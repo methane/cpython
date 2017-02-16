@@ -1738,12 +1738,12 @@ _PyObject_GC_Alloc(int use_calloc, size_t basicsize)
     if (basicsize > PY_SSIZE_T_MAX - sizeof(PyGC_Head))
         return PyErr_NoMemory();
     size = sizeof(PyGC_Head) + basicsize;
-    if (use_calloc)
-        g = (PyGC_Head *)PyObject_Calloc(1, size);
-    else
-        g = (PyGC_Head *)PyObject_Malloc(size);
+    g = _PyFreelist_Malloc(size);
     if (g == NULL)
         return PyErr_NoMemory();
+    if (use_calloc) {
+        memset((void*)g, 0, size);
+    }
     g->gc.gc_refs = 0;
     _PyGCHead_SET_REFS(g, GC_UNTRACKED);
     generations[0].count++; /* number of allocated GC objects */
@@ -1823,4 +1823,17 @@ PyObject_GC_Del(void *op)
         generations[0].count--;
     }
     PyObject_FREE(g);
+}
+
+void
+_PyObject_GC_Recycle(void *op, size_t basicsize)
+{
+    size_t size = sizeof(PyGC_Head) + basicsize;
+    PyGC_Head *g = AS_GC(op);
+    if (IS_TRACKED(op))
+        gc_list_remove(g);
+    if (generations[0].count > 0) {
+        generations[0].count--;
+    }
+    _PyFreelist_Free(g, size);
 }

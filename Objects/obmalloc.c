@@ -2383,3 +2383,5 @@ _PyObject_DebugMallocStats(FILE *out)
 }
 
 #endif /* #ifdef WITH_PYMALLOC */
+
+_Py_freelist_slot _Py_global_freelist[_PY_FREELIST_MAXSIZECLASS];

@@ -90,20 +90,6 @@ PyTuple_New(Py_ssize_t size)
 #endif
         return (PyObject *) op;
     }
-    if (size < PyTuple_MAXSAVESIZE && (op = free_list[size]) != NULL) {
-        free_list[size] = (PyTupleObject *) op->ob_item[0];
-        numfree[size]--;
-#ifdef COUNT_ALLOCS
-        fast_tuple_allocs++;
-#endif
-        /* Inline PyObject_InitVar */
-#ifdef Py_TRACE_REFS
-        Py_SIZE(op) = size;
-        Py_TYPE(op) = &PyTuple_Type;
-#endif
-        _Py_NewReference((PyObject *)op);
-    }
-    else
 #endif
     {
         /* Check for overflow */
@@ -241,20 +227,14 @@ tupledealloc(PyTupleObject *op)
         i = len;
         while (--i >= 0)
             Py_XDECREF(op->ob_item[i]);
-#if PyTuple_MAXSAVESIZE > 0
-        if (len < PyTuple_MAXSAVESIZE &&
-            numfree[len] < PyTuple_MAXFREELIST &&
-            Py_TYPE(op) == &PyTuple_Type)
-        {
-            op->ob_item[0] = (PyObject *) free_list[len];
-            numfree[len]++;
-            free_list[len] = op;
-            goto done; /* return */
-        }
-#endif
     }
-    Py_TYPE(op)->tp_free((PyObject *)op);
-done:
+    if (PyTuple_CheckExact(op)) {
+        _PyObject_GC_Recycle(
+            (PyObject *)op, sizeof(PyTupleObject) + sizeof(PyObject*)*(len-1));
+    }
+    else {
+        Py_TYPE(op)->tp_free((PyObject *)op);
+    }
     Py_TRASHCAN_SAFE_END(op)
 }
 

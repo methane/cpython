@@ -440,16 +440,13 @@ frame_dealloc(PyFrameObject *f)
     Py_CLEAR(f->f_exc_traceback);
 
     co = f->f_code;
-    if (co->co_zombieframe == NULL)
+    if (co->co_zombieframe == NULL) {
         co->co_zombieframe = f;
-    else if (numfree < PyFrame_MAXFREELIST) {
-        ++numfree;
-        f->f_back = free_list;
-        free_list = f;
     }
-    else
-        PyObject_GC_Del(f);
-
+    else {
+        _PyObject_GC_Recycle(
+            f, sizeof(PyFrameObject) + sizeof(PyObject*) * Py_SIZE(f));
+    }
     Py_DECREF(co);
     Py_TRASHCAN_SAFE_END(f)
 }
