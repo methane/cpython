@@ -73,100 +73,35 @@ list_resize(PyListObject *self, Py_ssize_t newsize)
     return 0;
 }
 
-/* Debug statistic to compare allocations with reuse through the free list */
-#undef SHOW_ALLOC_COUNT
-#ifdef SHOW_ALLOC_COUNT
-static size_t count_alloc = 0;
-static size_t count_reuse = 0;
-
-static void
-show_alloc(void)
-{
-    PyObject *xoptions, *value;
-    _Py_IDENTIFIER(showalloccount);
-
-    xoptions = PySys_GetXOptions();
-    if (xoptions == NULL)
-        return;
-    value = _PyDict_GetItemId(xoptions, &PyId_showalloccount);
-    if (value != Py_True)
-        return;
-
-    fprintf(stderr, "List allocations: %" PY_FORMAT_SIZE_T "d\n",
-        count_alloc);
-    fprintf(stderr, "List reuse through freelist: %" PY_FORMAT_SIZE_T
-        "d\n", count_reuse);
-    fprintf(stderr, "%.2f%% reuse rate\n\n",
-        (100.0*count_reuse/(count_alloc+count_reuse)));
-}
-#endif
-
-/* Empty list reuse scheme to save calls to malloc and free */
-#ifndef PyList_MAXFREELIST
-#define PyList_MAXFREELIST 80
-#endif
-static PyListObject *free_list[PyList_MAXFREELIST];
-static int numfree = 0;
-
 int
 PyList_ClearFreeList(void)
 {
-    PyListObject *op;
-    int ret = numfree;
-    while (numfree) {
-        op = free_list[--numfree];
-        assert(PyList_CheckExact(op));
-        PyObject_GC_Del(op);
-    }
-    return ret;
+    return 0;
 }
 
 void
 PyList_Fini(void)
 {
-    PyList_ClearFreeList();
 }
 
 /* Print summary info about the state of the optimized allocator */
 void
 _PyList_DebugMallocStats(FILE *out)
 {
-    _PyDebugAllocatorStats(out,
-                           "free PyListObject",
-                           numfree, sizeof(PyListObject));
 }
 
 PyObject *
 PyList_New(Py_ssize_t size)
 {
     PyListObject *op;
-#ifdef SHOW_ALLOC_COUNT
-    static int initialized = 0;
-    if (!initialized) {
-        Py_AtExit(show_alloc);
-        initialized = 1;
-    }
-#endif
 
     if (size < 0) {
         PyErr_BadInternalCall();
         return NULL;
     }
-    if (numfree) {
-        numfree--;
-        op = free_list[numfree];
-        _Py_NewReference((PyObject *)op);
-#ifdef SHOW_ALLOC_COUNT
-        count_reuse++;
-#endif
-    } else {
-        op = PyObject_GC_New(PyListObject, &PyList_Type);
-        if (op == NULL)
-            return NULL;
-#ifdef SHOW_ALLOC_COUNT
-        count_alloc++;
-#endif
-    }
+    op = PyObject_GC_New(PyListObject, &PyList_Type);
+    if (op == NULL)
+        return NULL;
     if (size <= 0)
         op->ob_item = NULL;
     else {
@@ -327,8 +262,9 @@ list_dealloc(PyListObject *op)
         }
         PyMem_FREE(op->ob_item);
     }
-    if (numfree < PyList_MAXFREELIST && PyList_CheckExact(op))
-        free_list[numfree++] = op;
+    if (PyList_CheckExact(op)) {
+        _PyObject_GC_Recycle(op, sizeof(PyListObject));
+    }
     else
         Py_TYPE(op)->tp_free((PyObject *)op);
     Py_TRASHCAN_SAFE_END(op)
