@@ -362,14 +362,12 @@ static PyGetSetDef frame_getsetlist[] = {
 };
 
 /* Stack frames are allocated and deallocated at a considerable rate.
-   In an attempt to improve the speed of function calls, we:
-
-   1. Hold a single "zombie" frame on each code object. This retains
+   In an attempt to improve the speed of function calls, we hold
+   a single "zombie" frame on each code object. This retains
    the allocated and initialised frame object from an invocation of
    the code object. The zombie is reanimated the next time we need a
-   frame object for that code object. Doing this saves the malloc/
-   realloc required when using a free_list frame that isn't the
-   correct size. It also saves some field initialisation.
+   frame object for that code object. Doing this saves the malloc.
+   It also saves some field initialisation.
 
    In zombie mode, no field of PyFrameObject holds a reference, but
    the following fields are still valid:
@@ -381,33 +379,8 @@ static PyGetSetDef frame_getsetlist[] = {
 
      * f_localsplus does not require re-allocation and
        the local variables in f_localsplus are NULL.
-
-   2. We also maintain a separate free list of stack frames (just like
-   floats are allocated in a special way -- see floatobject.c).  When
-   a stack frame is on the free list, only the following members have
-   a meaning:
-    ob_type             == &Frametype
-    f_back              next item on free list, or NULL
-    f_stacksize         size of value stack
-    ob_size             size of localsplus
-   Note that the value and block stacks are preserved -- this can save
-   another malloc() call or two (and two free() calls as well!).
-   Also note that, unlike for integers, each frame object is a
-   malloc'ed object in its own right -- it is only the actual calls to
-   malloc() that we are trying to save here, not the administration.
-   After all, while a typical program may make millions of calls, a
-   call depth of more than 20 or 30 is probably already exceptional
-   unless the program contains run-away recursion.  I hope.
-
-   Later, PyFrame_MAXFREELIST was added to bound the # of frames saved on
-   free_list.  Else programs creating lots of cyclic trash involving
-   frames could provoke free_list into growing without bound.
 */
 
-static PyFrameObject *free_list = NULL;
-static int numfree = 0;         /* number of frames currently in free_list */
-/* max value for numfree */
-#define PyFrame_MAXFREELIST 200
 
 static void _Py_HOT_FUNCTION
 frame_dealloc(PyFrameObject *f)
@@ -658,31 +631,11 @@ _PyFrame_New_NoTrack(PyThreadState *tstate, PyCodeObject *code,
         Py_ssize_t extras, ncells, nfrees;
         ncells = PyTuple_GET_SIZE(code->co_cellvars);
         nfrees = PyTuple_GET_SIZE(code->co_freevars);
-        extras = code->co_stacksize + code->co_nlocals + ncells +
-            nfrees;
-        if (free_list == NULL) {
-            f = PyObject_GC_NewVar(PyFrameObject, &PyFrame_Type,
-            extras);
-            if (f == NULL) {
-                Py_DECREF(builtins);
-                return NULL;
-            }
-        }
-        else {
-            assert(numfree > 0);
-            --numfree;
-            f = free_list;
-            free_list = free_list->f_back;
-            if (Py_SIZE(f) < extras) {
-                PyFrameObject *new_f = PyObject_GC_Resize(PyFrameObject, f, extras);
-                if (new_f == NULL) {
-                    PyObject_GC_Del(f);
-                    Py_DECREF(builtins);
-                    return NULL;
-                }
-                f = new_f;
-            }
-            _Py_NewReference((PyObject *)f);
+        extras = code->co_stacksize + code->co_nlocals + ncells + nfrees;
+        f = PyObject_GC_NewVar(PyFrameObject, &PyFrame_Type, extras);
+        if (f == NULL) {
+            Py_DECREF(builtins);
+            return NULL;
         }
 
         f->f_code = code;
@@ -979,30 +932,17 @@ PyFrame_LocalsToFast(PyFrameObject *f, int clear)
 int
 PyFrame_ClearFreeList(void)
 {
-    int freelist_size = numfree;
-
-    while (free_list != NULL) {
-        PyFrameObject *f = free_list;
-        free_list = free_list->f_back;
-        PyObject_GC_Del(f);
-        --numfree;
-    }
-    assert(numfree == 0);
-    return freelist_size;
+    return 0;
 }
 
 void
 PyFrame_Fini(void)
 {
-    (void)PyFrame_ClearFreeList();
 }
 
 /* Print summary info about the state of the optimized allocator */
 void
 _PyFrame_DebugMallocStats(FILE *out)
 {
-    _PyDebugAllocatorStats(out,
-                           "free PyFrameObject",
-                           numfree, sizeof(PyFrameObject));
 }
 
