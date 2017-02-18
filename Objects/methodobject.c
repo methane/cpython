@@ -4,15 +4,6 @@
 #include "Python.h"
 #include "structmember.h"
 
-/* Free list for method objects to safe malloc/free overhead
- * The m_self element is used to chain the objects.
- */
-static PyCFunctionObject *free_list = NULL;
-static int numfree = 0;
-#ifndef PyCFunction_MAXFREELIST
-#define PyCFunction_MAXFREELIST 256
-#endif
-
 /* undefine macro trampoline to PyCFunction_NewEx */
 #undef PyCFunction_New
 
@@ -26,17 +17,9 @@ PyObject *
 PyCFunction_NewEx(PyMethodDef *ml, PyObject *self, PyObject *module)
 {
     PyCFunctionObject *op;
-    op = free_list;
-    if (op != NULL) {
-        free_list = (PyCFunctionObject *)(op->m_self);
-        (void)PyObject_INIT(op, &PyCFunction_Type);
-        numfree--;
-    }
-    else {
-        op = PyObject_GC_New(PyCFunctionObject, &PyCFunction_Type);
-        if (op == NULL)
-            return NULL;
-    }
+    op = PyObject_GC_New(PyCFunctionObject, &PyCFunction_Type);
+    if (op == NULL)
+        return NULL;
     op->m_weakreflist = NULL;
     op->m_ml = ml;
     Py_XINCREF(self);
@@ -88,10 +71,8 @@ meth_dealloc(PyCFunctionObject *m)
     }
     Py_XDECREF(m->m_self);
     Py_XDECREF(m->m_module);
-    if (numfree < PyCFunction_MAXFREELIST) {
-        m->m_self = (PyObject *)free_list;
-        free_list = m;
-        numfree++;
+    if (Py_TYPE(m) == &PyCFunction_Type) {
+        _PyObject_GC_Recycle(m, sizeof(PyCFunctionObject));
     }
     else {
         PyObject_GC_Del(m);
@@ -306,16 +287,7 @@ PyTypeObject PyCFunction_Type = {
 int
 PyCFunction_ClearFreeList(void)
 {
-    int freelist_size = numfree;
-
-    while (free_list) {
-        PyCFunctionObject *v = free_list;
-        free_list = (PyCFunctionObject *)(v->m_self);
-        PyObject_GC_Del(v);
-        numfree--;
-    }
-    assert(numfree == 0);
-    return freelist_size;
+    return 0;
 }
 
 void
@@ -330,5 +302,5 @@ _PyCFunction_DebugMallocStats(FILE *out)
 {
     _PyDebugAllocatorStats(out,
                            "free PyCFunctionObject",
-                           numfree, sizeof(PyCFunctionObject));
+                           0, sizeof(PyCFunctionObject));
 }
