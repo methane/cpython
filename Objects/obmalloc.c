@@ -2241,6 +2241,8 @@ pool_is_in_list(const poolp target, poolp list)
 }
 #endif
 
+static void _PyFreelist_DebugMallocStats(FILE *out);
+
 /* Print summary info to "out" about the state of pymalloc's structures.
  * In Py_DEBUG mode, also perform some expensive internal consistency
  * checks.
@@ -2380,8 +2382,46 @@ _PyObject_DebugMallocStats(FILE *out)
     total += printone(out, "# bytes lost to quantization", quantization);
     total += printone(out, "# bytes lost to arena alignment", arena_alignment);
     (void)printone(out, "Total", total);
+
+    _PyFreelist_DebugMallocStats(out);
 }
 
 #endif /* #ifdef WITH_PYMALLOC */
 
 _Py_freelist_slot _Py_global_freelist[_PY_FREELIST_MAXSIZECLASS];
+
+static void
+_PyFreelist_DebugMallocStats(FILE *out)
+{
+    char buf[128];
+
+#if _PY_FREELIST_STAT
+    fputs("\n\nfreelist stats\n\n"
+          "size  num free     total    reused     alloc\n"
+          "----  --------  --------  --------  --------\n",
+          out);
+
+    for (int i = 0; i < _PY_FREELIST_MAXSIZECLASS; i++) {
+        int n = (int)_Py_global_freelist[i].nfree;
+        int s = (i + 1) * _PY_FREELIST_ALIGNMENT;
+        PyOS_snprintf(buf, sizeof(buf), "%4d  %8d  %8d  %8ld  %8ld\n",
+                      s, n, s * n,
+                      _Py_global_freelist[i].reused,
+                      _Py_global_freelist[i].alloc);
+        fputs(buf, out);
+    }
+#else
+    fputs("\n\nfreelist stats\n\n"
+          "size  num free  total bytes\n"
+          "----  --------  -----------\n",
+          out);
+
+    for (int i = 0; i < _PY_FREELIST_MAXSIZECLASS; i++) {
+        int n = (int)_Py_global_freelist[i].nfree;
+        int s = (i + 1) * _PY_FREELIST_ALIGNMENT;
+        PyOS_snprintf(buf, sizeof(buf), "%4d  %8d  %8d\n",
+                      s, n, s * n);
+        fputs(buf, out);
+    }
+#endif
+}

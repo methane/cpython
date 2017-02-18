@@ -105,14 +105,18 @@ PyAPI_FUNC(void) PyObject_Free(void *ptr);
 /* This function returns the number of allocated memory blocks, regardless of size */
 PyAPI_FUNC(Py_ssize_t) _Py_GetAllocatedBlocks(void);
 
+
 #define _PY_FREELIST_ALIGNMENT       (8)
-#define _PY_FREELIST_ALIGNMENT_SHIFT (3)
-#define _PY_FREELIST_MAXSIZECLASS   (32)
+#define _PY_FREELIST_MAXSIZECLASS   (24)
 #define _PY_FREELIST_MAXLENGTH    (1024)
+#define _PY_FREELIST_STAT 0
 
 typedef struct {
     void *ptr;
-    size_t n;
+    size_t nfree;
+#if _PY_FREELIST_STAT
+    size_t reused, alloc;
+#endif
 } _Py_freelist_slot;
 
 extern _Py_freelist_slot _Py_global_freelist[_PY_FREELIST_MAXSIZECLASS];
@@ -120,17 +124,22 @@ extern _Py_freelist_slot _Py_global_freelist[_PY_FREELIST_MAXSIZECLASS];
 static inline void*
 _PyFreelist_Malloc(size_t size)
 {
-    size_t sc = (size-1) >> _PY_FREELIST_ALIGNMENT_SHIFT;
+    size_t sc = (size-1) / _PY_FREELIST_ALIGNMENT;
     if (sc < _PY_FREELIST_MAXSIZECLASS) {
         _Py_freelist_slot *slot = &_Py_global_freelist[sc];
-        if (slot->n > 0) {
+        if (slot->nfree > 0) {
             void *ret = slot->ptr;
             slot->ptr = *((void**)ret);
-            slot->n--;
-            //fprintf(stderr, "fl malloc: size=%ld, n=%ld, ptr=%p\n",
-            //        sc, slot->n, ret);
+            slot->nfree--;
+#if _PY_FREELIST_STAT
+            slot->reused++;
+#endif
             return ret;
         }
+#if _PY_FREELIST_STAT
+        slot->alloc++;
+#endif
+        size = (sc + 1) * _PY_FREELIST_ALIGNMENT;
     }
     return PyObject_Malloc(size);
 }
@@ -138,15 +147,13 @@ _PyFreelist_Malloc(size_t size)
 static inline void
 _PyFreelist_Free(void *ptr, size_t size)
 {
-    size_t sc = (size-1) >> _PY_FREELIST_ALIGNMENT_SHIFT;
+    size_t sc = (size-1) / _PY_FREELIST_ALIGNMENT;
     if (sc < _PY_FREELIST_MAXSIZECLASS) {
         _Py_freelist_slot *slot = &_Py_global_freelist[sc];
-        if (slot->n < _PY_FREELIST_MAXLENGTH) {
+        if (slot->nfree < _PY_FREELIST_MAXLENGTH) {
             *((void**)ptr) = slot->ptr;
             slot->ptr = ptr;
-            slot->n++;
-            //fprintf(stderr, "fl free: size=%ld, n=%ld, ptr=%p\n",
-            //        sc, slot->n, ptr);
+            slot->nfree++;
             return;
         }
     }
