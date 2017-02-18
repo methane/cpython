@@ -5,14 +5,6 @@
 
 #define TP_DESCR_GET(t) ((t)->tp_descr_get)
 
-/* Free list for method objects to safe malloc/free overhead
- * The im_self element is used to chain the elements.
- */
-static PyMethodObject *free_list;
-static int numfree = 0;
-#ifndef PyMethod_MAXFREELIST
-#define PyMethod_MAXFREELIST 256
-#endif
 
 _Py_IDENTIFIER(__name__);
 _Py_IDENTIFIER(__qualname__);
@@ -50,17 +42,9 @@ PyMethod_New(PyObject *func, PyObject *self)
         PyErr_BadInternalCall();
         return NULL;
     }
-    im = free_list;
-    if (im != NULL) {
-        free_list = (PyMethodObject *)(im->im_self);
-        (void)PyObject_INIT(im, &PyMethod_Type);
-        numfree--;
-    }
-    else {
-        im = PyObject_GC_New(PyMethodObject, &PyMethod_Type);
-        if (im == NULL)
-            return NULL;
-    }
+    im = PyObject_GC_New(PyMethodObject, &PyMethod_Type);
+    if (im == NULL)
+        return NULL;
     im->im_weakreflist = NULL;
     Py_INCREF(func);
     im->im_func = func;
@@ -196,10 +180,8 @@ method_dealloc(PyMethodObject *im)
         PyObject_ClearWeakRefs((PyObject *)im);
     Py_DECREF(im->im_func);
     Py_XDECREF(im->im_self);
-    if (numfree < PyMethod_MAXFREELIST) {
-        im->im_self = (PyObject *)free_list;
-        free_list = im;
-        numfree++;
+    if (Py_TYPE((PyObject*)im) == &PyMethod_Type) {
+        _PyObject_GC_Recycle(im, sizeof(PyMethodObject));
     }
     else {
         PyObject_GC_Del(im);
@@ -377,16 +359,7 @@ PyTypeObject PyMethod_Type = {
 int
 PyMethod_ClearFreeList(void)
 {
-    int freelist_size = numfree;
-
-    while (free_list) {
-        PyMethodObject *im = free_list;
-        free_list = (PyMethodObject *)(im->im_self);
-        PyObject_GC_Del(im);
-        numfree--;
-    }
-    assert(numfree == 0);
-    return freelist_size;
+    return 0;
 }
 
 void
@@ -399,9 +372,6 @@ PyMethod_Fini(void)
 void
 _PyMethod_DebugMallocStats(FILE *out)
 {
-    _PyDebugAllocatorStats(out,
-                           "free PyMethodObject",
-                           numfree, sizeof(PyMethodObject));
 }
 
 /* ------------------------------------------------------------------------
@@ -484,7 +454,12 @@ static void
 instancemethod_dealloc(PyObject *self) {
     _PyObject_GC_UNTRACK(self);
     Py_DECREF(PyInstanceMethod_GET_FUNCTION(self));
-    PyObject_GC_Del(self);
+    if (Py_TYPE(self) == &PyInstanceMethod_Type) {
+        _PyObject_GC_Recycle(self, sizeof(PyInstanceMethodObject));
+    }
+    else {
+        PyObject_GC_Del(self);
+    }
 }
 
 static int
