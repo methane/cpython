@@ -1,7 +1,6 @@
 language: c
 dist: trusty
-sudo: false
-group: beta
+sudo: required
 
 # To cache doc-building dependencies.
 cache: pip
@@ -31,6 +30,7 @@ matrix:
        - TESTING=coverage
   include:
     - os: linux
+      sudo: false
       language: python
       python: 3.5
       env:
@@ -65,6 +65,7 @@ matrix:
         - source ./venv/bin/activate
         - bash <(curl -s https://codecov.io/bash)
     - os: linux
+      sudo: false
       language: cpp
       compiler: clang
       env:
