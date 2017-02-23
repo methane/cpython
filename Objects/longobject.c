@@ -202,8 +202,8 @@ _PyLong_New(Py_ssize_t size)
                         "too many digits in integer");
         return NULL;
     }
-    result = PyObject_MALLOC(offsetof(PyLongObject, ob_digit) +
-                             size*sizeof(digit));
+    result = _PyFreelist_Malloc(offsetof(PyLongObject, ob_digit) +
+                                size*sizeof(digit));
     if (!result) {
         PyErr_NoMemory();
         return NULL;
@@ -2889,7 +2889,13 @@ PyLong_AsDouble(PyObject *v)
 static void
 long_dealloc(PyObject *v)
 {
-    Py_TYPE(v)->tp_free(v);
+    if (PyLong_CheckExact(v)) {
+        _PyFreelist_Free(v, offsetof(PyLongObject, ob_digit) +
+                                Py_SIZE(v) * sizeof(digit));
+    }
+    else {
+        Py_TYPE(v)->tp_free(v);
+    }
 }
 
 static int

@@ -808,7 +808,7 @@ _PyObject_FastCall_Prepend(PyObject *callable,
         args2 = small_stack;
     }
     else {
-        args2 = PyMem_Malloc(nargs * sizeof(PyObject *));
+        args2 = _PyFreelist_Malloc(nargs * sizeof(PyObject *));
         if (args2 == NULL) {
             PyErr_NoMemory();
             return NULL;
@@ -823,7 +823,7 @@ _PyObject_FastCall_Prepend(PyObject *callable,
 
     result = _PyObject_FastCall(callable, args2, nargs);
     if (args2 != small_stack) {
-        PyMem_Free(args2);
+        _PyFreelist_Free(args2, nargs * sizeof(PyObject *));
     }
     return result;
 }
@@ -846,7 +846,7 @@ _PyObject_Call_Prepend(PyObject *callable,
         stack = small_stack;
     }
     else {
-        stack = PyMem_Malloc((argcount + 1) * sizeof(PyObject *));
+        stack = _PyFreelist_Malloc((argcount + 1) * sizeof(PyObject *));
         if (stack == NULL) {
             PyErr_NoMemory();
             return NULL;
@@ -863,7 +863,7 @@ _PyObject_Call_Prepend(PyObject *callable,
                                     stack, argcount + 1,
                                     kwargs);
     if (stack != small_stack) {
-        PyMem_Free(stack);
+        _PyFreelist_Free(stack, (argcount + 1) * sizeof(PyObject *));
     }
     return result;
 }
@@ -919,7 +919,7 @@ _PyObject_CallFunctionVa(PyObject *callable, const char *format,
         Py_DECREF(stack[i]);
     }
     if (stack != small_stack) {
-        PyMem_Free(stack);
+        PyMem_FREE(stack);
     }
     return result;
 }
@@ -1150,7 +1150,7 @@ object_vacall(PyObject *callable, va_list vargs)
         stack = small_stack;
     }
     else {
-        stack = PyMem_Malloc(nargs * sizeof(stack[0]));
+        stack = _PyFreelist_Malloc(nargs * sizeof(stack[0]));
         if (stack == NULL) {
             PyErr_NoMemory();
             return NULL;
@@ -1165,7 +1165,7 @@ object_vacall(PyObject *callable, va_list vargs)
     result = _PyObject_FastCall(callable, stack, nargs);
 
     if (stack != small_stack) {
-        PyMem_Free(stack);
+        _PyFreelist_Free(stack, nargs * sizeof(PyObject*));
     }
     return result;
 }

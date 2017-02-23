@@ -104,6 +104,64 @@ PyAPI_FUNC(void) PyObject_Free(void *ptr);
 #ifndef Py_LIMITED_API
 /* This function returns the number of allocated memory blocks, regardless of size */
 PyAPI_FUNC(Py_ssize_t) _Py_GetAllocatedBlocks(void);
+
+
+#define _PY_FREELIST_ALIGNMENT       (8)
+#define _PY_FREELIST_MAXSIZECLASS   (24)
+#define _PY_FREELIST_MAXLENGTH    (1024)
+#define _PY_FREELIST_STAT 0
+
+typedef struct {
+    void *ptr;
+    size_t nfree;
+#if _PY_FREELIST_STAT
+    size_t reused, alloc;
+#endif
+} _Py_freelist_slot;
+
+extern _Py_freelist_slot _Py_global_freelist[_PY_FREELIST_MAXSIZECLASS];
+
+static inline void*
+_PyFreelist_Malloc(size_t size)
+{
+    size_t sc = (size-1) / _PY_FREELIST_ALIGNMENT;
+    if (sc < _PY_FREELIST_MAXSIZECLASS) {
+        _Py_freelist_slot *slot = &_Py_global_freelist[sc];
+        if (slot->nfree > 0) {
+            void *ret = slot->ptr;
+            slot->ptr = *((void**)ret);
+            slot->nfree--;
+#if _PY_FREELIST_STAT
+            slot->reused++;
+#endif
+            return ret;
+        }
+#if _PY_FREELIST_STAT
+        slot->alloc++;
+#endif
+        size = (sc + 1) * _PY_FREELIST_ALIGNMENT;
+    }
+    return PyObject_Malloc(size);
+}
+
+static inline void
+_PyFreelist_Free(void *ptr, size_t size)
+{
+    size_t sc = (size-1) / _PY_FREELIST_ALIGNMENT;
+    if (sc < _PY_FREELIST_MAXSIZECLASS) {
+        _Py_freelist_slot *slot = &_Py_global_freelist[sc];
+        if (slot->nfree < _PY_FREELIST_MAXLENGTH) {
+            *((void**)ptr) = slot->ptr;
+            slot->ptr = ptr;
+            slot->nfree++;
+            return;
+        }
+    }
+    PyObject_Free(ptr);
+}
+
+/* TODO: Support ClearFreelist and stats */
+
 #endif /* !Py_LIMITED_API */
 
 /* Macros */
@@ -330,6 +388,9 @@ extern PyGC_Head *_PyGC_generation0;
 #ifndef Py_LIMITED_API
 PyAPI_FUNC(PyObject *) _PyObject_GC_Malloc(size_t size);
 PyAPI_FUNC(PyObject *) _PyObject_GC_Calloc(size_t size);
+PyAPI_FUNC(void) _PyObject_GC_Recycle(void *, size_t size);
+
+
 #endif /* !Py_LIMITED_API */
 PyAPI_FUNC(PyObject *) _PyObject_GC_New(PyTypeObject *);
 PyAPI_FUNC(PyVarObject *) _PyObject_GC_NewVar(PyTypeObject *, Py_ssize_t);
