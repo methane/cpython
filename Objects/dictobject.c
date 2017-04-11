@@ -621,10 +621,8 @@ new_dict_with_shared_keys(PyDictKeysObject *keys)
 PyObject *
 PyDict_New(void)
 {
-    PyDictKeysObject *keys = new_keys_object(PyDict_MINSIZE);
-    if (keys == NULL)
-        return NULL;
-    return new_dict(keys, NULL);
+    DK_INCREF(Py_EMPTY_KEYS);
+    return new_dict(Py_EMPTY_KEYS, empty_values);
 }
 
 /* Search index of hash table from offset of entry table */
@@ -1356,6 +1354,9 @@ _PyDict_NewPresized(Py_ssize_t minused)
     Py_ssize_t newsize;
     PyDictKeysObject *new_keys;
 
+    if (minused == 0) {
+        return PyDict_New();
+    }
     /* There are no strict guarantee that returned dict can contain minused
      * items without resize.  So we create medium size dict instead of very
      * large dict or MemoryError.
