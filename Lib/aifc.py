@@ -149,25 +149,25 @@ def _read_long(file):
     try:
         return struct.unpack('>l', file.read(4))[0]
     except struct.error:
-        raise EOFError
+        raise EOFError from None
 
 def _read_ulong(file):
     try:
         return struct.unpack('>L', file.read(4))[0]
     except struct.error:
-        raise EOFError
+        raise EOFError from None
 
 def _read_short(file):
     try:
         return struct.unpack('>h', file.read(2))[0]
     except struct.error:
-        raise EOFError
+        raise EOFError from None
 
 def _read_ushort(file):
     try:
         return struct.unpack('>H', file.read(2))[0]
     except struct.error:
-        raise EOFError
+        raise EOFError from None
 
 def _read_string(file):
     length = ord(file.read(1))
@@ -302,6 +302,8 @@ class Aifc_read:
     #       file for readframes()
     # _ssnd_chunk -- instantiation of a chunk class for the SSND chunk
     # _framesize -- size of one frame in the file
+
+    _file = None  # Set here since __del__ checks it
 
     def initfp(self, file):
         self._version = 0
@@ -546,6 +548,8 @@ class Aifc_write:
     # _nframeswritten -- the number of audio frames actually written
     # _datalength -- the size of the audio samples written to the header
     # _datawritten -- the size of the audio samples actually written
+
+    _file = None  # Set here since __del__ checks it
 
     def __init__(self, f):
         if isinstance(f, str):
