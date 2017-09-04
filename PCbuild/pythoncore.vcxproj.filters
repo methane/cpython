@@ -998,6 +998,9 @@
     <ClCompile Include="..\PC\invalid_parameter_handler.c">
       <Filter>PC</Filter>
     </ClCompile>
+    <ClCompile Include="..\Objects\odictobject.c">
+      <Filter>Objects</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="..\PC\python_nt.rc">
