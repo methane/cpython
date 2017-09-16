@@ -28,6 +28,7 @@ import pickle
 import random
 import signal
 import sys
+import threading
 import time
 import unittest
 import warnings
@@ -40,10 +41,6 @@ from test.support.script_helper import assert_python_ok, run_python_until_end
 import codecs
 import io  # C implementation of io
 import _pyio as pyio # Python implementation of io
-try:
-    import threading
-except ImportError:
-    threading = None
 
 try:
     import ctypes
@@ -443,8 +440,6 @@ class IOTest(unittest.TestCase):
             (self.BytesIO, "rws"), (self.StringIO, "rws"),
         )
         for [test, abilities] in tests:
-            if test is pipe_writer and not threading:
-                continue  # Skip subtest that uses a background thread
             with self.subTest(test), test() as obj:
                 readable = "r" in abilities
                 self.assertEqual(obj.readable(), readable)
@@ -1337,7 +1332,6 @@ class BufferedReaderTest(unittest.TestCase, CommonBufferedTests):
 
         self.assertEqual(b"abcdefg", bufio.read())
 
-    @unittest.skipUnless(threading, 'Threading required for this test.')
     @support.requires_resource('cpu')
     def test_threads(self):
         try:
@@ -1664,7 +1658,6 @@ class BufferedWriterTest(unittest.TestCase, CommonBufferedTests):
         with self.open(support.TESTFN, "rb", buffering=0) as f:
             self.assertEqual(f.read(), b"abc")
 
-    @unittest.skipUnless(threading, 'Threading required for this test.')
     @support.requires_resource('cpu')
     def test_threads(self):
         try:
@@ -3053,7 +3046,6 @@ class TextIOWrapperTest(unittest.TestCase):
             self.assertEqual(f.errors, "replace")
 
     @support.no_tracing
-    @unittest.skipUnless(threading, 'Threading required for this test.')
     def test_threads_write(self):
         # Issue6750: concurrent writes could duplicate data
         event = threading.Event()
@@ -3336,6 +3328,134 @@ class TextIOWrapperTest(unittest.TestCase):
 
         F.tell = lambda x: 0
         t = self.TextIOWrapper(F(), encoding='utf-8')
+
+    def test_reconfigure_encoding_same_codec(self):
+        data = 'foobar\n'.encode('latin1')
+        raw = self.BytesIO(data)
+        txt = self.TextIOWrapper(raw, encoding='latin1')
+        self.assertEqual(txt.encoding, 'latin1')
+
+        # Just an alias, shouldn't change anything
+        txt.reconfigure(encoding='ISO-8859-1')
+        self.assertEqual(txt.encoding, 'latin1')
+
+        # This is an actual change
+        txt.reconfigure(encoding='iso8859-15')
+        self.assertEqual(txt.encoding, 'iso8859-15')
+
+    def test_reconfigure_encoding_read(self):
+        # latin1 -> utf8
+        # (latin1 can decode utf-8 encoded string)
+        data = 'abc\xe9\n'.encode('latin1') + 'd\xe9f\n'.encode('utf8')
+        raw = self.BytesIO(data)
+        txt = self.TextIOWrapper(raw, encoding='latin1', newline='\n')
+        self.assertEqual(txt.readline(), 'abc\xe9\n')
+        with self.assertRaises(self.UnsupportedOperation):
+            txt.reconfigure(encoding='utf-8')
+
+    def test_reconfigure_write_fromascii(self):
+        # ascii has a specific encodefunc in the C implementation,
+        # but utf-8-sig has not. Make sure that we get rid of the
+        # cached encodefunc when we switch encoders.
+        raw = self.BytesIO()
+        txt = self.TextIOWrapper(raw, encoding='ascii', newline='\n')
+        txt.write('foo\n')
+        txt.reconfigure(encoding='utf-8-sig')
+        txt.write('\xe9\n')
+        txt.flush()
+        self.assertEqual(raw.getvalue(), b'foo\n\xc3\xa9\n')
+
+    def test_reconfigure_write(self):
+        # latin -> utf8
+        raw = self.BytesIO()
+        txt = self.TextIOWrapper(raw, encoding='latin1', newline='\n')
+        txt.write('abc\xe9\n')
+        txt.reconfigure(encoding='utf-8')
+        self.assertEqual(raw.getvalue(), b'abc\xe9\n')
+        txt.write('d\xe9f\n')
+        txt.flush()
+        self.assertEqual(raw.getvalue(), b'abc\xe9\nd\xc3\xa9f\n')
+
+        # ascii -> utf-8-sig: ensure that no BOM is written in the middle of
+        # the file
+        raw = self.BytesIO()
+        txt = self.TextIOWrapper(raw, encoding='ascii', newline='\n')
+        txt.write('abc\n')
+        txt.reconfigure(encoding='utf-8-sig')
+        txt.write('d\xe9f\n')
+        txt.flush()
+        self.assertEqual(raw.getvalue(), b'abc\nd\xc3\xa9f\n')
+
+    def test_reconfigure_write_non_seekable(self):
+        raw = self.BytesIO()
+        raw.seekable = lambda: False
+        raw.seek = None
+        txt = self.TextIOWrapper(raw, encoding='ascii', newline='\n')
+        txt.write('abc\n')
+        txt.reconfigure(encoding='utf-8-sig')
+        txt.write('d\xe9f\n')
+        txt.flush()
+
+        # If the raw stream is not seekable, there'll be a BOM
+        self.assertEqual(raw.getvalue(),  b'abc\n\xef\xbb\xbfd\xc3\xa9f\n')
+
+    def test_reconfigure_defaults(self):
+        txt = self.TextIOWrapper(self.BytesIO(), 'ascii', 'replace', '\n')
+        txt.reconfigure(encoding=None)
+        self.assertEqual(txt.encoding, 'ascii')
+        self.assertEqual(txt.errors, 'replace')
+        txt.write('LF\n')
+
+        txt.reconfigure(newline='\r\n')
+        self.assertEqual(txt.encoding, 'ascii')
+        self.assertEqual(txt.errors, 'replace')
+
+        txt.reconfigure(errors='ignore')
+        self.assertEqual(txt.encoding, 'ascii')
+        txt.write('CRLF\n')
+
+        txt.reconfigure(encoding='utf-8', newline=None)
+        self.assertEqual(txt.errors, 'strict')
+        txt.seek(0)
+        self.assertEqual(txt.read(), 'LF\nCRLF\n')
+
+        self.assertEqual(txt.detach().getvalue(), b'LF\nCRLF\r\n')
+
+    def test_reconfigure_newline(self):
+        raw = self.BytesIO(b'CR\rEOF')
+        txt = self.TextIOWrapper(raw, 'ascii', newline='\n')
+        txt.reconfigure(newline=None)
+        self.assertEqual(txt.readline(), 'CR\n')
+        raw = self.BytesIO(b'CR\rEOF')
+        txt = self.TextIOWrapper(raw, 'ascii', newline='\n')
+        txt.reconfigure(newline='')
+        self.assertEqual(txt.readline(), 'CR\r')
+        raw = self.BytesIO(b'CR\rLF\nEOF')
+        txt = self.TextIOWrapper(raw, 'ascii', newline='\r')
+        txt.reconfigure(newline='\n')
+        self.assertEqual(txt.readline(), 'CR\rLF\n')
+        raw = self.BytesIO(b'LF\nCR\rEOF')
+        txt = self.TextIOWrapper(raw, 'ascii', newline='\n')
+        txt.reconfigure(newline='\r')
+        self.assertEqual(txt.readline(), 'LF\nCR\r')
+        raw = self.BytesIO(b'CR\rCRLF\r\nEOF')
+        txt = self.TextIOWrapper(raw, 'ascii', newline='\r')
+        txt.reconfigure(newline='\r\n')
+        self.assertEqual(txt.readline(), 'CR\rCRLF\r\n')
+
+        txt = self.TextIOWrapper(self.BytesIO(), 'ascii', newline='\r')
+        txt.reconfigure(newline=None)
+        txt.write('linesep\n')
+        txt.reconfigure(newline='')
+        txt.write('LF\n')
+        txt.reconfigure(newline='\n')
+        txt.write('LF\n')
+        txt.reconfigure(newline='\r')
+        txt.write('CR\n')
+        txt.reconfigure(newline='\r\n')
+        txt.write('CRLF\n')
+        expected = 'linesep' + os.linesep + 'LF\nLF\nCR\rCRLF\r\n'
+        self.assertEqual(txt.detach().getvalue().decode('ascii'), expected)
 
 
 class MemviewBytesIO(io.BytesIO):
@@ -3804,7 +3924,6 @@ class CMiscIOTest(MiscIOTest):
         b = bytearray(2)
         self.assertRaises(ValueError, bufio.readinto, b)
 
-    @unittest.skipUnless(threading, 'Threading required for this test.')
     def check_daemon_threads_shutdown_deadlock(self, stream_name):
         # Issue #23309: deadlocks at shutdown should be avoided when a
         # daemon thread and the main thread both write to a file.
@@ -3868,7 +3987,6 @@ class SignalsTest(unittest.TestCase):
     def alarm_interrupt(self, sig, frame):
         1/0
 
-    @unittest.skipUnless(threading, 'Threading required for this test.')
     def check_interrupted_write(self, item, bytes, **fdopen_kwargs):
         """Check that a partial write, when it gets interrupted, properly
         invokes the signal handler, and bubbles up the exception raised
@@ -3990,7 +4108,6 @@ class SignalsTest(unittest.TestCase):
         self.check_interrupted_read_retry(lambda x: x,
                                           mode="r")
 
-    @unittest.skipUnless(threading, 'Threading required for this test.')
     def check_interrupted_write_retry(self, item, **fdopen_kwargs):
         """Check that a buffered write, when it gets interrupted (either
         returning a partial result or EINTR), properly invokes the signal
