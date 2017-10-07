@@ -921,9 +921,9 @@ class SizeofTest(unittest.TestCase):
         # method-wrapper (descriptor object)
         check({}.__iter__, size('2P'))
         # dict
-        check({}, size('nQ2P') + calcsize('2nP2n') + 8 + (8*2//3)*calcsize('n2P'))
+        check({}, size('2nQ2P') + calcsize('2nP2n') + 8 + (8*2//3)*calcsize('n2P'))
         longdict = {1:1, 2:2, 3:3, 4:4, 5:5, 6:6, 7:7, 8:8}
-        check(longdict, size('nQ2P') + calcsize('2nP2n') + 16 + (16*2//3)*calcsize('n2P'))
+        check(longdict, size('2nQ2P') + calcsize('2nP2n') + 16 + (16*2//3)*calcsize('n2P'))
         # dictionary-keyview
         check({}.keys(), size('P'))
         # dictionary-valueview
@@ -931,13 +931,13 @@ class SizeofTest(unittest.TestCase):
         # dictionary-itemview
         check({}.items(), size('P'))
         # dictionary iterator
-        check(iter({}), size('P2nPn'))
+        check(iter({}), size('P2nPni'))
         # dictionary-keyiterator
-        check(iter({}.keys()), size('P2nPn'))
+        check(iter({}.keys()), size('P2nPni'))
         # dictionary-valueiterator
-        check(iter({}.values()), size('P2nPn'))
+        check(iter({}.values()), size('P2nPni'))
         # dictionary-itemiterator
-        check(iter({}.items()), size('P2nPn'))
+        check(iter({}.items()), size('P2nPni'))
         # dictproxy
         class C(object): pass
         check(C.__dict__, size('P'))
@@ -1087,7 +1087,7 @@ class SizeofTest(unittest.TestCase):
         class newstyleclass(object): pass
         check(newstyleclass, s)
         # dict with shared keys
-        check(newstyleclass().__dict__, size('nQ2P' + '2nP2n'))
+        check(newstyleclass().__dict__, size('n2Q2P' + '2nP2n'))
         # unicode
         # each tuple contains a string and its expected character size
         # don't put any static strings here, as they may contain
