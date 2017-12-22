@@ -1756,7 +1756,6 @@ _PyODict_LRUGetItem(PyObject *od, PyObject *key, Py_hash_t hash)
 {
     PyODictObject *self = (PyODictObject*)od;
     if (_odict_EMPTY(self)) {
-        PyErr_SetObject(PyExc_KeyError, key);
         return NULL;
     }
 
@@ -1792,7 +1791,6 @@ _PyODict_LRULimitSize(PyObject *od, Py_ssize_t maxsize)
             return -1;
         }
         Py_DECREF(dvalue);
-        Py_DECREF(dkey);
     }
     return 0;
 }

@@ -669,6 +669,7 @@ struct lru_cache_object;
 typedef PyObject *(*lru_cache_ternaryfunc)(struct lru_cache_object *, PyObject *, PyObject *);
 
 typedef struct lru_cache_object {
+    PyObject_HEAD
     Py_ssize_t maxsize;
     PyObject *maxsize_O;
     PyObject *func;
