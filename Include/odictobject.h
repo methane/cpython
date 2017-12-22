@@ -38,6 +38,13 @@ PyAPI_FUNC(int) PyODict_DelItem(PyObject *od, PyObject *key);
 #define PyODict_GetItemString(od, key) \
     PyDict_GetItemString((PyObject *)od, key)
 
+/* Private API for using ODict for LRU */
+PyAPI_FUNC(PyObject *) _PyODict_LRUGetItem(
+    PyObject *od, PyObject *key, Py_hash_t hash);
+PyAPI_FUNC(int) _PyODict_SetItem_KnownHash(PyObject *od, PyObject *key,
+                                           PyObject *value, Py_hash_t hash);
+PyAPI_FUNC(int) _PyODict_LRULimitSize(PyObject *od, Py_ssize_t maxsize);
+
 #endif
 
 #ifdef __cplusplus

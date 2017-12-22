@@ -1244,10 +1244,6 @@ odict_clear(register PyODictObject *od)
 
 /* copy() */
 
-/* forward */
-static int _PyODict_SetItem_KnownHash(PyObject *, PyObject *, PyObject *,
-                                      Py_hash_t);
-
 PyDoc_STRVAR(odict_copy__doc__, "od.copy() -> a shallow copy of od");
 
 static PyObject *
@@ -1715,7 +1711,7 @@ PyODict_New(void) {
     return odict_new(&PyODict_Type, NULL, NULL);
 }
 
-static int
+int
 _PyODict_SetItem_KnownHash(PyObject *od, PyObject *key, PyObject *value,
                            Py_hash_t hash)
 {
@@ -1755,6 +1751,51 @@ PyODict_DelItem(PyObject *od, PyObject *key)
     return _PyDict_DelItem_KnownHash(od, key, hash);
 }
 
+PyObject *
+_PyODict_LRUGetItem(PyObject *od, PyObject *key, Py_hash_t hash)
+{
+    PyODictObject *self = (PyODictObject*)od;
+    if (_odict_EMPTY(self)) {
+        PyErr_SetObject(PyExc_KeyError, key);
+        return NULL;
+    }
+
+    _ODictNode *node = _odict_find_node(self, key);
+    if (node == NULL) {
+        return NULL;
+    }
+
+    // TODO: Currently, key is looked up twice.
+    // Copy _odict_find_node() again and get value at once.
+    PyObject *result = _PyDict_GetItem_KnownHash(od, key, hash);
+    if (result != NULL && node != _odict_LAST(self)) {
+        _odict_remove_node(self, node);
+        _odict_add_tail(self, node);
+    }
+    return result;
+}
+
+int
+_PyODict_LRULimitSize(PyObject *od, Py_ssize_t maxsize)
+{
+    while (PyODict_SIZE(od) >= maxsize - 1) {
+        _ODictNode *node = _odict_FIRST(od);
+        assert(node != NULL);
+
+        PyObject *dkey = _odictnode_KEY(node);
+        assert(dkey != NULL);
+
+        PyObject *dvalue = _odict_popkey_hash(
+            od, dkey, NULL, _odictnode_HASH(node));
+        if (dvalue == NULL) {
+            Py_DECREF(dkey);
+            return -1;
+        }
+        Py_DECREF(dvalue);
+        Py_DECREF(dkey);
+    }
+    return 0;
+}
 
 /* -------------------------------------------
  * The OrderedDict views (keys/values/items)

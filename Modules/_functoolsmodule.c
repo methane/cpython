@@ -664,73 +664,11 @@ sequence is empty.");
 /* this object is used delimit args and keywords in the cache keys */
 static PyObject *kwd_mark = NULL;
 
-struct lru_list_elem;
 struct lru_cache_object;
-
-typedef struct lru_list_elem {
-    PyObject_HEAD
-    struct lru_list_elem *prev, *next;  /* borrowed links */
-    Py_hash_t hash;
-    PyObject *key, *result;
-} lru_list_elem;
-
-static void
-lru_list_elem_dealloc(lru_list_elem *link)
-{
-    _PyObject_GC_UNTRACK(link);
-    Py_XDECREF(link->key);
-    Py_XDECREF(link->result);
-    PyObject_GC_Del(link);
-}
-
-static int
-lru_list_elem_traverse(lru_list_elem *link, visitproc visit, void *arg)
-{
-    Py_VISIT(link->key);
-    Py_VISIT(link->result);
-    return 0;
-}
-
-static int
-lru_list_elem_clear(lru_list_elem *link)
-{
-    Py_CLEAR(link->key);
-    Py_CLEAR(link->result);
-    return 0;
-}
-
-static PyTypeObject lru_list_elem_type = {
-    PyVarObject_HEAD_INIT(&PyType_Type, 0)
-    "functools._lru_list_elem",         /* tp_name */
-    sizeof(lru_list_elem),              /* tp_basicsize */
-    0,                                  /* tp_itemsize */
-    /* methods */
-    (destructor)lru_list_elem_dealloc,  /* tp_dealloc */
-    0,                                  /* tp_print */
-    0,                                  /* tp_getattr */
-    0,                                  /* tp_setattr */
-    0,                                  /* tp_reserved */
-    0,                                  /* tp_repr */
-    0,                                  /* tp_as_number */
-    0,                                  /* tp_as_sequence */
-    0,                                  /* tp_as_mapping */
-    0,                                  /* tp_hash */
-    0,                                  /* tp_call */
-    0,                                  /* tp_str */
-    0,                                  /* tp_getattro */
-    0,                                  /* tp_setattro */
-    0,                                  /* tp_as_buffer */
-    Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_GC,  /* tp_flags */
-    0,                                  /* tp_doc */
-    (traverseproc)lru_list_elem_traverse,  /* tp_traverse */
-    (inquiry)lru_list_elem_clear,       /* tp_clear */
-};
-
 
 typedef PyObject *(*lru_cache_ternaryfunc)(struct lru_cache_object *, PyObject *, PyObject *);
 
 typedef struct lru_cache_object {
-    lru_list_elem root;  /* includes PyObject_HEAD */
     Py_ssize_t maxsize;
     PyObject *maxsize_O;
     PyObject *func;
@@ -854,27 +792,9 @@ infinite_lru_cache_wrapper(lru_cache_object *self, PyObject *args, PyObject *kwd
     return result;
 }
 
-static void
-lru_cache_extricate_link(lru_list_elem *link)
-{
-    link->prev->next = link->next;
-    link->next->prev = link->prev;
-}
-
-static void
-lru_cache_append_link(lru_cache_object *self, lru_list_elem *link)
-{
-    lru_list_elem *root = &self->root;
-    lru_list_elem *last = root->prev;
-    last->next = root->prev = link;
-    link->prev = last;
-    link->next = root;
-}
-
 static PyObject *
 bounded_lru_cache_wrapper(lru_cache_object *self, PyObject *args, PyObject *kwds)
 {
-    lru_list_elem *link;
     PyObject *key, *result;
     Py_hash_t hash;
 
@@ -886,12 +806,10 @@ bounded_lru_cache_wrapper(lru_cache_object *self, PyObject *args, PyObject *kwds
         Py_DECREF(key);
         return NULL;
     }
-    link  = (lru_list_elem *)_PyDict_GetItem_KnownHash(self->cache, key, hash);
-    if (link) {
-        lru_cache_extricate_link(link);
-        lru_cache_append_link(self, link);
+
+    result = _PyODict_LRUGetItem(self->cache, key, hash);
+    if (result != NULL) {
         self->hits++;
-        result = link->result;
         Py_INCREF(result);
         Py_DECREF(key);
         return result;
@@ -900,86 +818,24 @@ bounded_lru_cache_wrapper(lru_cache_object *self, PyObject *args, PyObject *kwds
         Py_DECREF(key);
         return NULL;
     }
+
     result = PyObject_Call(self->func, args, kwds);
     if (!result) {
         Py_DECREF(key);
         return NULL;
     }
-    if (self->full && self->root.next != &self->root) {
-        /* Use the oldest item to store the new key and result. */
-        PyObject *oldkey, *oldresult, *popresult;
-        /* Extricate the oldest item. */
-        link = self->root.next;
-        lru_cache_extricate_link(link);
-        /* Remove it from the cache.
-           The cache dict holds one reference to the link,
-           and the linked list holds yet one reference to it. */
-        popresult = _PyDict_Pop_KnownHash(self->cache,
-                                          link->key, link->hash,
-                                          Py_None);
-        if (popresult == Py_None) {
-            /* Getting here means that this same key was added to the
-               cache while the lock was released.  Since the link
-               update is already done, we need only return the
-               computed result and update the count of misses. */
-            Py_DECREF(popresult);
-            Py_DECREF(link);
-            Py_DECREF(key);
-        }
-        else if (popresult == NULL) {
-            lru_cache_append_link(self, link);
-            Py_DECREF(key);
-            Py_DECREF(result);
-            return NULL;
-        }
-        else {
-            Py_DECREF(popresult);
-            /* Keep a reference to the old key and old result to
-               prevent their ref counts from going to zero during the
-               update. That will prevent potentially arbitrary object
-               clean-up code (i.e. __del__) from running while we're
-               still adjusting the links. */
-            oldkey = link->key;
-            oldresult = link->result;
 
-            link->hash = hash;
-            link->key = key;
-            link->result = result;
-            if (_PyDict_SetItem_KnownHash(self->cache, key, (PyObject *)link,
-                                          hash) < 0) {
-                Py_DECREF(link);
-                Py_DECREF(oldkey);
-                Py_DECREF(oldresult);
-                return NULL;
-            }
-            lru_cache_append_link(self, link);
-            Py_INCREF(result); /* for return */
-            Py_DECREF(oldkey);
-            Py_DECREF(oldresult);
-        }
-    } else {
-        /* Put result in a new link at the front of the queue. */
-        link = (lru_list_elem *)PyObject_GC_New(lru_list_elem,
-                                                &lru_list_elem_type);
-        if (link == NULL) {
-            Py_DECREF(key);
-            Py_DECREF(result);
-            return NULL;
-        }
-
-        link->hash = hash;
-        link->key = key;
-        link->result = result;
-        _PyObject_GC_TRACK(link);
-        if (_PyDict_SetItem_KnownHash(self->cache, key, (PyObject *)link,
-                                      hash) < 0) {
-            Py_DECREF(link);
-            return NULL;
-        }
-        lru_cache_append_link(self, link);
-        Py_INCREF(result); /* for return */
-        self->full = (PyDict_GET_SIZE(self->cache) >= self->maxsize);
+    if (_PyODict_SetItem_KnownHash(self->cache, key, result, hash) < 0) {
+        Py_DECREF(key);
+        Py_DECREF(result);
+        return NULL;
     }
+    Py_DECREF(key);
+
+    if (_PyODict_LRULimitSize(self->cache, self->maxsize) < 0) {
+        return NULL;
+    }
+
     self->misses++;
     return result;
 }
@@ -1025,8 +881,11 @@ lru_cache_new(PyTypeObject *type, PyObject *args, PyObject *kw)
         return NULL;
     }
 
-    if (!(cachedict = PyDict_New()))
+    cachedict = (wrapper == bounded_lru_cache_wrapper) ?
+        PyODict_New() : PyDict_New();
+    if (cachedict == NULL) {
         return NULL;
+    }
 
     obj = (lru_cache_object *)type->tp_alloc(type, 0);
     if (obj == NULL) {
@@ -1035,8 +894,6 @@ lru_cache_new(PyTypeObject *type, PyObject *args, PyObject *kw)
     }
 
     obj->cache = cachedict;
-    obj->root.prev = &obj->root;
-    obj->root.next = &obj->root;
     obj->maxsize = maxsize;
     Py_INCREF(maxsize_O);
     obj->maxsize_O = maxsize_O;
@@ -1051,42 +908,17 @@ lru_cache_new(PyTypeObject *type, PyObject *args, PyObject *kw)
     return (PyObject *)obj;
 }
 
-static lru_list_elem *
-lru_cache_unlink_list(lru_cache_object *self)
-{
-    lru_list_elem *root = &self->root;
-    lru_list_elem *link = root->next;
-    if (link == root)
-        return NULL;
-    root->prev->next = NULL;
-    root->next = root->prev = root;
-    return link;
-}
-
-static void
-lru_cache_clear_list(lru_list_elem *link)
-{
-    while (link != NULL) {
-        lru_list_elem *next = link->next;
-        Py_DECREF(link);
-        link = next;
-    }
-}
-
 static void
 lru_cache_dealloc(lru_cache_object *obj)
 {
-    lru_list_elem *list;
     /* bpo-31095: UnTrack is needed before calling any callbacks */
     PyObject_GC_UnTrack(obj);
 
-    list = lru_cache_unlink_list(obj);
     Py_XDECREF(obj->maxsize_O);
     Py_XDECREF(obj->func);
     Py_XDECREF(obj->cache);
     Py_XDECREF(obj->dict);
     Py_XDECREF(obj->cache_info_type);
-    lru_cache_clear_list(list);
     Py_TYPE(obj)->tp_free(obj);
 }
 
@@ -1117,11 +949,9 @@ lru_cache_cache_info(lru_cache_object *self, PyObject *unused)
 static PyObject *
 lru_cache_cache_clear(lru_cache_object *self, PyObject *unused)
 {
-    lru_list_elem *list = lru_cache_unlink_list(self);
     self->hits = self->misses = 0;
     self->full = 0;
     PyDict_Clear(self->cache);
-    lru_cache_clear_list(list);
     Py_RETURN_NONE;
 }
 
@@ -1148,12 +978,6 @@ lru_cache_deepcopy(PyObject *self, PyObject *unused)
 static int
 lru_cache_tp_traverse(lru_cache_object *self, visitproc visit, void *arg)
 {
-    lru_list_elem *link = self->root.next;
-    while (link != &self->root) {
-        lru_list_elem *next = link->next;
-        Py_VISIT(link);
-        link = next;
-    }
     Py_VISIT(self->maxsize_O);
     Py_VISIT(self->func);
     Py_VISIT(self->cache);
@@ -1165,13 +989,11 @@ lru_cache_tp_traverse(lru_cache_object *self, visitproc visit, void *arg)
 static int
 lru_cache_tp_clear(lru_cache_object *self)
 {
-    lru_list_elem *list = lru_cache_unlink_list(self);
     Py_CLEAR(self->maxsize_O);
     Py_CLEAR(self->func);
     Py_CLEAR(self->cache);
     Py_CLEAR(self->cache_info_type);
     Py_CLEAR(self->dict);
-    lru_cache_clear_list(list);
     return 0;
 }
 
