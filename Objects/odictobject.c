@@ -1779,6 +1779,9 @@ PyODict_DelItem(PyObject *od, PyObject *key)
     return _PyDict_DelItem_KnownHash(od, key, hash);
 }
 
+/* Similar to _PyDict_GetItem_KnownHash(), but does od.move_to_end(key) when
+ * key is found.
+ */
 PyObject *
 _PyODict_LRUGetItem(PyObject *od, PyObject *key, Py_hash_t hash)
 {
