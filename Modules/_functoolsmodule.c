@@ -798,6 +798,8 @@ bounded_lru_cache_wrapper(lru_cache_object *self, PyObject *args, PyObject *kwds
     PyObject *key, *result;
     Py_hash_t hash;
 
+    assert(PyODict_CheckExact(self->cache));
+
     key = lru_cache_make_key(args, kwds, self->typed);
     if (!key)
         return NULL;
