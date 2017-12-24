@@ -541,13 +541,17 @@ _odict_free_fast_nodes(PyODictObject *od) {
 
 /* Return the index into the hash table, regardless of a valid node. */
 static Py_ssize_t
-_odict_get_index_raw(PyODictObject *od, PyObject *key, Py_hash_t hash)
+_odict_get_index_raw(PyODictObject *od, PyObject *key, Py_hash_t hash,
+                     PyObject **pvalue)
 {
     PyObject *value = NULL;
     PyDictKeysObject *keys = ((PyDictObject *)od)->ma_keys;
     Py_ssize_t ix;
 
-    ix = (keys->dk_lookup)((PyDictObject *)od, key, hash, &value);
+    if (pvalue == NULL) {
+        pvalue = &value;
+    }
+    ix = (keys->dk_lookup)((PyDictObject *)od, key, hash, pvalue);
     if (ix == DKIX_EMPTY) {
         return keys->dk_nentries;  /* index of new entry */
     }
@@ -576,7 +580,7 @@ _odict_resize(PyODictObject *od) {
     /* Copy the current nodes into the table. */
     _odict_FOREACH(od, node) {
         i = _odict_get_index_raw(od, _odictnode_KEY(node),
-                                 _odictnode_HASH(node));
+                                 _odictnode_HASH(node), NULL);
         if (i < 0) {
             PyMem_FREE(fast_nodes);
             return -1;
@@ -594,7 +598,8 @@ _odict_resize(PyODictObject *od) {
 
 /* Return the index into the hash table, regardless of a valid node. */
 static Py_ssize_t
-_odict_get_index(PyODictObject *od, PyObject *key, Py_hash_t hash)
+_odict_get_index(PyODictObject *od, PyObject *key, Py_hash_t hash,
+                 PyObject **value)
 {
     PyDictKeysObject *keys;
 
@@ -609,18 +614,19 @@ _odict_get_index(PyODictObject *od, PyObject *key, Py_hash_t hash)
             return -1;
     }
 
-    return _odict_get_index_raw(od, key, hash);
+    return _odict_get_index_raw(od, key, hash, value);
 }
 
 /* Returns NULL if there was some error or the key was not found. */
 static _ODictNode *
-_odict_find_node_hash(PyODictObject *od, PyObject *key, Py_hash_t hash)
+_odict_find_node_hash(PyODictObject *od, PyObject *key, Py_hash_t hash,
+                      PyObject **value)
 {
     Py_ssize_t index;
 
     if (_odict_EMPTY(od))
         return NULL;
-    index = _odict_get_index(od, key, hash);
+    index = _odict_get_index(od, key, hash, value);
     if (index < 0)
         return NULL;
     return od->od_fast_nodes[index];
@@ -637,7 +643,7 @@ _odict_find_node(PyODictObject *od, PyObject *key)
     hash = PyObject_Hash(key);
     if (hash == -1)
         return NULL;
-    index = _odict_get_index(od, key, hash);
+    index = _odict_get_index(od, key, hash, NULL);
     if (index < 0)
         return NULL;
     return od->od_fast_nodes[index];
@@ -677,7 +683,7 @@ _odict_add_new_node(PyODictObject *od, PyObject *key, Py_hash_t hash)
     _ODictNode *node;
 
     Py_INCREF(key);
-    i = _odict_get_index(od, key, hash);
+    i = _odict_get_index(od, key, hash, NULL);
     if (i < 0) {
         if (!PyErr_Occurred())
             PyErr_SetObject(PyExc_KeyError, key);
@@ -759,7 +765,7 @@ _odict_clear_node(PyODictObject *od, _ODictNode *node, PyObject *key,
         return 0;
     }
 
-    i = _odict_get_index(od, key, hash);
+    i = _odict_get_index(od, key, hash, NULL);
     if (i < 0)
         return PyErr_Occurred() ? -1 : 0;
 
@@ -1094,7 +1100,7 @@ _odict_popkey_hash(PyObject *od, PyObject *key, PyObject *failobj,
     /* Pop the node first to avoid a possible dict resize (due to
        eval loop reentrancy) and complications due to hash collision
        resolution. */
-    node = _odict_find_node_hash((PyODictObject *)od, key, hash);
+    node = _odict_find_node_hash((PyODictObject *)od, key, hash, NULL);
     if (node == NULL) {
         if (PyErr_Occurred())
             return NULL;
@@ -1160,6 +1166,34 @@ _odict_popkey(PyObject *od, PyObject *key, PyObject *failobj)
 
 /* popitem() */
 
+/* Remove and return key and value from the dictionary.
+ *
+ * When return 0, caller has ownership of *pkey and *pvalue.
+ */
+int
+_PyODict_PopItem(PyObject *od, int last, PyObject **pkey, PyObject **pvalue)
+{
+    PyODictObject *self = (PyODictObject*)od;
+    if (_odict_EMPTY(self)) {
+        *pkey = *pvalue = NULL;
+        return 0;
+    }
+
+    _ODictNode *node = last ? _odict_LAST(self) : _odict_FIRST(self);
+
+    *pkey = _odictnode_KEY(node);
+    Py_INCREF(*pkey);
+
+    *pvalue = _odict_popkey_hash((PyObject *)self, *pkey, NULL,
+                                 _odictnode_HASH(node));
+    if (*pvalue == NULL) {
+        Py_DECREF(*pkey);
+        *pkey = NULL;
+        return -1;
+    }
+    return 0;
+}
+
 /*[clinic input]
 OrderedDict.popitem
 
@@ -1175,21 +1209,15 @@ OrderedDict_popitem_impl(PyODictObject *self, int last)
 /*[clinic end generated code: output=98e7d986690d49eb input=d992ac5ee8305e1a]*/
 {
     PyObject *key, *value, *item = NULL;
-    _ODictNode *node;
 
-    /* pull the item */
-
-    if (_odict_EMPTY(self)) {
+    if (_PyODict_PopItem((PyObject*)self, last, &key, &value) < 0) {
+        return NULL;
+    }
+    if (key == NULL) {
         PyErr_SetString(PyExc_KeyError, "dictionary is empty");
         return NULL;
     }
 
-    node = last ? _odict_LAST(self) : _odict_FIRST(self);
-    key = _odictnode_KEY(node);
-    Py_INCREF(key);
-    value = _odict_popkey_hash((PyObject *)self, key, NULL, _odictnode_HASH(node));
-    if (value == NULL)
-        return NULL;
     item = PyTuple_Pack(2, key, value);
     Py_DECREF(key);
     Py_DECREF(value);
@@ -1759,40 +1787,20 @@ _PyODict_LRUGetItem(PyObject *od, PyObject *key, Py_hash_t hash)
         return NULL;
     }
 
-    _ODictNode *node = _odict_find_node(self, key);
-    if (node == NULL) {
+    PyObject *result;
+    Py_ssize_t index = _odict_get_index(self, key, hash, &result);
+    if (index < 0 || result == NULL) {
         return NULL;
     }
 
-    // TODO: Currently, key is looked up twice.
-    // Copy _odict_find_node() again and get value at once.
-    PyObject *result = _PyDict_GetItem_KnownHash(od, key, hash);
-    if (result != NULL && node != _odict_LAST(self)) {
+    _ODictNode *node = self->od_fast_nodes[index];
+    if (node != _odict_LAST(self)) {
         _odict_remove_node(self, node);
         _odict_add_tail(self, node);
     }
+
+    Py_INCREF(result);
     return result;
-}
-
-int
-_PyODict_LRULimitSize(PyObject *od, Py_ssize_t maxsize)
-{
-    while (PyODict_SIZE(od) >= maxsize - 1) {
-        _ODictNode *node = _odict_FIRST(od);
-        assert(node != NULL);
-
-        PyObject *dkey = _odictnode_KEY(node);
-        assert(dkey != NULL);
-
-        PyObject *dvalue = _odict_popkey_hash(
-            od, dkey, NULL, _odictnode_HASH(node));
-        if (dvalue == NULL) {
-            Py_DECREF(dkey);
-            return -1;
-        }
-        Py_DECREF(dvalue);
-    }
-    return 0;
 }
 
 /* -------------------------------------------

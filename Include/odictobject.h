@@ -43,7 +43,8 @@ PyAPI_FUNC(PyObject *) _PyODict_LRUGetItem(
     PyObject *od, PyObject *key, Py_hash_t hash);
 PyAPI_FUNC(int) _PyODict_SetItem_KnownHash(PyObject *od, PyObject *key,
                                            PyObject *value, Py_hash_t hash);
-PyAPI_FUNC(int) _PyODict_LRULimitSize(PyObject *od, Py_ssize_t maxsize);
+PyAPI_FUNC(int) _PyODict_PopItem(PyObject *od, int last,
+                                 PyObject **pkey, PyObject **pvalue);
 
 #endif
 

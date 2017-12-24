@@ -679,7 +679,6 @@ typedef struct lru_cache_object {
     Py_ssize_t misses, hits;
     int typed;
     PyObject *dict;
-    int full;
 } lru_cache_object;
 
 static PyTypeObject lru_cache_type;
@@ -826,16 +825,24 @@ bounded_lru_cache_wrapper(lru_cache_object *self, PyObject *args, PyObject *kwds
         return NULL;
     }
 
+    while (PyODict_SIZE(self->cache) >= self->maxsize) {
+        PyObject *key, *value;
+        if (_PyODict_PopItem(self->cache, 0, &key, &value) < 0) {
+            return NULL;
+        }
+        if (key == NULL) {
+            break;  // dict is empty.
+        }
+        Py_DECREF(key);
+        Py_DECREF(value);
+    }
+
     if (_PyODict_SetItem_KnownHash(self->cache, key, result, hash) < 0) {
         Py_DECREF(key);
         Py_DECREF(result);
         return NULL;
     }
     Py_DECREF(key);
-
-    if (_PyODict_LRULimitSize(self->cache, self->maxsize) < 0) {
-        return NULL;
-    }
 
     self->misses++;
     return result;
@@ -951,7 +958,6 @@ static PyObject *
 lru_cache_cache_clear(lru_cache_object *self, PyObject *unused)
 {
     self->hits = self->misses = 0;
-    self->full = 0;
     PyDict_Clear(self->cache);
     Py_RETURN_NONE;
 }
