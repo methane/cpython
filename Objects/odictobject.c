@@ -802,9 +802,6 @@ _odict_clear_nodes(PyODictObject *od)
     }
 }
 
-/* There isn't any memory management of nodes past this point. */
-#undef _odictnode_DEALLOC
-
 static int
 _odict_keys_equal(PyODictObject *a, PyODictObject *b)
 {
@@ -1091,48 +1088,49 @@ odict_pop(PyObject *od, PyObject *args, PyObject *kwargs)
 }
 
 static PyObject *
-_odict_popkey_hash(PyObject *od, PyObject *key, PyObject *failobj,
+_odict_popkey_hash(PyODictObject *od, PyObject *key, PyObject *failobj,
                    Py_hash_t hash)
 {
+    Py_ssize_t i;
     _ODictNode *node;
     PyObject *value = NULL;
 
     /* Pop the node first to avoid a possible dict resize (due to
        eval loop reentrancy) and complications due to hash collision
        resolution. */
-    node = _odict_find_node_hash((PyODictObject *)od, key, hash, NULL);
-    if (node == NULL) {
-        if (PyErr_Occurred())
+    i = _odict_get_index(od, key, hash, &value);
+    if (i < 0) {
+        if (PyErr_Occurred()) {
             return NULL;
+        }
     }
     else {
-        int res = _odict_clear_node((PyODictObject *)od, node, key, hash);
-        if (res < 0) {
-            return NULL;
+        node = od->od_fast_nodes[i];
+        if (node != NULL) {
+            od->od_fast_nodes[i] = NULL;
+            _odict_remove_node(od, node);
+            _odictnode_DEALLOC(node);
         }
     }
 
     /* Now delete the value from the dict. */
     if (PyODict_CheckExact(od)) {
-        if (node != NULL) {
-            value = _PyDict_GetItem_KnownHash(od, key, hash);  /* borrowed */
-            if (value != NULL) {
-                Py_INCREF(value);
-                if (_PyDict_DelItem_KnownHash(od, key, hash) < 0) {
-                    Py_DECREF(value);
-                    return NULL;
-                }
+        if (node != NULL && value != NULL) {
+            Py_INCREF(value);
+            if (_PyDict_DelItem_KnownHash((PyObject*)od, key, hash) < 0) {
+                Py_DECREF(value);
+                return NULL;
             }
         }
     }
     else {
-        int exists = PySequence_Contains(od, key);
+        int exists = PySequence_Contains((PyObject*)od, key);
         if (exists < 0)
             return NULL;
         if (exists) {
-            value = PyObject_GetItem(od, key);
+            value = PyObject_GetItem((PyObject*)od, key);
             if (value != NULL) {
-                if (PyObject_DelItem(od, key) == -1) {
+                if (PyObject_DelItem((PyObject*)od, key) == -1) {
                     Py_CLEAR(value);
                 }
             }
