@@ -299,16 +299,16 @@ _sre_ascii_iscased_impl(PyObject *module, int character)
 }
 
 /*[clinic input]
-_sre.unicode_iscased -> bool
+_sre.unicode_iscased
 
     character: int
     /
 
 [clinic start generated code]*/
 
-static int
+static PyObject *
 _sre_unicode_iscased_impl(PyObject *module, int character)
-/*[clinic end generated code: output=9c5ddee0dc2bc258 input=51e42c3b8dddb78e]*/
+/*[clinic end generated code: output=d3079222a639e1a2 input=63730b28b723c2f1]*/
 {
     unsigned int ch = (unsigned int)character;
     return ch != sre_lower_unicode(ch) || ch != sre_upper_unicode(ch);

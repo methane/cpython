@@ -68,7 +68,7 @@ PyDoc_STRVAR(_sre_unicode_iscased__doc__,
 #define _SRE_UNICODE_ISCASED_METHODDEF    \
     {"unicode_iscased", (PyCFunction)_sre_unicode_iscased, METH_O, _sre_unicode_iscased__doc__},
 
-static int
+static PyObject *
 _sre_unicode_iscased_impl(PyObject *module, int character);
 
 static PyObject *
@@ -76,16 +76,11 @@ _sre_unicode_iscased(PyObject *module, PyObject *arg)
 {
     PyObject *return_value = NULL;
     int character;
-    int _return_value;
 
     if (!PyArg_Parse(arg, "i:unicode_iscased", &character)) {
         goto exit;
     }
-    _return_value = _sre_unicode_iscased_impl(module, character);
-    if ((_return_value == -1) && PyErr_Occurred()) {
-        goto exit;
-    }
-    return_value = PyBool_FromLong((long)_return_value);
+    return_value = _sre_unicode_iscased_impl(module, character);
 
 exit:
     return return_value;
@@ -765,4 +760,4 @@ _sre_SRE_Scanner_search(ScannerObject *self, PyObject *Py_UNUSED(ignored))
 {
     return _sre_SRE_Scanner_search_impl(self);
 }
-/*[clinic end generated code: output=4b807104b65c1e0e input=a9049054013a1b77]*/
+/*[clinic end generated code: output=f3842b8feec15f45 input=a9049054013a1b77]*/
