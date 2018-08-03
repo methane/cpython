@@ -491,6 +491,15 @@ typedef struct {
     double factor;
 } statscollector_t;
 
+static double
+scale_to_sec(statscollector_t *collect, long long t)
+{
+    if (collect->factor == 0.0) {
+        return _PyTime_AsSecondsDouble((_PyTime_t)t);
+    }
+    return t * collect->factor;
+}
+
 static int statsForSubEntry(rotating_node_t *node, void *arg)
 {
     ProfilerSubEntry *sentry = (ProfilerSubEntry*) node;
@@ -503,8 +512,8 @@ static int statsForSubEntry(rotating_node_t *node, void *arg)
                                   entry->userObj,
                                   sentry->callcount,
                                   sentry->recursivecallcount,
-                                  collect->factor * sentry->tt,
-                                  collect->factor * sentry->it);
+                                  scale_to_sec(collect, sentry->tt),
+                                  scale_to_sec(collect, sentry->it));
     if (sinfo == NULL)
         return -1;
     err = PyList_Append(collect->sublist, sinfo);
@@ -541,8 +550,8 @@ static int statsForEntry(rotating_node_t *node, void *arg)
                                  entry->userObj,
                                  entry->callcount,
                                  entry->recursivecallcount,
-                                 collect->factor * entry->tt,
-                                 collect->factor * entry->it,
+                                 scale_to_sec(collect, entry->tt),
+                                 scale_to_sec(collect, entry->it),
                                  collect->sublist);
     Py_DECREF(collect->sublist);
     if (info == NULL)
@@ -583,7 +592,7 @@ profiler_getstats(ProfilerObject *pObj, PyObject* noarg)
     if (pending_exception(pObj))
         return NULL;
     if (!pObj->externalTimer)
-        collect.factor = 1e-9;  // _Py_time_t is nanosecond
+        collect.factor = 0.0;
     else if (pObj->externalTimerUnit > 0.0)
         collect.factor = pObj->externalTimerUnit;
     else
