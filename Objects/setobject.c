@@ -10,19 +10,7 @@
    The initial probe index is computed as hash mod the table size.
    Subsequent probe indices are computed as explained in Objects/dictobject.c.
 
-   To improve cache locality, each probe inspects a series of consecutive
-   nearby entries before moving on to probes elsewhere in memory.  This leaves
-   us with a hybrid of linear probing and randomized probing.  The linear probing
-   reduces the cost of hash collisions because consecutive memory accesses
-   tend to be much cheaper than scattered probes.  After LINEAR_PROBES steps,
-   we then use more of the upper bits from the hash value and apply a simple
-   linear congruential random number genearator.  This helps break-up long
-   chains of collisions.
-
    All arithmetic on hash should ignore overflow.
-
-   Unlike the dictionary implementation, the lookkey function can return
-   NULL if the rich comparison returns an error.
 
    Use cases for sets differ considerably from dictionaries where looked-up
    keys are more likely to be present.  In contrast, sets are primarily
@@ -36,99 +24,181 @@
 #include "pycore_pystate.h"
 #include "structmember.h"
 
-/* Object used as dummy key to fill deleted entries */
-static PyObject _dummy_struct;
 
-#define dummy (&_dummy_struct)
+/* ======================================================================== */
+/* ======= Begin utility for so->indices ================================== */
+
+#define IS_POWER_OF_2(x) (((x) & (x-1)) == 0)
+
+#define IX_EMPTY -1
+#define IX_DUMMY -2
+#define IX_ERROR -3
+
+#if SIZEOF_VOID_P > 4
+#define IXSIZE(s)                      \
+    ((s) <= 0x100 ?                    \
+        1 : (s) <= 0x10000 ?           \
+            2 : (s) <= 0x100000000 ?   \
+                4 : sizeof(int64_t))
+#else
+#define IXSIZE(s)                      \
+    ((s) <= 0x100 ?                    \
+        1 : (s) <= 0x10000 ?           \
+            2 : sizeof(int32_t))
+#endif
+
+// calculate sizeof so->indices.  size is mask+1.
+static inline size_t
+sizeof_indices(size_t size)
+{
+    assert(IS_POWER_OF_2(size));
+    return IXSIZE(size) * size;
+}
+
+// read from so->indices
+static inline Py_ssize_t
+read_index(PySetObject *so, Py_ssize_t i)
+{
+    Py_ssize_t s = so->mask;
+    Py_ssize_t ix;
+
+    if (s <= 0xff) {
+        int8_t *indices = (int8_t*)(so->indices);
+        ix = indices[i];
+    }
+    else if (s <= 0xffff) {
+        int16_t *indices = (int16_t*)(so->indices);
+        ix = indices[i];
+    }
+#if SIZEOF_VOID_P > 4
+    else if (s > 0xffffffff) {
+        int64_t *indices = (int64_t*)(so->indices);
+        ix = indices[i];
+    }
+#endif
+    else {
+        int32_t *indices = (int32_t*)(so->indices);
+        ix = indices[i];
+    }
+    assert(ix >= IX_DUMMY);
+    assert(ix <= s/2);
+    return ix;
+}
+
+// write to so->indices
+static inline void
+write_index(PySetObject *so, Py_ssize_t i, Py_ssize_t ix)
+{
+    Py_ssize_t s = so->mask;
+    assert(ix >= IX_DUMMY);
+
+    if (s <= 0xff) {
+        int8_t *indices = (int8_t*)(so->indices);
+        indices[i] = (char)ix;
+    }
+    else if (s <= 0xffff) {
+        int16_t *indices = (int16_t*)(so->indices);
+        indices[i] = (int16_t)ix;
+    }
+#if SIZEOF_VOID_P > 4
+    else if (s > 0xffffffff) {
+        int64_t *indices = (int64_t*)(so->indices);
+        indices[i] = ix;
+    }
+#endif
+    else {
+        int32_t *indices = (int32_t*)(so->indices);
+        indices[i] = (int32_t)ix;
+    }
+}
+
+static void
+dump_set(PySetObject *so)
+{
+    fprintf(stderr, "set: ptr=%p, fill=%ld used=%ld last=%ld mask=%lx ",
+            so, so->fill, so->used, so->last, so->mask);
+    fprintf(stderr, "indices=");
+    for (Py_ssize_t i = 0; i <= so->mask; i++) {
+        if (i % 16 == 0) {
+            fputc('\n', stderr);
+        }
+        fprintf(stderr, "%ld ", read_index(so, i));
+    }
+    fprintf(stderr, "\nentries=\n");
+    for (ssize_t i = 0; i < so->fill; i++) {
+        PyObject *key = so->table[i].key;
+        if (key && PyUnicode_CheckExact(key)) {
+            fprintf(stderr, "%ld key=%p hash=%lx '%s'\n",
+                    i, so->table[i].key, so->table[i].hash, PyUnicode_AsUTF8(key));
+        } else {
+            fprintf(stderr, "%ld key=%p hash=%lx\n",
+                    i, so->table[i].key, so->table[i].hash);
+        }
+    }
+    fprintf(stderr, "^^^^^^^^^\n");
+}
 
 
 /* ======================================================================== */
 /* ======= Begin logic for probing the hash table ========================= */
 
-/* Set this to zero to turn-off linear probing */
-#ifndef LINEAR_PROBES
-#define LINEAR_PROBES 9
-#endif
-
 /* This must be >= 1 */
 #define PERTURB_SHIFT 5
 
-static setentry *
-set_lookkey(PySetObject *so, PyObject *key, Py_hash_t hash)
+
+// lookup key and hash from so.  When key is found in the set, return position
+// in so->indices and write pointer to the entry to *pentry.
+//
+// return values:
+//   >=0 : position in so->indices
+//   IX_EMPTY : not found
+//   IX_ERROR : error raised.
+static Py_ssize_t
+set_lookkey(PySetObject *so, PyObject *key, Py_hash_t hash, setentry **pentry)
 {
     setentry *table;
     setentry *entry;
-    size_t perturb;
+    size_t perturb = hash;
     size_t mask = so->mask;
     size_t i = (size_t)hash & mask; /* Unsigned for defined overflow behavior */
-    size_t j;
     int cmp;
 
-    entry = &so->table[i];
-    if (entry->key == NULL)
-        return entry;
-
-    perturb = hash;
-
     while (1) {
+        Py_ssize_t ix = read_index(so, i);
+        if (ix == IX_EMPTY) {
+            return IX_EMPTY;
+        }
+        entry = &so->table[ix];
+
         if (entry->hash == hash) {
             PyObject *startkey = entry->key;
-            /* startkey cannot be a dummy because the dummy hash field is -1 */
-            assert(startkey != dummy);
-            if (startkey == key)
-                return entry;
+            if (startkey == key) {
+                *pentry = entry;
+                return i;
+            }
             if (PyUnicode_CheckExact(startkey)
                 && PyUnicode_CheckExact(key)
-                && _PyUnicode_EQ(startkey, key))
-                return entry;
+                && _PyUnicode_EQ(startkey, key)) {
+                *pentry = entry;
+                return i;
+            }
             table = so->table;
             Py_INCREF(startkey);
             cmp = PyObject_RichCompareBool(startkey, key, Py_EQ);
             Py_DECREF(startkey);
-            if (cmp < 0)                                          /* unlikely */
-                return NULL;
+            if (cmp < 0) {                                        /* unlikely */
+                return IX_ERROR;
+            }
             if (table != so->table || entry->key != startkey)     /* unlikely */
-                return set_lookkey(so, key, hash);
-            if (cmp > 0)                                          /* likely */
-                return entry;
-            mask = so->mask;                 /* help avoid a register spill */
-        }
-
-        if (i + LINEAR_PROBES <= mask) {
-            for (j = 0 ; j < LINEAR_PROBES ; j++) {
-                entry++;
-                if (entry->hash == 0 && entry->key == NULL)
-                    return entry;
-                if (entry->hash == hash) {
-                    PyObject *startkey = entry->key;
-                    assert(startkey != dummy);
-                    if (startkey == key)
-                        return entry;
-                    if (PyUnicode_CheckExact(startkey)
-                        && PyUnicode_CheckExact(key)
-                        && _PyUnicode_EQ(startkey, key))
-                        return entry;
-                    table = so->table;
-                    Py_INCREF(startkey);
-                    cmp = PyObject_RichCompareBool(startkey, key, Py_EQ);
-                    Py_DECREF(startkey);
-                    if (cmp < 0)
-                        return NULL;
-                    if (table != so->table || entry->key != startkey)
-                        return set_lookkey(so, key, hash);
-                    if (cmp > 0)
-                        return entry;
-                    mask = so->mask;
-                }
+                return set_lookkey(so, key, hash, pentry);
+            if (cmp > 0) {                                        /* likely */
+                *pentry = entry;
+                return i;
             }
         }
 
         perturb >>= PERTURB_SHIFT;
         i = (i * 5 + 1 + perturb) & mask;
-
-        entry = &so->table[i];
-        if (entry->key == NULL)
-            return entry;
     }
 }
 
@@ -138,12 +208,10 @@ static int
 set_add_entry(PySetObject *so, PyObject *key, Py_hash_t hash)
 {
     setentry *table;
-    setentry *freeslot;
     setentry *entry;
     size_t perturb;
     size_t mask;
-    size_t i;                       /* Unsigned for defined overflow behavior */
-    size_t j;
+    size_t i;             /* Unsigned for defined overflow behavior */
     int cmp;
 
     /* Pre-increment is necessary to prevent arbitrary code in the rich
@@ -152,21 +220,31 @@ set_add_entry(PySetObject *so, PyObject *key, Py_hash_t hash)
 
   restart:
 
+    // To simplify, we don't overwrite "freeslot".
+    // It makes `so->last <= so->fill` always.
+    // This allows small optimization in set_pop() too.
+    assert(so->last <= so->fill);
+
+    if (so->fill >= (so->mask+1)/2) {
+        if (set_table_resize(so, so->used*2)) {
+            return -1;
+        }
+    }
+
     mask = so->mask;
     i = (size_t)hash & mask;
-
-    entry = &so->table[i];
-    if (entry->key == NULL)
-        goto found_unused;
-
-    freeslot = NULL;
     perturb = hash;
 
     while (1) {
+        Py_ssize_t ix = read_index(so, i);
+        if (ix == IX_EMPTY) {
+            goto found_unused;
+        }
+
+        entry = &so->table[ix];
+
         if (entry->hash == hash) {
             PyObject *startkey = entry->key;
-            /* startkey cannot be a dummy because the dummy hash field is -1 */
-            assert(startkey != dummy);
             if (startkey == key)
                 goto found_active;
             if (PyUnicode_CheckExact(startkey)
@@ -179,117 +257,112 @@ set_add_entry(PySetObject *so, PyObject *key, Py_hash_t hash)
             Py_DECREF(startkey);
             if (cmp > 0)                                          /* likely */
                 goto found_active;
-            if (cmp < 0)
-                goto comparison_error;
+            if (cmp < 0) {
+                Py_DECREF(key);
+                return -1;
+            }
             /* Continuing the search from the current entry only makes
                sense if the table and entry are unchanged; otherwise,
                we have to restart from the beginning */
             if (table != so->table || entry->key != startkey)
                 goto restart;
-            mask = so->mask;                 /* help avoid a register spill */
-        }
-        else if (entry->hash == -1)
-            freeslot = entry;
-
-        if (i + LINEAR_PROBES <= mask) {
-            for (j = 0 ; j < LINEAR_PROBES ; j++) {
-                entry++;
-                if (entry->hash == 0 && entry->key == NULL)
-                    goto found_unused_or_dummy;
-                if (entry->hash == hash) {
-                    PyObject *startkey = entry->key;
-                    assert(startkey != dummy);
-                    if (startkey == key)
-                        goto found_active;
-                    if (PyUnicode_CheckExact(startkey)
-                        && PyUnicode_CheckExact(key)
-                        && _PyUnicode_EQ(startkey, key))
-                        goto found_active;
-                    table = so->table;
-                    Py_INCREF(startkey);
-                    cmp = PyObject_RichCompareBool(startkey, key, Py_EQ);
-                    Py_DECREF(startkey);
-                    if (cmp > 0)
-                        goto found_active;
-                    if (cmp < 0)
-                        goto comparison_error;
-                    if (table != so->table || entry->key != startkey)
-                        goto restart;
-                    mask = so->mask;
-                }
-                else if (entry->hash == -1)
-                    freeslot = entry;
-            }
         }
 
         perturb >>= PERTURB_SHIFT;
         i = (i * 5 + 1 + perturb) & mask;
-
-        entry = &so->table[i];
-        if (entry->key == NULL)
-            goto found_unused_or_dummy;
     }
 
-  found_unused_or_dummy:
-    if (freeslot == NULL)
-        goto found_unused;
-    so->used++;
-    freeslot->key = key;
-    freeslot->hash = hash;
-    return 0;
-
   found_unused:
-    so->fill++;
+    entry = &so->table[so->last];
+    write_index(so, i, so->last);
     so->used++;
+    so->last++;
+    so->fill++;
     entry->key = key;
     entry->hash = hash;
-    if ((size_t)so->fill*5 < mask*3)
-        return 0;
-    return set_table_resize(so, so->used>50000 ? so->used*2 : so->used*4);
+    assert(so->used <= so->fill);
+    assert(so->used <= so->last);
+    assert(so->last <= so->fill);
+    return 0;
 
   found_active:
     Py_DECREF(key);
     return 0;
-
-  comparison_error:
-    Py_DECREF(key);
-    return -1;
 }
 
 /*
-Internal routine used by set_table_resize() to insert an item which is
-known to be absent from the set.  This routine also assumes that
-the set contains no deleted entries.  Besides the performance benefit,
-there is also safety benefit since using set_add_entry() risks making
-a callback in the middle of a set_table_resize(), see issue 1456209.
-The caller is responsible for updating the key's reference count and
-the setobject's fill and used fields.
+Internal routine used by set_table_resize() to rebuild so->indices.
+  - Requires so->indices is clean
+  - Requires so->table is dense (so->used == so->last)
+  - Updates so->fill too.
 */
 static void
-set_insert_clean(setentry *table, size_t mask, PyObject *key, Py_hash_t hash)
+rebuild_index(PySetObject *so)
 {
-    setentry *entry;
+    size_t mask = so->mask;
+
+    assert(so->used == so->last);
+    for (size_t i = 0; i <= mask; i++) {
+        assert(read_index(so, i) == IX_EMPTY);
+    }
+
+    for (Py_ssize_t i = 0; i < so->last; i++) {
+        assert(so->table[i].key != NULL);
+        size_t perturb = so->table[i].hash;
+        size_t j = perturb & mask;
+
+        for (;;) {
+            Py_ssize_t ix = read_index(so, j);
+            if (ix == IX_EMPTY) {
+                write_index(so, j, i);
+                break;
+            }
+            assert(ix >= 0);
+            perturb >>= PERTURB_SHIFT;
+            j = (j * 5 + 1 + perturb) & mask;
+        }
+    }
+    so->fill = so->used;
+}
+
+/*
+Internal routine used by set_table_resize() to pack so->table
+
+src[0..len] is copied into dst, skipping dummy entry (key == NULL).
+Returns number of copied elements.
+*/
+static Py_ssize_t
+pack_table(setentry *dst, setentry *src, Py_ssize_t len)
+{
+    Py_ssize_t j = 0;
+    for (Py_ssize_t i = 0; i < len; i++) {
+        if (src[i].key != NULL) {
+            dst[j++] = src[i];
+        }
+    }
+    return j;
+}
+
+/*
+Internal routine used by set_pop().  Find position of ix
+in so->indices.
+*/
+static Py_ssize_t
+find_ix_pos(PySetObject *so, Py_hash_t hash, Py_ssize_t ix)
+{
     size_t perturb = hash;
+    size_t mask = so->mask;
     size_t i = (size_t)hash & mask;
-    size_t j;
 
     while (1) {
-        entry = &table[i];
-        if (entry->key == NULL)
-            goto found_null;
-        if (i + LINEAR_PROBES <= mask) {
-            for (j = 0; j < LINEAR_PROBES; j++) {
-                entry++;
-                if (entry->key == NULL)
-                    goto found_null;
-            }
+        Py_ssize_t jx = read_index(so, i);
+        if (ix == jx) {
+            return i;
         }
+        assert(jx != IX_EMPTY);
         perturb >>= PERTURB_SHIFT;
         i = (i * 5 + 1 + perturb) & mask;
     }
-  found_null:
-    entry->key = key;
-    entry->hash = hash;
 }
 
 /* ======== End logic for probing the hash table ========================== */
@@ -303,79 +376,64 @@ actually be smaller than the old one.
 static int
 set_table_resize(PySetObject *so, Py_ssize_t minused)
 {
-    setentry *oldtable, *newtable, *entry;
-    Py_ssize_t oldmask = so->mask;
-    size_t newmask;
+    setentry *oldtable, *newtable;
+    char *newindices, *oldindices;
+    Py_ssize_t oldsize = so->mask + 1;
     int is_oldtable_malloced;
-    setentry small_copy[PySet_MINSIZE];
 
     assert(minused >= 0);
 
     /* Find the smallest table size > minused. */
     /* XXX speed-up with intrinsics */
     size_t newsize = PySet_MINSIZE;
-    while (newsize <= (size_t)minused) {
+    while (newsize < (size_t)minused*2) {
         newsize <<= 1; // The largest possible value is PY_SSIZE_T_MAX + 1.
     }
 
     /* Get space for a new table. */
+    oldindices = so->indices;
     oldtable = so->table;
+    assert(oldindices != NULL);
     assert(oldtable != NULL);
     is_oldtable_malloced = oldtable != so->smalltable;
 
+    if (newsize == (size_t)oldsize) {  // inplace repacking.
+        so->last = pack_table(so->table, so->table, so->last);
+        assert(so->last == so->used);
+        memset(so->indices, IX_EMPTY, sizeof_indices(newsize));
+        rebuild_index(so);
+        return 0;
+    }
+
     if (newsize == PySet_MINSIZE) {
-        /* A large table is shrinking, or we can't get any smaller. */
+        /* A large table is shrinking. */
+        newindices = so->smallindices;
         newtable = so->smalltable;
-        if (newtable == oldtable) {
-            if (so->fill == so->used) {
-                /* No dummies, so no point doing anything. */
-                return 0;
-            }
-            /* We're not going to resize it, but rebuild the
-               table anyway to purge old dummy entries.
-               Subtle:  This is *necessary* if fill==size,
-               as set_lookkey needs at least one virgin slot to
-               terminate failing searches.  If fill < size, it's
-               merely desirable, as dummies slow searches. */
-            assert(so->fill > so->used);
-            memcpy(small_copy, oldtable, sizeof(small_copy));
-            oldtable = small_copy;
-        }
     }
     else {
-        newtable = PyMem_NEW(setentry, newsize);
-        if (newtable == NULL) {
+        newindices = (char*)PyMem_MALLOC(sizeof_indices(newsize)
+                + sizeof(setentry) * newsize / 2);
+        if (newindices == NULL) {
             PyErr_NoMemory();
             return -1;
         }
+        newtable = (setentry*)(&newindices[sizeof_indices(newsize)]);
     }
 
     /* Make the set empty, using the new table. */
     assert(newtable != oldtable);
-    memset(newtable, 0, sizeof(setentry) * newsize);
+    memset(newindices, IX_EMPTY, sizeof_indices(newsize));
+    memset(newtable, 0, sizeof(setentry) * newsize / 2);
+    so->last = pack_table(newtable, oldtable, so->last);
+    assert(so->last == so->used);
     so->mask = newsize - 1;
+    so->indices = newindices;
     so->table = newtable;
+    rebuild_index(so);
 
-    /* Copy the data over; this is refcount-neutral for active entries;
-       dummy entries aren't copied over, of course */
-    newmask = (size_t)so->mask;
-    if (so->fill == so->used) {
-        for (entry = oldtable; entry <= oldtable + oldmask; entry++) {
-            if (entry->key != NULL) {
-                set_insert_clean(newtable, newmask, entry->key, entry->hash);
-            }
-        }
-    } else {
-        so->fill = so->used;
-        for (entry = oldtable; entry <= oldtable + oldmask; entry++) {
-            if (entry->key != NULL && entry->key != dummy) {
-                set_insert_clean(newtable, newmask, entry->key, entry->hash);
-            }
-        }
+    if (is_oldtable_malloced) {
+        PyMem_DEL(oldindices);
     }
-
-    if (is_oldtable_malloced)
-        PyMem_DEL(oldtable);
     return 0;
 }
 
@@ -384,10 +442,15 @@ set_contains_entry(PySetObject *so, PyObject *key, Py_hash_t hash)
 {
     setentry *entry;
 
-    entry = set_lookkey(so, key, hash);
-    if (entry != NULL)
-        return entry->key != NULL;
-    return -1;
+    Py_ssize_t i = set_lookkey(so, key, hash, &entry);
+    switch (i) {
+    case IX_ERROR:
+        return -1;
+    case IX_EMPTY:
+        return 0;
+    default:
+        return 1;
+    }
 }
 
 #define DISCARD_NOTFOUND 0
@@ -397,16 +460,19 @@ static int
 set_discard_entry(PySetObject *so, PyObject *key, Py_hash_t hash)
 {
     setentry *entry;
-    PyObject *old_key;
 
-    entry = set_lookkey(so, key, hash);
-    if (entry == NULL)
+    Py_ssize_t pos = set_lookkey(so, key, hash, &entry);
+    if (pos == IX_ERROR) {
         return -1;
-    if (entry->key == NULL)
+    }
+    if (pos == IX_EMPTY) {
         return DISCARD_NOTFOUND;
-    old_key = entry->key;
-    entry->key = dummy;
-    entry->hash = -1;
+    }
+
+    PyObject *old_key = entry->key;
+    write_index(so, pos, IX_DUMMY);
+    entry->key = NULL;
+    entry->hash = 0;
     so->used--;
     Py_DECREF(old_key);
     return DISCARD_FOUND;
@@ -437,6 +503,7 @@ set_contains_key(PySetObject *so, PyObject *key)
         if (hash == -1)
             return -1;
     }
+
     return set_contains_entry(so, key, hash);
 }
 
@@ -458,9 +525,12 @@ static void
 set_empty_to_minsize(PySetObject *so)
 {
     memset(so->smalltable, 0, sizeof(so->smalltable));
-    so->fill = 0;
+    memset(so->smallindices, IX_EMPTY, sizeof(so->smallindices));
     so->used = 0;
+    so->fill = 0;
+    so->last = 0;
     so->mask = PySet_MINSIZE - 1;
+    so->indices = so->smallindices;
     so->table = so->smalltable;
     so->hash = -1;
 }
@@ -469,11 +539,11 @@ static int
 set_clear_internal(PySetObject *so)
 {
     setentry *entry;
+    char *indices = so->indices;
     setentry *table = so->table;
-    Py_ssize_t fill = so->fill;
     Py_ssize_t used = so->used;
     int table_is_malloced = table != so->smalltable;
-    setentry small_copy[PySet_MINSIZE];
+    setentry small_copy[PySet_MINSIZE/2];
 
     assert (PyAnySet_Check(so));
     assert(table != NULL);
@@ -484,10 +554,10 @@ set_clear_internal(PySetObject *so)
      * clearing the slots, and never refer to anything via so->ref while
      * clearing.
      */
-    if (table_is_malloced)
+    if (table_is_malloced) {
         set_empty_to_minsize(so);
-
-    else if (fill > 0) {
+    }
+    else if (used > 0) {
         /* It's a small table with something that needs to be cleared.
          * Afraid the only safe way is to copy the set entries into
          * another small table first.
@@ -503,14 +573,15 @@ set_clear_internal(PySetObject *so)
      * has unique access to it, so decref side-effects can't alter it.
      */
     for (entry = table; used > 0; entry++) {
-        if (entry->key && entry->key != dummy) {
+        if (entry->key) {
             used--;
             Py_DECREF(entry->key);
         }
     }
 
-    if (table_is_malloced)
-        PyMem_DEL(table);
+    if (table_is_malloced) {
+        PyMem_DEL(indices);
+    }
     return 0;
 }
 
@@ -531,21 +602,22 @@ static int
 set_next(PySetObject *so, Py_ssize_t *pos_ptr, setentry **entry_ptr)
 {
     Py_ssize_t i;
-    Py_ssize_t mask;
+    Py_ssize_t isize;
     setentry *entry;
 
     assert (PyAnySet_Check(so));
     i = *pos_ptr;
     assert(i >= 0);
-    mask = so->mask;
+    isize = so->last;
     entry = &so->table[i];
-    while (i <= mask && (entry->key == NULL || entry->key == dummy)) {
+    while (i < isize && entry->key == NULL) {
         i++;
         entry++;
     }
     *pos_ptr = i+1;
-    if (i > mask)
+    if (i >= isize) {
         return 0;
+    }
     assert(entry != NULL);
     *entry_ptr = entry;
     return 1;
@@ -564,13 +636,14 @@ set_dealloc(PySetObject *so)
         PyObject_ClearWeakRefs((PyObject *) so);
 
     for (entry = so->table; used > 0; entry++) {
-        if (entry->key && entry->key != dummy) {
-                used--;
-                Py_DECREF(entry->key);
+        if (entry->key) {
+            used--;
+            Py_DECREF(entry->key);
         }
     }
-    if (so->table != so->smalltable)
-        PyMem_DEL(so->table);
+    if (so->table != so->smalltable) {
+        PyMem_DEL(so->indices);
+    }
     Py_TYPE(so)->tp_free(so);
     Py_TRASHCAN_END
 }
@@ -632,7 +705,6 @@ set_merge(PySetObject *so, PyObject *otherset)
     PySetObject *other;
     PyObject *key;
     Py_ssize_t i;
-    setentry *so_entry;
     setentry *other_entry;
 
     assert (PyAnySet_Check(so));
@@ -646,51 +718,32 @@ set_merge(PySetObject *so, PyObject *otherset)
      * incrementally resizing as we insert new keys.  Expect
      * that there will be no (or few) overlapping keys.
      */
-    if ((so->fill + other->used)*5 >= so->mask*3) {
-        if (set_table_resize(so, (so->used + other->used)*2) != 0)
+    if ((so->fill + other->used) > so->mask/2) {
+        if (set_table_resize(so, (so->used + other->used)) != 0)
             return -1;
     }
-    so_entry = so->table;
-    other_entry = other->table;
 
-    /* If our table is empty, and both tables have the same size, and
-       there are no dummies to eliminate, then just copy the pointers. */
-    if (so->fill == 0 && so->mask == other->mask && other->fill == other->used) {
-        for (i = 0; i <= other->mask; i++, so_entry++, other_entry++) {
-            key = other_entry->key;
-            if (key != NULL) {
-                assert(so_entry->key == NULL);
-                Py_INCREF(key);
-                so_entry->key = key;
-                so_entry->hash = other_entry->hash;
-            }
-        }
-        so->fill = other->fill;
-        so->used = other->used;
-        return 0;
-    }
-
-    /* If our table is empty, we can use set_insert_clean() */
+    /* If our table is empty, we can use pack_table() */
     if (so->fill == 0) {
         setentry *newtable = so->table;
-        size_t newmask = (size_t)so->mask;
-        so->fill = other->used;
+
+        so->last = pack_table(so->table, other->table, other->last);
+        assert(so->last == other->used);
         so->used = other->used;
-        for (i = other->mask + 1; i > 0 ; i--, other_entry++) {
-            key = other_entry->key;
-            if (key != NULL && key != dummy) {
-                Py_INCREF(key);
-                set_insert_clean(newtable, newmask, key, other_entry->hash);
-            }
+
+        for (i = 0; i < so->last; i++) {
+            Py_INCREF(newtable[i].key);
         }
+
+        rebuild_index(so);
         return 0;
     }
 
     /* We can't assure there are no duplicates, so do normal insertions */
-    for (i = 0; i <= other->mask; i++) {
+    for (i = 0; i < other->last; i++) {
         other_entry = &other->table[i];
         key = other_entry->key;
-        if (key != NULL && key != dummy) {
+        if (key != NULL) {
             if (set_add_entry(so, key, other_entry->hash))
                 return -1;
         }
@@ -701,25 +754,35 @@ set_merge(PySetObject *so, PyObject *otherset)
 static PyObject *
 set_pop(PySetObject *so, PyObject *Py_UNUSED(ignored))
 {
-    /* Make sure the search finger is in bounds */
-    setentry *entry = so->table + (so->finger & so->mask);
-    setentry *limit = so->table + so->mask;
-    PyObject *key;
-
     if (so->used == 0) {
         PyErr_SetString(PyExc_KeyError, "pop from an empty set");
         return NULL;
     }
-    while (entry->key == NULL || entry->key==dummy) {
-        entry++;
-        if (entry > limit)
-            entry = so->table;
+
+    setentry *entry = &so->table[so->last - 1];
+    while (entry->key == NULL) {
+        entry--;
+        assert(entry >= so->table);
     }
-    key = entry->key;
-    entry->key = dummy;
-    entry->hash = -1;
+
+    Py_ssize_t ix = entry - so->table;
+    Py_ssize_t pos = find_ix_pos(so, entry->hash, ix);
+
+    // Since we don't use freeslot in set_add_entry,
+    // we can use IX_EMPTY when removing last added entry.
+    if (ix == so->last - 1) {
+        write_index(so, pos, IX_EMPTY);
+        so->fill--;
+    }
+    else {
+        write_index(so, pos, IX_DUMMY);
+    }
+
+    PyObject *key = entry->key;
+    entry->key = NULL;
+    entry->hash = 0;
     so->used--;
-    so->finger = entry - so->table + 1;   /* next place to start */
+    so->last = ix;
     return key;
 }
 
@@ -774,16 +837,12 @@ frozenset_hash(PyObject *self)
        branches that would arise when trying to exclude null and dummy
        entries on every iteration. */
 
-    for (entry = so->table; entry <= &so->table[so->mask]; entry++)
+    for (entry = so->table; entry < &so->table[so->last]; entry++)
         hash ^= _shuffle_bits(entry->hash);
 
-    /* Remove the effect of an odd number of NULL entries */
-    if ((so->mask + 1 - so->fill) & 1)
-        hash ^= _shuffle_bits(0);
-
     /* Remove the effect of an odd number of dummy entries */
-    if ((so->fill - so->used) & 1)
-        hash ^= _shuffle_bits(-1);
+    if ((so->last - so->used) & 1)
+        hash ^= _shuffle_bits(0);
 
     /* Factor in the number of active entries */
     hash ^= ((Py_uhash_t)PySet_GET_SIZE(self) + 1) * 1927868237UL;
@@ -867,7 +926,7 @@ static PyMethodDef setiter_methods[] = {
 static PyObject *setiter_iternext(setiterobject *si)
 {
     PyObject *key;
-    Py_ssize_t i, mask;
+    Py_ssize_t i;
     setentry *entry;
     PySetObject *so = si->si_set;
 
@@ -885,11 +944,11 @@ static PyObject *setiter_iternext(setiterobject *si)
     i = si->si_pos;
     assert(i>=0);
     entry = so->table;
-    mask = so->mask;
-    while (i <= mask && (entry[i].key == NULL || entry[i].key == dummy))
+    size_t last = so->last;
+    while (i < last && entry[i].key == NULL)
         i++;
     si->si_pos = i+1;
-    if (i > mask)
+    if (i >= last)
         goto fail;
     si->len--;
     key = entry[i].key;
@@ -970,8 +1029,8 @@ set_update_internal(PySetObject *so, PyObject *other)
         */
         if (dictsize < 0)
             return -1;
-        if ((so->fill + dictsize)*5 >= so->mask*3) {
-            if (set_table_resize(so, (so->used + dictsize)*2) != 0)
+        if ((so->last + dictsize) > so->mask/2) {
+            if (set_table_resize(so, (so->used + dictsize)) != 0)
                 return -1;
         }
         while (_PyDict_Next(other, &pos, &key, &value, &hash)) {
@@ -1032,10 +1091,12 @@ make_new_set(PyTypeObject *type, PyObject *iterable)
 
     so->fill = 0;
     so->used = 0;
+    so->last = 0;
     so->mask = PySet_MINSIZE - 1;
+    so->indices = so->smallindices;
+    memset(so->indices, IX_EMPTY, sizeof(so->smallindices));
     so->table = so->smalltable;
     so->hash = -1;
-    so->finger = 0;
     so->weakreflist = NULL;
 
     if (iterable != NULL) {
@@ -1117,25 +1178,39 @@ set_swap_bodies(PySetObject *a, PySetObject *b)
 {
     Py_ssize_t t;
     setentry *u;
-    setentry tab[PySet_MINSIZE];
+    char *v;
+    setentry tab[PySet_MINSIZE/2];
+    char ind[PySet_MINSIZE];
     Py_hash_t h;
 
     t = a->fill;     a->fill   = b->fill;        b->fill  = t;
     t = a->used;     a->used   = b->used;        b->used  = t;
     t = a->mask;     a->mask   = b->mask;        b->mask  = t;
+    t = a->last;     a->last   = b->last;        b->last  = t;
 
     u = a->table;
-    if (a->table == a->smalltable)
+    v = a->indices;
+    if (a->table == a->smalltable) {
         u = b->smalltable;
-    a->table  = b->table;
-    if (b->table == b->smalltable)
-        a->table = a->smalltable;
+        v = b->smallindices;
+    }
+    a->table   = b->table;
+    a->indices = b->indices;
+    if (b->table == b->smalltable) {
+        a->table  = a->smalltable;
+        a->indices = a->smallindices;
+    }
     b->table = u;
+    b->indices = v;
 
     if (a->table == a->smalltable || b->table == b->smalltable) {
         memcpy(tab, a->smalltable, sizeof(tab));
         memcpy(a->smalltable, b->smalltable, sizeof(tab));
         memcpy(b->smalltable, tab, sizeof(tab));
+
+        memcpy(ind, a->smallindices, sizeof(ind));
+        memcpy(a->smallindices, b->smallindices, sizeof(ind));
+        memcpy(b->smallindices, ind, sizeof(ind));
     }
 
     if (PyType_IsSubtype(Py_TYPE(a), &PyFrozenSet_Type)  &&
@@ -1501,9 +1576,10 @@ set_difference_update_internal(PySetObject *so, PyObject *other)
             return -1;
     }
     /* If more than 1/4th are dummies, then resize them away. */
-    if ((size_t)(so->fill - so->used) <= (size_t)so->mask / 4)
+    //todo check fill
+    if ((size_t)(so->last - so->used) < (size_t)so->mask / 4)
         return 0;
-    return set_table_resize(so, so->used>50000 ? so->used*2 : so->used*4);
+    return set_table_resize(so, so->used*3/2);
 }
 
 static PyObject *
@@ -1991,8 +2067,10 @@ set_sizeof(PySetObject *so, PyObject *Py_UNUSED(ignored))
     Py_ssize_t res;
 
     res = _PyObject_SIZE(Py_TYPE(so));
-    if (so->table != so->smalltable)
-        res = res + (so->mask + 1) * sizeof(setentry);
+    if (so->table != so->smalltable) {
+        res += (so->mask + 1)/2 * sizeof(setentry);
+        res += sizeof_indices(so->mask+1);
+    }
     return PyLong_FromSsize_t(res);
 }
 
@@ -2376,8 +2454,6 @@ _PySet_Update(PyObject *set, PyObject *iterable)
     return set_update_internal((PySetObject *)set, iterable);
 }
 
-/* Exported for the gdb plugin's benefit. */
-PyObject *_PySet_Dummy = dummy;
 
 #ifdef Py_DEBUG
 
@@ -2520,46 +2596,3 @@ test_c_api(PySetObject *so, PyObject *Py_UNUSED(ignored))
 #undef assertRaises
 
 #endif
-
-/***** Dummy Struct  *************************************************/
-
-static PyObject *
-dummy_repr(PyObject *op)
-{
-    return PyUnicode_FromString("<dummy key>");
-}
-
-static void
-dummy_dealloc(PyObject* ignore)
-{
-    Py_FatalError("deallocating <dummy key>");
-}
-
-static PyTypeObject _PySetDummy_Type = {
-    PyVarObject_HEAD_INIT(&PyType_Type, 0)
-    "<dummy key> type",
-    0,
-    0,
-    dummy_dealloc,      /*tp_dealloc*/ /*never called*/
-    0,                  /*tp_vectorcall_offset*/
-    0,                  /*tp_getattr*/
-    0,                  /*tp_setattr*/
-    0,                  /*tp_as_async*/
-    dummy_repr,         /*tp_repr*/
-    0,                  /*tp_as_number*/
-    0,                  /*tp_as_sequence*/
-    0,                  /*tp_as_mapping*/
-    0,                  /*tp_hash */
-    0,                  /*tp_call */
-    0,                  /*tp_str */
-    0,                  /*tp_getattro */
-    0,                  /*tp_setattro */
-    0,                  /*tp_as_buffer */
-    Py_TPFLAGS_DEFAULT, /*tp_flags */
-};
-
-static PyObject _dummy_struct = {
-  _PyObject_EXTRA_INIT
-  2, &_PySetDummy_Type
-};
-

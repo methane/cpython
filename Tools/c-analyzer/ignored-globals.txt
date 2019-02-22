@@ -485,8 +485,5 @@ whatstrings
 # Objects/object.c
 _Py_abstract_hack
 
-# Objects/setobject.c
-_PySet_Dummy
-
 # Python/pylifecycle.c
 _PyOS_mystrnicmp_hack
