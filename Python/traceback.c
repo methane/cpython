@@ -683,10 +683,14 @@ _Py_DumpASCII(int fd, PyObject *text)
     size = ascii->length;
     kind = ascii->state.kind;
     if (kind == PyUnicode_WCHAR_KIND) {
+#if Py_WCHAR_CACHE
         wstr = ((PyASCIIObject *)text)->wstr;
         if (wstr == NULL)
             return;
         size = ((PyCompactUnicodeObject *)text)->wstr_length;
+#else
+        Py_UNREACHABLE();
+#endif
     }
     else if (ascii->state.compact) {
         if (ascii->state.ascii)

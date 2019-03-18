@@ -1070,6 +1070,7 @@ convertsimple(PyObject *arg, const char **p_format, va_list *p_va, int flags,
     case 'u': /* raw unicode buffer (Py_UNICODE *) */
     case 'Z': /* raw unicode buffer or None */
     {
+#if Py_WCHAR_CACHE
         Py_UNICODE **p = va_arg(*p_va, Py_UNICODE **);
 
         if (*format == '#') {
@@ -1108,6 +1109,10 @@ convertsimple(PyObject *arg, const char **p_format, va_list *p_va, int flags,
                 return converterr(c == 'Z' ? "str or None" : "str",
                                   arg, msgbuf, bufsize);
         }
+#else
+        PyErr_BadInternalCall();
+        RETURN_ERR_OCCURRED;
+#endif
         break;
     }
 
