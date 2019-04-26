@@ -777,6 +777,14 @@ latin1_encode(textio *self, PyObject *text)
     return _PyUnicode_AsLatin1String(text, PyUnicode_AsUTF8(self->errors));
 }
 
+static inline int
+is_asciicompat_encoding(encodefunc_t f)
+{
+    return f == (encodefunc_t) ascii_encode
+        || f == (encodefunc_t) latin1_encode
+        || f == (encodefunc_t) utf8_encode;
+}
+
 /* Map normalized encoding names onto the specialized encoding funcs */
 
 typedef struct {
@@ -1564,6 +1572,23 @@ _io_TextIOWrapper_write_impl(textio *self, PyObject *text)
          PyUnicode_FindChar(text, '\r', 0, PyUnicode_GET_LENGTH(text), 1) != -1))
         needflush = 1;
 
+    int is_bufferedwriter = (
+        (Py_TYPE(self->buffer) == &PyBufferedWriter_Type) ||
+        (Py_TYPE(self->buffer) == &PyBufferedRandom_Type));
+
+    int can_write_ascii = PyUnicode_IS_ASCII(text) &&
+        is_asciicompat_encoding(self->encodefunc);
+
+    // Fast path 1: write text to buffer without converting.
+    if (self->pending_bytes == NULL && is_bufferedwriter && can_write_ascii) {
+        if (_PyBufferedWriter_write(self->buffer, PyUnicode_DATA(text),
+                                    PyUnicode_GET_LENGTH(text)) < 0) {
+            Py_DECREF(text);
+            return NULL;
+        }
+        goto flush;
+    }
+
     /* XXX What if we were just reading? */
     if (self->encodefunc != NULL) {
         b = (*self->encodefunc)((PyObject *) self, text);
@@ -1584,6 +1609,22 @@ _io_TextIOWrapper_write_impl(textio *self, PyObject *text)
     }
 
     if (self->pending_bytes == NULL) {
+        // Fast path 2: avoid buffering in TextIOWrapper when buffer is
+        // PyBufferedWriter.
+        if (is_bufferedwriter) {
+            char *buf;
+            Py_ssize_t len;
+            if (PyBytes_AsStringAndSize(b, &buf, &len) < 0) {
+                Py_DECREF(b);
+                return NULL;
+            }
+            if (_PyBufferedWriter_write(self->buffer, (void*)buf, len) < 0) {
+                Py_DECREF(b);
+                return NULL;
+            }
+            goto flush;
+        }
+
         self->pending_bytes = PyList_New(0);
         if (self->pending_bytes == NULL) {
             Py_DECREF(b);
@@ -1603,6 +1644,7 @@ _io_TextIOWrapper_write_impl(textio *self, PyObject *text)
             return NULL;
     }
 
+flush:
     if (needflush) {
         ret = PyObject_CallMethodObjArgs(self->buffer, _PyIO_str_flush, NULL);
         if (ret == NULL)

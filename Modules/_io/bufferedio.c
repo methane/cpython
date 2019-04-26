@@ -1901,23 +1901,24 @@ error:
 }
 
 /*[clinic input]
-_io.BufferedWriter.write
+_io.BufferedWriter.write -> Py_ssize_t
     buffer: Py_buffer
     /
 [clinic start generated code]*/
 
-static PyObject *
+static Py_ssize_t
 _io_BufferedWriter_write_impl(buffered *self, Py_buffer *buffer)
-/*[clinic end generated code: output=7f8d1365759bfc6b input=dd87dd85fc7f8850]*/
+/*[clinic end generated code: output=bb4bbefc8bbbb200 input=6fe5f983b75cdda0]*/
 {
     PyObject *res = NULL;
     Py_ssize_t written, avail, remaining;
     Py_off_t offset;
 
-    CHECK_INITIALIZED(self)
+    CHECK_INITIALIZED_INT(self)
 
-    if (!ENTER_BUFFERED(self))
-        return NULL;
+    if (!ENTER_BUFFERED(self)) {
+        return -1;
+    }
 
     /* Issue #31976: Check for closed file after acquiring the lock. Another
        thread could be holding the lock while closing the file. */
@@ -2042,13 +2043,26 @@ _io_BufferedWriter_write_impl(buffered *self, Py_buffer *buffer)
     self->write_end = remaining;
     ADJUST_POSITION(self, remaining);
     self->raw_pos = 0;
-
-end:
-    res = PyLong_FromSsize_t(written);
+    goto end;
 
 error:
+    written = -1;
+end:
     LEAVE_BUFFERED(self)
-    return res;
+    return written;
+}
+
+Py_ssize_t
+_PyBufferedWriter_write(PyObject *writer, void *buf, Py_ssize_t len)
+{
+    if (Py_TYPE(writer) != &PyBufferedWriter_Type &&
+            Py_TYPE(writer) != &PyBufferedRandom_Type) {
+        PyErr_BadInternalCall();
+        return -1;
+    }
+    Py_buffer buffer;
+    PyBuffer_FillInfo(&buffer, NULL, buf, len, 1, PyBUF_FULL_RO);
+    return _io_BufferedWriter_write_impl((buffered*)writer, &buffer);
 }
 
 

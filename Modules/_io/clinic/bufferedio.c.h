@@ -525,7 +525,7 @@ PyDoc_STRVAR(_io_BufferedWriter_write__doc__,
 #define _IO_BUFFEREDWRITER_WRITE_METHODDEF    \
     {"write", (PyCFunction)_io_BufferedWriter_write, METH_O, _io_BufferedWriter_write__doc__},
 
-static PyObject *
+static Py_ssize_t
 _io_BufferedWriter_write_impl(buffered *self, Py_buffer *buffer);
 
 static PyObject *
@@ -533,6 +533,7 @@ _io_BufferedWriter_write(buffered *self, PyObject *arg)
 {
     PyObject *return_value = NULL;
     Py_buffer buffer = {NULL, NULL};
+    Py_ssize_t _return_value;
 
     if (PyObject_GetBuffer(arg, &buffer, PyBUF_SIMPLE) != 0) {
         goto exit;
@@ -541,7 +542,11 @@ _io_BufferedWriter_write(buffered *self, PyObject *arg)
         _PyArg_BadArgument("write", 0, "contiguous buffer", arg);
         goto exit;
     }
-    return_value = _io_BufferedWriter_write_impl(self, &buffer);
+    _return_value = _io_BufferedWriter_write_impl(self, &buffer);
+    if ((_return_value == -1) && PyErr_Occurred()) {
+        goto exit;
+    }
+    return_value = PyLong_FromSsize_t(_return_value);
 
 exit:
     /* Cleanup for buffer */
@@ -672,4 +677,4 @@ skip_optional_pos:
 exit:
     return return_value;
 }
-/*[clinic end generated code: output=b22b4aedd53c340a input=a9049054013a1b77]*/
+/*[clinic end generated code: output=11971d964e6b5ca1 input=a9049054013a1b77]*/

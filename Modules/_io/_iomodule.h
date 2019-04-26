@@ -73,6 +73,16 @@ extern Py_ssize_t _PyIO_find_line_ending(
 */
 extern int _PyIO_trap_eintr(void);
 
+/* C API version of BufferedWriter.write()
+ *
+ * writer must be instance of PyBufferedWriter or PyBufferedRandom.
+ * Subtypes of them are not allowed..
+ *
+ * Returns -1 when an exception is happened.  Otherwise, written bytes
+ * is returned.
+ */
+extern Py_ssize_t _PyBufferedWriter_write(PyObject *writer, void *buf, Py_ssize_t len);
+
 #define DEFAULT_BUFFER_SIZE (8 * 1024)  /* bytes */
 
 /*
