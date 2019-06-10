@@ -532,7 +532,9 @@ d_setitem(arrayobject *ap, Py_ssize_t i, PyObject *v)
 
 DEFINE_COMPAREITEMS(b, signed char)
 DEFINE_COMPAREITEMS(BB, unsigned char)
+#ifdef Py_WCHAR_CACHE
 DEFINE_COMPAREITEMS(u, Py_UNICODE)
+#endif
 DEFINE_COMPAREITEMS(h, short)
 DEFINE_COMPAREITEMS(HH, unsigned short)
 DEFINE_COMPAREITEMS(i, int)
@@ -550,7 +552,9 @@ DEFINE_COMPAREITEMS(QQ, unsigned long long)
 static const struct arraydescr descriptors[] = {
     {'b', 1, b_getitem, b_setitem, b_compareitems, "b", 1, 1},
     {'B', 1, BB_getitem, BB_setitem, BB_compareitems, "B", 1, 0},
+#ifdef Py_WCHAR_CACHE
     {'u', sizeof(Py_UNICODE), u_getitem, u_setitem, u_compareitems, "u", 0, 0},
+#endif
     {'h', sizeof(short), h_getitem, h_setitem, h_compareitems, "h", 1, 1},
     {'H', sizeof(short), HH_getitem, HH_setitem, HH_compareitems, "H", 1, 0},
     {'i', sizeof(int), i_getitem, i_setitem, i_compareitems, "i", 1, 1},
@@ -2633,6 +2637,7 @@ array_new(PyTypeObject *type, PyObject *args, PyObject *kwds)
     if (!PyArg_ParseTuple(args, "C|O:array", &c, &initial))
         return NULL;
 
+#ifdef Py_WCHAR_CACHE
     if (initial && c != 'u') {
         if (PyUnicode_Check(initial)) {
             PyErr_Format(PyExc_TypeError, "cannot use a str to initialize "
@@ -2646,12 +2651,15 @@ array_new(PyTypeObject *type, PyObject *args, PyObject *kwds)
             return NULL;
         }
     }
+#endif
 
     if (!(initial == NULL || PyList_Check(initial)
           || PyByteArray_Check(initial)
           || PyBytes_Check(initial)
           || PyTuple_Check(initial)
+#ifdef Py_WCHAR_CACHE
           || ((c=='u') && PyUnicode_Check(initial))
+#endif
           || (array_Check(initial)
               && c == ((arrayobject*)initial)->ob_descr->typecode))) {
         it = PyObject_GetIter(initial);
@@ -2710,6 +2718,7 @@ array_new(PyTypeObject *type, PyObject *args, PyObject *kwds)
                 }
                 Py_DECREF(v);
             }
+#ifdef Py_WCHAR_CACHE
             else if (initial != NULL && PyUnicode_Check(initial))  {
                 Py_UNICODE *ustr;
                 Py_ssize_t n;
@@ -2737,6 +2746,7 @@ array_new(PyTypeObject *type, PyObject *args, PyObject *kwds)
                     self->allocated = Py_SIZE(self);
                 }
             }
+#endif
             else if (initial != NULL && array_Check(initial) && len > 0) {
                 arrayobject *self = (arrayobject *)a;
                 arrayobject *other = (arrayobject *)initial;

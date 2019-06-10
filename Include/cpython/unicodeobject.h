@@ -218,7 +218,9 @@ typedef struct {
            4 bytes (see issue #19537 on m68k). */
         unsigned int :24;
     } state;
+#ifdef Py_WCHAR_CACHE
     wchar_t *wstr;              /* wchar_t representation (null-terminated) */
+#endif
 } PyASCIIObject;
 
 /* Non-ASCII strings allocated through PyUnicode_New use the
@@ -229,8 +231,10 @@ typedef struct {
     Py_ssize_t utf8_length;     /* Number of bytes in utf8, excluding the
                                  * terminating \0. */
     char *utf8;                 /* UTF-8 representation (null-terminated) */
+#ifdef Py_WCHAR_CACHE
     Py_ssize_t wstr_length;     /* Number of code points in wstr, possible
                                  * surrogates count as two code points. */
+#endif
 } PyCompactUnicodeObject;
 
 /* Strings allocated through PyUnicode_FromUnicode(NULL, len) use the
@@ -245,6 +249,9 @@ typedef struct {
         Py_UCS4 *ucs4;
     } data;                     /* Canonical, smallest-form Unicode buffer */
 } PyUnicodeObject;
+
+
+#ifdef Py_WCHAR_CACHE
 
 /* Fast access macros */
 #define PyUnicode_WSTR_LENGTH(op) \
@@ -284,6 +291,8 @@ typedef struct {
 #define PyUnicode_AS_DATA(op) \
     ((const char *)(PyUnicode_AS_UNICODE(op)))
     /* Py_DEPRECATED(3.3) */
+
+#endif
 
 
 /* --- Flexible String Representation Helper Macros (PEP 393) -------------- */
@@ -568,6 +577,7 @@ PyAPI_FUNC(Py_UCS4) _PyUnicode_FindMaxChar (
     Py_ssize_t start,
     Py_ssize_t end);
 
+#ifdef Py_WCHAR_CACHE
 /* Return a read-only pointer to the Unicode object's internal
    Py_UNICODE buffer.
    If the wchar_t/Py_UNICODE representation is not yet available, this
@@ -595,6 +605,7 @@ PyAPI_FUNC(Py_UNICODE *) PyUnicode_AsUnicodeAndSize(
 /* Get the maximum ordinal for a Unicode character. */
 PyAPI_FUNC(Py_UNICODE) PyUnicode_GetMax(void) Py_DEPRECATED(3.3);
 
+#endif
 
 /* --- _PyUnicodeWriter API ----------------------------------------------- */
 
