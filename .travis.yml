@@ -1,5 +1,5 @@
 language: c
-dist: xenial
+dist: bionic
 
 # To cache doc-building dependencies and C compiler output.
 cache:
@@ -24,6 +24,7 @@ branches:
     - master
     - /^\d\.\d+$/
     - buildbot-custom
+    - travis
 
 matrix:
   fast_finish: true
@@ -115,6 +116,7 @@ matrix:
 
 
 before_install:
+  - pyenv versions
   - set -e
   - |
       # Check short-circuit conditions
