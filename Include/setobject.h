@@ -8,17 +8,12 @@ extern "C" {
 
 #ifndef Py_LIMITED_API
 
-/* There are three kinds of entries in the table:
+/* There are two kinds of entries in the table:
 
 1. Unused:  key == NULL and hash == 0
-2. Dummy:   key == dummy and hash == -1
-3. Active:  key != NULL and key != dummy and hash != -1
+2. Active:  key != NULL and hash != -1
 
 The hash field of Unused slots is always zero.
-
-The hash field of Dummy slots are set to -1
-meaning that dummy entries can be detected by
-either entry->key==dummy or by entry->hash==-1.
 */
 
 #define PySet_MINSIZE 8
@@ -42,14 +37,19 @@ Invariants for frozensets:
 typedef struct {
     PyObject_HEAD
 
-    Py_ssize_t fill;            /* Number active and dummy entries*/
-    Py_ssize_t used;            /* Number active entries */
+    Py_ssize_t fill;            /* Number of active and dummy index */
+    Py_ssize_t used;            /* Number of active index */
+    Py_ssize_t last;            /* Number of used table entries */
 
-    /* The table contains mask + 1 slots, and that's a power of 2.
+    /* The indices contains mask + 1 slots, and that's a power of 2.
      * We store the mask instead of the size because the mask is more
      * frequently needed.
      */
     Py_ssize_t mask;
+    /* The indices pointer is never NULL which saves us from repeated
+     * runtime null-tests.
+     */
+    char *indices;
 
     /* The table points to a fixed-size smalltable for small tables
      * or to additional malloc'ed memory for bigger tables.
@@ -58,15 +58,13 @@ typedef struct {
      */
     setentry *table;
     Py_hash_t hash;             /* Only used by frozenset objects */
-    Py_ssize_t finger;          /* Search finger for pop() */
 
-    setentry smalltable[PySet_MINSIZE];
+    char smallindices[PySet_MINSIZE];
+    setentry smalltable[PySet_MINSIZE/2];
     PyObject *weakreflist;      /* List of weak references */
 } PySetObject;
 
 #define PySet_GET_SIZE(so) (assert(PyAnySet_Check(so)),(((PySetObject *)(so))->used))
-
-PyAPI_DATA(PyObject *) _PySet_Dummy;
 
 PyAPI_FUNC(int) _PySet_NextEntry(PyObject *set, Py_ssize_t *pos, PyObject **key, Py_hash_t *hash);
 PyAPI_FUNC(int) _PySet_Update(PyObject *set, PyObject *iterable);
