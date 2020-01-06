@@ -576,10 +576,11 @@ pycore_init_types(PyThreadState *tstate)
         if (_PyStatus_EXCEPTION(status)) {
             return status;
         }
+    }
 
-        if (!_PyLong_Init()) {
-            return _PyStatus_ERR("can't init longs");
-        }
+
+    if (!_PyLong_Init(tstate)) {
+        return _PyStatus_ERR("can't init longs");
     }
 
     if (is_main_interp) {
@@ -1251,7 +1252,11 @@ finalize_interp_types(PyThreadState *tstate, int is_main_interp)
         _PyList_Fini();
         _PySet_Fini();
         _PyBytes_Fini();
-        _PyLong_Fini();
+    }
+
+    _PyLong_Fini(tstate);
+
+    if (is_main_interp) {
         _PyFloat_Fini();
         _PyDict_Fini();
         _PySlice_Fini();
@@ -1812,7 +1817,7 @@ create_stdio(const PyConfig *config, PyObject* io,
         write_through = Py_True;
     else
         write_through = Py_False;
-    if (isatty && buffered_stdio)
+    if (buffered_stdio && (isatty || fd == fileno(stderr)))
         line_buffering = Py_True;
     else
         line_buffering = Py_False;
