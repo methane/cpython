@@ -1,0 +1,1 @@
+asyncio: Remove ``Task.current_task()`` and ``Task.all_tasks()``.

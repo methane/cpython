@@ -127,6 +127,10 @@ Deprecated
 Removed
 =======
 
+* :mod:`asyncio`: ``Task.all_tasks()`` and ``Task.current_task()`` are removed.
+  Please migrate to :func:`asyncio.all_tasks` and :func:`asyncio.current_task`.
+  (Contributed by Inada Naoki in :issue:`41156`.)
+
 
 Porting to Python 3.10
 ======================
