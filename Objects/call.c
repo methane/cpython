@@ -907,27 +907,8 @@ PyObject_CallFunctionObjArgs(PyObject *callable, ...)
 PyObject *
 _PyStack_AsDict(PyObject *const *values, PyObject *kwnames)
 {
-    Py_ssize_t nkwargs;
-    PyObject *kwdict;
-    Py_ssize_t i;
-
     assert(kwnames != NULL);
-    nkwargs = PyTuple_GET_SIZE(kwnames);
-    kwdict = _PyDict_NewPresized(nkwargs);
-    if (kwdict == NULL) {
-        return NULL;
-    }
-
-    for (i = 0; i < nkwargs; i++) {
-        PyObject *key = PyTuple_GET_ITEM(kwnames, i);
-        PyObject *value = *values++;
-        /* If key already exists, replace it with the new value */
-        if (PyDict_SetItem(kwdict, key, value)) {
-            Py_DECREF(kwdict);
-            return NULL;
-        }
-    }
-    return kwdict;
+    return _PyDict_FromItems(kwnames, values);
 }
 
 
