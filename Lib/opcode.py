@@ -190,6 +190,9 @@ def_op('CALL_FUNCTION_EX', 142)  # Flags
 
 jrel_op('SETUP_WITH', 143)
 
+def_op('EXTENDED_ARG', 144)
+EXTENDED_ARG = 144
+
 def_op('LIST_APPEND', 145)
 def_op('SET_ADD', 146)
 def_op('MAP_ADD', 147)
@@ -197,8 +200,7 @@ def_op('MAP_ADD', 147)
 def_op('LOAD_CLASSDEREF', 148)
 hasfree.append(148)
 
-def_op('EXTENDED_ARG', 144)
-EXTENDED_ARG = 144
+def_op('BINARY_ADD_IMM', 149) # tos + oparg
 
 jrel_op('SETUP_ASYNC_WITH', 154)
 

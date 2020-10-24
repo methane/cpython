@@ -924,6 +924,8 @@ stack_effect(int opcode, int oparg, int jump)
         case INPLACE_FLOOR_DIVIDE:
         case INPLACE_TRUE_DIVIDE:
             return -1;
+        case BINARY_ADD_IMM:
+            return 0;
 
         case INPLACE_ADD:
         case INPLACE_SUBTRACT:
@@ -3668,6 +3670,30 @@ compiler_boolop(struct compiler *c, expr_ty e)
 }
 
 static int
+compiler_binop(struct compiler *c, expr_ty e)
+{
+    long immediate = -1;
+    expr_ty right = e->v.BinOp.right;
+    if (right->kind == Constant_kind && PyLong_CheckExact(right->v.Constant.value)) {
+        int overflow;
+        immediate = PyLong_AsLongAndOverflow(right->v.Constant.value, &overflow);
+        if (overflow) {
+            immediate = -1;
+        }
+    }
+
+    VISIT(c, expr, e->v.BinOp.left);
+    if (e->v.BinOp.op == Add && immediate >= 0 && immediate < 256) {
+        ADDOP_I(c, BINARY_ADD_IMM, immediate);
+    }
+    else {
+        VISIT(c, expr, e->v.BinOp.right);
+        ADDOP(c, binop(e->v.BinOp.op));
+    }
+    return 1;
+}
+
+static int
 starunpack_helper(struct compiler *c, asdl_expr_seq *elts, int pushed,
                   int build, int add, int extend, int tuple)
 {
@@ -4995,10 +5021,7 @@ compiler_visit_expr1(struct compiler *c, expr_ty e)
     case BoolOp_kind:
         return compiler_boolop(c, e);
     case BinOp_kind:
-        VISIT(c, expr, e->v.BinOp.left);
-        VISIT(c, expr, e->v.BinOp.right);
-        ADDOP(c, binop(e->v.BinOp.op));
-        break;
+        return compiler_binop(c, e);
     case UnaryOp_kind:
         VISIT(c, expr, e->v.UnaryOp.operand);
         ADDOP(c, unaryop(e->v.UnaryOp.op));

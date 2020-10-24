@@ -1804,6 +1804,35 @@ main_loop:
             DISPATCH();
         }
 
+        case TARGET(BINARY_ADD_IMM): {
+            // We know rhs is small int. So we can optimize it for now.
+            PyObject *left = TOP();
+            if (PyLong_CheckExact(left) && Py_ABS(Py_SIZE(left)) <= 1) {
+                long long ll = PyLong_AsLongLong(left) + oparg;
+                assert(!_PyErr_Occurred(tstate));
+                PyObject *sum = PyLong_FromLongLong(ll);
+                Py_DECREF(left);
+                SET_TOP(sum);
+                if (sum == NULL) {
+                    goto error;
+                }
+            }
+            else {
+                PyObject *right = PyLong_FromLong((long)oparg);
+                if (right == NULL) {
+                    goto error;
+                }
+                PyObject *sum = PyNumber_Add(left, right);
+                Py_DECREF(left);
+                Py_DECREF(right);
+                SET_TOP(sum);
+                if (sum == NULL) {
+                    goto error;
+                }
+            }
+            DISPATCH();
+        }
+
         case TARGET(BINARY_SUBTRACT): {
             PyObject *right = POP();
             PyObject *left = TOP();
