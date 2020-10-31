@@ -467,8 +467,7 @@ later:
 #include "Python.h"
 #include "pycore_object.h"
 #include <stddef.h>               // offsetof()
-#include "dict-common.h"
-#include <stddef.h>
+#include "pycore_dict.h"
 
 #include "clinic/odictobject.c.h"
 
