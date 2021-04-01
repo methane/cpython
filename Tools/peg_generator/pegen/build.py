@@ -105,7 +105,7 @@ def compile_c_extension(
 def build_parser(
     grammar_file: str, verbose_tokenizer: bool = False, verbose_parser: bool = False
 ) -> Tuple[Grammar, Parser, Tokenizer]:
-    with open(grammar_file) as file:
+    with open(grammar_file, encoding="utf-8") as file:
         tokenizer = Tokenizer(tokenize.generate_tokens(file.readline), verbose=verbose_tokenizer)
         parser = GrammarParser(tokenizer, verbose=verbose_parser)
         grammar = parser.start()
@@ -155,9 +155,9 @@ def build_c_generator(
     keep_asserts_in_extension: bool = True,
     skip_actions: bool = False,
 ) -> ParserGenerator:
-    with open(tokens_file, "r") as tok_file:
+    with open(tokens_file, "r", encoding="utf-8") as tok_file:
         all_tokens, exact_tok, non_exact_tok = generate_token_definitions(tok_file)
-    with open(output_file, "w") as file:
+    with open(output_file, "w", encoding="utf-8") as file:
         gen: ParserGenerator = CParserGenerator(
             grammar, all_tokens, exact_tok, non_exact_tok, file, skip_actions=skip_actions
         )
