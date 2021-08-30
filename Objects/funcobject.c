@@ -10,7 +10,7 @@
 static uint32_t next_func_version = 1;
 
 PyObject *
-PyFunction_NewWithQualName(PyObject *code, PyObject *globals, PyObject *qualname)
+PyFunction_NewWithDoc(PyObject *code, PyObject *globals, PyObject *qualname, PyObject *doc)
 {
     assert(globals != NULL);
     assert(PyDict_Check(globals));
@@ -33,15 +33,17 @@ PyFunction_NewWithQualName(PyObject *code, PyObject *globals, PyObject *qualname
 
     PyObject *consts = code_obj->co_consts;
     assert(PyTuple_Check(consts));
-    PyObject *doc;
-    if (PyTuple_Size(consts) >= 1) {
-        doc = PyTuple_GetItem(consts, 0);
-        if (!PyUnicode_Check(doc)) {
+
+    if (doc == NULL) {
+        if (PyTuple_Size(consts) >= 1) {
+            doc = PyTuple_GetItem(consts, 0);
+            if (!PyUnicode_Check(doc)) {
+                doc = Py_None;
+            }
+        }
+        else {
             doc = Py_None;
         }
-    }
-    else {
-        doc = Py_None;
     }
     Py_INCREF(doc);
 
@@ -94,6 +96,12 @@ error:
     Py_XDECREF(module);
     Py_XDECREF(builtins);
     return NULL;
+}
+
+PyObject *
+PyFunction_NewWithQualName(PyObject *code, PyObject *globals, PyObject *qualname)
+{
+    return PyFunction_NewWithDoc(code, globals, qualname, NULL);
 }
 
 uint32_t _PyFunction_GetVersionForCurrentState(PyFunctionObject *func)
