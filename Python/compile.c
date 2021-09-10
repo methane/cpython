@@ -233,6 +233,7 @@ struct compiler_unit {
     int u_col_offset;      /* the offset of the current stmt */
     int u_end_lineno;      /* the end line of the current stmt */
     int u_end_col_offset;  /* the end offset of the current stmt */
+    int u_has_docstring;   /* 1 if u_consts[0] is the docstring, 0 otherwise */
 };
 
 /* This struct captures the global state of a compilation.
@@ -2459,9 +2460,12 @@ compiler_function(struct compiler *c, stmt_ty s, int is_async)
     if (c->c_optimize < 2) {
         docstring = _PyAST_GetDocString(body);
     }
-    if (compiler_add_const(c, docstring ? docstring : Py_None) < 0) {
-        compiler_exit_scope(c);
-        return 0;
+    c->u->u_has_docstring = docstring ? 1 : 0;
+    if (docstring != NULL) {
+        if (compiler_add_const(c, docstring) < 0) {
+            compiler_exit_scope(c);
+            return 0;
+        }
     }
 
     c->u->u_argcount = asdl_seq_LEN(args->args);
@@ -2866,10 +2870,8 @@ compiler_lambda(struct compiler *c, expr_ty e)
                               (void *)e, e->lineno))
         return 0;
 
-    /* Make None the first constant, so the lambda can't have a
-       docstring. */
-    if (compiler_add_const(c, Py_None) < 0)
-        return 0;
+    /* A lambda can't have a docstring. */
+    c->u->u_has_docstring = 0;
 
     c->u->u_argcount = asdl_seq_LEN(args->args);
     c->u->u_posonlyargcount = asdl_seq_LEN(args->posonlyargs);
@@ -7350,6 +7352,10 @@ compute_code_flags(struct compiler *c)
         flags |= CO_COROUTINE;
     }
 
+    if (c->u->u_has_docstring) {
+        flags |= CO_DOCSTRING;
+    }
+
     return flags;
 }
 
@@ -8611,8 +8617,8 @@ trim_unused_consts(struct compiler *c, struct assembler *a, PyObject *consts)
 {
     assert(PyList_CheckExact(consts));
 
-    // The first constant may be docstring; keep it always.
-    int max_const_index = 0;
+    // If the first constant is a docstring, keep it;
+    int max_const_index = c->u->u_has_docstring;
     for (basicblock *b = a->a_entry; b != NULL; b = b->b_next) {
         for (int i = 0; i < b->b_iused; i++) {
             if (b->b_instr[i].i_opcode == LOAD_CONST &&
