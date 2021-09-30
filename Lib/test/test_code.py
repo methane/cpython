@@ -17,7 +17,7 @@ cellvars: ('x',)
 freevars: ()
 nlocals: 2
 flags: 3
-consts: ('None', '<code object g>')
+consts: ('<code object g>',)
 
 >>> dump(f(4).__code__)
 name: g
@@ -87,7 +87,7 @@ cellvars: ()
 freevars: ()
 nlocals: 0
 flags: 3
-consts: ("'doc string'", 'None')
+consts: ()
 
 >>> def keywordonly_args(a,b,*,k1):
 ...     return a,b,k1
@@ -377,7 +377,7 @@ class CodeTest(unittest.TestCase):
             ],
             [
                 ("PUSH_EXC_INFO", None),
-                ("LOAD_CONST", None), # artificial 'None'
+                ("LOAD_NONE", None),  # artificial 'None'
                 ("STORE_NAME", "e"),  # XX: we know the location for this
                 ("DELETE_NAME", "e"),
                 ("RERAISE", 1),

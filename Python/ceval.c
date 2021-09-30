@@ -1733,8 +1733,15 @@ check_eval_breaker:
         }
 
         TARGET(LOAD_CONST): {
-            PREDICTED(LOAD_CONST);
             PyObject *value = GETITEM(consts, oparg);
+            Py_INCREF(value);
+            PUSH(value);
+            DISPATCH();
+        }
+
+        TARGET(LOAD_NONE): {
+            PREDICTED(LOAD_NONE);
+            PyObject *value = Py_None;
             Py_INCREF(value);
             PUSH(value);
             DISPATCH();
@@ -2643,7 +2650,7 @@ check_eval_breaker:
             }
 
             PUSH(awaitable);
-            PREDICT(LOAD_CONST);
+            PREDICT(LOAD_NONE);
             DISPATCH();
         }
 
@@ -2684,7 +2691,7 @@ check_eval_breaker:
                 goto error;
             }
 
-            PREDICT(LOAD_CONST);
+            PREDICT(LOAD_NONE);
             DISPATCH();
         }
 
@@ -4230,7 +4237,7 @@ check_eval_breaker:
                 if (iter == NULL)
                     goto error;
             }
-            PREDICT(LOAD_CONST);
+            PREDICT(LOAD_NONE);
             DISPATCH();
         }
 
@@ -4684,10 +4691,17 @@ check_eval_breaker:
 
         TARGET(MAKE_FUNCTION): {
             PyObject *codeobj = POP();
+            PyObject *doc = NULL;
+
+            if (oparg & 0x10) {
+                assert(PyUnicode_Check(TOP()));
+                doc = POP();
+            }
             PyFunctionObject *func = (PyFunctionObject *)
-                PyFunction_New(codeobj, GLOBALS());
+                PyFunction_NewWithDoc(codeobj, GLOBALS(), NULL, doc);
 
             Py_DECREF(codeobj);
+            Py_XDECREF(doc);
             if (func == NULL) {
                 goto error;
             }
