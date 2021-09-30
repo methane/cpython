@@ -4691,10 +4691,17 @@ check_eval_breaker:
 
         TARGET(MAKE_FUNCTION): {
             PyObject *codeobj = POP();
+            PyObject *doc = NULL;
+
+            if (oparg & 0x10) {
+                assert(PyUnicode_Check(TOP()));
+                doc = POP();
+            }
             PyFunctionObject *func = (PyFunctionObject *)
-                PyFunction_New(codeobj, GLOBALS());
+                PyFunction_NewWithDoc(codeobj, GLOBALS(), NULL, doc);
 
             Py_DECREF(codeobj);
+            Py_XDECREF(doc);
             if (func == NULL) {
                 goto error;
             }
