@@ -293,12 +293,13 @@ details of bytecode instructions as :class:`Instruction` instances:
 
    .. data:: argval
 
-      resolved arg value (if known), otherwise same as arg
+      resolved arg value (if any), otherwise ``None``
 
 
    .. data:: argrepr
 
-      human readable description of operation argument
+      human readable description of operation argument (if any),
+      otherwise an empty string.
 
 
    .. data:: offset
@@ -858,6 +859,11 @@ All of the following opcodes use their arguments.
 
    Pushes ``co_consts[consti]`` onto the stack.
 
+.. opcode:: LOAD_NONE
+
+   Pushes ``None`` onto the stack.
+
+   .. versionadded:: 3.11
 
 .. opcode:: LOAD_NAME (namei)
 

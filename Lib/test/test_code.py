@@ -17,7 +17,7 @@ cellvars: ('x',)
 freevars: ()
 nlocals: 2
 flags: 3
-consts: ('None', '<code object g>')
+consts: ('<code object g>',)
 
 >>> dump(f(4).__code__)
 name: g
@@ -86,8 +86,8 @@ varnames: ()
 cellvars: ()
 freevars: ()
 nlocals: 0
-flags: 3
-consts: ("'doc string'", 'None')
+flags: 67
+consts: ("'doc string'",)
 
 >>> def keywordonly_args(a,b,*,k1):
 ...     return a,b,k1
@@ -128,6 +128,7 @@ consts: ('None',)
 import inspect
 import sys
 import threading
+import doctest
 import unittest
 import textwrap
 import weakref
@@ -136,7 +137,7 @@ try:
     import ctypes
 except ImportError:
     ctypes = None
-from test.support import (run_doctest, run_unittest, cpython_only,
+from test.support import (cpython_only,
                           check_impl_detail, requires_debug_ranges,
                           gc_collect)
 from test.support.script_helper import assert_python_ok
@@ -376,7 +377,7 @@ class CodeTest(unittest.TestCase):
             ],
             [
                 ("PUSH_EXC_INFO", None),
-                ("LOAD_CONST", None), # artificial 'None'
+                ("LOAD_NONE", None),  # artificial 'None'
                 ("STORE_NAME", "e"),  # XX: we know the location for this
                 ("DELETE_NAME", "e"),
                 ("RERAISE", 1),
@@ -609,13 +610,10 @@ if check_impl_detail(cpython=True) and ctypes is not None:
             self.assertEqual(LAST_FREED, 500)
 
 
-def test_main(verbose=None):
-    from test import test_code
-    run_doctest(test_code, verbose)
-    tests = [CodeTest, CodeConstsTest, CodeWeakRefTest]
-    if check_impl_detail(cpython=True) and ctypes is not None:
-        tests.append(CoExtra)
-    run_unittest(*tests)
+def load_tests(loader, tests, pattern):
+    tests.addTest(doctest.DocTestSuite())
+    return tests
+
 
 if __name__ == "__main__":
-    test_main()
+    unittest.main()

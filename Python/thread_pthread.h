@@ -32,18 +32,17 @@
 #define THREAD_STACK_SIZE       0       /* use default stack size */
 #endif
 
-/* The default stack size for new threads on OSX and BSD is small enough that
+/* The default stack size for new threads on BSD is small enough that
  * we'll get hard crashes instead of 'maximum recursion depth exceeded'
  * exceptions.
  *
- * The default stack sizes below are the empirically determined minimal stack
+ * The default stack size below is the empirically determined minimal stack
  * sizes where a simple recursive function doesn't cause a hard crash.
+ *
+ * For macOS the value of THREAD_STACK_SIZE is determined in configure.ac
+ * as it also depends on the other configure options like chosen sanitizer
+ * runtimes.
  */
-#if defined(__APPLE__) && defined(THREAD_STACK_SIZE) && THREAD_STACK_SIZE == 0
-#undef  THREAD_STACK_SIZE
-/* Note: This matches the value of -Wl,-stack_size in configure.ac */
-#define THREAD_STACK_SIZE       0x1000000
-#endif
 #if defined(__FreeBSD__) && defined(THREAD_STACK_SIZE) && THREAD_STACK_SIZE == 0
 #undef  THREAD_STACK_SIZE
 #define THREAD_STACK_SIZE       0x400000
@@ -482,11 +481,7 @@ PyThread_acquire_lock_timed(PyThread_type_lock lock, PY_TIMEOUT_T microseconds,
             }
             else if (dt > 0) {
                 _PyTime_t realtime_deadline = _PyTime_GetSystemClock() + dt;
-                if (_PyTime_AsTimespec(realtime_deadline, &ts) < 0) {
-                    /* Cannot occur thanks to (microseconds > PY_TIMEOUT_MAX)
-                       check done above */
-                    Py_UNREACHABLE();
-                }
+                _PyTime_AsTimespec_clamp(realtime_deadline, &ts);
                 /* no need to update microseconds value, the code only care
                    if (microseconds > 0 or (microseconds == 0). */
             }

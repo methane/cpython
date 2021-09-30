@@ -627,10 +627,10 @@ if 1:
         # Merge constants in tuple or frozenset
         f1, f2 = lambda: "not a name", lambda: ("not a name",)
         f3 = lambda x: x in {("not a name",)}
-        self.assertIs(f1.__code__.co_consts[1],
-                      f2.__code__.co_consts[1][0])
-        self.assertIs(next(iter(f3.__code__.co_consts[1])),
-                      f2.__code__.co_consts[1])
+        self.assertIs(f1.__code__.co_consts[0],
+                      f2.__code__.co_consts[0][0])
+        self.assertIs(next(iter(f3.__code__.co_consts[0])),
+                      f2.__code__.co_consts[0])
 
         # {0} is converted to a constant frozenset({0}) by the peephole
         # optimizer
@@ -758,7 +758,7 @@ if 1:
         for func in funcs:
             opcodes = list(dis.get_instructions(func))
             self.assertLessEqual(len(opcodes), 3)
-            self.assertEqual('LOAD_CONST', opcodes[-2].opname)
+            self.assertEqual('LOAD_NONE', opcodes[-2].opname)
             self.assertEqual(None, opcodes[-2].argval)
             self.assertEqual('RETURN_VALUE', opcodes[-1].opname)
 
@@ -777,7 +777,7 @@ if 1:
         for func in funcs:
             opcodes = list(dis.get_instructions(func))
             self.assertEqual(2, len(opcodes))
-            self.assertEqual('LOAD_CONST', opcodes[0].opname)
+            self.assertEqual('LOAD_NONE', opcodes[0].opname)
             self.assertEqual(None, opcodes[0].argval)
             self.assertEqual('RETURN_VALUE', opcodes[1].opname)
 
@@ -953,7 +953,7 @@ if 1:
                     y)
         genexp_lines = [None, 1, 3, 1]
 
-        genexp_code = return_genexp.__code__.co_consts[1]
+        genexp_code = return_genexp.__code__.co_consts[0]
         code_lines = [ None if line is None else line-return_genexp.__code__.co_firstlineno
                       for (_, _, line) in genexp_code.co_lines() ]
         self.assertEqual(genexp_lines, code_lines)

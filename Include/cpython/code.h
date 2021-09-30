@@ -116,6 +116,7 @@ struct PyCodeObject {
 #define CO_VARKEYWORDS  0x0008
 #define CO_NESTED       0x0010
 #define CO_GENERATOR    0x0020
+#define CO_DOCSTRING    0x0040
 
 /* The CO_COROUTINE flag is set for coroutine functions (defined with
    ``async def`` keywords) */
