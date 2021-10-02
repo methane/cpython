@@ -38,13 +38,14 @@ from test.support.os_helper import TESTFN, unlink, temp_dir
 
 # Helper for tests using TESTFN
 @contextlib.contextmanager
-def managed_connect(*args, **kwargs):
+def managed_connect(*args, in_mem=False, **kwargs):
     cx = sqlite.connect(*args, **kwargs)
     try:
         yield cx
     finally:
         cx.close()
-        unlink(TESTFN)
+        if not in_mem:
+            unlink(TESTFN)
 
 
 class ModuleTests(unittest.TestCase):
@@ -1156,28 +1157,5 @@ class MultiprocessTests(unittest.TestCase):
         self.assertEqual(proc.returncode, 0)
 
 
-def suite():
-    tests = [
-        ClosedConTests,
-        ClosedCurTests,
-        ConnectionTests,
-        ConstructorTests,
-        CursorTests,
-        ExtensionTests,
-        ModuleTests,
-        MultiprocessTests,
-        OpenTests,
-        SqliteOnConflictTests,
-        ThreadTests,
-        UninitialisedConnectionTests,
-    ]
-    return unittest.TestSuite(
-        [unittest.TestLoader().loadTestsFromTestCase(t) for t in tests]
-    )
-
-def test():
-    runner = unittest.TextTestRunner()
-    runner.run(suite())
-
 if __name__ == "__main__":
-    test()
+    unittest.main()

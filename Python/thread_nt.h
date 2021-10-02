@@ -32,8 +32,8 @@ typedef struct _NRMUTEX
 } NRMUTEX;
 typedef NRMUTEX *PNRMUTEX;
 
-PNRMUTEX
-AllocNonRecursiveMutex()
+static PNRMUTEX
+AllocNonRecursiveMutex(void)
 {
     PNRMUTEX m = (PNRMUTEX)PyMem_RawMalloc(sizeof(NRMUTEX));
     if (!m)
@@ -51,7 +51,7 @@ fail:
     return NULL;
 }
 
-VOID
+static VOID
 FreeNonRecursiveMutex(PNRMUTEX mutex)
 {
     if (mutex) {
@@ -61,7 +61,7 @@ FreeNonRecursiveMutex(PNRMUTEX mutex)
     }
 }
 
-DWORD
+static DWORD
 EnterNonRecursiveMutex(PNRMUTEX mutex, DWORD milliseconds)
 {
     DWORD result = WAIT_OBJECT_0;
@@ -77,9 +77,6 @@ EnterNonRecursiveMutex(PNRMUTEX mutex, DWORD milliseconds)
     } else if (milliseconds != 0) {
         /* wait at least until the target */
         _PyTime_t now = _PyTime_GetPerfCounter();
-        if (now <= 0) {
-            Py_FatalError("_PyTime_GetPerfCounter() == 0");
-        }
         _PyTime_t nanoseconds = _PyTime_FromNanoseconds((_PyTime_t)milliseconds * 1000000);
         _PyTime_t target = now + nanoseconds;
         while (mutex->locked) {
@@ -104,7 +101,7 @@ EnterNonRecursiveMutex(PNRMUTEX mutex, DWORD milliseconds)
     return result;
 }
 
-BOOL
+static BOOL
 LeaveNonRecursiveMutex(PNRMUTEX mutex)
 {
     BOOL result;
@@ -122,26 +119,26 @@ LeaveNonRecursiveMutex(PNRMUTEX mutex)
 /* NR-locks based on a kernel mutex */
 #define PNRMUTEX HANDLE
 
-PNRMUTEX
-AllocNonRecursiveMutex()
+static PNRMUTEX
+AllocNonRecursiveMutex(void)
 {
     return CreateSemaphore(NULL, 1, 1, NULL);
 }
 
-VOID
+static VOID
 FreeNonRecursiveMutex(PNRMUTEX mutex)
 {
     /* No in-use check */
     CloseHandle(mutex);
 }
 
-DWORD
+static DWORD
 EnterNonRecursiveMutex(PNRMUTEX mutex, DWORD milliseconds)
 {
     return WaitForSingleObjectEx(mutex, milliseconds, FALSE);
 }
 
-BOOL
+static BOOL
 LeaveNonRecursiveMutex(PNRMUTEX mutex)
 {
     return ReleaseSemaphore(mutex, 1, NULL);
@@ -295,6 +292,10 @@ PyThread_free_lock(PyThread_type_lock aLock)
     FreeNonRecursiveMutex(aLock) ;
 }
 
+// WaitForSingleObject() documentation: "The time-out value needs to be a
+// positive number between 0 and 0x7FFFFFFF." INFINITE is equal to 0xFFFFFFFF.
+const DWORD TIMEOUT_MS_MAX = 0x7FFFFFFF;
+
 /*
  * Return 1 on success if the lock was acquired
  *
@@ -312,10 +313,20 @@ PyThread_acquire_lock_timed(PyThread_type_lock aLock,
 
     if (microseconds >= 0) {
         milliseconds = microseconds / 1000;
-        if (microseconds % 1000 > 0)
-            ++milliseconds;
-        if (milliseconds > PY_DWORD_MAX) {
-            Py_FatalError("Timeout larger than PY_TIMEOUT_MAX");
+        // Round milliseconds away from zero
+        if (microseconds % 1000 > 0) {
+            milliseconds++;
+        }
+        if (milliseconds > (PY_TIMEOUT_T)TIMEOUT_MS_MAX) {
+            // bpo-41710: PyThread_acquire_lock_timed() cannot report timeout
+            // overflow to the caller, so clamp the timeout to
+            // [0, TIMEOUT_MS_MAX] milliseconds.
+            //
+            // TIMEOUT_MS_MAX milliseconds is around 24.9 days.
+            //
+            // _thread.Lock.acquire() and _thread.RLock.acquire() raise an
+            // OverflowError if microseconds is greater than PY_TIMEOUT_MAX.
+            milliseconds = TIMEOUT_MS_MAX;
         }
     }
     else {
