@@ -240,6 +240,7 @@ uint64_t _pydict_global_version = 0;
 
 #include "clinic/dictobject.c.h"
 
+#define DK_ISVECTOR(dk) ((dk)->dk_log2_size == PyDict_LOG_MINSIZE)
 
 #if PyDict_MAXFREELIST > 0
 static struct _Py_dict_state *
@@ -377,6 +378,79 @@ dictkeys_set_index(PyDictKeysObject *keys, Py_ssize_t i, Py_ssize_t ix)
     }
 }
 
+// 8x8 simd-like functions.
+// https://graphics.stanford.edu/~seander/bithacks.html
+
+static const uint64_t lsb = 0x0101010101010101ull;
+static const uint64_t msb = 0x8080808080808080ull;
+
+// 0x00 -> 0x80, otherwise -> 0x00.
+// Caution: This function has false positive in limited case.
+static inline uint64_t
+haszero(uint64_t v) {
+    return (((v) - lsb) & ~(v) & msb);
+}
+
+// Find n in x. n should be 7bit value.
+static inline uint64_t
+hasvalue(uint64_t x, uint8_t n) {
+    return haszero(x ^ (n*lsb));
+}
+
+/* CountTrailingZeroesNonzero64
+
+This function is copied from:
+https://github.com/abseil/abseil-cpp/blob/1ae9b71c474628d60eb251a3f62967fe64151bb2/absl/numeric/internal/bits.h#L273
+
+License of this function:
+// Copyright 2020 The Abseil Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     https://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+Modifications:
+
+* Port to C, remove some macros.
+
+*/
+static inline int
+CountTrailingZeroesNonzero64(uint64_t x) {
+#if (defined(__clang__) || defined(__GNUC__))
+    return __builtin_ctzll(x);
+#elif defined(_MSC_VER) && !defined(__clang__) && \
+    (defined(_M_X64) || defined(_M_ARM64))
+    unsigned long result = 0;
+    _BitScanForward64(&result, x);
+    return result;
+#elif defined(_MSC_VER) && !defined(__clang__)
+    unsigned long result = 0;
+    if ((uint32_t)(x) == 0) {
+        _BitScanForward(&result, (uint32_t)(x >> 32));
+        return result + 32;
+    }
+    _BitScanForward(&result, (unsigned long)(x));
+    return result;
+#else
+    int c = 63;
+    x &= ~x + 1;
+    if (x & 0x00000000FFFFFFFF) c -= 32;
+    if (x & 0x0000FFFF0000FFFF) c -= 16;
+    if (x & 0x00FF00FF00FF00FF) c -= 8;
+    if (x & 0x0F0F0F0F0F0F0F0F) c -= 4;
+    if (x & 0x3333333333333333) c -= 2;
+    if (x & 0x5555555555555555) c -= 1;
+    return c;
+#endif
+}
 
 /* USABLE_FRACTION is the maximum dictionary load.
  * Increasing this ratio makes dictionaries more dense resulting in more
@@ -465,7 +539,7 @@ struct {
 #define Py_EMPTY_KEYS &empty_keys_struct
 
 /* Uncomment to check the dict content in _PyDict_CheckConsistency() */
-/* #define DEBUG_PYDICT */
+// #define DEBUG_PYDICT
 
 #ifdef DEBUG_PYDICT
 #  define ASSERT_CONSISTENT(op) assert(_PyDict_CheckConsistency((PyObject *)(op), 1))
@@ -481,14 +555,44 @@ get_index_from_order(PyDictObject *mp, Py_ssize_t i)
     return ((char *)mp->ma_values)[-3-i];
 }
 
+void
+dump_dictkeys(PyDictKeysObject *dk)
+{
+    fprintf(stderr, "dict object %p\n", dk);
+    fprintf(stderr, "  log2_size=%d\n", dk->dk_log2_size);
+    fprintf(stderr, "  usable=%d\n", dk->dk_usable);
+    fprintf(stderr, "  nentries=%d\n", dk->dk_nentries);
+
+    if (dk->dk_log2_size == PyDict_LOG_MINSIZE) {
+        const uint8_t *index = (const uint8_t*) dk->dk_indices;
+        fprintf(stderr, "  indices: %x %x %x %x %x %x %x %x\n",
+                index[0], index[1], index[2], index[3],
+                index[4], index[5], index[6], index[7]);
+    }
+    else {
+        fprintf(stderr, "  indices:\n");
+        int n = DK_SIZE(dk);
+        for (int i = 0; i < n; i++) {
+            fprintf(stderr, " - %d: %d\n", i, (int)dictkeys_get_index(dk, i));
+        }
+    }
+
+    PyDictKeyEntry *ep = DK_ENTRIES(dk);
+    Py_ssize_t usable = USABLE_FRACTION(DK_SIZE(dk));
+    for (int i = 0; i<usable; i++, ep++) {
+        fprintf(stderr, "  %d: key=%p hash=%llx\n", i, ep->me_key, ep->me_hash);
+    }
+    fprintf(stderr, "\n");
+}
+
 int
 _PyDict_CheckConsistency(PyObject *op, int check_content)
 {
 #define CHECK(expr) \
-    do { if (!(expr)) { _PyObject_ASSERT_FAILED_MSG(op, Py_STRINGIFY(expr)); } } while (0)
+    do { if (!(expr)) { dump_dictkeys(keys); _PyObject_ASSERT_FAILED_MSG(op, Py_STRINGIFY(expr)); } } while (0)
 
     assert(op != NULL);
-    CHECK(PyDict_Check(op));
+    //CHECK(PyDict_Check(op));
     PyDictObject *mp = (PyDictObject *)op;
 
     PyDictKeysObject *keys = mp->ma_keys;
@@ -511,14 +615,27 @@ _PyDict_CheckConsistency(PyObject *op, int check_content)
     if (check_content) {
         PyDictKeyEntry *entries = DK_ENTRIES(keys);
 
-        for (Py_ssize_t i=0; i < DK_SIZE(keys); i++) {
-            Py_ssize_t ix = dictkeys_get_index(keys, i);
-            CHECK(DKIX_DUMMY <= ix && ix <= usable);
+        if (!DK_ISVECTOR(keys)) {
+            for (Py_ssize_t i=0; i < DK_SIZE(keys); i++) {
+                Py_ssize_t ix = dictkeys_get_index(keys, i);
+                CHECK(DKIX_DUMMY <= ix && ix <= usable);
+
+                if (ix >= 0) {
+                    CHECK(entries[ix].me_key != NULL);
+                }
+            }
         }
 
         for (Py_ssize_t i=0; i < usable; i++) {
             PyDictKeyEntry *entry = &entries[i];
             PyObject *key = entry->me_key;
+
+            if (DK_ISVECTOR(keys)) {
+                int h7 = dictkeys_get_index(keys, i);
+                if (entries[i].me_key) {
+                    CHECK((entry->me_hash & 0x7f) == h7);
+                }
+            }
 
             if (key != NULL) {
                 if (PyUnicode_CheckExact(key)) {
@@ -779,6 +896,7 @@ PyDict_New(void)
 static Py_ssize_t
 lookdict_index(PyDictKeysObject *k, Py_hash_t hash, Py_ssize_t index)
 {
+    assert(!DK_ISVECTOR(k));
     size_t mask = DK_MASK(k);
     size_t perturb = (size_t)hash;
     size_t i = (size_t)hash & mask;
@@ -798,8 +916,42 @@ lookdict_index(PyDictKeysObject *k, Py_hash_t hash, Py_ssize_t index)
 }
 
 static Py_ssize_t
+dictkeys_stringlookup_vector(PyDictKeysObject* dk, PyObject *key, Py_hash_t hash)
+{
+    assert(DK_ISVECTOR(dk));
+    const uint64_t indices = *(const uint64_t*)(dk->dk_indices);
+    uint64_t found = hasvalue(indices, (uint8_t)(hash & 0x7f));
+    PyDictKeyEntry *ep0 = DK_ENTRIES_MIN(dk);
+
+    while (found) {
+        // 80 byte means found. LSB first.
+        // Example: 00 00 00 80 00 00 80 00 00 -> 2, 5
+        int pos = CountTrailingZeroesNonzero64(found);
+        assert((pos+1) % 8 == 0);
+        // 7 >> 3 = 0
+        // (8+7) >> 3 = 1
+        // (16+7) >> 3 = 2
+        // ...
+        pos >>= 3;
+
+        PyDictKeyEntry *ep = &ep0[pos];
+        if (ep->me_key == key ||
+                (ep->me_hash == hash && unicode_eq(ep->me_key, key))) {
+            return pos;
+        }
+
+        // reset lowest 1 bit.
+        found &= (found - 1);
+    }
+    return DKIX_EMPTY;
+}
+
+static Py_ssize_t
 dictkeys_stringlookup(PyDictKeysObject* dk, PyObject *key, Py_hash_t hash)
 {
+    if (DK_ISVECTOR(dk)) {
+        return dictkeys_stringlookup_vector(dk, key, hash);
+    }
     PyDictKeyEntry *ep0 = DK_ENTRIES(dk);
     size_t mask = DK_MASK(dk);
     size_t perturb = hash;
@@ -899,11 +1051,62 @@ start:
         }
         return ix;
     }
-    PyDictKeyEntry *ep0 = DK_ENTRIES(dk);
+
+    Py_ssize_t ix;
+    PyDictKeyEntry *ep0;
+
+    if (DK_ISVECTOR(dk)) {
+        // Use vector instead of hash table.
+        const uint64_t indices = *(const uint64_t*)(dk->dk_indices);
+        // found: 80 byte means found. LSB first.
+        // Example: 00 00 00 80 00 00 80 00 00 means 2, 5
+        uint64_t found = hasvalue(indices, (uint8_t)(hash & 0x7f));
+        ep0 = DK_ENTRIES_MIN(dk);
+
+        while (found) {
+            ix = CountTrailingZeroesNonzero64(found);
+            assert((ix+1) % 8 == 0);
+            // 7 >> 3 = 0
+            // (8+7) >> 3 = 1
+            // (16+7) >> 3 = 2
+            // ...
+            ix >>= 3;
+
+            PyDictKeyEntry *ep = &ep0[ix];
+            if (ep->me_key == key) {
+                goto found;
+            }
+            if (ep->me_hash == hash) {
+                PyObject *startkey = ep->me_key;
+                Py_INCREF(startkey);
+                int cmp = PyObject_RichCompareBool(startkey, key, Py_EQ);
+                Py_DECREF(startkey);
+                if (cmp < 0) {
+                    *value_addr = NULL;
+                    return DKIX_ERROR;
+                }
+                if (dk == mp->ma_keys && ep->me_key == startkey) {
+                    if (cmp > 0) {
+                        goto found;
+                    }
+                }
+                else {
+                    /* The dict was mutated, restart */
+                    goto start;
+                }
+            }
+
+            // reset lowest 1 bit.
+            found &= (found - 1);
+        }
+        *value_addr = NULL;
+        return DKIX_EMPTY;
+    }
+
+    ep0 = DK_ENTRIES(dk);
     size_t mask = DK_MASK(dk);
     size_t perturb = hash;
     size_t i = (size_t)hash & mask;
-    Py_ssize_t ix;
     for (;;) {
         ix = dictkeys_get_index(dk, i);
         if (ix == DKIX_EMPTY) {
@@ -1019,6 +1222,7 @@ static Py_ssize_t
 find_empty_slot(PyDictKeysObject *keys, Py_hash_t hash)
 {
     assert(keys != NULL);
+    assert(!DK_ISVECTOR(keys));
 
     const size_t mask = DK_MASK(keys);
     size_t i = hash & mask;
@@ -1057,10 +1261,15 @@ insert_into_dictkeys(PyDictKeysObject *keys, PyObject *name)
         Py_INCREF(name);
         /* Insert into new slot. */
         keys->dk_version = 0;
-        Py_ssize_t hashpos = find_empty_slot(keys, hash);
         ix = keys->dk_nentries;
         PyDictKeyEntry *ep = &DK_ENTRIES(keys)[ix];
-        dictkeys_set_index(keys, hashpos, ix);
+        if (DK_ISVECTOR(keys)) {
+            dictkeys_set_index(keys, ix, hash & 0x7f);
+        }
+        else {
+            Py_ssize_t hashpos = find_empty_slot(keys, hash);
+            dictkeys_set_index(keys, hashpos, ix);
+        }
         assert(ep->me_key == NULL);
         ep->me_key = name;
         ep->me_hash = hash;
@@ -1106,9 +1315,14 @@ insertdict(PyDictObject *mp, PyObject *key, Py_hash_t hash, PyObject *value)
         if (!PyUnicode_CheckExact(key) && mp->ma_keys->dk_kind != DICT_KEYS_GENERAL) {
             mp->ma_keys->dk_kind = DICT_KEYS_GENERAL;
         }
-        Py_ssize_t hashpos = find_empty_slot(mp->ma_keys, hash);
+        if (DK_ISVECTOR(mp->ma_keys)) {
+            dictkeys_set_index(mp->ma_keys, mp->ma_keys->dk_nentries, hash & 0x7f);
+        }
+        else {
+            Py_ssize_t hashpos = find_empty_slot(mp->ma_keys, hash);
+            dictkeys_set_index(mp->ma_keys, hashpos, mp->ma_keys->dk_nentries);
+        }
         ep = &DK_ENTRIES(mp->ma_keys)[mp->ma_keys->dk_nentries];
-        dictkeys_set_index(mp->ma_keys, hashpos, mp->ma_keys->dk_nentries);
         ep->me_key = key;
         ep->me_hash = hash;
         if (mp->ma_values) {
@@ -1177,9 +1391,8 @@ insert_to_emptydict(PyDictObject *mp, PyObject *key, Py_hash_t hash,
 
     MAINTAIN_TRACKING(mp, key, value);
 
-    size_t hashpos = (size_t)hash & (PyDict_MINSIZE-1);
-    PyDictKeyEntry *ep = DK_ENTRIES(mp->ma_keys);
-    dictkeys_set_index(mp->ma_keys, hashpos, 0);
+    PyDictKeyEntry *ep = DK_ENTRIES_MIN(mp->ma_keys);
+    dictkeys_set_index(mp->ma_keys, 0, hash&0x7f);
     ep->me_key = key;
     ep->me_hash = hash;
     ep->me_value = value;
@@ -1196,6 +1409,13 @@ Internal routine used by dictresize() to build a hashtable of entries.
 static void
 build_indices(PyDictKeysObject *keys, PyDictKeyEntry *ep, Py_ssize_t n)
 {
+    if (DK_ISVECTOR(keys)) {
+        for (Py_ssize_t ix = 0; ix < n; ix++, ep++) {
+            Py_hash_t hash = ep->me_hash;
+            dictkeys_set_index(keys, ix, hash & 0x7f);
+        }
+        return;
+    }
     size_t mask = DK_MASK(keys);
     for (Py_ssize_t ix = 0; ix != n; ix++, ep++) {
         Py_hash_t hash = ep->me_hash;
@@ -1650,10 +1870,6 @@ delitem_common(PyDictObject *mp, Py_hash_t hash, Py_ssize_t ix,
     PyObject *old_key;
     PyDictKeyEntry *ep;
 
-    Py_ssize_t hashpos = lookdict_index(mp->ma_keys, hash, ix);
-    assert(hashpos >= 0);
-
-    mp->ma_used--;
     mp->ma_version_tag = DICT_NEXT_VERSION();
     ep = &DK_ENTRIES(mp->ma_keys)[ix];
     if (mp->ma_values) {
@@ -1666,13 +1882,25 @@ delitem_common(PyDictObject *mp, Py_hash_t hash, Py_ssize_t ix,
     }
     else {
         mp->ma_keys->dk_version = 0;
-        dictkeys_set_index(mp->ma_keys, hashpos, DKIX_DUMMY);
+        if (DK_ISVECTOR(mp->ma_keys)) {
+            dictkeys_set_index(mp->ma_keys, ix, DKIX_EMPTY);
+            if (ix+1 == mp->ma_keys->dk_nentries) {
+                mp->ma_keys->dk_nentries--;
+                mp->ma_keys->dk_usable++;
+            }
+        }
+        else {
+            Py_ssize_t hashpos = lookdict_index(mp->ma_keys, hash, ix);
+            assert(hashpos >= 0);
+            dictkeys_set_index(mp->ma_keys, hashpos, DKIX_DUMMY);
+        }
         old_key = ep->me_key;
         ep->me_key = NULL;
         ep->me_value = NULL;
         Py_DECREF(old_key);
     }
     Py_DECREF(old_value);
+    mp->ma_used--;
 
     ASSERT_CONSISTENT(mp);
     return 0;
@@ -1753,8 +1981,13 @@ _PyDict_DelItemIf(PyObject *op, PyObject *key,
     if (res == -1)
         return -1;
 
-    hashpos = lookdict_index(mp->ma_keys, hash, ix);
-    assert(hashpos >= 0);
+    if (DK_ISVECTOR(mp->ma_keys)) {
+        hashpos = ix;
+    }
+    else {
+        hashpos = lookdict_index(mp->ma_keys, hash, ix);
+        assert(hashpos >= 0);
+    }
 
     if (res > 0)
         return delitem_common(mp, hashpos, ix, old_value);
@@ -3050,10 +3283,15 @@ PyDict_SetDefault(PyObject *d, PyObject *key, PyObject *defaultobj)
         if (!PyUnicode_CheckExact(key) && mp->ma_keys->dk_kind != DICT_KEYS_GENERAL) {
             mp->ma_keys->dk_kind = DICT_KEYS_GENERAL;
         }
-        Py_ssize_t hashpos = find_empty_slot(mp->ma_keys, hash);
+        if (DK_ISVECTOR(mp->ma_keys)) {
+            dictkeys_set_index(mp->ma_keys, mp->ma_keys->dk_nentries, hash&0x7f);
+        }
+        else {
+            Py_ssize_t hashpos = find_empty_slot(mp->ma_keys, hash);
+            dictkeys_set_index(mp->ma_keys, hashpos, mp->ma_keys->dk_nentries);
+        }
         ep0 = DK_ENTRIES(mp->ma_keys);
         ep = &ep0[mp->ma_keys->dk_nentries];
-        dictkeys_set_index(mp->ma_keys, hashpos, mp->ma_keys->dk_nentries);
         Py_INCREF(key);
         Py_INCREF(value);
         MAINTAIN_TRACKING(mp, key, value);
@@ -3194,10 +3432,18 @@ dict_popitem_impl(PyDictObject *self)
     assert(i >= 0);
 
     ep = &ep0[i];
-    j = lookdict_index(self->ma_keys, ep->me_hash, i);
-    assert(j >= 0);
-    assert(dictkeys_get_index(self->ma_keys, j) == i);
-    dictkeys_set_index(self->ma_keys, j, DKIX_DUMMY);
+    if (DK_ISVECTOR(self->ma_keys)) {
+        dictkeys_set_index(self->ma_keys, i, DKIX_EMPTY);
+        if (i == self->ma_keys->dk_nentries - 1) {
+            self->ma_keys->dk_usable++;
+        }
+    }
+    else {
+        j = lookdict_index(self->ma_keys, ep->me_hash, i);
+        assert(j >= 0);
+        assert(dictkeys_get_index(self->ma_keys, j) == i);
+        dictkeys_set_index(self->ma_keys, j, DKIX_DUMMY);
+    }
 
     PyTuple_SET_ITEM(res, 0, ep->me_key);
     PyTuple_SET_ITEM(res, 1, ep->me_value);

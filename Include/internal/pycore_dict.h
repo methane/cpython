@@ -130,6 +130,8 @@ struct _dictvalues {
 #endif
 #define DK_ENTRIES(dk) \
     ((PyDictKeyEntry*)(&((int8_t*)((dk)->dk_indices))[DK_SIZE(dk) * DK_IXSIZE(dk)]))
+#define DK_ENTRIES_MIN(dk) \
+    ((PyDictKeyEntry*)(&((int8_t*)((dk)->dk_indices))[8]))
 
 extern uint64_t _pydict_global_version;
 
