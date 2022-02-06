@@ -473,7 +473,11 @@ CountTrailingZeroesNonzero64(uint64_t x) {
  * USABLE_FRACTION should be quick to calculate.
  * Fractions around 1/2 to 2/3 seem to work well in practice.
  */
-#define USABLE_FRACTION(n) (((n) << 1)/3)
+static inline Py_ssize_t
+USABLE_FRACTION(Py_ssize_t n) {
+    if (n == 8) return 8;
+    return n * 2 / 3;
+}
 
 /* Find the smallest dk_size >= minsize. */
 static inline uint8_t
@@ -568,11 +572,13 @@ get_index_from_order(PyDictObject *mp, Py_ssize_t i)
 void
 dump_dictkeys(PyDictKeysObject *dk)
 {
-    fprintf(stderr, "dict object %p\n", dk);
+    fprintf(stderr, "dictkeys object %p\n", dk);
+    fprintf(stderr, "  kind=%d\n", dk->dk_kind);
     fprintf(stderr, "  log2_size=%d\n", dk->dk_log2_size);
     fprintf(stderr, "  usable=%ld\n", dk->dk_usable);
     fprintf(stderr, "  nentries=%ld\n", dk->dk_nentries);
 
+    Py_ssize_t usable = USABLE_FRACTION(DK_SIZE(dk));
     if (dk->dk_log2_size == PyDict_LOG_MINSIZE) {
         const uint8_t *index = (const uint8_t*) dk->dk_indices;
         fprintf(stderr, "  indices: %x %x %x %x %x %x %x %x\n",
@@ -588,7 +594,6 @@ dump_dictkeys(PyDictKeysObject *dk)
     }
 
     PyDictKeyEntry *ep = DK_ENTRIES(dk);
-    Py_ssize_t usable = USABLE_FRACTION(DK_SIZE(dk));
     for (int i = 0; i<usable; i++, ep++) {
         fprintf(stderr, "  %d: key=%p hash=%lx\n", i, ep->me_key, ep->me_hash);
     }
@@ -599,7 +604,7 @@ int
 _PyDict_CheckConsistency(PyObject *op, int check_content)
 {
 #define CHECK(expr) \
-    do { if (!(expr)) { dump_dictkeys(keys); _PyObject_ASSERT_FAILED_MSG(op, Py_STRINGIFY(expr)); } } while (0)
+    do { if (!(expr)) { /* dump_dictkeys(keys); */ _PyObject_ASSERT_FAILED_MSG(op, Py_STRINGIFY(expr)); } } while (0)
 
     assert(op != NULL);
     //CHECK(PyDict_Check(op));
