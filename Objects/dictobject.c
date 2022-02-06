@@ -122,6 +122,16 @@ As a consequence of this, split keys have a maximum size of 16.
 #include "pycore_pystate.h"       // _PyThreadState_GET()
 #include "stringlib/eq.h"         // unicode_eq()
 
+
+#if defined(__SSE2__) ||  \
+    (defined(_MSC_VER) && (defined(_M_X64) || (defined(_M_IX86))))
+#define HAVE_SSE2 1
+#include <emmintrin.h>
+#include <mmintrin.h>
+#else
+#define HAVE_SSE2 0
+#endif
+
 /*[clinic input]
 class dict "PyDictObject *" "&PyDict_Type"
 [clinic start generated code]*/
@@ -560,8 +570,8 @@ dump_dictkeys(PyDictKeysObject *dk)
 {
     fprintf(stderr, "dict object %p\n", dk);
     fprintf(stderr, "  log2_size=%d\n", dk->dk_log2_size);
-    fprintf(stderr, "  usable=%d\n", dk->dk_usable);
-    fprintf(stderr, "  nentries=%d\n", dk->dk_nentries);
+    fprintf(stderr, "  usable=%ld\n", dk->dk_usable);
+    fprintf(stderr, "  nentries=%ld\n", dk->dk_nentries);
 
     if (dk->dk_log2_size == PyDict_LOG_MINSIZE) {
         const uint8_t *index = (const uint8_t*) dk->dk_indices;
@@ -580,7 +590,7 @@ dump_dictkeys(PyDictKeysObject *dk)
     PyDictKeyEntry *ep = DK_ENTRIES(dk);
     Py_ssize_t usable = USABLE_FRACTION(DK_SIZE(dk));
     for (int i = 0; i<usable; i++, ep++) {
-        fprintf(stderr, "  %d: key=%p hash=%llx\n", i, ep->me_key, ep->me_hash);
+        fprintf(stderr, "  %d: key=%p hash=%lx\n", i, ep->me_key, ep->me_hash);
     }
     fprintf(stderr, "\n");
 }
@@ -919,24 +929,36 @@ static Py_ssize_t
 dictkeys_stringlookup_vector(PyDictKeysObject* dk, PyObject *key, Py_hash_t hash)
 {
     assert(DK_ISVECTOR(dk));
-    const uint64_t indices = *(const uint64_t*)(dk->dk_indices);
-    uint64_t found = hasvalue(indices, (uint8_t)(hash & 0x7f));
     PyDictKeyEntry *ep0 = DK_ENTRIES_MIN(dk);
+    const uint64_t indices = *(const uint64_t*)(dk->dk_indices);
+
+#if HAVE_SSE2
+    uint64_t found = _mm_movemask_pi8(
+                _mm_cmpeq_pi8(_mm_set1_pi8(hash & 0x7f), _m_from_int64((int64_t)indices)));
+#else
+    uint64_t found = hasvalue(indices, (uint8_t)(hash & 0x7f));
+#endif
 
     while (found) {
         // 80 byte means found. LSB first.
         // Example: 00 00 00 80 00 00 80 00 00 -> 2, 5
         int pos = CountTrailingZeroesNonzero64(found);
+#if !HAVE_SSE2
         assert((pos+1) % 8 == 0);
         // 7 >> 3 = 0
         // (8+7) >> 3 = 1
         // (16+7) >> 3 = 2
         // ...
         pos >>= 3;
+#endif
 
         PyDictKeyEntry *ep = &ep0[pos];
         if (ep->me_key == key ||
-                (ep->me_hash == hash && unicode_eq(ep->me_key, key))) {
+                (ep->me_hash == hash
+#if !HAVE_SSE2  /* hasvalue() has rare false positive. */
+                 && ep->me_key != NULL
+#endif
+                 && unicode_eq(ep->me_key, key))) {
             return pos;
         }
 
@@ -1056,27 +1078,37 @@ start:
     PyDictKeyEntry *ep0;
 
     if (DK_ISVECTOR(dk)) {
+        ep0 = DK_ENTRIES_MIN(dk);
         // Use vector instead of hash table.
         const uint64_t indices = *(const uint64_t*)(dk->dk_indices);
-        // found: 80 byte means found. LSB first.
-        // Example: 00 00 00 80 00 00 80 00 00 means 2, 5
+
+#if HAVE_SSE2
+        uint64_t found = _mm_movemask_pi8(
+                    _mm_cmpeq_pi8(_mm_set1_pi8(hash & 0x7f), _m_from_int64((int64_t)indices)));
+#else
         uint64_t found = hasvalue(indices, (uint8_t)(hash & 0x7f));
-        ep0 = DK_ENTRIES_MIN(dk);
+#endif
 
         while (found) {
             ix = CountTrailingZeroesNonzero64(found);
+#if !HAVE_SSE2
             assert((ix+1) % 8 == 0);
             // 7 >> 3 = 0
             // (8+7) >> 3 = 1
             // (16+7) >> 3 = 2
             // ...
             ix >>= 3;
+#endif
 
             PyDictKeyEntry *ep = &ep0[ix];
             if (ep->me_key == key) {
                 goto found;
             }
-            if (ep->me_hash == hash) {
+            if (ep->me_hash == hash
+#if !HAVE_SSE2  /* hasvalue() has rare false positive. */
+                    && ep->me_key != NULL
+#endif
+                    ) {
                 PyObject *startkey = ep->me_key;
                 Py_INCREF(startkey);
                 int cmp = PyObject_RichCompareBool(startkey, key, Py_EQ);
