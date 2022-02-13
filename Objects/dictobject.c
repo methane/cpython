@@ -520,6 +520,10 @@ calculate_log2_keysize(Py_ssize_t minsize)
 static inline uint8_t
 estimate_log2_keysize(Py_ssize_t n)
 {
+    if (n <= 8) return 3;
+#if HAVE_SSE2
+    if (n <= 16) return 4;
+#endif
     return calculate_log2_keysize((n*3 + 1) / 2);
 }
 
