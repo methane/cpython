@@ -250,7 +250,13 @@ uint64_t _pydict_global_version = 0;
 
 #include "clinic/dictobject.c.h"
 
-#define DK_ISVECTOR(dk) ((dk)->dk_log2_size == PyDict_LOG_MINSIZE)
+#if HAVE_SSE2
+// Use vector16 when SSE2 is available
+#define DK_ISVECTOR(dk) ((dk)->dk_log2_size <= 4)
+#else
+// Use vector8 otherwise.
+#define DK_ISVECTOR(dk) ((dk)->dk_log2_size == 3)
+#endif
 
 #if PyDict_MAXFREELIST > 0
 static struct _Py_dict_state *
@@ -475,7 +481,11 @@ CountTrailingZeroesNonzero64(uint64_t x) {
  */
 static inline Py_ssize_t
 USABLE_FRACTION(Py_ssize_t n) {
+#if HAVE_SSE2
+    if (n <= 16) return n;
+#else
     if (n == 8) return 8;
+#endif
     return n * 2 / 3;
 }
 
@@ -531,7 +541,7 @@ estimate_log2_keysize(Py_ssize_t n)
  */
 static PyDictKeysObject empty_keys_struct = {
         1, /* dk_refcnt */
-        0, /* dk_log2_size */
+        3, /* dk_log2_size */
         DICT_KEYS_SPLIT, /* dk_kind */
         1, /* dk_version */
         0, /* dk_usable (immutable) */
@@ -569,7 +579,7 @@ get_index_from_order(PyDictObject *mp, Py_ssize_t i)
     return ((char *)mp->ma_values)[-3-i];
 }
 
-void
+static void
 dump_dictkeys(PyDictKeysObject *dk)
 {
     fprintf(stderr, "dictkeys object %p\n", dk);
@@ -578,12 +588,17 @@ dump_dictkeys(PyDictKeysObject *dk)
     fprintf(stderr, "  usable=%ld\n", dk->dk_usable);
     fprintf(stderr, "  nentries=%ld\n", dk->dk_nentries);
 
-    Py_ssize_t usable = USABLE_FRACTION(DK_SIZE(dk));
-    if (dk->dk_log2_size == PyDict_LOG_MINSIZE) {
+    if (DK_ISVECTOR(dk)) {
         const uint8_t *index = (const uint8_t*) dk->dk_indices;
-        fprintf(stderr, "  indices: %x %x %x %x %x %x %x %x\n",
+        fprintf(stderr, "  indices: %2x %2x %2x %2x %2x %2x %2x %2x\n",
                 index[0], index[1], index[2], index[3],
                 index[4], index[5], index[6], index[7]);
+        if (dk->dk_log2_size == 16) {
+            index += 8;
+            fprintf(stderr, "           %2x %2x %2x %2x %2x %2x %2x %2x\n",
+                    index[0], index[1], index[2], index[3],
+                    index[4], index[5], index[6], index[7]);
+        }
     }
     else {
         fprintf(stderr, "  indices:\n");
@@ -594,7 +609,7 @@ dump_dictkeys(PyDictKeysObject *dk)
     }
 
     PyDictKeyEntry *ep = DK_ENTRIES(dk);
-    for (int i = 0; i<usable; i++, ep++) {
+    for (int i = 0; i < dk->dk_nentries; i++, ep++) {
         fprintf(stderr, "  %d: key=%p hash=%lx\n", i, ep->me_key, ep->me_hash);
     }
     fprintf(stderr, "\n");
@@ -604,10 +619,9 @@ int
 _PyDict_CheckConsistency(PyObject *op, int check_content)
 {
 #define CHECK(expr) \
-    do { if (!(expr)) { /* dump_dictkeys(keys); */ _PyObject_ASSERT_FAILED_MSG(op, Py_STRINGIFY(expr)); } } while (0)
+    do { if (!(expr)) { dump_dictkeys(keys); _PyObject_ASSERT_FAILED_MSG(op, Py_STRINGIFY(expr)); } } while (0)
 
     assert(op != NULL);
-    //CHECK(PyDict_Check(op));
     PyDictObject *mp = (PyDictObject *)op;
 
     PyDictKeysObject *keys = mp->ma_keys;
@@ -938,8 +952,11 @@ dictkeys_stringlookup_vector(PyDictKeysObject* dk, PyObject *key, Py_hash_t hash
     const uint64_t indices = *(const uint64_t*)(dk->dk_indices);
 
 #if HAVE_SSE2
-    uint64_t found = _mm_movemask_pi8(
-                _mm_cmpeq_pi8(_mm_set1_pi8(hash & 0x7f), _m_from_int64((int64_t)indices)));
+    // vector16 is supported only with SSE2
+    uint64_t hi = dk->dk_log2_size == 3 ? -1ULL : ((const uint64_t*)(dk->dk_indices))[1];
+    uint64_t found = _mm_movemask_epi8(
+            _mm_cmpeq_epi8(_mm_set1_epi8(hash & 0x7f), _mm_set_epi64x(hi, indices)));
+    //fprintf(stderr, "string hi=%llx lo=%llx hash=%x found=%lx\n", hi, indices, (int)hash&0x7f, found);
 #else
     uint64_t found = hasvalue(indices, (uint8_t)(hash & 0x7f));
 #endif
@@ -1088,8 +1105,10 @@ start:
         const uint64_t indices = *(const uint64_t*)(dk->dk_indices);
 
 #if HAVE_SSE2
-        uint64_t found = _mm_movemask_pi8(
-                    _mm_cmpeq_pi8(_mm_set1_pi8(hash & 0x7f), _m_from_int64((int64_t)indices)));
+        uint64_t hi = dk->dk_log2_size == 3 ? -1ULL : ((const uint64_t*)(dk->dk_indices))[1];
+        uint64_t found = _mm_movemask_epi8(
+                _mm_cmpeq_epi8(_mm_set1_epi8(hash & 0x7f), _mm_set_epi64x(hi, indices)));
+        //fprintf(stderr, "general log2=%d hi=%llx lo=%llx hash=%x found=%lx\n", dk->dk_log2_size, hi, indices, (int)hash&0x7f, found);
 #else
         uint64_t found = hasvalue(indices, (uint8_t)(hash & 0x7f));
 #endif
@@ -1123,6 +1142,8 @@ start:
                     return DKIX_ERROR;
                 }
                 if (dk == mp->ma_keys && ep->me_key == startkey) {
+                    assert(ep->me_value->ob_type != NULL);
+                    assert(ep->me_value->ob_type->tp_name != NULL);
                     if (cmp > 0) {
                         goto found;
                     }
