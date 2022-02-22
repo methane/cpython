@@ -192,9 +192,22 @@ CountTrailingZeroesNonzero64(uint64_t x) {
 #define CTRL_DUMMY (0xFF) // -1
 
 #if HAVE_SSE2
+#ifdef _MSC_VER
+__inline __m64
+_mm_set_pi64x (const __int64 i) {
+    union {
+        __int64 i;
+        __m64 v;
+    } u;
+
+    u.i = i;
+    return u.v;
+}
+#endif
+
 static inline uint64_t
 match_byte(uint64_t x, uint8_t n) {
-    return _mm_movemask_pi8(_mm_cmpeq_pi8(_mm_set1_pi8(n), (__m64)x));
+    return _mm_movemask_pi8(_mm_cmpeq_pi8(_mm_set1_pi8(n), _mm_set_pi64x(x)));
 }
 
 static inline uint64_t
@@ -205,7 +218,7 @@ match_empty(uint64_t x) {
 static inline uint64_t
 match_empty_or_dummy(uint64_t x) {
     // A byte is EMPTY or DELETED iff the high bit is set
-    return _mm_movemask_pi8((__m64)x);
+    return _mm_movemask_pi8(_mm_set_pi64x(x));
 }
 
 static inline int
