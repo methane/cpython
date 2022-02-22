@@ -188,8 +188,8 @@ CountTrailingZeroesNonzero64(uint64_t x) {
 }
 
 // These values are same to hashbrown.
-#define CTRL_EMPTY (0x80) // -128
-#define CTRL_DUMMY (0xFF) // -1
+#define CTRL_EMPTY (-128) // 0x80
+#define CTRL_DUMMY (-1)   // 0xFF
 
 #if HAVE_SSE2
 #ifdef _MSC_VER
