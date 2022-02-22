@@ -188,13 +188,13 @@ CountTrailingZeroesNonzero64(uint64_t x) {
 }
 
 // These values are same to hashbrown.
-static const char CTRL_EMPTY = 0x80; // -128
-static const char CTRL_DUMMY = 0xFF; // -1
+#define CTRL_EMPTY (0x80) // -128
+#define CTRL_DUMMY (0xFF) // -1
 
 #if HAVE_SSE2
 static inline uint64_t
 match_byte(uint64_t x, uint8_t n) {
-    return _mm_movemask_pi8(_mm_cmpeq_pi8(_mm_set1_pi8(n), _m_from_int64((int64_t)x)));
+    return _mm_movemask_pi8(_mm_cmpeq_pi8(_mm_set1_pi8(n), (__m64)x));
 }
 
 static inline uint64_t
@@ -205,7 +205,7 @@ match_empty(uint64_t x) {
 static inline uint64_t
 match_empty_or_dummy(uint64_t x) {
     // A byte is EMPTY or DELETED iff the high bit is set
-    return _mm_movemask_pi8(_m_from_int64((int64_t)x));
+    return _mm_movemask_pi8((__m64)x);
 }
 
 static inline int
@@ -560,10 +560,10 @@ ctrl_get_index(const group_control *g, uint8_t log2size, int pos)
         return ((uint16_t*)(g+1))[pos];
     }
     else if (log2size <= 32-3) {
-        return ((uint32_t*)(g+1))[pos];
+        return (Py_ssize_t)((uint32_t*)(g+1))[pos];
     }
     else {
-        return ((uint64_t*)(g+1))[pos];
+        return (Py_ssize_t)((uint64_t*)(g+1))[pos];
     }
 }
 
@@ -916,7 +916,7 @@ dictkeys_stringlookup(PyDictKeysObject* dk, PyObject *key, Py_hash_t hash)
             int pos = bitmask_getpos(found);  \
             /* match_byte() has rare false positive. */  \
             if (/* g->control.c[pos] == h2 */ 1) {  \
-                Py_ssize_t ix = g->index[pos];  \
+                Py_ssize_t ix = (Py_ssize_t)g->index[pos];  \
                 PyDictKeyEntry *ep = &ep0[ix];  \
                 if (ep->me_key == key ||  \
                     (ep->me_hash == hash  \
@@ -932,21 +932,24 @@ dictkeys_stringlookup(PyDictKeysObject* dk, PyObject *key, Py_hash_t hash)
     }
 
     if (dk->dk_log2_size <= 8-3) {
-    PyDictKeyEntry *ep0 = DK_ENTRIES(dk);
+        PyDictKeyEntry *ep0 = DK_ENTRIES(dk);
         LOOP(group8);
     }
     else if (dk->dk_log2_size <= 16-3) {
-    PyDictKeyEntry *ep0 = DK_ENTRIES(dk);
+        PyDictKeyEntry *ep0 = DK_ENTRIES(dk);
         LOOP(group16);
     }
-    else if (dk->dk_log2_size <= 32-3) {
-    PyDictKeyEntry *ep0 = DK_ENTRIES(dk);
-        LOOP(group32);
-    }
-    else {
-    PyDictKeyEntry *ep0 = DK_ENTRIES(dk);
+#if SIZEOF_VOID_P > 4
+    else if (dk->dk_log2_size > 32-3) {
+        PyDictKeyEntry *ep0 = DK_ENTRIES(dk);
         LOOP(group64);
     }
+#endif
+    else {
+        PyDictKeyEntry *ep0 = DK_ENTRIES(dk);
+        LOOP(group32);
+    }
+
 #undef LOOP
 
     Py_UNREACHABLE();
