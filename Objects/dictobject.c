@@ -570,6 +570,7 @@ ctrl_get_index(const group_control *g, uint8_t log2size, int pos)
 static void
 dump_dictkeys(PyDictKeysObject *dk)
 {
+#ifdef DEBUG_PYDICT
     fprintf(stderr, "dictkeys object %p\n", dk);
     fprintf(stderr, "  kind=%d\n", dk->dk_kind);
     fprintf(stderr, "  log2_size=%d\n", dk->dk_log2_size+3);
@@ -596,6 +597,7 @@ dump_dictkeys(PyDictKeysObject *dk)
         fprintf(stderr, "  %d: key=%p h1=%x h2=%02x hash=%lx\n", i, ep->me_key, h1, h2, ep->me_hash);
     }
     fprintf(stderr, "\n");
+#endif
 }
 
 int
@@ -3509,11 +3511,13 @@ PyDoc_STRVAR(items__doc__,
 PyDoc_STRVAR(values__doc__,
              "D.values() -> an object providing a view on D's values");
 
+#ifdef DEBUG_PYDICT
 static PyObject *dict_dump(PyDictObject *mp, PyObject *notused)
 {
     dump_dictkeys(mp->ma_keys);
     Py_RETURN_NONE;
 }
+#endif
 
 static PyMethodDef mapp_methods[] = {
     DICT___CONTAINS___METHODDEF
@@ -3540,7 +3544,9 @@ static PyMethodDef mapp_methods[] = {
      copy__doc__},
     DICT___REVERSED___METHODDEF
     {"__class_getitem__", Py_GenericAlias, METH_O|METH_CLASS, PyDoc_STR("See PEP 585")},
+#ifdef DEBUG_PYDICT
     {"_dump", (PyCFunction)dict_dump, METH_NOARGS, PyDoc_STR("internal use only")},
+#endif
     {NULL,              NULL}   /* sentinel */
 };
 
