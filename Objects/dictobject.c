@@ -801,6 +801,17 @@ static Py_ssize_t
 dictkeys_stringlookup(PyDictKeysObject* dk, PyObject *key, Py_hash_t hash)
 {
     PyDictKeyEntry *ep0 = DK_ENTRIES(dk);
+
+    if (dk->dk_log2_size == PyDict_LOG_MINSIZE) {
+        for (int i = 0; i < dk->dk_nentries; i++, ep0++) {
+            if (ep0->me_key == key ||
+                    (ep0->me_key != NULL && ep0->me_hash == hash && unicode_eq(ep0->me_key, key))) {
+                return i;
+            }
+        }
+        return DKIX_EMPTY;
+    }
+
     size_t mask = DK_MASK(dk);
     size_t perturb = hash;
     size_t i = (size_t)hash & mask;
