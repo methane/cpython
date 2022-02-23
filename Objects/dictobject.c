@@ -132,6 +132,135 @@ As a consequence of this, split keys have a maximum size of 16.
 #define HAVE_SSE2 0
 #endif
 
+/**** bit utilities. This will be moved to pycore_bitutils.h ****/
+
+/* CountTrailingZeroesNonzero64
+
+This function is copied from:
+https://github.com/abseil/abseil-cpp/blob/1ae9b71c474628d60eb251a3f62967fe64151bb2/absl/numeric/internal/bits.h#L273
+
+License of this function:
+// Copyright 2020 The Abseil Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     https://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+Modifications by Inada Naoki:
+
+* Port to C, remove some macros.
+
+*/
+static inline int
+CountTrailingZeroesNonzero64(uint64_t x) {
+#if (defined(__clang__) || defined(__GNUC__))
+    return __builtin_ctzll(x);
+#elif defined(_MSC_VER) && !defined(__clang__) && \
+    (defined(_M_X64) || defined(_M_ARM64))
+    unsigned long result = 0;
+    _BitScanForward64(&result, x);
+    return result;
+#elif defined(_MSC_VER) && !defined(__clang__)
+    unsigned long result = 0;
+    if ((uint32_t)(x) == 0) {
+        _BitScanForward(&result, (uint32_t)(x >> 32));
+        return result + 32;
+    }
+    _BitScanForward(&result, (unsigned long)(x));
+    return result;
+#else
+    int c = 63;
+    x &= ~x + 1;
+    if (x & 0x00000000FFFFFFFF) c -= 32;
+    if (x & 0x0000FFFF0000FFFF) c -= 16;
+    if (x & 0x00FF00FF00FF00FF) c -= 8;
+    if (x & 0x0F0F0F0F0F0F0F0F) c -= 4;
+    if (x & 0x3333333333333333) c -= 2;
+    if (x & 0x5555555555555555) c -= 1;
+    return c;
+#endif
+}
+
+#if HAVE_SSE2
+
+#ifdef _MSC_VER
+static __inline __m64
+_mm_set_pi64x (const __int64 i) {
+    union {
+        __int64 i;
+        __m64 v;
+    } u;
+
+    u.i = i;
+    return u.v;
+}
+#endif
+
+static inline uint64_t
+match_byte(uint64_t x, uint8_t n) {
+    return _mm_movemask_pi8(_mm_cmpeq_pi8(_mm_set1_pi8(n), _mm_set_pi64x(x)));
+}
+
+static inline uint64_t
+match_byte16(uint64_t hi, uint64_t lo, char c) {
+    __m128i control = _mm_set_epi64x(hi, lo);
+    return _mm_movemask_epi8(_mm_cmpeq_epi8(_mm_set1_epi8(c), control));
+}
+
+static inline int
+bitmask_getpos(uint64_t mask) {
+    return CountTrailingZeroesNonzero64(mask);
+}
+
+#else /* HAVE_SSE2 */
+
+// 8x8 simd-like functions.
+// https://graphics.stanford.edu/~seander/bithacks.html
+static const uint64_t lsb = 0x0101010101010101ull;
+static const uint64_t msb = 0x8080808080808080ull;
+
+// 0x00 -> 0x80, otherwise -> 0x00.
+// Caution: This function has false positive in limited case.
+static inline uint64_t
+haszero(uint64_t v) {
+    return (((v) - lsb) & ~(v) & msb);
+}
+
+// Find n in x. n should be 7bit value.
+static inline uint64_t
+match_byte(uint64_t x, uint8_t n) {
+    return haszero(x ^ (n*lsb));
+}
+
+static inline int
+bitmask_getpos(uint64_t mask) {
+    // 80 byte means found. LSB first.
+    // Example: 00 00 00 80 00 00 80 00 00 -> 2, 5
+    int pos = CountTrailingZeroesNonzero64(mask);
+
+    // Adjust position by >>3:
+    //   (0+7) >> 3 = 0
+    //   (8+7) >> 3 = 1
+    //   (16+7) >> 3 = 2
+    return pos >> 3;
+}
+
+#endif
+
+static inline void
+bitmask_next(uint64_t *found) {
+    // reset lowest 1bit
+    *found &= (*found - 1);
+}
+
 /*[clinic input]
 class dict "PyDictObject *" "&PyDict_Type"
 [clinic start generated code]*/
@@ -392,80 +521,6 @@ dictkeys_set_index(PyDictKeysObject *keys, Py_ssize_t i, Py_ssize_t ix)
         assert(ix <= 0x7fffffff);
         indices[i] = (int32_t)ix;
     }
-}
-
-// 8x8 simd-like functions.
-// https://graphics.stanford.edu/~seander/bithacks.html
-
-static const uint64_t lsb = 0x0101010101010101ull;
-static const uint64_t msb = 0x8080808080808080ull;
-
-// 0x00 -> 0x80, otherwise -> 0x00.
-// Caution: This function has false positive in limited case.
-static inline uint64_t
-haszero(uint64_t v) {
-    return (((v) - lsb) & ~(v) & msb);
-}
-
-// Find n in x. n should be 7bit value.
-static inline uint64_t
-hasvalue(uint64_t x, uint8_t n) {
-    return haszero(x ^ (n*lsb));
-}
-
-/* CountTrailingZeroesNonzero64
-
-This function is copied from:
-https://github.com/abseil/abseil-cpp/blob/1ae9b71c474628d60eb251a3f62967fe64151bb2/absl/numeric/internal/bits.h#L273
-
-License of this function:
-// Copyright 2020 The Abseil Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     https://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
-Modifications:
-
-* Port to C, remove some macros.
-
-*/
-static inline int
-CountTrailingZeroesNonzero64(uint64_t x) {
-#if (defined(__clang__) || defined(__GNUC__))
-    return __builtin_ctzll(x);
-#elif defined(_MSC_VER) && !defined(__clang__) && \
-    (defined(_M_X64) || defined(_M_ARM64))
-    unsigned long result = 0;
-    _BitScanForward64(&result, x);
-    return result;
-#elif defined(_MSC_VER) && !defined(__clang__)
-    unsigned long result = 0;
-    if ((uint32_t)(x) == 0) {
-        _BitScanForward(&result, (uint32_t)(x >> 32));
-        return result + 32;
-    }
-    _BitScanForward(&result, (unsigned long)(x));
-    return result;
-#else
-    int c = 63;
-    x &= ~x + 1;
-    if (x & 0x00000000FFFFFFFF) c -= 32;
-    if (x & 0x0000FFFF0000FFFF) c -= 16;
-    if (x & 0x00FF00FF00FF00FF) c -= 8;
-    if (x & 0x0F0F0F0F0F0F0F0F) c -= 4;
-    if (x & 0x3333333333333333) c -= 2;
-    if (x & 0x5555555555555555) c -= 1;
-    return c;
-#endif
 }
 
 /* USABLE_FRACTION is the maximum dictionary load.
@@ -953,43 +1008,32 @@ dictkeys_stringlookup_vector(PyDictKeysObject* dk, PyObject *key, Py_hash_t hash
 {
     assert(DK_ISVECTOR(dk));
     PyDictKeyEntry *ep0 = DK_ENTRIES_MIN(dk);
-    const uint64_t indices = *(const uint64_t*)(dk->dk_indices);
+    const uint64_t *indices = (const uint64_t*)(dk->dk_indices);
+    uint8_t h1 = (uint8_t)(hash & 0x7f);
+    uint64_t found;
 
 #if HAVE_SSE2
     // vector16 is supported only with SSE2
-    uint64_t hi = dk->dk_log2_size == 3 ? -1ULL : ((const uint64_t*)(dk->dk_indices))[1];
-    uint64_t found = _mm_movemask_epi8(
-            _mm_cmpeq_epi8(_mm_set1_epi8(hash & 0x7f), _mm_set_epi64x(hi, indices)));
-    //fprintf(stderr, "string hi=%llx lo=%llx hash=%x found=%lx\n", hi, indices, (int)hash&0x7f, found);
+    if (dk->dk_log2_size == 3) {
+        found = match_byte(indices[0], h1);
+    }
+    else {
+        found = match_byte16(indices[1], indices[0], h1);
+    }
 #else
-    uint64_t found = hasvalue(indices, (uint8_t)(hash & 0x7f));
+    found = match_byte(indices[0], h1);
 #endif
 
-    while (found) {
+    for (; found; bitmask_next(&found)) {
         // 80 byte means found. LSB first.
         // Example: 00 00 00 80 00 00 80 00 00 -> 2, 5
-        int pos = CountTrailingZeroesNonzero64(found);
-#if !HAVE_SSE2
-        assert((pos+1) % 8 == 0);
-        // 7 >> 3 = 0
-        // (8+7) >> 3 = 1
-        // (16+7) >> 3 = 2
-        // ...
-        pos >>= 3;
-#endif
+        int pos = bitmask_getpos(found);
 
         PyDictKeyEntry *ep = &ep0[pos];
         if (ep->me_key == key ||
-                (ep->me_hash == hash
-#if !HAVE_SSE2  /* hasvalue() has rare false positive. */
-                 && ep->me_key != NULL
-#endif
-                 && unicode_eq(ep->me_key, key))) {
+                (ep->me_hash == hash && unicode_eq(ep->me_key, key))) {
             return pos;
         }
-
-        // reset lowest 1 bit.
-        found &= (found - 1);
     }
     return DKIX_EMPTY;
 }
@@ -1106,37 +1150,30 @@ start:
     if (DK_ISVECTOR(dk)) {
         ep0 = DK_ENTRIES_MIN(dk);
         // Use vector instead of hash table.
-        const uint64_t indices = *(const uint64_t*)(dk->dk_indices);
+        const uint64_t *indices = (const uint64_t*)(dk->dk_indices);
+        uint8_t h1 = (uint8_t)(hash & 0x7f);
+        uint64_t found;
 
 #if HAVE_SSE2
-        uint64_t hi = dk->dk_log2_size == 3 ? -1ULL : ((const uint64_t*)(dk->dk_indices))[1];
-        uint64_t found = _mm_movemask_epi8(
-                _mm_cmpeq_epi8(_mm_set1_epi8(hash & 0x7f), _mm_set_epi64x(hi, indices)));
-        //fprintf(stderr, "general log2=%d hi=%llx lo=%llx hash=%x found=%lx\n", dk->dk_log2_size, hi, indices, (int)hash&0x7f, found);
+        // vector16 is supported only with SSE2
+        if (dk->dk_log2_size == 3) {
+            found = match_byte(indices[0], h1);
+        }
+        else {
+            found = match_byte16(indices[1], indices[0], h1);
+        }
 #else
-        uint64_t found = hasvalue(indices, (uint8_t)(hash & 0x7f));
+        found = match_byte(indices[0], h1);
 #endif
 
-        while (found) {
-            ix = CountTrailingZeroesNonzero64(found);
-#if !HAVE_SSE2
-            assert((ix+1) % 8 == 0);
-            // 7 >> 3 = 0
-            // (8+7) >> 3 = 1
-            // (16+7) >> 3 = 2
-            // ...
-            ix >>= 3;
-#endif
+        for (; found; bitmask_next(&found)) {
+            ix = bitmask_getpos(found);
 
             PyDictKeyEntry *ep = &ep0[ix];
             if (ep->me_key == key) {
                 goto found;
             }
-            if (ep->me_hash == hash
-#if !HAVE_SSE2  /* hasvalue() has rare false positive. */
-                    && ep->me_key != NULL
-#endif
-                    ) {
+            if (ep->me_hash == hash) {
                 PyObject *startkey = ep->me_key;
                 Py_INCREF(startkey);
                 int cmp = PyObject_RichCompareBool(startkey, key, Py_EQ);
@@ -1157,9 +1194,6 @@ start:
                     goto start;
                 }
             }
-
-            // reset lowest 1 bit.
-            found &= (found - 1);
         }
         *value_addr = NULL;
         return DKIX_EMPTY;
