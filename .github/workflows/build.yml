@@ -232,6 +232,10 @@ jobs:
         echo "PATH=/usr/lib/ccache:$PATH" >> $GITHUB_ENV
     - name: Configure ccache action
       uses: hendrikmuhs/ccache-action@v1.2
+    - name: Initialize CodeQL
+      uses: github/codeql-action/init@v2
+      with:
+        languages: c, python
     - name: Setup directory envs for out-of-tree builds
       run: |
         echo "CPYTHON_RO_SRCDIR=$(realpath -m ${GITHUB_WORKSPACE}/../cpython-ro-srcdir)" >> $GITHUB_ENV
@@ -252,6 +256,8 @@ jobs:
     - name: Remount sources writable for tests
       # some tests write to srcdir, lack of pyc files slows down testing
       run: sudo mount $CPYTHON_RO_SRCDIR -oremount,rw
+    - name: Perform CodeQL Analysis
+      uses: github/codeql-action/analyze@v2
     - name: Tests
       working-directory: ${{ env.CPYTHON_BUILDDIR }}
       run: xvfb-run make buildbottest TESTOPTS="-j4 -uall,-cpu"
