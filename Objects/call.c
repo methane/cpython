@@ -605,16 +605,14 @@ PyEval_CallFunction(PyObject *callable, const char *format, ...)
  */
 PyAPI_FUNC(PyObject *)  /* abi_only */
 _PyObject_CallFunction_SizeT(PyObject *callable, const char *format, ...)
-{
-    PyThreadState *tstate = _PyThreadState_GET();
-
-    va_list va;
-    va_start(va, format);
-    PyObject *result = _PyObject_CallFunctionVa(tstate, callable, format, va);
-    va_end(va);
-
-    return result;
-}
+#if defined(__GNUC__)
+__attribute__ ((alias("PyObject_CallFunction")));
+#elif defined(_MSC_VER)
+;
+#pragma comment(linker, "/alternatename:_PyObject_CallFunction_SizeT=PyObject_CallFunction")
+#else
+;
+#endif
 
 
 static PyObject*
