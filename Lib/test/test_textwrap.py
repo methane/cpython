@@ -10,7 +10,7 @@
 
 import unittest
 
-from textwrap import TextWrapper, wrap, fill, dedent, indent, shorten
+from textwrap import TextWrapper, wrap, fill, indent, shorten
 
 
 class BaseTestCase(unittest.TestCase):
@@ -760,6 +760,8 @@ some (including a hanging indent).'''
                       initial_indent="  * ", subsequent_indent="    ")
         self.check(result, expect)
 
+def dedent(text):
+    return text.dedent()
 
 # Despite the similar names, DedentTestCase is *not* the inverse
 # of IndentTestCase!

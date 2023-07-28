@@ -13484,6 +13484,12 @@ _PyUnicode_Dedent(PyObject *unicode)
     return res;
 }
 
+PyObject *
+unicode_dedent(PyObject *u, PyObject *Py_UNUSED(ignored))
+{
+    return _PyUnicode_Dedent(u);
+}
+
 static PyMethodDef unicode_methods[] = {
     UNICODE_ENCODE_METHODDEF
     UNICODE_REPLACE_METHODDEF
@@ -13534,6 +13540,7 @@ static PyMethodDef unicode_methods[] = {
     UNICODE___FORMAT___METHODDEF
     UNICODE_MAKETRANS_METHODDEF
     UNICODE_SIZEOF_METHODDEF
+    {"dedent", unicode_dedent, METH_NOARGS},
     {"__getnewargs__",  unicode_getnewargs, METH_NOARGS},
     {NULL, NULL}
 };
