@@ -970,14 +970,14 @@ class CmdLineTest(unittest.TestCase):
         rc, out, err = assert_python_ok('-c', code, PYTHONLEGACYWINDOWSFSENCODING='1')
         self.assertIn(expected.encode(), out)
 
-    @unittest.skipUnless(support.MS_WINDOWS, 'Test only applicable on Windows')
+    @unittest.skipUnless(type(sys.stderr.buffer.raw).__name__ == "_WindowsConsoleIO",
+                         "Test only applicable on Windows with console IO")
     def test_python_legacy_windows_stdio(self):
         def get_stderr_class(legacy_windows_stdio):
             code = 'import sys; print(type(sys.stderr.buffer.raw))'
             env = {'PYTHONLEGACYWINDOWSSTDIO': str(int(legacy_windows_stdio))}
             # use stderr=None as legacy_windows_stdio doesn't affect pipes
-            p = spawn_python('-c', code, env=env, stderr=None,
-                             creationflags=subprocess.CREATE_NEW_CONSOLE)
+            p = spawn_python('-c', code, env=env, stderr=None)
             out = kill_python(p).strip().decode('ascii', 'ignore')
             return out.removeprefix("<class '").removesuffix("'>")
 
