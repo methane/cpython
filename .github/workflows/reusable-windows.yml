@@ -1,6 +1,21 @@
 name: Reusable Windows
 
 on:
+  workflow_dispatch:
+    inputs:
+      arch:
+        description: CPU architecture
+        required: true
+        type: choice
+        options:
+          - x86
+          - x64
+          - arm64
+      free-threading:
+        description: Whether to compile CPython in free-threading mode
+        required: false
+        type: boolean
+        default: false
   workflow_call:
     inputs:
       arch:
