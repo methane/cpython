@@ -247,6 +247,88 @@ _PyPegen_decode_string(Parser *p, int raw, const char *s, size_t len, Token *t)
     return decode_unicode_with_escapes(p, s, len, t);
 }
 
+static PyObject*
+_PyPegen_dedent_string(Parser *p, int is_raw, const char *s, Py_ssize_t len, Token* token)
+{
+    Py_ssize_t lineno = token->lineno;
+
+    if (len == 0 || s[0] != '\n') {
+        RAISE_SYNTAX_ERROR_KNOWN_LOCATION(
+            token,
+            "d-string must start with a newline at line %d",
+            lineno
+        );
+        return NULL;
+    }
+
+    // find the last newline and check all chars after it are spaces or tabs.
+    const char *prefix = s + len;
+    while (prefix[-1] != '\n') {
+        assert(prefix > s); // we know at least the first char is a newline.
+        prefix--;
+        if (*prefix != ' ' && *prefix != '\t') {
+            RAISE_ERROR_KNOWN_LOCATION(p, PyExc_SyntaxError,
+                // specify the location of just before closing triple quotes.
+                token->end_lineno, token->end_col_offset - 3, token->end_lineno, token->end_col_offset-2,
+                "d-string must end with an indent line");
+            return NULL;
+        }
+    }
+
+    // Now, prefix is both the dedent indentation and the end of the d-string body.
+    Py_ssize_t prefix_len = s + len - prefix;
+    len = prefix - s;
+
+    PyUnicodeWriter *w = PyUnicodeWriter_Create(len);
+    if (w == NULL) {
+        return NULL;
+    }
+    const char *line_start = s + 1;  // skip the first newline
+
+    while (line_start < prefix) {
+        lineno++;
+
+        Py_ssize_t i;
+        for (i = 0; i < prefix_len && line_start + i < prefix; i++) {
+            if (line_start[i] != prefix[i]) {
+                if (line_start[i] == '\n') {
+                    break; // empty line
+                }
+                PyUnicodeWriter_Discard(w);
+                RAISE_ERROR_KNOWN_LOCATION(p, PyExc_SyntaxError, lineno, i, lineno, i+1,
+                    "d-string line missing valid indentation");
+                return NULL;
+            }
+        }
+
+        if (line_start[i] == '\n') {  // found an empty line with newline.
+            if (PyUnicodeWriter_WriteChar(w, '\n') < 0) {
+                PyUnicodeWriter_Discard(w);
+                return NULL;
+            }
+            line_start += i+1;
+            continue;
+        }
+
+        // found a indented line. let's dedent it.
+        line_start += i;
+        const char *line_end = memchr(line_start, '\n', prefix - line_start);
+        assert(line_end != NULL);  // we know there is at least one newline before prefix.
+        line_end++; // include the newline in the line
+        PyObject *line = _PyPegen_decode_string(
+                p, (is_raw || memchr(line_start, '\\', line_end - line_start) == NULL),
+                line_start, line_end - line_start, token);
+        if (line == NULL || PyUnicodeWriter_WriteStr(w, line) < 0) {
+            Py_XDECREF(line);
+            PyUnicodeWriter_Discard(w);
+            return NULL;
+        }
+        Py_DECREF(line);
+        line_start = line_end;
+    }
+    return PyUnicodeWriter_Finish(w);
+}
+
 /* s must include the bracketing quote characters, and r, b &/or f prefixes
     (if any), and embedded escape sequences (if any). (f-strings are handled by the parser)
    _PyPegen_parse_string parses it, and returns the decoded Python string object. */
@@ -262,6 +344,7 @@ _PyPegen_parse_string(Parser *p, Token *t)
     int quote = Py_CHARMASK(*s);
     int bytesmode = 0;
     int rawmode = 0;
+    int dedentmode = 0;
 
     if (Py_ISALPHA(quote)) {
         while (!bytesmode || !rawmode) {
@@ -275,6 +358,10 @@ _PyPegen_parse_string(Parser *p, Token *t)
             else if (quote == 'r' || quote == 'R') {
                 quote = (unsigned char)*++s;
                 rawmode = 1;
+            }
+            else if (quote == 'd' || quote == 'D') {
+                quote =(unsigned char)*++s;
+                dedentmode = 1;
             }
             else {
                 break;
@@ -315,10 +402,17 @@ _PyPegen_parse_string(Parser *p, Token *t)
             return NULL;
         }
     }
+    else if (dedentmode) {
+        RAISE_SYNTAX_ERROR_KNOWN_LOCATION(
+            t,
+            "d-string must be triple-quoted");
+        return NULL;
+    }
 
     /* Avoid invoking escape decoding routines if possible. */
     rawmode = rawmode || strchr(s, '\\') == NULL;
     if (bytesmode) {
+        assert(!dedentmode);
         /* Disallow non-ASCII characters. */
         const char *ch;
         for (ch = s; *ch; ch++) {
@@ -335,5 +429,9 @@ _PyPegen_parse_string(Parser *p, Token *t)
         }
         return decode_bytes_with_escapes(p, s, (Py_ssize_t)len, t);
     }
+    if (dedentmode) {
+        return _PyPegen_dedent_string(p, rawmode, s, len, t);
+    }
     return _PyPegen_decode_string(p, rawmode, s, len, t);
 }
+
