@@ -1311,8 +1311,8 @@ unicodewriter_write_line(Parser *p, PyUnicodeWriter *w, const char *line_start, 
 }
 
 static PyObject*
-_PyPegen_dedent_string_part(Parser *p, const char *s, size_t len, int indent_char, Py_ssize_t dedent_count,
-                            int is_raw, int is_first, expr_ty constant, Token* token)
+_PyPegen_dedent_string_part(Parser *p, const char *s, size_t len, const char *indent, Py_ssize_t indent_len,
+                            int is_first, int is_raw, expr_ty constant, Token* token)
 {
     Py_ssize_t lineno = constant->lineno;
     const char *line_start = s;
@@ -1350,7 +1350,7 @@ _PyPegen_dedent_string_part(Parser *p, const char *s, size_t len, int indent_cha
         lineno++;
 
         Py_ssize_t i = 0;
-        while (line_start + i < s_end && i < dedent_count && line_start[i] == indent_char) {
+        while (line_start + i < s_end && i < indent_len && line_start[i] == indent[i]) {
             i++;
         }
 
@@ -1365,8 +1365,8 @@ _PyPegen_dedent_string_part(Parser *p, const char *s, size_t len, int indent_cha
             line_start += i+1;
             continue;
         }
-        if (i < dedent_count) {  // found an invalid indent.
-            assert(line_start[i] != indent_char);
+        if (i < indent_len) {  // found an invalid indent.
+            assert(line_start[i] != indent[i]);
             PyUnicodeWriter_Discard(w);
             RAISE_ERROR_KNOWN_LOCATION(p, PyExc_SyntaxError, lineno, i, lineno, i+1,
                 "d-string line missing valid indentation");
@@ -1392,7 +1392,10 @@ _PyPegen_dedent_string_part(Parser *p, const char *s, size_t len, int indent_cha
 }
 
 static expr_ty
-_PyPegen_decode_fstring_part(Parser* p, int is_first, int is_raw, int indent_char, Py_ssize_t dedent_count, expr_ty constant, Token* token) {
+_PyPegen_decode_fstring_part(Parser* p, int is_first, int is_raw,
+                             const char *indent, Py_ssize_t indent_len,
+                             expr_ty constant, Token* token)
+{
     assert(PyUnicode_CheckExact(constant->v.Constant.value));
 
     const char* bstr = PyUnicode_AsUTF8(constant->v.Constant.value);
@@ -1402,9 +1405,9 @@ _PyPegen_decode_fstring_part(Parser* p, int is_first, int is_raw, int indent_cha
     is_raw = is_raw || strchr(bstr, '\\') == NULL;
 
     PyObject *str = NULL;
-    if (dedent_count > 0) {
-        str = _PyPegen_dedent_string_part(p, bstr, strlen(bstr), indent_char, dedent_count,
-                                        is_raw, is_first, constant, token);
+    if (indent_len > 0) {
+        str = _PyPegen_dedent_string_part(p, bstr, strlen(bstr), indent, indent_len,
+                                          is_first, is_raw, constant, token);
     }
     else {
         str = _PyPegen_decode_string(p, is_raw, bstr, strlen(bstr), token);
@@ -1422,6 +1425,14 @@ _PyPegen_decode_fstring_part(Parser* p, int is_first, int is_raw, int indent_cha
                            constant->end_lineno, constant->end_col_offset,
                            p->arena);
 }
+
+/* defined in unicodeobject.c */
+extern Py_ssize_t
+_Py_search_longest_common_leading_whitespace(
+    const char *const src,
+    const char *const end,
+    const char **output
+    );
 
 static asdl_expr_seq *
 _get_resized_exprs(Parser *p, Token *a, asdl_expr_seq *raw_expressions, Token *b, enum string_kind_t string_kind)
@@ -1441,13 +1452,14 @@ _get_resized_exprs(Parser *p, Token *a, asdl_expr_seq *raw_expressions, Token *b
     }
     int is_raw = strpbrk(quote_str, "rR") != NULL;
     int is_dedent = strpbrk(quote_str, "dD") != NULL;
-    int indent_char = 0;
-    Py_ssize_t indent_count = 0;
 
     asdl_expr_seq *seq = _Py_asdl_expr_seq_new(total_items, p->arena);
     if (seq == NULL) {
         return NULL;
     }
+
+    const char *common_indent_start = NULL;
+    Py_ssize_t common_indent_len = 0;
 
     if (is_dedent) {
         expr_ty first_item = asdl_seq_GET(raw_expressions, 0);
@@ -1460,52 +1472,52 @@ _get_resized_exprs(Parser *p, Token *a, asdl_expr_seq *raw_expressions, Token *b
             return NULL;
         }
 
-        expr_ty last_item = asdl_seq_GET(raw_expressions, n_items - 1);
-        if (last_item->kind != Constant_kind) {
-            RAISE_SYNTAX_ERROR_KNOWN_LOCATION(
-                last_item,
-                "d-string must end with an indent line"
-            );
+        // Instead of calculating common indent from all parts,
+        // build temporary string and calculate common indent from it.
+        PyBytesWriter *w = PyBytesWriter_Create(0);
+        if (w == NULL) {
             return NULL;
         }
 
-        Py_ssize_t blen;
-        const char *bstr = PyUnicode_AsUTF8AndSize(last_item->v.Constant.value, &blen);
-        if (bstr == NULL) {
-            return NULL;
-        }
+        for (Py_ssize_t i = 0; i < n_items; i++) {
+            expr_ty item = asdl_seq_GET(raw_expressions, i);
 
-        // memrchr is GNU extension; use manual loop for portability.
-        const char *lastline = bstr + blen;
-        while (bstr < lastline) {
-            if (lastline[-1] == '\n') {
-                break;
-            }
-            lastline--;
-            if (*lastline != ' ' && *lastline != '\t') {
-                RAISE_SYNTAX_ERROR_KNOWN_LOCATION(
-                    last_item,
-                    "d-string must end with an indent line"
-                );
-                return NULL;
-            }
-        }
-
-        // checks indent of the last line.
-        indent_count = bstr + blen - lastline;
-        if (indent_count > 0) {
-            indent_char = lastline[0];
-
-            for (Py_ssize_t i = 1; i < indent_count; i++) {
-                if (lastline[i] != indent_char) {
-                    RAISE_ERROR_KNOWN_LOCATION(
-                        p, PyExc_TabError, last_item->end_lineno, i, last_item->end_lineno, i+1,
-                        "inconsistent use of tabs and spaces in indentation"
-                    );
+            if (item->kind == JoinedStr_kind) {
+                // Write a placeholder.
+                if (PyBytesWriter_WriteBytes(w, "X", 1) < 0) {
+                    PyBytesWriter_Discard(w);
                     return NULL;
                 }
+                continue;
+            }
+            if (item->kind == Constant_kind) {
+                Py_ssize_t blen;
+                const char *bstr = PyUnicode_AsUTF8AndSize(item->v.Constant.value, &blen);
+                if (bstr == NULL || PyBytesWriter_WriteBytes(w, bstr, blen) < 0) {
+                    PyBytesWriter_Discard(w);
+                    return NULL;
+                }
+                continue;
             }
         }
+        // Add a terminator to include the last line before the ending quote
+        if (PyBytesWriter_WriteBytes(w, "X", 1) < 0) {
+            PyBytesWriter_Discard(w);
+            return NULL;
+        }
+
+        // TODO: instead of creating temp_bytes, we could search
+        // common index from each part directly. But this need reimplementation
+        // of _Py_search_longest_common_leading_whitespace.
+        PyObject *temp_bytes = PyBytesWriter_Finish(w);
+        if (temp_bytes == NULL) {
+            return NULL;
+        }
+        _PyArena_AddPyObject(p->arena, temp_bytes);
+        const char *temp_str = PyBytes_AsString(temp_bytes);
+        const char *temp_end = temp_str + PyBytes_GET_SIZE(temp_bytes);
+        common_indent_len = _Py_search_longest_common_leading_whitespace(
+            temp_str, temp_end, &common_indent_start);
     }
 
     Py_ssize_t index = 0;
@@ -1539,7 +1551,7 @@ _get_resized_exprs(Parser *p, Token *a, asdl_expr_seq *raw_expressions, Token *b
         }
 
         if (item->kind == Constant_kind) {
-            item = _PyPegen_decode_fstring_part(p, i == 0, is_raw, indent_char, indent_count, item, b);
+            item = _PyPegen_decode_fstring_part(p, i == 0, is_raw, common_indent_start, common_indent_len, item, b);
             if (item == NULL) {
                 return NULL;
             }

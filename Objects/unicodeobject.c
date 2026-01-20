@@ -13480,8 +13480,8 @@ of all lines in the [src, end).
 It returns the length of the common leading whitespace and sets `output` to
 point to the beginning of the common leading whitespace if length > 0.
 */
-static Py_ssize_t
-search_longest_common_leading_whitespace(
+Py_ssize_t
+_Py_search_longest_common_leading_whitespace(
     const char *const src,
     const char *const end,
     const char **output)
@@ -13576,7 +13576,7 @@ _PyUnicode_Dedent(PyObject *unicode)
     // [whitespace_start, whitespace_start + whitespace_len)
     // describes the current longest common leading whitespace
     const char *whitespace_start = NULL;
-    Py_ssize_t whitespace_len = search_longest_common_leading_whitespace(
+    Py_ssize_t whitespace_len = _Py_search_longest_common_leading_whitespace(
         src, end, &whitespace_start);
 
     if (whitespace_len == 0) {

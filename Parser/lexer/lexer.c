@@ -490,9 +490,6 @@ maybe_raise_syntax_error_for_string_prefixes(struct tok_state *tok,
     if (saw_b && saw_t) {
         RETURN_SYNTAX_ERROR("b", "t");
     }
-    if (saw_b && saw_d) {
-        RETURN_SYNTAX_ERROR("b", "d");
-    }
 
     if (saw_f && saw_t) {
         RETURN_SYNTAX_ERROR("f", "t");
