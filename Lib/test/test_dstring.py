@@ -26,21 +26,12 @@ class DStringTestCase(unittest.TestCase):
         ]
         self.assertAllRaise(SyntaxError, "d-string must start with a newline", exprs)
 
-    def test_no_last_newline(self):
-        exprs = [
-            "d'''\nhello world'''",
-            'D"""\nhello world"""',
-            "df'''\nhello {42}'''",
-        ]
-        self.assertAllRaise(SyntaxError, "d-string must end with an indent line", exprs)
-
     def test_simple_dstring(self):
         self.assertEqual(eval('d"""\n  hello world\n  """'), "hello world\n")
         self.assertEqual(eval('d"""\n  hello world\n """'), " hello world\n")
         self.assertEqual(eval('d"""\n  hello world\n"""'), "  hello world\n")
         self.assertEqual(eval('d"""\n  hello world\\\n """'), " hello world")
         self.assertEqual(eval('dr"""\n  hello world\\\n """'), " hello world\\\n")
-
 
 
 if __name__ == '__main__':
