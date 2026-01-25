@@ -1124,7 +1124,7 @@ tok_get_normal_mode(struct tok_state *tok, tokenizer_mode* current_tok, struct t
                 case 'd':
                 case 'D':
                     if (quote_size != 3) {
-                        return MAKE_TOKEN(_PyTokenizer_syntaxerror(tok, "d-string must be a multiline string"));
+                        return MAKE_TOKEN(_PyTokenizer_syntaxerror(tok, "d-string must be triple-quoted"));
                     }
                     break;
                 default:

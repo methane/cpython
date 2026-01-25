@@ -1484,6 +1484,13 @@ _get_resized_exprs(Parser *p, Token *a, asdl_expr_seq *raw_expressions, Token *b
     Py_ssize_t common_indent_len = 0;
 
     if (is_dedent) {
+        if (total_items == 0) {
+            RAISE_SYNTAX_ERROR_KNOWN_LOCATION(
+                a,
+                "d-string must start with a newline"
+            );
+            return NULL;
+        }
         expr_ty first_item = asdl_seq_GET(raw_expressions, 0);
         if (first_item->kind != Constant_kind
                 || PyUnicode_ReadChar(first_item->v.Constant.value, 0) != '\n') {
