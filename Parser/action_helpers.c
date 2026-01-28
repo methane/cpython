@@ -1448,13 +1448,102 @@ _PyPegen_decode_fstring_part(Parser* p, int is_first, int is_raw,
                            p->arena);
 }
 
-/* defined in unicodeobject.c */
-extern Py_ssize_t
-_Py_search_longest_common_leading_whitespace(
+/*
+This function is customized version of _Py_search_longest_common_leading_whitespace()
+in unicodeobject.c
+*/
+static void
+search_longest_common_leading_whitespace(
     const char *const src,
     const char *const end,
-    const char **output
-    );
+    const char **indent,
+    Py_ssize_t *indent_len)
+{
+    // [_start, _start + _len)
+    // describes the current longest common leading whitespace
+    const char *_start = *indent;
+    Py_ssize_t _len = *indent_len;
+
+    // skip the first line. for example:
+    // s = df"""
+    //    first part
+    //    first part{x}second part
+    //    second part
+    //    """
+    // we don't need newline after opening qute.
+    // we don't need first line in the second part too.
+    const char *iter = memchr(src, '\n', end - src);
+    if (iter == NULL) {
+        // single line string
+        return;
+    }
+
+    for (iter++; iter <= end; iter++) {
+        const char *line_start = iter;
+        const char *leading_whitespace_end = NULL;
+
+        // scan the whole line
+        while (iter < end && *iter != '\n') {
+            if (!leading_whitespace_end && *iter != ' ' && *iter != '\t') {
+                /* `iter` points to the first non-whitespace character
+                   in this line */
+                if (iter == line_start) {
+                    // some line has no indent, fast exit!
+                    *indent = iter;
+                    *indent_len = 0;
+                    return;
+                }
+                leading_whitespace_end = iter;
+            }
+            ++iter;
+        }
+
+        if (!leading_whitespace_end) {
+            // if this line has all white space, skip it
+            if (iter < end) {
+                continue;
+            }
+            leading_whitespace_end = iter;  // last line may not end with '\n'
+        }
+
+        if (!_start) {
+            // update the first leading whitespace
+            _start = line_start;
+            _len = leading_whitespace_end - line_start;
+        }
+        else {
+            /* We then compare with the current longest leading whitespace.
+
+               [line_start, leading_whitespace_end) is the leading
+               whitespace of this line,
+
+               [_start, _start + _len) is the leading whitespace of the
+               current longest leading whitespace. */
+            Py_ssize_t new_len = 0;
+            const char *_iter = _start, *line_iter = line_start;
+
+            while (_iter < _start + _len && line_iter < leading_whitespace_end
+                   && *_iter == *line_iter)
+            {
+                ++_iter;
+                ++line_iter;
+                ++new_len;
+            }
+
+            _len = new_len;
+            if (_len == 0) {
+                // No common things now, fast exit!
+                *indent = _start;
+                *indent_len = 0;
+                return;
+            }
+        }
+    }
+
+    *indent = _start;
+    *indent_len = _len;
+}
+
 
 static asdl_expr_seq *
 _get_resized_exprs(Parser *p, Token *a, asdl_expr_seq *raw_expressions, Token *b, enum string_kind_t string_kind)
@@ -1480,8 +1569,8 @@ _get_resized_exprs(Parser *p, Token *a, asdl_expr_seq *raw_expressions, Token *b
         return NULL;
     }
 
-    const char *common_indent_start = NULL;
-    Py_ssize_t common_indent_len = 0;
+    const char *indent_start = NULL;
+    Py_ssize_t indent_len = 0;
 
     if (is_dedent) {
         if (total_items == 0) {
@@ -1501,56 +1590,22 @@ _get_resized_exprs(Parser *p, Token *a, asdl_expr_seq *raw_expressions, Token *b
             return NULL;
         }
 
-        // Instead of calculating common indent from all parts,
-        // build temporary string and calculate common indent from it.
-        PyBytesWriter *w = PyBytesWriter_Create(0);
-        if (w == NULL) {
-            return NULL;
-        }
-
         for (Py_ssize_t i = 0; i < n_items; i++) {
             expr_ty item = asdl_seq_GET(raw_expressions, i);
-
-            if (item->kind == JoinedStr_kind) {
-                // Write a placeholder.
-                if (PyBytesWriter_WriteBytes(w, "X", 1) < 0) {
-                    PyBytesWriter_Discard(w);
-                    return NULL;
-                }
-                continue;
-            }
             if (item->kind == Constant_kind) {
                 Py_ssize_t blen;
                 const char *bstr = PyUnicode_AsUTF8AndSize(item->v.Constant.value, &blen);
-                if (bstr == NULL || PyBytesWriter_WriteBytes(w, bstr, blen) < 0) {
-                    PyBytesWriter_Discard(w);
+                if (bstr == NULL) {
                     return NULL;
                 }
-                continue;
+                search_longest_common_leading_whitespace(bstr, bstr + blen, &indent_start, &indent_len);
             }
         }
-        // Add a terminator to include the last line before the ending quote
-        if (PyBytesWriter_WriteBytes(w, "X", 1) < 0) {
-            PyBytesWriter_Discard(w);
-            return NULL;
-        }
 
-        // TODO: instead of creating temp_bytes, we could search
-        // common index from each part directly. But this need reimplementation
-        // of _Py_search_longest_common_leading_whitespace.
-        PyObject *temp_bytes = PyBytesWriter_Finish(w);
-        if (temp_bytes == NULL) {
-            return NULL;
-        }
-        _PyArena_AddPyObject(p->arena, temp_bytes);
-        const char *temp_str = PyBytes_AsString(temp_bytes);
-        const char *temp_end = temp_str + PyBytes_GET_SIZE(temp_bytes);
-        common_indent_len = _Py_search_longest_common_leading_whitespace(
-            temp_str, temp_end, &common_indent_start);
-        // _py_serach_longest_common_leading_whitespace() may return NULL when
-        // indent_len is 0.
-        if (common_indent_len == 0) {
-            common_indent_start = "";
+        assert(indent_start != NULL); // TODO: is this assert true?
+        // _py_serach_longest_common_leading_whitespace() may not set indent_start when string is empty.
+        if (indent_len == 0) {
+            indent_start = "";
         }
     }
 
@@ -1585,7 +1640,7 @@ _get_resized_exprs(Parser *p, Token *a, asdl_expr_seq *raw_expressions, Token *b
         }
 
         if (item->kind == Constant_kind) {
-            item = _PyPegen_decode_fstring_part(p, i == 0, is_raw, common_indent_start, common_indent_len, item, b);
+            item = _PyPegen_decode_fstring_part(p, i == 0, is_raw, indent_start, indent_len, item, b);
             if (item == NULL) {
                 return NULL;
             }
