@@ -1,16 +1,33 @@
 import unittest
 
+from test.test_string._support import TStringBaseCase
+
 
 _dstring_prefixes = "d db df dt dr drb drf drt".split()
 _dstring_prefixes += [p.upper() for p in _dstring_prefixes]
 
 
 def d(s):
-    # Helper function to evaluate d-strings.
+    """Helper function to evaluate d-strings."""
     if '"""' in s:
         return eval(f"d'''{s}'''")
     else:
         return eval(f'd"""{s}"""')
+
+def db(s):
+    """Helper function to evaluate db-strings."""
+    if '"""' in s:
+        return eval(f"db'''{s}'''")
+    else:
+        return eval(f'db"""{s}"""')
+
+def fd(s, globals=None):
+    """Helper function to evaluate fd-strings."""
+    if '"""' in s:
+        return eval(f"fd'''{s}'''", globals=globals)
+    else:
+        return eval(f'fd"""{s}"""', globals=globals)
+
 
 
 class DStringTestCase(unittest.TestCase):
@@ -52,52 +69,195 @@ class DStringTestCase(unittest.TestCase):
                     self.assertEqual(v, "")
                     self.assertEqual(v2, "")
 
-    def test_dedent(self):
+    def test_missing_newline_in_plain_and_raw_prefixes(self):
+        exprs = [
+            'd"""x"""',
+            'dr"""x"""',
+            'db"""x"""',
+            'drb"""x"""',
+        ]
+        self.assertAllRaise(SyntaxError, "d-string must start with a newline", exprs)
+
+    def check_dbstring(self, s, expected):
+        self.assertEqual(d(s), expected)
+        self.assertEqual(db(s), expected.encode())
+
+    def test_dbstring(self):
         # Basic dedent - remove common leading whitespace
-        result = d("""
-    hello
-    world
-    """)
-        self.assertEqual(result, "hello\nworld\n")
+        source = """
+            hello
+            world
+            """
+        self.check_dbstring(source, "hello\nworld\n")
+
+        # closing quote on same line as last content line
+        source = """
+            hello
+            world"""
+        self.check_dbstring(source, "hello\nworld")
 
         # Dedent with varying indentation
-        result = d("""
-     line1
-       line2
-    line3
-      """)
-        self.assertEqual(result, " line1\n   line2\nline3\n  ")
+        source = """
+            .line1
+            ...line2
+            line3
+            ..""".replace('.', ' ')
+        self.check_dbstring(source, " line1\n   line2\nline3\n  ")
 
         # Dedent with tabs
-        result = d("""
+        source = """
 \thello
 \tworld
-\t""")
-        self.assertEqual(result, "hello\nworld\n")
+\t"""
+        self.check_dbstring(source, "hello\nworld\n")
 
         # Mixed spaces and tabs (using common leading whitespace)
-        result = d("""
+        source = """
 \t\t    hello
 \t\t    world
-\t\t  """)
-        self.assertEqual(result, "  hello\n  world\n")
+\t\t  """
+        self.check_dbstring(source, "  hello\n  world\n")
 
         # Empty lines do not affect the calculation of common leading whitespace
-        result = d("""
+        source = """
     hello
 
     world
-    """)
-        self.assertEqual(result, "hello\n\nworld\n")
+    """
+        self.check_dbstring(source, "hello\n\nworld\n")
 
         # Lines with only whitespace also have their indentation removed.
-        result = d("""
-    hello
-  \n\
-      \n\
-    world
-    """)
-        self.assertEqual(result, "hello\n\n  \nworld\n")
+        source = """
+....hello
+..
+......
+....world
+....""".replace('.', ' ')
+        self.check_dbstring(source, "hello\n\n  \nworld\n")
+
+        # Line continuation with backslash works as usual.
+        # But you cannot put a backslash right after the opening quotes.
+        source = r"""
+            Hello \
+            World!\
+            """
+        self.check_dbstring(source, "Hello World!")
+
+    def test_raw_dstring(self):
+        source = r"""
+            path\\to\\file
+            keep\\n
+            """
+        self.assertEqual(d(source), "path\\to\\file\nkeep\\n\n")
+
+    def test_raw_dbstring(self):
+        source = r"""
+            path\\to\\file
+            keep\\n
+            """
+        self.assertEqual(db(source), b"path\\to\\file\nkeep\\n\n")
+
+    def test_dbstring_non_ascii_error(self):
+        with self.assertRaisesRegex(SyntaxError, "bytes can only contain ASCII literal characters"):
+            eval('db"""\n  \u00e9\n  """')
+
+    def test_concat_bytes_and_nonbytes_error(self):
+        exprs = [
+            'd"""\n    x\n    """ db"""\n    y\n    """',
+            'db"""\n    x\n    """ d"""\n    y\n    """',
+        ]
+        self.assertAllRaise(SyntaxError, "cannot mix bytes and nonbytes literals", exprs)
+
+
+class DStringFStringInteractionTestCase(unittest.TestCase):
+    def assertAllRaise(self, exception_type, regex, error_strings):
+        for str in error_strings:
+            with self.subTest(str=str):
+                with self.assertRaisesRegex(exception_type, regex):
+                    eval(str)
+
+    def test_fdstring(self):
+        g = {"world": 42}
+
+        source = r"""
+            Hello
+              {world}
+            """
+        self.assertEqual(fd(source, globals=g), "Hello\n  42\n")
+
+        source = r"""
+            Hello
+          {world}
+            """
+        self.assertEqual(fd(source, globals=g), "  Hello\n42\n  ")
+
+        source = r"""
+            Hello {world} Lorum
+            ipsum dolor sit amet,
+            """
+        self.assertEqual(fd(source, globals=g), "Hello 42 Lorum\nipsum dolor sit amet,\n")
+
+    def test_missing_newline_in_f_variants(self):
+        exprs = [
+            'df"""x"""',
+            'drf"""x"""',
+        ]
+        self.assertAllRaise(SyntaxError, "d-string must start with a newline", exprs)
+
+    def test_fdstring_conversion_and_format(self):
+        g = {"x": 3.14159, "name": "Alice"}
+
+        source = r"""
+            {x:.2f} {name!r}
+            """
+        self.assertEqual(fd(source, globals=g), "3.14 'Alice'\n")
+
+        source = r"""
+            {x=}
+            """
+        self.assertEqual(fd(source, globals=g), "x=3.14159\n")
+
+    def test_concat_with_fstring(self):
+        expr = 'd"""\n    hello\n    """ f"world"'
+        self.assertEqual(eval(expr), "hello\nworld")
+
+
+class DStringTStringInteractionTestCase(unittest.TestCase, TStringBaseCase):
+    def assertAllRaise(self, exception_type, regex, error_strings):
+        for str in error_strings:
+            with self.subTest(str=str):
+                with self.assertRaisesRegex(exception_type, regex):
+                    eval(str)
+
+    def test_missing_newline_in_t_variants(self):
+        exprs = [
+            'dt"""x"""',
+            'drt"""x"""',
+        ]
+        self.assertAllRaise(SyntaxError, "d-string must start with a newline", exprs)
+
+    def test_dtstring_basic(self):
+        name = "Python"
+        t = eval('dt"""\n    Hello, {name}\n    """', {"name": name})
+        self.assertTStringEqual(t, ("Hello, ", "\n"), [(name, "name")])
+
+    def test_drtstring_raw_content(self):
+        t = eval('drt"""\n    keep\\n\n    """')
+        self.assertTStringEqual(t, ("keep\\n\n",), ())
+
+    def test_concat_with_tstring_is_rejected(self):
+        exprs = [
+            'd"""\n    x\n    """ t"hello"',
+            't"hello" d"""\n    x\n    """',
+            'db"""\n    x\n    """ t"hello"',
+            't"hello" db"""\n    x\n    """',
+        ]
+        self.assertAllRaise(
+            SyntaxError,
+            "cannot mix t-string literals with string or bytes literals",
+            exprs,
+        )
+
 
 
 if __name__ == '__main__':
