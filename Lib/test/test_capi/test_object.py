@@ -238,13 +238,13 @@ class CAPITest(unittest.TestCase):
     @unittest.skipUnless(hasattr(_testcapi, 'negative_refcount'),
                          'need _testcapi.negative_refcount()')
     def test_negative_refcount(self):
-        code = """
+        code = d"""
             import _testcapi
             from test import support
 
             with support.SuppressCrashReport():
                 _testcapi.negative_refcount()
-        """
+            """
         self.check_negative_refcount(code)
 
     @unittest.skipUnless(hasattr(_testcapi, 'decref_freed_object'),
@@ -252,13 +252,13 @@ class CAPITest(unittest.TestCase):
     @support.skip_if_sanitizer("use after free on purpose",
                                address=True, memory=True, ub=True)
     def test_decref_freed_object(self):
-        code = """
+        code = d"""
             import _testcapi
             from test import support
 
             with support.SuppressCrashReport():
                 _testcapi.decref_freed_object()
-        """
+            """
         self.check_negative_refcount(code)
 
     @support.requires_resource('cpu')

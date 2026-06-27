@@ -16,7 +16,6 @@ import inspect
 import pickle
 import locale
 import sys
-import textwrap
 import types
 import unittest.mock
 import weakref
@@ -2596,7 +2595,7 @@ class SubinterpreterTests(unittest.TestCase):
     def test_static_types_inherited_slots(self):
         rch, sch = self.create_channel()
 
-        script = textwrap.dedent("""
+        script = d"""
             import test.support
             results = []
             for cls in test.support.iter_builtin_types():
@@ -2606,7 +2605,7 @@ class SubinterpreterTests(unittest.TestCase):
                     results.append(res)
             results = tuple((repr(c), a, repr(w)) for c, a, w in results)
             sch.send_nowait(results)
-            """)
+            """
         def collate_results(raw):
             results = {}
             for cls, attr, wrapper in raw:

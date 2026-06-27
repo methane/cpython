@@ -497,7 +497,7 @@ class EmbeddingTests(EmbeddingTestsMixin, unittest.TestCase):
         self.assertEqual(out, '20000101\n' * INIT_LOOPS)
 
     def test_static_types_inherited_slots(self):
-        script = textwrap.dedent("""
+        script = d"""
             import test.support
             results = []
             for cls in test.support.iter_builtin_types():
@@ -506,7 +506,7 @@ class EmbeddingTests(EmbeddingTestsMixin, unittest.TestCase):
                     res = (cls, attr, wrapper)
                     results.append(res)
             results = ((repr(c), a, repr(w)) for c, a, w in results)
-            """)
+            """
         def collate_results(raw):
             results = {}
             for cls, attr, wrapper in raw:
@@ -520,12 +520,12 @@ class EmbeddingTests(EmbeddingTestsMixin, unittest.TestCase):
         main_results = collate_results(ns['results'])
         del ns
 
-        script += textwrap.dedent("""
+        script += d"""
             import json
             import sys
             text = json.dumps(list(results))
             print(text, file=sys.stderr)
-            """)
+            """
         out, err = self.run_embedded_interpreter(
                 "test_repeated_init_exec", script, script)
         _results = err.split('--- Loop #')[1:]
@@ -552,7 +552,7 @@ class EmbeddingTests(EmbeddingTestsMixin, unittest.TestCase):
     def test_getargs_reset_static_parser(self):
         # Test _PyArg_Parser initializations via _PyArg_UnpackKeywords()
         # https://github.com/python/cpython/issues/122334
-        code = textwrap.dedent("""
+        code = d"""
             try:
                 import _ssl
             except ModuleNotFoundError:
@@ -568,7 +568,7 @@ class EmbeddingTests(EmbeddingTestsMixin, unittest.TestCase):
             import _zoneinfo
             _zoneinfo.ZoneInfo.clear_cache(only_keys=['Foo/Bar'])
             print('3')
-        """)
+            """
         out, err = self.run_embedded_interpreter("test_repeated_init_exec", code)
         self.assertEqual(out, '1\n2\n3\n' * INIT_LOOPS)
 
@@ -820,7 +820,7 @@ class InitConfigTests(EmbeddingTestsMixin, unittest.TestCase):
 
     def _get_expected_config_impl(self):
         env = remove_python_envvars()
-        code = textwrap.dedent('''
+        code = d'''
             import json
             import sys
             import _testinternalcapi
@@ -831,7 +831,7 @@ class InitConfigTests(EmbeddingTestsMixin, unittest.TestCase):
             data = data.encode('utf-8')
             sys.stdout.buffer.write(data)
             sys.stdout.buffer.flush()
-        ''')
+            '''
 
         # Use -S to not import the site module: get the proper configuration
         # when test_embed is run from a venv (bpo-35313)
@@ -2060,7 +2060,7 @@ class MiscTests(EmbeddingTestsMixin, unittest.TestCase):
         env['PYTHONUNBUFFERED'] = '1'
         out, err = self.run_embedded_interpreter("test_frozenmain", env=env)
         executable = os.path.realpath('./argv0')
-        expected = textwrap.dedent(f"""
+        expected = fd"""
             Frozen Hello World
             sys.argv ['./argv0', '-E', 'arg1', 'arg2']
             config program_name: ./argv0
@@ -2068,7 +2068,7 @@ class MiscTests(EmbeddingTestsMixin, unittest.TestCase):
             config use_environment: True
             config configure_c_stdio: True
             config buffered_stdio: False
-        """).lstrip()
+            """.lstrip()
         self.assertEqual(out, expected)
 
     @unittest.skipUnless(support.Py_DEBUG,

@@ -5267,11 +5267,11 @@ class GenericTests(BaseTestCase):
 
         # Test stringified annotations
         scope = {}
-        exec(textwrap.dedent('''
+        exec(d'''
         from __future__ import annotations
         class C3:
             a: List[list["C2"]]
-        '''), scope)
+        ''', scope)
         C3 = scope['C3']
         self.assertEqual(C3.__annotations__['a'], "List[list['C2']]")
         self.assertEqual(
@@ -8344,7 +8344,7 @@ class NamedTupleTests(BaseTestCase):
         self.assertEqual(Z.__annotate__(annotationlib.Format.STRING), {"a": "None", "b": "str"})
 
     def test_future_annotations(self):
-        code = """
+        code = d"""
         from __future__ import annotations
         from typing import NamedTuple
         class X(NamedTuple):

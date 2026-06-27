@@ -96,13 +96,13 @@ class CAPITest(unittest.TestCase):
 
     @support.requires_subprocess()
     def test_no_FatalError_infinite_loop(self):
-        code = textwrap.dedent("""
+        code = d"""
             import _testcapi
             from test import support
 
             with support.SuppressCrashReport():
                 _testcapi.crash_no_current_thread()
-        """)
+            """
 
         run_result, _cmd_line = run_python_until_end('-c', code)
         _rc, out, err = run_result
@@ -224,13 +224,13 @@ class CAPITest(unittest.TestCase):
         # Issue #23571: A function must not return NULL without setting an
         # error
         if support.Py_DEBUG:
-            code = textwrap.dedent("""
+            code = d"""
                 import _testcapi
                 from test import support
 
                 with support.SuppressCrashReport():
                     _testcapi.return_null_without_error()
-            """)
+                """
             rc, out, err = assert_python_failure('-c', code)
             err = decode_stderr(err)
             self.assertRegex(err,
@@ -241,7 +241,7 @@ class CAPITest(unittest.TestCase):
                     r'returned NULL without setting an exception\n'
                 r'\n' +
                 CURRENT_THREAD_REGEX +
-                r'  File .*", line 6 in <module>\n')
+                r'  File .*", line 5 in <module>\n')
         else:
             with self.assertRaises(SystemError) as cm:
                 _testcapi.return_null_without_error()
@@ -252,13 +252,13 @@ class CAPITest(unittest.TestCase):
     def test_return_result_with_error(self):
         # Issue #23571: A function must not return a result with an error set
         if support.Py_DEBUG:
-            code = textwrap.dedent("""
+            code = d"""
                 import _testcapi
                 from test import support
 
                 with support.SuppressCrashReport():
                     _testcapi.return_result_with_error()
-            """)
+                """
             rc, out, err = assert_python_failure('-c', code)
             err = decode_stderr(err)
             self.assertRegex(err,
@@ -275,7 +275,7 @@ class CAPITest(unittest.TestCase):
                         r'returned a result with an exception set\n'
                     r'\n' +
                     CURRENT_THREAD_REGEX +
-                    r'  File .*, line 6 in <module>\n')
+                    r'  File .*, line 5 in <module>\n')
         else:
             with self.assertRaises(SystemError) as cm:
                 _testcapi.return_result_with_error()
@@ -287,13 +287,13 @@ class CAPITest(unittest.TestCase):
         # Test _Py_CheckSlotResult(). Raise an exception and then calls
         # PyObject_GetItem(): check that the assertion catches the bug.
         # PyObject_GetItem() must not be called with an exception set.
-        code = textwrap.dedent("""
+        code = d"""
             import _testcapi
             from test import support
 
             with support.SuppressCrashReport():
                 _testcapi.getitem_with_error({1: 2}, 1)
-        """)
+            """
         rc, out, err = assert_python_failure('-c', code)
         err = decode_stderr(err)
         if 'SystemError: ' not in err:
@@ -305,7 +305,7 @@ class CAPITest(unittest.TestCase):
                     r'ValueError: bug\n'
                     r'\n' +
                     CURRENT_THREAD_REGEX +
-                    r'  File .*, line 6 in <module>\n'
+                    r'  File .*, line 5 in <module>\n'
                     r'\n'
                     r'Extension modules: ')
         else:
@@ -1667,7 +1667,7 @@ class TestPendingCalls(unittest.TestCase):
 
     @threading_helper.requires_working_threading()
     def test_pending_call_creates_thread(self):
-        source = """
+        source = d"""
         import _testinternalcapi
         import threading
         import time
@@ -1833,12 +1833,12 @@ class SubinterpreterTest(unittest.TestCase):
             }
             with self.subTest(config):
                 r, w = os.pipe()
-                script = textwrap.dedent(f'''
+                script = fd'''
                     import _testinternalcapi, json, os
                     settings = _testinternalcapi.get_interp_settings()
                     with os.fdopen({w}, "w") as stdin:
                         json.dump(settings, stdin)
-                    ''')
+                    '''
                 with os.fdopen(r) as stdout:
                     ret = support.run_in_subinterp_with_config(script, **kwargs)
                     self.assertEqual(ret, 0)
@@ -1851,11 +1851,11 @@ class SubinterpreterTest(unittest.TestCase):
         for config in expected_to_fail:
             kwargs = dict(zip(kwlist, config))
             with self.subTest(config):
-                script = textwrap.dedent(f'''
+                script = fd'''
                     import _testinternalcapi
                     _testinternalcapi.get_interp_settings()
                     raise NotImplementedError('unreachable')
-                    ''')
+                    '''
                 with self.assertRaises(_interpreters.InterpreterError):
                     support.run_in_subinterp_with_config(script, **kwargs)
 
@@ -1918,10 +1918,10 @@ class SubinterpreterTest(unittest.TestCase):
             if Py_GIL_DISABLED:
                 # gh-117649: The test fails before `w` is closed
                 self.addCleanup(os.close, w)
-            script = textwrap.dedent(f'''
+            script = fd'''
                 from test.test_capi.check_config import run_singlephase_check
                 run_singlephase_check({override}, {w})
-                ''')
+                '''
             with os.fdopen(r) as stdout:
                 ret = support.run_in_subinterp_with_config(script, **kwargs)
                 self.assertEqual(ret, 0)
@@ -1981,7 +1981,7 @@ class SubinterpreterTest(unittest.TestCase):
         else:
             loader = "ExtensionFileLoader"
 
-        script = textwrap.dedent(f"""
+        script = fd"""
             import importlib.machinery
             import importlib.util
             import os
@@ -1994,7 +1994,7 @@ class SubinterpreterTest(unittest.TestCase):
             attr_id = str(id(module.Error)).encode()
 
             os.write({w}, attr_id)
-            """)
+            """
         exec(script)
         main_attr_id = os.read(r, 100)
 
@@ -2630,14 +2630,14 @@ class TestThreadState(unittest.TestCase):
     @threading_helper.requires_working_threading()
     def test_gilstate_ensure_no_deadlock(self):
         # See https://github.com/python/cpython/issues/96071
-        code = textwrap.dedent("""
+        code = d"""
             import _testcapi
 
             def callback():
                 print('callback called')
 
             _testcapi._test_thread_state(callback)
-            """)
+            """
         ret = assert_python_ok('-X', 'tracemalloc', '-c', code)
         self.assertIn(b'callback called', ret.out)
 
@@ -3064,7 +3064,7 @@ class TestVersions(unittest.TestCase):
 
 class TestCEval(unittest.TestCase):
    def test_ceval_decref(self):
-        code = textwrap.dedent("""
+        code = d"""
             import _testcapi
             _testcapi.toggle_reftrace_printer(True)
             l1 = []
@@ -3072,7 +3072,7 @@ class TestCEval(unittest.TestCase):
             del l1
             del l2
             _testcapi.toggle_reftrace_printer(False)
-        """)
+            """
         _, out, _ = assert_python_ok("-c", code)
         lines = out.decode("utf-8").splitlines()
         self.assertEqual(lines.count("CREATE list"), 2)

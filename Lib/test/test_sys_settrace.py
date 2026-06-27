@@ -10,7 +10,6 @@ from test.support import import_helper, requires_subprocess, run_no_yield_async_
 import contextlib
 import os
 import tempfile
-import textwrap
 import subprocess
 import warnings
 try:
@@ -1819,7 +1818,7 @@ class TraceOpcodesTestCase(TraceTestCase):
         """Make sure setting f_trace_opcodes after starting trace works even
         if it's the first time f_trace_opcodes is being set. GH-103615"""
 
-        code = textwrap.dedent("""
+        code = d"""
             import sys
 
             def opcode_trace_func(frame, event, arg):
@@ -1831,7 +1830,7 @@ class TraceOpcodesTestCase(TraceTestCase):
             sys._getframe().f_trace = opcode_trace_func
             sys._getframe().f_trace_opcodes = True
             a = 1
-        """)
+            """
 
         # We can't use context manager because Windows can't execute a file while
         # it's being written

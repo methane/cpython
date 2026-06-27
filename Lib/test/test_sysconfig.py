@@ -6,7 +6,6 @@ import os
 import subprocess
 import shutil
 import json
-import textwrap
 from unittest.mock import patch
 from copy import copy
 
@@ -660,7 +659,7 @@ class TestSysConfig(unittest.TestCase, VirtualEnvironmentMixin):
 
     @requires_subprocess()
     def test_makefile_overwrites_config_vars(self):
-        script = textwrap.dedent("""
+        script = d"""
             import sys, sysconfig
 
             data = {
@@ -673,7 +672,7 @@ class TestSysConfig(unittest.TestCase, VirtualEnvironmentMixin):
 
             import json
             print(json.dumps(data, indent=2))
-        """)
+            """
 
         # We need to run the test inside a virtual environment so that
         # sys.prefix/sys.exec_prefix have a different value from the

@@ -3621,12 +3621,11 @@ def _connect(
     elif version != remote_pdb.protocol_version():
         target_ver = f"0x{remote_pdb.protocol_version():08X}"
         attach_ver = f"0x{version:08X}"
-        remote_pdb.error(
-            f"The target process is running a Python version that is"
-            f" incompatible with this PDB module."
-            f"\nTarget process pdb protocol version: {target_ver}"
-            f"\nLocal pdb module's protocol version: {attach_ver}"
-        )
+        remote_pdb.error(df"""
+            The target process is running a Python version that is\
+             incompatible with this PDB module.
+            Target process pdb protocol version: {target_ver}
+            Local pdb module's protocol version: {attach_ver}""")
     else:
         remote_pdb.set_trace(frame=frame, commands=commands.splitlines())
 
@@ -3647,20 +3646,18 @@ def attach(pid, commands=()):
         colorize = _colorize.can_colorize()
 
         connect_script.write(
-            textwrap.dedent(
-                f"""
-                import pdb, sys
-                pdb._connect(
-                    host="localhost",
-                    port={port},
-                    frame=sys._getframe(1),
-                    commands={json.dumps("\n".join(commands))},
-                    version={_PdbServer.protocol_version()},
-                    signal_raising_thread={use_signal_thread!r},
-                    colorize={colorize!r},
-                )
-                """
+            fd"""
+            import pdb, sys
+            pdb._connect(
+                host="localhost",
+                port={port},
+                frame=sys._getframe(1),
+                commands={json.dumps("\n".join(commands))},
+                version={_PdbServer.protocol_version()},
+                signal_raising_thread={use_signal_thread!r},
+                colorize={colorize!r},
             )
+            """
         )
         connect_script.close()
         orig_mode = os.stat(connect_script.name).st_mode

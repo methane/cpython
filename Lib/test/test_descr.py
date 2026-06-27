@@ -7,7 +7,6 @@ import pickle
 import random
 import string
 import sys
-import textwrap
 import types
 import unittest
 import warnings
@@ -5503,7 +5502,7 @@ class MiscTests(unittest.TestCase):
         # Issue #14199: _PyType_Lookup() has to keep a strong reference to
         # the type MRO because it may be modified during the lookup, if
         # __bases__ is set during the lookup for example.
-        code = textwrap.dedent("""
+        code = d"""
         class MyKey(object):
             def __hash__(self):
                 return hash('mykey')
@@ -5534,7 +5533,7 @@ class MiscTests(unittest.TestCase):
 
         # mykey2 is read from Base2 because MyKey.__eq__ has set __bases_
         print(f"mykey2={X.mykey2}")
-        """)
+        """
         _, out, err = assert_python_ok("-c", code)
         err = err.decode()
         self.assertRegex(err, "RuntimeWarning: .*X")

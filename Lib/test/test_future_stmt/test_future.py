@@ -5,10 +5,10 @@ import ast
 import unittest
 from test.support import import_helper
 from test.support.script_helper import spawn_python, kill_python
-from textwrap import dedent
 import os
 import re
 import sys
+from textwrap import dedent
 
 TOP_LEVEL_MSG = 'from __future__ imports must occur at the beginning of the file'
 
@@ -82,41 +82,41 @@ class FutureTest(unittest.TestCase):
             from test.test_future_stmt import test_future_multiple_features  # noqa: F401
 
     def test_unknown_future_flag(self):
-        code = """
+        code = d"""
             from __future__ import nested_scopes
             from __future__ import rested_snopes  # typo error here: nested => rested
-        """
+            """
         self.assertSyntaxError(
             code, lineno=2,
             message='future feature rested_snopes is not defined', offset=24,
         )
 
     def test_future_import_not_on_top(self):
-        code = """
+        code = d"""
             import some_module
             from __future__ import annotations
-        """
+            """
         self.assertSyntaxError(code, lineno=2)
 
-        code = """
+        code = d"""
             import __future__
             from __future__ import annotations
-        """
+            """
         self.assertSyntaxError(code, lineno=2)
 
-        code = """
+        code = d"""
             from __future__ import absolute_import
             "spam, bar, blah"
             from __future__ import print_function
-        """
+            """
         self.assertSyntaxError(code, lineno=3)
 
     def test_future_import_with_extra_string(self):
-        code = """
+        code = d"""
             '''Docstring'''
             "this isn't a doc string"
             from __future__ import nested_scopes
-        """
+            """
         self.assertSyntaxError(code, lineno=3, parametrize_docstring=False)
 
     def test_multiple_import_statements_on_same_line(self):
@@ -128,27 +128,27 @@ class FutureTest(unittest.TestCase):
         self.assertSyntaxError(code, offset=54)
 
         # Without `\`:
-        code = """
+        code = d"""
             from __future__ import nested_scopes; import string; from __future__ import  nested_scopes
-        """
+            """
         self.assertSyntaxError(code, offset=54)
 
     def test_future_import_star(self):
-        code = """
+        code = d"""
             from __future__ import *
-        """
+            """
         self.assertSyntaxError(code, message='future feature * is not defined', offset=24)
 
     def test_future_import_braces(self):
-        code = """
+        code = d"""
             from __future__ import braces
-        """
+            """
         # Congrats, you found an easter egg!
         self.assertSyntaxError(code, message='not a chance', offset=24)
 
-        code = """
+        code = d"""
             from __future__ import nested_scopes, braces
-        """
+            """
         self.assertSyntaxError(code, message='not a chance', offset=39)
 
     def test_module_with_future_import_not_on_top(self):
@@ -196,10 +196,10 @@ class FutureTest(unittest.TestCase):
         with self.assertRaises(ImportError):
             exec(code)
 
-        code = """
+        code = d"""
             from .__future__ import nested_scopes
             from __future__ import barry_as_FLUFL
-        """
+            """
         self.assertSyntaxError(code, lineno=2)
 
 class AnnotationsFutureTestCase(unittest.TestCase):

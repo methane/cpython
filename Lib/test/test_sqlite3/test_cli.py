@@ -1,7 +1,6 @@
 """sqlite3 CLI tests."""
 import sqlite3
 import sys
-import textwrap
 import unittest
 import unittest.mock
 import os
@@ -225,7 +224,7 @@ class Completion(unittest.TestCase):
             raise unittest.SkipTest("libedit readline is not supported")
 
     def write_input(self, input_, env=None):
-        script = textwrap.dedent("""
+        script = d"""
             import readline
             from sqlite3.__main__ import main
 
@@ -239,7 +238,7 @@ class Completion(unittest.TestCase):
             readline.parse_and_bind("set completion-display-width 0")
 
             main()
-        """)
+            """
         return run_pty(script, input_, env)
 
     def test_complete_sql_keywords(self):
@@ -267,7 +266,7 @@ class Completion(unittest.TestCase):
         self.assertIn(b".version", output)
 
     def test_complete_table_indexes_triggers_views(self):
-        input_ = textwrap.dedent("""\
+        input_ = d"""
             CREATE TABLE _Table (id);
             CREATE INDEX _Index ON _table (id);
             CREATE TRIGGER _Trigger BEFORE INSERT
@@ -288,7 +287,7 @@ class Completion(unittest.TestCase):
             CREATE VIEW attached._Attached_view AS SELECT 1;
 
             SELECT id FROM _\t\tta\t;
-            .quit\n""").encode()
+            .quit\n""".encode()
         output = self.write_input(input_)
         lines = output.decode().splitlines()
         indices = [i for i, line in enumerate(lines)
@@ -320,14 +319,14 @@ class Completion(unittest.TestCase):
                      "PRAGMA table-valued function is not available until "
                      "SQLite 3.16.0")
     def test_complete_columns(self):
-        input_ = textwrap.dedent("""\
+        input_ = d"""
             CREATE TABLE _table (_col_table);
             CREATE TEMP TABLE _temp_table (_col_temp);
             ATTACH ':memory:' AS attached;
             CREATE TABLE attached._attached_table (_col_attached);
 
             SELECT _col_\t\tta\tFROM _table;
-            .quit\n""").encode()
+            .quit\n""".encode()
         output = self.write_input(input_)
         lines = output.decode().splitlines()
         indices = [
@@ -356,7 +355,7 @@ class Completion(unittest.TestCase):
         self.assertIn(b"(1.0,)", output)
 
     def test_complete_schemata(self):
-        input_ = textwrap.dedent("""\
+        input_ = d"""
             ATTACH ':memory:' AS MixedCase;
             -- Test '_' is escaped in Like pattern filtering
             ATTACH ':memory:' AS _underscore;
@@ -365,7 +364,7 @@ class Completion(unittest.TestCase):
 
             SELECT * FROM \t\tmIX\t.sqlite_master;
             SELECT * FROM _und\t.sqlite_master;
-            .quit\n""").encode()
+            .quit\n""".encode()
         output = self.write_input(input_)
         lines = output.decode().splitlines()
         indices = [
@@ -398,7 +397,7 @@ class Completion(unittest.TestCase):
         self.assertEqual(line_num, len(lines))
 
     def test_complete_no_input(self):
-        script = textwrap.dedent("""
+        script = d"""
             import readline
             from sqlite3.__main__ import main
 
@@ -416,7 +415,7 @@ class Completion(unittest.TestCase):
             readline.parse_and_bind("set show-all-if-unmodified off")
 
             main()
-        """)
+            """
         input_ = b"\t\t.quit\n"
         output = run_pty(script, input_, env={**os.environ, "NO_COLOR": "1"})
         try:

@@ -2857,7 +2857,6 @@ Asserts:
 
 import re
 import doctest
-import textwrap
 import unittest
 
 from test import support
@@ -2873,16 +2872,16 @@ class SyntaxWarningTest(unittest.TestCase):
             compile(code, filename, mode)
 
     def test_return_in_finally(self):
-        source = textwrap.dedent("""
+        source = d"""
             def f():
                 try:
                     pass
                 finally:
                     return 42
-            """)
+            """
         self.check_warning(source, "'return' in a 'finally' block")
 
-        source = textwrap.dedent("""
+        source = d"""
             def f():
                 try:
                     pass
@@ -2891,10 +2890,10 @@ class SyntaxWarningTest(unittest.TestCase):
                         return 42
                     except:
                         pass
-            """)
+            """
         self.check_warning(source, "'return' in a 'finally' block")
 
-        source = textwrap.dedent("""
+        source = d"""
             def f():
                 try:
                     pass
@@ -2903,22 +2902,22 @@ class SyntaxWarningTest(unittest.TestCase):
                         pass
                     except:
                         return 42
-            """)
+            """
         self.check_warning(source, "'return' in a 'finally' block")
 
     def test_break_and_continue_in_finally(self):
         for kw in ('break', 'continue'):
 
-            source = textwrap.dedent(f"""
+            source = fd"""
                 for abc in range(10):
                     try:
                         pass
                     finally:
                         {kw}
-                """)
+                """
             self.check_warning(source, f"'{kw}' in a 'finally' block")
 
-            source = textwrap.dedent(f"""
+            source = fd"""
                 for abc in range(10):
                     try:
                         pass
@@ -2927,10 +2926,10 @@ class SyntaxWarningTest(unittest.TestCase):
                             {kw}
                         except:
                             pass
-                """)
+                """
             self.check_warning(source, f"'{kw}' in a 'finally' block")
 
-            source = textwrap.dedent(f"""
+            source = fd"""
                 for abc in range(10):
                     try:
                         pass
@@ -2939,7 +2938,7 @@ class SyntaxWarningTest(unittest.TestCase):
                             pass
                         except:
                             {kw}
-                """)
+                """
             self.check_warning(source, f"'{kw}' in a 'finally' block")
 
 
@@ -3216,11 +3215,11 @@ class A:
         # See gh-113297
 
         def get_code(n):
-            code = textwrap.dedent("""
+            code = d"""
                 def bug():
                     with (
                     a
-                """)
+                """
             for i in range(n):
                 code += f"    as a{i}, a\n"
             code += "): yield a"
@@ -3242,11 +3241,11 @@ class A:
         # See gh-116767
 
         def get_code(n):
-            code = [ textwrap.dedent("""
+            code = [ d"""
                 async def bug():
                     async with (
                     a
-                """) ]
+                """ ]
             for i in range(n):
                 code.append(f"    as a{i}, a\n")
             code.append("): yield a")
@@ -3435,33 +3434,29 @@ while 1:
 
     def test_except_stmt_invalid_as_expr(self):
         self._check_error(
-            textwrap.dedent(
-                """
+            d"""
                 try:
                     pass
                 except ValueError as obj.attr:
                     pass
-                """
-            ),
+                """,
             errtext="cannot use except statement with attribute",
-            lineno=4,
-            end_lineno=4,
+            lineno=3,
+            end_lineno=3,
             offset=22,
             end_offset=22 + len("obj.attr"),
         )
 
     def test_match_stmt_invalid_as_expr(self):
         self._check_error(
-            textwrap.dedent(
-                """
+            d"""
                 match 1:
                     case x as obj.attr:
                         ...
-                """
-            ),
+                """,
             errtext="cannot use attribute as pattern target",
-            lineno=3,
-            end_lineno=3,
+            lineno=2,
+            end_lineno=2,
             offset=15,
             end_offset=15 + len("obj.attr"),
         )

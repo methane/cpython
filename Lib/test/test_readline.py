@@ -6,7 +6,6 @@ import locale
 import os
 import sys
 import tempfile
-import textwrap
 import threading
 import unittest
 from test import support
@@ -207,7 +206,7 @@ print("History length:", readline.get_current_history_length())
         self.assertIn(b"History length: 0", output)
 
     def test_set_complete_delims(self):
-        script = textwrap.dedent("""
+        script = d"""
             import readline
             def complete(text, state):
                 if state == 0 and text == "$":
@@ -220,7 +219,7 @@ print("History length:", readline.get_current_history_length())
             readline.set_completer_delims(" \\t\\n")
             readline.set_completer(complete)
             print(input())
-        """)
+            """
 
         output = run_pty(script, input=b"$\t\n")
         self.assertIn(b"$complete", output)
@@ -372,7 +371,7 @@ readline.write_history_file(history_file)
     @requires_working_threading()
     def test_gh123321_threadsafe(self):
         """gh-123321: readline should be thread-safe and not crash"""
-        script = textwrap.dedent(r"""
+        script = rd"""
             import threading
             from test.support.threading_helper import join_thread
 
@@ -386,7 +385,7 @@ readline.write_history_file(history_file)
             join_thread(thread1)
             join_thread(thread2)
             print("done")
-        """)
+            """
 
         output = run_pty(script, input=b"input1\rinput2\r")
 

@@ -95,7 +95,7 @@ class TestPyStats(unittest.TestCase):
     def test_stats_toggle_on(self):
         """Check the toggle on functionality.
         """
-        code = """
+        code = d"""
         def func_start():
             modify_class()
         """
@@ -112,7 +112,7 @@ class TestPyStats(unittest.TestCase):
         stat_count = run_test_code(code)
         self.assertEqual(stat_count, '')
 
-        code = """
+        code = d"""
         def func_start():
             modify_class()
             sys._stats_on()
@@ -126,7 +126,7 @@ class TestPyStats(unittest.TestCase):
     def test_stats_toggle_on_thread(self):
         """Check the toggle on functionality when threads are used.
         """
-        code = """
+        code = d"""
         def func_test(thread_id):
             if thread_id == 0:
                 modify_class()
@@ -141,7 +141,7 @@ class TestPyStats(unittest.TestCase):
         stat_count = run_test_code(code)
         self.assertEqual(stat_count, '2')
 
-        code = """
+        code = d"""
         def func_test(thread_id):
             if thread_id == 0:
                 modify_class()
@@ -159,7 +159,7 @@ class TestPyStats(unittest.TestCase):
     def test_thread_exit_merge(self):
         """Check that per-thread stats (when free-threading enabled) are merged.
         """
-        code = """
+        code = d"""
         def func_test(thread_id):
             modify_class()
             if thread_id == 0:
@@ -172,7 +172,7 @@ class TestPyStats(unittest.TestCase):
     def test_stats_dump(self):
         """Check that sys._stats_dump() works.
         """
-        code = """
+        code = d"""
         def func_test(thread_id):
             if thread_id == 0:
                 stats_on()
@@ -190,7 +190,7 @@ class TestPyStats(unittest.TestCase):
     def test_stats_clear(self):
         """Check that sys._stats_clear() works.
         """
-        code = """
+        code = d"""
         ready = False
         def func_test(thread_id):
             global ready

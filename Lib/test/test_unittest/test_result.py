@@ -868,16 +868,18 @@ class TestOutputBuffering(unittest.TestCase):
             self.assertEqual(len(result_list), 1)
 
             test, message = result_list[0]
-            expectedOutMessage = textwrap.dedent("""
+            expectedOutMessage = d"""
+
                 Stdout:
                 foo
-            """)
+                """
             expectedErrMessage = ''
             if include_error:
-                expectedErrMessage = textwrap.dedent("""
+                expectedErrMessage = d"""
+
                 Stderr:
                 bar
-            """)
+                """
 
             expectedFullMessage = 'A traceback%s%s' % (expectedOutMessage, expectedErrMessage)
 

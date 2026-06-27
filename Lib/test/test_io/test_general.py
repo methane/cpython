@@ -9,7 +9,6 @@ import errno
 import os
 import pickle
 import sys
-import textwrap
 import threading
 import unittest
 import warnings
@@ -144,8 +143,7 @@ class IOTest:
     def test_startup_optimization(self):
         # gh-132952: Test that `io` is not imported at startup and that the
         # __module__ of UnsupportedOperation is set to "io".
-        assert_python_ok("-S", "-c", textwrap.dedent(
-            """
+        assert_python_ok("-S", "-c", d"""
             import sys
             assert "io" not in sys.modules
             try:
@@ -156,8 +154,7 @@ class IOTest:
                 assert typ.__name__ == "UnsupportedOperation", (typ, typ.__name__)
             else:
                 raise AssertionError("Expected UnsupportedOperation")
-            """
-        ))
+            """)
 
     @unittest.skipUnless(hasattr(os, "pipe"), "requires os.pipe()")
     def test_optional_abilities(self):
@@ -1266,7 +1263,7 @@ class MiscIOTest:
         mod = self.io.__name__
         filename = __file__
         invalid = 'Boom, Shaka Laka, Boom!'
-        code = textwrap.dedent(f'''
+        code = fd'''
             import sys
             from {mod} import open, TextIOWrapper
 
@@ -1301,7 +1298,7 @@ class MiscIOTest:
                     sys.exit(24)
 
             sys.exit(10)
-        ''')
+            '''
         proc = assert_python_failure('-X', 'dev', '-c', code)
         self.assertEqual(proc.rc, 10, proc)
 
@@ -1310,7 +1307,7 @@ class MiscIOTest:
         # and sys.flags.warn_default_encoding is set.
         mod = self.io.__name__
         filename = __file__
-        code = textwrap.dedent(f'''\
+        code = fd'''
             import sys
             from {mod} import open, TextIOWrapper
             import pathlib
@@ -1319,7 +1316,7 @@ class MiscIOTest:
                 pass
 
             pathlib.Path({filename!r}).read_text()  # line 8
-        ''')
+            '''
         proc = assert_python_ok('-X', 'warn_default_encoding', '-c', code)
         warnings = proc.err.splitlines()
         self.assertEqual(len(warnings), 2)

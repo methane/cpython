@@ -200,7 +200,6 @@ import sys
 import threading
 import doctest
 import unittest
-import textwrap
 import weakref
 import dis
 
@@ -498,12 +497,12 @@ class CodeTest(unittest.TestCase):
         import dis
 
         namespace = {}
-        exec(textwrap.dedent("""\
+        exec(d"""
         try:
             1/0
         except Exception as e:
             exc = e
-        """), namespace)
+        """, namespace)
 
         exc = namespace['exc']
         traceback = exc.__traceback__
@@ -544,7 +543,7 @@ class CodeTest(unittest.TestCase):
     def test_endline_and_columntable_none_when_no_debug_ranges(self):
         # Make sure that if `-X no_debug_ranges` is used, there is
         # minimal debug info
-        code = textwrap.dedent("""
+        code = d"""
             def f():
                 pass
 
@@ -553,12 +552,12 @@ class CodeTest(unittest.TestCase):
                 assert line == end_line
                 assert column is None
                 assert end_column is None
-            """)
+            """
         assert_python_ok('-X', 'no_debug_ranges', '-c', code)
 
     def test_endline_and_columntable_none_when_no_debug_ranges_env(self):
         # Same as above but using the environment variable opt out.
-        code = textwrap.dedent("""
+        code = d"""
             def f():
                 pass
 
@@ -567,7 +566,7 @@ class CodeTest(unittest.TestCase):
                 assert line == end_line
                 assert column is None
                 assert end_column is None
-            """)
+            """
         assert_python_ok('-c', code, PYTHONNODEBUGRANGES='1')
 
     # co_positions behavior when info is missing.
@@ -1226,15 +1225,15 @@ class CodeConstsTest(unittest.TestCase):
         # compile separately to avoid compile time de-duping
 
         globals = {}
-        exec(textwrap.dedent("""
+        exec(d"""
             def func1():
                 return (0.0, (1, 2, "hello"))
-        """), globals)
+            """, globals)
 
-        exec(textwrap.dedent("""
+        exec(d"""
             def func2():
                 return (0.0, (1, 2, "hello"))
-        """), globals)
+            """, globals)
 
         self.assertTrue(globals["func1"]() is globals["func2"]())
 
@@ -1463,7 +1462,7 @@ class CodeLocationTest(unittest.TestCase):
 
     @cpython_only
     def test_docstring_under_o2(self):
-        code = textwrap.dedent('''
+        code = d'''
             def has_docstring(x, y):
                 """This is a first-line doc string"""
                 """This is a second-line doc string"""
@@ -1485,7 +1484,7 @@ class CodeLocationTest(unittest.TestCase):
 
             for func in [has_docstring, no_docstring(4), async_func]:
                 assert(func.__doc__ is None)
-            ''')
+            '''
 
         rc, out, err = assert_python_ok('-OO', '-c', code)
 

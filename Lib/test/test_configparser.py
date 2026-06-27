@@ -332,31 +332,31 @@ boolean {0[0]} NO
         self.basic_test(cf)
         if self.strict:
             with self.assertRaises(configparser.DuplicateOptionError):
-                cf.read_string(textwrap.dedent("""\
+                cf.read_string(d"""
                     [Duplicate Options Here]
                     option {0[0]} with a value
                     option {0[1]} with another value
-                """.format(self.delimiters)))
+                    """.format(self.delimiters))
             with self.assertRaises(configparser.DuplicateSectionError):
-                cf.read_string(textwrap.dedent("""\
+                cf.read_string(d"""
                     [And Now For Something]
                     completely different {0[0]} True
                     [And Now For Something]
                     the larch {0[1]} 1
-                """.format(self.delimiters)))
+                    """.format(self.delimiters))
         else:
-            cf.read_string(textwrap.dedent("""\
+            cf.read_string(d"""
                 [Duplicate Options Here]
                 option {0[0]} with a value
                 option {0[1]} with another value
-            """.format(self.delimiters)))
+                """.format(self.delimiters))
 
-            cf.read_string(textwrap.dedent("""\
+            cf.read_string(d"""
                 [And Now For Something]
                 completely different {0[0]} True
                 [And Now For Something]
                 the larch {0[1]} 1
-            """.format(self.delimiters)))
+                """.format(self.delimiters))
 
     def test_basic_from_dict(self):
         config = {
@@ -899,11 +899,10 @@ boolean {0[0]} NO
         if self.allow_no_value:
             self.skipTest('if no_value is allowed, ParsingError is not raised')
 
-        invalid = textwrap.dedent("""\
+        invalid = d"""
             [DEFAULT]
             test {0} test
             invalid""".format(self.delimiters[0])
-        )
         cf = self.newconfig()
         with self.assertRaises(configparser.ParsingError):
             cf.read_string(invalid)
@@ -1008,7 +1007,7 @@ class ConfigParserTestCase(BasicTestCase, unittest.TestCase):
 class ConfigParserTestCaseNoInterpolation(BasicTestCase, unittest.TestCase):
     config_class = configparser.ConfigParser
     interpolation = None
-    ini = textwrap.dedent("""
+    ini = d"""
         [numbers]
         one = 1
         two = %(one)s * 2
@@ -1016,7 +1015,7 @@ class ConfigParserTestCaseNoInterpolation(BasicTestCase, unittest.TestCase):
 
         [hexen]
         sixteen = ${numbers:two} * 8
-    """).strip()
+        """.strip()
 
     def assertMatchesIni(self, cf):
         self.assertEqual(cf['numbers']['one'], '1')
@@ -1178,7 +1177,7 @@ class ConfigParserTestCaseExtendedInterpolation(BasicTestCase, unittest.TestCase
         return cf
 
     def test_extended_interpolation(self):
-        cf = self.fromstring(textwrap.dedent("""
+        cf = self.fromstring(d"""
             [common]
             favourite Beatle = Paul
             favourite color = green
@@ -1200,7 +1199,7 @@ class ConfigParserTestCaseExtendedInterpolation(BasicTestCase, unittest.TestCase
             favourite state of mind = paranoid
             favourite movie = soylent ${common:favourite color}
             favourite song = ${favourite color} sabbath - ${favourite state of mind}
-        """).strip())
+            """.strip())
 
         eq = self.assertEqual
         eq(cf['common']['favourite Beatle'], 'Paul')
@@ -1223,7 +1222,7 @@ class ConfigParserTestCaseExtendedInterpolation(BasicTestCase, unittest.TestCase
            'black sabbath - paranoid')
 
     def test_endless_loop(self):
-        cf = self.fromstring(textwrap.dedent("""
+        cf = self.fromstring(d"""
             [one for you]
             ping = ${one for me:pong}
 
@@ -1232,7 +1231,7 @@ class ConfigParserTestCaseExtendedInterpolation(BasicTestCase, unittest.TestCase
 
             [selfish]
             me = ${me}
-        """).strip())
+            """.strip())
 
         with self.assertRaises(configparser.InterpolationDepthError):
             cf['one for you']['ping']
@@ -1261,7 +1260,7 @@ class ConfigParserTestCaseExtendedInterpolation(BasicTestCase, unittest.TestCase
         self.assertEqual(cm.exception.args[2], '${dollars:${sick}}') #rawval
 
     def test_case_sensitivity_basic(self):
-        ini = textwrap.dedent("""
+        ini = d"""
             [common]
             optionlower = value
             OptionUpper = Value
@@ -1273,7 +1272,7 @@ class ConfigParserTestCaseExtendedInterpolation(BasicTestCase, unittest.TestCase
             [random]
             foolower = ${common:optionlower} redefined
             FooUpper = ${Common:OptionUpper} Redefined
-        """).strip()
+            """.strip()
 
         cf = self.fromstring(ini)
         eq = self.assertEqual
@@ -1285,7 +1284,7 @@ class ConfigParserTestCaseExtendedInterpolation(BasicTestCase, unittest.TestCase
         eq(cf['random']['FooUpper'], 'A Better Value Redefined')
 
     def test_case_sensitivity_conflicts(self):
-        ini = textwrap.dedent("""
+        ini = d"""
             [common]
             option = value
             Option = Value
@@ -1297,7 +1296,7 @@ class ConfigParserTestCaseExtendedInterpolation(BasicTestCase, unittest.TestCase
             [random]
             foo = ${common:option} redefined
             Foo = ${Common:Option} Redefined
-        """).strip()
+            """.strip()
         with self.assertRaises(configparser.DuplicateOptionError):
             cf = self.fromstring(ini)
 
@@ -1344,22 +1343,22 @@ class NoValueAndExtendedInterpolation(CfgParserTestCaseClass):
     allow_no_value = True
 
     def test_interpolation_with_allow_no_value(self):
-        config = textwrap.dedent("""
+        config = d"""
             [dummy]
             a
             b = ${a}
-        """)
+            """
         cf = self.fromstring(config)
 
         self.assertIs(cf["dummy"]["a"], None)
         self.assertEqual(cf["dummy"]["b"], "")
 
     def test_explicit_none(self):
-        config = textwrap.dedent("""
+        config = d"""
             [dummy]
             a = None
             b = ${a}
-        """)
+            """
         cf = self.fromstring(config)
 
         self.assertEqual(cf["dummy"]["a"], "None")
@@ -1483,7 +1482,7 @@ class CompatibleTestCase(CfgParserTestCaseClass, unittest.TestCase):
     inline_comment_prefixes = ';'
 
     def test_comment_handling(self):
-        config_string = textwrap.dedent("""\
+        config_string = d"""
         [Commented Bar]
         baz=qwe ; a comment
         foo: bar # not a comment!
@@ -1491,7 +1490,7 @@ class CompatibleTestCase(CfgParserTestCaseClass, unittest.TestCase):
         ; another comment
         quirk: this;is not a comment
         ; a space must precede an inline comment
-        """)
+        """
         cf = self.fromstring(config_string)
         self.assertEqual(cf.get('Commented Bar', 'foo'),
                          'bar # not a comment!')
@@ -1555,9 +1554,9 @@ class ReadFileTestCase(unittest.TestCase):
             self.assertEqual(parser["Foo Bar"]["foo"], "newbar")
 
     def test_iterable(self):
-        lines = textwrap.dedent("""
+        lines = d"""
         [Foo Bar]
-        foo=newbar""").strip().split('\n')
+        foo=newbar""".strip().split('\n')
         parser = configparser.ConfigParser()
         parser.read_file(lines)
         self.assertIn("Foo Bar", parser)
@@ -1576,9 +1575,9 @@ class ReadFileTestCase(unittest.TestCase):
 
     def test_source_as_bytes(self):
         """Issue #18260."""
-        lines = textwrap.dedent("""
+        lines = d"""
         [badbad]
-        [badbad]""").strip().split('\n')
+        [badbad]""".strip().split('\n')
         parser = configparser.ConfigParser()
         with self.assertRaises(configparser.DuplicateSectionError) as dse:
             parser.read_file(lines, source=b"badbad")
@@ -1587,10 +1586,10 @@ class ReadFileTestCase(unittest.TestCase):
             "While reading from b'badbad' [line  2]: section 'badbad' "
             "already exists"
         )
-        lines = textwrap.dedent("""
+        lines = d"""
         [badbad]
         bad = bad
-        bad = bad""").strip().split('\n')
+        bad = bad""".strip().split('\n')
         parser = configparser.ConfigParser()
         with self.assertRaises(configparser.DuplicateOptionError) as dse:
             parser.read_file(lines, source=b"badbad")
@@ -1599,9 +1598,9 @@ class ReadFileTestCase(unittest.TestCase):
             "While reading from b'badbad' [line  3]: option 'bad' in section "
             "'badbad' already exists"
         )
-        lines = textwrap.dedent("""
+        lines = d"""
         [badbad]
-        = bad""").strip().split('\n')
+        = bad""".strip().split('\n')
         parser = configparser.ConfigParser()
         with self.assertRaises(configparser.ParsingError) as dse:
             parser.read_file(lines, source=b"badbad")
@@ -1609,9 +1608,9 @@ class ReadFileTestCase(unittest.TestCase):
             str(dse.exception),
             "Source contains parsing errors: b'badbad'\n\t[line  2]: '= bad'"
         )
-        lines = textwrap.dedent("""
+        lines = d"""
         [badbad
-        bad = bad""").strip().split('\n')
+        bad = bad""".strip().split('\n')
         parser = configparser.ConfigParser()
         with self.assertRaises(configparser.MissingSectionHeaderError) as dse:
             parser.read_file(lines, source=b"badbad")
@@ -1676,12 +1675,12 @@ class CoverageOneHundredTestCase(unittest.TestCase):
 
     def test_interpolation_validation(self):
         parser = configparser.ConfigParser()
-        parser.read_string("""
+        parser.read_string(d"""
             [section]
             invalid_percent = %
             invalid_reference = %(()
             invalid_variable = %(does_not_exist)s
-        """)
+            """)
         with self.assertRaises(configparser.InterpolationSyntaxError) as cm:
             parser['section']['invalid_percent']
         self.assertEqual(str(cm.exception), "'%' must be followed by '%' or "
@@ -1693,22 +1692,22 @@ class CoverageOneHundredTestCase(unittest.TestCase):
 
     def test_sectionproxy_repr(self):
         parser = configparser.ConfigParser()
-        parser.read_string("""
+        parser.read_string(d"""
             [section]
             key = value
-        """)
+            """)
         self.assertEqual(repr(parser['section']), '<Section: section>')
 
     def test_inconsistent_converters_state(self):
         parser = configparser.ConfigParser()
         import decimal
         parser.converters['decimal'] = decimal.Decimal
-        parser.read_string("""
+        parser.read_string(d"""
             [s1]
             one = 1
             [s2]
             two = 2
-        """)
+            """)
         self.assertIn('decimal', parser.converters)
         self.assertEqual(parser.getdecimal('s1', 'one'), 1)
         self.assertEqual(parser.getdecimal('s2', 'two'), 2)
@@ -1903,7 +1902,7 @@ class InlineCommentStrippingTestCase(unittest.TestCase):
     def test_stripping(self):
         cfg = configparser.ConfigParser(inline_comment_prefixes=(';', '#',
                 '//'))
-        cfg.read_string("""
+        cfg.read_string(d"""
         [section]
         k1 = v1;still v1
         k2 = v2 ;a comment
@@ -1938,7 +1937,7 @@ class ExceptionContextTestCase(unittest.TestCase):
 
     def test_get_basic_interpolation(self):
         parser = configparser.ConfigParser()
-        parser.read_string("""
+        parser.read_string(d"""
         [Paths]
         home_dir: /Users
         my_dir: %(home_dir1)s/lumberjack
@@ -1952,7 +1951,7 @@ class ExceptionContextTestCase(unittest.TestCase):
     def test_get_extended_interpolation(self):
         parser = configparser.ConfigParser(
           interpolation=configparser.ExtendedInterpolation())
-        parser.read_string("""
+        parser.read_string(d"""
         [Paths]
         home_dir: /Users
         my_dir: ${home_dir1}/lumberjack
@@ -1965,7 +1964,7 @@ class ExceptionContextTestCase(unittest.TestCase):
 
     def test_missing_options(self):
         parser = configparser.ConfigParser()
-        parser.read_string("""
+        parser.read_string(d"""
         [Paths]
         home_dir: /Users
         """)
@@ -2010,7 +2009,7 @@ class ConvertersTestCase(BasicTestCase, unittest.TestCase):
             cfg.converters[''] = lambda v: v
         with self.assertRaises(ValueError):
             cfg.converters[None] = lambda v: v
-        cfg.read_string("""
+        cfg.read_string(d"""
         [s]
         str = string
         int = 1

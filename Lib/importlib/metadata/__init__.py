@@ -20,7 +20,6 @@ import pathlib
 import posixpath
 import re
 import sys
-import textwrap
 import types
 from collections.abc import Iterable, Mapping
 from contextlib import suppress
@@ -101,8 +100,7 @@ class Sectioned:
     []
     """
 
-    _sample = textwrap.dedent(
-        """
+    _sample = d"""
         [sec1]
         # comments ignored
         a = 1
@@ -111,7 +109,6 @@ class Sectioned:
         [sec2]
         a = 2
         """
-    ).lstrip()
 
     @classmethod
     def section_pairs(cls, text):

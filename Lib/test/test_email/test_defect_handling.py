@@ -1,4 +1,3 @@
-import textwrap
 import unittest
 import contextlib
 from email import policy
@@ -16,7 +15,7 @@ class TestDefectsBase:
         yield
 
     def test_same_boundary_inner_outer(self):
-        source = textwrap.dedent("""\
+        source = d"""
             Subject: XX
             From: xx@xx.dk
             To: XX
@@ -51,7 +50,7 @@ class TestDefectsBase:
 
             --MS_Mac_OE_3071477847_720252_MIME_Part--
 
-            """)
+            """
         # XXX better would be to actually detect the duplicate.
         with self._raise_point(errors.StartBoundaryNotFoundDefect):
             msg = self._str_msg(source)
@@ -63,7 +62,7 @@ class TestDefectsBase:
                               errors.StartBoundaryNotFoundDefect)
 
     def test_multipart_no_boundary(self):
-        source = textwrap.dedent("""\
+        source = d"""
             Date: Fri, 6 Apr 2001 09:23:06 -0800 (GMT-0800)
             From: foobar
             Subject: broken mail
@@ -80,7 +79,7 @@ class TestDefectsBase:
             Header: Another part
 
             --JAB03225.986577786/zinfandel.lacita.com--
-            """)
+            """
         with self._raise_point(errors.NoBoundaryInMultipartDefect):
             msg = self._str_msg(source)
         if self.raise_expected: return
@@ -91,7 +90,7 @@ class TestDefectsBase:
         self.assertIsInstance(self.get_defects(msg)[1],
                               errors.MultipartInvariantViolationDefect)
 
-    multipart_msg = textwrap.dedent("""\
+    multipart_msg = d"""
         Date: Wed, 14 Nov 2007 12:56:23 GMT
         From: foo@bar.invalid
         To: foo@bar.invalid
@@ -112,7 +111,7 @@ class TestDefectsBase:
         YWJj
 
         --===============3344438784458119861==--
-        """)
+        """
 
     def test_multipart_invalid_cte(self):
         with self._raise_point(
@@ -136,7 +135,7 @@ class TestDefectsBase:
             self.assertEqual(len(self.get_defects(msg)), 0, "cte="+cte)
 
     def test_lying_multipart(self):
-        source = textwrap.dedent("""\
+        source = d"""
             From: "Allison Dunlap" <xxx@example.com>
             To: yyy@example.com
             Subject: 64423
@@ -145,7 +144,7 @@ class TestDefectsBase:
             Content-Type: multipart/alternative;
 
             Blah blah blah
-            """)
+            """
         with self._raise_point(errors.NoBoundaryInMultipartDefect):
             msg = self._str_msg(source)
         if self.raise_expected: return
@@ -157,7 +156,7 @@ class TestDefectsBase:
                               errors.MultipartInvariantViolationDefect)
 
     def test_missing_start_boundary(self):
-        source = textwrap.dedent("""\
+        source = d"""
             Content-Type: multipart/mixed; boundary="AAA"
             From: Mail Delivery Subsystem <xxx@example.com>
             To: yyy@example.com
@@ -177,7 +176,7 @@ class TestDefectsBase:
 
             --AAA--
 
-            """)
+            """
         # The message structure is:
         #
         # multipart/mixed
@@ -219,14 +218,14 @@ class TestDefectsBase:
                                 [errors.MissingHeaderBodySeparatorDefect])
 
     def test_bad_padding_in_base64_payload(self):
-        source = textwrap.dedent("""\
+        source = d"""
             Subject: test
             MIME-Version: 1.0
             Content-Type: text/plain; charset="utf-8"
             Content-Transfer-Encoding: base64
 
             dmk
-            """)
+            """
         msg = self._str_msg(source)
         with self._raise_point(errors.InvalidBase64PaddingDefect):
             payload = msg.get_payload(decode=True)
@@ -236,14 +235,14 @@ class TestDefectsBase:
                                 [errors.InvalidBase64PaddingDefect])
 
     def test_invalid_chars_in_base64_payload(self):
-        source = textwrap.dedent("""\
+        source = d"""
             Subject: test
             MIME-Version: 1.0
             Content-Type: text/plain; charset="utf-8"
             Content-Transfer-Encoding: base64
 
             dm\x01k===
-            """)
+            """
         msg = self._str_msg(source)
         with self._raise_point(errors.InvalidBase64CharactersDefect):
             payload = msg.get_payload(decode=True)
@@ -253,14 +252,14 @@ class TestDefectsBase:
                                 [errors.InvalidBase64CharactersDefect])
 
     def test_invalid_length_of_base64_payload(self):
-        source = textwrap.dedent("""\
+        source = d"""
             Subject: test
             MIME-Version: 1.0
             Content-Type: text/plain; charset="utf-8"
             Content-Transfer-Encoding: base64
 
             abcde
-            """)
+            """
         msg = self._str_msg(source)
         with self._raise_point(errors.InvalidBase64LengthDefect):
             payload = msg.get_payload(decode=True)
@@ -270,7 +269,7 @@ class TestDefectsBase:
                                 [errors.InvalidBase64LengthDefect])
 
     def test_missing_ending_boundary(self):
-        source = textwrap.dedent("""\
+        source = d"""
             To: 1@harrydomain4.com
             Subject: Fwd: 1
             MIME-Version: 1.0
@@ -289,7 +288,7 @@ class TestDefectsBase:
 
             Alternative 2
 
-            """)
+            """
         with self._raise_point(errors.CloseBoundaryNotFoundDefect):
             msg = self._str_msg(source)
         if self.raise_expected: return

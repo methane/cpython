@@ -221,7 +221,7 @@ class ModuleSnapshot(types.SimpleNamespace):
             cached_id=id(cached),
         )
 
-    SCRIPT = textwrap.dedent('''
+    SCRIPT = d'''
         {imports}
 
         name = {name!r}
@@ -233,11 +233,11 @@ class ModuleSnapshot(types.SimpleNamespace):
         {body}
 
         {postscript}
-        ''')
-    IMPORTS = textwrap.dedent('''
+        '''
+    IMPORTS = d'''
         import sys
-        ''').strip()
-    SCRIPT_BODY = textwrap.dedent('''
+        '''.strip()
+    SCRIPT_BODY = d'''
         # Capture the snapshot data.
         cached = sys.modules.get(name)
         snapshot = dict(
@@ -254,11 +254,11 @@ class ModuleSnapshot(types.SimpleNamespace):
             cached=None,
             cached_id=id(cached) if cached else None,
         )
-        ''').strip()
-    CLEANUP_SCRIPT = textwrap.dedent('''
+        '''.strip()
+    CLEANUP_SCRIPT = d'''
         # Clean up the module.
         sys.modules.pop(name, None)
-        ''').strip()
+        '''.strip()
 
     @classmethod
     def build_script(cls, name, *,
@@ -284,11 +284,11 @@ class ModuleSnapshot(types.SimpleNamespace):
                 postscript = postcleanup
 
         if import_first:
-            prescript += textwrap.dedent(f'''
+            prescript += '\n' + fd'''
 
                 # Now import the module.
                 assert name not in sys.modules
-                import {name}''')
+                import {name}'''.lstrip('\n')
 
         return cls.SCRIPT.format(
             imports=cls.IMPORTS.strip(),
@@ -323,17 +323,17 @@ class ModuleSnapshot(types.SimpleNamespace):
         r, w = pipe
 
         # Build the script.
-        postscript = textwrap.dedent(f'''
+        postscript = fd'''
             # Send the result over the pipe.
             import json
             import os
             os.write({w}, json.dumps(snapshot).encode())
 
-            ''')
+            '''
         _postscript = script_kwargs.get('postscript')
         if _postscript:
             _postscript = textwrap.dedent(_postscript).lstrip()
-            postscript += _postscript
+            postscript += '\n' + _postscript
         script_kwargs['postscript'] = postscript.strip()
         script = cls.build_script(name, **script_kwargs)
 
@@ -661,13 +661,13 @@ class ImportTests(unittest.TestCase):
 
     def test_import_in_del_does_not_crash(self):
         # Issue 4236
-        testfn = script_helper.make_script('', TESTFN, textwrap.dedent("""\
+        testfn = script_helper.make_script('', TESTFN, d"""
             import sys
             class C:
                def __del__(self):
                   import importlib
             sys.argv.insert(0, C())
-            """))
+            """)
         script_helper.assert_python_ok(testfn)
 
     @skip_if_dont_write_bytecode
@@ -2191,7 +2191,7 @@ class SubinterpImportTests(unittest.TestCase):
     def import_script(self, name, fd, filename=None, check_override=None):
         override_text = ''
         if check_override is not None:
-            override_text = f'''
+            override_text = fd'''
                 import _imp
                 _imp._override_multi_interp_extensions_check({check_override})
                 '''
@@ -2203,7 +2203,7 @@ class SubinterpImportTests(unittest.TestCase):
             else:
                 loader = "ExtensionFileLoader"
 
-            return textwrap.dedent(f'''
+            return fd'''
                 from importlib.util import spec_from_loader, module_from_spec
                 from importlib.machinery import {loader}
                 import os, sys
@@ -2218,9 +2218,9 @@ class SubinterpImportTests(unittest.TestCase):
                 else:
                     text = 'okay'
                 os.write({fd}, text.encode('utf-8'))
-                ''')
+                '''
         else:
-            return textwrap.dedent(f'''
+            return fd'''
                 import os, sys
                 {override_text}
                 try:
@@ -2230,7 +2230,7 @@ class SubinterpImportTests(unittest.TestCase):
                 else:
                     text = 'okay'
                 os.write({fd}, text.encode('utf-8'))
-                ''')
+                '''
 
     def run_here(self, name, filename=None, *,
                  check_singlephase_setting=False,
@@ -2522,10 +2522,10 @@ class SubinterpImportTests(unittest.TestCase):
     @requires_singlephase_init
     def test_disallowed_reimport(self):
         # See https://github.com/python/cpython/issues/104621.
-        script = textwrap.dedent('''
+        script = d'''
             import _testsinglephase
             print(_testsinglephase)
-            ''')
+            '''
         interpid = _interpreters.create()
         self.addCleanup(lambda: _interpreters.destroy(interpid))
 
@@ -2676,7 +2676,7 @@ class TestSinglePhaseSnapshot(ModuleSnapshot):
             self.init_count = mod.initialized_count()
         return self
 
-    SCRIPT_BODY = ModuleSnapshot.SCRIPT_BODY + textwrap.dedent('''
+    SCRIPT_BODY = ModuleSnapshot.SCRIPT_BODY + '\n' + d'''
         snapshot['module'].update(dict(
             int_const=mod.int_const,
             str_const=mod.str_const,
@@ -2690,7 +2690,7 @@ class TestSinglePhaseSnapshot(ModuleSnapshot):
             has_spam=hasattr(mod, 'spam'),
             spam=getattr(mod, 'spam', None),
         ))
-        ''').rstrip()
+        '''.rstrip()
 
     @classmethod
     def parse(cls, text):
@@ -2804,10 +2804,10 @@ class SinglephaseInitTests(unittest.TestCase):
             except _interpreters.InterpreterNotFoundError:
                 pass
         self.addCleanup(ensure_destroyed)
-        _interpreters.exec(interpid, textwrap.dedent('''
+        _interpreters.exec(interpid, d'''
             import sys
             import _testinternalcapi
-            '''))
+            ''')
         def clean_up():
             _interpreters.exec(interpid, textwrap.dedent(f'''
                 name = {self.NAME!r}

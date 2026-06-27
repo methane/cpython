@@ -7,7 +7,6 @@ import inspect
 from io import StringIO
 import re
 import sys
-import textwrap
 import types
 from typing import overload, get_overloads
 import unittest
@@ -1312,14 +1311,14 @@ class PyWarningsDisplayTests(WarningsDisplayTests, unittest.TestCase):
         self.addCleanup(os_helper.unlink, os_helper.TESTFN)
 
         with open(os_helper.TESTFN, 'w', encoding="utf-8") as fp:
-            fp.write(textwrap.dedent("""
+            fp.write(d"""
                 def func():
                     f = open(__file__, "rb")
                     # Emit ResourceWarning
                     f = None
 
                 func()
-            """))
+                """)
 
         def run(*args):
             res = assert_python_ok(*args, PYTHONIOENCODING='utf-8')
@@ -1333,24 +1332,24 @@ class PyWarningsDisplayTests(WarningsDisplayTests, unittest.TestCase):
         # tracemalloc disabled
         filename = os.path.abspath(os_helper.TESTFN)
         stderr = run('-Wd', os_helper.TESTFN)
-        expected = textwrap.dedent(f'''
-            {filename}:5: ResourceWarning: unclosed file <...>
+        expected = fd'''
+            {filename}:4: ResourceWarning: unclosed file <...>
               f = None
             ResourceWarning: Enable tracemalloc to get the object allocation traceback
-        ''').strip()
+            '''.strip()
         self.assertEqual(stderr, expected)
 
         # tracemalloc enabled
         stderr = run('-Wd', '-X', 'tracemalloc=2', os_helper.TESTFN)
-        expected = textwrap.dedent(f'''
-            {filename}:5: ResourceWarning: unclosed file <...>
+        expected = fd'''
+            {filename}:4: ResourceWarning: unclosed file <...>
               f = None
             Object allocated at (most recent call last):
-              File "{filename}", lineno 7
+              File "{filename}", lineno 6
                 func()
-              File "{filename}", lineno 3
+              File "{filename}", lineno 2
                 f = open(__file__, "rb")
-        ''').strip()
+            '''.strip()
         self.assertEqual(stderr, expected)
 
 

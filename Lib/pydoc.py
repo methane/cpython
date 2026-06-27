@@ -1803,7 +1803,7 @@ def _introdoc():
         F1: enter interactive help, F2: enter history browsing mode, F3: enter paste
         mode (press again to exit).
         '''
-    return textwrap.dedent(f'''\
+    return fd'''
         Welcome to Python {ver}'s help utility! If this is your first time using
         Python, you should definitely check out the tutorial at
         https://docs.python.org/{ver}/tutorial/.
@@ -1819,7 +1819,7 @@ def _introdoc():
 
         To quit this help utility and return to the interpreter,
         enter "q", "quit" or "exit".
-    ''')
+        '''
 
 class Helper:
 

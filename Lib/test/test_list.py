@@ -1,6 +1,5 @@
 import signal
 import sys
-import textwrap
 from test import list_tests, support
 from test.support import cpython_only
 from test.support.import_helper import import_module
@@ -330,14 +329,14 @@ class ListTest(list_tests.CommonTest):
     def test_no_memory(self):
         # gh-118331: Make sure we don't crash if list allocation fails
         import_module("_testcapi")
-        code = textwrap.dedent("""
+        code = d"""
         import _testcapi, sys
         # Prime the freelist
         l = [None]
         del l
         _testcapi.set_nomemory(0)
         l = [None]
-        """)
+        """
         rc, _, _ = assert_python_failure("-c", code)
         if support.MS_WINDOWS:
             # STATUS_ACCESS_VIOLATION
@@ -348,7 +347,7 @@ class ListTest(list_tests.CommonTest):
     def test_deopt_from_append_list(self):
         # gh-132011: it used to crash, because
         # of `CALL_LIST_APPEND` specialization failure.
-        code = textwrap.dedent("""
+        code = d"""
             import _testinternalcapi
 
             l = []
@@ -362,7 +361,7 @@ class ListTest(list_tests.CommonTest):
                 pass
             else:
                 raise AssertionError
-        """)
+            """
 
         rc, _, _ = assert_python_ok("-c", code)
         self.assertEqual(rc, 0)

@@ -9,7 +9,6 @@ import importlib
 from pathlib import Path
 import sys
 import tempfile
-import textwrap
 import unittest
 from test import support
 from test.support.script_helper import assert_python_ok
@@ -143,8 +142,8 @@ class TestMiscellaneous(unittest.TestCase):
     def test_lazy_import(self):
         # Test the TOML file can be parsed without importing regular
         # expressions (tomllib._re)
-        code = textwrap.dedent("""
-            import sys, tomllib, textwrap
+        code = d"""
+            import sys, tomllib
             document = textwrap.dedent('''
                 [metadata]
                 key = "text"
@@ -153,6 +152,6 @@ class TestMiscellaneous(unittest.TestCase):
             ''')
             tomllib.loads(document)
             print("lazy import?", 'tomllib._re' not in sys.modules)
-        """)
+            """
         proc = assert_python_ok("-c", code)
         self.assertIn(b"lazy import? True", proc.out)

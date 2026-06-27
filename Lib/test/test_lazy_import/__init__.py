@@ -97,16 +97,16 @@ class LazyImportTests(LazyImportTestCase):
     @support.requires_subprocess()
     def test_from_import_with_module_getattr(self):
         """Lazy from import should respect module-level __getattr__."""
-        code = textwrap.dedent("""
+        code = d"""
             lazy from test.test_lazy_import.data.module_with_getattr import dynamic_attr
             assert dynamic_attr == "from_getattr"
-        """)
+            """
         assert_python_ok("-c", code)
 
     @support.requires_subprocess()
     def test_from_import_with_module_getattr_raising(self):
         """Lazy from import should respect module-level __getattr__."""
-        code = textwrap.dedent("""
+        code = d"""
             lazy from test.test_lazy_import.data.module_with_getattr import raising_attr
 
             try:
@@ -115,7 +115,7 @@ class LazyImportTests(LazyImportTestCase):
                 assert str(exc) == 'from_getattr', exc
             else:
                 assert False, f'ValueError is not raised: {raising_attr}'
-        """)
+            """
         assert_python_ok("-c", code)
 
     @support.requires_subprocess()
@@ -123,7 +123,7 @@ class LazyImportTests(LazyImportTestCase):
         """Lazy from import should respect module-level __getattr__."""
         for attr in ("missing_attr", "import_error_attr"):
             with self.subTest(attr=attr):
-                code = textwrap.dedent(f"""
+                code = fd"""
                     lazy from test.test_lazy_import.data.module_with_getattr import {attr}
 
                     try:
@@ -133,13 +133,13 @@ class LazyImportTests(LazyImportTestCase):
                         assert exc.__cause__ is not None
                     else:
                         assert False, ('ImportError is not raised', {attr})
-                """)
+                    """
                 assert_python_ok("-c", code)
 
     @support.requires_subprocess()
     def test_from_import_with_module_getattr_warning(self):
         """Lazy from import should respect module-level __getattr__."""
-        code = textwrap.dedent("""
+        code = d"""
             import warnings
 
             with warnings.catch_warnings(record=True) as log:
@@ -153,18 +153,18 @@ class LazyImportTests(LazyImportTestCase):
             assert len(log) == 1, log
             assert isinstance(log[0].message, UserWarning), log
             assert str(log[0].message) == 'from_getattr', log
-        """)
+            """
         assert_python_ok("-c", code)
 
     @support.requires_subprocess()
     def test_from_import_with_imported_module_getattr(self):
         """Lazy from import should not shadow an imported module's __getattr__."""
-        code = textwrap.dedent("""
+        code = d"""
             import test.test_lazy_import.data.module_with_getattr as mod
             lazy from test.test_lazy_import.data.module_with_getattr import dynamic_attr
             assert dynamic_attr == "from_getattr"
             assert mod.dynamic_attr == "from_getattr"
-        """)
+            """
         assert_python_ok("-c", code)
 
 
@@ -270,10 +270,10 @@ class LazyImportTypeTests(LazyImportTestCase):
     @support.requires_subprocess()
     def test_lazy_import_type_attributes_accessible(self):
         """Check that static PyLazyImport_Type is initialized at startup."""
-        code = textwrap.dedent("""
+        code = d"""
             lazy import json
             print(globals()["json"].resolve)
-        """)
+            """
         proc = assert_python_ok("-c", code)
         self.assertIn(b"<built-in method resolve of lazy_import object at", proc.out)
 
@@ -333,13 +333,13 @@ class SyntaxRestrictionTests(LazyImportTestCase):
     def test_lazy_import_exec_at_module_level(self):
         """lazy import via exec() at module level should work."""
         # exec() at module level (globals == locals) should allow lazy imports
-        code = textwrap.dedent("""
+        code = d"""
             import sys
             exec("lazy import json")
             # Should be lazy - not loaded yet
             assert 'json' not in sys.modules
             print("OK")
-        """)
+            """
         result = subprocess.run(
             [sys.executable, "-c", code],
             capture_output=True,
@@ -472,19 +472,19 @@ class PackageTests(LazyImportTestCase):
     @support.requires_subprocess()
     def test_lazy_from_import_does_not_pollute_parent(self):
         """Lazy from import should not add the name to the parent module's dict."""
-        code = textwrap.dedent("""
+        code = d"""
             lazy from json import nonexistent_attr
             import json
             assert "nonexistent_attr" not in json.__dict__, (
                 "lazy from import should not publish attributes on the parent module"
             )
-        """)
+            """
         assert_python_ok("-c", code)
 
     @support.requires_subprocess()
     def test_package_from_import_with_module_getattr_raising(self):
         """Lazy from import should respect a package's __getattr__."""
-        code = textwrap.dedent("""
+        code = d"""
             lazy from test.test_lazy_import.data.pkg import raising_attr
 
             try:
@@ -493,7 +493,7 @@ class PackageTests(LazyImportTestCase):
                 assert str(exc) == 'from_getattr', exc
             else:
                 assert False, f'ValueError is not raised: {raising_attr}'
-        """)
+            """
         assert_python_ok("-c", code)
 
     @support.requires_subprocess()
@@ -501,7 +501,7 @@ class PackageTests(LazyImportTestCase):
         """Lazy from import should respect package's __getattr__."""
         for attr in ("missing_attr", "import_error_attr"):
             with self.subTest(attr=attr):
-                code = textwrap.dedent(f"""
+                code = fd"""
                     lazy from test.test_lazy_import.data.pkg import {attr}
 
                     try:
@@ -511,13 +511,13 @@ class PackageTests(LazyImportTestCase):
                         assert exc.__cause__ is not None
                     else:
                         assert False, ('ImportError is not raised', {attr})
-                """)
+                    """
                 assert_python_ok("-c", code)
 
     @support.requires_subprocess()
     def test_from_import_with_module_getattr_warning(self):
         """Lazy from import should respect package's __getattr__."""
-        code = textwrap.dedent("""
+        code = d"""
             import warnings
 
             with warnings.catch_warnings(record=True) as log:
@@ -531,18 +531,18 @@ class PackageTests(LazyImportTestCase):
             assert len(log) == 1, log
             assert isinstance(log[0].message, UserWarning), log
             assert str(log[0].message) == 'from_getattr', log
-        """)
+            """
         assert_python_ok("-c", code)
 
     @support.requires_subprocess()
     def test_package_from_import_with_module_getattr(self):
         """Lazy from import should respect a package's __getattr__."""
-        code = textwrap.dedent("""
+        code = d"""
             import test.test_lazy_import.data.pkg as pkg
             lazy from test.test_lazy_import.data.pkg import dynamic_attr
             assert dynamic_attr == "from_getattr"
             assert pkg.dynamic_attr == "from_getattr"
-        """)
+            """
         assert_python_ok("-c", code)
 
 
@@ -632,14 +632,14 @@ class SysLazyImportsAPITests(LazyImportTestCase):
     @support.requires_subprocess()
     def test_lazy_modules_tracks_lazy_imports(self):
         """sys.lazy_modules should track lazily imported module names."""
-        code = textwrap.dedent("""
+        code = d"""
             import sys
             initial_count = len(sys.lazy_modules)
             import test.test_lazy_import.data.basic_unused
             assert "test.test_lazy_import.data.basic2" in sys.lazy_modules
             assert len(sys.lazy_modules) > initial_count
             print("OK")
-        """)
+            """
         result = subprocess.run(
             [sys.executable, "-c", code],
             capture_output=True,
@@ -659,7 +659,7 @@ class ErrorHandlingTests(LazyImportTestCase):
 
     def test_import_error_shows_chained_traceback(self):
         """Accessing a nonexistent lazy submodule via parent attr raises AttributeError."""
-        code = textwrap.dedent("""
+        code = d"""
             import sys
             lazy import test.test_lazy_import.data.nonexistent_module
 
@@ -667,7 +667,7 @@ class ErrorHandlingTests(LazyImportTestCase):
                 x = test.test_lazy_import.data.nonexistent_module
             except AttributeError as e:
                 print("OK")
-        """)
+            """
         result = subprocess.run(
             [sys.executable, "-c", code],
             capture_output=True,
@@ -679,7 +679,7 @@ class ErrorHandlingTests(LazyImportTestCase):
     def test_attribute_error_on_from_import_shows_chained_traceback(self):
         """Accessing missing attribute from lazy from-import should chain errors."""
         # Tests 'lazy from module import nonexistent' behavior
-        code = textwrap.dedent("""
+        code = d"""
             import sys
             lazy from test.test_lazy_import.data.basic2 import nonexistent_name
 
@@ -689,7 +689,7 @@ class ErrorHandlingTests(LazyImportTestCase):
                 # PEP 810: Enhanced error reporting through exception chaining
                 assert e.__cause__ is not None, "Expected chained exception"
                 print("OK")
-        """)
+            """
         result = subprocess.run(
             [sys.executable, "-c", code],
             capture_output=True,
@@ -704,7 +704,7 @@ class ErrorHandlingTests(LazyImportTestCase):
         PEP 810: "If reification fails, the lazy object is not reified or replaced.
         Subsequent uses of the lazy object will re-try the reification."
         """
-        code = textwrap.dedent("""
+        code = d"""
             import sys
             import types
 
@@ -725,7 +725,7 @@ class ErrorHandlingTests(LazyImportTestCase):
                 x = test.test_lazy_import.data.broken_module
             except AttributeError:
                 print("OK - retry worked")
-        """)
+            """
         result = subprocess.run(
             [sys.executable, "-c", code],
             capture_output=True,
@@ -736,7 +736,7 @@ class ErrorHandlingTests(LazyImportTestCase):
 
     def test_error_during_module_execution_propagates(self):
         """Errors in module code during reification should propagate correctly."""
-        code = textwrap.dedent("""
+        code = d"""
             import sys
             lazy import test.test_lazy_import.data.broken_module
 
@@ -745,7 +745,7 @@ class ErrorHandlingTests(LazyImportTestCase):
                 print("FAIL - should have raised")
             except AttributeError:
                 print("OK")
-        """)
+            """
         result = subprocess.run(
             [sys.executable, "-c", code],
             capture_output=True,
@@ -760,22 +760,22 @@ class ErrorHandlingTests(LazyImportTestCase):
             b_path = os.path.join(tmpdir, "b.py")
 
             with open(a_path, "w") as f:
-                f.write(textwrap.dedent("""\
+                f.write(d"""
                     lazy import b
 
                     def something():
                         b.hello()
 
                     something()
-                """))
+                    """)
 
             with open(b_path, "w") as f:
-                f.write(textwrap.dedent("""\
+                f.write(d"""
                     lazy import a
 
                     def hello():
                         print(a)
-                """))
+                    """)
 
             result = subprocess.run(
                 [sys.executable, a_path],
@@ -804,7 +804,7 @@ class GlobalsAndDictTests(LazyImportTestCase):
         automatically resolves lazy imports. Inside a function, accessing globals()['name']
         uses BINARY_SUBSCR which returns the lazy proxy without resolution.
         """
-        code = textwrap.dedent("""
+        code = d"""
             import sys
             import types
 
@@ -826,7 +826,7 @@ class GlobalsAndDictTests(LazyImportTestCase):
             # Module should STILL not be loaded
             assert 'test.test_lazy_import.data.basic2' not in sys.modules
             print("OK")
-        """)
+            """
         result = subprocess.run(
             [sys.executable, "-c", code],
             capture_output=True,
@@ -841,7 +841,7 @@ class GlobalsAndDictTests(LazyImportTestCase):
         Note: Assigning g['name'] to a local variable at module level triggers
         reification due to STORE_NAME bytecode. Inline access preserves laziness.
         """
-        code = textwrap.dedent("""
+        code = d"""
             import sys
             import types
             lazy import json
@@ -849,7 +849,7 @@ class GlobalsAndDictTests(LazyImportTestCase):
             assert type(globals()['json']) is types.LazyImportType
             assert 'json' not in sys.modules
             print("OK")
-        """)
+            """
         result = subprocess.run(
             [sys.executable, "-c", code],
             capture_output=True,
@@ -886,7 +886,7 @@ class GlobalsAndDictTests(LazyImportTestCase):
         Note: Must access lazy proxy from within a function to avoid automatic
         reification by LOAD_NAME at module level.
         """
-        code = textwrap.dedent("""
+        code = d"""
             import sys
             import types
 
@@ -908,7 +908,7 @@ class GlobalsAndDictTests(LazyImportTestCase):
 
             assert test_resolve()
             print("OK")
-        """)
+            """
         result = subprocess.run(
             [sys.executable, "-c", code],
             capture_output=True,
@@ -918,7 +918,7 @@ class GlobalsAndDictTests(LazyImportTestCase):
         self.assertIn("OK", result.stdout)
 
     def test_add_lazy_to_globals(self):
-        code = textwrap.dedent("""
+        code = d"""
             import sys
             import types
 
@@ -940,7 +940,7 @@ class GlobalsAndDictTests(LazyImportTestCase):
             globals()["sneaky"] = globals()["basic2"]
             assert f() == 210
             print("OK")
-        """)
+            """
         result = subprocess.run(
             [sys.executable, "-c", code],
             capture_output=True,
@@ -962,7 +962,7 @@ class MultipleNameFromImportTests(LazyImportTestCase):
 
     def test_accessing_one_name_leaves_others_as_proxies(self):
         """Accessing one name from multi-name import should leave others lazy."""
-        code = textwrap.dedent("""
+        code = d"""
             import sys
             import types
 
@@ -986,7 +986,7 @@ class MultipleNameFromImportTests(LazyImportTestCase):
             assert type(g['x']) is int, f"Expected int, got {type(g['x'])}"
             assert type(g['f']) is types.LazyImportType, f"Expected LazyImportType, got {type(g['f'])}"
             print("OK")
-        """)
+            """
         result = subprocess.run(
             [sys.executable, "-c", code],
             capture_output=True,
@@ -997,7 +997,7 @@ class MultipleNameFromImportTests(LazyImportTestCase):
 
     def test_all_names_reified_after_all_accessed(self):
         """All names should be reified after each is accessed."""
-        code = textwrap.dedent("""
+        code = d"""
             import sys
             import types
 
@@ -1013,7 +1013,7 @@ class MultipleNameFromImportTests(LazyImportTestCase):
             assert type(g['x']) is int
             assert callable(g['f'])
             print("OK")
-        """)
+            """
         result = subprocess.run(
             [sys.executable, "-c", code],
             capture_output=True,
@@ -1035,7 +1035,7 @@ class SysLazyModulesTrackingTests(LazyImportTestCase):
         # PEP 810 states lazy_modules tracks modules that have been lazily imported
         # Note: The current implementation keeps modules in lazy_modules even after
         # reification (primarily for diagnostics and introspection)
-        code = textwrap.dedent("""
+        code = d"""
             import sys
 
             initial_count = len(sys.lazy_modules)
@@ -1052,7 +1052,7 @@ class SysLazyModulesTrackingTests(LazyImportTestCase):
             # Module should still be tracked (for diagnostics per PEP 810)
             assert "test.test_lazy_import.data.basic2" not in sys.lazy_modules
             print("OK")
-        """)
+            """
         result = subprocess.run(
             [sys.executable, "-c", code],
             capture_output=True,
@@ -1067,14 +1067,14 @@ class SysLazyModulesTrackingTests(LazyImportTestCase):
         self.assertIsInstance(sys.lazy_modules, set)
 
     def test_lazy_module_without_children_is_tracked(self):
-        code = textwrap.dedent("""
+        code = d"""
             import sys
             lazy import json
             assert "json" in sys.lazy_modules, (
                 f"expected 'json' in sys.lazy_modules, got {set(sys.lazy_modules)}"
             )
             print("OK")
-        """)
+            """
         assert_python_ok("-c", code)
 
 
@@ -1089,7 +1089,7 @@ class CommandLineAndEnvVarTests(unittest.TestCase):
 
     def test_cli_lazy_imports_all_makes_regular_imports_lazy(self):
         """-X lazy_imports=all should make all imports potentially lazy."""
-        code = textwrap.dedent("""
+        code = d"""
             import sys
             # In 'all' mode, regular imports become lazy
             import json
@@ -1099,7 +1099,7 @@ class CommandLineAndEnvVarTests(unittest.TestCase):
                 print("LAZY")
             else:
                 print("EAGER")
-        """)
+            """
         result = subprocess.run(
             [sys.executable, "-X", "lazy_imports=all", "-c", code],
             capture_output=True,
@@ -1123,7 +1123,7 @@ class CommandLineAndEnvVarTests(unittest.TestCase):
         """-X lazy_imports=normal should respect lazy keyword only."""
         # Note: Use test modules instead of stdlib modules to avoid
         # modules already loaded by the interpreter startup
-        code = textwrap.dedent("""
+        code = d"""
             import sys
             import test.test_lazy_import.data.basic2  # Should be eager
             lazy import test.test_lazy_import.data.pkg.b  # Should be lazy
@@ -1135,7 +1135,7 @@ class CommandLineAndEnvVarTests(unittest.TestCase):
                 print("OK")
             else:
                 print(f"FAIL: eager={eager_loaded}, lazy={lazy_loaded}")
-        """)
+            """
         result = subprocess.run(
             [sys.executable, "-X", "lazy_imports=normal", "-c", code],
             capture_output=True,
@@ -1146,14 +1146,14 @@ class CommandLineAndEnvVarTests(unittest.TestCase):
 
     def test_env_var_lazy_imports_all_enables_global_lazy(self):
         """PYTHON_LAZY_IMPORTS=all should enable global lazy imports."""
-        code = textwrap.dedent("""
+        code = d"""
             import sys
             import json
             if 'json' not in sys.modules:
                 print("LAZY")
             else:
                 print("EAGER")
-        """)
+            """
         import os
         env = os.environ.copy()
         env["PYTHON_LAZY_IMPORTS"] = "all"
@@ -1184,14 +1184,14 @@ class CommandLineAndEnvVarTests(unittest.TestCase):
     def test_cli_overrides_env_var(self):
         """Command-line option should take precedence over environment variable."""
         # PEP 810: -X lazy_imports takes precedence over PYTHON_LAZY_IMPORTS
-        code = textwrap.dedent("""
+        code = d"""
             import sys
             import json
             if 'json' in sys.modules:
                 print("EAGER")
             else:
                 print("LAZY")
-        """)
+            """
         import os
         env = os.environ.copy()
         env["PYTHON_LAZY_IMPORTS"] = "all"  # env says all imports are lazy
@@ -1207,7 +1207,7 @@ class CommandLineAndEnvVarTests(unittest.TestCase):
 
     def test_sys_set_lazy_imports_overrides_cli(self):
         """sys.set_lazy_imports() should take precedence over CLI option."""
-        code = textwrap.dedent("""
+        code = d"""
             import sys
             sys.set_lazy_imports("normal")  # Override CLI
             import json
@@ -1215,7 +1215,7 @@ class CommandLineAndEnvVarTests(unittest.TestCase):
                 print("EAGER")
             else:
                 print("LAZY")
-        """)
+            """
         result = subprocess.run(
             [sys.executable, "-X", "lazy_imports=all", "-c", code],
             capture_output=True,
@@ -1264,7 +1264,7 @@ class FilterFunctionSignatureTests(LazyImportTestCase):
 
     def test_filter_receives_correct_arguments_for_import(self):
         """Filter should receive (importer, name, fromlist=None) for 'import x'."""
-        code = textwrap.dedent("""
+        code = d"""
             import sys
 
             received_args = []
@@ -1283,7 +1283,7 @@ class FilterFunctionSignatureTests(LazyImportTestCase):
             assert fromlist is None, f"Expected fromlist=None, got {fromlist!r}"
             assert isinstance(importer, str), f"Expected str importer, got {type(importer)}"
             print("OK")
-        """)
+            """
         result = subprocess.run(
             [sys.executable, "-c", code],
             capture_output=True,
@@ -1294,7 +1294,7 @@ class FilterFunctionSignatureTests(LazyImportTestCase):
 
     def test_filter_receives_fromlist_for_from_import(self):
         """Filter should receive fromlist tuple for 'from x import y, z'."""
-        code = textwrap.dedent("""
+        code = d"""
             import sys
 
             received_args = []
@@ -1312,7 +1312,7 @@ class FilterFunctionSignatureTests(LazyImportTestCase):
             assert name == "json", f"Expected name='json', got {name!r}"
             assert fromlist == ("dumps", "loads"), f"Expected ('dumps', 'loads'), got {fromlist!r}"
             print("OK")
-        """)
+            """
         result = subprocess.run(
             [sys.executable, "-c", code],
             capture_output=True,
@@ -1323,7 +1323,7 @@ class FilterFunctionSignatureTests(LazyImportTestCase):
 
     def test_filter_returning_false_forces_eager_import(self):
         """Filter returning False should make import eager."""
-        code = textwrap.dedent("""
+        code = d"""
             import sys
 
             def deny_filter(importer, name, fromlist):
@@ -1338,7 +1338,7 @@ class FilterFunctionSignatureTests(LazyImportTestCase):
                 print("EAGER")
             else:
                 print("LAZY")
-        """)
+            """
         result = subprocess.run(
             [sys.executable, "-c", code],
             capture_output=True,
@@ -1523,7 +1523,7 @@ class MixedLazyEagerImportTests(LazyImportTestCase):
 
     def test_eager_import_before_lazy_resolves_to_same_module(self):
         """Eager import before lazy should make lazy resolve to same module."""
-        code = textwrap.dedent("""
+        code = d"""
             import sys
             import json  # Eager import first
 
@@ -1532,7 +1532,7 @@ class MixedLazyEagerImportTests(LazyImportTestCase):
             # lazy_json should resolve to the same object
             assert json is lazy_json, "Lazy and eager imports should resolve to same module"
             print("OK")
-        """)
+            """
         result = subprocess.run(
             [sys.executable, "-c", code],
             capture_output=True,
@@ -1543,7 +1543,7 @@ class MixedLazyEagerImportTests(LazyImportTestCase):
 
     def test_lazy_import_before_eager_resolves_to_same_module(self):
         """Lazy import followed by eager should both point to same module."""
-        code = textwrap.dedent("""
+        code = d"""
             import sys
 
             lazy import json as lazy_json
@@ -1556,7 +1556,7 @@ class MixedLazyEagerImportTests(LazyImportTestCase):
             # Both should be the same object
             assert json is lazy_json
             print("OK")
-        """)
+            """
         result = subprocess.run(
             [sys.executable, "-c", code],
             capture_output=True,
@@ -1625,7 +1625,7 @@ class ImportStateAtReificationTests(LazyImportTestCase):
 
     def test_sys_path_at_reification_time_is_used(self):
         """sys.path changes after lazy import should affect reification."""
-        code = textwrap.dedent("""
+        code = d"""
             import sys
             import tempfile
             import os
@@ -1654,7 +1654,7 @@ class ImportStateAtReificationTests(LazyImportTestCase):
                 print("OK")
 
                 sys.path.remove(tmpdir)
-        """)
+            """
         result = subprocess.run(
             [sys.executable, "-c", code],
             capture_output=True,
@@ -1703,7 +1703,7 @@ class ThreadSafetyTests(LazyImportTestCase):
 
     def test_concurrent_reification_multiple_modules(self):
         """Multiple threads reifying different lazy imports concurrently."""
-        code = textwrap.dedent("""
+        code = d"""
             import sys
             import threading
 
@@ -1742,7 +1742,7 @@ class ThreadSafetyTests(LazyImportTestCase):
                 assert all(m == 'module' for m in mods), f"Thread {idx} got: {mods}"
 
             print("OK")
-        """)
+            """
 
         result = subprocess.run(
             [sys.executable, "-c", code],
@@ -1754,7 +1754,7 @@ class ThreadSafetyTests(LazyImportTestCase):
 
     def test_concurrent_lazy_modules_dict_updates(self):
         """Multiple threads creating lazy imports should safely update sys.lazy_modules."""
-        code = textwrap.dedent("""
+        code = d"""
             import sys
             import threading
 
@@ -1785,7 +1785,7 @@ class ThreadSafetyTests(LazyImportTestCase):
             assert not errors, f"Errors: {errors}"
             assert isinstance(sys.lazy_modules, set), "sys.lazy_modules is not a dict"
             print("OK")
-        """)
+            """
 
         result = subprocess.run(
             [sys.executable, "-c", code],
@@ -1797,7 +1797,7 @@ class ThreadSafetyTests(LazyImportTestCase):
 
     def test_concurrent_reification_same_module_high_contention(self):
         """High contention: many threads reifying the exact same lazy import."""
-        code = textwrap.dedent("""
+        code = d"""
             import sys
             import threading
             import types
@@ -1837,7 +1837,7 @@ class ThreadSafetyTests(LazyImportTestCase):
             assert all(r is first for r in results), "Inconsistent module objects"
             assert not isinstance(first, types.LazyImportType), "Got lazy import instead of module"
             print("OK")
-        """)
+            """
 
         result = subprocess.run(
             [sys.executable, "-c", code],
@@ -1849,7 +1849,7 @@ class ThreadSafetyTests(LazyImportTestCase):
 
     def test_concurrent_reification_with_module_attribute_access(self):
         """Threads racing to reify and immediately access module attributes."""
-        code = textwrap.dedent("""
+        code = d"""
             import sys
             import threading
 
@@ -1896,7 +1896,7 @@ class ThreadSafetyTests(LazyImportTestCase):
             for idx, types_tuple in results.items():
                 assert all(t == 'module' for t in types_tuple), f"Thread {idx}: {types_tuple}"
             print("OK")
-        """)
+            """
 
         result = subprocess.run(
             [sys.executable, "-c", code],

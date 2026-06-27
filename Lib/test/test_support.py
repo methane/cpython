@@ -14,7 +14,6 @@ import subprocess
 import sys
 import sysconfig
 import tempfile
-import textwrap
 import unittest
 import warnings
 
@@ -246,7 +245,7 @@ class TestSupport(unittest.TestCase):
         """Test that a forked child process does not remove the directory."""
         # See bpo-30028 for details.
         # Run the test as an external script, because it uses fork.
-        script_helper.assert_python_ok("-c", textwrap.dedent("""
+        script_helper.assert_python_ok("-c", d"""
             import os
             from test import support
             from test.support import os_helper
@@ -264,7 +263,7 @@ class TestSupport(unittest.TestCase):
                     # directory.
                     if not os.path.isdir(temp_path):
                         raise AssertionError("Child removed temp_path.")
-        """))
+            """)
 
     # Tests for change_cwd()
 
@@ -643,7 +642,7 @@ class TestSupport(unittest.TestCase):
 
     def test_get_recursion_depth(self):
         # test support.get_recursion_depth()
-        code = textwrap.dedent("""
+        code = d"""
             from test import support
             import sys
 
@@ -681,7 +680,7 @@ class TestSupport(unittest.TestCase):
                 limit = sys.getrecursionlimit()
                 print(f"test with sys.getrecursionlimit()={limit}")
                 test_recursive(2, limit)
-        """)
+            """
         script_helper.assert_python_ok("-c", code)
 
     @support.skip_if_unlimited_stack_size

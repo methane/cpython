@@ -1313,12 +1313,12 @@ class ProcessTestCase(BaseTestCase):
     def test_universal_newlines_communicate_stdin(self):
         # universal newlines through communicate(), with only stdin
         p = subprocess.Popen([sys.executable, "-c",
-                              'import sys,os;' + SETBINARY + textwrap.dedent('''
+                              'import sys,os;' + SETBINARY + d'''
                                s = sys.stdin.readline()
                                assert s == "line1\\n", repr(s)
                                s = sys.stdin.read()
                                assert s == "line3\\n", repr(s)
-                              ''')],
+                               '''],
                              stdin=subprocess.PIPE,
                              universal_newlines=1)
         (stdout, stderr) = p.communicate("line1\nline3\n")
@@ -1339,7 +1339,7 @@ class ProcessTestCase(BaseTestCase):
     def test_universal_newlines_communicate_stdin_stdout_stderr(self):
         # universal newlines through communicate(), with stdin, stdout, stderr
         p = subprocess.Popen([sys.executable, "-c",
-                              'import sys,os;' + SETBINARY + textwrap.dedent('''
+                              'import sys,os;' + SETBINARY + d'''
                                s = sys.stdin.buffer.readline()
                                sys.stdout.buffer.write(s)
                                sys.stdout.buffer.write(b"line2\\r")
@@ -1350,7 +1350,7 @@ class ProcessTestCase(BaseTestCase):
                                sys.stdout.buffer.write(b"line5\\r\\n")
                                sys.stderr.buffer.write(b"eline6\\r")
                                sys.stderr.buffer.write(b"eline7\\r\\nz")
-                              ''')],
+                               '''],
                              stdin=subprocess.PIPE,
                              stderr=subprocess.PIPE,
                              stdout=subprocess.PIPE,
@@ -1578,7 +1578,7 @@ class ProcessTestCase(BaseTestCase):
         except (AttributeError, ImportError):
             self.skipTest("need msvcrt.CrtSetReportMode")
 
-        code = textwrap.dedent(f"""
+        code = fd"""
             import msvcrt
             import subprocess
 
@@ -1596,7 +1596,7 @@ class ProcessTestCase(BaseTestCase):
                                  stderr=subprocess.PIPE)
             except OSError:
                 pass
-        """)
+            """
         cmd = [sys.executable, "-c", code]
         proc = subprocess.Popen(cmd,
                                 stderr=subprocess.PIPE,
@@ -2046,11 +2046,11 @@ class RunFuncTestCase(BaseTestCase):
                         f"{stacks}```")
 
     def test_encoding_warning(self):
-        code = textwrap.dedent("""\
+        code = d"""
             from subprocess import *
             run("echo hello", shell=True, text=True)
             check_output("echo hello", shell=True, text=True)
-            """)
+            """
         cp = subprocess.run([sys.executable, "-Xwarn_default_encoding", "-c", code],
                             capture_output=True)
         lines = cp.stderr.splitlines()
@@ -2912,13 +2912,13 @@ class POSIXProcessTestCase(BaseTestCase):
             for from_fd, to_fd in zip(from_fds, to_fds):
                 kwargs[arg_names[to_fd]] = from_fd
 
-            code = textwrap.dedent(r'''
+            code = rd'''
                 import os, sys
                 skipped_fd = int(sys.argv[1])
                 for fd in range(3):
                     if fd != skipped_fd:
                         os.write(fd, str(fd).encode('ascii'))
-            ''')
+                '''
 
             skipped_fd = (set(range(3)) - set(to_fds)).pop()
 
@@ -2930,11 +2930,11 @@ class POSIXProcessTestCase(BaseTestCase):
                 os.lseek(from_fd, 0, os.SEEK_SET)
                 read_bytes = os.read(from_fd, 1024)
                 read_fds = list(map(int, read_bytes.decode('ascii')))
-                msg = textwrap.dedent(f"""
+                msg = fd"""
                     When testing {from_fds} to {to_fds} redirection,
                     parent descriptor {from_fd} got redirected
                     to descriptor(s) {read_fds} instead of descriptor {to_fd}.
-                """)
+                    """
                 self.assertEqual([to_fd], read_fds, msg)
         finally:
             self._restore_fds(saved_fds)

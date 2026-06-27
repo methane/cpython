@@ -6,7 +6,6 @@ from unittest import mock
 from idlelib.idle_test.tkinter_testing_utils import run_in_tk_mainloop
 
 from functools import partial
-import textwrap
 from tkinter import Tk, Text
 from idlelib import config
 from idlelib.percolator import Percolator
@@ -20,7 +19,7 @@ testcfg = {
     'extensions': config.IdleUserConfParser(''),
 }
 
-source = textwrap.dedent("""\
+source = d"""
     if True: int ('1') # keyword, builtin, string, comment
     elif False: print(0)  # 'string' in comment
     else: float(None)  # if in comment
@@ -52,7 +51,7 @@ source = textwrap.dedent("""\
     '''
     case _:'''
     "match x:"
-    """)
+    """
 
 
 def setUpModule():
@@ -561,13 +560,13 @@ class ColorDelegatorTest(unittest.TestCase):
         self._assert_highlighting('lazy foo', {})
 
     def test_long_multiline_string(self):
-        source = textwrap.dedent('''\
+        source = d'''
             """a
             b
             c
             d
             e"""
-            ''')
+            '''
         self._assert_highlighting(source, {'STRING': [('1.0', '5.4')]})
 
     @run_in_tk_mainloop(delay=50)

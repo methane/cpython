@@ -126,11 +126,11 @@ class TestExecutorInvalidation(unittest.TestCase):
     def test_uop_optimizer_invalidation(self):
         # Generate a new function at each call
         ns = {}
-        exec(textwrap.dedent(f"""
+        exec(fd"""
             def f():
                 for i in range({TIER2_THRESHOLD}):
                     pass
-        """), ns, ns)
+            """, ns, ns)
         f = ns['f']
         f()
         exe = get_first_executor(f)
@@ -203,7 +203,7 @@ class TestUops(unittest.TestCase):
     def test_extended_arg(self):
         "Check EXTENDED_ARG handling in superblock creation"
         ns = {}
-        exec(textwrap.dedent(f"""
+        exec(fd"""
             def many_vars():
                 # 260 vars, so z9 should have index 259
                 a0 = a1 = a2 = a3 = a4 = a5 = a6 = a7 = a8 = a9 = 42
@@ -235,7 +235,7 @@ class TestUops(unittest.TestCase):
                 while z9 > 0:
                     z9 = z9 - 1
                     +z9
-        """), ns, ns)
+            """, ns, ns)
         many_vars = ns["many_vars"]
 
         ex = get_first_executor(many_vars)
@@ -786,7 +786,7 @@ class TestUopsOptimization(unittest.TestCase):
 
     def test_promote_globals_to_constants(self):
 
-        result = script_helper.run_python_until_end('-c', textwrap.dedent("""
+        result = script_helper.run_python_until_end('-c', d"""
         import _testinternalcapi
         import opcode
         import _opcode
@@ -816,7 +816,7 @@ class TestUopsOptimization(unittest.TestCase):
         uops = get_opnames(ex)
         assert "_LOAD_GLOBAL_BUILTINS" not in uops
         assert "_LOAD_CONST_INLINE_BORROW" in uops
-        """), PYTHON_JIT="1")
+        """, PYTHON_JIT="1")
         self.assertEqual(result[0].rc, 0, result)
 
     def test_float_add_constant_propagation(self):
@@ -1975,7 +1975,7 @@ class TestUopsOptimization(unittest.TestCase):
             {item for item in items}
 
     def test_power_type_depends_on_input_values(self):
-        template = textwrap.dedent("""
+        template = d"""
             import _testinternalcapi
 
             L, R, X, Y = {l}, {r}, {x}, {y}
@@ -2002,7 +2002,7 @@ class TestUopsOptimization(unittest.TestCase):
             f(L, R)
             # ...then run with another:
             f(X, Y)
-        """)
+            """
         interesting = [
             (1, 1),  # int ** int -> int
             (1, -1),  # int ** int -> float
@@ -4888,7 +4888,7 @@ class TestUopsOptimization(unittest.TestCase):
     def test_attr_promotion_failure(self):
         # We're not testing for any specific uops here, just
         # testing it doesn't crash.
-        script_helper.assert_python_ok('-c', textwrap.dedent("""
+        script_helper.assert_python_ok('-c', d"""
         import _testinternalcapi
         import _opcode
         import email
@@ -4911,7 +4911,7 @@ class TestUopsOptimization(unittest.TestCase):
 
 
         testfunc(_testinternalcapi.TIER2_THRESHOLD)
-        """))
+        """)
 
     def test_pop_top_specialize_none(self):
         def testfunc(n):
@@ -5105,7 +5105,7 @@ class TestUopsOptimization(unittest.TestCase):
                               f" than expected _EXIT_TRACE")
 
     def test_enter_executor_valid_op_arg(self):
-        script_helper.assert_python_ok("-c", textwrap.dedent("""
+        script_helper.assert_python_ok("-c", d"""
             import sys
             sys.setrecursionlimit(30) # reduce time of the run
 
@@ -5135,11 +5135,11 @@ class TestUopsOptimization(unittest.TestCase):
                     f1()
                 except RecursionError:
                     pass
-        """))
+            """)
 
     def test_attribute_changes_are_watched(self):
         # Just running to make sure it doesn't crash.
-        script_helper.assert_python_ok("-c", textwrap.dedent("""
+        script_helper.assert_python_ok("-c", d"""
             from concurrent.futures import ThreadPoolExecutor
             from unittest import TestCase
             NTHREADS = 6
@@ -5158,7 +5158,7 @@ class TestUopsOptimization(unittest.TestCase):
                     with ThreadPoolExecutor(NTHREADS) as pool:
                         pool.submit(read, (1,))
                         pool.submit(write, (1,))
-        """))
+            """)
 
     def test_handling_of_tos_cache_with_side_exits(self):
         # https://github.com/python/cpython/issues/142718
@@ -5182,7 +5182,7 @@ class TestUopsOptimization(unittest.TestCase):
             obj.attr = EvilAttr(obj.__dict__)
 
     def test_promoted_global_refcount_eliminated(self):
-        result = script_helper.run_python_until_end('-c', textwrap.dedent("""
+        result = script_helper.run_python_until_end('-c', d"""
         import _testinternalcapi
         import opcode
         import _opcode
@@ -5217,7 +5217,7 @@ class TestUopsOptimization(unittest.TestCase):
         assert "_POP_TOP_NOP" in uops
         pop_top_count = len([opname for opname in ex if opname == "_POP_TOP" ])
         assert pop_top_count <= 2
-        """), PYTHON_JIT="1")
+        """, PYTHON_JIT="1")
         self.assertEqual(result[0].rc, 0, result)
 
     def test_constant_fold_tuple(self):
@@ -5779,7 +5779,7 @@ class TestUopsOptimization(unittest.TestCase):
     def test_143026(self):
         # https://github.com/python/cpython/issues/143026
 
-        result = script_helper.run_python_until_end('-c', textwrap.dedent("""
+        result = script_helper.run_python_until_end('-c', d"""
         import gc
         thresholds = gc.get_threshold()
         try:
@@ -5792,7 +5792,7 @@ class TestUopsOptimization(unittest.TestCase):
             f1()
         finally:
             gc.set_threshold(*thresholds)
-        """), PYTHON_JIT="1")
+        """, PYTHON_JIT="1")
         self.assertEqual(result[0].rc, 0, result)
 
     def test_143092(self):
@@ -5882,7 +5882,7 @@ class TestUopsOptimization(unittest.TestCase):
     def test_143358(self):
         # https://github.com/python/cpython/issues/143358
 
-        result = script_helper.run_python_until_end('-c', textwrap.dedent(f"""
+        result = script_helper.run_python_until_end('-c', fd"""
         def f1():
 
             class EvilIterator:
@@ -5921,7 +5921,7 @@ class TestUopsOptimization(unittest.TestCase):
                     pass
 
         f1()
-        """), PYTHON_JIT="1", PYTHON_JIT_STRESS="1")
+        """, PYTHON_JIT="1", PYTHON_JIT_STRESS="1")
         self.assertEqual(result[0].rc, 0, result)
 
     def test_149335_trace_buffer_guard(self):
@@ -5963,7 +5963,7 @@ class TestUopsOptimization(unittest.TestCase):
         self.assertEqual(result[0].rc, 0, result)
 
     def test_144068_daemon_thread_jit_cleanup(self):
-        result = script_helper.run_python_until_end('-c', textwrap.dedent("""
+        result = script_helper.run_python_until_end('-c', d"""
         import threading
         import time
 
@@ -5977,7 +5977,7 @@ class TestUopsOptimization(unittest.TestCase):
         t.start()
 
         time.sleep(0.1)
-        """), PYTHON_JIT="1", ASAN_OPTIONS="detect_leaks=1")
+        """, PYTHON_JIT="1", ASAN_OPTIONS="detect_leaks=1")
         self.assertEqual(result[0].rc, 0, result)
         stderr = result[0].err.decode('utf-8', errors='replace')
         self.assertNotIn('LeakSanitizer', stderr,
@@ -5987,7 +5987,7 @@ class TestUopsOptimization(unittest.TestCase):
 
     def test_cold_exit_on_init_cleanup_frame(self):
 
-        result = script_helper.run_python_until_end('-c', textwrap.dedent("""
+        result = script_helper.run_python_until_end('-c', d"""
         class A:
             __slots__ = ('x', 'y', 'z', 'w')
             def __init__(self):
@@ -6030,13 +6030,13 @@ class TestUopsOptimization(unittest.TestCase):
         for f in funcs:
             for _ in range(10):
                 f(names, info)
-        """), PYTHON_JIT="1", PYTHON_JIT_STRESS="1",
+        """, PYTHON_JIT="1", PYTHON_JIT_STRESS="1",
              PYTHON_JIT_SIDE_EXIT_INITIAL_VALUE="1")
         self.assertEqual(result[0].rc, 0, result)
 
     def test_for_iter_gen_cleared_frame_does_not_crash(self):
         # See: https://github.com/python/cpython/issues/145197
-        result = script_helper.run_python_until_end('-c', textwrap.dedent("""
+        result = script_helper.run_python_until_end('-c', d"""
         def g():
             yield 1
             yield 2
@@ -6052,7 +6052,7 @@ class TestUopsOptimization(unittest.TestCase):
                 it.close()
             for _ in it:
                 pass
-        """),
+        """,
         PYTHON_JIT="1", PYTHON_JIT_STRESS="1")
         self.assertEqual(result[0].rc, 0, result)
 
@@ -6165,7 +6165,7 @@ class TestUopsOptimization(unittest.TestCase):
         self.assertEqual(uops.count("_GUARD_NOS_TYPE_VERSION"), 2)
 
     def test_settrace_then_polymorphic_call_does_not_crash(self):
-        script_helper.assert_python_ok("-c", textwrap.dedent("""
+        script_helper.assert_python_ok("-c", d"""
             import sys
             sys.settrace(lambda *_: None)
             sys.settrace(None)
@@ -6176,7 +6176,7 @@ class TestUopsOptimization(unittest.TestCase):
 
             for i in 0, 1, 0, 1:
                 C(0) if i else str(0)
-        """))
+            """)
 
     def test_load_special_type_guard_deopt(self):
         script_helper.assert_python_ok("-s", "-c", textwrap.dedent(f"""

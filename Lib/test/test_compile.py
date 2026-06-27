@@ -158,11 +158,11 @@ class TestSpecifics(unittest.TestCase):
 
     def test_indentation(self):
         # testing compile() of indented block w/o trailing newline"
-        s = textwrap.dedent("""
+        s = d"""
             if 1:
                 if 2:
                     pass
-            """)
+            """
         compile(s, "<string>", "exec")
 
     # This test is probably specific to CPython and may not generalize
@@ -476,17 +476,17 @@ class TestSpecifics(unittest.TestCase):
                     compile(expr, '<eval>', 'exec')
 
     def test_dead_code_with_except_handler_compiles(self):
-        compile(textwrap.dedent("""
+        compile(d"""
                 if None:
                     with CM:
                         x = 1
                 else:
                     x = 2
-               """), '<eval>', 'exec')
+                """, '<eval>', 'exec')
 
     def test_try_except_in_while_with_chained_condition_compiles(self):
         # see gh-124871
-        compile(textwrap.dedent("""
+        compile(d"""
             name_1, name_2, name_3 = 1, 2, 3
             while name_3 <= name_2 > name_1:
                 try:
@@ -495,7 +495,7 @@ class TestSpecifics(unittest.TestCase):
                     pass
                 finally:
                     pass
-            """), '<eval>', 'exec')
+            """, '<eval>', 'exec')
 
     def test_compile_invalid_namedexpr(self):
         # gh-109351
@@ -526,7 +526,7 @@ class TestSpecifics(unittest.TestCase):
 
     def test_compile_redundant_jumps_and_nops_after_moving_cold_blocks(self):
         # See gh-120367
-        code=textwrap.dedent("""
+        code=d"""
             try:
                 pass
             except:
@@ -537,7 +537,7 @@ class TestSpecifics(unittest.TestCase):
                         pass
             finally:
                 something
-            """)
+            """
 
         tree = ast.parse(code)
 
@@ -553,7 +553,7 @@ class TestSpecifics(unittest.TestCase):
 
     def test_compile_redundant_jump_after_convert_pseudo_ops(self):
         # See gh-120367
-        code=textwrap.dedent("""
+        code=d"""
             if name_2:
                 pass
             else:
@@ -562,7 +562,7 @@ class TestSpecifics(unittest.TestCase):
                 except:
                     pass
             ~name_5
-            """)
+            """
 
         tree = ast.parse(code)
 
@@ -913,7 +913,7 @@ class TestSpecifics(unittest.TestCase):
 
     @support.cpython_only
     def test_docstring(self):
-        src = textwrap.dedent("""
+        src = d"""
             def with_docstring():
                 "docstring"
 
@@ -929,7 +929,7 @@ class TestSpecifics(unittest.TestCase):
 
             def multiple_const_strings():
                 "not docstring " * 3
-            """)
+            """
 
         for opt in [0, 1, 2]:
             with self.subTest(opt=opt):
@@ -972,7 +972,7 @@ class TestSpecifics(unittest.TestCase):
     @support.cpython_only
     def test_docstring_omitted(self):
         # See gh-115347
-        src = textwrap.dedent("""
+        src = d"""
             def f():
                 "docstring1"
                 def h():
@@ -984,7 +984,7 @@ class TestSpecifics(unittest.TestCase):
                     pass
 
                 return h
-        """)
+            """
         for opt in [-1, 0, 1, 2]:
             for mode in ["exec", "single"]:
                 with self.subTest(opt=opt, mode=mode):
@@ -1565,14 +1565,14 @@ class TestSpecifics(unittest.TestCase):
 
     def test_multi_line_lambda_as_argument(self):
         # See gh-101928
-        code = textwrap.dedent("""
+        code = d"""
             def foo(param, lambda_exp):
                 pass
 
             foo(param=0,
                 lambda_exp=lambda:
                 1)
-        """)
+            """
         compile(code, "<test>", "exec")
 
     def test_apply_static_swaps(self):
@@ -1646,7 +1646,7 @@ class TestSpecifics(unittest.TestCase):
 
     def test_global_declaration_in_except_used_in_else(self):
         # See gh-111123
-        code = textwrap.dedent("""\
+        code = d"""
             def f():
                 try:
                     pass
@@ -1654,7 +1654,7 @@ class TestSpecifics(unittest.TestCase):
                     global a
                 else:
                     print(a)
-        """)
+            """
 
         g, l = {'a': 5}, {}
         for kw in ("except", "except*"):
@@ -1684,26 +1684,26 @@ class TestSpecifics(unittest.TestCase):
     def test_compile_warnings(self):
         # Each invocation of compile() emits compiler warnings, even if they
         # have the same message and line number.
-        source = textwrap.dedent(r"""
+        source = rd"""
             # tokenizer
             1or 0  # line 3
             # code generator
             1 is 1  # line 5
-        """)
+            """
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("default")
             for i in range(2):
                 # Even if compile() is at the same line.
                 compile(source, '<stdin>', 'exec')
 
-        self.assertEqual([wm.lineno for wm in caught], [3, 5] * 2)
+        self.assertEqual([wm.lineno for wm in caught], [2, 4] * 2)
 
     def test_compile_warning_in_finally(self):
         # Ensure that warnings inside finally blocks are
         # only emitted once despite the block being
         # compiled twice (for normal execution and for
         # exception handling).
-        source = textwrap.dedent("""
+        source = d"""
             try:
                 pass
             finally:
@@ -1712,19 +1712,19 @@ class TestSpecifics(unittest.TestCase):
                     pass
                 finally: # nested
                     1 is 1  # line 9
-        """)
+            """
 
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
             compile(source, '<stdin>', 'exec')
 
-        self.assertEqual(sorted(wm.lineno for wm in caught), [5, 9])
+        self.assertEqual(sorted(wm.lineno for wm in caught), [4, 8])
         for wm in caught:
             self.assertEqual(wm.category, SyntaxWarning)
             self.assertIn("\"is\" with 'int' literal", str(wm.message))
 
         # Other code path is used for "try" with "except*".
-        source = textwrap.dedent("""
+        source = d"""
             try:
                 pass
             except *Exception:
@@ -1737,13 +1737,13 @@ class TestSpecifics(unittest.TestCase):
                     pass
                 finally: # nested
                     1 is 1  # line 13
-        """)
+            """
 
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
             compile(source, '<stdin>', 'exec')
 
-        self.assertEqual(sorted(wm.lineno for wm in caught), [7, 13])
+        self.assertEqual(sorted(wm.lineno for wm in caught), [6, 12])
         for wm in caught:
             self.assertEqual(wm.category, SyntaxWarning)
             self.assertIn("\"is\" with 'int' literal", str(wm.message))
@@ -1773,27 +1773,27 @@ class TestSpecifics(unittest.TestCase):
             self.assertIs(wm.category, SyntaxWarning)
 
     @support.subTests('src', [
-        textwrap.dedent("""
+        d"""
             def f():
                 try:
                     pass
                 finally:
                     return 42
-            """),
-        textwrap.dedent("""
+            """,
+        d"""
             for x in y:
                 try:
                     pass
                 finally:
                     break
-            """),
-        textwrap.dedent("""
+            """,
+        d"""
             for x in y:
                 try:
                     pass
                 finally:
                     continue
-            """),
+            """,
     ])
     def test_pep_765_warnings(self, src):
         with self.assertWarnsRegex(SyntaxWarning, 'finally'):
@@ -1805,27 +1805,27 @@ class TestSpecifics(unittest.TestCase):
             compile(tree, '<string>', 'exec')
 
     @support.subTests('src', [
-        textwrap.dedent("""
+        d"""
             try:
                 pass
             finally:
                 def f():
                     return 42
-            """),
-        textwrap.dedent("""
+            """,
+        d"""
             try:
                 pass
             finally:
                 for x in y:
                     break
-            """),
-        textwrap.dedent("""
+            """,
+        d"""
             try:
                 pass
             finally:
                 for x in y:
                     continue
-            """),
+            """,
     ])
     def test_pep_765_no_warnings(self, src):
         with warnings.catch_warnings():
@@ -1972,24 +1972,24 @@ class TestSourcePositions(unittest.TestCase):
             column=2, end_column=9, occurrence=2)
 
     def test_multiline_expression(self):
-        snippet = textwrap.dedent("""\
+        snippet = d"""
             f(
                 1, 2, 3, 4
             )
-            """)
+            """
         compiled_code, _ = self.check_positions_against_ast(snippet)
         self.assertOpcodeSourcePositionIs(compiled_code, 'CALL',
             line=1, end_line=3, column=0, end_column=1)
 
     @requires_specialization
     def test_multiline_boolean_expression(self):
-        snippet = textwrap.dedent("""\
+        snippet = d"""
             if (a or
                 (b and not c) or
                 not (
                     d > 0)):
                 x = 42
-            """)
+            """
         compiled_code, _ = self.check_positions_against_ast(snippet)
         # jump if a is true:
         self.assertOpcodeSourcePositionIs(compiled_code, 'POP_JUMP_IF_TRUE',
@@ -2009,11 +2009,11 @@ class TestSourcePositions(unittest.TestCase):
 
     @unittest.skipIf(sys.flags.optimize, "Assertions are disabled in optimized mode")
     def test_multiline_assert(self):
-        snippet = textwrap.dedent("""\
+        snippet = d"""
             assert (a > 0 and
                     bb > 0 and
                     ccc == 1000000), "error msg"
-            """)
+            """
         compiled_code, _ = self.check_positions_against_ast(snippet)
         self.assertOpcodeSourcePositionIs(compiled_code, 'LOAD_COMMON_CONSTANT',
             line=1, end_line=3, column=0, end_column=36, occurrence=1)
@@ -2026,14 +2026,14 @@ class TestSourcePositions(unittest.TestCase):
             line=1, end_line=3, column=8, end_column=22, occurrence=1)
 
     def test_multiline_generator_expression(self):
-        snippet = textwrap.dedent("""\
+        snippet = d"""
             ((x,
                 2*x)
                 for x
                 in [1,2,3] if (x > 0
                                and x < 100
                                and x != 50))
-            """)
+            """
         compiled_code, _ = self.check_positions_against_ast(snippet)
         compiled_code = compiled_code.co_consts[0]
         self.assertIsInstance(compiled_code, types.CodeType)
@@ -2045,14 +2045,14 @@ class TestSourcePositions(unittest.TestCase):
             line=4, end_line=4, column=7, end_column=14, occurrence=1)
 
     def test_multiline_async_generator_expression(self):
-        snippet = textwrap.dedent("""\
+        snippet = d"""
             ((x,
                 2*x)
                 async for x
                 in [1,2,3] if (x > 0
                                and x < 100
                                and x != 50))
-            """)
+            """
         compiled_code, _ = self.check_positions_against_ast(snippet)
         compiled_code = compiled_code.co_consts[0]
         self.assertIsInstance(compiled_code, types.CodeType)
@@ -2062,14 +2062,14 @@ class TestSourcePositions(unittest.TestCase):
             line=1, end_line=6, column=0, end_column=32, occurrence=1)
 
     def test_multiline_list_comprehension(self):
-        snippet = textwrap.dedent("""\
+        snippet = d"""
             [(x,
                 2*x)
                 for x
                 in [1,2,3] if (x > 0
                                and x < 100
                                and x != 50)]
-            """)
+            """
         compiled_code, _ = self.check_positions_against_ast(snippet)
         self.assertIsInstance(compiled_code, types.CodeType)
         self.assertOpcodeSourcePositionIs(compiled_code, 'LIST_APPEND',
@@ -2078,7 +2078,7 @@ class TestSourcePositions(unittest.TestCase):
             line=1, end_line=2, column=1, end_column=8, occurrence=1)
 
     def test_multiline_async_list_comprehension(self):
-        snippet = textwrap.dedent("""\
+        snippet = d"""
             async def f():
                 [(x,
                     2*x)
@@ -2086,7 +2086,7 @@ class TestSourcePositions(unittest.TestCase):
                     in [1,2,3] if (x > 0
                                    and x < 100
                                    and x != 50)]
-            """)
+            """
         compiled_code, _ = self.check_positions_against_ast(snippet)
         g = {}
         eval(compiled_code, g)
@@ -2100,14 +2100,14 @@ class TestSourcePositions(unittest.TestCase):
             line=2, end_line=7, column=4, end_column=36, occurrence=1)
 
     def test_multiline_set_comprehension(self):
-        snippet = textwrap.dedent("""\
+        snippet = d"""
             {(x,
                 2*x)
                 for x
                 in [1,2,3] if (x > 0
                                and x < 100
                                and x != 50)}
-            """)
+            """
         compiled_code, _ = self.check_positions_against_ast(snippet)
         self.assertIsInstance(compiled_code, types.CodeType)
         self.assertOpcodeSourcePositionIs(compiled_code, 'SET_ADD',
@@ -2116,7 +2116,7 @@ class TestSourcePositions(unittest.TestCase):
             line=1, end_line=2, column=1, end_column=8, occurrence=1)
 
     def test_multiline_async_set_comprehension(self):
-        snippet = textwrap.dedent("""\
+        snippet = d"""
             async def f():
                 {(x,
                     2*x)
@@ -2124,7 +2124,7 @@ class TestSourcePositions(unittest.TestCase):
                     in [1,2,3] if (x > 0
                                    and x < 100
                                    and x != 50)}
-            """)
+            """
         compiled_code, _ = self.check_positions_against_ast(snippet)
         g = {}
         eval(compiled_code, g)
@@ -2138,14 +2138,14 @@ class TestSourcePositions(unittest.TestCase):
             line=2, end_line=7, column=4, end_column=36, occurrence=1)
 
     def test_multiline_dict_comprehension(self):
-        snippet = textwrap.dedent("""\
+        snippet = d"""
             {x:
                 2*x
                 for x
                 in [1,2,3] if (x > 0
                                and x < 100
                                and x != 50)}
-            """)
+            """
         compiled_code, _ = self.check_positions_against_ast(snippet)
         self.assertIsInstance(compiled_code, types.CodeType)
         self.assertOpcodeSourcePositionIs(compiled_code, 'MAP_ADD',
@@ -2154,7 +2154,7 @@ class TestSourcePositions(unittest.TestCase):
             line=1, end_line=2, column=1, end_column=7, occurrence=1)
 
     def test_multiline_async_dict_comprehension(self):
-        snippet = textwrap.dedent("""\
+        snippet = d"""
             async def f():
                 {x:
                     2*x
@@ -2162,7 +2162,7 @@ class TestSourcePositions(unittest.TestCase):
                     in [1,2,3] if (x > 0
                                    and x < 100
                                    and x != 50)}
-            """)
+            """
         compiled_code, _ = self.check_positions_against_ast(snippet)
         g = {}
         eval(compiled_code, g)
@@ -2176,11 +2176,11 @@ class TestSourcePositions(unittest.TestCase):
             line=2, end_line=7, column=4, end_column=36, occurrence=1)
 
     def test_matchcase_sequence(self):
-        snippet = textwrap.dedent("""\
+        snippet = d"""
             match x:
                 case a, b:
                     pass
-            """)
+            """
         compiled_code, _ = self.check_positions_against_ast(snippet)
         self.assertOpcodeSourcePositionIs(compiled_code, 'MATCH_SEQUENCE',
             line=2, end_line=2, column=9, end_column=13, occurrence=1)
@@ -2192,11 +2192,11 @@ class TestSourcePositions(unittest.TestCase):
             line=2, end_line=2, column=9, end_column=13, occurrence=2)
 
     def test_matchcase_sequence_wildcard(self):
-        snippet = textwrap.dedent("""\
+        snippet = d"""
             match x:
                 case a, *b, c:
                     pass
-            """)
+            """
         compiled_code, _ = self.check_positions_against_ast(snippet)
         self.assertOpcodeSourcePositionIs(compiled_code, 'MATCH_SEQUENCE',
             line=2, end_line=2, column=9, end_column=17, occurrence=1)
@@ -2210,11 +2210,11 @@ class TestSourcePositions(unittest.TestCase):
             line=2, end_line=2, column=9, end_column=17, occurrence=3)
 
     def test_matchcase_mapping(self):
-        snippet = textwrap.dedent("""\
+        snippet = d"""
             match x:
                 case {"a" : a, "b": b}:
                     pass
-            """)
+            """
         compiled_code, _ = self.check_positions_against_ast(snippet)
         self.assertOpcodeSourcePositionIs(compiled_code, 'MATCH_MAPPING',
             line=2, end_line=2, column=9, end_column=26, occurrence=1)
@@ -2226,11 +2226,11 @@ class TestSourcePositions(unittest.TestCase):
             line=2, end_line=2, column=9, end_column=26, occurrence=2)
 
     def test_matchcase_mapping_wildcard(self):
-        snippet = textwrap.dedent("""\
+        snippet = d"""
             match x:
                 case {"a" : a, "b": b, **c}:
                     pass
-            """)
+            """
         compiled_code, _ = self.check_positions_against_ast(snippet)
         self.assertOpcodeSourcePositionIs(compiled_code, 'MATCH_MAPPING',
             line=2, end_line=2, column=9, end_column=31, occurrence=1)
@@ -2242,11 +2242,11 @@ class TestSourcePositions(unittest.TestCase):
             line=2, end_line=2, column=9, end_column=31, occurrence=2)
 
     def test_matchcase_class(self):
-        snippet = textwrap.dedent("""\
+        snippet = d"""
             match x:
                 case C(a, b):
                     pass
-            """)
+            """
         compiled_code, _ = self.check_positions_against_ast(snippet)
         self.assertOpcodeSourcePositionIs(compiled_code, 'MATCH_CLASS',
             line=2, end_line=2, column=9, end_column=16, occurrence=1)
@@ -2258,11 +2258,11 @@ class TestSourcePositions(unittest.TestCase):
             line=2, end_line=2, column=9, end_column=16, occurrence=2)
 
     def test_matchcase_or(self):
-        snippet = textwrap.dedent("""\
+        snippet = d"""
             match x:
                 case C(1) | C(2):
                     pass
-            """)
+            """
         compiled_code, _ = self.check_positions_against_ast(snippet)
         self.assertOpcodeSourcePositionIs(compiled_code, 'MATCH_CLASS',
             line=2, end_line=2, column=9, end_column=13, occurrence=1)
@@ -2750,7 +2750,7 @@ class TestStackSizeStability(unittest.TestCase):
                     b
                 finally:
                     c
-            """
+                """
         self.check_stack_size(snippet)
 
     def test_try_finally(self):
@@ -2759,7 +2759,7 @@ class TestStackSizeStability(unittest.TestCase):
                     a
                 finally:
                     b
-            """
+                """
         self.check_stack_size(snippet)
 
     def test_with(self):

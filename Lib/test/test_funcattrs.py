@@ -1,4 +1,3 @@
-import textwrap
 import types
 import typing
 import unittest
@@ -122,10 +121,10 @@ class FunctionPropertiesTest(FuncAttrsTest):
 
         # Define functions using exec() with different builtins,
         # and test inheritance when globals has no "__builtins__" key
-        code = textwrap.dedent("""
+        code = d"""
             def func3(s): pass
             func4 = type(func3)(func3.__code__, {})
-        """)
+            """
         safe_builtins = {'None': None}
         ns = {'type': type, '__builtins__': safe_builtins}
         exec(code, ns)

@@ -15,7 +15,6 @@ import random
 import socket
 import string
 import sys
-import textwrap
 import weakref
 
 # Skip test if we can't import mmap.
@@ -1087,7 +1086,7 @@ class MmapTests(unittest.TestCase):
     def test_access_violations(self):
         from test.support.os_helper import TESTFN
 
-        code = textwrap.dedent("""
+        code = d"""
             import faulthandler
             import mmap
             import os
@@ -1151,7 +1150,7 @@ class MmapTests(unittest.TestCase):
                 with suppress(OSError):
                     m.rfind(b'A')
                     assert False, 'mmap.rfind() did not raise'
-        """)
+            """
         rt, stdout, stderr = assert_python_ok("-c", code, TESTFN)
         self.assertEqual(stdout.strip(), b'')
         self.assertEqual(stderr.strip(), b'')

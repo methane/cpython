@@ -688,21 +688,21 @@ class IncompatibleExtensionModuleRestrictionsTests(unittest.TestCase):
     # subinterpreters in the free-threaded build
     @support.expected_failure_if_gil_disabled()
     def test_single_phase_init_module(self):
-        script = textwrap.dedent('''
+        script = d'''
             from importlib.util import _incompatible_extension_module_restrictions
             with _incompatible_extension_module_restrictions(disable_check=True):
                 import _testsinglephase
-            ''')
+            '''
         with self.subTest('check disabled, shared GIL'):
             self.run_with_shared_gil(script)
         with self.subTest('check disabled, per-interpreter GIL'):
             self.run_with_own_gil(script)
 
-        script = textwrap.dedent(f'''
+        script = fd'''
             from importlib.util import _incompatible_extension_module_restrictions
             with _incompatible_extension_module_restrictions(disable_check=False):
                 import _testsinglephase
-            ''')
+            '''
         with self.subTest('check enabled, shared GIL'):
             with self.assertRaises(ImportError):
                 self.run_with_shared_gil(script)
@@ -731,23 +731,23 @@ class IncompatibleExtensionModuleRestrictionsTests(unittest.TestCase):
 
             ''')
 
-        script = prescript + textwrap.dedent('''
+        script = prescript + d'''
             from importlib.util import _incompatible_extension_module_restrictions
             with _incompatible_extension_module_restrictions(disable_check=True):
                 module = module_from_spec(spec)
                 loader.exec_module(module)
-            ''')
+            '''
         with self.subTest('check disabled, shared GIL'):
             self.run_with_shared_gil(script)
         with self.subTest('check disabled, per-interpreter GIL'):
             self.run_with_own_gil(script)
 
-        script = prescript + textwrap.dedent('''
+        script = prescript + d'''
             from importlib.util import _incompatible_extension_module_restrictions
             with _incompatible_extension_module_restrictions(disable_check=False):
                 module = module_from_spec(spec)
                 loader.exec_module(module)
-            ''')
+            '''
         with self.subTest('check enabled, shared GIL'):
             self.run_with_shared_gil(script)
         with self.subTest('check enabled, per-interpreter GIL'):
@@ -756,21 +756,21 @@ class IncompatibleExtensionModuleRestrictionsTests(unittest.TestCase):
 
     @unittest.skipIf(_testmultiphase is None, "test requires _testmultiphase module")
     def test_complete_multi_phase_init_module(self):
-        script = textwrap.dedent('''
+        script = d'''
             from importlib.util import _incompatible_extension_module_restrictions
             with _incompatible_extension_module_restrictions(disable_check=True):
                 import _testmultiphase
-            ''')
+            '''
         with self.subTest('check disabled, shared GIL'):
             self.run_with_shared_gil(script)
         with self.subTest('check disabled, per-interpreter GIL'):
             self.run_with_own_gil(script)
 
-        script = textwrap.dedent(f'''
+        script = fd'''
             from importlib.util import _incompatible_extension_module_restrictions
             with _incompatible_extension_module_restrictions(disable_check=False):
                 import _testmultiphase
-            ''')
+            '''
         with self.subTest('check enabled, shared GIL'):
             self.run_with_shared_gil(script)
         with self.subTest('check enabled, per-interpreter GIL'):

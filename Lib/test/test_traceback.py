@@ -175,13 +175,13 @@ class TracebackCases(unittest.TestCase):
             unlink(TESTFN)
 
     def test_no_caret_with_no_debug_ranges_flag_python_traceback(self):
-        code = textwrap.dedent("""
+        code = d"""
             import traceback
             try:
                 x = 1 / 0
             except ZeroDivisionError:
                 traceback.print_exc()
-            """)
+            """
         try:
             with open(TESTFN, 'w') as f:
                 f.write(code)
@@ -192,14 +192,14 @@ class TracebackCases(unittest.TestCase):
             lines = stderr.splitlines()
             self.assertEqual(len(lines), 4)
             self.assertEqual(lines[0], b'Traceback (most recent call last):')
-            self.assertIn(b'line 4, in <module>', lines[1])
+            self.assertIn(b'line 3, in <module>', lines[1])
             self.assertEqual(lines[2], b'    x = 1 / 0')
             self.assertEqual(lines[3], b'ZeroDivisionError: division by zero')
         finally:
             unlink(TESTFN)
 
     def test_recursion_error_during_traceback(self):
-        code = textwrap.dedent("""
+        code = d"""
                 import sys
                 from weakref import ref
 
@@ -213,7 +213,7 @@ class TracebackCases(unittest.TestCase):
                     f()
                 except RecursionError:
                     pass
-        """)
+                """
         try:
             with open(TESTFN, 'w') as f:
                 f.write(code)
@@ -497,7 +497,7 @@ class TracebackCases(unittest.TestCase):
     def test_print_traceback_at_exit(self):
         # Issue #22599: Ensure that it is possible to use the traceback module
         # to display an exception at Python exit
-        code = textwrap.dedent("""
+        code = d"""
             import sys
             import traceback
 
@@ -518,10 +518,10 @@ class TracebackCases(unittest.TestCase):
             # Keep a reference in the module namespace to call the destructor
             # when the module is unloaded
             obj = PrintExceptionAtExit()
-        """)
+            """
         rc, stdout, stderr = assert_python_ok('-c', code)
         expected = [b'Traceback (most recent call last):',
-                    b'  File "<string>", line 8, in __init__',
+                    b'  File "<string>", line 7, in __init__',
                     b'    x = 1 / 0',
                     b'        ^^^^^',
                     b'ZeroDivisionError: division by zero']
@@ -530,14 +530,14 @@ class TracebackCases(unittest.TestCase):
     @cpython_only
     def test_lost_io_open(self):
         # GH-142737: Display the traceback even if io.open is lost
-        crasher = textwrap.dedent("""\
+        crasher = d"""
             import io
             import traceback
             # Trigger fallback mode
             traceback._print_exception_bltin = None
             del io.open
             raise RuntimeError("should not crash")
-        """)
+            """
 
         # Create a temporary script to exercise _Py_FindSourceFile
         with temp_dir() as script_dir:
@@ -748,7 +748,7 @@ class TracebackErrorLocationCaretTestBase:
     def test_caret_multiline_expression_syntax_error(self):
         # Make sure an expression spanning multiple lines that has
         # a syntax error is correctly marked with carets.
-        code = textwrap.dedent("""
+        code = d"""
         def foo(*args, **kwargs):
             pass
 
@@ -757,7 +757,7 @@ class TracebackErrorLocationCaretTestBase:
         foo(a, z
                 for z in
                     range(10), b, c)
-        """)
+        """
 
         def f_with_multiline():
             # Need to defer the compilation until in self.get_exception(..)
@@ -772,7 +772,7 @@ class TracebackErrorLocationCaretTestBase:
             '    ~~~~~~~~^^\n'
             f'  File "{__file__}", line {lineno_f+2}, in f_with_multiline\n'
             '    return compile(code, "?", "exec")\n'
-            '  File "?", line 7\n'
+            '  File "?", line 6\n'
             '    foo(a, z\n'
             '           ^'
             )
@@ -781,12 +781,12 @@ class TracebackErrorLocationCaretTestBase:
         self.assertEqual(result_lines, expected_f.splitlines())
 
         # Check custom error messages covering multiple lines
-        code = textwrap.dedent("""
+        code = d"""
         dummy_call(
             "dummy value"
             foo="bar",
         )
-        """)
+        """
 
         def f_with_multiline():
             # Need to defer the compilation until in self.get_exception(..)
@@ -801,7 +801,7 @@ class TracebackErrorLocationCaretTestBase:
             '    ~~~~~~~~^^\n'
             f'  File "{__file__}", line {lineno_f+2}, in f_with_multiline\n'
             '    return compile(code, "?", "exec")\n'
-            '  File "?", line 3\n'
+            '  File "?", line 2\n'
             '    "dummy value"\n'
             '    ^^^^^^^^^^^^^'
             )
@@ -2650,18 +2650,18 @@ class BaseExceptionReportingTests:
                 self.assertEqual(exp, err)
 
     def test_exception_angle_bracketed_filename(self):
-        src = textwrap.dedent("""
+        src = d"""
             try:
                 raise ValueError(42)
             except Exception as e:
                 exc = e
-            """)
+            """
 
         code = compile(src, "<does not exist>", "exec")
         g, l = {}, {}
         exec(code, g, l)
         err = self.get_report(l['exc'])
-        exp = '  File "<does not exist>", line 3, in <module>\nValueError: 42\n'
+        exp = '  File "<does not exist>", line 2, in <module>\nValueError: 42\n'
         self.assertIn(exp, err)
 
     def test_exception_modulename_not_unicode(self):
@@ -4700,41 +4700,41 @@ class SuggestionFormattingTestBase(SuggestionFormattingTestMixin):
         return result_lines[0]
 
     def test_import_from_suggestions(self):
-        substitution = textwrap.dedent("""\
+        substitution = d"""
             noise = more_noise = a = bc = None
             blech = None
-        """)
+            """
 
-        elimination = textwrap.dedent("""
+        elimination = d"""
             noise = more_noise = a = bc = None
             blch = None
-        """)
+            """
 
-        addition = textwrap.dedent("""
+        addition = d"""
             noise = more_noise = a = bc = None
             bluchin = None
-        """)
+            """
 
-        substitutionOverElimination = textwrap.dedent("""
+        substitutionOverElimination = d"""
             blach = None
             bluc = None
-        """)
+            """
 
-        substitutionOverAddition = textwrap.dedent("""
+        substitutionOverAddition = d"""
             blach = None
             bluchi = None
-        """)
+            """
 
-        eliminationOverAddition = textwrap.dedent("""
+        eliminationOverAddition = d"""
             blucha = None
             bluc = None
-        """)
+            """
 
-        caseChangeOverSubstitution = textwrap.dedent("""
+        caseChangeOverSubstitution = d"""
             Luch = None
             fluch = None
             BLuch = None
-        """)
+            """
 
         for code, suggestion in [
             (addition, "'bluchin'?"),
@@ -4761,10 +4761,10 @@ class SuggestionFormattingTestBase(SuggestionFormattingTestMixin):
         self.assertNotIn("'_bluch'", self.get_import_from_suggestion(code, 'bluch'))
 
     def test_import_from_suggestions_non_string(self):
-        modWithNonStringAttr = textwrap.dedent("""\
+        modWithNonStringAttr = d"""
             globals()[0] = 1
             bluch = 1
-        """)
+            """
         self.assertIn("'bluch'", self.get_import_from_suggestion(modWithNonStringAttr, 'blech'))
 
     def test_import_from_suggestions_do_not_trigger_for_long_attributes(self):
@@ -5281,11 +5281,11 @@ class MiscTest(unittest.TestCase):
              b"or to enable your virtual environment?"), stderr
         )
 
-        code = """
+        code = d"""
             import sys
             sys.stdlib_module_names = sys.stdlib_module_names + ("boo",)
             import boo
-        """
+            """
         _, _, stderr = assert_python_failure('-S', '-c', code)
 
         self.assertNotIn(
@@ -5295,22 +5295,22 @@ class MiscTest(unittest.TestCase):
         )
 
     def test_missing_stdlib_module(self):
-        code = """
+        code = d"""
             import sys
             sys.stdlib_module_names |= {'spam'}
             import spam
-        """
+            """
         _, _, stderr = assert_python_failure('-S', '-c', code)
 
         self.assertIn(b"Standard library module 'spam' was not found", stderr)
 
-        code = """
+        code = d"""
             import sys
             import traceback
             traceback._MISSING_STDLIB_MODULE_MESSAGES = {'spam': "Install 'spam4life' for 'spam'"}
             sys.stdlib_module_names |= {'spam'}
             import spam
-        """
+            """
         _, _, stderr = assert_python_failure('-S', '-c', code)
 
         self.assertIn(b"Install 'spam4life' for 'spam'", stderr)
@@ -5613,16 +5613,16 @@ class TestLazyImportSuggestions(unittest.TestCase):
         """Printing an AttributeError should not trigger lazy import reification."""
         # pkg.bar prints "BAR_MODULE_LOADED" when imported.
         # If lazy import is reified during suggestion computation, we'll see it.
-        code = textwrap.dedent("""
+        code = d"""
             lazy import test.test_lazy_import.data.pkg.bar
             test.test_lazy_import.data.pkg.nonexistent
-        """)
+            """
         rc, stdout, stderr = assert_python_failure('-c', code)
         self.assertNotIn(b"BAR_MODULE_LOADED", stdout)
 
     def test_traceback_formatting_does_not_reify_lazy_imports(self):
         """Formatting a traceback should not trigger lazy import reification."""
-        code = textwrap.dedent("""
+        code = d"""
             import traceback
             lazy import test.test_lazy_import.data.pkg.bar
             try:
@@ -5630,18 +5630,18 @@ class TestLazyImportSuggestions(unittest.TestCase):
             except AttributeError:
                 traceback.format_exc()
             print("OK")
-        """)
+            """
         rc, stdout, stderr = assert_python_ok('-c', code)
         self.assertIn(b"OK", stdout)
         self.assertNotIn(b"BAR_MODULE_LOADED", stdout)
 
     def test_suggestion_still_works_for_non_lazy_attributes(self):
         """Suggestions should still work for non-lazy module attributes."""
-        code = textwrap.dedent("""
+        code = d"""
             lazy import test.test_lazy_import.data.pkg.bar
             # Typo for __name__
             test.test_lazy_import.data.pkg.__nme__
-        """)
+            """
         rc, stdout, stderr = assert_python_failure('-c', code)
         self.assertIn(b"__name__", stderr)
         self.assertNotIn(b"BAR_MODULE_LOADED", stdout)

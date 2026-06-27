@@ -2,7 +2,6 @@ import errno
 import select
 import subprocess
 import sys
-import textwrap
 import unittest
 from test import support
 
@@ -49,12 +48,12 @@ class SelectTestCase(unittest.TestCase):
 
     @support.requires_fork()
     def test_select(self):
-        code = textwrap.dedent('''
+        code = d'''
             import time
             for i in range(10):
                 print("testing...", flush=True)
                 time.sleep(0.050)
-        ''')
+            '''
         cmd = [sys.executable, '-I', '-c', code]
         with subprocess.Popen(cmd, stdout=subprocess.PIPE) as proc:
             pipe = proc.stdout

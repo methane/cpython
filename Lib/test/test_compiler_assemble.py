@@ -1,6 +1,5 @@
 import dis
 import io
-import textwrap
 import types
 
 from test.support.bytecode_helper import AssemblerTestCase
@@ -141,9 +140,9 @@ class IsolatedAssembleTests(AssemblerTestCase):
         co = self.insts_to_code_object(insts, metadata)
         output = io.StringIO()
         dis.dis(co, file=output)
-        exc_table = textwrap.dedent("""
+        exc_table = d"""
                                        ExceptionTable:
                                          L1 to L2 -> L2 [0]
                                          L2 to L3 -> L3 [1] lasti
-                                    """)
+                                       """
         self.assertEndsWith(output.getvalue(), exc_table)

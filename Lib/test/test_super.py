@@ -2,7 +2,6 @@
 
 import copy
 import pickle
-import textwrap
 import threading
 import unittest
 from unittest.mock import patch
@@ -343,16 +342,14 @@ class TestSuper(unittest.TestCase):
             super(1, int)
 
     def test_shadowed_global(self):
-        source = textwrap.dedent(
-            """
+        source = d"""
             class super:
                 msg = "truly super"
 
             class C:
                 def method(self):
                     return super().msg
-            """,
-        )
+            """
         with import_helper.ready_to_import(name="shadowed_super", source=source):
             import shadowed_super
         self.assertEqual(shadowed_super.C().method(), "truly super")

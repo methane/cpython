@@ -1806,7 +1806,7 @@ class ConfigFileTest(BaseTest):
 
     def test_defaults_do_no_interpolation(self):
         """bpo-33802 defaults should not get interpolated"""
-        ini = textwrap.dedent("""
+        ini = d"""
             [formatters]
             keys=default
 
@@ -1825,7 +1825,7 @@ class ConfigFileTest(BaseTest):
             [logger_root]
             formatter=default
             handlers=console
-            """).strip()
+            """.strip()
         fd, fn = tempfile.mkstemp(prefix='test_logging_', suffix='.ini')
         try:
             os.write(fd, ini.encode('ascii'))
@@ -4936,7 +4936,7 @@ class FormatterTest(unittest.TestCase, AssertErrorMessage):
         # references leak).
         start_ns = 1_677_903_920_000_998_503  # approx. 2023-03-04 04:25:20 UTC
         offsets_ns = (200, 500, 12_354, 99_999, 1_677_903_456_999_123_456)
-        code = textwrap.dedent(f"""
+        code = fd"""
             start_ns = {start_ns!r}
             offsets_ns = {offsets_ns!r}
             start_monotonic_ns = start_ns - 1
@@ -4967,7 +4967,7 @@ class FormatterTest(unittest.TestCase, AssertErrorMessage):
                 time.time = old_time
                 time.monotonic_ns = old_monotonic_ns
                 time.monotonic = old_monotonic
-        """)
+            """
         rc, out, err = assert_python_ok("-c", code)
         out = out.decode()
         for offset_ns, line in zip(offsets_ns, out.splitlines(), strict=True):
@@ -5303,7 +5303,7 @@ class ModuleLevelMiscTest(BaseTest):
 
     def test_logging_at_shutdown(self):
         # bpo-20037: Doing text I/O late at interpreter shutdown must not crash
-        code = textwrap.dedent("""
+        code = d"""
             import logging
 
             class A:
@@ -5314,7 +5314,7 @@ class ModuleLevelMiscTest(BaseTest):
                         logging.exception("exception in __del__")
 
             a = A()
-        """)
+            """
         rc, out, err = assert_python_ok("-c", code)
         err = err.decode()
         self.assertIn("exception in __del__", err)
@@ -5327,7 +5327,7 @@ class ModuleLevelMiscTest(BaseTest):
         filename = os_helper.TESTFN
         self.addCleanup(os_helper.unlink, filename)
 
-        code = textwrap.dedent(f"""
+        code = fd"""
             import builtins
             import logging
 
@@ -5345,7 +5345,7 @@ class ModuleLevelMiscTest(BaseTest):
             # Simulate the Python finalization which removes the builtin
             # open() function.
             del builtins.open
-        """)
+            """
         assert_python_ok("-c", code)
 
         with open(filename, encoding="utf-8") as fp:
@@ -5353,7 +5353,7 @@ class ModuleLevelMiscTest(BaseTest):
 
     def test_recursion_error(self):
         # Issue 36272
-        code = textwrap.dedent("""
+        code = d"""
             import logging
 
             def rec():
@@ -5361,7 +5361,7 @@ class ModuleLevelMiscTest(BaseTest):
                 rec()
 
             rec()
-        """)
+            """
         rc, out, err = assert_python_failure("-c", code)
         err = err.decode()
         self.assertNotIn("Cannot recover from stack overflow.", err)

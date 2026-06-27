@@ -10,7 +10,6 @@ import copy
 import threading
 import time
 import random
-import textwrap
 
 from test import support
 from test.support import script_helper, ALWAYS_EQ
@@ -1028,7 +1027,7 @@ class ReferencesTestCase(TestBase):
     def test_no_memory_when_clearing(self):
         # gh-118331: Make sure we do not raise an exception from the destructor
         # when clearing weakrefs if allocating the intermediate tuple fails.
-        code = textwrap.dedent("""
+        code = d"""
         import _testcapi
         import weakref
 
@@ -1044,7 +1043,7 @@ class ReferencesTestCase(TestBase):
         wrs = [weakref.ref(obj, callback) for _ in range(50)]
         _testcapi.set_nomemory(0)
         del obj
-        """).strip()
+        """.strip()
         res, _ = script_helper.run_python_until_end("-c", code)
         stderr = res.err.decode("ascii", "backslashreplace")
         self.assertNotRegex(stderr, "_Py_Dealloc: Deallocator of type 'TestObj'")

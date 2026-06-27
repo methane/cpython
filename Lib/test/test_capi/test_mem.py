@@ -1,5 +1,4 @@
 import re
-import textwrap
 import unittest
 
 
@@ -90,7 +89,7 @@ class PyMemDebugTests(unittest.TestCase):
         self.check_malloc_without_gil(code)
 
     def check_pyobject_is_freed(self, func_name):
-        code = textwrap.dedent(f'''
+        code = fd'''
             import gc, os, sys, _testinternalcapi
             # Disable the GC to avoid crash on GC collection
             gc.disable()
@@ -98,7 +97,7 @@ class PyMemDebugTests(unittest.TestCase):
             # Exit immediately to avoid a crash while deallocating
             # the invalid object
             os._exit(0)
-        ''')
+            '''
         assert_python_ok(
             '-c', code,
             PYTHONMALLOC=self.PYTHONMALLOC,

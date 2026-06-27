@@ -542,10 +542,12 @@ class TestProgName(BaseTest):
             self.assertUsage(parser, expected_usage)
             self.assertVersion(parser, "baz.py 1.2")
             self.assertHelp(parser,
-                            expected_usage + "\n" +
-                            "Options:\n"
-                            "  --version   show program's version number and exit\n"
-                            "  -h, --help  show this help message and exit\n")
+                            expected_usage + d"""
+
+                            Options:
+                              --version   show program's version number and exit
+                              -h, --help  show this help message and exit
+                            """)
         finally:
             sys.argv[:] = save_argv
 

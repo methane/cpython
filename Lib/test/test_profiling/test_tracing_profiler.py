@@ -6,7 +6,6 @@ import unittest
 # rip off all interesting stuff from test_profile
 import profiling.tracing as cProfile
 import tempfile
-import textwrap
 from test.test_profile import ProfileTest, regenerate_expected_output
 from test.support.script_helper import assert_python_failure, assert_python_ok
 from test import support
@@ -183,12 +182,12 @@ class TestCommandLine(unittest.TestCase):
         """Check that scripts that reference __main__ see their own namespace
         when being profiled."""
         with tempfile.NamedTemporaryFile("w+", delete_on_close=False) as f:
-            f.write(textwrap.dedent("""\
+            f.write(d"""
                 class Foo:
                     pass
                 import __main__
                 assert Foo == __main__.Foo
-                """))
+                """)
             f.close()
             assert_python_ok('-m', "cProfile", f.name)
 

@@ -1,6 +1,5 @@
 import importlib
 import re
-import textwrap
 import unittest
 
 from importlib.metadata import (
@@ -224,8 +223,7 @@ class APITests(
         assert "pytest; extra == 'test'" in deps
 
     def test_more_complex_deps_requires_text(self):
-        requires = textwrap.dedent(
-            """
+        requires = d"""
             dep1
             dep2
 
@@ -239,7 +237,6 @@ class APITests(
             [extra2:python_version < "3"]
             dep5
             """
-        )
         deps = sorted(Distribution._deps_from_requires_text(requires))
         expected = [
             'dep1',

@@ -1,7 +1,6 @@
 """Tests for blocking mode sampling profiler."""
 
 import io
-import textwrap
 import unittest
 from unittest import mock
 
@@ -43,7 +42,7 @@ class TestBlockingModeStackAccuracy(unittest.TestCase):
         # lines (temp1, temp2, etc.), fibonacci_generator should NOT be in the
         # stack at all.
         # Line numbers are important here - see ARITHMETIC_LINES below.
-        cls.generator_script = textwrap.dedent('''
+        cls.generator_script = d'''
             def fibonacci_generator(n):
                 a, b = 0, 1
                 for _ in range(n):
@@ -64,7 +63,7 @@ class TestBlockingModeStackAccuracy(unittest.TestCase):
 
             _test_sock.sendall(b"working")
             main()
-        ''')
+            '''
         # Line numbers of the arithmetic operations in consume_generator.
         # These are the lines where fibonacci_generator should NOT be in the
         # stack when consume_generator is the executing leaf frame. They account

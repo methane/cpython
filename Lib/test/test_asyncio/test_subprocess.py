@@ -2,7 +2,6 @@ import os
 import shlex
 import signal
 import sys
-import textwrap
 import unittest
 import warnings
 from unittest import mock
@@ -319,12 +318,12 @@ class SubprocessMixin:
         if support.MS_WINDOWS:
             handle = msvcrt.get_osfhandle(rfd)
             os.set_handle_inheritable(handle, True)
-            code = textwrap.dedent(f'''
+            code = fd'''
                 import os, msvcrt
                 handle = {handle}
                 fd = msvcrt.open_osfhandle(handle, os.O_RDONLY)
                 os.read(fd, 1)
-            ''')
+                '''
             from subprocess import STARTUPINFO
             startupinfo = STARTUPINFO()
             startupinfo.lpAttributeList = {"handle_list": [handle]}

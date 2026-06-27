@@ -535,7 +535,7 @@ class TestGetStackTrace(RemoteInspectionTestBase):
         import_module("_ctypes")
 
         # Run the test in a subprocess to avoid side effects
-        script = textwrap.dedent("""\
+        script = d"""
             import os
             import _remote_debugging
 
@@ -546,7 +546,7 @@ class TestGetStackTrace(RemoteInspectionTestBase):
 
             # Should still work after _ctypes import (gh-144563)
             unwinder = _remote_debugging.RemoteUnwinder(os.getpid())
-            """)
+            """
 
         result = subprocess.run(
             [sys.executable, "-c", script],
@@ -575,8 +575,7 @@ class TestGetStackTrace(RemoteInspectionTestBase):
         script_basename = f"mod_{latin1}_{bmp}_{astral}"
 
         port = find_unused_port()
-        script = textwrap.dedent(
-            f"""\
+        script = fd"""
             import socket
             import time
 
@@ -589,7 +588,6 @@ class TestGetStackTrace(RemoteInspectionTestBase):
 
             {func_name}()
             """
-        )
         with os_helper.temp_dir() as work_dir:
             script_dir = os.path.join(work_dir, "script_pkg")
             os.mkdir(script_dir)
@@ -635,8 +633,7 @@ class TestGetStackTrace(RemoteInspectionTestBase):
     )
     def test_async_remote_stack_trace(self):
         port = find_unused_port()
-        script = textwrap.dedent(
-            f"""\
+        script = fd"""
             import asyncio
             import time
             import sys
@@ -676,7 +673,6 @@ class TestGetStackTrace(RemoteInspectionTestBase):
 
             asyncio.run(main(), loop_factory={{TASK_FACTORY}})
             """
-        )
 
         for task_factory_variant in "asyncio.new_event_loop", "new_eager_loop":
             with (
@@ -839,8 +835,7 @@ class TestGetStackTrace(RemoteInspectionTestBase):
     )
     def test_asyncgen_remote_stack_trace(self):
         port = find_unused_port()
-        script = textwrap.dedent(
-            f"""\
+        script = fd"""
             import asyncio
             import time
             import sys
@@ -864,7 +859,6 @@ class TestGetStackTrace(RemoteInspectionTestBase):
 
             asyncio.run(main())
             """
-        )
 
         with os_helper.temp_dir() as work_dir:
             script_dir = os.path.join(work_dir, "script_pkg")
@@ -920,8 +914,7 @@ class TestGetStackTrace(RemoteInspectionTestBase):
     )
     def test_async_gather_remote_stack_trace(self):
         port = find_unused_port()
-        script = textwrap.dedent(
-            f"""\
+        script = fd"""
             import asyncio
             import time
             import sys
@@ -946,7 +939,6 @@ class TestGetStackTrace(RemoteInspectionTestBase):
 
             asyncio.run(main())
             """
-        )
 
         with os_helper.temp_dir() as work_dir:
             script_dir = os.path.join(work_dir, "script_pkg")
@@ -1038,8 +1030,7 @@ class TestGetStackTrace(RemoteInspectionTestBase):
     )
     def test_async_staggered_race_remote_stack_trace(self):
         port = find_unused_port()
-        script = textwrap.dedent(
-            f"""\
+        script = fd"""
             import asyncio.staggered
             import time
             import sys
@@ -1067,7 +1058,6 @@ class TestGetStackTrace(RemoteInspectionTestBase):
 
             asyncio.run(main())
             """
-        )
 
         with os_helper.temp_dir() as work_dir:
             script_dir = os.path.join(work_dir, "script_pkg")
@@ -1175,8 +1165,7 @@ class TestGetStackTrace(RemoteInspectionTestBase):
         NUM_TASKS = 100
 
         port = find_unused_port()
-        script = textwrap.dedent(
-            f"""\
+        script = fd"""
             import asyncio
             import os
             import random
@@ -1234,7 +1223,6 @@ class TestGetStackTrace(RemoteInspectionTestBase):
 
             asyncio.run(main())
             """
-        )
 
         with os_helper.temp_dir() as work_dir:
             script_dir = os.path.join(work_dir, "script_pkg")
@@ -2062,8 +2050,7 @@ class TestGetStackTrace(RemoteInspectionTestBase):
     )
     def test_opcodes_collection(self):
         """Test that opcodes are collected when the opcodes flag is set."""
-        script = textwrap.dedent(
-            """\
+        script = d"""
             import time, sys, socket
 
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -2075,7 +2062,6 @@ class TestGetStackTrace(RemoteInspectionTestBase):
 
             foo()
             """
-        )
 
         def get_trace_with_opcodes(pid):
             return RemoteUnwinder(pid, opcodes=True).get_stack_trace()
@@ -2099,8 +2085,7 @@ class TestGetStackTrace(RemoteInspectionTestBase):
     )
     def test_location_tuple_format(self):
         """Test that location is a 4-tuple (lineno, end_lineno, col_offset, end_col_offset)."""
-        script = textwrap.dedent(
-            """\
+        script = d"""
             import time, sys, socket
 
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -2112,7 +2097,6 @@ class TestGetStackTrace(RemoteInspectionTestBase):
 
             foo()
             """
-        )
 
         def get_trace_with_opcodes(pid):
             return RemoteUnwinder(pid, opcodes=True).get_stack_trace()
@@ -2148,8 +2132,7 @@ class TestGetStackTrace(RemoteInspectionTestBase):
     )
     def test_location_tuple_exact_values(self):
         """Test exact values of location tuple including column offsets."""
-        script = textwrap.dedent(
-            """\
+        script = d"""
             import time, sys, socket
 
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -2161,7 +2144,6 @@ class TestGetStackTrace(RemoteInspectionTestBase):
 
             foo()
             """
-        )
 
         def get_trace_with_opcodes(pid):
             return RemoteUnwinder(pid, opcodes=True).get_stack_trace()
@@ -2383,8 +2365,7 @@ class TestDetectionOfThreadStatus(RemoteInspectionTestBase):
     )
     def test_thread_status_all_mode_detection(self):
         port = find_unused_port()
-        script = textwrap.dedent(
-            f"""\
+        script = fd"""
             import socket
             import threading
             import time
@@ -2409,7 +2390,6 @@ class TestDetectionOfThreadStatus(RemoteInspectionTestBase):
             t1.join()
             t2.join()
             """
-        )
 
         with os_helper.temp_dir() as tmp_dir:
             script_file = make_script(tmp_dir, "script", script)
@@ -2507,8 +2487,7 @@ class TestDetectionOfThreadStatus(RemoteInspectionTestBase):
 
     def _make_exception_test_script(self, port):
         """Create script with exception and normal threads for testing."""
-        return textwrap.dedent(
-            f"""\
+        return fd"""
             import socket
             import threading
             import time
@@ -2535,7 +2514,6 @@ class TestDetectionOfThreadStatus(RemoteInspectionTestBase):
             t1.join()
             t2.join()
             """
-        )
 
     @contextmanager
     def _run_exception_test_process(self):

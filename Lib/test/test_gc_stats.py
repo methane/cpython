@@ -94,7 +94,7 @@ class TestLocalGCStats(unittest.TestCase):
 
     def test_all_interpreters_filter_for_local_process(self):
         interpreters = import_helper.import_module("concurrent.interpreters")
-        source = """
+        source = d"""
             import gc
             objects = []
             obj = []
@@ -103,7 +103,7 @@ class TestLocalGCStats(unittest.TestCase):
             gc.collect(0)
             gc.collect(1)
             gc.collect(2)
-        """
+            """
         interp = interpreters.create()
         try:
             interp.exec(textwrap.dedent(source))

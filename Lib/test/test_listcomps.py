@@ -103,19 +103,19 @@ class ListComprehensionTest(unittest.TestCase):
         for scope in scopes:
             with self.subTest(scope=scope):
                 if scope == "class":
-                    newcode = textwrap.dedent("""
+                    newcode = d"""
                         class _C:
-                            {code}
-                    """).format(code=textwrap.indent(code, "    "))
+                        {code}
+                        """.format(code=textwrap.indent(code, "    "))
                     def get_output(moddict, name):
                         return getattr(moddict["_C"], name)
                 elif scope == "function":
-                    newcode = textwrap.dedent("""
+                    newcode = d"""
                         def _f():
-                            {code}
+                        {code}
                             return locals()
                         _out = _f()
-                    """).format(code=textwrap.indent(code, "    "))
+                        """.format(code=textwrap.indent(code, "    "))
                     def get_output(moddict, name):
                         return moddict["_out"][name]
                 else:
@@ -133,18 +133,18 @@ class ListComprehensionTest(unittest.TestCase):
                         self.assertEqual(get_output(newns, k), v, k)
 
     def test_lambdas_with_iteration_var_as_default(self):
-        code = """
+        code = d"""
             items = [(lambda i=i: i) for i in range(5)]
             y = [x() for x in items]
-        """
+            """
         outputs = {"y": [0, 1, 2, 3, 4]}
         self._check_in_scopes(code, outputs)
 
     def test_lambdas_with_free_var(self):
-        code = """
+        code = d"""
             items = [(lambda: i) for i in range(5)]
             y = [x() for x in items]
-        """
+            """
         outputs = {"y": [4, 4, 4, 4, 4]}
         self._check_in_scopes(code, outputs)
 
@@ -160,21 +160,21 @@ class ListComprehensionTest(unittest.TestCase):
         self.assertIs(C().method(), C)
 
     def test_references_super(self):
-        code = """
+        code = d"""
             res = [super for x in [1]]
-        """
+            """
         self._check_in_scopes(code, outputs={"res": [super]})
 
     def test_references___class__(self):
-        code = """
+        code = d"""
             res = [__class__ for x in [1]]
-        """
+            """
         self._check_in_scopes(code, raises=NameError)
 
     def test_references___class___nested(self):
-        code = """
+        code = d"""
             res = [(lambda: __class__)() for _ in [1]]
-        """
+            """
         self._check_in_scopes(code, raises=NameError)
 
     def test_references___class___nested_used(self):
@@ -183,27 +183,27 @@ class ListComprehensionTest(unittest.TestCase):
         self.assertIs(_C.res[0](), _C)
 
     def test_references___class___defined(self):
-        code = """
+        code = d"""
             __class__ = 2
             res = [__class__ for x in [1]]
-        """
+            """
         self._check_in_scopes(
                 code, outputs={"res": [2]}, scopes=["module", "function"])
         self._check_in_scopes(code, raises=NameError, scopes=["class"])
 
     def test_references___class___defined_nested(self):
-        code = """
+        code = d"""
             __class__ = 2
             res = [(lambda: __class__)() for x in [1]]
-        """
+            """
         self._check_in_scopes(
                 code, outputs={"res": [2]}, scopes=["module", "function"])
         self._check_in_scopes(code, raises=NameError, scopes=["class"])
 
     def test_references___classdict__(self):
-        code = """
+        code = d"""
             class i: [__classdict__ for x in y]
-        """
+            """
         self._check_in_scopes(code, raises=NameError)
 
     def test_references___classdict___nested(self):
@@ -212,239 +212,239 @@ class ListComprehensionTest(unittest.TestCase):
         self.assertIn("res", _C.res[0])
 
     def test_references___conditional_annotations__(self):
-        code = """
+        code = d"""
             class i: [__conditional_annotations__ for x in y]
-        """
+            """
         self._check_in_scopes(code, raises=NameError)
 
     def test_references___conditional_annotations___nested(self):
-        code = """
+        code = d"""
             class i: [lambda: __conditional_annotations__ for x in y]
-        """
+            """
         self._check_in_scopes(code, raises=NameError)
 
     def test_references___class___enclosing(self):
-        code = """
+        code = d"""
             __class__ = 2
             class C:
                 res = [__class__ for x in [1]]
             res = C.res
-        """
+            """
         self._check_in_scopes(code, raises=NameError)
 
     def test_super_and_class_cell_in_sibling_comps(self):
-        code = """
+        code = d"""
             [super for _ in [1]]
             [__class__ for _ in [1]]
-        """
+            """
         self._check_in_scopes(code, raises=NameError)
 
     def test_inner_cell_shadows_outer(self):
-        code = """
+        code = d"""
             items = [(lambda: i) for i in range(5)]
             i = 20
             y = [x() for x in items]
-        """
+            """
         outputs = {"y": [4, 4, 4, 4, 4], "i": 20}
         self._check_in_scopes(code, outputs)
 
     def test_inner_cell_shadows_outer_no_store(self):
-        code = """
+        code = d"""
             def f(x):
                 return [lambda: x for x in range(x)], x
             fns, x = f(2)
             y = [fn() for fn in fns]
-        """
+            """
         outputs = {"y": [1, 1], "x": 2}
         self._check_in_scopes(code, outputs)
 
     def test_closure_can_jump_over_comp_scope(self):
-        code = """
+        code = d"""
             items = [(lambda: y) for i in range(5)]
             y = 2
             z = [x() for x in items]
-        """
+            """
         outputs = {"z": [2, 2, 2, 2, 2]}
         self._check_in_scopes(code, outputs, scopes=["module", "function"])
 
     def test_cell_inner_free_outer(self):
-        code = """
+        code = d"""
             def f():
                 return [lambda: x for x in (x, [1])[1]]
             x = ...
             y = [fn() for fn in f()]
-        """
+            """
         outputs = {"y": [1]}
         self._check_in_scopes(code, outputs, scopes=["module", "function"])
 
     def test_free_inner_cell_outer(self):
-        code = """
+        code = d"""
             g = 2
             def f():
                 return g
             y = [g for x in [1]]
-        """
+            """
         outputs = {"y": [2]}
         self._check_in_scopes(code, outputs, scopes=["module", "function"])
         self._check_in_scopes(code, scopes=["class"], raises=NameError)
 
     def test_inner_cell_shadows_outer_redefined(self):
-        code = """
+        code = d"""
             y = 10
             items = [(lambda: y) for y in range(5)]
             x = y
             y = 20
             out = [z() for z in items]
-        """
+            """
         outputs = {"x": 10, "out": [4, 4, 4, 4, 4]}
         self._check_in_scopes(code, outputs)
 
     def test_shadows_outer_cell(self):
-        code = """
+        code = d"""
             def inner():
                 return g
             [g for g in range(5)]
             x = inner()
-        """
+            """
         outputs = {"x": -1}
         self._check_in_scopes(code, outputs, ns={"g": -1})
 
     def test_explicit_global(self):
-        code = """
+        code = d"""
             global g
             x = g
             g = 2
             items = [g for g in [1]]
             y = g
-        """
+            """
         outputs = {"x": 1, "y": 2, "items": [1]}
         self._check_in_scopes(code, outputs, ns={"g": 1})
 
     def test_explicit_global_2(self):
-        code = """
+        code = d"""
             global g
             x = g
             g = 2
             items = [g for x in [1]]
             y = g
-        """
+            """
         outputs = {"x": 1, "y": 2, "items": [2]}
         self._check_in_scopes(code, outputs, ns={"g": 1})
 
     def test_explicit_global_3(self):
-        code = """
+        code = d"""
             global g
             fns = [lambda: g for g in [2]]
             items = [fn() for fn in fns]
-        """
+            """
         outputs = {"items": [2]}
         self._check_in_scopes(code, outputs, ns={"g": 1})
 
     def test_assignment_expression(self):
-        code = """
+        code = d"""
             x = -1
             items = [(x:=y) for y in range(3)]
-        """
+            """
         outputs = {"x": 2}
         # assignment expression in comprehension is disallowed in class scope
         self._check_in_scopes(code, outputs, scopes=["module", "function"])
 
     def test_free_var_in_comp_child(self):
-        code = """
+        code = d"""
             lst = range(3)
             funcs = [lambda: x for x in lst]
             inc = [x + 1 for x in lst]
             [x for x in inc]
             x = funcs[0]()
-        """
+            """
         outputs = {"x": 2}
         self._check_in_scopes(code, outputs)
 
     def test_shadow_with_free_and_local(self):
-        code = """
+        code = d"""
             lst = range(3)
             x = -1
             funcs = [lambda: x for x in lst]
             items = [x + 1 for x in lst]
-        """
+            """
         outputs = {"x": -1}
         self._check_in_scopes(code, outputs)
 
     def test_shadow_comp_iterable_name(self):
-        code = """
+        code = d"""
             x = [1]
             y = [x for x in x]
-        """
+            """
         outputs = {"x": [1]}
         self._check_in_scopes(code, outputs)
 
     def test_nested_free(self):
-        code = """
+        code = d"""
             x = 1
             def g():
                 [x for x in range(3)]
                 return x
             g()
-        """
+            """
         outputs = {"x": 1}
         self._check_in_scopes(code, outputs, scopes=["module", "function"])
 
     def test_introspecting_frame_locals(self):
-        code = """
+        code = d"""
             import sys
             [i for i in range(2)]
             i = 20
             sys._getframe().f_locals
-        """
+            """
         outputs = {"i": 20}
         self._check_in_scopes(code, outputs)
 
     def test_nested(self):
-        code = """
+        code = d"""
             l = [2, 3]
             y = [[x ** 2 for x in range(x)] for x in l]
-        """
+            """
         outputs = {"y": [[0, 1], [0, 1, 4]]}
         self._check_in_scopes(code, outputs)
 
     def test_nested_2(self):
-        code = """
+        code = d"""
             l = [1, 2, 3]
             x = 3
             y = [x for [x ** x for x in range(x)][x - 1] in l]
-        """
+            """
         outputs = {"y": [3, 3, 3]}
         self._check_in_scopes(code, outputs, scopes=["module", "function"])
         self._check_in_scopes(code, scopes=["class"], raises=NameError)
 
     def test_nested_3(self):
-        code = """
+        code = d"""
             l = [(1, 2), (3, 4), (5, 6)]
             y = [x for (x, [x ** x for x in range(x)][x - 1]) in l]
-        """
+            """
         outputs = {"y": [1, 3, 5]}
         self._check_in_scopes(code, outputs)
 
     def test_nested_4(self):
-        code = """
+        code = d"""
             items = [([lambda: x for x in range(2)], lambda: x) for x in range(3)]
             out = [([fn() for fn in fns], fn()) for fns, fn in items]
-        """
+            """
         outputs = {"out": [([1, 1], 2), ([1, 1], 2), ([1, 1], 2)]}
         self._check_in_scopes(code, outputs)
 
     def test_nameerror(self):
-        code = """
+        code = d"""
             [x for x in [1]]
             x
-        """
+            """
 
         self._check_in_scopes(code, raises=NameError)
 
     def test_dunder_name(self):
-        code = """
+        code = d"""
             y = [__x for __x in [1]]
-        """
+            """
         outputs = {"y": [1]}
         self._check_in_scopes(code, outputs)
 
@@ -467,69 +467,69 @@ class ListComprehensionTest(unittest.TestCase):
             f()
 
     def test_global_outside_cellvar_inside_plus_freevar(self):
-        code = """
+        code = d"""
             a = 1
             def f():
                 func, = [(lambda: b) for b in [a]]
                 return b, func()
             x = f()
-        """
+            """
         self._check_in_scopes(
             code, {"x": (2, 1)}, ns={"b": 2}, scopes=["function", "module"])
         # inside a class, the `a = 1` assignment is not visible
         self._check_in_scopes(code, raises=NameError, scopes=["class"])
 
     def test_cell_in_nested_comprehension(self):
-        code = """
+        code = d"""
             a = 1
             def f():
                 (func, inner_b), = [[lambda: b for b in c] + [b] for c in [[a]]]
                 return b, inner_b, func()
             x = f()
-        """
+            """
         self._check_in_scopes(
             code, {"x": (2, 2, 1)}, ns={"b": 2}, scopes=["function", "module"])
         # inside a class, the `a = 1` assignment is not visible
         self._check_in_scopes(code, raises=NameError, scopes=["class"])
 
     def test_name_error_in_class_scope(self):
-        code = """
+        code = d"""
             y = 1
             [x + y for x in range(2)]
-        """
+            """
         self._check_in_scopes(code, raises=NameError, scopes=["class"])
 
     def test_global_in_class_scope(self):
-        code = """
+        code = d"""
             y = 2
             vals = [(x, y) for x in range(2)]
-        """
+            """
         outputs = {"vals": [(0, 1), (1, 1)]}
         self._check_in_scopes(code, outputs, ns={"y": 1}, scopes=["class"])
 
     def test_in_class_scope_inside_function_1(self):
-        code = """
+        code = d"""
             class C:
                 y = 2
                 vals = [(x, y) for x in range(2)]
             vals = C.vals
-        """
+            """
         outputs = {"vals": [(0, 1), (1, 1)]}
         self._check_in_scopes(code, outputs, ns={"y": 1}, scopes=["function"])
 
     def test_in_class_scope_inside_function_2(self):
-        code = """
+        code = d"""
             y = 1
             class C:
                 y = 2
                 vals = [(x, y) for x in range(2)]
             vals = C.vals
-        """
+            """
         outputs = {"vals": [(0, 1), (1, 1)]}
         self._check_in_scopes(code, outputs, scopes=["function"])
 
     def test_in_class_scope_with_global(self):
-        code = """
+        code = d"""
             y = 1
             class C:
                 global y
@@ -539,14 +539,14 @@ class ListComprehensionTest(unittest.TestCase):
                 locals()['y'] = 3
                 vals = [(x, y) for x in range(2)]
             vals = C.vals
-        """
+            """
         outputs = {"vals": [(0, 2), (1, 2)]}
         self._check_in_scopes(code, outputs, scopes=["module", "class"])
         outputs = {"vals": [(0, 1), (1, 1)]}
         self._check_in_scopes(code, outputs, scopes=["function"])
 
     def test_in_class_scope_with_nonlocal(self):
-        code = """
+        code = d"""
             y = 1
             class C:
                 nonlocal y
@@ -556,76 +556,76 @@ class ListComprehensionTest(unittest.TestCase):
                 locals()['y'] = 3
                 vals = [(x, y) for x in range(2)]
             vals = C.vals
-        """
+            """
         outputs = {"vals": [(0, 2), (1, 2)]}
         self._check_in_scopes(code, outputs, scopes=["function"])
 
     def test_nested_has_free_var(self):
-        code = """
+        code = d"""
             items = [a for a in [1] if [a for _ in [0]]]
-        """
+            """
         outputs = {"items": [1]}
         self._check_in_scopes(code, outputs, scopes=["class"])
 
     def test_nested_free_var_not_bound_in_outer_comp(self):
-        code = """
+        code = d"""
             z = 1
             items = [a for a in [1] if [x for x in [1] if z]]
-        """
+            """
         self._check_in_scopes(code, {"items": [1]}, scopes=["module", "function"])
         self._check_in_scopes(code, {"items": []}, ns={"z": 0}, scopes=["class"])
 
     def test_nested_free_var_in_iter(self):
-        code = """
+        code = d"""
             items = [_C for _C in [1] for [0, 1][[x for x in [1] if _C][0]] in [2]]
-        """
+            """
         self._check_in_scopes(code, {"items": [1]})
 
     def test_nested_free_var_in_expr(self):
-        code = """
+        code = d"""
             items = [(_C, [x for x in [1] if _C]) for _C in [0, 1]]
-        """
+            """
         self._check_in_scopes(code, {"items": [(0, []), (1, [1])]})
 
     def test_nested_listcomp_in_lambda(self):
-        code = """
+        code = d"""
             f = [(z, lambda y: [(x, y, z) for x in [3]]) for z in [1]]
             (z, func), = f
             out = func(2)
-        """
+            """
         self._check_in_scopes(code, {"z": 1, "out": [(3, 2, 1)]})
 
     def test_lambda_in_iter(self):
-        code = """
+        code = d"""
             (func, c), = [(a, b) for b in [1] for a in [lambda : a]]
             d = func()
             assert d is func
             # must use "a" in this scope
             e = a if False else None
-        """
+            """
         self._check_in_scopes(code, {"c": 1, "e": None})
 
     def test_assign_to_comp_iter_var_in_outer_function(self):
-        code = """
+        code = d"""
             a = [1 for a in [0]]
-        """
+            """
         self._check_in_scopes(code, {"a": [1]}, scopes=["function"])
 
     def test_no_leakage_to_locals(self):
-        code = """
+        code = d"""
             def b():
                 [a for b in [1] for _ in []]
                 return b, locals()
             r, s = b()
             x = r is b
             y = list(s.keys())
-        """
+            """
         self._check_in_scopes(code, {"x": True, "y": []}, scopes=["module"])
         self._check_in_scopes(code, {"x": True, "y": ["b"]}, scopes=["function"])
         self._check_in_scopes(code, raises=NameError, scopes=["class"])
 
     def test_iter_var_available_in_locals(self):
-        code = """
+        code = d"""
             l = [1, 2]
             y = 0
             items = [locals()["x"] for x in l]
@@ -634,7 +634,7 @@ class ListComprehensionTest(unittest.TestCase):
             items4 = [eval("x") for x in l]
             # x is available, and does not overwrite y
             [exec("y = x") for x in l]
-        """
+            """
         self._check_in_scopes(
             code,
             {
@@ -647,7 +647,7 @@ class ListComprehensionTest(unittest.TestCase):
         )
 
     def test_comp_in_try_except(self):
-        template = """
+        template = d"""
             value = ["ab"]
             result = snapshot = None
             try:
@@ -655,7 +655,7 @@ class ListComprehensionTest(unittest.TestCase):
             except ValueError:
                 snapshot = value
                 raise
-        """
+            """
         # No exception.
         code = template.format(func='len')
         self._check_in_scopes(code, {"value": ["ab"], "result": [2], "snapshot": None})
@@ -665,14 +665,14 @@ class ListComprehensionTest(unittest.TestCase):
                               raises=ValueError)
 
     def test_comp_in_try_finally(self):
-        template = """
+        template = d"""
             value = ["ab"]
             result = snapshot = None
             try:
                 result = [{func}(value) for value in value]
             finally:
                 snapshot = value
-        """
+            """
         # No exception.
         code = template.format(func='len')
         self._check_in_scopes(code, {"value": ["ab"], "result": [2], "snapshot": ["ab"]})
@@ -682,25 +682,25 @@ class ListComprehensionTest(unittest.TestCase):
                               raises=ValueError)
 
     def test_exception_in_post_comp_call(self):
-        code = """
+        code = d"""
             value = [1, None]
             try:
                 [v for v in value].sort()
             except TypeError:
                 pass
-        """
+            """
         self._check_in_scopes(code, {"value": [1, None]})
 
     def test_frame_locals(self):
-        code = """
+        code = d"""
             val = "a" in [sys._getframe().f_locals for a in [0]][0]
-        """
+            """
         import sys
         self._check_in_scopes(code, {"val": False}, ns={"sys": sys})
 
-        code = """
+        code = d"""
             val = [sys._getframe().f_locals["a"] for a in [0]][0]
-        """
+            """
         self._check_in_scopes(code, {"val": 0}, ns={"sys": sys})
 
     def _recursive_replace(self, maybe_code):
@@ -716,12 +716,12 @@ class ListComprehensionTest(unittest.TestCase):
         exec(co, ns)
 
     def test_code_replace(self):
-        code = """
+        code = d"""
             x = 3
             [x for x in (1, 2)]
             dir()
             y = [x]
-        """
+            """
         self._check_in_scopes(code, {"y": [3], "x": 3})
         self._check_in_scopes(code, {"y": [3], "x": 3}, exec_func=self._replacing_exec)
 
@@ -743,17 +743,17 @@ class ListComprehensionTest(unittest.TestCase):
         self._check_in_scopes(code, expected, exec_func=self._replacing_exec)
 
     def test_multiple_comprehension_name_reuse(self):
-        code = """
+        code = d"""
             [x for x in [1]]
             y = [x for _ in [1]]
-        """
+            """
         self._check_in_scopes(code, {"y": [3]}, ns={"x": 3})
 
-        code = """
+        code = d"""
             x = 2
             [x for x in [1]]
             y = [x for _ in [1]]
-        """
+            """
         self._check_in_scopes(code, {"x": 2, "y": [3]}, ns={"x": 3}, scopes=["class"])
         self._check_in_scopes(code, {"x": 2, "y": [2]}, ns={"x": 3}, scopes=["function", "module"])
 

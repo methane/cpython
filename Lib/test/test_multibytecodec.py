@@ -7,7 +7,6 @@ import _multibytecodec
 import codecs
 import io
 import sys
-import textwrap
 import unittest
 from test import support
 from test.support import os_helper
@@ -216,7 +215,7 @@ class Test_IncrementalEncoder(unittest.TestCase):
         _testcapi = import_module("_testcapi")
         encoding = 'cp932'
         text = "Python の開発は、1990 年ごろから開始されています。"
-        code = textwrap.dedent("""
+        code = d"""
             import codecs
             encoding = %r
             text = %r
@@ -224,7 +223,7 @@ class Test_IncrementalEncoder(unittest.TestCase):
             text2 = encoder.encode(text).decode(encoding)
             if text2 != text:
                 raise ValueError(f"encoding issue: {text2!a} != {text!a}")
-        """) % (encoding, text)
+            """ % (encoding, text)
         res = _testcapi.run_in_subinterp(code)
         self.assertEqual(res, 0)
 

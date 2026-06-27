@@ -1222,7 +1222,7 @@ class GCTests(unittest.TestCase):
         # trigger this normally, but it *does* if it's inside unittest for whatever
         # reason. We can't call unittest from inside a test, so it has to be
         # in a subprocess.
-        source = textwrap.dedent("""
+        source = d"""
         import gc
         import unittest
 
@@ -1236,7 +1236,7 @@ class GCTests(unittest.TestCase):
 
         if __name__ == "__main__":
             unittest.main()
-        """)
+        """
         assert_python_ok("-c", source)
 
     def test_do_not_cleanup_type_subclasses_before_finalization(self):
@@ -1245,7 +1245,8 @@ class GCTests(unittest.TestCase):
         # the finalizer (__del__) then the line `fail = BaseNode.next.next`
         # should fail because we are trying to access a subclass
         # attribute. But subclass type cache was not properly invalidated.
-        code = """
+        code = d"""
+
             class BaseNode:
                 def __del__(self):
                     BaseNode.next = BaseNode.next.next
@@ -1256,17 +1257,17 @@ class GCTests(unittest.TestCase):
 
             BaseNode.next = Node()
             BaseNode.next.next = Node()
-        """
+            """
         # this test checks garbage collection while interp
         # finalization
-        assert_python_ok("-c", textwrap.dedent(code))
+        assert_python_ok("-c", code)
 
-        code_inside_function = textwrap.dedent(F"""
+        code_inside_function = df"""
             def test():
                 {textwrap.indent(code, '    ')}
 
             test()
-        """)
+            """
         # this test checks regular garbage collection
         assert_python_ok("-c", code_inside_function)
 
@@ -1432,7 +1433,7 @@ class GCCallbackTests(unittest.TestCase):
         import_module("ctypes")
 
         import subprocess
-        code = textwrap.dedent('''
+        code = d'''
             from test.support import gc_collect, SuppressCrashReport
 
             a = [1, 2, 3]
@@ -1453,7 +1454,7 @@ class GCCallbackTests(unittest.TestCase):
             # The garbage collector should now have a fatal error
             # when it reaches the broken object
             gc_collect()
-        ''')
+            '''
         p = subprocess.Popen([sys.executable, "-c", code],
                              stdout=subprocess.PIPE,
                              stderr=subprocess.PIPE)
@@ -1684,7 +1685,7 @@ class PythonFinalizationTests(unittest.TestCase):
         # not access the type memory after deallocating the instance, since
         # the type memory can be freed as well. The test is also related to
         # _PyAST_Fini() which clears references to AST types.
-        code = textwrap.dedent("""
+        code = d"""
             import ast
             import codecs
             from test import support
@@ -1694,19 +1695,19 @@ class PythonFinalizationTests(unittest.TestCase):
 
             # Store the tree somewhere to survive until the last GC collection
             support.late_deletion(tree)
-        """)
+            """
         assert_python_ok("-c", code)
 
     def test_warnings_fini(self):
         # See https://github.com/python/cpython/issues/137384
-        code = textwrap.dedent('''
+        code = d'''
             import asyncio
             from contextvars import ContextVar
 
             context_loop = ContextVar("context_loop", default=None)
             loop = asyncio.new_event_loop()
             context_loop.set(loop)
-        ''')
+            '''
 
         assert_python_ok("-c", code)
 

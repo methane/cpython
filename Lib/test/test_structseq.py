@@ -3,7 +3,6 @@ import gc
 import os
 import pickle
 import re
-import textwrap
 import time
 import unittest
 from test.support import script_helper
@@ -350,11 +349,11 @@ class StructSeqTest(unittest.TestCase):
         # with its own type doesn't crash. Previously, if the type's dictionary
         # was cleared first, the structseq instance would crash in the
         # destructor.
-        script_helper.assert_python_ok("-c", textwrap.dedent(r"""
+        script_helper.assert_python_ok("-c", rd"""
             import time
             t = time.gmtime()
             type(t).refcyle = t
-        """))
+            """)
 
     def test_replace_gc_tracked(self):
         # Verify that __replace__ results are properly GC-tracked

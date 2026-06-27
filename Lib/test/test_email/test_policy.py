@@ -1,6 +1,5 @@
 import io
 import types
-import textwrap
 import unittest
 import email.errors
 import email.policy
@@ -388,7 +387,7 @@ class TestPolicyPropagation(unittest.TestCase):
         self.assertIs(msg.policy, self.policy)
 
     def test_parser_propagates_policy_to_sub_messages(self):
-        msg = self._make_msg(textwrap.dedent("""\
+        msg = self._make_msg(d"""
             Subject: mime test
             MIME-Version: 1.0
             Content-Type: multipart/mixed, boundary="XXX"
@@ -402,7 +401,7 @@ class TestPolicyPropagation(unittest.TestCase):
 
             test2
             --XXX--
-            """))
+            """)
         for part in msg.walk():
             self.assertIs(part.policy, self.policy)
 

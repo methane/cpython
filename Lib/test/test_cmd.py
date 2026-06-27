@@ -9,7 +9,6 @@ import sys
 import doctest
 import unittest
 import io
-import textwrap
 from test import support
 from test.support.import_helper import ensure_lazy_imports, import_module
 from test.support.pty_helper import run_pty
@@ -277,7 +276,7 @@ class CmdTestReadline(unittest.TestCase):
         readline = import_module('readline')
 
     def test_basic_completion(self):
-        script = textwrap.dedent("""
+        script = d"""
             import cmd
             class simplecmd(cmd.Cmd):
                 def do_tab_completion_test(self, args):
@@ -285,7 +284,7 @@ class CmdTestReadline(unittest.TestCase):
                     return True
 
             simplecmd().cmdloop()
-        """)
+            """
 
         # 't' and complete 'ab_completion_test' to 'tab_completion_test'
         input = b"t\t\n"
@@ -296,7 +295,7 @@ class CmdTestReadline(unittest.TestCase):
         self.assertIn(b'tab completion success', output)
 
     def test_bang_completion_without_do_shell(self):
-        script = textwrap.dedent("""
+        script = d"""
             import cmd
             class simplecmd(cmd.Cmd):
                 def completedefault(self, text, line, begidx, endidx):
@@ -310,7 +309,7 @@ class CmdTestReadline(unittest.TestCase):
                     return True
 
             simplecmd().cmdloop()
-        """)
+            """
 
         # '! h' or '!h' and complete 'ello' to 'hello'
         for input in [b"! h\t\n", b"!h\t\n"]:

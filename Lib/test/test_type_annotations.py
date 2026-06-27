@@ -493,7 +493,7 @@ class DeferredEvaluationTests(unittest.TestCase):
         self.assertEqual(ns["C"].__annotations__, {"__classdict__": int})
 
     def test_future_annotations(self):
-        code = """
+        code = d"""
         from __future__ import annotations
 
         def f(x: int) -> int: pass
@@ -506,14 +506,14 @@ class DeferredEvaluationTests(unittest.TestCase):
         self.assertEqual(f.__annotations__, annos)
 
     def test_set_annotations(self):
-        function_code = textwrap.dedent("""
+        function_code = d"""
         def f(x: int):
             pass
-        """)
-        class_code = textwrap.dedent("""
+        """
+        class_code = d"""
         class f:
             x: int
-        """)
+        """
         for future in (False, True):
             for label, code in (("function", function_code), ("class", class_code)):
                 with self.subTest(future=future, label=label):
@@ -530,7 +530,7 @@ class DeferredEvaluationTests(unittest.TestCase):
     def test_name_clash_with_format(self):
         # this test would fail if __annotate__'s parameter was called "format"
         # during symbol table construction
-        code = """
+        code = d"""
         class format: pass
 
         def f(x: format): pass
@@ -539,7 +539,7 @@ class DeferredEvaluationTests(unittest.TestCase):
         f = ns["f"]
         self.assertEqual(f.__annotations__, {"x": ns["format"]})
 
-        code = """
+        code = d"""
         class Outer:
             class format: pass
 
@@ -548,7 +548,7 @@ class DeferredEvaluationTests(unittest.TestCase):
         ns = run_code(code)
         self.assertEqual(ns["Outer"].meth.__annotations__, {"x": ns["Outer"].format})
 
-        code = """
+        code = d"""
         def f(format):
             def inner(x: format): pass
             return inner
@@ -557,7 +557,7 @@ class DeferredEvaluationTests(unittest.TestCase):
         ns = run_code(code)
         self.assertEqual(ns["res"].__annotations__, {"x": "closure var"})
 
-        code = """
+        code = d"""
         def f(x: format):
             pass
         """
@@ -565,7 +565,7 @@ class DeferredEvaluationTests(unittest.TestCase):
         # picks up the format() builtin
         self.assertEqual(ns["f"].__annotations__, {"x": format})
 
-        code = """
+        code = d"""
         def outer():
             def f(x: format):
                 pass
@@ -603,7 +603,7 @@ class ConditionalAnnotationTests(unittest.TestCase):
                                          expected)
 
     def test_with(self):
-        code = """
+        code = d"""
             class Swallower:
                 def __enter__(self):
                     pass
@@ -616,27 +616,27 @@ class ConditionalAnnotationTests(unittest.TestCase):
                     about_to_raise: int
                     raise Exception
                 in_with: "with"
-        """
+            """
         self.check_scopes(code, {"about_to_raise": int}, {"in_with": "with"})
 
     def test_simple_if(self):
-        code = """
+        code = d"""
             if {cond}:
                 in_if: "if"
             else:
                 in_if: "else"
-        """
+            """
         self.check_scopes(code, {"in_if": "if"}, {"in_if": "else"})
 
     def test_if_elif(self):
-        code = """
+        code = d"""
             if not len:
                 in_if: "if"
             elif {cond}:
                 in_elif: "elif"
             else:
                 in_else: "else"
-        """
+            """
         self.check_scopes(
             code,
             {"in_elif": "elif"},
@@ -644,7 +644,7 @@ class ConditionalAnnotationTests(unittest.TestCase):
         )
 
     def test_try(self):
-        code = """
+        code = d"""
             try:
                 if {cond}:
                     raise Exception
@@ -653,7 +653,7 @@ class ConditionalAnnotationTests(unittest.TestCase):
                 in_except: "except"
             finally:
                 in_finally: "finally"
-        """
+            """
         self.check_scopes(
             code,
             {"in_except": "except", "in_finally": "finally"},
@@ -661,7 +661,7 @@ class ConditionalAnnotationTests(unittest.TestCase):
         )
 
     def test_try_star(self):
-        code = """
+        code = d"""
             try:
                 if {cond}:
                     raise Exception
@@ -670,7 +670,7 @@ class ConditionalAnnotationTests(unittest.TestCase):
                 in_except_star: "except"
             finally:
                 in_finally: "finally"
-        """
+            """
         self.check_scopes(
             code,
             {"in_except_star": "except", "in_finally": "finally"},
@@ -678,13 +678,13 @@ class ConditionalAnnotationTests(unittest.TestCase):
         )
 
     def test_while(self):
-        code = """
+        code = d"""
             while {cond}:
                 in_while: "while"
                 break
             else:
                 in_else: "else"
-        """
+            """
         self.check_scopes(
             code,
             {"in_while": "while"},
@@ -692,12 +692,12 @@ class ConditionalAnnotationTests(unittest.TestCase):
         )
 
     def test_for(self):
-        code = """
+        code = d"""
             for _ in ([1] if {cond} else []):
                 in_for: "for"
             else:
                 in_else: "else"
-        """
+            """
         self.check_scopes(
             code,
             {"in_for": "for", "in_else": "else"},
@@ -705,13 +705,13 @@ class ConditionalAnnotationTests(unittest.TestCase):
         )
 
     def test_match(self):
-        code = """
+        code = d"""
             match {cond}:
                 case True:
                     x: "true"
                 case False:
                     x: "false"
-        """
+            """
         self.check_scopes(
             code,
             {"x": "true"},
@@ -719,12 +719,12 @@ class ConditionalAnnotationTests(unittest.TestCase):
         )
 
     def test_nesting_override(self):
-        code = """
+        code = d"""
             if {cond}:
                 x: "foo"
                 if {cond}:
                     x: "bar"
-        """
+            """
         self.check_scopes(
             code,
             {"x": "bar"},
@@ -732,7 +732,7 @@ class ConditionalAnnotationTests(unittest.TestCase):
         )
 
     def test_nesting_outer(self):
-        code = """
+        code = d"""
             if {cond}:
                 outer_before: "outer_before"
                 if len:
@@ -740,7 +740,7 @@ class ConditionalAnnotationTests(unittest.TestCase):
                 else:
                     inner_else: "inner_else"
                 outer_after: "outer_after"
-        """
+            """
         self.check_scopes(
             code,
             {"outer_before": "outer_before", "inner_if": "inner_if",
@@ -749,7 +749,7 @@ class ConditionalAnnotationTests(unittest.TestCase):
         )
 
     def test_nesting_inner(self):
-        code = """
+        code = d"""
             if len:
                 outer_before: "outer_before"
                 if {cond}:
@@ -757,7 +757,7 @@ class ConditionalAnnotationTests(unittest.TestCase):
                 else:
                     inner_else: "inner_else"
                 outer_after: "outer_after"
-        """
+            """
         self.check_scopes(
             code,
             {"outer_before": "outer_before", "inner_if": "inner_if",
@@ -767,7 +767,7 @@ class ConditionalAnnotationTests(unittest.TestCase):
         )
 
     def test_non_name_annotations(self):
-        code = """
+        code = d"""
             before: "before"
             if {cond}:
                 a = "x"
@@ -776,7 +776,7 @@ class ConditionalAnnotationTests(unittest.TestCase):
                 a = object()
                 a.b: str
             after: "after"
-        """
+            """
         expected = {"before": "before", "after": "after"}
         self.check_scopes(code, expected, expected)
 
@@ -825,7 +825,7 @@ class RegressionTests(unittest.TestCase):
             compile(case, "<test>", "exec")
 
     def test_complex_comprehension_inlining_exec(self):
-        code = """
+        code = d"""
             unique_name_1 = unique_name_5 = [1]
             name_0 = 42
             unique_name_7: {name_0 for name_0 in unique_name_1}
@@ -834,7 +834,7 @@ class RegressionTests(unittest.TestCase):
                 for unique_name_6 in [1]
                 if name_0
             }
-        """
+            """
         mod = build_module(code)
         annos = mod.__annotations__
         self.assertEqual(annos.keys(), {"unique_name_7", "unique_name_2"})
@@ -844,7 +844,7 @@ class RegressionTests(unittest.TestCase):
         self.assertEqual(lamb(), 42)
 
     def test_annotate_qualname(self):
-        code = """
+        code = d"""
         def f() -> None:
             def nested() -> None: pass
             return nested
