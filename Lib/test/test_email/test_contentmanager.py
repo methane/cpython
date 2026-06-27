@@ -146,120 +146,120 @@ class TestRawDataManager(TestEmailBase):
     message = EmailMessage
 
     def test_get_text_plain(self):
-        m = self._str_msg(textwrap.dedent("""\
+        m = self._str_msg(d"""
             Content-Type: text/plain
 
             Basic text.
-            """))
+            """)
         self.assertEqual(raw_data_manager.get_content(m), "Basic text.\n")
 
     def test_get_text_html(self):
-        m = self._str_msg(textwrap.dedent("""\
+        m = self._str_msg(d"""
             Content-Type: text/html
 
             <p>Basic text.</p>
-            """))
+            """)
         self.assertEqual(raw_data_manager.get_content(m),
                          "<p>Basic text.</p>\n")
 
     def test_get_text_plain_latin1(self):
-        m = self._bytes_msg(textwrap.dedent("""\
+        m = self._bytes_msg(d"""
             Content-Type: text/plain; charset=latin1
 
             Basìc tëxt.
-            """).encode('latin1'))
+            """.encode('latin1'))
         self.assertEqual(raw_data_manager.get_content(m), "Basìc tëxt.\n")
 
     def test_get_text_plain_latin1_quoted_printable(self):
-        m = self._str_msg(textwrap.dedent("""\
+        m = self._str_msg(d"""
             Content-Type: text/plain; charset="latin-1"
             Content-Transfer-Encoding: quoted-printable
 
             Bas=ECc t=EBxt.
-            """))
+            """)
         self.assertEqual(raw_data_manager.get_content(m), "Basìc tëxt.\n")
 
     def test_get_text_plain_utf8_base64(self):
-        m = self._str_msg(textwrap.dedent("""\
+        m = self._str_msg(d"""
             Content-Type: text/plain; charset="utf8"
             Content-Transfer-Encoding: base64
 
             QmFzw6xjIHTDq3h0Lgo=
-            """))
+            """)
         self.assertEqual(raw_data_manager.get_content(m), "Basìc tëxt.\n")
 
     def test_get_text_plain_bad_utf8_quoted_printable(self):
-        m = self._str_msg(textwrap.dedent("""\
+        m = self._str_msg(d"""
             Content-Type: text/plain; charset="utf8"
             Content-Transfer-Encoding: quoted-printable
 
             Bas=c3=acc t=c3=abxt=fd.
-            """))
+            """)
         self.assertEqual(raw_data_manager.get_content(m), "Basìc tëxt�.\n")
 
     def test_get_text_plain_bad_utf8_quoted_printable_ignore_errors(self):
-        m = self._str_msg(textwrap.dedent("""\
+        m = self._str_msg(d"""
             Content-Type: text/plain; charset="utf8"
             Content-Transfer-Encoding: quoted-printable
 
             Bas=c3=acc t=c3=abxt=fd.
-            """))
+            """)
         self.assertEqual(raw_data_manager.get_content(m, errors='ignore'),
                          "Basìc tëxt.\n")
 
     def test_get_text_plain_utf8_base64_recoverable_bad_CTE_data(self):
-        m = self._str_msg(textwrap.dedent("""\
+        m = self._str_msg(d"""
             Content-Type: text/plain; charset="utf8"
             Content-Transfer-Encoding: base64
 
             QmFzw6xjIHTDq3h0Lgo\xFF=
-            """))
+            """)
         self.assertEqual(raw_data_manager.get_content(m, errors='ignore'),
                          "Basìc tëxt.\n")
 
     def test_get_text_invalid_keyword(self):
-        m = self._str_msg(textwrap.dedent("""\
+        m = self._str_msg(d"""
             Content-Type: text/plain
 
             Basic text.
-            """))
+            """)
         with self.assertRaises(TypeError):
             raw_data_manager.get_content(m, foo='ignore')
 
     def test_get_non_text(self):
-        template = textwrap.dedent("""\
+        template = d"""
             Content-Type: {}
             Content-Transfer-Encoding: base64
 
             Ym9ndXMgZGF0YQ==
-            """)
+            """
         for maintype in 'audio image video application'.split():
             with self.subTest(maintype=maintype):
                 m = self._str_msg(template.format(maintype+'/foo'))
                 self.assertEqual(raw_data_manager.get_content(m), b"bogus data")
 
     def test_get_non_text_invalid_keyword(self):
-        m = self._str_msg(textwrap.dedent("""\
+        m = self._str_msg(d"""
             Content-Type: image/jpg
             Content-Transfer-Encoding: base64
 
             Ym9ndXMgZGF0YQ==
-            """))
+            """)
         with self.assertRaises(TypeError):
             raw_data_manager.get_content(m, errors='ignore')
 
     def test_get_raises_on_multipart(self):
-        m = self._str_msg(textwrap.dedent("""\
+        m = self._str_msg(d"""
             Content-Type: multipart/mixed; boundary="==="
 
             --===
             --===--
-            """))
+            """)
         with self.assertRaises(KeyError):
             raw_data_manager.get_content(m)
 
     def test_get_message_rfc822_and_external_body(self):
-        template = textwrap.dedent("""\
+        template = d"""
             Content-Type: message/{}
 
             To: foo@example.com
@@ -267,7 +267,7 @@ class TestRawDataManager(TestEmailBase):
             Subject: example
 
             an example message
-            """)
+            """
         for subtype in 'rfc822 external-body'.split():
             with self.subTest(subtype=subtype):
                 m = self._str_msg(template.format(subtype))
@@ -279,7 +279,7 @@ class TestRawDataManager(TestEmailBase):
                 self.assertEqual(sub_msg['from'].addresses[0].username, 'bar')
 
     def test_get_message_non_rfc822_or_external_body_yields_bytes(self):
-        m = self._str_msg(textwrap.dedent("""\
+        m = self._str_msg(d"""
             Content-Type: message/partial
 
             To: foo@example.com
@@ -287,19 +287,19 @@ class TestRawDataManager(TestEmailBase):
             Subject: example
 
             The real body is in another message.
-            """))
+            """)
         self.assertStartsWith(raw_data_manager.get_content(m), b'To: foo@ex')
 
     def test_set_text_plain(self):
         m = self._make_message()
         content = "Simple message.\n"
         raw_data_manager.set_content(m, content)
-        self.assertEqual(str(m), textwrap.dedent("""\
+        self.assertEqual(str(m), d"""
             Content-Type: text/plain; charset="utf-8"
             Content-Transfer-Encoding: 7bit
 
             Simple message.
-            """))
+            """)
         self.assertEqual(m.get_payload(decode=True).decode('utf-8'), content)
         self.assertEqual(m.get_content(), content)
 
@@ -307,12 +307,12 @@ class TestRawDataManager(TestEmailBase):
         m = self._make_message()
         content = ''
         raw_data_manager.set_content(m, content)
-        self.assertEqual(str(m), textwrap.dedent("""\
+        self.assertEqual(str(m), d"""
             Content-Type: text/plain; charset="utf-8"
             Content-Transfer-Encoding: 7bit
 
 
-            """))
+            """)
         self.assertEqual(m.get_payload(decode=True).decode('utf-8'), '\n')
         self.assertEqual(m.get_content(), '\n')
 
@@ -320,12 +320,12 @@ class TestRawDataManager(TestEmailBase):
         m = self._make_message()
         content = "<p>Simple message.</p>\n"
         raw_data_manager.set_content(m, content, subtype='html')
-        self.assertEqual(str(m), textwrap.dedent("""\
+        self.assertEqual(str(m), d"""
             Content-Type: text/html; charset="utf-8"
             Content-Transfer-Encoding: 7bit
 
             <p>Simple message.</p>
-            """))
+            """)
         self.assertEqual(m.get_payload(decode=True).decode('utf-8'), content)
         self.assertEqual(m.get_content(), content)
 
@@ -333,12 +333,12 @@ class TestRawDataManager(TestEmailBase):
         m = self._make_message()
         content = "Simple message.\n"
         raw_data_manager.set_content(m, content, charset='latin-1')
-        self.assertEqual(str(m), textwrap.dedent("""\
+        self.assertEqual(str(m), d"""
             Content-Type: text/plain; charset="iso-8859-1"
             Content-Transfer-Encoding: 7bit
 
             Simple message.
-            """))
+            """)
         self.assertEqual(m.get_payload(decode=True).decode('utf-8'), content)
         self.assertEqual(m.get_content(), content)
 
@@ -346,19 +346,19 @@ class TestRawDataManager(TestEmailBase):
         m = self._make_message()
         content = "\ud55c\uad6d\uc5b4\n\uac02\n"
         raw_data_manager.set_content(m, content, charset='cp949')
-        self.assertEqual(str(m), textwrap.dedent("""\
+        self.assertEqual(str(m), d"""
             Content-Type: text/plain; charset="ks_c_5601-1987"
             Content-Transfer-Encoding: base64
 
             x9Gxub7uCoFBCg==
-            """))
-        self.assertEqual(bytes(m), textwrap.dedent("""\
+            """)
+        self.assertEqual(bytes(m), d"""
             Content-Type: text/plain; charset="ks_c_5601-1987"
             Content-Transfer-Encoding: 8bit
 
             \ud55c\uad6d\uc5b4
             \uac02
-            """).encode('ks_c_5601-1987'))
+            """.encode('ks_c_5601-1987'))
         self.assertEqual(m.get_payload(decode=True), content.encode('ks_c_5601-1987'))
         self.assertEqual(m.get_content(), content)
 
@@ -369,18 +369,18 @@ class TestRawDataManager(TestEmailBase):
         self.assertEqual(m['Content-Type'], 'text/plain; charset="iso-2022-jp"')
         self.assertEqual(m.get_payload(decode=True), content.encode('iso-2022-jp'))
         self.assertEqual(m.get_content(), content)
-        self.assertEqual(str(m), textwrap.dedent("""\
+        self.assertEqual(str(m), d"""
             Content-Type: text/plain; charset="iso-2022-jp"
             Content-Transfer-Encoding: 7bit
 
             \x1b$BF|K\\8l\x1b(B
-            """))
-        self.assertEqual(bytes(m), textwrap.dedent("""\
+            """)
+        self.assertEqual(bytes(m), d"""
             Content-Type: text/plain; charset="iso-2022-jp"
             Content-Transfer-Encoding: 7bit
 
             \u65e5\u672c\u8a9e
-            """).encode('iso-2022-jp'))
+            """.encode('iso-2022-jp'))
 
     def test_set_text_charset_euc_jp(self):
         m = self._make_message()
@@ -389,31 +389,31 @@ class TestRawDataManager(TestEmailBase):
         self.assertEqual(m['Content-Type'], 'text/plain; charset="iso-2022-jp"')
         self.assertEqual(m.get_payload(decode=True), content.encode('iso-2022-jp'))
         self.assertEqual(m.get_content(), content)
-        self.assertEqual(str(m), textwrap.dedent("""\
+        self.assertEqual(str(m), d"""
             Content-Type: text/plain; charset="iso-2022-jp"
             Content-Transfer-Encoding: 7bit
 
             \x1b$BF|K\\8l\x1b(B
-            """))
-        self.assertEqual(bytes(m), textwrap.dedent("""\
+            """)
+        self.assertEqual(bytes(m), d"""
             Content-Type: text/plain; charset="iso-2022-jp"
             Content-Transfer-Encoding: 7bit
 
             \u65e5\u672c\u8a9e
-            """).encode('iso-2022-jp'))
+            """.encode('iso-2022-jp'))
 
     def test_set_text_plain_long_line_heuristics(self):
         m = self._make_message()
         content = ("Simple but long message that is over 78 characters"
                    " long to force transfer encoding.\n")
         raw_data_manager.set_content(m, content)
-        self.assertEqual(str(m), textwrap.dedent("""\
+        self.assertEqual(str(m), d"""
             Content-Type: text/plain; charset="utf-8"
             Content-Transfer-Encoding: quoted-printable
 
             Simple but long message that is over 78 characters long to =
             force transfer encoding.
-            """))
+            """)
         self.assertEqual(m.get_payload(decode=True).decode('utf-8'), content)
         self.assertEqual(m.get_content(), content)
 
@@ -421,12 +421,12 @@ class TestRawDataManager(TestEmailBase):
         m = self._make_message()
         content = "et là il est monté sur moi et il commence à m'éto.\n"
         raw_data_manager.set_content(m, content)
-        self.assertEqual(bytes(m), textwrap.dedent("""\
+        self.assertEqual(bytes(m), d"""
             Content-Type: text/plain; charset="utf-8"
             Content-Transfer-Encoding: 8bit
 
             et là il est monté sur moi et il commence à m'éto.
-            """).encode('utf-8'))
+            """.encode('utf-8'))
         self.assertEqual(m.get_payload(decode=True).decode('utf-8'), content)
         self.assertEqual(m.get_content(), content)
 
@@ -436,14 +436,14 @@ class TestRawDataManager(TestEmailBase):
                    " vivarium.  et là il est monté sur moi et il commence"
                    " à m'éto.\n")
         raw_data_manager.set_content(m, content)
-        self.assertEqual(bytes(m), textwrap.dedent("""\
+        self.assertEqual(bytes(m), d"""
             Content-Type: text/plain; charset="utf-8"
             Content-Transfer-Encoding: quoted-printable
 
             j'ai un probl=C3=A8me de python. il est sorti de son vivari=
             um.  et l=C3=A0 il est mont=C3=A9 sur moi et il commence =
             =C3=A0 m'=C3=A9to.
-            """).encode('utf-8'))
+            """.encode('utf-8'))
         self.assertEqual(m.get_payload(decode=True).decode('utf-8'), content)
         self.assertEqual(m.get_content(), content)
 
@@ -454,10 +454,11 @@ class TestRawDataManager(TestEmailBase):
                   " vivarium.  et là il est monté sur moi et il commence"
                   " à m'éto.\n")
         raw_data_manager.set_content(m, content)
-        self.assertEqual(bytes(m), textwrap.dedent("""\
+        self.assertEqual(bytes(m), (d"""
             Content-Type: text/plain; charset="utf-8"
             Content-Transfer-Encoding: quoted-printable
-            """ + '\n'*10 + """
+
+            """ + '\n'*10 + d"""
             j'ai un probl=C3=A8me de python. il est sorti de son vivari=
             um.  et l=C3=A0 il est mont=C3=A9 sur moi et il commence =
             =C3=A0 m'=C3=A9to.
@@ -469,12 +470,12 @@ class TestRawDataManager(TestEmailBase):
         m = self._make_message()
         content = "áàäéèęöő.\n"
         raw_data_manager.set_content(m, content)
-        self.assertEqual(bytes(m), textwrap.dedent("""\
+        self.assertEqual(bytes(m), d"""
             Content-Type: text/plain; charset="utf-8"
             Content-Transfer-Encoding: 8bit
 
             áàäéèęöő.
-            """).encode('utf-8'))
+            """.encode('utf-8'))
         self.assertEqual(m.get_payload(decode=True).decode('utf-8'), content)
         self.assertEqual(m.get_content(), content)
 
@@ -497,7 +498,7 @@ class TestRawDataManager(TestEmailBase):
                    "áàäéèęöőáàäéèęöőáàäéèęöőáàäéèęöő"
                    "áàäéèęöőáàäéèęöőáàäéèęöőáàäéèęöő.\n")
         raw_data_manager.set_content(m, content)
-        self.assertEqual(bytes(m), textwrap.dedent("""\
+        self.assertEqual(bytes(m), d"""
             Content-Type: text/plain; charset="utf-8"
             Content-Transfer-Encoding: base64
 
@@ -506,7 +507,7 @@ class TestRawDataManager(TestEmailBase):
             xJnDtsWRw6HDoMOkw6nDqMSZw7bFkcOhw6DDpMOpw6jEmcO2xZHDocOgw6TD
             qcOoxJnDtsWRw6HDoMOkw6nDqMSZw7bFkcOhw6DDpMOpw6jEmcO2xZHDocOg
             w6TDqcOoxJnDtsWRLgo=
-            """).encode('utf-8'))
+            """.encode('utf-8'))
         self.assertEqual(m.get_payload(decode=True).decode('utf-8'), content)
         self.assertEqual(m.get_content(), content)
 
@@ -565,7 +566,7 @@ class TestRawDataManager(TestEmailBase):
         content['Subject'] = "get back in your box"
         content.set_content("Or face the comfy chair.")
         raw_data_manager.set_content(m, content)
-        self.assertEqual(str(m), textwrap.dedent("""\
+        self.assertEqual(str(m), d"""
             Subject: Forwarded message
             Content-Type: message/rfc822
             Content-Transfer-Encoding: 8bit
@@ -578,7 +579,7 @@ class TestRawDataManager(TestEmailBase):
             MIME-Version: 1.0
 
             Or face the comfy chair.
-            """))
+            """)
         payload = m.get_payload(0)
         self.assertIsInstance(payload, self.message)
         self.assertEqual(str(payload), str(content))
@@ -595,7 +596,7 @@ class TestRawDataManager(TestEmailBase):
         content.set_content("j'ai un problème de python. il est sorti de son"
                             " vivarium.")
         raw_data_manager.set_content(m, content)
-        self.assertEqual(bytes(m), textwrap.dedent("""\
+        self.assertEqual(bytes(m), d"""
             Subject: Escape report
             Content-Type: message/rfc822
             Content-Transfer-Encoding: 8bit
@@ -608,14 +609,14 @@ class TestRawDataManager(TestEmailBase):
             MIME-Version: 1.0
 
             j'ai un problème de python. il est sorti de son vivarium.
-            """).encode('utf-8'))
+            """.encode('utf-8'))
         # The choice of base64 for the body encoding is because generator
         # doesn't bother with heuristics and uses it unconditionally for utf-8
         # text.
         # XXX: the first cte should be 7bit, too...that's a generator bug.
         # XXX: the line length in the body also looks like a generator bug.
         self.assertEqual(m.as_string(maxheaderlen=self.policy.max_line_length),
-                         textwrap.dedent("""\
+                         d"""
             Subject: Escape report
             Content-Type: message/rfc822
             Content-Transfer-Encoding: 8bit
@@ -629,7 +630,7 @@ class TestRawDataManager(TestEmailBase):
 
             aidhaSB1biBwcm9ibMOobWUgZGUgcHl0aG9uLiBpbCBlc3Qgc29ydGkgZGUgc29uIHZpdmFyaXVt
             Lgo=
-            """))
+            """)
         self.assertIsInstance(m.get_content(), self.message)
         self.assertEqual(str(m.get_content()), str(content))
 
@@ -660,12 +661,12 @@ class TestRawDataManager(TestEmailBase):
             with self.subTest(content=content):
                 m = self._make_message()
                 raw_data_manager.set_content(m, content, 'image', 'jpeg')
-                self.assertEqual(str(m), textwrap.dedent("""\
+                self.assertEqual(str(m), d"""
                     Content-Type: image/jpeg
                     Content-Transfer-Encoding: base64
 
                     Ym9ndXMgY29udGVudA==
-                    """))
+                    """)
                 self.assertEqual(m.get_payload(decode=True), content)
                 self.assertEqual(m.get_content(), content)
 
@@ -681,13 +682,13 @@ class TestRawDataManager(TestEmailBase):
         m = self._make_message()
         content = b'b\xFFgus\tcon\nt\rent ' + b'z'*100
         m.set_content(content, 'audio', 'aif', cte='quoted-printable')
-        self.assertEqual(bytes(m), textwrap.dedent("""\
+        self.assertEqual(bytes(m), d"""
             Content-Type: audio/aif
             Content-Transfer-Encoding: quoted-printable
             MIME-Version: 1.0
 
             b=FFgus=09con=0At=0Dent=20zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz=
-            zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz""").encode('latin-1'))
+            zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz""".encode('latin-1'))
         self.assertEqual(m.get_payload(decode=True), content)
         self.assertEqual(m.get_content(), content)
 
@@ -695,12 +696,12 @@ class TestRawDataManager(TestEmailBase):
         m = self._make_message()
         content = b'b\xFFgus\tcon\nt\rent ' + b'z'*100
         m.set_content(content, 'video', 'mpeg', cte='binary')
-        self.assertEqual(bytes(m), textwrap.dedent("""\
+        self.assertEqual(bytes(m), d"""
             Content-Type: video/mpeg
             Content-Transfer-Encoding: binary
             MIME-Version: 1.0
 
-            """).encode('ascii') +
+            """.encode('ascii') +
             # XXX: the second \n ought to be a \r, but generator gets it wrong.
             # THIS MEANS WE DON'T ACTUALLY SUPPORT THE 'binary' CTE.
             b'b\xFFgus\tcon\nt\nent zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz' +
@@ -714,12 +715,12 @@ class TestRawDataManager(TestEmailBase):
         m = self._make_message()
         content = b'b\xFFgus\tcon\nt\rent\n' + b'z'*60 + b'\n'
         m.set_content(content, 'application', 'octet-stream', cte='8bit')
-        self.assertEqual(bytes(m), textwrap.dedent("""\
+        self.assertEqual(bytes(m), d"""
             Content-Type: application/octet-stream
             Content-Transfer-Encoding: 8bit
             MIME-Version: 1.0
 
-            """).encode('ascii') +
+            """.encode('ascii') +
             b'b\xFFgus\tcon\nt\nent\n' +
             b'zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\n')
         self.assertEqual(m.get_payload(decode=True), content)
@@ -733,7 +734,7 @@ class TestRawDataManager(TestEmailBase):
             header_factory("To", "foo@example.com"),
             header_factory("From", "foo@example.com"),
             header_factory("Subject", "I'm talking to myself.")))
-        self.assertEqual(str(m), textwrap.dedent("""\
+        self.assertEqual(str(m), d"""
             Content-Type: text/plain; charset="utf-8"
             To: foo@example.com
             From: foo@example.com
@@ -741,7 +742,7 @@ class TestRawDataManager(TestEmailBase):
             Content-Transfer-Encoding: 7bit
 
             Simple message.
-            """))
+            """)
 
     def test_set_headers_from_strings(self):
         m = self._make_message()
@@ -749,14 +750,14 @@ class TestRawDataManager(TestEmailBase):
         raw_data_manager.set_content(m, content, headers=(
             "X-Foo-Header: foo",
             "X-Bar-Header: bar",))
-        self.assertEqual(str(m), textwrap.dedent("""\
+        self.assertEqual(str(m), d"""
             Content-Type: text/plain; charset="utf-8"
             X-Foo-Header: foo
             X-Bar-Header: bar
             Content-Transfer-Encoding: 7bit
 
             Simple message.
-            """))
+            """)
 
     def test_set_headers_with_invalid_duplicate_string_header_raises(self):
         m = self._make_message()
@@ -826,7 +827,7 @@ class TestRawDataManager(TestEmailBase):
     def test_set_non_ascii_filename(self):
         m = self._make_message()
         m.set_content('foo', filename='ábárî.txt')
-        self.assertEqual(bytes(m), textwrap.dedent("""\
+        self.assertEqual(bytes(m), d"""
             Content-Type: text/plain; charset="utf-8"
             Content-Transfer-Encoding: 7bit
             Content-Disposition: attachment;
@@ -834,19 +835,19 @@ class TestRawDataManager(TestEmailBase):
             MIME-Version: 1.0
 
             foo
-            """).encode('ascii'))
+            """.encode('ascii'))
 
     def test_set_content_bytes_cte_7bit(self):
         m = self._make_message()
         m.set_content(b'ASCII-only message.\n',
             maintype='application', subtype='octet-stream', cte='7bit')
-        self.assertEqual(str(m), textwrap.dedent("""\
+        self.assertEqual(str(m), d"""
             Content-Type: application/octet-stream
             Content-Transfer-Encoding: 7bit
             MIME-Version: 1.0
 
             ASCII-only message.
-            """))
+            """)
 
     content_object_params = {
         'text_plain': ('content', ()),

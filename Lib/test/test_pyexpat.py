@@ -892,12 +892,12 @@ class ElementDeclHandlerTest(unittest.TestCase):
         # Unfixed, this test would leak the memory of the so-called
         # "content model" in function ``my_ElementDeclHandler`` of pyexpat.
         # See https://github.com/python/cpython/issues/140593.
-        data = textwrap.dedent('''\
+        data = d'''
             <!DOCTYPE quotations SYSTEM "quotations.dtd" [
                 <!ELEMENT root ANY>
             ]>
             <root/>
-        ''').encode('UTF-8')
+            '''.encode('UTF-8')
 
         parser = expat.ParserCreate()
         parser.NotStandaloneHandler = lambda: 1.234  # arbitrary float
@@ -1155,7 +1155,7 @@ class AttackProtectionTestBase(abc.ABC):
         Be careful: the number of total items is pow(n, k), thereby
         requiring at least pow(ncols, nrows) * sizeof(text) memory!
         """
-        template = textwrap.dedent(f"""\
+        template = fd"""
             <?xml version="1.0"?>
             <!DOCTYPE doc [
                 <!ENTITY row0 "{text}">
@@ -1163,7 +1163,7 @@ class AttackProtectionTestBase(abc.ABC):
             {{body}}
             ]>
             <doc>&row{nrows};</doc>
-        """).rstrip()
+            """.rstrip()
 
         body = '\n'.join(
             f'<!ENTITY row{i + 1} "{f"&row{i};" * ncols}">'
@@ -1175,7 +1175,7 @@ class AttackProtectionTestBase(abc.ABC):
     def test_payload_generation(self):
         # self-test for exponential_expansion_payload()
         payload = self.exponential_expansion_payload(nrows=2, ncols=3)
-        self.assertEqual(payload, textwrap.dedent("""\
+        self.assertEqual(payload, d"""
             <?xml version="1.0"?>
             <!DOCTYPE doc [
                 <!ENTITY row0 ".">
@@ -1184,7 +1184,7 @@ class AttackProtectionTestBase(abc.ABC):
                 <!ENTITY row2 "&row1;&row1;&row1;">
             ]>
             <doc>&row2;</doc>
-        """).rstrip())
+            """.rstrip())
 
     def assert_root_parser_failure(self, func, /, *args, **kwargs):
         """Check that func(*args, **kwargs) is invalid for a sub-parser."""

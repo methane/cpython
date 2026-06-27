@@ -17,7 +17,7 @@ class GeneralTest(unittest.TestCase):
 class FunctionalTest(unittest.TestCase):
     def test_shutdown(self):
         # Actually test the shutdown mechanism in a subprocess
-        code = textwrap.dedent("""
+        code = d"""
             import atexit
 
             def f(msg):
@@ -25,14 +25,14 @@ class FunctionalTest(unittest.TestCase):
 
             atexit.register(f, "one")
             atexit.register(f, "two")
-        """)
+            """
         res = script_helper.assert_python_ok("-c", code)
         self.assertEqual(res.out.decode().splitlines(), ["two", "one"])
         self.assertFalse(res.err)
 
     def test_atexit_instances(self):
         # bpo-42639: It is safe to have more than one atexit instance.
-        code = textwrap.dedent("""
+        code = d"""
             import sys
             import atexit as atexit1
             del sys.modules['atexit']
@@ -43,7 +43,7 @@ class FunctionalTest(unittest.TestCase):
 
             atexit1.register(print, "atexit1")
             atexit2.register(print, "atexit2")
-        """)
+            """
         res = script_helper.assert_python_ok("-c", code)
         self.assertEqual(res.out.decode().splitlines(), ["atexit2", "atexit1"])
         self.assertFalse(res.err)
@@ -53,7 +53,7 @@ class FunctionalTest(unittest.TestCase):
     @unittest.skipUnless(support.Py_GIL_DISABLED, "only meaningful without the GIL")
     def test_atexit_thread_safety(self):
         # GH-126907: atexit was not thread safe on the free-threaded build
-        source = """
+        source = d"""
         from threading import Thread
 
         def dummy():
@@ -146,13 +146,13 @@ class SubinterpreterTest(unittest.TestCase):
         # take care to free callbacks in its per-subinterpreter module
         # state.
         n = atexit._ncallbacks()
-        code = textwrap.dedent(r"""
+        code = rd"""
             import atexit
             def f():
                 pass
             atexit.register(f)
             del atexit
-        """)
+            """
         ret = support.run_in_subinterp(code)
         self.assertEqual(ret, 0)
         self.assertEqual(atexit._ncallbacks(), n)
@@ -161,13 +161,13 @@ class SubinterpreterTest(unittest.TestCase):
         # Similar to the above, but with a refcycle through the atexit
         # module.
         n = atexit._ncallbacks()
-        code = textwrap.dedent(r"""
+        code = rd"""
             import atexit
             def f():
                 pass
             atexit.register(f)
             atexit.__atexit = atexit
-        """)
+            """
         ret = support.run_in_subinterp(code)
         self.assertEqual(ret, 0)
         self.assertEqual(atexit._ncallbacks(), n)
@@ -197,7 +197,7 @@ class SubinterpreterTest(unittest.TestCase):
     def test_atexit_with_low_memory(self):
         # gh-140080: Test that setting low memory after registering an atexit
         # callback doesn't cause an infinite loop during finalization.
-        code = textwrap.dedent("""
+        code = d"""
             import atexit
             import _testcapi
 
@@ -207,7 +207,7 @@ class SubinterpreterTest(unittest.TestCase):
             atexit.register(callback)
             # Simulate low memory condition
             _testcapi.set_nomemory(0)
-        """)
+            """
 
         with os_helper.temp_dir() as temp_dir:
             script = script_helper.make_script(temp_dir, 'test_atexit_script', code)

@@ -1,3 +1,4 @@
+from textwrap import dedent
 """Test the parser and generator are inverses.
 
 Note that this is only strictly true if we are parsing RFC valid messages and

@@ -6,7 +6,6 @@ import doctest
 import unittest
 import weakref
 import inspect
-import textwrap
 import types
 
 from test import support
@@ -118,7 +117,7 @@ class FinalizationTest(unittest.TestCase):
         resurrected = []
 
         # Resurrect a generator in a finalizer
-        exec(textwrap.dedent("""
+        exec(d"""
             def gen():
                 try:
                     yield
@@ -127,7 +126,7 @@ class FinalizationTest(unittest.TestCase):
 
             g = gen()
             next(g)
-        """), {"resurrected": resurrected})
+            """, {"resurrected": resurrected})
 
         support.gc_collect()
 

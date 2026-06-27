@@ -401,13 +401,13 @@ class CmdLineTest(unittest.TestCase):
     @unittest.skipIf(os.environ.get("PYTHONUNBUFFERED", "0") != "0",
                      "Python stdio buffering is disabled.")
     def test_non_interactive_output_buffering(self):
-        code = textwrap.dedent("""
+        code = d"""
             import sys
             out = sys.stdout
             print(out.isatty(), out.write_through, out.line_buffering)
             err = sys.stderr
             print(err.isatty(), err.write_through, err.line_buffering)
-        """)
+            """
         args = [sys.executable, '-c', code]
         proc = subprocess.run(args, stdout=subprocess.PIPE,
                               stderr=subprocess.PIPE, text=True, check=True)

@@ -1,4 +1,3 @@
-import textwrap
 import unittest
 from test import support
 from test.support import python_is_optimized
@@ -112,14 +111,14 @@ id(42)
     @unittest.skipIf(python_is_optimized(),
                      "Python was compiled with optimizations")
     def test_wrapper_call(self):
-        cmd = textwrap.dedent('''
+        cmd = d'''
             class MyList(list):
                 def __init__(self):
                     super(*[]).__init__()   # wrapper_call()
 
             id("first break point")
             l = MyList()
-        ''')
+            '''
         cmds_after_breakpoint = ['break wrapper_call', 'continue']
         if CET_PROTECTION:
             # bpo-32962: same case as in get_stack_trace():

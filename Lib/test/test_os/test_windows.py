@@ -12,7 +12,6 @@ import shutil
 import signal
 import stat
 import subprocess
-import textwrap
 import time
 import uuid
 from test import support
@@ -511,7 +510,7 @@ class Win32NtTests(unittest.TestCase):
         filename =  os_helper.TESTFN
         self.addCleanup(os_helper.unlink, filename)
         deadline = time.time() + 5
-        command = textwrap.dedent("""\
+        command = d"""
             import os
             import sys
             import time
@@ -529,7 +528,7 @@ class Win32NtTests(unittest.TestCase):
                     os.remove(filename)
                 except OSError:
                     pass
-            """)
+            """
 
         with subprocess.Popen([sys.executable, '-c', command, filename, str(deadline)]) as proc:
             while time.time() < deadline:

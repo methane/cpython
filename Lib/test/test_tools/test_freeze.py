@@ -1,7 +1,6 @@
 """Sanity-check tests for the "freeze" tool."""
 
 import sys
-import textwrap
 import unittest
 
 from test import support
@@ -25,11 +24,11 @@ class TestFreeze(unittest.TestCase):
 
     @support.requires_resource('cpu') # Building Python is slow
     def test_freeze_simple_script(self):
-        script = textwrap.dedent("""
+        script = d"""
             import sys
             print('running...')
             sys.exit(0)
-            """)
+            """
         with os_helper.temp_dir() as outdir:
             outdir, scriptfile, python = helper.prepare(script, outdir)
             executable = helper.freeze(python, scriptfile, outdir)

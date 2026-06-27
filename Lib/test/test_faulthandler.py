@@ -9,6 +9,7 @@ import sys
 from test import support
 from test.support import os_helper, script_helper, is_android, MS_WINDOWS, threading_helper
 import tempfile
+import textwrap
 import unittest
 from textwrap import dedent
 
@@ -378,7 +379,7 @@ class FaultHandlerTests(unittest.TestCase):
 
     @skip_segfault_on_android
     def test_disable(self):
-        code = """
+        code = d"""
             import faulthandler
             faulthandler.enable()
             faulthandler.disable()
@@ -394,7 +395,7 @@ class FaultHandlerTests(unittest.TestCase):
     @skip_segfault_on_android
     def test_dump_ext_modules(self):
         # Don't filter stdlib module names: disable sys.stdlib_module_names
-        code = """
+        code = d"""
             import faulthandler
             import sys
             import math
@@ -414,7 +415,7 @@ class FaultHandlerTests(unittest.TestCase):
 
         # Ignore "math.integer" sub-module if "math" package is
         # in sys.stdlib_module_names
-        code = """
+        code = d"""
             import faulthandler
             import math.integer
             faulthandler.enable()
@@ -492,7 +493,7 @@ class FaultHandlerTests(unittest.TestCase):
         Explicitly call dump_traceback() function and check its output.
         Raise an error if the output doesn't match the expected format.
         """
-        code = """
+        code = d"""
             import faulthandler
 
             filename = {filename!r}
@@ -550,7 +551,7 @@ class FaultHandlerTests(unittest.TestCase):
         maxlen = 500
         func_name = 'x' * (maxlen + 50)
         truncated = 'x' * maxlen + '...'
-        code = """
+        code = d"""
             import faulthandler
 
             def {func_name}():
@@ -575,7 +576,7 @@ class FaultHandlerTests(unittest.TestCase):
         Call explicitly dump_traceback(all_threads=True) and check the output.
         Raise an error if the output doesn't match the expected format.
         """
-        code = """
+        code = d"""
             import faulthandler
             from threading import Thread, Event
             import time
@@ -616,7 +617,7 @@ class FaultHandlerTests(unittest.TestCase):
             lineno = 10
         # When the traceback is dumped, the waiter thread may be in the
         # `self.running.set()` call or in `self.stop.wait()`.
-        regex = fr"""
+        regex = dfr"""
             ^{THREAD_HEADER}
             (?:  File ".*threading.py", line [0-9]+ in [_a-z]+
             ){{1,3}}  File "<string>", line (?:22|23) in run
@@ -626,8 +627,7 @@ class FaultHandlerTests(unittest.TestCase):
             {CURRENT_THREAD_HEADER}
               File "<string>", line {lineno} in dump
               File "<string>", line 28 in <module>$
-            """
-        regex = dedent(regex).strip()
+            """.strip()
         self.assertRegex(output, regex)
         self.assertEqual(exitcode, 0)
 
@@ -648,7 +648,7 @@ class FaultHandlerTests(unittest.TestCase):
         Raise an error if the output doesn't match the expect format.
         """
         timeout_str = str(datetime.timedelta(seconds=TIMEOUT))
-        code = """
+        code = d"""
             import faulthandler
             import time
             import sys
@@ -728,7 +728,7 @@ class FaultHandlerTests(unittest.TestCase):
         # max_threads caps the dump and writes "...\n" when truncated.
         # Spawn N worker threads, dump with cap < N, and verify the
         # marker is present and exactly CAP thread headers are written.
-        code = dedent("""
+        code = d"""
             import faulthandler
             import sys
             import threading
@@ -753,7 +753,7 @@ class FaultHandlerTests(unittest.TestCase):
                 stop.set()
                 for t in threads:
                     t.join()
-        """).strip()
+            """
         proc = script_helper.assert_python_ok('-c', code)
         output = proc.err
         # Truncation marker is written on its own line when the cap is hit.
@@ -768,7 +768,7 @@ class FaultHandlerTests(unittest.TestCase):
     def test_enable_max_threads(self):
         # enable(max_threads=N) caps the thread dump produced when a
         # fatal signal fires.
-        code = dedent("""
+        code = d"""
             import faulthandler
             import threading
 
@@ -787,7 +787,7 @@ class FaultHandlerTests(unittest.TestCase):
             ready.wait()
             faulthandler.enable(max_threads=CAP)
             faulthandler._sigsegv()
-        """).strip()
+            """
         output, exitcode = self.get_output(code)
         output = '\n'.join(output)
         # Cap of 3 means the dump is truncated with "..." on its own line.
@@ -807,7 +807,7 @@ class FaultHandlerTests(unittest.TestCase):
         Raise an error if the output doesn't match the expected format.
         """
         signum = signal.SIGUSR1
-        code = """
+        code = d"""
             import faulthandler
             import os
             import signal
@@ -905,7 +905,7 @@ class FaultHandlerTests(unittest.TestCase):
     def test_register_max_threads(self):
         # register(max_threads=N) caps the thread dump produced when
         # the registered signal fires.
-        code = dedent("""
+        code = d"""
             import faulthandler
             import signal
             import threading
@@ -932,7 +932,7 @@ class FaultHandlerTests(unittest.TestCase):
                 stop.set()
                 for t in threads:
                     t.join()
-        """).strip()
+            """
         proc = script_helper.assert_python_ok('-c', code)
         output = proc.err
         # Cap of 3 means the dump is truncated with "..." on its own line.
@@ -985,12 +985,11 @@ class FaultHandlerTests(unittest.TestCase):
             0xE06D7363,   # MSC exception ("Emsc")
             0xE0434352,   # COM Callable Runtime exception ("ECCR")
         ):
-            code = f"""
-                    import faulthandler
-                    faulthandler.enable()
-                    faulthandler._raise_exception({exc_code})
-                    """
-            code = dedent(code)
+            code = df"""
+                import faulthandler
+                faulthandler.enable()
+                faulthandler._raise_exception({exc_code})
+                """
             output, exitcode = self.get_output(code)
             self.assertEqual(output, [])
             self.assertEqual(exitcode, exc_code)
@@ -1025,13 +1024,13 @@ class FaultHandlerTests(unittest.TestCase):
 
     @unittest.skipUnless(MS_WINDOWS, 'specific to Windows')
     def test_disable_windows_exc_handler(self):
-        code = dedent("""
+        code = d"""
             import faulthandler
             faulthandler.enable()
             faulthandler.disable()
             code = faulthandler._EXCEPTION_ACCESS_VIOLATION
             faulthandler._raise_exception(code)
-        """)
+            """
         output, exitcode = self.get_output(code)
         self.assertEqual(output, [])
         self.assertEqual(exitcode, 0xC0000005)
@@ -1039,10 +1038,10 @@ class FaultHandlerTests(unittest.TestCase):
     def test_cancel_later_without_dump_traceback_later(self):
         # bpo-37933: Calling cancel_dump_traceback_later()
         # without dump_traceback_later() must not segfault.
-        code = dedent("""
+        code = d"""
             import faulthandler
             faulthandler.cancel_dump_traceback_later()
-        """)
+            """
         output, exitcode = self.get_output(code)
         self.assertEqual(output, [])
         self.assertEqual(exitcode, 0)
@@ -1051,7 +1050,7 @@ class FaultHandlerTests(unittest.TestCase):
     @unittest.skipUnless(support.Py_GIL_DISABLED, "only meaningful if the GIL is disabled")
     def test_free_threaded_dump_traceback(self):
         # gh-128400: Other threads need to be paused to invoke faulthandler
-        code = dedent("""
+        code = d"""
         import faulthandler
         from threading import Thread, Event
 
@@ -1072,7 +1071,7 @@ class FaultHandlerTests(unittest.TestCase):
             faulthandler.dump_traceback(all_threads=True)
             waiter.stop.set()
             waiter.join()
-        """)
+        """
         _, exitcode = self.get_output(code)
         self.assertEqual(exitcode, 0)
 
@@ -1088,10 +1087,10 @@ class FaultHandlerTests(unittest.TestCase):
 
 
     def test_dump_c_stack(self):
-        code = dedent("""
+        code = d"""
         import faulthandler
         faulthandler.dump_c_stack()
-        """)
+        """
         output, exitcode = self.get_output(code)
         self.assertEqual(exitcode, 0)
         self.check_c_stack(output)

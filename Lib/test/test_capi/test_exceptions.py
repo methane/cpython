@@ -3,7 +3,6 @@ import os
 import re
 import sys
 import unittest
-import textwrap
 
 from test import support
 from test.support import import_helper, force_not_colorized
@@ -71,7 +70,7 @@ class Test_Exceptions(unittest.TestCase):
             self.assertTrue(False)
 
     def test_warn_with_stacklevel(self):
-        code = textwrap.dedent('''\
+        code = d'''
             import _testcapi
 
             def foo():
@@ -81,7 +80,7 @@ class Test_Exceptions(unittest.TestCase):
 
 
             foo()  # line 9
-        ''')
+            '''
         proc = assert_python_ok("-c", code)
         warnings = proc.err.splitlines()
         self.assertEqual(warnings, [
@@ -90,7 +89,7 @@ class Test_Exceptions(unittest.TestCase):
         ])
 
     def test_warn_during_finalization(self):
-        code = textwrap.dedent('''\
+        code = d'''
             import _testcapi
 
             class Foo:
@@ -100,7 +99,7 @@ class Test_Exceptions(unittest.TestCase):
                     self.foo()
 
             ref = Foo()
-        ''')
+            '''
         proc = assert_python_ok("-c", code)
         warnings = proc.err.splitlines()
         # Due to the finalization of the interpreter, the source will be omitted

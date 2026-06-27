@@ -1,4 +1,3 @@
-import textwrap
 import unittest
 from email import message_from_bytes, message_from_string, policy
 from email.message import EmailMessage, MIMEPart
@@ -21,7 +20,7 @@ class Test(TestEmailBase):
             m['To'] = 'xyz@abc'
 
     def test_rfc2043_auto_decoded_and_emailmessage_used(self):
-        m = message_from_string(textwrap.dedent("""\
+        m = message_from_string(d"""
             Subject: Ayons asperges pour le =?utf-8?q?d=C3=A9jeuner?=
             From: =?utf-8?q?Pep=C3=A9?= Le Pew <pepe@example.com>
             To: "Penelope Pussycat" <"penelope@example.com">
@@ -29,7 +28,7 @@ class Test(TestEmailBase):
             Content-Type: text/plain; charset="utf-8"
 
             sample text
-            """), policy=policy.default)
+            """, policy=policy.default)
         self.assertEqual(m['subject'], "Ayons asperges pour le déjeuner")
         self.assertEqual(m['from'], "Pepé Le Pew <pepe@example.com>")
         self.assertIsInstance(m, EmailMessage)
@@ -62,29 +61,29 @@ class TestEmailMessageBase:
             (None, None, 0),
             (),
             (),
-            textwrap.dedent("""\
+            d"""
                 To: foo@example.com
 
                 simple text body
-                """)),
+                """),
 
         'mime_non_text': (
             (None, None, None),
             (),
             (),
-            textwrap.dedent("""\
+            d"""
                 To: foo@example.com
                 MIME-Version: 1.0
                 Content-Type: image/jpg
 
                 bogus body.
-                """)),
+                """),
 
         'plain_html_alternative': (
             (None, 2, 1),
             (),
             (1, 2),
-            textwrap.dedent("""\
+            d"""
                 To: foo@example.com
                 MIME-Version: 1.0
                 Content-Type: multipart/alternative; boundary="==="
@@ -101,13 +100,13 @@ class TestEmailMessageBase:
 
                 <p>simple body</p>
                 --===--
-                """)),
+                """),
 
         'plain_html_mixed': (
             (None, 2, 1),
             (),
             (1, 2),
-            textwrap.dedent("""\
+            d"""
                 To: foo@example.com
                 MIME-Version: 1.0
                 Content-Type: multipart/mixed; boundary="==="
@@ -125,13 +124,13 @@ class TestEmailMessageBase:
                 <p>simple body</p>
 
                 --===--
-                """)),
+                """),
 
         'plain_html_attachment_mixed': (
             (None, None, 1),
             (2,),
             (1, 2),
-            textwrap.dedent("""\
+            d"""
                 To: foo@example.com
                 MIME-Version: 1.0
                 Content-Type: multipart/mixed; boundary="==="
@@ -148,13 +147,13 @@ class TestEmailMessageBase:
                 <p>simple body</p>
 
                 --===--
-                """)),
+                """),
 
         'html_text_attachment_mixed': (
             (None, 2, None),
             (1,),
             (1, 2),
-            textwrap.dedent("""\
+            d"""
                 To: foo@example.com
                 MIME-Version: 1.0
                 Content-Type: multipart/mixed; boundary="==="
@@ -171,13 +170,13 @@ class TestEmailMessageBase:
                 <p>simple body</p>
 
                 --===--
-                """)),
+                """),
 
         'html_text_attachment_inline_mixed': (
             (None, 2, 1),
             (),
             (1, 2),
-            textwrap.dedent("""\
+            d"""
                 To: foo@example.com
                 MIME-Version: 1.0
                 Content-Type: multipart/mixed; boundary="==="
@@ -195,14 +194,14 @@ class TestEmailMessageBase:
                 <p>simple body</p>
 
                 --===--
-                """)),
+                """),
 
         # RFC 2387
         'related': (
             (0, 1, None),
             (2,),
             (1, 2),
-            textwrap.dedent("""\
+            d"""
                 To: foo@example.com
                 MIME-Version: 1.0
                 Content-Type: multipart/related; boundary="==="; type=text/html
@@ -219,7 +218,7 @@ class TestEmailMessageBase:
                 bogus data
 
                 --===--
-                """)),
+                """),
 
         # This message structure will probably never be seen in the wild, but
         # it proves we distinguish between text parts based on 'start'.  The
@@ -228,7 +227,7 @@ class TestEmailMessageBase:
             (0, 2, None),
             (1,),
             (1, 2),
-            textwrap.dedent("""\
+            d"""
                 To: foo@example.com
                 MIME-Version: 1.0
                 Content-Type: multipart/related; boundary="==="; type=text/html;
@@ -248,14 +247,14 @@ class TestEmailMessageBase:
                 <!--#include file="<include>"-->
 
                 --===--
-                """)),
+                """),
 
 
         'mixed_alternative_plain_related': (
             (3, 4, 2),
             (6, 7),
             (1, 6, 7),
-            textwrap.dedent("""\
+            d"""
                 To: foo@example.com
                 MIME-Version: 1.0
                 Content-Type: multipart/mixed; boundary="==="
@@ -299,7 +298,7 @@ class TestEmailMessageBase:
                 another bogus jpg body
 
                 --===--
-                """)),
+                """),
 
         # This structure suggested by Stephen J. Turnbull...may not exist/be
         # supported in the wild, but we want to support it.
@@ -307,7 +306,7 @@ class TestEmailMessageBase:
             (1, 4, 3),
             (6, 7),
             (1, 6, 7),
-            textwrap.dedent("""\
+            d"""
                 To: foo@example.com
                 MIME-Version: 1.0
                 Content-Type: multipart/mixed; boundary="==="
@@ -351,7 +350,7 @@ class TestEmailMessageBase:
                 another bogus jpg body
 
                 --===--
-                """)),
+                """),
 
         # Same thing, but proving we only look at the root part, which is the
         # first one if there isn't any start parameter.  That is, this is a
@@ -360,7 +359,7 @@ class TestEmailMessageBase:
             (1, None, None),
             (6, 7),
             (1, 6, 7),
-            textwrap.dedent("""\
+            d"""
                 To: foo@example.com
                 MIME-Version: 1.0
                 Content-Type: multipart/mixed; boundary="==="
@@ -404,13 +403,13 @@ class TestEmailMessageBase:
                 another bogus jpg body
 
                 --===--
-                """)),
+                """),
 
         'message_rfc822': (
             (None, None, None),
             (),
             (),
-            textwrap.dedent("""\
+            d"""
                 To: foo@example.com
                 MIME-Version: 1.0
                 Content-Type: message/rfc822
@@ -419,13 +418,13 @@ class TestEmailMessageBase:
                 From: robot@examp.com
 
                 this is a message body.
-                """)),
+                """),
 
         'mixed_text_message_rfc822': (
             (None, None, 1),
             (2,),
             (1, 2),
-            textwrap.dedent("""\
+            d"""
                 To: foo@example.com
                 MIME-Version: 1.0
                 Content-Type: multipart/mixed; boundary="==="
@@ -444,7 +443,7 @@ class TestEmailMessageBase:
                 this is a message body.
 
                 --===--
-                """)),
+                """),
 
          }
 
@@ -1056,7 +1055,7 @@ class TestEmailMessage(TestEmailMessageBase, TestEmailBase):
 
     def test_get_body_malformed(self):
         """test for bpo-42892"""
-        msg = textwrap.dedent("""\
+        msg = d"""
             Message-ID: <674392CA.4347091@email.au>
             Date: Wed, 08 Nov 2017 08:50:22 +0700
             From: Foo Bar <email@email.au>
@@ -1075,7 +1074,7 @@ class TestEmailMessage(TestEmailMessageBase, TestEmailBase):
             Your message is ready to be sent with the following file or link
             attachments:
             XU89 - 08.11.2017
-            """)
+            """
         m = self._str_msg(msg)
         # In bpo-42892, this would raise
         # AttributeError: 'str' object has no attribute 'is_attachment'
@@ -1105,11 +1104,11 @@ class TestMIMEPart(TestEmailMessageBase, TestEmailBase):
         self.assertNotIn('MIME-Version', m)
 
     def test_string_payload_with_multipart_content_type(self):
-        msg = message_from_string(textwrap.dedent("""\
+        msg = message_from_string(d"""
         Content-Type: multipart/mixed; charset="utf-8"
 
         sample text
-        """), policy=policy.default)
+        """, policy=policy.default)
         attachments = msg.iter_attachments()
         self.assertEqual(list(attachments), [])
 

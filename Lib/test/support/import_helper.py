@@ -7,7 +7,6 @@ import os
 import py_compile
 import shutil
 import sys
-import textwrap
 import unittest
 import warnings
 
@@ -329,8 +328,7 @@ def ensure_lazy_imports(imported_module, modules_to_block, *, additional_code=No
     """Test that when imported_module is imported, none of the modules in
     modules_to_block are imported as a side effect."""
     modules_to_block = frozenset(modules_to_block)
-    script = textwrap.dedent(
-        f"""
+    script = fd"""
         import sys
         modules_to_block = {modules_to_block}
         if unexpected := modules_to_block & sys.modules.keys():
@@ -342,16 +340,13 @@ def ensure_lazy_imports(imported_module, modules_to_block, *, additional_code=No
             after = ", ".join(unexpected)
             raise AssertionError(f'unexpectedly imported after importing {imported_module}: {{after}}')
         """
-    )
     if additional_code:
-        script += additional_code
-        script += textwrap.dedent(
-            f"""
+        script += additional_code + "\n"
+        script += fd"""
             if unexpected := modules_to_block & sys.modules.keys():
                 after = ", ".join(unexpected)
                 raise AssertionError(f'unexpectedly imported after additional code: {{after}}')
             """
-        )
 
     from .script_helper import assert_python_ok
     assert_python_ok("-S", "-c", script)

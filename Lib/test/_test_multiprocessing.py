@@ -6453,7 +6453,7 @@ class TestResourceTracker(unittest.TestCase):
         # tracker (the at-fork handler preserves the inherited pipe fd),
         # *and* the parent should be able to reap the tracker promptly
         # after joining the child, without hitting the waitpid timeout.
-        cmd = textwrap.dedent('''
+        cmd = d'''
             import multiprocessing as mp
             from multiprocessing.resource_tracker import _resource_tracker
 
@@ -6485,7 +6485,7 @@ class TestResourceTracker(unittest.TestCase):
                 print(child_has_fd, child_pid_none, child_alive,
                       _resource_tracker._waitpid_timed_out,
                       _resource_tracker._exitcode)
-        ''')
+            '''
         rc, out, err = script_helper.assert_python_ok('-c', cmd)
         parts = out.decode().split()
         self.assertEqual(parts, ['True', 'True', 'True', 'False', '0'],
@@ -6497,7 +6497,7 @@ class TestResourceTracker(unittest.TestCase):
         # child's inherited fd, so the parent can reap the tracker
         # immediately -- even while the child is still alive -- rather
         # than waiting out the 1s timeout.
-        cmd = textwrap.dedent('''
+        cmd = d'''
             import os, signal
             from multiprocessing.resource_tracker import _resource_tracker
 
@@ -6524,7 +6524,7 @@ class TestResourceTracker(unittest.TestCase):
             print(child_fd_closed,
                   _resource_tracker._waitpid_timed_out,
                   _resource_tracker._exitcode)
-        ''')
+            '''
         rc, out, err = script_helper.assert_python_ok('-c', cmd)
         parts = out.decode().split()
         self.assertEqual(parts, ['True', 'False', '0'],
@@ -6535,7 +6535,7 @@ class TestResourceTracker(unittest.TestCase):
         # gh-146313: If a parent thread held the tracker's lock at fork
         # time, the child would inherit the held lock and deadlock on
         # its next ensure_running().  The at-fork handler reinits it.
-        cmd = textwrap.dedent('''
+        cmd = d'''
             import os, threading
             from multiprocessing.resource_tracker import _resource_tracker
 
@@ -6558,7 +6558,7 @@ class TestResourceTracker(unittest.TestCase):
             t.join()
             _, status = os.waitpid(pid, 0)
             print(os.waitstatus_to_exitcode(status))
-        ''')
+            '''
         rc, out, err = script_helper.assert_python_ok(
             '-W', 'ignore::DeprecationWarning', '-c', cmd)
         self.assertEqual(out.strip(), b'0',
@@ -6570,7 +6570,7 @@ class TestResourceTracker(unittest.TestCase):
         # fd and the parent calls _stop() without joining (simulating
         # abnormal shutdown), the safety-net timeout should fire rather
         # than deadlocking.
-        cmd = textwrap.dedent('''
+        cmd = d'''
             import multiprocessing as mp
             import signal
             from multiprocessing.resource_tracker import _resource_tracker
@@ -6585,7 +6585,7 @@ class TestResourceTracker(unittest.TestCase):
                 print(_resource_tracker._waitpid_timed_out)
                 p.terminate()
                 p.join()
-        ''')
+            '''
         rc, out, err = script_helper.assert_python_ok('-c', cmd)
         self.assertEqual(out.strip(), b'True',
             f"safety-net timeout did not fire: stderr={err!r}")
@@ -7146,7 +7146,7 @@ class TestNamedResource(unittest.TestCase):
         testfn = os_helper.TESTFN
         self.addCleanup(os_helper.unlink, testfn)
         with open(testfn, 'w', encoding='utf-8') as f:
-            f.write(textwrap.dedent('''\
+            f.write(d'''
                 import multiprocessing as mp
                 ctx = mp.get_context('spawn')
                 global_resource = ctx.Semaphore()
@@ -7155,7 +7155,7 @@ class TestNamedResource(unittest.TestCase):
                     p = ctx.Process(target=submain)
                     p.start()
                     p.join()
-            '''))
+                ''')
         rc, out, err = script_helper.assert_python_ok(testfn)
         # on error, err = 'UserWarning: resource_tracker: There appear to
         # be 1 leaked semaphore objects to clean up at shutdown'
@@ -7301,13 +7301,13 @@ class MiscTestCase(unittest.TestCase):
         testfn = os_helper.TESTFN
         self.addCleanup(os_helper.unlink, testfn)
         with open(testfn, 'w', encoding='utf-8') as f:
-            f.write(textwrap.dedent('''\
+            f.write(d'''
                 import multiprocessing
                 def f(x): return x*x
                 if __name__ == '__main__':
                     with multiprocessing.Pool(200) as p:
                         print(sum(p.map(f, range(1000))))
-            '''))
+                ''')
         rc, out, err = script_helper.assert_python_ok(testfn)
         self.assertEqual("332833500", out.decode('utf-8').strip())
         self.assertFalse(err, msg=err.decode('utf-8'))
@@ -7638,7 +7638,7 @@ class SemLockTests(unittest.TestCase):
 class ForkInThreads(unittest.TestCase):
 
     def test_fork(self):
-        code = """
+        code = d"""
         import os, sys, threading, time
 
         t = threading.Thread(target=time.sleep, args=(1,), daemon=True)
@@ -7666,7 +7666,7 @@ class ForkInThreads(unittest.TestCase):
         self.assertIn(b'is multi-threaded, use of fork() may lead to deadlocks in the child', res.err)
 
     def test_forkpty(self):
-        code = """
+        code = d"""
         import os, sys, threading, time
 
         t = threading.Thread(target=time.sleep, args=(1,), daemon=True)
@@ -7698,7 +7698,7 @@ class TestSharedMemoryNames(unittest.TestCase):
     def test_that_shared_memory_name_with_colons_has_no_resource_tracker_errors(
             self, use_simple_format):
         # Test script that creates and cleans up shared memory with colon in name
-        test_script = textwrap.dedent("""
+        test_script = d"""
             import sys
             from multiprocessing import shared_memory
             from multiprocessing import resource_tracker
@@ -7733,7 +7733,7 @@ class TestSharedMemoryNames(unittest.TestCase):
                     sys.exit(1)
 
             print("SUCCESS")
-        """ % use_simple_format)
+            """ % use_simple_format
 
         rc, out, err = assert_python_ok("-c", test_script)
         self.assertIn(b"SUCCESS", out)

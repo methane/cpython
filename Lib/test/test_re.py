@@ -2311,7 +2311,7 @@ class ReTests(unittest.TestCase):
         self.assertEqual(err.pos, 3)
         # Multiline pattern
         with self.assertRaises(re.PatternError) as cm:
-            re.compile("""
+            re.compile(d"""
                 (
                     abc
                 )
@@ -2319,12 +2319,12 @@ class ReTests(unittest.TestCase):
                 (
                 """, re.VERBOSE)
         err = cm.exception
-        self.assertEqual(err.pos, 77)
-        self.assertEqual(err.lineno, 5)
-        self.assertEqual(err.colno, 17)
+        self.assertEqual(err.pos, 12)
+        self.assertEqual(err.lineno, 4)
+        self.assertEqual(err.colno, 1)
         self.assertIn(err.msg, str(err))
-        self.assertIn(' at position 77', str(err))
-        self.assertIn('(line 5, column 17)', str(err))
+        self.assertIn(' at position 12', str(err))
+        self.assertIn('(line 4, column 1)', str(err))
 
     def test_misc_errors(self):
         self.checkPatternError(r'(', 'missing ), unterminated subpattern', 0)

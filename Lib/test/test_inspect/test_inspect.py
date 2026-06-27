@@ -1237,7 +1237,7 @@ class TestBuggyCases(GetSourceBase):
         with tempfile.TemporaryDirectory() as tempdir:
             with open(os.path.join(tempdir, 'inspect_actual%spy' % os.extsep),
                       'w', encoding='utf-8') as f:
-                f.write(textwrap.dedent("""
+                f.write(d"""
                     import inspect_other
                     class A:
                         def f(self):
@@ -1246,15 +1246,15 @@ class TestBuggyCases(GetSourceBase):
                         def f(self):
                             pass  # correct one
                     A.f = inspect_other.A.f
-                    """))
+                    """)
 
             with open(os.path.join(tempdir, 'inspect_other%spy' % os.extsep),
                       'w', encoding='utf-8') as f:
-                f.write(textwrap.dedent("""
+                f.write(d"""
                     class A:
                         def f(self):
                             pass
-                    """))
+                    """)
 
             with DirsOnSysPath(tempdir):
                 import inspect_actual
@@ -6766,15 +6766,15 @@ class TestModuleCLI(unittest.TestCase):
 
 class TestReload(unittest.TestCase):
 
-    src_before = textwrap.dedent("""\
-def foo():
-    print("Bla")
-    """)
+    src_before = d"""
+        def foo():
+            print("Bla")
+        """
 
-    src_after = textwrap.dedent("""\
-def foo():
-    print("Oh no!")
-    """)
+    src_after = d"""
+        def foo():
+            print("Oh no!")
+        """
 
     def assertInspectEqual(self, path, source):
         inspected_src = inspect.getsource(source)
@@ -6842,14 +6842,14 @@ class TestRepl(unittest.TestCase):
 
     @unittest.skipIf(not has_subprocess_support, "test requires subprocess")
     def test_getsource(self):
-        output = self.run_on_interactive_mode(textwrap.dedent("""\
+        output = self.run_on_interactive_mode(d"""
         def f():
             print(0)
             return 1 + 2
 
         import inspect
         print(f"The source is: <<<{inspect.getsource(f)}>>>")
-        """))
+        """)
 
         expected = "The source is: <<<def f():\n    print(0)\n    return 1 + 2\n>>>"
         self.assertIn(expected, output)

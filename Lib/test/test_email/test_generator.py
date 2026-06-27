@@ -1,6 +1,5 @@
 import io
 import re
-import textwrap
 import unittest
 import random
 import sys
@@ -28,7 +27,7 @@ class TestGeneratorBase:
         return self.msgfunc(msg, policy=policy)
 
     refold_long_expected = {
-        0: textwrap.dedent("""\
+        0: d"""
             To: whom_it_may_concern@example.com
             From: nobody_you_want_to_know@example.com
             Subject: We the willing led by the unknowing are doing the
@@ -36,8 +35,8 @@ class TestGeneratorBase:
              we are now qualified to do anything with nothing.
 
             None
-            """),
-        40: textwrap.dedent("""\
+            """,
+        40: d"""
             To: whom_it_may_concern@example.com
             From:
              nobody_you_want_to_know@example.com
@@ -48,8 +47,8 @@ class TestGeneratorBase:
              qualified to do anything with nothing.
 
             None
-            """),
-        20: textwrap.dedent("""\
+            """,
+        20: d"""
             To:
              whom_it_may_concern@example.com
             From:
@@ -67,7 +66,7 @@ class TestGeneratorBase:
              nothing.
 
             None
-            """),
+            """,
         }
     refold_long_expected[100] = refold_long_expected[0]
 
@@ -183,12 +182,12 @@ class TestGeneratorBase:
         self.assertEqual(s.getvalue(), self.typ(expected))
 
     def test_set_mangle_from_via_policy(self):
-        source = textwrap.dedent("""\
+        source = d"""
             Subject: test that
              from is mangled in the body!
 
             From time to time I write a rhyme.
-            """)
+            """
         variants = (
             (None, True),
             (policy.compat32, True),
@@ -214,21 +213,21 @@ class TestGeneratorBase:
     def test_rfc2231_wrapping(self):
         # This is pretty much just to make sure we don't have an infinite
         # loop; I don't expect anyone to hit this in the field.
-        msg = self.msgmaker(self.typ(textwrap.dedent("""\
+        msg = self.msgmaker(self.typ(d"""
             To: nobody
             Content-Disposition: attachment;
              filename="afilenamelongenoghtowraphere"
 
             None
-            """)))
-        expected = textwrap.dedent("""\
+            """))
+        expected = d"""
             To: nobody
             Content-Disposition: attachment;
              filename*0*=us-ascii''afilename;
              filename*1*=longenoghtowraphere
 
             None
-            """)
+            """
         s = self.ioclass()
         g = self.genclass(s, policy=self.policy.clone(max_line_length=33))
         g.flatten(msg)
@@ -238,59 +237,59 @@ class TestGeneratorBase:
         # This is just to make sure we don't have an infinite loop; I don't
         # expect anyone to hit this in the field, so I'm not bothering to make
         # the result optimal (the encoding isn't needed).
-        msg = self.msgmaker(self.typ(textwrap.dedent("""\
+        msg = self.msgmaker(self.typ(d"""
             To: nobody
             Content-Disposition: attachment;
              filename="afilenamelongenoghtowraphere"
 
             None
-            """)))
-        expected = textwrap.dedent("""\
+            """))
+        expected = d"""
             To: nobody
             Content-Disposition:
              attachment;
              filename*0*=us-ascii''afilenamelongenoghtowraphere
 
             None
-            """)
+            """
         s = self.ioclass()
         g = self.genclass(s, policy=self.policy.clone(max_line_length=20))
         g.flatten(msg)
         self.assertEqual(s.getvalue(), self.typ(expected))
 
     def test_keep_encoded_newlines(self):
-        msg = self.msgmaker(self.typ(textwrap.dedent("""\
+        msg = self.msgmaker(self.typ(d"""
             To: nobody
             Subject: Bad subject=?UTF-8?Q?=0A?=Bcc: injection@example.com
 
             None
-            """)))
-        expected = textwrap.dedent("""\
+            """))
+        expected = d"""
             To: nobody
             Subject: Bad subject=?UTF-8?Q?=0A?=Bcc: injection@example.com
 
             None
-            """)
+            """
         s = self.ioclass()
         g = self.genclass(s, policy=self.policy.clone(max_line_length=80))
         g.flatten(msg)
         self.assertEqual(s.getvalue(), self.typ(expected))
 
     def test_keep_long_encoded_newlines(self):
-        msg = self.msgmaker(self.typ(textwrap.dedent("""\
+        msg = self.msgmaker(self.typ(d"""
             To: nobody
             Subject: Bad subject=?UTF-8?Q?=0A?=Bcc: injection@example.com
 
             None
-            """)))
-        expected = textwrap.dedent("""\
+            """))
+        expected = d"""
             To: nobody
             Subject: Bad subject
              =?utf-8?q?=0A?=Bcc:
              injection@example.com
 
             None
-            """)
+            """
         s = self.ioclass()
         g = self.genclass(s, policy=self.policy.clone(max_line_length=30))
         g.flatten(msg)
@@ -341,19 +340,19 @@ class TestGeneratorBase:
                     g.flatten(msg)
 
     def test_local_part_quoted_string_wrapped_correctly(self):
-        msg = self.msgmaker(self.typ(textwrap.dedent("""\
+        msg = self.msgmaker(self.typ(d"""
             To: <"a long local part in a quoted string"@example.com>
             Subject: test
 
             None
-            """)), policy=self.policy.clone(max_line_length=20))
-        expected = textwrap.dedent("""\
+            """), policy=self.policy.clone(max_line_length=20))
+        expected = d"""
             To: <"a long local part in a
              quoted string"@example.com>
             Subject: test
 
             None
-            """)
+            """
         s = self.ioclass()
         g = self.genclass(s, policy=self.policy.clone(max_line_length=30))
         g.flatten(msg)
@@ -550,7 +549,7 @@ class TestBytesGenerator(TestGeneratorBase, TestEmailBase):
         self.assertEqual(s.getvalue(), expected)
 
     def test_cte_type_7bit_transforms_8bit_cte(self):
-        source = textwrap.dedent("""\
+        source = d"""
             From: foo@bar.com
             To: Dinsdale
             Subject: Nudge nudge, wink, wink
@@ -559,9 +558,9 @@ class TestBytesGenerator(TestGeneratorBase, TestEmailBase):
             Content-Transfer-Encoding: 8bit
 
             oh là là, know what I mean, know what I mean?
-            """).encode('latin1')
+            """.encode('latin1')
         msg = message_from_bytes(source)
-        expected =  textwrap.dedent("""\
+        expected =  d"""
             From: foo@bar.com
             To: Dinsdale
             Subject: Nudge nudge, wink, wink
@@ -570,7 +569,7 @@ class TestBytesGenerator(TestGeneratorBase, TestEmailBase):
             Content-Transfer-Encoding: quoted-printable
 
             oh l=E0 l=E0, know what I mean, know what I mean?
-            """).encode('ascii')
+            """.encode('ascii')
         s = io.BytesIO()
         g = BytesGenerator(s, policy=self.policy.clone(cte_type='7bit',
                                                        linesep='\n'))
@@ -583,7 +582,7 @@ class TestBytesGenerator(TestGeneratorBase, TestEmailBase):
         msg['To'] = 'Dinsdale'
         msg['Subject'] = 'Nudge nudge, wink, wink \u1F609'
         msg.set_content("oh là là, know what I mean, know what I mean?")
-        expected = textwrap.dedent("""\
+        expected = d"""
             From: Páolo <főo@bàr.com>
             To: Dinsdale
             Subject: Nudge nudge, wink, wink \u1F609
@@ -592,7 +591,7 @@ class TestBytesGenerator(TestGeneratorBase, TestEmailBase):
             MIME-Version: 1.0
 
             oh là là, know what I mean, know what I mean?
-            """).encode('utf-8').replace(b'\n', b'\r\n')
+            """.encode('utf-8').replace(b'\n', b'\r\n')
         s = io.BytesIO()
         g = BytesGenerator(s, policy=policy.SMTPUTF8)
         g.flatten(msg)
@@ -604,7 +603,7 @@ class TestBytesGenerator(TestGeneratorBase, TestEmailBase):
         msg["To"] = Address(addr_spec="bar@foo.com", display_name="Dinsdale")
         msg["Subject"] = "Nudge nudge, wink, wink"
         msg.set_content("oh boy, know what I mean, know what I mean?")
-        expected = textwrap.dedent("""\
+        expected = d"""
             From: =?utf-8?q?P=C3=A1olo?= <foo@bar.com>
             To: Dinsdale <bar@foo.com>
             Subject: Nudge nudge, wink, wink
@@ -613,7 +612,7 @@ class TestBytesGenerator(TestGeneratorBase, TestEmailBase):
             MIME-Version: 1.0
 
             oh boy, know what I mean, know what I mean?
-            """).encode().replace(b"\n", b"\r\n")
+            """.encode().replace(b"\n", b"\r\n")
         s = io.BytesIO()
         g = BytesGenerator(s, policy=policy.SMTP)
         g.flatten(msg)

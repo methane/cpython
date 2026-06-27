@@ -4,7 +4,6 @@ import sys
 from test.support import captured_stdout, requires_resource
 from test.support.os_helper import (TESTFN, rmtree, unlink)
 from test.support.script_helper import assert_python_ok, assert_python_failure
-import textwrap
 import unittest
 from types import FunctionType
 
@@ -456,12 +455,12 @@ class TestCoverageCommandLineOutput(unittest.TestCase):
 
     def setUp(self):
         with open(self.codefile, 'w', encoding='iso-8859-15') as f:
-            f.write(textwrap.dedent('''\
+            f.write(d'''
                 # coding: iso-8859-15
                 x = 'spœm'
                 if []:
                     print('unreachable')
-            '''))
+                ''')
 
     def tearDown(self):
         unlink(self.codefile)
@@ -492,12 +491,12 @@ class TestCoverageCommandLineOutput(unittest.TestCase):
         status, stdout, stderr = assert_python_ok(*argv)
         self.assertTrue(os.path.exists(self.coverfile))
         with open(self.coverfile, encoding='iso-8859-15') as f:
-            self.assertEqual(f.read(), textwrap.dedent('''\
+            self.assertEqual(f.read(), d'''
                        # coding: iso-8859-15
                     1: x = 'spœm'
                     1: if []:
                 >>>>>>     print('unreachable')
-            '''))
+                ''')
 
 class TestCommandLine(unittest.TestCase):
 
@@ -544,7 +543,7 @@ class TestCommandLine(unittest.TestCase):
         with open(filename, 'w', encoding='utf-8') as fd:
             self.addCleanup(unlink, filename)
             self.addCleanup(unlink, coverfilename)
-            fd.write(textwrap.dedent("""\
+            fd.write(d"""
                 x = 1
                 y = 2
 
@@ -553,7 +552,7 @@ class TestCommandLine(unittest.TestCase):
 
                 for i in range(10):
                     f()
-            """))
+                """)
         status, stdout, _ = assert_python_ok('-m', 'trace', '-cs', filename,
                                              PYTHONIOENCODING='utf-8')
         stdout = stdout.decode()

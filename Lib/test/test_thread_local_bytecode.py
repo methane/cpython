@@ -1,5 +1,4 @@
 """Tests for thread-local bytecode."""
-import textwrap
 import unittest
 
 from test import support
@@ -17,7 +16,7 @@ _testinternalcapi = import_helper.import_module("_testinternalcapi")
 class TLBCTests(unittest.TestCase):
     @requires_specialization
     def test_new_threads_start_with_unspecialized_code(self):
-        code = textwrap.dedent("""
+        code = d"""
         import dis
         import queue
         import threading
@@ -43,12 +42,12 @@ class TLBCTests(unittest.TestCase):
 
         assert "BINARY_OP_ADD_INT" in all_opnames(get_tlbc(f))
         assert "BINARY_OP_ADD_INT" not in all_opnames(q.get())
-        """)
+        """
         assert_python_ok("-X", "tlbc=1", "-c", code)
 
     @requires_specialization
     def test_threads_specialize_independently(self):
-        code = textwrap.dedent("""
+        code = d"""
         import dis
         import queue
         import threading
@@ -80,11 +79,11 @@ class TLBCTests(unittest.TestCase):
         t_opnames = all_opnames(q.get())
         assert "BINARY_OP_ADD_INT" not in t_opnames
         assert "BINARY_OP_ADD_UNICODE" in t_opnames
-        """)
+        """
         assert_python_ok("-X", "tlbc=1", "-c", code)
 
     def test_reuse_tlbc_across_threads_different_lifetimes(self):
-        code = textwrap.dedent("""
+        code = d"""
         import queue
         import threading
 
@@ -105,12 +104,12 @@ class TLBCTests(unittest.TestCase):
 
         assert tlbc_ids[0] == tlbc_ids[1]
         assert tlbc_ids[1] == tlbc_ids[2]
-        """)
+        """
         assert_python_ok("-X", "tlbc=1", "-c", code)
 
     @support.skip_if_sanitizer("gh-129752: data race on adaptive counter", thread=True)
     def test_no_copies_if_tlbc_disabled(self):
-        code = textwrap.dedent("""
+        code = d"""
         import queue
         import threading
 
@@ -138,11 +137,11 @@ class TLBCTests(unittest.TestCase):
         assert tlbc_ids[0] == main_tlbc_id
         assert tlbc_ids[1] == main_tlbc_id
         assert tlbc_ids[2] == main_tlbc_id
-        """)
+        """
         assert_python_ok("-X", "tlbc=0", "-c", code)
 
     def test_no_specialization_if_tlbc_disabled(self):
-        code = textwrap.dedent("""
+        code = d"""
         import dis
         import queue
         import threading
@@ -160,11 +159,11 @@ class TLBCTests(unittest.TestCase):
             f(1, 2)
 
         assert "BINARY_OP_ADD_INT" not in all_opnames(f)
-        """)
+        """
         assert_python_ok("-X", "tlbc=0", "-c", code)
 
     def test_generator_throw(self):
-        code = textwrap.dedent("""
+        code = d"""
         import queue
         import threading
 
@@ -190,7 +189,7 @@ class TLBCTests(unittest.TestCase):
         next(gen)
         main_id = gen.throw(ValueError)
         assert main_id != q.get()
-        """)
+        """
         assert_python_ok("-X", "tlbc=1", "-c", code)
 
 

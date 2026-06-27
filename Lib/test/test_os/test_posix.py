@@ -2062,9 +2062,9 @@ class _PosixSpawnMixin:
     @unittest.skipUnless(hasattr(signal, 'pthread_sigmask'),
                            'need signal.pthread_sigmask()')
     def test_setsigmask(self):
-        code = textwrap.dedent("""\
+        code = d"""
             import signal
-            signal.raise_signal(signal.SIGUSR1)""")
+            signal.raise_signal(signal.SIGUSR1)"""
 
         pid = self.spawn_func(
             sys.executable,
@@ -2095,12 +2095,12 @@ class _PosixSpawnMixin:
         try:
             os.set_inheritable(wfd, True)
 
-            code = textwrap.dedent(f"""
+            code = fd"""
                 import os
                 fd = {wfd}
                 sid = os.getsid(0)
                 os.write(fd, str(sid).encode())
-            """)
+                """
 
             try:
                 pid = self.spawn_func(sys.executable,
@@ -2124,9 +2124,9 @@ class _PosixSpawnMixin:
                          'need signal.pthread_sigmask()')
     def test_setsigdef(self):
         original_handler = signal.signal(signal.SIGUSR1, signal.SIG_IGN)
-        code = textwrap.dedent("""\
+        code = d"""
             import signal
-            signal.raise_signal(signal.SIGUSR1)""")
+            signal.raise_signal(signal.SIGUSR1)"""
         try:
             pid = self.spawn_func(
                 sys.executable,
@@ -2173,12 +2173,12 @@ class _PosixSpawnMixin:
     def test_setscheduler_only_param(self):
         policy = os.sched_getscheduler(0)
         priority = os.sched_get_priority_min(policy)
-        code = textwrap.dedent(f"""\
+        code = fd"""
             import os, sys
             if os.sched_getscheduler(0) != {policy}:
                 sys.exit(101)
             if os.sched_getparam(0).sched_priority != {priority}:
-                sys.exit(102)""")
+                sys.exit(102)"""
         pid = self.spawn_func(
             sys.executable,
             [sys.executable, '-c', code],
@@ -2199,12 +2199,12 @@ class _PosixSpawnMixin:
     def test_setscheduler_with_policy(self):
         policy = os.sched_getscheduler(0)
         priority = os.sched_get_priority_min(policy)
-        code = textwrap.dedent(f"""\
+        code = fd"""
             import os, sys
             if os.sched_getscheduler(0) != {policy}:
                 sys.exit(101)
             if os.sched_getparam(0).sched_priority != {priority}:
-                sys.exit(102)""")
+                sys.exit(102)"""
         pid = self.spawn_func(
             sys.executable,
             [sys.executable, '-c', code],

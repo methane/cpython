@@ -64,14 +64,14 @@ EXITCODE_NO_TESTS_RAN = 4
 EXITCODE_RERUN_FAIL = 5
 EXITCODE_INTERRUPTED = 130
 
-TEST_INTERRUPTED = textwrap.dedent("""
+TEST_INTERRUPTED = d"""
     from signal import SIGINT, raise_signal
     try:
         raise_signal(SIGINT)
     except ImportError:
         import os
         os.kill(os.getpid(), SIGINT)
-    """)
+    """
 
 
 class ParseArgsTestCase(unittest.TestCase):
@@ -607,13 +607,13 @@ class BaseTestCase(unittest.TestCase):
             BaseTestCase.TEST_UNIQUE_ID += 1
 
         if code is None:
-            code = textwrap.dedent("""
+            code = d"""
                     import unittest
 
                     class Tests(unittest.TestCase):
                         def test_empty_test(self):
                             pass
-                """)
+                    """
 
         # test_regrtest cannot be run twice in parallel because
         # of setUp() and create_test()
@@ -1014,7 +1014,7 @@ class ArgsTestCase(BaseTestCase):
         return self.run_python(cmdargs, **kw)
 
     def test_success(self):
-        code = textwrap.dedent("""
+        code = d"""
             import unittest
 
             class PassingTests(unittest.TestCase):
@@ -1026,7 +1026,7 @@ class ArgsTestCase(BaseTestCase):
 
                 def test_test3(self):
                     pass
-        """)
+            """
         tests = [self.create_test(f'ok{i}', code=code) for i in range(1, 6)]
 
         output = self.run_tests(*tests)
@@ -1034,10 +1034,10 @@ class ArgsTestCase(BaseTestCase):
                                   stats=3 * len(tests))
 
     def test_skip(self):
-        code = textwrap.dedent("""
+        code = d"""
             import unittest
             raise unittest.SkipTest("nope")
-        """)
+            """
         test_ok = self.create_test('ok')
         test_skip = self.create_test('skip', code=code)
         tests = [test_ok, test_skip]
@@ -1049,13 +1049,13 @@ class ArgsTestCase(BaseTestCase):
 
     def test_failing_test(self):
         # test a failing test
-        code = textwrap.dedent("""
+        code = d"""
             import unittest
 
             class FailingTest(unittest.TestCase):
                 def test_failing(self):
                     self.fail("bug")
-        """)
+            """
         test_ok = self.create_test('ok')
         test_failing = self.create_test('failing', code=code)
         tests = [test_ok, test_failing]
@@ -1097,10 +1097,10 @@ class ArgsTestCase(BaseTestCase):
 
     def test_random(self):
         # test -r and --randseed command line option
-        code = textwrap.dedent("""
+        code = d"""
             import random
             print("TESTRANDOM: %s" % random.randint(1, 1000))
-        """)
+            """
         test = self.create_test('random', code)
 
         # first run to get the output with the random seed
@@ -1250,7 +1250,7 @@ class ArgsTestCase(BaseTestCase):
 
     def test_forever(self):
         # test --forever
-        code = textwrap.dedent("""
+        code = d"""
             import builtins
             import unittest
 
@@ -1264,7 +1264,7 @@ class ArgsTestCase(BaseTestCase):
                             self.fail("fail at the 3rd runs")
                     else:
                         builtins.__dict__['RUN'] = 1
-        """)
+            """
         test = self.create_test('forever', code=code)
 
         # --forever
@@ -1310,7 +1310,7 @@ class ArgsTestCase(BaseTestCase):
     @unittest.skipUnless(support.Py_DEBUG, 'need a debug build')
     def check_huntrleaks(self, *, run_workers: bool):
         # test --huntrleaks
-        code = textwrap.dedent("""
+        code = d"""
             import unittest
 
             GLOBAL_LIST = []
@@ -1318,7 +1318,7 @@ class ArgsTestCase(BaseTestCase):
             class RefLeakTest(unittest.TestCase):
                 def test_leak(self):
                     GLOBAL_LIST.append(object())
-        """)
+            """
         self.check_leak(code, 'references', run_workers=run_workers)
 
     def test_huntrleaks(self):
@@ -1330,7 +1330,7 @@ class ArgsTestCase(BaseTestCase):
     @unittest.skipUnless(support.Py_DEBUG, 'need a debug build')
     def test_huntrleaks_bisect(self):
         # test --huntrleaks --bisect
-        code = textwrap.dedent("""
+        code = d"""
             import unittest
 
             GLOBAL_LIST = []
@@ -1347,7 +1347,7 @@ class ArgsTestCase(BaseTestCase):
 
                 def test4(self):
                     pass
-        """)
+            """
 
         test = self.create_test('huntrleaks', code=code)
 
@@ -1371,7 +1371,7 @@ class ArgsTestCase(BaseTestCase):
     @unittest.skipUnless(support.Py_DEBUG, 'need a debug build')
     def test_huntrleaks_fd_leak(self):
         # test --huntrleaks for file descriptor leak
-        code = textwrap.dedent("""
+        code = d"""
             import os
             import unittest
 
@@ -1379,7 +1379,7 @@ class ArgsTestCase(BaseTestCase):
                 def test_leak(self):
                     fd = os.open(__file__, os.O_RDONLY)
                     # bug: never close the file descriptor
-        """)
+            """
         self.check_leak(code, 'file descriptors')
 
     def test_list_tests(self):
@@ -1391,7 +1391,7 @@ class ArgsTestCase(BaseTestCase):
 
     def test_list_cases(self):
         # test --list-cases
-        code = textwrap.dedent("""
+        code = d"""
             import unittest
 
             class Tests(unittest.TestCase):
@@ -1399,7 +1399,7 @@ class ArgsTestCase(BaseTestCase):
                     pass
                 def test_method2(self):
                     pass
-        """)
+            """
         testname = self.create_test(code=code)
 
         # Test --list-cases
@@ -1431,7 +1431,7 @@ class ArgsTestCase(BaseTestCase):
         return [match.group(1) for match in regex.finditer(output)]
 
     def test_ignorefile(self):
-        code = textwrap.dedent("""
+        code = d"""
             import unittest
 
             class Tests(unittest.TestCase):
@@ -1443,7 +1443,7 @@ class ArgsTestCase(BaseTestCase):
                     pass
                 def test_method4(self):
                     pass
-        """)
+            """
         testname = self.create_test(code=code)
 
         # only run a subset
@@ -1465,7 +1465,7 @@ class ArgsTestCase(BaseTestCase):
         self.assertEqual(methods, subset)
 
     def test_matchfile(self):
-        code = textwrap.dedent("""
+        code = d"""
             import unittest
 
             class Tests(unittest.TestCase):
@@ -1477,7 +1477,7 @@ class ArgsTestCase(BaseTestCase):
                     pass
                 def test_method4(self):
                     pass
-        """)
+            """
         all_methods = ['test_method1', 'test_method2',
                        'test_method3', 'test_method4']
         testname = self.create_test(code=code)
@@ -1506,13 +1506,13 @@ class ArgsTestCase(BaseTestCase):
         self.assertEqual(methods, subset)
 
     def test_env_changed(self):
-        code = textwrap.dedent("""
+        code = d"""
             import unittest
 
             class Tests(unittest.TestCase):
                 def test_env_changed(self):
                     open("env_changed", "w").close()
-        """)
+            """
         testname = self.create_test(code=code)
 
         # don't fail by default
@@ -1537,7 +1537,7 @@ class ArgsTestCase(BaseTestCase):
 
     def test_rerun_fail(self):
         # FAILURE then FAILURE
-        code = textwrap.dedent("""
+        code = d"""
             import unittest
 
             class Tests(unittest.TestCase):
@@ -1547,7 +1547,7 @@ class ArgsTestCase(BaseTestCase):
                 def test_fail_always(self):
                     # test that always fails
                     self.fail("bug")
-        """)
+            """
         testname = self.create_test(code=code)
 
         output = self.run_tests("--rerun", testname, exitcode=EXITCODE_BAD_TEST)
@@ -1563,7 +1563,7 @@ class ArgsTestCase(BaseTestCase):
         self.addCleanup(os_helper.unlink, marker_filename)
         self.assertFalse(os.path.exists(marker_filename))
 
-        code = textwrap.dedent(f"""
+        code = fd"""
             import os.path
             import unittest
 
@@ -1577,7 +1577,7 @@ class ArgsTestCase(BaseTestCase):
                     if not os.path.exists(marker_filename):
                         open(marker_filename, "w").close()
                         self.fail("bug")
-        """)
+            """
         testname = self.create_test(code=code)
 
         # FAILURE then SUCCESS => exit code 0
@@ -1602,7 +1602,7 @@ class ArgsTestCase(BaseTestCase):
 
     def test_rerun_setup_class_hook_failure(self):
         # FAILURE then FAILURE
-        code = textwrap.dedent("""
+        code = d"""
             import unittest
 
             class ExampleTests(unittest.TestCase):
@@ -1612,7 +1612,7 @@ class ArgsTestCase(BaseTestCase):
 
                 def test_success(self):
                     return
-        """)
+            """
         testname = self.create_test(code=code)
 
         output = self.run_tests("--rerun", testname, exitcode=EXITCODE_BAD_TEST)
@@ -1625,7 +1625,7 @@ class ArgsTestCase(BaseTestCase):
 
     def test_rerun_teardown_class_hook_failure(self):
         # FAILURE then FAILURE
-        code = textwrap.dedent("""
+        code = d"""
             import unittest
 
             class ExampleTests(unittest.TestCase):
@@ -1635,7 +1635,7 @@ class ArgsTestCase(BaseTestCase):
 
                 def test_success(self):
                     return
-        """)
+            """
         testname = self.create_test(code=code)
 
         output = self.run_tests("--rerun", testname, exitcode=EXITCODE_BAD_TEST)
@@ -1648,7 +1648,7 @@ class ArgsTestCase(BaseTestCase):
 
     def test_rerun_setup_module_hook_failure(self):
         # FAILURE then FAILURE
-        code = textwrap.dedent("""
+        code = d"""
             import unittest
 
             def setUpModule():
@@ -1657,7 +1657,7 @@ class ArgsTestCase(BaseTestCase):
             class ExampleTests(unittest.TestCase):
                 def test_success(self):
                     return
-        """)
+            """
         testname = self.create_test(code=code)
 
         output = self.run_tests("--rerun", testname, exitcode=EXITCODE_BAD_TEST)
@@ -1670,7 +1670,7 @@ class ArgsTestCase(BaseTestCase):
 
     def test_rerun_teardown_module_hook_failure(self):
         # FAILURE then FAILURE
-        code = textwrap.dedent("""
+        code = d"""
             import unittest
 
             def tearDownModule():
@@ -1679,7 +1679,7 @@ class ArgsTestCase(BaseTestCase):
             class ExampleTests(unittest.TestCase):
                 def test_success(self):
                     return
-        """)
+            """
         testname = self.create_test(code=code)
 
         output = self.run_tests("--rerun", testname, exitcode=EXITCODE_BAD_TEST)
@@ -1692,7 +1692,7 @@ class ArgsTestCase(BaseTestCase):
 
     def test_rerun_setup_hook_failure(self):
         # FAILURE then FAILURE
-        code = textwrap.dedent("""
+        code = d"""
             import unittest
 
             class ExampleTests(unittest.TestCase):
@@ -1701,7 +1701,7 @@ class ArgsTestCase(BaseTestCase):
 
                 def test_success(self):
                     return
-        """)
+            """
         testname = self.create_test(code=code)
 
         output = self.run_tests("--rerun", testname, exitcode=EXITCODE_BAD_TEST)
@@ -1714,7 +1714,7 @@ class ArgsTestCase(BaseTestCase):
 
     def test_rerun_teardown_hook_failure(self):
         # FAILURE then FAILURE
-        code = textwrap.dedent("""
+        code = d"""
             import unittest
 
             class ExampleTests(unittest.TestCase):
@@ -1723,7 +1723,7 @@ class ArgsTestCase(BaseTestCase):
 
                 def test_success(self):
                     return
-        """)
+            """
         testname = self.create_test(code=code)
 
         output = self.run_tests("--rerun", testname, exitcode=EXITCODE_BAD_TEST)
@@ -1736,7 +1736,7 @@ class ArgsTestCase(BaseTestCase):
 
     def test_rerun_async_setup_hook_failure(self):
         # FAILURE then FAILURE
-        code = textwrap.dedent("""
+        code = d"""
             import unittest
 
             class ExampleTests(unittest.IsolatedAsyncioTestCase):
@@ -1745,7 +1745,7 @@ class ArgsTestCase(BaseTestCase):
 
                 async def test_success(self):
                     return
-        """)
+            """
         testname = self.create_test(code=code)
 
         output = self.run_tests("--rerun", testname, exitcode=EXITCODE_BAD_TEST)
@@ -1757,7 +1757,7 @@ class ArgsTestCase(BaseTestCase):
 
     def test_rerun_async_teardown_hook_failure(self):
         # FAILURE then FAILURE
-        code = textwrap.dedent("""
+        code = d"""
             import unittest
 
             class ExampleTests(unittest.IsolatedAsyncioTestCase):
@@ -1766,7 +1766,7 @@ class ArgsTestCase(BaseTestCase):
 
                 async def test_success(self):
                     return
-        """)
+            """
         testname = self.create_test(code=code)
 
         output = self.run_tests("--rerun", testname, exitcode=EXITCODE_BAD_TEST)
@@ -1778,13 +1778,13 @@ class ArgsTestCase(BaseTestCase):
                                   stats=2)
 
     def test_no_tests_ran(self):
-        code = textwrap.dedent("""
+        code = d"""
             import unittest
 
             class Tests(unittest.TestCase):
                 def test_bug(self):
                     pass
-        """)
+            """
         testname = self.create_test(code=code)
 
         output = self.run_tests(testname, "-m", "nosuchtest",
@@ -1794,13 +1794,13 @@ class ArgsTestCase(BaseTestCase):
                                   stats=0, filtered=True)
 
     def test_no_tests_ran_skip(self):
-        code = textwrap.dedent("""
+        code = d"""
             import unittest
 
             class Tests(unittest.TestCase):
                 def test_skipped(self):
                     self.skipTest("because")
-        """)
+            """
         testname = self.create_test(code=code)
 
         output = self.run_tests(testname)
@@ -1808,13 +1808,13 @@ class ArgsTestCase(BaseTestCase):
                                   stats=TestStats(1, skipped=1))
 
     def test_no_tests_ran_multiple_tests_nonexistent(self):
-        code = textwrap.dedent("""
+        code = d"""
             import unittest
 
             class Tests(unittest.TestCase):
                 def test_bug(self):
                     pass
-        """)
+            """
         testname = self.create_test(code=code)
         testname2 = self.create_test(code=code)
 
@@ -1825,21 +1825,21 @@ class ArgsTestCase(BaseTestCase):
                                   stats=0, filtered=True)
 
     def test_no_test_ran_some_test_exist_some_not(self):
-        code = textwrap.dedent("""
+        code = d"""
             import unittest
 
             class Tests(unittest.TestCase):
                 def test_bug(self):
                     pass
-        """)
+            """
         testname = self.create_test(code=code)
-        other_code = textwrap.dedent("""
+        other_code = d"""
             import unittest
 
             class Tests(unittest.TestCase):
                 def test_other_bug(self):
                     pass
-        """)
+            """
         testname2 = self.create_test(code=other_code)
 
         output = self.run_tests(testname, testname2, "-m", "nosuchtest",
@@ -1853,7 +1853,7 @@ class ArgsTestCase(BaseTestCase):
         # Skip test if _testcapi is missing
         import_helper.import_module('_testcapi')
 
-        code = textwrap.dedent(r"""
+        code = rd"""
             import _testcapi
             import gc
             import unittest
@@ -1869,7 +1869,7 @@ class ArgsTestCase(BaseTestCase):
                     obj = Garbage()
                     obj.ref_cycle = obj
                     obj = None
-        """)
+            """
         testname = self.create_test(code=code)
 
         output = self.run_tests("--fail-env-changed", testname,
@@ -1880,7 +1880,7 @@ class ArgsTestCase(BaseTestCase):
                                   stats=1)
 
     def test_multiprocessing_timeout(self):
-        code = textwrap.dedent(r"""
+        code = rd"""
             import time
             import unittest
             try:
@@ -1897,7 +1897,7 @@ class ArgsTestCase(BaseTestCase):
                         faulthandler.cancel_dump_traceback_later()
 
                     time.sleep(60 * 5)
-        """)
+            """
         testname = self.create_test(code=code)
 
         output = self.run_tests("-j2", "--timeout=1.0", testname,
@@ -1910,7 +1910,7 @@ class ArgsTestCase(BaseTestCase):
     def test_unraisable_exc(self):
         # --fail-env-changed must catch unraisable exception.
         # The exception must be displayed even if sys.stderr is redirected.
-        code = textwrap.dedent(r"""
+        code = rd"""
             import unittest
             import weakref
             from test.support import captured_stderr
@@ -1930,7 +1930,7 @@ class ArgsTestCase(BaseTestCase):
                         # an unraisable exception
                         obj = None
                     self.assertEqual(stderr.getvalue(), '')
-        """)
+            """
         testname = self.create_test(code=code)
 
         output = self.run_tests("--fail-env-changed", "-v", testname,
@@ -1945,7 +1945,7 @@ class ArgsTestCase(BaseTestCase):
     def test_threading_excepthook(self):
         # --fail-env-changed must catch uncaught thread exception.
         # The exception must be displayed even if sys.stderr is redirected.
-        code = textwrap.dedent(r"""
+        code = rd"""
             import threading
             import unittest
             from test.support import captured_stderr
@@ -1963,7 +1963,7 @@ class ArgsTestCase(BaseTestCase):
                         thread.start()
                         thread.join()
                     self.assertEqual(stderr.getvalue(), '')
-        """)
+            """
         testname = self.create_test(code=code)
 
         output = self.run_tests("--fail-env-changed", "-v", testname,
@@ -1978,7 +1978,7 @@ class ArgsTestCase(BaseTestCase):
     def test_print_warning(self):
         # bpo-45410: The order of messages must be preserved when -W and
         # support.print_warning() are used.
-        code = textwrap.dedent(r"""
+        code = rd"""
             import sys
             import unittest
             from test import support
@@ -1995,7 +1995,7 @@ class ArgsTestCase(BaseTestCase):
                     support.print_warning("msg2: print_warning")
                     # Fail with ENV CHANGED to see print_warning() log
                     support.environment_altered = True
-        """)
+            """
         testname = self.create_test(code=code)
 
         # Expect an output like:
@@ -2042,7 +2042,7 @@ class ArgsTestCase(BaseTestCase):
     @unittest.skipIf(support.is_wasi,
                      'checking temp files is not implemented on WASI')
     def test_leak_tmp_file(self):
-        code = textwrap.dedent(r"""
+        code = rd"""
             import os.path
             import tempfile
             import unittest
@@ -2052,7 +2052,7 @@ class ArgsTestCase(BaseTestCase):
                     filename = os.path.join(tempfile.gettempdir(), 'mytmpfile')
                     with open(filename, "wb") as fp:
                         fp.write(b'content')
-        """)
+            """
         testnames = [self.create_test(code=code) for _ in range(3)]
 
         output = self.run_tests("--fail-env-changed", "-v", "-j2", *testnames,
@@ -2093,7 +2093,7 @@ class ArgsTestCase(BaseTestCase):
 
         expected_line = corrupted_output.decode(encoding, 'backslashreplace')
 
-        code = textwrap.dedent(fr"""
+        code = frd"""
             import sys
             import unittest
 
@@ -2105,7 +2105,7 @@ class ArgsTestCase(BaseTestCase):
             corrupted_output = {corrupted_output!a}
             sys.stdout.buffer.write(corrupted_output)
             sys.stdout.buffer.flush()
-        """)
+            """
         testname = self.create_test(code=code)
 
         output = self.run_tests("--fail-env-changed", "-v", "-j1", testname)
@@ -2115,7 +2115,7 @@ class ArgsTestCase(BaseTestCase):
         self.check_line(output, expected_line, regex=False)
 
     def test_doctest(self):
-        code = textwrap.dedent(r'''
+        code = rd'''
             import doctest
             import sys
             from test import support
@@ -2143,7 +2143,7 @@ class ArgsTestCase(BaseTestCase):
             def load_tests(loader, tests, pattern):
                 tests.addTest(doctest.DocTestSuite())
                 return tests
-        ''')
+            '''
         testname = self.create_test(code=code)
 
         output = self.run_tests("--fail-env-changed", "-v", "-j1", testname,
@@ -2156,7 +2156,7 @@ class ArgsTestCase(BaseTestCase):
     def _check_random_seed(self, run_workers: bool):
         # gh-109276: When -r/--randomize is used, random.seed() is called
         # with the same random seed before running each test file.
-        code = textwrap.dedent(r'''
+        code = rd'''
             import random
             import unittest
 
@@ -2164,7 +2164,7 @@ class ArgsTestCase(BaseTestCase):
                 def test_randint(self):
                     numbers = [random.randint(0, 1000) for _ in range(10)]
                     print(f"Random numbers: {numbers}")
-        ''')
+            '''
         tests = [self.create_test(name=f'test_random{i}', code=code)
                  for i in range(1, 3+1)]
 
@@ -2194,14 +2194,14 @@ class ArgsTestCase(BaseTestCase):
         self._check_random_seed(run_workers=True)
 
     def test_python_command(self):
-        code = textwrap.dedent(r"""
+        code = rd"""
             import sys
             import unittest
 
             class WorkerTests(unittest.TestCase):
                 def test_dev_mode(self):
                     self.assertTrue(sys.flags.dev_mode)
-        """)
+            """
         tests = [self.create_test(code=code) for _ in range(3)]
 
         # Custom Python command: "python -X dev"
@@ -2236,7 +2236,7 @@ class ArgsTestCase(BaseTestCase):
     def check_add_python_opts(self, option):
         # --fast-ci and --slow-ci add "-u -W error -bb -E" options to Python
 
-        code = textwrap.dedent(r"""
+        code = rd"""
             import sys
             import unittest
             from test import support
@@ -2276,7 +2276,7 @@ class ArgsTestCase(BaseTestCase):
                     # -E option
                     self.assertEqual(not sys.flags.ignore_environment,
                                      use_environment)
-        """)
+            """
         testname = self.create_test(code=code)
 
         # Use directly subprocess to control the exact command line
@@ -2303,7 +2303,7 @@ class ArgsTestCase(BaseTestCase):
         # Skip test if faulthandler is missing
         import_helper.import_module('faulthandler')
 
-        code = textwrap.dedent(r"""
+        code = rd"""
             import faulthandler
             import unittest
             from test import support
@@ -2314,7 +2314,7 @@ class ArgsTestCase(BaseTestCase):
 
                     with support.SuppressCrashReport():
                         faulthandler._sigsegv(True)
-        """)
+            """
         testname = self.create_test(code=code)
 
         # Sanitizers must not handle SIGSEGV (ex: for test_enable_fd())
@@ -2334,14 +2334,14 @@ class ArgsTestCase(BaseTestCase):
         self.check_line(output, "just before crash!", full=True, regex=False)
 
     def test_verbose3(self):
-        code = textwrap.dedent(r"""
+        code = rd"""
             import unittest
             from test import support
 
             class VerboseTests(unittest.TestCase):
                 def test_pass(self):
                     print("SPAM SPAM SPAM")
-        """)
+            """
         testname = self.create_test(code=code)
 
         # Run sequentially
@@ -2357,14 +2357,14 @@ class ArgsTestCase(BaseTestCase):
             self.assertNotIn('SPAM SPAM SPAM', output)
 
     def test_xml(self):
-        code = textwrap.dedent(r"""
+        code = rd"""
             import unittest
 
             class VerboseTests(unittest.TestCase):
                 def test_failed(self):
                     print("abc \x1b def")
                     self.fail()
-        """)
+            """
         testname = self.create_test(code=code)
 
         # Run sequentially
@@ -2394,7 +2394,7 @@ class ArgsTestCase(BaseTestCase):
             self.assertEqual(out.text, r"abc \x1b def")
 
     def test_nonascii(self):
-        code = textwrap.dedent(r"""
+        code = rd"""
             import unittest
 
             class NonASCIITests(unittest.TestCase):
@@ -2407,7 +2407,7 @@ class ArgsTestCase(BaseTestCase):
 
                 def test_skip(self):
                     self.skipTest('skipped:\u20ac')
-        """)
+            """
         testname = self.create_test(code=code)
 
         env = dict(os.environ)

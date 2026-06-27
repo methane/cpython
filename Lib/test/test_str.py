@@ -13,7 +13,6 @@ import operator
 import pickle
 import struct
 import sys
-import textwrap
 import unicodedata
 import unittest
 import warnings
@@ -2643,7 +2642,7 @@ class StrTest(string_tests.StringLikeTest,
         # arguments in dev mode
         encodings = ('ascii', 'utf8', 'latin1')
         invalid = 'Boom, Shaka Laka, Boom!'
-        code = textwrap.dedent(f'''
+        code = fd'''
             import sys
             encodings = {encodings!r}
 
@@ -2694,7 +2693,7 @@ class StrTest(string_tests.StringLikeTest,
                         sys.exit(24)
 
             sys.exit(10)
-        ''')
+            '''
         proc = assert_python_failure('-X', 'dev', '-c', code)
         self.assertEqual(proc.rc, 10, proc)
 

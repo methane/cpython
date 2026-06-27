@@ -109,12 +109,14 @@ class GetKeysFrame(Frame):
 
         # Basic entry help text.
         help_basic = Label(self.frame_controls_basic, justify='left',
-                           text="Select the desired modifier keys\n"+
-                                "above, and the final key from the\n"+
-                                "list on the right.\n\n" +
-                                "Use upper case Symbols when using\n" +
-                                "the Shift modifier.  (Letters will be\n" +
-                                "converted automatically.)")
+                           text=d"""
+                            Select the desired modifier keys
+                            above, and the final key from the
+                            list on the right.
+
+                            Use upper case Symbols when using
+                            the Shift modifier.  (Letters will be
+                            converted automatically.)""")
         help_basic.grid(row=1, column=0, columnspan=4, padx=2, sticky='w')
 
         # Basic entry key list.

@@ -1178,7 +1178,7 @@ class ThreadTests(BaseTestCase):
         # bpo-1596321: If the threading module is first import from a thread
         # different than the main thread, threading._shutdown() must handle
         # this case without logging an error at Python exit.
-        code = textwrap.dedent('''
+        code = d'''
             import _thread
             import sys
 
@@ -1202,7 +1202,7 @@ class ThreadTests(BaseTestCase):
                 raise Exception('threading is not imported')
 
             # don't wait until the thread completes
-        ''')
+            '''
         rc, out, err = assert_python_ok("-c", code)
         self.assertEqual(out, b'')
         self.assertEqual(err, b'')
@@ -1232,7 +1232,7 @@ class ThreadTests(BaseTestCase):
         # We raise an exception rather than hang.
         for timeout in (None, 10):
             with self.subTest(timeout=timeout):
-                code = textwrap.dedent(f"""
+                code = fd"""
                     import threading
 
 
@@ -1260,7 +1260,7 @@ class ThreadTests(BaseTestCase):
                     # cleaned up during the GC that runs after daemon threads
                     # have been forced to exit during finalization.
                     Cycle()
-                """)
+                    """
                 rc, out, err = assert_python_ok("-c", code)
                 self.assertEqual(err, b"")
                 self.assertIn(b"got the correct exception", out)
@@ -1268,7 +1268,7 @@ class ThreadTests(BaseTestCase):
     def test_join_finished_daemon_thread_in_finalization(self):
         # (see previous test)
         # If the thread is already finished, join() succeeds.
-        code = textwrap.dedent("""
+        code = d"""
             import threading
             done = threading.Event()
 
@@ -1290,7 +1290,7 @@ class ThreadTests(BaseTestCase):
                     print('all clear!')
 
             Cycle()
-        """)
+            """
         rc, out, err = assert_python_ok("-c", code)
         self.assertEqual(err, b"")
         self.assertIn(b"all clear", out)
@@ -1301,7 +1301,7 @@ class ThreadTests(BaseTestCase):
         # code (and so, releasing locks), so acquiring a locked lock can not
         # succeed.
         # We raise an exception rather than hang.
-        code = textwrap.dedent(f"""
+        code = fd"""
             import threading
             import time
 
@@ -1345,7 +1345,7 @@ class ThreadTests(BaseTestCase):
             # cleaned up during the GC that runs after daemon threads
             # have been forced to exit during finalization.
             Cycle()
-        """)
+            """
         rc, out, err = assert_python_ok("-c", code)
         self.assertEqual(err, b"")
         self.assertIn(b"got the correct exception", out)
@@ -1388,7 +1388,7 @@ class ThreadTests(BaseTestCase):
     @cpython_only
     def test_finalize_daemon_thread_hang(self):
         # gh-87135: tests that daemon threads hang during finalization
-        script = textwrap.dedent('''
+        script = d'''
             import os
             import sys
             import threading
@@ -1446,7 +1446,7 @@ class ThreadTests(BaseTestCase):
             # If the follow exit code is retained, `run_during_finalization`
             # did not run.
             sys.exit(1)
-        ''')
+            '''
         assert_python_ok("-c", script)
 
     @skip_unless_reliable_fork
@@ -1851,7 +1851,7 @@ class SubinterpThreadingTests(BaseTestCase):
                        daemon=False,
                        ):
         import_module("_testinternalcapi")
-        subinterp_code = textwrap.dedent(f"""
+        subinterp_code = fd"""
             import test.support
             import threading
             def func():
@@ -1859,9 +1859,9 @@ class SubinterpThreadingTests(BaseTestCase):
             t = threading.Thread(target=func, daemon={daemon})
             {before_start}
             t.start()
-            """)
+            """
         check_multi_interp_extensions = bool(support.Py_GIL_DISABLED)
-        script = textwrap.dedent(f"""
+        script = fd"""
             import test.support
             test.support.run_in_subinterp_with_config(
                 {subinterp_code!r},
@@ -1873,7 +1873,7 @@ class SubinterpThreadingTests(BaseTestCase):
                 check_multi_interp_extensions={check_multi_interp_extensions},
                 own_gil=False,
             )
-            """)
+            """
         with test.support.SuppressCrashReport():
             _, _, err = assert_python_ok("-c", script)
         return err.decode()

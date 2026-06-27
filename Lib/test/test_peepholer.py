@@ -17,14 +17,12 @@ from test.support.bytecode_helper import (
 
 
 def compile_pattern_with_fast_locals(pattern):
-    source = textwrap.dedent(
-        f"""
+    source = fd"""
         def f(x):
             match x:
                 case {pattern}:
                     pass
         """
-    )
     namespace = {}
     exec(source, namespace)
     return namespace["f"].__code__
@@ -980,7 +978,7 @@ class TestMarkingVariablesAsUnKnown(BytecodeTestCase):
         self.assertInBytecode(f, 'LOAD_FAST_BORROW', "a73")
 
     def test_setting_lineno_no_undefined(self):
-        code = textwrap.dedent("""\
+        code = d"""
             def f():
                 x = y = 2
                 if not x:
@@ -991,7 +989,7 @@ class TestMarkingVariablesAsUnKnown(BytecodeTestCase):
                 L = 8
                 L = 9
                 L = 10
-        """)
+            """
         ns = {}
         exec(code, ns)
         f = ns['f']
@@ -1012,7 +1010,7 @@ class TestMarkingVariablesAsUnKnown(BytecodeTestCase):
         self.assertEqual(f.__code__.co_code, co_code)
 
     def test_setting_lineno_one_undefined(self):
-        code = textwrap.dedent("""\
+        code = d"""
             def f():
                 x = y = 2
                 if not x:
@@ -1023,7 +1021,7 @@ class TestMarkingVariablesAsUnKnown(BytecodeTestCase):
                 L = 8
                 L = 9
                 L = 10
-        """)
+            """
         ns = {}
         exec(code, ns)
         f = ns['f']
@@ -1046,7 +1044,7 @@ class TestMarkingVariablesAsUnKnown(BytecodeTestCase):
         self.assertEqual(f.__code__.co_code, co_code)
 
     def test_setting_lineno_two_undefined(self):
-        code = textwrap.dedent("""\
+        code = d"""
             def f():
                 x = y = 2
                 if not x:
@@ -1057,7 +1055,7 @@ class TestMarkingVariablesAsUnKnown(BytecodeTestCase):
                 L = 8
                 L = 9
                 L = 10
-        """)
+            """
         ns = {}
         exec(code, ns)
         f = ns['f']
@@ -1080,7 +1078,7 @@ class TestMarkingVariablesAsUnKnown(BytecodeTestCase):
         self.assertEqual(f.__code__.co_code, co_code)
 
     def make_function_with_no_checks(self):
-        code = textwrap.dedent("""\
+        code = d"""
             def f():
                 x = 2
                 L = 3
@@ -1089,7 +1087,7 @@ class TestMarkingVariablesAsUnKnown(BytecodeTestCase):
                 if not L:
                     x + 7
                     y = 2
-        """)
+            """
         ns = {}
         exec(code, ns)
         f = ns['f']

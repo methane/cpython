@@ -232,34 +232,34 @@ class AST_Tests(unittest.TestCase):
 
     def test_docstring_optimization_single_node(self):
         # https://github.com/python/cpython/issues/137308
-        class_example1 = textwrap.dedent('''
+        class_example1 = d'''
             class A:
                 """Docstring"""
-        ''')
-        class_example2 = textwrap.dedent('''
+            '''
+        class_example2 = d'''
             class A:
                 """
                 Docstring"""
-        ''')
-        def_example1 = textwrap.dedent('''
+            '''
+        def_example1 = d'''
             def some():
                 """Docstring"""
-        ''')
-        def_example2 = textwrap.dedent('''
+            '''
+        def_example2 = d'''
             def some():
                 """Docstring
                                        """
-        ''')
-        async_def_example1 = textwrap.dedent('''
+            '''
+        async_def_example1 = d'''
             async def some():
                 """Docstring"""
-        ''')
-        async_def_example2 = textwrap.dedent('''
+            '''
+        async_def_example2 = d'''
             async def some():
                 """
                 Docstring
             """
-        ''')
+            '''
         for code in [
             class_example1,
             class_example2,
@@ -278,9 +278,9 @@ class AST_Tests(unittest.TestCase):
                         self.assertEqual(
                             vars(pass_stmt),
                             {
-                                'lineno': 3,
+                                'lineno': 2,
                                 'col_offset': 4,
-                                'end_lineno': 3,
+                                'end_lineno': 2,
                                 'end_col_offset': 8,
                             },
                         )
@@ -298,18 +298,15 @@ class AST_Tests(unittest.TestCase):
 
     def test_docstring_optimization_multiple_nodes(self):
         # https://github.com/python/cpython/issues/137308
-        class_example = textwrap.dedent(
-            """
+        class_example = d"""
             class A:
                 '''
                 Docstring
                 '''
                 x = 1
             """
-        )
 
-        def_example = textwrap.dedent(
-            """
+        def_example = d"""
             def some():
                 '''
                 Docstring
@@ -317,10 +314,8 @@ class AST_Tests(unittest.TestCase):
             '''
                 x = 1
             """
-        )
 
-        async_def_example = textwrap.dedent(
-            """
+        async_def_example = d"""
             async def some():
 
                 '''Docstring
@@ -328,7 +323,6 @@ class AST_Tests(unittest.TestCase):
             '''
                 x = 1
             """
-        )
 
         for code in [
             class_example,
@@ -853,58 +847,58 @@ class AST_Tests(unittest.TestCase):
             ast.parse(code, feature_version=(3, 13))
 
     def test_pep758_except_without_parens(self):
-        code = textwrap.dedent("""
+        code = d"""
             try:
                 ...
             except ValueError, TypeError:
                 ...
-        """)
+            """
         ast.parse(code, feature_version=(3, 14))
         with self.assertRaises(SyntaxError):
             ast.parse(code, feature_version=(3, 13))
 
     def test_pep758_except_with_single_expr(self):
-        single_expr = textwrap.dedent("""
+        single_expr = d"""
             try:
                 ...
             except{0} TypeError:
                 ...
-        """)
+            """
 
-        single_expr_with_as = textwrap.dedent("""
+        single_expr_with_as = d"""
             try:
                 ...
             except{0} TypeError as exc:
                 ...
-        """)
+            """
 
-        single_tuple_expr = textwrap.dedent("""
+        single_tuple_expr = d"""
             try:
                 ...
             except{0} (TypeError,):
                 ...
-        """)
+            """
 
-        single_tuple_expr_with_as = textwrap.dedent("""
+        single_tuple_expr_with_as = d"""
             try:
                 ...
             except{0} (TypeError,) as exc:
                 ...
-        """)
+            """
 
-        single_parens_expr = textwrap.dedent("""
+        single_parens_expr = d"""
             try:
                 ...
             except{0} (TypeError):
                 ...
-        """)
+            """
 
-        single_parens_expr_with_as = textwrap.dedent("""
+        single_parens_expr_with_as = d"""
             try:
                 ...
             except{0} (TypeError) as exc:
                 ...
-        """)
+            """
 
         for code in [
             single_expr,
@@ -921,12 +915,12 @@ class AST_Tests(unittest.TestCase):
                     ast.parse(code, feature_version=(3, 13))
 
     def test_pep758_except_star_without_parens(self):
-        code = textwrap.dedent("""
+        code = d"""
             try:
                 ...
             except* ValueError, TypeError:
                 ...
-        """)
+            """
         ast.parse(code, feature_version=(3, 14))
         with self.assertRaises(SyntaxError):
             ast.parse(code, feature_version=(3, 13))
@@ -1227,7 +1221,7 @@ class CopyTests(unittest.TestCase):
     @skip_if_unlimited_stack_size
     def test_copy_with_parents(self):
         # gh-120108
-        code = """
+        code = d"""
         ('',)
         while i < n:
             if ch == '':
@@ -2197,11 +2191,11 @@ class ASTValidatorTests(unittest.TestCase):
                 case _:
                     return False
 
-        code = """
+        code = d"""
             @capybara
             def foo(bar) -> pacarana:
                 pass
-        """
+            """
         source = ast.parse(textwrap.dedent(code))
         funcdef = source.body[0]
         self.assertIsInstance(funcdef, ast.FunctionDef)
@@ -3201,12 +3195,12 @@ class NodeTransformerTests(ASTTestMixin, unittest.TestCase):
         self.assertASTTransformation(SomeTypeRemover, code, expected)
 
     def test_node_remove_from_list(self):
-        code = """
+        code = d"""
         def func(arg):
             print(arg)
             yield arg
         """
-        expected = """
+        expected = d"""
         def func(arg):
             print(arg)
         """
@@ -3223,10 +3217,10 @@ class NodeTransformerTests(ASTTestMixin, unittest.TestCase):
         self.assertASTTransformation(YieldRemover, code, expected)
 
     def test_node_return_list(self):
-        code = """
+        code = d"""
         class DSL(Base, kw1=True): ...
         """
-        expected = """
+        expected = d"""
         class DSL(Base, kw1=True, kw2=True, kw3=False): ...
         """
 
@@ -3244,11 +3238,11 @@ class NodeTransformerTests(ASTTestMixin, unittest.TestCase):
         self.assertASTTransformation(ExtendKeywords, code, expected)
 
     def test_node_mutate(self):
-        code = """
+        code = d"""
         def func(arg):
             print(arg)
         """
-        expected = """
+        expected = d"""
         def func(arg):
             log(arg)
         """
@@ -3263,11 +3257,11 @@ class NodeTransformerTests(ASTTestMixin, unittest.TestCase):
         self.assertASTTransformation(PrintToLog, code, expected)
 
     def test_node_replace(self):
-        code = """
+        code = d"""
         def func(arg):
             print(arg)
         """
-        expected = """
+        expected = d"""
         def func(arg):
             logger.log(arg, debug=True)
         """
@@ -3683,11 +3677,11 @@ class CommandLineTests(unittest.TestCase):
 
     def test_feature_version_flag(self):
         # test 'python -m ast --feature-version 3.9/3.10'
-        source = '''
+        source = d'''
             match x:
                 case 1:
                     pass
-        '''
+            '''
         expect = '''
             Module(
                body=[
@@ -3706,11 +3700,11 @@ class CommandLineTests(unittest.TestCase):
 
     def test_no_optimize_flag(self):
         # test 'python -m ast -O/--optimize -1/0'
-        source = '''
+        source = d'''
             match a:
                 case 1+2j:
                     pass
-        '''
+            '''
         expect = '''
             Module(
                body=[
@@ -3732,11 +3726,11 @@ class CommandLineTests(unittest.TestCase):
 
     def test_optimize_flag(self):
         # test 'python -m ast -O/--optimize 1/2'
-        source = '''
+        source = d'''
             match a:
                 case 1+2j:
                     pass
-        '''
+            '''
         expect = '''
             Module(
                body=[
@@ -3885,11 +3879,11 @@ class ASTOptimizationTests(unittest.TestCase):
                 self.assertListEqual(constants, values)
 
     def test_match_case_not_folded_in_unoptimized_ast(self):
-        src = textwrap.dedent("""
+        src = d"""
             match a:
                 case 1+2j:
                     pass
-            """)
+            """
 
         unfolded = "MatchValue(value=BinOp(left=Constant(value=1), op=Add(), right=Constant(value=2j))"
         folded = "MatchValue(value=Constant(value=(1+2j)))"

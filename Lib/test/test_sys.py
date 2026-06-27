@@ -1285,11 +1285,11 @@ class SysModuleTest(unittest.TestCase):
 
     @support.requires_subprocess()
     def test_orig_argv(self):
-        code = textwrap.dedent('''
+        code = d'''
             import sys
             print(sys.argv)
             print(sys.orig_argv)
-        ''')
+            '''
         args = [sys.executable, '-I', '-X', 'utf8', '-c', code, 'arg']
         proc = subprocess.run(args, check=True, capture_output=True, text=True)
         expected = [
@@ -1984,14 +1984,14 @@ class SizeofTest(unittest.TestCase):
         # If the default displayhook doesn't take a strong reference
         # to sys.stderr the following code can crash. See bpo-43660
         # for more details.
-        code = textwrap.dedent('''
+        code = d'''
             import sys
             class MyStderr:
                 def write(self, s):
                     sys.stderr = None
             sys.stderr = MyStderr()
             1/0
-        ''')
+            '''
         rc, out, err = assert_python_failure('-c', code)
         self.assertEqual(out, b"")
         self.assertEqual(err, b"")
@@ -2174,12 +2174,10 @@ raise Exception("Remote script exception")
 
     def test_new_namespace_for_each_remote_exec(self):
         """Test that each remote_exec call gets its own namespace."""
-        script = textwrap.dedent(
-            """
+        script = d"""
             assert globals() is not __import__("__main__").__dict__
             print("Remote script executed successfully!")
             """
-        )
         returncode, stdout, stderr = self._run_remote_exec_test(script)
         self.assertEqual(returncode, 0)
         self.assertEqual(stderr, b"")
@@ -2264,8 +2262,7 @@ class TestSysJIT(unittest.TestCase):
 
     def test_jit_is_active(self):
         available = sys._jit.is_available()
-        script = textwrap.dedent(
-            """
+        script = d"""
             import _testcapi
             import _testinternalcapi
             import sys
@@ -2304,7 +2301,6 @@ class TestSysJIT(unittest.TestCase):
             frame_4_interpreter()
             assert sys._jit.is_active() is False
             """
-        )
         assert_python_ok("-c", script.format(enabled=False), PYTHON_JIT="0")
         assert_python_ok("-c", script.format(enabled=available), PYTHON_JIT="1")
 

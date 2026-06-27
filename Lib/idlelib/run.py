@@ -481,21 +481,21 @@ class MyRPCServer(rpc.RPCServer):
             thread.interrupt_main()
         except:
             erf = sys.__stderr__
-            print(textwrap.dedent(f"""
+            print(fd"""
             {'-'*40}
             Unhandled exception in user code execution server!'
             Thread: {threading.current_thread().name}
             IDLE Client Address: {client_address}
             Request: {request!r}
-            """), file=erf)
+            """, file=erf)
             traceback.print_exc(limit=-20, file=erf)
-            print(textwrap.dedent(f"""
+            print(fd"""
             *** Unrecoverable, server exiting!
 
             Users should never see this message; it is likely transient.
             If this recurs, report this with a copy of the message
             and an explanation of how to make it repeat.
-            {'-'*40}"""), file=erf)
+            {'-'*40}""", file=erf)
             quitting = True
             thread.interrupt_main()
 

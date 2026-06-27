@@ -2200,7 +2200,7 @@ class TestLoadSuperAttr(CheckEvents):
         return has
 
     def _super_method_call(self, optimized=False):
-        codestr = """
+        codestr = d"""
             class A:
                 def method(self, x):
                     return x
@@ -2215,7 +2215,7 @@ class TestLoadSuperAttr(CheckEvents):
             b = B()
             def f():
                 return b.method(1)
-        """
+            """
         d = self._exec_super(codestr, optimized)
         expected = [
             ('line', 'get_events', 10),
@@ -2244,7 +2244,7 @@ class TestLoadSuperAttr(CheckEvents):
         self.check_events(opt_func, recorders=self.RECORDERS, expected=opt_expected)
 
     def _super_method_call_error(self, optimized=False):
-        codestr = """
+        codestr = d"""
             class A:
                 def method(self, x):
                     return x
@@ -2266,7 +2266,7 @@ class TestLoadSuperAttr(CheckEvents):
                     pass
                 else:
                     assert False, "should have raised TypeError"
-        """
+            """
         d = self._exec_super(codestr, optimized)
         expected = [
             ('line', 'get_events', 10),
@@ -2295,7 +2295,7 @@ class TestLoadSuperAttr(CheckEvents):
         self.check_events(opt_func, recorders=self.RECORDERS, expected=opt_expected)
 
     def _super_attr(self, optimized=False):
-        codestr = """
+        codestr = d"""
             class A:
                 x = 1
 
@@ -2307,7 +2307,7 @@ class TestLoadSuperAttr(CheckEvents):
             b = B()
             def f():
                 return b.method()
-        """
+            """
         d = self._exec_super(codestr, optimized)
         expected = [
             ('line', 'get_events', 10),
@@ -2332,14 +2332,14 @@ class TestLoadSuperAttr(CheckEvents):
         self.check_events(opt_func, recorders=self.RECORDERS, expected=opt_expected)
 
     def test_vs_other_type_call(self):
-        code_template = textwrap.dedent("""
+        code_template = d"""
             class C:
                 def method(self):
                     return {cls}().__repr__{call}
             c = C()
             def f():
                 return c.method()
-        """)
+            """
 
         def get_expected(name, call_method, ns):
             repr_arg = 0 if name == "int" else sys.monitoring.MISSING

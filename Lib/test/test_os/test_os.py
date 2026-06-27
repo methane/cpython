@@ -23,7 +23,6 @@ import subprocess
 import sys
 import sysconfig
 import tempfile
-import textwrap
 import time
 import types
 import unittest
@@ -4716,7 +4715,7 @@ class PseudoterminalTests(unittest.TestCase):
         self.addCleanup(os.close, fd)
         self.addCleanup(os.close, fd2)
 
-        code = textwrap.dedent(f"""
+        code = fd"""
             import errno
             import os
             import test.support
@@ -4747,7 +4746,7 @@ class PseudoterminalTests(unittest.TestCase):
                 else:
                     os.close(fd3)
                     raise Exception("dup must fail")
-        """)
+            """
 
         filename = os_helper.TESTFN
         self.addCleanup(os_helper.unlink, os_helper.TESTFN)

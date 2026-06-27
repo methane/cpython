@@ -21,12 +21,12 @@ with test_tools.imports_under_tool("peg_generator"):
 
 class TestPegen(unittest.TestCase):
     def test_parse_grammar(self) -> None:
-        grammar_source = """
+        grammar_source = d"""
         start: sum NEWLINE
         sum: t1=term '+' t2=term { action } | term
         term: NUMBER
         """
-        expected = """
+        expected = d"""
         start: sum NEWLINE
         sum: term '+' term | term
         term: NUMBER
@@ -43,7 +43,7 @@ class TestPegen(unittest.TestCase):
         self.assertEqual(repr(rules["term"]), expected_repr)
 
     def test_repeated_rules(self) -> None:
-        grammar_source = """
+        grammar_source = d"""
         start: the_rule NEWLINE
         the_rule: 'b' NEWLINE
         the_rule: 'a' NEWLINE
@@ -52,10 +52,10 @@ class TestPegen(unittest.TestCase):
             parse_string(grammar_source, GrammarParser)
 
     def test_long_rule_str(self) -> None:
-        grammar_source = """
+        grammar_source = d"""
         start: zero | one | one zero | one one | one zero zero | one zero one | one one zero | one one one
         """
-        expected = """
+        expected = d"""
         start:
             | zero
             | one
@@ -426,7 +426,7 @@ class TestPegen(unittest.TestCase):
         )
 
     def test_left_recursive(self) -> None:
-        grammar_source = """
+        grammar_source = d"""
         start: expr NEWLINE
         expr: ('-' term | expr '+' term | term)
         term: NUMBER
@@ -513,7 +513,7 @@ class TestPegen(unittest.TestCase):
         self.assertEqual(node.strip(), "name ->  a")
 
     def test_nullable(self) -> None:
-        grammar_source = """
+        grammar_source = d"""
         start: sign NUMBER
         sign: ['-' | '+']
         """
@@ -524,7 +524,7 @@ class TestPegen(unittest.TestCase):
         self.assertIn(rules["sign"], nullables)
 
     def test_advanced_left_recursive(self) -> None:
-        grammar_source = """
+        grammar_source = d"""
         start: NUMBER | sign start
         sign: ['-']
         """
@@ -538,7 +538,7 @@ class TestPegen(unittest.TestCase):
         self.assertFalse(rules["sign"].left_recursive)
 
     def test_mutually_left_recursive(self) -> None:
-        grammar_source = """
+        grammar_source = d"""
         start: foo 'E'
         foo: bar 'A' | 'B'
         bar: foo 'C' | 'D'
@@ -639,7 +639,7 @@ class TestPegen(unittest.TestCase):
         # which fails, so it retreats to NAME,
         # which succeeds, so we end up just recognizing 'x',
         # and then start fails because there's no '=' after that.
-        grammar_source = """
+        grammar_source = d"""
         start: target '='
         target: maybe '+' | NAME
         maybe: maybe '-' | target
@@ -871,7 +871,7 @@ class TestPegen(unittest.TestCase):
         self.assertIn("expected (':' | ';')", e.exception.args[0])
 
     def test_unreachable_explicit(self) -> None:
-        source = """
+        source = d"""
         start: NAME { UNREACHABLE }
         """
         grammar = parse_string(source, GrammarParser)
@@ -883,7 +883,7 @@ class TestPegen(unittest.TestCase):
         self.assertIn("This is a test", out.getvalue())
 
     def test_unreachable_implicit1(self) -> None:
-        source = """
+        source = d"""
         start: NAME | invalid_input
         invalid_input: NUMBER { None }
         """
@@ -896,7 +896,7 @@ class TestPegen(unittest.TestCase):
         self.assertIn("This is a test", out.getvalue())
 
     def test_unreachable_implicit2(self) -> None:
-        source = """
+        source = d"""
         start: NAME | '(' invalid_input ')'
         invalid_input: NUMBER { None }
         """
@@ -909,7 +909,7 @@ class TestPegen(unittest.TestCase):
         self.assertIn("This is a test", out.getvalue())
 
     def test_unreachable_implicit3(self) -> None:
-        source = """
+        source = d"""
         start: NAME | invalid_input { None }
         invalid_input: NUMBER
         """
@@ -1037,8 +1037,7 @@ class TestGrammarVisualizer(unittest.TestCase):
         printer.print_grammar_ast(rules, printer=lines.append)
 
         output = "\n".join(lines)
-        expected_output = textwrap.dedent(
-            """\
+        expected_output = d"""
         └──Rule
            └──Rhs
               └──Alt
@@ -1047,7 +1046,6 @@ class TestGrammarVisualizer(unittest.TestCase):
                  └──NamedItem
                     └──StringLeaf("'b'")
         """
-        )
 
         self.assertEqual(output, expected_output)
 
@@ -1064,8 +1062,7 @@ class TestGrammarVisualizer(unittest.TestCase):
         printer.print_grammar_ast(rules, printer=lines.append)
 
         output = "\n".join(lines)
-        expected_output = textwrap.dedent(
-            """\
+        expected_output = d"""
         └──Rule
            └──Rhs
               └──Alt
@@ -1086,7 +1083,6 @@ class TestGrammarVisualizer(unittest.TestCase):
                  └──NamedItem
                     └──StringLeaf("'b'")
                         """
-        )
 
         self.assertEqual(output, expected_output)
 
@@ -1101,8 +1097,7 @@ class TestGrammarVisualizer(unittest.TestCase):
         printer.print_grammar_ast(rules, printer=lines.append)
 
         output = "\n".join(lines)
-        expected_output = textwrap.dedent(
-            """\
+        expected_output = d"""
         └──Rule
            └──Rhs
               └──Alt
@@ -1127,14 +1122,13 @@ class TestGrammarVisualizer(unittest.TestCase):
                                                      └──NamedItem
                                                         └──StringLeaf("'d'")
                                 """
-        )
 
         self.assertEqual(output, expected_output)
 
     def test_rule_flags(self) -> None:
         """Test the new rule flags syntax that accepts arbitrary lists of flags."""
         # Test grammar with various flag combinations
-        grammar_source = """
+        grammar_source = d"""
         start: simple_rule
 
         simple_rule (memo):

@@ -5,7 +5,6 @@ import io
 import os
 import subprocess
 import sys
-import textwrap
 import time
 import unittest
 from concurrent.futures.interpreter import BrokenInterpreterPool
@@ -463,7 +462,7 @@ class InterpreterPoolExecutorTest(
     @support.requires_subprocess()
     def test_import_interpreter_pool_executor(self):
         # Test the import behavior normally if _interpreters is unavailable.
-        code = textwrap.dedent("""
+        code = d"""
         import sys
         # Set it to None to emulate the case when _interpreter is unavailable.
         sys.modules['_interpreters'] = None
@@ -491,7 +490,7 @@ class InterpreterPoolExecutorTest(
             print('InterpreterPoolExecutor should not be imported!',
                   file=sys.stderr)
             sys.exit(1)
-        """)
+        """
 
         cmd = [sys.executable, '-c', code]
         p = subprocess.run(cmd, capture_output=True)

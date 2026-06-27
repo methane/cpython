@@ -108,12 +108,10 @@ class TestLazyImports(unittest.TestCase):
         )
 
     def test_add_subparser(self):
-        add_subparser = textwrap.dedent(
-            """
+        add_subparser = d"""
             parser = argparse.ArgumentParser()
             parser.add_subparsers(dest='command', required=False)
             """
-        )
         imported_modules = {"shutil"}
 
         import_helper.ensure_lazy_imports(
@@ -123,15 +121,13 @@ class TestLazyImports(unittest.TestCase):
         )
 
     def test_parse_args(self):
-        example_parser = textwrap.dedent(
-            """
+        example_parser = d"""
             parser = argparse.ArgumentParser(prog='PROG')
             parser.add_argument('-f', '--foo')
             parser.add_argument('bar')
             parser.parse_args(['BAR'])
             parser.parse_args(['BAR', '--foo', 'FOO'])
             """
-        )
         imported_modules = {"shutil"}
         import_helper.ensure_lazy_imports(
             "argparse",
@@ -2905,7 +2901,7 @@ class TestAddSubparsers(TestCase):
     def test_help(self):
         self.assertEqual(self.parser.format_usage(),
                          'usage: PROG [-h] [--foo] bar {1,2,3} ...\n')
-        self.assertEqual(self.parser.format_help(), textwrap.dedent('''\
+        self.assertEqual(self.parser.format_help(), d'''
             usage: PROG [-h] [--foo] bar {1,2,3} ...
 
             main description
@@ -2917,14 +2913,14 @@ class TestAddSubparsers(TestCase):
             options:
               -h, --help  show this help message and exit
               --foo       foo help
-            '''))
+            ''')
 
     def test_help_extra_prefix_chars(self):
         # Make sure - is still used for help if it is a non-first prefix char
         parser = self._get_parser(prefix_chars='+:-')
         self.assertEqual(parser.format_usage(),
                          'usage: PROG [-h] [++foo] bar {1,2,3} ...\n')
-        self.assertEqual(parser.format_help(), textwrap.dedent('''\
+        self.assertEqual(parser.format_help(), d'''
             usage: PROG [-h] [++foo] bar {1,2,3} ...
 
             main description
@@ -2936,7 +2932,7 @@ class TestAddSubparsers(TestCase):
             options:
               -h, --help  show this help message and exit
               ++foo       foo help
-            '''))
+            ''')
 
     def test_help_non_breaking_spaces(self):
         parser = ErrorRaisingArgumentParser(
@@ -2945,7 +2941,7 @@ class TestAddSubparsers(TestCase):
             "--non-breaking", action='store_false',
             help='help message containing non-breaking spaces shall not '
             'wrap\N{NO-BREAK SPACE}at non-breaking spaces')
-        self.assertEqual(parser.format_help(), textwrap.dedent('''\
+        self.assertEqual(parser.format_help(), d'''
             usage: PROG [-h] [--non-breaking]
 
             main description
@@ -2954,7 +2950,7 @@ class TestAddSubparsers(TestCase):
               -h, --help      show this help message and exit
               --non-breaking  help message containing non-breaking spaces shall not
                               wrap\N{NO-BREAK SPACE}at non-breaking spaces
-        '''))
+            ''')
 
     def test_help_blank(self):
         # Issue 24444
@@ -2963,7 +2959,7 @@ class TestAddSubparsers(TestCase):
         parser.add_argument(
             'foo',
             help='    ')
-        self.assertEqual(parser.format_help(), textwrap.dedent('''\
+        self.assertEqual(parser.format_help(), d'''
             usage: PROG [-h] foo
 
             main description
@@ -2972,14 +2968,14 @@ class TestAddSubparsers(TestCase):
               foo         \n
             options:
               -h, --help  show this help message and exit
-        '''))
+            ''')
 
         parser = ErrorRaisingArgumentParser(
             prog='PROG', description='main description')
         parser.add_argument(
             'foo', choices=[],
             help='%(choices)s')
-        self.assertEqual(parser.format_help(), textwrap.dedent('''\
+        self.assertEqual(parser.format_help(), d'''
             usage: PROG [-h] {}
 
             main description
@@ -2988,13 +2984,13 @@ class TestAddSubparsers(TestCase):
               {}          \n
             options:
               -h, --help  show this help message and exit
-        '''))
+            ''')
 
     def test_help_alternate_prefix_chars(self):
         parser = self._get_parser(prefix_chars='+:/')
         self.assertEqual(parser.format_usage(),
                          'usage: PROG [+h] [++foo] bar {1,2,3} ...\n')
-        self.assertEqual(parser.format_help(), textwrap.dedent('''\
+        self.assertEqual(parser.format_help(), d'''
             usage: PROG [+h] [++foo] bar {1,2,3} ...
 
             main description
@@ -3006,13 +3002,13 @@ class TestAddSubparsers(TestCase):
             options:
               +h, ++help  show this help message and exit
               ++foo       foo help
-            '''))
+            ''')
 
     def test_parser_command_help(self):
         self.assertEqual(self.command_help_parser.format_usage(),
                          'usage: PROG [-h] [--foo] bar {1,2,3} ...\n')
         self.assertEqual(self.command_help_parser.format_help(),
-                         textwrap.dedent('''\
+                         d'''
             usage: PROG [-h] [--foo] bar {1,2,3} ...
 
             main description
@@ -3027,7 +3023,7 @@ class TestAddSubparsers(TestCase):
             options:
               -h, --help  show this help message and exit
               --foo       foo help
-            '''))
+            ''')
 
     def assert_bad_help(self, context_type, func, *args, **kwargs):
         with self.assertRaisesRegex(ValueError, 'badly formed help string') as cm:
@@ -3064,7 +3060,7 @@ class TestAddSubparsers(TestCase):
         parser2 = subparsers.add_parser('2')
         self.assertEqual(parser.format_usage(),
                          'usage: PROG [-h] [--foo] bar {1,2} ...\n')
-        self.assertEqual(parser.format_help(), textwrap.dedent('''\
+        self.assertEqual(parser.format_help(), d'''
             usage: PROG [-h] [--foo] bar {1,2} ...
 
             main description
@@ -3080,7 +3076,7 @@ class TestAddSubparsers(TestCase):
               command help
 
               {1,2}       additional text
-            '''))
+            ''')
 
     def _test_subparser_help(self, args_str, expected_help):
         with self.assertRaises(ArgumentParserError) as cm:
@@ -3088,7 +3084,7 @@ class TestAddSubparsers(TestCase):
         self.assertEqual(expected_help, cm.exception.stdout)
 
     def test_subparser1_help(self):
-        self._test_subparser_help('5.0 1 -h', textwrap.dedent('''\
+        self._test_subparser_help('5.0 1 -h', d'''
             usage: PROG bar 1 [-h] [-w W] {a,b,c}
 
             1 description
@@ -3099,10 +3095,10 @@ class TestAddSubparsers(TestCase):
             options:
               -h, --help  show this help message and exit
               -w W        w help
-            '''))
+            ''')
 
     def test_subparser2_help(self):
-        self._test_subparser_help('5.0 2 -h', textwrap.dedent('''\
+        self._test_subparser_help('5.0 2 -h', d'''
             usage: PROG bar 2 [-h] [-y {1,2,3}] [z ...]
 
             2 description
@@ -3113,7 +3109,7 @@ class TestAddSubparsers(TestCase):
             options:
               -h, --help  show this help message and exit
               -y {1,2,3}  y help
-            '''))
+            ''')
 
     def test_alias_invocation(self):
         parser = self._get_parser(aliases=True)
@@ -3134,7 +3130,7 @@ class TestAddSubparsers(TestCase):
     def test_alias_help(self):
         parser = self._get_parser(aliases=True, subparser_help=True)
         self.maxDiff = None
-        self.assertEqual(parser.format_help(), textwrap.dedent("""\
+        self.assertEqual(parser.format_help(), d"""
             usage: PROG [-h] [--foo] bar COMMAND ...
 
             main description
@@ -3152,7 +3148,7 @@ class TestAddSubparsers(TestCase):
                                     1 help
                 2                   2 help
                 3                   3 help
-            """))
+            """)
 
 # ============
 # Groups tests
@@ -3353,7 +3349,7 @@ class TestParentParsers(TestCase):
         parents = [self.abcd_parent, self.wxyz_parent]
         parser = ErrorRaisingArgumentParser(prog='PROG', parents=parents)
         parser_help = parser.format_help()
-        self.assertEqual(parser_help, textwrap.dedent('''\
+        self.assertEqual(parser_help, d'''
             usage: PROG [-h] [-b B] [--d D] [--w W] [-y Y] a z
 
             positional arguments:
@@ -3370,7 +3366,7 @@ class TestParentParsers(TestCase):
 
             x:
               -y Y
-        '''))
+            ''')
 
     def test_groups_parents(self):
         parent = ErrorRaisingArgumentParser(add_help=False)
@@ -3386,7 +3382,7 @@ class TestParentParsers(TestCase):
             ['-y', 'Y', '-z', 'Z'])
 
         parser_help = parser.format_help()
-        self.assertEqual(parser_help, textwrap.dedent('''\
+        self.assertEqual(parser_help, d'''
             usage: PROG [-h] [-w W] [-x X] [-y Y | -z Z]
 
             options:
@@ -3399,7 +3395,7 @@ class TestParentParsers(TestCase):
 
               -w W
               -x X
-        '''))
+            ''')
 
     def test_wrong_type_parents(self):
         self.assertRaises(TypeError, ErrorRaisingArgumentParser, parents=[1])
@@ -3418,7 +3414,7 @@ class TestParentParsers(TestCase):
             ['-y', 'Y', '-z', 'Z'])
 
         parser_help = parser.format_help()
-        self.assertEqual(parser_help, textwrap.dedent('''\
+        self.assertEqual(parser_help, d'''
             usage: PROG [-h] [-w W] [-x X] [-y Y | -z Z]
 
             options:
@@ -3431,7 +3427,7 @@ class TestParentParsers(TestCase):
               -x X
               -y Y
               -z Z
-        '''))
+            ''')
 
 # ==============================
 # Mutually exclusive group tests
@@ -5036,10 +5032,10 @@ class TestHelpUsageNoWhitespaceCrash(TestCase):
         mutex = parser.add_mutually_exclusive_group()
         mutex.add_argument('--spam', help=argparse.SUPPRESS)
         parser.add_argument('--eggs-eggs-eggs-eggs-eggs-eggs')
-        usage = textwrap.dedent('''\
+        usage = d'''
         usage: PROG [-h]
                     [--eggs-eggs-eggs-eggs-eggs-eggs EGGS_EGGS_EGGS_EGGS_EGGS_EGGS]
-        ''')
+        '''
         self.assertEqual(parser.format_usage(), usage)
 
     def test_newline_in_metavar(self):
@@ -5052,7 +5048,7 @@ class TestHelpUsageNoWhitespaceCrash(TestCase):
                             help='installation targets',
                             nargs='+',
                             metavar='\n'.join(mapping))
-        usage = textwrap.dedent('''\
+        usage = d'''
         usage: 11111111111111 [-h] [-v]
                               123456
         12345
@@ -5061,7 +5057,7 @@ class TestHelpUsageNoWhitespaceCrash(TestCase):
         12345
         12345
         123 ...]
-        ''')
+        '''
         self.assertEqual(parser.format_usage(), usage)
 
     def test_empty_metavar_required_arg(self):
@@ -5100,11 +5096,11 @@ class TestHelpUsageNoWhitespaceCrash(TestCase):
         g.add_argument('--op6', nargs=3)
         g.add_argument('--op7', metavar=('MET1', 'MET2', 'MET3'), nargs=3)
 
-        usage = textwrap.dedent('''\
+        usage = d'''
         usage: PROG [-h] [--op1 [MET] | --op2 [MET1 [MET2 ...]] | --op3 [OP3 ...] |
                     --op4 MET1 [MET2 ...] | --op5 OP5 [OP5 ...] | --op6 OP6 OP6 OP6 |
                     --op7 MET1 MET2 MET3]
-        ''')
+        '''
         self.assertEqual(parser.format_usage(), usage)
 
     def test_mutex_groups_with_mixed_optionals_positionals_wrap(self):
@@ -5119,11 +5115,11 @@ class TestHelpUsageNoWhitespaceCrash(TestCase):
         g.add_argument('-y', '--yet-another-long-option', nargs='?')
         g.add_argument('positional', nargs='?')
 
-        usage = textwrap.dedent('''\
+        usage = d'''
         usage: PROG [-h]
                     [-v | -q | -x [EXTRA_LONG_OPTION_NAME] |
                     -y [YET_ANOTHER_LONG_OPTION] | positional]
-        ''')
+        '''
         self.assertEqual(parser.format_usage(), usage)
 
 
@@ -5746,7 +5742,7 @@ class TestHelpCustomHelpFormatter(TestCase):
         parser.add_argument('spam', help="spam help")
 
         parser_help = parser.format_help()
-        self.assertEqual(parser_help, textwrap.dedent('''\
+        self.assertEqual(parser_help, d'''
             usage: PROG [-h] [+f FOO] spam
 
             positional arguments:
@@ -5755,7 +5751,7 @@ class TestHelpCustomHelpFormatter(TestCase):
             options:
                  -h, --help     show this help message and exit
                  +f, ++foo FOO  foo help
-        '''))
+            ''')
 
     def test_custom_formatter_class(self):
         class CustomFormatter(argparse.RawTextHelpFormatter):
@@ -5771,7 +5767,7 @@ class TestHelpCustomHelpFormatter(TestCase):
         parser.add_argument('spam', help="spam help")
 
         parser_help = parser.format_help()
-        self.assertEqual(parser_help, textwrap.dedent('''\
+        self.assertEqual(parser_help, d'''
             usage: PROG [-h] [+f FOO] spam
 
             positional arguments:
@@ -5780,7 +5776,7 @@ class TestHelpCustomHelpFormatter(TestCase):
             options:
                  -h, --help     show this help message and exit
                  +f, ++foo FOO  foo help
-        '''))
+            ''')
 
     def test_usage_long_subparser_command(self):
         """Test that subparser commands are formatted correctly in help"""
@@ -5805,7 +5801,7 @@ class TestHelpCustomHelpFormatter(TestCase):
                                   help="command that does something")
 
         parser_help = parent_parser.format_help()
-        self.assertEqual(parser_help, textwrap.dedent('''\
+        self.assertEqual(parser_help, d'''
             usage: PROG [-h] CMD ...
 
             options:
@@ -5816,7 +5812,7 @@ class TestHelpCustomHelpFormatter(TestCase):
                 add                  add something
                 remove               remove something
                 a-very-long-command  command that does something
-        '''))
+            ''')
 
     def test_direct_formatter_instantiation(self):
         formatter = argparse.HelpFormatter(prog="program")
@@ -6040,24 +6036,24 @@ class TestConflictHandling(TestCase):
 
         parser.add_argument('-x', help='OLD X')
         parser.add_argument('-x', help='NEW X')
-        self.assertEqual(parser.format_help(), textwrap.dedent('''\
+        self.assertEqual(parser.format_help(), d'''
             usage: PROG [-h] [-x X]
 
             options:
               -h, --help  show this help message and exit
               -x X        NEW X
-            '''))
+            ''')
 
         parser.add_argument('--spam', metavar='OLD_SPAM')
         parser.add_argument('--spam', metavar='NEW_SPAM')
-        self.assertEqual(parser.format_help(), textwrap.dedent('''\
+        self.assertEqual(parser.format_help(), d'''
             usage: PROG [-h] [-x X] [--spam NEW_SPAM]
 
             options:
               -h, --help       show this help message and exit
               -x X             NEW X
               --spam NEW_SPAM
-            '''))
+            ''')
 
     def test_subparser_conflict(self):
         parser = argparse.ArgumentParser()
@@ -7118,14 +7114,14 @@ class TestWrappingMetavar(TestCase):
     @force_not_colorized
     def test_help_with_metavar(self):
         help_text = self.parser.format_help()
-        self.assertEqual(help_text, textwrap.dedent('''\
+        self.assertEqual(help_text, d'''
             usage: this_is_spammy_prog_with_a_long_name_sorry_about_the_name
                    [-h] [--proxy <http[s]://example:1234>]
 
             options:
               -h, --help            show this help message and exit
               --proxy <http[s]://example:1234>
-            '''))
+            ''')
 
 
 class TestExitOnError(TestCase):
@@ -7283,11 +7279,11 @@ class TestExitOnError(TestCase):
 
 @force_not_colorized_test_class
 class TestProgName(TestCase):
-    source = textwrap.dedent('''\
+    source = d'''
         import argparse
         parser = argparse.ArgumentParser()
         parser.parse_args()
-    ''')
+        '''
 
     def setUp(self):
         self.dirname = 'package' + os_helper.FS_NONASCII
@@ -7485,8 +7481,7 @@ class TestColorized(TestCase):
         # Assert
         self.assertEqual(
             help_text,
-            textwrap.dedent(
-                f"""\
+            fd"""
                 {heading}usage: {reset}{prog}PROG{reset} [{short}-h{reset}] [{short}-v{reset} | {short}-q{reset}] [{short}-o{reset}] [{long}--optional2 {label}OPTIONAL2{reset}] [{long}--optional3 {label}{{X,Y,Z}}{reset}]
                             [{long}--optional4 {label}{{X,Y,Z}}{reset}] [{long}--optional5 {label}{{X,Y,Z}}{reset}] [{long}--optional6 {label}{{X,Y,Z}}{reset}]
                             [{short}-p {label}{{Aaaaa,Bbbbb,Ccccc,Ddddd}}{reset}] [{long}--optional8 {label}X{reset}] [{short}+f {label}F{reset}] [{long}++bar {label}BAR{reset}]
@@ -7526,8 +7521,7 @@ class TestColorized(TestCase):
                   {pos_b}{{sub1,sub2}}{reset}           additional help
                     {pos_b}sub1{reset}                sub1 help
                     {pos_b}sub2{reset}                sub2 help
-                """
-            ),
+                """,
         )
 
     def test_argparse_color_mutually_exclusive_group_usage(self):
@@ -7571,13 +7565,11 @@ class TestColorized(TestCase):
         # Assert
         self.assertEqual(
             help_text,
-            textwrap.dedent(
-                f"""\
-                {heading}usage: {reset}{usage}[prefix] {prog}PROG{reset}{usage} [suffix]{reset}
+            fd"""
+            {heading}usage: {reset}{usage}[prefix] {prog}PROG{reset}{usage} [suffix]{reset}
 
-                Test prog and usage colors
-                """
-            ),
+            Test prog and usage colors
+            """,
         )
 
     def test_custom_formatter_function(self):
@@ -7605,7 +7597,7 @@ class TestColorized(TestCase):
         reset = self.theme.reset
 
         parser_help = parser.format_help()
-        self.assertEqual(parser_help, textwrap.dedent(f'''\
+        self.assertEqual(parser_help, fd'''
             {heading}usage: {reset}{prog}PROG{reset} [{short}-h{reset}] [{short}+f {label}FOO{reset}] {pos}spam{reset}
 
             {heading}positional arguments:{reset}
@@ -7614,7 +7606,7 @@ class TestColorized(TestCase):
             {heading}options:{reset}
                  {short_b}-h{reset}, {long_b}--help{reset}     show this help message and exit
                  {short_b}+f{reset}, {long_b}++foo{reset} {label_b}FOO{reset}  foo help
-        '''))
+            ''')
 
     def test_custom_formatter_class(self):
         class CustomFormatter(argparse.RawTextHelpFormatter):
@@ -7642,7 +7634,7 @@ class TestColorized(TestCase):
         reset = self.theme.reset
 
         parser_help = parser.format_help()
-        self.assertEqual(parser_help, textwrap.dedent(f'''\
+        self.assertEqual(parser_help, fd'''
             {heading}usage: {reset}{prog}PROG{reset} [{short}-h{reset}] [{short}+f {label}FOO{reset}] {pos}spam{reset}
 
             {heading}positional arguments:{reset}
@@ -7651,7 +7643,7 @@ class TestColorized(TestCase):
             {heading}options:{reset}
                  {short_b}-h{reset}, {long_b}--help{reset}     show this help message and exit
                  {short_b}+f{reset}, {long_b}++foo{reset} {label_b}FOO{reset}  foo help
-        '''))
+            ''')
 
     def test_subparser_prog_is_stored_without_color(self):
         parser = argparse.ArgumentParser(prog='complex', color=True)

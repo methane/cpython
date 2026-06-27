@@ -1,4 +1,3 @@
-import textwrap
 import unittest
 from test import support
 
@@ -53,14 +52,14 @@ class CFunctionTests(DebuggerTests):
         ):
             with self.subTest(f'{obj}.{func_name}'):
                 call = f'{obj}.{func_name}({args})'
-                cmd = textwrap.dedent(f'''
+                cmd = fd'''
                     import _testcapi
                     def foo():
                         {call}
                     def bar():
                         foo()
                     bar()
-                ''')
+                    '''
                 if support.verbose:
                     print(f'  test call: {call}', flush=True)
 

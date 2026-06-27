@@ -14,7 +14,6 @@ import types
 import weakref
 import traceback
 import sys
-import textwrap
 import unittest
 from unittest.mock import Mock
 from typing import ClassVar, Any, List, Union, Tuple, Dict, Generic, TypeVar, Optional, Protocol, DefaultDict
@@ -2410,15 +2409,13 @@ class TestDocString(unittest.TestCase):
         # See: https://github.com/python/cpython/issues/128184
         ns = {}
         exec(
-            textwrap.dedent(
-                """
+            d"""
                 from dataclasses import dataclass
 
                 @dataclass
                 class C:
                     def __init__(self, x: X, num: int) -> None: ...
                 """,
-            ),
             ns,
         )
 

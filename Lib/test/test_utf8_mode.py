@@ -5,7 +5,6 @@ Test the implementation of the PEP 540: the UTF-8 Mode.
 import locale
 import subprocess
 import sys
-import textwrap
 import unittest
 from test import support
 from test.support.script_helper import assert_python_ok, assert_python_failure
@@ -98,11 +97,11 @@ class UTF8ModeTests(unittest.TestCase):
                       out.rstrip())
 
     def test_filesystemencoding(self):
-        code = textwrap.dedent('''
+        code = d'''
             import sys
             print("{}/{}".format(sys.getfilesystemencoding(),
                                  sys.getfilesystemencodeerrors()))
-        ''')
+            '''
 
         if MS_WINDOWS:
             expected = 'utf-8/surrogatepass'
@@ -121,12 +120,12 @@ class UTF8ModeTests(unittest.TestCase):
             self.assertEqual(out, 'mbcs/replace')
 
     def test_stdio(self):
-        code = textwrap.dedent('''
+        code = d'''
             import sys
             print(f"stdin: {sys.stdin.encoding}/{sys.stdin.errors}")
             print(f"stdout: {sys.stdout.encoding}/{sys.stdout.errors}")
             print(f"stderr: {sys.stderr.encoding}/{sys.stderr.errors}")
-        ''')
+            '''
 
         out = self.get_output('-X', 'utf8', '-c', code,
                               PYTHONIOENCODING='')
@@ -151,12 +150,12 @@ class UTF8ModeTests(unittest.TestCase):
                           'stderr: utf-8/backslashreplace'])
 
     def test_io(self):
-        code = textwrap.dedent('''
+        code = d'''
             import sys
             filename = sys.argv[1]
             with open(filename) as fp:
                 print(f"{fp.encoding}/{fp.errors}")
-        ''')
+            '''
         filename = __file__
 
         out = self.get_output('-c', code, filename, PYTHONUTF8='1')
@@ -171,13 +170,13 @@ class UTF8ModeTests(unittest.TestCase):
             args.append(f'encoding={encoding!r}')
         if errors:
             args.append(f'errors={errors!r}')
-        code = textwrap.dedent('''
+        code = d'''
             import sys
             from %s import open
             filename = sys.argv[1]
             with open(filename, %s) as fp:
                 print(f"{fp.encoding}/{fp.errors}")
-        ''') % (module, ', '.join(args))
+            ''' % (module, ', '.join(args))
         out = self.get_output('-c', code, filename,
                               PYTHONUTF8='1')
 

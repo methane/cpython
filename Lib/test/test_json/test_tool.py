@@ -2,7 +2,6 @@ import errno
 import pathlib
 import os
 import sys
-import textwrap
 import unittest
 import subprocess
 
@@ -25,7 +24,7 @@ class TestMain(unittest.TestCase):
            """
     module = 'json'
 
-    expect_without_sort_keys = textwrap.dedent("""\
+    expect_without_sort_keys = d"""
     [
         [
             "blorpie"
@@ -45,9 +44,9 @@ class TestMain(unittest.TestCase):
             "morefield": false
         }
     ]
-    """)
+    """
 
-    expect = textwrap.dedent("""\
+    expect = d"""
     [
         [
             "blorpie"
@@ -67,14 +66,14 @@ class TestMain(unittest.TestCase):
             "field": "yes"
         }
     ]
-    """)
+    """
 
-    jsonlines_raw = textwrap.dedent("""\
+    jsonlines_raw = d"""
     {"ingredients":["frog", "water", "chocolate", "glucose"]}
     {"ingredients":["chocolate","steel bolts"]}
-    """)
+    """
 
-    jsonlines_expect = textwrap.dedent("""\
+    jsonlines_expect = d"""
     {
         "ingredients": [
             "frog",
@@ -89,7 +88,7 @@ class TestMain(unittest.TestCase):
             "steel bolts"
         ]
     }
-    """)
+    """
 
     @force_not_colorized
     def test_stdin_stdout(self):
@@ -115,11 +114,11 @@ class TestMain(unittest.TestCase):
 
     def test_non_ascii_infile(self):
         data = '{"msg": "\u3053\u3093\u306b\u3061\u306f"}'
-        expect = textwrap.dedent('''\
+        expect = d'''
         {
             "msg": "\\u3053\\u3093\\u306b\\u3061\\u306f"
         }
-        ''').encode()
+        '''.encode()
 
         infile = self._create_infile(data)
         rc, out, err = assert_python_ok('-m', self.module, infile,
@@ -185,12 +184,12 @@ class TestMain(unittest.TestCase):
     @force_not_colorized
     def test_indent(self):
         input_ = '[1, 2]'
-        expect = textwrap.dedent('''\
+        expect = d'''
         [
           1,
           2
         ]
-        ''')
+        '''
         args = sys.executable, '-m', self.module, '--indent', '2'
         process = subprocess.run(args, input=input_, capture_output=True, text=True, check=True)
         self.assertEqual(process.stdout, expect)

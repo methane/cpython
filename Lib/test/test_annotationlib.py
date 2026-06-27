@@ -1,6 +1,5 @@
 """Tests for the annotations module."""
 
-import textwrap
 import annotationlib
 import builtins
 import collections
@@ -1823,14 +1822,14 @@ class TestGetAnnotateFromClassNamespace(unittest.TestCase):
             def __annotate__(format):
                 return {}
 
-        code = """
+        code = d"""
             from __future__ import annotations
 
             class HasFutureAnnotations(metaclass=Meta):
                 expected_annotate = False
                 a: int
-        """
-        exec(textwrap.dedent(code), {"Meta": Meta})
+            """
+        exec(code, {"Meta": Meta})
 
 
 class TestTypeRepr(unittest.TestCase):

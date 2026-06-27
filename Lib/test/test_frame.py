@@ -2,7 +2,6 @@ import copy
 import operator
 import re
 import sys
-import textwrap
 import threading
 import unittest
 import weakref
@@ -714,7 +713,7 @@ class TestIncompleteFrameAreInvisible(unittest.TestCase):
 
     def test_issue95818(self):
         # See GH-95818 for details
-        code = textwrap.dedent(f"""
+        code = fd"""
             import gc
 
             gc.set_threshold(1,1,1)
@@ -731,7 +730,7 @@ class TestIncompleteFrameAreInvisible(unittest.TestCase):
             del fd
             del l
             gen()
-        """)
+            """
         assert_python_ok("-c", code)
 
     @support.cpython_only

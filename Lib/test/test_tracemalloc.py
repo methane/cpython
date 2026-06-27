@@ -1,7 +1,6 @@
 import contextlib
 import os
 import sys
-import textwrap
 import tracemalloc
 import unittest
 from unittest.mock import patch
@@ -1121,7 +1120,7 @@ class TestCAPI(unittest.TestCase):
         _testcapi.tracemalloc_track_race()
 
     def test_late_untrack(self):
-        code = textwrap.dedent(f"""
+        code = fd"""
             from test import support
             import tracemalloc
             import _testcapi
@@ -1140,7 +1139,7 @@ class TestCAPI(unittest.TestCase):
             tracemalloc.start()
             obj = Tracked(domain, 1024 * 1024)
             support.late_deletion(obj)
-        """)
+            """
         assert_python_ok("-c", code)
 
 

@@ -9,7 +9,6 @@ import signal
 import subprocess
 import sys
 import tempfile
-import textwrap
 import unittest
 import warnings
 from test.support import (
@@ -855,11 +854,9 @@ class TestExit(unittest.TestCase):
         with self.tmp_path() as tmp:
             self.ham = ham = tmp / "ham.py"
             ham.write_text(
-                textwrap.dedent(
-                    """\
+                d"""
                     raise KeyboardInterrupt
                     """
-                )
             )
             super().run(*args, **kwargs)
 
@@ -878,12 +875,10 @@ class TestExit(unittest.TestCase):
         tmp = self.ham.parent
         run_module = tmp / "run_module.py"
         run_module.write_text(
-            textwrap.dedent(
-                """\
+            d"""
                 import runpy
                 runpy.run_module("ham")
                 """
-            )
         )
         self.assertSigInt([run_module], cwd=tmp)
 
@@ -891,12 +886,10 @@ class TestExit(unittest.TestCase):
         tmp = self.ham.parent
         run_module_as_main = tmp / "run_module_as_main.py"
         run_module_as_main.write_text(
-            textwrap.dedent(
-                """\
+            d"""
                 import runpy
                 runpy._run_module_as_main("ham")
                 """
-            )
         )
         self.assertSigInt([run_module_as_main], cwd=tmp)
 

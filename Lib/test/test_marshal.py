@@ -8,7 +8,6 @@ import sys
 import unittest
 import os
 import types
-import textwrap
 
 try:
     import _testcapi
@@ -171,7 +170,7 @@ class CodeTestCase(unittest.TestCase):
         # Make sure when demarshalling objects with `-X no_debug_ranges`
         # that the columns are None.
         co = ExceptionTestCase.test_exceptions.__code__
-        code = textwrap.dedent("""
+        code = d"""
         import sys
         import marshal
         with open(sys.argv[1], 'rb') as f:
@@ -179,7 +178,7 @@ class CodeTestCase(unittest.TestCase):
             positions = list(co.co_positions())
             assert positions[0][2] is None
             assert positions[0][3] is None
-        """)
+        """
 
         try:
             with open(os_helper.TESTFN, 'wb') as f:

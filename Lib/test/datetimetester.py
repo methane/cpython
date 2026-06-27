@@ -12,7 +12,6 @@ import random
 import re
 import struct
 import sys
-import textwrap
 import unittest
 import warnings
 
@@ -7400,7 +7399,7 @@ class CapiTest(unittest.TestCase):
         else:
             extension_loader = "ExtensionFileLoader"
 
-        script = textwrap.dedent(f"""
+        script = fd"""
             if {_interpreters is None}:
                 import _testcapi as module
                 module.test_datetime_capi()
@@ -7424,7 +7423,7 @@ class CapiTest(unittest.TestCase):
             run(module.datetime_check_time,     _datetime.time(12, 30))
             run(module.datetime_check_delta,    _datetime.timedelta(1))
             run(module.datetime_check_tzinfo,   _datetime.tzinfo())
-        """)
+            """
         if _interpreters is None:
             ret = support.run_in_subinterp(script)
             self.assertEqual(ret, 0)
@@ -7445,7 +7444,7 @@ class ExtensionModuleTests(unittest.TestCase):
     @support.cpython_only
     def test_gh_120161(self):
         with self.subTest('simple'):
-            script = textwrap.dedent("""
+            script = d"""
                 import datetime
                 from _ast import Tuple
                 f = lambda: None
@@ -7453,11 +7452,11 @@ class ExtensionModuleTests(unittest.TestCase):
 
                 class tzutc(datetime.tzinfo):
                     pass
-                """)
+                """
             script_helper.assert_python_ok('-c', script)
 
         with self.subTest('complex'):
-            script = textwrap.dedent("""
+            script = d"""
                 import asyncio
                 import datetime
                 from typing import Type
@@ -7474,12 +7473,12 @@ class ExtensionModuleTests(unittest.TestCase):
                 def pickle_fake_date(datetime_) -> Type[FakeDate]:
                     # A pickle function for FakeDate
                     return FakeDate
-                """)
+                """
             script_helper.assert_python_ok('-c', script)
 
     def test_update_type_cache(self):
         # gh-120782
-        script = textwrap.dedent("""
+        script = d"""
             import sys
             for i in range(5):
                 import _datetime
@@ -7506,7 +7505,7 @@ class ExtensionModuleTests(unittest.TestCase):
                 assert isinstance(_datetime.timezone.max, _datetime.tzinfo)
                 assert isinstance(_datetime.timezone.utc, _datetime.tzinfo)
                 del sys.modules['_datetime']
-            """)
+            """
         script_helper.assert_python_ok('-c', script)
 
     def test_concurrent_initialization_subinterpreter(self):

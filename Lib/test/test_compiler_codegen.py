@@ -1,5 +1,4 @@
 
-import textwrap
 from test.support.bytecode_helper import CodegenTestCase
 
 # Tests for the code-generation stage of the compiler.
@@ -68,10 +67,10 @@ class IsolatedCodeGenTests(CodegenTestCase):
         self.codegen_test(snippet, expected)
 
     def test_function(self):
-        snippet = textwrap.dedent("""
+        snippet = d"""
             def f(x):
                 return x + 42
-        """)
+            """
         expected = [
             # Function definition
             ('RESUME', 0),
@@ -95,7 +94,7 @@ class IsolatedCodeGenTests(CodegenTestCase):
         self.codegen_test(snippet, expected)
 
     def test_nested_functions(self):
-        snippet = textwrap.dedent("""
+        snippet = d"""
             def f():
                 def h():
                     return 12
@@ -105,7 +104,7 @@ class IsolatedCodeGenTests(CodegenTestCase):
                     z = 3
                     u = 4
                     return 42
-        """)
+            """
         expected = [
             # Function definition
             ('RESUME', 0),
