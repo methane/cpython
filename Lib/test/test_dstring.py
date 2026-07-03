@@ -21,12 +21,12 @@ def db(s):
     else:
         return eval(f'db"""{s}"""')
 
-def fd(s, globals=None):
-    """Helper function to evaluate fd-strings."""
+def df(s, globals=None):
+    """Helper function to evaluate df-strings."""
     if '"""' in s:
-        return eval(f"fd'''{s}'''", globals=globals)
+        return eval(f"df'''{s}'''", globals=globals)
     else:
-        return eval(f'fd"""{s}"""', globals=globals)
+        return eval(f'df"""{s}"""', globals=globals)
 
 
 
@@ -126,14 +126,33 @@ class DStringTestCase(unittest.TestCase):
     """
         self.check_dbstring(source, "hello\n\nworld\n")
 
-        # Lines with only whitespace also have their indentation removed.
+        # Blank lines are normalized to single newlines, even when they
+        # are longer than the common indentation.
         source = """
 ....hello
 ..
 ......
 ....world
 ....""".replace('.', ' ')
-        self.check_dbstring(source, "hello\n\n  \nworld\n")
+        self.check_dbstring(source, "hello\n\n\nworld\n")
+
+        # A blank line that does not match the common indentation is not
+        # an error; it is just normalized to an empty line.
+        source = """
+....hello
+\t
+....world
+....""".replace('.', ' ')
+        self.check_dbstring(source, "hello\n\nworld\n")
+
+        # Blank lines are normalized even when there is no common
+        # indentation.
+        source = """
+hello
+..
+world
+""".replace('.', ' ')
+        self.check_dbstring(source, "hello\n\nworld\n")
 
         # Line continuation with backslash works as usual.
         # But you cannot put a backslash right after the opening quotes.
@@ -159,7 +178,7 @@ class DStringTestCase(unittest.TestCase):
 
     def test_dbstring_non_ascii_error(self):
         with self.assertRaisesRegex(SyntaxError, "bytes can only contain ASCII literal characters"):
-            eval('db"""\n  \u00e9\n  """')
+            db('\n  \u00e9\n  ')
 
     def test_concat_bytes_and_nonbytes_error(self):
         exprs = [
@@ -176,26 +195,26 @@ class DStringFStringInteractionTestCase(unittest.TestCase):
                 with self.assertRaisesRegex(exception_type, regex):
                     eval(str)
 
-    def test_fdstring(self):
+    def test_dfstring(self):
         g = {"world": 42}
 
         source = r"""
             Hello
               {world}
             """
-        self.assertEqual(fd(source, globals=g), "Hello\n  42\n")
+        self.assertEqual(df(source, globals=g), "Hello\n  42\n")
 
         source = r"""
             Hello
           {world}
             """
-        self.assertEqual(fd(source, globals=g), "  Hello\n42\n  ")
+        self.assertEqual(df(source, globals=g), "  Hello\n42\n  ")
 
         source = r"""
             Hello {world} Lorum
             ipsum dolor sit amet,
             """
-        self.assertEqual(fd(source, globals=g), "Hello 42 Lorum\nipsum dolor sit amet,\n")
+        self.assertEqual(df(source, globals=g), "Hello 42 Lorum\nipsum dolor sit amet,\n")
 
     def test_missing_newline_in_f_variants(self):
         exprs = [
@@ -204,22 +223,71 @@ class DStringFStringInteractionTestCase(unittest.TestCase):
         ]
         self.assertAllRaise(SyntaxError, "d-string must start with a newline", exprs)
 
-    def test_fdstring_conversion_and_format(self):
+    def test_dfstring_conversion_and_format(self):
         g = {"x": 3.14159, "name": "Alice"}
 
         source = r"""
             {x:.2f} {name!r}
             """
-        self.assertEqual(fd(source, globals=g), "3.14 'Alice'\n")
+        self.assertEqual(df(source, globals=g), "3.14 'Alice'\n")
 
         source = r"""
             {x=}
             """
-        self.assertEqual(fd(source, globals=g), "x=3.14159\n")
+        self.assertEqual(df(source, globals=g), "x=3.14159\n")
 
     def test_concat_with_fstring(self):
-        expr = 'd"""\n    hello\n    """ f"world"'
+        expr = r'''d"""
+    hello
+    """ f"world"'''
         self.assertEqual(eval(expr), "hello\nworld")
+
+    def test_blank_line_normalization(self):
+        # Blank lines are normalized to single newlines, even when their
+        # whitespace doesn't match the common indentation.
+        self.assertEqual(df('\n    foo\n\t\n    bar {1}\n    '), "foo\n\nbar 1\n")
+
+    def test_multiline_expression_affects_indent(self):
+        # A line starting inside a replacement field also takes part in
+        # the common indentation calculation.
+        self.assertEqual(df(r'''
+    Hello {1 +
+   2}
+    '''), " Hello 3\n ")
+
+    def test_multiline_format_spec(self):
+        class Spec:
+            def __format__(self, spec):
+                return spec
+
+        # Lines inside a multi-line format spec are dedented too.
+        self.assertEqual(df(r'''
+    {s:>6
+    }
+    ''', globals={"s": Spec()}), ">6\n\n")
+
+        # Nested replacement fields in the format spec keep working.
+        self.assertEqual(df(r'''
+    {s:{"a"}b
+    c}
+    ''', globals={"s": Spec()}), "ab\nc\n")
+
+    def test_multiline_debug_text(self):
+        # The static text of a debug expression spanning multiple lines
+        # is dedented too.
+        self.assertEqual(df(r'''
+    {1 +
+    1=}
+    '''), "1 +\n1=2\n")
+
+    def test_nested_string_lines_affect_indent(self):
+        # Physical lines inside nested string literals in replacement
+        # fields are not excluded from the common indentation calculation.
+        self.assertEqual(df(r"""
+    {x or '''
+foo'''}
+    bar
+    """, globals={"x": ""}), "    \nfoo\n    bar\n    ")
 
 
 class DStringTStringInteractionTestCase(unittest.TestCase, TStringBaseCase):
@@ -244,6 +312,17 @@ class DStringTStringInteractionTestCase(unittest.TestCase, TStringBaseCase):
     def test_drtstring_raw_content(self):
         t = eval('drt"""\n    keep\\n\n    """')
         self.assertTStringEqual(t, ("keep\\n\n",), ())
+
+    def test_multiline_expression_text(self):
+        # The captured expression text of a multi-line interpolation is
+        # dedented too.
+        t = eval('dt"""\n    {1 +\n    1}\n    """')
+        self.assertTStringEqual(t, ("", "\n"), [(2, "1 +\n1")])
+
+    def test_multiline_format_spec(self):
+        # Lines inside a multi-line format spec are dedented too.
+        t = eval('dt"""\n    {1:>6\n    }\n    """')
+        self.assertEqual(t.interpolations[0].format_spec, ">6\n")
 
     def test_concat_with_tstring_is_rejected(self):
         exprs = [

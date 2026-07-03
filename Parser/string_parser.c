@@ -247,18 +247,10 @@ _PyPegen_decode_string(Parser *p, int raw, const char *s, size_t len, Token *t)
     return decode_unicode_with_escapes(p, s, len, t);
 }
 
-/* defined in unicodeobject.c */
-extern Py_ssize_t
-_Py_search_longest_common_leading_whitespace(
-    const char *const src,
-    const char *const end,
-    const char **output
-    );
-
 // Dedent d-string and return result as a bytes.
 static PyObject*
 _PyPegen_dedent_string(Parser *p, const char *s, Py_ssize_t len,
-                       const char *indent, Py_ssize_t indent_len, int lineno)
+                       const char *indent, Py_ssize_t indent_len)
 {
     PyBytesWriter *w = PyBytesWriter_Create(0);
     if (w == NULL) {
@@ -266,31 +258,29 @@ _PyPegen_dedent_string(Parser *p, const char *s, Py_ssize_t len,
     }
 
     const char *end = s + len;
-    for (; s < end; lineno++) {
-        Py_ssize_t i;
-        for (i = 0; i < indent_len; i++) {
-            if (s[i] != indent[i]) {
-                if (s[i] == '\n') {
-                    break; // empty line
-                }
-                PyBytesWriter_Discard(w);
-                RAISE_ERROR_KNOWN_LOCATION(p, PyExc_IndentationError, lineno, i, lineno, i+1,
-                    "d-string missing valid indentation");
-                return NULL;
-            }
+    while (s < end) {
+        // A blank line (whitespace-only line with a newline) is normalized
+        // to a single newline. The last line (before the closing quotes)
+        // has no newline and is never considered blank.
+        const char *q = s;
+        while (q < end && (*q == ' ' || *q == '\t')) {
+            q++;
         }
-
-        if (s[i] == '\n') {  // found an empty line with newline.
+        if (q < end && *q == '\n') {
             if (PyBytesWriter_WriteBytes(w, "\n", 1) < 0) {
                 PyBytesWriter_Discard(w);
                 return NULL;
             }
-            s += i+1;
+            s = q + 1;
             continue;
         }
 
-        // found a indented line. let's dedent it.
-        s += i;
+        // A non-blank line. The common indent was computed from all lines
+        // including the closing quotes line, so it is always a prefix of
+        // the leading whitespace of this line.
+        assert(q - s >= indent_len);
+        assert(memcmp(s, indent, (size_t)indent_len) == 0);
+        s += indent_len;
         const char *line_end = memchr(s, '\n', end - s);
         if (line_end == NULL) {
             line_end = end; // last line without newline
@@ -419,20 +409,19 @@ _PyPegen_parse_string(Parser *p, Token *t)
         // for indent calculation.
         const char *end = s + len;
         assert(*end == '"' || *end == '\''); // end[0:3] is the trailing quotes
-        const char *indent;
+        const char *indent = "";
         Py_ssize_t indent_len = _Py_search_longest_common_leading_whitespace(s+1, end+1, &indent);
 
         s++; len--; // skip the first newline
-        if (indent_len > 0) {
-            // dedent the string
-            dedent_bytes = _PyPegen_dedent_string(p, s, len, indent, indent_len, t->lineno + 1);
-            if (dedent_bytes == NULL) {
-                return NULL;
-            }
-            if (PyBytes_AsStringAndSize(dedent_bytes, (char**)&s, (Py_ssize_t*)&len) < 0) {
-                Py_DECREF(dedent_bytes);
-                return NULL;
-            }
+        // Dedent even when indent_len == 0: blank lines must still be
+        // normalized to single newlines.
+        dedent_bytes = _PyPegen_dedent_string(p, s, len, indent, indent_len);
+        if (dedent_bytes == NULL) {
+            return NULL;
+        }
+        if (PyBytes_AsStringAndSize(dedent_bytes, (char**)&s, (Py_ssize_t*)&len) < 0) {
+            Py_DECREF(dedent_bytes);
+            return NULL;
         }
 
         p->call_invalid_rules = 1;

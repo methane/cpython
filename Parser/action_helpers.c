@@ -1320,7 +1320,7 @@ unicodewriter_write_line(Parser *p, PyUnicodeWriter *w, const char *line_start, 
         return PyUnicodeWriter_WriteUTF8(w, line_start, line_end - line_start);
     }
     else {
-        PyObject *line = _PyPegen_decode_string(p, 1, line_start, line_end - line_start, token);
+        PyObject *line = _PyPegen_decode_string(p, 0, line_start, line_end - line_start, token);
         if (line == NULL || PyUnicodeWriter_WriteStr(w, line) < 0) {
             Py_XDECREF(line);
             return -1;
@@ -1333,14 +1333,13 @@ unicodewriter_write_line(Parser *p, PyUnicodeWriter *w, const char *line_start, 
 static PyObject*
 _PyPegen_dedent_string_part(
         Parser *p, const char *s, size_t len, const char *indent, Py_ssize_t indent_len,
-        int is_first, int is_raw, expr_ty constant, Token* token)
+        int is_first, int is_raw, Token* token)
 {
-    Py_ssize_t lineno = constant->lineno;
     const char *line_start = s;
     const char *end = s + len;
 
-    int _prev_call_invalid = p->call_invalid_rules;
-    if (!_prev_call_invalid && !is_raw) {
+    int prev_call_invalid = p->call_invalid_rules;
+    if (!prev_call_invalid && !is_raw) {
         // _PyPegen_decode_string() and decode_bytes_with_escapes() may call
         // warn_invalid_escape_sequence(). It may emit issue or raise SyntaxError
         // for invalid escape sequences.
@@ -1356,6 +1355,7 @@ _PyPegen_dedent_string_part(
 
     PyUnicodeWriter *w = PyUnicodeWriter_Create(len);
     if (w == NULL) {
+        p->call_invalid_rules = prev_call_invalid;
         return NULL;
     }
 
@@ -1368,7 +1368,8 @@ _PyPegen_dedent_string_part(
         //      first part {param} second part
         //      next line
         //    """"
-        // We don't need to dedent the first line in the non-first parts.
+        // The first line in a non-first part doesn't start at the
+        // beginning of a physical line; copy it verbatim.
         const char *line_end = memchr(line_start, '\n', end - line_start);
         if (line_end) {
             line_end++; // include the newline
@@ -1383,32 +1384,28 @@ _PyPegen_dedent_string_part(
     }
 
     while (line_start < end) {
-        lineno++;
-
-        Py_ssize_t i = 0;
-        while (line_start + i < end && i < indent_len && line_start[i] == indent[i]) {
-            i++;
+        // A blank line (whitespace-only line with a newline) is normalized
+        // to a single newline. A whitespace-only tail without a newline is
+        // not blank: the physical line continues with a replacement field
+        // or the closing quotes.
+        const char *q = line_start;
+        while (q < end && (*q == ' ' || *q == '\t')) {
+            q++;
         }
-
-        if (line_start[i] == '\0') {  // found an empty line without newline.
-            break;
-        }
-        if (line_start[i] == '\n') {  // found an empty line with newline.
+        if (q < end && *q == '\n') {
             if (PyUnicodeWriter_WriteChar(w, '\n') < 0) {
                 goto error;
             }
-            line_start += i+1;
+            line_start = q + 1;
             continue;
         }
-        if (i < indent_len) {  // found an invalid indent.
-            assert(line_start[i] != indent[i]);
-            RAISE_ERROR_KNOWN_LOCATION(p, PyExc_SyntaxError, lineno, i, lineno, i+1,
-                "d-string line missing valid indentation");
-            goto error;
-        }
 
-        // found a indented line. let's dedent it.
-        line_start += i;
+        // A non-blank line. The common indent was computed from all
+        // physical lines of the literal, so it is always a prefix of
+        // the leading whitespace of this line.
+        assert(q - line_start >= indent_len);
+        assert(memcmp(line_start, indent, (size_t)indent_len) == 0);
+        line_start += indent_len;
         const char *line_end = memchr(line_start, '\n', end - line_start);
         if (line_end) {
             line_end++; // include the newline
@@ -1421,11 +1418,11 @@ _PyPegen_dedent_string_part(
         }
         line_start = line_end;
     }
-    p->call_invalid_rules = _prev_call_invalid;
+    p->call_invalid_rules = prev_call_invalid;
     return  PyUnicodeWriter_Finish(w);
 
 error:
-    p->call_invalid_rules = _prev_call_invalid;
+    p->call_invalid_rules = prev_call_invalid;
     PyUnicodeWriter_Discard(w);
     return NULL;
 }
@@ -1446,7 +1443,7 @@ _PyPegen_decode_fstring_part(Parser* p, int is_first, int is_raw,
     PyObject *str = NULL;
     if (indent != NULL) {
         str = _PyPegen_dedent_string_part(p, bstr, strlen(bstr), indent, indent_len,
-                                          is_first, is_raw, constant, token);
+                                          is_first, is_raw, token);
     }
     else {
         str = _PyPegen_decode_string(p, is_raw, bstr, strlen(bstr), token);
@@ -1465,100 +1462,110 @@ _PyPegen_decode_fstring_part(Parser* p, int is_first, int is_raw,
                            p->arena);
 }
 
-/*
-This function is customized version of _Py_search_longest_common_leading_whitespace()
-in unicodeobject.c
-*/
-static void
-search_longest_common_leading_whitespace(
-    const char *const src,
-    const char *const end,
-    const char **indent,
-    Py_ssize_t *indent_len)
+// Dedent raw source text (debug text of `{expr=}` and the expression text
+// of Interpolation nodes) that may span multiple physical lines. The first
+// line starts in the middle of a physical line, so it is kept verbatim.
+// Returns a new (or the same, if nothing to do) object registered in the
+// arena, or NULL on error.
+static PyObject *
+dedent_raw_text(Parser *p, PyObject *str, const char *indent, Py_ssize_t indent_len,
+                Token *token)
 {
-    // [_start, _start + _len)
-    // describes the current longest common leading whitespace
-    const char *_start = *indent;
-    Py_ssize_t _len = *indent_len;
-
-    // skip the first line. for example:
-    // s = df"""
-    //    first part
-    //    first part{x}second part
-    //    second part
-    //    """
-    // we don't need newline after opening qute.
-    // we don't need first line in the second part too.
-    const char *iter = memchr(src, '\n', end - src);
-    if (iter == NULL) {
-        // single line string
-        return;
+    assert(PyUnicode_CheckExact(str));
+    Py_ssize_t len;
+    const char *bstr = PyUnicode_AsUTF8AndSize(str, &len);
+    if (bstr == NULL) {
+        return NULL;
     }
+    if (memchr(bstr, '\n', len) == NULL) {
+        return str;  // single line, nothing to dedent
+    }
+    PyObject *res = _PyPegen_dedent_string_part(p, bstr, len, indent, indent_len,
+                                                /*is_first=*/0, /*is_raw=*/1, token);
+    if (res == NULL) {
+        return NULL;
+    }
+    if (_PyArena_AddPyObject(p->arena, res) < 0) {
+        Py_DECREF(res);
+        return NULL;
+    }
+    return res;
+}
 
-    for (iter++; iter <= end; iter++) {
-        const char *line_start = iter;
-        const char *leading_whitespace_end = NULL;
+static int
+dedent_replacement_field(Parser *p, expr_ty item, const char *indent,
+                         Py_ssize_t indent_len, int is_raw, Token *token);
 
-        // scan the whole line
-        while (iter < end && *iter != '\n') {
-            if (!leading_whitespace_end && *iter != ' ' && *iter != '\t') {
-                /* `iter` points to the first non-whitespace character
-                   in this line */
-                if (iter == line_start) {
-                    // some line has no indent, fast exit!
-                    *indent = iter;
-                    *indent_len = 0;
-                    return;
+// Dedent and decode the constant parts of a format spec inside a d-string.
+// In d-strings, _PyPegen_decoded_constant_from_token() keeps the format
+// spec parts as raw (undecoded) text because the common indent is unknown
+// until FSTRING_END; here we dedent them and apply escape decoding.
+static int
+dedent_format_spec(Parser *p, expr_ty spec, const char *indent,
+                   Py_ssize_t indent_len, int is_raw, Token *token)
+{
+    if (spec->kind == Constant_kind) {
+        if (p->call_invalid_rules) {
+            // In the second (error reporting) parser pass, the tokenizer has
+            // already finished, so _PyPegen_decoded_constant_from_token()
+            // cannot detect the d-string mode and decodes the format spec
+            // parts immediately. The AST built in this pass is only used
+            // for error reporting; skip dedenting to avoid double decoding.
+            return 0;
+        }
+        expr_ty decoded = _PyPegen_decode_fstring_part(p, /*is_first=*/0, is_raw,
+                                                       indent, indent_len, spec, token);
+        if (decoded == NULL) {
+            return -1;
+        }
+        spec->v.Constant.value = decoded->v.Constant.value;
+        return 0;
+    }
+    if (spec->kind == JoinedStr_kind) {
+        asdl_expr_seq *values = spec->v.JoinedStr.values;
+        for (Py_ssize_t i = 0; i < asdl_seq_LEN(values); i++) {
+            expr_ty value = asdl_seq_GET(values, i);
+            if (value->kind == Constant_kind) {
+                if (dedent_format_spec(p, value, indent, indent_len, is_raw, token) < 0) {
+                    return -1;
                 }
-                leading_whitespace_end = iter;
             }
-            ++iter;
+            else if (dedent_replacement_field(p, value, indent, indent_len,
+                                              is_raw, token) < 0) {
+                return -1;
+            }
         }
+        return 0;
+    }
+    return dedent_replacement_field(p, spec, indent, indent_len, is_raw, token);
+}
 
-        if (!leading_whitespace_end) {
-            // if this line has all white space, skip it
-            if (iter < end) {
-                continue;
+// Apply d-string dedent to the parts of a FormattedValue/Interpolation
+// node that carry source text spanning multiple physical lines: the format
+// spec and (for t-strings) the expression text.
+static int
+dedent_replacement_field(Parser *p, expr_ty item, const char *indent,
+                         Py_ssize_t indent_len, int is_raw, Token *token)
+{
+    expr_ty format_spec = NULL;
+    if (item->kind == FormattedValue_kind) {
+        format_spec = item->v.FormattedValue.format_spec;
+    }
+    else if (item->kind == Interpolation_kind) {
+        format_spec = item->v.Interpolation.format_spec;
+        PyObject *exprstr = item->v.Interpolation.str;
+        if (exprstr != NULL && PyUnicode_CheckExact(exprstr)) {
+            PyObject *dedented = dedent_raw_text(p, exprstr, indent, indent_len, token);
+            if (dedented == NULL) {
+                return -1;
             }
-            leading_whitespace_end = iter;  // last line may not end with '\n'
-        }
-
-        if (!_start) {
-            // update the first leading whitespace
-            _start = line_start;
-            _len = leading_whitespace_end - line_start;
-        }
-        else {
-            /* We then compare with the current longest leading whitespace.
-
-               [line_start, leading_whitespace_end) is the leading
-               whitespace of this line,
-
-               [_start, _start + _len) is the leading whitespace of the
-               current longest leading whitespace. */
-            Py_ssize_t new_len = 0;
-            const char *_iter = _start, *line_iter = line_start;
-
-            while (_iter < _start + _len && line_iter < leading_whitespace_end
-                   && *_iter == *line_iter)
-            {
-                ++_iter;
-                ++line_iter;
-                ++new_len;
-            }
-
-            _len = new_len;
-            if (_len == 0) {
-                // No common things now, fast exit!
-                *indent = _start;
-                *indent_len = 0;
-                return;
-            }
+            item->v.Interpolation.str = dedented;
         }
     }
-
-    *indent = _start;
-    *indent_len = _len;
+    if (format_spec != NULL) {
+        return dedent_format_spec(p, format_spec, indent, indent_len, is_raw, token);
+    }
+    return 0;
 }
 
 
@@ -1607,22 +1614,20 @@ _get_resized_exprs(Parser *p, Token *a, asdl_expr_seq *raw_expressions, Token *b
             return NULL;
         }
 
-        for (Py_ssize_t i = 0; i < n_items; i++) {
-            expr_ty item = asdl_seq_GET(raw_expressions, i);
-            if (item->kind == Constant_kind) {
-                Py_ssize_t blen;
-                const char *bstr = PyUnicode_AsUTF8AndSize(item->v.Constant.value, &blen);
-                if (bstr == NULL) {
-                    return NULL;
-                }
-                search_longest_common_leading_whitespace(bstr, bstr + blen, &indent_start, &indent_len);
+        // The longest common leading whitespace is computed by the
+        // tokenizer over all physical lines of the literal (including
+        // lines starting inside replacement fields) and attached to the
+        // FSTRING_END/TSTRING_END token as metadata.
+        assert(b->metadata != NULL && PyUnicode_CheckExact(b->metadata));
+        if (b->metadata != NULL && PyUnicode_CheckExact(b->metadata)) {
+            indent_start = PyUnicode_AsUTF8AndSize(b->metadata, &indent_len);
+            if (indent_start == NULL) {
+                return NULL;
             }
         }
-
-        assert(indent_start != NULL); // TODO: is this assert true?
-        // _py_serach_longest_common_leading_whitespace() may not set indent_start when string is empty.
-        if (indent_len == 0) {
+        else {
             indent_start = "";
+            indent_len = 0;
         }
     }
 
@@ -1647,10 +1652,24 @@ _get_resized_exprs(Parser *p, Token *a, asdl_expr_seq *raw_expressions, Token *b
 
             expr_ty first = asdl_seq_GET(values, 0);
             assert(first->kind == Constant_kind);
+            if (is_dedent) {
+                // The debug text of `{expr=}` is raw source text that may
+                // span multiple physical lines; dedent it too.
+                PyObject *dedented = dedent_raw_text(p, first->v.Constant.value,
+                                                     indent_start, indent_len, b);
+                if (dedented == NULL) {
+                    return NULL;
+                }
+                first->v.Constant.value = dedented;
+            }
             asdl_seq_SET(seq, index++, first);
 
             expr_ty second = asdl_seq_GET(values, 1);
             assert((string_kind == TSTRING && second->kind == Interpolation_kind) || second->kind == FormattedValue_kind);
+            if (is_dedent && dedent_replacement_field(p, second, indent_start,
+                                                      indent_len, is_raw, b) < 0) {
+                return NULL;
+            }
             asdl_seq_SET(seq, index++, second);
 
             continue;
@@ -1669,6 +1688,10 @@ _get_resized_exprs(Parser *p, Token *a, asdl_expr_seq *raw_expressions, Token *b
                 && PyUnicode_GET_LENGTH(item->v.Constant.value) == 0) {
                 continue;
             }
+        }
+        else if (is_dedent && dedent_replacement_field(p, item, indent_start,
+                                                       indent_len, is_raw, b) < 0) {
+            return NULL;
         }
         asdl_seq_SET(seq, index++, item);
     }
@@ -1724,6 +1747,13 @@ expr_ty _PyPegen_decoded_constant_from_token(Parser* p, Token* tok) {
     int is_raw = 0;
     if (INSIDE_FSTRING(p->tok)) {
         tokenizer_mode *mode = TOK_GET_MODE(p->tok);
+        if (mode->dedent) {
+            // PEP 822: dedent must happen before escape decoding, but the
+            // common indent isn't known until FSTRING_END/TSTRING_END.
+            // Keep the raw text; _get_resized_exprs() dedents and decodes
+            // format spec parts of d-strings later.
+            return _PyPegen_constant_from_token(p, tok);
+        }
         is_raw = mode->raw;
     }
 
