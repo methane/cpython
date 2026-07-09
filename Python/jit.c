@@ -197,6 +197,7 @@ typedef uint32_t symbol_mask[SYMBOL_MASK_WORDS];
 typedef struct {
     unsigned char *mem;
     symbol_mask mask;
+    uint8_t offsets[SYMBOL_MASK_WORDS * 32];
     size_t size;
 } symbol_state;
 
@@ -276,15 +277,27 @@ get_symbol_slot(int ordinal, symbol_state *state, int size)
     const uint32_t state_mask = state->mask[ordinal / 32];
     assert(symbol_mask & state_mask);
 
-     // Count the number of set bits in the symbol mask lower than ordinal
-    size_t index = _Py_popcount32(state_mask & (symbol_mask - 1));
-    for (int i = 0; i < ordinal / 32; i++) {
-        index += _Py_popcount32(state->mask[i]);
-    }
-
+    size_t index = state->offsets[ordinal];
     unsigned char *slot = state->mem + index * size;
     assert((size_t)(index + 1) * size <= state->size);
     return slot;
+}
+
+static void
+initialize_symbol_state(symbol_state *state, size_t slot_size)
+{
+    size_t index = 0;
+    for (size_t word = 0; word < Py_ARRAY_LENGTH(state->mask); word++) {
+        uint32_t mask = state->mask[word];
+        while (mask) {
+            int bit = _Py_bit_length(mask & -mask) - 1;
+            size_t ordinal = word * 32 + bit;
+            assert(index < Py_ARRAY_LENGTH(state->offsets));
+            state->offsets[ordinal] = index++;
+            mask &= mask - 1;
+        }
+    }
+    state->size = index * slot_size;
 }
 
 // Return the address of the GOT slot for the requested symbol ordinal.
@@ -514,6 +527,39 @@ patch_x86_64_32rx(unsigned char *location, uint64_t value)
     memcpy(&relaxed, (void *)(value + 4), sizeof(relaxed));
     relaxed -= 4;
 
+    if (loc8[-2] == 0x8B &&
+        (loc8[-1] & 0xC7) == 0x05 &&
+        relaxed < (1ULL << 32))
+    {
+        // mov reg, [rip + AAA] -> mov reg, XXX
+        //
+        // This is especially helpful for JIT 32-bit operands on x86-64:
+        // many are not valid RIP-relative addresses, but still fit directly
+        // in a 32-bit immediate. Keep the original instruction length by using
+        // the C7 /0 encoding, whose immediate starts at the existing
+        // displacement location.
+        uint8_t modrm = loc8[-1];
+        uint8_t reg = (modrm >> 3) & 7;
+        if (loc8[-3] == 0x48 || loc8[-3] == 0x4C) {
+            // Preserve REX.W. If the old destination used REX.R, move that
+            // high register bit to REX.B because C7 encodes the destination in
+            // the r/m field.
+            if (relaxed < (1ULL << 31)) {
+                loc8[-3] = 0x48 | ((loc8[-3] & 0x04) >> 2);
+                loc8[-2] = 0xC7;
+                loc8[-1] = 0xC0 | reg;
+                patch_32(location, relaxed);
+                return;
+            }
+        }
+        else {
+            loc8[-2] = 0xC7;
+            loc8[-1] = 0xC0 | reg;
+            patch_32(location, relaxed);
+            return;
+        }
+    }
+
     if ((int64_t)relaxed - (int64_t)location >= -(1LL << 31) &&
         (int64_t)relaxed - (int64_t)location + 1 < (1LL << 31))
     {
@@ -662,19 +708,21 @@ _PyJIT_Compile(_PyExecutorObject *executor, const _PyUOpInstruction trace[], siz
     data_size += group->data_size;
     combine_symbol_mask(group->trampoline_mask, state.trampolines.mask);
     combine_symbol_mask(group->got_mask, state.got_symbols.mask);
-    // Calculate the size of the trampolines required by the whole trace
-    for (size_t i = 0; i < Py_ARRAY_LENGTH(state.trampolines.mask); i++) {
-        state.trampolines.size += _Py_popcount32(state.trampolines.mask[i]) * TRAMPOLINE_SIZE;
-    }
-    for (size_t i = 0; i < Py_ARRAY_LENGTH(state.got_symbols.mask); i++) {
-        state.got_symbols.size += _Py_popcount32(state.got_symbols.mask[i]) * GOT_SLOT_SIZE;
-    }
-    // Round up to the nearest page:
+    // Calculate the size and ordinal-to-slot mapping for the symbols needed by
+    // the whole trace. Emit-time patching can then find each symbol slot with a
+    // direct indexed load instead of recounting all earlier mask bits.
+    initialize_symbol_state(&state.trampolines, TRAMPOLINE_SIZE);
+    initialize_symbol_state(&state.got_symbols, GOT_SLOT_SIZE);
+    // Round up to the nearest required alignment. Keep the padding at zero
+    // when the preceding region is already aligned; otherwise every aligned
+    // trace pays for an unnecessary extra alignment unit (or page).
     size_t page_size = get_page_size();
     assert((page_size & (page_size - 1)) == 0);
-    size_t code_padding = DATA_ALIGN - ((code_size + state.trampolines.size) & (DATA_ALIGN - 1));
-    size_t padding = page_size - ((code_size + state.trampolines.size + code_padding + data_size + state.got_symbols.size) & (page_size - 1));
-    size_t total_size = code_size + state.trampolines.size + code_padding + data_size + state.got_symbols.size + padding;
+    size_t code_and_trampolines_size = code_size + state.trampolines.size;
+    size_t code_padding = (0 - code_and_trampolines_size) & (DATA_ALIGN - 1);
+    size_t used_size = code_and_trampolines_size + code_padding + data_size + state.got_symbols.size;
+    size_t padding = (0 - used_size) & (page_size - 1);
+    size_t total_size = used_size + padding;
     unsigned char *memory = jit_alloc(total_size);
     if (memory == NULL) {
         return -1;
