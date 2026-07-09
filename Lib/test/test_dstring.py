@@ -1,10 +1,22 @@
+import itertools
 import unittest
 
 from test.test_string._support import TStringBaseCase
 
 
-_dstring_prefixes = "d db df dt dr drb drf drt".split()
-_dstring_prefixes += [p.upper() for p in _dstring_prefixes]
+def _prefix_variants(prefix):
+    variants = set()
+    for permutation in itertools.permutations(prefix):
+        for letters in itertools.product(
+            *((c.lower(), c.upper()) for c in permutation)
+        ):
+            variants.add("".join(letters))
+    return sorted(variants)
+
+
+_dstring_prefixes = []
+for _prefix in "d db df dt dr drb drf drt".split():
+    _dstring_prefixes.extend(_prefix_variants(_prefix))
 
 
 def d(s):
@@ -27,6 +39,13 @@ def df(s, globals=None):
         return eval(f"df'''{s}'''", globals=globals)
     else:
         return eval(f'df"""{s}"""', globals=globals)
+
+def dt(s, globals=None):
+    """Helper function to evaluate dt-strings."""
+    if '"""' in s:
+        return eval(f"dt'''{s}'''", globals=globals)
+    else:
+        return eval(f'dt"""{s}"""', globals=globals)
 
 
 
@@ -78,6 +97,18 @@ class DStringTestCase(unittest.TestCase):
         ]
         self.assertAllRaise(SyntaxError, "d-string must start with a newline", exprs)
 
+    def test_backslash_after_opening_quotes(self):
+        exprs = [
+            f'{p}"""\\\nhello\n"""' for p in _dstring_prefixes
+        ]
+        self.assertAllRaise(SyntaxError, "d-string must start with a newline", exprs)
+
+    def test_u_prefix_is_rejected(self):
+        exprs = [
+            f'{p}"""\nhello\n"""' for p in _prefix_variants("du")
+        ]
+        self.assertAllRaise(SyntaxError, "'u' and 'd' prefixes are incompatible", exprs)
+
     def check_dbstring(self, s, expected):
         self.assertEqual(d(s), expected)
         self.assertEqual(db(s), expected.encode())
@@ -100,9 +131,10 @@ class DStringTestCase(unittest.TestCase):
         source = """
             .line1
             ...line2
+
             line3
             ..""".replace('.', ' ')
-        self.check_dbstring(source, " line1\n   line2\nline3\n  ")
+        self.check_dbstring(source, " line1\n   line2\n\nline3\n  ")
 
         # Dedent with tabs
         source = """
@@ -167,14 +199,7 @@ world
             path\\to\\file
             keep\\n
             """
-        self.assertEqual(d(source), "path\\to\\file\nkeep\\n\n")
-
-    def test_raw_dbstring(self):
-        source = r"""
-            path\\to\\file
-            keep\\n
-            """
-        self.assertEqual(db(source), b"path\\to\\file\nkeep\\n\n")
+        self.check_dbstring(source, "path\\to\\file\nkeep\\n\n")
 
     def test_dbstring_non_ascii_error(self):
         with self.assertRaisesRegex(SyntaxError, "bytes can only contain ASCII literal characters"):
@@ -242,6 +267,14 @@ class DStringFStringInteractionTestCase(unittest.TestCase):
     """ f"world"'''
         self.assertEqual(eval(expr), "hello\nworld")
 
+    def test_closing_quote_on_content_line(self):
+        g = {"value": "Python"}
+
+        source = r"""
+            hello {value}
+              world"""
+        self.assertEqual(df(source, globals=g), "hello Python\n  world")
+
     def test_blank_line_normalization(self):
         # Blank lines are normalized to single newlines, even when their
         # whitespace doesn't match the common indentation.
@@ -280,6 +313,11 @@ class DStringFStringInteractionTestCase(unittest.TestCase):
     1=}
     '''), "1 +\n1=2\n")
 
+        self.assertEqual(df(r'''
+     {24 *
+     3=}
+   '''), "  24 *\n  3=72\n")
+
     def test_nested_string_lines_affect_indent(self):
         # Physical lines inside nested string literals in replacement
         # fields are not excluded from the common indentation calculation.
@@ -288,6 +326,51 @@ class DStringFStringInteractionTestCase(unittest.TestCase):
 foo'''}
     bar
     """, globals={"x": ""}), "    \nfoo\n    bar\n    ")
+
+    def test_nested_dstring_inside_dfstring(self):
+        # A nested d-string literal in a replacement field is dedented
+        # independently when the expression is evaluated.
+        expr = r'''df"""
+    outer line
+        {d"""
+        nested
+        line
+        """}
+    """'''
+        self.assertEqual(eval(expr), "outer line\n    nested\nline\n\n")
+
+        # Unlike a regular triple-quoted string, the nested d-string
+        # content is dedented rather than preserving indentation from the
+        # surrounding source.
+        expr = r'''df"""
+    {x or d"""
+    foo
+    bar
+    """}
+    outer
+    """'''
+        self.assertEqual(eval(expr, {"x": ""}), "foo\nbar\n\nouter\n")
+
+        # Nested df-strings also work and interpolate normally.
+        expr = r'''df"""
+    prefix {df"""
+    value {42}
+    """} suffix
+    """'''
+        self.assertEqual(eval(expr), "prefix value 42\n suffix\n")
+
+        # Nested raw d-strings keep backslashes.
+        expr = r'''df"""
+    {dr"""
+    path\\to\\file
+    """}
+    """'''
+        self.assertEqual(eval(expr), r"path\\to\\file" + "\n\n")
+
+        # Nested d-strings must still start with a newline.
+        expr = 'df"""\n    {d"""x"""}\n    """'
+        with self.assertRaisesRegex(SyntaxError, "d-string must start with a newline"):
+            eval(expr)
 
 
 class DStringTStringInteractionTestCase(unittest.TestCase, TStringBaseCase):
@@ -309,6 +392,13 @@ class DStringTStringInteractionTestCase(unittest.TestCase, TStringBaseCase):
         t = eval('dt"""\n    Hello, {name}\n    """', {"name": name})
         self.assertTStringEqual(t, ("Hello, ", "\n"), [(name, "name")])
 
+    def test_closing_quote_on_content_line(self):
+        value = "Python"
+        t = dt(r"""
+            Hello, {value}
+              goodbye""", globals={"value": value})
+        self.assertTStringEqual(t, ("Hello, ", "\n  goodbye"), [(value, "value")])
+
     def test_drtstring_raw_content(self):
         t = eval('drt"""\n    keep\\n\n    """')
         self.assertTStringEqual(t, ("keep\\n\n",), ())
@@ -318,6 +408,12 @@ class DStringTStringInteractionTestCase(unittest.TestCase, TStringBaseCase):
         # dedented too.
         t = eval('dt"""\n    {1 +\n    1}\n    """')
         self.assertTStringEqual(t, ("", "\n"), [(2, "1 +\n1")])
+
+    def test_multiline_expression_affects_indent(self):
+        # A line starting inside a replacement field also takes part in
+        # the common indentation calculation.
+        t = eval('dt"""\n    Hello {1 +\n   2}\n    """')
+        self.assertTStringEqual(t, (" Hello ", "\n "), [(3, "1 +\n2")])
 
     def test_multiline_format_spec(self):
         # Lines inside a multi-line format spec are dedented too.
