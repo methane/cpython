@@ -382,25 +382,23 @@ _PyPegen_parse_string(Parser *p, Token *t)
     /* Avoid invoking escape decoding routines if possible. */
     rawmode = rawmode || strchr(s, '\\') == NULL;
 
-    int _prev_call_invald = p->call_invalid_rules;
-
-    PyObject *dedent_bytes = NULL;
-    if (dedentmode) {
-        if (len == 0 || s[0] != '\n') {
-            RAISE_SYNTAX_ERROR_KNOWN_LOCATION(t, "d-string must start with a newline");
-            return NULL;
-        }
-
-        if (bytesmode) {
-            for (const char *ch = s; ch < s + len; ch++) {
-                if (Py_CHARMASK(*ch) >= 0x80) {
-                    RAISE_SYNTAX_ERROR_KNOWN_LOCATION(
-                        t, "bytes can only contain ASCII literal characters");
-                    return NULL;
-                }
+    if (dedentmode && (len == 0 || s[0] != '\n')) {
+        RAISE_SYNTAX_ERROR_KNOWN_LOCATION(t, "d-string must start with a newline");
+        return NULL;
+    }
+    if (bytesmode) {
+        for (const char *ch = s; ch < s + len; ch++) {
+            if (Py_CHARMASK(*ch) >= 0x80) {
+                RAISE_SYNTAX_ERROR_KNOWN_LOCATION(
+                    t, "bytes can only contain ASCII literal characters");
+                return NULL;
             }
         }
+    }
 
+    int _prev_call_invald = p->call_invalid_rules;
+    PyObject *dedent_bytes = NULL;
+    if (dedentmode) {
         // _PyPegen_decode_string() and decode_bytes_with_escapes() emit
         // a warning for invalid escape sequences.
         // We need to call it before dedenting since it shifts the positions.
@@ -446,19 +444,6 @@ _PyPegen_parse_string(Parser *p, Token *t)
 
     PyObject *result;
     if (bytesmode) {
-        /* Disallow non-ASCII characters. */
-        const char *ch;
-        for (ch = s; *ch; ch++) {
-            if (Py_CHARMASK(*ch) >= 0x80) {
-                RAISE_SYNTAX_ERROR_KNOWN_LOCATION(
-                                   t,
-                                   "bytes can only contain ASCII "
-                                   "literal characters");
-                Py_XDECREF(dedent_bytes);
-                p->call_invalid_rules = _prev_call_invald;
-                return NULL;
-            }
-        }
         if (rawmode) {
             result = PyBytes_FromStringAndSize(s, (Py_ssize_t)len);
         }
