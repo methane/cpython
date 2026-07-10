@@ -1,5 +1,6 @@
 import itertools
 import unittest
+import warnings
 
 from test.test_string._support import TStringBaseCase
 
@@ -121,6 +122,14 @@ class DStringTestCase(unittest.TestCase):
             """
         self.check_dbstring(source, "hello\nworld\n")
 
+        # Whitespace before the closing quotes is a blank final line, even
+        # when it is longer than the common indentation.
+        source = """
+          foo
+          bar
+            """
+        self.check_dbstring(source, "foo\nbar\n")
+
         # closing quote on same line as last content line
         source = """
             hello
@@ -134,7 +143,7 @@ class DStringTestCase(unittest.TestCase):
 
             line3
             ..""".replace('.', ' ')
-        self.check_dbstring(source, " line1\n   line2\n\nline3\n  ")
+        self.check_dbstring(source, " line1\n   line2\n\nline3\n")
 
         # Dedent with tabs
         source = """
@@ -205,6 +214,15 @@ world
         with self.assertRaisesRegex(SyntaxError, "bytes can only contain ASCII literal characters"):
             db('\n  \u00e9\n  ')
 
+    def test_dbstring_non_ascii_error_precedes_invalid_escape_warning(self):
+        source = "db'''\n  \u00e9\\z\n  '''"
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", SyntaxWarning)
+            with self.assertRaisesRegex(
+                SyntaxError, "bytes can only contain ASCII literal characters"
+            ):
+                eval(source)
+
     def test_concat_bytes_and_nonbytes_error(self):
         exprs = [
             'd"""\n    x\n    """ db"""\n    y\n    """',
@@ -233,7 +251,7 @@ class DStringFStringInteractionTestCase(unittest.TestCase):
             Hello
           {world}
             """
-        self.assertEqual(df(source, globals=g), "  Hello\n42\n  ")
+        self.assertEqual(df(source, globals=g), "  Hello\n42\n")
 
         source = r"""
             Hello {world} Lorum
@@ -279,6 +297,7 @@ class DStringFStringInteractionTestCase(unittest.TestCase):
         # Blank lines are normalized to single newlines, even when their
         # whitespace doesn't match the common indentation.
         self.assertEqual(df('\n    foo\n\t\n    bar {1}\n    '), "foo\n\nbar 1\n")
+        self.assertEqual(df('\n  foo\n  {1}\n    '), "foo\n1\n")
 
     def test_multiline_expression_affects_indent(self):
         # A line starting inside a replacement field also takes part in
@@ -286,7 +305,7 @@ class DStringFStringInteractionTestCase(unittest.TestCase):
         self.assertEqual(df(r'''
     Hello {1 +
    2}
-    '''), " Hello 3\n ")
+    '''), " Hello 3\n")
 
     def test_multiline_format_spec(self):
         class Spec:
@@ -325,7 +344,7 @@ class DStringFStringInteractionTestCase(unittest.TestCase):
     {x or '''
 foo'''}
     bar
-    """, globals={"x": ""}), "    \nfoo\n    bar\n    ")
+    """, globals={"x": ""}), "    \nfoo\n    bar\n")
 
     def test_nested_dstring_inside_dfstring(self):
         # A nested d-string literal in a replacement field is dedented
@@ -392,6 +411,10 @@ class DStringTStringInteractionTestCase(unittest.TestCase, TStringBaseCase):
         t = eval('dt"""\n    Hello, {name}\n    """', {"name": name})
         self.assertTStringEqual(t, ("Hello, ", "\n"), [(name, "name")])
 
+    def test_blank_final_line_normalization(self):
+        t = dt('\n  foo\n  {1}\n    ')
+        self.assertTStringEqual(t, ("foo\n", "\n"), [(1, "1")])
+
     def test_closing_quote_on_content_line(self):
         value = "Python"
         t = dt(r"""
@@ -413,7 +436,7 @@ class DStringTStringInteractionTestCase(unittest.TestCase, TStringBaseCase):
         # A line starting inside a replacement field also takes part in
         # the common indentation calculation.
         t = eval('dt"""\n    Hello {1 +\n   2}\n    """')
-        self.assertTStringEqual(t, (" Hello ", "\n "), [(3, "1 +\n2")])
+        self.assertTStringEqual(t, (" Hello ", "\n"), [(3, "1 +\n2")])
 
     def test_multiline_format_spec(self):
         # Lines inside a multi-line format spec are dedented too.

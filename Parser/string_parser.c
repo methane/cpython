@@ -260,11 +260,14 @@ _PyPegen_dedent_string(Parser *p, const char *s, Py_ssize_t len,
     const char *end = s + len;
     while (s < end) {
         // A blank line (whitespace-only line with a newline) is normalized
-        // to a single newline. The last line (before the closing quotes)
-        // has no newline and is never considered blank.
+        // to a single newline. Whitespace before the closing quotes is also
+        // blank, but its preceding newline has already been written.
         const char *q = s;
         while (q < end && (*q == ' ' || *q == '\t')) {
             q++;
+        }
+        if (q == end) {
+            break;
         }
         if (q < end && *q == '\n') {
             if (PyBytesWriter_WriteBytes(w, "\n", 1) < 0) {
@@ -388,6 +391,16 @@ _PyPegen_parse_string(Parser *p, Token *t)
             return NULL;
         }
 
+        if (bytesmode) {
+            for (const char *ch = s; ch < s + len; ch++) {
+                if (Py_CHARMASK(*ch) >= 0x80) {
+                    RAISE_SYNTAX_ERROR_KNOWN_LOCATION(
+                        t, "bytes can only contain ASCII literal characters");
+                    return NULL;
+                }
+            }
+        }
+
         // _PyPegen_decode_string() and decode_bytes_with_escapes() emit
         // a warning for invalid escape sequences.
         // We need to call it before dedenting since it shifts the positions.
@@ -419,10 +432,14 @@ _PyPegen_parse_string(Parser *p, Token *t)
         if (dedent_bytes == NULL) {
             return NULL;
         }
-        if (PyBytes_AsStringAndSize(dedent_bytes, (char**)&s, (Py_ssize_t*)&len) < 0) {
+        char *dedent_str;
+        Py_ssize_t dedent_len;
+        if (PyBytes_AsStringAndSize(dedent_bytes, &dedent_str, &dedent_len) < 0) {
             Py_DECREF(dedent_bytes);
             return NULL;
         }
+        s = dedent_str;
+        len = dedent_len;
 
         p->call_invalid_rules = 1;
     }

@@ -1333,7 +1333,7 @@ unicodewriter_write_line(Parser *p, PyUnicodeWriter *w, const char *line_start, 
 static PyObject*
 _PyPegen_dedent_string_part(
         Parser *p, const char *s, size_t len, const char *indent, Py_ssize_t indent_len,
-        int is_first, int is_raw, Token* token)
+        int is_first, int is_last, int is_raw, Token* token)
 {
     const char *line_start = s;
     const char *end = s + len;
@@ -1385,12 +1385,15 @@ _PyPegen_dedent_string_part(
 
     while (line_start < end) {
         // A blank line (whitespace-only line with a newline) is normalized
-        // to a single newline. A whitespace-only tail without a newline is
-        // not blank: the physical line continues with a replacement field
-        // or the closing quotes.
+        // to a single newline. A whitespace-only final part is also blank:
+        // its preceding newline has already been written. Other tails may
+        // continue with a replacement field, so they are kept verbatim.
         const char *q = line_start;
         while (q < end && (*q == ' ' || *q == '\t')) {
             q++;
+        }
+        if (q == end && is_last) {
+            break;
         }
         if (q < end && *q == '\n') {
             if (PyUnicodeWriter_WriteChar(w, '\n') < 0) {
@@ -1428,8 +1431,8 @@ error:
 }
 
 static expr_ty
-_PyPegen_decode_fstring_part(Parser* p, int is_first, int is_raw,
-                             const char *indent, Py_ssize_t indent_len,
+_PyPegen_decode_fstring_part(Parser* p, int is_first, int is_last,
+                             int is_raw, const char *indent, Py_ssize_t indent_len,
                              expr_ty constant, Token* token)
 {
     assert(PyUnicode_CheckExact(constant->v.Constant.value));
@@ -1443,7 +1446,7 @@ _PyPegen_decode_fstring_part(Parser* p, int is_first, int is_raw,
     PyObject *str = NULL;
     if (indent != NULL) {
         str = _PyPegen_dedent_string_part(p, bstr, strlen(bstr), indent, indent_len,
-                                          is_first, is_raw, token);
+                                          is_first, is_last, is_raw, token);
     }
     else {
         str = _PyPegen_decode_string(p, is_raw, bstr, strlen(bstr), token);
@@ -1481,7 +1484,8 @@ dedent_raw_text(Parser *p, PyObject *str, const char *indent, Py_ssize_t indent_
         return str;  // single line, nothing to dedent
     }
     PyObject *res = _PyPegen_dedent_string_part(p, bstr, len, indent, indent_len,
-                                                /*is_first=*/0, /*is_raw=*/1, token);
+                                                /*is_first=*/0, /*is_last=*/0,
+                                                /*is_raw=*/1, token);
     if (res == NULL) {
         return NULL;
     }
@@ -1513,7 +1517,8 @@ dedent_format_spec(Parser *p, expr_ty spec, const char *indent,
             // for error reporting; skip dedenting to avoid double decoding.
             return 0;
         }
-        expr_ty decoded = _PyPegen_decode_fstring_part(p, /*is_first=*/0, is_raw,
+        expr_ty decoded = _PyPegen_decode_fstring_part(p, /*is_first=*/0,
+                                                       /*is_last=*/0, is_raw,
                                                        indent, indent_len, spec, token);
         if (decoded == NULL) {
             return -1;
@@ -1676,7 +1681,8 @@ _get_resized_exprs(Parser *p, Token *a, asdl_expr_seq *raw_expressions, Token *b
         }
 
         if (item->kind == Constant_kind) {
-            item = _PyPegen_decode_fstring_part(p, i == 0, is_raw, indent_start, indent_len, item, b);
+            item = _PyPegen_decode_fstring_part(p, i == 0, i == n_items - 1,
+                                                is_raw, indent_start, indent_len, item, b);
             if (item == NULL) {
                 return NULL;
             }
