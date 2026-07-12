@@ -1500,6 +1500,82 @@ static int
 dedent_replacement_field(Parser *p, expr_ty item, const char *indent,
                          Py_ssize_t indent_len, int is_raw, Token *token);
 
+/* Dedent multiline string literals embedded in a replacement expression.
+   Return 1 if one was found, 0 otherwise, and -1 on error. */
+static int
+dedent_inner_string_literals(Parser *p, expr_ty expr, const char *indent,
+                             Py_ssize_t indent_len, Token *token)
+{
+    if (expr->kind == Constant_kind &&
+        expr->end_lineno > expr->lineno &&
+        PyUnicode_CheckExact(expr->v.Constant.value)) {
+        PyObject *value = expr->v.Constant.value;
+        Py_ssize_t len;
+        const char *s = PyUnicode_AsUTF8AndSize(value, &len);
+        if (s == NULL) {
+            return -1;
+        }
+        if (memchr(s, '\n', len) == NULL) {
+            return 0;
+        }
+        /* Decoded escape sequences can introduce lines which did not
+           participate in the tokenizer's common-indent calculation. */
+        const char *line = memchr(s, '\n', len) + 1;
+        const char *end = s + len;
+        while (line < end) {
+            const char *q = line;
+            while (q < end && (*q == ' ' || *q == '\t')) {
+                q++;
+            }
+            if (q < end && *q != '\n' &&
+                (q - line < indent_len ||
+                 memcmp(line, indent, (size_t)indent_len) != 0)) {
+                return 0;
+            }
+            const char *newline = memchr(q, '\n', end - q);
+            if (newline == NULL) {
+                break;
+            }
+            line = newline + 1;
+        }
+        PyObject *dedented = dedent_raw_text(p, value, indent, indent_len, token);
+        if (dedented == NULL) {
+            return -1;
+        }
+        expr->v.Constant.value = dedented;
+        return 1;
+    }
+
+    asdl_expr_seq *values = NULL;
+    switch (expr->kind) {
+        case BoolOp_kind:
+            values = expr->v.BoolOp.values;
+            break;
+        case Tuple_kind:
+            values = expr->v.Tuple.elts;
+            break;
+        case List_kind:
+            values = expr->v.List.elts;
+            break;
+        case Set_kind:
+            values = expr->v.Set.elts;
+            break;
+        default:
+            return 0;
+    }
+
+    int found = 0;
+    for (Py_ssize_t i = 0; i < asdl_seq_LEN(values); i++) {
+        int result = dedent_inner_string_literals(
+            p, asdl_seq_GET(values, i), indent, indent_len, token);
+        if (result < 0) {
+            return -1;
+        }
+        found |= result;
+    }
+    return found;
+}
+
 // Dedent and decode the constant parts of a format spec inside a d-string.
 // In d-strings, _PyPegen_decoded_constant_from_token() keeps the format
 // spec parts as raw (undecoded) text because the common indent is unknown
@@ -1695,9 +1771,43 @@ _get_resized_exprs(Parser *p, Token *a, asdl_expr_seq *raw_expressions, Token *b
                 continue;
             }
         }
-        else if (is_dedent && dedent_replacement_field(p, item, indent_start,
-                                                       indent_len, is_raw, b) < 0) {
-            return NULL;
+        else if (is_dedent) {
+            int inner_literal = 0;
+            if (item->kind == FormattedValue_kind) {
+                inner_literal = dedent_inner_string_literals(
+                    p, item->v.FormattedValue.value, indent_start, indent_len, b);
+                if (inner_literal < 0) {
+                    return NULL;
+                }
+            }
+            if (dedent_replacement_field(p, item, indent_start,
+                                         indent_len, is_raw, b) < 0) {
+                return NULL;
+            }
+            if (inner_literal && index > 0 && indent_len > 0) {
+                expr_ty previous = asdl_seq_GET(seq, index - 1);
+                if (previous->kind == Constant_kind &&
+                    PyUnicode_CheckExact(previous->v.Constant.value)) {
+                    Py_ssize_t len;
+                    const char *s = PyUnicode_AsUTF8AndSize(
+                        previous->v.Constant.value, &len);
+                    if (s == NULL) {
+                        return NULL;
+                    }
+                    if (len >= indent_len &&
+                        memcmp(s + len - indent_len, indent_start,
+                               (size_t)indent_len) == 0) {
+                        PyObject *trimmed = PyUnicode_FromStringAndSize(
+                            s, len - indent_len);
+                        if (trimmed == NULL ||
+                            _PyArena_AddPyObject(p->arena, trimmed) < 0) {
+                            Py_XDECREF(trimmed);
+                            return NULL;
+                        }
+                        previous->v.Constant.value = trimmed;
+                    }
+                }
+            }
         }
         asdl_seq_SET(seq, index++, item);
     }

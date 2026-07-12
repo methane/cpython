@@ -343,12 +343,11 @@ class DFStringTestCase(AllRaisesMixin, unittest.TestCase):
     def test_nested_string_lines_affect_indent(self):
         # Physical lines inside nested string literals in replacement
         # fields are not excluded from the common indentation calculation.
-        # todo: strip indentation from inner string literal.
         self.assertEqual(df"""
         {0 or '''
     foo'''}
         bar
-        """, "    \n    foo\n    bar\n")
+        """, "\nfoo\n    bar\n")
 
     def test_nested_dstring_inside_dfstring(self):
         # A nested d-string literal in a replacement field is dedented
