@@ -20,6 +20,10 @@ for _prefix in "d db df dt dr drb drf drt".split():
     _dstring_prefixes.extend(_prefix_variants(_prefix))
 
 
+# Helper functions to evaluate d-strings.
+# Use these helper functions to evaluate d-strings in cases where
+# you want to test for SyntaxError or special indentation.
+
 def d(s):
     """Helper function to evaluate d-strings."""
     if '"""' in s:
@@ -49,13 +53,16 @@ def dt(s, globals=None):
         return eval(f'dt"""{s}"""', globals=globals)
 
 
+class AllRaisesMixin:
+    def assertAllRaise(self, exception_type, regex, exprs):
+        """Assert that all strings in exprs raise exception_type with regex."""
+        for expr in exprs:
+            with self.subTest(expr=expr):
+                with self.assertRaisesRegex(exception_type, regex):
+                    eval(expr)
 
-class DStringTestCase(unittest.TestCase):
-    def assertAllRaise(self, exception_type, regex, error_strings):
-        for str in error_strings:
-            with self.subTest(str=str):
-                with self.assertRaisesRegex(exception_type, regex) as cm:
-                    eval(str)
+
+class DStringTestCase(AllRaisesMixin, unittest.TestCase):
 
     def test_single_quote(self):
         exprs = [
@@ -74,20 +81,15 @@ class DStringTestCase(unittest.TestCase):
         self.assertAllRaise(SyntaxError, "d-string must start with a newline", exprs)
 
         for prefix in _dstring_prefixes:
-            expr = f"{prefix}'''\n'''"
-            expr2 = f'{prefix}"""\n"""'
-            with self.subTest(expr=expr):
-                v = eval(expr)
-                v2 = eval(expr2)
-                if 't' in prefix.lower():
-                    self.assertEqual(v.strings, ("",))
-                    self.assertEqual(v2.strings, ("",))
-                elif 'b' in prefix.lower():
-                    self.assertEqual(v, b"")
-                    self.assertEqual(v2, b"")
-                else:
-                    self.assertEqual(v, "")
-                    self.assertEqual(v2, "")
+            for expr in [f"{prefix}'''\n'''", f'{prefix}"""\n"""']:
+                with self.subTest(expr=expr):
+                    v = eval(expr)
+                    if 't' in prefix.lower():
+                        self.assertEqual(v.strings, ("",))
+                    elif 'b' in prefix.lower():
+                        self.assertEqual(v, b"")
+                    else:
+                        self.assertEqual(v, "")
 
     def test_missing_newline_in_plain_and_raw_prefixes(self):
         exprs = [
@@ -95,6 +97,8 @@ class DStringTestCase(unittest.TestCase):
             'dr"""x"""',
             'db"""x"""',
             'drb"""x"""',
+            'd"""x\n"""',
+            'd"""\\\n"""',
         ]
         self.assertAllRaise(SyntaxError, "d-string must start with a newline", exprs)
 
@@ -111,7 +115,9 @@ class DStringTestCase(unittest.TestCase):
         self.assertAllRaise(SyntaxError, "'u' and 'd' prefixes are incompatible", exprs)
 
     def check_dbstring(self, s, expected):
+        # check both d- and db-strings with expected and expected.encode()
         self.assertEqual(d(s), expected)
+        self.assertEqual(df(s), expected)
         self.assertEqual(db(s), expected.encode())
 
     def test_dbstring(self):
@@ -231,33 +237,7 @@ world
         self.assertAllRaise(SyntaxError, "cannot mix bytes and nonbytes literals", exprs)
 
 
-class DStringFStringInteractionTestCase(unittest.TestCase):
-    def assertAllRaise(self, exception_type, regex, error_strings):
-        for str in error_strings:
-            with self.subTest(str=str):
-                with self.assertRaisesRegex(exception_type, regex):
-                    eval(str)
-
-    def test_dfstring(self):
-        g = {"world": 42}
-
-        source = r"""
-            Hello
-              {world}
-            """
-        self.assertEqual(df(source, globals=g), "Hello\n  42\n")
-
-        source = r"""
-            Hello
-          {world}
-            """
-        self.assertEqual(df(source, globals=g), "  Hello\n42\n")
-
-        source = r"""
-            Hello {world} Lorum
-            ipsum dolor sit amet,
-            """
-        self.assertEqual(df(source, globals=g), "Hello 42 Lorum\nipsum dolor sit amet,\n")
+class DFStringTestCase(AllRaisesMixin, unittest.TestCase):
 
     def test_missing_newline_in_f_variants(self):
         exprs = [
@@ -266,32 +246,62 @@ class DStringFStringInteractionTestCase(unittest.TestCase):
         ]
         self.assertAllRaise(SyntaxError, "d-string must start with a newline", exprs)
 
-    def test_dfstring_conversion_and_format(self):
-        g = {"x": 3.14159, "name": "Alice"}
+    def test_dfstring(self):
+        world = 42
 
-        source = r"""
+        s = df"""
+            Hello
+              {world}
+            """
+        self.assertEqual(s, "Hello\n  42\n")
+
+        # '{' is taken into account when calculating the common indentation
+        s = df"""
+            Hello
+          {world}
+            """
+        self.assertEqual(s, "  Hello\n42\n")
+
+        # spaces after '}' is not taken into account
+        s = df"""
+            Hello {world} Lorum
+            ipsum dolor sit amet,
+            """
+        self.assertEqual(s, "Hello 42 Lorum\nipsum dolor sit amet,\n")
+
+        # The expression between '{' and '}' is taken into account
+        s = df"""
+              Hello {
+            world } Lorum
+              ipsum"""
+        self.assertEqual(s, "  Hello 42 Lorum\n  ipsum")
+
+    def test_dfstring_conversion_and_format(self):
+        x = 3.1415
+        name = "Alice"
+
+        s = df"""
             {x:.2f} {name!r}
             """
-        self.assertEqual(df(source, globals=g), "3.14 'Alice'\n")
+        self.assertEqual(s, "3.14 'Alice'\n")
 
-        source = r"""
+        s = df"""
             {x=}
             """
-        self.assertEqual(df(source, globals=g), "x=3.14159\n")
+        self.assertEqual(s, "x=3.1415\n")
 
     def test_concat_with_fstring(self):
-        expr = r'''d"""
-    hello
-    """ f"world"'''
-        self.assertEqual(eval(expr), "hello\nworld")
+        s = d"""
+            hello
+            """ f"world"
+        self.assertEqual(s, "hello\nworld")
 
     def test_closing_quote_on_content_line(self):
-        g = {"value": "Python"}
-
-        source = r"""
+        value = "Python"
+        s = df"""
             hello {value}
               world"""
-        self.assertEqual(df(source, globals=g), "hello Python\n  world")
+        self.assertEqual(s, "hello Python\n  world")
 
     def test_blank_line_normalization(self):
         # Blank lines are normalized to single newlines, even when their
@@ -299,92 +309,86 @@ class DStringFStringInteractionTestCase(unittest.TestCase):
         self.assertEqual(df('\n    foo\n\t\n    bar {1}\n    '), "foo\n\nbar 1\n")
         self.assertEqual(df('\n  foo\n  {1}\n    '), "foo\n1\n")
 
-    def test_multiline_expression_affects_indent(self):
-        # A line starting inside a replacement field also takes part in
-        # the common indentation calculation.
-        self.assertEqual(df(r'''
-    Hello {1 +
-   2}
-    '''), " Hello 3\n")
-
     def test_multiline_format_spec(self):
         class Spec:
             def __format__(self, spec):
                 return spec
+        s = Spec()
 
         # Lines inside a multi-line format spec are dedented too.
-        self.assertEqual(df(r'''
-    {s:>6
-    }
-    ''', globals={"s": Spec()}), ">6\n\n")
+        self.assertEqual(df'''
+            {s:>6
+            }
+            ''', ">6\n\n")
 
         # Nested replacement fields in the format spec keep working.
-        self.assertEqual(df(r'''
-    {s:{"a"}b
-    c}
-    ''', globals={"s": Spec()}), "ab\nc\n")
+        self.assertEqual(df'''
+            {s:{"a"}b
+            c}
+            ''', "ab\nc\n")
 
     def test_multiline_debug_text(self):
         # The static text of a debug expression spanning multiple lines
         # is dedented too.
-        self.assertEqual(df(r'''
-    {1 +
-    1=}
-    '''), "1 +\n1=2\n")
+        self.assertEqual(df'''
+            {1 +
+            1=}
+            ''', "1 +\n1=2\n")
 
-        self.assertEqual(df(r'''
-     {24 *
-     3=}
-   '''), "  24 *\n  3=72\n")
+        self.assertEqual(df'''
+              {24 *
+              3=}
+            ''', "  24 *\n  3=72\n")
 
     def test_nested_string_lines_affect_indent(self):
         # Physical lines inside nested string literals in replacement
         # fields are not excluded from the common indentation calculation.
-        self.assertEqual(df(r"""
-    {x or '''
-foo'''}
-    bar
-    """, globals={"x": ""}), "    \nfoo\n    bar\n")
+        # todo: strip indentation from inner string literal.
+        self.assertEqual(df"""
+        {0 or '''
+    foo'''}
+        bar
+        """, "    \n    foo\n    bar\n")
 
     def test_nested_dstring_inside_dfstring(self):
         # A nested d-string literal in a replacement field is dedented
         # independently when the expression is evaluated.
-        expr = r'''df"""
+        s = df"""
     outer line
         {d"""
         nested
         line
         """}
-    """'''
-        self.assertEqual(eval(expr), "outer line\n    nested\nline\n\n")
+    """
+        self.assertEqual(s, "outer line\n    nested\nline\n\n")
 
         # Unlike a regular triple-quoted string, the nested d-string
         # content is dedented rather than preserving indentation from the
         # surrounding source.
-        expr = r'''df"""
-    {x or d"""
-    foo
-    bar
-    """}
+        s = df"""
+    {d"""
+        foo
+        bar
+        """}
     outer
-    """'''
-        self.assertEqual(eval(expr, {"x": ""}), "foo\nbar\n\nouter\n")
+    """
+        self.assertEqual(s, "foo\nbar\n\nouter\n")
 
         # Nested df-strings also work and interpolate normally.
-        expr = r'''df"""
+        s = df"""
     prefix {df"""
     value {42}
     """} suffix
-    """'''
-        self.assertEqual(eval(expr), "prefix value 42\n suffix\n")
+    """
+        self.assertEqual(s, "prefix value 42\n suffix\n")
 
         # Nested raw d-strings keep backslashes.
-        expr = r'''df"""
+        s = df"""
     {dr"""
     path\\to\\file
     """}
-    """'''
-        self.assertEqual(eval(expr), r"path\\to\\file" + "\n\n")
+    """
+        self.assertEqual(s, r"path\\to\\file" + "\n\n")
 
         # Nested d-strings must still start with a newline.
         expr = 'df"""\n    {d"""x"""}\n    """'
@@ -392,12 +396,7 @@ foo'''}
             eval(expr)
 
 
-class DStringTStringInteractionTestCase(unittest.TestCase, TStringBaseCase):
-    def assertAllRaise(self, exception_type, regex, error_strings):
-        for str in error_strings:
-            with self.subTest(str=str):
-                with self.assertRaisesRegex(exception_type, regex):
-                    eval(str)
+class DTStringTestCase(AllRaisesMixin, TStringBaseCase, unittest.TestCase):
 
     def test_missing_newline_in_t_variants(self):
         exprs = [
@@ -440,7 +439,11 @@ class DStringTStringInteractionTestCase(unittest.TestCase, TStringBaseCase):
 
     def test_multiline_format_spec(self):
         # Lines inside a multi-line format spec are dedented too.
-        t = eval('dt"""\n    {1:>6\n    }\n    """')
+        # t = eval('dt"""\n    {1:>6\n    }\n    """')
+        t = dt"""
+            {1:>6
+            }
+            """
         self.assertEqual(t.interpolations[0].format_spec, ">6\n")
 
     def test_concat_with_tstring_is_rejected(self):
