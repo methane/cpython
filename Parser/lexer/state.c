@@ -81,6 +81,11 @@ free_fstring_expressions(struct tok_state *tok)
             mode->last_expr_end = -1;
             mode->in_format_spec = 0;
         }
+        if (mode->dedent_indent != NULL) {
+            PyMem_Free(mode->dedent_indent);
+            mode->dedent_indent = NULL;
+            mode->dedent_indent_len = 0;
+        }
     }
 }
 

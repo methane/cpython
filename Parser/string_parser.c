@@ -247,6 +247,60 @@ _PyPegen_decode_string(Parser *p, int raw, const char *s, size_t len, Token *t)
     return decode_unicode_with_escapes(p, s, len, t);
 }
 
+// Dedent d-string and return result as a bytes.
+static PyObject*
+_PyPegen_dedent_string(Parser *p, const char *s, Py_ssize_t len,
+                       const char *indent, Py_ssize_t indent_len)
+{
+    PyBytesWriter *w = PyBytesWriter_Create(0);
+    if (w == NULL) {
+        return NULL;
+    }
+
+    const char *end = s + len;
+    while (s < end) {
+        // A blank line (whitespace-only line with a newline) is normalized
+        // to a single newline. Whitespace before the closing quotes is also
+        // blank, but its preceding newline has already been written.
+        const char *q = s;
+        while (q < end && (*q == ' ' || *q == '\t')) {
+            q++;
+        }
+        if (q == end) {
+            break;
+        }
+        if (q < end && *q == '\n') {
+            if (PyBytesWriter_WriteBytes(w, "\n", 1) < 0) {
+                PyBytesWriter_Discard(w);
+                return NULL;
+            }
+            s = q + 1;
+            continue;
+        }
+
+        // A non-blank line. The common indent was computed from all lines
+        // including the closing quotes line, so it is always a prefix of
+        // the leading whitespace of this line.
+        assert(q - s >= indent_len);
+        assert(memcmp(s, indent, (size_t)indent_len) == 0);
+        s += indent_len;
+        const char *line_end = memchr(s, '\n', end - s);
+        if (line_end == NULL) {
+            line_end = end; // last line without newline
+        }
+        else {
+            line_end++; // include the newline in the line
+        }
+
+        if (PyBytesWriter_WriteBytes(w, s, line_end - s) < 0) {
+            PyBytesWriter_Discard(w);
+            return NULL;
+        }
+        s = line_end;
+    }
+    return PyBytesWriter_Finish(w);
+}
+
 /* s must include the bracketing quote characters, and r, b &/or f prefixes
     (if any), and embedded escape sequences (if any). (f-strings are handled by the parser)
    _PyPegen_parse_string parses it, and returns the decoded Python string object. */
@@ -262,9 +316,10 @@ _PyPegen_parse_string(Parser *p, Token *t)
     int quote = Py_CHARMASK(*s);
     int bytesmode = 0;
     int rawmode = 0;
+    int dedentmode = 0;
 
     if (Py_ISALPHA(quote)) {
-        while (!bytesmode || !rawmode) {
+        while (!bytesmode || !rawmode || !dedentmode) {
             if (quote == 'b' || quote == 'B') {
                 quote =(unsigned char)*++s;
                 bytesmode = 1;
@@ -275,6 +330,10 @@ _PyPegen_parse_string(Parser *p, Token *t)
             else if (quote == 'r' || quote == 'R') {
                 quote = (unsigned char)*++s;
                 rawmode = 1;
+            }
+            else if (quote == 'd' || quote == 'D') {
+                quote =(unsigned char)*++s;
+                dedentmode = 1;
             }
             else {
                 break;
@@ -315,25 +374,88 @@ _PyPegen_parse_string(Parser *p, Token *t)
             return NULL;
         }
     }
+    else if (dedentmode) {
+        RAISE_SYNTAX_ERROR_KNOWN_LOCATION(t, "d-string must be triple-quoted");
+        return NULL;
+    }
 
     /* Avoid invoking escape decoding routines if possible. */
     rawmode = rawmode || strchr(s, '\\') == NULL;
+
+    if (dedentmode && (len == 0 || s[0] != '\n')) {
+        RAISE_SYNTAX_ERROR_KNOWN_LOCATION(t, "d-string must start with a newline");
+        return NULL;
+    }
     if (bytesmode) {
-        /* Disallow non-ASCII characters. */
-        const char *ch;
-        for (ch = s; *ch; ch++) {
+        for (const char *ch = s; ch < s + len; ch++) {
             if (Py_CHARMASK(*ch) >= 0x80) {
                 RAISE_SYNTAX_ERROR_KNOWN_LOCATION(
-                                   t,
-                                   "bytes can only contain ASCII "
-                                   "literal characters");
+                    t, "bytes can only contain ASCII literal characters");
                 return NULL;
             }
         }
-        if (rawmode) {
-            return PyBytes_FromStringAndSize(s, (Py_ssize_t)len);
-        }
-        return decode_bytes_with_escapes(p, s, (Py_ssize_t)len, t);
     }
-    return _PyPegen_decode_string(p, rawmode, s, len, t);
+
+    int _prev_call_invald = p->call_invalid_rules;
+    PyObject *dedent_bytes = NULL;
+    if (dedentmode) {
+        // _PyPegen_decode_string() and decode_bytes_with_escapes() emit
+        // a warning for invalid escape sequences.
+        // We need to call it before dedenting since it shifts the positions.
+        if (!_prev_call_invald && !rawmode) {
+            PyObject *temp;
+            if (bytesmode) {
+                temp = decode_bytes_with_escapes(p, s, len, t);
+            }
+            else {
+                temp = _PyPegen_decode_string(p, 0, s, len, t);
+            }
+            if (temp == NULL) {
+                return NULL;
+            }
+            Py_DECREF(temp);
+        }
+
+        // We find common indent from [s, end+1) because we want to include the last line
+        // for indent calculation.
+        const char *end = s + len;
+        assert(*end == '"' || *end == '\''); // end[0:3] is the trailing quotes
+        const char *indent = "";
+        Py_ssize_t indent_len = _Py_search_longest_common_leading_whitespace(s+1, end+1, &indent);
+
+        s++; len--; // skip the first newline
+        // Dedent even when indent_len == 0: blank lines must still be
+        // normalized to single newlines.
+        dedent_bytes = _PyPegen_dedent_string(p, s, len, indent, indent_len);
+        if (dedent_bytes == NULL) {
+            return NULL;
+        }
+        char *dedent_str;
+        Py_ssize_t dedent_len;
+        if (PyBytes_AsStringAndSize(dedent_bytes, &dedent_str, &dedent_len) < 0) {
+            Py_DECREF(dedent_bytes);
+            return NULL;
+        }
+        s = dedent_str;
+        len = dedent_len;
+
+        p->call_invalid_rules = 1;
+    }
+
+    PyObject *result;
+    if (bytesmode) {
+        if (rawmode) {
+            result = PyBytes_FromStringAndSize(s, (Py_ssize_t)len);
+        }
+        else {
+            result = decode_bytes_with_escapes(p, s, (Py_ssize_t)len, t);
+        }
+    }
+    else {
+        result = _PyPegen_decode_string(p, rawmode, s, len, t);
+    }
+    Py_XDECREF(dedent_bytes);
+    p->call_invalid_rules = _prev_call_invald;
+    return result;
 }
+

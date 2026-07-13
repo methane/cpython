@@ -55,6 +55,72 @@ contains_null_bytes(const char* str, size_t size)
     return memchr(str, 0, size) != NULL;
 }
 
+/* PEP 822: fold the leading whitespace of the freshly read physical line
+   [tok->cur, tok->inp) into the longest common leading whitespace of every
+   active d-string. All physical lines between the opening and the closing
+   quotes are considered, including lines starting inside replacement
+   fields and nested string literals. Blank lines (whitespace-only) are
+   ignored. The line that contains the closing quotes is naturally
+   non-blank because the quote characters are on it.
+   Return 1 on success, 0 on memory error (tok->done is set). */
+static int
+update_dstring_indents(struct tok_state *tok)
+{
+    int any_dedent = 0;
+    for (int i = 1; i <= tok->tok_mode_stack_index; i++) {
+        if (tok->tok_mode_stack[i].dedent) {
+            any_dedent = 1;
+            break;
+        }
+    }
+    if (!any_dedent) {
+        return 1;
+    }
+
+    const char *line = tok->cur;
+    const char *end = tok->inp;
+    const char *ws_end = line;
+    while (ws_end < end && (*ws_end == ' ' || *ws_end == '\t')) {
+        ws_end++;
+    }
+    if (ws_end == end || *ws_end == '\n' || *ws_end == '\r') {
+        // A blank line. It doesn't affect the common leading whitespace.
+        return 1;
+    }
+    Py_ssize_t len = ws_end - line;
+
+    for (int i = 1; i <= tok->tok_mode_stack_index; i++) {
+        tokenizer_mode *mode = &(tok->tok_mode_stack[i]);
+        if (!mode->dedent) {
+            continue;
+        }
+        if (!mode->dedent_seen_line) {
+            mode->dedent_seen_line = 1;
+            assert(mode->dedent_indent == NULL);
+            mode->dedent_indent_len = 0;
+            if (len > 0) {
+                mode->dedent_indent = PyMem_Malloc(len);
+                if (mode->dedent_indent == NULL) {
+                    tok->done = E_NOMEM;
+                    tok->cur = tok->inp;
+                    return 0;
+                }
+                memcpy(mode->dedent_indent, line, len);
+                mode->dedent_indent_len = len;
+            }
+        }
+        else {
+            Py_ssize_t common = 0;
+            while (common < mode->dedent_indent_len && common < len
+                   && mode->dedent_indent[common] == line[common]) {
+                common++;
+            }
+            mode->dedent_indent_len = common;
+        }
+    }
+    return 1;
+}
+
 /* Get next char, updating state; error code goes into tok->done */
 static int
 tok_nextc(struct tok_state *tok)
@@ -89,6 +155,10 @@ tok_nextc(struct tok_state *tok)
         if (contains_null_bytes(tok->line_start, tok->inp - tok->line_start)) {
             _PyTokenizer_syntaxerror(tok, "source code cannot contain null bytes");
             tok->cur = tok->inp;
+            return EOF;
+        }
+
+        if (tok->tok_mode_stack_index > 0 && !update_dstring_indents(tok)) {
             return EOF;
         }
     }
@@ -455,9 +525,9 @@ tok_continuation_line(struct tok_state *tok) {
 static int
 maybe_raise_syntax_error_for_string_prefixes(struct tok_state *tok,
                                              int saw_b, int saw_r, int saw_u,
-                                             int saw_f, int saw_t) {
-    // Supported: rb, rf, rt (in any order)
-    // Unsupported: ub, ur, uf, ut, bf, bt, ft (in any order)
+                                             int saw_f, int saw_t, int saw_d) {
+    // Supported: rb, rf, rt, db, df, dt (in any order)
+    // Unsupported: ub, ur, uf, ut, ud, bf, bt, ft (in any order)
 
 #define RETURN_SYNTAX_ERROR(PREFIX1, PREFIX2)                             \
     do {                                                                  \
@@ -479,6 +549,9 @@ maybe_raise_syntax_error_for_string_prefixes(struct tok_state *tok,
     }
     if (saw_u && saw_t) {
         RETURN_SYNTAX_ERROR("u", "t");
+    }
+    if (saw_u && saw_d) {
+        RETURN_SYNTAX_ERROR("u", "d");
     }
 
     if (saw_b && saw_f) {
@@ -741,8 +814,8 @@ tok_get_normal_mode(struct tok_state *tok, tokenizer_mode* current_tok, struct t
     /* Identifier (most frequent token!) */
     nonascii = 0;
     if (is_potential_identifier_start(c)) {
-        /* Process the various legal combinations of b"", r"", u"", and f"". */
-        int saw_b = 0, saw_r = 0, saw_u = 0, saw_f = 0, saw_t = 0;
+        /* Process the various legal combinations of b"", r"", u"", f"", and d"". */
+        int saw_b = 0, saw_r = 0, saw_u = 0, saw_f = 0, saw_t = 0, saw_d = 0;
         while (1) {
             if (!saw_b && (c == 'b' || c == 'B')) {
                 saw_b = 1;
@@ -762,6 +835,9 @@ tok_get_normal_mode(struct tok_state *tok, tokenizer_mode* current_tok, struct t
             else if (!saw_t && (c == 't' || c == 'T')) {
                 saw_t = 1;
             }
+            else if (!saw_d && (c == 'd' || c == 'D')) {
+                saw_d = 1;
+            }
             else {
                 break;
             }
@@ -769,7 +845,7 @@ tok_get_normal_mode(struct tok_state *tok, tokenizer_mode* current_tok, struct t
             if (c == '"' || c == '\'') {
                 // Raise error on incompatible string prefixes:
                 int status = maybe_raise_syntax_error_for_string_prefixes(
-                    tok, saw_b, saw_r, saw_u, saw_f, saw_t);
+                    tok, saw_b, saw_r, saw_u, saw_f, saw_t, saw_d);
                 if (status < 0) {
                     return MAKE_TOKEN(ERRORTOKEN);
                 }
@@ -1049,7 +1125,7 @@ tok_get_normal_mode(struct tok_state *tok, tokenizer_mode* current_tok, struct t
     }
 
   f_string_quote:
-    if (((Py_TOLOWER(*tok->start) == 'f' || Py_TOLOWER(*tok->start) == 'r' || Py_TOLOWER(*tok->start) == 't')
+    if (((Py_TOLOWER(*tok->start) == 'f' || Py_TOLOWER(*tok->start) == 'r' || Py_TOLOWER(*tok->start) == 't' || Py_TOLOWER(*tok->start) == 'd')
         && (c == '\'' || c == '"'))) {
 
         int quote = c;
@@ -1089,6 +1165,7 @@ tok_get_normal_mode(struct tok_state *tok, tokenizer_mode* current_tok, struct t
         the_current_tok->kind = TOK_FSTRING_MODE;
         the_current_tok->quote = quote;
         the_current_tok->quote_size = quote_size;
+        the_current_tok->raw = 0;
         the_current_tok->start = tok->start;
         the_current_tok->multi_line_start = tok->line_start;
         the_current_tok->first_line = tok->lineno;
@@ -1099,27 +1176,35 @@ tok_get_normal_mode(struct tok_state *tok, tokenizer_mode* current_tok, struct t
         the_current_tok->last_expr_end = -1;
         the_current_tok->in_format_spec = 0;
         the_current_tok->in_debug = 0;
+        the_current_tok->dedent = 0;
+        the_current_tok->dedent_seen_line = 0;
+        the_current_tok->dedent_indent = NULL;
+        the_current_tok->dedent_indent_len = 0;
 
         enum string_kind_t string_kind = FSTRING;
-        switch (*tok->start) {
-            case 'T':
-            case 't':
-                the_current_tok->raw = Py_TOLOWER(*(tok->start + 1)) == 'r';
-                string_kind = TSTRING;
-                break;
-            case 'F':
-            case 'f':
-                the_current_tok->raw = Py_TOLOWER(*(tok->start + 1)) == 'r';
-                break;
-            case 'R':
-            case 'r':
-                the_current_tok->raw = 1;
-                if (Py_TOLOWER(*(tok->start + 1)) == 't') {
+        for (const char *p = tok->start; *p != c; p++) {
+            switch (*p) {
+                case 'f':
+                case 'F':
+                    break;
+                case 't':
+                case 'T':
                     string_kind = TSTRING;
-                }
-                break;
-            default:
-                Py_UNREACHABLE();
+                    break;
+                case 'r':
+                case 'R':
+                    the_current_tok->raw = 1;
+                    break;
+                case 'd':
+                case 'D':
+                    if (quote_size != 3) {
+                        return MAKE_TOKEN(_PyTokenizer_syntaxerror(tok, "d-string must be triple-quoted"));
+                    }
+                    the_current_tok->dedent = 1;
+                    break;
+                default:
+                    Py_UNREACHABLE();
+            }
         }
 
         the_current_tok->string_kind = string_kind;
@@ -1436,6 +1521,29 @@ tok_get_fstring_mode(struct tok_state *tok, tokenizer_mode* current_tok, struct 
         current_tok->last_expr_buffer = NULL;
         current_tok->last_expr_size = 0;
         current_tok->last_expr_end = -1;
+    }
+
+    if (current_tok->dedent) {
+        // Attach the longest common leading whitespace of the whole
+        // d-string to the FSTRING_END/TSTRING_END token so that
+        // _PyPegen_joined_str()/_PyPegen_template_str() can dedent
+        // the string parts.
+        PyObject *indent = PyUnicode_FromStringAndSize(
+            current_tok->dedent_indent == NULL ? "" : current_tok->dedent_indent,
+            current_tok->dedent_indent_len);
+        if (current_tok->dedent_indent != NULL) {
+            PyMem_Free(current_tok->dedent_indent);
+            current_tok->dedent_indent = NULL;
+            current_tok->dedent_indent_len = 0;
+        }
+        if (indent == NULL) {
+            return MAKE_TOKEN(ERRORTOKEN);
+        }
+        // This token can already have expression metadata when malformed
+        // nested f-strings cause the tokenizer to reuse it as the end token.
+        // Expression metadata is not meaningful on an FTSTRING_END token;
+        // replace it with the d-string indentation metadata.
+        Py_XSETREF(token->metadata, indent);
     }
 
     p_start = tok->start;
