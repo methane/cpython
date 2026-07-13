@@ -269,7 +269,7 @@ class DFStringTestCase(AllRaisesMixin, unittest.TestCase):
             """
         self.assertEqual(s, "Hello 42 Lorum\nipsum dolor sit amet,\n")
 
-        # The expression between '{' and '}' is taken into account
+        # The expression between '{' and '}' is taken into account.
         s = df"""
               Hello {
             world } Lorum
@@ -315,39 +315,40 @@ class DFStringTestCase(AllRaisesMixin, unittest.TestCase):
                 return spec
         s = Spec()
 
-        # Lines inside a multi-line format spec are dedented too.
+        # Lines inside a multi-line format spec are not dedented.
         self.assertEqual(df'''
             {s:>6
             }
-            ''', ">6\n\n")
+            ''', ">6\n            \n")
 
         # Nested replacement fields in the format spec keep working.
         self.assertEqual(df'''
             {s:{"a"}b
             c}
-            ''', "ab\nc\n")
+            ''', "ab\n            c\n")
 
     def test_multiline_debug_text(self):
-        # The static text of a debug expression spanning multiple lines
-        # is dedented too.
+        # The static text of a debug expression spanning multiple lines is
+        # not dedented.
         self.assertEqual(df'''
             {1 +
             1=}
-            ''', "1 +\n1=2\n")
+            ''', "1 +\n            1=2\n")
 
         self.assertEqual(df'''
               {24 *
               3=}
-            ''', "  24 *\n  3=72\n")
+            ''', "  24 *\n              3=72\n")
 
     def test_nested_string_lines_affect_indent(self):
-        # Physical lines inside nested string literals in replacement
-        # fields are not excluded from the common indentation calculation.
+        # Physical lines inside nested string literals in replacement fields
+        # take part in the common indentation calculation, but the inner
+        # string itself is not dedented.
         self.assertEqual(df"""
         {0 or '''
     foo'''}
         bar
-        """, "\nfoo\n    bar\n")
+        """, "    \n    foo\n    bar\n")
 
     def test_nested_dstring_inside_dfstring(self):
         # A nested d-string literal in a replacement field is dedented
@@ -361,16 +362,14 @@ class DFStringTestCase(AllRaisesMixin, unittest.TestCase):
     """
         self.assertEqual(s, "outer line\n    nested\nline\n\n")
 
-        # Unlike a regular triple-quoted string, the nested d-string
-        # content is dedented rather than preserving indentation from the
-        # surrounding source.
+        # the nested d-string content is dedented independently.
         s = df"""
-    {d"""
-        foo
-        bar
-        """}
-    outer
-    """
+            {d"""
+                foo
+                bar
+                """}
+            outer
+            """
         self.assertEqual(s, "foo\nbar\n\nouter\n")
 
         # Nested df-strings also work and interpolate normally.
@@ -383,11 +382,21 @@ class DFStringTestCase(AllRaisesMixin, unittest.TestCase):
 
         # Nested raw d-strings keep backslashes.
         s = df"""
-    {dr"""
-    path\\to\\file
-    """}
-    """
+            {dr"""
+                path\\to\\file
+                """}
+            """
         self.assertEqual(s, r"path\\to\\file" + "\n\n")
+
+        # Lines inside the replacement field still contribute to the outer
+        # d-string's common indentation.
+        s = df"""
+                foo {0 or d"""
+            bar
+            baz
+                    """} spam
+                """
+        self.assertEqual(s, "    foo bar\nbaz\n spam\n")
 
         # Nested d-strings must still start with a newline.
         expr = 'df"""\n    {d"""x"""}\n    """'
@@ -406,44 +415,51 @@ class DTStringTestCase(AllRaisesMixin, TStringBaseCase, unittest.TestCase):
 
     def test_dtstring_basic(self):
         name = "Python"
-        t = eval('dt"""\n    Hello, {name}\n    """', {"name": name})
+        t = dt"""
+            Hello, {name}
+            """
         self.assertTStringEqual(t, ("Hello, ", "\n"), [(name, "name")])
 
     def test_blank_final_line_normalization(self):
-        t = dt('\n  foo\n  {1}\n    ')
+        t = dt"""
+            foo
+            {1}
+            """
         self.assertTStringEqual(t, ("foo\n", "\n"), [(1, "1")])
 
     def test_closing_quote_on_content_line(self):
         value = "Python"
-        t = dt(r"""
+        t = dt"""
             Hello, {value}
-              goodbye""", globals={"value": value})
+              goodbye"""
         self.assertTStringEqual(t, ("Hello, ", "\n  goodbye"), [(value, "value")])
 
     def test_drtstring_raw_content(self):
-        t = eval('drt"""\n    keep\\n\n    """')
+        t = drt"""
+            keep\n
+            """
         self.assertTStringEqual(t, ("keep\\n\n",), ())
 
     def test_multiline_expression_text(self):
-        # The captured expression text of a multi-line interpolation is
-        # dedented too.
-        t = eval('dt"""\n    {1 +\n    1}\n    """')
-        self.assertTStringEqual(t, ("", "\n"), [(2, "1 +\n1")])
+        # The captured expression text of a multi-line interpolation is not
+        # dedented.
+        t = dt("""\n    {1 +\n    1}\n    """)
+        self.assertTStringEqual(t, ("", "\n"), [(2, "1 +\n    1")])
 
     def test_multiline_expression_affects_indent(self):
-        # A line starting inside a replacement field also takes part in
-        # the common indentation calculation.
-        t = eval('dt"""\n    Hello {1 +\n   2}\n    """')
-        self.assertTStringEqual(t, (" Hello ", "\n"), [(3, "1 +\n2")])
+        # A line starting inside a replacement field takes part in the common
+        # indentation calculation, but its text is not dedented.
+        t = dt("""\n    Hello {1 +\n   2}\n    """)
+        self.assertTStringEqual(t, (" Hello ", "\n"), [(3, "1 +\n   2")])
 
     def test_multiline_format_spec(self):
-        # Lines inside a multi-line format spec are dedented too.
+        # Lines inside a multi-line format spec are not dedented.
         # t = eval('dt"""\n    {1:>6\n    }\n    """')
         t = dt"""
             {1:>6
             }
             """
-        self.assertEqual(t.interpolations[0].format_spec, ">6\n")
+        self.assertEqual(t.interpolations[0].format_spec, f">6\n{' '*12}")
 
     def test_concat_with_tstring_is_rejected(self):
         exprs = [
@@ -457,7 +473,6 @@ class DTStringTestCase(AllRaisesMixin, TStringBaseCase, unittest.TestCase):
             "cannot mix t-string literals with string or bytes literals",
             exprs,
         )
-
 
 
 if __name__ == '__main__':

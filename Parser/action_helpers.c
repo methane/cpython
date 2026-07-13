@@ -1465,191 +1465,6 @@ _PyPegen_decode_fstring_part(Parser* p, int is_first, int is_last,
                            p->arena);
 }
 
-// Dedent raw source text (debug text of `{expr=}` and the expression text
-// of Interpolation nodes) that may span multiple physical lines. The first
-// line starts in the middle of a physical line, so it is kept verbatim.
-// Returns a new (or the same, if nothing to do) object registered in the
-// arena, or NULL on error.
-static PyObject *
-dedent_raw_text(Parser *p, PyObject *str, const char *indent, Py_ssize_t indent_len,
-                Token *token)
-{
-    assert(PyUnicode_CheckExact(str));
-    Py_ssize_t len;
-    const char *bstr = PyUnicode_AsUTF8AndSize(str, &len);
-    if (bstr == NULL) {
-        return NULL;
-    }
-    if (memchr(bstr, '\n', len) == NULL) {
-        return str;  // single line, nothing to dedent
-    }
-    PyObject *res = _PyPegen_dedent_string_part(p, bstr, len, indent, indent_len,
-                                                /*is_first=*/0, /*is_last=*/0,
-                                                /*is_raw=*/1, token);
-    if (res == NULL) {
-        return NULL;
-    }
-    if (_PyArena_AddPyObject(p->arena, res) < 0) {
-        Py_DECREF(res);
-        return NULL;
-    }
-    return res;
-}
-
-static int
-dedent_replacement_field(Parser *p, expr_ty item, const char *indent,
-                         Py_ssize_t indent_len, int is_raw, Token *token);
-
-/* Dedent multiline string literals embedded in a replacement expression.
-   Return 1 if one was found, 0 otherwise, and -1 on error. */
-static int
-dedent_inner_string_literals(Parser *p, expr_ty expr, const char *indent,
-                             Py_ssize_t indent_len, Token *token)
-{
-    if (expr->kind == Constant_kind &&
-        expr->end_lineno > expr->lineno &&
-        PyUnicode_CheckExact(expr->v.Constant.value)) {
-        PyObject *value = expr->v.Constant.value;
-        Py_ssize_t len;
-        const char *s = PyUnicode_AsUTF8AndSize(value, &len);
-        if (s == NULL) {
-            return -1;
-        }
-        if (memchr(s, '\n', len) == NULL) {
-            return 0;
-        }
-        /* Decoded escape sequences can introduce lines which did not
-           participate in the tokenizer's common-indent calculation. */
-        const char *line = memchr(s, '\n', len) + 1;
-        const char *end = s + len;
-        while (line < end) {
-            const char *q = line;
-            while (q < end && (*q == ' ' || *q == '\t')) {
-                q++;
-            }
-            if (q < end && *q != '\n' &&
-                (q - line < indent_len ||
-                 memcmp(line, indent, (size_t)indent_len) != 0)) {
-                return 0;
-            }
-            const char *newline = memchr(q, '\n', end - q);
-            if (newline == NULL) {
-                break;
-            }
-            line = newline + 1;
-        }
-        PyObject *dedented = dedent_raw_text(p, value, indent, indent_len, token);
-        if (dedented == NULL) {
-            return -1;
-        }
-        expr->v.Constant.value = dedented;
-        return 1;
-    }
-
-    asdl_expr_seq *values = NULL;
-    switch (expr->kind) {
-        case BoolOp_kind:
-            values = expr->v.BoolOp.values;
-            break;
-        case Tuple_kind:
-            values = expr->v.Tuple.elts;
-            break;
-        case List_kind:
-            values = expr->v.List.elts;
-            break;
-        case Set_kind:
-            values = expr->v.Set.elts;
-            break;
-        default:
-            return 0;
-    }
-
-    int found = 0;
-    for (Py_ssize_t i = 0; i < asdl_seq_LEN(values); i++) {
-        int result = dedent_inner_string_literals(
-            p, asdl_seq_GET(values, i), indent, indent_len, token);
-        if (result < 0) {
-            return -1;
-        }
-        found |= result;
-    }
-    return found;
-}
-
-// Dedent and decode the constant parts of a format spec inside a d-string.
-// In d-strings, _PyPegen_decoded_constant_from_token() keeps the format
-// spec parts as raw (undecoded) text because the common indent is unknown
-// until FSTRING_END; here we dedent them and apply escape decoding.
-static int
-dedent_format_spec(Parser *p, expr_ty spec, const char *indent,
-                   Py_ssize_t indent_len, int is_raw, Token *token)
-{
-    if (spec->kind == Constant_kind) {
-        if (p->call_invalid_rules) {
-            // In the second (error reporting) parser pass, the tokenizer has
-            // already finished, so _PyPegen_decoded_constant_from_token()
-            // cannot detect the d-string mode and decodes the format spec
-            // parts immediately. The AST built in this pass is only used
-            // for error reporting; skip dedenting to avoid double decoding.
-            return 0;
-        }
-        expr_ty decoded = _PyPegen_decode_fstring_part(p, /*is_first=*/0,
-                                                       /*is_last=*/0, is_raw,
-                                                       indent, indent_len, spec, token);
-        if (decoded == NULL) {
-            return -1;
-        }
-        spec->v.Constant.value = decoded->v.Constant.value;
-        return 0;
-    }
-    if (spec->kind == JoinedStr_kind) {
-        asdl_expr_seq *values = spec->v.JoinedStr.values;
-        for (Py_ssize_t i = 0; i < asdl_seq_LEN(values); i++) {
-            expr_ty value = asdl_seq_GET(values, i);
-            if (value->kind == Constant_kind) {
-                if (dedent_format_spec(p, value, indent, indent_len, is_raw, token) < 0) {
-                    return -1;
-                }
-            }
-            else if (dedent_replacement_field(p, value, indent, indent_len,
-                                              is_raw, token) < 0) {
-                return -1;
-            }
-        }
-        return 0;
-    }
-    return dedent_replacement_field(p, spec, indent, indent_len, is_raw, token);
-}
-
-// Apply d-string dedent to the parts of a FormattedValue/Interpolation
-// node that carry source text spanning multiple physical lines: the format
-// spec and (for t-strings) the expression text.
-static int
-dedent_replacement_field(Parser *p, expr_ty item, const char *indent,
-                         Py_ssize_t indent_len, int is_raw, Token *token)
-{
-    expr_ty format_spec = NULL;
-    if (item->kind == FormattedValue_kind) {
-        format_spec = item->v.FormattedValue.format_spec;
-    }
-    else if (item->kind == Interpolation_kind) {
-        format_spec = item->v.Interpolation.format_spec;
-        PyObject *exprstr = item->v.Interpolation.str;
-        if (exprstr != NULL && PyUnicode_CheckExact(exprstr)) {
-            PyObject *dedented = dedent_raw_text(p, exprstr, indent, indent_len, token);
-            if (dedented == NULL) {
-                return -1;
-            }
-            item->v.Interpolation.str = dedented;
-        }
-    }
-    if (format_spec != NULL) {
-        return dedent_format_spec(p, format_spec, indent, indent_len, is_raw, token);
-    }
-    return 0;
-}
-
-
 static asdl_expr_seq *
 _get_resized_exprs(Parser *p, Token *a, asdl_expr_seq *raw_expressions, Token *b, enum string_kind_t string_kind)
 {
@@ -1733,24 +1548,10 @@ _get_resized_exprs(Parser *p, Token *a, asdl_expr_seq *raw_expressions, Token *b
 
             expr_ty first = asdl_seq_GET(values, 0);
             assert(first->kind == Constant_kind);
-            if (is_dedent) {
-                // The debug text of `{expr=}` is raw source text that may
-                // span multiple physical lines; dedent it too.
-                PyObject *dedented = dedent_raw_text(p, first->v.Constant.value,
-                                                     indent_start, indent_len, b);
-                if (dedented == NULL) {
-                    return NULL;
-                }
-                first->v.Constant.value = dedented;
-            }
             asdl_seq_SET(seq, index++, first);
 
             expr_ty second = asdl_seq_GET(values, 1);
             assert((string_kind == TSTRING && second->kind == Interpolation_kind) || second->kind == FormattedValue_kind);
-            if (is_dedent && dedent_replacement_field(p, second, indent_start,
-                                                      indent_len, is_raw, b) < 0) {
-                return NULL;
-            }
             asdl_seq_SET(seq, index++, second);
 
             continue;
@@ -1769,44 +1570,6 @@ _get_resized_exprs(Parser *p, Token *a, asdl_expr_seq *raw_expressions, Token *b
             if (PyUnicode_CheckExact(item->v.Constant.value)
                 && PyUnicode_GET_LENGTH(item->v.Constant.value) == 0) {
                 continue;
-            }
-        }
-        else if (is_dedent) {
-            int inner_literal = 0;
-            if (item->kind == FormattedValue_kind) {
-                inner_literal = dedent_inner_string_literals(
-                    p, item->v.FormattedValue.value, indent_start, indent_len, b);
-                if (inner_literal < 0) {
-                    return NULL;
-                }
-            }
-            if (dedent_replacement_field(p, item, indent_start,
-                                         indent_len, is_raw, b) < 0) {
-                return NULL;
-            }
-            if (inner_literal && index > 0 && indent_len > 0) {
-                expr_ty previous = asdl_seq_GET(seq, index - 1);
-                if (previous->kind == Constant_kind &&
-                    PyUnicode_CheckExact(previous->v.Constant.value)) {
-                    Py_ssize_t len;
-                    const char *s = PyUnicode_AsUTF8AndSize(
-                        previous->v.Constant.value, &len);
-                    if (s == NULL) {
-                        return NULL;
-                    }
-                    if (len >= indent_len &&
-                        memcmp(s + len - indent_len, indent_start,
-                               (size_t)indent_len) == 0) {
-                        PyObject *trimmed = PyUnicode_FromStringAndSize(
-                            s, len - indent_len);
-                        if (trimmed == NULL ||
-                            _PyArena_AddPyObject(p->arena, trimmed) < 0) {
-                            Py_XDECREF(trimmed);
-                            return NULL;
-                        }
-                        previous->v.Constant.value = trimmed;
-                    }
-                }
             }
         }
         asdl_seq_SET(seq, index++, item);
@@ -1863,13 +1626,6 @@ expr_ty _PyPegen_decoded_constant_from_token(Parser* p, Token* tok) {
     int is_raw = 0;
     if (INSIDE_FSTRING(p->tok)) {
         tokenizer_mode *mode = TOK_GET_MODE(p->tok);
-        if (mode->dedent) {
-            // PEP 822: dedent must happen before escape decoding, but the
-            // common indent isn't known until FSTRING_END/TSTRING_END.
-            // Keep the raw text; _get_resized_exprs() dedents and decodes
-            // format spec parts of d-strings later.
-            return _PyPegen_constant_from_token(p, tok);
-        }
         is_raw = mode->raw;
     }
 
