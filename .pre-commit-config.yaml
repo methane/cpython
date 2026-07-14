@@ -19,6 +19,7 @@ repos:
         name: Run Ruff (lint) on Lib/test/
         args: [--exit-non-zero-on-fix]
         files: ^Lib/test/
+        exclude: ^Lib/test/test_dstring.py
       - id: ruff-check
         name: Run Ruff (lint) on Platforms/WASI/
         args: [--exit-non-zero-on-fix, --config=Platforms/WASI/.ruff.toml]
