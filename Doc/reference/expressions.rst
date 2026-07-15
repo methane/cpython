@@ -298,7 +298,7 @@ To concatenate string expressions at run time, the '+' operator may be used::
    Hello Blaise
 
 Literal concatenation can freely mix raw strings, triple-quoted strings,
-and formatted string literals.
+dedented strings, and formatted string literals.
 For example::
 
    >>> "Hello" r', ' f"{name}!"
