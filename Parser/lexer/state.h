@@ -37,8 +37,8 @@ struct token {
          expressions (`f"{expr=}"`) and t-string Interpolation.str
          (see set_ftstring_expr()).
        - On the FSTRING_END/TSTRING_END token of a d-string: the longest
-         common leading whitespace of all physical lines of the literal,
-         used to dedent the string parts (PEP 822).
+         common leading whitespace of the participating physical lines of the
+         literal, used to dedent the string parts (PEP 822).
        The owner is this struct (freed by _PyToken_Free()); pegen's
        initialize_token() moves it into the arena-managed Token. */
     PyObject *metadata;

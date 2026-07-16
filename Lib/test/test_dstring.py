@@ -1,4 +1,6 @@
+import io
 import itertools
+import tokenize
 import unittest
 import warnings
 
@@ -216,6 +218,14 @@ world
             """
         self.check_dbstring(source, "path\\to\\file\nkeep\\n\n")
 
+    def test_braces_are_literal_without_f_prefix(self):
+        s = d("""
+    hello {
+        1
+} world
+    """)
+        self.assertEqual(s, "    hello {\n        1\n} world\n")
+
     def test_dbstring_non_ascii_error(self):
         with self.assertRaisesRegex(SyntaxError, "bytes can only contain ASCII literal characters"):
             db('\n  \u00e9\n  ')
@@ -269,12 +279,21 @@ class DFStringTestCase(AllRaisesMixin, unittest.TestCase):
             """
         self.assertEqual(s, "Hello 42 Lorum\nipsum dolor sit amet,\n")
 
-        # The expression between '{' and '}' is taken into account.
+        # A line that starts inside a replacement field does not affect the
+        # common indentation.
         s = df"""
               Hello {
             world } Lorum
               ipsum"""
-        self.assertEqual(s, "  Hello 42 Lorum\n  ipsum")
+        self.assertEqual(s, "Hello 42 Lorum\nipsum")
+
+        # This is also true when constant text resumes on the same line.
+        s = df"""
+            hello {
+                1
+        } world
+            """
+        self.assertEqual(s, "hello 1 world\n")
 
     def test_dfstring_conversion_and_format(self):
         x = 3.1415
@@ -321,6 +340,13 @@ class DFStringTestCase(AllRaisesMixin, unittest.TestCase):
             }
             ''', ">6\n            \n")
 
+        # A line that starts in a format spec does not affect the outer common
+        # indentation, and its own indentation is retained.
+        self.assertEqual(df'''
+    {s:>6
+  }
+    ''', ">6\n  \n")
+
         # Nested replacement fields in the format spec keep working.
         self.assertEqual(df'''
             {s:{"a"}b
@@ -340,15 +366,15 @@ class DFStringTestCase(AllRaisesMixin, unittest.TestCase):
               3=}
             ''', "  24 *\n              3=72\n")
 
-    def test_nested_string_lines_affect_indent(self):
+    def test_nested_string_lines_do_not_affect_indent(self):
         # Physical lines inside nested string literals in replacement fields
-        # take part in the common indentation calculation, but the inner
-        # string itself is not dedented.
+        # do not take part in the outer common indentation calculation. The
+        # inner string itself is not dedented.
         self.assertEqual(df"""
         {0 or '''
     foo'''}
         bar
-        """, "    \n    foo\n    bar\n")
+        """, "\n    foo\nbar\n")
 
     def test_nested_dstring_inside_dfstring(self):
         # A nested d-string literal in a replacement field is dedented
@@ -388,7 +414,7 @@ class DFStringTestCase(AllRaisesMixin, unittest.TestCase):
             """
         self.assertEqual(s, r"path\\to\\file" + "\n\n")
 
-        # Lines inside the replacement field still contribute to the outer
+        # Lines inside the replacement field do not contribute to the outer
         # d-string's common indentation.
         s = df"""
                 foo {0 or d"""
@@ -396,12 +422,37 @@ class DFStringTestCase(AllRaisesMixin, unittest.TestCase):
             baz
                     """} spam
                 """
-        self.assertEqual(s, "    foo bar\nbaz\n spam\n")
+        self.assertEqual(s, "foo bar\nbaz\n spam\n")
 
         # Nested d-strings must still start with a newline.
         expr = 'df"""\n    {d"""x"""}\n    """'
         with self.assertRaisesRegex(SyntaxError, "d-string must start with a newline"):
             eval(expr)
+
+    def test_tokenize_untokenize_roundtrip(self):
+        source = b'''s = df"""
+    hello {
+  1
+} world
+    goodbye
+    """
+'''
+        tokens = list(tokenize.tokenize(io.BytesIO(source).readline))
+        token_pairs = [(tok.type, tok.string) for tok in tokens]
+        roundtripped = tokenize.untokenize(token_pairs)
+
+        roundtripped_pairs = [
+            (tok.type, tok.string)
+            for tok in tokenize.tokenize(io.BytesIO(roundtripped).readline)
+        ]
+        self.assertEqual(roundtripped_pairs, token_pairs)
+
+        namespace = {}
+        exec(source, namespace)
+        roundtripped_namespace = {}
+        exec(roundtripped, roundtripped_namespace)
+        self.assertEqual(namespace["s"], "hello 1 world\ngoodbye\n")
+        self.assertEqual(roundtripped_namespace["s"], namespace["s"])
 
 
 class DTStringTestCase(AllRaisesMixin, TStringBaseCase, unittest.TestCase):
@@ -446,11 +497,11 @@ class DTStringTestCase(AllRaisesMixin, TStringBaseCase, unittest.TestCase):
         t = dt("""\n    {1 +\n    1}\n    """)
         self.assertTStringEqual(t, ("", "\n"), [(2, "1 +\n    1")])
 
-    def test_multiline_expression_affects_indent(self):
-        # A line starting inside a replacement field takes part in the common
-        # indentation calculation, but its text is not dedented.
+    def test_multiline_expression_does_not_affect_indent(self):
+        # A line starting inside a replacement field does not take part in the
+        # common indentation calculation. Its text is not dedented.
         t = dt("""\n    Hello {1 +\n   2}\n    """)
-        self.assertTStringEqual(t, (" Hello ", "\n"), [(3, "1 +\n   2")])
+        self.assertTStringEqual(t, ("Hello ", "\n"), [(3, "1 +\n   2")])
 
     def test_multiline_format_spec(self):
         # Lines inside a multi-line format spec are not dedented.

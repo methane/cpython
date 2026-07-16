@@ -1078,10 +1078,11 @@ For example::
 
 
 The ``d`` prefix can be combined with the compatible ``r``, ``b``, ``f``, and
-``t`` prefixes. In a ``df`` or ``dt`` string, lines inside replacement fields
-participate in calculating the outer common indentation, but only the constant
-text outside replacement fields is dedented. A nested d-string is dedented
-independently.
+``t`` prefixes. In a ``df`` or ``dt`` string, a physical line participates in
+the outer common indentation calculation only if it starts outside a
+replacement field. A line that starts inside a replacement field is ignored
+even if constant text resumes later on that line. Only constant text outside
+replacement fields is dedented. A nested d-string is dedented independently.
 
 .. seealso::
 

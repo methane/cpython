@@ -1510,10 +1510,9 @@ _get_resized_exprs(Parser *p, Token *a, asdl_expr_seq *raw_expressions, Token *b
             return NULL;
         }
 
-        // The longest common leading whitespace is computed by the
-        // tokenizer over all physical lines of the literal (including
-        // lines starting inside replacement fields) and attached to the
-        // FSTRING_END/TSTRING_END token as metadata.
+        // The longest common leading whitespace is computed by the tokenizer
+        // over physical lines that start outside replacement fields and
+        // attached to the FSTRING_END/TSTRING_END token as metadata.
         assert(b->metadata != NULL && PyUnicode_CheckExact(b->metadata));
         if (b->metadata != NULL && PyUnicode_CheckExact(b->metadata)) {
             indent_start = PyUnicode_AsUTF8AndSize(b->metadata, &indent_len);

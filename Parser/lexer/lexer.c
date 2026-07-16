@@ -26,18 +26,19 @@ contains_null_bytes(const char* str, size_t size)
 
 /* PEP 822: fold the leading whitespace of the freshly read physical line
    [tok->cur, tok->inp) into the longest common leading whitespace of every
-   active d-string. All physical lines between the opening and the closing
-   quotes are considered, including lines starting inside replacement
-   fields and nested string literals. Blank lines (whitespace-only) are
-   ignored. The line that contains the closing quotes is naturally
-   non-blank because the quote characters are on it.
+   active d-string whose replacement field is not active at the start of the
+   line. Lines starting inside replacement fields, including lines inside
+   nested string literals, do not affect the outer d-string. Blank lines
+   (whitespace-only) are ignored. The line that contains the closing quotes is
+   naturally non-blank because the quote characters are on it.
    Return 1 on success, 0 on memory error (tok->done is set). */
 static int
 update_dstring_indents(struct tok_state *tok)
 {
     int any_dedent = 0;
     for (int i = 1; i <= tok->tok_mode_stack_index; i++) {
-        if (tok->tok_mode_stack[i].dedent) {
+        tokenizer_mode *mode = &tok->tok_mode_stack[i];
+        if (mode->dedent && !INSIDE_FSTRING_EXPR(mode)) {
             any_dedent = 1;
             break;
         }
@@ -60,7 +61,7 @@ update_dstring_indents(struct tok_state *tok)
 
     for (int i = 1; i <= tok->tok_mode_stack_index; i++) {
         tokenizer_mode *mode = &(tok->tok_mode_stack[i]);
-        if (!mode->dedent) {
+        if (!mode->dedent || INSIDE_FSTRING_EXPR(mode)) {
             continue;
         }
         if (!mode->dedent_seen_line) {
