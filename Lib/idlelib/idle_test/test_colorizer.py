@@ -88,6 +88,24 @@ class FunctionTest(unittest.TestCase):
         m = prog.search(line, m.end())
         eq(m.groupdict()['SYNC'], '\n')
 
+    def test_dstring_prefixes(self):
+        dstring_prefixes = (
+            'd', 'bd', 'db', 'rd', 'dr', 'fd', 'df', 'td', 'dt',
+            'brd', 'bdr', 'rbd', 'rdb', 'dbr', 'drb',
+            'frd', 'fdr', 'rfd', 'rdf', 'dfr', 'drf',
+            'trd', 'tdr', 'rtd', 'rdt', 'dtr', 'drt',
+        )
+        for prefix in dstring_prefixes:
+            for quote in ('\'\'\'', '"""'):
+                with self.subTest(prefix=prefix, quote=quote):
+                    source = f'{prefix}{quote}text{quote}'
+                    match = colorizer.prog.fullmatch(source)
+                    self.assertIsNotNone(match)
+                    self.assertEqual(match.groupdict()['STRING'], source)
+
+        # The d prefix is only valid for triple-quoted strings.
+        self.assertIsNone(colorizer.prog.match('d"text"'))
+
     def test_idprog(self):
         idprog = colorizer.idprog
         m = idprog.match('nospace')
