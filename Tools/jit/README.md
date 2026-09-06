@@ -91,3 +91,19 @@ If you're looking for information on how to update the JIT build dependencies, s
 
 The [example_trace_dump.py](./example_trace_dump.py) script will (when configured as described in the script) dump out the
 executors for a range of tiny programs to show the behavior of the JIT front-end.
+
+### Measuring JIT performance
+
+Use [benchmark.py](./benchmark.py) for a quick local smoke test before and after
+JIT changes. It runs a few hot-loop microbenchmarks twice, once with
+`PYTHON_JIT=0` and once with `PYTHON_JIT=1`, and prints the best timings and
+speedup ratios. This is not a replacement for `pyperformance`, but it is useful
+for checking whether a focused change affects tier-2 execution before running a
+larger benchmark suite.
+
+When configured with `--enable-experimental-jit=interpreter`, the benchmark
+measures the tier-2 micro-op interpreter described in
+[InternalDocs/jit.md](../../InternalDocs/jit.md). That mode is useful for
+understanding trace recording and optimizer behavior, but it can be slower than
+tier 1 because it does not exercise the copy-and-patch native-code backend. Use
+a full `--enable-experimental-jit` build when evaluating end-user JIT speedups.

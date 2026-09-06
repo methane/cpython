@@ -42,6 +42,7 @@ Program Execution
 - [Stack references (_PyStackRef)](stackrefs.md)
 
 - [The JIT](jit.md)
+- [JIT performance roadmap](jit_performance.md)
 
 - [Garbage Collector Design](garbage_collector.md)
 
