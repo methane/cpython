@@ -137,14 +137,19 @@
             // _BINARY_OP_ADD_FLOAT
             {
                 right = value;
-                PyObject *left_o = PyStackRef_AsPyObjectBorrow(left);
-                PyObject *right_o = PyStackRef_AsPyObjectBorrow(right);
-                assert(PyFloat_CheckExact(left_o));
-                assert(PyFloat_CheckExact(right_o));
+                assert(PyFloat_CheckExact(PyStackRef_AsPyObjectBorrow(left)));
+                assert(PyFloat_CheckExact(PyStackRef_AsPyObjectBorrow(right)));
                 STAT_INC(BINARY_OP, hit);
                 double dres =
-                ((PyFloatObject *)left_o)->ob_fval +
-                ((PyFloatObject *)right_o)->ob_fval;
+                _PyFloat_StackRefAsDouble(left) + _PyFloat_StackRefAsDouble(right);
+                #ifdef Py_EXPERIMENTAL_TRACING_GC
+                l = left;
+                r = right;
+                res = _PyFloat_ReuseOrCreate(&l, &r, dres);
+                if (PyStackRef_IsNull(res)) {
+                    JUMP_TO_LABEL(error);
+                }
+                #else
                 PyObject *d = PyFloat_FromDouble(dres);
                 if (d == NULL) {
                     JUMP_TO_LABEL(error);
@@ -152,6 +157,7 @@
                 res = PyStackRef_FromPyObjectSteal(d);
                 l = left;
                 r = right;
+                #endif
             }
             // _POP_TOP_FLOAT
             {
@@ -377,7 +383,11 @@
                 }
                 assert(d->result_type == NULL || Py_TYPE(res_o) == d->result_type);
                 assert(!d->result_unique || Py_REFCNT(res_o) == 1 || _Py_IsImmortal(res_o));
-                assert(!PyFloat_CheckExact(res_o) || Py_REFCNT(res_o) == 1);
+                assert(stack_pointer == _PyFrame_GetStackPointer(frame));
+                _PyFrame_StackPointerValidate(frame);
+                assert(!PyFloat_CheckExact(res_o) || _PyFloat_IsImmediate(res_o) ||
+                   Py_REFCNT(res_o) == 1);
+                _PyFrame_StackPointerInvalidate(frame);
                 res = PyStackRef_FromPyObjectSteal(res_o);
                 l = left;
                 r = right;
@@ -531,14 +541,19 @@
             // _BINARY_OP_MULTIPLY_FLOAT
             {
                 right = value;
-                PyObject *left_o = PyStackRef_AsPyObjectBorrow(left);
-                PyObject *right_o = PyStackRef_AsPyObjectBorrow(right);
-                assert(PyFloat_CheckExact(left_o));
-                assert(PyFloat_CheckExact(right_o));
+                assert(PyFloat_CheckExact(PyStackRef_AsPyObjectBorrow(left)));
+                assert(PyFloat_CheckExact(PyStackRef_AsPyObjectBorrow(right)));
                 STAT_INC(BINARY_OP, hit);
                 double dres =
-                ((PyFloatObject *)left_o)->ob_fval *
-                ((PyFloatObject *)right_o)->ob_fval;
+                _PyFloat_StackRefAsDouble(left) * _PyFloat_StackRefAsDouble(right);
+                #ifdef Py_EXPERIMENTAL_TRACING_GC
+                l = left;
+                r = right;
+                res = _PyFloat_ReuseOrCreate(&l, &r, dres);
+                if (PyStackRef_IsNull(res)) {
+                    JUMP_TO_LABEL(error);
+                }
+                #else
                 PyObject *d = PyFloat_FromDouble(dres);
                 if (d == NULL) {
                     JUMP_TO_LABEL(error);
@@ -546,6 +561,7 @@
                 res = PyStackRef_FromPyObjectSteal(d);
                 l = left;
                 r = right;
+                #endif
             }
             // _POP_TOP_FLOAT
             {
@@ -1041,7 +1057,10 @@
                     assert(_PyOpcode_Deopt[opcode] == (BINARY_OP));
                     JUMP_TO_PREDICTED(BINARY_OP);
                 }
-                Py_ssize_t index = ((PyLongObject*)sub)->long_value.ob_digit[0];
+                _PyFrame_SetStackPointer(frame, stack_pointer);
+                _PyFrame_StackPointerValidate(frame);
+                Py_ssize_t index = _PyLong_GetDigit((PyLongObject *)sub, 0);
+                _PyFrame_StackPointerInvalidate(frame);
                 if (PyUnicode_GET_LENGTH(str) <= index) {
                     UPDATE_MISS_STATS(BINARY_OP);
                     assert(_PyOpcode_Deopt[opcode] == (BINARY_OP));
@@ -1124,7 +1143,10 @@
                     assert(_PyOpcode_Deopt[opcode] == (BINARY_OP));
                     JUMP_TO_PREDICTED(BINARY_OP);
                 }
-                Py_ssize_t index = ((PyLongObject*)sub)->long_value.ob_digit[0];
+                _PyFrame_SetStackPointer(frame, stack_pointer);
+                _PyFrame_StackPointerValidate(frame);
+                Py_ssize_t index = _PyLong_GetDigit((PyLongObject *)sub, 0);
+                _PyFrame_StackPointerInvalidate(frame);
                 if (index >= PyTuple_GET_SIZE(tuple)) {
                     UPDATE_MISS_STATS(BINARY_OP);
                     assert(_PyOpcode_Deopt[opcode] == (BINARY_OP));
@@ -1139,7 +1161,10 @@
                 assert(PyLong_CheckExact(sub));
                 assert(PyTuple_CheckExact(tuple));
                 STAT_INC(BINARY_OP, hit);
-                Py_ssize_t index = ((PyLongObject*)sub)->long_value.ob_digit[0];
+                assert(stack_pointer == _PyFrame_GetStackPointer(frame));
+                _PyFrame_StackPointerValidate(frame);
+                Py_ssize_t index = _PyLong_GetDigit((PyLongObject *)sub, 0);
+                _PyFrame_StackPointerInvalidate(frame);
                 PyObject *res_o = PyTuple_GET_ITEM(tuple, index);
                 assert(res_o != NULL);
                 res = PyStackRef_FromPyObjectNew(res_o);
@@ -1218,7 +1243,10 @@
                     assert(_PyOpcode_Deopt[opcode] == (BINARY_OP));
                     JUMP_TO_PREDICTED(BINARY_OP);
                 }
-                Py_ssize_t index = ((PyLongObject*)sub)->long_value.ob_digit[0];
+                _PyFrame_SetStackPointer(frame, stack_pointer);
+                _PyFrame_StackPointerValidate(frame);
+                Py_ssize_t index = _PyLong_GetDigit((PyLongObject *)sub, 0);
+                _PyFrame_StackPointerInvalidate(frame);
                 if (PyUnicode_GET_LENGTH(str) <= index) {
                     UPDATE_MISS_STATS(BINARY_OP);
                     assert(_PyOpcode_Deopt[opcode] == (BINARY_OP));
@@ -1295,14 +1323,19 @@
             // _BINARY_OP_SUBTRACT_FLOAT
             {
                 right = value;
-                PyObject *left_o = PyStackRef_AsPyObjectBorrow(left);
-                PyObject *right_o = PyStackRef_AsPyObjectBorrow(right);
-                assert(PyFloat_CheckExact(left_o));
-                assert(PyFloat_CheckExact(right_o));
+                assert(PyFloat_CheckExact(PyStackRef_AsPyObjectBorrow(left)));
+                assert(PyFloat_CheckExact(PyStackRef_AsPyObjectBorrow(right)));
                 STAT_INC(BINARY_OP, hit);
                 double dres =
-                ((PyFloatObject *)left_o)->ob_fval -
-                ((PyFloatObject *)right_o)->ob_fval;
+                _PyFloat_StackRefAsDouble(left) - _PyFloat_StackRefAsDouble(right);
+                #ifdef Py_EXPERIMENTAL_TRACING_GC
+                l = left;
+                r = right;
+                res = _PyFloat_ReuseOrCreate(&l, &r, dres);
+                if (PyStackRef_IsNull(res)) {
+                    JUMP_TO_LABEL(error);
+                }
+                #else
                 PyObject *d = PyFloat_FromDouble(dres);
                 if (d == NULL) {
                     JUMP_TO_LABEL(error);
@@ -1310,6 +1343,7 @@
                 res = PyStackRef_FromPyObjectSteal(d);
                 l = left;
                 r = right;
+                #endif
             }
             // _POP_TOP_FLOAT
             {
@@ -5364,11 +5398,9 @@
             // _COMPARE_OP_FLOAT
             {
                 right = value;
-                PyObject *left_o = PyStackRef_AsPyObjectBorrow(left);
-                PyObject *right_o = PyStackRef_AsPyObjectBorrow(right);
                 STAT_INC(COMPARE_OP, hit);
-                double dleft = PyFloat_AS_DOUBLE(left_o);
-                double dright = PyFloat_AS_DOUBLE(right_o);
+                double dleft = _PyFloat_StackRefAsDouble(left);
+                double dright = _PyFloat_StackRefAsDouble(right);
                 int sign_ish = COMPARISON_BIT(dleft, dright);
                 l = left;
                 r = right;
@@ -6546,7 +6578,7 @@
                     JUMP_TO_PREDICTED(FOR_ITER);
                 }
                 #ifdef Py_GIL_DISABLED
-                if (!_PyObject_IsUniquelyReferenced((PyObject *)r)) {
+                if (!_PyRangeIter_IsSafeForSpecialization((PyObject *)r)) {
                     UPDATE_MISS_STATS(FOR_ITER);
                     assert(_PyOpcode_Deopt[opcode] == (FOR_ITER));
                     JUMP_TO_PREDICTED(FOR_ITER);
@@ -6558,7 +6590,7 @@
                 _PyRangeIterObject *r = (_PyRangeIterObject *)PyStackRef_AsPyObjectBorrow(iter);
                 assert(Py_TYPE(r) == &PyRangeIter_Type);
                 #ifdef Py_GIL_DISABLED
-                assert(_PyObject_IsUniquelyReferenced((PyObject *)r));
+                assert(_PyRangeIter_IsSafeForSpecialization((PyObject *)r));
                 #endif
                 STAT_INC(FOR_ITER, hit);
                 if (r->len <= 0) {
@@ -6571,7 +6603,7 @@
                 _PyRangeIterObject *r = (_PyRangeIterObject *)PyStackRef_AsPyObjectBorrow(iter);
                 assert(Py_TYPE(r) == &PyRangeIter_Type);
                 #ifdef Py_GIL_DISABLED
-                assert(_PyObject_IsUniquelyReferenced((PyObject *)r));
+                assert(_PyRangeIter_IsSafeForSpecialization((PyObject *)r));
                 #endif
                 assert(r->len > 0);
                 long value = r->start;
@@ -9494,23 +9526,29 @@
             {
                 uint16_t index = read_u16(&this_instr[4].cache);
                 PyObject *owner_o = PyStackRef_AsPyObjectBorrow(owner);
-                PyObject **addr = (PyObject **)((char *)owner_o + index);
-                PyObject *attr_o = FT_ATOMIC_LOAD_PTR(*addr);
-                if (attr_o == NULL) {
-                    UPDATE_MISS_STATS(LOAD_ATTR);
-                    assert(_PyOpcode_Deopt[opcode] == (LOAD_ATTR));
-                    JUMP_TO_PREDICTED(LOAD_ATTR);
+                if (_PyObject_IsImmediate(owner_o)) {
+                    assert(index == offsetof(PyObject, ob_type));
+                    attr = PyStackRef_FromPyObjectNew((PyObject *)Py_TYPE(owner_o));
                 }
-                #ifdef Py_GIL_DISABLED
-                int increfed = _Py_TryIncrefCompareStackRef(addr, attr_o, &attr);
-                if (!increfed) {
-                    UPDATE_MISS_STATS(LOAD_ATTR);
-                    assert(_PyOpcode_Deopt[opcode] == (LOAD_ATTR));
-                    JUMP_TO_PREDICTED(LOAD_ATTR);
+                else {
+                    PyObject **addr = (PyObject **)((char *)owner_o + index);
+                    PyObject *attr_o = FT_ATOMIC_LOAD_PTR(*addr);
+                    if (attr_o == NULL) {
+                        UPDATE_MISS_STATS(LOAD_ATTR);
+                        assert(_PyOpcode_Deopt[opcode] == (LOAD_ATTR));
+                        JUMP_TO_PREDICTED(LOAD_ATTR);
+                    }
+                    #ifdef Py_GIL_DISABLED
+                    int increfed = _Py_TryIncrefCompareStackRef(addr, attr_o, &attr);
+                    if (!increfed) {
+                        UPDATE_MISS_STATS(LOAD_ATTR);
+                        assert(_PyOpcode_Deopt[opcode] == (LOAD_ATTR));
+                        JUMP_TO_PREDICTED(LOAD_ATTR);
+                    }
+                    #else
+                    attr = PyStackRef_FromPyObjectNew(attr_o);
+                    #endif
                 }
-                #else
-                attr = PyStackRef_FromPyObjectNew(attr_o);
-                #endif
                 STAT_INC(LOAD_ATTR, hit);
                 o = owner;
             }

@@ -22,6 +22,12 @@ static bool _PyMem_mi_page_is_safe_to_free(mi_page_t *page);
 static bool _PyMem_mi_page_maybe_free(mi_page_t *page, mi_page_queue_t *pq, bool force);
 static void _PyMem_mi_page_reclaimed(mi_page_t *page);
 static void _PyMem_mi_heap_collect_qsbr(mi_heap_t *heap);
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+static bool _PyMem_mi_free_stopped_world(mi_page_t *page, mi_block_t *block);
+#if MI_DEBUG >= 3
+static bool _PyMem_mi_collecting_owner(uintptr_t owner, mi_segments_tld_t *tld);
+#endif
+#endif
 #  include "pycore_mimalloc.h"
 #  include "mimalloc/static.c"
 #  include "mimalloc/internal.h"  // for stats
@@ -95,6 +101,185 @@ _PyMem_RawFree(void *Py_UNUSED(ctx), void *ptr)
 }
 
 #ifdef WITH_MIMALLOC
+
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+static _Py_thread_local _PyMem_TracingSweep *tracing_sweep;
+#if MI_DEBUG >= 3
+static _Py_thread_local mi_tld_t *tracing_collect_tld;
+
+static bool
+_PyMem_mi_collecting_owner(uintptr_t owner, mi_segments_tld_t *tld)
+{
+    return tracing_collect_tld != NULL &&
+           &tracing_collect_tld->segments == tld &&
+           tracing_collect_tld->heap_backing->thread_id == owner;
+}
+#endif
+
+void
+_PyMem_CollectTracingHeaps(PyInterpreterState *interp)
+{
+    assert(interp->stoptheworld.world_stopped);
+    // The snapshot visitor merges frees but does not retire every empty
+    // page. Idle owners might never allocate again to finish that work.
+    // Collect their pages before a full snapshot, retaining the allocator's
+    // ordinary QSBR checks. No allocation, user callback or abandoned-pool
+    // reclamation is needed while holding the thread-state registry lock.
+    HEAD_LOCK(&_PyRuntime);
+    _Py_FOR_EACH_TSTATE_UNLOCKED(interp, p) {
+        struct _mimalloc_thread_state *m = &((_PyThreadStateImpl *)p)->mimalloc;
+        if (!_Py_atomic_load_int(&m->initialized)) {
+            continue;
+        }
+#if MI_DEBUG >= 3
+        assert(tracing_collect_tld == NULL);
+        tracing_collect_tld = &m->tld;
+#endif
+        for (int tag = 0; tag < _Py_MIMALLOC_HEAP_COUNT; tag++) {
+            mi_heap_t *heap = &m->heaps[tag];
+            _mi_heap_delayed_free_all(heap);
+            mi_collect_t collect = MI_NORMAL;
+            mi_heap_visit_pages(heap, mi_heap_page_collect, &collect, NULL);
+        }
+#if MI_DEBUG >= 3
+        tracing_collect_tld = NULL;
+#endif
+    }
+    HEAD_UNLOCK(&_PyRuntime);
+}
+
+static bool
+tracing_heap_stats(const mi_heap_t *heap, const mi_heap_area_t *area,
+                   void *block, size_t block_size, void *arg)
+{
+    _PyMem_TracingHeapStats *stats = arg;
+    stats->blocks += area->used;
+    stats->allocated += area->used * area->block_size;
+    stats->committed += area->committed;
+    stats->empty_committed += area->used == 0 ? area->committed : 0;
+    stats->areas++;
+    return true;
+}
+
+void
+_PyMem_GetTracingHeapStats(PyInterpreterState *interp,
+                         _PyMem_TracingHeapStats stats[2][_Py_MIMALLOC_HEAP_COUNT])
+{
+    memset(stats, 0, 2 * _Py_MIMALLOC_HEAP_COUNT * sizeof(stats[0][0]));
+    _PyEval_StopTheWorld(interp);
+    HEAD_LOCK(&_PyRuntime);
+    for (int tag = 0; tag < _Py_MIMALLOC_HEAP_COUNT; tag++) {
+        _Py_FOR_EACH_TSTATE_UNLOCKED(interp, p) {
+            struct _mimalloc_thread_state *m = &((_PyThreadStateImpl *)p)->mimalloc;
+            if (_Py_atomic_load_int(&m->initialized)) {
+#if MI_DEBUG >= 3
+                // The allocator visitor can finish delayed frees too.
+                assert(tracing_collect_tld == NULL);
+                tracing_collect_tld = &m->tld;
+#endif
+                mi_heap_visit_blocks(&m->heaps[tag], false,
+                                     tracing_heap_stats, &stats[0][tag]);
+#if MI_DEBUG >= 3
+                tracing_collect_tld = NULL;
+#endif
+            }
+        }
+        _mi_abandoned_pool_visit_blocks(&interp->mimalloc.abandoned_pool,
+                                        tag, false, tracing_heap_stats,
+                                        &stats[1][tag]);
+    }
+    HEAD_UNLOCK(&_PyRuntime);
+    _PyEval_StartTheWorld(interp);
+}
+
+void
+_PyMem_BeginTracingSweep(_PyMem_TracingSweep *sweep, PyInterpreterState *interp)
+{
+    assert(tracing_sweep == NULL);
+    assert(interp->stoptheworld.world_stopped);
+    *sweep = (_PyMem_TracingSweep){.interp = interp};
+    size_t capacity = 0;
+    _Py_FOR_EACH_TSTATE_BEGIN(interp, p) {
+        capacity++;
+    }
+    _Py_FOR_EACH_TSTATE_END(interp);
+    sweep->heap_ranges = PyMem_RawCalloc(capacity, sizeof(uintptr_t));
+    if (sweep->heap_ranges != NULL) {
+        _Py_FOR_EACH_TSTATE_BEGIN(interp, p) {
+            if (sweep->count == capacity) {
+                break;
+            }
+            _PyThreadStateImpl *ts = (_PyThreadStateImpl *)p;
+            if (_Py_atomic_load_int(&ts->mimalloc.initialized)) {
+                sweep->heap_ranges[sweep->count++] =
+                    (uintptr_t)ts->mimalloc.heaps;
+            }
+        }
+        _Py_FOR_EACH_TSTATE_END(interp);
+    }
+    // This optimization is optional on allocation failure. No exception or
+    // partial GC rollback is needed; an empty registry uses normal frees.
+    tracing_sweep = sweep;
+}
+
+void
+_PyMem_EndTracingSweep(_PyMem_TracingSweep *sweep)
+{
+    assert(tracing_sweep == sweep);
+    assert(sweep->interp->stoptheworld.world_stopped);
+    tracing_sweep = NULL;
+    PyMem_RawFree(sweep->heap_ranges);
+}
+
+static bool
+_PyMem_mi_free_stopped_world(mi_page_t *page, mi_block_t *block)
+{
+    _PyMem_TracingSweep *sweep = tracing_sweep;
+    if (sweep == NULL) {
+        return false;
+    }
+    // Only the callback-free sweep opts in. Raw allocator heaps, other
+    // interpreters, and abandoned pages must keep the ordinary remote path.
+    mi_heap_t *heap = mi_page_heap(page);
+    if (heap == NULL) {
+        return false;
+    }
+    // A live block keeps its page alive, but not necessarily its heap: an
+    // unrelated owner can exit and abandon the page concurrently. Compare
+    // addresses without dereferencing an unknown heap or taking a lock here.
+    uintptr_t address = (uintptr_t)heap;
+    size_t span = sizeof(((_PyThreadStateImpl *)0)->mimalloc.heaps);
+    if (address - sweep->current_range >= span) {
+        size_t i;
+        for (i = 0; i < sweep->count; i++) {
+            if (address - sweep->heap_ranges[i] < span) {
+                sweep->current_range = sweep->heap_ranges[i];
+                break;
+            }
+        }
+        if (i == sweep->count) {
+            return false;
+        }
+    }
+    assert(sweep->interp->stoptheworld.world_stopped);
+    if (mi_page_thread_free(page) == NULL) {
+        // Keep at least one normal remote free pending. On full pages the
+        // first block notifies the owner's delayed-free queue, and the next
+        // establishes the page-local thread-free list. The owner still
+        // performs unfull/retire and QSBR processing through those blocks.
+        return false;
+    }
+    // Pending remote blocks are included in used, so this cannot empty the
+    // page or invalidate its metadata. The owning thread is stopped. Publish
+    // directly to free to avoid both a CAS and another free-list merge walk.
+    assert(page->used > 1);
+    mi_block_set_next(page, block, page->free);
+    page->free = block;
+    page->free_is_zero = false;
+    page->used--;
+    return true;
+}
+#endif
 
 static void
 _PyMem_mi_page_clear_qsbr(mi_page_t *page)
@@ -256,12 +441,31 @@ _PyMem_mi_heap_collect_qsbr(mi_heap_t *heap)
 #endif
 }
 
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+static inline void
+tracing_record_allocation(_PyThreadStateImpl *tstate, size_t size, bool leaf)
+{
+    if (_Py_tracing_gc_enabled) {
+        tstate->gc.allocated_bytes += size;
+        if (!leaf) {
+            tstate->gc.nonleaf_bytes += size;
+        }
+        if (tstate->gc.allocated_bytes >= 256 * 1024) {
+            _PyGC_AccountAllocations(&tstate->base);
+        }
+    }
+}
+#endif
+
 void *
 _PyMem_MiMalloc(void *ctx, size_t size)
 {
 #ifdef Py_GIL_DISABLED
     _PyThreadStateImpl *tstate = (_PyThreadStateImpl *)_PyThreadState_GET();
     mi_heap_t *heap = &tstate->mimalloc.heaps[_Py_MIMALLOC_HEAP_MEM];
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    tracing_record_allocation(tstate, size, false);
+#endif
     return mi_heap_malloc(heap, size);
 #else
     return mi_malloc(size);
@@ -274,6 +478,9 @@ _PyMem_MiCalloc(void *ctx, size_t nelem, size_t elsize)
 #ifdef Py_GIL_DISABLED
     _PyThreadStateImpl *tstate = (_PyThreadStateImpl *)_PyThreadState_GET();
     mi_heap_t *heap = &tstate->mimalloc.heaps[_Py_MIMALLOC_HEAP_MEM];
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    tracing_record_allocation(tstate, nelem * elsize, false);
+#endif
     return mi_heap_calloc(heap, nelem, elsize);
 #else
     return mi_calloc(nelem, elsize);
@@ -286,6 +493,9 @@ _PyMem_MiRealloc(void *ctx, void *ptr, size_t size)
 #ifdef Py_GIL_DISABLED
     _PyThreadStateImpl *tstate = (_PyThreadStateImpl *)_PyThreadState_GET();
     mi_heap_t *heap = &tstate->mimalloc.heaps[_Py_MIMALLOC_HEAP_MEM];
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    tracing_record_allocation(tstate, size, false);
+#endif
     return mi_heap_realloc(heap, ptr, size);
 #else
     return mi_realloc(ptr, size);
@@ -304,6 +514,10 @@ _PyObject_MiMalloc(void *ctx, size_t nbytes)
 #ifdef Py_GIL_DISABLED
     _PyThreadStateImpl *tstate = (_PyThreadStateImpl *)_PyThreadState_GET();
     mi_heap_t *heap = tstate->mimalloc.current_object_heap;
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    tracing_record_allocation(tstate, nbytes,
+        heap == &tstate->mimalloc.heaps[_Py_MIMALLOC_HEAP_LEAF]);
+#endif
     return mi_heap_malloc(heap, nbytes);
 #else
     return mi_malloc(nbytes);
@@ -316,6 +530,10 @@ _PyObject_MiCalloc(void *ctx, size_t nelem, size_t elsize)
 #ifdef Py_GIL_DISABLED
     _PyThreadStateImpl *tstate = (_PyThreadStateImpl *)_PyThreadState_GET();
     mi_heap_t *heap = tstate->mimalloc.current_object_heap;
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    tracing_record_allocation(tstate, nelem * elsize,
+        heap == &tstate->mimalloc.heaps[_Py_MIMALLOC_HEAP_LEAF]);
+#endif
     return mi_heap_calloc(heap, nelem, elsize);
 #else
     return mi_calloc(nelem, elsize);
@@ -336,6 +554,10 @@ _PyObject_MiRealloc(void *ctx, void *ptr, size_t nbytes)
     }
 
     mi_heap_t *heap = tstate->mimalloc.current_object_heap;
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    tracing_record_allocation(tstate, nbytes,
+        heap == &tstate->mimalloc.heaps[_Py_MIMALLOC_HEAP_LEAF]);
+#endif
     void* newp = mi_heap_malloc(heap, nbytes);
     if (newp == NULL) {
         return NULL;

@@ -2,6 +2,7 @@ import contextlib
 import dis
 import itertools
 import sys
+import sysconfig
 import textwrap
 import unittest
 import gc
@@ -17,6 +18,11 @@ from test.support import (script_helper, requires_specialization,
 _testinternalcapi = import_helper.import_module("_testinternalcapi")
 
 from _testinternalcapi import _PY_NSMALLPOSINTS, TIER2_THRESHOLD, TIER2_RESUME_THRESHOLD
+
+_JIT_SUPPORTED = not Py_GIL_DISABLED or (
+    sysconfig.get_config_var("Py_EXPERIMENTAL_TRACING_GC")
+    and sys._is_gil_enabled() and sys._jit.is_enabled()
+)
 
 #For test of issue 136154
 GLOBAL_136154 = 42
@@ -85,7 +91,7 @@ def count_ops(ex, name):
 
 
 @requires_specialization
-@unittest.skipIf(Py_GIL_DISABLED, "optimizer not yet supported in free-threaded builds")
+@unittest.skipUnless(_JIT_SUPPORTED, "requires GIL-based JIT support")
 @requires_jit_enabled
 class TestExecutorInvalidation(unittest.TestCase):
 
@@ -179,7 +185,7 @@ def get_bool_guard_ops():
 
 
 @requires_specialization
-@unittest.skipIf(Py_GIL_DISABLED, "optimizer not yet supported in free-threaded builds")
+@unittest.skipUnless(_JIT_SUPPORTED, "requires GIL-based JIT support")
 @requires_jit_enabled
 @unittest.skipIf(os.getenv("PYTHON_UOPS_OPTIMIZE") == "0", "Needs uop optimizer to run.")
 class TestUops(unittest.TestCase):
@@ -626,7 +632,7 @@ class TestUops(unittest.TestCase):
 
 
 @requires_specialization
-@unittest.skipIf(Py_GIL_DISABLED, "optimizer not yet supported in free-threaded builds")
+@unittest.skipUnless(_JIT_SUPPORTED, "requires GIL-based JIT support")
 @requires_jit_enabled
 @unittest.skipIf(os.getenv("PYTHON_UOPS_OPTIMIZE") == "0", "Needs uop optimizer to run.")
 class TestUopsOptimization(unittest.TestCase):

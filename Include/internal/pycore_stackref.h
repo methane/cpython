@@ -425,7 +425,8 @@ PyStackRef_IsError(_PyStackRef ref)
 static inline bool
 PyStackRef_IsMalformed(_PyStackRef ref)
 {
-    return (ref.bits & Py_TAG_BITS) == Py_TAG_INVALID;
+    return !_PyObject_IsImmediate((PyObject *)ref.bits) &&
+           (ref.bits & Py_TAG_BITS) == Py_TAG_INVALID;
 }
 
 static inline bool
@@ -438,12 +439,18 @@ PyStackRef_IsValid(_PyStackRef ref)
 static inline bool
 PyStackRef_IsTaggedInt(_PyStackRef i)
 {
-    return (i.bits & Py_TAG_BITS) == Py_INT_TAG;
+    return !_PyObject_IsImmediate((PyObject *)i.bits) &&
+           (i.bits & Py_TAG_BITS) == Py_INT_TAG;
 }
 
 static inline _PyStackRef
 PyStackRef_TagInt(intptr_t i)
 {
+#ifdef Py_EXPERIMENTAL_NANBOX
+    // Positive stack integers are indices into allocated code/containers.
+    // Reserving the upper bits for floats limits their encoded width.
+    assert(i < (INT64_C(1) << 46) && i >= -(INT64_C(1) << 46));
+#endif
     assert(Py_ARITHMETIC_RIGHT_SHIFT(intptr_t, (intptr_t)(((uintptr_t)i) << Py_TAGGED_SHIFT),
                                      Py_TAGGED_SHIFT) == i);
     return (_PyStackRef){ .bits = ((((uintptr_t)i) << Py_TAGGED_SHIFT) | Py_INT_TAG) };
@@ -474,7 +481,20 @@ PyStackRef_IncrementTaggedIntNoOverflow(_PyStackRef ref)
 #endif
 
 #define BITS_TO_PTR(REF) ((PyObject *)((REF).bits))
+#ifdef Py_EXPERIMENTAL_NANBOX
+static inline PyObject *
+_PyStackRef_AsNanboxObject(_PyStackRef ref)
+{
+    uintptr_t bits = ref.bits;
+    if (!_PyObject_IsImmediate((PyObject *)bits)) {
+        bits &= ~Py_TAG_REFCNT;
+    }
+    return (PyObject *)bits;
+}
+#define BITS_TO_PTR_MASKED(REF) _PyStackRef_AsNanboxObject(REF)
+#else
 #define BITS_TO_PTR_MASKED(REF) ((PyObject *)(((REF).bits) & (~Py_TAG_REFCNT)))
+#endif
 
 #define PyStackRef_NULL_BITS Py_TAG_REFCNT
 static const _PyStackRef PyStackRef_NULL = { .bits = PyStackRef_NULL_BITS };
@@ -532,7 +552,8 @@ PyStackRef_CheckValid(_PyStackRef ref)
 static inline int
 PyStackRef_RefcountOnObject(_PyStackRef ref)
 {
-    return (ref.bits & Py_TAG_REFCNT) == 0;
+    return !_PyObject_IsImmediate((PyObject *)ref.bits) &&
+           (ref.bits & Py_TAG_REFCNT) == 0;
 }
 
 static inline PyObject *
@@ -545,6 +566,11 @@ PyStackRef_AsPyObjectBorrow(_PyStackRef ref)
 static inline _PyStackRef
 PyStackRef_Borrow(_PyStackRef ref)
 {
+#ifdef Py_EXPERIMENTAL_NANBOX
+    if (_PyObject_IsImmediate((PyObject *)ref.bits)) {
+        return ref;
+    }
+#endif
     return (_PyStackRef){ .bits = ref.bits | Py_TAG_REFCNT };
 }
 #endif
@@ -626,6 +652,11 @@ static inline _PyStackRef
 PyStackRef_FromPyObjectBorrow(PyObject *obj)
 {
     assert(obj != NULL);
+#ifdef Py_EXPERIMENTAL_NANBOX
+    if (_PyObject_IsImmediate(obj)) {
+        return (_PyStackRef){ .bits = (uintptr_t)obj };
+    }
+#endif
     return (_PyStackRef){ .bits = (uintptr_t)obj | Py_TAG_REFCNT};
 }
 
@@ -657,6 +688,11 @@ PyStackRef_DupImmortal(_PyStackRef ref)
 static inline bool
 PyStackRef_IsHeapSafe(_PyStackRef ref)
 {
+#ifdef Py_EXPERIMENTAL_NANBOX
+    if (_PyObject_IsImmediate((PyObject *)ref.bits)) {
+        return true;
+    }
+#endif
 #ifdef Py_GIL_DISABLED
     if ((ref.bits & Py_TAG_BITS) != Py_TAG_REFCNT) {
         return true;
@@ -739,7 +775,7 @@ PyStackRef_XCLOSE(_PyStackRef ref)
 
 // Note: this is a macro because MSVC (Windows) has trouble inlining it.
 
-#define PyStackRef_Is(a, b) (((a).bits & (~Py_TAG_REFCNT)) == ((b).bits & (~Py_TAG_REFCNT)))
+#define PyStackRef_Is(a, b) (BITS_TO_PTR_MASKED(a) == BITS_TO_PTR_MASKED(b))
 
 
 #endif // !defined(Py_GIL_DISABLED) && defined(Py_STACKREF_DEBUG)
@@ -755,6 +791,24 @@ PyStackRef_TYPE(_PyStackRef stackref) {
 // Converts a PyStackRef back to a PyObject *, converting the
 // stackref to a new reference.
 #define PyStackRef_AsPyObjectNew(stackref) Py_NewRef(PyStackRef_AsPyObjectBorrow(stackref))
+
+// Read a known float without separately decoding its object reference and
+// then testing the same immediate tag again in PyFloat_AS_DOUBLE(). This is
+// also used by the optimizer's constant evaluation of float comparisons.
+static inline Py_ALWAYS_INLINE double
+_PyFloat_StackRefAsDouble(_PyStackRef ref)
+{
+#ifdef Py_EXPERIMENTAL_NANBOX
+    PyObject *op = (PyObject *)ref.bits;
+    if (_PyFloat_IsImmediate(op)) {
+        return PyFloat_AS_DOUBLE(op);
+    }
+    op = (PyObject *)(ref.bits & ~Py_TAG_REFCNT);
+    return _PyFloat_CAST(op)->ob_fval;
+#else
+    return PyFloat_AS_DOUBLE(PyStackRef_AsPyObjectBorrow(ref));
+#endif
+}
 
 // StackRef type checks
 

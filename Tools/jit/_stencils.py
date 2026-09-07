@@ -92,6 +92,7 @@ _PATCH_FUNCS = {
     # x86_64-unknown-linux-gnu:
     "R_X86_64_64": "patch_64",
     "R_X86_64_GOTPCRELX": "patch_x86_64_32rx",
+    "R_X86_64_PC32": "patch_32r",
     "R_X86_64_PLT32": "patch_32r",
     "R_X86_64_REX_GOTPCRELX": "patch_x86_64_32rx",
     # x86_64-apple-darwin:
@@ -357,7 +358,7 @@ class StencilGroup:
                     hole.addend += addend
                     hole.symbol = None
                 elif (
-                    hole.kind in {"IMAGE_REL_AMD64_REL32"}
+                    hole.kind in {"IMAGE_REL_AMD64_REL32", "R_X86_64_PC32"}
                     and hole.value is HoleValue.ZERO
                 ):
                     raise ValueError(

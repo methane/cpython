@@ -60,9 +60,11 @@
 // Define them as macros to make sure that they are always inlined by the
 // preprocessor.
 
+#ifndef Py_EXPERIMENTAL_NANBOX
 #undef Py_IS_TYPE
 #define Py_IS_TYPE(ob, type) \
     (_PyObject_CAST(ob)->ob_type == (type))
+#endif
 
 #undef Py_XDECREF
 #define Py_XDECREF(arg) \
@@ -110,6 +112,31 @@
 #else // Py_GIL_DISABLED
 
 #undef Py_DECREF
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+#define Py_DECREF(arg) \
+    do { \
+        PyObject *op = _PyObject_CAST(arg); \
+        if (_Py_tracing_gc_enabled) { \
+            break; \
+        } \
+        uint32_t local = _Py_atomic_load_uint32_relaxed(&op->ob_ref_local); \
+        if (local == _Py_IMMORTAL_REFCNT_LOCAL) { \
+            _Py_DECREF_IMMORTAL_STAT_INC(); \
+            break; \
+        } \
+        _Py_DECREF_STAT_INC(); \
+        if (_Py_IsOwnedByCurrentThread(op)) { \
+            local--; \
+            _Py_atomic_store_uint32_relaxed(&op->ob_ref_local, local); \
+            if (local == 0) { \
+                _Py_MergeZeroLocalRefcount(op); \
+            } \
+        } \
+        else { \
+            _Py_DecRefShared(op); \
+        } \
+    } while (0)
+#else
 #define Py_DECREF(arg) \
     do { \
         PyObject *op = _PyObject_CAST(arg); \
@@ -130,6 +157,7 @@
             _Py_DecRefShared(op); \
         } \
     } while (0)
+#endif
 
 #undef _Py_DECREF_SPECIALIZED
 #define _Py_DECREF_SPECIALIZED(arg, dealloc) Py_DECREF(arg)

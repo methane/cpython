@@ -437,6 +437,262 @@ General Options
 
    .. versionadded:: 3.13
 
+.. option:: --with-experimental-gc=tracing
+
+   Build CPython with the experimental, non-moving tracing garbage collector.
+   This option is intended for performance experiments.  It changes object
+   lifetime and the C ABI, and requires :option:`--disable-gil` and mimalloc.
+   The resulting ABI tag contains ``g``.  The interpreter pins objects created
+   during bootstrap, as well as types whose instances lack cyclic-GC support.
+   Other heap types are traced and reclaimed, including their instances and
+   metaclasses.  Static C types retain their owned metadata as GC roots,
+   without keeping their heap subclasses alive through weak subclass links.
+   Type watchers run before clearing, and may resurrect intact
+   types.  Type headers remain allocated until instance and type deallocators
+   have finished using them.  Modules with native definitions, state, or
+   callbacks are also pinned.  Pure Python modules are traced and
+   reclaimed when unreachable, including cycles through their dictionaries.
+   Reachable functions retain their globals even if the module object is reclaimed.
+   Newly created functions and code objects are traced and reclaimed when
+   unreachable; executing and suspended frames keep their functions and code
+   alive.
+   Compiler symbol-table entries also participate in tracing.
+   Automatic collections run at interpreter safepoints.  Allocation debt is
+   counted in bytes, including scalar objects and auxiliary buffers, and the
+   collection budget grows with the reachable heap.  The first GC threshold
+   sets a minimum budget of 4096 bytes per threshold unit (about 8 MiB by
+   default); setting it to zero or calling :func:`gc.disable` disables
+   automatic collection.
+   The first value from :func:`gc.get_count` reports this allocation debt in
+   4 KiB units, rounded down, rather than a count of tracked objects.  It
+   includes published thread-local batches and the calling thread's partial
+   batch.  Other threads' unpublished batches are not included.  This avoids
+   maintaining a second allocation and deallocation counter on the hot path.
+   Threads publish any remaining local allocation debt when they exit, so
+   repeated short-lived threads also contribute to automatic scheduling.
+   Optimistic container and attribute reads do not increment the local or
+   shared reference-count fields, even when the value belongs to another
+   thread.  They still record aliases for uniqueness-sensitive operations;
+   already-recorded aliases need no atomic read-modify-write, and immortal
+   object headers remain unchanged.  Container synchronization and storage
+   consistency checks remain in place.
+
+   On Linux, ``PYTHON_TRACING_GC_SOFT_DIRTY=1`` opts into an experimental
+   scalar nursery.  Between full collections it uses the kernel's soft-dirty
+   page flags to skip unchanged managed storage when finding references to
+   newly allocated scalar objects.  Native and Python stack roots are still
+   scanned, and unknown GC types still expose external storage through
+   ``tp_traverse``.  Previously surviving scalars and all containers are
+   retained until a full collection.  At most seven nursery collections may
+   run consecutively; substantial non-scalar allocation forces an earlier
+   full collection.  Explicit :func:`gc.collect` always performs full tracing.
+   Automatic full collections pause write tracking when non-scalar allocation
+   is high, avoiding page-protection overhead on container-heavy workloads.
+   Scalar allocation areas whose pages are unchanged since that full
+   collection need no temporary allocation map or per-object scan in a
+   nursery collection.  New allocations write their headers and therefore
+   invalidate this shortcut.  Unreadable, non-present, or shared pages use
+   the ordinary scan; explicit full collections still inspect all areas.
+
+   Also setting ``PYTHON_TRACING_GC_YOUNG_CONTAINERS=1`` extends this nursery
+   to newly allocated, tracked exact lists, tuples, and dictionaries without
+   dictionary watchers.  These types have no weakrefs or Python finalizers;
+   their unreachable cycles can be reclaimed without running finalization.
+   Private list and dictionary storage is traced from its owner, rather than
+   treated as a root merely because it was recently written.  Surviving
+   containers and other types remain until a full collection.  Full tracing
+   still runs after at most seven nursery collections, on excessive retained
+   heap growth, and for explicit collections or :data:`gc.DEBUG_SAVEALL`.
+   A substantial volume of newly allocated objects outside these supported
+   container types also forces full tracing.  Their storage is counted while
+   building the allocation snapshot, allowing an early fallback before a
+   nursery traversal would retain them and their children.  Objects with a
+   retained old-generation mark, as well as frozen and immortal objects, do
+   not contribute to this allocation pressure.  Full collections preserve
+   the age of surviving and resurrected objects, including types that only
+   full tracing can reclaim.  These older types still expose their references
+   to young objects during nursery tracing.
+   When that initial allocation pressure is small, the nursery first traces
+   real roots.  It then retains any unreachable types that require full GC,
+   counting the additional young containers, private buffers, and scalar
+   children reached only through them.  Excessive retained descendants also
+   force full tracing; small instance bodies cannot hide large child graphs
+   from this budget.  Already reachable children and old shared data are not
+   charged again.
+   After this allocation-pressure fallback, the next three automatic full
+   collections pause the container nursery and its write tracking.  The last
+   establishes a new baseline so a changed workload can use the nursery again.
+   Explicit collection ends this pause immediately; scalar-only workloads can
+   still establish their own write-tracking baseline during the pause.
+   On the early snapshot fallback, the allocation maps already built are
+   converted to full tracing and completed while the world remains stopped.
+   A fallback after tracing descendants takes a fresh full snapshot instead.
+   The full collector consumes a reused snapshot once; any later resurrection
+   pass takes a fresh snapshot to include allocations made by finalizers.
+   Temporary allocation maps use one byte per scalar slot and four bytes
+   per other slot; traversal links are page-local indices, not pointers.
+   This additional option keeps write tracking active on container-heavy
+   workloads.  It is off by default; compare both elapsed time and peak
+   process memory when evaluating it.  The benchmark script's ``--suite mixed``
+   covers container/scalar churn, young cycles, and churn with long-lived
+   scalar or class-instance roots, with automatic GC enabled.  It includes
+   cyclic instances with large byte payloads to measure deferred child graphs.
+   It also alternates class-instance and supported-container phases to measure
+   nursery policy recovery without forcing collections between phases.  It measures
+   clearing large lists: once tracing is active, list clearing and list, tuple,
+   and dictionary key-table deallocation skip element-by-element
+   reference-release loops.
+   Buffer ownership counts and free-threaded storage synchronization remain
+   in place.  The young collector sweeps these callback-free containers from
+   its allocation map without a separate clearing pass; reference tracers
+   force the full collector instead.  This nursery finishes sweeping before
+   restarting other threads, preventing their allocations from outpacing its
+   reclamation.  Full collections use the same stopped-world destruction
+   when the entire unreachable graph consists only of these containers and
+   exact scalar leaves, without finalizers, reference tracers, or pending
+   callbacks.  Other full collections and the scalar-only nursery may still
+   resume threads before destruction so callbacks can run safely.
+   The stopped-world paths also untrack dead container headers before calling
+   their deallocators, avoiding a redundant atomic tracking-bit update.
+   Tracing-mode destruction does not use
+   the reference-counting trashcan: decrements cannot recursively destroy
+   children, and deallocators must run before their types and scalar children
+   are reclaimed, including during collections near the C-stack limit.
+
+   The nursery requires access to ``/proc/self/pagemap`` and
+   ``/proc/self/clear_refs``.  It resets process-wide write tracking after
+   full collections, so do not enable it alongside tools that depend on
+   retaining soft-dirty history.  An external reset, a fork, unavailable
+   tracking, or multiple interpreters causes fallback to full tracing.
+   A guarded private page detects external resets without being dirtied by
+   adjacent memory mappings, including allocations of new JIT code.
+   Write history is retained across nursery collections to avoid repeatedly
+   write-protecting and faulting on the same pages.  This optional backend
+   works in both supported threading/JIT modes described below; it is not
+   enabled by default and is not a portable write barrier.
+
+   Python frames are visited precisely.  Native C frames and suspended
+   threads' registers are scanned conservatively.  Extensions that hide
+   references outside the managed heaps without exposing them through
+   ``tp_traverse`` are not supported.
+
+   Acyclic tuples remain tracked so that explicit collections can reclaim
+   them.  Newly allocated exact integers, floats, strings, bytes, and complex
+   numbers use a separate traced heap and are also reclaimed.  Other objects
+   without cyclic-GC support are not yet reclaimed by this prototype.
+   Exact dictionaries (including string keys and shared keys), sets, lists,
+   tuples, functions, and cells are visited precisely.  Dictionary and set
+   storage is marked without repeating a conservative scan when its contents
+   are visited precisely.  Other reachable auxiliary allocations are scanned
+   conservatively, using a page-level allocation snapshot to reject pointers
+   to free slots.  Snapshots enumerate allocator pages directly, excluding
+   free slots before inspecting object headers.  Such conservative scans can
+   retain objects through stale or coincidental pointer values.
+   Heap types' shared-key tables are also visited precisely, excluding their
+   unused entries.  Owned type-name and documentation buffers contain no
+   Python references.  Compiled regular expressions opt into complete
+   ``tp_traverse``-based tracing, so their numeric instructions and allocation
+   padding are not mistaken for object references.  Other extension types
+   still require conservative body scans unless explicitly audited for this
+   stronger traversal contract.
+   Measure memory use as well as elapsed time when comparing builds.
+   Progress callbacks do not prevent collections, including collections in
+   another thread joined by a callback.  Nested or concurrent collections
+   during a notification pair do not dispatch additional callbacks; use
+   :func:`gc.get_stats` for total collection counts.  If another collector is
+   still running when a ``start`` callback returns, or has already satisfied
+   an automatic collection's allocation trigger, the initiating call skips
+   its collection and sends a ``stop`` notification with zero work.  Actual
+   collection, including finalizers and weakref callbacks, remains serialized.
+   ``Tools/scripts/benchmark_tracing_gc.py --suite collections`` includes
+   explicit reclamation in its timed workloads and reports peak memory use;
+   it also measures tracing of live dictionaries and functions.
+   The ``--suite leaf`` workloads repeatedly allocate scalar objects and
+   include periodic explicit collections in the measured time.
+   ``--suite automatic`` runs reference-operation workloads with automatic
+   GC enabled and reports collection counts as well as peak memory use.
+   ``--suite dynamic`` measures cyclic class instances, short-lived functions
+   with captured payloads, and repeated code compilation, with automatic GC
+   enabled.  It also measures
+   dynamic type/instance cycles, including explicit collection between batches
+   to expose unintended retention through native metadata.
+   Specialized float addition, subtraction, multiplication, and division
+   can reuse a uniquely owned temporary operand.  Borrowed or shared operands
+   keep their original values.  This reduces allocation without changing
+   the boxed representation of floats.  In JIT mode, an arithmetic result
+   immediately stored into a local variable can also reuse that local's
+   uniquely owned float.  Live aliases retain their original values, and
+   calls, safepoints, and observable side exits prevent this optimization.
+   Without :option:`--with-experimental-nanboxing`, this is allocation
+   elimination, not NaN-boxing or unboxed arithmetic.
+   ``--suite numeric`` measures chained float expressions and repeated local
+   updates with automatic GC enabled.
+   ``--suite threads`` measures repeated short-lived threads whose individual
+   allocations are smaller than the collector's local accounting batch.
+   It also splits one million container-building iterations among four worker
+   threads.  Allow multiple CPUs when evaluating free-threaded scaling.
+   A second parallel workload keeps its worker threads alive across four
+   batches and includes explicit reclamation after each batch in the measured
+   time.  It checks that retained allocation counts do not grow between batches,
+   so a larger collection budget cannot merely defer work past the measurement.
+   ``--suite reads`` measures list, dictionary, slot, and shared-list reads.
+   These loops use :func:`itertools.repeat` to avoid allocating loop-counter
+   integers.  The shared-list case includes four reader threads; allow more
+   than one CPU when evaluating free-threaded scaling.
+   A build with :option:`--enable-experimental-jit` can run the JIT with this
+   collector when the runtime GIL is permanently enabled and thread-local
+   bytecode is disabled: set ``PYTHON_JIT=1 PYTHON_GIL=1 PYTHON_TLBC=0``.
+   The equivalent command-line options for the latter two settings are
+   ``-X gil=1 -X tlbc=0``. This mode still uses the free-threaded object
+   layout; it is not a conventional GIL build. Concurrent free-threaded
+   execution of JIT code is not supported. Use ``PYTHON_JIT=0`` for the
+   free-threaded tracing-GC mode. Explicitly requesting the JIT with an
+   incompatible GIL or bytecode setting fails during initialization.
+   Active tracing buffers and executors participate in GC root discovery;
+   the borrowed executor registry does not keep unused generated code alive.
+
+   .. versionadded:: 3.16
+
+.. option:: --with-experimental-nanboxing
+
+   Experimentally represent non-NaN exact floats and single-digit exact integers
+   directly in a 64-bit object reference, including references stored in
+   containers.  Requires Linux
+   x86-64 and :option:`--with-experimental-gc=tracing`.  This adds ``n`` to the
+   already incompatible tracing-GC ABI tag.  The option is off by default.
+
+   Finite values, signed zeros, subnormals, and infinities retain their
+   binary64 bits without allocating a float object.  NaNs remain heap objects
+   to preserve their payloads and distinct identities as dictionary keys;
+   float subclasses and bootstrap floats also remain boxed.
+
+   Integer arithmetic and constructors can produce immediate values with
+   magnitude at most ``(1 << sys.int_info.bits_per_digit) - 1`` (normally
+   ``2**30 - 1``).  Larger integers retain their arbitrary-precision heap
+   representation; results can return to the immediate range without losing
+   precision.  The existing small-integer cache, integer subclasses, bootstrap
+   integers, and writable C integer-builder buffers remain boxed.  ``None`` and
+   booleans retain their existing singleton representation.  Heap addresses must
+   fit in the low 48 bits; unsupported addresses cause a fatal error.
+
+   This changes identity semantics: independently produced non-NaN floats
+   with identical bits, and independently produced immediate integers with the
+   same value, can be identical objects.  C extensions must be
+   rebuilt and must use accessors such as :c:func:`PyFloat_AS_DOUBLE` and
+   :c:func:`Py_TYPE` and the integer conversion APIs, not dereference immediate
+   references as object headers or access float payloads/integer digits directly.
+   Object size introspection still
+   reports the boxed layout, so use process memory and allocation counts
+   when measuring savings.  This is a performance prototype, not a supported
+   replacement for the normal C ABI.
+
+   The tracing collector's separate free-threaded/no-JIT and permanent-GIL
+   native-JIT execution modes also apply to this representation.  Reducing
+   scalar allocations does not eliminate collections caused by large integers,
+   containers, boxed NaNs, or other heap objects.
+
+   .. versionadded:: 3.16
+
 .. option:: --enable-experimental-jit=[no|yes|yes-off|interpreter]
 
    Indicate how to integrate the :ref:`experimental just-in-time compiler <whatsnew314-jit-compiler>`.

@@ -469,6 +469,16 @@ _Py_ExplicitMergeRefcount(PyObject *op, Py_ssize_t extra)
 {
     assert(!_Py_IsImmortal(op));
 
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    if (_Py_tracing_gc_enabled) {
+        // Deferred decrefs (QSBR and BRC) must not turn the ownership hint
+        // into a zero refcount. Reachability, not a numeric merge, decides
+        // whether the object can be destroyed in tracing mode.
+        _PyTracingGC_MarkShared(op);
+        return Py_REFCNT(op);
+    }
+#endif
+
 #ifdef Py_REF_DEBUG
     _Py_AddRefTotal(_PyThreadState_GET(), extra);
 #endif
@@ -709,6 +719,9 @@ _Py_BreakPoint(void)
 int
 _PyObject_IsFreed(PyObject *op)
 {
+    if (_PyObject_IsImmediate(op)) {
+        return 0;
+    }
     if (_PyMem_IsPtrFreed(op) || _PyMem_IsPtrFreed(Py_TYPE(op))) {
         return 1;
     }
@@ -3299,6 +3312,15 @@ _Py_Dealloc(PyObject *op)
 {
     PyTypeObject *type = Py_TYPE(op);
     unsigned long gc_flag = type->tp_flags & Py_TPFLAGS_HAVE_GC;
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    if (_Py_tracing_gc_enabled) {
+        // Decrefs are inert: destruction cannot recursively release children.
+        // The collector orders instance, code, type, and leaf destruction.
+        // Deferring any of those to the trashcan would outlive that ordering
+        // and could leave an instance referring to an already freed type.
+        gc_flag = 0;
+    }
+#endif
     destructor dealloc = type->tp_dealloc;
     PyThreadState *tstate = NULL;
     intptr_t margin = 0;

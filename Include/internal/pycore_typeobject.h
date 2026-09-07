@@ -43,6 +43,11 @@ extern void _PyTypes_FiniExtTypes(PyInterpreterState *interp);
 extern void _PyTypes_Fini(PyInterpreterState *);
 extern void _PyTypes_FiniCachedDescriptors(PyInterpreterState *);
 
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+extern void _PyType_NotifyTracingGC(PyTypeObject *);
+extern void _PyType_PrepareTracingGC(PyTypeObject *);
+#endif
+
 static inline PyObject **
 _PyStaticType_GET_WEAKREFS_LISTPTR(managed_static_type_state *state)
 {

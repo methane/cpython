@@ -20,6 +20,7 @@
 #include "pycore_uop_ids.h"       // MAX_UOP_ID
 #include "pycore_opcode_utils.h"  // RESUME_AT_FUNC_START
 #include "pycore_pylifecycle.h"   // _PyOS_URandomNonblock()
+#include "pycore_range.h"         // _PyRangeIter_IsSafeForSpecialization()
 #include "pycore_runtime.h"       // _Py_ID()
 #include "pycore_unicodeobject.h" // _PyUnicodeASCIIIter_Type
 
@@ -1591,7 +1592,7 @@ _Py_Specialize_StoreSubscr(_PyStackRef container_st, _PyStackRef sub_st, _Py_COD
     if (container_type == &PyList_Type) {
         if (PyLong_CheckExact(sub)) {
             if (_PyLong_IsNonNegativeCompact((PyLongObject *)sub)
-                && ((PyLongObject *)sub)->long_value.ob_digit[0] < (size_t)PyList_GET_SIZE(container))
+                && _PyLong_GetDigit((PyLongObject *)sub, 0) < PyList_GET_SIZE(container))
             {
                 specialize(instr, STORE_SUBSCR_LIST_INT);
                 return;
@@ -2693,7 +2694,7 @@ _Py_Specialize_ForIter(_PyStackRef iter, _PyStackRef null_or_index, _Py_CODEUNIT
             // than we need (even `it = iter(mylist); for item in it:` won't get
             // specialized) but we don't have a way to check whether we're the only
             // _thread_ who has access to the object.
-            if (!_PyObject_IsUniquelyReferenced(iter_o)) {
+            if (!_PyRangeIter_IsSafeForSpecialization(iter_o)) {
                 goto failure;
             }
 #endif

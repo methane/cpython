@@ -1367,6 +1367,15 @@ make_new_set_untracked(PyTypeObject *type, PyObject *iterable)
 
     if (iterable != NULL) {
         if (set_update_local(so, iterable)) {
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+            if (_Py_tracing_gc_enabled) {
+                // Filling has stopped and the initialized object is safe to
+                // traverse. The decref below cannot reclaim it in tracing
+                // mode: leaving it untracked would leak its storage and let
+                // its heap type be collected before the abandoned instance.
+                PyObject_GC_Track(so);
+            }
+#endif
             Py_DECREF(so);
             return NULL;
         }
@@ -1412,6 +1421,13 @@ static void
 _PyFrozenSet_MaybeUntrack(PyObject *op)
 {
     assert(op != NULL);
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    if (_Py_tracing_gc_enabled) {
+        // Acyclic frozensets still need reclamation when decrefs are inert.
+        // Leaving the header behind would also leave dangling child pointers.
+        return;
+    }
+#endif
     // subclasses of a frozenset can generate reference cycles, so do not untrack
     if (!PyFrozenSet_CheckExact(op)) {
         return;
@@ -1572,7 +1588,9 @@ _PySet_Freeze(PyObject *set)
 {
     assert(set != NULL);
     assert(PySet_CheckExact(set));
+#ifndef Py_EXPERIMENTAL_TRACING_GC
     assert(_PyObject_IsUniquelyReferenced(set));
+#endif
     set->ob_type = &PyFrozenSet_Type;
     return Py_NewRef(set);
 }
@@ -3115,7 +3133,13 @@ PySet_Add(PyObject *anyset, PyObject *key)
         return rv;
     }
 
-    if (PyFrozenSet_Check(anyset) && _PyObject_IsUniquelyReferenced(anyset)) {
+    if (PyFrozenSet_Check(anyset) &&
+        (_PyObject_IsUniquelyReferenced(anyset)
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+         || _Py_tracing_gc_enabled
+#endif
+        ))
+    {
         // We can only change frozensets if they are uniquely referenced. The
         // API limits the usage of `PySet_Add` to "fill in the values of brand
         // new frozensets before they are exposed to other code". In this case,

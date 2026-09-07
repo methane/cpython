@@ -4,6 +4,7 @@
 
 #include "opcode.h"
 #include "pycore_interp.h"
+#include "pycore_initconfig.h"    // _PyConfig_GIL_ENABLE
 #include "pycore_backoff.h"
 #include "pycore_bitutils.h"        // _Py_popcount32()
 #include "pycore_ceval.h"       // _Py_set_eval_breaker_bit
@@ -40,7 +41,7 @@
 
 #define _PyExecutorObject_CAST(op)  ((_PyExecutorObject *)(op))
 
-#ifndef Py_GIL_DISABLED
+#if !defined(Py_GIL_DISABLED) || defined(Py_EXPERIMENTAL_TRACING_GC)
 static bool
 has_space_for_executor(PyCodeObject *code, _Py_CODEUNIT *instr)
 {
@@ -111,7 +112,7 @@ insert_executor(PyCodeObject *code, _Py_CODEUNIT *instr, int index, _PyExecutorO
     instr->op.code = ENTER_EXECUTOR;
     instr->op.arg = index;
 }
-#endif // Py_GIL_DISABLED
+#endif
 
 static _PyExecutorObject *
 make_executor_from_uops(_PyThreadStateImpl *tstate, _PyUOpInstruction *buffer, int length, const _PyBloomFilter *dependencies);
@@ -138,6 +139,15 @@ _PyOptimizer_Optimize(
         // return immediately without optimization.
         return 0;
     }
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    // Executor installation still requires shared bytecode and a permanent
+    // GIL. This is not support for concurrently executing native traces.
+    if (interp->config.enable_gil != _PyConfig_GIL_ENABLE ||
+        interp->config.tlbc_enabled)
+    {
+        return 0;
+    }
+#endif
     _PyExecutorObject *prev_executor = _tstate->jit_tracer_state->initial_state.executor;
     if (prev_executor != NULL && !prev_executor->vm_data.valid) {
         // gh-143604: If we are a side exit executor and the original executor is no
@@ -146,7 +156,7 @@ _PyOptimizer_Optimize(
     }
     assert(!interp->compiling);
     assert(_tstate->jit_tracer_state->initial_state.stack_depth >= 0);
-#ifndef Py_GIL_DISABLED
+#if !defined(Py_GIL_DISABLED) || defined(Py_EXPERIMENTAL_TRACING_GC)
     assert(_tstate->jit_tracer_state->initial_state.func != NULL);
     interp->compiling = true;
     // The first executor in a chain and the MAX_CHAIN_DEPTH'th executor *must*
@@ -254,6 +264,11 @@ static int executor_clear(PyObject *executor);
 void
 _PyExecutor_Free(_PyExecutorObject *self)
 {
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    if (_PyObject_GC_IS_TRACKED(self)) {
+        _PyObject_GC_UNTRACK(self);
+    }
+#endif
 #ifdef _Py_JIT
     _PyJIT_Free(self);
 #endif
@@ -334,6 +349,15 @@ uop_dealloc(PyObject *op) {
     _PyExecutorObject *self = _PyExecutorObject_CAST(op);
     executor_invalidate(op);
     assert(self->vm_data.code == NULL);
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    if (_Py_tracing_gc_enabled) {
+        // Active executors are GC roots, including native stack references.
+        // Only an unreachable executor reaches deallocation. The ordinary
+        // pending-deletion protocol relies on numeric reference counts.
+        _PyExecutor_Free(self);
+        return;
+    }
+#endif
     add_to_pending_deletion_list(self);
 }
 
@@ -472,7 +496,13 @@ static PyMethodDef uop_executor_methods[] = {
 static int
 executor_is_gc(PyObject *o)
 {
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    // Cold immortal executors still reside in the traced GC heap. They are
+    // permanent roots, even though cyclic GC has no reason to visit them.
+    return 1;
+#else
     return !_Py_IsImmortal(o);
+#endif
 }
 
 PyTypeObject _PyUOpExecutor_Type = {
@@ -1421,6 +1451,13 @@ allocate_executor(int exit_count, int length)
     if (res == NULL) {
         return NULL;
     }
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    // Cold executors bypass _Py_ExecutorInit() and are scanned even though
+    // untracked. Do not expose uninitialized pointers to the collector.
+    memset(&res->trace, 0,
+           offsetof(_PyExecutorObject, exits) + size -
+           offsetof(_PyExecutorObject, trace));
+#endif
     res->trace = (_PyUOpInstruction *)(res->exits + exit_count);
     res->code_size = length;
     res->exit_count = exit_count;
@@ -1600,6 +1637,58 @@ int effective_trace_length(_PyUOpInstruction *buffer, int length)
 #endif
 
 
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+static void
+reuse_float_locals(_PyUOpInstruction *buffer, int length)
+{
+    if (!_Py_tracing_gc_enabled) {
+        return;
+    }
+    for (int i = 0; i < length; i++) {
+        int replacement;
+        switch (buffer[i].opcode) {
+            case _BINARY_OP_ADD_FLOAT:
+                replacement = _BINARY_OP_ADD_FLOAT_REUSE_LOCAL;
+                break;
+            case _BINARY_OP_SUBTRACT_FLOAT:
+                replacement = _BINARY_OP_SUBTRACT_FLOAT_REUSE_LOCAL;
+                break;
+            case _BINARY_OP_MULTIPLY_FLOAT:
+                replacement = _BINARY_OP_MULTIPLY_FLOAT_REUSE_LOCAL;
+                break;
+            case _BINARY_OP_TRUEDIV_FLOAT:
+                replacement = _BINARY_OP_TRUEDIV_FLOAT_REUSE_LOCAL;
+                break;
+            default:
+                continue;
+        }
+        int pops = 0;
+        for (int j = i + 1; j < length; j++) {
+            int opcode = buffer[j].opcode;
+            if (opcode == _NOP || opcode == _SET_IP ||
+                opcode == _CHECK_VALIDITY)
+            {
+                continue;
+            }
+            if ((opcode == _POP_TOP_NOP || opcode == _POP_TOP_FLOAT) &&
+                pops < 2)
+            {
+                pops++;
+                continue;
+            }
+            // Mutating the old local early is only valid when no operation
+            // can observe it before the store. Reuse itself checks executor
+            // validity, so an intervening validity check cannot then fail.
+            if (opcode == _SWAP_FAST && pops == 2) {
+                buffer[i].opcode = replacement;
+                buffer[i].oparg = buffer[j].oparg;
+            }
+            break;
+        }
+    }
+}
+#endif
+
 static int
 stack_allocate(_PyUOpInstruction *buffer, _PyUOpInstruction *output, int length)
 {
@@ -1680,6 +1769,9 @@ uop_optimize(
     }
     assert(length < UOP_MAX_TRACE_LENGTH);
     assert(length >= 1);
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    reuse_float_locals(buffer, length);
+#endif
     /* Fix up */
     for (int pc = 0; pc < length; pc++) {
         int opcode = buffer[pc].opcode;
@@ -1780,12 +1872,13 @@ unlink_executor(_PyExecutorObject *executor)
 int
 _Py_ExecutorInit(_PyExecutorObject *executor, const _PyBloomFilter *dependency_set)
 {
-    executor->vm_data.valid = true;
+    executor->vm_data.valid = false;
     executor->vm_data.pending_deletion = 0;
     executor->vm_data.code = NULL;
     if (link_executor(executor, dependency_set) < 0) {
         return -1;
     }
+    executor->vm_data.valid = true;
     return 0;
 }
 
@@ -1888,6 +1981,13 @@ executor_invalidate(PyObject *op)
     unlink_executor(executor);
     executor_clear_exits(executor);
     _Py_ExecutorDetach(executor);
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    if (_Py_tracing_gc_enabled) {
+        // Invalidation is not destruction. Keep this allocation eligible
+        // for a later collection when its remaining roots disappear.
+        return;
+    }
+#endif
     _PyObject_GC_UNTRACK(op);
 }
 

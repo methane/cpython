@@ -79,6 +79,13 @@ resize_local_refcounts(_PyThreadStateImpl *tstate)
 Py_ssize_t
 _PyObject_AssignUniqueId(PyObject *obj)
 {
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    if (_Py_tracing_gc_enabled) {
+        // Reference operations no longer use this table. Registering new
+        // objects would also make its borrowed pointers conservative roots.
+        return _Py_INVALID_UNIQUE_ID;
+    }
+#endif
     PyInterpreterState *interp = _PyInterpreterState_GET();
     struct _Py_unique_id_pool *pool = &interp->unique_ids;
 

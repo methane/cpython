@@ -464,13 +464,15 @@ dummy_func(
         // Inplace negation: negate a uniquely-referenced float in place.
         // Tier 2 only.
         tier2 op(_UNARY_NEGATIVE_FLOAT_INPLACE, (value -- res, v)) {
-            PyObject *val_o = PyStackRef_AsPyObjectBorrow(value);
-            assert(PyFloat_CheckExact(val_o));
-            assert(_PyObject_IsUniquelyReferenced(val_o));
+            assert(PyFloat_CheckExact(PyStackRef_AsPyObjectBorrow(value)));
             STAT_INC(UNARY_NEGATIVE, hit);
-            double dres = -((PyFloatObject *)val_o)->ob_fval;
-            ((PyFloatObject *)val_o)->ob_fval = dres;
-            res = value;
+            double dres = -_PyFloat_StackRefAsDouble(value);
+            res = _PyFloat_ReuseResult(value, dres);
+#ifdef Py_EXPERIMENTAL_NANBOX
+            if (PyStackRef_IsNull(res)) {
+                ERROR_NO_POP();
+            }
+#endif
             v = PyStackRef_NULL;
             INPUTS_DEAD();
         }
@@ -782,15 +784,20 @@ dummy_func(
         }
 
         pure op(_BINARY_OP_MULTIPLY_FLOAT, (left, right -- res, l, r)) {
-            PyObject *left_o = PyStackRef_AsPyObjectBorrow(left);
-            PyObject *right_o = PyStackRef_AsPyObjectBorrow(right);
-            assert(PyFloat_CheckExact(left_o));
-            assert(PyFloat_CheckExact(right_o));
+            assert(PyFloat_CheckExact(PyStackRef_AsPyObjectBorrow(left)));
+            assert(PyFloat_CheckExact(PyStackRef_AsPyObjectBorrow(right)));
 
             STAT_INC(BINARY_OP, hit);
             double dres =
-                ((PyFloatObject *)left_o)->ob_fval *
-                ((PyFloatObject *)right_o)->ob_fval;
+                _PyFloat_StackRefAsDouble(left) * _PyFloat_StackRefAsDouble(right);
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+            l = left;
+            r = right;
+            res = _PyFloat_ReuseOrCreate(&l, &r, dres);
+            if (PyStackRef_IsNull(res)) {
+                ERROR_NO_POP();
+            }
+#else
             PyObject *d = PyFloat_FromDouble(dres);
             if (d == NULL) {
                 ERROR_NO_POP();
@@ -798,19 +805,25 @@ dummy_func(
             res = PyStackRef_FromPyObjectSteal(d);
             l = left;
             r = right;
+#endif
             INPUTS_DEAD();
         }
 
         pure op(_BINARY_OP_ADD_FLOAT, (left, right -- res, l, r)) {
-            PyObject *left_o = PyStackRef_AsPyObjectBorrow(left);
-            PyObject *right_o = PyStackRef_AsPyObjectBorrow(right);
-            assert(PyFloat_CheckExact(left_o));
-            assert(PyFloat_CheckExact(right_o));
+            assert(PyFloat_CheckExact(PyStackRef_AsPyObjectBorrow(left)));
+            assert(PyFloat_CheckExact(PyStackRef_AsPyObjectBorrow(right)));
 
             STAT_INC(BINARY_OP, hit);
             double dres =
-                ((PyFloatObject *)left_o)->ob_fval +
-                ((PyFloatObject *)right_o)->ob_fval;
+                _PyFloat_StackRefAsDouble(left) + _PyFloat_StackRefAsDouble(right);
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+            l = left;
+            r = right;
+            res = _PyFloat_ReuseOrCreate(&l, &r, dres);
+            if (PyStackRef_IsNull(res)) {
+                ERROR_NO_POP();
+            }
+#else
             PyObject *d = PyFloat_FromDouble(dres);
             if (d == NULL) {
                 ERROR_NO_POP();
@@ -818,19 +831,25 @@ dummy_func(
             res = PyStackRef_FromPyObjectSteal(d);
             l = left;
             r = right;
+#endif
             INPUTS_DEAD();
         }
 
         pure op(_BINARY_OP_SUBTRACT_FLOAT, (left, right -- res, l, r)) {
-            PyObject *left_o = PyStackRef_AsPyObjectBorrow(left);
-            PyObject *right_o = PyStackRef_AsPyObjectBorrow(right);
-            assert(PyFloat_CheckExact(left_o));
-            assert(PyFloat_CheckExact(right_o));
+            assert(PyFloat_CheckExact(PyStackRef_AsPyObjectBorrow(left)));
+            assert(PyFloat_CheckExact(PyStackRef_AsPyObjectBorrow(right)));
 
             STAT_INC(BINARY_OP, hit);
             double dres =
-                ((PyFloatObject *)left_o)->ob_fval -
-                ((PyFloatObject *)right_o)->ob_fval;
+                _PyFloat_StackRefAsDouble(left) - _PyFloat_StackRefAsDouble(right);
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+            l = left;
+            r = right;
+            res = _PyFloat_ReuseOrCreate(&l, &r, dres);
+            if (PyStackRef_IsNull(res)) {
+                ERROR_NO_POP();
+            }
+#else
             PyObject *d = PyFloat_FromDouble(dres);
             if (d == NULL) {
                 ERROR_NO_POP();
@@ -838,6 +857,7 @@ dummy_func(
             res = PyStackRef_FromPyObjectSteal(d);
             l = left;
             r = right;
+#endif
             INPUTS_DEAD();
         }
 
@@ -854,7 +874,12 @@ dummy_func(
         // becomes _POP_TOP_NOP.
         tier2 op(_BINARY_OP_ADD_FLOAT_INPLACE, (left, right -- res, l, r)) {
             FLOAT_INPLACE_OP(left, right, left, +);
-            res = left;
+            res = _float_inplace_res;
+#ifdef Py_EXPERIMENTAL_NANBOX
+            if (PyStackRef_IsNull(res)) {
+                ERROR_NO_POP();
+            }
+#endif
             l = PyStackRef_NULL;
             r = right;
             INPUTS_DEAD();
@@ -862,7 +887,12 @@ dummy_func(
 
         tier2 op(_BINARY_OP_SUBTRACT_FLOAT_INPLACE, (left, right -- res, l, r)) {
             FLOAT_INPLACE_OP(left, right, left, -);
-            res = left;
+            res = _float_inplace_res;
+#ifdef Py_EXPERIMENTAL_NANBOX
+            if (PyStackRef_IsNull(res)) {
+                ERROR_NO_POP();
+            }
+#endif
             l = PyStackRef_NULL;
             r = right;
             INPUTS_DEAD();
@@ -870,7 +900,12 @@ dummy_func(
 
         tier2 op(_BINARY_OP_MULTIPLY_FLOAT_INPLACE, (left, right -- res, l, r)) {
             FLOAT_INPLACE_OP(left, right, left, *);
-            res = left;
+            res = _float_inplace_res;
+#ifdef Py_EXPERIMENTAL_NANBOX
+            if (PyStackRef_IsNull(res)) {
+                ERROR_NO_POP();
+            }
+#endif
             l = PyStackRef_NULL;
             r = right;
             INPUTS_DEAD();
@@ -879,7 +914,12 @@ dummy_func(
         // Inplace RIGHT variants: mutate the uniquely-referenced right operand.
         tier2 op(_BINARY_OP_ADD_FLOAT_INPLACE_RIGHT, (left, right -- res, l, r)) {
             FLOAT_INPLACE_OP(left, right, right, +);
-            res = right;
+            res = _float_inplace_res;
+#ifdef Py_EXPERIMENTAL_NANBOX
+            if (PyStackRef_IsNull(res)) {
+                ERROR_NO_POP();
+            }
+#endif
             l = left;
             r = PyStackRef_NULL;
             INPUTS_DEAD();
@@ -887,7 +927,12 @@ dummy_func(
 
         tier2 op(_BINARY_OP_MULTIPLY_FLOAT_INPLACE_RIGHT, (left, right -- res, l, r)) {
             FLOAT_INPLACE_OP(left, right, right, *);
-            res = right;
+            res = _float_inplace_res;
+#ifdef Py_EXPERIMENTAL_NANBOX
+            if (PyStackRef_IsNull(res)) {
+                ERROR_NO_POP();
+            }
+#endif
             l = left;
             r = PyStackRef_NULL;
             INPUTS_DEAD();
@@ -895,27 +940,134 @@ dummy_func(
 
         tier2 op(_BINARY_OP_SUBTRACT_FLOAT_INPLACE_RIGHT, (left, right -- res, l, r)) {
             FLOAT_INPLACE_OP(left, right, right, -);
-            res = right;
+            res = _float_inplace_res;
+#ifdef Py_EXPERIMENTAL_NANBOX
+            if (PyStackRef_IsNull(res)) {
+                ERROR_NO_POP();
+            }
+#endif
             l = left;
             r = PyStackRef_NULL;
+            INPUTS_DEAD();
+        }
+
+        // The tracing collector may reuse the destination of a subsequent
+        // STORE_FAST. These uops are introduced after symbolic optimization;
+        // the original operand pops and store are retained unchanged.
+        tier2 op(_BINARY_OP_ADD_FLOAT_REUSE_LOCAL, (left, right -- res, l, r)) {
+            STAT_INC(BINARY_OP, hit);
+            double value = _PyFloat_StackRefAsDouble(left) +
+                           _PyFloat_StackRefAsDouble(right);
+            l = left;
+            r = right;
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+            res = _PyFloat_ReuseLocal(frame, stack_pointer, oparg, value,
+                                     current_executor->vm_data.valid);
+            if (PyStackRef_IsNull(res)) {
+                res = _PyFloat_ReuseOrCreate(&l, &r, value);
+            }
+#else
+            PyObject *result = PyFloat_FromDouble(value);
+            res = result == NULL ? PyStackRef_NULL : PyStackRef_FromPyObjectSteal(result);
+#endif
+            if (PyStackRef_IsNull(res)) {
+                ERROR_NO_POP();
+            }
+            INPUTS_DEAD();
+        }
+
+        tier2 op(_BINARY_OP_SUBTRACT_FLOAT_REUSE_LOCAL, (left, right -- res, l, r)) {
+            STAT_INC(BINARY_OP, hit);
+            double value = _PyFloat_StackRefAsDouble(left) -
+                           _PyFloat_StackRefAsDouble(right);
+            l = left;
+            r = right;
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+            res = _PyFloat_ReuseLocal(frame, stack_pointer, oparg, value,
+                                     current_executor->vm_data.valid);
+            if (PyStackRef_IsNull(res)) {
+                res = _PyFloat_ReuseOrCreate(&l, &r, value);
+            }
+#else
+            PyObject *result = PyFloat_FromDouble(value);
+            res = result == NULL ? PyStackRef_NULL : PyStackRef_FromPyObjectSteal(result);
+#endif
+            if (PyStackRef_IsNull(res)) {
+                ERROR_NO_POP();
+            }
+            INPUTS_DEAD();
+        }
+
+        tier2 op(_BINARY_OP_MULTIPLY_FLOAT_REUSE_LOCAL, (left, right -- res, l, r)) {
+            STAT_INC(BINARY_OP, hit);
+            double value = _PyFloat_StackRefAsDouble(left) *
+                           _PyFloat_StackRefAsDouble(right);
+            l = left;
+            r = right;
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+            res = _PyFloat_ReuseLocal(frame, stack_pointer, oparg, value,
+                                     current_executor->vm_data.valid);
+            if (PyStackRef_IsNull(res)) {
+                res = _PyFloat_ReuseOrCreate(&l, &r, value);
+            }
+#else
+            PyObject *result = PyFloat_FromDouble(value);
+            res = result == NULL ? PyStackRef_NULL : PyStackRef_FromPyObjectSteal(result);
+#endif
+            if (PyStackRef_IsNull(res)) {
+                ERROR_NO_POP();
+            }
+            INPUTS_DEAD();
+        }
+
+        tier2 op(_BINARY_OP_TRUEDIV_FLOAT_REUSE_LOCAL, (left, right -- res, l, r)) {
+            STAT_INC(BINARY_OP, hit);
+            double divisor = _PyFloat_StackRefAsDouble(right);
+            if (divisor == 0.0) {
+                PyErr_SetString(PyExc_ZeroDivisionError,
+                                "float division by zero");
+                ERROR_NO_POP();
+            }
+            double value = _PyFloat_StackRefAsDouble(left) / divisor;
+            l = left;
+            r = right;
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+            res = _PyFloat_ReuseLocal(frame, stack_pointer, oparg, value,
+                                     current_executor->vm_data.valid);
+            if (PyStackRef_IsNull(res)) {
+                res = _PyFloat_ReuseOrCreate(&l, &r, value);
+            }
+#else
+            PyObject *result = PyFloat_FromDouble(value);
+            res = result == NULL ? PyStackRef_NULL : PyStackRef_FromPyObjectSteal(result);
+#endif
+            if (PyStackRef_IsNull(res)) {
+                ERROR_NO_POP();
+            }
             INPUTS_DEAD();
         }
 
         // Float true division --- not specialized at tier 1, emitted by the
         // tier 2 optimizer when both operands are known floats.
         tier2 op(_BINARY_OP_TRUEDIV_FLOAT, (left, right -- res, l, r)) {
-            PyObject *left_o = PyStackRef_AsPyObjectBorrow(left);
-            PyObject *right_o = PyStackRef_AsPyObjectBorrow(right);
-            assert(PyFloat_CheckExact(left_o));
-            assert(PyFloat_CheckExact(right_o));
+            assert(PyFloat_CheckExact(PyStackRef_AsPyObjectBorrow(left)));
+            assert(PyFloat_CheckExact(PyStackRef_AsPyObjectBorrow(right)));
             STAT_INC(BINARY_OP, hit);
-            double divisor = ((PyFloatObject *)right_o)->ob_fval;
+            double divisor = _PyFloat_StackRefAsDouble(right);
             if (divisor == 0.0) {
                 PyErr_SetString(PyExc_ZeroDivisionError,
                                 "float division by zero");
                 ERROR_NO_POP();
             }
-            double dres = ((PyFloatObject *)left_o)->ob_fval / divisor;
+            double dres = _PyFloat_StackRefAsDouble(left) / divisor;
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+            l = left;
+            r = right;
+            res = _PyFloat_ReuseOrCreate(&l, &r, dres);
+            if (PyStackRef_IsNull(res)) {
+                ERROR_NO_POP();
+            }
+#else
             PyObject *d = PyFloat_FromDouble(dres);
             if (d == NULL) {
                 ERROR_NO_POP();
@@ -923,6 +1075,7 @@ dummy_func(
             res = PyStackRef_FromPyObjectSteal(d);
             l = left;
             r = right;
+#endif
             INPUTS_DEAD();
         }
 
@@ -931,7 +1084,7 @@ dummy_func(
             if (_divop_err) {
                 ERROR_NO_POP();
             }
-            res = left;
+            res = _float_inplace_res;
             l = PyStackRef_NULL;
             r = right;
             INPUTS_DEAD();
@@ -942,7 +1095,7 @@ dummy_func(
             if (_divop_err) {
                 ERROR_NO_POP();
             }
-            res = right;
+            res = _float_inplace_res;
             l = left;
             r = PyStackRef_NULL;
             INPUTS_DEAD();
@@ -1060,7 +1213,8 @@ dummy_func(
             // binary operations are always uniquely referenced (refcount == 1).
             // If this assertion fails, update the optimizer to stop marking
             // float results as unique in optimizer_bytecodes.c.
-            assert(!PyFloat_CheckExact(res_o) || Py_REFCNT(res_o) == 1);
+            assert(!PyFloat_CheckExact(res_o) || _PyFloat_IsImmediate(res_o) ||
+                   Py_REFCNT(res_o) == 1);
 
             res = PyStackRef_FromPyObjectSteal(res_o);
             l = left;
@@ -1199,7 +1353,7 @@ dummy_func(
             assert(PyLong_CheckExact(sub));
             assert(PyUnicode_CheckExact(str));
             EXIT_IF(!_PyLong_IsNonNegativeCompact((PyLongObject*)sub));
-            Py_ssize_t index = ((PyLongObject*)sub)->long_value.ob_digit[0];
+            Py_ssize_t index = _PyLong_GetDigit((PyLongObject *)sub, 0);
             EXIT_IF(PyUnicode_GET_LENGTH(str) <= index);
             uint8_t c = PyUnicode_1BYTE_DATA(str)[index];
             assert(c < 128);
@@ -1221,7 +1375,7 @@ dummy_func(
             assert(PyLong_CheckExact(sub));
             assert(PyUnicode_CheckExact(str));
             EXIT_IF(!_PyLong_IsNonNegativeCompact((PyLongObject*)sub));
-            Py_ssize_t index = ((PyLongObject*)sub)->long_value.ob_digit[0];
+            Py_ssize_t index = _PyLong_GetDigit((PyLongObject *)sub, 0);
             EXIT_IF(PyUnicode_GET_LENGTH(str) <= index);
             // Specialize for reading an ASCII character from any string:
             Py_UCS4 c = PyUnicode_READ_CHAR(str, index);
@@ -1263,7 +1417,7 @@ dummy_func(
 
             // Deopt unless 0 <= sub < PyTuple_Size(list)
             EXIT_IF(!_PyLong_IsNonNegativeCompact((PyLongObject *)sub));
-            Py_ssize_t index = ((PyLongObject*)sub)->long_value.ob_digit[0];
+            Py_ssize_t index = _PyLong_GetDigit((PyLongObject *)sub, 0);
             EXIT_IF(index >= PyTuple_GET_SIZE(tuple));
         }
 
@@ -1275,7 +1429,7 @@ dummy_func(
             assert(PyTuple_CheckExact(tuple));
 
             STAT_INC(BINARY_OP, hit);
-            Py_ssize_t index = ((PyLongObject*)sub)->long_value.ob_digit[0];
+            Py_ssize_t index = _PyLong_GetDigit((PyLongObject *)sub, 0);
             PyObject *res_o = PyTuple_GET_ITEM(tuple, index);
             assert(res_o != NULL);
             res = PyStackRef_FromPyObjectNew(res_o);
@@ -3010,15 +3164,24 @@ dummy_func(
         op(_LOAD_ATTR_SLOT, (index/1, owner -- attr, o)) {
             PyObject *owner_o = PyStackRef_AsPyObjectBorrow(owner);
 
-            PyObject **addr = (PyObject **)((char *)owner_o + index);
-            PyObject *attr_o = FT_ATOMIC_LOAD_PTR(*addr);
-            EXIT_IF(attr_o == NULL);
-            #ifdef Py_GIL_DISABLED
-            int increfed = _Py_TryIncrefCompareStackRef(addr, attr_o, &attr);
-            EXIT_IF(!increfed);
-            #else
-            attr = PyStackRef_FromPyObjectNew(attr_o);
-            #endif
+            if (_PyObject_IsImmediate(owner_o)) {
+                // __class__ uses this slot specialization, even though an
+                // immediate has no header. Boxed and immediate values share
+                // a type version, so either can populate the same cache.
+                assert(index == offsetof(PyObject, ob_type));
+                attr = PyStackRef_FromPyObjectNew((PyObject *)Py_TYPE(owner_o));
+            }
+            else {
+                PyObject **addr = (PyObject **)((char *)owner_o + index);
+                PyObject *attr_o = FT_ATOMIC_LOAD_PTR(*addr);
+                EXIT_IF(attr_o == NULL);
+                #ifdef Py_GIL_DISABLED
+                int increfed = _Py_TryIncrefCompareStackRef(addr, attr_o, &attr);
+                EXIT_IF(!increfed);
+                #else
+                attr = PyStackRef_FromPyObjectNew(attr_o);
+                #endif
+            }
             STAT_INC(LOAD_ATTR, hit);
             o = owner;
             DEAD(owner);
@@ -3271,12 +3434,9 @@ dummy_func(
             _GUARD_TOS_UNICODE + _GUARD_NOS_UNICODE + unused/1 + _COMPARE_OP_STR + _POP_TOP_UNICODE + _POP_TOP_UNICODE;
 
         op(_COMPARE_OP_FLOAT, (left, right -- res, l, r)) {
-            PyObject *left_o = PyStackRef_AsPyObjectBorrow(left);
-            PyObject *right_o = PyStackRef_AsPyObjectBorrow(right);
-
             STAT_INC(COMPARE_OP, hit);
-            double dleft = PyFloat_AS_DOUBLE(left_o);
-            double dright = PyFloat_AS_DOUBLE(right_o);
+            double dleft = _PyFloat_StackRefAsDouble(left);
+            double dright = _PyFloat_StackRefAsDouble(right);
             // 1 if NaN, 2 if <, 4 if >, 8 if ==; this matches low four bits of the oparg
             int sign_ish = COMPARISON_BIT(dleft, dright);
             l = left;
@@ -4065,7 +4225,7 @@ dummy_func(
             _PyRangeIterObject *r = (_PyRangeIterObject *)PyStackRef_AsPyObjectBorrow(iter);
             EXIT_IF(Py_TYPE(r) != &PyRangeIter_Type);
 #ifdef Py_GIL_DISABLED
-            EXIT_IF(!_PyObject_IsUniquelyReferenced((PyObject *)r));
+            EXIT_IF(!_PyRangeIter_IsSafeForSpecialization((PyObject *)r));
 #endif
         }
 
@@ -4073,7 +4233,7 @@ dummy_func(
             _PyRangeIterObject *r = (_PyRangeIterObject *)PyStackRef_AsPyObjectBorrow(iter);
             assert(Py_TYPE(r) == &PyRangeIter_Type);
 #ifdef Py_GIL_DISABLED
-            assert(_PyObject_IsUniquelyReferenced((PyObject *)r));
+            assert(_PyRangeIter_IsSafeForSpecialization((PyObject *)r));
 #endif
             STAT_INC(FOR_ITER, hit);
             if (r->len <= 0) {
@@ -4094,7 +4254,7 @@ dummy_func(
             _PyRangeIterObject *r = (_PyRangeIterObject *)PyStackRef_AsPyObjectBorrow(iter);
             assert(Py_TYPE(r) == &PyRangeIter_Type);
 #ifdef Py_GIL_DISABLED
-            assert(_PyObject_IsUniquelyReferenced((PyObject *)r));
+            assert(_PyRangeIter_IsSafeForSpecialization((PyObject *)r));
 #endif
             assert(r->len > 0);
             long value = r->start;
