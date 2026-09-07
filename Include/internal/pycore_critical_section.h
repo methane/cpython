@@ -119,6 +119,12 @@ _PyCriticalSection_BeginMutex(PyThreadState *tstate, PyCriticalSection *c, PyMut
 static inline void
 _PyCriticalSection_Begin(PyThreadState *tstate, PyCriticalSection *c, PyObject *op)
 {
+    if (_PyObject_IsImmediate(op)) {
+        // Immediate values are immutable and have no object mutex.
+        c->_cs_mutex = NULL;
+        c->_cs_prev = 0;
+        return;
+    }
     _PyCriticalSection_BeginMutex(tstate, c, &op->ob_mutex);
 }
 
@@ -190,6 +196,12 @@ _PyCriticalSection2_BeginMutex(PyThreadState *tstate, PyCriticalSection2 *c, PyM
 static inline void
 _PyCriticalSection2_Begin(PyThreadState *tstate, PyCriticalSection2 *c, PyObject *a, PyObject *b)
 {
+    if (_PyObject_IsImmediate(a) || _PyObject_IsImmediate(b)) {
+        c->_cs_mutex2 = NULL;
+        _PyCriticalSection_Begin(tstate, &c->_cs_base,
+                                _PyObject_IsImmediate(a) ? b : a);
+        return;
+    }
     _PyCriticalSection2_BeginMutex(tstate, c, &a->ob_mutex, &b->ob_mutex);
 }
 
@@ -232,6 +244,9 @@ static inline void
 _PyCriticalSection_AssertHeldObj(PyObject *op)
 {
 #ifdef Py_DEBUG
+    if (_PyObject_IsImmediate(op)) {
+        return;
+    }
     PyMutex *mutex = &_PyObject_CAST(op)->ob_mutex;
     PyThreadState *tstate = _PyThreadState_GET();
     uintptr_t prev = tstate->critical_section;

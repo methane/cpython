@@ -19,6 +19,23 @@ extern void _PyFloat_FiniType(PyInterpreterState *);
 
 
 PyAPI_FUNC(void) _PyFloat_ExactDealloc(PyObject *op);
+// Materialize a heap float even in the immediate-value experimental ABI.
+PyAPI_FUNC(PyObject *) _PyFloat_FromDoubleBoxed(double value);
+
+static inline Py_ALWAYS_INLINE PyObject *
+_PyFloat_FromDouble(double value)
+{
+#ifdef Py_EXPERIMENTAL_NANBOX
+    // Keep immediate creation in the caller, especially in JIT stencils.
+    // Bootstrap values and NaNs still need a real object and may fail.
+    if (_Py_tracing_gc_enabled && !isnan(value)) {
+        return _PyFloat_EncodeImmediate(value);
+    }
+    return _PyFloat_FromDoubleBoxed(value);
+#else
+    return PyFloat_FromDouble(value);
+#endif
+}
 
 
 extern void _PyFloat_DebugMallocStats(FILE* out);

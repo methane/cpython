@@ -18,6 +18,20 @@
 
 #include "pydtrace.h"
 
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+#  include "pycore_moduleobject.h"
+#  include "pycore_typeobject.h"
+#  include <setjmp.h>
+#  ifdef __linux__
+#    include <fcntl.h>
+#    include <sys/mman.h>
+#    include <unistd.h>
+#  endif
+#  ifdef _Py_TIER2
+#    include "pycore_optimizer.h"
+#  endif
+#endif
+
 
 // enable the "mark alive" pass of GC
 #define GC_ENABLE_MARK_ALIVE 1
@@ -35,6 +49,10 @@
 #ifdef Py_GIL_DISABLED
 
 typedef struct _gc_runtime_state GCState;
+
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+int _Py_tracing_gc_enabled = 0;
+#endif
 
 #ifdef Py_DEBUG
 #  define GC_DEBUG
@@ -65,6 +83,13 @@ struct visitor_args {
     size_t offset;  // offset of PyObject from start of block
 };
 
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+struct tracing_stack_roots {
+    uintptr_t stack_pointer;
+    jmp_buf registers;
+};
+#endif
+
 // Per-collection state
 struct collection_state {
     struct visitor_args base;
@@ -83,7 +108,27 @@ struct collection_state {
     struct worklist legacy_finalizers;
     struct worklist wrcb_to_call;
     struct worklist objs_to_decref;
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    struct worklist leaf_unreachable;
+    bool leaf_candidates_ready;
+    const struct tracing_stack_roots *native_roots;
+    uintptr_t live_bytes;
+    struct tracing_heap *saved_snapshot;
+#endif
 };
+
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+static bool
+tracing_nursery_container(PyObject *op)
+{
+    // These exact types have no weakrefs or Python finalizers. Watched dicts
+    // must use the full collector, which handles callbacks and resurrection.
+    return _PyObject_GC_IS_TRACKED(op) &&
+           (PyList_CheckExact(op) || PyTuple_CheckExact(op) ||
+            (PyDict_CheckExact(op) &&
+             (((PyDictObject *)op)->_ma_watcher_tag & DICT_WATCHER_MASK) == 0));
+}
+#endif
 
 // iterate over a worklist
 #define WORKSTACK_FOR_EACH(stack, op) \
@@ -319,6 +364,7 @@ gc_restore_tid(PyObject *op)
     }
 }
 
+#ifndef Py_EXPERIMENTAL_TRACING_GC
 static void
 gc_restore_refs(PyObject *op)
 {
@@ -331,6 +377,7 @@ gc_restore_refs(PyObject *op)
         gc_clear_alive(op);
     }
 }
+#endif
 
 // Given a mimalloc memory block return the PyObject stored in it or NULL if
 // the block is not allocated or the object is not tracked or is immortal.
@@ -444,6 +491,7 @@ gc_visit_stackref(_PyStackRef stackref)
 }
 
 // Add 1 to the gc_refs for every deferred reference on each thread's stack.
+#ifndef Py_EXPERIMENTAL_TRACING_GC
 static void
 gc_visit_thread_stacks(PyInterpreterState *interp, struct collection_state *state)
 {
@@ -477,6 +525,7 @@ gc_visit_thread_stacks(PyInterpreterState *interp, struct collection_state *stat
     }
     _Py_FOR_EACH_TSTATE_END(interp);
 }
+#endif
 
 // Untrack objects that can never create reference cycles.
 // Return true if the object was untracked.
@@ -595,7 +644,14 @@ typedef struct {
     gc_span_stack_t spans;
     PyObject *buffer[BUFFER_SIZE];
     bool use_prefetch;
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    struct tracing_heap *tracing;
+#endif
 } gc_mark_args_t;
+
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+static int tracing_mark_address(struct tracing_heap *, uintptr_t);
+#endif
 
 
 // Returns number of entries in buffer
@@ -738,6 +794,11 @@ gc_mark_enqueue_buffer_visitproc(PyObject *op, void *args)
 static int
 gc_mark_enqueue(PyObject *op, gc_mark_args_t *args)
 {
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    if (args->tracing != NULL) {
+        return tracing_mark_address(args->tracing, (uintptr_t)op);
+    }
+#endif
     if (args->use_prefetch) {
         return gc_mark_enqueue_buffer(op, args);
     }
@@ -780,7 +841,11 @@ static bool
 gc_clear_alive_bits(const mi_heap_t *heap, const mi_heap_area_t *area,
                     void *block, size_t block_size, void *args)
 {
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    PyObject *op = op_from_block_all_gc(block, args);
+#else
     PyObject *op = op_from_block(block, args, false);
+#endif
     if (op == NULL) {
         return true;
     }
@@ -851,11 +916,53 @@ gc_visit_thread_stacks_mark_alive(PyInterpreterState *interp, gc_mark_args_t *ar
 {
     int err = 0;
     _Py_FOR_EACH_TSTATE_BEGIN(interp, p) {
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+        // Free-threaded stack references represent PyObject pointers held by
+        // C code.  The normal collector accounts for them through synthetic
+        // refcounts; an authoritative tracing pass must mark them directly.
+        for (_PyCStackRef *c_ref = ((_PyThreadStateImpl *)p)->c_stack_refs;
+             c_ref != NULL; c_ref = c_ref->next)
+        {
+            if (gc_visit_stackref_mark_alive(args, c_ref->ref) < 0) {
+                err = -1;
+                goto exit;
+            }
+        }
+#endif
         for (_PyInterpreterFrame *f = p->current_frame; f != NULL; f = f->previous) {
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+            if (f->owner == FRAME_OWNED_BY_INTERPRETER) {
+                // Entry frames live in the excluded native evaluator frame.
+                // Their stack can hold a return value or a saved executor.
+                for (_PyStackRef *ref = f->localsplus;
+                     ref < f->stackpointer; ref++)
+                {
+                    if (gc_visit_stackref_mark_alive(args, *ref) < 0) {
+                        err = -1;
+                        goto exit;
+                    }
+                }
+                continue;
+            }
+#endif
+
             if (f->owner >= FRAME_OWNED_BY_INTERPRETER) {
                 continue;
             }
 
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+            // These are roots even when the executing function is no longer
+            // reachable from its globals, or exec() has separate locals.
+            if (gc_visit_stackref_mark_alive(args, f->f_funcobj) < 0 ||
+                gc_mark_enqueue(f->f_globals, args) < 0 ||
+                gc_mark_enqueue(f->f_builtins, args) < 0 ||
+                gc_mark_enqueue(f->f_locals, args) < 0 ||
+                gc_mark_enqueue((PyObject *)f->frame_obj, args) < 0)
+            {
+                err = -1;
+                goto exit;
+            }
+#endif
             if (f->stackpointer == NULL) {
                 // GH-129236: The stackpointer may be NULL in cases where
                 // the GC is run during a PyStackRef_CLOSE() call. Skip this
@@ -970,6 +1077,7 @@ visit_decref(PyObject *op, void *arg)
 // Compute the number of external references to objects in the heap
 // by subtracting internal references from the refcount. The difference is
 // computed in the ob_tid field (we restore it later).
+#ifndef Py_EXPERIMENTAL_TRACING_GC
 static bool
 update_refs(const mi_heap_t *heap, const mi_heap_area_t *area,
             void *block, size_t block_size, void *args)
@@ -1022,10 +1130,14 @@ update_refs(const mi_heap_t *heap, const mi_heap_area_t *area,
     Py_TYPE(op)->tp_traverse(op, visit_decref, NULL);
     return true;
 }
+#endif
 
 static int
 visit_clear_unreachable(PyObject *op, void *stack)
 {
+    if (_PyObject_IsImmediate(op)) {
+        return 0;
+    }
     if (gc_is_unreachable(op)) {
         _PyObject_ASSERT(op, _PyObject_GC_IS_TRACKED(op));
         gc_clear_unreachable(op);
@@ -1060,6 +1172,17 @@ validate_alive_bits(const mi_heap_t *heap, const mi_heap_area_t *area,
         return true;
     }
 
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    if (_PyInterpreterState_GET()->gc.tracing_container_nursery_enabled &&
+        gc_is_alive(op))
+    {
+        // Between full collections ALIVE is also the promotion bit for all
+        // surviving typed objects, including types deferred by the nursery.
+        // It must never describe staged trash.
+        _PyObject_ASSERT(op, !gc_is_unreachable(op));
+        return true;
+    }
+#endif
     _PyObject_ASSERT_WITH_MSG(op, !gc_is_alive(op),
                               "object should not be marked as alive yet");
 
@@ -1119,6 +1242,7 @@ validate_gc_objects(const mi_heap_t *heap, const mi_heap_area_t *area,
 }
 #endif
 
+#ifndef Py_EXPERIMENTAL_TRACING_GC
 static bool
 mark_heap_visitor(const mi_heap_t *heap, const mi_heap_area_t *area,
                   void *block, size_t block_size, void *args)
@@ -1172,6 +1296,7 @@ restore_refs(const mi_heap_t *heap, const mi_heap_area_t *area,
     gc_clear_alive(op);
     return true;
 }
+#endif
 
 /* Return true if object has a pre-PEP 442 finalization method. */
 static int
@@ -1198,7 +1323,39 @@ scan_heap_visitor(const mi_heap_t *heap, const mi_heap_area_t *area,
         return true;
     }
 
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    // The mark pass is authoritative. Classify and enqueue garbage in one
+    // heap visit; numeric refcounts do not determine reachability.
+    if (_Py_IsImmortal(op)) {
+        if (!state->gcstate->tracing_container_nursery_enabled) {
+            gc_clear_alive(op);
+        }
+        return true;
+    }
+    state->candidates++;
+    if (gc_is_alive(op)) {
+        // Unsupported nursery types also need an age: otherwise their old
+        // storage is counted as new allocation pressure at every collection.
+        // A full snapshot clears these marks before discovering reachability.
+        if (!state->gcstate->tracing_container_nursery_enabled) {
+            gc_clear_alive(op);
+        }
+        gc_clear_unreachable(op);
+        return true;
+    }
+    gc_set_unreachable(op);
+#endif
     if (gc_is_unreachable(op)) {
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+        // Reference operations are inert. Give the worklist's objects a
+        // positive, merged diagnostic count so that resurrected/SAVEALL
+        // objects remain non-unique with a valid unowned header after removal
+        // from the worklist. Destruction changes this sentinel to zero.
+        _Py_atomic_store_uintptr_relaxed(&op->ob_tid, 0);
+        _Py_atomic_store_uint32_relaxed(&op->ob_ref_local, 0);
+        _Py_atomic_store_ssize_relaxed(&op->ob_ref_shared,
+                                      _Py_REF_SHARED(1, _Py_REF_MERGED));
+#else
         // Disable deferred refcounting for unreachable objects so that they
         // are collected immediately after finalization.
         disable_deferred_refcounting(op);
@@ -1206,6 +1363,7 @@ scan_heap_visitor(const mi_heap_t *heap, const mi_heap_area_t *area,
         // Merge and add one to the refcount to prevent deallocation while we
         // are holding on to it in a worklist.
         merge_refcount(op, 1);
+#endif
 
         if (has_legacy_finalizer(op)) {
             // would be unreachable, but has legacy finalizer
@@ -1374,15 +1532,24 @@ gc_propagate_alive(gc_mark_args_t *args)
 // alive bit set.
 //
 // Returns -1 on failure (out of memory).
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+#  include "gc_tracing.c.h"
+#endif
 static int
 gc_mark_alive_from_roots(PyInterpreterState *interp,
                          struct collection_state *state)
 {
-#ifdef GC_DEBUG
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    return tracing_mark_roots(interp, state);
+#else
+    gc_mark_args_t mark_args = { 0 };
+    // Select the queue discipline before enqueueing any roots. Buffered
+    // marking sets alive bits when popping, unbuffered marking when pushing.
+    mark_args.use_prefetch = interp->gc.long_lived_total > 200000;
+#if defined(GC_DEBUG) && !defined(Py_EXPERIMENTAL_TRACING_GC)
     // Check that all objects don't have alive bit set
     gc_visit_heaps(interp, &validate_alive_bits, &state->base);
 #endif
-    gc_mark_args_t mark_args = { 0 };
 
     // Using prefetch instructions is only a win if the set of objects being
     // examined by the GC does not fit into CPU caches.  Otherwise, using the
@@ -1390,8 +1557,6 @@ gc_mark_alive_from_roots(PyInterpreterState *interp,
     // object count seems a good estimate of if things will fit in the cache.
     // On 64-bit platforms, the minimum object size is 32 bytes.  A 4MB L2 cache
     // would hold about 130k objects.
-    mark_args.use_prefetch = interp->gc.long_lived_total > 200000;
-
     #define MARK_ENQUEUE(op) \
         if (op != NULL ) { \
             if (gc_mark_enqueue(op, &mark_args) < 0) { \
@@ -1400,6 +1565,18 @@ gc_mark_alive_from_roots(PyInterpreterState *interp,
             } \
         }
     MARK_ENQUEUE(interp->sysdict);
+    MARK_ENQUEUE(interp->gc.garbage);
+    MARK_ENQUEUE(interp->gc.callbacks);
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    // Argument parsers lazily cache their keyword tuple in static C storage.
+    // The runtime keeps a registry so these otherwise invisible references
+    // can participate in tracing.
+    for (_PyArg_Parser *parser = _PyRuntime.getargs.static_parsers;
+         parser != NULL; parser = parser->next)
+    {
+        MARK_ENQUEUE(parser->kwtuple);
+    }
+#endif
 #ifdef GC_MARK_ALIVE_EXTRA_ROOTS
     MARK_ENQUEUE(interp->builtins);
     MARK_ENQUEUE(interp->dict);
@@ -1434,6 +1611,7 @@ gc_mark_alive_from_roots(PyInterpreterState *interp,
     assert(mark_args.stack.head == NULL);
 
     return 0;
+#endif  // Py_EXPERIMENTAL_TRACING_GC
 }
 #endif // GC_ENABLE_MARK_ALIVE
 
@@ -1442,6 +1620,7 @@ static int
 deduce_unreachable_heap(PyInterpreterState *interp,
                         struct collection_state *state)
 {
+#ifndef Py_EXPERIMENTAL_TRACING_GC
     // Identify objects that are directly reachable from outside the GC heap
     // by computing the difference between the refcount and the number of
     // incoming references.
@@ -1467,6 +1646,12 @@ deduce_unreachable_heap(PyInterpreterState *interp,
     // Identify remaining unreachable objects and push them onto a stack.
     // Restores ob_tid for reachable objects.
     gc_visit_heaps(interp, &scan_heap_visitor, &state->base);
+#endif
+
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    // Turn the unmarked objects into the collector worklists.
+    gc_visit_heaps(interp, &scan_heap_visitor, &state->base);
+#endif
 
     if (state->legacy_finalizers.head) {
         // There may be objects reachable from legacy finalizers that are in
@@ -1711,6 +1896,11 @@ finalize_garbage(struct collection_state *state)
     // to prevent it from being deallocated while we are holding on to it.
     PyObject *op;
     WORKSTACK_FOR_EACH(&state->unreachable, op) {
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+        if (PyType_Check(op)) {
+            _PyType_NotifyTracingGC((PyTypeObject *)op);
+        }
+#endif
         if (!_PyGC_FINALIZED(op)) {
             destructor finalize = Py_TYPE(op)->tp_finalize;
             if (finalize != NULL) {
@@ -1721,6 +1911,42 @@ finalize_garbage(struct collection_state *state)
         }
     }
 }
+
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+static void
+tracing_delete_simple_garbage(struct collection_state *state)
+{
+    // The entire unreachable graph has been checked: only the nursery's
+    // callback-free containers and exact scalar leaves are present. No other
+    // deallocator can still inspect a container or its children, so there is
+    // no need for a preceding tp_clear pass. Keep the world stopped throughout.
+    assert(state->interp->stoptheworld.world_stopped);
+    assert(_PyRuntime.ref_tracer.tracer_func == NULL);
+    assert(!(state->gcstate->debug & _PyGC_DEBUG_SAVEALL));
+    _PyMem_TracingSweep sweep;
+    _PyMem_BeginTracingSweep(&sweep, state->interp);
+    PyObject *op;
+    while ((op = worklist_pop(&state->unreachable)) != NULL) {
+        assert(tracing_nursery_container(op) && gc_is_unreachable(op));
+        // No mutator or callback can touch this dead header. Untrack it here
+        // too, so its ordinary deallocator needs no atomic bit update.
+        gc_clear_bit(op, _PyGC_BITS_UNREACHABLE | _PyGC_BITS_TRACKED);
+        op->ob_ref_local = 0;
+        op->ob_ref_shared = _Py_REF_MERGED;
+        _Py_Dealloc(op);
+        state->collected++;
+    }
+    // Keep scalar storage intact until every container has been destroyed.
+    while ((op = worklist_pop(&state->leaf_unreachable)) != NULL) {
+        state->collected += tracing_delete_leaf(state->gcstate, op);
+    }
+    // Deallocation can refill this thread's freelists. Release those headers
+    // now too, rather than leaving them to the running-world cleanup below.
+    _PyThreadStateImpl *tstate = (_PyThreadStateImpl *)_PyThreadState_GET();
+    _PyObject_ClearFreeLists(&tstate->freelists, 0);
+    _PyMem_EndTracingSweep(&sweep);
+}
+#endif
 
 // Break reference cycles by clearing the containers involved.
 static void
@@ -1736,17 +1962,44 @@ delete_garbage(struct collection_state *state)
         Py_DECREF(op);
     }
 
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    struct worklist codes = {0};
+    struct worklist types = {0};
+    if (!(gcstate->debug & _PyGC_DEBUG_SAVEALL)) {
+        WORKSTACK_FOR_EACH(&state->unreachable, op) {
+            if (PyType_Check(op)) {
+                _PyType_PrepareTracingGC((PyTypeObject *)op);
+            }
+        }
+        // Decrefs cannot destroy children in tracing mode. Clear the entire
+        // unreachable graph before freeing any headers: memoryviews, for
+        // example, must release their exports before their managed buffer
+        // can be destroyed, irrespective of heap iteration order.
+        WORKSTACK_FOR_EACH(&state->unreachable, op) {
+            inquiry clear = Py_TYPE(op)->tp_clear;
+            if (clear != NULL) {
+                (void)clear(op);
+                if (_PyErr_Occurred(tstate)) {
+                    PyErr_FormatUnraisable("Exception ignored in tp_clear of %s",
+                                           Py_TYPE(op)->tp_name);
+                }
+            }
+        }
+    }
+#endif
     while ((op = worklist_pop(&state->unreachable)) != NULL) {
         _PyObject_ASSERT(op, gc_is_unreachable(op));
 
         // Clear the unreachable flag.
         gc_clear_unreachable(op);
 
+#ifndef Py_EXPERIMENTAL_TRACING_GC
         if (!_PyObject_GC_IS_TRACKED(op)) {
             // Object might have been untracked by some other tp_clear() call.
             Py_DECREF(op);  // drop the reference from the worklist
             continue;
         }
+#endif
 
         state->collected++;
 
@@ -1756,6 +2009,7 @@ delete_garbage(struct collection_state *state)
                 _PyErr_Clear(tstate);
             }
         }
+#ifndef Py_EXPERIMENTAL_TRACING_GC
         else {
             inquiry clear = Py_TYPE(op)->tp_clear;
             if (clear != NULL) {
@@ -1766,9 +2020,63 @@ delete_garbage(struct collection_state *state)
                 }
             }
         }
+#endif
 
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+        if (gcstate->debug & _PyGC_DEBUG_SAVEALL) {
+            // PyList_Append() cannot protect the object through a synthetic
+            // refcount in tracing mode.  It is now reachable from
+            // gc.garbage, so leave it tracked for the next mark pass.
+            continue;
+        }
+        if (PyType_Check(op)) {
+            // Instances still consult their types during deallocation.
+            worklist_push(&types, op);
+            continue;
+        }
+        if (PyCode_Check(op)) {
+            // Frame and function deallocators still inspect their code.
+            // All headers remain valid through the preceding clear pass.
+            worklist_push(&codes, op);
+            continue;
+        }
+        // tp_clear cannot release the object when decrefs are inert.  Set the
+        // diagnostic fields to the state expected by deallocators and invoke
+        // the normal destruction entry point exactly once.
+        op->ob_ref_local = 0;
+        op->ob_ref_shared = _Py_REF_MERGED;
+        _Py_Dealloc(op);
+#else
         Py_DECREF(op);  // drop the reference from the worklist
+#endif
     }
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    while ((op = worklist_pop(&codes)) != NULL) {
+        op->ob_ref_local = 0;
+        op->ob_ref_shared = _Py_REF_MERGED;
+        _Py_Dealloc(op);
+    }
+    struct worklist type_frees = {0};
+    struct _gc_thread_state *thread_gc = &((_PyThreadStateImpl *)tstate)->gc;
+    assert(thread_gc->deferred_type_frees == NULL);
+    thread_gc->deferred_type_frees = &type_frees.head;
+    while ((op = worklist_pop(&types)) != NULL) {
+        op->ob_ref_local = 0;
+        op->ob_ref_shared = _Py_REF_MERGED;
+        _Py_Dealloc(op);
+    }
+    thread_gc->deferred_type_frees = NULL;
+    while ((op = worklist_pop(&type_frees)) != NULL) {
+        // Presize was saved before any metaclass header could be freed.
+        size_t presize = (size_t)op->ob_ref_shared;
+        PyObject_Free((char *)op - presize);
+    }
+    // Containers may inspect their scalar children during destruction. Free
+    // the leaf candidates only after all container deallocators have run.
+    while ((op = worklist_pop(&state->leaf_unreachable)) != NULL) {
+        state->collected += tracing_delete_leaf(gcstate, op);
+    }
+#endif
 }
 
 static void
@@ -1805,7 +2113,7 @@ show_stats_each_generations(GCState *gcstate)
 static int
 visit_decref_unreachable(PyObject *op, void *data)
 {
-    if (gc_is_unreachable(op) && _PyObject_GC_IS_TRACKED(op)) {
+    if (_PyObject_GC_IS_TRACKED(op) && gc_is_unreachable(op)) {
         op->ob_ref_local -= 1;
     }
     return 0;
@@ -1841,6 +2149,42 @@ _PyGC_VisitFrameStack(_PyInterpreterFrame *frame, visitproc visit, void *arg)
 static int
 handle_resurrected_objects(struct collection_state *state)
 {
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    // Finalizers may publish an object into an interpreter root.  Re-run the
+    // precise root traversal and remove every newly reachable object from the
+    // pending sweep worklist.
+    if (gc_mark_alive_from_roots(state->interp, state) < 0) {
+        return -1;
+    }
+    PyObject *op;
+    struct worklist_iter iter;
+    WORKSTACK_FOR_EACH_ITER(&state->unreachable, &iter, op) {
+        if (gc_is_alive(op)) {
+            // Resurrected containers have survived this full collection too.
+            if (!state->gcstate->tracing_container_nursery_enabled) {
+                gc_clear_alive(op);
+            }
+            gc_clear_unreachable(op);
+            if (PyFunction_Check(op) || PyCode_Check(op)) {
+                // Destruction watchers may resurrect these objects. They
+                // must be notified again on a later destruction attempt.
+                gc_clear_bit(op, _PyGC_BITS_FINALIZED);
+            }
+            worklist_remove(&iter);
+            state->long_lived_total++;
+        }
+    }
+    WORKSTACK_FOR_EACH_ITER(&state->leaf_unreachable, &iter, op) {
+        if (gc_is_alive(op)) {
+            // As with other surviving leaves, retain the promotion bit for
+            // the next nursery. Its old owner may have no dirty pages after
+            // the new full-GC baseline, so a minor need not visit it again.
+            gc_clear_unreachable(op);
+            worklist_remove(&iter);
+        }
+    }
+    return 0;
+#else
     // First, find externally reachable objects by computing the reference
     // count difference in ob_ref_local. We can't use ob_tid here because
     // that's already used to store the unreachable worklist.
@@ -1919,6 +2263,7 @@ handle_resurrected_objects(struct collection_state *state)
 #endif
 
     return 0;
+#endif
 }
 
 
@@ -1999,6 +2344,21 @@ cleanup_worklist(struct worklist *worklist)
 static bool
 gc_should_collect(GCState *gcstate)
 {
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    if (!_Py_tracing_gc_enabled || gcstate->young.threshold <= 0 ||
+        !_Py_atomic_load_int_relaxed(&gcstate->enabled))
+    {
+        return false;
+    }
+    // The default threshold (2000) gives roughly 8 MiB of allocation debt.
+    // Grow the budget with the live heap to avoid quadratic full-heap scans.
+    uintptr_t budget = (uintptr_t)gcstate->young.threshold * 4096;
+    uintptr_t live = _Py_atomic_load_uintptr_relaxed(&gcstate->tracing_live_bytes);
+    if (budget < live) {
+        budget = live;
+    }
+    return _Py_atomic_load_uintptr_relaxed(&gcstate->tracing_allocated_bytes) >= budget;
+#else
     int count = _Py_atomic_load_int_relaxed(&gcstate->young.count);
     int threshold = gcstate->young.threshold;
     int gc_enabled = _Py_atomic_load_int_relaxed(&gcstate->enabled);
@@ -2016,8 +2376,32 @@ gc_should_collect(GCState *gcstate)
         return false;
     }
     return true;
+#endif
 }
 
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+void
+_PyGC_AccountAllocations(PyThreadState *tstate)
+{
+    struct _gc_thread_state *local = &((_PyThreadStateImpl *)tstate)->gc;
+    GCState *gcstate = &tstate->interp->gc;
+    _Py_atomic_add_uintptr(&gcstate->tracing_allocated_bytes, local->allocated_bytes);
+    _Py_atomic_add_uintptr(&gcstate->tracing_nonleaf_bytes, local->nonleaf_bytes);
+    local->allocated_bytes = 0;
+    local->nonleaf_bytes = 0;
+    if (gc_should_collect(gcstate) &&
+        !_Py_atomic_load_int_relaxed(&gcstate->collecting))
+    {
+        // The allocator only requests a collection. Run it at the next
+        // interpreter safepoint, after object construction has completed.
+        _Py_ScheduleGC(tstate);
+    }
+}
+#endif
+
+// Tracing GC accounts for allocation bytes in the allocator. Only the
+// reference-counting collector needs this additional object-count bookkeeping.
+#ifndef Py_EXPERIMENTAL_TRACING_GC
 static void
 record_allocation(PyThreadState *tstate)
 {
@@ -2064,6 +2448,7 @@ record_deallocation(PyThreadState *tstate)
         gc->alloc_count = 0;
     }
 }
+#endif
 
 static void
 gc_collect_internal(PyInterpreterState *interp, struct collection_state *state, int generation)
@@ -2076,6 +2461,11 @@ gc_collect_internal(PyInterpreterState *interp, struct collection_state *state, 
     }
 
     state->gcstate->young.count = 0;
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    state->gcstate->tracing_allocated_bytes = 0;
+    state->gcstate->tracing_skipped_leaf_pages = 0;
+    state->gcstate->tracing_skipped_old_pages = 0;
+#endif
     for (int i = 1; i <= generation; ++i) {
         state->gcstate->old[i-1].count = 0;
     }
@@ -2089,6 +2479,11 @@ gc_collect_internal(PyInterpreterState *interp, struct collection_state *state, 
 
     _Py_FOR_EACH_TSTATE_BEGIN(interp, p) {
         _PyThreadStateImpl *tstate = (_PyThreadStateImpl *)p;
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+        tstate->gc.allocated_bytes = 0;
+        state->gcstate->tracing_nonleaf_bytes += tstate->gc.nonleaf_bytes;
+        tstate->gc.nonleaf_bytes = 0;
+#endif
 
         // merge per-thread refcount for types into the type's actual refcount
         _PyObject_MergePerThreadRefcounts(tstate);
@@ -2100,6 +2495,40 @@ gc_collect_internal(PyInterpreterState *interp, struct collection_state *state, 
 
     process_delayed_frees(interp, state);
 
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    if (state->reason != _Py_GC_REASON_HEAP) {
+        state->gcstate->tracing_container_backoff = 0;
+    }
+    if (tracing_collect_leaves(interp, state) ||
+        tracing_collect_containers(interp, state))
+    {
+        // Nursery paths have already restarted the world and swept garbage.
+        return;
+    }
+    if (state->gcstate->tracing_container_backoff != 0) {
+        state->gcstate->tracing_container_backoff--;
+    }
+    // After unsupported-young pressure, avoid both repeated nursery attempts
+    // and page-protection faults. The last full collection in the pause
+    // establishes a new epoch so the next collection can try the nursery.
+    // A scalar-only phase may still use its independent, bounded nursery.
+    bool reset_dirty = state->reason != _Py_GC_REASON_HEAP ||
+                       (state->gcstate->tracing_container_nursery_enabled &&
+                        state->gcstate->tracing_container_backoff == 0) ||
+                       tracing_leaf_workload(state->gcstate);
+    state->gcstate->tracing_nonleaf_bytes = 0;
+    state->gcstate->tracing_minor_count = 0;
+    // Until the full collection has successfully marked all roots there is
+    // no valid baseline for a subsequent nursery collection.
+    state->gcstate->tracing_dirty_pid = 0;
+    tracing_clear_old_pages(state->gcstate);
+    if (state->saved_snapshot == NULL) {
+        // A nursery fallback may already own an allocation map. Do not
+        // change its allocator metadata before the full pass consumes it.
+        _PyMem_CollectTracingHeaps(interp);
+    }
+#endif
+
     #ifdef GC_ENABLE_MARK_ALIVE
     // If gc.freeze() was used, it seems likely that doing this "mark alive"
     // pass will not be a performance win.  Typically the majority of alive
@@ -2107,7 +2536,12 @@ gc_collect_internal(PyInterpreterState *interp, struct collection_state *state, 
     // doing this extra work.  Doing this pass also defeats one of the
     // purposes of using freeze: avoiding writes to objects that are frozen.
     // So, we just skip this if gc.freeze() was used.
-    if (!state->gcstate->freeze_active) {
+    if (!state->gcstate->freeze_active
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+        // Frozen containers still own collectible leaf objects.
+        || _Py_tracing_gc_enabled
+#endif
+    ) {
         // Mark objects reachable from known roots as "alive".  These will
         // be ignored for rest of the GC pass.
         int err = gc_mark_alive_from_roots(interp, state);
@@ -2123,12 +2557,18 @@ gc_collect_internal(PyInterpreterState *interp, struct collection_state *state, 
     int err = deduce_unreachable_heap(interp, state);
     if (err < 0) {
         _PyEval_StartTheWorld(interp);
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+        cleanup_worklist(&state->leaf_unreachable);
+        cleanup_worklist(&state->unreachable);
+        cleanup_worklist(&state->legacy_finalizers);
+        cleanup_worklist(&state->objs_to_decref);
+#endif
         PyErr_NoMemory();
         return;
     }
 
 #ifdef GC_DEBUG
-    // At this point, no object should have the alive bit set
+    // ALIVE may remain as a nursery promotion bit, but not on staged trash.
     gc_visit_heaps(interp, &validate_alive_bits, &state->base);
 #endif
 
@@ -2142,6 +2582,64 @@ gc_collect_internal(PyInterpreterState *interp, struct collection_state *state, 
 
     // Find weakref callbacks we will honor (but do not call them).
     find_weakref_callbacks(state);
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    bool needs_finalization = state->wrcb_to_call.head != 0 ||
+                              state->objs_to_decref.head != 0 ||
+                              state->legacy_finalizers.head != 0;
+    bool simple_sweep = _PyRuntime.ref_tracer.tracer_func == NULL &&
+                        !(state->gcstate->debug & _PyGC_DEBUG_SAVEALL);
+    PyObject *op;
+    WORKSTACK_FOR_EACH(&state->unreachable, op) {
+        if (!tracing_nursery_container(op)) {
+            // Absence of tp_finalize alone does not make an arbitrary
+            // tp_clear or tp_dealloc safe to run with other threads stopped.
+            simple_sweep = false;
+        }
+        if (PyType_Check(op) && ((PyTypeObject *)op)->tp_watched) {
+            needs_finalization = true;
+            break;
+        }
+        if (Py_TYPE(op)->tp_finalize != NULL && !_PyGC_FINALIZED(op)) {
+            // Function/code finalizers only dispatch destruction watchers.
+            // Without registered watchers they cannot execute user code.
+            if ((PyFunction_Check(op) && !interp->active_func_watchers) ||
+                (PyCode_Check(op) && !interp->active_code_watchers))
+            {
+                continue;
+            }
+            needs_finalization = true;
+            break;
+        }
+    }
+    if (!needs_finalization) {
+        // Only do this after ruling out *all* finalizers and weakref
+        // callbacks: those callbacks could install destruction watchers.
+        WORKSTACK_FOR_EACH(&state->unreachable, op) {
+            if (PyFunction_Check(op) || PyCode_Check(op)) {
+                _PyGC_SET_FINALIZED(op);
+            }
+        }
+        // Keep the world stopped until weakrefs have been cleared. Otherwise
+        // another thread could resurrect an object through a weakref and we
+        // would need the second root traversal even without finalizers.
+        _PyGC_ClearAllFreeLists(interp);
+        clear_weakrefs(state);
+        interp->gc.long_lived_total = state->long_lived_total;
+        if (reset_dirty) {
+            state->gcstate->tracing_nursery_base_bytes = state->live_bytes;
+            tracing_reset_dirty(interp);
+        }
+        if (simple_sweep) {
+            tracing_delete_simple_garbage(state);
+            _PyEval_StartTheWorld(interp);
+        }
+        else {
+            _PyEval_StartTheWorld(interp);
+            delete_garbage(state);
+        }
+        return;
+    }
+#endif
     _PyEval_StartTheWorld(interp);
 
     // Deallocate any object from the refcount merge step
@@ -2162,6 +2660,12 @@ gc_collect_internal(PyInterpreterState *interp, struct collection_state *state, 
     }
     // Record the number of live GC objects
     interp->gc.long_lived_total = state->long_lived_total;
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    if (err == 0 && reset_dirty) {
+        state->gcstate->tracing_nursery_base_bytes = state->live_bytes;
+        tracing_reset_dirty(interp);
+    }
+#endif
     _PyEval_StartTheWorld(interp);
 
 
@@ -2170,6 +2674,9 @@ gc_collect_internal(PyInterpreterState *interp, struct collection_state *state, 
         cleanup_worklist(&state->legacy_finalizers);
         cleanup_worklist(&state->wrcb_to_call);
         cleanup_worklist(&state->objs_to_decref);
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+        cleanup_worklist(&state->leaf_unreachable);
+#endif
         PyErr_NoMemory();
         return;
     }
@@ -2201,11 +2708,26 @@ get_stats(GCState *gcstate, int gen)
 /* This is the main function.  Read this to understand how the
  * collection process works. */
 static Py_ssize_t
-gc_collect_main(PyThreadState *tstate, int generation, _PyGC_Reason reason)
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+Py_NO_INLINE
+#endif
+gc_collect_main_impl(PyThreadState *tstate, int generation, _PyGC_Reason reason
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+                     , const struct tracing_stack_roots *native_roots
+#endif
+                     )
 {
     Py_ssize_t m = 0; /* # objects collected */
     Py_ssize_t n = 0; /* # unreachable objects that couldn't be collected */
     GCState *gcstate = &tstate->interp->gc;
+
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    // Finalization tears down interpreter roots in an order designed for
+    // refcounting.  The process is exiting, so leave the tracing heap intact.
+    if (reason == _Py_GC_REASON_SHUTDOWN || !_Py_tracing_gc_enabled) {
+        return 0;
+    }
+#endif
 
     // gc_collect_main() must not be called before _PyGC_Init
     // or after _PyGC_Fini()
@@ -2223,6 +2745,38 @@ gc_collect_main(PyThreadState *tstate, int generation, _PyGC_Reason reason)
         _Py_atomic_store_int(&gcstate->collecting, 0);
         return 0;
     }
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    int notifying = 0;
+    if (gcstate->callbacks != NULL && PyList_GET_SIZE(gcstate->callbacks) != 0) {
+        expected = 0;
+        notifying = _Py_atomic_compare_exchange_int(
+            &gcstate->tracing_notifying, &expected, 1);
+    }
+    if (notifying) {
+        // A callback can allocate, yield, or join an allocating thread. Keep
+        // the notification pair reserved, but let such threads collect. No
+        // collector state or frame has been installed yet.
+        _Py_atomic_store_int(&gcstate->collecting, 0);
+        invoke_gc_callback(tstate, "start", generation, 0, 0, 0, 0.0);
+        expected = 0;
+        int acquired = _Py_atomic_compare_exchange_int(
+            &gcstate->collecting, &expected, 1);
+        if (!acquired ||
+            (reason == _Py_GC_REASON_HEAP && !gc_should_collect(gcstate)))
+        {
+            // A concurrent or nested collection may have consumed the heap
+            // trigger. If it is still running, do not wait: its finalizer may
+            // be waiting for this callback's caller. Complete the pair with
+            // zero work, without touching another collector's state.
+            if (acquired) {
+                _Py_atomic_store_int(&gcstate->collecting, 0);
+            }
+            invoke_gc_callback(tstate, "stop", generation, 0, 0, 0, 0.0);
+            _Py_atomic_store_int(&gcstate->tracing_notifying, 0);
+            return 0;
+        }
+    }
+#endif
     gcstate->frame = tstate->current_frame;
 
     assert(generation >= 0 && generation < NUM_GENERATIONS);
@@ -2235,9 +2789,11 @@ gc_collect_main(PyThreadState *tstate, int generation, _PyGC_Reason reason)
 #endif
     GC_STAT_ADD(generation, collections, 1);
 
+#ifndef Py_EXPERIMENTAL_TRACING_GC
     if (reason != _Py_GC_REASON_SHUTDOWN) {
         invoke_gc_callback(tstate, "start", generation, 0, 0, 0, 0.0);
     }
+#endif
 
     if (gcstate->debug & _PyGC_DEBUG_STATS) {
         PySys_WriteStderr("gc: collecting generation %d...\n", generation);
@@ -2256,9 +2812,16 @@ gc_collect_main(PyThreadState *tstate, int generation, _PyGC_Reason reason)
         .interp = interp,
         .gcstate = gcstate,
         .reason = reason,
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+        .native_roots = native_roots,
+#endif
     };
 
     gc_collect_internal(interp, &state, generation);
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    assert(state.saved_snapshot == NULL);
+    _Py_atomic_store_uintptr_relaxed(&gcstate->tracing_live_bytes, state.live_bytes);
+#endif
 
     m = state.collected;
     n = state.uncollectable;
@@ -2313,14 +2876,41 @@ gc_collect_main(PyThreadState *tstate, int generation, _PyGC_Reason reason)
         PyDTrace_GC_DONE(n + m);
     }
 
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    // All reclamation, free-list cleanup and stats updates are complete.
+    // Release the frame before the gate: a new collector owns both after it
+    // acquires collecting, even while our stop notification is still running.
+    gcstate->frame = NULL;
+    _Py_atomic_store_int(&gcstate->collecting, 0);
+    if (notifying) {
+        invoke_gc_callback(tstate, "stop", generation, m, n, state.candidates, duration);
+        _Py_atomic_store_int(&gcstate->tracing_notifying, 0);
+    }
+#else
     if (reason != _Py_GC_REASON_SHUTDOWN) {
         invoke_gc_callback(tstate, "stop", generation, m, n, state.candidates, duration);
     }
-
-    assert(!_PyErr_Occurred(tstate));
     gcstate->frame = NULL;
     _Py_atomic_store_int(&gcstate->collecting, 0);
+#endif
+    assert(!_PyErr_Occurred(tstate));
     return n + m;
+}
+
+static Py_ssize_t
+gc_collect_main(PyThreadState *tstate, int generation, _PyGC_Reason reason)
+{
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    // Keep the native scan boundary outside every collector frame. Otherwise
+    // the pending-sweep worklist itself would become a conservative root on
+    // the resurrection pass, retaining all garbage.
+    struct tracing_stack_roots roots;
+    (void)setjmp(roots.registers);
+    roots.stack_pointer = _Py_get_machine_stack_pointer();
+    return gc_collect_main_impl(tstate, generation, reason, &roots);
+#else
+    return gc_collect_main_impl(tstate, generation, reason);
+#endif
 }
 
 static PyObject *
@@ -2466,6 +3056,24 @@ visit_freeze(const mi_heap_t *heap, const mi_heap_area_t *area,
     }
     return true;
 }
+
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+void
+_PyGC_InitializeTracing(PyInterpreterState *interp)
+{
+    const char *dirty = Py_GETENV("PYTHON_TRACING_GC_SOFT_DIRTY");
+    interp->gc.tracing_soft_dirty_enabled = dirty != NULL && strcmp(dirty, "1") == 0;
+    const char *containers = Py_GETENV("PYTHON_TRACING_GC_YOUNG_CONTAINERS");
+    interp->gc.tracing_container_nursery_enabled =
+        containers != NULL && strcmp(containers, "1") == 0;
+    // Pin the bootstrap heap without enabling gc.freeze()'s global bypass.
+    // These objects remain roots, and tracing still collects later objects.
+    struct visitor_args args;
+    _PyEval_StopTheWorld(interp);
+    gc_visit_heaps(interp, &visit_freeze, &args);
+    _PyEval_StartTheWorld(interp);
+}
+#endif
 
 void
 _PyGC_Freeze(PyInterpreterState *interp)
@@ -2633,6 +3241,9 @@ void
 _PyGC_Fini(PyInterpreterState *interp)
 {
     GCState *gcstate = &interp->gc;
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    tracing_fini_dirty(gcstate);
+#endif
     Py_CLEAR(gcstate->garbage);
     Py_CLEAR(gcstate->callbacks);
     PyMem_RawFree(gcstate->generation_stats);
@@ -2710,7 +3321,9 @@ _Py_ScheduleGC(PyThreadState *tstate)
 void
 _PyObject_GC_Link(PyObject *op)
 {
+#ifndef Py_EXPERIMENTAL_TRACING_GC
     record_allocation(_PyThreadState_GET());
+#endif
 }
 
 void
@@ -2739,7 +3352,9 @@ gc_alloc(PyTypeObject *tp, size_t basicsize, size_t presize)
         ((PyObject **)mem)[1] = NULL;
     }
     PyObject *op = (PyObject *)(mem + presize);
+#ifndef Py_EXPERIMENTAL_TRACING_GC
     record_allocation(tstate);
+#endif
     return op;
 }
 
@@ -2834,7 +3449,21 @@ PyObject_GC_Del(void *op)
 #endif
     }
 
-    record_deallocation(_PyThreadState_GET());
+    PyThreadState *tstate = _PyThreadState_GET();
+#ifndef Py_EXPERIMENTAL_TRACING_GC
+    record_deallocation(tstate);
+#endif
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    struct _gc_thread_state *thread_gc = &((_PyThreadStateImpl *)tstate)->gc;
+    if (thread_gc->deferred_type_frees != NULL && PyType_Check(op)) {
+        PyObject *obj = op;
+        assert(obj->ob_tid == 0);
+        obj->ob_ref_shared = (Py_ssize_t)presize;
+        obj->ob_tid = *thread_gc->deferred_type_frees;
+        *thread_gc->deferred_type_frees = (uintptr_t)obj;
+        return;
+    }
+#endif
     PyObject_Free(((char *)op)-presize);
 }
 

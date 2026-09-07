@@ -129,6 +129,20 @@ extern void _PyMem_AbandonDelayed(PyThreadState *tstate);
 // On interpreter shutdown, frees all delayed free requests.
 extern void _PyMem_FiniDelayed(PyInterpreterState *interp);
 
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+// Bracket callback-free reclamation while this interpreter is stopped.
+typedef struct {
+    PyInterpreterState *interp;
+    uintptr_t *heap_ranges;
+    size_t count;
+    uintptr_t current_range;
+} _PyMem_TracingSweep;
+extern void _PyMem_BeginTracingSweep(_PyMem_TracingSweep *sweep,
+                                    PyInterpreterState *interp);
+extern void _PyMem_EndTracingSweep(_PyMem_TracingSweep *sweep);
+extern void _PyMem_CollectTracingHeaps(PyInterpreterState *interp);
+#endif
+
 #ifdef __cplusplus
 }
 #endif

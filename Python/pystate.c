@@ -10,6 +10,7 @@
 #include "pycore_critical_section.h" // _PyCriticalSection_Resume()
 #include "pycore_dtoa.h"          // _dtoa_state_INIT()
 #include "pycore_freelist.h"      // _PyObject_ClearFreeLists()
+#include "pycore_gc.h"            // _PyGC_AccountAllocations()
 #include "pycore_initconfig.h"    // _PyStatus_OK()
 #include "pycore_interpframe.h"   // _PyThreadState_HasStackSpace()
 #include "pycore_object.h"        // _Py_ClearImmortal()
@@ -1878,12 +1879,24 @@ PyThreadState_Clear(PyThreadState *tstate)
     struct _Py_freelists *freelists = _Py_freelists_GET();
     _PyObject_ClearFreeLists(freelists, 1);
 
+    _PyThreadStateImpl *tstate_impl = (_PyThreadStateImpl *)tstate;
+#ifndef Py_EXPERIMENTAL_TRACING_GC
     // Flush the thread's local GC allocation count to the global count
     // before the thread state is cleared, otherwise the count is lost.
-    _PyThreadStateImpl *tstate_impl = (_PyThreadStateImpl *)tstate;
     _Py_atomic_add_int(&tstate->interp->gc.young.count,
                        (int)tstate_impl->gc.alloc_count);
     tstate_impl->gc.alloc_count = 0;
+#else
+    // The tracing collector schedules by bytes, not by the object count.
+    // Short-lived threads may never fill a local allocation batch, so their
+    // debt must also be published before the thread state disappears.
+    _PyGC_AccountAllocations(tstate);
+    if (_Py_eval_breaker_bit_is_set(tstate, _PY_GC_SCHEDULED_BIT)) {
+        // This thread will not reach another interpreter safepoint. Ask a
+        // surviving thread to run the collection instead.
+        _Py_set_eval_breaker_bit_all(tstate->interp, _PY_GC_SCHEDULED_BIT);
+    }
+#endif
 
     // Merge our thread-local refcounts into the type's own refcount and
     // free our local refcount array.
@@ -2323,6 +2336,13 @@ detach_thread(PyThreadState *tstate, int detached_state)
     if (tstate->critical_section != 0) {
         _PyCriticalSection_SuspendAll(tstate);
     }
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    // Publish C roots before the detached/suspended state becomes visible.
+    // A detached thread cannot acquire new Python references until reattach.
+    struct _gc_thread_state *gc = &((_PyThreadStateImpl *)tstate)->gc;
+    (void)setjmp(gc->registers);
+    gc->stack_pointer = _Py_get_machine_stack_pointer();
+#endif
 #ifdef Py_GIL_DISABLED
     _Py_qsbr_detach(((_PyThreadStateImpl *)tstate)->qsbr);
 #endif
@@ -3278,6 +3298,9 @@ tstate_mimalloc_bind(PyThreadState *tstate)
         [_Py_MIMALLOC_HEAP_OBJECT] = base_offset,
         [_Py_MIMALLOC_HEAP_GC] = base_offset,
         [_Py_MIMALLOC_HEAP_GC_PRE] = base_offset + 2 * sizeof(PyObject *),
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+        [_Py_MIMALLOC_HEAP_LEAF] = base_offset,
+#endif
     };
 
     // Initialize each heap
@@ -3291,6 +3314,9 @@ tstate_mimalloc_bind(PyThreadState *tstate)
     mts->heaps[_Py_MIMALLOC_HEAP_OBJECT].page_use_qsbr = true;
     mts->heaps[_Py_MIMALLOC_HEAP_GC].page_use_qsbr = true;
     mts->heaps[_Py_MIMALLOC_HEAP_GC_PRE].page_use_qsbr = true;
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    mts->heaps[_Py_MIMALLOC_HEAP_LEAF].page_use_qsbr = true;
+#endif
 
     // By default, object allocations use _Py_MIMALLOC_HEAP_OBJECT.
     // _PyObject_GC_New() and similar functions temporarily override this to

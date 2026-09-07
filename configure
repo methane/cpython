@@ -1108,6 +1108,8 @@ enable_shared
 with_static_libpython
 enable_static_libpython_for_interpreter
 enable_profiling
+with_experimental_gc
+with_experimental_nanboxing
 enable_gil
 with_pydebug
 with_trace_refs
@@ -1915,6 +1917,11 @@ Optional Packages:
   --without-static-libpython
                           do not build libpythonMAJOR.MINOR.a and do not
                           install python.o (default is yes)
+  --with-experimental-nanboxing
+                          use experimental immediate floats with tracing GC (Linux x86-64 only)
+  --with-experimental-gc[=no|tracing]
+                          build with an experimental tracing garbage collector
+                          (default is no)
   --with-pydebug          build with Py_DEBUG defined (default is no)
   --with-trace-refs       enable tracing references for debugging purpose
                           (default is no)
@@ -8510,6 +8517,64 @@ fi
 ABIFLAGS=""
 ABI_THREAD=""
 
+# Check for --with-experimental-gc
+{ printf "%s\n" "$as_me:${as_lineno-$LINENO}: checking for experimental garbage collector" >&5
+printf %s "checking for experimental garbage collector... " >&6; }
+
+# Check whether --with-experimental-gc was given.
+if test ${with_experimental_gc+y}
+then :
+  withval=$with_experimental_gc; experimental_gc=$withval
+else case e in #(
+  e) experimental_gc=no ;;
+esac
+fi
+
+case $experimental_gc in #(
+  no) :
+     ;; #(
+  tracing) :
+
+
+printf "%s\n" "#define Py_EXPERIMENTAL_TRACING_GC 1" >>confdefs.h
+
+    ABIFLAGS="${ABIFLAGS}g"
+   ;; #(
+  *) :
+    as_fn_error $? "invalid argument: --with-experimental-gc=$experimental_gc; expected no or tracing" "$LINENO" 5 ;;
+esac
+{ printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: $experimental_gc" >&5
+printf "%s\n" "$experimental_gc" >&6; }
+
+# Check whether --with-experimental-nanboxing was given.
+if test ${with_experimental_nanboxing+y}
+then :
+  withval=$with_experimental_nanboxing; experimental_nanboxing=$withval
+else case e in #(
+  e) experimental_nanboxing=no ;;
+esac
+fi
+case $experimental_nanboxing in #(
+  no) :
+     ;; #(
+  yes) :
+    if test "$experimental_gc" != tracing
+then :
+      as_fn_error $? "--with-experimental-nanboxing requires --with-experimental-gc=tracing" "$LINENO" 5
+fi
+    case $ac_sys_system:$host_cpu in #(
+      Linux:x86_64) :
+         ;; #(
+      *) :
+        as_fn_error $? "--with-experimental-nanboxing requires Linux x86-64" "$LINENO" 5 ;;
+    esac
+    printf "%s\n" "#define Py_EXPERIMENTAL_NANBOX 1" >>confdefs.h
+    ABIFLAGS="${ABIFLAGS}n"
+     ;; #(
+  *) :
+    as_fn_error $? "invalid argument: --with-experimental-nanboxing=$experimental_nanboxing" "$LINENO" 5 ;;
+esac
+
 # Check for --disable-gil
 # --disable-gil
 { printf "%s\n" "$as_me:${as_lineno-$LINENO}: checking for --disable-gil" >&5
@@ -8532,6 +8597,13 @@ fi
 
 { printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: $disable_gil" >&5
 printf "%s\n" "$disable_gil" >&6; }
+
+if test "$experimental_gc" = tracing && test "$disable_gil" != yes
+then :
+
+  as_fn_error $? "--with-experimental-gc=tracing requires --disable-gil" "$LINENO" 5
+
+fi
 
 if test "$disable_gil" = "yes"
 then
@@ -13313,6 +13385,12 @@ printf "%s\n" "$ac_cv_sizeof_void_p" >&6; }
 printf "%s\n" "#define SIZEOF_VOID_P $ac_cv_sizeof_void_p" >>confdefs.h
 
 
+if test "$experimental_gc" = tracing && test "$ac_cv_sizeof_void_p" != 8
+then :
+
+  as_fn_error $? "--with-experimental-gc=tracing currently requires 64-bit pointers" "$LINENO" 5
+
+fi
 # The cast to long int works around a bug in the HP C Compiler
 # version HP92453-01 B.11.11.23709.GP, which incorrectly rejects
 # declarations like 'int a3[[(sizeof (unsigned char)) >= 0]];'.
@@ -40252,4 +40330,3 @@ if test "$ac_cv_header_stdatomic_h" != "yes"; then
   { printf "%s\n" "$as_me:${as_lineno-$LINENO}: Your compiler or platform does have a working C11 stdatomic.h. A future version of Python may require stdatomic.h." >&5
 printf "%s\n" "$as_me: Your compiler or platform does have a working C11 stdatomic.h. A future version of Python may require stdatomic.h." >&6;}
 fi
-

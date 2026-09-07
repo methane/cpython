@@ -15,11 +15,34 @@ extern "C" {
 #include "pycore_qsbr.h"            // struct qsbr
 #include "pycore_uop.h"             // struct _PyUOpInstruction
 #include "pycore_structs.h"
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+#  include <setjmp.h>
+#endif
 
 #ifdef Py_GIL_DISABLED
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+struct _tracing_native_frame {
+    uintptr_t bottom;
+    uintptr_t top;
+    struct _tracing_native_frame *previous;
+};
+#endif
 struct _gc_thread_state {
     /* Thread-local allocation count. */
     Py_ssize_t alloc_count;
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    uintptr_t allocated_bytes;
+    uintptr_t nonleaf_bytes;
+    uintptr_t stack_pointer;
+    jmp_buf registers;
+    struct _tracing_native_frame *native_frames;
+    // Collector-owned list head while type deallocators run. Keep their
+    // headers valid until every metaclass and subclass has been dismantled.
+    uintptr_t *deferred_type_frees;
+    // Raw thread bootstrap storage is outside the traced heaps. Keep its
+    // strong Python references visible even before the thread acquires GIL.
+    PyObject *thread_start_roots[3];
+#endif
 };
 #endif
 

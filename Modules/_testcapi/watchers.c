@@ -872,6 +872,24 @@ static PyMethodDef test_methods[] = {
     {NULL},
 };
 
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+int
+_PyTestCapi_Traverse_Watchers(PyObject *module, visitproc visit, void *arg)
+{
+    // These strong references live in native globals, not the module dict.
+    // Expose them so a tracing collection cannot free a callback or its log.
+    Py_VISIT(g_dict_watch_events);
+    Py_VISIT(g_type_modified_events);
+    for (int i = 0; i < NUM_TEST_FUNC_WATCHERS; i++) {
+        Py_VISIT(pyfunc_watchers[i]);
+    }
+    for (int i = 0; i < NUM_CONTEXT_WATCHERS; i++) {
+        Py_VISIT(context_switches[i]);
+    }
+    return 0;
+}
+#endif
+
 int
 _PyTestCapi_Init_Watchers(PyObject *mod)
 {

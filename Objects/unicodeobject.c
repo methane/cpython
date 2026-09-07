@@ -39,6 +39,7 @@ OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 */
 
 #include "Python.h"
+#include "pycore_object_alloc.h"  // _PyObject_MallocLeaf()
 #include "pycore_abstract.h"      // _PyIndex_Check()
 #include "pycore_bytes_methods.h" // _Py_bytes_lower()
 #include "pycore_bytesobject.h"   // _PyBytes_RepeatBuffer()
@@ -1111,7 +1112,7 @@ _PyUnicode_ResizeCompact(PyObject *unicode, Py_ssize_t length)
 #endif
     _PyReftracerTrack(unicode, PyRefTracer_DESTROY);
 
-    new_unicode = (PyObject *)PyObject_Realloc(unicode, new_size);
+    new_unicode = (PyObject *)_PyObject_ReallocLeaf(&PyUnicode_Type, unicode, new_size);
     if (new_unicode == NULL) {
         _Py_NewReferenceNoTotal(unicode);
         PyErr_NoMemory();
@@ -1327,7 +1328,7 @@ PyUnicode_New(Py_ssize_t size, Py_UCS4 maxchar)
      * PyObject_New() so we are able to allocate space for the object and
      * it's data buffer.
      */
-    obj = (PyObject *) PyObject_Malloc(struct_size + (size + 1) * char_size);
+    obj = (PyObject *) _PyObject_MallocLeaf(&PyUnicode_Type, struct_size + (size + 1) * char_size);
     if (obj == NULL) {
         return PyErr_NoMemory();
     }

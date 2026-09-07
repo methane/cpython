@@ -1785,6 +1785,40 @@ AC_SUBST([ABI_THREAD])
 ABIFLAGS=""
 ABI_THREAD=""
 
+# Check for --with-experimental-gc
+AC_MSG_CHECKING([for experimental garbage collector])
+AC_ARG_WITH([experimental-gc],
+  [AS_HELP_STRING([--with-experimental-gc@<:@=no|tracing@:>@],
+                  [build with an experimental tracing garbage collector (default is no)])],
+  [experimental_gc=$withval], [experimental_gc=no])
+AS_CASE([$experimental_gc],
+  [no], [],
+  [tracing], [
+    AC_DEFINE([Py_EXPERIMENTAL_TRACING_GC], [1],
+              [Define to use the experimental tracing garbage collector])
+    ABIFLAGS="${ABIFLAGS}g"
+  ],
+  [AC_MSG_ERROR([invalid argument: --with-experimental-gc=$experimental_gc; expected no or tracing])])
+AC_MSG_RESULT([$experimental_gc])
+
+AC_ARG_WITH([experimental-nanboxing],
+  [AS_HELP_STRING([--with-experimental-nanboxing],
+                  [use experimental immediate floats with tracing GC (Linux x86-64 only)])],
+  [experimental_nanboxing=$withval], [experimental_nanboxing=no])
+AS_CASE([$experimental_nanboxing],
+  [no], [],
+  [yes], [
+    AS_IF([test "$experimental_gc" != tracing], [
+      AC_MSG_ERROR([--with-experimental-nanboxing requires --with-experimental-gc=tracing])
+    ])
+    AS_CASE([$ac_sys_system:$host_cpu], [Linux:x86_64], [],
+      [AC_MSG_ERROR([--with-experimental-nanboxing requires Linux x86-64])])
+    AC_DEFINE([Py_EXPERIMENTAL_NANBOX], [1],
+              [Define to use experimental NaN-boxed immediate floats])
+    ABIFLAGS="${ABIFLAGS}n"
+  ],
+  [AC_MSG_ERROR([invalid argument: --with-experimental-nanboxing=$experimental_nanboxing])])
+
 # Check for --disable-gil
 # --disable-gil
 AC_MSG_CHECKING([for --disable-gil])
@@ -1793,6 +1827,10 @@ AC_ARG_ENABLE([gil],
   [AS_VAR_IF([enable_gil], [yes], [disable_gil=no], [disable_gil=yes])], [disable_gil=no]
 )
 AC_MSG_RESULT([$disable_gil])
+
+AS_IF([test "$experimental_gc" = tracing && test "$disable_gil" != yes], [
+  AC_MSG_ERROR([--with-experimental-gc=tracing requires --disable-gil])
+])
 
 if test "$disable_gil" = "yes"
 then
@@ -3365,6 +3403,9 @@ AC_CHECK_SIZEOF([long], [4])
 AC_CHECK_ALIGNOF([long])
 AC_CHECK_SIZEOF([long long], [8])
 AC_CHECK_SIZEOF([void *], [4])
+AS_IF([test "$experimental_gc" = tracing && test "$ac_cv_sizeof_void_p" != 8], [
+  AC_MSG_ERROR([--with-experimental-gc=tracing currently requires 64-bit pointers])
+])
 AC_CHECK_SIZEOF([short], [2])
 AC_CHECK_SIZEOF([float], [4])
 AC_CHECK_SIZEOF([double], [8])

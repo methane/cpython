@@ -204,7 +204,7 @@ PyAPI_FUNC(int) _PyLong_UInt64_Converter(PyObject *, void *);
 static inline int
 _PyLong_IsNonNegativeCompact(const PyLongObject* op) {
     assert(PyLong_Check(op));
-    return ((op->long_value.lv_tag & ~IMMORTALITY_BIT_MASK) <= (1 << NON_SIZE_BITS));
+    return ((_PyLong_ReadTag(op) & ~IMMORTALITY_BIT_MASK) <= (1 << NON_SIZE_BITS));
 }
 
 
@@ -212,24 +212,24 @@ static inline int
 _PyLong_BothAreCompact(const PyLongObject* a, const PyLongObject* b) {
     assert(PyLong_Check(a));
     assert(PyLong_Check(b));
-    return (a->long_value.lv_tag | b->long_value.lv_tag) < (2 << NON_SIZE_BITS);
+    return (_PyLong_ReadTag(a) | _PyLong_ReadTag(b)) < (2 << NON_SIZE_BITS);
 }
 static inline bool
 _PyLong_IsZero(const PyLongObject *op)
 {
-    return (op->long_value.lv_tag & SIGN_MASK) == SIGN_ZERO;
+    return (_PyLong_ReadTag(op) & SIGN_MASK) == SIGN_ZERO;
 }
 
 static inline bool
 _PyLong_IsNegative(const PyLongObject *op)
 {
-    return (op->long_value.lv_tag & SIGN_MASK) == SIGN_NEGATIVE;
+    return (_PyLong_ReadTag(op) & SIGN_MASK) == SIGN_NEGATIVE;
 }
 
 static inline bool
 _PyLong_IsPositive(const PyLongObject *op)
 {
-    return (op->long_value.lv_tag & SIGN_MASK) == 0;
+    return (_PyLong_ReadTag(op) & SIGN_MASK) == 0;
 }
 
 /* Return true if the argument is a small int */
@@ -237,7 +237,7 @@ static inline bool
 _PyLong_IsSmallInt(const PyLongObject *op)
 {
     assert(PyLong_Check(op));
-    bool is_small_int = (op->long_value.lv_tag & IMMORTALITY_BIT_MASK) != 0;
+    bool is_small_int = (_PyLong_ReadTag(op) & IMMORTALITY_BIT_MASK) != 0;
     if (is_small_int) {
         assert(PyLong_CheckExact(op));
         assert(_Py_IsImmortal(op));
@@ -251,7 +251,7 @@ static inline Py_ssize_t
 _PyLong_DigitCount(const PyLongObject *op)
 {
     assert(PyLong_Check(op));
-    return (Py_ssize_t)(op->long_value.lv_tag >> NON_SIZE_BITS);
+    return (Py_ssize_t)(_PyLong_ReadTag(op) >> NON_SIZE_BITS);
 }
 
 /* Equivalent to _PyLong_DigitCount(op) * _PyLong_NonCompactSign(op) */
@@ -259,8 +259,8 @@ static inline Py_ssize_t
 _PyLong_SignedDigitCount(const PyLongObject *op)
 {
     assert(PyLong_Check(op));
-    Py_ssize_t sign = 1 - (op->long_value.lv_tag & SIGN_MASK);
-    return sign * (Py_ssize_t)(op->long_value.lv_tag >> NON_SIZE_BITS);
+    Py_ssize_t sign = 1 - (_PyLong_ReadTag(op) & SIGN_MASK);
+    return sign * (Py_ssize_t)(_PyLong_ReadTag(op) >> NON_SIZE_BITS);
 }
 
 static inline int
@@ -268,7 +268,7 @@ _PyLong_CompactSign(const PyLongObject *op)
 {
     assert(PyLong_Check(op));
     assert(_PyLong_IsCompact((PyLongObject *)op));
-    return 1 - (op->long_value.lv_tag & SIGN_MASK);
+    return 1 - (_PyLong_ReadTag(op) & SIGN_MASK);
 }
 
 static inline int
@@ -276,14 +276,14 @@ _PyLong_NonCompactSign(const PyLongObject *op)
 {
     assert(PyLong_Check(op));
     assert(!_PyLong_IsCompact((PyLongObject *)op));
-    return 1 - (op->long_value.lv_tag & SIGN_MASK);
+    return 1 - (_PyLong_ReadTag(op) & SIGN_MASK);
 }
 
 /* Do a and b have the same sign? */
 static inline int
 _PyLong_SameSign(const PyLongObject *a, const PyLongObject *b)
 {
-    return (a->long_value.lv_tag & SIGN_MASK) == (b->long_value.lv_tag & SIGN_MASK);
+    return (_PyLong_ReadTag(a) & SIGN_MASK) == (_PyLong_ReadTag(b) & SIGN_MASK);
 }
 
 /* Initialize the tag of a freshly-allocated int. */
@@ -303,6 +303,7 @@ _PyLong_SetSignAndDigitCount(PyLongObject *op, int sign, Py_ssize_t size)
     assert(size >= 0);
     assert(-1 <= sign && sign <= 1);
     assert(sign != 0 || size == 0);
+    assert(!_PyLong_IsImmediate((PyObject *)op));
     assert(!_PyLong_IsSmallInt(op));
     op->long_value.lv_tag = TAG_FROM_SIGN_AND_SIZE(sign, size);
 }
@@ -311,6 +312,7 @@ static inline void
 _PyLong_SetDigitCount(PyLongObject *op, Py_ssize_t size)
 {
     assert(size >= 0);
+    assert(!_PyLong_IsImmediate((PyObject *)op));
     assert(!_PyLong_IsSmallInt(op));
     op->long_value.lv_tag = (((size_t)size) << NON_SIZE_BITS) | (op->long_value.lv_tag & SIGN_MASK);
 }
@@ -320,6 +322,7 @@ _PyLong_SetDigitCount(PyLongObject *op, Py_ssize_t size)
 static inline void
 _PyLong_FlipSign(PyLongObject *op)
 {
+    assert(!_PyLong_IsImmediate((PyObject *)op));
     assert(!_PyLong_IsSmallInt(op));
     unsigned int flipped_sign = 2 - (op->long_value.lv_tag & SIGN_MASK);
     op->long_value.lv_tag &= NON_SIZE_MASK;

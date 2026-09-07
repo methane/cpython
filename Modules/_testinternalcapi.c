@@ -10,6 +10,7 @@
 #undef NDEBUG
 
 #include "Python.h"
+#include "pycore_floatobject.h"   // _PyFloat_FromDoubleBoxed()
 #include <string.h>
 #include "pycore_backoff.h"       // JUMP_BACKWARD_INITIAL_VALUE
 #include "pycore_bitutils.h"      // _Py_bswap32()
@@ -2829,6 +2830,317 @@ get_tlbc_id(PyObject *Py_UNUSED(module), PyObject *obj)
     return PyLong_FromVoidPtr(bc);
 }
 
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+static PyObject *
+make_tracing_gc_boxed_int(PyObject *self, PyObject *arg)
+{
+    if (!PyLong_CheckExact(arg)) {
+        PyErr_SetString(PyExc_TypeError, "expected an exact int");
+        return NULL;
+    }
+    // Small cached values remain cached; use non-cached values to exercise
+    // allocation and reclamation of a single-digit heap integer.
+    return _PyLong_Copy((PyLongObject *)arg);
+}
+
+static PyObject *
+make_tracing_gc_boxed_float(PyObject *self, PyObject *arg)
+{
+    double value = PyFloat_AsDouble(arg);
+    if (value == -1.0 && PyErr_Occurred()) {
+        return NULL;
+    }
+    return _PyFloat_FromDoubleBoxed(value);
+}
+
+static PyObject *
+test_tracing_gc_tryref_alias(PyObject *self, PyObject *Py_UNUSED(ignored))
+{
+    PyObject *op = _PyFloat_FromDoubleBoxed(12345.125);
+    if (op == NULL) {
+        return NULL;
+    }
+    PyObject *result = NULL;
+    uint32_t local = op->ob_ref_local;
+    Py_ssize_t shared = op->ob_ref_shared;
+    if (!_PyObject_IsUniquelyReferenced(op)) {
+        PyErr_SetString(PyExc_AssertionError, "fresh float is not unique");
+        goto done;
+    }
+    PyObject *slot = op;
+    if (!_Py_TryIncrefCompare(&slot, op) ||
+        _PyObject_IsUniquelyReferenced(op) ||
+        op->ob_ref_local != local || op->ob_ref_shared != shared)
+    {
+        PyErr_SetString(PyExc_AssertionError,
+                        "optimistic read must record alias without counting");
+        goto done;
+    }
+    // A legacy hot-read counter must not wrap into the immortality sentinel.
+    op->ob_ref_local = UINT32_MAX - 1;
+    int ok = _Py_TryIncrefFast(op) && op->ob_ref_local == UINT32_MAX - 1;
+    op->ob_ref_local = local;
+    if (!ok) {
+        PyErr_SetString(PyExc_AssertionError, "optimistic read changed local count");
+        goto done;
+    }
+    if (!_Py_TryIncRefShared(op) ||
+        op->ob_ref_local != local || op->ob_ref_shared != shared)
+    {
+        PyErr_SetString(PyExc_AssertionError, "shared read changed refcounts");
+        goto done;
+    }
+    // Simulate an immortal without an alias bit. These non-escaping calls
+    // must leave its header untouched, including the sticky ownership bit.
+    uint8_t bits = op->ob_gc_bits;
+    op->ob_ref_local = _Py_IMMORTAL_REFCNT_LOCAL;
+    op->ob_gc_bits = bits & ~_Py_TRACING_GC_SHARED_BIT;
+    uint8_t immortal_bits = op->ob_gc_bits;
+    Py_INCREF(op);
+    Py_SET_REFCNT(op, 2);
+    ok = _Py_TryIncrefFast(op) && _Py_TryIncRefShared(op) &&
+         op->ob_ref_local == _Py_IMMORTAL_REFCNT_LOCAL &&
+         op->ob_ref_shared == shared && op->ob_gc_bits == immortal_bits;
+    op->ob_ref_local = local;
+    op->ob_gc_bits = bits;
+    if (!ok) {
+        PyErr_SetString(PyExc_AssertionError, "read changed immortal header");
+        goto done;
+    }
+    result = Py_NewRef(Py_None);
+done:
+    Py_DECREF(op);
+    return result;
+}
+
+static PyObject *
+get_tracing_gc_refstate(PyObject *self, PyObject *op)
+{
+    if (_PyObject_IsImmediate(op)) {
+        // An immediate has no header or numeric reference-count fields.
+        Py_RETURN_NONE;
+    }
+    // Py_REFCNT() deliberately returns a synthetic value in this build.
+    // Tests need the actual fields to detect accidental refcount updates.
+    uint32_t local = _Py_atomic_load_uint32_relaxed(&op->ob_ref_local);
+    Py_ssize_t shared = _Py_atomic_load_ssize_relaxed(&op->ob_ref_shared);
+    return Py_BuildValue("(IK)", (unsigned int)local,
+                         (unsigned long long)shared);
+}
+
+static PyObject *
+set_tracing_gc_type_storage_garbage(PyObject *self, PyObject *args)
+{
+    PyObject *obj, *garbage;
+    const char *kind;
+    if (!PyArg_ParseTuple(args, "OOs", &obj, &garbage, &kind)) {
+        return NULL;
+    }
+    if (!PyType_Check(obj) ||
+        !(((PyTypeObject *)obj)->tp_flags & Py_TPFLAGS_HEAPTYPE))
+    {
+        return PyErr_Format(PyExc_TypeError, "expected a heap type");
+    }
+    PyHeapTypeObject *type = (PyHeapTypeObject *)obj;
+    if (strcmp(kind, "keys") == 0) {
+        PyDictKeysObject *keys = type->ht_cached_keys;
+        if (keys == NULL || keys->dk_kind != DICT_KEYS_SPLIT) {
+            return PyErr_Format(PyExc_ValueError, "expected shared keys");
+        }
+        // _PyDict_NewKeysForClass allocates 2/3 * DK_SIZE entries, but only
+        // SHARED_KEYS_MAX_SIZE can be used. Simulate stale allocator data
+        // in that allocated, semantically unused part of the table.
+        assert(SHARED_KEYS_MAX_SIZE < (DK_SIZE(keys) * 2) / 3);
+        PyDictUnicodeEntry *entries = DK_UNICODE_ENTRIES(keys);
+        memcpy(&entries[SHARED_KEYS_MAX_SIZE], &garbage, sizeof(garbage));
+    }
+    else if (strcmp(kind, "doc") == 0) {
+        const char *doc = type->ht_type.tp_doc;
+        size_t len = doc == NULL ? 1 : strlen(doc) + 1;
+        size_t offset = _Py_SIZE_ROUND_UP(len, sizeof(void *));
+        char *copy = PyMem_Calloc(1, offset + sizeof(garbage));
+        if (copy == NULL) {
+            return PyErr_NoMemory();
+        }
+        if (doc != NULL) {
+            memcpy(copy, doc, len);
+        }
+        memcpy(copy + offset, &garbage, sizeof(garbage));
+        PyMem_Free((char *)doc);
+        type->ht_type.tp_doc = copy;
+    }
+    else {
+        return PyErr_Format(PyExc_ValueError, "unknown storage kind");
+    }
+    // These bytes are not a strong reference and must never be dereferenced.
+    Py_RETURN_NONE;
+}
+
+struct tracing_sweep_probe {
+    PyMemAllocatorEx original;
+    PyInterpreterState *interp;
+    void **targets;
+    Py_ssize_t size;
+    Py_ssize_t freed;
+    Py_ssize_t stopped;
+};
+
+static void *
+tracing_probe_malloc(void *ctx, size_t size)
+{
+    struct tracing_sweep_probe *probe = ctx;
+    return probe->original.malloc(probe->original.ctx, size);
+}
+
+static void *
+tracing_probe_calloc(void *ctx, size_t nelem, size_t elsize)
+{
+    struct tracing_sweep_probe *probe = ctx;
+    return probe->original.calloc(probe->original.ctx, nelem, elsize);
+}
+
+static void *
+tracing_probe_realloc(void *ctx, void *ptr, size_t size)
+{
+    struct tracing_sweep_probe *probe = ctx;
+    return probe->original.realloc(probe->original.ctx, ptr, size);
+}
+
+static void
+tracing_probe_free(void *ctx, void *ptr)
+{
+    struct tracing_sweep_probe *probe = ctx;
+    if (ptr != NULL) {
+        for (Py_ssize_t i = 0; i < probe->size; i++) {
+            void *target = _Py_atomic_load_ptr_relaxed(&probe->targets[i]);
+            if (target == ptr &&
+                _Py_atomic_compare_exchange_ptr(&probe->targets[i], &target, NULL))
+            {
+                _Py_atomic_add_ssize(&probe->freed, 1);
+                if (probe->interp->stoptheworld.world_stopped) {
+                    _Py_atomic_add_ssize(&probe->stopped, 1);
+                }
+                break;
+            }
+        }
+    }
+    probe->original.free(probe->original.ctx, ptr);
+}
+
+static PyObject *
+test_tracing_gc_sweep(PyObject *self, PyObject *callback)
+{
+    if (!PyCallable_Check(callback)) {
+        return PyErr_Format(PyExc_TypeError, "expected a callable");
+    }
+    PyInterpreterState *interp = PyInterpreterState_Get();
+    PyThreadState *head = PyInterpreterState_ThreadHead(interp);
+    if (head != PyThreadState_Get() || PyThreadState_Next(head) != NULL) {
+        return PyErr_Format(PyExc_RuntimeError, "requires a single-threaded subprocess");
+    }
+    // Raw storage is deliberately not a GC root. Inspect actual frees rather
+    // than using a reftracer, which would force the nursery's full-GC fallback.
+    struct tracing_sweep_probe probe = {.interp = interp, .size = 256};
+    probe.targets = PyMem_RawCalloc(probe.size, sizeof(void *));
+    if (probe.targets == NULL) {
+        return PyErr_NoMemory();
+    }
+    int enabled = PyGC_Disable();
+    PyObject *result = NULL;
+    for (Py_ssize_t i = 0; i < probe.size; i++) {
+        PyObject *obj = PyList_New(1);
+        if (obj == NULL) {
+            goto done;
+        }
+        PyList_SET_ITEM(obj, 0, Py_NewRef(obj));
+        probe.targets[i] = obj;
+        Py_DECREF(obj);
+    }
+    PyMem_GetAllocator(PYMEM_DOMAIN_OBJ, &probe.original);
+    PyMemAllocatorEx allocator = {
+        .ctx = &probe,
+        .malloc = tracing_probe_malloc,
+        .calloc = tracing_probe_calloc,
+        .realloc = tracing_probe_realloc,
+        .free = tracing_probe_free,
+    };
+    _PyEval_StopTheWorld(interp);
+    PyMem_SetAllocator(PYMEM_DOMAIN_OBJ, &allocator);
+    _PyEval_StartTheWorld(interp);
+    result = PyObject_CallNoArgs(callback);
+    PyGC_Disable();
+    _PyEval_StopTheWorld(interp);
+    PyMem_SetAllocator(PYMEM_DOMAIN_OBJ, &probe.original);
+    _PyEval_StartTheWorld(interp);
+done:
+    PyMem_RawFree(probe.targets);
+    if (enabled) {
+        PyGC_Enable();
+    }
+    if (result == NULL) {
+        return NULL;
+    }
+    Py_DECREF(result);
+    return Py_BuildValue("(nn)", probe.freed, probe.stopped);
+}
+
+static PyObject *
+get_tracing_gc_state(PyObject *self, PyObject *Py_UNUSED(ignored))
+{
+    struct _gc_runtime_state *gc = &PyInterpreterState_Get()->gc;
+    return Py_BuildValue("{s:i,s:i,s:l}",
+                         "enabled", gc->tracing_soft_dirty_enabled,
+                         "minors", gc->tracing_minor_count,
+                         "pid", gc->tracing_dirty_pid);
+}
+
+static PyObject *
+get_tracing_gc_skipped_leaf_pages(PyObject *self, PyObject *Py_UNUSED(ignored))
+{
+    struct _gc_runtime_state *gc = &PyInterpreterState_Get()->gc;
+    return PyLong_FromUnsignedLong(gc->tracing_skipped_leaf_pages);
+}
+
+static PyObject *
+get_tracing_gc_heap_stats(PyObject *self, PyObject *Py_UNUSED(ignored))
+{
+    _PyMem_TracingHeapStats stats[2][_Py_MIMALLOC_HEAP_COUNT];
+    _PyMem_GetTracingHeapStats(PyInterpreterState_Get(), stats);
+    PyObject *result = PyList_New(0);
+    if (result == NULL) {
+        return NULL;
+    }
+    for (int abandoned = 0; abandoned < 2; abandoned++) {
+        for (int tag = 0; tag < _Py_MIMALLOC_HEAP_COUNT; tag++) {
+            _PyMem_TracingHeapStats *s = &stats[abandoned][tag];
+            PyObject *row = Py_BuildValue("{s:i,s:i,s:K,s:K,s:K,s:K,s:K}",
+                "abandoned", abandoned, "tag", tag,
+                "blocks", (unsigned long long)s->blocks,
+                "allocated", (unsigned long long)s->allocated,
+                "committed", (unsigned long long)s->committed,
+                "empty_committed", (unsigned long long)s->empty_committed,
+                "areas", (unsigned long long)s->areas);
+            if (row == NULL || PyList_Append(result, row) < 0) {
+                Py_XDECREF(row);
+                Py_DECREF(result);
+                return NULL;
+            }
+            Py_DECREF(row);
+        }
+    }
+    return result;
+}
+
+static PyObject *
+get_tracing_gc_old_pages(PyObject *self, PyObject *Py_UNUSED(ignored))
+{
+    struct _gc_runtime_state *gc = &PyInterpreterState_Get()->gc;
+    return Py_BuildValue("{s:n,s:n}",
+                         "cached", (Py_ssize_t)gc->tracing_old_page_count,
+                         "skipped", (Py_ssize_t)gc->tracing_skipped_old_pages);
+}
+#endif
+
 static PyObject *
 get_long_lived_total(PyObject *self, PyObject *Py_UNUSED(ignored))
 {
@@ -3369,6 +3681,18 @@ static PyMethodDef module_functions[] = {
     {"get_tlbc", get_tlbc, METH_O, NULL},
     {"get_tlbc_id", get_tlbc_id, METH_O, NULL},
     {"get_long_lived_total", get_long_lived_total, METH_NOARGS},
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    {"test_tracing_gc_tryref_alias", test_tracing_gc_tryref_alias, METH_NOARGS},
+    {"make_tracing_gc_boxed_float", make_tracing_gc_boxed_float, METH_O},
+    {"make_tracing_gc_boxed_int", make_tracing_gc_boxed_int, METH_O},
+    {"get_tracing_gc_refstate", get_tracing_gc_refstate, METH_O},
+    {"get_tracing_gc_state", get_tracing_gc_state, METH_NOARGS},
+    {"test_tracing_gc_sweep", test_tracing_gc_sweep, METH_O},
+    {"get_tracing_gc_skipped_leaf_pages", get_tracing_gc_skipped_leaf_pages, METH_NOARGS},
+    {"get_tracing_gc_old_pages", get_tracing_gc_old_pages, METH_NOARGS},
+    {"get_tracing_gc_heap_stats", get_tracing_gc_heap_stats, METH_NOARGS},
+    {"set_tracing_gc_type_storage_garbage", set_tracing_gc_type_storage_garbage, METH_VARARGS},
+#endif
 #endif
 #ifdef _Py_TIER2
     {"uop_symbols_test", _Py_uop_symbols_test, METH_NOARGS},

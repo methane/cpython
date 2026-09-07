@@ -50,21 +50,36 @@ static inline PyObject* _Py_FROM_GC(PyGC_Head *gc) {
 static inline void
 _PyObject_SET_GC_BITS(PyObject *op, uint8_t new_bits)
 {
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    // INCREF can publish the sticky ownership bit without the object lock.
+    // A load/store pair here could lose that concurrent update.
+    _Py_atomic_or_uint8(&op->ob_gc_bits, new_bits);
+#else
     uint8_t bits = _Py_atomic_load_uint8_relaxed(&op->ob_gc_bits);
     _Py_atomic_store_uint8_relaxed(&op->ob_gc_bits, bits | new_bits);
+#endif
 }
 
 static inline int
 _PyObject_HAS_GC_BITS(PyObject *op, uint8_t bits)
 {
+#ifdef Py_EXPERIMENTAL_NANBOX
+    if (_PyObject_IsImmediate(op)) {
+        return 0;
+    }
+#endif
     return (_Py_atomic_load_uint8_relaxed(&op->ob_gc_bits) & bits) != 0;
 }
 
 static inline void
 _PyObject_CLEAR_GC_BITS(PyObject *op, uint8_t bits_to_clear)
 {
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    _Py_atomic_and_uint8(&op->ob_gc_bits, (uint8_t)~bits_to_clear);
+#else
     uint8_t bits = _Py_atomic_load_uint8_relaxed(&op->ob_gc_bits);
     _Py_atomic_store_uint8_relaxed(&op->ob_gc_bits, bits & ~bits_to_clear);
+#endif
 }
 
 #endif
@@ -314,6 +329,16 @@ static inline void _PyObject_GC_UNTRACK(
 */
 
 extern void _PyGC_InitState(struct _gc_runtime_state *);
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+// Opt-in for types whose tp_traverse visits every owned Python reference.
+// Their remaining instance storage contains no references to trace. This
+// flag is not inherited: subclasses must establish the same contract.
+#define _Py_TPFLAGS_TRACING_PRECISE (1UL << 21)
+extern void _PyGC_InitializeTracing(PyInterpreterState *interp);
+extern void _PyGC_AccountAllocations(PyThreadState *tstate);
+#else
+#define _Py_TPFLAGS_TRACING_PRECISE 0
+#endif
 
 extern Py_ssize_t _PyGC_Collect(PyThreadState *tstate, int generation, _PyGC_Reason reason);
 extern void _PyGC_CollectNoFail(PyThreadState *tstate);

@@ -99,7 +99,11 @@ ste_new(struct symtable *st, identifier name, _Py_block_ty block,
     k = PyLong_FromVoidPtr(key);
     if (k == NULL)
         goto fail;
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    ste = PyObject_GC_New(PySTEntryObject, &PySTEntry_Type);
+#else
     ste = PyObject_New(PySTEntryObject, &PySTEntry_Type);
+#endif
     if (ste == NULL) {
         Py_DECREF(k);
         goto fail;
@@ -155,6 +159,10 @@ ste_new(struct symtable *st, identifier name, _Py_block_ty block,
         ste->ste_method = 1;
     }
 
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    // All reference fields are initialized, including those on failure paths.
+    PyObject_GC_Track(ste);
+#endif
     ste->ste_symbols = PyDict_New();
     ste->ste_varnames = PyList_New(0);
     ste->ste_children = PyList_New(0);
@@ -184,6 +192,9 @@ static void
 ste_dealloc(PyObject *op)
 {
     PySTEntryObject *ste = (PySTEntryObject *)op;
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    PyObject_GC_UnTrack(op);
+#endif
     ste->ste_table = NULL;
     Py_XDECREF(ste->ste_id);
     Py_XDECREF(ste->ste_name);
@@ -194,8 +205,30 @@ ste_dealloc(PyObject *op)
     Py_XDECREF(ste->ste_directives);
     Py_XDECREF(ste->ste_annotation_block);
     Py_XDECREF(ste->ste_mangled_names);
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    PyObject_GC_Del(ste);
+#else
     PyObject_Free(ste);
+#endif
 }
+
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+static int
+ste_traverse(PyObject *op, visitproc visit, void *arg)
+{
+    PySTEntryObject *ste = (PySTEntryObject *)op;
+    Py_VISIT(ste->ste_id);
+    Py_VISIT(ste->ste_name);
+    Py_VISIT(ste->ste_function_name);
+    Py_VISIT(ste->ste_symbols);
+    Py_VISIT(ste->ste_varnames);
+    Py_VISIT(ste->ste_children);
+    Py_VISIT(ste->ste_directives);
+    Py_VISIT(ste->ste_annotation_block);
+    Py_VISIT(ste->ste_mangled_names);
+    return 0;
+}
+#endif
 
 #define OFF(x) offsetof(PySTEntryObject, x)
 
@@ -231,9 +264,17 @@ PyTypeObject PySTEntry_Type = {
     PyObject_GenericGetAttr,                    /* tp_getattro */
     0,                                          /* tp_setattro */
     0,                                          /* tp_as_buffer */
-    Py_TPFLAGS_DEFAULT,                         /* tp_flags */
+    Py_TPFLAGS_DEFAULT
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+        | Py_TPFLAGS_HAVE_GC
+#endif
+        ,                                       /* tp_flags */
     0,                                          /* tp_doc */
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    ste_traverse,                               /* tp_traverse */
+#else
     0,                                          /* tp_traverse */
+#endif
     0,                                          /* tp_clear */
     0,                                          /* tp_richcompare */
     0,                                          /* tp_weaklistoffset */

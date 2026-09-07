@@ -243,6 +243,26 @@ struct _gc_runtime_state {
 #endif
     /* true if we are currently running the collector */
     int collecting;
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    uintptr_t tracing_allocated_bytes;
+    uintptr_t tracing_live_bytes;
+    uintptr_t tracing_nonleaf_bytes;
+    uintptr_t tracing_nonleaf_live_bytes;
+    uintptr_t tracing_nursery_base_bytes;
+    uintptr_t tracing_dirty_sentinel;
+    size_t tracing_os_page_size;
+    long tracing_dirty_pid;
+    uint16_t tracing_minor_count;  // At most seven consecutive minor collections.
+    uint16_t tracing_container_backoff;  // Full collections before retrying.
+    int tracing_soft_dirty_enabled;
+    int tracing_container_nursery_enabled;
+    // Diagnostic only; saturates at UINT32_MAX on very large heaps.
+    uint32_t tracing_skipped_leaf_pages;
+    // Clean, old built-in container areas, valid only within a dirty epoch.
+    struct tracing_old_page *tracing_old_pages;
+    size_t tracing_old_page_count;
+    size_t tracing_skipped_old_pages;
+#endif
     // The frame that started the current collection. It might be NULL even when
     // collecting (if no Python frame is running):
     _PyInterpreterFrame *frame;
@@ -269,6 +289,11 @@ struct _gc_runtime_state {
 #ifdef Py_GIL_DISABLED
     /* True if gc.freeze() has been used. */
     int freeze_active;
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    // Serialize progress notifications, not collections invoked by callbacks.
+    // Use the tail padding rather than shifting interpreter fields after gc.
+    int tracing_notifying;
+#endif
 #else
     PyGC_Head *generation0;
 #endif
@@ -635,6 +660,14 @@ struct types_state {
         managed_static_type_state initialized[_Py_MAX_MANAGED_STATIC_EXT_TYPES];
     } for_extensions;
     PyMutex mutex;
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    // Legacy static extension types live outside the managed heaps. Their
+    // owned metadata must remain roots even without a Python-level reference.
+    // Registration is protected by mutex; GC reads with the world stopped.
+    PyTypeObject **tracing_static_types;
+    size_t tracing_static_types_size;
+    size_t tracing_static_types_capacity;
+#endif
 
     // Borrowed references to type objects whose
     // tp_version_tag % TYPE_VERSION_CACHE_SIZE

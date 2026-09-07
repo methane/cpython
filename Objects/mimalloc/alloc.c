@@ -440,6 +440,11 @@ static mi_decl_noinline void _mi_free_block_mt(mi_page_t* page, mi_block_t* bloc
   #endif
 
   // Try to put the block on either the page-local thread free list, or the heap delayed free list.
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+  if (_PyMem_mi_free_stopped_world(page, block)) {
+    return;
+  }
+#endif
   mi_thread_free_t tfreex;
   bool use_delayed;
   mi_thread_free_t tfree = mi_atomic_load_relaxed(&page->xthread_free);

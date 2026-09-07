@@ -4,6 +4,7 @@
    for any kind of float exception without losing portability. */
 
 #include "Python.h"
+#include "pycore_object_alloc.h"  // _PyObject_MallocLeaf()
 #include "pycore_abstract.h"      // _PyNumber_Index()
 #include "pycore_dtoa.h"          // _Py_dg_dtoa()
 #include "pycore_floatobject.h"   // _PyFloat_FormatAdvancedWriter()
@@ -122,11 +123,11 @@ PyFloat_GetInfo(void)
 }
 
 PyObject *
-PyFloat_FromDouble(double fval)
+_PyFloat_FromDoubleBoxed(double fval)
 {
     PyFloatObject *op = _Py_FREELIST_POP(PyFloatObject, floats);
     if (op == NULL) {
-        op = PyObject_Malloc(sizeof(PyFloatObject));
+        op = _PyObject_MallocLeaf(&PyFloat_Type, sizeof(PyFloatObject));
         if (!op) {
             return PyErr_NoMemory();
         }
@@ -134,6 +135,17 @@ PyFloat_FromDouble(double fval)
     }
     op->ob_fval = fval;
     return (PyObject *) op;
+}
+
+PyObject *
+PyFloat_FromDouble(double fval)
+{
+#ifdef Py_EXPERIMENTAL_NANBOX
+    if (_Py_tracing_gc_enabled && !isnan(fval)) {
+        return _PyFloat_EncodeImmediate(fval);
+    }
+#endif
+    return _PyFloat_FromDoubleBoxed(fval);
 }
 
 static PyObject *
@@ -534,8 +546,7 @@ float_richcompare(PyObject *v, PyObject *w, int op)
 static Py_hash_t
 float_hash(PyObject *op)
 {
-    PyFloatObject *v = _PyFloat_CAST(op);
-    return _Py_HashDouble(op, v->ob_fval);
+    return _Py_HashDouble(op, PyFloat_AS_DOUBLE(op));
 }
 
 static PyObject *
@@ -807,22 +818,19 @@ float_pow(PyObject *v, PyObject *w, PyObject *z)
 static PyObject *
 float_neg(PyObject *op)
 {
-    PyFloatObject *v = _PyFloat_CAST(op);
-    return PyFloat_FromDouble(-v->ob_fval);
+    return PyFloat_FromDouble(-PyFloat_AS_DOUBLE(op));
 }
 
 static PyObject *
 float_abs(PyObject *op)
 {
-    PyFloatObject *v = _PyFloat_CAST(op);
-    return PyFloat_FromDouble(fabs(v->ob_fval));
+    return PyFloat_FromDouble(fabs(PyFloat_AS_DOUBLE(op)));
 }
 
 static int
 float_bool(PyObject *op)
 {
-    PyFloatObject *v = _PyFloat_CAST(op);
-    return v->ob_fval != 0.0;
+    return PyFloat_AS_DOUBLE(op) != 0.0;
 }
 
 /*[clinic input]
@@ -1072,7 +1080,7 @@ float_float(PyObject *v)
         return Py_NewRef(v);
     }
     else {
-        return PyFloat_FromDouble(((PyFloatObject *)v)->ob_fval);
+        return PyFloat_FromDouble(PyFloat_AS_DOUBLE(v));
     }
 }
 
@@ -1604,7 +1612,7 @@ float_subtype_new(PyTypeObject *type, PyObject *x)
         Py_DECREF(tmp);
         return NULL;
     }
-    ((PyFloatObject *)newobj)->ob_fval = ((PyFloatObject *)tmp)->ob_fval;
+    ((PyFloatObject *)newobj)->ob_fval = PyFloat_AS_DOUBLE(tmp);
     Py_DECREF(tmp);
     return newobj;
 }
@@ -1665,7 +1673,7 @@ static PyObject *
 float___getnewargs___impl(PyObject *self)
 /*[clinic end generated code: output=873258c9d206b088 input=002279d1d77891e6]*/
 {
-    return Py_BuildValue("(d)", ((PyFloatObject *)self)->ob_fval);
+    return Py_BuildValue("(d)", PyFloat_AS_DOUBLE(self));
 }
 
 

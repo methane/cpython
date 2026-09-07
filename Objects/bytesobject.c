@@ -1,6 +1,7 @@
 /* bytes object implementation */
 
 #include "Python.h"
+#include "pycore_object_alloc.h"  // _PyObject_MallocLeaf()
 #include "pycore_abstract.h"      // _PyIndex_Check()
 #include "pycore_bytes_methods.h" // _Py_bytes_startswith()
 #include "pycore_bytesobject.h"   // _PyBytes_Find(), _PyBytes_RepeatBuffer()
@@ -118,7 +119,7 @@ _PyBytes_FromSize(Py_ssize_t size, int use_calloc)
     if (use_calloc)
         op = (PyBytesObject *)PyObject_Calloc(1, PyBytesObject_SIZE + size);
     else
-        op = (PyBytesObject *)PyObject_Malloc(PyBytesObject_SIZE + size);
+        op = (PyBytesObject *)_PyObject_MallocLeaf(&PyBytes_Type, PyBytesObject_SIZE + size);
     if (op == NULL) {
         return PyErr_NoMemory();
     }
@@ -182,7 +183,7 @@ PyBytes_FromString(const char *str)
     }
 
     /* Inline PyObject_NewVar */
-    op = (PyBytesObject *)PyObject_Malloc(PyBytesObject_SIZE + size);
+    op = (PyBytesObject *)_PyObject_MallocLeaf(&PyBytes_Type, PyBytesObject_SIZE + size);
     if (op == NULL) {
         return PyErr_NoMemory();
     }
@@ -1606,7 +1607,7 @@ _PyBytes_Repeat(PyObject *self, Py_ssize_t n)
             "repeated bytes are too long");
         return NULL;
     }
-    PyBytesObject *op = PyObject_Malloc(PyBytesObject_SIZE + nbytes);
+    PyBytesObject *op = _PyObject_MallocLeaf(&PyBytes_Type, PyBytesObject_SIZE + nbytes);
     if (op == NULL) {
         return PyErr_NoMemory();
     }
@@ -3387,7 +3388,7 @@ _PyBytes_Resize(PyObject **pv, Py_ssize_t newsize)
 #endif
     _PyReftracerTrack(v, PyRefTracer_DESTROY);
     *pv = (PyObject *)
-        PyObject_Realloc(v, PyBytesObject_SIZE + newsize);
+        _PyObject_ReallocLeaf(&PyBytes_Type, v, PyBytesObject_SIZE + newsize);
     if (*pv == NULL) {
 #ifdef Py_REF_DEBUG
         _Py_DecRefTotal(_PyThreadState_GET());

@@ -118,7 +118,13 @@ int
 PyTuple_SetItem(PyObject *op, Py_ssize_t i, PyObject *newitem)
 {
     PyObject **p;
-    if (!PyTuple_Check(op) || !_PyObject_IsUniquelyReferenced(op)) {
+    if (!PyTuple_Check(op) ||
+        (!_PyObject_IsUniquelyReferenced(op)
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+         && !_Py_tracing_gc_enabled
+#endif
+        ))
+    {
         Py_XDECREF(newitem);
         PyErr_BadInternalCall();
         return -1;
@@ -137,6 +143,12 @@ PyTuple_SetItem(PyObject *op, Py_ssize_t i, PyObject *newitem)
 void
 _PyTuple_MaybeUntrack(PyObject *op)
 {
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    if (_Py_tracing_gc_enabled) {
+        // Acyclic tuples still need tracing when decrefs do not reclaim them.
+        return;
+    }
+#endif
     PyTupleObject *t;
     Py_ssize_t i, n;
 
@@ -165,6 +177,11 @@ _PyTuple_MaybeUntrack(PyObject *op)
 static bool
 maybe_tracked(PyObject *ob)
 {
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    if (_Py_tracing_gc_enabled) {
+        return true;
+    }
+#endif
     return _PyType_IS_GC(Py_TYPE(ob));
 }
 
@@ -272,9 +289,14 @@ tuple_dealloc(PyObject *self)
 
     PyObject_GC_UnTrack(op);
 
-    Py_ssize_t i = Py_SIZE(op);
-    while (--i >= 0) {
-        Py_XDECREF(op->ob_item[i]);
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    if (!_Py_tracing_gc_enabled)
+#endif
+    {
+        Py_ssize_t i = Py_SIZE(op);
+        while (--i >= 0) {
+            Py_XDECREF(op->ob_item[i]);
+        }
     }
     // This will abort on the empty singleton (if there is one).
     if (!maybe_freelist_push(op)) {
@@ -1036,11 +1058,35 @@ int
 _PyTuple_Resize(PyObject **pv, Py_ssize_t newsize)
 {
     PyTupleObject *v;
+#ifndef Py_EXPERIMENTAL_TRACING_GC
     PyTupleObject *sv;
+#endif
     Py_ssize_t i;
     Py_ssize_t oldsize;
 
     v = (PyTupleObject *) *pv;
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    if (v == NULL || !Py_IS_TYPE(v, &PyTuple_Type)) {
+        *pv = NULL;
+        PyErr_BadInternalCall();
+        return -1;
+    }
+    oldsize = Py_SIZE(v);
+    if (oldsize == newsize) {
+        return 0;
+    }
+    PyObject *replacement = PyTuple_New(newsize);
+    if (replacement == NULL) {
+        *pv = NULL;
+        return -1;
+    }
+    Py_ssize_t copy = Py_MIN(oldsize, newsize);
+    for (i = 0; i < copy; i++) {
+        PyTuple_SET_ITEM(replacement, i, Py_XNewRef(v->ob_item[i]));
+    }
+    *pv = replacement;
+    return 0;
+#else
     if (v == NULL || !Py_IS_TYPE(v, &PyTuple_Type) ||
         (Py_SIZE(v) != 0 && !_PyObject_IsUniquelyReferenced(*pv))) {
         *pv = 0;
@@ -1097,6 +1143,7 @@ _PyTuple_Resize(PyObject **pv, Py_ssize_t newsize)
     *pv = (PyObject *) sv;
     _PyObject_GC_TRACK(sv);
     return 0;
+#endif
 }
 
 /*********************** Tuple Iterator **************************/
