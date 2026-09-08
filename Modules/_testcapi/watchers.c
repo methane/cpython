@@ -97,13 +97,28 @@ dict_watch_callback_error(PyDict_WatchEvent event,
     return -1;
 }
 
+static int
+dict_watch_callback_resurrect(PyDict_WatchEvent event,
+                              PyObject *dict,
+                              PyObject *key,
+                              PyObject *new_value)
+{
+    if (event == PyDict_EVENT_DEALLOCATED) {
+        return PyList_Append(g_dict_watch_events, dict);
+    }
+    return 0;
+}
+
 static PyObject *
 add_dict_watcher(PyObject *self, PyObject *kind)
 {
     int watcher_id;
     assert(PyLong_Check(kind));
     long kind_l = PyLong_AsLong(kind);
-    if (kind_l == 2) {
+    if (kind_l == 3) {
+        watcher_id = PyDict_AddWatcher(dict_watch_callback_resurrect);
+    }
+    else if (kind_l == 2) {
         watcher_id = PyDict_AddWatcher(dict_watch_callback_second);
     }
     else if (kind_l == 1) {

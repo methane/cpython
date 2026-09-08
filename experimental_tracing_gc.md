@@ -1,13 +1,14 @@
 # Experimental tracing GC: implementation and findings
 
 Date: 2026-09-07. Implementation checkpoint: `1b990379c85` on
-`experimental-tracing-gc`. [日本語版](experimental_tracing_gc.ja.md).
+`experimental-tracing-gc`.
 
 This report is for students familiar with pointers, graphs, threads, and basic
 computer architecture. It describes a research prototype, not a production-ready
 replacement for CPython's memory management. Compatibility changes were allowed
 to explore performance potential. Measurements below belong to explicitly named
 development stages; they are **not a complete benchmark of the final commit**.
+Sections 8–12 record subsequent, uncommitted development separately.
 
 ## 1. What question does this experiment answer?
 
@@ -135,7 +136,7 @@ It is an experimental Linux backend, not a portable replacement for write barrie
 The implementation attacks repeated work at several levels:
 
 - Page-level allocation snapshots exclude free slots before reading headers.
-  Mark maps use one byte per scalar slot and four bytes per other slot, with
+  Mark maps use one byte per scalar slot and two bytes per other slot, with
   page-local traversal links and arena allocation for map storage.
 - Up to eight independent allocator free lists are walked in an interleaved
   fashion. This exposes independent memory loads instead of following one long
@@ -539,3 +540,700 @@ of the private fresh-process drivers. Its default `refcounts` suite disables GC;
 in a tracing build that can merely accumulate garbage. Use reclamation-inclusive
 workloads, matching environment settings, separate build directories, native-code
 checks, and independently repeated processes for meaningful new comparisons.
+
+## 8. Follow-up: set-operation cleanup and a rejected scan optimization
+
+This section records work after the checkpoint above, also on 2026-09-07.
+The final constructor fix was evaluated first. It preserved the failed-frozenset
+memory improvement, but FT N-body still took about 3.9% more time than the earlier
+page-retirement build. The earlier integer/float-local regressions were much
+smaller in this comparison. These results do not erase the historical regressions.
+
+### A scan optimization that did not pay off
+
+A candidate counted potential dirty roots per allocator page during existing
+classification and buffer-ownership work. It then avoided another slot-map walk
+whose only purpose was to ask whether such roots existed. Debug builds recomputed
+the counts independently and asserted equality before traversal.
+
+Focused tests passed, but five fresh-process measurements of the 16-batch parallel
+reclaim workload gave FT 3.105051 → 3.159997 s (1.8% worse) and JIT
+4.716666 → 4.707909 s (essentially unchanged). Old-heap controls improved by
+less than 1%, without a meaningful memory reduction. The implementation was
+reverted; only an additional mixed-buffer root-survival/reclamation test remains.
+Eliminating a loop is not sufficient if maintaining its summary adds other costs.
+
+### Fixing abandoned temporary sets
+
+Broader testing exposed a crash in the committed baseline as well as the candidate.
+The debugger showed an untracked exact set containing a freed element, visited
+from the nursery's deferred-object traversal. The constructor fix had not covered
+all temporary sets created by collection operations.
+
+The new `set_decref_untracked()` helper registers a completed, abandoned set with
+tracing GC before the otherwise ineffective decref. Constructor, copy, union,
+intersection, difference, and symmetric-difference cleanup paths use it where the
+temporary is still untracked. Already-tracked objects keep their existing cleanup.
+Successful construction is not tracked prematurely, and ordinary RC behavior is
+preserved. This fixes storage leaks and prevents full GC from freeing children
+while an abandoned, untracked parent can still be encountered later.
+
+A new regression test covers `set`/`frozenset`, four operations, and iterator/hash
+failures: 16 combinations, each performing 256 failures in an exited worker.
+All 16 failed the post-collection allocation bound on the preceding build and
+passed after the fix.
+
+The following dedicated experiment performs 80,000 failing operations across four
+batches, alternating set and frozenset. Automatic GC is enabled and three explicit
+full collections per batch are timed. Immortal `None`/`True` elements let the
+leaking baseline finish without dangling-child crashes. Medians of three fresh
+processes per mode, with the same isolation/affinity rules as section 4:
+
+| Mode | Seconds, before → after | Post-GC allocated-byte growth, MiB | Final current RSS, MiB |
+| --- | ---: | ---: | ---: |
+| FT | 0.204710 → 0.148158 | 17.0937 → 0.0039 | 42.25 → 27.08 |
+| JIT configuration | 0.210108 → 0.148259 | 17.0937 → 0.0039 | 42.29 → 26.95 |
+
+That is about 28%/29% less time for this error-heavy workload. JIT runtime settings,
+not native compilation of the exception loop, were asserted. This is a lifetime
+and memory improvement, not evidence of general tracing-GC superiority.
+
+Ordinary controls exposed a cost. Five-sample long reclaim times were nearly flat:
+FT 3.142610 → 3.139654 s; JIT 4.654538 → 4.684329 s. Peak RSS was
+79.59 → 79.83 MiB and 66.19 → 67.39 MiB respectively. Numerical N-body and
+float-local controls changed little, but the short container controls regressed.
+Longer, separately repeated controls confirmed that regression (`n=5`):
+
+| Workload | FT seconds, before → after | JIT seconds, before → after |
+| --- | ---: | ---: |
+| 100M integer updates | 1.410078 → 1.430473 | 0.896351 → 0.892278 |
+| 2M container-churn iterations | 0.413191 → 0.425554 | 0.404749 → 0.416761 |
+| 2M iterations beside old lists | 0.465606 → 0.479496 | 0.458932 → 0.470186 |
+| 2M iterations beside old dictionaries | 0.433313 → 0.445835 | 0.425188 → 0.436107 |
+
+The container regressions are approximately 2.5–3%, with almost unchanged recorded
+GC durations and matching collection/block counts. The FT integer regression is
+about 1.4%, with zero collections. Their cause has not been established; attributing
+them to additional collector work would be unsupported. The correctness fix is
+retained, and these performance regressions remain open work.
+
+Validation of this follow-up:
+
+- Native FT/JIT focused suites: 800 tests each, 9 skips, success; another 100
+  repeated GC methods per mode passed, including repeated error-path subtests.
+- Debug focused suite: 284 tests, success; NaN-boxing-OFF Debug: 284 tests,
+  16 skips, success.
+- The 12-file Debug run now completes: 2,912 tests, the same 32 failure IDs as
+  the earlier completed run, 69 skips. It is not a clean suite.
+- Native `test_set` completes with 644 tests and three iterator-cycle failures
+  per mode. All three were also observed in the baseline's full-suite context;
+  isolated tests alone did not reproduce every one. The baseline JIT full run
+  itself aborted, illustrating why incomplete-run totals are misleading.
+- A newly rebuilt ordinary RC FT executable passed 1,260 tests with 9 skips,
+  covering sets, integers, floats, math, selected C APIs, types, and JSON. This
+  narrows the previous RC-build validation gap; it is not a full RC test run or
+  a conventional-GIL RC build.
+
+Local evidence: `/tmp/gc-failedset-v2-{controls1,reclaim-long1,memory1}.json`,
+`/tmp/gc-rootcounts-{reclaim-long1,controls1}.json`,
+`/tmp/gc-setcleanup-{memory1,reclaim-long1,controls1,confirm1}.json`, and
+`/tmp/gc-setcleanup-progress.md`. The corresponding drivers and test logs are
+retained locally. No general throughput win or production-readiness claim follows
+from this update.
+
+## 9. Follow-up: bulk set release, three rejected variants
+
+This experiment, also on 2026-09-07, produced useful negative results. **None of
+the three speed-change variants below is retained.** The implementation returns
+to section 8's set-operation cleanup; new tests and benchmark workloads remain.
+
+A dead set still needs its table freed, but tracing GC already determines which
+children are reachable elsewhere. Decrementing every child's reference count is
+therefore unnecessary once decrefs are inert. Unlike list and tuple destruction,
+set destruction still walked the entries. Native disassembly confirmed that this
+was a real loop, including a tracing-enabled check for each occupied entry.
+
+Three prototypes skipped that loop and similar work in `set.clear()`:
+
+- V1 reset the set and freed its old table through an early tracing-only path,
+  without copying the inline table or visiting its keys.
+- V2 avoided resetting an already-empty inline table in that path.
+- V3 removed the duplicate early path, retaining the original reset/free control
+  flow and guarding only the inline copy and per-entry decref loops.
+
+All kept weakref handling and the normal delayed free for shared tables. None
+changed collection thresholds or intentionally postponed reclamation. V3 was a
+control-flow simplification, not an attempt to pad or align the executable.
+
+### Local gains did not establish an acceptable overall improvement
+
+V1 improved the following workloads, using medians of seven fresh processes per
+configuration. The baseline is section 8's cleanup build. Automatic GC and both
+experimental nurseries were enabled; builds/tests/profiles did not overlap timing.
+Versions alternated on CPU 2, with fixed hash seed and a discarded warmup process.
+
+| Workload | FT seconds, before → V1 | JIT-enabled configuration, before → V1 |
+| --- | ---: | ---: |
+| Copy a 4,096-key set and clear it, 20,000 times | 0.710523 → 0.674735 | 0.712913 → 0.677504 |
+| Create 8,192 frozensets in 64 batches, with full GC between batches | 2.021534 → 1.988979 | 2.019310 → 1.992120 |
+
+The first gain is about 5%; the second is only 1–2%. The set loops had no native
+executor at measurement end, so these are **JIT-enabled configuration results,
+not demonstrated native-loop speedups**. Existing numerical, container, and
+parallel-reclaim controls retained their native-code assertions.
+
+Collection counts and final allocated-block counts matched exactly in these
+target workloads. Peak RSS was effectively unchanged: about 19 MiB for clear and
+30 MiB for frozenset reclamation. Frozenset timings include three full collections
+after each batch, with a bound on retained-block growth.
+
+The 16-batch parallel list/tuple/dict reclaim workload was essentially flat
+(`n=5`): FT 3.167725 → 3.160779 s, JIT 4.722452 → 4.718345 s.
+V1's ordinary container controls were about 3% faster with nearly unchanged GC
+durations, but that does not establish a causal collector improvement.
+
+Further controls exposed regressions. The following rows use a nine-process
+three-way comparison for V1/V2, and seven processes for V3; each row reports its
+own baseline rather than mixing measurements from different runs:
+
+| Candidate / control | FT seconds, before → candidate | JIT-enabled seconds, before → candidate |
+| --- | ---: | ---: |
+| V1: 10M calls to `clear()` on an already-empty set | 0.229310 → 0.262327 | 0.216106 → 0.247699 |
+| V2: 100M integer updates | 1.441579 → 1.479357 | 0.893306 → 0.958833 |
+| V3: 100M integer updates | 1.424464 → 1.476458 | 0.892693 → 0.898397 |
+
+V1 made empty clear about 14% slower. V2 fixed that case but made the integer
+control about 2.6% slower in FT and 7.3% slower in JIT; a preceding independent
+five-process comparison had already shown the regression. V3 preserved empty
+clear performance but still regressed the FT integer control by about 3.6%.
+These integer loops had zero collections, so additional GC execution cannot
+explain their slowdown. Binary layout is a possible explanation, not a diagnosis
+established by this experiment. No fourth layout variant was tried.
+
+The selective gains were insufficient to accept these tradeoffs. All prototype
+C changes were reverted, preserving the preceding correctness fixes. In
+particular, the positive prototype measurements must not be assigned to the
+current implementation.
+
+### Tests retained and the next hypothesis
+
+`test_set_bulk_release` covers 36 configurations: builtin/subclass sets and
+frozensets, empty/small/large storage, sparse/dense mutable sets, clear/destruction,
+child finalization, weakrefs, retained children, and reuse after clearing.
+Allocation happens in exited workers to avoid stale conservative C-stack roots.
+It passes on the original implementation too: this is semantic regression
+coverage, not a timing assertion.
+
+Each prototype passed the focused Debug suite (285 tests), NaN-boxing-OFF Debug
+(285, 16 skips), native FT/JIT (801 each, 9 skips), ordinary RC FT (1,260,
+9 skips), and seven free-threading set race tests. Complete native `test_set`
+runs still had the known three iterator-cycle failures, and some FT runs also
+showed an intermittent `TestFrozenSetSubclass.test_free_after_iterating` failure.
+The extra passed in isolation and in two full V1 reruns. This is not a clean
+compatibility result. An initial two-failure nursery-policy test run was caused
+by forcing container-nursery settings onto scalar-only tests; the same failures
+were reproduced on the baseline before rerunning with per-test settings.
+
+After reverting, the new test and two related set tests were each repeated three
+times against the original native FT, native JIT, Debug, and NaN-OFF Debug builds:
+nine methods per configuration, all passed. At the end of that stage, the C source
+matched the preserved section 8 snapshot exactly.
+
+A more substantial remaining opportunity is allocation accounting. The wide-set
+clear workload still triggered 625 collections despite promptly releasing each
+external table. The allocator records gross requested bytes but does not credit
+these frees. Accounting for released auxiliary storage might avoid unnecessary
+collections; this is **a hypothesis, not an implemented speedup**. Correctly
+handling old-epoch frees, allocator size rounding, ownership, and delayed QSBR
+storage is essential—naively subtracting usable sizes could undercount real debt.
+This would address immediately released storage, not automatically solve the
+large parallel-reclaim gap to RC.
+
+Reproducible workloads were added to the benchmark tool as `wide_set_clear` and
+`wide_frozenset_reclaim` in the mixed suite. Their public defaults are shorter
+than the private long runs above. Local evidence is preserved in
+`/tmp/gc-setbulk-{target3,controls1,reclaim-long1,selection1}.json`,
+`/tmp/gc-setbulk-v2-{target1,controls1,reclaim-long1}.json`,
+`/tmp/gc-setbulk-v3-preflight1.json`, the corresponding drivers/test logs, and
+`/tmp/gc-setbulk-progress.md`.
+
+## 10. Follow-up: check outstanding storage before tracing
+
+### Why gross allocation is sometimes misleading
+
+A list can repeatedly allocate a large element array and release it with
+`clear()`, while the list object itself stays alive. Counting every requested
+byte toward the next collection makes this look like a growing heap—even when
+almost all the storage has already been returned to the allocator. In a new
+regression test, 128 repetitions of a roughly 1 MiB list buffer caused 16
+automatic collections on the preceding implementation.
+
+The new pressure check runs only after the ordinary byte-debt trigger fires.
+It stops the interpreter's threads and sums allocated slots from mimalloc's
+page metadata, including the abandoned heaps of exited threads. It does not
+trace object references or construct allocation maps. Enumeration stops early
+when enough outstanding storage is found; an incomplete traversal or arithmetic
+overflow conservatively requests a real collection.
+
+Let `L` be the existing live-byte estimate from the last collection, and let
+`B = max(L, threshold * 4096)` be the ordinary allocation budget. The retained
+candidate dismisses an automatic trigger only when outstanding allocated
+storage is below `L + B/2`. On dismissal, it rebases allocation debt on the
+observed excess over `L`, but **never moves `L` forward**. Otherwise a small
+amount of garbage accumulating between checks could escape collection forever.
+Explicit `gc.collect()` calls bypass this gate. Nursery age bits, dirty-page
+epochs, and conservative nonleaf pressure are not reset by a skipped collection.
+
+An initial variant allowed growth up to the full budget, `L + B`. It improved
+buffer reuse but increased peak RSS by roughly 3.5–7 MiB on ordinary mixed
+container workloads. The half-budget rule is a memory-policy correction, not a
+change to object representation or a new tracing algorithm. Neither rule places
+a hard limit on RSS: allocated slots, committed allocator pages, and resident
+memory are different quantities.
+
+These checks still pause threads. They do not send GC callbacks or increment
+collection counts/durations when tracing is skipped. Therefore zero reported
+collections does **not** mean zero pauses; end-to-end timings include the checks.
+
+### Correctness checks
+
+Three new tests cover promptly released buffers (including a subsequent explicit
+collection), slow accumulation of cyclic garbage across repeated pressure
+checks, and garbage left in an exited worker's allocator heaps. The first test
+fails on the preceding implementation and passes with the gate. Tests also
+exercise mixed buffer ownership, finalization/resurrection, nursery fallback,
+and stopped-world reclamation.
+
+The half-budget candidate passed 288 focused tests in Debug and in
+NaN-boxing-OFF Debug (16 skips in the latter), and 804 in each native FT and
+JIT-enabled configuration (9 skips). A stricter `MI_DEBUG=3` allocator build
+passed 24 repeated regression methods. The ordinary RC FT build passed 1,260
+tests (4 skips under the unittest runner). The broader Debug run still reported
+32 failures and 69 skips among 2,912 tests, with the same nine failing modules
+as the preceding stage. This is not a clean compatibility result.
+
+### Measurement method and ordinary-workload controls
+
+The before/after comparison uses the preserved section 8 implementation and the
+half-budget candidate, with both scalar and container nurseries enabled. Native
+builds use GCC 13.3, `-O3`, no PGO/LTO, and LLVM 21 JIT stencils. FT runs have
+the GIL disabled and JIT disabled; JIT-enabled runs have the GIL permanently
+enabled. Each timing is a fresh process, with fixed hash seed, normal allocator,
+discarded warmup, and alternating version order. Builds, tests, and profiling
+do not overlap measurements. Single-thread runs use CPU 2; four-worker runs use
+CPUs 0, 2, 4, and 6, separate physical performance cores on this machine.
+
+Five-process medians on three ordinary container controls were:
+
+| Workload | FT seconds, before → candidate | JIT-enabled seconds, before → candidate | FT peak RSS MiB, before → candidate |
+| --- | ---: | ---: | ---: |
+| 2M mixed container iterations | 0.426976 → 0.414720 | 0.417399 → 0.407086 | 22.375 → 22.625 |
+| Same, with 100k old lists | 0.482547 → 0.468695 | 0.471272 → 0.459844 | 36.563 → 36.566 |
+| Same, with 50k old dictionaries | 0.433580 → 0.421024 | 0.423739 → 0.412861 | 37.500 → 37.473 |
+
+Unlike the full-budget variant, these runs had the same collection counts and
+final allocated-block counts as the baseline. JIT-enabled peak RSS also stayed
+within 0.125 MiB of its baseline. The roughly 2.4–2.9% timing differences are
+end-to-end observations, not evidence that the gate reduced tracing in these
+controls: it did not reduce their collection counts.
+
+Numerical controls did not show a substantial regression. The 100M-integer JIT
+loop measured 0.893162 → 0.893685 seconds; the 10M-float-local loop measured
+0.357447 → 0.357211 seconds in FT and 0.173110 → 0.173022 in JIT. FT integer
+and n-body medians were lower, but these timed loops performed no collections;
+their differences cannot be attributed to avoided collector work. In particular,
+the integer FT baseline ranged from 1.372376 to 1.438401 seconds, overlapping
+the candidate's range. No binary-layout explanation was established or tuned.
+
+### Large-buffer results and their limits
+
+The targeted workloads use 512 serial list-buffer reuses, four workers with
+128 reuses each, 20k copies/clears of a 4,096-element set, and 64 batches of
+128 wide frozensets respectively. Five-process medians were:
+
+| Workload | FT seconds, before → candidate | JIT-enabled seconds, before → candidate | FT peak RSS MiB, before → candidate |
+| --- | ---: | ---: | ---: |
+| Reused list buffer | 0.113651 → 0.050125 | 0.113586 → 0.049680 | 21.500 → 20.625 |
+| Four-worker buffer reuse | 0.093494 → 0.019428 | 0.139967 → 0.061807 | 28.336 → 25.500 |
+| Wide set copy/clear | 0.713140 → 0.261113 | 0.715440 → 0.258784 | 19.000 → 22.500 |
+| Wide frozenset creation/reclamation | 2.017541 → 2.019612 | 2.024023 → 2.020798 | 30.125 → 30.125 |
+
+Serial buffer reuse improved about 2.3x in both configurations. Four-worker
+reuse improved about 4.8x in FT and 2.3x with the GIL enabled. Their collection
+counts changed from 64 to zero (serial), 34 to one (FT parallel), and 52 to one
+(GIL-enabled parallel). The latter's peak RSS also fell, 28.270 → 25.324 MiB.
+These are C-heavy workloads: the driver recorded no native executor code for
+these loops. The JIT-enabled column is therefore a runtime-configuration result,
+**not a claim that these loops executed as native JIT code**.
+
+Set copy/clear improved about 2.7x, but this has a memory tradeoff. The candidate
+retained roughly 3,600 additional allocated blocks at the end of the timed
+region, principally empty set bodies awaiting GC; peak RSS increased about
+3.5 MiB. It performed one collection instead of 625. Frozenset reclamation was
+essentially unchanged, with 448 collections in both versions: avoiding gross
+debt from promptly freed storage does not make ordinary object tracing free.
+
+The demanding four-worker container-reclaim test includes 16 allocation batches
+and explicit collections between batches. FT time changed 3.178086 → 3.104315
+seconds, while peak RSS increased 79.637 → 81.340 MiB. JIT-enabled time changed
+4.660439 → 4.683813 seconds, with RSS 65.488 → 66.793 MiB. This is not a
+substantial improvement to the general reclamation bottleneck. Its RC
+comparators measured 0.402136 seconds / 16.125 MiB in FT and 1.192935 seconds /
+15.242 MiB in conventional GIL-enabled JIT. The tracing candidate still took
+about 7.7x and 3.9x those times respectively. These are whole-runtime comparisons
+with different representations/build configurations, not isolated collector
+costs; the conventional RC JIT comparator is an older preserved build.
+
+### Include reclamation before calling it a speedup
+
+A second experiment repeats eight batches and performs three full collections
+after **every** batch, inside the timer. It also checks that post-collection
+allocated-block counts stabilize. Three-process medians were:
+
+| Eight-batch workload, including 24 explicit GCs | FT seconds, before → candidate | JIT-enabled seconds, before → candidate |
+| --- | ---: | ---: |
+| Wide set copy/clear, 20k iterations per batch | 5.665689 → 2.023969 | 5.684349 → 2.020127 |
+| List-buffer reuse, 512 iterations per batch | 0.911444 → 0.454693 | 0.909023 → 0.454519 |
+
+The speedups survive actual reclamation: about 2.8x for set clear and 2x for
+buffer reuse. Final block counts matched the baseline exactly in three of the
+four comparisons and differed by one in the fourth. Buffer-reuse peak RSS fell
+by 0.375 MiB in both modes. Set-clear peak RSS still increased, from 19.000 to
+23.750 MiB in FT and 19.375 to 23.875 MiB with the GIL enabled. Stable retained
+blocks do not erase a peak-memory tradeoff.
+
+The half-budget gate is retained as a targeted scheduling improvement. It
+recovers much of the unnecessary collection cost on immediately released
+buffers, without the initial variant's ordinary-control memory growth. It does
+not resolve the large parallel allocation/reclamation gap or the existing
+compatibility failures; further work must address those, not just optimize the
+already-improved buffer benchmark.
+
+Public workloads are `reused_list_buffer` in the mixed suite and
+`parallel_buffer_reuse` in the threads suite of
+`Tools/scripts/benchmark_tracing_gc.py`. Exact long-run measurements above are
+preserved in `/tmp/gc-heapgate-v2-{controls1,parallel1,target1,lifecycle1}.json`
+and their logs. Drivers are `/tmp/gc-heapgate-v2-benchmark.py` and
+`/tmp/gc-heapgate-v2-lifecycle-benchmark.py`; the local checkpoint
+`/tmp/gc-heapgate-progress.md` records source snapshots, build configurations,
+test evidence, and the superseded full-budget experiment separately.
+
+## 11. Follow-up: header prefetching did not improve reclamation
+
+After the pressure-gate change, a fresh profile of the demanding parallel
+reclaim workload attributed about 11.3% of sampled user-space core cycles to
+snapshot construction. Within that function, samples clustered around dependent
+free-list loads and object-header loads. This identifies places to investigate;
+it does not prove that explicit prefetching will make them faster.
+
+A prototype used the completed allocation map to prefetch an allocated header
+16 slots ahead, bounded to the same allocator page, while all interpreter
+threads remained stopped. It added no allocation/free-path work or persistent
+metadata. This is distinct from the earlier rejected pagemap-read prefetching.
+
+The primary test used four workers, 16 batches of one million total container
+iterations per batch, and explicit collections between batches. Five fresh
+processes per configuration, alternating version order, a discarded warmup,
+fixed hash seed and four physical performance cores gave these medians:
+
+| Configuration | Seconds, pressure gate → prefetch prototype | Peak RSS MiB, pressure gate → prototype |
+| --- | ---: | ---: |
+| FT, JIT disabled | 3.100087 → 3.177241 | 80.543 → 81.004 |
+| Permanent GIL, native JIT enabled | 4.654104 → 4.650879 | 66.066 → 67.512 |
+
+FT was about 2.5% slower and JIT was essentially unchanged. All runtime-mode,
+native-code, workload-result and bounded-reclamation assertions passed. The
+prototype also passed 289 focused Debug tests and 805 tests in each native
+FT/JIT configuration (9 skips). Passing tests did not justify retaining a
+performance regression: **the prefetch code was reverted**.
+
+A separate three-run FT counter diagnostic found about 1.3% more retired core
+instructions (50.159 → 50.800 billion), with essentially unchanged generic
+cache-miss counts (240.283 → 240.627 million). Only the performance-core counters
+had nearly complete running coverage; efficiency-core counters were not used.
+These instrumented, sequential diagnostic runs are not the alternating timing
+comparison above and do not establish a complete causal explanation. They do
+not support further tuning of this lookahead as the main solution.
+
+The retained regression test mixes cyclic containers and tuples ranging from
+empty to 32,768 entries, created by exited workers. Repeated collections check
+exact weakref survival and payload integrity across sparse and huge pages.
+It passes the preceding implementation too; this is semantic coverage, not a
+claim of fixing an existing bug. After reverting, this test and two related
+sparse-page tests were repeated three times each on the retained native FT,
+native JIT, Debug, and NaN-boxing-OFF Debug builds: nine methods per configuration,
+all passed. The next performance direction is reducing
+mandatory snapshot work, rather than merely adding hints around the same work.
+The general speed/memory objective remains unmet.
+
+Local evidence is preserved in `/tmp/gc-header-reclaim1.json`, its driver/log,
+`/tmp/gc-heapgate-current-perf1.data`, snapshot annotations, and
+`/tmp/gc-header-{baseline,candidate}-stat1.log`. Source/build/test provenance is
+recorded in `/tmp/gc-header-progress.md`. None of the rejected prototype's
+results should be described as an improvement in the retained implementation.
+
+## 12. Follow-up: combine header classification and buffer preparation
+
+### Remove a repeated walk, not just its cache misses
+
+The container nursery classified object headers, then walked the typed heap
+again to identify young lists' element arrays and young dictionaries' private
+storage. Such buffers must not independently keep a dead young owner's children
+alive. They should be traced only when their owner or another real root reaches
+them. The second walk repeated header and allocation-map reads.
+
+The new implementation identifies those buffers during the first header pass.
+It first completes the allocation maps for the untyped MEM and OBJECT heaps
+and sorts that prefix of the page table. Young-header classification can then
+look up private buffers without waiting for the remaining typed heaps. This
+trades an additional prefix sort for removing the later whole typed-heap walk.
+Shared dictionary keys and embedded values retain their existing ownership rules.
+
+Two details are essential for correctness. Cached page-table pointers are
+cleared when the table grows and after its final sort. Also, an early fallback
+to full tracing must reset the private-buffer marks that classification may
+already have set, as well as the typed-object marks, so that full tracing
+receives the same unmarked allocation maps as a fresh full snapshot. No edges
+have been traced at that point. The world remains stopped throughout these operations; no
+mutator allocation/free hook, nursery budget, or reclamation eligibility changed.
+
+### Validation and controls
+
+The existing fallback/resurrection test now additionally retains 64 young
+list/dictionary cycles through an old owner. It checks buffer contents and
+cycles after fallback and three more full collections, while keeping its
+original finalizer/resurrection assertions. The extended test also passed the
+preceding implementation. Debug and NaN-boxing-OFF Debug each passed 289 focused
+tests (16 skips in OFF). Native FT and JIT each passed 805 tests (9 skips), plus
+30 repeated methods covering fallback, buffer ownership, watched/external roots,
+split storage, sparse abandoned pages and huge objects. The broader Debug run
+still had 32 failures and 69 skips among 2,912 tests; its exact failure names
+matched the earlier pressure-gate run. Existing compatibility issues remain.
+
+Five-process ordinary-workload controls used the same isolated, fresh-process,
+alternating-order method as section 10. Both nursery options were enabled.
+
+| Workload | FT seconds, pressure gate → fused preparation | JIT-enabled seconds, pressure gate → fused preparation |
+| --- | ---: | ---: |
+| 2M mixed container iterations | 0.414228 → 0.408519 | 0.404210 → 0.401445 |
+| Same, with 100k old lists | 0.466169 → 0.460173 | 0.458010 → 0.451564 |
+| Same, with 50k old dictionaries | 0.419545 → 0.414234 | 0.411660 → 0.405686 |
+
+These runs improved roughly 0.7–1.5%, with identical collection counts and final
+allocated-block counts. Peak RSS stayed within 0.125 MiB of the baseline.
+Numerical controls stayed essentially flat: the 100M-integer loop measured
+1.379877 → 1.380260 seconds in FT and 0.891539 → 0.891661 in JIT. Float-local
+and n-body median changes were below 0.5%; those timed loops had no collections.
+The previously improved serial buffer-reuse workload also stayed around
+0.050 seconds and 20.625 MiB in both modes, with zero timed collections.
+
+### Repeated primary measurement and remaining limits
+
+The primary workload again uses four workers, 16 batches of one million total
+container iterations per batch, and explicit full collections between batches.
+Both independent comparisons passed all result, native-JIT and bounded-retention
+assertions. Each row below uses its own baseline, not measurements selected from
+different runs:
+
+| Comparison | FT seconds, before → after | JIT-enabled seconds, before → after |
+| --- | ---: | ---: |
+| First comparison, 5 processes | 3.140473 → 3.049577 | 4.705277 → 4.488543 |
+| Independent repeat, 7 processes | 3.127844 → 3.049702 | 4.731511 → 4.479786 |
+
+The repeat shortened FT time by about 2.5% and JIT-enabled time by 5.3%.
+Reported GC time fell 2.658126 → 2.570966 seconds in FT and 2.941909 → 2.702616
+in JIT. Peak RSS changed 82.070 → 82.320 MiB in FT and 66.453 → 65.613 MiB in
+JIT: **this is primarily a speed improvement, not a memory breakthrough**.
+Final allocated-block medians were identical in FT and differed by one in JIT.
+
+The same repeat included RC comparators: 0.411909 seconds / 16.125 MiB for FT
+and 1.202261 seconds / 15.238 MiB for conventional GIL-enabled JIT. The tracing
+candidate still took about 7.4x and 3.7x those times, respectively, and over
+four times their peak RSS. The RC JIT executable is an older preserved build;
+these remain end-to-end configuration comparisons, not isolated collector costs.
+
+Parallel buffer reuse was a less clear control. The initial short test's median
+was roughly 2.7–2.9% slower, despite lower reported GC time. An independent
+11-process repeat instead measured 0.019090 → 0.018731 seconds in FT and
+0.061471 → 0.061905 in the GIL-enabled configuration. With eight times the work
+(1,024 reuses per worker), nine-process medians were 0.114255 → 0.112185 in FT
+and 0.669007 → 0.694067 in the GIL-enabled configuration. The latter had wide,
+overlapping ranges. A further 15-process same-affinity confirmation measured
+0.645060 → 0.649417 seconds, again with wide overlapping ranges.
+
+For diagnosis only, pinning all four GIL-enabled workers to CPU 2 produced
+0.405925 → 0.405914 seconds over 11 processes. That changed-affinity result must
+not replace the original four-core comparison. These C-heavy loops had no
+native executor code. Their variability does not establish a scheduling cause
+or prove equivalence, and they do not support a universal speedup claim.
+
+The fused preparation is retained for its repeated primary-workload improvement
+and modest ordinary-container gains, with the above limitations recorded.
+The broader objective is still unmet: collector work remains substantial and
+serialized, peak memory is high, and known compatibility failures remain.
+
+Evidence is preserved in `/tmp/gc-bufferfusion-{reclaim1,reclaim2,controls1}.json`,
+the separate buffer-control JSON/log files, and their benchmark drivers.
+`/tmp/gc-bufferfusion-progress.md` records the unchanged candidate source,
+builds, test results and timing sequence. No timings overlapped builds, tests,
+profiling or other benchmark runs.
+
+## 13. Follow-up: completing scheduled memory purges at full GC (not retained)
+
+Reclaiming an object, freeing its allocator page, and returning physical memory
+to the operating system are different operations. A diagnostic with four workers
+found roughly 5.6 MiB of allocated slots after full collections, but much higher
+process RSS. Per-area allocator statistics do not include all committed free
+spans in otherwise occupied segments. An idle thread may not allocate again to
+finish those spans' delayed purges.
+
+The prototype completed already scheduled segment purges before fresh full-GC
+snapshots, after the existing normal page-retirement pass. It visited active
+owners and abandoned segments while the world was stopped. It did not force
+occupied or QSBR-protected pages to retire, change the allocator's global purge
+delay, add a per-free hook, or purge empty segments already returned to shared
+arenas. Saved fallback snapshots and minor collections were unchanged.
+
+### Repeated time and peak-memory measurements
+
+The comparator was section 12's fused preparation. The primary workload, build
+flags, four-core affinity, nursery settings and serial fresh-process method were
+unchanged. Each comparison alternated execution order and discarded a warmup.
+All benchmark result, native-JIT and bounded-retention assertions passed.
+Numbers below are medians; RSS is the process peak measured with `ru_maxrss`.
+
+| Comparison | Mode | Seconds, baseline → purge | Peak MiB, baseline → purge |
+| --- | --- | ---: | ---: |
+| 5 processes per configuration | FT | 3.027961 → 3.106948 | 80.746 → 68.184 |
+| 5 processes per configuration | JIT-enabled | 4.500864 → 4.552518 | 66.457 → 64.590 |
+| Independent 7-process repeat | FT | 3.036604 → 3.107116 | 81.023 → 67.867 |
+| Independent 7-process repeat | JIT-enabled | 4.494736 → 4.584948 | 66.328 → 65.438 |
+
+The repeat reduced FT peak memory about 16.2%, but increased time about 2.3%.
+JIT-enabled peak memory fell only 1.3%, with about 2.0% more time. This is a
+memory/throughput tradeoff, not a speed improvement. A separate untimed diagnostic
+also showed lower RSS after workers exited: 64,852 → 29,724 KiB in FT and
+58,196 → 28,952 KiB in JIT. Those are single approximate `/proc/self/status`
+snapshots from a different workload, not repeated peak-memory measurements.
+They suggest useful idle-memory release but cannot establish its typical size.
+
+### Validation, unresolved failure, and disposition
+
+A new semantic test parks four workers across three allocation epochs, retains
+nonzero 64 KiB buffers and container results, and verifies their contents after
+each of three full collections per epoch. It uses a long allocator purge delay,
+checks clean thread termination and reuse, and makes no fragile RSS assertion.
+This test also passes the preceding implementation and is retained.
+
+The prototype initially passed 290 focused Debug tests, 290 NaN-boxing-OFF Debug
+tests (16 skips), and 806 native tests in each mode (9 skips). An `MI_DEBUG=3`
+build passed 45 repeated methods. The broader Debug run had the same 32 failure
+names and 69 skips among 2,912 tests as the preceding implementation.
+
+However, a separate 45-method native FT repetition failed the existing
+fallback/resurrection test's final weak-reference count assertion three times.
+Native JIT passed all 45 methods. The FT suite passed on rerun, and an unchanged
+test run 200 times with hash seed zero and 200 times with randomized seeds passed
+on **each** binary. These later passes do not explain or erase the first failures;
+they establish neither a fix nor pre-existing baseline flakiness.
+
+The forced-purge runtime change was therefore removed. Its replicated throughput
+cost, small JIT peak-memory benefit, and unresolved correctness-test result do
+not justify adopting it. Section 12's runtime optimizations remain intact.
+Ordinary-workload controls were not pursued after these adoption gates failed.
+The overall speed/memory objective remains unmet.
+
+Evidence is preserved in `/tmp/gc-fullpurge-reclaim1.json`,
+`/tmp/gc-fullpurge-reclaim2b.json`, the memory and test logs, and
+`/tmp/gc-fullpurge-progress.md`. The `reclaim2` launch used an incorrect workload
+alias and exited before running a child; it supplied no measurements. Prototype
+sources and builds remain available for diagnosis. No timings overlapped builds,
+tests, profiling or other benchmark runs.
+
+## 14. Follow-up: two-byte allocation maps
+
+The snapshot's non-scalar allocation maps now use 16-bit entries instead of
+32-bit entries. This halves their **per-slot payload**, not the whole heap or
+process memory. Scalar maps still use one byte. Arena allocations retain the
+same 64 KiB minimum payload, so rounding and other metadata still cost memory.
+
+This works because a pending traversal stores a slot index within one allocator
+page, not an object address. Current page geometry limits the number of slots
+well below the 16-bit range, including space reserved for traversal links and
+three special states. Compile-time geometry assertions and a runtime capacity
+guard protect this bound. Object addresses, strides and general indices retain
+their width. Compiled debug information confirmed 2-byte entries versus 4 bytes
+in the comparator, with the page descriptor still 96 bytes in both builds.
+No object layout, allocation hook, nursery budget, or reclamation rule changed.
+
+### Safety coverage
+
+A new test builds 8,193 cyclic list/dictionary graphs containing tuples, byte
+strings and explicitly boxed floats. Across three epochs it checks payloads,
+creates holes by dropping alternate roots, collects, and refills them. This
+exercises mixed scalar/non-scalar maps, slot reuse and long pending chains.
+It also passes the preceding implementation. Existing tests cover deferred
+objects, old slots, young buffers, fallback/resurrection, abandoned owners and
+small through huge allocator pages.
+
+Debug and NaN-boxing-OFF Debug each passed 291 focused tests (16 skips in OFF).
+Native FT and JIT each passed 807 tests (9 skips), plus 55 repeated methods.
+The broad Debug run retained exactly the preceding 32 failure names and 69 skips
+among 2,912 tests. This is not a claim that compatibility is complete, or that
+the earlier rejected purge prototype's unexplained failure has been fixed.
+
+### Measurements and remaining limits
+
+The comparator is section 12's fused preparation, without section 13's rejected
+purge code. Build flags, workloads, separate FT/JIT configurations and measurement
+method were unchanged: isolated fresh processes, alternating order, discarded
+warmup, fixed affinity/hash seed and the default allocator. Both nursery options
+were enabled. Each comparison below uses its own matched baseline. All result,
+native-JIT and bounded-retention assertions passed.
+
+| Comparison | Mode | Median seconds, before → after | Peak MiB, before → after |
+| --- | --- | ---: | ---: |
+| 5 processes per configuration | FT | 3.045740 → 2.979494 | 81.527 → 75.840 |
+| 5 processes per configuration | JIT-enabled | 4.518280 → 4.404221 | 65.848 → 62.469 |
+| Independent 7-process repeat | FT | 3.010239 → 2.957861 | 81.383 → 76.684 |
+| Independent 7-process repeat | JIT-enabled | 4.383792 → 4.327875 | 66.914 → 62.434 |
+
+The repeat shortened time about 1.7% in FT and 1.3% in JIT-enabled mode, while
+reducing peak RSS about 5.8% and 6.7%. Reported GC time fell from 2.538982 to
+2.492771 seconds in FT and 2.638818 to 2.579510 in JIT. Collection counts changed
+619 → 618 in FT and stayed at 676 in JIT. Final allocated-block counts differed
+by eight in FT and were identical in JIT. These are modest improvements on one
+allocation-heavy workload, not a universal speedup or a halving of total memory.
+
+Five-process ordinary-container controls were roughly 0.5–0.9% faster, with
+identical collection and final block counts, and the same or lower peak RSS.
+Float-local, n-body and serial buffer-reuse timings stayed close to their
+comparators. The FT 100-million-integer loop was an exception: its first median
+increased 1.370696 → 1.384371 seconds. A separate nine-process comparison measured
+1.377278 → 1.384452 seconds, about 0.5% slower, with overlapping ranges. Both had
+zero timed collections. The cause is unproven; the result is retained as a
+limitation, not explained away as collector overhead or corrected by code-layout
+tuning. The corresponding JIT integer control stayed essentially flat.
+
+Explicit full-GC controls also passed. Eight collections of 210,000 live lists
+measured 0.084229 → 0.082456 seconds in FT and 0.084241 → 0.082330 in the
+GIL-enabled configuration, with peak RSS 0.75 MiB lower in each. The analogous
+20,000-live-dictionary control changed less than 1%, with essentially unchanged
+peak memory. These C-heavy collection loops had no native executor code.
+Short parallel buffer reuse had overlapping timing ranges: 0.018711 → 0.018394
+seconds in FT and 0.060931 → 0.061419 in the GIL-enabled configuration. It likewise
+had no native executor code and does not establish a general parallel speedup.
+
+The two-byte maps are retained for their repeated primary time/memory gains,
+modest ordinary-container gains and validation, with the numerical limitation
+above. The same primary repeat measured RC FT at 0.425462 seconds / 16.125 MiB
+and conventional GIL-enabled RC JIT at 1.189588 seconds / 15.125 MiB. Tracing still
+took about 7.0x and 3.6x those times, and four to five times their peak memory.
+The RC JIT comparator remains an older preserved build; these are end-to-end
+configuration comparisons, not isolated collector costs. The overall objective
+is still unmet.
+
+Evidence is preserved in `/tmp/gc-halfmarks-{reclaim1,reclaim2,controls1}.json`,
+`/tmp/gc-halfmarks-integer2.json`, `/tmp/gc-halfmarks-full1.json`, their logs and
+`/tmp/gc-halfmarks-progress.md`. No timing overlapped builds, tests, profiling or
+other benchmark runs.

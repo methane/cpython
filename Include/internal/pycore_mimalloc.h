@@ -80,6 +80,9 @@ typedef struct {
 PyAPI_FUNC(void) _PyMem_GetTracingHeapStats(
     PyInterpreterState *interp,
     _PyMem_TracingHeapStats stats[2][_Py_MIMALLOC_HEAP_COUNT]);
+// Requires the world stopped. Returns limit on overflow or incomplete traversal.
+extern uintptr_t _PyMem_TracingHeapSize(PyInterpreterState *interp,
+                                      uintptr_t limit);
 #endif
 #endif
 

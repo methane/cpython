@@ -57,6 +57,45 @@ WORKLOADS = {
 }
 
 MIXED_WORKLOADS = {
+    "reused_list_buffer": """
+        template = (None,) * 131072
+        holder = []
+        def hot(n):
+            for _ in range(n):
+                holder.extend(template)
+                holder.clear()
+            return len(holder)
+        def bench():
+            return hot(512)
+    """,
+    "wide_set_clear": """
+        template = set(range(4096))
+        def hot(n):
+            for _ in range(n):
+                value = template.copy()
+                value.clear()
+            return len(value)
+        def bench():
+            return hot(2000)
+    """,
+    "wide_frozenset_reclaim": """
+        import gc
+        import sys
+        template = set(range(4096))
+        def hot(n):
+            for _ in range(n):
+                value = frozenset(template)
+            return len(value)
+        def bench():
+            retained = []
+            for _ in range(16):
+                result = hot(128)
+                for _ in range(3):
+                    gc.collect()
+                retained.append(sys.getallocatedblocks())
+            assert max(retained[4:]) - min(retained[4:]) < 1000, retained
+            return result
+    """,
     "wide_list_clear": """
         def bench():
             for _ in range(2000):
@@ -406,6 +445,39 @@ NUMERIC_WORKLOADS = {
 }
 
 THREAD_WORKLOADS = {
+    "parallel_buffer_reuse": """
+        import threading
+        template = (None,) * 131072
+        def hot(n):
+            holder = []
+            for _ in range(n):
+                holder.extend(template)
+                holder.clear()
+            return len(holder)
+        def run(workers=4, iterations=128):
+            ready = threading.Barrier(workers + 1, timeout=60)
+            results = [None] * workers
+            errors = []
+            def worker(index):
+                try:
+                    ready.wait()
+                    results[index] = hot(iterations)
+                except BaseException as exc:
+                    errors.append(exc)
+                    ready.abort()
+            threads = [threading.Thread(target=worker, args=(i,))
+                       for i in range(workers)]
+            for thread in threads:
+                thread.start()
+            ready.wait()
+            for thread in threads:
+                thread.join()
+            assert not errors, errors
+            assert results == [0] * workers, results
+            return results
+        def bench():
+            return run()
+    """,
     "parallel_container_reclaim": """
         import gc
         import sys
