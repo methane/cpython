@@ -111,6 +111,7 @@ struct collection_state {
 #ifdef Py_EXPERIMENTAL_TRACING_GC
     struct worklist leaf_unreachable;
     bool leaf_candidates_ready;
+    bool tracing_classified;
     const struct tracing_stack_roots *native_roots;
     uintptr_t live_bytes;
     struct tracing_heap *saved_snapshot;
@@ -240,34 +241,6 @@ gc_clear_alive(PyObject *op)
     gc_clear_bit(op, _PyGC_BITS_ALIVE);
 }
 
-#ifdef Py_EXPERIMENTAL_TRACING_GC
-// No object is staged as unreachable when the initial full mark starts. While
-// the world is stopped, reuse that bit for reachability and convert it to the
-// ordinary post-mark state during the existing GC-heap classification visit.
-static inline int
-gc_is_tracing_marked(PyObject *op)
-{
-    return gc_is_unreachable(op);
-}
-
-static inline void
-gc_set_tracing_mark(PyObject *op)
-{
-    gc_set_unreachable(op);
-}
-
-static inline void
-gc_finish_tracing_mark(PyObject *op, bool marked, bool keep_alive)
-{
-    uint8_t bits = op->ob_gc_bits;
-    bits &= ~(_PyGC_BITS_UNREACHABLE | _PyGC_BITS_ALIVE);
-    if (marked && keep_alive) {
-        bits |= _PyGC_BITS_ALIVE;
-    }
-    op->ob_gc_bits = bits;
-}
-#endif
-
 // Initialize the `ob_tid` field to zero if the object is not already
 // initialized as unreachable.
 static void
@@ -318,6 +291,7 @@ merge_refcount(PyObject *op, Py_ssize_t extra)
     return refcount;
 }
 
+#ifndef Py_EXPERIMENTAL_TRACING_GC
 static void
 frame_disable_deferred_refcounting(_PyInterpreterFrame *frame)
 {
@@ -392,7 +366,6 @@ gc_restore_tid(PyObject *op)
     }
 }
 
-#ifndef Py_EXPERIMENTAL_TRACING_GC
 static void
 gc_restore_refs(PyObject *op)
 {
@@ -883,19 +856,6 @@ gc_clear_alive_bits(const mi_heap_t *heap, const mi_heap_area_t *area,
     return true;
 }
 
-#ifdef Py_EXPERIMENTAL_TRACING_GC
-static bool
-gc_clear_tracing_marks(const mi_heap_t *heap, const mi_heap_area_t *area,
-                       void *block, size_t block_size, void *args)
-{
-    PyObject *op = op_from_block_all_gc(block, args);
-    if (op != NULL) {
-        gc_clear_unreachable(op);
-    }
-    return true;
-}
-#endif
-
 static int
 gc_mark_traverse_list(PyObject *self, void *args)
 {
@@ -1346,6 +1306,7 @@ has_legacy_finalizer(PyObject *op)
     return Py_TYPE(op)->tp_del != NULL;
 }
 
+#ifndef Py_EXPERIMENTAL_TRACING_GC
 static bool
 scan_heap_visitor(const mi_heap_t *heap, const mi_heap_area_t *area,
                   void *block, size_t block_size, void *args)
@@ -1360,41 +1321,11 @@ scan_heap_visitor(const mi_heap_t *heap, const mi_heap_area_t *area,
     // and frozen objects as well.  This is especially important if many
     // tuples have been untracked.
     state->long_lived_total++;
-#ifdef Py_EXPERIMENTAL_TRACING_GC
-    bool marked = gc_is_tracing_marked(op);
-    gc_finish_tracing_mark(
-        op, marked, state->gcstate->tracing_container_nursery_enabled);
-#endif
     if (!_PyObject_GC_IS_TRACKED(op) || gc_is_frozen(op)) {
         return true;
     }
 
-#ifdef Py_EXPERIMENTAL_TRACING_GC
-    // The mark pass is authoritative. Classify and enqueue garbage in one
-    // heap visit; numeric refcounts do not determine reachability.
-    if (_Py_IsImmortal(op)) {
-        return true;
-    }
-    state->candidates++;
-    if (marked) {
-        // Unsupported nursery types also need an age: otherwise their old
-        // storage is counted as new allocation pressure at every collection.
-        gc_clear_unreachable(op);
-        return true;
-    }
-    gc_set_unreachable(op);
-#endif
     if (gc_is_unreachable(op)) {
-#ifdef Py_EXPERIMENTAL_TRACING_GC
-        // Reference operations are inert. Give the worklist's objects a
-        // positive, merged diagnostic count so that resurrected/SAVEALL
-        // objects remain non-unique with a valid unowned header after removal
-        // from the worklist. Destruction changes this sentinel to zero.
-        _Py_atomic_store_uintptr_relaxed(&op->ob_tid, 0);
-        _Py_atomic_store_uint32_relaxed(&op->ob_ref_local, 0);
-        _Py_atomic_store_ssize_relaxed(&op->ob_ref_shared,
-                                      _Py_REF_SHARED(1, _Py_REF_MERGED));
-#else
         // Disable deferred refcounting for unreachable objects so that they
         // are collected immediately after finalization.
         disable_deferred_refcounting(op);
@@ -1402,7 +1333,6 @@ scan_heap_visitor(const mi_heap_t *heap, const mi_heap_area_t *area,
         // Merge and add one to the refcount to prevent deallocation while we
         // are holding on to it in a worklist.
         merge_refcount(op, 1);
-#endif
 
         if (has_legacy_finalizer(op)) {
             // would be unreachable, but has legacy finalizer
@@ -1430,6 +1360,7 @@ scan_heap_visitor(const mi_heap_t *heap, const mi_heap_area_t *area,
     gc_clear_alive(op);
     return true;
 }
+#endif
 
 static int
 move_legacy_finalizer_reachable(struct collection_state *state);
@@ -1688,8 +1619,8 @@ deduce_unreachable_heap(PyInterpreterState *interp,
 #endif
 
 #ifdef Py_EXPERIMENTAL_TRACING_GC
-    // Turn the unmarked objects into the collector worklists.
-    gc_visit_heaps(interp, &scan_heap_visitor, &state->base);
+    // The mark snapshot has already produced the collector worklists.
+    assert(state->tracing_classified);
 #endif
 
     if (state->legacy_finalizers.head) {

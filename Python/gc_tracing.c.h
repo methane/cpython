@@ -19,6 +19,9 @@ struct tracing_page {
     size_t stride;
     size_t offset;
     size_t capacity;
+    // Restore the allocator's GC-heap visit order after address sorting.
+    size_t classify_heap;
+    size_t classify_page;
     uint32_t divisor_magic;
     unsigned divisor_shift;
     // Zero: free slot; one: unmarked allocation; two: visited allocation.
@@ -92,6 +95,9 @@ struct tracing_heap {
     Py_ssize_t skipped_old_objects;
     Py_ssize_t skipped_old_candidates;
     size_t skipped_old_pages;
+    // Current allocator heap and page sequence captured by snapshot_area().
+    size_t classify_heap;
+    size_t classify_page;
 };
 
 static bool tracing_area_clean(const struct tracing_heap *graph,
@@ -236,8 +242,8 @@ tracing_snapshot_use_full_heap(struct tracing_heap *graph)
     assert(graph->young_containers && !graph->leaf_only);
     assert(graph->pending == NULL);
     // No edges have been traced yet. Keep the allocation maps, but discard
-    // the nursery's implicit roots. The initial full mark uses a temporary
-    // header bit, so it does not need to clear every object's promotion bit.
+    // the nursery's implicit roots. The initial full mark records reachability
+    // only in these maps, so it need not clear every object's promotion bit.
     // The current page's free slots are already excluded, even if its
     // object-header loop has not finished.
     for (size_t i = 0; i < graph->size; i++) {
@@ -359,6 +365,8 @@ tracing_snapshot_area(const mi_heap_t *heap, const mi_heap_area_t *area,
         .stride = area->full_block_size,
         .offset = graph->offset,
         .capacity = capacity,
+        .classify_heap = graph->classify_heap,
+        .classify_page = graph->classify_page++,
         .marks = marks,
         .leaf_marks = leaf ? marks : NULL,
         .pending = SIZE_MAX,
@@ -500,9 +508,8 @@ tracing_snapshot_headers(struct tracing_heap *graph, size_t begin)
     for (size_t p = begin; p < graph->size; p++) {
         struct tracing_page *page = &graph->pages[p];
         if (page->typed && !page->leaf) {
-            // The first full root pass records reachability temporarily in
-            // UNREACHABLE and lets the existing classification visit
-            // normalize it.
+            // The first full root pass records reachability in the snapshot
+            // map and classifies it before releasing that map.
             // A later resurrection pass still clears ALIVE and retraces the
             // whole graph because finalizers may have mutated live objects.
             if (!graph->young_containers && graph->temporary_marks) {
@@ -578,6 +585,19 @@ tracing_compare_pages(const void *a, const void *b)
 }
 
 static int
+tracing_compare_classification_order(const void *a, const void *b)
+{
+    const struct tracing_page *x = a;
+    const struct tracing_page *y = b;
+    if (x->classify_heap != y->classify_heap) {
+        return (x->classify_heap > y->classify_heap) -
+               (x->classify_heap < y->classify_heap);
+    }
+    return (x->classify_page > y->classify_page) -
+           (x->classify_page < y->classify_page);
+}
+
+static int
 tracing_snapshot(PyInterpreterState *interp, struct tracing_heap *graph)
 {
     assert(interp->stoptheworld.world_stopped);
@@ -594,11 +614,15 @@ tracing_snapshot(PyInterpreterState *interp, struct tracing_heap *graph)
         if (tag == _Py_MIMALLOC_HEAP_GC_PRE) {
             graph->offset += 2 * sizeof(PyObject *);
         }
+        size_t classify_heap = 0;
         _Py_FOR_EACH_TSTATE_UNLOCKED(interp, p) {
             struct _mimalloc_thread_state *m = &((_PyThreadStateImpl *)p)->mimalloc;
             if (!_Py_atomic_load_int(&m->initialized)) {
                 continue;
             }
+            graph->classify_heap = 2 * classify_heap++ +
+                                   (tag == _Py_MIMALLOC_HEAP_GC_PRE);
+            graph->classify_page = 0;
             if (!mi_heap_visit_blocks(&m->heaps[tag], false,
                                       tracing_snapshot_area, graph))
             {
@@ -606,6 +630,9 @@ tracing_snapshot(PyInterpreterState *interp, struct tracing_heap *graph)
                 goto done;
             }
         }
+        graph->classify_heap = 2 * classify_heap +
+                               (tag == _Py_MIMALLOC_HEAP_GC_PRE);
+        graph->classify_page = 0;
         if (!_mi_abandoned_pool_visit_blocks(&interp->mimalloc.abandoned_pool,
                                              tag, false,
                                              tracing_snapshot_area, graph))
@@ -721,12 +748,7 @@ tracing_mark_typed(struct tracing_heap *graph, struct tracing_page *page,
         graph->nonleaf_live_bytes += page->block_size;
     }
     PyObject *op = (PyObject *)(block + page->offset);
-    if (graph->temporary_marks) {
-        if (!page->leaf) {
-            gc_set_tracing_mark(op);
-        }
-    }
-    else {
+    if (!graph->temporary_marks) {
         gc_set_alive(op);
     }
     return 0;
@@ -1161,6 +1183,70 @@ tracing_module_is_pinned(PyObject *op)
            module->md_exec != NULL;
 }
 
+static void
+tracing_classify_snapshot(struct tracing_heap *graph,
+                          struct collection_state *state)
+{
+    assert(graph->temporary_marks);
+    assert(graph->pending == NULL);
+    assert(!state->tracing_classified);
+    // Marking needs address order for binary searches. Classification and
+    // worklist construction retain the allocator visitor's prior order so
+    // that deallocation and freelist reuse do not change as a side effect.
+    if (graph->size > 1) {
+        qsort(graph->pages, graph->size, sizeof(*graph->pages),
+              tracing_compare_classification_order);
+    }
+    for (size_t i = 0; i < graph->size; i++) {
+        struct tracing_page *page = &graph->pages[i];
+        if (!page->typed || page->leaf) {
+            continue;
+        }
+        for (size_t j = 0; j < page->capacity; j++) {
+            uint16_t mark = page->marks[j];
+            if (mark == 0) {
+                continue;
+            }
+            assert(mark == 1 || mark == 2);
+            PyObject *op = (PyObject *)(page->start + j * page->stride +
+                                       page->offset);
+            state->long_lived_total++;
+            bool marked = mark != 1;
+            uint8_t bits = op->ob_gc_bits;
+            bits &= ~(_PyGC_BITS_UNREACHABLE | _PyGC_BITS_ALIVE);
+            if (marked &&
+                state->gcstate->tracing_container_nursery_enabled)
+            {
+                bits |= _PyGC_BITS_ALIVE;
+            }
+            op->ob_gc_bits = bits;
+            if (!(bits & _PyGC_BITS_TRACKED) ||
+                (bits & _PyGC_BITS_FROZEN) || _Py_IsImmortal(op))
+            {
+                continue;
+            }
+            state->candidates++;
+            if (marked) {
+                continue;
+            }
+            gc_set_unreachable(op);
+            _Py_atomic_store_uintptr_relaxed(&op->ob_tid, 0);
+            _Py_atomic_store_uint32_relaxed(&op->ob_ref_local, 0);
+            _Py_atomic_store_ssize_relaxed(
+                &op->ob_ref_shared, _Py_REF_SHARED(1, _Py_REF_MERGED));
+            if (has_legacy_finalizer(op)) {
+                gc_clear_unreachable(op);
+                worklist_push(&state->legacy_finalizers, op);
+            }
+            else {
+                worklist_push(&state->unreachable, op);
+            }
+            state->long_lived_total--;
+        }
+    }
+    state->tracing_classified = true;
+}
+
 static int
 tracing_traverse_object(struct tracing_heap *graph,
                         struct tracing_page *page, uintptr_t block)
@@ -1371,13 +1457,12 @@ tracing_mark_roots(PyInterpreterState *interp, struct collection_state *state)
     if (err == 0 && !state->leaf_candidates_ready) {
         tracing_find_dead_leaves(&graph, state);
     }
+    if (err == 0 && graph.temporary_marks) {
+        tracing_classify_snapshot(&graph, state);
+    }
     state->live_bytes = graph.live_bytes;
     if (err == 0) {
         state->gcstate->tracing_nonleaf_live_bytes = graph.nonleaf_live_bytes;
-    }
-    if (err != 0 && graph.temporary_marks) {
-        // A failed mark must not affect the next collection's classification.
-        gc_visit_heaps(interp, &gc_clear_tracing_marks, &state->base);
     }
     tracing_free_snapshot(&graph);
     return err;
