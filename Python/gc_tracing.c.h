@@ -831,13 +831,14 @@ tracing_visit(PyObject *op, void *arg)
     }
     struct tracing_heap *graph = arg;
     // Precise visitors supply valid object pointers, so already-marked GC
-    // containers can be rejected before looking up their allocation. Leaf
-    // headers cannot use this shortcut because their map is authoritative.
-    uint8_t mark = graph->temporary_marks ? _PyGC_BITS_UNREACHABLE
-                                         : _PyGC_BITS_ALIVE;
-    uint8_t mask = _PyGC_BITS_TRACKED | mark;
-    if ((op->ob_gc_bits & mask) == mask) {
-        return 0;
+    // containers can normally be rejected before looking up their allocation.
+    // During the initial full mark, use the dense snapshot map instead of
+    // loading a header from every referenced object.
+    if (!graph->temporary_marks) {
+        uint8_t mask = _PyGC_BITS_TRACKED | _PyGC_BITS_ALIVE;
+        if ((op->ob_gc_bits & mask) == mask) {
+            return 0;
+        }
     }
     return tracing_mark_object(graph, op);
 }

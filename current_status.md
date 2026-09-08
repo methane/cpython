@@ -335,6 +335,38 @@ tracing なしと NaN-boxing なしの object file も compile 成功し、Debug
 222.10 MiB、JIT 60.53 MiB から 101.75 MiBへ増えた。時間と memory の交換に過ぎず、
 参照カウントとの差の中心である遅延回収を悪化させるため不採用。
 
+## 続く最適化: initial mark の重複判定を snapshot map に統一
+
+前節の変更後を profile すると、`tracing_visit.part.0` がなお self samples の 7.16%を
+占め、その中では参照先 object の `ob_gc_bits` load が最大だった。従来は precise
+visitor が参照を一つ受け取るたびに header の temporary mark を調べ、未到達なら
+snapshot page と slot を検索していた。initial full mark の snapshot map は既に各
+slot の未到達・pending・到達状態を管理しており、重複判定の authoritative state で
+ある。この pass では header shortcut を使わず、常に dense map に判定を任せる。
+resurrection と nursery の `ALIVE` shortcut は残す。到達性、回収順、threshold は
+変えない。
+
+比較元は initial-mark commit `45d88d7530e`、比較先はこの変更。他の条件と5 workload
+は前節と同じで、各 5 fresh processes、8 values。変更後 / 変更前の幾何平均は次の
+とおり。
+
+| モード | 自動 GC の経過時間 | 自動 GC の報告時間 | Peak RSS |
+| --- | ---: | ---: | ---: |
+| FT | **0.9695x** | **0.9359x** | 1.0029x |
+| JIT | **0.9710x** | **0.9422x** | 0.9992x |
+
+全10組で経過時間と GC 時間が改善した。回収回数を各5回に固定した明示的 full-GC
+では collect 時間が FT 0.9746x、JIT 0.9878x、RSS は 0.9992x / 1.0007xだった。
+4 worker・16 batch・100万 container の stress は FT の時間 0.9666x、GC 0.9614x、
+JIT の時間 0.9783x、GC 0.9690x。JIT RSS は 0.9940x。FT は collection count が
+1.038xになった一方で RSS median は低く、少なくとも memory regression は示さなかった。
+補助 profile では `tracing_visit.part.0` の self share は 5.48%になり、initial path は
+参照先 header load を実行していないことを annotate で確認した。
+
+Debug focus は 173/173 tests 成功。native FT/JIT は比較元でも再現する
+`test_set_bulk_release` だけが失敗して 172/173。Debug/native full build は 116
+modules checked、import failure 0だった。
+
 ## 保存済みビルドと証拠
 
 以下はこのマシンのローカルパスで、Git に含まれない。`/tmp` が消えると失われる。
@@ -350,6 +382,7 @@ DICTWATCH の古い checkpoint にある RUNNING 表記は、この文書の結�
 | TYPEDMARK Debug | `/tmp/cpython-gc-dictwatch-fixed-debug.tR5Set`（incremental rebuild） |
 | initial mark 最適化 native | `/tmp/cpython-gc-typedmark-native.3qHu5p` |
 | initial mark 最適化 Debug | `/tmp/cpython-gc-dictwatch-fixed-debug.tR5Set`（incremental rebuild） |
+| mark-map 比較元 binary | `/tmp/cpython-gc-typedmark-native.3qHu5p/python-initialmark` |
 | 原因分析 RC FT | `/tmp/cpython-gc-analysis-rc_ft.tSSbDh` |
 | 原因分析 RC JIT | `/tmp/cpython-gc-analysis-rc_jit.X9zado` |
 | 原因分析 tracing、NaN-boxing なし | `/tmp/cpython-gc-analysis-trace_nonan.CTuKgS` |
@@ -418,6 +451,9 @@ env -u PYTHON_TRACING_GC_SOFT_DIRTY -u PYTHON_TRACING_GC_YOUNG_CONTAINERS \
   nursery fallback と対象外型の診断。
 - `/tmp/gc-tempmark-{final,explicit,stress}.log` と
   `/tmp/gc-tempmark-stress.json`: initial full mark 最適化の測定。
+- `/tmp/gc-markmap-{final,explicit,stress}.log`、
+  `/tmp/gc-markmap-stress.json`、`/tmp/gc-markmap-ft-perf-run.log`、
+  `/tmp/gc-markmap-ft-perf-report.txt`: initial mark の map 重複判定最適化。
 - `/tmp/gc-threshold-screen.json` と `/tmp/gc-threshold-stress.json`:
   不採用にした threshold 変更の時間・memory 測定。
 - `/tmp/gc-{heapgate,bufferfusion,halfmarks,privatekeys,dictwatch,fullpurge}-progress.md`:
