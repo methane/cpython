@@ -530,6 +530,7 @@ class ExperimentalTracingGCTests(unittest.TestCase):
                                         raw=False, fallback=False):
         self.run_soft_dirty(f"""
             import threading
+            import weakref
             from _testcapi import list_set_item
             from _testinternalcapi import (
                 get_tracing_gc_old_pages, get_long_lived_total)
@@ -542,6 +543,7 @@ class ExperimentalTracingGCTests(unittest.TestCase):
             gc.callbacks.append(record_candidates)
             class Node:
                 pass
+            node_refs = []
             def allocate_containers_until(predicate):
                 for batch in range(256):
                     for i in range(4096):
@@ -607,6 +609,9 @@ class ExperimentalTracingGCTests(unittest.TestCase):
                 nodes = [Node() for _ in range(30000)]
                 for node in nodes:
                     node.link = node
+                # Live weakrefs make these otherwise ordinary Python
+                # instances ineligible for the callback-free nursery.
+                node_refs.extend(map(weakref.ref, nodes))
                 del node, nodes
                 target = len(events) + 1
                 gc.enable()
@@ -881,7 +886,8 @@ class ExperimentalTracingGCTests(unittest.TestCase):
                 tracemalloc.start()
             if OPAQUE:
                 class Holder:
-                    pass
+                    def __del__(self):
+                        pass
                 def make_opaque():
                     for _ in range(32):
                         obj = Holder()
@@ -949,8 +955,8 @@ class ExperimentalTracingGCTests(unittest.TestCase):
         self.check_nursery_sweep_stop(full=True)
 
     def test_full_opaque_sweep_restarts_world(self):
-        # No tp_finalize is present, but an arbitrary tp_clear/tp_dealloc
-        # still needs the ordinary, running-world destruction path.
+        # A finalizer-bearing instance needs the ordinary, running-world
+        # destruction path.
         self.check_nursery_sweep_stop(full=True, opaque=True)
 
     def test_young_containers_old_storage_roots(self):
@@ -1601,6 +1607,84 @@ class ExperimentalTracingGCTests(unittest.TestCase):
             gc.collect()
         """, args=("-X", "gil=0", "-X", "tlbc=1"), env_vars={
             "PYTHON_TRACING_GC_YOUNG_CONTAINERS": "1", "PYTHON_JIT": "0"})
+
+    def test_young_builtin_and_python_containers(self):
+        self.run_soft_dirty("""
+            class Holder:
+                def method(self):
+                    pass
+            holder = Holder()
+
+            def make(index):
+                value = [sys._getframe(), holder.method]
+                node = Holder()
+                node.value = value
+                mapping = {'value': value, 'node': node}
+                value.extend((mapping, value.append, value))
+
+            prepare()
+            for index in range(20000):
+                make(index)
+                if events:
+                    break
+            assert events and events[-1] > 0, events
+            gc.collect()
+        """, env_vars={"PYTHON_TRACING_GC_YOUNG_CONTAINERS": "1"})
+
+    def test_young_picklers(self):
+        self.run_soft_dirty("""
+            import io
+            import pickle
+
+            def make(index):
+                stream = io.BytesIO()
+                pickler = pickle.Pickler(stream, protocol=5)
+                value = [index]
+                value.append(value)
+                pickler.dump(value)
+
+            prepare()
+            for index in range(20000):
+                make(index)
+                if events:
+                    break
+            assert events and events[0] > 0, events
+            gc.collect()
+        """, env_vars={"PYTHON_TRACING_GC_YOUNG_CONTAINERS": "1"})
+
+    def test_young_containers_defer_objects_with_weakrefs(self):
+        self.run_soft_dirty("""
+            import weakref
+            refs = []
+            class Holder:
+                pass
+
+            def make_frame():
+                frame = sys._getframe()
+                cycle = [frame]
+                cycle.append(cycle)
+                refs.append(weakref.ref(frame))
+
+            def make_instance():
+                value = Holder()
+                value.link = value
+                refs.append(weakref.ref(value))
+
+            prepare()
+            gc.disable()
+            for _ in range(32):
+                make_frame()
+                make_instance()
+            for _ in range(20000):
+                cycle = []
+                cycle.append(cycle)
+            gc.enable()
+            allocate_until(lambda: bool(events))
+            assert events[0] > 0, events
+            assert all(ref() is not None for ref in refs)
+            gc.collect()
+            assert sum(ref() is not None for ref in refs) < 4
+        """, env_vars={"PYTHON_TRACING_GC_YOUNG_CONTAINERS": "1"})
 
     def test_young_containers_periodic_full_gc(self):
         self.run_soft_dirty("""

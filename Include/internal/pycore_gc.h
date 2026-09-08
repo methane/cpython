@@ -334,10 +334,14 @@ extern void _PyGC_InitState(struct _gc_runtime_state *);
 // Their remaining instance storage contains no references to trace. This
 // flag is not inherited: subclasses must establish the same contract.
 #define _Py_TPFLAGS_TRACING_PRECISE (1UL << 21)
+// Opt-in for exact types whose deallocator cannot call Python or resurrect
+// the object. This property is stored separately so it is not inherited.
+#define _Py_TYPE_TRACING_NURSERY_SAFE (1U << 0)
 extern void _PyGC_InitializeTracing(PyInterpreterState *interp);
 extern void _PyGC_AccountAllocations(PyThreadState *tstate);
 #else
 #define _Py_TPFLAGS_TRACING_PRECISE 0
+#define _Py_TYPE_TRACING_NURSERY_SAFE 0
 #endif
 
 extern Py_ssize_t _PyGC_Collect(PyThreadState *tstate, int generation, _PyGC_Reason reason);

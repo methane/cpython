@@ -6885,6 +6885,26 @@ notify_type_dealloc_watchers(PyTypeObject *type)
 }
 
 #ifdef Py_EXPERIMENTAL_TRACING_GC
+bool
+_PyType_IsTracingNurserySafe(PyTypeObject *type)
+{
+    if (!(type->tp_flags & Py_TPFLAGS_HEAPTYPE) ||
+        type->tp_dealloc != subtype_dealloc ||
+        type->tp_finalize != NULL || type->tp_del != NULL)
+    {
+        return false;
+    }
+
+    // Pure Python classes eventually delegate to object_dealloc(). Extension
+    // bases may have callback-bearing deallocators that the nursery cannot run.
+    PyTypeObject *base = type;
+    while (base->tp_dealloc == subtype_dealloc) {
+        base = base->tp_base;
+        assert(base != NULL);
+    }
+    return base->tp_dealloc == object_dealloc;
+}
+
 void
 _PyType_NotifyTracingGC(PyTypeObject *type)
 {

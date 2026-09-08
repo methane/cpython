@@ -46,6 +46,7 @@ extern void _PyTypes_FiniCachedDescriptors(PyInterpreterState *);
 #ifdef Py_EXPERIMENTAL_TRACING_GC
 extern void _PyType_NotifyTracingGC(PyTypeObject *);
 extern void _PyType_PrepareTracingGC(PyTypeObject *);
+extern bool _PyType_IsTracingNurserySafe(PyTypeObject *);
 #endif
 
 static inline PyObject **
