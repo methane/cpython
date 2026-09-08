@@ -192,6 +192,67 @@ _PyMem_GetTracingHeapStats(PyInterpreterState *interp,
     _PyEval_StartTheWorld(interp);
 }
 
+struct tracing_heap_size {
+    uintptr_t bytes;
+    uintptr_t limit;
+};
+
+static bool
+tracing_count_heap_size(const mi_heap_t *heap, const mi_heap_area_t *area,
+                        void *block, size_t block_size, void *arg)
+{
+    assert(block == NULL);
+    struct tracing_heap_size *size = arg;
+    // Count allocated slots, including deferred storage and free-list caches,
+    // without inspecting object headers or constructing allocation maps.
+    if (area->block_size != 0 &&
+        area->used > (size->limit - size->bytes) / area->block_size)
+    {
+        return false;
+    }
+    size->bytes += area->used * area->block_size;
+    return size->bytes < size->limit;
+}
+
+uintptr_t
+_PyMem_TracingHeapSize(PyInterpreterState *interp, uintptr_t limit)
+{
+    assert(interp->stoptheworld.world_stopped);
+    struct tracing_heap_size size = {.limit = limit};
+    HEAD_LOCK(&_PyRuntime);
+    for (int tag = 0; tag < _Py_MIMALLOC_HEAP_COUNT; tag++) {
+        _Py_FOR_EACH_TSTATE_UNLOCKED(interp, p) {
+            struct _mimalloc_thread_state *m = &((_PyThreadStateImpl *)p)->mimalloc;
+            if (!_Py_atomic_load_int(&m->initialized)) {
+                continue;
+            }
+#if MI_DEBUG >= 3
+            assert(tracing_collect_tld == NULL);
+            tracing_collect_tld = &m->tld;
+#endif
+            bool ok = mi_heap_visit_blocks(&m->heaps[tag], false,
+                                           tracing_count_heap_size, &size);
+#if MI_DEBUG >= 3
+            tracing_collect_tld = NULL;
+#endif
+            if (!ok) {
+                size.bytes = limit;
+                goto done;
+            }
+        }
+        if (!_mi_abandoned_pool_visit_blocks(&interp->mimalloc.abandoned_pool,
+                                             tag, false,
+                                             tracing_count_heap_size, &size))
+        {
+            size.bytes = limit;
+            goto done;
+        }
+    }
+done:
+    HEAD_UNLOCK(&_PyRuntime);
+    return size.bytes;
+}
+
 void
 _PyMem_BeginTracingSweep(_PyMem_TracingSweep *sweep, PyInterpreterState *interp)
 {

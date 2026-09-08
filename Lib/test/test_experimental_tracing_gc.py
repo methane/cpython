@@ -251,6 +251,135 @@ class ExperimentalTracingGCTests(unittest.TestCase):
                 assert sum(ref() is not None for ref in refs) < 10
         """)
 
+    def test_dictionary_destruction_watcher_resurrection(self):
+        self.run_python("""
+            import gc, _testcapi
+
+            gc.disable()
+            class WatchedDict(dict):
+                pass
+            # This watcher stores the dictionary itself on each destruction
+            # attempt; the event list is also visited as a C module root.
+            watcher = _testcapi.add_dict_watcher(3)
+            events = _testcapi.get_dict_watcher_events()
+            def make():
+                for i in range(64):
+                    dictionary = (dict if i % 2 else WatchedDict)(
+                        number=i, payload=['alive', i])
+                    dictionary['cycle'] = dictionary
+                    _testcapi.watch_dict(watcher, dictionary)
+            def check(dictionaries):
+                for dictionary in dictionaries:
+                    number = dictionary['number']
+                    assert dictionary['payload'] == ['alive', number]
+                    assert dictionary['cycle'] is dictionary
+                    dictionary['reused'] = ['still alive', number]
+            try:
+                make()
+                for _ in range(3):
+                    gc.collect()
+                assert len(events) >= 60, len(events)
+                saved = events[:]
+                known = {id(dictionary) for dictionary in saved}
+                events.clear()
+                check(saved)
+                gc.collect()
+                assert not any(id(dictionary) in known for dictionary in events)
+                events.clear()
+                saved.clear()
+                for _ in range(3):
+                    gc.collect()
+                # Destruction watchers run again after a rescued dictionary
+                # becomes unreachable; they are not once-only __del__ hooks.
+                assert len(events) >= len(known) - 4, len(events)
+                check(events)
+                for dictionary in events:
+                    _testcapi.unwatch_dict(watcher, dictionary)
+                events.clear()
+                for _ in range(3):
+                    gc.collect()
+                assert not events
+            finally:
+                _testcapi.clear_dict_watcher(watcher)
+        """)
+
+    def test_private_and_shared_dict_storage_reuse(self):
+        self.run_python("""
+            import gc, threading
+
+            class Record:
+                pass
+            records = [Record() for _ in range(128)]
+            for i, record in enumerate(records):
+                record.number = i
+                record.payload = ['shared', i]
+            # Copies of split dictionaries share their keys table, unlike
+            # the combined dictionaries created and destroyed below.
+            copies = [record.__dict__.copy() for record in records]
+            frozen_copies = [frozendict(record.__dict__) for record in records]
+            errors = []
+            def churn():
+                try:
+                    for i in range(10000):
+                        unicode_keys = {'number': i, 'payload': ['unicode', i]}
+                        general_keys = {i: ['general', i], (i, None): i + 1}
+                        unicode_keys['cycle'] = unicode_keys
+                        general_keys['cycle'] = general_keys
+                        frozen_keys = frozendict(unicode_keys)
+                        empty = {}
+                        temporary = Record()
+                        temporary.number = i
+                        temporary.payload = ['temporary', i]
+                except BaseException as exc:
+                    errors.append(exc)
+            for epoch in range(3):
+                workers = [threading.Thread(target=churn) for _ in range(4)]
+                for worker in workers:
+                    worker.start()
+                for worker in workers:
+                    worker.join()
+                for _ in range(3):
+                    gc.collect()
+                    for i, (record, copied) in enumerate(zip(records, copies)):
+                        assert record.number == copied['number'] == i
+                        assert record.payload == copied['payload'] == ['shared', i]
+                        assert frozen_copies[i] == copied
+                assert not errors, errors
+        """)
+
+    def test_mixed_mark_maps_and_slot_reuse(self):
+        self.run_python("""
+            import gc
+            from _testinternalcapi import make_tracing_gc_boxed_float
+
+            gc.disable()
+            def make(index, epoch):
+                row = [index, epoch, make_tracing_gc_boxed_float(index + 0.25),
+                       bytes([index % 251]) * (17 + index % 97)]
+                row.append({'owner': row, 'values': tuple(range(index % 23))})
+                return row
+            roots = [make(i, 0) for i in range(8193)]
+            for epoch in range(1, 4):
+                for _ in range(3):
+                    gc.collect()
+                    for i, row in enumerate(roots):
+                        assert row[0] == i
+                        assert row[2] == i + 0.25
+                        assert row[3] == bytes([i % 251]) * (17 + i % 97)
+                        assert row[4]['owner'] is row
+                        assert row[4]['values'] == tuple(range(i % 23))
+                # Leave holes in both byte and halfword maps, then reuse
+                # their slots with another wide set of pending graph edges.
+                for i in range(epoch % 2, len(roots), 2):
+                    roots[i] = None
+                for _ in range(3):
+                    gc.collect()
+                for i in range(epoch % 2, len(roots), 2):
+                    roots[i] = make(i, epoch)
+            gc.collect()
+            assert all(row[4]['owner'] is row for row in roots)
+        """)
+
     def run_soft_dirty(self, source, *, args=(), env_vars=None):
         if sys.platform != "linux":
             self.skipTest("soft-dirty tracking requires Linux")
@@ -830,6 +959,57 @@ class ExperimentalTracingGCTests(unittest.TestCase):
             assert any(events), events
         """, env_vars={"PYTHON_TRACING_GC_YOUNG_CONTAINERS": "1"})
 
+    def test_young_containers_mixed_buffer_owners(self):
+        self.run_soft_dirty("""
+            from _testcapi import list_set_item
+
+            # Keep old item arrays while allocating equally sized young
+            # arrays. A page can contain both independent dirty roots and
+            # buffers that must be traced only through their young owners.
+            roots = [[None] * 128 for _ in range(256)]
+            def install(epoch):
+                for i, root in enumerate(roots):
+                    value = [None] * 128
+                    value[:2] = [epoch, i]
+                    value[-1] = value
+                    # No other thread uses these lists. Only the item array
+                    # is written, not the old object's header or its mutex.
+                    list_set_item(root, 0, value)
+                for _ in range(1024):
+                    value = [None] * 128
+                    value[0] = 'mixed-buffer-garbage'
+                    value[-1] = value
+            def churn():
+                for i in range(1000):
+                    value = [i, {'payload': (i, None)}]
+            for epoch in range(3):
+                # Start a fresh epoch so gc.get_objects() from the previous
+                # check cannot itself force a full-collection fallback.
+                prepare()
+                gc.disable()
+                install(epoch)
+                target = len(events) + 1
+                gc.enable()
+                for _ in range(256):
+                    churn()
+                    if len(events) >= target:
+                        break
+                else:
+                    raise AssertionError(('no collection', events))
+                gc.disable()
+                assert events[-1] > 0, events
+                for i, root in enumerate(roots):
+                    value = root[0]
+                    assert value[:2] == [epoch, i]
+                    assert value[-1] is value
+                del value, root
+                leftovers = sum(
+                    type(obj) is list and len(obj) == 128 and
+                    obj[0] == 'mixed-buffer-garbage' and obj[-1] is obj
+                    for obj in gc.get_objects())
+                assert leftovers < 20, leftovers
+        """, env_vars={"PYTHON_TRACING_GC_YOUNG_CONTAINERS": "1"})
+
     def test_young_containers_abandoned_old_storage_roots(self):
         self.run_soft_dirty("""
             import threading
@@ -950,6 +1130,48 @@ class ExperimentalTracingGCTests(unittest.TestCase):
             assert max(retained) - min(retained) < 5000, retained
         """)
 
+    def test_snapshot_headers_across_small_and_huge_pages(self):
+        self.run_python("""
+            import gc, threading, weakref
+
+            class Marker:
+                pass
+            gc.disable()
+            retained = []
+            refs = []
+            errors = []
+            widths = (0, 1, 15, 16, 17, 255, 4096, 32768)
+            def allocate(epoch):
+                try:
+                    for width in widths:
+                        for index in range(24):
+                            marker = Marker()
+                            marker.key = epoch, width, index
+                            row = [marker, (None,) * width]
+                            row.append(row)
+                            refs.append(weakref.ref(marker))
+                            if index in (0, 12, 23):
+                                retained.append(row)
+                except BaseException as exc:
+                    errors.append(exc)
+
+            for epoch in range(3):
+                worker = threading.Thread(target=allocate, args=(epoch,))
+                worker.start()
+                worker.join()
+                assert not errors, errors
+                # Huge tuple pages can have fewer slots than a lookahead
+                # window. Small pages have holes after the first collection.
+                for _ in range(3):
+                    gc.collect()
+                assert sum(ref() is not None for ref in refs) == len(retained)
+                for marker, items, link in retained:
+                    assert marker.key[2] in (0, 12, 23)
+                    assert len(items) == marker.key[1]
+                    assert all(item is None for item in items)
+                    assert link[0] is marker and link[2] is link
+        """)
+
     def test_full_gc_retires_idle_worker_pages(self):
         self.run_python("""
             import gc, threading
@@ -996,6 +1218,123 @@ class ExperimentalTracingGCTests(unittest.TestCase):
                     thread.join()
             assert not errors, errors
         """)
+
+    def test_full_gc_preserves_idle_worker_buffers(self):
+        self.run_python("""
+            import gc, threading
+
+            gc.disable()
+            gate = threading.Barrier(5, timeout=30)
+            results = [None] * 4
+            errors = []
+            def allocate(epoch):
+                for i in range(20000):
+                    value = [i, (epoch, i), {'value': i}]
+                return value
+            def worker(index):
+                try:
+                    # Keep an occupied buffer in the same owner's segments
+                    # while surrounding pages become free and are reused.
+                    live = bytearray([65 + index]) * 65536
+                    for epoch in range(3):
+                        results[index] = live, allocate(epoch)
+                        gate.wait()
+                        gate.wait()
+                except BaseException as exc:
+                    errors.append(exc)
+                    gate.abort()
+            threads = [threading.Thread(target=worker, args=(i,)) for i in range(4)]
+            for thread in threads:
+                thread.start()
+            try:
+                for epoch in range(3):
+                    gate.wait()
+                    for _ in range(3):
+                        gc.collect()
+                        for index, (live, last) in enumerate(results):
+                            assert live == bytearray([65 + index]) * 65536
+                            assert last == [19999, (epoch, 19999), {'value': 19999}]
+                        assert all(thread.is_alive() for thread in threads)
+                    gate.wait()
+            except BaseException:
+                gate.abort()
+                raise
+            finally:
+                for thread in threads:
+                    thread.join(30)
+            assert not errors, errors
+            assert all(not thread.is_alive() for thread in threads)
+        """, env_vars={"MIMALLOC_PURGE_DELAY": "600000"})
+
+    def test_failed_set_operations_are_reclaimed(self):
+        for kind in ('set', 'frozenset'):
+            for operation in ('union', 'intersection', 'difference',
+                              'symmetric_difference'):
+                for failure in ('iteration', 'hash'):
+                    with self.subTest(kind=kind, operation=operation,
+                                      failure=failure):
+                        self.run_python(f"""
+                            import gc
+                            import threading
+                            from _testinternalcapi import get_tracing_gc_heap_stats
+
+                            class Payload:
+                                pass
+                            class BadHash:
+                                def __hash__(self):
+                                    raise ValueError('hash failed')
+                            def failing(payload):
+                                yield payload
+                                if {failure!r} == 'hash':
+                                    yield BadHash()
+                                raise RuntimeError('iteration failed')
+                            def memory():
+                                return sum(row['allocated'] for row in
+                                           get_tracing_gc_heap_stats())
+                            errors = []
+                            completed = []
+                            def worker():
+                                try:
+                                    expected = (ValueError if {failure!r} == 'hash'
+                                                else RuntimeError)
+                                    for _ in range(256):
+                                        payload = Payload()
+                                        source = {kind}((payload, None))
+                                        method = getattr(source, {operation!r})
+                                        try:
+                                            # Also cover a later argument's
+                                            # failure in the multi-difference
+                                            # wrapper, after a successful copy.
+                                            if {operation!r} == 'difference':
+                                                method((), failing(payload))
+                                            else:
+                                                method(failing(payload))
+                                        except expected:
+                                            pass
+                                        else:
+                                            raise AssertionError('no exception')
+                                    completed.append(True)
+                                except BaseException as exc:
+                                    errors.append(exc)
+
+                            gc.disable()
+                            memory()
+                            for _ in range(3):
+                                gc.collect()
+                            before = memory()
+                            thread = threading.Thread(target=worker)
+                            thread.start()
+                            thread.join()
+                            assert not errors, errors
+                            assert completed == [True], completed
+                            # Exiting the worker removes stale native stack
+                            # roots. Abandoned untracked set bodies must not
+                            # remain allocated after their elements are freed.
+                            for _ in range(4):
+                                gc.collect()
+                            after = memory()
+                            assert after - before < 32 * 1024, (before, after)
+                        """)
 
     def test_failed_frozenset_subclass_is_reclaimed(self):
         self.run_python("""
@@ -1543,6 +1882,7 @@ class ExperimentalTracingGCTests(unittest.TestCase):
         self.run_soft_dirty("""
             import weakref
             calls, saved = [], []
+            roots = [None] * 64
             class Holder:
                 __slots__ = (tuple('slot_%d' % i for i in range(128)) +
                              ('number', 'payload', '__weakref__'))
@@ -1564,6 +1904,14 @@ class ExperimentalTracingGCTests(unittest.TestCase):
                 return refs
             prepare()
             gc.disable()
+            # These private list/dict buffers are classified before an early
+            # nursery fallback. Full tracing must restore their unmarked state
+            # and follow their contents from the retained owner, even though
+            # the owner list itself belongs to the preceding full-GC epoch.
+            for i in range(len(roots)):
+                row = ['retained-%d' % i, {'values': list(range(17 + i))}]
+                row.append(row)
+                roots[i] = row
             refs = make()
             gc.enable()
             allocate_until(lambda: bool(events))
@@ -1572,6 +1920,10 @@ class ExperimentalTracingGCTests(unittest.TestCase):
             assert sorted(obj.number for obj in saved) == [0, 1, 2]
             for _ in range(3):
                 gc.collect()
+                for i, row in enumerate(roots):
+                    assert row[0] == 'retained-%d' % i
+                    assert row[1] == {'values': list(range(17 + i))}
+                    assert row[2] is row
                 for obj in saved:
                     assert obj.payload == [{'number': obj.number},
                                            'resurrected-%d' % obj.number]
@@ -3394,6 +3746,171 @@ class ExperimentalTracingGCTests(unittest.TestCase):
                     assert copied == {'first': 'first-%d' % i,
                                       'second': [str(i)]}
                     assert nodes[i].__dict__ == (mapping if i % 2 else {})
+        """)
+
+    def test_set_bulk_release(self):
+        self.run_python("""
+            import gc, sys, threading, weakref
+
+            gc.disable()
+            finalized = []
+            errors = []
+            class Member:
+                def __init__(self, index):
+                    self.index = index
+                    self.finalized = finalized
+                def __hash__(self):
+                    return self.index
+                def __del__(self):
+                    self.finalized.append(self.index)
+            class SetSubclass(set):
+                pass
+            class FrozenSubclass(frozenset):
+                pass
+
+            for kind in (set, frozenset, SetSubclass, FrozenSubclass):
+                for clear in (False, True):
+                    if clear and issubclass(kind, frozenset):
+                        continue
+                    for size in (0, 3, 2048):
+                        for sparse in (False, True):
+                            finalized = []
+                            result = []
+                            def worker():
+                                try:
+                                    members = [Member(i) for i in range(size)]
+                                    container = kind(members)
+                                    refs = [weakref.ref(member)
+                                            for member in members]
+                                    survivor = members[-1] if members else None
+                                    if sparse and isinstance(container, set):
+                                        for member in members[:-1]:
+                                            container.remove(member)
+                                    container_ref = weakref.ref(container)
+                                    if clear:
+                                        container.clear()
+                                        assert not container
+                                        assert sys.getsizeof(container) == sys.getsizeof(kind())
+                                        # Exercise the reset inline table and
+                                        # subsequent growth, including dummies.
+                                        container.update(range(32))
+                                        container.difference_update(range(0, 32, 2))
+                                        assert container == set(range(1, 32, 2))
+                                        container.clear()
+                                        container.clear()
+                                        result.append(container)
+                                    result.extend((refs, survivor, container_ref))
+                                except BaseException as exc:
+                                    errors.append(exc)
+                            # An exited worker avoids retaining abandoned
+                            # members through conservative C-stack words.
+                            thread = threading.Thread(target=worker)
+                            thread.start()
+                            thread.join()
+                            assert not errors, errors
+                            refs, survivor, container_ref = result[-3:]
+                            for _ in range(4):
+                                gc.collect()
+                            assert sorted(finalized) == list(range(max(size - 1, 0))), finalized
+                            assert all(ref() is None for ref in refs[:-1])
+                            if size:
+                                assert refs[-1]() is survivor
+                                assert survivor.index == size - 1
+                            if clear:
+                                assert container_ref() is result[0]
+                                assert not result[0]
+                            else:
+                                assert container_ref() is None
+        """)
+
+    def test_released_buffers_do_not_force_collection(self):
+        self.run_python("""
+            import gc
+
+            template = (None,) * 131072
+            holder = []
+            gc.set_threshold(2000)
+            gc.collect()
+            before = sum(row['collections'] for row in gc.get_stats())
+            gc.enable()
+            # Allocate and promptly release 128 MiB of auxiliary storage,
+            # while keeping the live heap and the ordinary GC budget small.
+            for _ in range(128):
+                holder.extend(template)
+                assert len(holder) == len(template)
+                holder.clear()
+            after = sum(row['collections'] for row in gc.get_stats())
+            assert after == before, (before, after)
+            assert not holder and template[0] is template[-1] is None
+            # Explicit collection must not be suppressed by the pressure gate.
+            gc.collect()
+            assert sum(row['collections'] for row in gc.get_stats()) == after + 1
+        """)
+
+    def test_heap_pressure_checks_keep_a_fixed_live_baseline(self):
+        self.run_python("""
+            import gc, weakref
+
+            class Node:
+                __slots__ = ('payload', 'link', '__weakref__')
+            template = (None,) * 131072
+            holder = []
+            refs = []
+            gc.set_threshold(2000)
+            gc.collect()
+            before = sum(row['collections'] for row in gc.get_stats())
+            gc.enable()
+            # Most allocations are released immediately. A small amount of
+            # garbage accumulates between pressure checks. Rebasing the live
+            # heap on each check would let that garbage grow without limit.
+            for i in range(512):
+                holder.extend(template)
+                holder.clear()
+                node = Node()
+                node.payload = bytes([i % 251]) * 32768
+                node.link = node
+                refs.append(weakref.ref(node))
+            after = sum(row['collections'] for row in gc.get_stats())
+            assert after > before, (before, after)
+            assert sum(ref() is None for ref in refs) >= 128
+        """)
+
+    def test_heap_pressure_includes_abandoned_allocations(self):
+        self.run_python("""
+            import gc, threading, weakref
+
+            class Node:
+                __slots__ = ('payload', 'link', '__weakref__')
+            refs = []
+            errors = []
+            template = (None,) * 131072
+            holder = []
+            gc.set_threshold(2000)
+            gc.collect()
+            gc.disable()
+            def worker():
+                try:
+                    for i in range(2048):
+                        node = Node()
+                        node.payload = bytes([i % 251]) * 8192
+                        node.link = node
+                        refs.append(weakref.ref(node))
+                except BaseException as exc:
+                    errors.append(exc)
+            thread = threading.Thread(target=worker)
+            thread.start()
+            thread.join()
+            assert not errors and len(refs) == 2048, errors
+            before = sum(row['collections'] for row in gc.get_stats())
+            gc.enable()
+            for _ in range(64):
+                holder.extend(template)
+                holder.clear()
+            after = sum(row['collections'] for row in gc.get_stats())
+            # Looking only at active owners would miss the abandoned garbage
+            # and repeatedly dismiss this otherwise justified heap trigger.
+            assert after > before, (before, after)
+            assert sum(ref() is not None for ref in refs) < 16
         """)
 
     def test_acyclic_frozensets_are_reclaimed(self):

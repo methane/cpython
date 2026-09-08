@@ -25,9 +25,9 @@ struct tracing_page {
     // Larger values link the pending traversal through slot indices plus 3.
     // Leaves need no traversal links and use one byte per slot instead.
     // Nursery collections use three for a staged death, swept after restart.
-    // Page-local links need no pointer-sized storage. Mimalloc currently
-    // has 16-bit page capacities; leave room for both links and sentinels.
-    uint32_t *marks;
+    // Page-local links need no pointer-sized storage. The allocator's page
+    // geometry leaves room for both links and sentinels in 16 bits.
+    uint16_t *marks;
     uint8_t *leaf_marks;
     size_t pending;
     struct tracing_page *next_pending;
@@ -37,15 +37,25 @@ struct tracing_page {
 };
 
 #define TRACING_PAGE_CACHE_SIZE 1024
-#define TRACING_OLD_SLOT UINT32_MAX
-#define TRACING_YOUNG_BUFFER (UINT32_MAX - 1)
-#define TRACING_DEFERRED_SLOT (UINT32_MAX - 2)
+#define TRACING_OLD_SLOT UINT16_MAX
+#define TRACING_YOUNG_BUFFER (UINT16_MAX - 1)
+#define TRACING_DEFERRED_SLOT (UINT16_MAX - 2)
+
+// Small pages hold at most one block per pointer-sized slot. Larger page
+// classes have larger minimum block sizes; huge allocations use one slot.
+// Keep the runtime guard too, in case allocator geometry changes.
+static_assert(MI_SMALL_PAGE_SIZE / sizeof(mi_block_t) <= UINT16_MAX - 5,
+              "small-page slot indices must fit in tracing marks");
+static_assert(MI_MEDIUM_PAGE_SIZE / (MI_SMALL_OBJ_SIZE_MAX + 1) <= UINT16_MAX - 5,
+              "medium-page slot indices must fit in tracing marks");
+static_assert(MI_SEGMENT_SIZE / (MI_MEDIUM_OBJ_SIZE_MAX + 1) <= UINT16_MAX - 5,
+              "large-page slot indices must fit in tracing marks");
 
 struct tracing_mark_chunk {
     struct tracing_mark_chunk *next;
     size_t used;
     size_t capacity;
-    uint32_t data[];
+    uint16_t data[];
 };
 
 struct tracing_heap {
@@ -53,6 +63,7 @@ struct tracing_heap {
     struct tracing_mark_chunk *mark_chunks;
     size_t size;
     size_t capacity;
+    size_t buffer_page_count;
     struct tracing_page *pending;
     uintptr_t live_bytes;
     uintptr_t nonleaf_live_bytes;
@@ -177,19 +188,19 @@ tracing_publish_old_pages(GCState *gcstate, struct tracing_heap *graph)
 static void *
 tracing_alloc_marks(struct tracing_heap *graph, size_t capacity, bool leaf)
 {
-    // Pack byte maps and word maps into the same arena, keeping each map
-    // word-aligned. Maps stay stable when the page table grows or is sorted.
-    size_t units = leaf ? capacity / sizeof(uint32_t) +
-                          (capacity % sizeof(uint32_t) != 0) : capacity;
+    // Pack byte maps and halfword maps into the same arena, keeping each map
+    // halfword-aligned. Maps stay stable when the page table grows or is sorted.
+    size_t units = leaf ? capacity / sizeof(uint16_t) +
+                          (capacity % sizeof(uint16_t) != 0) : capacity;
     struct tracing_mark_chunk *chunk = graph->mark_chunks;
     if (chunk == NULL || units > chunk->capacity - chunk->used) {
-        size_t count = Py_MAX(units, 16384);
-        if (count > (SIZE_MAX - sizeof(*chunk)) / sizeof(uint32_t)) {
+        size_t count = Py_MAX(units, 65536 / sizeof(uint16_t));
+        if (count > (SIZE_MAX - sizeof(*chunk)) / sizeof(uint16_t)) {
             return NULL;
         }
         // These buffers belong only to this snapshot. Never allocate from
         // a Python heap being visited, or retain them after collection.
-        chunk = PyMem_RawMalloc(sizeof(*chunk) + count * sizeof(uint32_t));
+        chunk = PyMem_RawMalloc(sizeof(*chunk) + count * sizeof(uint16_t));
         if (chunk == NULL) {
             return NULL;
         }
@@ -229,12 +240,17 @@ tracing_snapshot_use_full_heap(struct tracing_heap *graph)
     // excluded, even if its object-header loop has not finished.
     for (size_t i = 0; i < graph->size; i++) {
         struct tracing_page *page = &graph->pages[i];
-        if (!page->typed || page->leaf) {
+        if (page->leaf) {
             continue;
         }
         for (size_t j = 0; j < page->capacity; j++) {
             if (page->marks[j] != 0) {
                 page->marks[j] = 1;
+                if (!page->typed) {
+                    // Header classification may already have identified a
+                    // private young buffer. Full tracing needs it unmarked.
+                    continue;
+                }
                 PyObject *op = (PyObject *)(page->start + j * page->stride +
                                            page->offset);
                 gc_clear_alive(op);
@@ -318,9 +334,13 @@ tracing_snapshot_area(const mi_heap_t *heap, const mi_heap_area_t *area,
         }
         graph->pages = pages;
         graph->capacity = capacity;
+        if (graph->buffer_page_count != 0) {
+            // Prefix lookups cache addresses inside the page table.
+            memset(graph->cache, 0, sizeof(graph->cache));
+        }
     }
     size_t capacity = area->committed / area->full_block_size;
-    if (capacity > UINT32_MAX - 5) {
+    if (capacity > UINT16_MAX - 5) {
         // The largest link is (capacity - 1) + 3 and must not overlap the
         // reserved nursery states, even if the allocator's limits change.
         return false;
@@ -415,6 +435,65 @@ tracing_snapshot_free_slots(struct tracing_heap *graph, size_t begin)
     }
 }
 
+static void
+tracing_young_buffer(struct tracing_heap *graph, const void *buffer)
+{
+    // MEM and OBJECT heaps are fully captured and sorted before typed heaps.
+    // Later page-table growth preserves these indices, but clears the cache.
+    size_t count = graph->buffer_page_count;
+    uintptr_t address = (uintptr_t)buffer;
+    if (count == 0 || address < graph->pages[0].start ||
+        address >= graph->pages[count - 1].end)
+    {
+        return;
+    }
+    size_t slot = (address >> 16) & (TRACING_PAGE_CACHE_SIZE - 1);
+    struct tracing_page *page = graph->cache[slot];
+    if (page == NULL || address < page->start || address >= page->end) {
+        size_t low = 0, high = count;
+        while (low < high) {
+            size_t middle = low + (high - low) / 2;
+            if (graph->pages[middle].start <= address) {
+                low = middle + 1;
+            }
+            else {
+                high = middle;
+            }
+        }
+        page = &graph->pages[low - 1];
+        if (address >= page->end) {
+            return;
+        }
+        graph->cache[slot] = page;
+    }
+    assert(!page->typed);
+    size_t index = tracing_page_index(page, address);
+    assert(address - (page->start + index * page->stride) < page->block_size);
+    if (page->marks[index] == 1) {
+        // Only one young owner can claim this private allocation.
+        page->marks[index] = TRACING_YOUNG_BUFFER;
+        graph->live_bytes -= page->block_size;
+        graph->nonleaf_live_bytes -= page->block_size;
+    }
+}
+
+static void
+tracing_prepare_young_buffer(struct tracing_heap *graph, PyObject *op)
+{
+    if (PyList_CheckExact(op)) {
+        tracing_young_buffer(graph, ((PyListObject *)op)->ob_item);
+    }
+    else if (PyDict_CheckExact(op)) {
+        PyDictObject *dict = (PyDictObject *)op;
+        if (dict->ma_values == NULL && dict->ma_keys->dk_refcnt == 1) {
+            tracing_young_buffer(graph, dict->ma_keys);
+        }
+        if (dict->ma_values != NULL && !dict->ma_values->embedded) {
+            tracing_young_buffer(graph, dict->ma_values);
+        }
+    }
+}
+
 static bool
 tracing_snapshot_headers(struct tracing_heap *graph, size_t begin)
 {
@@ -457,6 +536,9 @@ tracing_snapshot_headers(struct tracing_heap *graph, size_t begin)
                                 tracing_snapshot_use_full_heap(graph);
                                 return true;
                             }
+                        }
+                        if (!old) {
+                            tracing_prepare_young_buffer(graph, op);
                         }
                     }
                 }
@@ -524,6 +606,18 @@ tracing_snapshot(PyInterpreterState *interp, struct tracing_heap *graph)
             goto done;
         }
         tracing_snapshot_free_slots(graph, begin);
+        if (graph->young_containers && tag == _Py_MIMALLOC_HEAP_OBJECT) {
+            // Private buffers use these two untyped heaps. Prepare their
+            // lookup prefix before reading any GC/GC_PRE object headers.
+            assert(_Py_MIMALLOC_HEAP_MEM < _Py_MIMALLOC_HEAP_OBJECT);
+            assert(_Py_MIMALLOC_HEAP_OBJECT < _Py_MIMALLOC_HEAP_GC);
+            assert(_Py_MIMALLOC_HEAP_OBJECT < _Py_MIMALLOC_HEAP_GC_PRE);
+            if (graph->size > 1) {
+                qsort(graph->pages, graph->size, sizeof(*graph->pages),
+                      tracing_compare_pages);
+            }
+            graph->buffer_page_count = graph->size;
+        }
         if (!tracing_snapshot_headers(graph, begin)) {
             err = -1;
             goto done;
@@ -534,6 +628,10 @@ done:
     if (err == 0 && graph->size > 1) {
         qsort(graph->pages, graph->size, sizeof(*graph->pages),
               tracing_compare_pages);
+    }
+    if (graph->buffer_page_count != 0) {
+        // The complete table has a different order from the buffer prefix.
+        memset(graph->cache, 0, sizeof(graph->cache));
     }
     if (err == 0 && graph->size != 0) {
         graph->start = graph->pages[0].start;
@@ -615,7 +713,7 @@ tracing_mark_address(struct tracing_heap *graph, uintptr_t address)
         }
         else {
             assert(page->pending < page->capacity);
-            page->marks[index] = (uint32_t)page->pending + 3;
+            page->marks[index] = (uint16_t)(page->pending + 3);
         }
         page->pending = index;
     }
@@ -1385,55 +1483,6 @@ struct tracing_dirty_scan {
     size_t opaque_capacity;
 };
 
-static void
-tracing_young_buffer(struct tracing_heap *graph, const void *buffer)
-{
-    uintptr_t address = (uintptr_t)buffer;
-    struct tracing_page *page = tracing_find_page(graph, address);
-    if (page == NULL || page->typed) {
-        return;
-    }
-    size_t index = tracing_page_index(page, address);
-    assert(address - (page->start + index * page->stride) < page->block_size);
-    if (page->marks[index] == 1) {
-        // This allocation has exactly one young owner. Its dirty words must
-        // not root a dead owner's children or turn a young cycle into a root.
-        page->marks[index] = TRACING_YOUNG_BUFFER;
-        graph->live_bytes -= page->block_size;
-        graph->nonleaf_live_bytes -= page->block_size;
-    }
-}
-
-static void
-tracing_prepare_young_buffers(struct tracing_heap *graph)
-{
-    for (size_t i = 0; i < graph->size; i++) {
-        struct tracing_page *page = &graph->pages[i];
-        if (!page->typed || page->leaf) {
-            continue;
-        }
-        for (size_t j = 0; j < page->capacity; j++) {
-            if (page->marks[j] != 1) {
-                continue;
-            }
-            PyObject *op = (PyObject *)(page->start + j * page->stride +
-                                       page->offset);
-            if (PyList_CheckExact(op)) {
-                tracing_young_buffer(graph, ((PyListObject *)op)->ob_item);
-            }
-            else if (PyDict_CheckExact(op)) {
-                PyDictObject *dict = (PyDictObject *)op;
-                if (dict->ma_values == NULL && dict->ma_keys->dk_refcnt == 1) {
-                    tracing_young_buffer(graph, dict->ma_keys);
-                }
-                if (dict->ma_values != NULL && !dict->ma_values->embedded) {
-                    tracing_young_buffer(graph, dict->ma_values);
-                }
-            }
-        }
-    }
-}
-
 static bool
 tracing_scan_dirty_area(const mi_heap_t *heap, const mi_heap_area_t *area,
                         void *block, size_t block_size, void *arg)
@@ -1458,7 +1507,7 @@ tracing_scan_dirty_area(const mi_heap_t *heap, const mi_heap_area_t *area,
         assert(young_page != NULL && young_page->start == start);
         bool has_roots = false;
         for (size_t i = 0; i < young_page->capacity; i++) {
-            uint32_t mark = young_page->marks[i];
+            uint16_t mark = young_page->marks[i];
             if (scan->typed ? mark == TRACING_OLD_SLOT :
                 mark != 0 && mark != TRACING_YOUNG_BUFFER)
             {
@@ -1521,7 +1570,7 @@ tracing_scan_dirty_area(const mi_heap_t *heap, const mi_heap_area_t *area,
     Py_ssize_t old_candidates = 0;
     for (size_t i = 0; i < capacity; i++) {
         if (young_page != NULL) {
-            uint32_t mark = young_page->marks[i];
+            uint16_t mark = young_page->marks[i];
             if (mark != 0 && mark != TRACING_OLD_SLOT) {
                 cache_old = false;
             }
@@ -1777,7 +1826,6 @@ tracing_collect_containers(PyInterpreterState *interp,
         ok = false;
     }
     if (ok) {
-        tracing_prepare_young_buffers(&graph);
         ok = tracing_scan_dirty_heaps(interp, &graph, fd) &&
              tracing_scan_roots(interp, state, &graph) == 0 &&
              tracing_drain_pending(&graph) == 0 &&
@@ -1827,7 +1875,7 @@ tracing_collect_containers(PyInterpreterState *interp,
                 continue;
             }
             for (size_t j = 0; j < page->capacity; j++) {
-                uint32_t mark = page->marks[j];
+                uint16_t mark = page->marks[j];
                 if (mark == 0) {
                     continue;
                 }

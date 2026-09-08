@@ -1900,6 +1900,13 @@ finalize_garbage(struct collection_state *state)
         if (PyType_Check(op)) {
             _PyType_NotifyTracingGC((PyTypeObject *)op);
         }
+        else if (PyDict_Check(op)) {
+            // Destruction watchers can publish this dictionary and its
+            // contents. Notify before clearing anything, then let the
+            // following root pass detect resurrection.
+            _PyDict_NotifyEvent(PyDict_EVENT_DEALLOCATED,
+                                (PyDictObject *)op, NULL, NULL);
+        }
 #endif
         if (!_PyGC_FINALIZED(op)) {
             destructor finalize = Py_TYPE(op)->tp_finalize;
@@ -2173,6 +2180,13 @@ handle_resurrected_objects(struct collection_state *state)
             worklist_remove(&iter);
             state->long_lived_total++;
         }
+        else if (PyDict_Check(op)) {
+            // Notifications have run and this dictionary is still dead.
+            // Prevent callbacks during tp_clear/tp_dealloc, after the last
+            // resurrection check. Keep watchers on dictionaries that live.
+            PyDictObject *dict = (PyDictObject *)op;
+            dict->_ma_watcher_tag &= ~(uint64_t)DICT_WATCHER_MASK;
+        }
     }
     WORKSTACK_FOR_EACH_ITER(&state->leaf_unreachable, &iter, op) {
         if (gc_is_alive(op)) {
@@ -2380,6 +2394,38 @@ gc_should_collect(GCState *gcstate)
 }
 
 #ifdef Py_EXPERIMENTAL_TRACING_GC
+static bool
+tracing_recheck_heap_pressure(PyInterpreterState *interp)
+{
+    GCState *gcstate = &interp->gc;
+    assert(_Py_atomic_load_int_relaxed(&gcstate->collecting));
+    _PyEval_StopTheWorld(interp);
+    uintptr_t live = gcstate->tracing_live_bytes;
+    uintptr_t budget = Py_MAX(live, (uintptr_t)gcstate->young.threshold * 4096);
+    // Dismiss a trigger only when net growth is clearly below the ordinary
+    // budget. Spending the entire budget on net growth instead of gross
+    // allocations stretches garbage lifetimes too much on mixed workloads.
+    uintptr_t allowance = budget / 2;
+    uintptr_t limit = live > UINTPTR_MAX - allowance ? UINTPTR_MAX : live + allowance;
+    uintptr_t allocated = _PyMem_TracingHeapSize(interp, limit);
+    bool collect = allocated >= limit;
+    if (!collect) {
+        // Gross allocation debt includes auxiliary buffers already released by
+        // clear/realloc. Rebase it on actual outstanding storage, still bounded
+        // by the same live-heap baseline and the allowance above. Never move it
+        // forward on a skipped collection: that would permit unlimited growth.
+        gcstate->tracing_allocated_bytes = allocated > live ? allocated - live : 0;
+        _Py_FOR_EACH_TSTATE_BEGIN(interp, p) {
+            ((_PyThreadStateImpl *)p)->gc.allocated_bytes = 0;
+        }
+        _Py_FOR_EACH_TSTATE_END(interp);
+        // Nonleaf nursery pressure remains conservative until a real GC.
+        // No age bits, dirty epochs, roots or finalization state were changed.
+    }
+    _PyEval_StartTheWorld(interp);
+    return collect;
+}
+
 void
 _PyGC_AccountAllocations(PyThreadState *tstate)
 {
@@ -2599,6 +2645,12 @@ gc_collect_internal(PyInterpreterState *interp, struct collection_state *state, 
             needs_finalization = true;
             break;
         }
+        if (PyDict_Check(op) &&
+            (((PyDictObject *)op)->_ma_watcher_tag & DICT_WATCHER_MASK))
+        {
+            needs_finalization = true;
+            break;
+        }
         if (Py_TYPE(op)->tp_finalize != NULL && !_PyGC_FINALIZED(op)) {
             // Function/code finalizers only dispatch destruction watchers.
             // Without registered watchers they cannot execute user code.
@@ -2746,6 +2798,14 @@ gc_collect_main_impl(PyThreadState *tstate, int generation, _PyGC_Reason reason
         return 0;
     }
 #ifdef Py_EXPERIMENTAL_TRACING_GC
+    if (reason == _Py_GC_REASON_HEAP &&
+        !tracing_recheck_heap_pressure(tstate->interp))
+    {
+        // This was an allocator-pressure check, not a mark/sweep collection.
+        // Do not send GC callbacks or publish collection statistics for it.
+        _Py_atomic_store_int(&gcstate->collecting, 0);
+        return 0;
+    }
     int notifying = 0;
     if (gcstate->callbacks != NULL && PyList_GET_SIZE(gcstate->callbacks) != 0) {
         expected = 0;

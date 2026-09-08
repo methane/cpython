@@ -529,8 +529,10 @@ General Options
    A fallback after tracing descendants takes a fresh full snapshot instead.
    The full collector consumes a reused snapshot once; any later resurrection
    pass takes a fresh snapshot to include allocations made by finalizers.
-   Temporary allocation maps use one byte per scalar slot and four bytes
+   Temporary allocation maps use one byte per scalar slot and two bytes
    per other slot; traversal links are page-local indices, not pointers.
+   Allocator page geometry and slot-index bounds are checked before narrowing
+   these links; object addresses retain their full width.
    This additional option keeps write tracking active on container-heavy
    workloads.  It is off by default; compare both elapsed time and peak
    process memory when evaluating it.  The benchmark script's ``--suite mixed``
