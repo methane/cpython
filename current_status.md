@@ -1,7 +1,7 @@
 # Experimental tracing GC: 引き継ぎ状況
 
 更新日: 2026-09-08 UTC。ブランチ: `experimental-tracing-gc`。
-現在の tracing GC 実装の先頭コミットは `22ab6381f8d`。
+現在の tracing GC 実装の先頭コミットは `48e589623e6`。
 
 ## 最初に読むこと
 
@@ -474,6 +474,49 @@ old heap の広い再走査を dirty card の走査へ置き換える。その�
 
 新規8 focus tests は成功。native tracing suite は176件中175件が成功し、残る
 `test_set_bulk_release` は保存した変更前 binaryでも再現した。
+
+## 追加最適化: iterator と SRE object の nursery 回収
+
+`48e589623e6` は exact list iterator、generic sequence iterator、`re.Pattern`、
+`re.Match` を container nursery で回収する。iterator は nursery sweep の直前に
+参照先を切り、deallocator や freelist に死んだ edge を残さない。full GC の simple
+sweep では iterator を従来どおり対象外にした。full 側まで対象を広げると
+`test_young_container_sweep_releases_shared_storage` の一時保持が許容値 50 未満に対して
+116--135 個へ増えたためである。SRE の二型は型フラグで callback-free と宣言した。
+
+保存済み直前 binary と `regex_compile` を CPU 2、3 values、10 fresh processes、
+順序交互で比較した最良の確定版は、経過時間が FT **0.8641x**、JIT **0.8848x**、
+GC 報告時間が 0.7154x / 0.7713x。full collection の中央値は 14.5 から 5.5、
+14 から 6へ減った。別の5 workload・5 process比較では `regex_compile` が
+FT **0.7967x**、JIT **0.8776x**、5 workload の経過時間比の幾何平均は
+0.9406x / 0.9679xだった。`deepcopy` 系は0--4.8%改善、`pickle` は約1.6%悪化した。
+短い測定の RSS は変動が大きく、10 process の regex では1.018x / 1.075x、
+5 process比較では1.297x / 0.973xだった。両モードで安定して15%という目標には
+届いていないが、full GC を減らす効果は再現した。
+
+新しい iterator/SRE 回帰テストは確定版で成功し、変更前 binary では最初の collection
+が full になって失敗することを確認した。native FT/JIT は各180件中179件成功。
+唯一の `test_set_bulk_release` は変更前 binaryでも再現する既知失敗である。
+
+続けて次を試したが撤回した。
+
+- `os.stat_result`、set、cell、function、code、uop executor まで対象を広げる案。
+  `os.stat_result` は untracked tuple subtype のため通常の型フラグ判定より前に除外され、
+  untracked opt-in を許可すると約3.4 MiBの滞留は消えた。しかし code/executor の
+  相互 detach に破棄前 pass が必要になり、10 process の regex は FT 0.918x、
+  JIT 0.883xに後退した。
+- deferred 上限を budget の1/8から1/4へ広げる案、default thresholdを2000から
+  2500へ上げる案、fallback backoffを4から1へ短縮する案。いずれも full GC または
+  失敗した nursery scan の回数を安定して減らさず、速度改善が小さくなった。
+- container minor の periodic-full 上限を7から15へ延長する案。minor は9回まで
+  続いたが unsupported descendant の fallback が増え、regex の10 process中央値は
+  FT 0.893x、JIT 0.881xに留まった。
+
+確定版後の診断では、残る大きな unsupported body は `os.stat_result`、function、code、
+cell である。これらを除く試作では type と JIT executor が持つ private storage が
+deferred budget を超えた。これ以上 exact type を足すには複雑な破棄順制御が必要で、
+小幅な型追加だけでは両モード15%を安定達成できない。次の大きな改善点は引き続き、
+soft-dirty/PTE fault と old heap scan を置き換える write barrier/card table である。
 
 ## 保存済みビルドと証拠
 
