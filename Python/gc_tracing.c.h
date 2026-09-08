@@ -530,7 +530,7 @@ tracing_snapshot_headers(struct tracing_heap *graph, size_t begin)
                             graph->live_bytes += page->block_size;
                             graph->nonleaf_live_bytes += page->block_size;
                         }
-                        else if (!tracing_nursery_container(op)) {
+                        else if (!tracing_nursery_container(op, true)) {
                             page->may_defer = true;
                             // These young objects and their children must
                             // wait for full tracing if they are unreachable.
@@ -1356,7 +1356,7 @@ tracing_defer_unreachable(struct tracing_heap *graph)
             }
             PyObject *op = (PyObject *)(page->start + j * page->stride +
                                        page->offset);
-            if (tracing_nursery_container(op)) {
+            if (tracing_nursery_container(op, true)) {
                 continue;
             }
             assert(!gc_is_alive(op));
@@ -2058,7 +2058,7 @@ tracing_collect_containers(PyInterpreterState *interp,
                 // These exact types cannot invoke finalizers, and decrefs
                 // cannot destroy or inspect their children. Their normal
                 // deallocators release owned storage without a tp_clear pass.
-                assert(tracing_nursery_container(op));
+                assert(tracing_nursery_container(op, true));
                 assert(!gc_is_alive(op) && !gc_is_frozen(op));
                 assert(!gc_is_unreachable(op));
                 // Untrack while exclusive access is guaranteed, avoiding
@@ -2067,6 +2067,7 @@ tracing_collect_containers(PyInterpreterState *interp,
                 op->ob_tid = 0;
                 op->ob_ref_local = 0;
                 op->ob_ref_shared = _Py_REF_MERGED;
+                tracing_prepare_nursery_dealloc(op);
                 _Py_Dealloc(op);
                 state->collected++;
             }

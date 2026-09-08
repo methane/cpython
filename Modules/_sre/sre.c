@@ -3646,6 +3646,10 @@ sre_exec(PyObject *m)
     CREATE_TYPE(m, state->Match_Type, &match_spec);
     CREATE_TYPE(m, state->Scanner_Type, &scanner_spec);
     CREATE_TYPE(m, state->Template_Type, &template_spec);
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    state->Pattern_Type->tp_tracing_gc |= _Py_TYPE_TRACING_NURSERY_SAFE;
+    state->Match_Type->tp_tracing_gc |= _Py_TYPE_TRACING_NURSERY_SAFE;
+#endif
 
     if (PyModule_AddIntConstant(m, "MAGIC", SRE_MAGIC) < 0) {
         goto error;
