@@ -1631,3 +1631,77 @@ assertions were not changed. Raw suites are
 `/tmp/pyperformance-gc-results.wgIXfy/final-tracing-{ft,jit}.json`; per-benchmark
 ratios and the aggregate are in `final-compare-{ft,jit}.csv` and
 `final-compare-summary.json` in the same directory.
+
+## 22. Expand nursery type coverage and collect completed generators
+
+The reference-counting comparison in section 17 identified delayed reclamation
+as the largest remaining cost. The original container nursery only accepted
+exact lists, exact tuples and unwatched exact dictionaries. Object censuses of
+the five diagnostic workloads found that 47--58% of newly tracked objects were
+unsupported. Frames, methods, C functions, tracebacks, iterators, exceptions,
+Python instances, picklers and generators repeatedly exhausted the unsupported
+body budget, converted attempted minors into full collections, and entered the
+four-full-collection backoff.
+
+Commit `f08a66295e8` adds types whose young destruction cannot run a callback:
+selected exact builtin iterators and views, slices, enumerate/map/zip, common
+exact exceptions, and frames, C functions and methods without weak references.
+Pure Python heap types are accepted only when `subtype_dealloc` resolves to an
+`object_dealloc` base; C-extension bases are rejected. Finalizers, `tp_del` and
+actual weak references remain full-collection-only. `_pickle.Pickler` explicitly
+opts in. List iterators were left out because enabling them substantially
+increased conservative temporary retention in an existing shared-storage test.
+
+Commit `22ab6381f8d` additionally accepts exact generators only after their frame
+state is `FRAME_CLEARED`. Finalization is a no-op in that state. Suspended
+generators remain excluded because collection can execute `finally` blocks. A
+regression test verifies that a suspended generator cycle survives a minor and
+is finalized by a subsequent full collection.
+
+In alternating five-workload screening against `3bcdb09e4b9`, the type expansion
+reduced FT elapsed time to 0.874x for `deepcopy`, 0.779x for
+`deepcopy_reduce`, and 0.766x for `pickle`. The JIT-enabled ratios were 0.870x,
+0.779x and 0.821x. `deepcopy_memo` was nearly neutral at 0.991x/0.978x;
+`regex_compile` was 1.022x/1.048x. Comparing the completed-generator change
+directly with the type-expansion build put `regex_compile` at 0.996x FT and
+0.954x JIT, with reported GC time at 0.958x and 0.895x.
+
+The retained changes reduce the number of short-lived allocations held until a
+full collection; they do not reduce the allocations requested by Python code.
+Peak RSS in the short type-expansion runs varied from 1.03x to 1.39x because
+fewer full collections allowed more data to remain until the next minor. Trials
+that set the next allocation budget to one half of live bytes reduced RSS by
+about 20% but generally slowed elapsed time by 11--24%. Three quarters reduced
+RSS by 9--18% but slowed time by 5--11% and GC time by 10--24%. Reducing the
+periodic-full limit from seven minors to three did not produce a consistent RSS
+gain and slowed `deepcopy_reduce` by 6.8% FT and 11.5% JIT. These scheduling
+changes were removed.
+
+The next memory optimization should make each minor cheaper before increasing
+its frequency. An old-to-young write barrier and card table could replace Linux
+soft-dirty page faults and broad old-heap rescanning with dirty-card scanning.
+Only after that change is a smaller allocation budget likely to reduce retained
+memory without the measured time penalty. Further exact callback-free C types,
+type-specific ownership for young private buffers, and quicker allocator page
+reuse or purge are secondary opportunities.
+
+The new eight focused tests passed. The native tracing module passed 175 of 176
+tests; the only failure, `test_set_bulk_release`, also reproduced with the saved
+pre-change executable.
+
+The end-to-end pyperformance run used the same saved main `c8da735f4f05`
+baselines, 20 groups, CPU 2, hash seed zero, GCC `-O3` builds without PGO/LTO,
+pyperformance 1.14.0, pyperf 2.10.0 and `--fast` settings as section 21. Across
+the same 26 common subbenchmarks, tracing/main improved from 2.073x to
+**1.985x** FT and from 2.559x to **2.479x** JIT. The new/old-tracing geometric
+means were 0.957x and 0.969x. `deepcopy_reduce`, `pickle`, and `deepcopy`
+improved to 0.815x/0.778x, 0.846x/0.810x, and 0.855x/0.874x in FT/JIT. The JIT
+`regex_compile` suite result was 1.038x with a 12% standard deviation, whereas
+the alternating generator-only comparison was 0.954x; the latter is the better
+estimate of that individual change.
+
+The two GC-specific benchmarks still rejected conservative collection-count
+semantics before timing. Raw suites are
+`/tmp/pyperformance-gc-results.wgIXfy/nurserytypes-tracing-{ft,jit}.json`;
+per-benchmark ratios and the summary are in the corresponding
+`nurserytypes-compare-{ft,jit}.csv` and `nurserytypes-compare-summary.json`.
