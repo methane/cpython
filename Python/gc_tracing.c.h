@@ -671,23 +671,11 @@ tracing_find_page(struct tracing_heap *graph, uintptr_t address)
     return page;
 }
 
-static int
-tracing_mark_address(struct tracing_heap *graph, uintptr_t address)
+static inline int
+tracing_mark_typed(struct tracing_heap *graph, struct tracing_page *page,
+                   size_t index, uintptr_t block)
 {
-    // Interpreter and JIT stack references may have low-bit tags. Interior
-    // pointers are accepted, but padding and unallocated slots are not.
-    address &= ~(uintptr_t)Py_TAG_BITS;
-    struct tracing_page *page = tracing_find_page(graph, address);
-    if (page == NULL) {
-        return 0;
-    }
-    size_t index = tracing_page_index(page, address);
-    uintptr_t block = page->start + index * page->stride;
-    if (address - block >= page->block_size) {
-        return 0;
-    }
-    bool young_buffer = !page->typed &&
-                        page->marks[index] == TRACING_YOUNG_BUFFER;
+    assert(page->typed);
     if (page->leaf) {
         if (page->leaf_marks[index] != 1) {
             return 0;
@@ -701,7 +689,7 @@ tracing_mark_address(struct tracing_heap *graph, uintptr_t address)
         page->leaf_marks[index] = 2;
     }
     else {
-        if (page->marks[index] != 1 && !young_buffer) {
+        if (page->marks[index] != 1) {
             return 0;
         }
         // Keep pending slots on their page. Popping the next object then
@@ -717,22 +705,87 @@ tracing_mark_address(struct tracing_heap *graph, uintptr_t address)
         }
         page->pending = index;
     }
-    // A nursery collection counts old and newly marked leaves together in
-    // its final allocation-map pass. Do not walk their headers at snapshot
-    // time just to copy their existing ALIVE bits into the temporary map.
-    bool counted = graph->young_containers && !page->typed && !young_buffer;
-    if (!graph->leaf_only && !counted &&
-        !(graph->young_containers && page->leaf))
+    if (!graph->leaf_only && !(graph->young_containers && page->leaf))
     {
         graph->live_bytes += page->block_size;
     }
-    if (!page->leaf && !counted) {
+    if (!page->leaf) {
         graph->nonleaf_live_bytes += page->block_size;
     }
-    if (page->typed) {
-        gc_set_alive((PyObject *)(block + page->offset));
+    gc_set_alive((PyObject *)(block + page->offset));
+    return 0;
+}
+
+static inline int
+tracing_mark_untyped(struct tracing_heap *graph, struct tracing_page *page,
+                     size_t index)
+{
+    assert(!page->typed && !page->leaf);
+    bool young_buffer = page->marks[index] == TRACING_YOUNG_BUFFER;
+    if (page->marks[index] != 1 && !young_buffer) {
+        return 0;
+    }
+    if (page->pending == SIZE_MAX) {
+        page->marks[index] = 2;
+        page->next_pending = graph->pending;
+        graph->pending = page;
+    }
+    else {
+        assert(page->pending < page->capacity);
+        page->marks[index] = (uint16_t)(page->pending + 3);
+    }
+    page->pending = index;
+    // A nursery collection initially counts unowned auxiliary allocations.
+    // A claimed young buffer was excluded and must be added back here.
+    bool counted = graph->young_containers && !young_buffer;
+    if (!graph->leaf_only && !counted) {
+        graph->live_bytes += page->block_size;
+    }
+    if (!counted) {
+        graph->nonleaf_live_bytes += page->block_size;
     }
     return 0;
+}
+
+static int
+tracing_mark_address(struct tracing_heap *graph, uintptr_t address)
+{
+    // Interpreter and JIT stack references may have low-bit tags. Interior
+    // pointers are accepted, but padding and unallocated slots are not.
+    address &= ~(uintptr_t)Py_TAG_BITS;
+    struct tracing_page *page = tracing_find_page(graph, address);
+    if (page == NULL) {
+        return 0;
+    }
+    size_t index = tracing_page_index(page, address);
+    uintptr_t block = page->start + index * page->stride;
+    if (address - block >= page->block_size) {
+        return 0;
+    }
+    if (page->typed) {
+        return tracing_mark_typed(graph, page, index, block);
+    }
+    return tracing_mark_untyped(graph, page, index);
+}
+
+static int
+tracing_mark_object(struct tracing_heap *graph, PyObject *op)
+{
+    uintptr_t address = (uintptr_t)op;
+    struct tracing_page *page = tracing_find_page(graph, address);
+    if (page == NULL) {
+        return 0;
+    }
+    size_t index = tracing_page_index(page, address);
+    uintptr_t block = page->start + index * page->stride;
+    if (!page->typed) {
+        if (address - block >= page->block_size) {
+            return 0;
+        }
+        return tracing_mark_untyped(graph, page, index);
+    }
+    assert(address == block + page->offset);
+    return tracing_mark_typed(graph, page, index, block);
 }
 
 static void _Py_NO_SANITIZE_ADDRESS _Py_NO_SANITIZE_MEMORY
@@ -767,7 +820,7 @@ tracing_visit(PyObject *op, void *arg)
     if ((op->ob_gc_bits & mask) == mask) {
         return 0;
     }
-    return tracing_mark_address(arg, (uintptr_t)op);
+    return tracing_mark_object(arg, op);
 }
 
 // Claim an auxiliary allocation whose references the caller will visit
