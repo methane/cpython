@@ -1,16 +1,18 @@
 # Experimental tracing GC: 引き継ぎ状況
 
 更新日: 2026-09-08 UTC。ブランチ: `experimental-tracing-gc`。
-現在の tracing GC 実装の先頭コミットは `3bcdb09e4b9`。
+現在の tracing GC 実装の先頭コミットは `22ab6381f8d`。
 
 ## 最初に読むこと
 
 辞書 watcher の修正と回帰テストは `901122c50b0` にコミット済み。
 チェックポイントで失敗していた復活テストは解決し、Debug 全 173 tests と
 native FT/JIT の対象テストに成功した。main との pyperformance 比較も、最新の
-snapshot-map 直接分類まで含む `3bcdb09e4b9` で再実行した。その間に typed object の
-mark 経路分離、initial full mark の header clear 省略、snapshot map による重複判定、
-map からの直接 heap 分類を追加した。詳細は下記の各節を参照。
+snapshot-map 直接分類まで含む `3bcdb09e4b9` で一度再実行し、その後、young nursery の
+対象型拡大と完了済み generator の minor 回収を `22ab6381f8d` まで追加して再実行した。
+その間に typed object の mark 経路分離、initial full mark の header clear 省略、
+snapshot map による重複判定、map からの直接 heap 分類も追加した。詳細は下記の各節を
+参照。
 
 性能・互換性の実験であり、ある程度の互換性破壊は許容されている。ただし、
 クラッシュやリークを成功扱いしたり、テストを弱めて通したりしてはいけない。
@@ -52,6 +54,11 @@ LLVM 21 はインストール済み。実用的な速度・メモリ使用量と
   `PyObject *` では typed page 専用の mark 経路を使う。auxiliary allocation 用の
   young-buffer 判定と byte accounting を別関数へ分離し、conservative root と
   untyped allocation は従来の汎用経路で扱う。
+- **NURSERY TYPES** (`f08a66295e8`): callback なしで解放できる exact builtin、
+  weakref のない frame/method/C function、pure Python heap type、`Pickler` を young
+  nursery の対象にする。finalizer、weakref callback、C extension base は除外する。
+- **FINISHED GENERATORS** (`22ab6381f8d`): frame が cleared の exact generator だけを
+  minor 回収する。suspended generator は `finally` を実行し得るため full GC に残す。
 
 元の tracing GC、NaN-boxing、即値整数、JIT 対応は先行コミット
 `1b990379c85` に含まれる。設計の説明は英語レポートの前半を参照。
@@ -141,7 +148,7 @@ dict/function/type watcher 通知を期待する既知の互換性 failure/error
 
 ## pyperformance: 最新コミットと main の比較
 
-main は `c8da735f4f05` の保存済み baseline、tracing は最新の `3bcdb09e4b9`。
+main は `c8da735f4f05` の保存済み baseline、tracing は最新の `22ab6381f8d`。
 GCC `-O3`、PGO/LTO なし、CPU 2、hash seed 0、pyperformance 1.14.0 / pyperf
 2.10.0、`--fast` で直列実行した。FT は両方 `--disable-gil` ビルドで
 `PYTHON_GIL=0 PYTHON_TLBC=1 PYTHON_JIT=0`。JIT の main は通常 GIL ビルド、
@@ -156,13 +163,20 @@ tracing は 26 サブベンチを計測できた。比率は各サブベンチ�
 
 | モード | 共通件数 | 幾何平均 | 遅い / 速い | tracing で未計測 |
 | --- | ---: | ---: | ---: | --- |
-| FT | 26 | **2.073x** | 24 / 2 | `create_gc_cycles`, `gc_traversal` |
-| JIT | 26 | **2.559x** | 26 / 0 | 同上 |
+| FT | 26 | **1.985x** | 24 / 2 | `create_gc_cycles`, `gc_traversal` |
+| JIT | 26 | **2.479x** | 26 / 0 | 同上 |
 
-FT の主な遅化は `pickle` 3.28x、`pathlib` 3.16x、`regex_compile` 3.16x、
-`deepcopy` 3.12x、`deepcopy_reduce` 2.94x。`nbody` は 0.949x、`float` は
-0.983x と速かった。JIT は `regex_compile` 3.92x、`deepcopy_reduce` 3.89x、
-`deepcopy` 3.77x、`pickle` 3.52x、`pathlib` 3.44x で、全 26 件が遅かった。
+FT の大きな比率は `pathlib` 3.33x、`xml_etree_generate` 2.78x、
+`regex_compile` 2.77x、`pickle` 2.77x、`deepcopy` 2.67x。JIT は
+`regex_compile` 4.07x、`pathlib` 3.58x、`deepcopy` 3.30x、
+`xml_etree_generate` 3.24x、`2to3` 3.16xで、全26件が遅かった。
+
+`3bcdb09e4b9` の直前の suite に対する幾何平均は FT **0.957x**、JIT
+**0.969x**。対象 workload の旧 tracing 比は `deepcopy_reduce` が 0.815x / 0.778x、
+`pickle` が 0.846x / 0.810x、`deepcopy` が 0.855x / 0.874x（FT / JIT）。
+JIT `regex_compile` は標準偏差 12% の今回 suite では 1.038xだったが、変更前後を
+交互にした generator 単独測定では 0.954xだった。`--fast` suite の小差より交互測定を
+変更単体の判断に使う。
 
 `gc_collect` は回収数の下限、`gc_traversal` は回収数 0 を assertion する。
 conservative tracing は stale root により対象 cycle を一時保持でき、同時に別の
@@ -172,28 +186,29 @@ garbage を回収できるため、両 benchmark は calibration 前に assertio
 これは main と experimental branch の **end-to-end 構成比較**である。tracing 側は
 GC に加えて NaN-boxing、即値整数、JIT 対応なども異なるため、個々の差や幾何平均を
 tracing GC 単体のコストにはできない。`--fast` の結果には pyperf の安定性 warning
-もある。watcher 修正時点 `901122c50b0` の同じ集計は FT 2.050x / JIT 2.559x だった。
-最新値の FT 側の差は、別時刻の `--fast` run の揺らぎを含み、後続最適化の
-変更前後を交互に実行した節18--20の比較を覆す根拠にはしない。
+もある。snapshot-map 分類時点 `3bcdb09e4b9` の同じ集計は FT 2.073x / JIT
+2.559xだった。別時刻の non-interleaved suite なので、その差を今回の変更だけの
+効果とはみなさない。
 
 raw JSON と CSV は `/tmp/pyperformance-gc-results.wgIXfy/` の
-`final-tracing-{ft,jit}.json`、`final-compare-{ft,jit}.csv`、
-`final-compare-summary.json`。main baseline は `main-{ft,jit}.json`。native JIT が
-動かなかった最初の free-threaded main 試行は `main-jit-inactive.json` に隔離し、
-集計から除外した。
+`nurserytypes-tracing-{ft,jit}.json`、`nurserytypes-compare-{ft,jit}.csv`、
+`nurserytypes-compare-summary.json`。前回 tracing は `final-tracing-{ft,jit}.json`、
+main baseline は `main-{ft,jit}.json`。native JIT が動かなかった最初の
+free-threaded main 試行は `main-jit-inactive.json` に隔離し、集計から除外した。
 
 ## 残る課題
 
 1. 広い既存 watcher/stdlib suite の既知の tracing GC 互換性 failure を解消する。
 2. `gc_collect` と `gc_traversal` に tracing GC の回収数 semantics を扱える upstream
    benchmark が用意できれば、GC 専用二項目も性能比較する。
-3. 後続の原因分析で判明した full collection の頻度・範囲と nursery fallback を
-   優先して改善し、時間と RSS の両方で検証する。
+3. soft-dirty による page protection と minor scan の単価を下げる。old-to-young
+   write barrier と card table で dirty old object だけを走査できれば、現在の大きな
+   時間ペナルティなしに minor 頻度を上げられる。
 4. NaN-boxing と JIT 固有の残差は collector scheduling から分けて調査する。
 
 pyperformance checkout は `/home/methane/work/python/pyperformance`。
-以前利用した site-packages は
-`/tmp/pyperformance-run/venv/cpython3.16-8707a636499f-compat-31b33d68c68a/lib/python3.16t/site-packages`。
+今回利用した site-packages は
+`/tmp/pyperformance-final-work/venv/cpython3.16-4b512422fda7-compat-31b33d68c68a/lib/python3.16t/site-packages`。
 runner の現行 help と依存関係を確認してから使用すること。
 
 ## DICTWATCH 後の最適化: typed mark 経路
@@ -412,6 +427,54 @@ import failure 0だった。
 別に試した「既存の heap visit の header 更新を二回から一回へ畳む」案は、通常 GC
 時間が FT 0.9989x、JIT 0.9999x、経過時間が 1.0005x / 1.0024xで実益がなく撤回した。
 
+## allocation 圧力の改善: nursery の対象型を拡大
+
+原因分析の object census では、従来の list/tuple/unwatched-dict nursery から外れる
+短命 object が47--58%あった。`deepcopy` では frame、C function、method、traceback、
+dict iterator/view、例外、ユーザー instance、`pickle` では `Pickler`、正規表現では
+frame、method、generator、slice、iterator、例外が特に多かった。これらが minor の
+unsupported-body budget を超え、full GC と4回の backoffを繰り返していた。
+
+`f08a66295e8` は callback なしで解放できる型だけを nursery に加えた。exact
+traceback、tuple/dict iterator、dict view、slice、enumerate、map、zip、主要な組み込み
+例外、weakref のない frame/C function/method、pure Python heap type と、明示的に
+opt-in した exact `Pickler` が対象。pure Python type は `subtype_dealloc` の最寄りの
+base が `object_dealloc` であることを要求し、C extension base、finalizer、`tp_del`、
+実在する weakref を持つ object は full GC に残す。list iterator は conservative root
+による一時保持を既存テストで大きく増やしたため対象外のままにした。
+
+`22ab6381f8d` はさらに、frame state が `FRAME_CLEARED` の exact generator を対象に
+した。完了済み generator の finalize は何もしない。suspended generator は `finally`
+を実行し得るため除外し、minor では回収されず full GC で finalize される回帰テストを
+追加した。
+
+旧 `3bcdb09e4b9` と交互に測った5 workloadの主な経過時間比は次のとおり。型拡大後の
+FT は `deepcopy` 0.874x、`deepcopy_reduce` 0.779x、`pickle` 0.766x、JIT は
+0.870x、0.779x、0.821x。`deepcopy_memo` は0.991x / 0.978x、`regex_compile` は
+1.022x / 1.048xだった。完了 generator の追加を型拡大版と交互に測ると、
+`regex_compile` は FT 0.996x、JIT 0.954xで、報告GC時間は0.958x / 0.895xだった。
+型拡大後は minor が実際に走り、対象ケースの full collection が大きく減った。
+
+これは Python code が要求する allocation 回数を減らす変更ではない。短命 object を
+full GC まで保持せず minor で回収し、allocator の再利用を早める変更である。短い
+screening の Peak RSS は workload により3--39%増えた。full GC が減って次の minor
+まで保持する量が増えるためで、時間改善だけで memory 問題が解決したとはしない。
+
+allocation budget を小さくして minor を増やす案も測った。live bytes の1/2を次回
+budget にすると RSS は約20%下がる一方、経過時間は多くのケースで11--24%悪化した。
+3/4でも RSS は9--18%下がるが時間が5--11%、GC時間が10--24%悪化した。container
+minor 間の periodic-full 上限を7から3へ下げる案も、RSS改善が安定せず
+`deepcopy_reduce` を FT 6.8%、JIT 11.5%遅くしたため全て撤回した。
+
+次に allocation の滞留を減らすには、minor を安くする必要がある。old object への
+書き込みで card を dirty にする write barrier を追加し、soft-dirty/PTE fault と
+old heap の広い再走査を dirty card の走査へ置き換える。その後なら小さい budget を
+使って早く回収できる。次点は安全な exact C type の追加、young private buffer の
+型別所有権情報、minor 後の allocator page 再利用・purge 改善である。
+
+新規8 focus tests は成功。native tracing suite は176件中175件が成功し、残る
+`test_set_bulk_release` は保存した変更前 binaryでも再現した。
+
 ## 保存済みビルドと証拠
 
 以下はこのマシンのローカルパスで、Git に含まれない。`/tmp` が消えると失われる。
@@ -429,6 +492,9 @@ DICTWATCH の古い checkpoint にある RUNNING 表記は、この文書の結�
 | initial mark 最適化 Debug | `/tmp/cpython-gc-dictwatch-fixed-debug.tR5Set`（incremental rebuild） |
 | mark-map 比較元 binary | `/tmp/cpython-gc-typedmark-native.3qHu5p/python-initialmark` |
 | map 分類比較元 binary | `/tmp/cpython-gc-typedmark-native.3qHu5p/python-markmap` |
+| nursery 型拡大比較元 binary | `/tmp/cpython-gc-typedmark-native.3qHu5p/python-nurserytypes-baseline` |
+| generator 比較元 binary | `/tmp/cpython-gc-typedmark-native.3qHu5p/python-nurserytypes-v1` |
+| 最新 nursery/generator binary | `/tmp/cpython-gc-typedmark-native.3qHu5p/python-nurserytypes-gen` |
 | 原因分析 RC FT | `/tmp/cpython-gc-analysis-rc_ft.tSSbDh` |
 | 原因分析 RC JIT | `/tmp/cpython-gc-analysis-rc_jit.X9zado` |
 | 原因分析 tracing、NaN-boxing なし | `/tmp/cpython-gc-analysis-trace_nonan.CTuKgS` |
@@ -495,6 +561,8 @@ env -u PYTHON_TRACING_GC_SOFT_DIRTY -u PYTHON_TRACING_GC_YOUNG_CONTAINERS \
   `deepcopy` の hardware counters と profile。nursery 構成は counter のみ。
 - `/tmp/gc-nursery-diag.log` と `/tmp/gc-type-census.py`:
   nursery fallback と対象外型の診断。
+- `/tmp/gc-nurserytypes-benchmark.py` と `/tmp/gc-generator-benchmark.py`:
+  nursery 対象型拡大と完了 generator の交互測定 driver。
 - `/tmp/gc-tempmark-{final,explicit,stress}.log` と
   `/tmp/gc-tempmark-stress.json`: initial full mark 最適化の測定。
 - `/tmp/gc-markmap-{final,explicit,stress}.log`、
@@ -521,6 +589,9 @@ env -u PYTHON_TRACING_GC_SOFT_DIRTY -u PYTHON_TRACING_GC_YOUNG_CONTAINERS \
 - **FULLPURGE**: full GC で scheduled purge を完了させる試作。FT の RSS は
   減ったが時間は悪化。FT resurrection テストの 3 failure が未解明で、後続反復が
   通ったことを解決の証拠にしていない。runtime は撤回済み。
+- **SMALL NURSERY BUDGET**: live bytes の1/2・3/4を次回 allocation budget にする案と、
+  periodic full の上限を7から3へ下げる案。RSS低下と引き換えに5--24%遅くなり撤回。
+  soft-dirty のまま同じ定数を再調整せず、write barrier/card trackingを先に検討する。
 - bulk set release、header prefetch、root counts、sorted enumeration、page-map
   prefetch、scratch reuse、batch free publication、purge policy 変更にも不採用
   記録がある。新しい根拠なしに同じパラメータや code layout を調整し続けない。
