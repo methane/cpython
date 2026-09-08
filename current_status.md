@@ -5,11 +5,11 @@
 
 ## 最初に読むこと
 
-今回のコミットは、採用済みの最適化と、**テストがまだ失敗する辞書 watcher
-修正案を含む作業途中のチェックポイント**である。完成版ではない。
-直前の依頼は「pyperformance を使っていろいろなテストで RC と tracing GC を
-比較すること」。その比較を開始する前に、コミットと引き継ぎ文書の作成を
-依頼されたため、最新実装での広範な pyperformance 比較は未着手。
+現在の作業ツリーはチェックポイント `aa8e0f7f82f` の上に、辞書 watcher の
+修正と回帰テストを含む。チェックポイントで失敗していた
+辞書 watcher の復活テストは解決し、Debug 全 173 tests と native FT/JIT の
+対象テストに成功した。main との pyperformance 比較も完了した。詳細は下記の
+「解決済み: 辞書 watcher」と「pyperformance: main との比較」を参照。
 
 性能・互換性の実験であり、ある程度の互換性破壊は許容されている。ただし、
 クラッシュやリークを成功扱いしたり、テストを弱めて通したりしてはいけない。
@@ -45,8 +45,8 @@ LLVM 21 はインストール済み。実用的な速度・メモリ使用量と
   わけではない。これが直近の採用済み性能最適化。
 - 上記と不採用実験から得た回帰テスト、補助バッファ再利用などの独自
   ベンチマーク、configure 文書、英語レポートの追記。
-- **DICTWATCH（未完了）**: 下記の辞書破棄 watcher 修正案・C テスト helper・
-  失敗する回帰テストを、そのまま保存する。
+- **DICTWATCH（解決済み）**: 辞書 subclass の finalizer、破棄 watcher、復活判定の
+  順序を保つ二段階 root 再走査と、内容保持・再通知・unwatch 順序の回帰テスト。
 
 元の tracing GC、NaN-boxing、即値整数、JIT 対応は先行コミット
 `1b990379c85` に含まれる。設計の説明は英語レポートの前半を参照。
@@ -84,7 +84,7 @@ HALFMARKS 時点の検証は Debug focus 291 件成功、NaN-boxing OFF Debug
 69 skip。失敗名は比較元と一致したが、**全テスト成功ではない**。
 これらを現在の DICTWATCH 修正案の検証結果として扱わない。
 
-## 未完了: 辞書 watcher による復活
+## 解決済み: 辞書 watcher による復活
 
 ### 確認できている不具合
 
@@ -96,60 +96,90 @@ tracing の `_PyObject_ResurrectEnd()` は collector の事前通知・root 再�
 同じ再現コードは RC FT で 32 個の辞書を保持して終了した。
 PRIVATEKEYS 実験が原因という証拠はなく、採用済み baseline に存在する不具合。
 
-### 保存した修正案
+### 最終修正
 
-`Python/gc_free_threading.c` の三箇所を変更している。
+チェックポイント案は `finalize_garbage()` 内で watcher を通知していたため、通常の
+`subtype_dealloc()` と逆に辞書 subclass の `__del__` より先に通知していた。また、
+二度目の通知がない失敗は、テストを実行した Python thread の終了済み data stack に
+古いポインタ値が残り、conservative root として辞書を保持したことが原因だった。
 
-1. watched dict を `needs_finalization` に含める。
-2. `finalize_garbage()` で、内容を clear する前に DEALLOCATED を通知する。
-3. root 再走査後も死んだままの辞書だけ watcher bits を消し、最後の復活判定後に
-   callback が辞書を公開することを防ぐ。生き返った辞書の watcher は残す意図。
+最終実装は次の順序にした。
 
-`Modules/_testcapi/watchers.c` は watcher kind 3 を追加した。DEALLOCATED で
-既存の `g_dict_watch_events` に辞書自体を保存する。新しい C global はない。
-`test_dictionary_destruction_watcher_resurrection` は cyclic dict/subclass の
-内容保持、復活後の再利用、二度目の破棄通知、unwatch 後の挙動を検査する。
+1. watched dict を full finalization path に含める。
+2. 通常どおり finalizer を実行した後、world を止めて最初の root 再走査を行う。
+   `__del__` が復活または unwatch した辞書はここで反映される。
+3. まだ死んでいる watched dict がある場合だけ world を再開し、DEALLOCATED を通知。
+4. 再び world を止めて root を走査し、watcher が公開した辞書を救出する。なお死んだ
+   辞書だけ watcher bits を消し、実際の `dict_dealloc()` での二重通知を防ぐ。
 
-### 引き継ぎ時に実行した結果（重要）
+回帰テストは、割り当て・参照解放を worker thread の終了境界に置いて偽の
+conservative root を除き、辞書内容の保持と再利用、二度目の破棄通知、unwatch 後の
+無通知に加えて、subclass の `__del__` による unwatch が通知より先に効くことを検査する。
+DEALLOCATED で辞書自身を既存の C event list に保存する kind 3 helper は
+チェックポイントの `Modules/_testcapi/watchers.c` にある。
 
-native / Debug / helper-only baseline Debug のビルドは完了。
-各 116 modules checked、`_decimal` と `_tkinter` が optional missing、
-import failure は 0。baseline 側のビルド＋テスト job の終了コード 1 は、
-ビルド失敗ではなく新しい回帰テストの失敗による。
+### 検証結果
 
-- helper-only baseline: 新テストの subprocess が `-11` (SIGSEGV) で失敗。
-- 修正案 native FT: 新テストは **失敗**。
-- 修正案 native JIT-enabled: 同じ箇所で **失敗**。
-- 修正案 Debug FT: `test.test_experimental_tracing_gc` 全 173 tests を実行し、
-  172 成功・同じ新テスト 1 failure（31.863 秒）。これは上記 291 件の
-  複数ファイル focus suite とは別の実行。
+- Debug: `test.test_experimental_tracing_gc` は全 173 tests 成功（31.877 秒）。
+- native FT: 新しい辞書 watcher 回帰テスト成功。
+- native JIT: 同テストと `test_jit_stack_root` が成功。native JIT code の生成と
+  `sys._jit.is_active()` の観測も検査済み。
+- 元の ctypes UAF 再現コードは Debug/native FT の両方で 32 辞書を保持して正常終了。
+- tracing を無効にした構成で `Python/gc_free_threading.o` のコンパイル成功。
+- 各 full build は 116 modules checked、`_decimal` と `_tkinter` のみ optional
+  missing、import failure 0。
 
-修正案の失敗は、二度目の破棄を期待する
-`assert len(events) >= len(known) - 4, len(events)` で `events` が空になること。
-その前の内容チェックまでは通るが、修正完了やリーク解消はまだ証明できない。
-再通知されない原因は未調査。テストの到達性・保守的 root の保持と collector の
-復活処理を調べ、仕様も確認すること。単に assertion を削除してはいけない。
-早期通知と最後の watcher bits 消去による callback 順序の互換性も要レビュー。
+広い既存 watcher suite は全成功ではない。tracing GC では即時 `del` 後の
+dict/function/type watcher 通知を期待する既知の互換性 failure/error が残る。
+今回の UAF と callback 順序の回帰テストは成功しているが、watcher 全般の互換性が
+完成したという意味ではない。
 
-引き継ぎ前にコードを追加修正していない。新修正案の OFF ビルド、RC helper の
-検証、広い watcher/stdlib テスト、反復テスト、性能測定は未実施。
-元の ctypes 再現コードも修正案ではまだ再実行していない。
-この文書の作成時点で、今回起動・引き継いだビルドとテスト job は全て終了済み。
+## pyperformance: main との比較
 
-## 次に行うこと
+main は `c8da735f4f05`、tracing は `aa8e0f7f82f` と現在の runtime/test 差分。
+GCC `-O3`、PGO/LTO なし、CPU 2、hash seed 0、pyperformance 1.14.0 / pyperf
+2.10.0、`--fast` で直列実行した。FT は両方 `--disable-gil` ビルドで
+`PYTHON_GIL=0 PYTHON_TLBC=1 PYTHON_JIT=0`。JIT の main は通常 GIL ビルド、
+tracing は free-threaded ビルドに GIL を戻し、両方 `PYTHON_JIT=1` とした。
+main/tracing とも native JIT 実行を別テストで確認した。tracing の nursery 二設定は
+有効。FT は 10 worker × 2 values、JIT は 3 worker × 6 values で、各 worker に
+1 warmup、別に calibration run がある。
 
-1. DICTWATCH の失敗を調査し、修正案を検証する。上記の未検証範囲を埋める。
-   現在のバイナリを検証済み版としてベンチマークしない。
-2. ユーザー依頼の広範な **pyperformance** 比較を行う。
-   RC FT 対 tracing FT、RC JIT 対 tracing JIT を分ける。可能なら同じ source
-   revision と compiler/optimization 条件で RC comparator を新規作成する。
-3. 数値、コンテナ、文字列、JSON、アプリケーション系など複数分野を選び、
-   実行不能・失敗・skip を記録する。raw JSON、実行コマンド、環境、warmup、
-   sample 数を保存する。独自 benchmark script を pyperformance の代用にしない。
-4. FT/JIT/NaN-boxing/build layout も異なる end-to-end 比較と、GC だけを
-   変えた比較を区別する。JIT enabled と native code 実行確認も区別する。
-5. 英語レポートは現在 section 14 HALFMARKS まで。PRIVATEKEYS の不採用と
-   DICTWATCH の最終結果、および pyperformance 結果を必要に応じて追記する。
+20 benchmark group を選び、複数結果を返す group を展開すると main は 28、
+tracing は 26 サブベンチを計測できた。比率は各サブベンチの mean に対する
+`tracing / main`、総合値は共通 26 件の比率の幾何平均。
+
+| モード | 共通件数 | 幾何平均 | 遅い / 速い | tracing で未計測 |
+| --- | ---: | ---: | ---: | --- |
+| FT | 26 | **2.050x** | 24 / 2 | `create_gc_cycles`, `gc_traversal` |
+| JIT | 26 | **2.559x** | 26 / 0 | 同上 |
+
+FT の主な遅化は `pickle` 3.27x、`deepcopy` 3.14x、`deepcopy_reduce` 3.08x。
+`float` は 0.936x、`nbody` は 0.915x と速かった。JIT は
+`deepcopy_reduce` 4.18x、`deepcopy` 4.08x、`regex_compile` 3.97x、
+`pickle` 3.52x、`pathlib` 3.43x で、全 26 件が遅かった。
+
+`gc_collect` は回収数の下限、`gc_traversal` は回収数 0 を assertion する。
+conservative tracing は stale root により対象 cycle を一時保持でき、同時に別の
+garbage を回収できるため、両 benchmark は calibration 前に assertion failure となり
+時間値がない。benchmark を書き換えて数値だけ得ることはしていない。
+
+これは main と experimental branch の **end-to-end 構成比較**である。tracing 側は
+GC に加えて NaN-boxing、即値整数、JIT 対応なども異なるため、個々の差や幾何平均を
+tracing GC 単体のコストにはできない。`--fast` の結果には pyperf の安定性 warning
+もある。raw JSON と compare CSV は `/tmp/pyperformance-gc-results.wgIXfy/` の
+`{main,tracing}-{ft,jit}.json` と `compare-{ft,jit}.csv`。native JIT が動かなかった
+最初の free-threaded main 試行は `main-jit-inactive.json` に隔離し、集計から除外した。
+
+## 残る課題
+
+1. 広い既存 watcher/stdlib suite の既知の tracing GC 互換性 failure を解消する。
+2. `gc_collect` と `gc_traversal` に tracing GC の回収数 semantics を扱える upstream
+   benchmark が用意できれば、GC 専用二項目も性能比較する。
+3. 同一 source revision で collector だけを切り替えた比較を追加し、今回の
+   end-to-end 差から GC 単体の寄与を分離する。
+4. 幾何平均 2.0--2.6x と大きい差を、allocation、root scan、sweep、branch 固有の
+   object representation/JIT 差に分解する。
 
 pyperformance checkout は `/home/methane/work/python/pyperformance`。
 以前利用した site-packages は
@@ -165,6 +195,12 @@ DICTWATCH の古い checkpoint にある RUNNING 表記は、この文書の結�
 
 | 用途 | パス |
 | --- | --- |
+| 今回の DICTWATCH fixed native | `/tmp/cpython-gc-dictwatch-fixed-native.3PYuSt` |
+| 今回の DICTWATCH fixed Debug | `/tmp/cpython-gc-dictwatch-fixed-debug.tR5Set` |
+| 今回の non-tracing compile check | `/tmp/cpython-gc-dictwatch-fixed-rc-check.uOhNKc` |
+| main FT build | `/tmp/cpython-main-bench.uI5G5U/build` |
+| main conventional-GIL JIT build | `/tmp/cpython-main-jit-bench.E55QXp` |
+| pyperformance raw/compare | `/tmp/pyperformance-gc-results.wgIXfy` |
 | HALFMARKS source | `/tmp/cpython-gc-halfmarks-src.8gZQaf` |
 | HALFMARKS native | `/tmp/cpython-gc-halfmarks-native.EFIc6c` |
 | HALFMARKS Debug | `/tmp/cpython-gc-halfmarks-debug.X3WeKi` |
@@ -192,7 +228,7 @@ Debug は JIT 指定を `--enable-experimental-jit=interpreter` に変更し、
 例（今回実行した Debug suite）:
 
 ```sh
-cd /tmp/cpython-gc-dictwatch-debug.IjVrXA
+cd /tmp/cpython-gc-dictwatch-fixed-debug.tR5Set
 env -u PYTHON_TRACING_GC_SOFT_DIRTY -u PYTHON_TRACING_GC_YOUNG_CONTAINERS \
   PYTHONMALLOC=debug PYTHON_GIL=0 PYTHON_TLBC=1 PYTHON_JIT=0 \
   ./python -m unittest test.test_experimental_tracing_gc

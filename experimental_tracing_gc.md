@@ -1237,3 +1237,88 @@ Evidence is preserved in `/tmp/gc-halfmarks-{reclaim1,reclaim2,controls1}.json`,
 `/tmp/gc-halfmarks-integer2.json`, `/tmp/gc-halfmarks-full1.json`, their logs and
 `/tmp/gc-halfmarks-progress.md`. No timing overlapped builds, tests, profiling or
 other benchmark runs.
+
+## 15. Dictionary destruction-watcher resurrection and pyperformance
+
+### Correct watcher ordering and a second resurrection pass
+
+The tracing collector's resurrection protocol had one remaining unsafe callback.
+`dict_dealloc()` sends its destruction-watcher event after the collector's last
+root scan. A watcher that saved the dictionary in a Python list therefore left a
+freed dictionary reachable from that list. The Debug reproducer crashed with a
+poisoned type pointer; the reference-counting collector preserved all 32 watched
+dictionaries.
+
+The checkpoint attempted to notify watchers from `finalize_garbage()`. Although
+that avoided the use-after-free, it sent the event before a dictionary subtype's
+finalizer. Ordinary `subtype_dealloc()` runs that finalizer before calling the
+base dictionary deallocator, so a `__del__` method that unwatched its dictionary
+incorrectly received a destruction event.
+
+The retained implementation first runs finalizers and performs the existing root
+rescan. Only still-dead watched dictionaries are then notified while mutators may
+run. The world is stopped a second time and roots are scanned again, rescuing
+dictionaries published by watcher callbacks. Watcher bits are cleared only from
+dictionaries that remain dead after this second scan, preventing the real
+`dict_dealloc()` from sending an event after the final resurrection check.
+Finalizer resurrection and unwatching are therefore visible before notification,
+while watcher resurrection retains the dictionary's contents and watcher state.
+
+The regression test allocates and releases its candidates in worker threads that
+exit. This is necessary because stale values in a completed Python data stack are
+valid conservative roots even when no Python reference remains; those values had
+caused the checkpoint test's missing second notification. The test checks intact
+contents, reuse after resurrection, a later destruction notification, explicit
+unwatching, and a dictionary-subclass `__del__` that unwatches before the event.
+
+The complete Debug experimental tracing-GC module passed all 173 tests. The new
+test also passed the optimized FT configuration and the optimized JIT-enabled
+configuration. In the latter, the existing JIT stack-root test observed active
+native traces and native JIT code. The original ctypes reproducer preserved all
+32 dictionaries in both Debug and optimized FT runs. A non-tracing build compiled
+`Python/gc_free_threading.o`. The broader watcher suites still have pre-existing
+tracing-GC compatibility failures for immediate destruction notifications; this
+is not a claim that every watcher semantic is implemented.
+
+### End-to-end comparison with main
+
+pyperformance 1.14.0 and pyperf 2.10.0 ran 20 selected benchmark groups on CPU 2
+with hash seed zero and `--fast`. Both sides used GCC `-O3` without PGO or LTO.
+The main source was `c8da735f4f05`; the experimental side was `aa8e0f7f82f` plus
+the two-file watcher fix. FT used free-threaded binaries with the GIL and JIT off.
+The JIT comparison used a conventional GIL main build and the experimental
+free-threaded build with its GIL restored. Separate tests proved native JIT
+execution in both JIT comparators. Both tracing nursery options were enabled.
+
+The FT runs used ten worker processes with two measured values each; JIT used
+three workers with six measured values each. Every worker had one warmup, in
+addition to a calibration run. Multi-result groups expanded the main suite to 28
+subbenchmarks. Tracing produced comparable timings for 26. For each common
+benchmark, the ratio below is its mean tracing time divided by its mean main time;
+the aggregate is the geometric mean of those 26 ratios.
+
+| Mode | Common results | Geometric mean | Slower / faster | Missing on tracing |
+| --- | ---: | ---: | ---: | --- |
+| FT | 26 | **2.050x** | 24 / 2 | `create_gc_cycles`, `gc_traversal` |
+| JIT | 26 | **2.559x** | 26 / 0 | same |
+
+The largest FT ratios were `pickle` 3.27x, `deepcopy` 3.14x and
+`deepcopy_reduce` 3.08x. `float` was 0.936x and `nbody` 0.915x. In the valid JIT
+comparison, every common benchmark was slower: `deepcopy_reduce` 4.18x,
+`deepcopy` 4.08x, `regex_compile` 3.97x, `pickle` 3.52x and `pathlib` 3.43x were
+the largest ratios.
+
+The two missing GC benchmarks rejected tracing semantics before timing.
+`gc_collect` asserts a minimum returned collection count, while `gc_traversal`
+asserts that the returned count is zero. Conservative stale roots can defer some
+of the intended cycles, and a tracing pass can collect unrelated garbage, so the
+respective assertions failed during calibration. The benchmark sources and
+assertions were not weakened to manufacture timings.
+
+This is an end-to-end branch/configuration comparison. The experimental branch
+also changes object representation, immediate integers, NaN boxing and JIT
+support, so the ratios do not isolate tracing-GC cost. Some `--fast` results have
+pyperf stability warnings. Raw suites and comparison CSV files are under
+`/tmp/pyperformance-gc-results.wgIXfy/`. An initial main run used a free-threaded
+build with the GIL restored; its JIT was enabled but never active. That invalid
+run is retained as `main-jit-inactive.json` and excluded from every result above.

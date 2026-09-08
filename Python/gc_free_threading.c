@@ -1900,13 +1900,6 @@ finalize_garbage(struct collection_state *state)
         if (PyType_Check(op)) {
             _PyType_NotifyTracingGC((PyTypeObject *)op);
         }
-        else if (PyDict_Check(op)) {
-            // Destruction watchers can publish this dictionary and its
-            // contents. Notify before clearing anything, then let the
-            // following root pass detect resurrection.
-            _PyDict_NotifyEvent(PyDict_EVENT_DEALLOCATED,
-                                (PyDictObject *)op, NULL, NULL);
-        }
 #endif
         if (!_PyGC_FINALIZED(op)) {
             destructor finalize = Py_TYPE(op)->tp_finalize;
@@ -2154,7 +2147,8 @@ _PyGC_VisitFrameStack(_PyInterpreterFrame *frame, visitproc visit, void *arg)
 
 // Handle objects that may have resurrected after a call to 'finalize_garbage'.
 static int
-handle_resurrected_objects(struct collection_state *state)
+handle_resurrected_objects(struct collection_state *state,
+                           bool dict_watchers_notified)
 {
 #ifdef Py_EXPERIMENTAL_TRACING_GC
     // Finalizers may publish an object into an interpreter root.  Re-run the
@@ -2180,7 +2174,7 @@ handle_resurrected_objects(struct collection_state *state)
             worklist_remove(&iter);
             state->long_lived_total++;
         }
-        else if (PyDict_Check(op)) {
+        else if (dict_watchers_notified && PyDict_Check(op)) {
             // Notifications have run and this dictionary is still dead.
             // Prevent callbacks during tp_clear/tp_dealloc, after the last
             // resurrection check. Keep watchers on dictionaries that live.
@@ -2199,6 +2193,7 @@ handle_resurrected_objects(struct collection_state *state)
     }
     return 0;
 #else
+    (void)dict_watchers_notified;
     // First, find externally reachable objects by computing the reference
     // count difference in ob_ref_local. We can't use ob_tid here because
     // that's already used to store the unreachable worklist.
@@ -2279,6 +2274,36 @@ handle_resurrected_objects(struct collection_state *state)
     return 0;
 #endif
 }
+
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+static bool
+has_watched_dicts(struct collection_state *state)
+{
+    PyObject *op;
+    WORKSTACK_FOR_EACH(&state->unreachable, op) {
+        if (PyDict_Check(op) &&
+            (((PyDictObject *)op)->_ma_watcher_tag & DICT_WATCHER_MASK))
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+static void
+notify_dict_watchers(struct collection_state *state)
+{
+    PyObject *op;
+    WORKSTACK_FOR_EACH(&state->unreachable, op) {
+        if (PyDict_Check(op)) {
+            // The world is running here, so let _PyDict_NotifyEvent load the
+            // current watcher bits atomically.
+            _PyDict_NotifyEvent(PyDict_EVENT_DEALLOCATED,
+                                (PyDictObject *)op, NULL, NULL);
+        }
+    }
+}
+#endif
 
 
 /* Invoke progress callbacks to notify clients that garbage collection
@@ -2704,7 +2729,18 @@ gc_collect_internal(PyInterpreterState *interp, struct collection_state *state, 
 
     _PyEval_StopTheWorld(interp);
     // Handle any objects that may have resurrected after the finalization.
-    err = handle_resurrected_objects(state);
+    err = handle_resurrected_objects(state, false);
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    if (err == 0 && has_watched_dicts(state)) {
+        // A dict subtype's finalizer runs before its base dict deallocator.
+        // Preserve that ordering, and do not send a destruction event for a
+        // dictionary that its finalizer already resurrected.
+        _PyEval_StartTheWorld(interp);
+        notify_dict_watchers(state);
+        _PyEval_StopTheWorld(interp);
+        err = handle_resurrected_objects(state, true);
+    }
+#endif
     // Clear free lists in all threads
     _PyGC_ClearAllFreeLists(interp);
     if (err == 0) {

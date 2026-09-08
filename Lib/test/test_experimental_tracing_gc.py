@@ -253,19 +253,42 @@ class ExperimentalTracingGCTests(unittest.TestCase):
 
     def test_dictionary_destruction_watcher_resurrection(self):
         self.run_python("""
-            import gc, _testcapi
+            import gc, threading, _testcapi
 
             gc.disable()
+            unwatched = []
             class WatchedDict(dict):
                 pass
+            class UnwatchingDict(dict):
+                def __del__(self):
+                    # subtype_dealloc() runs finalizers before dict_dealloc().
+                    # A destruction watcher removed here must not be called.
+                    _testcapi.unwatch_dict(watcher, self)
+                    unwatched.append(self['number'])
             # This watcher stores the dictionary itself on each destruction
             # attempt; the event list is also visited as a C module root.
             watcher = _testcapi.add_dict_watcher(3)
             events = _testcapi.get_dict_watcher_events()
+            errors = []
+            def run_worker(func):
+                def worker():
+                    try:
+                        func()
+                    except BaseException as exc:
+                        errors.append(exc)
+                thread = threading.Thread(target=worker)
+                thread.start()
+                thread.join()
+                assert not thread.is_alive()
+                assert not errors, errors
             def make():
                 for i in range(64):
                     dictionary = (dict if i % 2 else WatchedDict)(
                         number=i, payload=['alive', i])
+                    dictionary['cycle'] = dictionary
+                    _testcapi.watch_dict(watcher, dictionary)
+                for i in range(8):
+                    dictionary = UnwatchingDict(number=1000 + i)
                     dictionary['cycle'] = dictionary
                     _testcapi.watch_dict(watcher, dictionary)
             def check(dictionaries):
@@ -275,27 +298,37 @@ class ExperimentalTracingGCTests(unittest.TestCase):
                     assert dictionary['cycle'] is dictionary
                     dictionary['reused'] = ['still alive', number]
             try:
-                make()
+                # Exiting the allocating thread removes conservative stack
+                # words that are not real references to these dictionaries.
+                run_worker(make)
                 for _ in range(3):
                     gc.collect()
                 assert len(events) >= 60, len(events)
-                saved = events[:]
-                known = {id(dictionary) for dictionary in saved}
-                events.clear()
-                check(saved)
-                gc.collect()
-                assert not any(id(dictionary) in known for dictionary in events)
-                events.clear()
-                saved.clear()
+                assert all(dictionary['number'] < 1000
+                           for dictionary in events), events
+                assert sorted(unwatched) == list(range(1000, 1008)), unwatched
+                expected = len(events)
+                def release_once():
+                    saved = events[:]
+                    events.clear()
+                    check(saved)
+                    gc.collect()
+                    assert not events, events
+                    saved.clear()
+                # The retired worker also drops stale values from its Python
+                # data stack before the dictionaries become candidates again.
+                run_worker(release_once)
                 for _ in range(3):
                     gc.collect()
                 # Destruction watchers run again after a rescued dictionary
                 # becomes unreachable; they are not once-only __del__ hooks.
-                assert len(events) >= len(known) - 4, len(events)
-                check(events)
-                for dictionary in events:
-                    _testcapi.unwatch_dict(watcher, dictionary)
-                events.clear()
+                assert len(events) >= expected - 4, len(events)
+                def release_unwatched():
+                    check(events)
+                    for dictionary in events:
+                        _testcapi.unwatch_dict(watcher, dictionary)
+                    events.clear()
+                run_worker(release_unwatched)
                 for _ in range(3):
                     gc.collect()
                 assert not events
