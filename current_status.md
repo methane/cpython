@@ -1,15 +1,15 @@
 # Experimental tracing GC: 引き継ぎ状況
 
 更新日: 2026-09-08 UTC。ブランチ: `experimental-tracing-gc`。
-今回のチェックポイントの親コミットは `4ebd5dcf047`。
+今回の最適化の親コミットは `901122c50b0`。
 
 ## 最初に読むこと
 
-現在の作業ツリーはチェックポイント `aa8e0f7f82f` の上に、辞書 watcher の
-修正と回帰テストを含む。チェックポイントで失敗していた
-辞書 watcher の復活テストは解決し、Debug 全 173 tests と native FT/JIT の
-対象テストに成功した。main との pyperformance 比較も完了した。詳細は下記の
-「解決済み: 辞書 watcher」と「pyperformance: main との比較」を参照。
+辞書 watcher の修正と回帰テストは `901122c50b0` にコミット済み。
+チェックポイントで失敗していた復活テストは解決し、Debug 全 173 tests と
+native FT/JIT の対象テストに成功した。main との pyperformance 比較も完了した。
+現在の作業ツリーは、その上に typed object の mark 経路を分離する性能最適化を
+含む。詳細は下記の各節を参照。
 
 性能・互換性の実験であり、ある程度の互換性破壊は許容されている。ただし、
 クラッシュやリークを成功扱いしたり、テストを弱めて通したりしてはいけない。
@@ -47,6 +47,10 @@ LLVM 21 はインストール済み。実用的な速度・メモリ使用量と
   ベンチマーク、configure 文書、英語レポートの追記。
 - **DICTWATCH（解決済み）**: 辞書 subclass の finalizer、破棄 watcher、復活判定の
   順序を保つ二段階 root 再走査と、内容保持・再通知・unwatch 順序の回帰テスト。
+- **TYPEDMARK** (`Python/gc_tracing.c.h`): `tp_traverse` が渡す正確な
+  `PyObject *` では typed page 専用の mark 経路を使う。auxiliary allocation 用の
+  young-buffer 判定と byte accounting を別関数へ分離し、conservative root と
+  untyped allocation は従来の汎用経路で扱う。
 
 元の tracing GC、NaN-boxing、即値整数、JIT 対応は先行コミット
 `1b990379c85` に含まれる。設計の説明は英語レポートの前半を参照。
@@ -136,7 +140,7 @@ dict/function/type watcher 通知を期待する既知の互換性 failure/error
 
 ## pyperformance: main との比較
 
-main は `c8da735f4f05`、tracing は `aa8e0f7f82f` と現在の runtime/test 差分。
+main は `c8da735f4f05`、tracing は `901122c50b0` と同内容の測定用 worktree。
 GCC `-O3`、PGO/LTO なし、CPU 2、hash seed 0、pyperformance 1.14.0 / pyperf
 2.10.0、`--fast` で直列実行した。FT は両方 `--disable-gil` ビルドで
 `PYTHON_GIL=0 PYTHON_TLBC=1 PYTHON_JIT=0`。JIT の main は通常 GIL ビルド、
@@ -186,6 +190,39 @@ pyperformance checkout は `/home/methane/work/python/pyperformance`。
 `/tmp/pyperformance-run/venv/cpython3.16-8707a636499f-compat-31b33d68c68a/lib/python3.16t/site-packages`。
 runner の現行 help と依存関係を確認してから使用すること。
 
+## DICTWATCH 後の最適化: typed mark 経路
+
+pyperformance で差が大きかった `deepcopy` 三種、`pickle`、`regex_compile` を
+同じ benchmark 実装・loop 数で呼び、watcher 修正済み native build と TYPEDMARK を
+比較した。CPU 2、hash seed 0、通常 allocator、nursery 有効。各値は独立 process、
+比較順を交互にした 5 process/configuration の中央値。8 values の自動 GC 測定で、
+collection 数は全比較で一致した。
+
+| モード | workload 5件の経過時間比の幾何平均 | 主な改善 | 小さな悪化 |
+| --- | ---: | --- | --- |
+| FT | **0.9926x** | `deepcopy_memo` 0.9728x、`pickle` 0.9922x | `deepcopy` 1.0012x、`deepcopy_reduce` 1.0020x |
+| JIT | **0.9944x** | `deepcopy` 0.9887x、`pickle` 0.9924x | `regex_compile` 1.0032x |
+
+JIT `regex_compile` も collector の報告時間は 0.9914x。別の明示的 full-GC 測定では
+FT 5/5 が 0.9556--0.9945x、JIT は三件が改善し、二件が 1.0019x / 1.0192x だった。
+小差を一般化しないが、自動 GC の両モードで総合改善し、変更は hot mark path に
+限定されるため採用した。Debug は全 173 tests 成功。native FT/JIT はそれぞれ
+173 件中、比較元でも同様に失敗する `test_set_bulk_release` 一件だけが失敗し、
+残り 172 件は成功。native JIT の active trace も確認した。
+
+事前 profile では callback なしの `deepcopy` full collection で
+`tracing_mark_address` が self samples の約 6.6%、`tracing_visit` が約 3.3%だった。
+今回不採用にした案は、2 の累乗 stride の page index を magic multiply から shift
+へ分岐する案と、nursery 失敗後の fixed backoff を 4 から 16 full collection へ
+延長する案。前者は明示的 full-GC の JIT 5/5 で 0.5--1.6%悪化、後者は自動 GC の
+回数を変えず、FT `deepcopy_reduce` が 1.034x、他はほぼ横ばいだったため撤回した。
+active free cursor、条件付き ALIVE clear、snapshot と heap classification の融合も
+速度または保守性の採用条件を満たさず撤回済み。
+
+測定 driver は `/tmp/gc-typedmark-benchmark.py`、候補 build は
+`/tmp/cpython-gc-powerstride-native.zYdBNv`（古い directory 名に注意）。profile は
+`/tmp/gc-deepcopy-perf.data`、元 workload は `/tmp/gc-pyperf-profile.py`。
+
 ## 保存済みビルドと証拠
 
 以下はこのマシンのローカルパスで、Git に含まれない。`/tmp` が消えると失われる。
@@ -197,6 +234,8 @@ DICTWATCH の古い checkpoint にある RUNNING 表記は、この文書の結�
 | --- | --- |
 | 今回の DICTWATCH fixed native | `/tmp/cpython-gc-dictwatch-fixed-native.3PYuSt` |
 | 今回の DICTWATCH fixed Debug | `/tmp/cpython-gc-dictwatch-fixed-debug.tR5Set` |
+| TYPEDMARK native | `/tmp/cpython-gc-powerstride-native.zYdBNv` |
+| TYPEDMARK Debug | `/tmp/cpython-gc-dictwatch-fixed-debug.tR5Set`（incremental rebuild） |
 | 今回の non-tracing compile check | `/tmp/cpython-gc-dictwatch-fixed-rc-check.uOhNKc` |
 | main FT build | `/tmp/cpython-main-bench.uI5G5U/build` |
 | main conventional-GIL JIT build | `/tmp/cpython-main-jit-bench.E55QXp` |
@@ -248,6 +287,8 @@ env -u PYTHON_TRACING_GC_SOFT_DIRTY -u PYTHON_TRACING_GC_YOUNG_CONTAINERS \
   最初の UAF 証拠。`baseline-gdb1.log` は ptrace 拒否であり backtrace ではない。
 - `/tmp/gc-halfmarks-{reclaim1,reclaim2,controls1,integer2,full1}.json`
   と同名 `.log`、`/tmp/gc-halfmarks-benchmark.py`: 採用済み最適化の計測。
+- `/tmp/gc-typedmark-results.txt` と `/tmp/gc-typedmark-benchmark.py`:
+  TYPEDMARK の自動 GC / 明示的 full-GC 比較。
 - `/tmp/gc-{heapgate,bufferfusion,halfmarks,privatekeys,dictwatch,fullpurge}-progress.md`:
   詳細な実験記録。
 

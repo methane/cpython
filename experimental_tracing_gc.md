@@ -8,7 +8,7 @@ computer architecture. It describes a research prototype, not a production-ready
 replacement for CPython's memory management. Compatibility changes were allowed
 to explore performance potential. Measurements below belong to explicitly named
 development stages; they are **not a complete benchmark of the final commit**.
-Sections 8–12 record subsequent, uncommitted development separately.
+Sections 8–16 record subsequent development separately.
 
 ## 1. What question does this experiment answer?
 
@@ -1284,8 +1284,8 @@ is not a claim that every watcher semantic is implemented.
 
 pyperformance 1.14.0 and pyperf 2.10.0 ran 20 selected benchmark groups on CPU 2
 with hash seed zero and `--fast`. Both sides used GCC `-O3` without PGO or LTO.
-The main source was `c8da735f4f05`; the experimental side was `aa8e0f7f82f` plus
-the two-file watcher fix. FT used free-threaded binaries with the GIL and JIT off.
+The main source was `c8da735f4f05`; the experimental side matched watcher-fix
+commit `901122c50b0`. FT used free-threaded binaries with the GIL and JIT off.
 The JIT comparison used a conventional GIL main build and the experimental
 free-threaded build with its GIL restored. Separate tests proved native JIT
 execution in both JIT comparators. Both tracing nursery options were enabled.
@@ -1322,3 +1322,55 @@ pyperf stability warnings. Raw suites and comparison CSV files are under
 `/tmp/pyperformance-gc-results.wgIXfy/`. An initial main run used a free-threaded
 build with the GIL restored; its JIT was enabled but never active. That invalid
 run is retained as `main-jit-inactive.json` and excluded from every result above.
+
+## 16. Follow-up: split precise typed-object marking
+
+Profiling a callback-free `deepcopy` full collection attributed about 6.6% of
+self samples to `tracing_mark_address` and another 3.3% to `tracing_visit`.
+Precise `tp_traverse` visitors provide valid `PyObject *` references, but the
+shared marking function still handled them like arbitrary words: it checked
+interior-pointer padding, identified young auxiliary buffers, and repeatedly
+combined typed and untyped byte-accounting rules.
+
+The retained change separates marking after the page lookup. Typed object pages
+use a helper that only handles scalar leaves or pending container traversal and
+sets the object's alive bit. Untyped auxiliary allocations retain their own
+young-buffer and accounting rules. Conservative stack, register and object-body
+words still use the general address function, including tag removal and padding
+validation. A precise reference to an object allocated on an untyped page also
+keeps the untyped path. No mark state, reachability policy, nursery budget or
+reclamation order changed.
+
+Five pyperformance implementations that were expensive in the branch comparison
+were called with their standard loop bodies: `deepcopy`, `deepcopy_reduce`,
+`deepcopy_memo`, `pickle` and `regex_compile`. The comparator was the committed
+watcher fix. Each automatic-GC result is the median of five isolated processes,
+with version order alternated, CPU 2, hash seed zero, the normal allocator and
+both nursery features. Each process measured eight values after an untimed
+warmup. Collection counts matched within every pair.
+
+| Mode | Geometric mean of five elapsed-time ratios | Largest improvements | Small regressions |
+| --- | ---: | --- | --- |
+| FT | **0.9926x** | `deepcopy_memo` 0.9728x; `pickle` 0.9922x | `deepcopy` 1.0012x; `deepcopy_reduce` 1.0020x |
+| JIT-enabled | **0.9944x** | `deepcopy` 0.9887x; `pickle` 0.9924x | `regex_compile` 1.0032x |
+
+The JIT `regex_compile` collector duration improved to 0.9914x despite its
+0.3% total-time increase. A separate explicit-full-GC comparison improved all
+five FT collector medians to 0.9556--0.9945x. Three JIT medians improved, while
+two measured 1.0019x and 1.0192x. These small workload-specific changes do not
+establish a universal speedup, but the automatic-GC aggregate improved in both
+supported modes and the code change targets the profiled mark path directly.
+
+The Debug tracing-GC module passed all 173 tests. Native FT and JIT each passed
+172 of 173; the sole `test_set_bulk_release` failure is also reproducible in the
+unchanged native comparator and depends on conservative stale-root retention.
+The JIT validation observed both an enabled JIT and execution inside an active
+native trace.
+
+Two smaller marking and scheduling trials were rejected. Branching to a shift
+for power-of-two allocation strides made all five explicit JIT collection
+medians 0.5--1.6% slower. Increasing the container-nursery failure backoff from
+four to sixteen full collections did not change automatic collection counts and
+made FT `deepcopy_reduce` 3.4% slower in the screening run. A cursor optimization,
+conditional alive-bit clearing and a fused heap-classification experiment also
+failed their performance or maintenance gates and were removed.
