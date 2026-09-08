@@ -240,6 +240,34 @@ gc_clear_alive(PyObject *op)
     gc_clear_bit(op, _PyGC_BITS_ALIVE);
 }
 
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+// No object is staged as unreachable when the initial full mark starts. While
+// the world is stopped, reuse that bit for reachability and convert it to the
+// ordinary post-mark state during the existing GC-heap classification visit.
+static inline int
+gc_is_tracing_marked(PyObject *op)
+{
+    return gc_is_unreachable(op);
+}
+
+static inline void
+gc_set_tracing_mark(PyObject *op)
+{
+    gc_set_unreachable(op);
+}
+
+static inline void
+gc_finish_tracing_mark(PyObject *op, bool marked, bool keep_alive)
+{
+    uint8_t bits = op->ob_gc_bits;
+    bits &= ~(_PyGC_BITS_UNREACHABLE | _PyGC_BITS_ALIVE);
+    if (marked && keep_alive) {
+        bits |= _PyGC_BITS_ALIVE;
+    }
+    op->ob_gc_bits = bits;
+}
+#endif
+
 // Initialize the `ob_tid` field to zero if the object is not already
 // initialized as unreachable.
 static void
@@ -855,6 +883,19 @@ gc_clear_alive_bits(const mi_heap_t *heap, const mi_heap_area_t *area,
     return true;
 }
 
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+static bool
+gc_clear_tracing_marks(const mi_heap_t *heap, const mi_heap_area_t *area,
+                       void *block, size_t block_size, void *args)
+{
+    PyObject *op = op_from_block_all_gc(block, args);
+    if (op != NULL) {
+        gc_clear_unreachable(op);
+    }
+    return true;
+}
+#endif
+
 static int
 gc_mark_traverse_list(PyObject *self, void *args)
 {
@@ -1319,6 +1360,11 @@ scan_heap_visitor(const mi_heap_t *heap, const mi_heap_area_t *area,
     // and frozen objects as well.  This is especially important if many
     // tuples have been untracked.
     state->long_lived_total++;
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    bool marked = gc_is_tracing_marked(op);
+    gc_finish_tracing_mark(
+        op, marked, state->gcstate->tracing_container_nursery_enabled);
+#endif
     if (!_PyObject_GC_IS_TRACKED(op) || gc_is_frozen(op)) {
         return true;
     }
@@ -1327,19 +1373,12 @@ scan_heap_visitor(const mi_heap_t *heap, const mi_heap_area_t *area,
     // The mark pass is authoritative. Classify and enqueue garbage in one
     // heap visit; numeric refcounts do not determine reachability.
     if (_Py_IsImmortal(op)) {
-        if (!state->gcstate->tracing_container_nursery_enabled) {
-            gc_clear_alive(op);
-        }
         return true;
     }
     state->candidates++;
-    if (gc_is_alive(op)) {
+    if (marked) {
         // Unsupported nursery types also need an age: otherwise their old
         // storage is counted as new allocation pressure at every collection.
-        // A full snapshot clears these marks before discovering reachability.
-        if (!state->gcstate->tracing_container_nursery_enabled) {
-            gc_clear_alive(op);
-        }
         gc_clear_unreachable(op);
         return true;
     }

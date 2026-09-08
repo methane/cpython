@@ -1449,3 +1449,55 @@ memory traffic in full snapshot/mark/sweep. Further isolated helper tuning canno
 recover the majority of the measured gap. Until unsupported coverage improves,
 the soft-dirty nursery should reject unsuitable attempts early rather than add
 fault and snapshot cost before the same full collection.
+
+## 18. Remove the initial full-mark header-clear pass
+
+The full snapshot previously cleared `ALIVE` in every non-leaf header. Marking
+set it again on reachable objects, and GC-heap classification usually cleared
+it a second time. No object is staged as `UNREACHABLE` when the initial root
+mark begins. The retained change therefore reuses `UNREACHABLE` as a temporary
+reachability bit while the world is stopped. The existing GC-heap
+classification visit reads it and produces the normal reachable or unreachable
+state. The post-finalizer resurrection pass still clears and uses `ALIVE` as
+before. Scalar leaves continue to use their snapshot map. This removes one
+whole-heap header pass from the common initial full collection.
+
+An unsafe first prototype tried to allocate bit 7 of `ob_gc_bits` for this
+state. It crashed in `PyBuffer_Release()` after collecting live bytes owned by a
+memoryview. A GDB watchpoint traced the destruction to `tracing_delete_leaf()`.
+Bit 7 was already `_Py_TRACING_GC_SHARED_BIT`, the sticky multiple-owner state,
+so shared objects were mistaken for marked objects. That prototype was removed;
+the retained implementation assumes no unused header bit.
+
+The comparator was typed-mark commit `2a7c7a505dc`. Five standard pyperformance
+loop bodies ran for eight values in five fresh processes per version, with
+alternating order, CPU 2, hash seed zero, the normal allocator and the nursery
+disabled. Ratios are candidate divided by comparator, geometrically averaged
+over `deepcopy`, `deepcopy_reduce`, `deepcopy_memo`, `pickle` and
+`regex_compile`.
+
+| Mode | Automatic elapsed | Reported automatic GC | Peak RSS |
+| --- | ---: | ---: | ---: |
+| FT | **0.9843x** | **0.9591x** | 1.0291x |
+| JIT-enabled | **0.9777x** | **0.9574x** | 1.0022x |
+
+The FT RSS aggregate is caused by one fewer terminal `deepcopy` collection:
+49.8 MiB became 57.5 MiB, while the other four workloads were unchanged. A
+separate explicit-full-GC comparison fixed the count at five collections per
+process. Collection time was **0.9466x** FT and **0.9446x** JIT, with RSS at
+1.0001x and 0.9905x. A four-worker, sixteen-batch, one-million-container stress
+also improved: FT elapsed/GC/RSS were 0.9716x/0.9692x/0.9717x, while JIT was
+0.9799x/0.9752x/0.9991x. The isolated terminal RSS result was therefore not
+treated as a general memory regression.
+
+The Debug focused module passed all 173 tests. Native FT and JIT each passed 172
+of 173; the sole `test_set_bulk_release` failure is reproducible in the
+comparator. Native JIT execution became active. Non-tracing and non-NaN-boxing
+objects compiled, and the complete Debug and native builds checked 116 modules
+with no import failures.
+
+Raising the full-GC threshold from 2,000 to 4,000 was rejected separately. It
+reduced the five-workload elapsed aggregate to 0.9488x FT and 0.9604x JIT, but
+the four-worker stress raised peak RSS from 193.98 to 222.10 MiB FT and from
+60.53 to 101.75 MiB JIT. That trade merely delays collection and worsens the
+retention cost identified in section 17.
