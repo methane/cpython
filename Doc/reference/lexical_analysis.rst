@@ -718,13 +718,17 @@ The allowed prefixes are:
 * ``r``: :ref:`Raw string <raw-strings>`
 * ``f``: :ref:`Formatted string literal <f-strings>` ("f-string")
 * ``t``: :ref:`Template string literal <t-strings>` ("t-string")
+* ``d``: :ref:`Dedented multiline string literal <d-strings>` ("d-string")
 * ``u``: No effect (allowed for backwards compatibility)
 
 See the linked sections for details on each type.
 
 Prefixes are case-insensitive (for example, '``B``' works the same as '``b``').
-The '``r``' prefix can be combined with '``f``', '``t``' or '``b``', so '``fr``',
-'``rf``', '``tr``', '``rt``', '``br``', and '``rb``' are also valid prefixes.
+The '``r``' prefix can be combined with '``f``', '``t``', '``b``', or
+'``d``'. The '``d``' prefix can also be combined with '``f``', '``t``', or
+'``b``', so the following prefix families are valid (in any order):
+``d``, ``dr``, ``db``, ``drb``, ``df``, ``drf``, ``dt``, and ``drt``.
+The ``u`` prefix cannot be combined with ``d``.
 
 .. versionadded:: 3.3
    The ``'rb'`` prefix of raw bytes literals has been added as a synonym
@@ -749,7 +753,10 @@ to indicate that an ending quote ends the literal.
    :group: python-grammar
 
    STRING:          [`stringprefix`] (`stringcontent`)
-   stringprefix:    <("r" | "u" | "b" | "br" | "rb"), case-insensitive>
+   stringprefix:    <("r" | "u" | "b" | "br" | "rb" |
+                      "d" | "dr" | "rd" | "db" | "bd" |
+                      "drb" | "dbr" | "rdb" | "rbd" | "bdr" | "brd"),
+                      case-insensitive>
    stringcontent:
       | "'''" ( !"'''" `longstringitem`)* "'''"
       | '"""' ( !'"""' `longstringitem`)* '"""'
@@ -1024,6 +1031,65 @@ characters as part of the literal, *not* as a line continuation.
 
 
 .. index::
+   single: dedented multiline string literal
+   single: d-string
+
+.. _d-strings:
+.. _dedented-string-literals:
+
+Dedented string literals
+------------------------
+
+.. versionadded:: 3.16
+
+A :dfn:`dedented multiline string literal` or :dfn:`d-string` is a string
+literal prefixed with '``d``' or '``D``'. It must use triple quotes, and the
+opening quotes must be immediately followed by a newline. This newline is not
+part of the resulting string.
+
+The longest prefix consisting only of spaces and tabs that is common to every
+non-blank line and to the line containing the closing quotes is removed from
+each non-blank line. Blank lines are normalized to a single newline and do not
+participate in finding the common indentation. The closing-quotes line always
+participates in that calculation, even when it contains no other characters.
+
+Dedentation is performed on the physical source lines before escape sequences
+are processed. Consequently, a line-continuation backslash is treated as part
+of the source line while its indentation is removed. Spaces and tabs are
+treated as different characters.
+
+For example::
+
+   >>> value = d"""spam"""
+   SyntaxError: d-string must start with a newline
+   >>> value = d"""
+   ...     first
+   ...       second
+   ...     """
+   >>> value
+   'first\n  second\n'
+   >>> value = d"""
+   ...     spam
+   ...     ham
+   ...     egg
+   ...   """
+   >>> value
+   '  spam\n  ham\n  egg\n'
+
+
+The ``d`` prefix can be combined with the compatible ``r``, ``b``, ``f``, and
+``t`` prefixes. In a ``df`` or ``dt`` string, a physical line participates in
+the outer common indentation calculation only if it starts outside a
+replacement field. A line that starts inside a replacement field is ignored
+even if constant text resumes later on that line. Only constant text outside
+replacement fields is dedented. A nested d-string is dedented independently.
+
+.. seealso::
+
+   :pep:`822` -- Dedented Multiline String
+
+
+.. index::
    single: formatted string literal
    single: interpolated string literal
    single: string; formatted literal
@@ -1253,7 +1319,9 @@ sequences (``f_quote``).
 
    FSTRING_START:      `fstringprefix` ("'" | '"' | "'''" | '"""')
    FSTRING_END:        `f_quote`
-   fstringprefix:      <("f" | "fr" | "rf"), case-insensitive>
+   fstringprefix:      <("f" | "fr" | "rf" | "df" | "fd" | "drf" |
+                          "dfr" | "rdf" | "rfd" | "fdr" | "frd"),
+                          case-insensitive>
    f_debug_specifier:  '='
    f_quote:            <the quote character(s) used in FSTRING_START>
 
@@ -1587,4 +1655,3 @@ is also available in the :mod:`!token` module documentation.
 
 A sequence of three consecutive periods (``...``) has a special
 meaning as an :py:data:`Ellipsis` literal.
-

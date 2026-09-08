@@ -53,10 +53,19 @@ def make_pat():
     builtin = r"([^.'\"\\#]\b|^)" + any("BUILTIN", builtinlist) + r"\b"
     comment = any("COMMENT", [r"#[^\n]*"])
     stringprefix = r"(?i:r|u|f|fr|rf|b|br|rb|t|rt|tr)?"
+    triple_stringprefix = (
+        r"(?i:"
+        r"brd|bdr|rbd|rdb|dbr|drb|"
+        r"frd|fdr|rfd|rdf|dfr|drf|"
+        r"trd|tdr|rtd|rdt|dtr|drt|"
+        r"bd|db|rd|dr|fd|df|td|dt|d|"
+        r"r|u|f|fr|rf|b|br|rb|t|rt|tr"
+        r")?"
+    )
     sqstring = stringprefix + r"'[^'\\\n]*(\\.[^'\\\n]*)*'?"
     dqstring = stringprefix + r'"[^"\\\n]*(\\.[^"\\\n]*)*"?'
-    sq3string = stringprefix + r"'''[^'\\]*((\\.|'(?!''))[^'\\]*)*(''')?"
-    dq3string = stringprefix + r'"""[^"\\]*((\\.|"(?!""))[^"\\]*)*(""")?'
+    sq3string = triple_stringprefix + r"'''[^'\\]*((\\.|'(?!''))[^'\\]*)*(''')?"
+    dq3string = triple_stringprefix + r'"""[^"\\]*((\\.|"(?!""))[^"\\]*)*(""")?'
     string = any("STRING", [sq3string, dq3string, sqstring, dqstring])
     prog = re.compile("|".join([
                                 builtin, comment, string, kw,

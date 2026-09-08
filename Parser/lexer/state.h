@@ -25,6 +25,17 @@ struct token {
     int level;
     int lineno, col_offset, end_lineno, end_col_offset;
     const char *start, *end;
+    /* Extra data (str or NULL) attached to some tokens, used by the parser
+       actions. The lexer sets it in two (mutually exclusive) cases:
+       - On the '}', ':' or '!' token terminating a replacement field
+         expression: the source text of the expression, for f-string debug
+         expressions (`f"{expr=}"`) and t-string Interpolation.str
+         (see set_ftstring_expr()).
+       - On the FSTRING_END/TSTRING_END token of a d-string: the longest
+         common leading whitespace of the participating physical lines of the
+         literal, used to dedent the string parts (PEP 822).
+       The owner is this struct (freed by _PyToken_Free()); pegen's
+       initialize_token() moves it into the arena-managed Token. */
     PyObject *metadata;
 };
 
@@ -61,6 +72,15 @@ typedef struct _tokenizer_mode {
     char* last_expr_buffer;
     int in_debug;
     int in_format_spec;
+
+    /* PEP 822 d-string support. While tokenizing a d-string, the longest
+       common leading whitespace of all physical lines seen so far is
+       maintained in [dedent_indent, dedent_indent + dedent_indent_len).
+       It is attached to the FSTRING_END/TSTRING_END token as metadata. */
+    int dedent;
+    int dedent_seen_line;
+    char *dedent_indent;
+    Py_ssize_t dedent_indent_len;
 
     enum string_kind_t string_kind;
 } tokenizer_mode;

@@ -47,7 +47,7 @@ TOK_NEXT_MODE(struct tok_state *tok)
 int _PyLexer_nextc(struct tok_state *);
 void _PyLexer_backup(struct tok_state *, int);
 int _PyLexer_set_ftstring_expr(struct tok_state *, struct token *, char);
-int _PyLexer_check_string_prefixes(struct tok_state *, int, int, int, int, int);
+int _PyLexer_check_string_prefixes(struct tok_state *, int, int, int, int, int, int);
 int _PyLexer_scan_number(struct tok_state *, struct token *, int, int);
 int _PyLexer_scan_fstring_start(struct tok_state *, struct token *, int);
 int _PyLexer_scan_string(struct tok_state *, struct token *, int);

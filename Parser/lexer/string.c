@@ -178,9 +178,9 @@ error:
 int
 _PyLexer_check_string_prefixes(struct tok_state *tok,
                                              int saw_b, int saw_r, int saw_u,
-                                             int saw_f, int saw_t) {
-    // Supported: rb, rf, rt (in any order)
-    // Unsupported: ub, ur, uf, ut, bf, bt, ft (in any order)
+                                             int saw_f, int saw_t, int saw_d) {
+    // Supported: rb, rf, rt, db, df, dt (in any order)
+    // Unsupported: ub, ur, uf, ut, ud, bf, bt, ft (in any order)
 
 #define RETURN_SYNTAX_ERROR(PREFIX1, PREFIX2)                             \
     do {                                                                  \
@@ -202,6 +202,9 @@ _PyLexer_check_string_prefixes(struct tok_state *tok,
     }
     if (saw_u && saw_t) {
         RETURN_SYNTAX_ERROR("u", "t");
+    }
+    if (saw_u && saw_d) {
+        RETURN_SYNTAX_ERROR("u", "d");
     }
 
     if (saw_b && saw_f) {
@@ -263,6 +266,7 @@ _PyLexer_scan_fstring_start(struct tok_state *tok, struct token *token, int c)
     the_current_tok->kind = TOK_FSTRING_MODE;
     the_current_tok->quote = quote;
     the_current_tok->quote_size = quote_size;
+    the_current_tok->raw = 0;
     the_current_tok->start = tok->start;
     the_current_tok->multi_line_start = tok->line_start;
     the_current_tok->first_line = tok->lineno;
@@ -273,27 +277,35 @@ _PyLexer_scan_fstring_start(struct tok_state *tok, struct token *token, int c)
     the_current_tok->last_expr_end = -1;
     the_current_tok->in_format_spec = 0;
     the_current_tok->in_debug = 0;
+    the_current_tok->dedent = 0;
+    the_current_tok->dedent_seen_line = 0;
+    the_current_tok->dedent_indent = NULL;
+    the_current_tok->dedent_indent_len = 0;
 
     enum string_kind_t string_kind = FSTRING;
-    switch (*tok->start) {
-        case 'T':
-        case 't':
-            the_current_tok->raw = Py_TOLOWER(*(tok->start + 1)) == 'r';
-            string_kind = TSTRING;
-            break;
-        case 'F':
-        case 'f':
-            the_current_tok->raw = Py_TOLOWER(*(tok->start + 1)) == 'r';
-            break;
-        case 'R':
-        case 'r':
-            the_current_tok->raw = 1;
-            if (Py_TOLOWER(*(tok->start + 1)) == 't') {
+    for (const char *p = tok->start; *p != c; p++) {
+        switch (*p) {
+            case 'f':
+            case 'F':
+                break;
+            case 't':
+            case 'T':
                 string_kind = TSTRING;
-            }
-            break;
-        default:
-            Py_UNREACHABLE();
+                break;
+            case 'r':
+            case 'R':
+                the_current_tok->raw = 1;
+                break;
+            case 'd':
+            case 'D':
+                if (quote_size != 3) {
+                    return MAKE_TOKEN(_PyTokenizer_syntaxerror(tok, "d-string must be triple-quoted"));
+                }
+                the_current_tok->dedent = 1;
+                break;
+            default:
+                Py_UNREACHABLE();
+        }
     }
 
     the_current_tok->string_kind = string_kind;
@@ -465,6 +477,29 @@ _PyLexer_get_fstring_mode(struct tok_state *tok, tokenizer_mode* current_tok, st
         current_tok->last_expr_buffer = NULL;
         current_tok->last_expr_size = 0;
         current_tok->last_expr_end = -1;
+    }
+
+    if (current_tok->dedent) {
+        // Attach the longest common leading whitespace of the whole
+        // d-string to the FSTRING_END/TSTRING_END token so that
+        // _PyPegen_joined_str()/_PyPegen_template_str() can dedent
+        // the string parts.
+        PyObject *indent = PyUnicode_FromStringAndSize(
+            current_tok->dedent_indent == NULL ? "" : current_tok->dedent_indent,
+            current_tok->dedent_indent_len);
+        if (current_tok->dedent_indent != NULL) {
+            PyMem_Free(current_tok->dedent_indent);
+            current_tok->dedent_indent = NULL;
+            current_tok->dedent_indent_len = 0;
+        }
+        if (indent == NULL) {
+            return MAKE_TOKEN(ERRORTOKEN);
+        }
+        // This token can already have expression metadata when malformed
+        // nested f-strings cause the tokenizer to reuse it as the end token.
+        // Expression metadata is not meaningful on an FTSTRING_END token;
+        // replace it with the d-string indentation metadata.
+        Py_XSETREF(token->metadata, indent);
     }
 
     p_start = tok->start;

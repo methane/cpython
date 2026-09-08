@@ -342,6 +342,16 @@ extern PyObject* _PyUnicode_XStrip(
     );
 
 
+/* Search the longest common leading whitespace of all lines in [src, end).
+   Returns the length of the common leading whitespace and sets `*output` to
+   point to the beginning of the common leading whitespace if length > 0.
+   Export for 'test_peg_generator.test_c_parser'.
+   */
+PyAPI_FUNC(Py_ssize_t) _Py_search_longest_common_leading_whitespace(
+    const char *src,
+    const char *end,
+    const char **output);
+
 /* Dedent a string.
    Intended to dedent Python source. Unlike `textwrap.dedent`, this
    only supports spaces and tabs and doesn't normalize empty lines.

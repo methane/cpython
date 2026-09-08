@@ -25,6 +25,73 @@ contains_null_bytes(const char* str, size_t size)
     return memchr(str, 0, size) != NULL;
 }
 
+/* PEP 822: fold the leading whitespace of the freshly read physical line
+   [tok->cur, tok->inp) into the longest common leading whitespace of every
+   active d-string whose replacement field is not active at the start of the
+   line. Lines starting inside replacement fields, including lines inside
+   nested string literals, do not affect the outer d-string. Blank lines
+   (whitespace-only) are ignored. The line that contains the closing quotes is
+   naturally non-blank because the quote characters are on it.
+   Return 1 on success, 0 on memory error (tok->done is set). */
+static int
+update_dstring_indents(struct tok_state *tok)
+{
+    int any_dedent = 0;
+    for (int i = 1; i <= tok->tok_mode_stack_index; i++) {
+        tokenizer_mode *mode = &tok->tok_mode_stack[i];
+        if (mode->dedent && !INSIDE_FSTRING_EXPR(mode)) {
+            any_dedent = 1;
+            break;
+        }
+    }
+    if (!any_dedent) {
+        return 1;
+    }
+
+    const char *line = tok->cur;
+    const char *end = tok->inp;
+    const char *ws_end = line;
+    while (ws_end < end && (*ws_end == ' ' || *ws_end == '\t')) {
+        ws_end++;
+    }
+    if (ws_end == end || *ws_end == '\n' || *ws_end == '\r') {
+        // A blank line. It doesn't affect the common leading whitespace.
+        return 1;
+    }
+    Py_ssize_t len = ws_end - line;
+
+    for (int i = 1; i <= tok->tok_mode_stack_index; i++) {
+        tokenizer_mode *mode = &(tok->tok_mode_stack[i]);
+        if (!mode->dedent || INSIDE_FSTRING_EXPR(mode)) {
+            continue;
+        }
+        if (!mode->dedent_seen_line) {
+            mode->dedent_seen_line = 1;
+            assert(mode->dedent_indent == NULL);
+            mode->dedent_indent_len = 0;
+            if (len > 0) {
+                mode->dedent_indent = PyMem_Malloc(len);
+                if (mode->dedent_indent == NULL) {
+                    tok->done = E_NOMEM;
+                    tok->cur = tok->inp;
+                    return 0;
+                }
+                memcpy(mode->dedent_indent, line, len);
+                mode->dedent_indent_len = len;
+            }
+        }
+        else {
+            Py_ssize_t common = 0;
+            while (common < mode->dedent_indent_len && common < len
+                   && mode->dedent_indent[common] == line[common]) {
+                common++;
+            }
+            mode->dedent_indent_len = common;
+        }
+    }
+    return 1;
+}
+
 /* Get next char, updating state; error code goes into tok->done */
 int
 _PyLexer_nextc(struct tok_state *tok)
@@ -59,6 +126,10 @@ _PyLexer_nextc(struct tok_state *tok)
         if (contains_null_bytes(tok->line_start, tok->inp - tok->line_start)) {
             _PyTokenizer_syntaxerror(tok, "source code cannot contain null bytes");
             tok->cur = tok->inp;
+            return EOF;
+        }
+
+        if (tok->tok_mode_stack_index > 0 && !update_dstring_indents(tok)) {
             return EOF;
         }
     }
@@ -401,8 +472,8 @@ _PyLexer_get_normal_mode(struct tok_state *tok, tokenizer_mode* current_tok, str
     /* Identifier (most frequent token!) */
     nonascii = 0;
     if (is_potential_identifier_start(c)) {
-        /* Process the various legal combinations of b"", r"", u"", and f"". */
-        int saw_b = 0, saw_r = 0, saw_u = 0, saw_f = 0, saw_t = 0;
+        /* Process the various legal combinations of b"", r"", u"", f"", and d"". */
+        int saw_b = 0, saw_r = 0, saw_u = 0, saw_f = 0, saw_t = 0, saw_d = 0;
         while (1) {
             if (!saw_b && (c == 'b' || c == 'B')) {
                 saw_b = 1;
@@ -422,6 +493,9 @@ _PyLexer_get_normal_mode(struct tok_state *tok, tokenizer_mode* current_tok, str
             else if (!saw_t && (c == 't' || c == 'T')) {
                 saw_t = 1;
             }
+            else if (!saw_d && (c == 'd' || c == 'D')) {
+                saw_d = 1;
+            }
             else {
                 break;
             }
@@ -429,7 +503,7 @@ _PyLexer_get_normal_mode(struct tok_state *tok, tokenizer_mode* current_tok, str
             if (c == '"' || c == '\'') {
                 // Raise error on incompatible string prefixes:
                 int status = _PyLexer_check_string_prefixes(
-                    tok, saw_b, saw_r, saw_u, saw_f, saw_t);
+                    tok, saw_b, saw_r, saw_u, saw_f, saw_t, saw_d);
                 if (status < 0) {
                     return MAKE_TOKEN(ERRORTOKEN);
                 }

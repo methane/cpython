@@ -1312,24 +1312,146 @@ _PyPegen_nonparen_genexp_in_call(Parser *p, expr_ty args, asdl_comprehension_seq
 
 // Fstring stuff
 
+static int
+unicodewriter_write_line(Parser *p, PyUnicodeWriter *w, const char *line_start, const char *line_end,
+                         int is_raw, Token* token)
+{
+    if (is_raw || memchr(line_start, '\\', line_end - line_start) == NULL) {
+        return PyUnicodeWriter_WriteUTF8(w, line_start, line_end - line_start);
+    }
+    else {
+        PyObject *line = _PyPegen_decode_string(p, 0, line_start, line_end - line_start, token);
+        if (line == NULL || PyUnicodeWriter_WriteStr(w, line) < 0) {
+            Py_XDECREF(line);
+            return -1;
+        }
+        Py_DECREF(line);
+    }
+    return 0;
+}
+
+static PyObject*
+_PyPegen_dedent_string_part(
+        Parser *p, const char *s, size_t len, const char *indent, Py_ssize_t indent_len,
+        int is_first, int is_last, int is_raw, Token* token)
+{
+    const char *line_start = s;
+    const char *end = s + len;
+
+    int prev_call_invalid = p->call_invalid_rules;
+    if (!prev_call_invalid && !is_raw) {
+        // _PyPegen_decode_string() and decode_bytes_with_escapes() may call
+        // warn_invalid_escape_sequence(). It may emit issue or raise SyntaxError
+        // for invalid escape sequences.
+        // We need to call it before dedenting since SyntaxError needs exact lineno
+        // and col_offset of invalid escape sequences.
+        PyObject *t = _PyPegen_decode_string(p, 0, s, len, token);
+        if (t == NULL) {
+            return NULL;
+        }
+        Py_DECREF(t);
+        p->call_invalid_rules = 1;
+    }
+
+    PyUnicodeWriter *w = PyUnicodeWriter_Create(len);
+    if (w == NULL) {
+        p->call_invalid_rules = prev_call_invalid;
+        return NULL;
+    }
+
+    if (is_first) {
+        assert (line_start[0] == '\n');
+        line_start++;  // skip the first newline
+    }
+    else {
+        // Example: df"""
+        //      first part {param} second part
+        //      next line
+        //    """"
+        // The first line in a non-first part doesn't start at the
+        // beginning of a physical line; copy it verbatim.
+        const char *line_end = memchr(line_start, '\n', end - line_start);
+        if (line_end) {
+            line_end++; // include the newline
+        }
+        else {
+            line_end = end;
+        }
+        if (unicodewriter_write_line(p, w, line_start, line_end, is_raw, token) < 0) {
+            goto error;
+        }
+        line_start = line_end;
+    }
+
+    while (line_start < end) {
+        // A blank line (whitespace-only line with a newline) is normalized
+        // to a single newline. A whitespace-only final part is also blank:
+        // its preceding newline has already been written. Other tails may
+        // continue with a replacement field, so they are kept verbatim.
+        const char *q = line_start;
+        while (q < end && (*q == ' ' || *q == '\t')) {
+            q++;
+        }
+        if (q == end && is_last) {
+            break;
+        }
+        if (q < end && *q == '\n') {
+            if (PyUnicodeWriter_WriteChar(w, '\n') < 0) {
+                goto error;
+            }
+            line_start = q + 1;
+            continue;
+        }
+
+        // A non-blank line. The common indent was computed from all
+        // physical lines of the literal, so it is always a prefix of
+        // the leading whitespace of this line.
+        assert(q - line_start >= indent_len);
+        assert(memcmp(line_start, indent, (size_t)indent_len) == 0);
+        line_start += indent_len;
+        const char *line_end = memchr(line_start, '\n', end - line_start);
+        if (line_end) {
+            line_end++; // include the newline
+        }
+        else {
+            line_end = end;
+        }
+        if (unicodewriter_write_line(p, w, line_start, line_end, is_raw, token) < 0) {
+            goto error;
+        }
+        line_start = line_end;
+    }
+    p->call_invalid_rules = prev_call_invalid;
+    return  PyUnicodeWriter_Finish(w);
+
+error:
+    p->call_invalid_rules = prev_call_invalid;
+    PyUnicodeWriter_Discard(w);
+    return NULL;
+}
+
 static expr_ty
-_PyPegen_decode_fstring_part(Parser* p, int is_raw, expr_ty constant, Token* token) {
+_PyPegen_decode_fstring_part(Parser* p, int is_first, int is_last,
+                             int is_raw, const char *indent, Py_ssize_t indent_len,
+                             expr_ty constant, Token* token)
+{
     assert(PyUnicode_CheckExact(constant->v.Constant.value));
 
     const char* bstr = PyUnicode_AsUTF8(constant->v.Constant.value);
     if (bstr == NULL) {
         return NULL;
     }
+    is_raw = is_raw || strchr(bstr, '\\') == NULL;
 
-    size_t len;
-    if (strcmp(bstr, "{{") == 0 || strcmp(bstr, "}}") == 0) {
-        len = 1;
-    } else {
-        len = strlen(bstr);
+    PyObject *str = NULL;
+    if (indent != NULL) {
+        str = _PyPegen_dedent_string_part(p, bstr, strlen(bstr), indent, indent_len,
+                                          is_first, is_last, is_raw, token);
+    }
+    else {
+        str = _PyPegen_decode_string(p, is_raw, bstr, strlen(bstr), token);
     }
 
-    is_raw = is_raw || strchr(bstr, '\\') == NULL;
-    PyObject *str = _PyPegen_decode_string(p, is_raw, bstr, len, token);
     if (str == NULL) {
         _Pypegen_raise_decode_error(p);
         return NULL;
@@ -1360,10 +1482,48 @@ _get_resized_exprs(Parser *p, Token *a, asdl_expr_seq *raw_expressions, Token *b
         return NULL;
     }
     int is_raw = strpbrk(quote_str, "rR") != NULL;
+    int is_dedent = strpbrk(quote_str, "dD") != NULL;
 
     asdl_expr_seq *seq = _Py_asdl_expr_seq_new(total_items, p->arena);
     if (seq == NULL) {
         return NULL;
+    }
+
+    const char *indent_start = NULL;
+    Py_ssize_t indent_len = 0;
+
+    if (is_dedent) {
+        if (total_items == 0) {
+            RAISE_SYNTAX_ERROR_KNOWN_LOCATION(
+                a,
+                "d-string must start with a newline"
+            );
+            return NULL;
+        }
+        expr_ty first_item = asdl_seq_GET(raw_expressions, 0);
+        if (first_item->kind != Constant_kind
+                || PyUnicode_ReadChar(first_item->v.Constant.value, 0) != '\n') {
+            RAISE_SYNTAX_ERROR_KNOWN_LOCATION(
+                first_item,
+                "d-string must start with a newline"
+            );
+            return NULL;
+        }
+
+        // The longest common leading whitespace is computed by the tokenizer
+        // over physical lines that start outside replacement fields and
+        // attached to the FSTRING_END/TSTRING_END token as metadata.
+        assert(b->metadata != NULL && PyUnicode_CheckExact(b->metadata));
+        if (b->metadata != NULL && PyUnicode_CheckExact(b->metadata)) {
+            indent_start = PyUnicode_AsUTF8AndSize(b->metadata, &indent_len);
+            if (indent_start == NULL) {
+                return NULL;
+            }
+        }
+        else {
+            indent_start = "";
+            indent_len = 0;
+        }
     }
 
     Py_ssize_t index = 0;
@@ -1397,7 +1557,8 @@ _get_resized_exprs(Parser *p, Token *a, asdl_expr_seq *raw_expressions, Token *b
         }
 
         if (item->kind == Constant_kind) {
-            item = _PyPegen_decode_fstring_part(p, is_raw, item, b);
+            item = _PyPegen_decode_fstring_part(p, i == 0, i == n_items - 1,
+                                                is_raw, indent_start, indent_len, item, b);
             if (item == NULL) {
                 return NULL;
             }
