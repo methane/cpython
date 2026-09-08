@@ -180,10 +180,9 @@ tracing GC 単体のコストにはできない。`--fast` の結果には pyper
 1. 広い既存 watcher/stdlib suite の既知の tracing GC 互換性 failure を解消する。
 2. `gc_collect` と `gc_traversal` に tracing GC の回収数 semantics を扱える upstream
    benchmark が用意できれば、GC 専用二項目も性能比較する。
-3. 同一 source revision で collector だけを切り替えた比較を追加し、今回の
-   end-to-end 差から GC 単体の寄与を分離する。
-4. 幾何平均 2.0--2.6x と大きい差を、allocation、root scan、sweep、branch 固有の
-   object representation/JIT 差に分解する。
+3. 後続の原因分析で判明した full collection の頻度・範囲と nursery fallback を
+   優先して改善し、時間と RSS の両方で検証する。
+4. NaN-boxing と JIT 固有の残差は collector scheduling から分けて調査する。
 
 pyperformance checkout は `/home/methane/work/python/pyperformance`。
 以前利用した site-packages は
@@ -194,7 +193,10 @@ runner の現行 help と依存関係を確認してから使用すること。
 
 pyperformance で差が大きかった `deepcopy` 三種、`pickle`、`regex_compile` を
 同じ benchmark 実装・loop 数で呼び、watcher 修正済み native build と TYPEDMARK を
-比較した。CPU 2、hash seed 0、通常 allocator、nursery 有効。各値は独立 process、
+比較した。CPU 2、hash seed 0、通常 allocator、nursery 無効。測定 driver が存在しない
+`PYTHON_GC_NURSERY=1` を設定していたことを後続調査で発見した。したがって、この比較は
+full tracing GC の mark 経路比較として有効だが、nursery 有効時の結果ではない。
+各値は独立 process、
 比較順を交互にした 5 process/configuration の中央値。8 values の自動 GC 測定で、
 collection 数は全比較で一致した。
 
@@ -223,6 +225,73 @@ active free cursor、条件付き ALIVE clear、snapshot と heap classification
 `/tmp/cpython-gc-powerstride-native.zYdBNv`（古い directory 名に注意）。profile は
 `/tmp/gc-deepcopy-perf.data`、元 workload は `/tmp/gc-pyperf-profile.py`。
 
+## 参照カウントとの差の原因分析
+
+`2a7c7a505dc` と同じ source revision から、通常の参照カウント、NaN-boxing なしの
+tracing GC、現在の NaN-boxing あり tracing GC を作り直した。FT は全て
+`--disable-gil` の同じ object layout なので collector の差を最もよく分離する。
+JIT の RC だけは通常 GIL build であり、JIT 結果には layout と optimizer 条件の差も
+残る。`deepcopy` 三種、`pickle`、`regex_compile` の標準 loop body を 8 values 実行し、
+各構成 5 fresh processes、CPU 2、hash seed 0、通常 allocator、順序交互の中央値を
+使った。表の総合値は workload 5 件の比率の幾何平均、GC 比率と「差のうち GC」は
+5 件の中央値である。
+
+| モード | tracing 構成 | 経過時間 / RC | GC 時間を除いた比 | 総時間の GC 比率 | RC との差のうち GC | Peak RSS / RC |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| FT | NaN-boxing なし | **2.455x** | 1.178x | 55.2% | 88.4% | 1.803x |
+| FT | NaN-boxing あり | **2.569x** | 1.300x | 52.9% | 81.3% | 1.806x |
+| JIT | NaN-boxing なし | **2.924x** | 1.323x | 58.4% | 84.0% | 2.195x |
+| JIT | NaN-boxing あり | **3.177x** | 1.556x | 52.1% | 73.3% | 2.152x |
+
+主因は回収の scheduling と full-heap tracing である。RC は短命な acyclic object を
+参照数 0 で直ちに破棄し、GC の allocation count も deallocation で減算するため、
+5 workload の測定区間で cycle GC は全て 0 回だった。tracing は allocator で gross
+allocation bytes を加算し、回収まで deallocation しない。同じ処理中に 24--92 回の
+collection が起き、その大半が全 heap の snapshot、root mark、typed traversal、
+dead-object 分類、clear/free を行った。GC の報告時間だけで RC との差の中央値
+73--88%を説明する。
+
+FT `deepcopy` の hardware counter では、RC に対し NaN-boxing なし tracing は
+cycles 2.51x、instructions 1.63x、branch misses 5.85x、cache references 29.7x、
+cache misses 62.0x、page faults 5.40x だった。IPC は 3.33 から 2.15 に低下した。
+`perf` の self samples は `gc_collect_main_impl` 9.5%、snapshot 4.3%、address mark
+4.2%、garbage deletion 3.9%、heap scan 3.5%、root mark 3.3%、typed traversal と
+dict traversal がそれぞれ約 2.5%などに分散していた。単一の遅い関数ではなく、
+全 heap を何度も読み書きする pipeline 全体が cache と分岐を増やしている。
+
+正しい環境変数
+`PYTHON_TRACING_GC_SOFT_DIRTY=1 PYTHON_TRACING_GC_YOUNG_CONTAINERS=1` でも
+この workload 群は改善しなかった。nursery ON/OFF の経過時間比の幾何平均は、
+NaN-boxing なしで FT 1.057x / JIT 1.107x、ありで FT 1.069x / JIT 1.093x と悪化した。
+FT `deepcopy` の nursery ON は page faults が RC の 36.2x、tracing OFF の 6.70xに
+なった。soft-dirty の page protection cost を払った後、対象外 object の圧力で
+full GC に fallback するためである。
+
+現在の container nursery が直接扱うのは exact `list`、exact `tuple`、watch されて
+いない exact `dict` だけである。GC を止めて各 workload が新しく作った tracked
+objects を概算すると、約 47--58%が対象外だった。`deepcopy` では frame、例外、
+traceback、iterator、bound/builtin method、ユーザー instance、`pickle` では
+`Pickler`、正規表現では method、generator、`SubPattern`、`Pattern` などが多い。
+対象外の young body が full-GC budget の 1/8 を超えると、snapshot を途中で full 用に
+切り替え、さらに 4 full collections の backoff に入る。instrumented `deepcopy` では
+この limit を毎回わずかに超えて minor count 0 のまま fallback することを確認した。
+
+GC を warmup 後に無効化し、1 value 分の garbage を意図的に保持させた補助測定では、
+NaN-boxing なし tracing の経過時間 / RC は FT 1.465x、JIT 1.663x、Peak RSS は
+3.93x / 4.68xだった。これは pure mutator cost ではなく、RC がその場で破棄・再利用
+する storage を tracing が回収まで保持する影響を含む。自動 GC 測定で GC 時間を
+差し引いた FT 1.178x と合わせると、二次要因は allocation accounting、遅延回収に
+よる allocator/cache pressure、object representation と dispatch である。
+NaN-boxing は中心原因ではないが、nursery OFF の同じ tracing 同士ではこの5件を
+FT 1.046x、JIT 1.087x遅くした。
+
+次の最適化は full collection 内の小さな関数を個別に削るだけでは不足する。優先順位は、
+common builtin とユーザー object を含む young heap を実際に minor 回収できる型情報・
+write barrier/dirty tracking、回収実績と RSS を使って gross allocation trigger を
+調整する scheduling、full snapshot/mark/sweep の memory traffic 削減である。
+soft-dirty nursery は fallback 時に余分な fault と snapshot costを加えるため、対象外
+比率を早く判定して試行を避けるか、対象型を広げるまではこの workload の解にならない。
+
 ## 保存済みビルドと証拠
 
 以下はこのマシンのローカルパスで、Git に含まれない。`/tmp` が消えると失われる。
@@ -236,6 +305,10 @@ DICTWATCH の古い checkpoint にある RUNNING 表記は、この文書の結�
 | 今回の DICTWATCH fixed Debug | `/tmp/cpython-gc-dictwatch-fixed-debug.tR5Set` |
 | TYPEDMARK native | `/tmp/cpython-gc-powerstride-native.zYdBNv` |
 | TYPEDMARK Debug | `/tmp/cpython-gc-dictwatch-fixed-debug.tR5Set`（incremental rebuild） |
+| 原因分析 RC FT | `/tmp/cpython-gc-analysis-rc_ft.tSSbDh` |
+| 原因分析 RC JIT | `/tmp/cpython-gc-analysis-rc_jit.X9zado` |
+| 原因分析 tracing、NaN-boxing なし | `/tmp/cpython-gc-analysis-trace_nonan.CTuKgS` |
+| 原因分析 tracing、NaN-boxing あり | `/tmp/cpython-gc-typedmark-native.3qHu5p` |
 | 今回の non-tracing compile check | `/tmp/cpython-gc-dictwatch-fixed-rc-check.uOhNKc` |
 | main FT build | `/tmp/cpython-main-bench.uI5G5U/build` |
 | main conventional-GIL JIT build | `/tmp/cpython-main-jit-bench.E55QXp` |
@@ -289,6 +362,15 @@ env -u PYTHON_TRACING_GC_SOFT_DIRTY -u PYTHON_TRACING_GC_YOUNG_CONTAINERS \
   と同名 `.log`、`/tmp/gc-halfmarks-benchmark.py`: 採用済み最適化の計測。
 - `/tmp/gc-typedmark-results.txt` と `/tmp/gc-typedmark-benchmark.py`:
   TYPEDMARK の自動 GC / 明示的 full-GC 比較。
+- `/tmp/gc-rc-cause-results.json` と `/tmp/gc-rc-cause-results.log`:
+  同一 revision の RC/tracing 原因分解。
+- `/tmp/gc-no-gc-mutator-results.json`:
+  GC 無効化による遅延回収 stress。純粋な mutator 比較ではない。
+- `/tmp/gc-rc-cause-{rc-ft,trace-nonan-ft}-{stat.csv,report.txt}` と
+  `/tmp/gc-rc-cause-trace-nonan-nursery-ft-stat.csv`:
+  `deepcopy` の hardware counters と profile。nursery 構成は counter のみ。
+- `/tmp/gc-nursery-diag.log` と `/tmp/gc-type-census.py`:
+  nursery fallback と対象外型の診断。
 - `/tmp/gc-{heapgate,bufferfusion,halfmarks,privatekeys,dictwatch,fullpurge}-progress.md`:
   詳細な実験記録。
 

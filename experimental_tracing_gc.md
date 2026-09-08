@@ -1346,8 +1346,11 @@ were called with their standard loop bodies: `deepcopy`, `deepcopy_reduce`,
 `deepcopy_memo`, `pickle` and `regex_compile`. The comparator was the committed
 watcher fix. Each automatic-GC result is the median of five isolated processes,
 with version order alternated, CPU 2, hash seed zero, the normal allocator and
-both nursery features. Each process measured eight values after an untimed
-warmup. Collection counts matched within every pair.
+the nursery disabled. A later audit found that the driver set the nonexistent
+`PYTHON_GC_NURSERY=1` variable rather than either tracing-GC nursery variable.
+The measurements therefore remain valid comparisons of the full-GC marking
+change, but they are not nursery-enabled results. Each process measured eight
+values after an untimed warmup. Collection counts matched within every pair.
 
 | Mode | Geometric mean of five elapsed-time ratios | Largest improvements | Small regressions |
 | --- | ---: | --- | --- |
@@ -1374,3 +1377,75 @@ four to sixteen full collections did not change automatic collection counts and
 made FT `deepcopy_reduce` 3.4% slower in the screening run. A cursor optimization,
 conditional alive-bit clearing and a fused heap-classification experiment also
 failed their performance or maintenance gates and were removed.
+
+## 17. Why tracing remains much slower than reference counting
+
+The collector cost was isolated at source revision `2a7c7a505dc`. New builds
+used conventional reference counting, tracing without NaN boxing, and the
+current tracing configuration with NaN boxing. The free-threaded comparison has
+the same `--disable-gil` object layout in all builds and is the cleanest collector
+comparison. The RC JIT comparator is a conventional-GIL build, so that result
+also contains layout and optimizer differences. Five expensive pyperformance
+loop bodies were run for eight values in five fresh processes per configuration,
+with alternating order, CPU 2, hash seed zero and the normal allocator. The
+table reports geometric means across workloads; the GC columns are medians.
+
+| Mode | Tracing configuration | Elapsed / RC | Residual after reported GC / RC | GC share of elapsed | Share of excess explained by GC | Peak RSS / RC |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| FT | no NaN boxing | **2.455x** | 1.178x | 55.2% | 88.4% | 1.803x |
+| FT | NaN boxing | **2.569x** | 1.300x | 52.9% | 81.3% | 1.806x |
+| JIT-enabled | no NaN boxing | **2.924x** | 1.323x | 58.4% | 84.0% | 2.195x |
+| JIT-enabled | NaN boxing | **3.177x** | 1.556x | 52.1% | 73.3% | 2.152x |
+
+Scheduling and repeated full-heap work are the primary cause. Reference counting
+destroys short-lived acyclic objects as soon as their count reaches zero and
+subtracts deallocations from the cyclic collector's allocation count. It ran
+zero cyclic collections in every measured interval. Tracing accounts gross
+allocated bytes in the allocator and does not reclaim those objects until a
+collection. It ran 24--92 collections over the same work, mostly taking a heap
+snapshot, marking roots, traversing typed objects, classifying dead allocations,
+and clearing and freeing them. Reported GC time alone explains a median 73--88%
+of the excess over RC.
+
+Hardware counters on the FT `deepcopy` profile reinforce that result. Relative
+to RC, tracing without NaN boxing used 2.51x cycles, 1.63x instructions, 5.85x
+branch misses, 29.7x cache references, 62.0x cache misses and 5.40x page faults.
+IPC fell from 3.33 to 2.15. Self samples were distributed across the collection
+pipeline: `gc_collect_main_impl` 9.5%, snapshotting 4.3%, address marking 4.2%,
+garbage deletion 3.9%, heap scanning 3.5%, root marking 3.3%, and typed and dict
+traversal about 2.5% each. No single helper dominates; repeatedly touching the
+whole heap creates the instruction, branch and cache cost.
+
+Enabling the real nursery variables did not help these workloads. The elapsed
+ON/OFF geometric mean was 1.057x FT and 1.107x JIT without NaN boxing, and 1.069x
+FT and 1.093x JIT with it. The FT `deepcopy` nursery run incurred 36.2x the RC
+page faults and 6.70x the nursery-off tracing faults. It paid soft-dirty page
+protection and snapshot costs, then fell back to a full collection.
+
+The container nursery directly accepts only exact lists, exact tuples and
+unwatched exact dictionaries. A census with collection disabled estimated that
+47--58% of newly created tracked objects in the five workloads were unsupported.
+They included frames, exceptions and tracebacks, iterators, bound and builtin
+methods, user instances, Picklers, and regular-expression generators,
+`SubPattern` and `Pattern` objects. When unsupported young bodies exceed one
+eighth of the full-GC budget, the snapshot changes to a full fallback and starts
+a four-full-collection backoff. An instrumented `deepcopy` run repeatedly crossed
+that limit by a small amount and recorded no successful minor collection.
+
+A separate delayed-reclamation stress disabled GC after warmup and ran one
+measured value. Without NaN boxing, tracing took 1.465x RC in FT and 1.663x in
+JIT, while peak RSS was 3.93x and 4.68x. This is not a pure instruction-only
+mutator comparison: it intentionally includes storage that RC immediately
+destroys and reuses but tracing retains until collection. Together with the
+1.178x FT residual under automatic collection, it identifies allocation
+accounting, delayed-reclamation allocator/cache pressure, and representation
+and dispatch costs as secondary causes. NaN boxing is not the central gap, but
+it added 1.046x FT and 1.087x JIT to these five nursery-off tracing workloads.
+
+The next material optimization needs to reduce full collection frequency or
+scope: a young heap that covers common builtin and user objects with reliable
+write/dirty tracking, scheduling informed by collection yield and RSS, and less
+memory traffic in full snapshot/mark/sweep. Further isolated helper tuning cannot
+recover the majority of the measured gap. Until unsupported coverage improves,
+the soft-dirty nursery should reject unsuitable attempts early rather than add
+fault and snapshot cost before the same full collection.
