@@ -1501,3 +1501,42 @@ reduced the five-workload elapsed aggregate to 0.9488x FT and 0.9604x JIT, but
 the four-worker stress raised peak RSS from 193.98 to 222.10 MiB FT and from
 60.53 to 101.75 MiB JIT. That trade merely delays collection and worsens the
 retention cost identified in section 17.
+
+## 19. Use snapshot marks for initial precise visits
+
+After section 18's change, a profile still attributed 7.16% of self samples to
+`tracing_visit.part.0`. Its largest local sample site loaded `ob_gc_bits` from
+each referenced object to reject an already marked container before the page
+lookup. The initial full mark already maintains a dense snapshot map whose slot
+states distinguish unmarked, pending and reached allocations. That map is the
+authoritative duplicate check for scalar leaves and auxiliary allocations as
+well.
+
+The retained change lets every initial precise visit use the snapshot map and
+avoids loading the referenced object's header. Resurrection and nursery passes
+keep the `ALIVE` header shortcut. Reachability, reclamation order, collection
+thresholds and the map state machine are unchanged.
+
+The comparator was initial-mark commit `45d88d7530e`. The same five workloads
+and controls as section 18 ran for eight values in five fresh processes per
+version. Ratios are candidate divided by comparator and geometrically averaged.
+
+| Mode | Automatic elapsed | Reported automatic GC | Peak RSS |
+| --- | ---: | ---: | ---: |
+| FT | **0.9695x** | **0.9359x** | 1.0029x |
+| JIT-enabled | **0.9710x** | **0.9422x** | 0.9992x |
+
+Elapsed and GC duration improved in all ten workload-mode pairs. With exactly
+five explicit full collections per process, collection time was 0.9746x FT and
+0.9878x JIT; RSS was 0.9992x and 1.0007x. A four-worker, sixteen-batch,
+one-million-container stress measured elapsed/GC ratios of 0.9666x/0.9614x FT
+and 0.9783x/0.9690x JIT. JIT RSS was 0.9940x. The FT candidate ran 1.038x as
+many collections but had a lower median peak RSS, so the stress did not show a
+memory regression.
+
+A supplementary candidate profile attributed 5.48% of self samples to
+`tracing_visit.part.0`; annotation confirmed that the initial path skipped the
+referenced-object header load. The Debug focused module passed all 173 tests.
+Native FT and JIT each passed 172 of 173, with only the comparator-reproducible
+`test_set_bulk_release` failure. Complete Debug and native builds checked 116
+modules with no import failures.
