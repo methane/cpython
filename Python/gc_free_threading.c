@@ -9,6 +9,7 @@
 #include "pycore_initconfig.h"    // _PyStatus_NO_MEMORY()
 #include "pycore_interp.h"        // PyInterpreterState.gc
 #include "pycore_interpframe.h"   // _PyFrame_GetLocalsArray()
+#include "pycore_iterobject.h"    // _PySeqIter_PrepareTracingDealloc()
 #include "pycore_list.h"          // _PyList_GetItemRef()
 #include "pycore_object.h"        // _PyObject_GET_WEAKREFS_LISTPTR()
 #include "pycore_object_alloc.h"  // _PyObject_MallocWithType()
@@ -121,7 +122,7 @@ struct collection_state {
 
 #ifdef Py_EXPERIMENTAL_TRACING_GC
 static bool
-tracing_nursery_container(PyObject *op)
+tracing_nursery_container(PyObject *op, bool partial)
 {
     if (!_PyObject_GC_IS_TRACKED(op)) {
         return false;
@@ -129,6 +130,11 @@ tracing_nursery_container(PyObject *op)
 
     PyTypeObject *type = Py_TYPE(op);
     if (type == &PyList_Type || type == &PyTuple_Type) {
+        return true;
+    }
+    if (partial &&
+        (type == &PyListIter_Type || type == &PySeqIter_Type))
+    {
         return true;
     }
     if (type == &PyTraceBack_Type || type == &PyTupleIter_Type ||
@@ -176,6 +182,19 @@ tracing_nursery_container(PyObject *op)
                 *_PyObject_GET_WEAKREFS_LISTPTR(op) == NULL);
     }
     return false;
+}
+
+static void
+tracing_prepare_nursery_dealloc(PyObject *op)
+{
+    if (Py_IS_TYPE(op, &PyListIter_Type)) {
+        // The iterator freelist otherwise retains this dead edge until the
+        // end of the sweep. It can then look live to a conservative scan.
+        ((_PyListIterObject *)op)->it_seq = NULL;
+    }
+    else if (Py_IS_TYPE(op, &PySeqIter_Type)) {
+        _PySeqIter_PrepareTracingDealloc(op);
+    }
 }
 #endif
 
@@ -1945,12 +1964,13 @@ tracing_delete_simple_garbage(struct collection_state *state)
     _PyMem_BeginTracingSweep(&sweep, state->interp);
     PyObject *op;
     while ((op = worklist_pop(&state->unreachable)) != NULL) {
-        assert(tracing_nursery_container(op) && gc_is_unreachable(op));
+        assert(tracing_nursery_container(op, false) && gc_is_unreachable(op));
         // No mutator or callback can touch this dead header. Untrack it here
         // too, so its ordinary deallocator needs no atomic bit update.
         gc_clear_bit(op, _PyGC_BITS_UNREACHABLE | _PyGC_BITS_TRACKED);
         op->ob_ref_local = 0;
         op->ob_ref_shared = _Py_REF_MERGED;
+        tracing_prepare_nursery_dealloc(op);
         _Py_Dealloc(op);
         state->collected++;
     }
@@ -2679,7 +2699,7 @@ gc_collect_internal(PyInterpreterState *interp, struct collection_state *state, 
                         !(state->gcstate->debug & _PyGC_DEBUG_SAVEALL);
     PyObject *op;
     WORKSTACK_FOR_EACH(&state->unreachable, op) {
-        if (!tracing_nursery_container(op)) {
+        if (!tracing_nursery_container(op, false)) {
             // Absence of tp_finalize alone does not make an arbitrary
             // tp_clear or tp_dealloc safe to run with other threads stopped.
             simple_sweep = false;

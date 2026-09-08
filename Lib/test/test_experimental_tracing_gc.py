@@ -1675,6 +1675,46 @@ class ExperimentalTracingGCTests(unittest.TestCase):
             gc.collect()
         """, env_vars={"PYTHON_TRACING_GC_YOUNG_CONTAINERS": "1"})
 
+    def test_young_list_and_sequence_iterators(self):
+        self.run_soft_dirty("""
+            class Sequence:
+                def __getitem__(self, index):
+                    if index == 0:
+                        return marker
+                    raise IndexError
+
+            marker = object()
+            live_list = [marker]
+            live_sequence = Sequence()
+            prepare()
+            gc.disable()
+            for _ in range(20000):
+                iter(live_list)
+                iter(live_sequence)
+            gc.enable()
+            allocate_until(lambda: bool(events))
+            assert events[0] > 0, events
+            assert live_list == [marker]
+            assert list(live_sequence) == [marker]
+        """, env_vars={"PYTHON_TRACING_GC_YOUNG_CONTAINERS": "1"})
+
+    def test_young_sre_objects(self):
+        self.run_soft_dirty("""
+            import re
+
+            prepare()
+            gc.disable()
+            for i in range(20000):
+                subject = 'value-%d' % i
+                pattern = re.compile('^value-%d$' % i)
+                assert pattern.match(subject) is not None
+            del pattern, subject
+            re.purge()
+            gc.enable()
+            allocate_until(lambda: bool(events))
+            assert events[0] > 0, events
+        """, env_vars={"PYTHON_TRACING_GC_YOUNG_CONTAINERS": "1"})
+
     def test_young_containers_defer_suspended_generators(self):
         self.run_soft_dirty("""
             finalized = []
