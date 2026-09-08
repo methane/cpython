@@ -1591,3 +1591,43 @@ A smaller trial retained the separate heap visit but combined its temporary
 mark cleanup and final classification into one header write. Automatic GC time
 was 0.9989x FT and 0.9999x JIT, while elapsed time was 1.0005x and 1.0024x. It
 provided no useful speedup and was removed.
+
+## 21. Final pyperformance rerun against main
+
+The end-to-end comparison in section 15 was rerun after all retained
+optimizations through commit `3bcdb09e4b9`. The saved main baselines remained
+commit `c8da735f4f05`; the benchmark checkout, CPU 2 affinity, hash seed zero,
+GCC `-O3` builds without PGO/LTO, pyperformance 1.14.0, pyperf 2.10.0 and
+`--fast` selection were unchanged. The tracing nursery's soft-dirty and young
+container options were enabled. FT ran with the GIL and JIT disabled; JIT ran
+with the GIL restored and native JIT active.
+
+The 20 selected groups again yielded 26 common subbenchmarks. Ratios are the
+new tracing mean divided by the saved main mean, and the aggregate is their
+geometric mean.
+
+| Mode | Common results | Geometric mean | Slower / faster | Missing on tracing |
+| --- | ---: | ---: | ---: | --- |
+| FT | 26 | **2.073x** | 24 / 2 | `create_gc_cycles`, `gc_traversal` |
+| JIT | 26 | **2.559x** | 26 / 0 | same |
+
+The largest FT ratios were `pickle` 3.28x, `pathlib` 3.16x,
+`regex_compile` 3.16x, `deepcopy` 3.12x and `deepcopy_reduce` 2.94x. `nbody`
+and `float` were 0.949x and 0.983x. The largest JIT ratios were
+`regex_compile` 3.92x, `deepcopy_reduce` 3.89x, `deepcopy` 3.77x, `pickle`
+3.52x and `pathlib` 3.44x; all 26 were slower.
+
+The earlier watcher-fix run measured 2.050x FT and 2.559x JIT. The final FT
+aggregate moved by about one percent in a separate `--fast` run, while the JIT
+aggregate was unchanged. Several final results emitted pyperf stability
+warnings. This non-interleaved suite comparison is therefore retained as the
+current end-to-end result, not as an estimate of the individual optimizations;
+sections 18--20 use alternating, repeated candidate/comparator runs for those
+estimates.
+
+The two GC-specific benchmarks still failed their collection-count assertions
+before timing, for the tracing-semantics reason described in section 15. Their
+assertions were not changed. Raw suites are
+`/tmp/pyperformance-gc-results.wgIXfy/final-tracing-{ft,jit}.json`; per-benchmark
+ratios and the aggregate are in `final-compare-{ft,jit}.csv` and
+`final-compare-summary.json` in the same directory.
