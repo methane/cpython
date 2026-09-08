@@ -1540,3 +1540,54 @@ referenced-object header load. The Debug focused module passed all 173 tests.
 Native FT and JIT each passed 172 of 173, with only the comparator-reproducible
 `test_set_bulk_release` failure. Complete Debug and native builds checked 116
 modules with no import failures.
+
+## 20. Classify the heap from the retained snapshot map
+
+The initial mark map already distinguishes free, unmarked, pending and reached
+slots. The implementation nevertheless wrote `UNREACHABLE` into each reached
+non-leaf header during marking, then called `gc_visit_heaps()` to enumerate the
+allocator again, read those headers and build the collector worklists. The
+retained change classifies non-leaf objects directly from the map after pending
+traversal drains. It removes both the random temporary-header writes and the
+second allocator heap visit. Resurrection still uses `ALIVE` headers because
+finalizers may mutate the graph after the initial map has been released.
+
+An initial version classified the address-sorted pages directly. That changed
+deallocation and freelist-reuse order, made automatic collection counts diverge
+between versions, and regressed the explicit-full-GC JIT geometric mean to
+1.0409x. The snapshot now records the allocator's prior order: each thread's GC
+heap followed by its preheader heap, then the abandoned GC and preheader heaps.
+After marking, pages return to that order before classification. All ten pairs
+in the screening run then had matching collection counts.
+
+The comparator was snapshot-visit commit `2aa8452100e`. The same five workloads
+and controls as section 19 ran for eight values in five fresh processes per
+version. Ratios are candidate divided by comparator and geometrically averaged.
+
+| Mode | Automatic elapsed | Reported automatic GC | Peak RSS |
+| --- | ---: | ---: | ---: |
+| FT | **0.9894x** | **0.9850x** | 1.0010x |
+| JIT-enabled | **0.9953x** | **0.9882x** | 1.0035x |
+
+Reported GC time improved in all ten workload-mode pairs. JIT
+`regex_compile` was the only elapsed-time regression at 1.0033x, while its GC
+duration improved to 0.9937x. A short repeat after the final code layout gave
+elapsed ratios of 0.9922x FT and 0.9946x JIT, with GC ratios of 0.9889x and
+0.9891x. Five explicit full collections per process measured collection time
+at 0.9981x FT and 0.9966x JIT; RSS was 1.0001x and 1.0023x.
+
+The four-worker stress improved elapsed/GC/RSS to
+0.9856x/0.9822x/0.8981x FT and 0.9725x/0.9673x/0.9713x JIT. A supplementary
+profile no longer contained `scan_heap_visitor`; classification was folded
+into `tracing_mark_roots`.
+
+The Debug focused module passed all 173 tests. Native FT and JIT each passed 172
+of 173, with only the comparator-reproducible `test_set_bulk_release` failure;
+native JIT execution became active. Non-tracing and non-NaN-boxing objects
+compiled, and the complete Debug and native builds checked 116 modules with no
+import failures.
+
+A smaller trial retained the separate heap visit but combined its temporary
+mark cleanup and final classification into one header write. Automatic GC time
+was 0.9989x FT and 0.9999x JIT, while elapsed time was 1.0005x and 1.0024x. It
+provided no useful speedup and was removed.

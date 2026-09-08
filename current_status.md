@@ -367,6 +367,44 @@ Debug focus は 173/173 tests 成功。native FT/JIT は比較元でも再現す
 `test_set_bulk_release` だけが失敗して 172/173。Debug/native full build は 116
 modules checked、import failure 0だった。
 
+## 続く最適化: snapshot map から直接 heap を分類
+
+initial mark の snapshot map は従来、到達した non-leaf の header にランダムに
+`UNREACHABLE` を書き、その後 `gc_visit_heaps()` が allocator を再列挙して header を
+読み、collector worklist を作った。map には free/unmarked/reached の全情報が残って
+いるため、mark 完了後に map を直接走査して worklist を作る。これにより mark 中の
+temporary header write と二度目の allocator heap visit を除いた。resurrection pass は
+従来どおり `ALIVE` header を使う。
+
+最初の版は address 順の map のまま分類し、解放・freelist reuse の順序を変えた。
+自動 collection count がケースごとに変わり、明示的 full-GC の JIT 幾何平均も
+1.0409xへ悪化したため不採用。snapshot 時に thread ごとの GC heap、preheader heap、
+最後の abandoned heap という元の allocator visit 順を各 page に保存し、mark 後に
+その順へ戻してから分類することで、短い測定の全10組で collection count が一致した。
+
+比較元は mark-map commit `2aa8452100e`、比較先はこの変更。前節と同じ5 workload、
+各 5 fresh processes、8 values の変更後 / 変更前の幾何平均は次のとおり。
+
+| モード | 自動 GC の経過時間 | 自動 GC の報告時間 | Peak RSS |
+| --- | ---: | ---: | ---: |
+| FT | **0.9894x** | **0.9850x** | 1.0010x |
+| JIT | **0.9953x** | **0.9882x** | 1.0035x |
+
+GC 時間は全10組で改善した。JIT `regex_compile` の経過時間だけ 1.0033xだったが、同じ
+case の GC 時間は 0.9937x。最終 code layout 後の短い再確認も FT/JIT の経過時間
+0.9922x / 0.9946x、GC 0.9889x / 0.9891xだった。各5回の明示的 full-GC は collect
+時間 FT 0.9981x、JIT 0.9966x、RSS 1.0001x / 1.0023x。4 worker stress は FT の時間
+0.9856x、GC 0.9822x、RSS 0.8981x、JIT は時間 0.9725x、GC 0.9673x、RSS 0.9713x。
+補助 profile から `scan_heap_visitor` は消え、分類は `tracing_mark_roots` に統合された。
+
+Debug focus は 173/173 tests 成功。native FT/JIT は比較元でも再現する
+`test_set_bulk_release` だけが失敗して 172/173。JIT enabled/active。tracing なしと
+NaN-boxing なしも compile 成功し、Debug/native full build は 116 modules checked、
+import failure 0だった。
+
+別に試した「既存の heap visit の header 更新を二回から一回へ畳む」案は、通常 GC
+時間が FT 0.9989x、JIT 0.9999x、経過時間が 1.0005x / 1.0024xで実益がなく撤回した。
+
 ## 保存済みビルドと証拠
 
 以下はこのマシンのローカルパスで、Git に含まれない。`/tmp` が消えると失われる。
@@ -383,6 +421,7 @@ DICTWATCH の古い checkpoint にある RUNNING 表記は、この文書の結�
 | initial mark 最適化 native | `/tmp/cpython-gc-typedmark-native.3qHu5p` |
 | initial mark 最適化 Debug | `/tmp/cpython-gc-dictwatch-fixed-debug.tR5Set`（incremental rebuild） |
 | mark-map 比較元 binary | `/tmp/cpython-gc-typedmark-native.3qHu5p/python-initialmark` |
+| map 分類比較元 binary | `/tmp/cpython-gc-typedmark-native.3qHu5p/python-markmap` |
 | 原因分析 RC FT | `/tmp/cpython-gc-analysis-rc_ft.tSSbDh` |
 | 原因分析 RC JIT | `/tmp/cpython-gc-analysis-rc_jit.X9zado` |
 | 原因分析 tracing、NaN-boxing なし | `/tmp/cpython-gc-analysis-trace_nonan.CTuKgS` |
@@ -454,6 +493,12 @@ env -u PYTHON_TRACING_GC_SOFT_DIRTY -u PYTHON_TRACING_GC_YOUNG_CONTAINERS \
 - `/tmp/gc-markmap-{final,explicit,stress}.log`、
   `/tmp/gc-markmap-stress.json`、`/tmp/gc-markmap-ft-perf-run.log`、
   `/tmp/gc-markmap-ft-perf-report.txt`: initial mark の map 重複判定最適化。
+- `/tmp/gc-mapclass-order-{final,explicit}.log`、
+  `/tmp/gc-mapclass-stress.{log,json}`、`/tmp/gc-mapclass-final-screen.log`、
+  `/tmp/gc-mapclass-ft-perf-report.txt`: snapshot map 直接分類の測定。
+- `/tmp/gc-classify-{screen2,explicit-screen}.log` と
+  `/tmp/gc-mapclass-{screen,explicit-screen}.log`: 不採用にした header 更新統合と
+  分類順を保存しない map 直接分類。
 - `/tmp/gc-threshold-screen.json` と `/tmp/gc-threshold-stress.json`:
   不採用にした threshold 変更の時間・memory 測定。
 - `/tmp/gc-{heapgate,bufferfusion,halfmarks,privatekeys,dictwatch,fullpurge}-progress.md`:
