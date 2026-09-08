@@ -10,6 +10,7 @@
 #include "pycore_interp.h"        // PyInterpreterState.gc
 #include "pycore_interpframe.h"   // _PyFrame_GetLocalsArray()
 #include "pycore_list.h"          // _PyList_GetItemRef()
+#include "pycore_object.h"        // _PyObject_GET_WEAKREFS_LISTPTR()
 #include "pycore_object_alloc.h"  // _PyObject_MallocWithType()
 #include "pycore_pystate.h"       // _PyThreadState_GET()
 #include "pycore_tstate.h"        // _PyThreadStateImpl
@@ -122,12 +123,52 @@ struct collection_state {
 static bool
 tracing_nursery_container(PyObject *op)
 {
-    // These exact types have no weakrefs or Python finalizers. Watched dicts
-    // must use the full collector, which handles callbacks and resurrection.
-    return _PyObject_GC_IS_TRACKED(op) &&
-           (PyList_CheckExact(op) || PyTuple_CheckExact(op) ||
-            (PyDict_CheckExact(op) &&
-             (((PyDictObject *)op)->_ma_watcher_tag & DICT_WATCHER_MASK) == 0));
+    if (!_PyObject_GC_IS_TRACKED(op)) {
+        return false;
+    }
+
+    PyTypeObject *type = Py_TYPE(op);
+    if (type == &PyList_Type || type == &PyTuple_Type) {
+        return true;
+    }
+    if (type == &PyTraceBack_Type || type == &PyTupleIter_Type ||
+        type == &PyDictIterKey_Type || type == &PyDictIterValue_Type ||
+        type == &PyDictIterItem_Type || type == &PyDictKeys_Type ||
+        type == &PyDictValues_Type || type == &PyDictItems_Type ||
+        type == &PySlice_Type || type == &PyEnum_Type ||
+        type == &PyMap_Type || type == &PyZip_Type ||
+        type == (PyTypeObject *)PyExc_KeyError ||
+        type == (PyTypeObject *)PyExc_IndexError ||
+        type == (PyTypeObject *)PyExc_AttributeError)
+    {
+        // These exact types have no Python finalizers. Weakref callbacks are
+        // safe only when no weakref exists at the nursery snapshot.
+        return type->tp_weaklistoffset == 0 ||
+               *_PyObject_GET_WEAKREFS_LISTPTR(op) == NULL;
+    }
+    if (type == &PyDict_Type) {
+        // Watched dicts need the full collector for watcher callbacks and
+        // resurrection handling.
+        return (((PyDictObject *)op)->_ma_watcher_tag & DICT_WATCHER_MASK) == 0;
+    }
+    if (type == &PyFrame_Type || type == &PyCFunction_Type ||
+        type == &PyCMethod_Type ||
+        type == &PyMethod_Type)
+    {
+        // Their deallocators can clear weakrefs, but are callback-free when
+        // the object has no weakrefs at the nursery snapshot.
+        return *_PyObject_GET_WEAKREFS_LISTPTR(op) == NULL;
+    }
+    if (_PyType_IsTracingNurserySafe(type)) {
+        return type->tp_weaklistoffset == 0 ||
+               *_PyObject_GET_WEAKREFS_LISTPTR(op) == NULL;
+    }
+    if (type->tp_tracing_gc & _Py_TYPE_TRACING_NURSERY_SAFE) {
+        return type->tp_finalize == NULL && type->tp_del == NULL &&
+               (type->tp_weaklistoffset == 0 ||
+                *_PyObject_GET_WEAKREFS_LISTPTR(op) == NULL);
+    }
+    return false;
 }
 #endif
 
