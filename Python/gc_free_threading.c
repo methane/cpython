@@ -159,6 +159,13 @@ tracing_nursery_container(PyObject *op)
         // the object has no weakrefs at the nursery snapshot.
         return *_PyObject_GET_WEAKREFS_LISTPTR(op) == NULL;
     }
+    if (type == &PyGen_Type &&
+        ((PyGenObject *)op)->gi_frame_state == FRAME_CLEARED)
+    {
+        // A completed generator's finalizer returns without executing its
+        // frame. Its ordinary deallocator is callback-free without weakrefs.
+        return *_PyObject_GET_WEAKREFS_LISTPTR(op) == NULL;
+    }
     if (_PyType_IsTracingNurserySafe(type)) {
         return type->tp_weaklistoffset == 0 ||
                *_PyObject_GET_WEAKREFS_LISTPTR(op) == NULL;

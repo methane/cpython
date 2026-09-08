@@ -1627,7 +1627,7 @@ class ExperimentalTracingGCTests(unittest.TestCase):
                 make(index)
                 if events:
                     break
-            assert events and events[-1] > 0, events
+            assert events and events[0] > 0, events
             gc.collect()
         """, env_vars={"PYTHON_TRACING_GC_YOUNG_CONTAINERS": "1"})
 
@@ -1650,6 +1650,59 @@ class ExperimentalTracingGCTests(unittest.TestCase):
                     break
             assert events and events[0] > 0, events
             gc.collect()
+        """, env_vars={"PYTHON_TRACING_GC_YOUNG_CONTAINERS": "1"})
+
+    def test_young_completed_generators(self):
+        self.run_soft_dirty("""
+            def empty():
+                if False:
+                    yield
+
+            def make():
+                generator = empty()
+                assert next(generator, None) is None
+                cycle = [generator]
+                cycle.append(cycle)
+
+            prepare()
+            gc.set_threshold(2000)
+            gc.disable()
+            for _ in range(20000):
+                make()
+            gc.enable()
+            allocate_until(lambda: bool(events))
+            assert events and events[0] > 0, events
+            gc.collect()
+        """, env_vars={"PYTHON_TRACING_GC_YOUNG_CONTAINERS": "1"})
+
+    def test_young_containers_defer_suspended_generators(self):
+        self.run_soft_dirty("""
+            finalized = []
+
+            def make():
+                cycle = []
+                def run():
+                    try:
+                        yield cycle
+                    finally:
+                        finalized.append(None)
+                generator = run()
+                cycle.append(generator)
+                assert next(generator) is cycle
+
+            prepare()
+            gc.disable()
+            for _ in range(32):
+                make()
+            for _ in range(20000):
+                cycle = []
+                cycle.append(cycle)
+            gc.enable()
+            allocate_until(lambda: bool(events))
+            assert events[0] > 0, events
+            assert not finalized
+            gc.collect()
+            assert len(finalized) > 28, len(finalized)
         """, env_vars={"PYTHON_TRACING_GC_YOUNG_CONTAINERS": "1"})
 
     def test_young_containers_defer_objects_with_weakrefs(self):
