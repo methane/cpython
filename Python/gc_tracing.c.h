@@ -74,6 +74,7 @@ struct tracing_heap {
     int tag;
     bool leaf_only;
     bool young_containers;
+    bool temporary_marks;
     bool tracing_deferred;
     uintptr_t deferred_young_bytes;
     uintptr_t deferred_young_limit;
@@ -235,9 +236,10 @@ tracing_snapshot_use_full_heap(struct tracing_heap *graph)
     assert(graph->young_containers && !graph->leaf_only);
     assert(graph->pending == NULL);
     // No edges have been traced yet. Keep the allocation maps, but discard
-    // the nursery's implicit roots and clear the same header bits that a
-    // full snapshot would clear. The current page's free slots are already
-    // excluded, even if its object-header loop has not finished.
+    // the nursery's implicit roots. The initial full mark uses a temporary
+    // header bit, so it does not need to clear every object's promotion bit.
+    // The current page's free slots are already excluded, even if its
+    // object-header loop has not finished.
     for (size_t i = 0; i < graph->size; i++) {
         struct tracing_page *page = &graph->pages[i];
         if (page->leaf) {
@@ -251,13 +253,11 @@ tracing_snapshot_use_full_heap(struct tracing_heap *graph)
                     // private young buffer. Full tracing needs it unmarked.
                     continue;
                 }
-                PyObject *op = (PyObject *)(page->start + j * page->stride +
-                                           page->offset);
-                gc_clear_alive(op);
             }
         }
     }
     graph->young_containers = false;
+    graph->temporary_marks = true;
     graph->live_bytes = 0;
     graph->nonleaf_live_bytes = 0;
 }
@@ -500,6 +500,14 @@ tracing_snapshot_headers(struct tracing_heap *graph, size_t begin)
     for (size_t p = begin; p < graph->size; p++) {
         struct tracing_page *page = &graph->pages[p];
         if (page->typed && !page->leaf) {
+            // The first full root pass records reachability temporarily in
+            // UNREACHABLE and lets the existing classification visit
+            // normalize it.
+            // A later resurrection pass still clears ALIVE and retraces the
+            // whole graph because finalizers may have mutated live objects.
+            if (!graph->young_containers && graph->temporary_marks) {
+                continue;
+            }
             for (size_t i = 0; i < page->capacity; i++) {
                 if (page->marks[i] != 0) {
                     PyObject *op = (PyObject *)(page->start + i * page->stride +
@@ -712,7 +720,15 @@ tracing_mark_typed(struct tracing_heap *graph, struct tracing_page *page,
     if (!page->leaf) {
         graph->nonleaf_live_bytes += page->block_size;
     }
-    gc_set_alive((PyObject *)(block + page->offset));
+    PyObject *op = (PyObject *)(block + page->offset);
+    if (graph->temporary_marks) {
+        if (!page->leaf) {
+            gc_set_tracing_mark(op);
+        }
+    }
+    else {
+        gc_set_alive(op);
+    }
     return 0;
 }
 
@@ -813,14 +829,17 @@ tracing_visit(PyObject *op, void *arg)
     if (_PyObject_IsImmediate(op)) {
         return 0;
     }
+    struct tracing_heap *graph = arg;
     // Precise visitors supply valid object pointers, so already-marked GC
     // containers can be rejected before looking up their allocation. Leaf
-    // headers are not cleared at snapshot time and cannot use this shortcut.
-    uint8_t mask = _PyGC_BITS_TRACKED | _PyGC_BITS_ALIVE;
+    // headers cannot use this shortcut because their map is authoritative.
+    uint8_t mark = graph->temporary_marks ? _PyGC_BITS_UNREACHABLE
+                                         : _PyGC_BITS_ALIVE;
+    uint8_t mask = _PyGC_BITS_TRACKED | mark;
     if ((op->ob_gc_bits & mask) == mask) {
         return 0;
     }
-    return tracing_mark_object(arg, op);
+    return tracing_mark_object(graph, op);
 }
 
 // Claim an auxiliary allocation whose references the caller will visit
@@ -1079,6 +1098,9 @@ tracing_find_dead_leaves(struct tracing_heap *graph,
                 continue;
             }
             if (page->leaf_marks[j] != 1) {
+                if (graph->temporary_marks) {
+                    gc_set_alive(op);
+                }
                 continue;
             }
             // Leaf snapshots do not clear old ALIVE bits. Only a new mark
@@ -1307,7 +1329,9 @@ tracing_mark_roots(PyInterpreterState *interp, struct collection_state *state)
         // Freelist entries have dead object headers; do not interpret them
         // as typed allocations in the snapshot.
         _PyGC_ClearAllFreeLists(interp);
-        graph = (struct tracing_heap){0};
+        graph = (struct tracing_heap){
+            .temporary_marks = !state->leaf_candidates_ready,
+        };
         if (tracing_snapshot(interp, &graph) < 0) {
             tracing_free_snapshot(&graph);
             return -1;
@@ -1349,6 +1373,10 @@ tracing_mark_roots(PyInterpreterState *interp, struct collection_state *state)
     state->live_bytes = graph.live_bytes;
     if (err == 0) {
         state->gcstate->tracing_nonleaf_live_bytes = graph.nonleaf_live_bytes;
+    }
+    if (err != 0 && graph.temporary_marks) {
+        // A failed mark must not affect the next collection's classification.
+        gc_visit_heaps(interp, &gc_clear_tracing_marks, &state->base);
     }
     tracing_free_snapshot(&graph);
     return err;

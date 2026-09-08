@@ -1,15 +1,15 @@
 # Experimental tracing GC: 引き継ぎ状況
 
 更新日: 2026-09-08 UTC。ブランチ: `experimental-tracing-gc`。
-今回の最適化の親コミットは `901122c50b0`。
+今回の最適化の親コミットは `4fc52958937`。
 
 ## 最初に読むこと
 
 辞書 watcher の修正と回帰テストは `901122c50b0` にコミット済み。
 チェックポイントで失敗していた復活テストは解決し、Debug 全 173 tests と
 native FT/JIT の対象テストに成功した。main との pyperformance 比較も完了した。
-現在の作業ツリーは、その上に typed object の mark 経路を分離する性能最適化を
-含む。詳細は下記の各節を参照。
+その後、typed object の mark 経路分離と initial full mark の header clear 省略を
+追加した。詳細は下記の各節を参照。
 
 性能・互換性の実験であり、ある程度の互換性破壊は許容されている。ただし、
 クラッシュやリークを成功扱いしたり、テストを弱めて通したりしてはいけない。
@@ -292,6 +292,49 @@ write barrier/dirty tracking、回収実績と RSS を使って gross allocation
 soft-dirty nursery は fallback 時に余分な fault と snapshot costを加えるため、対象外
 比率を早く判定して試行を避けるか、対象型を広げるまではこの workload の解にならない。
 
+## 原因分析後の最適化: initial full mark の header clear を省略
+
+full snapshot は従来、全 non-leaf object の `ALIVE` を一度消し、到達した object で
+再び立て、GC heap の分類時にもう一度消していた。最初の root mark が始まる時点では
+staged `UNREACHABLE` object が存在しないため、world を止めている間だけ
+`UNREACHABLE` を到達マークとして使う。既存の GC heap 分類 visit がそのマークを
+読み、通常の reachable/unreachable 状態へ変換する。finalizer 後の resurrection pass
+は従来どおり `ALIVE` を消してから再走査する。leaf object は header ではなく既存の
+snapshot map で判定する。このため initial snapshot の全 object header write/read pass
+を一つ省ける。
+
+最初の試作は `ob_gc_bits` の bit 7 を新しい一時マークに使い、`memoryview` が参照する
+生きた `bytes` を誤回収して `PyBuffer_Release()` で crash した。GDB の watchpoint で
+`tracing_delete_leaf()` からその `bytes` が解放されることを確認した。bit 7 は既に
+`_Py_TRACING_GC_SHARED_BIT` として複数所有の sticky state に使われていたためであり、
+この案は破棄した。最終案は空いている header bit を仮定しない。
+
+比較元は TYPEDMARK `2a7c7a505dc`、比較先はこの変更、nursery OFF、CPU 2、hash seed 0、
+通常 allocator。`deepcopy` 三種、`pickle`、`regex_compile` を各 5 fresh processes、
+8 values、順序交互で測定した。比率は変更後 / 変更前の幾何平均。
+
+| モード | 自動 GC の経過時間 | 自動 GC の報告時間 | Peak RSS |
+| --- | ---: | ---: | ---: |
+| FT | **0.9843x** | **0.9591x** | 1.0291x |
+| JIT | **0.9777x** | **0.9574x** | 1.0022x |
+
+FT RSS は `deepcopy` が終端で 1 collection 少なく、49.8 MiB から 57.5 MiB になった
+影響であり、他4件は同等だった。回収回数を各5回に固定した明示的 full-GC 測定では、
+収集時間は FT **0.9466x**、JIT **0.9446x**、RSS は 1.0001x / 0.9905xだった。
+4 worker・16 batch・100万 container の stress では、FT の時間 0.9716x、GC 0.9692x、
+RSS 0.9717x、JIT は時間 0.9799x、GC 0.9752x、RSS 0.9991xだった。したがって短い
+`deepcopy` の RSS は一般的な memory regression とは判断しなかった。
+
+Debug focus は 173/173 tests 成功。native FT/JIT はそれぞれ、比較元でも失敗する
+`test_set_bulk_release` だけが失敗して 172/173。JIT enabled/active を確認した。
+tracing なしと NaN-boxing なしの object file も compile 成功し、Debug/native full build
+はいずれも 116 modules checked、import failure 0だった。
+
+併せて full-GC threshold 2000 を 4000 にする案を測った。5 workload の時間は FT
+0.9488x、JIT 0.9604xになったが、4 worker stress の RSS は FT 193.98 MiB から
+222.10 MiB、JIT 60.53 MiB から 101.75 MiBへ増えた。時間と memory の交換に過ぎず、
+参照カウントとの差の中心である遅延回収を悪化させるため不採用。
+
 ## 保存済みビルドと証拠
 
 以下はこのマシンのローカルパスで、Git に含まれない。`/tmp` が消えると失われる。
@@ -305,6 +348,8 @@ DICTWATCH の古い checkpoint にある RUNNING 表記は、この文書の結�
 | 今回の DICTWATCH fixed Debug | `/tmp/cpython-gc-dictwatch-fixed-debug.tR5Set` |
 | TYPEDMARK native | `/tmp/cpython-gc-powerstride-native.zYdBNv` |
 | TYPEDMARK Debug | `/tmp/cpython-gc-dictwatch-fixed-debug.tR5Set`（incremental rebuild） |
+| initial mark 最適化 native | `/tmp/cpython-gc-typedmark-native.3qHu5p` |
+| initial mark 最適化 Debug | `/tmp/cpython-gc-dictwatch-fixed-debug.tR5Set`（incremental rebuild） |
 | 原因分析 RC FT | `/tmp/cpython-gc-analysis-rc_ft.tSSbDh` |
 | 原因分析 RC JIT | `/tmp/cpython-gc-analysis-rc_jit.X9zado` |
 | 原因分析 tracing、NaN-boxing なし | `/tmp/cpython-gc-analysis-trace_nonan.CTuKgS` |
@@ -371,6 +416,10 @@ env -u PYTHON_TRACING_GC_SOFT_DIRTY -u PYTHON_TRACING_GC_YOUNG_CONTAINERS \
   `deepcopy` の hardware counters と profile。nursery 構成は counter のみ。
 - `/tmp/gc-nursery-diag.log` と `/tmp/gc-type-census.py`:
   nursery fallback と対象外型の診断。
+- `/tmp/gc-tempmark-{final,explicit,stress}.log` と
+  `/tmp/gc-tempmark-stress.json`: initial full mark 最適化の測定。
+- `/tmp/gc-threshold-screen.json` と `/tmp/gc-threshold-stress.json`:
+  不採用にした threshold 変更の時間・memory 測定。
 - `/tmp/gc-{heapgate,bufferfusion,halfmarks,privatekeys,dictwatch,fullpurge}-progress.md`:
   詳細な実験記録。
 
