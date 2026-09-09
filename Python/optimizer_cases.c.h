@@ -634,7 +634,12 @@
                 assert(PyLong_CheckExact(right_o));
                 assert(_PyLong_BothAreCompact((PyLongObject *)left_o, (PyLongObject *)right_o));
                 STAT_INC(BINARY_OP, hit);
+                #if TIER_ONE
+                INT_BINARY_OP(left, right, left_o, right_o, *, _PyCompactLong_Multiply);
+                res_stackref = _int_binary_res;
+                #else
                 res_stackref = _PyCompactLong_Multiply((PyLongObject *)left_o, (PyLongObject *)right_o);
+                #endif
                 if (PyStackRef_IsNull(res_stackref )) {
                     ctx->done = true;
                     break;
@@ -705,7 +710,12 @@
                 assert(PyLong_CheckExact(right_o));
                 assert(_PyLong_BothAreCompact((PyLongObject *)left_o, (PyLongObject *)right_o));
                 STAT_INC(BINARY_OP, hit);
+                #if TIER_ONE
+                INT_BINARY_OP(left, right, left_o, right_o, +, _PyCompactLong_Add);
+                res_stackref = _int_binary_res;
+                #else
                 res_stackref = _PyCompactLong_Add((PyLongObject *)left_o, (PyLongObject *)right_o);
+                #endif
                 if (PyStackRef_IsNull(res_stackref )) {
                     ctx->done = true;
                     break;
@@ -776,7 +786,12 @@
                 assert(PyLong_CheckExact(right_o));
                 assert(_PyLong_BothAreCompact((PyLongObject *)left_o, (PyLongObject *)right_o));
                 STAT_INC(BINARY_OP, hit);
+                #if TIER_ONE
+                INT_BINARY_OP(left, right, left_o, right_o, -, _PyCompactLong_Subtract);
+                res_stackref = _int_binary_res;
+                #else
                 res_stackref = _PyCompactLong_Subtract((PyLongObject *)left_o, (PyLongObject *)right_o);
+                #endif
                 if (PyStackRef_IsNull(res_stackref )) {
                     ctx->done = true;
                     break;

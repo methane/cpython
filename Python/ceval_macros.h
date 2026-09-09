@@ -594,6 +594,12 @@ gen_try_set_executing(PyGenObject *gen)
     return false;
 }
 
+// Tier 1 can reuse an operand only when its stack reference owns the object's
+// sole reference. Borrowed references may still be visible through a local.
+#define STACKREF_CAN_REUSE(ref)                                         \
+    (PyStackRef_RefcountOnObject(ref) &&                                \
+     _PyObject_IsUniquelyReferenced(PyStackRef_AsPyObjectBorrow(ref)))
+
 // Macro for inplace float binary ops (tier 2 only).
 // Mutates the uniquely-referenced TARGET operand in place.
 // TARGET must be either left or right.
@@ -678,6 +684,63 @@ gen_try_set_executing(PyGenObject *gen)
             (PyLongObject *)PyStackRef_AsPyObjectBorrow(left),           \
             (PyLongObject *)PyStackRef_AsPyObjectBorrow(right));         \
     }
+
+#define INT_BINARY_OP(left, right, left_o, right_o, OP, FUNC)            \
+    _PyStackRef _int_binary_res;                                        \
+    do {                                                                \
+        _PyStackRef _target = PyStackRef_NULL;                          \
+        int _reuse_left = STACKREF_CAN_REUSE(left);                     \
+        if (_reuse_left) {                                              \
+            _target = left;                                             \
+        }                                                               \
+        else if (STACKREF_CAN_REUSE(right)) {                            \
+            _target = right;                                            \
+        }                                                               \
+        if (!PyStackRef_IsNull(_target)) {                               \
+            stwodigits _left_val = _PyLong_CompactValue(                \
+                (PyLongObject *)left_o);                                \
+            stwodigits _right_val = _PyLong_CompactValue(               \
+                (PyLongObject *)right_o);                               \
+            stwodigits _result = _left_val OP _right_val;               \
+            if (!_PY_IS_SMALL_INT(_result)                              \
+                && ((twodigits)(_result + PyLong_MASK)                  \
+                    < (twodigits)PyLong_MASK + PyLong_BASE))            \
+            {                                                           \
+                PyLongObject *_target_o = (PyLongObject *)              \
+                    PyStackRef_AsPyObjectBorrow(_target);                \
+                _PyLong_SetSignAndDigitCount(                           \
+                    _target_o, _result < 0 ? -1 : 1, 1);                \
+                _target_o->long_value.ob_digit[0] =                     \
+                    (digit)(_result < 0 ? -_result : _result);          \
+                _int_binary_res = _target;                              \
+                if (_reuse_left) {                                      \
+                    left = PyStackRef_Borrow(left);                     \
+                }                                                       \
+                else {                                                  \
+                    right = PyStackRef_Borrow(right);                   \
+                }                                                       \
+                break;                                                  \
+            }                                                           \
+        }                                                               \
+        _int_binary_res = FUNC(                                         \
+            (PyLongObject *)left_o, (PyLongObject *)right_o);            \
+    } while (0)
+
+static inline _PyStackRef
+_PyEval_LongFromLong(long value)
+{
+    PyObject *res;
+    if (_PY_IS_SMALL_INT(value)) {
+        res = (PyObject *)&_PyLong_SMALL_INTS[_PY_NSMALLNEGINTS + value];
+    }
+    else {
+        res = PyLong_FromLong(value);
+        if (res == NULL) {
+            return PyStackRef_NULL;
+        }
+    }
+    return PyStackRef_FromPyObjectSteal(res);
+}
 
 #define CALL_TP_ITERITEM_NO_ESCAPE(ITER, INDEX) \
     Py_TYPE(ITER)->_tp_iteritem((ITER), (INDEX))

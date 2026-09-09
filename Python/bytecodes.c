@@ -668,7 +668,12 @@ dummy_func(
             assert(_PyLong_BothAreCompact((PyLongObject *)left_o, (PyLongObject *)right_o));
 
             STAT_INC(BINARY_OP, hit);
+#if TIER_ONE
+            INT_BINARY_OP(left, right, left_o, right_o, *, _PyCompactLong_Multiply);
+            res = _int_binary_res;
+#else
             res = _PyCompactLong_Multiply((PyLongObject *)left_o, (PyLongObject *)right_o);
+#endif
             EXIT_IF(PyStackRef_IsNull(res));
             l = left;
             r = right;
@@ -683,7 +688,12 @@ dummy_func(
             assert(_PyLong_BothAreCompact((PyLongObject *)left_o, (PyLongObject *)right_o));
 
             STAT_INC(BINARY_OP, hit);
+#if TIER_ONE
+            INT_BINARY_OP(left, right, left_o, right_o, +, _PyCompactLong_Add);
+            res = _int_binary_res;
+#else
             res = _PyCompactLong_Add((PyLongObject *)left_o, (PyLongObject *)right_o);
+#endif
             EXIT_IF(PyStackRef_IsNull(res));
             l = left;
             r = right;
@@ -698,7 +708,12 @@ dummy_func(
             assert(_PyLong_BothAreCompact((PyLongObject *)left_o, (PyLongObject *)right_o));
 
             STAT_INC(BINARY_OP, hit);
+#if TIER_ONE
+            INT_BINARY_OP(left, right, left_o, right_o, -, _PyCompactLong_Subtract);
+            res = _int_binary_res;
+#else
             res = _PyCompactLong_Subtract((PyLongObject *)left_o, (PyLongObject *)right_o);
+#endif
             EXIT_IF(PyStackRef_IsNull(res));
             l = left;
             r = right;
@@ -788,14 +803,11 @@ dummy_func(
             assert(PyFloat_CheckExact(right_o));
 
             STAT_INC(BINARY_OP, hit);
-            double dres =
-                ((PyFloatObject *)left_o)->ob_fval *
-                ((PyFloatObject *)right_o)->ob_fval;
-            PyObject *d = PyFloat_FromDouble(dres);
-            if (d == NULL) {
+            _PyEval_FloatBinaryOp(left, right, left_o, right_o, *);
+            res = _float_binary_res;
+            if (PyStackRef_IsNull(res)) {
                 ERROR_NO_POP();
             }
-            res = PyStackRef_FromPyObjectSteal(d);
             l = left;
             r = right;
             INPUTS_DEAD();
@@ -808,14 +820,11 @@ dummy_func(
             assert(PyFloat_CheckExact(right_o));
 
             STAT_INC(BINARY_OP, hit);
-            double dres =
-                ((PyFloatObject *)left_o)->ob_fval +
-                ((PyFloatObject *)right_o)->ob_fval;
-            PyObject *d = PyFloat_FromDouble(dres);
-            if (d == NULL) {
+            _PyEval_FloatBinaryOp(left, right, left_o, right_o, +);
+            res = _float_binary_res;
+            if (PyStackRef_IsNull(res)) {
                 ERROR_NO_POP();
             }
-            res = PyStackRef_FromPyObjectSteal(d);
             l = left;
             r = right;
             INPUTS_DEAD();
@@ -828,14 +837,11 @@ dummy_func(
             assert(PyFloat_CheckExact(right_o));
 
             STAT_INC(BINARY_OP, hit);
-            double dres =
-                ((PyFloatObject *)left_o)->ob_fval -
-                ((PyFloatObject *)right_o)->ob_fval;
-            PyObject *d = PyFloat_FromDouble(dres);
-            if (d == NULL) {
+            _PyEval_FloatBinaryOp(left, right, left_o, right_o, -);
+            res = _float_binary_res;
+            if (PyStackRef_IsNull(res)) {
                 ERROR_NO_POP();
             }
-            res = PyStackRef_FromPyObjectSteal(d);
             l = left;
             r = right;
             INPUTS_DEAD();
@@ -4100,9 +4106,13 @@ dummy_func(
             long value = r->start;
             r->start = value + r->step;
             r->len--;
+#if TIER_ONE
+            next = _PyEval_LongFromLong(value);
+#else
             PyObject *res = PyLong_FromLong(value);
-            ERROR_IF(res == NULL);
-            next = PyStackRef_FromPyObjectSteal(res);
+            next = res == NULL ? PyStackRef_NULL : PyStackRef_FromPyObjectSteal(res);
+#endif
+            ERROR_IF(PyStackRef_IsNull(next));
         }
 
         macro(FOR_ITER_RANGE) =

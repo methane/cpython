@@ -4292,7 +4292,12 @@
             assert(PyLong_CheckExact(right_o));
             assert(_PyLong_BothAreCompact((PyLongObject *)left_o, (PyLongObject *)right_o));
             STAT_INC(BINARY_OP, hit);
+            #if TIER_ONE
+            INT_BINARY_OP(left, right, left_o, right_o, *, _PyCompactLong_Multiply);
+            res = _int_binary_res;
+            #else
             res = _PyCompactLong_Multiply((PyLongObject *)left_o, (PyLongObject *)right_o);
+            #endif
             if (PyStackRef_IsNull(res)) {
                 UOP_STAT_INC(uopcode, miss);
                 SET_CURRENT_CACHED_VALUES(0);
@@ -4327,7 +4332,12 @@
             assert(PyLong_CheckExact(right_o));
             assert(_PyLong_BothAreCompact((PyLongObject *)left_o, (PyLongObject *)right_o));
             STAT_INC(BINARY_OP, hit);
+            #if TIER_ONE
+            INT_BINARY_OP(left, right, left_o, right_o, *, _PyCompactLong_Multiply);
+            res = _int_binary_res;
+            #else
             res = _PyCompactLong_Multiply((PyLongObject *)left_o, (PyLongObject *)right_o);
+            #endif
             if (PyStackRef_IsNull(res)) {
                 UOP_STAT_INC(uopcode, miss);
                 _tos_cache0 = right;
@@ -4364,7 +4374,12 @@
             assert(PyLong_CheckExact(right_o));
             assert(_PyLong_BothAreCompact((PyLongObject *)left_o, (PyLongObject *)right_o));
             STAT_INC(BINARY_OP, hit);
+            #if TIER_ONE
+            INT_BINARY_OP(left, right, left_o, right_o, *, _PyCompactLong_Multiply);
+            res = _int_binary_res;
+            #else
             res = _PyCompactLong_Multiply((PyLongObject *)left_o, (PyLongObject *)right_o);
+            #endif
             if (PyStackRef_IsNull(res)) {
                 UOP_STAT_INC(uopcode, miss);
                 _tos_cache1 = right;
@@ -4398,7 +4413,12 @@
             assert(PyLong_CheckExact(right_o));
             assert(_PyLong_BothAreCompact((PyLongObject *)left_o, (PyLongObject *)right_o));
             STAT_INC(BINARY_OP, hit);
+            #if TIER_ONE
+            INT_BINARY_OP(left, right, left_o, right_o, +, _PyCompactLong_Add);
+            res = _int_binary_res;
+            #else
             res = _PyCompactLong_Add((PyLongObject *)left_o, (PyLongObject *)right_o);
+            #endif
             if (PyStackRef_IsNull(res)) {
                 UOP_STAT_INC(uopcode, miss);
                 SET_CURRENT_CACHED_VALUES(0);
@@ -4433,7 +4453,12 @@
             assert(PyLong_CheckExact(right_o));
             assert(_PyLong_BothAreCompact((PyLongObject *)left_o, (PyLongObject *)right_o));
             STAT_INC(BINARY_OP, hit);
+            #if TIER_ONE
+            INT_BINARY_OP(left, right, left_o, right_o, +, _PyCompactLong_Add);
+            res = _int_binary_res;
+            #else
             res = _PyCompactLong_Add((PyLongObject *)left_o, (PyLongObject *)right_o);
+            #endif
             if (PyStackRef_IsNull(res)) {
                 UOP_STAT_INC(uopcode, miss);
                 _tos_cache0 = right;
@@ -4470,7 +4495,12 @@
             assert(PyLong_CheckExact(right_o));
             assert(_PyLong_BothAreCompact((PyLongObject *)left_o, (PyLongObject *)right_o));
             STAT_INC(BINARY_OP, hit);
+            #if TIER_ONE
+            INT_BINARY_OP(left, right, left_o, right_o, +, _PyCompactLong_Add);
+            res = _int_binary_res;
+            #else
             res = _PyCompactLong_Add((PyLongObject *)left_o, (PyLongObject *)right_o);
+            #endif
             if (PyStackRef_IsNull(res)) {
                 UOP_STAT_INC(uopcode, miss);
                 _tos_cache1 = right;
@@ -4504,7 +4534,12 @@
             assert(PyLong_CheckExact(right_o));
             assert(_PyLong_BothAreCompact((PyLongObject *)left_o, (PyLongObject *)right_o));
             STAT_INC(BINARY_OP, hit);
+            #if TIER_ONE
+            INT_BINARY_OP(left, right, left_o, right_o, -, _PyCompactLong_Subtract);
+            res = _int_binary_res;
+            #else
             res = _PyCompactLong_Subtract((PyLongObject *)left_o, (PyLongObject *)right_o);
+            #endif
             if (PyStackRef_IsNull(res)) {
                 UOP_STAT_INC(uopcode, miss);
                 SET_CURRENT_CACHED_VALUES(0);
@@ -4539,7 +4574,12 @@
             assert(PyLong_CheckExact(right_o));
             assert(_PyLong_BothAreCompact((PyLongObject *)left_o, (PyLongObject *)right_o));
             STAT_INC(BINARY_OP, hit);
+            #if TIER_ONE
+            INT_BINARY_OP(left, right, left_o, right_o, -, _PyCompactLong_Subtract);
+            res = _int_binary_res;
+            #else
             res = _PyCompactLong_Subtract((PyLongObject *)left_o, (PyLongObject *)right_o);
+            #endif
             if (PyStackRef_IsNull(res)) {
                 UOP_STAT_INC(uopcode, miss);
                 _tos_cache0 = right;
@@ -4576,7 +4616,12 @@
             assert(PyLong_CheckExact(right_o));
             assert(_PyLong_BothAreCompact((PyLongObject *)left_o, (PyLongObject *)right_o));
             STAT_INC(BINARY_OP, hit);
+            #if TIER_ONE
+            INT_BINARY_OP(left, right, left_o, right_o, -, _PyCompactLong_Subtract);
+            res = _int_binary_res;
+            #else
             res = _PyCompactLong_Subtract((PyLongObject *)left_o, (PyLongObject *)right_o);
+            #endif
             if (PyStackRef_IsNull(res)) {
                 UOP_STAT_INC(uopcode, miss);
                 _tos_cache1 = right;
@@ -5329,15 +5374,12 @@
             assert(PyFloat_CheckExact(left_o));
             assert(PyFloat_CheckExact(right_o));
             STAT_INC(BINARY_OP, hit);
-            double dres =
-            ((PyFloatObject *)left_o)->ob_fval *
-            ((PyFloatObject *)right_o)->ob_fval;
-            PyObject *d = PyFloat_FromDouble(dres);
-            if (d == NULL) {
+            _PyEval_FloatBinaryOp(left, right, left_o, right_o, *);
+            res = _float_binary_res;
+            if (PyStackRef_IsNull(res)) {
                 SET_CURRENT_CACHED_VALUES(0);
                 JUMP_TO_ERROR();
             }
-            res = PyStackRef_FromPyObjectSteal(d);
             l = left;
             r = right;
             _tos_cache2 = r;
@@ -5366,18 +5408,15 @@
             assert(PyFloat_CheckExact(left_o));
             assert(PyFloat_CheckExact(right_o));
             STAT_INC(BINARY_OP, hit);
-            double dres =
-            ((PyFloatObject *)left_o)->ob_fval *
-            ((PyFloatObject *)right_o)->ob_fval;
-            PyObject *d = PyFloat_FromDouble(dres);
-            if (d == NULL) {
+            _PyEval_FloatBinaryOp(left, right, left_o, right_o, *);
+            res = _float_binary_res;
+            if (PyStackRef_IsNull(res)) {
                 stack_pointer[0] = right;
                 stack_pointer += 1;
                 ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
                 SET_CURRENT_CACHED_VALUES(0);
                 JUMP_TO_ERROR();
             }
-            res = PyStackRef_FromPyObjectSteal(d);
             l = left;
             r = right;
             _tos_cache2 = r;
@@ -5407,11 +5446,9 @@
             assert(PyFloat_CheckExact(left_o));
             assert(PyFloat_CheckExact(right_o));
             STAT_INC(BINARY_OP, hit);
-            double dres =
-            ((PyFloatObject *)left_o)->ob_fval *
-            ((PyFloatObject *)right_o)->ob_fval;
-            PyObject *d = PyFloat_FromDouble(dres);
-            if (d == NULL) {
+            _PyEval_FloatBinaryOp(left, right, left_o, right_o, *);
+            res = _float_binary_res;
+            if (PyStackRef_IsNull(res)) {
                 stack_pointer[0] = left;
                 stack_pointer[1] = right;
                 stack_pointer += 2;
@@ -5419,7 +5456,6 @@
                 SET_CURRENT_CACHED_VALUES(0);
                 JUMP_TO_ERROR();
             }
-            res = PyStackRef_FromPyObjectSteal(d);
             l = left;
             r = right;
             _tos_cache2 = r;
@@ -5445,15 +5481,12 @@
             assert(PyFloat_CheckExact(left_o));
             assert(PyFloat_CheckExact(right_o));
             STAT_INC(BINARY_OP, hit);
-            double dres =
-            ((PyFloatObject *)left_o)->ob_fval +
-            ((PyFloatObject *)right_o)->ob_fval;
-            PyObject *d = PyFloat_FromDouble(dres);
-            if (d == NULL) {
+            _PyEval_FloatBinaryOp(left, right, left_o, right_o, +);
+            res = _float_binary_res;
+            if (PyStackRef_IsNull(res)) {
                 SET_CURRENT_CACHED_VALUES(0);
                 JUMP_TO_ERROR();
             }
-            res = PyStackRef_FromPyObjectSteal(d);
             l = left;
             r = right;
             _tos_cache2 = r;
@@ -5482,18 +5515,15 @@
             assert(PyFloat_CheckExact(left_o));
             assert(PyFloat_CheckExact(right_o));
             STAT_INC(BINARY_OP, hit);
-            double dres =
-            ((PyFloatObject *)left_o)->ob_fval +
-            ((PyFloatObject *)right_o)->ob_fval;
-            PyObject *d = PyFloat_FromDouble(dres);
-            if (d == NULL) {
+            _PyEval_FloatBinaryOp(left, right, left_o, right_o, +);
+            res = _float_binary_res;
+            if (PyStackRef_IsNull(res)) {
                 stack_pointer[0] = right;
                 stack_pointer += 1;
                 ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
                 SET_CURRENT_CACHED_VALUES(0);
                 JUMP_TO_ERROR();
             }
-            res = PyStackRef_FromPyObjectSteal(d);
             l = left;
             r = right;
             _tos_cache2 = r;
@@ -5523,11 +5553,9 @@
             assert(PyFloat_CheckExact(left_o));
             assert(PyFloat_CheckExact(right_o));
             STAT_INC(BINARY_OP, hit);
-            double dres =
-            ((PyFloatObject *)left_o)->ob_fval +
-            ((PyFloatObject *)right_o)->ob_fval;
-            PyObject *d = PyFloat_FromDouble(dres);
-            if (d == NULL) {
+            _PyEval_FloatBinaryOp(left, right, left_o, right_o, +);
+            res = _float_binary_res;
+            if (PyStackRef_IsNull(res)) {
                 stack_pointer[0] = left;
                 stack_pointer[1] = right;
                 stack_pointer += 2;
@@ -5535,7 +5563,6 @@
                 SET_CURRENT_CACHED_VALUES(0);
                 JUMP_TO_ERROR();
             }
-            res = PyStackRef_FromPyObjectSteal(d);
             l = left;
             r = right;
             _tos_cache2 = r;
@@ -5561,15 +5588,12 @@
             assert(PyFloat_CheckExact(left_o));
             assert(PyFloat_CheckExact(right_o));
             STAT_INC(BINARY_OP, hit);
-            double dres =
-            ((PyFloatObject *)left_o)->ob_fval -
-            ((PyFloatObject *)right_o)->ob_fval;
-            PyObject *d = PyFloat_FromDouble(dres);
-            if (d == NULL) {
+            _PyEval_FloatBinaryOp(left, right, left_o, right_o, -);
+            res = _float_binary_res;
+            if (PyStackRef_IsNull(res)) {
                 SET_CURRENT_CACHED_VALUES(0);
                 JUMP_TO_ERROR();
             }
-            res = PyStackRef_FromPyObjectSteal(d);
             l = left;
             r = right;
             _tos_cache2 = r;
@@ -5598,18 +5622,15 @@
             assert(PyFloat_CheckExact(left_o));
             assert(PyFloat_CheckExact(right_o));
             STAT_INC(BINARY_OP, hit);
-            double dres =
-            ((PyFloatObject *)left_o)->ob_fval -
-            ((PyFloatObject *)right_o)->ob_fval;
-            PyObject *d = PyFloat_FromDouble(dres);
-            if (d == NULL) {
+            _PyEval_FloatBinaryOp(left, right, left_o, right_o, -);
+            res = _float_binary_res;
+            if (PyStackRef_IsNull(res)) {
                 stack_pointer[0] = right;
                 stack_pointer += 1;
                 ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
                 SET_CURRENT_CACHED_VALUES(0);
                 JUMP_TO_ERROR();
             }
-            res = PyStackRef_FromPyObjectSteal(d);
             l = left;
             r = right;
             _tos_cache2 = r;
@@ -5639,11 +5660,9 @@
             assert(PyFloat_CheckExact(left_o));
             assert(PyFloat_CheckExact(right_o));
             STAT_INC(BINARY_OP, hit);
-            double dres =
-            ((PyFloatObject *)left_o)->ob_fval -
-            ((PyFloatObject *)right_o)->ob_fval;
-            PyObject *d = PyFloat_FromDouble(dres);
-            if (d == NULL) {
+            _PyEval_FloatBinaryOp(left, right, left_o, right_o, -);
+            res = _float_binary_res;
+            if (PyStackRef_IsNull(res)) {
                 stack_pointer[0] = left;
                 stack_pointer[1] = right;
                 stack_pointer += 2;
@@ -5651,7 +5670,6 @@
                 SET_CURRENT_CACHED_VALUES(0);
                 JUMP_TO_ERROR();
             }
-            res = PyStackRef_FromPyObjectSteal(d);
             l = left;
             r = right;
             _tos_cache2 = r;
@@ -15997,12 +16015,16 @@
             long value = r->start;
             r->start = value + r->step;
             r->len--;
+            #if TIER_ONE
+            next = _PyEval_LongFromLong(value);
+            #else
             PyObject *res = PyLong_FromLong(value);
-            if (res == NULL) {
+            next = res == NULL ? PyStackRef_NULL : PyStackRef_FromPyObjectSteal(res);
+            #endif
+            if (PyStackRef_IsNull(next)) {
                 SET_CURRENT_CACHED_VALUES(0);
                 JUMP_TO_ERROR();
             }
-            next = PyStackRef_FromPyObjectSteal(res);
             _tos_cache2 = next;
             _tos_cache1 = stack_pointer[-1];
             _tos_cache0 = iter;
@@ -16029,15 +16051,20 @@
             long value = r->start;
             r->start = value + r->step;
             r->len--;
+            #if TIER_ONE
+            next = _PyEval_LongFromLong(value);
+            #else
             PyObject *res = PyLong_FromLong(value);
-            if (res == NULL) {
+            next = res == NULL ? PyStackRef_NULL : PyStackRef_FromPyObjectSteal(res);
+            #endif
+            if (PyStackRef_IsNull(next)) {
                 stack_pointer[0] = _stack_item_0;
-                stack_pointer += 1;
+                stack_pointer[1] = next;
+                stack_pointer += 2;
                 ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
                 SET_CURRENT_CACHED_VALUES(0);
                 JUMP_TO_ERROR();
             }
-            next = PyStackRef_FromPyObjectSteal(res);
             _tos_cache2 = next;
             _tos_cache1 = _stack_item_0;
             _tos_cache0 = iter;
@@ -16065,16 +16092,21 @@
             long value = r->start;
             r->start = value + r->step;
             r->len--;
+            #if TIER_ONE
+            next = _PyEval_LongFromLong(value);
+            #else
             PyObject *res = PyLong_FromLong(value);
-            if (res == NULL) {
+            next = res == NULL ? PyStackRef_NULL : PyStackRef_FromPyObjectSteal(res);
+            #endif
+            if (PyStackRef_IsNull(next)) {
                 stack_pointer[0] = iter;
                 stack_pointer[1] = _stack_item_1;
-                stack_pointer += 2;
+                stack_pointer[2] = next;
+                stack_pointer += 3;
                 ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
                 SET_CURRENT_CACHED_VALUES(0);
                 JUMP_TO_ERROR();
             }
-            next = PyStackRef_FromPyObjectSteal(res);
             _tos_cache2 = next;
             _tos_cache1 = _stack_item_1;
             _tos_cache0 = iter;

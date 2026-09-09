@@ -8,7 +8,38 @@ extern "C" {
 #  error "this header requires Py_BUILD_CORE define"
 #endif
 
+#include "pycore_stackref.h"      // _PyStackRef
 #include "pycore_unicodeobject.h" // _PyUnicodeWriter
+
+
+// Reuse an unaliased temporary operand for an exact float binary operation.
+#define _PyEval_FloatBinaryOp(left, right, left_o, right_o, OP)          \
+    _PyStackRef _float_binary_res;                                      \
+    do {                                                                \
+        double _dres =                                                   \
+            ((PyFloatObject *)left_o)->ob_fval                          \
+            OP ((PyFloatObject *)right_o)->ob_fval;                     \
+        if (PyStackRef_RefcountOnObject(left) &&                         \
+            _PyObject_IsUniquelyReferenced(left_o))                     \
+        {                                                               \
+            ((PyFloatObject *)left_o)->ob_fval = _dres;                 \
+            _float_binary_res = left;                                   \
+            left = PyStackRef_Borrow(left);                             \
+        }                                                               \
+        else if (PyStackRef_RefcountOnObject(right) &&                   \
+                 _PyObject_IsUniquelyReferenced(right_o))               \
+        {                                                               \
+            ((PyFloatObject *)right_o)->ob_fval = _dres;                \
+            _float_binary_res = right;                                  \
+            right = PyStackRef_Borrow(right);                           \
+        }                                                               \
+        else {                                                          \
+            PyObject *_d = PyFloat_FromDouble(_dres);                   \
+            _float_binary_res = _d == NULL                              \
+                ? PyStackRef_NULL                                       \
+                : PyStackRef_FromPyObjectSteal(_d);                     \
+        }                                                               \
+    } while (0)
 
 /* runtime lifecycle */
 

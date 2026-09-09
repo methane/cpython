@@ -580,6 +580,7 @@ def has_error_without_pop(op: parser.CodeDef) -> bool:
 
 
 NON_ESCAPING_FUNCTIONS = (
+    "INT_BINARY_OP",
     "PyCFunction_GET_FLAGS",
     "PyCFunction_GET_FUNCTION",
     "PyCFunction_GET_SELF",
@@ -651,6 +652,8 @@ NON_ESCAPING_FUNCTIONS = (
     "_PyCode_CODE",
     "_PyDictValues_AddToInsertionOrder",
     "_PyErr_Occurred",
+    "_PyEval_FloatBinaryOp",
+    "_PyEval_LongFromLong",
     "_PyFrame_GetBytecode",
     "_PyFrame_GetCode",
     "_PyFrame_IsIncomplete",

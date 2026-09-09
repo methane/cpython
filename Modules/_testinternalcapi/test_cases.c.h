@@ -142,14 +142,11 @@
                 assert(PyFloat_CheckExact(left_o));
                 assert(PyFloat_CheckExact(right_o));
                 STAT_INC(BINARY_OP, hit);
-                double dres =
-                ((PyFloatObject *)left_o)->ob_fval +
-                ((PyFloatObject *)right_o)->ob_fval;
-                PyObject *d = PyFloat_FromDouble(dres);
-                if (d == NULL) {
+                _PyEval_FloatBinaryOp(left, right, left_o, right_o, +);
+                res = _float_binary_res;
+                if (PyStackRef_IsNull(res)) {
                     JUMP_TO_LABEL(error);
                 }
-                res = PyStackRef_FromPyObjectSteal(d);
                 l = left;
                 r = right;
             }
@@ -218,7 +215,12 @@
                 assert(PyLong_CheckExact(right_o));
                 assert(_PyLong_BothAreCompact((PyLongObject *)left_o, (PyLongObject *)right_o));
                 STAT_INC(BINARY_OP, hit);
+                #if TIER_ONE
+                INT_BINARY_OP(left, right, left_o, right_o, +, _PyCompactLong_Add);
+                res = _int_binary_res;
+                #else
                 res = _PyCompactLong_Add((PyLongObject *)left_o, (PyLongObject *)right_o);
+                #endif
                 if (PyStackRef_IsNull(res)) {
                     UPDATE_MISS_STATS(BINARY_OP);
                     assert(_PyOpcode_Deopt[opcode] == (BINARY_OP));
@@ -536,14 +538,11 @@
                 assert(PyFloat_CheckExact(left_o));
                 assert(PyFloat_CheckExact(right_o));
                 STAT_INC(BINARY_OP, hit);
-                double dres =
-                ((PyFloatObject *)left_o)->ob_fval *
-                ((PyFloatObject *)right_o)->ob_fval;
-                PyObject *d = PyFloat_FromDouble(dres);
-                if (d == NULL) {
+                _PyEval_FloatBinaryOp(left, right, left_o, right_o, *);
+                res = _float_binary_res;
+                if (PyStackRef_IsNull(res)) {
                     JUMP_TO_LABEL(error);
                 }
-                res = PyStackRef_FromPyObjectSteal(d);
                 l = left;
                 r = right;
             }
@@ -612,7 +611,12 @@
                 assert(PyLong_CheckExact(right_o));
                 assert(_PyLong_BothAreCompact((PyLongObject *)left_o, (PyLongObject *)right_o));
                 STAT_INC(BINARY_OP, hit);
+                #if TIER_ONE
+                INT_BINARY_OP(left, right, left_o, right_o, *, _PyCompactLong_Multiply);
+                res = _int_binary_res;
+                #else
                 res = _PyCompactLong_Multiply((PyLongObject *)left_o, (PyLongObject *)right_o);
+                #endif
                 if (PyStackRef_IsNull(res)) {
                     UPDATE_MISS_STATS(BINARY_OP);
                     assert(_PyOpcode_Deopt[opcode] == (BINARY_OP));
@@ -1300,14 +1304,11 @@
                 assert(PyFloat_CheckExact(left_o));
                 assert(PyFloat_CheckExact(right_o));
                 STAT_INC(BINARY_OP, hit);
-                double dres =
-                ((PyFloatObject *)left_o)->ob_fval -
-                ((PyFloatObject *)right_o)->ob_fval;
-                PyObject *d = PyFloat_FromDouble(dres);
-                if (d == NULL) {
+                _PyEval_FloatBinaryOp(left, right, left_o, right_o, -);
+                res = _float_binary_res;
+                if (PyStackRef_IsNull(res)) {
                     JUMP_TO_LABEL(error);
                 }
-                res = PyStackRef_FromPyObjectSteal(d);
                 l = left;
                 r = right;
             }
@@ -1376,7 +1377,12 @@
                 assert(PyLong_CheckExact(right_o));
                 assert(_PyLong_BothAreCompact((PyLongObject *)left_o, (PyLongObject *)right_o));
                 STAT_INC(BINARY_OP, hit);
+                #if TIER_ONE
+                INT_BINARY_OP(left, right, left_o, right_o, -, _PyCompactLong_Subtract);
+                res = _int_binary_res;
+                #else
                 res = _PyCompactLong_Subtract((PyLongObject *)left_o, (PyLongObject *)right_o);
+                #endif
                 if (PyStackRef_IsNull(res)) {
                     UPDATE_MISS_STATS(BINARY_OP);
                     assert(_PyOpcode_Deopt[opcode] == (BINARY_OP));
@@ -6577,11 +6583,15 @@
                 long value = r->start;
                 r->start = value + r->step;
                 r->len--;
+                #if TIER_ONE
+                next = _PyEval_LongFromLong(value);
+                #else
                 PyObject *res = PyLong_FromLong(value);
-                if (res == NULL) {
+                next = res == NULL ? PyStackRef_NULL : PyStackRef_FromPyObjectSteal(res);
+                #endif
+                if (PyStackRef_IsNull(next)) {
                     JUMP_TO_LABEL(error);
                 }
-                next = PyStackRef_FromPyObjectSteal(res);
             }
             stack_pointer[0] = next;
             stack_pointer += 1;

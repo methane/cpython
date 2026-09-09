@@ -1375,6 +1375,56 @@ class TestSpecializer(TestBase):
         self.assert_specialized(binary_op_add_int, "BINARY_OP_ADD_INT")
         self.assert_no_opcode(binary_op_add_int, "BINARY_OP")
 
+        def binary_op_int_temporaries(a, b):
+            left_alias = a
+            right_alias = b
+            return (
+                (a + 1000) + b,
+                a + (b + 1000),
+                (a + 1000) - b,
+                a - (b + 1000),
+                (a + 1000) * b,
+                a * (b + 1000),
+                a, b, left_alias, right_alias,
+            )
+
+        int_expected = (
+            2010, 2010, 1984, -16, 25961, 1009961,
+            997, 13, 997, 13,
+        )
+        for _ in range(_testinternalcapi.SPECIALIZATION_THRESHOLD):
+            self.assertEqual(binary_op_int_temporaries(997, 13), int_expected)
+        self.assert_specialized(binary_op_int_temporaries, "BINARY_OP_ADD_INT")
+        self.assert_specialized(binary_op_int_temporaries, "BINARY_OP_SUBTRACT_INT")
+        self.assert_specialized(binary_op_int_temporaries, "BINARY_OP_MULTIPLY_INT")
+
+        def binary_op_float_temporaries(a, b):
+            left_alias = a
+            right_alias = b
+            return (
+                (a + 1000.0) + b,
+                a + (b + 1000.0),
+                (a + 1000.0) - b,
+                a - (b + 1000.0),
+                (a + 1000.0) * b,
+                a * (b + 1000.0),
+                a, b, left_alias, right_alias,
+            )
+
+        float_expected = (
+            2010.75, 2010.75, 1983.75, -16.25,
+            26962.875, 1010712.875,
+            997.25, 13.5, 997.25, 13.5,
+        )
+        for _ in range(_testinternalcapi.SPECIALIZATION_THRESHOLD):
+            self.assertEqual(
+                binary_op_float_temporaries(997.25, 13.5),
+                float_expected,
+            )
+        self.assert_specialized(binary_op_float_temporaries, "BINARY_OP_ADD_FLOAT")
+        self.assert_specialized(binary_op_float_temporaries, "BINARY_OP_SUBTRACT_FLOAT")
+        self.assert_specialized(binary_op_float_temporaries, "BINARY_OP_MULTIPLY_FLOAT")
+
         def binary_op_int_non_compact():
             for _ in range(_testinternalcapi.SPECIALIZATION_THRESHOLD):
                 a, b = 10000000000, 1
