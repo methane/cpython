@@ -1523,6 +1523,18 @@ init_interp_main(PyThreadState *tstate)
             // PYTHON_JIT=0|1 overrides the default
             enabled = *env != '0';
         }
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+        if (enabled && (config->enable_gil != _PyConfig_GIL_ENABLE ||
+                        config->tlbc_enabled))
+        {
+            if (env && *env != '\0' && *env != '0') {
+                return _PyStatus_ERR(
+                    "tracing GC JIT requires -X gil=1 -X tlbc=0 "
+                    "(or PYTHON_GIL=1 PYTHON_TLBC=0)");
+            }
+            enabled = 0;
+        }
+#endif
         if (enabled) {
 #ifdef _Py_JIT
             // perf profiler works fine with tier 2 interpreter, so
@@ -1609,6 +1621,10 @@ pyinit_main(PyThreadState *tstate)
     if (_PyStatus_EXCEPTION(status)) {
         return status;
     }
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    _PyGC_InitializeTracing(interp);
+    _Py_tracing_gc_enabled = 1;
+#endif
     return _PyStatus_OK();
 }
 
@@ -1619,6 +1635,12 @@ Py_InitializeFromConfig(const PyConfig *config)
     if (config == NULL) {
         return _PyStatus_ERR("initialization config is NULL");
     }
+
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    // A process may finalize and initialize Python again.  Bootstrap always
+    // uses ordinary reference counting until pyinit_main() completes.
+    _Py_tracing_gc_enabled = 0;
+#endif
 
     PyStatus status;
 

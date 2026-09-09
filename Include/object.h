@@ -189,6 +189,39 @@ PyAPI_FUNC(int) Py_Is(PyObject *x, PyObject *y);
 PyAPI_DATA(PyTypeObject) PyLong_Type;
 PyAPI_DATA(PyTypeObject) PyBool_Type;
 
+#ifdef Py_EXPERIMENTAL_NANBOX
+PyAPI_DATA(PyTypeObject) PyFloat_Type;
+
+// Experimental Linux x86-64 ABI: heap pointers occupy the low 48 bits.
+// Non-NaN doubles are encoded by adding 2**49 to their IEEE 754 bits.
+// Their upper 16 bits are then in [2, 0xfff2], disjoint from heap pointers
+// and the negative tagged integers used internally on the interpreter stack.
+// NaNs remain boxed so that their payloads and object identity are preserved.
+static inline int
+_PyFloat_IsImmediate(PyObject *op)
+{
+    uintptr_t tag = (uintptr_t)op >> 48;
+    return tag >= 2 && tag <= 0xfff2;
+}
+
+static inline int
+_PyLong_IsImmediate(PyObject *op)
+{
+    return ((uintptr_t)op >> 48) == 0xfff3;
+}
+
+static inline int
+_PyObject_IsImmediate(PyObject *op)
+{
+    uintptr_t tag = (uintptr_t)op >> 48;
+    return tag >= 2 && tag <= 0xfff3;
+}
+#else
+#  define _PyFloat_IsImmediate(op) 0
+#  define _PyLong_IsImmediate(op) 0
+#  define _PyObject_IsImmediate(op) 0
+#endif
+
 /* Definitions for the stable ABI */
 #if !defined(Py_LIMITED_API) || Py_LIMITED_API+0 >= _Py_PACK_VERSION(3, 14)
 PyAPI_FUNC(PyTypeObject*) Py_TYPE(PyObject *ob);
@@ -231,6 +264,14 @@ Py_SET_TYPE(PyObject *ob, PyTypeObject *type)
 static inline
 PyTypeObject* _Py_TYPE_impl(PyObject *ob)
 {
+#ifdef Py_EXPERIMENTAL_NANBOX
+    if (_PyFloat_IsImmediate(ob)) {
+        return &PyFloat_Type;
+    }
+    if (_PyLong_IsImmediate(ob)) {
+        return &PyLong_Type;
+    }
+#endif
     return ob->ob_type;
 }
 

@@ -221,12 +221,22 @@ gc_get_count_impl(PyObject *module)
     _PyThreadStateImpl *tstate = (_PyThreadStateImpl *)_PyThreadState_GET();
     struct _gc_thread_state *gc = &tstate->gc;
 
+#ifndef Py_EXPERIMENTAL_TRACING_GC
     // Flush the local allocation count to the global count
     _Py_atomic_add_int(&gcstate->young.count, (int)gc->alloc_count);
     gc->alloc_count = 0;
 #endif
+#endif
 
-#ifndef Py_GIL_DISABLED
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    // Use the same units as the tracing collector's minimum budget. Include
+    // this thread's partial batch without flushing it or scheduling a GC.
+    uintptr_t allocated =
+        _Py_atomic_load_uintptr_relaxed(&gcstate->tracing_allocated_bytes) +
+        gc->allocated_bytes;
+    return Py_BuildValue("(Kii)", (unsigned long long)(allocated / 4096),
+                         gcstate->old[0].count, gcstate->old[1].count);
+#elif !defined(Py_GIL_DISABLED)
     return Py_BuildValue("(iii)",
                          gcstate->generations[0].count,
                          gcstate->generations[1].count,

@@ -256,7 +256,11 @@ static bool mi_segment_is_valid(mi_segment_t* segment, mi_segments_tld_t* tld) {
   mi_assert_internal(segment != NULL);
   mi_assert_internal(_mi_ptr_cookie(segment) == segment->cookie);
   mi_assert_internal(segment->abandoned <= segment->used);
-  mi_assert_internal(segment->thread_id == 0 || segment->thread_id == _mi_thread_id());
+  mi_assert_internal(segment->thread_id == 0 || segment->thread_id == _mi_thread_id()
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+                     || _PyMem_mi_collecting_owner(segment->thread_id, tld)
+#endif
+                    );
   mi_assert_internal(mi_commit_mask_all_set(&segment->commit_mask, &segment->purge_mask)); // can only decommit committed blocks
   //mi_assert_internal(segment->segment_info_size % MI_SEGMENT_SLICE_SIZE == 0);
   mi_slice_t* slice = &segment->slices[0];

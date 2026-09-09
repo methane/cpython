@@ -25,6 +25,15 @@ _PyObject_GetAllocationHeap(_PyThreadStateImpl *tstate, PyTypeObject *tp)
         return &m->heaps[_Py_MIMALLOC_HEAP_GC];
     }
     else {
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+        if (_Py_tracing_gc_enabled &&
+            (tp == &PyLong_Type || tp == &PyFloat_Type ||
+             tp == &PyUnicode_Type || tp == &PyBytes_Type ||
+             tp == &PyComplex_Type))
+        {
+            return &m->heaps[_Py_MIMALLOC_HEAP_LEAF];
+        }
+#endif
         return &m->heaps[_Py_MIMALLOC_HEAP_OBJECT];
     }
 }
@@ -65,6 +74,26 @@ _PyObject_ReallocWithType(PyTypeObject *tp, void *ptr, size_t size)
     return mem;
 }
 
+// Preserve the ordinary allocator fast path outside the tracing experiment.
+static inline void *
+_PyObject_MallocLeaf(PyTypeObject *tp, size_t size)
+{
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    return _PyObject_MallocWithType(tp, size);
+#else
+    return PyObject_Malloc(size);
+#endif
+}
+
+static inline void *
+_PyObject_ReallocLeaf(PyTypeObject *tp, void *ptr, size_t size)
+{
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    return _PyObject_ReallocWithType(tp, ptr, size);
+#else
+    return PyObject_Realloc(ptr, size);
+#endif
+}
 #ifdef __cplusplus
 }
 #endif

@@ -14,6 +14,9 @@ typedef enum {
     _Py_MIMALLOC_HEAP_OBJECT = 1,   // non-GC objects
     _Py_MIMALLOC_HEAP_GC = 2,       // GC objects without pre-header
     _Py_MIMALLOC_HEAP_GC_PRE = 3,   // GC objects with pre-header
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    _Py_MIMALLOC_HEAP_LEAF = 4,     // Traced builtins without tp_traverse
+#endif
     _Py_MIMALLOC_HEAP_COUNT
 } _Py_mimalloc_heap_id;
 
@@ -64,6 +67,23 @@ struct _mimalloc_thread_state {
     int initialized;
     struct llist_node page_list;
 };
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+typedef struct {
+    size_t blocks;
+    size_t allocated;
+    size_t committed;
+    size_t empty_committed;
+    size_t areas;
+} _PyMem_TracingHeapStats;
+
+// Export for the allocator diagnostics in _testinternalcapi.
+PyAPI_FUNC(void) _PyMem_GetTracingHeapStats(
+    PyInterpreterState *interp,
+    _PyMem_TracingHeapStats stats[2][_Py_MIMALLOC_HEAP_COUNT]);
+// Requires the world stopped. Returns limit on overflow or incomplete traversal.
+extern uintptr_t _PyMem_TracingHeapSize(PyInterpreterState *interp,
+                                      uintptr_t limit);
+#endif
 #endif
 
 #endif // Py_INTERNAL_MIMALLOC_H

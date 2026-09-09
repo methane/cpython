@@ -22,6 +22,10 @@ extern PyObject *_PyCallIter_NewEx(PyObject *callable, PyObject *sentinel,
 extern PyObject *_PyACallIter_New(PyObject *callable, PyObject *sentinel,
                                   PyObject *stop_exc);
 
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+extern void _PySeqIter_PrepareTracingDealloc(PyObject *op);
+#endif
+
 #ifdef __cplusplus
 }
 #endif

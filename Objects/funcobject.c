@@ -1214,12 +1214,27 @@ func_clear(PyObject *self)
     return 0;
 }
 
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+static void
+func_finalize(PyObject *self)
+{
+    // Notify before the collector clears the unreachable graph, so a watcher
+    // can resurrect an intact function through the subsequent root traversal.
+    handle_func_event(PyFunction_EVENT_DESTROY, _PyFunction_CAST(self), NULL);
+}
+#endif
+
 static void
 func_dealloc(PyObject *self)
 {
     PyFunctionObject *op = _PyFunction_CAST(self);
     _PyObject_ResurrectStart(self);
-    handle_func_event(PyFunction_EVENT_DESTROY, op, NULL);
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    if (!_Py_tracing_gc_enabled || !_PyGC_FINALIZED(self))
+#endif
+    {
+        handle_func_event(PyFunction_EVENT_DESTROY, op, NULL);
+    }
     if (_PyObject_ResurrectEnd(self)) {
         return;
     }
@@ -1313,6 +1328,9 @@ PyTypeObject PyFunction_Type = {
     0,                                          /* tp_init */
     0,                                          /* tp_alloc */
     func_new,                                   /* tp_new */
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    .tp_finalize = func_finalize,
+#endif
 };
 
 

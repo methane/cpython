@@ -585,7 +585,12 @@ init_code(PyCodeObject *co, struct _PyCodeConstructor *con)
     co->_co_firsttraceable = entry_point;
 
 #ifdef Py_GIL_DISABLED
-    int enable_counters = interp->config.tlbc_enabled && interp->opt_config.specialization_enabled;
+    int shared_specialization = 0;
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    shared_specialization = interp->config.enable_gil == _PyConfig_GIL_ENABLE;
+#endif
+    int enable_counters = (interp->config.tlbc_enabled || shared_specialization)
+                          && interp->opt_config.specialization_enabled;
     _PyCode_Quicken(_PyCode_CODE(co), Py_SIZE(co), enable_counters, co->co_flags);
 #else
     _PyCode_Quicken(_PyCode_CODE(co), Py_SIZE(co), interp->opt_config.specialization_enabled, co->co_flags);
@@ -2395,6 +2400,27 @@ free_monitoring_data(_PyCoMonitoringData *data)
     PyMem_Free(data);
 }
 
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+static void
+code_finalize(PyObject *self)
+{
+    notify_code_watchers(PY_CODE_EVENT_DESTROY, _PyCodeObject_CAST(self));
+}
+
+static int
+code_clear(PyObject *self)
+{
+#ifdef _Py_TIER2
+    PyCodeObject *co = _PyCodeObject_CAST(self);
+    if (co->co_executors != NULL) {
+        // Executors must be detached while all candidate headers are valid.
+        clear_executors(co);
+    }
+#endif
+    return 0;
+}
+#endif
+
 static void
 code_dealloc(PyObject *self)
 {
@@ -2402,7 +2428,12 @@ code_dealloc(PyObject *self)
     _Py_atomic_add_uint64(&tstate->interp->_code_object_generation, 1);
     PyCodeObject *co = _PyCodeObject_CAST(self);
     _PyObject_ResurrectStart(self);
-    notify_code_watchers(PY_CODE_EVENT_DESTROY, co);
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    if (!_Py_tracing_gc_enabled || !_PyGC_FINALIZED(self))
+#endif
+    {
+        notify_code_watchers(PY_CODE_EVENT_DESTROY, co);
+    }
     if (_PyObject_ResurrectEnd(self)) {
         return;
     }
@@ -2475,6 +2506,20 @@ code_traverse(PyObject *self, visitproc visit, void *arg)
 {
     PyCodeObject *co = _PyCodeObject_CAST(self);
     Py_VISIT(co->co_consts);
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    // These acyclic tuples were kept alive by reference counting. The
+    // attribute cache is separately allocated, outside the code object's
+    // conservatively scanned allocation.
+    Py_VISIT(co->co_names);
+    Py_VISIT(co->co_localsplusnames);
+    _PyCoCached *cached = FT_ATOMIC_LOAD_PTR(co->_co_cached);
+    if (cached != NULL) {
+        Py_VISIT(cached->_co_code);
+        Py_VISIT(cached->_co_varnames);
+        Py_VISIT(cached->_co_cellvars);
+        Py_VISIT(cached->_co_freevars);
+    }
+#endif
     return 0;
 }
 #endif
@@ -2908,7 +2953,11 @@ PyTypeObject PyCode_Type = {
 #else
     0,                                  /* tp_traverse */
 #endif
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    code_clear,                          /* tp_clear */
+#else
     0,                                  /* tp_clear */
+#endif
     code_richcompare,                   /* tp_richcompare */
     offsetof(PyCodeObject, co_weakreflist),     /* tp_weaklistoffset */
     0,                                  /* tp_iter */
@@ -2924,6 +2973,9 @@ PyTypeObject PyCode_Type = {
     0,                                  /* tp_init */
     0,                                  /* tp_alloc */
     code_new,                           /* tp_new */
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    .tp_finalize = code_finalize,
+#endif
 };
 
 

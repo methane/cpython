@@ -59,6 +59,37 @@ test_critical_sections(PyObject *self, PyObject *Py_UNUSED(args))
     Py_RETURN_NONE;
 }
 
+static PyObject *
+check_critical_sections_objects(PyObject *self, PyObject *args)
+{
+    PyObject *a, *b;
+    if (!PyArg_UnpackTuple(args, "check_critical_sections_objects", 2, 2,
+                          &a, &b)) {
+        return NULL;
+    }
+    Py_BEGIN_CRITICAL_SECTION2(a, b);
+    if (!_PyObject_IsImmediate(a)) {
+        assert_nogil(PyMutex_IsLocked(&a->ob_mutex));
+    }
+    if (!_PyObject_IsImmediate(b)) {
+        assert_nogil(PyMutex_IsLocked(&b->ob_mutex));
+    }
+    Py_BEGIN_CRITICAL_SECTION(a);
+    Py_BEGIN_CRITICAL_SECTION(b);
+    Py_BEGIN_ALLOW_THREADS
+    Py_END_ALLOW_THREADS
+    Py_END_CRITICAL_SECTION();
+    Py_END_CRITICAL_SECTION();
+    Py_END_CRITICAL_SECTION2();
+    if (!_PyObject_IsImmediate(a)) {
+        assert_nogil(!PyMutex_IsLocked(&a->ob_mutex));
+    }
+    if (!_PyObject_IsImmediate(b)) {
+        assert_nogil(!PyMutex_IsLocked(&b->ob_mutex));
+    }
+    Py_RETURN_NONE;
+}
+
 static void
 lock_unlock_object(PyObject *obj, int recurse_depth)
 {
@@ -466,6 +497,7 @@ test_critical_sections_stw(PyObject *self, PyObject *Py_UNUSED(args))
 
 static PyMethodDef test_methods[] = {
     {"test_critical_sections", test_critical_sections, METH_NOARGS},
+    {"check_critical_sections_objects", check_critical_sections_objects, METH_VARARGS},
     {"test_critical_sections_nest", test_critical_sections_nest, METH_NOARGS},
     {"test_critical_sections_suspend", test_critical_sections_suspend, METH_NOARGS},
 #ifdef Py_GIL_DISABLED

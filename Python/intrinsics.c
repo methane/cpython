@@ -197,7 +197,9 @@ list_to_tuple(PyThreadState* unused, PyObject *v)
        freshly-built, uniquely-referenced temporary list, so steal its items
        into the tuple instead of copying them. */
     assert(PyList_CheckExact(v));
+#ifndef Py_EXPERIMENTAL_TRACING_GC
     assert(_PyObject_IsUniquelyReferenced(v));
+#endif
     return _PyList_AsTupleAndClear((PyListObject *)v);
 }
 
@@ -212,7 +214,9 @@ static PyObject *
 make_frozenset(PyThreadState* Py_UNUSED(ignored), PyObject *set)
 {
     assert(PySet_CheckExact(set));
+#ifndef Py_EXPERIMENTAL_TRACING_GC
     assert(_PyObject_IsUniquelyReferenced(set));
+#endif
     return _PySet_Freeze(set);
 }
 

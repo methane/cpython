@@ -1345,6 +1345,23 @@ set_update_impl(PySetObject *so, PyObject * const *others,
    can be retrieved or updated in a single cache line.
 */
 
+static void
+set_decref_untracked(PyObject *op)
+{
+    assert(PyAnySet_Check(op));
+    assert(!_PyObject_GC_IS_TRACKED(op));
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    if (_Py_tracing_gc_enabled) {
+        // Filling has stopped and the initialized object is safe to
+        // traverse. The decref cannot reclaim it in tracing mode: leaving
+        // it untracked would leak its storage and allow its children or
+        // heap type to be collected before the abandoned object.
+        PyObject_GC_Track(op);
+    }
+#endif
+    Py_DECREF(op);
+}
+
 // Build a set/frozenset left GC-untracked; the caller must _PyObject_GC_TRACK()
 // it once fully built, so a half-built set is never exposed during filling.
 static PyObject *
@@ -1367,7 +1384,7 @@ make_new_set_untracked(PyTypeObject *type, PyObject *iterable)
 
     if (iterable != NULL) {
         if (set_update_local(so, iterable)) {
-            Py_DECREF(so);
+            set_decref_untracked((PyObject *)so);
             return NULL;
         }
     }
@@ -1412,6 +1429,13 @@ static void
 _PyFrozenSet_MaybeUntrack(PyObject *op)
 {
     assert(op != NULL);
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    if (_Py_tracing_gc_enabled) {
+        // Acyclic frozensets still need reclamation when decrefs are inert.
+        // Leaving the header behind would also leave dangling child pointers.
+        return;
+    }
+#endif
     // subclasses of a frozenset can generate reference cycles, so do not untrack
     if (!PyFrozenSet_CheckExact(op)) {
         return;
@@ -1572,7 +1596,9 @@ _PySet_Freeze(PyObject *set)
 {
     assert(set != NULL);
     assert(PySet_CheckExact(set));
+#ifndef Py_EXPERIMENTAL_TRACING_GC
     assert(_PyObject_IsUniquelyReferenced(set));
+#endif
     set->ob_type = &PyFrozenSet_Type;
     return Py_NewRef(set);
 }
@@ -1586,7 +1612,7 @@ set_copy_untracked_lock_held(PySetObject *so)
         return NULL;
     }
     if (set_merge_lock_held((PySetObject *)copy, (PyObject *)so) < 0) {
-        Py_DECREF(copy);
+        set_decref_untracked(copy);
         return NULL;
     }
     return copy;
@@ -1672,7 +1698,7 @@ set_union_impl(PySetObject *so, PyObject * const *others,
         if ((PyObject *)so == other)
             continue;
         if (set_update_local(result, other)) {
-            Py_DECREF(result);
+            set_decref_untracked((PyObject *)result);
             return NULL;
         }
     }
@@ -1746,13 +1772,13 @@ set_intersection(PySetObject *so, PyObject *other)
             Py_INCREF(key);
             rv = set_contains_entry(so, key, hash);
             if (rv < 0) {
-                Py_DECREF(result);
+                set_decref_untracked((PyObject *)result);
                 Py_DECREF(key);
                 return NULL;
             }
             if (rv) {
                 if (set_add_entry(result, key, hash)) {
-                    Py_DECREF(result);
+                    set_decref_untracked((PyObject *)result);
                     Py_DECREF(key);
                     return NULL;
                 }
@@ -1765,7 +1791,7 @@ set_intersection(PySetObject *so, PyObject *other)
 
     it = PyObject_GetIter(other);
     if (it == NULL) {
-        Py_DECREF(result);
+        set_decref_untracked((PyObject *)result);
         return NULL;
     }
 
@@ -1788,14 +1814,14 @@ set_intersection(PySetObject *so, PyObject *other)
     }
     Py_DECREF(it);
     if (PyErr_Occurred()) {
-        Py_DECREF(result);
+        set_decref_untracked((PyObject *)result);
         return NULL;
     }
     _PyObject_GC_TRACK(result);
     return (PyObject *)result;
   error:
     Py_DECREF(it);
-    Py_DECREF(result);
+    set_decref_untracked((PyObject *)result);
     Py_DECREF(key);
     return NULL;
 }
@@ -2076,7 +2102,7 @@ set_copy_and_difference_untracked(PySetObject *so, PyObject *other)
         return NULL;
     if (set_difference_update_internal((PySetObject *) result, other) == 0)
         return result;
-    Py_DECREF(result);
+    set_decref_untracked(result);
     return NULL;
 }
 
@@ -2117,13 +2143,13 @@ set_difference_untracked(PySetObject *so, PyObject *other)
             Py_INCREF(key);
             rv = _PyDict_Contains_KnownHash(other, key, hash);
             if (rv < 0) {
-                Py_DECREF(result);
+                set_decref_untracked(result);
                 Py_DECREF(key);
                 return NULL;
             }
             if (!rv) {
                 if (set_add_entry((PySetObject *)result, key, hash)) {
-                    Py_DECREF(result);
+                    set_decref_untracked(result);
                     Py_DECREF(key);
                     return NULL;
                 }
@@ -2140,13 +2166,13 @@ set_difference_untracked(PySetObject *so, PyObject *other)
         Py_INCREF(key);
         rv = set_contains_entry((PySetObject *)other, key, hash);
         if (rv < 0) {
-            Py_DECREF(result);
+            set_decref_untracked(result);
             Py_DECREF(key);
             return NULL;
         }
         if (!rv) {
             if (set_add_entry((PySetObject *)result, key, hash)) {
-                Py_DECREF(result);
+                set_decref_untracked(result);
                 Py_DECREF(key);
                 return NULL;
             }
@@ -2191,7 +2217,7 @@ set_difference_multi_impl(PySetObject *so, PyObject * const *others,
         rv = set_difference_update_internal((PySetObject *)result, other);
         Py_END_CRITICAL_SECTION();
         if (rv) {
-            Py_DECREF(result);
+            set_decref_untracked(result);
             return NULL;
         }
     }
@@ -2364,11 +2390,11 @@ set_symmetric_difference_impl(PySetObject *so, PyObject *other)
         return NULL;
     }
     if (set_update_lock_held(result, other) < 0) {
-        Py_DECREF(result);
+        set_decref_untracked((PyObject *)result);
         return NULL;
     }
     if (set_symmetric_difference_update_set(result, so) < 0) {
-        Py_DECREF(result);
+        set_decref_untracked((PyObject *)result);
         return NULL;
     }
     _PyObject_GC_TRACK(result);
@@ -3115,7 +3141,13 @@ PySet_Add(PyObject *anyset, PyObject *key)
         return rv;
     }
 
-    if (PyFrozenSet_Check(anyset) && _PyObject_IsUniquelyReferenced(anyset)) {
+    if (PyFrozenSet_Check(anyset) &&
+        (_PyObject_IsUniquelyReferenced(anyset)
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+         || _Py_tracing_gc_enabled
+#endif
+        ))
+    {
         // We can only change frozensets if they are uniquely referenced. The
         // API limits the usage of `PySet_Add` to "fill in the values of brand
         // new frozensets before they are exposed to other code". In this case,

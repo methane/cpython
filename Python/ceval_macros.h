@@ -594,47 +594,132 @@ gen_try_set_executing(PyGenObject *gen)
     return false;
 }
 
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+static inline Py_ALWAYS_INLINE _PyStackRef
+_PyFloat_ReuseLocal(_PyInterpreterFrame *frame, _PyStackRef *stack_pointer,
+                   int local, double value, bool executor_valid)
+{
+#ifdef Py_EXPERIMENTAL_NANBOX
+    // Creating an immediate result does not need destination ownership.
+    return PyStackRef_NULL;
+#else
+    // Only used when a following STORE_FAST overwrites this local without
+    // an intervening call or safepoint. A validity check cannot fail once
+    // we have checked it here: these traces hold the permanent GIL, and
+    // neither reuse nor the intervening float pops can invalidate an executor.
+    // If it was already invalid, leave the local alone and let the original
+    // check exit with an ordinary arithmetic result on the stack.
+    // The two arithmetic inputs have already been read and are held in the
+    // uop's two cached registers.
+    if (!executor_valid) {
+        return PyStackRef_NULL;
+    }
+    _PyStackRef ref = frame->localsplus[local];
+    if (PyStackRef_IsNullOrInt(ref) || !PyStackRef_RefcountOnObject(ref)) {
+        return PyStackRef_NULL;
+    }
+    PyObject *op = PyStackRef_AsPyObjectBorrow(ref);
+    if (!PyFloat_CheckExact(op) || !_PyObject_IsUniquelyReferenced(op)) {
+        return PyStackRef_NULL;
+    }
+    // Owning aliases set the sticky shared bit, but a borrowed operand may
+    // still need the old value: x + (x := a + b), for example. Everything
+    // below the two consumed inputs must therefore be checked as well.
+    for (_PyStackRef *p = _PyFrame_Stackbase(frame); p < stack_pointer; p++) {
+        if (PyStackRef_Is(*p, ref)) {
+            return PyStackRef_NULL;
+        }
+    }
+    ((PyFloatObject *)op)->ob_fval = value;
+    return ref;
+#endif
+}
+
+static inline Py_ALWAYS_INLINE _PyStackRef
+_PyFloat_ReuseOrCreate(_PyStackRef *left, _PyStackRef *right, double value)
+{
+#ifndef Py_EXPERIMENTAL_NANBOX
+    // Ownership of the stack reference is essential: a borrowed reference
+    // may name a local variable which must keep its original value even if
+    // the object has only one owning reference.
+    if (_Py_tracing_gc_enabled) {
+        PyObject *op = PyStackRef_AsPyObjectBorrow(*left);
+        if (PyStackRef_RefcountOnObject(*left) &&
+            _PyObject_IsUniquelyReferenced(op))
+        {
+            _PyStackRef result = *left;
+            *left = PyStackRef_Borrow(result);
+            ((PyFloatObject *)op)->ob_fval = value;
+            return result;
+        }
+        op = PyStackRef_AsPyObjectBorrow(*right);
+        if (PyStackRef_RefcountOnObject(*right) &&
+            _PyObject_IsUniquelyReferenced(op))
+        {
+            _PyStackRef result = *right;
+            *right = PyStackRef_Borrow(result);
+            ((PyFloatObject *)op)->ob_fval = value;
+            return result;
+        }
+    }
+#endif
+    PyObject *op = _PyFloat_FromDouble(value);
+    return op == NULL ? PyStackRef_NULL : PyStackRef_FromPyObjectSteal(op);
+}
+#endif
+
+// An optimizer-unique float may be an immediate in the experimental ABI.
+// Only actual heap floats can be updated in place. NaN results must be boxed,
+// so the immediate branch can fail even for otherwise infallible arithmetic.
+static inline _PyStackRef
+_PyFloat_ReuseResult(_PyStackRef target, double value)
+{
+    PyObject *op = PyStackRef_AsPyObjectBorrow(target);
+#ifdef Py_EXPERIMENTAL_NANBOX
+    if (_PyFloat_IsImmediate(op)) {
+        op = _PyFloat_FromDouble(value);
+        return op == NULL ? PyStackRef_NULL : PyStackRef_FromPyObjectSteal(op);
+    }
+#endif
+    assert(_PyObject_IsUniquelyReferenced(op));
+    ((PyFloatObject *)op)->ob_fval = value;
+    return target;
+}
+
 // Macro for inplace float binary ops (tier 2 only).
 // Mutates the uniquely-referenced TARGET operand in place.
 // TARGET must be either left or right.
 #define FLOAT_INPLACE_OP(left, right, TARGET, OP)                        \
+    _PyStackRef _float_inplace_res;                                      \
     do {                                                                 \
-        PyObject *left_o = PyStackRef_AsPyObjectBorrow(left);            \
-        PyObject *right_o = PyStackRef_AsPyObjectBorrow(right);          \
-        assert(PyFloat_CheckExact(left_o));                              \
-        assert(PyFloat_CheckExact(right_o));                             \
-        assert(_PyObject_IsUniquelyReferenced(                           \
-            PyStackRef_AsPyObjectBorrow(TARGET)));                       \
+        assert(PyFloat_CheckExact(PyStackRef_AsPyObjectBorrow(left)));  \
+        assert(PyFloat_CheckExact(PyStackRef_AsPyObjectBorrow(right))); \
         STAT_INC(BINARY_OP, hit);                                        \
         double _dres =                                                   \
-            ((PyFloatObject *)left_o)->ob_fval                           \
-            OP ((PyFloatObject *)right_o)->ob_fval;                      \
-        ((PyFloatObject *)PyStackRef_AsPyObjectBorrow(TARGET))           \
-            ->ob_fval = _dres;                                           \
+            _PyFloat_StackRefAsDouble(left) OP                          \
+            _PyFloat_StackRefAsDouble(right);                           \
+        _float_inplace_res = _PyFloat_ReuseResult(TARGET, _dres);         \
     } while (0)
 
 // Inplace float true division. Sets _divop_err to 1 on zero division.
 // Caller must check _divop_err and call ERROR_NO_POP() if set.
 #define FLOAT_INPLACE_DIVOP(left, right, TARGET)                         \
     int _divop_err = 0;                                                  \
+    _PyStackRef _float_inplace_res = PyStackRef_NULL;                     \
     do {                                                                 \
-        PyObject *left_o = PyStackRef_AsPyObjectBorrow(left);            \
-        PyObject *right_o = PyStackRef_AsPyObjectBorrow(right);          \
-        assert(PyFloat_CheckExact(left_o));                              \
-        assert(PyFloat_CheckExact(right_o));                             \
-        assert(_PyObject_IsUniquelyReferenced(                           \
-            PyStackRef_AsPyObjectBorrow(TARGET)));                       \
+        assert(PyFloat_CheckExact(PyStackRef_AsPyObjectBorrow(left)));  \
+        assert(PyFloat_CheckExact(PyStackRef_AsPyObjectBorrow(right))); \
         STAT_INC(BINARY_OP, hit);                                        \
-        double _divisor = ((PyFloatObject *)right_o)->ob_fval;           \
+        double _divisor = _PyFloat_StackRefAsDouble(right);              \
         if (_divisor == 0.0) {                                           \
             PyErr_SetString(PyExc_ZeroDivisionError,                     \
                             "float division by zero");                   \
             _divop_err = 1;                                              \
             break;                                                       \
         }                                                                \
-        double _dres = ((PyFloatObject *)left_o)->ob_fval / _divisor;    \
-        ((PyFloatObject *)PyStackRef_AsPyObjectBorrow(TARGET))           \
-            ->ob_fval = _dres;                                           \
+        double _dres = _PyFloat_StackRefAsDouble(left) / _divisor;        \
+        _float_inplace_res = _PyFloat_ReuseResult(TARGET, _dres);         \
+        _divop_err = PyStackRef_IsNull(_float_inplace_res);               \
     } while (0)
 
 // Inplace compact int operation. TARGET is expected to be uniquely

@@ -1225,9 +1225,18 @@ dtrace_function_return(_PyInterpreterFrame *frame)
 }
 #endif
 
+#if defined(Py_EXPERIMENTAL_TRACING_GC) && !_Py_TAIL_CALL_INTERP
+static PyObject* _Py_HOT_FUNCTION DONT_SLP_VECTORIZE Py_NO_INLINE
+eval_frame_tracing(PyThreadState *tstate, _PyInterpreterFrame *frame, int throwflag)
+#else
 PyObject* _Py_HOT_FUNCTION DONT_SLP_VECTORIZE
 _PyEval_EvalFrameDefault(PyThreadState *tstate, _PyInterpreterFrame *frame, int throwflag)
+#endif
 {
+#if defined(Py_EXPERIMENTAL_TRACING_GC) && !_Py_TAIL_CALL_INTERP
+    ((_PyThreadStateImpl *)tstate)->gc.native_frames->bottom =
+        _Py_get_machine_stack_pointer();
+#endif
     _Py_EnsureTstateNotNULL(tstate);
     check_invalid_reentrancy();
     CALL_STAT_INC(pyeval_calls);
@@ -1357,6 +1366,25 @@ early_exit:
     tstate->current_frame = frame->previous;
     return NULL;
 }
+#if defined(Py_EXPERIMENTAL_TRACING_GC) && !_Py_TAIL_CALL_INTERP
+PyObject* _Py_HOT_FUNCTION
+_PyEval_EvalFrameDefault(PyThreadState *tstate, _PyInterpreterFrame *frame, int throwflag)
+{
+    // The evaluator's operands have precise Python-stack/CStackRef roots.
+    // Do not retain dead opcode temporaries from its native stack frame.
+    // This wrapper stays outside the excluded region, preserving the C
+    // caller's callee-saved registers as conservative roots.
+    struct _gc_thread_state *gc = &((_PyThreadStateImpl *)tstate)->gc;
+    struct _tracing_native_frame native = {
+        .top = _Py_get_machine_stack_pointer(),
+        .previous = gc->native_frames,
+    };
+    gc->native_frames = &native;
+    PyObject *result = eval_frame_tracing(tstate, frame, throwflag);
+    gc->native_frames = native.previous;
+    return result;
+}
+#endif
 #ifdef _Py_TIER2
 #ifdef _Py_JIT
 _PyJitEntryFuncPtr _Py_jit_entry = _PyJIT_Entry;

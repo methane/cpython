@@ -117,11 +117,52 @@ Py_DEPRECATED(3.14) PyAPI_FUNC(PyLongObject*) _PyLong_FromDigits(
 #define _PyLong_SIGN_MASK 3
 #define _PyLong_NON_SIZE_BITS 3
 
+#ifdef Py_EXPERIMENTAL_NANBOX
+static inline Py_ssize_t
+_PyLong_DecodeImmediate(const PyLongObject *op)
+{
+    assert(_PyLong_IsImmediate((PyObject *)op));
+    return (int32_t)(uintptr_t)op;
+}
+
+static inline PyObject *
+_PyLong_EncodeImmediate(Py_ssize_t value)
+{
+    assert(value >= -(Py_ssize_t)PyLong_MASK && value <= PyLong_MASK);
+    return (PyObject *)(UINT64_C(0xfff3000000000000) | (uint32_t)value);
+}
+#endif
+
+// Read-only accessors also accept an immediate single-digit integer.
+static inline uintptr_t
+_PyLong_ReadTag(const PyLongObject *op)
+{
+#ifdef Py_EXPERIMENTAL_NANBOX
+    if (_PyLong_IsImmediate((PyObject *)op)) {
+        Py_ssize_t value = _PyLong_DecodeImmediate(op);
+        return value == 0 ? 1 : ((1 << _PyLong_NON_SIZE_BITS) | (value < 0 ? 2 : 0));
+    }
+#endif
+    return op->long_value.lv_tag;
+}
+
+static inline digit
+_PyLong_GetDigit(const PyLongObject *op, Py_ssize_t index)
+{
+#ifdef Py_EXPERIMENTAL_NANBOX
+    if (_PyLong_IsImmediate((PyObject *)op)) {
+        assert(index == 0);
+        Py_ssize_t value = _PyLong_DecodeImmediate(op);
+        return (digit)(value < 0 ? -value : value);
+    }
+#endif
+    return op->long_value.ob_digit[index];
+}
 
 static inline int
 _PyLong_IsCompact(const PyLongObject* op) {
-    assert(PyType_HasFeature(op->ob_base.ob_type, Py_TPFLAGS_LONG_SUBCLASS));
-    return op->long_value.lv_tag < (2 << _PyLong_NON_SIZE_BITS);
+    assert(PyType_HasFeature(Py_TYPE(op), Py_TPFLAGS_LONG_SUBCLASS));
+    return _PyLong_ReadTag(op) < (2 << _PyLong_NON_SIZE_BITS);
 }
 
 #define PyUnstable_Long_IsCompact _PyLong_IsCompact
@@ -129,8 +170,13 @@ _PyLong_IsCompact(const PyLongObject* op) {
 static inline Py_ssize_t
 _PyLong_CompactValue(const PyLongObject *op)
 {
+#ifdef Py_EXPERIMENTAL_NANBOX
+    if (_PyLong_IsImmediate((PyObject *)op)) {
+        return _PyLong_DecodeImmediate(op);
+    }
+#endif
     Py_ssize_t sign;
-    assert(PyType_HasFeature(op->ob_base.ob_type, Py_TPFLAGS_LONG_SUBCLASS));
+    assert(PyType_HasFeature(Py_TYPE(op), Py_TPFLAGS_LONG_SUBCLASS));
     assert(PyUnstable_Long_IsCompact(op));
     sign = 1 - (op->long_value.lv_tag & _PyLong_SIGN_MASK);
     if (sign == 0) {

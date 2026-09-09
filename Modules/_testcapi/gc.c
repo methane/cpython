@@ -364,7 +364,261 @@ static PyType_Spec ObjExtraData_TypeSpec = {
     .slots = ObjExtraData_Slots,
 };
 
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+// Deliberately not exposed in the module dictionary: PyType_Ready must keep
+// the metadata alive when only native code can reach the static type.
+static PyTypeObject GCStaticType = {
+    PyVarObject_HEAD_INIT(NULL, 0)
+    .tp_name = "_testcapi.GCStaticType",
+    .tp_basicsize = sizeof(PyListObject),
+    .tp_flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE,
+    .tp_base = &PyList_Type,
+};
+
+static PyObject *
+get_tracing_gc_static_type(PyObject *self, PyObject *Py_UNUSED(ignored))
+{
+    if (PyType_Ready(&GCStaticType) < 0) {
+        return NULL;
+    }
+    return Py_NewRef((PyObject *)&GCStaticType);
+}
+
+static PyObject *
+set_tracing_gc_static_type_payload(PyObject *self, PyObject *value)
+{
+    if (PyType_Ready(&GCStaticType) < 0) {
+        return NULL;
+    }
+    PyType_Modified(&GCStaticType);
+    if (PyDict_SetItemString(GCStaticType.tp_dict, "payload", value) < 0) {
+        return NULL;
+    }
+    Py_RETURN_NONE;
+}
+
+// A GC edge outside the managed allocator. Updating it need not dirty the
+// owner's page; the nursery must still invoke this object's tp_traverse.
+typedef struct {
+    PyObject_HEAD
+    PyObject **storage;
+} GCExternalBuffer;
+
+static int
+external_buffer_traverse(PyObject *self, visitproc visit, void *arg)
+{
+    GCExternalBuffer *op = (GCExternalBuffer *)self;
+    Py_VISIT(Py_TYPE(self));
+    if (op->storage != NULL) {
+        Py_VISIT(*op->storage);
+    }
+    return 0;
+}
+
+static int
+external_buffer_clear(PyObject *self)
+{
+    GCExternalBuffer *op = (GCExternalBuffer *)self;
+    if (op->storage != NULL) {
+        Py_CLEAR(*op->storage);
+    }
+    return 0;
+}
+
+static void
+external_buffer_dealloc(PyObject *self)
+{
+    PyTypeObject *type = Py_TYPE(self);
+    PyObject_GC_UnTrack(self);
+    external_buffer_clear(self);
+    PyMem_RawFree(((GCExternalBuffer *)self)->storage);
+    type->tp_free(self);
+    Py_DECREF(type);
+}
+
+static PyObject *
+external_buffer_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
+{
+    GCExternalBuffer *op = (GCExternalBuffer *)type->tp_alloc(type, 0);
+    if (op == NULL) {
+        return NULL;
+    }
+    op->storage = PyMem_RawCalloc(1, sizeof(*op->storage));
+    if (op->storage == NULL) {
+        Py_DECREF(op);
+        return PyErr_NoMemory();
+    }
+    return (PyObject *)op;
+}
+
+static PyObject *
+external_buffer_get(PyObject *self, void *closure)
+{
+    PyObject *value;
+    Py_BEGIN_CRITICAL_SECTION(self);
+    PyObject *stored = *((GCExternalBuffer *)self)->storage;
+    value = Py_NewRef(stored == NULL ? Py_None : stored);
+    Py_END_CRITICAL_SECTION();
+    return value;
+}
+
+static int
+external_buffer_set(PyObject *self, PyObject *value, void *closure)
+{
+    Py_BEGIN_CRITICAL_SECTION(self);
+    Py_XSETREF(*((GCExternalBuffer *)self)->storage, Py_XNewRef(value));
+    Py_END_CRITICAL_SECTION();
+    return 0;
+}
+
+static PyGetSetDef external_buffer_getset[] = {
+    {"value", external_buffer_get, external_buffer_set, NULL, NULL},
+    {NULL},
+};
+
+static PyType_Slot external_buffer_slots[] = {
+    {Py_tp_new, external_buffer_new},
+    {Py_tp_dealloc, external_buffer_dealloc},
+    {Py_tp_traverse, external_buffer_traverse},
+    {Py_tp_clear, external_buffer_clear},
+    {Py_tp_getset, external_buffer_getset},
+    {0, NULL},
+};
+
+static PyType_Spec external_buffer_spec = {
+    .name = "_testcapi.GCExternalBuffer",
+    .basicsize = sizeof(GCExternalBuffer),
+    .flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_GC,
+    .slots = external_buffer_slots,
+};
+
+static PyObject *tracing_function_sink;
+static PyObject *tracing_code_sink;
+
+static int
+tracing_function_watcher(PyFunction_WatchEvent event, PyFunctionObject *function,
+                         PyObject *new_value)
+{
+    if (event == PyFunction_EVENT_DESTROY &&
+        PyUnicode_CompareWithASCIIString(
+            ((PyCodeObject *)function->func_code)->co_filename,
+            "<tracing-watchers>") == 0)
+    {
+        return PyList_Append(tracing_function_sink, (PyObject *)function);
+    }
+    return 0;
+}
+
+static int
+tracing_code_watcher(PyCodeEvent event, PyCodeObject *code)
+{
+    if (event == PY_CODE_EVENT_DESTROY &&
+        PyUnicode_CompareWithASCIIString(code->co_filename,
+                                         "<tracing-watchers>") == 0)
+    {
+        return PyList_Append(tracing_code_sink, (PyObject *)code);
+    }
+    return 0;
+}
+
+static PyObject *
+test_tracing_gc_watcher_resurrection(PyObject *self, PyObject *Py_UNUSED(ignored))
+{
+    PyObject *functions = PyList_New(0);
+    PyObject *codes = PyList_New(0);
+    PyObject *globals = PyDict_New();
+    int function_watcher = -1, code_watcher = -1;
+    PyObject *result = NULL;
+    if (functions == NULL || codes == NULL || globals == NULL) {
+        goto done;
+    }
+    // The sinks are also held in this native frame throughout collection.
+    tracing_function_sink = functions;
+    tracing_code_sink = codes;
+    function_watcher = PyFunction_AddWatcher(tracing_function_watcher);
+    if (function_watcher < 0) {
+        goto done;
+    }
+    code_watcher = PyCode_AddWatcher(tracing_code_watcher);
+    if (code_watcher < 0) {
+        goto done;
+    }
+    for (int i = 0; i < 100; i++) {
+        PyObject *code = Py_CompileString("42", "<tracing-watchers>", Py_eval_input);
+        if (code == NULL) {
+            goto done;
+        }
+        PyObject *function = PyFunction_New(code, globals);
+        Py_DECREF(code);
+        if (function == NULL) {
+            goto done;
+        }
+        Py_DECREF(function);
+    }
+    PyGC_Collect();
+    if (PyErr_Occurred()) {
+        goto done;
+    }
+    result = PyTuple_Pack(2, functions, codes);
+done:
+    if (code_watcher >= 0) {
+        PyCode_ClearWatcher(code_watcher);
+    }
+    if (function_watcher >= 0) {
+        PyFunction_ClearWatcher(function_watcher);
+    }
+    tracing_function_sink = NULL;
+    tracing_code_sink = NULL;
+    Py_XDECREF(functions);
+    Py_XDECREF(codes);
+    Py_XDECREF(globals);
+    return result;
+}
+
+static PyObject *
+test_tracing_gc_c_roots(PyObject *self, PyObject *callback)
+{
+    PyObject *roots[64] = {NULL};
+    PyObject *result = NULL;
+    for (int i = 0; i < 64; i++) {
+        roots[i] = PyLong_FromLong(1000000 + i);
+        if (roots[i] == NULL) {
+            goto done;
+        }
+    }
+    // These strong references exist only in native storage. The callback
+    // may explicitly collect, or allocate until automatic GC runs.
+    result = PyObject_CallNoArgs(callback);
+    if (result == NULL) {
+        goto done;
+    }
+    Py_CLEAR(result);
+    for (int i = 0; i < 64; i++) {
+        if (PyLong_AsLong(roots[i]) != 1000000 + i) {
+            if (!PyErr_Occurred()) {
+                PyErr_SetString(PyExc_AssertionError, "lost native GC root");
+            }
+            goto done;
+        }
+    }
+    result = Py_NewRef(Py_None);
+done:
+    for (int i = 0; i < 64; i++) {
+        Py_XDECREF(roots[i]);
+    }
+    return result;
+}
+#endif
+
 static PyMethodDef test_methods[] = {
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    {"get_tracing_gc_static_type", get_tracing_gc_static_type, METH_NOARGS, NULL},
+    {"set_tracing_gc_static_type_payload", set_tracing_gc_static_type_payload,
+     METH_O, NULL},
+    {"test_tracing_gc_watcher_resurrection", test_tracing_gc_watcher_resurrection,
+     METH_NOARGS, NULL},
+    {"test_tracing_gc_c_roots", test_tracing_gc_c_roots, METH_O, NULL},
+#endif
     {"test_gc_control", test_gc_control, METH_NOARGS},
     {"test_gc_visit_objects_basic", test_gc_visit_objects_basic, METH_NOARGS, NULL},
     {"test_gc_visit_objects_frozen", test_gc_visit_objects_frozen, METH_NOARGS, NULL},
@@ -376,6 +630,17 @@ static PyMethodDef test_methods[] = {
 
 int _PyTestCapi_Init_GC(PyObject *mod)
 {
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    PyObject *external_type = PyType_FromModuleAndSpec(mod, &external_buffer_spec, NULL);
+    if (external_type == NULL) {
+        return -1;
+    }
+    if (PyModule_AddObjectRef(mod, "GCExternalBuffer", external_type) < 0) {
+        Py_DECREF(external_type);
+        return -1;
+    }
+    Py_DECREF(external_type);
+#endif
     if (PyModule_AddFunctions(mod, test_methods) < 0) {
         return -1;
     }

@@ -100,9 +100,17 @@ class _Target(typing.Generic[_S, _R]):
         hasher.update(self.triple.encode())
         hasher.update(self.debug.to_bytes())
         hasher.update(self.cflags.encode())
-        # These dependencies are also reflected in _JITSources in regen.targets:
+        # Keep these dependencies in sync with JIT_DEPS in Makefile.pre.in
+        # and _JITSources in regen.targets. Inlined accessors and structure
+        # offsets change stencils even when executor_cases.c.h is unchanged.
         hasher.update(PYTHON_EXECUTOR_CASES_C_H.read_bytes())
         hasher.update((self.pyconfig_dir / "pyconfig.h").read_bytes())
+        headers = sorted((CPYTHON / "Include").rglob("*.h"))
+        headers.extend(sorted((CPYTHON / "Python").glob("*.h")))
+        for header in headers:
+            hasher.update(header.relative_to(CPYTHON).as_posix().encode())
+            hasher.update(b"\0")
+            hasher.update(header.read_bytes())
         for dirpath, _, filenames in sorted(os.walk(TOOLS_JIT)):
             # Exclude cache files from digest computation to ensure reproducible builds.
             if dirpath.endswith("__pycache__"):

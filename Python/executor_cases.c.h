@@ -2665,30 +2665,6 @@
             break;
         }
 
-        case _UNARY_NEGATIVE_FLOAT_INPLACE_r02: {
-            CHECK_CURRENT_CACHED_VALUES(0);
-            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
-            _PyStackRef value;
-            _PyStackRef res;
-            _PyStackRef v;
-            value = stack_pointer[-1];
-            PyObject *val_o = PyStackRef_AsPyObjectBorrow(value);
-            assert(PyFloat_CheckExact(val_o));
-            assert(_PyObject_IsUniquelyReferenced(val_o));
-            STAT_INC(UNARY_NEGATIVE, hit);
-            double dres = -((PyFloatObject *)val_o)->ob_fval;
-            ((PyFloatObject *)val_o)->ob_fval = dres;
-            res = value;
-            v = PyStackRef_NULL;
-            _tos_cache1 = v;
-            _tos_cache0 = res;
-            SET_CURRENT_CACHED_VALUES(2);
-            stack_pointer += -1;
-            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
-            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
-            break;
-        }
-
         case _UNARY_NEGATIVE_FLOAT_INPLACE_r12: {
             CHECK_CURRENT_CACHED_VALUES(1);
             ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
@@ -2697,42 +2673,29 @@
             _PyStackRef v;
             _PyStackRef _stack_item_0 = _tos_cache0;
             value = _stack_item_0;
-            PyObject *val_o = PyStackRef_AsPyObjectBorrow(value);
-            assert(PyFloat_CheckExact(val_o));
-            assert(_PyObject_IsUniquelyReferenced(val_o));
+            assert(PyFloat_CheckExact(PyStackRef_AsPyObjectBorrow(value)));
             STAT_INC(UNARY_NEGATIVE, hit);
-            double dres = -((PyFloatObject *)val_o)->ob_fval;
-            ((PyFloatObject *)val_o)->ob_fval = dres;
-            res = value;
+            double dres = -_PyFloat_StackRefAsDouble(value);
+            stack_pointer[0] = value;
+            stack_pointer += 1;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            _PyFrame_SetStackPointer(frame, stack_pointer);
+            _PyFrame_StackPointerValidate(frame);
+            res = _PyFloat_ReuseResult(value, dres);
+            _PyFrame_StackPointerInvalidate(frame);
+            #ifdef Py_EXPERIMENTAL_NANBOX
+            if (PyStackRef_IsNull(res)) {
+                SET_CURRENT_CACHED_VALUES(0);
+                JUMP_TO_ERROR();
+            }
+            #endif
             v = PyStackRef_NULL;
             _tos_cache1 = v;
             _tos_cache0 = res;
+            _tos_cache2 = PyStackRef_ZERO_BITS;
             SET_CURRENT_CACHED_VALUES(2);
-            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
-            break;
-        }
-
-        case _UNARY_NEGATIVE_FLOAT_INPLACE_r23: {
-            CHECK_CURRENT_CACHED_VALUES(2);
-            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
-            _PyStackRef value;
-            _PyStackRef res;
-            _PyStackRef v;
-            _PyStackRef _stack_item_0 = _tos_cache0;
-            _PyStackRef _stack_item_1 = _tos_cache1;
-            value = _stack_item_1;
-            PyObject *val_o = PyStackRef_AsPyObjectBorrow(value);
-            assert(PyFloat_CheckExact(val_o));
-            assert(_PyObject_IsUniquelyReferenced(val_o));
-            STAT_INC(UNARY_NEGATIVE, hit);
-            double dres = -((PyFloatObject *)val_o)->ob_fval;
-            ((PyFloatObject *)val_o)->ob_fval = dres;
-            res = value;
-            v = PyStackRef_NULL;
-            _tos_cache2 = v;
-            _tos_cache1 = res;
-            _tos_cache0 = _stack_item_0;
-            SET_CURRENT_CACHED_VALUES(3);
+            stack_pointer += -1;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
             ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
             break;
         }
@@ -5324,14 +5287,20 @@
             _PyStackRef r;
             right = stack_pointer[-1];
             left = stack_pointer[-2];
-            PyObject *left_o = PyStackRef_AsPyObjectBorrow(left);
-            PyObject *right_o = PyStackRef_AsPyObjectBorrow(right);
-            assert(PyFloat_CheckExact(left_o));
-            assert(PyFloat_CheckExact(right_o));
+            assert(PyFloat_CheckExact(PyStackRef_AsPyObjectBorrow(left)));
+            assert(PyFloat_CheckExact(PyStackRef_AsPyObjectBorrow(right)));
             STAT_INC(BINARY_OP, hit);
             double dres =
-            ((PyFloatObject *)left_o)->ob_fval *
-            ((PyFloatObject *)right_o)->ob_fval;
+            _PyFloat_StackRefAsDouble(left) * _PyFloat_StackRefAsDouble(right);
+            #ifdef Py_EXPERIMENTAL_TRACING_GC
+            l = left;
+            r = right;
+            res = _PyFloat_ReuseOrCreate(&l, &r, dres);
+            if (PyStackRef_IsNull(res)) {
+                SET_CURRENT_CACHED_VALUES(0);
+                JUMP_TO_ERROR();
+            }
+            #else
             PyObject *d = PyFloat_FromDouble(dres);
             if (d == NULL) {
                 SET_CURRENT_CACHED_VALUES(0);
@@ -5340,6 +5309,7 @@
             res = PyStackRef_FromPyObjectSteal(d);
             l = left;
             r = right;
+            #endif
             _tos_cache2 = r;
             _tos_cache1 = l;
             _tos_cache0 = res;
@@ -5361,14 +5331,23 @@
             _PyStackRef _stack_item_0 = _tos_cache0;
             right = _stack_item_0;
             left = stack_pointer[-1];
-            PyObject *left_o = PyStackRef_AsPyObjectBorrow(left);
-            PyObject *right_o = PyStackRef_AsPyObjectBorrow(right);
-            assert(PyFloat_CheckExact(left_o));
-            assert(PyFloat_CheckExact(right_o));
+            assert(PyFloat_CheckExact(PyStackRef_AsPyObjectBorrow(left)));
+            assert(PyFloat_CheckExact(PyStackRef_AsPyObjectBorrow(right)));
             STAT_INC(BINARY_OP, hit);
             double dres =
-            ((PyFloatObject *)left_o)->ob_fval *
-            ((PyFloatObject *)right_o)->ob_fval;
+            _PyFloat_StackRefAsDouble(left) * _PyFloat_StackRefAsDouble(right);
+            #ifdef Py_EXPERIMENTAL_TRACING_GC
+            l = left;
+            r = right;
+            res = _PyFloat_ReuseOrCreate(&l, &r, dres);
+            if (PyStackRef_IsNull(res)) {
+                stack_pointer[0] = right;
+                stack_pointer += 1;
+                ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                SET_CURRENT_CACHED_VALUES(0);
+                JUMP_TO_ERROR();
+            }
+            #else
             PyObject *d = PyFloat_FromDouble(dres);
             if (d == NULL) {
                 stack_pointer[0] = right;
@@ -5380,6 +5359,7 @@
             res = PyStackRef_FromPyObjectSteal(d);
             l = left;
             r = right;
+            #endif
             _tos_cache2 = r;
             _tos_cache1 = l;
             _tos_cache0 = res;
@@ -5402,14 +5382,24 @@
             _PyStackRef _stack_item_1 = _tos_cache1;
             right = _stack_item_1;
             left = _stack_item_0;
-            PyObject *left_o = PyStackRef_AsPyObjectBorrow(left);
-            PyObject *right_o = PyStackRef_AsPyObjectBorrow(right);
-            assert(PyFloat_CheckExact(left_o));
-            assert(PyFloat_CheckExact(right_o));
+            assert(PyFloat_CheckExact(PyStackRef_AsPyObjectBorrow(left)));
+            assert(PyFloat_CheckExact(PyStackRef_AsPyObjectBorrow(right)));
             STAT_INC(BINARY_OP, hit);
             double dres =
-            ((PyFloatObject *)left_o)->ob_fval *
-            ((PyFloatObject *)right_o)->ob_fval;
+            _PyFloat_StackRefAsDouble(left) * _PyFloat_StackRefAsDouble(right);
+            #ifdef Py_EXPERIMENTAL_TRACING_GC
+            l = left;
+            r = right;
+            res = _PyFloat_ReuseOrCreate(&l, &r, dres);
+            if (PyStackRef_IsNull(res)) {
+                stack_pointer[0] = left;
+                stack_pointer[1] = right;
+                stack_pointer += 2;
+                ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                SET_CURRENT_CACHED_VALUES(0);
+                JUMP_TO_ERROR();
+            }
+            #else
             PyObject *d = PyFloat_FromDouble(dres);
             if (d == NULL) {
                 stack_pointer[0] = left;
@@ -5422,6 +5412,7 @@
             res = PyStackRef_FromPyObjectSteal(d);
             l = left;
             r = right;
+            #endif
             _tos_cache2 = r;
             _tos_cache1 = l;
             _tos_cache0 = res;
@@ -5440,14 +5431,20 @@
             _PyStackRef r;
             right = stack_pointer[-1];
             left = stack_pointer[-2];
-            PyObject *left_o = PyStackRef_AsPyObjectBorrow(left);
-            PyObject *right_o = PyStackRef_AsPyObjectBorrow(right);
-            assert(PyFloat_CheckExact(left_o));
-            assert(PyFloat_CheckExact(right_o));
+            assert(PyFloat_CheckExact(PyStackRef_AsPyObjectBorrow(left)));
+            assert(PyFloat_CheckExact(PyStackRef_AsPyObjectBorrow(right)));
             STAT_INC(BINARY_OP, hit);
             double dres =
-            ((PyFloatObject *)left_o)->ob_fval +
-            ((PyFloatObject *)right_o)->ob_fval;
+            _PyFloat_StackRefAsDouble(left) + _PyFloat_StackRefAsDouble(right);
+            #ifdef Py_EXPERIMENTAL_TRACING_GC
+            l = left;
+            r = right;
+            res = _PyFloat_ReuseOrCreate(&l, &r, dres);
+            if (PyStackRef_IsNull(res)) {
+                SET_CURRENT_CACHED_VALUES(0);
+                JUMP_TO_ERROR();
+            }
+            #else
             PyObject *d = PyFloat_FromDouble(dres);
             if (d == NULL) {
                 SET_CURRENT_CACHED_VALUES(0);
@@ -5456,6 +5453,7 @@
             res = PyStackRef_FromPyObjectSteal(d);
             l = left;
             r = right;
+            #endif
             _tos_cache2 = r;
             _tos_cache1 = l;
             _tos_cache0 = res;
@@ -5477,14 +5475,23 @@
             _PyStackRef _stack_item_0 = _tos_cache0;
             right = _stack_item_0;
             left = stack_pointer[-1];
-            PyObject *left_o = PyStackRef_AsPyObjectBorrow(left);
-            PyObject *right_o = PyStackRef_AsPyObjectBorrow(right);
-            assert(PyFloat_CheckExact(left_o));
-            assert(PyFloat_CheckExact(right_o));
+            assert(PyFloat_CheckExact(PyStackRef_AsPyObjectBorrow(left)));
+            assert(PyFloat_CheckExact(PyStackRef_AsPyObjectBorrow(right)));
             STAT_INC(BINARY_OP, hit);
             double dres =
-            ((PyFloatObject *)left_o)->ob_fval +
-            ((PyFloatObject *)right_o)->ob_fval;
+            _PyFloat_StackRefAsDouble(left) + _PyFloat_StackRefAsDouble(right);
+            #ifdef Py_EXPERIMENTAL_TRACING_GC
+            l = left;
+            r = right;
+            res = _PyFloat_ReuseOrCreate(&l, &r, dres);
+            if (PyStackRef_IsNull(res)) {
+                stack_pointer[0] = right;
+                stack_pointer += 1;
+                ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                SET_CURRENT_CACHED_VALUES(0);
+                JUMP_TO_ERROR();
+            }
+            #else
             PyObject *d = PyFloat_FromDouble(dres);
             if (d == NULL) {
                 stack_pointer[0] = right;
@@ -5496,6 +5503,7 @@
             res = PyStackRef_FromPyObjectSteal(d);
             l = left;
             r = right;
+            #endif
             _tos_cache2 = r;
             _tos_cache1 = l;
             _tos_cache0 = res;
@@ -5518,14 +5526,24 @@
             _PyStackRef _stack_item_1 = _tos_cache1;
             right = _stack_item_1;
             left = _stack_item_0;
-            PyObject *left_o = PyStackRef_AsPyObjectBorrow(left);
-            PyObject *right_o = PyStackRef_AsPyObjectBorrow(right);
-            assert(PyFloat_CheckExact(left_o));
-            assert(PyFloat_CheckExact(right_o));
+            assert(PyFloat_CheckExact(PyStackRef_AsPyObjectBorrow(left)));
+            assert(PyFloat_CheckExact(PyStackRef_AsPyObjectBorrow(right)));
             STAT_INC(BINARY_OP, hit);
             double dres =
-            ((PyFloatObject *)left_o)->ob_fval +
-            ((PyFloatObject *)right_o)->ob_fval;
+            _PyFloat_StackRefAsDouble(left) + _PyFloat_StackRefAsDouble(right);
+            #ifdef Py_EXPERIMENTAL_TRACING_GC
+            l = left;
+            r = right;
+            res = _PyFloat_ReuseOrCreate(&l, &r, dres);
+            if (PyStackRef_IsNull(res)) {
+                stack_pointer[0] = left;
+                stack_pointer[1] = right;
+                stack_pointer += 2;
+                ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                SET_CURRENT_CACHED_VALUES(0);
+                JUMP_TO_ERROR();
+            }
+            #else
             PyObject *d = PyFloat_FromDouble(dres);
             if (d == NULL) {
                 stack_pointer[0] = left;
@@ -5538,6 +5556,7 @@
             res = PyStackRef_FromPyObjectSteal(d);
             l = left;
             r = right;
+            #endif
             _tos_cache2 = r;
             _tos_cache1 = l;
             _tos_cache0 = res;
@@ -5556,14 +5575,20 @@
             _PyStackRef r;
             right = stack_pointer[-1];
             left = stack_pointer[-2];
-            PyObject *left_o = PyStackRef_AsPyObjectBorrow(left);
-            PyObject *right_o = PyStackRef_AsPyObjectBorrow(right);
-            assert(PyFloat_CheckExact(left_o));
-            assert(PyFloat_CheckExact(right_o));
+            assert(PyFloat_CheckExact(PyStackRef_AsPyObjectBorrow(left)));
+            assert(PyFloat_CheckExact(PyStackRef_AsPyObjectBorrow(right)));
             STAT_INC(BINARY_OP, hit);
             double dres =
-            ((PyFloatObject *)left_o)->ob_fval -
-            ((PyFloatObject *)right_o)->ob_fval;
+            _PyFloat_StackRefAsDouble(left) - _PyFloat_StackRefAsDouble(right);
+            #ifdef Py_EXPERIMENTAL_TRACING_GC
+            l = left;
+            r = right;
+            res = _PyFloat_ReuseOrCreate(&l, &r, dres);
+            if (PyStackRef_IsNull(res)) {
+                SET_CURRENT_CACHED_VALUES(0);
+                JUMP_TO_ERROR();
+            }
+            #else
             PyObject *d = PyFloat_FromDouble(dres);
             if (d == NULL) {
                 SET_CURRENT_CACHED_VALUES(0);
@@ -5572,6 +5597,7 @@
             res = PyStackRef_FromPyObjectSteal(d);
             l = left;
             r = right;
+            #endif
             _tos_cache2 = r;
             _tos_cache1 = l;
             _tos_cache0 = res;
@@ -5593,14 +5619,23 @@
             _PyStackRef _stack_item_0 = _tos_cache0;
             right = _stack_item_0;
             left = stack_pointer[-1];
-            PyObject *left_o = PyStackRef_AsPyObjectBorrow(left);
-            PyObject *right_o = PyStackRef_AsPyObjectBorrow(right);
-            assert(PyFloat_CheckExact(left_o));
-            assert(PyFloat_CheckExact(right_o));
+            assert(PyFloat_CheckExact(PyStackRef_AsPyObjectBorrow(left)));
+            assert(PyFloat_CheckExact(PyStackRef_AsPyObjectBorrow(right)));
             STAT_INC(BINARY_OP, hit);
             double dres =
-            ((PyFloatObject *)left_o)->ob_fval -
-            ((PyFloatObject *)right_o)->ob_fval;
+            _PyFloat_StackRefAsDouble(left) - _PyFloat_StackRefAsDouble(right);
+            #ifdef Py_EXPERIMENTAL_TRACING_GC
+            l = left;
+            r = right;
+            res = _PyFloat_ReuseOrCreate(&l, &r, dres);
+            if (PyStackRef_IsNull(res)) {
+                stack_pointer[0] = right;
+                stack_pointer += 1;
+                ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                SET_CURRENT_CACHED_VALUES(0);
+                JUMP_TO_ERROR();
+            }
+            #else
             PyObject *d = PyFloat_FromDouble(dres);
             if (d == NULL) {
                 stack_pointer[0] = right;
@@ -5612,6 +5647,7 @@
             res = PyStackRef_FromPyObjectSteal(d);
             l = left;
             r = right;
+            #endif
             _tos_cache2 = r;
             _tos_cache1 = l;
             _tos_cache0 = res;
@@ -5634,14 +5670,24 @@
             _PyStackRef _stack_item_1 = _tos_cache1;
             right = _stack_item_1;
             left = _stack_item_0;
-            PyObject *left_o = PyStackRef_AsPyObjectBorrow(left);
-            PyObject *right_o = PyStackRef_AsPyObjectBorrow(right);
-            assert(PyFloat_CheckExact(left_o));
-            assert(PyFloat_CheckExact(right_o));
+            assert(PyFloat_CheckExact(PyStackRef_AsPyObjectBorrow(left)));
+            assert(PyFloat_CheckExact(PyStackRef_AsPyObjectBorrow(right)));
             STAT_INC(BINARY_OP, hit);
             double dres =
-            ((PyFloatObject *)left_o)->ob_fval -
-            ((PyFloatObject *)right_o)->ob_fval;
+            _PyFloat_StackRefAsDouble(left) - _PyFloat_StackRefAsDouble(right);
+            #ifdef Py_EXPERIMENTAL_TRACING_GC
+            l = left;
+            r = right;
+            res = _PyFloat_ReuseOrCreate(&l, &r, dres);
+            if (PyStackRef_IsNull(res)) {
+                stack_pointer[0] = left;
+                stack_pointer[1] = right;
+                stack_pointer += 2;
+                ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                SET_CURRENT_CACHED_VALUES(0);
+                JUMP_TO_ERROR();
+            }
+            #else
             PyObject *d = PyFloat_FromDouble(dres);
             if (d == NULL) {
                 stack_pointer[0] = left;
@@ -5654,6 +5700,7 @@
             res = PyStackRef_FromPyObjectSteal(d);
             l = left;
             r = right;
+            #endif
             _tos_cache2 = r;
             _tos_cache1 = l;
             _tos_cache0 = res;
@@ -5673,7 +5720,13 @@
             right = stack_pointer[-1];
             left = stack_pointer[-2];
             FLOAT_INPLACE_OP(left, right, left, +);
-            res = left;
+            res = _float_inplace_res;
+            #ifdef Py_EXPERIMENTAL_NANBOX
+            if (PyStackRef_IsNull(res)) {
+                SET_CURRENT_CACHED_VALUES(0);
+                JUMP_TO_ERROR();
+            }
+            #endif
             l = PyStackRef_NULL;
             r = right;
             _tos_cache2 = r;
@@ -5698,7 +5751,16 @@
             right = _stack_item_0;
             left = stack_pointer[-1];
             FLOAT_INPLACE_OP(left, right, left, +);
-            res = left;
+            res = _float_inplace_res;
+            #ifdef Py_EXPERIMENTAL_NANBOX
+            if (PyStackRef_IsNull(res)) {
+                stack_pointer[0] = right;
+                stack_pointer += 1;
+                ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                SET_CURRENT_CACHED_VALUES(0);
+                JUMP_TO_ERROR();
+            }
+            #endif
             l = PyStackRef_NULL;
             r = right;
             _tos_cache2 = r;
@@ -5724,7 +5786,17 @@
             right = _stack_item_1;
             left = _stack_item_0;
             FLOAT_INPLACE_OP(left, right, left, +);
-            res = left;
+            res = _float_inplace_res;
+            #ifdef Py_EXPERIMENTAL_NANBOX
+            if (PyStackRef_IsNull(res)) {
+                stack_pointer[0] = left;
+                stack_pointer[1] = right;
+                stack_pointer += 2;
+                ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                SET_CURRENT_CACHED_VALUES(0);
+                JUMP_TO_ERROR();
+            }
+            #endif
             l = PyStackRef_NULL;
             r = right;
             _tos_cache2 = r;
@@ -5746,7 +5818,13 @@
             right = stack_pointer[-1];
             left = stack_pointer[-2];
             FLOAT_INPLACE_OP(left, right, left, -);
-            res = left;
+            res = _float_inplace_res;
+            #ifdef Py_EXPERIMENTAL_NANBOX
+            if (PyStackRef_IsNull(res)) {
+                SET_CURRENT_CACHED_VALUES(0);
+                JUMP_TO_ERROR();
+            }
+            #endif
             l = PyStackRef_NULL;
             r = right;
             _tos_cache2 = r;
@@ -5771,7 +5849,16 @@
             right = _stack_item_0;
             left = stack_pointer[-1];
             FLOAT_INPLACE_OP(left, right, left, -);
-            res = left;
+            res = _float_inplace_res;
+            #ifdef Py_EXPERIMENTAL_NANBOX
+            if (PyStackRef_IsNull(res)) {
+                stack_pointer[0] = right;
+                stack_pointer += 1;
+                ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                SET_CURRENT_CACHED_VALUES(0);
+                JUMP_TO_ERROR();
+            }
+            #endif
             l = PyStackRef_NULL;
             r = right;
             _tos_cache2 = r;
@@ -5797,7 +5884,17 @@
             right = _stack_item_1;
             left = _stack_item_0;
             FLOAT_INPLACE_OP(left, right, left, -);
-            res = left;
+            res = _float_inplace_res;
+            #ifdef Py_EXPERIMENTAL_NANBOX
+            if (PyStackRef_IsNull(res)) {
+                stack_pointer[0] = left;
+                stack_pointer[1] = right;
+                stack_pointer += 2;
+                ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                SET_CURRENT_CACHED_VALUES(0);
+                JUMP_TO_ERROR();
+            }
+            #endif
             l = PyStackRef_NULL;
             r = right;
             _tos_cache2 = r;
@@ -5819,7 +5916,13 @@
             right = stack_pointer[-1];
             left = stack_pointer[-2];
             FLOAT_INPLACE_OP(left, right, left, *);
-            res = left;
+            res = _float_inplace_res;
+            #ifdef Py_EXPERIMENTAL_NANBOX
+            if (PyStackRef_IsNull(res)) {
+                SET_CURRENT_CACHED_VALUES(0);
+                JUMP_TO_ERROR();
+            }
+            #endif
             l = PyStackRef_NULL;
             r = right;
             _tos_cache2 = r;
@@ -5844,7 +5947,16 @@
             right = _stack_item_0;
             left = stack_pointer[-1];
             FLOAT_INPLACE_OP(left, right, left, *);
-            res = left;
+            res = _float_inplace_res;
+            #ifdef Py_EXPERIMENTAL_NANBOX
+            if (PyStackRef_IsNull(res)) {
+                stack_pointer[0] = right;
+                stack_pointer += 1;
+                ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                SET_CURRENT_CACHED_VALUES(0);
+                JUMP_TO_ERROR();
+            }
+            #endif
             l = PyStackRef_NULL;
             r = right;
             _tos_cache2 = r;
@@ -5870,7 +5982,17 @@
             right = _stack_item_1;
             left = _stack_item_0;
             FLOAT_INPLACE_OP(left, right, left, *);
-            res = left;
+            res = _float_inplace_res;
+            #ifdef Py_EXPERIMENTAL_NANBOX
+            if (PyStackRef_IsNull(res)) {
+                stack_pointer[0] = left;
+                stack_pointer[1] = right;
+                stack_pointer += 2;
+                ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                SET_CURRENT_CACHED_VALUES(0);
+                JUMP_TO_ERROR();
+            }
+            #endif
             l = PyStackRef_NULL;
             r = right;
             _tos_cache2 = r;
@@ -5892,7 +6014,13 @@
             right = stack_pointer[-1];
             left = stack_pointer[-2];
             FLOAT_INPLACE_OP(left, right, right, +);
-            res = right;
+            res = _float_inplace_res;
+            #ifdef Py_EXPERIMENTAL_NANBOX
+            if (PyStackRef_IsNull(res)) {
+                SET_CURRENT_CACHED_VALUES(0);
+                JUMP_TO_ERROR();
+            }
+            #endif
             l = left;
             r = PyStackRef_NULL;
             _tos_cache2 = r;
@@ -5917,7 +6045,16 @@
             right = _stack_item_0;
             left = stack_pointer[-1];
             FLOAT_INPLACE_OP(left, right, right, +);
-            res = right;
+            res = _float_inplace_res;
+            #ifdef Py_EXPERIMENTAL_NANBOX
+            if (PyStackRef_IsNull(res)) {
+                stack_pointer[0] = right;
+                stack_pointer += 1;
+                ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                SET_CURRENT_CACHED_VALUES(0);
+                JUMP_TO_ERROR();
+            }
+            #endif
             l = left;
             r = PyStackRef_NULL;
             _tos_cache2 = r;
@@ -5943,7 +6080,17 @@
             right = _stack_item_1;
             left = _stack_item_0;
             FLOAT_INPLACE_OP(left, right, right, +);
-            res = right;
+            res = _float_inplace_res;
+            #ifdef Py_EXPERIMENTAL_NANBOX
+            if (PyStackRef_IsNull(res)) {
+                stack_pointer[0] = left;
+                stack_pointer[1] = right;
+                stack_pointer += 2;
+                ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                SET_CURRENT_CACHED_VALUES(0);
+                JUMP_TO_ERROR();
+            }
+            #endif
             l = left;
             r = PyStackRef_NULL;
             _tos_cache2 = r;
@@ -5965,7 +6112,13 @@
             right = stack_pointer[-1];
             left = stack_pointer[-2];
             FLOAT_INPLACE_OP(left, right, right, *);
-            res = right;
+            res = _float_inplace_res;
+            #ifdef Py_EXPERIMENTAL_NANBOX
+            if (PyStackRef_IsNull(res)) {
+                SET_CURRENT_CACHED_VALUES(0);
+                JUMP_TO_ERROR();
+            }
+            #endif
             l = left;
             r = PyStackRef_NULL;
             _tos_cache2 = r;
@@ -5990,7 +6143,16 @@
             right = _stack_item_0;
             left = stack_pointer[-1];
             FLOAT_INPLACE_OP(left, right, right, *);
-            res = right;
+            res = _float_inplace_res;
+            #ifdef Py_EXPERIMENTAL_NANBOX
+            if (PyStackRef_IsNull(res)) {
+                stack_pointer[0] = right;
+                stack_pointer += 1;
+                ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                SET_CURRENT_CACHED_VALUES(0);
+                JUMP_TO_ERROR();
+            }
+            #endif
             l = left;
             r = PyStackRef_NULL;
             _tos_cache2 = r;
@@ -6016,7 +6178,17 @@
             right = _stack_item_1;
             left = _stack_item_0;
             FLOAT_INPLACE_OP(left, right, right, *);
-            res = right;
+            res = _float_inplace_res;
+            #ifdef Py_EXPERIMENTAL_NANBOX
+            if (PyStackRef_IsNull(res)) {
+                stack_pointer[0] = left;
+                stack_pointer[1] = right;
+                stack_pointer += 2;
+                ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                SET_CURRENT_CACHED_VALUES(0);
+                JUMP_TO_ERROR();
+            }
+            #endif
             l = left;
             r = PyStackRef_NULL;
             _tos_cache2 = r;
@@ -6038,7 +6210,13 @@
             right = stack_pointer[-1];
             left = stack_pointer[-2];
             FLOAT_INPLACE_OP(left, right, right, -);
-            res = right;
+            res = _float_inplace_res;
+            #ifdef Py_EXPERIMENTAL_NANBOX
+            if (PyStackRef_IsNull(res)) {
+                SET_CURRENT_CACHED_VALUES(0);
+                JUMP_TO_ERROR();
+            }
+            #endif
             l = left;
             r = PyStackRef_NULL;
             _tos_cache2 = r;
@@ -6063,7 +6241,16 @@
             right = _stack_item_0;
             left = stack_pointer[-1];
             FLOAT_INPLACE_OP(left, right, right, -);
-            res = right;
+            res = _float_inplace_res;
+            #ifdef Py_EXPERIMENTAL_NANBOX
+            if (PyStackRef_IsNull(res)) {
+                stack_pointer[0] = right;
+                stack_pointer += 1;
+                ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                SET_CURRENT_CACHED_VALUES(0);
+                JUMP_TO_ERROR();
+            }
+            #endif
             l = left;
             r = PyStackRef_NULL;
             _tos_cache2 = r;
@@ -6089,9 +6276,208 @@
             right = _stack_item_1;
             left = _stack_item_0;
             FLOAT_INPLACE_OP(left, right, right, -);
-            res = right;
+            res = _float_inplace_res;
+            #ifdef Py_EXPERIMENTAL_NANBOX
+            if (PyStackRef_IsNull(res)) {
+                stack_pointer[0] = left;
+                stack_pointer[1] = right;
+                stack_pointer += 2;
+                ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                SET_CURRENT_CACHED_VALUES(0);
+                JUMP_TO_ERROR();
+            }
+            #endif
             l = left;
             r = PyStackRef_NULL;
+            _tos_cache2 = r;
+            _tos_cache1 = l;
+            _tos_cache0 = res;
+            SET_CURRENT_CACHED_VALUES(3);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            break;
+        }
+
+        case _BINARY_OP_ADD_FLOAT_REUSE_LOCAL_r23: {
+            CHECK_CURRENT_CACHED_VALUES(2);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            _PyStackRef right;
+            _PyStackRef left;
+            _PyStackRef res;
+            _PyStackRef l;
+            _PyStackRef r;
+            _PyStackRef _stack_item_0 = _tos_cache0;
+            _PyStackRef _stack_item_1 = _tos_cache1;
+            oparg = CURRENT_OPARG();
+            right = _stack_item_1;
+            left = _stack_item_0;
+            STAT_INC(BINARY_OP, hit);
+            double value = _PyFloat_StackRefAsDouble(left) +
+            _PyFloat_StackRefAsDouble(right);
+            l = left;
+            r = right;
+            #ifdef Py_EXPERIMENTAL_TRACING_GC
+            res = _PyFloat_ReuseLocal(frame, stack_pointer, oparg, value,
+                                     current_executor->vm_data.valid);
+            if (PyStackRef_IsNull(res)) {
+                res = _PyFloat_ReuseOrCreate(&l, &r, value);
+            }
+            #else
+            PyObject *result = PyFloat_FromDouble(value);
+            res = result == NULL ? PyStackRef_NULL : PyStackRef_FromPyObjectSteal(result);
+            #endif
+            if (PyStackRef_IsNull(res)) {
+                stack_pointer[0] = left;
+                stack_pointer[1] = right;
+                stack_pointer += 2;
+                ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                SET_CURRENT_CACHED_VALUES(0);
+                JUMP_TO_ERROR();
+            }
+            _tos_cache2 = r;
+            _tos_cache1 = l;
+            _tos_cache0 = res;
+            SET_CURRENT_CACHED_VALUES(3);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            break;
+        }
+
+        case _BINARY_OP_SUBTRACT_FLOAT_REUSE_LOCAL_r23: {
+            CHECK_CURRENT_CACHED_VALUES(2);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            _PyStackRef right;
+            _PyStackRef left;
+            _PyStackRef res;
+            _PyStackRef l;
+            _PyStackRef r;
+            _PyStackRef _stack_item_0 = _tos_cache0;
+            _PyStackRef _stack_item_1 = _tos_cache1;
+            oparg = CURRENT_OPARG();
+            right = _stack_item_1;
+            left = _stack_item_0;
+            STAT_INC(BINARY_OP, hit);
+            double value = _PyFloat_StackRefAsDouble(left) -
+            _PyFloat_StackRefAsDouble(right);
+            l = left;
+            r = right;
+            #ifdef Py_EXPERIMENTAL_TRACING_GC
+            res = _PyFloat_ReuseLocal(frame, stack_pointer, oparg, value,
+                                     current_executor->vm_data.valid);
+            if (PyStackRef_IsNull(res)) {
+                res = _PyFloat_ReuseOrCreate(&l, &r, value);
+            }
+            #else
+            PyObject *result = PyFloat_FromDouble(value);
+            res = result == NULL ? PyStackRef_NULL : PyStackRef_FromPyObjectSteal(result);
+            #endif
+            if (PyStackRef_IsNull(res)) {
+                stack_pointer[0] = left;
+                stack_pointer[1] = right;
+                stack_pointer += 2;
+                ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                SET_CURRENT_CACHED_VALUES(0);
+                JUMP_TO_ERROR();
+            }
+            _tos_cache2 = r;
+            _tos_cache1 = l;
+            _tos_cache0 = res;
+            SET_CURRENT_CACHED_VALUES(3);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            break;
+        }
+
+        case _BINARY_OP_MULTIPLY_FLOAT_REUSE_LOCAL_r23: {
+            CHECK_CURRENT_CACHED_VALUES(2);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            _PyStackRef right;
+            _PyStackRef left;
+            _PyStackRef res;
+            _PyStackRef l;
+            _PyStackRef r;
+            _PyStackRef _stack_item_0 = _tos_cache0;
+            _PyStackRef _stack_item_1 = _tos_cache1;
+            oparg = CURRENT_OPARG();
+            right = _stack_item_1;
+            left = _stack_item_0;
+            STAT_INC(BINARY_OP, hit);
+            double value = _PyFloat_StackRefAsDouble(left) *
+            _PyFloat_StackRefAsDouble(right);
+            l = left;
+            r = right;
+            #ifdef Py_EXPERIMENTAL_TRACING_GC
+            res = _PyFloat_ReuseLocal(frame, stack_pointer, oparg, value,
+                                     current_executor->vm_data.valid);
+            if (PyStackRef_IsNull(res)) {
+                res = _PyFloat_ReuseOrCreate(&l, &r, value);
+            }
+            #else
+            PyObject *result = PyFloat_FromDouble(value);
+            res = result == NULL ? PyStackRef_NULL : PyStackRef_FromPyObjectSteal(result);
+            #endif
+            if (PyStackRef_IsNull(res)) {
+                stack_pointer[0] = left;
+                stack_pointer[1] = right;
+                stack_pointer += 2;
+                ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                SET_CURRENT_CACHED_VALUES(0);
+                JUMP_TO_ERROR();
+            }
+            _tos_cache2 = r;
+            _tos_cache1 = l;
+            _tos_cache0 = res;
+            SET_CURRENT_CACHED_VALUES(3);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            break;
+        }
+
+        case _BINARY_OP_TRUEDIV_FLOAT_REUSE_LOCAL_r23: {
+            CHECK_CURRENT_CACHED_VALUES(2);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            _PyStackRef right;
+            _PyStackRef left;
+            _PyStackRef res;
+            _PyStackRef l;
+            _PyStackRef r;
+            _PyStackRef _stack_item_0 = _tos_cache0;
+            _PyStackRef _stack_item_1 = _tos_cache1;
+            oparg = CURRENT_OPARG();
+            right = _stack_item_1;
+            left = _stack_item_0;
+            STAT_INC(BINARY_OP, hit);
+            double divisor = _PyFloat_StackRefAsDouble(right);
+            if (divisor == 0.0) {
+                stack_pointer[0] = left;
+                stack_pointer[1] = right;
+                stack_pointer += 2;
+                ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                _PyFrame_SetStackPointer(frame, stack_pointer);
+                _PyFrame_StackPointerValidate(frame);
+                PyErr_SetString(PyExc_ZeroDivisionError,
+                                "float division by zero");
+                _PyFrame_StackPointerInvalidate(frame);
+                SET_CURRENT_CACHED_VALUES(0);
+                JUMP_TO_ERROR();
+            }
+            double value = _PyFloat_StackRefAsDouble(left) / divisor;
+            l = left;
+            r = right;
+            #ifdef Py_EXPERIMENTAL_TRACING_GC
+            res = _PyFloat_ReuseLocal(frame, stack_pointer, oparg, value,
+                                     current_executor->vm_data.valid);
+            if (PyStackRef_IsNull(res)) {
+                res = _PyFloat_ReuseOrCreate(&l, &r, value);
+            }
+            #else
+            PyObject *result = PyFloat_FromDouble(value);
+            res = result == NULL ? PyStackRef_NULL : PyStackRef_FromPyObjectSteal(result);
+            #endif
+            if (PyStackRef_IsNull(res)) {
+                stack_pointer[0] = left;
+                stack_pointer[1] = right;
+                stack_pointer += 2;
+                ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                SET_CURRENT_CACHED_VALUES(0);
+                JUMP_TO_ERROR();
+            }
             _tos_cache2 = r;
             _tos_cache1 = l;
             _tos_cache0 = res;
@@ -6112,12 +6498,10 @@
             _PyStackRef _stack_item_1 = _tos_cache1;
             right = _stack_item_1;
             left = _stack_item_0;
-            PyObject *left_o = PyStackRef_AsPyObjectBorrow(left);
-            PyObject *right_o = PyStackRef_AsPyObjectBorrow(right);
-            assert(PyFloat_CheckExact(left_o));
-            assert(PyFloat_CheckExact(right_o));
+            assert(PyFloat_CheckExact(PyStackRef_AsPyObjectBorrow(left)));
+            assert(PyFloat_CheckExact(PyStackRef_AsPyObjectBorrow(right)));
             STAT_INC(BINARY_OP, hit);
-            double divisor = ((PyFloatObject *)right_o)->ob_fval;
+            double divisor = _PyFloat_StackRefAsDouble(right);
             if (divisor == 0.0) {
                 stack_pointer[0] = left;
                 stack_pointer[1] = right;
@@ -6131,7 +6515,20 @@
                 SET_CURRENT_CACHED_VALUES(0);
                 JUMP_TO_ERROR();
             }
-            double dres = ((PyFloatObject *)left_o)->ob_fval / divisor;
+            double dres = _PyFloat_StackRefAsDouble(left) / divisor;
+            #ifdef Py_EXPERIMENTAL_TRACING_GC
+            l = left;
+            r = right;
+            res = _PyFloat_ReuseOrCreate(&l, &r, dres);
+            if (PyStackRef_IsNull(res)) {
+                stack_pointer[0] = left;
+                stack_pointer[1] = right;
+                stack_pointer += 2;
+                ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                SET_CURRENT_CACHED_VALUES(0);
+                JUMP_TO_ERROR();
+            }
+            #else
             PyObject *d = PyFloat_FromDouble(dres);
             if (d == NULL) {
                 stack_pointer[0] = left;
@@ -6144,6 +6541,7 @@
             res = PyStackRef_FromPyObjectSteal(d);
             l = left;
             r = right;
+            #endif
             _tos_cache2 = r;
             _tos_cache1 = l;
             _tos_cache0 = res;
@@ -6167,7 +6565,7 @@
                 SET_CURRENT_CACHED_VALUES(0);
                 JUMP_TO_ERROR();
             }
-            res = left;
+            res = _float_inplace_res;
             l = PyStackRef_NULL;
             r = right;
             _tos_cache2 = r;
@@ -6199,7 +6597,7 @@
                 SET_CURRENT_CACHED_VALUES(0);
                 JUMP_TO_ERROR();
             }
-            res = left;
+            res = _float_inplace_res;
             l = PyStackRef_NULL;
             r = right;
             _tos_cache2 = r;
@@ -6233,7 +6631,7 @@
                 SET_CURRENT_CACHED_VALUES(0);
                 JUMP_TO_ERROR();
             }
-            res = left;
+            res = _float_inplace_res;
             l = PyStackRef_NULL;
             r = right;
             _tos_cache2 = r;
@@ -6259,7 +6657,7 @@
                 SET_CURRENT_CACHED_VALUES(0);
                 JUMP_TO_ERROR();
             }
-            res = right;
+            res = _float_inplace_res;
             l = left;
             r = PyStackRef_NULL;
             _tos_cache2 = r;
@@ -6291,7 +6689,7 @@
                 SET_CURRENT_CACHED_VALUES(0);
                 JUMP_TO_ERROR();
             }
-            res = right;
+            res = _float_inplace_res;
             l = left;
             r = PyStackRef_NULL;
             _tos_cache2 = r;
@@ -6325,7 +6723,7 @@
                 SET_CURRENT_CACHED_VALUES(0);
                 JUMP_TO_ERROR();
             }
-            res = right;
+            res = _float_inplace_res;
             l = left;
             r = PyStackRef_NULL;
             _tos_cache2 = r;
@@ -6785,7 +7183,11 @@
             }
             assert(d->result_type == NULL || Py_TYPE(res_o) == d->result_type);
             assert(!d->result_unique || Py_REFCNT(res_o) == 1 || _Py_IsImmortal(res_o));
-            assert(!PyFloat_CheckExact(res_o) || Py_REFCNT(res_o) == 1);
+            assert(stack_pointer == _PyFrame_GetStackPointer(frame));
+            _PyFrame_StackPointerValidate(frame);
+            assert(!PyFloat_CheckExact(res_o) || _PyFloat_IsImmediate(res_o) ||
+                   Py_REFCNT(res_o) == 1);
+            _PyFrame_StackPointerInvalidate(frame);
             res = PyStackRef_FromPyObjectSteal(res_o);
             l = left;
             r = right;
@@ -7110,12 +7512,21 @@
                 SET_CURRENT_CACHED_VALUES(2);
                 JUMP_TO_JUMP_TARGET();
             }
-            Py_ssize_t index = ((PyLongObject*)sub)->long_value.ob_digit[0];
+            stack_pointer[0] = str_st;
+            stack_pointer[1] = sub_st;
+            stack_pointer += 2;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            _PyFrame_SetStackPointer(frame, stack_pointer);
+            _PyFrame_StackPointerValidate(frame);
+            Py_ssize_t index = _PyLong_GetDigit((PyLongObject *)sub, 0);
+            _PyFrame_StackPointerInvalidate(frame);
             if (PyUnicode_GET_LENGTH(str) <= index) {
                 UOP_STAT_INC(uopcode, miss);
                 _tos_cache1 = sub_st;
                 _tos_cache0 = str_st;
                 SET_CURRENT_CACHED_VALUES(2);
+                stack_pointer += -2;
+                ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
                 JUMP_TO_JUMP_TARGET();
             }
             uint8_t c = PyUnicode_1BYTE_DATA(str)[index];
@@ -7129,6 +7540,8 @@
             _tos_cache1 = s;
             _tos_cache0 = res;
             SET_CURRENT_CACHED_VALUES(3);
+            stack_pointer += -2;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
             ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
             break;
         }
@@ -7156,12 +7569,21 @@
                 SET_CURRENT_CACHED_VALUES(2);
                 JUMP_TO_JUMP_TARGET();
             }
-            Py_ssize_t index = ((PyLongObject*)sub)->long_value.ob_digit[0];
+            stack_pointer[0] = str_st;
+            stack_pointer[1] = sub_st;
+            stack_pointer += 2;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            _PyFrame_SetStackPointer(frame, stack_pointer);
+            _PyFrame_StackPointerValidate(frame);
+            Py_ssize_t index = _PyLong_GetDigit((PyLongObject *)sub, 0);
+            _PyFrame_StackPointerInvalidate(frame);
             if (PyUnicode_GET_LENGTH(str) <= index) {
                 UOP_STAT_INC(uopcode, miss);
                 _tos_cache1 = sub_st;
                 _tos_cache0 = str_st;
                 SET_CURRENT_CACHED_VALUES(2);
+                stack_pointer += -2;
+                ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
                 JUMP_TO_JUMP_TARGET();
             }
             Py_UCS4 c = PyUnicode_READ_CHAR(str, index);
@@ -7170,6 +7592,8 @@
                 _tos_cache1 = sub_st;
                 _tos_cache0 = str_st;
                 SET_CURRENT_CACHED_VALUES(2);
+                stack_pointer += -2;
+                ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
                 JUMP_TO_JUMP_TARGET();
             }
             STAT_INC(BINARY_OP, hit);
@@ -7181,6 +7605,8 @@
             _tos_cache1 = s;
             _tos_cache0 = res;
             SET_CURRENT_CACHED_VALUES(3);
+            stack_pointer += -2;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
             ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
             break;
         }
@@ -7359,71 +7785,6 @@
             break;
         }
 
-        case _GUARD_BINARY_OP_SUBSCR_TUPLE_INT_BOUNDS_r02: {
-            CHECK_CURRENT_CACHED_VALUES(0);
-            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
-            _PyStackRef sub_st;
-            _PyStackRef tuple_st;
-            sub_st = stack_pointer[-1];
-            tuple_st = stack_pointer[-2];
-            PyObject *sub = PyStackRef_AsPyObjectBorrow(sub_st);
-            PyObject *tuple = PyStackRef_AsPyObjectBorrow(tuple_st);
-            assert(PyLong_CheckExact(sub));
-            assert(PyTuple_CheckExact(tuple));
-            if (!_PyLong_IsNonNegativeCompact((PyLongObject *)sub)) {
-                UOP_STAT_INC(uopcode, miss);
-                SET_CURRENT_CACHED_VALUES(0);
-                JUMP_TO_JUMP_TARGET();
-            }
-            Py_ssize_t index = ((PyLongObject*)sub)->long_value.ob_digit[0];
-            if (index >= PyTuple_GET_SIZE(tuple)) {
-                UOP_STAT_INC(uopcode, miss);
-                SET_CURRENT_CACHED_VALUES(0);
-                JUMP_TO_JUMP_TARGET();
-            }
-            _tos_cache1 = sub_st;
-            _tos_cache0 = tuple_st;
-            SET_CURRENT_CACHED_VALUES(2);
-            stack_pointer += -2;
-            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
-            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
-            break;
-        }
-
-        case _GUARD_BINARY_OP_SUBSCR_TUPLE_INT_BOUNDS_r12: {
-            CHECK_CURRENT_CACHED_VALUES(1);
-            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
-            _PyStackRef sub_st;
-            _PyStackRef tuple_st;
-            _PyStackRef _stack_item_0 = _tos_cache0;
-            sub_st = _stack_item_0;
-            tuple_st = stack_pointer[-1];
-            PyObject *sub = PyStackRef_AsPyObjectBorrow(sub_st);
-            PyObject *tuple = PyStackRef_AsPyObjectBorrow(tuple_st);
-            assert(PyLong_CheckExact(sub));
-            assert(PyTuple_CheckExact(tuple));
-            if (!_PyLong_IsNonNegativeCompact((PyLongObject *)sub)) {
-                UOP_STAT_INC(uopcode, miss);
-                _tos_cache0 = sub_st;
-                SET_CURRENT_CACHED_VALUES(1);
-                JUMP_TO_JUMP_TARGET();
-            }
-            Py_ssize_t index = ((PyLongObject*)sub)->long_value.ob_digit[0];
-            if (index >= PyTuple_GET_SIZE(tuple)) {
-                UOP_STAT_INC(uopcode, miss);
-                _tos_cache0 = sub_st;
-                SET_CURRENT_CACHED_VALUES(1);
-                JUMP_TO_JUMP_TARGET();
-            }
-            _tos_cache1 = sub_st;
-            _tos_cache0 = tuple_st;
-            SET_CURRENT_CACHED_VALUES(2);
-            stack_pointer += -1;
-            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
-            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
-            break;
-        }
-
         case _GUARD_BINARY_OP_SUBSCR_TUPLE_INT_BOUNDS_r22: {
             CHECK_CURRENT_CACHED_VALUES(2);
             ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
@@ -7444,118 +7805,28 @@
                 SET_CURRENT_CACHED_VALUES(2);
                 JUMP_TO_JUMP_TARGET();
             }
-            Py_ssize_t index = ((PyLongObject*)sub)->long_value.ob_digit[0];
+            stack_pointer[0] = tuple_st;
+            stack_pointer[1] = sub_st;
+            stack_pointer += 2;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            _PyFrame_SetStackPointer(frame, stack_pointer);
+            _PyFrame_StackPointerValidate(frame);
+            Py_ssize_t index = _PyLong_GetDigit((PyLongObject *)sub, 0);
+            _PyFrame_StackPointerInvalidate(frame);
             if (index >= PyTuple_GET_SIZE(tuple)) {
                 UOP_STAT_INC(uopcode, miss);
                 _tos_cache1 = sub_st;
                 _tos_cache0 = tuple_st;
                 SET_CURRENT_CACHED_VALUES(2);
+                stack_pointer += -2;
+                ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
                 JUMP_TO_JUMP_TARGET();
             }
             _tos_cache1 = sub_st;
             _tos_cache0 = tuple_st;
+            _tos_cache2 = PyStackRef_ZERO_BITS;
             SET_CURRENT_CACHED_VALUES(2);
-            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
-            break;
-        }
-
-        case _GUARD_BINARY_OP_SUBSCR_TUPLE_INT_BOUNDS_r33: {
-            CHECK_CURRENT_CACHED_VALUES(3);
-            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
-            _PyStackRef sub_st;
-            _PyStackRef tuple_st;
-            _PyStackRef _stack_item_0 = _tos_cache0;
-            _PyStackRef _stack_item_1 = _tos_cache1;
-            _PyStackRef _stack_item_2 = _tos_cache2;
-            sub_st = _stack_item_2;
-            tuple_st = _stack_item_1;
-            PyObject *sub = PyStackRef_AsPyObjectBorrow(sub_st);
-            PyObject *tuple = PyStackRef_AsPyObjectBorrow(tuple_st);
-            assert(PyLong_CheckExact(sub));
-            assert(PyTuple_CheckExact(tuple));
-            if (!_PyLong_IsNonNegativeCompact((PyLongObject *)sub)) {
-                UOP_STAT_INC(uopcode, miss);
-                _tos_cache2 = sub_st;
-                _tos_cache1 = tuple_st;
-                _tos_cache0 = _stack_item_0;
-                SET_CURRENT_CACHED_VALUES(3);
-                JUMP_TO_JUMP_TARGET();
-            }
-            Py_ssize_t index = ((PyLongObject*)sub)->long_value.ob_digit[0];
-            if (index >= PyTuple_GET_SIZE(tuple)) {
-                UOP_STAT_INC(uopcode, miss);
-                _tos_cache2 = sub_st;
-                _tos_cache1 = tuple_st;
-                _tos_cache0 = _stack_item_0;
-                SET_CURRENT_CACHED_VALUES(3);
-                JUMP_TO_JUMP_TARGET();
-            }
-            _tos_cache2 = sub_st;
-            _tos_cache1 = tuple_st;
-            _tos_cache0 = _stack_item_0;
-            SET_CURRENT_CACHED_VALUES(3);
-            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
-            break;
-        }
-
-        case _BINARY_OP_SUBSCR_TUPLE_INT_r03: {
-            CHECK_CURRENT_CACHED_VALUES(0);
-            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
-            _PyStackRef sub_st;
-            _PyStackRef tuple_st;
-            _PyStackRef res;
-            _PyStackRef ts;
-            _PyStackRef ss;
-            sub_st = stack_pointer[-1];
-            tuple_st = stack_pointer[-2];
-            PyObject *sub = PyStackRef_AsPyObjectBorrow(sub_st);
-            PyObject *tuple = PyStackRef_AsPyObjectBorrow(tuple_st);
-            assert(PyLong_CheckExact(sub));
-            assert(PyTuple_CheckExact(tuple));
-            STAT_INC(BINARY_OP, hit);
-            Py_ssize_t index = ((PyLongObject*)sub)->long_value.ob_digit[0];
-            PyObject *res_o = PyTuple_GET_ITEM(tuple, index);
-            assert(res_o != NULL);
-            res = PyStackRef_FromPyObjectNew(res_o);
-            ts = tuple_st;
-            ss = sub_st;
-            _tos_cache2 = ss;
-            _tos_cache1 = ts;
-            _tos_cache0 = res;
-            SET_CURRENT_CACHED_VALUES(3);
             stack_pointer += -2;
-            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
-            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
-            break;
-        }
-
-        case _BINARY_OP_SUBSCR_TUPLE_INT_r13: {
-            CHECK_CURRENT_CACHED_VALUES(1);
-            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
-            _PyStackRef sub_st;
-            _PyStackRef tuple_st;
-            _PyStackRef res;
-            _PyStackRef ts;
-            _PyStackRef ss;
-            _PyStackRef _stack_item_0 = _tos_cache0;
-            sub_st = _stack_item_0;
-            tuple_st = stack_pointer[-1];
-            PyObject *sub = PyStackRef_AsPyObjectBorrow(sub_st);
-            PyObject *tuple = PyStackRef_AsPyObjectBorrow(tuple_st);
-            assert(PyLong_CheckExact(sub));
-            assert(PyTuple_CheckExact(tuple));
-            STAT_INC(BINARY_OP, hit);
-            Py_ssize_t index = ((PyLongObject*)sub)->long_value.ob_digit[0];
-            PyObject *res_o = PyTuple_GET_ITEM(tuple, index);
-            assert(res_o != NULL);
-            res = PyStackRef_FromPyObjectNew(res_o);
-            ts = tuple_st;
-            ss = sub_st;
-            _tos_cache2 = ss;
-            _tos_cache1 = ts;
-            _tos_cache0 = res;
-            SET_CURRENT_CACHED_VALUES(3);
-            stack_pointer += -1;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
             ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
             break;
@@ -7578,7 +7849,14 @@
             assert(PyLong_CheckExact(sub));
             assert(PyTuple_CheckExact(tuple));
             STAT_INC(BINARY_OP, hit);
-            Py_ssize_t index = ((PyLongObject*)sub)->long_value.ob_digit[0];
+            stack_pointer[0] = tuple_st;
+            stack_pointer[1] = sub_st;
+            stack_pointer += 2;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            _PyFrame_SetStackPointer(frame, stack_pointer);
+            _PyFrame_StackPointerValidate(frame);
+            Py_ssize_t index = _PyLong_GetDigit((PyLongObject *)sub, 0);
+            _PyFrame_StackPointerInvalidate(frame);
             PyObject *res_o = PyTuple_GET_ITEM(tuple, index);
             assert(res_o != NULL);
             res = PyStackRef_FromPyObjectNew(res_o);
@@ -7588,6 +7866,8 @@
             _tos_cache1 = ts;
             _tos_cache0 = res;
             SET_CURRENT_CACHED_VALUES(3);
+            stack_pointer += -2;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
             ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
             break;
         }
@@ -12460,43 +12740,6 @@
             break;
         }
 
-        case _LOAD_ATTR_SLOT_r02: {
-            CHECK_CURRENT_CACHED_VALUES(0);
-            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
-            _PyStackRef owner;
-            _PyStackRef attr;
-            _PyStackRef o;
-            owner = stack_pointer[-1];
-            uint16_t index = (uint16_t)CURRENT_OPERAND0_16();
-            PyObject *owner_o = PyStackRef_AsPyObjectBorrow(owner);
-            PyObject **addr = (PyObject **)((char *)owner_o + index);
-            PyObject *attr_o = FT_ATOMIC_LOAD_PTR(*addr);
-            if (attr_o == NULL) {
-                UOP_STAT_INC(uopcode, miss);
-                SET_CURRENT_CACHED_VALUES(0);
-                JUMP_TO_JUMP_TARGET();
-            }
-            #ifdef Py_GIL_DISABLED
-            int increfed = _Py_TryIncrefCompareStackRef(addr, attr_o, &attr);
-            if (!increfed) {
-                UOP_STAT_INC(uopcode, miss);
-                SET_CURRENT_CACHED_VALUES(0);
-                JUMP_TO_JUMP_TARGET();
-            }
-            #else
-            attr = PyStackRef_FromPyObjectNew(attr_o);
-            #endif
-            STAT_INC(LOAD_ATTR, hit);
-            o = owner;
-            _tos_cache1 = o;
-            _tos_cache0 = attr;
-            SET_CURRENT_CACHED_VALUES(2);
-            stack_pointer += -1;
-            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
-            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
-            break;
-        }
-
         case _LOAD_ATTR_SLOT_r12: {
             CHECK_CURRENT_CACHED_VALUES(1);
             ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
@@ -12507,72 +12750,37 @@
             owner = _stack_item_0;
             uint16_t index = (uint16_t)CURRENT_OPERAND0_16();
             PyObject *owner_o = PyStackRef_AsPyObjectBorrow(owner);
-            PyObject **addr = (PyObject **)((char *)owner_o + index);
-            PyObject *attr_o = FT_ATOMIC_LOAD_PTR(*addr);
-            if (attr_o == NULL) {
-                UOP_STAT_INC(uopcode, miss);
-                _tos_cache0 = owner;
-                SET_CURRENT_CACHED_VALUES(1);
-                JUMP_TO_JUMP_TARGET();
+            if (_PyObject_IsImmediate(owner_o)) {
+                assert(index == offsetof(PyObject, ob_type));
+                attr = PyStackRef_FromPyObjectNew((PyObject *)Py_TYPE(owner_o));
             }
-            #ifdef Py_GIL_DISABLED
-            int increfed = _Py_TryIncrefCompareStackRef(addr, attr_o, &attr);
-            if (!increfed) {
-                UOP_STAT_INC(uopcode, miss);
-                _tos_cache0 = owner;
-                SET_CURRENT_CACHED_VALUES(1);
-                JUMP_TO_JUMP_TARGET();
+            else {
+                PyObject **addr = (PyObject **)((char *)owner_o + index);
+                PyObject *attr_o = FT_ATOMIC_LOAD_PTR(*addr);
+                if (attr_o == NULL) {
+                    UOP_STAT_INC(uopcode, miss);
+                    _tos_cache0 = owner;
+                    SET_CURRENT_CACHED_VALUES(1);
+                    JUMP_TO_JUMP_TARGET();
+                }
+                #ifdef Py_GIL_DISABLED
+                int increfed = _Py_TryIncrefCompareStackRef(addr, attr_o, &attr);
+                if (!increfed) {
+                    UOP_STAT_INC(uopcode, miss);
+                    _tos_cache0 = owner;
+                    SET_CURRENT_CACHED_VALUES(1);
+                    JUMP_TO_JUMP_TARGET();
+                }
+                #else
+                attr = PyStackRef_FromPyObjectNew(attr_o);
+                #endif
             }
-            #else
-            attr = PyStackRef_FromPyObjectNew(attr_o);
-            #endif
             STAT_INC(LOAD_ATTR, hit);
             o = owner;
             _tos_cache1 = o;
             _tos_cache0 = attr;
+            _tos_cache2 = PyStackRef_ZERO_BITS;
             SET_CURRENT_CACHED_VALUES(2);
-            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
-            break;
-        }
-
-        case _LOAD_ATTR_SLOT_r23: {
-            CHECK_CURRENT_CACHED_VALUES(2);
-            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
-            _PyStackRef owner;
-            _PyStackRef attr;
-            _PyStackRef o;
-            _PyStackRef _stack_item_0 = _tos_cache0;
-            _PyStackRef _stack_item_1 = _tos_cache1;
-            owner = _stack_item_1;
-            uint16_t index = (uint16_t)CURRENT_OPERAND0_16();
-            PyObject *owner_o = PyStackRef_AsPyObjectBorrow(owner);
-            PyObject **addr = (PyObject **)((char *)owner_o + index);
-            PyObject *attr_o = FT_ATOMIC_LOAD_PTR(*addr);
-            if (attr_o == NULL) {
-                UOP_STAT_INC(uopcode, miss);
-                _tos_cache1 = owner;
-                _tos_cache0 = _stack_item_0;
-                SET_CURRENT_CACHED_VALUES(2);
-                JUMP_TO_JUMP_TARGET();
-            }
-            #ifdef Py_GIL_DISABLED
-            int increfed = _Py_TryIncrefCompareStackRef(addr, attr_o, &attr);
-            if (!increfed) {
-                UOP_STAT_INC(uopcode, miss);
-                _tos_cache1 = owner;
-                _tos_cache0 = _stack_item_0;
-                SET_CURRENT_CACHED_VALUES(2);
-                JUMP_TO_JUMP_TARGET();
-            }
-            #else
-            attr = PyStackRef_FromPyObjectNew(attr_o);
-            #endif
-            STAT_INC(LOAD_ATTR, hit);
-            o = owner;
-            _tos_cache2 = o;
-            _tos_cache1 = attr;
-            _tos_cache0 = _stack_item_0;
-            SET_CURRENT_CACHED_VALUES(3);
             ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
             break;
         }
@@ -13370,11 +13578,9 @@
             oparg = CURRENT_OPARG();
             right = stack_pointer[-1];
             left = stack_pointer[-2];
-            PyObject *left_o = PyStackRef_AsPyObjectBorrow(left);
-            PyObject *right_o = PyStackRef_AsPyObjectBorrow(right);
             STAT_INC(COMPARE_OP, hit);
-            double dleft = PyFloat_AS_DOUBLE(left_o);
-            double dright = PyFloat_AS_DOUBLE(right_o);
+            double dleft = _PyFloat_StackRefAsDouble(left);
+            double dright = _PyFloat_StackRefAsDouble(right);
             int sign_ish = COMPARISON_BIT(dleft, dright);
             l = left;
             r = right;
@@ -13401,11 +13607,9 @@
             oparg = CURRENT_OPARG();
             right = _stack_item_0;
             left = stack_pointer[-1];
-            PyObject *left_o = PyStackRef_AsPyObjectBorrow(left);
-            PyObject *right_o = PyStackRef_AsPyObjectBorrow(right);
             STAT_INC(COMPARE_OP, hit);
-            double dleft = PyFloat_AS_DOUBLE(left_o);
-            double dright = PyFloat_AS_DOUBLE(right_o);
+            double dleft = _PyFloat_StackRefAsDouble(left);
+            double dright = _PyFloat_StackRefAsDouble(right);
             int sign_ish = COMPARISON_BIT(dleft, dright);
             l = left;
             r = right;
@@ -13433,11 +13637,9 @@
             oparg = CURRENT_OPARG();
             right = _stack_item_1;
             left = _stack_item_0;
-            PyObject *left_o = PyStackRef_AsPyObjectBorrow(left);
-            PyObject *right_o = PyStackRef_AsPyObjectBorrow(right);
             STAT_INC(COMPARE_OP, hit);
-            double dleft = PyFloat_AS_DOUBLE(left_o);
-            double dright = PyFloat_AS_DOUBLE(right_o);
+            double dleft = _PyFloat_StackRefAsDouble(left);
+            double dright = _PyFloat_StackRefAsDouble(right);
             int sign_ish = COMPARISON_BIT(dleft, dright);
             l = left;
             r = right;
@@ -15776,7 +15978,7 @@
                 JUMP_TO_JUMP_TARGET();
             }
             #ifdef Py_GIL_DISABLED
-            if (!_PyObject_IsUniquelyReferenced((PyObject *)r)) {
+            if (!_PyRangeIter_IsSafeForSpecialization((PyObject *)r)) {
                 UOP_STAT_INC(uopcode, miss);
                 SET_CURRENT_CACHED_VALUES(0);
                 JUMP_TO_JUMP_TARGET();
@@ -15805,7 +16007,7 @@
                 JUMP_TO_JUMP_TARGET();
             }
             #ifdef Py_GIL_DISABLED
-            if (!_PyObject_IsUniquelyReferenced((PyObject *)r)) {
+            if (!_PyRangeIter_IsSafeForSpecialization((PyObject *)r)) {
                 UOP_STAT_INC(uopcode, miss);
                 _tos_cache0 = _stack_item_0;
                 SET_CURRENT_CACHED_VALUES(1);
@@ -15837,7 +16039,7 @@
                 JUMP_TO_JUMP_TARGET();
             }
             #ifdef Py_GIL_DISABLED
-            if (!_PyObject_IsUniquelyReferenced((PyObject *)r)) {
+            if (!_PyRangeIter_IsSafeForSpecialization((PyObject *)r)) {
                 UOP_STAT_INC(uopcode, miss);
                 _tos_cache1 = _stack_item_1;
                 _tos_cache0 = iter;
@@ -15870,7 +16072,7 @@
                 JUMP_TO_JUMP_TARGET();
             }
             #ifdef Py_GIL_DISABLED
-            if (!_PyObject_IsUniquelyReferenced((PyObject *)r)) {
+            if (!_PyRangeIter_IsSafeForSpecialization((PyObject *)r)) {
                 UOP_STAT_INC(uopcode, miss);
                 _tos_cache2 = _stack_item_2;
                 _tos_cache1 = iter;
@@ -15991,7 +16193,7 @@
             _PyRangeIterObject *r = (_PyRangeIterObject *)PyStackRef_AsPyObjectBorrow(iter);
             assert(Py_TYPE(r) == &PyRangeIter_Type);
             #ifdef Py_GIL_DISABLED
-            assert(_PyObject_IsUniquelyReferenced((PyObject *)r));
+            assert(_PyRangeIter_IsSafeForSpecialization((PyObject *)r));
             #endif
             assert(r->len > 0);
             long value = r->start;
@@ -16023,7 +16225,7 @@
             _PyRangeIterObject *r = (_PyRangeIterObject *)PyStackRef_AsPyObjectBorrow(iter);
             assert(Py_TYPE(r) == &PyRangeIter_Type);
             #ifdef Py_GIL_DISABLED
-            assert(_PyObject_IsUniquelyReferenced((PyObject *)r));
+            assert(_PyRangeIter_IsSafeForSpecialization((PyObject *)r));
             #endif
             assert(r->len > 0);
             long value = r->start;
@@ -16059,7 +16261,7 @@
             _PyRangeIterObject *r = (_PyRangeIterObject *)PyStackRef_AsPyObjectBorrow(iter);
             assert(Py_TYPE(r) == &PyRangeIter_Type);
             #ifdef Py_GIL_DISABLED
-            assert(_PyObject_IsUniquelyReferenced((PyObject *)r));
+            assert(_PyRangeIter_IsSafeForSpecialization((PyObject *)r));
             #endif
             assert(r->len > 0);
             long value = r->start;

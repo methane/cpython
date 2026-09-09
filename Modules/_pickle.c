@@ -13,6 +13,7 @@
 #include "pycore_ceval.h"         // _Py_EnterRecursiveCall()
 #include "pycore_critical_section.h" // Py_BEGIN_CRITICAL_SECTION()
 #include "pycore_dict.h"          // _PyDict_SetItem_Take2()
+#include "pycore_gc.h"            // _Py_TYPE_TRACING_NURSERY_SAFE
 #include "pycore_long.h"          // _PyLong_AsByteArray()
 #include "pycore_moduleobject.h"  // _PyModule_GetState()
 #include "pycore_object.h"        // _PyNone_Type
@@ -8317,6 +8318,9 @@ _pickle_exec(PyObject *m)
     CREATE_TYPE(m, st->UnpicklerMemoProxyType, &unpickler_memoproxy_spec);
     CREATE_TYPE(m, st->Pickler_Type, &pickler_type_spec);
     CREATE_TYPE(m, st->Unpickler_Type, &unpickler_type_spec);
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    st->Pickler_Type->tp_tracing_gc |= _Py_TYPE_TRACING_NURSERY_SAFE;
+#endif
 
 #undef CREATE_TYPE
 

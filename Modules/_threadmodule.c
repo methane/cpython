@@ -399,6 +399,10 @@ thread_run(void *boot_raw)
         Py_DECREF(res);
     }
 
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    memset(((_PyThreadStateImpl *)tstate)->gc.thread_start_roots, 0,
+           sizeof(((_PyThreadStateImpl *)tstate)->gc.thread_start_roots));
+#endif
     thread_bootstate_free(boot, 1);
 
     _Py_atomic_add_ssize(&tstate->interp->threads.count, -1);
@@ -466,6 +470,15 @@ ThreadHandle_start(ThreadHandle *self, PyObject *func, PyObject *args,
     boot->func = Py_NewRef(func);
     boot->args = Py_NewRef(args);
     boot->kwargs = Py_XNewRef(kwargs);
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    // A new thread can wait for the GIL while another thread collects.
+    // Neither its native stack nor its RawMalloc'ed bootstate is a reliable
+    // root at this point. The published thread state is always scanned.
+    PyObject **roots = ((_PyThreadStateImpl *)boot->tstate)->gc.thread_start_roots;
+    roots[0] = boot->func;
+    roots[1] = boot->args;
+    roots[2] = boot->kwargs;
+#endif
     boot->handle = self;
     ThreadHandle_incref(self);
     boot->handle_ready = (PyEvent){0};

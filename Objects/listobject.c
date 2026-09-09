@@ -558,13 +558,18 @@ list_dealloc(PyObject *self)
     Py_ssize_t i;
     PyObject_GC_UnTrack(op);
     if (op->ob_item != NULL) {
-        /* Do it backwards, for Christian Tismer.
-           There's a simple test case where somehow this reduces
-           thrashing when a *very* large list is created and
-           immediately deleted. */
-        i = Py_SIZE(op);
-        while (--i >= 0) {
-            Py_XDECREF(op->ob_item[i]);
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+        if (!_Py_tracing_gc_enabled)
+#endif
+        {
+            /* Do it backwards, for Christian Tismer.
+               There's a simple test case where somehow this reduces
+               thrashing when a *very* large list is created and
+               immediately deleted. */
+            i = Py_SIZE(op);
+            while (--i >= 0) {
+                Py_XDECREF(op->ob_item[i]);
+            }
         }
         free_list_items(op->ob_item, false);
         op->ob_item = NULL;
@@ -883,8 +888,16 @@ list_clear_impl(PyListObject *a, bool is_resize)
     Py_SET_SIZE(a, 0);
     FT_ATOMIC_STORE_PTR_RELEASE(a->ob_item, NULL);
     a->allocated = 0;
-    while (--i >= 0) {
-        Py_XDECREF(items[i]);
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    // Reference release is inert after tracing starts. Do not load every
+    // element just to discover that again in Py_XDECREF(). Keep the ordinary
+    // path during bootstrap, and keep storage synchronization in both modes.
+    if (!_Py_tracing_gc_enabled)
+#endif
+    {
+        while (--i >= 0) {
+            Py_XDECREF(items[i]);
+        }
     }
 #ifdef Py_GIL_DISABLED
     if (is_resize) {

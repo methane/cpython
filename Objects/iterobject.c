@@ -46,6 +46,15 @@ iter_dealloc(PyObject *op)
     PyObject_GC_Del(it);
 }
 
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+void
+_PySeqIter_PrepareTracingDealloc(PyObject *op)
+{
+    assert(Py_IS_TYPE(op, &PySeqIter_Type));
+    ((seqiterobject *)op)->it_seq = NULL;
+}
+#endif
+
 static int
 iter_traverse(PyObject *op, visitproc visit, void *arg)
 {

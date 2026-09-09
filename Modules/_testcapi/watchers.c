@@ -97,13 +97,28 @@ dict_watch_callback_error(PyDict_WatchEvent event,
     return -1;
 }
 
+static int
+dict_watch_callback_resurrect(PyDict_WatchEvent event,
+                              PyObject *dict,
+                              PyObject *key,
+                              PyObject *new_value)
+{
+    if (event == PyDict_EVENT_DEALLOCATED) {
+        return PyList_Append(g_dict_watch_events, dict);
+    }
+    return 0;
+}
+
 static PyObject *
 add_dict_watcher(PyObject *self, PyObject *kind)
 {
     int watcher_id;
     assert(PyLong_Check(kind));
     long kind_l = PyLong_AsLong(kind);
-    if (kind_l == 2) {
+    if (kind_l == 3) {
+        watcher_id = PyDict_AddWatcher(dict_watch_callback_resurrect);
+    }
+    else if (kind_l == 2) {
         watcher_id = PyDict_AddWatcher(dict_watch_callback_second);
     }
     else if (kind_l == 1) {
@@ -871,6 +886,24 @@ static PyMethodDef test_methods[] = {
      allocate_too_many_context_watchers,                  METH_NOARGS,  NULL},
     {NULL},
 };
+
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+int
+_PyTestCapi_Traverse_Watchers(PyObject *module, visitproc visit, void *arg)
+{
+    // These strong references live in native globals, not the module dict.
+    // Expose them so a tracing collection cannot free a callback or its log.
+    Py_VISIT(g_dict_watch_events);
+    Py_VISIT(g_type_modified_events);
+    for (int i = 0; i < NUM_TEST_FUNC_WATCHERS; i++) {
+        Py_VISIT(pyfunc_watchers[i]);
+    }
+    for (int i = 0; i < NUM_CONTEXT_WATCHERS; i++) {
+        Py_VISIT(context_switches[i]);
+    }
+    return 0;
+}
+#endif
 
 int
 _PyTestCapi_Init_Watchers(PyObject *mod)

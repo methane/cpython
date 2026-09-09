@@ -29,7 +29,9 @@ skip_if_different_mount_drives()
 
 test_tools.skip_if_missing("cases_generator")
 with test_tools.imports_under_tool("cases_generator"):
-    from analyzer import StackItem, analyze_files
+    from analyzer import (
+        StackItem, analyze_files, analyze_forest, get_uop_cache_depths,
+    )
     from cwriter import CWriter
     import parser
     from stack import Local, Stack
@@ -54,6 +56,25 @@ def parse_src(src):
 
 
 class TestEffects(unittest.TestCase):
+    def test_float_local_reuse_register_layout(self):
+        for operation in ('ADD', 'SUBTRACT', 'MULTIPLY', 'TRUEDIV'):
+            name = f'_BINARY_OP_{operation}_FLOAT_REUSE_LOCAL'
+            with self.subTest(operation=operation):
+                # Even a small body must spill all values other than its two
+                # inputs: the local-reuse alias check scans the uncached stack.
+                source = f"""
+                    tier2 op({name}, (left, right -- res, l, r)) {{
+                        res = left;
+                        l = left;
+                        r = right;
+                    }}
+                """
+                analysis = analyze_forest(parse_src(source))
+                self.assertEqual(
+                    list(get_uop_cache_depths(analysis.uops[name])),
+                    [(2, 3, 2)],
+                )
+
     def test_effect_sizes(self):
         stack = Stack()
         inputs = [

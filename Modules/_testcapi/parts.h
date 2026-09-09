@@ -38,6 +38,9 @@ int _PyTestCapi_Init_DateTime(PyObject *module);
 int _PyTestCapi_Init_Docstring(PyObject *module);
 int _PyTestCapi_Init_Mem(PyObject *module);
 int _PyTestCapi_Init_Watchers(PyObject *module);
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+int _PyTestCapi_Traverse_Watchers(PyObject *, visitproc, void *);
+#endif
 int _PyTestCapi_Init_Long(PyObject *module);
 int _PyTestCapi_Init_Float(PyObject *module);
 int _PyTestCapi_Init_Complex(PyObject *module);

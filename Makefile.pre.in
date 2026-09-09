@@ -2218,6 +2218,7 @@ Include/pydtrace_probes.h: $(srcdir)/Include/pydtrace.d
 
 Python/ceval.o: $(srcdir)/Include/pydtrace.h
 Python/gc.o: $(srcdir)/Include/pydtrace.h
+Python/gc_free_threading.o: $(srcdir)/Include/pydtrace.h $(srcdir)/Python/gc_tracing.c.h
 Python/import.o: $(srcdir)/Include/pydtrace.h
 
 Python/pydtrace.o: $(srcdir)/Include/pydtrace.d $(DTRACE_DEPS)
@@ -3162,6 +3163,8 @@ JIT_TARGETS=	$(JIT_BUILD_TARGETS) $(filter-out $(JIT_SHIM_BUILD_OBJS),$(JIT_OBJS
 JIT_GENERATED_STAMP=	.jit-stamp
 
 JIT_DEPS = \
+		$(PYTHON_HEADERS) $(MIMALLOC_HEADERS) \
+		$(wildcard $(srcdir)/Python/*.h) \
 		$(srcdir)/Tools/jit/*.c \
 		$(srcdir)/Tools/jit/*.h \
 		$(srcdir)/Tools/jit/*.py \
