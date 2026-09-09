@@ -1099,14 +1099,9 @@ this approach.
    :ref:`import system <importsystem>` may opt to leave it unset if it
    has no semantic meaning (for example, a module loaded from a database).
 
-   .. deprecated-removed:: 3.13 3.15
-      Setting ``__cached__`` on a module while failing to set
-      :attr:`!__spec__.cached` is deprecated. In Python 3.15,
-      ``__cached__`` will cease to be set or taken into consideration by
-      the import system or standard library.
-
-   .. versionchanged:: 3.15
-      ``__cached__`` is no longer set.
+.. versionchanged:: 3.15
+   The ``__cached__`` attribute is no longer set on modules or taken into
+   consideration by the import system or standard library.
 
 Other writable attributes on module objects
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -2230,12 +2225,12 @@ Basic customization
       pair: built-in function; hash
 
    Called by built-in function :func:`hash` and for operations on members of
-   hashed collections including :class:`set`, :class:`frozenset`, and
-   :class:`dict`.  The ``__hash__()`` method should return an integer. The only required
-   property is that objects which compare equal have the same hash value; it is
-   advised to mix together the hash values of the components of the object that
-   also play a part in comparison of objects by packing them into a tuple and
-   hashing the tuple. Example::
+   hashed collections including :class:`set`, :class:`frozenset`, :class:`dict`,
+   and :class:`frozendict`. The ``__hash__()`` method should return an integer.
+   The only required property is that objects which compare equal have the same
+   hash value; it is advised to mix together the hash values of the components
+   of the object that also play a part in comparison of objects by packing them
+   into a tuple and hashing the tuple. Example::
 
        def __hash__(self):
            return hash((self.name, self.nick, self.color))
