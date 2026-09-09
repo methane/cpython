@@ -1910,6 +1910,12 @@
 /* Defined if Python is built as a shared library. */
 #undef Py_ENABLE_SHARED
 
+/* Define to use the experimental tracing garbage collector */
+#undef Py_EXPERIMENTAL_TRACING_GC
+
+/* Define to use experimental NaN-boxed immediate floats */
+#undef Py_EXPERIMENTAL_NANBOX
+
 /* Define if you want to disable the GIL */
 #undef Py_GIL_DISABLED
 
@@ -2288,4 +2294,3 @@
 #endif
 
 #endif /*Py_PYCONFIG_H*/
-

@@ -3993,6 +3993,9 @@ static struct PyModuleDef _testcapimodule = {
     .m_name = "_testcapi",
     .m_size = sizeof(testcapistate_t),
     .m_methods = TestMethods,
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    .m_traverse = _PyTestCapi_Traverse_Watchers,
+#endif
     .m_slots = _testcapi_slots
 };
 

@@ -95,6 +95,12 @@ check by comparing the reference count field to the minimum immortality refcount
 
 // Py_REFCNT() implementation for the stable ABI
 PyAPI_FUNC(Py_ssize_t) Py_REFCNT(PyObject *ob);
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+PyAPI_DATA(int) _Py_tracing_gc_enabled;
+// Sticky replacement for the ownership information that an incremented
+// reference count normally provides.  Bit 7 is unused in ob_gc_bits.
+#  define _Py_TRACING_GC_SHARED_BIT ((uint8_t)(1U << 7))
+#endif
 
 #if defined(Py_LIMITED_API) && Py_LIMITED_API+0 >= 0x030e0000
     // Stable ABI implements Py_REFCNT() as a function call
@@ -103,6 +109,11 @@ PyAPI_FUNC(Py_ssize_t) Py_REFCNT(PyObject *ob);
     // Py_REFCNT() is also a function call in abi3t.
 #else
     static inline Py_ssize_t _Py_REFCNT(PyObject *ob) {
+    #ifdef Py_EXPERIMENTAL_NANBOX
+        if (_PyObject_IsImmediate(ob)) {
+            return _Py_IMMORTAL_INITIAL_REFCNT;
+        }
+    #endif
     #if !defined(Py_GIL_DISABLED)
         return ob->ob_refcnt;
     #else
@@ -110,6 +121,27 @@ PyAPI_FUNC(Py_ssize_t) Py_REFCNT(PyObject *ob);
         if (local == _Py_IMMORTAL_REFCNT_LOCAL) {
             return _Py_IMMORTAL_INITIAL_REFCNT;
         }
+    #ifdef Py_EXPERIMENTAL_TRACING_GC
+        if (_Py_tracing_gc_enabled) {
+            // Retain the destruction sentinel and the fresh-object ownership
+            // hint used by specialization. Bootstrap aliases predate the
+            // sticky bit, so a numeric count above one is also non-unique.
+            if (local == 0) {
+                Py_ssize_t shared = _Py_atomic_load_ssize_relaxed(&ob->ob_ref_shared);
+                // A live weakref may have been merged while scheduling its
+                // callback. Only the zero-count merged value is destruction.
+                return shared == _Py_REF_MERGED ? 0 : 2;
+            }
+            if (local == 1 && _Py_IsOwnedByCurrentThread(ob) &&
+                _Py_atomic_load_ssize_relaxed(&ob->ob_ref_shared) == 0 &&
+                (_Py_atomic_load_uint8_relaxed(&ob->ob_gc_bits) &
+                 _Py_TRACING_GC_SHARED_BIT) == 0)
+            {
+                return 1;
+            }
+            return 2;
+        }
+    #endif
         Py_ssize_t shared = _Py_atomic_load_ssize_relaxed(&ob->ob_ref_shared);
         return _Py_STATIC_CAST(Py_ssize_t, local) +
                Py_ARITHMETIC_RIGHT_SHIFT(Py_ssize_t, shared, _Py_REF_SHARED_SHIFT);
@@ -125,6 +157,11 @@ PyAPI_FUNC(Py_ssize_t) Py_REFCNT(PyObject *ob);
 #ifndef _Py_OPAQUE_PYOBJECT
 static inline Py_ALWAYS_INLINE int _Py_IsImmortal(PyObject *op)
 {
+#ifdef Py_EXPERIMENTAL_NANBOX
+    if (_PyObject_IsImmediate(op)) {
+        return 1;
+    }
+#endif
 #if defined(Py_GIL_DISABLED)
     return (_Py_atomic_load_uint32_relaxed(&op->ob_ref_local) ==
             _Py_IMMORTAL_REFCNT_LOCAL);
@@ -139,6 +176,11 @@ static inline Py_ALWAYS_INLINE int _Py_IsImmortal(PyObject *op)
 
 static inline Py_ALWAYS_INLINE int _Py_IsStaticImmortal(PyObject *op)
 {
+#ifdef Py_EXPERIMENTAL_NANBOX
+    if (_PyObject_IsImmediate(op)) {
+        return 0;
+    }
+#endif
 #if defined(Py_GIL_DISABLED) || SIZEOF_VOID_P > 4
     return (op->ob_flags & _Py_STATICALLY_ALLOCATED_FLAG) != 0;
 #else
@@ -148,11 +190,40 @@ static inline Py_ALWAYS_INLINE int _Py_IsStaticImmortal(PyObject *op)
 #define _Py_IsStaticImmortal(op) _Py_IsStaticImmortal(_PyObject_CAST(op))
 #endif // !defined(_Py_OPAQUE_PYOBJECT)
 
+#if defined(Py_EXPERIMENTAL_TRACING_GC) && \
+    !defined(Py_LIMITED_API) && !defined(_Py_OPAQUE_PYOBJECT)
+static inline void
+_PyTracingGC_MarkShared(PyObject *op)
+{
+#ifdef Py_EXPERIMENTAL_NANBOX
+    if (_PyObject_IsImmediate(op)) {
+        return;
+    }
+#endif
+    uint8_t bits = _Py_atomic_load_uint8_relaxed(&op->ob_gc_bits);
+    if ((bits & _Py_TRACING_GC_SHARED_BIT) == 0 && !_Py_IsImmortal(op)) {
+        // Already-shared objects need only the byte load and bit test.
+        // Check immortality before the first write: immortal headers must
+        // remain untouched, even though their alias bit may be unset.
+        _Py_atomic_or_uint8(&op->ob_gc_bits, _Py_TRACING_GC_SHARED_BIT);
+    }
+}
+#endif
+
 // Py_SET_REFCNT() implementation for stable ABI
 PyAPI_FUNC(void) _Py_SetRefcnt(PyObject *ob, Py_ssize_t refcnt);
 
 static inline void Py_SET_REFCNT(PyObject *ob, Py_ssize_t refcnt) {
     assert(refcnt >= 0);
+#if defined(Py_EXPERIMENTAL_TRACING_GC) && \
+    !defined(Py_LIMITED_API) && !defined(_Py_OPAQUE_PYOBJECT)
+    if (_Py_tracing_gc_enabled) {
+        if (refcnt > 1 && !_Py_IsImmortal(ob)) {
+            _PyTracingGC_MarkShared(ob);
+        }
+        return;
+    }
+#endif
 #if (defined(Py_LIMITED_API) && Py_LIMITED_API+0 >= 0x030d0000) \
     || defined(_Py_OPAQUE_PYOBJECT)
     // Stable ABI implements Py_SET_REFCNT() as a function call
@@ -254,6 +325,20 @@ PyAPI_FUNC(void) _Py_DecRef(PyObject *);
 
 static inline Py_ALWAYS_INLINE void Py_INCREF(PyObject *op)
 {
+#ifdef Py_EXPERIMENTAL_NANBOX
+    if (_PyObject_IsImmediate(op)) {
+        return;
+    }
+#endif
+#if defined(Py_EXPERIMENTAL_TRACING_GC) && \
+    !defined(Py_LIMITED_API) && !defined(_Py_OPAQUE_PYOBJECT)
+    if (_Py_tracing_gc_enabled) {
+        if (!_Py_IsImmortal(op)) {
+            _PyTracingGC_MarkShared(op);
+        }
+        return;
+    }
+#endif
 #if (defined(Py_LIMITED_API) && (Py_LIMITED_API+0 >= 0x030c0000 || defined(Py_REF_DEBUG))) \
     || defined(_Py_OPAQUE_PYOBJECT)
     // Stable ABI implements Py_INCREF() as a function call on limited C API
@@ -324,7 +409,44 @@ PyAPI_FUNC(void) _Py_MergeZeroLocalRefcount(PyObject *);
 #endif  // Py_GIL_DISABLED
 #endif  // Py_LIMITED_API
 
-#if (defined(Py_LIMITED_API) && (Py_LIMITED_API+0 >= 0x030c0000 || defined(Py_REF_DEBUG))) \
+#if defined(Py_EXPERIMENTAL_TRACING_GC) && !defined(Py_LIMITED_API)
+static inline Py_ALWAYS_INLINE void Py_DECREF(PyObject *op)
+{
+    if (_Py_tracing_gc_enabled || _PyObject_IsImmediate(op)) {
+        return;
+    }
+    uint32_t local = _Py_atomic_load_uint32_relaxed(&op->ob_ref_local);
+    if (local == _Py_IMMORTAL_REFCNT_LOCAL) {
+        _Py_DECREF_IMMORTAL_STAT_INC();
+        return;
+    }
+    _Py_DECREF_STAT_INC();
+#ifdef Py_REF_DEBUG
+    _Py_DECREF_DecRefTotal();
+#endif
+    if (_Py_IsOwnedByCurrentThread(op)) {
+#ifdef Py_REF_DEBUG
+        if (local == 0) {
+            _Py_NegativeRefcount(__FILE__, __LINE__, op);
+        }
+#endif
+        local--;
+        _Py_atomic_store_uint32_relaxed(&op->ob_ref_local, local);
+        if (local == 0) {
+            _Py_MergeZeroLocalRefcount(op);
+        }
+    }
+    else {
+#ifdef Py_REF_DEBUG
+        _Py_DecRefSharedDebug(op, __FILE__, __LINE__);
+#else
+        _Py_DecRefShared(op);
+#endif
+    }
+}
+#define Py_DECREF(op) Py_DECREF(_PyObject_CAST(op))
+
+#elif (defined(Py_LIMITED_API) && (Py_LIMITED_API+0 >= 0x030c0000 || defined(Py_REF_DEBUG))) \
     || defined(_Py_OPAQUE_PYOBJECT)
 // Stable ABI implements Py_DECREF() as a function call on limited C API
 // version 3.12 and newer, abi3t, and on Python built in debug mode.

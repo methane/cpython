@@ -237,7 +237,11 @@ _PyUnicode_FormatLong(PyObject *val, int alt, int prec, int type)
     assert(PyUnicode_IS_ASCII(result));
 
     /* To modify the string in-place, there can only be one reference. */
-    if (!_PyObject_IsUniquelyReferenced(result)) {
+    if (!_PyObject_IsUniquelyReferenced(result)
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+        && !_Py_tracing_gc_enabled
+#endif
+    ) {
         Py_DECREF(result);
         PyErr_BadInternalCall();
         return NULL;

@@ -235,6 +235,9 @@ struct _typeobject {
     /* bitset of which type-watchers care about this type */
     unsigned char tp_watched;
 
+    /* Internal tracing GC properties. */
+    unsigned char tp_tracing_gc;
+
     /* Number of tp_version_tag values used.
      * Set to _Py_ATTR_CACHE_UNUSED if the attribute cache is
      * disabled for this type (e.g. due to custom MRO entries).
@@ -576,6 +579,11 @@ _Py_ThreadId(void)
 static inline Py_ALWAYS_INLINE int
 _Py_IsOwnedByCurrentThread(PyObject *ob)
 {
+#ifdef Py_EXPERIMENTAL_NANBOX
+    if (_PyObject_IsImmediate(ob)) {
+        return 0;
+    }
+#endif
 #ifdef _Py_THREAD_SANITIZER
     return _Py_atomic_load_uintptr_relaxed(&ob->ob_tid) == _Py_ThreadId();
 #else

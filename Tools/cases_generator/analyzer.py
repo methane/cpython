@@ -592,6 +592,10 @@ NON_ESCAPING_FUNCTIONS = (
     "PyException_GetTraceback",
     "PyFloat_AS_DOUBLE",
     "PyFloat_FromDouble",
+    "_PyFloat_FromDouble",
+    "_PyFloat_StackRefAsDouble",
+    "_PyFloat_ReuseOrCreate",
+    "_PyFloat_ReuseLocal",
     "PyFunction_GET_CODE",
     "PyFunction_GET_GLOBALS",
     "PyList_GET_ITEM",
@@ -682,6 +686,7 @@ NON_ESCAPING_FUNCTIONS = (
     "_PyObject_GetManagedDict",
     "_PyObject_InlineValues",
     "_PyObject_IsUniquelyReferenced",
+    "_PyRangeIter_IsSafeForSpecialization",
     "_PyObject_ManagedDictPointer",
     "_PyThreadState_HasStackSpace",
     "_PyTuple_FromStackRefStealOnSuccess",
@@ -1405,6 +1410,11 @@ def get_uop_cache_depths(uop: Uop) -> Iterator[tuple[int, int, int]]:
         return
     if uop.name == "_ERROR_POP_N":
         yield 0, 0, 0
+        return
+    if uop.name.endswith("_FLOAT_REUSE_LOCAL"):
+        # The borrowed-alias check scans everything below the two arithmetic
+        # inputs using stack_pointer. No other live value may remain cached.
+        yield 2, 3, 2
         return
     ideal_inputs = 0
     has_array = False

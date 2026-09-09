@@ -8,6 +8,9 @@
 #include "pycore_pystate.h"       // _PyThreadState_GET()
 #include "pycore_tuple.h"         // _PyTuple_ITEMS()
 #include "pycore_weakref.h"       // FT_CLEAR_WEAKREFS()
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+#  include "pycore_stackref.h"    // _PyCStackRef
+#endif
 
 
 #include "clinic/_functoolsmodule.c.h"
@@ -386,6 +389,14 @@ partial_vectorcall(PyObject *self, PyObject *const *args,
     PyObject *partial_function = Py_NewRef(pto->fn);
     PyObject *partial_args = Py_NewRef(pto->args);
     PyObject *partial_keywords = Py_NewRef(pto->kw);
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    // User-defined keyword hashing can replace the partial's state and
+    // collect. Keep the original call snapshot visible to the tracer.
+    _PyCStackRef function_root, args_root, keywords_root;
+    _PyThreadState_PushCStackRefNew(tstate, &function_root, partial_function);
+    _PyThreadState_PushCStackRefNew(tstate, &args_root, partial_args);
+    _PyThreadState_PushCStackRefNew(tstate, &keywords_root, partial_keywords);
+#endif
 
     PyObject **pto_args = _PyTuple_ITEMS(partial_args);
     Py_ssize_t pto_nargs = PyTuple_GET_SIZE(partial_args);
@@ -564,6 +575,11 @@ partial_vectorcall(PyObject *self, PyObject *const *args,
     }
 
  done:
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    _PyThreadState_PopCStackRef(tstate, &keywords_root);
+    _PyThreadState_PopCStackRef(tstate, &args_root);
+    _PyThreadState_PopCStackRef(tstate, &function_root);
+#endif
     Py_DECREF(partial_function);
     Py_DECREF(partial_args);
     Py_DECREF(partial_keywords);
@@ -1592,9 +1608,20 @@ bounded_lru_cache_wrapper(lru_cache_object *self, PyObject *args, PyObject *kwds
     Py_hash_t hash;
     int res;
 
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    // A temporary reference from gc.get_referents()/gc.get_objects() makes
+    // the cache's alias flag sticky. It can no longer rely on refcount-one
+    // exclusivity; protect both the linked list and its dictionary.
+    Py_BEGIN_CRITICAL_SECTION2(self, self->cache);
+#else
     Py_BEGIN_CRITICAL_SECTION(self);
+#endif
     res = bounded_lru_cache_get_lock_held(self, args, kwds, &result, &key, &hash);
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    Py_END_CRITICAL_SECTION2();
+#else
     Py_END_CRITICAL_SECTION();
+#endif
 
     if (res < 0) {
         return NULL;
@@ -1605,13 +1632,21 @@ bounded_lru_cache_wrapper(lru_cache_object *self, PyObject *args, PyObject *kwds
 
     result = PyObject_Call(self->func, args, kwds);
 
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    Py_BEGIN_CRITICAL_SECTION2(self, self->cache);
+#else
     Py_BEGIN_CRITICAL_SECTION(self);
+#endif
     /* Note:  key will be stolen in the below function, and
        result may be stolen or sometimes re-returned as a passthrough.
        Treat both as being stolen.
      */
     result = bounded_lru_cache_update_lock_held(self, result, key, hash);
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    Py_END_CRITICAL_SECTION2();
+#else
     Py_END_CRITICAL_SECTION();
+#endif
 
     return result;
 }
@@ -1797,6 +1832,11 @@ _functools__lru_cache_wrapper_cache_clear_impl(PyObject *self)
 /*[clinic end generated code: output=58423b35efc3e381 input=dfa33acbecf8b4b2]*/
 {
     lru_cache_object *_self = (lru_cache_object *) self;
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    // Keep list unlinking and dictionary clearing in the same two-object
+    // critical section, including if acquiring the dictionary lock blocks.
+    Py_BEGIN_CRITICAL_SECTION2(_self, _self->cache);
+#endif
     lru_list_elem *list = lru_cache_unlink_list(_self);
     FT_ATOMIC_STORE_SSIZE_RELAXED(_self->hits, 0);
     FT_ATOMIC_STORE_SSIZE_RELAXED(_self->misses, 0);
@@ -1808,6 +1848,9 @@ _functools__lru_cache_wrapper_cache_clear_impl(PyObject *self)
         PyDict_Clear(_self->cache);
     }
     lru_cache_clear_list(list);
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    Py_END_CRITICAL_SECTION2();
+#endif
     Py_RETURN_NONE;
 }
 

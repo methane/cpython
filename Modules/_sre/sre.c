@@ -39,6 +39,7 @@ static const char copyright[] =
     " SRE 2.2.2 Copyright (c) 1997-2002 by Secret Labs AB ";
 
 #include "Python.h"
+#include "pycore_gc.h"           // _Py_TPFLAGS_TRACING_PRECISE
 #include "pycore_critical_section.h" // Py_BEGIN_CRITICAL_SECTION
 #include "pycore_dict.h"             // _PyDict_Next()
 #include "pycore_long.h"             // _PyLong_GetZero()
@@ -3431,7 +3432,8 @@ static PyType_Spec pattern_spec = {
     .basicsize = sizeof(PatternObject),
     .itemsize = sizeof(SRE_CODE),
     .flags = (Py_TPFLAGS_DEFAULT | Py_TPFLAGS_IMMUTABLETYPE |
-              Py_TPFLAGS_DISALLOW_INSTANTIATION | Py_TPFLAGS_HAVE_GC),
+              Py_TPFLAGS_DISALLOW_INSTANTIATION | Py_TPFLAGS_HAVE_GC |
+              _Py_TPFLAGS_TRACING_PRECISE),
     .slots = pattern_slots,
 };
 
@@ -3644,6 +3646,10 @@ sre_exec(PyObject *m)
     CREATE_TYPE(m, state->Match_Type, &match_spec);
     CREATE_TYPE(m, state->Scanner_Type, &scanner_spec);
     CREATE_TYPE(m, state->Template_Type, &template_spec);
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    state->Pattern_Type->tp_tracing_gc |= _Py_TYPE_TRACING_NURSERY_SAFE;
+    state->Match_Type->tp_tracing_gc |= _Py_TYPE_TRACING_NURSERY_SAFE;
+#endif
 
     if (PyModule_AddIntConstant(m, "MAGIC", SRE_MAGIC) < 0) {
         goto error;

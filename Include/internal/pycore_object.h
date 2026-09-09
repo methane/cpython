@@ -137,6 +137,17 @@ static inline void _Py_RefcntAdd(PyObject* op, Py_ssize_t n)
         _Py_INCREF_IMMORTAL_STAT_INC();
         return;
     }
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    if (_Py_tracing_gc_enabled) {
+        // Bulk increments create aliases just like Py_INCREF().  Record that
+        // fact for uniqueness-sensitive in-place optimizations even though
+        // the numeric reference count is inert.
+        if (n > 0) {
+            _PyTracingGC_MarkShared(op);
+        }
+        return;
+    }
+#endif
 #ifndef Py_GIL_DISABLED
     Py_ssize_t refcnt = _Py_REFCNT(op);
     Py_ssize_t new_refcnt = refcnt + n;
@@ -183,7 +194,27 @@ static inline void _Py_RefcntAdd(PyObject* op, Py_ssize_t n)
 static inline int
 _PyObject_IsUniquelyReferenced(PyObject *ob)
 {
-#if !defined(Py_GIL_DISABLED)
+#ifdef Py_EXPERIMENTAL_NANBOX
+    if (_PyObject_IsImmediate(ob)) {
+        return 0;
+    }
+#endif
+#if defined(Py_EXPERIMENTAL_TRACING_GC)
+    if (_Py_tracing_gc_enabled) {
+        // Refcount increments set a sticky shared bit.  This preserves the
+        // important fresh-temporary optimization without relying on an inert
+        // numeric refcount, and conservatively falls back after an object has
+        // ever acquired another owning reference.
+        return (_Py_atomic_load_uint32_relaxed(&ob->ob_ref_local) == 1 &&
+                _Py_IsOwnedByCurrentThread(ob) &&
+                _Py_atomic_load_ssize_relaxed(&ob->ob_ref_shared) == 0 &&
+                (_Py_atomic_load_uint8_relaxed(&ob->ob_gc_bits) &
+                 _Py_TRACING_GC_SHARED_BIT) == 0);
+    }
+    return (_Py_IsOwnedByCurrentThread(ob) &&
+            _Py_atomic_load_uint32_relaxed(&ob->ob_ref_local) == 1 &&
+            _Py_atomic_load_ssize_relaxed(&ob->ob_ref_shared) == 0);
+#elif !defined(Py_GIL_DISABLED)
     return Py_REFCNT(ob) == 1;
 #else
     // NOTE: the entire ob_ref_shared field must be zero, including flags, to
@@ -232,6 +263,10 @@ static inline void _Py_ClearImmortal(PyObject *op)
 static inline void
 _Py_DECREF_SPECIALIZED(PyObject *op, const destructor destruct)
 {
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    (void)op;
+    (void)destruct;
+#else
     if (_Py_IsImmortal(op)) {
         _Py_DECREF_IMMORTAL_STAT_INC();
         return;
@@ -250,6 +285,7 @@ _Py_DECREF_SPECIALIZED(PyObject *op, const destructor destruct)
         _PyReftracerTrack(op, PyRefTracer_DESTROY);
         destruct(op);
     }
+#endif
 }
 
 #else
@@ -312,6 +348,14 @@ extern bool _PyRefchain_IsTraced(PyInterpreterState *interp, PyObject *obj);
 static inline void
 _Py_THREAD_INCREF_OBJECT(PyObject *obj, Py_ssize_t unique_id)
 {
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    if (_Py_tracing_gc_enabled) {
+        if (!_Py_IsImmortal(obj)) {
+            _PyTracingGC_MarkShared(obj);
+        }
+        return;
+    }
+#endif
     _PyThreadStateImpl *tstate = (_PyThreadStateImpl *)_PyThreadState_GET();
 
     // The table index is `unique_id - 1` because 0 is not a valid unique id.
@@ -362,6 +406,11 @@ _Py_INCREF_CODE(PyCodeObject *co)
 static inline void
 _Py_THREAD_DECREF_OBJECT(PyObject *obj, Py_ssize_t unique_id)
 {
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    if (_Py_tracing_gc_enabled) {
+        return;
+    }
+#endif
     _PyThreadStateImpl *tstate = (_PyThreadStateImpl *)_PyThreadState_GET();
 
     // The table index is `unique_id - 1` because 0 is not a valid unique id.
@@ -400,7 +449,10 @@ _Py_DECREF_CODE(PyCodeObject *co)
 }
 #endif
 
-#ifndef Py_GIL_DISABLED
+#if defined(Py_EXPERIMENTAL_TRACING_GC)
+# define Py_DECREF_MORTAL(op) Py_DECREF(op)
+# define Py_DECREF_MORTAL_SPECIALIZED(op, destruct) Py_DECREF(op)
+#elif !defined(Py_GIL_DISABLED)
 #ifdef Py_REF_DEBUG
 
 static inline void Py_DECREF_MORTAL(const char *filename, int lineno, PyObject *op)
@@ -476,6 +528,11 @@ static inline void Py_DECREF_MORTAL_SPECIALIZED(PyObject *op, destructor destruc
 static inline void
 _PyObject_Init(PyObject *op, PyTypeObject *typeobj)
 {
+#ifdef Py_EXPERIMENTAL_NANBOX
+    if ((uintptr_t)op >> 48) {
+        Py_FatalError("NaN-boxing requires heap pointers in the low 48 bits");
+    }
+#endif
     assert(op != NULL);
     Py_SET_TYPE(op, typeobj);
     assert(_PyType_HasFeature(typeobj, Py_TPFLAGS_HEAPTYPE) || _Py_IsImmortal(typeobj));
@@ -518,6 +575,21 @@ _PyObject_InitVar(PyVarObject *op, PyTypeObject *typeobj, Py_ssize_t size)
  */
 static inline int
 _Py_TryIncrefFast(PyObject *op) {
+#ifdef Py_EXPERIMENTAL_NANBOX
+    if (_PyObject_IsImmediate(op)) {
+        return 1;
+    }
+#endif
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    if (_Py_tracing_gc_enabled) {
+        // A mutator cannot be stopped between loading the pointer and this
+        // non-escaping operation. Reclamation is exclusively tracing-driven,
+        // so ownership and a shared refcount do not gate a successful read.
+        // Still record the alias for uniqueness-sensitive float operations.
+        _PyTracingGC_MarkShared(op);
+        return 1;
+    }
+#endif
     uint32_t local = _Py_atomic_load_uint32_relaxed(&op->ob_ref_local);
     local += 1;
     if (local == 0) {
@@ -539,6 +611,17 @@ _Py_TryIncrefFast(PyObject *op) {
 static inline int
 _Py_TryIncRefShared(PyObject *op)
 {
+#ifdef Py_EXPERIMENTAL_NANBOX
+    if (_PyObject_IsImmediate(op)) {
+        return 1;
+    }
+#endif
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    if (_Py_tracing_gc_enabled) {
+        _PyTracingGC_MarkShared(op);
+        return 1;
+    }
+#endif
     Py_ssize_t shared = _Py_atomic_load_ssize_relaxed(&op->ob_ref_shared);
     for (;;) {
         // If the shared refcount is zero and the object is either merged
@@ -697,6 +780,17 @@ _PyObject_ResurrectEnd(PyObject *op)
 #ifdef Py_REF_DEBUG
     _Py_DecRefTotal(_PyThreadState_GET());
 #endif
+#if defined(Py_EXPERIMENTAL_TRACING_GC)
+    if (_Py_tracing_gc_enabled) {
+        // Collector-driven finalization detects resurrection with a second
+        // tracing pass.  Restore the deallocator sentinel after the temporary
+        // refcount used by PyObject_CallFinalizerFromDealloc().
+        _Py_atomic_store_uintptr_relaxed(&op->ob_tid, 0);
+        _Py_atomic_store_uint32_relaxed(&op->ob_ref_local, 0);
+        _Py_atomic_store_ssize_relaxed(&op->ob_ref_shared, _Py_REF_MERGED);
+        return 0;
+    }
+#endif
 #ifndef Py_GIL_DISABLED
     Py_SET_REFCNT(op, Py_REFCNT(op) - 1);
     if (Py_REFCNT(op) == 0) {
@@ -726,6 +820,12 @@ _PyObject_ResurrectEnd(PyObject *op)
 static inline int
 _Py_TryIncref(PyObject *op)
 {
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    if (_Py_tracing_gc_enabled) {
+        Py_INCREF(op);
+        return 1;
+    }
+#endif
 #ifdef Py_GIL_DISABLED
     return _Py_TryIncrefFast(op) || _Py_TryIncRefShared(op);
 #else
@@ -1017,7 +1117,9 @@ enum _PyAnnotateFormat {
 extern int _PyObject_SetDict(PyObject *obj, PyObject *value);
 extern int _PyObject_SetManagedDict(PyObject *obj, PyObject *new_dict);
 
-#ifndef Py_GIL_DISABLED
+#if defined(Py_EXPERIMENTAL_TRACING_GC)
+# define _Py_INCREF_MORTAL(op) Py_INCREF(op)
+#elif !defined(Py_GIL_DISABLED)
 static inline Py_ALWAYS_INLINE void _Py_INCREF_MORTAL(PyObject *op)
 {
     assert(!_Py_IsStaticImmortal(op));

@@ -502,20 +502,27 @@ dictkeys_decref(PyDictKeysObject *dk, bool use_qsbr)
     _Py_DecRefTotal(_PyThreadState_GET());
 #endif
     if (DECREF_KEYS(dk) == 1) {
-        if (DK_IS_UNICODE(dk)) {
-            PyDictUnicodeEntry *entries = DK_UNICODE_ENTRIES(dk);
-            Py_ssize_t i, n;
-            for (i = 0, n = dk->dk_nentries; i < n; i++) {
-                Py_XDECREF(entries[i].me_key);
-                Py_XDECREF(entries[i].me_value);
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+        // Keys tables still have real ownership counts, but their Python
+        // entries do not. Release the table without scanning inert decrefs.
+        if (!_Py_tracing_gc_enabled)
+#endif
+        {
+            if (DK_IS_UNICODE(dk)) {
+                PyDictUnicodeEntry *entries = DK_UNICODE_ENTRIES(dk);
+                Py_ssize_t i, n;
+                for (i = 0, n = dk->dk_nentries; i < n; i++) {
+                    Py_XDECREF(entries[i].me_key);
+                    Py_XDECREF(entries[i].me_value);
+                }
             }
-        }
-        else {
-            PyDictKeyEntry *entries = DK_ENTRIES(dk);
-            Py_ssize_t i, n;
-            for (i = 0, n = dk->dk_nentries; i < n; i++) {
-                Py_XDECREF(entries[i].me_key);
-                Py_XDECREF(entries[i].me_value);
+            else {
+                PyDictKeyEntry *entries = DK_ENTRIES(dk);
+                Py_ssize_t i, n;
+                for (i = 0, n = dk->dk_nentries; i < n; i++) {
+                    Py_XDECREF(entries[i].me_key);
+                    Py_XDECREF(entries[i].me_value);
+                }
             }
         }
         free_keys_object(dk, use_qsbr);
@@ -7482,6 +7489,19 @@ store_instance_attr_lock_held(PyObject *obj, PyDictValues *values,
             dict = make_dict_from_instance_attributes(keys, values);
             if (dict == NULL ||
                 _PyDict_SetItem_LockHeld(dict, name, value) < 0) {
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+                if (dict != NULL && dict->ma_values == values) {
+                    // This unpublished dict borrows the instance's inline
+                    // values. In tracing mode the decref below cannot destroy
+                    // it immediately: a later tp_clear must not clear the
+                    // still-live instance or access its invalidated storage.
+                    PyDictKeysObject *oldkeys = dict->ma_keys;
+                    set_values(dict, NULL);
+                    set_keys(dict, Py_EMPTY_KEYS);
+                    STORE_USED(dict, 0);
+                    dictkeys_decref(oldkeys, false);
+                }
+#endif
                 Py_XDECREF(dict);
                 return -1;
             }

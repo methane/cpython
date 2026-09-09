@@ -1002,6 +1002,12 @@ PyType_ClearCache(void)
 void
 _PyTypes_Fini(PyInterpreterState *interp)
 {
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    PyMem_RawFree(interp->types.tracing_static_types);
+    interp->types.tracing_static_types = NULL;
+    interp->types.tracing_static_types_size = 0;
+    interp->types.tracing_static_types_capacity = 0;
+#endif
     // All the managed static types should have been finalized already.
     assert(interp->types.for_extensions.num_initialized == 0);
     for (size_t i = 0; i < _Py_MAX_MANAGED_STATIC_EXT_TYPES; i++) {
@@ -6858,6 +6864,71 @@ _PyTypes_FiniCachedDescriptors(PyInterpreterState *interp)
 
 
 static void
+notify_type_dealloc_watchers(PyTypeObject *type)
+{
+    PyInterpreterState *interp = _PyInterpreterState_GET();
+    int bits = type->tp_watched;
+    int i = 0;
+    while (bits) {
+        assert(i < TYPE_MAX_WATCHERS);
+        if (bits & 1) {
+            PyType_WatchCallback cb = interp->type_watchers[i];
+            if (cb && (cb(type) < 0)) {
+                PyErr_FormatUnraisable(
+                    "Exception ignored in type watcher callback #%d "
+                    "for %R", i, type);
+            }
+        }
+        i++;
+        bits >>= 1;
+    }
+}
+
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+bool
+_PyType_IsTracingNurserySafe(PyTypeObject *type)
+{
+    if (!(type->tp_flags & Py_TPFLAGS_HEAPTYPE) ||
+        type->tp_dealloc != subtype_dealloc ||
+        type->tp_finalize != NULL || type->tp_del != NULL)
+    {
+        return false;
+    }
+
+    // Pure Python classes eventually delegate to object_dealloc(). Extension
+    // bases may have callback-bearing deallocators that the nursery cannot run.
+    PyTypeObject *base = type;
+    while (base->tp_dealloc == subtype_dealloc) {
+        base = base->tp_base;
+        assert(base != NULL);
+    }
+    return base->tp_dealloc == object_dealloc;
+}
+
+void
+_PyType_NotifyTracingGC(PyTypeObject *type)
+{
+    // Watchers may resurrect an intact type. The collector re-traces roots
+    // before preparing any unreachable type for destruction.
+    notify_type_dealloc_watchers(type);
+}
+
+void
+_PyType_PrepareTracingGC(PyTypeObject *type)
+{
+    assert(_Py_tracing_gc_enabled);
+    // Notifications have already run, and resurrection has been ruled out.
+    // Suppress further callbacks during type_clear() and type_dealloc().
+    type->tp_watched = 0;
+    // Bases and subclass dictionaries must still have valid headers here.
+    // The base chain itself remains available to instance deallocators.
+    type_dealloc_common(type);
+    Py_CLEAR(type->tp_bases);
+    clear_tp_subclasses(type);
+}
+#endif
+
+static void
 type_dealloc(PyObject *self)
 {
     PyTypeObject *type = PyTypeObject_CAST(self);
@@ -6870,23 +6941,7 @@ type_dealloc(PyObject *self)
     // callbacks can safely inspect it.
     if (type->tp_watched) {
         _PyObject_ResurrectStart(self);
-        PyInterpreterState *interp = _PyInterpreterState_GET();
-        int bits = type->tp_watched;
-        int i = 0;
-        while (bits) {
-            assert(i < TYPE_MAX_WATCHERS);
-            if (bits & 1) {
-                PyType_WatchCallback cb = interp->type_watchers[i];
-                if (cb && (cb(type) < 0)) {
-                    PyErr_FormatUnraisable(
-                        "Exception ignored in type watcher callback #%d "
-                        "for %R",
-                        i, type);
-                }
-            }
-            i++;
-            bits >>= 1;
-        }
+        notify_type_dealloc_watchers(type);
         if (_PyObject_ResurrectEnd(self)) {
             return;     // callback resurrected the object
         }
@@ -9537,29 +9592,79 @@ type_ready_publish(PyTypeObject *type, int fix_slots)
     return res;
 }
 
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+static int
+register_tracing_static_type(PyTypeObject *type)
+{
+    ASSERT_TYPE_LOCK_HELD();
+    assert(!(type->tp_flags & (Py_TPFLAGS_HEAPTYPE |
+                              _Py_TPFLAGS_STATIC_BUILTIN)));
+    struct types_state *types = &_PyInterpreterState_GET()->types;
+    for (size_t i = 0; i < types->tracing_static_types_size; i++) {
+        if (types->tracing_static_types[i] == type) {
+            return 0;
+        }
+    }
+    if (types->tracing_static_types_size ==
+        types->tracing_static_types_capacity)
+    {
+        size_t capacity = types->tracing_static_types_capacity;
+        if (capacity > SIZE_MAX / 2 / sizeof(PyTypeObject *)) {
+            PyErr_NoMemory();
+            return -1;
+        }
+        capacity = capacity ? capacity * 2 : 32;
+        void *roots = PyMem_RawRealloc(types->tracing_static_types,
+                                      capacity * sizeof(PyTypeObject *));
+        if (roots == NULL) {
+            PyErr_NoMemory();
+            return -1;
+        }
+        types->tracing_static_types = roots;
+        types->tracing_static_types_capacity = capacity;
+    }
+    types->tracing_static_types[types->tracing_static_types_size++] = type;
+    return 0;
+}
+#endif
+
 int
 PyType_Ready(PyTypeObject *type)
 {
-    if (type->tp_flags & Py_TPFLAGS_READY) {
+    if ((type->tp_flags & Py_TPFLAGS_READY)
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+        // An already-ready legacy type may be new to this interpreter.
+        && (type->tp_flags & (Py_TPFLAGS_HEAPTYPE | _Py_TPFLAGS_STATIC_BUILTIN))
+#endif
+    ) {
         assert(_PyType_CheckConsistency(type));
         return 0;
     }
     assert(!(type->tp_flags & _Py_TPFLAGS_STATIC_BUILTIN));
 
     /* Historically, all static types were immutable. See bpo-43908 */
-    if (!(type->tp_flags & Py_TPFLAGS_HEAPTYPE)) {
+    if (!(type->tp_flags & (Py_TPFLAGS_HEAPTYPE | Py_TPFLAGS_READY))) {
         type_add_flags(type, Py_TPFLAGS_IMMUTABLETYPE);
         /* Static types must be immortal */
         _Py_SetImmortalUntracked((PyObject *)type);
     }
 
-    int res;
+    int res = 0;
     BEGIN_TYPE_LOCK();
-    if (!(type->tp_flags & Py_TPFLAGS_READY)) {
-        res = type_ready(type, 1, 1);
-    } else {
-        res = 0;
-        assert(_PyType_CheckConsistency(type));
+#ifdef Py_EXPERIMENTAL_TRACING_GC
+    if (!(type->tp_flags & Py_TPFLAGS_HEAPTYPE)) {
+        // Register before initialization can reach a GC safepoint. Static
+        // types are immortal, including when initialization fails and is
+        // retried later, so their partially initialized fields stay roots.
+        res = register_tracing_static_type(type);
+    }
+#endif
+    if (res == 0) {
+        if (!(type->tp_flags & Py_TPFLAGS_READY)) {
+            res = type_ready(type, 1, 1);
+        } else {
+            assert(_PyType_CheckConsistency(type));
+        }
     }
     END_TYPE_LOCK();
     return res;
