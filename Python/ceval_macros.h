@@ -71,12 +71,23 @@
 #define INSTRUCTION_STATS(op) ((void)0)
 #endif
 
-#ifdef Py_STATS
-#   define TAIL_CALL_PARAMS _PyInterpreterFrame *frame, _PyStackRef *stack_pointer, PyThreadState *tstate, _Py_CODEUNIT *next_instr, const void *instruction_funcptr_table, int oparg, int lastopcode
-#   define TAIL_CALL_ARGS frame, stack_pointer, tstate, next_instr, instruction_funcptr_table, oparg, lastopcode
+#if _Py_TIER2
+#   define TAIL_CALL_TABLE_PARAM const void *instruction_funcptr_table,
+#   define TAIL_CALL_TABLE_ARG instruction_funcptr_table,
+#   define TAIL_CALL_INITIAL_TABLE_ARG instruction_funcptr_handler_table,
 #else
-#   define TAIL_CALL_PARAMS _PyInterpreterFrame *frame, _PyStackRef *stack_pointer, PyThreadState *tstate, _Py_CODEUNIT *next_instr, const void *instruction_funcptr_table, int oparg
-#   define TAIL_CALL_ARGS frame, stack_pointer, tstate, next_instr, instruction_funcptr_table, oparg
+/* Without tier 2, dispatch never switches to the trace-recording table. */
+#   define TAIL_CALL_TABLE_PARAM
+#   define TAIL_CALL_TABLE_ARG
+#   define TAIL_CALL_INITIAL_TABLE_ARG
+#endif
+
+#ifdef Py_STATS
+#   define TAIL_CALL_PARAMS _PyInterpreterFrame *frame, _PyStackRef *stack_pointer, PyThreadState *tstate, _Py_CODEUNIT *next_instr, TAIL_CALL_TABLE_PARAM int oparg, int lastopcode
+#   define TAIL_CALL_ARGS frame, stack_pointer, tstate, next_instr, TAIL_CALL_TABLE_ARG oparg, lastopcode
+#else
+#   define TAIL_CALL_PARAMS _PyInterpreterFrame *frame, _PyStackRef *stack_pointer, PyThreadState *tstate, _Py_CODEUNIT *next_instr, TAIL_CALL_TABLE_PARAM int oparg
+#   define TAIL_CALL_ARGS frame, stack_pointer, tstate, next_instr, TAIL_CALL_TABLE_ARG oparg
 #endif
 
 #if _Py_TAIL_CALL_INTERP
@@ -96,14 +107,18 @@
 #   endif
     typedef PyObject *(Py_PRESERVE_NONE_CC *py_tail_call_funcptr)(TAIL_CALL_PARAMS);
 
-#   define DISPATCH_TABLE_VAR instruction_funcptr_table
 #   define DISPATCH_TABLE instruction_funcptr_handler_table
+#   if _Py_TIER2
+#       define DISPATCH_TABLE_VAR instruction_funcptr_table
+#   else
+#       define DISPATCH_TABLE_VAR DISPATCH_TABLE
+#   endif
 #   define TRACING_DISPATCH_TABLE instruction_funcptr_tracing_table
 #   define TARGET(op) Py_NO_INLINE PyObject *Py_PRESERVE_NONE_CC _TAIL_CALL_##op(TAIL_CALL_PARAMS)
 
 #   define DISPATCH_GOTO() \
         do { \
-            Py_MUSTTAIL return (((py_tail_call_funcptr *)instruction_funcptr_table)[opcode])(TAIL_CALL_ARGS); \
+            Py_MUSTTAIL return (((py_tail_call_funcptr *)DISPATCH_TABLE_VAR)[opcode])(TAIL_CALL_ARGS); \
         } while (0)
 #   define DISPATCH_GOTO_NON_TRACING() \
         do { \
@@ -116,12 +131,12 @@
 #   ifdef Py_STATS
 #       define JUMP_TO_PREDICTED(name) \
             do { \
-                Py_MUSTTAIL return (_TAIL_CALL_##name)(frame, stack_pointer, tstate, this_instr, instruction_funcptr_table, oparg, lastopcode); \
+                Py_MUSTTAIL return (_TAIL_CALL_##name)(frame, stack_pointer, tstate, this_instr, TAIL_CALL_TABLE_ARG oparg, lastopcode); \
             } while (0)
 #   else
 #       define JUMP_TO_PREDICTED(name) \
             do { \
-                Py_MUSTTAIL return (_TAIL_CALL_##name)(frame, stack_pointer, tstate, this_instr, instruction_funcptr_table, oparg); \
+                Py_MUSTTAIL return (_TAIL_CALL_##name)(frame, stack_pointer, tstate, this_instr, TAIL_CALL_TABLE_ARG oparg); \
             } while (0)
 #   endif
 #    define LABEL(name) TARGET(name)

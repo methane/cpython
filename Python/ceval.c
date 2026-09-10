@@ -1322,9 +1322,9 @@ _PyEval_EvalFrameDefault(PyThreadState *tstate, _PyInterpreterFrame *frame, int 
         _PyFrame_StackPointerInvalidate(frame);
 #if _Py_TAIL_CALL_INTERP
 #   if Py_STATS
-        return _TAIL_CALL_error(frame, stack_pointer, tstate, next_instr, instruction_funcptr_handler_table, 0, lastopcode);
+        return _TAIL_CALL_error(frame, stack_pointer, tstate, next_instr, TAIL_CALL_INITIAL_TABLE_ARG 0, lastopcode);
 #   else
-        return _TAIL_CALL_error(frame, stack_pointer, tstate, next_instr, instruction_funcptr_handler_table, 0);
+        return _TAIL_CALL_error(frame, stack_pointer, tstate, next_instr, TAIL_CALL_INITIAL_TABLE_ARG 0);
 #   endif
 #else
         goto error;
@@ -1333,9 +1333,9 @@ _PyEval_EvalFrameDefault(PyThreadState *tstate, _PyInterpreterFrame *frame, int 
 
 #if _Py_TAIL_CALL_INTERP
 #   if Py_STATS
-        return _TAIL_CALL_start_frame(frame, NULL, tstate, NULL, instruction_funcptr_handler_table, 0, lastopcode);
+        return _TAIL_CALL_start_frame(frame, NULL, tstate, NULL, TAIL_CALL_INITIAL_TABLE_ARG 0, lastopcode);
 #   else
-        return _TAIL_CALL_start_frame(frame, NULL, tstate, NULL, instruction_funcptr_handler_table, 0);
+        return _TAIL_CALL_start_frame(frame, NULL, tstate, NULL, TAIL_CALL_INITIAL_TABLE_ARG 0);
 #   endif
 #else
     goto start_frame;

@@ -170,6 +170,27 @@ class TestSpecifics(unittest.TestCase):
         exec(code, g)
         self.assertEqual(g['f'](5), 0)
 
+    @support.cpython_only
+    def test_extended_arg_locals_and_constants(self):
+        values = tuple(f"value {i}" for i in range(300))
+        assignments = "".join(
+            f"    v{i} = {value!r}\n" for i, value in enumerate(values)
+        )
+        result = ", ".join(f"v{i}" for i in range(len(values)))
+        namespace = {}
+        exec(f"def f():\n{assignments}    return ({result})\n", namespace)
+        f = namespace["f"]
+        instructions = list(dis.get_instructions(f))
+        for opname in ("LOAD_CONST", "LOAD_FAST_BORROW", "STORE_FAST"):
+            with self.subTest(opname=opname):
+                self.assertTrue(any(
+                    inst.opname == opname and inst.arg > 255
+                    for inst in instructions
+                ))
+        # Exercise both initial execution and the quickened instruction stream.
+        for _ in range(100):
+            self.assertEqual(f(), values)
+
     def test_argument_order(self):
         self.assertRaises(SyntaxError, exec, 'def f(a=1, b): pass')
 
