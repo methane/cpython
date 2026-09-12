@@ -218,16 +218,62 @@ class Tier3RangeTests(unittest.TestCase):
                     total(1000)
                 signal.signal(signal.SIGALRM, handler)
                 signal.setitimer(signal.ITIMER_REAL, 0.001)
-                while not fired:
-                    assert total(100_000) == sum(range(100_000))
+                n = 10_000_000
+                assert total(n) == sum(range(n))
                 signal.setitimer(signal.ITIMER_REAL, 0)
-                if observed[0] is not None and observed[1] is not None:
-                    result, item = observed
-                    assert result == sum(range(item + 1)), observed
-                    assert item < 99_999, observed
+                assert fired, "signal was not serviced during the loop"
+                assert observed[0] is not None and observed[1] is not None, observed
+                result, item = observed
+                assert result == sum(range(item + 1)), observed
+                assert item < n - 1, observed
             """),
             PYTHON_TIER3_JIT="resident",
             PYTHON_TIER3_BUDGET="4096",
+            PYTHON_JIT_STRESS="1",
+        )
+
+    def test_monitoring_invalidates_resident_executor(self):
+        script_helper.assert_python_ok(
+            "-c",
+            textwrap.dedent("""
+                import _opcode
+                import sys
+
+                def total(n):
+                    result = 0
+                    for item in range(n):
+                        result += item
+                    return result
+
+                for _ in range(2000):
+                    total(100)
+                active = None
+                for offset in range(0, len(total.__code__.co_code), 2):
+                    try:
+                        candidate = _opcode.get_executor(total.__code__, offset)
+                    except ValueError:
+                        continue
+                    if candidate.get_tier3_stats()["resident_entries"]:
+                        active = candidate
+                        break
+                assert active is not None
+                before = active.get_tier3_stats()
+                lines = []
+                def trace(frame, event, arg):
+                    if frame.f_code is total.__code__ and event == "line":
+                        lines.append(frame.f_lineno)
+                    return trace
+                sys.settrace(trace)
+                try:
+                    assert total(100) == sum(range(100))
+                finally:
+                    sys.settrace(None)
+                after = active.get_tier3_stats()
+                assert lines, "instrumented execution did not produce line events"
+                assert after["resident_iterations"] == before["resident_iterations"], (
+                    before, after)
+            """),
+            PYTHON_TIER3_JIT="resident",
             PYTHON_JIT_STRESS="1",
         )
 

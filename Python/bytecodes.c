@@ -6238,6 +6238,7 @@ dummy_func(
                 long next = range->start;
                 long remaining = range->len;
                 long completed = 0;
+                uint64_t polls = 0;
                 long last = 0;
                 bool overflow = false;
                 bool pending = false;
@@ -6245,13 +6246,12 @@ dummy_func(
                 uintptr_t iversion = FT_ATOMIC_LOAD_UINTPTR_ACQUIRE(
                     _PyFrame_GetCode(frame)->_co_instrumentation_version);
                 while (completed < remaining - 1) {
-                    current_executor->tier3_resident_polls++;
+                    polls++;
                     uintptr_t eval_breaker = _Py_atomic_load_uintptr_relaxed(
                         &tstate->eval_breaker);
                     invalid = !current_executor->vm_data.valid;
                     pending = eval_breaker != iversion;
                     if (pending || invalid) {
-                        current_executor->tier3_resident_pending_polls++;
                         break;
                     }
                     int64_t new_total;
@@ -6264,6 +6264,12 @@ dummy_func(
                     last = next;
                     completed++;
                     next++;
+                }
+                /* Statistics are published only as the resident region is
+                 * left, never by the generated arithmetic/poll backedge. */
+                current_executor->tier3_resident_polls += polls;
+                if (pending || invalid) {
+                    current_executor->tier3_resident_pending_polls++;
                 }
                 if (completed != 0) {
                     PyObject *new_sum = PyLong_FromLongLong(total);

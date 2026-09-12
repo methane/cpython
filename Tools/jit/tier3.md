@@ -48,9 +48,11 @@ Resident mode exposes `resident_entries`, `resident_iterations`,
 Before every logical addition it performs the same relaxed eval-breaker versus
 instrumentation-version predicate used by `_TIER2_RESUME_CHECK`, plus an
 executor-validity check. The no-work path neither publishes the frame nor
-allocates. A real pending/invalid result first transactionally commits the safe
-prefix, then invokes the existing pending-handler/deoptimization path at the
-loop header, before another logical iteration can execute. Under the GIL an
+allocates, and its poll count remains native until the region exits, so it does
+not update executor statistics on the arithmetic backedge. A real
+pending/invalid result first transactionally commits the safe prefix, then
+invokes the existing pending-handler/deoptimization path at the loop header,
+before another logical iteration can execute. Under the GIL an
 executor cannot be concurrently invalidated by another thread; invalidation
 requested by this thread sets an eval-breaker bit, and the explicit validity
 load additionally covers an already-invalid executor.
@@ -80,9 +82,11 @@ ordinary iteration continues.  On progress, both result objects are allocated be
 iterator or either local is changed; the update is then committed as one
 boundary transition.  If either allocation fails, the unchanged boundary state
 is routed through the integer addition's bytecode error target, not the
-backedge's unused target.  Thus the selected exception handler and traceback
-correspond to the operation represented by the chunk, and no completed Python
-iteration or pre-loop effect is replayed.
+resident periodic target. The resident instruction records those two targets
+separately: normal completion falls through after committing, pending work or
+invalidation commits and takes the periodic loop-header exit, and
+reconstruction failure commits nothing and takes the materialization-error
+target. Thus no partially committed resident prefix is Python-visible.
 
 Budgets greater than 4096 are rejected and use the default of 1024.  Every
 bounded chunk falls through to the original backedge, whose loop header starts

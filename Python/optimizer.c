@@ -1498,6 +1498,11 @@ prepare_for_execution(_PyUOpInstruction *buffer, int length)
         int base_opcode = _PyUop_Uncached[inst->opcode];
         assert(inst->opcode != _NOP);
         int32_t target = (int32_t)uop_get_target(inst);
+        /* Resident range regions have two independent exits.  Their normal
+         * periodic/deoptimization exit uses target, while operand0 records
+         * the bytecode location for reconstruction allocation failures. */
+        int32_t error_target = base_opcode == _TIER3_RANGE_CHUNK_RESIDENT
+            ? (int32_t)inst->operand0 : target;
         uint16_t exit_flags = _PyUop_Flags[base_opcode] & (HAS_EXIT_FLAG | HAS_DEOPT_FLAG | HAS_PERIODIC_FLAG);
         if (exit_flags) {
             uint16_t base_exit_op = _EXIT_TRACE;
@@ -1528,12 +1533,12 @@ prepare_for_execution(_PyUOpInstruction *buffer, int length)
         if (_PyUop_Flags[base_opcode] & HAS_ERROR_FLAG) {
             int popped = (_PyUop_Flags[base_opcode] & HAS_ERROR_NO_POP_FLAG) ?
                 0 : _PyUop_num_popped(base_opcode, inst->oparg);
-            if (target != current_error_target || popped != current_popped) {
+            if (error_target != current_error_target || popped != current_popped) {
                 current_popped = popped;
                 current_error = next_spare;
-                current_error_target = target;
+                current_error_target = error_target;
                 make_exit(&buffer[next_spare], _ERROR_POP_N_r00, 0, false);
-                buffer[next_spare].operand0 = target;
+                buffer[next_spare].operand0 = error_target;
                 next_spare++;
             }
             buffer[i].error_target = current_error;
@@ -1922,6 +1927,9 @@ mark_tier3_range_loop(_PyUOpInstruction *buffer, int length)
          * untouched.  Route allocation errors to the matched addition. */
         .target = opcode == _TIER3_RANGE_CHUNK_RESIDENT
                     ? periodic_target : error_target,
+        /* The resident uop also has HAS_ERROR_FLAG.  Keep its transactional
+         * reconstruction failure distinct from its periodic side exit. */
+        .operand0 = (uint64_t)error_target,
     };
     return length + 1;
 #endif

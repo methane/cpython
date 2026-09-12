@@ -22767,6 +22767,7 @@
                 long next = range->start;
                 long remaining = range->len;
                 long completed = 0;
+                uint64_t polls = 0;
                 long last = 0;
                 bool overflow = false;
                 bool pending = false;
@@ -22774,13 +22775,12 @@
                 uintptr_t iversion = FT_ATOMIC_LOAD_UINTPTR_ACQUIRE(
                     _PyFrame_GetCode(frame)->_co_instrumentation_version);
                 while (completed < remaining - 1) {
-                    current_executor->tier3_resident_polls++;
+                    polls++;
                     uintptr_t eval_breaker = _Py_atomic_load_uintptr_relaxed(
                         &tstate->eval_breaker);
                     invalid = !current_executor->vm_data.valid;
                     pending = eval_breaker != iversion;
                     if (pending || invalid) {
-                        current_executor->tier3_resident_pending_polls++;
                         break;
                     }
                     int64_t new_total;
@@ -22793,6 +22793,10 @@
                     last = next;
                     completed++;
                     next++;
+                }
+                current_executor->tier3_resident_polls += polls;
+                if (pending || invalid) {
+                    current_executor->tier3_resident_pending_polls++;
                 }
                 if (completed != 0) {
                     stack_pointer[-2] = iter;

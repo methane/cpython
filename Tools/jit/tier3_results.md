@@ -312,3 +312,92 @@ copy-and-patch emits the checked loop cleanly; subject to native confirmation of
 this resident stencil, the next step remains a small value/region
 representation with explicit exit materialization maps feeding the existing
 stencil backend, not a second backend.
+
+## Resident native follow-up (`362996d25a5037df98ad83cf60c20fc077b4f483`)
+
+The official LLVM 21.1.8 Linux x86-64 archive supplied all four required tools
+and built the release (`-DNDEBUG -O3`) native JIT. Stencils were regenerated
+with the documented `-fno-vectorize -fno-slp-vectorize` workaround. All timings
+below are medians of five stable samples pinned to CPU 0, with 500 warmups and
+no JIT stress. Each `n=1000` sample contains 2,000 calls and each `n=100000`
+sample 30 calls. `sys._jit.is_available()` and `is_enabled()` were both true,
+and the selected executors returned 4,096 bytes of native code. The complete
+per-sample counters are in `tier3_data/resident_native_362996d.json`.
+
+```sh
+mkdir -p /opt/llvm-21.1.8
+curl -fL --retry 4 --retry-delay 3 \
+  https://github.com/llvm/llvm-project/releases/download/llvmorg-21.1.8/LLVM-21.1.8-Linux-X64.tar.xz \
+  | tar -xJ --strip-components=1 -C /opt/llvm-21.1.8
+mkdir build-jit && cd build-jit
+LLVM_TOOLS_INSTALL_DIR=/opt/llvm-21.1.8 ../configure \
+  --enable-experimental-jit=yes
+python3.14 ../Tools/jit/build.py x86_64-pc-linux-gnu -o . -p . -f \
+  --cflags='-fno-vectorize -fno-slp-vectorize' \
+  --llvm-tools-install-dir=/opt/llvm-21.1.8
+touch .jit-stamp
+LLVM_TOOLS_INSTALL_DIR=/opt/llvm-21.1.8 make -j8
+```
+
+| n | initial | off (ns) | helper 64 / 4096 | direct 64 / 4096 | resident (ns) | resident coverage |
+|---:|---:|---:|---:|---:|---:|---:|
+| 1,000 | 0 | 11,309 | 1,079 / 682 | 982 / 565 | 980 | 99.800% |
+| 1,000 | -7 | 11,482 | 1,092 / 679 | 976 / 576 | 944 | 99.800% |
+| 1,000 | 2**40 | 27,393 | 1,445 / 724 | 1,321 / 606 | 975 | 99.800% |
+| 100,000 | 0 | 2,585,167 | 134,890 / 57,028 | 122,827 / 45,721 | 82,132 | 99.998% |
+| 100,000 | -7 | 2,587,981 | 136,518 / 57,604 | 122,606 / 46,845 | 82,599 | 99.998% |
+| 100,000 | 2**40 | 3,319,186 | 146,789 / 57,144 | 137,718 / 45,858 | 82,947 | 99.998% |
+
+For the 15 million requested iterations in each long-loop resident row, the
+counter deltas were 150 entries, 14,999,700 iterations, 14,999,700 fast polls,
+zero pending polls/overflow exits, and 150 normal materializations. Thus the
+resident mechanism removes normal boundary materialization, but its exact
+per-backedge poll makes it 1.75--1.81x slower than direct mode at budget 4096.
+
+The actual generated executor's resident loop is at offsets `0x2ab..0x2f0`:
+
+```asm
+2ab: lea    (%rcx,%r14,1),%r12
+2af: add    %r9,%r12
+2b2: mov    %r12,0x38(%rsp)       # reconstruction spill
+2b7: seto   %r13b
+2bb: jo     0x334                 # checked-int64 overflow exit
+2bd: cmp    %r14,%rdx
+2c0: je     0x34c                 # normal end
+2cb: mov    0x18(%r9),%r9         # relaxed eval_breaker load
+2cf: inc    %r14
+2d2: cmp    0x40(%rsp),%r9        # instrumentation version
+2d7: jne    0x2f0                 # pending/instrumentation exit
+2dd: mov    %r11,%r10
+2e0: inc    %r11
+2e3: inc    %rax
+2e6: mov    0x38(%rsp),%r9
+2eb: test   %dil,%dil             # validity captured under the GIL
+2ee: jne    0x2ab
+```
+
+There are no calls, `PyLong_*` operations, budget lookups, or executor-counter
+writes on this backedge. The total is spilled/reloaded once per iteration for
+exit reconstruction; progress and limit values remain in registers. Counter
+publication begins at `0x380`, after the native loop. Entry conversion and the
+two successful reconstruction allocations remain outside it.
+
+The focused signal test runtime-verifies that pending work observes a coherent
+prefix before the long range finishes. Enabling `sys.settrace()` after warmup
+runtime-verifies the other reachable transition: instrumentation invalidates
+or bypasses the resident executor, the call produces normal line events, and
+the old executor's resident-iteration counter does not advance. Allocation
+failure remains source-verified rather than injected. Preparation now gives
+the resident uop separate periodic and reconstruction-error targets, and both
+allocations precede any Python-visible state update.
+
+### Decision
+
+The assembly confirms that copy-and-patch expresses the poll and arithmetic
+without hot-loop calls or statistics writes. Resident state does remove nearly
+all normal materializations, but exact periodic polling plus its reconstruction
+spill costs substantially more than the amortized 4096-item direct loop. The
+next experiment should evolve the existing Tier-2 optimizer with a small value
+or region representation and explicit materialization/deopt maps, still feeding
+the stencil backend. A narrow second recurrence can test that representation;
+this evidence does not justify a separate native backend.

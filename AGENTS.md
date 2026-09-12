@@ -48,6 +48,23 @@ apt-get update
 apt-get install -y clang-21 llvm-21 llvm-21-tools
 ```
 
+If the package repository remains blocked, the official LLVM 21.1.8 x86-64
+release archive is a complete fallback. Downloading it is large (about 2 GB):
+
+```sh
+prefix=/opt/llvm-21.1.8
+mkdir -p "$prefix"
+curl -fL --retry 4 --retry-delay 3 \
+  https://github.com/llvm/llvm-project/releases/download/llvmorg-21.1.8/LLVM-21.1.8-Linux-X64.tar.xz \
+  | tar -xJ --strip-components=1 -C "$prefix"
+for tool in clang llvm-readobj llvm-objdump llvm-dwarfdump; do
+    "$prefix/bin/$tool" --version | head -1
+done
+export LLVM_TOOLS_INSTALL_DIR="$prefix"
+```
+
+Use this recipe only after probing existing installations as above.
+
 A proxy can transiently return HTTP 403; retry rather than changing LLVM
 versions. Configure and build native JIT from a separate build directory:
 
@@ -67,6 +84,8 @@ unsupported). From the native build directory run:
 python3.14 "$repo/Tools/jit/build.py" x86_64-pc-linux-gnu -o . -p . -f \
   --cflags='-fno-vectorize -fno-slp-vectorize' \
   --llvm-tools-install-dir=/usr/lib/llvm-21
+touch .jit-stamp
+LLVM_TOOLS_INSTALL_DIR=/usr/lib/llvm-21 make -j"$(nproc)"
 ```
 
 Retry without this workaround after LLVM or the stencil changes, and remove it
@@ -107,9 +126,10 @@ only to establish or debug executors, never in timed runs. Capture executor
 counter deltas immediately around every timed sample. Keep debug/interpreter
 measurements separate from native-JIT claims.
 
-To inspect generated code, obtain `executor.get_jit_code()`, write those bytes
-to a file, and disassemble with
-`llvm-objdump-21 -D --triple=x86_64-pc-linux-gnu`. Locate the experimental uop
+To inspect generated code, obtain `executor.get_jit_code()` and write those raw
+bytes to a file. LLVM's objdump rejects a headerless raw binary, so disassemble
+it with `objdump -D -b binary -m i386:x86-64`; use `llvm-objdump-21` for object
+files produced during stencil generation. Locate the experimental uop
 using its distinctive checked-loop sequence, then resolve indirect call-table
 slots against JIT relocations and symbols with `llvm-readobj-21`/`nm` (and
 `llvm-dwarfdump-21` for unwind/debug records). Do not infer register allocation
