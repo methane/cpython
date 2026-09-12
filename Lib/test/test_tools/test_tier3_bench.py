@@ -1,6 +1,7 @@
 import importlib.util
 from pathlib import Path
 import unittest
+from unittest import mock
 
 from test import support
 
@@ -23,6 +24,9 @@ class FakeExecutor:
 
     def get_jit_code(self):
         return self.code
+
+    def is_valid(self):
+        return True
 
 
 class Tier3BenchTests(unittest.TestCase):
@@ -56,6 +60,25 @@ class Tier3BenchTests(unittest.TestCase):
         self.assertEqual(result["status"], "stable")
         self.assertEqual(result["tier3_delta"]["resident_iterations"], 0)
         self.assertEqual(result["native_code_bytes"], 4)
+
+    def test_executor_becomes_invalid(self):
+        executor = FakeExecutor()
+        executor.is_valid = mock.Mock(side_effect=(True, False))
+        result = self.measure([(4, executor), (4, executor)])
+        self.assertEqual(result["status"], "executor invalidated")
+        self.assertIsNone(result["tier3_delta"])
+        self.assertEqual(result["native_code_bytes"], 0)
+
+    def test_configuration_checks_index_and_worktree(self):
+        completed = mock.Mock(returncode=1)
+        with mock.patch.object(
+            tier3_bench.subprocess,
+            "check_output",
+            side_effect=("commit\n", "tree\n"),
+        ), mock.patch.object(tier3_bench.subprocess, "run", return_value=completed) as run:
+            config = tier3_bench.configuration()
+        self.assertTrue(config["tracked_dirty"])
+        self.assertEqual(run.call_args.args[0], ["git", "diff", "--quiet", "HEAD", "--"])
 
     def test_checks_each_result(self):
         calls = 0

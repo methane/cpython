@@ -2045,18 +2045,31 @@ build_tier3_loop_region(_PyUOpInstruction *buffer, int length, Tier3LoopRegion *
             saw_mul = true;
             continue;
         }
-        if ((opcode == _BINARY_OP_ADD_INT || opcode == _BINARY_OP_ADD_INT_INPLACE ||
+        bool generic_add = opcode == _BINARY_OP &&
+                           (buffer[i].oparg == NB_ADD ||
+                            buffer[i].oparg == NB_INPLACE_ADD) &&
+                           !saw_mul;
+        if ((generic_add || opcode == _BINARY_OP_ADD_INT ||
+             opcode == _BINARY_OP_ADD_INT_INPLACE ||
              opcode == _BINARY_OP_ADD_INT_INPLACE_RIGHT) &&
             result < 0 && depth >= 2) {
             rhs = rhs < 0 ? region->induction_node : rhs;
             if (stack[depth - 2].node != region->accumulator_node || stack[depth - 1].node != rhs)
                 return false;
-            if (region->nodes[region->accumulator_node].compact == TIER3_FACT_NONE ||
-                region->nodes[rhs].compact == TIER3_FACT_NONE)
+            /* A generic add is safe to elide only for the plain reduction:
+             * the resident uop revalidates the exact accumulator type and its
+             * signed-i64 conversion before changing the iterator or locals.
+             * On guard failure this original generic operation still runs.
+             * Specialized arithmetic continues to require its compact facts. */
+            if (!generic_add &&
+                (region->nodes[region->accumulator_node].compact == TIER3_FACT_NONE ||
+                 region->nodes[rhs].compact == TIER3_FACT_NONE))
                 return false;
             result = tier3_region_add_node(region, TIER3_REGION_CHECKED_ADD, TIER3_VALUE_I64,
                                            region->accumulator_node, rhs);
-            region->nodes[result].compact = TIER3_FACT_CHECKED_OPERATION;
+            if (!generic_add) {
+                region->nodes[result].compact = TIER3_FACT_CHECKED_OPERATION;
+            }
             Tier3RefKind left_ref = stack[depth - 2].ref;
             Tier3RefKind right_ref = stack[depth - 1].ref;
             depth -= 2;
@@ -2066,6 +2079,11 @@ build_tier3_loop_region(_PyUOpInstruction *buffer, int length, Tier3LoopRegion *
                 return false;
             }
             region->error_target = buffer[i].target;
+            if (generic_add) {
+                /* Overflow resumes at this generic add with the current
+                 * iteration still uncommitted. */
+                region->overflow_target = buffer[i].target;
+            }
             continue;
         }
         if (phase == 11 &&

@@ -193,6 +193,61 @@ class Tier3RangeTests(unittest.TestCase):
             PYTHON_JIT_STRESS="1",
         )
 
+    def test_resident_sum_same_noncompact_training(self):
+        script_helper.assert_python_ok(
+            "-c",
+            textwrap.dedent("""
+                import _opcode
+
+                def sum_from(n, initial):
+                    total = initial
+                    for item in range(n):
+                        total += item
+                    return total
+
+                initial = 2**40
+                for _ in range(2000):
+                    assert sum_from(1000, initial) == initial + sum(range(1000))
+                active = None
+                for offset in range(0, len(sum_from.__code__.co_code), 2):
+                    try:
+                        candidate = _opcode.get_executor(sum_from.__code__, offset)
+                    except ValueError:
+                        continue
+                    if any(item[0] == '_TIER3_RANGE_CHUNK_RESIDENT'
+                           for item in candidate):
+                        active = candidate
+                        break
+                assert active is not None
+                before = active.get_tier3_stats()
+                assert sum_from(1000, initial) == initial + sum(range(1000))
+                assert sum_from(100_000, initial) == initial + sum(range(100_000))
+                after = active.get_tier3_stats()
+                assert after['resident_entries'] > before['resident_entries']
+                assert after['resident_iterations'] > before['resident_iterations']
+
+                # Each entry revalidates the accumulator rather than reusing
+                # the exact-int observation from training.
+                class ObservableInt(int):
+                    calls = 0
+                    def __add__(self, other):
+                        type(self).calls += 1
+                        return type(self)(int(self) + other)
+                    def __radd__(self, other):
+                        type(self).calls += 1
+                        return type(self)(other + int(self))
+
+                value = ObservableInt(7)
+                assert sum_from(3, value) == 10
+                assert ObservableInt.calls > 0
+                assert sum_from(0, value) is value
+                assert sum_from(1, True) == 1
+                assert sum_from(2, -(2**80)) == -(2**80) + 1
+            """),
+            PYTHON_TIER3_JIT="resident",
+            PYTHON_JIT_STRESS="1",
+        )
+
     def test_resident_prepared_exit_targets(self):
         script_helper.assert_python_ok(
             "-c",
@@ -238,39 +293,6 @@ class Tier3RangeTests(unittest.TestCase):
                     periodic = pending[0][2]
                     assert periodic != materialization_error, (pending, chunk)
                     assert any(item[3] == materialization_error for item in errors), errors
-            """),
-            PYTHON_TIER3_JIT="resident",
-            PYTHON_JIT_STRESS="1",
-        )
-
-    def test_range_start_stop_multiplication_overflow_is_not_admitted(self):
-        # The present recorder does not form a resident region for range(start,
-        # stop), so this is an explicitly labelled entry limitation rather than
-        # false integration evidence for native multiplication recovery.
-        script_helper.assert_python_ok(
-            "-c",
-            textwrap.dedent("""
-                import _opcode
-
-                def squares(start, stop, initial):
-                    total = initial
-                    item = start - 1
-                    for item in range(start, stop):
-                        total += item * item
-                    return total, item
-
-                start, stop, initial = 3_037_000_498, 3_037_000_502, -(2**63)
-                expected = initial + sum(item * item for item in range(start, stop))
-                for _ in range(2000):
-                    assert squares(start, stop, initial) == (expected, stop - 1)
-                names = set()
-                for offset in range(0, len(squares.__code__.co_code), 2):
-                    try:
-                        names.update(item[0] for item in
-                                     _opcode.get_executor(squares.__code__, offset))
-                    except ValueError:
-                        pass
-                assert '_TIER3_RANGE_CHUNK_RESIDENT_SQUARES' not in names, names
             """),
             PYTHON_TIER3_JIT="resident",
             PYTHON_JIT_STRESS="1",

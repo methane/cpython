@@ -1,0 +1,38 @@
+Tier-2 debug diagnosis and acceptance (2026-09-12)
+==================================================
+
+Build:
+  ./configure --with-pydebug --enable-experimental-jit=interpreter
+  make -j4
+
+Environment used for both fresh processes:
+  PYTHON_LLTRACE=2 PYTHON_TIER3_JIT=resident PYTHON_TIER3_DUMP=1 PYTHON_JIT_STRESS=1
+
+Before this change, same-input-only training of sum_from(1000, 2**40) recorded:
+  phase=10, depth=2: _BINARY_OP, oparg=13 (NB_INPLACE_ADD), target=20
+  cleanup: _POP_TOP_NOP, _POP_TOP, _SWAP_FAST local[2], _POP_TOP,
+           _JUMP_TO_TOP
+The executor retained _BINARY_OP and contained no resident uop; every Tier-3
+counter remained zero.  The builder accepted only compact-specialized add
+opcodes at that phase, so this exact opcode was the rejection.
+
+In a separate compact-seeded process, the same callable recorded:
+  _GUARD_TOS_INT target=20
+  _GUARD_NOS_INT target=20
+  _BINARY_OP_ADD_INT oparg=13 target=20
+and installed _TIER3_RANGE_CHUNK_RESIDENT.
+
+After this change, a fresh same-input-only process reports:
+  tier3-region acc=local[2] induction=local[3]
+    result=add(acc,induction) lowering=_TIER3_RANGE_CHUNK_RESIDENT
+    periodic=27 overflow=20 error=20
+  node=1 induction type=i64 compact=none
+  node=2 accumulator type=i64 compact=none
+  node=3 checked-add type=i64 compact=none
+A measured sum_from(1000, 2**40) call returned 1099512127276 and advanced
+resident_iterations by 998.  No call with a compact accumulator preceded it.
+
+The generic operation is admitted only for the existing plain-add recurrence
+and only for NB_ADD/NB_INPLACE_ADD.  The resident uop's exact-PyLong and signed-
+i64 conversion checks remain the runtime entry guards; failure leaves the
+iterator and locals unchanged so the retained generic operation executes.

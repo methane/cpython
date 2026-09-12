@@ -55,7 +55,8 @@ def measure_sample(function, n, initial, expected, loops, lookup=None):
     if lookup is None:
         lookup = tier3_executor
     selected = lookup(function)
-    before = selected[1].get_tier3_stats() if selected else None
+    valid_before = selected is not None and selected[1].is_valid()
+    before = selected[1].get_tier3_stats() if valid_before else None
     start = time.perf_counter_ns()
     for _ in range(loops):
         result = function(n, initial)
@@ -67,6 +68,8 @@ def measure_sample(function, n, initial, expected, loops, lookup=None):
         selected is not None
         and selected_after is not None
         and selected[1] is selected_after[1]
+        and valid_before
+        and selected_after[1].is_valid()
     )
     after = selected[1].get_tier3_stats() if stable else None
     delta = {key: after[key] - before[key] for key in before} if stable else None
@@ -83,9 +86,15 @@ def measure_sample(function, n, initial, expected, loops, lookup=None):
             "stable"
             if stable
             else (
-                "executor replaced"
-                if selected is not None and selected_after is not None
-                else "unavailable"
+                "executor invalidated"
+                if selected is not None
+                and selected_after is not None
+                and selected[1] is selected_after[1]
+                else (
+                    "executor replaced"
+                    if selected is not None and selected_after is not None
+                    else "unavailable"
+                )
             )
         ),
         "tier3_delta": delta,
@@ -125,7 +134,8 @@ def configuration():
         ).strip()
         tracked_dirty = (
             subprocess.run(
-                ["git", "diff", "--quiet"], cwd=os.path.dirname(__file__)
+                ["git", "diff", "--quiet", "HEAD", "--"],
+                cwd=os.path.dirname(__file__),
             ).returncode
             != 0
         )
@@ -211,14 +221,16 @@ def main():
     rejection_reason = None
     if not entered:
         if not stable:
-            rejection_reason = "executor unavailable or replaced during measurement"
-        elif args.training_profile == "same-input" and abs(args.initial) >= 2**30:
             rejection_reason = (
-                "no resident progress from the noncompact-only trace; "
-                "the current builder requires compact arithmetic facts"
+                "executor unavailable, invalidated, or replaced during measurement"
             )
+        elif os.environ.get("PYTHON_TIER3_JIT") not in {"3", "resident"}:
+            rejection_reason = "resident experiment disabled"
         else:
-            rejection_reason = "stable executor made no Tier-3 range progress"
+            rejection_reason = (
+                "stable executor made no Tier-3 range progress; "
+                "compiler rejection was not captured"
+            )
     print(
         json.dumps(
             {
