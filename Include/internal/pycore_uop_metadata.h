@@ -394,6 +394,7 @@ const uint32_t _PyUop_Flags[MAX_UOP_ID+1] = {
     [_JUMP_TO_TOP] = 0,
     [_TIER3_RANGE_CHUNK] = HAS_ARG_FLAG | HAS_ERROR_FLAG | HAS_ESCAPES_FLAG,
     [_TIER3_RANGE_CHUNK_NATIVE] = HAS_ARG_FLAG | HAS_ERROR_FLAG | HAS_ESCAPES_FLAG,
+    [_TIER3_RANGE_CHUNK_RESIDENT] = HAS_ARG_FLAG | HAS_PERIODIC_FLAG | HAS_ERROR_FLAG | HAS_ESCAPES_FLAG,
     [_SET_IP] = 0,
     [_CHECK_STACK_SPACE_OPERAND] = HAS_DEOPT_FLAG,
     [_SAVE_RETURN_OFFSET] = HAS_ARG_FLAG,
@@ -3678,6 +3679,15 @@ const _PyUopCachingInfo _PyUop_Caching[MAX_UOP_ID+1] = {
             { -1, -1, -1 },
         },
     },
+    [_TIER3_RANGE_CHUNK_RESIDENT] = {
+        .best = { 2, 2, 2, 2 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 2, 2, _TIER3_RANGE_CHUNK_RESIDENT_r22 },
+            { -1, -1, -1 },
+        },
+    },
     [_SET_IP] = {
         .best = { 0, 1, 2, 3 },
         .entries = {
@@ -4742,6 +4752,7 @@ const uint16_t _PyUop_Uncached[MAX_UOP_REGS_ID+1] = {
     [_JUMP_TO_TOP_r00] = _JUMP_TO_TOP,
     [_TIER3_RANGE_CHUNK_r22] = _TIER3_RANGE_CHUNK,
     [_TIER3_RANGE_CHUNK_NATIVE_r22] = _TIER3_RANGE_CHUNK_NATIVE,
+    [_TIER3_RANGE_CHUNK_RESIDENT_r22] = _TIER3_RANGE_CHUNK_RESIDENT,
     [_SET_IP_r00] = _SET_IP,
     [_SET_IP_r11] = _SET_IP,
     [_SET_IP_r22] = _SET_IP,
@@ -6128,6 +6139,8 @@ const char *const _PyOpcode_uop_name[MAX_UOP_REGS_ID+1] = {
     [_TIER3_RANGE_CHUNK_r22] = "_TIER3_RANGE_CHUNK_r22",
     [_TIER3_RANGE_CHUNK_NATIVE] = "_TIER3_RANGE_CHUNK_NATIVE",
     [_TIER3_RANGE_CHUNK_NATIVE_r22] = "_TIER3_RANGE_CHUNK_NATIVE_r22",
+    [_TIER3_RANGE_CHUNK_RESIDENT] = "_TIER3_RANGE_CHUNK_RESIDENT",
+    [_TIER3_RANGE_CHUNK_RESIDENT_r22] = "_TIER3_RANGE_CHUNK_RESIDENT_r22",
     [_TO_BOOL] = "_TO_BOOL",
     [_TO_BOOL_r11] = "_TO_BOOL_r11",
     [_TO_BOOL_BOOL] = "_TO_BOOL_BOOL",
@@ -6909,6 +6922,8 @@ int _PyUop_num_popped(int opcode, int oparg)
         case _TIER3_RANGE_CHUNK:
             return 0;
         case _TIER3_RANGE_CHUNK_NATIVE:
+            return 0;
+        case _TIER3_RANGE_CHUNK_RESIDENT:
             return 0;
         case _SET_IP:
             return 0;

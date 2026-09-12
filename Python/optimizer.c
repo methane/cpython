@@ -52,7 +52,8 @@ _PyTier3_GetBudget(void)
         const char *enabled = Py_GETENV("PYTHON_TIER3_JIT");
         if (enabled != NULL &&
             (strcmp(enabled, "1") == 0 || strcmp(enabled, "helper") == 0 ||
-             strcmp(enabled, "2") == 0 || strcmp(enabled, "direct") == 0)) {
+             strcmp(enabled, "2") == 0 || strcmp(enabled, "direct") == 0 ||
+             strcmp(enabled, "3") == 0 || strcmp(enabled, "resident") == 0)) {
             budget = 1024;
             const char *setting = Py_GETENV("PYTHON_TIER3_BUDGET");
             if (setting != NULL) {
@@ -577,7 +578,7 @@ get_tier3_stats(PyObject *self, PyObject *Py_UNUSED(ignored))
 {
     _PyExecutorObject *executor = _PyExecutorObject_CAST(self);
     return Py_BuildValue(
-        "{s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K}",
+        "{s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K}",
         "entries", executor->tier3_entries,
         "iterations", executor->tier3_iterations,
         "budget_exits", executor->tier3_budget_exits,
@@ -587,7 +588,16 @@ get_tier3_stats(PyObject *self, PyObject *Py_UNUSED(ignored))
         "native_budget_exits", executor->tier3_native_budget_exits,
         "native_overflow_exits", executor->tier3_native_overflow_exits,
         "native_materialization_exits",
-        executor->tier3_native_materialization_exits);
+        executor->tier3_native_materialization_exits,
+        "resident_entries", executor->tier3_resident_entries,
+        "resident_iterations", executor->tier3_resident_iterations,
+        "resident_polls", executor->tier3_resident_polls,
+        "resident_pending_polls", executor->tier3_resident_pending_polls,
+        "resident_overflow_exits", executor->tier3_resident_overflow_exits,
+        "resident_normal_materializations",
+        executor->tier3_resident_normal_materializations,
+        "resident_deopt_materializations",
+        executor->tier3_resident_deopt_materializations);
 }
 
 static PyMethodDef uop_executor_methods[] = {
@@ -1564,6 +1574,13 @@ allocate_executor(int exit_count, int length)
     res->tier3_native_budget_exits = 0;
     res->tier3_native_overflow_exits = 0;
     res->tier3_native_materialization_exits = 0;
+    res->tier3_resident_entries = 0;
+    res->tier3_resident_iterations = 0;
+    res->tier3_resident_polls = 0;
+    res->tier3_resident_pending_polls = 0;
+    res->tier3_resident_overflow_exits = 0;
+    res->tier3_resident_normal_materializations = 0;
+    res->tier3_resident_deopt_materializations = 0;
     return res;
 }
 
@@ -1827,6 +1844,7 @@ mark_tier3_range_loop(_PyUOpInstruction *buffer, int length)
     int error_target = -1;
     int iter_next = -1;
     int jump = -1;
+    int periodic_target = -1;
     for (int i = 0; i < length; i++) {
         int opcode = normalize_tier3_opcode(buffer[i].opcode);
         if (opcode == _NOP) {
@@ -1842,7 +1860,10 @@ mark_tier3_range_loop(_PyUOpInstruction *buffer, int length)
         if (expected != 0 && opcode != expected) {
             return length;
         }
-        if (pattern_index == 9) {
+        if (pattern_index == 3) {
+            periodic_target = buffer[i].target;
+        }
+        else if (pattern_index == 9) {
             induction_local = buffer[i].oparg;
         }
         else if (pattern_index == 7) {
@@ -1876,7 +1897,7 @@ mark_tier3_range_loop(_PyUOpInstruction *buffer, int length)
         pattern_index++;
     }
     if (pattern_index != (int)Py_ARRAY_LENGTH(pattern) ||
-        iter_next < 0 || jump < 0 || error_target < 0 ||
+        iter_next < 0 || jump < 0 || error_target < 0 || periodic_target < 0 ||
         sum_local < 0 || induction_local < 0 ||
         sum_local == induction_local || sum_local >= 16 || induction_local >= 16)
     {
@@ -1885,15 +1906,22 @@ mark_tier3_range_loop(_PyUOpInstruction *buffer, int length)
     memmove(&buffer[iter_next + 1], &buffer[iter_next],
             (length - iter_next) * sizeof(buffer[0]));
     const char *mode = Py_GETENV("PYTHON_TIER3_JIT");
+    int opcode = _TIER3_RANGE_CHUNK;
+    if (strcmp(mode, "2") == 0 || strcmp(mode, "direct") == 0) {
+        opcode = _TIER3_RANGE_CHUNK_NATIVE;
+    }
+    else if (strcmp(mode, "3") == 0 || strcmp(mode, "resident") == 0) {
+        opcode = _TIER3_RANGE_CHUNK_RESIDENT;
+    }
     buffer[iter_next] = (_PyUOpInstruction){
-        .opcode = (strcmp(mode, "2") == 0 || strcmp(mode, "direct") == 0)
-                    ? _TIER3_RANGE_CHUNK_NATIVE : _TIER3_RANGE_CHUNK,
+        .opcode = opcode,
         .oparg = (sum_local << 4) | induction_local,
         /* The header guards have proved an exact, non-exhausted range.  The
          * helper leaves one item for the ordinary body.  Materialization is
          * transactional: failure and zero progress leave iterator and locals
          * untouched.  Route allocation errors to the matched addition. */
-        .target = error_target,
+        .target = opcode == _TIER3_RANGE_CHUNK_RESIDENT
+                    ? periodic_target : error_target,
     };
     return length + 1;
 #endif

@@ -26,8 +26,10 @@ class Tier3RangeTests(unittest.TestCase):
         import _opcode
         import os
 
-        DIRECT = os.environ["PYTHON_TIER3_JIT"] in {"2", "direct"}
-        PREFIX = "native_" if DIRECT else ""
+        MODE = os.environ["PYTHON_TIER3_JIT"]
+        DIRECT = MODE in {"2", "direct"}
+        RESIDENT = MODE in {"3", "resident"}
+        PREFIX = "resident_" if RESIDENT else ("native_" if DIRECT else "")
 
         def executor(function):
             for offset in range(0, len(function.__code__.co_code), 2):
@@ -50,8 +52,10 @@ class Tier3RangeTests(unittest.TestCase):
             alias(40, 10)
         active = executor(renamed)
         names = [item[0] for item in active]
-        chunk = names.index('_TIER3_RANGE_CHUNK_NATIVE' if DIRECT else
-                            '_TIER3_RANGE_CHUNK')
+        chunk_name = ('_TIER3_RANGE_CHUNK_RESIDENT' if RESIDENT else
+                      ('_TIER3_RANGE_CHUNK_NATIVE' if DIRECT else
+                       '_TIER3_RANGE_CHUNK'))
+        chunk = names.index(chunk_name)
         assert names[chunk + 1] == '_ITER_NEXT_RANGE', names
         assert names.index('_JUMP_TO_TOP') > chunk, names
         before = active.get_tier3_stats()
@@ -78,7 +82,7 @@ class Tier3RangeTests(unittest.TestCase):
         stats = executor(renamed).get_tier3_stats()
         assert stats[PREFIX + "entries"] > 0, stats
         assert stats[PREFIX + "iterations"] >= stats[PREFIX + "entries"], stats
-        if int(__import__('os').environ['PYTHON_TIER3_BUDGET']) < 39:
+        if not RESIDENT and int(__import__('os').environ['PYTHON_TIER3_BUDGET']) < 39:
             assert stats[PREFIX + "budget_exits"] > 0, stats
 
         def sum_and_last(n, initial):
@@ -103,7 +107,7 @@ class Tier3RangeTests(unittest.TestCase):
     """)
 
     def test_range_osr_and_materialization(self):
-        for mode in ("1", "direct"):
+        for mode in ("1", "direct", "resident"):
             for budget in (1, 2, 7, 64, 4096):
                 with self.subTest(mode=mode, budget=budget):
                     script_helper.assert_python_ok(
@@ -188,22 +192,23 @@ class Tier3RangeTests(unittest.TestCase):
                     assert saw_executor, function.__name__
                 assert seen == list(range(20)) * 2000
             """),
-            PYTHON_TIER3_JIT="1",
+            PYTHON_TIER3_JIT="resident",
             PYTHON_JIT_STRESS="1",
         )
 
-    @unittest.skipUnless(
-        hasattr(__import__("signal"), "setitimer"), "needs setitimer"
-    )
+    @unittest.skipUnless(hasattr(__import__("signal"), "setitimer"), "needs setitimer")
     def test_periodic_signal_check(self):
         script_helper.assert_python_ok(
             "-c",
             textwrap.dedent("""
                 import signal
                 fired = False
-                def handler(*args):
-                    global fired
+                observed = None
+                def handler(signum, frame):
+                    global fired, observed
                     fired = True
+                    observed = (frame.f_locals.get('result'),
+                                frame.f_locals.get('item'))
                 def total(n):
                     result = 0
                     for item in range(n):
@@ -216,8 +221,12 @@ class Tier3RangeTests(unittest.TestCase):
                 while not fired:
                     assert total(100_000) == sum(range(100_000))
                 signal.setitimer(signal.ITIMER_REAL, 0)
+                if observed[0] is not None and observed[1] is not None:
+                    result, item = observed
+                    assert result == sum(range(item + 1)), observed
+                    assert item < 99_999, observed
             """),
-            PYTHON_TIER3_JIT="1",
+            PYTHON_TIER3_JIT="resident",
             PYTHON_TIER3_BUDGET="4096",
             PYTHON_JIT_STRESS="1",
         )

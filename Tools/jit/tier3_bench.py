@@ -41,7 +41,7 @@ def tier3_executor():
         if fallback is None:
             fallback = (offset, candidate)
         stats = candidate.get_tier3_stats()
-        if stats["entries"] or stats["native_entries"]:
+        if stats["entries"] or stats["native_entries"] or stats["resident_entries"]:
             return offset, candidate
     return fallback
 
@@ -103,17 +103,15 @@ def main():
             and selected[1] is selected_after[1]
         )
         after = selected[1].get_tier3_stats() if stable else None
-        delta = (
-            {key: after[key] - before[key] for key in before}
-            if stable
-            else None
-        )
+        delta = {key: after[key] - before[key] for key in before} if stable else None
         measurements.append(
             {
                 "elapsed_ns": elapsed,
-                "status": "stable"
-                if stable
-                else ("executor replaced" if selected else "unavailable"),
+                "status": (
+                    "stable"
+                    if stable
+                    else ("executor replaced" if selected else "unavailable")
+                ),
                 "tier3_delta": delta,
             }
         )
@@ -122,14 +120,10 @@ def main():
     if result != expected:
         raise AssertionError((result, expected))
 
-    stable_measurements = [
-        item for item in measurements if item["status"] == "stable"
-    ]
+    stable_measurements = [item for item in measurements if item["status"] == "stable"]
     stable = bool(stable_measurements)
     try:
-        native_code_verified = (
-            stable and selected[1].get_jit_code() is not None
-        )
+        native_code_verified = stable and selected[1].get_jit_code() is not None
     except RuntimeError:
         native_code_verified = False
     delta = (
@@ -141,10 +135,14 @@ def main():
         else None
     )
     entered = delta is not None and (
-        delta["entries"] > 0 or delta["native_entries"] > 0
+        delta["entries"] > 0
+        or delta["native_entries"] > 0
+        or delta["resident_entries"] > 0
     )
     processed = (
-        delta["iterations"] + delta["native_iterations"] if entered else 0
+        delta["iterations"] + delta["native_iterations"] + delta["resident_iterations"]
+        if entered
+        else 0
     )
     requested = max(args.n, 0) * args.loops * len(samples)
     print(
@@ -158,12 +156,14 @@ def main():
                 "samples_ns": samples,
                 "measurements": measurements,
                 "executor_offset": selected[0] if selected else None,
-                "tier3_status": "entered"
-                if entered
-                else (
-                    "executor replaced"
-                    if selected and not stable
-                    else ("not entered" if selected else "unavailable")
+                "tier3_status": (
+                    "entered"
+                    if entered
+                    else (
+                        "executor replaced"
+                        if selected and not stable
+                        else ("not entered" if selected else "unavailable")
+                    )
                 ),
                 "tier3_delta": delta,
                 "kernel_iterations": processed,

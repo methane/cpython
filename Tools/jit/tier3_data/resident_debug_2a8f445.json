@@ -1,0 +1,120 @@
+{
+  "configuration": {
+    "python": "3.16.0a0 (heads/work-dirty:0028fbe, Sep 12 2026, 10:18:50) [GCC 13.3.0]",
+    "commit": "2a8f4455c0a2c4b2eb2344b6355488b6bb570f6a",
+    "compiler": "GCC 13.3.0",
+    "architecture": "x86_64",
+    "configure_args": "'--with-pydebug' '--enable-experimental-jit=interpreter'",
+    "jit_available": true,
+    "jit_enabled": true,
+    "tier3_setting": "resident",
+    "tier3_budget": null
+  },
+  "workload": {
+    "n": 100000,
+    "initial": 0,
+    "warmup": 100,
+    "repeat": 3,
+    "loops": 10
+  },
+  "result": 4999950000,
+  "expected": 4999950000,
+  "median_ns": 215137.6,
+  "samples_ns": [
+    214710.0,
+    215137.6,
+    216159.1
+  ],
+  "measurements": [
+    {
+      "elapsed_ns": 214710.0,
+      "status": "stable",
+      "tier3_delta": {
+        "entries": 0,
+        "iterations": 0,
+        "budget_exits": 0,
+        "overflow_exits": 0,
+        "native_entries": 0,
+        "native_iterations": 0,
+        "native_budget_exits": 0,
+        "native_overflow_exits": 0,
+        "native_materialization_exits": 0,
+        "resident_entries": 10,
+        "resident_iterations": 999980,
+        "resident_polls": 999980,
+        "resident_pending_polls": 0,
+        "resident_overflow_exits": 0,
+        "resident_normal_materializations": 10,
+        "resident_deopt_materializations": 0
+      }
+    },
+    {
+      "elapsed_ns": 215137.6,
+      "status": "stable",
+      "tier3_delta": {
+        "entries": 0,
+        "iterations": 0,
+        "budget_exits": 0,
+        "overflow_exits": 0,
+        "native_entries": 0,
+        "native_iterations": 0,
+        "native_budget_exits": 0,
+        "native_overflow_exits": 0,
+        "native_materialization_exits": 0,
+        "resident_entries": 10,
+        "resident_iterations": 999980,
+        "resident_polls": 999980,
+        "resident_pending_polls": 0,
+        "resident_overflow_exits": 0,
+        "resident_normal_materializations": 10,
+        "resident_deopt_materializations": 0
+      }
+    },
+    {
+      "elapsed_ns": 216159.1,
+      "status": "stable",
+      "tier3_delta": {
+        "entries": 0,
+        "iterations": 0,
+        "budget_exits": 0,
+        "overflow_exits": 0,
+        "native_entries": 0,
+        "native_iterations": 0,
+        "native_budget_exits": 0,
+        "native_overflow_exits": 0,
+        "native_materialization_exits": 0,
+        "resident_entries": 10,
+        "resident_iterations": 999980,
+        "resident_polls": 999980,
+        "resident_pending_polls": 0,
+        "resident_overflow_exits": 0,
+        "resident_normal_materializations": 10,
+        "resident_deopt_materializations": 0
+      }
+    }
+  ],
+  "executor_offset": 54,
+  "tier3_status": "entered",
+  "tier3_delta": {
+    "entries": 0,
+    "iterations": 0,
+    "budget_exits": 0,
+    "overflow_exits": 0,
+    "native_entries": 0,
+    "native_iterations": 0,
+    "native_budget_exits": 0,
+    "native_overflow_exits": 0,
+    "native_materialization_exits": 0,
+    "resident_entries": 30,
+    "resident_iterations": 2999940,
+    "resident_polls": 2999940,
+    "resident_pending_polls": 0,
+    "resident_overflow_exits": 0,
+    "resident_normal_materializations": 30,
+    "resident_deopt_materializations": 0
+  },
+  "kernel_iterations": 2999940,
+  "requested_iterations": 3000000,
+  "kernel_fraction": 0.99998,
+  "native_code_verified": false
+}

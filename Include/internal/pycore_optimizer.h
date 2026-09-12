@@ -208,6 +208,13 @@ typedef struct _PyExecutorObject {
     uint64_t tier3_native_budget_exits;
     uint64_t tier3_native_overflow_exits;
     uint64_t tier3_native_materialization_exits;
+    uint64_t tier3_resident_entries;
+    uint64_t tier3_resident_iterations;
+    uint64_t tier3_resident_polls;
+    uint64_t tier3_resident_pending_polls;
+    uint64_t tier3_resident_overflow_exits;
+    uint64_t tier3_resident_normal_materializations;
+    uint64_t tier3_resident_deopt_materializations;
     _PyExitData exits[1];
 } _PyExecutorObject;
 

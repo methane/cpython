@@ -290,3 +290,25 @@ remain diagnostic history, including 98.46% coverage at `n=100000`, and are not
 used in any native-JIT speedup above. Targeted materialization OOM also remains
 source-reviewed rather than runtime-verified because the available
 process-global allocator hook cannot isolate the helper's two allocations.
+
+## Resident-state experiment (`2a8f4455c0a2c4b2eb2344b6355488b6bb570f6a`)
+
+Resident mode keeps the accumulator and range progress native across the full
+range region and performs an eval-breaker/instrumentation-version and executor
+validity load before every logical addition. It materializes only on normal
+completion, overflow, or a pending/invalidation deoptimization. The checked-in
+consolidated diagnostic sample is from the debug Tier-2 interpreter with stress
+enabled solely to establish the executor; it is correctness/counter evidence,
+not a native performance claim. For `n=100000`, it recorded 2,999,940 resident
+iterations and polls, 30 entries and normal materializations, no pending polls,
+and 99.998% processing coverage across the timed samples.
+
+A complete native LLVM 21 measurement could not be produced in this task image.
+The pre-existing `clang-21` command points into a removed Swift toolchain, and
+the verified jammy LLVM 21 apt repository retry returned HTTP 403 while fetching
+its signed `InRelease`. Consequently there is no new resident assembly or
+native timing claim. The existing direct-mode assembly already establishes that
+copy-and-patch emits the checked loop cleanly; subject to native confirmation of
+this resident stencil, the next step remains a small value/region
+representation with explicit exit materialization maps feeding the existing
+stencil backend, not a second backend.

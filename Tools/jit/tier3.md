@@ -6,6 +6,11 @@ present at process startup.  `1` (or `helper`) selects the C-helper reference;
 emitted in the JIT stencil and never calls `_PyTier3_RunRange`.  Entry
 conversion and exit materialization may still call existing C APIs.  It is
 limited to GIL-enabled builds and exact built-in range iterators with unit step.
+`3` (or `resident`) selects the bounded state-lifetime experiment. It keeps the
+accumulator, next range value, remaining count, and last completed induction
+value native until completion, overflow, pending work, or invalidation;
+`PYTHON_TIER3_BUDGET` is deliberately not a synchronization boundary in this
+mode.
 
 The optimizer recognizes the existing range iteration, integer addition, local
 stores, and loop-back uops using their actual opcodes and operands.  It inserts
@@ -36,6 +41,19 @@ fields from direct mode's `native_entries`, `native_iterations`,
 `native_materialization_exits`.  This remains a fused-uop experiment, not a
 general SSA compiler.  It uses no ctypes, replacement callable, Python compiler
 API, or RWX mapping.
+
+Resident mode exposes `resident_entries`, `resident_iterations`,
+`resident_polls`, `resident_pending_polls`, `resident_overflow_exits`,
+`resident_normal_materializations`, and `resident_deopt_materializations`.
+Before every logical addition it performs the same relaxed eval-breaker versus
+instrumentation-version predicate used by `_TIER2_RESUME_CHECK`, plus an
+executor-validity check. The no-work path neither publishes the frame nor
+allocates. A real pending/invalid result first transactionally commits the safe
+prefix, then invokes the existing pending-handler/deoptimization path at the
+loop header, before another logical iteration can execute. Under the GIL an
+executor cannot be concurrently invalidated by another thread; invalidation
+requested by this thread sets an eval-breaker bit, and the explicit validity
+load additionally covers an already-invalid executor.
 
 At entry the kernel accepts only an exact built-in `int` (not `bool` or an int
 subclass) whose value converts to signed 64-bit without overflow.  This includes
