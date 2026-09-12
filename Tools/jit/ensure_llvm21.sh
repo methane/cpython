@@ -7,20 +7,59 @@ env_file="$repo/.llvm21-env"
 
 select_prefix()
 {
-    for prefix in "${LLVM_TOOLS_INSTALL_DIR:-}" /opt/llvm-21.1.8 /usr/lib/llvm-21; do
-        test -n "$prefix" || continue
+    if test -n "${LLVM_TOOLS_INSTALL_DIR:-}"; then
+        set -- "$LLVM_TOOLS_INSTALL_DIR"
+    else
+        set -- /opt/llvm-21.1.8 /usr/lib/llvm-21
+    fi
+    for prefix do
         complete=true
+        versions=
         for tool in clang llvm-readobj llvm-objdump llvm-dwarfdump; do
             if ! test -x "$prefix/bin/$tool"; then
+                echo "Ignoring incomplete LLVM prefix $prefix: missing $tool" >&2
                 complete=false
+                continue
+            fi
+            version_file="${TMPDIR:-/tmp}/ensure-llvm21-version.$$"
+            if ! "$prefix/bin/$tool" --version >"$version_file" 2>&1; then
+                echo "Ignoring unusable LLVM prefix $prefix: $tool --version failed" >&2
+                cat "$version_file" >&2
+                rm -f "$version_file"
+                complete=false
+                continue
+            fi
+            version=$(sed -n '1p' "$version_file")
+            rm -f "$version_file"
+            case "$version" in
+                *"version 21."*) ;;
+                *)
+                    echo "Ignoring incompatible LLVM prefix $prefix: $tool reports: $version" >&2
+                    complete=false
+                    continue
+                    ;;
+            esac
+            if test -z "$versions"; then
+                versions=$version
+            else
+                versions="$versions
+$version"
             fi
         done
         if "$complete"; then
-            printf "export LLVM_TOOLS_INSTALL_DIR='%s'\n" "$prefix" >"$env_file"
+            tmp_env="$env_file.tmp.$$"
+            trap 'rm -f "$tmp_env"' EXIT HUP INT TERM
+            case "$prefix" in
+                *"'"*)
+                    echo "LLVM prefix contains an unsupported single quote: $prefix" >&2
+                    return 1
+                    ;;
+            esac
+            printf "export LLVM_TOOLS_INSTALL_DIR='%s'\n" "$prefix" >"$tmp_env"
+            mv "$tmp_env" "$env_file"
+            trap - EXIT HUP INT TERM
             echo "Selected complete LLVM prefix: $prefix"
-            for tool in clang llvm-readobj llvm-objdump llvm-dwarfdump; do
-                "$prefix/bin/$tool" --version | head -1
-            done
+            printf '%s\n' "$versions"
             return 0
         fi
     done

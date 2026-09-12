@@ -348,6 +348,84 @@ class Tier3RangeTests(unittest.TestCase):
             PYTHON_JIT_STRESS="1",
         )
 
+    @unittest.skipUnless(support.Py_DEBUG, "requires debug reconstruction injection")
+    def test_resident_reconstruction_allocation_failures(self):
+        script_helper.assert_python_ok(
+            "-c",
+            textwrap.dedent("""
+                import _opcode
+                import os
+
+                def add(n, initial):
+                    total = initial
+                    item = -1
+                    for item in range(n):
+                        total += item
+                    return total, item
+
+                def squares(n, initial):
+                    total = initial
+                    item = -1
+                    for item in range(n):
+                        total += item * item
+                    return total, item
+
+                def expected(kind, item, initial):
+                    terms = range(item + 1)
+                    return initial + sum(i * i if kind == 'squares' else i
+                                         for i in terms)
+
+                def executor(function, opname):
+                    for offset in range(0, len(function.__code__.co_code), 2):
+                        try:
+                            candidate = _opcode.get_executor(function.__code__, offset)
+                        except ValueError:
+                            continue
+                        if any(instruction[0] == opname for instruction in candidate):
+                            return candidate
+                    raise AssertionError(opname)
+
+                cases = (
+                    ('add', add, '_TIER3_RANGE_CHUNK_RESIDENT'),
+                    ('squares', squares, '_TIER3_RANGE_CHUNK_RESIDENT_SQUARES'),
+                )
+                initial = 2**40
+                for kind, function, opname in cases:
+                    for _ in range(2000):
+                        function(40, initial)
+                    active = executor(function, opname)
+                    for site in ('1', '2'):
+                        before = active.get_tier3_stats()
+                        finally_ran = False
+                        try:
+                            os.environ['PYTHON_TIER3_FAIL_RECONSTRUCTION'] = site
+                            function(1000, initial)
+                        except MemoryError as exc:
+                            frames = []
+                            tb = exc.__traceback__
+                            while tb is not None:
+                                frames.append(tb.tb_frame)
+                                tb = tb.tb_next
+                            failed = next(frame for frame in frames
+                                          if frame.f_code is function.__code__)
+                            local = failed.f_locals
+                            # Allocation is transactional: both locals still
+                            # describe the prefix visible before resident entry.
+                            assert local['total'] == expected(kind, local['item'], initial), local
+                        else:
+                            raise AssertionError('injected allocation was not reached')
+                        finally:
+                            os.environ.pop('PYTHON_TIER3_FAIL_RECONSTRUCTION', None)
+                            finally_ran = True
+                        assert finally_ran
+                        after = active.get_tier3_stats()
+                        assert after['resident_polls'] > before['resident_polls'], (before, after)
+                        assert function(1000, initial)[0] == expected(kind, 999, initial)
+            """),
+            PYTHON_TIER3_JIT="resident",
+            PYTHON_JIT_STRESS="1",
+        )
+
     def test_real_trace_region_dump(self):
         _, _, stderr = script_helper.assert_python_ok(
             "-c",

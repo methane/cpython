@@ -46,6 +46,16 @@ Tools/jit/ensure_llvm21.sh --install
 . ./.llvm21-env
 ```
 
+The preflight executes every required tool and accepts only LLVM 21 version
+output.  An explicitly supplied `LLVM_TOOLS_INSTALL_DIR` is authoritative: an
+invalid explicit prefix fails rather than silently selecting a different
+installation.  `.llvm21-env` is replaced atomically only after all four tools
+pass validation.  Its subprocess fixtures can be run without network access:
+
+```sh
+python -m test test_tools.test_ensure_llvm21 -v
+```
+
 Dependency setup may run before a task branch (and therefore this script) is
 checked out.  In that case use the self-contained probe/install recipe below
 during setup, then run the script after checkout to validate and persist the

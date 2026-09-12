@@ -681,3 +681,65 @@ gen_try_set_executing(PyGenObject *gen)
 
 #define CALL_TP_ITERITEM_NO_ESCAPE(ITER, INDEX) \
     Py_TYPE(ITER)->_tp_iteritem((ITER), (INDEX))
+
+typedef enum {
+    TIER3_RESIDENT_EXIT_NORMAL,
+    TIER3_RESIDENT_EXIT_OVERFLOW,
+    TIER3_RESIDENT_EXIT_PENDING,
+} _PyTier3ResidentExitReason;
+
+/* State committed by both resident range operations.  Until both Python
+ * integers have been created, the frame and iterator still describe the
+ * pre-entry boundary.  Afterwards they describe exactly COMPLETED iterations
+ * and the ordinary loop body will execute NEXT. */
+typedef struct {
+    int64_t accumulator;
+    long next;
+    long remaining;
+    long last;
+    long completed;
+    _PyTier3ResidentExitReason reason;
+} _PyTier3ResidentExitState;
+
+static inline int
+_PyTier3_CommitResidentExit(_PyInterpreterFrame *frame,
+                            _PyRangeIterObject *range,
+                            int accumulator_local,
+                            int induction_local,
+                            const _PyTier3ResidentExitState *state)
+{
+#ifdef Py_DEBUG
+    const char *failure = Py_GETENV("PYTHON_TIER3_FAIL_RECONSTRUCTION");
+    if (failure != NULL && strcmp(failure, "1") == 0) {
+        PyErr_NoMemory();
+        return -1;
+    }
+#endif
+    PyObject *new_accumulator = PyLong_FromLongLong(state->accumulator);
+    if (new_accumulator == NULL) {
+        return -1;
+    }
+#ifdef Py_DEBUG
+    if (failure != NULL && strcmp(failure, "2") == 0) {
+        Py_DECREF(new_accumulator);
+        PyErr_NoMemory();
+        return -1;
+    }
+#endif
+    PyObject *new_induction = PyLong_FromLong(state->last);
+    if (new_induction == NULL) {
+        Py_DECREF(new_accumulator);
+        return -1;
+    }
+    _PyStackRef old_accumulator = frame->localsplus[accumulator_local];
+    _PyStackRef old_induction = frame->localsplus[induction_local];
+    frame->localsplus[accumulator_local] =
+        PyStackRef_FromPyObjectSteal(new_accumulator);
+    frame->localsplus[induction_local] =
+        PyStackRef_FromPyObjectSteal(new_induction);
+    range->start = state->next;
+    range->len = state->remaining;
+    PyStackRef_XCLOSE(old_accumulator);
+    PyStackRef_XCLOSE(old_induction);
+    return 0;
+}

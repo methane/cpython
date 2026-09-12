@@ -6272,24 +6272,19 @@ dummy_func(
                     current_executor->tier3_resident_pending_polls++;
                 }
                 if (completed != 0) {
-                    PyObject *new_sum = PyLong_FromLongLong(total);
-                    ERROR_IF(new_sum == NULL);
-                    PyObject *new_induction = PyLong_FromLong(last);
-                    if (new_induction == NULL) {
-                        Py_DECREF(new_sum);
-                        ERROR_IF(true);
-                    }
-                    _PyStackRef old_sum = frame->localsplus[sum_local];
-                    _PyStackRef old_induction =
-                        frame->localsplus[induction_local];
-                    frame->localsplus[sum_local] =
-                        PyStackRef_FromPyObjectSteal(new_sum);
-                    frame->localsplus[induction_local] =
-                        PyStackRef_FromPyObjectSteal(new_induction);
-                    PyStackRef_XCLOSE(old_sum);
-                    PyStackRef_XCLOSE(old_induction);
-                    range->start = next;
-                    range->len -= completed;
+                    _PyTier3ResidentExitState exit = {
+                        .accumulator = total,
+                        .next = next,
+                        .remaining = remaining - completed,
+                        .last = last,
+                        .completed = completed,
+                        .reason = pending || invalid ? TIER3_RESIDENT_EXIT_PENDING :
+                                  (overflow ? TIER3_RESIDENT_EXIT_OVERFLOW :
+                                              TIER3_RESIDENT_EXIT_NORMAL),
+                    };
+                    int materialized = _PyTier3_CommitResidentExit(
+                        frame, range, sum_local, induction_local, &exit);
+                    ERROR_IF(materialized < 0);
                     current_executor->tier3_resident_entries++;
                     current_executor->tier3_resident_iterations += completed;
                     if (pending || invalid) {
@@ -6367,24 +6362,19 @@ dummy_func(
                     current_executor->tier3_resident_pending_polls++;
                 }
                 if (completed != 0) {
-                    PyObject *new_sum = PyLong_FromLongLong(total);
-                    ERROR_IF(new_sum == NULL);
-                    PyObject *new_induction = PyLong_FromLong(last);
-                    if (new_induction == NULL) {
-                        Py_DECREF(new_sum);
-                        ERROR_IF(true);
-                    }
-                    _PyStackRef old_sum = frame->localsplus[sum_local];
-                    _PyStackRef old_induction =
-                        frame->localsplus[induction_local];
-                    frame->localsplus[sum_local] =
-                        PyStackRef_FromPyObjectSteal(new_sum);
-                    frame->localsplus[induction_local] =
-                        PyStackRef_FromPyObjectSteal(new_induction);
-                    PyStackRef_XCLOSE(old_sum);
-                    PyStackRef_XCLOSE(old_induction);
-                    range->start = next;
-                    range->len -= completed;
+                    _PyTier3ResidentExitState exit = {
+                        .accumulator = total,
+                        .next = next,
+                        .remaining = remaining - completed,
+                        .last = last,
+                        .completed = completed,
+                        .reason = pending || invalid ? TIER3_RESIDENT_EXIT_PENDING :
+                                  (overflow ? TIER3_RESIDENT_EXIT_OVERFLOW :
+                                              TIER3_RESIDENT_EXIT_NORMAL),
+                    };
+                    int materialized = _PyTier3_CommitResidentExit(
+                        frame, range, sum_local, induction_local, &exit);
+                    ERROR_IF(materialized < 0);
                     current_executor->tier3_resident_entries++;
                     current_executor->tier3_resident_iterations += completed;
                     if (pending || invalid) {

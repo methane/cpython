@@ -22799,42 +22799,27 @@
                     current_executor->tier3_resident_pending_polls++;
                 }
                 if (completed != 0) {
+                    _PyTier3ResidentExitState exit = {
+                        .accumulator = total,
+                        .next = next,
+                        .remaining = remaining - completed,
+                        .last = last,
+                        .completed = completed,
+                        .reason = pending || invalid ? TIER3_RESIDENT_EXIT_PENDING :
+                        (overflow ? TIER3_RESIDENT_EXIT_OVERFLOW :
+                            TIER3_RESIDENT_EXIT_NORMAL),
+                    };
                     stack_pointer[-2] = iter;
                     stack_pointer[-1] = _stack_item_1;
                     _PyFrame_SetStackPointer(frame, stack_pointer);
                     _PyFrame_StackPointerValidate(frame);
-                    PyObject *new_sum = PyLong_FromLongLong(total);
+                    int materialized = _PyTier3_CommitResidentExit(
+                        frame, range, sum_local, induction_local, &exit);
                     _PyFrame_StackPointerInvalidate(frame);
-                    if (new_sum == NULL) {
+                    if (materialized < 0) {
                         SET_CURRENT_CACHED_VALUES(0);
                         JUMP_TO_ERROR();
                     }
-                    PyObject *new_induction = PyLong_FromLong(last);
-                    if (new_induction == NULL) {
-                        assert(stack_pointer == _PyFrame_GetStackPointer(frame));
-                        _PyFrame_StackPointerValidate(frame);
-                        Py_DECREF(new_sum);
-                        _PyFrame_StackPointerInvalidate(frame);
-                        SET_CURRENT_CACHED_VALUES(0);
-                        JUMP_TO_ERROR();
-                    }
-                    _PyStackRef old_sum = frame->localsplus[sum_local];
-                    _PyStackRef old_induction =
-                    frame->localsplus[induction_local];
-                    frame->localsplus[sum_local] =
-                    PyStackRef_FromPyObjectSteal(new_sum);
-                    frame->localsplus[induction_local] =
-                    PyStackRef_FromPyObjectSteal(new_induction);
-                    assert(stack_pointer == _PyFrame_GetStackPointer(frame));
-                    _PyFrame_StackPointerValidate(frame);
-                    PyStackRef_XCLOSE(old_sum);
-                    _PyFrame_StackPointerInvalidate(frame);
-                    assert(stack_pointer == _PyFrame_GetStackPointer(frame));
-                    _PyFrame_StackPointerValidate(frame);
-                    PyStackRef_XCLOSE(old_induction);
-                    _PyFrame_StackPointerInvalidate(frame);
-                    range->start = next;
-                    range->len -= completed;
                     current_executor->tier3_resident_entries++;
                     current_executor->tier3_resident_iterations += completed;
                     if (pending || invalid) {
@@ -22948,42 +22933,27 @@
                     current_executor->tier3_resident_pending_polls++;
                 }
                 if (completed != 0) {
+                    _PyTier3ResidentExitState exit = {
+                        .accumulator = total,
+                        .next = next,
+                        .remaining = remaining - completed,
+                        .last = last,
+                        .completed = completed,
+                        .reason = pending || invalid ? TIER3_RESIDENT_EXIT_PENDING :
+                        (overflow ? TIER3_RESIDENT_EXIT_OVERFLOW :
+                            TIER3_RESIDENT_EXIT_NORMAL),
+                    };
                     stack_pointer[-2] = iter;
                     stack_pointer[-1] = index;
                     _PyFrame_SetStackPointer(frame, stack_pointer);
                     _PyFrame_StackPointerValidate(frame);
-                    PyObject *new_sum = PyLong_FromLongLong(total);
+                    int materialized = _PyTier3_CommitResidentExit(
+                        frame, range, sum_local, induction_local, &exit);
                     _PyFrame_StackPointerInvalidate(frame);
-                    if (new_sum == NULL) {
+                    if (materialized < 0) {
                         SET_CURRENT_CACHED_VALUES(0);
                         JUMP_TO_ERROR();
                     }
-                    PyObject *new_induction = PyLong_FromLong(last);
-                    if (new_induction == NULL) {
-                        assert(stack_pointer == _PyFrame_GetStackPointer(frame));
-                        _PyFrame_StackPointerValidate(frame);
-                        Py_DECREF(new_sum);
-                        _PyFrame_StackPointerInvalidate(frame);
-                        SET_CURRENT_CACHED_VALUES(0);
-                        JUMP_TO_ERROR();
-                    }
-                    _PyStackRef old_sum = frame->localsplus[sum_local];
-                    _PyStackRef old_induction =
-                    frame->localsplus[induction_local];
-                    frame->localsplus[sum_local] =
-                    PyStackRef_FromPyObjectSteal(new_sum);
-                    frame->localsplus[induction_local] =
-                    PyStackRef_FromPyObjectSteal(new_induction);
-                    assert(stack_pointer == _PyFrame_GetStackPointer(frame));
-                    _PyFrame_StackPointerValidate(frame);
-                    PyStackRef_XCLOSE(old_sum);
-                    _PyFrame_StackPointerInvalidate(frame);
-                    assert(stack_pointer == _PyFrame_GetStackPointer(frame));
-                    _PyFrame_StackPointerValidate(frame);
-                    PyStackRef_XCLOSE(old_induction);
-                    _PyFrame_StackPointerInvalidate(frame);
-                    range->start = next;
-                    range->len -= completed;
                     current_executor->tier3_resident_entries++;
                     current_executor->tier3_resident_iterations += completed;
                     if (pending || invalid) {
