@@ -26,6 +26,7 @@ class Tier3RangeTests(unittest.TestCase):
         "_TIER3_RANGE_CHUNK",
         "_TIER3_RANGE_CHUNK_NATIVE",
         "_TIER3_RANGE_CHUNK_RESIDENT",
+        "_TIER3_RANGE_CHUNK_RESIDENT_SQUARES",
     )
     MODE_COUNTERS = (
         "entries",
@@ -142,6 +143,55 @@ class Tier3RangeTests(unittest.TestCase):
                         PYTHON_JIT_STRESS="1",
                     )
 
+    def test_resident_sum_squares(self):
+        script_helper.assert_python_ok(
+            "-c",
+            textwrap.dedent("""
+                import _opcode
+
+                def executor(function):
+                    for offset in range(0, len(function.__code__.co_code), 2):
+                        try:
+                            candidate = _opcode.get_executor(function.__code__, offset)
+                        except ValueError:
+                            continue
+                        if any(op[0] == '_TIER3_RANGE_CHUNK_RESIDENT_SQUARES'
+                               for op in candidate):
+                            return candidate
+                    raise AssertionError('sum-squares region was not installed')
+
+                def squares(n, initial):
+                    total = initial
+                    item = -1
+                    for item in range(n):
+                        total += item * item
+                    return total, item
+
+                def expected(n, initial):
+                    return initial + sum(item * item for item in range(n))
+
+                for _ in range(2000):
+                    squares(40, 0)
+                active = executor(squares)
+                for n in (0, 1, 2, 1000, 100_000):
+                    for initial in (0, -7, 2**40):
+                        assert squares(n, initial) == (
+                            expected(n, initial), n - 1 if n else -1)
+                before = active.get_tier3_stats()
+                result = squares(100, 2**63 - 10)
+                after = active.get_tier3_stats()
+                assert result == (expected(100, 2**63 - 10), 99), result
+                assert after['resident_iterations'] > before['resident_iterations']
+                assert after['resident_overflow_exits'] > before['resident_overflow_exits']
+
+                class MyInt(int): pass
+                assert squares(20, MyInt(0)) == (expected(20, 0), 19)
+                assert squares(20, False) == (expected(20, 0), 19)
+            """),
+            PYTHON_TIER3_JIT="resident",
+            PYTHON_JIT_STRESS="1",
+        )
+
     def test_disabled(self):
         source = textwrap.dedent(f"""
                 import _opcode
@@ -232,6 +282,10 @@ class Tier3RangeTests(unittest.TestCase):
                         s += i
                         s += 1
                     return s
+                def scaled(n):
+                    s = 0
+                    for i in range(n): s += i * 2
+                    return s
                 def effect(n):
                     s = 0
                     for i in range(n):
@@ -245,7 +299,8 @@ class Tier3RangeTests(unittest.TestCase):
                         s += i
                     return s
                 for function, args in ((constant, (20,)), (twice, (20,)),
-                                       (extra, (20,)), (effect, (20,)),
+                                       (extra, (20,)), (scaled, (20,)),
+                                       (effect, (20,)),
                                        (branch, (20, 10))):
                     for _ in range(2000): function(*args)
                     saw_executor = False
@@ -262,6 +317,7 @@ class Tier3RangeTests(unittest.TestCase):
                     if function is constant: assert expected == 20
                     elif function is twice: assert expected == 1 << 20
                     elif function is extra: assert expected == sum(range(20)) + 20
+                    elif function is scaled: assert expected == 2 * sum(range(20))
                     elif function is effect: assert expected == sum(range(20))
                     else: assert expected == sum(range(10))
                 assert seen == list(range(20)) * 2001

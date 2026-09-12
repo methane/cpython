@@ -6306,6 +6306,101 @@ dummy_func(
             }
         }
 
+        /* Lower the typed mul+add region through its own fused stencil. */
+        tier2 op(_TIER3_RANGE_CHUNK_RESIDENT_SQUARES, (iter, index -- iter, index)) {
+            (void)index;
+            int sum_local = oparg >> 4;
+            int induction_local = oparg & 15;
+            PyObject *iter_obj = PyStackRef_AsPyObjectBorrow(iter);
+            PyObject *sum_obj = PyStackRef_AsPyObjectBorrow(
+                frame->localsplus[sum_local]);
+            _PyRangeIterObject *range = (_PyRangeIterObject *)iter_obj;
+            int conversion_overflow = 0;
+            int64_t total = 0;
+            if (Py_TYPE(iter_obj) == &PyRangeIter_Type && range->step == 1 &&
+                PyLong_CheckExact(sum_obj)) {
+                total = PyLong_AsLongLongAndOverflow(
+                    sum_obj, &conversion_overflow);
+                int conversion_error = total == -1 && PyErr_Occurred();
+                ERROR_IF(conversion_error);
+            }
+            else {
+                conversion_overflow = 1;
+            }
+            if (conversion_overflow == 0) {
+                long next = range->start;
+                long remaining = range->len;
+                long completed = 0;
+                uint64_t polls = 0;
+                long last = 0;
+                bool overflow = false;
+                bool pending = false;
+                bool invalid = false;
+                uintptr_t iversion = FT_ATOMIC_LOAD_UINTPTR_ACQUIRE(
+                    _PyFrame_GetCode(frame)->_co_instrumentation_version);
+                while (completed < remaining - 1) {
+                    polls++;
+                    uintptr_t eval_breaker = _Py_atomic_load_uintptr_relaxed(
+                        &tstate->eval_breaker);
+                    invalid = !current_executor->vm_data.valid;
+                    pending = eval_breaker != iversion;
+                    if (pending || invalid) {
+                        break;
+                    }
+                    int64_t square;
+                    int64_t new_total;
+                    if (__builtin_mul_overflow((int64_t)next, (int64_t)next,
+                                               &square) ||
+                        __builtin_add_overflow(total, square, &new_total)) {
+                        overflow = true;
+                        break;
+                    }
+                    total = new_total;
+                    last = next;
+                    completed++;
+                    next++;
+                }
+                /* Statistics are published only as the resident region is
+                 * left, never by the generated arithmetic/poll backedge. */
+                current_executor->tier3_resident_polls += polls;
+                if (pending || invalid) {
+                    current_executor->tier3_resident_pending_polls++;
+                }
+                if (completed != 0) {
+                    PyObject *new_sum = PyLong_FromLongLong(total);
+                    ERROR_IF(new_sum == NULL);
+                    PyObject *new_induction = PyLong_FromLong(last);
+                    if (new_induction == NULL) {
+                        Py_DECREF(new_sum);
+                        ERROR_IF(true);
+                    }
+                    _PyStackRef old_sum = frame->localsplus[sum_local];
+                    _PyStackRef old_induction =
+                        frame->localsplus[induction_local];
+                    frame->localsplus[sum_local] =
+                        PyStackRef_FromPyObjectSteal(new_sum);
+                    frame->localsplus[induction_local] =
+                        PyStackRef_FromPyObjectSteal(new_induction);
+                    PyStackRef_XCLOSE(old_sum);
+                    PyStackRef_XCLOSE(old_induction);
+                    range->start = next;
+                    range->len -= completed;
+                    current_executor->tier3_resident_entries++;
+                    current_executor->tier3_resident_iterations += completed;
+                    if (pending || invalid) {
+                        current_executor->tier3_resident_deopt_materializations++;
+                    }
+                    else {
+                        current_executor->tier3_resident_normal_materializations++;
+                    }
+                }
+                if (overflow) {
+                    current_executor->tier3_resident_overflow_exits++;
+                }
+                HANDLE_PENDING_AND_DEOPT_IF(pending || invalid);
+            }
+        }
+
         tier2 op(_SET_IP, (instr_ptr/4 --)) {
             frame->instr_ptr = (_Py_CODEUNIT *)instr_ptr;
         }

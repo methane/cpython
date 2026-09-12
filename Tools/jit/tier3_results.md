@@ -315,6 +315,15 @@ stencil backend, not a second backend.
 
 ## Resident native follow-up (`362996d25a5037df98ad83cf60c20fc077b4f483`)
 
+> **Provenance correction:** this section and
+> `tier3_data/resident_native_362996d.json` are retained as historical
+> diagnostics only.  The artifact records a different ephemeral Codex
+> worktree hash and a `work-dirty` Python build; neither quoted full hash is a
+> GitHub-resolvable pushed revision whose exact source tree can now be
+> reconstructed.  The timings and assembly below must therefore not be used
+> as immutable performance evidence or relabelled as measurements of the
+> similarly prefixed commit.
+
 The official LLVM 21.1.8 Linux x86-64 archive supplied all four required tools
 and built the release (`-DNDEBUG -O3`) native JIT. Stencils were regenerated
 with the documented `-fno-vectorize -fno-slp-vectorize` workaround. All timings

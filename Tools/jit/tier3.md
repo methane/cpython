@@ -22,6 +22,16 @@ left intact.  No function, code-object, name, or complete uop-tuple template is
 matched.  When the feature is disabled, recognition runs no transformation and
 the experimental uop is absent from the executor.
 
+Resident lowering is driven by a compact typed C-side region description built
+from those uop operands. It records the range live-in, distinct accumulator and
+induction locals, boxed-object and signed-i64 values, checked-operation input
+dependencies, and the periodic, overflow, normal-materialization, and
+allocation-error boundaries. The same builder accepts either
+`acc_next = checked_add(acc, induction)` or
+`square = checked_mul(induction, induction); acc_next = checked_add(acc,
+square)`. These two fused stencil selections are intentionally limited
+lowering, not a general CFG or SSA framework.
+
 The new non-terminating uop runs at the guarded loop header, then falls through
 to the unchanged `_ITER_NEXT_RANGE`, ordinary body, and `_JUMP_TO_TOP`.  Its stack
 inputs are the existing iterator and tagged index.  The private C kernel reads
