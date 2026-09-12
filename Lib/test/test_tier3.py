@@ -192,6 +192,55 @@ class Tier3RangeTests(unittest.TestCase):
             PYTHON_JIT_STRESS="1",
         )
 
+    def test_sum_squares_mode_compatibility(self):
+        source = textwrap.dedent(f"""
+            import _opcode
+            EXPERIMENTAL_UOPS = {self.EXPERIMENTAL_UOPS!r}
+
+            def executors(function):
+                for offset in range(0, len(function.__code__.co_code), 2):
+                    try:
+                        yield _opcode.get_executor(function.__code__, offset)
+                    except ValueError:
+                        pass
+
+            def squares(n, initial):
+                total = initial
+                for item in range(n):
+                    total += item * item
+                return total
+
+            def squares_and_last(n, initial):
+                total = initial
+                item = -1
+                for item in range(n):
+                    total += item * item
+                return total, item
+
+            for function in (squares, squares_and_last):
+                for _ in range(2000):
+                    function(40, 0)
+                expected = 328350 if function is squares else (328350, 99)
+                assert function(100, 0) == expected
+                active = list(executors(function))
+                assert active
+                names = {{op[0] for executor in active for op in executor}}
+                if MODE in ('resident', '3'):
+                    assert '_TIER3_RANGE_CHUNK_RESIDENT_SQUARES' in names, names
+                    assert any(executor.get_tier3_stats()['resident_entries']
+                               for executor in active)
+                else:
+                    assert not names.intersection(EXPERIMENTAL_UOPS), names
+        """)
+        for mode in (None, "0", "helper", "1", "direct", "2", "resident", "3"):
+            with self.subTest(mode=mode):
+                env = {"PYTHON_JIT_STRESS": "1"}
+                if mode is not None:
+                    env["PYTHON_TIER3_JIT"] = mode
+                script_helper.assert_python_ok(
+                    "-c", f"MODE = {mode!r}\n" + source, **env
+                )
+
     def test_disabled(self):
         source = textwrap.dedent(f"""
                 import _opcode

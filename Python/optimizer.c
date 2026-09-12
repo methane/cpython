@@ -1984,17 +1984,22 @@ mark_tier3_range_loop(_PyUOpInstruction *buffer, int length)
     if (build_tier3_loop_region(buffer, length, &region)) {
         int insertion = region.insertion;
         const char *mode = Py_GETENV("PYTHON_TIER3_JIT");
+        bool direct = strcmp(mode, "2") == 0 || strcmp(mode, "direct") == 0;
+        bool resident = strcmp(mode, "3") == 0 || strcmp(mode, "resident") == 0;
+        /* Multiplication currently has only a resident lowering.  Reject it
+         * before changing the trace rather than selecting an addition-only
+         * helper or direct stencil. */
+        if (region.has_multiply && !resident) {
+            return length;
+        }
         int opcode = _TIER3_RANGE_CHUNK;
-        if (strcmp(mode, "2") == 0 || strcmp(mode, "direct") == 0) {
+        if (direct) {
             opcode = _TIER3_RANGE_CHUNK_NATIVE;
         }
-        else if (strcmp(mode, "3") == 0 || strcmp(mode, "resident") == 0) {
+        else if (resident) {
             opcode = region.has_multiply
                 ? _TIER3_RANGE_CHUNK_RESIDENT_SQUARES
                 : _TIER3_RANGE_CHUNK_RESIDENT;
-        }
-        else if (region.has_multiply) {
-            return length;
         }
         memmove(&buffer[insertion + 1], &buffer[insertion],
                 (length - insertion) * sizeof(buffer[0]));
