@@ -6129,6 +6129,88 @@ dummy_func(
             ERROR_IF(result < 0);
         }
 
+        /* Experimental direct-stencil counterpart of _TIER3_RANGE_CHUNK.
+         * Conversion and materialization may call C helpers, but the checked
+         * reduction loop itself is emitted as part of this uop's stencil. */
+        tier2 op(_TIER3_RANGE_CHUNK_NATIVE, (iter, index -- iter, index)) {
+            int sum_local = oparg >> 4;
+            int induction_local = oparg & 15;
+            PyObject *iter_obj = PyStackRef_AsPyObjectBorrow(iter);
+            PyObject *sum_obj = PyStackRef_AsPyObjectBorrow(
+                frame->localsplus[sum_local]);
+            _PyRangeIterObject *range = (_PyRangeIterObject *)iter_obj;
+            int conversion_overflow = 0;
+            int64_t total = 0;
+            if (Py_TYPE(iter_obj) == &PyRangeIter_Type &&
+                range->step == 1 && PyLong_CheckExact(sum_obj))
+            {
+                total = PyLong_AsLongLongAndOverflow(
+                    sum_obj, &conversion_overflow);
+                int conversion_error = total == -1 && PyErr_Occurred();
+                ERROR_IF(conversion_error);
+            }
+            else {
+                conversion_overflow = 1;
+            }
+            if (conversion_overflow == 0) {
+                long next = range->start;
+                long remaining = range->len;
+                long completed = 0;
+                long last = 0;
+                bool overflow = false;
+                long max_extra = Py_MIN(
+                    (long)_PyTier3_GetBudget(), remaining - 1);
+                while (completed < max_extra) {
+                    if ((next > 0 && total > INT64_MAX - next) ||
+                        (next < 0 && total < INT64_MIN - next))
+                    {
+                        overflow = true;
+                        break;
+                    }
+                    total += next;
+                    last = next;
+                    remaining--;
+                    next++;
+                    completed++;
+                }
+                if (completed != 0) {
+                    PyObject *new_sum = PyLong_FromLongLong(total);
+                    if (new_sum == NULL) {
+                        current_executor->tier3_native_materialization_exits++;
+                        ERROR_IF(true);
+                    }
+                    PyObject *new_induction = PyLong_FromLong(last);
+                    if (new_induction == NULL) {
+                        Py_DECREF(new_sum);
+                        current_executor->tier3_native_materialization_exits++;
+                        ERROR_IF(true);
+                    }
+                    _PyStackRef old_sum = frame->localsplus[sum_local];
+                    _PyStackRef old_induction =
+                        frame->localsplus[induction_local];
+                    frame->localsplus[sum_local] =
+                        PyStackRef_FromPyObjectSteal(new_sum);
+                    frame->localsplus[induction_local] =
+                        PyStackRef_FromPyObjectSteal(new_induction);
+                    PyStackRef_XCLOSE(old_sum);
+                    PyStackRef_XCLOSE(old_induction);
+                    range->start = next;
+                    range->len = remaining;
+                    current_executor->tier3_native_entries++;
+                    current_executor->tier3_native_iterations += completed;
+                    if (overflow) {
+                        current_executor->tier3_native_overflow_exits++;
+                    }
+                    else if (remaining > 0) {
+                        current_executor->tier3_native_budget_exits++;
+                    }
+                }
+                else if (overflow) {
+                    current_executor->tier3_native_overflow_exits++;
+                }
+            }
+        }
+
         tier2 op(_SET_IP, (instr_ptr/4 --)) {
             frame->instr_ptr = (_Py_CODEUNIT *)instr_ptr;
         }

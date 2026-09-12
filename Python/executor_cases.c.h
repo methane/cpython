@@ -22593,6 +22593,133 @@
             break;
         }
 
+        case _TIER3_RANGE_CHUNK_NATIVE_r22: {
+            CHECK_CURRENT_CACHED_VALUES(2);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            _PyStackRef iter;
+            _PyStackRef _stack_item_0 = _tos_cache0;
+            _PyStackRef _stack_item_1 = _tos_cache1;
+            oparg = CURRENT_OPARG();
+            iter = _stack_item_0;
+            int sum_local = oparg >> 4;
+            int induction_local = oparg & 15;
+            PyObject *iter_obj = PyStackRef_AsPyObjectBorrow(iter);
+            PyObject *sum_obj = PyStackRef_AsPyObjectBorrow(
+                frame->localsplus[sum_local]);
+            _PyRangeIterObject *range = (_PyRangeIterObject *)iter_obj;
+            int conversion_overflow = 0;
+            int64_t total = 0;
+            if (Py_TYPE(iter_obj) == &PyRangeIter_Type &&
+                range->step == 1 && PyLong_CheckExact(sum_obj))
+            {
+                stack_pointer[0] = iter;
+                stack_pointer[1] = _stack_item_1;
+                stack_pointer += 2;
+                ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                _PyFrame_SetStackPointer(frame, stack_pointer);
+                _PyFrame_StackPointerValidate(frame);
+                total = PyLong_AsLongLongAndOverflow(
+                    sum_obj, &conversion_overflow);
+                _PyFrame_StackPointerInvalidate(frame);
+                assert(stack_pointer == _PyFrame_GetStackPointer(frame));
+                _PyFrame_StackPointerValidate(frame);
+                int conversion_error = total == -1 && PyErr_Occurred();
+                _PyFrame_StackPointerInvalidate(frame);
+                if (conversion_error) {
+                    SET_CURRENT_CACHED_VALUES(0);
+                    JUMP_TO_ERROR();
+                }
+            }
+            else {
+                conversion_overflow = 1;
+                stack_pointer += 2;
+            }
+            if (conversion_overflow == 0) {
+                long next = range->start;
+                long remaining = range->len;
+                long completed = 0;
+                long last = 0;
+                bool overflow = false;
+                stack_pointer[-2] = iter;
+                stack_pointer[-1] = _stack_item_1;
+                _PyFrame_SetStackPointer(frame, stack_pointer);
+                _PyFrame_StackPointerValidate(frame);
+                long max_extra = Py_MIN(
+                                        (long)_PyTier3_GetBudget(), remaining - 1);
+                _PyFrame_StackPointerInvalidate(frame);
+                while (completed < max_extra) {
+                    if ((next > 0 && total > INT64_MAX - next) ||
+                        (next < 0 && total < INT64_MIN - next))
+                    {
+                        overflow = true;
+                        break;
+                    }
+                    total += next;
+                    last = next;
+                    remaining--;
+                    next++;
+                    completed++;
+                }
+                if (completed != 0) {
+                    assert(stack_pointer == _PyFrame_GetStackPointer(frame));
+                    _PyFrame_StackPointerValidate(frame);
+                    PyObject *new_sum = PyLong_FromLongLong(total);
+                    _PyFrame_StackPointerInvalidate(frame);
+                    if (new_sum == NULL) {
+                        current_executor->tier3_native_materialization_exits++;
+                        SET_CURRENT_CACHED_VALUES(0);
+                        JUMP_TO_ERROR();
+                    }
+                    PyObject *new_induction = PyLong_FromLong(last);
+                    if (new_induction == NULL) {
+                        assert(stack_pointer == _PyFrame_GetStackPointer(frame));
+                        _PyFrame_StackPointerValidate(frame);
+                        Py_DECREF(new_sum);
+                        _PyFrame_StackPointerInvalidate(frame);
+                        current_executor->tier3_native_materialization_exits++;
+                        SET_CURRENT_CACHED_VALUES(0);
+                        JUMP_TO_ERROR();
+                    }
+                    _PyStackRef old_sum = frame->localsplus[sum_local];
+                    _PyStackRef old_induction =
+                    frame->localsplus[induction_local];
+                    frame->localsplus[sum_local] =
+                    PyStackRef_FromPyObjectSteal(new_sum);
+                    frame->localsplus[induction_local] =
+                    PyStackRef_FromPyObjectSteal(new_induction);
+                    assert(stack_pointer == _PyFrame_GetStackPointer(frame));
+                    _PyFrame_StackPointerValidate(frame);
+                    PyStackRef_XCLOSE(old_sum);
+                    _PyFrame_StackPointerInvalidate(frame);
+                    assert(stack_pointer == _PyFrame_GetStackPointer(frame));
+                    _PyFrame_StackPointerValidate(frame);
+                    PyStackRef_XCLOSE(old_induction);
+                    _PyFrame_StackPointerInvalidate(frame);
+                    range->start = next;
+                    range->len = remaining;
+                    current_executor->tier3_native_entries++;
+                    current_executor->tier3_native_iterations += completed;
+                    if (overflow) {
+                        current_executor->tier3_native_overflow_exits++;
+                    }
+                    else if (remaining > 0) {
+                        current_executor->tier3_native_budget_exits++;
+                    }
+                }
+                else if (overflow) {
+                    current_executor->tier3_native_overflow_exits++;
+                }
+            }
+            _tos_cache1 = _stack_item_1;
+            _tos_cache0 = iter;
+            _tos_cache2 = PyStackRef_ZERO_BITS;
+            SET_CURRENT_CACHED_VALUES(2);
+            stack_pointer += -2;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            break;
+        }
+
         case _SET_IP_r00: {
             CHECK_CURRENT_CACHED_VALUES(0);
             ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);

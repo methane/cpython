@@ -40,7 +40,8 @@ def tier3_executor():
     for offset, candidate in executors():
         if fallback is None:
             fallback = (offset, candidate)
-        if candidate.get_tier3_stats()["entries"]:
+        stats = candidate.get_tier3_stats()
+        if stats["entries"] or stats["native_entries"]:
             return offset, candidate
     return fallback
 
@@ -139,9 +140,13 @@ def main():
         if stable
         else None
     )
-    entered = delta is not None and delta["entries"] > 0
-    processed = delta["iterations"] if entered else 0
-    requested = args.n * args.loops * len(samples)
+    entered = delta is not None and (
+        delta["entries"] > 0 or delta["native_entries"] > 0
+    )
+    processed = (
+        delta["iterations"] + delta["native_iterations"] if entered else 0
+    )
+    requested = max(args.n, 0) * args.loops * len(samples)
     print(
         json.dumps(
             {

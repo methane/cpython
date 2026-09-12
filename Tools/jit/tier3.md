@@ -1,12 +1,15 @@
 # Executor-integrated integer-loop experiment
 
-This experiment is disabled unless `PYTHON_TIER3_JIT=1` is present at process
-startup.  It is limited to GIL-enabled builds and exact built-in range iterators
-with unit step.
+This experiment is disabled unless a supported `PYTHON_TIER3_JIT` mode is
+present at process startup.  `1` (or `helper`) selects the C-helper reference;
+`2` (or `direct`) selects a second mode whose checked-int64 iteration loop is
+emitted in the JIT stencil and never calls `_PyTier3_RunRange`.  Entry
+conversion and exit materialization may still call existing C APIs.  It is
+limited to GIL-enabled builds and exact built-in range iterators with unit step.
 
 The optimizer recognizes the existing range iteration, integer addition, local
 stores, and loop-back uops using their actual opcodes and operands.  It inserts
-`_TIER3_RANGE_CHUNK` after the periodic/validity checks and the
+the mode-specific range chunk after the periodic/validity checks and the
 not-exhausted-range guard, but before `_ITER_NEXT_RANGE`; unsupported traces
 retain the existing executor unchanged.
 The existing `_JUMP_TO_TOP`, its target fixup, and periodic-check loop header are
@@ -27,11 +30,12 @@ committed.  The ordinary body consumes the reserved item, and the next executor
 iteration starts with `_CHECK_PERIODIC`, providing
 a bounded return to the existing safepoint and validity checks.
 
-Executor-local counters exposed by `get_tier3_stats()` distinguish entries,
-native C iterations, budget exits, and overflow exits.  This is a statically
-compiled C-kernel integration experiment, not an SSA compiler or dynamic native
-code emitter.  It uses no ctypes, replacement callable, Python compiler API, or
-RWX mapping.
+Executor-local counters exposed by `get_tier3_stats()` distinguish the helper
+fields from direct mode's `native_entries`, `native_iterations`,
+`native_budget_exits`, `native_overflow_exits`, and
+`native_materialization_exits`.  This remains a fused-uop experiment, not a
+general SSA compiler.  It uses no ctypes, replacement callable, Python compiler
+API, or RWX mapping.
 
 At entry the kernel accepts only an exact built-in `int` (not `bool` or an int
 subclass) whose value converts to signed 64-bit without overflow.  This includes

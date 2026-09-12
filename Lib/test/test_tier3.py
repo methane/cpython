@@ -22,6 +22,10 @@ def executors_available():
 class Tier3RangeTests(unittest.TestCase):
     SCRIPT = textwrap.dedent("""
         import _opcode
+        import os
+
+        DIRECT = os.environ["PYTHON_TIER3_JIT"] in {"2", "direct"}
+        PREFIX = "native_" if DIRECT else ""
 
         def executor(function):
             for offset in range(0, len(function.__code__.co_code), 2):
@@ -29,7 +33,7 @@ class Tier3RangeTests(unittest.TestCase):
                     candidate = _opcode.get_executor(function.__code__, offset)
                 except ValueError:
                     continue
-                if candidate.get_tier3_stats()["entries"]:
+                if candidate.get_tier3_stats()[PREFIX + "entries"]:
                     return candidate
             raise AssertionError("the integrated Tier-3 path was not entered")
 
@@ -44,35 +48,36 @@ class Tier3RangeTests(unittest.TestCase):
             alias(40, 10)
         active = executor(renamed)
         names = [item[0] for item in active]
-        chunk = names.index('_TIER3_RANGE_CHUNK')
+        chunk = names.index('_TIER3_RANGE_CHUNK_NATIVE' if DIRECT else
+                            '_TIER3_RANGE_CHUNK')
         assert names[chunk + 1] == '_ITER_NEXT_RANGE', names
         assert names.index('_JUMP_TO_TOP') > chunk, names
         before = active.get_tier3_stats()
         assert alias(100, -5) == -5 + sum(range(100))
         after = active.get_tier3_stats()
-        assert after["entries"] > before["entries"], (before, after)
-        assert after["iterations"] > before["iterations"], (before, after)
+        assert after[PREFIX + "entries"] > before[PREFIX + "entries"], (before, after)
+        assert after[PREFIX + "iterations"] > before[PREFIX + "iterations"], (before, after)
         before = executor(renamed).get_tier3_stats()
         assert alias(1000, 2**40) == 2**40 + sum(range(1000))
         after = executor(renamed).get_tier3_stats()
-        assert after['iterations'] > before['iterations'], (before, after)
+        assert after[PREFIX + 'iterations'] > before[PREFIX + 'iterations'], (before, after)
 
         before = executor(renamed).get_tier3_stats()
         assert alias(100, 2**63 - 10) == 2**63 - 10 + sum(range(100))
         after = executor(renamed).get_tier3_stats()
-        assert after['iterations'] > before['iterations'], (before, after)
+        assert after[PREFIX + 'iterations'] > before[PREFIX + 'iterations'], (before, after)
         if int(__import__('os').environ['PYTHON_TIER3_BUDGET']) >= 7:
-            assert after['overflow_exits'] > before['overflow_exits'], (before, after)
+            assert after[PREFIX + 'overflow_exits'] > before[PREFIX + 'overflow_exits'], (before, after)
         assert alias(-1, True) is True
         assert alias(0, 12345678901234567890) == 12345678901234567890
         assert alias(count=23, initial=17) == 17 + sum(range(23))
         for count in (0, 1, 2):
             assert alias(count, 11) == 11 + sum(range(count))
         stats = executor(renamed).get_tier3_stats()
-        assert stats["entries"] > 0, stats
-        assert stats["iterations"] >= stats["entries"], stats
+        assert stats[PREFIX + "entries"] > 0, stats
+        assert stats[PREFIX + "iterations"] >= stats[PREFIX + "entries"], stats
         if int(__import__('os').environ['PYTHON_TIER3_BUDGET']) < 39:
-            assert stats["budget_exits"] > 0, stats
+            assert stats[PREFIX + "budget_exits"] > 0, stats
 
         def sum_and_last(n, initial):
             total = initial
@@ -90,21 +95,22 @@ class Tier3RangeTests(unittest.TestCase):
         boundary = sum_and_last(100, 2**63 - 10)
         after = active.get_tier3_stats()
         assert boundary == (2**63 - 10 + sum(range(100)), 99), boundary
-        assert after["iterations"] > before["iterations"], (before, after)
+        assert after[PREFIX + "iterations"] > before[PREFIX + "iterations"], (before, after)
         if int(__import__('os').environ['PYTHON_TIER3_BUDGET']) >= 7:
-            assert after["overflow_exits"] > before["overflow_exits"], (before, after)
+            assert after[PREFIX + "overflow_exits"] > before[PREFIX + "overflow_exits"], (before, after)
     """)
 
     def test_range_osr_and_materialization(self):
-        for budget in (1, 2, 7, 64):
-            with self.subTest(budget=budget):
-                script_helper.assert_python_ok(
-                    "-c",
-                    self.SCRIPT,
-                    PYTHON_TIER3_JIT="1",
-                    PYTHON_TIER3_BUDGET=str(budget),
-                    PYTHON_JIT_STRESS="1",
-                )
+        for mode in ("1", "direct"):
+            for budget in (1, 2, 7, 64):
+                with self.subTest(mode=mode, budget=budget):
+                    script_helper.assert_python_ok(
+                        "-c",
+                        self.SCRIPT,
+                        PYTHON_TIER3_JIT=mode,
+                        PYTHON_TIER3_BUDGET=str(budget),
+                        PYTHON_JIT_STRESS="1",
+                    )
 
     def test_disabled(self):
         source = textwrap.dedent("""

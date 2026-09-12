@@ -43,14 +43,16 @@
 
 #define _PyExecutorObject_CAST(op)  ((_PyExecutorObject *)(op))
 
-static int
-tier3_budget(void)
+int
+_PyTier3_GetBudget(void)
 {
     static int budget = -1;
     if (budget < 0) {
         budget = 0;
         const char *enabled = Py_GETENV("PYTHON_TIER3_JIT");
-        if (enabled != NULL && strcmp(enabled, "1") == 0) {
+        if (enabled != NULL &&
+            (strcmp(enabled, "1") == 0 || strcmp(enabled, "helper") == 0 ||
+             strcmp(enabled, "2") == 0 || strcmp(enabled, "direct") == 0)) {
             budget = 1024;
             const char *setting = Py_GETENV("PYTHON_TIER3_BUDGET");
             if (setting != NULL) {
@@ -71,7 +73,7 @@ int
 _PyTier3_RunRange(_PyExecutorObject *executor, _PyInterpreterFrame *frame,
                   _PyStackRef iter, int sum_local, int induction_local)
 {
-    int budget = tier3_budget();
+    int budget = _PyTier3_GetBudget();
     if (budget == 0 || sum_local == induction_local) {
         return 0;
     }
@@ -575,11 +577,17 @@ get_tier3_stats(PyObject *self, PyObject *Py_UNUSED(ignored))
 {
     _PyExecutorObject *executor = _PyExecutorObject_CAST(self);
     return Py_BuildValue(
-        "{s:K,s:K,s:K,s:K}",
+        "{s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K}",
         "entries", executor->tier3_entries,
         "iterations", executor->tier3_iterations,
         "budget_exits", executor->tier3_budget_exits,
-        "overflow_exits", executor->tier3_overflow_exits);
+        "overflow_exits", executor->tier3_overflow_exits,
+        "native_entries", executor->tier3_native_entries,
+        "native_iterations", executor->tier3_native_iterations,
+        "native_budget_exits", executor->tier3_native_budget_exits,
+        "native_overflow_exits", executor->tier3_native_overflow_exits,
+        "native_materialization_exits",
+        executor->tier3_native_materialization_exits);
 }
 
 static PyMethodDef uop_executor_methods[] = {
@@ -1551,6 +1559,11 @@ allocate_executor(int exit_count, int length)
     res->tier3_iterations = 0;
     res->tier3_budget_exits = 0;
     res->tier3_overflow_exits = 0;
+    res->tier3_native_entries = 0;
+    res->tier3_native_iterations = 0;
+    res->tier3_native_budget_exits = 0;
+    res->tier3_native_overflow_exits = 0;
+    res->tier3_native_materialization_exits = 0;
     return res;
 }
 
@@ -1794,7 +1807,7 @@ mark_tier3_range_loop(_PyUOpInstruction *buffer, int length)
 #ifdef Py_GIL_DISABLED
     return length;
 #else
-    if (tier3_budget() == 0 || length >= UOP_MAX_TRACE_LENGTH) {
+    if (_PyTier3_GetBudget() == 0 || length >= UOP_MAX_TRACE_LENGTH) {
         return length;
     }
     static const uint16_t pattern[] = {
@@ -1871,8 +1884,10 @@ mark_tier3_range_loop(_PyUOpInstruction *buffer, int length)
     }
     memmove(&buffer[iter_next + 1], &buffer[iter_next],
             (length - iter_next) * sizeof(buffer[0]));
+    const char *mode = Py_GETENV("PYTHON_TIER3_JIT");
     buffer[iter_next] = (_PyUOpInstruction){
-        .opcode = _TIER3_RANGE_CHUNK,
+        .opcode = (strcmp(mode, "2") == 0 || strcmp(mode, "direct") == 0)
+                    ? _TIER3_RANGE_CHUNK_NATIVE : _TIER3_RANGE_CHUNK,
         .oparg = (sum_local << 4) | induction_local,
         /* The header guards have proved an exact, non-exhausted range.  The
          * helper leaves one item for the ordinary body.  Materialization is

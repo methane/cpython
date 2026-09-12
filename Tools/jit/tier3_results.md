@@ -1,5 +1,41 @@
 # Tier-3 range-kernel results
 
+## Direct-stencil follow-up
+
+The current follow-up adds `PYTHON_TIER3_JIT=direct` for the identical strict
+range-reduction shape.  `_TIER3_RANGE_CHUNK_NATIVE` contains the checked int64
+iteration loop rather than calling `_PyTier3_RunRange`; conversion and
+materialization remain boundary calls.  The historical helper measurements
+below remain the reference data.  Direct-mode native measurements and final
+assembly observations are recorded only after testing an immutable commit.
+
+Implementation commit `481e2a1` was runtime-verified with the debug Tier-2
+interpreter.  A short diagnostic (`n=1000`, 100 warmups, 3 samples, 50
+calls/sample, with JIT stress used only to establish executors) produced:
+
+| mode | budget | median ns/call | chunk iterations | fraction |
+|---|---:|---:|---:|---:|
+| helper | 1 | 156,001 | 74,850 | 49.90% |
+| direct | 1 | 159,538 | 74,850 | 49.90% |
+| helper | 8 | 37,439 | 133,200 | 88.80% |
+| direct | 8 | 37,224 | 133,200 | 88.80% |
+| helper | 64 | 7,291 | 147,450 | 98.30% |
+| direct | 64 | 7,179 | 147,450 | 98.30% |
+
+These are correctness/counter diagnostics, not native performance claims.
+Generated-case inspection shows one conversion and one budget call on entry,
+two allocation calls on a successful exit, and no calls in the checked-add
+`while` loop.  Its `total`, `next`, `remaining`, and `completed` values are C
+locals available to the stencil compiler, but actual register allocation,
+spills, and instruction counts cannot be inferred from source inspection.
+
+The supported LLVM 21 tools are not installed in this task environment:
+`clang-21` resolves through a missing swiftly toolchain and
+`llvm-dwarfdump-21` is absent.  Therefore this follow-up makes no new native
+stencil, disassembly, or native benchmark claim.  The architectural decision
+remains open until direct-vs-helper native measurements, especially budgets 1
+and 8, can be collected.
+
 The native measurements below were made from implementation commit
 `f895c84c1b514caea65fa25bde0b0d113497c552` on x86-64 Linux. This commit is
 based on `73fd8fc22138a1a2f03d62835e80497a365d4a2d`, which recorded the earlier

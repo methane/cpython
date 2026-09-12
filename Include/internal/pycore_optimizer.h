@@ -203,6 +203,11 @@ typedef struct _PyExecutorObject {
     uint64_t tier3_iterations;
     uint64_t tier3_budget_exits;
     uint64_t tier3_overflow_exits;
+    uint64_t tier3_native_entries;
+    uint64_t tier3_native_iterations;
+    uint64_t tier3_native_budget_exits;
+    uint64_t tier3_native_overflow_exits;
+    uint64_t tier3_native_materialization_exits;
     _PyExitData exits[1];
 } _PyExecutorObject;
 
@@ -212,6 +217,7 @@ int _PyTier3_RunRange(
     _PyStackRef iter,
     int sum_local,
     int induction_local);
+int _PyTier3_GetBudget(void);
 
 // Export for '_opcode' shared extension (JIT compiler).
 PyAPI_FUNC(_PyExecutorObject*) _Py_GetExecutor(PyCodeObject *code, int offset);
