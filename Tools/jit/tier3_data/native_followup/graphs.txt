@@ -1,0 +1,11 @@
+tier3-region acc=local[2] induction=local[3] result=add(acc,induction) result-node=3 lowering=_TIER3_RANGE_CHUNK_RESIDENT periodic=27 overflow=20 error=20
+  node=0 op=live-in type=object compact=none inputs=(-1,-1)
+  node=1 op=induction type=i64 compact=retained-guard inputs=(0,-1)
+  node=2 op=accumulator type=i64 compact=retained-guard inputs=(-1,-1)
+  node=3 op=checked-add type=i64 compact=checked-operation inputs=(2,1)
+tier3-region acc=local[2] induction=local[3] result=add(acc,mul(induction,induction)) result-node=4 lowering=_TIER3_RANGE_CHUNK_RESIDENT_SQUARES periodic=33 overflow=20 error=26
+  node=0 op=live-in type=object compact=none inputs=(-1,-1)
+  node=1 op=induction type=i64 compact=retained-guard inputs=(0,-1)
+  node=2 op=accumulator type=i64 compact=retained-guard inputs=(-1,-1)
+  node=3 op=checked-mul type=i64 compact=checked-operation inputs=(1,1)
+  node=4 op=checked-add type=i64 compact=checked-operation inputs=(2,3)

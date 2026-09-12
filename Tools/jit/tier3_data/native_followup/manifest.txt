@@ -1,0 +1,15 @@
+implementation_commit=85df248cd897d84702e91b5ba0218fb2b76c0eee
+source_tree=9d5a6cd6344ff055489ec008e00d255be4ee0d90
+tracked_source_state_before_evidence_documentation=clean
+executable_sha256=c747f186552e5c4808a1ab506b06b58e44d15f77223b86a5a8685b050a9520e7
+configure=../configure --enable-experimental-jit=yes
+compiler=GCC 13.3.0 -DNDEBUG -O3
+llvm_prefix=/usr/lib/llvm-21
+llvm_version=21.1.8
+stencil_cflags=-fno-vectorize -fno-slp-vectorize
+stencil_target=x86_64-pc-linux-gnu
+generated_source_status=no tracked generated-source changes
+initial_stencil_failure=Undefined temporary symbol .LCPI0_0
+benchmark_affinity=CPU 0 (permitted affinity 0-2)
+benchmark_environment=PYTHON_JIT=1; PYTHON_TIER3_JIT unset or resident; no PYTHON_JIT_STRESS
+benchmark_shape=500 warmups, 5 repeats, 2000 loops for n=1000 or 20 loops for n=100000

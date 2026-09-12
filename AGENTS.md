@@ -162,6 +162,16 @@ configured hooks). In particular, Black reformats `Tools/jit/tier3_bench.py`;
 run the hook locally rather than spending a CI cycle on that formatting-only
 failure.
 
+If `prek` is absent, the verified repository-local setup method is
+`python3 -m pip install --user prek`; invoke `$HOME/.local/bin/prek` directly
+when the user-site binary directory is not on `PATH`.
+
+Native evidence may be collected from a clean local implementation commit
+before it is published. Record both `git rev-parse HEAD` and
+`git rev-parse HEAD^{tree}` (plus tracked dirty state); the full source-tree
+hash is the practical identity used to reconcile that build with a later
+publication commit. A remote or pre-measurement push is not required.
+
 Update this section whenever a future task verifies a reusable environment,
 build, generation, or debugging workaround. Do not record branch-specific
 SHAs, transient benchmark values, or speculative advice here.

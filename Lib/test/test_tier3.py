@@ -223,6 +223,19 @@ class Tier3RangeTests(unittest.TestCase):
         self.assertIn("lowering=_TIER3_RANGE_CHUNK_RESIDENT ", dump)
         self.assertIn("result=add(acc,mul(induction,induction))", dump)
         self.assertIn("lowering=_TIER3_RANGE_CHUNK_RESIDENT_SQUARES ", dump)
+        self.assertIn("node=0 op=live-in type=object compact=none inputs=(-1,-1)", dump)
+        self.assertIn(
+            "node=3 op=checked-add type=i64 compact=checked-operation inputs=(2,1)",
+            dump,
+        )
+        self.assertIn(
+            "node=3 op=checked-mul type=i64 compact=checked-operation inputs=(1,1)",
+            dump,
+        )
+        self.assertIn(
+            "node=4 op=checked-add type=i64 compact=checked-operation inputs=(2,3)",
+            dump,
+        )
 
     def test_sum_squares_mode_compatibility(self):
         source = textwrap.dedent(f"""

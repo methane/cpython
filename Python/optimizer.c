@@ -1836,11 +1836,18 @@ typedef enum {
     TIER3_REGION_CHECKED_ADD,
 } Tier3RegionOp;
 
+typedef enum {
+    TIER3_FACT_NONE,
+    TIER3_FACT_RETAINED_GUARD,
+    TIER3_FACT_CHECKED_OPERATION,
+} Tier3FactSource;
+
 typedef struct {
     Tier3RegionOp op;
     Tier3ValueKind kind;
     int input0;
     int input1;
+    Tier3FactSource compact;
 } Tier3RegionNode;
 
 typedef struct {
@@ -1881,7 +1888,7 @@ tier3_region_add_node(Tier3LoopRegion *region, Tier3RegionOp op, Tier3ValueKind 
 {
     assert(region->node_count < (int)Py_ARRAY_LENGTH(region->nodes));
     int result = region->node_count++;
-    region->nodes[result] = (Tier3RegionNode){op, kind, input0, input1};
+    region->nodes[result] = (Tier3RegionNode){op, kind, input0, input1, TIER3_FACT_NONE};
     return result;
 }
 
@@ -1974,7 +1981,8 @@ build_tier3_loop_region(_PyUOpInstruction *buffer, int length, Tier3LoopRegion *
             continue;
         }
         if (phase == 9) {
-            if ((opcode != _POP_TOP && opcode != _POP_TOP_INT && opcode != _POP_TOP_NOP) ||
+            /* The replaced local is not proven null or immortal here. */
+            if ((opcode != _POP_TOP && opcode != _POP_TOP_INT) ||
                 !tier3_pop(stack, &depth, -1))
                 return false;
             phase = 10;
@@ -1994,18 +2002,30 @@ build_tier3_loop_region(_PyUOpInstruction *buffer, int length, Tier3LoopRegion *
                 return false;
             continue;
         }
-        if (opcode == _GUARD_TOS_OVERFLOWED || opcode == _GUARD_NOS_INT) {
-            if (depth == 0)
+        if (opcode == _GUARD_TOS_INT || opcode == _GUARD_TOS_OVERFLOWED ||
+            opcode == _GUARD_NOS_INT || opcode == _GUARD_NOS_OVERFLOWED) {
+            int guarded = (opcode == _GUARD_NOS_INT || opcode == _GUARD_NOS_OVERFLOWED)
+                              ? depth - 2
+                              : depth - 1;
+            if (guarded < 0)
                 return false;
+            /* These guards prove exact compact PyLongs.  This is stronger than
+             * the signed-i64 representation used by the fused kernel. */
+            int node = stack[guarded].node;
+            if (node < 0)
+                return false;
+            region->nodes[node].compact = TIER3_FACT_RETAINED_GUARD;
             if (region->overflow_target < 0)
                 region->overflow_target = buffer[i].target;
             continue;
         }
         if (opcode == _BINARY_OP_MULTIPLY_INT && !saw_mul && depth >= 2 &&
             stack[depth - 1].node == region->induction_node &&
-            stack[depth - 2].node == region->induction_node) {
+            stack[depth - 2].node == region->induction_node &&
+            region->nodes[region->induction_node].compact != TIER3_FACT_NONE) {
             int mul = tier3_region_add_node(region, TIER3_REGION_CHECKED_MUL, TIER3_VALUE_I64,
                                             region->induction_node, region->induction_node);
+            region->nodes[mul].compact = TIER3_FACT_CHECKED_OPERATION;
             Tier3RefKind left_ref = stack[depth - 2].ref;
             Tier3RefKind right_ref = stack[depth - 1].ref;
             depth -= 2;
@@ -2024,19 +2044,25 @@ build_tier3_loop_region(_PyUOpInstruction *buffer, int length, Tier3LoopRegion *
             rhs = rhs < 0 ? region->induction_node : rhs;
             if (stack[depth - 2].node != region->accumulator_node || stack[depth - 1].node != rhs)
                 return false;
+            if (region->nodes[region->accumulator_node].compact == TIER3_FACT_NONE ||
+                region->nodes[rhs].compact == TIER3_FACT_NONE)
+                return false;
             result = tier3_region_add_node(region, TIER3_REGION_CHECKED_ADD, TIER3_VALUE_I64,
                                            region->accumulator_node, rhs);
+            region->nodes[result].compact = TIER3_FACT_CHECKED_OPERATION;
             Tier3RefKind left_ref = stack[depth - 2].ref;
             Tier3RefKind right_ref = stack[depth - 1].ref;
             depth -= 2;
-            tier3_push(stack, &depth, result, TIER3_REF_OWNED);
-            tier3_push(stack, &depth, region->accumulator_node, left_ref);
-            tier3_push(stack, &depth, rhs, right_ref);
+            if (!tier3_push(stack, &depth, result, TIER3_REF_OWNED) ||
+                !tier3_push(stack, &depth, region->accumulator_node, left_ref) ||
+                !tier3_push(stack, &depth, rhs, right_ref)) {
+                return false;
+            }
             region->error_target = buffer[i].target;
             continue;
         }
         if (phase == 11 &&
-            (opcode == _POP_TOP || opcode == _POP_TOP_INT || opcode == _POP_TOP_NOP) &&
+            (opcode == _POP_TOP || opcode == _POP_TOP_INT) &&
             tier3_pop(stack, &depth, -1)) {
             phase = 12;
             continue;
@@ -2065,7 +2091,8 @@ build_tier3_loop_region(_PyUOpInstruction *buffer, int length, Tier3LoopRegion *
     return phase == 13 && depth == 0 && result >= 0 && region->induction_local >= 0 &&
            region->accumulator_local >= 0 && region->induction_local < 16 &&
            region->accumulator_local < 16 && region->induction_local != region->accumulator_local &&
-           region->periodic_target >= 0 && region->error_target >= 0;
+           region->periodic_target >= 0 && region->overflow_target >= 0 &&
+           region->error_target >= 0;
 }
 
 static Tier3LoweringKind
@@ -2116,11 +2143,22 @@ dump_tier3_region(const Tier3LoopRegion *region, Tier3LoweringKind kind, int opc
     }
     const char *expression =
         kind == TIER3_LOWER_MUL_ADD ? "add(acc,mul(induction,induction))" : "add(acc,induction)";
-    PySys_WriteStderr("tier3-region acc=local[%d] induction=local[%d] result=%s "
-                      "lowering=%s periodic=%d overflow=%d error=%d\n",
-                      region->accumulator_local, region->induction_local, expression,
-                      _PyOpcode_uop_name[opcode], region->periodic_target, region->overflow_target,
-                      region->error_target);
+    static const char *const operations[] = {"live-in", "induction", "accumulator",
+                                              "checked-mul", "checked-add"};
+    static const char *const kinds[] = {"object", "i64"};
+    static const char *const facts[] = {"none", "retained-guard", "checked-operation"};
+    fprintf(stderr,
+            "tier3-region acc=local[%d] induction=local[%d] result=%s result-node=%d "
+            "lowering=%s periodic=%d overflow=%d error=%d\n",
+            region->accumulator_local, region->induction_local, expression, region->result_node,
+            _PyOpcode_uop_name[opcode], region->periodic_target, region->overflow_target,
+            region->error_target);
+    for (int i = 0; i < region->node_count; i++) {
+        const Tier3RegionNode *node = &region->nodes[i];
+        fprintf(stderr, "  node=%d op=%s type=%s compact=%s inputs=(%d,%d)\n", i,
+                operations[node->op], kinds[node->kind], facts[node->compact], node->input0,
+                node->input1);
+    }
 }
 
 static int

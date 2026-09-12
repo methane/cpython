@@ -20,10 +20,20 @@ def sum_from(n, initial):
     return total
 
 
-def executors():
-    for offset in range(0, len(sum_from.__code__.co_code), 2):
+def sum_squares_from(n, initial):
+    total = initial
+    for item in range(n):
+        total += item * item
+    return total
+
+
+WORKLOADS = {"sum": sum_from, "squares": sum_squares_from}
+
+
+def executors(function):
+    for offset in range(0, len(function.__code__.co_code), 2):
         try:
-            yield offset, _opcode.get_executor(sum_from.__code__, offset)
+            yield offset, _opcode.get_executor(function.__code__, offset)
         except (RuntimeError, ValueError):
             pass
 
@@ -35,9 +45,9 @@ def positive(value):
     return value
 
 
-def tier3_executor():
+def tier3_executor(function):
     fallback = None
-    for offset, candidate in executors():
+    for offset, candidate in executors(function):
         if fallback is None:
             fallback = (offset, candidate)
         stats = candidate.get_tier3_stats()
@@ -73,30 +83,34 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--n", type=int, default=1000)
     parser.add_argument("--initial", type=int, default=0)
+    parser.add_argument("--workload", choices=WORKLOADS, default="sum")
     parser.add_argument("--warmup", type=positive, default=3000)
     parser.add_argument("--repeat", type=positive, default=9)
     parser.add_argument("--loops", type=positive, default=10000)
     args = parser.parse_args()
 
-    expected = args.initial + sum(range(args.n))
+    function = WORKLOADS[args.workload]
+    expected = args.initial + sum(
+        item * item if args.workload == "squares" else item for item in range(args.n)
+    )
     # Record the supported whole-loop trace from a compact accumulator before
     # measuring entry from a potentially non-compact exact int.
     for _ in range(args.warmup):
-        sum_from(min(args.n, 1000), 0)
+        function(min(args.n, 1000), 0)
     for _ in range(args.warmup):
-        assert sum_from(args.n, args.initial) == expected
+        assert function(args.n, args.initial) == expected
 
-    selected = tier3_executor()
+    selected = tier3_executor(function)
     samples = []
     measurements = []
     for _ in range(args.repeat):
-        selected = tier3_executor()
+        selected = tier3_executor(function)
         before = selected[1].get_tier3_stats() if selected else None
         start = time.perf_counter_ns()
         for _ in range(args.loops):
-            result = sum_from(args.n, args.initial)
+            result = function(args.n, args.initial)
         elapsed = (time.perf_counter_ns() - start) / args.loops
-        selected_after = tier3_executor()
+        selected_after = tier3_executor(function)
         stable = (
             selected is not None
             and selected_after is not None
@@ -123,8 +137,11 @@ def main():
     stable_measurements = [item for item in measurements if item["status"] == "stable"]
     stable = bool(stable_measurements)
     try:
-        native_code_verified = stable and selected[1].get_jit_code() is not None
+        native_code = selected[1].get_jit_code() if stable else None
+        native_code_bytes = len(native_code) if native_code else 0
+        native_code_verified = native_code_bytes > 0
     except RuntimeError:
+        native_code_bytes = 0
         native_code_verified = False
     delta = (
         {
@@ -150,12 +167,14 @@ def main():
             {
                 "configuration": configuration(),
                 "workload": vars(args),
+                "callable": function.__name__,
                 "result": result,
                 "expected": expected,
                 "median_ns": statistics.median(samples) if samples else None,
                 "samples_ns": samples,
                 "measurements": measurements,
                 "executor_offset": selected[0] if selected else None,
+                "executor_identity": id(selected[1]) if selected else None,
                 "tier3_status": (
                     "entered"
                     if entered
@@ -170,6 +189,7 @@ def main():
                 "requested_iterations": requested,
                 "kernel_fraction": processed / requested if requested else 0.0,
                 "native_code_verified": native_code_verified,
+                "native_code_bytes": native_code_bytes,
             },
             indent=2,
         )

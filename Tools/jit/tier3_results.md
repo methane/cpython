@@ -1,5 +1,75 @@
 # Tier-3 range-kernel results
 
+## Dataflow verifier and two-recurrence native follow-up
+
+The native executable used the tracked sources at local implementation commit
+`85df248cd897d84702e91b5ba0218fb2b76c0eee`, tree
+`9d5a6cd6344ff055489ec008e00d255be4ee0d90`. The build was an out-of-source,
+GCC 13.3.0 `-DNDEBUG -O3` build configured with
+`--enable-experimental-jit=yes`. Stencils used apt.llvm.org's complete Ubuntu
+LLVM 21.1.8 prefix at `/usr/lib/llvm-21` and
+`-fno-vectorize -fno-slp-vectorize`. The initial ordinary stencil generation
+reproduced `Undefined temporary symbol .LCPI0_0`; regeneration with those
+documented flags succeeded. The local `.llvm21-env`, build directories, and
+logs were not committed. The benchmark JSON records the executable's version,
+configure arguments, callable, executor identity, every sample and counter
+delta, result, and nonempty 4,096-byte native-code size.
+
+All timings below are medians of five samples pinned to permitted CPU 0, with
+500 warmups and no `PYTHON_JIT_STRESS`. Samples used 2,000 calls at `n=1000`
+and 20 calls at `n=100000`. “Off” is the same native build with the feature
+unset; “resident” is `PYTHON_TIER3_JIT=resident`.
+
+| workload | n | initial | off ns | resident ns | matched speedup |
+|---|---:|---:|---:|---:|---:|
+| sum | 1,000 | 0 | 11,412.5 | 944.7 | 12.08x |
+| sum | 1,000 | 2**40 | 27,587.7 | 991.5 | 27.82x |
+| sum | 100,000 | 0 | 2,575,237.4 | 82,210.8 | 31.32x |
+| sum | 100,000 | 2**40 | 3,328,197.8 | 82,532.8 | 40.33x |
+| squares | 1,000 | 0 | 15,316.1 | 1,195.3 | 12.81x |
+| squares | 1,000 | 2**40 | 35,244.8 | 1,198.2 | 29.41x |
+| squares | 100,000 | 0 | 5,293,688.8 | 103,549.9 | 51.12x |
+| squares | 100,000 | 2**40 | 5,008,392.2 | 103,429.2 | 48.42x |
+
+Every resident short-loop row recorded 10,000 entries, 9,980,000 iterations
+and polls, and 10,000 normal materializations. Every long-loop row recorded
+100 entries, 9,999,800 iterations and polls, and 100 materializations. All
+pending, deopt, and overflow counters were zero in the timed matrix. Off rows
+explicitly report “not entered” and zero Tier-3 deltas rather than treating
+absence as Tier-3 execution. Results matched the separately calculated Python
+answers in every row. Raw results and the graph/assembly artifacts are under
+`tier3_data/native_followup/`.
+
+The real squares graph binds accumulator node 2 and induction node 1, then
+selects result node 4 through checked-multiply node 3. Its compact facts show
+which values are established by retained guards and which by checked
+operations. The native hot backedge is:
+
+```asm
+2b4: lea    (%rcx,%r14,1),%r12
+2b8: imul   %r12,%r12
+2bc: jo     0x344
+2c2: add    %r9,%r12
+2c5: jo     0x344
+2d5: mov    0x18(%r9),%r9       # per-logical-backedge eval-breaker poll
+2d9: inc    %r14
+2dc: cmp    %r10,%r9            # instrumentation version
+2e3: jne    0x2f6
+2e5: mov    %r11,%r13
+2e8: inc    %r11
+2eb: inc    %rax
+2ee: mov    %r12,%r9            # one accumulator reconstruction spill
+2f1: test   %dil,%dil           # executor validity
+2f4: jne    0x2b4
+```
+
+There is no call, PyLong allocation, node interpretation, budget lookup, or
+statistics write on that loop backedge. Entry conversion, exit allocation,
+and counter publication remain outside it. Materialization OOM is still not
+runtime-verified: transactional writes and distinct exits do not prove that
+the exception location and reconstructed Python snapshot agree, so this
+experiment is not production-ready on that basis.
+
 ## Native helper/direct-stencil comparison
 
 Tested commit: `d9399c9e96bbeb0398fff4dc4adacb6a6a8df942` (x86-64
