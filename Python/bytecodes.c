@@ -6121,13 +6121,12 @@ dummy_func(
             JUMP_TO_JUMP_TARGET();
         }
 
-        tier2 op(_TIER3_RANGE_JUMP_TO_TOP, (iter, index -- iter, index)) {
+        tier2 op(_TIER3_RANGE_CHUNK, (iter, index -- iter, index)) {
             int sum_local = oparg >> 4;
             int induction_local = oparg & 15;
             int result = _PyTier3_RunRange(
                 current_executor, frame, iter, sum_local, induction_local);
             ERROR_IF(result < 0);
-            JUMP_TO_JUMP_TARGET();
         }
 
         tier2 op(_SET_IP, (instr_ptr/4 --)) {

@@ -30,6 +30,12 @@ class Tier3RangeTests(unittest.TestCase):
         alias = renamed
         for _ in range(2000):
             alias(40, 10)
+        active = executor(renamed)
+        before = active.get_tier3_stats()
+        assert alias(100, -5) == -5 + sum(range(100))
+        after = active.get_tier3_stats()
+        assert after["entries"] > before["entries"], (before, after)
+        assert after["iterations"] > before["iterations"], (before, after)
         assert alias(100, 2**63 - 10) == 2**63 - 10 + sum(range(100))
         assert alias(-1, True) is True
         assert alias(0, 12345678901234567890) == 12345678901234567890
@@ -67,7 +73,71 @@ class Tier3RangeTests(unittest.TestCase):
     def test_disabled_by_default(self):
         script_helper.assert_python_ok(
             "-c",
-            "import os; assert os.getenv('PYTHON_TIER3_JIT') is None",
+            textwrap.dedent("""
+                import _opcode
+                def f(n):
+                    s = 0
+                    for i in range(n):
+                        s += i
+                    return s
+                for _ in range(2000):
+                    f(40)
+                for offset in range(0, len(f.__code__.co_code), 2):
+                    try:
+                        executor = _opcode.get_executor(f.__code__, offset)
+                    except ValueError:
+                        continue
+                    assert all(item[0] != '_TIER3_RANGE_CHUNK' for item in executor)
+                    assert executor.get_tier3_stats()['entries'] == 0
+            """),
+            PYTHON_JIT_STRESS="1",
+        )
+
+    def test_unsafe_loops_are_rejected(self):
+        script_helper.assert_python_ok(
+            "-c",
+            textwrap.dedent("""
+                import _opcode
+                seen = []
+                def constant(n):
+                    s = 0
+                    for i in range(n): s += 1
+                    return s
+                def twice(n):
+                    s = 1
+                    for i in range(n): s += s
+                    return s
+                def extra(n):
+                    s = 0
+                    for i in range(n):
+                        s += i
+                        s += 1
+                    return s
+                def effect(n):
+                    s = 0
+                    for i in range(n):
+                        seen.append(i)
+                        s += i
+                    return s
+                def branch(n, stop):
+                    s = 0
+                    for i in range(n):
+                        if i == stop: break
+                        s += i
+                    return s
+                for function, args in ((constant, (20,)), (twice, (20,)),
+                                       (extra, (20,)), (effect, (20,)),
+                                       (branch, (20, 10))):
+                    for _ in range(2000): function(*args)
+                    for offset in range(0, len(function.__code__.co_code), 2):
+                        try: executor = _opcode.get_executor(function.__code__, offset)
+                        except ValueError: continue
+                        assert all(item[0] != '_TIER3_RANGE_CHUNK'
+                                   for item in executor), function.__name__
+                assert seen == list(range(20)) * 2000
+            """),
+            PYTHON_TIER3_JIT="1",
+            PYTHON_JIT_STRESS="1",
         )
 
 

@@ -90,11 +90,13 @@ _PyTier3_RunRange(_PyExecutorObject *executor, _PyInterpreterFrame *frame,
     bool overflow = false;
     while (completed < budget && remaining > 0) {
         int64_t new_total;
-        if (__builtin_add_overflow(total, (int64_t)next, &new_total))
+        if ((next > 0 && total > INT64_MAX - next) ||
+            (next < 0 && total < INT64_MIN - next))
         {
             overflow = true;
             break;
         }
+        new_total = total + next;
         total = new_total;
         last = next;
         remaining--;
@@ -1761,67 +1763,91 @@ stack_allocate(_PyUOpInstruction *buffer, _PyUOpInstruction *output, int length)
     return (int)(write - output);
 }
 
-static void
+static int
+normalize_tier3_opcode(int opcode)
+{
+    if (opcode > MAX_UOP_ID) {
+        opcode = _PyUop_Uncached[opcode];
+    }
+    if (opcode >= _SWAP_FAST_0 && opcode <= _SWAP_FAST_7) {
+        return _SWAP_FAST;
+    }
+    if (opcode >= _LOAD_FAST_0 && opcode <= _LOAD_FAST_7) {
+        return _LOAD_FAST;
+    }
+    if (opcode >= _LOAD_FAST_BORROW_0 && opcode <= _LOAD_FAST_BORROW_7) {
+        return _LOAD_FAST_BORROW;
+    }
+    return opcode;
+}
+
+static int
 mark_tier3_range_loop(_PyUOpInstruction *buffer, int length)
 {
 #ifdef Py_GIL_DISABLED
-    return;
+    return length;
 #else
-    int iter_next = -1;
+    if (tier3_budget() == 0 || length >= UOP_MAX_TRACE_LENGTH) {
+        return length;
+    }
+    int state = 0;
     int induction_local = -1;
-    int add = -1;
     int sum_local = -1;
     int jump = -1;
     for (int i = 0; i < length; i++) {
-        int opcode = buffer[i].opcode;
-        if (opcode > MAX_UOP_ID) {
-            opcode = _PyUop_Uncached[opcode];
+        int opcode = normalize_tier3_opcode(buffer[i].opcode);
+        if (opcode == _ITER_NEXT_RANGE && state == 0) {
+            state = 1;
         }
-        if (opcode >= _SWAP_FAST_1 && opcode <= _SWAP_FAST_7) {
-            opcode = _SWAP_FAST;
-        }
-        if (opcode == _ITER_NEXT_RANGE) {
-            iter_next = i;
-        }
-        else if (iter_next >= 0 && induction_local < 0 && opcode == _SWAP_FAST) {
+        else if (opcode == _SWAP_FAST && state == 1) {
             induction_local = buffer[i].oparg;
+            state = 2;
         }
-        else if (opcode == _BINARY_OP_ADD_INT ||
-                 opcode == _BINARY_OP_ADD_INT_INPLACE ||
-                 opcode == _BINARY_OP_ADD_INT_INPLACE_RIGHT) {
-            add = i;
-        }
-        else if (add >= 0 && opcode == _SWAP_FAST) {
+        else if ((opcode == _LOAD_FAST || opcode == _LOAD_FAST_BORROW) && state == 2) {
             sum_local = buffer[i].oparg;
+            state = 3;
         }
-        else if (opcode == _JUMP_TO_TOP) {
+        else if (opcode == _LOAD_FAST_BORROW && state == 3 &&
+                 buffer[i].oparg == induction_local) {
+            state = 4;
+        }
+        else if ((opcode == _BINARY_OP_ADD_INT ||
+                  opcode == _BINARY_OP_ADD_INT_INPLACE ||
+                  opcode == _BINARY_OP_ADD_INT_INPLACE_RIGHT) && state == 4) {
+            state = 5;
+        }
+        else if (opcode == _SWAP_FAST && state == 5 &&
+                 buffer[i].oparg == sum_local) {
+            state = 6;
+        }
+        else if (opcode == _JUMP_TO_TOP && state == 6) {
             jump = i;
             break;
         }
+        else if (opcode == _SET_IP || opcode == _CHECK_VALIDITY ||
+                 opcode == _GUARD_TOS_OVERFLOWED || opcode == _GUARD_NOS_INT ||
+                 opcode == _POP_TOP || opcode == _POP_TOP_INT ||
+                 opcode == _POP_TOP_NOP || opcode == _SPILL_OR_RELOAD ||
+                 opcode == _NOP) {
+            continue;
+        }
+        else if (state != 0) {
+            return length;
+        }
     }
-    if (iter_next < 0 || induction_local < 0 || add < 0 ||
-        sum_local < 0 || jump < 0 || induction_local >= 16 || sum_local >= 16)
+    if (jump < 0 || sum_local < 0 || induction_local < 0 ||
+        sum_local == induction_local || sum_local >= 16 || induction_local >= 16)
     {
-        return;
+        return length;
     }
-    /* Only accept the compact range-reduction region.  Calls, stores other
-       than the two locals, and additional arithmetic make it unsupported. */
-    for (int i = iter_next + 1; i < jump; i++) {
-        int opcode = buffer[i].opcode;
-        if (opcode > MAX_UOP_ID) {
-            opcode = _PyUop_Uncached[opcode];
-        }
-        if (opcode >= _SWAP_FAST_1 && opcode <= _SWAP_FAST_7) {
-            opcode = _SWAP_FAST;
-        }
-        if (opcode == _BINARY_OP_MULTIPLY_INT ||
-            opcode == _BINARY_OP_SUBTRACT_INT)
-        {
-            return;
-        }
-    }
-    buffer[jump].opcode = _TIER3_RANGE_JUMP_TO_TOP;
-    buffer[jump].oparg = (sum_local << 4) | induction_local;
+    memmove(&buffer[jump + 1], &buffer[jump],
+            (length - jump) * sizeof(buffer[0]));
+    buffer[jump] = (_PyUOpInstruction){
+        .opcode = _TIER3_RANGE_CHUNK,
+        .oparg = (sum_local << 4) | induction_local,
+        .target = buffer[jump + 1].target,
+    };
+    return length + 1;
 #endif
 }
 
@@ -1883,7 +1909,7 @@ uop_optimize(
     _PyJitUopBuffer *code_buffer = &_tstate->jit_tracer_state->code_buffer;
     code_buffer->next = code_buffer->start;
 
-    mark_tier3_range_loop(buffer, length);
+    length = mark_tier3_range_loop(buffer, length);
     OPT_HIST(effective_trace_length(buffer, length), optimized_trace_length_hist);
     _PyUOpInstruction *output = &_tstate->jit_tracer_state->uop_array[0];
     length = stack_allocate(buffer, output, length);

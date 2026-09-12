@@ -22560,7 +22560,7 @@
             break;
         }
 
-        case _TIER3_RANGE_JUMP_TO_TOP_r22: {
+        case _TIER3_RANGE_CHUNK_r22: {
             CHECK_CURRENT_CACHED_VALUES(2);
             ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
             _PyStackRef iter;
@@ -22583,7 +22583,6 @@
                 SET_CURRENT_CACHED_VALUES(0);
                 JUMP_TO_ERROR();
             }
-            JUMP_TO_JUMP_TARGET();
             _tos_cache1 = _stack_item_1;
             _tos_cache0 = iter;
             _tos_cache2 = PyStackRef_ZERO_BITS;

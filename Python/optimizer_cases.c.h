@@ -5541,7 +5541,7 @@
             break;
         }
 
-        case _TIER3_RANGE_JUMP_TO_TOP: {
+        case _TIER3_RANGE_CHUNK: {
             break;
         }
 

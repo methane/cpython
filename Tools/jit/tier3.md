@@ -6,11 +6,15 @@ with unit step.
 
 The optimizer recognizes the existing range iteration, integer addition, local
 stores, and loop-back uops using their actual opcodes and operands.  It replaces
-only the loop-back uop with `_TIER3_RANGE_JUMP_TO_TOP`; unsupported traces retain
-the existing executor unchanged.  No function, code-object, name, or complete
-uop-tuple template is matched.
+the instruction immediately before the existing loop-back with
+`_TIER3_RANGE_CHUNK`; unsupported traces retain the existing executor unchanged.
+The existing `_JUMP_TO_TOP`, its target fixup, and periodic-check loop header are
+left intact.  No function, code-object, name, or complete uop-tuple template is
+matched.  When the feature is disabled, recognition runs no transformation and
+the experimental uop is absent from the executor.
 
-The new uop runs at the boundary after one iteration has committed.  Its stack
+The new non-terminating uop runs at the boundary after one iteration has
+committed, then falls through to the original `_JUMP_TO_TOP`.  Its stack
 inputs are the existing iterator and tagged index.  The private C kernel reads
 the iterator's current `start` and `len`, and reads the current accumulator from
 the frame local selected by the trace's `_SWAP_FAST` operand.  It performs at
