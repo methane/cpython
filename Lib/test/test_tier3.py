@@ -2,6 +2,7 @@ import textwrap
 import unittest
 import _opcode
 
+from test import support
 from test.support import script_helper
 
 
@@ -19,6 +20,7 @@ def executors_available():
 
 
 @unittest.skipUnless(executors_available(), "requires tier 2")
+@support.requires_gil_enabled("Tier-3 range chunks require the GIL")
 class Tier3RangeTests(unittest.TestCase):
     SCRIPT = textwrap.dedent("""
         import _opcode
@@ -102,7 +104,7 @@ class Tier3RangeTests(unittest.TestCase):
 
     def test_range_osr_and_materialization(self):
         for mode in ("1", "direct"):
-            for budget in (1, 2, 7, 64):
+            for budget in (1, 2, 7, 64, 4096):
                 with self.subTest(mode=mode, budget=budget):
                     script_helper.assert_python_ok(
                         "-c",

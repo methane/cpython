@@ -73,7 +73,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--n", type=int, default=1000)
     parser.add_argument("--initial", type=int, default=0)
-    parser.add_argument("--warmup", type=int, default=3000)
+    parser.add_argument("--warmup", type=positive, default=3000)
     parser.add_argument("--repeat", type=positive, default=9)
     parser.add_argument("--loops", type=positive, default=10000)
     args = parser.parse_args()

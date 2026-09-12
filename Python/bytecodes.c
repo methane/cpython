@@ -6158,16 +6158,16 @@ dummy_func(
                 long completed = 0;
                 long last = 0;
                 bool overflow = false;
-                long max_extra = Py_MIN(
-                    (long)_PyTier3_GetBudget(), remaining - 1);
+                long budget = (long)_PyTier3_GetBudget();
+                long max_extra = Py_MIN(budget, remaining - 1);
                 while (completed < max_extra) {
-                    if ((next > 0 && total > INT64_MAX - next) ||
-                        (next < 0 && total < INT64_MIN - next))
-                    {
+                    int64_t new_total;
+                    if (__builtin_add_overflow(total, (int64_t)next,
+                                               &new_total)) {
                         overflow = true;
                         break;
                     }
-                    total += next;
+                    total = new_total;
                     last = next;
                     remaining--;
                     next++;

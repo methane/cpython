@@ -1,40 +1,156 @@
 # Tier-3 range-kernel results
 
-## Direct-stencil follow-up
+## Native helper/direct-stencil comparison
 
-The current follow-up adds `PYTHON_TIER3_JIT=direct` for the identical strict
-range-reduction shape.  `_TIER3_RANGE_CHUNK_NATIVE` contains the checked int64
-iteration loop rather than calling `_PyTier3_RunRange`; conversion and
-materialization remain boundary calls.  The historical helper measurements
-below remain the reference data.  Direct-mode native measurements and final
-assembly observations are recorded only after testing an immutable commit.
+Tested commit: `d9399c9e96bbeb0398fff4dc4adacb6a6a8df942` (x86-64
+Linux).  This commit contains the direct-stencil implementation and evaluates
+the runtime budget once per chunk.  Raw per-sample JSON is consolidated in
+`tier3_data/native_direct_matrix_d9399c9.json`.
 
-Implementation commit `481e2a1` was runtime-verified with the debug Tier-2
-interpreter.  A short diagnostic (`n=1000`, 100 warmups, 3 samples, 50
-calls/sample, with JIT stress used only to establish executors) produced:
+### LLVM 21 build
 
-| mode | budget | median ns/call | chunk iterations | fraction |
-|---|---:|---:|---:|---:|
-| helper | 1 | 156,001 | 74,850 | 49.90% |
-| direct | 1 | 159,538 | 74,850 | 49.90% |
-| helper | 8 | 37,439 | 133,200 | 88.80% |
-| direct | 8 | 37,224 | 133,200 | 88.80% |
-| helper | 64 | 7,291 | 147,450 | 98.30% |
-| direct | 64 | 7,179 | 147,450 | 98.30% |
+The official 21.1.0 release archive was downloaded successfully, but that
+particular `LLVM-21.1.0-Linux-X64.tar.xz` contains libraries and headers without
+a `bin/` directory.  The documented apt installer rejected Ubuntu noble because
+apt.llvm.org does not publish a noble LLVM 21 repository.  Installing the
+complete LLVM 21.1.8 tool set from apt.llvm.org's jammy repository provided
+`clang`, `llvm-readobj`, `llvm-objdump`, and `llvm-dwarfdump`:
 
-These are correctness/counter diagnostics, not native performance claims.
-Generated-case inspection shows one conversion and one budget call on entry,
-two allocation calls on a successful exit, and no calls in the checked-add
-`while` loop.  Its `total`, `next`, `remaining`, and `completed` values are C
-locals available to the stencil compiler, but actual register allocation,
-spills, and instruction counts cannot be inferred from source inspection.
+```sh
+curl -fsSL https://apt.llvm.org/llvm.sh -o /tmp/llvm.sh
+/tmp/llvm.sh 21  # rejected noble: distribution not supported
+# Add apt.llvm.org/jammy llvm-toolchain-jammy-21, then:
+apt-get update
+apt-get install -y clang-21 llvm-21 llvm-21-tools
+mkdir /workspace/build-jit21 && cd /workspace/build-jit21
+LLVM_TOOLS_INSTALL_DIR=/usr/lib/llvm-21 \
+    /workspace/cpython/configure --enable-experimental-jit=yes
+```
 
-The supported LLVM 21 tools are not installed in this task environment:
-`clang-21` resolves through a missing swiftly toolchain and
-`llvm-dwarfdump-21` is absent.  Therefore this follow-up makes no new native
-stencil, disassembly, or native benchmark claim.  The architectural decision
-remains open until direct-vs-helper native measurements, especially budgets 1
-and 8, can be collected.
+LLVM 21.1.8 emits a local constant-pool reference that the stencil assembly
+optimizer drops for `_GUARD_TOS_SLICE_r11`.  Building stencils with vectorization
+disabled avoids that unrelated LLVM-version difference; the interpreter remains
+a normal `-DNDEBUG -O3` build:
+
+```sh
+python3.14 /workspace/cpython/Tools/jit/build.py x86_64-pc-linux-gnu \
+  -o . -p . -f --cflags='-fno-vectorize -fno-slp-vectorize' \
+  --llvm-tools-install-dir=/usr/lib/llvm-21
+make -j8
+```
+
+`sys._jit.is_available()` and `sys._jit.is_enabled()` both returned `True`, and
+all three modes' selected executors returned 4096 bytes from `get_jit_code()`.
+No timed run used `PYTHON_JIT_STRESS`.  Every run was pinned to CPU 0, used
+1,000 warmups and seven samples, and used 5,000 calls/sample for `n=1000` or 50
+calls/sample for `n=100000`.
+
+### Decisive budget sweep (initial zero)
+
+Times are median nanoseconds per Python call.  `off/helper` and `off/direct` are
+speedups over the current native JIT; `helper/direct` greater than one means the
+direct stencil is faster.  Helper and direct counter deltas had identical
+coverage at every matched point.
+
+| n | budget | off ns | helper ns | direct ns | off/helper | off/direct | helper/direct | coverage |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1,000 | 1 | 11,336.6 | 14,446.9 | 15,046.1 | 0.78x | 0.75x | 0.960x | 49.90% |
+| 1,000 | 8 | 11,336.6 | 3,604.9 | 3,645.8 | 3.14x | 3.11x | 0.989x | 88.80% |
+| 1,000 | 64 | 11,336.6 | 1,071.5 | 961.5 | 10.58x | 11.79x | 1.114x | 98.30% |
+| 1,000 | 512 | 11,336.6 | 706.6 | 608.5 | 16.04x | 18.63x | 1.161x | 99.70% |
+| 1,000 | 4,096 | 11,336.6 | 667.4 | 561.6 | 16.99x | 20.19x | 1.188x | 99.80% |
+| 100,000 | 1 | 2,575,754.0 | 2,563,439.7 | 2,675,255.6 | 1.00x | 0.96x | 0.958x | 50.00% |
+| 100,000 | 8 | 2,575,754.0 | 619,053.1 | 636,010.1 | 4.16x | 4.05x | 0.973x | 88.89% |
+| 100,000 | 64 | 2,575,754.0 | 130,715.6 | 119,598.7 | 19.71x | 21.54x | 1.093x | 98.46% |
+| 100,000 | 512 | 2,575,754.0 | 67,060.3 | 56,995.8 | 38.41x | 45.19x | 1.177x | 99.80% |
+| 100,000 | 4,096 | 2,575,754.0 | 57,036.6 | 48,853.5 | 45.16x | 52.72x | 1.168x | 99.97% |
+
+At budget 64, initial `-7` gave helper/direct ratios of 1.076x (`n=1000`)
+and 1.085x (`n=100000`); initial `2**40` gave 1.055x and 1.082x.  Direct is
+therefore not materially better at the diagnostic budgets 1 and 8, and is only
+about 8--19% better once boundary costs are amortized.  The large-budget direct
+result is the measured floor for this Python integration; no standalone C-loop
+number is claimed because eliminating Python call/result handling would make it
+an unmatched workload.
+
+For the `n=100000`, budget-64 timed interval each mode recorded 538,650 chunk
+entries, 34,461,000 chunk iterations, 538,650 budget exits, and zero overflow
+exits.  At budget 4096 those deltas were 8,750 entries, 34,990,900 iterations,
+8,750 budget exits, and zero overflow exits.  These are measurement-only deltas,
+not cumulative warmup counters.
+
+### Generated direct machine code
+
+The direct chunk occupies approximately offsets `0xf5..0x486` (913 bytes),
+including guards, conversion, frame publication, materialization, reference
+updates, counters, and all exits.  `_PyTier3_GetBudget()` is an actual indirect
+runtime call once per chunk entry (at `0x234`); storing it in a local prevents
+`Py_MIN` from evaluating the call twice.  Entry publishes the stack pointer and
+calls `PyLong_AsLongLongAndOverflow`; a rare ambiguous `-1` result calls
+`PyErr_Occurred`.  Successful exit calls `PyLong_FromLongLong` and
+`PyLong_FromLong`, followed only by conditional deallocation calls.
+
+The checked loop itself is about 20 bytes:
+
+```text
+2d7: cmp  %rcx,%r8             # completed limit
+2da: je   326                  # materialize successful chunk
+2dc: lea  (%r11,%rdx),%rdi     # current range value
+2e0: dec  %rcx                 # completed count (negative)
+2e3: inc  %rdx                 # next-offset
+2e6: add  %rdi,%rax            # total += current
+2e9: jno  2d2                  # loop; overflow exits at 2eb
+```
+
+`total` remains in `%rax`, the range base/current calculation uses `%r11` and
+`%rdi`, the next offset uses `%rdx`, the completed count uses `%rcx`, and the
+limit uses `%r8`.  There are no calls or reloads in this loop.  There is one
+store of the running total to `0x68(%rsp)` on the taken backedge, so allocation
+exit can recover it; other exit values (`next`, `remaining`, and last induction)
+are computed around the loop and stored on the native stack.  Thus allocation
+is good but not wholly spill-free, and boundary code is much larger than the
+integer loop.
+
+### Materialization-failure boundary
+
+Both modes allocate the new accumulator and induction objects before changing
+locals or the range iterator.  Failure of either allocation therefore restores
+the exact chunk-entry iterator and locals; no logical iteration is committed.
+The uop stack effect is unchanged (`iter, index -- iter, index`) and generated
+error handling flushes that same pre-`_ITER_NEXT_RANGE` stack state.  The target
+is the matched addition's bytecode location so exception-table selection and
+traceback attribution correspond to the protected loop body.  A handler or
+`finally` observes the pre-chunk induction local and iterator, consistently with
+transactional zero progress, rather than a partially completed chunk.
+
+This pairing remains source-reviewed, not runtime-verified.  CPython's available
+allocation-failure support is process/global and cannot deterministically target
+either of these two allocations after executor entry without failing unrelated
+JIT/interpreter allocations.  Adding a production hook solely for this
+experiment would be disproportionate.  The limitation applies equally to
+helper and direct modes and must be resolved before treating either mode as
+production-ready.
+
+### Cost interpretation and next experiment
+
+Direct's clean register-resident arithmetic loop establishes that copy-and-patch
+can emit the desired unboxed checked loop.  Nevertheless, direct and helper are
+nearly identical at budgets 1 and 8, and direct improves only 8--19% at larger
+budgets.  This separates the costs: `PyLong_AsLongLongAndOverflow`, the runtime
+budget call, executor stack/frame synchronization, two PyLong materializations,
+and the deliberately ordinary iteration remain on every boundary in both
+modes; only the tiny checked loop moved across the helper-call boundary.
+
+The next experiment should keep copy-and-patch stencil generation and enlarge
+region recognition/lowering so unboxed accumulator and induction state remains
+live across the loop backedge and multiple periodic-check-safe regions.  A small
+value representation may feed stencils, but these measurements do not justify
+replacing the stencil backend with a separate native backend.  Quantitatively,
+the next design should target the remaining ~15,000 ns (budget 1) versus ~562 ns
+(large-budget floor) for `n=1000`, and should require at least a 2x improvement
+at budget 1/8 before broadening semantics.
+
+## Historical helper-only native results
 
 The native measurements below were made from implementation commit
 `f895c84c1b514caea65fa25bde0b0d113497c552` on x86-64 Linux. This commit is
