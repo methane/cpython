@@ -28,6 +28,7 @@ class Tier3RangeTests(unittest.TestCase):
         "_TIER3_RANGE_CHUNK_NATIVE",
         "_TIER3_RANGE_CHUNK_RESIDENT",
         "_TIER3_RANGE_CHUNK_RESIDENT_SQUARES",
+        "_TIER3_RANGE_CHUNK_RESIDENT_AFFINE",
     )
     MODE_COUNTERS = (
         "entries",
@@ -193,6 +194,130 @@ class Tier3RangeTests(unittest.TestCase):
             PYTHON_JIT_STRESS="1",
         )
 
+    def test_parameterized_integer_reductions(self):
+        script_helper.assert_python_ok(
+            "-c",
+            textwrap.dedent("""
+                import _opcode
+
+                def executor(function, opname):
+                    for offset in range(0, len(function.__code__.co_code), 2):
+                        try:
+                            candidate = _opcode.get_executor(function.__code__, offset)
+                        except ValueError:
+                            continue
+                        if any(op[0] == opname for op in candidate):
+                            return candidate
+                    raise AssertionError((function.__name__, opname))
+
+                def add_range(start, stop, step, initial):
+                    total = initial
+                    item = None
+                    for item in range(start, stop, step):
+                        total += item
+                    return total, item
+
+                def constant(start, stop, step, initial, increment):
+                    total = initial
+                    item = None
+                    for item in range(start, stop, step):
+                        total += increment
+                    return total, item
+
+                def literal(start, stop, step, initial):
+                    total = initial
+                    item = None
+                    for item in range(start, stop, step):
+                        total += -7
+                    return total, item
+
+                def affine(start, stop, step, initial, scale, bias):
+                    total = initial
+                    item = None
+                    for item in range(start, stop, step):
+                        total += scale * item + bias
+                    return total, item
+
+                cases = (
+                    (add_range, (0, 1000, 1, 2**40),
+                     '_TIER3_RANGE_CHUNK_RESIDENT'),
+                    (add_range, (7, 2007, 2, -7),
+                     '_TIER3_RANGE_CHUNK_RESIDENT'),
+                    (add_range, (1000, -1000, -3, 0),
+                     '_TIER3_RANGE_CHUNK_RESIDENT'),
+                    (constant, (7, 2007, 2, 2**40, -11),
+                     '_TIER3_RANGE_CHUNK_RESIDENT_AFFINE'),
+                    (literal, (1000, -1000, -3, -7),
+                     '_TIER3_RANGE_CHUNK_RESIDENT_AFFINE'),
+                    (affine, (7, 2007, 2, 2**40, -3, 11),
+                     '_TIER3_RANGE_CHUNK_RESIDENT_AFFINE'),
+                    (affine, (1000, -1000, -3, 0, 0, -5),
+                     '_TIER3_RANGE_CHUNK_RESIDENT_AFFINE'),
+                )
+                for function, args, opname in cases:
+                    expected_items = list(range(*args[:3]))
+                    if function is add_range:
+                        expected = args[3] + sum(expected_items)
+                    elif function is constant:
+                        expected = args[3] + len(expected_items) * args[4]
+                    elif function is literal:
+                        expected = args[3] - 7 * len(expected_items)
+                    else:
+                        expected = args[3] + sum(args[4] * i + args[5]
+                                                 for i in expected_items)
+                    answer = (expected, expected_items[-1] if expected_items else None)
+                    for _ in range(100):
+                        assert function(*args) == answer
+                    active = executor(function, opname)
+                    before = active.get_tier3_stats()
+                    assert function(*args) == answer
+                    after = active.get_tier3_stats()
+                    assert after['resident_entries'] > before['resident_entries'], (args, before, after)
+                    assert after['resident_iterations'] > before['resident_iterations'], (args, before, after)
+
+                # Invariant locals are revalidated on every entry.
+                assert affine(7, 2007, 2, 5, 4, -9) == (
+                    5 + sum(4 * i - 9 for i in range(7, 2007, 2)), 2005)
+
+                import random
+                random.seed(8675309)
+                optimized = 0
+                for _ in range(300):
+                    start = random.randrange(-1000, 1000)
+                    step = random.choice((-17, -3, -1, 1, 2, 19))
+                    count = random.randrange(4, 80)
+                    stop = start + step * count
+                    initial = random.choice((0, -7, 2**40))
+                    scale = random.randrange(-50, 51)
+                    bias = random.randrange(-50, 51)
+                    before = executor(affine, '_TIER3_RANGE_CHUNK_RESIDENT_AFFINE').get_tier3_stats()
+                    got = affine(start, stop, step, initial, scale, bias)
+                    after = executor(affine, '_TIER3_RANGE_CHUNK_RESIDENT_AFFINE').get_tier3_stats()
+                    items = range(start, stop, step)
+                    assert got == (initial + sum(scale * i + bias for i in items),
+                                   start + step * (count - 1))
+                    optimized += after['resident_iterations'] > before['resident_iterations']
+                assert optimized == 300, optimized
+
+                class ObservableInt(int):
+                    events = []
+                    def __mul__(self, other):
+                        self.events.append(('mul', int(self), other))
+                        return ObservableInt(int(self) * other)
+                    def __add__(self, other):
+                        self.events.append(('add', int(self), other))
+                        return ObservableInt(int(self) + other)
+                scale = ObservableInt(2)
+                result, last = affine(1, 5, 1, 0, scale, 3)
+                assert (result, last) == (32, 4)
+                assert scale.events == [event for i in range(1, 5) for event in
+                    (('mul', 2, i), ('add', 2 * i, 3))], scale.events
+            """),
+            PYTHON_TIER3_JIT="resident",
+            PYTHON_TIER3_BUDGET="4096",
+            PYTHON_JIT_STRESS="1",
+        )
+
     def test_resident_sum_same_noncompact_training(self):
         script_helper.assert_python_ok(
             "-c",
@@ -326,13 +451,20 @@ class Tier3RangeTests(unittest.TestCase):
                         total += item * item
                     return total
 
+                def affine(n, initial, scale, bias):
+                    total = initial
+                    for item in range(n):
+                        total += scale * item + bias
+                    return total
+
                 cases = (
                     (add, '_TIER3_RANGE_CHUNK_RESIDENT'),
                     (squares, '_TIER3_RANGE_CHUNK_RESIDENT_SQUARES'),
+                    (affine, '_TIER3_RANGE_CHUNK_RESIDENT_AFFINE'),
                 )
                 for function, resident in cases:
                     for _ in range(2000):
-                        function(40, 0)
+                        function(40, 0, 2, 3) if function is affine else function(40, 0)
                     instructions = find(function, resident)
                     chunk = next(item for item in instructions if item[0] == resident)
                     pending = [item for item in instructions
@@ -362,7 +494,7 @@ class Tier3RangeTests(unittest.TestCase):
                     total = initial
                     item = -7
                     try:
-                        for item in range(n):
+                        for item in range(7, n):
                             total += item
                     except MemoryError as exc:
                         tb = exc.__traceback__
@@ -375,7 +507,7 @@ class Tier3RangeTests(unittest.TestCase):
                 def body_only(n, initial):
                     total = initial
                     caught = None
-                    for item in range(n):
+                    for item in range(7, n):
                         try:
                             total += item
                         except MemoryError as exc:
@@ -389,7 +521,7 @@ class Tier3RangeTests(unittest.TestCase):
                     total = initial
                     item = -7
                     try:
-                        for item in range(n):
+                        for item in range(7, n):
                             total += item * item
                     except MemoryError as exc:
                         tb = exc.__traceback__
@@ -400,7 +532,7 @@ class Tier3RangeTests(unittest.TestCase):
                     return total, item, events
 
                 def expected(kind, item, initial):
-                    terms = range(item + 1)
+                    terms = range(7, item + 1)
                     return initial + sum(i * i if kind == 'squares' else i
                                          for i in terms)
 
@@ -435,17 +567,18 @@ class Tier3RangeTests(unittest.TestCase):
                             total, item, events = function(1000, initial)
                         finally:
                             os.environ.pop('PYTHON_TIER3_FAIL_RECONSTRUCTION', None)
-                        # The first interpreted iteration reserved item zero.
-                        # Failed reconstruction leaves that exact entry
+                        # The first interpreted iteration committed item 7.
+                        # Failed reconstruction leaves that nonzero entry
                         # snapshot visible to the handler in the optimized
                         # frame, and attributes the error to its addition.
-                        assert (total, item) == (initial, 0), (total, item)
+                        entry_total = initial + (49 if kind == 'squares' else 7)
+                        assert (total, item) == (entry_total, 7), (total, item)
                         assert events[0] == 'pre'
                         caught = events[1]
-                        assert caught[:3] == ('except', initial, 0), caught
+                        assert caught[:3] == ('except', entry_total, 7), caught
                         assert caught[3:] == (
                             addition.offset, addition.positions.lineno), caught
-                        assert events[2] == ('finally', initial, 0), events
+                        assert events[2] == ('finally', entry_total, 7), events
                         after = active.get_tier3_stats()
                         assert after['resident_polls'] > before['resident_polls'], (before, after)
                         assert function(1000, initial)[0] == expected(kind, 999, initial)
@@ -466,8 +599,8 @@ class Tier3RangeTests(unittest.TestCase):
                     total, item, caught = body_only(1000, initial)
                 finally:
                     os.environ.pop('PYTHON_TIER3_FAIL_RECONSTRUCTION', None)
-                assert (total, item) == (initial, 0)
-                assert caught == (initial, 0, addition.offset,
+                assert (total, item) == (initial + 7, 7)
+                assert caught == (initial + 7, 7, addition.offset,
                                    addition.positions.lineno), caught
                 after = active.get_tier3_stats()
                 assert after['resident_polls'] > before['resident_polls']
@@ -746,8 +879,8 @@ class Tier3RangeTests(unittest.TestCase):
                         if i == stop: break
                         s += i
                     return s
-                for function, args in ((constant, (20,)), (twice, (20,)),
-                                       (extra, (20,)), (scaled, (20,)),
+                for function, args in ((twice, (20,)),
+                                       (extra, (20,)),
                                        (effect, (20,)),
                                        (branch, (20, 10))):
                     for _ in range(2000): function(*args)
@@ -762,8 +895,7 @@ class Tier3RangeTests(unittest.TestCase):
                         )
                     assert saw_executor, function.__name__
                     expected = function(*args)
-                    if function is constant: assert expected == 20
-                    elif function is twice: assert expected == 1 << 20
+                    if function is twice: assert expected == 1 << 20
                     elif function is extra: assert expected == sum(range(20)) + 20
                     elif function is scaled: assert expected == 2 * sum(range(20))
                     elif function is effect: assert expected == sum(range(20))

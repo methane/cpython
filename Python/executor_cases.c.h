@@ -22609,8 +22609,7 @@
             _PyRangeIterObject *range = (_PyRangeIterObject *)iter_obj;
             int conversion_overflow = 0;
             int64_t total = 0;
-            if (Py_TYPE(iter_obj) == &PyRangeIter_Type &&
-                range->step == 1 && PyLong_CheckExact(sum_obj))
+            if (Py_TYPE(iter_obj) == &PyRangeIter_Type && PyLong_CheckExact(sum_obj))
             {
                 stack_pointer[0] = iter;
                 stack_pointer[1] = _stack_item_1;
@@ -22660,7 +22659,7 @@
                     total = new_total;
                     last = next;
                     remaining--;
-                    next++;
+                    next += range->step;
                     completed++;
                 }
                 if (completed != 0) {
@@ -22739,7 +22738,7 @@
             _PyRangeIterObject *range = (_PyRangeIterObject *)iter_obj;
             int conversion_overflow = 0;
             int64_t total = 0;
-            if (Py_TYPE(iter_obj) == &PyRangeIter_Type && range->step == 1 &&
+            if (Py_TYPE(iter_obj) == &PyRangeIter_Type &&
                 PyLong_CheckExact(sum_obj)) {
                 stack_pointer[0] = iter;
                 stack_pointer[1] = _stack_item_1;
@@ -22792,7 +22791,159 @@
                     total = new_total;
                     last = next;
                     completed++;
-                    next++;
+                    next += range->step;
+                }
+                current_executor->tier3_resident_polls += polls;
+                if (pending || invalid) {
+                    current_executor->tier3_resident_pending_polls++;
+                }
+                if (completed != 0) {
+                    _PyTier3ResidentExitState exit = {
+                        .accumulator = total,
+                        .next = next,
+                        .last = last,
+                        .completed = completed,
+                    };
+                    stack_pointer[-2] = iter;
+                    stack_pointer[-1] = _stack_item_1;
+                    _PyFrame_SetStackPointer(frame, stack_pointer);
+                    _PyFrame_StackPointerValidate(frame);
+                    int materialized = _PyTier3_CommitResidentExit(
+                        frame, range, sum_local, induction_local, &exit);
+                    _PyFrame_StackPointerInvalidate(frame);
+                    if (materialized < 0) {
+                        SET_CURRENT_CACHED_VALUES(0);
+                        JUMP_TO_ERROR();
+                    }
+                    current_executor->tier3_resident_entries++;
+                    current_executor->tier3_resident_iterations += completed;
+                    if (pending || invalid) {
+                        current_executor->tier3_resident_deopt_materializations++;
+                    }
+                    else {
+                        current_executor->tier3_resident_normal_materializations++;
+                    }
+                }
+                if (overflow) {
+                    current_executor->tier3_resident_overflow_exits++;
+                }
+                if (pending || invalid) {
+                    UOP_STAT_INC(uopcode, miss);
+                    _tos_cache1 = _stack_item_1;
+                    _tos_cache0 = iter;
+                    SET_CURRENT_CACHED_VALUES(2);
+                    stack_pointer += -2;
+                    ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                    JUMP_TO_JUMP_TARGET();
+                }
+            }
+            _tos_cache1 = _stack_item_1;
+            _tos_cache0 = iter;
+            _tos_cache2 = PyStackRef_ZERO_BITS;
+            SET_CURRENT_CACHED_VALUES(2);
+            stack_pointer += -2;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            break;
+        }
+
+        case _TIER3_RANGE_CHUNK_RESIDENT_AFFINE_r22: {
+            CHECK_CURRENT_CACHED_VALUES(2);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            _PyStackRef iter;
+            _PyStackRef _stack_item_0 = _tos_cache0;
+            _PyStackRef _stack_item_1 = _tos_cache1;
+            oparg = CURRENT_OPARG();
+            iter = _stack_item_0;
+            int sum_local = oparg >> 4;
+            int induction_local = oparg & 15;
+            uint64_t config = CURRENT_OPERAND1_64();
+            int scale_local = config & 15;
+            int bias_local = (config >> 4) & 15;
+            bool scale_constant = (config >> 8) & 1;
+            bool bias_constant = (config >> 9) & 1;
+            PyObject *iter_obj = PyStackRef_AsPyObjectBorrow(iter);
+            PyObject *sum_obj = PyStackRef_AsPyObjectBorrow(
+                frame->localsplus[sum_local]);
+            _PyRangeIterObject *range = (_PyRangeIterObject *)iter_obj;
+            int conversion_overflow = 0;
+            int64_t total = 0;
+            int64_t scale = (int64_t)(config << 24) >> 40;
+            int64_t bias = (int64_t)config >> 40;
+            PyObject *scale_obj = scale_constant ? NULL : PyStackRef_AsPyObjectBorrow(
+                frame->localsplus[scale_local]);
+            PyObject *bias_obj = bias_constant ? NULL : PyStackRef_AsPyObjectBorrow(
+                frame->localsplus[bias_local]);
+            if (Py_TYPE(iter_obj) == &PyRangeIter_Type &&
+                PyLong_CheckExact(sum_obj) &&
+                (scale_constant || PyLong_CheckExact(scale_obj)) &&
+                (bias_constant || PyLong_CheckExact(bias_obj))) {
+                stack_pointer[0] = iter;
+                stack_pointer[1] = _stack_item_1;
+                stack_pointer += 2;
+                ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                _PyFrame_SetStackPointer(frame, stack_pointer);
+                _PyFrame_StackPointerValidate(frame);
+                total = PyLong_AsLongLongAndOverflow(sum_obj, &conversion_overflow);
+                _PyFrame_StackPointerInvalidate(frame);
+                if (!conversion_overflow && !scale_constant) {
+                    assert(stack_pointer == _PyFrame_GetStackPointer(frame));
+                    _PyFrame_StackPointerValidate(frame);
+                    scale = PyLong_AsLongLongAndOverflow(scale_obj, &conversion_overflow);
+                    _PyFrame_StackPointerInvalidate(frame);
+                }
+                if (!conversion_overflow && !bias_constant) {
+                    assert(stack_pointer == _PyFrame_GetStackPointer(frame));
+                    _PyFrame_StackPointerValidate(frame);
+                    bias = PyLong_AsLongLongAndOverflow(bias_obj, &conversion_overflow);
+                    _PyFrame_StackPointerInvalidate(frame);
+                }
+                assert(stack_pointer == _PyFrame_GetStackPointer(frame));
+                _PyFrame_StackPointerValidate(frame);
+                int conversion_error = PyErr_Occurred() != NULL;
+                _PyFrame_StackPointerInvalidate(frame);
+                if (conversion_error) {
+                    SET_CURRENT_CACHED_VALUES(0);
+                    JUMP_TO_ERROR();
+                }
+            }
+            else {
+                conversion_overflow = 1;
+                stack_pointer += 2;
+            }
+            if (conversion_overflow == 0) {
+                long next = range->start;
+                long remaining = range->len;
+                long completed = 0;
+                uint64_t polls = 0;
+                long last = 0;
+                bool overflow = false;
+                bool pending = false;
+                bool invalid = false;
+                uintptr_t iversion = FT_ATOMIC_LOAD_UINTPTR_ACQUIRE(
+                    _PyFrame_GetCode(frame)->_co_instrumentation_version);
+                while (completed < remaining - 1) {
+                    polls++;
+                    uintptr_t eval_breaker = _Py_atomic_load_uintptr_relaxed(
+                        &tstate->eval_breaker);
+                    invalid = !current_executor->vm_data.valid;
+                    pending = eval_breaker != iversion;
+                    if (pending || invalid) {
+                        break;
+                    }
+                    int64_t scaled;
+                    int64_t term;
+                    int64_t new_total;
+                    if (__builtin_mul_overflow(scale, (int64_t)next, &scaled) ||
+                        __builtin_add_overflow(scaled, bias, &term) ||
+                        __builtin_add_overflow(total, term, &new_total)) {
+                        overflow = true;
+                        break;
+                    }
+                    total = new_total;
+                    last = next;
+                    completed++;
+                    next += range->step;
                 }
                 current_executor->tier3_resident_polls += polls;
                 if (pending || invalid) {
@@ -22867,7 +23018,7 @@
             _PyRangeIterObject *range = (_PyRangeIterObject *)iter_obj;
             int conversion_overflow = 0;
             int64_t total = 0;
-            if (Py_TYPE(iter_obj) == &PyRangeIter_Type && range->step == 1 &&
+            if (Py_TYPE(iter_obj) == &PyRangeIter_Type &&
                 PyLong_CheckExact(sum_obj)) {
                 stack_pointer[0] = iter;
                 stack_pointer[1] = index;
@@ -22922,7 +23073,7 @@
                     total = new_total;
                     last = next;
                     completed++;
-                    next++;
+                    next += range->step;
                 }
                 current_executor->tier3_resident_polls += polls;
                 if (pending || invalid) {

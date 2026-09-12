@@ -6141,8 +6141,7 @@ dummy_func(
             _PyRangeIterObject *range = (_PyRangeIterObject *)iter_obj;
             int conversion_overflow = 0;
             int64_t total = 0;
-            if (Py_TYPE(iter_obj) == &PyRangeIter_Type &&
-                range->step == 1 && PyLong_CheckExact(sum_obj))
+            if (Py_TYPE(iter_obj) == &PyRangeIter_Type && PyLong_CheckExact(sum_obj))
             {
                 total = PyLong_AsLongLongAndOverflow(
                     sum_obj, &conversion_overflow);
@@ -6170,7 +6169,7 @@ dummy_func(
                     total = new_total;
                     last = next;
                     remaining--;
-                    next++;
+                    next += range->step;
                     completed++;
                 }
                 if (completed != 0) {
@@ -6224,7 +6223,7 @@ dummy_func(
             _PyRangeIterObject *range = (_PyRangeIterObject *)iter_obj;
             int conversion_overflow = 0;
             int64_t total = 0;
-            if (Py_TYPE(iter_obj) == &PyRangeIter_Type && range->step == 1 &&
+            if (Py_TYPE(iter_obj) == &PyRangeIter_Type &&
                 PyLong_CheckExact(sum_obj)) {
                 total = PyLong_AsLongLongAndOverflow(
                     sum_obj, &conversion_overflow);
@@ -6263,7 +6262,113 @@ dummy_func(
                     total = new_total;
                     last = next;
                     completed++;
-                    next++;
+                    next += range->step;
+                }
+                /* Statistics are published only as the resident region is
+                 * left, never by the generated arithmetic/poll backedge. */
+                current_executor->tier3_resident_polls += polls;
+                if (pending || invalid) {
+                    current_executor->tier3_resident_pending_polls++;
+                }
+                if (completed != 0) {
+                    _PyTier3ResidentExitState exit = {
+                        .accumulator = total,
+                        .next = next,
+                        .last = last,
+                        .completed = completed,
+                    };
+                    int materialized = _PyTier3_CommitResidentExit(
+                        frame, range, sum_local, induction_local, &exit);
+                    ERROR_IF(materialized < 0);
+                    current_executor->tier3_resident_entries++;
+                    current_executor->tier3_resident_iterations += completed;
+                    if (pending || invalid) {
+                        current_executor->tier3_resident_deopt_materializations++;
+                    }
+                    else {
+                        current_executor->tier3_resident_normal_materializations++;
+                    }
+                }
+                if (overflow) {
+                    current_executor->tier3_resident_overflow_exits++;
+                }
+                HANDLE_PENDING_AND_DEOPT_IF(pending || invalid);
+            }
+        }
+
+        /* Parameterized affine reduction.  Operand1 describes guarded
+         * invariant locals or bounded literals; all conversions happen once
+         * at entry, outside the checked arithmetic/poll loop. */
+        tier2 op(_TIER3_RANGE_CHUNK_RESIDENT_AFFINE, (iter, index -- iter, index)) {
+            int sum_local = oparg >> 4;
+            int induction_local = oparg & 15;
+            uint64_t config = CURRENT_OPERAND1_64();
+            int scale_local = config & 15;
+            int bias_local = (config >> 4) & 15;
+            bool scale_constant = (config >> 8) & 1;
+            bool bias_constant = (config >> 9) & 1;
+            PyObject *iter_obj = PyStackRef_AsPyObjectBorrow(iter);
+            PyObject *sum_obj = PyStackRef_AsPyObjectBorrow(
+                frame->localsplus[sum_local]);
+            _PyRangeIterObject *range = (_PyRangeIterObject *)iter_obj;
+            int conversion_overflow = 0;
+            int64_t total = 0;
+            int64_t scale = (int64_t)(config << 24) >> 40;
+            int64_t bias = (int64_t)config >> 40;
+            PyObject *scale_obj = scale_constant ? NULL : PyStackRef_AsPyObjectBorrow(
+                frame->localsplus[scale_local]);
+            PyObject *bias_obj = bias_constant ? NULL : PyStackRef_AsPyObjectBorrow(
+                frame->localsplus[bias_local]);
+            if (Py_TYPE(iter_obj) == &PyRangeIter_Type &&
+                PyLong_CheckExact(sum_obj) &&
+                (scale_constant || PyLong_CheckExact(scale_obj)) &&
+                (bias_constant || PyLong_CheckExact(bias_obj))) {
+                total = PyLong_AsLongLongAndOverflow(sum_obj, &conversion_overflow);
+                if (!conversion_overflow && !scale_constant) {
+                    scale = PyLong_AsLongLongAndOverflow(scale_obj, &conversion_overflow);
+                }
+                if (!conversion_overflow && !bias_constant) {
+                    bias = PyLong_AsLongLongAndOverflow(bias_obj, &conversion_overflow);
+                }
+                int conversion_error = PyErr_Occurred() != NULL;
+                ERROR_IF(conversion_error);
+            }
+            else {
+                conversion_overflow = 1;
+            }
+            if (conversion_overflow == 0) {
+                long next = range->start;
+                long remaining = range->len;
+                long completed = 0;
+                uint64_t polls = 0;
+                long last = 0;
+                bool overflow = false;
+                bool pending = false;
+                bool invalid = false;
+                uintptr_t iversion = FT_ATOMIC_LOAD_UINTPTR_ACQUIRE(
+                    _PyFrame_GetCode(frame)->_co_instrumentation_version);
+                while (completed < remaining - 1) {
+                    polls++;
+                    uintptr_t eval_breaker = _Py_atomic_load_uintptr_relaxed(
+                        &tstate->eval_breaker);
+                    invalid = !current_executor->vm_data.valid;
+                    pending = eval_breaker != iversion;
+                    if (pending || invalid) {
+                        break;
+                    }
+                    int64_t scaled;
+                    int64_t term;
+                    int64_t new_total;
+                    if (__builtin_mul_overflow(scale, (int64_t)next, &scaled) ||
+                        __builtin_add_overflow(scaled, bias, &term) ||
+                        __builtin_add_overflow(total, term, &new_total)) {
+                        overflow = true;
+                        break;
+                    }
+                    total = new_total;
+                    last = next;
+                    completed++;
+                    next += range->step;
                 }
                 /* Statistics are published only as the resident region is
                  * left, never by the generated arithmetic/poll backedge. */
@@ -6308,7 +6413,7 @@ dummy_func(
             _PyRangeIterObject *range = (_PyRangeIterObject *)iter_obj;
             int conversion_overflow = 0;
             int64_t total = 0;
-            if (Py_TYPE(iter_obj) == &PyRangeIter_Type && range->step == 1 &&
+            if (Py_TYPE(iter_obj) == &PyRangeIter_Type &&
                 PyLong_CheckExact(sum_obj)) {
                 total = PyLong_AsLongLongAndOverflow(
                     sum_obj, &conversion_overflow);
@@ -6349,7 +6454,7 @@ dummy_func(
                     total = new_total;
                     last = next;
                     completed++;
-                    next++;
+                    next += range->step;
                 }
                 /* Statistics are published only as the resident region is
                  * left, never by the generated arithmetic/poll backedge. */

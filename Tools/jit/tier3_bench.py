@@ -27,7 +27,26 @@ def sum_squares_from(n, initial):
     return total
 
 
-WORKLOADS = {"sum": sum_from, "squares": sum_squares_from}
+def constant_from(n, initial, scale, bias):
+    total = initial
+    for _item in range(n):
+        total += bias
+    return total
+
+
+def affine_from(n, initial, scale, bias):
+    total = initial
+    for item in range(n):
+        total += scale * item + bias
+    return total
+
+
+WORKLOADS = {
+    "sum": sum_from,
+    "squares": sum_squares_from,
+    "constant": constant_from,
+    "affine": affine_from,
+}
 
 
 def executors(function):
@@ -45,7 +64,7 @@ def positive(value):
     return value
 
 
-def measure_sample(function, n, initial, expected, loops, lookup=None):
+def measure_sample(function, n, initial, expected, loops, lookup=None, extra_args=()):
     """Measure calls made while one executor remains selected.
 
     Executor-derived evidence is deliberately kept on the sample that observed
@@ -59,7 +78,7 @@ def measure_sample(function, n, initial, expected, loops, lookup=None):
     before = selected[1].get_tier3_stats() if valid_before else None
     start = time.perf_counter_ns()
     for _ in range(loops):
-        result = function(n, initial)
+        result = function(n, initial, *extra_args)
         if result != expected:
             raise AssertionError((result, expected))
     elapsed = (time.perf_counter_ns() - start) / loops
@@ -189,6 +208,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--n", type=int, default=1000)
     parser.add_argument("--initial", type=int, default=0)
+    parser.add_argument("--scale", type=int, default=3)
+    parser.add_argument("--bias", type=int, default=-7)
     parser.add_argument("--workload", choices=WORKLOADS, default="sum")
     parser.add_argument(
         "--training-profile",
@@ -202,19 +223,33 @@ def main():
     build_manifest = configuration()
 
     function = WORKLOADS[args.workload]
-    expected = args.initial + sum(
-        item * item if args.workload == "squares" else item for item in range(args.n)
+    extra_args = (
+        (args.scale, args.bias) if args.workload in {"constant", "affine"} else ()
     )
+    if args.workload == "squares":
+        terms = (item * item for item in range(args.n))
+    elif args.workload == "constant":
+        terms = (args.bias for _ in range(args.n))
+    elif args.workload == "affine":
+        terms = (args.scale * item + args.bias for item in range(args.n))
+    else:
+        terms = iter(range(args.n))
+    expected = args.initial + sum(terms)
     if args.training_profile == "compact-seeded":
         for _ in range(args.warmup):
-            function(min(args.n, 1000), 0)
+            function(min(args.n, 1000), 0, *extra_args)
     for _ in range(args.warmup):
-        assert function(args.n, args.initial) == expected
+        assert function(args.n, args.initial, *extra_args) == expected
 
     measurements = []
     for _ in range(args.repeat):
         measurement = measure_sample(
-            function, args.n, args.initial, expected, args.loops
+            function,
+            args.n,
+            args.initial,
+            expected,
+            args.loops,
+            extra_args=extra_args,
         )
         measurements.append(measurement)
     aggregate = aggregate_measurements(measurements, args.repeat)

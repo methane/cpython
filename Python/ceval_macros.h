@@ -684,10 +684,12 @@ gen_try_set_executing(PyGenObject *gen)
 
 /* State committed by both resident range operations.  Until both Python
  * integers have been created, the frame and iterator still describe the
- * pre-body entry boundary: the iterator has yielded the induction local, but
- * that iteration's arithmetic has not run.  A materialization error is
- * attributed to that arithmetic instruction.  Afterwards the frame describes
- * exactly COMPLETED iterations and the ordinary loop body will execute NEXT. */
+ * loop-header entry boundary: the induction local names the last ordinary
+ * iteration already committed and range->start names the next value to yield.
+ * A materialization error is attributed to the upcoming body's arithmetic
+ * while retaining that entry snapshot.  Afterwards the frame describes
+ * exactly COMPLETED additional iterations and the ordinary loop body will
+ * execute NEXT. */
 typedef struct {
     int64_t accumulator;
     long next;
