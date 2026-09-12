@@ -111,14 +111,21 @@ with the existing periodic and validity checks.
 
 ## Measurement
 
-`tier3_bench.py` validates every result and reports counters immediately before
+`tier3_bench.py` validates every measured result and reports counters immediately before
 and after its measured calls.  `kernel_iterations` and `kernel_fraction` are
 measurement deltas, and `tier3_status` explicitly distinguishes unavailable or
 non-entered paths.  It also records the interpreter, configure arguments,
-compiler, architecture, commit, experiment settings, and JIT state.  The
+compiler, architecture, commit, tree, tracked-dirty state, experiment settings,
+and JIT state.  This source manifest is captured before warmup.  The
 `native_code_verified` field reports whether the selected executor exposes
 nonempty generated JIT code; an interpreter-only build reports false.  In either
 case, the range chunk calls the same statically compiled C helper.
+
+The default `same-input` training profile warms only the requested input in a
+fresh benchmark process.  `compact-seeded` is an explicit diagnostic profile
+that first trains with a compact zero accumulator; it must not be reported as
+same-input coverage.  A stable executor with no counter progress remains in the
+output as `zero native progress`, together with a rejection reason.
 
 For example, run matched interpreters with the experiment absent and enabled:
 

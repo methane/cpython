@@ -1469,6 +1469,13 @@ static void make_exit(_PyUOpInstruction *inst, int opcode, int target, bool is_c
 #endif
 }
 
+static bool
+is_tier3_resident_range(int opcode)
+{
+    return opcode == _TIER3_RANGE_CHUNK_RESIDENT ||
+           opcode == _TIER3_RANGE_CHUNK_RESIDENT_SQUARES;
+}
+
 /* Convert implicit exits, errors and deopts
  * into explicit ones. */
 static int
@@ -1501,7 +1508,7 @@ prepare_for_execution(_PyUOpInstruction *buffer, int length)
         /* Resident range regions have two independent exits.  Their normal
          * periodic/deoptimization exit uses target, while operand0 records
          * the bytecode location for reconstruction allocation failures. */
-        int32_t error_target = base_opcode == _TIER3_RANGE_CHUNK_RESIDENT
+        int32_t error_target = is_tier3_resident_range(base_opcode)
             ? (int32_t)inst->operand0 : target;
         uint16_t exit_flags = _PyUop_Flags[base_opcode] & (HAS_EXIT_FLAG | HAS_DEOPT_FLAG | HAS_PERIODIC_FLAG);
         if (exit_flags) {
@@ -2188,8 +2195,7 @@ mark_tier3_range_loop(_PyUOpInstruction *buffer, int length)
         buffer[insertion] = (_PyUOpInstruction){
             .opcode = opcode,
             .oparg = (region.accumulator_local << 4) | region.induction_local,
-            .target = opcode == _TIER3_RANGE_CHUNK_RESIDENT ||
-                              opcode == _TIER3_RANGE_CHUNK_RESIDENT_SQUARES
+            .target = is_tier3_resident_range(opcode)
                           ? region.periodic_target
                           : region.error_target,
             .operand0 = (uint64_t)region.error_target,

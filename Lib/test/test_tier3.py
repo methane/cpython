@@ -193,6 +193,89 @@ class Tier3RangeTests(unittest.TestCase):
             PYTHON_JIT_STRESS="1",
         )
 
+    def test_resident_prepared_exit_targets(self):
+        script_helper.assert_python_ok(
+            "-c",
+            textwrap.dedent("""
+                import _opcode
+
+                def find(function, name):
+                    for offset in range(0, len(function.__code__.co_code), 2):
+                        try:
+                            executor = _opcode.get_executor(function.__code__, offset)
+                        except ValueError:
+                            continue
+                        if any(instruction[0] == name for instruction in executor):
+                            return list(executor)
+                    raise AssertionError(name)
+
+                def add(n, initial):
+                    total = initial
+                    for item in range(n):
+                        total += item
+                    return total
+
+                def squares(n, initial):
+                    total = initial
+                    for item in range(n):
+                        total += item * item
+                    return total
+
+                cases = (
+                    (add, '_TIER3_RANGE_CHUNK_RESIDENT'),
+                    (squares, '_TIER3_RANGE_CHUNK_RESIDENT_SQUARES'),
+                )
+                for function, resident in cases:
+                    for _ in range(2000):
+                        function(40, 0)
+                    instructions = find(function, resident)
+                    chunk = next(item for item in instructions if item[0] == resident)
+                    pending = [item for item in instructions
+                               if item[0] == '_HANDLE_PENDING_AND_DEOPT']
+                    errors = [item for item in instructions
+                              if item[0] == '_ERROR_POP_N']
+                    materialization_error = chunk[3]
+                    periodic = pending[0][2]
+                    assert periodic != materialization_error, (pending, chunk)
+                    assert any(item[3] == materialization_error for item in errors), errors
+            """),
+            PYTHON_TIER3_JIT="resident",
+            PYTHON_JIT_STRESS="1",
+        )
+
+    def test_range_start_stop_multiplication_overflow_is_not_admitted(self):
+        # The present recorder does not form a resident region for range(start,
+        # stop), so this is an explicitly labelled entry limitation rather than
+        # false integration evidence for native multiplication recovery.
+        script_helper.assert_python_ok(
+            "-c",
+            textwrap.dedent("""
+                import _opcode
+
+                def squares(start, stop, initial):
+                    total = initial
+                    item = start - 1
+                    for item in range(start, stop):
+                        total += item * item
+                    return total, item
+
+                start, stop, initial = 3_037_000_498, 3_037_000_502, -(2**63)
+                expected = initial + sum(item * item for item in range(start, stop))
+                for _ in range(2000):
+                    assert squares(start, stop, initial) == (expected, stop - 1)
+                names = set()
+                for offset in range(0, len(squares.__code__.co_code), 2):
+                    try:
+                        names.update(item[0] for item in
+                                     _opcode.get_executor(squares.__code__, offset))
+                    except ValueError:
+                        pass
+                assert '_TIER3_RANGE_CHUNK_RESIDENT_SQUARES' not in names, names
+            """),
+            PYTHON_TIER3_JIT="resident",
+            PYTHON_JIT_STRESS="1",
+        )
+
     def test_real_trace_region_dump(self):
         _, _, stderr = script_helper.assert_python_ok(
             "-c",
