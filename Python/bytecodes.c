@@ -6275,12 +6275,8 @@ dummy_func(
                     _PyTier3ResidentExitState exit = {
                         .accumulator = total,
                         .next = next,
-                        .remaining = remaining - completed,
                         .last = last,
                         .completed = completed,
-                        .reason = pending || invalid ? TIER3_RESIDENT_EXIT_PENDING :
-                                  (overflow ? TIER3_RESIDENT_EXIT_OVERFLOW :
-                                              TIER3_RESIDENT_EXIT_NORMAL),
                     };
                     int materialized = _PyTier3_CommitResidentExit(
                         frame, range, sum_local, induction_local, &exit);
@@ -6365,12 +6361,8 @@ dummy_func(
                     _PyTier3ResidentExitState exit = {
                         .accumulator = total,
                         .next = next,
-                        .remaining = remaining - completed,
                         .last = last,
                         .completed = completed,
-                        .reason = pending || invalid ? TIER3_RESIDENT_EXIT_PENDING :
-                                  (overflow ? TIER3_RESIDENT_EXIT_OVERFLOW :
-                                              TIER3_RESIDENT_EXIT_NORMAL),
                     };
                     int materialized = _PyTier3_CommitResidentExit(
                         frame, range, sum_local, induction_local, &exit);

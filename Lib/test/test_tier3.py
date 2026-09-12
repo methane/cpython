@@ -354,21 +354,50 @@ class Tier3RangeTests(unittest.TestCase):
             "-c",
             textwrap.dedent("""
                 import _opcode
+                import dis
                 import os
 
                 def add(n, initial):
+                    events = ['pre']
                     total = initial
-                    item = -1
+                    item = -7
+                    try:
+                        for item in range(n):
+                            total += item
+                    except MemoryError as exc:
+                        tb = exc.__traceback__
+                        events.append(('except', total, item,
+                                       tb.tb_lasti, tb.tb_lineno))
+                    finally:
+                        events.append(('finally', total, item))
+                    return total, item, events
+
+                def body_only(n, initial):
+                    total = initial
+                    caught = None
                     for item in range(n):
-                        total += item
-                    return total, item
+                        try:
+                            total += item
+                        except MemoryError as exc:
+                            tb = exc.__traceback__
+                            caught = (total, item, tb.tb_lasti, tb.tb_lineno)
+                            break
+                    return total, item, caught
 
                 def squares(n, initial):
+                    events = ['pre']
                     total = initial
-                    item = -1
-                    for item in range(n):
-                        total += item * item
-                    return total, item
+                    item = -7
+                    try:
+                        for item in range(n):
+                            total += item * item
+                    except MemoryError as exc:
+                        tb = exc.__traceback__
+                        events.append(('except', total, item,
+                                       tb.tb_lasti, tb.tb_lineno))
+                    finally:
+                        events.append(('finally', total, item))
+                    return total, item, events
 
                 def expected(kind, item, initial):
                     terms = range(item + 1)
@@ -391,38 +420,125 @@ class Tier3RangeTests(unittest.TestCase):
                 )
                 initial = 2**40
                 for kind, function, opname in cases:
+                    addition = next(
+                        instruction for instruction in dis.get_instructions(function)
+                        if instruction.opname == 'BINARY_OP' and
+                           instruction.argrepr == '+='
+                    )
                     for _ in range(2000):
                         function(40, initial)
                     active = executor(function, opname)
                     for site in ('1', '2'):
                         before = active.get_tier3_stats()
-                        finally_ran = False
                         try:
                             os.environ['PYTHON_TIER3_FAIL_RECONSTRUCTION'] = site
-                            function(1000, initial)
-                        except MemoryError as exc:
-                            frames = []
-                            tb = exc.__traceback__
-                            while tb is not None:
-                                frames.append(tb.tb_frame)
-                                tb = tb.tb_next
-                            failed = next(frame for frame in frames
-                                          if frame.f_code is function.__code__)
-                            local = failed.f_locals
-                            # Allocation is transactional: both locals still
-                            # describe the prefix visible before resident entry.
-                            assert local['total'] == expected(kind, local['item'], initial), local
-                        else:
-                            raise AssertionError('injected allocation was not reached')
+                            total, item, events = function(1000, initial)
                         finally:
                             os.environ.pop('PYTHON_TIER3_FAIL_RECONSTRUCTION', None)
-                            finally_ran = True
-                        assert finally_ran
+                        # The first interpreted iteration reserved item zero.
+                        # Failed reconstruction leaves that exact entry
+                        # snapshot visible to the handler in the optimized
+                        # frame, and attributes the error to its addition.
+                        assert (total, item) == (initial, 0), (total, item)
+                        assert events[0] == 'pre'
+                        caught = events[1]
+                        assert caught[:3] == ('except', initial, 0), caught
+                        assert caught[3:] == (
+                            addition.offset, addition.positions.lineno), caught
+                        assert events[2] == ('finally', initial, 0), events
                         after = active.get_tier3_stats()
                         assert after['resident_polls'] > before['resident_polls'], (before, after)
                         assert function(1000, initial)[0] == expected(kind, 999, initial)
+
+                # A handler covering only the arithmetic has a different
+                # exception boundary from the entire-loop cases above.
+                for _ in range(2000):
+                    body_only(40, initial)
+                active = executor(body_only, '_TIER3_RANGE_CHUNK_RESIDENT')
+                addition = next(
+                    instruction for instruction in dis.get_instructions(body_only)
+                    if instruction.opname == 'BINARY_OP' and
+                       instruction.argrepr == '+='
+                )
+                before = active.get_tier3_stats()
+                try:
+                    os.environ['PYTHON_TIER3_FAIL_RECONSTRUCTION'] = '1'
+                    total, item, caught = body_only(1000, initial)
+                finally:
+                    os.environ.pop('PYTHON_TIER3_FAIL_RECONSTRUCTION', None)
+                assert (total, item) == (initial, 0)
+                assert caught == (initial, 0, addition.offset,
+                                   addition.positions.lineno), caught
+                after = active.get_tier3_stats()
+                assert after['resident_polls'] > before['resident_polls']
             """),
             PYTHON_TIER3_JIT="resident",
+            PYTHON_TIER3_BUDGET="100000",
+            PYTHON_JIT_STRESS="1",
+        )
+
+    @unittest.skipUnless(
+        hasattr(__import__("signal"), "setitimer"), "needs setitimer"
+    )
+    def test_resident_pending_exit_reloads_mutated_local(self):
+        script_helper.assert_python_ok(
+            "-c",
+            textwrap.dedent("""
+                import _opcode
+                import signal
+
+                delta = 10**12
+                observations = []
+
+                def handler(signum, frame):
+                    if frame.f_code is total.__code__ and not observations:
+                        before = (frame.f_locals['result'],
+                                  frame.f_locals['item'])
+                        frame.f_locals['result'] = before[0] + delta
+                        observations.append(before)
+
+                def total(n):
+                    result = 2**40
+                    for item in range(n):
+                        result += item
+                    return result
+
+                for _ in range(2000):
+                    total(1000)
+                active = None
+                for offset in range(0, len(total.__code__.co_code), 2):
+                    try:
+                        candidate = _opcode.get_executor(total.__code__, offset)
+                    except ValueError:
+                        continue
+                    if candidate.get_tier3_stats()['resident_entries']:
+                        active = candidate
+                        break
+                assert active is not None
+                signal.signal(signal.SIGALRM, handler)
+                n = 10_000_000
+                before = active.get_tier3_stats()
+                for _ in range(5):
+                    observations.clear()
+                    signal.setitimer(signal.ITIMER_REAL, 0.001)
+                    result = total(n)
+                    signal.setitimer(signal.ITIMER_REAL, 0)
+                    after = active.get_tier3_stats()
+                    if (observations and
+                            after['resident_pending_polls'] >
+                            before['resident_pending_polls'] and
+                            after['resident_deopt_materializations'] >
+                            before['resident_deopt_materializations']):
+                        break
+                else:
+                    raise AssertionError((before, after, observations))
+                assert result == 2**40 + sum(range(n)) + delta
+                observed_total, item = observations[0]
+                assert observed_total == 2**40 + sum(range(item + 1))
+                assert item < n - 1
+            """),
+            PYTHON_TIER3_JIT="resident",
+            PYTHON_TIER3_BUDGET="4096",
             PYTHON_JIT_STRESS="1",
         )
 

@@ -22802,12 +22802,8 @@
                     _PyTier3ResidentExitState exit = {
                         .accumulator = total,
                         .next = next,
-                        .remaining = remaining - completed,
                         .last = last,
                         .completed = completed,
-                        .reason = pending || invalid ? TIER3_RESIDENT_EXIT_PENDING :
-                        (overflow ? TIER3_RESIDENT_EXIT_OVERFLOW :
-                            TIER3_RESIDENT_EXIT_NORMAL),
                     };
                     stack_pointer[-2] = iter;
                     stack_pointer[-1] = _stack_item_1;
@@ -22936,12 +22932,8 @@
                     _PyTier3ResidentExitState exit = {
                         .accumulator = total,
                         .next = next,
-                        .remaining = remaining - completed,
                         .last = last,
                         .completed = completed,
-                        .reason = pending || invalid ? TIER3_RESIDENT_EXIT_PENDING :
-                        (overflow ? TIER3_RESIDENT_EXIT_OVERFLOW :
-                            TIER3_RESIDENT_EXIT_NORMAL),
                     };
                     stack_pointer[-2] = iter;
                     stack_pointer[-1] = index;

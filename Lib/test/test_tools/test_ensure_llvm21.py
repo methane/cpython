@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -11,6 +12,10 @@ SCRIPT = Path(support.REPO_ROOT) / "Tools" / "jit" / "ensure_llvm21.sh"
 TOOLS = ("clang", "llvm-readobj", "llvm-objdump", "llvm-dwarfdump")
 
 
+@support.requires_subprocess()
+@unittest.skipUnless(os.name == "posix", "requires a POSIX shell")
+@unittest.skipUnless(shutil.which("git"), "requires git")
+@unittest.skipUnless(SCRIPT.is_file(), "requires a source checkout")
 class EnsureLLVM21Tests(unittest.TestCase):
     def run_preflight(self, versions, *, broken=()):
         with tempfile.TemporaryDirectory() as directory:

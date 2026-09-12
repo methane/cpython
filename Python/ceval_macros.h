@@ -682,23 +682,17 @@ gen_try_set_executing(PyGenObject *gen)
 #define CALL_TP_ITERITEM_NO_ESCAPE(ITER, INDEX) \
     Py_TYPE(ITER)->_tp_iteritem((ITER), (INDEX))
 
-typedef enum {
-    TIER3_RESIDENT_EXIT_NORMAL,
-    TIER3_RESIDENT_EXIT_OVERFLOW,
-    TIER3_RESIDENT_EXIT_PENDING,
-} _PyTier3ResidentExitReason;
-
 /* State committed by both resident range operations.  Until both Python
  * integers have been created, the frame and iterator still describe the
- * pre-entry boundary.  Afterwards they describe exactly COMPLETED iterations
- * and the ordinary loop body will execute NEXT. */
+ * pre-body entry boundary: the iterator has yielded the induction local, but
+ * that iteration's arithmetic has not run.  A materialization error is
+ * attributed to that arithmetic instruction.  Afterwards the frame describes
+ * exactly COMPLETED iterations and the ordinary loop body will execute NEXT. */
 typedef struct {
     int64_t accumulator;
     long next;
-    long remaining;
     long last;
     long completed;
-    _PyTier3ResidentExitReason reason;
 } _PyTier3ResidentExitState;
 
 static inline int
@@ -738,7 +732,8 @@ _PyTier3_CommitResidentExit(_PyInterpreterFrame *frame,
     frame->localsplus[induction_local] =
         PyStackRef_FromPyObjectSteal(new_induction);
     range->start = state->next;
-    range->len = state->remaining;
+    assert(range->len >= state->completed);
+    range->len -= state->completed;
     PyStackRef_XCLOSE(old_accumulator);
     PyStackRef_XCLOSE(old_induction);
     return 0;
