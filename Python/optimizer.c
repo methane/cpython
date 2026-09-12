@@ -9,11 +9,13 @@
 #include "pycore_ceval.h"       // _Py_set_eval_breaker_bit
 #include "pycore_code.h"            // _Py_GetBaseCodeUnit
 #include "pycore_interpframe.h"
+#include "pycore_long.h"
 #include "pycore_object.h"          // _PyObject_GC_UNTRACK()
 #include "pycore_opcode_metadata.h" // _PyOpcode_OpName[]
 #include "pycore_opcode_utils.h"  // MAX_REAL_OPCODE
 #include "pycore_optimizer.h"     // _Py_uop_analyze_and_optimize()
 #include "pycore_pystate.h"       // _PyInterpreterState_GET()
+#include "pycore_range.h"
 #include "pycore_tuple.h"         // _PyTuple_FromArraySteal
 #include "pycore_unicodeobject.h" // _PyUnicode_FromASCII
 #include "pycore_uop_ids.h"
@@ -39,6 +41,104 @@
 #define CODE_SIZE_EMPTY 2
 
 #define _PyExecutorObject_CAST(op)  ((_PyExecutorObject *)(op))
+
+static int
+tier3_budget(void)
+{
+    static int budget = -1;
+    if (budget < 0) {
+        budget = 0;
+        const char *enabled = Py_GETENV("PYTHON_TIER3_JIT");
+        if (enabled != NULL && strcmp(enabled, "1") == 0) {
+            budget = 1024;
+            const char *setting = Py_GETENV("PYTHON_TIER3_BUDGET");
+            if (setting != NULL) {
+                char *end;
+                long value = strtol(setting, &end, 10);
+                if (*setting != '\0' && *end == '\0' && value > 0 && value <= INT_MAX) {
+                    budget = (int)value;
+                }
+            }
+        }
+    }
+    return budget;
+}
+
+int
+_PyTier3_RunRange(_PyExecutorObject *executor, _PyInterpreterFrame *frame,
+                  _PyStackRef iter, int sum_local, int induction_local)
+{
+    int budget = tier3_budget();
+    if (budget == 0) {
+        return 0;
+    }
+    PyObject *iter_obj = PyStackRef_AsPyObjectBorrow(iter);
+    PyObject *sum_obj = PyStackRef_AsPyObjectBorrow(frame->localsplus[sum_local]);
+    if (Py_TYPE(iter_obj) != &PyRangeIter_Type ||
+        ((_PyRangeIterObject *)iter_obj)->step != 1 ||
+        !PyLong_CheckExact(sum_obj) ||
+        !_PyLong_IsCompact((PyLongObject *)sum_obj))
+    {
+        return 0;
+    }
+    _PyRangeIterObject *range = (_PyRangeIterObject *)iter_obj;
+    int64_t total = _PyLong_CompactValue((PyLongObject *)sum_obj);
+    long next = range->start;
+    long remaining = range->len;
+    long completed = 0;
+    long last = 0;
+    bool overflow = false;
+    while (completed < budget && remaining > 0) {
+        int64_t new_total;
+        if (__builtin_add_overflow(total, (int64_t)next, &new_total))
+        {
+            overflow = true;
+            break;
+        }
+        total = new_total;
+        last = next;
+        remaining--;
+        if (remaining > 0) {
+            if (next == LONG_MAX) {
+                return 0;
+            }
+            next++;
+        }
+        completed++;
+    }
+    if (completed == 0) {
+        if (overflow) {
+            executor->tier3_overflow_exits++;
+        }
+        return 0;
+    }
+    PyObject *new_sum = PyLong_FromLongLong(total);
+    if (new_sum == NULL) {
+        return -1;
+    }
+    PyObject *new_induction = PyLong_FromLong(last);
+    if (new_induction == NULL) {
+        Py_DECREF(new_sum);
+        return -1;
+    }
+    _PyStackRef old_sum = frame->localsplus[sum_local];
+    _PyStackRef old_induction = frame->localsplus[induction_local];
+    frame->localsplus[sum_local] = PyStackRef_FromPyObjectSteal(new_sum);
+    frame->localsplus[induction_local] = PyStackRef_FromPyObjectSteal(new_induction);
+    PyStackRef_XCLOSE(old_sum);
+    PyStackRef_XCLOSE(old_induction);
+    range->start = next;
+    range->len = remaining;
+    executor->tier3_entries++;
+    executor->tier3_iterations += completed;
+    if (overflow) {
+        executor->tier3_overflow_exits++;
+    }
+    else if (remaining > 0) {
+        executor->tier3_budget_exits++;
+    }
+    return 1;
+}
 
 #ifndef Py_GIL_DISABLED
 static bool
@@ -461,9 +561,22 @@ get_jit_code(PyObject *self, PyObject *Py_UNUSED(ignored))
 #endif
 }
 
+static PyObject *
+get_tier3_stats(PyObject *self, PyObject *Py_UNUSED(ignored))
+{
+    _PyExecutorObject *executor = _PyExecutorObject_CAST(self);
+    return Py_BuildValue(
+        "{s:K,s:K,s:K,s:K}",
+        "entries", executor->tier3_entries,
+        "iterations", executor->tier3_iterations,
+        "budget_exits", executor->tier3_budget_exits,
+        "overflow_exits", executor->tier3_overflow_exits);
+}
+
 static PyMethodDef uop_executor_methods[] = {
     { "is_valid", is_valid, METH_NOARGS, NULL },
     { "get_jit_code", get_jit_code, METH_NOARGS, NULL},
+    { "get_tier3_stats", get_tier3_stats, METH_NOARGS, NULL},
     { "get_opcode", get_opcode, METH_NOARGS, NULL },
     { "get_oparg", get_oparg, METH_NOARGS, NULL },
     { NULL, NULL },
@@ -1425,6 +1538,10 @@ allocate_executor(int exit_count, int length)
     res->code_size = length;
     res->exit_count = exit_count;
     res->jit_registration = NULL;
+    res->tier3_entries = 0;
+    res->tier3_iterations = 0;
+    res->tier3_budget_exits = 0;
+    res->tier3_overflow_exits = 0;
     return res;
 }
 
@@ -1644,6 +1761,70 @@ stack_allocate(_PyUOpInstruction *buffer, _PyUOpInstruction *output, int length)
     return (int)(write - output);
 }
 
+static void
+mark_tier3_range_loop(_PyUOpInstruction *buffer, int length)
+{
+#ifdef Py_GIL_DISABLED
+    return;
+#else
+    int iter_next = -1;
+    int induction_local = -1;
+    int add = -1;
+    int sum_local = -1;
+    int jump = -1;
+    for (int i = 0; i < length; i++) {
+        int opcode = buffer[i].opcode;
+        if (opcode > MAX_UOP_ID) {
+            opcode = _PyUop_Uncached[opcode];
+        }
+        if (opcode >= _SWAP_FAST_1 && opcode <= _SWAP_FAST_7) {
+            opcode = _SWAP_FAST;
+        }
+        if (opcode == _ITER_NEXT_RANGE) {
+            iter_next = i;
+        }
+        else if (iter_next >= 0 && induction_local < 0 && opcode == _SWAP_FAST) {
+            induction_local = buffer[i].oparg;
+        }
+        else if (opcode == _BINARY_OP_ADD_INT ||
+                 opcode == _BINARY_OP_ADD_INT_INPLACE ||
+                 opcode == _BINARY_OP_ADD_INT_INPLACE_RIGHT) {
+            add = i;
+        }
+        else if (add >= 0 && opcode == _SWAP_FAST) {
+            sum_local = buffer[i].oparg;
+        }
+        else if (opcode == _JUMP_TO_TOP) {
+            jump = i;
+            break;
+        }
+    }
+    if (iter_next < 0 || induction_local < 0 || add < 0 ||
+        sum_local < 0 || jump < 0 || induction_local >= 16 || sum_local >= 16)
+    {
+        return;
+    }
+    /* Only accept the compact range-reduction region.  Calls, stores other
+       than the two locals, and additional arithmetic make it unsupported. */
+    for (int i = iter_next + 1; i < jump; i++) {
+        int opcode = buffer[i].opcode;
+        if (opcode > MAX_UOP_ID) {
+            opcode = _PyUop_Uncached[opcode];
+        }
+        if (opcode >= _SWAP_FAST_1 && opcode <= _SWAP_FAST_7) {
+            opcode = _SWAP_FAST;
+        }
+        if (opcode == _BINARY_OP_MULTIPLY_INT ||
+            opcode == _BINARY_OP_SUBTRACT_INT)
+        {
+            return;
+        }
+    }
+    buffer[jump].opcode = _TIER3_RANGE_JUMP_TO_TOP;
+    buffer[jump].oparg = (sum_local << 4) | induction_local;
+#endif
+}
+
 static int
 uop_optimize(
     _PyInterpreterFrame *frame,
@@ -1702,6 +1883,7 @@ uop_optimize(
     _PyJitUopBuffer *code_buffer = &_tstate->jit_tracer_state->code_buffer;
     code_buffer->next = code_buffer->start;
 
+    mark_tier3_range_loop(buffer, length);
     OPT_HIST(effective_trace_length(buffer, length), optimized_trace_length_hist);
     _PyUOpInstruction *output = &_tstate->jit_tracer_state->uop_array[0];
     length = stack_allocate(buffer, output, length);

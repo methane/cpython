@@ -1,30 +1,6 @@
 The JIT Compiler
 ================
 
-Tier-3 optimization laboratory
-------------------------------
-
-``_tier3.py`` contains a small value-IR optimizer and linear-scan allocator.
-``_tier3_native.py`` adds an opt-in Linux x86-64 proof of concept that consumes
-a current executor's uop trace and emits native `sum(range(n))` and
-sum-of-squares loops.  It is a sidecar experiment and does not change normal
-runtime behavior.
-
-The input model preserves guards as effects and is intended to be populated by
-an adapter from the current uop trace.  Such an adapter must derive operation
-semantics from ``Python/bytecodes.c`` rather than duplicating them here.  The
-small synthetic experiment can be run with:
-
-```sh
-python Tools/jit/tier3_bench.py
-PYTHON_TIER3_DUMP=1 python Tools/jit/tier3_bench.py
-```
-
-The benchmark launches separate baseline, current-JIT, and Tier-3 processes and
-reports compilation cost, steady-state medians, code size, and speedups.  See
-``tier3.md`` for the design, correctness boundary, dump instructions, and
-measurement methodology.
-
 This version of CPython can be built with an experimental just-in-time compiler[^pep-744]. While most everything you already know about building and using CPython is unchanged, you will probably need to install a compatible version of LLVM first.
 
 Python 3.11 or newer is required to build the JIT.

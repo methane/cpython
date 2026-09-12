@@ -199,8 +199,19 @@ typedef struct _PyExecutorObject {
     size_t jit_size;
     void *jit_code;
     _PyJitCodeRegistration *jit_registration;
+    uint64_t tier3_entries;
+    uint64_t tier3_iterations;
+    uint64_t tier3_budget_exits;
+    uint64_t tier3_overflow_exits;
     _PyExitData exits[1];
 } _PyExecutorObject;
+
+int _PyTier3_RunRange(
+    _PyExecutorObject *executor,
+    _PyInterpreterFrame *frame,
+    _PyStackRef iter,
+    int sum_local,
+    int induction_local);
 
 // Export for '_opcode' shared extension (JIT compiler).
 PyAPI_FUNC(_PyExecutorObject*) _Py_GetExecutor(PyCodeObject *code, int offset);

@@ -5541,6 +5541,10 @@
             break;
         }
 
+        case _TIER3_RANGE_JUMP_TO_TOP: {
+            break;
+        }
+
         case _SET_IP: {
             break;
         }
