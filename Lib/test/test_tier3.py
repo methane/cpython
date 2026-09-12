@@ -22,6 +22,30 @@ def executors_available():
 @unittest.skipUnless(executors_available(), "requires tier 2")
 @support.requires_gil_enabled("Tier-3 range chunks require the GIL")
 class Tier3RangeTests(unittest.TestCase):
+    EXPERIMENTAL_UOPS = (
+        "_TIER3_RANGE_CHUNK",
+        "_TIER3_RANGE_CHUNK_NATIVE",
+        "_TIER3_RANGE_CHUNK_RESIDENT",
+    )
+    MODE_COUNTERS = (
+        "entries",
+        "iterations",
+        "budget_exits",
+        "overflow_exits",
+        "native_entries",
+        "native_iterations",
+        "native_budget_exits",
+        "native_overflow_exits",
+        "native_materialization_exits",
+        "resident_entries",
+        "resident_iterations",
+        "resident_polls",
+        "resident_pending_polls",
+        "resident_overflow_exits",
+        "resident_normal_materializations",
+        "resident_deopt_materializations",
+    )
+
     SCRIPT = textwrap.dedent("""
         import _opcode
         import os
@@ -119,8 +143,34 @@ class Tier3RangeTests(unittest.TestCase):
                     )
 
     def test_disabled(self):
-        source = textwrap.dedent("""
+        source = textwrap.dedent(f"""
                 import _opcode
+                EXPERIMENTAL_UOPS = {self.EXPERIMENTAL_UOPS!r}
+                MODE_COUNTERS = {self.MODE_COUNTERS!r}
+
+                def assert_inactive(instructions, stats):
+                    assert not set(EXPERIMENTAL_UOPS) & set(instructions), instructions
+                    assert all(stats[name] == 0 for name in MODE_COUNTERS), stats
+
+                # Guard the assertions themselves against omissions when another
+                # experimental mode is added.
+                for name in EXPERIMENTAL_UOPS:
+                    try:
+                        assert_inactive((name,), {{key: 0 for key in MODE_COUNTERS}})
+                    except AssertionError:
+                        pass
+                    else:
+                        raise AssertionError(name)
+                for name in MODE_COUNTERS:
+                    stats = {{key: 0 for key in MODE_COUNTERS}}
+                    stats[name] = 1
+                    try:
+                        assert_inactive((), stats)
+                    except AssertionError:
+                        pass
+                    else:
+                        raise AssertionError(name)
+
                 def f(n):
                     s = 0
                     for i in range(n):
@@ -135,9 +185,12 @@ class Tier3RangeTests(unittest.TestCase):
                     except ValueError:
                         continue
                     saw_executor = True
-                    assert all(item[0] != '_TIER3_RANGE_CHUNK' for item in executor)
-                    assert executor.get_tier3_stats()['entries'] == 0
+                    assert_inactive(
+                        tuple(item[0] for item in executor),
+                        executor.get_tier3_stats(),
+                    )
                 assert saw_executor
+                assert f(100) == sum(range(100))
             """)
         for setting in (None, "0"):
             with self.subTest(setting=setting):
@@ -147,10 +200,23 @@ class Tier3RangeTests(unittest.TestCase):
                 script_helper.assert_python_ok("-c", source, **env)
 
     def test_unsafe_loops_are_rejected(self):
-        script_helper.assert_python_ok(
-            "-c",
-            textwrap.dedent("""
+        source = textwrap.dedent(f"""
                 import _opcode
+                EXPERIMENTAL_UOPS = {self.EXPERIMENTAL_UOPS!r}
+                MODE_COUNTERS = {self.MODE_COUNTERS!r}
+
+                def assert_rejected(instructions, stats):
+                    assert not set(EXPERIMENTAL_UOPS) & set(instructions), instructions
+                    assert all(stats[name] == 0 for name in MODE_COUNTERS), stats
+
+                for name in EXPERIMENTAL_UOPS:
+                    try:
+                        assert_rejected((name,), {{key: 0 for key in MODE_COUNTERS}})
+                    except AssertionError:
+                        pass
+                    else:
+                        raise AssertionError(name)
+
                 seen = []
                 def constant(n):
                     s = 0
@@ -187,28 +253,42 @@ class Tier3RangeTests(unittest.TestCase):
                         try: executor = _opcode.get_executor(function.__code__, offset)
                         except ValueError: continue
                         saw_executor = True
-                        assert all(item[0] != '_TIER3_RANGE_CHUNK'
-                                   for item in executor), function.__name__
+                        assert_rejected(
+                            tuple(item[0] for item in executor),
+                            executor.get_tier3_stats(),
+                        )
                     assert saw_executor, function.__name__
-                assert seen == list(range(20)) * 2000
-            """),
-            PYTHON_TIER3_JIT="resident",
-            PYTHON_JIT_STRESS="1",
-        )
+                    expected = function(*args)
+                    if function is constant: assert expected == 20
+                    elif function is twice: assert expected == 1 << 20
+                    elif function is extra: assert expected == sum(range(20)) + 20
+                    elif function is effect: assert expected == sum(range(20))
+                    else: assert expected == sum(range(10))
+                assert seen == list(range(20)) * 2001
+            """)
+        for mode in ("helper", "direct", "resident"):
+            with self.subTest(mode=mode):
+                script_helper.assert_python_ok(
+                    "-c",
+                    source,
+                    PYTHON_TIER3_JIT=mode,
+                    PYTHON_JIT_STRESS="1",
+                )
 
-    @unittest.skipUnless(hasattr(__import__("signal"), "setitimer"), "needs setitimer")
+    @unittest.skipUnless(
+        hasattr(__import__("signal"), "setitimer"), "needs setitimer"
+    )
     def test_periodic_signal_check(self):
         script_helper.assert_python_ok(
             "-c",
             textwrap.dedent("""
+                import _opcode
                 import signal
-                fired = False
-                observed = None
+                observations = []
                 def handler(signum, frame):
-                    global fired, observed
-                    fired = True
-                    observed = (frame.f_locals.get('result'),
-                                frame.f_locals.get('item'))
+                    if frame.f_code is total.__code__:
+                        observations.append((frame.f_locals.get('result'),
+                                             frame.f_locals.get('item')))
                 def total(n):
                     result = 0
                     for item in range(n):
@@ -216,16 +296,37 @@ class Tier3RangeTests(unittest.TestCase):
                     return result
                 for _ in range(2000):
                     total(1000)
+                active = None
+                for offset in range(0, len(total.__code__.co_code), 2):
+                    try:
+                        candidate = _opcode.get_executor(total.__code__, offset)
+                    except ValueError:
+                        continue
+                    if candidate.get_tier3_stats()['resident_entries']:
+                        active = candidate
+                        break
+                assert active is not None
                 signal.signal(signal.SIGALRM, handler)
-                signal.setitimer(signal.ITIMER_REAL, 0.001)
                 n = 10_000_000
-                assert total(n) == sum(range(n))
-                signal.setitimer(signal.ITIMER_REAL, 0)
-                assert fired, "signal was not serviced during the loop"
-                assert observed[0] is not None and observed[1] is not None, observed
-                result, item = observed
-                assert result == sum(range(item + 1)), observed
-                assert item < n - 1, observed
+                before = active.get_tier3_stats()
+                for _ in range(5):
+                    signal.setitimer(signal.ITIMER_REAL, 0.001)
+                    assert total(n) == sum(range(n))
+                    signal.setitimer(signal.ITIMER_REAL, 0)
+                    after = active.get_tier3_stats()
+                    if (after['resident_pending_polls'] >
+                            before['resident_pending_polls'] and
+                            after['resident_deopt_materializations'] >
+                            before['resident_deopt_materializations']):
+                        break
+                else:
+                    raise AssertionError((before, after, observations))
+                assert after['resident_iterations'] > before['resident_iterations']
+                assert observations, "signal was not serviced in the target frame"
+                result, item = observations[-1]
+                assert result is not None and item is not None, observations
+                assert result == sum(range(item + 1)), observations
+                assert item < n - 1, observations
             """),
             PYTHON_TIER3_JIT="resident",
             PYTHON_TIER3_BUDGET="4096",

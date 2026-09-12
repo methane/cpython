@@ -34,6 +34,24 @@ for tool in clang llvm-readobj llvm-objdump llvm-dwarfdump; do
 done
 ```
 
+Select one complete prefix and persist it for later agent shells:
+
+```sh
+for prefix in "${LLVM_TOOLS_INSTALL_DIR:-}" /opt/llvm-21.1.8 /usr/lib/llvm-21; do
+    test -n "$prefix" || continue
+    test -x "$prefix/bin/clang" && test -x "$prefix/bin/llvm-readobj" && \
+        test -x "$prefix/bin/llvm-objdump" && \
+        test -x "$prefix/bin/llvm-dwarfdump" || continue
+    printf 'export LLVM_TOOLS_INSTALL_DIR=%q\n' "$prefix" >.llvm21-env
+    break
+done
+test -s .llvm21-env && . ./.llvm21-env
+```
+
+The environment file is repository-local and untracked. Source it explicitly
+in later setup/agent phases; exports made by a setup script do not persist into
+an agent's shell.
+
 apt.llvm.org has no LLVM 21 repository for Ubuntu 24.04 (noble).  The complete
 jammy packages work on the Codex Cloud noble image.  These are the commands used
 (the key may already be present as `/etc/apt/trusted.gpg.d/apt.llvm.org.asc`):
@@ -71,9 +89,10 @@ versions. Configure and build native JIT from a separate build directory:
 ```sh
 repo=$(git rev-parse --show-toplevel)
 mkdir -p "$repo/build-jit" && cd "$repo/build-jit"
-LLVM_TOOLS_INSTALL_DIR=/usr/lib/llvm-21 "$repo/configure" \
+test -n "${LLVM_TOOLS_INSTALL_DIR:-}" || . "$repo/.llvm21-env"
+LLVM_TOOLS_INSTALL_DIR="$LLVM_TOOLS_INSTALL_DIR" "$repo/configure" \
     --enable-experimental-jit=yes
-LLVM_TOOLS_INSTALL_DIR=/usr/lib/llvm-21 make -j"$(nproc)"
+LLVM_TOOLS_INSTALL_DIR="$LLVM_TOOLS_INSTALL_DIR" make -j"$(nproc)"
 ```
 
 LLVM 21.1.8 currently needs vectorization disabled when generating the
@@ -83,13 +102,15 @@ unsupported). From the native build directory run:
 ```sh
 python3.14 "$repo/Tools/jit/build.py" x86_64-pc-linux-gnu -o . -p . -f \
   --cflags='-fno-vectorize -fno-slp-vectorize' \
-  --llvm-tools-install-dir=/usr/lib/llvm-21
-touch .jit-stamp
-LLVM_TOOLS_INSTALL_DIR=/usr/lib/llvm-21 make -j"$(nproc)"
+  --llvm-tools-install-dir="$LLVM_TOOLS_INSTALL_DIR"
+LLVM_TOOLS_INSTALL_DIR="$LLVM_TOOLS_INSTALL_DIR" make -j"$(nproc)"
 ```
 
 Retry without this workaround after LLVM or the stencil changes, and remove it
-once ordinary generation succeeds.
+once ordinary generation succeeds. Reusing a cached LLVM prefix is safe, but
+rebuild source-dependent stencils and executables after checking out a new PR
+revision. Never update `.jit-stamp` unless stencil generation completed
+successfully and its prefix and flags were recorded.
 
 For cheap correctness and invariant work, use a distinct debug Tier-2
 interpreter build; never describe its timings as native-JIT results:
@@ -118,7 +139,8 @@ Run focused checks from each relevant build, including:
 PYTHON_JIT=1 ./python -m test test_tier3 test_capi.test_opt -v
 ```
 
-Pin benchmarks to one CPU when available (`taskset -c 0`). Compare matched
+Pin benchmarks to one CPU when available (choose one from
+`taskset -pc $$`, rather than assuming CPU 0 is allowed). Compare matched
 optimized builds and identical warmup/sample/input settings. Before timing,
 verify `sys._jit.is_available()` and `sys._jit.is_enabled()`, and verify the
 selected executor returns nonempty `get_jit_code()`. Use `PYTHON_JIT_STRESS`
