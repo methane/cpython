@@ -29,6 +29,7 @@
 #undef NEED_OPCODE_METADATA
 
 #define MAX_EXECUTORS_SIZE 256
+#define TIER3_MAX_BUDGET 4096
 
 // Trace too short, no progress:
 // _START_EXECUTOR
@@ -55,7 +56,9 @@ tier3_budget(void)
             if (setting != NULL) {
                 char *end;
                 long value = strtol(setting, &end, 10);
-                if (*setting != '\0' && *end == '\0' && value > 0 && value <= INT_MAX) {
+                if (*setting != '\0' && *end == '\0' &&
+                    value > 0 && value <= TIER3_MAX_BUDGET)
+                {
                     budget = (int)value;
                 }
             }
@@ -69,7 +72,7 @@ _PyTier3_RunRange(_PyExecutorObject *executor, _PyInterpreterFrame *frame,
                   _PyStackRef iter, int sum_local, int induction_local)
 {
     int budget = tier3_budget();
-    if (budget == 0) {
+    if (budget == 0 || sum_local == induction_local) {
         return 0;
     }
     PyObject *iter_obj = PyStackRef_AsPyObjectBorrow(iter);
@@ -100,12 +103,7 @@ _PyTier3_RunRange(_PyExecutorObject *executor, _PyInterpreterFrame *frame,
         total = new_total;
         last = next;
         remaining--;
-        if (remaining > 0) {
-            if (next == LONG_MAX) {
-                return 0;
-            }
-            next++;
-        }
+        next++;
         completed++;
     }
     if (completed == 0) {
@@ -1790,52 +1788,69 @@ mark_tier3_range_loop(_PyUOpInstruction *buffer, int length)
     if (tier3_budget() == 0 || length >= UOP_MAX_TRACE_LENGTH) {
         return length;
     }
-    int state = 0;
+    static const uint16_t pattern[] = {
+        _START_EXECUTOR, _MAKE_WARM, _SET_IP, _CHECK_PERIODIC,
+        _CHECK_VALIDITY, _ITER_CHECK_RANGE, _GUARD_NOT_EXHAUSTED_RANGE,
+        _ITER_NEXT_RANGE, _SET_IP,
+        _SWAP_FAST, _POP_TOP, _CHECK_VALIDITY,
+        _LOAD_FAST_BORROW, _LOAD_FAST_BORROW,
+        _GUARD_TOS_OVERFLOWED, _GUARD_NOS_INT,
+        0,  /* One of the supported integer additions. */
+        _POP_TOP_NOP, _POP_TOP_NOP, _SWAP_FAST, _POP_TOP_INT,
+        _JUMP_TO_TOP,
+    };
+    int pattern_index = 0;
     int induction_local = -1;
     int sum_local = -1;
+    int error_target = -1;
     int jump = -1;
     for (int i = 0; i < length; i++) {
         int opcode = normalize_tier3_opcode(buffer[i].opcode);
-        if (opcode == _ITER_NEXT_RANGE && state == 0) {
-            state = 1;
+        if (opcode == _NOP) {
+            continue;
         }
-        else if (opcode == _SWAP_FAST && state == 1) {
+        if (pattern_index == 5 && opcode == _SET_IP) {
+            continue;
+        }
+        if (pattern_index >= (int)Py_ARRAY_LENGTH(pattern)) {
+            return length;
+        }
+        int expected = pattern[pattern_index];
+        if (expected != 0 && opcode != expected) {
+            return length;
+        }
+        if (pattern_index == 9) {
             induction_local = buffer[i].oparg;
-            state = 2;
         }
-        else if ((opcode == _LOAD_FAST || opcode == _LOAD_FAST_BORROW) && state == 2) {
+        else if (pattern_index == 12) {
             sum_local = buffer[i].oparg;
-            state = 3;
         }
-        else if (opcode == _LOAD_FAST_BORROW && state == 3 &&
-                 buffer[i].oparg == induction_local) {
-            state = 4;
+        else if (pattern_index == 13) {
+            if (buffer[i].oparg != induction_local) {
+                return length;
+            }
         }
         else if ((opcode == _BINARY_OP_ADD_INT ||
                   opcode == _BINARY_OP_ADD_INT_INPLACE ||
-                  opcode == _BINARY_OP_ADD_INT_INPLACE_RIGHT) && state == 4) {
-            state = 5;
+                  opcode == _BINARY_OP_ADD_INT_INPLACE_RIGHT) &&
+                 pattern_index == 16) {
+            error_target = buffer[i].target;
         }
-        else if (opcode == _SWAP_FAST && state == 5 &&
-                 buffer[i].oparg == sum_local) {
-            state = 6;
-        }
-        else if (opcode == _JUMP_TO_TOP && state == 6) {
-            jump = i;
-            break;
-        }
-        else if (opcode == _SET_IP || opcode == _CHECK_VALIDITY ||
-                 opcode == _GUARD_TOS_OVERFLOWED || opcode == _GUARD_NOS_INT ||
-                 opcode == _POP_TOP || opcode == _POP_TOP_INT ||
-                 opcode == _POP_TOP_NOP || opcode == _SPILL_OR_RELOAD ||
-                 opcode == _NOP) {
-            continue;
-        }
-        else if (state != 0) {
+        else if (pattern_index == 16) {
             return length;
         }
+        else if (pattern_index == 19) {
+            if (buffer[i].oparg != sum_local) {
+                return length;
+            }
+        }
+        else if (pattern_index == 21) {
+            jump = i;
+        }
+        pattern_index++;
     }
-    if (jump < 0 || sum_local < 0 || induction_local < 0 ||
+    if (pattern_index != (int)Py_ARRAY_LENGTH(pattern) ||
+        jump < 0 || error_target < 0 || sum_local < 0 || induction_local < 0 ||
         sum_local == induction_local || sum_local >= 16 || induction_local >= 16)
     {
         return length;
@@ -1845,7 +1860,12 @@ mark_tier3_range_loop(_PyUOpInstruction *buffer, int length)
     buffer[jump] = (_PyUOpInstruction){
         .opcode = _TIER3_RANGE_CHUNK,
         .oparg = (sum_local << 4) | induction_local,
-        .target = buffer[jump + 1].target,
+        /* Materialization is transactional: on failure the iterator and
+         * locals still describe the start of the ordinary iteration.  Route
+         * the exception as though the skipped integer addition had failed.
+         * A zero-progress result similarly leaves all state untouched; a
+         * successful result commits both locals and iterator together. */
+        .target = error_target,
     };
     return length + 1;
 #endif

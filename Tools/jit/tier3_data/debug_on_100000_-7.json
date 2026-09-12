@@ -1,0 +1,52 @@
+{
+  "configuration": {
+    "python": "3.16.0a0 (heads/work-dirty:df7179c, Sep 12 2026, 08:33:41) [GCC 13.3.0]",
+    "commit": "df7179cf3dcae8f2d0c9e9defae1e35122b05312",
+    "compiler": "GCC 13.3.0",
+    "architecture": "x86_64",
+    "configure_args": "'--with-pydebug' '--enable-experimental-jit=interpreter'",
+    "jit_available": true,
+    "jit_enabled": true,
+    "tier3_setting": "1",
+    "tier3_budget": "64"
+  },
+  "workload": {
+    "n": 100000,
+    "initial": -7,
+    "warmup": 100,
+    "repeat": 3,
+    "loops": 20
+  },
+  "result": 4999949993,
+  "expected": 4999949993,
+  "median_ns": 24658796.05,
+  "samples_ns": [
+    24420852.4,
+    24658796.05,
+    24703932.6
+  ],
+  "executor_offset": 54,
+  "tier3_status": "entered",
+  "tier3_before": {
+    "entries": 71299,
+    "iterations": 4563136,
+    "budget_exits": 71299,
+    "overflow_exits": 0
+  },
+  "tier3_after": {
+    "entries": 114079,
+    "iterations": 7301056,
+    "budget_exits": 114079,
+    "overflow_exits": 0
+  },
+  "tier3_delta": {
+    "entries": 42780,
+    "iterations": 2737920,
+    "budget_exits": 42780,
+    "overflow_exits": 0
+  },
+  "kernel_iterations": 2737920,
+  "requested_iterations": 6000000,
+  "kernel_fraction": 0.45632,
+  "native_code_verified": false
+}

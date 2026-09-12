@@ -1,9 +1,16 @@
 """Measure the executor-integrated range kernel in the current process."""
-import _opcode
+
+import argparse
 import json
+import os
+import platform
 import statistics
+import subprocess
 import sys
+import sysconfig
 import time
+
+import _opcode
 
 
 def sum_from(n, initial):
@@ -13,32 +20,115 @@ def sum_from(n, initial):
     return total
 
 
-def executor():
+def executors():
     for offset in range(0, len(sum_from.__code__.co_code), 2):
         try:
-            return _opcode.get_executor(sum_from.__code__, offset)
+            yield offset, _opcode.get_executor(sum_from.__code__, offset)
         except ValueError:
             pass
-    return None
 
 
-for _ in range(3000):
-    sum_from(1000, 0)
+def tier3_executor():
+    fallback = None
+    for offset, candidate in executors():
+        if fallback is None:
+            fallback = (offset, candidate)
+        if candidate.get_tier3_stats()["entries"]:
+            return offset, candidate
+    return fallback
 
-samples = []
-for _ in range(9):
-    start = time.perf_counter_ns()
-    for _ in range(10000):
-        result = sum_from(1000, 0)
-    samples.append((time.perf_counter_ns() - start) / 10000)
 
-trace = executor()
-print(json.dumps({
-    "python": sys.version,
-    "jit_available": sys._jit.is_available(),
-    "jit_enabled": sys._jit.is_enabled(),
-    "median_ns": statistics.median(samples),
-    "samples_ns": samples,
-    "result": result,
-    "tier3": trace.get_tier3_stats() if trace is not None else None,
-}, indent=2))
+def configuration():
+    try:
+        commit = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"],
+            text=True,
+            cwd=os.path.dirname(__file__),
+            stderr=subprocess.DEVNULL,
+        ).strip()
+    except (OSError, subprocess.CalledProcessError):
+        commit = None
+    return {
+        "python": sys.version,
+        "commit": commit,
+        "compiler": platform.python_compiler(),
+        "architecture": platform.machine(),
+        "configure_args": sysconfig.get_config_var("CONFIG_ARGS"),
+        "jit_available": sys._jit.is_available(),
+        "jit_enabled": sys._jit.is_enabled(),
+        "tier3_setting": os.environ.get("PYTHON_TIER3_JIT"),
+        "tier3_budget": os.environ.get("PYTHON_TIER3_BUDGET"),
+    }
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--n", type=int, default=1000)
+    parser.add_argument("--initial", type=int, default=0)
+    parser.add_argument("--warmup", type=int, default=3000)
+    parser.add_argument("--repeat", type=int, default=9)
+    parser.add_argument("--loops", type=int, default=10000)
+    args = parser.parse_args()
+
+    expected = args.initial + sum(range(args.n))
+    for _ in range(args.warmup):
+        assert sum_from(args.n, args.initial) == expected
+
+    selected = tier3_executor()
+    before = selected[1].get_tier3_stats() if selected else None
+    samples = []
+    for _ in range(args.repeat):
+        start = time.perf_counter_ns()
+        for _ in range(args.loops):
+            result = sum_from(args.n, args.initial)
+        samples.append((time.perf_counter_ns() - start) / args.loops)
+    if result != expected:
+        raise AssertionError((result, expected))
+
+    selected_after = tier3_executor()
+    stable = (
+        selected is not None
+        and selected_after is not None
+        and selected[1] is selected_after[1]
+    )
+    after = selected[1].get_tier3_stats() if stable else None
+    delta = (
+        {key: after[key] - before[key] for key in before} if stable else None
+    )
+    entered = delta is not None and delta["entries"] > 0
+    processed = delta["iterations"] if entered else 0
+    requested = args.n * args.loops * args.repeat
+    print(
+        json.dumps(
+            {
+                "configuration": configuration(),
+                "workload": vars(args),
+                "result": result,
+                "expected": expected,
+                "median_ns": statistics.median(samples),
+                "samples_ns": samples,
+                "executor_offset": selected[0] if selected else None,
+                "tier3_status": "entered"
+                if entered
+                else (
+                    "executor replaced"
+                    if selected and not stable
+                    else ("not entered" if selected else "unavailable")
+                ),
+                "tier3_before": before,
+                "tier3_after": after,
+                "tier3_delta": delta,
+                "kernel_iterations": processed,
+                "requested_iterations": requested,
+                "kernel_fraction": processed / requested if requested else 0.0,
+                # Native code is intentionally not claimed here: this experiment is a
+                # Tier-2 executor invoking a statically compiled C helper.
+                "native_code_verified": False,
+            },
+            indent=2,
+        )
+    )
+
+
+if __name__ == "__main__":
+    main()

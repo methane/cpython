@@ -36,3 +36,45 @@ the existing executor/deoptimization path.  This means an actual int64 overflow
 inside the kernel is not currently reachable for the supported `range(n)`
 shape; the checked-add exit is retained as part of the state contract, but no
 performance claim is made for overflow handling.
+
+## State and failure contract
+
+Recognition is deliberately tied to the complete observed executor loop: the
+executor entry and periodic check, range guards and next operation, local
+replacement/cleanup operations, the two exact local loads, the guarded integer
+addition, its cleanup/store, and the original backedge must all occur in the
+expected order.  The local operands must prove distinct induction and
+accumulator slots.  This intentionally rejects traces with calls, branches,
+extra arithmetic, changed stack cleanup, or an unproved prefix rather than
+skipping their effects.
+
+A zero-progress return changes neither locals nor iterator and ordinary executor
+execution continues.  On progress, both result objects are allocated before the
+iterator or either local is changed; the update is then committed as one
+boundary transition.  If either allocation fails, the unchanged boundary state
+is routed through the integer addition's bytecode error target, not the
+backedge's unused target.  Thus the selected exception handler and traceback
+correspond to the operation represented by the chunk, and no completed Python
+iteration or pre-loop effect is replayed.
+
+Budgets greater than 4096 are rejected and use the default of 1024.  Every
+bounded chunk falls through to the original backedge, whose loop header starts
+with the existing periodic and validity checks.
+
+## Measurement
+
+`tier3_bench.py` validates every result and reports counters immediately before
+and after its measured calls.  `kernel_iterations` and `kernel_fraction` are
+measurement deltas, and `tier3_status` explicitly distinguishes unavailable or
+non-entered paths.  It also records the interpreter, configure arguments,
+compiler, architecture, commit, experiment settings, and JIT state.  The
+`native_code_verified` field is false by design: this is Tier-2 executor code
+calling a statically compiled C helper, not generated native code.
+
+For example, run matched interpreters with the experiment absent and enabled:
+
+```sh
+PYTHON_JIT_STRESS=1 ./python Tools/jit/tier3_bench.py --n 1000 --initial 0
+PYTHON_JIT_STRESS=1 PYTHON_TIER3_JIT=1 PYTHON_TIER3_BUDGET=64 \
+  ./python Tools/jit/tier3_bench.py --n 1000 --initial 0
+```

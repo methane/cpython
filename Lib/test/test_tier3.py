@@ -2,11 +2,23 @@ import textwrap
 import unittest
 import _opcode
 
-from test import support
 from test.support import script_helper
 
 
-@unittest.skipUnless(hasattr(_opcode, "get_executor"), "requires tier 2")
+def executors_available():
+    def probe():
+        pass
+
+    try:
+        _opcode.get_executor(probe.__code__, 0)
+    except ValueError:
+        return True
+    except RuntimeError:
+        return False
+    return True
+
+
+@unittest.skipUnless(executors_available(), "requires tier 2")
 class Tier3RangeTests(unittest.TestCase):
     SCRIPT = textwrap.dedent("""
         import _opcode
@@ -31,6 +43,9 @@ class Tier3RangeTests(unittest.TestCase):
         for _ in range(2000):
             alias(40, 10)
         active = executor(renamed)
+        names = [item[0] for item in active]
+        chunk = names.index('_TIER3_RANGE_CHUNK')
+        assert names[chunk + 2] == '_JUMP_TO_TOP', names
         before = active.get_tier3_stats()
         assert alias(100, -5) == -5 + sum(range(100))
         after = active.get_tier3_stats()
@@ -64,16 +79,15 @@ class Tier3RangeTests(unittest.TestCase):
         for budget in (1, 2, 7, 64):
             with self.subTest(budget=budget):
                 script_helper.assert_python_ok(
-                    "-c", self.SCRIPT,
+                    "-c",
+                    self.SCRIPT,
                     PYTHON_TIER3_JIT="1",
                     PYTHON_TIER3_BUDGET=str(budget),
                     PYTHON_JIT_STRESS="1",
                 )
 
-    def test_disabled_by_default(self):
-        script_helper.assert_python_ok(
-            "-c",
-            textwrap.dedent("""
+    def test_disabled(self):
+        source = textwrap.dedent("""
                 import _opcode
                 def f(n):
                     s = 0
@@ -89,9 +103,13 @@ class Tier3RangeTests(unittest.TestCase):
                         continue
                     assert all(item[0] != '_TIER3_RANGE_CHUNK' for item in executor)
                     assert executor.get_tier3_stats()['entries'] == 0
-            """),
-            PYTHON_JIT_STRESS="1",
-        )
+            """)
+        for setting in (None, "0"):
+            with self.subTest(setting=setting):
+                env = {"PYTHON_JIT_STRESS": "1", "__cleanenv": True}
+                if setting is not None:
+                    env["PYTHON_TIER3_JIT"] = setting
+                script_helper.assert_python_ok("-c", source, **env)
 
     def test_unsafe_loops_are_rejected(self):
         script_helper.assert_python_ok(
@@ -129,11 +147,14 @@ class Tier3RangeTests(unittest.TestCase):
                                        (extra, (20,)), (effect, (20,)),
                                        (branch, (20, 10))):
                     for _ in range(2000): function(*args)
+                    saw_executor = False
                     for offset in range(0, len(function.__code__.co_code), 2):
                         try: executor = _opcode.get_executor(function.__code__, offset)
                         except ValueError: continue
+                        saw_executor = True
                         assert all(item[0] != '_TIER3_RANGE_CHUNK'
                                    for item in executor), function.__name__
+                    assert saw_executor, function.__name__
                 assert seen == list(range(20)) * 2000
             """),
             PYTHON_TIER3_JIT="1",
