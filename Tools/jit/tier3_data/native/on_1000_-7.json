@@ -1,0 +1,138 @@
+{
+  "configuration": {
+    "python": "3.16.0a0 (heads/work-dirty:f895c84, Sep 12 2026, 09:11:58) [GCC 13.3.0]",
+    "commit": "f895c84ef8701c2d4780508495a05f6a797780af",
+    "compiler": "GCC 13.3.0",
+    "architecture": "x86_64",
+    "configure_args": "'--enable-experimental-jit=yes'",
+    "jit_available": true,
+    "jit_enabled": true,
+    "tier3_setting": "1",
+    "tier3_budget": "64"
+  },
+  "workload": {
+    "n": 1000,
+    "initial": -7,
+    "warmup": 3000,
+    "repeat": 9,
+    "loops": 20000
+  },
+  "result": 499493,
+  "expected": 499493,
+  "median_ns": 1108.9819,
+  "samples_ns": [
+    1118.61125,
+    1111.2408,
+    1108.1256,
+    1108.8682,
+    1108.5062,
+    1108.9819,
+    1109.16765,
+    1110.2378,
+    1107.37255
+  ],
+  "measurements": [
+    {
+      "elapsed_ns": 1118.61125,
+      "status": "stable",
+      "tier3_delta": {
+        "entries": 320000,
+        "iterations": 19660000,
+        "budget_exits": 320000,
+        "overflow_exits": 0
+      }
+    },
+    {
+      "elapsed_ns": 1111.2408,
+      "status": "stable",
+      "tier3_delta": {
+        "entries": 320000,
+        "iterations": 19660000,
+        "budget_exits": 320000,
+        "overflow_exits": 0
+      }
+    },
+    {
+      "elapsed_ns": 1108.1256,
+      "status": "stable",
+      "tier3_delta": {
+        "entries": 320000,
+        "iterations": 19660000,
+        "budget_exits": 320000,
+        "overflow_exits": 0
+      }
+    },
+    {
+      "elapsed_ns": 1108.8682,
+      "status": "stable",
+      "tier3_delta": {
+        "entries": 320000,
+        "iterations": 19660000,
+        "budget_exits": 320000,
+        "overflow_exits": 0
+      }
+    },
+    {
+      "elapsed_ns": 1108.5062,
+      "status": "stable",
+      "tier3_delta": {
+        "entries": 320000,
+        "iterations": 19660000,
+        "budget_exits": 320000,
+        "overflow_exits": 0
+      }
+    },
+    {
+      "elapsed_ns": 1108.9819,
+      "status": "stable",
+      "tier3_delta": {
+        "entries": 320000,
+        "iterations": 19660000,
+        "budget_exits": 320000,
+        "overflow_exits": 0
+      }
+    },
+    {
+      "elapsed_ns": 1109.16765,
+      "status": "stable",
+      "tier3_delta": {
+        "entries": 320000,
+        "iterations": 19660000,
+        "budget_exits": 320000,
+        "overflow_exits": 0
+      }
+    },
+    {
+      "elapsed_ns": 1110.2378,
+      "status": "stable",
+      "tier3_delta": {
+        "entries": 320000,
+        "iterations": 19660000,
+        "budget_exits": 320000,
+        "overflow_exits": 0
+      }
+    },
+    {
+      "elapsed_ns": 1107.37255,
+      "status": "stable",
+      "tier3_delta": {
+        "entries": 320000,
+        "iterations": 19660000,
+        "budget_exits": 320000,
+        "overflow_exits": 0
+      }
+    }
+  ],
+  "executor_offset": 54,
+  "tier3_status": "entered",
+  "tier3_delta": {
+    "entries": 2880000,
+    "iterations": 176940000,
+    "budget_exits": 2880000,
+    "overflow_exits": 0
+  },
+  "kernel_iterations": 176940000,
+  "requested_iterations": 180000000,
+  "kernel_fraction": 0.983,
+  "native_code_verified": true
+}

@@ -1,0 +1,116 @@
+{
+  "configuration": {
+    "python": "3.16.0a0 (heads/work-dirty:f895c84, Sep 12 2026, 09:11:58) [GCC 13.3.0]",
+    "commit": "f895c84ef8701c2d4780508495a05f6a797780af",
+    "compiler": "GCC 13.3.0",
+    "architecture": "x86_64",
+    "configure_args": "'--enable-experimental-jit=yes'",
+    "jit_available": true,
+    "jit_enabled": true,
+    "tier3_setting": "1",
+    "tier3_budget": "512"
+  },
+  "workload": {
+    "n": 100000,
+    "initial": 0,
+    "warmup": 3000,
+    "repeat": 7,
+    "loops": 100
+  },
+  "result": 4999950000,
+  "expected": 4999950000,
+  "median_ns": 67049.96,
+  "samples_ns": [
+    67319.46,
+    67077.1,
+    66737.89,
+    66874.3,
+    67049.96,
+    66832.74,
+    68641.63
+  ],
+  "measurements": [
+    {
+      "elapsed_ns": 67319.46,
+      "status": "stable",
+      "tier3_delta": {
+        "entries": 19500,
+        "iterations": 9980400,
+        "budget_exits": 19500,
+        "overflow_exits": 0
+      }
+    },
+    {
+      "elapsed_ns": 67077.1,
+      "status": "stable",
+      "tier3_delta": {
+        "entries": 19500,
+        "iterations": 9980400,
+        "budget_exits": 19500,
+        "overflow_exits": 0
+      }
+    },
+    {
+      "elapsed_ns": 66737.89,
+      "status": "stable",
+      "tier3_delta": {
+        "entries": 19500,
+        "iterations": 9980400,
+        "budget_exits": 19500,
+        "overflow_exits": 0
+      }
+    },
+    {
+      "elapsed_ns": 66874.3,
+      "status": "stable",
+      "tier3_delta": {
+        "entries": 19500,
+        "iterations": 9980400,
+        "budget_exits": 19500,
+        "overflow_exits": 0
+      }
+    },
+    {
+      "elapsed_ns": 67049.96,
+      "status": "stable",
+      "tier3_delta": {
+        "entries": 19500,
+        "iterations": 9980400,
+        "budget_exits": 19500,
+        "overflow_exits": 0
+      }
+    },
+    {
+      "elapsed_ns": 66832.74,
+      "status": "stable",
+      "tier3_delta": {
+        "entries": 19500,
+        "iterations": 9980400,
+        "budget_exits": 19500,
+        "overflow_exits": 0
+      }
+    },
+    {
+      "elapsed_ns": 68641.63,
+      "status": "stable",
+      "tier3_delta": {
+        "entries": 19500,
+        "iterations": 9980400,
+        "budget_exits": 19500,
+        "overflow_exits": 0
+      }
+    }
+  ],
+  "executor_offset": 54,
+  "tier3_status": "entered",
+  "tier3_delta": {
+    "entries": 136500,
+    "iterations": 69862800,
+    "budget_exits": 136500,
+    "overflow_exits": 0
+  },
+  "kernel_iterations": 69862800,
+  "requested_iterations": 70000000,
+  "kernel_fraction": 0.99804,
+  "native_code_verified": true
+}

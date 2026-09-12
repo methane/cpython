@@ -1,0 +1,138 @@
+{
+  "configuration": {
+    "python": "3.16.0a0 (heads/work-dirty:f895c84, Sep 12 2026, 09:11:58) [GCC 13.3.0]",
+    "commit": "f895c84ef8701c2d4780508495a05f6a797780af",
+    "compiler": "GCC 13.3.0",
+    "architecture": "x86_64",
+    "configure_args": "'--enable-experimental-jit=yes'",
+    "jit_available": true,
+    "jit_enabled": true,
+    "tier3_setting": null,
+    "tier3_budget": null
+  },
+  "workload": {
+    "n": 1000,
+    "initial": 0,
+    "warmup": 3000,
+    "repeat": 9,
+    "loops": 20000
+  },
+  "result": 499500,
+  "expected": 499500,
+  "median_ns": 11458.83725,
+  "samples_ns": [
+    11519.86765,
+    11463.41755,
+    11549.2494,
+    11770.186,
+    11458.83725,
+    11296.7478,
+    11309.2775,
+    11277.2653,
+    11395.211
+  ],
+  "measurements": [
+    {
+      "elapsed_ns": 11519.86765,
+      "status": "stable",
+      "tier3_delta": {
+        "entries": 0,
+        "iterations": 0,
+        "budget_exits": 0,
+        "overflow_exits": 0
+      }
+    },
+    {
+      "elapsed_ns": 11463.41755,
+      "status": "stable",
+      "tier3_delta": {
+        "entries": 0,
+        "iterations": 0,
+        "budget_exits": 0,
+        "overflow_exits": 0
+      }
+    },
+    {
+      "elapsed_ns": 11549.2494,
+      "status": "stable",
+      "tier3_delta": {
+        "entries": 0,
+        "iterations": 0,
+        "budget_exits": 0,
+        "overflow_exits": 0
+      }
+    },
+    {
+      "elapsed_ns": 11770.186,
+      "status": "stable",
+      "tier3_delta": {
+        "entries": 0,
+        "iterations": 0,
+        "budget_exits": 0,
+        "overflow_exits": 0
+      }
+    },
+    {
+      "elapsed_ns": 11458.83725,
+      "status": "stable",
+      "tier3_delta": {
+        "entries": 0,
+        "iterations": 0,
+        "budget_exits": 0,
+        "overflow_exits": 0
+      }
+    },
+    {
+      "elapsed_ns": 11296.7478,
+      "status": "stable",
+      "tier3_delta": {
+        "entries": 0,
+        "iterations": 0,
+        "budget_exits": 0,
+        "overflow_exits": 0
+      }
+    },
+    {
+      "elapsed_ns": 11309.2775,
+      "status": "stable",
+      "tier3_delta": {
+        "entries": 0,
+        "iterations": 0,
+        "budget_exits": 0,
+        "overflow_exits": 0
+      }
+    },
+    {
+      "elapsed_ns": 11277.2653,
+      "status": "stable",
+      "tier3_delta": {
+        "entries": 0,
+        "iterations": 0,
+        "budget_exits": 0,
+        "overflow_exits": 0
+      }
+    },
+    {
+      "elapsed_ns": 11395.211,
+      "status": "stable",
+      "tier3_delta": {
+        "entries": 0,
+        "iterations": 0,
+        "budget_exits": 0,
+        "overflow_exits": 0
+      }
+    }
+  ],
+  "executor_offset": 54,
+  "tier3_status": "not entered",
+  "tier3_delta": {
+    "entries": 0,
+    "iterations": 0,
+    "budget_exits": 0,
+    "overflow_exits": 0
+  },
+  "kernel_iterations": 0,
+  "requested_iterations": 180000000,
+  "kernel_fraction": 0.0,
+  "native_code_verified": true
+}

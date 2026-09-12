@@ -85,7 +85,14 @@ class Tier3RangeTests(unittest.TestCase):
             assert sum_and_last(40, 3) == (3 + sum(range(40)), 39)
         assert sum_and_last(0, 3) == (3, -1)
         assert sum_and_last(17, 9) == (9 + sum(range(17)), 16)
-        assert executor(sum_and_last).get_tier3_stats()["entries"] > 0
+        active = executor(sum_and_last)
+        before = active.get_tier3_stats()
+        boundary = sum_and_last(100, 2**63 - 10)
+        after = active.get_tier3_stats()
+        assert boundary == (2**63 - 10 + sum(range(100)), 99), boundary
+        assert after["iterations"] > before["iterations"], (before, after)
+        if int(__import__('os').environ['PYTHON_TIER3_BUDGET']) >= 7:
+            assert after["overflow_exits"] > before["overflow_exits"], (before, after)
     """)
 
     def test_range_osr_and_materialization(self):
@@ -109,13 +116,16 @@ class Tier3RangeTests(unittest.TestCase):
                     return s
                 for _ in range(2000):
                     f(40)
+                saw_executor = False
                 for offset in range(0, len(f.__code__.co_code), 2):
                     try:
                         executor = _opcode.get_executor(f.__code__, offset)
                     except ValueError:
                         continue
+                    saw_executor = True
                     assert all(item[0] != '_TIER3_RANGE_CHUNK' for item in executor)
                     assert executor.get_tier3_stats()['entries'] == 0
+                assert saw_executor
             """)
         for setting in (None, "0"):
             with self.subTest(setting=setting):
