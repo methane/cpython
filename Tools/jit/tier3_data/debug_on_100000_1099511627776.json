@@ -1,7 +1,7 @@
 {
   "configuration": {
-    "python": "3.16.0a0 (heads/work-dirty:df7179c, Sep 12 2026, 08:33:41) [GCC 13.3.0]",
-    "commit": "df7179cf3dcae8f2d0c9e9defae1e35122b05312",
+    "python": "3.16.0a0 (heads/work-dirty:5a74a34, Sep 12 2026, 08:53:09) [GCC 13.3.0]",
+    "commit": "864c1392d965b5871bc0deb6fe81cb70ca97acc0",
     "compiler": "GCC 13.3.0",
     "architecture": "x86_64",
     "configure_args": "'--with-pydebug' '--enable-experimental-jit=interpreter'",
@@ -13,42 +13,42 @@
   "workload": {
     "n": 100000,
     "initial": 1099511627776,
-    "warmup": 500,
+    "warmup": 30,
     "repeat": 5,
-    "loops": 50
+    "loops": 10
   },
   "result": 1104511577776,
   "expected": 1104511577776,
-  "median_ns": 33906548.7,
+  "median_ns": 2218984.7,
   "samples_ns": [
-    34002815.7,
-    34000554.44,
-    33906548.7,
-    33801131.4,
-    33728502.54
+    1824566.6,
+    2275793.8,
+    5595907.6,
+    1812954.4,
+    2218984.7
   ],
   "executor_offset": 54,
-  "tier3_status": "not entered",
+  "tier3_status": "entered",
   "tier3_before": {
-    "entries": 0,
-    "iterations": 0,
-    "budget_exits": 0,
+    "entries": 46649,
+    "iterations": 2983227,
+    "budget_exits": 46649,
     "overflow_exits": 0
   },
   "tier3_after": {
-    "entries": 0,
-    "iterations": 0,
-    "budget_exits": 0,
+    "entries": 123599,
+    "iterations": 7906227,
+    "budget_exits": 123599,
     "overflow_exits": 0
   },
   "tier3_delta": {
-    "entries": 0,
-    "iterations": 0,
-    "budget_exits": 0,
+    "entries": 76950,
+    "iterations": 4923000,
+    "budget_exits": 76950,
     "overflow_exits": 0
   },
-  "kernel_iterations": 0,
-  "requested_iterations": 25000000,
-  "kernel_fraction": 0.0,
+  "kernel_iterations": 4923000,
+  "requested_iterations": 5000000,
+  "kernel_fraction": 0.9846,
   "native_code_verified": false
 }

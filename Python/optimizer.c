@@ -79,19 +79,28 @@ _PyTier3_RunRange(_PyExecutorObject *executor, _PyInterpreterFrame *frame,
     PyObject *sum_obj = PyStackRef_AsPyObjectBorrow(frame->localsplus[sum_local]);
     if (Py_TYPE(iter_obj) != &PyRangeIter_Type ||
         ((_PyRangeIterObject *)iter_obj)->step != 1 ||
-        !PyLong_CheckExact(sum_obj) ||
-        !_PyLong_IsCompact((PyLongObject *)sum_obj))
+        !PyLong_CheckExact(sum_obj))
     {
         return 0;
     }
     _PyRangeIterObject *range = (_PyRangeIterObject *)iter_obj;
-    int64_t total = _PyLong_CompactValue((PyLongObject *)sum_obj);
+    int conversion_overflow = 0;
+    int64_t total = PyLong_AsLongLongAndOverflow(sum_obj, &conversion_overflow);
+    if (conversion_overflow != 0) {
+        assert(!PyErr_Occurred());
+        return 0;
+    }
+    if (total == -1 && PyErr_Occurred()) {
+        return -1;
+    }
     long next = range->start;
     long remaining = range->len;
     long completed = 0;
     long last = 0;
     bool overflow = false;
-    while (completed < budget && remaining > 0) {
+    /* Leave one value for the unchanged ordinary loop body. */
+    long max_extra = Py_MIN((long)budget, remaining - 1);
+    while (completed < max_extra) {
         int64_t new_total;
         if ((next > 0 && total > INT64_MAX - next) ||
             (next < 0 && total < INT64_MIN - next))
@@ -1803,6 +1812,7 @@ mark_tier3_range_loop(_PyUOpInstruction *buffer, int length)
     int induction_local = -1;
     int sum_local = -1;
     int error_target = -1;
+    int iter_next = -1;
     int jump = -1;
     for (int i = 0; i < length; i++) {
         int opcode = normalize_tier3_opcode(buffer[i].opcode);
@@ -1821,6 +1831,9 @@ mark_tier3_range_loop(_PyUOpInstruction *buffer, int length)
         }
         if (pattern_index == 9) {
             induction_local = buffer[i].oparg;
+        }
+        else if (pattern_index == 7) {
+            iter_next = i;
         }
         else if (pattern_index == 12) {
             sum_local = buffer[i].oparg;
@@ -1850,21 +1863,21 @@ mark_tier3_range_loop(_PyUOpInstruction *buffer, int length)
         pattern_index++;
     }
     if (pattern_index != (int)Py_ARRAY_LENGTH(pattern) ||
-        jump < 0 || error_target < 0 || sum_local < 0 || induction_local < 0 ||
+        iter_next < 0 || jump < 0 || error_target < 0 ||
+        sum_local < 0 || induction_local < 0 ||
         sum_local == induction_local || sum_local >= 16 || induction_local >= 16)
     {
         return length;
     }
-    memmove(&buffer[jump + 1], &buffer[jump],
-            (length - jump) * sizeof(buffer[0]));
-    buffer[jump] = (_PyUOpInstruction){
+    memmove(&buffer[iter_next + 1], &buffer[iter_next],
+            (length - iter_next) * sizeof(buffer[0]));
+    buffer[iter_next] = (_PyUOpInstruction){
         .opcode = _TIER3_RANGE_CHUNK,
         .oparg = (sum_local << 4) | induction_local,
-        /* Materialization is transactional: on failure the iterator and
-         * locals still describe the start of the ordinary iteration.  Route
-         * the exception as though the skipped integer addition had failed.
-         * A zero-progress result similarly leaves all state untouched; a
-         * successful result commits both locals and iterator together. */
+        /* The header guards have proved an exact, non-exhausted range.  The
+         * helper leaves one item for the ordinary body.  Materialization is
+         * transactional: failure and zero progress leave iterator and locals
+         * untouched.  Route allocation errors to the matched addition. */
         .target = error_target,
     };
     return length + 1;

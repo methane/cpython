@@ -71,6 +71,10 @@ def main():
     args = parser.parse_args()
 
     expected = args.initial + sum(range(args.n))
+    # Record the supported whole-loop trace from a compact accumulator before
+    # measuring entry from a potentially non-compact exact int.
+    for _ in range(args.warmup):
+        sum_from(min(args.n, 1000), 0)
     for _ in range(args.warmup):
         assert sum_from(args.n, args.initial) == expected
 
@@ -92,6 +96,12 @@ def main():
         and selected[1] is selected_after[1]
     )
     after = selected[1].get_tier3_stats() if stable else None
+    try:
+        native_code_verified = (
+            stable and selected[1].get_jit_code() is not None
+        )
+    except RuntimeError:
+        native_code_verified = False
     delta = (
         {key: after[key] - before[key] for key in before} if stable else None
     )
@@ -121,9 +131,7 @@ def main():
                 "kernel_iterations": processed,
                 "requested_iterations": requested,
                 "kernel_fraction": processed / requested if requested else 0.0,
-                # Native code is intentionally not claimed here: this experiment is a
-                # Tier-2 executor invoking a statically compiled C helper.
-                "native_code_verified": False,
+                "native_code_verified": native_code_verified,
             },
             indent=2,
         )

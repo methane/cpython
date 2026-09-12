@@ -1,7 +1,7 @@
 {
   "configuration": {
-    "python": "3.16.0a0 (heads/work-dirty:df7179c, Sep 12 2026, 08:33:41) [GCC 13.3.0]",
-    "commit": "df7179cf3dcae8f2d0c9e9defae1e35122b05312",
+    "python": "3.16.0a0 (heads/work-dirty:5a74a34, Sep 12 2026, 08:53:09) [GCC 13.3.0]",
+    "commit": "864c1392d965b5871bc0deb6fe81cb70ca97acc0",
     "compiler": "GCC 13.3.0",
     "architecture": "x86_64",
     "configure_args": "'--with-pydebug' '--enable-experimental-jit=interpreter'",
@@ -13,19 +13,19 @@
   "workload": {
     "n": 100000,
     "initial": 1099511627776,
-    "warmup": 500,
+    "warmup": 30,
     "repeat": 5,
-    "loops": 50
+    "loops": 10
   },
   "result": 1104511577776,
   "expected": 1104511577776,
-  "median_ns": 34114046.56,
+  "median_ns": 130163294.8,
   "samples_ns": [
-    33886801.22,
-    34114046.56,
-    34203723.5,
-    33990227.5,
-    34142182.54
+    130163294.8,
+    133385549.5,
+    88479898.6,
+    99334444.9,
+    133584475.0
   ],
   "executor_offset": 54,
   "tier3_status": "not entered",
@@ -48,7 +48,7 @@
     "overflow_exits": 0
   },
   "kernel_iterations": 0,
-  "requested_iterations": 25000000,
+  "requested_iterations": 5000000,
   "kernel_fraction": 0.0,
   "native_code_verified": false
 }

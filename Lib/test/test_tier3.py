@@ -45,16 +45,29 @@ class Tier3RangeTests(unittest.TestCase):
         active = executor(renamed)
         names = [item[0] for item in active]
         chunk = names.index('_TIER3_RANGE_CHUNK')
-        assert names[chunk + 2] == '_JUMP_TO_TOP', names
+        assert names[chunk + 1] == '_ITER_NEXT_RANGE', names
+        assert names.index('_JUMP_TO_TOP') > chunk, names
         before = active.get_tier3_stats()
         assert alias(100, -5) == -5 + sum(range(100))
         after = active.get_tier3_stats()
         assert after["entries"] > before["entries"], (before, after)
         assert after["iterations"] > before["iterations"], (before, after)
+        before = executor(renamed).get_tier3_stats()
+        assert alias(1000, 2**40) == 2**40 + sum(range(1000))
+        after = executor(renamed).get_tier3_stats()
+        assert after['iterations'] > before['iterations'], (before, after)
+
+        before = executor(renamed).get_tier3_stats()
         assert alias(100, 2**63 - 10) == 2**63 - 10 + sum(range(100))
+        after = executor(renamed).get_tier3_stats()
+        assert after['iterations'] > before['iterations'], (before, after)
+        if int(__import__('os').environ['PYTHON_TIER3_BUDGET']) >= 7:
+            assert after['overflow_exits'] > before['overflow_exits'], (before, after)
         assert alias(-1, True) is True
         assert alias(0, 12345678901234567890) == 12345678901234567890
         assert alias(count=23, initial=17) == 17 + sum(range(23))
+        for count in (0, 1, 2):
+            assert alias(count, 11) == 11 + sum(range(count))
         stats = executor(renamed).get_tier3_stats()
         assert stats["entries"] > 0, stats
         assert stats["iterations"] >= stats["entries"], stats
@@ -158,6 +171,36 @@ class Tier3RangeTests(unittest.TestCase):
                 assert seen == list(range(20)) * 2000
             """),
             PYTHON_TIER3_JIT="1",
+            PYTHON_JIT_STRESS="1",
+        )
+
+    @unittest.skipUnless(
+        hasattr(__import__("signal"), "setitimer"), "needs setitimer"
+    )
+    def test_periodic_signal_check(self):
+        script_helper.assert_python_ok(
+            "-c",
+            textwrap.dedent("""
+                import signal
+                fired = False
+                def handler(*args):
+                    global fired
+                    fired = True
+                def total(n):
+                    result = 0
+                    for item in range(n):
+                        result += item
+                    return result
+                for _ in range(2000):
+                    total(1000)
+                signal.signal(signal.SIGALRM, handler)
+                signal.setitimer(signal.ITIMER_REAL, 0.001)
+                while not fired:
+                    assert total(100_000) == sum(range(100_000))
+                signal.setitimer(signal.ITIMER_REAL, 0)
+            """),
+            PYTHON_TIER3_JIT="1",
+            PYTHON_TIER3_BUDGET="4096",
             PYTHON_JIT_STRESS="1",
         )
 
