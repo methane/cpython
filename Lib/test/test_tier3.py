@@ -4,6 +4,7 @@ import _opcode
 
 from test import support
 from test.support import script_helper
+from test.support import os_helper
 
 
 def executors_available():
@@ -192,10 +193,43 @@ class Tier3RangeTests(unittest.TestCase):
             PYTHON_JIT_STRESS="1",
         )
 
+    def test_real_trace_region_dump(self):
+        _, _, stderr = script_helper.assert_python_ok(
+            "-c",
+            textwrap.dedent("""
+                def add(n, initial):
+                    total = initial
+                    for item in range(n):
+                        total += item
+                    return total
+
+                def squares(n, initial):
+                    total = initial
+                    for item in range(n):
+                        total += item * item
+                    return total
+
+                for function in (add, squares):
+                    for _ in range(2000):
+                        function(40, 0)
+                    function(100, 0)
+            """),
+            PYTHON_TIER3_JIT="resident",
+            PYTHON_TIER3_DUMP="1",
+            PYTHON_JIT_STRESS="1",
+        )
+        dump = stderr.decode()
+        self.assertIn("result=add(acc,induction)", dump)
+        self.assertIn("lowering=_TIER3_RANGE_CHUNK_RESIDENT ", dump)
+        self.assertIn("result=add(acc,mul(induction,induction))", dump)
+        self.assertIn("lowering=_TIER3_RANGE_CHUNK_RESIDENT_SQUARES ", dump)
+
     def test_sum_squares_mode_compatibility(self):
         source = textwrap.dedent(f"""
             import _opcode
+            import os
             EXPERIMENTAL_UOPS = {self.EXPERIMENTAL_UOPS!r}
+            assert os.environ.get('PYTHON_TIER3_JIT') == MODE, os.environ.get('PYTHON_TIER3_JIT')
 
             def executors(function):
                 for offset in range(0, len(function.__code__.co_code), 2):
@@ -237,9 +271,12 @@ class Tier3RangeTests(unittest.TestCase):
                 env = {"PYTHON_JIT_STRESS": "1"}
                 if mode is not None:
                     env["PYTHON_TIER3_JIT"] = mode
-                script_helper.assert_python_ok(
-                    "-c", f"MODE = {mode!r}\n" + source, **env
-                )
+                with os_helper.EnvironmentVarGuard() as environ:
+                    if mode is None:
+                        environ.unset("PYTHON_TIER3_JIT")
+                    script_helper.assert_python_ok(
+                        "-c", f"MODE = {mode!r}\n" + source, **env
+                    )
 
     def test_disabled(self):
         source = textwrap.dedent(f"""

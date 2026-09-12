@@ -1856,12 +1856,28 @@ typedef struct {
     int periodic_target;
     int overflow_target;
     int error_target;
-    bool has_multiply;
 } Tier3LoopRegion;
 
+typedef enum {
+    TIER3_LOWER_NONE,
+    TIER3_LOWER_ADD,
+    TIER3_LOWER_MUL_ADD,
+} Tier3LoweringKind;
+
+typedef enum {
+    TIER3_REF_OWNED,
+    TIER3_REF_BORROWED,
+    TIER3_REF_TRASH,
+} Tier3RefKind;
+
+typedef struct {
+    int node;
+    Tier3RefKind ref;
+} Tier3StackValue;
+
 static int
-tier3_region_add_node(Tier3LoopRegion *region, Tier3RegionOp op,
-                      Tier3ValueKind kind, int input0, int input1)
+tier3_region_add_node(Tier3LoopRegion *region, Tier3RegionOp op, Tier3ValueKind kind, int input0,
+                      int input1)
 {
     assert(region->node_count < (int)Py_ARRAY_LENGTH(region->nodes));
     int result = region->node_count++;
@@ -1869,106 +1885,242 @@ tier3_region_add_node(Tier3LoopRegion *region, Tier3RegionOp op,
     return result;
 }
 
-/* Build a typed description from the complete optimized trace.  This is
- * deliberately a fixed-size region rather than a general CFG: the operands
- * below prove either acc+i or acc+(i*i), including both checked dependencies. */
 static bool
-build_tier3_loop_region(_PyUOpInstruction *buffer, int length,
-                        Tier3LoopRegion *region)
+tier3_push(Tier3StackValue *stack, int *depth, int node, Tier3RefKind ref)
 {
-    int positions[32];
-    int opcodes[32];
-    int count = 0;
+    if (*depth >= 8) {
+        return false;
+    }
+    stack[(*depth)++] = (Tier3StackValue){node, ref};
+    return true;
+}
+
+static bool
+tier3_pop(Tier3StackValue *stack, int *depth, int node)
+{
+    return *depth > 0 && stack[--*depth].node == node;
+}
+
+static bool
+tier3_cleanup(Tier3StackValue *stack, int *depth, int opcode)
+{
+    if (*depth == 0) {
+        return false;
+    }
+    Tier3RefKind ref = stack[*depth - 1].ref;
+    if ((opcode == _POP_TOP_NOP && ref == TIER3_REF_OWNED) ||
+        (opcode == _POP_TOP_INT && ref == TIER3_REF_BORROWED)) {
+        return false;
+    }
+    (*depth)--;
+    return true;
+}
+
+/* Interpret the bounded straight-line loop body.  Arithmetic uops retain their
+ * inputs, so cleanup pops are part of the proof rather than decorative shape
+ * matching.  Locals and ownership are tracked only for the two live-outs. */
+static bool
+build_tier3_loop_region(_PyUOpInstruction *buffer, int length, Tier3LoopRegion *region)
+{
+    *region = (Tier3LoopRegion){.induction_local = -1,
+                                .accumulator_local = -1,
+                                .periodic_target = -1,
+                                .error_target = -1,
+                                .overflow_target = -1};
+    region->iterator_node =
+        tier3_region_add_node(region, TIER3_REGION_LIVE_IN, TIER3_VALUE_OBJECT, -1, -1);
+    region->induction_node = tier3_region_add_node(region, TIER3_REGION_INDUCTION, TIER3_VALUE_I64,
+                                                   region->iterator_node, -1);
+    region->accumulator_node =
+        tier3_region_add_node(region, TIER3_REGION_ACCUMULATOR, TIER3_VALUE_I64, -1, -1);
+    Tier3StackValue stack[8];
+    int depth = 0, phase = 0, rhs = -1, result = -1;
+    bool saw_mul = false, saw_accumulator = false;
     for (int i = 0; i < length; i++) {
         int opcode = normalize_tier3_opcode(buffer[i].opcode);
-        if (opcode == _NOP) {
+        if (opcode == _NOP)
+            continue;
+        if (phase < 7) {
+            static const int header[] = {
+                _START_EXECUTOR,           _MAKE_WARM,      _SET_IP,
+                _CHECK_PERIODIC,           _CHECK_VALIDITY, _ITER_CHECK_RANGE,
+                _GUARD_NOT_EXHAUSTED_RANGE};
+            if (opcode == _SET_IP && phase == 5)
+                continue;
+            if (opcode != header[phase])
+                return false;
+            if (opcode == _CHECK_PERIODIC)
+                region->periodic_target = buffer[i].target;
+            phase++;
             continue;
         }
-        if (count >= (int)Py_ARRAY_LENGTH(opcodes)) {
-            return false;
+        if (phase == 7) {
+            if (opcode != _ITER_NEXT_RANGE)
+                return false;
+            region->insertion = i;
+            if (!tier3_push(stack, &depth, region->induction_node, TIER3_REF_OWNED))
+                return false;
+            phase = 8;
+            continue;
         }
-        positions[count] = i;
-        opcodes[count++] = opcode;
-    }
-    static const int add_shape[] = {
-        _START_EXECUTOR, _MAKE_WARM, _SET_IP, _CHECK_PERIODIC,
-        _CHECK_VALIDITY, _ITER_CHECK_RANGE, _GUARD_NOT_EXHAUSTED_RANGE,
-        _ITER_NEXT_RANGE, _SET_IP, _SWAP_FAST, _POP_TOP, _LOAD_FAST,
-        _CHECK_VALIDITY, _LOAD_FAST_BORROW, _GUARD_TOS_OVERFLOWED,
-        _GUARD_NOS_INT, _BINARY_OP_ADD_INT, _POP_TOP_NOP, _POP_TOP_INT,
-        _SWAP_FAST, _POP_TOP_INT, _JUMP_TO_TOP,
-    };
-    static const int square_shape[] = {
-        _START_EXECUTOR, _MAKE_WARM, _SET_IP, _CHECK_PERIODIC,
-        _CHECK_VALIDITY, _ITER_CHECK_RANGE, _GUARD_NOT_EXHAUSTED_RANGE,
-        _ITER_NEXT_RANGE, _SET_IP, _SWAP_FAST, _POP_TOP, _LOAD_FAST,
-        _CHECK_VALIDITY, _LOAD_FAST_BORROW, _LOAD_FAST_BORROW,
-        _GUARD_TOS_OVERFLOWED, _BINARY_OP_MULTIPLY_INT,
-        _POP_TOP_NOP, _POP_TOP_NOP, _GUARD_NOS_INT,
-        _BINARY_OP_ADD_INT_INPLACE_RIGHT, _POP_TOP_INT, _POP_TOP_INT,
-        _SWAP_FAST, _POP_TOP_INT, _JUMP_TO_TOP,
-    };
-    static const int square_observable_shape[] = {
-        _START_EXECUTOR, _MAKE_WARM, _SET_IP, _CHECK_PERIODIC,
-        _CHECK_VALIDITY, _ITER_CHECK_RANGE, _GUARD_NOT_EXHAUSTED_RANGE,
-        _ITER_NEXT_RANGE, _SET_IP, _SWAP_FAST, _POP_TOP, _CHECK_VALIDITY,
-        _LOAD_FAST_BORROW, _LOAD_FAST_BORROW, _LOAD_FAST_BORROW,
-        _GUARD_TOS_OVERFLOWED, _BINARY_OP_MULTIPLY_INT,
-        _POP_TOP_NOP, _POP_TOP_NOP, _GUARD_NOS_INT,
-        _BINARY_OP_ADD_INT_INPLACE_RIGHT, _POP_TOP_INT, _POP_TOP_NOP,
-        _SWAP_FAST, _POP_TOP_INT, _JUMP_TO_TOP,
-    };
-    bool square = count == (int)Py_ARRAY_LENGTH(square_shape) &&
-        memcmp(opcodes, square_shape, sizeof(square_shape)) == 0;
-    bool square_observable =
-        count == (int)Py_ARRAY_LENGTH(square_observable_shape) &&
-        memcmp(opcodes, square_observable_shape,
-               sizeof(square_observable_shape)) == 0;
-    bool add = count == (int)Py_ARRAY_LENGTH(add_shape) &&
-        memcmp(opcodes, add_shape, sizeof(add_shape)) == 0;
-    if (!add && !square && !square_observable) {
+        if (opcode == _SET_IP || opcode == _CHECK_VALIDITY)
+            continue;
+        if (phase == 8) {
+            if (opcode != _SWAP_FAST || region->induction_local >= 0)
+                return false;
+            region->induction_local = buffer[i].oparg;
+            stack[depth - 1] = (Tier3StackValue){-1, TIER3_REF_TRASH};
+            phase = 9;
+            continue;
+        }
+        if (phase == 9) {
+            if ((opcode != _POP_TOP && opcode != _POP_TOP_INT && opcode != _POP_TOP_NOP) ||
+                !tier3_pop(stack, &depth, -1))
+                return false;
+            phase = 10;
+            continue;
+        }
+        if (!saw_accumulator && (opcode == _LOAD_FAST || opcode == _LOAD_FAST_BORROW)) {
+            region->accumulator_local = buffer[i].oparg;
+            if (!tier3_push(stack, &depth, region->accumulator_node,
+                            opcode == _LOAD_FAST ? TIER3_REF_OWNED : TIER3_REF_BORROWED))
+                return false;
+            saw_accumulator = true;
+            continue;
+        }
+        if (opcode == _LOAD_FAST_BORROW) {
+            if (!saw_accumulator || buffer[i].oparg != region->induction_local ||
+                !tier3_push(stack, &depth, region->induction_node, TIER3_REF_BORROWED))
+                return false;
+            continue;
+        }
+        if (opcode == _GUARD_TOS_OVERFLOWED || opcode == _GUARD_NOS_INT) {
+            if (depth == 0)
+                return false;
+            if (region->overflow_target < 0)
+                region->overflow_target = buffer[i].target;
+            continue;
+        }
+        if (opcode == _BINARY_OP_MULTIPLY_INT && !saw_mul && depth >= 2 &&
+            stack[depth - 1].node == region->induction_node &&
+            stack[depth - 2].node == region->induction_node) {
+            int mul = tier3_region_add_node(region, TIER3_REGION_CHECKED_MUL, TIER3_VALUE_I64,
+                                            region->induction_node, region->induction_node);
+            Tier3RefKind left_ref = stack[depth - 2].ref;
+            Tier3RefKind right_ref = stack[depth - 1].ref;
+            depth -= 2;
+            if (!tier3_push(stack, &depth, mul, TIER3_REF_OWNED) ||
+                !tier3_push(stack, &depth, region->induction_node, left_ref) ||
+                !tier3_push(stack, &depth, region->induction_node, right_ref)) {
+                return false;
+            }
+            rhs = mul;
+            saw_mul = true;
+            continue;
+        }
+        if ((opcode == _BINARY_OP_ADD_INT || opcode == _BINARY_OP_ADD_INT_INPLACE ||
+             opcode == _BINARY_OP_ADD_INT_INPLACE_RIGHT) &&
+            result < 0 && depth >= 2) {
+            rhs = rhs < 0 ? region->induction_node : rhs;
+            if (stack[depth - 2].node != region->accumulator_node || stack[depth - 1].node != rhs)
+                return false;
+            result = tier3_region_add_node(region, TIER3_REGION_CHECKED_ADD, TIER3_VALUE_I64,
+                                           region->accumulator_node, rhs);
+            Tier3RefKind left_ref = stack[depth - 2].ref;
+            Tier3RefKind right_ref = stack[depth - 1].ref;
+            depth -= 2;
+            tier3_push(stack, &depth, result, TIER3_REF_OWNED);
+            tier3_push(stack, &depth, region->accumulator_node, left_ref);
+            tier3_push(stack, &depth, rhs, right_ref);
+            region->error_target = buffer[i].target;
+            continue;
+        }
+        if (phase == 11 &&
+            (opcode == _POP_TOP || opcode == _POP_TOP_INT || opcode == _POP_TOP_NOP) &&
+            tier3_pop(stack, &depth, -1)) {
+            phase = 12;
+            continue;
+        }
+        if (opcode == _POP_TOP || opcode == _POP_TOP_INT || opcode == _POP_TOP_NOP) {
+            if (depth <= 1 || stack[depth - 1].node == result ||
+                !tier3_cleanup(stack, &depth, opcode)) {
+                return false;
+            }
+            continue;
+        }
+        if (opcode == _SWAP_FAST && result >= 0 && depth == 1 && stack[0].node == result) {
+            if (buffer[i].oparg != region->accumulator_local)
+                return false;
+            stack[0] = (Tier3StackValue){-1, TIER3_REF_TRASH};
+            phase = 11;
+            continue;
+        }
+        if (phase == 12 && opcode == _JUMP_TO_TOP) {
+            region->result_node = result;
+            phase = 13;
+            continue;
+        }
         return false;
     }
-    square |= square_observable;
-    int induction_pos = square ? 9 : 9;
-    int accumulator_pos = square_observable ? 12 : 11;
-    int induction_load = 13;
-    int add_pos = square ? 20 : 16;
-    int store_pos = square ? 23 : 19;
-    int induction_local = buffer[positions[induction_pos]].oparg;
-    int accumulator_local = buffer[positions[accumulator_pos]].oparg;
-    if (buffer[positions[induction_load]].oparg != induction_local ||
-        (square && buffer[positions[induction_load + 1]].oparg != induction_local) ||
-        buffer[positions[store_pos]].oparg != accumulator_local ||
-        induction_local == accumulator_local || induction_local >= 16 ||
-        accumulator_local >= 16) {
-        return false;
+    return phase == 13 && depth == 0 && result >= 0 && region->induction_local >= 0 &&
+           region->accumulator_local >= 0 && region->induction_local < 16 &&
+           region->accumulator_local < 16 && region->induction_local != region->accumulator_local &&
+           region->periodic_target >= 0 && region->error_target >= 0;
+}
+
+static Tier3LoweringKind
+classify_tier3_region(const Tier3LoopRegion *region)
+{
+    const Tier3RegionNode *add = &region->nodes[region->result_node];
+    if (add->op != TIER3_REGION_CHECKED_ADD || add->kind != TIER3_VALUE_I64 ||
+        add->input0 != region->accumulator_node)
+        return TIER3_LOWER_NONE;
+    if (add->input1 == region->induction_node)
+        return TIER3_LOWER_ADD;
+    const Tier3RegionNode *rhs = &region->nodes[add->input1];
+    if (rhs->op == TIER3_REGION_CHECKED_MUL && rhs->kind == TIER3_VALUE_I64 &&
+        rhs->input0 == region->induction_node && rhs->input1 == region->induction_node) {
+        return TIER3_LOWER_MUL_ADD;
     }
-    *region = (Tier3LoopRegion){
-        .induction_local = induction_local,
-        .accumulator_local = accumulator_local,
-        .insertion = positions[7],
-        .periodic_target = buffer[positions[3]].target,
-        .overflow_target = buffer[positions[square ? 16 : 16]].target,
-        .error_target = buffer[positions[add_pos]].target,
-        .has_multiply = square,
-    };
-    region->iterator_node = tier3_region_add_node(
-        region, TIER3_REGION_LIVE_IN, TIER3_VALUE_OBJECT, -1, -1);
-    region->induction_node = tier3_region_add_node(
-        region, TIER3_REGION_INDUCTION, TIER3_VALUE_I64,
-        region->iterator_node, -1);
-    region->accumulator_node = tier3_region_add_node(
-        region, TIER3_REGION_ACCUMULATOR, TIER3_VALUE_I64, -1, -1);
-    int rhs = region->induction_node;
-    if (square) {
-        rhs = tier3_region_add_node(region, TIER3_REGION_CHECKED_MUL,
-                                    TIER3_VALUE_I64, rhs, rhs);
+    return TIER3_LOWER_NONE;
+}
+
+static int
+lower_tier3_region(Tier3LoweringKind kind, const char *mode)
+{
+    if (mode == NULL) {
+        return 0;
     }
-    region->result_node = tier3_region_add_node(
-        region, TIER3_REGION_CHECKED_ADD, TIER3_VALUE_I64,
-        region->accumulator_node, rhs);
-    return true;
+    bool direct = strcmp(mode, "2") == 0 || strcmp(mode, "direct") == 0;
+    bool resident = strcmp(mode, "3") == 0 || strcmp(mode, "resident") == 0;
+    if (kind == TIER3_LOWER_MUL_ADD) {
+        return resident ? _TIER3_RANGE_CHUNK_RESIDENT_SQUARES : 0;
+    }
+    if (kind != TIER3_LOWER_ADD) {
+        return 0;
+    }
+    if (direct) {
+        return _TIER3_RANGE_CHUNK_NATIVE;
+    }
+    if (resident) {
+        return _TIER3_RANGE_CHUNK_RESIDENT;
+    }
+    return _TIER3_RANGE_CHUNK;
+}
+
+static void
+dump_tier3_region(const Tier3LoopRegion *region, Tier3LoweringKind kind, int opcode)
+{
+    if (Py_GETENV("PYTHON_TIER3_DUMP") == NULL) {
+        return;
+    }
+    const char *expression =
+        kind == TIER3_LOWER_MUL_ADD ? "add(acc,mul(induction,induction))" : "add(acc,induction)";
+    PySys_WriteStderr("tier3-region acc=local[%d] induction=local[%d] result=%s "
+                      "lowering=%s periodic=%d overflow=%d error=%d\n",
+                      region->accumulator_local, region->induction_local, expression,
+                      _PyOpcode_uop_name[opcode], region->periodic_target, region->overflow_target,
+                      region->error_target);
 }
 
 static int
@@ -1982,146 +2134,38 @@ mark_tier3_range_loop(_PyUOpInstruction *buffer, int length)
     }
     Tier3LoopRegion region;
     if (build_tier3_loop_region(buffer, length, &region)) {
-        int insertion = region.insertion;
-        const char *mode = Py_GETENV("PYTHON_TIER3_JIT");
-        bool direct = strcmp(mode, "2") == 0 || strcmp(mode, "direct") == 0;
-        bool resident = strcmp(mode, "3") == 0 || strcmp(mode, "resident") == 0;
-        /* Multiplication currently has only a resident lowering.  Reject it
-         * before changing the trace rather than selecting an addition-only
-         * helper or direct stencil. */
-        if (region.has_multiply && !resident) {
+        Tier3LoweringKind kind = classify_tier3_region(&region);
+        if (kind == TIER3_LOWER_NONE) {
             return length;
         }
-        int opcode = _TIER3_RANGE_CHUNK;
-        if (direct) {
-            opcode = _TIER3_RANGE_CHUNK_NATIVE;
+        const char *mode = Py_GETENV("PYTHON_TIER3_JIT");
+        int opcode = lower_tier3_region(kind, mode);
+        if (opcode == 0) {
+            return length;
         }
-        else if (resident) {
-            opcode = region.has_multiply
-                ? _TIER3_RANGE_CHUNK_RESIDENT_SQUARES
-                : _TIER3_RANGE_CHUNK_RESIDENT;
-        }
+        dump_tier3_region(&region, kind, opcode);
+        int insertion = region.insertion;
         memmove(&buffer[insertion + 1], &buffer[insertion],
                 (length - insertion) * sizeof(buffer[0]));
         buffer[insertion] = (_PyUOpInstruction){
             .opcode = opcode,
             .oparg = (region.accumulator_local << 4) | region.induction_local,
             .target = opcode == _TIER3_RANGE_CHUNK_RESIDENT ||
-                      opcode == _TIER3_RANGE_CHUNK_RESIDENT_SQUARES
-                ? region.periodic_target : region.error_target,
+                              opcode == _TIER3_RANGE_CHUNK_RESIDENT_SQUARES
+                          ? region.periodic_target
+                          : region.error_target,
             .operand0 = (uint64_t)region.error_target,
         };
         return length + 1;
     }
-    static const uint16_t pattern[] = {
-        _START_EXECUTOR, _MAKE_WARM, _SET_IP, _CHECK_PERIODIC,
-        _CHECK_VALIDITY, _ITER_CHECK_RANGE, _GUARD_NOT_EXHAUSTED_RANGE,
-        _ITER_NEXT_RANGE, _SET_IP,
-        _SWAP_FAST, _POP_TOP, _CHECK_VALIDITY,
-        _LOAD_FAST_BORROW, _LOAD_FAST_BORROW,
-        _GUARD_TOS_OVERFLOWED, _GUARD_NOS_INT,
-        0,  /* One of the supported integer additions. */
-        _POP_TOP_NOP, _POP_TOP_NOP, _SWAP_FAST, _POP_TOP_INT,
-        _JUMP_TO_TOP,
-    };
-    int pattern_index = 0;
-    int induction_local = -1;
-    int sum_local = -1;
-    int error_target = -1;
-    int iter_next = -1;
-    int jump = -1;
-    int periodic_target = -1;
-    for (int i = 0; i < length; i++) {
-        int opcode = normalize_tier3_opcode(buffer[i].opcode);
-        if (opcode == _NOP) {
-            continue;
-        }
-        if (pattern_index == 5 && opcode == _SET_IP) {
-            continue;
-        }
-        if (pattern_index >= (int)Py_ARRAY_LENGTH(pattern)) {
-            return length;
-        }
-        int expected = pattern[pattern_index];
-        if (expected != 0 && opcode != expected) {
-            return length;
-        }
-        if (pattern_index == 3) {
-            periodic_target = buffer[i].target;
-        }
-        else if (pattern_index == 9) {
-            induction_local = buffer[i].oparg;
-        }
-        else if (pattern_index == 7) {
-            iter_next = i;
-        }
-        else if (pattern_index == 12) {
-            sum_local = buffer[i].oparg;
-        }
-        else if (pattern_index == 13) {
-            if (buffer[i].oparg != induction_local) {
-                return length;
-            }
-        }
-        else if ((opcode == _BINARY_OP_ADD_INT ||
-                  opcode == _BINARY_OP_ADD_INT_INPLACE ||
-                  opcode == _BINARY_OP_ADD_INT_INPLACE_RIGHT) &&
-                 pattern_index == 16) {
-            error_target = buffer[i].target;
-        }
-        else if (pattern_index == 16) {
-            return length;
-        }
-        else if (pattern_index == 19) {
-            if (buffer[i].oparg != sum_local) {
-                return length;
-            }
-        }
-        else if (pattern_index == 21) {
-            jump = i;
-        }
-        pattern_index++;
-    }
-    if (pattern_index != (int)Py_ARRAY_LENGTH(pattern) ||
-        iter_next < 0 || jump < 0 || error_target < 0 || periodic_target < 0 ||
-        sum_local < 0 || induction_local < 0 ||
-        sum_local == induction_local || sum_local >= 16 || induction_local >= 16)
-    {
-        return length;
-    }
-    memmove(&buffer[iter_next + 1], &buffer[iter_next],
-            (length - iter_next) * sizeof(buffer[0]));
-    const char *mode = Py_GETENV("PYTHON_TIER3_JIT");
-    int opcode = _TIER3_RANGE_CHUNK;
-    if (strcmp(mode, "2") == 0 || strcmp(mode, "direct") == 0) {
-        opcode = _TIER3_RANGE_CHUNK_NATIVE;
-    }
-    else if (strcmp(mode, "3") == 0 || strcmp(mode, "resident") == 0) {
-        opcode = _TIER3_RANGE_CHUNK_RESIDENT;
-    }
-    buffer[iter_next] = (_PyUOpInstruction){
-        .opcode = opcode,
-        .oparg = (sum_local << 4) | induction_local,
-        /* The header guards have proved an exact, non-exhausted range.  The
-         * helper leaves one item for the ordinary body.  Materialization is
-         * transactional: failure and zero progress leave iterator and locals
-         * untouched.  Route allocation errors to the matched addition. */
-        .target = opcode == _TIER3_RANGE_CHUNK_RESIDENT
-                    ? periodic_target : error_target,
-        /* The resident uop also has HAS_ERROR_FLAG.  Keep its transactional
-         * reconstruction failure distinct from its periodic side exit. */
-        .operand0 = (uint64_t)error_target,
-    };
-    return length + 1;
+    /* All supported variants must use the typed builder above. */
+    return length;
 #endif
 }
 
 static int
-uop_optimize(
-    _PyInterpreterFrame *frame,
-    PyThreadState *tstate,
-    _PyExecutorObject **exec_ptr,
-    bool progress_needed)
+uop_optimize(_PyInterpreterFrame *frame, PyThreadState *tstate, _PyExecutorObject **exec_ptr,
+             bool progress_needed)
 {
     _PyThreadStateImpl *_tstate = (_PyThreadStateImpl *)tstate;
     assert(_tstate->jit_tracer_state != NULL);
@@ -2197,7 +2241,6 @@ uop_optimize(
     *exec_ptr = executor;
     return 1;
 }
-
 
 /*****************************************
  *        Executor management

@@ -23,7 +23,10 @@ matched.  When the feature is disabled, recognition runs no transformation and
 the experimental uop is absent from the executor.
 
 Resident lowering is driven by a compact typed C-side region description built
-from those uop operands. It records the range live-in, distinct accumulator and
+by a bounded symbolic interpreter over the optimized uops, rather than by
+whole-trace opcode arrays. It models retained arithmetic operands and their
+owned/borrowed cleanup, and rejects unknown effects, inconsistent stacks, and
+extra stores. It records the range live-in, distinct accumulator and
 induction locals, boxed-object and signed-i64 values, checked-operation input
 dependencies, and the periodic, overflow, normal-materialization, and
 allocation-error boundaries. The same builder accepts either
@@ -31,6 +34,10 @@ allocation-error boundaries. The same builder accepts either
 `square = checked_mul(induction, induction); acc_next = checked_add(acc,
 square)`. These two fused stencil selections are intentionally limited
 lowering, not a general CFG or SSA framework.
+
+Setting `PYTHON_TIER3_DUMP=1` prints the graph expression, local roles, selected
+lowering, and reconstruction targets when a real trace is accepted. This is a
+diagnostic of compilation; the node array is not interpreted by the hot loop.
 
 The new non-terminating uop runs at the guarded loop header, then falls through
 to the unchanged `_ITER_NEXT_RANGE`, ordinary body, and `_JUMP_TO_TOP`.  Its stack
