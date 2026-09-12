@@ -1,6 +1,32 @@
 The JIT Compiler
 ================
 
+Tier-3 optimization laboratory
+------------------------------
+
+``_tier3.py`` is a deliberately disconnected prototype for experimenting with
+a value IR above the existing uop optimizer and copy-and-patch JIT.  It contains
+constant folding, GVN/CSE, dead-code elimination, simple loop-invariant code
+motion, and linear-scan register allocation.  It does **not** generate native
+code or change runtime behavior.  In particular, its results are not evidence
+of a speedup over the current JIT.
+
+The input model preserves guards as effects and is intended to be populated by
+an adapter from the current uop trace.  Such an adapter must derive operation
+semantics from ``Python/bytecodes.c`` rather than duplicating them here.  The
+small synthetic experiment can be run with:
+
+```sh
+python Tools/jit/tier3_bench.py
+python Tools/jit/tier3_bench.py --disable cse
+```
+
+The JSON reports median optimizer time, instruction elimination, and register
+spills so optimization effects can be compared independently.  A meaningful
+performance comparison still requires a uop adapter, deoptimization metadata,
+native code generation, and a benchmark build that can select tier 2 or tier 3
+for the same trace.
+
 This version of CPython can be built with an experimental just-in-time compiler[^pep-744]. While most everything you already know about building and using CPython is unchanged, you will probably need to install a compatible version of LLVM first.
 
 Python 3.11 or newer is required to build the JIT.
