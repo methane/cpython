@@ -4,12 +4,11 @@ The JIT Compiler
 Tier-3 optimization laboratory
 ------------------------------
 
-``_tier3.py`` is a deliberately disconnected prototype for experimenting with
-a value IR above the existing uop optimizer and copy-and-patch JIT.  It contains
-constant folding, GVN/CSE, dead-code elimination, simple loop-invariant code
-motion, and linear-scan register allocation.  It does **not** generate native
-code or change runtime behavior.  In particular, its results are not evidence
-of a speedup over the current JIT.
+``_tier3.py`` contains a small value-IR optimizer and linear-scan allocator.
+``_tier3_native.py`` adds an opt-in Linux x86-64 proof of concept that consumes
+a current executor's uop trace and emits native `sum(range(n))` and
+sum-of-squares loops.  It is a sidecar experiment and does not change normal
+runtime behavior.
 
 The input model preserves guards as effects and is intended to be populated by
 an adapter from the current uop trace.  Such an adapter must derive operation
@@ -18,14 +17,13 @@ small synthetic experiment can be run with:
 
 ```sh
 python Tools/jit/tier3_bench.py
-python Tools/jit/tier3_bench.py --disable cse
+PYTHON_TIER3_DUMP=1 python Tools/jit/tier3_bench.py
 ```
 
-The JSON reports median optimizer time, instruction elimination, and register
-spills so optimization effects can be compared independently.  A meaningful
-performance comparison still requires a uop adapter, deoptimization metadata,
-native code generation, and a benchmark build that can select tier 2 or tier 3
-for the same trace.
+The benchmark launches separate baseline, current-JIT, and Tier-3 processes and
+reports compilation cost, steady-state medians, code size, and speedups.  See
+``tier3.md`` for the design, correctness boundary, dump instructions, and
+measurement methodology.
 
 This version of CPython can be built with an experimental just-in-time compiler[^pep-744]. While most everything you already know about building and using CPython is unchanged, you will probably need to install a compatible version of LLVM first.
 
