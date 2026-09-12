@@ -89,6 +89,44 @@ class Tier3BenchTests(unittest.TestCase):
         with self.assertRaises(AssertionError):
             tier3_bench.measure_sample(wrong_after_first, 4, 3, 9, 2)
 
+    def test_aggregate_requires_every_sample(self):
+        stable = {
+            "status": "stable",
+            "elapsed_ns": 10,
+            "tier3_delta": {"resident_iterations": 4},
+            "executor_offset": 4,
+            "executor_identity": 1,
+            "native_code_bytes": 4,
+        }
+        missing = dict(stable, status="unavailable", tier3_delta=None,
+                       native_code_bytes=0)
+        replaced = dict(missing, status="executor replaced")
+        invalidated = dict(missing, status="executor invalidated")
+        for incomplete in (missing, replaced, invalidated):
+            with self.subTest(status=incomplete["status"]):
+                self.assertIsNone(
+                    tier3_bench.aggregate_measurements([stable, incomplete], 2)
+                )
+
+        aggregate = tier3_bench.aggregate_measurements([stable, stable], 2)
+        self.assertEqual(aggregate["median_ns"], 10)
+        self.assertEqual(aggregate["tier3_delta"]["resident_iterations"], 8)
+        self.assertTrue(aggregate["native_code_verified"])
+
+    def test_aggregate_verifies_code_for_every_sample(self):
+        sample = {
+            "status": "stable",
+            "elapsed_ns": 10,
+            "tier3_delta": {"resident_iterations": 0},
+            "executor_offset": 4,
+            "executor_identity": 1,
+            "native_code_bytes": 4,
+        }
+        no_code = dict(sample, native_code_bytes=0)
+        aggregate = tier3_bench.aggregate_measurements([sample, no_code], 2)
+        self.assertFalse(aggregate["native_code_verified"])
+        self.assertEqual(aggregate["native_code_bytes"], 0)
+
 
 if __name__ == "__main__":
     unittest.main()

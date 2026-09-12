@@ -28,8 +28,11 @@ After this change the same-input-only process reports:
   node=3 checked-mul type=i64 compact=checked-operation inputs=(1,1)
   node=4 checked-add type=i64 compact=none inputs=(2,3)
 
-A separately measured squares_from(1000, 2**40) call returned 1109840460776
-and advanced resident_iterations by 998.  No call with a compact accumulator
+A separately measured squares_from(1000, 2**40) call returned 1099844461276,
+matching the independent formula ``2**40 + 1000*999*1999//6``, and advanced
+resident_iterations by 998.  The previously recorded value was a transcription
+error, not reproduced execution output.  The machine-readable rerun is in
+``acceptance.json``.  No call with a compact accumulator
 preceded it.  The generic add is accepted only after its left input is proven
 to be the live accumulator and its right input is the recognized induction
 square.  Generic multiplication is likewise accepted only for two copies of

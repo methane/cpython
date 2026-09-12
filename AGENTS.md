@@ -34,6 +34,25 @@ for tool in clang llvm-readobj llvm-objdump llvm-dwarfdump; do
 done
 ```
 
+The repository preflight automates that complete-prefix check and persists the
+selection.  Run it after checking out the task revision; pass `--install` only
+when no complete cached prefix exists and installing signed apt packages is
+permitted:
+
+```sh
+Tools/jit/ensure_llvm21.sh
+# If the preflight reports that every candidate is incomplete:
+Tools/jit/ensure_llvm21.sh --install
+. ./.llvm21-env
+```
+
+Dependency setup may run before a task branch (and therefore this script) is
+checked out.  In that case use the self-contained probe/install recipe below
+during setup, then run the script after checkout to validate and persist the
+selected prefix.  A successful dependency preflight does not validate cached
+stencils or executables; always rebuild source-dependent artifacts for the
+selected revision.
+
 Select one complete prefix and persist it for later agent shells:
 
 ```sh

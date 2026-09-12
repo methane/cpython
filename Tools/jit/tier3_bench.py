@@ -115,6 +115,34 @@ def tier3_executor(function):
     return fallback
 
 
+def aggregate_measurements(measurements, repeat):
+    """Aggregate only a complete run of stable samples.
+
+    Keep diagnostics for every sample, but never derive timing or native-code
+    claims from a stable subset of a run that also observed invalidation,
+    replacement, or disappearance.
+    """
+    eligible = len(measurements) == repeat and all(
+        item["status"] == "stable" for item in measurements
+    )
+    if not eligible:
+        return None
+    delta = {
+        key: sum(item["tier3_delta"][key] for item in measurements)
+        for key in measurements[0]["tier3_delta"]
+    }
+    code_sizes = [item["native_code_bytes"] for item in measurements]
+    return {
+        "median_ns": statistics.median(item["elapsed_ns"] for item in measurements),
+        "samples_ns": [item["elapsed_ns"] for item in measurements],
+        "tier3_delta": delta,
+        "executor_offset": measurements[-1]["executor_offset"],
+        "executor_identity": measurements[-1]["executor_identity"],
+        "native_code_verified": all(size > 0 for size in code_sizes),
+        "native_code_bytes": min(code_sizes, default=0),
+    }
+
+
 def configuration():
     try:
         commit = subprocess.check_output(
@@ -183,30 +211,15 @@ def main():
     for _ in range(args.warmup):
         assert function(args.n, args.initial) == expected
 
-    samples = []
     measurements = []
     for _ in range(args.repeat):
         measurement = measure_sample(
             function, args.n, args.initial, expected, args.loops
         )
         measurements.append(measurement)
-        if measurement["status"] == "stable":
-            samples.append(measurement["elapsed_ns"])
-
-    stable_measurements = [item for item in measurements if item["status"] == "stable"]
-    stable = len(stable_measurements) == args.repeat
-    native_code_bytes = max(
-        (item["native_code_bytes"] for item in stable_measurements), default=0
-    )
-    native_code_verified = native_code_bytes > 0
-    delta = (
-        {
-            key: sum(item["tier3_delta"][key] for item in stable_measurements)
-            for key in stable_measurements[0]["tier3_delta"]
-        }
-        if stable
-        else None
-    )
+    aggregate = aggregate_measurements(measurements, args.repeat)
+    stable = aggregate is not None
+    delta = aggregate["tier3_delta"] if aggregate else None
     entered = delta is not None and (
         delta["entries"] > 0
         or delta["native_entries"] > 0
@@ -217,7 +230,7 @@ def main():
         if entered
         else 0
     )
-    requested = max(args.n, 0) * args.loops * len(samples)
+    requested = max(args.n, 0) * args.loops * args.repeat if stable else 0
     rejection_reason = None
     if not entered:
         if not stable:
@@ -239,14 +252,14 @@ def main():
                 "callable": function.__name__,
                 "result": expected,
                 "expected": expected,
-                "median_ns": statistics.median(samples) if samples else None,
-                "samples_ns": samples,
+                "median_ns": aggregate["median_ns"] if aggregate else None,
+                "samples_ns": aggregate["samples_ns"] if aggregate else [],
                 "measurements": measurements,
                 "executor_offset": (
-                    stable_measurements[-1]["executor_offset"] if stable else None
+                    aggregate["executor_offset"] if aggregate else None
                 ),
                 "executor_identity": (
-                    stable_measurements[-1]["executor_identity"] if stable else None
+                    aggregate["executor_identity"] if aggregate else None
                 ),
                 "tier3_status": (
                     "entered"
@@ -260,8 +273,10 @@ def main():
                 "kernel_iterations": processed,
                 "requested_iterations": requested,
                 "kernel_fraction": processed / requested if requested else 0.0,
-                "native_code_verified": native_code_verified,
-                "native_code_bytes": native_code_bytes,
+                "native_code_verified": (
+                    aggregate["native_code_verified"] if aggregate else False
+                ),
+                "native_code_bytes": aggregate["native_code_bytes"] if aggregate else 0,
             },
             indent=2,
         )

@@ -2049,7 +2049,7 @@ build_tier3_loop_region(_PyUOpInstruction *buffer, int length, Tier3LoopRegion *
             saw_mul = true;
             continue;
         }
-        bool generic_add = opcode == _BINARY_OP &&
+        bool generic_add = depth >= 2 && opcode == _BINARY_OP &&
                            (buffer[i].oparg == NB_ADD ||
                             buffer[i].oparg == NB_INPLACE_ADD) &&
                            (rhs < 0 || (saw_mul && rhs >= 0 &&
