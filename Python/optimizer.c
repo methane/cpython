@@ -2026,13 +2026,17 @@ build_tier3_loop_region(_PyUOpInstruction *buffer, int length, Tier3LoopRegion *
                 region->overflow_target = buffer[i].target;
             continue;
         }
-        if (opcode == _BINARY_OP_MULTIPLY_INT && !saw_mul && depth >= 2 &&
+        bool generic_multiply = opcode == _BINARY_OP && buffer[i].oparg == NB_MULTIPLY;
+        if ((generic_multiply || opcode == _BINARY_OP_MULTIPLY_INT) && !saw_mul && depth >= 2 &&
             stack[depth - 1].node == region->induction_node &&
             stack[depth - 2].node == region->induction_node &&
-            region->nodes[region->induction_node].compact != TIER3_FACT_NONE) {
+            (generic_multiply ||
+             region->nodes[region->induction_node].compact != TIER3_FACT_NONE)) {
             int mul = tier3_region_add_node(region, TIER3_REGION_CHECKED_MUL, TIER3_VALUE_I64,
                                             region->induction_node, region->induction_node);
-            region->nodes[mul].compact = TIER3_FACT_CHECKED_OPERATION;
+            if (!generic_multiply) {
+                region->nodes[mul].compact = TIER3_FACT_CHECKED_OPERATION;
+            }
             Tier3RefKind left_ref = stack[depth - 2].ref;
             Tier3RefKind right_ref = stack[depth - 1].ref;
             depth -= 2;
@@ -2048,7 +2052,8 @@ build_tier3_loop_region(_PyUOpInstruction *buffer, int length, Tier3LoopRegion *
         bool generic_add = opcode == _BINARY_OP &&
                            (buffer[i].oparg == NB_ADD ||
                             buffer[i].oparg == NB_INPLACE_ADD) &&
-                           !saw_mul;
+                           (rhs < 0 || (saw_mul && rhs >= 0 &&
+                                        stack[depth - 1].node == rhs));
         if ((generic_add || opcode == _BINARY_OP_ADD_INT ||
              opcode == _BINARY_OP_ADD_INT_INPLACE ||
              opcode == _BINARY_OP_ADD_INT_INPLACE_RIGHT) &&
@@ -2056,7 +2061,8 @@ build_tier3_loop_region(_PyUOpInstruction *buffer, int length, Tier3LoopRegion *
             rhs = rhs < 0 ? region->induction_node : rhs;
             if (stack[depth - 2].node != region->accumulator_node || stack[depth - 1].node != rhs)
                 return false;
-            /* A generic add is safe to elide only for the plain reduction:
+            /* A generic add is safe to elide only after its operands prove
+             * either the plain reduction or the recognized induction square:
              * the resident uop revalidates the exact accumulator type and its
              * signed-i64 conversion before changing the iterator or locals.
              * On guard failure this original generic operation still runs.
@@ -2080,8 +2086,8 @@ build_tier3_loop_region(_PyUOpInstruction *buffer, int length, Tier3LoopRegion *
             }
             region->error_target = buffer[i].target;
             if (generic_add) {
-                /* Overflow resumes at this generic add with the current
-                 * iteration still uncommitted. */
+                /* Overflow materializes the committed prefix.  The reserved
+                 * iteration is then executed by the ordinary loop body. */
                 region->overflow_target = buffer[i].target;
             }
             continue;

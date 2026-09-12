@@ -194,7 +194,7 @@ def main():
             samples.append(measurement["elapsed_ns"])
 
     stable_measurements = [item for item in measurements if item["status"] == "stable"]
-    stable = bool(stable_measurements)
+    stable = len(stable_measurements) == args.repeat
     native_code_bytes = max(
         (item["native_code_bytes"] for item in stable_measurements), default=0
     )

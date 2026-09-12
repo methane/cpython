@@ -58,7 +58,7 @@ operations. The native hot backedge is:
 2e5: mov    %r11,%r13
 2e8: inc    %r11
 2eb: inc    %rax
-2ee: mov    %r12,%r9            # one accumulator reconstruction spill
+2ee: mov    %r12,%r9            # accumulator register move for reconstruction
 2f1: test   %dil,%dil           # executor validity
 2f4: jne    0x2b4
 ```

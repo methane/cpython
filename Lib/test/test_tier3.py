@@ -219,30 +219,80 @@ class Tier3RangeTests(unittest.TestCase):
                         active = candidate
                         break
                 assert active is not None
-                before = active.get_tier3_stats()
-                assert sum_from(1000, initial) == initial + sum(range(1000))
-                assert sum_from(100_000, initial) == initial + sum(range(100_000))
-                after = active.get_tier3_stats()
-                assert after['resident_entries'] > before['resident_entries']
-                assert after['resident_iterations'] > before['resident_iterations']
+                for n in (1000, 100_000):
+                    before = active.get_tier3_stats()
+                    assert sum_from(n, initial) == initial + sum(range(n))
+                    after = active.get_tier3_stats()
+                    assert after['resident_entries'] > before['resident_entries']
+                    assert after['resident_iterations'] > before['resident_iterations']
 
                 # Each entry revalidates the accumulator rather than reusing
                 # the exact-int observation from training.
                 class ObservableInt(int):
-                    calls = 0
+                    calls = []
                     def __add__(self, other):
-                        type(self).calls += 1
+                        type(self).calls.append(('add', other))
                         return type(self)(int(self) + other)
                     def __radd__(self, other):
-                        type(self).calls += 1
+                        type(self).calls.append(('radd', other))
                         return type(self)(other + int(self))
 
                 value = ObservableInt(7)
-                assert sum_from(3, value) == 10
-                assert ObservableInt.calls > 0
+                result = sum_from(3, value)
+                assert result == 10 and type(result) is ObservableInt
+                assert ObservableInt.calls == [('add', 0), ('add', 1), ('add', 2)]
                 assert sum_from(0, value) is value
                 assert sum_from(1, True) == 1
                 assert sum_from(2, -(2**80)) == -(2**80) + 1
+            """),
+            PYTHON_TIER3_JIT="resident",
+            PYTHON_JIT_STRESS="1",
+        )
+
+    def test_resident_squares_same_noncompact_training(self):
+        script_helper.assert_python_ok(
+            "-c",
+            textwrap.dedent("""
+                import _opcode
+
+                def squares_from(n, initial):
+                    total = initial
+                    item = -1
+                    for item in range(n):
+                        total += item * item
+                    return total, item
+
+                def expected(n, initial):
+                    return initial + sum(item * item for item in range(n))
+
+                initial = 2**40
+                for _ in range(2000):
+                    assert squares_from(1000, initial) == (expected(1000, initial), 999)
+                active = None
+                for offset in range(0, len(squares_from.__code__.co_code), 2):
+                    try:
+                        candidate = _opcode.get_executor(squares_from.__code__, offset)
+                    except ValueError:
+                        continue
+                    if any(item[0] == '_TIER3_RANGE_CHUNK_RESIDENT_SQUARES'
+                           for item in candidate):
+                        active = candidate
+                        break
+                assert active is not None
+                for n in (1000, 100_000):
+                    before = active.get_tier3_stats()
+                    assert squares_from(n, initial) == (expected(n, initial), n - 1)
+                    after = active.get_tier3_stats()
+                    assert after['resident_entries'] > before['resident_entries']
+                    assert after['resident_iterations'] > before['resident_iterations']
+
+                # Addition overflow occurs after a successful square; the
+                # ordinary body must execute the reserved iteration once.
+                before = active.get_tier3_stats()
+                result = squares_from(100, 2**63 - 10)
+                after = active.get_tier3_stats()
+                assert result == (expected(100, 2**63 - 10), 99)
+                assert after['resident_overflow_exits'] > before['resident_overflow_exits']
             """),
             PYTHON_TIER3_JIT="resident",
             PYTHON_JIT_STRESS="1",
