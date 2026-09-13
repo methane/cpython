@@ -1,0 +1,73 @@
+# Experimental straight-line Tier 2 regions
+
+These experiments use the existing abstract interpreter, stack cache, and
+copy-and-patch backend. They are disabled by default. Enable individual groups
+before compiling a trace:
+
+```sh
+PYTHON_JIT=1 PYTHON_TIER2_INT_REGIONS=1 \
+  PYTHON_TIER2_BUILTIN_REGIONS=1 PYTHON_TIER2_FLOAT_FUSION=1 \
+  build-jit/python program.py
+```
+
+Integer regions contain exactly two dependent add/subtract/multiply operations,
+optionally followed by a comparison. The first two inputs are retained on the
+operand stack; further inputs are unchanged local slots. All inputs must be
+exact signed-i64 ints. Each operation checks overflow in Python order. Failure
+exits at the first operation with the original stack, so ordinary arbitrary
+precision arithmetic and subclass dispatch remain available. Only the final
+object result is boxed; a comparison produces the existing bool singleton.
+
+Recognition happens before abstract interpretation to avoid propagating removed
+compact-int guards into later operations. The nine operation pairs use the
+existing uop replication mechanism, with separate object and predicate outputs.
+There is no runtime operation-selection loop. Matching is bounded to 32 uops
+and rejects calls, stores, frame changes, and periodic checks. If an experimental
+whole-range mode is also requested, range traces are reserved for that pass.
+
+The builtin group fuses `len(value)` with an immediate comparison, addition, or
+subtraction using another local. It accepts exact str, bytes, and tuple operands
+with borrowed or immortal references. An owned receiver can run finalizers
+when the original call closes it, so it exits before the call. Callable identity
+is still checked by the existing len guard. Mutable containers, subclasses,
+and replaced builtins follow the ordinary call path.
+
+`str.startswith` and `str.endswith` accept an exact str receiver, an exact str
+single argument, and default bounds. The optimizer verifies the actual builtin
+descriptor identity and preserves the existing call guards and periodic check.
+The runtime calls `PyUnicode_Tailmatch` directly. Result-type propagation removes
+redundant bool conversions; the result is still the existing bool singleton.
+Tuple affixes, explicit bounds, keywords, and overrides use ordinary calls.
+
+The integer and builtin experiments require a 64-bit GIL build with GCC/Clang
+checked arithmetic. Other configurations do not enable them. The existing
+float fusion preserves its volatile binary64 rounding boundary; shared results
+allocate a fresh float, and unique results reuse their private accumulator.
+
+`executor.get_region_stats()` reports entries, guard/overflow exits, integer
+boxing operations, and allocation errors. Counters are per executor; an entry
+alone is not proof of success. Inspect deltas around the specific input and
+check that the corresponding failure counters stay unchanged. `int_boxes`
+counts boxing operations, including small-int cache hits, not heap allocations.
+
+Debug builds support `PYTHON_TIER2_REGION_FAIL_ALLOC=int|len|float` to exercise
+the fused allocation's error edge and in-frame handlers. The probe is absent
+from release execution. It is intended only for private tests.
+
+```sh
+build-tier2-debug/python -m test test_capi.test_opt_regions -v
+build-jit/python -m test test_capi.test_opt_regions test_tier3 test_capi.test_opt -v
+```
+
+`region_bench.py` supplies a fixed ten-workload exploratory panel, including two
+representative header parsers and dict/JSON/template controls. It records cold
+calls, warmup, every steady-state sample, immediate executor counter deltas,
+and the selected native code. Run modes in rotating order on the same CPU with
+no competing builds. `--profile` is a separate diagnostic invocation. This
+panel is not the pyperformance suite.
+
+Local results, commands, the immutable source baseline, build identities,
+known limitations, and raw-log paths are recorded in the checkout's `plan.md`.
+The experiments remain opt-in: checked integer predicates and builtin consumers
+show useful gains in the local panel; boxed integer chains and shared float
+updates do not yet show a reliable speed benefit.

@@ -115,6 +115,12 @@ Use this recipe only after probing existing installations as above.
 A proxy can transiently return HTTP 403; retry rather than changing LLVM
 versions. Configure and build native JIT from a separate build directory:
 
+An existing in-source build must be cleaned before an out-of-tree build can
+pass `check-clean-src`.
+Run `make distclean` before starting any builds nested under the checkout:
+its recursive cleanup also removes their object files and shared libraries.
+An independent source snapshot is another way to preserve an existing build.
+
 ```sh
 repo=$(git rev-parse --show-toplevel)
 mkdir -p "$repo/build-jit" && cd "$repo/build-jit"
@@ -149,6 +155,11 @@ mkdir -p "$repo/build-tier2-debug" && cd "$repo/build-tier2-debug"
 "$repo/configure" --with-pydebug --enable-experimental-jit=interpreter
 make -j"$(nproc)"
 ```
+
+A completed Tier-2 interpreter can also run the stencil generator. If the
+configured bootstrap Python stalls in LLVM subprocess handling, the verified
+local alternative is `make PYTHON_FOR_REGEN="$repo/build-tier2-debug/python"`.
+Keep that executable fixed while it is being used as a build tool.
 
 ### Regeneration, tests, and measurements
 
