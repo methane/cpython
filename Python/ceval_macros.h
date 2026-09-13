@@ -1,5 +1,9 @@
 // Macros and other things needed by ceval.c, and bytecodes.c
 
+#if defined(__SSE2__) && !defined(__FAST_MATH__)
+#  include <emmintrin.h>
+#endif
+
 /* Computed GOTOs, or
        the-optimization-commonly-but-improperly-known-as-"threaded code"
    using gcc's labels-as-values extension
@@ -638,6 +642,39 @@ _PyRegion_DivideThenAdd(double accumulator, double numerator, int64_t denominato
     volatile double term = numerator / (double)denominator;
 #endif
     return accumulator + term;
+}
+
+/* Divide independent adjacent terms together, then add each binary64 result
+ * in its original order. The range proof excludes zero denominators and
+ * inexact integer conversions. Never add the two terms to each other. */
+static inline bool
+_PyRegion_CanDividePair(void)
+{
+#if defined(__SSE2__) && !defined(__FAST_MATH__)
+    /* With traps enabled, retain the original division/addition order as
+     * well: the second division must not trap ahead of the first addition. */
+    return (_mm_getcsr() & _MM_MASK_MASK) == _MM_MASK_MASK;
+#else
+    return false;
+#endif
+}
+
+static inline Py_ALWAYS_INLINE double
+_PyRegion_DividePairThenAdd(double accumulator, double numerator,
+                           int64_t first, int64_t second)
+{
+#if defined(__SSE2__) && !defined(__FAST_MATH__)
+#  if defined(__clang__)
+#pragma STDC FENV_ACCESS ON
+#  endif
+    __m128d denominators = _mm_set_pd((double)second, (double)first);
+    __m128d terms = _mm_div_pd(_mm_set1_pd(numerator), denominators);
+    double total = accumulator + _mm_cvtsd_f64(terms);
+    return total + _mm_cvtsd_f64(_mm_unpackhi_pd(terms, terms));
+#else
+    double total = _PyRegion_DivideThenAdd(accumulator, numerator, first);
+    return _PyRegion_DivideThenAdd(total, numerator, second);
+#endif
 }
 
 

@@ -89,15 +89,19 @@ arguments retain the bounded-input contract. The old induction local must be
 null or an exact int. Function, stack-space, recursion, globals (when present),
 and callee instrumentation checks precede the chunk. The denominator must be
 monotone, nonzero with one sign, and within `[-2**53, 2**53]` throughout it.
-The loop performs every binary64 division and addition in the original order,
-then updates the unique accumulator, cached induction local, and iterator
+The loop performs every binary64 division and preserves the original sequence
+of additions, then updates the unique accumulator, cached induction local, and iterator
 without allocation. It consumes the remaining range and takes a copy of the
 original exhaustion guard's exit, retaining the iterator/index stack expected
 after `END_FOR`. A chunk has at most the small-int-cache span of iterations.
-The final term is peeled to avoid conditional recurrence updates inside the
-chunk. Clang uses a local `FENV_ACCESS ON` helper so constrained floating-point
+On SSE2 builds without fast-math, adjacent divisions use two SIMD lanes when
+all MXCSR exception traps are masked. Their results enter two separate scalar
+additions in the original order; the terms are never summed together first.
+Enabled traps and other targets retain the scalar division/addition sequence.
+The final one or two terms are peeled to avoid conditional recurrence updates
+inside the chunk. Clang uses a local `FENV_ACCESS ON` helper so constrained floating-point
 operations preserve separate rounding after inlining without volatile memory
-traffic. Other compilers retain the volatile evaluation boundary.
+traffic. The scalar helper retains a volatile evaluation boundary with other compilers.
 NaN accumulators retain ordinary execution to preserve payload selection as
 well as rounding; constrained operations alone do not fix register-operand
 choices when both operands are NaNs.

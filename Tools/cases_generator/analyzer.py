@@ -671,6 +671,8 @@ NON_ESCAPING_FUNCTIONS = (
     "_PyRegion_CallAttribute",
     "_PyRegion_PolyBinary",
     "_PyRegion_DivideThenAdd",
+    "_PyRegion_CanDividePair",
+    "_PyRegion_DividePairThenAdd",
     "_PyRegion_RangeStart64",
     "_PyRegion_RangeStart128",
     "isnan",

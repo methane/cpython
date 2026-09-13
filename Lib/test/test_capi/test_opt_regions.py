@@ -391,6 +391,26 @@ class TestRegions(unittest.TestCase):
                         self.assertGreater(after["range_iterations"], before["range_iterations"])
 
     @requires_call_regions
+    def test_float_range_pair_order(self):
+        # Adding adjacent terms together first would change these results.
+        # Exercise both the final pair and the odd trailing scalar term.
+        for numerator, initial in (("1.0", 2.0**53), ("-1.0", -2.0**53)):
+            ns, ex = self.warm_float_range("(a + a) + a + 1", numerator)
+            for count in (*range(1, 9), 126, 127, 128, 129, 130, 131):
+                with self.subTest(numerator=numerator, count=count):
+                    expected = initial
+                    for _ in range(count):
+                        expected = operator.add(expected, float(numerator))
+                    before = ex.get_region_stats()
+                    result, last = ns["run"](0, 1, count + 1, initial)
+                    after = ex.get_region_stats()
+                    self.assertEqual(struct.pack("d", result), struct.pack("d", expected))
+                    self.assertEqual(last, count)
+                    if count >= 3:
+                        self.assertGreater(after["range_iterations"], before["range_iterations"])
+                        self.assertEqual(after["range_guard_exits"], before["range_guard_exits"])
+
+    @requires_call_regions
     def test_float_range_scalar_coefficients(self):
         ns, ex = self.warm_float_range("(a + j) * (a + j + 1) // 2 + a + 1")
         names = [uop[0] for uop in ex]

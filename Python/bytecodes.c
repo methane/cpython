@@ -6903,16 +6903,32 @@ dummy_func(
             PyFloatObject *acc = (PyFloatObject *)PyStackRef_AsPyObjectBorrow(GETLOCAL(accumulator));
             double total = acc->ob_fval;
             double dividend = PyFloat_AS_DOUBLE(numerator);
-            for (long i = 1; i < count; i++) {
-                /* Separate binary64 rounding for every Python operation. */
-                total = _PyRegion_DivideThenAdd(total, dividend, denominator);
-                denominator += delta;
+            long remaining = count;
+            bool paired = _PyRegion_CanDividePair();
+            while (paired && remaining > 2) {
+                int64_t second = denominator + delta;
+                total = _PyRegion_DividePairThenAdd(total, dividend, denominator, second);
                 delta += difference;
+                denominator = second + delta;
+                delta += difference;
+                remaining -= 2;
             }
-            /* Peel the last term instead of conditionally updating two
-             * integer recurrences on every iteration. All updates above
-             * remain inside the proved endpoint and last-step bounds. */
-            total = _PyRegion_DivideThenAdd(total, dividend, denominator);
+            /* Keep the final one or two terms outside the recurrence loop.
+             * Every integer update stays within the proved endpoint and
+             * last-step bounds, including for an odd number of terms. */
+            if (paired && remaining == 2) {
+                total = _PyRegion_DividePairThenAdd(total, dividend,
+                                                   denominator, denominator + delta);
+            }
+            else {
+                while (remaining > 1) {
+                    total = _PyRegion_DivideThenAdd(total, dividend, denominator);
+                    denominator += delta;
+                    delta += difference;
+                    remaining--;
+                }
+                total = _PyRegion_DivideThenAdd(total, dividend, denominator);
+            }
             acc->ob_fval = total;
             long last_index = range->start + count - 1;
             range->start += count;

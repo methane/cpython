@@ -29238,12 +29238,29 @@
             PyFloatObject *acc = (PyFloatObject *)PyStackRef_AsPyObjectBorrow(GETLOCAL(accumulator));
             double total = acc->ob_fval;
             double dividend = PyFloat_AS_DOUBLE(numerator);
-            for (long i = 1; i < count; i++) {
-                total = _PyRegion_DivideThenAdd(total, dividend, denominator);
-                denominator += delta;
+            long remaining = count;
+            bool paired = _PyRegion_CanDividePair();
+            while (paired && remaining > 2) {
+                int64_t second = denominator + delta;
+                total = _PyRegion_DividePairThenAdd(total, dividend, denominator, second);
                 delta += difference;
+                denominator = second + delta;
+                delta += difference;
+                remaining -= 2;
             }
-            total = _PyRegion_DivideThenAdd(total, dividend, denominator);
+            if (paired && remaining == 2) {
+                total = _PyRegion_DividePairThenAdd(total, dividend,
+                    denominator, denominator + delta);
+            }
+            else {
+                while (remaining > 1) {
+                    total = _PyRegion_DivideThenAdd(total, dividend, denominator);
+                    denominator += delta;
+                    delta += difference;
+                    remaining--;
+                }
+                total = _PyRegion_DivideThenAdd(total, dividend, denominator);
+            }
             acc->ob_fval = total;
             long last_index = range->start + count - 1;
             range->start += count;

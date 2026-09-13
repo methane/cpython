@@ -1144,3 +1144,33 @@ build-jit/python -m test test_capi.test_opt_regions test_capi.test_opt test_tier
   解釈できないため通常起動は失敗した。`--isolated --select F401,F811`で同じ静的checkを
   実行し成功した。Spectralの100 loops診断はPython約0.959 ms、C対照約0.617 msで、
   同じchecksumだった。この差を次のnative profileで調べる。
+
+### 隣接する除算のSIMD化と加算順序の保持
+
+- enumerate fallbackはローカルcommit `0ee834acfb2`。全tracked source/build artifactの
+  hashを`enum-fallback-{source-hashes,manifest}.json`、比較用binaryを
+  `python-suite-enum-fallback`へ保存した。
+- Spectralのnative profileはlost samples0で、約64%が除算・加算loopに集中していた。
+  range生成とその整数変換、frame cleanupなども残る。診断用Cで隣接除算だけを二つの
+  SIMD lanesへまとめ、加算は元の順序で一つずつ行うと、約0.617→0.328 msだった。
+  同じ676,000項とchecksumを維持し、C結果はPythonの達成判定には使わない。
+- SSE2・fast-mathなし・MXCSRの例外trapが全てmaskedの場合に、この二項処理をrange
+  uopへ追加した。trap有効時と他architectureは従来のscalar処理を使う。両分母は既存の
+  非zero・整数からdoubleへのexact変換の証明対象であり、各除算結果を元の加算順序で使う。
+  最後の1/2項はloop外へ分離し、差分更新が証明した最後のindexを超えないようにした。
+- `±2**53`に`±1`を一項ずつ加える回帰テストで、項を先に合算する誤変換を検出する。
+  1〜8、126〜131項の偶奇と末尾を検証する。debug/native buildと丸め・特殊値検証へ進む。
+- debug region64 tests、generator/float/math/rangeの271 tests・3 skips、native392 tests・
+  7 skipsが成功。generator suiteの最初の指定を`test_tools.test_generated_cases`と誤り
+  import失敗したため、実在する`test_generated_cases`で関連suiteと再実行した。
+- 4丸めモード×trap masked/FE_DIVBYZERO enabledの576ケースで、native/debugとも
+  result bitsと例外flagsが対照と一致した。debugでnative-code bytesも要求した最初の診断は
+  RuntimeErrorだったため、明示的な`--interpreter`引数を追加して再実行した。失敗ログは
+  `.initial.*`に残した。native特殊値56ケースもpayloadを含めて一致した。
+- native assemblyはdivpdの各laneを二つのaddsdへ順番に渡し、chunk前にMXCSR maskを検査。
+  probeは5,200 chunks・670,800 iterations、guard失敗0、box0を保持した。3 blocksの
+  Spectral比較は前版比0.77176・main比0.022643（約0.763 ms）。全90値は
+  `range-paired-spectral-rows.json`へ保存。前版の第2 blockには約1.034 msの値もあり、
+  それを含む全値から比を計算した。全6本の半減はまだ判定していない。
+- 次は分母・差分・二階差分の範囲を追加検査し、全分母がsigned 32-bitに収まる場合に
+  隣接整数の更新とdoubleへの変換もSIMD化する。大きな値は現在の64-bit版を保持する。
