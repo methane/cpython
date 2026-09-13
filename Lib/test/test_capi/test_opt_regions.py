@@ -292,7 +292,7 @@ class TestRegions(unittest.TestCase):
                                   ("body", 1, "str")])
         self.assertGreater(ex.get_region_stats()["enum_entries"], before)
 
-    def warm_float_range(self, expression):
+    def warm_float_range(self, expression, numerator="1.0"):
         self.enterContext(mock.patch.dict(os.environ, {
             "PYTHON_TIER2_BOUNDED_INT_REGIONS": "1",
             "PYTHON_TIER2_FLOAT_RANGE": "1",
@@ -300,7 +300,7 @@ class TestRegions(unittest.TestCase):
         namespace = {}
         exec(
             "def term(a, j):\n"
-            f"    return 1.0 / ({expression})\n"
+            f"    return {numerator} / ({expression})\n"
             "def run(a, start, stop, initial=0.0):\n"
             "    total = initial + 0.0\n"
             "    for j in range(start, stop):\n"
@@ -344,6 +344,7 @@ class TestRegions(unittest.TestCase):
         names = [uop[0] for uop in ex]
         self.assertTrue(any(name.startswith("_POLY_STORE") for name in names), names)
         self.assertFalse(any(name.startswith("_POLY_BINARY") for name in names), names)
+        self.assertIn("_FLOAT_RANGE_PREPARE_1", names)
         for a in (-100, -1, 0, 1, 100, 2**28 - 1):
             expected = 0.0
             for j in range(120, 200):
@@ -456,6 +457,72 @@ class TestRegions(unittest.TestCase):
         ns["run"](Number(31), 1, 80)
         self.assertEqual(calls, [item for j in range(1, 80) for item in (j, j)])
         self.assertGreater(ex.get_region_stats()["range_guard_exits"], before)
+
+    @requires_call_regions
+    def test_float_range_nan_payload(self):
+        for numerator in ("1.0", "(1e309 - 1e309)"):
+            ns, ex = self.warm_float_range(
+                "(a + j) * (a + j + 1) // 2 + a + 1", numerator)
+            for payload in ("7ff8000000000011", "fff8000000000022", "7ff0000000000033"):
+                with self.subTest(numerator=numerator, payload=payload):
+                    initial = struct.unpack(">d", bytes.fromhex(payload))[0]
+                    expected = operator.add(initial, 0.0)
+                    for j in range(120, 200):
+                        expected = operator.add(expected, ns["term"](31, j))
+                    before = ex.get_region_stats()
+                    result, last = ns["run"](31, 120, 200, initial)
+                    after = ex.get_region_stats()
+                    self.assertEqual(struct.pack("d", result), struct.pack("d", expected))
+                    self.assertEqual(last, 199)
+                    self.assertGreater(after["range_guard_exits"], before["range_guard_exits"])
+                    self.assertEqual(after["range_iterations"], before["range_iterations"])
+
+    @requires_call_regions
+    def test_float_range_last_term_error(self):
+        ns, ex = self.warm_float_range("(a - j) + a + 200")
+        before = ex.get_region_stats()["range_guard_exits"]
+        expected = 0.0
+        for j in range(120, 200):
+            expected = operator.add(expected, ns["term"](0, j))
+        try:
+            ns["run"](0, 120, 201)
+        except ZeroDivisionError as error:
+            tb = error.__traceback__
+            while tb.tb_next is not None:
+                if tb.tb_frame.f_code is ns["run"].__code__:
+                    self.assertEqual(tb.tb_frame.f_locals["j"], 200)
+                    self.assertEqual(struct.pack("d", tb.tb_frame.f_locals["total"]),
+                                     struct.pack("d", expected))
+                tb = tb.tb_next
+            self.assertIs(tb.tb_frame.f_code, ns["term"].__code__)
+            self.assertEqual(tb.tb_frame.f_locals["j"], 200)
+        else:
+            self.fail("last denominator is zero")
+        self.assertGreater(ex.get_region_stats()["range_guard_exits"], before)
+
+    @requires_call_regions
+    def test_float_range_iterator_exhaustion(self):
+        ns, _ = self.warm_float_range("(a + j) * (a + j + 1) // 2 + a + 1")
+        exec("def consume(a, iterator):\n"
+             "    total = 0.0\n"
+             "    for j in iterator:\n"
+             "        total += term(a, j)\n"
+             "    return total, j\n", ns)
+        consume = ns["consume"]
+        for _ in range(TIER2_THRESHOLD // 119 + 8):
+            consume(31, iter(range(1, 120)))
+        ex = self.executor(consume, "_FLOAT_RANGE_REDUCE")
+        expected = 0.0
+        for j in range(120, 200):
+            expected = operator.add(expected, ns["term"](31, j))
+        iterator = iter(range(120, 200))
+        before = ex.get_region_stats()["range_iterations"]
+        result, last = consume(31, iterator)
+        self.assertEqual(struct.pack("d", result), struct.pack("d", expected))
+        self.assertEqual(last, 199)
+        self.assertEqual(iterator.__length_hint__(), 0)
+        self.assertIs(next(iterator, None), None)
+        self.assertEqual(ex.get_region_stats()["range_iterations"] - before, 79)
 
     @requires_call_regions
     def test_float_range_code_and_monitoring(self):

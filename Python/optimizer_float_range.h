@@ -1,7 +1,8 @@
 /* Opt-in short range reductions over a bounded integer polynomial.
  * Coefficients use the integer-valued basis 1, j, j*(j-1)/2.  Each node is
  * lowered to a copy-and-patch uop; there is no runtime expression evaluator.
- * The unchanged trace remains the fallback and executes the last iteration.
+ * The unchanged trace remains the fallback; a successful chunk takes the
+ * original loop-exhaustion exit with the same stack and local values.
  */
 
 #include "optimizer_poly_scalar.h"
@@ -38,6 +39,7 @@ mark_float_range(_PyUOpInstruction *buffer, int length, int available)
     }
     int pc = 0;
     int insertion, target, induction, accumulator;
+    _PyUOpInstruction exhausted;
     int args[4], nargs = 0;
     PyObject *function, *numerator;
     _PyUOpInstruction prefix[96];
@@ -47,9 +49,13 @@ mark_float_range(_PyUOpInstruction *buffer, int length, int available)
                          _ITER_CHECK_RANGE, _GUARD_NOT_EXHAUSTED_RANGE};
     for (size_t i = 0; i < Py_ARRAY_LENGTH(header); i++) {
         pc = float_range_next(buffer, pc, length);
-        if (pc >= length || buffer[pc++].opcode != header[i]) {
+        if (pc >= length || buffer[pc].opcode != header[i]) {
             return float_range_reject(length, __LINE__);
         }
+        if (header[i] == _GUARD_NOT_EXHAUSTED_RANGE) {
+            exhausted = buffer[pc];
+        }
+        pc++;
     }
     pc = float_range_next(buffer, pc, length);
     if (pc >= length || buffer[pc].opcode != _ITER_NEXT_RANGE) {
@@ -246,8 +252,19 @@ mark_float_range(_PyUOpInstruction *buffer, int length, int available)
     FR_EMIT(_FLOAT_RANGE_REDUCE, (accumulator << 8) | induction,
             (uintptr_t)numerator, 0);
     used = simplify_poly_setup(prefix, used, available);
+    if (used + 2 > (int)Py_ARRAY_LENGTH(prefix)) {
+        return float_range_reject(length, __LINE__);
+    }
+    _PyUOpInstruction reduce = prefix[--used];
+    int narrow = (int)reduce.operand1;
+    FR_EMIT(_FLOAT_RANGE_PREPARE_0 + narrow, narrow, 0, 0);
+    reduce.operand1 = 0;
+    prefix[used++] = reduce;
+    /* A successful chunk consumes the iterator. Use its original exhaustion
+     * exit, which resumes after END_FOR with iter/index still on the stack. */
+    prefix[used++] = exhausted;
     bool in_setup = false;
-    for (int i = 0; i < used - 1; i++) {
+    for (int i = 0; i < used - 2; i++) {
         if (prefix[i].opcode == _FLOAT_RANGE_GUARD) {
             in_setup = true;
         }

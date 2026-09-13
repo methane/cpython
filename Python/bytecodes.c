@@ -6696,7 +6696,11 @@ dummy_func(
                 !PyStackRef_IsNull(acc) && PyStackRef_RefcountOnObject(acc);
             if (valid) {
                 PyObject *obj = PyStackRef_AsPyObjectBorrow(acc);
-                valid = PyFloat_CheckExact(obj) && _PyObject_IsUniquelyReferenced(obj);
+                /* Keep NaN payload selection on Python's original path.
+                 * Even constrained FP permits operand-register choices
+                 * that select a different payload when both inputs are NaN. */
+                valid = PyFloat_CheckExact(obj) && _PyObject_IsUniquelyReferenced(obj) &&
+                        !isnan(PyFloat_AS_DOUBLE(obj));
             }
             if (!PyStackRef_IsNull(old_index)) {
                 valid = valid && PyLong_CheckExact(PyStackRef_AsPyObjectBorrow(old_index));
@@ -6801,36 +6805,32 @@ dummy_func(
             poly[2] = Py_ARITHMETIC_RIGHT_SHIFT(int64_t, poly[2], oparg);
         }
 
+        replicate(2) tier2 op(_FLOAT_RANGE_PREPARE, (iter, index -- iter, index)) {
+            _PyRangeIterObject *range = (_PyRangeIterObject *)PyStackRef_AsPyObjectBorrow(iter);
+            bool valid = current_executor->region_poly_valid;
+            if (valid) {
+                int64_t *poly = current_executor->region_poly_scratch[0];
+                if (oparg) {
+                    valid = _PyRegion_RangeStart64(poly, range->start, range->len);
+                }
+                else {
+#ifdef __SIZEOF_INT128__
+                    valid = _PyRegion_RangeStart128(poly, range->start, range->len);
+#else
+                    valid = false;
+#endif
+                }
+            }
+            current_executor->region_poly_valid = valid;
+        }
+
         tier2 op(_FLOAT_RANGE_REDUCE, (numerator/4, iter, index -- iter, index)) {
             bool valid = current_executor->region_poly_valid;
             _PyRangeIterObject *range = (_PyRangeIterObject *)PyStackRef_AsPyObjectBorrow(iter);
-            int64_t denominator = 0, delta = 0, difference = 0;
-            long count = range->len - 1;
-#ifdef __SIZEOF_INT128__
-            if (valid) {
-                __int128 c0 = current_executor->region_poly_scratch[0][0];
-                __int128 c1 = current_executor->region_poly_scratch[0][1];
-                __int128 c2 = current_executor->region_poly_scratch[0][2];
-                __int128 start = range->start;
-                __int128 d = c0 + c1*start + c2*start*(start - 1)/2;
-                __int128 step = c1 + c2*start;
-                __int128 last = d + step*(count - 1) + c2*(count - 1)*(count - 2)/2;
-                __int128 last_step = step + c2*(count - 1);
-                const int64_t exact = INT64_C(1) << 53;
-                valid = ((step >= 0 && last_step >= 0) || (step <= 0 && last_step <= 0)) &&
-                    ((d > 0 && last > 0) || (d < 0 && last < 0)) &&
-                    d >= -exact && d <= exact && last >= -exact && last <= exact &&
-                    step >= INT64_MIN && step <= INT64_MAX &&
-                    last_step >= INT64_MIN && last_step <= INT64_MAX;
-                if (valid) {
-                    denominator = (int64_t)d;
-                    delta = (int64_t)step;
-                    difference = (int64_t)c2;
-                }
-            }
-#else
-            valid = false;
-#endif
+            int64_t denominator = current_executor->region_poly_scratch[0][0];
+            int64_t delta = current_executor->region_poly_scratch[0][1];
+            int64_t difference = current_executor->region_poly_scratch[0][2];
+            long count = range->len;
             if (!valid) {
                 current_executor->region_range_guard_exits++;
                 EXIT_IF(true);

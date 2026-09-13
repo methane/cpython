@@ -210,6 +210,40 @@ poly_scalar_expression(PolyScalar *ps, int root)
 }
 
 static int
+poly_scalar_range_width(PolyScalar *ps, int *roots)
+{
+    RegionBounds c0 = ps->nodes[roots[0]].bounds;
+    RegionBounds c1 = ps->nodes[roots[1]].bounds;
+    RegionBounds c2 = ps->nodes[roots[2]].bounds;
+    RegionBounds start = {-_PY_NSMALLNEGINTS, _PY_NSMALLPOSINTS - 1};
+    RegionBounds previous = {start.low - 1, start.high - 1};
+    RegionBounds steps = {0, _PY_NSMALLPOSINTS + _PY_NSMALLNEGINTS - 1};
+    RegionBounds previous_step = {-1, steps.high - 1};
+    RegionBounds two = {2, 2};
+    RegionBounds linear, quadratic, d, step, last, last_step;
+    /* Prove each intermediate in the runtime expression, including products
+     * before division by two. Correlation is deliberately not assumed. */
+    bool narrow =
+        region_bounds(c1, start, 2, &linear) &&
+        region_bounds(c2, start, 2, &quadratic) &&
+        region_bounds(quadratic, previous, 2, &quadratic) &&
+        region_bounds(quadratic, two, 3, &quadratic) &&
+        region_bounds(c0, linear, 0, &d) &&
+        region_bounds(d, quadratic, 0, &d) &&
+        region_bounds(c2, start, 2, &step) &&
+        region_bounds(c1, step, 0, &step) &&
+        region_bounds(step, steps, 2, &linear) &&
+        region_bounds(c2, steps, 2, &quadratic) &&
+        region_bounds(quadratic, previous_step, 2, &quadratic) &&
+        region_bounds(quadratic, two, 3, &quadratic) &&
+        region_bounds(d, linear, 0, &last) &&
+        region_bounds(last, quadratic, 0, &last) &&
+        region_bounds(c2, steps, 2, &last_step) &&
+        region_bounds(step, last_step, 0, &last_step);
+    return narrow;
+}
+
+static int
 simplify_poly_setup(_PyUOpInstruction *prefix, int used, int available)
 {
     PolyScalar ps = {0};
@@ -305,6 +339,7 @@ simplify_poly_setup(_PyUOpInstruction *prefix, int used, int available)
         return used;
     }
     _PyUOpInstruction reduce = prefix[used - 1];
+    reduce.operand1 = poly_scalar_range_width(&ps, poly[0]);
     memcpy(prefix + begin, ps.output, ps.used * sizeof(*prefix));
     prefix[begin + ps.used] = reduce;
     return begin + ps.used + 1;

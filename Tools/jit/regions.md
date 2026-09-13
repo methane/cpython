@@ -78,21 +78,29 @@ Nonconstant coefficients must divide exactly. Runtime exactness checks remain
 even when later constant folding removes the corresponding value. Known powers
 of two use a mask and arithmetic shift. The final three coefficients feed the
 same range reduction, which rejects overflowing or otherwise unproved chunks.
+Coefficient intervals also select a 64-bit setup when every intermediate in
+the initial-denominator and endpoint calculations is proved to fit. Otherwise
+the setup retains 128-bit arithmetic. Both apply the same runtime monotonicity,
+sign, and exact-integer-conversion checks.
 
 The range must have step one and fit wholly in the small-int cache. Its
-accumulator must be an exact, owned, uniquely referenced float; integer
+accumulator must be an exact, owned, uniquely referenced non-NaN float; integer
 arguments retain the bounded-input contract. The old induction local must be
 null or an exact int. Function, stack-space, recursion, globals (when present),
 and callee instrumentation checks precede the chunk. The denominator must be
 monotone, nonzero with one sign, and within `[-2**53, 2**53]` throughout it.
 The loop performs every binary64 division and addition in the original order,
 then updates the unique accumulator, cached induction local, and iterator
-without allocation. It leaves one ordinary iteration and returns to existing
-periodic checks after at most the small-int-cache span minus one iterations.
+without allocation. It consumes the remaining range and takes a copy of the
+original exhaustion guard's exit, retaining the iterator/index stack expected
+after `END_FOR`. A chunk has at most the small-int-cache span of iterations.
 The final term is peeled to avoid conditional recurrence updates inside the
 chunk. Clang uses a local `FENV_ACCESS ON` helper so constrained floating-point
 operations preserve separate rounding after inlining without volatile memory
 traffic. Other compilers retain the volatile evaluation boundary.
+NaN accumulators retain ordinary execution to preserve payload selection as
+well as rounding; constrained operations alone do not fix register-operand
+choices when both operands are NaNs.
 Any failed proof exits at the original `FOR_ITER`, before committing effects.
 `range_entries`, `range_iterations`, and `range_guard_exits` record execution.
 This experiment is disabled on free-threaded, 32-bit, DTrace, Emscripten, and

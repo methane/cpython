@@ -472,6 +472,9 @@ const uint32_t _PyUop_Flags[MAX_UOP_ID+1] = {
     [_POLY_BINARY_3] = 0,
     [_POLY_BINARY] = HAS_ARG_FLAG,
     [_POLY_RSHIFT] = HAS_ARG_FLAG,
+    [_FLOAT_RANGE_PREPARE_0] = 0,
+    [_FLOAT_RANGE_PREPARE_1] = 0,
+    [_FLOAT_RANGE_PREPARE] = HAS_ARG_FLAG,
     [_FLOAT_RANGE_REDUCE] = HAS_ARG_FLAG | HAS_LOCAL_FLAG | HAS_EXIT_FLAG | HAS_ESCAPES_FLAG,
     [_TIER3_RANGE_CHUNK] = HAS_ARG_FLAG | HAS_ERROR_FLAG | HAS_ESCAPES_FLAG,
     [_TIER3_RANGE_CHUNK_NATIVE] = HAS_ARG_FLAG | HAS_ERROR_FLAG | HAS_ESCAPES_FLAG,
@@ -537,6 +540,7 @@ const ReplicationRange _PyUop_Replication[MAX_UOP_ID+1] = {
     [_GUARD_BIT_IS_UNSET_POP] = { 4, 8 },
     [_POLY_STORE] = { 0, 3 },
     [_POLY_BINARY] = { 0, 4 },
+    [_FLOAT_RANGE_PREPARE] = { 0, 2 },
 };
 
 const _PyUopCachingInfo _PyUop_Caching[MAX_UOP_ID+1] = {
@@ -4473,6 +4477,33 @@ const _PyUopCachingInfo _PyUop_Caching[MAX_UOP_ID+1] = {
             { 3, 3, _POLY_RSHIFT_r33 },
         },
     },
+    [_FLOAT_RANGE_PREPARE_0] = {
+        .best = { 0, 1, 2, 3 },
+        .entries = {
+            { 2, 0, _FLOAT_RANGE_PREPARE_0_r02 },
+            { 2, 1, _FLOAT_RANGE_PREPARE_0_r12 },
+            { 2, 2, _FLOAT_RANGE_PREPARE_0_r22 },
+            { 3, 3, _FLOAT_RANGE_PREPARE_0_r33 },
+        },
+    },
+    [_FLOAT_RANGE_PREPARE_1] = {
+        .best = { 0, 1, 2, 3 },
+        .entries = {
+            { 2, 0, _FLOAT_RANGE_PREPARE_1_r02 },
+            { 2, 1, _FLOAT_RANGE_PREPARE_1_r12 },
+            { 2, 2, _FLOAT_RANGE_PREPARE_1_r22 },
+            { 3, 3, _FLOAT_RANGE_PREPARE_1_r33 },
+        },
+    },
+    [_FLOAT_RANGE_PREPARE] = {
+        .best = { 0, 1, 2, 3 },
+        .entries = {
+            { 2, 0, _FLOAT_RANGE_PREPARE_r02 },
+            { 2, 1, _FLOAT_RANGE_PREPARE_r12 },
+            { 2, 2, _FLOAT_RANGE_PREPARE_r22 },
+            { 3, 3, _FLOAT_RANGE_PREPARE_r33 },
+        },
+    },
     [_FLOAT_RANGE_REDUCE] = {
         .best = { 2, 2, 2, 2 },
         .entries = {
@@ -5746,6 +5777,18 @@ const uint16_t _PyUop_Uncached[MAX_UOP_REGS_ID+1] = {
     [_POLY_RSHIFT_r11] = _POLY_RSHIFT,
     [_POLY_RSHIFT_r22] = _POLY_RSHIFT,
     [_POLY_RSHIFT_r33] = _POLY_RSHIFT,
+    [_FLOAT_RANGE_PREPARE_0_r02] = _FLOAT_RANGE_PREPARE_0,
+    [_FLOAT_RANGE_PREPARE_0_r12] = _FLOAT_RANGE_PREPARE_0,
+    [_FLOAT_RANGE_PREPARE_0_r22] = _FLOAT_RANGE_PREPARE_0,
+    [_FLOAT_RANGE_PREPARE_0_r33] = _FLOAT_RANGE_PREPARE_0,
+    [_FLOAT_RANGE_PREPARE_1_r02] = _FLOAT_RANGE_PREPARE_1,
+    [_FLOAT_RANGE_PREPARE_1_r12] = _FLOAT_RANGE_PREPARE_1,
+    [_FLOAT_RANGE_PREPARE_1_r22] = _FLOAT_RANGE_PREPARE_1,
+    [_FLOAT_RANGE_PREPARE_1_r33] = _FLOAT_RANGE_PREPARE_1,
+    [_FLOAT_RANGE_PREPARE_r02] = _FLOAT_RANGE_PREPARE,
+    [_FLOAT_RANGE_PREPARE_r12] = _FLOAT_RANGE_PREPARE,
+    [_FLOAT_RANGE_PREPARE_r22] = _FLOAT_RANGE_PREPARE,
+    [_FLOAT_RANGE_PREPARE_r33] = _FLOAT_RANGE_PREPARE,
     [_FLOAT_RANGE_REDUCE_r22] = _FLOAT_RANGE_REDUCE,
     [_TIER3_RANGE_CHUNK_r22] = _TIER3_RANGE_CHUNK,
     [_TIER3_RANGE_CHUNK_NATIVE_r22] = _TIER3_RANGE_CHUNK_NATIVE,
@@ -6274,6 +6317,21 @@ const char *const _PyOpcode_uop_name[MAX_UOP_REGS_ID+1] = {
     [_FATAL_ERROR_r33] = "_FATAL_ERROR_r33",
     [_FLOAT_RANGE_GUARD] = "_FLOAT_RANGE_GUARD",
     [_FLOAT_RANGE_GUARD_r22] = "_FLOAT_RANGE_GUARD_r22",
+    [_FLOAT_RANGE_PREPARE] = "_FLOAT_RANGE_PREPARE",
+    [_FLOAT_RANGE_PREPARE_r02] = "_FLOAT_RANGE_PREPARE_r02",
+    [_FLOAT_RANGE_PREPARE_r12] = "_FLOAT_RANGE_PREPARE_r12",
+    [_FLOAT_RANGE_PREPARE_r22] = "_FLOAT_RANGE_PREPARE_r22",
+    [_FLOAT_RANGE_PREPARE_r33] = "_FLOAT_RANGE_PREPARE_r33",
+    [_FLOAT_RANGE_PREPARE_0] = "_FLOAT_RANGE_PREPARE_0",
+    [_FLOAT_RANGE_PREPARE_0_r02] = "_FLOAT_RANGE_PREPARE_0_r02",
+    [_FLOAT_RANGE_PREPARE_0_r12] = "_FLOAT_RANGE_PREPARE_0_r12",
+    [_FLOAT_RANGE_PREPARE_0_r22] = "_FLOAT_RANGE_PREPARE_0_r22",
+    [_FLOAT_RANGE_PREPARE_0_r33] = "_FLOAT_RANGE_PREPARE_0_r33",
+    [_FLOAT_RANGE_PREPARE_1] = "_FLOAT_RANGE_PREPARE_1",
+    [_FLOAT_RANGE_PREPARE_1_r02] = "_FLOAT_RANGE_PREPARE_1_r02",
+    [_FLOAT_RANGE_PREPARE_1_r12] = "_FLOAT_RANGE_PREPARE_1_r12",
+    [_FLOAT_RANGE_PREPARE_1_r22] = "_FLOAT_RANGE_PREPARE_1_r22",
+    [_FLOAT_RANGE_PREPARE_1_r33] = "_FLOAT_RANGE_PREPARE_1_r33",
     [_FLOAT_RANGE_REDUCE] = "_FLOAT_RANGE_REDUCE",
     [_FLOAT_RANGE_REDUCE_r22] = "_FLOAT_RANGE_REDUCE_r22",
     [_FORMAT_SIMPLE] = "_FORMAT_SIMPLE",
@@ -8320,6 +8378,12 @@ int _PyUop_num_popped(int opcode, int oparg)
         case _POLY_BINARY:
             return 0;
         case _POLY_RSHIFT:
+            return 0;
+        case _FLOAT_RANGE_PREPARE_0:
+            return 0;
+        case _FLOAT_RANGE_PREPARE_1:
+            return 0;
+        case _FLOAT_RANGE_PREPARE:
             return 0;
         case _FLOAT_RANGE_REDUCE:
             return 0;

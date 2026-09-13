@@ -27247,7 +27247,8 @@
             !PyStackRef_IsNull(acc) && PyStackRef_RefcountOnObject(acc);
             if (valid) {
                 PyObject *obj = PyStackRef_AsPyObjectBorrow(acc);
-                valid = PyFloat_CheckExact(obj) && _PyObject_IsUniquelyReferenced(obj);
+                valid = PyFloat_CheckExact(obj) && _PyObject_IsUniquelyReferenced(obj) &&
+                !isnan(PyFloat_AS_DOUBLE(obj));
             }
             if (!PyStackRef_IsNull(old_index)) {
                 valid = valid && PyLong_CheckExact(PyStackRef_AsPyObjectBorrow(old_index));
@@ -28507,6 +28508,395 @@
             break;
         }
 
+        case _FLOAT_RANGE_PREPARE_0_r02: {
+            CHECK_CURRENT_CACHED_VALUES(0);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            _PyStackRef iter;
+            oparg = 0;
+            assert(oparg == CURRENT_OPARG());
+            iter = stack_pointer[-2];
+            _PyRangeIterObject *range = (_PyRangeIterObject *)PyStackRef_AsPyObjectBorrow(iter);
+            bool valid = current_executor->region_poly_valid;
+            if (valid) {
+                int64_t *poly = current_executor->region_poly_scratch[0];
+                if (oparg) {
+                    valid = _PyRegion_RangeStart64(poly, range->start, range->len);
+                }
+                else {
+                    #ifdef __SIZEOF_INT128__
+                    valid = _PyRegion_RangeStart128(poly, range->start, range->len);
+                    #else
+                    valid = false;
+                    #endif
+                }
+            }
+            current_executor->region_poly_valid = valid;
+            _tos_cache1 = stack_pointer[-1];
+            _tos_cache0 = iter;
+            SET_CURRENT_CACHED_VALUES(2);
+            stack_pointer += -2;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            break;
+        }
+
+        case _FLOAT_RANGE_PREPARE_0_r12: {
+            CHECK_CURRENT_CACHED_VALUES(1);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            _PyStackRef iter;
+            _PyStackRef _stack_item_0 = _tos_cache0;
+            oparg = 0;
+            assert(oparg == CURRENT_OPARG());
+            iter = stack_pointer[-1];
+            _PyRangeIterObject *range = (_PyRangeIterObject *)PyStackRef_AsPyObjectBorrow(iter);
+            bool valid = current_executor->region_poly_valid;
+            if (valid) {
+                int64_t *poly = current_executor->region_poly_scratch[0];
+                if (oparg) {
+                    valid = _PyRegion_RangeStart64(poly, range->start, range->len);
+                }
+                else {
+                    #ifdef __SIZEOF_INT128__
+                    valid = _PyRegion_RangeStart128(poly, range->start, range->len);
+                    #else
+                    valid = false;
+                    #endif
+                }
+            }
+            current_executor->region_poly_valid = valid;
+            _tos_cache1 = _stack_item_0;
+            _tos_cache0 = iter;
+            SET_CURRENT_CACHED_VALUES(2);
+            stack_pointer += -1;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            break;
+        }
+
+        case _FLOAT_RANGE_PREPARE_0_r22: {
+            CHECK_CURRENT_CACHED_VALUES(2);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            _PyStackRef iter;
+            _PyStackRef _stack_item_0 = _tos_cache0;
+            _PyStackRef _stack_item_1 = _tos_cache1;
+            oparg = 0;
+            assert(oparg == CURRENT_OPARG());
+            iter = _stack_item_0;
+            _PyRangeIterObject *range = (_PyRangeIterObject *)PyStackRef_AsPyObjectBorrow(iter);
+            bool valid = current_executor->region_poly_valid;
+            if (valid) {
+                int64_t *poly = current_executor->region_poly_scratch[0];
+                if (oparg) {
+                    valid = _PyRegion_RangeStart64(poly, range->start, range->len);
+                }
+                else {
+                    #ifdef __SIZEOF_INT128__
+                    valid = _PyRegion_RangeStart128(poly, range->start, range->len);
+                    #else
+                    valid = false;
+                    #endif
+                }
+            }
+            current_executor->region_poly_valid = valid;
+            _tos_cache1 = _stack_item_1;
+            _tos_cache0 = iter;
+            SET_CURRENT_CACHED_VALUES(2);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            break;
+        }
+
+        case _FLOAT_RANGE_PREPARE_0_r33: {
+            CHECK_CURRENT_CACHED_VALUES(3);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            _PyStackRef iter;
+            _PyStackRef _stack_item_0 = _tos_cache0;
+            _PyStackRef _stack_item_1 = _tos_cache1;
+            _PyStackRef _stack_item_2 = _tos_cache2;
+            oparg = 0;
+            assert(oparg == CURRENT_OPARG());
+            iter = _stack_item_1;
+            _PyRangeIterObject *range = (_PyRangeIterObject *)PyStackRef_AsPyObjectBorrow(iter);
+            bool valid = current_executor->region_poly_valid;
+            if (valid) {
+                int64_t *poly = current_executor->region_poly_scratch[0];
+                if (oparg) {
+                    valid = _PyRegion_RangeStart64(poly, range->start, range->len);
+                }
+                else {
+                    #ifdef __SIZEOF_INT128__
+                    valid = _PyRegion_RangeStart128(poly, range->start, range->len);
+                    #else
+                    valid = false;
+                    #endif
+                }
+            }
+            current_executor->region_poly_valid = valid;
+            _tos_cache2 = _stack_item_2;
+            _tos_cache1 = iter;
+            _tos_cache0 = _stack_item_0;
+            SET_CURRENT_CACHED_VALUES(3);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            break;
+        }
+
+        case _FLOAT_RANGE_PREPARE_1_r02: {
+            CHECK_CURRENT_CACHED_VALUES(0);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            _PyStackRef iter;
+            oparg = 1;
+            assert(oparg == CURRENT_OPARG());
+            iter = stack_pointer[-2];
+            _PyRangeIterObject *range = (_PyRangeIterObject *)PyStackRef_AsPyObjectBorrow(iter);
+            bool valid = current_executor->region_poly_valid;
+            if (valid) {
+                int64_t *poly = current_executor->region_poly_scratch[0];
+                if (oparg) {
+                    valid = _PyRegion_RangeStart64(poly, range->start, range->len);
+                }
+                else {
+                    #ifdef __SIZEOF_INT128__
+                    valid = _PyRegion_RangeStart128(poly, range->start, range->len);
+                    #else
+                    valid = false;
+                    #endif
+                }
+            }
+            current_executor->region_poly_valid = valid;
+            _tos_cache1 = stack_pointer[-1];
+            _tos_cache0 = iter;
+            SET_CURRENT_CACHED_VALUES(2);
+            stack_pointer += -2;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            break;
+        }
+
+        case _FLOAT_RANGE_PREPARE_1_r12: {
+            CHECK_CURRENT_CACHED_VALUES(1);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            _PyStackRef iter;
+            _PyStackRef _stack_item_0 = _tos_cache0;
+            oparg = 1;
+            assert(oparg == CURRENT_OPARG());
+            iter = stack_pointer[-1];
+            _PyRangeIterObject *range = (_PyRangeIterObject *)PyStackRef_AsPyObjectBorrow(iter);
+            bool valid = current_executor->region_poly_valid;
+            if (valid) {
+                int64_t *poly = current_executor->region_poly_scratch[0];
+                if (oparg) {
+                    valid = _PyRegion_RangeStart64(poly, range->start, range->len);
+                }
+                else {
+                    #ifdef __SIZEOF_INT128__
+                    valid = _PyRegion_RangeStart128(poly, range->start, range->len);
+                    #else
+                    valid = false;
+                    #endif
+                }
+            }
+            current_executor->region_poly_valid = valid;
+            _tos_cache1 = _stack_item_0;
+            _tos_cache0 = iter;
+            SET_CURRENT_CACHED_VALUES(2);
+            stack_pointer += -1;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            break;
+        }
+
+        case _FLOAT_RANGE_PREPARE_1_r22: {
+            CHECK_CURRENT_CACHED_VALUES(2);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            _PyStackRef iter;
+            _PyStackRef _stack_item_0 = _tos_cache0;
+            _PyStackRef _stack_item_1 = _tos_cache1;
+            oparg = 1;
+            assert(oparg == CURRENT_OPARG());
+            iter = _stack_item_0;
+            _PyRangeIterObject *range = (_PyRangeIterObject *)PyStackRef_AsPyObjectBorrow(iter);
+            bool valid = current_executor->region_poly_valid;
+            if (valid) {
+                int64_t *poly = current_executor->region_poly_scratch[0];
+                if (oparg) {
+                    valid = _PyRegion_RangeStart64(poly, range->start, range->len);
+                }
+                else {
+                    #ifdef __SIZEOF_INT128__
+                    valid = _PyRegion_RangeStart128(poly, range->start, range->len);
+                    #else
+                    valid = false;
+                    #endif
+                }
+            }
+            current_executor->region_poly_valid = valid;
+            _tos_cache1 = _stack_item_1;
+            _tos_cache0 = iter;
+            SET_CURRENT_CACHED_VALUES(2);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            break;
+        }
+
+        case _FLOAT_RANGE_PREPARE_1_r33: {
+            CHECK_CURRENT_CACHED_VALUES(3);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            _PyStackRef iter;
+            _PyStackRef _stack_item_0 = _tos_cache0;
+            _PyStackRef _stack_item_1 = _tos_cache1;
+            _PyStackRef _stack_item_2 = _tos_cache2;
+            oparg = 1;
+            assert(oparg == CURRENT_OPARG());
+            iter = _stack_item_1;
+            _PyRangeIterObject *range = (_PyRangeIterObject *)PyStackRef_AsPyObjectBorrow(iter);
+            bool valid = current_executor->region_poly_valid;
+            if (valid) {
+                int64_t *poly = current_executor->region_poly_scratch[0];
+                if (oparg) {
+                    valid = _PyRegion_RangeStart64(poly, range->start, range->len);
+                }
+                else {
+                    #ifdef __SIZEOF_INT128__
+                    valid = _PyRegion_RangeStart128(poly, range->start, range->len);
+                    #else
+                    valid = false;
+                    #endif
+                }
+            }
+            current_executor->region_poly_valid = valid;
+            _tos_cache2 = _stack_item_2;
+            _tos_cache1 = iter;
+            _tos_cache0 = _stack_item_0;
+            SET_CURRENT_CACHED_VALUES(3);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            break;
+        }
+
+        case _FLOAT_RANGE_PREPARE_r02: {
+            CHECK_CURRENT_CACHED_VALUES(0);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            _PyStackRef iter;
+            oparg = CURRENT_OPARG();
+            iter = stack_pointer[-2];
+            _PyRangeIterObject *range = (_PyRangeIterObject *)PyStackRef_AsPyObjectBorrow(iter);
+            bool valid = current_executor->region_poly_valid;
+            if (valid) {
+                int64_t *poly = current_executor->region_poly_scratch[0];
+                if (oparg) {
+                    valid = _PyRegion_RangeStart64(poly, range->start, range->len);
+                }
+                else {
+                    #ifdef __SIZEOF_INT128__
+                    valid = _PyRegion_RangeStart128(poly, range->start, range->len);
+                    #else
+                    valid = false;
+                    #endif
+                }
+            }
+            current_executor->region_poly_valid = valid;
+            _tos_cache1 = stack_pointer[-1];
+            _tos_cache0 = iter;
+            SET_CURRENT_CACHED_VALUES(2);
+            stack_pointer += -2;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            break;
+        }
+
+        case _FLOAT_RANGE_PREPARE_r12: {
+            CHECK_CURRENT_CACHED_VALUES(1);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            _PyStackRef iter;
+            _PyStackRef _stack_item_0 = _tos_cache0;
+            oparg = CURRENT_OPARG();
+            iter = stack_pointer[-1];
+            _PyRangeIterObject *range = (_PyRangeIterObject *)PyStackRef_AsPyObjectBorrow(iter);
+            bool valid = current_executor->region_poly_valid;
+            if (valid) {
+                int64_t *poly = current_executor->region_poly_scratch[0];
+                if (oparg) {
+                    valid = _PyRegion_RangeStart64(poly, range->start, range->len);
+                }
+                else {
+                    #ifdef __SIZEOF_INT128__
+                    valid = _PyRegion_RangeStart128(poly, range->start, range->len);
+                    #else
+                    valid = false;
+                    #endif
+                }
+            }
+            current_executor->region_poly_valid = valid;
+            _tos_cache1 = _stack_item_0;
+            _tos_cache0 = iter;
+            SET_CURRENT_CACHED_VALUES(2);
+            stack_pointer += -1;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            break;
+        }
+
+        case _FLOAT_RANGE_PREPARE_r22: {
+            CHECK_CURRENT_CACHED_VALUES(2);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            _PyStackRef iter;
+            _PyStackRef _stack_item_0 = _tos_cache0;
+            _PyStackRef _stack_item_1 = _tos_cache1;
+            oparg = CURRENT_OPARG();
+            iter = _stack_item_0;
+            _PyRangeIterObject *range = (_PyRangeIterObject *)PyStackRef_AsPyObjectBorrow(iter);
+            bool valid = current_executor->region_poly_valid;
+            if (valid) {
+                int64_t *poly = current_executor->region_poly_scratch[0];
+                if (oparg) {
+                    valid = _PyRegion_RangeStart64(poly, range->start, range->len);
+                }
+                else {
+                    #ifdef __SIZEOF_INT128__
+                    valid = _PyRegion_RangeStart128(poly, range->start, range->len);
+                    #else
+                    valid = false;
+                    #endif
+                }
+            }
+            current_executor->region_poly_valid = valid;
+            _tos_cache1 = _stack_item_1;
+            _tos_cache0 = iter;
+            SET_CURRENT_CACHED_VALUES(2);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            break;
+        }
+
+        case _FLOAT_RANGE_PREPARE_r33: {
+            CHECK_CURRENT_CACHED_VALUES(3);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            _PyStackRef iter;
+            _PyStackRef _stack_item_0 = _tos_cache0;
+            _PyStackRef _stack_item_1 = _tos_cache1;
+            _PyStackRef _stack_item_2 = _tos_cache2;
+            oparg = CURRENT_OPARG();
+            iter = _stack_item_1;
+            _PyRangeIterObject *range = (_PyRangeIterObject *)PyStackRef_AsPyObjectBorrow(iter);
+            bool valid = current_executor->region_poly_valid;
+            if (valid) {
+                int64_t *poly = current_executor->region_poly_scratch[0];
+                if (oparg) {
+                    valid = _PyRegion_RangeStart64(poly, range->start, range->len);
+                }
+                else {
+                    #ifdef __SIZEOF_INT128__
+                    valid = _PyRegion_RangeStart128(poly, range->start, range->len);
+                    #else
+                    valid = false;
+                    #endif
+                }
+            }
+            current_executor->region_poly_valid = valid;
+            _tos_cache2 = _stack_item_2;
+            _tos_cache1 = iter;
+            _tos_cache0 = _stack_item_0;
+            SET_CURRENT_CACHED_VALUES(3);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            break;
+        }
+
         case _FLOAT_RANGE_REDUCE_r22: {
             CHECK_CURRENT_CACHED_VALUES(2);
             ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
@@ -28518,33 +28908,10 @@
             PyObject *numerator = (PyObject *)CURRENT_OPERAND0_64();
             bool valid = current_executor->region_poly_valid;
             _PyRangeIterObject *range = (_PyRangeIterObject *)PyStackRef_AsPyObjectBorrow(iter);
-            int64_t denominator = 0, delta = 0, difference = 0;
-            long count = range->len - 1;
-            #ifdef __SIZEOF_INT128__
-            if (valid) {
-                __int128 c0 = current_executor->region_poly_scratch[0][0];
-                __int128 c1 = current_executor->region_poly_scratch[0][1];
-                __int128 c2 = current_executor->region_poly_scratch[0][2];
-                __int128 start = range->start;
-                __int128 d = c0 + c1*start + c2*start*(start - 1)/2;
-                __int128 step = c1 + c2*start;
-                __int128 last = d + step*(count - 1) + c2*(count - 1)*(count - 2)/2;
-                __int128 last_step = step + c2*(count - 1);
-                const int64_t exact = INT64_C(1) << 53;
-                valid = ((step >= 0 && last_step >= 0) || (step <= 0 && last_step <= 0)) &&
-                ((d > 0 && last > 0) || (d < 0 && last < 0)) &&
-                d >= -exact && d <= exact && last >= -exact && last <= exact &&
-                step >= INT64_MIN && step <= INT64_MAX &&
-                last_step >= INT64_MIN && last_step <= INT64_MAX;
-                if (valid) {
-                    denominator = (int64_t)d;
-                    delta = (int64_t)step;
-                    difference = (int64_t)c2;
-                }
-            }
-            #else
-            valid = false;
-            #endif
+            int64_t denominator = current_executor->region_poly_scratch[0][0];
+            int64_t delta = current_executor->region_poly_scratch[0][1];
+            int64_t difference = current_executor->region_poly_scratch[0][2];
+            long count = range->len;
             if (!valid) {
                 current_executor->region_range_guard_exits++;
                 if (true) {

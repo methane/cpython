@@ -843,6 +843,38 @@ _PyRegion_PolyBinary(int64_t a0, int64_t a1, int64_t a2,
 #endif
 }
 
+/* The narrow form is selected only after a compile-time interval proof for
+ * every intermediate. Both forms retain the same sign and endpoint checks. */
+#define REGION_RANGE_START(NAME, TYPE)                                  \
+static inline Py_ALWAYS_INLINE bool                                    \
+NAME(int64_t *poly, long initial, long count)                           \
+{                                                                      \
+    TYPE c0 = poly[0], c1 = poly[1], c2 = poly[2];                      \
+    TYPE start = initial;                                              \
+    TYPE d = c0 + c1*start + c2*start*(start - 1)/2;                    \
+    TYPE step = c1 + c2*start;                                         \
+    TYPE last = d + step*(count - 1) + c2*(count - 1)*(count - 2)/2;    \
+    TYPE last_step = step + c2*(count - 1);                            \
+    const int64_t exact = INT64_C(1) << 53;                             \
+    bool valid = ((step >= 0 && last_step >= 0) ||                     \
+                  (step <= 0 && last_step <= 0)) &&                    \
+        ((d > 0 && last > 0) || (d < 0 && last < 0)) &&                \
+        d >= -exact && d <= exact && last >= -exact && last <= exact && \
+        step >= INT64_MIN && step <= INT64_MAX &&                      \
+        last_step >= INT64_MIN && last_step <= INT64_MAX;              \
+    if (valid) {                                                       \
+        poly[0] = (int64_t)d;                                           \
+        poly[1] = (int64_t)step;                                        \
+    }                                                                  \
+    return valid;                                                      \
+}
+
+REGION_RANGE_START(_PyRegion_RangeStart64, int64_t)
+#ifdef __SIZEOF_INT128__
+REGION_RANGE_START(_PyRegion_RangeStart128, __int128)
+#endif
+#undef REGION_RANGE_START
+
 // Inplace float true division. Sets _divop_err to 1 on zero division.
 // Caller must check _divop_err and call ERROR_NO_POP() if set.
 #define FLOAT_INPLACE_DIVOP(left, right, TARGET)                         \

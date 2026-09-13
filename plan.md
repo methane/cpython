@@ -1024,3 +1024,45 @@ build-jit/python -m test test_capi.test_opt_regions test_capi.test_opt test_tier
 - ここまでをローカルcommitへまとめる。次は係数のcompile-time boundsから、rangeの
   初期値・終点検査も64-bitで安全に行える場合を証明し、現在の128-bit計算を減らす。
   簡約できない式には既存経路を残す。全6本の半減はまだ未達。
+
+### range初期値・終点検査の整数幅
+
+- 係数簡約版はローカルcommit `85d7ba42c49`。全tracked sourceとbuild artifactのhashを
+  `scalar-source-hashes.json`、`scalar-manifest.json`へ記録した。
+- scalar係数のintervalとsmall-int cache内のstart/countから、初期値・差分・終点・最終差分の
+  全中間値を追加で証明する。除算前の積も検査し、相関による範囲縮小は仮定しない。
+  成功時だけ64-bitの準備uopを使い、証明できなければ128-bitの準備uopを使う。
+- 準備とfloat loopを分離し、成功時のscratch先頭二値を初期denominatorとdeltaへ置き換える。
+  符号・単調性・2**53以内の検査と、失敗時に元FOR_ITERへ戻る処理は同じ。新規経路の
+  実適用をテストで確認し、native buildと検証へ進む。
+- debug151 tests、native380 tests・7 skips、丸め288件が成功。直列の3 blocks比較では
+  前版比0.98864、main比0.03223。最初の`range64-spectral`比較は診断probeと短時間重ねて
+  しまったため性能判定には使わず、生値を残して`range64-serial-spectral`として3 blocksを
+  取り直した。速い/遅い値の選別ではなく、競合を避ける測定手順への違反による再実行。
+- 次は残していた最後の通常iterationもchunkへ含める。成功後には元のrange exhaustion
+  guardを複製し、その既存の出口へ戻す。元traceのcallee定数とfallbackは残すので、参照保持を
+  新たな仕組みへ移さない。終点の証明は追加の1項まで広げ、index/local/iteratorを最後の状態へ
+  更新する。元FOR_ITERへ戻る失敗経路と、END_FORの後へ進む成功経路を分けて扱う。
+- 最後の項まで含む版はdebug153 tests、native382 tests・7 skips、4丸めモード288件が成功。
+  最後の分母が0になる場合のcallee traceback、callerのjと部分和、外部aliasのあるrange
+  iteratorの枯渇と最後のindexを追加検証した。native比較後、全6本を再測定する。
+- 最後の通常iterationを省く追加効果は前版比0.88769、Spectralのmain比0.02864。
+  rangeは5,200 chunks・670,800 iterationsでguard失敗0、通常のbounded divisionsが
+  10,360→5,160へ減った。676,000項の計算自体は同じ。
+- 全6本の2 blocks・各10値はgeomean **0.54025**（起動込み0.65688）。個別比は
+  BPE 0.92598、B-tree 0.98050、DeltaBlue 1.01462、Hexiom 0.98130、Raytrace 0.95642、
+  Spectral 0.02876。半減未達。B-treeはblocks間0.950〜1.012で、起動込みでは1.03167。
+  全240値とchecksum/binary/script hashは`range-full-rows.json`に記録した。
+- 追加の特殊値検証56件で、分子と初期値が異なるNaNの場合にpayload差を2件発見した。
+  constrained FPでもoperand registerの選び方によりNaN payloadは変わり得るため、累積値が
+  NaNなら元のPython経路へ戻すguardを追加した。quiet/signaling NaNの3 payloadについて
+  修正前の失敗を回帰テストで確認済み。上の性能比較は修正前binaryの結果として保持する。
+  `co_consts`差し替えによる最初の診断は借用constant条件を満たさずexecutor未生成だったので、
+  コンパイラが畳み込むNaN式を使って実経路を検証した。修正後のnative検証へ進む。
+- NaN修正後はdebug154 tests、native383 tests・7 skips、4丸めモード288件と特殊値56件の
+  bit比較が成功した。isnanは再入しない判定として生成器へ登録し、不要なescape処理を除いた
+  最終版でも同じ検証が通過。NaN修正を含むrange改善をローカルcommitへ記録する。
+- 次のBPE候補は、実traceの二つのlist subscriptと`i+1`から既存tuple比較までの処理を融合する。
+  同じborrowed localのexact list/int、両indexの範囲、exact tupleと対応するimmutable要素型を
+  最初のsubscriptで検査する。失敗時は最初の添字操作へ戻し、second-indexの例外やsubclassの
+  callback順を保持する。まずこの契約を実装・テストし、実coverageとBPEの差を確認する。

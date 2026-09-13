@@ -5925,6 +5925,10 @@
             break;
         }
 
+        case _FLOAT_RANGE_PREPARE: {
+            break;
+        }
+
         case _FLOAT_RANGE_REDUCE: {
             break;
         }
