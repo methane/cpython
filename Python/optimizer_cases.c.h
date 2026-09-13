@@ -5330,8 +5330,14 @@
                            || oparg == NB_INPLACE_TRUE_DIVIDE);
             bool is_remainder = (oparg == NB_REMAINDER
                              || oparg == NB_INPLACE_REMAINDER);
+            bool is_float_chain_op = (oparg == NB_ADD
+                                  || oparg == NB_INPLACE_ADD
+                                  || oparg == NB_SUBTRACT
+                                  || oparg == NB_INPLACE_SUBTRACT
+                                  || oparg == NB_MULTIPLY
+                                  || oparg == NB_INPLACE_MULTIPLY);
             int emit_op = _BINARY_OP;
-            if (is_truediv || is_remainder) {
+            if (is_float_chain_op || is_truediv || is_remainder) {
                 if (!sym_has_type(rhs)
                     && sym_get_probable_type(rhs) == &PyFloat_Type) {
                     ADD_OP(_GUARD_TOS_FLOAT, 0, 0);
@@ -5542,6 +5548,22 @@
         }
 
         case _TIER3_RANGE_CHUNK: {
+            break;
+        }
+
+        case _TIER3_RANGE_CHUNK_NATIVE: {
+            break;
+        }
+
+        case _TIER3_RANGE_CHUNK_RESIDENT: {
+            break;
+        }
+
+        case _TIER3_RANGE_CHUNK_RESIDENT_AFFINE: {
+            break;
+        }
+
+        case _TIER3_RANGE_CHUNK_RESIDENT_SQUARES: {
             break;
         }
 

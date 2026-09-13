@@ -1684,6 +1684,7 @@ dummy_func(
                 _PyInterpreterFrame *gen_frame = &gen->gi_iframe;
                 _PyFrame_StackPush(gen_frame, PyStackRef_MakeHeapSafe(v));
                 DEAD(v);
+                SYNC_SP();
                 gen->gi_exc_state.previous_item = tstate->exc_info;
                 tstate->exc_info = &gen->gi_exc_state;
                 assert(INSTRUCTION_SIZE + oparg <= UINT16_MAX);
@@ -4404,6 +4405,7 @@ dummy_func(
                 DEAD(self_or_null);
                 DEAD(callable);
                 // Manipulate stack directly since we leave using DISPATCH_INLINED().
+                SYNC_SP();
                 // The frame has stolen all the arguments from the stack,
                 // so there is no need to clean them up.
                 if (new_frame == NULL) {
@@ -5438,6 +5440,7 @@ dummy_func(
                 DEAD(callable);
                 PyStackRef_CLOSE(kwnames);
                 // Sync stack explicitly since we leave using DISPATCH_INLINED().
+                SYNC_SP();
                 // The frame has stolen all the arguments from the stack,
                 // so there is no need to clean them up.
                 if (new_frame == NULL) {
@@ -5684,6 +5687,7 @@ dummy_func(
                         nargs, callargs, kwargs, frame);
                     // Need to sync the stack since we exit with DISPATCH_INLINED.
                     INPUTS_DEAD();
+                    SYNC_SP();
                     if (new_frame == NULL) {
                         ERROR_NO_POP();
                     }
@@ -6485,6 +6489,7 @@ dummy_func(
                 TIER2_TO_TIER2(exit->executor);
             }
             else {
+                SYNC_SP();
                 if (!backoff_counter_triggers(temperature)) {
                     exit->temperature = advance_backoff_counter(temperature);
                     GOTO_TIER_ONE(target);

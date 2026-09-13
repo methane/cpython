@@ -4057,6 +4057,57 @@ class TestUopsOptimization(unittest.TestCase):
         self.assertIn("_GUARD_NOS_FLOAT", uops)
         self.assertIn("_BINARY_OP_TRUEDIV_FLOAT", uops)
 
+    def test_float_arithmetic_chain_speculative_guards_from_tracing(self):
+        # The argument types are observations, not static facts.  Exact-float
+        # guards make the ordered multiply/add chain safe to specialize.
+        def testfunc(args):
+            first, second, third, n = args
+            result = 0.0
+            for _ in range(n):
+                result = first * first + second * second + third * third
+            return result
+
+        args = (2.0, -3.0, 4.0, TIER2_THRESHOLD)
+        res, ex = self._run_with_optimizer(testfunc, args)
+        self.assertEqual(res, 29.0)
+        self.assertIsNotNone(ex)
+        uops = get_opnames(ex)
+        self.assertIn("_GUARD_TOS_FLOAT", uops)
+        self.assertIn("_BINARY_OP_MULTIPLY_FLOAT", uops)
+        self.assertTrue(
+            "_BINARY_OP_ADD_FLOAT_INPLACE" in uops
+            or "_BINARY_OP_ADD_FLOAT_INPLACE_RIGHT" in uops
+        )
+
+    def test_float_arithmetic_chain_guard_failure(self):
+        events = []
+
+        class ObservableFloat(float):
+            def __mul__(self, other):
+                events.append(("mul", float(self), float(other)))
+                return ObservableFloat(super().__mul__(other))
+
+            def __add__(self, other):
+                events.append(("add", float(self), float(other)))
+                return ObservableFloat(super().__add__(other))
+
+        def testfunc(args):
+            first, second, n = args
+            result = 0.0
+            for _ in range(n):
+                result = first * first + second
+            return result
+
+        self._run_with_optimizer(testfunc, (2.0, 3.0, TIER2_THRESHOLD))
+        value = ObservableFloat(2.0)
+        result = testfunc((value, ObservableFloat(3.0), 1))
+        self.assertIsInstance(result, ObservableFloat)
+        self.assertEqual(
+            events,
+            [("mul", 2.0, 2.0), ("add", 4.0, 3.0)],
+        )
+        self.assertEqual(testfunc((2.0, 3.0, 1)), 7.0)
+
     def test_float_remainder_speculative_guards_from_tracing(self):
         # a, b are locals with no statically known type. Tracing records
         # them as floats; the optimizer then speculatively emits

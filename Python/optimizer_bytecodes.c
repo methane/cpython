@@ -297,17 +297,25 @@ dummy_func(void) {
                            || oparg == NB_INPLACE_TRUE_DIVIDE);
         bool is_remainder = (oparg == NB_REMAINDER
                              || oparg == NB_INPLACE_REMAINDER);
+        bool is_float_chain_op = (oparg == NB_ADD
+                                  || oparg == NB_INPLACE_ADD
+                                  || oparg == NB_SUBTRACT
+                                  || oparg == NB_INPLACE_SUBTRACT
+                                  || oparg == NB_MULTIPLY
+                                  || oparg == NB_INPLACE_MULTIPLY);
         int emit_op = _BINARY_OP;
         // Promote probable-float operands to known floats via speculative
         // guards. _RECORD_TOS_TYPE / _RECORD_NOS_TYPE in the BINARY_OP macro
         // record the observed operand type during tracing, which
         // sym_get_probable_type reads here. Applied only to ops where
         // narrowing unlocks a meaningful downstream win:
+        //   - add/subtract/multiply: keeps exact-float arithmetic chains on
+        //     the specialized path and lets unique intermediates be reused.
         //   - NB_TRUE_DIVIDE: enables the specialized float path below.
         //   - NB_REMAINDER: lets the float result type propagate.
         // NB_POWER is excluded: speculative guards there regressed
         // test_power_type_depends_on_input_values (GH-127844).
-        if (is_truediv || is_remainder) {
+        if (is_float_chain_op || is_truediv || is_remainder) {
             if (!sym_has_type(rhs)
                     && sym_get_probable_type(rhs) == &PyFloat_Type) {
                 ADD_OP(_GUARD_TOS_FLOAT, 0, 0);

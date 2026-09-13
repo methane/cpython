@@ -177,6 +177,19 @@ only to establish or debug executors, never in timed runs. Capture executor
 counter deltas immediately around every timed sample. Keep debug/interpreter
 measurements separate from native-JIT claims.
 
+Pyperf filters worker environments by default. Pass only the experiment
+variables required by the run, and verify them through the same worker launch
+path before interpreting workload coverage:
+
+```sh
+PYTHONPATH=Tools/jit:$PYTHONPATH PYTHON_JIT=1 PYTHON_TIER3_JIT=resident \
+  build-jit/python Tools/jit/pyperf_tier3_worker_probe.py \
+  --inherit-environ=PYTHON_JIT,PYTHON_TIER3_JIT --fast --min-time=0.1
+```
+
+Use that same `--inherit-environ` allowlist for benchmark entrypoints. Add dump
+or stress variables only to separate diagnostic runs, never timings.
+
 To inspect generated code, obtain `executor.get_jit_code()` and write those raw
 bytes to a file. LLVM's objdump rejects a headerless raw binary, so disassemble
 it with `objdump -D -b binary -m i386:x86-64`; use `llvm-objdump-21` for object
