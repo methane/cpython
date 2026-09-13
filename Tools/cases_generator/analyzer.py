@@ -673,6 +673,8 @@ NON_ESCAPING_FUNCTIONS = (
     "_PyRegion_DivideThenAdd",
     "_PyRegion_CanDividePair",
     "_PyRegion_DividePairThenAdd",
+    "_PyRegion_RangeFitsInt32",
+    "_PyRegion_SumInt32Range",
     "_PyRegion_RangeStart64",
     "_PyRegion_RangeStart128",
     "isnan",

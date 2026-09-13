@@ -1174,3 +1174,22 @@ build-jit/python -m test test_capi.test_opt_regions test_capi.test_opt test_tier
   それを含む全値から比を計算した。全6本の半減はまだ判定していない。
 - 次は分母・差分・二階差分の範囲を追加検査し、全分母がsigned 32-bitに収まる場合に
   隣接整数の更新とdoubleへの変換もSIMD化する。大きな値は現在の64-bit版を保持する。
+- 二項除算版はローカルcommit `189ed7cb98c`。source/build hashを
+  `range-paired-{source-hashes,manifest}.json`、binaryを`python-suite-range-paired`へ保存。
+- 分母・差分・二階差分をint32へ制限してから、cached range長を使う安全なint64式で終点を
+  検査する経路を追加した。既存の単調性証明と合わせ、全分母のint32表現を保証する。
+  二本の整数列と差分はpacked modulo-2**32加算で更新し、各laneをdoubleへexact変換する。
+  最後の未使用の更新はwrap可能だが、消費する分母は全て元の整数値と一致する。
+- `range_int32_iterations`で実適用を計測し、正負のint32境界の内外、第一差分の2倍がint32を
+  超える短いrangeを追加テストする。native/debug buildを実行中。
+- 最初のwrapテスト式は`a*j*j`を含み、既存のbounded-input証明では中間値が62-bitを
+  超えるためrange自体が生成されなかった。二つの書き方を試した失敗ログを保持し、
+  証明対象に収まる一次式`a*j*8+a+1`へ修正した。最初の通常iterationと残る二項の
+  符号が変わるrangeで、同符号のchunk内だけを最適化し、paired stepのwrapを確認する。
+- 修正後はdebug336 tests・3 skips、native393 tests・7 skipsが成功。両buildの丸め・trap・
+  flags診断576ケースとnative特殊値56ケースも一致した。native probeは670,800 chunk
+  iterations全てがint32経路を通り、guard失敗0・box0を保持した。
+- assemblyはcvtdq2pd一命令で二つの分母を変換し、divpdと順序を保つ二つのaddsd、二つの
+  padddでloopを構成していた。Spectralの3 blocksは前版比0.93225・main比0.020958
+  （約0.710 ms）。全90値とidentityは`range-int32-spectral-rows.json`へ保存した。
+  この版の全6本比較へ進み、なお不足すればprofileに残るrange生成の処理を検討する。

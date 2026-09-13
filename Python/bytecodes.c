@@ -6905,6 +6905,12 @@ dummy_func(
             double dividend = PyFloat_AS_DOUBLE(numerator);
             long remaining = count;
             bool paired = _PyRegion_CanDividePair();
+            if (paired && _PyRegion_RangeFitsInt32(denominator, delta, difference, count)) {
+                total = _PyRegion_SumInt32Range(total, dividend, denominator,
+                                                delta, difference, count);
+                current_executor->region_range_int32_iterations += count;
+                remaining = 0;
+            }
             while (paired && remaining > 2) {
                 int64_t second = denominator + delta;
                 total = _PyRegion_DividePairThenAdd(total, dividend, denominator, second);
@@ -6920,7 +6926,7 @@ dummy_func(
                 total = _PyRegion_DividePairThenAdd(total, dividend,
                                                    denominator, denominator + delta);
             }
-            else {
+            else if (remaining) {
                 while (remaining > 1) {
                     total = _PyRegion_DivideThenAdd(total, dividend, denominator);
                     denominator += delta;

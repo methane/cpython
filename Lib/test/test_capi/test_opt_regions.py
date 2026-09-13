@@ -411,6 +411,38 @@ class TestRegions(unittest.TestCase):
                         self.assertEqual(after["range_guard_exits"], before["range_guard_exits"])
 
     @requires_call_regions
+    def test_float_range_int32_boundaries(self):
+        for expression, cases in (
+            ("(a * j + a) + j + 20", (
+                (2**28 - 4, 1, 8, True), (2**28 - 4, 1, 9, False),
+                (-(2**28 - 4), 1, 8, True), (-(2**28 - 4), 1, 9, False),
+            )),
+            # Twice the first difference exceeds int32 here. Packed
+            # recurrence updates must wrap without changing any used value.
+            ("((a * j) * 8 + a) + 1", (
+                (200_000_000, -1, 2, True), (-200_000_000, -1, 2, True),
+            )),
+        ):
+            ns, ex = self.warm_float_range(expression)
+            narrow_available = ex.get_region_stats()["range_int32_iterations"] > 0
+            for a, start, stop, narrow in cases:
+                with self.subTest(expression=expression, a=a, stop=stop):
+                    expected = 0.0
+                    for j in range(start, stop):
+                        expected = operator.add(expected, ns["term"](a, j))
+                    before = ex.get_region_stats()
+                    result, last = ns["run"](a, start, stop)
+                    after = ex.get_region_stats()
+                    self.assertEqual(struct.pack("d", result), struct.pack("d", expected))
+                    self.assertEqual(last, stop - 1)
+                    self.assertGreater(after["range_iterations"], before["range_iterations"])
+                    if narrow and narrow_available:
+                        self.assertGreater(after["range_int32_iterations"], before["range_int32_iterations"])
+                    else:
+                        self.assertEqual(after["range_int32_iterations"], before["range_int32_iterations"])
+                    self.assertEqual(after["range_guard_exits"], before["range_guard_exits"])
+
+    @requires_call_regions
     def test_float_range_scalar_coefficients(self):
         ns, ex = self.warm_float_range("(a + j) * (a + j + 1) // 2 + a + 1")
         names = [uop[0] for uop in ex]

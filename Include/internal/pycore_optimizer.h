@@ -236,6 +236,7 @@ typedef struct _PyExecutorObject {
     uint64_t region_call_attr_entries;
     uint64_t region_range_entries;
     uint64_t region_range_iterations;
+    uint64_t region_range_int32_iterations;
     uint64_t region_range_guard_exits;
     uint64_t region_enum_entries;
     uint64_t region_enum_guard_exits;

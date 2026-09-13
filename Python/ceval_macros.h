@@ -677,6 +677,61 @@ _PyRegion_DividePairThenAdd(double accumulator, double numerator,
 #endif
 }
 
+static inline bool
+_PyRegion_RangeFitsInt32(int64_t denominator, int64_t delta,
+                        int64_t difference, long count)
+{
+    assert(count > 1 && count <= _PY_NSMALLNEGINTS + _PY_NSMALLPOSINTS);
+    if (denominator < INT32_MIN || denominator > INT32_MAX ||
+        delta < INT32_MIN || delta > INT32_MAX ||
+        difference < INT32_MIN || difference > INT32_MAX) {
+        return false;
+    }
+    /* Signed-32-bit inputs and the cached-index count bound keep every
+     * intermediate here below 2**52. The preceding monotonicity proof
+     * puts every denominator between this endpoint and the first one. */
+    int64_t steps = count - 1;
+    int64_t last = denominator + delta*steps + difference*steps*(steps - 1)/2;
+    return last >= INT32_MIN && last <= INT32_MAX;
+}
+
+static inline Py_ALWAYS_INLINE double
+_PyRegion_SumInt32Range(double accumulator, double numerator,
+                        int64_t denominator, int64_t delta,
+                        int64_t difference, long count)
+{
+#if defined(__SSE2__) && !defined(__FAST_MATH__)
+#  if defined(__clang__)
+#pragma STDC FENV_ACCESS ON
+#  endif
+    __m128i denominators = _mm_set_epi32(0, 0, (int)(denominator + delta),
+                                        (int)denominator);
+    int64_t first_step = 2*delta + difference;
+    int64_t second_step = first_step + 2*difference;
+    /* Packed integer additions wrap modulo 2**32. Truncating the steps
+     * keeps exactly the low bits of each proved signed-32-bit denominator,
+     * even when a difference or an unused final update is outside int32. */
+    __m128i steps = _mm_set_epi32(0, 0, (int)(uint32_t)second_step,
+                                 (int)(uint32_t)first_step);
+    __m128i increments = _mm_set1_epi32((int)(uint32_t)(4*difference));
+    __m128d dividends = _mm_set1_pd(numerator);
+    for (long pairs = count / 2; pairs > 0; pairs--) {
+        __m128d terms = _mm_div_pd(dividends, _mm_cvtepi32_pd(denominators));
+        accumulator += _mm_cvtsd_f64(terms);
+        accumulator += _mm_cvtsd_f64(_mm_unpackhi_pd(terms, terms));
+        denominators = _mm_add_epi32(denominators, steps);
+        steps = _mm_add_epi32(steps, increments);
+    }
+    if (count & 1) {
+        accumulator = _PyRegion_DivideThenAdd(accumulator, numerator,
+                                               _mm_cvtsi128_si32(denominators));
+    }
+    return accumulator;
+#else
+    Py_UNREACHABLE();
+#endif
+}
+
 
 /* Like the resident-range reconstruction probe, this private debug-only
  * fault injection targets the actual fused allocation and its error edge. */

@@ -98,6 +98,12 @@ On SSE2 builds without fast-math, adjacent divisions use two SIMD lanes when
 all MXCSR exception traps are masked. Their results enter two separate scalar
 additions in the original order; the terms are never summed together first.
 Enabled traps and other targets retain the scalar division/addition sequence.
+When the denominator, first difference, and second difference fit signed int32,
+an additional endpoint check can prove every denominator fits int32. That path
+updates two packed integer recurrences and converts both denominators with one
+SIMD instruction. Packed step updates use modulo-2**32 arithmetic; only proved
+int32 denominators are consumed. `range_int32_iterations` counts its iterations.
+Wider denominators keep the two separate int64-to-double conversions.
 The final one or two terms are peeled to avoid conditional recurrence updates
 inside the chunk. Clang uses a local `FENV_ACCESS ON` helper so constrained floating-point
 operations preserve separate rounding after inlining without volatile memory

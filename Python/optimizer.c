@@ -605,7 +605,7 @@ get_region_stats(PyObject *self, PyObject *Py_UNUSED(ignored))
 {
     _PyExecutorObject *executor = _PyExecutorObject_CAST(self);
     return Py_BuildValue(
-        "{s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K}",
+        "{s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K}",
         "bounded_entries", executor->region_bounded_entries,
         "bounded_guard_exits", executor->region_bounded_guard_exits,
         "bounded_boxes", executor->region_bounded_boxes,
@@ -626,6 +626,7 @@ get_region_stats(PyObject *self, PyObject *Py_UNUSED(ignored))
         "enum_fallbacks", executor->region_enum_fallbacks,
         "range_entries", executor->region_range_entries,
         "range_iterations", executor->region_range_iterations,
+        "range_int32_iterations", executor->region_range_int32_iterations,
         "range_guard_exits", executor->region_range_guard_exits,
         "tuple_entries", executor->region_tuple_entries,
         "tuple_list_entries", executor->region_tuple_list_entries,
@@ -1647,6 +1648,7 @@ allocate_executor(int exit_count, int length)
     res->region_enum_fallbacks = 0;
     res->region_range_entries = 0;
     res->region_range_iterations = 0;
+    res->region_range_int32_iterations = 0;
     res->region_range_guard_exits = 0;
     res->region_poly_valid = false;
     res->region_tuple_entries = 0;
