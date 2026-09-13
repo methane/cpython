@@ -14,6 +14,7 @@
 #include "pycore_ceval.h"         // _PyEval_LazyImportName(), _PyEval_LazyImportFrom()
 #include "pycore_code.h"
 #include "pycore_emscripten_signal.h"  // _Py_CHECK_EMSCRIPTEN_SIGNALS
+#include "pycore_enumobject.h"    // _PyEnumObject
 #include "pycore_function.h"
 #include "pycore_import.h"        // _PyImport_LoadLazyImportTstate()
 #include "pycore_instruments.h"
@@ -4185,6 +4186,50 @@ dummy_func(
             }
             STAT_INC(FOR_ITER, hit);
             next = PyStackRef_FromPyObjectSteal(item);
+        }
+
+        tier2 op(_GUARD_ENUM_LIST, (iter, null_or_index -- iter, null_or_index)) {
+            PyObject *obj = PyStackRef_AsPyObjectBorrow(iter);
+            bool valid = Py_TYPE(obj) == &PyEnum_Type;
+            if (valid) {
+                _PyEnumObject *en = (_PyEnumObject *)obj;
+                valid = en->en_index >= -_PY_NSMALLNEGINTS &&
+                    en->en_index < _PY_NSMALLPOSINTS &&
+                    Py_TYPE(en->en_sit) == &PyListIter_Type &&
+                    _PyObject_IsUniquelyReferenced(en->en_result);
+                if (valid) {
+                    _PyListIterObject *it = (_PyListIterObject *)en->en_sit;
+                    valid = it->it_seq != NULL &&
+                        (size_t)it->it_index < (size_t)PyList_GET_SIZE(it->it_seq);
+                }
+            }
+            if (!valid) {
+                current_executor->region_enum_guard_exits++;
+                EXIT_IF(true);
+            }
+        }
+
+        tier2 op(_ITER_NEXT_ENUM_LIST, (iter, null_or_index -- iter, null_or_index, next)) {
+            _PyEnumObject *en = (_PyEnumObject *)PyStackRef_AsPyObjectBorrow(iter);
+            _PyListIterObject *it = (_PyListIterObject *)en->en_sit;
+            PyObject *next_item = Py_NewRef(PyList_GET_ITEM(it->it_seq, it->it_index));
+            it->it_index++;
+            PyObject *next_index = Py_NewRef((PyObject *)&_PyLong_SMALL_INTS[
+                _PY_NSMALLNEGINTS + en->en_index]);
+            en->en_index++;
+            PyObject *result = en->en_result;
+            assert(_PyObject_IsUniquelyReferenced(result));
+            PyObject *old_index = PyTuple_GET_ITEM(result, 0);
+            PyObject *old_item = PyTuple_GET_ITEM(result, 1);
+            next = PyStackRef_FromPyObjectNew(result);
+            PyTuple_SET_ITEM(result, 0, next_index);
+            PyTuple_SET_ITEM(result, 1, next_item);
+            /* Preserve enum_next's publication and cleanup order, including
+             * an old element's finalizer re-entering this same enumerate. */
+            Py_DECREF(old_index);
+            Py_DECREF(old_item);
+            _PyTuple_Recycle(result);
+            current_executor->region_enum_entries++;
         }
 
         op(_GUARD_NOS_ITER_VIRTUAL, (iter, null_or_index -- iter, null_or_index)) {

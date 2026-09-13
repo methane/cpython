@@ -911,3 +911,28 @@ build-jit/python -m test test_capi.test_opt_regions test_capi.test_opt test_tier
   `float-range-shift-paired.json`にコマンド・env・binary hash・全値を保存した。
   追加効果は小さく、6本全体の半減にはまだ足りない。新しい領域をローカルcommitへ
   まとめ、次にprofileで費用が大きいenumerate(list)の反復を調べる。
+- range領域のローカルcommitは`20570bef035`。shift版の前版比は3 blocksのgeomean
+  0.99012で約1%の追加短縮だった。commit/tree、全tracked source、binary/configure/
+  stencilは`float-range-manifest.json`と`float-range-source-hashes.json`へ保存した。
+
+### enumerate(list)の反復処理
+
+- B-treeのprofileにはlist iteratorのnext約10.1%、enum_next約4.7%があり、実traceも
+  `_GUARD_TYPE_ITER`→`_ITER_NEXT_INLINE`→tuple unpackを通っていた。
+  `PYTHON_TIER2_BUILTIN_REGIONS=1`の中で、exact enumerateの内部がexact list iterator、
+  indexがsmall-int cache内、結果tupleがuniqueかつ次要素が存在する場合に限る経路を追加。
+- guardは元のFOR_ITERへ戻す。元の`_ITER_NEXT_INLINE`のexitはEND_FORの後なので、
+  未対応入力のfallbackに流用するとループを途中終了してしまう点を分けて扱う。
+  enumobjectの構造体をinternal headerへ移し、tupleの更新、参照の解放順、GCへの再登録と
+  hash cacheのresetはenum_nextと同じ順にする。共有tupleや枯渇時は通常処理へ戻す。
+- debugの4テストが成功。list/tuple iterator、cache境界・巨大index、結果tupleの外部alias、
+  hash計算後のtuple再利用、旧要素のfinalizerが同じenumerateへ再入する場合を確認した。
+  現在native buildと関連検証へ進む。`enum_guard_exits`は通常のiterator枯渇も数える。
+- debug region45 + generator99の144 tests、関連enumerate/iter/list/tuple/GCの341 tests・
+  1 skip、native関連373 tests・7 skipsが成功。B-treeの3 blocks・各10 values比較では
+  前版比0.97580、main比0.97229で、全値を`enum-btree-rows.json`へ保存した。
+  単一build同士で約2.4%の追加短縮という範囲の結果として扱う。
+- B-treeのnative probeはenum entries 1,455,829、guard exits 16,302（枯渇を含む）、
+  len entries 110,877。side traceを含む45 executors・356,352 bytesを保存した。
+  4生成ファイルの再生成はbyte単位で同一、F401/F811とdiff check成功。
+  次はattribute getterと、属性同士の整数比較を行う短いcalleeへcall frame省略を広げる。

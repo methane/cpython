@@ -3923,6 +3923,20 @@
             break;
         }
 
+        case _GUARD_ENUM_LIST: {
+            break;
+        }
+
+        case _ITER_NEXT_ENUM_LIST: {
+            JitOptRef next;
+            next = sym_new_not_null(ctx);
+            CHECK_STACK_BOUNDS(1);
+            stack_pointer[0] = next;
+            stack_pointer += 1;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            break;
+        }
+
         case _GUARD_NOS_ITER_VIRTUAL: {
             break;
         }

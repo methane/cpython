@@ -14,6 +14,7 @@
 #include "pycore_descrobject.h"
 #include "pycore_dict.h"
 #include "pycore_emscripten_signal.h"
+#include "pycore_enumobject.h"
 #include "pycore_floatobject.h"
 #include "pycore_frame.h"
 #include "pycore_function.h"

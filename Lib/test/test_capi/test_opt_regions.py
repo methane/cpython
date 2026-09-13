@@ -80,6 +80,81 @@ class TestRegions(unittest.TestCase):
         ex = self.executor(func, "_INT_REGION_COMPARE" if compare else "_INT_REGION")
         return func, ex
 
+    def warm_enumerate(self, run):
+        for _ in range(TIER2_THRESHOLD // 64 + 8):
+            run(enumerate([None] * 64))
+        return self.executor(run, "_ITER_NEXT_ENUM_LIST")
+
+    def test_enumerate_list_and_fallbacks(self):
+        def consume(iterator):
+            out = []
+            for index, item in iterator:
+                out.append((index, item))
+            return out
+        ex = self.warm_enumerate(consume)
+        before = ex.get_region_stats()["enum_entries"]
+        values = [object() for _ in range(64)]
+        self.assertEqual(consume(enumerate(values)), list(zip(range(64), values)))
+        self.assertGreater(ex.get_region_stats()["enum_entries"], before)
+        for start in (-6, 1020, 2**100):
+            self.assertEqual(consume(enumerate(values, start)),
+                             list(zip(range(start, start + 64), values)))
+        self.assertEqual(consume(enumerate(tuple(values))), list(zip(range(64), values)))
+        self.assertEqual(consume(iter([(1, "x"), (2, "y")])), [(1, "x"), (2, "y")])
+
+    def test_enumerate_tuple_alias(self):
+        def consume(iterator):
+            result = []
+            for i, item in iterator:
+                result.append((i, item))
+            return result
+        ex = self.warm_enumerate(consume)
+        iterator = enumerate(list(range(64)))
+        first = next(iterator)
+        before = ex.get_region_stats()
+        self.assertEqual(consume(iterator), [(i, i) for i in range(1, 64)])
+        self.assertEqual(first, (0, 0))
+        after = ex.get_region_stats()
+        self.assertEqual(after["enum_entries"], before["enum_entries"])
+        self.assertGreater(after["enum_guard_exits"], before["enum_guard_exits"])
+
+    def test_enumerate_tuple_hash(self):
+        def consume(iterator):
+            result = []
+            for pair in iterator:
+                result.append(hash(pair))
+                del pair
+            return result
+        ex = self.warm_enumerate(consume)
+        before = ex.get_region_stats()["enum_entries"]
+        self.assertEqual(consume(enumerate(list(range(64)))),
+                         [hash((i, i)) for i in range(64)])
+        self.assertGreater(ex.get_region_stats()["enum_entries"], before)
+
+    def test_enumerate_finalizer_reentry(self):
+        def consume(iterator, values, events):
+            for i, item in iterator:
+                events.append(("body", i, type(item).__name__))
+                if i == 0:
+                    values.pop(0)
+                del item
+        for _ in range(TIER2_THRESHOLD // 64 + 8):
+            values = [None] * 64
+            consume(enumerate(values), values, [])
+        ex = self.executor(consume, "_ITER_NEXT_ENUM_LIST")
+        events = []
+        class Victim:
+            def __del__(self):
+                events.append(("finalizer", next(iterator)))
+        values = [Victim(), "skip", "next", "tail"]
+        iterator = enumerate(values)
+        before = ex.get_region_stats()["enum_entries"]
+        consume(iterator, values, events)
+        self.assertEqual(events, [("body", 0, "Victim"),
+                                  ("finalizer", (2, "tail")),
+                                  ("body", 1, "str")])
+        self.assertGreater(ex.get_region_stats()["enum_entries"], before)
+
     def warm_float_range(self, expression):
         self.enterContext(mock.patch.dict(os.environ, {
             "PYTHON_TIER2_BOUNDED_INT_REGIONS": "1",

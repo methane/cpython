@@ -2,6 +2,7 @@
 
 #include "Python.h"
 #include "pycore_call.h"          // _PyObject_CallNoArgs()
+#include "pycore_enumobject.h"    // _PyEnumObject
 #include "pycore_long.h"          // _PyLong_GetOne()
 #include "pycore_modsupport.h"    // _PyArg_NoKwnames()
 #include "pycore_object.h"        // _PyObject_GC_TRACK()
@@ -16,14 +17,7 @@ class reversed "reversedobject *" "&PyReversed_Type"
 [clinic start generated code]*/
 /*[clinic end generated code: output=da39a3ee5e6b4b0d input=d2dfdf1a88c88975]*/
 
-typedef struct {
-    PyObject_HEAD
-    Py_ssize_t en_index;           /* current index of enumeration */
-    PyObject* en_sit;              /* secondary iterator of enumeration */
-    PyObject* en_result;           /* result tuple  */
-    PyObject* en_longindex;        /* index for sequences >= PY_SSIZE_T_MAX */
-    PyObject* one;                 /* borrowed reference */
-} enumobject;
+typedef _PyEnumObject enumobject;
 
 #define _enumobject_CAST(op)    ((enumobject *)(op))
 

@@ -947,6 +947,30 @@ eliminate_trivial_frames(_PyUOpInstruction *buffer, int length)
 #endif
 }
 
+static void
+inline_enumerate_list(_PyUOpInstruction *buffer, int length)
+{
+    if (!region_enabled("PYTHON_TIER2_BUILTIN_REGIONS")) {
+        return;
+    }
+    for (int pc = 0; pc < length; pc++) {
+        if (buffer[pc].opcode != _GUARD_TYPE_ITER ||
+            buffer[pc].operand0 != (uintptr_t)&PyEnum_Type) {
+            continue;
+        }
+        int end = Py_MIN(pc + 8, length);
+        int next = region_skip(buffer, pc + 1, end);
+        if (next >= end || buffer[next].opcode != _ITER_NEXT_INLINE ||
+            buffer[next].operand0 != (uintptr_t)PyEnum_Type.tp_iternext) {
+            continue;
+        }
+        /* The guard exits at FOR_ITER. The original next uop instead exits
+         * after END_FOR; an unsupported inner iterator must not use that exit. */
+        buffer[pc].opcode = _GUARD_ENUM_LIST;
+        buffer[next].opcode = _ITER_NEXT_ENUM_LIST;
+    }
+}
+
 //  0 - failure, no error raised, just fall back to Tier 1
 // -1 - failure, and raise error
 //  > 0 - length of optimized trace
@@ -976,6 +1000,7 @@ _Py_uop_analyze_and_optimize(
     assert(length > 0);
 
     eliminate_trivial_frames(output, length);
+    inline_enumerate_list(output, length);
     length = remove_unneeded_uops(output, length);
     assert(length > 0);
     fuse_float_product_updates(output, length);

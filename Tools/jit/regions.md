@@ -89,6 +89,16 @@ Any failed proof exits at the original `FOR_ITER`, before committing effects.
 This experiment is disabled on free-threaded, 32-bit, DTrace, Emscripten, and
 targets without a native 128-bit integer type.
 
+Builtin regions also inline the common `enumerate(list)` next operation after
+abstract interpretation. The receiver must be an exact enumerate with an exact
+list iterator, a cached integer index, a uniquely referenced result tuple, and
+an available next element. Unsupported inputs and exhaustion leave through the
+original `FOR_ITER` guard, rather than the next operation's end-of-loop exit.
+The result tuple remains observable through the enumerate: its contents,
+reference-release order, hash reset, and GC re-tracking match `enum_next`.
+Old-element finalizers may re-enter the same iterator. `enum_entries` counts
+the fast path; `enum_guard_exits` includes ordinary exhaustion.
+
 The builtin group fuses `len(value)` with an immediate comparison, addition, or
 subtraction using another local or a `LOAD_SMALL_INT` constant. It accepts exact
 str, bytes, tuple, list, and dict operands. The receiver must be borrowed,

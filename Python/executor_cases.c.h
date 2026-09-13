@@ -18242,6 +18242,101 @@
             break;
         }
 
+        case _GUARD_ENUM_LIST_r22: {
+            CHECK_CURRENT_CACHED_VALUES(2);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            _PyStackRef iter;
+            _PyStackRef _stack_item_0 = _tos_cache0;
+            _PyStackRef _stack_item_1 = _tos_cache1;
+            iter = _stack_item_0;
+            PyObject *obj = PyStackRef_AsPyObjectBorrow(iter);
+            bool valid = Py_TYPE(obj) == &PyEnum_Type;
+            if (valid) {
+                _PyEnumObject *en = (_PyEnumObject *)obj;
+                valid = en->en_index >= -_PY_NSMALLNEGINTS &&
+                en->en_index < _PY_NSMALLPOSINTS &&
+                Py_TYPE(en->en_sit) == &PyListIter_Type &&
+                _PyObject_IsUniquelyReferenced(en->en_result);
+                if (valid) {
+                    _PyListIterObject *it = (_PyListIterObject *)en->en_sit;
+                    valid = it->it_seq != NULL &&
+                    (size_t)it->it_index < (size_t)PyList_GET_SIZE(it->it_seq);
+                }
+            }
+            if (!valid) {
+                current_executor->region_enum_guard_exits++;
+                if (true) {
+                    UOP_STAT_INC(uopcode, miss);
+                    _tos_cache1 = _stack_item_1;
+                    _tos_cache0 = iter;
+                    SET_CURRENT_CACHED_VALUES(2);
+                    JUMP_TO_JUMP_TARGET();
+                }
+            }
+            _tos_cache1 = _stack_item_1;
+            _tos_cache0 = iter;
+            _tos_cache2 = PyStackRef_ZERO_BITS;
+            SET_CURRENT_CACHED_VALUES(2);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            break;
+        }
+
+        case _ITER_NEXT_ENUM_LIST_r23: {
+            CHECK_CURRENT_CACHED_VALUES(2);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            _PyStackRef iter;
+            _PyStackRef next;
+            _PyStackRef _stack_item_0 = _tos_cache0;
+            _PyStackRef _stack_item_1 = _tos_cache1;
+            iter = _stack_item_0;
+            _PyEnumObject *en = (_PyEnumObject *)PyStackRef_AsPyObjectBorrow(iter);
+            _PyListIterObject *it = (_PyListIterObject *)en->en_sit;
+            PyObject *next_item = Py_NewRef(PyList_GET_ITEM(it->it_seq, it->it_index));
+            it->it_index++;
+            PyObject *next_index = Py_NewRef((PyObject *)&_PyLong_SMALL_INTS[
+                _PY_NSMALLNEGINTS + en->en_index]);
+            en->en_index++;
+            PyObject *result = en->en_result;
+            assert(_PyObject_IsUniquelyReferenced(result));
+            PyObject *old_index = PyTuple_GET_ITEM(result, 0);
+            PyObject *old_item = PyTuple_GET_ITEM(result, 1);
+            next = PyStackRef_FromPyObjectNew(result);
+            stack_pointer[0] = iter;
+            stack_pointer[1] = _stack_item_1;
+            stack_pointer[2] = next;
+            stack_pointer += 3;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            _PyFrame_SetStackPointer(frame, stack_pointer);
+            _PyFrame_StackPointerValidate(frame);
+            PyTuple_SET_ITEM(result, 0, next_index);
+            _PyFrame_StackPointerInvalidate(frame);
+            assert(stack_pointer == _PyFrame_GetStackPointer(frame));
+            _PyFrame_StackPointerValidate(frame);
+            PyTuple_SET_ITEM(result, 1, next_item);
+            _PyFrame_StackPointerInvalidate(frame);
+            assert(stack_pointer == _PyFrame_GetStackPointer(frame));
+            _PyFrame_StackPointerValidate(frame);
+            Py_DECREF(old_index);
+            _PyFrame_StackPointerInvalidate(frame);
+            assert(stack_pointer == _PyFrame_GetStackPointer(frame));
+            _PyFrame_StackPointerValidate(frame);
+            Py_DECREF(old_item);
+            _PyFrame_StackPointerInvalidate(frame);
+            assert(stack_pointer == _PyFrame_GetStackPointer(frame));
+            _PyFrame_StackPointerValidate(frame);
+            _PyTuple_Recycle(result);
+            _PyFrame_StackPointerInvalidate(frame);
+            current_executor->region_enum_entries++;
+            _tos_cache2 = next;
+            _tos_cache1 = _stack_item_1;
+            _tos_cache0 = iter;
+            SET_CURRENT_CACHED_VALUES(3);
+            stack_pointer += -3;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            break;
+        }
+
         case _GUARD_NOS_ITER_VIRTUAL_r02: {
             CHECK_CURRENT_CACHED_VALUES(0);
             ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
