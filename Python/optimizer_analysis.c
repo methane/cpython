@@ -798,7 +798,7 @@ remove_unneeded_uops(_PyUOpInstruction *buffer, int buffer_size)
 }
 
 static void
-fuse_float_product_add(_PyUOpInstruction *buffer, int length)
+fuse_float_product_updates(_PyUOpInstruction *buffer, int length)
 {
     const char *enabled = Py_GETENV("PYTHON_TIER2_FLOAT_FUSION");
     if (enabled == NULL || strcmp(enabled, "1") != 0) {
@@ -816,17 +816,21 @@ fuse_float_product_add(_PyUOpInstruction *buffer, int length)
             add++;
         }
         if (add + 2 >= length ||
-            buffer[add].opcode != _BINARY_OP_ADD_FLOAT_INPLACE ||
+            (buffer[add].opcode != _BINARY_OP_ADD_FLOAT_INPLACE &&
+             buffer[add].opcode != _BINARY_OP_SUBTRACT_FLOAT_INPLACE) ||
             buffer[add + 1].opcode != _POP_TOP_FLOAT ||
             buffer[add + 2].opcode != _POP_TOP_NOP) {
             continue;
         }
-        buffer[pc].opcode = _BINARY_OP_MULTIPLY_ADD_FLOAT_INPLACE;
+        buffer[pc].opcode = buffer[add].opcode == _BINARY_OP_ADD_FLOAT_INPLACE
+            ? _BINARY_OP_MULTIPLY_ADD_FLOAT_INPLACE
+            : _BINARY_OP_MULTIPLY_SUBTRACT_FLOAT_INPLACE;
         for (int i = pc + 1; i <= add + 2; i++) {
             assert(buffer[i].opcode == _NOP ||
                    buffer[i].opcode == _POP_TOP_NOP ||
                    buffer[i].opcode == _POP_TOP_FLOAT ||
-                   buffer[i].opcode == _BINARY_OP_ADD_FLOAT_INPLACE);
+                   buffer[i].opcode == _BINARY_OP_ADD_FLOAT_INPLACE ||
+                   buffer[i].opcode == _BINARY_OP_SUBTRACT_FLOAT_INPLACE);
             buffer[i].opcode = _NOP;
         }
     }
@@ -858,7 +862,7 @@ _Py_uop_analyze_and_optimize(
 
     length = remove_unneeded_uops(output, length);
     assert(length > 0);
-    fuse_float_product_add(output, length);
+    fuse_float_product_updates(output, length);
 
     OPT_STAT_INC(optimizer_successes);
     return length;

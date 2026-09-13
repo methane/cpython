@@ -889,14 +889,37 @@ dummy_func(
             assert(PyFloat_CheckExact(left_o));
             assert(PyFloat_CheckExact(right_o));
             assert(_PyObject_IsUniquelyReferenced(acc_o));
-            double value = _PyFloat_MultiplyThenAdd(
+            double value = _PyFloat_MultiplyThenUpdate(
                 ((PyFloatObject *)acc_o)->ob_fval,
                 ((PyFloatObject *)left_o)->ob_fval,
-                ((PyFloatObject *)right_o)->ob_fval);
+                ((PyFloatObject *)right_o)->ob_fval, false);
             ((PyFloatObject *)acc_o)->ob_fval = value;
             /* The matcher consumed _POP_TOP_NOP for both operands.  They are
              * borrowed stack references (or immortal), so closing them here
              * would invent escaping decrefs and force stack publication. */
+            assert(!PyStackRef_RefcountOnObject(left) || _Py_IsImmortal(left_o));
+            assert(!PyStackRef_RefcountOnObject(right) || _Py_IsImmortal(right_o));
+            DEAD(left);
+            DEAD(right);
+            res = acc;
+            INPUTS_DEAD();
+        }
+
+        // Fuse ``acc - left * right`` under the same ownership contract.
+        tier2 pure op(_BINARY_OP_MULTIPLY_SUBTRACT_FLOAT_INPLACE,
+                 (acc, left, right -- res)) {
+            PyObject *acc_o = PyStackRef_AsPyObjectBorrow(acc);
+            PyObject *left_o = PyStackRef_AsPyObjectBorrow(left);
+            PyObject *right_o = PyStackRef_AsPyObjectBorrow(right);
+            assert(PyFloat_CheckExact(acc_o));
+            assert(PyFloat_CheckExact(left_o));
+            assert(PyFloat_CheckExact(right_o));
+            assert(_PyObject_IsUniquelyReferenced(acc_o));
+            double value = _PyFloat_MultiplyThenUpdate(
+                ((PyFloatObject *)acc_o)->ob_fval,
+                ((PyFloatObject *)left_o)->ob_fval,
+                ((PyFloatObject *)right_o)->ob_fval, true);
+            ((PyFloatObject *)acc_o)->ob_fval = value;
             assert(!PyStackRef_RefcountOnObject(left) || _Py_IsImmortal(left_o));
             assert(!PyStackRef_RefcountOnObject(right) || _Py_IsImmortal(right_o));
             DEAD(left);

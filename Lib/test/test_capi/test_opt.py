@@ -4145,15 +4145,33 @@ class TestUopsOptimization(unittest.TestCase):
             (2.0**1023, 2.0, -(2.0**1023), 1.0),
             (1.25, 1.25, 1.25, 1.25),
         ]
-        for a, b, c, d in edge_cases:
-            expected = a * b + c * d
-            actual = testfunc((a, b, c, d, 1))
-            if math.isnan(expected):
-                self.assertTrue(math.isnan(actual))
-            else:
-                self.assertEqual(
-                    struct.pack("=d", actual), struct.pack("=d", expected)
-                )
+        with mock.patch.dict(os.environ, {"PYTHON_TIER2_FLOAT_FUSION": "1"}):
+            for a, b, c, d in edge_cases:
+                expected = a * b + c * d
+                actual = testfunc((a, b, c, d, 8))
+                if math.isnan(expected):
+                    self.assertTrue(math.isnan(actual))
+                else:
+                    self.assertEqual(
+                        struct.pack("=d", actual), struct.pack("=d", expected)
+                    )
+
+    def test_float_product_subtract_fusion(self):
+        def testfunc(args):
+            a, b, c, d, n = args
+            result = 0.0
+            for _ in range(n):
+                result = a * b - c * d
+            return result
+
+        with mock.patch.dict(os.environ, {"PYTHON_TIER2_FLOAT_FUSION": "1"}):
+            result, executor = self._run_with_optimizer(
+                testfunc, (7.0, 3.0, 2.0, 5.0, TIER2_THRESHOLD)
+            )
+        self.assertEqual(result, 11.0)
+        self.assertIn(
+            "_BINARY_OP_MULTIPLY_SUBTRACT_FLOAT_INPLACE", get_opnames(executor)
+        )
 
     def test_float_product_add_fusion_guard_failure(self):
         events = []

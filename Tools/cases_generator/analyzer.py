@@ -580,7 +580,7 @@ def has_error_without_pop(op: parser.CodeDef) -> bool:
 
 
 NON_ESCAPING_FUNCTIONS = (
-    "_PyFloat_MultiplyThenAdd",
+    "_PyFloat_MultiplyThenUpdate",
     "PyCFunction_GET_FLAGS",
     "PyCFunction_GET_FUNCTION",
     "PyCFunction_GET_SELF",

@@ -613,26 +613,17 @@ gen_try_set_executing(PyGenObject *gen)
             ->ob_fval = _dres;                                           \
     } while (0)
 
-/* Preserve the two Python rounding points in a product/add chain even when an
- * embedding compiler enables FP contraction.  This is always inlined into the
- * fused uop, so it introduces no hot-path call. */
-#if defined(__clang__)
-#  pragma clang fp contract(off)
-#elif defined(__GNUC__)
-#  pragma GCC push_options
-#  pragma GCC optimize ("fp-contract=off")
-#endif
+/* Preserve the two Python rounding points in a product/update chain even when
+ * an embedding compiler enables FP contraction.  The volatile store is an
+ * evaluation boundary in C; unlike compiler-specific pragmas, it also remains
+ * effective after this helper is inlined into a stencil. */
 static inline Py_ALWAYS_INLINE double
-_PyFloat_MultiplyThenAdd(double accumulator, double left, double right)
+_PyFloat_MultiplyThenUpdate(double accumulator, double left, double right,
+                            bool subtract)
 {
-    double product = left * right;
-    return accumulator + product;
+    volatile double product = left * right;
+    return subtract ? accumulator - product : accumulator + product;
 }
-#if defined(__clang__)
-#  pragma clang fp contract(on)
-#elif defined(__GNUC__)
-#  pragma GCC pop_options
-#endif
 
 
 // Inplace float true division. Sets _divop_err to 1 on zero division.
