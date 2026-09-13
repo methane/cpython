@@ -1157,6 +1157,9 @@ inline_enumerate_list(_PyUOpInstruction *buffer, int length)
          * after END_FOR; an unsupported inner iterator must not use that exit. */
         buffer[pc].opcode = _GUARD_ENUM_LIST;
         buffer[next].opcode = _ITER_NEXT_ENUM_LIST;
+        /* Normal exhaustion keeps next's after-END_FOR target; exceptions
+         * need the original FOR_ITER location instead. */
+        buffer[next].operand0 = buffer[pc].target;
     }
 }
 

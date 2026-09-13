@@ -1115,3 +1115,32 @@ build-jit/python -m test test_capi.test_opt_regions test_capi.test_opt test_tier
 - 専用tempdirでのdebug8 suitesは505 tests成功。元の失敗ログは保持し、この直列結果を
   関連検証の結果とする。4生成ファイルの再生成同一性、静的check、diff checkを済ませて
   ローカルcommitへまとめ、次にenumerateのunsupported内側iteratorのfallbackを改善する。
+
+### enumerateの通常経路をtrace内で呼ぶfallback
+
+- list比較のローカルcommitは`d992fb58dd7`。全tracked sourceとbuild artifactのhashを
+  `list-pair-source-hashes.json`、`list-pair-manifest.json`へ保存した。
+- enumerateの型guardと内側iteratorの選択を分けた。exact list iterator・cached index・
+  unique tuple・次の要素が揃う場合は現在のinline処理を使い、それ以外は同じtraceから
+  通常のenum_nextを呼ぶ。`enum_fallbacks`を新設し、`enum_guard_exits`はenumerate型自体の
+  不一致によるexitを数える。共有tuple/巨大index/枯渇も通常のenum処理へ任せる。
+- 正常な枯渇は元のEND_FOR後の出口を使い、例外は型guardから保存した元FOR_ITER位置へ
+  戻す。resident rangeと同じく、prepare_for_executionで独立したerror targetを設定する。
+  zip内側のcounter、共有cached tuple、StopIterationとValueError、callerのtraceback行を
+  確認するテストを追加し、debugで検証中。
+- debug region63 + generator99の162 tests、関連enum/iter/list/tuple/GC/monitoringの
+  439 tests・1 skipが成功。related suiteは専用tempdirを使い、同じworker directoryの
+  衝突を避けた。native build後、BPEのguard/fallback counterとB-treeの高速経路を確認する。
+- native391 tests・7 skipsが成功。BPE probeはenum guard失敗0、通常fallback81,840回、
+  executor38個・180,224 bytes（前版72個・348,160 bytes）。list比較5,512,640回と
+  len15,437,472回は保持した。B-treeはinline enum1,455,829回、通常fallback16,302回、
+  型guard失敗0で、list高速経路が使われている。
+- 3 blocks・各10値・main/前版/新実装をrotateした比較は、BPEが前版比0.99540・main比
+  0.90991、B-treeが前版比0.98742・main比0.94104。guard exit解消の時間への効果は小幅。
+  全180値・起動時間・checksum/identityは`enum-fallback-{bpe,btree}-rows.json`へ保存した。
+  次はこの版を保存し、Spectralのnative loopと周辺処理の残るコストを診断する。
+  Cの数値kernelは診断用の対照に限り、Python benchmarkの目標達成値へ混ぜない。
+- 4生成ファイルは再生成で同一、diff checkも成功。手元のruffはrepositoryの`py315`設定を
+  解釈できないため通常起動は失敗した。`--isolated --select F401,F811`で同じ静的checkを
+  実行し成功した。Spectralの100 loops診断はPython約0.959 ms、C対照約0.617 msで、
+  同じchecksumだった。この差を次のnative profileで調べる。

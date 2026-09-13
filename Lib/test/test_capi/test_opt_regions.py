@@ -254,7 +254,58 @@ class TestRegions(unittest.TestCase):
         self.assertEqual(first, (0, 0))
         after = ex.get_region_stats()
         self.assertEqual(after["enum_entries"], before["enum_entries"])
-        self.assertGreater(after["enum_guard_exits"], before["enum_guard_exits"])
+        self.assertGreater(after["enum_fallbacks"], before["enum_fallbacks"])
+        self.assertEqual(after["enum_guard_exits"], before["enum_guard_exits"])
+
+    def test_enumerate_inner_iterator_fallback(self):
+        def consume(iterator):
+            out = []
+            for index, item in iterator:
+                out.append((index, item))
+            return out
+        ex = self.warm_enumerate(consume)
+        before = ex.get_region_stats()
+        self.assertEqual(consume(enumerate(zip(range(64), range(64)))),
+                         [(i, (i, i)) for i in range(64)])
+        after = ex.get_region_stats()
+        self.assertEqual(after["enum_entries"], before["enum_entries"])
+        self.assertGreater(after["enum_fallbacks"], before["enum_fallbacks"])
+        self.assertEqual(after["enum_guard_exits"], before["enum_guard_exits"])
+
+    def test_enumerate_inner_iterator_error(self):
+        def consume(iterator):
+            out = []
+            for index, item in iterator:
+                out.append((index, item))
+            return out
+        ex = self.warm_enumerate(consume)
+        class Inner:
+            def __init__(self, error):
+                self.index = 0
+                self.error = error
+            def __iter__(self):
+                return self
+            def __next__(self):
+                self.index += 1
+                if self.index == 5:
+                    raise self.error("inner failure")
+                return self.index
+        before = ex.get_region_stats()["enum_fallbacks"]
+        self.assertEqual(consume(enumerate(Inner(StopIteration))), list(enumerate(range(1, 5))))
+        try:
+            consume(enumerate(Inner(ValueError)))
+        except ValueError as error:
+            self.assertEqual(str(error), "inner failure")
+            frames = []
+            tb = error.__traceback__
+            while tb is not None:
+                frames.append((tb.tb_frame.f_code, tb.tb_lineno))
+                tb = tb.tb_next
+            self.assertIn((consume.__code__, consume.__code__.co_firstlineno + 2), frames)
+            self.assertIs(frames[-1][0], Inner.__next__.__code__)
+        else:
+            self.fail("iterator error was lost")
+        self.assertGreater(ex.get_region_stats()["enum_fallbacks"], before)
 
     def test_enumerate_tuple_hash(self):
         def consume(iterator):

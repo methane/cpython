@@ -605,7 +605,7 @@ get_region_stats(PyObject *self, PyObject *Py_UNUSED(ignored))
 {
     _PyExecutorObject *executor = _PyExecutorObject_CAST(self);
     return Py_BuildValue(
-        "{s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K}",
+        "{s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K}",
         "bounded_entries", executor->region_bounded_entries,
         "bounded_guard_exits", executor->region_bounded_guard_exits,
         "bounded_boxes", executor->region_bounded_boxes,
@@ -623,6 +623,7 @@ get_region_stats(PyObject *self, PyObject *Py_UNUSED(ignored))
         "call_attr_entries", executor->region_call_attr_entries,
         "enum_entries", executor->region_enum_entries,
         "enum_guard_exits", executor->region_enum_guard_exits,
+        "enum_fallbacks", executor->region_enum_fallbacks,
         "range_entries", executor->region_range_entries,
         "range_iterations", executor->region_range_iterations,
         "range_guard_exits", executor->region_range_guard_exits,
@@ -687,6 +688,7 @@ is_for_iter_test[MAX_UOP_ID + 1] = {
     [_GUARD_NOT_EXHAUSTED_TUPLE] = 1,
     [_FOR_ITER_TIER_TWO] = 1,
     [_ITER_NEXT_INLINE] = 1,
+    [_ITER_NEXT_ENUM_LIST] = 1,
 };
 
 static const uint16_t
@@ -1542,10 +1544,11 @@ prepare_for_execution(_PyUOpInstruction *buffer, int length)
         int base_opcode = _PyUop_Uncached[inst->opcode];
         assert(inst->opcode != _NOP);
         int32_t target = (int32_t)uop_get_target(inst);
-        /* Resident range regions have two independent exits.  Their normal
-         * periodic/deoptimization exit uses target, while operand0 records
-         * the bytecode location for reconstruction allocation failures. */
-        int32_t error_target = is_tier3_resident_range(base_opcode)
+        /* Some operations have independent normal and error exits. Range
+         * reconstruction errors and enum_next exceptions use operand0;
+         * enumerate's ordinary exhaustion instead resumes after END_FOR. */
+        int32_t error_target = (is_tier3_resident_range(base_opcode) ||
+                                base_opcode == _ITER_NEXT_ENUM_LIST)
             ? (int32_t)inst->operand0 : target;
         uint16_t exit_flags = _PyUop_Flags[base_opcode] & (HAS_EXIT_FLAG | HAS_DEOPT_FLAG | HAS_PERIODIC_FLAG);
         if (exit_flags) {
@@ -1641,6 +1644,7 @@ allocate_executor(int exit_count, int length)
     res->region_call_attr_entries = 0;
     res->region_enum_entries = 0;
     res->region_enum_guard_exits = 0;
+    res->region_enum_fallbacks = 0;
     res->region_range_entries = 0;
     res->region_range_iterations = 0;
     res->region_range_guard_exits = 0;

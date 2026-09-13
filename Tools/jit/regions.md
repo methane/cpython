@@ -107,14 +107,16 @@ This experiment is disabled on free-threaded, 32-bit, DTrace, Emscripten, and
 targets without a native 128-bit integer type.
 
 Builtin regions also inline the common `enumerate(list)` next operation after
-abstract interpretation. The receiver must be an exact enumerate with an exact
-list iterator, a cached integer index, a uniquely referenced result tuple, and
-an available next element. Unsupported inputs and exhaustion leave through the
-original `FOR_ITER` guard, rather than the next operation's end-of-loop exit.
-The result tuple remains observable through the enumerate: its contents,
-reference-release order, hash reset, and GC re-tracking match `enum_next`.
-Old-element finalizers may re-enter the same iterator. `enum_entries` counts
-the fast path; `enum_guard_exits` includes ordinary exhaustion.
+abstract interpretation. The receiver must be an exact enumerate. Its fast path
+requires an exact list iterator, a cached integer index, a uniquely referenced
+result tuple, and an available next element. Other inner iterators, shared
+tuples, large indices, and exhaustion call ordinary `enum_next` within the trace.
+Normal exhaustion uses the original exit after `END_FOR`; exceptions use the
+saved `FOR_ITER` location. The result tuple remains observable through the
+enumerate: its contents, reference-release order, hash reset, and GC re-tracking
+match `enum_next`. Old-element finalizers may re-enter the same iterator.
+`enum_entries` counts the fast path, `enum_fallbacks` the ordinary calls, and
+`enum_guard_exits` failures of the enumerate-type guard itself.
 
 The builtin group fuses `len(value)` with an immediate comparison, addition, or
 subtraction using another local or a `LOAD_SMALL_INT` constant. It accepts exact
