@@ -478,3 +478,180 @@ python3 jit-artifacts/local-regions/measure-final.py
 主要artifactは `jit-artifacts/local-regions/`。`build-manifest.json`、`summary-final.json`、
 `measurement-order-final.json`、`panel-final-*.json`、実assembly、`perf-*.stat`、
 `sampling-*.txt/.data` と成功/失敗logを保存した。大きいartifactとsource snapshotはcommit対象にしない。
+
+## 15. 継続目標：spectral_norm.py を main の半分の時間へ
+
+前段のM0–M5完了は、この目標の達成を意味しない。前turnはint/builtin実装と
+検証結果を保存した進捗であり、spectral_normの最終比較は未実施だった。
+
+### Progress / 比較条件
+
+- 開始HEAD `d4b913f159d`、tracked clean。対象のユーザー所有
+  `spectral_norm.py` は変更しない。676,000回のeval_Aとchecksumを維持する。
+- 比較基準はローカル `main` の `a60343ed17785ebbcd43de9080cadd8e2541db6f`。
+  以前の `build-baseline-jit` は別の実験HEADであり、mainの代わりにしない。
+  mainをarchiveし `build-main-jit` に同じGCC/FP/LLVM21/native JIT、PGO/LTOなしで
+  ビルドする。remote取得・push・PR操作は行わない。
+- 主判定は同一CPU 2、同じscript/入力/3 warmups/10 values、独立processを
+  6 blocksで交互測定したprocess平均時間比のgeomeanが0.5以下。
+  両方のJIT ONを主比較とし、JIT OFFとprocess全体時間も補助的に保存する。
+  全samplesを保持し、除外やビルド中の測定で達成判定しない。
+- artifactは `jit-artifacts/spectral-goal/`。現行版の初回screenは約33.8 ms。
+  これはmain比や最終結果ではない。
+
+### 発見 / 設計判断 / 次の作業
+
+- 実executorではeval_Aがinlineされるが、既存int/float/builtin regionの
+  counterは全て0。式木と定数を含む整数式は現在の二演算matcherの対象外。
+  `// 2` は汎用 `_BINARY_OP`、最後のfloat/int除算はhelper呼び出しである。
+- まずmain実測と現在のCPU profileを保存し、整数除算・中間box・型変換の
+  費用を確認する。一般の算術へ適用できる変更から進め、関数名やchecksumに
+  依存する専用置換、Pythonの演算順序の変更は行わない。
+
+### Bounded expression の実装（継続中）
+
+- main初回screenも約33.7 ms。現行版とほぼ同速で、半減は未達。
+  CPU profileは `_PyCompactLong_Add` 14.36%、Multiply 7.54%、
+  float/int除算helper 6.32%、generic floor divide関連5%以上。
+- `PYTHON_TIER2_BOUNDED_INT_REGIONS=1` を追加。最大8演算・4追加locals・
+  native stack深さ4・scan128 uopsの式木を、既存tagged整数stack/cacheと
+  copy-and-patchの小さいuopへloweringする。演算nodeをruntimeで解釈しない。
+- 入力をexact intの±(2**28−1)へ入口でguardし、全中間値がtagged整数の
+  範囲に収まることをinterval計算で証明する。証明失敗は通常経路を維持。
+  現在のchecked-i64二演算経路も保持する。定数の非ゼロ整数除算を扱い、
+  正の2冪は負数のfloorを維持するshiftへloweringする。
+- 最初の2 operandはborrowed/immortalに限定。入口guard失敗時は元のstack。
+  内部はallocation/exit/callback/periodic check/frame変更なし。唯一のlive-outを
+  box化する前に全tagged値をstackから除き、確保失敗は元の最初の算術位置へ
+  帰属させる。生成器のescape metadataも検査する。
+- debugの4追加testsで式木4種類×境界値/乱数、実counter、範囲外/subclass、
+  ゼロ除算、unsafe interval、in-frame MemoryErrorを検証。最初の失敗1件は
+  新テストがZeroDivisionErrorの旧メッセージを期待したためで、現行の
+  `division by zero` に合わせて再検証した。
+- spectralのdebug実traceで7演算全てが同一regionになり、約200万回のentryと
+  box、guard exit=0、checksum一致を確認。これは速度達成の証拠ではない。
+- 次はnative測定、残るfloat/int除算・frame費用の調査、必要な追加変更、
+  意味論suite、最終main比較。目的は引き続きscript全体の時間比0.5以下。
+
+### Native screen と float consumer
+
+- 整数boxをlive-outにする最初のnative版は、main約33.74 msに対して
+  約22.39 ms（時間比0.664）。同一入力の各sampleで675,960 entries、
+  guard失敗0、同数boxes、checksum一致。未達なので次へ進めた。
+  `bounded-v2.json` / `main-v2.json`、当時のpatch・binary hashを保存。
+- この版のprofileはfloat/int除算helperが9.77%、整数box生成・破棄も残った。
+  後続がfloat除算のときは入口でborrowed/immortal exact-float numeratorを
+  guardし、整数結果を直接consumerへ渡す。±2**53内はexactなC変換、
+  それ以上は一時PyLongと既存PyLong_AsDoubleでPythonの丸めを維持する。
+- consumerでエラーを起こす前にtagged値を全て消費する。除算の元のSET_IPを
+  保持し、ZeroDivisionErrorを正しい命令へ帰属させる。通常function呼び出しや
+  returnのframe構築・破棄は変更していない。
+- debugの追加7 testsが成功。numeric oracleはoperator APIを使い、同じ最適化を
+  oracle側でも実行することを避けた。大きい整数、NaN/inf/±0/subnormal、
+  型・所有権guard、実JIT内のゼロ除算とfloat/変換用intのallocation failureを確認。
+  最初のゼロ除算テストは初回のTier1反復で例外を起こしていたため、2反復目に
+  初めてゼロになる別関数とentry counterを使って経路を検証し直した。
+- 次はconsumer版native比較と関連suite。半減はまだ確認できていない。
+
+### 6 blocks の比較と全体時間の追加ゲート
+
+- consumer版screenは18.45 ms / main33.63 ms。入口のlocal重複guardを、
+  直前の2つのlocal loadとの対応に基づいて除去し、追加local数をstencilで固定。
+  0追加localのspectral traceではguardのruntime loopがなくなった。
+- この版を6 blocks・4 modes（main JIT / candidate / candidate OFF /
+  main interpreter）でローテーション測定した。`final-*.json` と
+  `final-order.json` / `final-summary.json` に全値・counter・hashを保存。
+  定常probe比0.4711、元scriptのsample平均比0.4715、全process時間比0.5037。
+  元scriptの6 process比は0.5025–0.5049であり、遅い値を捨てていない。
+- 主指標は半減を満たしたが、**起動とwarmupも含む元script全体の時間比も
+  0.5以下になることを追加ゲート**とした。0.5037を達成とは扱わず継続する。
+- この時点のnativeは349 tests・7 skips成功、debugは447 tests・3 skipsに
+  新しい4-localの1 testも追加成功。関連13 suitesの1,187 tests・19 skips成功。
+  Linux x86の4 rounding modesそれぞれ48 bit comparisonsがdebug/nativeで成功し、
+  processの元のrounding modeへ復元した。`rounding-*.json` に保存。
+- 次の変更は、最初の算術結果がstackに残り、同じ2 localsを同じ順序・演算で
+  再計算する場合の共通部分式除去。借用intのguardとeffect-free区間の証明を
+  再利用し、値をtagged integerのまま複製する。加算以外の減算・乗算にも
+  同じ仕組みを使う。native再比較は別prefixで保存する。
+
+### 最終結果：目標達成（2026-09-13）
+
+- [x] **変更していないspectral_norm.pyが、mainの半分以下の実行時間になる。**
+  定常実行だけでなく、起動・3 warmups・10 values・出力を含む元script全体でも
+  6組すべてで時間比0.5未満になった。実験フラグ有効時の、このPC上の結果。
+- 実装commit：`9115e6ae0d2f10381472e9f67050f64cc947410c`、tree
+  `730a9ff3fdd249c9abefe76d04b5dd4bd74a4fcb`。既存実装は保持し、GitHubへの
+  投稿・push・PR変更は行っていない。PGO/LTOは両比較buildとも未使用。
+- Source baselineはローカルmain `a60343ed17785ebbcd43de9080cadd8e2541db6f`。
+  archiveの6,275 blobsを照合した。145のWindows用text filesは.gitattributes指定の
+  CRLF変換だけであり、他の差異はない。対象scriptのSHA256は
+  `3e888cd7061073f538d4df509c2d6bdf4c3f7baa4e6b3ad7f9540e0615b8580b`。
+- 最終native binaryは実装commit前にビルドして固定した。sys.versionの旧dirty
+  表記は保持する。`source-audit.json` と `build-manifest.json` に実装内容との一致、
+  commit/tree、binary・読み込んだ拡張・生成stencil・configureのhashを保存。
+  `jit_stencils.h` はwrapperなので、実体のtarget別headerもhashに含めた。
+
+次の表は6 processesの算術平均。比の主解析は各blockで対応させたprocess平均比の
+geomeanであり、全値を使う。CPU 2（P-core、sibling 3）、powersaveのまま。
+システム設定は変更していない。main/candidateともnative JITをONにした比較が主結果。
+
+| mode | 元scriptの定常時間 / operation | 元scriptのprocess全体時間 |
+|---|---:|---:|
+| main、JIT ON | 33.712 ms | 466.613 ms |
+| candidate、bounded region ON | 14.794 ms | 220.534 ms |
+| candidate、bounded region OFF | 33.548 ms | 465.477 ms |
+| main、JIT OFF（補助比較） | 47.418 ms | 644.277 ms |
+
+- 元scriptの定常比 **0.43884**（6組0.43530–0.44050）、process全体比
+  **0.47263**（0.46945–0.47431）。counter付きprobeの定常比も0.43833。
+  起動費用はtaskset/process起動とscriptの全処理を含み、純粋なJIT compile latency
+  とは区別する。1組のbuild・1台のPCであり、他buildや他CPUへの一般化は未検証。
+- `--json`も指定しない通常コマンドを、別の6組でAB/BA測定した。
+  process全体比は **0.47191**（0.46827–0.47465）で、こちらも全組で半減。
+  通常の標準出力と全測定順を `default-*.txt` / `default-command.json` に保存した。
+- `complete-*.json`、`complete-order.json`、`complete-summary.json` が最終結果。
+  全24 probe processesと24元script processes、各10 measured valuesを保存した。
+  前の約0.5037のprocess比を含む全探索結果も保存し、sample除外は0。
+- 各candidate sampleで675,960 bounded entries/divisions、guard failure=0、
+  integer boxes=0、allocation errors=0。676,000 evaluations中、99.99%以上が
+  この経路で動く。全実行のchecksumは `409.3151805348543` で一致した。
+- 別実験のperf statは同じ230 kernel operations（warmup含む）をAB/BAで2反復。
+  candidate/mainのcycles比0.43784、instructions比0.47216、branches比0.46019。
+  branch-missesは0.9426/1.0847でgeomean1.0112とほぼ横ばい。4 eventsのrunningは
+  99%で、時間結果とは混ぜていない。samplingのlostは両方0。
+- 実native codeの0x532で最初の加算、0x539でその値の複製、0x567で乗算、
+  0x592でfloorを保つshift、0x706でdivsd、0x812で後続のaddsdを確認した。
+  0xc88以降などのdataをobjdumpが命令と表示する部分は数えない。
+  正負unboxingにもimulがあるため、全imul数をPythonの乗算数とは解釈しない。
+  stencilは0追加localのSTARTが222 bytes、DUPが3 bytes、DIVIDEが318 bytes。
+  最もhotなexecutorの確保サイズは4,096 bytes（page padding込み）。
+- executable textはmain6,256,502 bytes、candidate6,315,702 bytes。この差には
+  以前の実験も含まれるので、今回のregion単独の増加とは説明しない。
+
+### 最終検証・制約・次の作業
+
+- native最終版は **349 tests・7 skips成功**（`test-duplicate-native.log`）。
+  debugは追加region21 testsとgenerator99 testsの120件成功、bounded ONの
+  test_tier3も14件成功。最終版で関連12 suitesを再実行し1,088件・19 skips成功
+  （`test-related-complete-debug.log`）。generatorと合わせて関連1,187件を確認。
+- 4 rounding modes ×48 casesのbit比較とmode復元はdebug/nativeで成功。
+  最後のCSE版nativeでも同じ192 casesを再確認した。
+  `git diff --check`、F401/F811 lint、4生成ファイルの再生成idempotenceも成功。
+  Black/prek未導入・全hooks未実施、ASan/FT/32-bit/他compiler未検証という
+  前段の制約は変えていない。既存JITのmemory-block増加問題も修正範囲外。
+- bounded regionは明示opt-inを維持する。53 bitを超えるlive-outをfloatへ変換する
+  caseでは一時PyLongを使う。今回のscriptではこのslow pathへ入っていない。
+  改善率をfull pyperformanceやすべての整数処理の改善率とはしない。
+- この目標に必要な作業は完了。次の性能課題を進めるなら、残ったframe生成・破棄、
+  float box、range iteratorのint生成をprofileから調べる。既存のmemory-block増加の
+  切り分けも別課題として維持する。今回の達成条件をその追加課題へ拡張しない。
+
+再実行（計測中に他のbuild/testを走らせない）：
+
+```sh
+PYTHON_JIT=1 PYTHON_TIER2_BOUNDED_INT_REGIONS=1 build-jit/python spectral_norm.py
+# 同じ6 blocksを別prefixへ保存し、元script全体時間も比較する
+python3 jit-artifacts/spectral-goal/measure.py repeat
+# correctness / counters / fallback
+build-jit/python -m test test_capi.test_opt_regions test_capi.test_opt test_tier3 -j4
+```
