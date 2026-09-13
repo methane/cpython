@@ -146,6 +146,19 @@ is disabled in DTrace and Emscripten builds.
 The callee's code keeps a strong reference through argument and callable
 cleanup, preserving its lifetime if a finalizer replaces `__code__`.
 
+The same option handles short callees that return a cached attribute, compare
+it with `None` by identity, or compare two cached exact compact integer
+attributes. A separate `_CALL_PY_ATTRIBUTE` family keeps the simple argument
+and constant return stencils small. It accepts slots and managed inline values,
+with up to four explicit arguments and a 64-uop scan limit. Attribute offsets
+remain paired with the recorded type versions, even if abstract interpretation
+removes redundant guards. The call checks those versions, inline-value validity,
+and attribute presence before consuming any inputs. Missing attributes,
+descriptors, noncompact integers, and subclass comparisons fall back at the
+original call, retaining the callee frame for exceptions and callbacks.
+`call_attr_entries` counts successful attribute calls; cleanup retains the same
+reference order and code lifetime as the simpler family.
+
 The integer and builtin experiments require a 64-bit GIL build with GCC/Clang
 checked arithmetic. Other configurations do not enable them. The existing
 float fusion preserves its volatile binary64 rounding boundary; shared results

@@ -5028,6 +5028,82 @@ dummy_func(
             Py_DECREF(code);
         }
 
+        replicate(5) tier2 op(_CALL_PY_ATTRIBUTE, (source/4, config/4, callable, self_or_null, args[oparg] -- res)) {
+            assert(oparg <= 4);
+            current_executor->region_call_entries++;
+            PyFunctionObject *func = (PyFunctionObject *)PyStackRef_AsPyObjectBorrow(callable);
+            assert(PyFunction_Check(func));
+            PyCodeObject *code = (PyCodeObject *)func->func_code;
+            uintptr_t version = FT_ATOMIC_LOAD_UINTPTR_ACQUIRE(code->_co_instrumentation_version);
+            bool valid = _Py_atomic_load_uintptr_relaxed(&tstate->eval_breaker) == version;
+            int has_self = !PyStackRef_IsNull(self_or_null);
+            PyObject *attribute = NULL;
+            PyObject *other_attribute = NULL;
+            uint64_t descriptor = (uintptr_t)source >> 2;
+            {
+                int index = descriptor & 7;
+                valid = valid && index < oparg + has_self;
+                if (valid) {
+                    _PyStackRef owner = has_self && index == 0 ? self_or_null : args[index - has_self];
+                    attribute = _PyRegion_CallAttribute(owner, descriptor);
+                    valid = attribute != NULL;
+                }
+                if (valid && ((descriptor >> 52) & 3) == 3) {
+                    uint64_t other = (uintptr_t)config;
+                    index = other & 7;
+                    valid = index < oparg + has_self;
+                    if (valid) {
+                        _PyStackRef owner = has_self && index == 0 ? self_or_null : args[index - has_self];
+                        other_attribute = _PyRegion_CallAttribute(owner, other);
+                        valid = other_attribute != NULL && PyLong_CheckExact(attribute) &&
+                            PyLong_CheckExact(other_attribute) &&
+                            _PyLong_BothAreCompact((PyLongObject *)attribute, (PyLongObject *)other_attribute);
+                    }
+                }
+            }
+            if (!valid) {
+                current_executor->region_call_guard_exits++;
+                DEOPT_IF(true);
+            }
+            /* The real frame retains its code until after locals and the
+             * callable have been cleared. A finalizer may replace __code__;
+             * preserve that lifetime even though the frame is omitted. */
+            Py_INCREF(code);
+            {
+                int mode = (descriptor >> 52) & 3;
+                if (mode == 0) {
+                    res = PyStackRef_FromPyObjectNew(attribute);
+                }
+                else {
+                    bool result;
+                    if (mode == 3) {
+                        sdigit left = _PyLong_CompactValue((PyLongObject *)attribute);
+                        sdigit right = _PyLong_CompactValue((PyLongObject *)other_attribute);
+                        result = COMPARISON_BIT(left, right) & ((uintptr_t)config >> 52);
+                    }
+                    else {
+                        result = (attribute == Py_None) ^ (mode == 2);
+                    }
+                    res = result ? PyStackRef_True : PyStackRef_False;
+                }
+                current_executor->region_call_attr_entries++;
+            }
+            /* Match the unlinked callee's reverse-local cleanup order. Keep
+             * refs off the visible value stack during arbitrary finalizers;
+             * reentry may reuse the caller's consumed argument slots. */
+            _PyStackRef cleanup[6];
+            cleanup[0] = callable;
+            cleanup[1] = self_or_null;
+            for (int i = 0; i < oparg; i++) {
+                cleanup[i + 2] = args[i];
+            }
+            INPUTS_DEAD();
+            for (int i = oparg + 1; i >= 0; i--) {
+                PyStackRef_XCLOSE(cleanup[i]);
+            }
+            Py_DECREF(code);
+        }
+
         op(_PUSH_FRAME, (new_frame -- )) {
             assert(!IS_PEP523_HOOKED(tstate));
             _PyInterpreterFrame *temp = PyStackRef_Unwrap(new_frame);

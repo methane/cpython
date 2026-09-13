@@ -363,6 +363,12 @@ const uint32_t _PyUop_Flags[MAX_UOP_ID+1] = {
     [_CALL_PY_TRIVIAL_3] = HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
     [_CALL_PY_TRIVIAL_4] = HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
     [_CALL_PY_TRIVIAL] = HAS_ARG_FLAG | HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
+    [_CALL_PY_ATTRIBUTE_0] = HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
+    [_CALL_PY_ATTRIBUTE_1] = HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
+    [_CALL_PY_ATTRIBUTE_2] = HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
+    [_CALL_PY_ATTRIBUTE_3] = HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
+    [_CALL_PY_ATTRIBUTE_4] = HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
+    [_CALL_PY_ATTRIBUTE] = HAS_ARG_FLAG | HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
     [_PUSH_FRAME] = HAS_SYNC_SP_FLAG | HAS_NEEDS_GUARD_IP_FLAG,
     [_GUARD_NOS_NULL] = HAS_EXIT_FLAG,
     [_GUARD_THIRD_NULL] = HAS_EXIT_FLAG,
@@ -517,6 +523,7 @@ const ReplicationRange _PyUop_Replication[MAX_UOP_ID+1] = {
     [_COMPARE_TUPLE_PAIR] = { 0, 2 },
     [_INIT_CALL_PY_EXACT_ARGS] = { 0, 5 },
     [_CALL_PY_TRIVIAL] = { 0, 5 },
+    [_CALL_PY_ATTRIBUTE] = { 0, 5 },
     [_COPY] = { 1, 4 },
     [_SWAP] = { 2, 4 },
     [_GUARD_BIT_IS_SET_POP] = { 4, 8 },
@@ -3477,6 +3484,60 @@ const _PyUopCachingInfo _PyUop_Caching[MAX_UOP_ID+1] = {
             { -1, -1, -1 },
         },
     },
+    [_CALL_PY_ATTRIBUTE_0] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 1, 0, _CALL_PY_ATTRIBUTE_0_r01 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_CALL_PY_ATTRIBUTE_1] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 1, 0, _CALL_PY_ATTRIBUTE_1_r01 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_CALL_PY_ATTRIBUTE_2] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 1, 0, _CALL_PY_ATTRIBUTE_2_r01 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_CALL_PY_ATTRIBUTE_3] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 1, 0, _CALL_PY_ATTRIBUTE_3_r01 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_CALL_PY_ATTRIBUTE_4] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 1, 0, _CALL_PY_ATTRIBUTE_4_r01 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_CALL_PY_ATTRIBUTE] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 1, 0, _CALL_PY_ATTRIBUTE_r01 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
     [_PUSH_FRAME] = {
         .best = { 1, 1, 1, 1 },
         .entries = {
@@ -5361,6 +5422,12 @@ const uint16_t _PyUop_Uncached[MAX_UOP_REGS_ID+1] = {
     [_CALL_PY_TRIVIAL_3_r01] = _CALL_PY_TRIVIAL_3,
     [_CALL_PY_TRIVIAL_4_r01] = _CALL_PY_TRIVIAL_4,
     [_CALL_PY_TRIVIAL_r01] = _CALL_PY_TRIVIAL,
+    [_CALL_PY_ATTRIBUTE_0_r01] = _CALL_PY_ATTRIBUTE_0,
+    [_CALL_PY_ATTRIBUTE_1_r01] = _CALL_PY_ATTRIBUTE_1,
+    [_CALL_PY_ATTRIBUTE_2_r01] = _CALL_PY_ATTRIBUTE_2,
+    [_CALL_PY_ATTRIBUTE_3_r01] = _CALL_PY_ATTRIBUTE_3,
+    [_CALL_PY_ATTRIBUTE_4_r01] = _CALL_PY_ATTRIBUTE_4,
+    [_CALL_PY_ATTRIBUTE_r01] = _CALL_PY_ATTRIBUTE,
     [_PUSH_FRAME_r10] = _PUSH_FRAME,
     [_GUARD_NOS_NULL_r02] = _GUARD_NOS_NULL,
     [_GUARD_NOS_NULL_r12] = _GUARD_NOS_NULL,
@@ -5897,6 +5964,18 @@ const char *const _PyOpcode_uop_name[MAX_UOP_REGS_ID+1] = {
     [_CALL_METHOD_DESCRIPTOR_O_INLINE_r03] = "_CALL_METHOD_DESCRIPTOR_O_INLINE_r03",
     [_CALL_NON_PY_GENERAL] = "_CALL_NON_PY_GENERAL",
     [_CALL_NON_PY_GENERAL_r01] = "_CALL_NON_PY_GENERAL_r01",
+    [_CALL_PY_ATTRIBUTE] = "_CALL_PY_ATTRIBUTE",
+    [_CALL_PY_ATTRIBUTE_r01] = "_CALL_PY_ATTRIBUTE_r01",
+    [_CALL_PY_ATTRIBUTE_0] = "_CALL_PY_ATTRIBUTE_0",
+    [_CALL_PY_ATTRIBUTE_0_r01] = "_CALL_PY_ATTRIBUTE_0_r01",
+    [_CALL_PY_ATTRIBUTE_1] = "_CALL_PY_ATTRIBUTE_1",
+    [_CALL_PY_ATTRIBUTE_1_r01] = "_CALL_PY_ATTRIBUTE_1_r01",
+    [_CALL_PY_ATTRIBUTE_2] = "_CALL_PY_ATTRIBUTE_2",
+    [_CALL_PY_ATTRIBUTE_2_r01] = "_CALL_PY_ATTRIBUTE_2_r01",
+    [_CALL_PY_ATTRIBUTE_3] = "_CALL_PY_ATTRIBUTE_3",
+    [_CALL_PY_ATTRIBUTE_3_r01] = "_CALL_PY_ATTRIBUTE_3_r01",
+    [_CALL_PY_ATTRIBUTE_4] = "_CALL_PY_ATTRIBUTE_4",
+    [_CALL_PY_ATTRIBUTE_4_r01] = "_CALL_PY_ATTRIBUTE_4_r01",
     [_CALL_PY_TRIVIAL] = "_CALL_PY_TRIVIAL",
     [_CALL_PY_TRIVIAL_r01] = "_CALL_PY_TRIVIAL_r01",
     [_CALL_PY_TRIVIAL_0] = "_CALL_PY_TRIVIAL_0",
@@ -7891,6 +7970,18 @@ int _PyUop_num_popped(int opcode, int oparg)
         case _CALL_PY_TRIVIAL_4:
             return 2 + oparg;
         case _CALL_PY_TRIVIAL:
+            return 2 + oparg;
+        case _CALL_PY_ATTRIBUTE_0:
+            return 2 + oparg;
+        case _CALL_PY_ATTRIBUTE_1:
+            return 2 + oparg;
+        case _CALL_PY_ATTRIBUTE_2:
+            return 2 + oparg;
+        case _CALL_PY_ATTRIBUTE_3:
+            return 2 + oparg;
+        case _CALL_PY_ATTRIBUTE_4:
+            return 2 + oparg;
+        case _CALL_PY_ATTRIBUTE:
             return 2 + oparg;
         case _PUSH_FRAME:
             return 1;

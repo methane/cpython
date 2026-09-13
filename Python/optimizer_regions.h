@@ -106,6 +106,37 @@ region_previous_local(const _PyUOpInstruction *buffer, int *pc)
     return buffer[(*pc)--].oparg;
 }
 
+/* Preserve a recorded layout guard before abstract interpretation can remove
+ * it. Operand1 is otherwise unused by these attribute-load uops. A later
+ * leaf-call lowering repeats that exact version check at the CALL boundary. */
+static void
+annotate_attribute_versions(_PyUOpInstruction *buffer, int length)
+{
+    if (!region_enabled("PYTHON_TIER2_CALL_REGIONS")) {
+        return;
+    }
+    for (int pc = 0; pc < length; pc++) {
+        if (buffer[pc].opcode == _LOAD_ATTR_SLOT ||
+            buffer[pc].opcode == _LOAD_ATTR_INSTANCE_VALUE) {
+            buffer[pc].operand1 = 0;
+        }
+    }
+    for (int pc = 0; pc < length; pc++) {
+        if (buffer[pc].opcode != _GUARD_TYPE_VERSION || !buffer[pc].operand0) {
+            continue;
+        }
+        int next = region_skip(buffer, pc + 1, length);
+        bool managed = next < length && buffer[next].opcode == _CHECK_MANAGED_OBJECT_HAS_VALUES;
+        if (managed) {
+            next = region_skip(buffer, next + 1, length);
+        }
+        if (next < length && !(buffer[next].oparg & 1) &&
+            buffer[next].opcode == (managed ? _LOAD_ATTR_INSTANCE_VALUE : _LOAD_ATTR_SLOT)) {
+            buffer[next].operand1 = buffer[pc].operand0 | ((uint64_t)managed << 32);
+        }
+    }
+}
+
 /* The bounded path keeps tagged native integers on the existing operand
  * stack. Prove every intermediate fits before emitting it: there can be no
  * exit, allocation, callback, or frame transition between START and BOX.

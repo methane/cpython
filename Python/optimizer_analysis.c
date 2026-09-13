@@ -864,7 +864,7 @@ trivial_call_skip(const _PyUOpInstruction *buffer, int pc, int end)
 {
     while (pc < end) {
         int next = region_skip(buffer, pc, end);
-        if (next < end && buffer[next].opcode == _RECORD_CODE) {
+        if (next < end && (_PyUop_Flags[buffer[next].opcode] & HAS_RECORDS_VALUE_FLAG)) {
             pc = next + 1;
         }
         else {
@@ -872,6 +872,39 @@ trivial_call_skip(const _PyUOpInstruction *buffer, int pc, int end)
         }
     }
     return pc;
+}
+
+static int
+trivial_attribute_load(_PyUOpInstruction *buffer, int pc, int end,
+                       int nargs, uint64_t *descriptor)
+{
+    pc = trivial_call_skip(buffer, pc, end);
+    if (pc >= end || (region_opcode(&buffer[pc]) != _LOAD_FAST &&
+                     region_opcode(&buffer[pc]) != _LOAD_FAST_BORROW) ||
+        buffer[pc].oparg > nargs) {
+        return -1;
+    }
+    int arg = buffer[pc++].oparg;
+    pc = trivial_call_skip(buffer, pc, end);
+    if (pc < end && buffer[pc].opcode == _GUARD_TYPE_VERSION) {
+        pc = trivial_call_skip(buffer, pc + 1, end);
+    }
+    if (pc < end && buffer[pc].opcode == _CHECK_MANAGED_OBJECT_HAS_VALUES) {
+        pc = trivial_call_skip(buffer, pc + 1, end);
+    }
+    if (pc >= end || (buffer[pc].opcode != _LOAD_ATTR_SLOT &&
+                      buffer[pc].opcode != _LOAD_ATTR_INSTANCE_VALUE) ||
+        !buffer[pc].operand1 || buffer[pc].operand0 > UINT16_MAX) {
+        return -1;
+    }
+    uint64_t version = buffer[pc].operand1 & UINT32_MAX;
+    uint64_t managed = buffer[pc].operand1 >> 32;
+    *descriptor = arg | (buffer[pc].operand0 << 3) | (version << 19) | (managed << 51);
+    pc = trivial_call_skip(buffer, pc + 1, end);
+    if (pc >= end || (buffer[pc].opcode != _POP_TOP && buffer[pc].opcode != _POP_TOP_NOP)) {
+        return -1;
+    }
+    return trivial_call_skip(buffer, pc + 1, end);
 }
 
 static void
@@ -884,8 +917,8 @@ eliminate_trivial_frames(_PyUOpInstruction *buffer, int length)
         return;
     }
     /* Abstract interpretation has already proved the call and return match.
-     * Only an argument or an immortal constant may be returned, with no
-     * other body operations. Preserve the caller's version, argument,
+     * Admit an argument, immortal constant, cached attribute, or a predicate
+     * over such attributes. Preserve the caller's version, argument,
      * recursion, and stack-space checks. The replacement checks the callee's
      * eval breaker before consuming anything, at the original CALL boundary.
      * No callee frame can escape in this interval. */
@@ -894,7 +927,7 @@ eliminate_trivial_frames(_PyUOpInstruction *buffer, int length)
             buffer[start].oparg > 4) {
             continue;
         }
-        int end = Py_MIN(length, start + 24);
+        int end = Py_MIN(length, start + 64);
         int pc = trivial_call_skip(buffer, start + 1, end);
         if (pc >= end || buffer[pc++].opcode != _SAVE_RETURN_OFFSET) {
             continue;
@@ -912,33 +945,86 @@ eliminate_trivial_frames(_PyUOpInstruction *buffer, int length)
             continue;
         }
         uintptr_t source;
+        uint64_t config = 0, descriptor;
+        int after_attribute = trivial_attribute_load(
+            buffer, pc, end, buffer[start].oparg, &descriptor);
         int opcode = region_opcode(&buffer[pc]);
-        if (opcode == _LOAD_FAST || opcode == _LOAD_FAST_BORROW) {
+        if (after_attribute >= 0) {
+            int mode = 0;
+            pc = after_attribute;
+            if (pc < end && buffer[pc].opcode == _LOAD_CONST_INLINE_BORROW &&
+                buffer[pc].operand0 == (uintptr_t)Py_None) {
+                pc = trivial_call_skip(buffer, pc + 1, end);
+                if (pc >= end || buffer[pc].opcode != _IS_OP) {
+                    continue;
+                }
+                mode = buffer[pc++].oparg ? 2 : 1;
+                for (int i = 0; i < 2; i++) {
+                    pc = trivial_call_skip(buffer, pc, end);
+                    if (pc >= end || (buffer[pc].opcode != _POP_TOP &&
+                                      buffer[pc].opcode != _POP_TOP_NOP)) {
+                        pc = end;
+                        break;
+                    }
+                    pc++;
+                }
+            }
+            else if (pc < end && (region_opcode(&buffer[pc]) == _LOAD_FAST ||
+                                  region_opcode(&buffer[pc]) == _LOAD_FAST_BORROW)) {
+                pc = trivial_attribute_load(buffer, pc, end, buffer[start].oparg, &config);
+                if (pc < 0) {
+                    continue;
+                }
+                while (pc < end && (buffer[pc].opcode == _GUARD_TOS_INT ||
+                                    buffer[pc].opcode == _GUARD_NOS_INT)) {
+                    pc = trivial_call_skip(buffer, pc + 1, end);
+                }
+                if (pc >= end || buffer[pc].opcode != _COMPARE_OP_INT) {
+                    continue;
+                }
+                mode = 3;
+                config |= (uint64_t)(buffer[pc++].oparg & 15) << 52;
+                for (int i = 0; i < 2; i++) {
+                    pc = trivial_call_skip(buffer, pc, end);
+                    if (pc >= end || (buffer[pc].opcode != _POP_TOP_INT &&
+                                      buffer[pc].opcode != _POP_TOP_NOP)) {
+                        pc = end;
+                        break;
+                    }
+                    pc++;
+                }
+            }
+            source = ((descriptor | ((uint64_t)mode << 52)) << 2) | 2;
+            pc = trivial_call_skip(buffer, pc, end);
+        }
+        else if (opcode == _LOAD_FAST || opcode == _LOAD_FAST_BORROW) {
             if (buffer[pc].oparg > buffer[start].oparg) {
                 continue;
             }
             /* Odd operands identify argument slots; constants are aligned. */
             source = ((uintptr_t)buffer[pc].oparg << 1) | 1;
+            pc = trivial_call_skip(buffer, pc + 1, end);
         }
         else if (opcode == _LOAD_CONST_INLINE_BORROW &&
                  _Py_IsImmortal((PyObject *)buffer[pc].operand0)) {
             source = buffer[pc].operand0;
+            pc = trivial_call_skip(buffer, pc + 1, end);
         }
         else {
             continue;
         }
-        pc = trivial_call_skip(buffer, pc + 1, end);
         if (pc < end && buffer[pc].opcode == _MAKE_HEAP_SAFE) {
             pc = trivial_call_skip(buffer, pc + 1, end);
         }
         if (pc >= end || buffer[pc].opcode != _RETURN_VALUE) {
             continue;
         }
-        buffer[start].opcode = _CALL_PY_TRIVIAL;
+        buffer[start].opcode = (source & 3) == 2 ? _CALL_PY_ATTRIBUTE : _CALL_PY_TRIVIAL;
         buffer[start].operand0 = source;
+        buffer[start].operand1 = config;
         for (int i = start + 1; i <= pc; i++) {
             /* Leave recorded references for the normal tracer cleanup. */
-            if (buffer[i].opcode != _RECORD_CODE) {
+            if (!(_PyUop_Flags[buffer[i].opcode] & HAS_RECORDS_VALUE_FLAG)) {
                 buffer[i].opcode = _NOP;
             }
         }
@@ -986,6 +1072,7 @@ _Py_uop_analyze_and_optimize(
 {
     OPT_STAT_INC(optimizer_attempts);
 
+    annotate_attribute_versions(buffer, length);
     lower_bounded_int_regions(buffer, length);
     lower_int_regions(buffer, length);
     lower_len_regions(buffer, length);

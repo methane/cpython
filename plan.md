@@ -936,3 +936,49 @@ build-jit/python -m test test_capi.test_opt_regions test_capi.test_opt test_tier
   len entries 110,877。side traceを含む45 executors・356,352 bytesを保存した。
   4生成ファイルの再生成はbyte単位で同一、F401/F811とdiff check成功。
   次はattribute getterと、属性同士の整数比較を行う短いcalleeへcall frame省略を広げる。
+- enumerate実装のローカルcommitは`f6ce15da08e`。
+
+### 属性を読む短いcallee
+
+- 既存の`_CALL_PY_TRIVIAL`を、cached attributeの取得、`is None`/`is not None`、
+  二つのcached attributeのcompact exact int比較へ拡張した。引数・定数の旧経路も保持。
+  slotとmanaged inline valueを扱い、最大4 explicit args、最大64 uopsを検査する。
+- abstract interpreterが冗長guardを消す前に、元のLOAD_ATTRに対応するtype versionを
+  未使用operand1へ注記する。現在のtype versionを後から推定して古いoffsetと組み合わせる
+  ことはしない。CALL入口でその記録済みversion、inline valuesの有効性、属性の存在、
+  必要なら両方のexact compact intを検査する。失敗時は入力を消費せず元CALLへ戻す。
+- 参照のcleanupとcode lifetimeは既存call経路を共有する。recorded referencesはnormal
+  tracer cleanupまで保持する。callee bodyのtype recorderもskip/保持対象に含めた。
+- debug region50 + generator99の149 testsが成功。slot/managedのgetter・None比較・
+  6種類の整数比較、巨大int/bool、descriptor変更、subclassの非bool比較結果、owned receiverの
+  finalizer時のrefcount、classmethodでの異なるlayoutの二つの引数を確認した。
+- enumerateの生成コードを読んで、PyTuple_SET_ITEMと_PyTuple_Recycleが不要なescape扱いに
+  なっていたことも修正した。前者は代入、後者はhash resetとGC link更新だけでPythonへ
+  再入しない。要素のDECREFに必要なescapeは保持する。nativeと関連テストへ進む。
+- native関連378 tests・7 skips、debug関連9 suitesの1,203 tests・14 skipsが成功。
+  通常の3 warmups / 10 valuesで全6本を2 blocks比較し、実workloadでのcoverageも
+  追加確認する。実装したgetterの機能検証と、ベンチマーク上の効果は分けて扱う。
+- 属性callの初版は6本geomean 0.56124（起動込み0.66489）。個別比はBPE 0.92418、
+  B-tree 0.96006、DeltaBlue 1.00660、Hexiom 0.97273、Raytrace 0.96729、
+  Spectral 0.03719。半減は未達。B-treeは定常では改善する一方、起動込みでは1.00976。
+- 引数/定数の既存call stencilへ属性の全分岐を加えたため、単純なcallにも大きいcodeを
+  複製する構造になっていた。既存_CALL_PY_TRIVIALを元に戻し、属性用の
+  _CALL_PY_ATTRIBUTEへ分離してコード量と影響を再確認する。初版binaryと差分は
+  `python-suite-attr-call-initial`、`attr-call-initial-manifest.json`へ保存した。
+- DeltaBlueのprobeでは、既定の3 warmups直後のexecutor集合が空で、4回目の実行中に
+  3 executorsが現れた。従来probeは新規executorの増分を数えていなかったので、実行直後に
+  新規分も取得し、check_resultを呼ぶ前に加算するよう修正した。過去の空counterを
+  「JITが一度も動かなかった」という証拠にはしない。warmup軌跡の診断も追加する。
+- 修正probeによるDeltaBlueは3 warmups後の実行で新規3 executors・属性call増分0、
+  20 warmups後では24 executors・属性call増分1,301だった。Hexiomも15→43 executorsに
+  増える。これらはdefault workloadのcoverageを説明する診断で、warmupを変更した時間を
+  目標値へ混ぜない。debugテストと一部時間が重なったため、probeの時刻値も性能比較に
+  使わない。分離版debug149 testsが通過し、nativeを再ビルド中。
+- 分離版native378 tests・7 skipsが成功。Raytraceの3 blocks・各10 valuesはmain比
+  0.98276、enumerate版比1.01482で改善とは判断しない。block間の比は0.971〜1.047と
+  揺れており、全90値とbinary hashを`attr-call-split-raytrace-rows.json`へ保存した。
+  4生成ファイルは再生成で同一、F401/F811とdiff checkも成功。
+- 次はrange係数の式をコンパイル時に簡約する。既存の多項式uop列から定数畳み込みを行い、
+  範囲証明したスカラー整数uopへ変換する。Python frameの余剰stack容量に収まることも
+  確認し、証明や容量が不足すれば現在の係数計算を保持する。浮動小数点の除算・加算順と
+  元traceのfallbackは保持する。全6本geomeanの最新値は初版の0.56124で半減未達。

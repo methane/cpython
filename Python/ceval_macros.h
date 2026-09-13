@@ -658,6 +658,22 @@ _PyRegion_BoundedInput(_PyStackRef ref, intptr_t *value)
            *value <= _PY_INT_REGION_INPUT_MAX;
 }
 
+static inline PyObject *
+_PyRegion_CallAttribute(_PyStackRef owner, uint64_t descriptor)
+{
+    PyObject *obj = PyStackRef_AsPyObjectBorrow(owner);
+    uint32_t version = (uint32_t)(descriptor >> 19);
+    if (Py_TYPE(obj)->tp_version_tag != version) {
+        return NULL;
+    }
+    if ((descriptor & (UINT64_C(1) << 51)) &&
+        !FT_ATOMIC_LOAD_UINT8(_PyObject_InlineValues(obj)->valid)) {
+        return NULL;
+    }
+    uint16_t offset = (uint16_t)(descriptor >> 3);
+    return *(PyObject **)((char *)obj + offset);
+}
+
 static inline bool
 _PyRegion_AsInt64(_PyStackRef ref, int64_t *value)
 {

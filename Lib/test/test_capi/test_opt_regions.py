@@ -85,6 +85,143 @@ class TestRegions(unittest.TestCase):
             run(enumerate([None] * 64))
         return self.executor(run, "_ITER_NEXT_ENUM_LIST")
 
+    def warm_attribute_call(self, expression, slots):
+        self.enterContext(mock.patch.dict(os.environ, {"PYTHON_TIER2_CALL_REGIONS": "1"}))
+        namespace = {}
+        layout = "    __slots__ = ('value',)\n" if slots else ""
+        exec("class Holder:\n" + layout +
+             "    def method(self, other):\n"
+             f"        return {expression}\n"
+             "def run(left, right, n):\n"
+             "    result = None\n"
+             "    for _ in range(n):\n"
+             "        result = left.method(right)\n"
+             "    return result\n", namespace)
+        cls = namespace["Holder"]
+        left, right = cls(), cls()
+        left.value, right.value = 17, 31
+        run = namespace["run"]
+        run(left, right, TIER2_THRESHOLD)
+        ex = self.executor(run, "_CALL_PY_ATTRIBUTE")
+        before = ex.get_region_stats()["call_attr_entries"]
+        run(left, right, 8)
+        self.assertGreater(ex.get_region_stats()["call_attr_entries"], before)
+        return run, ex, left, right
+
+    @requires_call_regions
+    def test_attribute_call_getters(self):
+        for slots in (False, True):
+            for expression, expected in (("self.value", lambda x: x),
+                                         ("self.value is None", lambda x: x is None),
+                                         ("self.value is not None", lambda x: x is not None)):
+                with self.subTest(slots=slots, expression=expression):
+                    run, ex, left, right = self.warm_attribute_call(expression, slots)
+                    for value in (None, object(), 2**100, 1.25):
+                        left.value = value
+                        result = run(left, right, 8)
+                        self.assertIs(result, expected(value))
+                    del left.value
+                    try:
+                        run(left, right, 8)
+                    except AttributeError as error:
+                        tb = error.__traceback__
+                        while tb.tb_next is not None:
+                            tb = tb.tb_next
+                        self.assertIs(tb.tb_frame.f_code, type(left).method.__code__)
+                    else:
+                        self.fail("missing attribute did not raise")
+
+    @requires_call_regions
+    def test_attribute_call_comparisons(self):
+        for slots in (False, True):
+            for symbol, operation in (("<", operator.lt), ("<=", operator.le),
+                                       ("==", operator.eq), ("!=", operator.ne),
+                                       (">", operator.gt), (">=", operator.ge)):
+                with self.subTest(slots=slots, symbol=symbol):
+                    run, ex, left, right = self.warm_attribute_call(
+                        f"self.value {symbol} other.value", slots)
+                    for a, b in ((-31, 17), (17, 17), (31, -17),
+                                 (True, False), (2**100, 2**100 + 1)):
+                        left.value, right.value = a, b
+                        self.assertIs(run(left, right, 8), operation(a, b))
+
+    @requires_call_regions
+    def test_attribute_call_descriptor_and_dispatch(self):
+        run, ex, left, right = self.warm_attribute_call("self.value", False)
+        calls = []
+        def getter(owner):
+            self.assertIs(sys._getframe(1).f_code, type(left).method.__code__)
+            calls.append(owner)
+            return "descriptor"
+        type(left).value = property(getter)
+        self.assertEqual(run(left, right, 8), "descriptor")
+        self.assertEqual(calls, [left] * 8)
+
+        run, ex, left, right = self.warm_attribute_call("self.value < other.value", True)
+        marker = object()
+        class Number(int):
+            def __lt__(self, other):
+                calls.append(other)
+                return marker
+        calls.clear()
+        left.value = Number(17)
+        before = ex.get_region_stats()["call_guard_exits"]
+        self.assertIs(run(left, right, 8), marker)
+        self.assertEqual(calls, [right.value] * 8)
+        self.assertGreater(ex.get_region_stats()["call_guard_exits"], before)
+
+    @requires_call_regions
+    def test_attribute_call_owned_receiver(self):
+        self.enterContext(mock.patch.dict(os.environ, {"PYTHON_TIER2_CALL_REGIONS": "1"}))
+        events = []
+        class Payload:
+            pass
+        class Holder:
+            __slots__ = ("value",)
+            def __init__(self):
+                self.value = Payload()
+            def method(self):
+                return self.value
+            def __del__(self):
+                events.append(sys.getrefcount(self.value))
+        def run(n):
+            result = None
+            for _ in range(n):
+                result = Holder().method()
+            return result
+        run(TIER2_THRESHOLD)
+        ex = self.executor(run, "_CALL_PY_ATTRIBUTE")
+        events.clear()
+        before = ex.get_region_stats()["call_attr_entries"]
+        result = run(2)
+        self.assertIsInstance(result, Payload)
+        self.assertEqual(events, [3, 3])
+        self.assertGreater(ex.get_region_stats()["call_attr_entries"], before)
+
+    @requires_call_regions
+    def test_attribute_call_classmethod(self):
+        self.enterContext(mock.patch.dict(os.environ, {"PYTHON_TIER2_CALL_REGIONS": "1"}))
+        class Left:
+            __slots__ = ("value",)
+        class Right:
+            pass
+        class Compare:
+            @classmethod
+            def method(cls, left, right):
+                return left.value < right.value
+        def run(left, right, n):
+            result = None
+            for _ in range(n):
+                result = Compare.method(left, right)
+            return result
+        left, right = Left(), Right()
+        left.value, right.value = -17, 31
+        run(left, right, TIER2_THRESHOLD)
+        ex = self.executor(run, "_CALL_PY_ATTRIBUTE")
+        before = ex.get_region_stats()["call_attr_entries"]
+        self.assertIs(run(left, right, 8), True)
+        self.assertGreater(ex.get_region_stats()["call_attr_entries"], before)
+
     def test_enumerate_list_and_fallbacks(self):
         def consume(iterator):
             out = []
