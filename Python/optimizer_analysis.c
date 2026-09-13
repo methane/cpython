@@ -874,6 +874,7 @@ _Py_uop_analyze_and_optimize(
 {
     OPT_STAT_INC(optimizer_attempts);
 
+    lower_bounded_int_regions(buffer, length);
     lower_int_regions(buffer, length);
     lower_len_regions(buffer, length);
     length = optimize_uops(

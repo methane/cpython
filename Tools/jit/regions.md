@@ -25,6 +25,39 @@ There is no runtime operation-selection loop. Matching is bounded to 32 uops
 and rejects calls, stores, frame changes, and periodic checks. If an experimental
 whole-range mode is also requested, range traces are reserved for that pass.
 
+`PYTHON_TIER2_BOUNDED_INT_REGIONS=1` additionally enables expression trees with
+three to eight operations: add/subtract/multiply and floor division by a known
+nonzero integer. Leaves are local reads and `LOAD_SMALL_INT` constants. An
+entry guard admits exact int inputs in `[-(2**28-1), 2**28-1]`. Interval analysis
+proves that every intermediate fits the existing signed 62-bit tagged integer
+representation. The native values use the ordinary operand stack and register
+cache; arithmetic uses a small replicated stencil family. No runtime IR
+interpreter is added. Scanning stops at 128 uops, four additional locals, or
+four native stack values. Unsupported operations and unprovable intervals
+retain ordinary execution.
+If the first result is still on top and the same two locals are used for the
+same operation again, the region duplicates that native value. This common
+subexpression rule applies to addition, subtraction, and multiplication.
+
+The first two references must be borrowed or immortal. Further inputs remain
+in unchanged locals; repeated checks are removed only when adjacent local
+loads identify the entry operands. Guard failure preserves the original
+operand stack. There are no exits, allocations, frame transitions, or Python
+callbacks while native intermediates are live. The final boxing operation
+consumes all tagged values before it can allocate or raise. Its allocation
+error is attributed to the first original arithmetic operation.
+
+An immediate true-division consumer can use the integer result directly when
+its numerator is an exact borrowed or immortal float. That numerator is also
+guarded before entering the region. Integers up to 53 bits convert exactly;
+larger values use `PyLong_AsDouble` to retain Python's rounding. Division by
+zero and float allocation errors retain the original division's instruction
+location. The common case creates a float without an intermediate PyLong.
+The new `bounded_entries`, `bounded_guard_exits`, `bounded_boxes`, and
+`bounded_divisions` counters distinguish this path from checked-i64 regions.
+As with `int_boxes`, `bounded_boxes` counts representations, including cached
+ints, rather than heap allocations.
+
 The builtin group fuses `len(value)` with an immediate comparison, addition, or
 subtraction using another local. It accepts exact str, bytes, and tuple operands
 with borrowed or immortal references. An owned receiver can run finalizers
@@ -53,6 +86,9 @@ counts boxing operations, including small-int cache hits, not heap allocations.
 Debug builds support `PYTHON_TIER2_REGION_FAIL_ALLOC=int|len|float` to exercise
 the fused allocation's error edge and in-frame handlers. The probe is absent
 from release execution. It is intended only for private tests.
+The bounded path also accepts `bounded`, `bounded_float`, and
+`bounded_conversion` for final integer, final float, and large-integer
+conversion allocation failures respectively.
 
 ```sh
 build-tier2-debug/python -m test test_capi.test_opt_regions -v

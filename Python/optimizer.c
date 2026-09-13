@@ -605,7 +605,11 @@ get_region_stats(PyObject *self, PyObject *Py_UNUSED(ignored))
 {
     _PyExecutorObject *executor = _PyExecutorObject_CAST(self);
     return Py_BuildValue(
-        "{s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K}",
+        "{s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K}",
+        "bounded_entries", executor->region_bounded_entries,
+        "bounded_guard_exits", executor->region_bounded_guard_exits,
+        "bounded_boxes", executor->region_bounded_boxes,
+        "bounded_divisions", executor->region_bounded_divisions,
         "int_entries", executor->region_int_entries,
         "int_guard_exits", executor->region_int_guard_exits,
         "int_overflow_exits", executor->region_int_overflow_exits,
@@ -1609,6 +1613,10 @@ allocate_executor(int exit_count, int length)
     res->tier3_native_overflow_exits = 0;
     res->tier3_native_materialization_exits = 0;
     res->tier3_resident_entries = 0;
+    res->region_bounded_entries = 0;
+    res->region_bounded_guard_exits = 0;
+    res->region_bounded_boxes = 0;
+    res->region_bounded_divisions = 0;
     res->region_int_entries = 0;
     res->region_int_guard_exits = 0;
     res->region_int_overflow_exits = 0;

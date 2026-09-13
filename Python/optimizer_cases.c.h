@@ -812,6 +812,94 @@
             break;
         }
 
+        case _INT_REGION_START: {
+            JitOptRef a;
+            JitOptRef b;
+            PyObject *locals = (PyObject *)this_instr->operand0;
+            (void)locals;
+            a = sym_new_unknown(ctx);
+            b = sym_new_unknown(ctx);
+            stack_pointer[-2] = a;
+            stack_pointer[-1] = b;
+            break;
+        }
+
+        case _INT_REGION_LOCAL: {
+            JitOptRef value;
+            value = sym_new_unknown(ctx);
+            CHECK_STACK_BOUNDS(1);
+            stack_pointer[0] = value;
+            stack_pointer += 1;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            break;
+        }
+
+        case _INT_REGION_CONST: {
+            JitOptRef value;
+            value = sym_new_unknown(ctx);
+            CHECK_STACK_BOUNDS(1);
+            stack_pointer[0] = value;
+            stack_pointer += 1;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            break;
+        }
+
+        case _INT_REGION_DUP: {
+            JitOptRef value;
+            JitOptRef copy;
+            value = stack_pointer[-1];
+            copy = value;
+            CHECK_STACK_BOUNDS(1);
+            stack_pointer[0] = copy;
+            stack_pointer += 1;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            break;
+        }
+
+        case _INT_REGION_BINARY: {
+            JitOptRef value;
+            value = sym_new_unknown(ctx);
+            CHECK_STACK_BOUNDS(-1);
+            stack_pointer[-2] = value;
+            stack_pointer += -1;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            break;
+        }
+
+        case _INT_REGION_RSHIFT: {
+            JitOptRef value;
+            value = sym_new_unknown(ctx);
+            CHECK_STACK_BOUNDS(-1);
+            stack_pointer[-2] = value;
+            stack_pointer += -1;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            break;
+        }
+
+        case _INT_REGION_BOX: {
+            JitOptRef res;
+            res = PyJitRef_MakeUnique(sym_new_type(ctx, &PyLong_Type));
+            stack_pointer[-1] = res;
+            break;
+        }
+
+        case _INT_REGION_GUARD_FLOAT: {
+            JitOptRef numerator;
+            numerator = stack_pointer[-3];
+            sym_set_type(numerator, &PyFloat_Type);
+            break;
+        }
+
+        case _INT_REGION_DIVIDE: {
+            JitOptRef res;
+            res = PyJitRef_MakeUnique(sym_new_type(ctx, &PyFloat_Type));
+            CHECK_STACK_BOUNDS(-1);
+            stack_pointer[-2] = res;
+            stack_pointer += -1;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            break;
+        }
+
         case _INT_REGION: {
             JitOptRef right;
             JitOptRef left;

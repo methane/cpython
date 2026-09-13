@@ -714,6 +714,137 @@ dummy_func(
         macro(BINARY_OP_SUBTRACT_INT) =
             _GUARD_TOS_INT + _GUARD_NOS_INT + unused/5 + _BINARY_OP_SUBTRACT_INT + _POP_TOP_INT + _POP_TOP_INT;
 
+        /* A bounded region has no exits or escaping operations after START
+         * until BOX has consumed its sole native live-out. Tagged integers
+         * use the ordinary stack/cache slots, never object references. */
+        replicate(5) tier2 op(_INT_REGION_START, (left, right, locals/4 -- a, b)) {
+            current_executor->region_bounded_entries++;
+            intptr_t av, bv;
+            bool valid = _PyRegion_BoundedInput(left, &av) &&
+                         _PyRegion_BoundedInput(right, &bv);
+            PyObject *left_o = PyStackRef_AsPyObjectBorrow(left);
+            PyObject *right_o = PyStackRef_AsPyObjectBorrow(right);
+            valid = valid &&
+                    (!PyStackRef_RefcountOnObject(left) || _Py_IsImmortal(left_o)) &&
+                    (!PyStackRef_RefcountOnObject(right) || _Py_IsImmortal(right_o));
+            uint64_t config = (uint64_t)(uintptr_t)locals;
+            for (int i = 0; valid && i < oparg; i++) {
+                int local = (config >> (16 * i)) & 0xffff;
+                intptr_t unused;
+                valid = _PyRegion_BoundedInput(GETLOCAL(local), &unused);
+            }
+            if (!valid) {
+                current_executor->region_bounded_guard_exits++;
+                EXIT_IF(true);
+            }
+            a = PyStackRef_TagInt(av);
+            b = PyStackRef_TagInt(bv);
+            INPUTS_DEAD();
+        }
+
+        tier2 op(_INT_REGION_LOCAL, (-- value)) {
+            PyLongObject *obj = (PyLongObject *)PyStackRef_AsPyObjectBorrow(GETLOCAL(oparg));
+            assert(PyLong_CheckExact(obj) && _PyLong_IsCompact(obj));
+            value = PyStackRef_TagInt(_PyLong_CompactValue(obj));
+        }
+
+        tier2 op(_INT_REGION_CONST, (-- value)) {
+            value = PyStackRef_TagInt(oparg);
+        }
+
+        tier2 op(_INT_REGION_DUP, (value -- value, copy)) {
+            assert(PyStackRef_IsTaggedInt(value));
+            copy = value;
+        }
+
+        replicate(4) tier2 op(_INT_REGION_BINARY, (left, right -- value)) {
+            intptr_t a = PyStackRef_UntagInt(left);
+            intptr_t b = PyStackRef_UntagInt(right);
+            intptr_t result;
+            if (oparg == 0) {
+                result = a + b;
+            }
+            else if (oparg == 1) {
+                result = a - b;
+            }
+            else if (oparg == 2) {
+                result = a * b;
+            }
+            else {
+                assert(oparg == 3 && b != 0);
+                result = a / b - ((a % b != 0) && ((a < 0) != (b < 0)));
+            }
+            value = PyStackRef_TagInt(result);
+            INPUTS_DEAD();
+        }
+
+        tier2 op(_INT_REGION_RSHIFT, (left, right -- value)) {
+            (void)right;
+            intptr_t a = PyStackRef_UntagInt(left);
+            value = PyStackRef_TagInt(Py_ARITHMETIC_RIGHT_SHIFT(intptr_t, a, oparg));
+            INPUTS_DEAD();
+        }
+
+        tier2 op(_INT_REGION_BOX, (value -- res)) {
+            intptr_t result = PyStackRef_UntagInt(value);
+            INPUTS_DEAD();
+            PyObject *obj = _PyRegion_AllocationFails("bounded")
+                            ? NULL : PyLong_FromSsize_t(result);
+            if (obj == NULL) {
+                current_executor->region_allocation_errors++;
+                ERROR_NO_POP();
+            }
+            current_executor->region_bounded_boxes++;
+            res = PyStackRef_FromPyObjectSteal(obj);
+        }
+
+        tier2 op(_INT_REGION_GUARD_FLOAT, (numerator, left, right -- numerator, left, right)) {
+            PyObject *obj = PyStackRef_AsPyObjectBorrow(numerator);
+            if (!PyFloat_CheckExact(obj) ||
+                (PyStackRef_RefcountOnObject(numerator) && !_Py_IsImmortal(obj))) {
+                current_executor->region_bounded_guard_exits++;
+                EXIT_IF(true);
+            }
+        }
+
+        tier2 op(_INT_REGION_DIVIDE, (numerator, value -- res)) {
+            double dividend = PyFloat_AS_DOUBLE(PyStackRef_AsPyObjectBorrow(numerator));
+            intptr_t integer = PyStackRef_UntagInt(value);
+            INPUTS_DEAD();
+            if (integer == 0) {
+                PyErr_SetString(PyExc_ZeroDivisionError, "division by zero");
+                ERROR_NO_POP();
+            }
+            double divisor;
+            if (integer >= -(INT64_C(1) << 53) && integer <= (INT64_C(1) << 53)) {
+                divisor = (double)integer;
+            }
+            else {
+                /* Reuse Python's round-to-nearest-even conversion for large
+                 * integers, including under a nondefault hardware rounding
+                 * mode. The common, exactly representable case needs no box. */
+                PyObject *obj = _PyRegion_AllocationFails("bounded_conversion")
+                                ? NULL : PyLong_FromSsize_t(integer);
+                if (obj == NULL) {
+                    current_executor->region_allocation_errors++;
+                    ERROR_NO_POP();
+                }
+                current_executor->region_bounded_boxes++;
+                divisor = PyLong_AsDouble(obj);
+                Py_DECREF(obj);
+                /* A tagged integer cannot overflow binary64. */
+                assert(!PyErr_Occurred());
+            }
+            PyObject *obj = _PyRegion_AllocationFails("bounded_float")
+                            ? NULL : PyFloat_FromDouble(dividend / divisor);
+            if (obj == NULL) {
+                current_executor->region_allocation_errors++;
+                ERROR_NO_POP();
+            }
+            current_executor->region_bounded_divisions++;
+            res = PyStackRef_FromPyObjectSteal(obj);
+        }
+
         /* The entry stack belongs to the first Python operation. Nothing is
          * consumed until every type/range/overflow check has succeeded. */
         replicate(9) tier2 op(_INT_REGION, (left, right, config/4 -- res, l, r)) {

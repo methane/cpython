@@ -666,6 +666,8 @@ NON_ESCAPING_FUNCTIONS = (
     "_PyList_AppendTakeRef",
     "_PyList_ITEMS",
     "_PyLong_CompactValue",
+    "_PyRegion_BoundedInput",
+    "Py_ARITHMETIC_RIGHT_SHIFT",
     "_PyLong_DigitCount",
     "_PyLong_IsCompact",
     "_PyLong_IsNegative",

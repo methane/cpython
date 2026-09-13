@@ -34,6 +34,9 @@ extern "C" {
 #define OPTIMIZER_EFFECTIVENESS    2
 #define MAX_TARGET_LENGTH          (FITNESS_INITIAL / OPTIMIZER_EFFECTIVENESS)
 
+/* Shared by bounded-region interval analysis and its runtime entry guards. */
+#define _PY_INT_REGION_INPUT_MAX ((INT64_C(1) << 28) - 1)
+
 /* Exit quality thresholds: trace stops when fitness < exit_quality.
  * Higher = trace is more willing to stop here. */
 #define EXIT_QUALITY_CLOSE_LOOP      (FITNESS_INITIAL - AVG_SLOTS_PER_INSTRUCTION*4)
@@ -216,6 +219,10 @@ typedef struct _PyExecutorObject {
     uint64_t tier3_resident_normal_materializations;
     uint64_t tier3_resident_deopt_materializations;
     /* Opt-in straight-line region diagnostics, local to this executor. */
+    uint64_t region_bounded_entries;
+    uint64_t region_bounded_guard_exits;
+    uint64_t region_bounded_boxes;
+    uint64_t region_bounded_divisions;
     uint64_t region_int_entries;
     uint64_t region_int_guard_exits;
     uint64_t region_int_overflow_exits;

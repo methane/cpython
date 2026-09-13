@@ -73,6 +73,224 @@ class TestRegions(unittest.TestCase):
         ex = self.executor(func, "_INT_REGION_COMPARE" if compare else "_INT_REGION")
         return func, ex
 
+    def warm_bounded(self, expression, limit=1000):
+        self.enterContext(mock.patch.dict(
+            os.environ, {"PYTHON_TIER2_BOUNDED_INT_REGIONS": "1"}))
+        func = arithmetic(expression)
+        func(31, 17, 9, limit, TIER2_THRESHOLD)
+        return func, self.executor(func, "_INT_REGION_START")
+
+    def test_bounded_expression_trees(self):
+        expressions = [
+            ("(a + b) * (c + 1)",
+             lambda a, b, c: operator.mul(operator.add(a, b), operator.add(c, 1))),
+            ("(a - b) * (c + 1) + a",
+             lambda a, b, c: operator.add(operator.mul(operator.sub(a, b),
+                                                      operator.add(c, 1)), a)),
+            ("(a + b) * (a + b + 1) // 2 + a + 1",
+             lambda a, b, c: operator.add(operator.add(operator.floordiv(
+                 operator.mul(operator.add(a, b), operator.add(operator.add(a, b), 1)),
+                 2), a), 1)),
+            ("((a + b) * (c + 1)) // 3",
+             lambda a, b, c: operator.floordiv(
+                 operator.mul(operator.add(a, b), operator.add(c, 1)), 3)),
+            ("(a - b) * (a - b + 1)",
+             lambda a, b, c: operator.mul(operator.sub(a, b),
+                                          operator.add(operator.sub(a, b), 1))),
+            ("(a * b) + (a * b + 1)",
+             lambda a, b, c: operator.add(operator.mul(a, b),
+                                          operator.add(operator.mul(a, b), 1))),
+        ]
+        rng = random.Random(271828)
+        bound = 2**28 - 1
+        cases = [(a, b, c) for a in (-bound, -1, 0, 1, bound)
+                 for b in (-bound, -1, 0, 1, bound)
+                 for c in (-bound, 0, bound)]
+        cases += [tuple(rng.randrange(-bound, bound + 1) for _ in range(3))
+                  for _ in range(100)]
+        for expression, oracle in expressions:
+            with self.subTest(expression=expression):
+                func, ex = self.warm_bounded(expression)
+                if expression.startswith(("(a - b) * (a - b", "(a * b) + (a * b")):
+                    self.executor(func, "_INT_REGION_DUP")
+                for a, b, c in cases:
+                    before = ex.get_region_stats()
+                    value = self.executed(ex, "bounded_entries", func,
+                                          a, b, c, 0, 8)
+                    self.assertEqual(value, oracle(a, b, c))
+                    after = ex.get_region_stats()
+                    self.assertEqual(after["bounded_boxes"] - before["bounded_boxes"],
+                                     after["bounded_entries"] - before["bounded_entries"])
+
+    def test_bounded_guards_and_callbacks(self):
+        events = []
+
+        class Number(int):
+            def __add__(self, other):
+                events.append(("add", int(self), other))
+                return int(self) + other
+
+        for args in [(2**28, 1, 2), (-2**28, 1, 2), (1, 2**50, 3),
+                     (1, 2, 2**50), (True, 2, 3), (1, 2, True),
+                     (Number(11), 2, 3), (1, 2, Number(11))]:
+            with self.subTest(args=args):
+                func, ex = self.warm_bounded("(a + b) * (c + 1)")
+                events.clear()
+                actual = self.executed(ex, "bounded_guard_exits", func,
+                                       *args, 0, 8)
+                recorded = events.copy()
+                events.clear()
+                a, b, c = args
+                expected = (a + b) * (c + 1)
+                self.assertEqual(actual, expected)
+                self.assertEqual(recorded, events * 8)
+                self.assertEqual(func(31, 17, 9, 0, 32), 480)
+
+    def test_bounded_four_additional_locals(self):
+        self.enterContext(mock.patch.dict(
+            os.environ, {"PYTHON_TIER2_BOUNDED_INT_REGIONS": "1"}))
+
+        def run(f, d, b, e, c, a, n):
+            for _ in range(n):
+                result = (a + b) * (c + d) + (e + f)
+            return result
+
+        support.reset_code(run)
+        self.addCleanup(support.reset_code, run)
+        self.assertEqual(run(17, 11, 5, 13, 7, 3, TIER2_THRESHOLD), 174)
+        ex = self.executor(run, "_INT_REGION_START_4")
+        self.assertEqual(self.executed(ex, "bounded_entries", run,
+                                       17, 11, 5, 13, 7, 3, 8), 174)
+        self.assertEqual(self.executed(ex, "bounded_guard_exits", run,
+                                       2**50, 11, 5, 13, 7, 3, 8), 2**50 + 157)
+
+    def test_bounded_float_division(self):
+        func, ex = self.warm_bounded("limit / ((a + b) * (c + 1))", limit=1.0)
+        self.executor(func, "_INT_REGION_DIVIDE")
+        cases = [(31, 17, 9), (-31, 17, 9), (31, 17, -9),
+                 (2**27 + 1, 0, 2**27), (2**27 + 1, 2, 2**27),
+                 (-2**27 - 1, 0, 2**27)]
+        for a, b, c in cases:
+            denominator = operator.mul(operator.add(a, b), operator.add(c, 1))
+            for numerator in (1.0, -1.0, 0.0, -0.0, 1e308, 5e-324,
+                              math.inf, -math.inf, math.nan, -math.nan):
+                expected = operator.truediv(numerator, denominator)
+                actual = self.executed(ex, "bounded_entries", func,
+                                       a, b, c, numerator, 8)
+                self.assertEqual(struct.pack("d", actual), struct.pack("d", expected))
+        before = ex.get_region_stats()
+        self.assertEqual(self.executed(ex, "bounded_divisions", func,
+                                       31, 17, 9, 1.0, 8), 1.0 / 480)
+        self.assertEqual(before["bounded_boxes"], ex.get_region_stats()["bounded_boxes"])
+        with self.assertRaisesRegex(ZeroDivisionError, "division by zero"):
+            func(1, -1, 9, 1.0, 8)
+        self.assertEqual(func(31, 17, 9, 1.0, 8), 1.0 / 480)
+
+        def zero(n, offset):
+            for index in range(n):
+                result = 1.0 / ((index + offset) * (index + 1))
+            return result
+
+        support.reset_code(zero)
+        self.addCleanup(support.reset_code, zero)
+        zero(TIER2_THRESHOLD, 1)
+        ex = self.executor(zero, "_INT_REGION_DIVIDE")
+        before = ex.get_region_stats()
+        # First iteration succeeds in tier 1; the second raises in the JIT.
+        with self.assertRaisesRegex(ZeroDivisionError, "division by zero"):
+            zero(8, -1)
+        after = ex.get_region_stats()
+        self.assertGreater(after["bounded_entries"], before["bounded_entries"])
+        self.assertEqual(after["bounded_guard_exits"], before["bounded_guard_exits"])
+
+    def test_bounded_float_numerator_fallback(self):
+        events = []
+
+        class Number(float):
+            def __truediv__(self, other):
+                events.append(other)
+                return ("division", other)
+
+        for numerator in (1, True, Number(1.0)):
+            func, ex = self.warm_bounded("limit / ((a + b) * (c + 1))", limit=1.0)
+            events.clear()
+            actual = self.executed(ex, "bounded_guard_exits", func,
+                                   31, 17, 9, numerator, 8)
+            self.assertEqual(actual, operator.truediv(numerator, 480))
+            if isinstance(numerator, Number):
+                self.assertEqual(events, [480] * 9)
+        func, ex = self.warm_bounded("(limit + 0.5) / ((a + b) * (c + 1))", limit=1.0)
+        self.assertEqual(self.executed(ex, "bounded_guard_exits", func,
+                                       31, 17, 9, 1.0, 8), 1.5 / 480)
+
+    def test_bounded_zero_division_and_unsafe_interval(self):
+        # The unsafe division is after a materialized region. It must retain
+        # its normal error edge, with no tagged values exposed to unwinding.
+        self.enterContext(mock.patch.dict(
+            os.environ, {"PYTHON_TIER2_BOUNDED_INT_REGIONS": "1"}))
+        func = arithmetic("((a + b) * (c + 1)) // limit")
+        func(31, 17, 9, 3, TIER2_THRESHOLD)
+        ex = self.executor(func, "_INT_REGION_START")
+        with self.assertRaisesRegex(ZeroDivisionError, "division by zero"):
+            func(31, 17, 9, 0, 8)
+        self.assertEqual(self.executed(ex, "bounded_entries", func,
+                                       31, 17, 9, 3, 8), 160)
+        unsafe = arithmetic("a * b * c + 1")
+        unsafe(31, 17, 9, 0, TIER2_THRESHOLD)
+        self.assertFalse(any(name.startswith("_INT_REGION_START")
+                             for ex in get_all_executors(unsafe)
+                             for name in get_opnames(ex)))
+        self.assertEqual(unsafe(2**28 - 1, 2**28 - 1, 2**28 - 1, 0, 8),
+                         (2**28 - 1)**3 + 1)
+
+    @unittest.skipUnless(support.Py_DEBUG, "debug allocation probe")
+    def test_bounded_allocation_error_in_frame(self):
+        self.enterContext(mock.patch.dict(
+            os.environ, {"PYTHON_TIER2_BOUNDED_INT_REGIONS": "1"}))
+
+        def run(a, b, c, n):
+            try:
+                for _ in range(n):
+                    result = (a + b) * (c + 1)
+                return result
+            except MemoryError:
+                return (a, b, c)
+
+        support.reset_code(run)
+        self.addCleanup(support.reset_code, run)
+        self.assertEqual(run(31, 17, 9, TIER2_THRESHOLD), 480)
+        ex = self.executor(run, "_INT_REGION_START")
+        with mock.patch.dict(os.environ, {"PYTHON_TIER2_REGION_FAIL_ALLOC": "bounded"}):
+            self.assertEqual(self.executed(ex, "allocation_errors", run,
+                                           31, 17, 9, 8), (31, 17, 9))
+        self.assertEqual(run(31, 17, 9, 8), 480)
+
+    @unittest.skipUnless(support.Py_DEBUG, "debug allocation probe")
+    def test_bounded_float_allocation_error_in_frame(self):
+        self.enterContext(mock.patch.dict(
+            os.environ, {"PYTHON_TIER2_BOUNDED_INT_REGIONS": "1"}))
+
+        def run(a, b, c, n):
+            try:
+                for _ in range(n):
+                    result = 1.0 / ((a + b) * (c + 1))
+                return result
+            except MemoryError:
+                return (a, b, c)
+
+        support.reset_code(run)
+        self.addCleanup(support.reset_code, run)
+        self.assertEqual(run(31, 17, 9, TIER2_THRESHOLD), 1.0 / 480)
+        ex = self.executor(run, "_INT_REGION_DIVIDE")
+        with mock.patch.dict(os.environ, {"PYTHON_TIER2_REGION_FAIL_ALLOC": "bounded_float"}):
+            self.assertEqual(self.executed(ex, "allocation_errors", run,
+                                           31, 17, 9, 8), (31, 17, 9))
+        with mock.patch.dict(os.environ, {"PYTHON_TIER2_REGION_FAIL_ALLOC": "bounded_conversion"}):
+            self.assertEqual(self.executed(ex, "allocation_errors", run,
+                                           2**27 + 1, 0, 2**27, 8),
+                             (2**27 + 1, 0, 2**27))
+        self.assertEqual(run(31, 17, 9, 8), 1.0 / 480)
+
     def test_int_expressions_and_comparisons(self):
         rng = random.Random(481516)
         pairs = [("*", operator.mul), ("+", operator.add), ("-", operator.sub)]

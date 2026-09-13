@@ -644,6 +644,21 @@ _PyRegion_AllocationFails(const char *kind)
 /* These conversions never invoke Python or set an exception: exact ints are
  * required, and AsLongLongAndOverflow reports range failures out of band. */
 static inline bool
+_PyRegion_BoundedInput(_PyStackRef ref, intptr_t *value)
+{
+    if (PyStackRef_IsNull(ref)) {
+        return false;
+    }
+    PyObject *obj = PyStackRef_AsPyObjectBorrow(ref);
+    if (!PyLong_CheckExact(obj) || !_PyLong_IsCompact((PyLongObject *)obj)) {
+        return false;
+    }
+    *value = _PyLong_CompactValue((PyLongObject *)obj);
+    return *value >= -_PY_INT_REGION_INPUT_MAX &&
+           *value <= _PY_INT_REGION_INPUT_MAX;
+}
+
+static inline bool
 _PyRegion_AsInt64(_PyStackRef ref, int64_t *value)
 {
     if (PyStackRef_IsNull(ref)) {

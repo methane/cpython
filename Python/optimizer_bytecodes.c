@@ -2435,6 +2435,44 @@ dummy_func(void) {
         }
     }
 
+    op(_INT_REGION_START, (left, right, locals/4 -- a, b)) {
+        (void)locals;
+        a = sym_new_unknown(ctx);
+        b = sym_new_unknown(ctx);
+    }
+
+    op(_INT_REGION_LOCAL, (-- value)) {
+        value = sym_new_unknown(ctx);
+    }
+
+    op(_INT_REGION_CONST, (-- value)) {
+        value = sym_new_unknown(ctx);
+    }
+
+    op(_INT_REGION_DUP, (value -- value, copy)) {
+        copy = value;
+    }
+
+    op(_INT_REGION_BINARY, (left, right -- value)) {
+        value = sym_new_unknown(ctx);
+    }
+
+    op(_INT_REGION_RSHIFT, (left, right -- value)) {
+        value = sym_new_unknown(ctx);
+    }
+
+    op(_INT_REGION_BOX, (value -- res)) {
+        res = PyJitRef_MakeUnique(sym_new_type(ctx, &PyLong_Type));
+    }
+
+    op(_INT_REGION_GUARD_FLOAT, (numerator, left, right -- numerator, left, right)) {
+        sym_set_type(numerator, &PyFloat_Type);
+    }
+
+    op(_INT_REGION_DIVIDE, (numerator, value -- res)) {
+        res = PyJitRef_MakeUnique(sym_new_type(ctx, &PyFloat_Type));
+    }
+
     op(_INT_REGION, (left, right, config/4 -- res, l, r)) {
         res = sym_new_type(ctx, &PyLong_Type);
         l = left;
