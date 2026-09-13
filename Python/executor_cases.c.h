@@ -5953,6 +5953,132 @@
             break;
         }
 
+        case _BINARY_OP_MULTIPLY_ADD_FLOAT_SHARED_r31: {
+            CHECK_CURRENT_CACHED_VALUES(3);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            _PyStackRef right;
+            _PyStackRef left;
+            _PyStackRef acc;
+            _PyStackRef res;
+            _PyStackRef _stack_item_0 = _tos_cache0;
+            _PyStackRef _stack_item_1 = _tos_cache1;
+            _PyStackRef _stack_item_2 = _tos_cache2;
+            right = _stack_item_2;
+            left = _stack_item_1;
+            acc = _stack_item_0;
+            PyObject *acc_o = PyStackRef_AsPyObjectBorrow(acc);
+            PyObject *left_o = PyStackRef_AsPyObjectBorrow(left);
+            PyObject *right_o = PyStackRef_AsPyObjectBorrow(right);
+            if (!PyFloat_CheckExact(acc_o)) {
+                UOP_STAT_INC(uopcode, miss);
+                _tos_cache2 = right;
+                _tos_cache1 = left;
+                _tos_cache0 = acc;
+                SET_CURRENT_CACHED_VALUES(3);
+                JUMP_TO_JUMP_TARGET();
+            }
+            if (!PyFloat_CheckExact(left_o)) {
+                UOP_STAT_INC(uopcode, miss);
+                _tos_cache2 = right;
+                _tos_cache1 = left;
+                _tos_cache0 = acc;
+                SET_CURRENT_CACHED_VALUES(3);
+                JUMP_TO_JUMP_TARGET();
+            }
+            if (!PyFloat_CheckExact(right_o)) {
+                UOP_STAT_INC(uopcode, miss);
+                _tos_cache2 = right;
+                _tos_cache1 = left;
+                _tos_cache0 = acc;
+                SET_CURRENT_CACHED_VALUES(3);
+                JUMP_TO_JUMP_TARGET();
+            }
+            double value = _PyFloat_MultiplyThenUpdate(
+                ((PyFloatObject *)acc_o)->ob_fval,
+                ((PyFloatObject *)left_o)->ob_fval,
+                ((PyFloatObject *)right_o)->ob_fval, false);
+            PyObject *result = PyFloat_FromDouble(value);
+            if (result == NULL) {
+                stack_pointer[0] = acc;
+                stack_pointer[1] = left;
+                stack_pointer[2] = right;
+                stack_pointer += 3;
+                ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                SET_CURRENT_CACHED_VALUES(0);
+                JUMP_TO_ERROR();
+            }
+            res = PyStackRef_FromPyObjectSteal(result);
+            _tos_cache0 = res;
+            _tos_cache1 = PyStackRef_ZERO_BITS;
+            _tos_cache2 = PyStackRef_ZERO_BITS;
+            SET_CURRENT_CACHED_VALUES(1);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            break;
+        }
+
+        case _BINARY_OP_MULTIPLY_SUBTRACT_FLOAT_SHARED_r31: {
+            CHECK_CURRENT_CACHED_VALUES(3);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            _PyStackRef right;
+            _PyStackRef left;
+            _PyStackRef acc;
+            _PyStackRef res;
+            _PyStackRef _stack_item_0 = _tos_cache0;
+            _PyStackRef _stack_item_1 = _tos_cache1;
+            _PyStackRef _stack_item_2 = _tos_cache2;
+            right = _stack_item_2;
+            left = _stack_item_1;
+            acc = _stack_item_0;
+            PyObject *acc_o = PyStackRef_AsPyObjectBorrow(acc);
+            PyObject *left_o = PyStackRef_AsPyObjectBorrow(left);
+            PyObject *right_o = PyStackRef_AsPyObjectBorrow(right);
+            if (!PyFloat_CheckExact(acc_o)) {
+                UOP_STAT_INC(uopcode, miss);
+                _tos_cache2 = right;
+                _tos_cache1 = left;
+                _tos_cache0 = acc;
+                SET_CURRENT_CACHED_VALUES(3);
+                JUMP_TO_JUMP_TARGET();
+            }
+            if (!PyFloat_CheckExact(left_o)) {
+                UOP_STAT_INC(uopcode, miss);
+                _tos_cache2 = right;
+                _tos_cache1 = left;
+                _tos_cache0 = acc;
+                SET_CURRENT_CACHED_VALUES(3);
+                JUMP_TO_JUMP_TARGET();
+            }
+            if (!PyFloat_CheckExact(right_o)) {
+                UOP_STAT_INC(uopcode, miss);
+                _tos_cache2 = right;
+                _tos_cache1 = left;
+                _tos_cache0 = acc;
+                SET_CURRENT_CACHED_VALUES(3);
+                JUMP_TO_JUMP_TARGET();
+            }
+            double value = _PyFloat_MultiplyThenUpdate(
+                ((PyFloatObject *)acc_o)->ob_fval,
+                ((PyFloatObject *)left_o)->ob_fval,
+                ((PyFloatObject *)right_o)->ob_fval, true);
+            PyObject *result = PyFloat_FromDouble(value);
+            if (result == NULL) {
+                stack_pointer[0] = acc;
+                stack_pointer[1] = left;
+                stack_pointer[2] = right;
+                stack_pointer += 3;
+                ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                SET_CURRENT_CACHED_VALUES(0);
+                JUMP_TO_ERROR();
+            }
+            res = PyStackRef_FromPyObjectSteal(result);
+            _tos_cache0 = res;
+            _tos_cache1 = PyStackRef_ZERO_BITS;
+            _tos_cache2 = PyStackRef_ZERO_BITS;
+            SET_CURRENT_CACHED_VALUES(1);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            break;
+        }
+
         case _BINARY_OP_ADD_FLOAT_INPLACE_RIGHT_r03: {
             CHECK_CURRENT_CACHED_VALUES(0);
             ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);

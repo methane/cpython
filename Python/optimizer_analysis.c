@@ -812,25 +812,46 @@ fuse_float_product_updates(_PyUOpInstruction *buffer, int length)
             continue;
         }
         int add = pc + 3;
-        while (add < length && buffer[add].opcode == _NOP) {
+        bool skipped_accumulator_guard = false;
+        while (add < length &&
+               (buffer[add].opcode == _NOP ||
+                buffer[add].opcode == _GUARD_NOS_FLOAT)) {
+            skipped_accumulator_guard |= buffer[add].opcode == _GUARD_NOS_FLOAT;
             add++;
         }
-        if (add + 2 >= length ||
-            (buffer[add].opcode != _BINARY_OP_ADD_FLOAT_INPLACE &&
-             buffer[add].opcode != _BINARY_OP_SUBTRACT_FLOAT_INPLACE) ||
-            buffer[add + 1].opcode != _POP_TOP_FLOAT ||
+        if (add + 2 >= length) {
+            continue;
+        }
+        int update = buffer[add].opcode;
+        bool unique_left =
+            update == _BINARY_OP_ADD_FLOAT_INPLACE ||
+            update == _BINARY_OP_SUBTRACT_FLOAT_INPLACE;
+        bool unique_right =
+            update == _BINARY_OP_ADD_FLOAT_INPLACE_RIGHT ||
+            update == _BINARY_OP_SUBTRACT_FLOAT_INPLACE_RIGHT;
+        if ((!unique_left && !unique_right) ||
+            (skipped_accumulator_guard && !unique_right) ||
+            buffer[add + 1].opcode != (unique_left ? _POP_TOP_FLOAT : _POP_TOP_NOP) ||
             buffer[add + 2].opcode != _POP_TOP_NOP) {
             continue;
         }
-        buffer[pc].opcode = buffer[add].opcode == _BINARY_OP_ADD_FLOAT_INPLACE
-            ? _BINARY_OP_MULTIPLY_ADD_FLOAT_INPLACE
-            : _BINARY_OP_MULTIPLY_SUBTRACT_FLOAT_INPLACE;
+        bool subtract =
+            update == _BINARY_OP_SUBTRACT_FLOAT_INPLACE ||
+            update == _BINARY_OP_SUBTRACT_FLOAT_INPLACE_RIGHT;
+        buffer[pc].opcode = unique_left
+            ? (subtract ? _BINARY_OP_MULTIPLY_SUBTRACT_FLOAT_INPLACE
+                        : _BINARY_OP_MULTIPLY_ADD_FLOAT_INPLACE)
+            : (subtract ? _BINARY_OP_MULTIPLY_SUBTRACT_FLOAT_SHARED
+                        : _BINARY_OP_MULTIPLY_ADD_FLOAT_SHARED);
         for (int i = pc + 1; i <= add + 2; i++) {
             assert(buffer[i].opcode == _NOP ||
                    buffer[i].opcode == _POP_TOP_NOP ||
                    buffer[i].opcode == _POP_TOP_FLOAT ||
+                   buffer[i].opcode == _GUARD_NOS_FLOAT ||
                    buffer[i].opcode == _BINARY_OP_ADD_FLOAT_INPLACE ||
-                   buffer[i].opcode == _BINARY_OP_SUBTRACT_FLOAT_INPLACE);
+                   buffer[i].opcode == _BINARY_OP_SUBTRACT_FLOAT_INPLACE ||
+                   buffer[i].opcode == _BINARY_OP_ADD_FLOAT_INPLACE_RIGHT ||
+                   buffer[i].opcode == _BINARY_OP_SUBTRACT_FLOAT_INPLACE_RIGHT);
             buffer[i].opcode = _NOP;
         }
     }

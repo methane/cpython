@@ -928,6 +928,50 @@ dummy_func(
             INPUTS_DEAD();
         }
 
+        // Fuse a borrowed accumulator update when the product is the unique
+        // right operand in the original in-place operation.  Unlike the
+        // unique-left forms above, this must allocate the final result: the
+        // accumulator may be externally aliased and must not be mutated.
+        tier2 op(_BINARY_OP_MULTIPLY_ADD_FLOAT_SHARED,
+                 (acc, left, right -- res)) {
+            PyObject *acc_o = PyStackRef_AsPyObjectBorrow(acc);
+            PyObject *left_o = PyStackRef_AsPyObjectBorrow(left);
+            PyObject *right_o = PyStackRef_AsPyObjectBorrow(right);
+            EXIT_IF(!PyFloat_CheckExact(acc_o));
+            EXIT_IF(!PyFloat_CheckExact(left_o));
+            EXIT_IF(!PyFloat_CheckExact(right_o));
+            double value = _PyFloat_MultiplyThenUpdate(
+                ((PyFloatObject *)acc_o)->ob_fval,
+                ((PyFloatObject *)left_o)->ob_fval,
+                ((PyFloatObject *)right_o)->ob_fval, false);
+            PyObject *result = PyFloat_FromDouble(value);
+            if (result == NULL) {
+                ERROR_NO_POP();
+            }
+            res = PyStackRef_FromPyObjectSteal(result);
+            INPUTS_DEAD();
+        }
+
+        tier2 op(_BINARY_OP_MULTIPLY_SUBTRACT_FLOAT_SHARED,
+                 (acc, left, right -- res)) {
+            PyObject *acc_o = PyStackRef_AsPyObjectBorrow(acc);
+            PyObject *left_o = PyStackRef_AsPyObjectBorrow(left);
+            PyObject *right_o = PyStackRef_AsPyObjectBorrow(right);
+            EXIT_IF(!PyFloat_CheckExact(acc_o));
+            EXIT_IF(!PyFloat_CheckExact(left_o));
+            EXIT_IF(!PyFloat_CheckExact(right_o));
+            double value = _PyFloat_MultiplyThenUpdate(
+                ((PyFloatObject *)acc_o)->ob_fval,
+                ((PyFloatObject *)left_o)->ob_fval,
+                ((PyFloatObject *)right_o)->ob_fval, true);
+            PyObject *result = PyFloat_FromDouble(value);
+            if (result == NULL) {
+                ERROR_NO_POP();
+            }
+            res = PyStackRef_FromPyObjectSteal(result);
+            INPUTS_DEAD();
+        }
+
         // Inplace RIGHT variants: mutate the uniquely-referenced right operand.
         tier2 op(_BINARY_OP_ADD_FLOAT_INPLACE_RIGHT, (left, right -- res, l, r)) {
             FLOAT_INPLACE_OP(left, right, right, +);

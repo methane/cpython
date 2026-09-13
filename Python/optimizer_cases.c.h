@@ -1082,6 +1082,36 @@
             break;
         }
 
+        case _BINARY_OP_MULTIPLY_SUBTRACT_FLOAT_INPLACE: {
+            JitOptRef res;
+            res = sym_new_not_null(ctx);
+            CHECK_STACK_BOUNDS(-2);
+            stack_pointer[-3] = res;
+            stack_pointer += -2;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            break;
+        }
+
+        case _BINARY_OP_MULTIPLY_ADD_FLOAT_SHARED: {
+            JitOptRef res;
+            res = sym_new_not_null(ctx);
+            CHECK_STACK_BOUNDS(-2);
+            stack_pointer[-3] = res;
+            stack_pointer += -2;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            break;
+        }
+
+        case _BINARY_OP_MULTIPLY_SUBTRACT_FLOAT_SHARED: {
+            JitOptRef res;
+            res = sym_new_not_null(ctx);
+            CHECK_STACK_BOUNDS(-2);
+            stack_pointer[-3] = res;
+            stack_pointer += -2;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            break;
+        }
+
         case _BINARY_OP_ADD_FLOAT_INPLACE_RIGHT: {
             JitOptRef res;
             JitOptRef l;

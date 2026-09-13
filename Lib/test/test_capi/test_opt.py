@@ -4173,6 +4173,45 @@ class TestUopsOptimization(unittest.TestCase):
             "_BINARY_OP_MULTIPLY_SUBTRACT_FLOAT_INPLACE", get_opnames(executor)
         )
 
+    def test_float_product_update_shared_accumulator(self):
+        def add_product(args):
+            accumulator, left, right, n = args
+            result = 0.0
+            for _ in range(n):
+                result = accumulator + left * right
+            return result
+
+        def subtract_product(args):
+            accumulator, left, right, n = args
+            result = 0.0
+            for _ in range(n):
+                result = accumulator - left * right
+            return result
+
+        with mock.patch.dict(os.environ, {"PYTHON_TIER2_FLOAT_FUSION": "1"}):
+            add_result, add_executor = self._run_with_optimizer(
+                add_product, (7.0, 3.0, 2.0, TIER2_THRESHOLD)
+            )
+            subtract_result, subtract_executor = self._run_with_optimizer(
+                subtract_product, (7.0, 3.0, 2.0, TIER2_THRESHOLD)
+            )
+
+        self.assertEqual(add_result, 13.0)
+        self.assertIn(
+            "_BINARY_OP_MULTIPLY_ADD_FLOAT_SHARED", get_opnames(add_executor)
+        )
+        self.assertEqual(subtract_result, 1.0)
+        self.assertIn(
+            "_BINARY_OP_MULTIPLY_SUBTRACT_FLOAT_SHARED",
+            get_opnames(subtract_executor),
+        )
+
+        # The accumulator is borrowed and may be externally aliased.  The
+        # shared variant must allocate a result rather than mutating it.
+        accumulator = 7.0
+        self.assertEqual(add_product((accumulator, 3.0, 2.0, 8)), 13.0)
+        self.assertEqual(accumulator, 7.0)
+
     def test_float_product_add_fusion_guard_failure(self):
         events = []
 
