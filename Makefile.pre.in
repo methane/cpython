@@ -2197,6 +2197,8 @@ Python/flowgraph.o: \
 
 Python/optimizer.o: \
 		$(srcdir)/Python/optimizer_float_range.h \
+		$(srcdir)/Python/optimizer_poly_scalar.h \
+		$(srcdir)/Python/optimizer_region_bounds.h \
 		$(srcdir)/Python/executor_cases.c.h \
 		$(srcdir)/Include/internal/pycore_opcode_metadata.h \
 		$(srcdir)/Include/internal/pycore_optimizer.h
@@ -2205,6 +2207,7 @@ Python/optimizer_analysis.o: \
 		$(srcdir)/Include/internal/pycore_opcode_metadata.h \
 		$(srcdir)/Include/internal/pycore_optimizer.h \
 		$(srcdir)/Python/optimizer_regions.h \
+		$(srcdir)/Python/optimizer_region_bounds.h \
 		$(srcdir)/Python/optimizer_cases.c.h
 
 Python/frozen.o: $(FROZEN_FILES_OUT)

@@ -2533,7 +2533,10 @@ uop_optimize(_PyInterpreterFrame *frame, PyThreadState *tstate, _PyExecutorObjec
     code_buffer->next = code_buffer->start;
 
     length = mark_tier3_range_loop(buffer, length);
-    length = mark_float_range(buffer, length);
+    /* The range header leaves the initial operand stack intact. Scalar
+     * coefficient setup must fit in this frame's existing value-stack area. */
+    int available = _tstate->jit_tracer_state->initial_state.code->co_stacksize - curr_stackentries;
+    length = mark_float_range(buffer, length, available);
     OPT_HIST(effective_trace_length(buffer, length), optimized_trace_length_hist);
     _PyUOpInstruction *output = &_tstate->jit_tracer_state->uop_array[0];
     length = stack_allocate(buffer, output, length);

@@ -625,6 +625,21 @@ _PyFloat_MultiplyThenUpdate(double accumulator, double left, double right,
     return subtract ? accumulator - product : accumulator + product;
 }
 
+/* FENV_ACCESS makes Clang emit constrained FP operations, preserving the
+ * rounding boundary after inlining without a volatile memory round trip.
+ * FP_CONTRACT OFF alone does not survive every inlining configuration. */
+static inline Py_ALWAYS_INLINE double
+_PyRegion_DivideThenAdd(double accumulator, double numerator, int64_t denominator)
+{
+#if defined(__clang__) && !defined(__FAST_MATH__)
+#pragma STDC FENV_ACCESS ON
+    double term = numerator / (double)denominator;
+#else
+    volatile double term = numerator / (double)denominator;
+#endif
+    return accumulator + term;
+}
+
 
 /* Like the resident-range reconstruction probe, this private debug-only
  * fault injection targets the actual fused allocation and its error edge. */

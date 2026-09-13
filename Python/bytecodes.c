@@ -6716,6 +6716,41 @@ dummy_func(
             current_executor->region_poly_valid = true;
         }
 
+        tier2 op(_POLY_SCALAR_CONST, (constant/4 -- value)) {
+            value = PyStackRef_TagInt((intptr_t)constant);
+        }
+
+        tier2 op(_POLY_SCALAR_RSHIFT, (value -- result)) {
+            intptr_t number = PyStackRef_UntagInt(value);
+            int shift = oparg & 63;
+            if (oparg & 64) {
+                uintptr_t mask = (UINT64_C(1) << shift) - 1;
+                current_executor->region_poly_valid = current_executor->region_poly_valid &&
+                    ((uintptr_t)number & mask) == 0;
+            }
+            result = PyStackRef_TagInt(Py_ARITHMETIC_RIGHT_SHIFT(intptr_t, number, shift));
+            INPUTS_DEAD();
+        }
+
+        tier2 op(_POLY_SCALAR_DIVIDE, (divisor/4, value -- result)) {
+            intptr_t number = PyStackRef_UntagInt(value);
+            intptr_t denominator = (intptr_t)divisor;
+            assert(denominator != 0);
+            intptr_t remainder = number % denominator;
+            if (oparg) {
+                current_executor->region_poly_valid = current_executor->region_poly_valid && remainder == 0;
+            }
+            intptr_t quotient = number / denominator -
+                ((remainder != 0) && ((number < 0) != (denominator < 0)));
+            result = PyStackRef_TagInt(quotient);
+            INPUTS_DEAD();
+        }
+
+        replicate(3) tier2 op(_POLY_STORE, (value --)) {
+            current_executor->region_poly_scratch[0][oparg] = PyStackRef_UntagInt(value);
+            INPUTS_DEAD();
+        }
+
         tier2 op(_POLY_LOCAL, (slot/4 --)) {
             intptr_t value;
             bool valid = _PyRegion_BoundedInput(GETLOCAL(oparg), &value);
@@ -6805,15 +6840,16 @@ dummy_func(
             PyFloatObject *acc = (PyFloatObject *)PyStackRef_AsPyObjectBorrow(GETLOCAL(accumulator));
             double total = acc->ob_fval;
             double dividend = PyFloat_AS_DOUBLE(numerator);
-            for (long i = 0; i < count; i++) {
+            for (long i = 1; i < count; i++) {
                 /* Separate binary64 rounding for every Python operation. */
-                volatile double term = dividend / (double)denominator;
-                total = total + term;
-                if (i + 1 < count) {
-                    denominator += delta;
-                    delta += difference;
-                }
+                total = _PyRegion_DivideThenAdd(total, dividend, denominator);
+                denominator += delta;
+                delta += difference;
             }
+            /* Peel the last term instead of conditionally updating two
+             * integer recurrences on every iteration. All updates above
+             * remain inside the proved endpoint and last-step bounds. */
+            total = _PyRegion_DivideThenAdd(total, dividend, denominator);
             acc->ob_fval = total;
             long last_index = range->start + count - 1;
             range->start += count;

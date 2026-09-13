@@ -4,6 +4,8 @@
  * The unchanged trace remains the fallback and executes the last iteration.
  */
 
+#include "optimizer_poly_scalar.h"
+
 static int
 float_range_next(_PyUOpInstruction *buffer, int pc, int length)
 {
@@ -26,7 +28,7 @@ float_range_reject(int length, int line)
 }
 
 static int
-mark_float_range(_PyUOpInstruction *buffer, int length)
+mark_float_range(_PyUOpInstruction *buffer, int length, int available)
 {
 #if defined(__SIZEOF_INT128__) && SIZEOF_VOID_P == 8 && \
     !defined(Py_GIL_DISABLED) && !defined(WITH_DTRACE) && !defined(__EMSCRIPTEN__)
@@ -243,6 +245,7 @@ mark_float_range(_PyUOpInstruction *buffer, int length)
     FR_EXPECT(_JUMP_TO_TOP);
     FR_EMIT(_FLOAT_RANGE_REDUCE, (accumulator << 8) | induction,
             (uintptr_t)numerator, 0);
+    used = simplify_poly_setup(prefix, used, available);
     bool in_setup = false;
     for (int i = 0; i < used - 1; i++) {
         if (prefix[i].opcode == _FLOAT_RANGE_GUARD) {

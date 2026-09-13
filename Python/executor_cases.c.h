@@ -27279,6 +27279,498 @@
             break;
         }
 
+        case _POLY_SCALAR_CONST_r01: {
+            CHECK_CURRENT_CACHED_VALUES(0);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            _PyStackRef value;
+            PyObject *constant = (PyObject *)CURRENT_OPERAND0_64();
+            value = PyStackRef_TagInt((intptr_t)constant);
+            _tos_cache0 = value;
+            SET_CURRENT_CACHED_VALUES(1);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            break;
+        }
+
+        case _POLY_SCALAR_CONST_r12: {
+            CHECK_CURRENT_CACHED_VALUES(1);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            _PyStackRef value;
+            _PyStackRef _stack_item_0 = _tos_cache0;
+            PyObject *constant = (PyObject *)CURRENT_OPERAND0_64();
+            value = PyStackRef_TagInt((intptr_t)constant);
+            _tos_cache1 = value;
+            _tos_cache0 = _stack_item_0;
+            SET_CURRENT_CACHED_VALUES(2);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            break;
+        }
+
+        case _POLY_SCALAR_CONST_r23: {
+            CHECK_CURRENT_CACHED_VALUES(2);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            _PyStackRef value;
+            _PyStackRef _stack_item_0 = _tos_cache0;
+            _PyStackRef _stack_item_1 = _tos_cache1;
+            PyObject *constant = (PyObject *)CURRENT_OPERAND0_64();
+            value = PyStackRef_TagInt((intptr_t)constant);
+            _tos_cache2 = value;
+            _tos_cache1 = _stack_item_1;
+            _tos_cache0 = _stack_item_0;
+            SET_CURRENT_CACHED_VALUES(3);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            break;
+        }
+
+        case _POLY_SCALAR_RSHIFT_r01: {
+            CHECK_CURRENT_CACHED_VALUES(0);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            _PyStackRef value;
+            _PyStackRef result;
+            oparg = CURRENT_OPARG();
+            value = stack_pointer[-1];
+            intptr_t number = PyStackRef_UntagInt(value);
+            int shift = oparg & 63;
+            if (oparg & 64) {
+                uintptr_t mask = (UINT64_C(1) << shift) - 1;
+                current_executor->region_poly_valid = current_executor->region_poly_valid &&
+                ((uintptr_t)number & mask) == 0;
+            }
+            result = PyStackRef_TagInt(Py_ARITHMETIC_RIGHT_SHIFT(intptr_t, number, shift));
+            _tos_cache0 = result;
+            SET_CURRENT_CACHED_VALUES(1);
+            stack_pointer += -1;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            break;
+        }
+
+        case _POLY_SCALAR_RSHIFT_r11: {
+            CHECK_CURRENT_CACHED_VALUES(1);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            _PyStackRef value;
+            _PyStackRef result;
+            _PyStackRef _stack_item_0 = _tos_cache0;
+            oparg = CURRENT_OPARG();
+            value = _stack_item_0;
+            intptr_t number = PyStackRef_UntagInt(value);
+            int shift = oparg & 63;
+            if (oparg & 64) {
+                uintptr_t mask = (UINT64_C(1) << shift) - 1;
+                current_executor->region_poly_valid = current_executor->region_poly_valid &&
+                ((uintptr_t)number & mask) == 0;
+            }
+            result = PyStackRef_TagInt(Py_ARITHMETIC_RIGHT_SHIFT(intptr_t, number, shift));
+            _tos_cache0 = result;
+            SET_CURRENT_CACHED_VALUES(1);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            break;
+        }
+
+        case _POLY_SCALAR_RSHIFT_r22: {
+            CHECK_CURRENT_CACHED_VALUES(2);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            _PyStackRef value;
+            _PyStackRef result;
+            _PyStackRef _stack_item_0 = _tos_cache0;
+            _PyStackRef _stack_item_1 = _tos_cache1;
+            oparg = CURRENT_OPARG();
+            value = _stack_item_1;
+            intptr_t number = PyStackRef_UntagInt(value);
+            int shift = oparg & 63;
+            if (oparg & 64) {
+                uintptr_t mask = (UINT64_C(1) << shift) - 1;
+                current_executor->region_poly_valid = current_executor->region_poly_valid &&
+                ((uintptr_t)number & mask) == 0;
+            }
+            result = PyStackRef_TagInt(Py_ARITHMETIC_RIGHT_SHIFT(intptr_t, number, shift));
+            _tos_cache1 = result;
+            _tos_cache0 = _stack_item_0;
+            SET_CURRENT_CACHED_VALUES(2);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            break;
+        }
+
+        case _POLY_SCALAR_RSHIFT_r33: {
+            CHECK_CURRENT_CACHED_VALUES(3);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            _PyStackRef value;
+            _PyStackRef result;
+            _PyStackRef _stack_item_0 = _tos_cache0;
+            _PyStackRef _stack_item_1 = _tos_cache1;
+            _PyStackRef _stack_item_2 = _tos_cache2;
+            oparg = CURRENT_OPARG();
+            value = _stack_item_2;
+            intptr_t number = PyStackRef_UntagInt(value);
+            int shift = oparg & 63;
+            if (oparg & 64) {
+                uintptr_t mask = (UINT64_C(1) << shift) - 1;
+                current_executor->region_poly_valid = current_executor->region_poly_valid &&
+                ((uintptr_t)number & mask) == 0;
+            }
+            result = PyStackRef_TagInt(Py_ARITHMETIC_RIGHT_SHIFT(intptr_t, number, shift));
+            _tos_cache2 = result;
+            _tos_cache1 = _stack_item_1;
+            _tos_cache0 = _stack_item_0;
+            SET_CURRENT_CACHED_VALUES(3);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            break;
+        }
+
+        case _POLY_SCALAR_DIVIDE_r01: {
+            CHECK_CURRENT_CACHED_VALUES(0);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            _PyStackRef value;
+            _PyStackRef result;
+            oparg = CURRENT_OPARG();
+            value = stack_pointer[-1];
+            PyObject *divisor = (PyObject *)CURRENT_OPERAND0_64();
+            intptr_t number = PyStackRef_UntagInt(value);
+            intptr_t denominator = (intptr_t)divisor;
+            assert(denominator != 0);
+            intptr_t remainder = number % denominator;
+            if (oparg) {
+                current_executor->region_poly_valid = current_executor->region_poly_valid && remainder == 0;
+            }
+            intptr_t quotient = number / denominator -
+            ((remainder != 0) && ((number < 0) != (denominator < 0)));
+            result = PyStackRef_TagInt(quotient);
+            _tos_cache0 = result;
+            SET_CURRENT_CACHED_VALUES(1);
+            stack_pointer += -1;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            break;
+        }
+
+        case _POLY_SCALAR_DIVIDE_r11: {
+            CHECK_CURRENT_CACHED_VALUES(1);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            _PyStackRef value;
+            _PyStackRef result;
+            _PyStackRef _stack_item_0 = _tos_cache0;
+            oparg = CURRENT_OPARG();
+            value = _stack_item_0;
+            PyObject *divisor = (PyObject *)CURRENT_OPERAND0_64();
+            intptr_t number = PyStackRef_UntagInt(value);
+            intptr_t denominator = (intptr_t)divisor;
+            assert(denominator != 0);
+            intptr_t remainder = number % denominator;
+            if (oparg) {
+                current_executor->region_poly_valid = current_executor->region_poly_valid && remainder == 0;
+            }
+            intptr_t quotient = number / denominator -
+            ((remainder != 0) && ((number < 0) != (denominator < 0)));
+            result = PyStackRef_TagInt(quotient);
+            _tos_cache0 = result;
+            SET_CURRENT_CACHED_VALUES(1);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            break;
+        }
+
+        case _POLY_SCALAR_DIVIDE_r22: {
+            CHECK_CURRENT_CACHED_VALUES(2);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            _PyStackRef value;
+            _PyStackRef result;
+            _PyStackRef _stack_item_0 = _tos_cache0;
+            _PyStackRef _stack_item_1 = _tos_cache1;
+            oparg = CURRENT_OPARG();
+            value = _stack_item_1;
+            PyObject *divisor = (PyObject *)CURRENT_OPERAND0_64();
+            intptr_t number = PyStackRef_UntagInt(value);
+            intptr_t denominator = (intptr_t)divisor;
+            assert(denominator != 0);
+            intptr_t remainder = number % denominator;
+            if (oparg) {
+                current_executor->region_poly_valid = current_executor->region_poly_valid && remainder == 0;
+            }
+            intptr_t quotient = number / denominator -
+            ((remainder != 0) && ((number < 0) != (denominator < 0)));
+            result = PyStackRef_TagInt(quotient);
+            _tos_cache1 = result;
+            _tos_cache0 = _stack_item_0;
+            SET_CURRENT_CACHED_VALUES(2);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            break;
+        }
+
+        case _POLY_SCALAR_DIVIDE_r33: {
+            CHECK_CURRENT_CACHED_VALUES(3);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            _PyStackRef value;
+            _PyStackRef result;
+            _PyStackRef _stack_item_0 = _tos_cache0;
+            _PyStackRef _stack_item_1 = _tos_cache1;
+            _PyStackRef _stack_item_2 = _tos_cache2;
+            oparg = CURRENT_OPARG();
+            value = _stack_item_2;
+            PyObject *divisor = (PyObject *)CURRENT_OPERAND0_64();
+            intptr_t number = PyStackRef_UntagInt(value);
+            intptr_t denominator = (intptr_t)divisor;
+            assert(denominator != 0);
+            intptr_t remainder = number % denominator;
+            if (oparg) {
+                current_executor->region_poly_valid = current_executor->region_poly_valid && remainder == 0;
+            }
+            intptr_t quotient = number / denominator -
+            ((remainder != 0) && ((number < 0) != (denominator < 0)));
+            result = PyStackRef_TagInt(quotient);
+            _tos_cache2 = result;
+            _tos_cache1 = _stack_item_1;
+            _tos_cache0 = _stack_item_0;
+            SET_CURRENT_CACHED_VALUES(3);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            break;
+        }
+
+        case _POLY_STORE_0_r00: {
+            CHECK_CURRENT_CACHED_VALUES(0);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            _PyStackRef value;
+            oparg = 0;
+            assert(oparg == CURRENT_OPARG());
+            value = stack_pointer[-1];
+            current_executor->region_poly_scratch[0][oparg] = PyStackRef_UntagInt(value);
+            SET_CURRENT_CACHED_VALUES(0);
+            stack_pointer += -1;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            break;
+        }
+
+        case _POLY_STORE_0_r10: {
+            CHECK_CURRENT_CACHED_VALUES(1);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            _PyStackRef value;
+            _PyStackRef _stack_item_0 = _tos_cache0;
+            oparg = 0;
+            assert(oparg == CURRENT_OPARG());
+            value = _stack_item_0;
+            current_executor->region_poly_scratch[0][oparg] = PyStackRef_UntagInt(value);
+            SET_CURRENT_CACHED_VALUES(0);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            break;
+        }
+
+        case _POLY_STORE_0_r21: {
+            CHECK_CURRENT_CACHED_VALUES(2);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            _PyStackRef value;
+            _PyStackRef _stack_item_0 = _tos_cache0;
+            _PyStackRef _stack_item_1 = _tos_cache1;
+            oparg = 0;
+            assert(oparg == CURRENT_OPARG());
+            value = _stack_item_1;
+            current_executor->region_poly_scratch[0][oparg] = PyStackRef_UntagInt(value);
+            _tos_cache0 = _stack_item_0;
+            SET_CURRENT_CACHED_VALUES(1);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            break;
+        }
+
+        case _POLY_STORE_0_r32: {
+            CHECK_CURRENT_CACHED_VALUES(3);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            _PyStackRef value;
+            _PyStackRef _stack_item_0 = _tos_cache0;
+            _PyStackRef _stack_item_1 = _tos_cache1;
+            _PyStackRef _stack_item_2 = _tos_cache2;
+            oparg = 0;
+            assert(oparg == CURRENT_OPARG());
+            value = _stack_item_2;
+            current_executor->region_poly_scratch[0][oparg] = PyStackRef_UntagInt(value);
+            _tos_cache1 = _stack_item_1;
+            _tos_cache0 = _stack_item_0;
+            SET_CURRENT_CACHED_VALUES(2);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            break;
+        }
+
+        case _POLY_STORE_1_r00: {
+            CHECK_CURRENT_CACHED_VALUES(0);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            _PyStackRef value;
+            oparg = 1;
+            assert(oparg == CURRENT_OPARG());
+            value = stack_pointer[-1];
+            current_executor->region_poly_scratch[0][oparg] = PyStackRef_UntagInt(value);
+            SET_CURRENT_CACHED_VALUES(0);
+            stack_pointer += -1;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            break;
+        }
+
+        case _POLY_STORE_1_r10: {
+            CHECK_CURRENT_CACHED_VALUES(1);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            _PyStackRef value;
+            _PyStackRef _stack_item_0 = _tos_cache0;
+            oparg = 1;
+            assert(oparg == CURRENT_OPARG());
+            value = _stack_item_0;
+            current_executor->region_poly_scratch[0][oparg] = PyStackRef_UntagInt(value);
+            SET_CURRENT_CACHED_VALUES(0);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            break;
+        }
+
+        case _POLY_STORE_1_r21: {
+            CHECK_CURRENT_CACHED_VALUES(2);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            _PyStackRef value;
+            _PyStackRef _stack_item_0 = _tos_cache0;
+            _PyStackRef _stack_item_1 = _tos_cache1;
+            oparg = 1;
+            assert(oparg == CURRENT_OPARG());
+            value = _stack_item_1;
+            current_executor->region_poly_scratch[0][oparg] = PyStackRef_UntagInt(value);
+            _tos_cache0 = _stack_item_0;
+            SET_CURRENT_CACHED_VALUES(1);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            break;
+        }
+
+        case _POLY_STORE_1_r32: {
+            CHECK_CURRENT_CACHED_VALUES(3);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            _PyStackRef value;
+            _PyStackRef _stack_item_0 = _tos_cache0;
+            _PyStackRef _stack_item_1 = _tos_cache1;
+            _PyStackRef _stack_item_2 = _tos_cache2;
+            oparg = 1;
+            assert(oparg == CURRENT_OPARG());
+            value = _stack_item_2;
+            current_executor->region_poly_scratch[0][oparg] = PyStackRef_UntagInt(value);
+            _tos_cache1 = _stack_item_1;
+            _tos_cache0 = _stack_item_0;
+            SET_CURRENT_CACHED_VALUES(2);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            break;
+        }
+
+        case _POLY_STORE_2_r00: {
+            CHECK_CURRENT_CACHED_VALUES(0);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            _PyStackRef value;
+            oparg = 2;
+            assert(oparg == CURRENT_OPARG());
+            value = stack_pointer[-1];
+            current_executor->region_poly_scratch[0][oparg] = PyStackRef_UntagInt(value);
+            SET_CURRENT_CACHED_VALUES(0);
+            stack_pointer += -1;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            break;
+        }
+
+        case _POLY_STORE_2_r10: {
+            CHECK_CURRENT_CACHED_VALUES(1);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            _PyStackRef value;
+            _PyStackRef _stack_item_0 = _tos_cache0;
+            oparg = 2;
+            assert(oparg == CURRENT_OPARG());
+            value = _stack_item_0;
+            current_executor->region_poly_scratch[0][oparg] = PyStackRef_UntagInt(value);
+            SET_CURRENT_CACHED_VALUES(0);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            break;
+        }
+
+        case _POLY_STORE_2_r21: {
+            CHECK_CURRENT_CACHED_VALUES(2);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            _PyStackRef value;
+            _PyStackRef _stack_item_0 = _tos_cache0;
+            _PyStackRef _stack_item_1 = _tos_cache1;
+            oparg = 2;
+            assert(oparg == CURRENT_OPARG());
+            value = _stack_item_1;
+            current_executor->region_poly_scratch[0][oparg] = PyStackRef_UntagInt(value);
+            _tos_cache0 = _stack_item_0;
+            SET_CURRENT_CACHED_VALUES(1);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            break;
+        }
+
+        case _POLY_STORE_2_r32: {
+            CHECK_CURRENT_CACHED_VALUES(3);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            _PyStackRef value;
+            _PyStackRef _stack_item_0 = _tos_cache0;
+            _PyStackRef _stack_item_1 = _tos_cache1;
+            _PyStackRef _stack_item_2 = _tos_cache2;
+            oparg = 2;
+            assert(oparg == CURRENT_OPARG());
+            value = _stack_item_2;
+            current_executor->region_poly_scratch[0][oparg] = PyStackRef_UntagInt(value);
+            _tos_cache1 = _stack_item_1;
+            _tos_cache0 = _stack_item_0;
+            SET_CURRENT_CACHED_VALUES(2);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            break;
+        }
+
+        case _POLY_STORE_r00: {
+            CHECK_CURRENT_CACHED_VALUES(0);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            _PyStackRef value;
+            oparg = CURRENT_OPARG();
+            value = stack_pointer[-1];
+            current_executor->region_poly_scratch[0][oparg] = PyStackRef_UntagInt(value);
+            SET_CURRENT_CACHED_VALUES(0);
+            stack_pointer += -1;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            break;
+        }
+
+        case _POLY_STORE_r10: {
+            CHECK_CURRENT_CACHED_VALUES(1);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            _PyStackRef value;
+            _PyStackRef _stack_item_0 = _tos_cache0;
+            oparg = CURRENT_OPARG();
+            value = _stack_item_0;
+            current_executor->region_poly_scratch[0][oparg] = PyStackRef_UntagInt(value);
+            SET_CURRENT_CACHED_VALUES(0);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            break;
+        }
+
+        case _POLY_STORE_r21: {
+            CHECK_CURRENT_CACHED_VALUES(2);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            _PyStackRef value;
+            _PyStackRef _stack_item_0 = _tos_cache0;
+            _PyStackRef _stack_item_1 = _tos_cache1;
+            oparg = CURRENT_OPARG();
+            value = _stack_item_1;
+            current_executor->region_poly_scratch[0][oparg] = PyStackRef_UntagInt(value);
+            _tos_cache0 = _stack_item_0;
+            SET_CURRENT_CACHED_VALUES(1);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            break;
+        }
+
+        case _POLY_STORE_r32: {
+            CHECK_CURRENT_CACHED_VALUES(3);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            _PyStackRef value;
+            _PyStackRef _stack_item_0 = _tos_cache0;
+            _PyStackRef _stack_item_1 = _tos_cache1;
+            _PyStackRef _stack_item_2 = _tos_cache2;
+            oparg = CURRENT_OPARG();
+            value = _stack_item_2;
+            current_executor->region_poly_scratch[0][oparg] = PyStackRef_UntagInt(value);
+            _tos_cache1 = _stack_item_1;
+            _tos_cache0 = _stack_item_0;
+            SET_CURRENT_CACHED_VALUES(2);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            break;
+        }
+
         case _POLY_LOCAL_r00: {
             CHECK_CURRENT_CACHED_VALUES(0);
             ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
@@ -28068,14 +28560,12 @@
             PyFloatObject *acc = (PyFloatObject *)PyStackRef_AsPyObjectBorrow(GETLOCAL(accumulator));
             double total = acc->ob_fval;
             double dividend = PyFloat_AS_DOUBLE(numerator);
-            for (long i = 0; i < count; i++) {
-                volatile double term = dividend / (double)denominator;
-                total = total + term;
-                if (i + 1 < count) {
-                    denominator += delta;
-                    delta += difference;
-                }
+            for (long i = 1; i < count; i++) {
+                total = _PyRegion_DivideThenAdd(total, dividend, denominator);
+                denominator += delta;
+                delta += difference;
             }
+            total = _PyRegion_DivideThenAdd(total, dividend, denominator);
             acc->ob_fval = total;
             long last_index = range->start + count - 1;
             range->start += count;

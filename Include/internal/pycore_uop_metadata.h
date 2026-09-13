@@ -455,6 +455,13 @@ const uint32_t _PyUop_Flags[MAX_UOP_ID+1] = {
     [_GUARD_IS_NOT_NONE_POP] = HAS_EXIT_FLAG | HAS_ESCAPES_FLAG,
     [_JUMP_TO_TOP] = 0,
     [_FLOAT_RANGE_GUARD] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG,
+    [_POLY_SCALAR_CONST] = 0,
+    [_POLY_SCALAR_RSHIFT] = HAS_ARG_FLAG,
+    [_POLY_SCALAR_DIVIDE] = HAS_ARG_FLAG,
+    [_POLY_STORE_0] = 0,
+    [_POLY_STORE_1] = 0,
+    [_POLY_STORE_2] = 0,
+    [_POLY_STORE] = HAS_ARG_FLAG,
     [_POLY_LOCAL] = HAS_ARG_FLAG | HAS_LOCAL_FLAG,
     [_POLY_INDUCTION] = 0,
     [_POLY_CONST] = HAS_ARG_FLAG,
@@ -528,6 +535,7 @@ const ReplicationRange _PyUop_Replication[MAX_UOP_ID+1] = {
     [_SWAP] = { 2, 4 },
     [_GUARD_BIT_IS_SET_POP] = { 4, 8 },
     [_GUARD_BIT_IS_UNSET_POP] = { 4, 8 },
+    [_POLY_STORE] = { 0, 3 },
     [_POLY_BINARY] = { 0, 4 },
 };
 
@@ -4312,6 +4320,69 @@ const _PyUopCachingInfo _PyUop_Caching[MAX_UOP_ID+1] = {
             { -1, -1, -1 },
         },
     },
+    [_POLY_SCALAR_CONST] = {
+        .best = { 0, 1, 2, 2 },
+        .entries = {
+            { 1, 0, _POLY_SCALAR_CONST_r01 },
+            { 2, 1, _POLY_SCALAR_CONST_r12 },
+            { 3, 2, _POLY_SCALAR_CONST_r23 },
+            { -1, -1, -1 },
+        },
+    },
+    [_POLY_SCALAR_RSHIFT] = {
+        .best = { 0, 1, 2, 3 },
+        .entries = {
+            { 1, 0, _POLY_SCALAR_RSHIFT_r01 },
+            { 1, 1, _POLY_SCALAR_RSHIFT_r11 },
+            { 2, 2, _POLY_SCALAR_RSHIFT_r22 },
+            { 3, 3, _POLY_SCALAR_RSHIFT_r33 },
+        },
+    },
+    [_POLY_SCALAR_DIVIDE] = {
+        .best = { 0, 1, 2, 3 },
+        .entries = {
+            { 1, 0, _POLY_SCALAR_DIVIDE_r01 },
+            { 1, 1, _POLY_SCALAR_DIVIDE_r11 },
+            { 2, 2, _POLY_SCALAR_DIVIDE_r22 },
+            { 3, 3, _POLY_SCALAR_DIVIDE_r33 },
+        },
+    },
+    [_POLY_STORE_0] = {
+        .best = { 0, 1, 2, 3 },
+        .entries = {
+            { 0, 0, _POLY_STORE_0_r00 },
+            { 0, 1, _POLY_STORE_0_r10 },
+            { 1, 2, _POLY_STORE_0_r21 },
+            { 2, 3, _POLY_STORE_0_r32 },
+        },
+    },
+    [_POLY_STORE_1] = {
+        .best = { 0, 1, 2, 3 },
+        .entries = {
+            { 0, 0, _POLY_STORE_1_r00 },
+            { 0, 1, _POLY_STORE_1_r10 },
+            { 1, 2, _POLY_STORE_1_r21 },
+            { 2, 3, _POLY_STORE_1_r32 },
+        },
+    },
+    [_POLY_STORE_2] = {
+        .best = { 0, 1, 2, 3 },
+        .entries = {
+            { 0, 0, _POLY_STORE_2_r00 },
+            { 0, 1, _POLY_STORE_2_r10 },
+            { 1, 2, _POLY_STORE_2_r21 },
+            { 2, 3, _POLY_STORE_2_r32 },
+        },
+    },
+    [_POLY_STORE] = {
+        .best = { 0, 1, 2, 3 },
+        .entries = {
+            { 0, 0, _POLY_STORE_r00 },
+            { 0, 1, _POLY_STORE_r10 },
+            { 1, 2, _POLY_STORE_r21 },
+            { 2, 3, _POLY_STORE_r32 },
+        },
+    },
     [_POLY_LOCAL] = {
         .best = { 0, 1, 2, 3 },
         .entries = {
@@ -5608,6 +5679,33 @@ const uint16_t _PyUop_Uncached[MAX_UOP_REGS_ID+1] = {
     [_GUARD_IS_NOT_NONE_POP_r10] = _GUARD_IS_NOT_NONE_POP,
     [_JUMP_TO_TOP_r00] = _JUMP_TO_TOP,
     [_FLOAT_RANGE_GUARD_r22] = _FLOAT_RANGE_GUARD,
+    [_POLY_SCALAR_CONST_r01] = _POLY_SCALAR_CONST,
+    [_POLY_SCALAR_CONST_r12] = _POLY_SCALAR_CONST,
+    [_POLY_SCALAR_CONST_r23] = _POLY_SCALAR_CONST,
+    [_POLY_SCALAR_RSHIFT_r01] = _POLY_SCALAR_RSHIFT,
+    [_POLY_SCALAR_RSHIFT_r11] = _POLY_SCALAR_RSHIFT,
+    [_POLY_SCALAR_RSHIFT_r22] = _POLY_SCALAR_RSHIFT,
+    [_POLY_SCALAR_RSHIFT_r33] = _POLY_SCALAR_RSHIFT,
+    [_POLY_SCALAR_DIVIDE_r01] = _POLY_SCALAR_DIVIDE,
+    [_POLY_SCALAR_DIVIDE_r11] = _POLY_SCALAR_DIVIDE,
+    [_POLY_SCALAR_DIVIDE_r22] = _POLY_SCALAR_DIVIDE,
+    [_POLY_SCALAR_DIVIDE_r33] = _POLY_SCALAR_DIVIDE,
+    [_POLY_STORE_0_r00] = _POLY_STORE_0,
+    [_POLY_STORE_0_r10] = _POLY_STORE_0,
+    [_POLY_STORE_0_r21] = _POLY_STORE_0,
+    [_POLY_STORE_0_r32] = _POLY_STORE_0,
+    [_POLY_STORE_1_r00] = _POLY_STORE_1,
+    [_POLY_STORE_1_r10] = _POLY_STORE_1,
+    [_POLY_STORE_1_r21] = _POLY_STORE_1,
+    [_POLY_STORE_1_r32] = _POLY_STORE_1,
+    [_POLY_STORE_2_r00] = _POLY_STORE_2,
+    [_POLY_STORE_2_r10] = _POLY_STORE_2,
+    [_POLY_STORE_2_r21] = _POLY_STORE_2,
+    [_POLY_STORE_2_r32] = _POLY_STORE_2,
+    [_POLY_STORE_r00] = _POLY_STORE,
+    [_POLY_STORE_r10] = _POLY_STORE,
+    [_POLY_STORE_r21] = _POLY_STORE,
+    [_POLY_STORE_r32] = _POLY_STORE,
     [_POLY_LOCAL_r00] = _POLY_LOCAL,
     [_POLY_LOCAL_r11] = _POLY_LOCAL,
     [_POLY_LOCAL_r22] = _POLY_LOCAL,
@@ -7031,6 +7129,40 @@ const char *const _PyOpcode_uop_name[MAX_UOP_REGS_ID+1] = {
     [_POLY_RSHIFT_r11] = "_POLY_RSHIFT_r11",
     [_POLY_RSHIFT_r22] = "_POLY_RSHIFT_r22",
     [_POLY_RSHIFT_r33] = "_POLY_RSHIFT_r33",
+    [_POLY_SCALAR_CONST] = "_POLY_SCALAR_CONST",
+    [_POLY_SCALAR_CONST_r01] = "_POLY_SCALAR_CONST_r01",
+    [_POLY_SCALAR_CONST_r12] = "_POLY_SCALAR_CONST_r12",
+    [_POLY_SCALAR_CONST_r23] = "_POLY_SCALAR_CONST_r23",
+    [_POLY_SCALAR_DIVIDE] = "_POLY_SCALAR_DIVIDE",
+    [_POLY_SCALAR_DIVIDE_r01] = "_POLY_SCALAR_DIVIDE_r01",
+    [_POLY_SCALAR_DIVIDE_r11] = "_POLY_SCALAR_DIVIDE_r11",
+    [_POLY_SCALAR_DIVIDE_r22] = "_POLY_SCALAR_DIVIDE_r22",
+    [_POLY_SCALAR_DIVIDE_r33] = "_POLY_SCALAR_DIVIDE_r33",
+    [_POLY_SCALAR_RSHIFT] = "_POLY_SCALAR_RSHIFT",
+    [_POLY_SCALAR_RSHIFT_r01] = "_POLY_SCALAR_RSHIFT_r01",
+    [_POLY_SCALAR_RSHIFT_r11] = "_POLY_SCALAR_RSHIFT_r11",
+    [_POLY_SCALAR_RSHIFT_r22] = "_POLY_SCALAR_RSHIFT_r22",
+    [_POLY_SCALAR_RSHIFT_r33] = "_POLY_SCALAR_RSHIFT_r33",
+    [_POLY_STORE] = "_POLY_STORE",
+    [_POLY_STORE_r00] = "_POLY_STORE_r00",
+    [_POLY_STORE_r10] = "_POLY_STORE_r10",
+    [_POLY_STORE_r21] = "_POLY_STORE_r21",
+    [_POLY_STORE_r32] = "_POLY_STORE_r32",
+    [_POLY_STORE_0] = "_POLY_STORE_0",
+    [_POLY_STORE_0_r00] = "_POLY_STORE_0_r00",
+    [_POLY_STORE_0_r10] = "_POLY_STORE_0_r10",
+    [_POLY_STORE_0_r21] = "_POLY_STORE_0_r21",
+    [_POLY_STORE_0_r32] = "_POLY_STORE_0_r32",
+    [_POLY_STORE_1] = "_POLY_STORE_1",
+    [_POLY_STORE_1_r00] = "_POLY_STORE_1_r00",
+    [_POLY_STORE_1_r10] = "_POLY_STORE_1_r10",
+    [_POLY_STORE_1_r21] = "_POLY_STORE_1_r21",
+    [_POLY_STORE_1_r32] = "_POLY_STORE_1_r32",
+    [_POLY_STORE_2] = "_POLY_STORE_2",
+    [_POLY_STORE_2_r00] = "_POLY_STORE_2_r00",
+    [_POLY_STORE_2_r10] = "_POLY_STORE_2_r10",
+    [_POLY_STORE_2_r21] = "_POLY_STORE_2_r21",
+    [_POLY_STORE_2_r32] = "_POLY_STORE_2_r32",
     [_POP_EXCEPT] = "_POP_EXCEPT",
     [_POP_EXCEPT_r10] = "_POP_EXCEPT_r10",
     [_POP_ITER] = "_POP_ITER",
@@ -8155,6 +8287,20 @@ int _PyUop_num_popped(int opcode, int oparg)
             return 0;
         case _FLOAT_RANGE_GUARD:
             return 0;
+        case _POLY_SCALAR_CONST:
+            return 0;
+        case _POLY_SCALAR_RSHIFT:
+            return 1;
+        case _POLY_SCALAR_DIVIDE:
+            return 1;
+        case _POLY_STORE_0:
+            return 1;
+        case _POLY_STORE_1:
+            return 1;
+        case _POLY_STORE_2:
+            return 1;
+        case _POLY_STORE:
+            return 1;
         case _POLY_LOCAL:
             return 0;
         case _POLY_INDUCTION:

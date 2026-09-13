@@ -670,6 +670,7 @@ NON_ESCAPING_FUNCTIONS = (
     "_PyRegion_BoundedInput",
     "_PyRegion_CallAttribute",
     "_PyRegion_PolyBinary",
+    "_PyRegion_DivideThenAdd",
     "_PyRegion_Length",
     "_PyRegion_EqualityType",
     "_PyRegion_ImmutableEqual",

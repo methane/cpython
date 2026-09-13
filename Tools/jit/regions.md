@@ -66,13 +66,18 @@ expression. It supports degree zero, one, or two. It does not inspect function
 names or benchmark inputs. Other calls, stores, effects, or consumers reject
 the region. The original trace remains the fallback.
 
-The integer-valued basis `1, j, j*(j-1)/2` gives three coefficients. Existing
-copy-and-patch stencils calculate them once per chunk, using a bounded four-slot
-scratch array in the executor. This setup requires the GIL and cannot escape,
-allocate, or re-enter Python; it adds no Python operand-stack entries and has
-no runtime node-dispatch loop. Coefficient overflow or a floor divisor that
-does not divide the nonconstant coefficients exactly rejects the chunk.
-Known powers of two use a mask and arithmetic shift.
+The integer-valued basis `1, j, j*(j-1)/2` gives three coefficients. A bounded
+compile-time expression graph folds constants and factors exact divisions,
+then emits ordinary tagged-integer uops with a signed-62-bit interval proof.
+Its maximum stack depth must fit the original frame's unused operand-stack
+capacity. Failed proofs and capacity limits retain the checked coefficient
+stencils, which use a bounded four-slot scratch array in the executor without
+adding operand-stack entries. Both setups require the GIL and cannot escape,
+allocate, or re-enter Python; neither has a runtime node-dispatch loop.
+Nonconstant coefficients must divide exactly. Runtime exactness checks remain
+even when later constant folding removes the corresponding value. Known powers
+of two use a mask and arithmetic shift. The final three coefficients feed the
+same range reduction, which rejects overflowing or otherwise unproved chunks.
 
 The range must have step one and fit wholly in the small-int cache. Its
 accumulator must be an exact, owned, uniquely referenced float; integer
@@ -84,6 +89,10 @@ The loop performs every binary64 division and addition in the original order,
 then updates the unique accumulator, cached induction local, and iterator
 without allocation. It leaves one ordinary iteration and returns to existing
 periodic checks after at most the small-int-cache span minus one iterations.
+The final term is peeled to avoid conditional recurrence updates inside the
+chunk. Clang uses a local `FENV_ACCESS ON` helper so constrained floating-point
+operations preserve separate rounding after inlining without volatile memory
+traffic. Other compilers retain the volatile evaluation boundary.
 Any failed proof exits at the original `FOR_ITER`, before committing effects.
 `range_entries`, `range_iterations`, and `range_guard_exits` record execution.
 This experiment is disabled on free-threaded, 32-bit, DTrace, Emscripten, and

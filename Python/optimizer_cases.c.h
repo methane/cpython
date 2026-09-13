@@ -5870,6 +5870,37 @@
             break;
         }
 
+        case _POLY_SCALAR_CONST: {
+            JitOptRef value;
+            value = sym_new_not_null(ctx);
+            CHECK_STACK_BOUNDS(1);
+            stack_pointer[0] = value;
+            stack_pointer += 1;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            break;
+        }
+
+        case _POLY_SCALAR_RSHIFT: {
+            JitOptRef result;
+            result = sym_new_not_null(ctx);
+            stack_pointer[-1] = result;
+            break;
+        }
+
+        case _POLY_SCALAR_DIVIDE: {
+            JitOptRef result;
+            result = sym_new_not_null(ctx);
+            stack_pointer[-1] = result;
+            break;
+        }
+
+        case _POLY_STORE: {
+            CHECK_STACK_BOUNDS(-1);
+            stack_pointer += -1;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            break;
+        }
+
         case _POLY_LOCAL: {
             break;
         }

@@ -982,3 +982,45 @@ build-jit/python -m test test_capi.test_opt_regions test_capi.test_opt test_tier
   範囲証明したスカラー整数uopへ変換する。Python frameの余剰stack容量に収まることも
   確認し、証明や容量が不足すれば現在の係数計算を保持する。浮動小数点の除算・加算順と
   元traceのfallbackは保持する。全6本geomeanの最新値は初版の0.56124で半減未達。
+
+### 係数計算のコンパイル時簡約
+
+- 属性callはローカルcommit `dadeeb6d2b8`。B-treeのnative probeでは属性call 99,655回、
+  call guard失敗0を確認した。commit/tree、全tracked sourceとbuild artifactのhashは
+  `attr-call-manifest.json`、`attr-call-source-hashes.json`に記録し、比較用binaryも保存した。
+- 多項式係数を最大96 nodesのコンパイル時式に変換し、0/1、同じ値の加算、定数の再結合、
+  exact除算の因数分解を追加。62-bit interval proofは既存int領域と共通headerへ移した。
+  証明できない除算の割り切れ条件は実行時に検査し、後続の`* 0`が値を消しても検査は残す。
+- スカラー値は既存のtagged integer uopと最大96 uopsのprefixで計算する。発行時のstack
+  最大深さを元codeのco_stacksizeとtrace開始stack深さから求めた余剰容量と比較する。
+  条件を満たさない場合は既存scratchでの係数計算をそのまま使う。setup中のexit/escapeを
+  metadataで検査し、最終3係数だけを従来のrange reductionへ渡す。
+- debug buildが完了。簡約命令の実適用、3と4による係数のexact/nonexact除算、消去される
+  値に付随する割り切れ検査のテストを追加し、region/generator testsを実行中。
+- region52 testsとgenerator99 tests成功。最初はgeneratorのモジュール名を誤指定したため
+  import失敗になったが、正しい`test_generated_cases`で再実行した。native関連380 tests・
+  7 skipsと、4丸めモード・288 bit比較も成功し、元の丸めモードへ復元した。
+- native assemblyの従来ループには、最終回だけ整数差分の更新を止めるための二つのcmovが
+  毎反復入っていた。係数簡約単独の比較を先に保存し、その後、最後の除算・加算をloop外へ
+  分離してこの分岐を除く。既存の終点と最終差分の証明範囲を超えた整数演算は行わない。
+- 係数簡約単独はSpectralの3 blocksで前版比0.91072、main比0.03379。最後の項をloop外へ
+  分けた追加変更は前版比0.97629、main比0.03291だった。各90値・checksum・binary hashは
+  `scalar-poly-spectral-rows.json`、`scalar-peel-spectral-rows.json`へ保存した。
+- 最後の項を分けた版はdebug281 tests・1 skip、native380 tests・7 skipsと丸め288件が成功。
+  1/2/3要素のrangeも検査した。native probeはrange 5,200 chunks・665,600 iterations、
+  guard失敗0、box0。assemblyの内側loopで2つのcmovが消え、divsd/addsdは別命令のまま。
+- 次はbinary64の境界を保ちつつ、native側の各項のvolatile store/reloadを除けるか検証する。
+  Clangの局所的なFP contraction禁止を明示するhelperを使い、GCC側は既存volatileを保持。
+  assemblyと4丸めモードでのbit一致を条件に、別因子として比較する。
+- `clang-21 -O3 -mfma -ffp-contract=fast`の小さなinline実験で、`contract(off)`だけでは
+  multiply/addがFMAへ融合することを確認した。`__builtin_assoc_barrier`も未対応だった。
+  `FENV_ACCESS ON`ではinline後もLLVM constrained FPが残り、対照だけがFMAとなった。
+  この指定を局所helperに採用し、GCC側はvolatileを保持する。実験のC/IR/assemblyと失敗も
+  `clang-{contract,assoc,fenv}-probe.*`へ保存した。native本体の検証へ進む。
+- constrained FP版もdebug151 tests、native380 tests・7 skips、丸め288件が成功した。
+  native assemblyはdivsd/addsdの別命令を保持し、項ごとのstore/reloadが消えた。
+  前版比は3 blocksで0.98773、main比0.03244。追加効果は約1%に留まり、命令削減だけで
+  大きく速くなったとは扱わない。全値は`scalar-fenv-spectral-rows.json`に記録した。
+- ここまでをローカルcommitへまとめる。次は係数のcompile-time boundsから、rangeの
+  初期値・終点検査も64-bitで安全に行える場合を証明し、現在の128-bit計算を減らす。
+  簡約できない式には既存経路を残す。全6本の半減はまだ未達。

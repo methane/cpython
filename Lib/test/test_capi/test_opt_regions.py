@@ -324,7 +324,8 @@ class TestRegions(unittest.TestCase):
             with self.subTest(expression=expression):
                 ns, ex = self.warm_float_range(expression)
                 run, term = ns["run"], ns["term"]
-                for a, start, stop in ((7, 1, 80), (31, 120, 200), (9, -4, 12)):
+                for a, start, stop in ((7, 1, 80), (31, 120, 200), (9, -4, 12),
+                                        (7, 1, 2), (7, 1, 3), (7, 1, 4)):
                     expected = 0.0
                     for j in range(start, stop):
                         expected = operator.add(expected, term(a, j))
@@ -336,6 +337,45 @@ class TestRegions(unittest.TestCase):
                     # This monotone interval must execute a real chunk.
                     if start == 120:
                         self.assertGreater(after["range_iterations"], before["range_iterations"])
+
+    @requires_call_regions
+    def test_float_range_scalar_coefficients(self):
+        ns, ex = self.warm_float_range("(a + j) * (a + j + 1) // 2 + a + 1")
+        names = [uop[0] for uop in ex]
+        self.assertTrue(any(name.startswith("_POLY_STORE") for name in names), names)
+        self.assertFalse(any(name.startswith("_POLY_BINARY") for name in names), names)
+        for a in (-100, -1, 0, 1, 100, 2**28 - 1):
+            expected = 0.0
+            for j in range(120, 200):
+                expected = operator.add(expected, ns["term"](a, j))
+            result, last = ns["run"](a, 120, 200)
+            self.assertEqual(struct.pack("d", result), struct.pack("d", expected))
+            self.assertEqual(last, 199)
+
+    @requires_call_regions
+    def test_float_range_scalar_divisibility(self):
+        # A nonconstant coefficient requires a runtime divisibility check.
+        # Even multiplication by zero must not discard that required check.
+        for divisor in (3, 4):
+            for suffix in ("+ a + 1", "* 0 + a + 1"):
+                with self.subTest(divisor=divisor, suffix=suffix):
+                    ns, ex = self.warm_float_range(f"((a * j + 1) // {divisor}) {suffix}")
+                    names = [uop[0] for uop in ex]
+                    self.assertTrue(any(name.startswith("_POLY_STORE") for name in names), names)
+                    for a in (divisor * 10, divisor * 10 + 1):
+                        expected = 0.0
+                        for j in range(1, 120):
+                            expected = operator.add(expected, ns["term"](a, j))
+                        before = ex.get_region_stats()
+                        result, last = ns["run"](a, 1, 120)
+                        after = ex.get_region_stats()
+                        self.assertEqual(struct.pack("d", result), struct.pack("d", expected))
+                        self.assertEqual(last, 119)
+                        if a % divisor:
+                            self.assertGreater(after["range_guard_exits"], before["range_guard_exits"])
+                            self.assertEqual(after["range_iterations"], before["range_iterations"])
+                        else:
+                            self.assertGreater(after["range_iterations"], before["range_iterations"])
 
     @requires_call_regions
     def test_float_range_fallback_and_alias(self):
