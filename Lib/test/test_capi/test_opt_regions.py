@@ -223,6 +223,136 @@ class TestRegions(unittest.TestCase):
         self.assertIs(run(left, right, 8), True)
         self.assertGreater(ex.get_region_stats()["call_attr_entries"], before)
 
+    def warm_range_call(self):
+        def make(stop, n):
+            result = None
+            for _ in range(n):
+                result = range(stop)
+            return result
+        support.reset_code(make)
+        self.addCleanup(support.reset_code, make)
+        make(17, TIER2_THRESHOLD)
+        return make, self.executor(make, "_CALL_RANGE_COMPACT")
+
+    def test_range_compact_constructor(self):
+        make, ex = self.warm_range_call()
+        for stop in (-10000, -1, 0, 1, 1024, 10000, 2**29 - 1):
+            with self.subTest(stop=stop):
+                before = ex.get_region_stats()["range_call_entries"]
+                result = make(stop, 8)
+                self.assertIs(type(result), range)
+                self.assertIs(result.stop, stop)
+                self.assertEqual(result, range(stop))
+                self.assertEqual((result.start, result.step, len(result)), (0, 1, max(stop, 0)))
+                self.assertGreater(ex.get_region_stats()["range_call_entries"], before)
+        stop = int("10000")
+        refs = sys.getrefcount(stop)
+        result = make(stop, 8)
+        # The range owns stop once; its private length is a distinct int.
+        self.assertEqual(sys.getrefcount(stop), refs + 1)
+        del result
+        self.assertEqual(sys.getrefcount(stop), refs)
+
+    def test_range_constructor_fallback(self):
+        make, ex = self.warm_range_call()
+        for stop in (True, False, 2**100, -(2**100)):
+            before = ex.get_region_stats()["range_call_entries"]
+            self.assertEqual(make(stop, 8), range(stop))
+            self.assertEqual(ex.get_region_stats()["range_call_entries"], before)
+        events = []
+        class Index:
+            def __index__(self):
+                events.append(sys._getframe(1).f_code)
+                return 7
+        self.assertEqual(make(Index(), 8), range(7))
+        self.assertEqual(events, [make.__code__] * 8)
+        for stop in (None, 1.5, object()):
+            try:
+                make(stop, 8)
+            except TypeError as error:
+                tb = error.__traceback__
+                while tb.tb_next:
+                    tb = tb.tb_next
+                self.assertIs(tb.tb_frame.f_code, make.__code__)
+                self.assertEqual(tb.tb_lineno, make.__code__.co_firstlineno + 3)
+            else:
+                self.fail("invalid range argument did not raise")
+
+    def warm_range_iter(self):
+        def take(value, n):
+            result = []
+            for _ in range(n):
+                for item in value:
+                    result.append(item)
+                    break
+            return result
+        support.reset_code(take)
+        self.addCleanup(support.reset_code, take)
+        take(range(7, 10), TIER2_THRESHOLD)
+        return take, self.executor(take, "_GET_ITER_RANGE")
+
+    def test_range_compact_iterator(self):
+        for value in (range(1), range(7, 20, 3), range(20, -3, -4),
+                      range(-10, 100, 7), range(0), range(-10)):
+            with self.subTest(value=value):
+                take, ex = self.warm_range_iter()
+                before = ex.get_region_stats()["range_iter_entries"]
+                self.assertEqual(take(value, 8), list(value[:1]) * 8)
+                # The empty inner loop can leave this trace before GET_ITER.
+                if value:
+                    self.assertGreater(ex.get_region_stats()["range_iter_entries"], before)
+        for value in (range(2**100), range(2**100, 2**100 + 3),
+                      range(0, 2**100, -1), range(0, 1, 2**100)):
+            with self.subTest(value=value):
+                take, ex = self.warm_range_iter()
+                before = ex.get_region_stats()["range_iter_entries"]
+                self.assertEqual(take(value, 8), list(value[:1]) * 8)
+                self.assertEqual(ex.get_region_stats()["range_iter_entries"], before)
+
+    @unittest.skipUnless(support.Py_DEBUG, "debug allocation probe")
+    def test_range_allocation_error(self):
+        make, call_ex = self.warm_range_call()
+        take, iter_ex = self.warm_range_iter()
+        for kind, run, ex, argument, line in (
+            ("range_call", make, call_ex, 10000, 3),
+            ("range_iter", take, iter_ex, range(7, 10), 3),
+        ):
+            before = ex.get_region_stats()["allocation_errors"]
+            with mock.patch.dict(os.environ, {"PYTHON_TIER2_REGION_FAIL_ALLOC": kind}):
+                try:
+                    run(argument, 8)
+                except MemoryError as error:
+                    tb = error.__traceback__
+                    while tb.tb_next:
+                        tb = tb.tb_next
+                    self.assertIs(tb.tb_frame.f_code, run.__code__)
+                    self.assertEqual(tb.tb_lineno, run.__code__.co_firstlineno + line)
+                else:
+                    self.fail("range allocation error was lost")
+            self.assertGreater(ex.get_region_stats()["allocation_errors"], before)
+            run(argument, 8)
+
+    @unittest.skipUnless(support.Py_DEBUG, "debug allocation probe")
+    def test_range_allocation_handler_and_cleanup(self):
+        def run(stop, n):
+            for _ in range(n):
+                try:
+                    for item in range(stop):
+                        break
+                except MemoryError as error:
+                    return error.__traceback__.tb_lineno
+            return None
+        stop = int("10000")
+        self.assertIsNone(run(stop, TIER2_THRESHOLD))
+        self.executor(run, "_CALL_RANGE_COMPACT")
+        self.executor(run, "_GET_ITER_RANGE")
+        refs = sys.getrefcount(stop)
+        for kind in ("range_call", "range_iter"):
+            with mock.patch.dict(os.environ, {"PYTHON_TIER2_REGION_FAIL_ALLOC": kind}):
+                self.assertEqual(run(stop, 8), run.__code__.co_firstlineno + 3)
+            self.assertEqual(sys.getrefcount(stop), refs)
+        self.assertIsNone(run(stop, 8))
+
     def test_enumerate_list_and_fallbacks(self):
         def consume(iterator):
             out = []

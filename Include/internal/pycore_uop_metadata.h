@@ -312,6 +312,7 @@ const uint32_t _PyUop_Flags[MAX_UOP_ID+1] = {
     [_GUARD_ITER_VIRTUAL] = HAS_EXIT_FLAG,
     [_PUSH_TAGGED_ZERO] = 0,
     [_GET_ITER_TRAD] = HAS_ERROR_FLAG | HAS_ESCAPES_FLAG,
+    [_GET_ITER_RANGE] = HAS_EXIT_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG,
     [_FOR_ITER_TIER_TWO] = HAS_EXIT_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG,
     [_GUARD_TYPE_ITER] = HAS_EXIT_FLAG,
     [_ITER_NEXT_INLINE] = HAS_EXIT_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG,
@@ -387,6 +388,7 @@ const uint32_t _PyUop_Flags[MAX_UOP_ID+1] = {
     [_EXIT_INIT_CHECK] = HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG,
     [_GUARD_CALLABLE_BUILTIN_CLASS] = HAS_ARG_FLAG | HAS_EXIT_FLAG,
     [_CALL_BUILTIN_CLASS] = HAS_ARG_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG,
+    [_CALL_RANGE_COMPACT] = HAS_EXIT_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG,
     [_GUARD_CALLABLE_BUILTIN_O] = HAS_ARG_FLAG | HAS_EXIT_FLAG,
     [_CALL_BUILTIN_O] = HAS_ARG_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG,
     [_GUARD_CALLABLE_BUILTIN_FAST] = HAS_ARG_FLAG | HAS_EXIT_FLAG,
@@ -3041,6 +3043,15 @@ const _PyUopCachingInfo _PyUop_Caching[MAX_UOP_ID+1] = {
             { -1, -1, -1 },
         },
     },
+    [_GET_ITER_RANGE] = {
+        .best = { 1, 1, 1, 1 },
+        .entries = {
+            { -1, -1, -1 },
+            { 2, 1, _GET_ITER_RANGE_r12 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
     [_FOR_ITER_TIER_TWO] = {
         .best = { 2, 2, 2, 2 },
         .entries = {
@@ -3714,6 +3725,15 @@ const _PyUopCachingInfo _PyUop_Caching[MAX_UOP_ID+1] = {
             { -1, -1, -1 },
             { -1, -1, -1 },
             { -1, -1, -1 },
+        },
+    },
+    [_CALL_RANGE_COMPACT] = {
+        .best = { 3, 3, 3, 3 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 3, 3, _CALL_RANGE_COMPACT_r33 },
         },
     },
     [_GUARD_CALLABLE_BUILTIN_O] = {
@@ -5451,6 +5471,7 @@ const uint16_t _PyUop_Uncached[MAX_UOP_REGS_ID+1] = {
     [_PUSH_TAGGED_ZERO_r12] = _PUSH_TAGGED_ZERO,
     [_PUSH_TAGGED_ZERO_r23] = _PUSH_TAGGED_ZERO,
     [_GET_ITER_TRAD_r12] = _GET_ITER_TRAD,
+    [_GET_ITER_RANGE_r12] = _GET_ITER_RANGE,
     [_FOR_ITER_TIER_TWO_r23] = _FOR_ITER_TIER_TWO,
     [_GUARD_TYPE_ITER_r02] = _GUARD_TYPE_ITER,
     [_GUARD_TYPE_ITER_r12] = _GUARD_TYPE_ITER,
@@ -5600,6 +5621,7 @@ const uint16_t _PyUop_Uncached[MAX_UOP_REGS_ID+1] = {
     [_EXIT_INIT_CHECK_r10] = _EXIT_INIT_CHECK,
     [_GUARD_CALLABLE_BUILTIN_CLASS_r00] = _GUARD_CALLABLE_BUILTIN_CLASS,
     [_CALL_BUILTIN_CLASS_r00] = _CALL_BUILTIN_CLASS,
+    [_CALL_RANGE_COMPACT_r33] = _CALL_RANGE_COMPACT,
     [_GUARD_CALLABLE_BUILTIN_O_r00] = _GUARD_CALLABLE_BUILTIN_O,
     [_CALL_BUILTIN_O_r03] = _CALL_BUILTIN_O,
     [_GUARD_CALLABLE_BUILTIN_FAST_r00] = _GUARD_CALLABLE_BUILTIN_FAST,
@@ -6166,6 +6188,8 @@ const char *const _PyOpcode_uop_name[MAX_UOP_REGS_ID+1] = {
     [_CALL_PY_TRIVIAL_3_r01] = "_CALL_PY_TRIVIAL_3_r01",
     [_CALL_PY_TRIVIAL_4] = "_CALL_PY_TRIVIAL_4",
     [_CALL_PY_TRIVIAL_4_r01] = "_CALL_PY_TRIVIAL_4_r01",
+    [_CALL_RANGE_COMPACT] = "_CALL_RANGE_COMPACT",
+    [_CALL_RANGE_COMPACT_r33] = "_CALL_RANGE_COMPACT_r33",
     [_CALL_STR_1] = "_CALL_STR_1",
     [_CALL_STR_1_r32] = "_CALL_STR_1_r32",
     [_CALL_STR_TAILMATCH] = "_CALL_STR_TAILMATCH",
@@ -6397,6 +6421,8 @@ const char *const _PyOpcode_uop_name[MAX_UOP_REGS_ID+1] = {
     [_GET_AWAITABLE_r11] = "_GET_AWAITABLE_r11",
     [_GET_ITER] = "_GET_ITER",
     [_GET_ITER_r12] = "_GET_ITER_r12",
+    [_GET_ITER_RANGE] = "_GET_ITER_RANGE",
+    [_GET_ITER_RANGE_r12] = "_GET_ITER_RANGE_r12",
     [_GET_ITER_TRAD] = "_GET_ITER_TRAD",
     [_GET_ITER_TRAD_r12] = "_GET_ITER_TRAD_r12",
     [_GET_LEN] = "_GET_LEN",
@@ -8105,6 +8131,8 @@ int _PyUop_num_popped(int opcode, int oparg)
             return 0;
         case _GET_ITER_TRAD:
             return 1;
+        case _GET_ITER_RANGE:
+            return 1;
         case _FOR_ITER_TIER_TWO:
             return 0;
         case _GUARD_TYPE_ITER:
@@ -8254,6 +8282,8 @@ int _PyUop_num_popped(int opcode, int oparg)
         case _GUARD_CALLABLE_BUILTIN_CLASS:
             return 0;
         case _CALL_BUILTIN_CLASS:
+            return 0;
+        case _CALL_RANGE_COMPACT:
             return 0;
         case _GUARD_CALLABLE_BUILTIN_O:
             return 0;

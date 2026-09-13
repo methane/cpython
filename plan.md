@@ -1193,3 +1193,35 @@ build-jit/python -m test test_capi.test_opt_regions test_capi.test_opt test_tier
   padddでloopを構成していた。Spectralの3 blocksは前版比0.93225・main比0.020958
   （約0.710 ms）。全90値とidentityは`range-int32-spectral-rows.json`へ保存した。
   この版の全6本比較へ進み、なお不足すればprofileに残るrange生成の処理を検討する。
+- int32版はローカルcommit `64b4ca84f02`。source/build hashと比較用binaryを保存済み。
+  全6本・2 blocks・各10値の幾何平均は **0.50868**（起動込み0.63716）。半減未達で、
+  全体としてさらに約1.7%の短縮が必要。全240値は`range-int32-suite-rows.json`へ保存した。
+
+### rangeの生成とiteratorへの変換
+
+- range生成後のperiodic checkをまたいで一時rangeを省くと、入力stopの参照数や生存期間を
+  変えるため採用しない。rangeとiteratorは通常どおり別々に生成し、exact compact intと
+  分かる場合の繰り返す整数変換・長さ計算だけを省く。
+- 既知の`range(stop)` callは型と引数を検査し、既存のallocation/freelistを共有するhelperへ
+  変換する。stopの参照を通常どおり保持し、private lengthも別のPyLongとして作る。
+  既知のrangeに対するGET_ITERは四つのinteger fieldsを検査し、同じrange iteratorを作る。
+  各uopのallocation errorは元CALL/GET_ITERへ戻し、periodic checkとcleanupは保持する。
+- 負値/0/compact上限、stopのidentityとrefcount、大整数・bool・`__index__`のfallback、
+  正負step/空range/巨大range、debugでの両allocation errorの位置を追加検証する。
+  native/debug buildを実行中。
+- nativeの最初のbuildはjit.cに新helper宣言が見えず失敗した。`pycore_range.h`のincludeを
+  追加してbuildは完了。debugでは空rangeの返り値は一致したが、GET_ITER以前にtraceを
+  離れるため同じexecutorのentry増加を要求した二つのassertが失敗した。空rangeでwarmup
+  してもGET_ITERより前でDEOPTするtraceだったため、空rangeは結果を検査し、非空rangeで
+  新uopのcounterを検証する形へ修正した。各失敗ログは残し、修正後の検証を実行中。
+- 修正後のdebug region69 testsとnative関連426 tests・8 skipsが成功。debug関連の
+  generator/range/iter/GC/monitoringは先の同時runで成功済み。同じframe内で両MemoryErrorを
+  捕捉し、一時rangeの解放後にstopの参照数が戻るテストも追加した。最終region70 testsは
+  debug成功、native成功・5 skips。4生成ファイルの同一性、静的check、diff checkも成功。
+- Spectralの3 blocksは前版比0.87883・main比0.018378（約0.621 ms）。native probeでは
+  range call/iterator生成それぞれ5,160回、int32 chunk670,800 iterations、guard失敗0。
+  全90値とidentityは`range-objects-spectral-rows.json`へ保存した。
+- 丸め・trap・flagsの576ケースはnativeで成功。全6オプションを有効にした追加runでも
+  同576ケースと特殊値56ケースのbit比較が成功した。
+- この実装を保存し、全6本を4 blocks・各10値で測定する。benchmarkは入力・warmups・
+  loopsを変えず、全480値を使って幾何平均を判定する。ビルドや診断probeを測定と重ねない。

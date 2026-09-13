@@ -32,13 +32,7 @@ class longrange_iterator "longrangeiterobject *" "&PyLongRangeIter_Type"
    would presumably help perf.
 */
 
-typedef struct {
-    PyObject_HEAD
-    PyObject *start;
-    PyObject *stop;
-    PyObject *step;
-    PyObject *length;
-} rangeobject;
+typedef _PyRangeObject rangeobject;
 
 /* Helper function for validating step.  Always returns a new reference or
    NULL on error.
@@ -64,14 +58,9 @@ static PyObject *
 compute_range_length(PyObject *start, PyObject *stop, PyObject *step);
 
 static rangeobject *
-make_range_object(PyTypeObject *type, PyObject *start,
-                  PyObject *stop, PyObject *step)
+make_range_with_length(PyTypeObject *type, PyObject *start,
+                       PyObject *stop, PyObject *step, PyObject *length)
 {
-    PyObject *length;
-    length = compute_range_length(start, stop, step);
-    if (length == NULL) {
-        return NULL;
-    }
     rangeobject *obj = _Py_FREELIST_POP(rangeobject, ranges);
     if (obj == NULL) {
         obj = PyObject_New(rangeobject, type);
@@ -85,6 +74,36 @@ make_range_object(PyTypeObject *type, PyObject *start,
     obj->step = step;
     obj->length = length;
     return obj;
+}
+
+static rangeobject *
+make_range_object(PyTypeObject *type, PyObject *start,
+                  PyObject *stop, PyObject *step)
+{
+    PyObject *length = compute_range_length(start, stop, step);
+    if (length == NULL) {
+        return NULL;
+    }
+    return make_range_with_length(type, start, stop, step, length);
+}
+
+PyObject *
+_PyRange_FromCompactStop(PyObject *stop)
+{
+    assert(_PyLong_CheckExactAndCompact(stop));
+    long value = (long)_PyLong_CompactValue((PyLongObject *)stop);
+    Py_INCREF(stop);
+    PyObject *length = PyLong_FromLong(Py_MAX(value, 0));
+    if (length == NULL) {
+        Py_DECREF(stop);
+        return NULL;
+    }
+    rangeobject *result = make_range_with_length(&PyRange_Type,
+        _PyLong_GetZero(), stop, _PyLong_GetOne(), length);
+    if (result == NULL) {
+        Py_DECREF(stop);
+    }
+    return (PyObject *)result;
 }
 
 /* XXX(nnorwitz): should we error check if the user passes any empty ranges?
@@ -1031,6 +1050,22 @@ fast_range_iter(long start, long stop, long step, long len)
     it->step = step;
     it->len = len;
     return (PyObject *)it;
+}
+
+PyObject *
+_PyRangeIter_FromCompactRange(PyObject *obj)
+{
+    assert(PyRange_Check(obj));
+    rangeobject *range = (rangeobject *)obj;
+    assert(_PyLong_CheckExactAndCompact(range->start));
+    assert(_PyLong_CheckExactAndCompact(range->stop));
+    assert(_PyLong_CheckExactAndCompact(range->step));
+    assert(_PyLong_CheckExactAndCompact(range->length));
+    return fast_range_iter(
+        (long)_PyLong_CompactValue((PyLongObject *)range->start),
+        (long)_PyLong_CompactValue((PyLongObject *)range->stop),
+        (long)_PyLong_CompactValue((PyLongObject *)range->step),
+        (long)_PyLong_CompactValue((PyLongObject *)range->length));
 }
 
 /*[clinic input]

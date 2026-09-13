@@ -128,6 +128,16 @@ match `enum_next`. Old-element finalizers may re-enter the same iterator.
 `enum_entries` counts the fast path, `enum_fallbacks` the ordinary calls, and
 `enum_guard_exits` failures of the enumerate-type guard itself.
 
+The builtin option specializes a known `range(stop)` call with an exact compact
+int, and `GET_ITER` on a known range whose four integer fields are compact.
+Both use the ordinary range/iterator allocation and freelists. The range object
+still owns its original stop, has a separately created length, and lives until
+the original iterator operation consumes it. This preserves its lifetime across
+periodic checks. Wider integers and `__index__` inputs use the original operations.
+`range_call_entries` and `range_iter_entries` count the two successful paths.
+Debug allocation injection accepts `range_call` and `range_iter` to check their
+original CALL and GET_ITER error locations.
+
 The builtin group fuses `len(value)` with an immediate comparison, addition, or
 subtraction using another local or a `LOAD_SMALL_INT` constant. It accepts exact
 str, bytes, tuple, list, and dict operands. The receiver must be borrowed,

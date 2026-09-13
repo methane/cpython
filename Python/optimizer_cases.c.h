@@ -3804,7 +3804,8 @@
                     ADD_OP(_GUARD_TYPE, 0, (uintptr_t)tp);
                     sym_set_type(iterable, tp);
                 }
-                ADD_OP(_GET_ITER_TRAD, 0, 0);
+                ADD_OP(tp == &PyRange_Type && region_enabled("PYTHON_TIER2_BUILTIN_REGIONS")
+                   ? _GET_ITER_RANGE : _GET_ITER_TRAD, 0, 0);
             }
             if (is_coro) {
                 assert(!is_trad);
@@ -3880,6 +3881,19 @@
         }
 
         case _GET_ITER_TRAD: {
+            JitOptRef iter;
+            JitOptRef index_or_null;
+            iter = sym_new_not_null(ctx);
+            index_or_null = sym_new_not_null(ctx);
+            CHECK_STACK_BOUNDS(1);
+            stack_pointer[-1] = iter;
+            stack_pointer[0] = index_or_null;
+            stack_pointer += 1;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            break;
+        }
+
+        case _GET_ITER_RANGE: {
             JitOptRef iter;
             JitOptRef index_or_null;
             iter = sym_new_not_null(ctx);
@@ -4722,10 +4736,24 @@
         }
 
         case _CALL_BUILTIN_CLASS: {
+            JitOptRef self_or_null;
             JitOptRef callable;
+            self_or_null = stack_pointer[-1 - oparg];
             callable = stack_pointer[-2 - oparg];
-            callable = sym_new_not_null(ctx);
+            if (oparg == 1 && sym_is_null(self_or_null) &&
+                sym_get_const(ctx, callable) == (PyObject *)&PyRange_Type &&
+                region_enabled("PYTHON_TIER2_BUILTIN_REGIONS")) {
+                ADD_OP(_CALL_RANGE_COMPACT, 1, 0);
+                callable = sym_new_type(ctx, &PyRange_Type);
+            }
+            else {
+                callable = sym_new_not_null(ctx);
+            }
             stack_pointer[-2 - oparg] = callable;
+            break;
+        }
+
+        case _CALL_RANGE_COMPACT: {
             break;
         }
 

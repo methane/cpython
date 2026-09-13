@@ -18244,6 +18244,55 @@
             break;
         }
 
+        case _GET_ITER_RANGE_r12: {
+            CHECK_CURRENT_CACHED_VALUES(1);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            _PyStackRef iterable;
+            _PyStackRef iter;
+            _PyStackRef index_or_null;
+            _PyStackRef _stack_item_0 = _tos_cache0;
+            iterable = _stack_item_0;
+            _PyRangeObject *range = (_PyRangeObject *)PyStackRef_AsPyObjectBorrow(iterable);
+            assert(PyRange_Check(range));
+            if (!_PyLong_CheckExactAndCompact(range->start) ||
+                    !_PyLong_CheckExactAndCompact(range->stop) ||
+                    !_PyLong_CheckExactAndCompact(range->step) ||
+                    !_PyLong_CheckExactAndCompact(range->length)) {
+                UOP_STAT_INC(uopcode, miss);
+                _tos_cache0 = iterable;
+                SET_CURRENT_CACHED_VALUES(1);
+                JUMP_TO_JUMP_TARGET();
+            }
+            stack_pointer[0] = iterable;
+            stack_pointer += 1;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            _PyFrame_SetStackPointer(frame, stack_pointer);
+            _PyFrame_StackPointerValidate(frame);
+            PyObject *iter_o = _PyRegion_AllocationFails("range_iter")
+            ? NULL : _PyRangeIter_FromCompactRange((PyObject *)range);
+            _PyFrame_StackPointerInvalidate(frame);
+            stack_pointer += -1;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            _PyFrame_SetStackPointer(frame, stack_pointer);
+            _PyFrame_StackPointerValidate(frame);
+            PyStackRef_CLOSE(iterable);
+            _PyFrame_StackPointerInvalidate(frame);
+            if (iter_o == NULL) {
+                current_executor->region_allocation_errors++;
+                SET_CURRENT_CACHED_VALUES(0);
+                JUMP_TO_ERROR();
+            }
+            current_executor->region_range_iter_entries++;
+            iter = PyStackRef_FromPyObjectSteal(iter_o);
+            index_or_null = PyStackRef_NULL;
+            _tos_cache1 = index_or_null;
+            _tos_cache0 = iter;
+            _tos_cache2 = PyStackRef_ZERO_BITS;
+            SET_CURRENT_CACHED_VALUES(2);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            break;
+        }
+
         /* _FOR_ITER is not a viable micro-op for tier 2 because it is replaced */
 
         case _FOR_ITER_TIER_TWO_r23: {
@@ -23109,6 +23158,62 @@
             _tos_cache1 = PyStackRef_ZERO_BITS;
             _tos_cache2 = PyStackRef_ZERO_BITS;
             SET_CURRENT_CACHED_VALUES(0);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            break;
+        }
+
+        case _CALL_RANGE_COMPACT_r33: {
+            CHECK_CURRENT_CACHED_VALUES(3);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            _PyStackRef stop;
+            _PyStackRef self_or_null;
+            _PyStackRef callable;
+            _PyStackRef _stack_item_0 = _tos_cache0;
+            _PyStackRef _stack_item_1 = _tos_cache1;
+            _PyStackRef _stack_item_2 = _tos_cache2;
+            stop = _stack_item_2;
+            self_or_null = _stack_item_1;
+            callable = _stack_item_0;
+            if (PyStackRef_AsPyObjectBorrow(callable) != (PyObject *)&PyRange_Type ||
+                    !PyStackRef_IsNull(self_or_null) ||
+                    !_PyLong_CheckExactAndCompact(PyStackRef_AsPyObjectBorrow(stop))) {
+                UOP_STAT_INC(uopcode, miss);
+                _tos_cache2 = stop;
+                _tos_cache1 = self_or_null;
+                _tos_cache0 = callable;
+                SET_CURRENT_CACHED_VALUES(3);
+                JUMP_TO_JUMP_TARGET();
+            }
+            stack_pointer[0] = callable;
+            stack_pointer[1] = self_or_null;
+            stack_pointer[2] = stop;
+            stack_pointer += 3;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            _PyFrame_SetStackPointer(frame, stack_pointer);
+            _PyFrame_StackPointerValidate(frame);
+            PyObject *result = _PyRegion_AllocationFails("range_call")
+            ? NULL : _PyRange_FromCompactStop(PyStackRef_AsPyObjectBorrow(stop));
+            _PyFrame_StackPointerInvalidate(frame);
+            if (result == NULL) {
+                current_executor->region_allocation_errors++;
+                SET_CURRENT_CACHED_VALUES(0);
+                JUMP_TO_ERROR();
+            }
+            _PyStackRef previous = callable;
+            callable = PyStackRef_FromPyObjectSteal(result);
+            stack_pointer[-3] = callable;
+            assert(stack_pointer == _PyFrame_GetStackPointer(frame));
+            _PyFrame_StackPointerValidate(frame);
+            PyStackRef_CLOSE(previous);
+            _PyFrame_StackPointerInvalidate(frame);
+            current_executor->region_range_call_entries++;
+            STAT_INC(CALL, hit);
+            _tos_cache2 = stop;
+            _tos_cache1 = self_or_null;
+            _tos_cache0 = callable;
+            SET_CURRENT_CACHED_VALUES(3);
+            stack_pointer += -3;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
             ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
             break;
         }

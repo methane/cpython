@@ -1491,7 +1491,8 @@ dummy_func(void) {
                 ADD_OP(_GUARD_TYPE, 0, (uintptr_t)tp);
                 sym_set_type(iterable, tp);
             }
-            ADD_OP(_GET_ITER_TRAD, 0, 0);
+            ADD_OP(tp == &PyRange_Type && region_enabled("PYTHON_TIER2_BUILTIN_REGIONS")
+                   ? _GET_ITER_RANGE : _GET_ITER_TRAD, 0, 0);
         }
         if (is_coro) {
             assert(!is_trad);
@@ -1819,7 +1820,15 @@ dummy_func(void) {
     }
 
     op(_CALL_BUILTIN_CLASS, (callable, self_or_null, args[oparg] -- callable, self_or_null, args[oparg])) {
-        callable = sym_new_not_null(ctx);
+        if (oparg == 1 && sym_is_null(self_or_null) &&
+            sym_get_const(ctx, callable) == (PyObject *)&PyRange_Type &&
+            region_enabled("PYTHON_TIER2_BUILTIN_REGIONS")) {
+            ADD_OP(_CALL_RANGE_COMPACT, 1, 0);
+            callable = sym_new_type(ctx, &PyRange_Type);
+        }
+        else {
+            callable = sym_new_not_null(ctx);
+        }
     }
 
     op(_GUARD_CALLABLE_METHOD_DESCRIPTOR_O, (callable, self_or_null, args[oparg] -- callable, self_or_null, args[oparg])) {

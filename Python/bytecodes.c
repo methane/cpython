@@ -4153,6 +4153,25 @@ dummy_func(
             index_or_null = PyStackRef_NULL;
         }
 
+        tier2 op(_GET_ITER_RANGE, (iterable -- iter, index_or_null)) {
+            _PyRangeObject *range = (_PyRangeObject *)PyStackRef_AsPyObjectBorrow(iterable);
+            assert(PyRange_Check(range));
+            EXIT_IF(!_PyLong_CheckExactAndCompact(range->start) ||
+                    !_PyLong_CheckExactAndCompact(range->stop) ||
+                    !_PyLong_CheckExactAndCompact(range->step) ||
+                    !_PyLong_CheckExactAndCompact(range->length));
+            PyObject *iter_o = _PyRegion_AllocationFails("range_iter")
+                ? NULL : _PyRangeIter_FromCompactRange((PyObject *)range);
+            PyStackRef_CLOSE(iterable);
+            if (iter_o == NULL) {
+                current_executor->region_allocation_errors++;
+                ERROR_NO_POP();
+            }
+            current_executor->region_range_iter_entries++;
+            iter = PyStackRef_FromPyObjectSteal(iter_o);
+            index_or_null = PyStackRef_NULL;
+        }
+
         // Most members of this family are "secretly" super-instructions.
         // When the loop is exhausted, they jump, and the jump target is
         // always END_FOR, which pops two values off the stack.
@@ -5412,6 +5431,23 @@ dummy_func(
             _POP_TOP_OPARG +
             POP_TOP +
             _CHECK_PERIODIC_AT_END;
+
+        tier2 op(_CALL_RANGE_COMPACT, (callable, self_or_null, stop -- callable, self_or_null, stop)) {
+            EXIT_IF(PyStackRef_AsPyObjectBorrow(callable) != (PyObject *)&PyRange_Type ||
+                    !PyStackRef_IsNull(self_or_null) ||
+                    !_PyLong_CheckExactAndCompact(PyStackRef_AsPyObjectBorrow(stop)));
+            PyObject *result = _PyRegion_AllocationFails("range_call")
+                ? NULL : _PyRange_FromCompactStop(PyStackRef_AsPyObjectBorrow(stop));
+            if (result == NULL) {
+                current_executor->region_allocation_errors++;
+                ERROR_NO_POP();
+            }
+            _PyStackRef previous = callable;
+            callable = PyStackRef_FromPyObjectSteal(result);
+            PyStackRef_CLOSE(previous);
+            current_executor->region_range_call_entries++;
+            STAT_INC(CALL, hit);
+        }
 
         op(_GUARD_CALLABLE_BUILTIN_O, (callable, self_or_null, args[oparg] -- callable, self_or_null, args[oparg])) {
             PyObject *callable_o = PyStackRef_AsPyObjectBorrow(callable);
