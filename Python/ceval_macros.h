@@ -764,6 +764,54 @@ _PyRegion_Arithmetic(int64_t left, int64_t right, int op, int64_t *result)
 #endif
 }
 
+/* Polynomial coefficients in the basis 1, j, binomial(j, 2). Operation is a
+ * replicated stencil immediate. False propagates a failed proof. */
+static inline bool
+_PyRegion_PolyBinary(int64_t a0, int64_t a1, int64_t a2,
+                     int64_t b0, int64_t b1, int64_t b2, int operation,
+                     int64_t *r0, int64_t *r1, int64_t *r2)
+{
+#ifdef __SIZEOF_INT128__
+    __int128 c0, c1, c2;
+    if (operation == 0) {
+        c0 = (__int128)a0 + b0;
+        c1 = (__int128)a1 + b1;
+        c2 = (__int128)a2 + b2;
+    }
+    else if (operation == 1) {
+        c0 = (__int128)a0 - b0;
+        c1 = (__int128)a1 - b1;
+        c2 = (__int128)a2 - b2;
+    }
+    else if (operation == 2) {
+        /* The builder proved that the product has degree at most two. */
+        c0 = (__int128)a0 * b0;
+        c1 = (__int128)a0*b1 + (__int128)a1*b0 + (__int128)a1*b1;
+        c2 = (__int128)a0*b2 + (__int128)a2*b0 + 2*(__int128)a1*b1;
+    }
+    else {
+        assert(operation == 3 && b1 == 0 && b2 == 0);
+        if (b0 == 0 || a1 % b0 || a2 % b0) {
+            return false;
+        }
+        c0 = a0 / b0 - ((a0 % b0 != 0) && ((a0 < 0) != (b0 < 0)));
+        c1 = a1 / b0;
+        c2 = a2 / b0;
+    }
+    const int64_t high = INT64_MAX >> Py_TAGGED_SHIFT;
+    const int64_t low = -high - 1;
+    if (c0 < low || c0 > high || c1 < low || c1 > high || c2 < low || c2 > high) {
+        return false;
+    }
+    *r0 = (int64_t)c0;
+    *r1 = (int64_t)c1;
+    *r2 = (int64_t)c2;
+    return true;
+#else
+    return false;
+#endif
+}
+
 // Inplace float true division. Sets _divop_err to 1 on zero division.
 // Caller must check _divop_err and call ERROR_NO_POP() if set.
 #define FLOAT_INPLACE_DIVOP(left, right, TARGET)                         \

@@ -446,6 +446,18 @@ const uint32_t _PyUop_Flags[MAX_UOP_ID+1] = {
     [_GUARD_IS_NONE_POP] = HAS_EXIT_FLAG,
     [_GUARD_IS_NOT_NONE_POP] = HAS_EXIT_FLAG | HAS_ESCAPES_FLAG,
     [_JUMP_TO_TOP] = 0,
+    [_FLOAT_RANGE_GUARD] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG,
+    [_POLY_LOCAL] = HAS_ARG_FLAG | HAS_LOCAL_FLAG,
+    [_POLY_INDUCTION] = 0,
+    [_POLY_CONST] = HAS_ARG_FLAG,
+    [_POLY_DUP] = HAS_ARG_FLAG,
+    [_POLY_BINARY_0] = 0,
+    [_POLY_BINARY_1] = 0,
+    [_POLY_BINARY_2] = 0,
+    [_POLY_BINARY_3] = 0,
+    [_POLY_BINARY] = HAS_ARG_FLAG,
+    [_POLY_RSHIFT] = HAS_ARG_FLAG,
+    [_FLOAT_RANGE_REDUCE] = HAS_ARG_FLAG | HAS_LOCAL_FLAG | HAS_EXIT_FLAG | HAS_ESCAPES_FLAG,
     [_TIER3_RANGE_CHUNK] = HAS_ARG_FLAG | HAS_ERROR_FLAG | HAS_ESCAPES_FLAG,
     [_TIER3_RANGE_CHUNK_NATIVE] = HAS_ARG_FLAG | HAS_ERROR_FLAG | HAS_ESCAPES_FLAG,
     [_TIER3_RANGE_CHUNK_RESIDENT] = HAS_ARG_FLAG | HAS_PERIODIC_FLAG | HAS_ERROR_FLAG | HAS_ESCAPES_FLAG,
@@ -507,6 +519,7 @@ const ReplicationRange _PyUop_Replication[MAX_UOP_ID+1] = {
     [_SWAP] = { 2, 4 },
     [_GUARD_BIT_IS_SET_POP] = { 4, 8 },
     [_GUARD_BIT_IS_UNSET_POP] = { 4, 8 },
+    [_POLY_BINARY] = { 0, 4 },
 };
 
 const _PyUopCachingInfo _PyUop_Caching[MAX_UOP_ID+1] = {
@@ -4209,6 +4222,114 @@ const _PyUopCachingInfo _PyUop_Caching[MAX_UOP_ID+1] = {
             { -1, -1, -1 },
         },
     },
+    [_FLOAT_RANGE_GUARD] = {
+        .best = { 2, 2, 2, 2 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 2, 2, _FLOAT_RANGE_GUARD_r22 },
+            { -1, -1, -1 },
+        },
+    },
+    [_POLY_LOCAL] = {
+        .best = { 0, 1, 2, 3 },
+        .entries = {
+            { 0, 0, _POLY_LOCAL_r00 },
+            { 1, 1, _POLY_LOCAL_r11 },
+            { 2, 2, _POLY_LOCAL_r22 },
+            { 3, 3, _POLY_LOCAL_r33 },
+        },
+    },
+    [_POLY_INDUCTION] = {
+        .best = { 0, 1, 2, 3 },
+        .entries = {
+            { 0, 0, _POLY_INDUCTION_r00 },
+            { 1, 1, _POLY_INDUCTION_r11 },
+            { 2, 2, _POLY_INDUCTION_r22 },
+            { 3, 3, _POLY_INDUCTION_r33 },
+        },
+    },
+    [_POLY_CONST] = {
+        .best = { 0, 1, 2, 3 },
+        .entries = {
+            { 0, 0, _POLY_CONST_r00 },
+            { 1, 1, _POLY_CONST_r11 },
+            { 2, 2, _POLY_CONST_r22 },
+            { 3, 3, _POLY_CONST_r33 },
+        },
+    },
+    [_POLY_DUP] = {
+        .best = { 0, 1, 2, 3 },
+        .entries = {
+            { 0, 0, _POLY_DUP_r00 },
+            { 1, 1, _POLY_DUP_r11 },
+            { 2, 2, _POLY_DUP_r22 },
+            { 3, 3, _POLY_DUP_r33 },
+        },
+    },
+    [_POLY_BINARY_0] = {
+        .best = { 0, 1, 2, 3 },
+        .entries = {
+            { 0, 0, _POLY_BINARY_0_r00 },
+            { 1, 1, _POLY_BINARY_0_r11 },
+            { 2, 2, _POLY_BINARY_0_r22 },
+            { 3, 3, _POLY_BINARY_0_r33 },
+        },
+    },
+    [_POLY_BINARY_1] = {
+        .best = { 0, 1, 2, 3 },
+        .entries = {
+            { 0, 0, _POLY_BINARY_1_r00 },
+            { 1, 1, _POLY_BINARY_1_r11 },
+            { 2, 2, _POLY_BINARY_1_r22 },
+            { 3, 3, _POLY_BINARY_1_r33 },
+        },
+    },
+    [_POLY_BINARY_2] = {
+        .best = { 0, 1, 2, 3 },
+        .entries = {
+            { 0, 0, _POLY_BINARY_2_r00 },
+            { 1, 1, _POLY_BINARY_2_r11 },
+            { 2, 2, _POLY_BINARY_2_r22 },
+            { 3, 3, _POLY_BINARY_2_r33 },
+        },
+    },
+    [_POLY_BINARY_3] = {
+        .best = { 0, 1, 2, 3 },
+        .entries = {
+            { 0, 0, _POLY_BINARY_3_r00 },
+            { 1, 1, _POLY_BINARY_3_r11 },
+            { 2, 2, _POLY_BINARY_3_r22 },
+            { 3, 3, _POLY_BINARY_3_r33 },
+        },
+    },
+    [_POLY_BINARY] = {
+        .best = { 0, 1, 2, 3 },
+        .entries = {
+            { 0, 0, _POLY_BINARY_r00 },
+            { 1, 1, _POLY_BINARY_r11 },
+            { 2, 2, _POLY_BINARY_r22 },
+            { 3, 3, _POLY_BINARY_r33 },
+        },
+    },
+    [_POLY_RSHIFT] = {
+        .best = { 0, 1, 2, 3 },
+        .entries = {
+            { 0, 0, _POLY_RSHIFT_r00 },
+            { 1, 1, _POLY_RSHIFT_r11 },
+            { 2, 2, _POLY_RSHIFT_r22 },
+            { 3, 3, _POLY_RSHIFT_r33 },
+        },
+    },
+    [_FLOAT_RANGE_REDUCE] = {
+        .best = { 2, 2, 2, 2 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 2, 2, _FLOAT_RANGE_REDUCE_r22 },
+            { -1, -1, -1 },
+        },
+    },
     [_TIER3_RANGE_CHUNK] = {
         .best = { 2, 2, 2, 2 },
         .entries = {
@@ -5397,6 +5518,48 @@ const uint16_t _PyUop_Uncached[MAX_UOP_REGS_ID+1] = {
     [_GUARD_IS_NONE_POP_r32] = _GUARD_IS_NONE_POP,
     [_GUARD_IS_NOT_NONE_POP_r10] = _GUARD_IS_NOT_NONE_POP,
     [_JUMP_TO_TOP_r00] = _JUMP_TO_TOP,
+    [_FLOAT_RANGE_GUARD_r22] = _FLOAT_RANGE_GUARD,
+    [_POLY_LOCAL_r00] = _POLY_LOCAL,
+    [_POLY_LOCAL_r11] = _POLY_LOCAL,
+    [_POLY_LOCAL_r22] = _POLY_LOCAL,
+    [_POLY_LOCAL_r33] = _POLY_LOCAL,
+    [_POLY_INDUCTION_r00] = _POLY_INDUCTION,
+    [_POLY_INDUCTION_r11] = _POLY_INDUCTION,
+    [_POLY_INDUCTION_r22] = _POLY_INDUCTION,
+    [_POLY_INDUCTION_r33] = _POLY_INDUCTION,
+    [_POLY_CONST_r00] = _POLY_CONST,
+    [_POLY_CONST_r11] = _POLY_CONST,
+    [_POLY_CONST_r22] = _POLY_CONST,
+    [_POLY_CONST_r33] = _POLY_CONST,
+    [_POLY_DUP_r00] = _POLY_DUP,
+    [_POLY_DUP_r11] = _POLY_DUP,
+    [_POLY_DUP_r22] = _POLY_DUP,
+    [_POLY_DUP_r33] = _POLY_DUP,
+    [_POLY_BINARY_0_r00] = _POLY_BINARY_0,
+    [_POLY_BINARY_0_r11] = _POLY_BINARY_0,
+    [_POLY_BINARY_0_r22] = _POLY_BINARY_0,
+    [_POLY_BINARY_0_r33] = _POLY_BINARY_0,
+    [_POLY_BINARY_1_r00] = _POLY_BINARY_1,
+    [_POLY_BINARY_1_r11] = _POLY_BINARY_1,
+    [_POLY_BINARY_1_r22] = _POLY_BINARY_1,
+    [_POLY_BINARY_1_r33] = _POLY_BINARY_1,
+    [_POLY_BINARY_2_r00] = _POLY_BINARY_2,
+    [_POLY_BINARY_2_r11] = _POLY_BINARY_2,
+    [_POLY_BINARY_2_r22] = _POLY_BINARY_2,
+    [_POLY_BINARY_2_r33] = _POLY_BINARY_2,
+    [_POLY_BINARY_3_r00] = _POLY_BINARY_3,
+    [_POLY_BINARY_3_r11] = _POLY_BINARY_3,
+    [_POLY_BINARY_3_r22] = _POLY_BINARY_3,
+    [_POLY_BINARY_3_r33] = _POLY_BINARY_3,
+    [_POLY_BINARY_r00] = _POLY_BINARY,
+    [_POLY_BINARY_r11] = _POLY_BINARY,
+    [_POLY_BINARY_r22] = _POLY_BINARY,
+    [_POLY_BINARY_r33] = _POLY_BINARY,
+    [_POLY_RSHIFT_r00] = _POLY_RSHIFT,
+    [_POLY_RSHIFT_r11] = _POLY_RSHIFT,
+    [_POLY_RSHIFT_r22] = _POLY_RSHIFT,
+    [_POLY_RSHIFT_r33] = _POLY_RSHIFT,
+    [_FLOAT_RANGE_REDUCE_r22] = _FLOAT_RANGE_REDUCE,
     [_TIER3_RANGE_CHUNK_r22] = _TIER3_RANGE_CHUNK,
     [_TIER3_RANGE_CHUNK_NATIVE_r22] = _TIER3_RANGE_CHUNK_NATIVE,
     [_TIER3_RANGE_CHUNK_RESIDENT_r22] = _TIER3_RANGE_CHUNK_RESIDENT,
@@ -5910,6 +6073,10 @@ const char *const _PyOpcode_uop_name[MAX_UOP_REGS_ID+1] = {
     [_FATAL_ERROR_r11] = "_FATAL_ERROR_r11",
     [_FATAL_ERROR_r22] = "_FATAL_ERROR_r22",
     [_FATAL_ERROR_r33] = "_FATAL_ERROR_r33",
+    [_FLOAT_RANGE_GUARD] = "_FLOAT_RANGE_GUARD",
+    [_FLOAT_RANGE_GUARD_r22] = "_FLOAT_RANGE_GUARD_r22",
+    [_FLOAT_RANGE_REDUCE] = "_FLOAT_RANGE_REDUCE",
+    [_FLOAT_RANGE_REDUCE_r22] = "_FLOAT_RANGE_REDUCE_r22",
     [_FORMAT_SIMPLE] = "_FORMAT_SIMPLE",
     [_FORMAT_SIMPLE_r11] = "_FORMAT_SIMPLE_r11",
     [_FORMAT_WITH_SPEC] = "_FORMAT_WITH_SPEC",
@@ -6709,6 +6876,56 @@ const char *const _PyOpcode_uop_name[MAX_UOP_REGS_ID+1] = {
     [_NOP_r11] = "_NOP_r11",
     [_NOP_r22] = "_NOP_r22",
     [_NOP_r33] = "_NOP_r33",
+    [_POLY_BINARY] = "_POLY_BINARY",
+    [_POLY_BINARY_r00] = "_POLY_BINARY_r00",
+    [_POLY_BINARY_r11] = "_POLY_BINARY_r11",
+    [_POLY_BINARY_r22] = "_POLY_BINARY_r22",
+    [_POLY_BINARY_r33] = "_POLY_BINARY_r33",
+    [_POLY_BINARY_0] = "_POLY_BINARY_0",
+    [_POLY_BINARY_0_r00] = "_POLY_BINARY_0_r00",
+    [_POLY_BINARY_0_r11] = "_POLY_BINARY_0_r11",
+    [_POLY_BINARY_0_r22] = "_POLY_BINARY_0_r22",
+    [_POLY_BINARY_0_r33] = "_POLY_BINARY_0_r33",
+    [_POLY_BINARY_1] = "_POLY_BINARY_1",
+    [_POLY_BINARY_1_r00] = "_POLY_BINARY_1_r00",
+    [_POLY_BINARY_1_r11] = "_POLY_BINARY_1_r11",
+    [_POLY_BINARY_1_r22] = "_POLY_BINARY_1_r22",
+    [_POLY_BINARY_1_r33] = "_POLY_BINARY_1_r33",
+    [_POLY_BINARY_2] = "_POLY_BINARY_2",
+    [_POLY_BINARY_2_r00] = "_POLY_BINARY_2_r00",
+    [_POLY_BINARY_2_r11] = "_POLY_BINARY_2_r11",
+    [_POLY_BINARY_2_r22] = "_POLY_BINARY_2_r22",
+    [_POLY_BINARY_2_r33] = "_POLY_BINARY_2_r33",
+    [_POLY_BINARY_3] = "_POLY_BINARY_3",
+    [_POLY_BINARY_3_r00] = "_POLY_BINARY_3_r00",
+    [_POLY_BINARY_3_r11] = "_POLY_BINARY_3_r11",
+    [_POLY_BINARY_3_r22] = "_POLY_BINARY_3_r22",
+    [_POLY_BINARY_3_r33] = "_POLY_BINARY_3_r33",
+    [_POLY_CONST] = "_POLY_CONST",
+    [_POLY_CONST_r00] = "_POLY_CONST_r00",
+    [_POLY_CONST_r11] = "_POLY_CONST_r11",
+    [_POLY_CONST_r22] = "_POLY_CONST_r22",
+    [_POLY_CONST_r33] = "_POLY_CONST_r33",
+    [_POLY_DUP] = "_POLY_DUP",
+    [_POLY_DUP_r00] = "_POLY_DUP_r00",
+    [_POLY_DUP_r11] = "_POLY_DUP_r11",
+    [_POLY_DUP_r22] = "_POLY_DUP_r22",
+    [_POLY_DUP_r33] = "_POLY_DUP_r33",
+    [_POLY_INDUCTION] = "_POLY_INDUCTION",
+    [_POLY_INDUCTION_r00] = "_POLY_INDUCTION_r00",
+    [_POLY_INDUCTION_r11] = "_POLY_INDUCTION_r11",
+    [_POLY_INDUCTION_r22] = "_POLY_INDUCTION_r22",
+    [_POLY_INDUCTION_r33] = "_POLY_INDUCTION_r33",
+    [_POLY_LOCAL] = "_POLY_LOCAL",
+    [_POLY_LOCAL_r00] = "_POLY_LOCAL_r00",
+    [_POLY_LOCAL_r11] = "_POLY_LOCAL_r11",
+    [_POLY_LOCAL_r22] = "_POLY_LOCAL_r22",
+    [_POLY_LOCAL_r33] = "_POLY_LOCAL_r33",
+    [_POLY_RSHIFT] = "_POLY_RSHIFT",
+    [_POLY_RSHIFT_r00] = "_POLY_RSHIFT_r00",
+    [_POLY_RSHIFT_r11] = "_POLY_RSHIFT_r11",
+    [_POLY_RSHIFT_r22] = "_POLY_RSHIFT_r22",
+    [_POLY_RSHIFT_r33] = "_POLY_RSHIFT_r33",
     [_POP_EXCEPT] = "_POP_EXCEPT",
     [_POP_EXCEPT_r10] = "_POP_EXCEPT_r10",
     [_POP_ITER] = "_POP_ITER",
@@ -7814,6 +8031,30 @@ int _PyUop_num_popped(int opcode, int oparg)
         case _GUARD_IS_NOT_NONE_POP:
             return 1;
         case _JUMP_TO_TOP:
+            return 0;
+        case _FLOAT_RANGE_GUARD:
+            return 0;
+        case _POLY_LOCAL:
+            return 0;
+        case _POLY_INDUCTION:
+            return 0;
+        case _POLY_CONST:
+            return 0;
+        case _POLY_DUP:
+            return 0;
+        case _POLY_BINARY_0:
+            return 0;
+        case _POLY_BINARY_1:
+            return 0;
+        case _POLY_BINARY_2:
+            return 0;
+        case _POLY_BINARY_3:
+            return 0;
+        case _POLY_BINARY:
+            return 0;
+        case _POLY_RSHIFT:
+            return 0;
+        case _FLOAT_RANGE_REDUCE:
             return 0;
         case _TIER3_RANGE_CHUNK:
             return 0;

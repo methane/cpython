@@ -223,6 +223,12 @@ slots against JIT relocations and symbols with `llvm-readobj-21`/`nm` (and
 `llvm-dwarfdump-21` for unwind/debug records). Do not infer register allocation
 from generated C.
 
+Code-attached executors alone can miss hot side traces. For coverage probes,
+follow executor objects returned by `gc.get_referents(executor)` recursively,
+deduplicating by identity. Their traversal visits outgoing executor links;
+do not assign a side trace's Python function from the root used to reach it.
+Capture the same executor set immediately before and after each measured call.
+
 Before pushing every iteration run `prek run --all-files` (or all equivalent
 configured hooks). In particular, Black reformats `Tools/jit/tier3_bench.py`;
 run the hook locally rather than spending a CI cycle on that formatting-only

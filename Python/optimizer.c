@@ -605,7 +605,7 @@ get_region_stats(PyObject *self, PyObject *Py_UNUSED(ignored))
 {
     _PyExecutorObject *executor = _PyExecutorObject_CAST(self);
     return Py_BuildValue(
-        "{s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K}",
+        "{s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K}",
         "bounded_entries", executor->region_bounded_entries,
         "bounded_guard_exits", executor->region_bounded_guard_exits,
         "bounded_boxes", executor->region_bounded_boxes,
@@ -620,6 +620,9 @@ get_region_stats(PyObject *self, PyObject *Py_UNUSED(ignored))
         "method_guard_exits", executor->region_method_guard_exits,
         "call_entries", executor->region_call_entries,
         "call_guard_exits", executor->region_call_guard_exits,
+        "range_entries", executor->region_range_entries,
+        "range_iterations", executor->region_range_iterations,
+        "range_guard_exits", executor->region_range_guard_exits,
         "tuple_entries", executor->region_tuple_entries,
         "tuple_guard_exits", executor->region_tuple_guard_exits,
         "float_unique_entries", executor->region_float_unique_entries,
@@ -1631,6 +1634,10 @@ allocate_executor(int exit_count, int length)
     res->region_method_guard_exits = 0;
     res->region_call_entries = 0;
     res->region_call_guard_exits = 0;
+    res->region_range_entries = 0;
+    res->region_range_iterations = 0;
+    res->region_range_guard_exits = 0;
+    res->region_poly_valid = false;
     res->region_tuple_entries = 0;
     res->region_tuple_guard_exits = 0;
     res->region_float_unique_entries = 0;
@@ -2462,6 +2469,8 @@ mark_tier3_range_loop(_PyUOpInstruction *buffer, int length)
 #endif
 }
 
+#include "optimizer_float_range.h"
+
 static int
 uop_optimize(_PyInterpreterFrame *frame, PyThreadState *tstate, _PyExecutorObject **exec_ptr,
              bool progress_needed)
@@ -2518,6 +2527,7 @@ uop_optimize(_PyInterpreterFrame *frame, PyThreadState *tstate, _PyExecutorObjec
     code_buffer->next = code_buffer->start;
 
     length = mark_tier3_range_loop(buffer, length);
+    length = mark_float_range(buffer, length);
     OPT_HIST(effective_trace_length(buffer, length), optimized_trace_length_hist);
     _PyUOpInstruction *output = &_tstate->jit_tracer_state->uop_array[0];
     length = stack_allocate(buffer, output, length);

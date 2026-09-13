@@ -80,6 +80,154 @@ class TestRegions(unittest.TestCase):
         ex = self.executor(func, "_INT_REGION_COMPARE" if compare else "_INT_REGION")
         return func, ex
 
+    def warm_float_range(self, expression):
+        self.enterContext(mock.patch.dict(os.environ, {
+            "PYTHON_TIER2_BOUNDED_INT_REGIONS": "1",
+            "PYTHON_TIER2_FLOAT_RANGE": "1",
+        }))
+        namespace = {}
+        exec(
+            "def term(a, j):\n"
+            f"    return 1.0 / ({expression})\n"
+            "def run(a, start, stop, initial=0.0):\n"
+            "    total = initial + 0.0\n"
+            "    for j in range(start, stop):\n"
+            "        total += term(a, j)\n"
+            "    return total, j\n",
+            namespace,
+        )
+        run = namespace["run"]
+        for _ in range(TIER2_THRESHOLD // 119 + 8):
+            run(31, 1, 120)
+        return namespace, self.executor(run, "_FLOAT_RANGE_REDUCE")
+
+    @requires_call_regions
+    def test_float_range_polynomials(self):
+        for expression in (
+            "(a + j) * (a + j + 1) // 2 + a + 1",
+            "(a * j + a) + j + 20",
+            "(a + a) + a + 1",
+            "(a - j) * (a - j) + a + 1",
+        ):
+            with self.subTest(expression=expression):
+                ns, ex = self.warm_float_range(expression)
+                run, term = ns["run"], ns["term"]
+                for a, start, stop in ((7, 1, 80), (31, 120, 200), (9, -4, 12)):
+                    expected = 0.0
+                    for j in range(start, stop):
+                        expected = operator.add(expected, term(a, j))
+                    before = ex.get_region_stats()
+                    result, last = run(a, start, stop)
+                    after = ex.get_region_stats()
+                    self.assertEqual(struct.pack("d", result), struct.pack("d", expected))
+                    self.assertEqual(last, stop - 1)
+                    # This monotone interval must execute a real chunk.
+                    if start == 120:
+                        self.assertGreater(after["range_iterations"], before["range_iterations"])
+
+    @requires_call_regions
+    def test_float_range_fallback_and_alias(self):
+        for a, start, stop in ((2**29, 1, 80), (2**28 - 1, 1, 80),
+                               (31, 1018, 1040), (31, -10, 80)):
+            ns, ex = self.warm_float_range("(a + j) * (a + j + 1) // 2 + a + 1")
+            run, term = ns["run"], ns["term"]
+            expected = 0.0
+            for j in range(start, stop):
+                expected = operator.add(expected, term(a, j))
+            before = ex.get_region_stats()
+            result, last = run(a, start, stop)
+            self.assertEqual(struct.pack("d", result), struct.pack("d", expected))
+            self.assertEqual(last, stop - 1)
+            self.assertGreater(ex.get_region_stats()["range_guard_exits"],
+                               before["range_guard_exits"])
+        initial = float("1.23456789012345")
+        original = struct.pack("d", initial)
+        result, last = run(31, 1, 120, initial)
+        self.assertEqual(struct.pack("d", initial), original)
+        self.assertGreater(result, initial)
+        self.assertEqual(last, 119)
+
+    @requires_call_regions
+    def test_float_range_fractional_coefficients(self):
+        for divisor in (3, 4):
+            with self.subTest(divisor=divisor):
+                ns, ex = self.warm_float_range(
+                    f"(a + j) * (a + j + 1) // {divisor} + a + 1")
+                before = ex.get_region_stats()
+                expected = 0.0
+                for j in range(1, 120):
+                    expected = operator.add(expected, ns["term"](31, j))
+                result, last = ns["run"](31, 1, 120)
+                self.assertEqual(struct.pack("d", result), struct.pack("d", expected))
+                self.assertEqual(last, 119)
+                after = ex.get_region_stats()
+                self.assertGreater(after["range_guard_exits"], before["range_guard_exits"])
+                self.assertEqual(after["range_iterations"], before["range_iterations"])
+
+    @requires_call_regions
+    def test_float_range_negative_coefficients(self):
+        ns, ex = self.warm_float_range("(a - j) * (j - a + 1) // 2 + a + 1")
+        expected = 0.0
+        for j in range(120, 200):
+            expected = operator.add(expected, ns["term"](31, j))
+        before = ex.get_region_stats()["range_iterations"]
+        result, last = ns["run"](31, 120, 200)
+        self.assertEqual(struct.pack("d", result), struct.pack("d", expected))
+        self.assertEqual(last, 199)
+        self.assertGreater(ex.get_region_stats()["range_iterations"], before)
+
+    @requires_call_regions
+    def test_float_range_zero_and_subclass(self):
+        ns, ex = self.warm_float_range("(a + j) * (a + j + 1) // 2 + a + 1")
+        before = ex.get_region_stats()["range_guard_exits"]
+        try:
+            ns["run"](-1, -5, 12)
+        except ZeroDivisionError as error:
+            self.assertEqual(str(error), "division by zero")
+            tb = error.__traceback__
+            while tb.tb_next is not None:
+                tb = tb.tb_next
+            self.assertIs(tb.tb_frame.f_code, ns["term"].__code__)
+            self.assertEqual(tb.tb_lineno, 2)
+            self.assertEqual(tb.tb_frame.f_locals["j"], 0)
+        else:
+            self.fail("division by zero was skipped")
+        self.assertGreater(ex.get_region_stats()["range_guard_exits"], before)
+
+        ns, ex = self.warm_float_range("(a + j) * (a + j + 1) // 2 + a + 1")
+        calls = []
+        class Number(int):
+            def __add__(self, other):
+                calls.append(other)
+                return int(self) + other
+        before = ex.get_region_stats()["range_guard_exits"]
+        ns["run"](Number(31), 1, 80)
+        self.assertEqual(calls, [item for j in range(1, 80) for item in (j, j)])
+        self.assertGreater(ex.get_region_stats()["range_guard_exits"], before)
+
+    @requires_call_regions
+    def test_float_range_code_and_monitoring(self):
+        ns, ex = self.warm_float_range("(a + j) * (a + j + 1) // 2 + a + 1")
+        run, term = ns["run"], ns["term"]
+        calls = []
+        tool = sys.monitoring.PROFILER_ID
+        sys.monitoring.use_tool_id(tool, "float range test")
+        try:
+            sys.monitoring.register_callback(tool, sys.monitoring.events.PY_START,
+                                            lambda code, offset: calls.append(code))
+            sys.monitoring.set_local_events(tool, term.__code__, sys.monitoring.events.PY_START)
+            run(31, 1, 80)
+            self.assertEqual(calls.count(term.__code__), 79)
+        finally:
+            sys.monitoring.set_events(tool, 0)
+            sys.monitoring.set_local_events(tool, term.__code__, 0)
+            sys.monitoring.register_callback(tool, sys.monitoring.events.PY_START, None)
+            sys.monitoring.free_tool_id(tool)
+        def replacement(a, j):
+            return 2.0
+        term.__code__ = replacement.__code__
+        self.assertEqual(run(31, 1, 80), (158.0, 79))
+
     def warm_bounded(self, expression, limit=1000):
         self.enterContext(mock.patch.dict(
             os.environ, {"PYTHON_TIER2_BOUNDED_INT_REGIONS": "1"}))

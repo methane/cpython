@@ -233,6 +233,12 @@ typedef struct _PyExecutorObject {
     uint64_t region_method_guard_exits;
     uint64_t region_call_entries;
     uint64_t region_call_guard_exits;
+    uint64_t region_range_entries;
+    uint64_t region_range_iterations;
+    uint64_t region_range_guard_exits;
+    /* GIL-only coefficient setup cannot escape or re-enter Python. */
+    int64_t region_poly_scratch[4][3];
+    bool region_poly_valid;
     uint64_t region_tuple_entries;
     uint64_t region_tuple_guard_exits;
     uint64_t region_float_unique_entries;

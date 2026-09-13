@@ -58,6 +58,37 @@ The new `bounded_entries`, `bounded_guard_exits`, `bounded_boxes`, and
 As with `int_boxes`, `bounded_boxes` counts representations, including cached
 ints, rather than heap allocations.
 
+`PYTHON_TIER2_FLOAT_RANGE=1`, together with bounded integer regions, enables
+short range reductions of a constant float divided by an integer polynomial.
+The matcher follows the optimized uop dependencies of an exact positional
+Python call with up to four arguments and a three-to-eight-operation integer
+expression. It supports degree zero, one, or two. It does not inspect function
+names or benchmark inputs. Other calls, stores, effects, or consumers reject
+the region. The original trace remains the fallback.
+
+The integer-valued basis `1, j, j*(j-1)/2` gives three coefficients. Existing
+copy-and-patch stencils calculate them once per chunk, using a bounded four-slot
+scratch array in the executor. This setup requires the GIL and cannot escape,
+allocate, or re-enter Python; it adds no Python operand-stack entries and has
+no runtime node-dispatch loop. Coefficient overflow or a floor divisor that
+does not divide the nonconstant coefficients exactly rejects the chunk.
+Known powers of two use a mask and arithmetic shift.
+
+The range must have step one and fit wholly in the small-int cache. Its
+accumulator must be an exact, owned, uniquely referenced float; integer
+arguments retain the bounded-input contract. The old induction local must be
+null or an exact int. Function, stack-space, recursion, globals (when present),
+and callee instrumentation checks precede the chunk. The denominator must be
+monotone, nonzero with one sign, and within `[-2**53, 2**53]` throughout it.
+The loop performs every binary64 division and addition in the original order,
+then updates the unique accumulator, cached induction local, and iterator
+without allocation. It leaves one ordinary iteration and returns to existing
+periodic checks after at most the small-int-cache span minus one iterations.
+Any failed proof exits at the original `FOR_ITER`, before committing effects.
+`range_entries`, `range_iterations`, and `range_guard_exits` record execution.
+This experiment is disabled on free-threaded, 32-bit, DTrace, Emscripten, and
+targets without a native 128-bit integer type.
+
 The builtin group fuses `len(value)` with an immediate comparison, addition, or
 subtraction using another local or a `LOAD_SMALL_INT` constant. It accepts exact
 str, bytes, tuple, list, and dict operands. The receiver must be borrowed,

@@ -6561,6 +6561,150 @@ dummy_func(
             JUMP_TO_JUMP_TARGET();
         }
 
+        tier2 op(_FLOAT_RANGE_GUARD, (config/4, callable/4, iter, index -- iter, index)) {
+            uint64_t slots = (uint64_t)(uintptr_t)config;
+            int accumulator = slots & 255;
+            int induction = (slots >> 8) & 255;
+            _PyRangeIterObject *range = (_PyRangeIterObject *)PyStackRef_AsPyObjectBorrow(iter);
+            _PyStackRef acc = GETLOCAL(accumulator);
+            _PyStackRef old_index = GETLOCAL(induction);
+            bool valid = Py_TYPE(range) == &PyRangeIter_Type && range->step == 1 &&
+                range->len > 1 && range->len <= _PY_NSMALLNEGINTS + _PY_NSMALLPOSINTS &&
+                range->start >= -_PY_NSMALLNEGINTS &&
+                range->start < _PY_NSMALLPOSINTS - range->len + 1 &&
+                !PyStackRef_IsNull(acc) && PyStackRef_RefcountOnObject(acc);
+            if (valid) {
+                PyObject *obj = PyStackRef_AsPyObjectBorrow(acc);
+                valid = PyFloat_CheckExact(obj) && _PyObject_IsUniquelyReferenced(obj);
+            }
+            if (!PyStackRef_IsNull(old_index)) {
+                valid = valid && PyLong_CheckExact(PyStackRef_AsPyObjectBorrow(old_index));
+            }
+            for (int i = 0; valid && i < (int)(slots >> 48); i++) {
+                int local = (slots >> (16 + 8*i)) & 255;
+                intptr_t value;
+                valid = local == induction || _PyRegion_BoundedInput(GETLOCAL(local), &value);
+            }
+            PyCodeObject *code = (PyCodeObject *)((PyFunctionObject *)callable)->func_code;
+            uintptr_t version = FT_ATOMIC_LOAD_UINTPTR_ACQUIRE(code->_co_instrumentation_version);
+            valid = valid && version == _Py_atomic_load_uintptr_relaxed(&tstate->eval_breaker);
+            if (!valid) {
+                current_executor->region_range_guard_exits++;
+                EXIT_IF(true);
+            }
+            current_executor->region_poly_valid = true;
+        }
+
+        tier2 op(_POLY_LOCAL, (slot/4 --)) {
+            intptr_t value;
+            bool valid = _PyRegion_BoundedInput(GETLOCAL(oparg), &value);
+            assert(valid);
+            int64_t *poly = current_executor->region_poly_scratch[(uintptr_t)slot];
+            poly[0] = value;
+            poly[1] = 0;
+            poly[2] = 0;
+        }
+
+        tier2 op(_POLY_INDUCTION, (slot/4 --)) {
+            int64_t *poly = current_executor->region_poly_scratch[(uintptr_t)slot];
+            poly[0] = 0;
+            poly[1] = 1;
+            poly[2] = 0;
+        }
+
+        tier2 op(_POLY_CONST, (slot/4 --)) {
+            int64_t *poly = current_executor->region_poly_scratch[(uintptr_t)slot];
+            poly[0] = oparg;
+            poly[1] = 0;
+            poly[2] = 0;
+        }
+
+        tier2 op(_POLY_DUP, (--)) {
+            int64_t *poly = current_executor->region_poly_scratch[oparg];
+            int64_t *copy = current_executor->region_poly_scratch[oparg + 1];
+            copy[0] = poly[0];
+            copy[1] = poly[1];
+            copy[2] = poly[2];
+        }
+
+        replicate(4) tier2 op(_POLY_BINARY, (slot/4 --)) {
+            int64_t *a = current_executor->region_poly_scratch[(uintptr_t)slot];
+            int64_t *b = current_executor->region_poly_scratch[(uintptr_t)slot + 1];
+            current_executor->region_poly_valid = current_executor->region_poly_valid &&
+                _PyRegion_PolyBinary(a[0], a[1], a[2], b[0], b[1], b[2],
+                                    oparg, &a[0], &a[1], &a[2]);
+        }
+
+        tier2 op(_POLY_RSHIFT, (slot/4 --)) {
+            int64_t *poly = current_executor->region_poly_scratch[(uintptr_t)slot];
+            uint64_t mask = (UINT64_C(1) << oparg) - 1;
+            current_executor->region_poly_valid = current_executor->region_poly_valid &&
+                (((uint64_t)poly[1] | (uint64_t)poly[2]) & mask) == 0;
+            poly[0] = Py_ARITHMETIC_RIGHT_SHIFT(int64_t, poly[0], oparg);
+            poly[1] = Py_ARITHMETIC_RIGHT_SHIFT(int64_t, poly[1], oparg);
+            poly[2] = Py_ARITHMETIC_RIGHT_SHIFT(int64_t, poly[2], oparg);
+        }
+
+        tier2 op(_FLOAT_RANGE_REDUCE, (numerator/4, iter, index -- iter, index)) {
+            bool valid = current_executor->region_poly_valid;
+            _PyRangeIterObject *range = (_PyRangeIterObject *)PyStackRef_AsPyObjectBorrow(iter);
+            int64_t denominator = 0, delta = 0, difference = 0;
+            long count = range->len - 1;
+#ifdef __SIZEOF_INT128__
+            if (valid) {
+                __int128 c0 = current_executor->region_poly_scratch[0][0];
+                __int128 c1 = current_executor->region_poly_scratch[0][1];
+                __int128 c2 = current_executor->region_poly_scratch[0][2];
+                __int128 start = range->start;
+                __int128 d = c0 + c1*start + c2*start*(start - 1)/2;
+                __int128 step = c1 + c2*start;
+                __int128 last = d + step*(count - 1) + c2*(count - 1)*(count - 2)/2;
+                __int128 last_step = step + c2*(count - 1);
+                const int64_t exact = INT64_C(1) << 53;
+                valid = ((step >= 0 && last_step >= 0) || (step <= 0 && last_step <= 0)) &&
+                    ((d > 0 && last > 0) || (d < 0 && last < 0)) &&
+                    d >= -exact && d <= exact && last >= -exact && last <= exact &&
+                    step >= INT64_MIN && step <= INT64_MAX &&
+                    last_step >= INT64_MIN && last_step <= INT64_MAX;
+                if (valid) {
+                    denominator = (int64_t)d;
+                    delta = (int64_t)step;
+                    difference = (int64_t)c2;
+                }
+            }
+#else
+            valid = false;
+#endif
+            if (!valid) {
+                current_executor->region_range_guard_exits++;
+                EXIT_IF(true);
+            }
+            int accumulator = oparg >> 8;
+            int induction = oparg & 255;
+            PyFloatObject *acc = (PyFloatObject *)PyStackRef_AsPyObjectBorrow(GETLOCAL(accumulator));
+            double total = acc->ob_fval;
+            double dividend = PyFloat_AS_DOUBLE(numerator);
+            for (long i = 0; i < count; i++) {
+                /* Separate binary64 rounding for every Python operation. */
+                volatile double term = dividend / (double)denominator;
+                total = total + term;
+                if (i + 1 < count) {
+                    denominator += delta;
+                    delta += difference;
+                }
+            }
+            acc->ob_fval = total;
+            long last_index = range->start + count - 1;
+            range->start += count;
+            range->len -= count;
+            _PyStackRef old_index = GETLOCAL(induction);
+            PyObject *last_obj = (PyObject *)&_PyLong_SMALL_INTS[_PY_NSMALLNEGINTS + last_index];
+            GETLOCAL(induction) = PyStackRef_FromPyObjectNew(last_obj);
+            PyStackRef_XCLOSE(old_index);
+            current_executor->region_range_entries++;
+            current_executor->region_range_iterations += count;
+        }
+
         tier2 op(_TIER3_RANGE_CHUNK, (iter, index -- iter, index)) {
             int sum_local = oparg >> 4;
             int induction_local = oparg & 15;

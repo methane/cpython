@@ -5842,6 +5842,38 @@
             break;
         }
 
+        case _FLOAT_RANGE_GUARD: {
+            break;
+        }
+
+        case _POLY_LOCAL: {
+            break;
+        }
+
+        case _POLY_INDUCTION: {
+            break;
+        }
+
+        case _POLY_CONST: {
+            break;
+        }
+
+        case _POLY_DUP: {
+            break;
+        }
+
+        case _POLY_BINARY: {
+            break;
+        }
+
+        case _POLY_RSHIFT: {
+            break;
+        }
+
+        case _FLOAT_RANGE_REDUCE: {
+            break;
+        }
+
         case _TIER3_RANGE_CHUNK: {
             break;
         }

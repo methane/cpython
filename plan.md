@@ -832,3 +832,82 @@ build-jit/python -m test test_capi.test_opt_regions test_capi.test_opt test_tier
   全6本を通常の3 warmups / 10 valuesで比較する。目標はなおactiveで、0.5以下には
   未達。次の大きい課題は数値領域の周囲に残るframe・float box・loop bookkeeping。
   特にspectralのnative化余地と、Raytraceの属性からfloat算術への接続を調査する。
+- ローカル実装commitは`8ce3bf60642d0d13b018c0d24b423f307d8af3cf`。
+  `current-manifest.json`と`current-source-hashes.json`にcommit/tree、cleanな取得時点の
+  全6,378 tracked files、binary、configure、実体stencil、全benchmarkのhashを保存。
+  native binary SHA256は`33d5ee3c381584981acb43d7ab7c73b18875978a8c4a21d40166b21dd2c3c289`。
+- 通常設定の再測定中、spectralのJSONにjit_enabledがないためcontrollerの追加検査が
+  失敗した。他5本とspectralの実行・checksumは正常。保存済みの10行とspectralの
+  全10 samplesを保持し、後者を`current-recovery.json`に記録して再開した。
+  その1 processのwall timeだけは保存前に失われたためnullとし、推定で埋めない。
+  全ての定常samplesを主解析に含め、process全体の比は欠測を明示する。
+  元scriptのJIT確認は別のexecutor probeを併用する。
+- 修正後の通常設定は全24 processes / 240定常samplesを保持して完了した。
+  個別比はBPE 0.92569、B-tree 0.99535、DeltaBlue 0.99282、Hexiom 0.97475、
+  Raytrace 0.95234、Spectral 0.43831、全6本の幾何平均0.84813。半減は未達。
+  起動込み0.86165はSpectralの1 pairだけwall time欠測のため、同じ標本数の
+  比較ではない。`current-summary.json`に各pairを残した。
+- executor probeを`gc.get_referents(executor)`で到達可能なside traceまで辿るよう
+  修正した。BPEのtuple entriesは5,515,130、len entriesは15,437,472、guard失敗0。
+  以前のcode-attached executorのみのcounterはcoverageの下限だった。今回の
+  `current-graph-bpe.json`はpinし忘れた診断なので時間の比較には使わない。
+- 数値ループの費用を切り分けるC診断は、Spectralと同じ全演算・加算順序・checksumで
+  約0.617ms/kernel。Pythonの測定結果や目標達成値には含めない。最初の診断は
+  compilerが重複呼び出しを除去していたため無効と判定し、assemblyとともに
+  `numeric-ceiling-elided.*`へ保存した。修正版は各呼び出しの結果をvolatile sinkへ
+  書き、assemblyで100回のcallとscalar div/addを確認した。
+
+### 次の実装：二次式の逆数を加算する短いrange領域
+
+- 既存のbounded int traceから整数の二次多項式を構成し、有限差分の係数を通常の
+  copy-and-patch uopで計算する方法を実装する。runtime node interpreterや入力名に
+  依存するkernelは追加しない。定数・一次・二次の同じfamilyを扱う。
+- 最初はstep=1、index全体が既存small-int cache内、exactかつuniqueなfloat
+  accumulatorに限定する。これによりchunk内のframe生成・中間box・最終allocationを
+  省ける。元の最後の1反復を残し、最大反復数もsmall-int cacheの範囲に制限する。
+- 係数のoverflow、非定数係数が割り切れないfloor division、分母の符号変化、
+  非exact型、alias、code変更、監視イベントでは元のFOR_ITERへ戻す。floatの除算と
+  加算は反復ごとの順序を変えない。まずこの契約をdebugで確認し、効果が見えてから
+  nativeと関連テストへ進む。現時点では未実装・未検証。
+- `_FLOAT_RANGE_GUARD`、係数計算の4演算family、`_FLOAT_RANGE_REDUCE`を実装。
+  現在のsmall-int cacheは-5..1024なので、chunkは最大1,029反復で周期的な確認へ戻る。
+  guardはrange/unique float/各int入力/関数version/stack・再帰余地/監視versionを検査する。
+  係数は整数値のbasis `1, j, j*(j-1)//2`で扱い、除算では非定数係数の整除を検査。
+  単調かつ同符号で、分母が±2**53以内のchunkだけを実行する。
+- 初案の3係数×4段をPython operand stackへ置く方法は、debugのstack上限検査で
+  停止した。frameのco_stacksizeを超えるため不採用とし、executor内の4×3個の
+  整数作業領域へ変更した。GIL保持中でPythonへのescapeがないsetup区間に限定し、
+  同じexecutorへの再入・並行実行が起きない契約にする。runtime node dispatchはない。
+  新headerをMakefileの明示依存にも追加した。
+- テストの最初のwarmupは4002反復の閾値に不足していたため、閾値から回数を算出。
+  fallbackの試験もcache上限を従来の256と誤認していたので1024の外へ修正した。
+  型・大きいint・cache外・係数の非整除・分母0の元callee traceback・subclassの
+  dispatch順序・monitoringイベント数・code変更を検査する40 region testsがdebug/nativeで
+  成功。native関連367 tests・7 skips、debug region/generator138 testsが成功した後、
+  追加の例外/subclassテストを両buildで再実行している。
+- nativeの単独予備測定は約1.26ms、元benchmarkのchecksum一致。別のnative probeは
+  5,200 range entries / 665,600 iterations、guard失敗0。残りの通常処理も含めて元の
+  676,000 term evaluationsを保つ。code-attachedとside executorの合計は24,576 bytes。
+  この時点ではmainとの対応測定ではなく予備値。全6本の2 blocks・通常10 values比較を
+  開始した。完了後に丸めのbit比較と追加レビューを行う。半減目標は継続中。
+- 最初のrange版の全6本geomeanは0.56486（起動込み0.66177）。個別比は
+  BPE 0.92901、B-tree 0.98770、DeltaBlue 1.02093、Hexiom 0.97475、
+  Raytrace 0.95249、Spectral 0.03735。全240定常samplesを残した。
+  半減はなお未達。DeltaBlueの約2.1%悪化も含め、`float-range-rows.json`へ記録した。
+- Linux/x86の4丸めモード、3式、6種類の分子、4種類の初期値を組み合わせた288件の
+  bit比較がnativeで成功。各caseの実range counter増分と丸めモードの復元を確認した。
+  数値は±0、負数、subnormal、overflowも含む。例外/subclass追加後はregion40 testsが
+  debug/nativeで成功。初版binary、差分、新header、stencil hashを
+  `float-range-initial-manifest.json`に対応付けて保持した。
+- 次に、既知の2の累乗での係数除算をmaskと算術shiftに置き換える。
+  元の整数regionが持つshift量を使い、非定数係数の整除を引き続き検査する。
+  その除数だけの係数constantは不要になるため省く。setupがescapeしないことを
+  metadataでもassertする。変更前binaryは`python-suite-float-range`へ保存済み。
+- shift版はdebug region41 + generator99の140 tests、native関連369 tests・7 skips成功。
+  数値/range/call/frame/weakref/trace/monitoringのdebug8 suitesは1,072 tests・14 skips成功。
+  4丸めモードの288 bit比較も再度成功した。2の累乗で割り切れない係数と、負の係数に
+  対する算術shiftのテストを追加した。4生成ファイルは再生成でbyte単位同一。
+- Spectralの追加比較は3 blocksでmain→前版→shift版の順をrotateし、全90 valuesを保持。
+  `float-range-shift-paired.json`にコマンド・env・binary hash・全値を保存した。
+  追加効果は小さく、6本全体の半減にはまだ足りない。新しい領域をローカルcommitへ
+  まとめ、次にprofileで費用が大きいenumerate(list)の反復を調べる。

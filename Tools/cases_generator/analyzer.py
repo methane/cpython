@@ -667,6 +667,7 @@ NON_ESCAPING_FUNCTIONS = (
     "_PyList_ITEMS",
     "_PyLong_CompactValue",
     "_PyRegion_BoundedInput",
+    "_PyRegion_PolyBinary",
     "_PyRegion_Length",
     "_PyRegion_EqualityType",
     "_PyRegion_ImmutableEqual",
