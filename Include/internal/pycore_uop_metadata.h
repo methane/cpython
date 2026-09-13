@@ -109,6 +109,26 @@ const uint32_t _PyUop_Flags[MAX_UOP_ID+1] = {
     [_BINARY_OP_MULTIPLY_INT] = HAS_EXIT_FLAG | HAS_PURE_FLAG,
     [_BINARY_OP_ADD_INT] = HAS_EXIT_FLAG | HAS_PURE_FLAG,
     [_BINARY_OP_SUBTRACT_INT] = HAS_EXIT_FLAG | HAS_PURE_FLAG,
+    [_INT_REGION_0] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG,
+    [_INT_REGION_1] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG,
+    [_INT_REGION_2] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG,
+    [_INT_REGION_3] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG,
+    [_INT_REGION_4] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG,
+    [_INT_REGION_5] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG,
+    [_INT_REGION_6] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG,
+    [_INT_REGION_7] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG,
+    [_INT_REGION_8] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG,
+    [_INT_REGION] = HAS_ARG_FLAG | HAS_LOCAL_FLAG | HAS_EXIT_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG,
+    [_INT_REGION_COMPARE_0] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG | HAS_ESCAPES_FLAG,
+    [_INT_REGION_COMPARE_1] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG | HAS_ESCAPES_FLAG,
+    [_INT_REGION_COMPARE_2] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG | HAS_ESCAPES_FLAG,
+    [_INT_REGION_COMPARE_3] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG | HAS_ESCAPES_FLAG,
+    [_INT_REGION_COMPARE_4] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG | HAS_ESCAPES_FLAG,
+    [_INT_REGION_COMPARE_5] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG | HAS_ESCAPES_FLAG,
+    [_INT_REGION_COMPARE_6] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG | HAS_ESCAPES_FLAG,
+    [_INT_REGION_COMPARE_7] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG | HAS_ESCAPES_FLAG,
+    [_INT_REGION_COMPARE_8] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG | HAS_ESCAPES_FLAG,
+    [_INT_REGION_COMPARE] = HAS_ARG_FLAG | HAS_LOCAL_FLAG | HAS_EXIT_FLAG | HAS_ESCAPES_FLAG,
     [_BINARY_OP_ADD_INT_INPLACE] = HAS_EXIT_FLAG,
     [_BINARY_OP_SUBTRACT_INT_INPLACE] = HAS_EXIT_FLAG,
     [_BINARY_OP_MULTIPLY_INT_INPLACE] = HAS_EXIT_FLAG,
@@ -125,8 +145,8 @@ const uint32_t _PyUop_Flags[MAX_UOP_ID+1] = {
     [_BINARY_OP_MULTIPLY_FLOAT_INPLACE] = 0,
     [_BINARY_OP_MULTIPLY_ADD_FLOAT_INPLACE] = HAS_PURE_FLAG,
     [_BINARY_OP_MULTIPLY_SUBTRACT_FLOAT_INPLACE] = HAS_PURE_FLAG,
-    [_BINARY_OP_MULTIPLY_ADD_FLOAT_SHARED] = HAS_EXIT_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG,
-    [_BINARY_OP_MULTIPLY_SUBTRACT_FLOAT_SHARED] = HAS_EXIT_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG,
+    [_BINARY_OP_MULTIPLY_ADD_FLOAT_SHARED] = HAS_EXIT_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG,
+    [_BINARY_OP_MULTIPLY_SUBTRACT_FLOAT_SHARED] = HAS_EXIT_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG,
     [_BINARY_OP_ADD_FLOAT_INPLACE_RIGHT] = 0,
     [_BINARY_OP_MULTIPLY_FLOAT_INPLACE_RIGHT] = 0,
     [_BINARY_OP_SUBTRACT_FLOAT_INPLACE_RIGHT] = 0,
@@ -337,6 +357,8 @@ const uint32_t _PyUop_Flags[MAX_UOP_ID+1] = {
     [_CALL_BUILTIN_FAST_WITH_KEYWORDS] = HAS_ARG_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG,
     [_GUARD_CALLABLE_LEN] = HAS_EXIT_FLAG,
     [_CALL_LEN] = HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG,
+    [_CALL_LEN_CONSUMER] = HAS_ARG_FLAG | HAS_LOCAL_FLAG | HAS_EXIT_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG,
+    [_CALL_STR_TAILMATCH] = HAS_ARG_FLAG | HAS_EXIT_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG,
     [_GUARD_CALLABLE_ISINSTANCE] = HAS_EXIT_FLAG,
     [_CALL_ISINSTANCE] = HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG,
     [_GUARD_CALLABLE_LIST_APPEND] = HAS_EXIT_FLAG,
@@ -446,6 +468,8 @@ const ReplicationRange _PyUop_Replication[MAX_UOP_ID+1] = {
     [_LOAD_FAST_BORROW] = { 0, 8 },
     [_LOAD_SMALL_INT] = { 0, 4 },
     [_SWAP_FAST] = { 0, 8 },
+    [_INT_REGION] = { 0, 9 },
+    [_INT_REGION_COMPARE] = { 0, 9 },
     [_INIT_CALL_PY_EXACT_ARGS] = { 0, 5 },
     [_COPY] = { 1, 4 },
     [_SWAP] = { 2, 4 },
@@ -1117,6 +1141,186 @@ const _PyUopCachingInfo _PyUop_Caching[MAX_UOP_ID+1] = {
             { 3, 0, _BINARY_OP_SUBTRACT_INT_r03 },
             { 3, 1, _BINARY_OP_SUBTRACT_INT_r13 },
             { 3, 2, _BINARY_OP_SUBTRACT_INT_r23 },
+            { -1, -1, -1 },
+        },
+    },
+    [_INT_REGION_0] = {
+        .best = { 2, 2, 2, 2 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 3, 2, _INT_REGION_0_r23 },
+            { -1, -1, -1 },
+        },
+    },
+    [_INT_REGION_1] = {
+        .best = { 2, 2, 2, 2 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 3, 2, _INT_REGION_1_r23 },
+            { -1, -1, -1 },
+        },
+    },
+    [_INT_REGION_2] = {
+        .best = { 2, 2, 2, 2 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 3, 2, _INT_REGION_2_r23 },
+            { -1, -1, -1 },
+        },
+    },
+    [_INT_REGION_3] = {
+        .best = { 2, 2, 2, 2 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 3, 2, _INT_REGION_3_r23 },
+            { -1, -1, -1 },
+        },
+    },
+    [_INT_REGION_4] = {
+        .best = { 2, 2, 2, 2 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 3, 2, _INT_REGION_4_r23 },
+            { -1, -1, -1 },
+        },
+    },
+    [_INT_REGION_5] = {
+        .best = { 2, 2, 2, 2 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 3, 2, _INT_REGION_5_r23 },
+            { -1, -1, -1 },
+        },
+    },
+    [_INT_REGION_6] = {
+        .best = { 2, 2, 2, 2 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 3, 2, _INT_REGION_6_r23 },
+            { -1, -1, -1 },
+        },
+    },
+    [_INT_REGION_7] = {
+        .best = { 2, 2, 2, 2 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 3, 2, _INT_REGION_7_r23 },
+            { -1, -1, -1 },
+        },
+    },
+    [_INT_REGION_8] = {
+        .best = { 2, 2, 2, 2 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 3, 2, _INT_REGION_8_r23 },
+            { -1, -1, -1 },
+        },
+    },
+    [_INT_REGION] = {
+        .best = { 2, 2, 2, 2 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 3, 2, _INT_REGION_r23 },
+            { -1, -1, -1 },
+        },
+    },
+    [_INT_REGION_COMPARE_0] = {
+        .best = { 2, 2, 2, 2 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 3, 2, _INT_REGION_COMPARE_0_r23 },
+            { -1, -1, -1 },
+        },
+    },
+    [_INT_REGION_COMPARE_1] = {
+        .best = { 2, 2, 2, 2 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 3, 2, _INT_REGION_COMPARE_1_r23 },
+            { -1, -1, -1 },
+        },
+    },
+    [_INT_REGION_COMPARE_2] = {
+        .best = { 2, 2, 2, 2 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 3, 2, _INT_REGION_COMPARE_2_r23 },
+            { -1, -1, -1 },
+        },
+    },
+    [_INT_REGION_COMPARE_3] = {
+        .best = { 2, 2, 2, 2 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 3, 2, _INT_REGION_COMPARE_3_r23 },
+            { -1, -1, -1 },
+        },
+    },
+    [_INT_REGION_COMPARE_4] = {
+        .best = { 2, 2, 2, 2 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 3, 2, _INT_REGION_COMPARE_4_r23 },
+            { -1, -1, -1 },
+        },
+    },
+    [_INT_REGION_COMPARE_5] = {
+        .best = { 2, 2, 2, 2 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 3, 2, _INT_REGION_COMPARE_5_r23 },
+            { -1, -1, -1 },
+        },
+    },
+    [_INT_REGION_COMPARE_6] = {
+        .best = { 2, 2, 2, 2 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 3, 2, _INT_REGION_COMPARE_6_r23 },
+            { -1, -1, -1 },
+        },
+    },
+    [_INT_REGION_COMPARE_7] = {
+        .best = { 2, 2, 2, 2 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 3, 2, _INT_REGION_COMPARE_7_r23 },
+            { -1, -1, -1 },
+        },
+    },
+    [_INT_REGION_COMPARE_8] = {
+        .best = { 2, 2, 2, 2 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 3, 2, _INT_REGION_COMPARE_8_r23 },
+            { -1, -1, -1 },
+        },
+    },
+    [_INT_REGION_COMPARE] = {
+        .best = { 2, 2, 2, 2 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 3, 2, _INT_REGION_COMPARE_r23 },
             { -1, -1, -1 },
         },
     },
@@ -3172,6 +3376,24 @@ const _PyUopCachingInfo _PyUop_Caching[MAX_UOP_ID+1] = {
             { 3, 3, _CALL_LEN_r33 },
         },
     },
+    [_CALL_LEN_CONSUMER] = {
+        .best = { 3, 3, 3, 3 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 3, 3, _CALL_LEN_CONSUMER_r33 },
+        },
+    },
+    [_CALL_STR_TAILMATCH] = {
+        .best = { 3, 3, 3, 3 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 3, 3, _CALL_STR_TAILMATCH_r33 },
+        },
+    },
     [_GUARD_CALLABLE_ISINSTANCE] = {
         .best = { 0, 1, 2, 3 },
         .entries = {
@@ -4216,6 +4438,26 @@ const uint16_t _PyUop_Uncached[MAX_UOP_REGS_ID+1] = {
     [_BINARY_OP_SUBTRACT_INT_r03] = _BINARY_OP_SUBTRACT_INT,
     [_BINARY_OP_SUBTRACT_INT_r13] = _BINARY_OP_SUBTRACT_INT,
     [_BINARY_OP_SUBTRACT_INT_r23] = _BINARY_OP_SUBTRACT_INT,
+    [_INT_REGION_0_r23] = _INT_REGION_0,
+    [_INT_REGION_1_r23] = _INT_REGION_1,
+    [_INT_REGION_2_r23] = _INT_REGION_2,
+    [_INT_REGION_3_r23] = _INT_REGION_3,
+    [_INT_REGION_4_r23] = _INT_REGION_4,
+    [_INT_REGION_5_r23] = _INT_REGION_5,
+    [_INT_REGION_6_r23] = _INT_REGION_6,
+    [_INT_REGION_7_r23] = _INT_REGION_7,
+    [_INT_REGION_8_r23] = _INT_REGION_8,
+    [_INT_REGION_r23] = _INT_REGION,
+    [_INT_REGION_COMPARE_0_r23] = _INT_REGION_COMPARE_0,
+    [_INT_REGION_COMPARE_1_r23] = _INT_REGION_COMPARE_1,
+    [_INT_REGION_COMPARE_2_r23] = _INT_REGION_COMPARE_2,
+    [_INT_REGION_COMPARE_3_r23] = _INT_REGION_COMPARE_3,
+    [_INT_REGION_COMPARE_4_r23] = _INT_REGION_COMPARE_4,
+    [_INT_REGION_COMPARE_5_r23] = _INT_REGION_COMPARE_5,
+    [_INT_REGION_COMPARE_6_r23] = _INT_REGION_COMPARE_6,
+    [_INT_REGION_COMPARE_7_r23] = _INT_REGION_COMPARE_7,
+    [_INT_REGION_COMPARE_8_r23] = _INT_REGION_COMPARE_8,
+    [_INT_REGION_COMPARE_r23] = _INT_REGION_COMPARE,
     [_BINARY_OP_ADD_INT_INPLACE_r03] = _BINARY_OP_ADD_INT_INPLACE,
     [_BINARY_OP_ADD_INT_INPLACE_r13] = _BINARY_OP_ADD_INT_INPLACE,
     [_BINARY_OP_ADD_INT_INPLACE_r23] = _BINARY_OP_ADD_INT_INPLACE,
@@ -4682,6 +4924,8 @@ const uint16_t _PyUop_Uncached[MAX_UOP_REGS_ID+1] = {
     [_GUARD_CALLABLE_LEN_r23] = _GUARD_CALLABLE_LEN,
     [_GUARD_CALLABLE_LEN_r33] = _GUARD_CALLABLE_LEN,
     [_CALL_LEN_r33] = _CALL_LEN,
+    [_CALL_LEN_CONSUMER_r33] = _CALL_LEN_CONSUMER,
+    [_CALL_STR_TAILMATCH_r33] = _CALL_STR_TAILMATCH,
     [_GUARD_CALLABLE_ISINSTANCE_r03] = _GUARD_CALLABLE_ISINSTANCE,
     [_GUARD_CALLABLE_ISINSTANCE_r13] = _GUARD_CALLABLE_ISINSTANCE,
     [_GUARD_CALLABLE_ISINSTANCE_r23] = _GUARD_CALLABLE_ISINSTANCE,
@@ -5102,6 +5346,8 @@ const char *const _PyOpcode_uop_name[MAX_UOP_REGS_ID+1] = {
     [_CALL_KW_NON_PY_r11] = "_CALL_KW_NON_PY_r11",
     [_CALL_LEN] = "_CALL_LEN",
     [_CALL_LEN_r33] = "_CALL_LEN_r33",
+    [_CALL_LEN_CONSUMER] = "_CALL_LEN_CONSUMER",
+    [_CALL_LEN_CONSUMER_r33] = "_CALL_LEN_CONSUMER_r33",
     [_CALL_LIST_APPEND] = "_CALL_LIST_APPEND",
     [_CALL_LIST_APPEND_r03] = "_CALL_LIST_APPEND_r03",
     [_CALL_LIST_APPEND_r13] = "_CALL_LIST_APPEND_r13",
@@ -5127,6 +5373,8 @@ const char *const _PyOpcode_uop_name[MAX_UOP_REGS_ID+1] = {
     [_CALL_NON_PY_GENERAL_r01] = "_CALL_NON_PY_GENERAL_r01",
     [_CALL_STR_1] = "_CALL_STR_1",
     [_CALL_STR_1_r32] = "_CALL_STR_1_r32",
+    [_CALL_STR_TAILMATCH] = "_CALL_STR_TAILMATCH",
+    [_CALL_STR_TAILMATCH_r33] = "_CALL_STR_TAILMATCH_r33",
     [_CALL_TUPLE_1] = "_CALL_TUPLE_1",
     [_CALL_TUPLE_1_r32] = "_CALL_TUPLE_1_r32",
     [_CALL_TYPE_1] = "_CALL_TYPE_1",
@@ -5737,6 +5985,46 @@ const char *const _PyOpcode_uop_name[MAX_UOP_REGS_ID+1] = {
     [_INIT_CALL_PY_EXACT_ARGS_4_r01] = "_INIT_CALL_PY_EXACT_ARGS_4_r01",
     [_INSERT_NULL] = "_INSERT_NULL",
     [_INSERT_NULL_r10] = "_INSERT_NULL_r10",
+    [_INT_REGION] = "_INT_REGION",
+    [_INT_REGION_r23] = "_INT_REGION_r23",
+    [_INT_REGION_0] = "_INT_REGION_0",
+    [_INT_REGION_0_r23] = "_INT_REGION_0_r23",
+    [_INT_REGION_1] = "_INT_REGION_1",
+    [_INT_REGION_1_r23] = "_INT_REGION_1_r23",
+    [_INT_REGION_2] = "_INT_REGION_2",
+    [_INT_REGION_2_r23] = "_INT_REGION_2_r23",
+    [_INT_REGION_3] = "_INT_REGION_3",
+    [_INT_REGION_3_r23] = "_INT_REGION_3_r23",
+    [_INT_REGION_4] = "_INT_REGION_4",
+    [_INT_REGION_4_r23] = "_INT_REGION_4_r23",
+    [_INT_REGION_5] = "_INT_REGION_5",
+    [_INT_REGION_5_r23] = "_INT_REGION_5_r23",
+    [_INT_REGION_6] = "_INT_REGION_6",
+    [_INT_REGION_6_r23] = "_INT_REGION_6_r23",
+    [_INT_REGION_7] = "_INT_REGION_7",
+    [_INT_REGION_7_r23] = "_INT_REGION_7_r23",
+    [_INT_REGION_8] = "_INT_REGION_8",
+    [_INT_REGION_8_r23] = "_INT_REGION_8_r23",
+    [_INT_REGION_COMPARE] = "_INT_REGION_COMPARE",
+    [_INT_REGION_COMPARE_r23] = "_INT_REGION_COMPARE_r23",
+    [_INT_REGION_COMPARE_0] = "_INT_REGION_COMPARE_0",
+    [_INT_REGION_COMPARE_0_r23] = "_INT_REGION_COMPARE_0_r23",
+    [_INT_REGION_COMPARE_1] = "_INT_REGION_COMPARE_1",
+    [_INT_REGION_COMPARE_1_r23] = "_INT_REGION_COMPARE_1_r23",
+    [_INT_REGION_COMPARE_2] = "_INT_REGION_COMPARE_2",
+    [_INT_REGION_COMPARE_2_r23] = "_INT_REGION_COMPARE_2_r23",
+    [_INT_REGION_COMPARE_3] = "_INT_REGION_COMPARE_3",
+    [_INT_REGION_COMPARE_3_r23] = "_INT_REGION_COMPARE_3_r23",
+    [_INT_REGION_COMPARE_4] = "_INT_REGION_COMPARE_4",
+    [_INT_REGION_COMPARE_4_r23] = "_INT_REGION_COMPARE_4_r23",
+    [_INT_REGION_COMPARE_5] = "_INT_REGION_COMPARE_5",
+    [_INT_REGION_COMPARE_5_r23] = "_INT_REGION_COMPARE_5_r23",
+    [_INT_REGION_COMPARE_6] = "_INT_REGION_COMPARE_6",
+    [_INT_REGION_COMPARE_6_r23] = "_INT_REGION_COMPARE_6_r23",
+    [_INT_REGION_COMPARE_7] = "_INT_REGION_COMPARE_7",
+    [_INT_REGION_COMPARE_7_r23] = "_INT_REGION_COMPARE_7_r23",
+    [_INT_REGION_COMPARE_8] = "_INT_REGION_COMPARE_8",
+    [_INT_REGION_COMPARE_8_r23] = "_INT_REGION_COMPARE_8_r23",
     [_IS_NONE] = "_IS_NONE",
     [_IS_NONE_r11] = "_IS_NONE_r11",
     [_IS_OP] = "_IS_OP",
@@ -6431,6 +6719,46 @@ int _PyUop_num_popped(int opcode, int oparg)
             return 2;
         case _BINARY_OP_SUBTRACT_INT:
             return 2;
+        case _INT_REGION_0:
+            return 2;
+        case _INT_REGION_1:
+            return 2;
+        case _INT_REGION_2:
+            return 2;
+        case _INT_REGION_3:
+            return 2;
+        case _INT_REGION_4:
+            return 2;
+        case _INT_REGION_5:
+            return 2;
+        case _INT_REGION_6:
+            return 2;
+        case _INT_REGION_7:
+            return 2;
+        case _INT_REGION_8:
+            return 2;
+        case _INT_REGION:
+            return 2;
+        case _INT_REGION_COMPARE_0:
+            return 2;
+        case _INT_REGION_COMPARE_1:
+            return 2;
+        case _INT_REGION_COMPARE_2:
+            return 2;
+        case _INT_REGION_COMPARE_3:
+            return 2;
+        case _INT_REGION_COMPARE_4:
+            return 2;
+        case _INT_REGION_COMPARE_5:
+            return 2;
+        case _INT_REGION_COMPARE_6:
+            return 2;
+        case _INT_REGION_COMPARE_7:
+            return 2;
+        case _INT_REGION_COMPARE_8:
+            return 2;
+        case _INT_REGION_COMPARE:
+            return 2;
         case _BINARY_OP_ADD_INT_INPLACE:
             return 2;
         case _BINARY_OP_SUBTRACT_INT_INPLACE:
@@ -6887,6 +7215,10 @@ int _PyUop_num_popped(int opcode, int oparg)
             return 0;
         case _CALL_LEN:
             return 3;
+        case _CALL_LEN_CONSUMER:
+            return 3;
+        case _CALL_STR_TAILMATCH:
+            return 0;
         case _GUARD_CALLABLE_ISINSTANCE:
             return 0;
         case _CALL_ISINSTANCE:

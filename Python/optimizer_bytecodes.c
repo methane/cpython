@@ -1939,13 +1939,25 @@ dummy_func(void) {
 
     op(_CALL_METHOD_DESCRIPTOR_FAST, (callable, self_or_null, args[oparg] -- callable, self_or_null, args[oparg])) {
         PyObject *callable_o = sym_get_const(ctx, callable);
+        bool tailmatch = false;
         if (callable_o && Py_IS_TYPE(callable_o, &PyMethodDescr_Type)
             && sym_is_not_null(self_or_null)) {
             PyMethodDescrObject *method = (PyMethodDescrObject *)callable_o;
             PyCFunction cfunc = method->d_method->ml_meth;
-            ADD_OP(_CALL_METHOD_DESCRIPTOR_FAST_INLINE, oparg, (uintptr_t)cfunc);
+            const char *name = method->d_method->ml_name;
+            if (region_enabled("PYTHON_TIER2_BUILTIN_REGIONS") && oparg == 1 &&
+                method->d_common.d_type == &PyUnicode_Type &&
+                (strcmp(name, "startswith") == 0 || strcmp(name, "endswith") == 0) &&
+                _PyType_Lookup(&PyUnicode_Type, method->d_common.d_name) == callable_o) {
+                ADD_OP(_CALL_STR_TAILMATCH, strcmp(name, "endswith") == 0,
+                       (uintptr_t)callable_o);
+                tailmatch = true;
+            }
+            else {
+                ADD_OP(_CALL_METHOD_DESCRIPTOR_FAST_INLINE, oparg, (uintptr_t)cfunc);
+            }
         }
-        callable = sym_new_not_null(ctx);
+        callable = tailmatch ? sym_new_type(ctx, &PyBool_Type) : sym_new_not_null(ctx);
     }
 
     op(_GUARD_CALLABLE_METHOD_DESCRIPTOR_FAST, (callable, self_or_null, args[oparg] -- callable, self_or_null, args[oparg])) {
@@ -2421,6 +2433,24 @@ dummy_func(void) {
         else {
             sym_set_const(callable, (PyObject *)&PyUnicode_Type);
         }
+    }
+
+    op(_INT_REGION, (left, right, config/4 -- res, l, r)) {
+        res = sym_new_type(ctx, &PyLong_Type);
+        l = left;
+        r = right;
+    }
+
+    op(_INT_REGION_COMPARE, (left, right, config/4 -- res, l, r)) {
+        res = sym_new_type(ctx, &PyBool_Type);
+        l = left;
+        r = right;
+    }
+
+    op(_CALL_LEN_CONSUMER, (callable, null, arg, local/4 -- res, a, c)) {
+        res = sym_new_type(ctx, (oparg & 16) ? &PyBool_Type : &PyLong_Type);
+        a = arg;
+        c = callable;
     }
 
     op(_CALL_LEN, (callable, null, arg -- res, a, c)) {

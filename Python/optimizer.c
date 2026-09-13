@@ -600,10 +600,31 @@ get_tier3_stats(PyObject *self, PyObject *Py_UNUSED(ignored))
         executor->tier3_resident_deopt_materializations);
 }
 
+static PyObject *
+get_region_stats(PyObject *self, PyObject *Py_UNUSED(ignored))
+{
+    _PyExecutorObject *executor = _PyExecutorObject_CAST(self);
+    return Py_BuildValue(
+        "{s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K}",
+        "int_entries", executor->region_int_entries,
+        "int_guard_exits", executor->region_int_guard_exits,
+        "int_overflow_exits", executor->region_int_overflow_exits,
+        "int_boxes", executor->region_int_boxes,
+        "len_entries", executor->region_len_entries,
+        "len_guard_exits", executor->region_len_guard_exits,
+        "method_entries", executor->region_method_entries,
+        "method_guard_exits", executor->region_method_guard_exits,
+        "float_unique_entries", executor->region_float_unique_entries,
+        "float_shared_entries", executor->region_float_shared_entries,
+        "float_guard_exits", executor->region_float_guard_exits,
+        "allocation_errors", executor->region_allocation_errors);
+}
+
 static PyMethodDef uop_executor_methods[] = {
     { "is_valid", is_valid, METH_NOARGS, NULL },
     { "get_jit_code", get_jit_code, METH_NOARGS, NULL},
     { "get_tier3_stats", get_tier3_stats, METH_NOARGS, NULL},
+    { "get_region_stats", get_region_stats, METH_NOARGS, NULL},
     { "get_opcode", get_opcode, METH_NOARGS, NULL },
     { "get_oparg", get_oparg, METH_NOARGS, NULL },
     { NULL, NULL },
@@ -1588,6 +1609,18 @@ allocate_executor(int exit_count, int length)
     res->tier3_native_overflow_exits = 0;
     res->tier3_native_materialization_exits = 0;
     res->tier3_resident_entries = 0;
+    res->region_int_entries = 0;
+    res->region_int_guard_exits = 0;
+    res->region_int_overflow_exits = 0;
+    res->region_int_boxes = 0;
+    res->region_len_entries = 0;
+    res->region_len_guard_exits = 0;
+    res->region_method_entries = 0;
+    res->region_method_guard_exits = 0;
+    res->region_float_unique_entries = 0;
+    res->region_float_shared_entries = 0;
+    res->region_float_guard_exits = 0;
+    res->region_allocation_errors = 0;
     res->tier3_resident_iterations = 0;
     res->tier3_resident_polls = 0;
     res->tier3_resident_pending_polls = 0;

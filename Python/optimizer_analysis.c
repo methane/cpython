@@ -39,6 +39,8 @@
 #include <stdint.h>
 #include <stddef.h>
 
+#include "optimizer_regions.h"
+
 #ifdef Py_DEBUG
     extern const char *_PyUOpName(int index);
     extern void _PyUOpPrint(const _PyUOpInstruction *uop);
@@ -872,6 +874,8 @@ _Py_uop_analyze_and_optimize(
 {
     OPT_STAT_INC(optimizer_attempts);
 
+    lower_int_regions(buffer, length);
+    lower_len_regions(buffer, length);
     length = optimize_uops(
         tstate, buffer, length, curr_stacklen, output, dependencies);
 

@@ -215,6 +215,19 @@ typedef struct _PyExecutorObject {
     uint64_t tier3_resident_overflow_exits;
     uint64_t tier3_resident_normal_materializations;
     uint64_t tier3_resident_deopt_materializations;
+    /* Opt-in straight-line region diagnostics, local to this executor. */
+    uint64_t region_int_entries;
+    uint64_t region_int_guard_exits;
+    uint64_t region_int_overflow_exits;
+    uint64_t region_int_boxes;
+    uint64_t region_len_entries;
+    uint64_t region_len_guard_exits;
+    uint64_t region_method_entries;
+    uint64_t region_method_guard_exits;
+    uint64_t region_float_unique_entries;
+    uint64_t region_float_shared_entries;
+    uint64_t region_float_guard_exits;
+    uint64_t region_allocation_errors;
     _PyExitData exits[1];
 } _PyExecutorObject;
 

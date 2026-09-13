@@ -626,6 +626,60 @@ _PyFloat_MultiplyThenUpdate(double accumulator, double left, double right,
 }
 
 
+/* Like the resident-range reconstruction probe, this private debug-only
+ * fault injection targets the actual fused allocation and its error edge. */
+static inline bool
+_PyRegion_AllocationFails(const char *kind)
+{
+#ifdef Py_DEBUG
+    const char *failure = Py_GETENV("PYTHON_TIER2_REGION_FAIL_ALLOC");
+    if (failure != NULL && strcmp(failure, kind) == 0) {
+        PyErr_NoMemory();
+        return true;
+    }
+#endif
+    return false;
+}
+
+/* These conversions never invoke Python or set an exception: exact ints are
+ * required, and AsLongLongAndOverflow reports range failures out of band. */
+static inline bool
+_PyRegion_AsInt64(_PyStackRef ref, int64_t *value)
+{
+    if (PyStackRef_IsNull(ref)) {
+        return false;
+    }
+    PyObject *obj = PyStackRef_AsPyObjectBorrow(ref);
+    if (!PyLong_CheckExact(obj)) {
+        return false;
+    }
+    if (_PyLong_IsCompact((PyLongObject *)obj)) {
+        *value = _PyLong_CompactValue((PyLongObject *)obj);
+        return true;
+    }
+    int overflow;
+    *value = PyLong_AsLongLongAndOverflow(obj, &overflow);
+    return overflow == 0;
+}
+
+/* A fixed pair of checked operations, not a runtime IR interpreter. The
+ * selector is a stencil immediate: 0 = add, 1 = subtract, 2 = multiply. */
+static inline bool
+_PyRegion_Arithmetic(int64_t left, int64_t right, int op, int64_t *result)
+{
+#if defined(__GNUC__) || defined(__clang__)
+    switch (op) {
+        case 0: return !__builtin_add_overflow(left, right, result);
+        case 1: return !__builtin_sub_overflow(left, right, result);
+        case 2: return !__builtin_mul_overflow(left, right, result);
+        default: Py_UNREACHABLE();
+    }
+#else
+    /* The experimental matcher is disabled without checked arithmetic. */
+    return false;
+#endif
+}
+
 // Inplace float true division. Sets _divop_err to 1 on zero division.
 // Caller must check _divop_err and call ERROR_NO_POP() if set.
 #define FLOAT_INPLACE_DIVOP(left, right, TARGET)                         \

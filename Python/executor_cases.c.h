@@ -4594,6 +4594,1514 @@
             break;
         }
 
+        case _INT_REGION_0_r23: {
+            CHECK_CURRENT_CACHED_VALUES(2);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            _PyStackRef right;
+            _PyStackRef left;
+            _PyStackRef res;
+            _PyStackRef l;
+            _PyStackRef r;
+            _PyStackRef _stack_item_0 = _tos_cache0;
+            _PyStackRef _stack_item_1 = _tos_cache1;
+            oparg = 0;
+            assert(oparg == CURRENT_OPARG());
+            right = _stack_item_1;
+            left = _stack_item_0;
+            PyObject *config = (PyObject *)CURRENT_OPERAND0_64();
+            current_executor->region_int_entries++;
+            int64_t a, b, c, intermediate, value;
+            stack_pointer[0] = left;
+            stack_pointer[1] = right;
+            stack_pointer += 2;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            _PyFrame_SetStackPointer(frame, stack_pointer);
+            _PyFrame_StackPointerValidate(frame);
+            bool valid = _PyRegion_AsInt64(left, &a) &&
+            _PyRegion_AsInt64(right, &b) &&
+            _PyRegion_AsInt64(GETLOCAL((uintptr_t)config & 0xffff), &c);
+            _PyFrame_StackPointerInvalidate(frame);
+            if (!valid) {
+                current_executor->region_int_guard_exits++;
+                if (true) {
+                    UOP_STAT_INC(uopcode, miss);
+                    _tos_cache1 = right;
+                    _tos_cache0 = left;
+                    SET_CURRENT_CACHED_VALUES(2);
+                    stack_pointer += -2;
+                    ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                    JUMP_TO_JUMP_TARGET();
+                }
+            }
+            assert(stack_pointer == _PyFrame_GetStackPointer(frame));
+            _PyFrame_StackPointerValidate(frame);
+            bool fits = _PyRegion_Arithmetic(a, b, oparg % 3, &intermediate) &&
+            _PyRegion_Arithmetic(intermediate, c, oparg / 3, &value);
+            _PyFrame_StackPointerInvalidate(frame);
+            if (!fits) {
+                current_executor->region_int_overflow_exits++;
+                if (true) {
+                    UOP_STAT_INC(uopcode, miss);
+                    _tos_cache1 = right;
+                    _tos_cache0 = left;
+                    SET_CURRENT_CACHED_VALUES(2);
+                    stack_pointer += -2;
+                    ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                    JUMP_TO_JUMP_TARGET();
+                }
+            }
+            assert(stack_pointer == _PyFrame_GetStackPointer(frame));
+            _PyFrame_StackPointerValidate(frame);
+            PyObject *result = _PyRegion_AllocationFails("int")
+            ? NULL : PyLong_FromLongLong(value);
+            _PyFrame_StackPointerInvalidate(frame);
+            if (result == NULL) {
+                current_executor->region_allocation_errors++;
+                SET_CURRENT_CACHED_VALUES(0);
+                JUMP_TO_ERROR();
+            }
+            current_executor->region_int_boxes++;
+            res = PyStackRef_FromPyObjectSteal(result);
+            l = left;
+            r = right;
+            _tos_cache2 = r;
+            _tos_cache1 = l;
+            _tos_cache0 = res;
+            SET_CURRENT_CACHED_VALUES(3);
+            stack_pointer += -2;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            break;
+        }
+
+        case _INT_REGION_1_r23: {
+            CHECK_CURRENT_CACHED_VALUES(2);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            _PyStackRef right;
+            _PyStackRef left;
+            _PyStackRef res;
+            _PyStackRef l;
+            _PyStackRef r;
+            _PyStackRef _stack_item_0 = _tos_cache0;
+            _PyStackRef _stack_item_1 = _tos_cache1;
+            oparg = 1;
+            assert(oparg == CURRENT_OPARG());
+            right = _stack_item_1;
+            left = _stack_item_0;
+            PyObject *config = (PyObject *)CURRENT_OPERAND0_64();
+            current_executor->region_int_entries++;
+            int64_t a, b, c, intermediate, value;
+            stack_pointer[0] = left;
+            stack_pointer[1] = right;
+            stack_pointer += 2;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            _PyFrame_SetStackPointer(frame, stack_pointer);
+            _PyFrame_StackPointerValidate(frame);
+            bool valid = _PyRegion_AsInt64(left, &a) &&
+            _PyRegion_AsInt64(right, &b) &&
+            _PyRegion_AsInt64(GETLOCAL((uintptr_t)config & 0xffff), &c);
+            _PyFrame_StackPointerInvalidate(frame);
+            if (!valid) {
+                current_executor->region_int_guard_exits++;
+                if (true) {
+                    UOP_STAT_INC(uopcode, miss);
+                    _tos_cache1 = right;
+                    _tos_cache0 = left;
+                    SET_CURRENT_CACHED_VALUES(2);
+                    stack_pointer += -2;
+                    ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                    JUMP_TO_JUMP_TARGET();
+                }
+            }
+            assert(stack_pointer == _PyFrame_GetStackPointer(frame));
+            _PyFrame_StackPointerValidate(frame);
+            bool fits = _PyRegion_Arithmetic(a, b, oparg % 3, &intermediate) &&
+            _PyRegion_Arithmetic(intermediate, c, oparg / 3, &value);
+            _PyFrame_StackPointerInvalidate(frame);
+            if (!fits) {
+                current_executor->region_int_overflow_exits++;
+                if (true) {
+                    UOP_STAT_INC(uopcode, miss);
+                    _tos_cache1 = right;
+                    _tos_cache0 = left;
+                    SET_CURRENT_CACHED_VALUES(2);
+                    stack_pointer += -2;
+                    ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                    JUMP_TO_JUMP_TARGET();
+                }
+            }
+            assert(stack_pointer == _PyFrame_GetStackPointer(frame));
+            _PyFrame_StackPointerValidate(frame);
+            PyObject *result = _PyRegion_AllocationFails("int")
+            ? NULL : PyLong_FromLongLong(value);
+            _PyFrame_StackPointerInvalidate(frame);
+            if (result == NULL) {
+                current_executor->region_allocation_errors++;
+                SET_CURRENT_CACHED_VALUES(0);
+                JUMP_TO_ERROR();
+            }
+            current_executor->region_int_boxes++;
+            res = PyStackRef_FromPyObjectSteal(result);
+            l = left;
+            r = right;
+            _tos_cache2 = r;
+            _tos_cache1 = l;
+            _tos_cache0 = res;
+            SET_CURRENT_CACHED_VALUES(3);
+            stack_pointer += -2;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            break;
+        }
+
+        case _INT_REGION_2_r23: {
+            CHECK_CURRENT_CACHED_VALUES(2);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            _PyStackRef right;
+            _PyStackRef left;
+            _PyStackRef res;
+            _PyStackRef l;
+            _PyStackRef r;
+            _PyStackRef _stack_item_0 = _tos_cache0;
+            _PyStackRef _stack_item_1 = _tos_cache1;
+            oparg = 2;
+            assert(oparg == CURRENT_OPARG());
+            right = _stack_item_1;
+            left = _stack_item_0;
+            PyObject *config = (PyObject *)CURRENT_OPERAND0_64();
+            current_executor->region_int_entries++;
+            int64_t a, b, c, intermediate, value;
+            stack_pointer[0] = left;
+            stack_pointer[1] = right;
+            stack_pointer += 2;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            _PyFrame_SetStackPointer(frame, stack_pointer);
+            _PyFrame_StackPointerValidate(frame);
+            bool valid = _PyRegion_AsInt64(left, &a) &&
+            _PyRegion_AsInt64(right, &b) &&
+            _PyRegion_AsInt64(GETLOCAL((uintptr_t)config & 0xffff), &c);
+            _PyFrame_StackPointerInvalidate(frame);
+            if (!valid) {
+                current_executor->region_int_guard_exits++;
+                if (true) {
+                    UOP_STAT_INC(uopcode, miss);
+                    _tos_cache1 = right;
+                    _tos_cache0 = left;
+                    SET_CURRENT_CACHED_VALUES(2);
+                    stack_pointer += -2;
+                    ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                    JUMP_TO_JUMP_TARGET();
+                }
+            }
+            assert(stack_pointer == _PyFrame_GetStackPointer(frame));
+            _PyFrame_StackPointerValidate(frame);
+            bool fits = _PyRegion_Arithmetic(a, b, oparg % 3, &intermediate) &&
+            _PyRegion_Arithmetic(intermediate, c, oparg / 3, &value);
+            _PyFrame_StackPointerInvalidate(frame);
+            if (!fits) {
+                current_executor->region_int_overflow_exits++;
+                if (true) {
+                    UOP_STAT_INC(uopcode, miss);
+                    _tos_cache1 = right;
+                    _tos_cache0 = left;
+                    SET_CURRENT_CACHED_VALUES(2);
+                    stack_pointer += -2;
+                    ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                    JUMP_TO_JUMP_TARGET();
+                }
+            }
+            assert(stack_pointer == _PyFrame_GetStackPointer(frame));
+            _PyFrame_StackPointerValidate(frame);
+            PyObject *result = _PyRegion_AllocationFails("int")
+            ? NULL : PyLong_FromLongLong(value);
+            _PyFrame_StackPointerInvalidate(frame);
+            if (result == NULL) {
+                current_executor->region_allocation_errors++;
+                SET_CURRENT_CACHED_VALUES(0);
+                JUMP_TO_ERROR();
+            }
+            current_executor->region_int_boxes++;
+            res = PyStackRef_FromPyObjectSteal(result);
+            l = left;
+            r = right;
+            _tos_cache2 = r;
+            _tos_cache1 = l;
+            _tos_cache0 = res;
+            SET_CURRENT_CACHED_VALUES(3);
+            stack_pointer += -2;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            break;
+        }
+
+        case _INT_REGION_3_r23: {
+            CHECK_CURRENT_CACHED_VALUES(2);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            _PyStackRef right;
+            _PyStackRef left;
+            _PyStackRef res;
+            _PyStackRef l;
+            _PyStackRef r;
+            _PyStackRef _stack_item_0 = _tos_cache0;
+            _PyStackRef _stack_item_1 = _tos_cache1;
+            oparg = 3;
+            assert(oparg == CURRENT_OPARG());
+            right = _stack_item_1;
+            left = _stack_item_0;
+            PyObject *config = (PyObject *)CURRENT_OPERAND0_64();
+            current_executor->region_int_entries++;
+            int64_t a, b, c, intermediate, value;
+            stack_pointer[0] = left;
+            stack_pointer[1] = right;
+            stack_pointer += 2;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            _PyFrame_SetStackPointer(frame, stack_pointer);
+            _PyFrame_StackPointerValidate(frame);
+            bool valid = _PyRegion_AsInt64(left, &a) &&
+            _PyRegion_AsInt64(right, &b) &&
+            _PyRegion_AsInt64(GETLOCAL((uintptr_t)config & 0xffff), &c);
+            _PyFrame_StackPointerInvalidate(frame);
+            if (!valid) {
+                current_executor->region_int_guard_exits++;
+                if (true) {
+                    UOP_STAT_INC(uopcode, miss);
+                    _tos_cache1 = right;
+                    _tos_cache0 = left;
+                    SET_CURRENT_CACHED_VALUES(2);
+                    stack_pointer += -2;
+                    ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                    JUMP_TO_JUMP_TARGET();
+                }
+            }
+            assert(stack_pointer == _PyFrame_GetStackPointer(frame));
+            _PyFrame_StackPointerValidate(frame);
+            bool fits = _PyRegion_Arithmetic(a, b, oparg % 3, &intermediate) &&
+            _PyRegion_Arithmetic(intermediate, c, oparg / 3, &value);
+            _PyFrame_StackPointerInvalidate(frame);
+            if (!fits) {
+                current_executor->region_int_overflow_exits++;
+                if (true) {
+                    UOP_STAT_INC(uopcode, miss);
+                    _tos_cache1 = right;
+                    _tos_cache0 = left;
+                    SET_CURRENT_CACHED_VALUES(2);
+                    stack_pointer += -2;
+                    ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                    JUMP_TO_JUMP_TARGET();
+                }
+            }
+            assert(stack_pointer == _PyFrame_GetStackPointer(frame));
+            _PyFrame_StackPointerValidate(frame);
+            PyObject *result = _PyRegion_AllocationFails("int")
+            ? NULL : PyLong_FromLongLong(value);
+            _PyFrame_StackPointerInvalidate(frame);
+            if (result == NULL) {
+                current_executor->region_allocation_errors++;
+                SET_CURRENT_CACHED_VALUES(0);
+                JUMP_TO_ERROR();
+            }
+            current_executor->region_int_boxes++;
+            res = PyStackRef_FromPyObjectSteal(result);
+            l = left;
+            r = right;
+            _tos_cache2 = r;
+            _tos_cache1 = l;
+            _tos_cache0 = res;
+            SET_CURRENT_CACHED_VALUES(3);
+            stack_pointer += -2;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            break;
+        }
+
+        case _INT_REGION_4_r23: {
+            CHECK_CURRENT_CACHED_VALUES(2);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            _PyStackRef right;
+            _PyStackRef left;
+            _PyStackRef res;
+            _PyStackRef l;
+            _PyStackRef r;
+            _PyStackRef _stack_item_0 = _tos_cache0;
+            _PyStackRef _stack_item_1 = _tos_cache1;
+            oparg = 4;
+            assert(oparg == CURRENT_OPARG());
+            right = _stack_item_1;
+            left = _stack_item_0;
+            PyObject *config = (PyObject *)CURRENT_OPERAND0_64();
+            current_executor->region_int_entries++;
+            int64_t a, b, c, intermediate, value;
+            stack_pointer[0] = left;
+            stack_pointer[1] = right;
+            stack_pointer += 2;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            _PyFrame_SetStackPointer(frame, stack_pointer);
+            _PyFrame_StackPointerValidate(frame);
+            bool valid = _PyRegion_AsInt64(left, &a) &&
+            _PyRegion_AsInt64(right, &b) &&
+            _PyRegion_AsInt64(GETLOCAL((uintptr_t)config & 0xffff), &c);
+            _PyFrame_StackPointerInvalidate(frame);
+            if (!valid) {
+                current_executor->region_int_guard_exits++;
+                if (true) {
+                    UOP_STAT_INC(uopcode, miss);
+                    _tos_cache1 = right;
+                    _tos_cache0 = left;
+                    SET_CURRENT_CACHED_VALUES(2);
+                    stack_pointer += -2;
+                    ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                    JUMP_TO_JUMP_TARGET();
+                }
+            }
+            assert(stack_pointer == _PyFrame_GetStackPointer(frame));
+            _PyFrame_StackPointerValidate(frame);
+            bool fits = _PyRegion_Arithmetic(a, b, oparg % 3, &intermediate) &&
+            _PyRegion_Arithmetic(intermediate, c, oparg / 3, &value);
+            _PyFrame_StackPointerInvalidate(frame);
+            if (!fits) {
+                current_executor->region_int_overflow_exits++;
+                if (true) {
+                    UOP_STAT_INC(uopcode, miss);
+                    _tos_cache1 = right;
+                    _tos_cache0 = left;
+                    SET_CURRENT_CACHED_VALUES(2);
+                    stack_pointer += -2;
+                    ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                    JUMP_TO_JUMP_TARGET();
+                }
+            }
+            assert(stack_pointer == _PyFrame_GetStackPointer(frame));
+            _PyFrame_StackPointerValidate(frame);
+            PyObject *result = _PyRegion_AllocationFails("int")
+            ? NULL : PyLong_FromLongLong(value);
+            _PyFrame_StackPointerInvalidate(frame);
+            if (result == NULL) {
+                current_executor->region_allocation_errors++;
+                SET_CURRENT_CACHED_VALUES(0);
+                JUMP_TO_ERROR();
+            }
+            current_executor->region_int_boxes++;
+            res = PyStackRef_FromPyObjectSteal(result);
+            l = left;
+            r = right;
+            _tos_cache2 = r;
+            _tos_cache1 = l;
+            _tos_cache0 = res;
+            SET_CURRENT_CACHED_VALUES(3);
+            stack_pointer += -2;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            break;
+        }
+
+        case _INT_REGION_5_r23: {
+            CHECK_CURRENT_CACHED_VALUES(2);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            _PyStackRef right;
+            _PyStackRef left;
+            _PyStackRef res;
+            _PyStackRef l;
+            _PyStackRef r;
+            _PyStackRef _stack_item_0 = _tos_cache0;
+            _PyStackRef _stack_item_1 = _tos_cache1;
+            oparg = 5;
+            assert(oparg == CURRENT_OPARG());
+            right = _stack_item_1;
+            left = _stack_item_0;
+            PyObject *config = (PyObject *)CURRENT_OPERAND0_64();
+            current_executor->region_int_entries++;
+            int64_t a, b, c, intermediate, value;
+            stack_pointer[0] = left;
+            stack_pointer[1] = right;
+            stack_pointer += 2;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            _PyFrame_SetStackPointer(frame, stack_pointer);
+            _PyFrame_StackPointerValidate(frame);
+            bool valid = _PyRegion_AsInt64(left, &a) &&
+            _PyRegion_AsInt64(right, &b) &&
+            _PyRegion_AsInt64(GETLOCAL((uintptr_t)config & 0xffff), &c);
+            _PyFrame_StackPointerInvalidate(frame);
+            if (!valid) {
+                current_executor->region_int_guard_exits++;
+                if (true) {
+                    UOP_STAT_INC(uopcode, miss);
+                    _tos_cache1 = right;
+                    _tos_cache0 = left;
+                    SET_CURRENT_CACHED_VALUES(2);
+                    stack_pointer += -2;
+                    ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                    JUMP_TO_JUMP_TARGET();
+                }
+            }
+            assert(stack_pointer == _PyFrame_GetStackPointer(frame));
+            _PyFrame_StackPointerValidate(frame);
+            bool fits = _PyRegion_Arithmetic(a, b, oparg % 3, &intermediate) &&
+            _PyRegion_Arithmetic(intermediate, c, oparg / 3, &value);
+            _PyFrame_StackPointerInvalidate(frame);
+            if (!fits) {
+                current_executor->region_int_overflow_exits++;
+                if (true) {
+                    UOP_STAT_INC(uopcode, miss);
+                    _tos_cache1 = right;
+                    _tos_cache0 = left;
+                    SET_CURRENT_CACHED_VALUES(2);
+                    stack_pointer += -2;
+                    ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                    JUMP_TO_JUMP_TARGET();
+                }
+            }
+            assert(stack_pointer == _PyFrame_GetStackPointer(frame));
+            _PyFrame_StackPointerValidate(frame);
+            PyObject *result = _PyRegion_AllocationFails("int")
+            ? NULL : PyLong_FromLongLong(value);
+            _PyFrame_StackPointerInvalidate(frame);
+            if (result == NULL) {
+                current_executor->region_allocation_errors++;
+                SET_CURRENT_CACHED_VALUES(0);
+                JUMP_TO_ERROR();
+            }
+            current_executor->region_int_boxes++;
+            res = PyStackRef_FromPyObjectSteal(result);
+            l = left;
+            r = right;
+            _tos_cache2 = r;
+            _tos_cache1 = l;
+            _tos_cache0 = res;
+            SET_CURRENT_CACHED_VALUES(3);
+            stack_pointer += -2;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            break;
+        }
+
+        case _INT_REGION_6_r23: {
+            CHECK_CURRENT_CACHED_VALUES(2);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            _PyStackRef right;
+            _PyStackRef left;
+            _PyStackRef res;
+            _PyStackRef l;
+            _PyStackRef r;
+            _PyStackRef _stack_item_0 = _tos_cache0;
+            _PyStackRef _stack_item_1 = _tos_cache1;
+            oparg = 6;
+            assert(oparg == CURRENT_OPARG());
+            right = _stack_item_1;
+            left = _stack_item_0;
+            PyObject *config = (PyObject *)CURRENT_OPERAND0_64();
+            current_executor->region_int_entries++;
+            int64_t a, b, c, intermediate, value;
+            stack_pointer[0] = left;
+            stack_pointer[1] = right;
+            stack_pointer += 2;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            _PyFrame_SetStackPointer(frame, stack_pointer);
+            _PyFrame_StackPointerValidate(frame);
+            bool valid = _PyRegion_AsInt64(left, &a) &&
+            _PyRegion_AsInt64(right, &b) &&
+            _PyRegion_AsInt64(GETLOCAL((uintptr_t)config & 0xffff), &c);
+            _PyFrame_StackPointerInvalidate(frame);
+            if (!valid) {
+                current_executor->region_int_guard_exits++;
+                if (true) {
+                    UOP_STAT_INC(uopcode, miss);
+                    _tos_cache1 = right;
+                    _tos_cache0 = left;
+                    SET_CURRENT_CACHED_VALUES(2);
+                    stack_pointer += -2;
+                    ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                    JUMP_TO_JUMP_TARGET();
+                }
+            }
+            assert(stack_pointer == _PyFrame_GetStackPointer(frame));
+            _PyFrame_StackPointerValidate(frame);
+            bool fits = _PyRegion_Arithmetic(a, b, oparg % 3, &intermediate) &&
+            _PyRegion_Arithmetic(intermediate, c, oparg / 3, &value);
+            _PyFrame_StackPointerInvalidate(frame);
+            if (!fits) {
+                current_executor->region_int_overflow_exits++;
+                if (true) {
+                    UOP_STAT_INC(uopcode, miss);
+                    _tos_cache1 = right;
+                    _tos_cache0 = left;
+                    SET_CURRENT_CACHED_VALUES(2);
+                    stack_pointer += -2;
+                    ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                    JUMP_TO_JUMP_TARGET();
+                }
+            }
+            assert(stack_pointer == _PyFrame_GetStackPointer(frame));
+            _PyFrame_StackPointerValidate(frame);
+            PyObject *result = _PyRegion_AllocationFails("int")
+            ? NULL : PyLong_FromLongLong(value);
+            _PyFrame_StackPointerInvalidate(frame);
+            if (result == NULL) {
+                current_executor->region_allocation_errors++;
+                SET_CURRENT_CACHED_VALUES(0);
+                JUMP_TO_ERROR();
+            }
+            current_executor->region_int_boxes++;
+            res = PyStackRef_FromPyObjectSteal(result);
+            l = left;
+            r = right;
+            _tos_cache2 = r;
+            _tos_cache1 = l;
+            _tos_cache0 = res;
+            SET_CURRENT_CACHED_VALUES(3);
+            stack_pointer += -2;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            break;
+        }
+
+        case _INT_REGION_7_r23: {
+            CHECK_CURRENT_CACHED_VALUES(2);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            _PyStackRef right;
+            _PyStackRef left;
+            _PyStackRef res;
+            _PyStackRef l;
+            _PyStackRef r;
+            _PyStackRef _stack_item_0 = _tos_cache0;
+            _PyStackRef _stack_item_1 = _tos_cache1;
+            oparg = 7;
+            assert(oparg == CURRENT_OPARG());
+            right = _stack_item_1;
+            left = _stack_item_0;
+            PyObject *config = (PyObject *)CURRENT_OPERAND0_64();
+            current_executor->region_int_entries++;
+            int64_t a, b, c, intermediate, value;
+            stack_pointer[0] = left;
+            stack_pointer[1] = right;
+            stack_pointer += 2;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            _PyFrame_SetStackPointer(frame, stack_pointer);
+            _PyFrame_StackPointerValidate(frame);
+            bool valid = _PyRegion_AsInt64(left, &a) &&
+            _PyRegion_AsInt64(right, &b) &&
+            _PyRegion_AsInt64(GETLOCAL((uintptr_t)config & 0xffff), &c);
+            _PyFrame_StackPointerInvalidate(frame);
+            if (!valid) {
+                current_executor->region_int_guard_exits++;
+                if (true) {
+                    UOP_STAT_INC(uopcode, miss);
+                    _tos_cache1 = right;
+                    _tos_cache0 = left;
+                    SET_CURRENT_CACHED_VALUES(2);
+                    stack_pointer += -2;
+                    ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                    JUMP_TO_JUMP_TARGET();
+                }
+            }
+            assert(stack_pointer == _PyFrame_GetStackPointer(frame));
+            _PyFrame_StackPointerValidate(frame);
+            bool fits = _PyRegion_Arithmetic(a, b, oparg % 3, &intermediate) &&
+            _PyRegion_Arithmetic(intermediate, c, oparg / 3, &value);
+            _PyFrame_StackPointerInvalidate(frame);
+            if (!fits) {
+                current_executor->region_int_overflow_exits++;
+                if (true) {
+                    UOP_STAT_INC(uopcode, miss);
+                    _tos_cache1 = right;
+                    _tos_cache0 = left;
+                    SET_CURRENT_CACHED_VALUES(2);
+                    stack_pointer += -2;
+                    ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                    JUMP_TO_JUMP_TARGET();
+                }
+            }
+            assert(stack_pointer == _PyFrame_GetStackPointer(frame));
+            _PyFrame_StackPointerValidate(frame);
+            PyObject *result = _PyRegion_AllocationFails("int")
+            ? NULL : PyLong_FromLongLong(value);
+            _PyFrame_StackPointerInvalidate(frame);
+            if (result == NULL) {
+                current_executor->region_allocation_errors++;
+                SET_CURRENT_CACHED_VALUES(0);
+                JUMP_TO_ERROR();
+            }
+            current_executor->region_int_boxes++;
+            res = PyStackRef_FromPyObjectSteal(result);
+            l = left;
+            r = right;
+            _tos_cache2 = r;
+            _tos_cache1 = l;
+            _tos_cache0 = res;
+            SET_CURRENT_CACHED_VALUES(3);
+            stack_pointer += -2;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            break;
+        }
+
+        case _INT_REGION_8_r23: {
+            CHECK_CURRENT_CACHED_VALUES(2);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            _PyStackRef right;
+            _PyStackRef left;
+            _PyStackRef res;
+            _PyStackRef l;
+            _PyStackRef r;
+            _PyStackRef _stack_item_0 = _tos_cache0;
+            _PyStackRef _stack_item_1 = _tos_cache1;
+            oparg = 8;
+            assert(oparg == CURRENT_OPARG());
+            right = _stack_item_1;
+            left = _stack_item_0;
+            PyObject *config = (PyObject *)CURRENT_OPERAND0_64();
+            current_executor->region_int_entries++;
+            int64_t a, b, c, intermediate, value;
+            stack_pointer[0] = left;
+            stack_pointer[1] = right;
+            stack_pointer += 2;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            _PyFrame_SetStackPointer(frame, stack_pointer);
+            _PyFrame_StackPointerValidate(frame);
+            bool valid = _PyRegion_AsInt64(left, &a) &&
+            _PyRegion_AsInt64(right, &b) &&
+            _PyRegion_AsInt64(GETLOCAL((uintptr_t)config & 0xffff), &c);
+            _PyFrame_StackPointerInvalidate(frame);
+            if (!valid) {
+                current_executor->region_int_guard_exits++;
+                if (true) {
+                    UOP_STAT_INC(uopcode, miss);
+                    _tos_cache1 = right;
+                    _tos_cache0 = left;
+                    SET_CURRENT_CACHED_VALUES(2);
+                    stack_pointer += -2;
+                    ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                    JUMP_TO_JUMP_TARGET();
+                }
+            }
+            assert(stack_pointer == _PyFrame_GetStackPointer(frame));
+            _PyFrame_StackPointerValidate(frame);
+            bool fits = _PyRegion_Arithmetic(a, b, oparg % 3, &intermediate) &&
+            _PyRegion_Arithmetic(intermediate, c, oparg / 3, &value);
+            _PyFrame_StackPointerInvalidate(frame);
+            if (!fits) {
+                current_executor->region_int_overflow_exits++;
+                if (true) {
+                    UOP_STAT_INC(uopcode, miss);
+                    _tos_cache1 = right;
+                    _tos_cache0 = left;
+                    SET_CURRENT_CACHED_VALUES(2);
+                    stack_pointer += -2;
+                    ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                    JUMP_TO_JUMP_TARGET();
+                }
+            }
+            assert(stack_pointer == _PyFrame_GetStackPointer(frame));
+            _PyFrame_StackPointerValidate(frame);
+            PyObject *result = _PyRegion_AllocationFails("int")
+            ? NULL : PyLong_FromLongLong(value);
+            _PyFrame_StackPointerInvalidate(frame);
+            if (result == NULL) {
+                current_executor->region_allocation_errors++;
+                SET_CURRENT_CACHED_VALUES(0);
+                JUMP_TO_ERROR();
+            }
+            current_executor->region_int_boxes++;
+            res = PyStackRef_FromPyObjectSteal(result);
+            l = left;
+            r = right;
+            _tos_cache2 = r;
+            _tos_cache1 = l;
+            _tos_cache0 = res;
+            SET_CURRENT_CACHED_VALUES(3);
+            stack_pointer += -2;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            break;
+        }
+
+        case _INT_REGION_r23: {
+            CHECK_CURRENT_CACHED_VALUES(2);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            _PyStackRef right;
+            _PyStackRef left;
+            _PyStackRef res;
+            _PyStackRef l;
+            _PyStackRef r;
+            _PyStackRef _stack_item_0 = _tos_cache0;
+            _PyStackRef _stack_item_1 = _tos_cache1;
+            oparg = CURRENT_OPARG();
+            right = _stack_item_1;
+            left = _stack_item_0;
+            PyObject *config = (PyObject *)CURRENT_OPERAND0_64();
+            current_executor->region_int_entries++;
+            int64_t a, b, c, intermediate, value;
+            stack_pointer[0] = left;
+            stack_pointer[1] = right;
+            stack_pointer += 2;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            _PyFrame_SetStackPointer(frame, stack_pointer);
+            _PyFrame_StackPointerValidate(frame);
+            bool valid = _PyRegion_AsInt64(left, &a) &&
+            _PyRegion_AsInt64(right, &b) &&
+            _PyRegion_AsInt64(GETLOCAL((uintptr_t)config & 0xffff), &c);
+            _PyFrame_StackPointerInvalidate(frame);
+            if (!valid) {
+                current_executor->region_int_guard_exits++;
+                if (true) {
+                    UOP_STAT_INC(uopcode, miss);
+                    _tos_cache1 = right;
+                    _tos_cache0 = left;
+                    SET_CURRENT_CACHED_VALUES(2);
+                    stack_pointer += -2;
+                    ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                    JUMP_TO_JUMP_TARGET();
+                }
+            }
+            assert(stack_pointer == _PyFrame_GetStackPointer(frame));
+            _PyFrame_StackPointerValidate(frame);
+            bool fits = _PyRegion_Arithmetic(a, b, oparg % 3, &intermediate) &&
+            _PyRegion_Arithmetic(intermediate, c, oparg / 3, &value);
+            _PyFrame_StackPointerInvalidate(frame);
+            if (!fits) {
+                current_executor->region_int_overflow_exits++;
+                if (true) {
+                    UOP_STAT_INC(uopcode, miss);
+                    _tos_cache1 = right;
+                    _tos_cache0 = left;
+                    SET_CURRENT_CACHED_VALUES(2);
+                    stack_pointer += -2;
+                    ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                    JUMP_TO_JUMP_TARGET();
+                }
+            }
+            assert(stack_pointer == _PyFrame_GetStackPointer(frame));
+            _PyFrame_StackPointerValidate(frame);
+            PyObject *result = _PyRegion_AllocationFails("int")
+            ? NULL : PyLong_FromLongLong(value);
+            _PyFrame_StackPointerInvalidate(frame);
+            if (result == NULL) {
+                current_executor->region_allocation_errors++;
+                SET_CURRENT_CACHED_VALUES(0);
+                JUMP_TO_ERROR();
+            }
+            current_executor->region_int_boxes++;
+            res = PyStackRef_FromPyObjectSteal(result);
+            l = left;
+            r = right;
+            _tos_cache2 = r;
+            _tos_cache1 = l;
+            _tos_cache0 = res;
+            SET_CURRENT_CACHED_VALUES(3);
+            stack_pointer += -2;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            break;
+        }
+
+        case _INT_REGION_COMPARE_0_r23: {
+            CHECK_CURRENT_CACHED_VALUES(2);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            _PyStackRef right;
+            _PyStackRef left;
+            _PyStackRef res;
+            _PyStackRef l;
+            _PyStackRef r;
+            _PyStackRef _stack_item_0 = _tos_cache0;
+            _PyStackRef _stack_item_1 = _tos_cache1;
+            oparg = 0;
+            assert(oparg == CURRENT_OPARG());
+            right = _stack_item_1;
+            left = _stack_item_0;
+            PyObject *config = (PyObject *)CURRENT_OPERAND0_64();
+            current_executor->region_int_entries++;
+            int64_t a, b, c, limit, intermediate, value;
+            stack_pointer[0] = left;
+            stack_pointer[1] = right;
+            stack_pointer += 2;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            _PyFrame_SetStackPointer(frame, stack_pointer);
+            _PyFrame_StackPointerValidate(frame);
+            bool valid = _PyRegion_AsInt64(left, &a) &&
+            _PyRegion_AsInt64(right, &b) &&
+            _PyRegion_AsInt64(GETLOCAL((uintptr_t)config & 0xffff), &c) &&
+            _PyRegion_AsInt64(GETLOCAL(((uintptr_t)config >> 16) & 0xffff), &limit);
+            _PyFrame_StackPointerInvalidate(frame);
+            if (!valid) {
+                current_executor->region_int_guard_exits++;
+                if (true) {
+                    UOP_STAT_INC(uopcode, miss);
+                    _tos_cache1 = right;
+                    _tos_cache0 = left;
+                    SET_CURRENT_CACHED_VALUES(2);
+                    stack_pointer += -2;
+                    ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                    JUMP_TO_JUMP_TARGET();
+                }
+            }
+            assert(stack_pointer == _PyFrame_GetStackPointer(frame));
+            _PyFrame_StackPointerValidate(frame);
+            bool fits = _PyRegion_Arithmetic(a, b, oparg % 3, &intermediate) &&
+            _PyRegion_Arithmetic(intermediate, c, oparg / 3, &value);
+            _PyFrame_StackPointerInvalidate(frame);
+            if (!fits) {
+                current_executor->region_int_overflow_exits++;
+                if (true) {
+                    UOP_STAT_INC(uopcode, miss);
+                    _tos_cache1 = right;
+                    _tos_cache0 = left;
+                    SET_CURRENT_CACHED_VALUES(2);
+                    stack_pointer += -2;
+                    ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                    JUMP_TO_JUMP_TARGET();
+                }
+            }
+            res = (COMPARISON_BIT(value, limit) & ((uint64_t)(uintptr_t)config >> 32))
+            ? PyStackRef_True : PyStackRef_False;
+            l = left;
+            r = right;
+            _tos_cache2 = r;
+            _tos_cache1 = l;
+            _tos_cache0 = res;
+            SET_CURRENT_CACHED_VALUES(3);
+            stack_pointer += -2;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            break;
+        }
+
+        case _INT_REGION_COMPARE_1_r23: {
+            CHECK_CURRENT_CACHED_VALUES(2);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            _PyStackRef right;
+            _PyStackRef left;
+            _PyStackRef res;
+            _PyStackRef l;
+            _PyStackRef r;
+            _PyStackRef _stack_item_0 = _tos_cache0;
+            _PyStackRef _stack_item_1 = _tos_cache1;
+            oparg = 1;
+            assert(oparg == CURRENT_OPARG());
+            right = _stack_item_1;
+            left = _stack_item_0;
+            PyObject *config = (PyObject *)CURRENT_OPERAND0_64();
+            current_executor->region_int_entries++;
+            int64_t a, b, c, limit, intermediate, value;
+            stack_pointer[0] = left;
+            stack_pointer[1] = right;
+            stack_pointer += 2;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            _PyFrame_SetStackPointer(frame, stack_pointer);
+            _PyFrame_StackPointerValidate(frame);
+            bool valid = _PyRegion_AsInt64(left, &a) &&
+            _PyRegion_AsInt64(right, &b) &&
+            _PyRegion_AsInt64(GETLOCAL((uintptr_t)config & 0xffff), &c) &&
+            _PyRegion_AsInt64(GETLOCAL(((uintptr_t)config >> 16) & 0xffff), &limit);
+            _PyFrame_StackPointerInvalidate(frame);
+            if (!valid) {
+                current_executor->region_int_guard_exits++;
+                if (true) {
+                    UOP_STAT_INC(uopcode, miss);
+                    _tos_cache1 = right;
+                    _tos_cache0 = left;
+                    SET_CURRENT_CACHED_VALUES(2);
+                    stack_pointer += -2;
+                    ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                    JUMP_TO_JUMP_TARGET();
+                }
+            }
+            assert(stack_pointer == _PyFrame_GetStackPointer(frame));
+            _PyFrame_StackPointerValidate(frame);
+            bool fits = _PyRegion_Arithmetic(a, b, oparg % 3, &intermediate) &&
+            _PyRegion_Arithmetic(intermediate, c, oparg / 3, &value);
+            _PyFrame_StackPointerInvalidate(frame);
+            if (!fits) {
+                current_executor->region_int_overflow_exits++;
+                if (true) {
+                    UOP_STAT_INC(uopcode, miss);
+                    _tos_cache1 = right;
+                    _tos_cache0 = left;
+                    SET_CURRENT_CACHED_VALUES(2);
+                    stack_pointer += -2;
+                    ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                    JUMP_TO_JUMP_TARGET();
+                }
+            }
+            res = (COMPARISON_BIT(value, limit) & ((uint64_t)(uintptr_t)config >> 32))
+            ? PyStackRef_True : PyStackRef_False;
+            l = left;
+            r = right;
+            _tos_cache2 = r;
+            _tos_cache1 = l;
+            _tos_cache0 = res;
+            SET_CURRENT_CACHED_VALUES(3);
+            stack_pointer += -2;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            break;
+        }
+
+        case _INT_REGION_COMPARE_2_r23: {
+            CHECK_CURRENT_CACHED_VALUES(2);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            _PyStackRef right;
+            _PyStackRef left;
+            _PyStackRef res;
+            _PyStackRef l;
+            _PyStackRef r;
+            _PyStackRef _stack_item_0 = _tos_cache0;
+            _PyStackRef _stack_item_1 = _tos_cache1;
+            oparg = 2;
+            assert(oparg == CURRENT_OPARG());
+            right = _stack_item_1;
+            left = _stack_item_0;
+            PyObject *config = (PyObject *)CURRENT_OPERAND0_64();
+            current_executor->region_int_entries++;
+            int64_t a, b, c, limit, intermediate, value;
+            stack_pointer[0] = left;
+            stack_pointer[1] = right;
+            stack_pointer += 2;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            _PyFrame_SetStackPointer(frame, stack_pointer);
+            _PyFrame_StackPointerValidate(frame);
+            bool valid = _PyRegion_AsInt64(left, &a) &&
+            _PyRegion_AsInt64(right, &b) &&
+            _PyRegion_AsInt64(GETLOCAL((uintptr_t)config & 0xffff), &c) &&
+            _PyRegion_AsInt64(GETLOCAL(((uintptr_t)config >> 16) & 0xffff), &limit);
+            _PyFrame_StackPointerInvalidate(frame);
+            if (!valid) {
+                current_executor->region_int_guard_exits++;
+                if (true) {
+                    UOP_STAT_INC(uopcode, miss);
+                    _tos_cache1 = right;
+                    _tos_cache0 = left;
+                    SET_CURRENT_CACHED_VALUES(2);
+                    stack_pointer += -2;
+                    ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                    JUMP_TO_JUMP_TARGET();
+                }
+            }
+            assert(stack_pointer == _PyFrame_GetStackPointer(frame));
+            _PyFrame_StackPointerValidate(frame);
+            bool fits = _PyRegion_Arithmetic(a, b, oparg % 3, &intermediate) &&
+            _PyRegion_Arithmetic(intermediate, c, oparg / 3, &value);
+            _PyFrame_StackPointerInvalidate(frame);
+            if (!fits) {
+                current_executor->region_int_overflow_exits++;
+                if (true) {
+                    UOP_STAT_INC(uopcode, miss);
+                    _tos_cache1 = right;
+                    _tos_cache0 = left;
+                    SET_CURRENT_CACHED_VALUES(2);
+                    stack_pointer += -2;
+                    ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                    JUMP_TO_JUMP_TARGET();
+                }
+            }
+            res = (COMPARISON_BIT(value, limit) & ((uint64_t)(uintptr_t)config >> 32))
+            ? PyStackRef_True : PyStackRef_False;
+            l = left;
+            r = right;
+            _tos_cache2 = r;
+            _tos_cache1 = l;
+            _tos_cache0 = res;
+            SET_CURRENT_CACHED_VALUES(3);
+            stack_pointer += -2;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            break;
+        }
+
+        case _INT_REGION_COMPARE_3_r23: {
+            CHECK_CURRENT_CACHED_VALUES(2);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            _PyStackRef right;
+            _PyStackRef left;
+            _PyStackRef res;
+            _PyStackRef l;
+            _PyStackRef r;
+            _PyStackRef _stack_item_0 = _tos_cache0;
+            _PyStackRef _stack_item_1 = _tos_cache1;
+            oparg = 3;
+            assert(oparg == CURRENT_OPARG());
+            right = _stack_item_1;
+            left = _stack_item_0;
+            PyObject *config = (PyObject *)CURRENT_OPERAND0_64();
+            current_executor->region_int_entries++;
+            int64_t a, b, c, limit, intermediate, value;
+            stack_pointer[0] = left;
+            stack_pointer[1] = right;
+            stack_pointer += 2;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            _PyFrame_SetStackPointer(frame, stack_pointer);
+            _PyFrame_StackPointerValidate(frame);
+            bool valid = _PyRegion_AsInt64(left, &a) &&
+            _PyRegion_AsInt64(right, &b) &&
+            _PyRegion_AsInt64(GETLOCAL((uintptr_t)config & 0xffff), &c) &&
+            _PyRegion_AsInt64(GETLOCAL(((uintptr_t)config >> 16) & 0xffff), &limit);
+            _PyFrame_StackPointerInvalidate(frame);
+            if (!valid) {
+                current_executor->region_int_guard_exits++;
+                if (true) {
+                    UOP_STAT_INC(uopcode, miss);
+                    _tos_cache1 = right;
+                    _tos_cache0 = left;
+                    SET_CURRENT_CACHED_VALUES(2);
+                    stack_pointer += -2;
+                    ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                    JUMP_TO_JUMP_TARGET();
+                }
+            }
+            assert(stack_pointer == _PyFrame_GetStackPointer(frame));
+            _PyFrame_StackPointerValidate(frame);
+            bool fits = _PyRegion_Arithmetic(a, b, oparg % 3, &intermediate) &&
+            _PyRegion_Arithmetic(intermediate, c, oparg / 3, &value);
+            _PyFrame_StackPointerInvalidate(frame);
+            if (!fits) {
+                current_executor->region_int_overflow_exits++;
+                if (true) {
+                    UOP_STAT_INC(uopcode, miss);
+                    _tos_cache1 = right;
+                    _tos_cache0 = left;
+                    SET_CURRENT_CACHED_VALUES(2);
+                    stack_pointer += -2;
+                    ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                    JUMP_TO_JUMP_TARGET();
+                }
+            }
+            res = (COMPARISON_BIT(value, limit) & ((uint64_t)(uintptr_t)config >> 32))
+            ? PyStackRef_True : PyStackRef_False;
+            l = left;
+            r = right;
+            _tos_cache2 = r;
+            _tos_cache1 = l;
+            _tos_cache0 = res;
+            SET_CURRENT_CACHED_VALUES(3);
+            stack_pointer += -2;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            break;
+        }
+
+        case _INT_REGION_COMPARE_4_r23: {
+            CHECK_CURRENT_CACHED_VALUES(2);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            _PyStackRef right;
+            _PyStackRef left;
+            _PyStackRef res;
+            _PyStackRef l;
+            _PyStackRef r;
+            _PyStackRef _stack_item_0 = _tos_cache0;
+            _PyStackRef _stack_item_1 = _tos_cache1;
+            oparg = 4;
+            assert(oparg == CURRENT_OPARG());
+            right = _stack_item_1;
+            left = _stack_item_0;
+            PyObject *config = (PyObject *)CURRENT_OPERAND0_64();
+            current_executor->region_int_entries++;
+            int64_t a, b, c, limit, intermediate, value;
+            stack_pointer[0] = left;
+            stack_pointer[1] = right;
+            stack_pointer += 2;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            _PyFrame_SetStackPointer(frame, stack_pointer);
+            _PyFrame_StackPointerValidate(frame);
+            bool valid = _PyRegion_AsInt64(left, &a) &&
+            _PyRegion_AsInt64(right, &b) &&
+            _PyRegion_AsInt64(GETLOCAL((uintptr_t)config & 0xffff), &c) &&
+            _PyRegion_AsInt64(GETLOCAL(((uintptr_t)config >> 16) & 0xffff), &limit);
+            _PyFrame_StackPointerInvalidate(frame);
+            if (!valid) {
+                current_executor->region_int_guard_exits++;
+                if (true) {
+                    UOP_STAT_INC(uopcode, miss);
+                    _tos_cache1 = right;
+                    _tos_cache0 = left;
+                    SET_CURRENT_CACHED_VALUES(2);
+                    stack_pointer += -2;
+                    ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                    JUMP_TO_JUMP_TARGET();
+                }
+            }
+            assert(stack_pointer == _PyFrame_GetStackPointer(frame));
+            _PyFrame_StackPointerValidate(frame);
+            bool fits = _PyRegion_Arithmetic(a, b, oparg % 3, &intermediate) &&
+            _PyRegion_Arithmetic(intermediate, c, oparg / 3, &value);
+            _PyFrame_StackPointerInvalidate(frame);
+            if (!fits) {
+                current_executor->region_int_overflow_exits++;
+                if (true) {
+                    UOP_STAT_INC(uopcode, miss);
+                    _tos_cache1 = right;
+                    _tos_cache0 = left;
+                    SET_CURRENT_CACHED_VALUES(2);
+                    stack_pointer += -2;
+                    ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                    JUMP_TO_JUMP_TARGET();
+                }
+            }
+            res = (COMPARISON_BIT(value, limit) & ((uint64_t)(uintptr_t)config >> 32))
+            ? PyStackRef_True : PyStackRef_False;
+            l = left;
+            r = right;
+            _tos_cache2 = r;
+            _tos_cache1 = l;
+            _tos_cache0 = res;
+            SET_CURRENT_CACHED_VALUES(3);
+            stack_pointer += -2;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            break;
+        }
+
+        case _INT_REGION_COMPARE_5_r23: {
+            CHECK_CURRENT_CACHED_VALUES(2);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            _PyStackRef right;
+            _PyStackRef left;
+            _PyStackRef res;
+            _PyStackRef l;
+            _PyStackRef r;
+            _PyStackRef _stack_item_0 = _tos_cache0;
+            _PyStackRef _stack_item_1 = _tos_cache1;
+            oparg = 5;
+            assert(oparg == CURRENT_OPARG());
+            right = _stack_item_1;
+            left = _stack_item_0;
+            PyObject *config = (PyObject *)CURRENT_OPERAND0_64();
+            current_executor->region_int_entries++;
+            int64_t a, b, c, limit, intermediate, value;
+            stack_pointer[0] = left;
+            stack_pointer[1] = right;
+            stack_pointer += 2;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            _PyFrame_SetStackPointer(frame, stack_pointer);
+            _PyFrame_StackPointerValidate(frame);
+            bool valid = _PyRegion_AsInt64(left, &a) &&
+            _PyRegion_AsInt64(right, &b) &&
+            _PyRegion_AsInt64(GETLOCAL((uintptr_t)config & 0xffff), &c) &&
+            _PyRegion_AsInt64(GETLOCAL(((uintptr_t)config >> 16) & 0xffff), &limit);
+            _PyFrame_StackPointerInvalidate(frame);
+            if (!valid) {
+                current_executor->region_int_guard_exits++;
+                if (true) {
+                    UOP_STAT_INC(uopcode, miss);
+                    _tos_cache1 = right;
+                    _tos_cache0 = left;
+                    SET_CURRENT_CACHED_VALUES(2);
+                    stack_pointer += -2;
+                    ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                    JUMP_TO_JUMP_TARGET();
+                }
+            }
+            assert(stack_pointer == _PyFrame_GetStackPointer(frame));
+            _PyFrame_StackPointerValidate(frame);
+            bool fits = _PyRegion_Arithmetic(a, b, oparg % 3, &intermediate) &&
+            _PyRegion_Arithmetic(intermediate, c, oparg / 3, &value);
+            _PyFrame_StackPointerInvalidate(frame);
+            if (!fits) {
+                current_executor->region_int_overflow_exits++;
+                if (true) {
+                    UOP_STAT_INC(uopcode, miss);
+                    _tos_cache1 = right;
+                    _tos_cache0 = left;
+                    SET_CURRENT_CACHED_VALUES(2);
+                    stack_pointer += -2;
+                    ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                    JUMP_TO_JUMP_TARGET();
+                }
+            }
+            res = (COMPARISON_BIT(value, limit) & ((uint64_t)(uintptr_t)config >> 32))
+            ? PyStackRef_True : PyStackRef_False;
+            l = left;
+            r = right;
+            _tos_cache2 = r;
+            _tos_cache1 = l;
+            _tos_cache0 = res;
+            SET_CURRENT_CACHED_VALUES(3);
+            stack_pointer += -2;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            break;
+        }
+
+        case _INT_REGION_COMPARE_6_r23: {
+            CHECK_CURRENT_CACHED_VALUES(2);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            _PyStackRef right;
+            _PyStackRef left;
+            _PyStackRef res;
+            _PyStackRef l;
+            _PyStackRef r;
+            _PyStackRef _stack_item_0 = _tos_cache0;
+            _PyStackRef _stack_item_1 = _tos_cache1;
+            oparg = 6;
+            assert(oparg == CURRENT_OPARG());
+            right = _stack_item_1;
+            left = _stack_item_0;
+            PyObject *config = (PyObject *)CURRENT_OPERAND0_64();
+            current_executor->region_int_entries++;
+            int64_t a, b, c, limit, intermediate, value;
+            stack_pointer[0] = left;
+            stack_pointer[1] = right;
+            stack_pointer += 2;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            _PyFrame_SetStackPointer(frame, stack_pointer);
+            _PyFrame_StackPointerValidate(frame);
+            bool valid = _PyRegion_AsInt64(left, &a) &&
+            _PyRegion_AsInt64(right, &b) &&
+            _PyRegion_AsInt64(GETLOCAL((uintptr_t)config & 0xffff), &c) &&
+            _PyRegion_AsInt64(GETLOCAL(((uintptr_t)config >> 16) & 0xffff), &limit);
+            _PyFrame_StackPointerInvalidate(frame);
+            if (!valid) {
+                current_executor->region_int_guard_exits++;
+                if (true) {
+                    UOP_STAT_INC(uopcode, miss);
+                    _tos_cache1 = right;
+                    _tos_cache0 = left;
+                    SET_CURRENT_CACHED_VALUES(2);
+                    stack_pointer += -2;
+                    ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                    JUMP_TO_JUMP_TARGET();
+                }
+            }
+            assert(stack_pointer == _PyFrame_GetStackPointer(frame));
+            _PyFrame_StackPointerValidate(frame);
+            bool fits = _PyRegion_Arithmetic(a, b, oparg % 3, &intermediate) &&
+            _PyRegion_Arithmetic(intermediate, c, oparg / 3, &value);
+            _PyFrame_StackPointerInvalidate(frame);
+            if (!fits) {
+                current_executor->region_int_overflow_exits++;
+                if (true) {
+                    UOP_STAT_INC(uopcode, miss);
+                    _tos_cache1 = right;
+                    _tos_cache0 = left;
+                    SET_CURRENT_CACHED_VALUES(2);
+                    stack_pointer += -2;
+                    ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                    JUMP_TO_JUMP_TARGET();
+                }
+            }
+            res = (COMPARISON_BIT(value, limit) & ((uint64_t)(uintptr_t)config >> 32))
+            ? PyStackRef_True : PyStackRef_False;
+            l = left;
+            r = right;
+            _tos_cache2 = r;
+            _tos_cache1 = l;
+            _tos_cache0 = res;
+            SET_CURRENT_CACHED_VALUES(3);
+            stack_pointer += -2;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            break;
+        }
+
+        case _INT_REGION_COMPARE_7_r23: {
+            CHECK_CURRENT_CACHED_VALUES(2);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            _PyStackRef right;
+            _PyStackRef left;
+            _PyStackRef res;
+            _PyStackRef l;
+            _PyStackRef r;
+            _PyStackRef _stack_item_0 = _tos_cache0;
+            _PyStackRef _stack_item_1 = _tos_cache1;
+            oparg = 7;
+            assert(oparg == CURRENT_OPARG());
+            right = _stack_item_1;
+            left = _stack_item_0;
+            PyObject *config = (PyObject *)CURRENT_OPERAND0_64();
+            current_executor->region_int_entries++;
+            int64_t a, b, c, limit, intermediate, value;
+            stack_pointer[0] = left;
+            stack_pointer[1] = right;
+            stack_pointer += 2;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            _PyFrame_SetStackPointer(frame, stack_pointer);
+            _PyFrame_StackPointerValidate(frame);
+            bool valid = _PyRegion_AsInt64(left, &a) &&
+            _PyRegion_AsInt64(right, &b) &&
+            _PyRegion_AsInt64(GETLOCAL((uintptr_t)config & 0xffff), &c) &&
+            _PyRegion_AsInt64(GETLOCAL(((uintptr_t)config >> 16) & 0xffff), &limit);
+            _PyFrame_StackPointerInvalidate(frame);
+            if (!valid) {
+                current_executor->region_int_guard_exits++;
+                if (true) {
+                    UOP_STAT_INC(uopcode, miss);
+                    _tos_cache1 = right;
+                    _tos_cache0 = left;
+                    SET_CURRENT_CACHED_VALUES(2);
+                    stack_pointer += -2;
+                    ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                    JUMP_TO_JUMP_TARGET();
+                }
+            }
+            assert(stack_pointer == _PyFrame_GetStackPointer(frame));
+            _PyFrame_StackPointerValidate(frame);
+            bool fits = _PyRegion_Arithmetic(a, b, oparg % 3, &intermediate) &&
+            _PyRegion_Arithmetic(intermediate, c, oparg / 3, &value);
+            _PyFrame_StackPointerInvalidate(frame);
+            if (!fits) {
+                current_executor->region_int_overflow_exits++;
+                if (true) {
+                    UOP_STAT_INC(uopcode, miss);
+                    _tos_cache1 = right;
+                    _tos_cache0 = left;
+                    SET_CURRENT_CACHED_VALUES(2);
+                    stack_pointer += -2;
+                    ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                    JUMP_TO_JUMP_TARGET();
+                }
+            }
+            res = (COMPARISON_BIT(value, limit) & ((uint64_t)(uintptr_t)config >> 32))
+            ? PyStackRef_True : PyStackRef_False;
+            l = left;
+            r = right;
+            _tos_cache2 = r;
+            _tos_cache1 = l;
+            _tos_cache0 = res;
+            SET_CURRENT_CACHED_VALUES(3);
+            stack_pointer += -2;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            break;
+        }
+
+        case _INT_REGION_COMPARE_8_r23: {
+            CHECK_CURRENT_CACHED_VALUES(2);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            _PyStackRef right;
+            _PyStackRef left;
+            _PyStackRef res;
+            _PyStackRef l;
+            _PyStackRef r;
+            _PyStackRef _stack_item_0 = _tos_cache0;
+            _PyStackRef _stack_item_1 = _tos_cache1;
+            oparg = 8;
+            assert(oparg == CURRENT_OPARG());
+            right = _stack_item_1;
+            left = _stack_item_0;
+            PyObject *config = (PyObject *)CURRENT_OPERAND0_64();
+            current_executor->region_int_entries++;
+            int64_t a, b, c, limit, intermediate, value;
+            stack_pointer[0] = left;
+            stack_pointer[1] = right;
+            stack_pointer += 2;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            _PyFrame_SetStackPointer(frame, stack_pointer);
+            _PyFrame_StackPointerValidate(frame);
+            bool valid = _PyRegion_AsInt64(left, &a) &&
+            _PyRegion_AsInt64(right, &b) &&
+            _PyRegion_AsInt64(GETLOCAL((uintptr_t)config & 0xffff), &c) &&
+            _PyRegion_AsInt64(GETLOCAL(((uintptr_t)config >> 16) & 0xffff), &limit);
+            _PyFrame_StackPointerInvalidate(frame);
+            if (!valid) {
+                current_executor->region_int_guard_exits++;
+                if (true) {
+                    UOP_STAT_INC(uopcode, miss);
+                    _tos_cache1 = right;
+                    _tos_cache0 = left;
+                    SET_CURRENT_CACHED_VALUES(2);
+                    stack_pointer += -2;
+                    ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                    JUMP_TO_JUMP_TARGET();
+                }
+            }
+            assert(stack_pointer == _PyFrame_GetStackPointer(frame));
+            _PyFrame_StackPointerValidate(frame);
+            bool fits = _PyRegion_Arithmetic(a, b, oparg % 3, &intermediate) &&
+            _PyRegion_Arithmetic(intermediate, c, oparg / 3, &value);
+            _PyFrame_StackPointerInvalidate(frame);
+            if (!fits) {
+                current_executor->region_int_overflow_exits++;
+                if (true) {
+                    UOP_STAT_INC(uopcode, miss);
+                    _tos_cache1 = right;
+                    _tos_cache0 = left;
+                    SET_CURRENT_CACHED_VALUES(2);
+                    stack_pointer += -2;
+                    ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                    JUMP_TO_JUMP_TARGET();
+                }
+            }
+            res = (COMPARISON_BIT(value, limit) & ((uint64_t)(uintptr_t)config >> 32))
+            ? PyStackRef_True : PyStackRef_False;
+            l = left;
+            r = right;
+            _tos_cache2 = r;
+            _tos_cache1 = l;
+            _tos_cache0 = res;
+            SET_CURRENT_CACHED_VALUES(3);
+            stack_pointer += -2;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            break;
+        }
+
+        case _INT_REGION_COMPARE_r23: {
+            CHECK_CURRENT_CACHED_VALUES(2);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            _PyStackRef right;
+            _PyStackRef left;
+            _PyStackRef res;
+            _PyStackRef l;
+            _PyStackRef r;
+            _PyStackRef _stack_item_0 = _tos_cache0;
+            _PyStackRef _stack_item_1 = _tos_cache1;
+            oparg = CURRENT_OPARG();
+            right = _stack_item_1;
+            left = _stack_item_0;
+            PyObject *config = (PyObject *)CURRENT_OPERAND0_64();
+            current_executor->region_int_entries++;
+            int64_t a, b, c, limit, intermediate, value;
+            stack_pointer[0] = left;
+            stack_pointer[1] = right;
+            stack_pointer += 2;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            _PyFrame_SetStackPointer(frame, stack_pointer);
+            _PyFrame_StackPointerValidate(frame);
+            bool valid = _PyRegion_AsInt64(left, &a) &&
+            _PyRegion_AsInt64(right, &b) &&
+            _PyRegion_AsInt64(GETLOCAL((uintptr_t)config & 0xffff), &c) &&
+            _PyRegion_AsInt64(GETLOCAL(((uintptr_t)config >> 16) & 0xffff), &limit);
+            _PyFrame_StackPointerInvalidate(frame);
+            if (!valid) {
+                current_executor->region_int_guard_exits++;
+                if (true) {
+                    UOP_STAT_INC(uopcode, miss);
+                    _tos_cache1 = right;
+                    _tos_cache0 = left;
+                    SET_CURRENT_CACHED_VALUES(2);
+                    stack_pointer += -2;
+                    ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                    JUMP_TO_JUMP_TARGET();
+                }
+            }
+            assert(stack_pointer == _PyFrame_GetStackPointer(frame));
+            _PyFrame_StackPointerValidate(frame);
+            bool fits = _PyRegion_Arithmetic(a, b, oparg % 3, &intermediate) &&
+            _PyRegion_Arithmetic(intermediate, c, oparg / 3, &value);
+            _PyFrame_StackPointerInvalidate(frame);
+            if (!fits) {
+                current_executor->region_int_overflow_exits++;
+                if (true) {
+                    UOP_STAT_INC(uopcode, miss);
+                    _tos_cache1 = right;
+                    _tos_cache0 = left;
+                    SET_CURRENT_CACHED_VALUES(2);
+                    stack_pointer += -2;
+                    ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                    JUMP_TO_JUMP_TARGET();
+                }
+            }
+            res = (COMPARISON_BIT(value, limit) & ((uint64_t)(uintptr_t)config >> 32))
+            ? PyStackRef_True : PyStackRef_False;
+            l = left;
+            r = right;
+            _tos_cache2 = r;
+            _tos_cache1 = l;
+            _tos_cache0 = res;
+            SET_CURRENT_CACHED_VALUES(3);
+            stack_pointer += -2;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            break;
+        }
+
         case _BINARY_OP_ADD_INT_INPLACE_r03: {
             CHECK_CURRENT_CACHED_VALUES(0);
             ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
@@ -5894,6 +7402,7 @@
             right = _stack_item_2;
             left = _stack_item_1;
             acc = _stack_item_0;
+            current_executor->region_float_unique_entries++;
             PyObject *acc_o = PyStackRef_AsPyObjectBorrow(acc);
             PyObject *left_o = PyStackRef_AsPyObjectBorrow(left);
             PyObject *right_o = PyStackRef_AsPyObjectBorrow(right);
@@ -5930,6 +7439,7 @@
             right = _stack_item_2;
             left = _stack_item_1;
             acc = _stack_item_0;
+            current_executor->region_float_unique_entries++;
             PyObject *acc_o = PyStackRef_AsPyObjectBorrow(acc);
             PyObject *left_o = PyStackRef_AsPyObjectBorrow(left);
             PyObject *right_o = PyStackRef_AsPyObjectBorrow(right);
@@ -5966,44 +7476,38 @@
             right = _stack_item_2;
             left = _stack_item_1;
             acc = _stack_item_0;
+            current_executor->region_float_shared_entries++;
             PyObject *acc_o = PyStackRef_AsPyObjectBorrow(acc);
             PyObject *left_o = PyStackRef_AsPyObjectBorrow(left);
             PyObject *right_o = PyStackRef_AsPyObjectBorrow(right);
-            if (!PyFloat_CheckExact(acc_o)) {
-                UOP_STAT_INC(uopcode, miss);
-                _tos_cache2 = right;
-                _tos_cache1 = left;
-                _tos_cache0 = acc;
-                SET_CURRENT_CACHED_VALUES(3);
-                JUMP_TO_JUMP_TARGET();
-            }
-            if (!PyFloat_CheckExact(left_o)) {
-                UOP_STAT_INC(uopcode, miss);
-                _tos_cache2 = right;
-                _tos_cache1 = left;
-                _tos_cache0 = acc;
-                SET_CURRENT_CACHED_VALUES(3);
-                JUMP_TO_JUMP_TARGET();
-            }
-            if (!PyFloat_CheckExact(right_o)) {
-                UOP_STAT_INC(uopcode, miss);
-                _tos_cache2 = right;
-                _tos_cache1 = left;
-                _tos_cache0 = acc;
-                SET_CURRENT_CACHED_VALUES(3);
-                JUMP_TO_JUMP_TARGET();
+            if (!PyFloat_CheckExact(acc_o) || !PyFloat_CheckExact(left_o) ||
+                !PyFloat_CheckExact(right_o)) {
+                current_executor->region_float_guard_exits++;
+                if (true) {
+                    UOP_STAT_INC(uopcode, miss);
+                    _tos_cache2 = right;
+                    _tos_cache1 = left;
+                    _tos_cache0 = acc;
+                    SET_CURRENT_CACHED_VALUES(3);
+                    JUMP_TO_JUMP_TARGET();
+                }
             }
             double value = _PyFloat_MultiplyThenUpdate(
                 ((PyFloatObject *)acc_o)->ob_fval,
                 ((PyFloatObject *)left_o)->ob_fval,
                 ((PyFloatObject *)right_o)->ob_fval, false);
-            PyObject *result = PyFloat_FromDouble(value);
+            stack_pointer[0] = acc;
+            stack_pointer[1] = left;
+            stack_pointer[2] = right;
+            stack_pointer += 3;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            _PyFrame_SetStackPointer(frame, stack_pointer);
+            _PyFrame_StackPointerValidate(frame);
+            PyObject *result = _PyRegion_AllocationFails("float")
+            ? NULL : PyFloat_FromDouble(value);
+            _PyFrame_StackPointerInvalidate(frame);
             if (result == NULL) {
-                stack_pointer[0] = acc;
-                stack_pointer[1] = left;
-                stack_pointer[2] = right;
-                stack_pointer += 3;
-                ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                current_executor->region_allocation_errors++;
                 SET_CURRENT_CACHED_VALUES(0);
                 JUMP_TO_ERROR();
             }
@@ -6012,6 +7516,8 @@
             _tos_cache1 = PyStackRef_ZERO_BITS;
             _tos_cache2 = PyStackRef_ZERO_BITS;
             SET_CURRENT_CACHED_VALUES(1);
+            stack_pointer += -3;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
             ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
             break;
         }
@@ -6029,44 +7535,38 @@
             right = _stack_item_2;
             left = _stack_item_1;
             acc = _stack_item_0;
+            current_executor->region_float_shared_entries++;
             PyObject *acc_o = PyStackRef_AsPyObjectBorrow(acc);
             PyObject *left_o = PyStackRef_AsPyObjectBorrow(left);
             PyObject *right_o = PyStackRef_AsPyObjectBorrow(right);
-            if (!PyFloat_CheckExact(acc_o)) {
-                UOP_STAT_INC(uopcode, miss);
-                _tos_cache2 = right;
-                _tos_cache1 = left;
-                _tos_cache0 = acc;
-                SET_CURRENT_CACHED_VALUES(3);
-                JUMP_TO_JUMP_TARGET();
-            }
-            if (!PyFloat_CheckExact(left_o)) {
-                UOP_STAT_INC(uopcode, miss);
-                _tos_cache2 = right;
-                _tos_cache1 = left;
-                _tos_cache0 = acc;
-                SET_CURRENT_CACHED_VALUES(3);
-                JUMP_TO_JUMP_TARGET();
-            }
-            if (!PyFloat_CheckExact(right_o)) {
-                UOP_STAT_INC(uopcode, miss);
-                _tos_cache2 = right;
-                _tos_cache1 = left;
-                _tos_cache0 = acc;
-                SET_CURRENT_CACHED_VALUES(3);
-                JUMP_TO_JUMP_TARGET();
+            if (!PyFloat_CheckExact(acc_o) || !PyFloat_CheckExact(left_o) ||
+                !PyFloat_CheckExact(right_o)) {
+                current_executor->region_float_guard_exits++;
+                if (true) {
+                    UOP_STAT_INC(uopcode, miss);
+                    _tos_cache2 = right;
+                    _tos_cache1 = left;
+                    _tos_cache0 = acc;
+                    SET_CURRENT_CACHED_VALUES(3);
+                    JUMP_TO_JUMP_TARGET();
+                }
             }
             double value = _PyFloat_MultiplyThenUpdate(
                 ((PyFloatObject *)acc_o)->ob_fval,
                 ((PyFloatObject *)left_o)->ob_fval,
                 ((PyFloatObject *)right_o)->ob_fval, true);
-            PyObject *result = PyFloat_FromDouble(value);
+            stack_pointer[0] = acc;
+            stack_pointer[1] = left;
+            stack_pointer[2] = right;
+            stack_pointer += 3;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            _PyFrame_SetStackPointer(frame, stack_pointer);
+            _PyFrame_StackPointerValidate(frame);
+            PyObject *result = _PyRegion_AllocationFails("float")
+            ? NULL : PyFloat_FromDouble(value);
+            _PyFrame_StackPointerInvalidate(frame);
             if (result == NULL) {
-                stack_pointer[0] = acc;
-                stack_pointer[1] = left;
-                stack_pointer[2] = right;
-                stack_pointer += 3;
-                ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                current_executor->region_allocation_errors++;
                 SET_CURRENT_CACHED_VALUES(0);
                 JUMP_TO_ERROR();
             }
@@ -6075,6 +7575,8 @@
             _tos_cache1 = PyStackRef_ZERO_BITS;
             _tos_cache2 = PyStackRef_ZERO_BITS;
             SET_CURRENT_CACHED_VALUES(1);
+            stack_pointer += -3;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
             ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
             break;
         }
@@ -18891,6 +20393,156 @@
             _tos_cache2 = c;
             _tos_cache1 = a;
             _tos_cache0 = res;
+            SET_CURRENT_CACHED_VALUES(3);
+            stack_pointer += -3;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            break;
+        }
+
+        case _CALL_LEN_CONSUMER_r33: {
+            CHECK_CURRENT_CACHED_VALUES(3);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            _PyStackRef arg;
+            _PyStackRef callable;
+            _PyStackRef res;
+            _PyStackRef a;
+            _PyStackRef c;
+            _PyStackRef _stack_item_0 = _tos_cache0;
+            _PyStackRef _stack_item_1 = _tos_cache1;
+            _PyStackRef _stack_item_2 = _tos_cache2;
+            oparg = CURRENT_OPARG();
+            arg = _stack_item_2;
+            callable = _stack_item_0;
+            PyObject *local = (PyObject *)CURRENT_OPERAND0_64();
+            current_executor->region_len_entries++;
+            PyObject *obj = PyStackRef_AsPyObjectBorrow(arg);
+            int64_t right;
+            stack_pointer[0] = callable;
+            stack_pointer[1] = _stack_item_1;
+            stack_pointer[2] = arg;
+            stack_pointer += 3;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            _PyFrame_SetStackPointer(frame, stack_pointer);
+            _PyFrame_StackPointerValidate(frame);
+            bool valid = (!PyStackRef_RefcountOnObject(arg) || _Py_IsImmortal(obj)) &&
+            (PyUnicode_CheckExact(obj) || PyBytes_CheckExact(obj) ||
+                          PyTuple_CheckExact(obj)) &&
+            _PyRegion_AsInt64(GETLOCAL((uintptr_t)local), &right);
+            _PyFrame_StackPointerInvalidate(frame);
+            if (!valid) {
+                current_executor->region_len_guard_exits++;
+                if (true) {
+                    UOP_STAT_INC(uopcode, miss);
+                    _tos_cache2 = arg;
+                    _tos_cache1 = _stack_item_1;
+                    _tos_cache0 = callable;
+                    SET_CURRENT_CACHED_VALUES(3);
+                    stack_pointer += -3;
+                    ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                    JUMP_TO_JUMP_TARGET();
+                }
+            }
+            Py_ssize_t size = PyUnicode_CheckExact(obj) ? PyUnicode_GET_LENGTH(obj)
+        : PyBytes_CheckExact(obj) ? PyBytes_GET_SIZE(obj)
+        : PyTuple_GET_SIZE(obj);
+            if (oparg & 16) {
+                res = (COMPARISON_BIT(size, right) & oparg)
+                ? PyStackRef_True : PyStackRef_False;
+            }
+            else {
+                int64_t value;
+                if (!_PyRegion_Arithmetic(size, right, oparg, &value)) {
+                    current_executor->region_len_guard_exits++;
+                    if (true) {
+                        UOP_STAT_INC(uopcode, miss);
+                        _tos_cache2 = arg;
+                        _tos_cache1 = _stack_item_1;
+                        _tos_cache0 = callable;
+                        SET_CURRENT_CACHED_VALUES(3);
+                        stack_pointer += -3;
+                        ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                        JUMP_TO_JUMP_TARGET();
+                    }
+                }
+                assert(stack_pointer == _PyFrame_GetStackPointer(frame));
+                _PyFrame_StackPointerValidate(frame);
+                PyObject *result = _PyRegion_AllocationFails("len")
+                ? NULL : PyLong_FromLongLong(value);
+                _PyFrame_StackPointerInvalidate(frame);
+                if (result == NULL) {
+                    current_executor->region_allocation_errors++;
+                    SET_CURRENT_CACHED_VALUES(0);
+                    JUMP_TO_ERROR();
+                }
+                res = PyStackRef_FromPyObjectSteal(result);
+            }
+            a = arg;
+            c = callable;
+            _tos_cache2 = c;
+            _tos_cache1 = a;
+            _tos_cache0 = res;
+            SET_CURRENT_CACHED_VALUES(3);
+            stack_pointer += -3;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            break;
+        }
+
+        case _CALL_STR_TAILMATCH_r33: {
+            CHECK_CURRENT_CACHED_VALUES(3);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            _PyStackRef arg;
+            _PyStackRef self_st;
+            _PyStackRef callable;
+            _PyStackRef _stack_item_0 = _tos_cache0;
+            _PyStackRef _stack_item_1 = _tos_cache1;
+            _PyStackRef _stack_item_2 = _tos_cache2;
+            oparg = CURRENT_OPARG();
+            arg = _stack_item_2;
+            self_st = _stack_item_1;
+            callable = _stack_item_0;
+            PyObject *descriptor = (PyObject *)CURRENT_OPERAND0_64();
+            current_executor->region_method_entries++;
+            PyObject *self = PyStackRef_AsPyObjectBorrow(self_st);
+            PyObject *prefix = PyStackRef_AsPyObjectBorrow(arg);
+            bool valid = PyStackRef_AsPyObjectBorrow(callable) == (PyObject *)descriptor &&
+            PyUnicode_CheckExact(self) && PyUnicode_CheckExact(prefix);
+            if (!valid) {
+                current_executor->region_method_guard_exits++;
+                if (true) {
+                    UOP_STAT_INC(uopcode, miss);
+                    _tos_cache2 = arg;
+                    _tos_cache1 = self_st;
+                    _tos_cache0 = callable;
+                    SET_CURRENT_CACHED_VALUES(3);
+                    JUMP_TO_JUMP_TARGET();
+                }
+            }
+            stack_pointer[0] = callable;
+            stack_pointer[1] = self_st;
+            stack_pointer[2] = arg;
+            stack_pointer += 3;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            _PyFrame_SetStackPointer(frame, stack_pointer);
+            _PyFrame_StackPointerValidate(frame);
+            int match = PyUnicode_Tailmatch(self, prefix, 0, PY_SSIZE_T_MAX,
+                oparg ? 1 : -1);
+            _PyFrame_StackPointerInvalidate(frame);
+            if (match < 0) {
+                SET_CURRENT_CACHED_VALUES(0);
+                JUMP_TO_ERROR();
+            }
+            _PyStackRef previous = callable;
+            callable = match ? PyStackRef_True : PyStackRef_False;
+            stack_pointer[-3] = callable;
+            assert(stack_pointer == _PyFrame_GetStackPointer(frame));
+            _PyFrame_StackPointerValidate(frame);
+            PyStackRef_CLOSE(previous);
+            _PyFrame_StackPointerInvalidate(frame);
+            _tos_cache2 = arg;
+            _tos_cache1 = self_st;
+            _tos_cache0 = callable;
             SET_CURRENT_CACHED_VALUES(3);
             stack_pointer += -3;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);

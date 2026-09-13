@@ -714,6 +714,61 @@ dummy_func(
         macro(BINARY_OP_SUBTRACT_INT) =
             _GUARD_TOS_INT + _GUARD_NOS_INT + unused/5 + _BINARY_OP_SUBTRACT_INT + _POP_TOP_INT + _POP_TOP_INT;
 
+        /* The entry stack belongs to the first Python operation. Nothing is
+         * consumed until every type/range/overflow check has succeeded. */
+        replicate(9) tier2 op(_INT_REGION, (left, right, config/4 -- res, l, r)) {
+            current_executor->region_int_entries++;
+            int64_t a, b, c, intermediate, value;
+            bool valid = _PyRegion_AsInt64(left, &a) &&
+                         _PyRegion_AsInt64(right, &b) &&
+                         _PyRegion_AsInt64(GETLOCAL((uintptr_t)config & 0xffff), &c);
+            if (!valid) {
+                current_executor->region_int_guard_exits++;
+                EXIT_IF(true);
+            }
+            bool fits = _PyRegion_Arithmetic(a, b, oparg % 3, &intermediate) &&
+                        _PyRegion_Arithmetic(intermediate, c, oparg / 3, &value);
+            if (!fits) {
+                current_executor->region_int_overflow_exits++;
+                EXIT_IF(true);
+            }
+            PyObject *result = _PyRegion_AllocationFails("int")
+                               ? NULL : PyLong_FromLongLong(value);
+            if (result == NULL) {
+                current_executor->region_allocation_errors++;
+                ERROR_NO_POP();
+            }
+            current_executor->region_int_boxes++;
+            res = PyStackRef_FromPyObjectSteal(result);
+            l = left;
+            r = right;
+            INPUTS_DEAD();
+        }
+
+        replicate(9) tier2 op(_INT_REGION_COMPARE, (left, right, config/4 -- res, l, r)) {
+            current_executor->region_int_entries++;
+            int64_t a, b, c, limit, intermediate, value;
+            bool valid = _PyRegion_AsInt64(left, &a) &&
+                         _PyRegion_AsInt64(right, &b) &&
+                         _PyRegion_AsInt64(GETLOCAL((uintptr_t)config & 0xffff), &c) &&
+                         _PyRegion_AsInt64(GETLOCAL(((uintptr_t)config >> 16) & 0xffff), &limit);
+            if (!valid) {
+                current_executor->region_int_guard_exits++;
+                EXIT_IF(true);
+            }
+            bool fits = _PyRegion_Arithmetic(a, b, oparg % 3, &intermediate) &&
+                        _PyRegion_Arithmetic(intermediate, c, oparg / 3, &value);
+            if (!fits) {
+                current_executor->region_int_overflow_exits++;
+                EXIT_IF(true);
+            }
+            res = (COMPARISON_BIT(value, limit) & ((uint64_t)(uintptr_t)config >> 32))
+                  ? PyStackRef_True : PyStackRef_False;
+            l = left;
+            r = right;
+            INPUTS_DEAD();
+        }
+
         // Inplace compact int ops: mutate the uniquely-referenced operand
         // when possible. The op handles decref of TARGET internally so
         // the following _POP_TOP_INT becomes _POP_TOP_NOP. Tier 2 only.
@@ -882,6 +937,7 @@ dummy_func(
         // binary64 rounding semantics.
         tier2 pure op(_BINARY_OP_MULTIPLY_ADD_FLOAT_INPLACE,
                  (acc, left, right -- res)) {
+            current_executor->region_float_unique_entries++;
             PyObject *acc_o = PyStackRef_AsPyObjectBorrow(acc);
             PyObject *left_o = PyStackRef_AsPyObjectBorrow(left);
             PyObject *right_o = PyStackRef_AsPyObjectBorrow(right);
@@ -908,6 +964,7 @@ dummy_func(
         // Fuse ``acc - left * right`` under the same ownership contract.
         tier2 pure op(_BINARY_OP_MULTIPLY_SUBTRACT_FLOAT_INPLACE,
                  (acc, left, right -- res)) {
+            current_executor->region_float_unique_entries++;
             PyObject *acc_o = PyStackRef_AsPyObjectBorrow(acc);
             PyObject *left_o = PyStackRef_AsPyObjectBorrow(left);
             PyObject *right_o = PyStackRef_AsPyObjectBorrow(right);
@@ -934,18 +991,23 @@ dummy_func(
         // accumulator may be externally aliased and must not be mutated.
         tier2 op(_BINARY_OP_MULTIPLY_ADD_FLOAT_SHARED,
                  (acc, left, right -- res)) {
+            current_executor->region_float_shared_entries++;
             PyObject *acc_o = PyStackRef_AsPyObjectBorrow(acc);
             PyObject *left_o = PyStackRef_AsPyObjectBorrow(left);
             PyObject *right_o = PyStackRef_AsPyObjectBorrow(right);
-            EXIT_IF(!PyFloat_CheckExact(acc_o));
-            EXIT_IF(!PyFloat_CheckExact(left_o));
-            EXIT_IF(!PyFloat_CheckExact(right_o));
+            if (!PyFloat_CheckExact(acc_o) || !PyFloat_CheckExact(left_o) ||
+                !PyFloat_CheckExact(right_o)) {
+                current_executor->region_float_guard_exits++;
+                EXIT_IF(true);
+            }
             double value = _PyFloat_MultiplyThenUpdate(
                 ((PyFloatObject *)acc_o)->ob_fval,
                 ((PyFloatObject *)left_o)->ob_fval,
                 ((PyFloatObject *)right_o)->ob_fval, false);
-            PyObject *result = PyFloat_FromDouble(value);
+            PyObject *result = _PyRegion_AllocationFails("float")
+                               ? NULL : PyFloat_FromDouble(value);
             if (result == NULL) {
+                current_executor->region_allocation_errors++;
                 ERROR_NO_POP();
             }
             res = PyStackRef_FromPyObjectSteal(result);
@@ -954,18 +1016,23 @@ dummy_func(
 
         tier2 op(_BINARY_OP_MULTIPLY_SUBTRACT_FLOAT_SHARED,
                  (acc, left, right -- res)) {
+            current_executor->region_float_shared_entries++;
             PyObject *acc_o = PyStackRef_AsPyObjectBorrow(acc);
             PyObject *left_o = PyStackRef_AsPyObjectBorrow(left);
             PyObject *right_o = PyStackRef_AsPyObjectBorrow(right);
-            EXIT_IF(!PyFloat_CheckExact(acc_o));
-            EXIT_IF(!PyFloat_CheckExact(left_o));
-            EXIT_IF(!PyFloat_CheckExact(right_o));
+            if (!PyFloat_CheckExact(acc_o) || !PyFloat_CheckExact(left_o) ||
+                !PyFloat_CheckExact(right_o)) {
+                current_executor->region_float_guard_exits++;
+                EXIT_IF(true);
+            }
             double value = _PyFloat_MultiplyThenUpdate(
                 ((PyFloatObject *)acc_o)->ob_fval,
                 ((PyFloatObject *)left_o)->ob_fval,
                 ((PyFloatObject *)right_o)->ob_fval, true);
-            PyObject *result = PyFloat_FromDouble(value);
+            PyObject *result = _PyRegion_AllocationFails("float")
+                               ? NULL : PyFloat_FromDouble(value);
             if (result == NULL) {
+                current_executor->region_allocation_errors++;
                 ERROR_NO_POP();
             }
             res = PyStackRef_FromPyObjectSteal(result);
@@ -5112,6 +5179,67 @@ dummy_func(
             c = callable;
             INPUTS_DEAD();
             res = PyStackRef_FromPyObjectSteal(res_o);
+        }
+
+        tier2 op(_CALL_LEN_CONSUMER, (callable, null, arg, local/4 -- res, a, c)) {
+            current_executor->region_len_entries++;
+            PyObject *obj = PyStackRef_AsPyObjectBorrow(arg);
+            int64_t right;
+            /* An owned tuple could run finalizers when closed by CALL_LEN,
+             * before the original consumer loads its local. Do not move
+             * that effect. Borrowed (or immortal) operands have no close. */
+            bool valid = (!PyStackRef_RefcountOnObject(arg) || _Py_IsImmortal(obj)) &&
+                         (PyUnicode_CheckExact(obj) || PyBytes_CheckExact(obj) ||
+                          PyTuple_CheckExact(obj)) &&
+                         _PyRegion_AsInt64(GETLOCAL((uintptr_t)local), &right);
+            if (!valid) {
+                current_executor->region_len_guard_exits++;
+                EXIT_IF(true);
+            }
+            Py_ssize_t size = PyUnicode_CheckExact(obj) ? PyUnicode_GET_LENGTH(obj)
+                           : PyBytes_CheckExact(obj) ? PyBytes_GET_SIZE(obj)
+                           : PyTuple_GET_SIZE(obj);
+            if (oparg & 16) {
+                res = (COMPARISON_BIT(size, right) & oparg)
+                      ? PyStackRef_True : PyStackRef_False;
+            }
+            else {
+                int64_t value;
+                if (!_PyRegion_Arithmetic(size, right, oparg, &value)) {
+                    current_executor->region_len_guard_exits++;
+                    EXIT_IF(true);
+                }
+                PyObject *result = _PyRegion_AllocationFails("len")
+                                   ? NULL : PyLong_FromLongLong(value);
+                if (result == NULL) {
+                    current_executor->region_allocation_errors++;
+                    ERROR_NO_POP();
+                }
+                res = PyStackRef_FromPyObjectSteal(result);
+            }
+            a = arg;
+            c = callable;
+            INPUTS_DEAD();
+        }
+
+        tier2 op(_CALL_STR_TAILMATCH, (callable, self_st, arg, descriptor/4 -- callable, self_st, arg)) {
+            current_executor->region_method_entries++;
+            PyObject *self = PyStackRef_AsPyObjectBorrow(self_st);
+            PyObject *prefix = PyStackRef_AsPyObjectBorrow(arg);
+            bool valid = PyStackRef_AsPyObjectBorrow(callable) == (PyObject *)descriptor &&
+                         PyUnicode_CheckExact(self) && PyUnicode_CheckExact(prefix);
+            if (!valid) {
+                current_executor->region_method_guard_exits++;
+                EXIT_IF(true);
+            }
+            int match = PyUnicode_Tailmatch(self, prefix, 0, PY_SSIZE_T_MAX,
+                                           oparg ? 1 : -1);
+            if (match < 0) {
+                ERROR_NO_POP();
+            }
+            _PyStackRef previous = callable;
+            callable = match ? PyStackRef_True : PyStackRef_False;
+            PyStackRef_CLOSE(previous);
         }
 
         op(_GUARD_CALLABLE_ISINSTANCE, (callable, unused, unused, unused -- callable, unused, unused, unused)) {
