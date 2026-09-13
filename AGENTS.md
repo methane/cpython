@@ -166,6 +166,13 @@ separate generated output.  Regenerate it with
 build's `regen-optimizer-cases` target); `tier2_generator.py` only regenerates
 executor cases.
 
+Fused floating-point uops must preserve Python's operation-by-operation
+binary64 rounding even when an embedding compiler enables contraction.  Use a
+scoped `#pragma STDC FP_CONTRACT OFF` at the fused arithmetic and inspect the
+generated executor/native assembly for separate multiply and add instructions;
+the cancellation case `-1.0 + (1.0 + 2**-27) * (1.0 - 2**-27)` is a reusable
+regression witness.
+
 Run focused checks from each relevant build, including:
 
 ```sh

@@ -7,6 +7,8 @@ import unittest
 from unittest import mock
 import gc
 import os
+import math
+import struct
 import types
 
 import _opcode
@@ -4132,6 +4134,61 @@ class TestUopsOptimization(unittest.TestCase):
         self.assertIn(
             "_BINARY_OP_MULTIPLY_ADD_FLOAT_INPLACE", get_opnames(executor)
         )
+
+        # The fused suffix is c*d followed by addition to a*b.  This witness
+        # distinguishes Python's two rounded operations from an FMA.
+        edge_cases = [
+            (-1.0, 1.0, 1.0 + 2**-27, 1.0 - 2**-27),
+            (-0.0, 1.0, 0.0, 1.0),
+            (float("inf"), 1.0, 2.0, 3.0),
+            (2.0**-1022, 0.5, 2.0**-1022, 0.5),
+            (2.0**1023, 2.0, -(2.0**1023), 1.0),
+            (1.25, 1.25, 1.25, 1.25),
+        ]
+        for a, b, c, d in edge_cases:
+            expected = a * b + c * d
+            actual = testfunc((a, b, c, d, 1))
+            if math.isnan(expected):
+                self.assertTrue(math.isnan(actual))
+            else:
+                self.assertEqual(
+                    struct.pack("=d", actual), struct.pack("=d", expected)
+                )
+
+    def test_float_product_add_fusion_guard_failure(self):
+        events = []
+
+        class ObservableFloat(float):
+            def __mul__(self, other):
+                events.append(("mul", float(self), float(other)))
+                return ObservableFloat(float(self) * float(other))
+
+            def __add__(self, other):
+                events.append(("add", float(self), float(other)))
+                return ObservableFloat(float(self) + float(other))
+
+        def testfunc(args):
+            a, b, c, d, n = args
+            result = 0.0
+            for _ in range(n):
+                result = a * b + c * d
+            return result
+
+        with mock.patch.dict(os.environ, {"PYTHON_TIER2_FLOAT_FUSION": "1"}):
+            _, executor = self._run_with_optimizer(
+                testfunc, (1.0, 2.0, 3.0, 4.0, TIER2_THRESHOLD)
+            )
+        self.assertIn(
+            "_BINARY_OP_MULTIPLY_ADD_FLOAT_INPLACE", get_opnames(executor)
+        )
+        value = ObservableFloat(2.0)
+        result = testfunc((value, value, value, value, 1))
+        self.assertIsInstance(result, ObservableFloat)
+        self.assertEqual(
+            events,
+            [("mul", 2.0, 2.0), ("mul", 2.0, 2.0), ("add", 4.0, 4.0)],
+        )
+        self.assertEqual(testfunc((2.0, 3.0, 4.0, 5.0, 1)), 26.0)
 
     def test_float_remainder_speculative_guards_from_tracing(self):
         # a, b are locals with no statically known type. Tracing records

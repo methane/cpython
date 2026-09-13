@@ -613,6 +613,28 @@ gen_try_set_executing(PyGenObject *gen)
             ->ob_fval = _dres;                                           \
     } while (0)
 
+/* Preserve the two Python rounding points in a product/add chain even when an
+ * embedding compiler enables FP contraction.  This is always inlined into the
+ * fused uop, so it introduces no hot-path call. */
+#if defined(__clang__)
+#  pragma clang fp contract(off)
+#elif defined(__GNUC__)
+#  pragma GCC push_options
+#  pragma GCC optimize ("fp-contract=off")
+#endif
+static inline Py_ALWAYS_INLINE double
+_PyFloat_MultiplyThenAdd(double accumulator, double left, double right)
+{
+    double product = left * right;
+    return accumulator + product;
+}
+#if defined(__clang__)
+#  pragma clang fp contract(on)
+#elif defined(__GNUC__)
+#  pragma GCC pop_options
+#endif
+
+
 // Inplace float true division. Sets _divop_err to 1 on zero division.
 // Caller must check _divop_err and call ERROR_NO_POP() if set.
 #define FLOAT_INPLACE_DIVOP(left, right, TARGET)                         \
