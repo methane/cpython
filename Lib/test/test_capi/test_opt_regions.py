@@ -7,7 +7,9 @@ import os
 import random
 import struct
 import sys
+import sysconfig
 import unittest
+import weakref
 from unittest import mock
 
 from test import support
@@ -20,6 +22,11 @@ SETTINGS = {
     "PYTHON_TIER2_BUILTIN_REGIONS": "1",
     "PYTHON_TIER2_FLOAT_FUSION": "1",
 }
+
+requires_call_regions = unittest.skipIf(
+    sysconfig.get_config_var("WITH_DTRACE") or sys.platform == "emscripten",
+    "call regions are disabled with DTrace or Emscripten",
+)
 
 
 def arithmetic(expression):
@@ -396,7 +403,8 @@ class TestRegions(unittest.TestCase):
 
     def test_len_consumers(self):
         for expression in ("len(a) >= b", "len(a) - b", "len(a) + b"):
-            for value in ("x" * 400, b"x" * 400, tuple(range(400))):
+            for value in ("x" * 400, b"x" * 400, tuple(range(400)),
+                          list(range(400)), dict.fromkeys(range(400))):
                 with self.subTest(expression=expression, receiver=type(value)):
                     func = arithmetic(expression)
                     func(value, 10, 0, 0, TIER2_THRESHOLD)
@@ -406,6 +414,112 @@ class TestRegions(unittest.TestCase):
                                                value, right, 0, 0, 8)
                         expected = eval(expression, {"a": value, "b": right})
                         self.assertEqual(actual, expected)
+
+    def test_len_constant_consumers(self):
+        for expression, oracle in (
+            ("len(a) - 1", lambda a: operator.sub(len(a), 1)),
+            ("len(a) + 7", lambda a: operator.add(len(a), 7)),
+            ("len(a) == 1", lambda a: operator.eq(len(a), 1)),
+            ("len(a) >= 16", lambda a: operator.ge(len(a), 16)),
+        ):
+            for make in (list, tuple, dict.fromkeys):
+                with self.subTest(expression=expression, make=make):
+                    func = arithmetic(expression)
+                    func(make(range(400)), 0, 0, 0, TIER2_THRESHOLD)
+                    ex = self.executor(func, "_CALL_LEN_CONSUMER")
+                    for size in (0, 1, 2, 15, 16, 17, 400):
+                        value = make(range(size))
+                        actual = self.executed(ex, "len_entries", func,
+                                               value, 0, 0, 0, 8)
+                        self.assertEqual(actual, oracle(value))
+
+    def test_len_mutation_and_owned_alias(self):
+        class Holder:
+            def __init__(self, value):
+                self.value = value
+
+        for value in ([1, 2, 3], dict.fromkeys(range(3))):
+            # Attribute loads produce owned refs; Holder retains the receiver.
+            func = arithmetic("len(a.value) - 1")
+            holder = Holder(value)
+            func(holder, 0, 0, 0, TIER2_THRESHOLD)
+            ex = self.executor(func, "_CALL_LEN_CONSUMER")
+            self.assertEqual(self.executed(ex, "len_entries", func,
+                                           holder, 0, 0, 0, 8), 2)
+            value.clear()
+            self.assertEqual(self.executed(ex, "len_entries", func,
+                                           holder, 0, 0, 0, 8), -1)
+
+        def run(a, n):
+            total = 0
+            for i in range(n):
+                total += len(a) - 1
+                a.append(i)
+            return total
+
+        self.assertEqual(run([], TIER2_THRESHOLD),
+                         TIER2_THRESHOLD * (TIER2_THRESHOLD - 3) // 2)
+        ex = self.executor(run, "_CALL_LEN_CONSUMER")
+        self.assertEqual(self.executed(ex, "len_entries", run, [], 8), 20)
+
+    def test_len_left_comparison(self):
+        for operator_text, compare in (("<", operator.lt), ("<=", operator.le),
+                                       ("==", operator.eq), ("!=", operator.ne),
+                                       (">", operator.gt), (">=", operator.ge)):
+            for suffix, adjust in (("", 0), (" - 1", -1), (" + 7", 7)):
+                expression = f"b {operator_text} len(a){suffix}"
+                with self.subTest(expression=expression):
+                    func = arithmetic(expression)
+                    func([0] * 400, 10, 0, 0, TIER2_THRESHOLD)
+                    ex = self.executor(func, "_CALL_LEN_LEFT_COMPARE")
+                    for make in (list, tuple, dict.fromkeys):
+                        for size in (0, 1, 400):
+                            value = make(range(size))
+                            for left in (-2**63, -1, 0, size + adjust,
+                                         size + adjust + 1, 2**63 - 1):
+                                actual = self.executed(ex, "len_entries", func,
+                                                       value, left, 0, 0, 8)
+                                self.assertIs(actual, compare(left, size + adjust))
+
+    def test_len_left_comparison_fallback(self):
+        events = []
+
+        class Number(int):
+            def __lt__(self, other):
+                events.append(("compare", other))
+                return False
+
+        class Sized(list):
+            def __len__(self):
+                events.append("len")
+                return 11
+
+        func = arithmetic("b < len(a) - 1")
+        func([0] * 400, 10, 0, 0, TIER2_THRESHOLD)
+        ex = self.executor(func, "_CALL_LEN_LEFT_COMPARE")
+        self.assertFalse(self.executed(ex, "len_guard_exits", func,
+                                       Sized(), Number(1), 0, 0, 8))
+        self.assertEqual(events, ["len", ("compare", 10)] * 8)
+        for left in (True, 2**100, -2**100):
+            self.assertEqual(self.executed(ex, "len_guard_exits", func,
+                                           [1, 2, 3], left, 0, 0, 8),
+                             operator.lt(left, 2))
+
+        func.__globals__["len"] = lambda value: 1
+        self.assertFalse(func([0] * 400, 10, 0, 0, 8))
+
+    def test_len_left_comparison_mutation(self):
+        def run(a, n):
+            matches = 0
+            for i in range(n):
+                matches += i == len(a) - 1
+                a.append(i)
+            return matches
+
+        self.assertEqual(run([None], TIER2_THRESHOLD), TIER2_THRESHOLD)
+        ex = self.executor(run, "_CALL_LEN_LEFT_COMPARE")
+        self.assertEqual(self.executed(ex, "len_entries", run, [None], 8), 8)
+        self.assertEqual(self.executed(ex, "len_entries", run, [], 8), 0)
 
     def test_len_override_and_user_receiver(self):
         events = []
@@ -490,6 +604,277 @@ class TestRegions(unittest.TestCase):
         self.assertEqual(func(value, 1, 0, 0, 8), 2)
         value.append(4)
         self.assertEqual(func(value, 1, 0, 0, 8), 3)
+
+    def test_tuple_pair_comparison(self):
+        nan = float("nan")
+        cases = [
+            (b"ab", b"cd", (b"ab", b"cd")),
+            (b"ab", b"cd", (b"ac", b"cd")),
+            ("é", "漢字", ("é", "漢字")),
+            ("é", "漢字", ("é", "漢")),
+            (17, -19, (17, -19)),
+            (2**200, -(2**300), (int(str(2**200)), int(str(-(2**300))))),
+            (2**200, 2**300, (2**200, 2**301)),
+            (0.0, -0.0, (-0.0, 0.0)),
+            (nan, nan, (nan, nan)),
+            (nan, 1.0, (float("nan"), 1.0)),
+            (float("inf"), 1.0, (float("inf"), 1.0)),
+        ]
+        for expression, compare in (("(a, b) == c", operator.eq),
+                                    ("(a, b) != c", operator.ne)):
+            func = arithmetic(expression)
+            func(*cases[0], 0, TIER2_THRESHOLD)
+            ex = self.executor(func, "_COMPARE_TUPLE_PAIR")
+            for a, b, c in cases:
+                with self.subTest(expression=expression, a=a, b=b, c=c):
+                    expected = compare((a, b), c)
+                    actual = self.executed(ex, "tuple_entries", func,
+                                           a, b, c, 0, 8)
+                    self.assertIs(actual, expected)
+
+    def test_tuple_pair_fallback_and_callbacks(self):
+        events = []
+
+        class Element(int):
+            def __eq__(self, other):
+                events.append(int(self))
+                return int(self) == other
+
+        class Pair(tuple):
+            def __eq__(self, other):
+                events.append(type(other))
+                return "overridden"
+
+        func = arithmetic("(a, b) == c")
+        func(1, 2, (1, 2), 0, TIER2_THRESHOLD)
+        ex = self.executor(func, "_COMPARE_TUPLE_PAIR")
+        self.assertFalse(self.executed(ex, "tuple_guard_exits", func,
+                                       Element(1), Element(2), (1, 3), 0, 8))
+        self.assertEqual(events, [1, 2] * 8)
+        events.clear()
+        self.assertEqual(self.executed(ex, "tuple_guard_exits", func,
+                                       1, 2, Pair((1, 2)), 0, 8), "overridden")
+        self.assertEqual(events, [tuple] * 8)
+        # Different lengths still compare the common prefix: do not shortcut
+        # the user callback just because the lengths differ.
+        events.clear()
+        self.assertFalse(self.executed(ex, "tuple_guard_exits", func,
+                                       Element(1), 2, (1,), 0, 8))
+        self.assertEqual(events, [1] * 8)
+        for a, b, c in ((1, 2, (1.0, 2.0)), (True, False, (1, 0)),
+                        (1, 2, [1, 2]), (1, 2, ())):
+            self.assertEqual(self.executed(ex, "tuple_guard_exits", func,
+                                           a, b, c, 0, 8), operator.eq((a, b), c))
+
+    def test_tuple_pair_owned_fallback(self):
+        events = []
+
+        class Element:
+            def __init__(self, number):
+                self.number = number
+
+            def __eq__(self, other):
+                events.append(("eq", self.number))
+                return True
+
+            def __del__(self):
+                events.append(("del", self.number))
+
+        func = arithmetic("(a(), b()) == c")
+        store = [2, 1] * TIER2_THRESHOLD
+        pop = store.pop
+        func(pop, pop, (1, 2), 0, TIER2_THRESHOLD)
+        ex = self.executor(func, "_COMPARE_TUPLE_PAIR")
+        for _ in range(8):
+            store.extend((Element(2), Element(1)))
+        self.assertTrue(self.executed(ex, "tuple_guard_exits", func,
+                                      pop, pop, (1, 2), 0, 8))
+        self.assertEqual(events, [("eq", 1), ("eq", 2),
+                                  ("del", 2), ("del", 1)] * 8)
+
+    def test_tuple_pair_bytes_warning(self):
+        from test.support.script_helper import assert_python_ok
+
+        assert_python_ok("-bb", "-c", """
+from _testinternalcapi import TIER2_THRESHOLD
+from test.test_capi.test_opt import get_all_executors, get_opnames
+
+def check():
+    def run(a, b, choices, n):
+        for i in range(n):
+            c = choices[i != 0]
+            result = (a, b) == c
+        return result
+
+    pair = (b'x', b'y')
+    run(b'x', b'y', (pair, pair), TIER2_THRESHOLD)
+    ex = next(ex for ex in get_all_executors(run)
+              if any(op.startswith('_COMPARE_TUPLE_PAIR') for op in get_opnames(ex)))
+    before = ex.get_region_stats()['tuple_guard_exits']
+    try:
+        # The first iteration runs in Tier 1; raise only after entering JIT.
+        run(b'x', b'y', (pair, ('x', 'y')), 8)
+    except BytesWarning:
+        pass
+    else:
+        raise AssertionError('BytesWarning was lost')
+    assert ex.get_region_stats()['tuple_guard_exits'] > before
+
+check()
+""", PYTHON_TIER2_BUILTIN_REGIONS="1", PYTHON_JIT="1")
+
+    @requires_call_regions
+    def test_trivial_calls_arguments_and_constants(self):
+        self.enterContext(mock.patch.dict(
+            os.environ, {"PYTHON_TIER2_CALL_REGIONS": "1"}))
+        values = [object(), [], {}, object()]
+        for count in range(5):
+            parameters = [f"p{i}" for i in range(count)]
+            returns = parameters + ["None", "True", "False", "17"]
+            for returned in returns:
+                with self.subTest(count=count, returned=returned):
+                    namespace = {}
+                    exec(f"def leaf({', '.join(parameters)}):\n"
+                         f"    return {returned}\n", namespace)
+                    leaf = namespace["leaf"]
+                    caller_ns = {}
+                    arguments = ", ".join(f"values[{i}]" for i in range(count))
+                    exec("def run(leaf, values, n):\n"
+                         "    result = None\n"
+                         "    for _ in range(n):\n"
+                         f"        result = leaf({arguments})\n"
+                         "    return result\n", caller_ns)
+                    run = caller_ns["run"]
+                    expected = leaf(*values[:count])
+                    self.assertIs(run(leaf, values, TIER2_THRESHOLD), expected)
+                    ex = self.executor(run, "_CALL_PY_TRIVIAL")
+                    self.assertIs(self.executed(ex, "call_entries", run,
+                                               leaf, values, 8), expected)
+
+    @requires_call_regions
+    def test_trivial_method_and_code_replacement(self):
+        self.enterContext(mock.patch.dict(
+            os.environ, {"PYTHON_TIER2_CALL_REGIONS": "1"}))
+
+        class Receiver:
+            def identity(self):
+                return self
+
+        obj = Receiver()
+        func = arithmetic("a.identity()")
+        func(obj, 0, 0, 0, TIER2_THRESHOLD)
+        ex = self.executor(func, "_CALL_PY_TRIVIAL")
+        self.assertIs(self.executed(ex, "call_entries", func, obj, 0, 0, 0, 8), obj)
+
+        def replacement(self):
+            return 42
+
+        Receiver.identity.__code__ = replacement.__code__
+        self.assertEqual(func(obj, 0, 0, 0, 8), 42)
+
+        class Override(Receiver):
+            def identity(self):
+                raise ValueError("overridden")
+
+        with self.assertRaisesRegex(ValueError, "overridden"):
+            func(Override(), 0, 0, 0, 8)
+
+    @requires_call_regions
+    def test_trivial_call_cleanup_and_reentry(self):
+        self.enterContext(mock.patch.dict(
+            os.environ, {"PYTHON_TIER2_CALL_REGIONS": "1"}))
+        events = []
+
+        class Argument:
+            def __init__(self, number):
+                self.number = number
+
+            def __del__(self):
+                # Reenter Python while the outer call still owns other args.
+                events.append((self.number, sum(range(50))))
+
+        def leaf(first, second, third):
+            return first
+
+        def run(n):
+            result = None
+            for _ in range(n):
+                result = leaf(Argument(1), Argument(2), Argument(3))
+            return result
+
+        warm = run(TIER2_THRESHOLD)
+        ex = self.executor(run, "_CALL_PY_TRIVIAL")
+        del warm
+        events.clear()
+        result = self.executed(ex, "call_entries", run, 8)
+        del result
+        self.assertEqual([number for number, total in events],
+                         [3, 2] + [3, 2, 1] * 7 + [1])
+        self.assertTrue(all(total == 1225 for number, total in events))
+
+    @requires_call_regions
+    def test_trivial_call_monitoring(self):
+        self.enterContext(mock.patch.dict(
+            os.environ, {"PYTHON_TIER2_CALL_REGIONS": "1"}))
+
+        def leaf(arg):
+            return arg
+
+        func = arithmetic("a(b)")
+        func(leaf, 17, 0, 0, TIER2_THRESHOLD)
+        self.executor(func, "_CALL_PY_TRIVIAL")
+        monitoring = sys.monitoring
+        tool = 4
+        monitoring.use_tool_id(tool, "test_trivial_call")
+        events = []
+        try:
+            monitoring.register_callback(tool, monitoring.events.PY_START,
+                                         lambda *args: events.append("start"))
+            monitoring.register_callback(tool, monitoring.events.PY_RETURN,
+                                         lambda *args: events.append("return"))
+            monitoring.set_local_events(tool, leaf.__code__,
+                                        monitoring.events.PY_START | monitoring.events.PY_RETURN)
+            self.assertEqual(func(leaf, 17, 0, 0, 8), 17)
+            self.assertEqual(events, ["start", "return"] * 8)
+        finally:
+            monitoring.set_local_events(tool, leaf.__code__, 0)
+            monitoring.register_callback(tool, monitoring.events.PY_START, None)
+            monitoring.register_callback(tool, monitoring.events.PY_RETURN, None)
+            monitoring.free_tool_id(tool)
+
+    @requires_call_regions
+    def test_trivial_call_code_lifetime(self):
+        self.enterContext(mock.patch.dict(
+            os.environ, {"PYTHON_TIER2_CALL_REGIONS": "1"}))
+        events = []
+        namespace = {}
+        # The dynamically compiled code has no enclosing co_consts owner.
+        exec("def leaf(arg):\n    return None\n", namespace)
+        leaf = namespace.pop("leaf")
+        old_code = weakref.ref(leaf.__code__, lambda _: events.append("code"))
+
+        def replacement(arg):
+            return 17
+
+        class Finalizer:
+            def __del__(self):
+                events.append("before")
+                leaf.__code__ = replacement.__code__
+                events.append(("after", old_code() is not None))
+
+        def run(leaf, pop, n):
+            for _ in range(n):
+                result = leaf(pop())
+            return result
+
+        store = [0] * TIER2_THRESHOLD
+        run(leaf, store.pop, TIER2_THRESHOLD)
+        ex = self.executor(run, "_CALL_PY_TRIVIAL")
+        # Make the first Tier 1 iteration harmless; the second uses the JIT.
+        store.extend((Finalizer(), 0))
+        self.assertIsNone(self.executed(ex, "call_entries", run, leaf, store.pop, 2))
+        self.assertEqual(events, ["before", ("after", True), "code"])
+        self.assertIsNone(old_code())
 
     def test_methods_and_unicode(self):
         for method in ("startswith", "endswith"):

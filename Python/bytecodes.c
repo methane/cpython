@@ -3534,6 +3534,28 @@ dummy_func(
             #endif  /* ENABLE_SPECIALIZATION */
         }
 
+        replicate(2) tier2 op(_COMPARE_TUPLE_PAIR, (local/4, first, second -- res, f, s)) {
+            current_executor->region_tuple_entries++;
+            PyObject *right = PyStackRef_AsPyObjectBorrow(GETLOCAL((uintptr_t)local));
+            PyObject *first_o = PyStackRef_AsPyObjectBorrow(first);
+            PyObject *second_o = PyStackRef_AsPyObjectBorrow(second);
+            bool valid = PyTuple_CheckExact(right) && PyTuple_GET_SIZE(right) == 2 &&
+                         _PyRegion_EqualityType(Py_TYPE(first_o)) &&
+                         _PyRegion_EqualityType(Py_TYPE(second_o)) &&
+                         Py_TYPE(first_o) == Py_TYPE(PyTuple_GET_ITEM(right, 0)) &&
+                         Py_TYPE(second_o) == Py_TYPE(PyTuple_GET_ITEM(right, 1));
+            if (!valid) {
+                current_executor->region_tuple_guard_exits++;
+                EXIT_IF(true);
+            }
+            bool equal = _PyRegion_ImmutableEqual(first_o, PyTuple_GET_ITEM(right, 0)) &&
+                         _PyRegion_ImmutableEqual(second_o, PyTuple_GET_ITEM(right, 1));
+            res = (equal ^ oparg) ? PyStackRef_True : PyStackRef_False;
+            f = first;
+            s = second;
+            INPUTS_DEAD();
+        }
+
         op(_COMPARE_OP, (left, right -- res)) {
             PyObject *left_o = PyStackRef_AsPyObjectBorrow(left);
             PyObject *right_o = PyStackRef_AsPyObjectBorrow(right);
@@ -4916,6 +4938,51 @@ dummy_func(
             new_frame = PyStackRef_Wrap(pushed_frame);
         }
 
+        replicate(5) tier2 op(_CALL_PY_TRIVIAL, (source/4, callable, self_or_null, args[oparg] -- res)) {
+            assert(oparg <= 4);
+            current_executor->region_call_entries++;
+            PyFunctionObject *func = (PyFunctionObject *)PyStackRef_AsPyObjectBorrow(callable);
+            assert(PyFunction_Check(func));
+            PyCodeObject *code = (PyCodeObject *)func->func_code;
+            uintptr_t version = FT_ATOMIC_LOAD_UINTPTR_ACQUIRE(code->_co_instrumentation_version);
+            bool valid = _Py_atomic_load_uintptr_relaxed(&tstate->eval_breaker) == version;
+            int has_self = !PyStackRef_IsNull(self_or_null);
+            if ((uintptr_t)source & 1) {
+                valid = valid && ((uintptr_t)source >> 1) < (uintptr_t)(oparg + has_self);
+            }
+            if (!valid) {
+                current_executor->region_call_guard_exits++;
+                DEOPT_IF(true);
+            }
+            /* The real frame retains its code until after locals and the
+             * callable have been cleared. A finalizer may replace __code__;
+             * preserve that lifetime even though the frame is omitted. */
+            Py_INCREF(code);
+            if ((uintptr_t)source & 1) {
+                int index = (uintptr_t)source >> 1;
+                _PyStackRef value = has_self && index == 0 ? self_or_null : args[index - has_self];
+                res = PyStackRef_FromPyObjectNew(PyStackRef_AsPyObjectBorrow(value));
+            }
+            else {
+                assert(_Py_IsImmortal((PyObject *)source));
+                res = PyStackRef_FromPyObjectBorrow(source);
+            }
+            /* Match the unlinked callee's reverse-local cleanup order. Keep
+             * refs off the visible value stack during arbitrary finalizers;
+             * reentry may reuse the caller's consumed argument slots. */
+            _PyStackRef cleanup[6];
+            cleanup[0] = callable;
+            cleanup[1] = self_or_null;
+            for (int i = 0; i < oparg; i++) {
+                cleanup[i + 2] = args[i];
+            }
+            INPUTS_DEAD();
+            for (int i = oparg + 1; i >= 0; i--) {
+                PyStackRef_XCLOSE(cleanup[i]);
+            }
+            Py_DECREF(code);
+        }
+
         op(_PUSH_FRAME, (new_frame -- )) {
             assert(!IS_PEP523_HOOKED(tstate));
             _PyInterpreterFrame *temp = PyStackRef_Unwrap(new_frame);
@@ -5314,29 +5381,27 @@ dummy_func(
 
         tier2 op(_CALL_LEN_CONSUMER, (callable, null, arg, local/4 -- res, a, c)) {
             current_executor->region_len_entries++;
-            PyObject *obj = PyStackRef_AsPyObjectBorrow(arg);
+            Py_ssize_t size;
             int64_t right;
-            /* An owned tuple could run finalizers when closed by CALL_LEN,
-             * before the original consumer loads its local. Do not move
-             * that effect. Borrowed (or immortal) operands have no close. */
-            bool valid = (!PyStackRef_RefcountOnObject(arg) || _Py_IsImmortal(obj)) &&
-                         (PyUnicode_CheckExact(obj) || PyBytes_CheckExact(obj) ||
-                          PyTuple_CheckExact(obj)) &&
-                         _PyRegion_AsInt64(GETLOCAL((uintptr_t)local), &right);
+            bool valid = _PyRegion_Length(arg, &size);
+            if (oparg & 32) {
+                right = (uintptr_t)local;
+            }
+            else {
+                valid = valid &&
+                        _PyRegion_AsInt64(GETLOCAL((uintptr_t)local), &right);
+            }
             if (!valid) {
                 current_executor->region_len_guard_exits++;
                 EXIT_IF(true);
             }
-            Py_ssize_t size = PyUnicode_CheckExact(obj) ? PyUnicode_GET_LENGTH(obj)
-                           : PyBytes_CheckExact(obj) ? PyBytes_GET_SIZE(obj)
-                           : PyTuple_GET_SIZE(obj);
             if (oparg & 16) {
                 res = (COMPARISON_BIT(size, right) & oparg)
                       ? PyStackRef_True : PyStackRef_False;
             }
             else {
                 int64_t value;
-                if (!_PyRegion_Arithmetic(size, right, oparg, &value)) {
+                if (!_PyRegion_Arithmetic(size, right, oparg & 15, &value)) {
                     current_executor->region_len_guard_exits++;
                     EXIT_IF(true);
                 }
@@ -5348,6 +5413,26 @@ dummy_func(
                 }
                 res = PyStackRef_FromPyObjectSteal(result);
             }
+            a = arg;
+            c = callable;
+            INPUTS_DEAD();
+        }
+
+        tier2 op(_CALL_LEN_LEFT_COMPARE, (offset/4, left, callable, null, arg -- res, l, a, c)) {
+            current_executor->region_len_entries++;
+            Py_ssize_t size;
+            int64_t left_value, right_value;
+            bool valid = _PyRegion_Length(arg, &size) &&
+                         _PyRegion_AsInt64(left, &left_value) &&
+                         _PyRegion_Arithmetic(size, (uintptr_t)offset,
+                                              oparg & 1, &right_value);
+            if (!valid) {
+                current_executor->region_len_guard_exits++;
+                EXIT_IF(true);
+            }
+            res = (COMPARISON_BIT(left_value, right_value) & (oparg >> 1))
+                  ? PyStackRef_True : PyStackRef_False;
+            l = left;
             a = arg;
             c = callable;
             INPUTS_DEAD();

@@ -859,6 +859,94 @@ fuse_float_product_updates(_PyUOpInstruction *buffer, int length)
     }
 }
 
+static inline int
+trivial_call_skip(const _PyUOpInstruction *buffer, int pc, int end)
+{
+    while (pc < end) {
+        int next = region_skip(buffer, pc, end);
+        if (next < end && buffer[next].opcode == _RECORD_CODE) {
+            pc = next + 1;
+        }
+        else {
+            return next;
+        }
+    }
+    return pc;
+}
+
+static void
+eliminate_trivial_frames(_PyUOpInstruction *buffer, int length)
+{
+#if defined(WITH_DTRACE) || defined(__EMSCRIPTEN__)
+    return;
+#else
+    if (!region_enabled("PYTHON_TIER2_CALL_REGIONS")) {
+        return;
+    }
+    /* Abstract interpretation has already proved the call and return match.
+     * Only an argument or an immortal constant may be returned, with no
+     * other body operations. Preserve the caller's version, argument,
+     * recursion, and stack-space checks. The replacement checks the callee's
+     * eval breaker before consuming anything, at the original CALL boundary.
+     * No callee frame can escape in this interval. */
+    for (int start = 0; start < length; start++) {
+        if (buffer[start].opcode != _INIT_CALL_PY_EXACT_ARGS ||
+            buffer[start].oparg > 4) {
+            continue;
+        }
+        int end = Py_MIN(length, start + 24);
+        int pc = trivial_call_skip(buffer, start + 1, end);
+        if (pc >= end || buffer[pc++].opcode != _SAVE_RETURN_OFFSET) {
+            continue;
+        }
+        pc = trivial_call_skip(buffer, pc, end);
+        if (pc >= end || buffer[pc++].opcode != _PUSH_FRAME) {
+            continue;
+        }
+        pc = trivial_call_skip(buffer, pc, end);
+        if (pc >= end || buffer[pc++].opcode != _TIER2_RESUME_CHECK) {
+            continue;
+        }
+        pc = trivial_call_skip(buffer, pc, end);
+        if (pc >= end) {
+            continue;
+        }
+        uintptr_t source;
+        int opcode = region_opcode(&buffer[pc]);
+        if (opcode == _LOAD_FAST || opcode == _LOAD_FAST_BORROW) {
+            if (buffer[pc].oparg > buffer[start].oparg) {
+                continue;
+            }
+            /* Odd operands identify argument slots; constants are aligned. */
+            source = ((uintptr_t)buffer[pc].oparg << 1) | 1;
+        }
+        else if (opcode == _LOAD_CONST_INLINE_BORROW &&
+                 _Py_IsImmortal((PyObject *)buffer[pc].operand0)) {
+            source = buffer[pc].operand0;
+        }
+        else {
+            continue;
+        }
+        pc = trivial_call_skip(buffer, pc + 1, end);
+        if (pc < end && buffer[pc].opcode == _MAKE_HEAP_SAFE) {
+            pc = trivial_call_skip(buffer, pc + 1, end);
+        }
+        if (pc >= end || buffer[pc].opcode != _RETURN_VALUE) {
+            continue;
+        }
+        buffer[start].opcode = _CALL_PY_TRIVIAL;
+        buffer[start].operand0 = source;
+        for (int i = start + 1; i <= pc; i++) {
+            /* Leave recorded references for the normal tracer cleanup. */
+            if (buffer[i].opcode != _RECORD_CODE) {
+                buffer[i].opcode = _NOP;
+            }
+        }
+        start = pc;
+    }
+#endif
+}
+
 //  0 - failure, no error raised, just fall back to Tier 1
 // -1 - failure, and raise error
 //  > 0 - length of optimized trace
@@ -877,6 +965,7 @@ _Py_uop_analyze_and_optimize(
     lower_bounded_int_regions(buffer, length);
     lower_int_regions(buffer, length);
     lower_len_regions(buffer, length);
+    lower_tuple_comparisons(buffer, length);
     length = optimize_uops(
         tstate, buffer, length, curr_stacklen, output, dependencies);
 
@@ -886,6 +975,7 @@ _Py_uop_analyze_and_optimize(
 
     assert(length > 0);
 
+    eliminate_trivial_frames(output, length);
     length = remove_unneeded_uops(output, length);
     assert(length > 0);
     fuse_float_product_updates(output, length);

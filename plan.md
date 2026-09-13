@@ -655,3 +655,180 @@ python3 jit-artifacts/spectral-goal/measure.py repeat
 # correctness / counters / fallback
 build-jit/python -m test test_capi.test_opt_regions test_capi.test_opt test_tier3 -j4
 ```
+
+## 16. 継続目標の拡張：benchmarks/ 全スクリプトの時間比の幾何平均を半減
+
+### 対象・権限・現在地
+
+- ローカル `3405a44d68c` で6 scriptsと説明文が追加され、goal管理の現在のobjectiveも
+  「benchmarks/ にあるベンチマークスクリプトすべての実行時間をmain比で半減する。」
+  へ変わっていた。このcommitは実装9115e6と文書366b5d9の間に追加されている。
+  ユーザーの変更を保持し、新しい範囲を継続対象にする。
+- Section15のspectral単体の達成は有効だが、全6本の達成とはしない。
+  goalの完了呼び出し時に範囲の変更を検出し、誤って広いgoalを完了扱いにした状態を
+  即座に同じobjectiveのactive goalへ戻した。今後は完了直前にも最新のgoalを取得し、
+  検証した対象と一致することを確認する。
+- 対象は `spectral_norm.py`, `bpe_tokeniser.py`, `btree.py`, `deltablue.py`,
+  `hexiom.py`, `raytrace.py`。`benchmarks/standalone_benchmarks.md` を読んだ。
+  アルゴリズム・入力・仕事量・checksum・検証を変更しない。benchmark側の書換えや
+  一部の平均による代用で達成にしない。
+- benchmarks内のspectralはrootの同名scriptとSHA256が一致する。新しい5本は未達・
+  性能未検証。GitHub操作禁止、LLVM21、PGO/LTOなし、mainの固定revisionとの
+  同条件比較を維持する。
+
+### 次の作業
+
+1. `jit-artifacts/benchmark-suite/` に全6本のhash、固定したmain/candidateのbinary
+   identity、cold pilotと同一warmupのscreenを保存する。計測は並行させない。
+2. 既存機能ON/OFFの実行counterとprofileを取得し、残る5本の時間を支配する
+   call/frame、属性、container操作、短命objectの費用を区別する。
+3. 根拠のある共通最適化を実装・検証し、各scriptを同条件で追跡する。
+   最終ゲートは、下記の更新されたユーザー目標に従う。
+
+### 目標の更新とcold pilot
+
+- ユーザーがobjectiveを「benchmarks/ にあるベンチマークスクリプトすべての
+  実行時間の幾何平均をmain比で半減する。」へ明示的に更新した。以後は全6本を
+  同じ重みで含む時間比の幾何平均を主指標にし、個別の比も全て報告する。
+  各本の半減は必須ゲートから外す。入力・アルゴリズムは引き続き固定する。
+- CPU 2、warmups=0、values=1のcold pilotが全12実行でchecksum検証成功。
+  main / candidate全region ONの秒数はBPE 3.0055 / 2.9488、B-tree
+  0.06572 / 0.06616、DeltaBlue 0.001940 / 0.001958、Hexiom 0.003874 /
+  0.003950、Raytrace 0.15786 / 0.16215、Spectral 0.03424 / 0.01540。
+  これは単発の探索値であり、性能達成の根拠とはしない。`pilot.json`に全値、
+  process時間、実行コマンド、checksum、script/binary hashを保存した。
+- 次はmatched warm screenと関数・native profile、executor coverageの採取。
+  単一scriptの大きい改善だけで全体の達成を推定しない。
+
+### 初期warm比較・coverageとlenの拡張
+
+- 2 blocks、各3 warmups / 5 values、同じCPUとbinaryで順序を反転して比較した。
+  個別の定常比はBPE 0.9931、B-tree 1.0142、DeltaBlue 1.0095、Hexiom
+  1.0211、Raytrace 0.9976、Spectral 0.4378。全6本の幾何平均は **0.87649**、
+  起動込みprocess比の幾何平均は0.89102。半減には未達。全値とchecksum照合は
+  `initial-rows.json` / `initial-summary.json`、除外sampleは0。
+- `initial-probe-*.json`に実executorとnative bytes、sample前後のcounter差を保存。
+  BPE/B-tree/Hexiomでは既存regionのentryが全て0。DeltaBlueは短い設定では
+  executorが1個で、warmup/trace形成自体の費用も今後区別する。Raytraceでは
+  100,253 float融合と10,000 bounded int entriesがあり、失敗counter=0だが、
+  それだけでscript全体の改善は見られない。Spectralの675,960 divisionsは維持。
+- 別のperf sampling (`initial-perf-*`) は全てlost=0。BPEはdict lookup、tuple/list
+  allocation・破棄・iteration、GCに費用が分散。B-treeはlistiter_next 10.10%、
+  enum_next 4.72%。DeltaBlue/Raytraceはframe clear関連にそれぞれ約8%、
+  Hexiomはrichcompare/list containsに約12%。sampling割合と時間比を混同しない。
+- BPEの実traceにある`len(word) - 1`は定数operandのため旧loweringの対象外だった。
+  既存CALL_LEN_CONSUMERをsmall-int定数に拡張し、exact list/dictも長さをその場で
+  読む。owned receiverも他のstrong referenceがある場合はcloseでfinalizerが
+  動かないため許可する（64-bit GIL gateは維持）。単独所有・subclassはfallback。
+  call/store/periodic checkを跨いだ長さの再利用は行わない。
+- 2 testsを追加し、既存のreceiver matrixもlist/dictへ拡張。定数の演算・比較、
+  空container、attribute経由のowned alias、反復内のmutationを実経路で確認する。
+  現在debug/nativeをビルド・検証中。次はnative効果を測り、call/frameや
+  container操作の共通改善へ進む。
+
+### len拡張の検証と次のcall実装
+
+- debug 23 tests成功、nativeはregions/opt/tier3の351 tests・7 skips成功。
+  同条件の2 blocks (`len-rows.json`) の全6本geomeanは0.86301。個別の比は
+  BPE 0.9716、B-tree 1.0021、DeltaBlue 1.0001、Hexiom 0.9813、Raytrace
+  0.9857、Spectral 0.4386。探索段階の小さい差であり、全体半減には未達。
+- `len-probe-*`の1 operationでBPE 15,418,447、B-tree 7,495、Hexiom 34,602
+  len entriesを確認し、全てguard failure=0 / allocation error=0。長さ融合が
+  実programで動く状態になった。比較前のnative binaryを
+  `build-jit/python-suite-initial`、len版を`python-suite-len`として固定保存した。
+- 次に`PYTHON_TIER2_CALL_REGIONS=1`のopt-in経路を実装中。abstract interpreterが
+  対応を確認済みのexact-args callについて、calleeが引数かimmortal定数を返すだけの
+  場合にframeを省く。既存のfunction version・argument・recursion・stack checksを
+  維持し、calleeのeval breakerに不一致があれば元CALLへ戻す。
+- 返す引数を先にstrong reference化し、消費した引数をCの一時配列へ移してから、
+  通常returnと同じ逆順でcloseする。finalizerの再入時にも他の引数が生存し、
+  呼出側のoperand stackから消費済みrefsが見えないようにする。
+  任意のcalleeや有効なDTrace/特殊platformへ範囲を広げない。
+- 0〜4 arguments、各引数/定数return、methodのself return、code差し替え、
+  override、finalizer順序と再入、monitoringの4 testsを追加してdebug検証中。
+- 最初のcallテストは認識が働かず33 subcasesで失敗した。実行部の意味論不一致では
+  なく、abstract pass後にも参照cleanup用の_RECORD_CODEが残ることをpatternが
+  考慮していなかったため。recordを認識時だけ読み飛ばし、元のtracer cleanupに
+  残すよう修正した。27 region testsは全て成功。現在native buildとcall/frame/
+  monitoring等の関連10 suitesを検証中。
+- nativeのregions/opt/tier3は355 tests・7 skips成功。debug関連10 suitesでは
+  9 suitesが成功し、test_sysのみremote_execの11 casesがsandboxの
+  PermissionErrorで失敗した。CALL_REGIONS=0のself-process caseでも同じエラーを
+  再現。自分自身/テストが起動した子へのアクセスを行うtest_sysを承認済みの
+  sandbox外実行で再確認し、101 tests・7 skips成功。関連10 suitesの全1,246件を
+  通過したが、test_sysの実行環境は区別してログに残す。システム設定は未変更。
+- 次はcall版の全6本比較、callee省略の実entry counter、生成native codeの確認。
+- call版2 blocksの全6本geomeanは **0.85783**、起動込みは0.87568。
+  個別の定常比はBPE 0.9800、B-tree 1.0002、DeltaBlue 1.0160、Hexiom
+  0.9875、Raytrace 0.9240、Spectral 0.4385。`call-rows.json`に全値保存。
+  Raytraceで1 operationあたり676,375 call entries、guard exits=0を確認し、
+  同probeのexecutor確保bytes合計は647,168から634,880へ減った。page paddingと
+  複数executorを含むサイズであり、純粋な命令サイズとは区別する。
+  `_CALL_PY_TRIVIAL_0`のnative stencilは269 bytes。半減は引き続き未達。
+
+### lenの比較consumerまでの接続
+
+- BPEでは長さと`- 1`を融合しても、そのinteger結果を直後の比較が再びunboxして
+  いた。`left CMP len(value)`および`left CMP (len(value) +/- small_constant)`を
+  同じbounded matcherで認識し、boolへ直接接続する実装を追加中。
+  元のleft/receiver/callableをguard時に保持し、失敗時は元CALLへ戻す。
+  受理したreceiverとexact-int leftのcleanupにPythonへの再入はなく、長さの読みは
+  effectを跨がない。加減算overflowは通常経路へ戻す。新しい実行tierは追加しない。
+- 長さ取得・所有権guardを共通inline helperへまとめた。6種類の比較、長さ0/1/400、
+  signed-i64両端、bool/huge-int/subclassのfallback、callback順序、反復内mutationを
+  検証する3 testsを追加し、debug build中。次はnative検証と全6本比較を行う。
+- debug region30 tests、generator99 tests成功。generatorを最初に旧名
+  `test_tools.test_cases_generator`で起動した1回はModuleNotFoundErrorで、実際の
+  `test_generated_cases`で再実行した。nativeは358 tests・7 skips成功。
+- 2 blocksの全6本geomeanは0.85935、起動込み0.87428。前のcall版0.85783から
+  全体の改善はまだ見られず、探索値を性能上の有効性とは扱わない。全値は
+  `len-compare-rows.json`。元のcall版も保存し、後続の測定でON/OFFを切り分ける。
+
+### 一時tupleの比較
+
+- BPEのprofileにtuple生成・破棄が現れ、実traceにも`(word[i], word[i+1]) == pair`
+  があるため、同じuop依存関係の2要素tupleのEQ/NEを次の対象にした。
+  作ったtupleが即座にlocalのtupleとの比較で消費される場合だけを16 uops以内で
+  認識し、一時tupleの生成と汎用tuple比較を省く。関数名や入力には依存しない。
+- 右はexact tupleかつ長さ2、対応する各要素は同じexact bytes/str/int/float型に限定。
+  NaN等を含むtuple比較のidentity shortcutを保つ。異種型、subclass、長さ違いは
+  元BUILD_TUPLEへ戻す。特に長さ違いでもtupleは共通prefixの__eq__を呼ぶため、
+  長さだけを見てfalseにはしない。BytesWarningがあり得る異種比較もfallback。
+- 4 testsを追加し、builtin各型・任意精度int・NaN/±0、subclass dispatch、要素の
+  callback順序、owned一時要素のfinalizer順序、`-bb`のBytesWarningを確認する。
+  現在はlen比較版のcounter採取中で、完了後にtuple版をビルド・検証する。
+- tuple版debugの34 region testsとgenerator99 testsが成功。最初の`-bb`テストは
+  警告例外自体は正しかったが、初回のTier1反復で例外を出してguard counterを
+  確認できなかった。初回だけ同型、2反復目で異種比較にする入力へ修正し、
+  実regionのguard exitとBytesWarningの両方を確認した。
+- len比較版probeではBPE 15,418,447 / B-tree 39,731 / Hexiom 34,602 len entries、
+  全てguard失敗0。B-treeでも従来より多くの長さ比較が対象になった。
+  現在tuple版native buildとcontainer/数値比較の関連8 suitesを実行中。
+- tuple版native 362 tests・7 skips成功、debug関連8 suites 834 tests・15 skips成功。
+  2 blocksの全6本geomeanは0.85217、起動込み0.87037。個別比はBPE 0.92068、
+  B-tree 1.00461、DeltaBlue 1.01038、Hexiom 0.97850、Raytrace 0.95423、
+  Spectral 0.43887。探索の全値を`tuple-rows.json`に保存。半減は未達。
+
+### callの追加レビュー：code lifetimeの修正
+
+- 追加レビューで、通常のframeがf_executableを保持する期間も再現する必要があると
+  分かった。finalizerがcallee.__code__を差し替えると、旧コードのweakref callbackが
+  finalizerの終了前に動いてしまう問題をdebug/native両方で実際に再現した。
+  `call-lifetime-before-{debug,native}.log`とOFFの対照結果を保存した。
+- frameを省いても、元のcodeをcall開始時にretainし、引数・callableのcleanupが
+  完了してからreleaseするよう修正。新しい回帰テストは2反復目にfinalizerを渡し、
+  call counter増分と、旧コードがfinalizer中は生存することを両方検査する。
+  修正前はbefore→code解放→after(false)、修正後/OFFは
+  before→after(true)→code解放になった。refcountもOFFと一致。
+- debug35 region tests + generator99 testsの134件成功。現在nativeと関連call/frame/
+  weakref suitesを再検証中。修正前の探索時間は最終性能の根拠には使わない。
+- 修正後nativeは363 tests・7 skips成功。code lifetimeの単独probeもdebug/nativeで
+  正しい順序と実call entryを確認した。debug関連call/frame/eval/weakrefの407件・
+  12 skips成功。4生成ファイルの再生成はbyte単位で同一、F401/F811とdiff check成功。
+- 次の比較からはblockごとにPYTHONHASHSEED=0,1,...をmain/candidate両方へ同じ値で
+  渡し、dict配置のprocessごとの変動を対応させる。設定をraw metadataへ記録する。
+  以前の探索値はそのまま保持し、設定変更を混ぜた差分は効果量として扱わない。
+- 一連のlen/tuple consumerとtrivial-callの変更をローカルcommitにまとめ、修正後の
+  全6本を通常の3 warmups / 10 valuesで比較する。目標はなおactiveで、0.5以下には
+  未達。次の大きい課題は数値領域の周囲に残るframe・float box・loop bookkeeping。
+  特にspectralのnative化余地と、Raytraceの属性からfloat算術への接続を調査する。

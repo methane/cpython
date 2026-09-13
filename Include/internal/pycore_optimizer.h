@@ -231,6 +231,10 @@ typedef struct _PyExecutorObject {
     uint64_t region_len_guard_exits;
     uint64_t region_method_entries;
     uint64_t region_method_guard_exits;
+    uint64_t region_call_entries;
+    uint64_t region_call_guard_exits;
+    uint64_t region_tuple_entries;
+    uint64_t region_tuple_guard_exits;
     uint64_t region_float_unique_entries;
     uint64_t region_float_shared_entries;
     uint64_t region_float_guard_exits;

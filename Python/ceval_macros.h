@@ -677,6 +677,75 @@ _PyRegion_AsInt64(_PyStackRef ref, int64_t *value)
     return overflow == 0;
 }
 
+static inline bool
+_PyRegion_Length(_PyStackRef ref, Py_ssize_t *size)
+{
+    PyObject *obj = PyStackRef_AsPyObjectBorrow(ref);
+    /* Closing the original receiver must not run a finalizer before the
+     * consumer. Another strong reference also suffices under the GIL. */
+    if (PyStackRef_RefcountOnObject(ref) &&
+        !_Py_IsImmortal(obj) && Py_REFCNT(obj) <= 1) {
+        return false;
+    }
+    if (PyUnicode_CheckExact(obj)) {
+        *size = PyUnicode_GET_LENGTH(obj);
+    }
+    else if (PyBytes_CheckExact(obj)) {
+        *size = PyBytes_GET_SIZE(obj);
+    }
+    else if (PyTuple_CheckExact(obj)) {
+        *size = PyTuple_GET_SIZE(obj);
+    }
+    else if (PyList_CheckExact(obj)) {
+        *size = PyList_GET_SIZE(obj);
+    }
+    else if (PyDict_CheckExact(obj)) {
+        *size = PyDict_GET_SIZE(obj);
+    }
+    else {
+        return false;
+    }
+    return true;
+}
+
+static inline bool
+_PyRegion_EqualityType(PyTypeObject *type)
+{
+    return type == &PyBytes_Type || type == &PyUnicode_Type ||
+           type == &PyLong_Type || type == &PyFloat_Type;
+}
+
+/* Both operands have the same exact immutable builtin type. These equality
+ * operations cannot call Python, issue BytesWarning, or allocate a result.
+ * Preserve tuple comparison's identity shortcut, particularly for NaNs. */
+static inline bool
+_PyRegion_ImmutableEqual(PyObject *left, PyObject *right)
+{
+    assert(Py_TYPE(left) == Py_TYPE(right));
+    assert(_PyRegion_EqualityType(Py_TYPE(left)));
+    if (left == right) {
+        return true;
+    }
+    if (PyBytes_CheckExact(left)) {
+        Py_ssize_t size = PyBytes_GET_SIZE(left);
+        return size == PyBytes_GET_SIZE(right) &&
+               memcmp(PyBytes_AS_STRING(left), PyBytes_AS_STRING(right), size) == 0;
+    }
+    if (PyUnicode_CheckExact(left)) {
+        return _PyUnicode_Equal(left, right);
+    }
+    if (PyFloat_CheckExact(left)) {
+        return PyFloat_AS_DOUBLE(left) == PyFloat_AS_DOUBLE(right);
+    }
+    if (_PyLong_BothAreCompact((PyLongObject *)left, (PyLongObject *)right)) {
+        return _PyLong_CompactValue((PyLongObject *)left) ==
+               _PyLong_CompactValue((PyLongObject *)right);
+    }
+    int equal = PyObject_RichCompareBool(left, right, Py_EQ);
+    assert(equal >= 0);
+    return equal;
+}
+
 /* A fixed pair of checked operations, not a runtime IR interpreter. The
  * selector is a stencil immediate: 0 = add, 1 = subtract, 2 = multiply. */
 static inline bool

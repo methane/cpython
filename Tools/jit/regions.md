@@ -59,11 +59,29 @@ As with `int_boxes`, `bounded_boxes` counts representations, including cached
 ints, rather than heap allocations.
 
 The builtin group fuses `len(value)` with an immediate comparison, addition, or
-subtraction using another local. It accepts exact str, bytes, and tuple operands
-with borrowed or immortal references. An owned receiver can run finalizers
-when the original call closes it, so it exits before the call. Callable identity
-is still checked by the existing len guard. Mutable containers, subclasses,
-and replaced builtins follow the ordinary call path.
+subtraction using another local or a `LOAD_SMALL_INT` constant. It accepts exact
+str, bytes, tuple, list, and dict operands. The receiver must be borrowed,
+immortal, or have another strong reference, so closing it cannot run finalizers
+before the consumer. Mutable lengths are read at the call, without crossing
+any call, store, or periodic check. Callable identity is still checked by the
+existing len guard. Solely owned receivers, subclasses, and replaced builtins
+follow the ordinary call path.
+
+The same group can produce a bool directly for `left CMP len(value)` or
+`left CMP (len(value) +/- small_constant)`. The left operand must be an exact
+signed-i64 int. Both the length and adjusted length stay unboxed; an arithmetic
+overflow exits at the original call with all inputs intact. All six integer
+comparisons use the existing comparison mask, and the original operand cleanup
+order is retained.
+
+The builtin group also removes a newly built two-element tuple when its sole
+consumer is equality or inequality against a local tuple. The right operand
+must be an exact tuple of length two. Corresponding elements must have the
+same exact bytes, str, int, or float type; comparison then uses their existing
+immutable equality semantics without allocating the left tuple. Tuple's
+identity shortcut is retained for NaNs. Other lengths, mixed types (including
+comparisons that can emit `BytesWarning`), and subclasses exit at the original
+`BUILD_TUPLE`. `tuple_entries` and `tuple_guard_exits` report this path.
 
 `str.startswith` and `str.endswith` accept an exact str receiver, an exact str
 single argument, and default bounds. The optimizer verifies the actual builtin
@@ -71,6 +89,21 @@ descriptor identity and preserves the existing call guards and periodic check.
 The runtime calls `PyUnicode_Tailmatch` directly. Result-type propagation removes
 redundant bool conversions; the result is still the existing bool singleton.
 Tuple affixes, explicit bounds, keywords, and overrides use ordinary calls.
+
+`PYTHON_TIER2_CALL_REGIONS=1` removes matched inlined call/return frames when
+the entire body only returns an argument or an immortal constant. Recognition
+is limited to 24 uops and four explicit arguments, after abstract interpretation.
+The existing function version, argument count, recursion, and stack checks
+remain. Before consuming the call stack, the replacement checks the callee's
+instrumentation version against the eval breaker; a mismatch returns to the
+original CALL. There is no callee operation that can expose its frame.
+Returned arguments acquire a strong reference before the remaining arguments
+are closed in reverse order, with the callable last. Temporary references live
+off the operand stack during finalizer reentry. `call_entries` and
+`call_guard_exits` report this path. It requires the same 64-bit GIL gate and
+is disabled in DTrace and Emscripten builds.
+The callee's code keeps a strong reference through argument and callable
+cleanup, preserving its lifetime if a finalizer replaces `__code__`.
 
 The integer and builtin experiments require a 64-bit GIL build with GCC/Clang
 checked arithmetic. Other configurations do not enable them. The existing

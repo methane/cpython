@@ -605,7 +605,7 @@ get_region_stats(PyObject *self, PyObject *Py_UNUSED(ignored))
 {
     _PyExecutorObject *executor = _PyExecutorObject_CAST(self);
     return Py_BuildValue(
-        "{s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K}",
+        "{s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K}",
         "bounded_entries", executor->region_bounded_entries,
         "bounded_guard_exits", executor->region_bounded_guard_exits,
         "bounded_boxes", executor->region_bounded_boxes,
@@ -618,6 +618,10 @@ get_region_stats(PyObject *self, PyObject *Py_UNUSED(ignored))
         "len_guard_exits", executor->region_len_guard_exits,
         "method_entries", executor->region_method_entries,
         "method_guard_exits", executor->region_method_guard_exits,
+        "call_entries", executor->region_call_entries,
+        "call_guard_exits", executor->region_call_guard_exits,
+        "tuple_entries", executor->region_tuple_entries,
+        "tuple_guard_exits", executor->region_tuple_guard_exits,
         "float_unique_entries", executor->region_float_unique_entries,
         "float_shared_entries", executor->region_float_shared_entries,
         "float_guard_exits", executor->region_float_guard_exits,
@@ -1625,6 +1629,10 @@ allocate_executor(int exit_count, int length)
     res->region_len_guard_exits = 0;
     res->region_method_entries = 0;
     res->region_method_guard_exits = 0;
+    res->region_call_entries = 0;
+    res->region_call_guard_exits = 0;
+    res->region_tuple_entries = 0;
+    res->region_tuple_guard_exits = 0;
     res->region_float_unique_entries = 0;
     res->region_float_shared_entries = 0;
     res->region_float_guard_exits = 0;

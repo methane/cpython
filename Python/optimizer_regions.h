@@ -443,6 +443,41 @@ lower_int_regions(_PyUOpInstruction *buffer, int length)
     }
 }
 
+static int
+lower_len_left_compare(_PyUOpInstruction *buffer, int pc, int end)
+{
+    int comparison;
+    int operation = 0;
+    int offset = 0;
+    int stop = region_int_operation(buffer, pc + 3, end, true, &comparison);
+    if (stop < 0) {
+        int load = region_skip(buffer, pc + 3, end);
+        if (load >= end || buffer[load].opcode != _LOAD_SMALL_INT) {
+            return -1;
+        }
+        offset = buffer[load].oparg;
+        int next = region_int_operation(buffer, load + 1, end, false, &operation);
+        if (next < 0 || operation == 2) {
+            return -1;
+        }
+        stop = region_int_operation(buffer, next, end, true, &comparison);
+        if (stop < 0) {
+            return -1;
+        }
+    }
+    buffer[pc].opcode = _CALL_LEN_LEFT_COMPARE;
+    buffer[pc].oparg = (comparison << 1) | operation;
+    buffer[pc].operand0 = offset;
+    for (int i = pc + 1; i < stop - 3; i++) {
+        buffer[i].opcode = _NOP;
+    }
+    /* Keep the original callable, receiver, then left-int cleanup order. */
+    for (int i = stop - 3; i < stop; i++) {
+        buffer[i].opcode = _POP_TOP;
+    }
+    return stop;
+}
+
 static void
 lower_len_regions(_PyUOpInstruction *buffer, int length)
 {
@@ -455,11 +490,23 @@ lower_len_regions(_PyUOpInstruction *buffer, int length)
             buffer[pc + 2].opcode != _POP_TOP) {
             continue;
         }
-        int end = Py_MIN(length, pc + 20);
+        int end = Py_MIN(length, pc + 32);
+        int left_compare = lower_len_left_compare(buffer, pc, end);
+        if (left_compare >= 0) {
+            pc = left_compare - 1;
+            continue;
+        }
         int local, op;
+        bool constant = false;
         int next = region_local(buffer, pc + 3, end, &local);
         if (next < 0) {
-            continue;
+            int load = region_skip(buffer, pc + 3, end);
+            if (load >= end || buffer[load].opcode != _LOAD_SMALL_INT) {
+                continue;
+            }
+            local = buffer[load].oparg;
+            constant = true;
+            next = load + 1;
         }
         int stop = region_int_operation(buffer, next, end, true, &op);
         if (stop >= 0) {
@@ -472,7 +519,7 @@ lower_len_regions(_PyUOpInstruction *buffer, int length)
             }
         }
         buffer[pc].opcode = _CALL_LEN_CONSUMER;
-        buffer[pc].oparg = op;
+        buffer[pc].oparg = op | (constant ? 32 : 0);
         buffer[pc].operand0 = local;
         for (int i = pc + 1; i < stop - 2; i++) {
             buffer[i].opcode = _NOP;
@@ -482,5 +529,42 @@ lower_len_regions(_PyUOpInstruction *buffer, int length)
         buffer[stop - 2].opcode = _POP_TOP;
         buffer[stop - 1].opcode = _POP_TOP;
         pc = stop - 1;
+    }
+}
+
+static void
+lower_tuple_comparisons(_PyUOpInstruction *buffer, int length)
+{
+    if (!region_enabled("PYTHON_TIER2_BUILTIN_REGIONS")) {
+        return;
+    }
+    for (int pc = 0; pc < length; pc++) {
+        if (buffer[pc].opcode != _BUILD_TUPLE || buffer[pc].oparg != 2) {
+            continue;
+        }
+        int end = Py_MIN(length, pc + 16);
+        int local;
+        int next = region_local(buffer, pc + 1, end, &local);
+        if (next < 0) {
+            continue;
+        }
+        int compare = region_skip(buffer, next, end);
+        if (compare >= end || buffer[compare].opcode != _COMPARE_OP) {
+            continue;
+        }
+        int operation = buffer[compare].oparg >> 5;
+        if (operation != Py_EQ && operation != Py_NE) {
+            continue;
+        }
+        buffer[pc].opcode = _COMPARE_TUPLE_PAIR;
+        buffer[pc].oparg = operation == Py_NE;
+        buffer[pc].operand0 = local;
+        for (int i = pc + 1; i < compare - 1; i++) {
+            buffer[i].opcode = _NOP;
+        }
+        /* The two immutable elements are closed in tuple-deallocation order. */
+        buffer[compare - 1].opcode = _POP_TOP;
+        buffer[compare].opcode = _POP_TOP;
+        pc = compare;
     }
 }

@@ -815,6 +815,12 @@ dummy_func(void) {
         }
     }
 
+    op(_COMPARE_TUPLE_PAIR, (local/4, first, second -- res, f, s)) {
+        res = sym_new_type(ctx, &PyBool_Type);
+        f = first;
+        s = second;
+    }
+
     op(_COMPARE_OP, (left, right -- res)) {
         // Comparison between bytes and str or int is not impacted by this optimization as bytes
         // is not a safe type (due to its ability to raise a warning during comparisons).
@@ -2487,6 +2493,13 @@ dummy_func(void) {
 
     op(_CALL_LEN_CONSUMER, (callable, null, arg, local/4 -- res, a, c)) {
         res = sym_new_type(ctx, (oparg & 16) ? &PyBool_Type : &PyLong_Type);
+        a = arg;
+        c = callable;
+    }
+
+    op(_CALL_LEN_LEFT_COMPARE, (offset/4, left, callable, null, arg -- res, l, a, c)) {
+        res = sym_new_type(ctx, &PyBool_Type);
+        l = left;
         a = arg;
         c = callable;
     }

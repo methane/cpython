@@ -3060,6 +3060,27 @@
             break;
         }
 
+        case _COMPARE_TUPLE_PAIR: {
+            JitOptRef second;
+            JitOptRef first;
+            JitOptRef res;
+            JitOptRef f;
+            JitOptRef s;
+            second = stack_pointer[-1];
+            first = stack_pointer[-2];
+            PyObject *local = (PyObject *)this_instr->operand0;
+            res = sym_new_type(ctx, &PyBool_Type);
+            f = first;
+            s = second;
+            CHECK_STACK_BOUNDS(1);
+            stack_pointer[-2] = res;
+            stack_pointer[-1] = f;
+            stack_pointer[0] = s;
+            stack_pointer += 1;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            break;
+        }
+
         case _COMPARE_OP: {
             JitOptRef right;
             JitOptRef left;
@@ -4409,6 +4430,16 @@
             break;
         }
 
+        case _CALL_PY_TRIVIAL: {
+            JitOptRef res;
+            res = sym_new_not_null(ctx);
+            CHECK_STACK_BOUNDS(-1 - oparg);
+            stack_pointer[-2 - oparg] = res;
+            stack_pointer += -1 - oparg;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            break;
+        }
+
         case _PUSH_FRAME: {
             JitOptRef new_frame;
             new_frame = stack_pointer[-1];
@@ -4839,6 +4870,29 @@
             a = arg;
             c = callable;
             stack_pointer[-3] = res;
+            stack_pointer[-2] = a;
+            stack_pointer[-1] = c;
+            break;
+        }
+
+        case _CALL_LEN_LEFT_COMPARE: {
+            JitOptRef arg;
+            JitOptRef callable;
+            JitOptRef left;
+            JitOptRef res;
+            JitOptRef l;
+            JitOptRef a;
+            JitOptRef c;
+            arg = stack_pointer[-1];
+            callable = stack_pointer[-3];
+            left = stack_pointer[-4];
+            PyObject *offset = (PyObject *)this_instr->operand0;
+            res = sym_new_type(ctx, &PyBool_Type);
+            l = left;
+            a = arg;
+            c = callable;
+            stack_pointer[-4] = res;
+            stack_pointer[-3] = l;
             stack_pointer[-2] = a;
             stack_pointer[-1] = c;
             break;
