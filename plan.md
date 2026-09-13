@@ -1,5 +1,10 @@
 # CPython Tier 2：Linux上で行う2〜3日間の実装計画
 
+**最新結果（2026-09-13）**：必須のint/float/builtin最適化を実装・検証し、追加目標の
+全6ベンチマークの計測区間の時間比は幾何平均 **0.49208（約2.03倍速）**となった。
+LLVM 21・PGO/LTOなし・実験6オプションONの同条件比較。起動込みは0.62891。
+最終条件・個別比・生データは末尾の「全6本の最終判定」に記録した。
+
 参照HEAD：`2e3c7f3fc36fa6389f00c5de4a2010ccb0fc7127`  
 現在のhead branch：`codex/run-native-measurement-for-recurrences`  
 現在のbase branch：`codex/add-experimental-optimizing-jit-backend`
@@ -1225,3 +1230,49 @@ build-jit/python -m test test_capi.test_opt_regions test_capi.test_opt test_tier
   同576ケースと特殊値56ケースのbit比較が成功した。
 - この実装を保存し、全6本を4 blocks・各10値で測定する。benchmarkは入力・warmups・
   loopsを変えず、全480値を使って幾何平均を判定する。ビルドや診断probeを測定と重ねない。
+
+### 全6本の最終判定（2026-09-13）
+
+- 実装commitは **`a021ff543bc`**。固定mainは **`a60343ed17785ebbcd43de9080cadd8e2541db6f`**。
+  `range-objects-manifest.json`と`range-objects-source-hashes.json`にsource/build identityを保存。
+  candidateのSHA256は`7960ce4c778a1be09efbab4aaba4779f28ec2c9471967b6efb028937e7e5c393`、
+  mainは`8fb6c5b87dec8e272c1acfad0197dc086bcd3e0c93912d949d43d5c4d9603407`。
+- Linux x86_64・GIL・CPU 2、GCC 13.3.0 -O3・LLVM 21.1.8、PGO/LTOなし。
+  mainとcandidateのbuild条件を一致させ、元のCLIをwarmups=3、values=10、loops=1で実行。
+  4 blocksで起動順を交互にし、PYTHONHASHSEEDはblock番号を使った。
+  candidateはBOUNDED_INT_REGIONS、INT_REGIONS、BUILTIN_REGIONS、FLOAT_FUSION、
+  CALL_REGIONS、FLOAT_RANGEの6実験オプションを有効化した。既定値は引き続きOFF。
+- 各block内の10個の`samples_seconds`の算術平均からcandidate/main比を求め、block間と
+  全6 script間を同じ重みの幾何平均で集計した。48 process・480値を全て採用し、除外0。
+  全scriptのchecksumがmainと一致し、入力・アルゴリズム・仕事量は変更していない。
+
+| script | 計測区間のmain比 |
+| --- | ---: |
+| bpe_tokeniser.py | 0.90987 |
+| btree.py | 0.93032 |
+| deltablue.py | 1.00029 |
+| hexiom.py | 0.96108 |
+| raytrace.py | 0.94687 |
+| spectral_norm.py | 0.01843 |
+| **幾何平均** | **0.492077（約2.032倍速）** |
+
+- block別の幾何平均は0.49388、0.49074、0.49137、0.49233。全4 blocksとも0.5未満。
+  更新された「全6本の時間比の幾何平均を半減」という主指標を達成した。
+  DeltaBlueはほぼ同等であり、各script個別の半減を達成したという意味ではない。
+  起動・warmupを含むprocess時間の幾何平均は **0.62891**で、この別指標は半減していない。
+- 生データ・各processのstdout/stderr・checksum/環境/コマンド/identityは
+  `jit-artifacts/benchmark-suite/range-objects-suite-rows.json`、集計は同directoryの
+  `range-objects-suite-summary.json`。再測定は新しいprefixを指定して以下を実行する。
+
+  ```sh
+  python3 jit-artifacts/benchmark-suite/screen-float-range.py manual-final-check 4 10
+  ```
+
+- int領域、len/consumer、startswith/endswith、float丸め・所有権・fallbackの必須実装と
+  検証は完了。追加したcall/tuple/list/enumerate/rangeの検証とnative証拠も上記に記録した。
+  最終追加のrangeはdebug region70 tests、native region70 tests・5 skipsが成功し、
+  関連range/iter/GC/monitoring/generator、native opt/tier3の検証も成功済み。
+  全オプションONで丸め/trap/flags576ケースと特殊値56ケースがbit一致した。
+- このgoalに必要な未完了作業はない。検証範囲はこのLinux x86_64構成であり、他architecture、
+  free-threaded、32-bitの性能や全pyperformanceへの一般化は主張しない。
+  GitHub投稿・push・PR変更は行っていない。今後の既定値変更や公開は別の作業として扱う。
