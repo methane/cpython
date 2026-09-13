@@ -1,0 +1,7 @@
+source_head=2bd2f131eb0213ce0a58e3884a169bd09d412c17
+source_tree_before_artifacts=c225825699ef255d556c46ce312f3db8c7adc516
+debug_executable_sha256=b86de84858acd0da95976ef51548eab5d08f6a00d6e4bfa9570448f47460aa62
+pyperf=2.10.0
+pyperformance=1.14.0
+worker_environment=PYTHON_TIER2_FLOAT_FUSION,PYTHONPATH
+fusion_trace_count=16

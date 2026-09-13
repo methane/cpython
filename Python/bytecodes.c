@@ -876,6 +876,29 @@ dummy_func(
             INPUTS_DEAD();
         }
 
+        // Fuse ``acc + left * right`` when acc is a unique temporary.  This
+        // keeps the product unboxed and reuses acc for the sole live result.
+        // Keep the two operations separate: contraction would change Python's
+        // binary64 rounding semantics.
+        tier2 op(_BINARY_OP_MULTIPLY_ADD_FLOAT_INPLACE,
+                 (acc, left, right -- res)) {
+            PyObject *acc_o = PyStackRef_AsPyObjectBorrow(acc);
+            PyObject *left_o = PyStackRef_AsPyObjectBorrow(left);
+            PyObject *right_o = PyStackRef_AsPyObjectBorrow(right);
+            assert(PyFloat_CheckExact(acc_o));
+            assert(PyFloat_CheckExact(left_o));
+            assert(PyFloat_CheckExact(right_o));
+            assert(_PyObject_IsUniquelyReferenced(acc_o));
+            double product = ((PyFloatObject *)left_o)->ob_fval *
+                             ((PyFloatObject *)right_o)->ob_fval;
+            double value = ((PyFloatObject *)acc_o)->ob_fval + product;
+            ((PyFloatObject *)acc_o)->ob_fval = value;
+            PyStackRef_CLOSE(right);
+            PyStackRef_CLOSE(left);
+            res = acc;
+            INPUTS_DEAD();
+        }
+
         // Inplace RIGHT variants: mutate the uniquely-referenced right operand.
         tier2 op(_BINARY_OP_ADD_FLOAT_INPLACE_RIGHT, (left, right -- res, l, r)) {
             FLOAT_INPLACE_OP(left, right, right, +);

@@ -160,6 +160,12 @@ python3 Tools/cases_generator/uop_id_generator.py
 python3 Tools/cases_generator/uop_metadata_generator.py
 ```
 
+Changes to optimizer definitions in `Python/optimizer_bytecodes.c` use a
+separate generated output.  Regenerate it with
+`python3 Tools/cases_generator/optimizer_generator.py` (or the configured
+build's `regen-optimizer-cases` target); `tier2_generator.py` only regenerates
+executor cases.
+
 Run focused checks from each relevant build, including:
 
 ```sh

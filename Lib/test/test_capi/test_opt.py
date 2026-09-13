@@ -4,6 +4,7 @@ import itertools
 import sys
 import textwrap
 import unittest
+from unittest import mock
 import gc
 import os
 import types
@@ -4112,6 +4113,25 @@ class TestUopsOptimization(unittest.TestCase):
             [("mul", 2.0, 2.0), ("add", 4.0, 3.0)],
         )
         self.assertEqual(testfunc((2.0, 3.0, 1)), 7.0)
+
+    def test_float_product_add_fusion(self):
+        def testfunc(args):
+            a, b, c, d, n = args
+            result = 0.0
+            for _ in range(n):
+                result = a * b + c * d
+            return result
+
+        args = (1.25, -2.0, 3.5, 4.0, TIER2_THRESHOLD)
+        with mock.patch.dict(
+            os.environ, {"PYTHON_TIER2_FLOAT_FUSION": "1"}
+        ):
+            result, executor = self._run_with_optimizer(testfunc, args)
+        self.assertEqual(result, 11.5)
+        self.assertIsNotNone(executor)
+        self.assertIn(
+            "_BINARY_OP_MULTIPLY_ADD_FLOAT_INPLACE", get_opnames(executor)
+        )
 
     def test_float_remainder_speculative_guards_from_tracing(self):
         # a, b are locals with no statically known type. Tracing records

@@ -797,6 +797,41 @@ remove_unneeded_uops(_PyUOpInstruction *buffer, int buffer_size)
     Py_UNREACHABLE();
 }
 
+static void
+fuse_float_product_add(_PyUOpInstruction *buffer, int length)
+{
+    const char *enabled = Py_GETENV("PYTHON_TIER2_FLOAT_FUSION");
+    if (enabled == NULL || strcmp(enabled, "1") != 0) {
+        return;
+    }
+    for (int pc = 0; pc + 5 < length; pc++) {
+        if (buffer[pc].opcode != _BINARY_OP_MULTIPLY_FLOAT ||
+            buffer[pc + 1].opcode != _POP_TOP_NOP ||
+            buffer[pc + 2].opcode != _POP_TOP_NOP)
+        {
+            continue;
+        }
+        int add = pc + 3;
+        while (add < length && buffer[add].opcode == _NOP) {
+            add++;
+        }
+        if (add + 2 >= length ||
+            buffer[add].opcode != _BINARY_OP_ADD_FLOAT_INPLACE ||
+            buffer[add + 1].opcode != _POP_TOP_FLOAT ||
+            buffer[add + 2].opcode != _POP_TOP_NOP) {
+            continue;
+        }
+        buffer[pc].opcode = _BINARY_OP_MULTIPLY_ADD_FLOAT_INPLACE;
+        for (int i = pc + 1; i <= add + 2; i++) {
+            assert(buffer[i].opcode == _NOP ||
+                   buffer[i].opcode == _POP_TOP_NOP ||
+                   buffer[i].opcode == _POP_TOP_FLOAT ||
+                   buffer[i].opcode == _BINARY_OP_ADD_FLOAT_INPLACE);
+            buffer[i].opcode = _NOP;
+        }
+    }
+}
+
 //  0 - failure, no error raised, just fall back to Tier 1
 // -1 - failure, and raise error
 //  > 0 - length of optimized trace
@@ -823,6 +858,7 @@ _Py_uop_analyze_and_optimize(
 
     length = remove_unneeded_uops(output, length);
     assert(length > 0);
+    fuse_float_product_add(output, length);
 
     OPT_STAT_INC(optimizer_successes);
     return length;
