@@ -8,6 +8,7 @@ import random
 import struct
 import sys
 import sysconfig
+import types
 import unittest
 import weakref
 from unittest import mock
@@ -463,12 +464,21 @@ class TestRegions(unittest.TestCase):
         for numerator in ("1.0", "(1e309 - 1e309)"):
             ns, ex = self.warm_float_range(
                 "(a + j) * (a + j + 1) // 2 + a + 1", numerator)
-            for payload in ("7ff8000000000011", "fff8000000000022", "7ff0000000000033"):
-                with self.subTest(numerator=numerator, payload=payload):
+            # Compare the same warmed bytecode with the feature disabled.
+            # The existing debug Tier 2 float-add path can select a different
+            # NaN payload from operator.add, independently of this region.
+            controls = []
+            with mock.patch.dict(os.environ, {"PYTHON_TIER2_FLOAT_RANGE": "0"}):
+                control = types.FunctionType(ns["run"].__code__.replace(), ns,
+                                             argdefs=ns["run"].__defaults__)
+                for _ in range(TIER2_THRESHOLD // 119 + 8):
+                    control(31, 1, 120)
+                for payload in ("7ff8000000000011", "fff8000000000022", "7ff0000000000033"):
                     initial = struct.unpack(">d", bytes.fromhex(payload))[0]
-                    expected = operator.add(initial, 0.0)
-                    for j in range(120, 200):
-                        expected = operator.add(expected, ns["term"](31, j))
+                    expected, _ = control(31, 120, 200, initial)
+                    controls.append((payload, initial, expected))
+            for payload, initial, expected in controls:
+                with self.subTest(numerator=numerator, payload=payload):
                     before = ex.get_region_stats()
                     result, last = ns["run"](31, 120, 200, initial)
                     after = ex.get_region_stats()

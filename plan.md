@@ -1059,9 +1059,17 @@ build-jit/python -m test test_capi.test_opt_regions test_capi.test_opt test_tier
   修正前の失敗を回帰テストで確認済み。上の性能比較は修正前binaryの結果として保持する。
   `co_consts`差し替えによる最初の診断は借用constant条件を満たさずexecutor未生成だったので、
   コンパイラが畳み込むNaN式を使って実経路を検証した。修正後のnative検証へ進む。
-- NaN修正後はdebug154 tests、native383 tests・7 skips、4丸めモード288件と特殊値56件の
-  bit比較が成功した。isnanは再入しない判定として生成器へ登録し、不要なescape処理を除いた
-  最終版でも同じ検証が通過。NaN修正を含むrange改善をローカルcommitへ記録する。
+- NaN修正後はnative383 tests・7 skips、4丸めモード288件と特殊値56件のbit比較が成功した。
+  isnanは再入しない判定として生成器へ登録し、不要なescape処理を除いた最終native版でも
+  通過した。一方debug154 testsにはNaN payloadの3失敗が残っており、前の成功記録は誤り。
+  ログの失敗を見落としてローカルcommit `65c1465643c`へ進めてしまったため訂正する。
+  debugの通常JIT経路とoperator.addの差か、実装の差かを最適化OFFの対照で切り分ける。
+- `nan-control-{debug,native}.json`でOFF/ONを比較し、debugの3 payloadはOFFでも
+  operator.addと異なる一方、ONとOFFはbit単位で一致すると確認した。nativeもON/OFF一致。
+  ONではrange guard失敗79回・chunk iteration0なので通常処理へ戻っている。
+  テストの対照を、同じbytecodeを新しいcode objectでwarmupしたfeature OFF版へ修正する。
+  nativeで最初に発見した差は実装の問題でありNaN guardで修正済み、debugの残りの失敗は
+  operator.addを対照にしたテストの問題だった。訂正後のdebug/native testsを再実行中。
 - 次のBPE候補は、実traceの二つのlist subscriptと`i+1`から既存tuple比較までの処理を融合する。
   同じborrowed localのexact list/int、両indexの範囲、exact tupleと対応するimmutable要素型を
   最初のsubscriptで検査する。失敗時は最初の添字操作へ戻し、second-indexの例外やsubclassの
