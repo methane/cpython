@@ -329,7 +329,44 @@ dummy_func(void) {
                 lhs_float = true;
             }
         }
-        if (is_truediv && lhs_float && rhs_float) {
+        if (is_float_chain_op && lhs_float && rhs_float) {
+            int plain_op;
+            int inplace_op;
+            int inplace_right_op;
+            if (oparg == NB_ADD || oparg == NB_INPLACE_ADD) {
+                plain_op = _BINARY_OP_ADD_FLOAT;
+                inplace_op = _BINARY_OP_ADD_FLOAT_INPLACE;
+                inplace_right_op = _BINARY_OP_ADD_FLOAT_INPLACE_RIGHT;
+            }
+            else if (oparg == NB_SUBTRACT || oparg == NB_INPLACE_SUBTRACT) {
+                plain_op = _BINARY_OP_SUBTRACT_FLOAT;
+                inplace_op = _BINARY_OP_SUBTRACT_FLOAT_INPLACE;
+                inplace_right_op = _BINARY_OP_SUBTRACT_FLOAT_INPLACE_RIGHT;
+            }
+            else {
+                assert(oparg == NB_MULTIPLY || oparg == NB_INPLACE_MULTIPLY);
+                plain_op = _BINARY_OP_MULTIPLY_FLOAT;
+                inplace_op = _BINARY_OP_MULTIPLY_FLOAT_INPLACE;
+                inplace_right_op = _BINARY_OP_MULTIPLY_FLOAT_INPLACE_RIGHT;
+            }
+            if (PyJitRef_IsUnique(lhs)) {
+                emit_op = inplace_op;
+                l = sym_new_null(ctx);
+                r = rhs;
+            }
+            else if (PyJitRef_IsUnique(rhs)) {
+                emit_op = inplace_right_op;
+                l = lhs;
+                r = sym_new_null(ctx);
+            }
+            else {
+                emit_op = plain_op;
+                l = lhs;
+                r = rhs;
+            }
+            res = PyJitRef_MakeUnique(sym_new_type(ctx, &PyFloat_Type));
+        }
+        else if (is_truediv && lhs_float && rhs_float) {
             if (PyJitRef_IsUnique(lhs)) {
                 emit_op = _BINARY_OP_TRUEDIV_FLOAT_INPLACE;
                 l = sym_new_null(ctx);

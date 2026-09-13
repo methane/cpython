@@ -4073,7 +4073,12 @@ class TestUopsOptimization(unittest.TestCase):
         self.assertIsNotNone(ex)
         uops = get_opnames(ex)
         self.assertIn("_GUARD_TOS_FLOAT", uops)
-        self.assertIn("_BINARY_OP_MULTIPLY_FLOAT", uops)
+        self.assertNotIn("_BINARY_OP", uops)
+        self.assertTrue(
+            "_BINARY_OP_MULTIPLY_FLOAT" in uops
+            or "_BINARY_OP_MULTIPLY_FLOAT_INPLACE" in uops
+            or "_BINARY_OP_MULTIPLY_FLOAT_INPLACE_RIGHT" in uops
+        )
         self.assertTrue(
             "_BINARY_OP_ADD_FLOAT_INPLACE" in uops
             or "_BINARY_OP_ADD_FLOAT_INPLACE_RIGHT" in uops
