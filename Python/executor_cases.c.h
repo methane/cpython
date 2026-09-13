@@ -22763,69 +22763,19 @@
                 stack_pointer += 2;
             }
             if (conversion_overflow == 0) {
-                long next = range->start;
-                long remaining = range->len;
-                long completed = 0;
-                uint64_t polls = 0;
-                long last = 0;
-                bool overflow = false;
+                int materialized = 0;
                 bool pending = false;
                 bool invalid = false;
-                uintptr_t iversion = FT_ATOMIC_LOAD_UINTPTR_ACQUIRE(
-                    _PyFrame_GetCode(frame)->_co_instrumentation_version);
-                while (completed < remaining - 1) {
-                    polls++;
-                    uintptr_t eval_breaker = _Py_atomic_load_uintptr_relaxed(
-                        &tstate->eval_breaker);
-                    invalid = !current_executor->vm_data.valid;
-                    pending = eval_breaker != iversion;
-                    if (pending || invalid) {
-                        break;
-                    }
-                    int64_t new_total;
-                    if (__builtin_add_overflow(total, (int64_t)next,
-                            &new_total)) {
-                        overflow = true;
-                        break;
-                    }
-                    total = new_total;
-                    last = next;
-                    completed++;
-                    next += range->step;
-                }
-                current_executor->tier3_resident_polls += polls;
-                if (pending || invalid) {
-                    current_executor->tier3_resident_pending_polls++;
-                }
-                if (completed != 0) {
-                    _PyTier3ResidentExitState exit = {
-                        .accumulator = total,
-                        .next = next,
-                        .last = last,
-                        .completed = completed,
-                    };
-                    stack_pointer[-2] = iter;
-                    stack_pointer[-1] = _stack_item_1;
-                    _PyFrame_SetStackPointer(frame, stack_pointer);
-                    _PyFrame_StackPointerValidate(frame);
-                    int materialized = _PyTier3_CommitResidentExit(
-                        frame, range, sum_local, induction_local, &exit);
-                    _PyFrame_StackPointerInvalidate(frame);
-                    if (materialized < 0) {
-                        SET_CURRENT_CACHED_VALUES(0);
-                        JUMP_TO_ERROR();
-                    }
-                    current_executor->tier3_resident_entries++;
-                    current_executor->tier3_resident_iterations += completed;
-                    if (pending || invalid) {
-                        current_executor->tier3_resident_deopt_materializations++;
-                    }
-                    else {
-                        current_executor->tier3_resident_normal_materializations++;
-                    }
-                }
-                if (overflow) {
-                    current_executor->tier3_resident_overflow_exits++;
+                stack_pointer[-2] = iter;
+                stack_pointer[-1] = _stack_item_1;
+                _PyFrame_SetStackPointer(frame, stack_pointer);
+                _PyFrame_StackPointerValidate(frame);
+                _Py_TIER3_RESIDENT_LOOP(
+                                        __builtin_add_overflow(total, (int64_t)next, &new_total));
+                _PyFrame_StackPointerInvalidate(frame);
+                if (materialized < 0) {
+                    SET_CURRENT_CACHED_VALUES(0);
+                    JUMP_TO_ERROR();
                 }
                 if (pending || invalid) {
                     UOP_STAT_INC(uopcode, miss);
@@ -22912,72 +22862,23 @@
                 stack_pointer += 2;
             }
             if (conversion_overflow == 0) {
-                long next = range->start;
-                long remaining = range->len;
-                long completed = 0;
-                uint64_t polls = 0;
-                long last = 0;
-                bool overflow = false;
+                int materialized = 0;
                 bool pending = false;
                 bool invalid = false;
-                uintptr_t iversion = FT_ATOMIC_LOAD_UINTPTR_ACQUIRE(
-                    _PyFrame_GetCode(frame)->_co_instrumentation_version);
-                while (completed < remaining - 1) {
-                    polls++;
-                    uintptr_t eval_breaker = _Py_atomic_load_uintptr_relaxed(
-                        &tstate->eval_breaker);
-                    invalid = !current_executor->vm_data.valid;
-                    pending = eval_breaker != iversion;
-                    if (pending || invalid) {
-                        break;
-                    }
-                    int64_t scaled;
-                    int64_t term;
-                    int64_t new_total;
-                    if (__builtin_mul_overflow(scale, (int64_t)next, &scaled) ||
-                        __builtin_add_overflow(scaled, bias, &term) ||
-                        __builtin_add_overflow(total, term, &new_total)) {
-                        overflow = true;
-                        break;
-                    }
-                    total = new_total;
-                    last = next;
-                    completed++;
-                    next += range->step;
-                }
-                current_executor->tier3_resident_polls += polls;
-                if (pending || invalid) {
-                    current_executor->tier3_resident_pending_polls++;
-                }
-                if (completed != 0) {
-                    _PyTier3ResidentExitState exit = {
-                        .accumulator = total,
-                        .next = next,
-                        .last = last,
-                        .completed = completed,
-                    };
-                    stack_pointer[-2] = iter;
-                    stack_pointer[-1] = _stack_item_1;
-                    _PyFrame_SetStackPointer(frame, stack_pointer);
-                    _PyFrame_StackPointerValidate(frame);
-                    int materialized = _PyTier3_CommitResidentExit(
-                        frame, range, sum_local, induction_local, &exit);
-                    _PyFrame_StackPointerInvalidate(frame);
-                    if (materialized < 0) {
-                        SET_CURRENT_CACHED_VALUES(0);
-                        JUMP_TO_ERROR();
-                    }
-                    current_executor->tier3_resident_entries++;
-                    current_executor->tier3_resident_iterations += completed;
-                    if (pending || invalid) {
-                        current_executor->tier3_resident_deopt_materializations++;
-                    }
-                    else {
-                        current_executor->tier3_resident_normal_materializations++;
-                    }
-                }
-                if (overflow) {
-                    current_executor->tier3_resident_overflow_exits++;
+                int64_t scaled;
+                int64_t term;
+                stack_pointer[-2] = iter;
+                stack_pointer[-1] = _stack_item_1;
+                _PyFrame_SetStackPointer(frame, stack_pointer);
+                _PyFrame_StackPointerValidate(frame);
+                _Py_TIER3_RESIDENT_LOOP(
+                                        __builtin_mul_overflow(scale, (int64_t)next, &scaled) ||
+                                        __builtin_add_overflow(scaled, bias, &term) ||
+                                        __builtin_add_overflow(total, term, &new_total));
+                _PyFrame_StackPointerInvalidate(frame);
+                if (materialized < 0) {
+                    SET_CURRENT_CACHED_VALUES(0);
+                    JUMP_TO_ERROR();
                 }
                 if (pending || invalid) {
                     UOP_STAT_INC(uopcode, miss);
@@ -23043,71 +22944,21 @@
                 stack_pointer += 2;
             }
             if (conversion_overflow == 0) {
-                long next = range->start;
-                long remaining = range->len;
-                long completed = 0;
-                uint64_t polls = 0;
-                long last = 0;
-                bool overflow = false;
+                int materialized = 0;
                 bool pending = false;
                 bool invalid = false;
-                uintptr_t iversion = FT_ATOMIC_LOAD_UINTPTR_ACQUIRE(
-                    _PyFrame_GetCode(frame)->_co_instrumentation_version);
-                while (completed < remaining - 1) {
-                    polls++;
-                    uintptr_t eval_breaker = _Py_atomic_load_uintptr_relaxed(
-                        &tstate->eval_breaker);
-                    invalid = !current_executor->vm_data.valid;
-                    pending = eval_breaker != iversion;
-                    if (pending || invalid) {
-                        break;
-                    }
-                    int64_t square;
-                    int64_t new_total;
-                    if (__builtin_mul_overflow((int64_t)next, (int64_t)next,
-                            &square) ||
-                        __builtin_add_overflow(total, square, &new_total)) {
-                        overflow = true;
-                        break;
-                    }
-                    total = new_total;
-                    last = next;
-                    completed++;
-                    next += range->step;
-                }
-                current_executor->tier3_resident_polls += polls;
-                if (pending || invalid) {
-                    current_executor->tier3_resident_pending_polls++;
-                }
-                if (completed != 0) {
-                    _PyTier3ResidentExitState exit = {
-                        .accumulator = total,
-                        .next = next,
-                        .last = last,
-                        .completed = completed,
-                    };
-                    stack_pointer[-2] = iter;
-                    stack_pointer[-1] = index;
-                    _PyFrame_SetStackPointer(frame, stack_pointer);
-                    _PyFrame_StackPointerValidate(frame);
-                    int materialized = _PyTier3_CommitResidentExit(
-                        frame, range, sum_local, induction_local, &exit);
-                    _PyFrame_StackPointerInvalidate(frame);
-                    if (materialized < 0) {
-                        SET_CURRENT_CACHED_VALUES(0);
-                        JUMP_TO_ERROR();
-                    }
-                    current_executor->tier3_resident_entries++;
-                    current_executor->tier3_resident_iterations += completed;
-                    if (pending || invalid) {
-                        current_executor->tier3_resident_deopt_materializations++;
-                    }
-                    else {
-                        current_executor->tier3_resident_normal_materializations++;
-                    }
-                }
-                if (overflow) {
-                    current_executor->tier3_resident_overflow_exits++;
+                int64_t square;
+                stack_pointer[-2] = iter;
+                stack_pointer[-1] = index;
+                _PyFrame_SetStackPointer(frame, stack_pointer);
+                _PyFrame_StackPointerValidate(frame);
+                _Py_TIER3_RESIDENT_LOOP(
+                                        __builtin_mul_overflow((int64_t)next, (int64_t)next, &square) ||
+                                        __builtin_add_overflow(total, square, &new_total));
+                _PyFrame_StackPointerInvalidate(frame);
+                if (materialized < 0) {
+                    SET_CURRENT_CACHED_VALUES(0);
+                    JUMP_TO_ERROR();
                 }
                 if (pending || invalid) {
                     UOP_STAT_INC(uopcode, miss);

@@ -1,0 +1,8 @@
+== richards ==
+.
+richards: 20.6 ms
+region_count=
+== nbody ==
+.
+nbody: 50.1 ms
+region_count=

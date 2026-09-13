@@ -976,7 +976,10 @@ def compute_properties(op: parser.CodeDef) -> Properties:
     deopts_if = variable_used(op, "DEOPT_IF")
     exits_if = variable_used(op, "EXIT_IF")
     exit_if_at_end = variable_used(op, "AT_END_EXIT_IF")
-    deopts_periodic = variable_used(op, "HANDLE_PENDING_AND_DEOPT_IF")
+    deopts_periodic = (
+        variable_used(op, "HANDLE_PENDING_AND_DEOPT_IF")
+        or variable_used(op, "_Py_TIER3_RESIDENT_LOOP")
+    )
     exits_and_deopts = sum((deopts_if, exits_if, deopts_periodic))
     if exits_and_deopts > 1:
         tkn = op.tokens[0]

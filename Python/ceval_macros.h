@@ -740,3 +740,67 @@ _PyTier3_CommitResidentExit(_PyInterpreterFrame *frame,
     PyStackRef_XCLOSE(old_induction);
     return 0;
 }
+
+
+/* Compile-time-specialized residency skeleton.  STEP_OVERFLOW is an ordered
+ * checked-arithmetic expression that stores the next accumulator in
+ * new_total.  It is expanded into each finite stencil: there is no runtime
+ * expression dispatch or per-iteration helper call. */
+#define _Py_TIER3_RESIDENT_LOOP(STEP_OVERFLOW)                           \
+    do {                                                                 \
+        long next = range->start;                                        \
+        long remaining = range->len;                                     \
+        long completed = 0;                                              \
+        uint64_t polls = 0;                                              \
+        long last = 0;                                                   \
+        bool overflow = false;                                           \
+        uintptr_t iversion = FT_ATOMIC_LOAD_UINTPTR_ACQUIRE(             \
+            _PyFrame_GetCode(frame)->_co_instrumentation_version);       \
+        while (completed < remaining - 1) {                              \
+            polls++;                                                     \
+            uintptr_t eval_breaker = _Py_atomic_load_uintptr_relaxed(    \
+                &tstate->eval_breaker);                                  \
+            invalid = !current_executor->vm_data.valid;                  \
+            pending = eval_breaker != iversion;                          \
+            if (pending || invalid) {                                    \
+                break;                                                   \
+            }                                                            \
+            int64_t new_total;                                           \
+            if (STEP_OVERFLOW) {                                         \
+                overflow = true;                                         \
+                break;                                                   \
+            }                                                            \
+            total = new_total;                                           \
+            last = next;                                                 \
+            completed++;                                                 \
+            next += range->step;                                         \
+        }                                                                \
+        current_executor->tier3_resident_polls += polls;                 \
+        if (pending || invalid) {                                        \
+            current_executor->tier3_resident_pending_polls++;            \
+        }                                                                \
+        if (completed != 0) {                                            \
+            _PyTier3ResidentExitState exit = {                           \
+                .accumulator = total,                                    \
+                .next = next,                                            \
+                .last = last,                                            \
+                .completed = completed,                                  \
+            };                                                           \
+            materialized = _PyTier3_CommitResidentExit(                  \
+                frame, range, sum_local, induction_local, &exit);        \
+            if (materialized < 0) {                                      \
+                break;                                                   \
+            }                                                            \
+            current_executor->tier3_resident_entries++;                  \
+            current_executor->tier3_resident_iterations += completed;    \
+            if (pending || invalid) {                                    \
+                current_executor->tier3_resident_deopt_materializations++; \
+            }                                                            \
+            else {                                                       \
+                current_executor->tier3_resident_normal_materializations++; \
+            }                                                            \
+        }                                                                \
+        if (overflow) {                                                  \
+            current_executor->tier3_resident_overflow_exits++;           \
+        }                                                                \
+    } while (0)

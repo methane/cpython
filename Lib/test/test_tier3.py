@@ -531,10 +531,28 @@ class Tier3RangeTests(unittest.TestCase):
                         events.append(('finally', total, item))
                     return total, item, events
 
+                def affine(n, initial, scale=3, bias=-11):
+                    events = ['pre']
+                    total = initial
+                    item = -7
+                    try:
+                        for item in range(7, n):
+                            total += scale * item + bias
+                    except MemoryError as exc:
+                        tb = exc.__traceback__
+                        events.append(('except', total, item,
+                                       tb.tb_lasti, tb.tb_lineno))
+                    finally:
+                        events.append(('finally', total, item))
+                    return total, item, events
+
                 def expected(kind, item, initial):
                     terms = range(7, item + 1)
-                    return initial + sum(i * i if kind == 'squares' else i
-                                         for i in terms)
+                    if kind == 'squares':
+                        return initial + sum(i * i for i in terms)
+                    if kind == 'affine':
+                        return initial + sum(3 * i - 11 for i in terms)
+                    return initial + sum(terms)
 
                 def executor(function, opname):
                     for offset in range(0, len(function.__code__.co_code), 2):
@@ -549,6 +567,7 @@ class Tier3RangeTests(unittest.TestCase):
                 cases = (
                     ('add', add, '_TIER3_RANGE_CHUNK_RESIDENT'),
                     ('squares', squares, '_TIER3_RANGE_CHUNK_RESIDENT_SQUARES'),
+                    ('affine', affine, '_TIER3_RANGE_CHUNK_RESIDENT_AFFINE'),
                 )
                 initial = 2**40
                 for kind, function, opname in cases:
@@ -571,7 +590,9 @@ class Tier3RangeTests(unittest.TestCase):
                         # Failed reconstruction leaves that nonzero entry
                         # snapshot visible to the handler in the optimized
                         # frame, and attributes the error to its addition.
-                        entry_total = initial + (49 if kind == 'squares' else 7)
+                        entry_term = (49 if kind == 'squares' else
+                                      10 if kind == 'affine' else 7)
+                        entry_total = initial + entry_term
                         assert (total, item) == (entry_total, 7), (total, item)
                         assert events[0] == 'pre'
                         caught = events[1]
@@ -857,6 +878,22 @@ class Tier3RangeTests(unittest.TestCase):
                     s = 1
                     for i in range(n): s += s
                     return s
+                def accumulator_as_increment(n):
+                    s = 1
+                    for i in range(n): s += s
+                    return s
+                def accumulator_as_scale(n, bias):
+                    s = 1
+                    for i in range(n): s += s * i + bias
+                    return s
+                def accumulator_as_bias(n, scale):
+                    s = 1
+                    for i in range(n): s += scale * i + s
+                    return s
+                def over_capacity(n, a, b, c):
+                    s = 0
+                    for i in range(n): s += a * i + (b * i + c)
+                    return s
                 def extra(n):
                     s = 0
                     for i in range(n):
@@ -880,6 +917,10 @@ class Tier3RangeTests(unittest.TestCase):
                         s += i
                     return s
                 for function, args in ((twice, (20,)),
+                                       (accumulator_as_increment, (20,)),
+                                       (accumulator_as_scale, (20, 3)),
+                                       (accumulator_as_bias, (20, 3)),
+                                       (over_capacity, (20, 2, 3, 4)),
                                        (extra, (20,)),
                                        (effect, (20,)),
                                        (branch, (20, 10))):
@@ -895,7 +936,18 @@ class Tier3RangeTests(unittest.TestCase):
                         )
                     assert saw_executor, function.__name__
                     expected = function(*args)
-                    if function is twice: assert expected == 1 << 20
+                    if function in (twice, accumulator_as_increment):
+                        assert expected == 1 << 20
+                    elif function is accumulator_as_scale:
+                        reference = 1
+                        for i in range(20): reference += reference * i + 3
+                        assert expected == reference
+                    elif function is accumulator_as_bias:
+                        reference = 1
+                        for i in range(20): reference += 3 * i + reference
+                        assert expected == reference
+                    elif function is over_capacity:
+                        assert expected == sum(2 * i + (3 * i + 4) for i in range(20))
                     elif function is extra: assert expected == sum(range(20)) + 20
                     elif function is scaled: assert expected == 2 * sum(range(20))
                     elif function is effect: assert expected == sum(range(20))

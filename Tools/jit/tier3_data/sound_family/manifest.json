@@ -1,0 +1,14 @@
+{
+  "implementation_commit": "f2b6d5362cef10177a1e8222d7357695f65c3b92",
+  "implementation_tree": "1c9e397f5e330aabce62f0e1445a6ea6fed61791",
+  "tracked_source_dirty": false,
+  "executable_sha256": "c17027bf1813929ebc5dd95542be0cdbcd927f346b27c3145024404ecf76b366",
+  "llvm_prefix": "/usr/lib/llvm-21",
+  "llvm_version": "21.1.8",
+  "stencil_cflags": "-fno-vectorize -fno-slp-vectorize",
+  "cpu_affinity": "0 (allowed set 0-2)",
+  "microbenchmark_command": "PYTHON_JIT=1 PYTHON_TIER3_JIT={0,resident} build-jit/python Tools/jit/tier3_bench.py --workload {sum,squares,constant,affine} --n 100000 --initial 1099511627776 --scale=-3 --bias=11 --training-profile same-input --warmup 300 --loops 1000 --repeat 3",
+  "pyperformance_version": "1.14.0",
+  "pyperformance_launch": "direct benchmark run_benchmark.py with host-installed pure-Python pyperformance/pyperf on PYTHONPATH",
+  "pyperformance_command": "PYTHON_JIT=1 PYTHON_TIER3_JIT={0,resident} build-jit/python bm_{richards,nbody}/run_benchmark.py --fast --min-time=0.1 --affinity=0"
+}

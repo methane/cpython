@@ -1900,7 +1900,9 @@ static int
 tier3_region_add_node(Tier3LoopRegion *region, Tier3RegionOp op, Tier3ValueKind kind, int input0,
                       int input1)
 {
-    assert(region->node_count < (int)Py_ARRAY_LENGTH(region->nodes));
+    if (region->node_count >= (int)Py_ARRAY_LENGTH(region->nodes)) {
+        return -1;
+    }
     int result = region->node_count++;
     region->nodes[result] = (Tier3RegionNode){
         .op = op, .kind = kind, .input0 = input0, .input1 = input1,
@@ -1951,6 +1953,9 @@ tier3_invariant_node(Tier3LoopRegion *region, int local)
     }
     int node = tier3_region_add_node(
         region, TIER3_REGION_INVARIANT, TIER3_VALUE_I64, -1, -1);
+    if (node < 0) {
+        return -1;
+    }
     region->nodes[node].local = local;
     return node;
 }
@@ -1964,13 +1969,17 @@ tier3_constant_node(Tier3LoopRegion *region, PyObject *constant)
     int overflow = 0;
     int64_t value = PyLong_AsLongLongAndOverflow(constant, &overflow);
     if (overflow || (value == -1 && PyErr_Occurred())) {
-        PyErr_Clear();
         return -1;
     }
     int node = tier3_region_add_node(
         region, TIER3_REGION_CONSTANT, TIER3_VALUE_I64, -1, -1);
+    if (node < 0) {
+        return -1;
+    }
     region->nodes[node].constant = value;
-    region->nodes[node].compact = TIER3_FACT_RETAINED_GUARD;
+    if (_PyLong_IsCompact((PyLongObject *)constant)) {
+        region->nodes[node].compact = TIER3_FACT_RETAINED_GUARD;
+    }
     return node;
 }
 
@@ -1991,6 +2000,10 @@ build_tier3_loop_region(_PyUOpInstruction *buffer, int length, Tier3LoopRegion *
                                                    region->iterator_node, -1);
     region->accumulator_node =
         tier3_region_add_node(region, TIER3_REGION_ACCUMULATOR, TIER3_VALUE_I64, -1, -1);
+    if (region->iterator_node < 0 || region->induction_node < 0 ||
+        region->accumulator_node < 0) {
+        return false;
+    }
     Tier3StackValue stack[8];
     int depth = 0, phase = 0, result = -1;
     bool saw_accumulator = false;
@@ -2053,8 +2066,10 @@ build_tier3_loop_region(_PyUOpInstruction *buffer, int length, Tier3LoopRegion *
             }
             int node = buffer[i].oparg == region->induction_local
                            ? region->induction_node
+                       : buffer[i].oparg == region->accumulator_local
+                           ? region->accumulator_node
                            : tier3_invariant_node(region, buffer[i].oparg);
-            if (!tier3_push(stack, &depth, node,
+            if (node < 0 || !tier3_push(stack, &depth, node,
                             opcode == _LOAD_FAST ? TIER3_REF_OWNED : TIER3_REF_BORROWED)) {
                 return false;
             }
@@ -2102,6 +2117,9 @@ build_tier3_loop_region(_PyUOpInstruction *buffer, int length, Tier3LoopRegion *
             }
             int mul = tier3_region_add_node(region, TIER3_REGION_CHECKED_MUL, TIER3_VALUE_I64,
                                             left, right);
+            if (mul < 0) {
+                return false;
+            }
             if (!generic_multiply) {
                 region->nodes[mul].compact = TIER3_FACT_CHECKED_OPERATION;
             }
@@ -2142,6 +2160,9 @@ build_tier3_loop_region(_PyUOpInstruction *buffer, int length, Tier3LoopRegion *
                 return false;
             int add_result = tier3_region_add_node(
                 region, TIER3_REGION_CHECKED_ADD, TIER3_VALUE_I64, left, right);
+            if (add_result < 0) {
+                return false;
+            }
             if (!generic_add) {
                 region->nodes[add_result].compact = TIER3_FACT_CHECKED_OPERATION;
             }
@@ -2201,6 +2222,19 @@ build_tier3_loop_region(_PyUOpInstruction *buffer, int length, Tier3LoopRegion *
 static Tier3LoweringKind
 classify_tier3_region(const Tier3LoopRegion *region)
 {
+    if (region->result_node < 0 || region->result_node >= region->node_count ||
+        region->node_count > (int)Py_ARRAY_LENGTH(region->nodes)) {
+        return TIER3_LOWER_NONE;
+    }
+    for (int i = 0; i < region->node_count; i++) {
+        const Tier3RegionNode *node = &region->nodes[i];
+        if ((node->input0 >= region->node_count || node->input1 >= region->node_count) ||
+            (node->op == TIER3_REGION_INVARIANT &&
+             (node->local == region->accumulator_local ||
+              node->local == region->induction_local))) {
+            return TIER3_LOWER_NONE;
+        }
+    }
     const Tier3RegionNode *add = &region->nodes[region->result_node];
     if (add->op != TIER3_REGION_CHECKED_ADD || add->kind != TIER3_VALUE_I64 ||
         add->input0 != region->accumulator_node)

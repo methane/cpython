@@ -1684,7 +1684,6 @@ dummy_func(
                 _PyInterpreterFrame *gen_frame = &gen->gi_iframe;
                 _PyFrame_StackPush(gen_frame, PyStackRef_MakeHeapSafe(v));
                 DEAD(v);
-                SYNC_SP();
                 gen->gi_exc_state.previous_item = tstate->exc_info;
                 tstate->exc_info = &gen->gi_exc_state;
                 assert(INSTRUCTION_SIZE + oparg <= UINT16_MAX);
@@ -4405,7 +4404,6 @@ dummy_func(
                 DEAD(self_or_null);
                 DEAD(callable);
                 // Manipulate stack directly since we leave using DISPATCH_INLINED().
-                SYNC_SP();
                 // The frame has stolen all the arguments from the stack,
                 // so there is no need to clean them up.
                 if (new_frame == NULL) {
@@ -5440,7 +5438,6 @@ dummy_func(
                 DEAD(callable);
                 PyStackRef_CLOSE(kwnames);
                 // Sync stack explicitly since we leave using DISPATCH_INLINED().
-                SYNC_SP();
                 // The frame has stolen all the arguments from the stack,
                 // so there is no need to clean them up.
                 if (new_frame == NULL) {
@@ -5687,7 +5684,6 @@ dummy_func(
                         nargs, callargs, kwargs, frame);
                     // Need to sync the stack since we exit with DISPATCH_INLINED.
                     INPUTS_DEAD();
-                    SYNC_SP();
                     if (new_frame == NULL) {
                         ERROR_NO_POP();
                     }
@@ -6234,64 +6230,12 @@ dummy_func(
                 conversion_overflow = 1;
             }
             if (conversion_overflow == 0) {
-                long next = range->start;
-                long remaining = range->len;
-                long completed = 0;
-                uint64_t polls = 0;
-                long last = 0;
-                bool overflow = false;
+                int materialized = 0;
                 bool pending = false;
                 bool invalid = false;
-                uintptr_t iversion = FT_ATOMIC_LOAD_UINTPTR_ACQUIRE(
-                    _PyFrame_GetCode(frame)->_co_instrumentation_version);
-                while (completed < remaining - 1) {
-                    polls++;
-                    uintptr_t eval_breaker = _Py_atomic_load_uintptr_relaxed(
-                        &tstate->eval_breaker);
-                    invalid = !current_executor->vm_data.valid;
-                    pending = eval_breaker != iversion;
-                    if (pending || invalid) {
-                        break;
-                    }
-                    int64_t new_total;
-                    if (__builtin_add_overflow(total, (int64_t)next,
-                                               &new_total)) {
-                        overflow = true;
-                        break;
-                    }
-                    total = new_total;
-                    last = next;
-                    completed++;
-                    next += range->step;
-                }
-                /* Statistics are published only as the resident region is
-                 * left, never by the generated arithmetic/poll backedge. */
-                current_executor->tier3_resident_polls += polls;
-                if (pending || invalid) {
-                    current_executor->tier3_resident_pending_polls++;
-                }
-                if (completed != 0) {
-                    _PyTier3ResidentExitState exit = {
-                        .accumulator = total,
-                        .next = next,
-                        .last = last,
-                        .completed = completed,
-                    };
-                    int materialized = _PyTier3_CommitResidentExit(
-                        frame, range, sum_local, induction_local, &exit);
-                    ERROR_IF(materialized < 0);
-                    current_executor->tier3_resident_entries++;
-                    current_executor->tier3_resident_iterations += completed;
-                    if (pending || invalid) {
-                        current_executor->tier3_resident_deopt_materializations++;
-                    }
-                    else {
-                        current_executor->tier3_resident_normal_materializations++;
-                    }
-                }
-                if (overflow) {
-                    current_executor->tier3_resident_overflow_exits++;
-                }
+                _Py_TIER3_RESIDENT_LOOP(
+                    __builtin_add_overflow(total, (int64_t)next, &new_total));
+                ERROR_IF(materialized < 0);
                 HANDLE_PENDING_AND_DEOPT_IF(pending || invalid);
             }
         }
@@ -6337,67 +6281,16 @@ dummy_func(
                 conversion_overflow = 1;
             }
             if (conversion_overflow == 0) {
-                long next = range->start;
-                long remaining = range->len;
-                long completed = 0;
-                uint64_t polls = 0;
-                long last = 0;
-                bool overflow = false;
+                int materialized = 0;
                 bool pending = false;
                 bool invalid = false;
-                uintptr_t iversion = FT_ATOMIC_LOAD_UINTPTR_ACQUIRE(
-                    _PyFrame_GetCode(frame)->_co_instrumentation_version);
-                while (completed < remaining - 1) {
-                    polls++;
-                    uintptr_t eval_breaker = _Py_atomic_load_uintptr_relaxed(
-                        &tstate->eval_breaker);
-                    invalid = !current_executor->vm_data.valid;
-                    pending = eval_breaker != iversion;
-                    if (pending || invalid) {
-                        break;
-                    }
-                    int64_t scaled;
-                    int64_t term;
-                    int64_t new_total;
-                    if (__builtin_mul_overflow(scale, (int64_t)next, &scaled) ||
-                        __builtin_add_overflow(scaled, bias, &term) ||
-                        __builtin_add_overflow(total, term, &new_total)) {
-                        overflow = true;
-                        break;
-                    }
-                    total = new_total;
-                    last = next;
-                    completed++;
-                    next += range->step;
-                }
-                /* Statistics are published only as the resident region is
-                 * left, never by the generated arithmetic/poll backedge. */
-                current_executor->tier3_resident_polls += polls;
-                if (pending || invalid) {
-                    current_executor->tier3_resident_pending_polls++;
-                }
-                if (completed != 0) {
-                    _PyTier3ResidentExitState exit = {
-                        .accumulator = total,
-                        .next = next,
-                        .last = last,
-                        .completed = completed,
-                    };
-                    int materialized = _PyTier3_CommitResidentExit(
-                        frame, range, sum_local, induction_local, &exit);
-                    ERROR_IF(materialized < 0);
-                    current_executor->tier3_resident_entries++;
-                    current_executor->tier3_resident_iterations += completed;
-                    if (pending || invalid) {
-                        current_executor->tier3_resident_deopt_materializations++;
-                    }
-                    else {
-                        current_executor->tier3_resident_normal_materializations++;
-                    }
-                }
-                if (overflow) {
-                    current_executor->tier3_resident_overflow_exits++;
-                }
+                int64_t scaled;
+                int64_t term;
+                _Py_TIER3_RESIDENT_LOOP(
+                    __builtin_mul_overflow(scale, (int64_t)next, &scaled) ||
+                    __builtin_add_overflow(scaled, bias, &term) ||
+                    __builtin_add_overflow(total, term, &new_total));
+                ERROR_IF(materialized < 0);
                 HANDLE_PENDING_AND_DEOPT_IF(pending || invalid);
             }
         }
@@ -6424,66 +6317,14 @@ dummy_func(
                 conversion_overflow = 1;
             }
             if (conversion_overflow == 0) {
-                long next = range->start;
-                long remaining = range->len;
-                long completed = 0;
-                uint64_t polls = 0;
-                long last = 0;
-                bool overflow = false;
+                int materialized = 0;
                 bool pending = false;
                 bool invalid = false;
-                uintptr_t iversion = FT_ATOMIC_LOAD_UINTPTR_ACQUIRE(
-                    _PyFrame_GetCode(frame)->_co_instrumentation_version);
-                while (completed < remaining - 1) {
-                    polls++;
-                    uintptr_t eval_breaker = _Py_atomic_load_uintptr_relaxed(
-                        &tstate->eval_breaker);
-                    invalid = !current_executor->vm_data.valid;
-                    pending = eval_breaker != iversion;
-                    if (pending || invalid) {
-                        break;
-                    }
-                    int64_t square;
-                    int64_t new_total;
-                    if (__builtin_mul_overflow((int64_t)next, (int64_t)next,
-                                               &square) ||
-                        __builtin_add_overflow(total, square, &new_total)) {
-                        overflow = true;
-                        break;
-                    }
-                    total = new_total;
-                    last = next;
-                    completed++;
-                    next += range->step;
-                }
-                /* Statistics are published only as the resident region is
-                 * left, never by the generated arithmetic/poll backedge. */
-                current_executor->tier3_resident_polls += polls;
-                if (pending || invalid) {
-                    current_executor->tier3_resident_pending_polls++;
-                }
-                if (completed != 0) {
-                    _PyTier3ResidentExitState exit = {
-                        .accumulator = total,
-                        .next = next,
-                        .last = last,
-                        .completed = completed,
-                    };
-                    int materialized = _PyTier3_CommitResidentExit(
-                        frame, range, sum_local, induction_local, &exit);
-                    ERROR_IF(materialized < 0);
-                    current_executor->tier3_resident_entries++;
-                    current_executor->tier3_resident_iterations += completed;
-                    if (pending || invalid) {
-                        current_executor->tier3_resident_deopt_materializations++;
-                    }
-                    else {
-                        current_executor->tier3_resident_normal_materializations++;
-                    }
-                }
-                if (overflow) {
-                    current_executor->tier3_resident_overflow_exits++;
-                }
+                int64_t square;
+                _Py_TIER3_RESIDENT_LOOP(
+                    __builtin_mul_overflow((int64_t)next, (int64_t)next, &square) ||
+                    __builtin_add_overflow(total, square, &new_total));
+                ERROR_IF(materialized < 0);
                 HANDLE_PENDING_AND_DEOPT_IF(pending || invalid);
             }
         }
@@ -6644,7 +6485,6 @@ dummy_func(
                 TIER2_TO_TIER2(exit->executor);
             }
             else {
-                SYNC_SP();
                 if (!backoff_counter_triggers(temperature)) {
                     exit->temperature = advance_backoff_counter(temperature);
                     GOTO_TIER_ONE(target);
