@@ -1082,6 +1082,121 @@ class TestRegions(unittest.TestCase):
         value.append(4)
         self.assertEqual(func(value, 1, 0, 0, 8), 3)
 
+    def warm_list_pair(self, operation="=="):
+        ns = {}
+        exec("def compare(items, positions, pair, n):\n"
+             "    result = None\n"
+             "    for k in range(n):\n"
+             "        i = positions[k & 1]\n"
+             f"        result = (items[i], items[i + 1]) {operation} pair\n"
+             "    return result\n", ns)
+        compare = ns["compare"]
+        compare([b"a", b"b", b"c"], (0, 0), (b"a", b"b"), TIER2_THRESHOLD)
+        return compare, self.executor(compare, "_COMPARE_LIST_PAIR")
+
+    def test_list_pair_comparison(self):
+        nan = float("nan")
+        for operation in ("==", "!="):
+            compare, ex = self.warm_list_pair(operation)
+            for items in ([b"a", b"b", b"c"], ["α", "β", "γ"],
+                          [2**100, -2**100, 0], [nan, 0.0, -0.0]):
+                for i in (0, 1, -1, -2, -3):
+                    pair = (items[i], items[i + 1])
+                    for target in (pair, pair[::-1]):
+                        expected = operator.eq(pair, target) if operation == "==" else operator.ne(pair, target)
+                        before = ex.get_region_stats()["tuple_list_entries"]
+                        self.assertEqual(compare(items, (i, i), target, 2), expected)
+                        self.assertGreater(ex.get_region_stats()["tuple_list_entries"], before)
+            items = list(range(400))
+            self.assertEqual(compare(items, (260, 260), (260, 261), 2), operation == "==")
+
+    def test_list_pair_index_errors(self):
+        for bad in (2, 3, -4, 2**100):
+            compare, ex = self.warm_list_pair()
+            before = ex.get_region_stats()["tuple_guard_exits"]
+            # The first elements differ, but the second index must still be
+            # evaluated and raise. Iteration zero establishes the entry stack.
+            with self.assertRaises(IndexError) as caught:
+                compare([b"a", b"b", b"c"], (0, bad), (b"x", b"y"), 2)
+            self.assertIn("index", str(caught.exception))
+            # Huge indices can leave at the original compact-int guard.
+            if abs(bad) < 100:
+                self.assertGreater(ex.get_region_stats()["tuple_guard_exits"], before)
+
+    def test_tuple_pair_distinct_large_integers(self):
+        compare, ex = self.warm_list_pair()
+        direct = arithmetic("(a, b) == c")
+        direct(1, 2, (1, 2), 0, TIER2_THRESHOLD)
+        direct_ex = self.executor(direct, "_COMPARE_TUPLE_PAIR")
+        for a in (2**100, -(2**100), 2**100 + 1, 2**4096, -(2**4096)):
+            for b in (a, a - 1, a + 1, -a, a << 30):
+                with self.subTest(a_bits=a.bit_length(), b_bits=b.bit_length(), equal=a == b):
+                    left, right = int(str(a)), int(str(b))
+                    self.assertIsNot(left, right)
+                    target = (right, 0)
+                    before = ex.get_region_stats()["tuple_list_entries"]
+                    self.assertIs(compare([left, 0], (0, 0), target, 2), a == b)
+                    self.assertGreater(ex.get_region_stats()["tuple_list_entries"], before)
+                    self.assertIs(self.executed(direct_ex, "tuple_entries", direct,
+                                                 left, 0, target, 0, 2), a == b)
+
+    def test_list_pair_mutation(self):
+        ns = {}
+        exec("def compare(items, positions, pair, values, n):\n"
+             "    results = []\n"
+             "    for k in range(n):\n"
+             "        i = positions[k & 1]\n"
+             "        results.append((items[i], items[i + 1]) == pair)\n"
+             "        items[0] = values[k & 1]\n"
+             "    return results\n", ns)
+        compare = ns["compare"]
+        compare([b"a", b"b"], (0, 0), (b"a", b"b"), (b"a", b"a"), TIER2_THRESHOLD)
+        ex = self.executor(compare, "_COMPARE_LIST_PAIR")
+        before = ex.get_region_stats()["tuple_list_entries"]
+        self.assertEqual(compare([b"a", b"b"], (0, 0), (b"a", b"b"),
+                                 (b"a", b"x"), 4), [True, True, False, True])
+        self.assertGreater(ex.get_region_stats()["tuple_list_entries"], before)
+
+    def test_list_pair_callbacks(self):
+        compare, ex = self.warm_list_pair()
+        events = []
+        class Item:
+            def __eq__(self, other):
+                events.append(("eq", other))
+                return False
+        first = Item()
+        before = ex.get_region_stats()["tuple_guard_exits"]
+        self.assertFalse(compare([first, b"b"], (0, 0), (b"x", b"y"), 2))
+        self.assertEqual(events, [("eq", b"x"), ("eq", b"x")])
+        self.assertGreater(ex.get_region_stats()["tuple_guard_exits"], before)
+        events.clear()
+        class Index(int):
+            def __add__(self, other):
+                events.append(("add", other))
+                return int(self) + other
+        self.assertTrue(compare([b"a", b"b"], (0, Index(0)), (b"a", b"b"), 2))
+        self.assertEqual(events, [("add", 1)])
+        events.clear()
+        class Items(list):
+            def __getitem__(self, index):
+                events.append(("get", index))
+                return super().__getitem__(index)
+        self.assertTrue(compare(Items([b"a", b"b"]), (0, 0), (b"a", b"b"), 2))
+        self.assertEqual(events, [("get", 0), ("get", 1)] * 2)
+
+    def test_list_pair_right_tuple_callback(self):
+        compare, ex = self.warm_list_pair()
+        events = []
+        class Pair(tuple):
+            def __eq__(self, other):
+                events.append(other)
+                return "result"
+        target = Pair((b"a", b"b"))
+        before = ex.get_region_stats()["tuple_guard_exits"]
+        self.assertEqual(compare([b"a", b"b"], (0, 0), target, 2), "result")
+        self.assertEqual(events, [(b"a", b"b")] * 2)
+        self.assertGreater(ex.get_region_stats()["tuple_guard_exits"], before)
+
     def test_tuple_pair_comparison(self):
         nan = float("nan")
         cases = [

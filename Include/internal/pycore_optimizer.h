@@ -243,6 +243,7 @@ typedef struct _PyExecutorObject {
     int64_t region_poly_scratch[4][3];
     bool region_poly_valid;
     uint64_t region_tuple_entries;
+    uint64_t region_tuple_list_entries;
     uint64_t region_tuple_guard_exits;
     uint64_t region_float_unique_entries;
     uint64_t region_float_shared_entries;

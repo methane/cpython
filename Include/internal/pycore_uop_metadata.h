@@ -283,6 +283,9 @@ const uint32_t _PyUop_Flags[MAX_UOP_ID+1] = {
     [_COMPARE_TUPLE_PAIR_0] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG,
     [_COMPARE_TUPLE_PAIR_1] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG,
     [_COMPARE_TUPLE_PAIR] = HAS_ARG_FLAG | HAS_LOCAL_FLAG | HAS_EXIT_FLAG,
+    [_COMPARE_LIST_PAIR_0] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG,
+    [_COMPARE_LIST_PAIR_1] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG,
+    [_COMPARE_LIST_PAIR] = HAS_ARG_FLAG | HAS_LOCAL_FLAG | HAS_EXIT_FLAG,
     [_COMPARE_OP] = HAS_ARG_FLAG | HAS_ERROR_FLAG | HAS_ESCAPES_FLAG,
     [_COMPARE_OP_FLOAT] = HAS_ARG_FLAG,
     [_COMPARE_OP_INT] = HAS_ARG_FLAG,
@@ -531,6 +534,7 @@ const ReplicationRange _PyUop_Replication[MAX_UOP_ID+1] = {
     [_INT_REGION] = { 0, 9 },
     [_INT_REGION_COMPARE] = { 0, 9 },
     [_COMPARE_TUPLE_PAIR] = { 0, 2 },
+    [_COMPARE_LIST_PAIR] = { 0, 2 },
     [_INIT_CALL_PY_EXACT_ARGS] = { 0, 5 },
     [_CALL_PY_TRIVIAL] = { 0, 5 },
     [_CALL_PY_ATTRIBUTE] = { 0, 5 },
@@ -2773,6 +2777,33 @@ const _PyUopCachingInfo _PyUop_Caching[MAX_UOP_ID+1] = {
             { -1, -1, -1 },
             { -1, -1, -1 },
             { 3, 2, _COMPARE_TUPLE_PAIR_r23 },
+            { -1, -1, -1 },
+        },
+    },
+    [_COMPARE_LIST_PAIR_0] = {
+        .best = { 2, 2, 2, 2 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 3, 2, _COMPARE_LIST_PAIR_0_r23 },
+            { -1, -1, -1 },
+        },
+    },
+    [_COMPARE_LIST_PAIR_1] = {
+        .best = { 2, 2, 2, 2 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 3, 2, _COMPARE_LIST_PAIR_1_r23 },
+            { -1, -1, -1 },
+        },
+    },
+    [_COMPARE_LIST_PAIR] = {
+        .best = { 2, 2, 2, 2 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 3, 2, _COMPARE_LIST_PAIR_r23 },
             { -1, -1, -1 },
         },
     },
@@ -5366,6 +5397,9 @@ const uint16_t _PyUop_Uncached[MAX_UOP_REGS_ID+1] = {
     [_COMPARE_TUPLE_PAIR_0_r23] = _COMPARE_TUPLE_PAIR_0,
     [_COMPARE_TUPLE_PAIR_1_r23] = _COMPARE_TUPLE_PAIR_1,
     [_COMPARE_TUPLE_PAIR_r23] = _COMPARE_TUPLE_PAIR,
+    [_COMPARE_LIST_PAIR_0_r23] = _COMPARE_LIST_PAIR_0,
+    [_COMPARE_LIST_PAIR_1_r23] = _COMPARE_LIST_PAIR_1,
+    [_COMPARE_LIST_PAIR_r23] = _COMPARE_LIST_PAIR,
     [_COMPARE_OP_r21] = _COMPARE_OP,
     [_COMPARE_OP_FLOAT_r03] = _COMPARE_OP_FLOAT,
     [_COMPARE_OP_FLOAT_r13] = _COMPARE_OP_FLOAT,
@@ -6227,6 +6261,12 @@ const char *const _PyOpcode_uop_name[MAX_UOP_REGS_ID+1] = {
     [_COLD_DYNAMIC_EXIT_r00] = "_COLD_DYNAMIC_EXIT_r00",
     [_COLD_EXIT] = "_COLD_EXIT",
     [_COLD_EXIT_r00] = "_COLD_EXIT_r00",
+    [_COMPARE_LIST_PAIR] = "_COMPARE_LIST_PAIR",
+    [_COMPARE_LIST_PAIR_r23] = "_COMPARE_LIST_PAIR_r23",
+    [_COMPARE_LIST_PAIR_0] = "_COMPARE_LIST_PAIR_0",
+    [_COMPARE_LIST_PAIR_0_r23] = "_COMPARE_LIST_PAIR_0_r23",
+    [_COMPARE_LIST_PAIR_1] = "_COMPARE_LIST_PAIR_1",
+    [_COMPARE_LIST_PAIR_1_r23] = "_COMPARE_LIST_PAIR_1_r23",
     [_COMPARE_OP] = "_COMPARE_OP",
     [_COMPARE_OP_r21] = "_COMPARE_OP_r21",
     [_COMPARE_OP_FLOAT] = "_COMPARE_OP_FLOAT",
@@ -8000,6 +8040,12 @@ int _PyUop_num_popped(int opcode, int oparg)
         case _COMPARE_TUPLE_PAIR_1:
             return 2;
         case _COMPARE_TUPLE_PAIR:
+            return 2;
+        case _COMPARE_LIST_PAIR_0:
+            return 2;
+        case _COMPARE_LIST_PAIR_1:
+            return 2;
+        case _COMPARE_LIST_PAIR:
             return 2;
         case _COMPARE_OP:
             return 2;

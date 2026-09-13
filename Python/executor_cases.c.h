@@ -16566,6 +16566,206 @@
             break;
         }
 
+        case _COMPARE_LIST_PAIR_0_r23: {
+            CHECK_CURRENT_CACHED_VALUES(2);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            _PyStackRef index;
+            _PyStackRef container;
+            _PyStackRef res;
+            _PyStackRef c;
+            _PyStackRef i;
+            _PyStackRef _stack_item_0 = _tos_cache0;
+            _PyStackRef _stack_item_1 = _tos_cache1;
+            oparg = 0;
+            assert(oparg == CURRENT_OPARG());
+            index = _stack_item_1;
+            container = _stack_item_0;
+            PyObject *local = (PyObject *)CURRENT_OPERAND0_64();
+            current_executor->region_tuple_entries++;
+            PyObject *list = PyStackRef_AsPyObjectBorrow(container);
+            PyObject *index_o = PyStackRef_AsPyObjectBorrow(index);
+            PyObject *right = PyStackRef_AsPyObjectBorrow(GETLOCAL((uintptr_t)local));
+            bool valid = PyList_CheckExact(list) && PyLong_CheckExact(index_o) &&
+            _PyLong_IsCompact((PyLongObject *)index_o) &&
+            PyTuple_CheckExact(right) && PyTuple_GET_SIZE(right) == 2;
+            PyObject *first = NULL, *second = NULL;
+            if (valid) {
+                Py_ssize_t a = _PyLong_CompactValue((PyLongObject *)index_o);
+                Py_ssize_t b = a + 1;
+                Py_ssize_t size = PyList_GET_SIZE(list);
+                if (a < 0) {
+                    a += size;
+                }
+                if (b < 0) {
+                    b += size;
+                }
+                valid = (size_t)a < (size_t)size && (size_t)b < (size_t)size;
+                if (valid) {
+                    first = PyList_GET_ITEM(list, a);
+                    second = PyList_GET_ITEM(list, b);
+                    valid = _PyRegion_EqualityType(Py_TYPE(first)) &&
+                    _PyRegion_EqualityType(Py_TYPE(second)) &&
+                    Py_TYPE(first) == Py_TYPE(PyTuple_GET_ITEM(right, 0)) &&
+                    Py_TYPE(second) == Py_TYPE(PyTuple_GET_ITEM(right, 1));
+                }
+            }
+            if (!valid) {
+                current_executor->region_tuple_guard_exits++;
+                if (true) {
+                    UOP_STAT_INC(uopcode, miss);
+                    _tos_cache1 = index;
+                    _tos_cache0 = container;
+                    SET_CURRENT_CACHED_VALUES(2);
+                    JUMP_TO_JUMP_TARGET();
+                }
+            }
+            bool equal = _PyRegion_ImmutableEqual(first, PyTuple_GET_ITEM(right, 0)) &&
+            _PyRegion_ImmutableEqual(second, PyTuple_GET_ITEM(right, 1));
+            current_executor->region_tuple_list_entries++;
+            res = (equal ^ oparg) ? PyStackRef_True : PyStackRef_False;
+            c = container;
+            i = index;
+            _tos_cache2 = i;
+            _tos_cache1 = c;
+            _tos_cache0 = res;
+            SET_CURRENT_CACHED_VALUES(3);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            break;
+        }
+
+        case _COMPARE_LIST_PAIR_1_r23: {
+            CHECK_CURRENT_CACHED_VALUES(2);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            _PyStackRef index;
+            _PyStackRef container;
+            _PyStackRef res;
+            _PyStackRef c;
+            _PyStackRef i;
+            _PyStackRef _stack_item_0 = _tos_cache0;
+            _PyStackRef _stack_item_1 = _tos_cache1;
+            oparg = 1;
+            assert(oparg == CURRENT_OPARG());
+            index = _stack_item_1;
+            container = _stack_item_0;
+            PyObject *local = (PyObject *)CURRENT_OPERAND0_64();
+            current_executor->region_tuple_entries++;
+            PyObject *list = PyStackRef_AsPyObjectBorrow(container);
+            PyObject *index_o = PyStackRef_AsPyObjectBorrow(index);
+            PyObject *right = PyStackRef_AsPyObjectBorrow(GETLOCAL((uintptr_t)local));
+            bool valid = PyList_CheckExact(list) && PyLong_CheckExact(index_o) &&
+            _PyLong_IsCompact((PyLongObject *)index_o) &&
+            PyTuple_CheckExact(right) && PyTuple_GET_SIZE(right) == 2;
+            PyObject *first = NULL, *second = NULL;
+            if (valid) {
+                Py_ssize_t a = _PyLong_CompactValue((PyLongObject *)index_o);
+                Py_ssize_t b = a + 1;
+                Py_ssize_t size = PyList_GET_SIZE(list);
+                if (a < 0) {
+                    a += size;
+                }
+                if (b < 0) {
+                    b += size;
+                }
+                valid = (size_t)a < (size_t)size && (size_t)b < (size_t)size;
+                if (valid) {
+                    first = PyList_GET_ITEM(list, a);
+                    second = PyList_GET_ITEM(list, b);
+                    valid = _PyRegion_EqualityType(Py_TYPE(first)) &&
+                    _PyRegion_EqualityType(Py_TYPE(second)) &&
+                    Py_TYPE(first) == Py_TYPE(PyTuple_GET_ITEM(right, 0)) &&
+                    Py_TYPE(second) == Py_TYPE(PyTuple_GET_ITEM(right, 1));
+                }
+            }
+            if (!valid) {
+                current_executor->region_tuple_guard_exits++;
+                if (true) {
+                    UOP_STAT_INC(uopcode, miss);
+                    _tos_cache1 = index;
+                    _tos_cache0 = container;
+                    SET_CURRENT_CACHED_VALUES(2);
+                    JUMP_TO_JUMP_TARGET();
+                }
+            }
+            bool equal = _PyRegion_ImmutableEqual(first, PyTuple_GET_ITEM(right, 0)) &&
+            _PyRegion_ImmutableEqual(second, PyTuple_GET_ITEM(right, 1));
+            current_executor->region_tuple_list_entries++;
+            res = (equal ^ oparg) ? PyStackRef_True : PyStackRef_False;
+            c = container;
+            i = index;
+            _tos_cache2 = i;
+            _tos_cache1 = c;
+            _tos_cache0 = res;
+            SET_CURRENT_CACHED_VALUES(3);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            break;
+        }
+
+        case _COMPARE_LIST_PAIR_r23: {
+            CHECK_CURRENT_CACHED_VALUES(2);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            _PyStackRef index;
+            _PyStackRef container;
+            _PyStackRef res;
+            _PyStackRef c;
+            _PyStackRef i;
+            _PyStackRef _stack_item_0 = _tos_cache0;
+            _PyStackRef _stack_item_1 = _tos_cache1;
+            oparg = CURRENT_OPARG();
+            index = _stack_item_1;
+            container = _stack_item_0;
+            PyObject *local = (PyObject *)CURRENT_OPERAND0_64();
+            current_executor->region_tuple_entries++;
+            PyObject *list = PyStackRef_AsPyObjectBorrow(container);
+            PyObject *index_o = PyStackRef_AsPyObjectBorrow(index);
+            PyObject *right = PyStackRef_AsPyObjectBorrow(GETLOCAL((uintptr_t)local));
+            bool valid = PyList_CheckExact(list) && PyLong_CheckExact(index_o) &&
+            _PyLong_IsCompact((PyLongObject *)index_o) &&
+            PyTuple_CheckExact(right) && PyTuple_GET_SIZE(right) == 2;
+            PyObject *first = NULL, *second = NULL;
+            if (valid) {
+                Py_ssize_t a = _PyLong_CompactValue((PyLongObject *)index_o);
+                Py_ssize_t b = a + 1;
+                Py_ssize_t size = PyList_GET_SIZE(list);
+                if (a < 0) {
+                    a += size;
+                }
+                if (b < 0) {
+                    b += size;
+                }
+                valid = (size_t)a < (size_t)size && (size_t)b < (size_t)size;
+                if (valid) {
+                    first = PyList_GET_ITEM(list, a);
+                    second = PyList_GET_ITEM(list, b);
+                    valid = _PyRegion_EqualityType(Py_TYPE(first)) &&
+                    _PyRegion_EqualityType(Py_TYPE(second)) &&
+                    Py_TYPE(first) == Py_TYPE(PyTuple_GET_ITEM(right, 0)) &&
+                    Py_TYPE(second) == Py_TYPE(PyTuple_GET_ITEM(right, 1));
+                }
+            }
+            if (!valid) {
+                current_executor->region_tuple_guard_exits++;
+                if (true) {
+                    UOP_STAT_INC(uopcode, miss);
+                    _tos_cache1 = index;
+                    _tos_cache0 = container;
+                    SET_CURRENT_CACHED_VALUES(2);
+                    JUMP_TO_JUMP_TARGET();
+                }
+            }
+            bool equal = _PyRegion_ImmutableEqual(first, PyTuple_GET_ITEM(right, 0)) &&
+            _PyRegion_ImmutableEqual(second, PyTuple_GET_ITEM(right, 1));
+            current_executor->region_tuple_list_entries++;
+            res = (equal ^ oparg) ? PyStackRef_True : PyStackRef_False;
+            c = container;
+            i = index;
+            _tos_cache2 = i;
+            _tos_cache1 = c;
+            _tos_cache0 = res;
+            SET_CURRENT_CACHED_VALUES(3);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            break;
+        }
+
         case _COMPARE_OP_r21: {
             CHECK_CURRENT_CACHED_VALUES(2);
             ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);

@@ -1074,3 +1074,44 @@ build-jit/python -m test test_capi.test_opt_regions test_capi.test_opt test_tier
   同じborrowed localのexact list/int、両indexの範囲、exact tupleと対応するimmutable要素型を
   最初のsubscriptで検査する。失敗時は最初の添字操作へ戻し、second-indexの例外やsubclassの
   callback順を保持する。まずこの契約を実装・テストし、実coverageとBPEの差を確認する。
+
+### listの二つの添字操作とtuple比較
+
+- NaNテストの訂正後はdebug154 testsとnative region55 tests・3 skipsが成功。
+  ローカルcommitは`34be1000494`、実装直前のrange改善は`65c1465643c`。
+  全tracked source/build artifactのhashを`range-final-*-hashes.json`と
+  `range-final-manifest.json`へ保存し、比較用binary `python-suite-range-final`も保持した。
+- post-abstractの最大64 uopsを検査し、同じborrowed list/index localからの
+  二つのsubscriptと`i+1`、既存tuple比較を`_COMPARE_LIST_PAIR`へ融合した。
+  一時要素の参照とindexのboxを省き、両indexと対応するimmutable型を最初に検査する。
+  indexの負数補正は二つそれぞれに行い、`i=-1`の次が0になるPythonの意味を保持する。
+- 成功数は`tuple_list_entries`に分けて記録する。guard失敗は既存tuple counterへ加算し、
+  最初の添字操作でfallbackする。recorded referencesは通常のtracer cleanupまで保持。
+- debug region59 + generator99の158 testsが成功。EQ/NE、bytes/str/big int/float/NaN、
+  負のindex、cache外のindex、第一・第二indexの範囲外、要素・index・list・right tupleの
+  subclass callbackと非boolの比較結果を確認した。native buildへ進む。
+- listを同じloop内で書き換える検証も追加し、debug159 tests、native388 tests・7 skipsが成功。
+  BPEのnative probeはtuple_list_entries 5,512,640、tuple guard失敗0。全tuple entries
+  5,515,130の大半が新経路を使い、len entries 15,437,472も保持していた。
+  3 blocks・各10値でmain/前版/新実装をrotateする比較を実行中。
+- 同じprobeで`enumerate(zip(...))`に対するenum guard失敗が1,033,510回と判明した。
+  list専用guardでunsupported iteratorも毎回traceから外しているため、次に通常のenum_nextを
+  その場で呼ぶfallbackを検討する。先に現在のlist比較の効果を保存し、別変更として検証する。
+- 共有のimmutable equality helperも確認した。非compact intだけ汎用richcompareを呼んで
+  いたが、そのAPIはC再帰limitで例外を返し得るため「失敗しない」というassertと整合しない。
+  list比較の測定完了後に、符号・digit数・digitsの直接比較へ置き換え、別objectの大整数を
+  対象にした一致/不一致を追加検証する。
+- list比較の3 blocksは前版比0.98062、main比0.91307。全90値・起動時間・identityを
+  `list-pair-bpe-rows.json`へ保存した。約1.9%の追加短縮で、これ単独では全体の半減に足りない。
+  比較時のbinaryと差分は`python-suite-list-pair-initial`、`list-pair-initial-manifest.json`へ保存。
+- 共有helperの大整数比較を、符号・digit数・digitsの直接比較へ変更した。100-bit/4,096-bitの
+  別objectについて、等値、隣接値、符号違い、digit数違いを両方のtuple経路で検証する。
+  この修正を含む最終debug/native buildを実行中。
+- 最終region/generatorはdebug160 tests、native389 tests・7 skipsが成功。一緒に走らせた
+  別debug regrtestは同じworker名の一時directoryを共有し、片方の終了時にcwdが消えたため
+  5 suitesが失敗した。並行tool実行のPID namespaceが同じworker PIDを使うためで、ログの
+  FileExistsError/FileNotFoundErrorを保存した。専用tempdirでdebug8 suitesを直列に再実行する。
+  今後の衝突を避ける手順をAGENTS.mdにも追記した。
+- 専用tempdirでのdebug8 suitesは505 tests成功。元の失敗ログは保持し、この直列結果を
+  関連検証の結果とする。4生成ファイルの再生成同一性、静的check、diff checkを済ませて
+  ローカルcommitへまとめ、次にenumerateのunsupported内側iteratorのfallbackを改善する。

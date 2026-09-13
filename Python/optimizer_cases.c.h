@@ -3081,6 +3081,22 @@
             break;
         }
 
+        case _COMPARE_LIST_PAIR: {
+            JitOptRef res;
+            JitOptRef c;
+            JitOptRef i;
+            res = sym_new_not_null(ctx);
+            c = sym_new_not_null(ctx);
+            i = sym_new_not_null(ctx);
+            CHECK_STACK_BOUNDS(1);
+            stack_pointer[-2] = res;
+            stack_pointer[-1] = c;
+            stack_pointer[0] = i;
+            stack_pointer += 1;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            break;
+        }
+
         case _COMPARE_OP: {
             JitOptRef right;
             JitOptRef left;

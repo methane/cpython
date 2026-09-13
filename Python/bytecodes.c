@@ -3557,6 +3557,50 @@ dummy_func(
             INPUTS_DEAD();
         }
 
+        replicate(2) tier2 op(_COMPARE_LIST_PAIR, (local/4, container, index -- res, c, i)) {
+            current_executor->region_tuple_entries++;
+            PyObject *list = PyStackRef_AsPyObjectBorrow(container);
+            PyObject *index_o = PyStackRef_AsPyObjectBorrow(index);
+            PyObject *right = PyStackRef_AsPyObjectBorrow(GETLOCAL((uintptr_t)local));
+            bool valid = PyList_CheckExact(list) && PyLong_CheckExact(index_o) &&
+                _PyLong_IsCompact((PyLongObject *)index_o) &&
+                PyTuple_CheckExact(right) && PyTuple_GET_SIZE(right) == 2;
+            PyObject *first = NULL, *second = NULL;
+            if (valid) {
+                Py_ssize_t a = _PyLong_CompactValue((PyLongObject *)index_o);
+                Py_ssize_t b = a + 1;
+                Py_ssize_t size = PyList_GET_SIZE(list);
+                if (a < 0) {
+                    a += size;
+                }
+                if (b < 0) {
+                    b += size;
+                }
+                valid = (size_t)a < (size_t)size && (size_t)b < (size_t)size;
+                if (valid) {
+                    first = PyList_GET_ITEM(list, a);
+                    second = PyList_GET_ITEM(list, b);
+                    valid = _PyRegion_EqualityType(Py_TYPE(first)) &&
+                        _PyRegion_EqualityType(Py_TYPE(second)) &&
+                        Py_TYPE(first) == Py_TYPE(PyTuple_GET_ITEM(right, 0)) &&
+                        Py_TYPE(second) == Py_TYPE(PyTuple_GET_ITEM(right, 1));
+                }
+            }
+            if (!valid) {
+                current_executor->region_tuple_guard_exits++;
+                EXIT_IF(true);
+            }
+            /* The unchanged list local owns both elements throughout these
+             * callback-free comparisons, so no temporary references escape. */
+            bool equal = _PyRegion_ImmutableEqual(first, PyTuple_GET_ITEM(right, 0)) &&
+                         _PyRegion_ImmutableEqual(second, PyTuple_GET_ITEM(right, 1));
+            current_executor->region_tuple_list_entries++;
+            res = (equal ^ oparg) ? PyStackRef_True : PyStackRef_False;
+            c = container;
+            i = index;
+            INPUTS_DEAD();
+        }
+
         op(_COMPARE_OP, (left, right -- res)) {
             PyObject *left_o = PyStackRef_AsPyObjectBorrow(left);
             PyObject *right_o = PyStackRef_AsPyObjectBorrow(right);

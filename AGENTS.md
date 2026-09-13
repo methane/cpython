@@ -184,6 +184,11 @@ generated executor/native assembly for separate multiply and update instructions
 the cancellation case `-1.0 + (1.0 + 2**-27) * (1.0 - 2**-27)` is a reusable
 regression witness.
 
+Separate regrtest invocations sharing a build directory must run sequentially
+or use distinct `--tempdir` directories. Execution tools can use separate PID
+namespaces with the same worker PID while sharing the filesystem; the default
+worker directory can then collide and be removed by another test process.
+
 Run focused checks from each relevant build, including:
 
 ```sh

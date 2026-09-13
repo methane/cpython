@@ -772,9 +772,12 @@ _PyRegion_ImmutableEqual(PyObject *left, PyObject *right)
         return _PyLong_CompactValue((PyLongObject *)left) ==
                _PyLong_CompactValue((PyLongObject *)right);
     }
-    int equal = PyObject_RichCompareBool(left, right, Py_EQ);
-    assert(equal >= 0);
-    return equal;
+    PyLongObject *a = (PyLongObject *)left;
+    PyLongObject *b = (PyLongObject *)right;
+    Py_ssize_t digits = _PyLong_DigitCount(a);
+    return _PyLong_SameSign(a, b) && digits == _PyLong_DigitCount(b) &&
+           memcmp(a->long_value.ob_digit, b->long_value.ob_digit,
+                  (size_t)digits * sizeof(digit)) == 0;
 }
 
 /* A fixed pair of checked operations, not a runtime IR interpreter. The

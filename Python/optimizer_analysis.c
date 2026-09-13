@@ -1034,6 +1034,109 @@ eliminate_trivial_frames(_PyUOpInstruction *buffer, int length)
 }
 
 static void
+fuse_list_pair_comparisons(_PyUOpInstruction *buffer, int length)
+{
+    if (!region_enabled("PYTHON_TIER2_BUILTIN_REGIONS")) {
+        return;
+    }
+    for (int start = 0; start < length; start++) {
+        if (region_opcode(&buffer[start]) != _LOAD_FAST_BORROW) {
+            continue;
+        }
+        int list_local = buffer[start].oparg;
+        int end = Py_MIN(start + 64, length);
+        int pc = start + 1;
+#define PAIR_NEXT() (pc = trivial_call_skip(buffer, pc, end), \
+                    pc < end ? region_opcode(&buffer[pc]) : -1)
+#define PAIR_EXPECT(OP) do { \
+    if (PAIR_NEXT() != (OP)) goto next_pair; \
+    pc++; \
+} while (0)
+#define PAIR_GUARDS() do { \
+    int op; \
+    while ((op = PAIR_NEXT()) == _GUARD_TOS_INT || \
+           op == _GUARD_NOS_INT || op == _GUARD_NOS_LIST) { pc++; } \
+} while (0)
+        if (PAIR_NEXT() != _LOAD_FAST_BORROW) {
+            continue;
+        }
+        int index_local = buffer[pc++].oparg;
+        PAIR_GUARDS();
+        int first = pc;
+        PAIR_EXPECT(_BINARY_OP_SUBSCR_LIST_INT);
+        if (PAIR_NEXT() != _POP_TOP_NOP) {
+            continue;
+        }
+        int index_cleanup = pc++;
+        if (PAIR_NEXT() != _POP_TOP_NOP) {
+            continue;
+        }
+        int list_cleanup = pc++;
+        if (PAIR_NEXT() != _LOAD_FAST_BORROW || buffer[pc++].oparg != list_local ||
+            PAIR_NEXT() != _LOAD_FAST_BORROW || buffer[pc++].oparg != index_local) {
+            continue;
+        }
+        int constant = PAIR_NEXT();
+        if (constant == _LOAD_SMALL_INT && buffer[pc].oparg == 1) {
+            pc++;
+        }
+        else if (constant == _LOAD_CONST_INLINE_BORROW &&
+                 (PyObject *)buffer[pc].operand0 == _PyLong_GetOne()) {
+            pc++;
+        }
+        else {
+            continue;
+        }
+        PAIR_GUARDS();
+        PAIR_EXPECT(_BINARY_OP_ADD_INT);
+        PAIR_EXPECT(_POP_TOP_NOP);
+        PAIR_EXPECT(_POP_TOP_NOP);
+        PAIR_GUARDS();
+        PAIR_EXPECT(_BINARY_OP_SUBSCR_LIST_INT);
+        int cleanup = PAIR_NEXT();
+        if (cleanup != _POP_TOP_INT && cleanup != _POP_TOP_NOP) {
+            continue;
+        }
+        pc++;
+        PAIR_EXPECT(_POP_TOP_NOP);
+        int compare = PAIR_NEXT();
+        if (compare != _COMPARE_TUPLE_PAIR && compare != _COMPARE_TUPLE_PAIR_0 &&
+            compare != _COMPARE_TUPLE_PAIR_1) {
+            continue;
+        }
+        int operation = buffer[pc].oparg;
+        uint64_t tuple_local = buffer[pc++].operand0;
+        for (int i = 0; i < 2; i++) {
+            int pop = PAIR_NEXT();
+            if (pop != _POP_TOP && pop != _POP_TOP_NOP) {
+                goto next_pair;
+            }
+            pc++;
+        }
+        /* Both list/index reads remain borrowed locals. No effects or stores
+         * occur between the first subscript and the final tuple cleanup. The
+         * replacement checks both indices before comparison, including when
+         * the first elements differ, and exits at the original first lookup. */
+        buffer[first].opcode = _COMPARE_LIST_PAIR;
+        buffer[first].oparg = operation;
+        buffer[first].operand0 = tuple_local;
+        for (int i = first + 1; i < pc; i++) {
+            if (!(_PyUop_Flags[buffer[i].opcode] & HAS_RECORDS_VALUE_FLAG)) {
+                buffer[i].opcode = _NOP;
+            }
+        }
+        buffer[index_cleanup].opcode = _POP_TOP_NOP;
+        buffer[list_cleanup].opcode = _POP_TOP_NOP;
+        start = pc - 1;
+next_pair:
+        ;
+#undef PAIR_GUARDS
+#undef PAIR_EXPECT
+#undef PAIR_NEXT
+    }
+}
+
+static void
 inline_enumerate_list(_PyUOpInstruction *buffer, int length)
 {
     if (!region_enabled("PYTHON_TIER2_BUILTIN_REGIONS")) {
@@ -1087,6 +1190,7 @@ _Py_uop_analyze_and_optimize(
     assert(length > 0);
 
     eliminate_trivial_frames(output, length);
+    fuse_list_pair_comparisons(output, length);
     inline_enumerate_list(output, length);
     length = remove_unneeded_uops(output, length);
     assert(length > 0);

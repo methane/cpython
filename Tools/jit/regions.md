@@ -141,6 +141,17 @@ identity shortcut is retained for NaNs. Other lengths, mixed types (including
 comparisons that can emit `BytesWarning`), and subclasses exit at the original
 `BUILD_TUPLE`. `tuple_entries` and `tuple_guard_exits` report this path.
 
+When both left elements come from `items[i]` and `items[i + 1]`, the builtin
+group can also fuse the lookups and index addition into the comparison.
+Both reads must use the same borrowed list/index locals, with no intervening
+effects or stores. The receiver must be an exact list and the index an exact
+compact int. Both indices are checked before comparing either element; negative
+indices are normalized independently. The existing exact-tuple and immutable
+element-type checks still apply. Failure resumes at the first subscript, so
+second-index errors and subclass callbacks retain their original evaluation
+order. List contents are read on each execution. `tuple_list_entries` counts
+successful fused lookups within `tuple_entries`.
+
 `str.startswith` and `str.endswith` accept an exact str receiver, an exact str
 single argument, and default bounds. The optimizer verifies the actual builtin
 descriptor identity and preserves the existing call guards and periodic check.
@@ -150,7 +161,7 @@ Tuple affixes, explicit bounds, keywords, and overrides use ordinary calls.
 
 `PYTHON_TIER2_CALL_REGIONS=1` removes matched inlined call/return frames when
 the entire body only returns an argument or an immortal constant. Recognition
-is limited to 24 uops and four explicit arguments, after abstract interpretation.
+is limited to 64 uops and four explicit arguments, after abstract interpretation.
 The existing function version, argument count, recursion, and stack checks
 remain. Before consuming the call stack, the replacement checks the callee's
 instrumentation version against the eval breaker; a mismatch returns to the
