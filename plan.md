@@ -2709,3 +2709,33 @@ build-jit/python -m test test_capi.test_opt_regions test_capi.test_opt test_tier
   追加する。その後、BPE/Raytraceで残るコストと回帰を、固定入力のnative profileから
   改めて切り分ける。タプルのidentityや例外時stateを変える再利用は導入しない。
   目標算術平均0.5は未達で、goalは継続する。
+
+
+### stencilヘッダー依存の修復
+
+- `Include/internal/pycore_optimizer.h`をPOSIXの`JIT_DEPS`、Windowsの`_JITSources`、
+  `Tools/jit/_targets.py`のdigestへ追加した。ヘッダーだけを書き換えた一時source treeで
+  digestが安定して再現し、内容変更後に変わるoffline testも追加した。
+- 修正前に生成された`build-jit/Makefile`から通常の`make -n .jit-stamp`を実行すると、
+  Makefileを再構成した後に`Tools/jit/build.py`と`.jit-stamp`更新を自動で予定した。
+  実際の通常buildでもheaderより新しいstencilを13:05 UTCに生成し、依存修正が
+  強制再生成なしで働くことを確認した。最初のsystem Python 3.13による生成は約10分間
+  生成物が更新されず停止したため中断し、記録済みの`build-tier2-debug/python`を
+  `PYTHON_FOR_REGEN`に固定すると約36秒で完了した。
+- 再生成時、`_GUARD_GLOBALS_VERSION_AND_IDENTITY`の64-bit cache operandが生成Cでは
+  `PyObject *`として宣言され、32-bitのdict keys versionと直接比較される警告を発見した。
+  cache幅とoperand配置は変えず、`uintptr_t`経由で`uint32_t expected_version`へ明示変換して
+  比較するよう修正した。再生成された4 stack-cache replicasすべてに同じ変換が入り、
+  対象警告は消えた。
+- PGO/LTOなしでdebug Tier-2とnative JITを再構築。native binaryは
+  `9647e7da986cd96a820f1c76c7d3a3e49d23a02fa0f8b5d21f2127904161afba`、
+  `PYTHON_JIT=1`でavailable/enabledともtrue。debugの`test_tier3`、`test_capi.test_opt`、
+  digest testは336 tests（3 skips）、regionは200 tests成功。native JIT有効は同じ
+  4 filesで536 tests（14 skips）、無効経路は335 tests（4 skips）成功した。
+  stale stencil時の410 failuresは再発せず、diff checkも成功した。
+- この修復はbuild correctnessであり、最新の性能値0.6564989を更新しない。ローカル
+  checkpointへ保存後、固定入力・固定CPUでBPEとRaytraceのnative profileを取り直す。
+  まずexecutor coverage/counterとperf symbolsを対応させ、呼び出し境界、lookup、allocation、
+  refcountのどれが残り時間を占めるかを決める。次の変更はprofileで支配的な一経路に限定し、
+  機能test、native counter/code、対応するbefore/after測定の順に採否を判断する。
+  目標算術平均0.5は未達のためgoalを継続する。

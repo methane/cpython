@@ -28,6 +28,7 @@ TOOLS = TOOLS_JIT.parent
 CPYTHON = TOOLS.parent
 EXTERNALS = CPYTHON / "externals"
 PYTHON_EXECUTOR_CASES_C_H = CPYTHON / "Python" / "executor_cases.c.h"
+PYCORE_OPTIMIZER_H = CPYTHON / "Include" / "internal" / "pycore_optimizer.h"
 TOOLS_JIT_TEMPLATE_C = TOOLS_JIT / "template.c"
 
 ASYNCIO_RUNNER = asyncio.Runner()
@@ -102,6 +103,7 @@ class _Target(typing.Generic[_S, _R]):
         hasher.update(self.cflags.encode())
         # These dependencies are also reflected in _JITSources in regen.targets:
         hasher.update(PYTHON_EXECUTOR_CASES_C_H.read_bytes())
+        hasher.update(PYCORE_OPTIMIZER_H.read_bytes())
         hasher.update((self.pyconfig_dir / "pyconfig.h").read_bytes())
         for dirpath, _, filenames in sorted(os.walk(TOOLS_JIT)):
             # Exclude cache files from digest computation to ensure reproducible builds.

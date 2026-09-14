@@ -209,14 +209,15 @@ generated executor/native assembly for separate multiply and update instructions
 the cancellation case `-1.0 + (1.0 + 2**-27) * (1.0 - 2**-27)` is a reusable
 regression witness.
 
-A header-only change used by stencils (for example, moving fields in
-`Include/internal/pycore_optimizer.h`) can be missed by both `JIT_DEPS` and
-the stencil input digest when `Python/executor_cases.c.h` is unchanged.
-After such a change, run the configured `Tools/jit/build.py` command with
-`--force`, keeping its target triple, output/config directories, LLVM prefix,
-and C flags, then relink the native build. Check native counters/offsets as
-well as Python results: a successful ordinary build can still contain stale
-struct offsets. Do not manually advance `.jit-stamp` to bypass regeneration.
+`Include/internal/pycore_optimizer.h` is an explicit stencil dependency in the
+Make and Windows regeneration inputs and in the stencil digest.  Its layout
+changes therefore trigger regeneration.  When a different header begins to
+affect stencil code, add it to all three dependency lists before relying on an
+ordinary incremental build.  Until then, use the configured
+`Tools/jit/build.py --force` command for that header, keeping its target triple,
+output/config directories, LLVM prefix, and C flags, then relink the native
+build. Check native counters/offsets as well as Python results. Do not manually
+advance `.jit-stamp` to bypass regeneration.
 
 Separate regrtest invocations sharing a build directory must run sequentially
 or use distinct `--tempdir` directories. Execution tools can use separate PID
