@@ -21,6 +21,18 @@ watch dependency also guards the borrowed namespace pointer's lifetime.
 Region rewrites that move this guard must preserve both operands; in
 particular, float-range lowering keeps it in the emitted prefix.
 
+With `PYTHON_TIER2_CALL_REGIONS=1`, folded globals register separate Bloom
+dependencies for the dictionary structure and each referenced unicode key
+hash. Replacing an unrelated existing value can retain the executor; replacing
+a referenced value invalidates it before the old object is released. Other
+events (including add/delete/clear/deallocation and non-exact-unicode keys)
+invalidate structural dependencies. Legacy raw-dictionary dependencies still
+invalidate on every event, including those from module-attribute folding.
+The watcher remains subscribed while named dependencies may survive. Hash
+collisions can cause extra invalidations, never omitted ones. The existing
+mutation count saturates at its old limit; named folding can continue above
+that limit. No references are added to keep global values alive.
+
 Integer regions contain exactly two dependent add/subtract/multiply operations,
 optionally followed by a comparison. The first two inputs are retained on the
 operand stack; further inputs are unchanged local slots. All inputs must be

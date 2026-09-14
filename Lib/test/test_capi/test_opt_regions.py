@@ -1901,12 +1901,12 @@ case.doCleanups()
             monitoring.register_callback(tool, monitoring.events.LINE, None)
             monitoring.free_tool_id(tool)
 
-    def warm_named_globals(self):
+    def warm_named_globals(self, unrelated="unrelated"):
         self.enterContext(mock.patch.dict(
             os.environ, {"PYTHON_TIER2_CALL_REGIONS": "1"}))
         ns = {}
         exec("class Box:\n    pass\n"
-             "stable = Box()\nstable.value = 7\nunrelated = 0\n"
+             f"stable = Box()\nstable.value = 7\n{unrelated} = 0\n"
              "def read(n):\n"
              "    total = 0\n"
              "    for _ in range(n):\n"
@@ -1917,6 +1917,156 @@ case.doCleanups()
         ex = next(iter(get_all_executors(run)))
         self.assertTrue(ex.is_valid())
         return run, ex, ns
+
+    def test_named_globals_unrelated_replacements(self):
+        # Bloom collisions may invalidate unrelated entries. Require retention
+        # for at least one of several namespaces/keys, while checking results
+        # and required invalidation in every case.
+        retained = False
+        for attempt in range(8):
+            name = f"unrelated_{attempt}"
+            run, ex, ns = self.warm_named_globals(name)
+            for value in range(1, 17):
+                ns[name] = value
+                self.assertEqual(run(8), 56)
+            retained |= ex.is_valid()
+            # The used value must invalidate before its old reference dies,
+            # even after many updates to unrelated entries.
+            old = weakref.ref(ns["stable"])
+            replacement = ns["Box"]()
+            replacement.value = 11
+            ns["stable"] = replacement
+            self.assertFalse(ex.is_valid())
+            self.assertIsNone(old())
+            self.assertEqual(run(8), 88)
+        self.assertTrue(retained)
+
+    def test_named_globals_recompile_after_mutations(self):
+        run, ex, ns = self.warm_named_globals()
+        for value in range(16):
+            replacement = ns["Box"]()
+            replacement.value = value
+            ns["stable"] = replacement
+            self.assertFalse(ex.is_valid())
+            self.assertEqual(run(TIER2_THRESHOLD), value * TIER2_THRESHOLD)
+            ex = next(iter(get_all_executors(run)))
+            self.assertTrue(ex.is_valid())
+        # Named folding still works past the old dictionary mutation limit.
+        self.assertIn("_GUARD_GLOBALS_VERSION_AND_IDENTITY",
+                      [uop[0] for uop in ex])
+        ns["unrelated"] = 99
+        self.assertEqual(run(8), 120)
+
+    def test_named_globals_legacy_dependency(self):
+        run, unused, ns = self.warm_named_globals()
+        exec("def legacy(n):\n"
+             "    total = 0\n"
+             "    for _ in range(n):\n        total += stable.value\n"
+             "    return total\n", ns)
+        run(TIER2_THRESHOLD)
+        named = next(iter(get_all_executors(run)))
+        legacy = ns["legacy"]
+        with mock.patch.dict(os.environ, {"PYTHON_TIER2_CALL_REGIONS": "0"}):
+            self.assertEqual(legacy(TIER2_THRESHOLD), 7 * TIER2_THRESHOLD)
+        old = next(iter(get_all_executors(legacy)))
+        self.assertTrue(old.is_valid())
+        ns["unrelated"] = 4
+        self.assertFalse(old.is_valid())
+        replacement = ns["Box"]()
+        replacement.value = 11
+        ns["stable"] = replacement
+        self.assertFalse(named.is_valid())
+        self.assertEqual(run(8), 88)
+        self.assertEqual(legacy(8), 88)
+
+    @support.nomemtest
+    def test_named_globals_invalidation_allocation_failure(self):
+        from test.support.import_helper import import_module
+
+        capi = import_module("_testcapi")
+        run, ex, ns = self.warm_named_globals()
+        old = weakref.ref(ns["stable"])
+        replacement = ns["Box"]()
+        replacement.value = 11
+        set_nomemory, clear = capi.set_nomemory, capi.remove_mem_hooks
+        set_nomemory(0, 1)
+        try:
+            # Collecting dependent executors needs an allocation. Failure
+            # must invalidate all executors without leaking MemoryError.
+            ns["stable"] = replacement
+        finally:
+            clear()
+        self.assertFalse(ex.is_valid())
+        self.assertIsNone(old())
+        self.assertEqual(run(8), 88)
+
+    def test_named_globals_finalizer_reentry(self):
+        self.enterContext(mock.patch.dict(
+            os.environ, {"PYTHON_TIER2_CALL_REGIONS": "1"}))
+        ns = {}
+        exec("events = []\nunrelated = 0\n"
+             "class Box:\n"
+             "    def __init__(self, value):\n        self.value = value\n"
+             "    def __del__(self):\n"
+             "        global unrelated\n"
+             "        if self.value == 7:\n"
+             "            unrelated = 13\n"
+             "            events.append(read(8))\n"
+             "stable = Box(7)\n"
+             "def read(n):\n"
+             "    total = 0\n"
+             "    for _ in range(n):\n        total += stable.value\n"
+             "    return total\n"
+             "def read_other(n):\n"
+             "    total = 0\n"
+             "    for _ in range(n):\n        total += unrelated\n"
+             "    return total\n", ns)
+        run, other = ns["read"], ns["read_other"]
+        run(TIER2_THRESHOLD)
+        other(TIER2_THRESHOLD)
+        first = next(iter(get_all_executors(run)))
+        second = next(iter(get_all_executors(other)))
+        old = weakref.ref(ns["stable"])
+        ns["stable"] = ns["Box"](11)
+        self.assertIsNone(old())
+        self.assertFalse(first.is_valid())
+        self.assertFalse(second.is_valid())
+        self.assertEqual(ns["events"], [88])
+        self.assertEqual(other(8), 104)
+
+    def test_named_globals_general_key(self):
+        run, ex, ns = self.warm_named_globals()
+        class Key:
+            def __hash__(self):
+                return hash("stable")
+            def __eq__(self, other):
+                return other == "stable"
+        replacement = ns["Box"]()
+        replacement.value = 23
+        ns[Key()] = replacement
+        self.assertFalse(ex.is_valid())
+        self.assertEqual(run(8), 184)
+
+    def test_named_globals_builtin_shadowing(self):
+        self.enterContext(mock.patch.dict(
+            os.environ, {"PYTHON_TIER2_CALL_REGIONS": "1"}))
+        retained = False
+        for attempt in range(8):
+            name = f"unrelated_{attempt}"
+            ns = {name: 0}
+            exec("def read(n):\n"
+                 "    total = 0\n"
+                 "    for _ in range(n):\n        total += len(())\n"
+                 "    return total\n", ns)
+            run = ns["read"]
+            self.assertEqual(run(TIER2_THRESHOLD), 0)
+            ex = next(iter(get_all_executors(run)))
+            ns[name] = 17
+            retained |= ex.is_valid()
+            ns["len"] = lambda value: 3
+            self.assertFalse(ex.is_valid())
+            self.assertEqual(run(8), 24)
+        self.assertTrue(retained)
 
     def test_global_guard_structure_and_lifetime(self):
         for mutation in ("add", "delete", "clear", "replace"):

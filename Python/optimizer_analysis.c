@@ -144,10 +144,17 @@ globals_watcher_callback(PyDict_WatchEvent event, PyObject* dict,
                          PyObject* key, PyObject* new_value)
 {
     RARE_EVENT_STAT_INC(watched_globals_modification);
-    assert(get_mutations(dict) < _Py_MAX_ALLOWED_GLOBALS_MODIFICATIONS);
-    _Py_Executors_InvalidateDependency(_PyInterpreterState_GET(), dict, 1);
-    increment_mutations(dict);
-    PyDict_Unwatch(GLOBALS_WATCHER_ID, dict);
+    bool value_only = event == PyDict_EVENT_MODIFIED && key != NULL && PyUnicode_CheckExact(key);
+    Py_hash_t hash = value_only ? PyObject_Hash(key) : 0;
+    assert(!value_only || hash != -1);
+    bool keep_watch = _Py_Executors_InvalidateGlobalDependency(
+        _PyInterpreterState_GET(), dict, hash, value_only);
+    if (get_mutations(dict) < _Py_MAX_ALLOWED_GLOBALS_MODIFICATIONS) {
+        increment_mutations(dict);
+    }
+    if (!keep_watch) {
+        PyDict_Unwatch(GLOBALS_WATCHER_ID, dict);
+    }
     return 0;
 }
 

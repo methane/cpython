@@ -1,9 +1,9 @@
 # CPython Tier 2：Linux上で行う2〜3日間の実装計画
 
 **現在の目標（2026-09-14）**：全6ベンチマークのmain比の**算術平均0.5以下**。
-開始時の480値は **0.7944918**。最新のglobals identity修正screen（3 blocks、3 builds、540値）は
-**0.6644558**（対応する直前版0.6653419）で、目標は未達。
-この段階は誤計算の修正で、全体の前版比0.9997148を速度改善とは断定しない。
+開始時の480値は **0.7944918**。最新の名前単位globals依存関係screen（3 blocks、3 builds、540値）は
+**0.6607413**（対応する直前版0.6672309）で、目標は未達。
+DeltaBlueは3 blockとも短縮し、全体の前版比算術平均は0.9934147。
 各blockの各scriptで10値の平均時間からcandidate/main比を求め、blocksと6 scriptを
 等重みの算術平均で集計する。途中screenは3 blocks、最終goal判定は4 blocksとする。
 入力・CLI・warmups=3・values=10・loops=1、固定main、PGO/LTOなしの比較条件を維持する。
@@ -2541,3 +2541,45 @@ build-jit/python -m test test_capi.test_opt_regions test_capi.test_opt test_tier
 - `PYTHON_JIT=1`のみの独立native再現でもコピー側152/元56を確認。修正は実験flagに
   限定していない。C/H一致を監査してローカルcheckpointへ保存する。次は
   `jit-artifacts/benchmark-suite/named-globals-design.md`の名前/構造dependency案を実装する。
+
+
+### globals名前単位dependency（prototype実装）
+
+- legacy dictionary dependencyと衝突を区別するdomain hashで、名前valueと辞書構造の
+  Bloom dependencyを追加した。CALL_REGIONSでglobalを定数化すると名前/構造を登録し、
+  namespace identity guardも保持する。builtinのshadowing検査は構造dependencyで保護する。
+  module属性のconstant化は初版ではlegacyのまま保守的に無効化する。
+- MODIFIEDかつexact unicode keyだけは名前とlegacyを無効化し、他eventは構造とlegacyを
+  無効化する。残る名前dependencyがあればwatchを維持し、mutation countは既存上限で
+  飽和する。閾値の数値は変更せず、global valueへの追加referenceも持たない。
+- invalidate helperは既存OOM時の全executor無効化を保持し、既存raw dependency APIも
+  同じhelperを使う。無関係なentryの16更新とused entry変更のtestを復帰させた。
+  現在prototypeで、生成/build/test/native/performanceはこれから検証する。
+
+- 名前単位prototypeは重点9 testsと関連13 filesの1,551 testsが両buildで成功
+  （debug4/native15 skips）。さらにdict/watchers関連3 filesの234 testsも両方成功した。
+  8生成物はbyte一致、Ruff/diff check成功。nativeは
+  `681e401eb5d4b312661e5a4514a22a680f06fd94a4b780d9c629bd8b5f4aaa2a`、
+  stencil hashはidentity版と完全一致。manifest/patch/保存binaryを記録した。
+- 独立再現でunrelated更新後も有効、used更新後は無効、繰り返し更新後も有効を確認。
+  コピーしたglobalsも正しい結果を返す。DeltaBlueの10値probeではcall_attr_entriesが
+  0/0/14/100/100/100/133/598/598/598（前版は最初8値0、その後48/99）。
+  14 executors/155,648 bytes。観測中に作られ破棄されたexecutorは数えられない限界は同じ。
+- DeltaBlue単独90値はafter/before0.967158/0.965862/0.956110、幾何平均0.963031、
+  全checksum一致・除外0。現在同じbinaryと固定mainで6本全体を3 blocks screen中。
+  named dependencyはmodule属性定数化には未適用であり、性能範囲を拡大解釈しない。
+
+- 最終11重点testsは両build成功。後から追加した2 testsはlegacy/named依存の併用と
+  無効化対象list確保のOOM fallbackを検証する。先の広域1,551件はこの2件追加前の結果。
+  保持testは8種類のnamespace/keyで必要な無効化と結果を毎回検査し、少なくとも一つが
+  保持されることを確認する。単一のBloom false positiveを機能不良とみなさない。
+- 全6本・3 blocks・540値は全checksum一致・除外0。main比算術平均は
+  **0.6672309→0.6607413**、after/before算術平均0.9934147。block別は
+  0.990363/0.994911/0.994970。DeltaBlueは0.955686/0.973587/0.973046、
+  平均0.967440で全block短縮。他5本は方向混在（BPE0.999160、Btree0.997842、
+  Hexiom0.997842、Raytrace0.995609、Spectral1.002595）。全結果を保持する。
+- named globals依存関係を採用する。全体の別時点の0.6644558との単純差は主張せず、
+  対応するcontrol比を使う。英語reportとregions契約にも設計・検証・結果を反映する。
+  次は`conditional-attribute-design.md`に整理した、整数属性の条件確認と属性返却を
+  組み合わせるcallee経路を検証する。既存の関数version・型watch・namespace依存と
+  元CALLへのfallbackを保持し、引数解放前に全guardを完了させる。

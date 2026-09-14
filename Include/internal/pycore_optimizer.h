@@ -372,9 +372,8 @@ _Py_BloomFilter_Init(_PyBloomFilter *bloom)
 }
 
 static inline void
-_Py_BloomFilter_Add(_PyBloomFilter *bloom, void *ptr)
+_Py_BloomFilter_AddHash(_PyBloomFilter *bloom, uint64_t hash)
 {
-    uint64_t hash = address_to_hash(ptr);
     assert(_Py_BLOOM_FILTER_K <= 8);
     for (int i = 0; i < _Py_BLOOM_FILTER_K; i++) {
         uint8_t bits = hash & 255;
@@ -382,6 +381,26 @@ _Py_BloomFilter_Add(_PyBloomFilter *bloom, void *ptr)
             (_Py_bloom_filter_word_t)1 << (bits & (_Py_BLOOM_FILTER_BITS_PER_WORD - 1));
         hash >>= 8;
     }
+}
+
+static inline void
+_Py_BloomFilter_Add(_PyBloomFilter *bloom, void *ptr)
+{
+    _Py_BloomFilter_AddHash(bloom, address_to_hash(ptr));
+}
+
+/* Separate value and structure dependencies from legacy object dependencies.
+ * Equal unicode keys have equal hashes; collisions only add invalidations. */
+static inline void
+_Py_BloomFilter_AddGlobal(_PyBloomFilter *bloom, void *dict,
+                         Py_hash_t key_hash, bool structure)
+{
+    uint64_t hash = address_to_hash(dict);
+    hash ^= structure ? UINT64_C(0x73c9b150ef248a6d) : UINT64_C(0x2f4a6198d7b3e05c);
+    hash *= (uint64_t)PyHASH_MULTIPLIER;
+    hash ^= (uint64_t)key_hash;
+    hash *= (uint64_t)PyHASH_MULTIPLIER;
+    _Py_BloomFilter_AddHash(bloom, hash);
 }
 
 static inline bool
@@ -400,11 +419,14 @@ bloom_filter_may_contain(const _PyBloomFilter *bloom, const _PyBloomFilter *hash
 
 #ifdef _Py_TIER2
 PyAPI_FUNC(void) _Py_Executors_InvalidateDependency(PyInterpreterState *interp, void *obj, int is_invalidation);
+PyAPI_FUNC(bool) _Py_Executors_InvalidateGlobalDependency(
+    PyInterpreterState *interp, void *dict, Py_hash_t key_hash, bool value_only);
 PyAPI_FUNC(void) _Py_Executors_InvalidateAll(PyInterpreterState *interp, int is_invalidation);
 PyAPI_FUNC(void) _Py_Executors_InvalidateCold(PyInterpreterState *interp);
 
 #else
 #  define _Py_Executors_InvalidateDependency(A, B, C) ((void)0)
+#  define _Py_Executors_InvalidateGlobalDependency(A, B, C, D) false
 #  define _Py_Executors_InvalidateAll(A, B) ((void)0)
 
 #endif

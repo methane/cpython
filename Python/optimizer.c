@@ -2828,12 +2828,10 @@ _Py_Executor_DependsOn(_PyExecutorObject *executor, void *obj)
  * May cause other executors to be invalidated as well.
  * Uses contiguous bloom filter array for cache-friendly scanning.
  */
-void
-_Py_Executors_InvalidateDependency(PyInterpreterState *interp, void *obj, int is_invalidation)
+static void
+invalidate_dependencies(PyInterpreterState *interp, const _PyBloomFilter *filter,
+                        const _PyBloomFilter *other, int is_invalidation)
 {
-    _PyBloomFilter obj_filter;
-    _Py_BloomFilter_Init(&obj_filter);
-    _Py_BloomFilter_Add(&obj_filter, obj);
     /* Scan contiguous bloom filter array */
     PyObject *invalidate = PyList_New(0);
     if (invalidate == NULL) {
@@ -2843,7 +2841,8 @@ _Py_Executors_InvalidateDependency(PyInterpreterState *interp, void *obj, int is
      * executors to invalidate first */
     for (size_t i = 0; i < interp->executor_count; i++) {
         assert(interp->executor_ptrs[i]->vm_data.valid);
-        if (bloom_filter_may_contain(&interp->executor_blooms[i], &obj_filter) &&
+        if ((bloom_filter_may_contain(&interp->executor_blooms[i], filter) ||
+             (other != NULL && bloom_filter_may_contain(&interp->executor_blooms[i], other))) &&
             PyList_Append(invalidate, (PyObject *)interp->executor_ptrs[i]))
         {
             goto error;
@@ -2863,6 +2862,37 @@ error:
     Py_XDECREF(invalidate);
     // If we're truly out of memory, wiping out everything is a fine fallback:
     _Py_Executors_InvalidateAll(interp, is_invalidation);
+}
+
+void
+_Py_Executors_InvalidateDependency(PyInterpreterState *interp, void *obj, int is_invalidation)
+{
+    _PyBloomFilter filter;
+    _Py_BloomFilter_Init(&filter);
+    _Py_BloomFilter_Add(&filter, obj);
+    invalidate_dependencies(interp, &filter, NULL, is_invalidation);
+}
+
+/* Return whether surviving named dependencies still require the dict watch.
+ * Legacy dependencies are invalidated for every event, as before. */
+bool
+_Py_Executors_InvalidateGlobalDependency(PyInterpreterState *interp, void *dict,
+                                       Py_hash_t key_hash, bool value_only)
+{
+    _PyBloomFilter legacy, changed, structure;
+    _Py_BloomFilter_Init(&legacy);
+    _Py_BloomFilter_Init(&changed);
+    _Py_BloomFilter_Init(&structure);
+    _Py_BloomFilter_Add(&legacy, dict);
+    _Py_BloomFilter_AddGlobal(&changed, dict, value_only ? key_hash : 0, !value_only);
+    _Py_BloomFilter_AddGlobal(&structure, dict, 0, true);
+    invalidate_dependencies(interp, &legacy, &changed, 1);
+    for (size_t i = 0; i < interp->executor_count; i++) {
+        if (bloom_filter_may_contain(&interp->executor_blooms[i], &structure)) {
+            return true;
+        }
+    }
+    return false;
 }
 
 /* Invalidate all executors */

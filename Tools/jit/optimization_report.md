@@ -884,8 +884,8 @@ The final native binary SHA256 is
 `globals-identity-*` and `copied-globals-*` preserve the local source/build
 identities, failing and successful reproductions, tests, and coverage.
 The compiler, stencil, frame-pointer, and no-PGO/no-LTO settings are unchanged.
-This is a correctness repair; changes to the granularity of globals
-invalidation remain a separate, unimplemented experiment.
+This checkpoint is a correctness repair; the subsequent section describes
+the separate change to the granularity of globals invalidation.
 
 
 The matched six-workload comparison completed with 540 matching checksums and
@@ -900,3 +900,71 @@ for this change. The repair is retained for correctness, without a general
 speedup claim. The 0.5 arithmetic-mean objective remains unmet. A native
 reproduction with only `PYTHON_JIT=1` also returned the correct copied and
 original results; the repair is not restricted to the experiment flags.
+
+
+## Named globals dependencies (2026-09-14 follow-up)
+
+The preceding watcher invalidated every executor depending on a globals
+dictionary whenever any entry changed. DeltaBlue replaces its `planner`
+global between constraint graphs; executors using other stable globals were
+also discarded. An isolated reproduction confirmed this in both fixed main
+and the preceding candidate. A value guard alone would not protect the
+lifetime of folded constants, and retaining arbitrary global values would
+change when their finalizers run. The implementation keeps dict notification
+as the invalidation boundary and makes dependencies more selective.
+
+Under `PYTHON_TIER2_CALL_REGIONS=1`, global constant folding adds domain-separated
+Bloom tokens for dictionary structure and `(dictionary, unicode key hash)`.
+Equal unicode keys share the latter token. A MODIFIED event with an exact
+unicode key invalidates its key token and all legacy raw-dictionary tokens.
+Every other event invalidates structural and legacy tokens. This covers
+addition and builtin shadowing, deletion, clear, deallocation, and general-key
+operations without invoking arbitrary key hashing in the watcher. False
+positives only discard additional executors. Module-attribute folding retains
+its original conservative raw-dictionary dependency in this version.
+
+After invalidation, surviving structural dependencies keep the watcher
+subscribed. The existing dictionary mutation count saturates at its unchanged
+limit; the opt-in named path can continue folding beyond that limit. The
+legacy path retains its limit. Both paths share the original collect-first
+invalidation implementation and its allocation-failure fallback to invalidating
+all executors. Namespace identity/version guards remain, and no value or
+dictionary references are added. There are no new executor fields or watchers.
+
+Seven new tests cover repeated unrelated changes, recompilation after repeated
+referenced-value changes, finalizer reentry, a general-key replacement, builtin
+shadowing, mixed legacy/named dependencies, and allocation failure during
+invalidation. Retention checks use several namespaces/keys to allow individual
+Bloom false positives; required invalidation and Python results are checked
+in every case. Both builds passed the final eleven focused tests including
+the previous namespace/lifetime/range regressions. Before the last two tests
+were added, thirteen related files passed 1,551 tests (4 debug / 15 native
+skips); a separate dict/watchers group passed 234 tests in each build. Eight
+generated files reproduced exactly. The native stencil header is byte-for-byte
+identical to the preceding identity-guard build.
+
+The unchanged DeltaBlue probe, with three warmups and ten values, observed
+attribute-call counts of 0, 0, 14, 100, 100, 100, 133, 598, 598, 598. The control
+had zero in its first eight values, followed by 48 and 99. The candidate ended
+with 14 reachable executors and 155,648 native bytes. These diagnostics show
+earlier observed use of the existing optimization, but cannot count an
+executor both created and destroyed within one measured call. Diagnostic
+elapsed times are not used as benchmark evidence.
+
+A separate matched DeltaBlue comparison gave ratios 0.967158, 0.965862, and
+0.956110 (geometric mean 0.963031) against the preceding candidate. The full
+six-workload screen also improved DeltaBlue in every block: 0.955686, 0.973587,
+and 0.973046 (arithmetic mean 0.967440). Other workloads had mixed directions,
+with means BPE 0.999160, B-tree 0.997842, Hexiom 0.997842, Raytrace 0.995609,
+and Spectral Norm 1.002595. All 540 checksums matched and no values were
+excluded. The suite's arithmetic mean relative to fixed main changed from
+**0.6672309 to 0.6607413** in this comparison; the mean against the preceding
+candidate was 0.9934147. The 0.5 objective remains unmet.
+
+The implementation is retained for the repeated DeltaBlue improvement. The
+candidate SHA256 is
+`681e401eb5d4b312661e5a4514a22a680f06fd94a4b780d9c629bd8b5f4aaa2a`.
+`named-globals-*` artifacts preserve source/build identities, tests, native
+coverage, and all original samples. Compiler flags, warmups, inputs, and the
+fixed main build are unchanged, with no PGO or LTO. Saved executables share
+current extension modules; their hashes are recorded by the coverage probes.
