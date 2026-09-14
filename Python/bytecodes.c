@@ -2632,6 +2632,11 @@ dummy_func(
             assert(keys->dk_kind == DICT_KEYS_UNICODE);
         }
 
+        tier2 op(_GUARD_BUILTINS_IDENTITY, (--)) {
+            /* Function versions alone do not identify the builtins mapping. */
+            DEOPT_IF(BUILTINS() != tstate->interp->builtins);
+        }
+
         op(_LOAD_GLOBAL_MODULE, (version/1, unused/1, index/1 -- res))
         {
             PyDictObject *dict = (PyDictObject *)GLOBALS();
@@ -5348,6 +5353,81 @@ dummy_func(
             Py_DECREF(code);
         }
 
+        replicate(5) tier2 op(_CALL_PY_LIST, (source/4, config/4, callable, self_or_null, args[oparg] -- res)) {
+            current_executor->region_call_entries++;
+            PyFunctionObject *func = (PyFunctionObject *)PyStackRef_AsPyObjectBorrow(callable);
+            assert(PyFunction_Check(func));
+            PyCodeObject *code = (PyCodeObject *)func->func_code;
+            uint64_t options = (uintptr_t)config;
+            uint64_t descriptor = (uintptr_t)source;
+            int has_self = !PyStackRef_IsNull(self_or_null);
+            int owner_index = descriptor & 7;
+            int index_arg = options & 7;
+            bool valid = _Py_atomic_load_uintptr_relaxed(&tstate->eval_breaker) ==
+                FT_ATOMIC_LOAD_UINTPTR_ACQUIRE(code->_co_instrumentation_version) &&
+                owner_index < oparg + has_self && index_arg < oparg + has_self;
+            PyObject *item = NULL;
+            Py_ssize_t size = 0;
+            if (valid && (options & 8)) {
+                valid = func->func_builtins == tstate->interp->builtins;
+                uint32_t version = options >> 24;
+                if (version) {
+                    PyDictObject *globals = (PyDictObject *)func->func_globals;
+                    valid = valid && PyDict_CheckExact(globals) &&
+                        globals->ma_keys->dk_version == version;
+                }
+            }
+            if (valid) {
+                _PyStackRef owner = has_self && owner_index == 0
+                    ? self_or_null : args[owner_index - has_self];
+                PyObject *list = _PyRegion_CallAttribute(owner, descriptor);
+                _PyStackRef sub = has_self && index_arg == 0
+                    ? self_or_null : args[index_arg - has_self];
+                PyObject *index_o = PyStackRef_AsPyObjectBorrow(sub);
+                valid = list != NULL && PyList_CheckExact(list) &&
+                    PyLong_CheckExact(index_o) && _PyLong_IsCompact((PyLongObject *)index_o);
+                if (valid) {
+                    Py_ssize_t index = _PyLong_CompactValue((PyLongObject *)index_o);
+                    if (index < 0) {
+                        index += PyList_GET_SIZE(list);
+                    }
+                    valid = (size_t)index < (size_t)PyList_GET_SIZE(list);
+                    if (valid) {
+                        item = PyList_GET_ITEM(list, index);
+                        if (options & 8) {
+                            valid = _PyRegion_Length(PyStackRef_FromPyObjectBorrow(item), &size);
+                        }
+                    }
+                }
+            }
+            if (!valid) {
+                current_executor->region_call_guard_exits++;
+                DEOPT_IF(true);
+            }
+            Py_INCREF(code);
+            if (options & 8) {
+                Py_ssize_t right = (options >> 8) & UINT16_MAX;
+                res = (COMPARISON_BIT(size, right) & (options >> 4))
+                    ? PyStackRef_True : PyStackRef_False;
+            }
+            else {
+                res = PyStackRef_FromPyObjectNew(item);
+            }
+            frame->return_offset = options >> 56;
+            current_executor->region_call_list_entries++;
+            _PyStackRef cleanup[6];
+            cleanup[0] = callable;
+            cleanup[1] = self_or_null;
+            for (int i = 0; i < oparg; i++) {
+                cleanup[i + 2] = args[i];
+            }
+            INPUTS_DEAD();
+            for (int i = oparg + 1; i >= 0; i--) {
+                PyStackRef_XCLOSE(cleanup[i]);
+            }
+            Py_DECREF(code);
+        }
+
         op(_PUSH_FRAME, (new_frame -- )) {
             assert(!IS_PEP523_HOOKED(tstate));
             _PyInterpreterFrame *temp = PyStackRef_Unwrap(new_frame);
@@ -5857,6 +5937,50 @@ dummy_func(
             c = callable;
             INPUTS_DEAD();
             res = PyStackRef_FromPyObjectSteal(res_o);
+        }
+
+        tier2 op(_LEN_SUBSCR_LIST, (local/4, callable, null, container, sub -- res)) {
+            PyObject *list = PyStackRef_AsPyObjectBorrow(container);
+            PyObject *index_o = PyStackRef_AsPyObjectBorrow(sub);
+            bool valid = PyStackRef_IsNull(null) &&
+                PyStackRef_AsPyObjectBorrow(callable) == tstate->interp->callable_cache.len &&
+                PyList_CheckExact(list) && PyLong_CheckExact(index_o) &&
+                _PyLong_IsCompact((PyLongObject *)index_o) &&
+                (!PyStackRef_RefcountOnObject(container) || Py_REFCNT(list) > 1);
+            Py_ssize_t size = 0;
+            int64_t right = 0;
+            if (valid) {
+                Py_ssize_t index = _PyLong_CompactValue((PyLongObject *)index_o);
+                if (index < 0) {
+                    index += PyList_GET_SIZE(list);
+                }
+                valid = (size_t)index < (size_t)PyList_GET_SIZE(list);
+                if (valid) {
+                    PyObject *item = PyList_GET_ITEM(list, index);
+                    valid = _PyRegion_Length(PyStackRef_FromPyObjectBorrow(item), &size);
+                }
+            }
+            if (oparg & 32) {
+                right = (uintptr_t)local;
+            }
+            else {
+                valid = valid && _PyRegion_AsInt64(GETLOCAL((uintptr_t)local), &right);
+            }
+            if (!valid) {
+                current_executor->region_len_guard_exits++;
+                DEOPT_IF(true);
+            }
+            res = (COMPARISON_BIT(size, right) & oparg) ? PyStackRef_True : PyStackRef_False;
+            current_executor->region_len_subscript_entries++;
+            /* Closing the list must not run finalizers before the length
+             * operation. Its surviving owner also retains the selected item. */
+            _PyStackRef old_sub = sub;
+            _PyStackRef old_list = container;
+            _PyStackRef old_callable = callable;
+            INPUTS_DEAD();
+            PyStackRef_CLOSE(old_sub);
+            PyStackRef_CLOSE(old_list);
+            PyStackRef_CLOSE(old_callable);
         }
 
         tier2 op(_CALL_LEN_CONSUMER, (callable, null, arg, local/4 -- res, a, c)) {

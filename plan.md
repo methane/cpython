@@ -1504,3 +1504,60 @@ build-jit/python -m test test_capi.test_opt_regions test_capi.test_opt test_tier
   exact list・compact index・属性type version・builtin lenのbindingを確認し、例外や
   callbackが必要な場合に元CALLへ戻せる範囲でframe省略を検討する。現在のconstructor
   実装を比較基準として保存してから着手し、未検証の候補を今回の性能値へ混ぜない。
+
+### 属性listの短いcallee（実装・検証中）
+
+- constructor段階をローカルcommit `186bc0325f5`（tree
+  `cba3e2b770b234ffe876c24502662d3ca244a410`）へ保存した。新しい試行とは区別する。
+- `_CALL_PY_LIST`を試作。cached attributeのexact listをcompact indexで読み、要素を
+  返すか、その組み込みlengthを小さい定数と比較する全calleeを96 uops以内で認識する。
+  関数・属性type version、index範囲、len binding、globals keys versionとinstrumentation
+  を確認する。subclass・missing属性・範囲外・ユーザーlengthは元CALLへ戻して通常処理する。
+- 結果を保有してから既存と同じ逆順で引数を解放し、code lifetimeとreturn offsetを保つ。
+  全生成物を再生成し両buildを開始した。これから実際の適用、fallback、例外、binding変更、
+  参照所有権をテストし、Hexiomのnative coverageと対応比較で採否を判断する。
+- 最初の5 testsでは、copied builtinsの`len`変更だけが失敗した。切り分け用scriptは
+  constructor checkpointと固定mainの両方でも失敗（1を42へ変更しても1を返す）。
+  `_LOAD_GLOBAL_BUILTINS`の定数化が常に`interp->builtins`を参照・監視する一方、コピーは
+  keys versionを共有でき、値の変更をそのwatcherが検知できないことを確認した。
+- custom builtinsでは元のloadを保持し、定数化した標準builtinsにはidentity guardを追加。
+  同じfunction/code versionを持つ別functionからの呼び出しにも実際のmappingを検査する。
+  新しいlist callもcalleeのbuiltins identityを確認する。コピーの値変更と、同一versionで
+  異なるbuiltinsのfunctionを渡す通常optimizer回帰テストを追加し、再build中。
+  このguard修正は実験optionの外にも適用されるため、その性能効果と副作用も確認する。
+- 修正後、debug関連1,538 tests・21 skips、native関連1,452 tests・29 skipsが成功。
+  list callのindex/length callback、2 iteration目のIndexErrorとcallee traceback、slots、
+  globalsのlen差し替え、monitoring、結果のweakref lifetime、同一versionでcustom builtinsへ
+  差し替えるケースを確認した。native Hexiomで12,421 list calls、guard exit0を観測。
+- 3 blocks・90値のHexiom比較はconstructor版比0.977255、main比0.845026で全block改善。
+  builtin guard修正を含む段階全体の比較である。`call-list-hexiom-{rows,summary}.json`、
+  native証拠、`call-list.patch`/manifest/比較用binaryを保存した。
+- 関数入口から始まるtraceにはframe省略を適用できず、通常のlen consumerが22,181回
+  残る。次はlist subscriptと直後のlen比較を直接融合し、関数frameを保ったまま中間参照と
+  dispatchを減らせるか調べる。list解放でfinalizerが起きる場合は従来の順序を維持する。
+- `_LEN_SUBSCR_LIST`を追加。list subscriptから定数/ローカルとのlen比較までを融合する。
+  exact listとcompact index、builtin len、組み込みlength、右辺intを確認し、共有/borrowed
+  listだけを直接処理する。唯一所有のlistは、indexing後のlist解放で他の要素のfinalizerが
+  対象要素を変更できるため元subscriptへ戻す。関数frameを省く必要はない。
+- 6比較演算子、定数/ローカル右辺、正負indexとlist/tuple/str/bytes/dict要素を検証。
+  user length callbackと、list解放時のfinalizerが対象listへappendしてからlenが実行される
+  ケースもfallback counter込みで成功した。両buildを終え、関連テストを再実行している。
+- debug関連1,541 tests・21 skips、native関連1,455 tests・29 skipsが成功。
+  native Hexiomで18,293 subscript/len融合、12,421 list calls、両guard exit0を観測。
+  3 blocks・90値の比較は直前list-call版比0.988643、main比0.833381で全block改善。
+  `len-subscript-hexiom-{rows,summary}.json`、native bytes/asm、差分/manifest/binaryへ保存。
+  constructor後のbuiltin guardも含め、全6本の2-block screenで影響を確認する。
+- 全6本・2 blocks・240値のscreenはmain比算術平均 **0.714387**
+  （block別0.713392/0.715382）、起動込み0.744414。BPE0.829302、B-tree0.749773、
+  DeltaBlue0.974704、Hexiom0.833954、Raytrace0.880046、Spectral0.018540。
+  checksumは全て一致。`len-subscript-suite-{rows,summary}.json`へ保存した。
+  前screen0.721664から改善したが、目標0.5は未達。Hexiom以外の小さい変動を
+  list融合の個別効果とは主張せず、段階全体のscreen結果として扱う。
+- 全6オプションONでfloatの丸め/trap/flags576ケースと特殊値56ケースも再確認し、
+  mismatchは0。`len-subscript-fenv.json`と`len-subscript-specials.json`へ保存した。
+  `Tools/jit/regions.md`にcallee/list/len融合とbuiltins guardの意味論・fallbackを追記した。
+- 次はBPEの既存keyのread→整数加算→storeに残る二重lookupを調べる。単に要求keyが
+  builtinというだけでは、衝突した他のkeyの`__eq__` callbackを省略できない。
+  直接更新を試す場合は、lookupで実際に比較するkeyも検査し、不明な比較、missing、
+  dict watcher、unsupported slotは元の処理へ戻す設計とする。allocation errorの位置、
+  値・key・dictの参照解放順序も先に証明し、現在の検証済み段階を比較基準に保持する。

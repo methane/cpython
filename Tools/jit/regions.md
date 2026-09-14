@@ -151,13 +151,20 @@ The original operand cleanup and error location are retained. The
 `contains_entries`, `contains_iterations`, and `contains_fallbacks` counters
 separate completed direct searches, tested integer elements, and ordinary calls.
 
-Two accompanying guard changes apply independently of the region options.
+Several accompanying guard changes apply independently of the region options.
 Dict subscription and assignment use `_GUARD_NOS_TYPE` to check the receiver,
 instead of checking the key at TOS. Builtin method-descriptor guards accept
 subtypes using `PyObject_TypeCheck`, as ordinary descriptor calls do; this
 allows inherited methods such as `list.append` to stay in a trace. The latter
 also applies to Tier 1. The separate `CALL_LIST_APPEND` specialization still
 requires an exact list.
+
+Builtin constant folding also checks the function's actual builtins mapping.
+Only the interpreter's canonical builtins dictionary is covered by the builtin
+watcher; custom dictionaries keep the ordinary load. Folded loads carry
+`_GUARD_BUILTINS_IDENTITY`, since functions with the same code/function version
+can use different mappings. A copied dictionary can preserve a keys version
+while changing values, so the keys version alone does not prove the binding.
 
 For a dict subclass whose generic assignment slot resolves `__setitem__` to
 dict's original descriptor, `_STORE_SUBSCR_DICT_INHERITED` calls `PyDict_SetItem`
@@ -187,6 +194,14 @@ before the consumer. Mutable lengths are read at the call, without crossing
 any call, store, or periodic check. Callable identity is still checked by the
 existing len guard. Solely owned receivers, subclasses, and replaced builtins
 follow the ordinary call path.
+
+`_LEN_SUBSCR_LIST` additionally fuses an exact list subscript with a following
+length comparison against a local integer or small constant. It checks the
+index, selected item's builtin length, and callable before consuming inputs.
+The outer list must be borrowed or have another owner: freeing a unique list
+could run another element's finalizer and change the selected item's length.
+Guard failures resume at the original subscript. `len_subscript_entries` counts
+successful fusions; unsupported cases increment `len_guard_exits`.
 
 The same group can produce a bool directly for `left CMP len(value)` or
 `left CMP (len(value) +/- small_constant)`. The left operand must be an exact
@@ -249,6 +264,17 @@ descriptors, noncompact integers, and subclass comparisons fall back at the
 original call, retaining the callee frame for exceptions and callbacks.
 `call_attr_entries` counts successful attribute calls; cleanup retains the same
 reference order and code lifetime as the simpler family.
+
+`_CALL_PY_LIST` extends call frame elimination to a cached attribute's exact
+list item, optionally consumed by a builtin length comparison against a small
+constant. It accepts compact integer indices, including negative indices,
+and checks bounds before removing the callee frame. Length predicates retain
+the globals keys version and canonical builtins identity checks. Missing
+attributes, custom indexing or length methods, and out-of-range indices resume
+at the original CALL, preserving the callee's exception and callback context.
+Result ownership, reverse argument cleanup, code lifetime, instrumentation,
+and the caller's return offset are preserved. `call_list_entries` counts this
+path, under the existing call-region option and platform restrictions.
 
 `_CALL_CLASS_ATTRIBUTES` handles constructors whose entire initializer stores
 each of one to four explicit positional arguments once into distinct inline

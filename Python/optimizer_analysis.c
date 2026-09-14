@@ -1033,6 +1033,111 @@ eliminate_trivial_frames(_PyUOpInstruction *buffer, int length)
 #endif
 }
 
+/* A cached attribute followed by exact list indexing, optionally consumed by
+ * a constant length predicate. Guard failures resume at the original CALL. */
+static void
+inline_list_attribute_calls(_PyUOpInstruction *buffer, int length)
+{
+#if defined(WITH_DTRACE) || defined(__EMSCRIPTEN__)
+    return;
+#else
+    if (!region_enabled("PYTHON_TIER2_CALL_REGIONS")) {
+        return;
+    }
+    for (int start = 0; start < length; start++) {
+        int nargs = buffer[start].oparg;
+        if (buffer[start].opcode != _INIT_CALL_PY_EXACT_ARGS || nargs > 4) {
+            continue;
+        }
+        int end = Py_MIN(length, start + 96);
+        int pc = start + 1;
+#define LIST_NEXT() (pc = trivial_call_skip(buffer, pc, end), \
+                     pc < end ? region_opcode(&buffer[pc]) : 0)
+#define LIST_EXPECT(OP) do { if (LIST_NEXT() != (OP)) goto next_list_call; pc++; } while (0)
+        if (LIST_NEXT() != _SAVE_RETURN_OFFSET || buffer[pc].oparg > 255) {
+            continue;
+        }
+        uint64_t config = (uint64_t)buffer[pc++].oparg << 56;
+        LIST_EXPECT(_PUSH_FRAME);
+        LIST_EXPECT(_TIER2_RESUME_CHECK);
+        uint32_t globals_version = 0;
+        if (LIST_NEXT() == _GUARD_GLOBALS_VERSION) {
+            globals_version = (uint32_t)buffer[pc++].operand0;
+            if (globals_version == 0) {
+                continue;
+            }
+        }
+        if (LIST_NEXT() == _GUARD_BUILTINS_IDENTITY) {
+            pc++;
+        }
+        bool length_predicate = LIST_NEXT() == _LOAD_CONST_INLINE ||
+                                LIST_NEXT() == _LOAD_CONST_INLINE_BORROW;
+        if (length_predicate) {
+            if (buffer[pc++].operand0 !=
+                (uintptr_t)_PyInterpreterState_GET()->callable_cache.len) {
+                continue;
+            }
+            LIST_EXPECT(_PUSH_NULL);
+            config |= 8 | ((uint64_t)globals_version << 24);
+        }
+        else if (globals_version != 0) {
+            continue;
+        }
+        uint64_t descriptor;
+        pc = trivial_attribute_load(buffer, pc, end, nargs, &descriptor);
+        if (pc < 0 || LIST_NEXT() != _LOAD_FAST_BORROW || buffer[pc].oparg > nargs) {
+            continue;
+        }
+        config |= buffer[pc++].oparg;
+        int op;
+        while ((op = LIST_NEXT()) == _GUARD_TOS_INT || op == _GUARD_NOS_LIST) {
+            pc++;
+        }
+        LIST_EXPECT(_BINARY_OP_SUBSCR_LIST_INT);
+        for (int i = 0; i < 2; i++) {
+            op = LIST_NEXT();
+            if (op != _POP_TOP && op != _POP_TOP_NOP) {
+                goto next_list_call;
+            }
+            pc++;
+        }
+        if (length_predicate) {
+            if (LIST_NEXT() != _CALL_LEN_CONSUMER ||
+                (buffer[pc].oparg & 48) != 48 || buffer[pc].operand0 > UINT16_MAX) {
+                continue;
+            }
+            config |= ((uint64_t)(buffer[pc].oparg & 15) << 4) |
+                      (buffer[pc].operand0 << 8);
+            pc++;
+            for (int i = 0; i < 2; i++) {
+                op = LIST_NEXT();
+                if (op != _POP_TOP && op != _POP_TOP_NOP) {
+                    goto next_list_call;
+                }
+                pc++;
+            }
+        }
+        if (LIST_NEXT() == _MAKE_HEAP_SAFE) {
+            pc++;
+        }
+        LIST_EXPECT(_RETURN_VALUE);
+        buffer[start].opcode = _CALL_PY_LIST;
+        buffer[start].operand0 = descriptor;
+        buffer[start].operand1 = config;
+        for (int i = start + 1; i < pc; i++) {
+            if (!(_PyUop_Flags[buffer[i].opcode] & HAS_RECORDS_VALUE_FLAG)) {
+                buffer[i].opcode = _NOP;
+            }
+        }
+        start = pc - 1;
+next_list_call:
+        ;
+#undef LIST_EXPECT
+#undef LIST_NEXT
+    }
+#endif
+}
+
 /* Match a complete class call whose initializer stores each argument once.
  * Keep allocation identity, and retain a materialization path for pending work
  * after allocation. No arbitrary initializer bytecode is executed by the uop. */
@@ -1243,6 +1348,55 @@ next_pair:
 }
 
 static void
+fuse_list_length_predicates(_PyUOpInstruction *buffer, int length)
+{
+    if (!region_enabled("PYTHON_TIER2_BUILTIN_REGIONS")) {
+        return;
+    }
+    for (int start = 0; start < length; start++) {
+        if (buffer[start].opcode != _BINARY_OP_SUBSCR_LIST_INT) {
+            continue;
+        }
+        int end = Py_MIN(length, start + 32);
+        int pc = start + 1;
+        for (int i = 0; i < 2; i++) {
+            pc = trivial_call_skip(buffer, pc, end);
+            if (pc >= end || (buffer[pc].opcode != _POP_TOP &&
+                              buffer[pc].opcode != _POP_TOP_NOP)) {
+                goto next_list_length;
+            }
+            pc++;
+        }
+        pc = trivial_call_skip(buffer, pc, end);
+        if (pc >= end || buffer[pc].opcode != _CALL_LEN_CONSUMER ||
+            !(buffer[pc].oparg & 16)) {
+            continue;
+        }
+        int comparison = buffer[pc].oparg;
+        uint64_t right = buffer[pc++].operand0;
+        for (int i = 0; i < 2; i++) {
+            pc = trivial_call_skip(buffer, pc, end);
+            if (pc >= end || (buffer[pc].opcode != _POP_TOP &&
+                              buffer[pc].opcode != _POP_TOP_NOP)) {
+                goto next_list_length;
+            }
+            pc++;
+        }
+        buffer[start].opcode = _LEN_SUBSCR_LIST;
+        buffer[start].oparg = comparison;
+        buffer[start].operand0 = right;
+        for (int i = start + 1; i < pc; i++) {
+            if (!(_PyUop_Flags[buffer[i].opcode] & HAS_RECORDS_VALUE_FLAG)) {
+                buffer[i].opcode = _NOP;
+            }
+        }
+        start = pc - 1;
+next_list_length:
+        ;
+    }
+}
+
+static void
 inline_enumerate_list(_PyUOpInstruction *buffer, int length)
 {
     if (!region_enabled("PYTHON_TIER2_BUILTIN_REGIONS")) {
@@ -1420,8 +1574,10 @@ _Py_uop_analyze_and_optimize(
     assert(length > 0);
 
     eliminate_trivial_frames(output, length);
+    inline_list_attribute_calls(output, length);
     inline_attribute_initializers(output, length);
     fuse_list_pair_comparisons(output, length);
+    fuse_list_length_predicates(output, length);
     inline_enumerate_list(output, length);
     inline_enumerate_int_scan(output, length);
     length = remove_unneeded_uops(output, length);

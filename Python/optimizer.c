@@ -605,7 +605,7 @@ get_region_stats(PyObject *self, PyObject *Py_UNUSED(ignored))
 {
     _PyExecutorObject *executor = _PyExecutorObject_CAST(self);
     return Py_BuildValue(
-        "{s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K}",
+        "{s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K}",
         "bounded_entries", executor->region_bounded_entries,
         "bounded_guard_exits", executor->region_bounded_guard_exits,
         "bounded_boxes", executor->region_bounded_boxes,
@@ -635,6 +635,8 @@ get_region_stats(PyObject *self, PyObject *Py_UNUSED(ignored))
         "class_entries", executor->region_class_entries,
         "class_guard_exits", executor->region_class_guard_exits,
         "class_materializations", executor->region_class_materializations,
+        "call_list_entries", executor->region_call_list_entries,
+        "len_subscript_entries", executor->region_len_subscript_entries,
         "range_entries", executor->region_range_entries,
         "range_iterations", executor->region_range_iterations,
         "range_int32_iterations", executor->region_range_int32_iterations,
@@ -1670,6 +1672,8 @@ allocate_executor(int exit_count, int length)
     res->region_class_entries = 0;
     res->region_class_guard_exits = 0;
     res->region_class_materializations = 0;
+    res->region_call_list_entries = 0;
+    res->region_len_subscript_entries = 0;
     res->region_range_entries = 0;
     res->region_range_iterations = 0;
     res->region_range_int32_iterations = 0;

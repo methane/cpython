@@ -79,6 +79,268 @@ class TestRegions(unittest.TestCase):
         ex = self.executor(run, "_CALL_CLASS_ATTRIBUTES")
         return cls, run, args, ex
 
+    def warm_list_call(self, expression="self.cells[index]", slots=False):
+        self.enterContext(mock.patch.dict(
+            os.environ, {"PYTHON_TIER2_CALL_REGIONS": "1"}))
+        namespace = {"__builtins__": vars(builtins)}
+        exec(
+            "class Receiver:\n"
+            + ("    __slots__ = ('cells',)\n" if slots else "")
+            + "    def get(self, index):\n"
+            f"        return {expression}\n"
+            "def run(receiver, index, n):\n"
+            "    result = None\n"
+            "    for _ in range(n):\n"
+            "        result = receiver.get(index)\n"
+            "    return result\n",
+            namespace,
+        )
+        receiver = namespace["Receiver"]()
+        receiver.cells = [[object()], [], [object(), object()]]
+        run = namespace["run"]
+        run(receiver, 0, TIER2_THRESHOLD)
+        ex = self.executor(run, "_CALL_PY_LIST")
+        return namespace, receiver, run, ex
+
+    def warm_len_subscript(self, comparison="==", constant=False):
+        namespace = {}
+        right = "1" if constant else "limit"
+        exec("def run(container, index, limit, n):\n"
+             "    result = None\n"
+             "    for _ in range(n):\n"
+             f"        result = len(container[index]) {comparison} {right}\n"
+             "    return result\n", namespace)
+        run = namespace["run"]
+        run([[object()]], 0, 1, TIER2_THRESHOLD)
+        return run, self.executor(run, "_LEN_SUBSCR_LIST")
+
+    def test_len_subscript_comparisons(self):
+        values = [[], [1], (1, 2), "abc", b"x", {1: 2}]
+        for constant in (False, True):
+            for comparison, compare in (("==", operator.eq), ("!=", operator.ne),
+                                         ("<", operator.lt), ("<=", operator.le),
+                                         (">", operator.gt), (">=", operator.ge)):
+                with self.subTest(constant=constant, comparison=comparison):
+                    run, ex = self.warm_len_subscript(comparison, constant)
+                    for index in range(-len(values), len(values)):
+                        expected = compare(len(values[index]), 1)
+                        self.assertIs(self.executed(ex, "len_subscript_entries", run,
+                                                    values, index, 1, 8), expected)
+
+    def test_len_subscript_user_length(self):
+        run, ex = self.warm_len_subscript()
+        events = []
+
+        class Sized:
+            def __len__(self):
+                events.append("len")
+                return 1
+
+        self.assertTrue(self.executed(ex, "len_guard_exits", run, [Sized()], 0, 1, 8))
+        self.assertEqual(events, ["len"] * 8)
+
+    def test_len_subscript_unique_list_finalizer_order(self):
+        def run(factory, n):
+            result = None
+            for _ in range(n):
+                result = len(factory()[0]) == 1
+            return result
+
+        held = [[]]
+        pool = [held] * TIER2_THRESHOLD
+        pop = pool.pop
+        run(pop, TIER2_THRESHOLD)
+        ex = self.executor(run, "_LEN_SUBSCR_LIST")
+        events = []
+
+        class Trigger:
+            def __init__(self, selected):
+                self.selected = selected
+
+            def __del__(self):
+                self.selected.append(1)
+                events.append("deleted")
+
+        selected = [[] for _ in range(8)]
+        pool.extend([value, Trigger(value)] for value in selected)
+
+        # The other list element is destroyed after indexing, before len().
+        # Measuring length before that finalizer would incorrectly return False.
+        before = ex.get_region_stats()["len_guard_exits"]
+        self.assertTrue(run(pop, 8))
+        self.assertEqual(events, ["deleted"] * 8)
+        self.assertGreater(ex.get_region_stats()["len_guard_exits"], before)
+
+    @requires_call_regions
+    def test_list_call_item_and_length(self):
+        for slots in (False, True):
+            for expression in ("self.cells[index]", "len(self.cells[index]) == 1",
+                               "len(self.cells[index]) != 2", "len(self.cells[index]) < 2"):
+                with self.subTest(slots=slots, expression=expression):
+                    _, receiver, run, ex = self.warm_list_call(expression, slots)
+                    for index in (0, 1, 2, -1, -2, -3):
+                        expected = receiver.get(index)
+                        self.assertIs(self.executed(ex, "call_list_entries", run,
+                                                    receiver, index, 8), expected)
+
+    @requires_call_regions
+    def test_list_call_index_and_list_callbacks(self):
+        _, receiver, run, ex = self.warm_list_call()
+        events = []
+
+        class Index:
+            def __index__(self):
+                events.append("index")
+                return 1
+
+        self.assertIs(self.executed(ex, "call_guard_exits", run,
+                                   receiver, Index(), 8), receiver.cells[1])
+        self.assertEqual(events, ["index"] * 8)
+        events.clear()
+
+        class Values(list):
+            def __getitem__(self, index):
+                events.append(index)
+                return "override"
+
+        receiver.cells = Values(receiver.cells)
+        self.assertEqual(run(receiver, 0, 8), "override")
+        self.assertEqual(events, [0] * 8)
+
+    @requires_call_regions
+    def test_list_call_length_callback(self):
+        _, receiver, run, ex = self.warm_list_call("len(self.cells[index]) == 1")
+        events = []
+
+        class Sized:
+            def __len__(self):
+                events.append("len")
+                return 1
+
+        receiver.cells[0] = Sized()
+        self.assertTrue(self.executed(ex, "call_guard_exits", run, receiver, 0, 8))
+        self.assertEqual(events, ["len"] * 8)
+
+    @requires_call_regions
+    def test_list_call_len_binding(self):
+        namespace, receiver, run, ex = self.warm_list_call("len(self.cells[index]) == 1")
+        self.executed(ex, "call_list_entries", run, receiver, 0, 8)
+        events = []
+
+        def replacement(value):
+            events.append(value)
+            return 42
+
+        namespace["len"] = replacement
+        self.assertFalse(run(receiver, 0, 8))
+        self.assertEqual(events, [receiver.cells[0]] * 8)
+
+    @requires_call_regions
+    def test_list_call_second_iteration_exception(self):
+        self.enterContext(mock.patch.dict(
+            os.environ, {"PYTHON_TIER2_CALL_REGIONS": "1"}))
+
+        class Receiver:
+            def get(self, index):
+                return len(self.cells[index]) == 1
+
+        def run(receiver, indices, n):
+            result = None
+            for i in range(n):
+                result = receiver.get(indices[i != 0])
+            return result
+
+        receiver = Receiver()
+        receiver.cells = [[object()]]
+        run(receiver, (0, 0), TIER2_THRESHOLD)
+        ex = self.executor(run, "_CALL_PY_LIST")
+        before = ex.get_region_stats()["call_guard_exits"]
+        try:
+            run(receiver, (0, 1), 8)
+        except IndexError as exc:
+            traceback = exc.__traceback__
+            while traceback.tb_next is not None:
+                traceback = traceback.tb_next
+            self.assertIs(traceback.tb_frame.f_code, Receiver.get.__code__)
+            self.assertEqual(traceback.tb_frame.f_locals["index"], 1)
+        else:
+            self.fail("IndexError was lost")
+        self.assertGreater(ex.get_region_stats()["call_guard_exits"], before)
+
+    @requires_call_regions
+    def test_list_call_monitoring(self):
+        _, receiver, run, ex = self.warm_list_call("len(self.cells[index]) == 1")
+        self.executed(ex, "call_list_entries", run, receiver, 0, 8)
+        monitoring = sys.monitoring
+        tool = 4
+        code = type(receiver).get.__code__
+        events = []
+        monitoring.use_tool_id(tool, "list call")
+        try:
+            monitoring.register_callback(tool, monitoring.events.PY_START,
+                                         lambda *args: events.append("start"))
+            monitoring.register_callback(tool, monitoring.events.PY_RETURN,
+                                         lambda *args: events.append("return"))
+            monitoring.set_local_events(tool, code,
+                                        monitoring.events.PY_START | monitoring.events.PY_RETURN)
+            self.assertTrue(run(receiver, 0, 8))
+            self.assertEqual(events, ["start", "return"] * 8)
+        finally:
+            monitoring.set_local_events(tool, code, 0)
+            monitoring.register_callback(tool, monitoring.events.PY_START, None)
+            monitoring.register_callback(tool, monitoring.events.PY_RETURN, None)
+            monitoring.free_tool_id(tool)
+
+    @requires_call_regions
+    def test_list_call_same_version_custom_builtins(self):
+        self.enterContext(mock.patch.dict(
+            os.environ, {"PYTHON_TIER2_CALL_REGIONS": "1"}))
+
+        def make_get():
+            def get(receiver, index):
+                return len(receiver.cells[index]) == 1
+            return get
+
+        def run(functions, receiver, index):
+            result = None
+            for function in functions:
+                result = function(receiver, index)
+            return result
+
+        class Receiver:
+            pass
+
+        receiver = Receiver()
+        receiver.cells = [[object()]]
+        get = make_get()
+        run([get] * TIER2_THRESHOLD, receiver, 0)
+        ex = self.executor(run, "_CALL_PY_LIST")
+        self.assertTrue(self.executed(ex, "call_list_entries", run,
+                                      [get] * 8, receiver, 0))
+        custom_builtins = vars(builtins).copy()
+        custom_builtins["len"] = lambda value: 42
+        custom_get = types.FunctionType(make_get.__code__, {"__builtins__": custom_builtins})()
+        self.assertFalse(run([get, custom_get], receiver, 0))
+
+    @requires_call_regions
+    def test_list_call_return_lifetime(self):
+        _, receiver, run, ex = self.warm_list_call()
+        events = []
+
+        class Value:
+            def __del__(self):
+                events.append("deleted")
+
+        receiver.cells = [Value()]
+        ref = weakref.ref(receiver.cells[0])
+        result = self.executed(ex, "call_list_entries", run, receiver, 0, 8)
+        receiver.cells.clear()
+        self.assertIs(result, ref())
+        self.assertFalse(events)
+        del result
+        self.assertIsNone(ref())
+        self.assertEqual(events, ["deleted"])
+
     @requires_call_regions
     def test_class_attributes_identity_and_order(self):
         for nargs in range(1, 5):

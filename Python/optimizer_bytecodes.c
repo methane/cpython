@@ -2682,7 +2682,11 @@ dummy_func(void) {
         PyObject *cnst = NULL;
         PyInterpreterState *interp = _PyInterpreterState_GET();
         PyObject *builtins = interp->builtins;
-        if (incorrect_keys(builtins, version)) {
+        if (ctx->frame->func == NULL || ctx->frame->func->func_builtins != builtins) {
+            /* Only the interpreter's builtins are covered by this watcher.
+             * A copied dict can share a keys version while its values differ. */
+        }
+        else if (incorrect_keys(builtins, version)) {
             OPT_STAT_INC(remove_globals_incorrect_keys);
             ctx->done = true;
         }
@@ -2696,6 +2700,10 @@ dummy_func(void) {
             }
             if (ctx->frame->globals_checked_version != 0 && ctx->frame->globals_watched) {
                 cnst = convert_global_to_const(this_instr, builtins);
+                if (cnst != NULL) {
+                    ADD_OP(_GUARD_BUILTINS_IDENTITY, 0, 0);
+                    ADD_OP(this_instr->opcode, this_instr->oparg, this_instr->operand0);
+                }
             }
         }
         if (cnst == NULL) {

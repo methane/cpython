@@ -254,6 +254,8 @@ typedef struct _PyExecutorObject {
     uint64_t region_class_entries;
     uint64_t region_class_guard_exits;
     uint64_t region_class_materializations;
+    uint64_t region_call_list_entries;
+    uint64_t region_len_subscript_entries;
     /* GIL-only coefficient setup cannot escape or re-enter Python. */
     int64_t region_poly_scratch[4][3];
     bool region_poly_valid;

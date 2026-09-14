@@ -845,6 +845,41 @@ class TestUopsOptimization(unittest.TestCase):
         """), PYTHON_JIT="1")
         self.assertEqual(result[0].rc, 0, result)
 
+    def test_copied_builtins_value_change(self):
+        import builtins
+
+        namespace = {"__builtins__": vars(builtins).copy()}
+        exec("def size(value):\n"
+             "    return len(value)\n"
+             "def run(value, n):\n"
+             "    for _ in range(n):\n"
+             "        result = size(value)\n"
+             "    return result\n", namespace)
+        self.assertEqual(namespace["run"]([1], TIER2_THRESHOLD), 1)
+        namespace["__builtins__"]["len"] = lambda value: 42
+        self.assertEqual(namespace["run"]([1], 8), 42)
+
+    def test_same_function_version_different_builtins(self):
+        import builtins
+
+        def make_size():
+            def size(value):
+                return len(value)
+            return size
+
+        def run(functions, value):
+            result = None
+            for function in functions:
+                result = function(value)
+            return result
+
+        size = make_size()
+        self.assertEqual(run([size] * TIER2_THRESHOLD, [1]), 1)
+        namespace = {"__builtins__": vars(builtins).copy()}
+        namespace["__builtins__"]["len"] = lambda value: 42
+        custom_size = types.FunctionType(make_size.__code__, namespace)()
+        self.assertEqual(run([size, custom_size], [1]), 42)
+
     def test_float_add_constant_propagation(self):
         def testfunc(n):
             a = 1.0

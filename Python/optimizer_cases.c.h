@@ -2438,6 +2438,10 @@
             break;
         }
 
+        case _GUARD_BUILTINS_IDENTITY: {
+            break;
+        }
+
         case _LOAD_GLOBAL_MODULE: {
             JitOptRef res;
             uint16_t version = (uint16_t)this_instr->operand0;
@@ -2494,7 +2498,9 @@
             PyObject *cnst = NULL;
             PyInterpreterState *interp = _PyInterpreterState_GET();
             PyObject *builtins = interp->builtins;
-            if (incorrect_keys(builtins, version)) {
+            if (ctx->frame->func == NULL || ctx->frame->func->func_builtins != builtins) {
+            }
+            else if (incorrect_keys(builtins, version)) {
                 OPT_STAT_INC(remove_globals_incorrect_keys);
                 ctx->done = true;
             }
@@ -2507,6 +2513,10 @@
                 }
                 if (ctx->frame->globals_checked_version != 0 && ctx->frame->globals_watched) {
                     cnst = convert_global_to_const(this_instr, builtins);
+                    if (cnst != NULL) {
+                        ADD_OP(_GUARD_BUILTINS_IDENTITY, 0, 0);
+                        ADD_OP(this_instr->opcode, this_instr->oparg, this_instr->operand0);
+                    }
                 }
             }
             if (cnst == NULL) {
@@ -4554,6 +4564,16 @@
             break;
         }
 
+        case _CALL_PY_LIST: {
+            JitOptRef res;
+            res = sym_new_not_null(ctx);
+            CHECK_STACK_BOUNDS(-1 - oparg);
+            stack_pointer[-2 - oparg] = res;
+            stack_pointer += -1 - oparg;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            break;
+        }
+
         case _PUSH_FRAME: {
             JitOptRef new_frame;
             new_frame = stack_pointer[-1];
@@ -4998,6 +5018,16 @@
             stack_pointer[-3] = res;
             stack_pointer[-2] = a;
             stack_pointer[-1] = c;
+            break;
+        }
+
+        case _LEN_SUBSCR_LIST: {
+            JitOptRef res;
+            res = sym_new_not_null(ctx);
+            CHECK_STACK_BOUNDS(-3);
+            stack_pointer[-4] = res;
+            stack_pointer += -3;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
             break;
         }
 
