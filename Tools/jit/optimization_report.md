@@ -725,3 +725,22 @@ source/build identities, original samples, tests, counter probes, and native
 assembly. Saved candidate executables share the current extension modules;
 they are not complete independent build archives. Earlier unsuccessful call
 mode replication trials and all comparison data remain in the local artifacts.
+
+
+A subsequent change selects twelve search replicas by comparison operator and
+explicit argument count. Each loop uses a direct integer comparison in place
+of the repeated comparison-mask construction. The generic base stencil uses
+bitwise boolean composition to avoid a jump table unsupported by the assembly
+optimizer; all twelve actual replicas retain identical machine code across
+that formulation change. The ten-file debug/native tests passed again, and
+all eight generated outputs reproduced exactly.
+
+The matched follow-up comparison improved B-tree by another **2.1%** (ratios
+0.984554, 0.968711, and 0.984577). All checksums matched and no values were
+excluded. The arithmetic mean relative to main changed from **0.674354 to
+0.670577** in that comparison. Other workloads had mixed block directions;
+the earlier 0.670030 result is a separate comparison, not its matched control.
+B-tree's observed counters were unchanged, with 20 reachable executors and
+131,072 native bytes. The adopted binary SHA256 is
+`c94079b27ee5b3851c19346d09545fb4064789ff1adcf3521733562831828297`;
+`search-comparison-*` holds its local evidence. The 0.5 objective remains open.

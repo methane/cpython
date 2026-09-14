@@ -5713,15 +5713,16 @@ dummy_func(
             Py_DECREF(code);
         }
 
-        replicate(3) tier2 op(_CALL_PY_ATTRIBUTE_SEARCH, (source/4, config/4, callable, self_or_null, args[oparg] -- res)) {
+        replicate(12) tier2 op(_CALL_PY_ATTRIBUTE_SEARCH, (source/4, config/4, callable, self_or_null, args[1 + oparg / 6] -- res)) {
             uint64_t descriptor = (uintptr_t)source;
             uint64_t options = (uintptr_t)config;
             current_executor->region_call_entries++;
             PyFunctionObject *func = (PyFunctionObject *)PyStackRef_AsPyObjectBorrow(callable);
             assert(PyFunction_Check(func));
             PyCodeObject *code = (PyCodeObject *)func->func_code;
+            int nargs = 1 + oparg / 6;
             int has_self = !PyStackRef_IsNull(self_or_null);
-            bool valid = oparg + has_self == 2 &&
+            bool valid = nargs + has_self == 2 &&
                 func->func_version == (uint32_t)options &&
                 _Py_atomic_load_uintptr_relaxed(&tstate->eval_breaker) ==
                     FT_ATOMIC_LOAD_UINTPTR_ACQUIRE(code->_co_instrumentation_version);
@@ -5744,7 +5745,7 @@ dummy_func(
                 if (valid) {
                     sdigit right = _PyLong_CompactValue((PyLongObject *)key);
                     Py_ssize_t field = (descriptor >> 52) & 31;
-                    unsigned int mask = (descriptor >> 57) & 15;
+                    assert(((descriptor >> 57) & 7) == (unsigned int)(oparg % 6));
                     for (; position < PyList_GET_SIZE(list); position++) {
                         PyObject *item = PyList_GET_ITEM(list, position);
                         if (!PyTuple_CheckExact(item) || field >= PyTuple_GET_SIZE(item)) {
@@ -5757,7 +5758,17 @@ dummy_func(
                             break;
                         }
                         sdigit left = _PyLong_CompactValue((PyLongObject *)value);
-                        if (COMPARISON_BIT(left, right) & mask) {
+                        /* Bitwise boolean composition keeps the unused generic
+                         * stencil free of jump tables. Replicas fold to one
+                         * comparison, without branches on the operation. */
+                        bool matches =
+                            ((oparg % 6 == Py_LT) & (left < right)) |
+                            ((oparg % 6 == Py_LE) & (left <= right)) |
+                            ((oparg % 6 == Py_EQ) & (left == right)) |
+                            ((oparg % 6 == Py_NE) & (left != right)) |
+                            ((oparg % 6 == Py_GT) & (left > right)) |
+                            ((oparg % 6 == Py_GE) & (left >= right));
+                        if (matches) {
                             break;
                         }
                     }
@@ -5778,11 +5789,11 @@ dummy_func(
             _PyStackRef cleanup[4];
             cleanup[0] = callable;
             cleanup[1] = self_or_null;
-            for (int i = 0; i < oparg; i++) {
+            for (int i = 0; i < nargs; i++) {
                 cleanup[i + 2] = args[i];
             }
             INPUTS_DEAD();
-            for (int i = oparg + 1; i >= 0; i--) {
+            for (int i = nargs + 1; i >= 0; i--) {
                 PyStackRef_XCLOSE(cleanup[i]);
             }
             Py_DECREF(code);

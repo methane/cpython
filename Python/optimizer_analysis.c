@@ -1656,7 +1656,7 @@ attribute_search_body(PyCodeObject *code, uint64_t *options, uint64_t *fields)
     unsigned int mask = arg & 15;
     static const unsigned int masks[] = {2, 10, 8, 7, 4, 12};
     if (!(arg & 16) || (arg >> 5) > Py_GE || mask != masks[arg >> 5]) return false;
-    *fields |= (uint64_t)mask << 57;
+    *fields |= (uint64_t)(arg >> 5) << 57;
     SEARCH_READ(POP_JUMP_IF_TRUE);
     int matched = pc + arg;
     SEARCH_READ(NOT_TAKEN);
@@ -1727,6 +1727,7 @@ inline_attribute_search_calls(_PyUOpInstruction *buffer, int length)
         if (trivial_attribute_load(buffer, pc, end, 1, &descriptor) < 0 ||
             (descriptor & 7) != 0) continue;
         buffer[start].opcode = _CALL_PY_ATTRIBUTE_SEARCH;
+        buffer[start].oparg = 6 * (nargs - 1) + (fields >> 57);
         buffer[start].operand0 = descriptor | fields;
         buffer[start].operand1 = options | func->func_version;
         /* The full body proof covers returns not present on this trace.

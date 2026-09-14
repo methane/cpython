@@ -4636,9 +4636,9 @@
         case _CALL_PY_ATTRIBUTE_SEARCH: {
             JitOptRef res;
             res = sym_new_not_null(ctx);
-            CHECK_STACK_BOUNDS(-1 - oparg);
-            stack_pointer[-2 - oparg] = res;
-            stack_pointer += -1 - oparg;
+            CHECK_STACK_BOUNDS(-1 - (1 + oparg / 6));
+            stack_pointer[-2 - (1 + oparg / 6)] = res;
+            stack_pointer += -1 - (1 + oparg / 6);
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
             break;
         }

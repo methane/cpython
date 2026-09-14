@@ -360,6 +360,11 @@ exception handlers. It accepts all six integer comparisons and tuple fields
 the same two argument slots. It also requires a recorded slot or managed
 inline attribute load at the start of the traced callee.
 
+The comparison and explicit argument count select one of twelve replicas:
+`oparg % 6` selects the comparison, and `1 + oparg / 6` counts explicit
+arguments. Each native loop therefore uses one fixed integer comparison;
+the descriptor's comparison tag is also checked in debug builds.
+
 The replacement checks the function version and instrumentation state, the
 cached attribute layout, and the current resolution of both builtins in the
 callee's globals and builtins. General-key dictionaries are rejected before

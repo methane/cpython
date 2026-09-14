@@ -1,8 +1,9 @@
 # CPython Tier 2：Linux上で行う2〜3日間の実装計画
 
 **現在の目標（2026-09-14）**：全6ベンチマークのmain比の**算術平均0.5以下**。
-開始時の480値は **0.7944918**。最新の検索最適化screen（3 blocks、3 builds、540値）は
-**0.6700296**で、目標は未達。Btreeの前zip版比は **0.7997691**、main比は **0.5697899**。
+開始時の480値は **0.7944918**。最新の比較分離screen（3 blocks、3 builds、540値）は
+**0.6705774**（対応する直前版0.6743540）で、目標は未達。
+Btreeの直前検索版比は **0.9792806**、main比は **0.5611035**。
 各blockの各scriptで10値の平均時間からcandidate/main比を求め、blocksと6 scriptを
 等重みの算術平均で集計する。途中screenは3 blocks、最終goal判定は4 blocksとする。
 入力・CLI・warmups=3・values=10・loops=1、固定main、PGO/LTOなしの比較条件を維持する。
@@ -2326,3 +2327,53 @@ build-jit/python -m test test_capi.test_opt_regions test_capi.test_opt test_tier
 
 - 数値順ID生成fixと生成回帰testをローカル `cbcf14f0e6e` に保存した。検索実装のC/Hは
   最終測定manifestと一致したまま。次のcommitで検索実装と今回の記録を保存する。
+
+
+### 検索loopの比較をreplicaに分離（実装・検証中）
+
+- 検索checkpointは `4bbe45fc2fb`。最終測定manifestとcommitの全C/Hが一致することを
+  `attribute-search-final-checkpoint.json`へ保存した。固定main binaryもhash一致を確認。
+- 比較6種類×explicit引数1/2の12 replicasを適用。stack effectは1+oparg/6、比較は
+  oparg%6へ移し、毎要素のCOMPARISON_BIT生成を直接の整数比較に置き換えた。
+  上限・型/関数/builtin guard・cleanup・dynamic exitは保持し、debugでdescriptorとの
+  比較番号一致をassertする。既存の24-case行列には実際のreplica名の検査を加えた。
+  まだこの版のbuild/test/速度確認は未実施。最終検索版を対照に採否を判断する。
+
+- 比較分離版はdebugの検索10 tests成功。native生成は未定義.LBB0_33〜36で失敗した。
+  13 stencilsを個別生成して元/処理後assemblyを保存したところ、12 replicasは全成功し、
+  未使用のgeneric baseだけが失敗。6分岐がjump tableへ変換され、assembly optimizerが
+  table経由の参照先を到達不能として除いていた。LLVMや全体のbuild flagsは変えない。
+- 分岐をbitwise boolean式へ変更した。全比較が純粋なcompact整数比較なので追加の例外や
+  副作用はなく、実replicaでは比較1個へ定数化される。generic baseにもjump tableを作らず
+  生成できるか、個別stencilと両buildで再確認する。失敗artifactは保持した。
+
+- boolean式への修正後はgenericを含む13 stencilsがすべて成功し、data sectionも0。
+  実replicaは1 explicit argが947 bytes、2 argsが944 bytes。12 replicasそれぞれの.textは
+  分岐版とbyte一致した（`search-comparison-boolean-text-check.json`）。変更は汎用baseの
+  生成障害を避けるもので、実replicaの比較1個への定数化は保持する。両buildを再構築中。
+
+- 比較分離版は関連10 filesでdebug1,372/native1,285 tests成功（36/47 skips）。
+  8生成物のbyte再現と、CALL以外の5実験flagを0にしたnative形成・実行確認も成功した。
+  Btreeの全counterは前版と一致し、20 executors・native135,168→131,072 bytes。
+  raw assemblyでは検索loopがcmp/jgeに変わり、旧setge/setle/or/bt列がなくなった。
+- binary SHA256 `c94079b27ee5b3851c19346d09545fb4064789ff1adcf3521733562831828297`。
+  `search-comparison-*`にsource/build/拡張identity・native assembly・生成とtestログを保存。
+  前版とのBtree 3 blocks・90値は0.981837/0.977562/0.975847、幾何平均 **0.978412**。
+  全checksum一致・除外0。全6本を最終検索版d7185a...と固定mainに対して比較中。
+- 汎用stencilのjump table問題とnumeric replica IDの検査を、再利用可能な生成上の注意
+  としてAGENTS.mdへ追記した。追加のLLVMインストール、PGO/LTO、build flags変更は不要。
+
+- 比較分離版の全6本・3 blocks・540値は全checksum一致・除外0。対応する前検索版の
+  main比算術平均 **0.674354→0.670577**。今回after/main block別0.667642/0.671572/
+  0.672519、after/beforeは0.993154/0.991067/0.998553（平均0.994258）。
+  別時点の前版screen0.670030との単純差を改善量として扱わない。
+- Btreeは0.984554/0.968711/0.984577（平均 **0.979281**）、単独比較と全block改善が
+  一致したため採用する。main比はBPE0.807371、Btree0.561103、DeltaBlue0.981747、
+  Hexiom0.834083、Raytrace0.820596、Spectral0.018564。目標0.5は引き続き未達。
+  他のafter/beforeはBPE0.999849、DeltaBlue0.998792、Hexiom1.000098、Raytrace0.988731、
+  Spectral0.998798で方向が混在する。`search-comparison-suite-*`へ全結果を保存した。
+- 次の調査で、短いloopのexecutor作成後のcacheが8190へ戻ることを実機で確認した。
+  初期loop閾値は4000、resume閾値が8190。FinalizeTracingが既にENTER_EXECUTORに
+  置換された命令を直接JUMP_BACKWARD_JITと比較していることが原因候補。まず独立した
+  回帰testと固定mainで確認し、無効化後の再試行が本来の閾値で行われるよう修正を検討する。
+  まだこのcounterについてproduction Cは変更していない。

@@ -193,6 +193,15 @@ record consumer slot maps in sync, and rebuild `Python/optimizer.o` after
 recorder changes. The configured `regen-record-functions` target also supplies
 the correct output path.
 
+Replicated uops need contiguous, numerically ordered IDs, including suffixes
+above nine. Check the generic base stencil as well as the replicas: stencil
+generation compiles both. With LLVM 21 on x86-64, a runtime selector in the
+base can become a jump table whose targets the assembly optimizer drops,
+leaving undefined `.LBB` symbols at assembly time. For pure integer comparison
+selectors, bitwise boolean composition avoids that table while constant
+replicas still fold to one comparison. Preserve the original and processed
+assembly to diagnose this case, and validate every stencil before rebuilding.
+
 Fused floating-point uops must preserve Python's operation-by-operation
 binary64 rounding even when an embedding compiler enables contraction.  Use an
 explicit C evaluation boundary at the fused arithmetic and inspect the

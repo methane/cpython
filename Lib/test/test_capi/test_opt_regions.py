@@ -1924,6 +1924,9 @@ case.doCleanups()
         run = ns["run"]
         run(owner, 17, TIER2_THRESHOLD)
         ex = self.executor(run, "_CALL_PY_ATTRIBUTE_SEARCH")
+        comparison = ("<", "<=", "==", "!=", ">", ">=").index(symbol)
+        self.assertIn(f"_CALL_PY_ATTRIBUTE_SEARCH_{6 * (not bound) + comparison}",
+                      get_opnames(ex))
         self.executed(ex, "call_search_entries", run, owner, 17, 8)
         return owner, run, ex, ns
 
