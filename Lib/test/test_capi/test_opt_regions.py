@@ -1,6 +1,7 @@
 """Exercise opt-in regions through real executors, including their exits."""
 
 import builtins
+import collections
 import math
 import operator
 import os
@@ -85,6 +86,365 @@ class TestRegions(unittest.TestCase):
         for _ in range(TIER2_THRESHOLD // 64 + 8):
             run(enumerate([None] * 64))
         return self.executor(run, "_ITER_NEXT_ENUM_LIST")
+
+    def warm_enumerate_scan(self, comparison=">=", field=0):
+        namespace = {}
+        exec(
+            "def run(iterator, key):\n"
+            "    position = -1\n"
+            "    item = None\n"
+            "    for position, item in iterator:\n"
+            f"        if item[{field}] {comparison} key:\n"
+            "            break\n"
+            "    return position, item\n",
+            namespace,
+        )
+        run = namespace["run"]
+        values = [(i, i) for i in range(128)]
+        key = 1000 if comparison in (">", ">=", "==") else -1
+        if comparison == "!=":
+            values = [(0, 0)] * 128
+            key = 0
+        for _ in range(TIER2_THRESHOLD // 128 + 8):
+            run(enumerate(values), key)
+        return run, self.executor(run, "_ENUM_LIST_INT_SCAN")
+
+    def warm_list_contains(self, invert=False):
+        run = arithmetic("a not in b" if invert else "a in b")
+        run(99, list(range(128)), 0, 0, TIER2_THRESHOLD)
+        return run, self.executor(run, "_CONTAINS_OP_LIST_INT")
+
+    def warm_dict_store(self, mapping_type=collections.Counter):
+        def run(mapping, key, n):
+            for _ in range(n):
+                previous = mapping[key]
+                mapping[key] = previous + 1
+            return mapping
+
+        run.__code__ = run.__code__.replace()
+        run(mapping_type(), "key", TIER2_THRESHOLD)
+        return run, self.executor(run, "_STORE_SUBSCR_DICT_INHERITED")
+
+    def test_dict_store_inherited_values(self):
+        run, ex = self.warm_dict_store()
+        for key in ("key", 10000, (b"a", b"b")):
+            for value in (0, -10000, 2**100):
+                with self.subTest(key=key, value=value):
+                    mapping = collections.Counter({key: value})
+                    if value == 2**100:
+                        # The preceding compact-int addition exits first.
+                        self.assertIs(run(mapping, key, 64), mapping)
+                    else:
+                        self.assertIs(self.executed(ex, "dict_store_entries",
+                                                   run, mapping, key, 64), mapping)
+                    self.assertEqual(mapping[key], value + 64)
+
+    def test_dict_store_inherited_delete_and_receiver(self):
+        calls = []
+        class Mapping(collections.Counter):
+            def __delitem__(self, key):
+                calls.append(key)
+                super().__delitem__(key)
+
+        run, ex = self.warm_dict_store(Mapping)
+        mapping = Mapping(key=0)
+        self.executed(ex, "dict_store_entries", run, mapping, "key", 8)
+        self.assertEqual(mapping["key"], 8)
+        self.assertEqual(calls, [])
+        del mapping["key"]
+        self.assertEqual(calls, ["key"])
+        # An unrelated receiver must keep its assignment implementation.
+        class Other(dict):
+            def __setitem__(self, key, value):
+                calls.append(value)
+                super().__setitem__(key, value)
+        self.assertEqual(run(Other(key=0), "key", 8), {"key": 8})
+        self.assertEqual(calls[1:], list(range(1, 9)))
+        self.assertEqual(run([0], 0, 8), [8])
+
+    def test_dict_store_inherited_type_invalidation(self):
+        for change_base in (False, True):
+            with self.subTest(change_base=change_base):
+                class Base(collections.Counter):
+                    pass
+                class Mapping(Base):
+                    pass
+                run, ex = self.warm_dict_store(Mapping)
+                calls = []
+                def setitem(self, key, value):
+                    calls.append(value)
+                    dict.__setitem__(self, key, value)
+                owner = Base if change_base else Mapping
+                owner.__setitem__ = setitem
+                self.assertFalse(ex.is_valid())
+                self.assertEqual(run(Mapping(key=0), "key", 8), {"key": 8})
+                self.assertEqual(calls, list(range(1, 9)))
+                del owner.__setitem__
+                run, ex = self.warm_dict_store(Mapping)
+                self.executed(ex, "dict_store_entries", run, Mapping(key=0), "key", 8)
+                self.assertEqual(calls, list(range(1, 9)))
+
+    def test_dict_store_inherited_hash_error(self):
+        run, ex = self.warm_dict_store()
+        calls = []
+        class Key:
+            def __hash__(self):
+                calls.append(len(calls) + 1)
+                if len(calls) == 4:
+                    raise RuntimeError("store hash")
+                return 42
+        key = Key()
+        mapping = collections.Counter({key: 0})
+        calls.clear()
+        before = ex.get_region_stats()["dict_store_entries"]
+        try:
+            run(mapping, key, 8)
+        except RuntimeError as error:
+            self.assertEqual(str(error), "store hash")
+            tb = error.__traceback__
+            while tb.tb_frame.f_code is not run.__code__:
+                tb = tb.tb_next
+            self.assertEqual(tb.tb_lineno, run.__code__.co_firstlineno + 3)
+            self.assertEqual(tb.tb_frame.f_locals["previous"], 1)
+        else:
+            self.fail("store hash error was skipped")
+        self.assertEqual(calls, [1, 2, 3, 4])
+        self.assertEqual(mapping[key], 1)
+        self.assertGreater(ex.get_region_stats()["dict_store_entries"], before)
+
+    def test_dict_store_inherited_hash_changes_method(self):
+        class Mapping(collections.Counter):
+            pass
+        run, ex = self.warm_dict_store(Mapping)
+        hashes = []
+        stores = []
+        def setitem(self, key, value):
+            stores.append(value)
+            dict.__setitem__(self, key, value)
+        class Key:
+            def __hash__(self):
+                hashes.append(len(hashes) + 1)
+                if len(hashes) == 4:
+                    Mapping.__setitem__ = setitem
+                return 42
+        key = Key()
+        mapping = Mapping({key: 0})
+        hashes.clear()
+        before = ex.get_region_stats()["dict_store_entries"]
+        run(mapping, key, 4)
+        self.assertEqual(hashes, list(range(1, 9)))
+        # The second store already selected dict's method before hashing.
+        self.assertEqual(stores, [3, 4])
+        self.assertFalse(ex.is_valid())
+        self.assertEqual(mapping[key], 4)
+        self.assertGreater(ex.get_region_stats()["dict_store_entries"], before)
+
+    def test_list_contains_int_values(self):
+        for invert in (False, True):
+            run, ex = self.warm_list_contains(invert)
+            for values in ([], [1], list(range(128)),
+                           [-(2**30-1), 2**30-1, 10000, -10000]):
+                for value in (-2**30+1, -10000, -1, 0, 1, 64, 127, 128, 10000, 2**30-1):
+                    with self.subTest(invert=invert, values=values[:3], value=value):
+                        self.assertEqual(
+                            self.executed(ex, "contains_entries", run, value, values, 0, 0, 8),
+                            (value in values) ^ invert)
+            before = ex.get_region_stats()["contains_iterations"]
+            self.assertEqual(run(10000, [int("10000")], 0, 0, 8), not invert)
+            self.assertGreater(ex.get_region_stats()["contains_iterations"], before)
+
+    def test_list_contains_int_fallback(self):
+        run, ex = self.warm_list_contains()
+        for value, container in [(True, [0, 1]), (1, [True]),
+                                 (2**100, [0, 2**100]), (1, [2**100, 1]),
+                                 ("a", ["b", "a"]), (1, (0, 1)),
+                                 (1, {1, 2}), (1, {1: None})]:
+            with self.subTest(value=value, container=container):
+                self.assertEqual(run(value, container, 0, 0, 8), value in container)
+        with self.assertRaises(TypeError):
+            run(1, None, 0, 0, 1)
+
+        calls = []
+        class Values(list):
+            def __contains__(self, value):
+                calls.append(value)
+                return False
+        self.assertFalse(run(1, Values([1]), 0, 0, 1))
+        self.assertEqual(calls, [1])
+        self.assertGreater(ex.get_region_stats()["contains_fallbacks"], 0)
+
+    def test_list_contains_int_mutation_and_error(self):
+        run, ex = self.warm_list_contains()
+        calls = []
+        values = list(range(64))
+        class Value:
+            def __eq__(self, other):
+                calls.append(other)
+                # The first iteration precedes the loop executor. Mutate on
+                # its next iteration, inside the optimized operation's fallback.
+                if len(calls) == 2:
+                    values.clear()
+                return False
+        values.extend([Value(), 1000])
+        before = ex.get_region_stats()["contains_iterations"]
+        self.assertFalse(run(1000, values, 0, 0, 8))
+        self.assertEqual(calls, [1000, 1000])
+        self.assertEqual(values, [])
+        self.assertGreater(ex.get_region_stats()["contains_iterations"], before)
+
+        calls.clear()
+        class Broken(int):
+            def __eq__(self, other):
+                calls.append(other)
+                if len(calls) == 2:
+                    raise RuntimeError("membership comparison")
+                return False
+        before = ex.get_region_stats()["contains_fallbacks"]
+        try:
+            run(1000, [0, 1, Broken(2), 1000], 0, 0, 8)
+        except RuntimeError as error:
+            self.assertEqual(str(error), "membership comparison")
+            tb = error.__traceback__
+            while tb.tb_frame.f_code is not run.__code__:
+                tb = tb.tb_next
+            self.assertEqual(tb.tb_lineno, 4)
+        else:
+            self.fail("membership comparison error was skipped")
+        self.assertEqual(calls, [1000, 1000])
+        self.assertGreater(ex.get_region_stats()["contains_fallbacks"], before)
+
+    def test_enumerate_int_scan_comparisons(self):
+        comparisons = {"<": operator.lt, "<=": operator.le,
+                       "==": operator.eq, "!=": operator.ne,
+                       ">": operator.gt, ">=": operator.ge}
+        for field in (0, 1):
+            for comparison, compare in comparisons.items():
+                with self.subTest(field=field, comparison=comparison):
+                    run, ex = self.warm_enumerate_scan(comparison, field)
+                    values = [(i, 255-i) for i in range(256)]
+                    for key in (-1, 0, 1, 64, 127, 255, 256):
+                        expected = (-1, None)
+                        consumed = 0
+                        for position, item in enumerate(values):
+                            expected = position, item
+                            consumed += 1
+                            if compare(item[field], key):
+                                break
+                        iterator = enumerate(values)
+                        self.assertEqual(run(iterator, key), expected)
+                        self.assertEqual(list(iterator), list(enumerate(values))[consumed:])
+                    before = ex.get_region_stats()["enum_scan_iterations"]
+                    same = [(0, 0)] * 200
+                    key = 1000 if comparison in (">", ">=", "==") else -1
+                    if comparison == "!=":
+                        key = 0
+                    self.assertEqual(run(enumerate(same), key), (199, (0, 0)))
+                    self.assertGreater(ex.get_region_stats()["enum_scan_iterations"], before)
+
+    def test_enumerate_int_scan_cache_and_alias(self):
+        run, ex = self.warm_enumerate_scan()
+        values = [(i,) for i in range(200)]
+        for start in (-10, -5, 0, 1000, 1024, 1025, 2**100):
+            for size in (0, 1, 2, 63, 64, 65, 128, 200):
+                with self.subTest(start=start, size=size):
+                    iterator = enumerate(values[:size], start)
+                    expected = (start + size - 1, values[size-1]) if size else (-1, None)
+                    self.assertEqual(run(iterator, 1000), expected)
+                    self.assertEqual(list(iterator), [])
+        iterator = enumerate(values)
+        cached = next(iterator)
+        before = ex.get_region_stats()["enum_scan_iterations"]
+        self.assertEqual(run(iterator, 1000), (199, values[-1]))
+        self.assertEqual(cached, (0, values[0]))
+        self.assertEqual(ex.get_region_stats()["enum_scan_iterations"], before)
+        self.assertEqual(run(iter(enumerate(values)), 80), (80, values[80]))
+        self.assertEqual(run(iter(list(enumerate(values))), 80), (80, values[80]))
+
+    def test_enumerate_int_scan_error_and_callback(self):
+        run, ex = self.warm_enumerate_scan()
+        values = [(i,) for i in range(200)]
+        values[80] = ()
+        iterator = enumerate(values)
+        before = ex.get_region_stats()["enum_scan_iterations"]
+        try:
+            run(iterator, 1000)
+        except IndexError as error:
+            tb = error.__traceback__
+            while tb.tb_frame.f_code is not run.__code__:
+                tb = tb.tb_next
+            self.assertEqual(tb.tb_lineno, 5)
+            self.assertEqual(tb.tb_frame.f_locals["position"], 80)
+            self.assertIs(tb.tb_frame.f_locals["item"], values[80])
+        else:
+            self.fail("tuple subscript error was skipped")
+        self.assertGreater(ex.get_region_stats()["enum_scan_iterations"], before)
+        self.assertEqual(next(iterator), (81, values[81]))
+
+        calls = []
+        class Value(int):
+            def __ge__(self, other):
+                calls.append((int(self), other))
+                values[81] = (2000,)
+                return False
+        values = [(i,) for i in range(200)]
+        values[80] = (Value(80),)
+        self.assertEqual(run(enumerate(values), 1000), (81, (2000,)))
+        self.assertEqual(calls, [(80, 1000)])
+        for item in ((True,), (2**100,), [2000]):
+            values[80] = item
+            expected = next(((i, x) for i, x in enumerate(values) if x[0] >= 1000),
+                            (199, values[-1]))
+            self.assertEqual(run(enumerate(values), 1000), expected)
+
+    def test_enumerate_int_scan_finalizer_order(self):
+        run, ex = self.warm_enumerate_scan()
+        calls = []
+        values = [(i,) for i in range(200)]
+
+        class Payload:
+            def __del__(self):
+                calls.append("finalize")
+                values[82] = (2000,)
+
+        class Value(int):
+            def __ge__(self, other):
+                calls.append("compare")
+                # The next chunk must not delay releasing this item: the
+                # cached tuple and frame will hold its last two references.
+                values[80] = (80,)
+                return False
+
+        values[80] = (Value(80), Payload())
+        before = ex.get_region_stats()["enum_scan_iterations"]
+        self.assertEqual(run(enumerate(values), 1000), (82, (2000,)))
+        self.assertEqual(calls, ["compare", "finalize"])
+        self.assertGreater(ex.get_region_stats()["enum_scan_iterations"], before)
+
+    def test_enumerate_int_scan_monitoring(self):
+        run, ex = self.warm_enumerate_scan()
+        values = [(i,) for i in range(128)]
+        positions = []
+        monitoring = sys.monitoring
+        tool = 4
+        monitoring.use_tool_id(tool, "test_enumerate_int_scan")
+
+        def on_line(code, line):
+            if line == 5:
+                positions.append(sys._getframe(1).f_locals["position"])
+                if positions[-1] == 64:
+                    values[65] = (2000,)
+
+        before = ex.get_region_stats()["enum_scan_iterations"]
+        try:
+            monitoring.register_callback(tool, monitoring.events.LINE, on_line)
+            monitoring.set_local_events(tool, run.__code__, monitoring.events.LINE)
+            self.assertEqual(run(enumerate(values), 1000), (65, (2000,)))
+            self.assertEqual(positions, list(range(66)))
+            self.assertEqual(ex.get_region_stats()["enum_scan_iterations"], before)
+        finally:
+            monitoring.set_local_events(tool, run.__code__, 0)
+            monitoring.register_callback(tool, monitoring.events.LINE, None)
+            monitoring.free_tool_id(tool)
 
     def warm_attribute_call(self, expression, slots):
         self.enterContext(mock.patch.dict(os.environ, {"PYTHON_TIER2_CALL_REGIONS": "1"}))

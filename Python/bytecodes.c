@@ -1711,6 +1711,25 @@ dummy_func(
 
         macro(STORE_SUBSCR) = _SPECIALIZE_STORE_SUBSCR + _STORE_SUBSCR;
 
+        tier2 op(_STORE_SUBSCR_DICT_INHERITED, (type_version/2, v, container, sub --)) {
+            PyObject *dict = PyStackRef_AsPyObjectBorrow(container);
+            int err;
+            assert(type_version != 0);
+            if (Py_TYPE(dict)->tp_version_tag == type_version) {
+                assert(PyDict_Check(dict));
+                current_executor->region_dict_store_entries++;
+                err = PyDict_SetItem(dict, PyStackRef_AsPyObjectBorrow(sub),
+                                     PyStackRef_AsPyObjectBorrow(v));
+            }
+            else {
+                current_executor->region_dict_store_fallbacks++;
+                err = PyObject_SetItem(dict, PyStackRef_AsPyObjectBorrow(sub),
+                                      PyStackRef_AsPyObjectBorrow(v));
+            }
+            DECREF_INPUTS();
+            ERROR_IF(err);
+        }
+
         macro(STORE_SUBSCR_LIST_INT) =
             _GUARD_TOS_INT + _GUARD_NOS_LIST + unused/1 + _STORE_SUBSCR_LIST_INT + _POP_TOP_INT + POP_TOP;
 
@@ -3186,6 +3205,11 @@ dummy_func(
             EXIT_IF(tp != (PyTypeObject *)type);
         }
 
+        tier2 op(_GUARD_NOS_TYPE, (type/4, owner, unused -- owner, unused)) {
+            PyTypeObject *tp = Py_TYPE(PyStackRef_AsPyObjectBorrow(owner));
+            EXIT_IF(tp != (PyTypeObject *)type);
+        }
+
         op(_CHECK_MANAGED_OBJECT_HAS_VALUES, (owner -- owner)) {
             PyObject *owner_o = PyStackRef_AsPyObjectBorrow(owner);
             assert(Py_TYPE(owner_o)->tp_dictoffset < 0);
@@ -3711,6 +3735,48 @@ dummy_func(
             int res = PySequence_Contains(right_o, left_o);
             if (res < 0) {
                 ERROR_NO_POP();
+            }
+            b = (res ^ oparg) ? PyStackRef_True : PyStackRef_False;
+            l = left;
+            r = right;
+            INPUTS_DEAD();
+        }
+
+        tier2 op(_CONTAINS_OP_LIST_INT, (left, right -- b, l, r)) {
+            PyObject *left_o = PyStackRef_AsPyObjectBorrow(left);
+            PyObject *right_o = PyStackRef_AsPyObjectBorrow(right);
+            int res = -1;
+            Py_ssize_t checked = 0;
+            if (PyList_CheckExact(right_o) && PyLong_CheckExact(left_o) &&
+                _PyLong_IsCompact((PyLongObject *)left_o)) {
+                Py_ssize_t value = _PyLong_CompactValue((PyLongObject *)left_o);
+                res = 0;
+                for (Py_ssize_t i = 0; i < PyList_GET_SIZE(right_o); i++) {
+                    PyObject *item = PyList_GET_ITEM(right_o, i);
+                    if (!PyLong_CheckExact(item) || !_PyLong_IsCompact((PyLongObject *)item)) {
+                        /* Only exact integer comparisons preceded this point.
+                         * They cannot invoke Python or mutate the list, so
+                         * restarting the ordinary operation repeats no effects. */
+                        res = -1;
+                        break;
+                    }
+                    checked++;
+                    if (_PyLong_CompactValue((PyLongObject *)item) == value) {
+                        res = 1;
+                        break;
+                    }
+                }
+            }
+            current_executor->region_contains_iterations += checked;
+            if (res < 0) {
+                current_executor->region_contains_fallbacks++;
+                res = PySequence_Contains(right_o, left_o);
+                if (res < 0) {
+                    ERROR_NO_POP();
+                }
+            }
+            else {
+                current_executor->region_contains_entries++;
             }
             b = (res ^ oparg) ? PyStackRef_True : PyStackRef_False;
             l = left;
@@ -4255,6 +4321,102 @@ dummy_func(
             if (Py_TYPE(PyStackRef_AsPyObjectBorrow(iter)) != &PyEnum_Type) {
                 current_executor->region_enum_guard_exits++;
                 EXIT_IF(true);
+            }
+        }
+
+        replicate(6) tier2 op(_ENUM_LIST_INT_SCAN, (config/4, field/4, iter, null_or_index -- iter, null_or_index)) {
+            PyObject *obj = PyStackRef_AsPyObjectBorrow(iter);
+            if (Py_TYPE(obj) != &PyEnum_Type) {
+                current_executor->region_enum_guard_exits++;
+                EXIT_IF(true);
+            }
+            _PyEnumObject *en = (_PyEnumObject *)obj;
+            uint64_t slots = (uint64_t)(uintptr_t)config;
+            int key_local = slots & 255;
+            int index_local = (slots >> 8) & 255;
+            int item_local = (slots >> 16) & 255;
+            _PyStackRef key_ref = GETLOCAL(key_local);
+            _PyStackRef index_ref = GETLOCAL(index_local);
+            _PyStackRef item_ref = GETLOCAL(item_local);
+            bool direct = !PyStackRef_IsNull(key_ref) &&
+                !PyStackRef_IsNull(index_ref) && !PyStackRef_IsNull(item_ref) &&
+                en->en_index >= -_PY_NSMALLNEGINTS &&
+                en->en_index < _PY_NSMALLPOSINTS &&
+                Py_TYPE(en->en_sit) == &PyListIter_Type &&
+                _PyObject_IsUniquelyReferenced(en->en_result);
+            _PyListIterObject *it = NULL;
+            PyObject *key = NULL;
+            if (direct) {
+                it = (_PyListIterObject *)en->en_sit;
+                key = PyStackRef_AsPyObjectBorrow(key_ref);
+                PyObject *old_item = PyStackRef_AsPyObjectBorrow(item_ref);
+                PyObject *old_index = PyStackRef_AsPyObjectBorrow(index_ref);
+                /* All removed decrefs must be unable to run finalizers. The
+                 * list still owns the old item, as it owns every new item.
+                 * A mutation at the header's periodic check can break this
+                 * relationship: retain the original next/unpack in that case. */
+                direct = PyLong_CheckExact(key) && _PyLong_IsCompact((PyLongObject *)key) &&
+                    PyLong_CheckExact(old_index) && it->it_seq != NULL &&
+                    it->it_index > 0 && it->it_index <= PyList_GET_SIZE(it->it_seq) &&
+                    PyList_GET_ITEM(it->it_seq, it->it_index - 1) == old_item &&
+                    PyTuple_GET_ITEM(en->en_result, 0) == old_index &&
+                    PyTuple_GET_ITEM(en->en_result, 1) == old_item;
+            }
+            Py_ssize_t count = 0;
+            if (direct) {
+                Py_ssize_t stop = Py_MIN(PyList_GET_SIZE(it->it_seq) - it->it_index, 64);
+                stop = Py_MIN(stop, _PY_NSMALLPOSINTS - en->en_index);
+                Py_ssize_t limit = _PyLong_CompactValue((PyLongObject *)key);
+                while (count < stop) {
+                    PyObject *item = PyList_GET_ITEM(it->it_seq, it->it_index + count);
+                    if (!PyTuple_CheckExact(item) ||
+                        (size_t)PyTuple_GET_SIZE(item) <= (uintptr_t)field) {
+                        break;
+                    }
+                    PyObject *value = PyTuple_GET_ITEM(item, (uintptr_t)field);
+                    if (!PyLong_CheckExact(value) || !_PyLong_IsCompact((PyLongObject *)value)) {
+                        break;
+                    }
+                    Py_ssize_t integer = _PyLong_CompactValue((PyLongObject *)value);
+                    /* Replication folds this to one comparison. Bitwise
+                     * operators also keep the unused generic stencil free
+                     * of a jump table through the assembly optimizer. */
+                    bool follows =
+                        ((oparg == Py_LT) & (integer < limit)) |
+                        ((oparg == Py_LE) & (integer <= limit)) |
+                        ((oparg == Py_EQ) & (integer == limit)) |
+                        ((oparg == Py_NE) & (integer != limit)) |
+                        ((oparg == Py_GT) & (integer > limit)) |
+                        ((oparg == Py_GE) & (integer >= limit));
+                    if (!follows) {
+                        break;
+                    }
+                    count++;
+                }
+            }
+            if (count) {
+                PyObject *result = en->en_result;
+                PyObject *old_index = PyTuple_GET_ITEM(result, 0);
+                PyObject *old_item = PyTuple_GET_ITEM(result, 1);
+                PyObject *last_item = PyList_GET_ITEM(it->it_seq, it->it_index + count - 1);
+                PyObject *last_index = (PyObject *)&_PyLong_SMALL_INTS[
+                    _PY_NSMALLNEGINTS + en->en_index + count - 1];
+                it->it_index += count;
+                en->en_index += count;
+                PyTuple_SET_ITEM(result, 0, Py_NewRef(last_index));
+                PyTuple_SET_ITEM(result, 1, Py_NewRef(last_item));
+                Py_DECREF(old_index);
+                Py_DECREF(old_item);
+                _PyTuple_Recycle(result);
+                GETLOCAL(index_local) = PyStackRef_FromPyObjectNew(last_index);
+                PyStackRef_CLOSE(index_ref);
+                GETLOCAL(item_local) = PyStackRef_FromPyObjectNew(last_item);
+                PyStackRef_CLOSE(item_ref);
+                current_executor->region_enum_scan_entries++;
+                current_executor->region_enum_scan_iterations += count;
+            }
+            else {
+                current_executor->region_enum_scan_misses++;
             }
         }
 
@@ -5755,7 +5917,7 @@ dummy_func(
             EXIT_IF(total_args != 2);
             PyObject *self = PyStackRef_AsPyObjectBorrow(
                 PyStackRef_IsNull(self_or_null) ? args[0] : self_or_null);
-            EXIT_IF(!Py_IS_TYPE(self, method->d_common.d_type));
+            EXIT_IF(!PyObject_TypeCheck(self, method->d_common.d_type));
         }
 
          op(_CALL_METHOD_DESCRIPTOR_O, (callable, self_or_null, args[oparg] -- res, c, s, a)) {
@@ -5831,7 +5993,7 @@ dummy_func(
             }
             EXIT_IF(total_args == 0);
             PyObject *self = PyStackRef_AsPyObjectBorrow(arguments[0]);
-            EXIT_IF(!Py_IS_TYPE(self, method->d_common.d_type));
+            EXIT_IF(!PyObject_TypeCheck(self, method->d_common.d_type));
         }
 
         op(_CALL_METHOD_DESCRIPTOR_FAST_WITH_KEYWORDS, (callable, self_or_null, args[oparg] -- callable, self_or_null, args[oparg])) {
@@ -5904,7 +6066,7 @@ dummy_func(
             EXIT_IF(total_args != 1);
             PyObject *self = PyStackRef_AsPyObjectBorrow(
                 PyStackRef_IsNull(self_or_null) ? args[0] : self_or_null);
-            EXIT_IF(!Py_IS_TYPE(self, method->d_common.d_type));
+            EXIT_IF(!PyObject_TypeCheck(self, method->d_common.d_type));
         }
 
         op(_CALL_METHOD_DESCRIPTOR_NOARGS, (callable, self_or_null, args[oparg] -- res, c, s)) {
@@ -5973,7 +6135,7 @@ dummy_func(
             EXIT_IF(total_args == 0);
             PyObject *self = PyStackRef_AsPyObjectBorrow(
                 PyStackRef_IsNull(self_or_null) ? args[0] : self_or_null);
-            EXIT_IF(!Py_IS_TYPE(self, method->d_common.d_type));
+            EXIT_IF(!PyObject_TypeCheck(self, method->d_common.d_type));
         }
 
         op(_CALL_METHOD_DESCRIPTOR_FAST, (callable, self_or_null, args[oparg] -- callable, self_or_null, args[oparg])) {

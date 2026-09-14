@@ -1,5 +1,8 @@
 # Experimental straight-line Tier 2 regions
 
+For the design rationale, semantic constraints, and measured results across the
+completed experiments, see [the optimization report](optimization_report.md).
+
 These experiments use the existing abstract interpreter, stack cache, and
 copy-and-patch backend. They are disabled by default. Enable individual groups
 before compiling a trace:
@@ -127,6 +130,44 @@ enumerate: its contents, reference-release order, hash reset, and GC re-tracking
 match `enum_next`. Old-element finalizers may re-enter the same iterator.
 `enum_entries` counts the fast path, `enum_fallbacks` the ordinary calls, and
 `enum_guard_exits` failures of the enumerate-type guard itself.
+
+For a loop that only unpacks enumerate results, reads a constant tuple field,
+and compares its exact compact integer with an unchanged local, the builtin
+group can scan up to 64 consecutive items taking the same loop branch.
+The six integer comparisons use replicated stencils. `_ENUM_LIST_INT_SCAN`
+leaves the original next/unpack/comparison in place for
+the first different branch, unsupported element, or exhaustion. It preserves
+the header's periodic check and requires the list still to own the previous
+local and cached-tuple item, so omitted reference releases cannot run finalizers.
+Shared enumerate result tuples and indices outside the small-int cache retain
+ordinary iteration. `enum_scan_entries`, `enum_scan_iterations`, and
+`enum_scan_misses` distinguish chunk execution from the original next path.
+
+`_CONTAINS_OP_LIST_INT` scans exact lists of compact exact integers directly.
+For unsupported operands or the first unsupported element it calls ordinary
+`PySequence_Contains` in the trace. Restarting that operation repeats only
+the preceding exact-integer comparisons, which have no callbacks or mutations.
+The original operand cleanup and error location are retained. The
+`contains_entries`, `contains_iterations`, and `contains_fallbacks` counters
+separate completed direct searches, tested integer elements, and ordinary calls.
+
+Two accompanying guard changes apply independently of the region options.
+Dict subscription and assignment use `_GUARD_NOS_TYPE` to check the receiver,
+instead of checking the key at TOS. Builtin method-descriptor guards accept
+subtypes using `PyObject_TypeCheck`, as ordinary descriptor calls do; this
+allows inherited methods such as `list.append` to stay in a trace. The latter
+also applies to Tier 1. The separate `CALL_LIST_APPEND` specialization still
+requires an exact list.
+
+For a dict subclass whose generic assignment slot resolves `__setitem__` to
+dict's original descriptor, `_STORE_SUBSCR_DICT_INHERITED` calls `PyDict_SetItem`
+directly. Overriding `__delitem__` alone can cause this generic slot, as in
+`collections.Counter`. The optimizer checks the slot itself to exclude custom
+C implementations and watches the type. The uop checks the receiver's type
+version before the call; a mismatch uses ordinary `PyObject_SetItem` in the
+trace. Hash/equality callbacks, errors, and operand cleanup use the original
+dict and bytecode protocols. `dict_store_entries` and `dict_store_fallbacks`
+count direct and ordinary calls.
 
 The builtin option specializes a known `range(stop)` call with an exact compact
 int, and `GET_ITER` on a known range whose four integer fields are compact.

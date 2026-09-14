@@ -199,6 +199,7 @@ const uint32_t _PyUop_Flags[MAX_UOP_ID+1] = {
     [_LIST_APPEND] = HAS_ARG_FLAG | HAS_ERROR_FLAG,
     [_SET_ADD] = HAS_ARG_FLAG | HAS_ERROR_FLAG | HAS_ESCAPES_FLAG,
     [_STORE_SUBSCR] = HAS_ERROR_FLAG | HAS_ESCAPES_FLAG,
+    [_STORE_SUBSCR_DICT_INHERITED] = HAS_ERROR_FLAG | HAS_ESCAPES_FLAG,
     [_STORE_SUBSCR_LIST_INT] = HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
     [_STORE_SUBSCR_DICT] = HAS_ERROR_FLAG | HAS_ESCAPES_FLAG,
     [_STORE_SUBSCR_DICT_KNOWN_HASH] = HAS_ERROR_FLAG | HAS_ESCAPES_FLAG,
@@ -266,6 +267,7 @@ const uint32_t _PyUop_Flags[MAX_UOP_ID+1] = {
     [_GUARD_TYPE_VERSION] = HAS_EXIT_FLAG,
     [_GUARD_TYPE_VERSION_LOCKED] = HAS_EXIT_FLAG,
     [_GUARD_TYPE] = HAS_EXIT_FLAG,
+    [_GUARD_NOS_TYPE] = HAS_EXIT_FLAG,
     [_CHECK_MANAGED_OBJECT_HAS_VALUES] = HAS_EXIT_FLAG,
     [_LOAD_ATTR_INSTANCE_VALUE] = HAS_DEOPT_FLAG,
     [_LOAD_ATTR_MODULE] = HAS_EXIT_FLAG,
@@ -292,6 +294,7 @@ const uint32_t _PyUop_Flags[MAX_UOP_ID+1] = {
     [_COMPARE_OP_STR] = HAS_ARG_FLAG,
     [_IS_OP] = HAS_ARG_FLAG,
     [_CONTAINS_OP] = HAS_ARG_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG,
+    [_CONTAINS_OP_LIST_INT] = HAS_ARG_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG,
     [_GUARD_TOS_ANY_SET] = HAS_EXIT_FLAG,
     [_GUARD_TOS_SET] = HAS_EXIT_FLAG,
     [_GUARD_TOS_FROZENSET] = HAS_EXIT_FLAG,
@@ -317,6 +320,13 @@ const uint32_t _PyUop_Flags[MAX_UOP_ID+1] = {
     [_GUARD_TYPE_ITER] = HAS_EXIT_FLAG,
     [_ITER_NEXT_INLINE] = HAS_EXIT_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG,
     [_GUARD_ENUM_LIST] = HAS_EXIT_FLAG,
+    [_ENUM_LIST_INT_SCAN_0] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG | HAS_ESCAPES_FLAG,
+    [_ENUM_LIST_INT_SCAN_1] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG | HAS_ESCAPES_FLAG,
+    [_ENUM_LIST_INT_SCAN_2] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG | HAS_ESCAPES_FLAG,
+    [_ENUM_LIST_INT_SCAN_3] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG | HAS_ESCAPES_FLAG,
+    [_ENUM_LIST_INT_SCAN_4] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG | HAS_ESCAPES_FLAG,
+    [_ENUM_LIST_INT_SCAN_5] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG | HAS_ESCAPES_FLAG,
+    [_ENUM_LIST_INT_SCAN] = HAS_ARG_FLAG | HAS_LOCAL_FLAG | HAS_EXIT_FLAG | HAS_ESCAPES_FLAG,
     [_ITER_NEXT_ENUM_LIST] = HAS_EXIT_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG,
     [_GUARD_NOS_ITER_VIRTUAL] = HAS_EXIT_FLAG,
     [_GUARD_TOS_NOT_NULL] = HAS_EXIT_FLAG,
@@ -537,6 +547,7 @@ const ReplicationRange _PyUop_Replication[MAX_UOP_ID+1] = {
     [_INT_REGION_COMPARE] = { 0, 9 },
     [_COMPARE_TUPLE_PAIR] = { 0, 2 },
     [_COMPARE_LIST_PAIR] = { 0, 2 },
+    [_ENUM_LIST_INT_SCAN] = { 0, 6 },
     [_INIT_CALL_PY_EXACT_ARGS] = { 0, 5 },
     [_CALL_PY_TRIVIAL] = { 0, 5 },
     [_CALL_PY_ATTRIBUTE] = { 0, 5 },
@@ -2026,6 +2037,15 @@ const _PyUopCachingInfo _PyUop_Caching[MAX_UOP_ID+1] = {
             { 0, 3, _STORE_SUBSCR_r30 },
         },
     },
+    [_STORE_SUBSCR_DICT_INHERITED] = {
+        .best = { 3, 3, 3, 3 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 0, 3, _STORE_SUBSCR_DICT_INHERITED_r30 },
+        },
+    },
     [_STORE_SUBSCR_LIST_INT] = {
         .best = { 3, 3, 3, 3 },
         .entries = {
@@ -2629,6 +2649,15 @@ const _PyUopCachingInfo _PyUop_Caching[MAX_UOP_ID+1] = {
             { 3, 3, _GUARD_TYPE_r33 },
         },
     },
+    [_GUARD_NOS_TYPE] = {
+        .best = { 0, 1, 2, 3 },
+        .entries = {
+            { 2, 0, _GUARD_NOS_TYPE_r02 },
+            { 2, 1, _GUARD_NOS_TYPE_r12 },
+            { 2, 2, _GUARD_NOS_TYPE_r22 },
+            { 3, 3, _GUARD_NOS_TYPE_r33 },
+        },
+    },
     [_CHECK_MANAGED_OBJECT_HAS_VALUES] = {
         .best = { 0, 1, 2, 3 },
         .entries = {
@@ -2863,6 +2892,15 @@ const _PyUopCachingInfo _PyUop_Caching[MAX_UOP_ID+1] = {
             { -1, -1, -1 },
         },
     },
+    [_CONTAINS_OP_LIST_INT] = {
+        .best = { 2, 2, 2, 2 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 3, 2, _CONTAINS_OP_LIST_INT_r23 },
+            { -1, -1, -1 },
+        },
+    },
     [_GUARD_TOS_ANY_SET] = {
         .best = { 0, 1, 2, 3 },
         .entries = {
@@ -3086,6 +3124,69 @@ const _PyUopCachingInfo _PyUop_Caching[MAX_UOP_ID+1] = {
             { 2, 1, _GUARD_ENUM_LIST_r12 },
             { 2, 2, _GUARD_ENUM_LIST_r22 },
             { 3, 3, _GUARD_ENUM_LIST_r33 },
+        },
+    },
+    [_ENUM_LIST_INT_SCAN_0] = {
+        .best = { 2, 2, 2, 2 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 2, 2, _ENUM_LIST_INT_SCAN_0_r22 },
+            { -1, -1, -1 },
+        },
+    },
+    [_ENUM_LIST_INT_SCAN_1] = {
+        .best = { 2, 2, 2, 2 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 2, 2, _ENUM_LIST_INT_SCAN_1_r22 },
+            { -1, -1, -1 },
+        },
+    },
+    [_ENUM_LIST_INT_SCAN_2] = {
+        .best = { 2, 2, 2, 2 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 2, 2, _ENUM_LIST_INT_SCAN_2_r22 },
+            { -1, -1, -1 },
+        },
+    },
+    [_ENUM_LIST_INT_SCAN_3] = {
+        .best = { 2, 2, 2, 2 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 2, 2, _ENUM_LIST_INT_SCAN_3_r22 },
+            { -1, -1, -1 },
+        },
+    },
+    [_ENUM_LIST_INT_SCAN_4] = {
+        .best = { 2, 2, 2, 2 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 2, 2, _ENUM_LIST_INT_SCAN_4_r22 },
+            { -1, -1, -1 },
+        },
+    },
+    [_ENUM_LIST_INT_SCAN_5] = {
+        .best = { 2, 2, 2, 2 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 2, 2, _ENUM_LIST_INT_SCAN_5_r22 },
+            { -1, -1, -1 },
+        },
+    },
+    [_ENUM_LIST_INT_SCAN] = {
+        .best = { 2, 2, 2, 2 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 2, 2, _ENUM_LIST_INT_SCAN_r22 },
+            { -1, -1, -1 },
         },
     },
     [_ITER_NEXT_ENUM_LIST] = {
@@ -5271,6 +5372,7 @@ const uint16_t _PyUop_Uncached[MAX_UOP_REGS_ID+1] = {
     [_LIST_APPEND_r10] = _LIST_APPEND,
     [_SET_ADD_r10] = _SET_ADD,
     [_STORE_SUBSCR_r30] = _STORE_SUBSCR,
+    [_STORE_SUBSCR_DICT_INHERITED_r30] = _STORE_SUBSCR_DICT_INHERITED,
     [_STORE_SUBSCR_LIST_INT_r32] = _STORE_SUBSCR_LIST_INT,
     [_STORE_SUBSCR_DICT_r31] = _STORE_SUBSCR_DICT,
     [_STORE_SUBSCR_DICT_KNOWN_HASH_r31] = _STORE_SUBSCR_DICT_KNOWN_HASH,
@@ -5381,6 +5483,10 @@ const uint16_t _PyUop_Uncached[MAX_UOP_REGS_ID+1] = {
     [_GUARD_TYPE_r11] = _GUARD_TYPE,
     [_GUARD_TYPE_r22] = _GUARD_TYPE,
     [_GUARD_TYPE_r33] = _GUARD_TYPE,
+    [_GUARD_NOS_TYPE_r02] = _GUARD_NOS_TYPE,
+    [_GUARD_NOS_TYPE_r12] = _GUARD_NOS_TYPE,
+    [_GUARD_NOS_TYPE_r22] = _GUARD_NOS_TYPE,
+    [_GUARD_NOS_TYPE_r33] = _GUARD_NOS_TYPE,
     [_CHECK_MANAGED_OBJECT_HAS_VALUES_r01] = _CHECK_MANAGED_OBJECT_HAS_VALUES,
     [_CHECK_MANAGED_OBJECT_HAS_VALUES_r11] = _CHECK_MANAGED_OBJECT_HAS_VALUES,
     [_CHECK_MANAGED_OBJECT_HAS_VALUES_r22] = _CHECK_MANAGED_OBJECT_HAS_VALUES,
@@ -5430,6 +5536,7 @@ const uint16_t _PyUop_Uncached[MAX_UOP_REGS_ID+1] = {
     [_IS_OP_r13] = _IS_OP,
     [_IS_OP_r23] = _IS_OP,
     [_CONTAINS_OP_r23] = _CONTAINS_OP,
+    [_CONTAINS_OP_LIST_INT_r23] = _CONTAINS_OP_LIST_INT,
     [_GUARD_TOS_ANY_SET_r01] = _GUARD_TOS_ANY_SET,
     [_GUARD_TOS_ANY_SET_r11] = _GUARD_TOS_ANY_SET,
     [_GUARD_TOS_ANY_SET_r22] = _GUARD_TOS_ANY_SET,
@@ -5482,6 +5589,13 @@ const uint16_t _PyUop_Uncached[MAX_UOP_REGS_ID+1] = {
     [_GUARD_ENUM_LIST_r12] = _GUARD_ENUM_LIST,
     [_GUARD_ENUM_LIST_r22] = _GUARD_ENUM_LIST,
     [_GUARD_ENUM_LIST_r33] = _GUARD_ENUM_LIST,
+    [_ENUM_LIST_INT_SCAN_0_r22] = _ENUM_LIST_INT_SCAN_0,
+    [_ENUM_LIST_INT_SCAN_1_r22] = _ENUM_LIST_INT_SCAN_1,
+    [_ENUM_LIST_INT_SCAN_2_r22] = _ENUM_LIST_INT_SCAN_2,
+    [_ENUM_LIST_INT_SCAN_3_r22] = _ENUM_LIST_INT_SCAN_3,
+    [_ENUM_LIST_INT_SCAN_4_r22] = _ENUM_LIST_INT_SCAN_4,
+    [_ENUM_LIST_INT_SCAN_5_r22] = _ENUM_LIST_INT_SCAN_5,
+    [_ENUM_LIST_INT_SCAN_r22] = _ENUM_LIST_INT_SCAN,
     [_ITER_NEXT_ENUM_LIST_r23] = _ITER_NEXT_ENUM_LIST,
     [_GUARD_NOS_ITER_VIRTUAL_r02] = _GUARD_NOS_ITER_VIRTUAL,
     [_GUARD_NOS_ITER_VIRTUAL_r12] = _GUARD_NOS_ITER_VIRTUAL,
@@ -6314,6 +6428,8 @@ const char *const _PyOpcode_uop_name[MAX_UOP_REGS_ID+1] = {
     [_CONTAINS_OP_r23] = "_CONTAINS_OP_r23",
     [_CONTAINS_OP_DICT] = "_CONTAINS_OP_DICT",
     [_CONTAINS_OP_DICT_r23] = "_CONTAINS_OP_DICT_r23",
+    [_CONTAINS_OP_LIST_INT] = "_CONTAINS_OP_LIST_INT",
+    [_CONTAINS_OP_LIST_INT_r23] = "_CONTAINS_OP_LIST_INT_r23",
     [_CONTAINS_OP_SET] = "_CONTAINS_OP_SET",
     [_CONTAINS_OP_SET_r23] = "_CONTAINS_OP_SET_r23",
     [_CONVERT_VALUE] = "_CONVERT_VALUE",
@@ -6364,6 +6480,20 @@ const char *const _PyOpcode_uop_name[MAX_UOP_REGS_ID+1] = {
     [_END_FOR_r10] = "_END_FOR_r10",
     [_END_SEND] = "_END_SEND",
     [_END_SEND_r31] = "_END_SEND_r31",
+    [_ENUM_LIST_INT_SCAN] = "_ENUM_LIST_INT_SCAN",
+    [_ENUM_LIST_INT_SCAN_r22] = "_ENUM_LIST_INT_SCAN_r22",
+    [_ENUM_LIST_INT_SCAN_0] = "_ENUM_LIST_INT_SCAN_0",
+    [_ENUM_LIST_INT_SCAN_0_r22] = "_ENUM_LIST_INT_SCAN_0_r22",
+    [_ENUM_LIST_INT_SCAN_1] = "_ENUM_LIST_INT_SCAN_1",
+    [_ENUM_LIST_INT_SCAN_1_r22] = "_ENUM_LIST_INT_SCAN_1_r22",
+    [_ENUM_LIST_INT_SCAN_2] = "_ENUM_LIST_INT_SCAN_2",
+    [_ENUM_LIST_INT_SCAN_2_r22] = "_ENUM_LIST_INT_SCAN_2_r22",
+    [_ENUM_LIST_INT_SCAN_3] = "_ENUM_LIST_INT_SCAN_3",
+    [_ENUM_LIST_INT_SCAN_3_r22] = "_ENUM_LIST_INT_SCAN_3_r22",
+    [_ENUM_LIST_INT_SCAN_4] = "_ENUM_LIST_INT_SCAN_4",
+    [_ENUM_LIST_INT_SCAN_4_r22] = "_ENUM_LIST_INT_SCAN_4_r22",
+    [_ENUM_LIST_INT_SCAN_5] = "_ENUM_LIST_INT_SCAN_5",
+    [_ENUM_LIST_INT_SCAN_5_r22] = "_ENUM_LIST_INT_SCAN_5_r22",
     [_ERROR_POP_N] = "_ERROR_POP_N",
     [_ERROR_POP_N_r00] = "_ERROR_POP_N_r00",
     [_EXIT_INIT_CHECK] = "_EXIT_INIT_CHECK",
@@ -6687,6 +6817,11 @@ const char *const _PyOpcode_uop_name[MAX_UOP_REGS_ID+1] = {
     [_GUARD_NOS_TUPLE_r12] = "_GUARD_NOS_TUPLE_r12",
     [_GUARD_NOS_TUPLE_r22] = "_GUARD_NOS_TUPLE_r22",
     [_GUARD_NOS_TUPLE_r33] = "_GUARD_NOS_TUPLE_r33",
+    [_GUARD_NOS_TYPE] = "_GUARD_NOS_TYPE",
+    [_GUARD_NOS_TYPE_r02] = "_GUARD_NOS_TYPE_r02",
+    [_GUARD_NOS_TYPE_r12] = "_GUARD_NOS_TYPE_r12",
+    [_GUARD_NOS_TYPE_r22] = "_GUARD_NOS_TYPE_r22",
+    [_GUARD_NOS_TYPE_r33] = "_GUARD_NOS_TYPE_r33",
     [_GUARD_NOS_TYPE_VERSION] = "_GUARD_NOS_TYPE_VERSION",
     [_GUARD_NOS_TYPE_VERSION_r02] = "_GUARD_NOS_TYPE_VERSION_r02",
     [_GUARD_NOS_TYPE_VERSION_r12] = "_GUARD_NOS_TYPE_VERSION_r12",
@@ -7437,6 +7572,8 @@ const char *const _PyOpcode_uop_name[MAX_UOP_REGS_ID+1] = {
     [_STORE_SUBSCR_r30] = "_STORE_SUBSCR_r30",
     [_STORE_SUBSCR_DICT] = "_STORE_SUBSCR_DICT",
     [_STORE_SUBSCR_DICT_r31] = "_STORE_SUBSCR_DICT_r31",
+    [_STORE_SUBSCR_DICT_INHERITED] = "_STORE_SUBSCR_DICT_INHERITED",
+    [_STORE_SUBSCR_DICT_INHERITED_r30] = "_STORE_SUBSCR_DICT_INHERITED_r30",
     [_STORE_SUBSCR_DICT_KNOWN_HASH] = "_STORE_SUBSCR_DICT_KNOWN_HASH",
     [_STORE_SUBSCR_DICT_KNOWN_HASH_r31] = "_STORE_SUBSCR_DICT_KNOWN_HASH_r31",
     [_STORE_SUBSCR_LIST_INT] = "_STORE_SUBSCR_LIST_INT",
@@ -7905,6 +8042,8 @@ int _PyUop_num_popped(int opcode, int oparg)
             return 1;
         case _STORE_SUBSCR:
             return 3;
+        case _STORE_SUBSCR_DICT_INHERITED:
+            return 3;
         case _STORE_SUBSCR_LIST_INT:
             return 3;
         case _STORE_SUBSCR_DICT:
@@ -8039,6 +8178,8 @@ int _PyUop_num_popped(int opcode, int oparg)
             return 0;
         case _GUARD_TYPE:
             return 0;
+        case _GUARD_NOS_TYPE:
+            return 0;
         case _CHECK_MANAGED_OBJECT_HAS_VALUES:
             return 0;
         case _LOAD_ATTR_INSTANCE_VALUE:
@@ -8091,6 +8232,8 @@ int _PyUop_num_popped(int opcode, int oparg)
             return 2;
         case _CONTAINS_OP:
             return 2;
+        case _CONTAINS_OP_LIST_INT:
+            return 2;
         case _GUARD_TOS_ANY_SET:
             return 0;
         case _GUARD_TOS_SET:
@@ -8140,6 +8283,20 @@ int _PyUop_num_popped(int opcode, int oparg)
         case _ITER_NEXT_INLINE:
             return 0;
         case _GUARD_ENUM_LIST:
+            return 0;
+        case _ENUM_LIST_INT_SCAN_0:
+            return 0;
+        case _ENUM_LIST_INT_SCAN_1:
+            return 0;
+        case _ENUM_LIST_INT_SCAN_2:
+            return 0;
+        case _ENUM_LIST_INT_SCAN_3:
+            return 0;
+        case _ENUM_LIST_INT_SCAN_4:
+            return 0;
+        case _ENUM_LIST_INT_SCAN_5:
+            return 0;
+        case _ENUM_LIST_INT_SCAN:
             return 0;
         case _ITER_NEXT_ENUM_LIST:
             return 0;

@@ -185,6 +185,28 @@ dummy_func(void) {
         ss = sub_st;
     }
 
+    op(_STORE_SUBSCR, (v, container, sub --)) {
+        (void)v;
+        (void)sub;
+        PyTypeObject *type = sym_get_type(container);
+        if (type == NULL) {
+            type = sym_get_probable_type(container);
+        }
+        if (region_enabled("PYTHON_TIER2_BUILTIN_REGIONS") && type != NULL &&
+            PyType_IsSubtype(type, &PyDict_Type) &&
+            _PyType_HasGenericSetItem(type) &&
+            _PyType_Lookup(type, &_Py_ID(__setitem__)) ==
+                _PyType_Lookup(&PyDict_Type, &_Py_ID(__setitem__)) &&
+            type->tp_version_tag != 0) {
+            /* __delitem__ can force generic assignment dispatch even when
+             * __setitem__ is inherited unchanged from dict. Version-check
+             * the receiver in the new uop; a mismatch keeps ordinary dispatch. */
+            REPLACE_OP(this_instr, _STORE_SUBSCR_DICT_INHERITED, 0,
+                       type->tp_version_tag);
+            watch_type(type, dependencies);
+        }
+    }
+
     op(_STORE_ATTR_SLOT, (index/1, value, owner -- o)) {
         (void)index;
         (void)value;
@@ -897,7 +919,14 @@ dummy_func(void) {
         b = sym_new_type(ctx, &PyBool_Type);
         l = left;
         r = right;
-        REPLACE_OPCODE_IF_EVALUATES_PURE(left, right, b);
+        PyTypeObject *type = sym_get_type(right);
+        if (region_enabled("PYTHON_TIER2_BUILTIN_REGIONS") &&
+            (type == NULL || type == &PyList_Type)) {
+            REPLACE_OP(this_instr, _CONTAINS_OP_LIST_INT, oparg, 0);
+        }
+        else {
+            REPLACE_OPCODE_IF_EVALUATES_PURE(left, right, b);
+        }
     }
 
     op(_CONTAINS_OP_SET, (left, right -- b, l, r)) {
@@ -2288,7 +2317,7 @@ dummy_func(void) {
                 ADD_OP(_NOP, 0, 0);
             }
             else {
-                ADD_OP(_GUARD_TYPE, 0, (uintptr_t)tp);
+                ADD_OP(_GUARD_NOS_TYPE, 0, (uintptr_t)tp);
                 sym_set_type(nos, tp);
             }
             PyType_Watch(TYPE_WATCHER_ID, (PyObject *)tp);
@@ -2309,7 +2338,7 @@ dummy_func(void) {
                 ADD_OP(_NOP, 0, 0);
             }
             else {
-                ADD_OP(_GUARD_TYPE, 0, (uintptr_t)tp);
+                ADD_OP(_GUARD_NOS_TYPE, 0, (uintptr_t)tp);
                 sym_set_type(nos, tp);
             }
             PyType_Watch(TYPE_WATCHER_ID, (PyObject *)tp);

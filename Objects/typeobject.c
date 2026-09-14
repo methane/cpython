@@ -10669,6 +10669,13 @@ slot_mp_ass_subscript(PyObject *self, PyObject *key, PyObject *value)
     return 0;
 }
 
+int
+_PyType_HasGenericSetItem(PyTypeObject *type)
+{
+    return type->tp_as_mapping != NULL &&
+        type->tp_as_mapping->mp_ass_subscript == slot_mp_ass_subscript;
+}
+
 SLOT1BIN(slot_nb_add, nb_add, __add__, __radd__)
 SLOT1BIN(slot_nb_subtract, nb_subtract, __sub__, __rsub__)
 SLOT1BIN(slot_nb_multiply, nb_multiply, __mul__, __rmul__)

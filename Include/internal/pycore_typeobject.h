@@ -102,6 +102,9 @@ extern int _PyType_HasSubclasses(PyTypeObject *);
 // Export for _testinternalcapi extension.
 PyAPI_FUNC(PyObject *) _PyType_GetSlotWrapperNames(void);
 
+/* Whether assignment dispatches through the generic __setitem__ lookup. */
+extern int _PyType_HasGenericSetItem(PyTypeObject *type);
+
 // PyType_Ready() must be called if _PyType_IsReady() is false.
 // See also the Py_TPFLAGS_READY flag.
 static inline int

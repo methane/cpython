@@ -243,6 +243,14 @@ typedef struct _PyExecutorObject {
     uint64_t region_enum_entries;
     uint64_t region_enum_guard_exits;
     uint64_t region_enum_fallbacks;
+    uint64_t region_enum_scan_entries;
+    uint64_t region_enum_scan_iterations;
+    uint64_t region_enum_scan_misses;
+    uint64_t region_contains_entries;
+    uint64_t region_contains_iterations;
+    uint64_t region_contains_fallbacks;
+    uint64_t region_dict_store_entries;
+    uint64_t region_dict_store_fallbacks;
     /* GIL-only coefficient setup cannot escape or re-enter Python. */
     int64_t region_poly_scratch[4][3];
     bool region_poly_valid;

@@ -1670,7 +1670,7 @@
                     ADD_OP(_NOP, 0, 0);
                 }
                 else {
-                    ADD_OP(_GUARD_TYPE, 0, (uintptr_t)tp);
+                    ADD_OP(_GUARD_NOS_TYPE, 0, (uintptr_t)tp);
                     sym_set_type(nos, tp);
                 }
                 PyType_Watch(TYPE_WATCHER_ID, (PyObject *)tp);
@@ -1694,7 +1694,7 @@
                     ADD_OP(_NOP, 0, 0);
                 }
                 else {
-                    ADD_OP(_GUARD_TYPE, 0, (uintptr_t)tp);
+                    ADD_OP(_GUARD_NOS_TYPE, 0, (uintptr_t)tp);
                     sym_set_type(nos, tp);
                 }
                 PyType_Watch(TYPE_WATCHER_ID, (PyObject *)tp);
@@ -1893,6 +1893,35 @@
         }
 
         case _STORE_SUBSCR: {
+            JitOptRef sub;
+            JitOptRef container;
+            JitOptRef v;
+            sub = stack_pointer[-1];
+            container = stack_pointer[-2];
+            v = stack_pointer[-3];
+            (void)v;
+            (void)sub;
+            PyTypeObject *type = sym_get_type(container);
+            if (type == NULL) {
+                type = sym_get_probable_type(container);
+            }
+            if (region_enabled("PYTHON_TIER2_BUILTIN_REGIONS") && type != NULL &&
+                PyType_IsSubtype(type, &PyDict_Type) &&
+                _PyType_HasGenericSetItem(type) &&
+                _PyType_Lookup(type, &_Py_ID(__setitem__)) ==
+                _PyType_Lookup(&PyDict_Type, &_Py_ID(__setitem__)) &&
+                type->tp_version_tag != 0) {
+                REPLACE_OP(this_instr, _STORE_SUBSCR_DICT_INHERITED, 0,
+                       type->tp_version_tag);
+                watch_type(type, dependencies);
+            }
+            CHECK_STACK_BOUNDS(-3);
+            stack_pointer += -3;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            break;
+        }
+
+        case _STORE_SUBSCR_DICT_INHERITED: {
             CHECK_STACK_BOUNDS(-3);
             stack_pointer += -3;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
@@ -2816,6 +2845,10 @@
             break;
         }
 
+        case _GUARD_NOS_TYPE: {
+            break;
+        }
+
         case _CHECK_MANAGED_OBJECT_HAS_VALUES: {
             break;
         }
@@ -3399,47 +3432,70 @@
             b = sym_new_type(ctx, &PyBool_Type);
             l = left;
             r = right;
-            if (
-                sym_is_safe_const(ctx, left) &&
-                sym_is_safe_const(ctx, right)
-            ) {
-                JitOptRef left_sym = left;
-                JitOptRef right_sym = right;
-                _PyStackRef left = sym_get_const_as_stackref(ctx, left_sym);
-                _PyStackRef right = sym_get_const_as_stackref(ctx, right_sym);
-                _PyStackRef b_stackref;
-                _PyStackRef l_stackref;
-                _PyStackRef r_stackref;
-                /* Start of uop copied from bytecodes for constant evaluation */
-                PyObject *left_o = PyStackRef_AsPyObjectBorrow(left);
-                PyObject *right_o = PyStackRef_AsPyObjectBorrow(right);
-                int res = PySequence_Contains(right_o, left_o);
-                if (res < 0) {
-                    JUMP_TO_LABEL(error);
-                }
-                b_stackref = (res ^ oparg) ? PyStackRef_True : PyStackRef_False;
-                l_stackref = left;
-                r_stackref = right;
-                /* End of uop copied from bytecodes for constant evaluation */
-                (void)l_stackref;
-                (void)r_stackref;
-                b = sym_new_const_steal(ctx, PyStackRef_AsPyObjectSteal(b_stackref));
-                if (sym_is_const(ctx, b)) {
-                    PyObject *result = sym_get_const(ctx, b);
-                    if (_Py_IsImmortal(result)) {
-                        // Replace with _LOAD_CONST_INLINE_BORROW + _RROT_3 since we have two inputs and an immortal result
-                        ADD_OP(_LOAD_CONST_INLINE_BORROW, 0, (uintptr_t)result);
-                        ADD_OP(_RROT_3, 0, 0);
-                    }
-                }
-                CHECK_STACK_BOUNDS(1);
-                stack_pointer[-2] = b;
-                stack_pointer[-1] = l;
-                stack_pointer[0] = r;
-                stack_pointer += 1;
-                ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
-                break;
+            PyTypeObject *type = sym_get_type(right);
+            if (region_enabled("PYTHON_TIER2_BUILTIN_REGIONS") &&
+                (type == NULL || type == &PyList_Type)) {
+                REPLACE_OP(this_instr, _CONTAINS_OP_LIST_INT, oparg, 0);
             }
+            else {
+                if (
+                    sym_is_safe_const(ctx, left) &&
+                    sym_is_safe_const(ctx, right)
+                ) {
+                    JitOptRef left_sym = left;
+                    JitOptRef right_sym = right;
+                    _PyStackRef left = sym_get_const_as_stackref(ctx, left_sym);
+                    _PyStackRef right = sym_get_const_as_stackref(ctx, right_sym);
+                    _PyStackRef b_stackref;
+                    _PyStackRef l_stackref;
+                    _PyStackRef r_stackref;
+                    /* Start of uop copied from bytecodes for constant evaluation */
+                    PyObject *left_o = PyStackRef_AsPyObjectBorrow(left);
+                    PyObject *right_o = PyStackRef_AsPyObjectBorrow(right);
+                    int res = PySequence_Contains(right_o, left_o);
+                    if (res < 0) {
+                        JUMP_TO_LABEL(error);
+                    }
+                    b_stackref = (res ^ oparg) ? PyStackRef_True : PyStackRef_False;
+                    l_stackref = left;
+                    r_stackref = right;
+                    /* End of uop copied from bytecodes for constant evaluation */
+                    (void)l_stackref;
+                    (void)r_stackref;
+                    b = sym_new_const_steal(ctx, PyStackRef_AsPyObjectSteal(b_stackref));
+                    if (sym_is_const(ctx, b)) {
+                        PyObject *result = sym_get_const(ctx, b);
+                        if (_Py_IsImmortal(result)) {
+                            // Replace with _LOAD_CONST_INLINE_BORROW + _RROT_3 since we have two inputs and an immortal result
+                            ADD_OP(_LOAD_CONST_INLINE_BORROW, 0, (uintptr_t)result);
+                            ADD_OP(_RROT_3, 0, 0);
+                        }
+                    }
+                    CHECK_STACK_BOUNDS(1);
+                    stack_pointer[-2] = b;
+                    stack_pointer[-1] = l;
+                    stack_pointer[0] = r;
+                    stack_pointer += 1;
+                    ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                    break;
+                }
+            }
+            CHECK_STACK_BOUNDS(1);
+            stack_pointer[-2] = b;
+            stack_pointer[-1] = l;
+            stack_pointer[0] = r;
+            stack_pointer += 1;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            break;
+        }
+
+        case _CONTAINS_OP_LIST_INT: {
+            JitOptRef b;
+            JitOptRef l;
+            JitOptRef r;
+            b = sym_new_not_null(ctx);
+            l = sym_new_not_null(ctx);
+            r = sym_new_not_null(ctx);
             CHECK_STACK_BOUNDS(1);
             stack_pointer[-2] = b;
             stack_pointer[-1] = l;
@@ -3954,6 +4010,10 @@
         }
 
         case _GUARD_ENUM_LIST: {
+            break;
+        }
+
+        case _ENUM_LIST_INT_SCAN: {
             break;
         }
 

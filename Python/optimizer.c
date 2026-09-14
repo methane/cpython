@@ -605,7 +605,7 @@ get_region_stats(PyObject *self, PyObject *Py_UNUSED(ignored))
 {
     _PyExecutorObject *executor = _PyExecutorObject_CAST(self);
     return Py_BuildValue(
-        "{s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K}",
+        "{s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K}",
         "bounded_entries", executor->region_bounded_entries,
         "bounded_guard_exits", executor->region_bounded_guard_exits,
         "bounded_boxes", executor->region_bounded_boxes,
@@ -624,6 +624,14 @@ get_region_stats(PyObject *self, PyObject *Py_UNUSED(ignored))
         "enum_entries", executor->region_enum_entries,
         "enum_guard_exits", executor->region_enum_guard_exits,
         "enum_fallbacks", executor->region_enum_fallbacks,
+        "enum_scan_entries", executor->region_enum_scan_entries,
+        "enum_scan_iterations", executor->region_enum_scan_iterations,
+        "enum_scan_misses", executor->region_enum_scan_misses,
+        "contains_entries", executor->region_contains_entries,
+        "contains_iterations", executor->region_contains_iterations,
+        "contains_fallbacks", executor->region_contains_fallbacks,
+        "dict_store_entries", executor->region_dict_store_entries,
+        "dict_store_fallbacks", executor->region_dict_store_fallbacks,
         "range_entries", executor->region_range_entries,
         "range_iterations", executor->region_range_iterations,
         "range_int32_iterations", executor->region_range_int32_iterations,
@@ -1648,6 +1656,14 @@ allocate_executor(int exit_count, int length)
     res->region_enum_entries = 0;
     res->region_enum_guard_exits = 0;
     res->region_enum_fallbacks = 0;
+    res->region_enum_scan_entries = 0;
+    res->region_enum_scan_iterations = 0;
+    res->region_enum_scan_misses = 0;
+    res->region_contains_entries = 0;
+    res->region_contains_iterations = 0;
+    res->region_contains_fallbacks = 0;
+    res->region_dict_store_entries = 0;
+    res->region_dict_store_fallbacks = 0;
     res->region_range_entries = 0;
     res->region_range_iterations = 0;
     res->region_range_int32_iterations = 0;

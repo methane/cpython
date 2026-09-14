@@ -1163,6 +1163,127 @@ inline_enumerate_list(_PyUOpInstruction *buffer, int length)
     }
 }
 
+/* Skip a bounded sequence of iterations that only unpack enumerate, read an
+ * integer tuple field, and compare it with an unchanged local. Keep the
+ * original iteration for the first different branch or unsupported value. */
+static void
+inline_enumerate_int_scan(_PyUOpInstruction *buffer, int length)
+{
+    if (!region_enabled("PYTHON_TIER2_BUILTIN_REGIONS")) {
+        return;
+    }
+    int end = Py_MIN(length, 64);
+    int pc = 0;
+#define SCAN_NEXT() (pc = trivial_call_skip(buffer, pc, end), \
+                    pc < end ? region_opcode(&buffer[pc]) : -1)
+#define SCAN_EXPECT(OP) do { \
+    if (SCAN_NEXT() != (OP)) return; \
+    pc++; \
+} while (0)
+    SCAN_EXPECT(_START_EXECUTOR);
+    SCAN_EXPECT(_MAKE_WARM);
+    SCAN_EXPECT(_CHECK_PERIODIC);
+    if (SCAN_NEXT() != _GUARD_ENUM_LIST) {
+        return;
+    }
+    int start = pc++;
+    SCAN_EXPECT(_ITER_NEXT_ENUM_LIST);
+    if (SCAN_NEXT() != _GUARD_TOS_TUPLE || buffer[pc++].oparg != 2) {
+        return;
+    }
+    SCAN_EXPECT(_UNPACK_SEQUENCE_TWO_TUPLE);
+    if (SCAN_NEXT() != _SWAP_FAST) {
+        return;
+    }
+    int index_local = buffer[pc++].oparg;
+    SCAN_EXPECT(_POP_TOP);
+    if (SCAN_NEXT() != _SWAP_FAST) {
+        return;
+    }
+    int item_local = buffer[pc++].oparg;
+    SCAN_EXPECT(_POP_TOP);
+    if (SCAN_NEXT() != _LOAD_FAST_BORROW ||
+        buffer[pc++].oparg != item_local) {
+        return;
+    }
+    int field;
+    int op = SCAN_NEXT();
+    if (op == _LOAD_SMALL_INT) {
+        field = buffer[pc++].oparg;
+    }
+    else if (op == _LOAD_CONST_INLINE_BORROW) {
+        PyObject *constant = (PyObject *)buffer[pc++].operand0;
+        if (!PyLong_CheckExact(constant) || !_PyLong_IsCompact((PyLongObject *)constant)) {
+            return;
+        }
+        Py_ssize_t value = _PyLong_CompactValue((PyLongObject *)constant);
+        if (value < 0 || value > UINT16_MAX) {
+            return;
+        }
+        field = (int)value;
+    }
+    else {
+        return;
+    }
+    SCAN_EXPECT(_GUARD_NOS_TUPLE);
+    SCAN_EXPECT(_GUARD_BINARY_OP_SUBSCR_TUPLE_INT_BOUNDS);
+    SCAN_EXPECT(_BINARY_OP_SUBSCR_TUPLE_INT);
+    SCAN_EXPECT(_POP_TOP_NOP);
+    SCAN_EXPECT(_POP_TOP_NOP);
+    if (SCAN_NEXT() != _LOAD_FAST_BORROW) {
+        return;
+    }
+    int key_local = buffer[pc++].oparg;
+    while ((op = SCAN_NEXT()) == _GUARD_TOS_INT || op == _GUARD_NOS_INT) {
+        pc++;
+    }
+    if (SCAN_NEXT() != _COMPARE_OP_INT) {
+        return;
+    }
+    int mask = buffer[pc++].oparg & 14;
+    SCAN_EXPECT(_POP_TOP_NOP);
+    SCAN_EXPECT(_POP_TOP_INT);
+    op = SCAN_NEXT();
+    bool on_true;
+    if (op == _GUARD_IS_TRUE_POP || op == _GUARD_IS_FALSE_POP) {
+        on_true = op == _GUARD_IS_TRUE_POP;
+    }
+    else if (op == _GUARD_BIT_IS_SET_POP || op == _GUARD_BIT_IS_UNSET_POP) {
+        int bit = buffer[pc].oparg;
+        if (bit != get_test_bit_for_bools()) {
+            return;
+        }
+        on_true = (test_bit_set_in_true(bit) != 0) == (op == _GUARD_BIT_IS_SET_POP);
+    }
+    else {
+        return;
+    }
+    pc++;
+    SCAN_EXPECT(_JUMP_TO_TOP);
+    if (index_local > 255 || item_local > 255 || key_local > 255 ||
+        index_local == item_local || key_local == index_local || key_local == item_local) {
+        return;
+    }
+    mask = on_true ? mask : mask ^ 14;
+    int comparison;
+    switch (mask) {
+        case 2: comparison = Py_LT; break;
+        case 10: comparison = Py_LE; break;
+        case 8: comparison = Py_EQ; break;
+        case 6: comparison = Py_NE; break;
+        case 4: comparison = Py_GT; break;
+        case 12: comparison = Py_GE; break;
+        default: return;
+    }
+    buffer[start].opcode = _ENUM_LIST_INT_SCAN;
+    buffer[start].oparg = comparison;
+    buffer[start].operand0 = key_local | ((uint64_t)index_local << 8) |
+                            ((uint64_t)item_local << 16);
+    buffer[start].operand1 = field;
+#undef SCAN_EXPECT
+#undef SCAN_NEXT
+}
+
 //  0 - failure, no error raised, just fall back to Tier 1
 // -1 - failure, and raise error
 //  > 0 - length of optimized trace
@@ -1195,6 +1316,7 @@ _Py_uop_analyze_and_optimize(
     eliminate_trivial_frames(output, length);
     fuse_list_pair_comparisons(output, length);
     inline_enumerate_list(output, length);
+    inline_enumerate_int_scan(output, length);
     length = remove_unneeded_uops(output, length);
     assert(length > 0);
     fuse_float_product_updates(output, length);

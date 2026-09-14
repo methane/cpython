@@ -1,6 +1,12 @@
 # CPython Tier 2：Linux上で行う2〜3日間の実装計画
 
-**最新結果（2026-09-13）**：必須のint/float/builtin最適化を実装・検証し、追加目標の
+**現在の目標（2026-09-14）**：全6ベンチマークのmain比の**算術平均0.5以下**。
+開始時の480値は **0.7944918**。最新240値のscreenは **0.7299191**で、この新目標は未達。
+各blockの各scriptで10値の平均時間からcandidate/main比を求め、4 blocksと6 scriptを
+等重みの算術平均で集計する。入力・CLI・warmups=3・values=10・loops=1、固定main、
+PGO/LTOなしの比較条件を維持し、末尾の新工程を進める。
+
+**前回結果（2026-09-13）**：必須のint/float/builtin最適化を実装・検証し、追加目標の
 全6ベンチマークの計測区間の時間比は幾何平均 **0.49208（約2.03倍速）**となった。
 LLVM 21・PGO/LTOなし・実験6オプションONの同条件比較。起動込みは0.62891。
 最終条件・個別比・生データは末尾の「全6本の最終判定」に記録した。
@@ -1292,3 +1298,165 @@ build-jit/python -m test test_capi.test_opt_regions test_capi.test_opt test_tier
 - 文書作成は完了。コード・build・計測条件の変更はなく、再ビルド・runtime test・性能測定の
   再実行はしていない。次に公開や既定値変更を検討する際のレビュー課題を文書末尾へ記載。
   GitHub投稿・push・PR変更は行っていない。
+
+## 17. 継続目標：6本のmain比の算術平均を0.5以下へ（2026-09-14）
+
+- 新しいgoalと「JITの高速化を続けて」という指示に従い、前回の幾何平均の達成を新指標の
+  達成とは扱わない。前turnは英文ドキュメントの完成と数値監査で進捗あり。新工程は
+  `36846454143`（ユーザーのreport commit）から開始し、残る`regions.md`のリンク差分を保持。
+- 最終480値を再計算すると、script別の算術平均比はBPE0.9098765、B-tree0.9303600、
+  DeltaBlue1.0002993、Hexiom0.9610843、Raytrace0.9469058、Spectral0.0184252。
+  全6本の算術平均は0.7944918、block別は0.7981124/0.7920051/0.7927031/0.7951468。
+- LLVM preflightで既存`/usr/lib/llvm-21`の4 toolsを再確認。保存済みmain/candidate/debugの
+  binary・config・stencil hashは全て一致した。新実装前の比較binaryを保持する。
+- 次は現candidateの5本のnative profileを取り直し、guard/dispatch・call frame・allocation・
+  loop内部の費用を調べる。初期profileは古い版なので、新たな変更の根拠には再検証が必要。
+  benchmark自体のアルゴリズムや入力は変更せず、runtimeの再利用可能な最適化を進める。
+
+### Enumerate上の整数キー検索をchunk化
+
+- 現candidateの5本を固定仕事量のperf/native probeで再調査し、全profileでlost samples0。
+  `arithmetic-start-{btree,raytrace,hexiom,deltablue,bpe_tokeniser}`へ保存した。
+  B-treeのget_positionは約145万回/処理のenumerate/unpack/tuple参照/整数比較を残していた。
+- `_ENUM_LIST_INT_SCAN`をbuiltinオプション配下へ追加。最大64項目のexact tuple内のcompact
+  int比較が同じloop分岐を取る間だけ進め、次の分岐・未対応値・枯渇は元iterationに任せる。
+  enumerate/result tuple/元list/localsの参照関係を検査し、途中のdecrefがfinalizerを呼べる
+  場合はchunk化しない。cached resultの共有・index cache境界・例外位置も保持する。
+- 6比較×2 field位置、cache境界/空/短いlist、共有tuple、途中のIndexError、subclass比較での
+  mutation、最後のitem参照を閉じた際のfinalizerの順序を追加検証。debug関連503 tests・
+  1 skip、native region/opt/tier3/enumerate507 tests・9 skipsが成功した。
+- native probeでは1,334,848 iterationsを119,610 chunksへまとめた。通常enum処理は
+  120,981回、fallback16,302回、type guard失敗0。B-tree全体の3 blocks・各10値比較は
+  前版比0.81676、main比0.76111（約49.1 ms）。90値を`enum-scan-btree-rows.json`に保持。
+  source/build hashと差分を`enum-scan-{manifest,source-hashes}.json`、`enum-scan.patch`へ保存。
+- 算術平均専用runner `screen-arithmetic.py`を作り、保存済み480値から開始点0.7944918を
+  再計算した。まだ全6本の新測定はしておらず、全体目標の達成は主張しない。
+- 次はHexiomの現profileで合計約12%を占めるlist membership/richcompareの経路を調べる。
+  exact compact int同士を直接比較できる部分をJIT内へ展開し、最初の未対応要素では
+  元の比較順序・mutation・例外を維持する。既存enum-scan binaryは固定して残す。
+
+### List membershipの整数比較
+
+- `_CONTAINS_OP_LIST_INT`をbuiltinオプション配下へ追加。exact listとcompact exact intの
+  検索を直接行い、未対応型・要素はtrace内で元の`PySequence_Contains`へ渡す。それまでの
+  exact int比較を再実行してもcallbackやmutationは重複しない。元のerror/cleanupを保持。
+- 最初のテストは1 iterationを指定し、loop executorへ入る前に終了する2箇所でcounterの
+  増分assertが失敗。ログを保持し、複数iterationと2回目の比較で発生するmutation/errorで
+  実際に新uopのfallbackを検証する形へ修正した。値やcallbackの期待値は緩めていない。
+- 既存enum scan matcherのbool判定を明示的な0/1へ正規化し、True側のbitが立つ配置でも
+  正しい比較を選べるようにした。line monitoringからlocalsを観測・listを変更するテストも
+  追加し、monitoring有効時にchunkが反復を飛ばさないことを確認した。
+- debug関連431 tests、native region/opt/tier3/list/tuple515 tests・9 skipsが成功。
+  Hexiom probeはcontains35,299 calls、68,631 integer elements、fallback0。3 blocks・
+  全90値の比較は前版比0.89791、main比0.86325。`contains-hexiom-{rows,summary}.json`、
+  `contains-{manifest,source-hashes}.json`、差分と比較用binaryを保存した。
+- enum scanのnative loopでは整数比較のmask生成・判定が残っていた。次は6種類の比較を
+  `replicate(6)`でstencil生成時に固定し、loop内の判定とregister pressureを削減する。
+  最終的には全6本を算術平均runnerで測り、改善と回帰を含めて新しい現在値を確認する。
+
+### Enum scanの比較をstencil生成時に固定
+
+- `replicate(6)`で6比較を固定した。テストで`!=`のunordered bitがmatcherに混入する
+  問題を検出し、整数比較のmaskを`&14`へ修正。bytecode DSLは`switch`を扱えず、
+  if/else版は汎用stencilのjump tableから参照するlabelがassembly最適化で消えるため、
+  bool式をbit演算で結合した。6 replicaと汎用版を含む通常stencil生成が成功した。
+- debug関連448 tests、native region/opt/tier3/list/tuple515 tests・9 skipsが成功。
+  nativeのscan loopはmask計算から単一の`cmp`/`jl`になり、probeの処理回数は前版と一致。
+  B-treeの3 blocks・90値は直前版比0.98510、main比0.74612。全blockで改善した。
+  `enum-compare-btree-{rows,summary}.json`とnative raw bytes/assemblyへ保存した。
+- 次は全6本を2 blocks・各10値でscreenし、新目標の現在値を求める。並行してBPEの
+  Counter更新に残る汎用`STORE_SUBSCR`の型・slot・descriptor条件を調べる。
+- 2 blocks・240値の全体screenが終了し、checksumは全て一致。main比の算術平均は
+  **0.742812**（block別0.740632/0.744992）。BPE0.907423、B-tree0.743405、
+  DeltaBlue1.003341、Hexiom0.847332、Raytrace0.936952、Spectral0.018420。
+  起動込み算術平均は0.767662。開始点0.794492から改善したが、目標0.5は未達。
+  `enum-contains-suite-{rows,summary}.json`へ全生データと集計を保存した。
+
+### 継承したdict代入への直接呼び出し（実装・検証中）
+
+- Counterは`__delitem__`のoverrideにより`mp_ass_subscript`が汎用slotとなる一方、
+  `__setitem__`はdictのdescriptorを継承する。この条件を型・slot・descriptorで確認し、
+  `_STORE_SUBSCR_DICT_INHERITED`でversion一致時に`PyDict_SetItem`を直接呼ぶ。
+  不一致は同じuop内の通常dispatch、cleanup/errorは元の`STORE_SUBSCR`を保つ。
+- C拡張の独自slotを誤って迂回しないよう、typeobject側の小さい内部predicateで
+  `slot_mp_ass_subscript`そのものを確認する。最適化対象型も既存watcherで監視する。
+  値、削除override、異なるreceiver、base/subclassのmethod変更、hash例外、
+  storeのhash中にmethodを変更するケースのテストを追加。再生成後の両buildが進行中。
+- 最初のdebug検証で14 failures。生成された代入uopのcounterが0のままで、直前の既存
+  `_GUARD_NOS_DICT_SUBSCRIPT`の最適化が`_GUARD_TYPE`へ置換され、receiverでなくキーを
+  検査していた。dict store側にも同じ位置の問題があった。両方を新しい`_GUARD_NOS_TYPE`
+  へ修正した。この修正は実験optionの外にも適用する通常optimizerのguard修正である。
+- キーがreceiverと同じhashable dict subclass型でも、異なるreceiverをdict用uopへ
+  誤って通さないread/write回帰テストを`test_opt`へ追加。テストhelperはcodeを分離し、
+  大整数加算で先にexitするケースは意味論を、compact値は実際の代入counterを検査する。
+- 再生成・build後、debug関連807 tests・4 skips、native region/opt/tier3/dict/collections
+  674 tests・10 skipsが成功。次にBPEのnative coverageと前段階/mainとの性能を確認する。
+- BPEのnative probeでは直接代入3,344,210 calls、fallback0。3 blocks・90値の元CLI比較は
+  直前版比0.920758、main比0.831823、全blockで改善。guard修正と直接代入の組み合わせの
+  効果であり、両者個別の寄与はまだ分離していない。`dict-store-bpe-{rows,summary}.json`、
+  native証拠、source/build manifest、差分、比較用binaryを保存した。
+
+### Exact positional initializerの引数配置（検証済み・今回は不採用）
+
+- Raytraceのtraceには、Vector/Point生成のたびに`_CREATE_INIT_FRAME`から汎用の
+  `_PyEvalFramePushAndInit`を呼ぶ経路が残る。`_CREATE_INIT_FRAME_POSITIONAL`をcall
+  オプション配下へ追加し、0〜4個の明示的な引数とselfを直接frame localsへ配置する。
+- 実際のinitializerとcleanupの2 framesは保持。引数数・kwonly/varargs/optimized flags・
+  残りstack spaceを実行時に確認し、不一致は元のbinderへ渡す。locals初期化、cell/free
+  variables、traceback、monitoring、None以外の戻り値チェックを既存のframe処理に任せる。
+- 0〜4引数、defaultsを使うfallback、initializer変更、frame locals/closure、2回目の
+  initializerでの例外と非None returnを追加検証する。現在は再生成を終え、buildへ進む。
+- debug関連541 tests・8 skips、native region/opt/tier3/call/frame673 tests・17 skipsが成功。
+  Raytrace probeは直接引数配置545,321 calls、fallback0。最初の3 blocks・90値は
+  直前版比0.99095、main比0.93430。ただしblock別の直前版比は1.00309/0.97896/0.99094と
+  小さく混在し、主効果を断定できないため同条件でもう3 blocks測定する。
+- DeltaBlueの既存traceでは、list subclassの継承メソッド`append`のCALL位置でtraceが
+  終了していた。method descriptorのreceiver guardがexact typeに制限されていることを
+  確認。次工程で通常のdescriptor呼び出しと同じsubtype条件を検討し、overrideや不正な
+  receiverのdispatch/errorを保ちながらtraceを継続できるか調べる。
+- 追加3 blocksは直前版比1.01726。6 blocksの対応比は平均でほぼ同等であり、1 processで
+  約6.5%遅い値も出た。性能上の利益を確認できないため、追加uop/counter/test/docを
+  dict-store段階へ戻した。`init-frame.patch`、source/build manifest、比較用binary、
+  全180値とnative証拠を保存し、不採用の試行を最終実装の成果へ混ぜない。
+
+### 組み込みmethod descriptorのsubclass receiver（実装・検証中）
+
+- `METH_O`、`METH_NOARGS`、`METH_FASTCALL`、`METH_FASTCALL|METH_KEYWORDS`の4 guardを
+  `Py_IS_TYPE`から`PyObject_TypeCheck`へ変更。`Objects/descrobject.c`の`descr_check`と
+  同じreceiver条件を使う。list subclassの`append/copy/index/sort`などが対象となる。
+  このguardの拡張はTier 1とTier 2に適用し、実験optionで切り替えるuopではない。
+- callableのdescriptor型・引数形式・selfの有無のguard、既存call本体、cleanup・error・
+  periodic checkは維持。abstract interpreterによるguard除去の条件は広げていない。
+  `CALL_LIST_APPEND`は引き続きexact list専用で、subclassはdescriptorのcall本体を使う。
+- bound/unbound呼び出しで4形式のuopまでtraceが続くこと、戻り値とreceiverの変更、
+  method override、不正なreceiver、2 iteration目のIndexErrorを追加検証する。
+  initializer試行の取り消しとともにTier 1/Tier 2/optimizerの生成物を再生成した。
+- debug関連1,009 tests・28 skips、native region/opt/tier3/call/opcache/list/collections
+  876 tests・34 skipsが成功。DeltaBlueの3 blocks・90値は直前dict-store版比0.955919、
+  main比0.965710で、全block改善した。`descriptor-subclass-deltablue-{rows,summary}.json`
+  に保存。この値にはTier 1でのguard miss解消も含まれ、native専用の利益とはしない。
+- 元のCLIと同じ3 warmups・1 loopのprobeでは、DeltaBlueのexecutorは3つしかなく、
+  計測callで3つが新しく観測され、call region counterは0だった。以前の1500 loopsの
+  profileとはwarmup状態が異なる。長時間probeのcoverageを元CLIに帰属しない。
+  次は全6本のscreenを更新し、短いworkloadの実際のJIT到達範囲を調べる。
+- 2 blocks・240値の全体screenはmain比算術平均 **0.729919**、起動込み0.755748。
+  BPE0.829947、B-tree0.754272、DeltaBlue0.965772、Hexiom0.861511、Raytrace0.949566、
+  Spectral0.018446。checksumは全て一致。`descriptor-subclass-suite-{rows,summary}.json`
+  を保存した。目標0.5には未達。Raytrace/B-treeの小さい変動は対応比較の主効果と分ける。
+- 3 warmups・10 values・1 loopのDeltaBlue coverage probeでは、前半8 samplesのcall
+  region counterは0、最後の2 samplesで48/99だった（計11 executors）。元CLIを変えずに
+  既存JIT policy変数のloop/resume閾値を比較し、compile費用と実行範囲を別途診断する。
+  `PYTHON_JIT_STRESS`は使わず、policy試行の値を現在の目標達成値へ混ぜない。
+- loop/resume閾値を既存のpolicy変数で1008/4094、502/2046、250/1020へ変え、defaultと
+  4 blocks・160値で比較した。default比の算術平均は1.01763/1.02147/0.99042、起動込みは
+  0.98991/1.00938/1.01149で効果が安定しない。policyは変更しない。
+  `jit-policy-deltablue-{rows,summary}.json`に全値を保存した。
+- 現段階の採用対象はenum scanと比較replica、list integer membership、dict receiver
+  guard修正、継承dict代入、method descriptorのsubtype guard。initializer binder短縮と
+  閾値試行は採用しない。次はRaytraceのallocation/frameコストを減らす実装を調べる。
+  constructorのbodyを省く場合も新しいobject identity、監視・例外・GC callbackの位置と
+  引数所有権を保持する必要があり、単なるunique instanceの再利用は行わない。
+- 採用した段階をまとめる前に、全6オプションONでfloatの丸め/trap/flags576ケースと
+  特殊値56ケースを再検証し、全てbit一致した。5つの生成物も再生成してbyte一致を確認。
+  差分空白検査と変更したPython testの設定相当のRuff検査（F401/F811）も成功した。
+  GitHub投稿・push・PR変更は行っていない。現在値と未完了の目標を保持して次へ進む。

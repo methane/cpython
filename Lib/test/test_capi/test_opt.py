@@ -2448,7 +2448,118 @@ class TestUopsOptimization(unittest.TestCase):
         self.assertEqual(uops.count("_STORE_SUBSCR_DICT_KNOWN_HASH"), 1)
         self.assertEqual(uops.count("_GUARD_NOS_DICT_SUBSCRIPT"), 0)
         self.assertEqual(uops.count("_GUARD_NOS_DICT_STORE_SUBSCRIPT"), 0)
-        self.assertEqual(uops.count("_GUARD_TYPE"), 1)
+        self.assertEqual(uops.count("_GUARD_NOS_TYPE"), 1)
+
+    def test_dict_subclass_guards_receiver(self):
+        class HashableDict(dict):
+            __hash__ = object.__hash__
+
+        key = HashableDict()
+        receiver = HashableDict({key: 1})
+
+        def read(n):
+            for _ in range(n):
+                value = receiver[key]
+            return value
+
+        def write(n):
+            for _ in range(n):
+                receiver[key] = 2
+
+        for func in (read, write):
+            _, ex = self._run_with_optimizer(func, TIER2_THRESHOLD)
+            self.assertIsNotNone(ex)
+            self.assertIn("_GUARD_NOS_TYPE", get_opnames(ex))
+
+        # The key has the recorded receiver type, but is not the receiver.
+        # Guarding TOS would incorrectly admit a non-dict to the dict uop.
+        stores = []
+        class Other:
+            def __getitem__(self, sub):
+                assert sub is key
+                return 42
+
+            def __setitem__(self, sub, value):
+                stores.append((sub, value))
+
+        receiver = Other()
+        self.assertEqual(read(8), 42)
+        write(8)
+        self.assertEqual(stores, [(key, 2)] * 8)
+
+    def test_method_descriptor_subclass_calls(self):
+        cases = (
+            ("receiver.append(1)", "_CALL_METHOD_DESCRIPTOR_O"),
+            ("receiver.copy()", "_CALL_METHOD_DESCRIPTOR_NOARGS"),
+            ("receiver.count(1)", "_CALL_METHOD_DESCRIPTOR_O"),
+            ("receiver.index(1)", "_CALL_METHOD_DESCRIPTOR_FAST"),
+            ("receiver.sort()", "_CALL_METHOD_DESCRIPTOR_FAST_WITH_KEYWORDS"),
+        )
+        for expression, opcode in cases:
+            for unbound in (False, True):
+                with self.subTest(expression=expression, unbound=unbound):
+                    class MyList(list):
+                        pass
+                    receiver = MyList([3, 1, 2])
+                    call = expression
+                    if unbound:
+                        name, args = expression.removeprefix("receiver.").split("(", 1)
+                        call = f"list.{name}(receiver{', ' if args != ')' else ''}{args}"
+                    namespace = {}
+                    exec("def run(receiver, n):\n"
+                         "    for _ in range(n):\n"
+                         f"        result = {call}\n"
+                         "    return result\n", namespace)
+                    run = namespace["run"]
+                    run(receiver, TIER2_THRESHOLD)
+                    ex = get_first_executor(run)
+                    self.assertIsNotNone(ex)
+                    self.assertTrue(any(name == opcode or name == opcode + "_INLINE"
+                                        for name in get_opnames(ex)), get_opnames(ex))
+                    reference = MyList(receiver)
+                    expected = eval(expression, {"receiver": reference})
+                    self.assertEqual(run(receiver, 1), expected)
+                    self.assertEqual(receiver, reference)
+
+    def test_method_descriptor_subclass_override_and_error(self):
+        class MyList(list):
+            pass
+
+        def copy(receiver, n):
+            for _ in range(n):
+                result = receiver.copy()
+            return result
+
+        copy(MyList([1]), TIER2_THRESHOLD)
+        self.assertIn("_CALL_METHOD_DESCRIPTOR_NOARGS_INLINE",
+                      get_opnames(get_first_executor(copy)))
+        MyList.copy = lambda self: "overridden"
+        self.assertEqual(copy(MyList([1]), 8), "overridden")
+
+        def pop(receiver, n):
+            for _ in range(n):
+                result = list.pop(receiver)
+            return result
+
+        pop(MyList(range(TIER2_THRESHOLD)), TIER2_THRESHOLD)
+        ex = get_first_executor(pop)
+        self.assertIsNotNone(ex)
+        self.assertTrue(any(name.startswith("_CALL_METHOD_DESCRIPTOR_FAST")
+                            for name in get_opnames(ex)), get_opnames(ex))
+        with self.assertRaises(TypeError):
+            pop({}, 8)
+        receiver = MyList([1])
+        try:
+            pop(receiver, 8)
+        except IndexError as error:
+            self.assertEqual(str(error), "pop from empty list")
+            tb = error.__traceback__
+            while tb.tb_frame.f_code is not pop.__code__:
+                tb = tb.tb_next
+            self.assertEqual(tb.tb_lineno, pop.__code__.co_firstlineno + 2)
+        else:
+            self.fail("empty-list error was skipped")
+        self.assertEqual(receiver, [])
 
     def test_dict_subclass_subscr_with_override(self):
         class MyDict(dict):
