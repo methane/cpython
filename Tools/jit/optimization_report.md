@@ -968,3 +968,165 @@ candidate SHA256 is
 coverage, and all original samples. Compiler flags, warmups, inputs, and the
 fixed main build are unchanged, with no PGO or LTO. Saved executables share
 current extension modules; their hashes are recorded by the coverage probes.
+
+
+## Conditional attribute returns (2026-09-14 follow-up)
+
+The surviving DeltaBlue traces still contained frames for short methods that
+compare an integer attribute with a constant and return another attribute,
+for example `if owner.tag == Threshold.limit: return owner.left`, followed
+by `return owner.right`. In `Plan.execute`, an equality constraint repeatedly
+calls two such selectors. Existing leaf-call elimination covered a direct
+attribute or predicate return, but did not cover the branch and attribute
+return together.
+
+`inline_conditional_attribute_calls` recognizes the complete recorded path
+from `_INIT_CALL_PY_EXACT_ARGS` through `_RETURN_VALUE`, bounded to 96 uops.
+It requires cached attribute layouts, a compact-int comparison with an
+immortal exact-int constant fitting a signed byte, one observed boolean
+branch, and a cached attribute return. The constant may have been folded
+from a watched global or class attribute. Names are not part of matching.
+Unsupported operations, stores, callbacks, periodic checks, or incomplete
+paths prevent the rewrite. The comparison may be any of Python's six
+ordering/equality comparisons and either observed branch.
+
+`_CALL_PY_ATTRIBUTE_IF` checks instrumentation, the selector's type/layout,
+its exact compact-int value, the observed predicate, and the returned
+attribute's type/layout and presence. Every failure deoptimizes at the
+original CALL with its operands intact, so the other branch and generic
+Python comparisons remain available. The result reference and original code
+are kept alive through reverse argument/callable cleanup. Successful calls
+omit the callee frame; the enclosing function and its remaining operations
+continue on the original trace. A dedicated counter distinguishes these
+returns from the preceding attribute-call paths.
+
+A correctness review rejected the first prototype's assumption that a
+nonzero function version identifies a single function and globals mapping.
+`MAKE_FUNCTION` copies `co_version`: distinct functions with the same code
+can share a valid version. A direct `types.FunctionType` clone leaves its
+version unset and had not exposed this problem. A new test executes
+MAKE_FUNCTION with the warmed code in another namespace and reproduced an
+incorrect return in both builds. The initial six-workload screen was
+interrupted; its partial rows and the initial single-workload comparison
+remain recorded as evidence for a rejected prototype.
+
+The corrected implementation emits `_GUARD_CALL_GLOBALS_IDENTITY` before a
+fused call whose constant came through a globals guard. It checks the actual
+callee mapping without pushing its frame. Existing dict dependencies protect
+the borrowed namespace pointer and folded values; type dependencies protect
+folded class attributes. The original function-version, stack-space, and
+recursion guards remain. This extra guard is required even when code/function
+versions match. Constants that do not require a globals guard avoid it.
+
+Nine added tests cover both layouts and calling conventions, all comparisons
+and directions, constant bounds, branch changes, large ints and bools,
+class/global/code replacement, direct and MAKE_FUNCTION clones, namespace
+destruction, a mutating int-subclass comparison, descriptor exceptions with
+the original callee traceback, owned-receiver finalization, monitoring, and
+profile call/return events. Both builds passed 1,562 tests in thirteen
+related files (4 debug / 15 native skips). All nine new tests also passed
+in native mode with the other five experiment groups disabled. Eight
+generated outputs reproduced exactly.
+
+The corrected native candidate is
+`4674c1047a65d9c3532a1c61be40b439583ac5068e424f0991ea756f35275f8a`.
+DeltaBlue's ten-value coverage probe observed 20,000, 20,000, 20,014, 20,100,
+20,100, 20,199, 20,266, 20,897, 21,139, and 21,594 conditional returns, with
+zero observed call-guard exits. Its 14 reachable executors occupied 151,552
+native bytes, compared with 155,648 before this change. `Plan.execute` went
+from 167 to 101 uops and from three PUSH/RETURN pairs to one, with two
+explicit globals guards and conditional calls. Its allocation remained
+8,192 bytes. The initially unguarded prototype's smaller 147,456-byte total
+is not the corrected implementation's code size.
+
+A separate corrected DeltaBlue comparison gave ratios 0.947384, 0.961084,
+and 0.953200 against the preceding named-globals candidate (geometric mean
+0.953873), with all checksums matching and no exclusions. The corresponding
+ratio to fixed main was 0.891576. `conditional-attribute-*` records preserve
+the failed prototypes, final source/build identities, tests, coverage, native
+code, and measurements. These runs retain the fixed compiler/stencil flags,
+three warmups, ten values, and no PGO or LTO. Saved executables share the
+current extension modules, whose hashes are recorded separately.
+
+
+The first corrected six-workload screen was essentially flat: fixed-main
+arithmetic means 0.6587151 before and 0.6586115 after, with a mean
+after/before ratio of 1.0005464. DeltaBlue's block ratios were 0.951818,
+1.036294, and 0.954803, while Hexiom regressed in all blocks (mean 1.008790).
+BPE, B-tree, Raytrace, and Spectral Norm had mixed directions. No values
+were excluded. A predeclared follow-up with the same binaries found
+DeltaBlue ratios 0.947578, 0.966250, and 0.942240 (geometric mean 0.951967).
+Hexiom gave mixed ratios 0.961678, 1.014399, and 1.001977 (0.992427).
+The seed-1 Hexiom coverage probes had identical counters for all ten values
+and identical code allocation: 28 executors / 159,744 bytes. The new
+conditional-return counter was zero. These observations do not establish
+the cause of the timing variation. A second three-block suite comparison
+was declared before collecting further timings.
+
+
+The predeclared repeat screen gave fixed-main means 0.6688699 before and
+0.6597483 after, and an after/before mean of 0.9907443. DeltaBlue improved
+in all blocks (0.950038, 0.900405, 0.949521); its second control block was
+slower than the other two and remains included. BPE and Raytrace regressed
+in all blocks, with means 1.004604 and 1.007969. Hexiom and B-tree were
+near even with mixed directions, and Spectral Norm also had mixed directions.
+All 540 checksums matched, with no exclusions. The earlier nearly flat
+screen remains part of the evidence.
+
+Review also found that inserting the new diagnostic counter among existing
+fields changed the offsets of later counters and polynomial scratch data.
+The saved Hexiom machine code confirmed the extra eight-byte displacement:
+for example, the list-call counter moved from 0x218 to 0x220. This is an
+unnecessary effect on existing stencils, but does not prove the cause of
+the timing regressions. A subsequent variant places the new field after
+the existing diagnostic fields to preserve their offsets. Its validation
+and comparison are separate from the middle-field results above.
+
+
+The header-layout edit exposed a build-cache hazard: the native executable
+was rebuilt while its stencils retained the previous field offsets. The
+initial appended-field build failed 410 region-test checks and its native
+probe audit failed. It was not used for timings. Both the Make dependencies
+and stencil digest omitted `pycore_optimizer.h`; a mock digest probe confirmed
+that changing that header's bytes did not affect the digest. Forced stencil
+regeneration with the same target, LLVM prefix, and flags corrected this.
+The workflow workaround is recorded in AGENTS.md.
+
+After regeneration and relinking, both builds passed 1,563 tests in thirteen
+files (4 debug / 15 native skips), including a tenth conditional-call test
+covering all supported argument positions. The corrected appended-field
+candidate is
+`e6793865982e1098903b9fdba87aead913369ca73928bd8b7ca0953d2d5e9420`.
+Its DeltaBlue counters and 151,552 native bytes were unchanged. Hexiom's
+existing counters and 159,744 bytes were unchanged, and static disassembly
+confirmed that the old counter displacements were restored.
+
+The isolated three-block comparison against the middle-field candidate gave
+DeltaBlue ratios 0.995632, 0.999433, 0.995595 (geometric mean 0.996885), and
+Hexiom ratios 1.011276, 1.001286, 1.004359 (1.005632). Thus restoring the
+old field offsets did not establish a Hexiom improvement. These comparisons
+are distinct from the full feature comparison against named-globals. The
+`conditional-attribute-layout-*` artifacts identify the final variant,
+while the stale-stencil and earlier prototype artifacts remain preserved.
+
+
+The final appended-field comparison against the named-globals checkpoint
+completed all 540 values with matching checksums and no exclusions. The
+suite's arithmetic mean relative to fixed main changed from **0.6620986 to
+0.6564989**. Its after/before mean was 0.9954716, with block means 0.994219,
+0.995407, and 0.996790. DeltaBlue improved in every block (0.944521, 0.937148,
+0.957567; mean 0.946412), as did B-tree (mean 0.996526). Four workloads
+regressed in every block: BPE 1.007020, Hexiom 1.004086, Raytrace 1.011450,
+and Spectral Norm 1.007335. The implementation is retained for its repeated
+DeltaBlue improvement and the aggregate arithmetic-mean improvement, with
+these individual regressions explicitly retained. Preserving existing counter
+offsets does not remove all build/layout sensitivity or explain the regressions.
+
+Final ratios to fixed main are BPE 0.815598, B-tree 0.551212, DeltaBlue
+0.887381, Hexiom 0.830578, Raytrace 0.835328, and Spectral Norm 0.018896.
+All ten new tests also passed on the final native executable with the other
+five experimental groups disabled. The 0.5 arithmetic-mean objective remains
+unmet. The earlier nearly flat screen, the slower-control block in the
+repeat, the counter-placement comparisons, and the failed stencil build
+remain part of the development record; none is silently replaced by this
+final result.

@@ -362,6 +362,24 @@ original call, retaining the callee frame for exceptions and callbacks.
 `call_attr_entries` counts successful attribute calls; cleanup retains the same
 reference order and code lifetime as the simpler family.
 
+`_CALL_PY_ATTRIBUTE_IF` combines an exact compact-int attribute comparison
+with the cached attribute return on the observed branch. It accepts an
+immortal exact-int constant fitting a signed byte, all six comparisons,
+slots/managed values, and up to four explicit arguments. Matching covers
+the complete recorded call-to-return path within 96 uops. Function/attribute
+names do not affect recognition. Predicate, type, missing-attribute, and
+instrumentation failures resume the original CALL before consuming its
+operands; the other branch executes normally. Successful calls retain the
+same result/code lifetime and reverse cleanup as the simpler family.
+`call_conditional_entries` counts successful conditional returns.
+
+For a folded global/class constant, `_GUARD_CALL_GLOBALS_IDENTITY` checks the
+actual callee mapping before the fused call. A function-version guard alone
+is insufficient: MAKE_FUNCTION can give different functions sharing code
+the same valid version. The prior namespace/type dependencies remain and
+protect borrowed pointers and folded values. Constants without a globals
+guard do not need this additional check.
+
 `_CALL_PY_ATTRIBUTE_SEARCH` recognizes a complete two-argument function:
 
 ```python

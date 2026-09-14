@@ -209,6 +209,15 @@ generated executor/native assembly for separate multiply and update instructions
 the cancellation case `-1.0 + (1.0 + 2**-27) * (1.0 - 2**-27)` is a reusable
 regression witness.
 
+A header-only change used by stencils (for example, moving fields in
+`Include/internal/pycore_optimizer.h`) can be missed by both `JIT_DEPS` and
+the stencil input digest when `Python/executor_cases.c.h` is unchanged.
+After such a change, run the configured `Tools/jit/build.py` command with
+`--force`, keeping its target triple, output/config directories, LLVM prefix,
+and C flags, then relink the native build. Check native counters/offsets as
+well as Python results: a successful ordinary build can still contain stale
+struct offsets. Do not manually advance `.jit-stamp` to bypass regeneration.
+
 Separate regrtest invocations sharing a build directory must run sequentially
 or use distinct `--tempdir` directories. Execution tools can use separate PID
 namespaces with the same worker PID while sharing the filesystem; the default
@@ -220,6 +229,14 @@ created directly with `types.FunctionType` currently retain an unset version
 and do not specialize CALL. To test a callee's RESUME countdown, call it from
 C, for example through `map`: a hot Python caller can inline the callee and
 avoid executing its Tier 1 RESUME counter.
+
+A function version is not a function or globals identity: `MAKE_FUNCTION`
+copies the code version, so different functions sharing a code object can
+share a valid version. For namespace-sensitive call transformations, also
+check the actual callee globals. Regression fixtures can execute a compiled
+`def` whose nested code constant is replaced with the warmed callee's code
+in a second namespace. This exercises version sharing; a direct
+`types.FunctionType` clone alone does not.
 
 Run focused checks from each relevant build, including:
 

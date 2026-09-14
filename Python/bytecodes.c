@@ -5640,6 +5640,71 @@ dummy_func(
             Py_DECREF(code);
         }
 
+        replicate(5) tier2 op(_GUARD_CALL_GLOBALS_IDENTITY, (namespace/4, callable, unused, unused[oparg] -- callable, unused, unused[oparg])) {
+            PyFunctionObject *func = (PyFunctionObject *)PyStackRef_AsPyObjectBorrow(callable);
+            assert(PyFunction_Check(func));
+            /* A dict dependency protects this borrowed mapping pointer.
+             * Distinct functions can share a code/function version. */
+            if (func->func_globals != namespace) {
+                current_executor->region_call_guard_exits++;
+                DEOPT_IF(true);
+            }
+        }
+
+        replicate(5) tier2 op(_CALL_PY_ATTRIBUTE_IF, (source/4, config/4, callable, self_or_null, args[oparg] -- res)) {
+            assert(oparg <= 4);
+            current_executor->region_call_entries++;
+            PyFunctionObject *func = (PyFunctionObject *)PyStackRef_AsPyObjectBorrow(callable);
+            assert(PyFunction_Check(func));
+            PyCodeObject *code = (PyCodeObject *)func->func_code;
+            uintptr_t version = FT_ATOMIC_LOAD_UINTPTR_ACQUIRE(code->_co_instrumentation_version);
+            bool valid = _Py_atomic_load_uintptr_relaxed(&tstate->eval_breaker) == version;
+            int has_self = !PyStackRef_IsNull(self_or_null);
+            uint64_t selector = (uintptr_t)source;
+            uint64_t result = (uintptr_t)config;
+            int index = selector & 7;
+            valid = valid && index < oparg + has_self;
+            if (valid) {
+                _PyStackRef owner = has_self && index == 0 ? self_or_null : args[index - has_self];
+                PyObject *attribute = _PyRegion_CallAttribute(owner, selector);
+                valid = attribute != NULL && PyLong_CheckExact(attribute) &&
+                        _PyLong_IsCompact((PyLongObject *)attribute);
+                if (valid) {
+                    sdigit value = _PyLong_CompactValue((PyLongObject *)attribute);
+                    sdigit constant = (int8_t)(selector >> 52);
+                    valid = (COMPARISON_BIT(value, constant) & (selector >> 60)) != 0;
+                }
+            }
+            index = result & 7;
+            valid = valid && index < oparg + has_self;
+            PyObject *attribute = NULL;
+            if (valid) {
+                _PyStackRef owner = has_self && index == 0 ? self_or_null : args[index - has_self];
+                attribute = _PyRegion_CallAttribute(owner, result);
+                valid = attribute != NULL;
+            }
+            if (!valid) {
+                current_executor->region_call_guard_exits++;
+                DEOPT_IF(true);
+            }
+            /* Keep the original code and result alive through reverse-local
+             * cleanup, which can run finalizers with the caller visible. */
+            Py_INCREF(code);
+            res = PyStackRef_FromPyObjectNew(attribute);
+            current_executor->region_call_conditional_entries++;
+            _PyStackRef cleanup[6];
+            cleanup[0] = callable;
+            cleanup[1] = self_or_null;
+            for (int i = 0; i < oparg; i++) {
+                cleanup[i + 2] = args[i];
+            }
+            INPUTS_DEAD();
+            for (int i = oparg + 1; i >= 0; i--) {
+                PyStackRef_XCLOSE(cleanup[i]);
+            }
+            Py_DECREF(code);
+        }
+
         replicate(10) tier2 op(_CALL_PY_LIST, (source/4, config/4, callable, self_or_null, args[oparg % 5] -- res)) {
             current_executor->region_call_entries++;
             PyFunctionObject *func = (PyFunctionObject *)PyStackRef_AsPyObjectBorrow(callable);

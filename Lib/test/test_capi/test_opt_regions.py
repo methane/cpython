@@ -1901,6 +1901,263 @@ case.doCleanups()
             monitoring.register_callback(tool, monitoring.events.LINE, None)
             monitoring.free_tool_id(tool)
 
+    def warm_conditional_attribute(self, symbol="==", slots=False, bound=False,
+                                   initial=1, limit="Threshold.limit"):
+        self.enterContext(mock.patch.dict(
+            os.environ, {"PYTHON_TIER2_CALL_REGIONS": "1"}))
+        ns = {}
+        layout = "    __slots__ = ('tag', 'left', 'right')\n" if slots else ""
+        call = "owner.select()" if bound else "func(owner)"
+        exec("class Holder:\n" + layout + "    pass\n"
+             "class Threshold:\n    limit = 1\n"
+             "def select(owner):\n"
+             f"    if owner.tag {symbol} {limit}:\n"
+             "        return owner.left\n"
+             "    return owner.right\n"
+             "Holder.select = select\n"
+             "def run(func, owner, n):\n"
+             "    result = None\n"
+             "    for _ in range(n):\n"
+             f"        result = {call}\n"
+             "    return result\n", ns)
+        owner = ns["Holder"]()
+        owner.tag, owner.left, owner.right = initial, object(), object()
+        func, run = ns["select"], ns["run"]
+        expected = func(owner)
+        self.assertIs(run(func, owner, TIER2_THRESHOLD), expected)
+        ex = self.executor(run, "_CALL_PY_ATTRIBUTE_IF")
+        self.assertIs(run(func, owner, 8), expected)
+        self.assertGreater(ex.get_region_stats()["call_conditional_entries"], 0)
+        return owner, func, run, ex, ns
+
+    @requires_call_regions
+    def test_conditional_attribute_comparisons(self):
+        cases = {"<": (0, 2), "<=": (1, 2), "==": (1, 0),
+                 "!=": (0, 1), ">": (2, 1), ">=": (1, 0)}
+        for symbol, values in cases.items():
+            for slots in (False, True):
+                for bound in (False, True):
+                    for initial in values:
+                        with self.subTest(symbol=symbol, slots=slots,
+                                          bound=bound, initial=initial):
+                            owner, func, run, ex, _ = self.warm_conditional_attribute(
+                                symbol, slots, bound, initial)
+                            before = ex.get_region_stats()["call_conditional_entries"]
+                            self.assertIs(run(func, owner, 8), func(owner))
+                            self.assertGreater(ex.get_region_stats()["call_conditional_entries"], before)
+                            for value in (-2**80, -1, 0, 1, 2, 2**80, True, False):
+                                owner.tag = value
+                                self.assertIs(run(func, owner, 8), func(owner))
+
+    @requires_call_regions
+    def test_conditional_attribute_argument_slots(self):
+        self.enterContext(mock.patch.dict(
+            os.environ, {"PYTHON_TIER2_CALL_REGIONS": "1"}))
+        for bound in (False, True):
+            for nargs in range(0 if bound else 1, 5):
+                with self.subTest(bound=bound, nargs=nargs):
+                    count = nargs + bound
+                    names = [f"a{i}" for i in range(count)]
+                    signature = ", ".join(names)
+                    arguments = ", ".join(names[bound:])
+                    ns = {}
+                    exec("class Holder:\n    pass\n"
+                         f"def select({signature}):\n"
+                         f"    if {names[-1]}.tag == 1:\n"
+                         "        return a0.left\n"
+                         "    return a0.right\n"
+                         f"def run(func, {arguments + ', ' if arguments else ''}n):\n"
+                         "    result = None\n"
+                         "    for _ in range(n):\n"
+                         f"        result = func({arguments})\n"
+                         "    return result\n", ns)
+                    owners = [ns["Holder"]() for _ in names]
+                    for owner in owners:
+                        owner.tag, owner.left, owner.right = 1, object(), object()
+                    func, run = ns["select"], ns["run"]
+                    if bound:
+                        func = func.__get__(owners[0])
+                    args = owners[bound:]
+                    self.assertIs(run(func, *args, TIER2_THRESHOLD), owners[0].left)
+                    ex = self.executor(run, "_CALL_PY_ATTRIBUTE_IF")
+                    self.assertIs(run(func, *args, 8), owners[0].left)
+                    self.assertGreater(ex.get_region_stats()["call_conditional_entries"], 0)
+                    owners[-1].tag = 0
+                    self.assertIs(run(func, *args, 8), owners[0].right)
+
+    @requires_call_regions
+    def test_conditional_attribute_constants(self):
+        for value in (-5, 0, 127):
+            with self.subTest(value=value):
+                owner, func, run, ex, _ = self.warm_conditional_attribute(
+                    initial=value, limit=str(value))
+                owner.tag = value + 1
+                self.assertIs(run(func, owner, 8), owner.right)
+                self.assertGreater(ex.get_region_stats()["call_guard_exits"], 0)
+
+    @requires_call_regions
+    def test_conditional_attribute_class_and_global_changes(self):
+        for mutation in ("class", "global", "copy", "code"):
+            with self.subTest(mutation=mutation):
+                owner, func, run, ex, ns = self.warm_conditional_attribute()
+                if mutation == "class":
+                    ns["Threshold"].limit = 2
+                elif mutation in ("global", "copy"):
+                    class Replacement:
+                        limit = 2
+                    if mutation == "global":
+                        ns["Threshold"] = Replacement
+                    else:
+                        other = ns.copy()
+                        other["Threshold"] = Replacement
+                        func = types.FunctionType(func.__code__, other)
+                else:
+                    def changed(owner):
+                        return owner.right
+                    func.__code__ = changed.__code__
+                self.assertIs(run(func, owner, 8), owner.right)
+                self.assertIs(ns["select"](owner),
+                              owner.left if mutation == "copy" else owner.right)
+
+    @requires_call_regions
+    def test_conditional_attribute_shared_code_version(self):
+        owner, func, run, ex, ns = self.warm_conditional_attribute()
+        class Replacement:
+            limit = 2
+        other = ns.copy()
+        other["Threshold"] = Replacement
+        # MAKE_FUNCTION assigns the same code version to this distinct
+        # function. Direct FunctionType construction leaves it unset.
+        maker = compile("def clone(): pass", "<make_clone>", "exec")
+        maker = maker.replace(co_consts=tuple(
+            func.__code__ if isinstance(value, types.CodeType) else value
+            for value in maker.co_consts))
+        exec(maker, other)
+        clone = other["clone"]
+        self.assertIs(clone.__code__, func.__code__)
+        self.assertIsNot(clone.__globals__, func.__globals__)
+        self.assertIs(run(clone, owner, 8), owner.right)
+        self.assertIs(run(func, owner, 8), owner.left)
+
+    @requires_call_regions
+    def test_conditional_attribute_namespace_lifetime(self):
+        owner, func, _, _, ns = self.warm_conditional_attribute()
+        # Use a caller with separate globals and remove the method alias, so
+        # retaining this caller/receiver cannot retain the callee namespace.
+        del ns["Holder"].select
+        callers = {}
+        exec("def caller(func, owner, n):\n"
+             "    result = None\n"
+             "    for _ in range(n):\n        result = func(owner)\n"
+             "    return result\n", callers)
+        caller = callers["caller"]
+        self.assertIs(caller(func, owner, TIER2_THRESHOLD), owner.left)
+        ex = self.executor(caller, "_CALL_PY_ATTRIBUTE_IF")
+        self.assertIs(caller(func, owner, 8), owner.left)
+        old = weakref.ref(ns["Threshold"])
+        del func, ns
+        gc.collect()
+        self.assertIsNone(old())
+        self.assertFalse(ex.is_valid())
+
+    @requires_call_regions
+    def test_conditional_attribute_callback_and_error(self):
+        owner, func, run, ex, ns = self.warm_conditional_attribute()
+        calls = []
+        class Tag(int):
+            def __eq__(self, other):
+                calls.append(other)
+                owner.left = replacement
+                return True
+        replacement = object()
+        owner.tag = Tag(1)
+        self.assertIs(run(func, owner, 8), replacement)
+        self.assertEqual(calls, [1] * 8)
+        self.assertGreater(ex.get_region_stats()["call_guard_exits"], 0)
+
+        owner.tag = 1
+        def broken(self):
+            raise ValueError("selected attribute")
+        ns["Holder"].left = property(broken)
+        try:
+            run(func, owner, 8)
+        except ValueError as error:
+            self.assertEqual(str(error), "selected attribute")
+            tb = error.__traceback__
+            while tb is not None and tb.tb_frame.f_code is not func.__code__:
+                tb = tb.tb_next
+            self.assertIsNotNone(tb)
+            self.assertEqual(tb.tb_lineno, func.__code__.co_firstlineno + 2)
+        else:
+            self.fail("descriptor did not raise")
+
+    @requires_call_regions
+    def test_conditional_attribute_monitoring(self):
+        owner, func, run, ex, _ = self.warm_conditional_attribute()
+        tool = sys.monitoring.PROFILER_ID
+        sys.monitoring.use_tool_id(tool, "conditional attribute")
+        events = []
+        def returned(code, offset, value):
+            events.append(value)
+        before = ex.get_region_stats()["call_conditional_entries"]
+        try:
+            sys.monitoring.register_callback(tool, sys.monitoring.events.PY_RETURN, returned)
+            sys.monitoring.set_local_events(tool, func.__code__, sys.monitoring.events.PY_RETURN)
+            self.assertIs(run(func, owner, 8), owner.left)
+            self.assertEqual(events, [owner.left] * 8)
+            self.assertEqual(ex.get_region_stats()["call_conditional_entries"], before)
+        finally:
+            sys.monitoring.set_local_events(tool, func.__code__, 0)
+            sys.monitoring.register_callback(tool, sys.monitoring.events.PY_RETURN, None)
+            sys.monitoring.free_tool_id(tool)
+
+    @requires_call_regions
+    def test_conditional_attribute_owned_receiver(self):
+        owner, func, _, _, ns = self.warm_conditional_attribute()
+        seen, refs = [], []
+        def finalized(self):
+            seen.append(sys._getframe(1).f_code)
+        ns["Holder"].__del__ = finalized
+        def factory():
+            result = ns["Holder"]()
+            result.tag, result.left, result.right = 1, owner.left, owner.right
+            refs.append(weakref.ref(result))
+            return result
+        exec("def run_owned(factory, func, n):\n"
+             "    result = None\n"
+             "    for _ in range(n):\n"
+             "        result = func(factory())\n"
+             "    return result\n", ns)
+        run = ns["run_owned"]
+        self.assertIs(run(factory, func, TIER2_THRESHOLD), owner.left)
+        ex = self.executor(run, "_CALL_PY_ATTRIBUTE_IF")
+        seen.clear()
+        refs.clear()
+        before = ex.get_region_stats()["call_conditional_entries"]
+        self.assertIs(run(factory, func, 8), owner.left)
+        self.assertGreater(ex.get_region_stats()["call_conditional_entries"], before)
+        self.assertEqual(seen, [run.__code__] * 8)
+        self.assertTrue(all(ref() is None for ref in refs))
+        # Avoid adding an unrelated destructor event during test cleanup.
+        del ns["Holder"].__del__
+
+    @requires_call_regions
+    def test_conditional_attribute_profile(self):
+        owner, func, run, ex, _ = self.warm_conditional_attribute()
+        events = []
+        def profile(frame, event, arg):
+            if frame.f_code is func.__code__:
+                events.append(event)
+        before = ex.get_region_stats()["call_conditional_entries"]
+        old = sys.getprofile()
+        try:
+            sys.setprofile(profile)
+            self.assertIs(run(func, owner, 8), owner.left)
+        finally:
+            sys.setprofile(old)
+        self.assertEqual(events, ["call", "return"] * 8)
+        self.assertEqual(ex.get_region_stats()["call_conditional_entries"], before)
+
     def warm_named_globals(self, unrelated="unrelated"):
         self.enterContext(mock.patch.dict(
             os.environ, {"PYTHON_TIER2_CALL_REGIONS": "1"}))

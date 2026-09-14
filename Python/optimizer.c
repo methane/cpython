@@ -605,7 +605,7 @@ get_region_stats(PyObject *self, PyObject *Py_UNUSED(ignored))
 {
     _PyExecutorObject *executor = _PyExecutorObject_CAST(self);
     return Py_BuildValue(
-        "{s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K}",
+        "{s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K}",
         "bounded_entries", executor->region_bounded_entries,
         "bounded_guard_exits", executor->region_bounded_guard_exits,
         "bounded_boxes", executor->region_bounded_boxes,
@@ -621,6 +621,7 @@ get_region_stats(PyObject *self, PyObject *Py_UNUSED(ignored))
         "call_entries", executor->region_call_entries,
         "call_guard_exits", executor->region_call_guard_exits,
         "call_attr_entries", executor->region_call_attr_entries,
+        "call_conditional_entries", executor->region_call_conditional_entries,
         "enum_entries", executor->region_enum_entries,
         "enum_guard_exits", executor->region_enum_guard_exits,
         "enum_fallbacks", executor->region_enum_fallbacks,
@@ -1687,6 +1688,7 @@ allocate_executor(int exit_count, int length)
     res->region_call_entries = 0;
     res->region_call_guard_exits = 0;
     res->region_call_attr_entries = 0;
+    res->region_call_conditional_entries = 0;
     res->region_enum_entries = 0;
     res->region_enum_guard_exits = 0;
     res->region_enum_fallbacks = 0;

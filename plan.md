@@ -1,9 +1,9 @@
 # CPython Tier 2：Linux上で行う2〜3日間の実装計画
 
 **現在の目標（2026-09-14）**：全6ベンチマークのmain比の**算術平均0.5以下**。
-開始時の480値は **0.7944918**。最新の名前単位globals依存関係screen（3 blocks、3 builds、540値）は
-**0.6607413**（対応する直前版0.6672309）で、目標は未達。
-DeltaBlueは3 blockとも短縮し、全体の前版比算術平均は0.9934147。
+開始時の480値は **0.7944918**。最新の条件付き属性返却screen（3 blocks、3 builds、540値）は
+**0.6564989**（対応する直前版0.6620986）で、目標は未達。
+DeltaBlue/Btreeは3 blockとも短縮、他4本は小さな回帰があり、前版比算術平均は0.9954716。
 各blockの各scriptで10値の平均時間からcandidate/main比を求め、blocksと6 scriptを
 等重みの算術平均で集計する。途中screenは3 blocks、最終goal判定は4 blocksとする。
 入力・CLI・warmups=3・values=10・loops=1、固定main、PGO/LTOなしの比較条件を維持する。
@@ -2583,3 +2583,129 @@ build-jit/python -m test test_capi.test_opt_regions test_capi.test_opt test_tier
   次は`conditional-attribute-design.md`に整理した、整数属性の条件確認と属性返却を
   組み合わせるcallee経路を検証する。既存の関数version・型watch・namespace依存と
   元CALLへのfallbackを保持し、引数解放前に全guardを完了させる。
+
+
+### 条件付き属性返却（prototype）
+
+- named globalsの追加7 testsは両buildでhash seed 0/1/2/42でも成功し、ローカル
+  checkpointに保存済み。次のcallee最適化として、cached整数属性とsigned-byteの
+  immortal定数の比較、観測branch、cached属性返却を一つのuopへまとめる実装を追加。
+- 元CALLのfunction version/stack/recursion guardを保持する。非zero function versionで
+  同じfunctionのglobals associationが確定する場合だけ、定数化後のnamespace guardを
+  省略する。cloneは別versionとなりfallbackする。既存のdict/type dependenciesは維持する。
+- 全guardを引数解放前に実行し、分岐や型が合わなければ元CALLへ戻す。成功時は結果と
+  元codeを保持して、既存call regionと同じ逆順cleanupを行う。新counterを追加し、
+  両buildを再構築中。比較6種/両branch/slotsとmanaged/boundとfree、constant端、
+  class/global/code/copy変更、callback/descriptorエラー、monitoringのtestを追加した。
+
+- 初回重点testは形成した直後のexecutorで実行counterを検査し、57 subtestsが0で失敗した。
+  形成後の8呼び出しで実行を確認するようfixtureを修正し、同じbinaryで全件成功。
+  ベンチマークのwarmupは変更していない。失敗ログは保持する。
+- owned receiverのfinalizerがcaller frameを見ること・即時解放と、profileのcall/returnを
+  検査する2 testsを追加。関連13 filesは両buildで1,560 tests成功（debug4/native15 skips）。
+  8生成物byte一致、Ruff/diff check成功。native binaryは
+  `95a35e1c0ec0bc0ecb50a1e006b17e0a6fa433f40b2d9d750951316b1740a379`。
+- DeltaBlueの10値で新counterは20,000/20,000/20,014/20,100/20,100/20,199/20,266/
+  20,897/21,139/21,594、guard退出0。14 executors/147,456 bytes（前版155,648）。
+  Plan.executeは167→97 uops、PUSH/RETURNは3組→1組、codeページ量は8,192 bytesのまま。
+  native bytes/assemblyと両版probe/manifest/patchを保存した。
+- 単独DeltaBlue90値はafter/before0.938143/0.929893/0.942139、幾何平均0.936711。
+  対main0.875918、全checksum一致・除外0。6本全体の対応比較を3 blocksで実行中。
+
+- 採用前のソース監査で初版のfunction version解釈を訂正。MAKE_FUNCTIONはco_versionを
+  引き継ぐため、同じcodeの別functionが同じversionを持てる。FunctionType直接生成だけの
+  testではUNSET versionとなり問題を見逃していた。MAKE_FUNCTIONで同じcode/versionと
+  別globalsを作る回帰testは両buildで誤った属性を返して失敗した。
+- 全体screenを中断し、初版の単独性能/partial rowsは不採用prototypeの証拠として保存。
+  新`_GUARD_CALL_GLOBALS_IDENTITY`でcalleeの実globalsを元mappingと比較してから
+  fused callへ進むよう修正。元dict dependencyがborrowed namespace pointerを保護する。
+  フレームを作ってからGLOBALSを検査する代わりに、元CALLのstackを保って検査する。
+  再build・全関連test・native probe・対応比較を改めて実施する。
+
+- namespace guard修正版は共有code/version regressionと元namespace破棄のtestを含む
+  1,562 testsが両build成功（debug4/native15 skips）。他5実験flagを無効にしたnativeの
+  追加9 testsも成功。8生成物再現/Ruff/diff check成功。最終候補binaryは
+  `4674c1047a65d9c3532a1c61be40b439583ac5068e424f0991ea756f35275f8a`。
+- 修正版probeは新counterの10値すべて初版と同じ、guard退出0。14 executors/151,552 bytes。
+  Plan.executeは101 uops/8,192 bytesで、各条件付きcallの前にcallee globals guardがある。
+  PUSH/RETURNは3組→1組を維持する。初版147,456 bytesとの差も隠さず記録する。
+- 修正版単独90値は0.947384/0.961084/0.953200、幾何平均0.953873（main比0.891576）、
+  全checksum一致・除外0。新prefix `conditional-attribute-final-suite`で全6本比較を再開した。
+
+- 修正版の全6本540値は全checksum一致・除外0だが、main比算術平均は
+  **0.6587151→0.6586115**とほぼ横ばい。after/before平均1.0005464。
+  DeltaBlueは0.951818/1.036294/0.954803（平均0.980972）で第2 blockが逆転。
+  Hexiomは1.022736/1.001478/1.002155（平均1.008790）と全block悪化。
+  BPE1.003627/Btree1.003433/Raytrace1.006016/Spectral1.000441は方向混在。
+- 採用を保留する。単独DeltaBlueの改善だけで全体の効果を断定しない。第2 blockの
+  DeltaBlueは一つの極端値だけでなく、多くの値が高かった。原因は未特定。
+  追加検証は同じ固定binaryで、Hexiom/DeltaBlue native経路を先に確認し、各単独3 blocks
+  (各90値)、続いて全体をもう3 blocks(540値)に事前固定する。build/閾値/入力は変えず、
+  全データを保持し、良い結果が出るまで繰り返す運用にはしない。
+
+- seed1の両版probeでもDeltaBlueの新counterは全10値で動作し、guard退出0。Hexiomは
+  新counter0、28 executors/159,744 bytesと既存counterの全10値が前後一致した。
+  これだけではタイミング差の原因を特定できない。追加単独90値はDeltaBlue
+  0.947578/0.966250/0.942240（幾何平均0.951967）、Hexiom
+  0.961678/1.014399/1.001977（0.992427、方向混在）。追加全体screenを継続中。
+- ソース監査で新counterをstruct中段へ挿入したため、その後の既存counter/scratchの
+  offsetまで8 bytes変わっていたことを確認した。不要な既存stencilへの波及なので、
+  新fieldを末尾へ移すpatchをartifactに準備した（まだ未適用）。現在の固定binaryによる
+  追加screenは最後まで保存し、その後この1要因を変えて再検証する。配置差が現在の
+  回帰原因だとは断定せず、比較によって検証する。
+
+- 保存raw native codeの静的逆アセンブルでも、既存counterのoffset変更を確認した。
+  例: Hexiom Done.__getitem__のcall_list_entriesは0x218→0x220、
+  Done.removeのremove_entriesは0x310→0x318。
+  `conditional-attribute-hexiom-counter-offsets.json`へ前後を記録した。これは
+  machine codeへの不要な波及の証拠であり、性能回帰の因果関係の証明ではない。
+  struct末尾配置後は同じ対応を検査する。
+
+- 追加全体540値も全checksum一致・除外0。main比算術平均0.6688699→0.6597483、
+  after/before0.9907443。DeltaBlueは0.950038/0.900405/0.949521と全block短縮だが、
+  第2 blockのcontrol/mainが1.028045と他より遅い。遅いcontrolも除外しない。
+  BPE1.004604/Raytrace1.007969は全block悪化、Hexiom1.000414、Btree1.000441、
+  Spectral0.997716は方向混在。前回のほぼ横ばい結果も保持する。
+- 予定のcounter末尾配置だけを適用して両buildを再構築する。追加したarity testは
+  0〜4 explicit args、bound/free、selectorとresultが異なるargumentのケースを検査する。
+  既存counterのnative offsetが戻るかを確認し、配置変更単独のDeltaBlue/Hexiom各90値、
+  続いてnamed-globals版をcontrolに全6本540値を測る。
+
+- counter末尾配置のdebugは1,563 tests成功したが、nativeはregion testsで410 failures。
+  原因調査で、MakeのJIT_DEPSとTools/jit/_targets.pyのdigestがpycore_optimizer.hを
+  入力に含めず、headerだけの変更では古いstencilを再利用していたことを確認した。
+  最初のnative binary 8dabd5cb...はstencil不整合のため性能比較に使用しない。
+  probe/native-offset検査も失敗しており、そのログ/manifest/binaryを保持する。
+- 固定bootstrap/LLVM21/同じno-vectorization flagsでbuild.py -fを実行してから
+  nativeを再リンクする。通常の再build成功だけでstruct layoutとstencilの一致を
+  認定できないことをAGENTSの再利用可能な手順にも記録する。
+
+- 強制再生成・再リンク後はnativeも1,563 tests成功（15 skips）。有効な最終候補は
+  `e6793865982e1098903b9fdba87aead913369ca73928bd8b7ca0953d2d5e9420`、
+  `conditional-attribute-layout-*`へ識別情報を保存。mockによるdigest検査でも、
+  pycore_optimizer.hの内容変更がdigestに反映されないことを確認した。
+- 新probeではDeltaBlue新counter全10値を維持、14 executors/151,552 bytes。
+  Hexiomは既存全counterが一致し、28 executors/159,744 bytes、既存counterの
+  native offsetも完全に元へ戻った。末尾配置版と中段配置版の比較90値は、
+  DeltaBlue0.995632/0.999433/0.995595（幾何平均0.996885）、
+  Hexiom1.011276/1.001286/1.004359（1.005632）と全block悪化した。
+  offset変更だけを回帰原因とはみなせない。全体比較はnamed-globals版をcontrolに実行中。
+
+- 末尾counter最終候補の全6本540値は全checksum一致・除外0。main比算術平均は
+  **0.6620986→0.6564989**、after/before0.9954716、block別0.994219/0.995407/0.996790。
+  DeltaBlueは0.944521/0.937148/0.957567（平均0.946412）、Btree0.996526で全block短縮。
+  一方、BPE1.007020、Hexiom1.004086、Raytrace1.011450、Spectral1.007335は
+  すべてのblockで悪化した。これらの回帰を保ったまま、目標の算術平均での改善と
+  繰り返し確認したDeltaBlueの改善から、条件付き属性返却を採用する。
+- 最終main比: BPE0.815598、Btree0.551212、DeltaBlue0.887381、Hexiom0.830578、
+  Raytrace0.835328、Spectral0.018896。別時点のscreenとの差分を改善とは主張しない。
+  10追加testsを他5実験flag0のnativeでも検証成功。両buildの関連13 filesは各1,563 tests
+  （debug4/native15 skips）。8生成物再現、native counters/offsets、Ruff/diff check成功。
+  英語report/regionsと失敗prototypeを含む全artifactを更新し、C/H一致を確認して
+  ローカルcheckpointへ保存する。GitHubへの操作は行っていない。
+- 次の作業は、確認済みのstencil再生成漏れの最小修正。
+  `stencil-header-dependency-next.patch`と設計メモを準備した。Make/Windowsの入力一覧と
+  digestへpycore_optimizer.hを加え、header内容だけの変更でdigestが変わるoffline testを
+  追加する。その後、BPE/Raytraceで残るコストと回帰を、固定入力のnative profileから
+  改めて切り分ける。タプルのidentityや例外時stateを変える再利用は導入しない。
+  目標算術平均0.5は未達で、goalは継続する。

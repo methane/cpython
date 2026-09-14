@@ -1234,6 +1234,158 @@ eliminate_trivial_frames(_PyUOpInstruction *buffer, int length)
 #endif
 }
 
+/* Fuse the complete recorded path of a conditional attribute return. Every
+ * failure resumes at the original CALL, before argument ownership changes. */
+static void
+inline_conditional_attribute_calls(_PyUOpInstruction *buffer, int length)
+{
+#if defined(WITH_DTRACE) || defined(__EMSCRIPTEN__)
+    return;
+#else
+    if (!region_enabled("PYTHON_TIER2_CALL_REGIONS")) {
+        return;
+    }
+    for (int start = 0; start < length; start++) {
+        if (buffer[start].opcode != _INIT_CALL_PY_EXACT_ARGS || buffer[start].oparg > 4) {
+            continue;
+        }
+        /* Retain the code-version guard. MAKE_FUNCTION can give distinct
+         * functions the same version, so a folded globals guard also needs
+         * an explicit check of the actual callee's namespace. */
+        int guard = start - 1;
+        while (guard >= 0 && (buffer[guard].opcode == _NOP ||
+               buffer[guard].opcode == _CHECK_RECURSION_REMAINING ||
+               buffer[guard].opcode == _CHECK_STACK_SPACE_OPERAND)) {
+            guard--;
+        }
+        if (guard < 0 || buffer[guard].opcode != _CHECK_FUNCTION_VERSION ||
+            buffer[guard].operand0 == 0) {
+            continue;
+        }
+        int end = Py_MIN(length, start + 96);
+        int pc = start + 1;
+#define CONDITIONAL_NEXT() (pc = trivial_call_skip(buffer, pc, end), \
+                            pc < end ? region_opcode(&buffer[pc]) : -1)
+#define CONDITIONAL_EXPECT(OP) do { \
+    if (CONDITIONAL_NEXT() != (OP)) goto next_conditional; \
+    pc++; \
+} while (0)
+        if (CONDITIONAL_NEXT() != _SAVE_RETURN_OFFSET) {
+            continue;
+        }
+        int call_slot = pc++;
+        CONDITIONAL_EXPECT(_PUSH_FRAME);
+        CONDITIONAL_EXPECT(_TIER2_RESUME_CHECK);
+        uint64_t selector, result;
+        pc = trivial_attribute_load(buffer, pc, end, buffer[start].oparg, &selector);
+        if (pc < 0) {
+            continue;
+        }
+        PyObject *namespace = NULL;
+        int op = CONDITIONAL_NEXT();
+        if (op == _GUARD_GLOBALS_VERSION_AND_IDENTITY) {
+            namespace = (PyObject *)buffer[pc].operand1;
+            if (namespace == NULL) {
+                continue;
+            }
+            pc++;
+            op = CONDITIONAL_NEXT();
+        }
+        /* Folding a class attribute can leave its watched owner load/pop.
+         * No escaping operation occurs between them. Retain all previously
+         * registered dict/type dependencies protecting the folded value. */
+        if (op == _LOAD_CONST_INLINE && PyType_Check((PyObject *)buffer[pc].operand0)) {
+            pc++;
+            CONDITIONAL_EXPECT(_POP_TOP);
+            op = CONDITIONAL_NEXT();
+        }
+        Py_ssize_t constant;
+        if (op == _LOAD_SMALL_INT) {
+            constant = buffer[pc++].oparg;
+        }
+        else if (op == _LOAD_CONST_INLINE_BORROW) {
+            PyObject *value = (PyObject *)buffer[pc++].operand0;
+            if (!PyLong_CheckExact(value) || !_Py_IsImmortal(value) ||
+                !_PyLong_IsCompact((PyLongObject *)value)) {
+                continue;
+            }
+            constant = _PyLong_CompactValue((PyLongObject *)value);
+        }
+        else {
+            continue;
+        }
+        if (constant < INT8_MIN || constant > INT8_MAX) {
+            continue;
+        }
+        while ((op = CONDITIONAL_NEXT()) == _GUARD_NOS_INT || op == _GUARD_TOS_INT) {
+            pc++;
+        }
+        if (CONDITIONAL_NEXT() != _COMPARE_OP_INT) {
+            continue;
+        }
+        int mask = buffer[pc++].oparg & 14;
+        for (int i = 0; i < 2; i++) {
+            op = CONDITIONAL_NEXT();
+            if (op != _POP_TOP_INT && op != _POP_TOP_NOP) {
+                goto next_conditional;
+            }
+            pc++;
+        }
+        op = CONDITIONAL_NEXT();
+        bool on_true;
+        if (op == _GUARD_IS_TRUE_POP || op == _GUARD_IS_FALSE_POP) {
+            on_true = op == _GUARD_IS_TRUE_POP;
+        }
+        else if (op == _GUARD_BIT_IS_SET_POP || op == _GUARD_BIT_IS_UNSET_POP) {
+            int bit = buffer[pc].oparg;
+            if (bit != get_test_bit_for_bools()) {
+                continue;
+            }
+            on_true = (test_bit_set_in_true(bit) != 0) == (op == _GUARD_BIT_IS_SET_POP);
+        }
+        else {
+            continue;
+        }
+        pc++;
+        mask = on_true ? mask : mask ^ 14;
+        pc = trivial_attribute_load(buffer, pc, end, buffer[start].oparg, &result);
+        if (pc < 0) {
+            continue;
+        }
+        if (CONDITIONAL_NEXT() == _MAKE_HEAP_SAFE) {
+            pc++;
+        }
+        if (CONDITIONAL_NEXT() != _RETURN_VALUE) {
+            continue;
+        }
+        _PyUOpInstruction call = buffer[start];
+        call.opcode = _CALL_PY_ATTRIBUTE_IF;
+        call.operand0 = selector | ((uint64_t)(uint8_t)constant << 52) |
+                        ((uint64_t)mask << 60);
+        call.operand1 = result;
+        for (int i = start + 1; i <= pc; i++) {
+            if (!(_PyUop_Flags[buffer[i].opcode] & HAS_RECORDS_VALUE_FLAG)) {
+                buffer[i].opcode = _NOP;
+            }
+        }
+        if (namespace != NULL) {
+            buffer[start].opcode = _GUARD_CALL_GLOBALS_IDENTITY;
+            buffer[start].operand0 = (uintptr_t)namespace;
+            buffer[start].operand1 = 0;
+            buffer[call_slot] = call;
+        }
+        else {
+            buffer[start] = call;
+        }
+        start = pc;
+next_conditional:
+        ;
+#undef CONDITIONAL_EXPECT
+#undef CONDITIONAL_NEXT
+    }
+#endif
+}
+
 /* A cached attribute followed by exact list indexing, optionally consumed by
  * a constant length predicate. Guard failures resume at the original CALL. */
 static void
@@ -2411,6 +2563,7 @@ _Py_uop_analyze_and_optimize(
 
     length = remove_folded_constant_traffic(output, length);
     eliminate_trivial_frames(output, length);
+    inline_conditional_attribute_calls(output, length);
     inline_list_attribute_calls(output, length);
     inline_attribute_search_calls(output, length);
     inline_list_remove_calls(output, length);

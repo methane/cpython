@@ -4652,6 +4652,20 @@
             break;
         }
 
+        case _GUARD_CALL_GLOBALS_IDENTITY: {
+            break;
+        }
+
+        case _CALL_PY_ATTRIBUTE_IF: {
+            JitOptRef res;
+            res = sym_new_not_null(ctx);
+            CHECK_STACK_BOUNDS(-1 - oparg);
+            stack_pointer[-2 - oparg] = res;
+            stack_pointer += -1 - oparg;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            break;
+        }
+
         case _CALL_PY_LIST: {
             JitOptRef res;
             res = sym_new_not_null(ctx);
