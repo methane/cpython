@@ -7,6 +7,7 @@ import argparse
 
 from analyzer import (
     Analysis,
+    Uop,
     analyze_files,
     get_uop_cache_depths,
 )
@@ -20,6 +21,13 @@ from typing import TextIO
 
 
 DEFAULT_OUTPUT = ROOT / "Include/internal/pycore_uop_ids.h"
+
+
+def uop_sort_key(item: tuple[str, Uop]) -> tuple[str, int, int]:
+    name, uop = item
+    if uop.replicates is not None:
+        return uop.replicates.name, 1, int(name.rsplit("_", 1)[1])
+    return name, 0, 0
 
 
 def generate_uop_ids(
@@ -36,13 +44,18 @@ def generate_uop_ids(
         next_id = start_id
         PRE_DEFINED = {"_EXIT_TRACE", "_SET_IP"}
 
-        uops = [(uop.name, uop) for uop in analysis.uops.values()]
+        uops = sorted(
+            ((uop.name, uop) for uop in analysis.uops.values()),
+            key=uop_sort_key,
+        )
+        # The optimizer selects replicas by adding to the base ID. Keep them
+        # contiguous and in numeric order, including two-digit suffixes.
         # Sort so that _BASE comes immediately before _BASE_0, etc.  Split the
         # uops into those that get their own sequential id and those that are
         # aliased to the matching tier 1 opcode id.
         sequential_uops: list[str] = []
         aliased_uops: list[str] = []
-        for name, uop in sorted(uops):
+        for name, uop in uops:
             if name in PRE_DEFINED or uop.is_super() or uop.properties.tier == 1:
                 continue
             if uop.implicitly_created and not distinct_namespace and not uop.replicated:
@@ -75,7 +88,7 @@ def generate_uop_ids(
 
         # The "register" variants are numbered immediately after the base uops.
         reg_labels: list[str] = []
-        for name, uop in sorted(uops):
+        for name, uop in uops:
             if uop.properties.tier == 1:
                 continue
             if uop.properties.records_value:

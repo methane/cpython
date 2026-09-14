@@ -37,6 +37,7 @@ with test_tools.imports_under_tool("cases_generator"):
     import tier2_generator
     import optimizer_generator
     import record_function_generator
+    import uop_id_generator
 
 
 def handle_stderr():
@@ -2117,6 +2118,41 @@ class TestGeneratedCases(unittest.TestCase):
         }
         """
         self.run_cases_test(input, output)
+
+
+class TestUopIdGeneration(unittest.TestCase):
+    def test_replica_ids_are_contiguous_and_numeric(self):
+        import io
+
+        source = """
+        replicate(12) tier2 op(_WIDE, (items[oparg] -- res)) {
+            res = PyStackRef_DUP(items[oparg - 1]);
+            INPUTS_DEAD();
+        }
+        replicate(8:13) tier2 op(_OFFSET, (items[oparg] -- res)) {
+            res = PyStackRef_None;
+            INPUTS_DEAD();
+        }
+        tier2 op(_WIDE_5_HELPER, (--)) {}
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            filename = os.path.join(directory, "input.c")
+            with open(filename, "w") as file:
+                file.write(parser.BEGIN_MARKER + source + parser.END_MARKER)
+            analysis = analyze_files([filename])
+            for distinct_namespace in (False, True):
+                with self.subTest(distinct_namespace=distinct_namespace):
+                    output = io.StringIO()
+                    uop_id_generator.generate_uop_ids(
+                        [filename], analysis, output, distinct_namespace)
+                    primary = output.getvalue().split("enum {", 1)[1].split("};", 1)[0]
+                    names = [line.strip().rstrip(",") for line in primary.splitlines()]
+                    for base, replicas in (("_WIDE", range(12)),
+                                           ("_OFFSET", range(8, 13))):
+                        position = names.index(base)
+                        expected = [base] + [f"{base}_{i}" for i in replicas]
+                        self.assertEqual(names[position:position + len(expected)], expected)
+
 
 class TestTier2ConditionalExit(unittest.TestCase):
     def test_exit_with_cached_success_result(self):
