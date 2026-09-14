@@ -275,23 +275,37 @@ class TestRegions(unittest.TestCase):
         self.assertFalse(run(receiver, 8))
         self.assertEqual(events, [receiver.cells] * 8)
 
-        receiver, run, _ = self.warm_attribute_length()
-        events.clear()
-        original_len = builtins.len
+        # Builtin mutations permanently consume the interpreter's folding
+        # budget, even after restoring len. Keep this check out of later tests.
+        from test.support.script_helper import assert_python_ok
 
-        def replaced_len(value):
-            if value is receiver.cells:
-                events.append(sys._getframe(1).f_code.co_name)
-                return 30
-            return original_len(value)
+        assert_python_ok("-c", """
+import builtins
+import sys
+from test.test_capi.test_opt_regions import TestRegions
 
-        try:
-            builtins.len = replaced_len
-            result = run(receiver, 8)
-        finally:
-            builtins.len = original_len
-        self.assertFalse(result)
-        self.assertEqual(events, ["ready"] * 8)
+case = TestRegions()
+case.setUp()
+receiver, run, ex = case.warm_attribute_length()
+case.assertTrue(case.executed(ex, "call_list_entries", run, receiver, 8))
+events = []
+original_len = builtins.len
+
+def replaced_len(value):
+    if value is receiver.cells:
+        events.append(sys._getframe(1).f_code.co_name)
+        return 30
+    return original_len(value)
+
+try:
+    builtins.len = replaced_len
+    result = run(receiver, 8)
+finally:
+    builtins.len = original_len
+case.assertFalse(result)
+case.assertEqual(events, ["ready"] * 8)
+case.doCleanups()
+""", PYTHON_JIT="1")
 
     def warm_float_owned(self, symbol="+", fields=(True, True)):
         class Holder:
@@ -2889,6 +2903,39 @@ class TestRegions(unittest.TestCase):
             # Huge indices can leave at the original compact-int guard.
             if abs(bad) < 100:
                 self.assertGreater(ex.get_region_stats()["tuple_guard_exits"], before)
+
+    def test_pair_comparison_mixed_immutable_types(self):
+        cases = [
+            (b"prefix\0suffix", b"second\0value"),
+            (b"a" * 1024, b"b" * 1024),
+            (b"bytes", "unicode"),
+            ("unicode", b"bytes"),
+            (b"bytes", 2**100),
+            (0.5, b"bytes"),
+        ]
+        for symbol, operation in (("==", operator.eq), ("!=", operator.ne)):
+            direct = arithmetic(f"(a, b) {symbol} c")
+            direct(b"a", b"b", (b"a", b"b"), 0, TIER2_THRESHOLD)
+            direct_ex = self.executor(direct, "_COMPARE_TUPLE_PAIR")
+            indexed, indexed_ex = self.warm_list_pair(symbol)
+            for first, second in cases:
+                # Equal bytes with separate identities exercise the data
+                # comparison, including embedded zeros and long prefixes.
+                pair = tuple(bytes(bytearray(value)) if isinstance(value, bytes)
+                             else value for value in (first, second))
+                for reverse in (False, True):
+                    target = pair[::-1] if reverse else pair
+                    with self.subTest(symbol=symbol, first=first, second=second,
+                                      reversed=reverse):
+                        expected = operation((first, second), target)
+                        matched_types = type(first) is type(target[0]) and type(second) is type(target[1])
+                        counter = "tuple_entries" if matched_types else "tuple_guard_exits"
+                        self.assertIs(self.executed(direct_ex, counter, direct,
+                                                    first, second, target, 0, 8), expected)
+                        self.assertIs(indexed([first, second], (0, 0), target, 8), expected)
+                self.assertIs(self.executed(indexed_ex, "tuple_list_entries", indexed,
+                                            [first, second], (0, 0), pair, 8),
+                              symbol == "==")
 
     def test_tuple_pair_distinct_large_integers(self):
         compare, ex = self.warm_list_pair()

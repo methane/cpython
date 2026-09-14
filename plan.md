@@ -1899,3 +1899,44 @@ build-jit/python -m test test_capi.test_opt_regions test_capi.test_opt test_tier
   float/unicode/intの型分岐を先に通る箇所がある。対応する左右型を先に照合し、
   bytes二要素の組を短く判定する小さな変更案を準備した。まず通常の比較・callback順を
   保つこととnative codeの変化を確認し、BPEで効果がなければ採用しない。
+
+### 隣接ペア比較の型判定（実装・検証中）
+
+- len段階はローカルcommit `6674373eb60996dd9bfd33b96d264acc21534af7`、tree
+  `f88e9b9401d2cb93ef31becf8e647d974f1d763b`へ保存した。測定時のC/H sourceとの一致も
+  `folded-len-replicas-checkpoint.json`で確認。リモート操作なし。
+- tuple/list pair比較の2箇所で、左右の対応する型の一致を先に判定し、両要素がexact bytes
+  の場合は残るimmutable型の列挙を省く。bytesでない混合要素は既存の判定と比較へ進む。
+  index範囲の検査、値比較、fallback先、callback順、counter契約は維持する。
+- 別identityのbytes（NUL/長いprefixを含む）とbytes/str/int/floatの混合ペアを検証に追加。
+  source差分は型guardの順番と短絡条件に限定し、入力・アルゴリズム・CLIは変更しない。
+
+- 初回の一括検証で2つのfixture不備が出た。直前checkpointへ単独検証後に追加した
+  canonical builtins.len変更は、restore後もinterpreterのbuiltin_dict rare-event counterを
+  消費し、上限3に達した後のlen/range融合と後続test_optのcode-shape検査を失敗させた。
+  値をrestoreするだけではテスト分離にならないため、canonical変更ケースを子processへ移した。
+  先の「関連10 files成功」はこの追加ケースを含む一括実行の結果ではなかったので、
+  この相互作用の修正後に関連範囲を改めて検証する。
+- 新しい混合型ペアのreverseケースは対応する左右型が違い、正しくguard退出していたが、
+  fixtureがguard退出0を要求して失敗した。guard_exit増加と通常の比較結果を要求する形に修正。
+  指定したtest_unicodeもこのrevisionには存在せず、正しいtest_strへ変更して再実行する。
+  初回debug58/native56 failuresとModuleNotFoundErrorのログは保持し、成功扱いにはしない。
+
+- fixture修正後の6 filesはdebug **1,063 tests・17 skips**、native **977 tests・25 skips**で
+  成功。8生成物のbyte再現、Ruff、diff --checkも成功した。nativeの適用counterは前版と
+  一致し、34 executors・167,936 bytes。executor28の0x60f/0x618でbytes二要素の判定を
+  確認した。`pair-type-guard-{manifest.json,.patch}`と保存binaryにidentityを記録した。
+- BPEの3 blocks・90値比較は直前len版比 **0.996815/0.997139/1.001136**、段階比較の
+  幾何平均 **0.998361**、main比0.814416。全checksum一致、除外0。
+  効果が小さく全blockで揃わないため、Cの型判定変更は採用せず元へ戻す。
+  混合ペアのテストとcanonical builtins変更のprocess分離は保持する。
+- CPU profileは39K samples・lost0。dict lookup/tupleとlistのallocation・deallocation、GCも
+  費用を占めている。`pair-type-guard-bpe-profile.*`に保存した。profile割合と時間比は区別する。
+- 次は採用済みCへ戻したbuildでfixture修正を含む関連13 filesを検証し、その後Raytraceの
+  float属性読み出しから複数の積和までのtraceを現binaryで確認する。call frameは残したまま
+  中間operandの参照操作・box・重複guardをまとめる余地と、例外位置/丸めの条件を調べる。
+
+- Cを戻した状態の関連13 filesはdebug **1,643 tests・18 skips**、native **1,557 tests・
+  26 skips**で成功。`test-pair-type-restored-{debug,native}.log`へ保存した。
+  canonical builtins変更の子process分離により、後続のlen/rangeとtest_optも成功している。
+  型判定prototypeのC・生成物差分は残っていない。最新の全6本goal値は引き続き0.700686。
