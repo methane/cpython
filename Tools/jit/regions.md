@@ -415,9 +415,12 @@ calls, stores, periodic checks, or frame transitions. Layout annotations are
 preserved before abstract interpretation removes redundant type guards;
 matching runs before the existing product-update fusion.
 
-The uop checks both owner types, managed-values validity when applicable, and
-all six nonnull exact-float fields before loading their doubles. A failed
-guard resumes at the first original `LOAD_FAST` with the unchanged entry
+The uop checks both owner types and managed-values validity when applicable,
+then guards each field immediately after its pointer load. All six nonnull
+exact-float checks precede any double loads or arithmetic. Keeping each check
+next to its load avoids constructing six nullable results and testing them
+again later in the native stencil. A failed guard resumes at the first
+original `LOAD_FAST` with the unchanged entry
 stack. The owner locals retain the attributes, and no callback or owner-local
 replacement can occur within the region. This permits raw field reads without
 temporary `INCREF`/`DECREF` operations. Attribute changes, numeric subclasses,

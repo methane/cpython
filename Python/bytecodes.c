@@ -1145,12 +1145,32 @@ dummy_func(
             }
             uint64_t offsets = (uintptr_t)fields;
             PyObject *a = _PyRegion_FloatAttribute(left, (offsets & 255) * sizeof(PyObject *));
+            if (a == NULL) {
+                current_executor->region_float_guard_exits++;
+                EXIT_IF(true);
+            }
             PyObject *b = _PyRegion_FloatAttribute(right, ((offsets >> 8) & 255) * sizeof(PyObject *));
+            if (b == NULL) {
+                current_executor->region_float_guard_exits++;
+                EXIT_IF(true);
+            }
             PyObject *c = _PyRegion_FloatAttribute(left, ((offsets >> 16) & 255) * sizeof(PyObject *));
+            if (c == NULL) {
+                current_executor->region_float_guard_exits++;
+                EXIT_IF(true);
+            }
             PyObject *d = _PyRegion_FloatAttribute(right, ((offsets >> 24) & 255) * sizeof(PyObject *));
+            if (d == NULL) {
+                current_executor->region_float_guard_exits++;
+                EXIT_IF(true);
+            }
             PyObject *e = _PyRegion_FloatAttribute(left, ((offsets >> 32) & 255) * sizeof(PyObject *));
+            if (e == NULL) {
+                current_executor->region_float_guard_exits++;
+                EXIT_IF(true);
+            }
             PyObject *f = _PyRegion_FloatAttribute(right, ((offsets >> 40) & 255) * sizeof(PyObject *));
-            if (a == NULL || b == NULL || c == NULL || d == NULL || e == NULL || f == NULL) {
+            if (f == NULL) {
                 current_executor->region_float_guard_exits++;
                 EXIT_IF(true);
             }

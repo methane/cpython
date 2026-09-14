@@ -2015,3 +2015,65 @@ build-jit/python -m test test_capi.test_opt_regions test_capi.test_opt test_tier
   一括検査するため、CMOV/zeroing/再検査が残る。各属性を読んだ直後に同じguard退出を
   判定すれば、この交通整理を減らせる可能性がある。全guardがFP演算より前という条件を
   保ち、native code・fenv・Raytraceの対応比較で効果を確認してから採否を決める。
+
+### float属性guardの逐次判定（実装・検証中）
+
+- 属性融合のcheckpointはcommit `23101bb5b2186bdf50eca3a020a5b553276564e1`、tree
+  `66981d01ca13e6a97d05b861c865a9df99e64619`。測定C/Hとの一致を別manifestで確認した。
+- 新uopで各nullable-pointer helperの直後に同じguard退出を置く変更を実装した。
+  従来の「6つのnullable結果を作成してから一括判定」を短絡化する。全6属性の成功を
+  確認するまでdoubleを読まず、演算・allocation・退出先・counterの条件は維持する。
+  生成物を再生成してdebug/native buildを進める。導入前実行ファイルは保存済み。
+
+- 新native stencilは **683→583 bytes**、CMOVなし。実際のkernelも3 mulsd/2 addsdを保持。
+  関連4 filesはdebug **620 tests・4 skips**、native **534 tests・14 skips**で成功。
+  8生成物のbyte再現も成功。特殊値5,488・fenv144 casesは前段階と同じ結果で、nativeは
+  bit/flags全一致、debugは同じNaN payload差のみ。結果とnative codeは別prefixへ保存した。
+- Raytraceの57 executors、native bytes827,392、全counterは前段階と一致する。
+  float_attribute_entries354,003、guard exits69,902、owned136,756。native SHA256
+  `a7d45ec68eed986af21d8c50def06b21f623c8c1fe13c6b3fa9eb726c3df2e9a` を保存し、
+  `float-attributes-early-*`へmanifest/patch/probeを記録した。直前の属性融合版との
+  Raytrace 3-block対応比較を実行中。縮小自体を速度改善とは扱わない。
+
+- Raytraceの3 blocks・90値比較は属性融合の初版比 **0.978222/0.983084/0.993939**、
+  段階比較の幾何平均 **0.985060** と全block改善。全checksum一致、除外0。
+  `float-attributes-early-raytrace-{rows,summary}.json`へ保存した。
+  guard短絡化を含む最終版について、属性融合そのものの導入前版（ee2d...）と固定mainを
+  対照に全6本・3 blocks・540値の比較を開始する。
+
+- 最終全6本比較は全checksum一致・除外0で、同じ測定内の導入前版main比算術平均
+  0.696745→最終版 **0.694141**（block別0.695088/0.697320/0.690013）。goal0.5は未達。
+  Raytraceの導入前比は0.964519/0.974101/0.957412、平均0.965344。
+  ほかの導入前比はBPE1.001541、Btree1.005208、DeltaBlue1.003422、Hexiom1.006420、
+  Spectral1.000810。Btree/DeltaBlue/Hexiomの小さな増加が全blockにあるため記録し、
+  逐次guardの変更だけを初版属性融合と比べる追加対照で確認する。
+- 追加の対照実行ではBtreeのtoolがsessionを返した後にDeltaBlueを起動してしまい、
+  2本が重なった。`float-attributes-early-control-{btree,deltablue}-*`はプロトコル違反の
+  無効runとして全データを保持し、性能判定には使わない。初めに完了したHexiom対照と
+  直前の全6本・540値は重なっていない。Btree/DeltaBlueは新prefixで順に再実行する。
+
+- 逐次guardだけを初版属性融合と比べた有効な追加対照は、Hexiom
+  1.002502/0.998886/1.001245（幾何平均1.000877）、Btree
+  0.977809/1.005129/0.993490（0.992079）で、同方向の悪化は再現しなかった。
+  全6本で観測した小さい悪化を消す扱いにはせず、別の測定として保持する。
+
+- DeltaBlueの有効な逐次対照は1.007702/1.021253/1.013145（幾何平均1.014018）で悪化。
+  原因を区別するため同じCLI設定でbefore/after/after/beforeを3 blocks実行した追加120値も、
+  1.010550/1.005780/1.005381（算術平均 **1.007237**）となった。全checksum一致、除外0。
+  `float-attributes-delta-abba-*`へ保存した。DeltaBlueの小さな回帰は確認できており、
+  不成立扱いにしない。
+- DeltaBlueの前後native probeはともに3 executors・16,384 bytes、region counter全0。
+  hot rootの151 uopsのopcode/opargは一致し、差が出たcold-exitのopargはaddress由来。
+  各sampleで新しい3 executorsが観測され、cold compilation/無効化の影響も残る。
+  共通のEvalFrame/float/int/dict/allocatorのsymbol offsetsは一致し、JIT compiler/optimizer
+  側はoffsetが変わる。回帰原因をこの情報だけで特定したとは扱わない。
+- 全6本の直接比較では全blockの算術平均が改善し、Raytraceの初版との独立比較も全block
+  改善したため、100-byte縮小を保持する。DeltaBlueで0.7～1.4%の回帰が出た対照を併記。
+  最終版script別main比はBPE0.816257、Btree0.704836、DeltaBlue0.976304、Hexiom0.834020、
+  Raytrace0.814920、Spectral0.018506。最新goal値は **0.694141**（未達）のまま。
+- 次はBPEのzip/list iteratorを対象にする。zipはshared結果ならtupleを先にallocateし、
+  unique結果なら各itemの置換後に古いitemをDECREFする。2つの異なるexact list iteratorsの
+  両方に次要素があり、reused tupleの旧要素がcallback-freeな場合に限り、同じ生成・
+  消費・参照操作の順序で間接iternext callsを省く候補を実装する。exhaustion、strict、
+  同一iteratorの重複、古い要素のfinalizerは通常zip経路に任せる。iteration/tupleの
+  virtualizationには広げず、まず形成・順序・例外・native適用とBPEの対応比較を行う。
