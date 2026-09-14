@@ -13961,6 +13961,7 @@
             ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
             PyObject *version = (PyObject *)CURRENT_OPERAND0_64();
             PyObject *namespace = (PyObject *)CURRENT_OPERAND1_64();
+            uint32_t expected_version = (uint32_t)(uintptr_t)version;
             PyDictObject *dict = (PyDictObject *)GLOBALS();
             if (dict != (PyDictObject *)(uintptr_t)namespace) {
                 UOP_STAT_INC(uopcode, miss);
@@ -13969,7 +13970,7 @@
             }
             assert(PyDict_CheckExact(dict));
             PyDictKeysObject *keys = FT_ATOMIC_LOAD_PTR_ACQUIRE(dict->ma_keys);
-            if (FT_ATOMIC_LOAD_UINT32_RELAXED(keys->dk_version) != version) {
+            if (FT_ATOMIC_LOAD_UINT32_RELAXED(keys->dk_version) != expected_version) {
                 UOP_STAT_INC(uopcode, miss);
                 SET_CURRENT_CACHED_VALUES(0);
                 JUMP_TO_JUMP_TARGET();
@@ -13986,6 +13987,7 @@
             _PyStackRef _stack_item_0 = _tos_cache0;
             PyObject *version = (PyObject *)CURRENT_OPERAND0_64();
             PyObject *namespace = (PyObject *)CURRENT_OPERAND1_64();
+            uint32_t expected_version = (uint32_t)(uintptr_t)version;
             PyDictObject *dict = (PyDictObject *)GLOBALS();
             if (dict != (PyDictObject *)(uintptr_t)namespace) {
                 UOP_STAT_INC(uopcode, miss);
@@ -13995,7 +13997,7 @@
             }
             assert(PyDict_CheckExact(dict));
             PyDictKeysObject *keys = FT_ATOMIC_LOAD_PTR_ACQUIRE(dict->ma_keys);
-            if (FT_ATOMIC_LOAD_UINT32_RELAXED(keys->dk_version) != version) {
+            if (FT_ATOMIC_LOAD_UINT32_RELAXED(keys->dk_version) != expected_version) {
                 UOP_STAT_INC(uopcode, miss);
                 _tos_cache0 = _stack_item_0;
                 SET_CURRENT_CACHED_VALUES(1);
@@ -14015,6 +14017,7 @@
             _PyStackRef _stack_item_1 = _tos_cache1;
             PyObject *version = (PyObject *)CURRENT_OPERAND0_64();
             PyObject *namespace = (PyObject *)CURRENT_OPERAND1_64();
+            uint32_t expected_version = (uint32_t)(uintptr_t)version;
             PyDictObject *dict = (PyDictObject *)GLOBALS();
             if (dict != (PyDictObject *)(uintptr_t)namespace) {
                 UOP_STAT_INC(uopcode, miss);
@@ -14025,7 +14028,7 @@
             }
             assert(PyDict_CheckExact(dict));
             PyDictKeysObject *keys = FT_ATOMIC_LOAD_PTR_ACQUIRE(dict->ma_keys);
-            if (FT_ATOMIC_LOAD_UINT32_RELAXED(keys->dk_version) != version) {
+            if (FT_ATOMIC_LOAD_UINT32_RELAXED(keys->dk_version) != expected_version) {
                 UOP_STAT_INC(uopcode, miss);
                 _tos_cache1 = _stack_item_1;
                 _tos_cache0 = _stack_item_0;
@@ -14048,6 +14051,7 @@
             _PyStackRef _stack_item_2 = _tos_cache2;
             PyObject *version = (PyObject *)CURRENT_OPERAND0_64();
             PyObject *namespace = (PyObject *)CURRENT_OPERAND1_64();
+            uint32_t expected_version = (uint32_t)(uintptr_t)version;
             PyDictObject *dict = (PyDictObject *)GLOBALS();
             if (dict != (PyDictObject *)(uintptr_t)namespace) {
                 UOP_STAT_INC(uopcode, miss);
@@ -14059,7 +14063,7 @@
             }
             assert(PyDict_CheckExact(dict));
             PyDictKeysObject *keys = FT_ATOMIC_LOAD_PTR_ACQUIRE(dict->ma_keys);
-            if (FT_ATOMIC_LOAD_UINT32_RELAXED(keys->dk_version) != version) {
+            if (FT_ATOMIC_LOAD_UINT32_RELAXED(keys->dk_version) != expected_version) {
                 UOP_STAT_INC(uopcode, miss);
                 _tos_cache2 = _stack_item_2;
                 _tos_cache1 = _stack_item_1;
