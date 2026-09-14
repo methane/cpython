@@ -767,3 +767,80 @@ destroyed within a measured call. Native stencils were unchanged. The binary
 SHA256 is `0e5b3a081be0820afefd878e56a5dc5c8639832c132bf12f06db44105c17571e`;
 `retry-counter-*` records the local evidence. The arithmetic-mean goal remains
 unmet.
+
+
+## Conditional list removal (2026-09-14 follow-up)
+
+The next experiment recognizes a complete three-argument Python function
+implementing `if value in owner.cells[index]: ...remove(value); return True`,
+with a False return on absence. It proves both branches and their destinations,
+the repeated attribute/index, and the exact `remove` method name. Function and
+attribute names are otherwise unrestricted. The implementation is enabled by
+`PYTHON_TIER2_CALL_REGIONS=1`; the exact contract is in
+[`regions.md`](regions.md).
+
+Both the outer and inner lists must be exact lists, and the index and searched
+value must be exact compact ints. Negative indices are supported. Scanning is
+bounded to 64 elements and stops at the first match, without inspecting later
+unsupported objects. A guard failure precedes mutation and resumes ordinary
+Python. Successful deletion reuses `PyList_SetSlice()` and its guarantee that
+deleting one item cannot fail. The removed exact int cannot invoke Python,
+and the remaining elements retain their ownership. There is no intermediate
+result allocation and no Python callback within the shared runtime helper.
+
+`_CALL_PY_LIST_REMOVE` omits the callee frame while preserving the preceding
+call checks, current function version, instrumentation, code lifetime, and
+reverse argument cleanup. `_LIST_REMOVE_LOCAL` handles function-entry root
+traces: it retains the real frame and resumes at the original branch's
+RETURN_VALUE. Treating these paths separately matters when describing the
+work eliminated. The call-site-only prototype reached just 339 operations
+and five deletions in the first Hexiom diagnostic value. Adding the entry
+path reached 2,675 operations and 395 deletions, with no guard exits. Native
+code decreased from 77,824 to 73,728 bytes across 15 reachable executors.
+The entry executor for `Done.remove` decreased from 8,192 to 4,096 bytes.
+
+The ten-value coverage probe observed 2,675/2,716/2,717 operations in the first
+three values, and 2,717 thereafter, with 395/436/436 deletions respectively.
+All ten values had zero removal guard exits. These are separate diagnostics,
+not the timing samples. Ten added tests cover both paths, layouts, argument
+conventions, bounds, duplicate deletion, aliases, unsupported inputs, callbacks,
+descriptor and code changes, monitoring, finalizers, and extra-effect bodies.
+Both builds passed 1,469 tests in ten relevant files (4 debug and 15 native
+skips), before the additional C-profile test. The final ten focused tests
+passed in both builds, including the original list.remove C-call/C-return
+events under profiling. All ten also passed with the other five experiment
+flags disabled. Eight generated outputs reproduced byte for byte.
+
+The final individual Hexiom comparison against the preceding countdown-fix
+build used three rotated process blocks, the original three warmups and ten
+single-loop values, and CPU 2. Ratios were 0.992870, 0.991241, and 0.992094
+(geometric mean 0.992068). Comparing entry support against the call-site-only
+prototype gave mixed directions (geometric mean 0.997752), so its incremental
+speed benefit is not independently established.
+
+The subsequent six-workload comparison preserved all 540 checksums and
+excluded no values. Hexiom improved in all three blocks, with an arithmetic
+mean ratio of 0.987740. BPE regressed in all three blocks, with a mean ratio
+of 1.007009. The BPE diagnostic observed no removal operations; all existing
+counters and its 34 executors / 167,936 native bytes matched the control.
+That does not establish the cause of the timing regression. Other workloads
+had mixed directions. The suite's arithmetic mean relative to fixed main
+changed from 0.6713321 to 0.6704071; the 0.5 objective remains unmet.
+
+The candidate binary SHA256 is
+`c8d787052e4eabcc53fdbf9f3fca1727fcd3e97d033d859bbfd56b2ca4e499ff`.
+The `list-remove-call-*`, `list-remove-local-*`, and `list-remove-final-*`
+artifacts preserve source/build identities, original samples, tests, coverage,
+and machine code. Both native builds used the same LLVM 21 stencil flags,
+frame-pointer settings, and no PGO or LTO. Saved executables share the current
+extension modules, whose identities are recorded by the probes.
+
+
+A predeclared three-block BPE follow-up with the same fixed binaries gave
+ratios 1.000629, 1.001148, and 0.997738 (geometric mean 0.999837), with matching
+checksums and zero exclusions. It did not reproduce a consistent regression;
+the original six-workload result remains part of the evidence. The combined
+removal optimization is retained for its repeated Hexiom improvement, without
+a BPE speedup claim or a claim that the entry path alone has a reliable benefit.
+The native deletion call-table slot resolves to `PyList_SetSlice`, using a
+load bias independently verified from the list and int type addresses.

@@ -26917,6 +26917,285 @@
             break;
         }
 
+        case _CALL_PY_LIST_REMOVE_0_r01: {
+            CHECK_CURRENT_CACHED_VALUES(0);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            _PyStackRef *args;
+            _PyStackRef self_or_null;
+            _PyStackRef callable;
+            _PyStackRef res;
+            oparg = 0;
+            assert(oparg == CURRENT_OPARG());
+            args = &stack_pointer[-(2 + oparg)];
+            self_or_null = stack_pointer[-1 - (2 + oparg)];
+            callable = stack_pointer[-2 - (2 + oparg)];
+            PyObject *source = (PyObject *)CURRENT_OPERAND0_64();
+            PyObject *config = (PyObject *)CURRENT_OPERAND1_64();
+            uint64_t descriptor = (uintptr_t)source;
+            uint64_t options = (uintptr_t)config;
+            current_executor->region_call_entries++;
+            PyFunctionObject *func = (PyFunctionObject *)PyStackRef_AsPyObjectBorrow(callable);
+            assert(PyFunction_Check(func));
+            PyCodeObject *code = (PyCodeObject *)func->func_code;
+            int nargs = 2 + oparg;
+            int has_self = !PyStackRef_IsNull(self_or_null);
+            bool valid = nargs + has_self == 3 &&
+            func->func_version == (uint32_t)options &&
+            _Py_atomic_load_uintptr_relaxed(&tstate->eval_breaker) ==
+            FT_ATOMIC_LOAD_UINTPTR_ACQUIRE(code->_co_instrumentation_version);
+            Py_ssize_t checked = 0;
+            int removed = -1;
+            if (valid) {
+                removed = _PyRegion_RemoveListItem(has_self ? self_or_null : args[0],
+                    args[1 - has_self], args[2 - has_self], descriptor, &checked);
+            }
+            valid = valid && removed >= 0;
+            if (!valid) {
+                current_executor->region_call_guard_exits++;
+                if (true) {
+                    UOP_STAT_INC(uopcode, miss);
+                    SET_CURRENT_CACHED_VALUES(0);
+                    JUMP_TO_JUMP_TARGET();
+                }
+            }
+            Py_INCREF(code);
+            res = removed ? PyStackRef_True : PyStackRef_False;
+            current_executor->region_call_remove_hits += removed;
+            current_executor->region_call_remove_entries++;
+            current_executor->region_call_remove_iterations += checked;
+            frame->return_offset = options >> 48;
+            _PyStackRef cleanup[5];
+            cleanup[0] = callable;
+            cleanup[1] = self_or_null;
+            for (int i = 0; i < nargs; i++) {
+                cleanup[i + 2] = args[i];
+            }
+            for (int i = nargs + 1; i >= 0; i--) {
+                stack_pointer[-2 - (2 + oparg)] = res;
+                stack_pointer += -1 - (2 + oparg);
+                ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                _PyFrame_SetStackPointer(frame, stack_pointer);
+                _PyFrame_StackPointerValidate(frame);
+                PyStackRef_XCLOSE(cleanup[i]);
+                _PyFrame_StackPointerInvalidate(frame);
+                stack_pointer += 1 + (2 + oparg);
+            }
+            stack_pointer[-2 - (2 + oparg)] = res;
+            stack_pointer += -1 - (2 + oparg);
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            _PyFrame_SetStackPointer(frame, stack_pointer);
+            _PyFrame_StackPointerValidate(frame);
+            Py_DECREF(code);
+            _PyFrame_StackPointerInvalidate(frame);
+            frame->instr_ptr += frame->return_offset;
+            _tos_cache0 = res;
+            _tos_cache1 = PyStackRef_ZERO_BITS;
+            _tos_cache2 = PyStackRef_ZERO_BITS;
+            SET_CURRENT_CACHED_VALUES(1);
+            stack_pointer += -1;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            break;
+        }
+
+        case _CALL_PY_LIST_REMOVE_1_r01: {
+            CHECK_CURRENT_CACHED_VALUES(0);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            _PyStackRef *args;
+            _PyStackRef self_or_null;
+            _PyStackRef callable;
+            _PyStackRef res;
+            oparg = 1;
+            assert(oparg == CURRENT_OPARG());
+            args = &stack_pointer[-(2 + oparg)];
+            self_or_null = stack_pointer[-1 - (2 + oparg)];
+            callable = stack_pointer[-2 - (2 + oparg)];
+            PyObject *source = (PyObject *)CURRENT_OPERAND0_64();
+            PyObject *config = (PyObject *)CURRENT_OPERAND1_64();
+            uint64_t descriptor = (uintptr_t)source;
+            uint64_t options = (uintptr_t)config;
+            current_executor->region_call_entries++;
+            PyFunctionObject *func = (PyFunctionObject *)PyStackRef_AsPyObjectBorrow(callable);
+            assert(PyFunction_Check(func));
+            PyCodeObject *code = (PyCodeObject *)func->func_code;
+            int nargs = 2 + oparg;
+            int has_self = !PyStackRef_IsNull(self_or_null);
+            bool valid = nargs + has_self == 3 &&
+            func->func_version == (uint32_t)options &&
+            _Py_atomic_load_uintptr_relaxed(&tstate->eval_breaker) ==
+            FT_ATOMIC_LOAD_UINTPTR_ACQUIRE(code->_co_instrumentation_version);
+            Py_ssize_t checked = 0;
+            int removed = -1;
+            if (valid) {
+                removed = _PyRegion_RemoveListItem(has_self ? self_or_null : args[0],
+                    args[1 - has_self], args[2 - has_self], descriptor, &checked);
+            }
+            valid = valid && removed >= 0;
+            if (!valid) {
+                current_executor->region_call_guard_exits++;
+                if (true) {
+                    UOP_STAT_INC(uopcode, miss);
+                    SET_CURRENT_CACHED_VALUES(0);
+                    JUMP_TO_JUMP_TARGET();
+                }
+            }
+            Py_INCREF(code);
+            res = removed ? PyStackRef_True : PyStackRef_False;
+            current_executor->region_call_remove_hits += removed;
+            current_executor->region_call_remove_entries++;
+            current_executor->region_call_remove_iterations += checked;
+            frame->return_offset = options >> 48;
+            _PyStackRef cleanup[5];
+            cleanup[0] = callable;
+            cleanup[1] = self_or_null;
+            for (int i = 0; i < nargs; i++) {
+                cleanup[i + 2] = args[i];
+            }
+            for (int i = nargs + 1; i >= 0; i--) {
+                stack_pointer[-2 - (2 + oparg)] = res;
+                stack_pointer += -1 - (2 + oparg);
+                ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                _PyFrame_SetStackPointer(frame, stack_pointer);
+                _PyFrame_StackPointerValidate(frame);
+                PyStackRef_XCLOSE(cleanup[i]);
+                _PyFrame_StackPointerInvalidate(frame);
+                stack_pointer += 1 + (2 + oparg);
+            }
+            stack_pointer[-2 - (2 + oparg)] = res;
+            stack_pointer += -1 - (2 + oparg);
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            _PyFrame_SetStackPointer(frame, stack_pointer);
+            _PyFrame_StackPointerValidate(frame);
+            Py_DECREF(code);
+            _PyFrame_StackPointerInvalidate(frame);
+            frame->instr_ptr += frame->return_offset;
+            _tos_cache0 = res;
+            _tos_cache1 = PyStackRef_ZERO_BITS;
+            _tos_cache2 = PyStackRef_ZERO_BITS;
+            SET_CURRENT_CACHED_VALUES(1);
+            stack_pointer += -1;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            break;
+        }
+
+        case _CALL_PY_LIST_REMOVE_r01: {
+            CHECK_CURRENT_CACHED_VALUES(0);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            _PyStackRef *args;
+            _PyStackRef self_or_null;
+            _PyStackRef callable;
+            _PyStackRef res;
+            oparg = CURRENT_OPARG();
+            args = &stack_pointer[-(2 + oparg)];
+            self_or_null = stack_pointer[-1 - (2 + oparg)];
+            callable = stack_pointer[-2 - (2 + oparg)];
+            PyObject *source = (PyObject *)CURRENT_OPERAND0_64();
+            PyObject *config = (PyObject *)CURRENT_OPERAND1_64();
+            uint64_t descriptor = (uintptr_t)source;
+            uint64_t options = (uintptr_t)config;
+            current_executor->region_call_entries++;
+            PyFunctionObject *func = (PyFunctionObject *)PyStackRef_AsPyObjectBorrow(callable);
+            assert(PyFunction_Check(func));
+            PyCodeObject *code = (PyCodeObject *)func->func_code;
+            int nargs = 2 + oparg;
+            int has_self = !PyStackRef_IsNull(self_or_null);
+            bool valid = nargs + has_self == 3 &&
+            func->func_version == (uint32_t)options &&
+            _Py_atomic_load_uintptr_relaxed(&tstate->eval_breaker) ==
+            FT_ATOMIC_LOAD_UINTPTR_ACQUIRE(code->_co_instrumentation_version);
+            Py_ssize_t checked = 0;
+            int removed = -1;
+            if (valid) {
+                removed = _PyRegion_RemoveListItem(has_self ? self_or_null : args[0],
+                    args[1 - has_self], args[2 - has_self], descriptor, &checked);
+            }
+            valid = valid && removed >= 0;
+            if (!valid) {
+                current_executor->region_call_guard_exits++;
+                if (true) {
+                    UOP_STAT_INC(uopcode, miss);
+                    SET_CURRENT_CACHED_VALUES(0);
+                    JUMP_TO_JUMP_TARGET();
+                }
+            }
+            Py_INCREF(code);
+            res = removed ? PyStackRef_True : PyStackRef_False;
+            current_executor->region_call_remove_hits += removed;
+            current_executor->region_call_remove_entries++;
+            current_executor->region_call_remove_iterations += checked;
+            frame->return_offset = options >> 48;
+            _PyStackRef cleanup[5];
+            cleanup[0] = callable;
+            cleanup[1] = self_or_null;
+            for (int i = 0; i < nargs; i++) {
+                cleanup[i + 2] = args[i];
+            }
+            for (int i = nargs + 1; i >= 0; i--) {
+                stack_pointer[-2 - (2 + oparg)] = res;
+                stack_pointer += -1 - (2 + oparg);
+                ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                _PyFrame_SetStackPointer(frame, stack_pointer);
+                _PyFrame_StackPointerValidate(frame);
+                PyStackRef_XCLOSE(cleanup[i]);
+                _PyFrame_StackPointerInvalidate(frame);
+                stack_pointer += 1 + (2 + oparg);
+            }
+            stack_pointer[-2 - (2 + oparg)] = res;
+            stack_pointer += -1 - (2 + oparg);
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            _PyFrame_SetStackPointer(frame, stack_pointer);
+            _PyFrame_StackPointerValidate(frame);
+            Py_DECREF(code);
+            _PyFrame_StackPointerInvalidate(frame);
+            frame->instr_ptr += frame->return_offset;
+            _tos_cache0 = res;
+            _tos_cache1 = PyStackRef_ZERO_BITS;
+            _tos_cache2 = PyStackRef_ZERO_BITS;
+            SET_CURRENT_CACHED_VALUES(1);
+            stack_pointer += -1;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            break;
+        }
+
+        case _LIST_REMOVE_LOCAL_r01: {
+            CHECK_CURRENT_CACHED_VALUES(0);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            _PyStackRef res;
+            PyObject *source = (PyObject *)CURRENT_OPERAND0_64();
+            PyObject *returns = (PyObject *)CURRENT_OPERAND1_64();
+            PyCodeObject *code = _PyFrame_GetCode(frame);
+            bool valid = _Py_atomic_load_uintptr_relaxed(&tstate->eval_breaker) ==
+            FT_ATOMIC_LOAD_UINTPTR_ACQUIRE(code->_co_instrumentation_version);
+            Py_ssize_t checked = 0;
+            int removed = -1;
+            if (valid) {
+                removed = _PyRegion_RemoveListItem(GETLOCAL(0), GETLOCAL(1), GETLOCAL(2),
+                    (uintptr_t)source, &checked);
+            }
+            if (removed < 0) {
+                current_executor->region_call_guard_exits++;
+                if (true) {
+                    UOP_STAT_INC(uopcode, miss);
+                    SET_CURRENT_CACHED_VALUES(0);
+                    JUMP_TO_JUMP_TARGET();
+                }
+            }
+            res = removed ? PyStackRef_True : PyStackRef_False;
+            current_executor->region_call_remove_entries++;
+            current_executor->region_call_remove_hits += removed;
+            current_executor->region_call_remove_iterations += checked;
+            frame->instr_ptr = _PyCode_CODE(code) +
+            (((uintptr_t)returns >> (removed * 16)) & UINT16_MAX);
+            _tos_cache0 = res;
+            _tos_cache1 = PyStackRef_ZERO_BITS;
+            _tos_cache2 = PyStackRef_ZERO_BITS;
+            SET_CURRENT_CACHED_VALUES(1);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            break;
+        }
+
         case _PUSH_FRAME_r10: {
             CHECK_CURRENT_CACHED_VALUES(1);
             ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);

@@ -414,6 +414,10 @@ const uint32_t _PyUop_Flags[MAX_UOP_ID+1] = {
     [_CALL_PY_ATTRIBUTE_SEARCH_10] = HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
     [_CALL_PY_ATTRIBUTE_SEARCH_11] = HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
     [_CALL_PY_ATTRIBUTE_SEARCH] = HAS_ARG_FLAG | HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
+    [_CALL_PY_LIST_REMOVE_0] = HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
+    [_CALL_PY_LIST_REMOVE_1] = HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
+    [_CALL_PY_LIST_REMOVE] = HAS_ARG_FLAG | HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
+    [_LIST_REMOVE_LOCAL] = HAS_LOCAL_FLAG | HAS_DEOPT_FLAG,
     [_PUSH_FRAME] = HAS_SYNC_SP_FLAG | HAS_NEEDS_GUARD_IP_FLAG,
     [_GUARD_NOS_NULL] = HAS_EXIT_FLAG,
     [_GUARD_THIRD_NULL] = HAS_EXIT_FLAG,
@@ -591,6 +595,7 @@ const ReplicationRange _PyUop_Replication[MAX_UOP_ID+1] = {
     [_CALL_PY_ATTRIBUTE] = { 0, 5 },
     [_CALL_PY_LIST] = { 0, 10 },
     [_CALL_PY_ATTRIBUTE_SEARCH] = { 0, 12 },
+    [_CALL_PY_LIST_REMOVE] = { 0, 2 },
     [_CALL_CLASS_ATTRIBUTES] = { 0, 5 },
     [_COPY] = { 1, 4 },
     [_SWAP] = { 2, 4 },
@@ -4013,6 +4018,42 @@ const _PyUopCachingInfo _PyUop_Caching[MAX_UOP_ID+1] = {
             { -1, -1, -1 },
         },
     },
+    [_CALL_PY_LIST_REMOVE_0] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 1, 0, _CALL_PY_LIST_REMOVE_0_r01 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_CALL_PY_LIST_REMOVE_1] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 1, 0, _CALL_PY_LIST_REMOVE_1_r01 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_CALL_PY_LIST_REMOVE] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 1, 0, _CALL_PY_LIST_REMOVE_r01 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_LIST_REMOVE_LOCAL] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 1, 0, _LIST_REMOVE_LOCAL_r01 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
     [_PUSH_FRAME] = {
         .best = { 1, 1, 1, 1 },
         .entries = {
@@ -6122,6 +6163,10 @@ const uint16_t _PyUop_Uncached[MAX_UOP_REGS_ID+1] = {
     [_CALL_PY_ATTRIBUTE_SEARCH_10_r01] = _CALL_PY_ATTRIBUTE_SEARCH_10,
     [_CALL_PY_ATTRIBUTE_SEARCH_11_r01] = _CALL_PY_ATTRIBUTE_SEARCH_11,
     [_CALL_PY_ATTRIBUTE_SEARCH_r01] = _CALL_PY_ATTRIBUTE_SEARCH,
+    [_CALL_PY_LIST_REMOVE_0_r01] = _CALL_PY_LIST_REMOVE_0,
+    [_CALL_PY_LIST_REMOVE_1_r01] = _CALL_PY_LIST_REMOVE_1,
+    [_CALL_PY_LIST_REMOVE_r01] = _CALL_PY_LIST_REMOVE,
+    [_LIST_REMOVE_LOCAL_r01] = _LIST_REMOVE_LOCAL,
     [_PUSH_FRAME_r10] = _PUSH_FRAME,
     [_GUARD_NOS_NULL_r02] = _GUARD_NOS_NULL,
     [_GUARD_NOS_NULL_r12] = _GUARD_NOS_NULL,
@@ -6781,6 +6826,12 @@ const char *const _PyOpcode_uop_name[MAX_UOP_REGS_ID+1] = {
     [_CALL_PY_LIST_8_r01] = "_CALL_PY_LIST_8_r01",
     [_CALL_PY_LIST_9] = "_CALL_PY_LIST_9",
     [_CALL_PY_LIST_9_r01] = "_CALL_PY_LIST_9_r01",
+    [_CALL_PY_LIST_REMOVE] = "_CALL_PY_LIST_REMOVE",
+    [_CALL_PY_LIST_REMOVE_r01] = "_CALL_PY_LIST_REMOVE_r01",
+    [_CALL_PY_LIST_REMOVE_0] = "_CALL_PY_LIST_REMOVE_0",
+    [_CALL_PY_LIST_REMOVE_0_r01] = "_CALL_PY_LIST_REMOVE_0_r01",
+    [_CALL_PY_LIST_REMOVE_1] = "_CALL_PY_LIST_REMOVE_1",
+    [_CALL_PY_LIST_REMOVE_1_r01] = "_CALL_PY_LIST_REMOVE_1_r01",
     [_CALL_PY_TRIVIAL] = "_CALL_PY_TRIVIAL",
     [_CALL_PY_TRIVIAL_r01] = "_CALL_PY_TRIVIAL_r01",
     [_CALL_PY_TRIVIAL_0] = "_CALL_PY_TRIVIAL_0",
@@ -7630,6 +7681,8 @@ const char *const _PyOpcode_uop_name[MAX_UOP_REGS_ID+1] = {
     [_LIST_EXTEND_r11] = "_LIST_EXTEND_r11",
     [_LIST_PAIR_APPEND_SCAN] = "_LIST_PAIR_APPEND_SCAN",
     [_LIST_PAIR_APPEND_SCAN_r22] = "_LIST_PAIR_APPEND_SCAN_r22",
+    [_LIST_REMOVE_LOCAL] = "_LIST_REMOVE_LOCAL",
+    [_LIST_REMOVE_LOCAL_r01] = "_LIST_REMOVE_LOCAL_r01",
     [_LOAD_ATTR] = "_LOAD_ATTR",
     [_LOAD_ATTR_r10] = "_LOAD_ATTR_r10",
     [_LOAD_ATTR_CLASS] = "_LOAD_ATTR_CLASS",
@@ -8981,6 +9034,14 @@ int _PyUop_num_popped(int opcode, int oparg)
             return 2 + (1 + oparg / 6);
         case _CALL_PY_ATTRIBUTE_SEARCH:
             return 2 + (1 + oparg / 6);
+        case _CALL_PY_LIST_REMOVE_0:
+            return 2 + (2 + oparg);
+        case _CALL_PY_LIST_REMOVE_1:
+            return 2 + (2 + oparg);
+        case _CALL_PY_LIST_REMOVE:
+            return 2 + (2 + oparg);
+        case _LIST_REMOVE_LOCAL:
+            return 0;
         case _PUSH_FRAME:
             return 1;
         case _GUARD_NOS_NULL:

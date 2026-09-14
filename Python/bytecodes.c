@@ -5800,6 +5800,74 @@ dummy_func(
             frame->instr_ptr += frame->return_offset;
         }
 
+        replicate(2) tier2 op(_CALL_PY_LIST_REMOVE, (source/4, config/4, callable, self_or_null, args[2 + oparg] -- res)) {
+            uint64_t descriptor = (uintptr_t)source;
+            uint64_t options = (uintptr_t)config;
+            current_executor->region_call_entries++;
+            PyFunctionObject *func = (PyFunctionObject *)PyStackRef_AsPyObjectBorrow(callable);
+            assert(PyFunction_Check(func));
+            PyCodeObject *code = (PyCodeObject *)func->func_code;
+            int nargs = 2 + oparg;
+            int has_self = !PyStackRef_IsNull(self_or_null);
+            bool valid = nargs + has_self == 3 &&
+                func->func_version == (uint32_t)options &&
+                _Py_atomic_load_uintptr_relaxed(&tstate->eval_breaker) ==
+                    FT_ATOMIC_LOAD_UINTPTR_ACQUIRE(code->_co_instrumentation_version);
+            Py_ssize_t checked = 0;
+            int removed = -1;
+            if (valid) {
+                removed = _PyRegion_RemoveListItem(has_self ? self_or_null : args[0],
+                    args[1 - has_self], args[2 - has_self], descriptor, &checked);
+            }
+            valid = valid && removed >= 0;
+            if (!valid) {
+                current_executor->region_call_guard_exits++;
+                DEOPT_IF(true);
+            }
+            Py_INCREF(code);
+            res = removed ? PyStackRef_True : PyStackRef_False;
+            current_executor->region_call_remove_hits += removed;
+            current_executor->region_call_remove_entries++;
+            current_executor->region_call_remove_iterations += checked;
+            frame->return_offset = options >> 48;
+            _PyStackRef cleanup[5];
+            cleanup[0] = callable;
+            cleanup[1] = self_or_null;
+            for (int i = 0; i < nargs; i++) {
+                cleanup[i + 2] = args[i];
+            }
+            INPUTS_DEAD();
+            for (int i = nargs + 1; i >= 0; i--) {
+                PyStackRef_XCLOSE(cleanup[i]);
+            }
+            Py_DECREF(code);
+            frame->instr_ptr += frame->return_offset;
+        }
+
+        tier2 op(_LIST_REMOVE_LOCAL, (source/4, returns/4 -- res)) {
+            PyCodeObject *code = _PyFrame_GetCode(frame);
+            bool valid = _Py_atomic_load_uintptr_relaxed(&tstate->eval_breaker) ==
+                FT_ATOMIC_LOAD_UINTPTR_ACQUIRE(code->_co_instrumentation_version);
+            Py_ssize_t checked = 0;
+            int removed = -1;
+            if (valid) {
+                removed = _PyRegion_RemoveListItem(GETLOCAL(0), GETLOCAL(1), GETLOCAL(2),
+                                                   (uintptr_t)source, &checked);
+            }
+            if (removed < 0) {
+                current_executor->region_call_guard_exits++;
+                DEOPT_IF(true);
+            }
+            res = removed ? PyStackRef_True : PyStackRef_False;
+            current_executor->region_call_remove_entries++;
+            current_executor->region_call_remove_hits += removed;
+            current_executor->region_call_remove_iterations += checked;
+            /* Keep the actual callee frame. Tier 1 executes its corresponding
+             * RETURN_VALUE with the result already on the value stack. */
+            frame->instr_ptr = _PyCode_CODE(code) +
+                (((uintptr_t)returns >> (removed * 16)) & UINT16_MAX);
+        }
+
         op(_PUSH_FRAME, (new_frame -- )) {
             assert(!IS_PEP523_HOOKED(tstate));
             _PyInterpreterFrame *temp = PyStackRef_Unwrap(new_frame);

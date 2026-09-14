@@ -678,6 +678,7 @@ NON_ESCAPING_FUNCTIONS = (
     "_PyLong_CompactValue",
     "_PyRegion_BoundedInput",
     "_PyRegion_CallAttribute",
+    "_PyRegion_RemoveListItem",
     "_PyRegion_PolyBinary",
     "_PyRegion_DivideThenAdd",
     "_PyRegion_CanDividePair",

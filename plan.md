@@ -1,9 +1,9 @@
 # CPython Tier 2：Linux上で行う2〜3日間の実装計画
 
 **現在の目標（2026-09-14）**：全6ベンチマークのmain比の**算術平均0.5以下**。
-開始時の480値は **0.7944918**。最新の比較分離screen（3 blocks、3 builds、540値）は
-**0.6691246**（対応する直前版0.6686175）で、目標は未達。
-最新counter修正に速度改善の根拠はなく、再生成動作の不具合修正として保持する。
+開始時の480値は **0.7944918**。最新の条件付きlist削除screen（3 blocks、3 builds、540値）は
+**0.6704071**（対応する直前版0.6713321）で、目標は未達。
+Hexiomの前版比は **0.9877403**、main比は **0.8255069**。
 各blockの各scriptで10値の平均時間からcandidate/main比を求め、blocksと6 scriptを
 等重みの算術平均で集計する。途中screenは3 blocks、最終goal判定は4 blocksとする。
 入力・CLI・warmups=3・values=10・loops=1、固定main、PGO/LTOなしの比較条件を維持する。
@@ -2417,3 +2417,75 @@ build-jit/python -m test test_capi.test_opt_regions test_capi.test_opt test_tier
   unsupported型/descriptor/比較callbackは元CALLへ戻し、mutation前に全guardを終える。
   単要素のlist slice削除は既存list実装が失敗しない契約を持つため、その経路を再利用し、
   capacity管理・要素移動を独自実装しない。まず回帰testとnative形成、Hexiom比較で評価する。
+
+### 条件付きlist削除call（実装・検証中）
+
+- `_CALL_PY_LIST_REMOVE`を追加。bound/freeの2 replicasで3引数の全bodyと2 returns、
+  分岐先、繰り返される属性/index、`remove`の名前を証明する。元function versionと
+  instrumentation、cached属性layout、outer/inner exact list、compact整数index/valueを
+  mutation前に検査する。負indexに対応し、inner listは64要素以下に制限する。
+- 一度の検索で最初の一致だけ削除し、未一致ならFalse。検索中のunsupported要素は
+  副作用がない段階で元CALLへ戻す。一致後のtailは検査しない。削除は既存
+  `PyList_SetSlice(list, position, position+1, NULL)`で、単要素削除が失敗しない契約を
+  再利用する。削除対象はexact intなのでfinalizerはなく、残存要素の所有権も変えない。
+- 成功後はreverse argument cleanupとcode lifetimeを保持してcallerのCALL直後へ戻る。
+  entries/hits/iterationsを新counterへ記録。初回generatorはbrace必須のDSL構文で失敗し、
+  後続makeも未生成IDで失敗した。構文を修正して8生成物の再生成が完了し、両buildを再構築中。
+- 7 testsを追加し、layout/bound-free、長さ/負index/duplicates/alias/非compact型、比較callback、
+  descriptor/code変更、monitoring、owned receiverのfinalizer、余分な副作用bodyを検査する。
+  現段階は実装済みで、形成・性能はまだ未確認。タイミングとbuild/testを並行させない。
+
+- call版の7 testsは両build成功。関連10 files（list/C API/generatorを含む）は両方
+  1,467 tests成功（debug4/native15 skips）。Hexiomの新経路は339 entries/5 hits/
+  771比較、全call guard退出0。15 executors/77,824 bytesは前版と同じ。
+- call版binary `dccb92d9a9361f3229894479c84a50feea78dca4cf8d0f298e2cfa218d79ebb6`。
+  `list-remove-call-*`にmanifest/patch/90値の対応比較を保存した。Hexiom前版比は
+  0.998133/0.988743/0.995542、幾何平均0.994132（除外0）。まだ全6本の採否判定はしていない。
+- 主要なDone.removeの入口executorを対象に、実frameを保持する`_LIST_REMOVE_LOCAL`も追加。
+  tracerの開始code/offset/stack深さと同じ全body証明を使い、結果boolをstackへ積んで実際の
+  true/false側RETURN_VALUEへTier 1で戻す。共通helperに全型guard・検索・削除をまとめた。
+  helperは全経路でPythonを呼ばず例外も設定しないため、generatorのnon-escaping一覧へ登録。
+  call版のframe省略と、local版のframe保持をcounter解釈でも区別する。
+- local版のC呼び出しによる入口形成、duplicates/長さ/負index/unsupported callback、
+  PY_RETURN monitoringの2 testsを追加し、両buildを再構築中。
+
+- call/local計9 testsと関連10 filesは両build成功（各1,469 tests、debug4/native15 skips）。
+  8生成物はbyte一致、Ruff F401/F811とdiff checkも成功。native binaryは
+  `c8d787052e4eabcc53fdbf9f3fca1727fcd3e97d033d859bbfd56b2ca4e499ff`。
+- Hexiomは合計2,675 entries/395 hits/6,630比較（call版339/5/771、実frameを保持する
+  local版2,336/390/5,859）、guard退出0。15 executorsのnative codeは77,824→73,728 bytes。
+  Done.removeは8,192→4,096 bytes。raw code/assemblyを`list-remove-local-hexiom-native.*`へ保存。
+- local追加分だけの90値は1.001880/0.997847/0.993546、幾何平均0.997752で方向が混在。
+  全体を導入前counter版と比べた90値は0.992870/0.991241/0.992094、幾何平均0.992068。
+  全checksum一致・除外0。全6本を同じ導入前版と固定mainでscreen中。
+  入口対応単独の性能効果はまだ断定せず、全体と分けて記録する。
+
+- 全6本・3 blocks・540値は全checksum一致・除外0。main比算術平均は
+  **0.6713321→0.6704071**、after/before平均0.999397。Hexiomは
+  0.991602/0.983815/0.987804（平均0.987740）と全block改善。
+  一方BPEは1.006544/1.005923/1.008560（平均1.007009）と全block悪化した。
+  他は方向混在。`list-remove-final-suite-*`へ全データを保存。採否前にBPEのnative
+  coverageを確認し、同じ固定binaryの3 blocks・90値で回帰を追加確認する。
+- 次の候補としてglobals watcherを調査した。現callbackは変更keyを使わずdictionary
+  全体へのdependencyを無効化し、unwatchする。単にruntimeの値guardへ置換すると、
+  旧値の寿命とアドレス再利用、fold済みconstantの安全性を失う可能性がある。
+  変更keyに対応するdependencyと構造変更へのdependencyを分ける案を検討するが、
+  既存watcherの解除条件・mutation上限・module属性のconstant化も含む設計が必要。
+  現段階は調査のみで、watcherや既定の閾値には変更していない。
+
+- BPE追加90値は1.000629/1.001148/0.997738、幾何平均 **0.999837**、除外0。
+  全体screenの0.7%悪化は再現せず、原因は未特定。前後probeは新削除counter0、既存全counter
+  一致、34 executors/167,936 bytes。全体screenの悪化結果も残し、BPEの改善は主張しない。
+- 最終10値のHexiom probeはentries2,675/2,716/2,717、その後2,717、hits395/436/436、
+  その後436、全値guard退出0。1値probeだけの適用数を全10値へ外挿しない。
+- C呼び出しprofileの回帰testを追加し、最終10 focused testsはdebug/nativeとも成功。
+  他5実験flagを0にしたnative最終10 testsも成功した。関連10 filesの既存結果は1,469 tests
+  （追加profile test前）であり、最新focused結果と件数を混同しない。
+- raw native codeの間接call slotをPyList_Type/PyLong_Typeの一致するload biasとnmから
+  解決し、削除経路が既存PyList_SetSliceを呼ぶことを確認（`list-remove-local-native-symbols.json`）。
+- 条件付き削除全体はHexiomの単独/全体比較で全block改善したため採用する。入口対応単独の
+  小差とBPEの不確実性は保持する。source変更・生成・両build・機能/native・比較の根拠を
+  `list-remove-*`へ保存し、英語report/regions契約にも追記した。目標算術平均0.5は未達。
+- 次はglobalsの名前単位dependencyを、元valueの寿命を伸ばさず変更通知で保護できるか
+  独立testから進める。既存のdictionary全体dependencyも保護し、残るexecutorが必要な間は
+  watcherを解除しない条件と、削除/clear/非unicode key/再入のfallbackを先に設計する。

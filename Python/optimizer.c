@@ -605,7 +605,7 @@ get_region_stats(PyObject *self, PyObject *Py_UNUSED(ignored))
 {
     _PyExecutorObject *executor = _PyExecutorObject_CAST(self);
     return Py_BuildValue(
-        "{s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K}",
+        "{s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K}",
         "bounded_entries", executor->region_bounded_entries,
         "bounded_guard_exits", executor->region_bounded_guard_exits,
         "bounded_boxes", executor->region_bounded_boxes,
@@ -661,7 +661,10 @@ get_region_stats(PyObject *self, PyObject *Py_UNUSED(ignored))
         "zip_reused_entries", executor->region_zip_reused_entries,
         "zip_fallbacks", executor->region_zip_fallbacks,
         "call_search_entries", executor->region_call_search_entries,
-        "call_search_iterations", executor->region_call_search_iterations);
+        "call_search_iterations", executor->region_call_search_iterations,
+        "call_remove_entries", executor->region_call_remove_entries,
+        "call_remove_hits", executor->region_call_remove_hits,
+        "call_remove_iterations", executor->region_call_remove_iterations);
 }
 
 static PyMethodDef uop_executor_methods[] = {
@@ -1726,6 +1729,9 @@ allocate_executor(int exit_count, int length)
     res->region_zip_fallbacks = 0;
     res->region_call_search_entries = 0;
     res->region_call_search_iterations = 0;
+    res->region_call_remove_entries = 0;
+    res->region_call_remove_hits = 0;
+    res->region_call_remove_iterations = 0;
     res->tier3_resident_iterations = 0;
     res->tier3_resident_polls = 0;
     res->tier3_resident_pending_polls = 0;

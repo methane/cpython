@@ -295,6 +295,9 @@ typedef struct _PyExecutorObject {
     uint64_t region_zip_fallbacks;
     uint64_t region_call_search_entries;
     uint64_t region_call_search_iterations;
+    uint64_t region_call_remove_entries;
+    uint64_t region_call_remove_hits;
+    uint64_t region_call_remove_iterations;
     _PyExitData exits[1];
 } _PyExecutorObject;
 

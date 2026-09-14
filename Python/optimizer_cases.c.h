@@ -4643,6 +4643,26 @@
             break;
         }
 
+        case _CALL_PY_LIST_REMOVE: {
+            JitOptRef res;
+            res = sym_new_not_null(ctx);
+            CHECK_STACK_BOUNDS(-1 - (2 + oparg));
+            stack_pointer[-2 - (2 + oparg)] = res;
+            stack_pointer += -1 - (2 + oparg);
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            break;
+        }
+
+        case _LIST_REMOVE_LOCAL: {
+            JitOptRef res;
+            res = sym_new_not_null(ctx);
+            CHECK_STACK_BOUNDS(1);
+            stack_pointer[0] = res;
+            stack_pointer += 1;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            break;
+        }
+
         case _PUSH_FRAME: {
             JitOptRef new_frame;
             new_frame = stack_pointer[-1];

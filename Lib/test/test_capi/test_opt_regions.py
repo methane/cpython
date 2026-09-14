@@ -1901,6 +1901,275 @@ case.doCleanups()
             monitoring.register_callback(tool, monitoring.events.LINE, None)
             monitoring.free_tool_id(tool)
 
+    def warm_list_remove(self, slots=False, bound=True):
+        self.enterContext(mock.patch.dict(
+            os.environ, {"PYTHON_TIER2_CALL_REGIONS": "1"}))
+        ns = {}
+        layout = "    __slots__ = ('cells',)\n" if slots else ""
+        call = "owner.discard(index, value)" if bound else "discard(owner, index, value)"
+        exec("class Holder:\n" + layout + "    pass\n"
+             "def discard(owner, index, value):\n"
+             "    if value in owner.cells[index]:\n"
+             "        owner.cells[index].remove(value)\n"
+             "        return True\n"
+             "    else:\n"
+             "        return False\n"
+             "Holder.discard = discard\n"
+             "def run(owner, index, value, n):\n"
+             "    hits = 0\n"
+             "    for _ in range(n):\n"
+             f"        hits += {call}\n"
+             "    return hits\n", ns)
+        owner = ns["Holder"]()
+        owner.cells = [list(range(32))]
+        run = ns["run"]
+        self.assertEqual(run(owner, 0, 99, TIER2_THRESHOLD), 0)
+        ex = self.executor(run, "_CALL_PY_LIST_REMOVE")
+        self.assertIn(f"_CALL_PY_LIST_REMOVE_{int(not bound)}", get_opnames(ex))
+        self.assertEqual(self.executed(ex, "call_remove_entries", run, owner, 0, 99, 8), 0)
+        return owner, run, ex, ns
+
+    def warm_local_list_remove(self, slots=False):
+        owner, _, _, ns = self.warm_list_remove(slots=slots, bound=False)
+        exec("def run_local(owner, index, value, n):\n"
+             "    return sum(map(discard, [owner] * n, [index] * n, [value] * n))\n", ns)
+        run = ns["run_local"]
+        self.assertEqual(run(owner, 0, 99, 3 * TIER2_THRESHOLD), 0)
+        ex = self.executor(ns["discard"], "_LIST_REMOVE_LOCAL")
+        self.assertEqual(self.executed(ex, "call_remove_entries", run, owner, 0, 99, 8), 0)
+        return owner, run, ex, ns
+
+    @requires_call_regions
+    def test_local_list_remove_matrix(self):
+        for slots in (False, True):
+            with self.subTest(slots=slots):
+                owner, run, ex, ns = self.warm_local_list_remove(slots)
+                for length in (0, 1, 2, 31, 64, 65):
+                    for index in (0, -1):
+                        values = [i % 5 for i in range(length)]
+                        owner.cells = [values]
+                        expected = min(8, values.count(3))
+                        reference = values.copy()
+                        for _ in range(expected):
+                            reference.remove(3)
+                        self.assertEqual(run(owner, index, 3, 8), expected)
+                        self.assertEqual(values, reference)
+                owner.cells = [[300] * 16 + [None]]
+                self.assertEqual(self.executed(ex, "call_remove_hits", run,
+                                               owner, 0, 300, 8), 8)
+                self.assertEqual(owner.cells, [[300] * 8 + [None]])
+                frames = []
+                class Equal:
+                    def __eq__(self, other):
+                        frames.append(sys._getframe(1).f_code)
+                        return True
+                owner.cells = [[Equal()]]
+                self.assertEqual(run(owner, 0, 300, 8), 1)
+                self.assertEqual(frames, [ns["discard"].__code__] * 2)
+
+    @requires_call_regions
+    def test_local_list_remove_monitoring(self):
+        owner, run, ex, ns = self.warm_local_list_remove()
+        monitoring = sys.monitoring
+        tool = monitoring.PROFILER_ID
+        monitoring.use_tool_id(tool, "local list remove test")
+        frames = []
+        def on_return(code, offset, value):
+            frames.append((sys._getframe(1).f_code, value))
+        before = ex.get_region_stats()["call_remove_entries"]
+        try:
+            monitoring.register_callback(tool, monitoring.events.PY_RETURN, on_return)
+            monitoring.set_local_events(tool, ns["discard"].__code__, monitoring.events.PY_RETURN)
+            owner.cells = [[300] * 3]
+            self.assertEqual(run(owner, 0, 300, 8), 3)
+            self.assertEqual(frames, [(ns["discard"].__code__, i < 3) for i in range(8)])
+            self.assertEqual(ex.get_region_stats()["call_remove_entries"], before)
+        finally:
+            monitoring.set_local_events(tool, ns["discard"].__code__, 0)
+            monitoring.register_callback(tool, monitoring.events.PY_RETURN, None)
+            monitoring.free_tool_id(tool)
+
+    @requires_call_regions
+    def test_list_remove_matrix(self):
+        for slots in (False, True):
+            for bound in (False, True):
+                with self.subTest(slots=slots, bound=bound):
+                    owner, run, ex, _ = self.warm_list_remove(slots, bound)
+                    for length in (0, 1, 2, 31, 64, 65):
+                        for index in (0, -1):
+                            for needle in (-1, 0, 3, 64):
+                                values = [i % 5 for i in range(length)]
+                                owner.cells = [values]
+                                alias = values
+                                expected = min(8, values.count(needle))
+                                reference = values.copy()
+                                for _ in range(expected):
+                                    reference.remove(needle)
+                                self.assertEqual(run(owner, index, needle, 8), expected)
+                                self.assertIs(owner.cells[0], alias)
+                                self.assertEqual(values, reference)
+                    # Exercise successful native deletion, including duplicates
+                    # and an unsupported tail that must not be inspected.
+                    owner.cells = [[300] * 16 + [None]]
+                    self.assertEqual(self.executed(ex, "call_remove_hits", run,
+                                                   owner, 0, 300, 8), 8)
+                    self.assertEqual(owner.cells, [[300] * 8 + [None]])
+
+    @requires_call_regions
+    def test_list_remove_fallbacks(self):
+        owner, run, _, _ = self.warm_list_remove()
+        class Int(int):
+            pass
+        class List(list):
+            pass
+        for values, needle in (([True, 1], 1), ([Int(2), 2], 2),
+                               ([2**100, 2**100], 2**100),
+                               (List([3, 3]), 3), ([1, 1], Int(1))):
+            owner.cells = [values]
+            self.assertEqual(run(owner, 0, needle, 8), 2)
+            self.assertEqual(values, [])
+        owner.cells = List([[2, 2]])
+        self.assertEqual(run(owner, Int(-1), 2, 8), 2)
+        for index, error in ((10, IndexError), (-2, IndexError), (1.5, TypeError)):
+            owner.cells = [[1]]
+            try:
+                run(owner, index, 1, 8)
+            except error as caught:
+                tb = caught.__traceback__
+                names = []
+                while tb is not None:
+                    names.append(tb.tb_frame.f_code.co_name)
+                    tb = tb.tb_next
+                self.assertIn("discard", names)
+            else:
+                self.fail(f"expected {error.__name__}")
+
+    @requires_call_regions
+    def test_list_remove_comparison_callback(self):
+        owner, run, _, _ = self.warm_list_remove()
+        calls = []
+        class Equal:
+            def __eq__(self, other):
+                calls.append(sys._getframe(1).f_code.co_name)
+                if len(calls) == 1:
+                    owner.cells[0].append(77)
+                return True
+        owner.cells = [[Equal()]]
+        self.assertEqual(run(owner, 0, 77, 8), 2)
+        self.assertEqual(calls, ["discard", "discard"])
+        self.assertEqual(owner.cells, [[]])
+
+    @requires_call_regions
+    def test_list_remove_descriptor_and_code_changes(self):
+        owner, run, _, ns = self.warm_list_remove()
+        calls = []
+        values = [5] * 16
+        def cells(self):
+            calls.append(sys._getframe(1).f_code.co_name)
+            return [values]
+        ns["Holder"].cells = property(cells)
+        self.assertEqual(run(owner, 0, 5, 8), 8)
+        self.assertEqual(calls, ["discard"] * 16)
+        owner, run, _, ns = self.warm_list_remove(bound=False)
+        exec("def replacement(owner, index, value):\n    return False\n", ns)
+        ns["discard"].__code__ = ns["replacement"].__code__
+        owner.cells = [[5] * 16]
+        self.assertEqual(run(owner, 0, 5, 8), 0)
+        self.assertEqual(owner.cells, [[5] * 16])
+
+    @requires_call_regions
+    def test_list_remove_monitoring(self):
+        owner, run, ex, ns = self.warm_list_remove()
+        monitoring = sys.monitoring
+        tool = monitoring.PROFILER_ID
+        monitoring.use_tool_id(tool, "list remove test")
+        lines = []
+        def on_line(code, line):
+            lines.append(sys._getframe(1).f_code.co_name)
+        before = ex.get_region_stats()["call_remove_entries"]
+        try:
+            monitoring.register_callback(tool, monitoring.events.LINE, on_line)
+            monitoring.set_local_events(tool, ns["discard"].__code__, monitoring.events.LINE)
+            owner.cells = [[1] * 16]
+            self.assertEqual(run(owner, 0, 1, 8), 8)
+            self.assertTrue(lines)
+            self.assertEqual(set(lines), {"discard"})
+            self.assertEqual(ex.get_region_stats()["call_remove_entries"], before)
+        finally:
+            monitoring.set_local_events(tool, ns["discard"].__code__, 0)
+            monitoring.register_callback(tool, monitoring.events.LINE, None)
+            monitoring.free_tool_id(tool)
+
+    @requires_call_regions
+    def test_list_remove_profile(self):
+        for warm in (self.warm_list_remove, self.warm_local_list_remove):
+            with self.subTest(warm=warm.__name__):
+                owner, run, ex, ns = warm()
+                events = []
+                def profile(frame, event, arg):
+                    if (frame.f_code is ns["discard"].__code__
+                            and event in ("c_call", "c_return")
+                            and getattr(arg, "__name__", None) == "remove"):
+                        events.append(event)
+                owner.cells = [[300] * 16]
+                before = ex.get_region_stats()["call_remove_entries"]
+                old_profile = sys.getprofile()
+                try:
+                    sys.setprofile(profile)
+                    self.assertEqual(run(owner, 0, 300, 8), 8)
+                finally:
+                    sys.setprofile(old_profile)
+                self.assertEqual(events, ["c_call", "c_return"] * 8)
+                self.assertEqual(ex.get_region_stats()["call_remove_entries"], before)
+
+    @requires_call_regions
+    def test_list_remove_owned_receiver(self):
+        owner, _, _, ns = self.warm_list_remove(bound=False)
+        events = []
+        inspect_frame = [False]
+        cls = type(owner)
+        def finalize(obj):
+            if inspect_frame[0]:
+                events.append((sys._getframe(1).f_code.co_name, len(obj.cells[0])))
+        cls.__del__ = finalize
+        ns["cells"] = owner.cells
+        refs = sys.getrefcount(owner.cells)
+        exec("def initialize(obj):\n"
+             "    obj.cells = cells\n"
+             "Holder.__init__ = initialize\n"
+             "def run_owned(n):\n"
+             "    hits = 0\n"
+             "    for _ in range(n):\n"
+             "        hits += discard(Holder(), 0, 77)\n"
+             "    return hits\n", ns)
+        run = ns["run_owned"]
+        self.assertEqual(run(8 * TIER2_THRESHOLD), 0)
+        ex = self.executor(run, "_CALL_PY_LIST_REMOVE")
+        owner.cells[0] = [77] * 16
+        inspect_frame[0] = True
+        try:
+            self.assertEqual(self.executed(ex, "call_remove_hits", run, 8), 8)
+            self.assertEqual(events, [("run_owned", size) for size in range(15, 7, -1)])
+            self.assertEqual(sys.getrefcount(owner.cells), refs)
+        finally:
+            del cls.__del__
+
+    @requires_call_regions
+    def test_list_remove_extra_effects(self):
+        owner, run, _, ns = self.warm_list_remove(bound=False)
+        events = []
+        ns["events"] = events
+        exec("def discard(owner, index, value):\n"
+             "    if value in owner.cells[index]:\n"
+             "        owner.cells[index].remove(value)\n"
+             "        events.append(value)\n"
+             "        return True\n"
+             "    else:\n"
+             "        return False\n", ns)
+        owner.cells = [[2] * 16]
+        self.assertEqual(run(owner, 0, 2, 8), 8)
+        self.assertEqual(events, [2] * 8)
+
     def warm_attribute_search(self, symbol=">=", slots=False, bound=True, field=0):
         self.enterContext(mock.patch.dict(
             os.environ, {"PYTHON_TIER2_CALL_REGIONS": "1"}))

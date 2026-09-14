@@ -386,6 +386,51 @@ and resumes Tier 1 in the caller immediately after CALL. `call_search_entries`
 counts successes; `call_search_iterations` counts positions advanced before
 the match or exhaustion. These counters describe coverage, not timing.
 
+Conditional list removal uses the same call-region option. It proves the
+complete original bytecode of this three-argument function, including both
+returns, the branch destination, the repeated attribute and index, and the
+`remove` method name:
+
+```python
+def discard(owner, index, value):
+    if value in owner.cells[index]:
+        owner.cells[index].remove(value)
+        return True
+    else:
+        return False
+```
+
+The attribute name and function name are unrestricted. `_CALL_PY_LIST_REMOVE`
+has two replicas for bound and unbound calls. It retains the preceding call
+guards, checks the recorded function version and instrumentation, and obtains
+the outer list through a guarded cached attribute. Both lists must be exact
+lists; the index and searched value must be exact compact ints. Negative
+indices are normalized, and the inner list is limited to 64 elements. Only
+visited elements must be exact compact ints; scanning stops at the first
+match. Any unsupported input deoptimizes at the original CALL before effects.
+Python equality callbacks, descriptors, and indexing errors consequently run
+in the original callee. Exact list method lookup cannot be overridden.
+
+`_PyRegion_RemoveListItem()` performs one scan and uses `PyList_SetSlice()` to
+delete the matching element. Existing list code guarantees that a single-item
+deletion cannot fail, including shrinking its allocation. Only the removed
+exact int loses a reference; moving the remaining elements cannot finalize
+them. This helper neither calls Python nor raises an exception, and is marked
+non-escaping for code generation. A miss leaves the list unchanged. Successful
+calls return the existing bool singleton and preserve code lifetime and
+reverse argument cleanup before resuming the caller after CALL.
+
+`_LIST_REMOVE_LOCAL` also recognizes a root trace starting at this function's
+RESUME with an empty value stack. It uses the same body proof and runtime
+helper, retains the actual callee frame, and resumes Tier 1 at the appropriate
+original RETURN_VALUE with the bool already on the stack. It does not count
+as frame elimination. `call_remove_entries`, `call_remove_hits`, and
+`call_remove_iterations` count completed operations, deletions, and inspected
+elements across both paths. `call_entries` counts only the call-site variant;
+`call_guard_exits` includes failures from either variant. These counters are
+per executor; probe the relevant roots and their outgoing executor links.
+
+
 `_CALL_PY_LIST` extends call frame elimination to a cached attribute's exact
 list item, optionally consumed by a builtin length comparison against a small
 constant. It accepts compact integer indices, including negative indices,

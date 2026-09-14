@@ -1751,6 +1751,155 @@ next_search:
 #endif
 }
 
+/* A complete conditional removal body. Prove both branches before omitting
+ * the callee, including that the mutating method is exactly list.remove. */
+static bool
+list_remove_body(PyCodeObject *code, uint64_t *returns)
+{
+    if (code->co_argcount != 3 || code->co_kwonlyargcount ||
+        Py_SIZE(code) > UINT16_MAX || code->co_nlocalsplus != 3 || PyBytes_GET_SIZE(code->co_exceptiontable) ||
+        (code->co_flags & (CO_VARARGS | CO_VARKEYWORDS | CO_GENERATOR |
+                          CO_COROUTINE | CO_ASYNC_GENERATOR))) return false;
+    int pc = 0, op, arg;
+#define REMOVE_READ(OP) do { \
+    if (!pair_scan_instruction(code, &pc, &op, &arg) || op != (OP)) return false; \
+} while (0)
+#define REMOVE_ARG(OP, ARG) do { REMOVE_READ(OP); if (arg != (ARG)) return false; } while (0)
+    REMOVE_ARG(RESUME, 0);
+    REMOVE_ARG(LOAD_FAST_BORROW_LOAD_FAST_BORROW, 0x20);
+    REMOVE_READ(LOAD_ATTR);
+    if (arg & 1) return false;
+    int attribute = arg;
+    REMOVE_ARG(LOAD_FAST_BORROW, 1);
+    REMOVE_ARG(BINARY_OP, NB_SUBSCR);
+    REMOVE_ARG(CONTAINS_OP, 0);
+    REMOVE_READ(POP_JUMP_IF_FALSE);
+    int missing = pc + arg;
+    REMOVE_READ(NOT_TAKEN);
+    REMOVE_ARG(LOAD_FAST_BORROW, 0);
+    REMOVE_ARG(LOAD_ATTR, attribute);
+    REMOVE_ARG(LOAD_FAST_BORROW, 1);
+    REMOVE_ARG(BINARY_OP, NB_SUBSCR);
+    REMOVE_READ(LOAD_ATTR);
+    if (!(arg & 1) || (arg >> 1) >= PyTuple_GET_SIZE(code->co_names) ||
+        !PyUnicode_CheckExact(PyTuple_GET_ITEM(code->co_names, arg >> 1)) ||
+        PyUnicode_CompareWithASCIIString(PyTuple_GET_ITEM(code->co_names, arg >> 1),
+                                       "remove") != 0) return false;
+    REMOVE_ARG(LOAD_FAST_BORROW, 2);
+    REMOVE_ARG(CALL, 1);
+    REMOVE_READ(POP_TOP);
+    REMOVE_ARG(LOAD_COMMON_CONSTANT, CONSTANT_TRUE);
+    *returns = (uint64_t)pc << 16;
+    REMOVE_READ(RETURN_VALUE);
+    if (pc != missing) return false;
+    REMOVE_ARG(LOAD_COMMON_CONSTANT, CONSTANT_FALSE);
+    *returns |= pc;
+    REMOVE_READ(RETURN_VALUE);
+    return pc == Py_SIZE(code);
+#undef REMOVE_ARG
+#undef REMOVE_READ
+}
+
+static void
+inline_list_remove_calls(_PyUOpInstruction *buffer, int length)
+{
+#if defined(WITH_DTRACE) || defined(__EMSCRIPTEN__)
+    return;
+#else
+    if (!region_enabled("PYTHON_TIER2_CALL_REGIONS")) return;
+    for (int start = 0; start < length; start++) {
+        int nargs = buffer[start].oparg;
+        if (buffer[start].opcode != _INIT_CALL_PY_EXACT_ARGS ||
+            nargs < 2 || nargs > 3) continue;
+        PyFunctionObject *func = NULL;
+        for (int i = start - 1; i >= 0 && i >= start - 16; i--) {
+            int op = buffer[i].opcode;
+            if (op == _RECORD_CALLABLE || op == _RECORD_BOUND_METHOD) {
+                PyObject *obj = (PyObject *)buffer[i].operand0;
+                if (obj != NULL && PyMethod_Check(obj)) obj = PyMethod_GET_FUNCTION(obj);
+                if (obj != NULL && PyFunction_Check(obj)) func = (PyFunctionObject *)obj;
+                break;
+            }
+        }
+        uint64_t returns;
+        if (func == NULL || !_PyFunction_IsVersionValid(func->func_version) ||
+            !list_remove_body((PyCodeObject *)func->func_code, &returns)) continue;
+        int end = Py_MIN(length, start + 64);
+        int pc = start + 1;
+#define REMOVE_NEXT() (pc = trivial_call_skip(buffer, pc, end), \
+                       pc < end ? region_opcode(&buffer[pc]) : 0)
+#define REMOVE_EXPECT(OP) do { if (REMOVE_NEXT() != (OP)) goto next_remove; pc++; } while (0)
+        if (REMOVE_NEXT() != _SAVE_RETURN_OFFSET) continue;
+        uint64_t options = (uint64_t)buffer[pc++].oparg << 48;
+        REMOVE_EXPECT(_PUSH_FRAME);
+        REMOVE_EXPECT(_TIER2_RESUME_CHECK);
+        int op = REMOVE_NEXT();
+        if ((op != _LOAD_FAST && op != _LOAD_FAST_BORROW) || buffer[pc++].oparg != 2) continue;
+        uint64_t descriptor;
+        if (trivial_attribute_load(buffer, pc, end, 2, &descriptor) < 0 ||
+            (descriptor & 7) != 0) continue;
+        buffer[start].opcode = _CALL_PY_LIST_REMOVE;
+        buffer[start].oparg = nargs - 2;
+        buffer[start].operand0 = descriptor;
+        buffer[start].operand1 = options | func->func_version;
+        /* Both original returns are proved. The mutation completes before
+         * leaving this trace at the instruction following the caller's CALL. */
+        for (int i = start + 1; i < length; i++) {
+            if (!(_PyUop_Flags[buffer[i].opcode] & HAS_RECORDS_VALUE_FLAG)) {
+                buffer[i].opcode = _NOP;
+            }
+        }
+        buffer[length - 1].opcode = _DYNAMIC_EXIT;
+        buffer[length - 1].oparg = 0;
+        buffer[length - 1].target = 0;
+        buffer[length - 1].operand0 = buffer[length - 1].operand1 = 0;
+        return;
+next_remove:
+        ;
+#undef REMOVE_EXPECT
+#undef REMOVE_NEXT
+    }
+#endif
+}
+
+static void
+inline_local_list_remove(_PyThreadStateImpl *tstate, _PyUOpInstruction *buffer, int length)
+{
+    if (!region_enabled("PYTHON_TIER2_CALL_REGIONS")) return;
+    const _PyJitTracerState *tracer = tstate->jit_tracer_state;
+    PyCodeObject *code = tracer->initial_state.code;
+    uint64_t returns;
+    if (tracer->initial_state.start_instr != _PyCode_CODE(code) ||
+        tracer->initial_state.stack_depth != 0 ||
+        !list_remove_body(code, &returns)) return;
+    int pc = 0;
+    if (length < 4 || buffer[pc++].opcode != _START_EXECUTOR) return;
+    if (buffer[pc].opcode == _MAKE_WARM) pc++;
+    pc = trivial_call_skip(buffer, pc, length);
+    if (pc >= length || buffer[pc++].opcode != _TIER2_RESUME_CHECK) return;
+    pc = trivial_call_skip(buffer, pc, length);
+    int start = pc;
+    if (pc >= length || (region_opcode(&buffer[pc]) != _LOAD_FAST_BORROW &&
+                         region_opcode(&buffer[pc]) != _LOAD_FAST) ||
+        buffer[pc++].oparg != 2) return;
+    uint64_t descriptor;
+    if (trivial_attribute_load(buffer, pc, length, 2, &descriptor) < 0 ||
+        (descriptor & 7) != 0) return;
+    buffer[start].opcode = _LIST_REMOVE_LOCAL;
+    buffer[start].oparg = 0;
+    buffer[start].operand0 = descriptor;
+    buffer[start].operand1 = returns;
+    for (int i = start + 1; i < length; i++) {
+        if (!(_PyUop_Flags[buffer[i].opcode] & HAS_RECORDS_VALUE_FLAG)) {
+            buffer[i].opcode = _NOP;
+        }
+    }
+    buffer[length - 1].opcode = _DYNAMIC_EXIT;
+    buffer[length - 1].oparg = 0;
+    buffer[length - 1].target = 0;
+    buffer[length - 1].operand0 = buffer[length - 1].operand1 = 0;
+}
+
 /* Side traces can start after the header. Prove that their backedge repeats
  * exactly `index < global_name(source) - 1`, followed by this same pair read.
  * The uop checks that global_name still resolves to the canonical len. */
@@ -2255,6 +2404,8 @@ _Py_uop_analyze_and_optimize(
     eliminate_trivial_frames(output, length);
     inline_list_attribute_calls(output, length);
     inline_attribute_search_calls(output, length);
+    inline_list_remove_calls(output, length);
+    inline_local_list_remove(tstate, output, length);
     inline_attribute_initializers(output, length);
     fuse_list_pair_comparisons(output, length);
     inline_list_pair_append_scan(tstate, output, length);

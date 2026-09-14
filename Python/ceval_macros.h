@@ -775,6 +775,52 @@ _PyRegion_CallAttribute(_PyStackRef owner, uint64_t descriptor)
     return *(PyObject **)((char *)obj + offset);
 }
 
+/* Return -1 before effects for unsupported input, 0 for absence, or 1
+ * after deleting the first match. No path calls Python or raises an error. */
+static inline int
+_PyRegion_RemoveListItem(_PyStackRef owner, _PyStackRef index_ref,
+                         _PyStackRef value_ref, uint64_t descriptor,
+                         Py_ssize_t *checked)
+{
+    PyObject *outer = _PyRegion_CallAttribute(owner, descriptor);
+    PyObject *index_o = PyStackRef_AsPyObjectBorrow(index_ref);
+    PyObject *value = PyStackRef_AsPyObjectBorrow(value_ref);
+    if (outer == NULL || !PyList_CheckExact(outer) ||
+        !PyLong_CheckExact(index_o) || !PyLong_CheckExact(value) ||
+        !_PyLong_BothAreCompact((PyLongObject *)index_o, (PyLongObject *)value)) {
+        return -1;
+    }
+    Py_ssize_t index = _PyLong_CompactValue((PyLongObject *)index_o);
+    if (index < 0) {
+        index += PyList_GET_SIZE(outer);
+    }
+    if ((size_t)index >= (size_t)PyList_GET_SIZE(outer)) {
+        return -1;
+    }
+    PyObject *list = PyList_GET_ITEM(outer, index);
+    if (!PyList_CheckExact(list) || PyList_GET_SIZE(list) > 64) {
+        return -1;
+    }
+    sdigit needle = _PyLong_CompactValue((PyLongObject *)value);
+    for (Py_ssize_t position = 0; position < PyList_GET_SIZE(list); position++) {
+        PyObject *item = PyList_GET_ITEM(list, position);
+        if (!PyLong_CheckExact(item) || !_PyLong_IsCompact((PyLongObject *)item)) {
+            return -1;
+        }
+        if (_PyLong_CompactValue((PyLongObject *)item) == needle) {
+            /* Single-element deletion cannot fail. Keep list's normal capacity
+             * policy; only the removed exact int loses a reference. */
+            int err = PyList_SetSlice(list, position, position + 1, NULL);
+            assert(err == 0);
+            (void)err;
+            *checked = position + 1;
+            return 1;
+        }
+    }
+    *checked = PyList_GET_SIZE(list);
+    return 0;
+}
+
 static inline bool
 _PyRegion_AsInt64(_PyStackRef ref, int64_t *value)
 {
