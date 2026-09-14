@@ -327,6 +327,40 @@ Result ownership, reverse argument cleanup, code lifetime, instrumentation,
 and the caller's return offset are preserved. `call_list_entries` counts this
 path, under the existing call-region option and platform restrictions.
 
+The same uop also handles `return len(self.items) OP constant`, for each of
+the six integer comparisons. Replicas 0 through 4 select indexed items, and
+replicas 5 through 9 select the attribute list itself. The explicit argument
+count is `oparg % 5`. Selecting the mode when generating the stencil keeps
+direct-length checks out of existing indexed calls.
+The fast path reads the exact list's size directly and returns a Boolean;
+it needs neither an intermediate `int` nor a callee frame. The owner argument
+keeps the list alive until the comparison completes. A list subclass, changed
+builtin, missing attribute, or instrumentation request takes the original CALL
+path, so a user-defined `__len__` observes the real callee frame and the original
+evaluation order. Direct predicates use the existing `call_list_entries`
+counter. Bounds are currently limited to nonnegative 16-bit constants.
+
+Some bounds become constant only during abstract interpretation, as in
+`len(self.items) == 2 * self.minimum_degree - 1`. A cleanup pass before call
+matching removes unused local load/pop pairs, including short-local replicas,
+and the load/rotate/pop traffic left when both folded operands are immortal.
+The result load remains. These local matches cross only NOPs, instruction
+position updates, and value records; they do not cross validity guards,
+periodic checks, calls, or stores. The existing unnecessary-uop pass runs before
+and between these matches to remove checks already proved redundant. This
+cleanup is enabled by any of the integer, builtin, or call-region options.
+
+Folded class-attribute bounds currently fuse on the slot-attribute path where
+no intermediate instance-shadowing guard remains. Instances with a dictionary
+retain their managed-values guard and use ordinary execution for that pattern;
+literal bounds can fuse for both layouts. The pass does not independently fuse
+an arbitrary post-optimization `CALL_LEN`: moving its cleanup could allow a
+finalizer to change the later bound or leave an exit with the wrong operand
+stack. It instead requires the complete short callee and its retained owner.
+Tests cover all comparisons and supported layouts, class and function changes,
+instance shadowing, copied builtins, and callbacks that change a class attribute
+or raise from `__len__`.
+
 `_CALL_CLASS_ATTRIBUTES` handles constructors whose entire initializer stores
 each of one to four explicit positional arguments once into distinct inline
 instance attributes, then returns `None`. Matching is bounded to 96 uops and

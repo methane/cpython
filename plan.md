@@ -1795,3 +1795,107 @@ build-jit/python -m test test_capi.test_opt_regions test_capi.test_opt test_tier
 - BPE/Btreeの3 blocksすべての改善と、回帰を含めた全体の小さな改善を根拠に、
   scan/escape分類の段階を現状として保持する。Raytraceの回帰原因は未特定で、記録を残す。
   source/test/docをローカルの次のチェックポイントへ保存し、次の変更と分離する。
+
+
+### 畳み込み後の定数とlen predicate（実装開始）
+
+- scan段階をローカルcommit `5c3db9c7a3af5646922e57bd2076e8464cd16425`、tree
+  `e3402aae7350d897430a1ae16980e6162770b792`へ保存した。リモート操作なし。
+- 現在のBtree probeでもBNode.is_fullに、畳み込み済みの2/16/32/1/31のloadとrotate/pop、
+  単独CALL_LEN、比較、callee frameが残る。`pair-scan-inline-btree-native.json`に保存した。
+- まず参照の取得と解放の間に効果のないlocal load/pop、およびimmortal定数だけの
+  folded operandsのrotate/popを除去する。新しい照合はCHECK_PERIODIC・CHECK_VALIDITY・
+  任意callをまたがず、通常の不要uop除去により不要と判明したcheckだけを取り除く。
+- その後、abstract interpretationで初めて定数になった比較値をCALL_LEN_CONSUMERへ
+  融合する。条件が揃えば既存のCALL_PY_LISTを属性list自体のlen predicateにも広げ、
+  元のfunc/type/builtins/recursion/instrumentation guardと逆順cleanupを保持する。
+
+- 設計を限定した。任意のCALL_LENの後でcleanupを動かすと、finalizerによるclass属性変更や
+  validity exit時のstack形に影響し得る。この段階では単独のCALL_LENを後から融合せず、
+  owner引数が属性listを保持している短いcallee全体の融合に限定する。
+- `remove_folded_constant_traffic`を追加し、short-local replicaの未使用load/popと、
+  2つのimmortal operandを捨てるRROT_3/popを除去する。既存の不要check除去を間に挟むが、
+  新しい照合自体はCHECK_VALIDITY/周期チェックをまたがない。
+- CALL_PY_LISTの未使用argument selector7を属性list自体の長さ比較に割り当てた。
+  既にCALL_LEN_CONSUMERになった場合と、定数fold後のCALL_LEN→constant→int比較に対応。
+  新しいcounter fieldや新uop IDは増やさず、既存call_list_entriesに含める。
+  比較6種類、slot/dict属性、class/function変更、__len__のcallback/例外、copied builtinsを
+  回帰テストとして追加し、両buildを更新中。
+
+- 初回の新規テストではliteralのlen predicateは融合したが、class属性から計算する版で
+  executorの適用確認が失敗した。先に既存の不要check除去を行う順番へ修正すると、
+  slotsのunused local load/popと2段のconstant fold cleanupを除去できた。
+- instance dictを持つownerでは、class属性のshadowingを検出するmanaged-values guardが
+  残る。このguardを無条件に消さず、folded-bound融合は現在のguard-freeなslots経路に
+  限定する。literal-bound融合はslot/dict両方を対象とし、instance属性でclass値を
+  上書きした場合に通常経路が正しい値を返すテストも追加した。
+- 新規5 tests（比較6種×literal/folded×slot/dictのsubtestsを含む）が両buildで成功。
+  class/function変更、__len__中のclass変更と例外のcallee frame、copied builtinsも成功した。
+  関連10 filesの一括検証へ進む。
+
+- 関連10 filesはdebug **1,131 tests・4 skips**、native **1,045 tests・12 skips**で成功。
+  初回native probeではBtreeの直接属性len比較が **156,252 calls** 適用され、
+  call_list_entriesが0から増えた。BPEのscan/dict countersは直前版と一致した。
+  これらの診断時間を性能比較には使わない。
+- CALL_REGIONS単独でもfold後の融合を使えるようcleanupのgateを揃え、単独オプションの
+  回帰テストを追加した。最終build後に関連10 filesを再実行している。
+  English design notesを`Tools/jit/regions.md`へ追記した。
+- 次の比較は固定main、保存済みpair-scan-inline版、今回版の3種類、全6本・3 blocks・
+  540値とする。設定は元CLIの3 warmups/10 values/1 loop、CPU2、block別hashseedを維持。
+  最終binaryのnative coverageとidentityを記録してからタイミングを開始する。
+
+- 最終10-file検証はdebug **1,132 tests・4 skips**、native **1,046 tests・12 skips**で成功。
+  8生成物はbyte単位で再現し、Ruff F401/F811とdiff --checkも成功した。
+- 最終native SHA256は`18c3a6ecfd4638cf3132aee24dc5209f69cc16afd3d4330a50efd1d6312dd033`。
+  `build-jit/python-suite-folded-len`に保存（extensionsは現buildを共有）。
+  `folded-len-final-manifest.json`、同patch、Btree/BPE native probeにdirty sourceと
+  loaded extension identityを記録した。Btreeの156,252 direct len callsを再確認し、
+  BPE countersは直前版と一致した。
+- optimizer cleanupが他領域へ影響しないことも確認するため、native owned-floatの
+  特殊値2,058ケースと丸め/例外フラグ432ケースを再実行し、bit・flagsとも通常経路と一致。
+  `folded-len-final-owned-fenv-native.json`に保存。全6本の対応比較を実行中。
+
+- 3 blocks・540値の比較は全checksum一致、除外0。main比算術平均は直前版0.706848、
+  今回版 **0.704356**、block別0.702248/0.709039/0.701780。目標0.5は未達。
+  Btreeの直前版比は0.951328/0.929428/0.958331、平均 **0.946362** で全block改善。
+- 一方Hexiomは1.010567/1.022322/1.015285、平均 **1.016058** と全block悪化した。
+  他の直前版比はBPE1.008936、DeltaBlue1.002394、Raytrace1.002828、Spectral0.996688。
+  全値を`folded-len-final-suite-{rows,summary}.json`へ保持する。
+- Hexiomの前後native probeは適用counterが一致（call_list12,421、len_subscript18,293）。
+  ただしDone.__getitem__のexecutorは8,192から12,288 native bytesへ増えた。
+  CALL_PY_LISTへ追加したdirect-lengthの分岐が、既存indexed経路にも入った影響を疑う。
+  この原因はまだ仮説であり、現在段階を確定せず、direct/indexedをstencil生成時に
+  分離して同じ比較条件で確認する。
+
+- direct/indexedを10個のoparg replicasに分離した。0～4は従来のindexed経路、5～9は
+  direct-length経路、引数数はoparg % 5とする。未使用selector7方式は撤回し、runtimeの
+  追加分岐を各stencilの定数条件として消す。method/free functionの全対応arityと
+  owner/valueの参照数を追加検証した。
+- 最終関連10 filesはdebug **1,133 tests・4 skips**、native **1,047 tests・12 skips**で成功。
+  8生成物のbyte再現と静的checkも成功。最終optimizer objectは明示的に再ビルドした。
+  native SHA256 `f8ba3d3afa1566fde46c61a89f6f5b03648cfb38fbd773ce350a50086968a2cd` を
+  `python-suite-folded-len-replicas`、`folded-len-replicas-manifest.json`、同patchに保存。
+- Hexiomの適用counterは同じで、Done.__getitem__のnative bytesは8,192へ戻った。
+  Btreeのdirect len calls156,252も保持し、全native bytesは278,528から258,048へ減った。
+  Hexiomの分離前版との3-block・90値比較は0.986174/0.995044/0.992887、
+  段階比較の幾何平均 **0.991361**、全checksum一致・除外0。
+- 分離前への改善を確認したうえで、最終的な機能全体の効果を判定するため、固定mainと
+  導入前pair-scan-inline版を対照にした全6本・3 blocks・540値の比較を再実行中。
+
+- 最終3 blocks・540値は全checksum一致・除外0。導入前版のmain比算術平均0.711223に
+  対し、今回版は **0.700686**（block別0.700237/0.701297/0.700522）。目標0.5は未達。
+  Btreeの導入前比は0.951528/0.942432/0.922651、平均 **0.938870** と全block改善。
+  Hexiomは0.998633/0.969079/0.999509、平均0.989074で、分離前の回帰は再現しなかった。
+- script別main比はBPE0.814951、Btree0.707799、DeltaBlue0.966806、Hexiom0.833871、
+  Raytrace0.862132、Spectral0.018556。導入前比の残りはBPE1.000152、DeltaBlue1.001997、
+  Raytrace0.989117、Spectral1.002770。Btree以外の小さい/不均一な差をlen融合の直接効果と
+  断定しない。今回版全体の導入前比算術平均は0.986997。
+  `folded-len-replicas-suite-{rows,summary}.json`へ全値を保存した。
+- canonical builtins dictのlen自体を差し替える追加ケースもdebug/nativeで成功し、
+  callbackが本来のready frameから8回呼ばれた。先のcopied-builtinsケースに加えて確認。
+  C sourceは最終測定時から変更なし。今回の定数cleanup/len融合/stencil分離を保持し、
+  source/test/docをローカルcheckpointへまとめる。GitHub操作なし。
+- 次はBPEの隣接ペア比較を調べる。現native codeでは、exact bytesの判定でも
+  float/unicode/intの型分岐を先に通る箇所がある。対応する左右型を先に照合し、
+  bytes二要素の組を短く判定する小さな変更案を準備した。まず通常の比較・callback順を
+  保つこととnative codeの変化を確認し、BPEで効果がなければ採用しない。

@@ -94,6 +94,11 @@ enum {
     _CALL_PY_LIST_2,
     _CALL_PY_LIST_3,
     _CALL_PY_LIST_4,
+    _CALL_PY_LIST_5,
+    _CALL_PY_LIST_6,
+    _CALL_PY_LIST_7,
+    _CALL_PY_LIST_8,
+    _CALL_PY_LIST_9,
     _CALL_PY_TRIVIAL,
     _CALL_PY_TRIVIAL_0,
     _CALL_PY_TRIVIAL_1,
@@ -487,7 +492,7 @@ enum {
     _UNPACK_SEQUENCE_UNIQUE_TWO_TUPLE,
     _YIELD_VALUE,
 };
-#define MAX_UOP_ID 775
+#define MAX_UOP_ID 780
 
 #define _BUILD_INTERPOLATION BUILD_INTERPOLATION
 #define _BUILD_LIST BUILD_LIST
@@ -703,6 +708,11 @@ enum {
     _CALL_PY_LIST_2_r01,
     _CALL_PY_LIST_3_r01,
     _CALL_PY_LIST_4_r01,
+    _CALL_PY_LIST_5_r01,
+    _CALL_PY_LIST_6_r01,
+    _CALL_PY_LIST_7_r01,
+    _CALL_PY_LIST_8_r01,
+    _CALL_PY_LIST_9_r01,
     _CALL_PY_TRIVIAL_r01,
     _CALL_PY_TRIVIAL_0_r01,
     _CALL_PY_TRIVIAL_1_r01,
@@ -1781,7 +1791,7 @@ enum {
     _WITH_EXCEPT_START_r33,
     _YIELD_VALUE_r11,
 };
-#define MAX_UOP_REGS_ID 1992
+#define MAX_UOP_REGS_ID 2002
 
 #ifdef __cplusplus
 }

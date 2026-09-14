@@ -126,6 +126,173 @@ class TestRegions(unittest.TestCase):
         ex = self.executor(run, "_DICT_PAIR_INCREMENT")
         return run, mapping, key, ex
 
+    def warm_attribute_length(self, operation="==", folded=True, slots=True):
+        self.enterContext(mock.patch.dict(
+            os.environ, {"PYTHON_TIER2_CALL_REGIONS": "1"}))
+        ns = {"__builtins__": vars(builtins)}
+        expression = "2 * self.degree - 1" if folded else "31"
+        exec("class Receiver:\n"
+             + ("    __slots__ = ('cells',)\n" if slots else "") +
+             "    degree = 16\n"
+             "    def ready(self):\n"
+             f"        return len(self.cells) {operation} ({expression})\n"
+             "def run(receiver, n):\n"
+             "    result = None\n"
+             "    for _ in range(n):\n"
+             "        result = receiver.ready()\n"
+             "    return result\n", ns)
+        receiver = ns["Receiver"]()
+        receiver.cells = [None] * 31
+        run = ns["run"]
+        run(receiver, TIER2_THRESHOLD)
+        if folded and not slots:
+            self.assertFalse(any("_CALL_PY_LIST" in get_opnames(ex)
+                                 for ex in get_all_executors(run)))
+            return receiver, run, None
+        return receiver, run, self.executor(run, "_CALL_PY_LIST")
+
+    def test_attribute_length_predicate(self):
+        for operation, compare in (("==", operator.eq), ("!=", operator.ne),
+                                   ("<", operator.lt), ("<=", operator.le),
+                                   (">", operator.gt), (">=", operator.ge)):
+            for slots in (False, True):
+                for folded in (False, True):
+                    with self.subTest(operation=operation, slots=slots, folded=folded):
+                        receiver, run, ex = self.warm_attribute_length(operation, folded, slots)
+                        for size in (0, 1, 30, 31, 32, 1024, 1100):
+                            receiver.cells = [None] * size
+                            if ex is None:
+                                result = run(receiver, 8)
+                            else:
+                                result = self.executed(ex, "call_list_entries", run, receiver, 8)
+                            self.assertEqual(result, compare(size, 31))
+
+    def test_attribute_length_instance_shadow(self):
+        receiver, run, _ = self.warm_attribute_length(slots=False)
+        self.assertTrue(run(receiver, 8))
+        receiver.degree = 17
+        self.assertFalse(run(receiver, 8))
+        del receiver.degree
+        self.assertTrue(run(receiver, 8))
+
+    def test_attribute_length_call_option_only(self):
+        with mock.patch.dict(os.environ, {"PYTHON_TIER2_INT_REGIONS": "0",
+                                          "PYTHON_TIER2_BUILTIN_REGIONS": "0"}):
+            receiver, run, ex = self.warm_attribute_length()
+            self.assertTrue(self.executed(ex, "call_list_entries", run, receiver, 8))
+
+    def test_attribute_length_argument_counts(self):
+        self.enterContext(mock.patch.dict(
+            os.environ, {"PYTHON_TIER2_CALL_REGIONS": "1"}))
+        for method in (False, True):
+            for nargs in range(0 if method else 1, 5):
+                with self.subTest(method=method, nargs=nargs):
+                    names = [f"a{i}" for i in range(nargs)]
+                    signature = ", ".join((["self"] if method else []) + names)
+                    owner = "self" if method else names[-1]
+                    arguments = ", ".join(["value"] * (nargs if method else nargs - 1)
+                                          + ([] if method else ["receiver"]))
+                    ns = {"__builtins__": vars(builtins)}
+                    exec("class Receiver:\n"
+                         "    __slots__ = ('cells',)\n"
+                         "    pass\n"
+                         f"def ready({signature}):\n"
+                         f"    return len({owner}.cells) == 31\n"
+                         + ("Receiver.ready = ready\n" if method else "") +
+                         "def run(receiver, value, n):\n"
+                         "    result = None\n"
+                         "    for _ in range(n):\n"
+                         f"        result = {'receiver.ready' if method else 'ready'}({arguments})\n"
+                         "    return result\n", ns)
+                    receiver, run = ns["Receiver"](), ns["run"]
+                    receiver.cells = [None] * 31
+                    value = object()
+                    refs = sys.getrefcount(value), sys.getrefcount(receiver)
+                    self.assertTrue(run(receiver, value, TIER2_THRESHOLD))
+                    ex = self.executor(run, "_CALL_PY_LIST")
+                    self.assertTrue(self.executed(ex, "call_list_entries", run,
+                                                  receiver, value, 100))
+                    receiver.cells.clear()
+                    self.assertFalse(run(receiver, value, 8))
+                    self.assertEqual((sys.getrefcount(value), sys.getrefcount(receiver)), refs)
+
+    def test_attribute_length_class_change(self):
+        receiver, run, _ = self.warm_attribute_length()
+        cls = type(receiver)
+        for degree in (4, 16, 1024, 2**40, -10):
+            cls.degree = degree
+            self.assertEqual(run(receiver, 8), len(receiver.cells) == 2 * degree - 1)
+        cls.degree = 16
+        self.assertTrue(run(receiver, 8))
+        cls.ready = lambda self: "changed"
+        self.assertEqual(run(receiver, 8), "changed")
+
+    def test_attribute_length_callback_order(self):
+        receiver, run, _ = self.warm_attribute_length()
+        cls = type(receiver)
+        events = []
+
+        class Cells(list):
+            def __len__(self):
+                events.append(sys._getframe(1).f_code.co_name)
+                cls.degree = 5
+                return 7
+
+        receiver.cells = Cells()
+        cls.degree = 4
+        # The comparison must use the degree after __len__ has changed it.
+        self.assertFalse(run(receiver, 8))
+        self.assertEqual(events, ["ready"] * 8)
+
+        class LengthError(Exception):
+            pass
+
+        class Failing(list):
+            def __len__(self):
+                raise LengthError
+
+        receiver.cells = Failing()
+        try:
+            run(receiver, 8)
+        except LengthError as error:
+            self.assertEqual(error.__traceback__.tb_next.tb_next.tb_frame.f_code.co_name,
+                             "ready")
+        else:
+            self.fail("__len__ did not raise")
+
+    def test_attribute_length_replaced_builtins(self):
+        receiver, run, _ = self.warm_attribute_length()
+        method = type(receiver).ready
+        events = []
+
+        def length(value):
+            events.append(value)
+            return 30
+
+        custom = vars(builtins).copy()
+        custom["len"] = length
+        type(receiver).ready = types.FunctionType(method.__code__, {"__builtins__": custom})
+        self.assertFalse(run(receiver, 8))
+        self.assertEqual(events, [receiver.cells] * 8)
+
+        receiver, run, _ = self.warm_attribute_length()
+        events.clear()
+        original_len = builtins.len
+
+        def replaced_len(value):
+            if value is receiver.cells:
+                events.append(sys._getframe(1).f_code.co_name)
+                return 30
+            return original_len(value)
+
+        try:
+            builtins.len = replaced_len
+            result = run(receiver, 8)
+        finally:
+            builtins.len = original_len
+        self.assertFalse(result)
+        self.assertEqual(events, ["ready"] * 8)
+
     def warm_float_owned(self, symbol="+", fields=(True, True)):
         class Holder:
             pass

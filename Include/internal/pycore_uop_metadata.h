@@ -393,6 +393,11 @@ const uint32_t _PyUop_Flags[MAX_UOP_ID+1] = {
     [_CALL_PY_LIST_2] = HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
     [_CALL_PY_LIST_3] = HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
     [_CALL_PY_LIST_4] = HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
+    [_CALL_PY_LIST_5] = HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
+    [_CALL_PY_LIST_6] = HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
+    [_CALL_PY_LIST_7] = HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
+    [_CALL_PY_LIST_8] = HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
+    [_CALL_PY_LIST_9] = HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
     [_CALL_PY_LIST] = HAS_ARG_FLAG | HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
     [_PUSH_FRAME] = HAS_SYNC_SP_FLAG | HAS_NEEDS_GUARD_IP_FLAG,
     [_GUARD_NOS_NULL] = HAS_EXIT_FLAG,
@@ -569,7 +574,7 @@ const ReplicationRange _PyUop_Replication[MAX_UOP_ID+1] = {
     [_INIT_CALL_PY_EXACT_ARGS] = { 0, 5 },
     [_CALL_PY_TRIVIAL] = { 0, 5 },
     [_CALL_PY_ATTRIBUTE] = { 0, 5 },
-    [_CALL_PY_LIST] = { 0, 5 },
+    [_CALL_PY_LIST] = { 0, 10 },
     [_CALL_CLASS_ATTRIBUTES] = { 0, 5 },
     [_COPY] = { 1, 4 },
     [_SWAP] = { 2, 4 },
@@ -3803,6 +3808,51 @@ const _PyUopCachingInfo _PyUop_Caching[MAX_UOP_ID+1] = {
             { -1, -1, -1 },
         },
     },
+    [_CALL_PY_LIST_5] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 1, 0, _CALL_PY_LIST_5_r01 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_CALL_PY_LIST_6] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 1, 0, _CALL_PY_LIST_6_r01 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_CALL_PY_LIST_7] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 1, 0, _CALL_PY_LIST_7_r01 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_CALL_PY_LIST_8] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 1, 0, _CALL_PY_LIST_8_r01 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_CALL_PY_LIST_9] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 1, 0, _CALL_PY_LIST_9_r01 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
     [_CALL_PY_LIST] = {
         .best = { 0, 0, 0, 0 },
         .entries = {
@@ -5900,6 +5950,11 @@ const uint16_t _PyUop_Uncached[MAX_UOP_REGS_ID+1] = {
     [_CALL_PY_LIST_2_r01] = _CALL_PY_LIST_2,
     [_CALL_PY_LIST_3_r01] = _CALL_PY_LIST_3,
     [_CALL_PY_LIST_4_r01] = _CALL_PY_LIST_4,
+    [_CALL_PY_LIST_5_r01] = _CALL_PY_LIST_5,
+    [_CALL_PY_LIST_6_r01] = _CALL_PY_LIST_6,
+    [_CALL_PY_LIST_7_r01] = _CALL_PY_LIST_7,
+    [_CALL_PY_LIST_8_r01] = _CALL_PY_LIST_8,
+    [_CALL_PY_LIST_9_r01] = _CALL_PY_LIST_9,
     [_CALL_PY_LIST_r01] = _CALL_PY_LIST,
     [_PUSH_FRAME_r10] = _PUSH_FRAME,
     [_GUARD_NOS_NULL_r02] = _GUARD_NOS_NULL,
@@ -6524,6 +6579,16 @@ const char *const _PyOpcode_uop_name[MAX_UOP_REGS_ID+1] = {
     [_CALL_PY_LIST_3_r01] = "_CALL_PY_LIST_3_r01",
     [_CALL_PY_LIST_4] = "_CALL_PY_LIST_4",
     [_CALL_PY_LIST_4_r01] = "_CALL_PY_LIST_4_r01",
+    [_CALL_PY_LIST_5] = "_CALL_PY_LIST_5",
+    [_CALL_PY_LIST_5_r01] = "_CALL_PY_LIST_5_r01",
+    [_CALL_PY_LIST_6] = "_CALL_PY_LIST_6",
+    [_CALL_PY_LIST_6_r01] = "_CALL_PY_LIST_6_r01",
+    [_CALL_PY_LIST_7] = "_CALL_PY_LIST_7",
+    [_CALL_PY_LIST_7_r01] = "_CALL_PY_LIST_7_r01",
+    [_CALL_PY_LIST_8] = "_CALL_PY_LIST_8",
+    [_CALL_PY_LIST_8_r01] = "_CALL_PY_LIST_8_r01",
+    [_CALL_PY_LIST_9] = "_CALL_PY_LIST_9",
+    [_CALL_PY_LIST_9_r01] = "_CALL_PY_LIST_9_r01",
     [_CALL_PY_TRIVIAL] = "_CALL_PY_TRIVIAL",
     [_CALL_PY_TRIVIAL_r01] = "_CALL_PY_TRIVIAL_r01",
     [_CALL_PY_TRIVIAL_0] = "_CALL_PY_TRIVIAL_0",
@@ -8669,17 +8734,27 @@ int _PyUop_num_popped(int opcode, int oparg)
         case _CALL_PY_ATTRIBUTE:
             return 2 + oparg;
         case _CALL_PY_LIST_0:
-            return 2 + oparg;
+            return 2 + (oparg % 5);
         case _CALL_PY_LIST_1:
-            return 2 + oparg;
+            return 2 + (oparg % 5);
         case _CALL_PY_LIST_2:
-            return 2 + oparg;
+            return 2 + (oparg % 5);
         case _CALL_PY_LIST_3:
-            return 2 + oparg;
+            return 2 + (oparg % 5);
         case _CALL_PY_LIST_4:
-            return 2 + oparg;
+            return 2 + (oparg % 5);
+        case _CALL_PY_LIST_5:
+            return 2 + (oparg % 5);
+        case _CALL_PY_LIST_6:
+            return 2 + (oparg % 5);
+        case _CALL_PY_LIST_7:
+            return 2 + (oparg % 5);
+        case _CALL_PY_LIST_8:
+            return 2 + (oparg % 5);
+        case _CALL_PY_LIST_9:
+            return 2 + (oparg % 5);
         case _CALL_PY_LIST:
-            return 2 + oparg;
+            return 2 + (oparg % 5);
         case _PUSH_FRAME:
             return 1;
         case _GUARD_NOS_NULL:

@@ -923,6 +923,85 @@ trivial_attribute_load(_PyUOpInstruction *buffer, int pc, int end,
     return trivial_call_skip(buffer, pc + 1, end);
 }
 
+/* Unlike the general call matcher, this peephole must not cross a validity
+ * guard: that guard's exit still expects the original intermediate stack. */
+static int
+folded_constant_skip(const _PyUOpInstruction *buffer, int pc, int end)
+{
+    while (pc < end && (buffer[pc].opcode == _NOP || buffer[pc].opcode == _SET_IP ||
+            (_PyUop_Flags[buffer[pc].opcode] & HAS_RECORDS_VALUE_FLAG))) {
+        pc++;
+    }
+    return pc;
+}
+
+static int
+remove_folded_constant_traffic(_PyUOpInstruction *buffer, int length)
+{
+    if (!region_enabled("PYTHON_TIER2_BUILTIN_REGIONS") &&
+        !region_enabled("PYTHON_TIER2_INT_REGIONS") &&
+        !region_enabled("PYTHON_TIER2_CALL_REGIONS")) {
+        return length;
+    }
+    length = remove_unneeded_uops(buffer, length);
+    /* The general push/pop table does not include the short-local replicas.
+     * Closing the just-loaded reference cannot finalize a still-owned local;
+     * no callback, store, guard, or periodic check can intervene here. */
+    for (int start = 0; start < length; start++) {
+        int op = region_opcode(&buffer[start]);
+        if (op != _LOAD_FAST && op != _LOAD_FAST_BORROW) {
+            continue;
+        }
+        int pop = folded_constant_skip(buffer, start + 1, length);
+        if (pop < length && op_without_pop[buffer[pop].opcode]) {
+            buffer[start].opcode = buffer[pop].opcode = _NOP;
+        }
+    }
+    length = remove_unneeded_uops(buffer, length);
+    int loads[3];
+    int count = 0;
+    for (int pc = 0; pc < length; pc++) {
+        pc = folded_constant_skip(buffer, pc, length);
+        if (pc == length) break;
+        int op = buffer[pc].opcode;
+        if (op == _LOAD_CONST_INLINE || op == _LOAD_CONST_INLINE_BORROW ||
+            op == _LOAD_SMALL_INT) {
+            if (count == 3) {
+                loads[0] = loads[1];
+                loads[1] = loads[2];
+                count--;
+            }
+            loads[count++] = pc;
+            continue;
+        }
+        if (op == _RROT_3 && count == 3) {
+            int first_pop = folded_constant_skip(buffer, pc + 1, length);
+            int second_pop = folded_constant_skip(buffer, first_pop + 1, length);
+            bool valid = second_pop < length &&
+                op_without_pop[buffer[first_pop].opcode] &&
+                op_without_pop[buffer[second_pop].opcode];
+            for (int i = 0; i < 2 && valid; i++) {
+                _PyUOpInstruction *load = &buffer[loads[i]];
+                valid = load->opcode == _LOAD_SMALL_INT ||
+                        _Py_IsImmortal((PyObject *)load->operand0);
+            }
+            if (valid) {
+                /* Folding left the result above its two old operands. The
+                 * operands are immortal, so only the result load is needed. */
+                buffer[loads[0]].opcode = buffer[loads[1]].opcode = _NOP;
+                buffer[pc].opcode = _NOP;
+                buffer[first_pop].opcode = buffer[second_pop].opcode = _NOP;
+                loads[0] = loads[2];
+                count = 1;
+                pc = second_pop;
+                continue;
+            }
+        }
+        count = 0;
+    }
+    return length;
+}
+
 static void
 eliminate_trivial_frames(_PyUOpInstruction *buffer, int length)
 {
@@ -1101,36 +1180,75 @@ inline_list_attribute_calls(_PyUOpInstruction *buffer, int length)
         }
         uint64_t descriptor;
         pc = trivial_attribute_load(buffer, pc, end, nargs, &descriptor);
-        if (pc < 0 || LIST_NEXT() != _LOAD_FAST_BORROW || buffer[pc].oparg > nargs) {
+        if (pc < 0) {
             continue;
         }
-        config |= buffer[pc++].oparg;
-        int op;
-        while ((op = LIST_NEXT()) == _GUARD_TOS_INT || op == _GUARD_NOS_LIST) {
-            pc++;
-        }
-        LIST_EXPECT(_BINARY_OP_SUBSCR_LIST_INT);
-        for (int i = 0; i < 2; i++) {
-            op = LIST_NEXT();
-            if (op != _POP_TOP && op != _POP_TOP_NOP) {
-                goto next_list_call;
-            }
-            pc++;
-        }
-        if (length_predicate) {
-            if (LIST_NEXT() != _CALL_LEN_CONSUMER ||
-                (buffer[pc].oparg & 48) != 48 || buffer[pc].operand0 > UINT16_MAX) {
+        int op = LIST_NEXT();
+        bool direct_length = length_predicate &&
+            (op == _CALL_LEN || op == _CALL_LEN_CONSUMER);
+        if (!direct_length) {
+            if (LIST_NEXT() != _LOAD_FAST_BORROW || buffer[pc].oparg > nargs) {
                 continue;
             }
-            config |= ((uint64_t)(buffer[pc].oparg & 15) << 4) |
-                      (buffer[pc].operand0 << 8);
-            pc++;
+            config |= buffer[pc++].oparg;
+            while ((op = LIST_NEXT()) == _GUARD_TOS_INT || op == _GUARD_NOS_LIST) {
+                pc++;
+            }
+            LIST_EXPECT(_BINARY_OP_SUBSCR_LIST_INT);
             for (int i = 0; i < 2; i++) {
                 op = LIST_NEXT();
-                if (op != _POP_TOP && op != _POP_TOP_NOP) {
-                    goto next_list_call;
-                }
+                if (op != _POP_TOP && op != _POP_TOP_NOP) goto next_list_call;
                 pc++;
+            }
+        }
+        if (length_predicate) {
+            if (direct_length && LIST_NEXT() == _CALL_LEN) {
+                pc++;
+                for (int i = 0; i < 2; i++) {
+                    op = LIST_NEXT();
+                    if (op != _POP_TOP && op != _POP_TOP_NOP) goto next_list_call;
+                    pc++;
+                }
+                op = LIST_NEXT();
+                Py_ssize_t value;
+                if (op == _LOAD_SMALL_INT) {
+                    value = buffer[pc++].oparg;
+                }
+                else if (op == _LOAD_CONST_INLINE_BORROW || op == _LOAD_CONST_INLINE) {
+                    PyObject *constant = (PyObject *)buffer[pc++].operand0;
+                    if (!PyLong_CheckExact(constant) || !_PyLong_IsCompact((PyLongObject *)constant)) {
+                        continue;
+                    }
+                    value = _PyLong_CompactValue((PyLongObject *)constant);
+                }
+                else continue;
+                if (value < 0 || value > UINT16_MAX) continue;
+                while ((op = LIST_NEXT()) == _GUARD_TOS_INT || op == _GUARD_NOS_INT ||
+                       op == _GUARD_NOS_OVERFLOWED) {
+                    pc++;
+                }
+                if (LIST_NEXT() != _COMPARE_OP_INT) continue;
+                config |= ((uint64_t)(buffer[pc++].oparg & 15) << 4) |
+                          ((uint64_t)value << 8);
+                for (int i = 0; i < 2; i++) {
+                    op = LIST_NEXT();
+                    if (op != _POP_TOP_INT && op != _POP_TOP_NOP) goto next_list_call;
+                    pc++;
+                }
+            }
+            else {
+                if (LIST_NEXT() != _CALL_LEN_CONSUMER ||
+                    (buffer[pc].oparg & 48) != 48 || buffer[pc].operand0 > UINT16_MAX) {
+                    continue;
+                }
+                config |= ((uint64_t)(buffer[pc].oparg & 15) << 4) |
+                          (buffer[pc].operand0 << 8);
+                pc++;
+                for (int i = 0; i < 2; i++) {
+                    op = LIST_NEXT();
+                    if (op != _POP_TOP && op != _POP_TOP_NOP) goto next_list_call;
+                    pc++;
+                }
             }
         }
         if (LIST_NEXT() == _MAKE_HEAP_SAFE) {
@@ -1138,6 +1256,9 @@ inline_list_attribute_calls(_PyUOpInstruction *buffer, int length)
         }
         LIST_EXPECT(_RETURN_VALUE);
         buffer[start].opcode = _CALL_PY_LIST;
+        /* Separate stencils keep the direct-length branch out of indexed
+         * calls. The low five replicas retain the original argument counts. */
+        buffer[start].oparg = nargs + (direct_length ? 5 : 0);
         buffer[start].operand0 = descriptor;
         buffer[start].operand1 = config;
         for (int i = start + 1; i < pc; i++) {
@@ -1872,6 +1993,7 @@ _Py_uop_analyze_and_optimize(
 
     assert(length > 0);
 
+    length = remove_folded_constant_traffic(output, length);
     eliminate_trivial_frames(output, length);
     inline_list_attribute_calls(output, length);
     inline_attribute_initializers(output, length);

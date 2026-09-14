@@ -23840,9 +23840,9 @@
             _PyStackRef res;
             oparg = 0;
             assert(oparg == CURRENT_OPARG());
-            args = &stack_pointer[-oparg];
-            self_or_null = stack_pointer[-1 - oparg];
-            callable = stack_pointer[-2 - oparg];
+            args = &stack_pointer[-(oparg % 5)];
+            self_or_null = stack_pointer[-1 - (oparg % 5)];
+            callable = stack_pointer[-2 - (oparg % 5)];
             PyObject *source = (PyObject *)CURRENT_OPERAND0_64();
             PyObject *config = (PyObject *)CURRENT_OPERAND1_64();
             current_executor->region_call_entries++;
@@ -23851,12 +23851,15 @@
             PyCodeObject *code = (PyCodeObject *)func->func_code;
             uint64_t options = (uintptr_t)config;
             uint64_t descriptor = (uintptr_t)source;
+            int nargs = oparg % 5;
             int has_self = !PyStackRef_IsNull(self_or_null);
             int owner_index = descriptor & 7;
             int index_arg = options & 7;
+            bool direct_length = oparg >= 5;
             bool valid = _Py_atomic_load_uintptr_relaxed(&tstate->eval_breaker) ==
             FT_ATOMIC_LOAD_UINTPTR_ACQUIRE(code->_co_instrumentation_version) &&
-            owner_index < oparg + has_self && index_arg < oparg + has_self;
+            owner_index < nargs + has_self &&
+            (direct_length ? (options & 8) != 0 : index_arg < nargs + has_self);
             PyObject *item = NULL;
             Py_ssize_t size = 0;
             if (valid && (options & 8)) {
@@ -23872,21 +23875,27 @@
                 _PyStackRef owner = has_self && owner_index == 0
                 ? self_or_null : args[owner_index - has_self];
                 PyObject *list = _PyRegion_CallAttribute(owner, descriptor);
-                _PyStackRef sub = has_self && index_arg == 0
-                ? self_or_null : args[index_arg - has_self];
-                PyObject *index_o = PyStackRef_AsPyObjectBorrow(sub);
-                valid = list != NULL && PyList_CheckExact(list) &&
-                PyLong_CheckExact(index_o) && _PyLong_IsCompact((PyLongObject *)index_o);
-                if (valid) {
-                    Py_ssize_t index = _PyLong_CompactValue((PyLongObject *)index_o);
-                    if (index < 0) {
-                        index += PyList_GET_SIZE(list);
-                    }
-                    valid = (size_t)index < (size_t)PyList_GET_SIZE(list);
+                valid = list != NULL && PyList_CheckExact(list);
+                if (valid && direct_length) {
+                    size = PyList_GET_SIZE(list);
+                }
+                else if (valid) {
+                    _PyStackRef sub = has_self && index_arg == 0
+                    ? self_or_null : args[index_arg - has_self];
+                    PyObject *index_o = PyStackRef_AsPyObjectBorrow(sub);
+                    valid = PyLong_CheckExact(index_o) &&
+                    _PyLong_IsCompact((PyLongObject *)index_o);
                     if (valid) {
-                        item = PyList_GET_ITEM(list, index);
-                        if (options & 8) {
-                            valid = _PyRegion_Length(PyStackRef_FromPyObjectBorrow(item), &size);
+                        Py_ssize_t index = _PyLong_CompactValue((PyLongObject *)index_o);
+                        if (index < 0) {
+                            index += PyList_GET_SIZE(list);
+                        }
+                        valid = (size_t)index < (size_t)PyList_GET_SIZE(list);
+                        if (valid) {
+                            item = PyList_GET_ITEM(list, index);
+                            if (options & 8) {
+                                valid = _PyRegion_Length(PyStackRef_FromPyObjectBorrow(item), &size);
+                            }
                         }
                     }
                 }
@@ -23913,21 +23922,21 @@
             _PyStackRef cleanup[6];
             cleanup[0] = callable;
             cleanup[1] = self_or_null;
-            for (int i = 0; i < oparg; i++) {
+            for (int i = 0; i < nargs; i++) {
                 cleanup[i + 2] = args[i];
             }
-            for (int i = oparg + 1; i >= 0; i--) {
-                stack_pointer[-2 - oparg] = res;
-                stack_pointer += -1 - oparg;
+            for (int i = nargs + 1; i >= 0; i--) {
+                stack_pointer[-2 - (oparg % 5)] = res;
+                stack_pointer += -1 - (oparg % 5);
                 ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
                 _PyFrame_SetStackPointer(frame, stack_pointer);
                 _PyFrame_StackPointerValidate(frame);
                 PyStackRef_XCLOSE(cleanup[i]);
                 _PyFrame_StackPointerInvalidate(frame);
-                stack_pointer += 1 + oparg;
+                stack_pointer += 1 + (oparg % 5);
             }
-            stack_pointer[-2 - oparg] = res;
-            stack_pointer += -1 - oparg;
+            stack_pointer[-2 - (oparg % 5)] = res;
+            stack_pointer += -1 - (oparg % 5);
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
             _PyFrame_SetStackPointer(frame, stack_pointer);
             _PyFrame_StackPointerValidate(frame);
@@ -23952,9 +23961,9 @@
             _PyStackRef res;
             oparg = 1;
             assert(oparg == CURRENT_OPARG());
-            args = &stack_pointer[-oparg];
-            self_or_null = stack_pointer[-1 - oparg];
-            callable = stack_pointer[-2 - oparg];
+            args = &stack_pointer[-(oparg % 5)];
+            self_or_null = stack_pointer[-1 - (oparg % 5)];
+            callable = stack_pointer[-2 - (oparg % 5)];
             PyObject *source = (PyObject *)CURRENT_OPERAND0_64();
             PyObject *config = (PyObject *)CURRENT_OPERAND1_64();
             current_executor->region_call_entries++;
@@ -23963,12 +23972,15 @@
             PyCodeObject *code = (PyCodeObject *)func->func_code;
             uint64_t options = (uintptr_t)config;
             uint64_t descriptor = (uintptr_t)source;
+            int nargs = oparg % 5;
             int has_self = !PyStackRef_IsNull(self_or_null);
             int owner_index = descriptor & 7;
             int index_arg = options & 7;
+            bool direct_length = oparg >= 5;
             bool valid = _Py_atomic_load_uintptr_relaxed(&tstate->eval_breaker) ==
             FT_ATOMIC_LOAD_UINTPTR_ACQUIRE(code->_co_instrumentation_version) &&
-            owner_index < oparg + has_self && index_arg < oparg + has_self;
+            owner_index < nargs + has_self &&
+            (direct_length ? (options & 8) != 0 : index_arg < nargs + has_self);
             PyObject *item = NULL;
             Py_ssize_t size = 0;
             if (valid && (options & 8)) {
@@ -23984,21 +23996,27 @@
                 _PyStackRef owner = has_self && owner_index == 0
                 ? self_or_null : args[owner_index - has_self];
                 PyObject *list = _PyRegion_CallAttribute(owner, descriptor);
-                _PyStackRef sub = has_self && index_arg == 0
-                ? self_or_null : args[index_arg - has_self];
-                PyObject *index_o = PyStackRef_AsPyObjectBorrow(sub);
-                valid = list != NULL && PyList_CheckExact(list) &&
-                PyLong_CheckExact(index_o) && _PyLong_IsCompact((PyLongObject *)index_o);
-                if (valid) {
-                    Py_ssize_t index = _PyLong_CompactValue((PyLongObject *)index_o);
-                    if (index < 0) {
-                        index += PyList_GET_SIZE(list);
-                    }
-                    valid = (size_t)index < (size_t)PyList_GET_SIZE(list);
+                valid = list != NULL && PyList_CheckExact(list);
+                if (valid && direct_length) {
+                    size = PyList_GET_SIZE(list);
+                }
+                else if (valid) {
+                    _PyStackRef sub = has_self && index_arg == 0
+                    ? self_or_null : args[index_arg - has_self];
+                    PyObject *index_o = PyStackRef_AsPyObjectBorrow(sub);
+                    valid = PyLong_CheckExact(index_o) &&
+                    _PyLong_IsCompact((PyLongObject *)index_o);
                     if (valid) {
-                        item = PyList_GET_ITEM(list, index);
-                        if (options & 8) {
-                            valid = _PyRegion_Length(PyStackRef_FromPyObjectBorrow(item), &size);
+                        Py_ssize_t index = _PyLong_CompactValue((PyLongObject *)index_o);
+                        if (index < 0) {
+                            index += PyList_GET_SIZE(list);
+                        }
+                        valid = (size_t)index < (size_t)PyList_GET_SIZE(list);
+                        if (valid) {
+                            item = PyList_GET_ITEM(list, index);
+                            if (options & 8) {
+                                valid = _PyRegion_Length(PyStackRef_FromPyObjectBorrow(item), &size);
+                            }
                         }
                     }
                 }
@@ -24025,21 +24043,21 @@
             _PyStackRef cleanup[6];
             cleanup[0] = callable;
             cleanup[1] = self_or_null;
-            for (int i = 0; i < oparg; i++) {
+            for (int i = 0; i < nargs; i++) {
                 cleanup[i + 2] = args[i];
             }
-            for (int i = oparg + 1; i >= 0; i--) {
-                stack_pointer[-2 - oparg] = res;
-                stack_pointer += -1 - oparg;
+            for (int i = nargs + 1; i >= 0; i--) {
+                stack_pointer[-2 - (oparg % 5)] = res;
+                stack_pointer += -1 - (oparg % 5);
                 ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
                 _PyFrame_SetStackPointer(frame, stack_pointer);
                 _PyFrame_StackPointerValidate(frame);
                 PyStackRef_XCLOSE(cleanup[i]);
                 _PyFrame_StackPointerInvalidate(frame);
-                stack_pointer += 1 + oparg;
+                stack_pointer += 1 + (oparg % 5);
             }
-            stack_pointer[-2 - oparg] = res;
-            stack_pointer += -1 - oparg;
+            stack_pointer[-2 - (oparg % 5)] = res;
+            stack_pointer += -1 - (oparg % 5);
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
             _PyFrame_SetStackPointer(frame, stack_pointer);
             _PyFrame_StackPointerValidate(frame);
@@ -24064,9 +24082,9 @@
             _PyStackRef res;
             oparg = 2;
             assert(oparg == CURRENT_OPARG());
-            args = &stack_pointer[-oparg];
-            self_or_null = stack_pointer[-1 - oparg];
-            callable = stack_pointer[-2 - oparg];
+            args = &stack_pointer[-(oparg % 5)];
+            self_or_null = stack_pointer[-1 - (oparg % 5)];
+            callable = stack_pointer[-2 - (oparg % 5)];
             PyObject *source = (PyObject *)CURRENT_OPERAND0_64();
             PyObject *config = (PyObject *)CURRENT_OPERAND1_64();
             current_executor->region_call_entries++;
@@ -24075,12 +24093,15 @@
             PyCodeObject *code = (PyCodeObject *)func->func_code;
             uint64_t options = (uintptr_t)config;
             uint64_t descriptor = (uintptr_t)source;
+            int nargs = oparg % 5;
             int has_self = !PyStackRef_IsNull(self_or_null);
             int owner_index = descriptor & 7;
             int index_arg = options & 7;
+            bool direct_length = oparg >= 5;
             bool valid = _Py_atomic_load_uintptr_relaxed(&tstate->eval_breaker) ==
             FT_ATOMIC_LOAD_UINTPTR_ACQUIRE(code->_co_instrumentation_version) &&
-            owner_index < oparg + has_self && index_arg < oparg + has_self;
+            owner_index < nargs + has_self &&
+            (direct_length ? (options & 8) != 0 : index_arg < nargs + has_self);
             PyObject *item = NULL;
             Py_ssize_t size = 0;
             if (valid && (options & 8)) {
@@ -24096,21 +24117,27 @@
                 _PyStackRef owner = has_self && owner_index == 0
                 ? self_or_null : args[owner_index - has_self];
                 PyObject *list = _PyRegion_CallAttribute(owner, descriptor);
-                _PyStackRef sub = has_self && index_arg == 0
-                ? self_or_null : args[index_arg - has_self];
-                PyObject *index_o = PyStackRef_AsPyObjectBorrow(sub);
-                valid = list != NULL && PyList_CheckExact(list) &&
-                PyLong_CheckExact(index_o) && _PyLong_IsCompact((PyLongObject *)index_o);
-                if (valid) {
-                    Py_ssize_t index = _PyLong_CompactValue((PyLongObject *)index_o);
-                    if (index < 0) {
-                        index += PyList_GET_SIZE(list);
-                    }
-                    valid = (size_t)index < (size_t)PyList_GET_SIZE(list);
+                valid = list != NULL && PyList_CheckExact(list);
+                if (valid && direct_length) {
+                    size = PyList_GET_SIZE(list);
+                }
+                else if (valid) {
+                    _PyStackRef sub = has_self && index_arg == 0
+                    ? self_or_null : args[index_arg - has_self];
+                    PyObject *index_o = PyStackRef_AsPyObjectBorrow(sub);
+                    valid = PyLong_CheckExact(index_o) &&
+                    _PyLong_IsCompact((PyLongObject *)index_o);
                     if (valid) {
-                        item = PyList_GET_ITEM(list, index);
-                        if (options & 8) {
-                            valid = _PyRegion_Length(PyStackRef_FromPyObjectBorrow(item), &size);
+                        Py_ssize_t index = _PyLong_CompactValue((PyLongObject *)index_o);
+                        if (index < 0) {
+                            index += PyList_GET_SIZE(list);
+                        }
+                        valid = (size_t)index < (size_t)PyList_GET_SIZE(list);
+                        if (valid) {
+                            item = PyList_GET_ITEM(list, index);
+                            if (options & 8) {
+                                valid = _PyRegion_Length(PyStackRef_FromPyObjectBorrow(item), &size);
+                            }
                         }
                     }
                 }
@@ -24137,21 +24164,21 @@
             _PyStackRef cleanup[6];
             cleanup[0] = callable;
             cleanup[1] = self_or_null;
-            for (int i = 0; i < oparg; i++) {
+            for (int i = 0; i < nargs; i++) {
                 cleanup[i + 2] = args[i];
             }
-            for (int i = oparg + 1; i >= 0; i--) {
-                stack_pointer[-2 - oparg] = res;
-                stack_pointer += -1 - oparg;
+            for (int i = nargs + 1; i >= 0; i--) {
+                stack_pointer[-2 - (oparg % 5)] = res;
+                stack_pointer += -1 - (oparg % 5);
                 ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
                 _PyFrame_SetStackPointer(frame, stack_pointer);
                 _PyFrame_StackPointerValidate(frame);
                 PyStackRef_XCLOSE(cleanup[i]);
                 _PyFrame_StackPointerInvalidate(frame);
-                stack_pointer += 1 + oparg;
+                stack_pointer += 1 + (oparg % 5);
             }
-            stack_pointer[-2 - oparg] = res;
-            stack_pointer += -1 - oparg;
+            stack_pointer[-2 - (oparg % 5)] = res;
+            stack_pointer += -1 - (oparg % 5);
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
             _PyFrame_SetStackPointer(frame, stack_pointer);
             _PyFrame_StackPointerValidate(frame);
@@ -24176,9 +24203,9 @@
             _PyStackRef res;
             oparg = 3;
             assert(oparg == CURRENT_OPARG());
-            args = &stack_pointer[-oparg];
-            self_or_null = stack_pointer[-1 - oparg];
-            callable = stack_pointer[-2 - oparg];
+            args = &stack_pointer[-(oparg % 5)];
+            self_or_null = stack_pointer[-1 - (oparg % 5)];
+            callable = stack_pointer[-2 - (oparg % 5)];
             PyObject *source = (PyObject *)CURRENT_OPERAND0_64();
             PyObject *config = (PyObject *)CURRENT_OPERAND1_64();
             current_executor->region_call_entries++;
@@ -24187,12 +24214,15 @@
             PyCodeObject *code = (PyCodeObject *)func->func_code;
             uint64_t options = (uintptr_t)config;
             uint64_t descriptor = (uintptr_t)source;
+            int nargs = oparg % 5;
             int has_self = !PyStackRef_IsNull(self_or_null);
             int owner_index = descriptor & 7;
             int index_arg = options & 7;
+            bool direct_length = oparg >= 5;
             bool valid = _Py_atomic_load_uintptr_relaxed(&tstate->eval_breaker) ==
             FT_ATOMIC_LOAD_UINTPTR_ACQUIRE(code->_co_instrumentation_version) &&
-            owner_index < oparg + has_self && index_arg < oparg + has_self;
+            owner_index < nargs + has_self &&
+            (direct_length ? (options & 8) != 0 : index_arg < nargs + has_self);
             PyObject *item = NULL;
             Py_ssize_t size = 0;
             if (valid && (options & 8)) {
@@ -24208,21 +24238,27 @@
                 _PyStackRef owner = has_self && owner_index == 0
                 ? self_or_null : args[owner_index - has_self];
                 PyObject *list = _PyRegion_CallAttribute(owner, descriptor);
-                _PyStackRef sub = has_self && index_arg == 0
-                ? self_or_null : args[index_arg - has_self];
-                PyObject *index_o = PyStackRef_AsPyObjectBorrow(sub);
-                valid = list != NULL && PyList_CheckExact(list) &&
-                PyLong_CheckExact(index_o) && _PyLong_IsCompact((PyLongObject *)index_o);
-                if (valid) {
-                    Py_ssize_t index = _PyLong_CompactValue((PyLongObject *)index_o);
-                    if (index < 0) {
-                        index += PyList_GET_SIZE(list);
-                    }
-                    valid = (size_t)index < (size_t)PyList_GET_SIZE(list);
+                valid = list != NULL && PyList_CheckExact(list);
+                if (valid && direct_length) {
+                    size = PyList_GET_SIZE(list);
+                }
+                else if (valid) {
+                    _PyStackRef sub = has_self && index_arg == 0
+                    ? self_or_null : args[index_arg - has_self];
+                    PyObject *index_o = PyStackRef_AsPyObjectBorrow(sub);
+                    valid = PyLong_CheckExact(index_o) &&
+                    _PyLong_IsCompact((PyLongObject *)index_o);
                     if (valid) {
-                        item = PyList_GET_ITEM(list, index);
-                        if (options & 8) {
-                            valid = _PyRegion_Length(PyStackRef_FromPyObjectBorrow(item), &size);
+                        Py_ssize_t index = _PyLong_CompactValue((PyLongObject *)index_o);
+                        if (index < 0) {
+                            index += PyList_GET_SIZE(list);
+                        }
+                        valid = (size_t)index < (size_t)PyList_GET_SIZE(list);
+                        if (valid) {
+                            item = PyList_GET_ITEM(list, index);
+                            if (options & 8) {
+                                valid = _PyRegion_Length(PyStackRef_FromPyObjectBorrow(item), &size);
+                            }
                         }
                     }
                 }
@@ -24249,21 +24285,21 @@
             _PyStackRef cleanup[6];
             cleanup[0] = callable;
             cleanup[1] = self_or_null;
-            for (int i = 0; i < oparg; i++) {
+            for (int i = 0; i < nargs; i++) {
                 cleanup[i + 2] = args[i];
             }
-            for (int i = oparg + 1; i >= 0; i--) {
-                stack_pointer[-2 - oparg] = res;
-                stack_pointer += -1 - oparg;
+            for (int i = nargs + 1; i >= 0; i--) {
+                stack_pointer[-2 - (oparg % 5)] = res;
+                stack_pointer += -1 - (oparg % 5);
                 ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
                 _PyFrame_SetStackPointer(frame, stack_pointer);
                 _PyFrame_StackPointerValidate(frame);
                 PyStackRef_XCLOSE(cleanup[i]);
                 _PyFrame_StackPointerInvalidate(frame);
-                stack_pointer += 1 + oparg;
+                stack_pointer += 1 + (oparg % 5);
             }
-            stack_pointer[-2 - oparg] = res;
-            stack_pointer += -1 - oparg;
+            stack_pointer[-2 - (oparg % 5)] = res;
+            stack_pointer += -1 - (oparg % 5);
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
             _PyFrame_SetStackPointer(frame, stack_pointer);
             _PyFrame_StackPointerValidate(frame);
@@ -24288,9 +24324,9 @@
             _PyStackRef res;
             oparg = 4;
             assert(oparg == CURRENT_OPARG());
-            args = &stack_pointer[-oparg];
-            self_or_null = stack_pointer[-1 - oparg];
-            callable = stack_pointer[-2 - oparg];
+            args = &stack_pointer[-(oparg % 5)];
+            self_or_null = stack_pointer[-1 - (oparg % 5)];
+            callable = stack_pointer[-2 - (oparg % 5)];
             PyObject *source = (PyObject *)CURRENT_OPERAND0_64();
             PyObject *config = (PyObject *)CURRENT_OPERAND1_64();
             current_executor->region_call_entries++;
@@ -24299,12 +24335,15 @@
             PyCodeObject *code = (PyCodeObject *)func->func_code;
             uint64_t options = (uintptr_t)config;
             uint64_t descriptor = (uintptr_t)source;
+            int nargs = oparg % 5;
             int has_self = !PyStackRef_IsNull(self_or_null);
             int owner_index = descriptor & 7;
             int index_arg = options & 7;
+            bool direct_length = oparg >= 5;
             bool valid = _Py_atomic_load_uintptr_relaxed(&tstate->eval_breaker) ==
             FT_ATOMIC_LOAD_UINTPTR_ACQUIRE(code->_co_instrumentation_version) &&
-            owner_index < oparg + has_self && index_arg < oparg + has_self;
+            owner_index < nargs + has_self &&
+            (direct_length ? (options & 8) != 0 : index_arg < nargs + has_self);
             PyObject *item = NULL;
             Py_ssize_t size = 0;
             if (valid && (options & 8)) {
@@ -24320,21 +24359,27 @@
                 _PyStackRef owner = has_self && owner_index == 0
                 ? self_or_null : args[owner_index - has_self];
                 PyObject *list = _PyRegion_CallAttribute(owner, descriptor);
-                _PyStackRef sub = has_self && index_arg == 0
-                ? self_or_null : args[index_arg - has_self];
-                PyObject *index_o = PyStackRef_AsPyObjectBorrow(sub);
-                valid = list != NULL && PyList_CheckExact(list) &&
-                PyLong_CheckExact(index_o) && _PyLong_IsCompact((PyLongObject *)index_o);
-                if (valid) {
-                    Py_ssize_t index = _PyLong_CompactValue((PyLongObject *)index_o);
-                    if (index < 0) {
-                        index += PyList_GET_SIZE(list);
-                    }
-                    valid = (size_t)index < (size_t)PyList_GET_SIZE(list);
+                valid = list != NULL && PyList_CheckExact(list);
+                if (valid && direct_length) {
+                    size = PyList_GET_SIZE(list);
+                }
+                else if (valid) {
+                    _PyStackRef sub = has_self && index_arg == 0
+                    ? self_or_null : args[index_arg - has_self];
+                    PyObject *index_o = PyStackRef_AsPyObjectBorrow(sub);
+                    valid = PyLong_CheckExact(index_o) &&
+                    _PyLong_IsCompact((PyLongObject *)index_o);
                     if (valid) {
-                        item = PyList_GET_ITEM(list, index);
-                        if (options & 8) {
-                            valid = _PyRegion_Length(PyStackRef_FromPyObjectBorrow(item), &size);
+                        Py_ssize_t index = _PyLong_CompactValue((PyLongObject *)index_o);
+                        if (index < 0) {
+                            index += PyList_GET_SIZE(list);
+                        }
+                        valid = (size_t)index < (size_t)PyList_GET_SIZE(list);
+                        if (valid) {
+                            item = PyList_GET_ITEM(list, index);
+                            if (options & 8) {
+                                valid = _PyRegion_Length(PyStackRef_FromPyObjectBorrow(item), &size);
+                            }
                         }
                     }
                 }
@@ -24361,21 +24406,626 @@
             _PyStackRef cleanup[6];
             cleanup[0] = callable;
             cleanup[1] = self_or_null;
-            for (int i = 0; i < oparg; i++) {
+            for (int i = 0; i < nargs; i++) {
                 cleanup[i + 2] = args[i];
             }
-            for (int i = oparg + 1; i >= 0; i--) {
-                stack_pointer[-2 - oparg] = res;
-                stack_pointer += -1 - oparg;
+            for (int i = nargs + 1; i >= 0; i--) {
+                stack_pointer[-2 - (oparg % 5)] = res;
+                stack_pointer += -1 - (oparg % 5);
                 ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
                 _PyFrame_SetStackPointer(frame, stack_pointer);
                 _PyFrame_StackPointerValidate(frame);
                 PyStackRef_XCLOSE(cleanup[i]);
                 _PyFrame_StackPointerInvalidate(frame);
-                stack_pointer += 1 + oparg;
+                stack_pointer += 1 + (oparg % 5);
             }
-            stack_pointer[-2 - oparg] = res;
-            stack_pointer += -1 - oparg;
+            stack_pointer[-2 - (oparg % 5)] = res;
+            stack_pointer += -1 - (oparg % 5);
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            _PyFrame_SetStackPointer(frame, stack_pointer);
+            _PyFrame_StackPointerValidate(frame);
+            Py_DECREF(code);
+            _PyFrame_StackPointerInvalidate(frame);
+            _tos_cache0 = res;
+            _tos_cache1 = PyStackRef_ZERO_BITS;
+            _tos_cache2 = PyStackRef_ZERO_BITS;
+            SET_CURRENT_CACHED_VALUES(1);
+            stack_pointer += -1;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            break;
+        }
+
+        case _CALL_PY_LIST_5_r01: {
+            CHECK_CURRENT_CACHED_VALUES(0);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            _PyStackRef *args;
+            _PyStackRef self_or_null;
+            _PyStackRef callable;
+            _PyStackRef res;
+            oparg = 5;
+            assert(oparg == CURRENT_OPARG());
+            args = &stack_pointer[-(oparg % 5)];
+            self_or_null = stack_pointer[-1 - (oparg % 5)];
+            callable = stack_pointer[-2 - (oparg % 5)];
+            PyObject *source = (PyObject *)CURRENT_OPERAND0_64();
+            PyObject *config = (PyObject *)CURRENT_OPERAND1_64();
+            current_executor->region_call_entries++;
+            PyFunctionObject *func = (PyFunctionObject *)PyStackRef_AsPyObjectBorrow(callable);
+            assert(PyFunction_Check(func));
+            PyCodeObject *code = (PyCodeObject *)func->func_code;
+            uint64_t options = (uintptr_t)config;
+            uint64_t descriptor = (uintptr_t)source;
+            int nargs = oparg % 5;
+            int has_self = !PyStackRef_IsNull(self_or_null);
+            int owner_index = descriptor & 7;
+            int index_arg = options & 7;
+            bool direct_length = oparg >= 5;
+            bool valid = _Py_atomic_load_uintptr_relaxed(&tstate->eval_breaker) ==
+            FT_ATOMIC_LOAD_UINTPTR_ACQUIRE(code->_co_instrumentation_version) &&
+            owner_index < nargs + has_self &&
+            (direct_length ? (options & 8) != 0 : index_arg < nargs + has_self);
+            PyObject *item = NULL;
+            Py_ssize_t size = 0;
+            if (valid && (options & 8)) {
+                valid = func->func_builtins == tstate->interp->builtins;
+                uint32_t version = options >> 24;
+                if (version) {
+                    PyDictObject *globals = (PyDictObject *)func->func_globals;
+                    valid = valid && PyDict_CheckExact(globals) &&
+                    globals->ma_keys->dk_version == version;
+                }
+            }
+            if (valid) {
+                _PyStackRef owner = has_self && owner_index == 0
+                ? self_or_null : args[owner_index - has_self];
+                PyObject *list = _PyRegion_CallAttribute(owner, descriptor);
+                valid = list != NULL && PyList_CheckExact(list);
+                if (valid && direct_length) {
+                    size = PyList_GET_SIZE(list);
+                }
+                else if (valid) {
+                    _PyStackRef sub = has_self && index_arg == 0
+                    ? self_or_null : args[index_arg - has_self];
+                    PyObject *index_o = PyStackRef_AsPyObjectBorrow(sub);
+                    valid = PyLong_CheckExact(index_o) &&
+                    _PyLong_IsCompact((PyLongObject *)index_o);
+                    if (valid) {
+                        Py_ssize_t index = _PyLong_CompactValue((PyLongObject *)index_o);
+                        if (index < 0) {
+                            index += PyList_GET_SIZE(list);
+                        }
+                        valid = (size_t)index < (size_t)PyList_GET_SIZE(list);
+                        if (valid) {
+                            item = PyList_GET_ITEM(list, index);
+                            if (options & 8) {
+                                valid = _PyRegion_Length(PyStackRef_FromPyObjectBorrow(item), &size);
+                            }
+                        }
+                    }
+                }
+            }
+            if (!valid) {
+                current_executor->region_call_guard_exits++;
+                if (true) {
+                    UOP_STAT_INC(uopcode, miss);
+                    SET_CURRENT_CACHED_VALUES(0);
+                    JUMP_TO_JUMP_TARGET();
+                }
+            }
+            Py_INCREF(code);
+            if (options & 8) {
+                Py_ssize_t right = (options >> 8) & UINT16_MAX;
+                res = (COMPARISON_BIT(size, right) & (options >> 4))
+                ? PyStackRef_True : PyStackRef_False;
+            }
+            else {
+                res = PyStackRef_FromPyObjectNew(item);
+            }
+            frame->return_offset = options >> 56;
+            current_executor->region_call_list_entries++;
+            _PyStackRef cleanup[6];
+            cleanup[0] = callable;
+            cleanup[1] = self_or_null;
+            for (int i = 0; i < nargs; i++) {
+                cleanup[i + 2] = args[i];
+            }
+            for (int i = nargs + 1; i >= 0; i--) {
+                stack_pointer[-2 - (oparg % 5)] = res;
+                stack_pointer += -1 - (oparg % 5);
+                ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                _PyFrame_SetStackPointer(frame, stack_pointer);
+                _PyFrame_StackPointerValidate(frame);
+                PyStackRef_XCLOSE(cleanup[i]);
+                _PyFrame_StackPointerInvalidate(frame);
+                stack_pointer += 1 + (oparg % 5);
+            }
+            stack_pointer[-2 - (oparg % 5)] = res;
+            stack_pointer += -1 - (oparg % 5);
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            _PyFrame_SetStackPointer(frame, stack_pointer);
+            _PyFrame_StackPointerValidate(frame);
+            Py_DECREF(code);
+            _PyFrame_StackPointerInvalidate(frame);
+            _tos_cache0 = res;
+            _tos_cache1 = PyStackRef_ZERO_BITS;
+            _tos_cache2 = PyStackRef_ZERO_BITS;
+            SET_CURRENT_CACHED_VALUES(1);
+            stack_pointer += -1;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            break;
+        }
+
+        case _CALL_PY_LIST_6_r01: {
+            CHECK_CURRENT_CACHED_VALUES(0);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            _PyStackRef *args;
+            _PyStackRef self_or_null;
+            _PyStackRef callable;
+            _PyStackRef res;
+            oparg = 6;
+            assert(oparg == CURRENT_OPARG());
+            args = &stack_pointer[-(oparg % 5)];
+            self_or_null = stack_pointer[-1 - (oparg % 5)];
+            callable = stack_pointer[-2 - (oparg % 5)];
+            PyObject *source = (PyObject *)CURRENT_OPERAND0_64();
+            PyObject *config = (PyObject *)CURRENT_OPERAND1_64();
+            current_executor->region_call_entries++;
+            PyFunctionObject *func = (PyFunctionObject *)PyStackRef_AsPyObjectBorrow(callable);
+            assert(PyFunction_Check(func));
+            PyCodeObject *code = (PyCodeObject *)func->func_code;
+            uint64_t options = (uintptr_t)config;
+            uint64_t descriptor = (uintptr_t)source;
+            int nargs = oparg % 5;
+            int has_self = !PyStackRef_IsNull(self_or_null);
+            int owner_index = descriptor & 7;
+            int index_arg = options & 7;
+            bool direct_length = oparg >= 5;
+            bool valid = _Py_atomic_load_uintptr_relaxed(&tstate->eval_breaker) ==
+            FT_ATOMIC_LOAD_UINTPTR_ACQUIRE(code->_co_instrumentation_version) &&
+            owner_index < nargs + has_self &&
+            (direct_length ? (options & 8) != 0 : index_arg < nargs + has_self);
+            PyObject *item = NULL;
+            Py_ssize_t size = 0;
+            if (valid && (options & 8)) {
+                valid = func->func_builtins == tstate->interp->builtins;
+                uint32_t version = options >> 24;
+                if (version) {
+                    PyDictObject *globals = (PyDictObject *)func->func_globals;
+                    valid = valid && PyDict_CheckExact(globals) &&
+                    globals->ma_keys->dk_version == version;
+                }
+            }
+            if (valid) {
+                _PyStackRef owner = has_self && owner_index == 0
+                ? self_or_null : args[owner_index - has_self];
+                PyObject *list = _PyRegion_CallAttribute(owner, descriptor);
+                valid = list != NULL && PyList_CheckExact(list);
+                if (valid && direct_length) {
+                    size = PyList_GET_SIZE(list);
+                }
+                else if (valid) {
+                    _PyStackRef sub = has_self && index_arg == 0
+                    ? self_or_null : args[index_arg - has_self];
+                    PyObject *index_o = PyStackRef_AsPyObjectBorrow(sub);
+                    valid = PyLong_CheckExact(index_o) &&
+                    _PyLong_IsCompact((PyLongObject *)index_o);
+                    if (valid) {
+                        Py_ssize_t index = _PyLong_CompactValue((PyLongObject *)index_o);
+                        if (index < 0) {
+                            index += PyList_GET_SIZE(list);
+                        }
+                        valid = (size_t)index < (size_t)PyList_GET_SIZE(list);
+                        if (valid) {
+                            item = PyList_GET_ITEM(list, index);
+                            if (options & 8) {
+                                valid = _PyRegion_Length(PyStackRef_FromPyObjectBorrow(item), &size);
+                            }
+                        }
+                    }
+                }
+            }
+            if (!valid) {
+                current_executor->region_call_guard_exits++;
+                if (true) {
+                    UOP_STAT_INC(uopcode, miss);
+                    SET_CURRENT_CACHED_VALUES(0);
+                    JUMP_TO_JUMP_TARGET();
+                }
+            }
+            Py_INCREF(code);
+            if (options & 8) {
+                Py_ssize_t right = (options >> 8) & UINT16_MAX;
+                res = (COMPARISON_BIT(size, right) & (options >> 4))
+                ? PyStackRef_True : PyStackRef_False;
+            }
+            else {
+                res = PyStackRef_FromPyObjectNew(item);
+            }
+            frame->return_offset = options >> 56;
+            current_executor->region_call_list_entries++;
+            _PyStackRef cleanup[6];
+            cleanup[0] = callable;
+            cleanup[1] = self_or_null;
+            for (int i = 0; i < nargs; i++) {
+                cleanup[i + 2] = args[i];
+            }
+            for (int i = nargs + 1; i >= 0; i--) {
+                stack_pointer[-2 - (oparg % 5)] = res;
+                stack_pointer += -1 - (oparg % 5);
+                ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                _PyFrame_SetStackPointer(frame, stack_pointer);
+                _PyFrame_StackPointerValidate(frame);
+                PyStackRef_XCLOSE(cleanup[i]);
+                _PyFrame_StackPointerInvalidate(frame);
+                stack_pointer += 1 + (oparg % 5);
+            }
+            stack_pointer[-2 - (oparg % 5)] = res;
+            stack_pointer += -1 - (oparg % 5);
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            _PyFrame_SetStackPointer(frame, stack_pointer);
+            _PyFrame_StackPointerValidate(frame);
+            Py_DECREF(code);
+            _PyFrame_StackPointerInvalidate(frame);
+            _tos_cache0 = res;
+            _tos_cache1 = PyStackRef_ZERO_BITS;
+            _tos_cache2 = PyStackRef_ZERO_BITS;
+            SET_CURRENT_CACHED_VALUES(1);
+            stack_pointer += -1;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            break;
+        }
+
+        case _CALL_PY_LIST_7_r01: {
+            CHECK_CURRENT_CACHED_VALUES(0);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            _PyStackRef *args;
+            _PyStackRef self_or_null;
+            _PyStackRef callable;
+            _PyStackRef res;
+            oparg = 7;
+            assert(oparg == CURRENT_OPARG());
+            args = &stack_pointer[-(oparg % 5)];
+            self_or_null = stack_pointer[-1 - (oparg % 5)];
+            callable = stack_pointer[-2 - (oparg % 5)];
+            PyObject *source = (PyObject *)CURRENT_OPERAND0_64();
+            PyObject *config = (PyObject *)CURRENT_OPERAND1_64();
+            current_executor->region_call_entries++;
+            PyFunctionObject *func = (PyFunctionObject *)PyStackRef_AsPyObjectBorrow(callable);
+            assert(PyFunction_Check(func));
+            PyCodeObject *code = (PyCodeObject *)func->func_code;
+            uint64_t options = (uintptr_t)config;
+            uint64_t descriptor = (uintptr_t)source;
+            int nargs = oparg % 5;
+            int has_self = !PyStackRef_IsNull(self_or_null);
+            int owner_index = descriptor & 7;
+            int index_arg = options & 7;
+            bool direct_length = oparg >= 5;
+            bool valid = _Py_atomic_load_uintptr_relaxed(&tstate->eval_breaker) ==
+            FT_ATOMIC_LOAD_UINTPTR_ACQUIRE(code->_co_instrumentation_version) &&
+            owner_index < nargs + has_self &&
+            (direct_length ? (options & 8) != 0 : index_arg < nargs + has_self);
+            PyObject *item = NULL;
+            Py_ssize_t size = 0;
+            if (valid && (options & 8)) {
+                valid = func->func_builtins == tstate->interp->builtins;
+                uint32_t version = options >> 24;
+                if (version) {
+                    PyDictObject *globals = (PyDictObject *)func->func_globals;
+                    valid = valid && PyDict_CheckExact(globals) &&
+                    globals->ma_keys->dk_version == version;
+                }
+            }
+            if (valid) {
+                _PyStackRef owner = has_self && owner_index == 0
+                ? self_or_null : args[owner_index - has_self];
+                PyObject *list = _PyRegion_CallAttribute(owner, descriptor);
+                valid = list != NULL && PyList_CheckExact(list);
+                if (valid && direct_length) {
+                    size = PyList_GET_SIZE(list);
+                }
+                else if (valid) {
+                    _PyStackRef sub = has_self && index_arg == 0
+                    ? self_or_null : args[index_arg - has_self];
+                    PyObject *index_o = PyStackRef_AsPyObjectBorrow(sub);
+                    valid = PyLong_CheckExact(index_o) &&
+                    _PyLong_IsCompact((PyLongObject *)index_o);
+                    if (valid) {
+                        Py_ssize_t index = _PyLong_CompactValue((PyLongObject *)index_o);
+                        if (index < 0) {
+                            index += PyList_GET_SIZE(list);
+                        }
+                        valid = (size_t)index < (size_t)PyList_GET_SIZE(list);
+                        if (valid) {
+                            item = PyList_GET_ITEM(list, index);
+                            if (options & 8) {
+                                valid = _PyRegion_Length(PyStackRef_FromPyObjectBorrow(item), &size);
+                            }
+                        }
+                    }
+                }
+            }
+            if (!valid) {
+                current_executor->region_call_guard_exits++;
+                if (true) {
+                    UOP_STAT_INC(uopcode, miss);
+                    SET_CURRENT_CACHED_VALUES(0);
+                    JUMP_TO_JUMP_TARGET();
+                }
+            }
+            Py_INCREF(code);
+            if (options & 8) {
+                Py_ssize_t right = (options >> 8) & UINT16_MAX;
+                res = (COMPARISON_BIT(size, right) & (options >> 4))
+                ? PyStackRef_True : PyStackRef_False;
+            }
+            else {
+                res = PyStackRef_FromPyObjectNew(item);
+            }
+            frame->return_offset = options >> 56;
+            current_executor->region_call_list_entries++;
+            _PyStackRef cleanup[6];
+            cleanup[0] = callable;
+            cleanup[1] = self_or_null;
+            for (int i = 0; i < nargs; i++) {
+                cleanup[i + 2] = args[i];
+            }
+            for (int i = nargs + 1; i >= 0; i--) {
+                stack_pointer[-2 - (oparg % 5)] = res;
+                stack_pointer += -1 - (oparg % 5);
+                ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                _PyFrame_SetStackPointer(frame, stack_pointer);
+                _PyFrame_StackPointerValidate(frame);
+                PyStackRef_XCLOSE(cleanup[i]);
+                _PyFrame_StackPointerInvalidate(frame);
+                stack_pointer += 1 + (oparg % 5);
+            }
+            stack_pointer[-2 - (oparg % 5)] = res;
+            stack_pointer += -1 - (oparg % 5);
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            _PyFrame_SetStackPointer(frame, stack_pointer);
+            _PyFrame_StackPointerValidate(frame);
+            Py_DECREF(code);
+            _PyFrame_StackPointerInvalidate(frame);
+            _tos_cache0 = res;
+            _tos_cache1 = PyStackRef_ZERO_BITS;
+            _tos_cache2 = PyStackRef_ZERO_BITS;
+            SET_CURRENT_CACHED_VALUES(1);
+            stack_pointer += -1;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            break;
+        }
+
+        case _CALL_PY_LIST_8_r01: {
+            CHECK_CURRENT_CACHED_VALUES(0);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            _PyStackRef *args;
+            _PyStackRef self_or_null;
+            _PyStackRef callable;
+            _PyStackRef res;
+            oparg = 8;
+            assert(oparg == CURRENT_OPARG());
+            args = &stack_pointer[-(oparg % 5)];
+            self_or_null = stack_pointer[-1 - (oparg % 5)];
+            callable = stack_pointer[-2 - (oparg % 5)];
+            PyObject *source = (PyObject *)CURRENT_OPERAND0_64();
+            PyObject *config = (PyObject *)CURRENT_OPERAND1_64();
+            current_executor->region_call_entries++;
+            PyFunctionObject *func = (PyFunctionObject *)PyStackRef_AsPyObjectBorrow(callable);
+            assert(PyFunction_Check(func));
+            PyCodeObject *code = (PyCodeObject *)func->func_code;
+            uint64_t options = (uintptr_t)config;
+            uint64_t descriptor = (uintptr_t)source;
+            int nargs = oparg % 5;
+            int has_self = !PyStackRef_IsNull(self_or_null);
+            int owner_index = descriptor & 7;
+            int index_arg = options & 7;
+            bool direct_length = oparg >= 5;
+            bool valid = _Py_atomic_load_uintptr_relaxed(&tstate->eval_breaker) ==
+            FT_ATOMIC_LOAD_UINTPTR_ACQUIRE(code->_co_instrumentation_version) &&
+            owner_index < nargs + has_self &&
+            (direct_length ? (options & 8) != 0 : index_arg < nargs + has_self);
+            PyObject *item = NULL;
+            Py_ssize_t size = 0;
+            if (valid && (options & 8)) {
+                valid = func->func_builtins == tstate->interp->builtins;
+                uint32_t version = options >> 24;
+                if (version) {
+                    PyDictObject *globals = (PyDictObject *)func->func_globals;
+                    valid = valid && PyDict_CheckExact(globals) &&
+                    globals->ma_keys->dk_version == version;
+                }
+            }
+            if (valid) {
+                _PyStackRef owner = has_self && owner_index == 0
+                ? self_or_null : args[owner_index - has_self];
+                PyObject *list = _PyRegion_CallAttribute(owner, descriptor);
+                valid = list != NULL && PyList_CheckExact(list);
+                if (valid && direct_length) {
+                    size = PyList_GET_SIZE(list);
+                }
+                else if (valid) {
+                    _PyStackRef sub = has_self && index_arg == 0
+                    ? self_or_null : args[index_arg - has_self];
+                    PyObject *index_o = PyStackRef_AsPyObjectBorrow(sub);
+                    valid = PyLong_CheckExact(index_o) &&
+                    _PyLong_IsCompact((PyLongObject *)index_o);
+                    if (valid) {
+                        Py_ssize_t index = _PyLong_CompactValue((PyLongObject *)index_o);
+                        if (index < 0) {
+                            index += PyList_GET_SIZE(list);
+                        }
+                        valid = (size_t)index < (size_t)PyList_GET_SIZE(list);
+                        if (valid) {
+                            item = PyList_GET_ITEM(list, index);
+                            if (options & 8) {
+                                valid = _PyRegion_Length(PyStackRef_FromPyObjectBorrow(item), &size);
+                            }
+                        }
+                    }
+                }
+            }
+            if (!valid) {
+                current_executor->region_call_guard_exits++;
+                if (true) {
+                    UOP_STAT_INC(uopcode, miss);
+                    SET_CURRENT_CACHED_VALUES(0);
+                    JUMP_TO_JUMP_TARGET();
+                }
+            }
+            Py_INCREF(code);
+            if (options & 8) {
+                Py_ssize_t right = (options >> 8) & UINT16_MAX;
+                res = (COMPARISON_BIT(size, right) & (options >> 4))
+                ? PyStackRef_True : PyStackRef_False;
+            }
+            else {
+                res = PyStackRef_FromPyObjectNew(item);
+            }
+            frame->return_offset = options >> 56;
+            current_executor->region_call_list_entries++;
+            _PyStackRef cleanup[6];
+            cleanup[0] = callable;
+            cleanup[1] = self_or_null;
+            for (int i = 0; i < nargs; i++) {
+                cleanup[i + 2] = args[i];
+            }
+            for (int i = nargs + 1; i >= 0; i--) {
+                stack_pointer[-2 - (oparg % 5)] = res;
+                stack_pointer += -1 - (oparg % 5);
+                ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                _PyFrame_SetStackPointer(frame, stack_pointer);
+                _PyFrame_StackPointerValidate(frame);
+                PyStackRef_XCLOSE(cleanup[i]);
+                _PyFrame_StackPointerInvalidate(frame);
+                stack_pointer += 1 + (oparg % 5);
+            }
+            stack_pointer[-2 - (oparg % 5)] = res;
+            stack_pointer += -1 - (oparg % 5);
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            _PyFrame_SetStackPointer(frame, stack_pointer);
+            _PyFrame_StackPointerValidate(frame);
+            Py_DECREF(code);
+            _PyFrame_StackPointerInvalidate(frame);
+            _tos_cache0 = res;
+            _tos_cache1 = PyStackRef_ZERO_BITS;
+            _tos_cache2 = PyStackRef_ZERO_BITS;
+            SET_CURRENT_CACHED_VALUES(1);
+            stack_pointer += -1;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            break;
+        }
+
+        case _CALL_PY_LIST_9_r01: {
+            CHECK_CURRENT_CACHED_VALUES(0);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            _PyStackRef *args;
+            _PyStackRef self_or_null;
+            _PyStackRef callable;
+            _PyStackRef res;
+            oparg = 9;
+            assert(oparg == CURRENT_OPARG());
+            args = &stack_pointer[-(oparg % 5)];
+            self_or_null = stack_pointer[-1 - (oparg % 5)];
+            callable = stack_pointer[-2 - (oparg % 5)];
+            PyObject *source = (PyObject *)CURRENT_OPERAND0_64();
+            PyObject *config = (PyObject *)CURRENT_OPERAND1_64();
+            current_executor->region_call_entries++;
+            PyFunctionObject *func = (PyFunctionObject *)PyStackRef_AsPyObjectBorrow(callable);
+            assert(PyFunction_Check(func));
+            PyCodeObject *code = (PyCodeObject *)func->func_code;
+            uint64_t options = (uintptr_t)config;
+            uint64_t descriptor = (uintptr_t)source;
+            int nargs = oparg % 5;
+            int has_self = !PyStackRef_IsNull(self_or_null);
+            int owner_index = descriptor & 7;
+            int index_arg = options & 7;
+            bool direct_length = oparg >= 5;
+            bool valid = _Py_atomic_load_uintptr_relaxed(&tstate->eval_breaker) ==
+            FT_ATOMIC_LOAD_UINTPTR_ACQUIRE(code->_co_instrumentation_version) &&
+            owner_index < nargs + has_self &&
+            (direct_length ? (options & 8) != 0 : index_arg < nargs + has_self);
+            PyObject *item = NULL;
+            Py_ssize_t size = 0;
+            if (valid && (options & 8)) {
+                valid = func->func_builtins == tstate->interp->builtins;
+                uint32_t version = options >> 24;
+                if (version) {
+                    PyDictObject *globals = (PyDictObject *)func->func_globals;
+                    valid = valid && PyDict_CheckExact(globals) &&
+                    globals->ma_keys->dk_version == version;
+                }
+            }
+            if (valid) {
+                _PyStackRef owner = has_self && owner_index == 0
+                ? self_or_null : args[owner_index - has_self];
+                PyObject *list = _PyRegion_CallAttribute(owner, descriptor);
+                valid = list != NULL && PyList_CheckExact(list);
+                if (valid && direct_length) {
+                    size = PyList_GET_SIZE(list);
+                }
+                else if (valid) {
+                    _PyStackRef sub = has_self && index_arg == 0
+                    ? self_or_null : args[index_arg - has_self];
+                    PyObject *index_o = PyStackRef_AsPyObjectBorrow(sub);
+                    valid = PyLong_CheckExact(index_o) &&
+                    _PyLong_IsCompact((PyLongObject *)index_o);
+                    if (valid) {
+                        Py_ssize_t index = _PyLong_CompactValue((PyLongObject *)index_o);
+                        if (index < 0) {
+                            index += PyList_GET_SIZE(list);
+                        }
+                        valid = (size_t)index < (size_t)PyList_GET_SIZE(list);
+                        if (valid) {
+                            item = PyList_GET_ITEM(list, index);
+                            if (options & 8) {
+                                valid = _PyRegion_Length(PyStackRef_FromPyObjectBorrow(item), &size);
+                            }
+                        }
+                    }
+                }
+            }
+            if (!valid) {
+                current_executor->region_call_guard_exits++;
+                if (true) {
+                    UOP_STAT_INC(uopcode, miss);
+                    SET_CURRENT_CACHED_VALUES(0);
+                    JUMP_TO_JUMP_TARGET();
+                }
+            }
+            Py_INCREF(code);
+            if (options & 8) {
+                Py_ssize_t right = (options >> 8) & UINT16_MAX;
+                res = (COMPARISON_BIT(size, right) & (options >> 4))
+                ? PyStackRef_True : PyStackRef_False;
+            }
+            else {
+                res = PyStackRef_FromPyObjectNew(item);
+            }
+            frame->return_offset = options >> 56;
+            current_executor->region_call_list_entries++;
+            _PyStackRef cleanup[6];
+            cleanup[0] = callable;
+            cleanup[1] = self_or_null;
+            for (int i = 0; i < nargs; i++) {
+                cleanup[i + 2] = args[i];
+            }
+            for (int i = nargs + 1; i >= 0; i--) {
+                stack_pointer[-2 - (oparg % 5)] = res;
+                stack_pointer += -1 - (oparg % 5);
+                ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                _PyFrame_SetStackPointer(frame, stack_pointer);
+                _PyFrame_StackPointerValidate(frame);
+                PyStackRef_XCLOSE(cleanup[i]);
+                _PyFrame_StackPointerInvalidate(frame);
+                stack_pointer += 1 + (oparg % 5);
+            }
+            stack_pointer[-2 - (oparg % 5)] = res;
+            stack_pointer += -1 - (oparg % 5);
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
             _PyFrame_SetStackPointer(frame, stack_pointer);
             _PyFrame_StackPointerValidate(frame);
@@ -24399,9 +25049,9 @@
             _PyStackRef callable;
             _PyStackRef res;
             oparg = CURRENT_OPARG();
-            args = &stack_pointer[-oparg];
-            self_or_null = stack_pointer[-1 - oparg];
-            callable = stack_pointer[-2 - oparg];
+            args = &stack_pointer[-(oparg % 5)];
+            self_or_null = stack_pointer[-1 - (oparg % 5)];
+            callable = stack_pointer[-2 - (oparg % 5)];
             PyObject *source = (PyObject *)CURRENT_OPERAND0_64();
             PyObject *config = (PyObject *)CURRENT_OPERAND1_64();
             current_executor->region_call_entries++;
@@ -24410,12 +25060,15 @@
             PyCodeObject *code = (PyCodeObject *)func->func_code;
             uint64_t options = (uintptr_t)config;
             uint64_t descriptor = (uintptr_t)source;
+            int nargs = oparg % 5;
             int has_self = !PyStackRef_IsNull(self_or_null);
             int owner_index = descriptor & 7;
             int index_arg = options & 7;
+            bool direct_length = oparg >= 5;
             bool valid = _Py_atomic_load_uintptr_relaxed(&tstate->eval_breaker) ==
             FT_ATOMIC_LOAD_UINTPTR_ACQUIRE(code->_co_instrumentation_version) &&
-            owner_index < oparg + has_self && index_arg < oparg + has_self;
+            owner_index < nargs + has_self &&
+            (direct_length ? (options & 8) != 0 : index_arg < nargs + has_self);
             PyObject *item = NULL;
             Py_ssize_t size = 0;
             if (valid && (options & 8)) {
@@ -24431,21 +25084,27 @@
                 _PyStackRef owner = has_self && owner_index == 0
                 ? self_or_null : args[owner_index - has_self];
                 PyObject *list = _PyRegion_CallAttribute(owner, descriptor);
-                _PyStackRef sub = has_self && index_arg == 0
-                ? self_or_null : args[index_arg - has_self];
-                PyObject *index_o = PyStackRef_AsPyObjectBorrow(sub);
-                valid = list != NULL && PyList_CheckExact(list) &&
-                PyLong_CheckExact(index_o) && _PyLong_IsCompact((PyLongObject *)index_o);
-                if (valid) {
-                    Py_ssize_t index = _PyLong_CompactValue((PyLongObject *)index_o);
-                    if (index < 0) {
-                        index += PyList_GET_SIZE(list);
-                    }
-                    valid = (size_t)index < (size_t)PyList_GET_SIZE(list);
+                valid = list != NULL && PyList_CheckExact(list);
+                if (valid && direct_length) {
+                    size = PyList_GET_SIZE(list);
+                }
+                else if (valid) {
+                    _PyStackRef sub = has_self && index_arg == 0
+                    ? self_or_null : args[index_arg - has_self];
+                    PyObject *index_o = PyStackRef_AsPyObjectBorrow(sub);
+                    valid = PyLong_CheckExact(index_o) &&
+                    _PyLong_IsCompact((PyLongObject *)index_o);
                     if (valid) {
-                        item = PyList_GET_ITEM(list, index);
-                        if (options & 8) {
-                            valid = _PyRegion_Length(PyStackRef_FromPyObjectBorrow(item), &size);
+                        Py_ssize_t index = _PyLong_CompactValue((PyLongObject *)index_o);
+                        if (index < 0) {
+                            index += PyList_GET_SIZE(list);
+                        }
+                        valid = (size_t)index < (size_t)PyList_GET_SIZE(list);
+                        if (valid) {
+                            item = PyList_GET_ITEM(list, index);
+                            if (options & 8) {
+                                valid = _PyRegion_Length(PyStackRef_FromPyObjectBorrow(item), &size);
+                            }
                         }
                     }
                 }
@@ -24472,21 +25131,21 @@
             _PyStackRef cleanup[6];
             cleanup[0] = callable;
             cleanup[1] = self_or_null;
-            for (int i = 0; i < oparg; i++) {
+            for (int i = 0; i < nargs; i++) {
                 cleanup[i + 2] = args[i];
             }
-            for (int i = oparg + 1; i >= 0; i--) {
-                stack_pointer[-2 - oparg] = res;
-                stack_pointer += -1 - oparg;
+            for (int i = nargs + 1; i >= 0; i--) {
+                stack_pointer[-2 - (oparg % 5)] = res;
+                stack_pointer += -1 - (oparg % 5);
                 ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
                 _PyFrame_SetStackPointer(frame, stack_pointer);
                 _PyFrame_StackPointerValidate(frame);
                 PyStackRef_XCLOSE(cleanup[i]);
                 _PyFrame_StackPointerInvalidate(frame);
-                stack_pointer += 1 + oparg;
+                stack_pointer += 1 + (oparg % 5);
             }
-            stack_pointer[-2 - oparg] = res;
-            stack_pointer += -1 - oparg;
+            stack_pointer[-2 - (oparg % 5)] = res;
+            stack_pointer += -1 - (oparg % 5);
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
             _PyFrame_SetStackPointer(frame, stack_pointer);
             _PyFrame_StackPointerValidate(frame);
