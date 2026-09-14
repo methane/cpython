@@ -214,6 +214,13 @@ or use distinct `--tempdir` directories. Execution tools can use separate PID
 namespaces with the same worker PID while sharing the filesystem; the default
 worker directory can then collide and be removed by another test process.
 
+For call-region fixtures that must specialize, create functions through `def`
+or `exec` so `MAKE_FUNCTION` assigns a usable function version. Functions
+created directly with `types.FunctionType` currently retain an unset version
+and do not specialize CALL. To test a callee's RESUME countdown, call it from
+C, for example through `map`: a hot Python caller can inline the callee and
+avoid executing its Tier 1 RESUME counter.
+
 Run focused checks from each relevant build, including:
 
 ```sh

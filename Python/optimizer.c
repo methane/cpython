@@ -1418,7 +1418,14 @@ _PyJit_FinalizeTracing(PyThreadState *tstate, int err)
             tracer->initial_state.jump_backward_instr[1].counter = restart_backoff_counter(counter);
         }
         else {
-            if (tracer->initial_state.jump_backward_instr[0].op.code == JUMP_BACKWARD_JIT) {
+            /* Compilation may have replaced the triggering instruction with
+             * ENTER_EXECUTOR. Recover its original opcode, including when an
+             * EXTENDED_ARG prefix was the executor insertion point. */
+            PyCodeObject *code = tracer->initial_state.code;
+            int offset = (int)(tracer->initial_state.jump_backward_instr - _PyCode_CODE(code));
+            int opcode = _Py_GetBaseCodeUnit(code, offset).op.code;
+            assert(opcode == JUMP_BACKWARD || opcode == RESUME);
+            if (opcode == JUMP_BACKWARD) {
                 tracer->initial_state.jump_backward_instr[1].counter = initial_jump_backoff_counter(&tstate->interp->opt_config);
             }
             else {

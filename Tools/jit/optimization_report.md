@@ -744,3 +744,26 @@ B-tree's observed counters were unchanged, with 20 reachable executors and
 131,072 native bytes. The adopted binary SHA256 is
 `c94079b27ee5b3851c19346d09545fb4064789ff1adcf3521733562831828297`;
 `search-comparison-*` holds its local evidence. The 0.5 objective remains open.
+
+
+The next checkpoint fixes the countdown reset after successful root tracing.
+Executor insertion can replace a short loop's `JUMP_BACKWARD_JIT` with
+`ENTER_EXECUTOR` before finalization examines it. Testing the patched opcode
+therefore selected the RESUME countdown (8190) instead of the loop countdown
+(4000). `_Py_GetBaseCodeUnit()` recovers the original opcode. Configured
+thresholds are unchanged. A regression test reproduces the failure to retrace
+an invalidated short loop at its intended threshold; extended-argument loops
+and C-driven function-entry calls provide controls. Both builds passed the
+1,268 tests in seven related files (4 debug and 15 native skips).
+
+This is retained as a correctness fix, with no speedup claim. A matched
+three-block six-workload comparison changed the arithmetic mean relative to
+main from 0.6686175 to 0.6691246. B-tree and Hexiom regressed in all three
+blocks; DeltaBlue improved there but had mixed directions in its separate
+comparison (geometric ratio 1.007766). All 540 suite checksums matched and no
+samples were excluded. The before/after ten-value DeltaBlue coverage probes
+observed the same counters, but cannot capture executors both created and
+destroyed within a measured call. Native stencils were unchanged. The binary
+SHA256 is `0e5b3a081be0820afefd878e56a5dc5c8639832c132bf12f06db44105c17571e`;
+`retry-counter-*` records the local evidence. The arithmetic-mean goal remains
+unmet.

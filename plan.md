@@ -2,8 +2,8 @@
 
 **現在の目標（2026-09-14）**：全6ベンチマークのmain比の**算術平均0.5以下**。
 開始時の480値は **0.7944918**。最新の比較分離screen（3 blocks、3 builds、540値）は
-**0.6705774**（対応する直前版0.6743540）で、目標は未達。
-Btreeの直前検索版比は **0.9792806**、main比は **0.5611035**。
+**0.6691246**（対応する直前版0.6686175）で、目標は未達。
+最新counter修正に速度改善の根拠はなく、再生成動作の不具合修正として保持する。
 各blockの各scriptで10値の平均時間からcandidate/main比を求め、blocksと6 scriptを
 等重みの算術平均で集計する。途中screenは3 blocks、最終goal判定は4 blocksとする。
 入力・CLI・warmups=3・values=10・loops=1、固定main、PGO/LTOなしの比較条件を維持する。
@@ -2377,3 +2377,43 @@ build-jit/python -m test test_capi.test_opt_regions test_capi.test_opt test_tier
   置換された命令を直接JUMP_BACKWARD_JITと比較していることが原因候補。まず独立した
   回帰testと固定mainで確認し、無効化後の再試行が本来の閾値で行われるよう修正を検討する。
   まだこのcounterについてproduction Cは変更していない。
+
+
+### 無効化後のloop再試行counter（再現・回帰test追加）
+
+- 比較分離の採用checkpointは `8cf5d02d4e6`。測定sourceのC/H一致を別JSONへ記録した。
+- 固定mainと現在版の両方で同じcounter問題を再現。短いloop（jump arg13）は成功後8190、
+  期待4000。無効化後にTIER2_THRESHOLD回反復しても新executorができなかった。
+  EXTENDED_ARG付きloop（arg335）は4000で再形成成功、関数RESUMEは期待どおり8190。
+  `check-retry-counter.py`と`retry-counter-{main,candidate-before}.json`に保存した。
+- loopの短/長両方でcounterと無効化後の再形成を検査するtest、およびCのmapから呼び出す
+  RESUMEの対照testを追加した。これから修正前の失敗を確認し、元opcodeを参照して
+  countdownの種類を選ぶ修正を行う。JIT_STRESSや閾値のチューニングは行わない。
+
+- 修正前の回帰testは短いloopだけ8190 != 4000で失敗し、長いjumpとRESUMEの対照は成功。
+  FinalizeTracingで_Py_GetBaseCodeUnitから元のopcodeを取得し、JUMP_BACKWARDならloopの
+  設定値、RESUMEなら入口の設定値へ戻すよう変更した。閾値自体は一切変更していない。
+- 両buildの修正後focused 2 testsは成功。短/長loopで無効化後に本来の反復数で新executorが
+  形成されることも確認した。関連7 files（optimizer/regions/tier3/monitoring/trace/profile/
+  call）をdebug/nativeで検証中。calleeのRESUME検証とMAKE_FUNCTIONによるcall fixtureの
+  注意を、再利用可能な手順としてAGENTS.mdへ補足した。
+
+- 関連7 filesはdebug/nativeとも1,268 tests成功（4/15 skips）。Ruff F401/F811と
+  diff checkも成功。native stencilsは比較分離版とbyte一致、binaryは
+  `0e5b3a081be0820afefd878e56a5dc5c8639832c132bf12f06db44105c17571e`。
+- DeltaBlueの3 blocks・90値は前版比1.026249/0.996111/1.001195、幾何平均1.007766。
+  10値の別coverage probeは前後とも最初の8値で観測counter0、9/10値のcall_attrが48/99。
+  probeが捕捉できない、一回の呼出し内で生成・破棄されたexecutorの存在は否定できない。
+  counter修正によるcoverage増加やDeltaBlue高速化は確認していない。
+- 全6本・3 blocks・540値は全checksum一致・除外0。main比算術平均は
+  **0.6686175→0.6691246**、after/before平均1.001705。DeltaBlueは今回だけ全block改善
+  (0.998987/0.990873/0.993724)だが単独比較とは揃わない。Btreeは
+  1.023341/1.002112/1.009008、Hexiomは1.000160/1.000333/1.005916と全block悪化した。
+  速度改善としては主張せず、元opcodeによる正しい再試行counterの修正として保持する。
+  `retry-counter-*`に全生データ・build/test/probe・修正前の失敗を保存した。
+- 次はexact listの条件付き削除callを検討する。`if value in owner.cells[index]:
+  owner.cells[index].remove(value); return True; else: return False`の全bytecodeを証明し、
+  cached属性・exact list・compact intに限定して二重検索とcallee frameを省く。
+  unsupported型/descriptor/比較callbackは元CALLへ戻し、mutation前に全guardを終える。
+  単要素のlist slice削除は既存list実装が失敗しない契約を持つため、その経路を再利用し、
+  capacity管理・要素移動を独自実装しない。まず回帰testとnative形成、Hexiom比較で評価する。

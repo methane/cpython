@@ -92,6 +92,47 @@ def count_ops(ex, name):
 @requires_jit_enabled
 class TestExecutorInvalidation(unittest.TestCase):
 
+    def test_loop_retry_after_invalidation(self):
+        for padding in (0, 40):
+            with self.subTest(padding=padding):
+                ns = {}
+                exec("def loop(n):\n    total = 0\n    for i in range(n):\n"
+                     + "        total += i\n" * (padding + 1)
+                     + "    return total\n", ns)
+                loop = ns["loop"]
+                backward = next(inst for inst in dis.get_instructions(loop)
+                                if inst.opname == "JUMP_BACKWARD")
+                self.assertEqual(backward.arg > 255, bool(padding))
+                expected = (padding + 1) * sum(range(TIER2_THRESHOLD))
+                self.assertEqual(loop(TIER2_THRESHOLD), expected)
+                first = get_first_executor(loop)
+                self.assertIsNotNone(first)
+                # The successful trace must reset the loop countdown, even
+                # when ENTER_EXECUTOR replaced JUMP_BACKWARD rather than an
+                # EXTENDED_ARG prefix. The low three bits hold the backoff.
+                counter, = struct.unpack_from(
+                    "=H", loop.__code__._co_code_adaptive, backward.offset + 2)
+                self.assertEqual(counter >> 3, TIER2_THRESHOLD - 2)
+                _testinternalcapi.invalidate_executors(loop.__code__)
+                self.assertFalse(first.is_valid())
+                self.assertEqual(loop(TIER2_THRESHOLD), expected)
+                second = get_first_executor(loop)
+                self.assertIsNotNone(second)
+                self.assertIsNot(second, first)
+                self.assertTrue(second.is_valid())
+
+    def test_resume_counter_after_compilation(self):
+        ns = {}
+        exec("def leaf(value):\n    return value + 1\n", ns)
+        leaf = ns["leaf"]
+        # Call from C so a caller trace cannot inline the function and avoid
+        # executing its RESUME counter.
+        self.assertEqual(list(map(leaf, [1] * TIER2_RESUME_THRESHOLD)),
+                         [2] * TIER2_RESUME_THRESHOLD)
+        self.assertIsNotNone(get_first_executor(leaf))
+        counter, = struct.unpack_from("=H", leaf.__code__._co_code_adaptive, 2)
+        self.assertEqual(counter >> 3, TIER2_RESUME_THRESHOLD - 2)
+
     def test_invalidate_object(self):
         # Generate a new set of functions at each call
         ns = {}
