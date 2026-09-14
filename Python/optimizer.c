@@ -605,7 +605,7 @@ get_region_stats(PyObject *self, PyObject *Py_UNUSED(ignored))
 {
     _PyExecutorObject *executor = _PyExecutorObject_CAST(self);
     return Py_BuildValue(
-        "{s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K}",
+        "{s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K}",
         "bounded_entries", executor->region_bounded_entries,
         "bounded_guard_exits", executor->region_bounded_guard_exits,
         "bounded_boxes", executor->region_bounded_boxes,
@@ -632,6 +632,9 @@ get_region_stats(PyObject *self, PyObject *Py_UNUSED(ignored))
         "contains_fallbacks", executor->region_contains_fallbacks,
         "dict_store_entries", executor->region_dict_store_entries,
         "dict_store_fallbacks", executor->region_dict_store_fallbacks,
+        "class_entries", executor->region_class_entries,
+        "class_guard_exits", executor->region_class_guard_exits,
+        "class_materializations", executor->region_class_materializations,
         "range_entries", executor->region_range_entries,
         "range_iterations", executor->region_range_iterations,
         "range_int32_iterations", executor->region_range_int32_iterations,
@@ -1664,6 +1667,9 @@ allocate_executor(int exit_count, int length)
     res->region_contains_fallbacks = 0;
     res->region_dict_store_entries = 0;
     res->region_dict_store_fallbacks = 0;
+    res->region_class_entries = 0;
+    res->region_class_guard_exits = 0;
+    res->region_class_materializations = 0;
     res->region_range_entries = 0;
     res->region_range_iterations = 0;
     res->region_range_int32_iterations = 0;

@@ -1033,6 +1033,112 @@ eliminate_trivial_frames(_PyUOpInstruction *buffer, int length)
 #endif
 }
 
+/* Match a complete class call whose initializer stores each argument once.
+ * Keep allocation identity, and retain a materialization path for pending work
+ * after allocation. No arbitrary initializer bytecode is executed by the uop. */
+static void
+inline_attribute_initializers(_PyUOpInstruction *buffer, int length)
+{
+#if defined(WITH_DTRACE) || defined(__EMSCRIPTEN__)
+    return;
+#else
+    if (!region_enabled("PYTHON_TIER2_CALL_REGIONS")) {
+        return;
+    }
+    for (int start = 0; start < length; start++) {
+        int nargs = buffer[start].oparg;
+        if (buffer[start].opcode != _ALLOCATE_OBJECT || nargs < 1 || nargs > 4) {
+            continue;
+        }
+        int end = Py_MIN(length, start + 96);
+        int pc = start + 1;
+        uint64_t fields = 0;
+        uint32_t type_version = 0;
+        unsigned int arguments = 0;
+        unsigned int offsets[4];
+#define INIT_NEXT() (pc = trivial_call_skip(buffer, pc, end), \
+                     pc < end ? region_opcode(&buffer[pc]) : 0)
+#define INIT_EXPECT(OP) do { if (INIT_NEXT() != (OP)) goto next_init; pc++; } while (0)
+        if (INIT_NEXT() != _CREATE_INIT_FRAME || buffer[pc].operand0 == 0) {
+            continue;
+        }
+        uint64_t func_version = buffer[pc++].operand0;
+        INIT_EXPECT(_PUSH_FRAME);
+        INIT_EXPECT(_TIER2_RESUME_CHECK);
+        for (int i = 0; i < nargs; i++) {
+            if (INIT_NEXT() != _LOAD_FAST_BORROW ||
+                buffer[pc].oparg < 1 || buffer[pc].oparg > nargs) {
+                goto next_init;
+            }
+            unsigned int arg = buffer[pc++].oparg - 1;
+            if (arguments & (1U << arg)) {
+                goto next_init;
+            }
+            arguments |= 1U << arg;
+            if (INIT_NEXT() != _LOAD_FAST_BORROW || buffer[pc++].oparg != 0) {
+                goto next_init;
+            }
+            INIT_EXPECT(_LOCK_OBJECT);
+            if (INIT_NEXT() == _GUARD_TYPE_VERSION_LOCKED) {
+                uint32_t version = (uint32_t)buffer[pc++].operand0;
+                if (version == 0 || (type_version && type_version != version)) {
+                    goto next_init;
+                }
+                type_version = version;
+            }
+            INIT_EXPECT(_GUARD_DORV_NO_DICT);
+            if (INIT_NEXT() != _STORE_ATTR_INSTANCE_VALUE ||
+                buffer[pc].operand0 > 2040 || (buffer[pc].operand0 & 7)) {
+                goto next_init;
+            }
+            unsigned int offset = (unsigned int)buffer[pc++].operand0 / 8;
+            for (int j = 0; j < i; j++) {
+                if (offset == offsets[j]) {
+                    goto next_init;
+                }
+            }
+            offsets[i] = offset;
+            fields |= (uint64_t)(offset | (arg << 8)) << (10 * i);
+            INIT_EXPECT(_POP_TOP_NOP);
+        }
+        if (type_version == 0 || INIT_NEXT() != _LOAD_CONST_INLINE_BORROW ||
+            buffer[pc++].operand0 != (uintptr_t)Py_None) {
+            continue;
+        }
+        INIT_EXPECT(_RETURN_VALUE);
+        INIT_EXPECT(_EXIT_INIT_CHECK);
+        if (INIT_NEXT() == _MAKE_HEAP_SAFE) {
+            pc++;
+        }
+        bool dynamic_return = INIT_NEXT() == _DEOPT && buffer[pc].target == 1 &&
+            buffer[pc].operand0 == (uintptr_t)(_PyCode_CODE(&_Py_InitCleanup) + 1);
+        if (!dynamic_return) {
+            INIT_EXPECT(_RETURN_VALUE);
+        }
+        buffer[start].opcode = _CALL_CLASS_ATTRIBUTES;
+        buffer[start].operand0 = func_version | ((uint64_t)type_version << 32);
+        buffer[start].operand1 = fields | ((uint64_t)dynamic_return << 63);
+        for (int i = start + 1; i < pc; i++) {
+            if (!(_PyUop_Flags[buffer[i].opcode] & HAS_RECORDS_VALUE_FLAG)) {
+                buffer[i].opcode = _NOP;
+            }
+        }
+        if (dynamic_return) {
+            /* The original trace stops at the cleanup trampoline's RETURN.
+             * The fused call has already returned to its real caller. */
+            buffer[pc].opcode = _DYNAMIC_EXIT;
+            buffer[pc].target = 0;
+            buffer[pc].operand0 = 0;
+        }
+        start = pc - 1;
+next_init:
+        ;
+#undef INIT_EXPECT
+#undef INIT_NEXT
+    }
+#endif
+}
+
 static void
 fuse_list_pair_comparisons(_PyUOpInstruction *buffer, int length)
 {
@@ -1314,6 +1420,7 @@ _Py_uop_analyze_and_optimize(
     assert(length > 0);
 
     eliminate_trivial_frames(output, length);
+    inline_attribute_initializers(output, length);
     fuse_list_pair_comparisons(output, length);
     inline_enumerate_list(output, length);
     inline_enumerate_int_scan(output, length);

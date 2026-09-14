@@ -1460,3 +1460,47 @@ build-jit/python -m test test_capi.test_opt_regions test_capi.test_opt test_tier
   特殊値56ケースを再検証し、全てbit一致した。5つの生成物も再生成してbyte一致を確認。
   差分空白検査と変更したPython testの設定相当のRuff検査（F401/F811）も成功した。
   GitHub投稿・push・PR変更は行っていない。現在値と未完了の目標を保持して次へ進む。
+
+### 単純なconstructorのframe省略（実装・検証中）
+
+- ローカルcheckpoint `e2fe92a4b59`（tree `acb110a08b10de80114cf15f14ca419073fd1c37`）
+  に採用済みの変更を保存した。最新screenの算術平均0.729919を比較基準として保持する。
+- `_CALL_CLASS_ATTRIBUTES`を試作。1〜4個の引数をそれぞれ異なるinline属性へ一度だけ
+  代入しNoneを返すinitializerの全traceを対象に、毎回新しいobjectを確保して直接代入する。
+  型・function version、引数形式、stack容量、instrumentation状態を確認する。
+- allocation後にGCなどのpending workが生じた場合、元と同じinitializer/cleanupの
+  2 framesを作り、属性代入前のinitializer入口へ戻す。単純なobject再利用は行わない。
+  このfallbackが生成器の固定cache出口条件に合わず、条件付きTier 1退出のcache flushを
+  分離した。loop中の引数所有権移動も明示的なlocal経由とし、全5生成物の再生成が成功。
+- 両buildを開始し、identity・属性順序・code変更・allocation失敗の回帰テストを追加中。
+  まだ新uopの動作や性能を検証していないため、採用済みの高速化には数えない。
+- 基本テスト成功後のRaytraceでクラッシュを検出。call regionだけでも再現した。
+  gdbと最適化後traceから、省略した`_CREATE_INIT_FRAME`が設定していたreturn offsetを
+  fast pathが保存していないことを特定。直後のreturn guardが誤ったCALLへ戻っていた。
+  fast pathでもoffsetを設定し、constructor→method→callerの入れ子returnを回帰テスト化。
+- 修正後はdebug関連1,369 tests・13 skips、native関連1,283 tests・21 skipsが成功。
+  GC thresholdを下げたテストで実際のframe復元counter増加、callbackから見える
+  initializer引数・未初期化属性を確認。monitoring、code変更、setattr変更も検証した。
+  debugの元Raytrace CLIとnative coverage probeも成功し、nativeで142,034直接生成、
+  guard exit0・frame復元0を観測。次に直前版/mainとの元CLI対応比較で採否を判断する。
+- 3 blocks・90値のRaytrace比較は直前版比0.967780、main比0.926102で全block改善。
+  `class-attributes-raytrace-{rows,summary}.json`、差分・manifest・比較用binaryを保存した。
+- 未最適化のclass traceの多くはcleanup trampolineの最終RETURN直前で終了していた。
+  この終端を認識し、frameを省いた後は元のcallerのCALL直後へdynamic exitする拡張を追加。
+  別のcallerへ戻るテストと、所有された引数のweakref/finalizerテストを追加して両build成功。
+  function入口のtraceを確実に作るテストはCのmap経由でwarmupする（Python loopでは
+  callerへinlineされ、対象function自体にexecutorが作られないため）。関連テストを再実行中。
+- 拡張後はdebug関連1,371 tests・13 skips、native関連1,285 tests・21 skipsが成功。
+  native直接生成は277,405 callsへ増え、guard exit0・frame復元0。3 blocks・90値の
+  Raytrace比較は直前constructor版比0.979577、main比0.886277で全block改善した。
+  `class-exit-raytrace-{rows,summary}.json`、native bytes/asm、差分・manifest・binaryを保存。
+  whitespaceと変更Python testのRuff F401/F811も成功。全6本の2-block screenへ進む。
+- 全6本・2 blocks・240値のscreenはmain比算術平均 **0.721664**
+  （block別0.721441/0.721886）、起動込み0.749202。BPE0.833229、B-tree0.753662、
+  DeltaBlue0.969658、Hexiom0.859987、Raytrace0.895014、Spectral約0.018441。
+  checksumは全て一致。`class-exit-suite-{rows,summary}.json`に保存した。
+  前screen0.729919から改善したが、算術平均0.5の目標は未達である。
+- 次はHexiomに残る`self.cells[i]`や`len(self.cells[i]) == constant`の短いcalleeを調べる。
+  exact list・compact index・属性type version・builtin lenのbindingを確認し、例外や
+  callbackが必要な場合に元CALLへ戻せる範囲でframe省略を検討する。現在のconstructor
+  実装を比較基準として保存してから着手し、未検証の候補を今回の性能値へ混ぜない。

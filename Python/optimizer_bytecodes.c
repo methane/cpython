@@ -1416,6 +1416,12 @@ dummy_func(void) {
     }
 
     op(_CREATE_INIT_FRAME, (init, self, args[oparg] -- init_frame)) {
+        PyObject *init_o = sym_get_const(ctx, init);
+        if (region_enabled("PYTHON_TIER2_CALL_REGIONS") &&
+            init_o != NULL && PyFunction_Check(init_o)) {
+            this_instr->operand0 = _PyFunction_GetVersionForCurrentState(
+                (PyFunctionObject *)init_o);
+        }
         ctx->frame->stack_pointer = stack_pointer - oparg - 2;
         _Py_UOpsAbstractFrame *shim = frame_new(ctx, (PyCodeObject *)&_Py_InitCleanup, NULL, 0);
         if (shim == NULL) {

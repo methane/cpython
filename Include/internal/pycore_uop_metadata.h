@@ -395,6 +395,12 @@ const uint32_t _PyUop_Flags[MAX_UOP_ID+1] = {
     [_CHECK_OBJECT] = HAS_ARG_FLAG | HAS_EXIT_FLAG,
     [_ALLOCATE_OBJECT] = HAS_ARG_FLAG | HAS_EXIT_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG,
     [_CREATE_INIT_FRAME] = HAS_ARG_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG | HAS_SYNC_SP_FLAG,
+    [_CALL_CLASS_ATTRIBUTES_0] = HAS_DEOPT_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG | HAS_SYNC_SP_FLAG | HAS_NEEDS_GUARD_IP_FLAG,
+    [_CALL_CLASS_ATTRIBUTES_1] = HAS_DEOPT_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG | HAS_SYNC_SP_FLAG | HAS_NEEDS_GUARD_IP_FLAG,
+    [_CALL_CLASS_ATTRIBUTES_2] = HAS_DEOPT_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG | HAS_SYNC_SP_FLAG | HAS_NEEDS_GUARD_IP_FLAG,
+    [_CALL_CLASS_ATTRIBUTES_3] = HAS_DEOPT_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG | HAS_SYNC_SP_FLAG | HAS_NEEDS_GUARD_IP_FLAG,
+    [_CALL_CLASS_ATTRIBUTES_4] = HAS_DEOPT_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG | HAS_SYNC_SP_FLAG | HAS_NEEDS_GUARD_IP_FLAG,
+    [_CALL_CLASS_ATTRIBUTES] = HAS_ARG_FLAG | HAS_DEOPT_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG | HAS_SYNC_SP_FLAG | HAS_NEEDS_GUARD_IP_FLAG,
     [_EXIT_INIT_CHECK] = HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG,
     [_GUARD_CALLABLE_BUILTIN_CLASS] = HAS_ARG_FLAG | HAS_EXIT_FLAG,
     [_CALL_BUILTIN_CLASS] = HAS_ARG_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG,
@@ -551,6 +557,7 @@ const ReplicationRange _PyUop_Replication[MAX_UOP_ID+1] = {
     [_INIT_CALL_PY_EXACT_ARGS] = { 0, 5 },
     [_CALL_PY_TRIVIAL] = { 0, 5 },
     [_CALL_PY_ATTRIBUTE] = { 0, 5 },
+    [_CALL_CLASS_ATTRIBUTES] = { 0, 5 },
     [_COPY] = { 1, 4 },
     [_SWAP] = { 2, 4 },
     [_GUARD_BIT_IS_SET_POP] = { 4, 8 },
@@ -3801,6 +3808,60 @@ const _PyUopCachingInfo _PyUop_Caching[MAX_UOP_ID+1] = {
             { -1, -1, -1 },
         },
     },
+    [_CALL_CLASS_ATTRIBUTES_0] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 1, 1, _CALL_CLASS_ATTRIBUTES_0_r01 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_CALL_CLASS_ATTRIBUTES_1] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 1, 1, _CALL_CLASS_ATTRIBUTES_1_r01 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_CALL_CLASS_ATTRIBUTES_2] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 1, 1, _CALL_CLASS_ATTRIBUTES_2_r01 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_CALL_CLASS_ATTRIBUTES_3] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 1, 1, _CALL_CLASS_ATTRIBUTES_3_r01 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_CALL_CLASS_ATTRIBUTES_4] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 1, 1, _CALL_CLASS_ATTRIBUTES_4_r01 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_CALL_CLASS_ATTRIBUTES] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 1, 1, _CALL_CLASS_ATTRIBUTES_r01 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
     [_EXIT_INIT_CHECK] = {
         .best = { 1, 1, 1, 1 },
         .entries = {
@@ -5732,6 +5793,12 @@ const uint16_t _PyUop_Uncached[MAX_UOP_REGS_ID+1] = {
     [_CHECK_OBJECT_r00] = _CHECK_OBJECT,
     [_ALLOCATE_OBJECT_r00] = _ALLOCATE_OBJECT,
     [_CREATE_INIT_FRAME_r01] = _CREATE_INIT_FRAME,
+    [_CALL_CLASS_ATTRIBUTES_0_r01] = _CALL_CLASS_ATTRIBUTES_0,
+    [_CALL_CLASS_ATTRIBUTES_1_r01] = _CALL_CLASS_ATTRIBUTES_1,
+    [_CALL_CLASS_ATTRIBUTES_2_r01] = _CALL_CLASS_ATTRIBUTES_2,
+    [_CALL_CLASS_ATTRIBUTES_3_r01] = _CALL_CLASS_ATTRIBUTES_3,
+    [_CALL_CLASS_ATTRIBUTES_4_r01] = _CALL_CLASS_ATTRIBUTES_4,
+    [_CALL_CLASS_ATTRIBUTES_r01] = _CALL_CLASS_ATTRIBUTES,
     [_EXIT_INIT_CHECK_r10] = _EXIT_INIT_CHECK,
     [_GUARD_CALLABLE_BUILTIN_CLASS_r00] = _GUARD_CALLABLE_BUILTIN_CLASS,
     [_CALL_BUILTIN_CLASS_r00] = _CALL_BUILTIN_CLASS,
@@ -6239,6 +6306,18 @@ const char *const _PyOpcode_uop_name[MAX_UOP_REGS_ID+1] = {
     [_CALL_BUILTIN_FAST_WITH_KEYWORDS_r00] = "_CALL_BUILTIN_FAST_WITH_KEYWORDS_r00",
     [_CALL_BUILTIN_O] = "_CALL_BUILTIN_O",
     [_CALL_BUILTIN_O_r03] = "_CALL_BUILTIN_O_r03",
+    [_CALL_CLASS_ATTRIBUTES] = "_CALL_CLASS_ATTRIBUTES",
+    [_CALL_CLASS_ATTRIBUTES_r01] = "_CALL_CLASS_ATTRIBUTES_r01",
+    [_CALL_CLASS_ATTRIBUTES_0] = "_CALL_CLASS_ATTRIBUTES_0",
+    [_CALL_CLASS_ATTRIBUTES_0_r01] = "_CALL_CLASS_ATTRIBUTES_0_r01",
+    [_CALL_CLASS_ATTRIBUTES_1] = "_CALL_CLASS_ATTRIBUTES_1",
+    [_CALL_CLASS_ATTRIBUTES_1_r01] = "_CALL_CLASS_ATTRIBUTES_1_r01",
+    [_CALL_CLASS_ATTRIBUTES_2] = "_CALL_CLASS_ATTRIBUTES_2",
+    [_CALL_CLASS_ATTRIBUTES_2_r01] = "_CALL_CLASS_ATTRIBUTES_2_r01",
+    [_CALL_CLASS_ATTRIBUTES_3] = "_CALL_CLASS_ATTRIBUTES_3",
+    [_CALL_CLASS_ATTRIBUTES_3_r01] = "_CALL_CLASS_ATTRIBUTES_3_r01",
+    [_CALL_CLASS_ATTRIBUTES_4] = "_CALL_CLASS_ATTRIBUTES_4",
+    [_CALL_CLASS_ATTRIBUTES_4_r01] = "_CALL_CLASS_ATTRIBUTES_4_r01",
     [_CALL_FUNCTION_EX_NON_PY_GENERAL] = "_CALL_FUNCTION_EX_NON_PY_GENERAL",
     [_CALL_FUNCTION_EX_NON_PY_GENERAL_r31] = "_CALL_FUNCTION_EX_NON_PY_GENERAL_r31",
     [_CALL_INTRINSIC_1] = "_CALL_INTRINSIC_1",
@@ -8433,6 +8512,18 @@ int _PyUop_num_popped(int opcode, int oparg)
         case _ALLOCATE_OBJECT:
             return 0;
         case _CREATE_INIT_FRAME:
+            return 2 + oparg;
+        case _CALL_CLASS_ATTRIBUTES_0:
+            return 2 + oparg;
+        case _CALL_CLASS_ATTRIBUTES_1:
+            return 2 + oparg;
+        case _CALL_CLASS_ATTRIBUTES_2:
+            return 2 + oparg;
+        case _CALL_CLASS_ATTRIBUTES_3:
+            return 2 + oparg;
+        case _CALL_CLASS_ATTRIBUTES_4:
+            return 2 + oparg;
+        case _CALL_CLASS_ATTRIBUTES:
             return 2 + oparg;
         case _EXIT_INIT_CHECK:
             return 1;

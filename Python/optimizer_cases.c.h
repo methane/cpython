@@ -4753,6 +4753,12 @@
             args = &stack_pointer[-oparg];
             self = stack_pointer[-1 - oparg];
             init = stack_pointer[-2 - oparg];
+            PyObject *init_o = sym_get_const(ctx, init);
+            if (region_enabled("PYTHON_TIER2_CALL_REGIONS") &&
+                init_o != NULL && PyFunction_Check(init_o)) {
+                this_instr->operand0 = _PyFunction_GetVersionForCurrentState(
+                    (PyFunctionObject *)init_o);
+            }
             ctx->frame->stack_pointer = stack_pointer - oparg - 2;
             _Py_UOpsAbstractFrame *shim = frame_new(ctx, (PyCodeObject *)&_Py_InitCleanup, NULL, 0);
             if (shim == NULL) {
@@ -4767,6 +4773,16 @@
             init_frame = PyJitRef_WrapInvalid(frame_new_from_symbol(ctx, init, args-1, oparg+1));
             CHECK_STACK_BOUNDS(-1 - oparg);
             stack_pointer[-2 - oparg] = init_frame;
+            stack_pointer += -1 - oparg;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            break;
+        }
+
+        case _CALL_CLASS_ATTRIBUTES: {
+            JitOptRef res;
+            res = sym_new_not_null(ctx);
+            CHECK_STACK_BOUNDS(-1 - oparg);
+            stack_pointer[-2 - oparg] = res;
             stack_pointer += -1 - oparg;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
             break;

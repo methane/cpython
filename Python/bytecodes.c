@@ -5537,6 +5537,104 @@ dummy_func(
             init_frame = PyStackRef_Wrap(temp);
         }
 
+        replicate(5) tier2 op(_CALL_CLASS_ATTRIBUTES, (versions/4, fields/4, callable, null, args[oparg] -- res)) {
+            PyTypeObject *tp = (PyTypeObject *)PyStackRef_AsPyObjectBorrow(callable);
+            uint32_t type_version = (uint64_t)versions >> 32;
+            uint32_t func_version = (uint32_t)(uint64_t)versions;
+            bool valid = PyStackRef_IsNull(null) && PyType_Check(tp) &&
+                tp->tp_version_tag == type_version &&
+                (tp->tp_flags & Py_TPFLAGS_HEAPTYPE) &&
+                (tp->tp_flags & Py_TPFLAGS_INLINE_VALUES) &&
+                tp->tp_new == PyBaseObject_Type.tp_new && tp->tp_alloc == PyType_GenericAlloc;
+            PyFunctionObject *init_func = NULL;
+            PyCodeObject *code = NULL;
+            if (valid) {
+                init_func = (PyFunctionObject *)((PyHeapTypeObject *)tp)->_spec_cache.init;
+                valid = init_func != NULL && PyFunction_Check(init_func) &&
+                    init_func->func_version == func_version;
+            }
+            if (valid) {
+                code = (PyCodeObject *)init_func->func_code;
+                valid = code->co_argcount == oparg + 1 && code->co_kwonlyargcount == 0 &&
+                    (code->co_flags & (CO_OPTIMIZED | CO_VARARGS | CO_VARKEYWORDS)) == CO_OPTIMIZED &&
+                    _Py_atomic_load_uintptr_relaxed(&tstate->eval_breaker) ==
+                        FT_ATOMIC_LOAD_UINTPTR_ACQUIRE(code->_co_instrumentation_version) &&
+                    _PyThreadState_HasStackSpace(tstate, code->co_framesize + _Py_InitCleanup.co_framesize);
+            }
+            if (!valid) {
+                current_executor->region_class_guard_exits++;
+                DEOPT_IF(true);
+            }
+            PyObject *self_o = _PyRegion_AllocationFails("class_call")
+                ? NULL : PyType_GenericAlloc(tp, 0);
+            if (self_o == NULL) {
+                current_executor->region_allocation_errors++;
+                ERROR_NO_POP();
+            }
+            PyDictValues *values = _PyObject_InlineValues(self_o);
+            Py_ssize_t first = (char *)values->values - (char *)self_o;
+            valid = values->valid && values->size == 0 && values->capacity >= oparg &&
+                _PyObject_GetManagedDict(self_o) == NULL &&
+                _Py_atomic_load_uintptr_relaxed(&tstate->eval_breaker) ==
+                    FT_ATOMIC_LOAD_UINTPTR_ACQUIRE(code->_co_instrumentation_version);
+            for (int i = 0; valid && i < oparg; i++) {
+                Py_ssize_t offset = (((uint64_t)fields >> (10 * i)) & 255) * 8;
+                Py_ssize_t index = (offset - first) / (Py_ssize_t)sizeof(PyObject *);
+                valid = offset >= first && (offset - first) % sizeof(PyObject *) == 0 &&
+                    index < values->capacity && values->values[index] == NULL;
+            }
+            if (!valid) {
+                /* Allocation can schedule GC. Materialize the same two frames
+                 * and resume at initializer entry before any attribute store,
+                 * so callbacks see the original arguments, locals, and object. */
+                current_executor->region_class_materializations++;
+                null = PyStackRef_FromPyObjectSteal(self_o);
+                _PyStackRef previous = callable;
+                callable = PyStackRef_FromPyObjectNew(init_func);
+                PyStackRef_CLOSE(previous);
+                _PyInterpreterFrame *shim = _PyFrame_PushTrampolineUnchecked(
+                    tstate, (PyCodeObject *)&_Py_InitCleanup, 1, frame);
+                shim->localsplus[0] = PyStackRef_DUP(null);
+                _PyInterpreterFrame *temp = _PyEvalFramePushAndInit(
+                    tstate, callable, NULL, args-1, oparg+1, NULL, shim);
+                INPUTS_DEAD();
+                SYNC_SP();
+                if (temp == NULL) {
+                    _PyEval_FrameClearAndPop(tstate, shim);
+                    ERROR_NO_POP();
+                }
+                frame->return_offset = 1 + INLINE_CACHE_ENTRIES_CALL;
+                SAVE_STACK();
+                frame = tstate->current_frame = temp;
+                tstate->py_recursion_remaining -= 2;
+                RELOAD_STACK();
+                LOAD_IP(0);
+                GOTO_TIER_ONE(frame->instr_ptr);
+            }
+            for (int i = 0; i < oparg; i++) {
+                uint64_t field = (uint64_t)fields >> (10 * i);
+                Py_ssize_t offset = (field & 255) * 8;
+                Py_ssize_t index = (offset - first) / sizeof(PyObject *);
+                int arg = (field >> 8) & 3;
+                _PyStackRef value = args[arg];
+                values->values[index] = PyStackRef_AsPyObjectSteal(value);
+                _PyDictValues_AddToInsertionOrder(values, index);
+            }
+            current_executor->region_class_entries++;
+            /* Return guards after the removed cleanup frame still use the
+             * caller's offset to identify the continuation of this CALL. */
+            frame->return_offset = 1 + INLINE_CACHE_ENTRIES_CALL;
+            res = PyStackRef_FromPyObjectSteal(self_o);
+            _PyStackRef previous = callable;
+            INPUTS_DEAD();
+            PyStackRef_CLOSE(previous);
+            if ((uint64_t)fields >> 63) {
+                /* The following dynamic exit replaces a trace ending at the
+                 * cleanup trampoline's RETURN_VALUE. */
+                frame->instr_ptr += 1 + INLINE_CACHE_ENTRIES_CALL;
+            }
+        }
+
         macro(CALL_ALLOC_AND_ENTER_INIT) =
             _RECORD_CALLABLE +
             unused/1 +

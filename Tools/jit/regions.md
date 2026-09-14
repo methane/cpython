@@ -250,6 +250,25 @@ original call, retaining the callee frame for exceptions and callbacks.
 `call_attr_entries` counts successful attribute calls; cleanup retains the same
 reference order and code lifetime as the simpler family.
 
+`_CALL_CLASS_ATTRIBUTES` handles constructors whose entire initializer stores
+each of one to four explicit positional arguments once into distinct inline
+instance attributes, then returns `None`. Matching is bounded to 96 uops and
+uses the recorded function and type versions. It allocates a fresh instance
+with the original allocator and transfers the argument references in attribute
+assignment order, preserving identity and `__dict__` insertion order. The
+function version, argument shape, inline layout, recursion, stack capacity,
+and instrumentation checks retain ordinary execution when unsuitable.
+
+Allocation can schedule GC. If pending work appears after allocation, or the
+fresh inline layout is unsuitable, the uop creates the original initializer
+and cleanup frames and exits to the initializer's entry before any stores.
+GC callbacks and monitoring therefore see the original frame and arguments.
+The successful path omits both frames but retains the caller's return offset.
+When the recorded trace stops at the cleanup trampoline's final `RETURN_VALUE`,
+a dynamic exit resumes the real caller immediately after its constructor CALL.
+`class_entries`, `class_guard_exits`, and `class_materializations` distinguish
+these paths. The same call-region option and platform restrictions apply.
+
 The integer and builtin experiments require a 64-bit GIL build with GCC/Clang
 checked arithmetic. Other configurations do not enable them. The existing
 float fusion preserves its volatile binary64 rounding boundary; shared results

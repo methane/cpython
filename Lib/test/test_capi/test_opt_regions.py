@@ -2,6 +2,7 @@
 
 import builtins
 import collections
+import gc
 import math
 import operator
 import os
@@ -52,6 +53,248 @@ def arithmetic(expression):
 class TestRegions(unittest.TestCase):
     def setUp(self):
         self.enterContext(mock.patch.dict(os.environ, SETTINGS))
+
+    def warm_class_attributes(self, nargs=3, order=None):
+        self.enterContext(mock.patch.dict(
+            os.environ, {"PYTHON_TIER2_CALL_REGIONS": "1"}))
+        if order is None:
+            order = list(range(nargs))
+        names = [f"a{i}" for i in range(nargs)]
+        signature = ", ".join(names)
+        namespace = {}
+        exec(
+            f"class Record:\n"
+            f"    def __init__(self, {signature}):\n"
+            + "".join(f"        self.{names[i]} = {names[i]}\n" for i in order)
+            + f"def run(cls, {signature}, n):\n"
+            "    result = None\n"
+            "    for _ in range(n):\n"
+            f"        result = cls({signature})\n"
+            "    return result\n",
+            namespace,
+        )
+        cls, run = namespace["Record"], namespace["run"]
+        args = [object() for _ in names]
+        run(cls, *args, TIER2_THRESHOLD)
+        ex = self.executor(run, "_CALL_CLASS_ATTRIBUTES")
+        return cls, run, args, ex
+
+    @requires_call_regions
+    def test_class_attributes_identity_and_order(self):
+        for nargs in range(1, 5):
+            with self.subTest(nargs=nargs):
+                order = list(reversed(range(nargs)))
+                cls, run, args, ex = self.warm_class_attributes(nargs, order)
+                retained = [self.executed(ex, "class_entries", run, cls, *args, 8)
+                            for _ in range(4)]
+                self.assertEqual(len({id(obj) for obj in retained}), 4)
+                for obj in retained:
+                    self.assertIs(type(obj), cls)
+                    self.assertEqual(list(vars(obj)), [f"a{i}" for i in order])
+                    for i, value in enumerate(args):
+                        self.assertIs(getattr(obj, f"a{i}"), value)
+
+    @requires_call_regions
+    def test_class_attributes_initializer_code_change(self):
+        cls, run, args, ex = self.warm_class_attributes()
+        self.executed(ex, "class_entries", run, cls, *args, 8)
+
+        def replacement(self, a0, a1, a2):
+            self.changed = (a2, a1, a0)
+
+        cls.__init__.__code__ = replacement.__code__
+        obj = run(cls, *args, 8)
+        self.assertEqual(vars(obj), {"changed": tuple(reversed(args))})
+
+    @requires_call_regions
+    @unittest.skipUnless(support.Py_DEBUG, "uses debug allocation injection")
+    def test_class_attributes_allocation_error(self):
+        cls, run, args, ex = self.warm_class_attributes()
+        before = ex.get_region_stats()["allocation_errors"]
+        with mock.patch.dict(os.environ, {"PYTHON_TIER2_REGION_FAIL_ALLOC": "class_call"}):
+            with self.assertRaises(MemoryError) as caught:
+                run(cls, *args, 8)
+        self.assertGreater(ex.get_region_stats()["allocation_errors"], before)
+        self.assertIsNone(caught.exception.__context__)
+
+    @requires_call_regions
+    def test_class_attributes_gc_materialization(self):
+        self.enterContext(mock.patch.dict(
+            os.environ, {"PYTHON_TIER2_CALL_REGIONS": "1"}))
+
+        class Record:
+            def __init__(self, value):
+                self.value = value
+
+        def run(cls, value, n):
+            result = []
+            for _ in range(n):
+                result.append(cls(value))
+            return result
+
+        value = object()
+        run(Record, value, TIER2_THRESHOLD)
+        ex = self.executor(run, "_CALL_CLASS_ATTRIBUTES")
+        seen = []
+
+        def callback(phase, info):
+            if phase == "start":
+                frame = sys._getframe(1)
+                if frame.f_code is Record.__init__.__code__:
+                    local = frame.f_locals
+                    seen.append((local["value"] is value,
+                                 list(vars(local["self"]))))
+
+        old_threshold = gc.get_threshold()
+        was_enabled = gc.isenabled()
+        try:
+            gc.collect()
+            gc.enable()
+            gc.callbacks.append(callback)
+            gc.set_threshold(32, 10, 10)
+            before = ex.get_region_stats()["class_materializations"]
+            result = run(Record, value, 1024)
+            after = ex.get_region_stats()["class_materializations"]
+        finally:
+            gc.callbacks.remove(callback)
+            gc.set_threshold(*old_threshold)
+            if not was_enabled:
+                gc.disable()
+        self.assertGreater(after, before)
+        self.assertTrue(seen)
+        self.assertTrue(all(correct and not attrs for correct, attrs in seen), seen)
+        self.assertTrue(all(obj.value is value for obj in result))
+
+    @requires_call_regions
+    def test_class_attributes_setattr_override(self):
+        cls, run, args, ex = self.warm_class_attributes()
+        self.executed(ex, "class_entries", run, cls, *args, 8)
+        seen = []
+
+        def setter(self, name, value):
+            seen.append((name, value))
+            object.__setattr__(self, name, value)
+
+        cls.__setattr__ = setter
+        result = run(cls, *args, 8)
+        self.assertEqual(seen, list(zip(("a0", "a1", "a2"), args)) * 8)
+        self.assertEqual(vars(result), dict(zip(("a0", "a1", "a2"), args)))
+
+    @requires_call_regions
+    def test_class_attributes_nested_returns(self):
+        self.enterContext(mock.patch.dict(
+            os.environ, {"PYTHON_TIER2_CALL_REGIONS": "1"}))
+
+        class Vector:
+            def __init__(self, x, y, z):
+                self.x = x
+                self.y = y
+                self.z = z
+
+            def scale(self, factor):
+                return Vector(factor * self.x, factor * self.y, factor * self.z)
+
+            def normalize(self):
+                return self.scale(0.5)
+
+        def run(vector, n):
+            result = None
+            for _ in range(n):
+                result = vector.normalize()
+            return result
+
+        vector = Vector(1.0, 2.0, 3.0)
+        run(vector, TIER2_THRESHOLD)
+        ex = self.executor(run, "_CALL_CLASS_ATTRIBUTES")
+        result = self.executed(ex, "class_entries", run, vector, 8)
+        self.assertEqual((result.x, result.y, result.z), (0.5, 1.0, 1.5))
+
+    @requires_call_regions
+    def test_class_attributes_monitoring(self):
+        cls, run, args, ex = self.warm_class_attributes()
+        self.executed(ex, "class_entries", run, cls, *args, 8)
+        monitoring = sys.monitoring
+        tool = 4
+        monitoring.use_tool_id(tool, "class attributes")
+        events = []
+        try:
+            monitoring.register_callback(tool, monitoring.events.PY_START,
+                                         lambda *args: events.append("start"))
+            monitoring.register_callback(tool, monitoring.events.PY_RETURN,
+                                         lambda *args: events.append("return"))
+            monitoring.set_local_events(tool, cls.__init__.__code__,
+                                        monitoring.events.PY_START | monitoring.events.PY_RETURN)
+            result = run(cls, *args, 8)
+            self.assertEqual(events, ["start", "return"] * 8)
+            self.assertIs(result.a0, args[0])
+        finally:
+            monitoring.set_local_events(tool, cls.__init__.__code__, 0)
+            monitoring.register_callback(tool, monitoring.events.PY_START, None)
+            monitoring.register_callback(tool, monitoring.events.PY_RETURN, None)
+            monitoring.free_tool_id(tool)
+
+    @requires_call_regions
+    def test_class_attributes_dynamic_return(self):
+        from itertools import repeat
+
+        self.enterContext(mock.patch.dict(
+            os.environ, {"PYTHON_TIER2_CALL_REGIONS": "1"}))
+
+        class Record:
+            def __init__(self, value):
+                self.value = value
+
+        def make(value):
+            return Record(value)
+
+        value = object()
+        list(map(make, repeat(value, TIER2_THRESHOLD * 4)))
+        ex = self.executor(make, "_CALL_CLASS_ATTRIBUTES")
+        self.assertIn("_DYNAMIC_EXIT", get_opnames(ex))
+        result = self.executed(ex, "class_entries", make, value)
+        self.assertIs(result.value, value)
+        # Return to another caller without reusing the warmup caller's offset.
+        def other_caller():
+            return ("before", make(value), "after")
+        result = self.executed(ex, "class_entries", other_caller)
+        self.assertEqual((result[0], result[2]), ("before", "after"))
+        self.assertIs(result[1].value, value)
+
+    @requires_call_regions
+    def test_class_attributes_owned_arguments(self):
+        self.enterContext(mock.patch.dict(
+            os.environ, {"PYTHON_TIER2_CALL_REGIONS": "1"}))
+
+        class Record:
+            def __init__(self, a, b):
+                self.a = a
+                self.b = b
+
+        def run(values, n):
+            result = None
+            for _ in range(n):
+                result = Record(values.pop(), values.pop())
+            return result
+
+        run([object() for _ in range(TIER2_THRESHOLD * 2)], TIER2_THRESHOLD)
+        ex = self.executor(run, "_CALL_CLASS_ATTRIBUTES")
+        deleted = []
+
+        class Value:
+            def __del__(self):
+                deleted.append(id(self))
+
+        values = [Value() for _ in range(16)]
+        refs = [weakref.ref(value) for value in values]
+        result = self.executed(ex, "class_entries", run, values, 8)
+        self.assertFalse(values)
+        self.assertEqual(len(deleted), 14)
+        self.assertTrue(all(ref() is None for ref in refs[2:]))
+        self.assertIs(result.a, refs[1]())
+        self.assertIs(result.b, refs[0]())
+        del result
+        self.assertEqual(len(deleted), 16)
+        self.assertTrue(all(ref() is None for ref in refs))
 
     def executor(self, func, opcode):
         matches = [ex for ex in get_all_executors(func)
