@@ -20,6 +20,8 @@ The measurement checkpoint is dated September 13, 2026. This report was written
 on September 14 from the implementation, test logs, native-code probes, and raw
 measurements. [`regions.md`](regions.md) is the compact usage and implementation
 contract; [`plan.md`](../../plan.md) contains the development record.
+The final section records a later local checkpoint using an arithmetic-mean
+objective; the historical results above retain their original scope.
 
 ## Scope and integration
 
@@ -659,3 +661,67 @@ The most useful next review work is to audit guard/exit and reference-lifetime
 contracts, resolve the known refleak and shape-test issues, and measure
 profitability and code-size costs on independent workloads and builds before
 considering broader enablement.
+
+
+## September 14 follow-up: bounded attribute-list searches
+
+The later `_CALL_PY_ATTRIBUTE_SEARCH` experiment eliminates calls implementing
+a positional search over a cached list attribute. It proves the complete
+original bytecode, including both returns and all jump destinations. A
+successful call scans at most 64 exact tuple elements with exact compact
+integer fields and returns a cached integer position. It avoids the callee
+frame, enumerate iterator, and intermediate tuples. This is a structural
+match; neither function names nor benchmark names select it.
+
+The function version, instrumentation state, attribute layout, and current
+callee-side resolution of `enumerate` and `len` are guarded. All argument and
+stack checks preceding the original call remain. Guard failures resume the
+original CALL, so Python comparison callbacks, descriptors, and exceptions
+retain their real callee frame. The scan cannot allocate or call Python;
+reverse argument cleanup and code lifetime preserve finalizer behavior. The
+successful path ends the trace and resumes Tier 1 immediately after CALL.
+[`regions.md`](regions.md) describes the exact supported body and guards.
+
+The final matched comparison used the retained zip optimization checkpoint
+`0ddb447533f` as its preceding candidate, the same fixed main executable as
+before, CPU 2, three process blocks, and each script's original three warmups
+and ten single-loop values. Native builds used LLVM 21 stencils at `-Os`, the
+recorded vectorization workaround, and no PGO or LTO. All 540 result checksums
+matched; no samples were excluded. Builds, tests, and probes ran separately
+from these timings.
+
+| Workload | Final / preceding candidate | Final / fixed main |
+| --- | ---: | ---: |
+| BPE | 0.997882 | 0.808582 |
+| B-tree | 0.799769 | 0.569790 |
+| DeltaBlue | 1.001024 | 0.967519 |
+| Hexiom | 0.999817 | 0.831643 |
+| Raytrace | 0.997551 | 0.824048 |
+| Spectral Norm | 0.997532 | 0.018595 |
+
+Entries are arithmetic means of the three per-block time ratios. The
+six-workload arithmetic mean relative to main decreased from **0.694339 to
+0.670030**. The current objective of 0.5 remains unmet. B-tree improved in every
+block of two individual comparisons and two six-workload comparisons, by
+roughly 19–20%. The other workloads' final directions were mixed. An earlier
+search build had a 0.7% Hexiom regression across all three blocks; that result
+is retained, although the final comparison did not reproduce a consistent
+regression. These results do not establish a general application speedup.
+
+The B-tree diagnostic observed 177,958 successful fused searches and no call
+guard exits in its measured call. Its reachable executors decreased from 26
+to 20, and native code from 258,048 to 135,168 bytes. Ten added search tests
+cover layouts, argument conventions, all six comparisons, bounds, unsupported
+types, mutation and callback behavior, finalizers, namespaces, code changes,
+and monitoring. The final relevant ten-file runs passed 1,372 debug tests
+(36 skips) and 1,285 native tests (47 skips). Eight generated outputs reproduced
+byte for byte. A separate generator fix keeps replica IDs contiguous in
+numeric order, including families with two-digit suffixes.
+
+The final native executable SHA256 is
+`d7185a95fc22975fff8b6f36926347bb11c5b29d859e10a8fa305a87043133e7`.
+The local `jit-artifacts/benchmark-suite/attribute-search-final-*` files record
+source/build identities, original samples, tests, counter probes, and native
+assembly. Saved candidate executables share the current extension modules;
+they are not complete independent build archives. Earlier unsuccessful call
+mode replication trials and all comparison data remain in the local artifacts.

@@ -797,11 +797,9 @@ _PyRegion_AsInt64(_PyStackRef ref, int64_t *value)
 /* Restrict lookup to unicode-key tables: a general-key table could invoke
  * an unrelated key's __eq__ while resolving the global name. */
 static inline bool
-_PyRegion_HasBuiltinLen(_PyInterpreterFrame *frame, PyObject *name,
-                        PyObject *builtin_len)
+_PyRegion_HasBuiltin(PyObject *globals, PyObject *builtins, PyObject *name,
+                     PyObject *builtin)
 {
-    PyObject *globals = frame->f_globals;
-    PyObject *builtins = frame->f_builtins;
     if (!PyDict_CheckExact(globals) || !PyDict_CheckExact(builtins) ||
         ((PyDictObject *)globals)->ma_keys->dk_kind == DICT_KEYS_GENERAL ||
         ((PyDictObject *)builtins)->ma_keys->dk_kind == DICT_KEYS_GENERAL) {
@@ -809,7 +807,14 @@ _PyRegion_HasBuiltinLen(_PyInterpreterFrame *frame, PyObject *name,
     }
     assert(PyUnicode_CheckExact(name));
     return _PyDict_LoadGlobal((PyDictObject *)globals, (PyDictObject *)builtins,
-                              name) == builtin_len;
+                              name) == builtin;
+}
+
+static inline bool
+_PyRegion_HasBuiltinLen(_PyInterpreterFrame *frame, PyObject *name,
+                        PyObject *builtin_len)
+{
+    return _PyRegion_HasBuiltin(frame->f_globals, frame->f_builtins, name, builtin_len);
 }
 
 static inline bool

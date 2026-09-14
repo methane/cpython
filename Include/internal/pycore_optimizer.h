@@ -293,6 +293,8 @@ typedef struct _PyExecutorObject {
     uint64_t region_zip_entries;
     uint64_t region_zip_reused_entries;
     uint64_t region_zip_fallbacks;
+    uint64_t region_call_search_entries;
+    uint64_t region_call_search_iterations;
     _PyExitData exits[1];
 } _PyExecutorObject;
 

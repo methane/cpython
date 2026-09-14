@@ -5713,6 +5713,82 @@ dummy_func(
             Py_DECREF(code);
         }
 
+        replicate(3) tier2 op(_CALL_PY_ATTRIBUTE_SEARCH, (source/4, config/4, callable, self_or_null, args[oparg] -- res)) {
+            uint64_t descriptor = (uintptr_t)source;
+            uint64_t options = (uintptr_t)config;
+            current_executor->region_call_entries++;
+            PyFunctionObject *func = (PyFunctionObject *)PyStackRef_AsPyObjectBorrow(callable);
+            assert(PyFunction_Check(func));
+            PyCodeObject *code = (PyCodeObject *)func->func_code;
+            int has_self = !PyStackRef_IsNull(self_or_null);
+            bool valid = oparg + has_self == 2 &&
+                func->func_version == (uint32_t)options &&
+                _Py_atomic_load_uintptr_relaxed(&tstate->eval_breaker) ==
+                    FT_ATOMIC_LOAD_UINTPTR_ACQUIRE(code->_co_instrumentation_version);
+            Py_ssize_t position = 0;
+            if (valid) {
+                valid = _PyRegion_HasBuiltin(func->func_globals, func->func_builtins,
+                    PyTuple_GET_ITEM(code->co_names, (options >> 32) & 255),
+                    (PyObject *)&PyEnum_Type) &&
+                    _PyRegion_HasBuiltin(func->func_globals, func->func_builtins,
+                    PyTuple_GET_ITEM(code->co_names, (options >> 40) & 255),
+                    tstate->interp->callable_cache.len);
+            }
+            if (valid) {
+                _PyStackRef owner = has_self ? self_or_null : args[0];
+                PyObject *list = _PyRegion_CallAttribute(owner, descriptor);
+                PyObject *key = PyStackRef_AsPyObjectBorrow(args[1 - has_self]);
+                valid = list != NULL && PyList_CheckExact(list) &&
+                    PyList_GET_SIZE(list) <= 64 && PyLong_CheckExact(key) &&
+                    _PyLong_IsCompact((PyLongObject *)key);
+                if (valid) {
+                    sdigit right = _PyLong_CompactValue((PyLongObject *)key);
+                    Py_ssize_t field = (descriptor >> 52) & 31;
+                    unsigned int mask = (descriptor >> 57) & 15;
+                    for (; position < PyList_GET_SIZE(list); position++) {
+                        PyObject *item = PyList_GET_ITEM(list, position);
+                        if (!PyTuple_CheckExact(item) || field >= PyTuple_GET_SIZE(item)) {
+                            valid = false;
+                            break;
+                        }
+                        PyObject *value = PyTuple_GET_ITEM(item, field);
+                        if (!PyLong_CheckExact(value) || !_PyLong_IsCompact((PyLongObject *)value)) {
+                            valid = false;
+                            break;
+                        }
+                        sdigit left = _PyLong_CompactValue((PyLongObject *)value);
+                        if (COMPARISON_BIT(left, right) & mask) {
+                            break;
+                        }
+                    }
+                }
+            }
+            if (!valid) {
+                current_executor->region_call_guard_exits++;
+                DEOPT_IF(true);
+            }
+            /* All reads are borrowed from the still-owned list. The elided
+             * iterator, tuple, and local references cannot finalize anything
+             * before reverse argument cleanup. The result is immortal. */
+            Py_INCREF(code);
+            res = PyStackRef_FromPyObjectBorrow(_PyLong_FromUnsignedChar((unsigned char)position));
+            current_executor->region_call_search_entries++;
+            current_executor->region_call_search_iterations += position;
+            frame->return_offset = options >> 48;
+            _PyStackRef cleanup[4];
+            cleanup[0] = callable;
+            cleanup[1] = self_or_null;
+            for (int i = 0; i < oparg; i++) {
+                cleanup[i + 2] = args[i];
+            }
+            INPUTS_DEAD();
+            for (int i = oparg + 1; i >= 0; i--) {
+                PyStackRef_XCLOSE(cleanup[i]);
+            }
+            Py_DECREF(code);
+            frame->instr_ptr += frame->return_offset;
+        }
+
         op(_PUSH_FRAME, (new_frame -- )) {
             assert(!IS_PEP523_HOOKED(tstate));
             _PyInterpreterFrame *temp = PyStackRef_Unwrap(new_frame);

@@ -342,6 +342,45 @@ original call, retaining the callee frame for exceptions and callbacks.
 `call_attr_entries` counts successful attribute calls; cleanup retains the same
 reference order and code lifetime as the simpler family.
 
+`_CALL_PY_ATTRIBUTE_SEARCH` recognizes a complete two-argument function:
+
+```python
+def find_position(owner, key):
+    for position, item in enumerate(owner.items):
+        if item[0] >= key:
+            return position
+    return len(owner.items)
+```
+
+Names are unrestricted, and aliases for the two builtins are accepted. The
+matcher proves every original bytecode operation and both return paths,
+including jump destinations, the repeated attribute name, and the absence of
+exception handlers. It accepts all six integer comparisons and tuple fields
+0 through 31. Both direct function calls and calls with implicit `self` use
+the same two argument slots. It also requires a recorded slot or managed
+inline attribute load at the start of the traced callee.
+
+The replacement checks the function version and instrumentation state, the
+cached attribute layout, and the current resolution of both builtins in the
+callee's globals and builtins. General-key dictionaries are rejected before
+lookup, since even an unrelated key could run a comparison callback. The
+search accepts an exact list of at most 64 items, an exact compact integer key,
+and exact tuples whose selected fields are exact compact integers. It stops
+at the first match, so unsupported items after that match are not inspected.
+A failed guard resumes at the original CALL without consuming inputs or
+changing Python state; any comparison callbacks and exceptions then have the
+real callee frame.
+
+Successful searches return an immortal small integer and need no iterator,
+intermediate tuple, or callee frame. The bounded scan cannot allocate or call
+Python. Borrowing from the still-owned list makes the omitted temporary
+reference releases unobservable. The code reference and reverse argument
+cleanup follow the other call regions, including finalizer reentry. Since the
+trace need not contain both original returns, the replacement ends the trace
+and resumes Tier 1 in the caller immediately after CALL. `call_search_entries`
+counts successes; `call_search_iterations` counts positions advanced before
+the match or exhaustion. These counters describe coverage, not timing.
+
 `_CALL_PY_LIST` extends call frame elimination to a cached attribute's exact
 list item, optionally consumed by a builtin length comparison against a small
 constant. It accepts compact integer indices, including negative indices,

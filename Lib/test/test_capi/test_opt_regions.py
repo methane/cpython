@@ -1901,6 +1901,243 @@ case.doCleanups()
             monitoring.register_callback(tool, monitoring.events.LINE, None)
             monitoring.free_tool_id(tool)
 
+    def warm_attribute_search(self, symbol=">=", slots=False, bound=True, field=0):
+        self.enterContext(mock.patch.dict(
+            os.environ, {"PYTHON_TIER2_CALL_REGIONS": "1"}))
+        ns = {"walk": enumerate, "size": len}
+        layout = "    __slots__ = ('cells',)\n" if slots else ""
+        call = "owner.search(key)" if bound else "search(owner, key)"
+        exec("class Holder:\n" + layout + "    pass\n"
+             "def search(owner, key):\n"
+             "    for position, item in walk(owner.cells):\n"
+             f"        if item[{field}] {symbol} key:\n"
+             "            return position\n"
+             "    return size(owner.cells)\n"
+             "Holder.search = search\n"
+             "def run(owner, key, n):\n"
+             "    result = None\n"
+             "    for _ in range(n):\n"
+             f"        result = {call}\n"
+             "    return result\n", ns)
+        owner = ns["Holder"]()
+        owner.cells = [(None,) * field + (i,) for i in range(31)]
+        run = ns["run"]
+        run(owner, 17, TIER2_THRESHOLD)
+        ex = self.executor(run, "_CALL_PY_ATTRIBUTE_SEARCH")
+        self.executed(ex, "call_search_entries", run, owner, 17, 8)
+        return owner, run, ex, ns
+
+    @requires_call_regions
+    def test_attribute_search_matrix(self):
+        for slots in (False, True):
+            for bound in (False, True):
+                for symbol, compare in (("<", operator.lt), ("<=", operator.le),
+                                        ("==", operator.eq), ("!=", operator.ne),
+                                        (">", operator.gt), (">=", operator.ge)):
+                    with self.subTest(slots=slots, bound=bound, symbol=symbol):
+                        owner, run, ex, ns = self.warm_attribute_search(symbol, slots, bound)
+                        for length in (0, 1, 31, 64):
+                            owner.cells = [(i - 16,) for i in range(length)]
+                            random.Random(length).shuffle(owner.cells)
+                            for key in (-31, 0, 17, 65):
+                                expected = next((i for i, item in enumerate(owner.cells)
+                                                 if compare(item[0], key)), length)
+                                self.assertEqual(self.executed(ex, "call_search_entries", run,
+                                                               owner, key, 8), expected)
+                        owner.cells = [(i,) for i in range(65)]
+                        self.assertEqual(run(owner, 17, 8), ns["search"](owner, 17))
+        for field in (1, 31):
+            with self.subTest(field=field):
+                owner, run, ex, ns = self.warm_attribute_search(field=field)
+                self.assertEqual(run(owner, 17, 8), 17)
+
+    @requires_call_regions
+    def test_attribute_search_fallbacks(self):
+        owner, run, ex, ns = self.warm_attribute_search()
+        class Int(int):
+            pass
+        class Tuple(tuple):
+            pass
+        class List(list):
+            pass
+        for cells, key in (([(False,), (True,)], True),
+                           ([(2**100,), (2**101,)], 2**100 + 1),
+                           ([(Int(1),), (Int(2),)], Int(2)),
+                           ([Tuple((1,)), Tuple((2,))], 2),
+                           (List([(1,), (2,)]), 2),
+                           (([1], [2]), 2)):
+            with self.subTest(cells=cells, key=key):
+                owner.cells = cells
+                self.assertEqual(run(owner, key, 8), ns["search"](owner, key))
+        for cells, exception in (([()], IndexError), ([object()], TypeError)):
+            owner.cells = cells
+            with self.assertRaises(exception):
+                run(owner, 17, 8)
+            # assertRaises clears the traceback; capture it in the next call.
+            try:
+                run(owner, 17, 8)
+            except exception as error:
+                tb = error.__traceback__
+                while tb.tb_next:
+                    tb = tb.tb_next
+                self.assertIs(tb.tb_frame.f_code, ns["search"].__code__)
+
+    @requires_call_regions
+    def test_attribute_search_comparison_callback(self):
+        owner, run, ex, ns = self.warm_attribute_search()
+        events = []
+        class Key:
+            def __ge__(self, other):
+                events.append(sys._getframe(1).f_code)
+                owner.cells.append((100,))
+                return False
+        for _ in range(8):
+            owner.cells = [(0,), (Key(),)]
+            self.assertEqual(run(owner, 17, 1), 2)
+        self.assertEqual(events, [ns["search"].__code__] * 8)
+
+    @requires_call_regions
+    def test_attribute_search_global_changes(self):
+        owner, run, ex, ns = self.warm_attribute_search()
+        events = []
+        def replacement_walk(items):
+            events.append(sys._getframe(1).f_code)
+            return enumerate(items, 100)
+        ns["walk"] = replacement_walk
+        self.assertEqual(run(owner, 17, 8), 117)
+        self.assertEqual(events, [ns["search"].__code__] * 8)
+        ns["walk"] = enumerate
+        ns["size"] = lambda items: 1000
+        self.assertEqual(run(owner, 100, 8), 1000)
+        ns["size"] = len
+        original = ns["search"]
+        original.__code__ = (lambda owner, key: "changed").__code__
+        self.assertEqual(run(owner, 17, 8), "changed")
+
+    @requires_call_regions
+    def test_attribute_search_callee_namespace(self):
+        owner, run, _, ns = self.warm_attribute_search()
+        callee_globals = {"walk": enumerate, "size": len,
+                          "__builtins__": dict(vars(builtins))}
+        exec("def search(owner, key):\n"
+             "    for position, item in walk(owner.cells):\n"
+             "        if item[0] >= key:\n"
+             "            return position\n"
+             "    return size(owner.cells)\n", callee_globals)
+        type(owner).search = callee_globals["search"]
+        # These names belong to the caller and must not guard the callee.
+        ns["walk"] = ns["size"] = lambda items: "caller"
+        exec("def run_separate(owner, key, n):\n"
+             "    for _ in range(n):\n"
+             "        result = owner.search(key)\n"
+             "    return result\n", ns)
+        run = ns["run_separate"]
+        self.assertEqual(run(owner, 17, TIER2_THRESHOLD), 17)
+        ex = self.executor(run, "_CALL_PY_ATTRIBUTE_SEARCH")
+        self.assertEqual(self.executed(ex, "call_search_entries", run, owner, 17, 8), 17)
+        callee_globals["size"] = lambda items: 2000
+        self.assertEqual(run(owner, 100, 8), 2000)
+        del callee_globals["size"]
+        callee_globals["__builtins__"]["size"] = lambda items: 3000
+        self.assertEqual(run(owner, 100, 8), 3000)
+
+    @requires_call_regions
+    def test_attribute_search_descriptor_change(self):
+        owner, run, ex, ns = self.warm_attribute_search()
+        events = []
+        def getter(owner):
+            events.append(sys._getframe(1).f_code)
+            return [(100,)]
+        type(owner).cells = property(getter)
+        self.assertEqual(run(owner, 17, 8), 0)
+        self.assertEqual(events, [ns["search"].__code__] * 8)
+
+    @requires_call_regions
+    def test_attribute_search_monitoring(self):
+        owner, run, ex, ns = self.warm_attribute_search()
+        monitoring = sys.monitoring
+        tool = monitoring.OPTIMIZER_ID
+        code = ns["search"].__code__
+        events = []
+        monitoring.use_tool_id(tool, "attribute search")
+        try:
+            monitoring.register_callback(tool, monitoring.events.INSTRUCTION,
+                                         lambda code, offset: events.append(code))
+            monitoring.set_local_events(tool, code, monitoring.events.INSTRUCTION)
+            self.assertEqual(run(owner, 17, 8), 17)
+            self.assertIn(code, events)
+        finally:
+            monitoring.set_local_events(tool, code, 0)
+            monitoring.register_callback(tool, monitoring.events.INSTRUCTION, None)
+            monitoring.free_tool_id(tool)
+
+    @requires_call_regions
+    def test_attribute_search_owned_receiver(self):
+        owner, _, _, ns = self.warm_attribute_search(bound=False)
+        events = []
+        cls = type(owner)
+        inspect_frame = [False]
+        def finalize(obj):
+            if inspect_frame[0]:
+                events.append(sys._getframe(1).f_code.co_name)
+        cls.__del__ = finalize
+        ns["cells"] = owner.cells
+        refs = sys.getrefcount(owner.cells)
+        exec("def initialize(obj):\n"
+             "    obj.cells = cells\n"
+             "Holder.__init__ = initialize\n"
+             "def run_owned(n):\n"
+             "    result = None\n"
+             "    for _ in range(n):\n"
+             "        result = search(Holder(), 17)\n"
+             "    return result\n", ns)
+        run = ns["run_owned"]
+        self.assertEqual(run(8 * TIER2_THRESHOLD), 17)
+        ex = self.executor(run, "_CALL_PY_ATTRIBUTE_SEARCH")
+        events.clear()
+        inspect_frame[0] = True
+        self.assertEqual(self.executed(ex, "call_search_entries", run, 8), 17)
+        self.assertEqual(events, ["run_owned"] * 8)
+        self.assertEqual(sys.getrefcount(owner.cells), refs)
+        # Keep the helper's original receiver out of the finalizer assertions.
+        del cls.__del__
+
+    @requires_call_regions
+    def test_attribute_search_general_key_globals(self):
+        owner, run, ex, ns = self.warm_attribute_search()
+        events = []
+        class Collision:
+            def __hash__(self):
+                return hash("walk")
+            def __eq__(self, other):
+                events.append((other, sys._getframe(1).f_code))
+                return False
+        del ns["walk"]
+        ns[Collision()] = None
+        ns["walk"] = enumerate
+        events.clear()
+        self.assertEqual(run(owner, 17, 8), 17)
+        self.assertTrue(events)
+        self.assertTrue(all(name == "walk" and code is ns["search"].__code__
+                            for name, code in events))
+
+    @requires_call_regions
+    def test_attribute_search_extra_effects(self):
+        owner, run, ex, ns = self.warm_attribute_search()
+        events = []
+        ns["observe"] = events.append
+        exec("def replacement(owner, key):\n"
+             "    for position, item in walk(owner.cells):\n"
+             "        if item[0] >= key:\n"
+             "            observe(position)\n"
+             "            return position\n"
+             "    return size(owner.cells)\n", ns)
+        ns["search"].__code__ = ns["replacement"].__code__
+        self.assertEqual(run(owner, 17, TIER2_THRESHOLD), 17)
+        events.clear()
+        self.assertEqual(run(owner, 17, 8), 17)
+        self.assertEqual(events, [17] * 8)
+
     def warm_attribute_call(self, expression, slots):
         self.enterContext(mock.patch.dict(os.environ, {"PYTHON_TIER2_CALL_REGIONS": "1"}))
         namespace = {}
@@ -1923,6 +2160,59 @@ case.doCleanups()
         run(left, right, 8)
         self.assertGreater(ex.get_region_stats()["call_attr_entries"], before)
         return run, ex, left, right
+
+    @requires_call_regions
+    def test_attribute_call_argument_counts(self):
+        self.enterContext(mock.patch.dict(
+            os.environ, {"PYTHON_TIER2_CALL_REGIONS": "1"}))
+        for slots in (False, True):
+            for bound in (False, True):
+                for count in range(0 if bound else 1, 5):
+                    names = [f"p{i}" for i in range(count)]
+                    owner = names[-1] if names else "self"
+                    other = "self" if bound else names[0]
+                    expressions = (f"{owner}.value",
+                                   f"{owner}.value is None",
+                                   f"{owner}.value is not None",
+                                   f"{owner}.value < {other}.value")
+                    for mode, expression in enumerate(expressions):
+                        with self.subTest(slots=slots, bound=bound,
+                                          count=count, mode=mode):
+                            namespace = {}
+                            layout = "    __slots__ = ('value',)\n" if slots else ""
+                            if bound:
+                                signature = ", ".join(["self"] + names)
+                                body = (f"    def leaf({signature}):\n"
+                                        f"        return {expression}\n")
+                            else:
+                                signature = ", ".join(names)
+                                body = (f"def leaf({signature}):\n"
+                                        f"    return {expression}\n")
+                            exec("class Holder:\n" + layout + "    pass\n" + body,
+                                 namespace)
+                            cls = namespace["Holder"]
+                            obj = cls()
+                            obj.value = 31
+                            values = [cls() for _ in names]
+                            for index, value in enumerate(values):
+                                value.value = index + 1
+                            leaf = obj.leaf if bound else namespace["leaf"]
+                            args = ", ".join(f"values[{i}]" for i in range(count))
+                            callable_name = "obj.leaf" if bound else "leaf"
+                            exec("def run(obj, leaf, values, n):\n"
+                                 "    result = None\n"
+                                 "    for _ in range(n):\n"
+                                 f"        result = {callable_name}({args})\n"
+                                 "    return result\n", namespace)
+                            run = namespace["run"]
+                            expected = leaf(*values)
+                            self.assertIs(run(obj, leaf, values, TIER2_THRESHOLD),
+                                          expected)
+                            ex = self.executor(run, "_CALL_PY_ATTRIBUTE")
+                            self.assertIn(f"_CALL_PY_ATTRIBUTE_{count}",
+                                          get_opnames(ex))
+                            self.assertIs(self.executed(ex, "call_attr_entries", run,
+                                                       obj, leaf, values, 8), expected)
 
     @requires_call_regions
     def test_attribute_call_getters(self):

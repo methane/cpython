@@ -585,6 +585,7 @@ NON_ESCAPING_FUNCTIONS = (
     "_PyRegion_FloatAttribute",
     "_PyRegion_AllocationFails",
     "_PyRegion_HasBuiltinLen",
+    "_PyRegion_HasBuiltin",
     "_PyRegion_BytesEqual",
     "Py_MIN",
     "Py_MAX",

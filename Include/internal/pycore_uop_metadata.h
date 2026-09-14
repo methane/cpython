@@ -401,6 +401,10 @@ const uint32_t _PyUop_Flags[MAX_UOP_ID+1] = {
     [_CALL_PY_LIST_8] = HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
     [_CALL_PY_LIST_9] = HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
     [_CALL_PY_LIST] = HAS_ARG_FLAG | HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
+    [_CALL_PY_ATTRIBUTE_SEARCH_0] = HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
+    [_CALL_PY_ATTRIBUTE_SEARCH_1] = HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
+    [_CALL_PY_ATTRIBUTE_SEARCH_2] = HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
+    [_CALL_PY_ATTRIBUTE_SEARCH] = HAS_ARG_FLAG | HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
     [_PUSH_FRAME] = HAS_SYNC_SP_FLAG | HAS_NEEDS_GUARD_IP_FLAG,
     [_GUARD_NOS_NULL] = HAS_EXIT_FLAG,
     [_GUARD_THIRD_NULL] = HAS_EXIT_FLAG,
@@ -577,6 +581,7 @@ const ReplicationRange _PyUop_Replication[MAX_UOP_ID+1] = {
     [_CALL_PY_TRIVIAL] = { 0, 5 },
     [_CALL_PY_ATTRIBUTE] = { 0, 5 },
     [_CALL_PY_LIST] = { 0, 10 },
+    [_CALL_PY_ATTRIBUTE_SEARCH] = { 0, 3 },
     [_CALL_CLASS_ATTRIBUTES] = { 0, 5 },
     [_COPY] = { 1, 4 },
     [_SWAP] = { 2, 4 },
@@ -3882,6 +3887,42 @@ const _PyUopCachingInfo _PyUop_Caching[MAX_UOP_ID+1] = {
             { -1, -1, -1 },
         },
     },
+    [_CALL_PY_ATTRIBUTE_SEARCH_0] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 1, 0, _CALL_PY_ATTRIBUTE_SEARCH_0_r01 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_CALL_PY_ATTRIBUTE_SEARCH_1] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 1, 0, _CALL_PY_ATTRIBUTE_SEARCH_1_r01 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_CALL_PY_ATTRIBUTE_SEARCH_2] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 1, 0, _CALL_PY_ATTRIBUTE_SEARCH_2_r01 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_CALL_PY_ATTRIBUTE_SEARCH] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 1, 0, _CALL_PY_ATTRIBUTE_SEARCH_r01 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
     [_PUSH_FRAME] = {
         .best = { 1, 1, 1, 1 },
         .entries = {
@@ -5978,6 +6019,10 @@ const uint16_t _PyUop_Uncached[MAX_UOP_REGS_ID+1] = {
     [_CALL_PY_LIST_8_r01] = _CALL_PY_LIST_8,
     [_CALL_PY_LIST_9_r01] = _CALL_PY_LIST_9,
     [_CALL_PY_LIST_r01] = _CALL_PY_LIST,
+    [_CALL_PY_ATTRIBUTE_SEARCH_0_r01] = _CALL_PY_ATTRIBUTE_SEARCH_0,
+    [_CALL_PY_ATTRIBUTE_SEARCH_1_r01] = _CALL_PY_ATTRIBUTE_SEARCH_1,
+    [_CALL_PY_ATTRIBUTE_SEARCH_2_r01] = _CALL_PY_ATTRIBUTE_SEARCH_2,
+    [_CALL_PY_ATTRIBUTE_SEARCH_r01] = _CALL_PY_ATTRIBUTE_SEARCH,
     [_PUSH_FRAME_r10] = _PUSH_FRAME,
     [_GUARD_NOS_NULL_r02] = _GUARD_NOS_NULL,
     [_GUARD_NOS_NULL_r12] = _GUARD_NOS_NULL,
@@ -6589,6 +6634,14 @@ const char *const _PyOpcode_uop_name[MAX_UOP_REGS_ID+1] = {
     [_CALL_PY_ATTRIBUTE_3_r01] = "_CALL_PY_ATTRIBUTE_3_r01",
     [_CALL_PY_ATTRIBUTE_4] = "_CALL_PY_ATTRIBUTE_4",
     [_CALL_PY_ATTRIBUTE_4_r01] = "_CALL_PY_ATTRIBUTE_4_r01",
+    [_CALL_PY_ATTRIBUTE_SEARCH] = "_CALL_PY_ATTRIBUTE_SEARCH",
+    [_CALL_PY_ATTRIBUTE_SEARCH_r01] = "_CALL_PY_ATTRIBUTE_SEARCH_r01",
+    [_CALL_PY_ATTRIBUTE_SEARCH_0] = "_CALL_PY_ATTRIBUTE_SEARCH_0",
+    [_CALL_PY_ATTRIBUTE_SEARCH_0_r01] = "_CALL_PY_ATTRIBUTE_SEARCH_0_r01",
+    [_CALL_PY_ATTRIBUTE_SEARCH_1] = "_CALL_PY_ATTRIBUTE_SEARCH_1",
+    [_CALL_PY_ATTRIBUTE_SEARCH_1_r01] = "_CALL_PY_ATTRIBUTE_SEARCH_1_r01",
+    [_CALL_PY_ATTRIBUTE_SEARCH_2] = "_CALL_PY_ATTRIBUTE_SEARCH_2",
+    [_CALL_PY_ATTRIBUTE_SEARCH_2_r01] = "_CALL_PY_ATTRIBUTE_SEARCH_2_r01",
     [_CALL_PY_LIST] = "_CALL_PY_LIST",
     [_CALL_PY_LIST_r01] = "_CALL_PY_LIST_r01",
     [_CALL_PY_LIST_0] = "_CALL_PY_LIST_0",
@@ -8785,6 +8838,14 @@ int _PyUop_num_popped(int opcode, int oparg)
             return 2 + (oparg % 5);
         case _CALL_PY_LIST:
             return 2 + (oparg % 5);
+        case _CALL_PY_ATTRIBUTE_SEARCH_0:
+            return 2 + oparg;
+        case _CALL_PY_ATTRIBUTE_SEARCH_1:
+            return 2 + oparg;
+        case _CALL_PY_ATTRIBUTE_SEARCH_2:
+            return 2 + oparg;
+        case _CALL_PY_ATTRIBUTE_SEARCH:
+            return 2 + oparg;
         case _PUSH_FRAME:
             return 1;
         case _GUARD_NOS_NULL:

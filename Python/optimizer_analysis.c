@@ -1615,6 +1615,141 @@ pair_scan_instruction(PyCodeObject *code, int *pc, int *opcode, int *oparg)
     return false;
 }
 
+/* Prove both exits of a small, effect-free positional search. Names are
+ * resolved in the callee at execution time; no benchmark names are special. */
+static bool
+attribute_search_body(PyCodeObject *code, uint64_t *options, uint64_t *fields)
+{
+    if (code->co_argcount != 2 || code->co_kwonlyargcount ||
+        code->co_nlocalsplus != 4 || PyBytes_GET_SIZE(code->co_exceptiontable) ||
+        (code->co_flags & (CO_VARARGS | CO_VARKEYWORDS | CO_GENERATOR |
+                          CO_COROUTINE | CO_ASYNC_GENERATOR))) {
+        return false;
+    }
+    int pc = 0, op, arg;
+#define SEARCH_READ(OP) do { \
+    if (!pair_scan_instruction(code, &pc, &op, &arg) || op != (OP)) return false; \
+} while (0)
+#define SEARCH_ARG(OP, ARG) do { SEARCH_READ(OP); if (arg != (ARG)) return false; } while (0)
+    SEARCH_ARG(RESUME, 0);
+    SEARCH_READ(LOAD_GLOBAL);
+    if (!(arg & 1) || (arg >> 1) > UINT8_MAX) return false;
+    *options = (uint64_t)(arg >> 1) << 32;
+    SEARCH_ARG(LOAD_FAST_BORROW, 0);
+    SEARCH_READ(LOAD_ATTR);
+    if (arg & 1) return false;
+    int attribute = arg;
+    SEARCH_ARG(CALL, 1);
+    SEARCH_ARG(GET_ITER, 0);
+    int loop = pc;
+    SEARCH_READ(FOR_ITER);
+    int exhausted = pc + arg;
+    SEARCH_ARG(UNPACK_SEQUENCE, 2);
+    SEARCH_ARG(STORE_FAST_STORE_FAST, 0x23);
+    SEARCH_ARG(LOAD_FAST_BORROW, 3);
+    SEARCH_READ(LOAD_SMALL_INT);
+    if (arg > 31) return false;
+    *fields = (uint64_t)arg << 52;
+    SEARCH_ARG(BINARY_OP, NB_SUBSCR);
+    SEARCH_ARG(LOAD_FAST_BORROW, 1);
+    SEARCH_READ(COMPARE_OP);
+    unsigned int mask = arg & 15;
+    static const unsigned int masks[] = {2, 10, 8, 7, 4, 12};
+    if (!(arg & 16) || (arg >> 5) > Py_GE || mask != masks[arg >> 5]) return false;
+    *fields |= (uint64_t)mask << 57;
+    SEARCH_READ(POP_JUMP_IF_TRUE);
+    int matched = pc + arg;
+    SEARCH_READ(NOT_TAKEN);
+    SEARCH_READ(JUMP_BACKWARD);
+    if (pc - arg != loop || pc != matched) return false;
+    SEARCH_ARG(LOAD_FAST_BORROW, 2);
+    SEARCH_ARG(SWAP, 3);
+    SEARCH_READ(POP_TOP);
+    SEARCH_READ(POP_TOP);
+    SEARCH_READ(RETURN_VALUE);
+    if (pc != exhausted) return false;
+    SEARCH_READ(END_FOR);
+    SEARCH_READ(POP_ITER);
+    SEARCH_READ(LOAD_GLOBAL);
+    if (!(arg & 1) || (arg >> 1) > UINT8_MAX) return false;
+    *options |= (uint64_t)(arg >> 1) << 40;
+    SEARCH_ARG(LOAD_FAST_BORROW, 0);
+    SEARCH_ARG(LOAD_ATTR, attribute);
+    SEARCH_ARG(CALL, 1);
+    SEARCH_READ(RETURN_VALUE);
+    return pc == Py_SIZE(code);
+#undef SEARCH_ARG
+#undef SEARCH_READ
+}
+
+static void
+inline_attribute_search_calls(_PyUOpInstruction *buffer, int length)
+{
+#if defined(WITH_DTRACE) || defined(__EMSCRIPTEN__)
+    return;
+#else
+    if (!region_enabled("PYTHON_TIER2_CALL_REGIONS")) return;
+    for (int start = 0; start < length; start++) {
+        int nargs = buffer[start].oparg;
+        if (buffer[start].opcode != _INIT_CALL_PY_EXACT_ARGS ||
+            nargs < 1 || nargs > 2) continue;
+        PyFunctionObject *func = NULL;
+        for (int i = start - 1; i >= 0 && i >= start - 16; i--) {
+            int op = buffer[i].opcode;
+            if (op == _RECORD_CALLABLE || op == _RECORD_BOUND_METHOD) {
+                PyObject *obj = (PyObject *)buffer[i].operand0;
+                if (obj != NULL && PyMethod_Check(obj)) obj = PyMethod_GET_FUNCTION(obj);
+                if (obj != NULL && PyFunction_Check(obj)) func = (PyFunctionObject *)obj;
+                break;
+            }
+        }
+        uint64_t options, fields;
+        if (func == NULL || !_PyFunction_IsVersionValid(func->func_version) ||
+            !attribute_search_body((PyCodeObject *)func->func_code, &options, &fields)) {
+            continue;
+        }
+        int end = Py_MIN(length, start + 64);
+        int pc = start + 1;
+#define SEARCH_NEXT() (pc = trivial_call_skip(buffer, pc, end), \
+                       pc < end ? region_opcode(&buffer[pc]) : 0)
+#define SEARCH_EXPECT(OP) do { if (SEARCH_NEXT() != (OP)) goto next_search; pc++; } while (0)
+        if (SEARCH_NEXT() != _SAVE_RETURN_OFFSET || buffer[pc].oparg > UINT16_MAX) continue;
+        options |= (uint64_t)buffer[pc++].oparg << 48;
+        SEARCH_EXPECT(_PUSH_FRAME);
+        SEARCH_EXPECT(_TIER2_RESUME_CHECK);
+        if (SEARCH_NEXT() == _GUARD_GLOBALS_VERSION) pc++;
+        if (SEARCH_NEXT() == _GUARD_BUILTINS_IDENTITY) pc++;
+        int op = SEARCH_NEXT();
+        if ((op != _LOAD_CONST_INLINE && op != _LOAD_CONST_INLINE_BORROW) ||
+            buffer[pc++].operand0 != (uintptr_t)&PyEnum_Type) continue;
+        SEARCH_EXPECT(_PUSH_NULL);
+        uint64_t descriptor;
+        if (trivial_attribute_load(buffer, pc, end, 1, &descriptor) < 0 ||
+            (descriptor & 7) != 0) continue;
+        buffer[start].opcode = _CALL_PY_ATTRIBUTE_SEARCH;
+        buffer[start].operand0 = descriptor | fields;
+        buffer[start].operand1 = options | func->func_version;
+        /* The full body proof covers returns not present on this trace.
+         * Resume the real caller after CALL, with the one result on its stack.
+         * Retain recorded references for the normal tracer cleanup. */
+        for (int i = start + 1; i < length; i++) {
+            if (!(_PyUop_Flags[buffer[i].opcode] & HAS_RECORDS_VALUE_FLAG)) {
+                buffer[i].opcode = _NOP;
+            }
+        }
+        buffer[length - 1].opcode = _DYNAMIC_EXIT;
+        buffer[length - 1].oparg = 0;
+        buffer[length - 1].target = 0;
+        buffer[length - 1].operand0 = buffer[length - 1].operand1 = 0;
+        return;
+next_search:
+        ;
+#undef SEARCH_EXPECT
+#undef SEARCH_NEXT
+    }
+#endif
+}
+
 /* Side traces can start after the header. Prove that their backedge repeats
  * exactly `index < global_name(source) - 1`, followed by this same pair read.
  * The uop checks that global_name still resolves to the canonical len. */
@@ -2118,6 +2253,7 @@ _Py_uop_analyze_and_optimize(
     length = remove_folded_constant_traffic(output, length);
     eliminate_trivial_frames(output, length);
     inline_list_attribute_calls(output, length);
+    inline_attribute_search_calls(output, length);
     inline_attribute_initializers(output, length);
     fuse_list_pair_comparisons(output, length);
     inline_list_pair_append_scan(tstate, output, length);

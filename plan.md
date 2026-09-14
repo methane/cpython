@@ -1,10 +1,12 @@
 # CPython Tier 2：Linux上で行う2〜3日間の実装計画
 
 **現在の目標（2026-09-14）**：全6ベンチマークのmain比の**算術平均0.5以下**。
-開始時の480値は **0.7944918**。最新240値のscreenは **0.7299191**で、この新目標は未達。
-各blockの各scriptで10値の平均時間からcandidate/main比を求め、4 blocksと6 scriptを
-等重みの算術平均で集計する。入力・CLI・warmups=3・values=10・loops=1、固定main、
-PGO/LTOなしの比較条件を維持し、末尾の新工程を進める。
+開始時の480値は **0.7944918**。最新の検索最適化screen（3 blocks、3 builds、540値）は
+**0.6700296**で、目標は未達。Btreeの前zip版比は **0.7997691**、main比は **0.5697899**。
+各blockの各scriptで10値の平均時間からcandidate/main比を求め、blocksと6 scriptを
+等重みの算術平均で集計する。途中screenは3 blocks、最終goal判定は4 blocksとする。
+入力・CLI・warmups=3・values=10・loops=1、固定main、PGO/LTOなしの比較条件を維持する。
+最新の採否・検証・次の工程は末尾に記録する。
 
 **前回結果（2026-09-13）**：必須のint/float/builtin最適化を実装・検証し、追加目標の
 全6ベンチマークの計測区間の時間比は幾何平均 **0.49208（約2.03倍速）**となった。
@@ -2158,3 +2160,169 @@ build-jit/python -m test test_capi.test_opt_regions test_capi.test_opt test_tier
   zip適用を確認したBPE以外の小さな変動を、zipの直接効果として一般化しない。
 - 静的checkは成功。変更・11追加tests・英語のcontract・測定履歴をローカルcheckpointへ
   保存する。次のcall replica変更はartifact内のpatchとして準備済みで、まだCへ未適用。
+
+### 単純callの戻り値modeをreplicaへ移す（実装・検証中）
+
+- zipのcheckpointは `0ddb447533f`。測定sourceとcommitのC/H一致を別JSONに記録した。
+- `_CALL_PY_TRIVIAL`はconstant/argument×引数0〜4の10 replicas、`_CALL_PY_ATTRIBUTE`は
+  getter/is None/is not None/compact int比較×引数0〜4の20 replicasへ変更した。
+  stack effectとcleanupの引数数はoparg%5、modeは商へ分離する。元のsource/config descriptor
+  とguard・cleanup・code lifetimeは維持し、debug assertでmode encodingも検査する。
+- 既存trivial-call行列にreplica確認を加え、attribute callにはslots/managed・bound/unbound・
+  全引数数/4 modesの72ケースを追加した。まだbuild/test/測定は未実行。
+  zip最終版を対照として、形成・意味論・native code size・Btree/Raytraceの差を確認する。
+
+- 初回call検証は失敗。attribute行列で想定replica名が異なり、classmethodではdebugの
+  `oparg == CURRENT_OPARG()` assert、nativeはsegfault。ログを保持し、性能測定は未実施。
+  原因はuop ID generatorの辞書順で、20 replicasの_10.._19が_2より前に並び、optimizerの
+  base+oparg+1による選択と不一致になったこと。replicates metadataで親をgroup化し、
+  suffixを数値順にした。通常uop名は従来の名前順。12個・8:13範囲・似た名前の別uopを
+  含む小さい生成テストを追加し、両namespaceで連続性を確認する。
+
+- 数値順のID修正後はcall関連32 tests（追加72-case行列込み）が両buildで成功。
+  関連10 filesはdebug **1,311 tests・37 skips**、native **1,224 tests・48 skips**で成功。
+  8生成物のbyte再現、Ruff、diff --checkも成功した。0引数のnative stencilはtrivialの
+  constant217/argument301 bytes（従来330）、属性getter366/None比較407/整数比較674
+  bytes（従来726）。種類別の生成コードをartifactに保存した。
+- Btree/Raytrace probeは全counterが前版と一致。Btreeはcall260,571/属性104,319、
+  26 executors・258,048 bytesのまま。Raytraceはcall809,915/属性3,856、57 executorsで
+  native bytes827,392→823,296。いずれもcall guard exits0。
+  native SHA256 `347e3095a251cf0f85f7dacbd0728fa00b155776862ccf76911e2a7bf8af1995`、
+  source/stencil/拡張identityを `call-mode-replicas-*` に保存した。Btreeの対応測定中。
+
+- Btreeの3 blocks・90値は導入前比0.992941/0.991813/0.994570、幾何平均 **0.993107**。
+  全checksum一致・除外0、全block改善。`call-mode-replicas-btree-*`へ保存した。
+- sourceのmode抽出に明示的uint64_t castを追加し、無効化される32-bit buildでも
+  uintptr_tの幅を超えるshiftを避けた。native optimizer_analysis.oの.textは変更前後で
+  byte一致し、両buildのcall32 testsも再度成功。final binaryは
+  `2ffe413e8224e811a314cf2c30c1f1d68a4e2c46b35a786165bd66fce69e15b2`。
+- Raytraceの対応90値は1.000261/0.982557/0.999158、幾何平均 **0.993959**。
+  全checksum一致・除外0だが、3 blocksに揃った改善とは扱わない。
+  `call-mode-replicas-raytrace-*`へ保存。最終binaryのcounter再確認後、全6本のscreenへ進む。
+
+- 全6本・3 blocks・540値では全checksum一致・除外0だが、導入前のmain比算術平均
+  **0.691281→0.695589** と悪化。after/mainのblock別0.702104/0.691285/0.693377、
+  after/beforeは1.011665/1.005494/0.998480、平均1.005213。
+  BPE1.004569、Btree1.008091、DeltaBlue1.002680、Hexiom1.003491、Raytrace1.013572、
+  Spectral0.998877。`call-mode-replicas-suite-*`へ保存し、この版の採用は未確定。
+- 特にBtree/Raytraceは最初のblockで3.6/3.7%悪化し、単独比較と逆になった。
+  明示cast前後のbinary全.textはbyte一致（SHA25634040cf0...）で、機械語変更による
+  差ではない。同じ最終binaryでBtree/Raytraceを各3 blocksのABBA・120値により
+  順に再確認する。これまでの測定を除外・置換せず、追加対照として残す。
+
+- 追加ABBAは各3 blocks・120値、全checksum一致・除外0。Btreeは
+  0.982858/0.993297/0.972860（算術平均 **0.983005**）、Raytraceは
+  1.005324/0.999833/1.000131（**1.001762**）。全6本の悪化を消す扱いにはしない。
+- Btreeでは属性callの成功104,319回があり、単独3 blocksとABBA3 blocksで改善した。
+  一方Raytraceの約80万回のtrivial callには、分離による安定した利益を確認できない。
+  次の試行は **属性callの20 replicasのみ** に絞り、trivial familyは元の5 replicasへ戻す。
+  数値ID生成の修正と回帰test、72-case属性行列は保持。まだこの限定版は未build/未測定。
+
+- 属性callだけの版は関連10 filesがdebug **1,311 tests・37 skips**、native **1,224 tests・
+  48 skips**で成功。8生成物のbyte再現と静的checkも成功。Btree/Raytraceの全counterは
+  zip最終版と一致した。Btreeは26 executors・258,048 bytes、Raytraceは57 executors。
+  source/stencil/拡張・native codeは `attribute-mode-replicas-*` へ保存した。
+  native SHA256 `f0a1e16e02e1b4b93a1df7775d199d450c9d99e778737e1c3a4dec6b5295b823`。
+  zip最終版と固定mainに対し全6本・3 blocks・540値を比較する。
+
+- 属性限定版の全6本・3 blocks・540値も全checksum一致・除外0だが、main比算術平均は
+  **0.692053→0.694799**。after/beforeは0.997825/0.994346/1.016532、平均1.002901。
+  Btreeは1.002700/0.983515/1.000205と揃わず、Hexiomの第3 blockは1.080839。
+  この測定を除外せず保存し、限定版も採用しない。runtimeと英語contractをzip checkpointへ
+  戻し、数値順uop ID生成の修正・生成回帰test・72-case属性testは保持した。
+- 次は短い属性list内のtuple整数field検索。完全なcallee bytecodeを証明し、exact型・
+  compact整数・list長上限・canonical enumerate/lenをguardする候補を実装する。
+  任意の比較callbackや属性descriptorは元のCALLへ戻し、実callee frameで実行する。
+
+- 検索uopの初版を両buildで作成。6 focused testsのうち5成功、比較行列の != 4ケースは
+  regionが形成されず失敗した。元bytecodeの != maskにはunordered bitもあり7だが、
+  matcherがcompact int用mask6を要求していた。完全body証明側を7へ修正した。
+  debugの初回regrtestには残存tempdirの警告もあった。以後は新しい専用tempdirを使う。
+  まだ性能測定は実施していない。
+
+- 修正後の検索9 testsはdebug/native双方成功。owned receiverのfixtureは、callee検索loop
+  のexecutorが先にでき、caller traceの形成には追加warmupを要した（元4002回では0本）。
+  factoryと弱参照作成を省いた短いconstructor fixtureで8×閾値までwarmupし、実行counter・
+  finalizerのcaller frame・参照数を確認した。失敗したfixtureログも保持している。
+  !=を含む24組の比較/layout/call行列、長さ0/1/31/64/65、field1/31、型guard、
+  callbackによるlist延長、例外frame、global/descriptor/code変更、general-key globals、
+  monitoring、body内に追加effectがある場合のfallbackを確認。関連10 filesを両buildで実行中。
+- 成功時は完全body証明に基づき、元traceのcallee部分を短い検索に置換してcallerのCALL直後
+  へdynamic exitする。既存の関数version/引数/recursion/stack guardとcode lifetimeを保つ。
+  上限64なのでpollを跨ぐ長いnative loopにはしない。全6本採用判断はまだ行っていない。
+
+- 検索初版の関連10 filesはdebug **1,371 tests・36 skips**、native **1,284 tests・47 skips**
+  で成功。Btree probeは20 executors、新検索成功177,958回・advance1,471,160回・
+  call guard exits0。従来のenum scanは119,610→1回となり、既存の細かいloop処理の多くを
+  置換したことを確認。counter採取のsecondsは速度比較に使っていない。
+- Btreeの正式3 blocks・90値は前zip版比0.815275/0.817284/0.809248、幾何平均
+  **0.813928**。main比は0.571241/0.583710/0.576020。全checksum一致・除外0。
+  binary SHA256 `05ee4a95147d4cc952a6d22652b7bf18c0ba09ca63ee3581cb1e470d280d0d56`、
+  `attribute-search-{manifest.json,btree-*,*.patch}`へ保存。全6本のscreenを逐次実行中。
+- calleeとcallerの別globals・コピーbuiltinsを追加検証し、現在の検索10 testsは両buildで
+  成功した。最初のfixtureはFunctionTypeで複製した関数のversionがUNSETとなりCALL自体が
+  特殊化されず失敗。MAKE_FUNCTIONを通るexecで独立したcallee/callerを作って修正した。
+  初回失敗・optimizer debugログも保存。callee globals/builtinsの変更に追従する。
+- reviewで次の小修正を予定: full-body matcherのfunc_version検査を非0から
+  _PyFunction_IsVersionValidへ厳格化し、共有されるCLEARED値1も明示的に除外する。
+  現在の測定binary/source identityを保持し、測定完了後にbuildと再検証を行う。
+
+- 次の調査対象はDeltaBlueの13呼び出し全体のcoverage。既存の--values 1 probeでは
+  最初のtimed callでregion counterが0だったが、それだけでは正式CLIの10値すべてを
+  代表しない。global plannerの更新がdict watcherでexecutorを無効化し、watch回数上限6に
+  達する前後でcoverageが変わり得る。全6本測定の終了後に--values 10で前後counterを
+  各sample直前・直後に採取し、どの段階で最適化が利用されているか確認する。
+  この時点では原因や改善量を確定していない。
+
+- 初版の全6本・3 blocks・540値は全checksum一致・除外0。main比算術平均
+  **0.692659→0.671773**、after/main block別0.675454/0.667425/0.672440。
+  BPE0.809331、Btree0.566232、DeltaBlue0.976129、Hexiom0.838080、Raytrace0.822231、
+  Spectral0.018636。goal0.5は未達。`attribute-search-suite-{rows,summary}.json`へ保存。
+- after/before全体は0.971865/0.967552/0.970900（平均0.970105）。Btreeは
+  0.801587/0.806472/0.811687（平均 **0.806582**）で、単独比較と全block改善が一致した。
+  一方Hexiomは1.010224/1.003247/1.006520（平均 **1.006664**）、Spectralも
+  1.003266/1.003015/1.001064と小幅増加。DeltaBlue1.005420、Raytrace1.000928、
+  BPE0.998591はblockで方向が混在。これらを除外せず、検索の直接利益とは区別する。
+- 測定後にfunc_versionを_IsVersionValidで検査する一行修正を適用した。最終buildの
+  focused/full検証とBtree対照、全6本の最終確認へ進む。native stencilは変更していない。
+
+- 最終版は関連10 filesでdebug **1,372 tests・36 skips**、native **1,285 tests・47 skips**
+  が成功。8生成物はbyte一致し、Ruff/diff checkも成功。Btreeの全counterは初版と一致し、
+  native codeは20 executors・135,168 bytes（zip対照26本・258,048 bytes）。
+  最終binary SHA256 `d7185a95fc22975fff8b6f36926347bb11c5b29d859e10a8fa305a87043133e7`。
+  `attribute-search-final-*`へsource・binary・拡張identity、raw native code/assemblyを保存。
+- 最終版のBtree 3 blocks・90値も0.805036/0.812130/0.814674、幾何平均 **0.810603**。
+  main比0.560801/0.573306/0.582460、全checksum一致・除外0。全6本の最終比較を実行中。
+- DeltaBlueの3 warmups＋10値probeはzip対照/最終版とも同じcoverage。最初8値の観測counterは
+  0、9値目にcall/attribute48回、10値目に99回。最終11 executors。観測対象はsample前の
+  executor群とsample後に発見した新executorであり、call途中に生成・破棄されたexecutorの
+  counterまでは採取できない。0を「そのcall中に一切regionが動かなかった」と解釈しない。
+- DeltaBlueの追加perfは本来の13 callsを維持し、各timed callのmonotonic開始/終了で
+  sampleを絞った。cycles:u period20000、frame pointers、perf_jitは使わない。
+  全3,400 samples中、測定窓内416 samples。leafはEvalFrame155、unknown61、
+  visit_decref27、gc_collect_main22、Frame_ClearExceptCode17、FrameClearAndPop11。
+  少数sampleの粗いprofileなので小さなC関数の順位は断定しない。10値のcounterは
+  perfなしprobeと一致。`attribute-search-deltablue-windows-*`へ生データを保存した。
+  profileのsecondsを性能改善の根拠には使わない。
+
+- raw native executorを確認。長さguardはcmp $0x40、scan backedge内では毎要素に
+  setge/setle/or/btで比較maskを評価している。次の候補は比較種類×引数数の12 replicasで
+  この毎要素のmask処理を除くこと。既に修正した数値順ID生成を使い、同じ型guard・
+  cleanup・上限・fallbackを保持する。準備patchだけをartifactに保存し、測定中のsource/
+  binaryにはまだ適用しない。最終版の全6本結果とcheckpoint確定後に比較する。
+
+- 最終全6本・3 blocks・540値も全checksum一致・除外0。main比算術平均
+  **0.694339→0.670030**、after/main block別0.670924/0.669091/0.670074。
+  BPE0.808582、Btree0.569790、DeltaBlue0.967519、Hexiom0.831643、Raytrace0.824048、
+  Spectral0.018595。after/before全体0.967763/0.962884/0.966141、平均0.965596。
+- Btreeは0.788183/0.808530/0.802595（平均 **0.799769**）。2回の単独比較と2回の全6本で
+  全block改善し、約19〜20%短縮が再現したため検索最適化を採用する。目標0.5は未達。
+  その他のafter/beforeはBPE0.997882、DeltaBlue1.001024、Hexiom0.999817、
+  Raytrace0.997551、Spectral0.997532でblockの方向が混在する。初版Hexiomの全block悪化は
+  この最終比較では再現しなかったが、先の測定を消さず残す。
+- 英語reportに今回の完全body証明・guard/fallback・実行時間とvalidationの追記を行う。
+  数値ID生成fixを独立したローカルcommit、検索実装/10追加tests/72-case属性回帰行列/
+  docs/進捗を次のローカルcheckpointとして保存する。GitHub操作・push・PR変更は行わない。
+
+- 数値順ID生成fixと生成回帰testをローカル `cbcf14f0e6e` に保存した。検索実装のC/Hは
+  最終測定manifestと一致したまま。次のcommitで検索実装と今回の記録を保存する。
