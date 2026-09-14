@@ -307,6 +307,301 @@ case.assertEqual(events, ["ready"] * 8)
 case.doCleanups()
 """, PYTHON_JIT="1")
 
+    def warm_float_attributes(self, slots=False, expression=None):
+        if expression is None:
+            expression = "self.x * other.x + self.y * other.y + self.z * other.z"
+        namespace = {}
+        exec("class Vector:\n"
+             + ("    __slots__ = ('x', 'y', 'z')\n" if slots else "") +
+             "    def dot(self, other):\n"
+             f"        return {expression}\n"
+             "def run(left, right, n):\n"
+             "    for _ in range(n):\n"
+             "        result = left.dot(right)\n"
+             "    return result\n", namespace)
+        cls = namespace["Vector"]
+        left, right = cls(), cls()
+        left.x, left.y, left.z = map(float, (2, 3, 4))
+        right.x, right.y, right.z = map(float, (5, 6, 7))
+        run = namespace["run"]
+        run(left, right, TIER2_THRESHOLD)
+        candidates = (run, cls.dot)
+        for function in candidates:
+            if any("_FLOAT_ATTRIBUTE_SUM_PRODUCTS" in get_opnames(ex)
+                   for ex in get_all_executors(function)):
+                return run, left, right, self.executor(function, "_FLOAT_ATTRIBUTE_SUM_PRODUCTS")
+        self.fail([get_opnames(ex) for f in candidates for ex in get_all_executors(f)])
+
+    def test_float_attribute_products(self):
+        for slots in (False, True):
+            with self.subTest(slots=slots):
+                run, left, right, ex = self.warm_float_attributes(slots)
+                self.assertEqual(self.executed(ex, "float_attribute_entries", run,
+                                               left, right, 8), 56.0)
+                self.assertEqual(self.executed(ex, "float_attribute_entries", run,
+                                               left, left, 8), 29.0)
+
+    def test_float_attribute_offsets_and_aliases(self):
+        for slots in (False, True):
+            for expression, expected in (
+                ("self.z * other.y + self.x * other.z + self.y * other.x", 53.0),
+                ("self.x * self.y + self.z * self.x + self.y * self.z", 26.0),
+            ):
+                with self.subTest(slots=slots, expression=expression):
+                    run, left, right, ex = self.warm_float_attributes(slots, expression)
+                    self.assertEqual(self.executed(ex, "float_attribute_entries", run,
+                                                   left, right, 8), expected)
+
+    def test_float_attribute_rounding(self):
+        cases = [
+            (-1.0, 1.0, 1.0 + 2**-27, 1.0 - 2**-27, 0.0, 1.0),
+            (1e308, 2.0, -1e308, 2.0, 1.0, 1.0),
+            (2**-1022, 2**-53, 2**-1022, 2**-53, -0.0, 1.0),
+            (math.inf, 0.0, 1.0, 1.0, 1.0, 1.0),
+        ]
+        for a in (0.0, -0.0):
+            for b in (0.0, -0.0):
+                for c in (0.0, -0.0):
+                    cases.append((a, 1.0, b, 1.0, c, 1.0))
+        rng = random.Random(7721)
+        for _ in range(128):
+            cases.append(tuple(struct.unpack("d", rng.randbytes(8))[0] for _ in range(6)))
+        for slots in (False, True):
+            run, left, right, ex = self.warm_float_attributes(slots)
+            for values in cases:
+                left.x, right.x, left.y, right.y, left.z, right.z = values
+                a, b, c, d, e, f = values
+                expected = a * b + c * d + e * f
+                actual = self.executed(ex, "float_attribute_entries", run, left, right, 8)
+                if math.isnan(expected):
+                    self.assertTrue(math.isnan(actual))
+                else:
+                    self.assertEqual(struct.pack("d", actual), struct.pack("d", expected))
+
+    def test_float_attribute_references(self):
+        for slots in (False, True):
+            run, left, right, ex = self.warm_float_attributes(slots)
+            values = (left.x, left.y, left.z, right.x, right.y, right.z, left, right)
+            references = [sys.getrefcount(value) for value in values]
+            first = self.executed(ex, "float_attribute_entries", run, left, right, 8)
+            second = self.executed(ex, "float_attribute_entries", run, left, right, 1000)
+            self.assertIsNot(first, second)
+            self.assertEqual(first, second)
+            self.assertEqual([sys.getrefcount(value) for value in values], references)
+            self.assertEqual(values[:6], (2.0, 3.0, 4.0, 5.0, 6.0, 7.0))
+
+    def test_float_attribute_numeric_callback(self):
+        for slots in (False, True):
+            run, left, right, ex = self.warm_float_attributes(slots)
+            events = []
+
+            class Number(float):
+                def __rmul__(self, value):
+                    frame = sys._getframe(1)
+                    events.append((frame.f_code, frame.f_locals["self"], value))
+                    left.z = 101.0
+                    return value * float(self)
+
+            right.y = Number(6.0)
+            self.assertEqual(self.executed(ex, "float_guard_exits", run,
+                                           left, right, 8), 735.0)
+            self.assertEqual(events, [(type(left).dot.__code__, left, 3.0)] * 8)
+
+    def test_float_attribute_layout_changes(self):
+        for slots in (False, True):
+            for change in ("missing", "class", "accessor", "dict"):
+                if slots and change == "dict":
+                    continue
+                with self.subTest(slots=slots, change=change):
+                    run, left, right, ex = self.warm_float_attributes(slots)
+                    if change == "missing":
+                        namespace = {}
+                        exec("def run(left, others):\n"
+                             "    for other in others:\n"
+                             "        result = left.dot(other)\n"
+                             "    return result\n", namespace)
+                        run = namespace["run"]
+                        run(left, [right] * TIER2_THRESHOLD)
+                        ex = self.executor(run, "_FLOAT_ATTRIBUTE_SUM_PRODUCTS")
+                        missing = type(right)()
+                        missing.x, missing.y = 5.0, 6.0
+                        before = ex.get_region_stats()["float_guard_exits"]
+                        with self.assertRaises(AttributeError):
+                            # The first iteration runs before the loop executor.
+                            run(left, [right, missing])
+                        self.assertGreater(ex.get_region_stats()["float_guard_exits"], before)
+                    elif change == "dict":
+                        # Mutate the argument, whose managed-values guard is
+                        # inside the new region, beyond the method lookup.
+                        right.__dict__ = dict(x=5.0, y=6.0, z=10.0)
+                        self.assertEqual(self.executed(ex, "float_guard_exits", run,
+                                                       left, right, 8), 68.0)
+                        left.__dict__ = dict(x=2.0, y=3.0, z=10.0)
+                        self.assertEqual(run(left, right, 8), 128.0)
+                    elif change == "class":
+                        class Other(type(left)):
+                            pass
+
+                        other = Other()
+                        other.x, other.y, other.z = 5.0, 6.0, 10.0
+                        self.assertEqual(self.executed(ex, "float_guard_exits", run,
+                                                       left, other, 8), 68.0)
+                    else:
+                        events = []
+
+                        def getattribute(self, name):
+                            if name in ("x", "y", "z"):
+                                events.append((name, sys._getframe(1).f_code))
+                            return object.__getattribute__(self, name)
+
+                        type(left).__getattribute__ = getattribute
+                        self.assertEqual(run(left, right, 8), 56.0)
+                        code = type(left).dot.__code__
+                        self.assertEqual(events, [(name, code) for name in
+                                                 ("x", "x", "y", "y", "z", "z")] * 8)
+
+    def test_float_attributes_without_call_regions(self):
+        with mock.patch.dict(os.environ, {"PYTHON_TIER2_CALL_REGIONS": "0",
+                                           "PYTHON_TIER2_INT_REGIONS": "0",
+                                           "PYTHON_TIER2_BUILTIN_REGIONS": "0"}):
+            for slots in (False, True):
+                run, left, right, ex = self.warm_float_attributes(slots)
+                self.assertEqual(self.executed(ex, "float_attribute_entries", run,
+                                               left, right, 8), 56.0)
+
+    def test_float_attribute_owner_local_indices(self):
+        for slots in (False, True):
+            _, left, right, _ = self.warm_float_attributes(slots)
+            for count in (6, 7):
+                namespace = {}
+                args = ", ".join(f"p{i}" for i in range(count))
+                exec(f"def run({args}, left, right, n):\n"
+                     "    for _ in range(n):\n"
+                     "        result = left.x * right.x + left.y * right.y + left.z * right.z\n"
+                     "    return result\n", namespace)
+                run = namespace["run"]
+                values = (None,) * count + (left, right)
+                run(*values, TIER2_THRESHOLD)
+                if count == 6:
+                    ex = self.executor(run, "_FLOAT_ATTRIBUTE_SUM_PRODUCTS")
+                    self.assertEqual(self.executed(ex, "float_attribute_entries", run,
+                                                   *values, 8), 56.0)
+                else:
+                    self.assertFalse(any("_FLOAT_ATTRIBUTE_SUM_PRODUCTS" in get_opnames(ex)
+                                         for ex in get_all_executors(run)))
+                    self.assertEqual(run(*values, 8), 56.0)
+
+    def test_float_attribute_intervening_effects(self):
+        for body in (
+            "return self.x * other.x + self.y * convert(other.y) + self.z * other.z",
+            "return self.x * other.x + (product := self.y * other.y) + self.z * other.z",
+        ):
+            _, left, right, _ = self.warm_float_attributes()
+            events = []
+
+            def convert(value):
+                events.append(sys._getframe(1).f_code)
+                left.z = 10.0
+                return value
+
+            namespace = {"convert": convert}
+            exec("def dot(self, other):\n" + f"    {body}\n"
+                 "def run(left, right, n):\n"
+                 "    for _ in range(n):\n"
+                 "        result = left.dot(right)\n"
+                 "    return result\n", namespace)
+            type(left).dot = namespace["dot"]
+            run = namespace["run"]
+            run(left, right, TIER2_THRESHOLD)
+            events.clear()
+            self.assertFalse(any("_FLOAT_ATTRIBUTE_SUM_PRODUCTS" in get_opnames(ex)
+                                 for f in (run, type(left).dot) for ex in get_all_executors(f)))
+            self.assertEqual(run(left, right, 8), 98.0 if "convert" in body else 56.0)
+            self.assertEqual(events, [type(left).dot.__code__] * 8 if "convert" in body else [])
+
+    @unittest.skipUnless(support.Py_DEBUG, "uses debug allocation injection")
+    def test_float_attribute_allocation_error(self):
+        import dis
+
+        for slots in (False, True):
+            run, left, right, ex = self.warm_float_attributes(slots)
+            code = type(left).dot.__code__
+            add = max(instruction.offset for instruction in dis.get_instructions(code)
+                      if instruction.opname == "BINARY_OP" and instruction.argrepr == "+")
+            before = ex.get_region_stats()["allocation_errors"]
+            with mock.patch.dict(os.environ, {"PYTHON_TIER2_REGION_FAIL_ALLOC": "float_attributes"}):
+                try:
+                    run(left, right, 8)
+                except MemoryError as exc:
+                    traceback = exc.__traceback__
+                    while traceback.tb_next is not None:
+                        traceback = traceback.tb_next
+                    self.assertIs(traceback.tb_frame.f_code, code)
+                    self.assertEqual(traceback.tb_lasti, add)
+                    self.assertIs(traceback.tb_frame.f_locals["self"], left)
+                    self.assertIs(traceback.tb_frame.f_locals["other"], right)
+                else:
+                    self.fail("MemoryError was lost")
+            self.assertGreater(ex.get_region_stats()["allocation_errors"], before)
+            self.assertEqual(run(left, right, 8), 56.0)
+
+    def test_float_attribute_monitoring(self):
+        run, left, right, ex = self.warm_float_attributes()
+        code = type(left).dot.__code__
+        monitoring = sys.monitoring
+        tool = 4
+        monitoring.use_tool_id(tool, "float attributes")
+        events = []
+        before = ex.get_region_stats()["float_attribute_entries"]
+
+        def on_instruction(code, offset):
+            events.append(offset)
+            left.z = 10.0
+
+        try:
+            monitoring.register_callback(tool, monitoring.events.INSTRUCTION, on_instruction)
+            monitoring.set_local_events(tool, code, monitoring.events.INSTRUCTION)
+            self.assertEqual(run(left, right, 8), 98.0)
+            self.assertTrue(events)
+            self.assertEqual(ex.get_region_stats()["float_attribute_entries"], before)
+        finally:
+            monitoring.set_local_events(tool, code, 0)
+            monitoring.register_callback(tool, monitoring.events.INSTRUCTION, None)
+            monitoring.free_tool_id(tool)
+
+    @unittest.skipUnless(support.Py_DEBUG, "uses debug allocation injection")
+    def test_float_attribute_allocation_handler(self):
+        import dis
+
+        _, left, right, _ = self.warm_float_attributes()
+        namespace = {}
+        exec("def dot(self, other):\n"
+             "    marker = self\n"
+             "    try:\n"
+             "        return 7.0 + (self.x * other.x + self.y * other.y + self.z * other.z)\n"
+             "    except MemoryError as error:\n"
+             "        return marker, other, error\n"
+             "def run(left, right, n):\n"
+             "    for _ in range(n):\n"
+             "        result = left.dot(right)\n"
+             "    return result\n", namespace)
+        type(left).dot = namespace["dot"]
+        run = namespace["run"]
+        run(left, right, TIER2_THRESHOLD)
+        ex = self.executor(run, "_FLOAT_ATTRIBUTE_SUM_PRODUCTS")
+        code = type(left).dot.__code__
+        adds = [instruction.offset for instruction in dis.get_instructions(code)
+                if instruction.opname == "BINARY_OP" and instruction.argrepr == "+"]
+        self.assertEqual(len(adds), 3)
+        with mock.patch.dict(os.environ, {"PYTHON_TIER2_REGION_FAIL_ALLOC": "float_attributes"}):
+            marker, other, error = self.executed(ex, "allocation_errors", run, left, right, 8)
+        self.assertIs(marker, left)
+        self.assertIs(other, right)
+        self.assertIsInstance(error, MemoryError)
+        self.assertIs(error.__traceback__.tb_frame.f_code, code)
+        self.assertEqual(error.__traceback__.tb_lasti, adds[1])
+        self.assertEqual(run(left, right, 8), 63.0)
+
     def warm_float_owned(self, symbol="+", fields=(True, True)):
         class Holder:
             pass

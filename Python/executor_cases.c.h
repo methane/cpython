@@ -8974,6 +8974,84 @@
             break;
         }
 
+        case _FLOAT_ATTRIBUTE_SUM_PRODUCTS_r01: {
+            CHECK_CURRENT_CACHED_VALUES(0);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            _PyStackRef res;
+            PyObject *fields = (PyObject *)CURRENT_OPERAND0_64();
+            PyObject *layout = (PyObject *)CURRENT_OPERAND1_64();
+            uint64_t config = (uintptr_t)layout;
+            _PyStackRef first = GETLOCAL(config & 7);
+            _PyStackRef second = GETLOCAL((config >> 3) & 7);
+            if (PyStackRef_IsNull(first) || PyStackRef_IsNull(second)) {
+                current_executor->region_float_guard_exits++;
+                if (true) {
+                    UOP_STAT_INC(uopcode, miss);
+                    SET_CURRENT_CACHED_VALUES(0);
+                    JUMP_TO_JUMP_TARGET();
+                }
+            }
+            PyObject *left = PyStackRef_AsPyObjectBorrow(first);
+            PyObject *right = PyStackRef_AsPyObjectBorrow(second);
+            uint32_t version = (uint32_t)(config >> 6);
+            if (Py_TYPE(left)->tp_version_tag != version ||
+                Py_TYPE(right)->tp_version_tag != version) {
+                current_executor->region_float_guard_exits++;
+                if (true) {
+                    UOP_STAT_INC(uopcode, miss);
+                    SET_CURRENT_CACHED_VALUES(0);
+                    JUMP_TO_JUMP_TARGET();
+                }
+            }
+            if ((config >> 38) & 1) {
+                if (!_PyObject_InlineValues(left)->valid ||
+                    !_PyObject_InlineValues(right)->valid) {
+                    current_executor->region_float_guard_exits++;
+                    if (true) {
+                        UOP_STAT_INC(uopcode, miss);
+                        SET_CURRENT_CACHED_VALUES(0);
+                        JUMP_TO_JUMP_TARGET();
+                    }
+                }
+            }
+            uint64_t offsets = (uintptr_t)fields;
+            PyObject *a = _PyRegion_FloatAttribute(left, (offsets & 255) * sizeof(PyObject *));
+            PyObject *b = _PyRegion_FloatAttribute(right, ((offsets >> 8) & 255) * sizeof(PyObject *));
+            PyObject *c = _PyRegion_FloatAttribute(left, ((offsets >> 16) & 255) * sizeof(PyObject *));
+            PyObject *d = _PyRegion_FloatAttribute(right, ((offsets >> 24) & 255) * sizeof(PyObject *));
+            PyObject *e = _PyRegion_FloatAttribute(left, ((offsets >> 32) & 255) * sizeof(PyObject *));
+            PyObject *f = _PyRegion_FloatAttribute(right, ((offsets >> 40) & 255) * sizeof(PyObject *));
+            if (a == NULL || b == NULL || c == NULL || d == NULL || e == NULL || f == NULL) {
+                current_executor->region_float_guard_exits++;
+                if (true) {
+                    UOP_STAT_INC(uopcode, miss);
+                    SET_CURRENT_CACHED_VALUES(0);
+                    JUMP_TO_JUMP_TARGET();
+                }
+            }
+            volatile double product = ((PyFloatObject *)a)->ob_fval * ((PyFloatObject *)b)->ob_fval;
+            volatile double partial = _PyFloat_MultiplyThenUpdate(
+                product, ((PyFloatObject *)c)->ob_fval, ((PyFloatObject *)d)->ob_fval, false);
+            double value = _PyFloat_MultiplyThenUpdate(
+                partial, ((PyFloatObject *)e)->ob_fval, ((PyFloatObject *)f)->ob_fval, false);
+            frame->instr_ptr = _PyFrame_GetBytecode(frame) + ((config >> 39) & UINT16_MAX);
+            PyObject *result = _PyRegion_AllocationFails("float_attributes")
+            ? NULL : PyFloat_FromDouble(value);
+            if (result == NULL) {
+                current_executor->region_allocation_errors++;
+                SET_CURRENT_CACHED_VALUES(0);
+                JUMP_TO_ERROR();
+            }
+            res = PyStackRef_FromPyObjectSteal(result);
+            current_executor->region_float_attribute_entries++;
+            _tos_cache0 = res;
+            _tos_cache1 = PyStackRef_ZERO_BITS;
+            _tos_cache2 = PyStackRef_ZERO_BITS;
+            SET_CURRENT_CACHED_VALUES(1);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            break;
+        }
+
         case _BINARY_OP_MULTIPLY_ADD_FLOAT_OWNED_r33: {
             CHECK_CURRENT_CACHED_VALUES(3);
             ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);

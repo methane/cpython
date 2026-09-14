@@ -1222,6 +1222,18 @@
             break;
         }
 
+        case _FLOAT_ATTRIBUTE_SUM_PRODUCTS: {
+            JitOptRef res;
+            PyObject *fields = (PyObject *)this_instr->operand0;
+            PyObject *layout = (PyObject *)this_instr->operand1;
+            res = PyJitRef_MakeUnique(sym_new_type(ctx, &PyFloat_Type));
+            CHECK_STACK_BOUNDS(1);
+            stack_pointer[0] = res;
+            stack_pointer += 1;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            break;
+        }
+
         case _BINARY_OP_MULTIPLY_ADD_FLOAT_OWNED: {
             JitOptRef res;
             JitOptRef l;

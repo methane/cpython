@@ -2519,6 +2519,10 @@ dummy_func(void) {
         sym_set_type(numerator, &PyFloat_Type);
     }
 
+    op(_FLOAT_ATTRIBUTE_SUM_PRODUCTS, (fields/4, layout/4 -- res)) {
+        res = PyJitRef_MakeUnique(sym_new_type(ctx, &PyFloat_Type));
+    }
+
     op(_INT_REGION_DIVIDE, (numerator, value -- res)) {
         res = PyJitRef_MakeUnique(sym_new_type(ctx, &PyFloat_Type));
     }

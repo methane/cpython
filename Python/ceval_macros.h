@@ -629,6 +629,15 @@ _PyFloat_MultiplyThenUpdate(double accumulator, double left, double right,
     return subtract ? accumulator - product : accumulator + product;
 }
 
+/* The caller guards the owner's recorded layout and retains it in a local.
+ * Do not load a double until every field in the region has passed its guard. */
+static inline Py_ALWAYS_INLINE PyObject *
+_PyRegion_FloatAttribute(PyObject *owner, Py_ssize_t offset)
+{
+    PyObject *value = *(PyObject **)((char *)owner + offset);
+    return value != NULL && PyFloat_CheckExact(value) ? value : NULL;
+}
+
 /* FENV_ACCESS makes Clang emit constrained FP operations, preserving the
  * rounding boundary after inlining without a volatile memory round trip.
  * FP_CONTRACT OFF alone does not survive every inlining configuration. */

@@ -396,6 +396,45 @@ NaNs by classification; NaN payload selection can differ between the debug
 Tier-2 interpreter's C operations. Separate native diagnostics record payload
 bits and floating-point exception flags as additional evidence.
 
+The same `PYTHON_TIER2_FLOAT_FUSION=1` option also recognizes a straight-line
+sum of three products of cached float attributes, for example:
+
+```python
+return self.x * other.x + self.y * other.y + self.z * other.z
+```
+
+`_FLOAT_ATTRIBUTE_SUM_PRODUCTS` retains the callee frame and replaces the six
+attribute loads, three products, two left-associated additions, and their
+temporary reference cleanup. Recognition follows the uops rather than names:
+each product loads from the same two owner locals, which may alias or be the
+same local. All six attributes must share a recorded nonzero type version and
+layout kind (slots or managed inline values). Owner indices are limited to
+0 through 7; field offsets must be pointer-aligned and fit in eight bits when
+scaled by the pointer size. The search is bounded to 128 uops and cannot cross
+calls, stores, periodic checks, or frame transitions. Layout annotations are
+preserved before abstract interpretation removes redundant type guards;
+matching runs before the existing product-update fusion.
+
+The uop checks both owner types, managed-values validity when applicable, and
+all six nonnull exact-float fields before loading their doubles. A failed
+guard resumes at the first original `LOAD_FAST` with the unchanged entry
+stack. The owner locals retain the attributes, and no callback or owner-local
+replacement can occur within the region. This permits raw field reads without
+temporary `INCREF`/`DECREF` operations. Attribute changes, numeric subclasses,
+overridden attribute access, and instrumentation retain ordinary execution.
+
+Explicit C evaluation boundaries preserve all five binary64 rounding points,
+including the first product and the partial sum. Only the final result is
+boxed, as a fresh float. Its allocation error uses the real callee frame and
+the final original `ADD` position. That position is stored as an absolute
+16-bit code-unit offset: the first `LOAD_FAST` need not have a surviving
+`SET_IP`. Expressions beyond this encoding's range are left unchanged.
+`float_attribute_entries` counts successful results, `float_guard_exits`
+counts failed entry checks, and debug allocation injection accepts
+`PYTHON_TIER2_REGION_FAIL_ALLOC=float_attributes`. The 64-bit GIL and GCC/Clang
+restrictions apply to this new attribute region; it does not require call
+regions to be enabled.
+
 `executor.get_region_stats()` reports entries, guard/overflow exits, integer
 boxing operations, and allocation errors. Counters are per executor; an entry
 alone is not proof of success. Inspect deltas around the specific input and

@@ -605,7 +605,7 @@ get_region_stats(PyObject *self, PyObject *Py_UNUSED(ignored))
 {
     _PyExecutorObject *executor = _PyExecutorObject_CAST(self);
     return Py_BuildValue(
-        "{s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K}",
+        "{s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K}",
         "bounded_entries", executor->region_bounded_entries,
         "bounded_guard_exits", executor->region_bounded_guard_exits,
         "bounded_boxes", executor->region_bounded_boxes,
@@ -653,6 +653,7 @@ get_region_stats(PyObject *self, PyObject *Py_UNUSED(ignored))
         "tuple_guard_exits", executor->region_tuple_guard_exits,
         "float_unique_entries", executor->region_float_unique_entries,
         "float_owned_entries", executor->region_float_owned_entries,
+        "float_attribute_entries", executor->region_float_attribute_entries,
         "float_shared_entries", executor->region_float_shared_entries,
         "float_guard_exits", executor->region_float_guard_exits,
         "allocation_errors", executor->region_allocation_errors);
@@ -1575,6 +1576,9 @@ prepare_for_execution(_PyUOpInstruction *buffer, int length)
         if (base_opcode == _DICT_PAIR_INCREMENT) {
             error_target = target + (int32_t)((inst->operand0 >> 32) & UINT16_MAX);
         }
+        if (base_opcode == _FLOAT_ATTRIBUTE_SUM_PRODUCTS) {
+            error_target = (int32_t)((inst->operand1 >> 39) & UINT16_MAX);
+        }
         uint16_t exit_flags = _PyUop_Flags[base_opcode] & (HAS_EXIT_FLAG | HAS_DEOPT_FLAG | HAS_PERIODIC_FLAG);
         if (exit_flags) {
             uint16_t base_exit_op = _EXIT_TRACE;
@@ -1700,6 +1704,7 @@ allocate_executor(int exit_count, int length)
     res->region_tuple_guard_exits = 0;
     res->region_float_unique_entries = 0;
     res->region_float_owned_entries = 0;
+    res->region_float_attribute_entries = 0;
     res->region_float_shared_entries = 0;
     res->region_float_guard_exits = 0;
     res->region_allocation_errors = 0;

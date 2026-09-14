@@ -923,6 +923,105 @@ trivial_attribute_load(_PyUOpInstruction *buffer, int pc, int end,
     return trivial_call_skip(buffer, pc + 1, end);
 }
 
+/* Keep the callee frame and replace only the straight-line arithmetic.
+ * A single guarded layout covers both owners and all six attribute loads.
+ * No calls, stores, periodic checks, or frame transitions may be skipped. */
+static void
+fuse_float_attribute_products(_PyUOpInstruction *buffer, int length)
+{
+    if (!region_enabled("PYTHON_TIER2_FLOAT_FUSION")) {
+        return;
+    }
+    for (int start = 0; start < length; start++) {
+        int opcode = region_opcode(&buffer[start]);
+        if (opcode != _LOAD_FAST && opcode != _LOAD_FAST_BORROW) {
+            continue;
+        }
+        int end = Py_MIN(length, start + 128);
+        int pc = start;
+        uint64_t fields = 0;
+        uint64_t common = 0;
+        unsigned int owners[2] = {0, 0};
+        uint32_t add_target = 0;
+#define FLOAT_NEXT() (pc = trivial_call_skip(buffer, pc, end), \
+                      pc < end ? buffer[pc].opcode : 0)
+        for (int product = 0; product < 3; product++) {
+            for (int side = 0; side < 2; side++) {
+                uint64_t descriptor;
+                pc = trivial_attribute_load(buffer, pc, end, 7, &descriptor);
+                if (pc < 0) {
+                    goto next_float_attributes;
+                }
+                uint64_t offset = (descriptor >> 3) & UINT16_MAX;
+                if (offset % sizeof(PyObject *) || offset / sizeof(PyObject *) > UINT8_MAX) {
+                    goto next_float_attributes;
+                }
+                if (product == 0) {
+                    owners[side] = descriptor & 7;
+                    if (side == 0) {
+                        common = descriptor >> 19;
+                    }
+                }
+                if ((descriptor >> 19) != common || (descriptor & 7) != owners[side]) {
+                    goto next_float_attributes;
+                }
+                fields |= (offset / sizeof(PyObject *)) << (8 * (2 * product + side));
+            }
+            int op;
+            while ((op = FLOAT_NEXT()) == _GUARD_TOS_FLOAT || op == _GUARD_NOS_FLOAT) {
+                pc++;
+            }
+            if (FLOAT_NEXT() != _BINARY_OP_MULTIPLY_FLOAT) {
+                goto next_float_attributes;
+            }
+            pc++;
+            for (int i = 0; i < 2; i++) {
+                op = FLOAT_NEXT();
+                if (op != _POP_TOP_FLOAT && op != _POP_TOP_NOP) {
+                    goto next_float_attributes;
+                }
+                pc++;
+            }
+            if (product != 0) {
+                while ((op = FLOAT_NEXT()) == _GUARD_NOS_FLOAT) {
+                    pc++;
+                }
+                if (FLOAT_NEXT() != _BINARY_OP_ADD_FLOAT_INPLACE) {
+                    goto next_float_attributes;
+                }
+                add_target = buffer[pc++].target;
+                if (FLOAT_NEXT() != _POP_TOP_FLOAT) {
+                    goto next_float_attributes;
+                }
+                pc++;
+                if (FLOAT_NEXT() != _POP_TOP_NOP) {
+                    goto next_float_attributes;
+                }
+                pc++;
+            }
+        }
+        if (!common || add_target > UINT16_MAX || add_target < buffer[start].target) {
+            continue;
+        }
+        buffer[start].opcode = _FLOAT_ATTRIBUTE_SUM_PRODUCTS;
+        buffer[start].oparg = 0;
+        buffer[start].operand0 = fields;
+        /* Use an absolute code-unit offset: the original LOAD_FAST did not
+         * need a SET_IP, so frame->instr_ptr may precede the region entry. */
+        buffer[start].operand1 = owners[0] | ((uint64_t)owners[1] << 3) |
+                                (common << 6) | ((uint64_t)add_target << 39);
+        for (int i = start + 1; i < pc; i++) {
+            if (!(_PyUop_Flags[buffer[i].opcode] & HAS_RECORDS_VALUE_FLAG)) {
+                buffer[i].opcode = _NOP;
+            }
+        }
+        start = pc - 1;
+next_float_attributes:
+        ;
+#undef FLOAT_NEXT
+    }
+}
+
 /* Unlike the general call matcher, this peephole must not cross a validity
  * guard: that guard's exit still expects the original intermediate stack. */
 static int
@@ -2005,6 +2104,7 @@ _Py_uop_analyze_and_optimize(
     inline_enumerate_int_scan(output, length);
     length = remove_unneeded_uops(output, length);
     assert(length > 0);
+    fuse_float_attribute_products(output, length);
     fuse_float_product_updates(output, length);
 
     OPT_STAT_INC(optimizer_successes);

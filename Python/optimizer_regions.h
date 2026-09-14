@@ -108,11 +108,12 @@ region_previous_local(const _PyUOpInstruction *buffer, int *pc)
 
 /* Preserve a recorded layout guard before abstract interpretation can remove
  * it. Operand1 is otherwise unused by these attribute-load uops. A later
- * leaf-call lowering repeats that exact version check at the CALL boundary. */
+ * lowering repeats that exact version check at its region boundary. */
 static void
 annotate_attribute_versions(_PyUOpInstruction *buffer, int length)
 {
-    if (!region_enabled("PYTHON_TIER2_CALL_REGIONS")) {
+    if (!region_enabled("PYTHON_TIER2_CALL_REGIONS") &&
+        !region_enabled("PYTHON_TIER2_FLOAT_FUSION")) {
         return;
     }
     for (int pc = 0; pc < length; pc++) {

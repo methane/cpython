@@ -1117,6 +1117,59 @@ dummy_func(
             INPUTS_DEAD();
         }
 
+        // Six cached float attributes, three products, and two left-associated
+        // additions. The two owner locals keep every field alive without
+        // temporary references. All guards precede any floating-point work.
+        tier2 op(_FLOAT_ATTRIBUTE_SUM_PRODUCTS, (fields/4, layout/4 -- res)) {
+            uint64_t config = (uintptr_t)layout;
+            _PyStackRef first = GETLOCAL(config & 7);
+            _PyStackRef second = GETLOCAL((config >> 3) & 7);
+            if (PyStackRef_IsNull(first) || PyStackRef_IsNull(second)) {
+                current_executor->region_float_guard_exits++;
+                EXIT_IF(true);
+            }
+            PyObject *left = PyStackRef_AsPyObjectBorrow(first);
+            PyObject *right = PyStackRef_AsPyObjectBorrow(second);
+            uint32_t version = (uint32_t)(config >> 6);
+            if (Py_TYPE(left)->tp_version_tag != version ||
+                Py_TYPE(right)->tp_version_tag != version) {
+                current_executor->region_float_guard_exits++;
+                EXIT_IF(true);
+            }
+            if ((config >> 38) & 1) {
+                if (!_PyObject_InlineValues(left)->valid ||
+                    !_PyObject_InlineValues(right)->valid) {
+                    current_executor->region_float_guard_exits++;
+                    EXIT_IF(true);
+                }
+            }
+            uint64_t offsets = (uintptr_t)fields;
+            PyObject *a = _PyRegion_FloatAttribute(left, (offsets & 255) * sizeof(PyObject *));
+            PyObject *b = _PyRegion_FloatAttribute(right, ((offsets >> 8) & 255) * sizeof(PyObject *));
+            PyObject *c = _PyRegion_FloatAttribute(left, ((offsets >> 16) & 255) * sizeof(PyObject *));
+            PyObject *d = _PyRegion_FloatAttribute(right, ((offsets >> 24) & 255) * sizeof(PyObject *));
+            PyObject *e = _PyRegion_FloatAttribute(left, ((offsets >> 32) & 255) * sizeof(PyObject *));
+            PyObject *f = _PyRegion_FloatAttribute(right, ((offsets >> 40) & 255) * sizeof(PyObject *));
+            if (a == NULL || b == NULL || c == NULL || d == NULL || e == NULL || f == NULL) {
+                current_executor->region_float_guard_exits++;
+                EXIT_IF(true);
+            }
+            volatile double product = ((PyFloatObject *)a)->ob_fval * ((PyFloatObject *)b)->ob_fval;
+            volatile double partial = _PyFloat_MultiplyThenUpdate(
+                product, ((PyFloatObject *)c)->ob_fval, ((PyFloatObject *)d)->ob_fval, false);
+            double value = _PyFloat_MultiplyThenUpdate(
+                partial, ((PyFloatObject *)e)->ob_fval, ((PyFloatObject *)f)->ob_fval, false);
+            frame->instr_ptr = _PyFrame_GetBytecode(frame) + ((config >> 39) & UINT16_MAX);
+            PyObject *result = _PyRegion_AllocationFails("float_attributes")
+                ? NULL : PyFloat_FromDouble(value);
+            if (result == NULL) {
+                current_executor->region_allocation_errors++;
+                ERROR_NO_POP();
+            }
+            res = PyStackRef_FromPyObjectSteal(result);
+            current_executor->region_float_attribute_entries++;
+        }
+
         // Keep owned factor references for the original specialized cleanup.
         // Exact-float decrements cannot invoke Python, so the update can run
         // before those decrements without publishing an intermediate product.

@@ -1940,3 +1940,78 @@ build-jit/python -m test test_capi.test_opt_regions test_capi.test_opt test_tier
   26 skips**で成功。`test-pair-type-restored-{debug,native}.log`へ保存した。
   canonical builtins変更の子process分離により、後続のlen/rangeとtest_optも成功している。
   型判定prototypeのC・生成物差分は残っていない。最新の全6本goal値は引き続き0.700686。
+
+### float属性の3積和領域（実装・検証中）
+
+- fixture修正をローカルcommit `28bdc7d101e01ae204dcc25fe4056328e173c173`、tree
+  `44dee4e18a08490e7526cdfb9825a295fdfcde21`へ保存した。リモート操作なし。
+- Raytraceの最新native traceではVector.dotに6属性のload/refcount/guard、最初の積のbox、
+  owned積和2回が残る。frameを残し、この連続範囲だけを1 uopへまとめるprototypeを実装。
+  同じ記録type version・配置のowner local 2つ（0～7）、exact float属性6つ、左結合の
+  3乗算/2加算だけを認識する。pointer単位8-bit offset 6つをoperand0へ格納し、
+  owner indices/type version/managed flag/final ADD offsetをoperand1へ格納する。
+- guardは全て演算前、失敗時は元の最初のLOAD_FASTから通常実行。owner localsが属性を
+  保持するため中間INCREF/DECREFは不要。任意call/store/periodic check/frame遷移は跨がない。
+  最初の積と途中の和、および既存multiply-update helper内の積にC評価境界を置く。
+- 最初のLOAD_FASTにはSET_IPが残る保証がないため、final ADDの位置はdeltaではなく
+  絶対code-unit offset（16-bit範囲限定）を保存する。最終floatのallocation failureは
+  実際のcallee frame・final ADD位置で報告する。新counterはfloat_attribute_entries。
+- 導入前binary SHA256 `ee2d9bfa59be9607c8554e1dee2a2854acdf84c550047a42b212a638014a3e13`
+  を `python-suite-float-attributes-before`へ保存し、manifestとRaytrace native probeを
+  `float-attributes-before-*`へ保存した。現在は生成・形成テストを始める段階で、性能未検証。
+
+- 初回形成テストはslots成功・managed不成立（13 failures）。managed側の冗長guard/NOPを
+  含むspanが96を超えたため、探索上限を128 uopsへ修正した。次の1 failureはcalleeより
+  前のmethod lookup guardで退出するowner.__dict__変更に新counterを要求したfixture不備。
+  argument側のdictを変更して新region内のguardを実行するケースへ修正した。
+  続くmissing属性2 failuresは最初の通常loop iterationで例外が出ていたため、valid値の
+  次にmissing値をlist iterationで渡し、実際のregion退出をcounterで確認する形に修正。
+  いずれも失敗ログを保持し、通過扱いにはしない。
+- 追加11 testsはslots/managed、permuted offsets、同一owner、local6/7と8の境界、
+  参照数・fresh結果identity、CALL_REGIONSなし、callbackによる後続属性変更、
+  missing属性・型・__dict__・__getattribute__変更、call/storeで認識を停止すること、
+  instruction monitoring、debug OOMのcallee frame/locals/final ADD位置を確認して成功。
+- 関連14 filesはdebug **1,708 tests・19 skips**、native **1,622 tests・28 skips**で成功。
+  8生成物のbyte再現、Ruff、diff --checkも成功。C/H実装は以後変更していない。
+- `check-float-attributes.py`で2 layouts・特殊値 **5,488 cases** と、4丸めモード×
+  divide-by-zero trap設定2種類×9入力×2 layoutsの **144 fenv cases**を確認した。
+  nativeはbit/flagsとも全一致。debugはNaN payloadの差が特殊値1,152、fenv16件あるが、
+  有限値・signed zero・NaN分類・例外flagsの不一致は0。全入力bits/結果/entry deltasを
+  `float-attributes-{build-jit,build-tier2-debug}-fenv.json`へ保存した。
+- native kernelの実際の演算範囲0x5b2～0x602に3 mulsd/2 addsdとC評価境界のstore/loadを
+  確認し、FMAなし。`float-attributes-kernel-0-0.{bin,asm}`に保存。
+  Raytraceの即時probeでは成功354,003、guard exits69,902、allocation errors0。
+  owned updatesは844,762→136,756（2×354,003減）、他familyの適用回数は一致。
+  recursive executor数57で、native bytes合計901,120→827,392。
+- native SHA256 `6f73e80207ca4719da9d089f39c2a6737b63589cd267eaa652eeb28d37b6f0c6`
+  を `python-suite-float-attributes`へ保存し、manifest/source patchを保存した。
+  Raytraceの3 blocks・90値比較は導入前比 **0.960214/0.970180/0.997651**、段階比較の
+  幾何平均 **0.975887**。main比0.840682、全checksum一致、除外0。
+  全6本・3 blocks・540値の対応比較を続け、ほかのworkloadへの影響を確認する。
+
+- 全6本・3 blocks・540値の比較は全checksum一致、除外0。同じ測定内の導入前版main比
+  算術平均0.698207に対して、今回版は **0.694190**（block別0.690067/0.693863/0.698640）。
+  算術平均0.5のgoalは未達。最新の測定値へ更新し、以前の0.700686とは測定blockも異なる
+  ことを明記する。導入前への直接比較は今回の対応値を使う。
+- script別main比はBPE0.813567、Btree0.702635、DeltaBlue0.966258、Hexiom0.831451、
+  Raytrace0.832724、Spectral0.018505。Raytraceの導入前比は **0.971170/0.950799/0.983391**、
+  平均 **0.968453** と全block改善。残る導入前比はBPE0.999759、Btree1.000706、
+  DeltaBlue0.999931、Hexiom1.003555、Spectral0.998418。全体の導入前比算術平均0.995137、
+  block別0.992935/0.991915/1.000562。3番目のblockでは全体比が僅かに悪化している。
+  他workloadの小さな変動をfloat属性融合の直接効果と断定しない。
+  `float-attributes-suite-{rows,summary}.json`に全値を保存した。
+- 実際のnative stencil relocationも確認し、演算部分は3 mulsd/2 addsd、FMAなし、
+  `PyFloat_FromDouble` call relocation 1個。`float-attributes-assembly.json`へ保存した。
+- OOMをcallee自身のexceptで処理する追加テストでは、式の外側の7.0がoperand stackへ
+  残る場合もhandler・元locals・内側のfinal ADD位置が正しく復元された。
+  初回fixtureは既存runの無効化/backoffによりexecutorなしで失敗。新しいrunでwarmupし、
+  実際のallocation_errors counterを確認して成功した。失敗ログも保持。
+  この最後のケースを含めて関連14 filesを再実行し、source/test/docをcheckpointへまとめる。
+
+- 最終fixtureを含む関連14 filesはdebug **1,709 tests・19 skips**、native **1,623 tests・
+  29 skips**で成功（`float-attributes-*-checkpoint-tests.log`）。静的checkも再度成功。
+  この段階を保持し、英語の設計文書 `Tools/jit/regions.md` と合わせてローカル保存する。
+- 次の検討は新uopのnative guard code。現在のnullable-pointer helperは6結果を保持してから
+  一括検査するため、CMOV/zeroing/再検査が残る。各属性を読んだ直後に同じguard退出を
+  判定すれば、この交通整理を減らせる可能性がある。全guardがFP演算より前という条件を
+  保ち、native code・fenv・Raytraceの対応比較で効果を確認してから採否を決める。
