@@ -334,6 +334,7 @@ const uint32_t _PyUop_Flags[MAX_UOP_ID+1] = {
     [_ENUM_LIST_INT_SCAN_5] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG | HAS_ESCAPES_FLAG,
     [_ENUM_LIST_INT_SCAN] = HAS_ARG_FLAG | HAS_LOCAL_FLAG | HAS_EXIT_FLAG | HAS_ESCAPES_FLAG,
     [_ITER_NEXT_ENUM_LIST] = HAS_EXIT_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG,
+    [_ITER_NEXT_ZIP_LIST_PAIR] = HAS_EXIT_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG,
     [_GUARD_NOS_ITER_VIRTUAL] = HAS_EXIT_FLAG,
     [_GUARD_TOS_NOT_NULL] = HAS_EXIT_FLAG,
     [_FOR_ITER_VIRTUAL_TIER_TWO] = HAS_EXIT_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG,
@@ -3278,6 +3279,15 @@ const _PyUopCachingInfo _PyUop_Caching[MAX_UOP_ID+1] = {
             { -1, -1, -1 },
         },
     },
+    [_ITER_NEXT_ZIP_LIST_PAIR] = {
+        .best = { 2, 2, 2, 2 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 3, 2, _ITER_NEXT_ZIP_LIST_PAIR_r23 },
+            { -1, -1, -1 },
+        },
+    },
     [_GUARD_NOS_ITER_VIRTUAL] = {
         .best = { 0, 1, 2, 3 },
         .entries = {
@@ -5851,6 +5861,7 @@ const uint16_t _PyUop_Uncached[MAX_UOP_REGS_ID+1] = {
     [_ENUM_LIST_INT_SCAN_5_r22] = _ENUM_LIST_INT_SCAN_5,
     [_ENUM_LIST_INT_SCAN_r22] = _ENUM_LIST_INT_SCAN,
     [_ITER_NEXT_ENUM_LIST_r23] = _ITER_NEXT_ENUM_LIST,
+    [_ITER_NEXT_ZIP_LIST_PAIR_r23] = _ITER_NEXT_ZIP_LIST_PAIR,
     [_GUARD_NOS_ITER_VIRTUAL_r02] = _GUARD_NOS_ITER_VIRTUAL,
     [_GUARD_NOS_ITER_VIRTUAL_r12] = _GUARD_NOS_ITER_VIRTUAL,
     [_GUARD_NOS_ITER_VIRTUAL_r22] = _GUARD_NOS_ITER_VIRTUAL,
@@ -7437,6 +7448,8 @@ const char *const _PyOpcode_uop_name[MAX_UOP_REGS_ID+1] = {
     [_ITER_NEXT_TUPLE_r03] = "_ITER_NEXT_TUPLE_r03",
     [_ITER_NEXT_TUPLE_r13] = "_ITER_NEXT_TUPLE_r13",
     [_ITER_NEXT_TUPLE_r23] = "_ITER_NEXT_TUPLE_r23",
+    [_ITER_NEXT_ZIP_LIST_PAIR] = "_ITER_NEXT_ZIP_LIST_PAIR",
+    [_ITER_NEXT_ZIP_LIST_PAIR_r23] = "_ITER_NEXT_ZIP_LIST_PAIR_r23",
     [_JUMP_TO_TOP] = "_JUMP_TO_TOP",
     [_JUMP_TO_TOP_r00] = "_JUMP_TO_TOP_r00",
     [_LEN_SUBSCR_LIST] = "_LEN_SUBSCR_LIST",
@@ -8637,6 +8650,8 @@ int _PyUop_num_popped(int opcode, int oparg)
         case _ENUM_LIST_INT_SCAN:
             return 0;
         case _ITER_NEXT_ENUM_LIST:
+            return 0;
+        case _ITER_NEXT_ZIP_LIST_PAIR:
             return 0;
         case _GUARD_NOS_ITER_VIRTUAL:
             return 0;

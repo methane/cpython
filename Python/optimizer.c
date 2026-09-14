@@ -605,7 +605,7 @@ get_region_stats(PyObject *self, PyObject *Py_UNUSED(ignored))
 {
     _PyExecutorObject *executor = _PyExecutorObject_CAST(self);
     return Py_BuildValue(
-        "{s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K}",
+        "{s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K}",
         "bounded_entries", executor->region_bounded_entries,
         "bounded_guard_exits", executor->region_bounded_guard_exits,
         "bounded_boxes", executor->region_bounded_boxes,
@@ -656,7 +656,10 @@ get_region_stats(PyObject *self, PyObject *Py_UNUSED(ignored))
         "float_attribute_entries", executor->region_float_attribute_entries,
         "float_shared_entries", executor->region_float_shared_entries,
         "float_guard_exits", executor->region_float_guard_exits,
-        "allocation_errors", executor->region_allocation_errors);
+        "allocation_errors", executor->region_allocation_errors,
+        "zip_entries", executor->region_zip_entries,
+        "zip_reused_entries", executor->region_zip_reused_entries,
+        "zip_fallbacks", executor->region_zip_fallbacks);
 }
 
 static PyMethodDef uop_executor_methods[] = {
@@ -1571,7 +1574,8 @@ prepare_for_execution(_PyUOpInstruction *buffer, int length)
          * reconstruction errors and enum_next exceptions use operand0;
          * enumerate's ordinary exhaustion instead resumes after END_FOR. */
         int32_t error_target = (is_tier3_resident_range(base_opcode) ||
-                                base_opcode == _ITER_NEXT_ENUM_LIST)
+                                base_opcode == _ITER_NEXT_ENUM_LIST ||
+                                base_opcode == _ITER_NEXT_ZIP_LIST_PAIR)
             ? (int32_t)inst->operand0 : target;
         if (base_opcode == _DICT_PAIR_INCREMENT) {
             error_target = target + (int32_t)((inst->operand0 >> 32) & UINT16_MAX);
@@ -1708,6 +1712,9 @@ allocate_executor(int exit_count, int length)
     res->region_float_shared_entries = 0;
     res->region_float_guard_exits = 0;
     res->region_allocation_errors = 0;
+    res->region_zip_entries = 0;
+    res->region_zip_reused_entries = 0;
+    res->region_zip_fallbacks = 0;
     res->tier3_resident_iterations = 0;
     res->tier3_resident_polls = 0;
     res->tier3_resident_pending_polls = 0;

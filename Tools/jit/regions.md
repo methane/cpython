@@ -131,6 +131,32 @@ match `enum_next`. Old-element finalizers may re-enter the same iterator.
 `enum_entries` counts the fast path, `enum_fallbacks` the ordinary calls, and
 `enum_guard_exits` failures of the enumerate-type guard itself.
 
+The builtin group also replaces an exact zip's inline next call with
+`_ITER_NEXT_ZIP_LIST_PAIR`. Its C helper directly consumes two distinct exact
+list iterators when both still have an element. Two iterators may refer to the
+same list. Repeating the same iterator object, exhausted inputs, and other
+iterator types use the ordinary `zip_next` protocol. The original exact-zip
+guard remains; the transformation does not inspect variable names or inputs.
+
+Tuple ownership follows `zip_next`. A shared cached result requires a fresh
+tuple, allocated before either iterator advances. A uniquely referenced
+cached tuple is reused only when both old elements are exact bytes or `None`:
+each new element is acquired, its iterator advances, and the corresponding
+old element is replaced and released before consuming the next iterator.
+Hash reset and GC re-tracking use the existing `_PyTuple_Recycle` operation.
+Other old elements retain the ordinary path, so a finalizer can re-enter zip,
+advance an iterator, or mutate a list at the original point in execution.
+
+The helper can call Python through its fallback and is classified as escaping.
+Normal exhaustion resumes after `END_FOR`; exceptions use the original
+`FOR_ITER` position and frame. `strict=True` still uses ordinary zip logic at
+exhaustion, including its extra iterator consumption. `zip_entries` counts
+successful direct pairs, `zip_reused_entries` is its cached-tuple subset, and
+`zip_fallbacks` counts ordinary next calls, including exhaustion and errors.
+Debug injection with `PYTHON_TIER2_REGION_FAIL_ALLOC=zip` targets only the
+actual fresh-tuple allocation; a failure leaves both iterator positions
+unchanged. The existing 64-bit GIL builtin-region gate applies.
+
 For a loop that only unpacks enumerate results, reads a constant tuple field,
 and compares its exact compact integer with an unchanged local, the builtin
 group can scan up to 64 consecutive items taking the same loop branch.

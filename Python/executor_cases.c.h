@@ -20347,6 +20347,72 @@
             break;
         }
 
+        case _ITER_NEXT_ZIP_LIST_PAIR_r23: {
+            CHECK_CURRENT_CACHED_VALUES(2);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            _PyStackRef iter;
+            _PyStackRef next;
+            _PyStackRef _stack_item_0 = _tos_cache0;
+            _PyStackRef _stack_item_1 = _tos_cache1;
+            iter = _stack_item_0;
+            int direct;
+            stack_pointer[0] = iter;
+            stack_pointer[1] = _stack_item_1;
+            stack_pointer += 2;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            _PyFrame_SetStackPointer(frame, stack_pointer);
+            _PyFrame_StackPointerValidate(frame);
+            PyObject *item = _PyZip_NextListPair(PyStackRef_AsPyObjectBorrow(iter), &direct);
+            _PyFrame_StackPointerInvalidate(frame);
+            if (direct == 0) {
+                current_executor->region_zip_fallbacks++;
+            }
+            if (item == NULL) {
+                if (direct == 2) {
+                    current_executor->region_allocation_errors++;
+                }
+                if (_PyErr_Occurred(tstate)) {
+                    if (_PyErr_ExceptionMatches(tstate, PyExc_StopIteration)) {
+                        assert(stack_pointer == _PyFrame_GetStackPointer(frame));
+                        _PyFrame_StackPointerValidate(frame);
+                        _PyEval_MonitorRaise(tstate, frame, frame->instr_ptr);
+                        _PyFrame_StackPointerInvalidate(frame);
+                        assert(stack_pointer == _PyFrame_GetStackPointer(frame));
+                        _PyFrame_StackPointerValidate(frame);
+                        _PyErr_Clear(tstate);
+                        _PyFrame_StackPointerInvalidate(frame);
+                    }
+                    else {
+                        SET_CURRENT_CACHED_VALUES(0);
+                        JUMP_TO_ERROR();
+                    }
+                }
+                if (true) {
+                    UOP_STAT_INC(uopcode, miss);
+                    _tos_cache1 = _stack_item_1;
+                    _tos_cache0 = iter;
+                    SET_CURRENT_CACHED_VALUES(2);
+                    stack_pointer += -2;
+                    ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                    JUMP_TO_JUMP_TARGET();
+                }
+            }
+            if (direct != 0) {
+                current_executor->region_zip_entries++;
+                current_executor->region_zip_reused_entries += direct == 1;
+            }
+            next = PyStackRef_FromPyObjectSteal(item);
+            STAT_INC(FOR_ITER, hit);
+            _tos_cache2 = next;
+            _tos_cache1 = _stack_item_1;
+            _tos_cache0 = iter;
+            SET_CURRENT_CACHED_VALUES(3);
+            stack_pointer += -2;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            break;
+        }
+
         case _GUARD_NOS_ITER_VIRTUAL_r02: {
             CHECK_CURRENT_CACHED_VALUES(0);
             ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);

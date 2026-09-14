@@ -20,12 +20,14 @@
 #include "pycore_instruments.h"
 #include "pycore_interpolation.h" // _PyInterpolation_Build()
 #include "pycore_intrinsics.h"
+#include "pycore_iterobject.h"    // _PyZip_NextListPair()
 #include "pycore_lazyimportobject.h"  // PyLazyImport_CheckExact()
 #include "pycore_long.h"          // _PyLong_ExactDealloc(), _PyLong_GetZero()
 #include "pycore_moduleobject.h"  // PyModuleObject
 #include "pycore_object.h"        // _PyObject_GC_TRACK()
 #include "pycore_opcode_metadata.h"  // uop names
 #include "pycore_opcode_utils.h"  // MAKE_FUNCTION_*
+#include "pycore_optimizer.h"    // _PyRegion_AllocationFails()
 #include "pycore_pyatomic_ft_wrappers.h" // FT_ATOMIC_*
 #include "pycore_pyerrors.h"      // _PyErr_GetRaisedException()
 #include "pycore_pystate.h"       // _PyInterpreterState_GET()
@@ -4723,6 +4725,35 @@ dummy_func(
                 }
                 next = PyStackRef_FromPyObjectSteal(item);
             }
+            STAT_INC(FOR_ITER, hit);
+        }
+
+        tier2 op(_ITER_NEXT_ZIP_LIST_PAIR, (iter, null_or_index -- iter, null_or_index, next)) {
+            int direct;
+            PyObject *item = _PyZip_NextListPair(PyStackRef_AsPyObjectBorrow(iter), &direct);
+            if (direct == 0) {
+                current_executor->region_zip_fallbacks++;
+            }
+            if (item == NULL) {
+                if (direct == 2) {
+                    current_executor->region_allocation_errors++;
+                }
+                if (_PyErr_Occurred(tstate)) {
+                    if (_PyErr_ExceptionMatches(tstate, PyExc_StopIteration)) {
+                        _PyEval_MonitorRaise(tstate, frame, frame->instr_ptr);
+                        _PyErr_Clear(tstate);
+                    }
+                    else {
+                        ERROR_NO_POP();
+                    }
+                }
+                EXIT_IF(true);
+            }
+            if (direct != 0) {
+                current_executor->region_zip_entries++;
+                current_executor->region_zip_reused_entries += direct == 1;
+            }
+            next = PyStackRef_FromPyObjectSteal(item);
             STAT_INC(FOR_ITER, hit);
         }
 

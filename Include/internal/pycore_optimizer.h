@@ -16,6 +16,23 @@ extern "C" {
 #include "pycore_optimizer_types.h"
 #include <stdbool.h>
 
+/* Private debug-only fault injection shared by regions and their C helpers.
+ * With no old raised exception to release, this installs a preallocated
+ * MemoryError without invoking Python. Release builds remove the probe. */
+static inline bool
+_PyRegion_AllocationFails(const char *kind)
+{
+#ifdef Py_DEBUG
+    assert(!PyErr_Occurred());
+    const char *failure = Py_GETENV("PYTHON_TIER2_REGION_FAIL_ALLOC");
+    if (failure != NULL && strcmp(failure, kind) == 0) {
+        PyErr_NoMemory();
+        return true;
+    }
+#endif
+    return false;
+}
+
 /* Fitness controls how long a trace can grow.
  * Starts at FITNESS_INITIAL, then decreases from per-bytecode buffer usage
  * plus branch/frame heuristics. The trace stops when fitness drops below the
@@ -273,6 +290,9 @@ typedef struct _PyExecutorObject {
     uint64_t region_float_shared_entries;
     uint64_t region_float_guard_exits;
     uint64_t region_allocation_errors;
+    uint64_t region_zip_entries;
+    uint64_t region_zip_reused_entries;
+    uint64_t region_zip_fallbacks;
     _PyExitData exits[1];
 } _PyExecutorObject;
 

@@ -33,6 +33,7 @@
 #include "pycore_unicodeobject.h"
 
 #include "pycore_jit.h"
+#include "pycore_iterobject.h"    // _PyZip_NextListPair()
 
 // Memory management stuff: ///////////////////////////////////////////////////
 

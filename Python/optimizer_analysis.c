@@ -1942,6 +1942,29 @@ inline_enumerate_list(_PyUOpInstruction *buffer, int length)
     }
 }
 
+static void
+inline_zip_list_pairs(_PyUOpInstruction *buffer, int length)
+{
+    if (!region_enabled("PYTHON_TIER2_BUILTIN_REGIONS")) {
+        return;
+    }
+    for (int pc = 0; pc < length; pc++) {
+        if (buffer[pc].opcode != _GUARD_TYPE_ITER ||
+            buffer[pc].operand0 != (uintptr_t)&PyZip_Type) {
+            continue;
+        }
+        int end = Py_MIN(pc + 8, length);
+        int next = region_skip(buffer, pc + 1, end);
+        if (next < end && buffer[next].opcode == _ITER_NEXT_INLINE &&
+            buffer[next].operand0 == (uintptr_t)PyZip_Type.tp_iternext) {
+            buffer[next].opcode = _ITER_NEXT_ZIP_LIST_PAIR;
+            /* Keep exhaustion's after-END_FOR target. Errors still belong
+             * to the original FOR_ITER instruction, before any cleanup. */
+            buffer[next].operand0 = buffer[pc].target;
+        }
+    }
+}
+
 /* Skip a bounded sequence of iterations that only unpack enumerate, read an
  * integer tuple field, and compare it with an unchanged local. Keep the
  * original iteration for the first different branch or unsupported value. */
@@ -2101,6 +2124,7 @@ _Py_uop_analyze_and_optimize(
     fuse_list_length_predicates(output, length);
     fuse_dict_pair_increments(output, length);
     inline_enumerate_list(output, length);
+    inline_zip_list_pairs(output, length);
     inline_enumerate_int_scan(output, length);
     length = remove_unneeded_uops(output, length);
     assert(length > 0);

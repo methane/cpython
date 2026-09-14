@@ -307,6 +307,233 @@ case.assertEqual(events, ["ready"] * 8)
 case.doCleanups()
 """, PYTHON_JIT="1")
 
+    def warm_zip_list_pairs(self):
+        namespace = {}
+        exec("def run(iterator):\n"
+             "    last = None\n"
+             "    for pair in iterator:\n"
+             "        last = pair\n"
+             "    return last\n", namespace)
+        run = namespace["run"]
+        run(zip([b"left"] * TIER2_THRESHOLD, [b"right"] * TIER2_THRESHOLD))
+        return run, self.executor(run, "_ITER_NEXT_ZIP_LIST_PAIR")
+
+    def test_zip_list_pairs(self):
+        run, ex = self.warm_zip_list_pairs()
+        for strict in (False, True):
+            first = [bytes([i]) for i in range(16)]
+            second = [bytes([i + 16]) for i in range(16)]
+            iterator = zip(first, second, strict=strict)
+            self.assertEqual(self.executed(ex, "zip_entries", run, iterator),
+                             (first[-1], second[-1]))
+            self.assertEqual(list(iterator), [])
+
+    def test_zip_list_pairs_reuse_and_hash(self):
+        run, ex = self.warm_zip_list_pairs()
+        first = [bytes([i]) for i in range(16)]
+        second = [bytes([i + 16]) for i in range(16)]
+        iterator = zip(first, second)
+        cached = next(iterator)
+        hash(cached)
+        del cached
+        result = self.executed(ex, "zip_reused_entries", run, iterator)
+        self.assertEqual(result, (first[-1], second[-1]))
+        self.assertEqual(hash(result), hash((first[-1], second[-1])))
+        iterator = zip(first, second)
+        cached = next(iterator)
+        cached_hash = hash(cached)
+        references = [sys.getrefcount(item) for item in first + second]
+        result = self.executed(ex, "zip_entries", run, iterator)
+        self.assertEqual(cached, (first[0], second[0]))
+        self.assertEqual(hash(cached), cached_hash)
+        del result
+        self.assertEqual([sys.getrefcount(item) for item in first + second], references)
+
+    def test_zip_list_pairs_retained_results(self):
+        namespace = {}
+        exec("def run(iterator):\n"
+             "    result = []\n"
+             "    for pair in iterator:\n"
+             "        result.append(pair)\n"
+             "    return result\n", namespace)
+        run = namespace["run"]
+        run(zip([b"left"] * TIER2_THRESHOLD, [b"right"] * TIER2_THRESHOLD))
+        ex = self.executor(run, "_ITER_NEXT_ZIP_LIST_PAIR")
+        first = [object() for _ in range(16)]
+        second = [object() for _ in range(16)]
+        before = ex.get_region_stats()["zip_reused_entries"]
+        result = self.executed(ex, "zip_entries", run, zip(first, second))
+        self.assertEqual(result, list(zip(first, second)))
+        self.assertEqual(len({id(pair) for pair in result}), 16)
+        self.assertEqual(ex.get_region_stats()["zip_reused_entries"], before)
+
+    def test_zip_list_pairs_exhaustion(self):
+        run, ex = self.warm_zip_list_pairs()
+        for strict in (False, True):
+            for sizes in ((5, 5), (5, 8), (8, 5)):
+                with self.subTest(strict=strict, sizes=sizes):
+                    left, right = map(lambda n: iter(list(range(n))), sizes)
+                    iterator = zip(left, right, strict=strict)
+                    before = ex.get_region_stats()["zip_fallbacks"]
+                    if strict and sizes[0] != sizes[1]:
+                        with self.assertRaises(ValueError):
+                            run(iterator)
+                    else:
+                        self.assertEqual(run(iterator), (4, 4))
+                    self.assertGreater(ex.get_region_stats()["zip_fallbacks"], before)
+                    self.assertEqual(list(left), list(range(6, sizes[0])))
+                    self.assertEqual(list(right), list(range(6 if strict else 5, sizes[1])))
+
+    def test_zip_list_pairs_aliased_iterators(self):
+        run, ex = self.warm_zip_list_pairs()
+        for strict in (False, True):
+            shared = iter(list(range(16)))
+            before = ex.get_region_stats()["zip_entries"]
+            self.assertEqual(self.executed(ex, "zip_fallbacks", run,
+                                           zip(shared, shared, strict=strict)), (14, 15))
+            self.assertEqual(ex.get_region_stats()["zip_entries"], before)
+        shared = [bytes([i]) for i in range(16)]
+        self.assertEqual(self.executed(ex, "zip_entries", run, zip(shared, shared)),
+                         (shared[-1], shared[-1]))
+
+    def test_zip_list_pairs_other_arities(self):
+        run, ex = self.warm_zip_list_pairs()
+        self.assertIsNone(run(zip()))
+        for count in (1, 3, 4):
+            before = ex.get_region_stats()["zip_entries"]
+            inputs = [list(range(8)) for _ in range(count)]
+            self.assertEqual(self.executed(ex, "zip_fallbacks", run, zip(*inputs)),
+                             (7,) * count)
+            self.assertEqual(ex.get_region_stats()["zip_entries"], before)
+
+    def test_zip_list_pairs_monitoring(self):
+        run, ex = self.warm_zip_list_pairs()
+        code = run.__code__
+        monitoring = sys.monitoring
+        tool = 4
+        monitoring.use_tool_id(tool, "zip list pairs")
+        events = []
+        before = ex.get_region_stats()["zip_entries"]
+        try:
+            monitoring.register_callback(tool, monitoring.events.INSTRUCTION,
+                                         lambda code, offset: events.append(offset))
+            monitoring.set_local_events(tool, code, monitoring.events.INSTRUCTION)
+            self.assertEqual(run(zip(list(range(8)), list(range(8)))), (7, 7))
+            self.assertTrue(events)
+            self.assertEqual(ex.get_region_stats()["zip_entries"], before)
+        finally:
+            monitoring.set_local_events(tool, code, 0)
+            monitoring.register_callback(tool, monitoring.events.INSTRUCTION, None)
+            monitoring.free_tool_id(tool)
+
+    def test_zip_list_pairs_generic_iterators(self):
+        run, ex = self.warm_zip_list_pairs()
+        events = []
+
+        class Iterator:
+            def __init__(self, name):
+                self.name = name
+                self.values = iter(range(8))
+
+            def __iter__(self):
+                return self
+
+            def __next__(self):
+                events.append((self.name, sys._getframe(1).f_code))
+                return next(self.values)
+
+        self.assertEqual(self.executed(ex, "zip_fallbacks", run,
+                                       zip(Iterator("left"), Iterator("right"))), (7, 7))
+        self.assertEqual(events, [(name, run.__code__) for name in
+                                 ["left", "right"] * 8 + ["left"]])
+
+    def test_zip_list_pairs_callback_error(self):
+        import dis
+
+        run, ex = self.warm_zip_list_pairs()
+        events = []
+
+        class Iterator:
+            def __iter__(self):
+                return self
+
+            def __next__(self):
+                events.append(sys._getframe(1).f_code)
+                if len(events) == 4:
+                    raise MemoryError("zip callback")
+                return len(events) - 1
+
+        left = iter(list(range(8)))
+        before = ex.get_region_stats()["zip_fallbacks"]
+        try:
+            run(zip(left, Iterator()))
+        except MemoryError as error:
+            traceback = error.__traceback__.tb_next
+            self.assertIs(traceback.tb_frame.f_code, run.__code__)
+            position = next(i.offset for i in dis.get_instructions(run) if i.opname == "FOR_ITER")
+            self.assertEqual(traceback.tb_lasti, position)
+        else:
+            self.fail("MemoryError was lost")
+        self.assertGreater(ex.get_region_stats()["zip_fallbacks"], before)
+        self.assertEqual(events, [run.__code__] * 4)
+        self.assertEqual(next(left), 4)
+
+    def test_zip_list_pairs_old_element_finalizer(self):
+        namespace = {}
+        exec("def run(iterator, source):\n"
+             "    result = []\n"
+             "    for pair in iterator:\n"
+             "        result.append((type(pair[0]).__name__, pair[1]))\n"
+             "        source[0] = None\n"
+             "        pair = None\n"
+             "    return result\n", namespace)
+        run = namespace["run"]
+        source = [b"left"] * TIER2_THRESHOLD
+        run(zip(source, [b"right"] * TIER2_THRESHOLD), source)
+        ex = self.executor(run, "_ITER_NEXT_ZIP_LIST_PAIR")
+        events = []
+        right_source = [bytes([i]) for i in range(8)]
+
+        class Payload:
+            def __del__(self):
+                events.append((sys._getframe(1).f_code, next(left)))
+                right_source.clear()
+
+        source = [Payload(), b"one", b"two", b"three"]
+        left = iter(source)
+        result = self.executed(ex, "zip_fallbacks", run,
+                               zip(left, iter(right_source)), source)
+        self.assertEqual(result, [("Payload", bytes([0]))])
+        self.assertEqual(events, [(run.__code__, b"two")])
+        self.assertEqual(next(left), b"three")
+
+    @unittest.skipUnless(support.Py_DEBUG, "uses debug allocation injection")
+    def test_zip_list_pairs_allocation_error(self):
+        import dis
+
+        run, ex = self.warm_zip_list_pairs()
+        first = [bytes([i]) for i in range(16)]
+        second = [bytes([i + 16]) for i in range(16)]
+        iterator = zip(first, second)
+        cached = next(iterator)  # Pin zip's cached tuple: subsequent results allocate.
+        position = next(i.offset for i in dis.get_instructions(run) if i.opname == "FOR_ITER")
+        before = ex.get_region_stats()["allocation_errors"]
+        with mock.patch.dict(os.environ, {"PYTHON_TIER2_REGION_FAIL_ALLOC": "zip"}):
+            try:
+                run(iterator)
+            except MemoryError as error:
+                traceback = error.__traceback__
+                while traceback.tb_next is not None:
+                    traceback = traceback.tb_next
+                self.assertIs(traceback.tb_frame.f_code, run.__code__)
+                self.assertEqual(traceback.tb_lasti, position)
+                self.assertEqual(traceback.tb_frame.f_locals["last"], (first[1], second[1]))
+            else:
+                self.fail("MemoryError was lost")
+        self.assertGreater(ex.get_region_stats()["allocation_errors"], before)
+        self.assertEqual(next(iterator), (first[2], second[2]))
+        self.assertEqual(cached, (first[0], second[0]))
+
     def warm_float_attributes(self, slots=False, expression=None):
         if expression is None:
             expression = "self.x * other.x + self.y * other.y + self.z * other.z"

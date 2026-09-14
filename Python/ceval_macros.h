@@ -742,25 +742,6 @@ _PyRegion_SumInt32Range(double accumulator, double numerator,
 }
 
 
-/* Like the resident-range reconstruction probe, this private debug-only
- * fault injection targets the actual fused allocation and its error edge. */
-static inline bool
-_PyRegion_AllocationFails(const char *kind)
-{
-#ifdef Py_DEBUG
-    /* Match an allocation attempted during ordinary bytecode execution.
-     * With no old raised exception to release, PyErr_NoMemory only installs
-     * a preallocated exception and cannot invoke Python. */
-    assert(!PyErr_Occurred());
-    const char *failure = Py_GETENV("PYTHON_TIER2_REGION_FAIL_ALLOC");
-    if (failure != NULL && strcmp(failure, kind) == 0) {
-        PyErr_NoMemory();
-        return true;
-    }
-#endif
-    return false;
-}
-
 /* These conversions never invoke Python or set an exception: exact ints are
  * required, and AsLongLongAndOverflow reports range failures out of band. */
 static inline bool

@@ -2077,3 +2077,84 @@ build-jit/python -m test test_capi.test_opt_regions test_capi.test_opt test_tier
   消費・参照操作の順序で間接iternext callsを省く候補を実装する。exhaustion、strict、
   同一iteratorの重複、古い要素のfinalizerは通常zip経路に任せる。iteration/tupleの
   virtualizationには広げず、まず形成・順序・例外・native適用とBPEの対応比較を行う。
+
+### zipのlist iterator経路（実装・検証中）
+
+- floatの最終checkpointはcommit `70a6d94ce34ec8fedf5c31dbd7a9f32a42ea721a`、tree
+  `468b26ce65fc2b09d364f50fdd22d0a99ecc5ced`。測定C/Hとの一致を確認しmanifestへ記録した。
+- `_ITER_NEXT_ZIP_LIST_PAIR` とC helper `_PyZip_NextListPair`を実装。既存exact-zip guardを
+  残し、BUILTIN_REGIONSでのみgeneric nextを置換する。異なるexact list iterators2つの
+  両方がin-boundsなら、listの要素取得とindex増加を直接行う。shared結果は通常zipと同じく
+  tuple allocationを先に行い、unique結果は旧要素がexact bytes/Noneのときだけ通常と同じ
+  順番で置換・DECREF・tuple recycleを行う。その他とexhaustionは元のzip_nextへ委譲する。
+- callback可能なfallbackがあるため、このuop/helperはescapingとして扱う。正常exhaustionは
+  END_FOR後、例外は元FOR_ITERへ分ける。zip_entries/reused_entries/fallbacksを追加した。
+  共通debug allocation injectionをoptimizerのprivate headerへ移し、shared tupleの実際の
+  allocationだけを `PYTHON_TIER2_REGION_FAIL_ALLOC=zip`で失敗させられるようにした。
+- ここではC/uop/matcher/countersを実装した段階。まだ生成・ビルド・zipのテストは未実行。
+  保存済み `python-suite-float-attributes-early`（a7d4...）を導入前対照にする。
+
+- 初回native buildは新helperの宣言がPython/jit.cから見えず失敗。runtime relocation tableの
+  利用箇所にもprivate iterator headerをincludeして解決した。debug/native buildが成功。
+- 新しい11 testsは両buildで成功（nativeはallocation injection 1件skip）。shared tupleを
+  保持した場合のidentity/参照数、unique tupleのhash reset、同じlistを別iteratorで読む場合、
+  同一iteratorを2回渡す場合、zipの0/1/3/4 arities、strict時の余分な消費、custom iteratorの
+  callback順/real frame/例外位置、旧要素のfinalizerが片方のiteratorを進めてもう片方の
+  listをclearする場合、instruction monitoring、OOMで両iteratorが進まないことを確認した。
+- 共通allocation probeの移動とiterator protocolを含め、関連17 filesをdebug/nativeで
+  検証中。次は8生成物の再現性、BPEのnative適用counter/assemblyと対応測定を行う。
+
+- 関連17 filesはdebug **2,082 tests・32 skips**、native **1,996 tests・43 skips**で成功。
+  8生成物のbyte再現、Ruff、diff --checkも成功した。
+- BPE native probeは34 executors・167,936 bytesで前段階と同じ。新経路は3,344,210 entries、
+  うち846,111 reused、fallbacks2,183,853。ほかのregion countersは従来と一致し、allocation
+  errors0。`zip-list-pairs-bpe-native.*`に保存した。C helperのdisassemblyでは成功経路の
+  2つの間接iternext callsがなく、必要なPyTuple_New/DECREFと通常zip_nextへのfallbackを
+  確認した（`zip-list-pairs-helper.asm`）。probeの秒数は性能比較には使わない。
+- `python-suite-zip-list-pairs`、manifest/source patchへ実装identityを保存し、
+  float最終版とのBPE 3 blocks・90値の対応比較を実行中。
+
+- 初版BPEの3 blocks・90値は全checksum一致・除外0。前版比は
+  **0.995692/0.994509/0.993747**、段階比較の幾何平均 **0.994649**。main比0.809550。
+  改善は小さいが全blockで一致した。`zip-list-pairs-bpe-{rows,summary}.json`に保存。
+- 初版native stencilは281 bytesで、C helperがstackへ返すdirect種別を読み戻し、JIT側で
+  counterを選び直す分岐とspillが残った。counterをmode既知のC側で更新する変更を準備。
+  成功/再利用/通常fallback/実際のallocation errorというcounter契約は保持し、fallback
+  counterはcallbackの後に更新する。helperへの引数をint*からexecutor pointerへ変更し、
+  uopは結果/例外/通常exhaustionを処理する。まだこの変更のbuild/test/性能は未検証。
+
+- counter移動版は関連6 filesがdebug **939 tests・16 skips**、native **853 tests・27 skips**で成功。
+  8生成物のbyte再現とRuff/diff checkも成功した。native stencilは **281→240 bytes**。
+  BPE probeの全counterは初版と一致し、native executor 34個・167,936 bytesも同じ。
+  成功3,344,210、再利用846,111、fallback2,183,853、allocation errors0。
+  binary SHA256 `2dd4636163baf804ac3aa8c2231cf052ee66329476ed3de3468de0834817a48c` と
+  source/stencil/拡張のidentityを `zip-list-pairs-counters-*` へ保存した。
+  初版とのBPE 3 blocks・90値を逐次実行中。次に全6本で最終採否を判断する。
+
+- counter移動版はBPE 3 blocksで初版比0.998757/1.003806/1.018921、幾何平均
+  **1.007125**。全checksum一致・除外0だが改善が安定せず、採用しない。
+  240-byte化だけを理由に保持せず、counterをuop側で更新する初版へsourceを戻した。
+  初版manifestと全変更C/Hのhash一致を確認。再生成・再ビルドして全6本比較へ進む。
+
+- 復元後の関連6 filesはdebug939/native853 testsで再び成功（16/27 skips）。
+  再ビルド後native SHA256 `5dfd4c267883a8750b5d92c7ddb8dfb009be7b307c8abb5809ef731b490a7a1a`。
+  BPEのcounter/34 executors/167,936 bytesは初版と一致した。
+  `zip-list-pairs-final-*`へ復元source・build・test・probe identityを保存し、
+  float最終版と固定mainに対する6本・3 blocks・540値の比較を逐次実行中。
+- 次の候補をnative codeから検討した。Raytraceのdotには先行するmustBeVector呼び出しが
+  あり、単なる「属性演算だけのcallee」としてframe全体を省略するmatcherは適用できない。
+  検証呼び出しを省く実装には進めない。既存のtrivial/attribute call uopでは、optimizerが
+  決めた戻り値種類・比較modeをnativeで再判定している。引数数とmodeをreplicaへ符号化し、
+  同じguard・所有権・cleanup順を保って定数分岐を消す候補を次に実装・比較する。
+
+- zip最終版の全6本・3 blocks・540値は全checksum一致、除外0。導入前のmain比算術平均
+  **0.695013→0.689955**（今回版block別0.688948/0.689200/0.691718）。goal0.5は未達。
+  script別main比はBPE0.809344、Btree0.706917、DeltaBlue0.961591、Hexiom0.828228、
+  Raytrace0.815276、Spectral0.018376。`zip-list-pairs-final-suite-{rows,summary}.json`に保存。
+- BPEの導入前比は0.990640/0.997890/0.989853（算術平均 **0.992794**）と全block改善。
+  初版の独立比較も全block改善しており、zip初版を採用する。全6本の導入前比算術平均は
+  0.993617、block別0.992311/0.994078/0.994463。その他の導入前比はBtree0.993222、
+  DeltaBlue0.988360、Hexiom0.997187、Raytrace0.992761、Spectral0.997380。
+  zip適用を確認したBPE以外の小さな変動を、zipの直接効果として一般化しない。
+- 静的checkは成功。変更・11追加tests・英語のcontract・測定履歴をローカルcheckpointへ
+  保存する。次のcall replica変更はartifact内のpatchとして準備済みで、まだCへ未適用。
