@@ -1705,3 +1705,93 @@ build-jit/python -m test test_capi.test_opt_regions test_capi.test_opt test_tier
   benchmarkのアルゴリズムや入力、オブジェクトの公開されたidentityは変更しない。
 - まず元のbackedgeとheaderのlen/builtin guard、append receiverとindex localの対応を
   traceとbytecodeから証明できるか確認する。まだ実装済み・性能改善として数えない。
+
+- 検証済みdict/owned-float段階をローカルcommit
+  `00fcaf8462ddc60fc48586b65fb8ad5c271e95fa`、tree
+  `72a3d4f54cfabfcc97347fe16aad795f4b905235`へ記録した。リモート操作はなし。
+- BPEのowned-float段階の診断ではfloat適用0、主要counter・34 executors・2,020 uopsが
+  直前版と一致。ABBAの4回perf stat（元CLI、起動/warmup込み）では全group稼働率99%、
+  before cycles139.487/139.551G、after138.751/139.627G、instructionsは458.481～459.047G。
+  約2.6%の回帰はこの診断では再現せず、原因は未特定のまま。生データは
+  `float-owned-bpe-perf-*`。診断値で元の時間測定を置き換えない。
+- `_LIST_PAIR_APPEND_SCAN`を実装した。元list guardを置換し、同一localのlist/index、
+  exact bytes pair、異なるexact output list、cached small-int範囲、既存capacityを確認する。
+  比較後に通常iterationを1回残すため、末尾の有効なペアはscanで消費しない。
+- suffixがpair非一致→append(word[i])→i+=1→backedgeだけであることを確認する。
+  side traceでもbackedgeの元bytecode（ENTER_EXECUTOR/EXTENDED_ARGを含む）から
+  `i < global(word)-1`と同じbody開始位置を検証する。実行時にglobalがcanonical lenへ
+  解決されることも確認する。general-key globals/builtinsは未対応とし、名前lookupが
+  衝突keyのPython callbackを呼ぶ可能性を排除する。
+- 両buildで新規6 testsが成功。空/短いlist、64/255境界、途中一致、負の開始位置、
+  outputとsourceのalias、bytes/list subclass callback、len差し替え、参照数、類似する
+  未対応ループを検証した。native BPEのcoverageを採取し、追加の例外/side-trace検証へ進む。
+
+- 初期版のnative BPEで956,013 chunks・1,672,794 skipped iterationsを確認した。
+  len/tuple比較の回数も正確に同数減り、dict更新とside-storeのcoverageは維持された。
+  `pair-scan-initial-bpe-native.*`へ保存。短いchunkと2,883,833 missesの費用を含めて測る。
+- 生成コードが`Py_MIN`/`Py_MAX`と`Py_SET_SIZE`をescapingと誤分類していた。
+  これらはC式・field書き込みだけでPythonを呼ばないためnon-escapingへ追加した。
+  新scanのHAS_ESCAPESと余分なstack公開がなくなった。既存enum scan等にも影響するので、
+  builtin/optimizer/generator/list/dict関連を両buildで一括再検証する。
+- 途中の比較例外に対するpartial outputとframeのindex、append callbackによる入力listの
+  短縮、hot branchが変わった後のoutgoing executorを追加検証中。入力・CLIは変更していない。
+
+- escape分類修正後、関連10 filesはdebug **1,124 tests・4 skips**、native
+  **1,038 tests・12 skips**で成功。差分内の既存executor変更はenum scanの余分なstack公開の
+  除去であり、float演算コードには変更がない。
+- nativeのallocation failure診断で、capacity8・size5のoutputにscanで2反復進んだ後、
+  元appendのCALL（offset202）でMemoryErrorを観測した。frameのi=3、output size8で
+  prefix5個と成功した3個の追加が保持された。`check-pair-scan-oom.py`と
+  `pair-scan-oom-native.json`へ保存した。
+- 最終prototypeでも956,013 chunks・1,672,794 skipped iterationsを維持し、ホットなside
+  executor28にもnative scanを確認した。34 executors、native code合計167,936 bytes。
+  `pair-scan-bpe-native.*`と`pair-scan-{manifest.json,.patch}`に記録し、直前owned-float版との
+  固定mainを含む3-block・90値比較を開始した。まだ性能採用の判断はしていない。
+
+- native asmではscan内のbytes比較が汎用immutable比較helperへのcallになり、未使用の
+  unicode/float/int分岐まで含んでいた。また末尾近くの不成立を、複数local・tuple・outputの
+  guard後に判定していた。次の版では位置/残り長を先に判定し、exact bytes比較を明示的に
+  inlineする。現在の3-block比較は保存済みの現行binaryで完了させ、再生成/buildはその後。
+- 現在のsmall-int cache上限は`_PY_NSMALLPOSINTS=1025`。従来の256付近に加えて
+  1023～1026と1100のlistでも検証するようテストを広げた。copied builtinsのlen差し替えと
+  general-key globalsにある衝突callbackの列も追加検証する。
+
+- 最初の3 blocks・90値は直前owned-float版比 **1.005453/0.996064/1.006680**、
+  段階比較の幾何平均 **1.002721**、main比0.816504。全checksum一致、除外0。
+  この版を高速化成功とは判定しない。`pair-scan-bpe-{rows,summary}.json`へ保存した。
+- 予定していた早い不成立判定とbytes専用inline比較を含む版をこれから再生成・buildする。
+  原因仮説は追加guardと汎用helperの費用。追加比較も事前に3 blocks・90値とし、
+  引き続き導入前のowned-float版を対照にする。
+
+- inline版の初回検証では、追加したFunctionTypeのfixture2つがデフォルト引数をコピーして
+  おらずTypeErrorで失敗した。`argdefs=run.__defaults__`を指定して修正し、追加11 testsが
+  両buildで成功した。allocation failureの診断もdebug/native両方で同じi=3・成功prefixを確認。
+- 修正後にtest_opt_regions全127 testsを両buildで再実行し成功（native7 skips）。
+  先の10-file実行で成功した残り9 filesと合わせ、現在の関連範囲はdebug1,126 tests・4 skips、
+  native1,040 tests・12 skips。8生成物のbyte単位の再現、Ruff、diff --checkも成功した。
+- inline版のnative coverageは前版と同数。executor28の0xe8/0xfcに位置の早期判定、
+  0x371/0x381にbytesのidentity/長さ比較があり、scan中の汎用immutable helper呼び出しが
+  消えた。bytesデータ比較のmemcmpは残る。native bytesとmanifestを`pair-scan-inline*`へ保存。
+- 最終判断用の比較は全6本に広げ、固定main・導入前owned-float版・inline版の3種類、
+  3 blocks・540値で実行中。BPEについて事前に定めた3 blocks・90値もこの中で取得する。
+  重いbuild/test/probeはタイミング中に走らせない。
+
+- 全6本・3 blocks・540値の比較が完了し、全checksum一致、除外0。
+  直前owned-float版のmain比算術平均 **0.706593** に対し、今回版は **0.704639**
+  （block別0.710845/0.701429/0.701643）。過去screenの0.712403との差を今回の効果とはしない。
+  目標0.5は未達。
+- 今回版のscript別main比はBPE0.813254、Btree0.740443、DeltaBlue0.969030、
+  Hexiom0.834058、Raytrace0.852363、Spectral0.018683。
+  直前版比はBPE0.993987（3 blocksとも改善）、Btree0.991347（3 blocksとも改善）、
+  DeltaBlue0.997392、Hexiom0.993405、Raytrace1.009182、Spectral0.999399。
+- Raytraceは1.026929/1.000491/1.000127と全blockで遅く、最初のblockの差が特に大きい。
+  これも含めた全6本の直前版比算術平均は0.997452で、全体効果は小さい。
+  BPEのscanと既存enumのescape分類修正を組み合わせた段階として記録し、特定の変更だけの
+  効果とは主張しない。全値は`pair-scan-inline-suite-{rows,summary}.json`に保持する。
+- 次はBtree等の短いメソッドのtraceを現在のbinaryで確認する。以前のBNode.is_fullの
+  native traceでは、constant folding済みの値にもload/rotate/popが残り、lenのboxingと
+  比較、callee frameを別々に処理していた。残っている仕事を確認してから次の対象を決める。
+
+- BPE/Btreeの3 blocksすべての改善と、回帰を含めた全体の小さな改善を根拠に、
+  scan/escape分類の段階を現状として保持する。Raytraceの回帰原因は未特定で、記録を残す。
+  source/test/docをローカルの次のチェックポイントへ保存し、次の変更と分離する。

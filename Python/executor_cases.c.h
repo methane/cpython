@@ -17037,6 +17037,100 @@
             break;
         }
 
+        case _LIST_PAIR_APPEND_SCAN_r22: {
+            CHECK_CURRENT_CACHED_VALUES(2);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            _PyStackRef index;
+            _PyStackRef container;
+            _PyStackRef _stack_item_0 = _tos_cache0;
+            _PyStackRef _stack_item_1 = _tos_cache1;
+            index = _stack_item_1;
+            container = _stack_item_0;
+            PyObject *config = (PyObject *)CURRENT_OPERAND0_64();
+            PyObject *name = (PyObject *)CURRENT_OPERAND1_64();
+            PyObject *source = PyStackRef_AsPyObjectBorrow(container);
+            if (!PyList_CheckExact(source)) {
+                UOP_STAT_INC(uopcode, miss);
+                _tos_cache1 = index;
+                _tos_cache0 = container;
+                SET_CURRENT_CACHED_VALUES(2);
+                JUMP_TO_JUMP_TARGET();
+            }
+            PyObject *index_o = PyStackRef_AsPyObjectBorrow(index);
+            Py_ssize_t count = 0;
+            Py_ssize_t position = -1;
+            if (PyLong_CheckExact(index_o) && _PyLong_IsCompact((PyLongObject *)index_o)) {
+                position = _PyLong_CompactValue((PyLongObject *)index_o);
+            }
+            if (position >= 0 && position < _PY_NSMALLPOSINTS - 1 &&
+                position < PyList_GET_SIZE(source) - 2) {
+                uint64_t slots = (uint64_t)(uintptr_t)config;
+                int index_local = slots & 255;
+                int list_local = (slots >> 8) & 255;
+                int output_local = (slots >> 16) & 255;
+                int pair_local = (slots >> 24) & 255;
+                _PyStackRef old_index = GETLOCAL(index_local);
+                _PyStackRef output_ref = GETLOCAL(output_local);
+                _PyStackRef pair_ref = GETLOCAL(pair_local);
+                PyObject *output = NULL;
+                PyObject *pair = NULL;
+                bool direct = !PyStackRef_IsNull(old_index) &&
+                !PyStackRef_IsNull(GETLOCAL(list_local)) &&
+                !PyStackRef_IsNull(output_ref) && !PyStackRef_IsNull(pair_ref) &&
+                PyStackRef_AsPyObjectBorrow(old_index) == index_o &&
+                PyStackRef_AsPyObjectBorrow(GETLOCAL(list_local)) == source;
+                if (direct) {
+                    output = PyStackRef_AsPyObjectBorrow(output_ref);
+                    pair = PyStackRef_AsPyObjectBorrow(pair_ref);
+                    direct = PyList_CheckExact(output) && output != source &&
+                    PyList_GET_SIZE(output) < ((PyListObject *)output)->allocated &&
+                    PyTuple_CheckExact(pair) && PyTuple_GET_SIZE(pair) == 2 &&
+                    PyBytes_CheckExact(PyTuple_GET_ITEM(pair, 0)) &&
+                    PyBytes_CheckExact(PyTuple_GET_ITEM(pair, 1));
+                }
+                if (direct && _PyRegion_HasBuiltinLen(frame,
+                        PyTuple_GET_ITEM(_PyFrame_GetCode(frame)->co_names, (uintptr_t)name),
+                        tstate->interp->callable_cache.len)) {
+                    Py_ssize_t size = PyList_GET_SIZE(output);
+                    Py_ssize_t stop = Py_MIN(64, ((PyListObject *)output)->allocated - size);
+                    stop = Py_MIN(stop, _PY_NSMALLPOSINTS - 1 - position);
+                    stop = Py_MIN(stop, PyList_GET_SIZE(source) - 2 - position);
+                    while (count < stop) {
+                        PyObject *a = PyList_GET_ITEM(source, position + count);
+                        PyObject *b = PyList_GET_ITEM(source, position + count + 1);
+                        if (!PyBytes_CheckExact(a) || !PyBytes_CheckExact(b) ||
+                            (_PyRegion_BytesEqual(a, PyTuple_GET_ITEM(pair, 0)) &&
+                             _PyRegion_BytesEqual(b, PyTuple_GET_ITEM(pair, 1)))) {
+                            break;
+                        }
+                        PyList_SET_ITEM(output, size + count, Py_NewRef(a));
+                        count++;
+                    }
+                    if (count) {
+                        Py_SET_SIZE(output, size + count);
+                        PyObject *next_index = (PyObject *)&_PyLong_SMALL_INTS[
+                        _PY_NSMALLNEGINTS + position + count];
+                        GETLOCAL(index_local) = PyStackRef_FromPyObjectNew(next_index);
+                        index = PyStackRef_Borrow(GETLOCAL(index_local));
+                        PyStackRef_CLOSE_SPECIALIZED(old_index, _PyLong_ExactDealloc);
+                    }
+                }
+            }
+            if (count) {
+                current_executor->region_pair_scan_entries++;
+                current_executor->region_pair_scan_iterations += count;
+            }
+            else {
+                current_executor->region_pair_scan_misses++;
+            }
+            _tos_cache1 = index;
+            _tos_cache0 = container;
+            _tos_cache2 = PyStackRef_ZERO_BITS;
+            SET_CURRENT_CACHED_VALUES(2);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            break;
+        }
+
         case _COMPARE_LIST_PAIR_0_r23: {
             CHECK_CURRENT_CACHED_VALUES(2);
             ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
@@ -19178,18 +19272,8 @@
             }
             Py_ssize_t count = 0;
             if (direct) {
-                stack_pointer[0] = iter;
-                stack_pointer[1] = _stack_item_1;
-                stack_pointer += 2;
-                ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
-                _PyFrame_SetStackPointer(frame, stack_pointer);
-                _PyFrame_StackPointerValidate(frame);
                 Py_ssize_t stop = Py_MIN(PyList_GET_SIZE(it->it_seq) - it->it_index, 64);
-                _PyFrame_StackPointerInvalidate(frame);
-                assert(stack_pointer == _PyFrame_GetStackPointer(frame));
-                _PyFrame_StackPointerValidate(frame);
                 stop = Py_MIN(stop, _PY_NSMALLPOSINTS - en->en_index);
-                _PyFrame_StackPointerInvalidate(frame);
                 Py_ssize_t limit = _PyLong_CompactValue((PyLongObject *)key);
                 while (count < stop) {
                     PyObject *item = PyList_GET_ITEM(it->it_seq, it->it_index + count);
@@ -19214,7 +19298,6 @@
                     }
                     count++;
                 }
-                stack_pointer += -2;
             }
             if (count) {
                 PyObject *result = en->en_result;
@@ -19319,18 +19402,8 @@
             }
             Py_ssize_t count = 0;
             if (direct) {
-                stack_pointer[0] = iter;
-                stack_pointer[1] = _stack_item_1;
-                stack_pointer += 2;
-                ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
-                _PyFrame_SetStackPointer(frame, stack_pointer);
-                _PyFrame_StackPointerValidate(frame);
                 Py_ssize_t stop = Py_MIN(PyList_GET_SIZE(it->it_seq) - it->it_index, 64);
-                _PyFrame_StackPointerInvalidate(frame);
-                assert(stack_pointer == _PyFrame_GetStackPointer(frame));
-                _PyFrame_StackPointerValidate(frame);
                 stop = Py_MIN(stop, _PY_NSMALLPOSINTS - en->en_index);
-                _PyFrame_StackPointerInvalidate(frame);
                 Py_ssize_t limit = _PyLong_CompactValue((PyLongObject *)key);
                 while (count < stop) {
                     PyObject *item = PyList_GET_ITEM(it->it_seq, it->it_index + count);
@@ -19355,7 +19428,6 @@
                     }
                     count++;
                 }
-                stack_pointer += -2;
             }
             if (count) {
                 PyObject *result = en->en_result;
@@ -19460,18 +19532,8 @@
             }
             Py_ssize_t count = 0;
             if (direct) {
-                stack_pointer[0] = iter;
-                stack_pointer[1] = _stack_item_1;
-                stack_pointer += 2;
-                ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
-                _PyFrame_SetStackPointer(frame, stack_pointer);
-                _PyFrame_StackPointerValidate(frame);
                 Py_ssize_t stop = Py_MIN(PyList_GET_SIZE(it->it_seq) - it->it_index, 64);
-                _PyFrame_StackPointerInvalidate(frame);
-                assert(stack_pointer == _PyFrame_GetStackPointer(frame));
-                _PyFrame_StackPointerValidate(frame);
                 stop = Py_MIN(stop, _PY_NSMALLPOSINTS - en->en_index);
-                _PyFrame_StackPointerInvalidate(frame);
                 Py_ssize_t limit = _PyLong_CompactValue((PyLongObject *)key);
                 while (count < stop) {
                     PyObject *item = PyList_GET_ITEM(it->it_seq, it->it_index + count);
@@ -19496,7 +19558,6 @@
                     }
                     count++;
                 }
-                stack_pointer += -2;
             }
             if (count) {
                 PyObject *result = en->en_result;
@@ -19601,18 +19662,8 @@
             }
             Py_ssize_t count = 0;
             if (direct) {
-                stack_pointer[0] = iter;
-                stack_pointer[1] = _stack_item_1;
-                stack_pointer += 2;
-                ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
-                _PyFrame_SetStackPointer(frame, stack_pointer);
-                _PyFrame_StackPointerValidate(frame);
                 Py_ssize_t stop = Py_MIN(PyList_GET_SIZE(it->it_seq) - it->it_index, 64);
-                _PyFrame_StackPointerInvalidate(frame);
-                assert(stack_pointer == _PyFrame_GetStackPointer(frame));
-                _PyFrame_StackPointerValidate(frame);
                 stop = Py_MIN(stop, _PY_NSMALLPOSINTS - en->en_index);
-                _PyFrame_StackPointerInvalidate(frame);
                 Py_ssize_t limit = _PyLong_CompactValue((PyLongObject *)key);
                 while (count < stop) {
                     PyObject *item = PyList_GET_ITEM(it->it_seq, it->it_index + count);
@@ -19637,7 +19688,6 @@
                     }
                     count++;
                 }
-                stack_pointer += -2;
             }
             if (count) {
                 PyObject *result = en->en_result;
@@ -19742,18 +19792,8 @@
             }
             Py_ssize_t count = 0;
             if (direct) {
-                stack_pointer[0] = iter;
-                stack_pointer[1] = _stack_item_1;
-                stack_pointer += 2;
-                ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
-                _PyFrame_SetStackPointer(frame, stack_pointer);
-                _PyFrame_StackPointerValidate(frame);
                 Py_ssize_t stop = Py_MIN(PyList_GET_SIZE(it->it_seq) - it->it_index, 64);
-                _PyFrame_StackPointerInvalidate(frame);
-                assert(stack_pointer == _PyFrame_GetStackPointer(frame));
-                _PyFrame_StackPointerValidate(frame);
                 stop = Py_MIN(stop, _PY_NSMALLPOSINTS - en->en_index);
-                _PyFrame_StackPointerInvalidate(frame);
                 Py_ssize_t limit = _PyLong_CompactValue((PyLongObject *)key);
                 while (count < stop) {
                     PyObject *item = PyList_GET_ITEM(it->it_seq, it->it_index + count);
@@ -19778,7 +19818,6 @@
                     }
                     count++;
                 }
-                stack_pointer += -2;
             }
             if (count) {
                 PyObject *result = en->en_result;
@@ -19883,18 +19922,8 @@
             }
             Py_ssize_t count = 0;
             if (direct) {
-                stack_pointer[0] = iter;
-                stack_pointer[1] = _stack_item_1;
-                stack_pointer += 2;
-                ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
-                _PyFrame_SetStackPointer(frame, stack_pointer);
-                _PyFrame_StackPointerValidate(frame);
                 Py_ssize_t stop = Py_MIN(PyList_GET_SIZE(it->it_seq) - it->it_index, 64);
-                _PyFrame_StackPointerInvalidate(frame);
-                assert(stack_pointer == _PyFrame_GetStackPointer(frame));
-                _PyFrame_StackPointerValidate(frame);
                 stop = Py_MIN(stop, _PY_NSMALLPOSINTS - en->en_index);
-                _PyFrame_StackPointerInvalidate(frame);
                 Py_ssize_t limit = _PyLong_CompactValue((PyLongObject *)key);
                 while (count < stop) {
                     PyObject *item = PyList_GET_ITEM(it->it_seq, it->it_index + count);
@@ -19919,7 +19948,6 @@
                     }
                     count++;
                 }
-                stack_pointer += -2;
             }
             if (count) {
                 PyObject *result = en->en_result;
@@ -20023,18 +20051,8 @@
             }
             Py_ssize_t count = 0;
             if (direct) {
-                stack_pointer[0] = iter;
-                stack_pointer[1] = _stack_item_1;
-                stack_pointer += 2;
-                ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
-                _PyFrame_SetStackPointer(frame, stack_pointer);
-                _PyFrame_StackPointerValidate(frame);
                 Py_ssize_t stop = Py_MIN(PyList_GET_SIZE(it->it_seq) - it->it_index, 64);
-                _PyFrame_StackPointerInvalidate(frame);
-                assert(stack_pointer == _PyFrame_GetStackPointer(frame));
-                _PyFrame_StackPointerValidate(frame);
                 stop = Py_MIN(stop, _PY_NSMALLPOSINTS - en->en_index);
-                _PyFrame_StackPointerInvalidate(frame);
                 Py_ssize_t limit = _PyLong_CompactValue((PyLongObject *)key);
                 while (count < stop) {
                     PyObject *item = PyList_GET_ITEM(it->it_seq, it->it_index + count);
@@ -20059,7 +20077,6 @@
                     }
                     count++;
                 }
-                stack_pointer += -2;
             }
             if (count) {
                 PyObject *result = en->en_result;
@@ -32645,10 +32662,7 @@
                 _PyFrame_StackPointerValidate(frame);
                 long budget = (long)_PyTier3_GetBudget();
                 _PyFrame_StackPointerInvalidate(frame);
-                assert(stack_pointer == _PyFrame_GetStackPointer(frame));
-                _PyFrame_StackPointerValidate(frame);
                 long max_extra = Py_MIN(budget, remaining - 1);
-                _PyFrame_StackPointerInvalidate(frame);
                 while (completed < max_extra) {
                     int64_t new_total;
                     if (__builtin_add_overflow(total, (int64_t)next,

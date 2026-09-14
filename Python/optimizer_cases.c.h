@@ -3157,6 +3157,10 @@
             break;
         }
 
+        case _LIST_PAIR_APPEND_SCAN: {
+            break;
+        }
+
         case _COMPARE_LIST_PAIR: {
             JitOptRef res;
             JitOptRef c;

@@ -2427,6 +2427,261 @@ class TestRegions(unittest.TestCase):
         value.append(4)
         self.assertEqual(func(value, 1, 0, 0, 8), 3)
 
+    def pair_append_function(self, condition="i < len(word) - 1", matched="merge",
+                             extra="", increment=1):
+        ns = {"__builtins__": vars(builtins)}
+        on_match = ("            output.append(b'merged')\n"
+                    "            i += 2\n") if matched == "merge" else "            break\n"
+        exec("def run(word, pair, output, start=0):\n"
+             "    i = start\n"
+             f"    while {condition}:\n"
+             "        if (word[i], word[i + 1]) == pair:\n"
+             + on_match +
+             "        else:\n"
+             "            output.append(word[i])\n"
+             + (f"            {extra}\n" if extra else "") +
+             f"            i += {increment}\n"
+             "    if i == len(word) - 1:\n"
+             "        output.append(word[i])\n"
+             "    return output, i\n", ns)
+        return ns["run"]
+
+    def warm_pair_append(self, **kwargs):
+        run = self.pair_append_function(**kwargs)
+        word = [b"a"] * 96
+        for _ in range(TIER2_THRESHOLD // 32 + 32):
+            self.assertEqual(run(word, (b"x", b"y"), []), (word, 95))
+        return run, self.executor(run, "_LIST_PAIR_APPEND_SCAN")
+
+    def test_pair_append_scan_values_and_boundaries(self):
+        run, ex = self.warm_pair_append()
+        reference = self.pair_append_function()
+        pair = (b"x", b"y")
+        for size in (0, 1, 2, 3, 7, 16, 63, 64, 65, 96, 254, 255, 256, 300,
+                     1023, 1024, 1025, 1026, 1100):
+            for start in (0, 1, -1):
+                with self.subTest(size=size, start=start):
+                    word = [b"a"] * size
+                    if size == 0 and start < 0:
+                        continue
+                    expected = reference(word, pair, [], start)
+                    self.assertEqual(run(word, pair, [], start), expected)
+        word = [b"a"] * 96
+        for position in (0, 1, 3, 4, 31, 63, 64, 94):
+            with self.subTest(position=position):
+                data = word.copy()
+                data[position:position + 2] = pair
+                self.assertEqual(run(data, pair, []), reference(data, pair, []))
+        before = ex.get_region_stats()["pair_scan_iterations"]
+        self.assertEqual(run(word, pair, []), (word, 95))
+        self.assertGreater(ex.get_region_stats()["pair_scan_iterations"], before)
+
+    def test_pair_append_scan_reference_ownership(self):
+        run, ex = self.warm_pair_append()
+        item = bytes(bytearray(b"non-interned scan item"))
+        word = [item] * 96
+        before_refs = sys.getrefcount(item)
+        before = ex.get_region_stats()["pair_scan_iterations"]
+        for _ in range(1000):
+            output, index = run(word, (b"x", b"y"), [])
+            self.assertEqual(index, 95)
+            self.assertTrue(all(value is item for value in output))
+            del output
+        self.assertGreater(ex.get_region_stats()["pair_scan_iterations"], before)
+        self.assertEqual(sys.getrefcount(item), before_refs)
+
+    def test_pair_append_scan_output_alias(self):
+        run, ex = self.warm_pair_append(matched="break")
+        word = [b"a"] * 8 + [b"x", b"y"]
+        before = ex.get_region_stats()["pair_scan_iterations"]
+        output, index = run(word, (b"x", b"y"), word)
+        self.assertIs(output, word)
+        self.assertEqual(index, 8)
+        self.assertEqual(word, [b"a"] * 8 + [b"x", b"y"] + [b"a"] * 8)
+        self.assertEqual(ex.get_region_stats()["pair_scan_iterations"], before)
+
+    def test_pair_append_scan_callbacks(self):
+        run, ex = self.warm_pair_append()
+        events = []
+
+        class Bytes(bytes):
+            def __eq__(self, other):
+                events.append((bytes(self), other))
+                return False
+
+        word = [b"a"] * 8 + [Bytes(b"callback")] + [b"a"] * 12
+        reference = self.pair_append_function()
+        expected = reference(word, (b"x", b"y"), [])
+        expected_events = events.copy()
+        events.clear()
+        self.assertEqual(run(word, (b"x", b"y"), []), expected)
+        self.assertEqual(events, expected_events)
+
+        class Output(list):
+            def append(self, item):
+                events.append(item)
+                super().append(item)
+
+        events.clear()
+        before = ex.get_region_stats()["pair_scan_iterations"]
+        output, index = run([b"a"] * 96, (b"x", b"y"), Output())
+        self.assertEqual(output, [b"a"] * 96)
+        self.assertEqual(index, 95)
+        self.assertEqual(events, output)
+        self.assertEqual(ex.get_region_stats()["pair_scan_iterations"], before)
+
+    def test_pair_append_scan_replaced_len(self):
+        run, _ = self.warm_pair_append()
+        events = []
+
+        def length(word):
+            events.append(len(word))
+            return min(len(word), 12)
+
+        run.__globals__["len"] = length
+        self.assertEqual(run([b"a"] * 96, (b"x", b"y"), []), ([b"a"] * 12, 11))
+        # Twelve header evaluations and one final check, each still a call.
+        self.assertEqual(events, [96] * 13)
+        del run.__globals__["len"]
+        self.assertEqual(run([b"a"] * 96, (b"x", b"y"), []), ([b"a"] * 96, 95))
+        custom = vars(builtins).copy()
+        custom["len"] = length
+        copied = types.FunctionType(run.__code__, {"__builtins__": custom},
+                                    argdefs=run.__defaults__)
+        events.clear()
+        self.assertEqual(copied([b"a"] * 96, (b"x", b"y"), []), ([b"a"] * 12, 11))
+        self.assertEqual(events, [96] * 13)
+
+    def test_pair_append_scan_general_globals(self):
+        run, _ = self.warm_pair_append()
+        events = []
+
+        class Collision:
+            def __hash__(self):
+                return hash("len")
+
+            def __eq__(self, other):
+                events.append(other)
+                return False
+
+        run.__globals__[Collision()] = None
+        # Share the exact globals table and original code bytes, but use a
+        # fresh code object without region lowering for the reference run.
+        reference = types.FunctionType(run.__code__.replace(), run.__globals__,
+                                       argdefs=run.__defaults__)
+        with mock.patch.dict(os.environ, {"PYTHON_TIER2_BUILTIN_REGIONS": "0"}):
+            expected = reference([b"a"] * 96, (b"x", b"y"), [])
+        expected_events = events.copy()
+        events.clear()
+        self.assertEqual(run([b"a"] * 96, (b"x", b"y"), []), expected)
+        self.assertEqual(events, expected_events)
+        self.assertTrue(events)
+
+    def test_pair_append_scan_rejects_other_loops(self):
+        for options in ({"condition": "i < len(word) - 2"},
+                        {"extra": "events.append(i)"}, {"increment": 2}):
+            with self.subTest(options=options):
+                run = self.pair_append_function(**options)
+                run.__globals__["events"] = []
+                for _ in range(TIER2_THRESHOLD // 32 + 32):
+                    run([b"a"] * 96, (b"x", b"y"), [])
+                self.assertFalse(any("_LIST_PAIR_APPEND_SCAN" in get_opnames(ex)
+                                     for ex in get_all_executors(run)))
+
+    def test_pair_append_scan_exception_after_progress(self):
+        run, ex = self.warm_pair_append()
+
+        class ComparisonError(Exception):
+            pass
+
+        class Bytes(bytes):
+            def __eq__(self, other):
+                raise ComparisonError
+
+        output = []
+        word = [b"a"] * 40 + [Bytes(b"callback")] + [b"a"] * 20
+        before = ex.get_region_stats()["pair_scan_iterations"]
+        try:
+            run(word, (b"x", b"y"), output)
+        except ComparisonError as error:
+            tb = error.__traceback__.tb_next
+            self.assertIs(tb.tb_frame.f_code, run.__code__)
+            self.assertEqual(tb.tb_frame.f_locals["i"], 40)
+            self.assertIs(tb.tb_frame.f_locals["output"], output)
+        else:
+            self.fail("comparison did not raise")
+        self.assertEqual(output, [b"a"] * 40)
+        self.assertGreater(ex.get_region_stats()["pair_scan_iterations"], before)
+
+    @support.nomemtest
+    def test_pair_append_scan_resize_failure(self):
+        from opcode import opmap
+        from test.support.import_helper import import_module
+
+        capi = import_module("_testcapi")
+        run, ex = self.warm_pair_append()
+        word = [b"a"] * 96
+        pair = (b"x", b"y")
+        output = [b"prefix"] * 8
+        del output[5:]  # Keep capacity eight, with three unused slots.
+        before = ex.get_region_stats()["pair_scan_iterations"]
+        set_nomemory, clear = capi.set_nomemory, capi.remove_mem_hooks
+        failure = None
+        set_nomemory(0, 1)
+        try:
+            run(word, pair, output)
+        except MemoryError as error:
+            clear()
+            tb = error.__traceback__.tb_next
+            failure = (tb.tb_frame.f_code, tb.tb_lasti, tb.tb_frame.f_locals["i"])
+        finally:
+            clear()
+        self.assertIsNotNone(failure)
+        code, offset, index = failure
+        self.assertIs(code, run.__code__)
+        self.assertEqual(code.co_code[offset], opmap["CALL"])
+        self.assertEqual(index, 3)
+        self.assertEqual(output, [b"prefix"] * 5 + [b"a"] * 3)
+        self.assertGreater(ex.get_region_stats()["pair_scan_iterations"], before)
+
+    def test_pair_append_scan_source_mutation(self):
+        run, _ = self.warm_pair_append()
+        events = []
+        word = [b"a"] * 96
+
+        class Output(list):
+            def append(self, item):
+                events.append(item)
+                word.pop()
+                super().append(item)
+
+        output, index = run(word, (b"x", b"y"), Output())
+        self.assertEqual(index, 48)
+        self.assertEqual(output, [b"a"] * 48)
+        self.assertEqual(word, [b"a"] * 48)
+        self.assertEqual(events, output)
+
+    def test_pair_append_scan_side_trace(self):
+        run, root = self.warm_pair_append()
+        word = [b"a"] * 96
+        # Make the formerly cold matching branch hot, then revisit a long
+        # nonmatching suffix. Follow outgoing links as well as code roots.
+        word[:2] = (b"x", b"y")
+        for _ in range(TIER2_THRESHOLD):
+            self.assertEqual(run(word, (b"x", b"y"), []),
+                             ([b"merged"] + word[2:], 95))
+        selected = list(get_all_executors(run))
+        seen = {id(ex) for ex in selected}
+        for ex in selected:
+            for child in gc.get_referents(ex):
+                if type(child) is type(root) and id(child) not in seen:
+                    selected.append(child)
+                    seen.add(id(child))
+        before = sum(ex.get_region_stats()["pair_scan_iterations"] for ex in selected)
+        self.assertEqual(run(word, (b"x", b"y"), []), ([b"merged"] + word[2:], 95))
+        after = sum(ex.get_region_stats()["pair_scan_iterations"] for ex in selected)
+        self.assertGreater(after, before)
+
     def warm_list_pair(self, operation="=="):
         ns = {}
         exec("def compare(items, positions, pair, n):\n"

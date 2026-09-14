@@ -143,6 +143,30 @@ Shared enumerate result tuples and indices outside the small-int cache retain
 ordinary iteration. `enum_scan_entries`, `enum_scan_iterations`, and
 `enum_scan_misses` distinguish chunk execution from the original next path.
 
+`_LIST_PAIR_APPEND_SCAN` recognizes the nonmatching branch of a loop that
+compares `(source[index], source[index + 1])` with a local pair, appends
+`source[index]` to an output list, and increments the index by one. It retains
+the original iteration and consumes up to 64 preceding iterations using only
+the output list's existing capacity. Both lists must be exact and distinct,
+the pair and compared elements must contain exact bytes, and the resulting
+index must remain in the small-int cache. There is no allocation or callback
+inside the scan. Capacity exhaustion, matching pairs, and unsupported values
+leave the remaining append, error location, and comparison to the original
+trace. The final complete pair is also left to the original iteration, whose
+header has already been evaluated.
+
+The matcher verifies the nonmatching trace through its backedge and decodes
+the original loop header, including saved instructions under `ENTER_EXECUTOR`.
+The header must test `index < global_name(source) - 1` and lead to the same
+pair read. This admits side traces without assuming their incoming branch
+proves the next iteration's condition. At runtime the global name must resolve
+to the canonical `len`; globals and builtins must have unicode-key tables so
+this check cannot invoke a colliding key's `__eq__`. Other headers, extra body
+effects, aliased local slots, and frame transitions are rejected. The GIL and
+64-bit builtin-region gates apply. `pair_scan_entries`, `pair_scan_iterations`,
+and `pair_scan_misses` report actual skipped iterations separately from the
+ordinary comparisons that remain.
+
 `_CONTAINS_OP_LIST_INT` scans exact lists of compact exact integers directly.
 For unsupported operands or the first unsupported element it calls ordinary
 `PySequence_Contains` in the trace. Restarting that operation repeats only

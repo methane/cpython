@@ -804,6 +804,24 @@ _PyRegion_AsInt64(_PyStackRef ref, int64_t *value)
     return overflow == 0;
 }
 
+/* Restrict lookup to unicode-key tables: a general-key table could invoke
+ * an unrelated key's __eq__ while resolving the global name. */
+static inline bool
+_PyRegion_HasBuiltinLen(_PyInterpreterFrame *frame, PyObject *name,
+                        PyObject *builtin_len)
+{
+    PyObject *globals = frame->f_globals;
+    PyObject *builtins = frame->f_builtins;
+    if (!PyDict_CheckExact(globals) || !PyDict_CheckExact(builtins) ||
+        ((PyDictObject *)globals)->ma_keys->dk_kind == DICT_KEYS_GENERAL ||
+        ((PyDictObject *)builtins)->ma_keys->dk_kind == DICT_KEYS_GENERAL) {
+        return false;
+    }
+    assert(PyUnicode_CheckExact(name));
+    return _PyDict_LoadGlobal((PyDictObject *)globals, (PyDictObject *)builtins,
+                              name) == builtin_len;
+}
+
 static inline bool
 _PyRegion_Length(_PyStackRef ref, Py_ssize_t *size)
 {
@@ -845,6 +863,16 @@ _PyRegion_EqualityType(PyTypeObject *type)
 /* Both operands have the same exact immutable builtin type. These equality
  * operations cannot call Python, issue BytesWarning, or allocate a result.
  * Preserve tuple comparison's identity shortcut, particularly for NaNs. */
+static inline Py_ALWAYS_INLINE bool
+_PyRegion_BytesEqual(PyObject *left, PyObject *right)
+{
+    assert(PyBytes_CheckExact(left) && PyBytes_CheckExact(right));
+    return left == right ||
+        (PyBytes_GET_SIZE(left) == PyBytes_GET_SIZE(right) &&
+         memcmp(PyBytes_AS_STRING(left), PyBytes_AS_STRING(right),
+                PyBytes_GET_SIZE(left)) == 0);
+}
+
 static inline bool
 _PyRegion_ImmutableEqual(PyObject *left, PyObject *right)
 {

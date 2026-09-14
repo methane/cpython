@@ -289,6 +289,7 @@ const uint32_t _PyUop_Flags[MAX_UOP_ID+1] = {
     [_COMPARE_TUPLE_PAIR_0] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG,
     [_COMPARE_TUPLE_PAIR_1] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG,
     [_COMPARE_TUPLE_PAIR] = HAS_ARG_FLAG | HAS_LOCAL_FLAG | HAS_EXIT_FLAG,
+    [_LIST_PAIR_APPEND_SCAN] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG,
     [_COMPARE_LIST_PAIR_0] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG,
     [_COMPARE_LIST_PAIR_1] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG,
     [_COMPARE_LIST_PAIR] = HAS_ARG_FLAG | HAS_LOCAL_FLAG | HAS_EXIT_FLAG,
@@ -2863,6 +2864,15 @@ const _PyUopCachingInfo _PyUop_Caching[MAX_UOP_ID+1] = {
             { -1, -1, -1 },
             { -1, -1, -1 },
             { 3, 2, _COMPARE_TUPLE_PAIR_r23 },
+            { -1, -1, -1 },
+        },
+    },
+    [_LIST_PAIR_APPEND_SCAN] = {
+        .best = { 2, 2, 2, 2 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 2, 2, _LIST_PAIR_APPEND_SCAN_r22 },
             { -1, -1, -1 },
         },
     },
@@ -5705,6 +5715,7 @@ const uint16_t _PyUop_Uncached[MAX_UOP_REGS_ID+1] = {
     [_COMPARE_TUPLE_PAIR_0_r23] = _COMPARE_TUPLE_PAIR_0,
     [_COMPARE_TUPLE_PAIR_1_r23] = _COMPARE_TUPLE_PAIR_1,
     [_COMPARE_TUPLE_PAIR_r23] = _COMPARE_TUPLE_PAIR,
+    [_LIST_PAIR_APPEND_SCAN_r22] = _LIST_PAIR_APPEND_SCAN,
     [_COMPARE_LIST_PAIR_0_r23] = _COMPARE_LIST_PAIR_0,
     [_COMPARE_LIST_PAIR_1_r23] = _COMPARE_LIST_PAIR_1,
     [_COMPARE_LIST_PAIR_r23] = _COMPARE_LIST_PAIR,
@@ -7356,6 +7367,8 @@ const char *const _PyOpcode_uop_name[MAX_UOP_REGS_ID+1] = {
     [_LIST_APPEND_r10] = "_LIST_APPEND_r10",
     [_LIST_EXTEND] = "_LIST_EXTEND",
     [_LIST_EXTEND_r11] = "_LIST_EXTEND_r11",
+    [_LIST_PAIR_APPEND_SCAN] = "_LIST_PAIR_APPEND_SCAN",
+    [_LIST_PAIR_APPEND_SCAN_r22] = "_LIST_PAIR_APPEND_SCAN_r22",
     [_LOAD_ATTR] = "_LOAD_ATTR",
     [_LOAD_ATTR_r10] = "_LOAD_ATTR_r10",
     [_LOAD_ATTR_CLASS] = "_LOAD_ATTR_CLASS",
@@ -8457,6 +8470,8 @@ int _PyUop_num_popped(int opcode, int oparg)
             return 2;
         case _COMPARE_TUPLE_PAIR:
             return 2;
+        case _LIST_PAIR_APPEND_SCAN:
+            return 0;
         case _COMPARE_LIST_PAIR_0:
             return 2;
         case _COMPARE_LIST_PAIR_1:

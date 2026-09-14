@@ -246,6 +246,9 @@ typedef struct _PyExecutorObject {
     uint64_t region_enum_scan_entries;
     uint64_t region_enum_scan_iterations;
     uint64_t region_enum_scan_misses;
+    uint64_t region_pair_scan_entries;
+    uint64_t region_pair_scan_iterations;
+    uint64_t region_pair_scan_misses;
     uint64_t region_contains_entries;
     uint64_t region_contains_iterations;
     uint64_t region_contains_fallbacks;

@@ -3679,6 +3679,85 @@ dummy_func(
             INPUTS_DEAD();
         }
 
+        tier2 op(_LIST_PAIR_APPEND_SCAN, (config/4, name/4, container, index -- container, index)) {
+            PyObject *source = PyStackRef_AsPyObjectBorrow(container);
+            EXIT_IF(!PyList_CheckExact(source));
+            PyObject *index_o = PyStackRef_AsPyObjectBorrow(index);
+            Py_ssize_t count = 0;
+            Py_ssize_t position = -1;
+            if (PyLong_CheckExact(index_o) && _PyLong_IsCompact((PyLongObject *)index_o)) {
+                position = _PyLong_CompactValue((PyLongObject *)index_o);
+            }
+            /* Short suffixes are common: reject them before reading unrelated
+             * locals, validating the output/pair, or resolving the global. */
+            if (position >= 0 && position < _PY_NSMALLPOSINTS - 1 &&
+                position < PyList_GET_SIZE(source) - 2) {
+                uint64_t slots = (uint64_t)(uintptr_t)config;
+                int index_local = slots & 255;
+                int list_local = (slots >> 8) & 255;
+                int output_local = (slots >> 16) & 255;
+                int pair_local = (slots >> 24) & 255;
+                _PyStackRef old_index = GETLOCAL(index_local);
+                _PyStackRef output_ref = GETLOCAL(output_local);
+                _PyStackRef pair_ref = GETLOCAL(pair_local);
+                PyObject *output = NULL;
+                PyObject *pair = NULL;
+                bool direct = !PyStackRef_IsNull(old_index) &&
+                    !PyStackRef_IsNull(GETLOCAL(list_local)) &&
+                    !PyStackRef_IsNull(output_ref) && !PyStackRef_IsNull(pair_ref) &&
+                    PyStackRef_AsPyObjectBorrow(old_index) == index_o &&
+                    PyStackRef_AsPyObjectBorrow(GETLOCAL(list_local)) == source;
+                if (direct) {
+                    output = PyStackRef_AsPyObjectBorrow(output_ref);
+                    pair = PyStackRef_AsPyObjectBorrow(pair_ref);
+                    direct = PyList_CheckExact(output) && output != source &&
+                        PyList_GET_SIZE(output) < ((PyListObject *)output)->allocated &&
+                        PyTuple_CheckExact(pair) && PyTuple_GET_SIZE(pair) == 2 &&
+                        PyBytes_CheckExact(PyTuple_GET_ITEM(pair, 0)) &&
+                        PyBytes_CheckExact(PyTuple_GET_ITEM(pair, 1));
+                }
+                if (direct && _PyRegion_HasBuiltinLen(frame,
+                        PyTuple_GET_ITEM(_PyFrame_GetCode(frame)->co_names, (uintptr_t)name),
+                        tstate->interp->callable_cache.len)) {
+                    Py_ssize_t size = PyList_GET_SIZE(output);
+                    Py_ssize_t stop = Py_MIN(64, ((PyListObject *)output)->allocated - size);
+                    stop = Py_MIN(stop, _PY_NSMALLPOSINTS - 1 - position);
+                    /* Leave one complete pair for the original iteration:
+                     * its header condition has already been evaluated. */
+                    stop = Py_MIN(stop, PyList_GET_SIZE(source) - 2 - position);
+                    while (count < stop) {
+                        PyObject *a = PyList_GET_ITEM(source, position + count);
+                        PyObject *b = PyList_GET_ITEM(source, position + count + 1);
+                        if (!PyBytes_CheckExact(a) || !PyBytes_CheckExact(b) ||
+                            (_PyRegion_BytesEqual(a, PyTuple_GET_ITEM(pair, 0)) &&
+                             _PyRegion_BytesEqual(b, PyTuple_GET_ITEM(pair, 1)))) {
+                            break;
+                        }
+                        /* No resize, allocation, Python callback, or decref.
+                         * The remaining iteration retains the ordinary append
+                         * and its error location when capacity is exhausted. */
+                        PyList_SET_ITEM(output, size + count, Py_NewRef(a));
+                        count++;
+                    }
+                    if (count) {
+                        Py_SET_SIZE(output, size + count);
+                        PyObject *next_index = (PyObject *)&_PyLong_SMALL_INTS[
+                            _PY_NSMALLNEGINTS + position + count];
+                        GETLOCAL(index_local) = PyStackRef_FromPyObjectNew(next_index);
+                        index = PyStackRef_Borrow(GETLOCAL(index_local));
+                        PyStackRef_CLOSE_SPECIALIZED(old_index, _PyLong_ExactDealloc);
+                    }
+                }
+            }
+            if (count) {
+                current_executor->region_pair_scan_entries++;
+                current_executor->region_pair_scan_iterations += count;
+            }
+            else {
+                current_executor->region_pair_scan_misses++;
+            }
+        }
+
         replicate(2) tier2 op(_COMPARE_LIST_PAIR, (local/4, container, index -- res, c, i)) {
             current_executor->region_tuple_entries++;
             PyObject *list = PyStackRef_AsPyObjectBorrow(container);

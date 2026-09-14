@@ -1363,6 +1363,185 @@ next_pair:
     }
 }
 
+/* Read original bytecode operations, including an attached executor's saved
+ * instruction. Offsets and cache sizes are in code units. */
+static bool
+pair_scan_instruction(PyCodeObject *code, int *pc, int *opcode, int *oparg)
+{
+    unsigned int arg = 0;
+    int units = (int)Py_SIZE(code);
+    for (int n = 0; n < 4 && *pc < units && *pc >= 0; n++) {
+        _Py_CODEUNIT inst = _PyCode_CODE(code)[(*pc)++];
+        int op = inst.op.code;
+        unsigned int low = inst.op.arg;
+        if (op == ENTER_EXECUTOR) {
+            _PyExecutorObject *ex = code->co_executors->executors[low];
+            op = ex->vm_data.opcode;
+            low = ex->vm_data.oparg;
+        }
+        arg = (arg << 8) | low;
+        if (op == EXTENDED_ARG) {
+            continue;
+        }
+        op = _PyOpcode_Deopt[op];
+        *pc += _PyOpcode_Caches[op];
+        if (*pc > units || arg > INT_MAX) {
+            return false;
+        }
+        *opcode = op;
+        *oparg = (int)arg;
+        return true;
+    }
+    return false;
+}
+
+/* Side traces can start after the header. Prove that their backedge repeats
+ * exactly `index < global_name(source) - 1`, followed by this same pair read.
+ * The uop checks that global_name still resolves to the canonical len. */
+static int
+pair_scan_len_name(PyCodeObject *code, int edge, int body,
+                   int index_local, int list_local)
+{
+    int pc = edge, opcode, arg;
+#define HEADER_READ(OP) do { \
+    if (!pair_scan_instruction(code, &pc, &opcode, &arg) || opcode != (OP)) return -1; \
+} while (0)
+    HEADER_READ(JUMP_BACKWARD);
+    pc -= arg;
+    HEADER_READ(LOAD_FAST_BORROW);
+    if (arg != index_local) return -1;
+    HEADER_READ(LOAD_GLOBAL);
+    if (!(arg & 1)) return -1;
+    int name = arg >> 1;
+    HEADER_READ(LOAD_FAST_BORROW);
+    if (arg != list_local) return -1;
+    HEADER_READ(CALL);
+    if (arg != 1) return -1;
+    HEADER_READ(LOAD_SMALL_INT);
+    if (arg != 1) return -1;
+    HEADER_READ(BINARY_OP);
+    if (arg != NB_SUBTRACT) return -1;
+    HEADER_READ(COMPARE_OP);
+    if (arg != ((Py_LT << 5) | 16 | 2)) return -1;
+    HEADER_READ(POP_JUMP_IF_FALSE);
+    if (pc < body) {
+        HEADER_READ(NOT_TAKEN);
+    }
+    return pc == body ? name : -1;
+#undef HEADER_READ
+}
+
+static void
+inline_list_pair_append_scan(_PyThreadStateImpl *tstate,
+                             _PyUOpInstruction *buffer, int length)
+{
+    if (!region_enabled("PYTHON_TIER2_BUILTIN_REGIONS")) {
+        return;
+    }
+    PyCodeObject *code = (PyCodeObject *)tstate->jit_tracer_state->initial_state.func->func_code;
+    for (int start = 0; start < length; start++) {
+        if (buffer[start].opcode == _PUSH_FRAME || buffer[start].opcode == _RETURN_VALUE) {
+            /* All instruction offsets below must belong to the root frame. */
+            return;
+        }
+        if (region_opcode(&buffer[start]) != _LOAD_FAST_BORROW) {
+            continue;
+        }
+        int list_local = buffer[start].oparg;
+        int end = Py_MIN(start + 96, length);
+        int pc = start + 1;
+#define APPEND_NEXT() (pc = trivial_call_skip(buffer, pc, end), \
+                       pc < end ? region_opcode(&buffer[pc]) : -1)
+#define APPEND_EXPECT(OP) do { \
+    if (APPEND_NEXT() != (OP)) goto next_append_scan; \
+    pc++; \
+} while (0)
+#define APPEND_LOCAL(LOCAL) do { \
+    if (APPEND_NEXT() != _LOAD_FAST_BORROW || buffer[pc++].oparg != (LOCAL)) \
+        goto next_append_scan; \
+} while (0)
+        if (APPEND_NEXT() != _LOAD_FAST_BORROW) continue;
+        int index_local = buffer[pc++].oparg;
+        if (APPEND_NEXT() == _GUARD_TOS_INT) pc++;
+        int scan = pc;
+        APPEND_EXPECT(_GUARD_NOS_LIST);
+        if (APPEND_NEXT() != _COMPARE_LIST_PAIR || buffer[pc].oparg != 0) continue;
+        int pair_local = (int)buffer[pc++].operand0;
+        APPEND_EXPECT(_POP_TOP_NOP);
+        APPEND_EXPECT(_POP_TOP_NOP);
+        int op = APPEND_NEXT();
+        if (pc >= end) continue;
+        if (op != _GUARD_IS_FALSE_POP) {
+            int bit = buffer[pc].oparg;
+            if ((op != _GUARD_BIT_IS_SET_POP && op != _GUARD_BIT_IS_UNSET_POP) ||
+                bit != get_test_bit_for_bools() ||
+                ((test_bit_set_in_true(bit) != 0) == (op == _GUARD_BIT_IS_SET_POP))) {
+                continue;
+            }
+        }
+        pc++;
+        if (APPEND_NEXT() != _LOAD_FAST_BORROW) continue;
+        int output_local = buffer[pc++].oparg;
+        APPEND_EXPECT(_GUARD_TYPE_VERSION);
+        if (APPEND_NEXT() != _LOAD_CONST_INLINE_BORROW ||
+            buffer[pc++].operand0 != (uintptr_t)tstate->base.interp->callable_cache.list_append ||
+            APPEND_NEXT() != _SWAP || buffer[pc++].oparg != 2) {
+            continue;
+        }
+        APPEND_LOCAL(list_local);
+        APPEND_LOCAL(index_local);
+        if (APPEND_NEXT() == _GUARD_TOS_INT) pc++;
+        if (APPEND_NEXT() == _GUARD_NOS_LIST) pc++;
+        APPEND_EXPECT(_BINARY_OP_SUBSCR_LIST_INT);
+        APPEND_EXPECT(_POP_TOP_NOP);
+        APPEND_EXPECT(_POP_TOP_NOP);
+        if (APPEND_NEXT() != _CALL_LIST_APPEND || buffer[pc++].oparg != 1) continue;
+        APPEND_EXPECT(_POP_TOP_NOP);
+        APPEND_EXPECT(_POP_TOP);
+        APPEND_EXPECT(_POP_TOP_NOP);
+        APPEND_LOCAL(index_local);
+        op = APPEND_NEXT();
+        if (op == _LOAD_SMALL_INT && buffer[pc].oparg == 1) pc++;
+        else if (op == _LOAD_CONST_INLINE_BORROW &&
+                 buffer[pc].operand0 == (uintptr_t)_PyLong_GetOne()) pc++;
+        else continue;
+        if (APPEND_NEXT() == _GUARD_TOS_INT) pc++;
+        if (APPEND_NEXT() == _GUARD_NOS_INT) pc++;
+        APPEND_EXPECT(_BINARY_OP_ADD_INT);
+        APPEND_EXPECT(_POP_TOP_NOP);
+        APPEND_EXPECT(_POP_TOP_NOP);
+        if (APPEND_NEXT() != _SWAP_FAST || buffer[pc++].oparg != index_local) continue;
+        op = APPEND_NEXT();
+        if (op != _POP_TOP_INT && op != _POP_TOP_NOP) continue;
+        pc++;
+        op = APPEND_NEXT();
+        if (op != _EXIT_TRACE && op != _JUMP_TO_TOP) continue;
+        int edge = op == _EXIT_TRACE ? buffer[pc].target : buffer[0].target;
+        int name = pair_scan_len_name(code, edge, buffer[start].target,
+                                      index_local, list_local);
+        int locals[] = {index_local, list_local, output_local, pair_local};
+        if (name < 0 || name >= PyTuple_GET_SIZE(code->co_names) ||
+            !PyUnicode_CheckExact(PyTuple_GET_ITEM(code->co_names, name))) continue;
+        for (int i = 0; i < 4; i++) {
+            if (locals[i] < 0 || locals[i] > 255) goto next_append_scan;
+            for (int j = 0; j < i; j++) {
+                if (locals[i] == locals[j]) goto next_append_scan;
+            }
+        }
+        buffer[scan].opcode = _LIST_PAIR_APPEND_SCAN;
+        buffer[scan].oparg = 0;
+        buffer[scan].operand0 = index_local | ((uint64_t)list_local << 8) |
+            ((uint64_t)output_local << 16) | ((uint64_t)pair_local << 24);
+        buffer[scan].operand1 = name;
+        start = pc;
+next_append_scan:
+        ;
+#undef APPEND_LOCAL
+#undef APPEND_EXPECT
+#undef APPEND_NEXT
+    }
+}
+
 static void
 fuse_list_length_predicates(_PyUOpInstruction *buffer, int length)
 {
@@ -1697,6 +1876,7 @@ _Py_uop_analyze_and_optimize(
     inline_list_attribute_calls(output, length);
     inline_attribute_initializers(output, length);
     fuse_list_pair_comparisons(output, length);
+    inline_list_pair_append_scan(tstate, output, length);
     fuse_list_length_predicates(output, length);
     fuse_dict_pair_increments(output, length);
     inline_enumerate_list(output, length);
