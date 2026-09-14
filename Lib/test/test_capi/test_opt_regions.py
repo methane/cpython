@@ -114,6 +114,229 @@ class TestRegions(unittest.TestCase):
         run([[object()]], 0, 1, TIER2_THRESHOLD)
         return run, self.executor(run, "_LEN_SUBSCR_LIST")
 
+    def warm_dict_update(self, cls=collections.Counter, addend=1):
+        namespace = {}
+        exec("def run(mapping, key, n):\n"
+             "    for _ in range(n):\n"
+             f"        mapping[key] += {addend}\n", namespace)
+        run = namespace["run"]
+        key = (b"first", b"second")
+        mapping = cls({key: 1000})
+        run(mapping, key, TIER2_THRESHOLD)
+        ex = self.executor(run, "_DICT_PAIR_INCREMENT")
+        return run, mapping, key, ex
+
+    def warm_float_owned(self, symbol="+", fields=(True, True)):
+        class Holder:
+            pass
+
+        holder = Holder()
+        holder.left, holder.right = float("3.0"), float("2.0")
+        left = "holder.left" if fields[0] else "b"
+        right = "holder.right" if fields[1] else "c"
+        namespace = {}
+        exec("def run(a, b, c, holder, n):\n"
+             "    for _ in range(n):\n"
+             f"        result = a * 1.0 {symbol} {left} * {right}\n"
+             "    return result\n", namespace)
+        run = namespace["run"]
+        run(7.0, 3.0, 2.0, holder, TIER2_THRESHOLD)
+        operation = "ADD" if symbol == "+" else "SUBTRACT"
+        ex = self.executor(run, f"_BINARY_OP_MULTIPLY_{operation}_FLOAT_OWNED")
+        return run, holder, ex
+
+    def test_dict_update_existing_values(self):
+        for addend in (0, 1, 7, 255):
+            with self.subTest(addend=addend):
+                run, mapping, key, ex = self.warm_dict_update(addend=addend)
+                for value in (-1000, -1, 0, 255, 1000, 2**30 - 10000):
+                    mapping[key] = value
+                    self.executed(ex, "dict_update_entries", run, mapping, key, 8)
+                    self.assertEqual(mapping[key], value + addend * 8)
+                # Equal freshly created keys need not be identical to the stored key.
+                same_key = tuple(bytes(bytearray(item)) for item in key)
+                before = mapping[key]
+                self.executed(ex, "dict_update_entries", run, mapping, same_key, 8)
+                self.assertEqual(mapping[key], before + addend * 8)
+
+    def test_dict_update_colliding_callback(self):
+        run, mapping, key, ex = self.warm_dict_update()
+        events = []
+
+        class Collision:
+            def __hash__(self):
+                return hash(key)
+
+            def __eq__(self, other):
+                events.append(other)
+                return False
+
+        mapping.clear()
+        mapping[Collision()] = 2000
+        mapping[key] = 1000
+        events.clear()
+        # The probe sequence can visit a colliding entry more than once.
+        # Compare against ordinary read/add/write under this hash seed.
+        for _ in range(8):
+            mapping[key] += 1
+        self.assertEqual(mapping[key], 1008)
+        expected = events.copy()
+        mapping[key] = 1000
+        events.clear()
+        before = ex.get_region_stats()["dict_update_guard_exits"]
+        run(mapping, key, 8)
+        self.assertEqual(mapping[key], 1008)
+        # The final assertion's lookup also compares the colliding key.
+        self.assertEqual(events, expected)
+        self.assertGreater(ex.get_region_stats()["dict_update_guard_exits"], before)
+
+    def test_dict_update_missing_and_noncompact(self):
+        events = []
+
+        class Counter(collections.Counter):
+            def __missing__(self, key):
+                events.append(key)
+                return 100
+
+        run, mapping, key, ex = self.warm_dict_update(Counter)
+        del mapping[key]
+        run(mapping, key, 8)
+        self.assertEqual(mapping[key], 108)
+        self.assertEqual(events, [key])
+        for value in (2**100, 1.5):
+            mapping[key] = value
+            before = ex.get_region_stats()["dict_update_guard_exits"]
+            run(mapping, key, 8)
+            self.assertEqual(mapping[key], value + 8)
+            self.assertGreater(ex.get_region_stats()["dict_update_guard_exits"], before)
+
+    def test_dict_update_watcher(self):
+        import _testcapi
+
+        run, mapping, key, ex = self.warm_dict_update()
+        mapping[key] = 1000
+        watcher = _testcapi.add_dict_watcher(0)
+        try:
+            _testcapi.watch_dict(watcher, mapping)
+            before = ex.get_region_stats()["dict_update_guard_exits"]
+            run(mapping, key, 8)
+            events = _testcapi.get_dict_watcher_events()
+            self.assertEqual(events, [f"mod:{key}:{value}" for value in range(1001, 1009)])
+            self.assertGreater(ex.get_region_stats()["dict_update_guard_exits"], before)
+        finally:
+            _testcapi.unwatch_dict(watcher, mapping)
+            _testcapi.clear_dict_watcher(watcher)
+
+    def test_dict_update_second_iteration_missing(self):
+        events = []
+
+        class Counter(collections.Counter):
+            def __missing__(self, key):
+                events.append(key)
+                return 100
+
+        def run(mapping, keys):
+            for key in keys:
+                mapping[key] += 1
+
+        key = (b"first", b"second")
+        mapping = Counter({key: 1000})
+        run(mapping, [key] * TIER2_THRESHOLD)
+        ex = self.executor(run, "_DICT_PAIR_INCREMENT")
+        missing = (b"new", b"pair")
+        before = ex.get_region_stats()["dict_update_guard_exits"]
+        run(mapping, [key, missing])
+        self.assertEqual(mapping[missing], 101)
+        self.assertEqual(events, [missing])
+        self.assertGreater(ex.get_region_stats()["dict_update_guard_exits"], before)
+
+    def test_dict_update_method_change(self):
+        class Counter(collections.Counter):
+            pass
+
+        run, mapping, key, ex = self.warm_dict_update(Counter)
+        self.executed(ex, "dict_update_entries", run, mapping, key, 8)
+        events = []
+
+        def setter(self, key, value):
+            events.append(value)
+            dict.__setitem__(self, key, value)
+
+        Counter.__setitem__ = setter
+        before = mapping[key]
+        run(mapping, key, 8)
+        self.assertEqual(events, list(range(before + 1, before + 9)))
+        self.assertEqual(mapping[key], before + 8)
+
+    def test_dict_update_missing_side_trace(self):
+        events = []
+
+        class Counter(collections.Counter):
+            def __missing__(self, key):
+                events.append(key)
+                return 100
+
+        def run(mapping, keys):
+            for key in keys:
+                mapping[key] += 1
+
+        key = (b"first", b"second")
+        mapping = Counter({key: 1000})
+        run(mapping, [key] * TIER2_THRESHOLD)
+        root = self.executor(run, "_DICT_PAIR_INCREMENT")
+        keys = [(b"new", str(i).encode()) for i in range(TIER2_THRESHOLD)]
+        for _ in range(4):
+            mapping.clear()
+            mapping[key] = 1000
+            run(mapping, [key, *keys])
+        self.assertEqual(events, keys * 4)
+        self.assertEqual(mapping[key], 1001)
+        self.assertTrue(all(mapping[item] == 101 for item in keys))
+        pending = [root]
+        seen = set()
+        direct_stores = 0
+        while pending:
+            ex = pending.pop()
+            if id(ex) in seen:
+                continue
+            seen.add(id(ex))
+            direct_stores += ex.get_region_stats()["dict_store_entries"]
+            pending.extend(obj for obj in gc.get_referents(ex)
+                           if type(obj) is type(root))
+        self.assertGreater(direct_stores, 0)
+
+    def test_dict_update_reference_ownership(self):
+        run, mapping, key, ex = self.warm_dict_update()
+        reference = weakref.ref(mapping)
+        references = sys.getrefcount(key)
+        self.executed(ex, "dict_update_entries", run, mapping, key, 1000)
+        self.assertEqual(sys.getrefcount(key), references)
+        del mapping
+        self.assertIsNone(reference())
+
+    @unittest.skipUnless(support.Py_DEBUG, "uses debug allocation injection")
+    def test_dict_update_allocation_error_location(self):
+        import dis
+
+        run, mapping, key, ex = self.warm_dict_update()
+        mapping[key] = 1000
+        add = next(instruction.offset for instruction in dis.get_instructions(run)
+                   if instruction.opname == "BINARY_OP" and instruction.argrepr == "+=")
+        before = ex.get_region_stats()["allocation_errors"]
+        with mock.patch.dict(os.environ, {"PYTHON_TIER2_REGION_FAIL_ALLOC": "dict_update"}):
+            try:
+                run(mapping, key, 8)
+            except MemoryError as exc:
+                traceback = exc.__traceback__
+                while traceback.tb_next is not None:
+                    traceback = traceback.tb_next
+                self.assertIs(traceback.tb_frame.f_code, run.__code__)
+                self.assertEqual(traceback.tb_lasti, add)
+            else:
+                self.fail("MemoryError was lost")
+        self.assertEqual(mapping[key], 1001)
+        self.assertGreater(ex.get_region_stats()["allocation_errors"], before)
+
     def test_len_subscript_comparisons(self):
         values = [[], [1], (1, 2), "abc", b"x", {1: 2}]
         for constant in (False, True):
@@ -643,6 +866,30 @@ class TestRegions(unittest.TestCase):
                         self.assertIs(self.executed(ex, "dict_store_entries",
                                                    run, mapping, key, 64), mapping)
                     self.assertEqual(mapping[key], value + 64)
+
+    def test_dict_store_recorded_receiver(self):
+        def run(mapping, key, value, n):
+            for _ in range(n):
+                mapping[key] = value
+
+        mapping = collections.Counter()
+        value = object()
+        run(mapping, 0, value, TIER2_THRESHOLD)
+        ex = self.executor(run, "_STORE_SUBSCR_DICT_INHERITED")
+        self.executed(ex, "dict_store_entries", run, mapping, 0, value, 8)
+        self.assertIs(mapping[0], value)
+
+        events = []
+
+        class Other(dict):
+            def __setitem__(self, key, value):
+                events.append((key, value))
+
+        self.executed(ex, "dict_store_fallbacks", run, Other(), 0, value, 8)
+        self.assertEqual(events, [(0, value)] * 8)
+        values = [None]
+        self.executed(ex, "dict_store_fallbacks", run, values, 0, value, 8)
+        self.assertIs(values[0], value)
 
     def test_dict_store_inherited_delete_and_receiver(self):
         calls = []
@@ -2619,6 +2866,62 @@ check()
                                  for ex in get_all_executors(func)))
         with self.assertRaises(TypeError):
             "abc".startswith(prefix="a")
+
+    def test_float_owned_rounding(self):
+        nan1 = struct.unpack("=d", struct.pack("=Q", 0x7ff8000000000001))[0]
+        nan2 = struct.unpack("=d", struct.pack("=Q", 0xfff8000000000002))[0]
+        cases = [
+            (-1.0, 1.0 + 2**-27, 1.0 - 2**-27),
+            (-0.0, 0.0, 1.0), (0.0, -0.0, 1.0),
+            (float("inf"), -float("inf"), 1.0),
+            (0.0, 2.0**-1022, 0.5), (0.0, 5e-324, 0.5),
+            (1.0, 2.0**1023, 2.0), (1.25, 1.25, 1.25),
+            (nan1, nan2, 1.0), (1.0, nan1, nan2),
+        ]
+        for fields in ((True, False), (False, True), (True, True)):
+            for symbol, update in (("+", operator.add), ("-", operator.sub)):
+                with self.subTest(fields=fields, symbol=symbol):
+                    run, holder, ex = self.warm_float_owned(symbol, fields)
+                    for a, b, c in cases:
+                        holder.left, holder.right = b, c
+                        inputs = [struct.pack("=d", x) for x in (a, b, c)]
+                        expected = update(operator.mul(a, 1.0), operator.mul(b, c))
+                        actual = self.executed(ex, "float_owned_entries", run,
+                                               a, b, c, holder, 8)
+                        if math.isnan(expected):
+                            self.assertTrue(math.isnan(actual))
+                        else:
+                            self.assertEqual(struct.pack("=d", actual), struct.pack("=d", expected))
+                        self.assertEqual([struct.pack("=d", x) for x in (a, b, c)], inputs)
+
+    def test_float_owned_reference_ownership(self):
+        for fields in ((True, False), (False, True), (True, True)):
+            run, holder, ex = self.warm_float_owned(fields=fields)
+            value = float("1.25")
+            holder.left = holder.right = value
+            references = sys.getrefcount(value)
+            actual = self.executed(ex, "float_owned_entries", run,
+                                   value, value, value, holder, 1000)
+            self.assertEqual(actual, 2.8125)
+            self.assertEqual(value, 1.25)
+            self.assertIsNot(actual, value)
+            self.assertEqual(sys.getrefcount(value), references)
+
+    def test_float_owned_subclass_callback(self):
+        run, holder, ex = self.warm_float_owned()
+        events = []
+
+        class Product(float):
+            def __mul__(self, other):
+                events.append(other)
+                return 42.0
+
+        holder.left = Product(3.0)
+        self.assertEqual(run(7.0, 3.0, 2.0, holder, 8), 49.0)
+        self.assertEqual(events, [2.0] * 8)
+        holder.left = 3.0
+        self.assertEqual(self.executed(ex, "float_owned_entries", run,
+                                       7.0, 3.0, 2.0, holder, 8), 13.0)
 
     def test_float_rounding_and_ownership(self):
         cases = [

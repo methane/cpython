@@ -2196,6 +2196,7 @@ Python/flowgraph.o: \
 		$(srcdir)/Include/internal/pycore_opcode_metadata.h
 
 Python/optimizer.o: \
+		$(srcdir)/Python/record_functions.c.h \
 		$(srcdir)/Python/optimizer_float_range.h \
 		$(srcdir)/Python/optimizer_poly_scalar.h \
 		$(srcdir)/Python/optimizer_region_bounds.h \

@@ -580,7 +580,9 @@ def has_error_without_pop(op: parser.CodeDef) -> bool:
 
 
 NON_ESCAPING_FUNCTIONS = (
+    "_PyDict_LookupExactBytesPair",
     "_PyFloat_MultiplyThenUpdate",
+    "_PyRegion_AllocationFails",
     "PyCFunction_GET_FLAGS",
     "PyCFunction_GET_FUNCTION",
     "PyCFunction_GET_SELF",

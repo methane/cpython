@@ -1222,6 +1222,32 @@
             break;
         }
 
+        case _BINARY_OP_MULTIPLY_ADD_FLOAT_OWNED: {
+            JitOptRef res;
+            JitOptRef l;
+            JitOptRef r;
+            res = sym_new_not_null(ctx);
+            l = sym_new_not_null(ctx);
+            r = sym_new_not_null(ctx);
+            stack_pointer[-3] = res;
+            stack_pointer[-2] = l;
+            stack_pointer[-1] = r;
+            break;
+        }
+
+        case _BINARY_OP_MULTIPLY_SUBTRACT_FLOAT_OWNED: {
+            JitOptRef res;
+            JitOptRef l;
+            JitOptRef r;
+            res = sym_new_not_null(ctx);
+            l = sym_new_not_null(ctx);
+            r = sym_new_not_null(ctx);
+            stack_pointer[-3] = res;
+            stack_pointer[-2] = l;
+            stack_pointer[-1] = r;
+            break;
+        }
+
         case _BINARY_OP_MULTIPLY_ADD_FLOAT_SHARED: {
             JitOptRef res;
             res = sym_new_not_null(ctx);
@@ -1917,6 +1943,13 @@
             }
             CHECK_STACK_BOUNDS(-3);
             stack_pointer += -3;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            break;
+        }
+
+        case _DICT_PAIR_INCREMENT: {
+            CHECK_STACK_BOUNDS(-4);
+            stack_pointer += -4;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
             break;
         }

@@ -605,7 +605,7 @@ get_region_stats(PyObject *self, PyObject *Py_UNUSED(ignored))
 {
     _PyExecutorObject *executor = _PyExecutorObject_CAST(self);
     return Py_BuildValue(
-        "{s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K}",
+        "{s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K}",
         "bounded_entries", executor->region_bounded_entries,
         "bounded_guard_exits", executor->region_bounded_guard_exits,
         "bounded_boxes", executor->region_bounded_boxes,
@@ -637,6 +637,8 @@ get_region_stats(PyObject *self, PyObject *Py_UNUSED(ignored))
         "class_materializations", executor->region_class_materializations,
         "call_list_entries", executor->region_call_list_entries,
         "len_subscript_entries", executor->region_len_subscript_entries,
+        "dict_update_entries", executor->region_dict_update_entries,
+        "dict_update_guard_exits", executor->region_dict_update_guard_exits,
         "range_entries", executor->region_range_entries,
         "range_iterations", executor->region_range_iterations,
         "range_int32_iterations", executor->region_range_int32_iterations,
@@ -647,6 +649,7 @@ get_region_stats(PyObject *self, PyObject *Py_UNUSED(ignored))
         "tuple_list_entries", executor->region_tuple_list_entries,
         "tuple_guard_exits", executor->region_tuple_guard_exits,
         "float_unique_entries", executor->region_float_unique_entries,
+        "float_owned_entries", executor->region_float_owned_entries,
         "float_shared_entries", executor->region_float_shared_entries,
         "float_guard_exits", executor->region_float_guard_exits,
         "allocation_errors", executor->region_allocation_errors);
@@ -1566,6 +1569,9 @@ prepare_for_execution(_PyUOpInstruction *buffer, int length)
         int32_t error_target = (is_tier3_resident_range(base_opcode) ||
                                 base_opcode == _ITER_NEXT_ENUM_LIST)
             ? (int32_t)inst->operand0 : target;
+        if (base_opcode == _DICT_PAIR_INCREMENT) {
+            error_target = target + (int32_t)((inst->operand0 >> 32) & UINT16_MAX);
+        }
         uint16_t exit_flags = _PyUop_Flags[base_opcode] & (HAS_EXIT_FLAG | HAS_DEOPT_FLAG | HAS_PERIODIC_FLAG);
         if (exit_flags) {
             uint16_t base_exit_op = _EXIT_TRACE;
@@ -1674,6 +1680,8 @@ allocate_executor(int exit_count, int length)
     res->region_class_materializations = 0;
     res->region_call_list_entries = 0;
     res->region_len_subscript_entries = 0;
+    res->region_dict_update_entries = 0;
+    res->region_dict_update_guard_exits = 0;
     res->region_range_entries = 0;
     res->region_range_iterations = 0;
     res->region_range_int32_iterations = 0;
@@ -1685,6 +1693,7 @@ allocate_executor(int exit_count, int length)
     res->region_tuple_list_entries = 0;
     res->region_tuple_guard_exits = 0;
     res->region_float_unique_entries = 0;
+    res->region_float_owned_entries = 0;
     res->region_float_shared_entries = 0;
     res->region_float_guard_exits = 0;
     res->region_allocation_errors = 0;

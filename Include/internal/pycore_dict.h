@@ -48,6 +48,10 @@ PyAPI_FUNC(PyObject *) _PyDict_Subscript(PyObject *self, PyObject *key);
 PyAPI_FUNC(PyObject *) _PyDict_SubscriptKnownHash(PyObject *self, PyObject *key, Py_hash_t hash);
 PyAPI_FUNC(int) _PyDict_StoreSubscript(PyObject *self, PyObject *key, PyObject *value);
 
+/* GIL-only, callback-free lookup for experimental existing-value updates.
+ * A negative result requests ordinary lookup, without setting an exception. */
+PyAPI_FUNC(Py_ssize_t) _PyDict_LookupExactBytesPair(PyDictObject *mp, PyObject *key);
+
 // Export for '_ctypes' shared extension
 PyAPI_FUNC(Py_ssize_t) _PyDict_SizeOf(PyDictObject *);
 

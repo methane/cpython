@@ -204,6 +204,7 @@ const _PyOpcodeRecordSlotMap _PyOpcode_RecordSlotMaps[256] = {
         [TO_BOOL_ALWAYS_TRUE] = {1, 0, {0}},
         [BINARY_OP_SUBSCR_DICT] = {1, 1, {0}},
         [BINARY_OP_SUBSCR_GETITEM] = {1, 0, {0}},
+        [STORE_SUBSCR] = {1, 0, {0}},
         [STORE_SUBSCR_DICT] = {1, 0, {0}},
         [SEND_GEN] = {1, 0, {0}},
         [FOR_ITER] = {1, 1, {0}},

@@ -1117,6 +1117,51 @@ dummy_func(
             INPUTS_DEAD();
         }
 
+        // Keep owned factor references for the original specialized cleanup.
+        // Exact-float decrements cannot invoke Python, so the update can run
+        // before those decrements without publishing an intermediate product.
+        tier2 pure op(_BINARY_OP_MULTIPLY_ADD_FLOAT_OWNED,
+                 (acc, left, right -- res, l, r)) {
+            PyObject *acc_o = PyStackRef_AsPyObjectBorrow(acc);
+            PyObject *left_o = PyStackRef_AsPyObjectBorrow(left);
+            PyObject *right_o = PyStackRef_AsPyObjectBorrow(right);
+            assert(PyFloat_CheckExact(acc_o));
+            assert(PyFloat_CheckExact(left_o));
+            assert(PyFloat_CheckExact(right_o));
+            assert(_PyObject_IsUniquelyReferenced(acc_o));
+            ((PyFloatObject *)acc_o)->ob_fval = _PyFloat_MultiplyThenUpdate(
+                ((PyFloatObject *)acc_o)->ob_fval,
+                ((PyFloatObject *)left_o)->ob_fval,
+                ((PyFloatObject *)right_o)->ob_fval, false);
+            current_executor->region_float_unique_entries++;
+            current_executor->region_float_owned_entries++;
+            res = acc;
+            l = left;
+            r = right;
+            INPUTS_DEAD();
+        }
+
+        tier2 pure op(_BINARY_OP_MULTIPLY_SUBTRACT_FLOAT_OWNED,
+                 (acc, left, right -- res, l, r)) {
+            PyObject *acc_o = PyStackRef_AsPyObjectBorrow(acc);
+            PyObject *left_o = PyStackRef_AsPyObjectBorrow(left);
+            PyObject *right_o = PyStackRef_AsPyObjectBorrow(right);
+            assert(PyFloat_CheckExact(acc_o));
+            assert(PyFloat_CheckExact(left_o));
+            assert(PyFloat_CheckExact(right_o));
+            assert(_PyObject_IsUniquelyReferenced(acc_o));
+            ((PyFloatObject *)acc_o)->ob_fval = _PyFloat_MultiplyThenUpdate(
+                ((PyFloatObject *)acc_o)->ob_fval,
+                ((PyFloatObject *)left_o)->ob_fval,
+                ((PyFloatObject *)right_o)->ob_fval, true);
+            current_executor->region_float_unique_entries++;
+            current_executor->region_float_owned_entries++;
+            res = acc;
+            l = left;
+            r = right;
+            INPUTS_DEAD();
+        }
+
         // Fuse a borrowed accumulator update when the product is the unique
         // right operand in the original in-place operation.  Unlike the
         // unique-left forms above, this must allocate the final result: the
@@ -1709,7 +1754,55 @@ dummy_func(
             ERROR_IF(err);
         }
 
-        macro(STORE_SUBSCR) = _SPECIALIZE_STORE_SUBSCR + _STORE_SUBSCR;
+        macro(STORE_SUBSCR) = _SPECIALIZE_STORE_SUBSCR + _RECORD_NOS_TYPE + _STORE_SUBSCR;
+
+        tier2 op(_DICT_PAIR_INCREMENT, (config/4, store_dict, store_key, dict_copy, key_copy --)) {
+            PyObject *dict_o = PyStackRef_AsPyObjectBorrow(dict_copy);
+            PyObject *key = PyStackRef_AsPyObjectBorrow(key_copy);
+            uint64_t options = (uintptr_t)config;
+            uint32_t type_version = (uint32_t)options;
+            bool valid = PyDict_Check(dict_o) && Py_TYPE(dict_o)->tp_version_tag == type_version &&
+                Py_TYPE(dict_o)->tp_as_mapping->mp_subscript == _PyDict_Subscript &&
+                PyStackRef_AsPyObjectBorrow(store_dict) == dict_o &&
+                PyStackRef_AsPyObjectBorrow(store_key) == key;
+            PyDictObject *dict = (PyDictObject *)dict_o;
+            Py_ssize_t ix = valid ? _PyDict_LookupExactBytesPair(dict, key) : -1;
+            PyObject *old_value = NULL;
+            if (ix >= 0) {
+                old_value = DK_ENTRIES(dict->ma_keys)[ix].me_value;
+                valid = old_value != NULL && PyLong_CheckExact(old_value) &&
+                    _PyLong_IsCompact((PyLongObject *)old_value);
+            }
+            else {
+                valid = false;
+            }
+            if (!valid) {
+                current_executor->region_dict_update_guard_exits++;
+                EXIT_IF(true);
+            }
+            /* All key comparisons above are callback-free, the dict has no
+             * watchers, and compact-int boxing cannot schedule GC. Thus its
+             * existing entry remains stable until this replacement. */
+            long value = (long)_PyLong_CompactValue((PyLongObject *)old_value) + oparg;
+            _Py_CODEUNIT *first_ip = frame->instr_ptr;
+            frame->instr_ptr = first_ip + ((options >> 32) & UINT16_MAX);
+            PyObject *new_value = _PyRegion_AllocationFails("dict_update")
+                ? NULL : PyLong_FromLong(value);
+            if (new_value == NULL) {
+                current_executor->region_allocation_errors++;
+                ERROR_NO_POP();
+            }
+            frame->instr_ptr = first_ip + (options >> 48);
+            DK_ENTRIES(dict->ma_keys)[ix].me_value = new_value;
+            _PyStackRef previous = PyStackRef_FromPyObjectSteal(old_value);
+            PyStackRef_CLOSE_SPECIALIZED(previous, _PyLong_ExactDealloc);
+            current_executor->region_dict_update_entries++;
+            _PyStackRef cleanup[4] = {key_copy, dict_copy, store_key, store_dict};
+            INPUTS_DEAD();
+            for (int i = 0; i < 4; i++) {
+                PyStackRef_CLOSE(cleanup[i]);
+            }
+        }
 
         tier2 op(_STORE_SUBSCR_DICT_INHERITED, (type_version/2, v, container, sub --)) {
             PyObject *dict = PyStackRef_AsPyObjectBorrow(container);

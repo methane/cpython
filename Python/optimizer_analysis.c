@@ -808,11 +808,15 @@ fuse_float_product_updates(_PyUOpInstruction *buffer, int length)
     }
     for (int pc = 0; pc + 5 < length; pc++) {
         if (buffer[pc].opcode != _BINARY_OP_MULTIPLY_FLOAT ||
-            buffer[pc + 1].opcode != _POP_TOP_NOP ||
-            buffer[pc + 2].opcode != _POP_TOP_NOP)
+            (buffer[pc + 1].opcode != _POP_TOP_NOP &&
+             buffer[pc + 1].opcode != _POP_TOP_FLOAT) ||
+            (buffer[pc + 2].opcode != _POP_TOP_NOP &&
+             buffer[pc + 2].opcode != _POP_TOP_FLOAT))
         {
             continue;
         }
+        bool owned_factors = buffer[pc + 1].opcode == _POP_TOP_FLOAT ||
+                             buffer[pc + 2].opcode == _POP_TOP_FLOAT;
         int add = pc + 3;
         bool skipped_accumulator_guard = false;
         while (add < length &&
@@ -832,6 +836,7 @@ fuse_float_product_updates(_PyUOpInstruction *buffer, int length)
             update == _BINARY_OP_ADD_FLOAT_INPLACE_RIGHT ||
             update == _BINARY_OP_SUBTRACT_FLOAT_INPLACE_RIGHT;
         if ((!unique_left && !unique_right) ||
+            (owned_factors && !unique_left) ||
             (skipped_accumulator_guard && !unique_right) ||
             buffer[add + 1].opcode != (unique_left ? _POP_TOP_FLOAT : _POP_TOP_NOP) ||
             buffer[add + 2].opcode != _POP_TOP_NOP) {
@@ -840,12 +845,23 @@ fuse_float_product_updates(_PyUOpInstruction *buffer, int length)
         bool subtract =
             update == _BINARY_OP_SUBTRACT_FLOAT_INPLACE ||
             update == _BINARY_OP_SUBTRACT_FLOAT_INPLACE_RIGHT;
-        buffer[pc].opcode = unique_left
-            ? (subtract ? _BINARY_OP_MULTIPLY_SUBTRACT_FLOAT_INPLACE
-                        : _BINARY_OP_MULTIPLY_ADD_FLOAT_INPLACE)
-            : (subtract ? _BINARY_OP_MULTIPLY_SUBTRACT_FLOAT_SHARED
-                        : _BINARY_OP_MULTIPLY_ADD_FLOAT_SHARED);
+        if (owned_factors) {
+            buffer[pc].opcode = subtract ? _BINARY_OP_MULTIPLY_SUBTRACT_FLOAT_OWNED
+                                        : _BINARY_OP_MULTIPLY_ADD_FLOAT_OWNED;
+        }
+        else {
+            buffer[pc].opcode = unique_left
+                ? (subtract ? _BINARY_OP_MULTIPLY_SUBTRACT_FLOAT_INPLACE
+                            : _BINARY_OP_MULTIPLY_ADD_FLOAT_INPLACE)
+                : (subtract ? _BINARY_OP_MULTIPLY_SUBTRACT_FLOAT_SHARED
+                            : _BINARY_OP_MULTIPLY_ADD_FLOAT_SHARED);
+        }
         for (int i = pc + 1; i <= add + 2; i++) {
+            if (owned_factors && i <= pc + 2) {
+                /* The new uop returns both original factor references for
+                 * these exact-float cleanup operations, in their old order. */
+                continue;
+            }
             assert(buffer[i].opcode == _NOP ||
                    buffer[i].opcode == _POP_TOP_NOP ||
                    buffer[i].opcode == _POP_TOP_FLOAT ||
@@ -1397,6 +1413,110 @@ next_list_length:
 }
 
 static void
+fuse_dict_pair_increments(_PyUOpInstruction *buffer, int length)
+{
+    if (!region_enabled("PYTHON_TIER2_BUILTIN_REGIONS")) {
+        return;
+    }
+    for (int start = 0; start < length; start++) {
+        if (buffer[start].opcode != _BINARY_OP_SUBSCR_DICT) {
+            continue;
+        }
+        /* A side trace starting at a failed subscription must retain ordinary
+         * lookup instead of immediately repeating this guard. Require the
+         * original augmented assignment's two operand copies in this trace. */
+        int copies = 0;
+        for (int p = start - 1; p >= 0 && p >= start - 12; p--) {
+            int op = region_opcode(&buffer[p]);
+            if (op == _NOP || op == _SET_IP || op == _CHECK_VALIDITY ||
+                op == _GUARD_NOS_TYPE || op == _GUARD_NOS_DICT_SUBSCRIPT ||
+                (_PyUop_Flags[buffer[p].opcode] & HAS_RECORDS_VALUE_FLAG)) {
+                continue;
+            }
+            if (op != _COPY || buffer[p].oparg != 2) {
+                break;
+            }
+            if (++copies == 2) {
+                break;
+            }
+        }
+        if (copies != 2) {
+            continue;
+        }
+        int end = Py_MIN(length, start + 40);
+        int pc = start + 1;
+#define DICT_NEXT() (pc = trivial_call_skip(buffer, pc, end), \
+                     pc < end ? region_opcode(&buffer[pc]) : 0)
+        for (int i = 0; i < 2; i++) {
+            int op = DICT_NEXT();
+            if (op != _POP_TOP && op != _POP_TOP_NOP) {
+                goto next_dict_pair;
+            }
+            pc++;
+        }
+        int op = DICT_NEXT();
+        unsigned int addend;
+        if (op == _LOAD_SMALL_INT) {
+            addend = buffer[pc++].oparg;
+        }
+        else if (op == _LOAD_CONST_INLINE_BORROW) {
+            PyObject *value = (PyObject *)buffer[pc++].operand0;
+            if (!PyLong_CheckExact(value) || !_PyLong_IsCompact((PyLongObject *)value)) {
+                continue;
+            }
+            addend = (unsigned int)_PyLong_CompactValue((PyLongObject *)value);
+        }
+        else {
+            continue;
+        }
+        if (addend > UINT16_MAX) {
+            continue;
+        }
+        while ((op = DICT_NEXT()) == _GUARD_TOS_INT || op == _GUARD_NOS_INT) {
+            pc++;
+        }
+        if (DICT_NEXT() != _BINARY_OP_ADD_INT) {
+            continue;
+        }
+        uint32_t add_target = buffer[pc++].target;
+        for (int i = 0; i < 2; i++) {
+            op = DICT_NEXT();
+            if (op != _POP_TOP_INT && op != _POP_TOP_NOP) {
+                goto next_dict_pair;
+            }
+            pc++;
+        }
+        if (DICT_NEXT() != _SWAP || buffer[pc++].oparg != 3 ||
+            DICT_NEXT() != _SWAP || buffer[pc++].oparg != 2) {
+            continue;
+        }
+        if (DICT_NEXT() != _STORE_SUBSCR_DICT_INHERITED || buffer[pc].operand0 == 0) {
+            continue;
+        }
+        uint32_t store_target = buffer[pc].target;
+        uint32_t first_target = buffer[start].target;
+        if (add_target < first_target || store_target < add_target ||
+            store_target - first_target > UINT16_MAX) {
+            continue;
+        }
+        buffer[start].opcode = _DICT_PAIR_INCREMENT;
+        buffer[start].oparg = addend;
+        buffer[start].operand0 = buffer[pc].operand0 |
+            ((uint64_t)(add_target - first_target) << 32) |
+            ((uint64_t)(store_target - first_target) << 48);
+        for (int i = start + 1; i <= pc; i++) {
+            if (!(_PyUop_Flags[buffer[i].opcode] & HAS_RECORDS_VALUE_FLAG)) {
+                buffer[i].opcode = _NOP;
+            }
+        }
+        start = pc;
+next_dict_pair:
+        ;
+#undef DICT_NEXT
+    }
+}
+
+static void
 inline_enumerate_list(_PyUOpInstruction *buffer, int length)
 {
     if (!region_enabled("PYTHON_TIER2_BUILTIN_REGIONS")) {
@@ -1578,6 +1698,7 @@ _Py_uop_analyze_and_optimize(
     inline_attribute_initializers(output, length);
     fuse_list_pair_comparisons(output, length);
     fuse_list_length_predicates(output, length);
+    fuse_dict_pair_increments(output, length);
     inline_enumerate_list(output, length);
     inline_enumerate_int_scan(output, length);
     length = remove_unneeded_uops(output, length);

@@ -176,6 +176,33 @@ trace. Hash/equality callbacks, errors, and operand cleanup use the original
 dict and bytecode protocols. `dict_store_entries` and `dict_store_fallbacks`
 count direct and ordinary calls.
 
+`_DICT_PAIR_INCREMENT` additionally recognizes subscription, addition of a
+nonnegative small integer constant, and inherited dict assignment using the
+same dict and key. The fast path accepts an existing exact compact integer
+value and an exact two-tuple of exact bytes. A restricted lookup uses the
+ordinary tuple hash cache and dict probe sequence, but checks any colliding
+stored key before comparing it. Encountering a key with a possible equality
+callback retains the original operations. Missing keys, watched dictionaries,
+split tables, unsupported values, and changed type/slot assumptions also exit
+at the subscription. The matcher requires the augmented assignment's two
+operand copies in the trace, so a side trace starting at a failed subscription
+retains the ordinary lookup. Generic assignment records its receiver type for
+abstract interpretation; this lets inherited dict assignment remain direct
+even when the side trace's incoming stack has no type information.
+
+Successful lookup and compact-int boxing cannot invoke Python or schedule GC,
+so the existing entry remains stable through replacement. The uop allocates
+the normal new integer and replaces the value without a second lookup. It
+preserves the four operand references and their cleanup order; it does not
+reuse a published integer or synthesize a missing-key result. Allocation errors
+use the original addition's bytecode offset, including the executor's error
+stub, while successful cleanup uses the original assignment's offset.
+`dict_update_entries` and `dict_update_guard_exits` distinguish direct updates
+and fallbacks. The generator treats the restricted lookup as non-escaping,
+and the old integer uses the existing exact-int cleanup. Dictionary operand
+cleanup retains ordinary escaping decrements, since a last reference can still
+run a subclass finalizer. Debug allocation injection accepts `dict_update`.
+
 The builtin option specializes a known `range(stop)` call with an exact compact
 int, and `GET_ITER` on a known range whose four integer fields are compact.
 Both use the ordinary range/iterator allocation and freelists. The range object
@@ -299,6 +326,17 @@ The integer and builtin experiments require a 64-bit GIL build with GCC/Clang
 checked arithmetic. Other configurations do not enable them. The existing
 float fusion preserves its volatile binary64 rounding boundary; shared results
 allocate a fresh float, and unique results reuse their private accumulator.
+The `_BINARY_OP_MULTIPLY_{ADD,SUBTRACT}_FLOAT_OWNED` variants also accept owned
+factor references when the accumulator is already proved unique. They return
+both factor references to the original exact-float cleanup uops, preserving
+their order. Exact floats cannot run Python finalizers, so the update can
+precede those decrements without exposing a boxed intermediate product.
+`float_owned_entries` counts these updates and is included in
+`float_unique_entries`. Existing type guards and the shared-accumulator path
+remain in place. Tests compare finite results and signed zeros bitwise, and
+NaNs by classification; NaN payload selection can differ between the debug
+Tier-2 interpreter's C operations. Separate native diagnostics record payload
+bits and floating-point exception flags as additional evidence.
 
 `executor.get_region_stats()` reports entries, guard/overflow exits, integer
 boxing operations, and allocation errors. Counters are per executor; an entry
@@ -309,6 +347,9 @@ counts boxing operations, including small-int cache hits, not heap allocations.
 Debug builds support `PYTHON_TIER2_REGION_FAIL_ALLOC=int|len|float` to exercise
 the fused allocation's error edge and in-frame handlers. The probe is absent
 from release execution. It is intended only for private tests.
+The probe requires no pending raised exception and uses the preallocated
+`MemoryError` path. It is classified as non-escaping, so its presence in the
+uop source does not force operand-stack publication in release code.
 The bounded path also accepts `bounded`, `bounded_float`, and
 `bounded_conversion` for final integer, final float, and large-integer
 conversion allocation failures respectively.

@@ -177,6 +177,22 @@ separate generated output.  Regenerate it with
 build's `regen-optimizer-cases` target); `tier2_generator.py` only regenerates
 executor cases.
 
+When changing a bytecode macro's uop sequence, also regenerate the opcode
+expansion metadata and trace recorder tables:
+
+```sh
+python3 Tools/cases_generator/opcode_metadata_generator.py
+python3 Tools/cases_generator/py_metadata_generator.py
+python3 Tools/cases_generator/record_function_generator.py \
+    -o Python/record_functions.c.h Python/bytecodes.c
+```
+
+Use the explicit recorder output path above: the generator's default filename
+differs from the header included by the build. Keep the opcode expansion and
+record consumer slot maps in sync, and rebuild `Python/optimizer.o` after
+recorder changes. The configured `regen-record-functions` target also supplies
+the correct output path.
+
 Fused floating-point uops must preserve Python's operation-by-operation
 binary64 rounding even when an embedding compiler enables contraction.  Use an
 explicit C evaluation boundary at the fused arithmetic and inspect the

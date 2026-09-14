@@ -1561,3 +1561,147 @@ build-jit/python -m test test_capi.test_opt_regions test_capi.test_opt test_tier
   直接更新を試す場合は、lookupで実際に比較するkeyも検査し、不明な比較、missing、
   dict watcher、unsupported slotは元の処理へ戻す設計とする。allocation errorの位置、
   値・key・dictの参照解放順序も先に証明し、現在の検証済み段階を比較基準に保持する。
+
+### 既存bytes-pair keyの整数更新（実装・検証中）
+
+- 検証済み段階をローカルcommit `9e96c11b1ba`（tree
+  `fc7a71de13576da55248f9e2c11d483f23bf5f85`）へ保存。新しいBPE profileはlost samples0、
+  dict lookup6.66%、insertdict1.03%、tuple deallocation4.00%、tuple allocation2.58%。
+  `len-subscript-bpe-profile.*`にnative coverageとperf結果を保存した（timing結果とは別）。
+- `_DICT_PAIR_INCREMENT`を試作し、同じdict/keyのread、非負小定数のint add、継承した
+  dict代入までを認識する。既存のslot/type version guardとruntimeのidentity検査を保つ。
+- 内部lookupはexact tuple-of-two-exact-bytesに限定。hashが衝突したstored keyも同じ
+  形式かを確認し、不明な比較なら元のGETへ戻す。missing、非compact値、split table、
+  dict watcherもfallback。通常のtuple hash cacheとdictのprobe手順を使う。
+- callback/GCのない区間で既存entryへ新しいintを置き、2回目のlookupを省く。
+  int allocation失敗は元のADD、代入後のcleanupは元のSTOREの位置に帰属させる。
+  全生成物の再生成が成功し両buildを開始した。これからcollision callback、missing、
+  method変更、watcher、allocation error、参照所有権を検証する。まだ性能上の成果に含めない。
+- 新規8 testsがdebugで成功し、関連7 test filesもdebug884 tests・4 skips、native
+  798 tests・12 skipsで成功した。allocation時の共通error stubが命令位置を上書きするため、
+  fused uopのerror targetにも元ADDのoffsetを設定した。tracebackの命令位置を検証済み。
+- native BPEの1 sampleでは2,259,345回の直接更新と1,084,865回のguard exitを観測した。
+  native codeを含むexecutorと全counterを`dict-update-bpe-native.*`へ保存した。
+  guard exitが多いため、適用回数だけでは改善とは判断しない。固定main・直前版・試作版を
+  順序交替で3 blocks・90値比較中。missing keyでTier 1へ戻る費用も採否に含める。
+- 最初の3 blocksは直前版比0.999325/0.998396/0.992477、段階比較の幾何平均0.996728、
+  main比0.831926。全block改善だが効果は小さい。全90値を`dict-update-bpe-*`、
+  ソース差分・manifest・比較用binaryを`dict-update-deopt*`へ保存した。
+- 次はguard失敗をDEOPTから通常のEXITへ変え、fallback先の元GET以降をside traceに
+  できるか調べる。意味論のfallback位置・入力は同じ。missingを勝手に0へ置き換えず、
+  元の`__missing__`・加算・代入を使う。guardが同じ融合へ循環する場合もcoverageで確認する。
+- EXIT版もdebug884 tests・4 skips、native798 tests・12 skips成功。native executor 26は
+  元GET・ADD・STOREのside traceだったが、入ってきたstackの型情報がないためSTOREは
+  汎用処理のままだった。直接更新/guardの件数はDEOPT版と同じ。`dict-update-exit*`へ保存し
+  3-block比較中。このcoverageを踏まえ、汎用STORE_SUBSCRにもreceiver型のrecordを追加する。
+- side traceでも継承dict代入を選べるようにする一方、融合は同じtrace内にCOPY 2が2つ
+  ある場合に限定する。失敗GETから始まるtraceが再び同じ融合guardへ戻る循環を防ぐ。
+  元の型・slot version確認と通常setterへのfallbackは保ち、benchmark完了後に再buildする。
+- EXIT版の3 blocks・90値はDEOPT版比0.997229/0.992173/0.996069、段階比較の幾何平均
+  0.995155、main比0.831828。全block改善だが依然として小さい効果である。
+  `dict-update-exit-bpe-{rows,summary}.json`へ保存。receiver記録を含む版の再生成へ進む。
+- 初回の新規テストは失敗した。bytecode macroの変更にはuop metadataだけでなく
+  `opcode_metadata_generator.py`によるtrace展開表の再生成も必要だった。
+  C/Pythonのopcode metadataを再生成し、STORE_SUBSCRにrecordが含まれることを確認して
+  再build中。衝突比較回数のテストも、hash次第でprobeが同じentryを複数回訪れるため、
+  固定17回ではなく同条件の通常read/add/writeが発生させるcallback列と比較するように修正した。
+- debugのrecord-slot assertionで、record consumerの表も更新が必要と判明した。
+  `record_function_generator.py`はdefault出力名がbuildの入力名と異なるため、
+  `-o Python/record_functions.c.h Python/bytecodes.c`を明示して再生成する。
+  不完全な表で通ったnativeテストは検証済み結果に数えず、両buildを修正後に再検証する。
+- `optimizer.c`がrecord表をincludeするのにMakefileの依存関係が欠けており、表の修正後も
+  古いoptimizer.oが残って同じassertionになった。`Python/optimizer.o`の前提に
+  `Python/record_functions.c.h`を追加し、incremental buildで確実に反映されるよう修正する。
+- 正しいrecord表と依存関係で再build後、追加分を含むdict関連15 testsが両buildで成功。
+  missing keyを4 batches繰り返し、callback列・値とside traceの直接store counterも確認した。
+  関連9 filesはdebug1,041 tests・4 skips、native955 tests・12 skipsで成功。
+  opcode/disassemblyのテストも含む。再生成手順の注意点は`AGENTS.md`に追記した。
+  最終試作版のBPE native coverageと、融合導入前のlen-subscript版との対応比較へ進む。
+- 最終版のnative BPEでは直接更新2,259,345回、side traceでの継承dict直接代入1,084,865回、
+  通常setterへのfallback0を観測した。side traceは同じ融合を繰り返さず、元GETとADDを保持。
+  native bytes/counters/環境・binary/extension hashは`dict-update-record-bpe-native.*`に保存。
+- 全6オプションでfloatの丸め・trap・flags576ケースと特殊値56ケースを再確認し、
+  mismatch0。8つの関連生成物もsourceからbyte単位で再現できた。
+  `dict-update-{fenv,specials}.json`へ保存し、融合導入前の版との3-block比較を開始した。
+- native asmのcall tableを、recordされた`PyZip_Type`と`zip_next`から求めた同一load biasと
+  binary symbolsで解決した。成功経路は専用lookup1回と`PyLong_FromLong`1回の後、entryを
+  直接書き換える（`dict-update-record-calls.json`、executor12のasm）。
+- ただしgeneratorはcallback-freeなlookupをまだescaping callと扱い、前後でoperand stackを
+  公開・再読込していた。このhelperをnon-escaping一覧へ追加し、旧exact intの解放には
+  既存のspecialized closeを使う。dict自体の最終解放は引き続き通常のescaping cleanupを保つ。
+  変更前版は`dict-update-record*`へ保存済み。対応比較完了後に再生成・再build・再検証する。
+- receiver記録版の3 blocksは導入前比0.983848/1.003740/0.981164、段階比較の幾何平均
+  0.989533、main比0.817631。1 blockで小さな逆転があり、安定した改善とはまだ判定しない。
+- debug allocation probeもescapingと扱われていた。`PyErr_NoMemory`がpreallocated例外を
+  設定する実装を確認し、既存raised exceptionがない契約をdebug assertにしてnon-escaping
+  とする。これはint/float/lenの生成コードにも影響するため、dict単独の改善とは主張せず、
+  全関連テスト・float flags/特殊値・全6本を再検証して採否を判断する。
+- escape分類修正後もdebug1,041 tests・4 skips、native955 tests・12 skipsが成功。
+  追加のfloat診断では、unique/shared積和・積差について、符号付きゼロ、infinity、異なる
+  quiet/signaling NaN payloadを組み合わせた1,372ケースのbit列が通常JITおよびC演算と一致。
+  `check-fusion-specials.py`と`dict-update-escape-fusion-specials.json`へ保存した。
+- escape分類版のrange fenv576ケース・特殊値56ケースも一致し、8生成物のbyte単位の再現も
+  成功。BPEの直接更新/side-storeの件数は維持できた。この検証済みbinaryとsource差分を
+  `dict-update-escape*`へ保存し、融合導入前との対応比較を実行中。
+- 最終の3 blocks・90値は導入前比0.976389/0.971948/0.981247、段階比較の幾何平均
+  **0.976521**、main比**0.812703**。全block改善した。dict更新、side traceのreceiver記録、
+  escape分類修正を合わせた効果として採用する。`dict-update-escape-bpe-{rows,summary}.json`
+  に全値とchecksum一致を保存。全6本への影響は次のfloat拡張と段階を区別して確認する。
+
+### 所有されたfloat operandの積和・積差（実装・検証済み、全体効果は小さい）
+
+- 最新native Raytraceの`Vector.dot`にも、属性loadが所有するfloatの積のboxingが残る。
+  既存のborrowed-factor融合では対応せず、通常のmultiplyとunique accumulatorへのaddが
+  別uopになっていた。`dict-update-escape-raytrace-native.json`へ現状を保存した。
+- unique-left accumulatorの場合に、片方または両方のfactorがownedでも融合するuopを追加。
+  二つのfactor参照を出力として返し、元の`_POP_TOP_FLOAT`/`_POP_TOP_NOP`を同じ順序で残す。
+  exact floatの解放はPythonを呼ばないため、積とupdateを先に計算してもcallback順序を
+  変えない。公開されたfloatは再利用せず、既存のvolatile binary64境界も保つ。
+- `float_owned_entries`を追加し既存unique counterにも含める。borrowed経路のuopは保持する。
+  現在のBPE比較は保存した旧binaryで最後まで行い、終了後にこの拡張をbuild・検証する。
+- 初回はnativeのfloat関連21 testsと、ownedの3形態×積和/積差の特殊値2,058ケース、
+  fenv288ケースが成功した。debugは新規テストのNaN bit比較3つが失敗した。
+- 切り分け診断で、debugの通常Tier 2自体にC演算と異なるNaN payloadが378ケースあり、
+  新融合と通常Tier 2の間にも198ケースのpayload差があった。有限値・signed zeroと
+  fenv flagsには差がない。nativeでは通常JIT/C/融合の全bit列が一致している。
+- 計画の検証基準（「有限値は必要に応じbit比較、NaNは適切な分類で比較」）に合わせ、
+  通常の回帰テストは既存floatテストと同じNaN分類比較に修正する。debugをbit完全一致と
+  主張せず、payload差のraw rowsを`float-owned-specials-debug.json`に保持する。
+  演算順序とvolatileの丸め境界を変更する根拠はなく、数値処理は変更しない。
+- 関連9 filesはdebug1,044 tests・4 skips、native958 tests・12 skipsで成功。
+  quiet/signaling NaNを含むfenv検証を432ケースへ広げ、両backendでflagsと値/NaN分類は一致。
+  nativeは特殊値2,058ケース・fenv432ケースともbit一致。debugのpayload差は特殊値198ケース、
+  fenv48ケースとして記録し、有限値やflagsの不一致とは区別している。
+- native Raytraceではowned経路844,762回を確認し、unique融合総数は170,153→1,014,915回。
+  executor4の0x65e/0x869にmulsd、volatile store/loadを挟んで0x66f/0x87aにaddsdがあり、
+  FMAへ縮約されていない。`float-owned-raytrace-native.*`へnative codeとcounterを保存した。
+- 3 blocks・90値のRaytrace比較は直前dict/escape版比0.974762/0.986479/0.969464、
+  段階比較の幾何平均 **0.976876**。全block改善した。main比は0.833477だがmain自身の
+  block間差が大きいため、個別効果の判断には直前版との対応比較を用いる。
+  `float-owned-raytrace-{rows,summary}.json`に全値とchecksum一致を保存した。
+- 次は固定main・dict/escape版・owned-float版の3種類を全6本で同時にscreenする。
+  入力と元CLIの3 warmups・10 values・1 loopは同一、2 blocksで360値。元の2-build
+  screenと分けて、段階ごとのmain比算術平均とowned拡張の追加効果を保存する。
+
+- 全6本・2 blocks・360値の三者比較が完了し、全checksum一致、除外0。
+  dict/escape版のmain比算術平均は **0.712614**、owned-float版は **0.712403**
+  （block別0.714420/0.710387）。目標0.5は未達。
+  owned-float版のscript別main比はBPE0.834298、Btree0.749783、DeltaBlue0.977292、
+  Hexiom0.834151、Raytrace0.860312、Spectral0.018585。
+- owned拡張の直前版比はRaytrace0.971263と両block改善する一方、BPEは
+  1.036386/1.016247（平均1.026316）で両block回帰し、全体の効果はほぼ相殺された。
+  BPEでの回帰原因は未特定。float uopの適用差、native code、perfを調べ、ソース変更の
+  直接効果とbuild/layout差を区別する。都合の悪い値を除外したり、全体改善と主張しない。
+  全結果は`float-owned-suite-{rows,summary}.json`に保持する。
+
+### 隣接ペアを比較するリスト走査（設計・coverage調査）
+
+- 次の候補は、`i < len(word)-1`のループで非一致の隣接ペアに対し
+  `new_word.append(word[i]); i += 1`だけを実行する経路のbounded scan。
+  既存のlist-pair融合でも比較以外のload/len/append/incrementが毎回残っている。
+- 追加のallocationやerror位置変更を避けるため、exact listの既存allocated容量内、
+  exact bytes同士の比較、small-int index、最大64回に限定する案を検討する。
+  容量不足・一致・未対応値では元のiterationへ戻し、通常appendの再確保と例外を保持する。
+  benchmarkのアルゴリズムや入力、オブジェクトの公開されたidentityは変更しない。
+- まず元のbackedgeとheaderのlen/builtin guard、append receiverとindex localの対応を
+  traceとbytecodeから証明できるか確認する。まだ実装済み・性能改善として数えない。
