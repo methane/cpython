@@ -844,3 +844,59 @@ removal optimization is retained for its repeated Hexiom improvement, without
 a BPE speedup claim or a claim that the entry path alone has a reliable benefit.
 The native deletion call-table slot resolves to `PyList_SetSlice`, using a
 load bias independently verified from the list and int type addresses.
+
+
+## Globals identity and constant folding (2026-09-14 follow-up)
+
+Investigating invalidation uncovered an independent correctness bug: a dict
+copy can retain the original keys version while holding different values.
+A function whose code already has a loop executor can be recreated with
+`types.FunctionType(code, copied_globals)`. A keys-version-only guard then
+allows constants from the original globals mapping to be used by the copy.
+In the reduced case, eight additions of the copied value 19 returned **68**
+instead of **152**: the first iteration used 19, and the seven JIT iterations
+used the original value 7. This reproduced in both the preceding candidate
+and the fixed main executable used for these comparisons.
+
+`_GUARD_GLOBALS_VERSION_AND_IDENTITY` checks the actual mapping pointer as
+well as its keys version wherever watched globals permit constant folding.
+The existing dict dependency protects the borrowed mapping pointer: changing
+or destroying that dictionary invalidates dependent executors before old
+values or the mapping can be freed. No extra ownership is added to extend
+their lifetimes. The ordinary dynamic global-load path remains available
+when constant folding is not justified. The two call-pattern recognizers and
+the float-range lowerer accept the stronger guard; the latter preserves the
+entire instruction, including its namespace operand, in the region prefix.
+
+Four added tests cover shared code with copied globals, structural mutation,
+replacement and destruction of the original namespace, and a copied
+float-range caller with a different term function. The first broad run caught
+20 float-range formation subtest failures because that lowerer recognized
+only the old guard; those failures are retained. After correcting the
+recognizer, both builds passed 1,546 tests in thirteen relevant files
+(4 debug and 15 native skips). Eight generated outputs reproduced exactly.
+The reduced native example now returns 152, while the original still returns
+56. B-tree and Spectral Norm probes retained their previous counters and
+native sizes: 20 executors / 131,072 bytes and 4 / 24,576 bytes respectively.
+
+The final native binary SHA256 is
+`d4072ddeb417870a3f5f45c321cbae46047678e25d16f7358d7ae825c2bf949e`.
+`globals-identity-*` and `copied-globals-*` preserve the local source/build
+identities, failing and successful reproductions, tests, and coverage.
+The compiler, stencil, frame-pointer, and no-PGO/no-LTO settings are unchanged.
+This is a correctness repair; changes to the granularity of globals
+invalidation remain a separate, unimplemented experiment.
+
+
+The matched six-workload comparison completed with 540 matching checksums and
+no exclusions. Its arithmetic mean relative to fixed main changed from
+0.6653419 to 0.6644558; the mean ratio against the preceding candidate was
+0.9997148, with mixed block directions. BPE and B-tree improved in all blocks
+(mean ratios 0.986170 and 0.996398); DeltaBlue and Spectral Norm regressed in
+all blocks (1.003498 and 1.006191). Hexiom and Raytrace had mixed directions.
+BPE's third control block was slower than its other two and remains included.
+The previous 0.6704071 result was measured separately, not the matched control
+for this change. The repair is retained for correctness, without a general
+speedup claim. The 0.5 arithmetic-mean objective remains unmet. A native
+reproduction with only `PYTHON_JIT=1` also returned the correct copied and
+original results; the repair is not restricted to the experiment flags.

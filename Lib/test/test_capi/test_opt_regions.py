@@ -1901,6 +1901,72 @@ case.doCleanups()
             monitoring.register_callback(tool, monitoring.events.LINE, None)
             monitoring.free_tool_id(tool)
 
+    def warm_named_globals(self):
+        self.enterContext(mock.patch.dict(
+            os.environ, {"PYTHON_TIER2_CALL_REGIONS": "1"}))
+        ns = {}
+        exec("class Box:\n    pass\n"
+             "stable = Box()\nstable.value = 7\nunrelated = 0\n"
+             "def read(n):\n"
+             "    total = 0\n"
+             "    for _ in range(n):\n"
+             "        total += stable.value\n"
+             "    return total\n", ns)
+        run = ns["read"]
+        self.assertEqual(run(TIER2_THRESHOLD), 7 * TIER2_THRESHOLD)
+        ex = next(iter(get_all_executors(run)))
+        self.assertTrue(ex.is_valid())
+        return run, ex, ns
+
+    def test_global_guard_structure_and_lifetime(self):
+        for mutation in ("add", "delete", "clear", "replace"):
+            with self.subTest(mutation=mutation):
+                run, ex, ns = self.warm_named_globals()
+                old = weakref.ref(ns["stable"])
+                if mutation == "add":
+                    ns["new_name"] = None
+                elif mutation == "delete":
+                    del ns["stable"]
+                elif mutation == "clear":
+                    ns.clear()
+                else:
+                    replacement = ns["Box"]()
+                    replacement.value = 11
+                    ns["stable"] = replacement
+                self.assertFalse(ex.is_valid())
+                if mutation != "add":
+                    self.assertIsNone(old())
+                if mutation in ("delete", "clear"):
+                    with self.assertRaises(NameError):
+                        run(8)
+                else:
+                    self.assertEqual(run(8), 56 if mutation == "add" else 88)
+
+    def test_global_guard_copied_namespace(self):
+        run, ex, ns = self.warm_named_globals()
+        other = ns.copy()
+        other["stable"] = ns["Box"]()
+        other["stable"].value = 19
+        alias = types.FunctionType(run.__code__, other)
+        self.assertEqual(alias(8), 152)
+        self.assertEqual(run(8), 56)
+
+    def test_global_guard_namespace_lifetime(self):
+        run, ex, ns = self.warm_named_globals()
+        old = weakref.ref(ns["stable"])
+        other = ns.copy()
+        del other["read"]
+        other["stable"] = ns["Box"]()
+        other["stable"].value = 19
+        alias = types.FunctionType(run.__code__, other)
+        # The identity guard borrows its mapping pointer. Its dependency must
+        # invalidate before the original namespace can be freed and reused.
+        del run, ns
+        gc.collect()
+        self.assertIsNone(old())
+        self.assertFalse(ex.is_valid())
+        self.assertEqual(alias(8), 152)
+
     def warm_list_remove(self, slots=False, bound=True):
         self.enterContext(mock.patch.dict(
             os.environ, {"PYTHON_TIER2_CALL_REGIONS": "1"}))
@@ -3143,6 +3209,19 @@ case.doCleanups()
         self.assertEqual(iterator.__length_hint__(), 0)
         self.assertIs(next(iterator, None), None)
         self.assertEqual(ex.get_region_stats()["range_iterations"] - before, 79)
+
+    @requires_call_regions
+    def test_float_range_copied_namespace(self):
+        ns, ex = self.warm_float_range("(a + j) * (a + j + 1) // 2 + a + 1")
+        run = ns["run"]
+        other = ns.copy()
+        def replacement(a, j):
+            return 2.0
+        other["term"] = replacement
+        alias = types.FunctionType(run.__code__, other, argdefs=run.__defaults__)
+        before = ex.get_region_stats()["range_iterations"]
+        self.assertEqual(alias(31, 1, 80), (158.0, 79))
+        self.assertEqual(ex.get_region_stats()["range_iterations"], before)
 
     @requires_call_regions
     def test_float_range_code_and_monitoring(self):

@@ -1255,7 +1255,8 @@ inline_list_attribute_calls(_PyUOpInstruction *buffer, int length)
         LIST_EXPECT(_PUSH_FRAME);
         LIST_EXPECT(_TIER2_RESUME_CHECK);
         uint32_t globals_version = 0;
-        if (LIST_NEXT() == _GUARD_GLOBALS_VERSION) {
+        if (LIST_NEXT() == _GUARD_GLOBALS_VERSION ||
+            LIST_NEXT() == _GUARD_GLOBALS_VERSION_AND_IDENTITY) {
             globals_version = (uint32_t)buffer[pc++].operand0;
             if (globals_version == 0) {
                 continue;
@@ -1717,7 +1718,8 @@ inline_attribute_search_calls(_PyUOpInstruction *buffer, int length)
         options |= (uint64_t)buffer[pc++].oparg << 48;
         SEARCH_EXPECT(_PUSH_FRAME);
         SEARCH_EXPECT(_TIER2_RESUME_CHECK);
-        if (SEARCH_NEXT() == _GUARD_GLOBALS_VERSION) pc++;
+        if (SEARCH_NEXT() == _GUARD_GLOBALS_VERSION ||
+            SEARCH_NEXT() == _GUARD_GLOBALS_VERSION_AND_IDENTITY) pc++;
         if (SEARCH_NEXT() == _GUARD_BUILTINS_IDENTITY) pc++;
         int op = SEARCH_NEXT();
         if ((op != _LOAD_CONST_INLINE && op != _LOAD_CONST_INLINE_BORROW) ||

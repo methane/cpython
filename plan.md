@@ -1,9 +1,9 @@
 # CPython Tier 2：Linux上で行う2〜3日間の実装計画
 
 **現在の目標（2026-09-14）**：全6ベンチマークのmain比の**算術平均0.5以下**。
-開始時の480値は **0.7944918**。最新の条件付きlist削除screen（3 blocks、3 builds、540値）は
-**0.6704071**（対応する直前版0.6713321）で、目標は未達。
-Hexiomの前版比は **0.9877403**、main比は **0.8255069**。
+開始時の480値は **0.7944918**。最新のglobals identity修正screen（3 blocks、3 builds、540値）は
+**0.6644558**（対応する直前版0.6653419）で、目標は未達。
+この段階は誤計算の修正で、全体の前版比0.9997148を速度改善とは断定しない。
 各blockの各scriptで10値の平均時間からcandidate/main比を求め、blocksと6 scriptを
 等重みの算術平均で集計する。途中screenは3 blocks、最終goal判定は4 blocksとする。
 入力・CLI・warmups=3・values=10・loops=1、固定main、PGO/LTOなしの比較条件を維持する。
@@ -2489,3 +2489,55 @@ build-jit/python -m test test_capi.test_opt_regions test_capi.test_opt test_tier
 - 次はglobalsの名前単位dependencyを、元valueの寿命を伸ばさず変更通知で保護できるか
   独立testから進める。既存のdictionary全体dependencyも保護し、残るexecutorが必要な間は
   watcherを解除しない条件と、削除/clear/非unicode key/再入のfallbackを先に設計する。
+
+
+### globals名前単位dependency（独立再現・test先行）
+
+- 固定mainと採用版の両方で、既存の無関係なglobal entryの値を変えるだけでexecutorが
+  invalidになることを再現した。実際に参照するstable entryの変更も正しくinvalidになる。
+  `check-global-dependencies.py`と`global-dependencies-*-v2.json`へ保存した。
+- 初版driverはmain側の既知8190 retry counterのため4002反復では再形成せず停止した。
+  初版sourceと失敗理由を保持し、untimed再現の再warmupだけ両閾値の最大値を使った。
+  ベンチマークのwarmup/sample設定やruntime閾値は変更していない。
+- unrelated entryを16回変更してもexecutorが有効であること、used entry変更時は無効化と
+  旧値の即時解放があること、add/delete/clear、共有codeと別globalsの3 testsを追加。
+  現在のimplementationで先に失敗を確認してから、名前と構造へのdependencyを分ける。
+
+- test先行で別の正しさの問題を発見。元globalsにvalue7、コピー側にvalue19を持たせ、
+  同じcodeのfunctionをコピー側で8回反復すると期待152に対し68（19+7*7）になった。
+  debug/current native/fixed mainで再現。`check-copied-globals.py`と
+  `copied-globals-{native-before,main}.json`へ証拠を保存した。前のコピー検査はmutation上限後の
+  非定数化経路だったため、この問題を検出していなかった。
+- dictionaryのcopyはkeys versionを保持できるため、versionだけではconstantのnamespaceを
+  特定できない。先にversionとglobalsのidentityを同時に検査するuopへ置換する修正を行う。
+  元dictへのwatch dependencyは保持し、旧dictの寿命を延ばす新referenceは追加しない。
+- 名前単位の性能testはartifactへ一旦保存し、現在の回帰testはcopied namespaceと
+  add/delete/clear/replace後のvalue lifetimeの2 testsに分けた。正しさの修正を検証した後で
+  無関係なentry変更でexecutorを保持する実装へ戻る。
+
+- identity修正後、3 testsと独立native再現は成功し、152を返した。12 filesの初回検証で
+  float rangeの形成testが20 subtests失敗した。range lowererが旧guard名だけを許可して
+  いたため、新guardを同じくprefixへ保持するよう修正し、コピーしたnamespaceで別termを
+  使う回帰testも追加した。guardを落として形成だけ復旧する変更はしていない。
+- 同じ初回検証のtest_funcは存在しないmodule名によるimport失敗。実在する
+  test_funcattrs/test_capi.test_functionを指定して再検証する。失敗ログは保持した。
+
+- range prefix対応後は追加4 testsを含む関連13 filesが両buildで成功（各1,546 tests、
+  debug4/native15 skips）。8生成物の再現性、Ruff、diff checkも成功した。
+- 最終native `d4072ddeb417870a3f5f45c321cbae46047678e25d16f7358d7ae825c2bf949e`。
+  Btreeの20 executors/131,072 bytes、Spectralの4 executors/24,576 bytesと全counterは
+  前版と一致。namespace guardの追加でこれらの既存最適化が失われていないことを確認した。
+  `globals-identity-*`にmanifest/patch/build/test/再現/probeを保存。正しさの修正として保持し、
+  現在6本の対応比較を実行中。名前単位dependencyの性能変更はまだ実装していない。
+
+- 全6本・3 blocks・540値は全checksum一致・除外0。main比算術平均は
+  **0.6653419→0.6644558**、after/before0.9997148（block別1.003017/0.998421/0.997707）。
+  BPE0.986170とBtree0.996398は全block短縮。一方DeltaBlue1.003498、Spectral1.006191は
+  全block増加、Hexiom1.001991/Raytrace1.004041は方向混在した。BPEの第3 blockは
+  before/main0.839009で他の0.817291/0.814351より遅いが除外していない。
+- 新版main比はBPE0.812011、Btree0.553316、DeltaBlue0.964631、Hexiom0.824743、
+  Raytrace0.813127、Spectral0.018906。別時点の前screen0.670407との単純差を改善としない。
+  正しさの修正として採用し、性能はほぼ横ばい・個別回帰ありと記録する。
+- `PYTHON_JIT=1`のみの独立native再現でもコピー側152/元56を確認。修正は実験flagに
+  限定していない。C/H一致を監査してローカルcheckpointへ保存する。次は
+  `jit-artifacts/benchmark-suite/named-globals-design.md`の名前/構造dependency案を実装する。

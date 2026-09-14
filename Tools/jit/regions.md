@@ -13,6 +13,14 @@ PYTHON_JIT=1 PYTHON_TIER2_INT_REGIONS=1 \
   build-jit/python program.py
 ```
 
+Constant folding of globals checks both the dictionary identity and its keys
+version. A copied dictionary may have the same keys version and different
+values. `_GUARD_GLOBALS_VERSION_AND_IDENTITY` preserves this distinction when
+code is shared across functions with different globals. The ordinary globals
+watch dependency also guards the borrowed namespace pointer's lifetime.
+Region rewrites that move this guard must preserve both operands; in
+particular, float-range lowering keeps it in the emitted prefix.
+
 Integer regions contain exactly two dependent add/subtract/multiply operations,
 optionally followed by a comparison. The first two inputs are retained on the
 operand stack; further inputs are unchanged local slots. All inputs must be

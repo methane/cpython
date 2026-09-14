@@ -92,7 +92,8 @@ mark_float_range(_PyUOpInstruction *buffer, int length, int available)
     if (induction > 255 || accumulator > 255 || induction == accumulator) {
         return float_range_reject(length, __LINE__);
     }
-    if (FR_NEXT() == _GUARD_GLOBALS_VERSION) {
+    if (FR_NEXT() == _GUARD_GLOBALS_VERSION ||
+        FR_NEXT() == _GUARD_GLOBALS_VERSION_AND_IDENTITY) {
         prefix[used++] = buffer[pc++];
         prefix[used - 1].target = target;
     }

@@ -2800,6 +2800,17 @@ dummy_func(
             assert(keys->dk_kind == DICT_KEYS_UNICODE);
         }
 
+        tier2 op(_GUARD_GLOBALS_VERSION_AND_IDENTITY, (version/4, namespace/4 --)) {
+            /* Dict copies can preserve their keys version while holding
+             * different values. Constant folding depends on the mapping too. */
+            PyDictObject *dict = (PyDictObject *)GLOBALS();
+            DEOPT_IF(dict != (PyDictObject *)(uintptr_t)namespace);
+            assert(PyDict_CheckExact(dict));
+            PyDictKeysObject *keys = FT_ATOMIC_LOAD_PTR_ACQUIRE(dict->ma_keys);
+            DEOPT_IF(FT_ATOMIC_LOAD_UINT32_RELAXED(keys->dk_version) != version);
+            assert(keys->dk_kind == DICT_KEYS_UNICODE);
+        }
+
         tier2 op(_GUARD_BUILTINS_IDENTITY, (--)) {
             /* Function versions alone do not identify the builtins mapping. */
             DEOPT_IF(BUILTINS() != tstate->interp->builtins);

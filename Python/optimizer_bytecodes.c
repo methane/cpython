@@ -2674,6 +2674,9 @@ dummy_func(void) {
                 }
                 if (ctx->frame->globals_checked_version == version) {
                     ADD_OP(_NOP, 0, 0);
+                } else {
+                    ADD_OP(_GUARD_GLOBALS_VERSION_AND_IDENTITY, 0, version);
+                    uop_buffer_last(&ctx->out_buffer)->operand1 = (uintptr_t)globals;
                 }
             }
         }
@@ -2742,7 +2745,9 @@ dummy_func(void) {
                     ctx->frame->globals_watched = true;
                 }
                 if (ctx->frame->globals_checked_version != version && this_instr[-1].opcode == _NOP) {
-                    REPLACE_OP(uop_buffer_last(&ctx->out_buffer), _GUARD_GLOBALS_VERSION, 0, version);
+                    REPLACE_OP(uop_buffer_last(&ctx->out_buffer),
+                               _GUARD_GLOBALS_VERSION_AND_IDENTITY, 0, version);
+                    uop_buffer_last(&ctx->out_buffer)->operand1 = (uintptr_t)globals;
                     ctx->frame->globals_checked_version = version;
                 }
                 if (ctx->frame->globals_checked_version == version) {
