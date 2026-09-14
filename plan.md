@@ -1276,3 +1276,19 @@ build-jit/python -m test test_capi.test_opt_regions test_capi.test_opt test_tier
 - このgoalに必要な未完了作業はない。検証範囲はこのLinux x86_64構成であり、他architecture、
   free-threaded、32-bitの性能や全pyperformanceへの一般化は主張しない。
   GitHub投稿・push・PR変更は行っていない。今後の既定値変更や公開は別の作業として扱う。
+
+### Core developer向け英文ドキュメント（2026-09-14）
+
+- 依頼に応じて`Tools/jit/optimization_report.md`を作成し、`regions.md`からリンクした。
+  実装commit `a021ff543bc`までのint/float/builtin/call/range最適化について、pass順序、
+  適用条件、所有権、fallback/error位置、binary64丸め、SIMDの条件を英語で説明する。
+- 最終480値から個別平均・対応比・全体幾何平均を再計算した。Spectral以外の5本は
+  幾何平均0.949200であり、全6本0.492077がSpectralの改善に強く依存する点も明記。
+  起動込み0.628911、初期panelとのbaselineの違い、shape/refleakの未解決事項を残した。
+- 実装とraw data/logに照合して記述し、未追跡artifactを必要とする再現手順と参照先を
+  明示した。相対リンク32件、コード例のPython/shell構文、表の平均時間・対応比・幾何平均、
+  例示した多項式の恒等式を検査し成功。全480値を再集計し、保存済みbuild/script/測定dataの
+  SHA256も一致した。新文書を含む末尾空白検査と`git diff --check`も成功した。
+- 文書作成は完了。コード・build・計測条件の変更はなく、再ビルド・runtime test・性能測定の
+  再実行はしていない。次に公開や既定値変更を検討する際のレビュー課題を文書末尾へ記載。
+  GitHub投稿・push・PR変更は行っていない。
