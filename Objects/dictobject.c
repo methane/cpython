@@ -1249,6 +1249,63 @@ check_keys_unicode(PyDictKeysObject *dk, PyObject *key)
     return PyUnicode_CheckExact(key) && (dk->dk_kind != DICT_KEYS_GENERAL);
 }
 
+#ifndef Py_GIL_DISABLED
+static bool
+is_exact_bytes_pair(PyObject *key)
+{
+    return PyTuple_CheckExact(key) && PyTuple_GET_SIZE(key) == 2 &&
+        PyBytes_CheckExact(PyTuple_GET_ITEM(key, 0)) &&
+        PyBytes_CheckExact(PyTuple_GET_ITEM(key, 1));
+}
+
+static int
+compare_exact_bytes_pair(PyDictObject *mp, PyDictKeysObject *dk,
+                         void *entries, Py_ssize_t ix, PyObject *key, Py_hash_t hash)
+{
+    PyDictKeyEntry *entry = &((PyDictKeyEntry *)entries)[ix];
+    if (entry->me_key == key) {
+        return 1;
+    }
+    if (entry->me_hash != hash) {
+        return 0;
+    }
+    PyObject *stored = entry->me_key;
+    if (!is_exact_bytes_pair(stored)) {
+        /* Ordinary lookup may invoke this colliding key's __eq__. */
+        return DKIX_EMPTY;
+    }
+    for (int i = 0; i < 2; i++) {
+        PyObject *left = PyTuple_GET_ITEM(stored, i);
+        PyObject *right = PyTuple_GET_ITEM(key, i);
+        if (left != right &&
+            (PyBytes_GET_SIZE(left) != PyBytes_GET_SIZE(right) ||
+             memcmp(PyBytes_AS_STRING(left), PyBytes_AS_STRING(right), PyBytes_GET_SIZE(left)))) {
+            return 0;
+        }
+    }
+    return 1;
+}
+#endif
+
+Py_ssize_t
+_PyDict_LookupExactBytesPair(PyDictObject *mp, PyObject *key)
+{
+#ifdef Py_GIL_DISABLED
+    return DKIX_EMPTY;
+#else
+    assert(PyDict_Check(mp));
+    if (mp->ma_values != NULL || mp->ma_keys->dk_kind != DICT_KEYS_GENERAL ||
+        (mp->_ma_watcher_tag & DICT_WATCHER_MASK) || !is_exact_bytes_pair(key)) {
+        return DKIX_EMPTY;
+    }
+    /* Exact bytes and tuple hashing cannot run Python or raise. Reuse the
+     * tuple's normal cached hash rather than introducing a separate formula. */
+    Py_hash_t hash = PyTuple_Type.tp_hash(key);
+    assert(hash != -1);
+    return do_lookup(mp, mp->ma_keys, key, hash, compare_exact_bytes_pair);
+#endif
+}
+
 static Py_ssize_t
 hash_unicode_key(PyObject *key)
 {

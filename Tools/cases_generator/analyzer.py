@@ -580,6 +580,16 @@ def has_error_without_pop(op: parser.CodeDef) -> bool:
 
 
 NON_ESCAPING_FUNCTIONS = (
+    "_PyDict_LookupExactBytesPair",
+    "_PyFloat_MultiplyThenUpdate",
+    "_PyRegion_FloatAttribute",
+    "_PyRegion_AllocationFails",
+    "_PyRegion_HasBuiltinLen",
+    "_PyRegion_HasBuiltin",
+    "_PyRegion_BytesEqual",
+    "Py_MIN",
+    "Py_MAX",
+    "Py_SET_SIZE",
     "PyCFunction_GET_FLAGS",
     "PyCFunction_GET_FUNCTION",
     "PyCFunction_GET_SELF",
@@ -632,6 +642,7 @@ NON_ESCAPING_FUNCTIONS = (
     "PySet_GET_SIZE",
     "PyTuple_GET_ITEM",
     "PyTuple_GET_SIZE",
+    "PyTuple_SET_ITEM",
     "PyType_HasFeature",
     "PyUnicode_Concat",
     "PyUnicode_GET_LENGTH",
@@ -665,6 +676,23 @@ NON_ESCAPING_FUNCTIONS = (
     "_PyList_AppendTakeRef",
     "_PyList_ITEMS",
     "_PyLong_CompactValue",
+    "_PyRegion_BoundedInput",
+    "_PyRegion_CallAttribute",
+    "_PyRegion_RemoveListItem",
+    "_PyRegion_PolyBinary",
+    "_PyRegion_DivideThenAdd",
+    "_PyRegion_CanDividePair",
+    "_PyRegion_DividePairThenAdd",
+    "_PyRegion_RangeFitsInt32",
+    "_PyRegion_SumInt32Range",
+    "_PyRegion_RangeStart64",
+    "_PyRegion_RangeStart128",
+    "isnan",
+    "_PyRegion_Length",
+    "_PyRegion_EqualityType",
+    "_PyRegion_ImmutableEqual",
+    "_PyTuple_Recycle",
+    "Py_ARITHMETIC_RIGHT_SHIFT",
     "_PyLong_DigitCount",
     "_PyLong_IsCompact",
     "_PyLong_IsNegative",
@@ -976,7 +1004,10 @@ def compute_properties(op: parser.CodeDef) -> Properties:
     deopts_if = variable_used(op, "DEOPT_IF")
     exits_if = variable_used(op, "EXIT_IF")
     exit_if_at_end = variable_used(op, "AT_END_EXIT_IF")
-    deopts_periodic = variable_used(op, "HANDLE_PENDING_AND_DEOPT_IF")
+    deopts_periodic = (
+        variable_used(op, "HANDLE_PENDING_AND_DEOPT_IF")
+        or variable_used(op, "_Py_TIER3_RESIDENT_LOOP")
+    )
     exits_and_deopts = sum((deopts_if, exits_if, deopts_periodic))
     if exits_and_deopts > 1:
         tkn = op.tokens[0]

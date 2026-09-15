@@ -4,8 +4,11 @@ import itertools
 import sys
 import textwrap
 import unittest
+from unittest import mock
 import gc
 import os
+import math
+import struct
 import types
 
 import _opcode
@@ -88,6 +91,47 @@ def count_ops(ex, name):
 @unittest.skipIf(Py_GIL_DISABLED, "optimizer not yet supported in free-threaded builds")
 @requires_jit_enabled
 class TestExecutorInvalidation(unittest.TestCase):
+
+    def test_loop_retry_after_invalidation(self):
+        for padding in (0, 40):
+            with self.subTest(padding=padding):
+                ns = {}
+                exec("def loop(n):\n    total = 0\n    for i in range(n):\n"
+                     + "        total += i\n" * (padding + 1)
+                     + "    return total\n", ns)
+                loop = ns["loop"]
+                backward = next(inst for inst in dis.get_instructions(loop)
+                                if inst.opname == "JUMP_BACKWARD")
+                self.assertEqual(backward.arg > 255, bool(padding))
+                expected = (padding + 1) * sum(range(TIER2_THRESHOLD))
+                self.assertEqual(loop(TIER2_THRESHOLD), expected)
+                first = get_first_executor(loop)
+                self.assertIsNotNone(first)
+                # The successful trace must reset the loop countdown, even
+                # when ENTER_EXECUTOR replaced JUMP_BACKWARD rather than an
+                # EXTENDED_ARG prefix. The low three bits hold the backoff.
+                counter, = struct.unpack_from(
+                    "=H", loop.__code__._co_code_adaptive, backward.offset + 2)
+                self.assertEqual(counter >> 3, TIER2_THRESHOLD - 2)
+                _testinternalcapi.invalidate_executors(loop.__code__)
+                self.assertFalse(first.is_valid())
+                self.assertEqual(loop(TIER2_THRESHOLD), expected)
+                second = get_first_executor(loop)
+                self.assertIsNotNone(second)
+                self.assertIsNot(second, first)
+                self.assertTrue(second.is_valid())
+
+    def test_resume_counter_after_compilation(self):
+        ns = {}
+        exec("def leaf(value):\n    return value + 1\n", ns)
+        leaf = ns["leaf"]
+        # Call from C so a caller trace cannot inline the function and avoid
+        # executing its RESUME counter.
+        self.assertEqual(list(map(leaf, [1] * TIER2_RESUME_THRESHOLD)),
+                         [2] * TIER2_RESUME_THRESHOLD)
+        self.assertIsNotNone(get_first_executor(leaf))
+        counter, = struct.unpack_from("=H", leaf.__code__._co_code_adaptive, 2)
+        self.assertEqual(counter >> 3, TIER2_RESUME_THRESHOLD - 2)
 
     def test_invalidate_object(self):
         # Generate a new set of functions at each call
@@ -841,6 +885,41 @@ class TestUopsOptimization(unittest.TestCase):
         assert "_LOAD_CONST_INLINE_BORROW" in uops
         """), PYTHON_JIT="1")
         self.assertEqual(result[0].rc, 0, result)
+
+    def test_copied_builtins_value_change(self):
+        import builtins
+
+        namespace = {"__builtins__": vars(builtins).copy()}
+        exec("def size(value):\n"
+             "    return len(value)\n"
+             "def run(value, n):\n"
+             "    for _ in range(n):\n"
+             "        result = size(value)\n"
+             "    return result\n", namespace)
+        self.assertEqual(namespace["run"]([1], TIER2_THRESHOLD), 1)
+        namespace["__builtins__"]["len"] = lambda value: 42
+        self.assertEqual(namespace["run"]([1], 8), 42)
+
+    def test_same_function_version_different_builtins(self):
+        import builtins
+
+        def make_size():
+            def size(value):
+                return len(value)
+            return size
+
+        def run(functions, value):
+            result = None
+            for function in functions:
+                result = function(value)
+            return result
+
+        size = make_size()
+        self.assertEqual(run([size] * TIER2_THRESHOLD, [1]), 1)
+        namespace = {"__builtins__": vars(builtins).copy()}
+        namespace["__builtins__"]["len"] = lambda value: 42
+        custom_size = types.FunctionType(make_size.__code__, namespace)()
+        self.assertEqual(run([size, custom_size], [1]), 42)
 
     def test_float_add_constant_propagation(self):
         def testfunc(n):
@@ -2445,7 +2524,118 @@ class TestUopsOptimization(unittest.TestCase):
         self.assertEqual(uops.count("_STORE_SUBSCR_DICT_KNOWN_HASH"), 1)
         self.assertEqual(uops.count("_GUARD_NOS_DICT_SUBSCRIPT"), 0)
         self.assertEqual(uops.count("_GUARD_NOS_DICT_STORE_SUBSCRIPT"), 0)
-        self.assertEqual(uops.count("_GUARD_TYPE"), 1)
+        self.assertEqual(uops.count("_GUARD_NOS_TYPE"), 1)
+
+    def test_dict_subclass_guards_receiver(self):
+        class HashableDict(dict):
+            __hash__ = object.__hash__
+
+        key = HashableDict()
+        receiver = HashableDict({key: 1})
+
+        def read(n):
+            for _ in range(n):
+                value = receiver[key]
+            return value
+
+        def write(n):
+            for _ in range(n):
+                receiver[key] = 2
+
+        for func in (read, write):
+            _, ex = self._run_with_optimizer(func, TIER2_THRESHOLD)
+            self.assertIsNotNone(ex)
+            self.assertIn("_GUARD_NOS_TYPE", get_opnames(ex))
+
+        # The key has the recorded receiver type, but is not the receiver.
+        # Guarding TOS would incorrectly admit a non-dict to the dict uop.
+        stores = []
+        class Other:
+            def __getitem__(self, sub):
+                assert sub is key
+                return 42
+
+            def __setitem__(self, sub, value):
+                stores.append((sub, value))
+
+        receiver = Other()
+        self.assertEqual(read(8), 42)
+        write(8)
+        self.assertEqual(stores, [(key, 2)] * 8)
+
+    def test_method_descriptor_subclass_calls(self):
+        cases = (
+            ("receiver.append(1)", "_CALL_METHOD_DESCRIPTOR_O"),
+            ("receiver.copy()", "_CALL_METHOD_DESCRIPTOR_NOARGS"),
+            ("receiver.count(1)", "_CALL_METHOD_DESCRIPTOR_O"),
+            ("receiver.index(1)", "_CALL_METHOD_DESCRIPTOR_FAST"),
+            ("receiver.sort()", "_CALL_METHOD_DESCRIPTOR_FAST_WITH_KEYWORDS"),
+        )
+        for expression, opcode in cases:
+            for unbound in (False, True):
+                with self.subTest(expression=expression, unbound=unbound):
+                    class MyList(list):
+                        pass
+                    receiver = MyList([3, 1, 2])
+                    call = expression
+                    if unbound:
+                        name, args = expression.removeprefix("receiver.").split("(", 1)
+                        call = f"list.{name}(receiver{', ' if args != ')' else ''}{args}"
+                    namespace = {}
+                    exec("def run(receiver, n):\n"
+                         "    for _ in range(n):\n"
+                         f"        result = {call}\n"
+                         "    return result\n", namespace)
+                    run = namespace["run"]
+                    run(receiver, TIER2_THRESHOLD)
+                    ex = get_first_executor(run)
+                    self.assertIsNotNone(ex)
+                    self.assertTrue(any(name == opcode or name == opcode + "_INLINE"
+                                        for name in get_opnames(ex)), get_opnames(ex))
+                    reference = MyList(receiver)
+                    expected = eval(expression, {"receiver": reference})
+                    self.assertEqual(run(receiver, 1), expected)
+                    self.assertEqual(receiver, reference)
+
+    def test_method_descriptor_subclass_override_and_error(self):
+        class MyList(list):
+            pass
+
+        def copy(receiver, n):
+            for _ in range(n):
+                result = receiver.copy()
+            return result
+
+        copy(MyList([1]), TIER2_THRESHOLD)
+        self.assertIn("_CALL_METHOD_DESCRIPTOR_NOARGS_INLINE",
+                      get_opnames(get_first_executor(copy)))
+        MyList.copy = lambda self: "overridden"
+        self.assertEqual(copy(MyList([1]), 8), "overridden")
+
+        def pop(receiver, n):
+            for _ in range(n):
+                result = list.pop(receiver)
+            return result
+
+        pop(MyList(range(TIER2_THRESHOLD)), TIER2_THRESHOLD)
+        ex = get_first_executor(pop)
+        self.assertIsNotNone(ex)
+        self.assertTrue(any(name.startswith("_CALL_METHOD_DESCRIPTOR_FAST")
+                            for name in get_opnames(ex)), get_opnames(ex))
+        with self.assertRaises(TypeError):
+            pop({}, 8)
+        receiver = MyList([1])
+        try:
+            pop(receiver, 8)
+        except IndexError as error:
+            self.assertEqual(str(error), "pop from empty list")
+            tb = error.__traceback__
+            while tb.tb_frame.f_code is not pop.__code__:
+                tb = tb.tb_next
+            self.assertEqual(tb.tb_lineno, pop.__code__.co_firstlineno + 2)
+        else:
+            self.fail("empty-list error was skipped")
+        self.assertEqual(receiver, [])
 
     def test_dict_subclass_subscr_with_override(self):
         class MyDict(dict):
@@ -4056,6 +4246,193 @@ class TestUopsOptimization(unittest.TestCase):
         self.assertIn("_GUARD_TOS_FLOAT", uops)
         self.assertIn("_GUARD_NOS_FLOAT", uops)
         self.assertIn("_BINARY_OP_TRUEDIV_FLOAT", uops)
+
+    def test_float_arithmetic_chain_speculative_guards_from_tracing(self):
+        # The argument types are observations, not static facts.  Exact-float
+        # guards make the ordered multiply/add chain safe to specialize.
+        def testfunc(args):
+            first, second, third, n = args
+            result = 0.0
+            for _ in range(n):
+                result = first * first + second * second + third * third
+            return result
+
+        args = (2.0, -3.0, 4.0, TIER2_THRESHOLD)
+        res, ex = self._run_with_optimizer(testfunc, args)
+        self.assertEqual(res, 29.0)
+        self.assertIsNotNone(ex)
+        uops = get_opnames(ex)
+        self.assertIn("_GUARD_TOS_FLOAT", uops)
+        self.assertNotIn("_BINARY_OP", uops)
+        self.assertTrue(
+            "_BINARY_OP_MULTIPLY_FLOAT" in uops
+            or "_BINARY_OP_MULTIPLY_FLOAT_INPLACE" in uops
+            or "_BINARY_OP_MULTIPLY_FLOAT_INPLACE_RIGHT" in uops
+        )
+        self.assertTrue(
+            "_BINARY_OP_ADD_FLOAT_INPLACE" in uops
+            or "_BINARY_OP_ADD_FLOAT_INPLACE_RIGHT" in uops
+        )
+
+    def test_float_arithmetic_chain_guard_failure(self):
+        events = []
+
+        class ObservableFloat(float):
+            def __mul__(self, other):
+                events.append(("mul", float(self), float(other)))
+                return ObservableFloat(super().__mul__(other))
+
+            def __add__(self, other):
+                events.append(("add", float(self), float(other)))
+                return ObservableFloat(super().__add__(other))
+
+        def testfunc(args):
+            first, second, n = args
+            result = 0.0
+            for _ in range(n):
+                result = first * first + second
+            return result
+
+        self._run_with_optimizer(testfunc, (2.0, 3.0, TIER2_THRESHOLD))
+        value = ObservableFloat(2.0)
+        result = testfunc((value, ObservableFloat(3.0), 1))
+        self.assertIsInstance(result, ObservableFloat)
+        self.assertEqual(
+            events,
+            [("mul", 2.0, 2.0), ("add", 4.0, 3.0)],
+        )
+        self.assertEqual(testfunc((2.0, 3.0, 1)), 7.0)
+
+    def test_float_product_add_fusion(self):
+        def testfunc(args):
+            a, b, c, d, n = args
+            result = 0.0
+            for _ in range(n):
+                result = a * b + c * d
+            return result
+
+        args = (1.25, -2.0, 3.5, 4.0, TIER2_THRESHOLD)
+        with mock.patch.dict(
+            os.environ, {"PYTHON_TIER2_FLOAT_FUSION": "1"}
+        ):
+            result, executor = self._run_with_optimizer(testfunc, args)
+        self.assertEqual(result, 11.5)
+        self.assertIsNotNone(executor)
+        self.assertIn(
+            "_BINARY_OP_MULTIPLY_ADD_FLOAT_INPLACE", get_opnames(executor)
+        )
+
+        # The fused suffix is c*d followed by addition to a*b.  This witness
+        # distinguishes Python's two rounded operations from an FMA.
+        edge_cases = [
+            (-1.0, 1.0, 1.0 + 2**-27, 1.0 - 2**-27),
+            (-0.0, 1.0, 0.0, 1.0),
+            (float("inf"), 1.0, 2.0, 3.0),
+            (2.0**-1022, 0.5, 2.0**-1022, 0.5),
+            (2.0**1023, 2.0, -(2.0**1023), 1.0),
+            (1.25, 1.25, 1.25, 1.25),
+        ]
+        with mock.patch.dict(os.environ, {"PYTHON_TIER2_FLOAT_FUSION": "1"}):
+            for a, b, c, d in edge_cases:
+                expected = a * b + c * d
+                actual = testfunc((a, b, c, d, 8))
+                if math.isnan(expected):
+                    self.assertTrue(math.isnan(actual))
+                else:
+                    self.assertEqual(
+                        struct.pack("=d", actual), struct.pack("=d", expected)
+                    )
+
+    def test_float_product_subtract_fusion(self):
+        def testfunc(args):
+            a, b, c, d, n = args
+            result = 0.0
+            for _ in range(n):
+                result = a * b - c * d
+            return result
+
+        with mock.patch.dict(os.environ, {"PYTHON_TIER2_FLOAT_FUSION": "1"}):
+            result, executor = self._run_with_optimizer(
+                testfunc, (7.0, 3.0, 2.0, 5.0, TIER2_THRESHOLD)
+            )
+        self.assertEqual(result, 11.0)
+        self.assertIn(
+            "_BINARY_OP_MULTIPLY_SUBTRACT_FLOAT_INPLACE", get_opnames(executor)
+        )
+
+    def test_float_product_update_shared_accumulator(self):
+        def add_product(args):
+            accumulator, left, right, n = args
+            result = 0.0
+            for _ in range(n):
+                result = accumulator + left * right
+            return result
+
+        def subtract_product(args):
+            accumulator, left, right, n = args
+            result = 0.0
+            for _ in range(n):
+                result = accumulator - left * right
+            return result
+
+        with mock.patch.dict(os.environ, {"PYTHON_TIER2_FLOAT_FUSION": "1"}):
+            add_result, add_executor = self._run_with_optimizer(
+                add_product, (7.0, 3.0, 2.0, TIER2_THRESHOLD)
+            )
+            subtract_result, subtract_executor = self._run_with_optimizer(
+                subtract_product, (7.0, 3.0, 2.0, TIER2_THRESHOLD)
+            )
+
+        self.assertEqual(add_result, 13.0)
+        self.assertIn(
+            "_BINARY_OP_MULTIPLY_ADD_FLOAT_SHARED", get_opnames(add_executor)
+        )
+        self.assertEqual(subtract_result, 1.0)
+        self.assertIn(
+            "_BINARY_OP_MULTIPLY_SUBTRACT_FLOAT_SHARED",
+            get_opnames(subtract_executor),
+        )
+
+        # The accumulator is borrowed and may be externally aliased.  The
+        # shared variant must allocate a result rather than mutating it.
+        accumulator = 7.0
+        self.assertEqual(add_product((accumulator, 3.0, 2.0, 8)), 13.0)
+        self.assertEqual(accumulator, 7.0)
+
+    def test_float_product_add_fusion_guard_failure(self):
+        events = []
+
+        class ObservableFloat(float):
+            def __mul__(self, other):
+                events.append(("mul", float(self), float(other)))
+                return ObservableFloat(float(self) * float(other))
+
+            def __add__(self, other):
+                events.append(("add", float(self), float(other)))
+                return ObservableFloat(float(self) + float(other))
+
+        def testfunc(args):
+            a, b, c, d, n = args
+            result = 0.0
+            for _ in range(n):
+                result = a * b + c * d
+            return result
+
+        with mock.patch.dict(os.environ, {"PYTHON_TIER2_FLOAT_FUSION": "1"}):
+            _, executor = self._run_with_optimizer(
+                testfunc, (1.0, 2.0, 3.0, 4.0, TIER2_THRESHOLD)
+            )
+        self.assertIn(
+            "_BINARY_OP_MULTIPLY_ADD_FLOAT_INPLACE", get_opnames(executor)
+        )
+        value = ObservableFloat(2.0)
+        result = testfunc((value, value, value, value, 1))
+        self.assertIsInstance(result, ObservableFloat)
+        self.assertEqual(
+            events,
+            [("mul", 2.0, 2.0), ("mul", 2.0, 2.0), ("add", 4.0, 4.0)],
+        )
+        self.assertEqual(testfunc((2.0, 3.0, 4.0, 5.0, 1)), 26.0)
 
     def test_float_remainder_speculative_guards_from_tracing(self):
         # a, b are locals with no statically known type. Tracing records

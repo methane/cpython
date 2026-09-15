@@ -1,0 +1,25 @@
+{
+  "tested_implementation_commit": "c690b7ecc306cd716e05d5b1e2b1b9d61677139e",
+  "tested_implementation_tree": "dfc4e49d02a875f2d958f99bcda97d01f19ccc3a",
+  "results_commit": "c4bbb81a6ed769067550a274afd2b45d44f8a9f6",
+  "results_tree": "ff4193a54977d832f52e6b6028be1345a9a7676b",
+  "executable_sha256": "6b8737d6829d51426f1ee5335f0b51009f51ec47b7d36e1104849e4732744422",
+  "executable": "build-jit/python",
+  "configure": "--enable-experimental-jit=yes",
+  "llvm_prefix": "/usr/lib/llvm-21",
+  "llvm_version": "21.1.8",
+  "stencil_cflags": "-fno-vectorize -fno-slp-vectorize",
+  "cpu_affinity": "0",
+  "workload": {
+    "n": 100000,
+    "initial": 1099511627776,
+    "scale": -3,
+    "bias": 11,
+    "training_profile": "same-input",
+    "warmup": 300,
+    "loops_per_sample": 1000,
+    "samples": 3
+  },
+  "timing_semantics": "per-call time includes independent result validation",
+  "checkout_note": "JSON was collected after the implementation commit with tracked benchmark/report edits present; the executable identity above is the compiled implementation identity."
+}

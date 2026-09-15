@@ -1,5 +1,9 @@
 // Macros and other things needed by ceval.c, and bytecodes.c
 
+#if defined(__SSE2__) && !defined(__FAST_MATH__)
+#  include <emmintrin.h>
+#endif
+
 /* Computed GOTOs, or
        the-optimization-commonly-but-improperly-known-as-"threaded code"
    using gcc's labels-as-values extension
@@ -613,6 +617,432 @@ gen_try_set_executing(PyGenObject *gen)
             ->ob_fval = _dres;                                           \
     } while (0)
 
+/* Preserve the two Python rounding points in a product/update chain even when
+ * an embedding compiler enables FP contraction.  The volatile store is an
+ * evaluation boundary in C; unlike compiler-specific pragmas, it also remains
+ * effective after this helper is inlined into a stencil. */
+static inline Py_ALWAYS_INLINE double
+_PyFloat_MultiplyThenUpdate(double accumulator, double left, double right,
+                            bool subtract)
+{
+    volatile double product = left * right;
+    return subtract ? accumulator - product : accumulator + product;
+}
+
+/* The caller guards the owner's recorded layout and retains it in a local.
+ * Do not load a double until every field in the region has passed its guard. */
+static inline Py_ALWAYS_INLINE PyObject *
+_PyRegion_FloatAttribute(PyObject *owner, Py_ssize_t offset)
+{
+    PyObject *value = *(PyObject **)((char *)owner + offset);
+    return value != NULL && PyFloat_CheckExact(value) ? value : NULL;
+}
+
+/* FENV_ACCESS makes Clang emit constrained FP operations, preserving the
+ * rounding boundary after inlining without a volatile memory round trip.
+ * FP_CONTRACT OFF alone does not survive every inlining configuration. */
+static inline Py_ALWAYS_INLINE double
+_PyRegion_DivideThenAdd(double accumulator, double numerator, int64_t denominator)
+{
+#if defined(__clang__) && !defined(__FAST_MATH__)
+#pragma STDC FENV_ACCESS ON
+    double term = numerator / (double)denominator;
+#else
+    volatile double term = numerator / (double)denominator;
+#endif
+    return accumulator + term;
+}
+
+/* Divide independent adjacent terms together, then add each binary64 result
+ * in its original order. The range proof excludes zero denominators and
+ * inexact integer conversions. Never add the two terms to each other. */
+static inline bool
+_PyRegion_CanDividePair(void)
+{
+#if defined(__SSE2__) && !defined(__FAST_MATH__)
+    /* With traps enabled, retain the original division/addition order as
+     * well: the second division must not trap ahead of the first addition. */
+    return (_mm_getcsr() & _MM_MASK_MASK) == _MM_MASK_MASK;
+#else
+    return false;
+#endif
+}
+
+static inline Py_ALWAYS_INLINE double
+_PyRegion_DividePairThenAdd(double accumulator, double numerator,
+                           int64_t first, int64_t second)
+{
+#if defined(__SSE2__) && !defined(__FAST_MATH__)
+#  if defined(__clang__)
+#pragma STDC FENV_ACCESS ON
+#  endif
+    __m128d denominators = _mm_set_pd((double)second, (double)first);
+    __m128d terms = _mm_div_pd(_mm_set1_pd(numerator), denominators);
+    double total = accumulator + _mm_cvtsd_f64(terms);
+    return total + _mm_cvtsd_f64(_mm_unpackhi_pd(terms, terms));
+#else
+    double total = _PyRegion_DivideThenAdd(accumulator, numerator, first);
+    return _PyRegion_DivideThenAdd(total, numerator, second);
+#endif
+}
+
+static inline bool
+_PyRegion_RangeFitsInt32(int64_t denominator, int64_t delta,
+                        int64_t difference, long count)
+{
+    assert(count > 1 && count <= _PY_NSMALLNEGINTS + _PY_NSMALLPOSINTS);
+    if (denominator < INT32_MIN || denominator > INT32_MAX ||
+        delta < INT32_MIN || delta > INT32_MAX ||
+        difference < INT32_MIN || difference > INT32_MAX) {
+        return false;
+    }
+    /* Signed-32-bit inputs and the cached-index count bound keep every
+     * intermediate here below 2**52. The preceding monotonicity proof
+     * puts every denominator between this endpoint and the first one. */
+    int64_t steps = count - 1;
+    int64_t last = denominator + delta*steps + difference*steps*(steps - 1)/2;
+    return last >= INT32_MIN && last <= INT32_MAX;
+}
+
+static inline Py_ALWAYS_INLINE double
+_PyRegion_SumInt32Range(double accumulator, double numerator,
+                        int64_t denominator, int64_t delta,
+                        int64_t difference, long count)
+{
+#if defined(__SSE2__) && !defined(__FAST_MATH__)
+#  if defined(__clang__)
+#pragma STDC FENV_ACCESS ON
+#  endif
+    __m128i denominators = _mm_set_epi32(0, 0, (int)(denominator + delta),
+                                        (int)denominator);
+    int64_t first_step = 2*delta + difference;
+    int64_t second_step = first_step + 2*difference;
+    /* Packed integer additions wrap modulo 2**32. Truncating the steps
+     * keeps exactly the low bits of each proved signed-32-bit denominator,
+     * even when a difference or an unused final update is outside int32. */
+    __m128i steps = _mm_set_epi32(0, 0, (int)(uint32_t)second_step,
+                                 (int)(uint32_t)first_step);
+    __m128i increments = _mm_set1_epi32((int)(uint32_t)(4*difference));
+    __m128d dividends = _mm_set1_pd(numerator);
+    for (long pairs = count / 2; pairs > 0; pairs--) {
+        __m128d terms = _mm_div_pd(dividends, _mm_cvtepi32_pd(denominators));
+        accumulator += _mm_cvtsd_f64(terms);
+        accumulator += _mm_cvtsd_f64(_mm_unpackhi_pd(terms, terms));
+        denominators = _mm_add_epi32(denominators, steps);
+        steps = _mm_add_epi32(steps, increments);
+    }
+    if (count & 1) {
+        accumulator = _PyRegion_DivideThenAdd(accumulator, numerator,
+                                               _mm_cvtsi128_si32(denominators));
+    }
+    return accumulator;
+#else
+    Py_UNREACHABLE();
+#endif
+}
+
+
+/* These conversions never invoke Python or set an exception: exact ints are
+ * required, and AsLongLongAndOverflow reports range failures out of band. */
+static inline bool
+_PyRegion_BoundedInput(_PyStackRef ref, intptr_t *value)
+{
+    if (PyStackRef_IsNull(ref)) {
+        return false;
+    }
+    PyObject *obj = PyStackRef_AsPyObjectBorrow(ref);
+    if (!PyLong_CheckExact(obj) || !_PyLong_IsCompact((PyLongObject *)obj)) {
+        return false;
+    }
+    *value = _PyLong_CompactValue((PyLongObject *)obj);
+    return *value >= -_PY_INT_REGION_INPUT_MAX &&
+           *value <= _PY_INT_REGION_INPUT_MAX;
+}
+
+static inline PyObject *
+_PyRegion_CallAttribute(_PyStackRef owner, uint64_t descriptor)
+{
+    PyObject *obj = PyStackRef_AsPyObjectBorrow(owner);
+    uint32_t version = (uint32_t)(descriptor >> 19);
+    if (Py_TYPE(obj)->tp_version_tag != version) {
+        return NULL;
+    }
+    if ((descriptor & (UINT64_C(1) << 51)) &&
+        !FT_ATOMIC_LOAD_UINT8(_PyObject_InlineValues(obj)->valid)) {
+        return NULL;
+    }
+    uint16_t offset = (uint16_t)(descriptor >> 3);
+    return *(PyObject **)((char *)obj + offset);
+}
+
+/* Return -1 before effects for unsupported input, 0 for absence, or 1
+ * after deleting the first match. No path calls Python or raises an error. */
+static inline int
+_PyRegion_RemoveListItem(_PyStackRef owner, _PyStackRef index_ref,
+                         _PyStackRef value_ref, uint64_t descriptor,
+                         Py_ssize_t *checked)
+{
+    PyObject *outer = _PyRegion_CallAttribute(owner, descriptor);
+    PyObject *index_o = PyStackRef_AsPyObjectBorrow(index_ref);
+    PyObject *value = PyStackRef_AsPyObjectBorrow(value_ref);
+    if (outer == NULL || !PyList_CheckExact(outer) ||
+        !PyLong_CheckExact(index_o) || !PyLong_CheckExact(value) ||
+        !_PyLong_BothAreCompact((PyLongObject *)index_o, (PyLongObject *)value)) {
+        return -1;
+    }
+    Py_ssize_t index = _PyLong_CompactValue((PyLongObject *)index_o);
+    if (index < 0) {
+        index += PyList_GET_SIZE(outer);
+    }
+    if ((size_t)index >= (size_t)PyList_GET_SIZE(outer)) {
+        return -1;
+    }
+    PyObject *list = PyList_GET_ITEM(outer, index);
+    if (!PyList_CheckExact(list) || PyList_GET_SIZE(list) > 64) {
+        return -1;
+    }
+    sdigit needle = _PyLong_CompactValue((PyLongObject *)value);
+    for (Py_ssize_t position = 0; position < PyList_GET_SIZE(list); position++) {
+        PyObject *item = PyList_GET_ITEM(list, position);
+        if (!PyLong_CheckExact(item) || !_PyLong_IsCompact((PyLongObject *)item)) {
+            return -1;
+        }
+        if (_PyLong_CompactValue((PyLongObject *)item) == needle) {
+            /* Single-element deletion cannot fail. Keep list's normal capacity
+             * policy; only the removed exact int loses a reference. */
+            int err = PyList_SetSlice(list, position, position + 1, NULL);
+            assert(err == 0);
+            (void)err;
+            *checked = position + 1;
+            return 1;
+        }
+    }
+    *checked = PyList_GET_SIZE(list);
+    return 0;
+}
+
+static inline bool
+_PyRegion_AsInt64(_PyStackRef ref, int64_t *value)
+{
+    if (PyStackRef_IsNull(ref)) {
+        return false;
+    }
+    PyObject *obj = PyStackRef_AsPyObjectBorrow(ref);
+    if (!PyLong_CheckExact(obj)) {
+        return false;
+    }
+    if (_PyLong_IsCompact((PyLongObject *)obj)) {
+        *value = _PyLong_CompactValue((PyLongObject *)obj);
+        return true;
+    }
+    int overflow;
+    *value = PyLong_AsLongLongAndOverflow(obj, &overflow);
+    return overflow == 0;
+}
+
+/* Restrict lookup to unicode-key tables: a general-key table could invoke
+ * an unrelated key's __eq__ while resolving the global name. */
+static inline bool
+_PyRegion_HasBuiltin(PyObject *globals, PyObject *builtins, PyObject *name,
+                     PyObject *builtin)
+{
+    if (!PyDict_CheckExact(globals) || !PyDict_CheckExact(builtins) ||
+        ((PyDictObject *)globals)->ma_keys->dk_kind == DICT_KEYS_GENERAL ||
+        ((PyDictObject *)builtins)->ma_keys->dk_kind == DICT_KEYS_GENERAL) {
+        return false;
+    }
+    assert(PyUnicode_CheckExact(name));
+    return _PyDict_LoadGlobal((PyDictObject *)globals, (PyDictObject *)builtins,
+                              name) == builtin;
+}
+
+static inline bool
+_PyRegion_HasBuiltinLen(_PyInterpreterFrame *frame, PyObject *name,
+                        PyObject *builtin_len)
+{
+    return _PyRegion_HasBuiltin(frame->f_globals, frame->f_builtins, name, builtin_len);
+}
+
+static inline bool
+_PyRegion_Length(_PyStackRef ref, Py_ssize_t *size)
+{
+    PyObject *obj = PyStackRef_AsPyObjectBorrow(ref);
+    /* Closing the original receiver must not run a finalizer before the
+     * consumer. Another strong reference also suffices under the GIL. */
+    if (PyStackRef_RefcountOnObject(ref) &&
+        !_Py_IsImmortal(obj) && Py_REFCNT(obj) <= 1) {
+        return false;
+    }
+    if (PyUnicode_CheckExact(obj)) {
+        *size = PyUnicode_GET_LENGTH(obj);
+    }
+    else if (PyBytes_CheckExact(obj)) {
+        *size = PyBytes_GET_SIZE(obj);
+    }
+    else if (PyTuple_CheckExact(obj)) {
+        *size = PyTuple_GET_SIZE(obj);
+    }
+    else if (PyList_CheckExact(obj)) {
+        *size = PyList_GET_SIZE(obj);
+    }
+    else if (PyDict_CheckExact(obj)) {
+        *size = PyDict_GET_SIZE(obj);
+    }
+    else {
+        return false;
+    }
+    return true;
+}
+
+static inline bool
+_PyRegion_EqualityType(PyTypeObject *type)
+{
+    return type == &PyBytes_Type || type == &PyUnicode_Type ||
+           type == &PyLong_Type || type == &PyFloat_Type;
+}
+
+/* Both operands have the same exact immutable builtin type. These equality
+ * operations cannot call Python, issue BytesWarning, or allocate a result.
+ * Preserve tuple comparison's identity shortcut, particularly for NaNs. */
+static inline Py_ALWAYS_INLINE bool
+_PyRegion_BytesEqual(PyObject *left, PyObject *right)
+{
+    assert(PyBytes_CheckExact(left) && PyBytes_CheckExact(right));
+    return left == right ||
+        (PyBytes_GET_SIZE(left) == PyBytes_GET_SIZE(right) &&
+         memcmp(PyBytes_AS_STRING(left), PyBytes_AS_STRING(right),
+                PyBytes_GET_SIZE(left)) == 0);
+}
+
+static inline bool
+_PyRegion_ImmutableEqual(PyObject *left, PyObject *right)
+{
+    assert(Py_TYPE(left) == Py_TYPE(right));
+    assert(_PyRegion_EqualityType(Py_TYPE(left)));
+    if (left == right) {
+        return true;
+    }
+    if (PyBytes_CheckExact(left)) {
+        Py_ssize_t size = PyBytes_GET_SIZE(left);
+        return size == PyBytes_GET_SIZE(right) &&
+               memcmp(PyBytes_AS_STRING(left), PyBytes_AS_STRING(right), size) == 0;
+    }
+    if (PyUnicode_CheckExact(left)) {
+        return _PyUnicode_Equal(left, right);
+    }
+    if (PyFloat_CheckExact(left)) {
+        return PyFloat_AS_DOUBLE(left) == PyFloat_AS_DOUBLE(right);
+    }
+    if (_PyLong_BothAreCompact((PyLongObject *)left, (PyLongObject *)right)) {
+        return _PyLong_CompactValue((PyLongObject *)left) ==
+               _PyLong_CompactValue((PyLongObject *)right);
+    }
+    PyLongObject *a = (PyLongObject *)left;
+    PyLongObject *b = (PyLongObject *)right;
+    Py_ssize_t digits = _PyLong_DigitCount(a);
+    return _PyLong_SameSign(a, b) && digits == _PyLong_DigitCount(b) &&
+           memcmp(a->long_value.ob_digit, b->long_value.ob_digit,
+                  (size_t)digits * sizeof(digit)) == 0;
+}
+
+/* A fixed pair of checked operations, not a runtime IR interpreter. The
+ * selector is a stencil immediate: 0 = add, 1 = subtract, 2 = multiply. */
+static inline bool
+_PyRegion_Arithmetic(int64_t left, int64_t right, int op, int64_t *result)
+{
+#if defined(__GNUC__) || defined(__clang__)
+    switch (op) {
+        case 0: return !__builtin_add_overflow(left, right, result);
+        case 1: return !__builtin_sub_overflow(left, right, result);
+        case 2: return !__builtin_mul_overflow(left, right, result);
+        default: Py_UNREACHABLE();
+    }
+#else
+    /* The experimental matcher is disabled without checked arithmetic. */
+    return false;
+#endif
+}
+
+/* Polynomial coefficients in the basis 1, j, binomial(j, 2). Operation is a
+ * replicated stencil immediate. False propagates a failed proof. */
+static inline bool
+_PyRegion_PolyBinary(int64_t a0, int64_t a1, int64_t a2,
+                     int64_t b0, int64_t b1, int64_t b2, int operation,
+                     int64_t *r0, int64_t *r1, int64_t *r2)
+{
+#ifdef __SIZEOF_INT128__
+    __int128 c0, c1, c2;
+    if (operation == 0) {
+        c0 = (__int128)a0 + b0;
+        c1 = (__int128)a1 + b1;
+        c2 = (__int128)a2 + b2;
+    }
+    else if (operation == 1) {
+        c0 = (__int128)a0 - b0;
+        c1 = (__int128)a1 - b1;
+        c2 = (__int128)a2 - b2;
+    }
+    else if (operation == 2) {
+        /* The builder proved that the product has degree at most two. */
+        c0 = (__int128)a0 * b0;
+        c1 = (__int128)a0*b1 + (__int128)a1*b0 + (__int128)a1*b1;
+        c2 = (__int128)a0*b2 + (__int128)a2*b0 + 2*(__int128)a1*b1;
+    }
+    else {
+        assert(operation == 3 && b1 == 0 && b2 == 0);
+        if (b0 == 0 || a1 % b0 || a2 % b0) {
+            return false;
+        }
+        c0 = a0 / b0 - ((a0 % b0 != 0) && ((a0 < 0) != (b0 < 0)));
+        c1 = a1 / b0;
+        c2 = a2 / b0;
+    }
+    const int64_t high = INT64_MAX >> Py_TAGGED_SHIFT;
+    const int64_t low = -high - 1;
+    if (c0 < low || c0 > high || c1 < low || c1 > high || c2 < low || c2 > high) {
+        return false;
+    }
+    *r0 = (int64_t)c0;
+    *r1 = (int64_t)c1;
+    *r2 = (int64_t)c2;
+    return true;
+#else
+    return false;
+#endif
+}
+
+/* The narrow form is selected only after a compile-time interval proof for
+ * every intermediate. Both forms retain the same sign and endpoint checks. */
+#define REGION_RANGE_START(NAME, TYPE)                                  \
+static inline Py_ALWAYS_INLINE bool                                    \
+NAME(int64_t *poly, long initial, long count)                           \
+{                                                                      \
+    TYPE c0 = poly[0], c1 = poly[1], c2 = poly[2];                      \
+    TYPE start = initial;                                              \
+    TYPE d = c0 + c1*start + c2*start*(start - 1)/2;                    \
+    TYPE step = c1 + c2*start;                                         \
+    TYPE last = d + step*(count - 1) + c2*(count - 1)*(count - 2)/2;    \
+    TYPE last_step = step + c2*(count - 1);                            \
+    const int64_t exact = INT64_C(1) << 53;                             \
+    bool valid = ((step >= 0 && last_step >= 0) ||                     \
+                  (step <= 0 && last_step <= 0)) &&                    \
+        ((d > 0 && last > 0) || (d < 0 && last < 0)) &&                \
+        d >= -exact && d <= exact && last >= -exact && last <= exact && \
+        step >= INT64_MIN && step <= INT64_MAX &&                      \
+        last_step >= INT64_MIN && last_step <= INT64_MAX;              \
+    if (valid) {                                                       \
+        poly[0] = (int64_t)d;                                           \
+        poly[1] = (int64_t)step;                                        \
+    }                                                                  \
+    return valid;                                                      \
+}
+
+REGION_RANGE_START(_PyRegion_RangeStart64, int64_t)
+#ifdef __SIZEOF_INT128__
+REGION_RANGE_START(_PyRegion_RangeStart128, __int128)
+#endif
+#undef REGION_RANGE_START
+
 // Inplace float true division. Sets _divop_err to 1 on zero division.
 // Caller must check _divop_err and call ERROR_NO_POP() if set.
 #define FLOAT_INPLACE_DIVOP(left, right, TARGET)                         \
@@ -681,3 +1111,126 @@ gen_try_set_executing(PyGenObject *gen)
 
 #define CALL_TP_ITERITEM_NO_ESCAPE(ITER, INDEX) \
     Py_TYPE(ITER)->_tp_iteritem((ITER), (INDEX))
+
+/* State committed by both resident range operations.  Until both Python
+ * integers have been created, the frame and iterator still describe the
+ * loop-header entry boundary: the induction local names the last ordinary
+ * iteration already committed and range->start names the next value to yield.
+ * A materialization error is attributed to the upcoming body's arithmetic
+ * while retaining that entry snapshot.  Afterwards the frame describes
+ * exactly COMPLETED additional iterations and the ordinary loop body will
+ * execute NEXT. */
+typedef struct {
+    int64_t accumulator;
+    long next;
+    long last;
+    long completed;
+} _PyTier3ResidentExitState;
+
+static inline int
+_PyTier3_CommitResidentExit(_PyInterpreterFrame *frame,
+                            _PyRangeIterObject *range,
+                            int accumulator_local,
+                            int induction_local,
+                            const _PyTier3ResidentExitState *state)
+{
+#ifdef Py_DEBUG
+    const char *failure = Py_GETENV("PYTHON_TIER3_FAIL_RECONSTRUCTION");
+    if (failure != NULL && strcmp(failure, "1") == 0) {
+        PyErr_NoMemory();
+        return -1;
+    }
+#endif
+    PyObject *new_accumulator = PyLong_FromLongLong(state->accumulator);
+    if (new_accumulator == NULL) {
+        return -1;
+    }
+#ifdef Py_DEBUG
+    if (failure != NULL && strcmp(failure, "2") == 0) {
+        Py_DECREF(new_accumulator);
+        PyErr_NoMemory();
+        return -1;
+    }
+#endif
+    PyObject *new_induction = PyLong_FromLong(state->last);
+    if (new_induction == NULL) {
+        Py_DECREF(new_accumulator);
+        return -1;
+    }
+    _PyStackRef old_accumulator = frame->localsplus[accumulator_local];
+    _PyStackRef old_induction = frame->localsplus[induction_local];
+    frame->localsplus[accumulator_local] =
+        PyStackRef_FromPyObjectSteal(new_accumulator);
+    frame->localsplus[induction_local] =
+        PyStackRef_FromPyObjectSteal(new_induction);
+    range->start = state->next;
+    assert(range->len >= state->completed);
+    range->len -= state->completed;
+    PyStackRef_XCLOSE(old_accumulator);
+    PyStackRef_XCLOSE(old_induction);
+    return 0;
+}
+
+
+/* Compile-time-specialized residency skeleton.  STEP_OVERFLOW is an ordered
+ * checked-arithmetic expression that stores the next accumulator in
+ * new_total.  It is expanded into each finite stencil: there is no runtime
+ * expression dispatch or per-iteration helper call. */
+#define _Py_TIER3_RESIDENT_LOOP(STEP_OVERFLOW)                           \
+    do {                                                                 \
+        long next = range->start;                                        \
+        long remaining = range->len;                                     \
+        long completed = 0;                                              \
+        uint64_t polls = 0;                                              \
+        long last = 0;                                                   \
+        bool overflow = false;                                           \
+        uintptr_t iversion = FT_ATOMIC_LOAD_UINTPTR_ACQUIRE(             \
+            _PyFrame_GetCode(frame)->_co_instrumentation_version);       \
+        while (completed < remaining - 1) {                              \
+            polls++;                                                     \
+            uintptr_t eval_breaker = _Py_atomic_load_uintptr_relaxed(    \
+                &tstate->eval_breaker);                                  \
+            invalid = !current_executor->vm_data.valid;                  \
+            pending = eval_breaker != iversion;                          \
+            if (pending || invalid) {                                    \
+                break;                                                   \
+            }                                                            \
+            int64_t new_total;                                           \
+            if (STEP_OVERFLOW) {                                         \
+                overflow = true;                                         \
+                break;                                                   \
+            }                                                            \
+            total = new_total;                                           \
+            last = next;                                                 \
+            completed++;                                                 \
+            next += range->step;                                         \
+        }                                                                \
+        current_executor->tier3_resident_polls += polls;                 \
+        if (pending || invalid) {                                        \
+            current_executor->tier3_resident_pending_polls++;            \
+        }                                                                \
+        if (completed != 0) {                                            \
+            _PyTier3ResidentExitState exit = {                           \
+                .accumulator = total,                                    \
+                .next = next,                                            \
+                .last = last,                                            \
+                .completed = completed,                                  \
+            };                                                           \
+            materialized = _PyTier3_CommitResidentExit(                  \
+                frame, range, sum_local, induction_local, &exit);        \
+            if (materialized < 0) {                                      \
+                break;                                                   \
+            }                                                            \
+            current_executor->tier3_resident_entries++;                  \
+            current_executor->tier3_resident_iterations += completed;    \
+            if (pending || invalid) {                                    \
+                current_executor->tier3_resident_deopt_materializations++; \
+            }                                                            \
+            else {                                                       \
+                current_executor->tier3_resident_normal_materializations++; \
+            }                                                            \
+        }                                                                \
+        if (overflow) {                                                  \
+            current_executor->tier3_resident_overflow_exits++;           \
+        }                                                                \
+    } while (0)

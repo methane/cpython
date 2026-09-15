@@ -1,0 +1,170 @@
+{
+  "configuration": {
+    "python": "3.16.0a0 (heads/work-dirty:96685d3, Sep 12 2026, 13:01:57) [GCC 13.3.0]",
+    "commit": "96685d349b4acbc177512ab0d5c4b7061169b07f",
+    "compiler": "GCC 13.3.0",
+    "architecture": "x86_64",
+    "configure_args": "'--enable-experimental-jit=yes'",
+    "jit_available": true,
+    "jit_enabled": true,
+    "tier3_setting": null,
+    "tier3_budget": null
+  },
+  "workload": {
+    "n": 100000,
+    "initial": 0,
+    "workload": "sum",
+    "warmup": 500,
+    "repeat": 5,
+    "loops": 20
+  },
+  "callable": "sum_from",
+  "result": 4999950000,
+  "expected": 4999950000,
+  "median_ns": 2575237.35,
+  "samples_ns": [
+    2576663.5,
+    2575237.35,
+    2582812.8,
+    2557830.7,
+    2556863.7
+  ],
+  "measurements": [
+    {
+      "elapsed_ns": 2576663.5,
+      "status": "stable",
+      "tier3_delta": {
+        "entries": 0,
+        "iterations": 0,
+        "budget_exits": 0,
+        "overflow_exits": 0,
+        "native_entries": 0,
+        "native_iterations": 0,
+        "native_budget_exits": 0,
+        "native_overflow_exits": 0,
+        "native_materialization_exits": 0,
+        "resident_entries": 0,
+        "resident_iterations": 0,
+        "resident_polls": 0,
+        "resident_pending_polls": 0,
+        "resident_overflow_exits": 0,
+        "resident_normal_materializations": 0,
+        "resident_deopt_materializations": 0
+      }
+    },
+    {
+      "elapsed_ns": 2575237.35,
+      "status": "stable",
+      "tier3_delta": {
+        "entries": 0,
+        "iterations": 0,
+        "budget_exits": 0,
+        "overflow_exits": 0,
+        "native_entries": 0,
+        "native_iterations": 0,
+        "native_budget_exits": 0,
+        "native_overflow_exits": 0,
+        "native_materialization_exits": 0,
+        "resident_entries": 0,
+        "resident_iterations": 0,
+        "resident_polls": 0,
+        "resident_pending_polls": 0,
+        "resident_overflow_exits": 0,
+        "resident_normal_materializations": 0,
+        "resident_deopt_materializations": 0
+      }
+    },
+    {
+      "elapsed_ns": 2582812.8,
+      "status": "stable",
+      "tier3_delta": {
+        "entries": 0,
+        "iterations": 0,
+        "budget_exits": 0,
+        "overflow_exits": 0,
+        "native_entries": 0,
+        "native_iterations": 0,
+        "native_budget_exits": 0,
+        "native_overflow_exits": 0,
+        "native_materialization_exits": 0,
+        "resident_entries": 0,
+        "resident_iterations": 0,
+        "resident_polls": 0,
+        "resident_pending_polls": 0,
+        "resident_overflow_exits": 0,
+        "resident_normal_materializations": 0,
+        "resident_deopt_materializations": 0
+      }
+    },
+    {
+      "elapsed_ns": 2557830.7,
+      "status": "stable",
+      "tier3_delta": {
+        "entries": 0,
+        "iterations": 0,
+        "budget_exits": 0,
+        "overflow_exits": 0,
+        "native_entries": 0,
+        "native_iterations": 0,
+        "native_budget_exits": 0,
+        "native_overflow_exits": 0,
+        "native_materialization_exits": 0,
+        "resident_entries": 0,
+        "resident_iterations": 0,
+        "resident_polls": 0,
+        "resident_pending_polls": 0,
+        "resident_overflow_exits": 0,
+        "resident_normal_materializations": 0,
+        "resident_deopt_materializations": 0
+      }
+    },
+    {
+      "elapsed_ns": 2556863.7,
+      "status": "stable",
+      "tier3_delta": {
+        "entries": 0,
+        "iterations": 0,
+        "budget_exits": 0,
+        "overflow_exits": 0,
+        "native_entries": 0,
+        "native_iterations": 0,
+        "native_budget_exits": 0,
+        "native_overflow_exits": 0,
+        "native_materialization_exits": 0,
+        "resident_entries": 0,
+        "resident_iterations": 0,
+        "resident_polls": 0,
+        "resident_pending_polls": 0,
+        "resident_overflow_exits": 0,
+        "resident_normal_materializations": 0,
+        "resident_deopt_materializations": 0
+      }
+    }
+  ],
+  "executor_offset": 54,
+  "executor_identity": 94672506604896,
+  "tier3_status": "not entered",
+  "tier3_delta": {
+    "entries": 0,
+    "iterations": 0,
+    "budget_exits": 0,
+    "overflow_exits": 0,
+    "native_entries": 0,
+    "native_iterations": 0,
+    "native_budget_exits": 0,
+    "native_overflow_exits": 0,
+    "native_materialization_exits": 0,
+    "resident_entries": 0,
+    "resident_iterations": 0,
+    "resident_polls": 0,
+    "resident_pending_polls": 0,
+    "resident_overflow_exits": 0,
+    "resident_normal_materializations": 0,
+    "resident_deopt_materializations": 0
+  },
+  "kernel_iterations": 0,
+  "requested_iterations": 10000000,
+  "kernel_fraction": 0.0,
+  "native_code_verified": true,
+  "native_code_bytes": 4096
+}

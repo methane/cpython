@@ -16,6 +16,23 @@ extern "C" {
 #include "pycore_optimizer_types.h"
 #include <stdbool.h>
 
+/* Private debug-only fault injection shared by regions and their C helpers.
+ * With no old raised exception to release, this installs a preallocated
+ * MemoryError without invoking Python. Release builds remove the probe. */
+static inline bool
+_PyRegion_AllocationFails(const char *kind)
+{
+#ifdef Py_DEBUG
+    assert(!PyErr_Occurred());
+    const char *failure = Py_GETENV("PYTHON_TIER2_REGION_FAIL_ALLOC");
+    if (failure != NULL && strcmp(failure, kind) == 0) {
+        PyErr_NoMemory();
+        return true;
+    }
+#endif
+    return false;
+}
+
 /* Fitness controls how long a trace can grow.
  * Starts at FITNESS_INITIAL, then decreases from per-bytecode buffer usage
  * plus branch/frame heuristics. The trace stops when fitness drops below the
@@ -33,6 +50,9 @@ extern "C" {
  */
 #define OPTIMIZER_EFFECTIVENESS    2
 #define MAX_TARGET_LENGTH          (FITNESS_INITIAL / OPTIMIZER_EFFECTIVENESS)
+
+/* Shared by bounded-region interval analysis and its runtime entry guards. */
+#define _PY_INT_REGION_INPUT_MAX ((INT64_C(1) << 28) - 1)
 
 /* Exit quality thresholds: trace stops when fitness < exit_quality.
  * Higher = trace is more willing to stop here. */
@@ -215,6 +235,70 @@ typedef struct _PyExecutorObject {
     uint64_t tier3_resident_overflow_exits;
     uint64_t tier3_resident_normal_materializations;
     uint64_t tier3_resident_deopt_materializations;
+    /* Opt-in straight-line region diagnostics, local to this executor. */
+    uint64_t region_bounded_entries;
+    uint64_t region_bounded_guard_exits;
+    uint64_t region_bounded_boxes;
+    uint64_t region_bounded_divisions;
+    uint64_t region_int_entries;
+    uint64_t region_int_guard_exits;
+    uint64_t region_int_overflow_exits;
+    uint64_t region_int_boxes;
+    uint64_t region_len_entries;
+    uint64_t region_len_guard_exits;
+    uint64_t region_method_entries;
+    uint64_t region_method_guard_exits;
+    uint64_t region_call_entries;
+    uint64_t region_call_guard_exits;
+    uint64_t region_call_attr_entries;
+    uint64_t region_range_entries;
+    uint64_t region_range_iterations;
+    uint64_t region_range_int32_iterations;
+    uint64_t region_range_call_entries;
+    uint64_t region_range_iter_entries;
+    uint64_t region_range_guard_exits;
+    uint64_t region_enum_entries;
+    uint64_t region_enum_guard_exits;
+    uint64_t region_enum_fallbacks;
+    uint64_t region_enum_scan_entries;
+    uint64_t region_enum_scan_iterations;
+    uint64_t region_enum_scan_misses;
+    uint64_t region_pair_scan_entries;
+    uint64_t region_pair_scan_iterations;
+    uint64_t region_pair_scan_misses;
+    uint64_t region_contains_entries;
+    uint64_t region_contains_iterations;
+    uint64_t region_contains_fallbacks;
+    uint64_t region_dict_store_entries;
+    uint64_t region_dict_store_fallbacks;
+    uint64_t region_class_entries;
+    uint64_t region_class_guard_exits;
+    uint64_t region_class_materializations;
+    uint64_t region_call_list_entries;
+    uint64_t region_len_subscript_entries;
+    uint64_t region_dict_update_entries;
+    uint64_t region_dict_update_guard_exits;
+    /* GIL-only coefficient setup cannot escape or re-enter Python. */
+    int64_t region_poly_scratch[4][3];
+    bool region_poly_valid;
+    uint64_t region_tuple_entries;
+    uint64_t region_tuple_list_entries;
+    uint64_t region_tuple_guard_exits;
+    uint64_t region_float_unique_entries;
+    uint64_t region_float_owned_entries;
+    uint64_t region_float_attribute_entries;
+    uint64_t region_float_shared_entries;
+    uint64_t region_float_guard_exits;
+    uint64_t region_allocation_errors;
+    uint64_t region_zip_entries;
+    uint64_t region_zip_reused_entries;
+    uint64_t region_zip_fallbacks;
+    uint64_t region_call_search_entries;
+    uint64_t region_call_search_iterations;
+    uint64_t region_call_remove_entries;
+    uint64_t region_call_remove_hits;
+    uint64_t region_call_remove_iterations;
+    uint64_t region_call_conditional_entries;
     _PyExitData exits[1];
 } _PyExecutorObject;
 
@@ -289,9 +373,8 @@ _Py_BloomFilter_Init(_PyBloomFilter *bloom)
 }
 
 static inline void
-_Py_BloomFilter_Add(_PyBloomFilter *bloom, void *ptr)
+_Py_BloomFilter_AddHash(_PyBloomFilter *bloom, uint64_t hash)
 {
-    uint64_t hash = address_to_hash(ptr);
     assert(_Py_BLOOM_FILTER_K <= 8);
     for (int i = 0; i < _Py_BLOOM_FILTER_K; i++) {
         uint8_t bits = hash & 255;
@@ -299,6 +382,26 @@ _Py_BloomFilter_Add(_PyBloomFilter *bloom, void *ptr)
             (_Py_bloom_filter_word_t)1 << (bits & (_Py_BLOOM_FILTER_BITS_PER_WORD - 1));
         hash >>= 8;
     }
+}
+
+static inline void
+_Py_BloomFilter_Add(_PyBloomFilter *bloom, void *ptr)
+{
+    _Py_BloomFilter_AddHash(bloom, address_to_hash(ptr));
+}
+
+/* Separate value and structure dependencies from legacy object dependencies.
+ * Equal unicode keys have equal hashes; collisions only add invalidations. */
+static inline void
+_Py_BloomFilter_AddGlobal(_PyBloomFilter *bloom, void *dict,
+                         Py_hash_t key_hash, bool structure)
+{
+    uint64_t hash = address_to_hash(dict);
+    hash ^= structure ? UINT64_C(0x73c9b150ef248a6d) : UINT64_C(0x2f4a6198d7b3e05c);
+    hash *= (uint64_t)PyHASH_MULTIPLIER;
+    hash ^= (uint64_t)key_hash;
+    hash *= (uint64_t)PyHASH_MULTIPLIER;
+    _Py_BloomFilter_AddHash(bloom, hash);
 }
 
 static inline bool
@@ -317,11 +420,14 @@ bloom_filter_may_contain(const _PyBloomFilter *bloom, const _PyBloomFilter *hash
 
 #ifdef _Py_TIER2
 PyAPI_FUNC(void) _Py_Executors_InvalidateDependency(PyInterpreterState *interp, void *obj, int is_invalidation);
+PyAPI_FUNC(bool) _Py_Executors_InvalidateGlobalDependency(
+    PyInterpreterState *interp, void *dict, Py_hash_t key_hash, bool value_only);
 PyAPI_FUNC(void) _Py_Executors_InvalidateAll(PyInterpreterState *interp, int is_invalidation);
 PyAPI_FUNC(void) _Py_Executors_InvalidateCold(PyInterpreterState *interp);
 
 #else
 #  define _Py_Executors_InvalidateDependency(A, B, C) ((void)0)
+#  define _Py_Executors_InvalidateGlobalDependency(A, B, C, D) false
 #  define _Py_Executors_InvalidateAll(A, B) ((void)0)
 
 #endif

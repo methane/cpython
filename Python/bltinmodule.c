@@ -11,9 +11,11 @@
 #include "pycore_interp.h"        // _PyInterpreterState_GetConfig()
 #include "pycore_import.h"        // _PyImport_LazyImportModuleLevelObject  ()
 #include "pycore_iterobject.h"    // _PyCallIter_NewEx()
+#include "pycore_list.h"          // _PyListIterObject
 #include "pycore_long.h"          // _PyLong_CompactValue
 #include "pycore_modsupport.h"    // _PyArg_NoKwnames()
 #include "pycore_object.h"        // _Py_AddToAllObjects()
+#include "pycore_optimizer.h"     // _PyRegion_AllocationFails()
 #include "pycore_pyerrors.h"      // _PyErr_NoMemory()
 #include "pycore_pystate.h"       // _PyThreadState_GET()
 #include "pycore_pythonrun.h"     // _Py_SourceAsString()
@@ -3373,6 +3375,69 @@ check:
     }
     // All arguments are exhausted. Success!
     return NULL;
+}
+
+PyObject *
+_PyZip_NextListPair(PyObject *self, int *direct)
+{
+    assert(Py_IS_TYPE(self, &PyZip_Type));
+    *direct = 0;
+#ifndef Py_GIL_DISABLED
+    zipobject *zip = _zipobject_CAST(self);
+    if (zip->tuplesize == 2) {
+        PyObject *left = PyTuple_GET_ITEM(zip->ittuple, 0);
+        PyObject *right = PyTuple_GET_ITEM(zip->ittuple, 1);
+        if (left != right && Py_IS_TYPE(left, &PyListIter_Type) &&
+            Py_IS_TYPE(right, &PyListIter_Type)) {
+            _PyListIterObject *first = (_PyListIterObject *)left;
+            _PyListIterObject *second = (_PyListIterObject *)right;
+            if (first->it_seq != NULL && second->it_seq != NULL &&
+                (size_t)first->it_index < (size_t)PyList_GET_SIZE(first->it_seq) &&
+                (size_t)second->it_index < (size_t)PyList_GET_SIZE(second->it_seq)) {
+                PyObject *result = zip->result;
+                bool reuse = _PyObject_IsUniquelyReferenced(result);
+                if (reuse) {
+                    /* zip_next closes each old element before consuming the
+                     * next iterator. Preserve that order, and use the ordinary
+                     * path if an old element could re-enter or mutate zip. */
+                    PyObject *old_first = PyTuple_GET_ITEM(result, 0);
+                    PyObject *old_second = PyTuple_GET_ITEM(result, 1);
+                    if ((!PyBytes_CheckExact(old_first) && old_first != Py_None) ||
+                        (!PyBytes_CheckExact(old_second) && old_second != Py_None)) {
+                        return zip_next(self);
+                    }
+                    *direct = 1;
+                    Py_INCREF(result);
+                }
+                else {
+                    /* Allocate before consuming either iterator, as zip_next
+                     * does. Tuple allocation can schedule GC but cannot run it
+                     * here; no callback can change the guarded list positions. */
+                    *direct = 2;
+                    result = _PyRegion_AllocationFails("zip") ? NULL : PyTuple_New(2);
+                    if (result == NULL) {
+                        return NULL;
+                    }
+                }
+                PyObject *item = Py_NewRef(PyList_GET_ITEM(first->it_seq, first->it_index));
+                first->it_index++;
+                PyObject *old_item = PyTuple_GET_ITEM(result, 0);
+                PyTuple_SET_ITEM(result, 0, item);
+                Py_XDECREF(old_item);
+                item = Py_NewRef(PyList_GET_ITEM(second->it_seq, second->it_index));
+                second->it_index++;
+                old_item = PyTuple_GET_ITEM(result, 1);
+                PyTuple_SET_ITEM(result, 1, item);
+                Py_XDECREF(old_item);
+                if (reuse) {
+                    _PyTuple_Recycle(result);
+                }
+                return result;
+            }
+        }
+    }
+#endif
+    return zip_next(self);
 }
 
 static PyObject *

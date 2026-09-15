@@ -1,0 +1,15 @@
+{
+  "debug_executable_sha256": "6e07ddfd9cfa78557f989bdc7ff0123907dd3d268889ade66a4e43a5c379cc88",
+  "python_build": "debug Tier-2 interpreter JIT",
+  "pyperformance_version": "1.14.0",
+  "pyperf_version": "2.10.0",
+  "worker_environment": [
+    "PYTHON_JIT",
+    "PYTHON_TIER3_JIT",
+    "PYTHONPATH"
+  ],
+  "native_blocker": "Tools/jit/ensure_llvm21.sh --install: HTTP 403 downloading apt.llvm.org key",
+  "implementation_commit": "fb11f10ad604d2ccdd143212347a01a97010d48b",
+  "implementation_tree": "80a580b231065368dcc84257e4ac3608e5ad69c7",
+  "tracked_source_dirty_at_measurement": true
+}

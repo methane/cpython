@@ -1,0 +1,22 @@
+{
+  "tested_commit": "09590312a82542765547ceb5826f7f869a2e5ccf",
+  "tested_tree": "89fa45a49dc0ed07dba5f5fa420cfeb63fd21cce",
+  "tracked_dirty_before_measurement": false,
+  "executable": "build-jit/python",
+  "executable_sha256": "20171534367fd1b6df24529e3e509bb3372d5b74be18c7a8a5242f114eee2f54",
+  "llvm_prefix": "/usr/lib/llvm-21",
+  "llvm_version": "21.1.8",
+  "stencil_cflags": [
+    "-fno-vectorize",
+    "-fno-slp-vectorize"
+  ],
+  "cpu_affinity": "0 (permitted set 0-2)",
+  "environment": {
+    "PYTHON_JIT": "1",
+    "PYTHON_TIER3_JIT": "resident for on; unset for off"
+  },
+  "warmup": 3000,
+  "repeat": 3,
+  "sample_target": "approximately 100 ms for resident samples",
+  "timing_includes_per_call_result_validation": true
+}

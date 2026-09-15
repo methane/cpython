@@ -10,6 +10,7 @@
 #include "pycore_code.h"
 #include "pycore_dict.h"
 #include "pycore_emscripten_signal.h"  // _Py_CHECK_EMSCRIPTEN_SIGNALS
+#include "pycore_enumobject.h"    // _PyEnumObject
 #include "pycore_floatobject.h"   // _PyFloat_ExactDealloc()
 #include "pycore_frame.h"
 #include "pycore_function.h"
@@ -28,6 +29,7 @@
 #include "pycore_opcode_metadata.h" // EXTRA_CASES
 #include "pycore_opcode_utils.h"  // MAKE_FUNCTION_*
 #include "pycore_optimizer.h"     // _PyUOpExecutor_Type
+#include "pycore_iterobject.h"    // _PyZip_NextListPair()
 #include "pycore_pyatomic_ft_wrappers.h" // FT_ATOMIC_*
 #include "pycore_pyerrors.h"      // _PyErr_GetRaisedException()
 #include "pycore_pystate.h"       // _PyInterpreterState_GET()

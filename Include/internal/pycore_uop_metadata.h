@@ -109,6 +109,44 @@ const uint32_t _PyUop_Flags[MAX_UOP_ID+1] = {
     [_BINARY_OP_MULTIPLY_INT] = HAS_EXIT_FLAG | HAS_PURE_FLAG,
     [_BINARY_OP_ADD_INT] = HAS_EXIT_FLAG | HAS_PURE_FLAG,
     [_BINARY_OP_SUBTRACT_INT] = HAS_EXIT_FLAG | HAS_PURE_FLAG,
+    [_INT_REGION_START_0] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG,
+    [_INT_REGION_START_1] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG,
+    [_INT_REGION_START_2] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG,
+    [_INT_REGION_START_3] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG,
+    [_INT_REGION_START_4] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG,
+    [_INT_REGION_START] = HAS_ARG_FLAG | HAS_LOCAL_FLAG | HAS_EXIT_FLAG,
+    [_INT_REGION_LOCAL] = HAS_ARG_FLAG | HAS_LOCAL_FLAG,
+    [_INT_REGION_CONST] = HAS_ARG_FLAG,
+    [_INT_REGION_DUP] = 0,
+    [_INT_REGION_BINARY_0] = 0,
+    [_INT_REGION_BINARY_1] = 0,
+    [_INT_REGION_BINARY_2] = 0,
+    [_INT_REGION_BINARY_3] = 0,
+    [_INT_REGION_BINARY] = HAS_ARG_FLAG,
+    [_INT_REGION_RSHIFT] = HAS_ARG_FLAG,
+    [_INT_REGION_BOX] = HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG,
+    [_INT_REGION_GUARD_FLOAT] = HAS_EXIT_FLAG,
+    [_INT_REGION_DIVIDE] = HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG,
+    [_INT_REGION_0] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG,
+    [_INT_REGION_1] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG,
+    [_INT_REGION_2] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG,
+    [_INT_REGION_3] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG,
+    [_INT_REGION_4] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG,
+    [_INT_REGION_5] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG,
+    [_INT_REGION_6] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG,
+    [_INT_REGION_7] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG,
+    [_INT_REGION_8] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG,
+    [_INT_REGION] = HAS_ARG_FLAG | HAS_LOCAL_FLAG | HAS_EXIT_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG,
+    [_INT_REGION_COMPARE_0] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG | HAS_ESCAPES_FLAG,
+    [_INT_REGION_COMPARE_1] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG | HAS_ESCAPES_FLAG,
+    [_INT_REGION_COMPARE_2] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG | HAS_ESCAPES_FLAG,
+    [_INT_REGION_COMPARE_3] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG | HAS_ESCAPES_FLAG,
+    [_INT_REGION_COMPARE_4] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG | HAS_ESCAPES_FLAG,
+    [_INT_REGION_COMPARE_5] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG | HAS_ESCAPES_FLAG,
+    [_INT_REGION_COMPARE_6] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG | HAS_ESCAPES_FLAG,
+    [_INT_REGION_COMPARE_7] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG | HAS_ESCAPES_FLAG,
+    [_INT_REGION_COMPARE_8] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG | HAS_ESCAPES_FLAG,
+    [_INT_REGION_COMPARE] = HAS_ARG_FLAG | HAS_LOCAL_FLAG | HAS_EXIT_FLAG | HAS_ESCAPES_FLAG,
     [_BINARY_OP_ADD_INT_INPLACE] = HAS_EXIT_FLAG,
     [_BINARY_OP_SUBTRACT_INT_INPLACE] = HAS_EXIT_FLAG,
     [_BINARY_OP_MULTIPLY_INT_INPLACE] = HAS_EXIT_FLAG,
@@ -123,6 +161,13 @@ const uint32_t _PyUop_Flags[MAX_UOP_ID+1] = {
     [_BINARY_OP_ADD_FLOAT_INPLACE] = 0,
     [_BINARY_OP_SUBTRACT_FLOAT_INPLACE] = 0,
     [_BINARY_OP_MULTIPLY_FLOAT_INPLACE] = 0,
+    [_BINARY_OP_MULTIPLY_ADD_FLOAT_INPLACE] = HAS_PURE_FLAG,
+    [_BINARY_OP_MULTIPLY_SUBTRACT_FLOAT_INPLACE] = HAS_PURE_FLAG,
+    [_FLOAT_ATTRIBUTE_SUM_PRODUCTS] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG,
+    [_BINARY_OP_MULTIPLY_ADD_FLOAT_OWNED] = HAS_PURE_FLAG,
+    [_BINARY_OP_MULTIPLY_SUBTRACT_FLOAT_OWNED] = HAS_PURE_FLAG,
+    [_BINARY_OP_MULTIPLY_ADD_FLOAT_SHARED] = HAS_EXIT_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG,
+    [_BINARY_OP_MULTIPLY_SUBTRACT_FLOAT_SHARED] = HAS_EXIT_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG,
     [_BINARY_OP_ADD_FLOAT_INPLACE_RIGHT] = 0,
     [_BINARY_OP_MULTIPLY_FLOAT_INPLACE_RIGHT] = 0,
     [_BINARY_OP_SUBTRACT_FLOAT_INPLACE_RIGHT] = 0,
@@ -157,6 +202,8 @@ const uint32_t _PyUop_Flags[MAX_UOP_ID+1] = {
     [_LIST_APPEND] = HAS_ARG_FLAG | HAS_ERROR_FLAG,
     [_SET_ADD] = HAS_ARG_FLAG | HAS_ERROR_FLAG | HAS_ESCAPES_FLAG,
     [_STORE_SUBSCR] = HAS_ERROR_FLAG | HAS_ESCAPES_FLAG,
+    [_DICT_PAIR_INCREMENT] = HAS_ARG_FLAG | HAS_EXIT_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG,
+    [_STORE_SUBSCR_DICT_INHERITED] = HAS_ERROR_FLAG | HAS_ESCAPES_FLAG,
     [_STORE_SUBSCR_LIST_INT] = HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
     [_STORE_SUBSCR_DICT] = HAS_ERROR_FLAG | HAS_ESCAPES_FLAG,
     [_STORE_SUBSCR_DICT_KNOWN_HASH] = HAS_ERROR_FLAG | HAS_ESCAPES_FLAG,
@@ -194,6 +241,8 @@ const uint32_t _PyUop_Flags[MAX_UOP_ID+1] = {
     [_LOAD_GLOBAL] = HAS_ARG_FLAG | HAS_NAME_FLAG | HAS_ERROR_FLAG | HAS_ESCAPES_FLAG,
     [_PUSH_NULL_CONDITIONAL] = HAS_ARG_FLAG,
     [_GUARD_GLOBALS_VERSION] = HAS_DEOPT_FLAG,
+    [_GUARD_GLOBALS_VERSION_AND_IDENTITY] = HAS_DEOPT_FLAG,
+    [_GUARD_BUILTINS_IDENTITY] = HAS_DEOPT_FLAG,
     [_LOAD_GLOBAL_MODULE] = HAS_DEOPT_FLAG,
     [_LOAD_GLOBAL_BUILTINS] = HAS_DEOPT_FLAG,
     [_DELETE_FAST] = HAS_ARG_FLAG | HAS_LOCAL_FLAG | HAS_ERROR_FLAG | HAS_ESCAPES_FLAG,
@@ -224,6 +273,7 @@ const uint32_t _PyUop_Flags[MAX_UOP_ID+1] = {
     [_GUARD_TYPE_VERSION] = HAS_EXIT_FLAG,
     [_GUARD_TYPE_VERSION_LOCKED] = HAS_EXIT_FLAG,
     [_GUARD_TYPE] = HAS_EXIT_FLAG,
+    [_GUARD_NOS_TYPE] = HAS_EXIT_FLAG,
     [_CHECK_MANAGED_OBJECT_HAS_VALUES] = HAS_EXIT_FLAG,
     [_LOAD_ATTR_INSTANCE_VALUE] = HAS_DEOPT_FLAG,
     [_LOAD_ATTR_MODULE] = HAS_EXIT_FLAG,
@@ -238,12 +288,20 @@ const uint32_t _PyUop_Flags[MAX_UOP_ID+1] = {
     [_LOCK_OBJECT] = HAS_DEOPT_FLAG,
     [_STORE_ATTR_WITH_HINT] = HAS_ARG_FLAG | HAS_NAME_FLAG | HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
     [_STORE_ATTR_SLOT] = HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
+    [_COMPARE_TUPLE_PAIR_0] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG,
+    [_COMPARE_TUPLE_PAIR_1] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG,
+    [_COMPARE_TUPLE_PAIR] = HAS_ARG_FLAG | HAS_LOCAL_FLAG | HAS_EXIT_FLAG,
+    [_LIST_PAIR_APPEND_SCAN] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG,
+    [_COMPARE_LIST_PAIR_0] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG,
+    [_COMPARE_LIST_PAIR_1] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG,
+    [_COMPARE_LIST_PAIR] = HAS_ARG_FLAG | HAS_LOCAL_FLAG | HAS_EXIT_FLAG,
     [_COMPARE_OP] = HAS_ARG_FLAG | HAS_ERROR_FLAG | HAS_ESCAPES_FLAG,
     [_COMPARE_OP_FLOAT] = HAS_ARG_FLAG,
     [_COMPARE_OP_INT] = HAS_ARG_FLAG,
     [_COMPARE_OP_STR] = HAS_ARG_FLAG,
     [_IS_OP] = HAS_ARG_FLAG,
     [_CONTAINS_OP] = HAS_ARG_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG,
+    [_CONTAINS_OP_LIST_INT] = HAS_ARG_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG,
     [_GUARD_TOS_ANY_SET] = HAS_EXIT_FLAG,
     [_GUARD_TOS_SET] = HAS_EXIT_FLAG,
     [_GUARD_TOS_FROZENSET] = HAS_EXIT_FLAG,
@@ -264,9 +322,20 @@ const uint32_t _PyUop_Flags[MAX_UOP_ID+1] = {
     [_GUARD_ITER_VIRTUAL] = HAS_EXIT_FLAG,
     [_PUSH_TAGGED_ZERO] = 0,
     [_GET_ITER_TRAD] = HAS_ERROR_FLAG | HAS_ESCAPES_FLAG,
+    [_GET_ITER_RANGE] = HAS_EXIT_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG,
     [_FOR_ITER_TIER_TWO] = HAS_EXIT_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG,
     [_GUARD_TYPE_ITER] = HAS_EXIT_FLAG,
     [_ITER_NEXT_INLINE] = HAS_EXIT_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG,
+    [_GUARD_ENUM_LIST] = HAS_EXIT_FLAG,
+    [_ENUM_LIST_INT_SCAN_0] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG | HAS_ESCAPES_FLAG,
+    [_ENUM_LIST_INT_SCAN_1] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG | HAS_ESCAPES_FLAG,
+    [_ENUM_LIST_INT_SCAN_2] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG | HAS_ESCAPES_FLAG,
+    [_ENUM_LIST_INT_SCAN_3] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG | HAS_ESCAPES_FLAG,
+    [_ENUM_LIST_INT_SCAN_4] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG | HAS_ESCAPES_FLAG,
+    [_ENUM_LIST_INT_SCAN_5] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG | HAS_ESCAPES_FLAG,
+    [_ENUM_LIST_INT_SCAN] = HAS_ARG_FLAG | HAS_LOCAL_FLAG | HAS_EXIT_FLAG | HAS_ESCAPES_FLAG,
+    [_ITER_NEXT_ENUM_LIST] = HAS_EXIT_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG,
+    [_ITER_NEXT_ZIP_LIST_PAIR] = HAS_EXIT_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG,
     [_GUARD_NOS_ITER_VIRTUAL] = HAS_EXIT_FLAG,
     [_GUARD_TOS_NOT_NULL] = HAS_EXIT_FLAG,
     [_FOR_ITER_VIRTUAL_TIER_TWO] = HAS_EXIT_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG,
@@ -310,6 +379,58 @@ const uint32_t _PyUop_Flags[MAX_UOP_ID+1] = {
     [_INIT_CALL_PY_EXACT_ARGS_3] = HAS_PURE_FLAG,
     [_INIT_CALL_PY_EXACT_ARGS_4] = HAS_PURE_FLAG,
     [_INIT_CALL_PY_EXACT_ARGS] = HAS_ARG_FLAG | HAS_PURE_FLAG,
+    [_CALL_PY_TRIVIAL_0] = HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
+    [_CALL_PY_TRIVIAL_1] = HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
+    [_CALL_PY_TRIVIAL_2] = HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
+    [_CALL_PY_TRIVIAL_3] = HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
+    [_CALL_PY_TRIVIAL_4] = HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
+    [_CALL_PY_TRIVIAL] = HAS_ARG_FLAG | HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
+    [_CALL_PY_ATTRIBUTE_0] = HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
+    [_CALL_PY_ATTRIBUTE_1] = HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
+    [_CALL_PY_ATTRIBUTE_2] = HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
+    [_CALL_PY_ATTRIBUTE_3] = HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
+    [_CALL_PY_ATTRIBUTE_4] = HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
+    [_CALL_PY_ATTRIBUTE] = HAS_ARG_FLAG | HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
+    [_GUARD_CALL_GLOBALS_IDENTITY_0] = HAS_DEOPT_FLAG,
+    [_GUARD_CALL_GLOBALS_IDENTITY_1] = HAS_DEOPT_FLAG,
+    [_GUARD_CALL_GLOBALS_IDENTITY_2] = HAS_DEOPT_FLAG,
+    [_GUARD_CALL_GLOBALS_IDENTITY_3] = HAS_DEOPT_FLAG,
+    [_GUARD_CALL_GLOBALS_IDENTITY_4] = HAS_DEOPT_FLAG,
+    [_GUARD_CALL_GLOBALS_IDENTITY] = HAS_ARG_FLAG | HAS_DEOPT_FLAG,
+    [_CALL_PY_ATTRIBUTE_IF_0] = HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
+    [_CALL_PY_ATTRIBUTE_IF_1] = HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
+    [_CALL_PY_ATTRIBUTE_IF_2] = HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
+    [_CALL_PY_ATTRIBUTE_IF_3] = HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
+    [_CALL_PY_ATTRIBUTE_IF_4] = HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
+    [_CALL_PY_ATTRIBUTE_IF] = HAS_ARG_FLAG | HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
+    [_CALL_PY_LIST_0] = HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
+    [_CALL_PY_LIST_1] = HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
+    [_CALL_PY_LIST_2] = HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
+    [_CALL_PY_LIST_3] = HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
+    [_CALL_PY_LIST_4] = HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
+    [_CALL_PY_LIST_5] = HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
+    [_CALL_PY_LIST_6] = HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
+    [_CALL_PY_LIST_7] = HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
+    [_CALL_PY_LIST_8] = HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
+    [_CALL_PY_LIST_9] = HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
+    [_CALL_PY_LIST] = HAS_ARG_FLAG | HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
+    [_CALL_PY_ATTRIBUTE_SEARCH_0] = HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
+    [_CALL_PY_ATTRIBUTE_SEARCH_1] = HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
+    [_CALL_PY_ATTRIBUTE_SEARCH_2] = HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
+    [_CALL_PY_ATTRIBUTE_SEARCH_3] = HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
+    [_CALL_PY_ATTRIBUTE_SEARCH_4] = HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
+    [_CALL_PY_ATTRIBUTE_SEARCH_5] = HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
+    [_CALL_PY_ATTRIBUTE_SEARCH_6] = HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
+    [_CALL_PY_ATTRIBUTE_SEARCH_7] = HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
+    [_CALL_PY_ATTRIBUTE_SEARCH_8] = HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
+    [_CALL_PY_ATTRIBUTE_SEARCH_9] = HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
+    [_CALL_PY_ATTRIBUTE_SEARCH_10] = HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
+    [_CALL_PY_ATTRIBUTE_SEARCH_11] = HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
+    [_CALL_PY_ATTRIBUTE_SEARCH] = HAS_ARG_FLAG | HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
+    [_CALL_PY_LIST_REMOVE_0] = HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
+    [_CALL_PY_LIST_REMOVE_1] = HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
+    [_CALL_PY_LIST_REMOVE] = HAS_ARG_FLAG | HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
+    [_LIST_REMOVE_LOCAL] = HAS_LOCAL_FLAG | HAS_DEOPT_FLAG,
     [_PUSH_FRAME] = HAS_SYNC_SP_FLAG | HAS_NEEDS_GUARD_IP_FLAG,
     [_GUARD_NOS_NULL] = HAS_EXIT_FLAG,
     [_GUARD_THIRD_NULL] = HAS_EXIT_FLAG,
@@ -322,9 +443,16 @@ const uint32_t _PyUop_Flags[MAX_UOP_ID+1] = {
     [_CHECK_OBJECT] = HAS_ARG_FLAG | HAS_EXIT_FLAG,
     [_ALLOCATE_OBJECT] = HAS_ARG_FLAG | HAS_EXIT_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG,
     [_CREATE_INIT_FRAME] = HAS_ARG_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG | HAS_SYNC_SP_FLAG,
+    [_CALL_CLASS_ATTRIBUTES_0] = HAS_DEOPT_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG | HAS_SYNC_SP_FLAG | HAS_NEEDS_GUARD_IP_FLAG,
+    [_CALL_CLASS_ATTRIBUTES_1] = HAS_DEOPT_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG | HAS_SYNC_SP_FLAG | HAS_NEEDS_GUARD_IP_FLAG,
+    [_CALL_CLASS_ATTRIBUTES_2] = HAS_DEOPT_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG | HAS_SYNC_SP_FLAG | HAS_NEEDS_GUARD_IP_FLAG,
+    [_CALL_CLASS_ATTRIBUTES_3] = HAS_DEOPT_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG | HAS_SYNC_SP_FLAG | HAS_NEEDS_GUARD_IP_FLAG,
+    [_CALL_CLASS_ATTRIBUTES_4] = HAS_DEOPT_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG | HAS_SYNC_SP_FLAG | HAS_NEEDS_GUARD_IP_FLAG,
+    [_CALL_CLASS_ATTRIBUTES] = HAS_ARG_FLAG | HAS_DEOPT_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG | HAS_SYNC_SP_FLAG | HAS_NEEDS_GUARD_IP_FLAG,
     [_EXIT_INIT_CHECK] = HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG,
     [_GUARD_CALLABLE_BUILTIN_CLASS] = HAS_ARG_FLAG | HAS_EXIT_FLAG,
     [_CALL_BUILTIN_CLASS] = HAS_ARG_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG,
+    [_CALL_RANGE_COMPACT] = HAS_EXIT_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG,
     [_GUARD_CALLABLE_BUILTIN_O] = HAS_ARG_FLAG | HAS_EXIT_FLAG,
     [_CALL_BUILTIN_O] = HAS_ARG_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG,
     [_GUARD_CALLABLE_BUILTIN_FAST] = HAS_ARG_FLAG | HAS_EXIT_FLAG,
@@ -333,6 +461,10 @@ const uint32_t _PyUop_Flags[MAX_UOP_ID+1] = {
     [_CALL_BUILTIN_FAST_WITH_KEYWORDS] = HAS_ARG_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG,
     [_GUARD_CALLABLE_LEN] = HAS_EXIT_FLAG,
     [_CALL_LEN] = HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG,
+    [_LEN_SUBSCR_LIST] = HAS_ARG_FLAG | HAS_LOCAL_FLAG | HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
+    [_CALL_LEN_CONSUMER] = HAS_ARG_FLAG | HAS_LOCAL_FLAG | HAS_EXIT_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG,
+    [_CALL_LEN_LEFT_COMPARE] = HAS_ARG_FLAG | HAS_EXIT_FLAG | HAS_ESCAPES_FLAG,
+    [_CALL_STR_TAILMATCH] = HAS_ARG_FLAG | HAS_EXIT_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG,
     [_GUARD_CALLABLE_ISINSTANCE] = HAS_EXIT_FLAG,
     [_CALL_ISINSTANCE] = HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG,
     [_GUARD_CALLABLE_LIST_APPEND] = HAS_EXIT_FLAG,
@@ -392,9 +524,32 @@ const uint32_t _PyUop_Flags[MAX_UOP_ID+1] = {
     [_GUARD_IS_NONE_POP] = HAS_EXIT_FLAG,
     [_GUARD_IS_NOT_NONE_POP] = HAS_EXIT_FLAG | HAS_ESCAPES_FLAG,
     [_JUMP_TO_TOP] = 0,
+    [_FLOAT_RANGE_GUARD] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG,
+    [_POLY_SCALAR_CONST] = 0,
+    [_POLY_SCALAR_RSHIFT] = HAS_ARG_FLAG,
+    [_POLY_SCALAR_DIVIDE] = HAS_ARG_FLAG,
+    [_POLY_STORE_0] = 0,
+    [_POLY_STORE_1] = 0,
+    [_POLY_STORE_2] = 0,
+    [_POLY_STORE] = HAS_ARG_FLAG,
+    [_POLY_LOCAL] = HAS_ARG_FLAG | HAS_LOCAL_FLAG,
+    [_POLY_INDUCTION] = 0,
+    [_POLY_CONST] = HAS_ARG_FLAG,
+    [_POLY_DUP] = HAS_ARG_FLAG,
+    [_POLY_BINARY_0] = 0,
+    [_POLY_BINARY_1] = 0,
+    [_POLY_BINARY_2] = 0,
+    [_POLY_BINARY_3] = 0,
+    [_POLY_BINARY] = HAS_ARG_FLAG,
+    [_POLY_RSHIFT] = HAS_ARG_FLAG,
+    [_FLOAT_RANGE_PREPARE_0] = 0,
+    [_FLOAT_RANGE_PREPARE_1] = 0,
+    [_FLOAT_RANGE_PREPARE] = HAS_ARG_FLAG,
+    [_FLOAT_RANGE_REDUCE] = HAS_ARG_FLAG | HAS_LOCAL_FLAG | HAS_EXIT_FLAG | HAS_ESCAPES_FLAG,
     [_TIER3_RANGE_CHUNK] = HAS_ARG_FLAG | HAS_ERROR_FLAG | HAS_ESCAPES_FLAG,
     [_TIER3_RANGE_CHUNK_NATIVE] = HAS_ARG_FLAG | HAS_ERROR_FLAG | HAS_ESCAPES_FLAG,
     [_TIER3_RANGE_CHUNK_RESIDENT] = HAS_ARG_FLAG | HAS_PERIODIC_FLAG | HAS_ERROR_FLAG | HAS_ESCAPES_FLAG,
+    [_TIER3_RANGE_CHUNK_RESIDENT_AFFINE] = HAS_ARG_FLAG | HAS_PERIODIC_FLAG | HAS_ERROR_FLAG | HAS_ESCAPES_FLAG,
     [_TIER3_RANGE_CHUNK_RESIDENT_SQUARES] = HAS_ARG_FLAG | HAS_PERIODIC_FLAG | HAS_ERROR_FLAG | HAS_ESCAPES_FLAG,
     [_SET_IP] = 0,
     [_CHECK_STACK_SPACE_OPERAND] = HAS_DEOPT_FLAG,
@@ -441,11 +596,29 @@ const ReplicationRange _PyUop_Replication[MAX_UOP_ID+1] = {
     [_LOAD_FAST_BORROW] = { 0, 8 },
     [_LOAD_SMALL_INT] = { 0, 4 },
     [_SWAP_FAST] = { 0, 8 },
+    [_INT_REGION_START] = { 0, 5 },
+    [_INT_REGION_BINARY] = { 0, 4 },
+    [_INT_REGION] = { 0, 9 },
+    [_INT_REGION_COMPARE] = { 0, 9 },
+    [_COMPARE_TUPLE_PAIR] = { 0, 2 },
+    [_COMPARE_LIST_PAIR] = { 0, 2 },
+    [_ENUM_LIST_INT_SCAN] = { 0, 6 },
     [_INIT_CALL_PY_EXACT_ARGS] = { 0, 5 },
+    [_CALL_PY_TRIVIAL] = { 0, 5 },
+    [_CALL_PY_ATTRIBUTE] = { 0, 5 },
+    [_GUARD_CALL_GLOBALS_IDENTITY] = { 0, 5 },
+    [_CALL_PY_ATTRIBUTE_IF] = { 0, 5 },
+    [_CALL_PY_LIST] = { 0, 10 },
+    [_CALL_PY_ATTRIBUTE_SEARCH] = { 0, 12 },
+    [_CALL_PY_LIST_REMOVE] = { 0, 2 },
+    [_CALL_CLASS_ATTRIBUTES] = { 0, 5 },
     [_COPY] = { 1, 4 },
     [_SWAP] = { 2, 4 },
     [_GUARD_BIT_IS_SET_POP] = { 4, 8 },
     [_GUARD_BIT_IS_UNSET_POP] = { 4, 8 },
+    [_POLY_STORE] = { 0, 3 },
+    [_POLY_BINARY] = { 0, 4 },
+    [_FLOAT_RANGE_PREPARE] = { 0, 2 },
 };
 
 const _PyUopCachingInfo _PyUop_Caching[MAX_UOP_ID+1] = {
@@ -1115,6 +1288,348 @@ const _PyUopCachingInfo _PyUop_Caching[MAX_UOP_ID+1] = {
             { -1, -1, -1 },
         },
     },
+    [_INT_REGION_START_0] = {
+        .best = { 2, 2, 2, 2 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 2, 2, _INT_REGION_START_0_r22 },
+            { -1, -1, -1 },
+        },
+    },
+    [_INT_REGION_START_1] = {
+        .best = { 2, 2, 2, 2 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 2, 2, _INT_REGION_START_1_r22 },
+            { -1, -1, -1 },
+        },
+    },
+    [_INT_REGION_START_2] = {
+        .best = { 2, 2, 2, 2 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 2, 2, _INT_REGION_START_2_r22 },
+            { -1, -1, -1 },
+        },
+    },
+    [_INT_REGION_START_3] = {
+        .best = { 2, 2, 2, 2 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 2, 2, _INT_REGION_START_3_r22 },
+            { -1, -1, -1 },
+        },
+    },
+    [_INT_REGION_START_4] = {
+        .best = { 2, 2, 2, 2 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 2, 2, _INT_REGION_START_4_r22 },
+            { -1, -1, -1 },
+        },
+    },
+    [_INT_REGION_START] = {
+        .best = { 2, 2, 2, 2 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 2, 2, _INT_REGION_START_r22 },
+            { -1, -1, -1 },
+        },
+    },
+    [_INT_REGION_LOCAL] = {
+        .best = { 0, 1, 2, 2 },
+        .entries = {
+            { 1, 0, _INT_REGION_LOCAL_r01 },
+            { 2, 1, _INT_REGION_LOCAL_r12 },
+            { 3, 2, _INT_REGION_LOCAL_r23 },
+            { -1, -1, -1 },
+        },
+    },
+    [_INT_REGION_CONST] = {
+        .best = { 0, 1, 2, 2 },
+        .entries = {
+            { 1, 0, _INT_REGION_CONST_r01 },
+            { 2, 1, _INT_REGION_CONST_r12 },
+            { 3, 2, _INT_REGION_CONST_r23 },
+            { -1, -1, -1 },
+        },
+    },
+    [_INT_REGION_DUP] = {
+        .best = { 0, 1, 2, 2 },
+        .entries = {
+            { 2, 0, _INT_REGION_DUP_r02 },
+            { 2, 1, _INT_REGION_DUP_r12 },
+            { 3, 2, _INT_REGION_DUP_r23 },
+            { -1, -1, -1 },
+        },
+    },
+    [_INT_REGION_BINARY_0] = {
+        .best = { 0, 1, 2, 3 },
+        .entries = {
+            { 1, 0, _INT_REGION_BINARY_0_r01 },
+            { 1, 1, _INT_REGION_BINARY_0_r11 },
+            { 1, 2, _INT_REGION_BINARY_0_r21 },
+            { 2, 3, _INT_REGION_BINARY_0_r32 },
+        },
+    },
+    [_INT_REGION_BINARY_1] = {
+        .best = { 0, 1, 2, 3 },
+        .entries = {
+            { 1, 0, _INT_REGION_BINARY_1_r01 },
+            { 1, 1, _INT_REGION_BINARY_1_r11 },
+            { 1, 2, _INT_REGION_BINARY_1_r21 },
+            { 2, 3, _INT_REGION_BINARY_1_r32 },
+        },
+    },
+    [_INT_REGION_BINARY_2] = {
+        .best = { 0, 1, 2, 3 },
+        .entries = {
+            { 1, 0, _INT_REGION_BINARY_2_r01 },
+            { 1, 1, _INT_REGION_BINARY_2_r11 },
+            { 1, 2, _INT_REGION_BINARY_2_r21 },
+            { 2, 3, _INT_REGION_BINARY_2_r32 },
+        },
+    },
+    [_INT_REGION_BINARY_3] = {
+        .best = { 0, 1, 2, 3 },
+        .entries = {
+            { 1, 0, _INT_REGION_BINARY_3_r01 },
+            { 1, 1, _INT_REGION_BINARY_3_r11 },
+            { 1, 2, _INT_REGION_BINARY_3_r21 },
+            { 2, 3, _INT_REGION_BINARY_3_r32 },
+        },
+    },
+    [_INT_REGION_BINARY] = {
+        .best = { 0, 1, 2, 3 },
+        .entries = {
+            { 1, 0, _INT_REGION_BINARY_r01 },
+            { 1, 1, _INT_REGION_BINARY_r11 },
+            { 1, 2, _INT_REGION_BINARY_r21 },
+            { 2, 3, _INT_REGION_BINARY_r32 },
+        },
+    },
+    [_INT_REGION_RSHIFT] = {
+        .best = { 0, 1, 2, 3 },
+        .entries = {
+            { 1, 0, _INT_REGION_RSHIFT_r01 },
+            { 1, 1, _INT_REGION_RSHIFT_r11 },
+            { 1, 2, _INT_REGION_RSHIFT_r21 },
+            { 2, 3, _INT_REGION_RSHIFT_r32 },
+        },
+    },
+    [_INT_REGION_BOX] = {
+        .best = { 0, 1, 2, 3 },
+        .entries = {
+            { 1, 0, _INT_REGION_BOX_r01 },
+            { 1, 1, _INT_REGION_BOX_r11 },
+            { 2, 2, _INT_REGION_BOX_r22 },
+            { 3, 3, _INT_REGION_BOX_r33 },
+        },
+    },
+    [_INT_REGION_GUARD_FLOAT] = {
+        .best = { 0, 1, 2, 3 },
+        .entries = {
+            { 3, 0, _INT_REGION_GUARD_FLOAT_r03 },
+            { 3, 1, _INT_REGION_GUARD_FLOAT_r13 },
+            { 3, 2, _INT_REGION_GUARD_FLOAT_r23 },
+            { 3, 3, _INT_REGION_GUARD_FLOAT_r33 },
+        },
+    },
+    [_INT_REGION_DIVIDE] = {
+        .best = { 2, 2, 2, 2 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 1, 2, _INT_REGION_DIVIDE_r21 },
+            { -1, -1, -1 },
+        },
+    },
+    [_INT_REGION_0] = {
+        .best = { 2, 2, 2, 2 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 3, 2, _INT_REGION_0_r23 },
+            { -1, -1, -1 },
+        },
+    },
+    [_INT_REGION_1] = {
+        .best = { 2, 2, 2, 2 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 3, 2, _INT_REGION_1_r23 },
+            { -1, -1, -1 },
+        },
+    },
+    [_INT_REGION_2] = {
+        .best = { 2, 2, 2, 2 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 3, 2, _INT_REGION_2_r23 },
+            { -1, -1, -1 },
+        },
+    },
+    [_INT_REGION_3] = {
+        .best = { 2, 2, 2, 2 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 3, 2, _INT_REGION_3_r23 },
+            { -1, -1, -1 },
+        },
+    },
+    [_INT_REGION_4] = {
+        .best = { 2, 2, 2, 2 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 3, 2, _INT_REGION_4_r23 },
+            { -1, -1, -1 },
+        },
+    },
+    [_INT_REGION_5] = {
+        .best = { 2, 2, 2, 2 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 3, 2, _INT_REGION_5_r23 },
+            { -1, -1, -1 },
+        },
+    },
+    [_INT_REGION_6] = {
+        .best = { 2, 2, 2, 2 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 3, 2, _INT_REGION_6_r23 },
+            { -1, -1, -1 },
+        },
+    },
+    [_INT_REGION_7] = {
+        .best = { 2, 2, 2, 2 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 3, 2, _INT_REGION_7_r23 },
+            { -1, -1, -1 },
+        },
+    },
+    [_INT_REGION_8] = {
+        .best = { 2, 2, 2, 2 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 3, 2, _INT_REGION_8_r23 },
+            { -1, -1, -1 },
+        },
+    },
+    [_INT_REGION] = {
+        .best = { 2, 2, 2, 2 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 3, 2, _INT_REGION_r23 },
+            { -1, -1, -1 },
+        },
+    },
+    [_INT_REGION_COMPARE_0] = {
+        .best = { 2, 2, 2, 2 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 3, 2, _INT_REGION_COMPARE_0_r23 },
+            { -1, -1, -1 },
+        },
+    },
+    [_INT_REGION_COMPARE_1] = {
+        .best = { 2, 2, 2, 2 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 3, 2, _INT_REGION_COMPARE_1_r23 },
+            { -1, -1, -1 },
+        },
+    },
+    [_INT_REGION_COMPARE_2] = {
+        .best = { 2, 2, 2, 2 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 3, 2, _INT_REGION_COMPARE_2_r23 },
+            { -1, -1, -1 },
+        },
+    },
+    [_INT_REGION_COMPARE_3] = {
+        .best = { 2, 2, 2, 2 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 3, 2, _INT_REGION_COMPARE_3_r23 },
+            { -1, -1, -1 },
+        },
+    },
+    [_INT_REGION_COMPARE_4] = {
+        .best = { 2, 2, 2, 2 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 3, 2, _INT_REGION_COMPARE_4_r23 },
+            { -1, -1, -1 },
+        },
+    },
+    [_INT_REGION_COMPARE_5] = {
+        .best = { 2, 2, 2, 2 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 3, 2, _INT_REGION_COMPARE_5_r23 },
+            { -1, -1, -1 },
+        },
+    },
+    [_INT_REGION_COMPARE_6] = {
+        .best = { 2, 2, 2, 2 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 3, 2, _INT_REGION_COMPARE_6_r23 },
+            { -1, -1, -1 },
+        },
+    },
+    [_INT_REGION_COMPARE_7] = {
+        .best = { 2, 2, 2, 2 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 3, 2, _INT_REGION_COMPARE_7_r23 },
+            { -1, -1, -1 },
+        },
+    },
+    [_INT_REGION_COMPARE_8] = {
+        .best = { 2, 2, 2, 2 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 3, 2, _INT_REGION_COMPARE_8_r23 },
+            { -1, -1, -1 },
+        },
+    },
+    [_INT_REGION_COMPARE] = {
+        .best = { 2, 2, 2, 2 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 3, 2, _INT_REGION_COMPARE_r23 },
+            { -1, -1, -1 },
+        },
+    },
     [_BINARY_OP_ADD_INT_INPLACE] = {
         .best = { 0, 1, 2, 2 },
         .entries = {
@@ -1239,6 +1754,69 @@ const _PyUopCachingInfo _PyUop_Caching[MAX_UOP_ID+1] = {
             { 3, 1, _BINARY_OP_MULTIPLY_FLOAT_INPLACE_r13 },
             { 3, 2, _BINARY_OP_MULTIPLY_FLOAT_INPLACE_r23 },
             { -1, -1, -1 },
+        },
+    },
+    [_BINARY_OP_MULTIPLY_ADD_FLOAT_INPLACE] = {
+        .best = { 3, 3, 3, 3 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 1, 3, _BINARY_OP_MULTIPLY_ADD_FLOAT_INPLACE_r31 },
+        },
+    },
+    [_BINARY_OP_MULTIPLY_SUBTRACT_FLOAT_INPLACE] = {
+        .best = { 3, 3, 3, 3 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 1, 3, _BINARY_OP_MULTIPLY_SUBTRACT_FLOAT_INPLACE_r31 },
+        },
+    },
+    [_FLOAT_ATTRIBUTE_SUM_PRODUCTS] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 1, 0, _FLOAT_ATTRIBUTE_SUM_PRODUCTS_r01 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_BINARY_OP_MULTIPLY_ADD_FLOAT_OWNED] = {
+        .best = { 3, 3, 3, 3 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 3, 3, _BINARY_OP_MULTIPLY_ADD_FLOAT_OWNED_r33 },
+        },
+    },
+    [_BINARY_OP_MULTIPLY_SUBTRACT_FLOAT_OWNED] = {
+        .best = { 3, 3, 3, 3 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 3, 3, _BINARY_OP_MULTIPLY_SUBTRACT_FLOAT_OWNED_r33 },
+        },
+    },
+    [_BINARY_OP_MULTIPLY_ADD_FLOAT_SHARED] = {
+        .best = { 3, 3, 3, 3 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 1, 3, _BINARY_OP_MULTIPLY_ADD_FLOAT_SHARED_r31 },
+        },
+    },
+    [_BINARY_OP_MULTIPLY_SUBTRACT_FLOAT_SHARED] = {
+        .best = { 3, 3, 3, 3 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 1, 3, _BINARY_OP_MULTIPLY_SUBTRACT_FLOAT_SHARED_r31 },
         },
     },
     [_BINARY_OP_ADD_FLOAT_INPLACE_RIGHT] = {
@@ -1545,6 +2123,24 @@ const _PyUopCachingInfo _PyUop_Caching[MAX_UOP_ID+1] = {
             { -1, -1, -1 },
             { -1, -1, -1 },
             { 0, 3, _STORE_SUBSCR_r30 },
+        },
+    },
+    [_DICT_PAIR_INCREMENT] = {
+        .best = { 3, 3, 3, 3 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 0, 3, _DICT_PAIR_INCREMENT_r30 },
+        },
+    },
+    [_STORE_SUBSCR_DICT_INHERITED] = {
+        .best = { 3, 3, 3, 3 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 0, 3, _STORE_SUBSCR_DICT_INHERITED_r30 },
         },
     },
     [_STORE_SUBSCR_LIST_INT] = {
@@ -1880,6 +2476,24 @@ const _PyUopCachingInfo _PyUop_Caching[MAX_UOP_ID+1] = {
             { 3, 3, _GUARD_GLOBALS_VERSION_r33 },
         },
     },
+    [_GUARD_GLOBALS_VERSION_AND_IDENTITY] = {
+        .best = { 0, 1, 2, 3 },
+        .entries = {
+            { 0, 0, _GUARD_GLOBALS_VERSION_AND_IDENTITY_r00 },
+            { 1, 1, _GUARD_GLOBALS_VERSION_AND_IDENTITY_r11 },
+            { 2, 2, _GUARD_GLOBALS_VERSION_AND_IDENTITY_r22 },
+            { 3, 3, _GUARD_GLOBALS_VERSION_AND_IDENTITY_r33 },
+        },
+    },
+    [_GUARD_BUILTINS_IDENTITY] = {
+        .best = { 0, 1, 2, 3 },
+        .entries = {
+            { 0, 0, _GUARD_BUILTINS_IDENTITY_r00 },
+            { 1, 1, _GUARD_BUILTINS_IDENTITY_r11 },
+            { 2, 2, _GUARD_BUILTINS_IDENTITY_r22 },
+            { 3, 3, _GUARD_BUILTINS_IDENTITY_r33 },
+        },
+    },
     [_LOAD_GLOBAL_MODULE] = {
         .best = { 0, 0, 0, 0 },
         .entries = {
@@ -2150,6 +2764,15 @@ const _PyUopCachingInfo _PyUop_Caching[MAX_UOP_ID+1] = {
             { 3, 3, _GUARD_TYPE_r33 },
         },
     },
+    [_GUARD_NOS_TYPE] = {
+        .best = { 0, 1, 2, 3 },
+        .entries = {
+            { 2, 0, _GUARD_NOS_TYPE_r02 },
+            { 2, 1, _GUARD_NOS_TYPE_r12 },
+            { 2, 2, _GUARD_NOS_TYPE_r22 },
+            { 3, 3, _GUARD_NOS_TYPE_r33 },
+        },
+    },
     [_CHECK_MANAGED_OBJECT_HAS_VALUES] = {
         .best = { 0, 1, 2, 3 },
         .entries = {
@@ -2276,6 +2899,69 @@ const _PyUopCachingInfo _PyUop_Caching[MAX_UOP_ID+1] = {
             { -1, -1, -1 },
         },
     },
+    [_COMPARE_TUPLE_PAIR_0] = {
+        .best = { 2, 2, 2, 2 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 3, 2, _COMPARE_TUPLE_PAIR_0_r23 },
+            { -1, -1, -1 },
+        },
+    },
+    [_COMPARE_TUPLE_PAIR_1] = {
+        .best = { 2, 2, 2, 2 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 3, 2, _COMPARE_TUPLE_PAIR_1_r23 },
+            { -1, -1, -1 },
+        },
+    },
+    [_COMPARE_TUPLE_PAIR] = {
+        .best = { 2, 2, 2, 2 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 3, 2, _COMPARE_TUPLE_PAIR_r23 },
+            { -1, -1, -1 },
+        },
+    },
+    [_LIST_PAIR_APPEND_SCAN] = {
+        .best = { 2, 2, 2, 2 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 2, 2, _LIST_PAIR_APPEND_SCAN_r22 },
+            { -1, -1, -1 },
+        },
+    },
+    [_COMPARE_LIST_PAIR_0] = {
+        .best = { 2, 2, 2, 2 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 3, 2, _COMPARE_LIST_PAIR_0_r23 },
+            { -1, -1, -1 },
+        },
+    },
+    [_COMPARE_LIST_PAIR_1] = {
+        .best = { 2, 2, 2, 2 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 3, 2, _COMPARE_LIST_PAIR_1_r23 },
+            { -1, -1, -1 },
+        },
+    },
+    [_COMPARE_LIST_PAIR] = {
+        .best = { 2, 2, 2, 2 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 3, 2, _COMPARE_LIST_PAIR_r23 },
+            { -1, -1, -1 },
+        },
+    },
     [_COMPARE_OP] = {
         .best = { 2, 2, 2, 2 },
         .entries = {
@@ -2327,6 +3013,15 @@ const _PyUopCachingInfo _PyUop_Caching[MAX_UOP_ID+1] = {
             { -1, -1, -1 },
             { -1, -1, -1 },
             { 3, 2, _CONTAINS_OP_r23 },
+            { -1, -1, -1 },
+        },
+    },
+    [_CONTAINS_OP_LIST_INT] = {
+        .best = { 2, 2, 2, 2 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 3, 2, _CONTAINS_OP_LIST_INT_r23 },
             { -1, -1, -1 },
         },
     },
@@ -2510,6 +3205,15 @@ const _PyUopCachingInfo _PyUop_Caching[MAX_UOP_ID+1] = {
             { -1, -1, -1 },
         },
     },
+    [_GET_ITER_RANGE] = {
+        .best = { 1, 1, 1, 1 },
+        .entries = {
+            { -1, -1, -1 },
+            { 2, 1, _GET_ITER_RANGE_r12 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
     [_FOR_ITER_TIER_TWO] = {
         .best = { 2, 2, 2, 2 },
         .entries = {
@@ -2534,6 +3238,96 @@ const _PyUopCachingInfo _PyUop_Caching[MAX_UOP_ID+1] = {
             { -1, -1, -1 },
             { -1, -1, -1 },
             { 3, 2, _ITER_NEXT_INLINE_r23 },
+            { -1, -1, -1 },
+        },
+    },
+    [_GUARD_ENUM_LIST] = {
+        .best = { 0, 1, 2, 3 },
+        .entries = {
+            { 2, 0, _GUARD_ENUM_LIST_r02 },
+            { 2, 1, _GUARD_ENUM_LIST_r12 },
+            { 2, 2, _GUARD_ENUM_LIST_r22 },
+            { 3, 3, _GUARD_ENUM_LIST_r33 },
+        },
+    },
+    [_ENUM_LIST_INT_SCAN_0] = {
+        .best = { 2, 2, 2, 2 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 2, 2, _ENUM_LIST_INT_SCAN_0_r22 },
+            { -1, -1, -1 },
+        },
+    },
+    [_ENUM_LIST_INT_SCAN_1] = {
+        .best = { 2, 2, 2, 2 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 2, 2, _ENUM_LIST_INT_SCAN_1_r22 },
+            { -1, -1, -1 },
+        },
+    },
+    [_ENUM_LIST_INT_SCAN_2] = {
+        .best = { 2, 2, 2, 2 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 2, 2, _ENUM_LIST_INT_SCAN_2_r22 },
+            { -1, -1, -1 },
+        },
+    },
+    [_ENUM_LIST_INT_SCAN_3] = {
+        .best = { 2, 2, 2, 2 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 2, 2, _ENUM_LIST_INT_SCAN_3_r22 },
+            { -1, -1, -1 },
+        },
+    },
+    [_ENUM_LIST_INT_SCAN_4] = {
+        .best = { 2, 2, 2, 2 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 2, 2, _ENUM_LIST_INT_SCAN_4_r22 },
+            { -1, -1, -1 },
+        },
+    },
+    [_ENUM_LIST_INT_SCAN_5] = {
+        .best = { 2, 2, 2, 2 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 2, 2, _ENUM_LIST_INT_SCAN_5_r22 },
+            { -1, -1, -1 },
+        },
+    },
+    [_ENUM_LIST_INT_SCAN] = {
+        .best = { 2, 2, 2, 2 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 2, 2, _ENUM_LIST_INT_SCAN_r22 },
+            { -1, -1, -1 },
+        },
+    },
+    [_ITER_NEXT_ENUM_LIST] = {
+        .best = { 2, 2, 2, 2 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 3, 2, _ITER_NEXT_ENUM_LIST_r23 },
+            { -1, -1, -1 },
+        },
+    },
+    [_ITER_NEXT_ZIP_LIST_PAIR] = {
+        .best = { 2, 2, 2, 2 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 3, 2, _ITER_NEXT_ZIP_LIST_PAIR_r23 },
             { -1, -1, -1 },
         },
     },
@@ -2924,6 +3718,474 @@ const _PyUopCachingInfo _PyUop_Caching[MAX_UOP_ID+1] = {
             { -1, -1, -1 },
         },
     },
+    [_CALL_PY_TRIVIAL_0] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 1, 0, _CALL_PY_TRIVIAL_0_r01 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_CALL_PY_TRIVIAL_1] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 1, 0, _CALL_PY_TRIVIAL_1_r01 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_CALL_PY_TRIVIAL_2] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 1, 0, _CALL_PY_TRIVIAL_2_r01 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_CALL_PY_TRIVIAL_3] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 1, 0, _CALL_PY_TRIVIAL_3_r01 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_CALL_PY_TRIVIAL_4] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 1, 0, _CALL_PY_TRIVIAL_4_r01 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_CALL_PY_TRIVIAL] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 1, 0, _CALL_PY_TRIVIAL_r01 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_CALL_PY_ATTRIBUTE_0] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 1, 0, _CALL_PY_ATTRIBUTE_0_r01 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_CALL_PY_ATTRIBUTE_1] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 1, 0, _CALL_PY_ATTRIBUTE_1_r01 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_CALL_PY_ATTRIBUTE_2] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 1, 0, _CALL_PY_ATTRIBUTE_2_r01 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_CALL_PY_ATTRIBUTE_3] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 1, 0, _CALL_PY_ATTRIBUTE_3_r01 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_CALL_PY_ATTRIBUTE_4] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 1, 0, _CALL_PY_ATTRIBUTE_4_r01 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_CALL_PY_ATTRIBUTE] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 1, 0, _CALL_PY_ATTRIBUTE_r01 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_GUARD_CALL_GLOBALS_IDENTITY_0] = {
+        .best = { 0, 1, 2, 3 },
+        .entries = {
+            { 2, 0, _GUARD_CALL_GLOBALS_IDENTITY_0_r02 },
+            { 2, 1, _GUARD_CALL_GLOBALS_IDENTITY_0_r12 },
+            { 2, 2, _GUARD_CALL_GLOBALS_IDENTITY_0_r22 },
+            { 3, 3, _GUARD_CALL_GLOBALS_IDENTITY_0_r33 },
+        },
+    },
+    [_GUARD_CALL_GLOBALS_IDENTITY_1] = {
+        .best = { 0, 1, 2, 3 },
+        .entries = {
+            { 3, 0, _GUARD_CALL_GLOBALS_IDENTITY_1_r03 },
+            { 3, 1, _GUARD_CALL_GLOBALS_IDENTITY_1_r13 },
+            { 3, 2, _GUARD_CALL_GLOBALS_IDENTITY_1_r23 },
+            { 3, 3, _GUARD_CALL_GLOBALS_IDENTITY_1_r33 },
+        },
+    },
+    [_GUARD_CALL_GLOBALS_IDENTITY_2] = {
+        .best = { 0, 1, 2, 3 },
+        .entries = {
+            { 3, 0, _GUARD_CALL_GLOBALS_IDENTITY_2_r03 },
+            { 3, 1, _GUARD_CALL_GLOBALS_IDENTITY_2_r13 },
+            { 3, 2, _GUARD_CALL_GLOBALS_IDENTITY_2_r23 },
+            { 3, 3, _GUARD_CALL_GLOBALS_IDENTITY_2_r33 },
+        },
+    },
+    [_GUARD_CALL_GLOBALS_IDENTITY_3] = {
+        .best = { 0, 1, 2, 3 },
+        .entries = {
+            { 3, 0, _GUARD_CALL_GLOBALS_IDENTITY_3_r03 },
+            { 3, 1, _GUARD_CALL_GLOBALS_IDENTITY_3_r13 },
+            { 3, 2, _GUARD_CALL_GLOBALS_IDENTITY_3_r23 },
+            { 3, 3, _GUARD_CALL_GLOBALS_IDENTITY_3_r33 },
+        },
+    },
+    [_GUARD_CALL_GLOBALS_IDENTITY_4] = {
+        .best = { 0, 1, 2, 3 },
+        .entries = {
+            { 3, 0, _GUARD_CALL_GLOBALS_IDENTITY_4_r03 },
+            { 3, 1, _GUARD_CALL_GLOBALS_IDENTITY_4_r13 },
+            { 3, 2, _GUARD_CALL_GLOBALS_IDENTITY_4_r23 },
+            { 3, 3, _GUARD_CALL_GLOBALS_IDENTITY_4_r33 },
+        },
+    },
+    [_GUARD_CALL_GLOBALS_IDENTITY] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 0, 0, _GUARD_CALL_GLOBALS_IDENTITY_r00 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_CALL_PY_ATTRIBUTE_IF_0] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 1, 0, _CALL_PY_ATTRIBUTE_IF_0_r01 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_CALL_PY_ATTRIBUTE_IF_1] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 1, 0, _CALL_PY_ATTRIBUTE_IF_1_r01 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_CALL_PY_ATTRIBUTE_IF_2] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 1, 0, _CALL_PY_ATTRIBUTE_IF_2_r01 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_CALL_PY_ATTRIBUTE_IF_3] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 1, 0, _CALL_PY_ATTRIBUTE_IF_3_r01 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_CALL_PY_ATTRIBUTE_IF_4] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 1, 0, _CALL_PY_ATTRIBUTE_IF_4_r01 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_CALL_PY_ATTRIBUTE_IF] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 1, 0, _CALL_PY_ATTRIBUTE_IF_r01 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_CALL_PY_LIST_0] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 1, 0, _CALL_PY_LIST_0_r01 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_CALL_PY_LIST_1] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 1, 0, _CALL_PY_LIST_1_r01 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_CALL_PY_LIST_2] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 1, 0, _CALL_PY_LIST_2_r01 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_CALL_PY_LIST_3] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 1, 0, _CALL_PY_LIST_3_r01 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_CALL_PY_LIST_4] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 1, 0, _CALL_PY_LIST_4_r01 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_CALL_PY_LIST_5] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 1, 0, _CALL_PY_LIST_5_r01 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_CALL_PY_LIST_6] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 1, 0, _CALL_PY_LIST_6_r01 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_CALL_PY_LIST_7] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 1, 0, _CALL_PY_LIST_7_r01 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_CALL_PY_LIST_8] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 1, 0, _CALL_PY_LIST_8_r01 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_CALL_PY_LIST_9] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 1, 0, _CALL_PY_LIST_9_r01 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_CALL_PY_LIST] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 1, 0, _CALL_PY_LIST_r01 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_CALL_PY_ATTRIBUTE_SEARCH_0] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 1, 0, _CALL_PY_ATTRIBUTE_SEARCH_0_r01 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_CALL_PY_ATTRIBUTE_SEARCH_1] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 1, 0, _CALL_PY_ATTRIBUTE_SEARCH_1_r01 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_CALL_PY_ATTRIBUTE_SEARCH_2] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 1, 0, _CALL_PY_ATTRIBUTE_SEARCH_2_r01 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_CALL_PY_ATTRIBUTE_SEARCH_3] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 1, 0, _CALL_PY_ATTRIBUTE_SEARCH_3_r01 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_CALL_PY_ATTRIBUTE_SEARCH_4] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 1, 0, _CALL_PY_ATTRIBUTE_SEARCH_4_r01 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_CALL_PY_ATTRIBUTE_SEARCH_5] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 1, 0, _CALL_PY_ATTRIBUTE_SEARCH_5_r01 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_CALL_PY_ATTRIBUTE_SEARCH_6] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 1, 0, _CALL_PY_ATTRIBUTE_SEARCH_6_r01 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_CALL_PY_ATTRIBUTE_SEARCH_7] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 1, 0, _CALL_PY_ATTRIBUTE_SEARCH_7_r01 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_CALL_PY_ATTRIBUTE_SEARCH_8] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 1, 0, _CALL_PY_ATTRIBUTE_SEARCH_8_r01 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_CALL_PY_ATTRIBUTE_SEARCH_9] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 1, 0, _CALL_PY_ATTRIBUTE_SEARCH_9_r01 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_CALL_PY_ATTRIBUTE_SEARCH_10] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 1, 0, _CALL_PY_ATTRIBUTE_SEARCH_10_r01 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_CALL_PY_ATTRIBUTE_SEARCH_11] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 1, 0, _CALL_PY_ATTRIBUTE_SEARCH_11_r01 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_CALL_PY_ATTRIBUTE_SEARCH] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 1, 0, _CALL_PY_ATTRIBUTE_SEARCH_r01 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_CALL_PY_LIST_REMOVE_0] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 1, 0, _CALL_PY_LIST_REMOVE_0_r01 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_CALL_PY_LIST_REMOVE_1] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 1, 0, _CALL_PY_LIST_REMOVE_1_r01 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_CALL_PY_LIST_REMOVE] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 1, 0, _CALL_PY_LIST_REMOVE_r01 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_LIST_REMOVE_LOCAL] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 1, 0, _LIST_REMOVE_LOCAL_r01 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
     [_PUSH_FRAME] = {
         .best = { 1, 1, 1, 1 },
         .entries = {
@@ -3032,6 +4294,60 @@ const _PyUopCachingInfo _PyUop_Caching[MAX_UOP_ID+1] = {
             { -1, -1, -1 },
         },
     },
+    [_CALL_CLASS_ATTRIBUTES_0] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 1, 1, _CALL_CLASS_ATTRIBUTES_0_r01 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_CALL_CLASS_ATTRIBUTES_1] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 1, 1, _CALL_CLASS_ATTRIBUTES_1_r01 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_CALL_CLASS_ATTRIBUTES_2] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 1, 1, _CALL_CLASS_ATTRIBUTES_2_r01 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_CALL_CLASS_ATTRIBUTES_3] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 1, 1, _CALL_CLASS_ATTRIBUTES_3_r01 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_CALL_CLASS_ATTRIBUTES_4] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 1, 1, _CALL_CLASS_ATTRIBUTES_4_r01 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_CALL_CLASS_ATTRIBUTES] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 1, 1, _CALL_CLASS_ATTRIBUTES_r01 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
     [_EXIT_INIT_CHECK] = {
         .best = { 1, 1, 1, 1 },
         .entries = {
@@ -3057,6 +4373,15 @@ const _PyUopCachingInfo _PyUop_Caching[MAX_UOP_ID+1] = {
             { -1, -1, -1 },
             { -1, -1, -1 },
             { -1, -1, -1 },
+        },
+    },
+    [_CALL_RANGE_COMPACT] = {
+        .best = { 3, 3, 3, 3 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 3, 3, _CALL_RANGE_COMPACT_r33 },
         },
     },
     [_GUARD_CALLABLE_BUILTIN_O] = {
@@ -3129,6 +4454,42 @@ const _PyUopCachingInfo _PyUop_Caching[MAX_UOP_ID+1] = {
             { -1, -1, -1 },
             { -1, -1, -1 },
             { 3, 3, _CALL_LEN_r33 },
+        },
+    },
+    [_LEN_SUBSCR_LIST] = {
+        .best = { 3, 3, 3, 3 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 1, 3, _LEN_SUBSCR_LIST_r31 },
+        },
+    },
+    [_CALL_LEN_CONSUMER] = {
+        .best = { 3, 3, 3, 3 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 3, 3, _CALL_LEN_CONSUMER_r33 },
+        },
+    },
+    [_CALL_LEN_LEFT_COMPARE] = {
+        .best = { 3, 3, 3, 3 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 3, 3, _CALL_LEN_LEFT_COMPARE_r33 },
+        },
+    },
+    [_CALL_STR_TAILMATCH] = {
+        .best = { 3, 3, 3, 3 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 3, 3, _CALL_STR_TAILMATCH_r33 },
         },
     },
     [_GUARD_CALLABLE_ISINSTANCE] = {
@@ -3662,6 +5023,204 @@ const _PyUopCachingInfo _PyUop_Caching[MAX_UOP_ID+1] = {
             { -1, -1, -1 },
         },
     },
+    [_FLOAT_RANGE_GUARD] = {
+        .best = { 2, 2, 2, 2 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 2, 2, _FLOAT_RANGE_GUARD_r22 },
+            { -1, -1, -1 },
+        },
+    },
+    [_POLY_SCALAR_CONST] = {
+        .best = { 0, 1, 2, 2 },
+        .entries = {
+            { 1, 0, _POLY_SCALAR_CONST_r01 },
+            { 2, 1, _POLY_SCALAR_CONST_r12 },
+            { 3, 2, _POLY_SCALAR_CONST_r23 },
+            { -1, -1, -1 },
+        },
+    },
+    [_POLY_SCALAR_RSHIFT] = {
+        .best = { 0, 1, 2, 3 },
+        .entries = {
+            { 1, 0, _POLY_SCALAR_RSHIFT_r01 },
+            { 1, 1, _POLY_SCALAR_RSHIFT_r11 },
+            { 2, 2, _POLY_SCALAR_RSHIFT_r22 },
+            { 3, 3, _POLY_SCALAR_RSHIFT_r33 },
+        },
+    },
+    [_POLY_SCALAR_DIVIDE] = {
+        .best = { 0, 1, 2, 3 },
+        .entries = {
+            { 1, 0, _POLY_SCALAR_DIVIDE_r01 },
+            { 1, 1, _POLY_SCALAR_DIVIDE_r11 },
+            { 2, 2, _POLY_SCALAR_DIVIDE_r22 },
+            { 3, 3, _POLY_SCALAR_DIVIDE_r33 },
+        },
+    },
+    [_POLY_STORE_0] = {
+        .best = { 0, 1, 2, 3 },
+        .entries = {
+            { 0, 0, _POLY_STORE_0_r00 },
+            { 0, 1, _POLY_STORE_0_r10 },
+            { 1, 2, _POLY_STORE_0_r21 },
+            { 2, 3, _POLY_STORE_0_r32 },
+        },
+    },
+    [_POLY_STORE_1] = {
+        .best = { 0, 1, 2, 3 },
+        .entries = {
+            { 0, 0, _POLY_STORE_1_r00 },
+            { 0, 1, _POLY_STORE_1_r10 },
+            { 1, 2, _POLY_STORE_1_r21 },
+            { 2, 3, _POLY_STORE_1_r32 },
+        },
+    },
+    [_POLY_STORE_2] = {
+        .best = { 0, 1, 2, 3 },
+        .entries = {
+            { 0, 0, _POLY_STORE_2_r00 },
+            { 0, 1, _POLY_STORE_2_r10 },
+            { 1, 2, _POLY_STORE_2_r21 },
+            { 2, 3, _POLY_STORE_2_r32 },
+        },
+    },
+    [_POLY_STORE] = {
+        .best = { 0, 1, 2, 3 },
+        .entries = {
+            { 0, 0, _POLY_STORE_r00 },
+            { 0, 1, _POLY_STORE_r10 },
+            { 1, 2, _POLY_STORE_r21 },
+            { 2, 3, _POLY_STORE_r32 },
+        },
+    },
+    [_POLY_LOCAL] = {
+        .best = { 0, 1, 2, 3 },
+        .entries = {
+            { 0, 0, _POLY_LOCAL_r00 },
+            { 1, 1, _POLY_LOCAL_r11 },
+            { 2, 2, _POLY_LOCAL_r22 },
+            { 3, 3, _POLY_LOCAL_r33 },
+        },
+    },
+    [_POLY_INDUCTION] = {
+        .best = { 0, 1, 2, 3 },
+        .entries = {
+            { 0, 0, _POLY_INDUCTION_r00 },
+            { 1, 1, _POLY_INDUCTION_r11 },
+            { 2, 2, _POLY_INDUCTION_r22 },
+            { 3, 3, _POLY_INDUCTION_r33 },
+        },
+    },
+    [_POLY_CONST] = {
+        .best = { 0, 1, 2, 3 },
+        .entries = {
+            { 0, 0, _POLY_CONST_r00 },
+            { 1, 1, _POLY_CONST_r11 },
+            { 2, 2, _POLY_CONST_r22 },
+            { 3, 3, _POLY_CONST_r33 },
+        },
+    },
+    [_POLY_DUP] = {
+        .best = { 0, 1, 2, 3 },
+        .entries = {
+            { 0, 0, _POLY_DUP_r00 },
+            { 1, 1, _POLY_DUP_r11 },
+            { 2, 2, _POLY_DUP_r22 },
+            { 3, 3, _POLY_DUP_r33 },
+        },
+    },
+    [_POLY_BINARY_0] = {
+        .best = { 0, 1, 2, 3 },
+        .entries = {
+            { 0, 0, _POLY_BINARY_0_r00 },
+            { 1, 1, _POLY_BINARY_0_r11 },
+            { 2, 2, _POLY_BINARY_0_r22 },
+            { 3, 3, _POLY_BINARY_0_r33 },
+        },
+    },
+    [_POLY_BINARY_1] = {
+        .best = { 0, 1, 2, 3 },
+        .entries = {
+            { 0, 0, _POLY_BINARY_1_r00 },
+            { 1, 1, _POLY_BINARY_1_r11 },
+            { 2, 2, _POLY_BINARY_1_r22 },
+            { 3, 3, _POLY_BINARY_1_r33 },
+        },
+    },
+    [_POLY_BINARY_2] = {
+        .best = { 0, 1, 2, 3 },
+        .entries = {
+            { 0, 0, _POLY_BINARY_2_r00 },
+            { 1, 1, _POLY_BINARY_2_r11 },
+            { 2, 2, _POLY_BINARY_2_r22 },
+            { 3, 3, _POLY_BINARY_2_r33 },
+        },
+    },
+    [_POLY_BINARY_3] = {
+        .best = { 0, 1, 2, 3 },
+        .entries = {
+            { 0, 0, _POLY_BINARY_3_r00 },
+            { 1, 1, _POLY_BINARY_3_r11 },
+            { 2, 2, _POLY_BINARY_3_r22 },
+            { 3, 3, _POLY_BINARY_3_r33 },
+        },
+    },
+    [_POLY_BINARY] = {
+        .best = { 0, 1, 2, 3 },
+        .entries = {
+            { 0, 0, _POLY_BINARY_r00 },
+            { 1, 1, _POLY_BINARY_r11 },
+            { 2, 2, _POLY_BINARY_r22 },
+            { 3, 3, _POLY_BINARY_r33 },
+        },
+    },
+    [_POLY_RSHIFT] = {
+        .best = { 0, 1, 2, 3 },
+        .entries = {
+            { 0, 0, _POLY_RSHIFT_r00 },
+            { 1, 1, _POLY_RSHIFT_r11 },
+            { 2, 2, _POLY_RSHIFT_r22 },
+            { 3, 3, _POLY_RSHIFT_r33 },
+        },
+    },
+    [_FLOAT_RANGE_PREPARE_0] = {
+        .best = { 0, 1, 2, 3 },
+        .entries = {
+            { 2, 0, _FLOAT_RANGE_PREPARE_0_r02 },
+            { 2, 1, _FLOAT_RANGE_PREPARE_0_r12 },
+            { 2, 2, _FLOAT_RANGE_PREPARE_0_r22 },
+            { 3, 3, _FLOAT_RANGE_PREPARE_0_r33 },
+        },
+    },
+    [_FLOAT_RANGE_PREPARE_1] = {
+        .best = { 0, 1, 2, 3 },
+        .entries = {
+            { 2, 0, _FLOAT_RANGE_PREPARE_1_r02 },
+            { 2, 1, _FLOAT_RANGE_PREPARE_1_r12 },
+            { 2, 2, _FLOAT_RANGE_PREPARE_1_r22 },
+            { 3, 3, _FLOAT_RANGE_PREPARE_1_r33 },
+        },
+    },
+    [_FLOAT_RANGE_PREPARE] = {
+        .best = { 0, 1, 2, 3 },
+        .entries = {
+            { 2, 0, _FLOAT_RANGE_PREPARE_r02 },
+            { 2, 1, _FLOAT_RANGE_PREPARE_r12 },
+            { 2, 2, _FLOAT_RANGE_PREPARE_r22 },
+            { 3, 3, _FLOAT_RANGE_PREPARE_r33 },
+        },
+    },
+    [_FLOAT_RANGE_REDUCE] = {
+        .best = { 2, 2, 2, 2 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 2, 2, _FLOAT_RANGE_REDUCE_r22 },
+            { -1, -1, -1 },
+        },
+    },
     [_TIER3_RANGE_CHUNK] = {
         .best = { 2, 2, 2, 2 },
         .entries = {
@@ -3686,6 +5245,15 @@ const _PyUopCachingInfo _PyUop_Caching[MAX_UOP_ID+1] = {
             { -1, -1, -1 },
             { -1, -1, -1 },
             { 2, 2, _TIER3_RANGE_CHUNK_RESIDENT_r22 },
+            { -1, -1, -1 },
+        },
+    },
+    [_TIER3_RANGE_CHUNK_RESIDENT_AFFINE] = {
+        .best = { 2, 2, 2, 2 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 2, 2, _TIER3_RANGE_CHUNK_RESIDENT_AFFINE_r22 },
             { -1, -1, -1 },
         },
     },
@@ -4166,6 +5734,74 @@ const uint16_t _PyUop_Uncached[MAX_UOP_REGS_ID+1] = {
     [_BINARY_OP_SUBTRACT_INT_r03] = _BINARY_OP_SUBTRACT_INT,
     [_BINARY_OP_SUBTRACT_INT_r13] = _BINARY_OP_SUBTRACT_INT,
     [_BINARY_OP_SUBTRACT_INT_r23] = _BINARY_OP_SUBTRACT_INT,
+    [_INT_REGION_START_0_r22] = _INT_REGION_START_0,
+    [_INT_REGION_START_1_r22] = _INT_REGION_START_1,
+    [_INT_REGION_START_2_r22] = _INT_REGION_START_2,
+    [_INT_REGION_START_3_r22] = _INT_REGION_START_3,
+    [_INT_REGION_START_4_r22] = _INT_REGION_START_4,
+    [_INT_REGION_START_r22] = _INT_REGION_START,
+    [_INT_REGION_LOCAL_r01] = _INT_REGION_LOCAL,
+    [_INT_REGION_LOCAL_r12] = _INT_REGION_LOCAL,
+    [_INT_REGION_LOCAL_r23] = _INT_REGION_LOCAL,
+    [_INT_REGION_CONST_r01] = _INT_REGION_CONST,
+    [_INT_REGION_CONST_r12] = _INT_REGION_CONST,
+    [_INT_REGION_CONST_r23] = _INT_REGION_CONST,
+    [_INT_REGION_DUP_r02] = _INT_REGION_DUP,
+    [_INT_REGION_DUP_r12] = _INT_REGION_DUP,
+    [_INT_REGION_DUP_r23] = _INT_REGION_DUP,
+    [_INT_REGION_BINARY_0_r01] = _INT_REGION_BINARY_0,
+    [_INT_REGION_BINARY_0_r11] = _INT_REGION_BINARY_0,
+    [_INT_REGION_BINARY_0_r21] = _INT_REGION_BINARY_0,
+    [_INT_REGION_BINARY_0_r32] = _INT_REGION_BINARY_0,
+    [_INT_REGION_BINARY_1_r01] = _INT_REGION_BINARY_1,
+    [_INT_REGION_BINARY_1_r11] = _INT_REGION_BINARY_1,
+    [_INT_REGION_BINARY_1_r21] = _INT_REGION_BINARY_1,
+    [_INT_REGION_BINARY_1_r32] = _INT_REGION_BINARY_1,
+    [_INT_REGION_BINARY_2_r01] = _INT_REGION_BINARY_2,
+    [_INT_REGION_BINARY_2_r11] = _INT_REGION_BINARY_2,
+    [_INT_REGION_BINARY_2_r21] = _INT_REGION_BINARY_2,
+    [_INT_REGION_BINARY_2_r32] = _INT_REGION_BINARY_2,
+    [_INT_REGION_BINARY_3_r01] = _INT_REGION_BINARY_3,
+    [_INT_REGION_BINARY_3_r11] = _INT_REGION_BINARY_3,
+    [_INT_REGION_BINARY_3_r21] = _INT_REGION_BINARY_3,
+    [_INT_REGION_BINARY_3_r32] = _INT_REGION_BINARY_3,
+    [_INT_REGION_BINARY_r01] = _INT_REGION_BINARY,
+    [_INT_REGION_BINARY_r11] = _INT_REGION_BINARY,
+    [_INT_REGION_BINARY_r21] = _INT_REGION_BINARY,
+    [_INT_REGION_BINARY_r32] = _INT_REGION_BINARY,
+    [_INT_REGION_RSHIFT_r01] = _INT_REGION_RSHIFT,
+    [_INT_REGION_RSHIFT_r11] = _INT_REGION_RSHIFT,
+    [_INT_REGION_RSHIFT_r21] = _INT_REGION_RSHIFT,
+    [_INT_REGION_RSHIFT_r32] = _INT_REGION_RSHIFT,
+    [_INT_REGION_BOX_r01] = _INT_REGION_BOX,
+    [_INT_REGION_BOX_r11] = _INT_REGION_BOX,
+    [_INT_REGION_BOX_r22] = _INT_REGION_BOX,
+    [_INT_REGION_BOX_r33] = _INT_REGION_BOX,
+    [_INT_REGION_GUARD_FLOAT_r03] = _INT_REGION_GUARD_FLOAT,
+    [_INT_REGION_GUARD_FLOAT_r13] = _INT_REGION_GUARD_FLOAT,
+    [_INT_REGION_GUARD_FLOAT_r23] = _INT_REGION_GUARD_FLOAT,
+    [_INT_REGION_GUARD_FLOAT_r33] = _INT_REGION_GUARD_FLOAT,
+    [_INT_REGION_DIVIDE_r21] = _INT_REGION_DIVIDE,
+    [_INT_REGION_0_r23] = _INT_REGION_0,
+    [_INT_REGION_1_r23] = _INT_REGION_1,
+    [_INT_REGION_2_r23] = _INT_REGION_2,
+    [_INT_REGION_3_r23] = _INT_REGION_3,
+    [_INT_REGION_4_r23] = _INT_REGION_4,
+    [_INT_REGION_5_r23] = _INT_REGION_5,
+    [_INT_REGION_6_r23] = _INT_REGION_6,
+    [_INT_REGION_7_r23] = _INT_REGION_7,
+    [_INT_REGION_8_r23] = _INT_REGION_8,
+    [_INT_REGION_r23] = _INT_REGION,
+    [_INT_REGION_COMPARE_0_r23] = _INT_REGION_COMPARE_0,
+    [_INT_REGION_COMPARE_1_r23] = _INT_REGION_COMPARE_1,
+    [_INT_REGION_COMPARE_2_r23] = _INT_REGION_COMPARE_2,
+    [_INT_REGION_COMPARE_3_r23] = _INT_REGION_COMPARE_3,
+    [_INT_REGION_COMPARE_4_r23] = _INT_REGION_COMPARE_4,
+    [_INT_REGION_COMPARE_5_r23] = _INT_REGION_COMPARE_5,
+    [_INT_REGION_COMPARE_6_r23] = _INT_REGION_COMPARE_6,
+    [_INT_REGION_COMPARE_7_r23] = _INT_REGION_COMPARE_7,
+    [_INT_REGION_COMPARE_8_r23] = _INT_REGION_COMPARE_8,
+    [_INT_REGION_COMPARE_r23] = _INT_REGION_COMPARE,
     [_BINARY_OP_ADD_INT_INPLACE_r03] = _BINARY_OP_ADD_INT_INPLACE,
     [_BINARY_OP_ADD_INT_INPLACE_r13] = _BINARY_OP_ADD_INT_INPLACE,
     [_BINARY_OP_ADD_INT_INPLACE_r23] = _BINARY_OP_ADD_INT_INPLACE,
@@ -4210,6 +5846,13 @@ const uint16_t _PyUop_Uncached[MAX_UOP_REGS_ID+1] = {
     [_BINARY_OP_MULTIPLY_FLOAT_INPLACE_r03] = _BINARY_OP_MULTIPLY_FLOAT_INPLACE,
     [_BINARY_OP_MULTIPLY_FLOAT_INPLACE_r13] = _BINARY_OP_MULTIPLY_FLOAT_INPLACE,
     [_BINARY_OP_MULTIPLY_FLOAT_INPLACE_r23] = _BINARY_OP_MULTIPLY_FLOAT_INPLACE,
+    [_BINARY_OP_MULTIPLY_ADD_FLOAT_INPLACE_r31] = _BINARY_OP_MULTIPLY_ADD_FLOAT_INPLACE,
+    [_BINARY_OP_MULTIPLY_SUBTRACT_FLOAT_INPLACE_r31] = _BINARY_OP_MULTIPLY_SUBTRACT_FLOAT_INPLACE,
+    [_FLOAT_ATTRIBUTE_SUM_PRODUCTS_r01] = _FLOAT_ATTRIBUTE_SUM_PRODUCTS,
+    [_BINARY_OP_MULTIPLY_ADD_FLOAT_OWNED_r33] = _BINARY_OP_MULTIPLY_ADD_FLOAT_OWNED,
+    [_BINARY_OP_MULTIPLY_SUBTRACT_FLOAT_OWNED_r33] = _BINARY_OP_MULTIPLY_SUBTRACT_FLOAT_OWNED,
+    [_BINARY_OP_MULTIPLY_ADD_FLOAT_SHARED_r31] = _BINARY_OP_MULTIPLY_ADD_FLOAT_SHARED,
+    [_BINARY_OP_MULTIPLY_SUBTRACT_FLOAT_SHARED_r31] = _BINARY_OP_MULTIPLY_SUBTRACT_FLOAT_SHARED,
     [_BINARY_OP_ADD_FLOAT_INPLACE_RIGHT_r03] = _BINARY_OP_ADD_FLOAT_INPLACE_RIGHT,
     [_BINARY_OP_ADD_FLOAT_INPLACE_RIGHT_r13] = _BINARY_OP_ADD_FLOAT_INPLACE_RIGHT,
     [_BINARY_OP_ADD_FLOAT_INPLACE_RIGHT_r23] = _BINARY_OP_ADD_FLOAT_INPLACE_RIGHT,
@@ -4291,6 +5934,8 @@ const uint16_t _PyUop_Uncached[MAX_UOP_REGS_ID+1] = {
     [_LIST_APPEND_r10] = _LIST_APPEND,
     [_SET_ADD_r10] = _SET_ADD,
     [_STORE_SUBSCR_r30] = _STORE_SUBSCR,
+    [_DICT_PAIR_INCREMENT_r30] = _DICT_PAIR_INCREMENT,
+    [_STORE_SUBSCR_DICT_INHERITED_r30] = _STORE_SUBSCR_DICT_INHERITED,
     [_STORE_SUBSCR_LIST_INT_r32] = _STORE_SUBSCR_LIST_INT,
     [_STORE_SUBSCR_DICT_r31] = _STORE_SUBSCR_DICT,
     [_STORE_SUBSCR_DICT_KNOWN_HASH_r31] = _STORE_SUBSCR_DICT_KNOWN_HASH,
@@ -4353,6 +5998,14 @@ const uint16_t _PyUop_Uncached[MAX_UOP_REGS_ID+1] = {
     [_GUARD_GLOBALS_VERSION_r11] = _GUARD_GLOBALS_VERSION,
     [_GUARD_GLOBALS_VERSION_r22] = _GUARD_GLOBALS_VERSION,
     [_GUARD_GLOBALS_VERSION_r33] = _GUARD_GLOBALS_VERSION,
+    [_GUARD_GLOBALS_VERSION_AND_IDENTITY_r00] = _GUARD_GLOBALS_VERSION_AND_IDENTITY,
+    [_GUARD_GLOBALS_VERSION_AND_IDENTITY_r11] = _GUARD_GLOBALS_VERSION_AND_IDENTITY,
+    [_GUARD_GLOBALS_VERSION_AND_IDENTITY_r22] = _GUARD_GLOBALS_VERSION_AND_IDENTITY,
+    [_GUARD_GLOBALS_VERSION_AND_IDENTITY_r33] = _GUARD_GLOBALS_VERSION_AND_IDENTITY,
+    [_GUARD_BUILTINS_IDENTITY_r00] = _GUARD_BUILTINS_IDENTITY,
+    [_GUARD_BUILTINS_IDENTITY_r11] = _GUARD_BUILTINS_IDENTITY,
+    [_GUARD_BUILTINS_IDENTITY_r22] = _GUARD_BUILTINS_IDENTITY,
+    [_GUARD_BUILTINS_IDENTITY_r33] = _GUARD_BUILTINS_IDENTITY,
     [_LOAD_GLOBAL_MODULE_r01] = _LOAD_GLOBAL_MODULE,
     [_LOAD_GLOBAL_BUILTINS_r01] = _LOAD_GLOBAL_BUILTINS,
     [_DELETE_FAST_r00] = _DELETE_FAST,
@@ -4401,6 +6054,10 @@ const uint16_t _PyUop_Uncached[MAX_UOP_REGS_ID+1] = {
     [_GUARD_TYPE_r11] = _GUARD_TYPE,
     [_GUARD_TYPE_r22] = _GUARD_TYPE,
     [_GUARD_TYPE_r33] = _GUARD_TYPE,
+    [_GUARD_NOS_TYPE_r02] = _GUARD_NOS_TYPE,
+    [_GUARD_NOS_TYPE_r12] = _GUARD_NOS_TYPE,
+    [_GUARD_NOS_TYPE_r22] = _GUARD_NOS_TYPE,
+    [_GUARD_NOS_TYPE_r33] = _GUARD_NOS_TYPE,
     [_CHECK_MANAGED_OBJECT_HAS_VALUES_r01] = _CHECK_MANAGED_OBJECT_HAS_VALUES,
     [_CHECK_MANAGED_OBJECT_HAS_VALUES_r11] = _CHECK_MANAGED_OBJECT_HAS_VALUES,
     [_CHECK_MANAGED_OBJECT_HAS_VALUES_r22] = _CHECK_MANAGED_OBJECT_HAS_VALUES,
@@ -4434,6 +6091,13 @@ const uint16_t _PyUop_Uncached[MAX_UOP_REGS_ID+1] = {
     [_LOCK_OBJECT_r33] = _LOCK_OBJECT,
     [_STORE_ATTR_WITH_HINT_r21] = _STORE_ATTR_WITH_HINT,
     [_STORE_ATTR_SLOT_r21] = _STORE_ATTR_SLOT,
+    [_COMPARE_TUPLE_PAIR_0_r23] = _COMPARE_TUPLE_PAIR_0,
+    [_COMPARE_TUPLE_PAIR_1_r23] = _COMPARE_TUPLE_PAIR_1,
+    [_COMPARE_TUPLE_PAIR_r23] = _COMPARE_TUPLE_PAIR,
+    [_LIST_PAIR_APPEND_SCAN_r22] = _LIST_PAIR_APPEND_SCAN,
+    [_COMPARE_LIST_PAIR_0_r23] = _COMPARE_LIST_PAIR_0,
+    [_COMPARE_LIST_PAIR_1_r23] = _COMPARE_LIST_PAIR_1,
+    [_COMPARE_LIST_PAIR_r23] = _COMPARE_LIST_PAIR,
     [_COMPARE_OP_r21] = _COMPARE_OP,
     [_COMPARE_OP_FLOAT_r03] = _COMPARE_OP_FLOAT,
     [_COMPARE_OP_FLOAT_r13] = _COMPARE_OP_FLOAT,
@@ -4444,6 +6108,7 @@ const uint16_t _PyUop_Uncached[MAX_UOP_REGS_ID+1] = {
     [_IS_OP_r13] = _IS_OP,
     [_IS_OP_r23] = _IS_OP,
     [_CONTAINS_OP_r23] = _CONTAINS_OP,
+    [_CONTAINS_OP_LIST_INT_r23] = _CONTAINS_OP_LIST_INT,
     [_GUARD_TOS_ANY_SET_r01] = _GUARD_TOS_ANY_SET,
     [_GUARD_TOS_ANY_SET_r11] = _GUARD_TOS_ANY_SET,
     [_GUARD_TOS_ANY_SET_r22] = _GUARD_TOS_ANY_SET,
@@ -4485,12 +6150,26 @@ const uint16_t _PyUop_Uncached[MAX_UOP_REGS_ID+1] = {
     [_PUSH_TAGGED_ZERO_r12] = _PUSH_TAGGED_ZERO,
     [_PUSH_TAGGED_ZERO_r23] = _PUSH_TAGGED_ZERO,
     [_GET_ITER_TRAD_r12] = _GET_ITER_TRAD,
+    [_GET_ITER_RANGE_r12] = _GET_ITER_RANGE,
     [_FOR_ITER_TIER_TWO_r23] = _FOR_ITER_TIER_TWO,
     [_GUARD_TYPE_ITER_r02] = _GUARD_TYPE_ITER,
     [_GUARD_TYPE_ITER_r12] = _GUARD_TYPE_ITER,
     [_GUARD_TYPE_ITER_r22] = _GUARD_TYPE_ITER,
     [_GUARD_TYPE_ITER_r33] = _GUARD_TYPE_ITER,
     [_ITER_NEXT_INLINE_r23] = _ITER_NEXT_INLINE,
+    [_GUARD_ENUM_LIST_r02] = _GUARD_ENUM_LIST,
+    [_GUARD_ENUM_LIST_r12] = _GUARD_ENUM_LIST,
+    [_GUARD_ENUM_LIST_r22] = _GUARD_ENUM_LIST,
+    [_GUARD_ENUM_LIST_r33] = _GUARD_ENUM_LIST,
+    [_ENUM_LIST_INT_SCAN_0_r22] = _ENUM_LIST_INT_SCAN_0,
+    [_ENUM_LIST_INT_SCAN_1_r22] = _ENUM_LIST_INT_SCAN_1,
+    [_ENUM_LIST_INT_SCAN_2_r22] = _ENUM_LIST_INT_SCAN_2,
+    [_ENUM_LIST_INT_SCAN_3_r22] = _ENUM_LIST_INT_SCAN_3,
+    [_ENUM_LIST_INT_SCAN_4_r22] = _ENUM_LIST_INT_SCAN_4,
+    [_ENUM_LIST_INT_SCAN_5_r22] = _ENUM_LIST_INT_SCAN_5,
+    [_ENUM_LIST_INT_SCAN_r22] = _ENUM_LIST_INT_SCAN,
+    [_ITER_NEXT_ENUM_LIST_r23] = _ITER_NEXT_ENUM_LIST,
+    [_ITER_NEXT_ZIP_LIST_PAIR_r23] = _ITER_NEXT_ZIP_LIST_PAIR,
     [_GUARD_NOS_ITER_VIRTUAL_r02] = _GUARD_NOS_ITER_VIRTUAL,
     [_GUARD_NOS_ITER_VIRTUAL_r12] = _GUARD_NOS_ITER_VIRTUAL,
     [_GUARD_NOS_ITER_VIRTUAL_r22] = _GUARD_NOS_ITER_VIRTUAL,
@@ -4584,6 +6263,73 @@ const uint16_t _PyUop_Uncached[MAX_UOP_REGS_ID+1] = {
     [_INIT_CALL_PY_EXACT_ARGS_3_r01] = _INIT_CALL_PY_EXACT_ARGS_3,
     [_INIT_CALL_PY_EXACT_ARGS_4_r01] = _INIT_CALL_PY_EXACT_ARGS_4,
     [_INIT_CALL_PY_EXACT_ARGS_r01] = _INIT_CALL_PY_EXACT_ARGS,
+    [_CALL_PY_TRIVIAL_0_r01] = _CALL_PY_TRIVIAL_0,
+    [_CALL_PY_TRIVIAL_1_r01] = _CALL_PY_TRIVIAL_1,
+    [_CALL_PY_TRIVIAL_2_r01] = _CALL_PY_TRIVIAL_2,
+    [_CALL_PY_TRIVIAL_3_r01] = _CALL_PY_TRIVIAL_3,
+    [_CALL_PY_TRIVIAL_4_r01] = _CALL_PY_TRIVIAL_4,
+    [_CALL_PY_TRIVIAL_r01] = _CALL_PY_TRIVIAL,
+    [_CALL_PY_ATTRIBUTE_0_r01] = _CALL_PY_ATTRIBUTE_0,
+    [_CALL_PY_ATTRIBUTE_1_r01] = _CALL_PY_ATTRIBUTE_1,
+    [_CALL_PY_ATTRIBUTE_2_r01] = _CALL_PY_ATTRIBUTE_2,
+    [_CALL_PY_ATTRIBUTE_3_r01] = _CALL_PY_ATTRIBUTE_3,
+    [_CALL_PY_ATTRIBUTE_4_r01] = _CALL_PY_ATTRIBUTE_4,
+    [_CALL_PY_ATTRIBUTE_r01] = _CALL_PY_ATTRIBUTE,
+    [_GUARD_CALL_GLOBALS_IDENTITY_0_r02] = _GUARD_CALL_GLOBALS_IDENTITY_0,
+    [_GUARD_CALL_GLOBALS_IDENTITY_0_r12] = _GUARD_CALL_GLOBALS_IDENTITY_0,
+    [_GUARD_CALL_GLOBALS_IDENTITY_0_r22] = _GUARD_CALL_GLOBALS_IDENTITY_0,
+    [_GUARD_CALL_GLOBALS_IDENTITY_0_r33] = _GUARD_CALL_GLOBALS_IDENTITY_0,
+    [_GUARD_CALL_GLOBALS_IDENTITY_1_r03] = _GUARD_CALL_GLOBALS_IDENTITY_1,
+    [_GUARD_CALL_GLOBALS_IDENTITY_1_r13] = _GUARD_CALL_GLOBALS_IDENTITY_1,
+    [_GUARD_CALL_GLOBALS_IDENTITY_1_r23] = _GUARD_CALL_GLOBALS_IDENTITY_1,
+    [_GUARD_CALL_GLOBALS_IDENTITY_1_r33] = _GUARD_CALL_GLOBALS_IDENTITY_1,
+    [_GUARD_CALL_GLOBALS_IDENTITY_2_r03] = _GUARD_CALL_GLOBALS_IDENTITY_2,
+    [_GUARD_CALL_GLOBALS_IDENTITY_2_r13] = _GUARD_CALL_GLOBALS_IDENTITY_2,
+    [_GUARD_CALL_GLOBALS_IDENTITY_2_r23] = _GUARD_CALL_GLOBALS_IDENTITY_2,
+    [_GUARD_CALL_GLOBALS_IDENTITY_2_r33] = _GUARD_CALL_GLOBALS_IDENTITY_2,
+    [_GUARD_CALL_GLOBALS_IDENTITY_3_r03] = _GUARD_CALL_GLOBALS_IDENTITY_3,
+    [_GUARD_CALL_GLOBALS_IDENTITY_3_r13] = _GUARD_CALL_GLOBALS_IDENTITY_3,
+    [_GUARD_CALL_GLOBALS_IDENTITY_3_r23] = _GUARD_CALL_GLOBALS_IDENTITY_3,
+    [_GUARD_CALL_GLOBALS_IDENTITY_3_r33] = _GUARD_CALL_GLOBALS_IDENTITY_3,
+    [_GUARD_CALL_GLOBALS_IDENTITY_4_r03] = _GUARD_CALL_GLOBALS_IDENTITY_4,
+    [_GUARD_CALL_GLOBALS_IDENTITY_4_r13] = _GUARD_CALL_GLOBALS_IDENTITY_4,
+    [_GUARD_CALL_GLOBALS_IDENTITY_4_r23] = _GUARD_CALL_GLOBALS_IDENTITY_4,
+    [_GUARD_CALL_GLOBALS_IDENTITY_4_r33] = _GUARD_CALL_GLOBALS_IDENTITY_4,
+    [_GUARD_CALL_GLOBALS_IDENTITY_r00] = _GUARD_CALL_GLOBALS_IDENTITY,
+    [_CALL_PY_ATTRIBUTE_IF_0_r01] = _CALL_PY_ATTRIBUTE_IF_0,
+    [_CALL_PY_ATTRIBUTE_IF_1_r01] = _CALL_PY_ATTRIBUTE_IF_1,
+    [_CALL_PY_ATTRIBUTE_IF_2_r01] = _CALL_PY_ATTRIBUTE_IF_2,
+    [_CALL_PY_ATTRIBUTE_IF_3_r01] = _CALL_PY_ATTRIBUTE_IF_3,
+    [_CALL_PY_ATTRIBUTE_IF_4_r01] = _CALL_PY_ATTRIBUTE_IF_4,
+    [_CALL_PY_ATTRIBUTE_IF_r01] = _CALL_PY_ATTRIBUTE_IF,
+    [_CALL_PY_LIST_0_r01] = _CALL_PY_LIST_0,
+    [_CALL_PY_LIST_1_r01] = _CALL_PY_LIST_1,
+    [_CALL_PY_LIST_2_r01] = _CALL_PY_LIST_2,
+    [_CALL_PY_LIST_3_r01] = _CALL_PY_LIST_3,
+    [_CALL_PY_LIST_4_r01] = _CALL_PY_LIST_4,
+    [_CALL_PY_LIST_5_r01] = _CALL_PY_LIST_5,
+    [_CALL_PY_LIST_6_r01] = _CALL_PY_LIST_6,
+    [_CALL_PY_LIST_7_r01] = _CALL_PY_LIST_7,
+    [_CALL_PY_LIST_8_r01] = _CALL_PY_LIST_8,
+    [_CALL_PY_LIST_9_r01] = _CALL_PY_LIST_9,
+    [_CALL_PY_LIST_r01] = _CALL_PY_LIST,
+    [_CALL_PY_ATTRIBUTE_SEARCH_0_r01] = _CALL_PY_ATTRIBUTE_SEARCH_0,
+    [_CALL_PY_ATTRIBUTE_SEARCH_1_r01] = _CALL_PY_ATTRIBUTE_SEARCH_1,
+    [_CALL_PY_ATTRIBUTE_SEARCH_2_r01] = _CALL_PY_ATTRIBUTE_SEARCH_2,
+    [_CALL_PY_ATTRIBUTE_SEARCH_3_r01] = _CALL_PY_ATTRIBUTE_SEARCH_3,
+    [_CALL_PY_ATTRIBUTE_SEARCH_4_r01] = _CALL_PY_ATTRIBUTE_SEARCH_4,
+    [_CALL_PY_ATTRIBUTE_SEARCH_5_r01] = _CALL_PY_ATTRIBUTE_SEARCH_5,
+    [_CALL_PY_ATTRIBUTE_SEARCH_6_r01] = _CALL_PY_ATTRIBUTE_SEARCH_6,
+    [_CALL_PY_ATTRIBUTE_SEARCH_7_r01] = _CALL_PY_ATTRIBUTE_SEARCH_7,
+    [_CALL_PY_ATTRIBUTE_SEARCH_8_r01] = _CALL_PY_ATTRIBUTE_SEARCH_8,
+    [_CALL_PY_ATTRIBUTE_SEARCH_9_r01] = _CALL_PY_ATTRIBUTE_SEARCH_9,
+    [_CALL_PY_ATTRIBUTE_SEARCH_10_r01] = _CALL_PY_ATTRIBUTE_SEARCH_10,
+    [_CALL_PY_ATTRIBUTE_SEARCH_11_r01] = _CALL_PY_ATTRIBUTE_SEARCH_11,
+    [_CALL_PY_ATTRIBUTE_SEARCH_r01] = _CALL_PY_ATTRIBUTE_SEARCH,
+    [_CALL_PY_LIST_REMOVE_0_r01] = _CALL_PY_LIST_REMOVE_0,
+    [_CALL_PY_LIST_REMOVE_1_r01] = _CALL_PY_LIST_REMOVE_1,
+    [_CALL_PY_LIST_REMOVE_r01] = _CALL_PY_LIST_REMOVE,
+    [_LIST_REMOVE_LOCAL_r01] = _LIST_REMOVE_LOCAL,
     [_PUSH_FRAME_r10] = _PUSH_FRAME,
     [_GUARD_NOS_NULL_r02] = _GUARD_NOS_NULL,
     [_GUARD_NOS_NULL_r12] = _GUARD_NOS_NULL,
@@ -4614,9 +6360,16 @@ const uint16_t _PyUop_Uncached[MAX_UOP_REGS_ID+1] = {
     [_CHECK_OBJECT_r00] = _CHECK_OBJECT,
     [_ALLOCATE_OBJECT_r00] = _ALLOCATE_OBJECT,
     [_CREATE_INIT_FRAME_r01] = _CREATE_INIT_FRAME,
+    [_CALL_CLASS_ATTRIBUTES_0_r01] = _CALL_CLASS_ATTRIBUTES_0,
+    [_CALL_CLASS_ATTRIBUTES_1_r01] = _CALL_CLASS_ATTRIBUTES_1,
+    [_CALL_CLASS_ATTRIBUTES_2_r01] = _CALL_CLASS_ATTRIBUTES_2,
+    [_CALL_CLASS_ATTRIBUTES_3_r01] = _CALL_CLASS_ATTRIBUTES_3,
+    [_CALL_CLASS_ATTRIBUTES_4_r01] = _CALL_CLASS_ATTRIBUTES_4,
+    [_CALL_CLASS_ATTRIBUTES_r01] = _CALL_CLASS_ATTRIBUTES,
     [_EXIT_INIT_CHECK_r10] = _EXIT_INIT_CHECK,
     [_GUARD_CALLABLE_BUILTIN_CLASS_r00] = _GUARD_CALLABLE_BUILTIN_CLASS,
     [_CALL_BUILTIN_CLASS_r00] = _CALL_BUILTIN_CLASS,
+    [_CALL_RANGE_COMPACT_r33] = _CALL_RANGE_COMPACT,
     [_GUARD_CALLABLE_BUILTIN_O_r00] = _GUARD_CALLABLE_BUILTIN_O,
     [_CALL_BUILTIN_O_r03] = _CALL_BUILTIN_O,
     [_GUARD_CALLABLE_BUILTIN_FAST_r00] = _GUARD_CALLABLE_BUILTIN_FAST,
@@ -4628,6 +6381,10 @@ const uint16_t _PyUop_Uncached[MAX_UOP_REGS_ID+1] = {
     [_GUARD_CALLABLE_LEN_r23] = _GUARD_CALLABLE_LEN,
     [_GUARD_CALLABLE_LEN_r33] = _GUARD_CALLABLE_LEN,
     [_CALL_LEN_r33] = _CALL_LEN,
+    [_LEN_SUBSCR_LIST_r31] = _LEN_SUBSCR_LIST,
+    [_CALL_LEN_CONSUMER_r33] = _CALL_LEN_CONSUMER,
+    [_CALL_LEN_LEFT_COMPARE_r33] = _CALL_LEN_LEFT_COMPARE,
+    [_CALL_STR_TAILMATCH_r33] = _CALL_STR_TAILMATCH,
     [_GUARD_CALLABLE_ISINSTANCE_r03] = _GUARD_CALLABLE_ISINSTANCE,
     [_GUARD_CALLABLE_ISINSTANCE_r13] = _GUARD_CALLABLE_ISINSTANCE,
     [_GUARD_CALLABLE_ISINSTANCE_r23] = _GUARD_CALLABLE_ISINSTANCE,
@@ -4760,9 +6517,91 @@ const uint16_t _PyUop_Uncached[MAX_UOP_REGS_ID+1] = {
     [_GUARD_IS_NONE_POP_r32] = _GUARD_IS_NONE_POP,
     [_GUARD_IS_NOT_NONE_POP_r10] = _GUARD_IS_NOT_NONE_POP,
     [_JUMP_TO_TOP_r00] = _JUMP_TO_TOP,
+    [_FLOAT_RANGE_GUARD_r22] = _FLOAT_RANGE_GUARD,
+    [_POLY_SCALAR_CONST_r01] = _POLY_SCALAR_CONST,
+    [_POLY_SCALAR_CONST_r12] = _POLY_SCALAR_CONST,
+    [_POLY_SCALAR_CONST_r23] = _POLY_SCALAR_CONST,
+    [_POLY_SCALAR_RSHIFT_r01] = _POLY_SCALAR_RSHIFT,
+    [_POLY_SCALAR_RSHIFT_r11] = _POLY_SCALAR_RSHIFT,
+    [_POLY_SCALAR_RSHIFT_r22] = _POLY_SCALAR_RSHIFT,
+    [_POLY_SCALAR_RSHIFT_r33] = _POLY_SCALAR_RSHIFT,
+    [_POLY_SCALAR_DIVIDE_r01] = _POLY_SCALAR_DIVIDE,
+    [_POLY_SCALAR_DIVIDE_r11] = _POLY_SCALAR_DIVIDE,
+    [_POLY_SCALAR_DIVIDE_r22] = _POLY_SCALAR_DIVIDE,
+    [_POLY_SCALAR_DIVIDE_r33] = _POLY_SCALAR_DIVIDE,
+    [_POLY_STORE_0_r00] = _POLY_STORE_0,
+    [_POLY_STORE_0_r10] = _POLY_STORE_0,
+    [_POLY_STORE_0_r21] = _POLY_STORE_0,
+    [_POLY_STORE_0_r32] = _POLY_STORE_0,
+    [_POLY_STORE_1_r00] = _POLY_STORE_1,
+    [_POLY_STORE_1_r10] = _POLY_STORE_1,
+    [_POLY_STORE_1_r21] = _POLY_STORE_1,
+    [_POLY_STORE_1_r32] = _POLY_STORE_1,
+    [_POLY_STORE_2_r00] = _POLY_STORE_2,
+    [_POLY_STORE_2_r10] = _POLY_STORE_2,
+    [_POLY_STORE_2_r21] = _POLY_STORE_2,
+    [_POLY_STORE_2_r32] = _POLY_STORE_2,
+    [_POLY_STORE_r00] = _POLY_STORE,
+    [_POLY_STORE_r10] = _POLY_STORE,
+    [_POLY_STORE_r21] = _POLY_STORE,
+    [_POLY_STORE_r32] = _POLY_STORE,
+    [_POLY_LOCAL_r00] = _POLY_LOCAL,
+    [_POLY_LOCAL_r11] = _POLY_LOCAL,
+    [_POLY_LOCAL_r22] = _POLY_LOCAL,
+    [_POLY_LOCAL_r33] = _POLY_LOCAL,
+    [_POLY_INDUCTION_r00] = _POLY_INDUCTION,
+    [_POLY_INDUCTION_r11] = _POLY_INDUCTION,
+    [_POLY_INDUCTION_r22] = _POLY_INDUCTION,
+    [_POLY_INDUCTION_r33] = _POLY_INDUCTION,
+    [_POLY_CONST_r00] = _POLY_CONST,
+    [_POLY_CONST_r11] = _POLY_CONST,
+    [_POLY_CONST_r22] = _POLY_CONST,
+    [_POLY_CONST_r33] = _POLY_CONST,
+    [_POLY_DUP_r00] = _POLY_DUP,
+    [_POLY_DUP_r11] = _POLY_DUP,
+    [_POLY_DUP_r22] = _POLY_DUP,
+    [_POLY_DUP_r33] = _POLY_DUP,
+    [_POLY_BINARY_0_r00] = _POLY_BINARY_0,
+    [_POLY_BINARY_0_r11] = _POLY_BINARY_0,
+    [_POLY_BINARY_0_r22] = _POLY_BINARY_0,
+    [_POLY_BINARY_0_r33] = _POLY_BINARY_0,
+    [_POLY_BINARY_1_r00] = _POLY_BINARY_1,
+    [_POLY_BINARY_1_r11] = _POLY_BINARY_1,
+    [_POLY_BINARY_1_r22] = _POLY_BINARY_1,
+    [_POLY_BINARY_1_r33] = _POLY_BINARY_1,
+    [_POLY_BINARY_2_r00] = _POLY_BINARY_2,
+    [_POLY_BINARY_2_r11] = _POLY_BINARY_2,
+    [_POLY_BINARY_2_r22] = _POLY_BINARY_2,
+    [_POLY_BINARY_2_r33] = _POLY_BINARY_2,
+    [_POLY_BINARY_3_r00] = _POLY_BINARY_3,
+    [_POLY_BINARY_3_r11] = _POLY_BINARY_3,
+    [_POLY_BINARY_3_r22] = _POLY_BINARY_3,
+    [_POLY_BINARY_3_r33] = _POLY_BINARY_3,
+    [_POLY_BINARY_r00] = _POLY_BINARY,
+    [_POLY_BINARY_r11] = _POLY_BINARY,
+    [_POLY_BINARY_r22] = _POLY_BINARY,
+    [_POLY_BINARY_r33] = _POLY_BINARY,
+    [_POLY_RSHIFT_r00] = _POLY_RSHIFT,
+    [_POLY_RSHIFT_r11] = _POLY_RSHIFT,
+    [_POLY_RSHIFT_r22] = _POLY_RSHIFT,
+    [_POLY_RSHIFT_r33] = _POLY_RSHIFT,
+    [_FLOAT_RANGE_PREPARE_0_r02] = _FLOAT_RANGE_PREPARE_0,
+    [_FLOAT_RANGE_PREPARE_0_r12] = _FLOAT_RANGE_PREPARE_0,
+    [_FLOAT_RANGE_PREPARE_0_r22] = _FLOAT_RANGE_PREPARE_0,
+    [_FLOAT_RANGE_PREPARE_0_r33] = _FLOAT_RANGE_PREPARE_0,
+    [_FLOAT_RANGE_PREPARE_1_r02] = _FLOAT_RANGE_PREPARE_1,
+    [_FLOAT_RANGE_PREPARE_1_r12] = _FLOAT_RANGE_PREPARE_1,
+    [_FLOAT_RANGE_PREPARE_1_r22] = _FLOAT_RANGE_PREPARE_1,
+    [_FLOAT_RANGE_PREPARE_1_r33] = _FLOAT_RANGE_PREPARE_1,
+    [_FLOAT_RANGE_PREPARE_r02] = _FLOAT_RANGE_PREPARE,
+    [_FLOAT_RANGE_PREPARE_r12] = _FLOAT_RANGE_PREPARE,
+    [_FLOAT_RANGE_PREPARE_r22] = _FLOAT_RANGE_PREPARE,
+    [_FLOAT_RANGE_PREPARE_r33] = _FLOAT_RANGE_PREPARE,
+    [_FLOAT_RANGE_REDUCE_r22] = _FLOAT_RANGE_REDUCE,
     [_TIER3_RANGE_CHUNK_r22] = _TIER3_RANGE_CHUNK,
     [_TIER3_RANGE_CHUNK_NATIVE_r22] = _TIER3_RANGE_CHUNK_NATIVE,
     [_TIER3_RANGE_CHUNK_RESIDENT_r22] = _TIER3_RANGE_CHUNK_RESIDENT,
+    [_TIER3_RANGE_CHUNK_RESIDENT_AFFINE_r22] = _TIER3_RANGE_CHUNK_RESIDENT_AFFINE,
     [_TIER3_RANGE_CHUNK_RESIDENT_SQUARES_r22] = _TIER3_RANGE_CHUNK_RESIDENT_SQUARES,
     [_SET_IP_r00] = _SET_IP,
     [_SET_IP_r11] = _SET_IP,
@@ -4920,6 +6759,12 @@ const char *const _PyOpcode_uop_name[MAX_UOP_REGS_ID+1] = {
     [_BINARY_OP_EXTEND_r23] = "_BINARY_OP_EXTEND_r23",
     [_BINARY_OP_INPLACE_ADD_UNICODE] = "_BINARY_OP_INPLACE_ADD_UNICODE",
     [_BINARY_OP_INPLACE_ADD_UNICODE_r21] = "_BINARY_OP_INPLACE_ADD_UNICODE_r21",
+    [_BINARY_OP_MULTIPLY_ADD_FLOAT_INPLACE] = "_BINARY_OP_MULTIPLY_ADD_FLOAT_INPLACE",
+    [_BINARY_OP_MULTIPLY_ADD_FLOAT_INPLACE_r31] = "_BINARY_OP_MULTIPLY_ADD_FLOAT_INPLACE_r31",
+    [_BINARY_OP_MULTIPLY_ADD_FLOAT_OWNED] = "_BINARY_OP_MULTIPLY_ADD_FLOAT_OWNED",
+    [_BINARY_OP_MULTIPLY_ADD_FLOAT_OWNED_r33] = "_BINARY_OP_MULTIPLY_ADD_FLOAT_OWNED_r33",
+    [_BINARY_OP_MULTIPLY_ADD_FLOAT_SHARED] = "_BINARY_OP_MULTIPLY_ADD_FLOAT_SHARED",
+    [_BINARY_OP_MULTIPLY_ADD_FLOAT_SHARED_r31] = "_BINARY_OP_MULTIPLY_ADD_FLOAT_SHARED_r31",
     [_BINARY_OP_MULTIPLY_FLOAT] = "_BINARY_OP_MULTIPLY_FLOAT",
     [_BINARY_OP_MULTIPLY_FLOAT_r03] = "_BINARY_OP_MULTIPLY_FLOAT_r03",
     [_BINARY_OP_MULTIPLY_FLOAT_r13] = "_BINARY_OP_MULTIPLY_FLOAT_r13",
@@ -4944,6 +6789,12 @@ const char *const _PyOpcode_uop_name[MAX_UOP_REGS_ID+1] = {
     [_BINARY_OP_MULTIPLY_INT_INPLACE_RIGHT_r03] = "_BINARY_OP_MULTIPLY_INT_INPLACE_RIGHT_r03",
     [_BINARY_OP_MULTIPLY_INT_INPLACE_RIGHT_r13] = "_BINARY_OP_MULTIPLY_INT_INPLACE_RIGHT_r13",
     [_BINARY_OP_MULTIPLY_INT_INPLACE_RIGHT_r23] = "_BINARY_OP_MULTIPLY_INT_INPLACE_RIGHT_r23",
+    [_BINARY_OP_MULTIPLY_SUBTRACT_FLOAT_INPLACE] = "_BINARY_OP_MULTIPLY_SUBTRACT_FLOAT_INPLACE",
+    [_BINARY_OP_MULTIPLY_SUBTRACT_FLOAT_INPLACE_r31] = "_BINARY_OP_MULTIPLY_SUBTRACT_FLOAT_INPLACE_r31",
+    [_BINARY_OP_MULTIPLY_SUBTRACT_FLOAT_OWNED] = "_BINARY_OP_MULTIPLY_SUBTRACT_FLOAT_OWNED",
+    [_BINARY_OP_MULTIPLY_SUBTRACT_FLOAT_OWNED_r33] = "_BINARY_OP_MULTIPLY_SUBTRACT_FLOAT_OWNED_r33",
+    [_BINARY_OP_MULTIPLY_SUBTRACT_FLOAT_SHARED] = "_BINARY_OP_MULTIPLY_SUBTRACT_FLOAT_SHARED",
+    [_BINARY_OP_MULTIPLY_SUBTRACT_FLOAT_SHARED_r31] = "_BINARY_OP_MULTIPLY_SUBTRACT_FLOAT_SHARED_r31",
     [_BINARY_OP_SUBSCR_CHECK_FUNC] = "_BINARY_OP_SUBSCR_CHECK_FUNC",
     [_BINARY_OP_SUBSCR_CHECK_FUNC_r23] = "_BINARY_OP_SUBSCR_CHECK_FUNC_r23",
     [_BINARY_OP_SUBSCR_DICT] = "_BINARY_OP_SUBSCR_DICT",
@@ -5027,6 +6878,18 @@ const char *const _PyOpcode_uop_name[MAX_UOP_REGS_ID+1] = {
     [_CALL_BUILTIN_FAST_WITH_KEYWORDS_r00] = "_CALL_BUILTIN_FAST_WITH_KEYWORDS_r00",
     [_CALL_BUILTIN_O] = "_CALL_BUILTIN_O",
     [_CALL_BUILTIN_O_r03] = "_CALL_BUILTIN_O_r03",
+    [_CALL_CLASS_ATTRIBUTES] = "_CALL_CLASS_ATTRIBUTES",
+    [_CALL_CLASS_ATTRIBUTES_r01] = "_CALL_CLASS_ATTRIBUTES_r01",
+    [_CALL_CLASS_ATTRIBUTES_0] = "_CALL_CLASS_ATTRIBUTES_0",
+    [_CALL_CLASS_ATTRIBUTES_0_r01] = "_CALL_CLASS_ATTRIBUTES_0_r01",
+    [_CALL_CLASS_ATTRIBUTES_1] = "_CALL_CLASS_ATTRIBUTES_1",
+    [_CALL_CLASS_ATTRIBUTES_1_r01] = "_CALL_CLASS_ATTRIBUTES_1_r01",
+    [_CALL_CLASS_ATTRIBUTES_2] = "_CALL_CLASS_ATTRIBUTES_2",
+    [_CALL_CLASS_ATTRIBUTES_2_r01] = "_CALL_CLASS_ATTRIBUTES_2_r01",
+    [_CALL_CLASS_ATTRIBUTES_3] = "_CALL_CLASS_ATTRIBUTES_3",
+    [_CALL_CLASS_ATTRIBUTES_3_r01] = "_CALL_CLASS_ATTRIBUTES_3_r01",
+    [_CALL_CLASS_ATTRIBUTES_4] = "_CALL_CLASS_ATTRIBUTES_4",
+    [_CALL_CLASS_ATTRIBUTES_4_r01] = "_CALL_CLASS_ATTRIBUTES_4_r01",
     [_CALL_FUNCTION_EX_NON_PY_GENERAL] = "_CALL_FUNCTION_EX_NON_PY_GENERAL",
     [_CALL_FUNCTION_EX_NON_PY_GENERAL_r31] = "_CALL_FUNCTION_EX_NON_PY_GENERAL_r31",
     [_CALL_INTRINSIC_1] = "_CALL_INTRINSIC_1",
@@ -5039,6 +6902,10 @@ const char *const _PyOpcode_uop_name[MAX_UOP_REGS_ID+1] = {
     [_CALL_KW_NON_PY_r11] = "_CALL_KW_NON_PY_r11",
     [_CALL_LEN] = "_CALL_LEN",
     [_CALL_LEN_r33] = "_CALL_LEN_r33",
+    [_CALL_LEN_CONSUMER] = "_CALL_LEN_CONSUMER",
+    [_CALL_LEN_CONSUMER_r33] = "_CALL_LEN_CONSUMER_r33",
+    [_CALL_LEN_LEFT_COMPARE] = "_CALL_LEN_LEFT_COMPARE",
+    [_CALL_LEN_LEFT_COMPARE_r33] = "_CALL_LEN_LEFT_COMPARE_r33",
     [_CALL_LIST_APPEND] = "_CALL_LIST_APPEND",
     [_CALL_LIST_APPEND_r03] = "_CALL_LIST_APPEND_r03",
     [_CALL_LIST_APPEND_r13] = "_CALL_LIST_APPEND_r13",
@@ -5062,8 +6929,102 @@ const char *const _PyOpcode_uop_name[MAX_UOP_REGS_ID+1] = {
     [_CALL_METHOD_DESCRIPTOR_O_INLINE_r03] = "_CALL_METHOD_DESCRIPTOR_O_INLINE_r03",
     [_CALL_NON_PY_GENERAL] = "_CALL_NON_PY_GENERAL",
     [_CALL_NON_PY_GENERAL_r01] = "_CALL_NON_PY_GENERAL_r01",
+    [_CALL_PY_ATTRIBUTE] = "_CALL_PY_ATTRIBUTE",
+    [_CALL_PY_ATTRIBUTE_r01] = "_CALL_PY_ATTRIBUTE_r01",
+    [_CALL_PY_ATTRIBUTE_0] = "_CALL_PY_ATTRIBUTE_0",
+    [_CALL_PY_ATTRIBUTE_0_r01] = "_CALL_PY_ATTRIBUTE_0_r01",
+    [_CALL_PY_ATTRIBUTE_1] = "_CALL_PY_ATTRIBUTE_1",
+    [_CALL_PY_ATTRIBUTE_1_r01] = "_CALL_PY_ATTRIBUTE_1_r01",
+    [_CALL_PY_ATTRIBUTE_2] = "_CALL_PY_ATTRIBUTE_2",
+    [_CALL_PY_ATTRIBUTE_2_r01] = "_CALL_PY_ATTRIBUTE_2_r01",
+    [_CALL_PY_ATTRIBUTE_3] = "_CALL_PY_ATTRIBUTE_3",
+    [_CALL_PY_ATTRIBUTE_3_r01] = "_CALL_PY_ATTRIBUTE_3_r01",
+    [_CALL_PY_ATTRIBUTE_4] = "_CALL_PY_ATTRIBUTE_4",
+    [_CALL_PY_ATTRIBUTE_4_r01] = "_CALL_PY_ATTRIBUTE_4_r01",
+    [_CALL_PY_ATTRIBUTE_IF] = "_CALL_PY_ATTRIBUTE_IF",
+    [_CALL_PY_ATTRIBUTE_IF_r01] = "_CALL_PY_ATTRIBUTE_IF_r01",
+    [_CALL_PY_ATTRIBUTE_IF_0] = "_CALL_PY_ATTRIBUTE_IF_0",
+    [_CALL_PY_ATTRIBUTE_IF_0_r01] = "_CALL_PY_ATTRIBUTE_IF_0_r01",
+    [_CALL_PY_ATTRIBUTE_IF_1] = "_CALL_PY_ATTRIBUTE_IF_1",
+    [_CALL_PY_ATTRIBUTE_IF_1_r01] = "_CALL_PY_ATTRIBUTE_IF_1_r01",
+    [_CALL_PY_ATTRIBUTE_IF_2] = "_CALL_PY_ATTRIBUTE_IF_2",
+    [_CALL_PY_ATTRIBUTE_IF_2_r01] = "_CALL_PY_ATTRIBUTE_IF_2_r01",
+    [_CALL_PY_ATTRIBUTE_IF_3] = "_CALL_PY_ATTRIBUTE_IF_3",
+    [_CALL_PY_ATTRIBUTE_IF_3_r01] = "_CALL_PY_ATTRIBUTE_IF_3_r01",
+    [_CALL_PY_ATTRIBUTE_IF_4] = "_CALL_PY_ATTRIBUTE_IF_4",
+    [_CALL_PY_ATTRIBUTE_IF_4_r01] = "_CALL_PY_ATTRIBUTE_IF_4_r01",
+    [_CALL_PY_ATTRIBUTE_SEARCH] = "_CALL_PY_ATTRIBUTE_SEARCH",
+    [_CALL_PY_ATTRIBUTE_SEARCH_r01] = "_CALL_PY_ATTRIBUTE_SEARCH_r01",
+    [_CALL_PY_ATTRIBUTE_SEARCH_0] = "_CALL_PY_ATTRIBUTE_SEARCH_0",
+    [_CALL_PY_ATTRIBUTE_SEARCH_0_r01] = "_CALL_PY_ATTRIBUTE_SEARCH_0_r01",
+    [_CALL_PY_ATTRIBUTE_SEARCH_1] = "_CALL_PY_ATTRIBUTE_SEARCH_1",
+    [_CALL_PY_ATTRIBUTE_SEARCH_1_r01] = "_CALL_PY_ATTRIBUTE_SEARCH_1_r01",
+    [_CALL_PY_ATTRIBUTE_SEARCH_10] = "_CALL_PY_ATTRIBUTE_SEARCH_10",
+    [_CALL_PY_ATTRIBUTE_SEARCH_10_r01] = "_CALL_PY_ATTRIBUTE_SEARCH_10_r01",
+    [_CALL_PY_ATTRIBUTE_SEARCH_11] = "_CALL_PY_ATTRIBUTE_SEARCH_11",
+    [_CALL_PY_ATTRIBUTE_SEARCH_11_r01] = "_CALL_PY_ATTRIBUTE_SEARCH_11_r01",
+    [_CALL_PY_ATTRIBUTE_SEARCH_2] = "_CALL_PY_ATTRIBUTE_SEARCH_2",
+    [_CALL_PY_ATTRIBUTE_SEARCH_2_r01] = "_CALL_PY_ATTRIBUTE_SEARCH_2_r01",
+    [_CALL_PY_ATTRIBUTE_SEARCH_3] = "_CALL_PY_ATTRIBUTE_SEARCH_3",
+    [_CALL_PY_ATTRIBUTE_SEARCH_3_r01] = "_CALL_PY_ATTRIBUTE_SEARCH_3_r01",
+    [_CALL_PY_ATTRIBUTE_SEARCH_4] = "_CALL_PY_ATTRIBUTE_SEARCH_4",
+    [_CALL_PY_ATTRIBUTE_SEARCH_4_r01] = "_CALL_PY_ATTRIBUTE_SEARCH_4_r01",
+    [_CALL_PY_ATTRIBUTE_SEARCH_5] = "_CALL_PY_ATTRIBUTE_SEARCH_5",
+    [_CALL_PY_ATTRIBUTE_SEARCH_5_r01] = "_CALL_PY_ATTRIBUTE_SEARCH_5_r01",
+    [_CALL_PY_ATTRIBUTE_SEARCH_6] = "_CALL_PY_ATTRIBUTE_SEARCH_6",
+    [_CALL_PY_ATTRIBUTE_SEARCH_6_r01] = "_CALL_PY_ATTRIBUTE_SEARCH_6_r01",
+    [_CALL_PY_ATTRIBUTE_SEARCH_7] = "_CALL_PY_ATTRIBUTE_SEARCH_7",
+    [_CALL_PY_ATTRIBUTE_SEARCH_7_r01] = "_CALL_PY_ATTRIBUTE_SEARCH_7_r01",
+    [_CALL_PY_ATTRIBUTE_SEARCH_8] = "_CALL_PY_ATTRIBUTE_SEARCH_8",
+    [_CALL_PY_ATTRIBUTE_SEARCH_8_r01] = "_CALL_PY_ATTRIBUTE_SEARCH_8_r01",
+    [_CALL_PY_ATTRIBUTE_SEARCH_9] = "_CALL_PY_ATTRIBUTE_SEARCH_9",
+    [_CALL_PY_ATTRIBUTE_SEARCH_9_r01] = "_CALL_PY_ATTRIBUTE_SEARCH_9_r01",
+    [_CALL_PY_LIST] = "_CALL_PY_LIST",
+    [_CALL_PY_LIST_r01] = "_CALL_PY_LIST_r01",
+    [_CALL_PY_LIST_0] = "_CALL_PY_LIST_0",
+    [_CALL_PY_LIST_0_r01] = "_CALL_PY_LIST_0_r01",
+    [_CALL_PY_LIST_1] = "_CALL_PY_LIST_1",
+    [_CALL_PY_LIST_1_r01] = "_CALL_PY_LIST_1_r01",
+    [_CALL_PY_LIST_2] = "_CALL_PY_LIST_2",
+    [_CALL_PY_LIST_2_r01] = "_CALL_PY_LIST_2_r01",
+    [_CALL_PY_LIST_3] = "_CALL_PY_LIST_3",
+    [_CALL_PY_LIST_3_r01] = "_CALL_PY_LIST_3_r01",
+    [_CALL_PY_LIST_4] = "_CALL_PY_LIST_4",
+    [_CALL_PY_LIST_4_r01] = "_CALL_PY_LIST_4_r01",
+    [_CALL_PY_LIST_5] = "_CALL_PY_LIST_5",
+    [_CALL_PY_LIST_5_r01] = "_CALL_PY_LIST_5_r01",
+    [_CALL_PY_LIST_6] = "_CALL_PY_LIST_6",
+    [_CALL_PY_LIST_6_r01] = "_CALL_PY_LIST_6_r01",
+    [_CALL_PY_LIST_7] = "_CALL_PY_LIST_7",
+    [_CALL_PY_LIST_7_r01] = "_CALL_PY_LIST_7_r01",
+    [_CALL_PY_LIST_8] = "_CALL_PY_LIST_8",
+    [_CALL_PY_LIST_8_r01] = "_CALL_PY_LIST_8_r01",
+    [_CALL_PY_LIST_9] = "_CALL_PY_LIST_9",
+    [_CALL_PY_LIST_9_r01] = "_CALL_PY_LIST_9_r01",
+    [_CALL_PY_LIST_REMOVE] = "_CALL_PY_LIST_REMOVE",
+    [_CALL_PY_LIST_REMOVE_r01] = "_CALL_PY_LIST_REMOVE_r01",
+    [_CALL_PY_LIST_REMOVE_0] = "_CALL_PY_LIST_REMOVE_0",
+    [_CALL_PY_LIST_REMOVE_0_r01] = "_CALL_PY_LIST_REMOVE_0_r01",
+    [_CALL_PY_LIST_REMOVE_1] = "_CALL_PY_LIST_REMOVE_1",
+    [_CALL_PY_LIST_REMOVE_1_r01] = "_CALL_PY_LIST_REMOVE_1_r01",
+    [_CALL_PY_TRIVIAL] = "_CALL_PY_TRIVIAL",
+    [_CALL_PY_TRIVIAL_r01] = "_CALL_PY_TRIVIAL_r01",
+    [_CALL_PY_TRIVIAL_0] = "_CALL_PY_TRIVIAL_0",
+    [_CALL_PY_TRIVIAL_0_r01] = "_CALL_PY_TRIVIAL_0_r01",
+    [_CALL_PY_TRIVIAL_1] = "_CALL_PY_TRIVIAL_1",
+    [_CALL_PY_TRIVIAL_1_r01] = "_CALL_PY_TRIVIAL_1_r01",
+    [_CALL_PY_TRIVIAL_2] = "_CALL_PY_TRIVIAL_2",
+    [_CALL_PY_TRIVIAL_2_r01] = "_CALL_PY_TRIVIAL_2_r01",
+    [_CALL_PY_TRIVIAL_3] = "_CALL_PY_TRIVIAL_3",
+    [_CALL_PY_TRIVIAL_3_r01] = "_CALL_PY_TRIVIAL_3_r01",
+    [_CALL_PY_TRIVIAL_4] = "_CALL_PY_TRIVIAL_4",
+    [_CALL_PY_TRIVIAL_4_r01] = "_CALL_PY_TRIVIAL_4_r01",
+    [_CALL_RANGE_COMPACT] = "_CALL_RANGE_COMPACT",
+    [_CALL_RANGE_COMPACT_r33] = "_CALL_RANGE_COMPACT_r33",
     [_CALL_STR_1] = "_CALL_STR_1",
     [_CALL_STR_1_r32] = "_CALL_STR_1_r32",
+    [_CALL_STR_TAILMATCH] = "_CALL_STR_TAILMATCH",
+    [_CALL_STR_TAILMATCH_r33] = "_CALL_STR_TAILMATCH_r33",
     [_CALL_TUPLE_1] = "_CALL_TUPLE_1",
     [_CALL_TUPLE_1_r32] = "_CALL_TUPLE_1_r32",
     [_CALL_TYPE_1] = "_CALL_TYPE_1",
@@ -5158,6 +7119,12 @@ const char *const _PyOpcode_uop_name[MAX_UOP_REGS_ID+1] = {
     [_COLD_DYNAMIC_EXIT_r00] = "_COLD_DYNAMIC_EXIT_r00",
     [_COLD_EXIT] = "_COLD_EXIT",
     [_COLD_EXIT_r00] = "_COLD_EXIT_r00",
+    [_COMPARE_LIST_PAIR] = "_COMPARE_LIST_PAIR",
+    [_COMPARE_LIST_PAIR_r23] = "_COMPARE_LIST_PAIR_r23",
+    [_COMPARE_LIST_PAIR_0] = "_COMPARE_LIST_PAIR_0",
+    [_COMPARE_LIST_PAIR_0_r23] = "_COMPARE_LIST_PAIR_0_r23",
+    [_COMPARE_LIST_PAIR_1] = "_COMPARE_LIST_PAIR_1",
+    [_COMPARE_LIST_PAIR_1_r23] = "_COMPARE_LIST_PAIR_1_r23",
     [_COMPARE_OP] = "_COMPARE_OP",
     [_COMPARE_OP_r21] = "_COMPARE_OP_r21",
     [_COMPARE_OP_FLOAT] = "_COMPARE_OP_FLOAT",
@@ -5168,10 +7135,18 @@ const char *const _PyOpcode_uop_name[MAX_UOP_REGS_ID+1] = {
     [_COMPARE_OP_INT_r23] = "_COMPARE_OP_INT_r23",
     [_COMPARE_OP_STR] = "_COMPARE_OP_STR",
     [_COMPARE_OP_STR_r23] = "_COMPARE_OP_STR_r23",
+    [_COMPARE_TUPLE_PAIR] = "_COMPARE_TUPLE_PAIR",
+    [_COMPARE_TUPLE_PAIR_r23] = "_COMPARE_TUPLE_PAIR_r23",
+    [_COMPARE_TUPLE_PAIR_0] = "_COMPARE_TUPLE_PAIR_0",
+    [_COMPARE_TUPLE_PAIR_0_r23] = "_COMPARE_TUPLE_PAIR_0_r23",
+    [_COMPARE_TUPLE_PAIR_1] = "_COMPARE_TUPLE_PAIR_1",
+    [_COMPARE_TUPLE_PAIR_1_r23] = "_COMPARE_TUPLE_PAIR_1_r23",
     [_CONTAINS_OP] = "_CONTAINS_OP",
     [_CONTAINS_OP_r23] = "_CONTAINS_OP_r23",
     [_CONTAINS_OP_DICT] = "_CONTAINS_OP_DICT",
     [_CONTAINS_OP_DICT_r23] = "_CONTAINS_OP_DICT_r23",
+    [_CONTAINS_OP_LIST_INT] = "_CONTAINS_OP_LIST_INT",
+    [_CONTAINS_OP_LIST_INT_r23] = "_CONTAINS_OP_LIST_INT_r23",
     [_CONTAINS_OP_SET] = "_CONTAINS_OP_SET",
     [_CONTAINS_OP_SET_r23] = "_CONTAINS_OP_SET_r23",
     [_CONVERT_VALUE] = "_CONVERT_VALUE",
@@ -5211,6 +7186,8 @@ const char *const _PyOpcode_uop_name[MAX_UOP_REGS_ID+1] = {
     [_DEOPT_r30] = "_DEOPT_r30",
     [_DICT_MERGE] = "_DICT_MERGE",
     [_DICT_MERGE_r11] = "_DICT_MERGE_r11",
+    [_DICT_PAIR_INCREMENT] = "_DICT_PAIR_INCREMENT",
+    [_DICT_PAIR_INCREMENT_r30] = "_DICT_PAIR_INCREMENT_r30",
     [_DICT_UPDATE] = "_DICT_UPDATE",
     [_DICT_UPDATE_r11] = "_DICT_UPDATE_r11",
     [_DYNAMIC_EXIT] = "_DYNAMIC_EXIT",
@@ -5222,6 +7199,20 @@ const char *const _PyOpcode_uop_name[MAX_UOP_REGS_ID+1] = {
     [_END_FOR_r10] = "_END_FOR_r10",
     [_END_SEND] = "_END_SEND",
     [_END_SEND_r31] = "_END_SEND_r31",
+    [_ENUM_LIST_INT_SCAN] = "_ENUM_LIST_INT_SCAN",
+    [_ENUM_LIST_INT_SCAN_r22] = "_ENUM_LIST_INT_SCAN_r22",
+    [_ENUM_LIST_INT_SCAN_0] = "_ENUM_LIST_INT_SCAN_0",
+    [_ENUM_LIST_INT_SCAN_0_r22] = "_ENUM_LIST_INT_SCAN_0_r22",
+    [_ENUM_LIST_INT_SCAN_1] = "_ENUM_LIST_INT_SCAN_1",
+    [_ENUM_LIST_INT_SCAN_1_r22] = "_ENUM_LIST_INT_SCAN_1_r22",
+    [_ENUM_LIST_INT_SCAN_2] = "_ENUM_LIST_INT_SCAN_2",
+    [_ENUM_LIST_INT_SCAN_2_r22] = "_ENUM_LIST_INT_SCAN_2_r22",
+    [_ENUM_LIST_INT_SCAN_3] = "_ENUM_LIST_INT_SCAN_3",
+    [_ENUM_LIST_INT_SCAN_3_r22] = "_ENUM_LIST_INT_SCAN_3_r22",
+    [_ENUM_LIST_INT_SCAN_4] = "_ENUM_LIST_INT_SCAN_4",
+    [_ENUM_LIST_INT_SCAN_4_r22] = "_ENUM_LIST_INT_SCAN_4_r22",
+    [_ENUM_LIST_INT_SCAN_5] = "_ENUM_LIST_INT_SCAN_5",
+    [_ENUM_LIST_INT_SCAN_5_r22] = "_ENUM_LIST_INT_SCAN_5_r22",
     [_ERROR_POP_N] = "_ERROR_POP_N",
     [_ERROR_POP_N_r00] = "_ERROR_POP_N_r00",
     [_EXIT_INIT_CHECK] = "_EXIT_INIT_CHECK",
@@ -5240,6 +7231,27 @@ const char *const _PyOpcode_uop_name[MAX_UOP_REGS_ID+1] = {
     [_FATAL_ERROR_r11] = "_FATAL_ERROR_r11",
     [_FATAL_ERROR_r22] = "_FATAL_ERROR_r22",
     [_FATAL_ERROR_r33] = "_FATAL_ERROR_r33",
+    [_FLOAT_ATTRIBUTE_SUM_PRODUCTS] = "_FLOAT_ATTRIBUTE_SUM_PRODUCTS",
+    [_FLOAT_ATTRIBUTE_SUM_PRODUCTS_r01] = "_FLOAT_ATTRIBUTE_SUM_PRODUCTS_r01",
+    [_FLOAT_RANGE_GUARD] = "_FLOAT_RANGE_GUARD",
+    [_FLOAT_RANGE_GUARD_r22] = "_FLOAT_RANGE_GUARD_r22",
+    [_FLOAT_RANGE_PREPARE] = "_FLOAT_RANGE_PREPARE",
+    [_FLOAT_RANGE_PREPARE_r02] = "_FLOAT_RANGE_PREPARE_r02",
+    [_FLOAT_RANGE_PREPARE_r12] = "_FLOAT_RANGE_PREPARE_r12",
+    [_FLOAT_RANGE_PREPARE_r22] = "_FLOAT_RANGE_PREPARE_r22",
+    [_FLOAT_RANGE_PREPARE_r33] = "_FLOAT_RANGE_PREPARE_r33",
+    [_FLOAT_RANGE_PREPARE_0] = "_FLOAT_RANGE_PREPARE_0",
+    [_FLOAT_RANGE_PREPARE_0_r02] = "_FLOAT_RANGE_PREPARE_0_r02",
+    [_FLOAT_RANGE_PREPARE_0_r12] = "_FLOAT_RANGE_PREPARE_0_r12",
+    [_FLOAT_RANGE_PREPARE_0_r22] = "_FLOAT_RANGE_PREPARE_0_r22",
+    [_FLOAT_RANGE_PREPARE_0_r33] = "_FLOAT_RANGE_PREPARE_0_r33",
+    [_FLOAT_RANGE_PREPARE_1] = "_FLOAT_RANGE_PREPARE_1",
+    [_FLOAT_RANGE_PREPARE_1_r02] = "_FLOAT_RANGE_PREPARE_1_r02",
+    [_FLOAT_RANGE_PREPARE_1_r12] = "_FLOAT_RANGE_PREPARE_1_r12",
+    [_FLOAT_RANGE_PREPARE_1_r22] = "_FLOAT_RANGE_PREPARE_1_r22",
+    [_FLOAT_RANGE_PREPARE_1_r33] = "_FLOAT_RANGE_PREPARE_1_r33",
+    [_FLOAT_RANGE_REDUCE] = "_FLOAT_RANGE_REDUCE",
+    [_FLOAT_RANGE_REDUCE_r22] = "_FLOAT_RANGE_REDUCE_r22",
     [_FORMAT_SIMPLE] = "_FORMAT_SIMPLE",
     [_FORMAT_SIMPLE_r11] = "_FORMAT_SIMPLE_r11",
     [_FORMAT_WITH_SPEC] = "_FORMAT_WITH_SPEC",
@@ -5260,6 +7272,8 @@ const char *const _PyOpcode_uop_name[MAX_UOP_REGS_ID+1] = {
     [_GET_AWAITABLE_r11] = "_GET_AWAITABLE_r11",
     [_GET_ITER] = "_GET_ITER",
     [_GET_ITER_r12] = "_GET_ITER_r12",
+    [_GET_ITER_RANGE] = "_GET_ITER_RANGE",
+    [_GET_ITER_RANGE_r12] = "_GET_ITER_RANGE_r12",
     [_GET_ITER_TRAD] = "_GET_ITER_TRAD",
     [_GET_ITER_TRAD_r12] = "_GET_ITER_TRAD_r12",
     [_GET_LEN] = "_GET_LEN",
@@ -5336,6 +7350,11 @@ const char *const _PyOpcode_uop_name[MAX_UOP_REGS_ID+1] = {
     [_GUARD_BIT_IS_UNSET_POP_7_r10] = "_GUARD_BIT_IS_UNSET_POP_7_r10",
     [_GUARD_BIT_IS_UNSET_POP_7_r21] = "_GUARD_BIT_IS_UNSET_POP_7_r21",
     [_GUARD_BIT_IS_UNSET_POP_7_r32] = "_GUARD_BIT_IS_UNSET_POP_7_r32",
+    [_GUARD_BUILTINS_IDENTITY] = "_GUARD_BUILTINS_IDENTITY",
+    [_GUARD_BUILTINS_IDENTITY_r00] = "_GUARD_BUILTINS_IDENTITY_r00",
+    [_GUARD_BUILTINS_IDENTITY_r11] = "_GUARD_BUILTINS_IDENTITY_r11",
+    [_GUARD_BUILTINS_IDENTITY_r22] = "_GUARD_BUILTINS_IDENTITY_r22",
+    [_GUARD_BUILTINS_IDENTITY_r33] = "_GUARD_BUILTINS_IDENTITY_r33",
     [_GUARD_CALLABLE_BUILTIN_CLASS] = "_GUARD_CALLABLE_BUILTIN_CLASS",
     [_GUARD_CALLABLE_BUILTIN_CLASS_r00] = "_GUARD_CALLABLE_BUILTIN_CLASS_r00",
     [_GUARD_CALLABLE_BUILTIN_FAST] = "_GUARD_CALLABLE_BUILTIN_FAST",
@@ -5382,6 +7401,33 @@ const char *const _PyOpcode_uop_name[MAX_UOP_REGS_ID+1] = {
     [_GUARD_CALLABLE_TYPE_1_r13] = "_GUARD_CALLABLE_TYPE_1_r13",
     [_GUARD_CALLABLE_TYPE_1_r23] = "_GUARD_CALLABLE_TYPE_1_r23",
     [_GUARD_CALLABLE_TYPE_1_r33] = "_GUARD_CALLABLE_TYPE_1_r33",
+    [_GUARD_CALL_GLOBALS_IDENTITY] = "_GUARD_CALL_GLOBALS_IDENTITY",
+    [_GUARD_CALL_GLOBALS_IDENTITY_r00] = "_GUARD_CALL_GLOBALS_IDENTITY_r00",
+    [_GUARD_CALL_GLOBALS_IDENTITY_0] = "_GUARD_CALL_GLOBALS_IDENTITY_0",
+    [_GUARD_CALL_GLOBALS_IDENTITY_0_r02] = "_GUARD_CALL_GLOBALS_IDENTITY_0_r02",
+    [_GUARD_CALL_GLOBALS_IDENTITY_0_r12] = "_GUARD_CALL_GLOBALS_IDENTITY_0_r12",
+    [_GUARD_CALL_GLOBALS_IDENTITY_0_r22] = "_GUARD_CALL_GLOBALS_IDENTITY_0_r22",
+    [_GUARD_CALL_GLOBALS_IDENTITY_0_r33] = "_GUARD_CALL_GLOBALS_IDENTITY_0_r33",
+    [_GUARD_CALL_GLOBALS_IDENTITY_1] = "_GUARD_CALL_GLOBALS_IDENTITY_1",
+    [_GUARD_CALL_GLOBALS_IDENTITY_1_r03] = "_GUARD_CALL_GLOBALS_IDENTITY_1_r03",
+    [_GUARD_CALL_GLOBALS_IDENTITY_1_r13] = "_GUARD_CALL_GLOBALS_IDENTITY_1_r13",
+    [_GUARD_CALL_GLOBALS_IDENTITY_1_r23] = "_GUARD_CALL_GLOBALS_IDENTITY_1_r23",
+    [_GUARD_CALL_GLOBALS_IDENTITY_1_r33] = "_GUARD_CALL_GLOBALS_IDENTITY_1_r33",
+    [_GUARD_CALL_GLOBALS_IDENTITY_2] = "_GUARD_CALL_GLOBALS_IDENTITY_2",
+    [_GUARD_CALL_GLOBALS_IDENTITY_2_r03] = "_GUARD_CALL_GLOBALS_IDENTITY_2_r03",
+    [_GUARD_CALL_GLOBALS_IDENTITY_2_r13] = "_GUARD_CALL_GLOBALS_IDENTITY_2_r13",
+    [_GUARD_CALL_GLOBALS_IDENTITY_2_r23] = "_GUARD_CALL_GLOBALS_IDENTITY_2_r23",
+    [_GUARD_CALL_GLOBALS_IDENTITY_2_r33] = "_GUARD_CALL_GLOBALS_IDENTITY_2_r33",
+    [_GUARD_CALL_GLOBALS_IDENTITY_3] = "_GUARD_CALL_GLOBALS_IDENTITY_3",
+    [_GUARD_CALL_GLOBALS_IDENTITY_3_r03] = "_GUARD_CALL_GLOBALS_IDENTITY_3_r03",
+    [_GUARD_CALL_GLOBALS_IDENTITY_3_r13] = "_GUARD_CALL_GLOBALS_IDENTITY_3_r13",
+    [_GUARD_CALL_GLOBALS_IDENTITY_3_r23] = "_GUARD_CALL_GLOBALS_IDENTITY_3_r23",
+    [_GUARD_CALL_GLOBALS_IDENTITY_3_r33] = "_GUARD_CALL_GLOBALS_IDENTITY_3_r33",
+    [_GUARD_CALL_GLOBALS_IDENTITY_4] = "_GUARD_CALL_GLOBALS_IDENTITY_4",
+    [_GUARD_CALL_GLOBALS_IDENTITY_4_r03] = "_GUARD_CALL_GLOBALS_IDENTITY_4_r03",
+    [_GUARD_CALL_GLOBALS_IDENTITY_4_r13] = "_GUARD_CALL_GLOBALS_IDENTITY_4_r13",
+    [_GUARD_CALL_GLOBALS_IDENTITY_4_r23] = "_GUARD_CALL_GLOBALS_IDENTITY_4_r23",
+    [_GUARD_CALL_GLOBALS_IDENTITY_4_r33] = "_GUARD_CALL_GLOBALS_IDENTITY_4_r33",
     [_GUARD_CODE_VERSION_RETURN_GENERATOR] = "_GUARD_CODE_VERSION_RETURN_GENERATOR",
     [_GUARD_CODE_VERSION_RETURN_GENERATOR_r00] = "_GUARD_CODE_VERSION_RETURN_GENERATOR_r00",
     [_GUARD_CODE_VERSION_RETURN_GENERATOR_r11] = "_GUARD_CODE_VERSION_RETURN_GENERATOR_r11",
@@ -5407,11 +7453,21 @@ const char *const _PyOpcode_uop_name[MAX_UOP_REGS_ID+1] = {
     [_GUARD_DORV_NO_DICT_r11] = "_GUARD_DORV_NO_DICT_r11",
     [_GUARD_DORV_NO_DICT_r22] = "_GUARD_DORV_NO_DICT_r22",
     [_GUARD_DORV_NO_DICT_r33] = "_GUARD_DORV_NO_DICT_r33",
+    [_GUARD_ENUM_LIST] = "_GUARD_ENUM_LIST",
+    [_GUARD_ENUM_LIST_r02] = "_GUARD_ENUM_LIST_r02",
+    [_GUARD_ENUM_LIST_r12] = "_GUARD_ENUM_LIST_r12",
+    [_GUARD_ENUM_LIST_r22] = "_GUARD_ENUM_LIST_r22",
+    [_GUARD_ENUM_LIST_r33] = "_GUARD_ENUM_LIST_r33",
     [_GUARD_GLOBALS_VERSION] = "_GUARD_GLOBALS_VERSION",
     [_GUARD_GLOBALS_VERSION_r00] = "_GUARD_GLOBALS_VERSION_r00",
     [_GUARD_GLOBALS_VERSION_r11] = "_GUARD_GLOBALS_VERSION_r11",
     [_GUARD_GLOBALS_VERSION_r22] = "_GUARD_GLOBALS_VERSION_r22",
     [_GUARD_GLOBALS_VERSION_r33] = "_GUARD_GLOBALS_VERSION_r33",
+    [_GUARD_GLOBALS_VERSION_AND_IDENTITY] = "_GUARD_GLOBALS_VERSION_AND_IDENTITY",
+    [_GUARD_GLOBALS_VERSION_AND_IDENTITY_r00] = "_GUARD_GLOBALS_VERSION_AND_IDENTITY_r00",
+    [_GUARD_GLOBALS_VERSION_AND_IDENTITY_r11] = "_GUARD_GLOBALS_VERSION_AND_IDENTITY_r11",
+    [_GUARD_GLOBALS_VERSION_AND_IDENTITY_r22] = "_GUARD_GLOBALS_VERSION_AND_IDENTITY_r22",
+    [_GUARD_GLOBALS_VERSION_AND_IDENTITY_r33] = "_GUARD_GLOBALS_VERSION_AND_IDENTITY_r33",
     [_GUARD_IP_RETURN_GENERATOR] = "_GUARD_IP_RETURN_GENERATOR",
     [_GUARD_IP_RETURN_GENERATOR_r00] = "_GUARD_IP_RETURN_GENERATOR_r00",
     [_GUARD_IP_RETURN_GENERATOR_r11] = "_GUARD_IP_RETURN_GENERATOR_r11",
@@ -5519,6 +7575,11 @@ const char *const _PyOpcode_uop_name[MAX_UOP_REGS_ID+1] = {
     [_GUARD_NOS_TUPLE_r12] = "_GUARD_NOS_TUPLE_r12",
     [_GUARD_NOS_TUPLE_r22] = "_GUARD_NOS_TUPLE_r22",
     [_GUARD_NOS_TUPLE_r33] = "_GUARD_NOS_TUPLE_r33",
+    [_GUARD_NOS_TYPE] = "_GUARD_NOS_TYPE",
+    [_GUARD_NOS_TYPE_r02] = "_GUARD_NOS_TYPE_r02",
+    [_GUARD_NOS_TYPE_r12] = "_GUARD_NOS_TYPE_r12",
+    [_GUARD_NOS_TYPE_r22] = "_GUARD_NOS_TYPE_r22",
+    [_GUARD_NOS_TYPE_r33] = "_GUARD_NOS_TYPE_r33",
     [_GUARD_NOS_TYPE_VERSION] = "_GUARD_NOS_TYPE_VERSION",
     [_GUARD_NOS_TYPE_VERSION_r02] = "_GUARD_NOS_TYPE_VERSION_r02",
     [_GUARD_NOS_TYPE_VERSION_r12] = "_GUARD_NOS_TYPE_VERSION_r12",
@@ -5674,6 +7735,112 @@ const char *const _PyOpcode_uop_name[MAX_UOP_REGS_ID+1] = {
     [_INIT_CALL_PY_EXACT_ARGS_4_r01] = "_INIT_CALL_PY_EXACT_ARGS_4_r01",
     [_INSERT_NULL] = "_INSERT_NULL",
     [_INSERT_NULL_r10] = "_INSERT_NULL_r10",
+    [_INT_REGION] = "_INT_REGION",
+    [_INT_REGION_r23] = "_INT_REGION_r23",
+    [_INT_REGION_0] = "_INT_REGION_0",
+    [_INT_REGION_0_r23] = "_INT_REGION_0_r23",
+    [_INT_REGION_1] = "_INT_REGION_1",
+    [_INT_REGION_1_r23] = "_INT_REGION_1_r23",
+    [_INT_REGION_2] = "_INT_REGION_2",
+    [_INT_REGION_2_r23] = "_INT_REGION_2_r23",
+    [_INT_REGION_3] = "_INT_REGION_3",
+    [_INT_REGION_3_r23] = "_INT_REGION_3_r23",
+    [_INT_REGION_4] = "_INT_REGION_4",
+    [_INT_REGION_4_r23] = "_INT_REGION_4_r23",
+    [_INT_REGION_5] = "_INT_REGION_5",
+    [_INT_REGION_5_r23] = "_INT_REGION_5_r23",
+    [_INT_REGION_6] = "_INT_REGION_6",
+    [_INT_REGION_6_r23] = "_INT_REGION_6_r23",
+    [_INT_REGION_7] = "_INT_REGION_7",
+    [_INT_REGION_7_r23] = "_INT_REGION_7_r23",
+    [_INT_REGION_8] = "_INT_REGION_8",
+    [_INT_REGION_8_r23] = "_INT_REGION_8_r23",
+    [_INT_REGION_BINARY] = "_INT_REGION_BINARY",
+    [_INT_REGION_BINARY_r01] = "_INT_REGION_BINARY_r01",
+    [_INT_REGION_BINARY_r11] = "_INT_REGION_BINARY_r11",
+    [_INT_REGION_BINARY_r21] = "_INT_REGION_BINARY_r21",
+    [_INT_REGION_BINARY_r32] = "_INT_REGION_BINARY_r32",
+    [_INT_REGION_BINARY_0] = "_INT_REGION_BINARY_0",
+    [_INT_REGION_BINARY_0_r01] = "_INT_REGION_BINARY_0_r01",
+    [_INT_REGION_BINARY_0_r11] = "_INT_REGION_BINARY_0_r11",
+    [_INT_REGION_BINARY_0_r21] = "_INT_REGION_BINARY_0_r21",
+    [_INT_REGION_BINARY_0_r32] = "_INT_REGION_BINARY_0_r32",
+    [_INT_REGION_BINARY_1] = "_INT_REGION_BINARY_1",
+    [_INT_REGION_BINARY_1_r01] = "_INT_REGION_BINARY_1_r01",
+    [_INT_REGION_BINARY_1_r11] = "_INT_REGION_BINARY_1_r11",
+    [_INT_REGION_BINARY_1_r21] = "_INT_REGION_BINARY_1_r21",
+    [_INT_REGION_BINARY_1_r32] = "_INT_REGION_BINARY_1_r32",
+    [_INT_REGION_BINARY_2] = "_INT_REGION_BINARY_2",
+    [_INT_REGION_BINARY_2_r01] = "_INT_REGION_BINARY_2_r01",
+    [_INT_REGION_BINARY_2_r11] = "_INT_REGION_BINARY_2_r11",
+    [_INT_REGION_BINARY_2_r21] = "_INT_REGION_BINARY_2_r21",
+    [_INT_REGION_BINARY_2_r32] = "_INT_REGION_BINARY_2_r32",
+    [_INT_REGION_BINARY_3] = "_INT_REGION_BINARY_3",
+    [_INT_REGION_BINARY_3_r01] = "_INT_REGION_BINARY_3_r01",
+    [_INT_REGION_BINARY_3_r11] = "_INT_REGION_BINARY_3_r11",
+    [_INT_REGION_BINARY_3_r21] = "_INT_REGION_BINARY_3_r21",
+    [_INT_REGION_BINARY_3_r32] = "_INT_REGION_BINARY_3_r32",
+    [_INT_REGION_BOX] = "_INT_REGION_BOX",
+    [_INT_REGION_BOX_r01] = "_INT_REGION_BOX_r01",
+    [_INT_REGION_BOX_r11] = "_INT_REGION_BOX_r11",
+    [_INT_REGION_BOX_r22] = "_INT_REGION_BOX_r22",
+    [_INT_REGION_BOX_r33] = "_INT_REGION_BOX_r33",
+    [_INT_REGION_COMPARE] = "_INT_REGION_COMPARE",
+    [_INT_REGION_COMPARE_r23] = "_INT_REGION_COMPARE_r23",
+    [_INT_REGION_COMPARE_0] = "_INT_REGION_COMPARE_0",
+    [_INT_REGION_COMPARE_0_r23] = "_INT_REGION_COMPARE_0_r23",
+    [_INT_REGION_COMPARE_1] = "_INT_REGION_COMPARE_1",
+    [_INT_REGION_COMPARE_1_r23] = "_INT_REGION_COMPARE_1_r23",
+    [_INT_REGION_COMPARE_2] = "_INT_REGION_COMPARE_2",
+    [_INT_REGION_COMPARE_2_r23] = "_INT_REGION_COMPARE_2_r23",
+    [_INT_REGION_COMPARE_3] = "_INT_REGION_COMPARE_3",
+    [_INT_REGION_COMPARE_3_r23] = "_INT_REGION_COMPARE_3_r23",
+    [_INT_REGION_COMPARE_4] = "_INT_REGION_COMPARE_4",
+    [_INT_REGION_COMPARE_4_r23] = "_INT_REGION_COMPARE_4_r23",
+    [_INT_REGION_COMPARE_5] = "_INT_REGION_COMPARE_5",
+    [_INT_REGION_COMPARE_5_r23] = "_INT_REGION_COMPARE_5_r23",
+    [_INT_REGION_COMPARE_6] = "_INT_REGION_COMPARE_6",
+    [_INT_REGION_COMPARE_6_r23] = "_INT_REGION_COMPARE_6_r23",
+    [_INT_REGION_COMPARE_7] = "_INT_REGION_COMPARE_7",
+    [_INT_REGION_COMPARE_7_r23] = "_INT_REGION_COMPARE_7_r23",
+    [_INT_REGION_COMPARE_8] = "_INT_REGION_COMPARE_8",
+    [_INT_REGION_COMPARE_8_r23] = "_INT_REGION_COMPARE_8_r23",
+    [_INT_REGION_CONST] = "_INT_REGION_CONST",
+    [_INT_REGION_CONST_r01] = "_INT_REGION_CONST_r01",
+    [_INT_REGION_CONST_r12] = "_INT_REGION_CONST_r12",
+    [_INT_REGION_CONST_r23] = "_INT_REGION_CONST_r23",
+    [_INT_REGION_DIVIDE] = "_INT_REGION_DIVIDE",
+    [_INT_REGION_DIVIDE_r21] = "_INT_REGION_DIVIDE_r21",
+    [_INT_REGION_DUP] = "_INT_REGION_DUP",
+    [_INT_REGION_DUP_r02] = "_INT_REGION_DUP_r02",
+    [_INT_REGION_DUP_r12] = "_INT_REGION_DUP_r12",
+    [_INT_REGION_DUP_r23] = "_INT_REGION_DUP_r23",
+    [_INT_REGION_GUARD_FLOAT] = "_INT_REGION_GUARD_FLOAT",
+    [_INT_REGION_GUARD_FLOAT_r03] = "_INT_REGION_GUARD_FLOAT_r03",
+    [_INT_REGION_GUARD_FLOAT_r13] = "_INT_REGION_GUARD_FLOAT_r13",
+    [_INT_REGION_GUARD_FLOAT_r23] = "_INT_REGION_GUARD_FLOAT_r23",
+    [_INT_REGION_GUARD_FLOAT_r33] = "_INT_REGION_GUARD_FLOAT_r33",
+    [_INT_REGION_LOCAL] = "_INT_REGION_LOCAL",
+    [_INT_REGION_LOCAL_r01] = "_INT_REGION_LOCAL_r01",
+    [_INT_REGION_LOCAL_r12] = "_INT_REGION_LOCAL_r12",
+    [_INT_REGION_LOCAL_r23] = "_INT_REGION_LOCAL_r23",
+    [_INT_REGION_RSHIFT] = "_INT_REGION_RSHIFT",
+    [_INT_REGION_RSHIFT_r01] = "_INT_REGION_RSHIFT_r01",
+    [_INT_REGION_RSHIFT_r11] = "_INT_REGION_RSHIFT_r11",
+    [_INT_REGION_RSHIFT_r21] = "_INT_REGION_RSHIFT_r21",
+    [_INT_REGION_RSHIFT_r32] = "_INT_REGION_RSHIFT_r32",
+    [_INT_REGION_START] = "_INT_REGION_START",
+    [_INT_REGION_START_r22] = "_INT_REGION_START_r22",
+    [_INT_REGION_START_0] = "_INT_REGION_START_0",
+    [_INT_REGION_START_0_r22] = "_INT_REGION_START_0_r22",
+    [_INT_REGION_START_1] = "_INT_REGION_START_1",
+    [_INT_REGION_START_1_r22] = "_INT_REGION_START_1_r22",
+    [_INT_REGION_START_2] = "_INT_REGION_START_2",
+    [_INT_REGION_START_2_r22] = "_INT_REGION_START_2_r22",
+    [_INT_REGION_START_3] = "_INT_REGION_START_3",
+    [_INT_REGION_START_3_r22] = "_INT_REGION_START_3_r22",
+    [_INT_REGION_START_4] = "_INT_REGION_START_4",
+    [_INT_REGION_START_4_r22] = "_INT_REGION_START_4_r22",
     [_IS_NONE] = "_IS_NONE",
     [_IS_NONE_r11] = "_IS_NONE_r11",
     [_IS_OP] = "_IS_OP",
@@ -5695,6 +7862,8 @@ const char *const _PyOpcode_uop_name[MAX_UOP_REGS_ID+1] = {
     [_ITER_CHECK_TUPLE_r12] = "_ITER_CHECK_TUPLE_r12",
     [_ITER_CHECK_TUPLE_r22] = "_ITER_CHECK_TUPLE_r22",
     [_ITER_CHECK_TUPLE_r33] = "_ITER_CHECK_TUPLE_r33",
+    [_ITER_NEXT_ENUM_LIST] = "_ITER_NEXT_ENUM_LIST",
+    [_ITER_NEXT_ENUM_LIST_r23] = "_ITER_NEXT_ENUM_LIST_r23",
     [_ITER_NEXT_INLINE] = "_ITER_NEXT_INLINE",
     [_ITER_NEXT_INLINE_r23] = "_ITER_NEXT_INLINE_r23",
     [_ITER_NEXT_LIST_TIER_TWO] = "_ITER_NEXT_LIST_TIER_TWO",
@@ -5707,12 +7876,20 @@ const char *const _PyOpcode_uop_name[MAX_UOP_REGS_ID+1] = {
     [_ITER_NEXT_TUPLE_r03] = "_ITER_NEXT_TUPLE_r03",
     [_ITER_NEXT_TUPLE_r13] = "_ITER_NEXT_TUPLE_r13",
     [_ITER_NEXT_TUPLE_r23] = "_ITER_NEXT_TUPLE_r23",
+    [_ITER_NEXT_ZIP_LIST_PAIR] = "_ITER_NEXT_ZIP_LIST_PAIR",
+    [_ITER_NEXT_ZIP_LIST_PAIR_r23] = "_ITER_NEXT_ZIP_LIST_PAIR_r23",
     [_JUMP_TO_TOP] = "_JUMP_TO_TOP",
     [_JUMP_TO_TOP_r00] = "_JUMP_TO_TOP_r00",
+    [_LEN_SUBSCR_LIST] = "_LEN_SUBSCR_LIST",
+    [_LEN_SUBSCR_LIST_r31] = "_LEN_SUBSCR_LIST_r31",
     [_LIST_APPEND] = "_LIST_APPEND",
     [_LIST_APPEND_r10] = "_LIST_APPEND_r10",
     [_LIST_EXTEND] = "_LIST_EXTEND",
     [_LIST_EXTEND_r11] = "_LIST_EXTEND_r11",
+    [_LIST_PAIR_APPEND_SCAN] = "_LIST_PAIR_APPEND_SCAN",
+    [_LIST_PAIR_APPEND_SCAN_r22] = "_LIST_PAIR_APPEND_SCAN_r22",
+    [_LIST_REMOVE_LOCAL] = "_LIST_REMOVE_LOCAL",
+    [_LIST_REMOVE_LOCAL_r01] = "_LIST_REMOVE_LOCAL_r01",
     [_LOAD_ATTR] = "_LOAD_ATTR",
     [_LOAD_ATTR_r10] = "_LOAD_ATTR_r10",
     [_LOAD_ATTR_CLASS] = "_LOAD_ATTR_CLASS",
@@ -5936,6 +8113,90 @@ const char *const _PyOpcode_uop_name[MAX_UOP_REGS_ID+1] = {
     [_NOP_r11] = "_NOP_r11",
     [_NOP_r22] = "_NOP_r22",
     [_NOP_r33] = "_NOP_r33",
+    [_POLY_BINARY] = "_POLY_BINARY",
+    [_POLY_BINARY_r00] = "_POLY_BINARY_r00",
+    [_POLY_BINARY_r11] = "_POLY_BINARY_r11",
+    [_POLY_BINARY_r22] = "_POLY_BINARY_r22",
+    [_POLY_BINARY_r33] = "_POLY_BINARY_r33",
+    [_POLY_BINARY_0] = "_POLY_BINARY_0",
+    [_POLY_BINARY_0_r00] = "_POLY_BINARY_0_r00",
+    [_POLY_BINARY_0_r11] = "_POLY_BINARY_0_r11",
+    [_POLY_BINARY_0_r22] = "_POLY_BINARY_0_r22",
+    [_POLY_BINARY_0_r33] = "_POLY_BINARY_0_r33",
+    [_POLY_BINARY_1] = "_POLY_BINARY_1",
+    [_POLY_BINARY_1_r00] = "_POLY_BINARY_1_r00",
+    [_POLY_BINARY_1_r11] = "_POLY_BINARY_1_r11",
+    [_POLY_BINARY_1_r22] = "_POLY_BINARY_1_r22",
+    [_POLY_BINARY_1_r33] = "_POLY_BINARY_1_r33",
+    [_POLY_BINARY_2] = "_POLY_BINARY_2",
+    [_POLY_BINARY_2_r00] = "_POLY_BINARY_2_r00",
+    [_POLY_BINARY_2_r11] = "_POLY_BINARY_2_r11",
+    [_POLY_BINARY_2_r22] = "_POLY_BINARY_2_r22",
+    [_POLY_BINARY_2_r33] = "_POLY_BINARY_2_r33",
+    [_POLY_BINARY_3] = "_POLY_BINARY_3",
+    [_POLY_BINARY_3_r00] = "_POLY_BINARY_3_r00",
+    [_POLY_BINARY_3_r11] = "_POLY_BINARY_3_r11",
+    [_POLY_BINARY_3_r22] = "_POLY_BINARY_3_r22",
+    [_POLY_BINARY_3_r33] = "_POLY_BINARY_3_r33",
+    [_POLY_CONST] = "_POLY_CONST",
+    [_POLY_CONST_r00] = "_POLY_CONST_r00",
+    [_POLY_CONST_r11] = "_POLY_CONST_r11",
+    [_POLY_CONST_r22] = "_POLY_CONST_r22",
+    [_POLY_CONST_r33] = "_POLY_CONST_r33",
+    [_POLY_DUP] = "_POLY_DUP",
+    [_POLY_DUP_r00] = "_POLY_DUP_r00",
+    [_POLY_DUP_r11] = "_POLY_DUP_r11",
+    [_POLY_DUP_r22] = "_POLY_DUP_r22",
+    [_POLY_DUP_r33] = "_POLY_DUP_r33",
+    [_POLY_INDUCTION] = "_POLY_INDUCTION",
+    [_POLY_INDUCTION_r00] = "_POLY_INDUCTION_r00",
+    [_POLY_INDUCTION_r11] = "_POLY_INDUCTION_r11",
+    [_POLY_INDUCTION_r22] = "_POLY_INDUCTION_r22",
+    [_POLY_INDUCTION_r33] = "_POLY_INDUCTION_r33",
+    [_POLY_LOCAL] = "_POLY_LOCAL",
+    [_POLY_LOCAL_r00] = "_POLY_LOCAL_r00",
+    [_POLY_LOCAL_r11] = "_POLY_LOCAL_r11",
+    [_POLY_LOCAL_r22] = "_POLY_LOCAL_r22",
+    [_POLY_LOCAL_r33] = "_POLY_LOCAL_r33",
+    [_POLY_RSHIFT] = "_POLY_RSHIFT",
+    [_POLY_RSHIFT_r00] = "_POLY_RSHIFT_r00",
+    [_POLY_RSHIFT_r11] = "_POLY_RSHIFT_r11",
+    [_POLY_RSHIFT_r22] = "_POLY_RSHIFT_r22",
+    [_POLY_RSHIFT_r33] = "_POLY_RSHIFT_r33",
+    [_POLY_SCALAR_CONST] = "_POLY_SCALAR_CONST",
+    [_POLY_SCALAR_CONST_r01] = "_POLY_SCALAR_CONST_r01",
+    [_POLY_SCALAR_CONST_r12] = "_POLY_SCALAR_CONST_r12",
+    [_POLY_SCALAR_CONST_r23] = "_POLY_SCALAR_CONST_r23",
+    [_POLY_SCALAR_DIVIDE] = "_POLY_SCALAR_DIVIDE",
+    [_POLY_SCALAR_DIVIDE_r01] = "_POLY_SCALAR_DIVIDE_r01",
+    [_POLY_SCALAR_DIVIDE_r11] = "_POLY_SCALAR_DIVIDE_r11",
+    [_POLY_SCALAR_DIVIDE_r22] = "_POLY_SCALAR_DIVIDE_r22",
+    [_POLY_SCALAR_DIVIDE_r33] = "_POLY_SCALAR_DIVIDE_r33",
+    [_POLY_SCALAR_RSHIFT] = "_POLY_SCALAR_RSHIFT",
+    [_POLY_SCALAR_RSHIFT_r01] = "_POLY_SCALAR_RSHIFT_r01",
+    [_POLY_SCALAR_RSHIFT_r11] = "_POLY_SCALAR_RSHIFT_r11",
+    [_POLY_SCALAR_RSHIFT_r22] = "_POLY_SCALAR_RSHIFT_r22",
+    [_POLY_SCALAR_RSHIFT_r33] = "_POLY_SCALAR_RSHIFT_r33",
+    [_POLY_STORE] = "_POLY_STORE",
+    [_POLY_STORE_r00] = "_POLY_STORE_r00",
+    [_POLY_STORE_r10] = "_POLY_STORE_r10",
+    [_POLY_STORE_r21] = "_POLY_STORE_r21",
+    [_POLY_STORE_r32] = "_POLY_STORE_r32",
+    [_POLY_STORE_0] = "_POLY_STORE_0",
+    [_POLY_STORE_0_r00] = "_POLY_STORE_0_r00",
+    [_POLY_STORE_0_r10] = "_POLY_STORE_0_r10",
+    [_POLY_STORE_0_r21] = "_POLY_STORE_0_r21",
+    [_POLY_STORE_0_r32] = "_POLY_STORE_0_r32",
+    [_POLY_STORE_1] = "_POLY_STORE_1",
+    [_POLY_STORE_1_r00] = "_POLY_STORE_1_r00",
+    [_POLY_STORE_1_r10] = "_POLY_STORE_1_r10",
+    [_POLY_STORE_1_r21] = "_POLY_STORE_1_r21",
+    [_POLY_STORE_1_r32] = "_POLY_STORE_1_r32",
+    [_POLY_STORE_2] = "_POLY_STORE_2",
+    [_POLY_STORE_2_r00] = "_POLY_STORE_2_r00",
+    [_POLY_STORE_2_r10] = "_POLY_STORE_2_r10",
+    [_POLY_STORE_2_r21] = "_POLY_STORE_2_r21",
+    [_POLY_STORE_2_r32] = "_POLY_STORE_2_r32",
     [_POP_EXCEPT] = "_POP_EXCEPT",
     [_POP_EXCEPT_r10] = "_POP_EXCEPT_r10",
     [_POP_ITER] = "_POP_ITER",
@@ -6080,6 +8341,8 @@ const char *const _PyOpcode_uop_name[MAX_UOP_REGS_ID+1] = {
     [_STORE_SUBSCR_r30] = "_STORE_SUBSCR_r30",
     [_STORE_SUBSCR_DICT] = "_STORE_SUBSCR_DICT",
     [_STORE_SUBSCR_DICT_r31] = "_STORE_SUBSCR_DICT_r31",
+    [_STORE_SUBSCR_DICT_INHERITED] = "_STORE_SUBSCR_DICT_INHERITED",
+    [_STORE_SUBSCR_DICT_INHERITED_r30] = "_STORE_SUBSCR_DICT_INHERITED_r30",
     [_STORE_SUBSCR_DICT_KNOWN_HASH] = "_STORE_SUBSCR_DICT_KNOWN_HASH",
     [_STORE_SUBSCR_DICT_KNOWN_HASH_r31] = "_STORE_SUBSCR_DICT_KNOWN_HASH_r31",
     [_STORE_SUBSCR_LIST_INT] = "_STORE_SUBSCR_LIST_INT",
@@ -6152,6 +8415,8 @@ const char *const _PyOpcode_uop_name[MAX_UOP_REGS_ID+1] = {
     [_TIER3_RANGE_CHUNK_NATIVE_r22] = "_TIER3_RANGE_CHUNK_NATIVE_r22",
     [_TIER3_RANGE_CHUNK_RESIDENT] = "_TIER3_RANGE_CHUNK_RESIDENT",
     [_TIER3_RANGE_CHUNK_RESIDENT_r22] = "_TIER3_RANGE_CHUNK_RESIDENT_r22",
+    [_TIER3_RANGE_CHUNK_RESIDENT_AFFINE] = "_TIER3_RANGE_CHUNK_RESIDENT_AFFINE",
+    [_TIER3_RANGE_CHUNK_RESIDENT_AFFINE_r22] = "_TIER3_RANGE_CHUNK_RESIDENT_AFFINE_r22",
     [_TIER3_RANGE_CHUNK_RESIDENT_SQUARES] = "_TIER3_RANGE_CHUNK_RESIDENT_SQUARES",
     [_TIER3_RANGE_CHUNK_RESIDENT_SQUARES_r22] = "_TIER3_RANGE_CHUNK_RESIDENT_SQUARES_r22",
     [_TO_BOOL] = "_TO_BOOL",
@@ -6366,6 +8631,82 @@ int _PyUop_num_popped(int opcode, int oparg)
             return 2;
         case _BINARY_OP_SUBTRACT_INT:
             return 2;
+        case _INT_REGION_START_0:
+            return 2;
+        case _INT_REGION_START_1:
+            return 2;
+        case _INT_REGION_START_2:
+            return 2;
+        case _INT_REGION_START_3:
+            return 2;
+        case _INT_REGION_START_4:
+            return 2;
+        case _INT_REGION_START:
+            return 2;
+        case _INT_REGION_LOCAL:
+            return 0;
+        case _INT_REGION_CONST:
+            return 0;
+        case _INT_REGION_DUP:
+            return 0;
+        case _INT_REGION_BINARY_0:
+            return 2;
+        case _INT_REGION_BINARY_1:
+            return 2;
+        case _INT_REGION_BINARY_2:
+            return 2;
+        case _INT_REGION_BINARY_3:
+            return 2;
+        case _INT_REGION_BINARY:
+            return 2;
+        case _INT_REGION_RSHIFT:
+            return 2;
+        case _INT_REGION_BOX:
+            return 1;
+        case _INT_REGION_GUARD_FLOAT:
+            return 0;
+        case _INT_REGION_DIVIDE:
+            return 2;
+        case _INT_REGION_0:
+            return 2;
+        case _INT_REGION_1:
+            return 2;
+        case _INT_REGION_2:
+            return 2;
+        case _INT_REGION_3:
+            return 2;
+        case _INT_REGION_4:
+            return 2;
+        case _INT_REGION_5:
+            return 2;
+        case _INT_REGION_6:
+            return 2;
+        case _INT_REGION_7:
+            return 2;
+        case _INT_REGION_8:
+            return 2;
+        case _INT_REGION:
+            return 2;
+        case _INT_REGION_COMPARE_0:
+            return 2;
+        case _INT_REGION_COMPARE_1:
+            return 2;
+        case _INT_REGION_COMPARE_2:
+            return 2;
+        case _INT_REGION_COMPARE_3:
+            return 2;
+        case _INT_REGION_COMPARE_4:
+            return 2;
+        case _INT_REGION_COMPARE_5:
+            return 2;
+        case _INT_REGION_COMPARE_6:
+            return 2;
+        case _INT_REGION_COMPARE_7:
+            return 2;
+        case _INT_REGION_COMPARE_8:
+            return 2;
+        case _INT_REGION_COMPARE:
+            return 2;
         case _BINARY_OP_ADD_INT_INPLACE:
             return 2;
         case _BINARY_OP_SUBTRACT_INT_INPLACE:
@@ -6394,6 +8735,20 @@ int _PyUop_num_popped(int opcode, int oparg)
             return 2;
         case _BINARY_OP_MULTIPLY_FLOAT_INPLACE:
             return 2;
+        case _BINARY_OP_MULTIPLY_ADD_FLOAT_INPLACE:
+            return 3;
+        case _BINARY_OP_MULTIPLY_SUBTRACT_FLOAT_INPLACE:
+            return 3;
+        case _FLOAT_ATTRIBUTE_SUM_PRODUCTS:
+            return 0;
+        case _BINARY_OP_MULTIPLY_ADD_FLOAT_OWNED:
+            return 3;
+        case _BINARY_OP_MULTIPLY_SUBTRACT_FLOAT_OWNED:
+            return 3;
+        case _BINARY_OP_MULTIPLY_ADD_FLOAT_SHARED:
+            return 3;
+        case _BINARY_OP_MULTIPLY_SUBTRACT_FLOAT_SHARED:
+            return 3;
         case _BINARY_OP_ADD_FLOAT_INPLACE_RIGHT:
             return 2;
         case _BINARY_OP_MULTIPLY_FLOAT_INPLACE_RIGHT:
@@ -6461,6 +8816,10 @@ int _PyUop_num_popped(int opcode, int oparg)
         case _SET_ADD:
             return 1;
         case _STORE_SUBSCR:
+            return 3;
+        case _DICT_PAIR_INCREMENT:
+            return 4;
+        case _STORE_SUBSCR_DICT_INHERITED:
             return 3;
         case _STORE_SUBSCR_LIST_INT:
             return 3;
@@ -6536,6 +8895,10 @@ int _PyUop_num_popped(int opcode, int oparg)
             return 0;
         case _GUARD_GLOBALS_VERSION:
             return 0;
+        case _GUARD_GLOBALS_VERSION_AND_IDENTITY:
+            return 0;
+        case _GUARD_BUILTINS_IDENTITY:
+            return 0;
         case _LOAD_GLOBAL_MODULE:
             return 0;
         case _LOAD_GLOBAL_BUILTINS:
@@ -6596,6 +8959,8 @@ int _PyUop_num_popped(int opcode, int oparg)
             return 0;
         case _GUARD_TYPE:
             return 0;
+        case _GUARD_NOS_TYPE:
+            return 0;
         case _CHECK_MANAGED_OBJECT_HAS_VALUES:
             return 0;
         case _LOAD_ATTR_INSTANCE_VALUE:
@@ -6624,6 +8989,20 @@ int _PyUop_num_popped(int opcode, int oparg)
             return 2;
         case _STORE_ATTR_SLOT:
             return 2;
+        case _COMPARE_TUPLE_PAIR_0:
+            return 2;
+        case _COMPARE_TUPLE_PAIR_1:
+            return 2;
+        case _COMPARE_TUPLE_PAIR:
+            return 2;
+        case _LIST_PAIR_APPEND_SCAN:
+            return 0;
+        case _COMPARE_LIST_PAIR_0:
+            return 2;
+        case _COMPARE_LIST_PAIR_1:
+            return 2;
+        case _COMPARE_LIST_PAIR:
+            return 2;
         case _COMPARE_OP:
             return 2;
         case _COMPARE_OP_FLOAT:
@@ -6635,6 +9014,8 @@ int _PyUop_num_popped(int opcode, int oparg)
         case _IS_OP:
             return 2;
         case _CONTAINS_OP:
+            return 2;
+        case _CONTAINS_OP_LIST_INT:
             return 2;
         case _GUARD_TOS_ANY_SET:
             return 0;
@@ -6676,11 +9057,33 @@ int _PyUop_num_popped(int opcode, int oparg)
             return 0;
         case _GET_ITER_TRAD:
             return 1;
+        case _GET_ITER_RANGE:
+            return 1;
         case _FOR_ITER_TIER_TWO:
             return 0;
         case _GUARD_TYPE_ITER:
             return 0;
         case _ITER_NEXT_INLINE:
+            return 0;
+        case _GUARD_ENUM_LIST:
+            return 0;
+        case _ENUM_LIST_INT_SCAN_0:
+            return 0;
+        case _ENUM_LIST_INT_SCAN_1:
+            return 0;
+        case _ENUM_LIST_INT_SCAN_2:
+            return 0;
+        case _ENUM_LIST_INT_SCAN_3:
+            return 0;
+        case _ENUM_LIST_INT_SCAN_4:
+            return 0;
+        case _ENUM_LIST_INT_SCAN_5:
+            return 0;
+        case _ENUM_LIST_INT_SCAN:
+            return 0;
+        case _ITER_NEXT_ENUM_LIST:
+            return 0;
+        case _ITER_NEXT_ZIP_LIST_PAIR:
             return 0;
         case _GUARD_NOS_ITER_VIRTUAL:
             return 0;
@@ -6768,6 +9171,110 @@ int _PyUop_num_popped(int opcode, int oparg)
             return 2 + oparg;
         case _INIT_CALL_PY_EXACT_ARGS:
             return 2 + oparg;
+        case _CALL_PY_TRIVIAL_0:
+            return 2 + oparg;
+        case _CALL_PY_TRIVIAL_1:
+            return 2 + oparg;
+        case _CALL_PY_TRIVIAL_2:
+            return 2 + oparg;
+        case _CALL_PY_TRIVIAL_3:
+            return 2 + oparg;
+        case _CALL_PY_TRIVIAL_4:
+            return 2 + oparg;
+        case _CALL_PY_TRIVIAL:
+            return 2 + oparg;
+        case _CALL_PY_ATTRIBUTE_0:
+            return 2 + oparg;
+        case _CALL_PY_ATTRIBUTE_1:
+            return 2 + oparg;
+        case _CALL_PY_ATTRIBUTE_2:
+            return 2 + oparg;
+        case _CALL_PY_ATTRIBUTE_3:
+            return 2 + oparg;
+        case _CALL_PY_ATTRIBUTE_4:
+            return 2 + oparg;
+        case _CALL_PY_ATTRIBUTE:
+            return 2 + oparg;
+        case _GUARD_CALL_GLOBALS_IDENTITY_0:
+            return 0;
+        case _GUARD_CALL_GLOBALS_IDENTITY_1:
+            return 0;
+        case _GUARD_CALL_GLOBALS_IDENTITY_2:
+            return 0;
+        case _GUARD_CALL_GLOBALS_IDENTITY_3:
+            return 0;
+        case _GUARD_CALL_GLOBALS_IDENTITY_4:
+            return 0;
+        case _GUARD_CALL_GLOBALS_IDENTITY:
+            return 0;
+        case _CALL_PY_ATTRIBUTE_IF_0:
+            return 2 + oparg;
+        case _CALL_PY_ATTRIBUTE_IF_1:
+            return 2 + oparg;
+        case _CALL_PY_ATTRIBUTE_IF_2:
+            return 2 + oparg;
+        case _CALL_PY_ATTRIBUTE_IF_3:
+            return 2 + oparg;
+        case _CALL_PY_ATTRIBUTE_IF_4:
+            return 2 + oparg;
+        case _CALL_PY_ATTRIBUTE_IF:
+            return 2 + oparg;
+        case _CALL_PY_LIST_0:
+            return 2 + (oparg % 5);
+        case _CALL_PY_LIST_1:
+            return 2 + (oparg % 5);
+        case _CALL_PY_LIST_2:
+            return 2 + (oparg % 5);
+        case _CALL_PY_LIST_3:
+            return 2 + (oparg % 5);
+        case _CALL_PY_LIST_4:
+            return 2 + (oparg % 5);
+        case _CALL_PY_LIST_5:
+            return 2 + (oparg % 5);
+        case _CALL_PY_LIST_6:
+            return 2 + (oparg % 5);
+        case _CALL_PY_LIST_7:
+            return 2 + (oparg % 5);
+        case _CALL_PY_LIST_8:
+            return 2 + (oparg % 5);
+        case _CALL_PY_LIST_9:
+            return 2 + (oparg % 5);
+        case _CALL_PY_LIST:
+            return 2 + (oparg % 5);
+        case _CALL_PY_ATTRIBUTE_SEARCH_0:
+            return 2 + (1 + oparg / 6);
+        case _CALL_PY_ATTRIBUTE_SEARCH_1:
+            return 2 + (1 + oparg / 6);
+        case _CALL_PY_ATTRIBUTE_SEARCH_2:
+            return 2 + (1 + oparg / 6);
+        case _CALL_PY_ATTRIBUTE_SEARCH_3:
+            return 2 + (1 + oparg / 6);
+        case _CALL_PY_ATTRIBUTE_SEARCH_4:
+            return 2 + (1 + oparg / 6);
+        case _CALL_PY_ATTRIBUTE_SEARCH_5:
+            return 2 + (1 + oparg / 6);
+        case _CALL_PY_ATTRIBUTE_SEARCH_6:
+            return 2 + (1 + oparg / 6);
+        case _CALL_PY_ATTRIBUTE_SEARCH_7:
+            return 2 + (1 + oparg / 6);
+        case _CALL_PY_ATTRIBUTE_SEARCH_8:
+            return 2 + (1 + oparg / 6);
+        case _CALL_PY_ATTRIBUTE_SEARCH_9:
+            return 2 + (1 + oparg / 6);
+        case _CALL_PY_ATTRIBUTE_SEARCH_10:
+            return 2 + (1 + oparg / 6);
+        case _CALL_PY_ATTRIBUTE_SEARCH_11:
+            return 2 + (1 + oparg / 6);
+        case _CALL_PY_ATTRIBUTE_SEARCH:
+            return 2 + (1 + oparg / 6);
+        case _CALL_PY_LIST_REMOVE_0:
+            return 2 + (2 + oparg);
+        case _CALL_PY_LIST_REMOVE_1:
+            return 2 + (2 + oparg);
+        case _CALL_PY_LIST_REMOVE:
+            return 2 + (2 + oparg);
+        case _LIST_REMOVE_LOCAL:
+            return 0;
         case _PUSH_FRAME:
             return 1;
         case _GUARD_NOS_NULL:
@@ -6792,11 +9299,25 @@ int _PyUop_num_popped(int opcode, int oparg)
             return 0;
         case _CREATE_INIT_FRAME:
             return 2 + oparg;
+        case _CALL_CLASS_ATTRIBUTES_0:
+            return 2 + oparg;
+        case _CALL_CLASS_ATTRIBUTES_1:
+            return 2 + oparg;
+        case _CALL_CLASS_ATTRIBUTES_2:
+            return 2 + oparg;
+        case _CALL_CLASS_ATTRIBUTES_3:
+            return 2 + oparg;
+        case _CALL_CLASS_ATTRIBUTES_4:
+            return 2 + oparg;
+        case _CALL_CLASS_ATTRIBUTES:
+            return 2 + oparg;
         case _EXIT_INIT_CHECK:
             return 1;
         case _GUARD_CALLABLE_BUILTIN_CLASS:
             return 0;
         case _CALL_BUILTIN_CLASS:
+            return 0;
+        case _CALL_RANGE_COMPACT:
             return 0;
         case _GUARD_CALLABLE_BUILTIN_O:
             return 0;
@@ -6814,6 +9335,14 @@ int _PyUop_num_popped(int opcode, int oparg)
             return 0;
         case _CALL_LEN:
             return 3;
+        case _LEN_SUBSCR_LIST:
+            return 4;
+        case _CALL_LEN_CONSUMER:
+            return 3;
+        case _CALL_LEN_LEFT_COMPARE:
+            return 4;
+        case _CALL_STR_TAILMATCH:
+            return 0;
         case _GUARD_CALLABLE_ISINSTANCE:
             return 0;
         case _CALL_ISINSTANCE:
@@ -6932,11 +9461,57 @@ int _PyUop_num_popped(int opcode, int oparg)
             return 1;
         case _JUMP_TO_TOP:
             return 0;
+        case _FLOAT_RANGE_GUARD:
+            return 0;
+        case _POLY_SCALAR_CONST:
+            return 0;
+        case _POLY_SCALAR_RSHIFT:
+            return 1;
+        case _POLY_SCALAR_DIVIDE:
+            return 1;
+        case _POLY_STORE_0:
+            return 1;
+        case _POLY_STORE_1:
+            return 1;
+        case _POLY_STORE_2:
+            return 1;
+        case _POLY_STORE:
+            return 1;
+        case _POLY_LOCAL:
+            return 0;
+        case _POLY_INDUCTION:
+            return 0;
+        case _POLY_CONST:
+            return 0;
+        case _POLY_DUP:
+            return 0;
+        case _POLY_BINARY_0:
+            return 0;
+        case _POLY_BINARY_1:
+            return 0;
+        case _POLY_BINARY_2:
+            return 0;
+        case _POLY_BINARY_3:
+            return 0;
+        case _POLY_BINARY:
+            return 0;
+        case _POLY_RSHIFT:
+            return 0;
+        case _FLOAT_RANGE_PREPARE_0:
+            return 0;
+        case _FLOAT_RANGE_PREPARE_1:
+            return 0;
+        case _FLOAT_RANGE_PREPARE:
+            return 0;
+        case _FLOAT_RANGE_REDUCE:
+            return 0;
         case _TIER3_RANGE_CHUNK:
             return 0;
         case _TIER3_RANGE_CHUNK_NATIVE:
             return 0;
         case _TIER3_RANGE_CHUNK_RESIDENT:
+            return 0;
+        case _TIER3_RANGE_CHUNK_RESIDENT_AFFINE:
             return 0;
         case _TIER3_RANGE_CHUNK_RESIDENT_SQUARES:
             return 0;

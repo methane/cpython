@@ -153,7 +153,19 @@ class Tier2Emitter(Emitter):
         inst: Instruction | None,
     ) -> bool:
         assert self.exit_cache_depth == 0, uop.name
-        self.cache_items(storage.stack, self.exit_cache_depth, False)
+        return self.goto_tier_one(tkn, tkn_iter, uop, storage, inst)
+
+    def goto_tier_one(
+        self,
+        tkn: Token,
+        tkn_iter: TokenIterator,
+        uop: CodeSection,
+        storage: Storage,
+        inst: Instruction | None,
+    ) -> bool:
+        # A conditional interpreter exit flushes the cache even when the
+        # successful path of this uop returns a cached value.
+        self.cache_items(storage.stack, 0, False)
         storage.flush(self.out)
         self.out.emit(tkn)
         lparen = next(tkn_iter)
@@ -162,8 +174,6 @@ class Tier2Emitter(Emitter):
         emit_to(self.out, tkn_iter, "RPAREN")
         self.out.emit(")")
         return False
-
-    goto_tier_one = tier2_to_tier2
 
     def exit_if_after(
         self,

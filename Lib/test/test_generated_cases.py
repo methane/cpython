@@ -34,8 +34,10 @@ with test_tools.imports_under_tool("cases_generator"):
     import parser
     from stack import Local, Stack
     import tier1_generator
+    import tier2_generator
     import optimizer_generator
     import record_function_generator
+    import uop_id_generator
 
 
 def handle_stderr():
@@ -2116,6 +2118,72 @@ class TestGeneratedCases(unittest.TestCase):
         }
         """
         self.run_cases_test(input, output)
+
+
+class TestUopIdGeneration(unittest.TestCase):
+    def test_replica_ids_are_contiguous_and_numeric(self):
+        import io
+
+        source = """
+        replicate(12) tier2 op(_WIDE, (items[oparg] -- res)) {
+            res = PyStackRef_DUP(items[oparg - 1]);
+            INPUTS_DEAD();
+        }
+        replicate(8:13) tier2 op(_OFFSET, (items[oparg] -- res)) {
+            res = PyStackRef_None;
+            INPUTS_DEAD();
+        }
+        tier2 op(_WIDE_5_HELPER, (--)) {}
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            filename = os.path.join(directory, "input.c")
+            with open(filename, "w") as file:
+                file.write(parser.BEGIN_MARKER + source + parser.END_MARKER)
+            analysis = analyze_files([filename])
+            for distinct_namespace in (False, True):
+                with self.subTest(distinct_namespace=distinct_namespace):
+                    output = io.StringIO()
+                    uop_id_generator.generate_uop_ids(
+                        [filename], analysis, output, distinct_namespace)
+                    primary = output.getvalue().split("enum {", 1)[1].split("};", 1)[0]
+                    names = [line.strip().rstrip(",") for line in primary.splitlines()]
+                    for base, replicas in (("_WIDE", range(12)),
+                                           ("_OFFSET", range(8, 13))):
+                        position = names.index(base)
+                        expected = [base] + [f"{base}_{i}" for i in replicas]
+                        self.assertEqual(names[position:position + len(expected)], expected)
+
+
+class TestTier2ConditionalExit(unittest.TestCase):
+    def test_exit_with_cached_success_result(self):
+        import io
+
+        source = """
+        tier2 op(_CONDITIONAL_EXIT, (args[oparg] -- res)) {
+            if (must_exit) {
+                INPUTS_DEAD();
+                SYNC_SP();
+                GOTO_TIER_ONE(frame->instr_ptr);
+            }
+            res = PyStackRef_DUP(args[0]);
+            INPUTS_DEAD();
+        }
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            filename = os.path.join(directory, "input.c")
+            with open(filename, "w") as file:
+                file.write(parser.BEGIN_MARKER + source + parser.END_MARKER)
+            analysis = analyze_files([filename])
+            output = io.StringIO()
+            tier2_generator.generate_tier2([filename], analysis, output, False)
+        generated = output.getvalue()
+        self.assertIn("case _CONDITIONAL_EXIT_r01:", generated)
+        exit_path, success_path = generated.split("GOTO_TIER_ONE(frame->instr_ptr);", 1)
+        self.assertIn("SET_CURRENT_CACHED_VALUES(0);", exit_path)
+        self.assertNotIn("_tos_cache0 = res;", exit_path)
+        self.assertIn("_tos_cache0 = res;", success_path)
+        self.assertIn("SET_CURRENT_CACHED_VALUES(1);", success_path)
+
 
 class TestRecorderTableGeneration(unittest.TestCase):
 

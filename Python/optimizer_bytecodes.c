@@ -185,6 +185,28 @@ dummy_func(void) {
         ss = sub_st;
     }
 
+    op(_STORE_SUBSCR, (v, container, sub --)) {
+        (void)v;
+        (void)sub;
+        PyTypeObject *type = sym_get_type(container);
+        if (type == NULL) {
+            type = sym_get_probable_type(container);
+        }
+        if (region_enabled("PYTHON_TIER2_BUILTIN_REGIONS") && type != NULL &&
+            PyType_IsSubtype(type, &PyDict_Type) &&
+            _PyType_HasGenericSetItem(type) &&
+            _PyType_Lookup(type, &_Py_ID(__setitem__)) ==
+                _PyType_Lookup(&PyDict_Type, &_Py_ID(__setitem__)) &&
+            type->tp_version_tag != 0) {
+            /* __delitem__ can force generic assignment dispatch even when
+             * __setitem__ is inherited unchanged from dict. Version-check
+             * the receiver in the new uop; a mismatch keeps ordinary dispatch. */
+            REPLACE_OP(this_instr, _STORE_SUBSCR_DICT_INHERITED, 0,
+                       type->tp_version_tag);
+            watch_type(type, dependencies);
+        }
+    }
+
     op(_STORE_ATTR_SLOT, (index/1, value, owner -- o)) {
         (void)index;
         (void)value;
@@ -297,17 +319,25 @@ dummy_func(void) {
                            || oparg == NB_INPLACE_TRUE_DIVIDE);
         bool is_remainder = (oparg == NB_REMAINDER
                              || oparg == NB_INPLACE_REMAINDER);
+        bool is_float_chain_op = (oparg == NB_ADD
+                                  || oparg == NB_INPLACE_ADD
+                                  || oparg == NB_SUBTRACT
+                                  || oparg == NB_INPLACE_SUBTRACT
+                                  || oparg == NB_MULTIPLY
+                                  || oparg == NB_INPLACE_MULTIPLY);
         int emit_op = _BINARY_OP;
         // Promote probable-float operands to known floats via speculative
         // guards. _RECORD_TOS_TYPE / _RECORD_NOS_TYPE in the BINARY_OP macro
         // record the observed operand type during tracing, which
         // sym_get_probable_type reads here. Applied only to ops where
         // narrowing unlocks a meaningful downstream win:
+        //   - add/subtract/multiply: keeps exact-float arithmetic chains on
+        //     the specialized path and lets unique intermediates be reused.
         //   - NB_TRUE_DIVIDE: enables the specialized float path below.
         //   - NB_REMAINDER: lets the float result type propagate.
         // NB_POWER is excluded: speculative guards there regressed
         // test_power_type_depends_on_input_values (GH-127844).
-        if (is_truediv || is_remainder) {
+        if (is_float_chain_op || is_truediv || is_remainder) {
             if (!sym_has_type(rhs)
                     && sym_get_probable_type(rhs) == &PyFloat_Type) {
                 ADD_OP(_GUARD_TOS_FLOAT, 0, 0);
@@ -321,7 +351,44 @@ dummy_func(void) {
                 lhs_float = true;
             }
         }
-        if (is_truediv && lhs_float && rhs_float) {
+        if (is_float_chain_op && lhs_float && rhs_float) {
+            int plain_op;
+            int inplace_op;
+            int inplace_right_op;
+            if (oparg == NB_ADD || oparg == NB_INPLACE_ADD) {
+                plain_op = _BINARY_OP_ADD_FLOAT;
+                inplace_op = _BINARY_OP_ADD_FLOAT_INPLACE;
+                inplace_right_op = _BINARY_OP_ADD_FLOAT_INPLACE_RIGHT;
+            }
+            else if (oparg == NB_SUBTRACT || oparg == NB_INPLACE_SUBTRACT) {
+                plain_op = _BINARY_OP_SUBTRACT_FLOAT;
+                inplace_op = _BINARY_OP_SUBTRACT_FLOAT_INPLACE;
+                inplace_right_op = _BINARY_OP_SUBTRACT_FLOAT_INPLACE_RIGHT;
+            }
+            else {
+                assert(oparg == NB_MULTIPLY || oparg == NB_INPLACE_MULTIPLY);
+                plain_op = _BINARY_OP_MULTIPLY_FLOAT;
+                inplace_op = _BINARY_OP_MULTIPLY_FLOAT_INPLACE;
+                inplace_right_op = _BINARY_OP_MULTIPLY_FLOAT_INPLACE_RIGHT;
+            }
+            if (PyJitRef_IsUnique(lhs)) {
+                emit_op = inplace_op;
+                l = sym_new_null(ctx);
+                r = rhs;
+            }
+            else if (PyJitRef_IsUnique(rhs)) {
+                emit_op = inplace_right_op;
+                l = lhs;
+                r = sym_new_null(ctx);
+            }
+            else {
+                emit_op = plain_op;
+                l = lhs;
+                r = rhs;
+            }
+            res = PyJitRef_MakeUnique(sym_new_type(ctx, &PyFloat_Type));
+        }
+        else if (is_truediv && lhs_float && rhs_float) {
             if (PyJitRef_IsUnique(lhs)) {
                 emit_op = _BINARY_OP_TRUEDIV_FLOAT_INPLACE;
                 l = sym_new_null(ctx);
@@ -770,6 +837,12 @@ dummy_func(void) {
         }
     }
 
+    op(_COMPARE_TUPLE_PAIR, (local/4, first, second -- res, f, s)) {
+        res = sym_new_type(ctx, &PyBool_Type);
+        f = first;
+        s = second;
+    }
+
     op(_COMPARE_OP, (left, right -- res)) {
         // Comparison between bytes and str or int is not impacted by this optimization as bytes
         // is not a safe type (due to its ability to raise a warning during comparisons).
@@ -846,7 +919,14 @@ dummy_func(void) {
         b = sym_new_type(ctx, &PyBool_Type);
         l = left;
         r = right;
-        REPLACE_OPCODE_IF_EVALUATES_PURE(left, right, b);
+        PyTypeObject *type = sym_get_type(right);
+        if (region_enabled("PYTHON_TIER2_BUILTIN_REGIONS") &&
+            (type == NULL || type == &PyList_Type)) {
+            REPLACE_OP(this_instr, _CONTAINS_OP_LIST_INT, oparg, 0);
+        }
+        else {
+            REPLACE_OPCODE_IF_EVALUATES_PURE(left, right, b);
+        }
     }
 
     op(_CONTAINS_OP_SET, (left, right -- b, l, r)) {
@@ -1336,6 +1416,12 @@ dummy_func(void) {
     }
 
     op(_CREATE_INIT_FRAME, (init, self, args[oparg] -- init_frame)) {
+        PyObject *init_o = sym_get_const(ctx, init);
+        if (region_enabled("PYTHON_TIER2_CALL_REGIONS") &&
+            init_o != NULL && PyFunction_Check(init_o)) {
+            this_instr->operand0 = _PyFunction_GetVersionForCurrentState(
+                (PyFunctionObject *)init_o);
+        }
         ctx->frame->stack_pointer = stack_pointer - oparg - 2;
         _Py_UOpsAbstractFrame *shim = frame_new(ctx, (PyCodeObject *)&_Py_InitCleanup, NULL, 0);
         if (shim == NULL) {
@@ -1440,7 +1526,8 @@ dummy_func(void) {
                 ADD_OP(_GUARD_TYPE, 0, (uintptr_t)tp);
                 sym_set_type(iterable, tp);
             }
-            ADD_OP(_GET_ITER_TRAD, 0, 0);
+            ADD_OP(tp == &PyRange_Type && region_enabled("PYTHON_TIER2_BUILTIN_REGIONS")
+                   ? _GET_ITER_RANGE : _GET_ITER_TRAD, 0, 0);
         }
         if (is_coro) {
             assert(!is_trad);
@@ -1768,7 +1855,15 @@ dummy_func(void) {
     }
 
     op(_CALL_BUILTIN_CLASS, (callable, self_or_null, args[oparg] -- callable, self_or_null, args[oparg])) {
-        callable = sym_new_not_null(ctx);
+        if (oparg == 1 && sym_is_null(self_or_null) &&
+            sym_get_const(ctx, callable) == (PyObject *)&PyRange_Type &&
+            region_enabled("PYTHON_TIER2_BUILTIN_REGIONS")) {
+            ADD_OP(_CALL_RANGE_COMPACT, 1, 0);
+            callable = sym_new_type(ctx, &PyRange_Type);
+        }
+        else {
+            callable = sym_new_not_null(ctx);
+        }
     }
 
     op(_GUARD_CALLABLE_METHOD_DESCRIPTOR_O, (callable, self_or_null, args[oparg] -- callable, self_or_null, args[oparg])) {
@@ -1894,13 +1989,25 @@ dummy_func(void) {
 
     op(_CALL_METHOD_DESCRIPTOR_FAST, (callable, self_or_null, args[oparg] -- callable, self_or_null, args[oparg])) {
         PyObject *callable_o = sym_get_const(ctx, callable);
+        bool tailmatch = false;
         if (callable_o && Py_IS_TYPE(callable_o, &PyMethodDescr_Type)
             && sym_is_not_null(self_or_null)) {
             PyMethodDescrObject *method = (PyMethodDescrObject *)callable_o;
             PyCFunction cfunc = method->d_method->ml_meth;
-            ADD_OP(_CALL_METHOD_DESCRIPTOR_FAST_INLINE, oparg, (uintptr_t)cfunc);
+            const char *name = method->d_method->ml_name;
+            if (region_enabled("PYTHON_TIER2_BUILTIN_REGIONS") && oparg == 1 &&
+                method->d_common.d_type == &PyUnicode_Type &&
+                (strcmp(name, "startswith") == 0 || strcmp(name, "endswith") == 0) &&
+                _PyType_Lookup(&PyUnicode_Type, method->d_common.d_name) == callable_o) {
+                ADD_OP(_CALL_STR_TAILMATCH, strcmp(name, "endswith") == 0,
+                       (uintptr_t)callable_o);
+                tailmatch = true;
+            }
+            else {
+                ADD_OP(_CALL_METHOD_DESCRIPTOR_FAST_INLINE, oparg, (uintptr_t)cfunc);
+            }
         }
-        callable = sym_new_not_null(ctx);
+        callable = tailmatch ? sym_new_type(ctx, &PyBool_Type) : sym_new_not_null(ctx);
     }
 
     op(_GUARD_CALLABLE_METHOD_DESCRIPTOR_FAST, (callable, self_or_null, args[oparg] -- callable, self_or_null, args[oparg])) {
@@ -2216,7 +2323,7 @@ dummy_func(void) {
                 ADD_OP(_NOP, 0, 0);
             }
             else {
-                ADD_OP(_GUARD_TYPE, 0, (uintptr_t)tp);
+                ADD_OP(_GUARD_NOS_TYPE, 0, (uintptr_t)tp);
                 sym_set_type(nos, tp);
             }
             PyType_Watch(TYPE_WATCHER_ID, (PyObject *)tp);
@@ -2237,7 +2344,7 @@ dummy_func(void) {
                 ADD_OP(_NOP, 0, 0);
             }
             else {
-                ADD_OP(_GUARD_TYPE, 0, (uintptr_t)tp);
+                ADD_OP(_GUARD_NOS_TYPE, 0, (uintptr_t)tp);
                 sym_set_type(nos, tp);
             }
             PyType_Watch(TYPE_WATCHER_ID, (PyObject *)tp);
@@ -2378,6 +2485,73 @@ dummy_func(void) {
         }
     }
 
+    op(_INT_REGION_START, (left, right, locals/4 -- a, b)) {
+        (void)locals;
+        a = sym_new_unknown(ctx);
+        b = sym_new_unknown(ctx);
+    }
+
+    op(_INT_REGION_LOCAL, (-- value)) {
+        value = sym_new_unknown(ctx);
+    }
+
+    op(_INT_REGION_CONST, (-- value)) {
+        value = sym_new_unknown(ctx);
+    }
+
+    op(_INT_REGION_DUP, (value -- value, copy)) {
+        copy = value;
+    }
+
+    op(_INT_REGION_BINARY, (left, right -- value)) {
+        value = sym_new_unknown(ctx);
+    }
+
+    op(_INT_REGION_RSHIFT, (left, right -- value)) {
+        value = sym_new_unknown(ctx);
+    }
+
+    op(_INT_REGION_BOX, (value -- res)) {
+        res = PyJitRef_MakeUnique(sym_new_type(ctx, &PyLong_Type));
+    }
+
+    op(_INT_REGION_GUARD_FLOAT, (numerator, left, right -- numerator, left, right)) {
+        sym_set_type(numerator, &PyFloat_Type);
+    }
+
+    op(_FLOAT_ATTRIBUTE_SUM_PRODUCTS, (fields/4, layout/4 -- res)) {
+        res = PyJitRef_MakeUnique(sym_new_type(ctx, &PyFloat_Type));
+    }
+
+    op(_INT_REGION_DIVIDE, (numerator, value -- res)) {
+        res = PyJitRef_MakeUnique(sym_new_type(ctx, &PyFloat_Type));
+    }
+
+    op(_INT_REGION, (left, right, config/4 -- res, l, r)) {
+        res = sym_new_type(ctx, &PyLong_Type);
+        l = left;
+        r = right;
+    }
+
+    op(_INT_REGION_COMPARE, (left, right, config/4 -- res, l, r)) {
+        res = sym_new_type(ctx, &PyBool_Type);
+        l = left;
+        r = right;
+    }
+
+    op(_CALL_LEN_CONSUMER, (callable, null, arg, local/4 -- res, a, c)) {
+        res = sym_new_type(ctx, (oparg & 16) ? &PyBool_Type : &PyLong_Type);
+        a = arg;
+        c = callable;
+    }
+
+    op(_CALL_LEN_LEFT_COMPARE, (offset/4, left, callable, null, arg -- res, l, a, c)) {
+        res = sym_new_type(ctx, &PyBool_Type);
+        l = left;
+        a = arg;
+        c = callable;
+    }
+
     op(_CALL_LEN, (callable, null, arg -- res, a, c)) {
         res = sym_new_type(ctx, &PyLong_Type);
         Py_ssize_t length = sym_tuple_length(arg);
@@ -2485,21 +2659,30 @@ dummy_func(void) {
     op(_GUARD_GLOBALS_VERSION, (version/1 --)) {
         if (ctx->frame->func != NULL) {
             PyObject *globals = ctx->frame->func->func_globals;
+            bool named = region_enabled("PYTHON_TIER2_CALL_REGIONS");
             if (incorrect_keys(globals, version)) {
                 OPT_STAT_INC(remove_globals_incorrect_keys);
                 ctx->done = true;
             }
-            else if (get_mutations(globals) >= _Py_MAX_ALLOWED_GLOBALS_MODIFICATIONS) {
+            else if (!named && get_mutations(globals) >= _Py_MAX_ALLOWED_GLOBALS_MODIFICATIONS) {
                 /* Do nothing */
             }
             else {
                 if (!ctx->frame->globals_watched) {
                     PyDict_Watch(GLOBALS_WATCHER_ID, globals);
-                    _Py_BloomFilter_Add(dependencies, globals);
+                    if (named) {
+                        _Py_BloomFilter_AddGlobal(dependencies, globals, 0, true);
+                    }
+                    else {
+                        _Py_BloomFilter_Add(dependencies, globals);
+                    }
                     ctx->frame->globals_watched = true;
                 }
                 if (ctx->frame->globals_checked_version == version) {
                     ADD_OP(_NOP, 0, 0);
+                } else {
+                    ADD_OP(_GUARD_GLOBALS_VERSION_AND_IDENTITY, 0, version);
+                    uop_buffer_last(&ctx->out_buffer)->operand1 = (uintptr_t)globals;
                 }
             }
         }
@@ -2512,7 +2695,11 @@ dummy_func(void) {
         PyObject *cnst = NULL;
         PyInterpreterState *interp = _PyInterpreterState_GET();
         PyObject *builtins = interp->builtins;
-        if (incorrect_keys(builtins, version)) {
+        if (ctx->frame->func == NULL || ctx->frame->func->func_builtins != builtins) {
+            /* Only the interpreter's builtins are covered by this watcher.
+             * A copied dict can share a keys version while its values differ. */
+        }
+        else if (incorrect_keys(builtins, version)) {
             OPT_STAT_INC(remove_globals_incorrect_keys);
             ctx->done = true;
         }
@@ -2526,6 +2713,10 @@ dummy_func(void) {
             }
             if (ctx->frame->globals_checked_version != 0 && ctx->frame->globals_watched) {
                 cnst = convert_global_to_const(this_instr, builtins);
+                if (cnst != NULL) {
+                    ADD_OP(_GUARD_BUILTINS_IDENTITY, 0, 0);
+                    ADD_OP(this_instr->opcode, this_instr->oparg, this_instr->operand0);
+                }
             }
         }
         if (cnst == NULL) {
@@ -2546,25 +2737,41 @@ dummy_func(void) {
         PyObject *cnst = NULL;
         if (ctx->frame->func != NULL) {
             PyObject *globals = ctx->frame->func->func_globals;
+            bool named = region_enabled("PYTHON_TIER2_CALL_REGIONS");
             if (incorrect_keys(globals, version)) {
                 OPT_STAT_INC(remove_globals_incorrect_keys);
                 ctx->done = true;
             }
-            else if (get_mutations(globals) >= _Py_MAX_ALLOWED_GLOBALS_MODIFICATIONS) {
+            else if (!named && get_mutations(globals) >= _Py_MAX_ALLOWED_GLOBALS_MODIFICATIONS) {
                 /* Do nothing */
             }
             else {
                 if (!ctx->frame->globals_watched) {
                     PyDict_Watch(GLOBALS_WATCHER_ID, globals);
-                    _Py_BloomFilter_Add(dependencies, globals);
+                    if (named) {
+                        _Py_BloomFilter_AddGlobal(dependencies, globals, 0, true);
+                    }
+                    else {
+                        _Py_BloomFilter_Add(dependencies, globals);
+                    }
                     ctx->frame->globals_watched = true;
                 }
                 if (ctx->frame->globals_checked_version != version && this_instr[-1].opcode == _NOP) {
-                    REPLACE_OP(uop_buffer_last(&ctx->out_buffer), _GUARD_GLOBALS_VERSION, 0, version);
+                    REPLACE_OP(uop_buffer_last(&ctx->out_buffer),
+                               _GUARD_GLOBALS_VERSION_AND_IDENTITY, 0, version);
+                    uop_buffer_last(&ctx->out_buffer)->operand1 = (uintptr_t)globals;
                     ctx->frame->globals_checked_version = version;
                 }
                 if (ctx->frame->globals_checked_version == version) {
                     cnst = convert_global_to_const(this_instr, globals);
+                    if (cnst != NULL && named) {
+                        PyDictObject *dict = (PyDictObject *)globals;
+                        PyObject *key = DK_UNICODE_ENTRIES(dict->ma_keys)[index].me_key;
+                        assert(PyUnicode_CheckExact(key));
+                        Py_hash_t hash = PyObject_Hash(key);
+                        assert(hash != -1);
+                        _Py_BloomFilter_AddGlobal(dependencies, globals, hash, false);
+                    }
                 }
             }
         }

@@ -39,6 +39,8 @@
 #include <stdint.h>
 #include <stddef.h>
 
+#include "optimizer_regions.h"
+
 #ifdef Py_DEBUG
     extern const char *_PyUOpName(int index);
     extern void _PyUOpPrint(const _PyUOpInstruction *uop);
@@ -142,10 +144,17 @@ globals_watcher_callback(PyDict_WatchEvent event, PyObject* dict,
                          PyObject* key, PyObject* new_value)
 {
     RARE_EVENT_STAT_INC(watched_globals_modification);
-    assert(get_mutations(dict) < _Py_MAX_ALLOWED_GLOBALS_MODIFICATIONS);
-    _Py_Executors_InvalidateDependency(_PyInterpreterState_GET(), dict, 1);
-    increment_mutations(dict);
-    PyDict_Unwatch(GLOBALS_WATCHER_ID, dict);
+    bool value_only = event == PyDict_EVENT_MODIFIED && key != NULL && PyUnicode_CheckExact(key);
+    Py_hash_t hash = value_only ? PyObject_Hash(key) : 0;
+    assert(!value_only || hash != -1);
+    bool keep_watch = _Py_Executors_InvalidateGlobalDependency(
+        _PyInterpreterState_GET(), dict, hash, value_only);
+    if (get_mutations(dict) < _Py_MAX_ALLOWED_GLOBALS_MODIFICATIONS) {
+        increment_mutations(dict);
+    }
+    if (!keep_watch) {
+        PyDict_Unwatch(GLOBALS_WATCHER_ID, dict);
+    }
     return 0;
 }
 
@@ -797,6 +806,1732 @@ remove_unneeded_uops(_PyUOpInstruction *buffer, int buffer_size)
     Py_UNREACHABLE();
 }
 
+static void
+fuse_float_product_updates(_PyUOpInstruction *buffer, int length)
+{
+    const char *enabled = Py_GETENV("PYTHON_TIER2_FLOAT_FUSION");
+    if (enabled == NULL || strcmp(enabled, "1") != 0) {
+        return;
+    }
+    for (int pc = 0; pc + 5 < length; pc++) {
+        if (buffer[pc].opcode != _BINARY_OP_MULTIPLY_FLOAT ||
+            (buffer[pc + 1].opcode != _POP_TOP_NOP &&
+             buffer[pc + 1].opcode != _POP_TOP_FLOAT) ||
+            (buffer[pc + 2].opcode != _POP_TOP_NOP &&
+             buffer[pc + 2].opcode != _POP_TOP_FLOAT))
+        {
+            continue;
+        }
+        bool owned_factors = buffer[pc + 1].opcode == _POP_TOP_FLOAT ||
+                             buffer[pc + 2].opcode == _POP_TOP_FLOAT;
+        int add = pc + 3;
+        bool skipped_accumulator_guard = false;
+        while (add < length &&
+               (buffer[add].opcode == _NOP ||
+                buffer[add].opcode == _GUARD_NOS_FLOAT)) {
+            skipped_accumulator_guard |= buffer[add].opcode == _GUARD_NOS_FLOAT;
+            add++;
+        }
+        if (add + 2 >= length) {
+            continue;
+        }
+        int update = buffer[add].opcode;
+        bool unique_left =
+            update == _BINARY_OP_ADD_FLOAT_INPLACE ||
+            update == _BINARY_OP_SUBTRACT_FLOAT_INPLACE;
+        bool unique_right =
+            update == _BINARY_OP_ADD_FLOAT_INPLACE_RIGHT ||
+            update == _BINARY_OP_SUBTRACT_FLOAT_INPLACE_RIGHT;
+        if ((!unique_left && !unique_right) ||
+            (owned_factors && !unique_left) ||
+            (skipped_accumulator_guard && !unique_right) ||
+            buffer[add + 1].opcode != (unique_left ? _POP_TOP_FLOAT : _POP_TOP_NOP) ||
+            buffer[add + 2].opcode != _POP_TOP_NOP) {
+            continue;
+        }
+        bool subtract =
+            update == _BINARY_OP_SUBTRACT_FLOAT_INPLACE ||
+            update == _BINARY_OP_SUBTRACT_FLOAT_INPLACE_RIGHT;
+        if (owned_factors) {
+            buffer[pc].opcode = subtract ? _BINARY_OP_MULTIPLY_SUBTRACT_FLOAT_OWNED
+                                        : _BINARY_OP_MULTIPLY_ADD_FLOAT_OWNED;
+        }
+        else {
+            buffer[pc].opcode = unique_left
+                ? (subtract ? _BINARY_OP_MULTIPLY_SUBTRACT_FLOAT_INPLACE
+                            : _BINARY_OP_MULTIPLY_ADD_FLOAT_INPLACE)
+                : (subtract ? _BINARY_OP_MULTIPLY_SUBTRACT_FLOAT_SHARED
+                            : _BINARY_OP_MULTIPLY_ADD_FLOAT_SHARED);
+        }
+        for (int i = pc + 1; i <= add + 2; i++) {
+            if (owned_factors && i <= pc + 2) {
+                /* The new uop returns both original factor references for
+                 * these exact-float cleanup operations, in their old order. */
+                continue;
+            }
+            assert(buffer[i].opcode == _NOP ||
+                   buffer[i].opcode == _POP_TOP_NOP ||
+                   buffer[i].opcode == _POP_TOP_FLOAT ||
+                   buffer[i].opcode == _GUARD_NOS_FLOAT ||
+                   buffer[i].opcode == _BINARY_OP_ADD_FLOAT_INPLACE ||
+                   buffer[i].opcode == _BINARY_OP_SUBTRACT_FLOAT_INPLACE ||
+                   buffer[i].opcode == _BINARY_OP_ADD_FLOAT_INPLACE_RIGHT ||
+                   buffer[i].opcode == _BINARY_OP_SUBTRACT_FLOAT_INPLACE_RIGHT);
+            buffer[i].opcode = _NOP;
+        }
+    }
+}
+
+static inline int
+trivial_call_skip(const _PyUOpInstruction *buffer, int pc, int end)
+{
+    while (pc < end) {
+        int next = region_skip(buffer, pc, end);
+        if (next < end && (_PyUop_Flags[buffer[next].opcode] & HAS_RECORDS_VALUE_FLAG)) {
+            pc = next + 1;
+        }
+        else {
+            return next;
+        }
+    }
+    return pc;
+}
+
+static int
+trivial_attribute_load(_PyUOpInstruction *buffer, int pc, int end,
+                       int nargs, uint64_t *descriptor)
+{
+    pc = trivial_call_skip(buffer, pc, end);
+    if (pc >= end || (region_opcode(&buffer[pc]) != _LOAD_FAST &&
+                     region_opcode(&buffer[pc]) != _LOAD_FAST_BORROW) ||
+        buffer[pc].oparg > nargs) {
+        return -1;
+    }
+    int arg = buffer[pc++].oparg;
+    pc = trivial_call_skip(buffer, pc, end);
+    if (pc < end && buffer[pc].opcode == _GUARD_TYPE_VERSION) {
+        pc = trivial_call_skip(buffer, pc + 1, end);
+    }
+    if (pc < end && buffer[pc].opcode == _CHECK_MANAGED_OBJECT_HAS_VALUES) {
+        pc = trivial_call_skip(buffer, pc + 1, end);
+    }
+    if (pc >= end || (buffer[pc].opcode != _LOAD_ATTR_SLOT &&
+                      buffer[pc].opcode != _LOAD_ATTR_INSTANCE_VALUE) ||
+        !buffer[pc].operand1 || buffer[pc].operand0 > UINT16_MAX) {
+        return -1;
+    }
+    uint64_t version = buffer[pc].operand1 & UINT32_MAX;
+    uint64_t managed = buffer[pc].operand1 >> 32;
+    *descriptor = arg | (buffer[pc].operand0 << 3) | (version << 19) | (managed << 51);
+    pc = trivial_call_skip(buffer, pc + 1, end);
+    if (pc >= end || (buffer[pc].opcode != _POP_TOP && buffer[pc].opcode != _POP_TOP_NOP)) {
+        return -1;
+    }
+    return trivial_call_skip(buffer, pc + 1, end);
+}
+
+/* Keep the callee frame and replace only the straight-line arithmetic.
+ * A single guarded layout covers both owners and all six attribute loads.
+ * No calls, stores, periodic checks, or frame transitions may be skipped. */
+static void
+fuse_float_attribute_products(_PyUOpInstruction *buffer, int length)
+{
+    if (!region_enabled("PYTHON_TIER2_FLOAT_FUSION")) {
+        return;
+    }
+    for (int start = 0; start < length; start++) {
+        int opcode = region_opcode(&buffer[start]);
+        if (opcode != _LOAD_FAST && opcode != _LOAD_FAST_BORROW) {
+            continue;
+        }
+        int end = Py_MIN(length, start + 128);
+        int pc = start;
+        uint64_t fields = 0;
+        uint64_t common = 0;
+        unsigned int owners[2] = {0, 0};
+        uint32_t add_target = 0;
+#define FLOAT_NEXT() (pc = trivial_call_skip(buffer, pc, end), \
+                      pc < end ? buffer[pc].opcode : 0)
+        for (int product = 0; product < 3; product++) {
+            for (int side = 0; side < 2; side++) {
+                uint64_t descriptor;
+                pc = trivial_attribute_load(buffer, pc, end, 7, &descriptor);
+                if (pc < 0) {
+                    goto next_float_attributes;
+                }
+                uint64_t offset = (descriptor >> 3) & UINT16_MAX;
+                if (offset % sizeof(PyObject *) || offset / sizeof(PyObject *) > UINT8_MAX) {
+                    goto next_float_attributes;
+                }
+                if (product == 0) {
+                    owners[side] = descriptor & 7;
+                    if (side == 0) {
+                        common = descriptor >> 19;
+                    }
+                }
+                if ((descriptor >> 19) != common || (descriptor & 7) != owners[side]) {
+                    goto next_float_attributes;
+                }
+                fields |= (offset / sizeof(PyObject *)) << (8 * (2 * product + side));
+            }
+            int op;
+            while ((op = FLOAT_NEXT()) == _GUARD_TOS_FLOAT || op == _GUARD_NOS_FLOAT) {
+                pc++;
+            }
+            if (FLOAT_NEXT() != _BINARY_OP_MULTIPLY_FLOAT) {
+                goto next_float_attributes;
+            }
+            pc++;
+            for (int i = 0; i < 2; i++) {
+                op = FLOAT_NEXT();
+                if (op != _POP_TOP_FLOAT && op != _POP_TOP_NOP) {
+                    goto next_float_attributes;
+                }
+                pc++;
+            }
+            if (product != 0) {
+                while ((op = FLOAT_NEXT()) == _GUARD_NOS_FLOAT) {
+                    pc++;
+                }
+                if (FLOAT_NEXT() != _BINARY_OP_ADD_FLOAT_INPLACE) {
+                    goto next_float_attributes;
+                }
+                add_target = buffer[pc++].target;
+                if (FLOAT_NEXT() != _POP_TOP_FLOAT) {
+                    goto next_float_attributes;
+                }
+                pc++;
+                if (FLOAT_NEXT() != _POP_TOP_NOP) {
+                    goto next_float_attributes;
+                }
+                pc++;
+            }
+        }
+        if (!common || add_target > UINT16_MAX || add_target < buffer[start].target) {
+            continue;
+        }
+        buffer[start].opcode = _FLOAT_ATTRIBUTE_SUM_PRODUCTS;
+        buffer[start].oparg = 0;
+        buffer[start].operand0 = fields;
+        /* Use an absolute code-unit offset: the original LOAD_FAST did not
+         * need a SET_IP, so frame->instr_ptr may precede the region entry. */
+        buffer[start].operand1 = owners[0] | ((uint64_t)owners[1] << 3) |
+                                (common << 6) | ((uint64_t)add_target << 39);
+        for (int i = start + 1; i < pc; i++) {
+            if (!(_PyUop_Flags[buffer[i].opcode] & HAS_RECORDS_VALUE_FLAG)) {
+                buffer[i].opcode = _NOP;
+            }
+        }
+        start = pc - 1;
+next_float_attributes:
+        ;
+#undef FLOAT_NEXT
+    }
+}
+
+/* Unlike the general call matcher, this peephole must not cross a validity
+ * guard: that guard's exit still expects the original intermediate stack. */
+static int
+folded_constant_skip(const _PyUOpInstruction *buffer, int pc, int end)
+{
+    while (pc < end && (buffer[pc].opcode == _NOP || buffer[pc].opcode == _SET_IP ||
+            (_PyUop_Flags[buffer[pc].opcode] & HAS_RECORDS_VALUE_FLAG))) {
+        pc++;
+    }
+    return pc;
+}
+
+static int
+remove_folded_constant_traffic(_PyUOpInstruction *buffer, int length)
+{
+    if (!region_enabled("PYTHON_TIER2_BUILTIN_REGIONS") &&
+        !region_enabled("PYTHON_TIER2_INT_REGIONS") &&
+        !region_enabled("PYTHON_TIER2_CALL_REGIONS")) {
+        return length;
+    }
+    length = remove_unneeded_uops(buffer, length);
+    /* The general push/pop table does not include the short-local replicas.
+     * Closing the just-loaded reference cannot finalize a still-owned local;
+     * no callback, store, guard, or periodic check can intervene here. */
+    for (int start = 0; start < length; start++) {
+        int op = region_opcode(&buffer[start]);
+        if (op != _LOAD_FAST && op != _LOAD_FAST_BORROW) {
+            continue;
+        }
+        int pop = folded_constant_skip(buffer, start + 1, length);
+        if (pop < length && op_without_pop[buffer[pop].opcode]) {
+            buffer[start].opcode = buffer[pop].opcode = _NOP;
+        }
+    }
+    length = remove_unneeded_uops(buffer, length);
+    int loads[3];
+    int count = 0;
+    for (int pc = 0; pc < length; pc++) {
+        pc = folded_constant_skip(buffer, pc, length);
+        if (pc == length) break;
+        int op = buffer[pc].opcode;
+        if (op == _LOAD_CONST_INLINE || op == _LOAD_CONST_INLINE_BORROW ||
+            op == _LOAD_SMALL_INT) {
+            if (count == 3) {
+                loads[0] = loads[1];
+                loads[1] = loads[2];
+                count--;
+            }
+            loads[count++] = pc;
+            continue;
+        }
+        if (op == _RROT_3 && count == 3) {
+            int first_pop = folded_constant_skip(buffer, pc + 1, length);
+            int second_pop = folded_constant_skip(buffer, first_pop + 1, length);
+            bool valid = second_pop < length &&
+                op_without_pop[buffer[first_pop].opcode] &&
+                op_without_pop[buffer[second_pop].opcode];
+            for (int i = 0; i < 2 && valid; i++) {
+                _PyUOpInstruction *load = &buffer[loads[i]];
+                valid = load->opcode == _LOAD_SMALL_INT ||
+                        _Py_IsImmortal((PyObject *)load->operand0);
+            }
+            if (valid) {
+                /* Folding left the result above its two old operands. The
+                 * operands are immortal, so only the result load is needed. */
+                buffer[loads[0]].opcode = buffer[loads[1]].opcode = _NOP;
+                buffer[pc].opcode = _NOP;
+                buffer[first_pop].opcode = buffer[second_pop].opcode = _NOP;
+                loads[0] = loads[2];
+                count = 1;
+                pc = second_pop;
+                continue;
+            }
+        }
+        count = 0;
+    }
+    return length;
+}
+
+static void
+eliminate_trivial_frames(_PyUOpInstruction *buffer, int length)
+{
+#if defined(WITH_DTRACE) || defined(__EMSCRIPTEN__)
+    return;
+#else
+    if (!region_enabled("PYTHON_TIER2_CALL_REGIONS")) {
+        return;
+    }
+    /* Abstract interpretation has already proved the call and return match.
+     * Admit an argument, immortal constant, cached attribute, or a predicate
+     * over such attributes. Preserve the caller's version, argument,
+     * recursion, and stack-space checks. The replacement checks the callee's
+     * eval breaker before consuming anything, at the original CALL boundary.
+     * No callee frame can escape in this interval. */
+    for (int start = 0; start < length; start++) {
+        if (buffer[start].opcode != _INIT_CALL_PY_EXACT_ARGS ||
+            buffer[start].oparg > 4) {
+            continue;
+        }
+        int end = Py_MIN(length, start + 64);
+        int pc = trivial_call_skip(buffer, start + 1, end);
+        if (pc >= end || buffer[pc++].opcode != _SAVE_RETURN_OFFSET) {
+            continue;
+        }
+        pc = trivial_call_skip(buffer, pc, end);
+        if (pc >= end || buffer[pc++].opcode != _PUSH_FRAME) {
+            continue;
+        }
+        pc = trivial_call_skip(buffer, pc, end);
+        if (pc >= end || buffer[pc++].opcode != _TIER2_RESUME_CHECK) {
+            continue;
+        }
+        pc = trivial_call_skip(buffer, pc, end);
+        if (pc >= end) {
+            continue;
+        }
+        uintptr_t source;
+        uint64_t config = 0, descriptor;
+        int after_attribute = trivial_attribute_load(
+            buffer, pc, end, buffer[start].oparg, &descriptor);
+        int opcode = region_opcode(&buffer[pc]);
+        if (after_attribute >= 0) {
+            int mode = 0;
+            pc = after_attribute;
+            if (pc < end && buffer[pc].opcode == _LOAD_CONST_INLINE_BORROW &&
+                buffer[pc].operand0 == (uintptr_t)Py_None) {
+                pc = trivial_call_skip(buffer, pc + 1, end);
+                if (pc >= end || buffer[pc].opcode != _IS_OP) {
+                    continue;
+                }
+                mode = buffer[pc++].oparg ? 2 : 1;
+                for (int i = 0; i < 2; i++) {
+                    pc = trivial_call_skip(buffer, pc, end);
+                    if (pc >= end || (buffer[pc].opcode != _POP_TOP &&
+                                      buffer[pc].opcode != _POP_TOP_NOP)) {
+                        pc = end;
+                        break;
+                    }
+                    pc++;
+                }
+            }
+            else if (pc < end && (region_opcode(&buffer[pc]) == _LOAD_FAST ||
+                                  region_opcode(&buffer[pc]) == _LOAD_FAST_BORROW)) {
+                pc = trivial_attribute_load(buffer, pc, end, buffer[start].oparg, &config);
+                if (pc < 0) {
+                    continue;
+                }
+                while (pc < end && (buffer[pc].opcode == _GUARD_TOS_INT ||
+                                    buffer[pc].opcode == _GUARD_NOS_INT)) {
+                    pc = trivial_call_skip(buffer, pc + 1, end);
+                }
+                if (pc >= end || buffer[pc].opcode != _COMPARE_OP_INT) {
+                    continue;
+                }
+                mode = 3;
+                config |= (uint64_t)(buffer[pc++].oparg & 15) << 52;
+                for (int i = 0; i < 2; i++) {
+                    pc = trivial_call_skip(buffer, pc, end);
+                    if (pc >= end || (buffer[pc].opcode != _POP_TOP_INT &&
+                                      buffer[pc].opcode != _POP_TOP_NOP)) {
+                        pc = end;
+                        break;
+                    }
+                    pc++;
+                }
+            }
+            source = ((descriptor | ((uint64_t)mode << 52)) << 2) | 2;
+            pc = trivial_call_skip(buffer, pc, end);
+        }
+        else if (opcode == _LOAD_FAST || opcode == _LOAD_FAST_BORROW) {
+            if (buffer[pc].oparg > buffer[start].oparg) {
+                continue;
+            }
+            /* Odd operands identify argument slots; constants are aligned. */
+            source = ((uintptr_t)buffer[pc].oparg << 1) | 1;
+            pc = trivial_call_skip(buffer, pc + 1, end);
+        }
+        else if (opcode == _LOAD_CONST_INLINE_BORROW &&
+                 _Py_IsImmortal((PyObject *)buffer[pc].operand0)) {
+            source = buffer[pc].operand0;
+            pc = trivial_call_skip(buffer, pc + 1, end);
+        }
+        else {
+            continue;
+        }
+        if (pc < end && buffer[pc].opcode == _MAKE_HEAP_SAFE) {
+            pc = trivial_call_skip(buffer, pc + 1, end);
+        }
+        if (pc >= end || buffer[pc].opcode != _RETURN_VALUE) {
+            continue;
+        }
+        buffer[start].opcode = (source & 3) == 2 ? _CALL_PY_ATTRIBUTE : _CALL_PY_TRIVIAL;
+        buffer[start].operand0 = source;
+        buffer[start].operand1 = config;
+        for (int i = start + 1; i <= pc; i++) {
+            /* Leave recorded references for the normal tracer cleanup. */
+            if (!(_PyUop_Flags[buffer[i].opcode] & HAS_RECORDS_VALUE_FLAG)) {
+                buffer[i].opcode = _NOP;
+            }
+        }
+        start = pc;
+    }
+#endif
+}
+
+/* Fuse the complete recorded path of a conditional attribute return. Every
+ * failure resumes at the original CALL, before argument ownership changes. */
+static void
+inline_conditional_attribute_calls(_PyUOpInstruction *buffer, int length)
+{
+#if defined(WITH_DTRACE) || defined(__EMSCRIPTEN__)
+    return;
+#else
+    if (!region_enabled("PYTHON_TIER2_CALL_REGIONS")) {
+        return;
+    }
+    for (int start = 0; start < length; start++) {
+        if (buffer[start].opcode != _INIT_CALL_PY_EXACT_ARGS || buffer[start].oparg > 4) {
+            continue;
+        }
+        /* Retain the code-version guard. MAKE_FUNCTION can give distinct
+         * functions the same version, so a folded globals guard also needs
+         * an explicit check of the actual callee's namespace. */
+        int guard = start - 1;
+        while (guard >= 0 && (buffer[guard].opcode == _NOP ||
+               buffer[guard].opcode == _CHECK_RECURSION_REMAINING ||
+               buffer[guard].opcode == _CHECK_STACK_SPACE_OPERAND)) {
+            guard--;
+        }
+        if (guard < 0 || buffer[guard].opcode != _CHECK_FUNCTION_VERSION ||
+            buffer[guard].operand0 == 0) {
+            continue;
+        }
+        int end = Py_MIN(length, start + 96);
+        int pc = start + 1;
+#define CONDITIONAL_NEXT() (pc = trivial_call_skip(buffer, pc, end), \
+                            pc < end ? region_opcode(&buffer[pc]) : -1)
+#define CONDITIONAL_EXPECT(OP) do { \
+    if (CONDITIONAL_NEXT() != (OP)) goto next_conditional; \
+    pc++; \
+} while (0)
+        if (CONDITIONAL_NEXT() != _SAVE_RETURN_OFFSET) {
+            continue;
+        }
+        int call_slot = pc++;
+        CONDITIONAL_EXPECT(_PUSH_FRAME);
+        CONDITIONAL_EXPECT(_TIER2_RESUME_CHECK);
+        uint64_t selector, result;
+        pc = trivial_attribute_load(buffer, pc, end, buffer[start].oparg, &selector);
+        if (pc < 0) {
+            continue;
+        }
+        PyObject *namespace = NULL;
+        int op = CONDITIONAL_NEXT();
+        if (op == _GUARD_GLOBALS_VERSION_AND_IDENTITY) {
+            namespace = (PyObject *)buffer[pc].operand1;
+            if (namespace == NULL) {
+                continue;
+            }
+            pc++;
+            op = CONDITIONAL_NEXT();
+        }
+        /* Folding a class attribute can leave its watched owner load/pop.
+         * No escaping operation occurs between them. Retain all previously
+         * registered dict/type dependencies protecting the folded value. */
+        if (op == _LOAD_CONST_INLINE && PyType_Check((PyObject *)buffer[pc].operand0)) {
+            pc++;
+            CONDITIONAL_EXPECT(_POP_TOP);
+            op = CONDITIONAL_NEXT();
+        }
+        Py_ssize_t constant;
+        if (op == _LOAD_SMALL_INT) {
+            constant = buffer[pc++].oparg;
+        }
+        else if (op == _LOAD_CONST_INLINE_BORROW) {
+            PyObject *value = (PyObject *)buffer[pc++].operand0;
+            if (!PyLong_CheckExact(value) || !_Py_IsImmortal(value) ||
+                !_PyLong_IsCompact((PyLongObject *)value)) {
+                continue;
+            }
+            constant = _PyLong_CompactValue((PyLongObject *)value);
+        }
+        else {
+            continue;
+        }
+        if (constant < INT8_MIN || constant > INT8_MAX) {
+            continue;
+        }
+        while ((op = CONDITIONAL_NEXT()) == _GUARD_NOS_INT || op == _GUARD_TOS_INT) {
+            pc++;
+        }
+        if (CONDITIONAL_NEXT() != _COMPARE_OP_INT) {
+            continue;
+        }
+        int mask = buffer[pc++].oparg & 14;
+        for (int i = 0; i < 2; i++) {
+            op = CONDITIONAL_NEXT();
+            if (op != _POP_TOP_INT && op != _POP_TOP_NOP) {
+                goto next_conditional;
+            }
+            pc++;
+        }
+        op = CONDITIONAL_NEXT();
+        bool on_true;
+        if (op == _GUARD_IS_TRUE_POP || op == _GUARD_IS_FALSE_POP) {
+            on_true = op == _GUARD_IS_TRUE_POP;
+        }
+        else if (op == _GUARD_BIT_IS_SET_POP || op == _GUARD_BIT_IS_UNSET_POP) {
+            int bit = buffer[pc].oparg;
+            if (bit != get_test_bit_for_bools()) {
+                continue;
+            }
+            on_true = (test_bit_set_in_true(bit) != 0) == (op == _GUARD_BIT_IS_SET_POP);
+        }
+        else {
+            continue;
+        }
+        pc++;
+        mask = on_true ? mask : mask ^ 14;
+        pc = trivial_attribute_load(buffer, pc, end, buffer[start].oparg, &result);
+        if (pc < 0) {
+            continue;
+        }
+        if (CONDITIONAL_NEXT() == _MAKE_HEAP_SAFE) {
+            pc++;
+        }
+        if (CONDITIONAL_NEXT() != _RETURN_VALUE) {
+            continue;
+        }
+        _PyUOpInstruction call = buffer[start];
+        call.opcode = _CALL_PY_ATTRIBUTE_IF;
+        call.operand0 = selector | ((uint64_t)(uint8_t)constant << 52) |
+                        ((uint64_t)mask << 60);
+        call.operand1 = result;
+        for (int i = start + 1; i <= pc; i++) {
+            if (!(_PyUop_Flags[buffer[i].opcode] & HAS_RECORDS_VALUE_FLAG)) {
+                buffer[i].opcode = _NOP;
+            }
+        }
+        if (namespace != NULL) {
+            buffer[start].opcode = _GUARD_CALL_GLOBALS_IDENTITY;
+            buffer[start].operand0 = (uintptr_t)namespace;
+            buffer[start].operand1 = 0;
+            buffer[call_slot] = call;
+        }
+        else {
+            buffer[start] = call;
+        }
+        start = pc;
+next_conditional:
+        ;
+#undef CONDITIONAL_EXPECT
+#undef CONDITIONAL_NEXT
+    }
+#endif
+}
+
+/* A cached attribute followed by exact list indexing, optionally consumed by
+ * a constant length predicate. Guard failures resume at the original CALL. */
+static void
+inline_list_attribute_calls(_PyUOpInstruction *buffer, int length)
+{
+#if defined(WITH_DTRACE) || defined(__EMSCRIPTEN__)
+    return;
+#else
+    if (!region_enabled("PYTHON_TIER2_CALL_REGIONS")) {
+        return;
+    }
+    for (int start = 0; start < length; start++) {
+        int nargs = buffer[start].oparg;
+        if (buffer[start].opcode != _INIT_CALL_PY_EXACT_ARGS || nargs > 4) {
+            continue;
+        }
+        int end = Py_MIN(length, start + 96);
+        int pc = start + 1;
+#define LIST_NEXT() (pc = trivial_call_skip(buffer, pc, end), \
+                     pc < end ? region_opcode(&buffer[pc]) : 0)
+#define LIST_EXPECT(OP) do { if (LIST_NEXT() != (OP)) goto next_list_call; pc++; } while (0)
+        if (LIST_NEXT() != _SAVE_RETURN_OFFSET || buffer[pc].oparg > 255) {
+            continue;
+        }
+        uint64_t config = (uint64_t)buffer[pc++].oparg << 56;
+        LIST_EXPECT(_PUSH_FRAME);
+        LIST_EXPECT(_TIER2_RESUME_CHECK);
+        uint32_t globals_version = 0;
+        if (LIST_NEXT() == _GUARD_GLOBALS_VERSION ||
+            LIST_NEXT() == _GUARD_GLOBALS_VERSION_AND_IDENTITY) {
+            globals_version = (uint32_t)buffer[pc++].operand0;
+            if (globals_version == 0) {
+                continue;
+            }
+        }
+        if (LIST_NEXT() == _GUARD_BUILTINS_IDENTITY) {
+            pc++;
+        }
+        bool length_predicate = LIST_NEXT() == _LOAD_CONST_INLINE ||
+                                LIST_NEXT() == _LOAD_CONST_INLINE_BORROW;
+        if (length_predicate) {
+            if (buffer[pc++].operand0 !=
+                (uintptr_t)_PyInterpreterState_GET()->callable_cache.len) {
+                continue;
+            }
+            LIST_EXPECT(_PUSH_NULL);
+            config |= 8 | ((uint64_t)globals_version << 24);
+        }
+        else if (globals_version != 0) {
+            continue;
+        }
+        uint64_t descriptor;
+        pc = trivial_attribute_load(buffer, pc, end, nargs, &descriptor);
+        if (pc < 0) {
+            continue;
+        }
+        int op = LIST_NEXT();
+        bool direct_length = length_predicate &&
+            (op == _CALL_LEN || op == _CALL_LEN_CONSUMER);
+        if (!direct_length) {
+            if (LIST_NEXT() != _LOAD_FAST_BORROW || buffer[pc].oparg > nargs) {
+                continue;
+            }
+            config |= buffer[pc++].oparg;
+            while ((op = LIST_NEXT()) == _GUARD_TOS_INT || op == _GUARD_NOS_LIST) {
+                pc++;
+            }
+            LIST_EXPECT(_BINARY_OP_SUBSCR_LIST_INT);
+            for (int i = 0; i < 2; i++) {
+                op = LIST_NEXT();
+                if (op != _POP_TOP && op != _POP_TOP_NOP) goto next_list_call;
+                pc++;
+            }
+        }
+        if (length_predicate) {
+            if (direct_length && LIST_NEXT() == _CALL_LEN) {
+                pc++;
+                for (int i = 0; i < 2; i++) {
+                    op = LIST_NEXT();
+                    if (op != _POP_TOP && op != _POP_TOP_NOP) goto next_list_call;
+                    pc++;
+                }
+                op = LIST_NEXT();
+                Py_ssize_t value;
+                if (op == _LOAD_SMALL_INT) {
+                    value = buffer[pc++].oparg;
+                }
+                else if (op == _LOAD_CONST_INLINE_BORROW || op == _LOAD_CONST_INLINE) {
+                    PyObject *constant = (PyObject *)buffer[pc++].operand0;
+                    if (!PyLong_CheckExact(constant) || !_PyLong_IsCompact((PyLongObject *)constant)) {
+                        continue;
+                    }
+                    value = _PyLong_CompactValue((PyLongObject *)constant);
+                }
+                else continue;
+                if (value < 0 || value > UINT16_MAX) continue;
+                while ((op = LIST_NEXT()) == _GUARD_TOS_INT || op == _GUARD_NOS_INT ||
+                       op == _GUARD_NOS_OVERFLOWED) {
+                    pc++;
+                }
+                if (LIST_NEXT() != _COMPARE_OP_INT) continue;
+                config |= ((uint64_t)(buffer[pc++].oparg & 15) << 4) |
+                          ((uint64_t)value << 8);
+                for (int i = 0; i < 2; i++) {
+                    op = LIST_NEXT();
+                    if (op != _POP_TOP_INT && op != _POP_TOP_NOP) goto next_list_call;
+                    pc++;
+                }
+            }
+            else {
+                if (LIST_NEXT() != _CALL_LEN_CONSUMER ||
+                    (buffer[pc].oparg & 48) != 48 || buffer[pc].operand0 > UINT16_MAX) {
+                    continue;
+                }
+                config |= ((uint64_t)(buffer[pc].oparg & 15) << 4) |
+                          (buffer[pc].operand0 << 8);
+                pc++;
+                for (int i = 0; i < 2; i++) {
+                    op = LIST_NEXT();
+                    if (op != _POP_TOP && op != _POP_TOP_NOP) goto next_list_call;
+                    pc++;
+                }
+            }
+        }
+        if (LIST_NEXT() == _MAKE_HEAP_SAFE) {
+            pc++;
+        }
+        LIST_EXPECT(_RETURN_VALUE);
+        buffer[start].opcode = _CALL_PY_LIST;
+        /* Separate stencils keep the direct-length branch out of indexed
+         * calls. The low five replicas retain the original argument counts. */
+        buffer[start].oparg = nargs + (direct_length ? 5 : 0);
+        buffer[start].operand0 = descriptor;
+        buffer[start].operand1 = config;
+        for (int i = start + 1; i < pc; i++) {
+            if (!(_PyUop_Flags[buffer[i].opcode] & HAS_RECORDS_VALUE_FLAG)) {
+                buffer[i].opcode = _NOP;
+            }
+        }
+        start = pc - 1;
+next_list_call:
+        ;
+#undef LIST_EXPECT
+#undef LIST_NEXT
+    }
+#endif
+}
+
+/* Match a complete class call whose initializer stores each argument once.
+ * Keep allocation identity, and retain a materialization path for pending work
+ * after allocation. No arbitrary initializer bytecode is executed by the uop. */
+static void
+inline_attribute_initializers(_PyUOpInstruction *buffer, int length)
+{
+#if defined(WITH_DTRACE) || defined(__EMSCRIPTEN__)
+    return;
+#else
+    if (!region_enabled("PYTHON_TIER2_CALL_REGIONS")) {
+        return;
+    }
+    for (int start = 0; start < length; start++) {
+        int nargs = buffer[start].oparg;
+        if (buffer[start].opcode != _ALLOCATE_OBJECT || nargs < 1 || nargs > 4) {
+            continue;
+        }
+        int end = Py_MIN(length, start + 96);
+        int pc = start + 1;
+        uint64_t fields = 0;
+        uint32_t type_version = 0;
+        unsigned int arguments = 0;
+        unsigned int offsets[4];
+#define INIT_NEXT() (pc = trivial_call_skip(buffer, pc, end), \
+                     pc < end ? region_opcode(&buffer[pc]) : 0)
+#define INIT_EXPECT(OP) do { if (INIT_NEXT() != (OP)) goto next_init; pc++; } while (0)
+        if (INIT_NEXT() != _CREATE_INIT_FRAME || buffer[pc].operand0 == 0) {
+            continue;
+        }
+        uint64_t func_version = buffer[pc++].operand0;
+        INIT_EXPECT(_PUSH_FRAME);
+        INIT_EXPECT(_TIER2_RESUME_CHECK);
+        for (int i = 0; i < nargs; i++) {
+            if (INIT_NEXT() != _LOAD_FAST_BORROW ||
+                buffer[pc].oparg < 1 || buffer[pc].oparg > nargs) {
+                goto next_init;
+            }
+            unsigned int arg = buffer[pc++].oparg - 1;
+            if (arguments & (1U << arg)) {
+                goto next_init;
+            }
+            arguments |= 1U << arg;
+            if (INIT_NEXT() != _LOAD_FAST_BORROW || buffer[pc++].oparg != 0) {
+                goto next_init;
+            }
+            INIT_EXPECT(_LOCK_OBJECT);
+            if (INIT_NEXT() == _GUARD_TYPE_VERSION_LOCKED) {
+                uint32_t version = (uint32_t)buffer[pc++].operand0;
+                if (version == 0 || (type_version && type_version != version)) {
+                    goto next_init;
+                }
+                type_version = version;
+            }
+            INIT_EXPECT(_GUARD_DORV_NO_DICT);
+            if (INIT_NEXT() != _STORE_ATTR_INSTANCE_VALUE ||
+                buffer[pc].operand0 > 2040 || (buffer[pc].operand0 & 7)) {
+                goto next_init;
+            }
+            unsigned int offset = (unsigned int)buffer[pc++].operand0 / 8;
+            for (int j = 0; j < i; j++) {
+                if (offset == offsets[j]) {
+                    goto next_init;
+                }
+            }
+            offsets[i] = offset;
+            fields |= (uint64_t)(offset | (arg << 8)) << (10 * i);
+            INIT_EXPECT(_POP_TOP_NOP);
+        }
+        if (type_version == 0 || INIT_NEXT() != _LOAD_CONST_INLINE_BORROW ||
+            buffer[pc++].operand0 != (uintptr_t)Py_None) {
+            continue;
+        }
+        INIT_EXPECT(_RETURN_VALUE);
+        INIT_EXPECT(_EXIT_INIT_CHECK);
+        if (INIT_NEXT() == _MAKE_HEAP_SAFE) {
+            pc++;
+        }
+        bool dynamic_return = INIT_NEXT() == _DEOPT && buffer[pc].target == 1 &&
+            buffer[pc].operand0 == (uintptr_t)(_PyCode_CODE(&_Py_InitCleanup) + 1);
+        if (!dynamic_return) {
+            INIT_EXPECT(_RETURN_VALUE);
+        }
+        buffer[start].opcode = _CALL_CLASS_ATTRIBUTES;
+        buffer[start].operand0 = func_version | ((uint64_t)type_version << 32);
+        buffer[start].operand1 = fields | ((uint64_t)dynamic_return << 63);
+        for (int i = start + 1; i < pc; i++) {
+            if (!(_PyUop_Flags[buffer[i].opcode] & HAS_RECORDS_VALUE_FLAG)) {
+                buffer[i].opcode = _NOP;
+            }
+        }
+        if (dynamic_return) {
+            /* The original trace stops at the cleanup trampoline's RETURN.
+             * The fused call has already returned to its real caller. */
+            buffer[pc].opcode = _DYNAMIC_EXIT;
+            buffer[pc].target = 0;
+            buffer[pc].operand0 = 0;
+        }
+        start = pc - 1;
+next_init:
+        ;
+#undef INIT_EXPECT
+#undef INIT_NEXT
+    }
+#endif
+}
+
+static void
+fuse_list_pair_comparisons(_PyUOpInstruction *buffer, int length)
+{
+    if (!region_enabled("PYTHON_TIER2_BUILTIN_REGIONS")) {
+        return;
+    }
+    for (int start = 0; start < length; start++) {
+        if (region_opcode(&buffer[start]) != _LOAD_FAST_BORROW) {
+            continue;
+        }
+        int list_local = buffer[start].oparg;
+        int end = Py_MIN(start + 64, length);
+        int pc = start + 1;
+#define PAIR_NEXT() (pc = trivial_call_skip(buffer, pc, end), \
+                    pc < end ? region_opcode(&buffer[pc]) : -1)
+#define PAIR_EXPECT(OP) do { \
+    if (PAIR_NEXT() != (OP)) goto next_pair; \
+    pc++; \
+} while (0)
+#define PAIR_GUARDS() do { \
+    int op; \
+    while ((op = PAIR_NEXT()) == _GUARD_TOS_INT || \
+           op == _GUARD_NOS_INT || op == _GUARD_NOS_LIST) { pc++; } \
+} while (0)
+        if (PAIR_NEXT() != _LOAD_FAST_BORROW) {
+            continue;
+        }
+        int index_local = buffer[pc++].oparg;
+        PAIR_GUARDS();
+        int first = pc;
+        PAIR_EXPECT(_BINARY_OP_SUBSCR_LIST_INT);
+        if (PAIR_NEXT() != _POP_TOP_NOP) {
+            continue;
+        }
+        int index_cleanup = pc++;
+        if (PAIR_NEXT() != _POP_TOP_NOP) {
+            continue;
+        }
+        int list_cleanup = pc++;
+        if (PAIR_NEXT() != _LOAD_FAST_BORROW || buffer[pc++].oparg != list_local ||
+            PAIR_NEXT() != _LOAD_FAST_BORROW || buffer[pc++].oparg != index_local) {
+            continue;
+        }
+        int constant = PAIR_NEXT();
+        if (constant == _LOAD_SMALL_INT && buffer[pc].oparg == 1) {
+            pc++;
+        }
+        else if (constant == _LOAD_CONST_INLINE_BORROW &&
+                 (PyObject *)buffer[pc].operand0 == _PyLong_GetOne()) {
+            pc++;
+        }
+        else {
+            continue;
+        }
+        PAIR_GUARDS();
+        PAIR_EXPECT(_BINARY_OP_ADD_INT);
+        PAIR_EXPECT(_POP_TOP_NOP);
+        PAIR_EXPECT(_POP_TOP_NOP);
+        PAIR_GUARDS();
+        PAIR_EXPECT(_BINARY_OP_SUBSCR_LIST_INT);
+        int cleanup = PAIR_NEXT();
+        if (cleanup != _POP_TOP_INT && cleanup != _POP_TOP_NOP) {
+            continue;
+        }
+        pc++;
+        PAIR_EXPECT(_POP_TOP_NOP);
+        int compare = PAIR_NEXT();
+        if (compare != _COMPARE_TUPLE_PAIR && compare != _COMPARE_TUPLE_PAIR_0 &&
+            compare != _COMPARE_TUPLE_PAIR_1) {
+            continue;
+        }
+        int operation = buffer[pc].oparg;
+        uint64_t tuple_local = buffer[pc++].operand0;
+        for (int i = 0; i < 2; i++) {
+            int pop = PAIR_NEXT();
+            if (pop != _POP_TOP && pop != _POP_TOP_NOP) {
+                goto next_pair;
+            }
+            pc++;
+        }
+        /* Both list/index reads remain borrowed locals. No effects or stores
+         * occur between the first subscript and the final tuple cleanup. The
+         * replacement checks both indices before comparison, including when
+         * the first elements differ, and exits at the original first lookup. */
+        buffer[first].opcode = _COMPARE_LIST_PAIR;
+        buffer[first].oparg = operation;
+        buffer[first].operand0 = tuple_local;
+        for (int i = first + 1; i < pc; i++) {
+            if (!(_PyUop_Flags[buffer[i].opcode] & HAS_RECORDS_VALUE_FLAG)) {
+                buffer[i].opcode = _NOP;
+            }
+        }
+        buffer[index_cleanup].opcode = _POP_TOP_NOP;
+        buffer[list_cleanup].opcode = _POP_TOP_NOP;
+        start = pc - 1;
+next_pair:
+        ;
+#undef PAIR_GUARDS
+#undef PAIR_EXPECT
+#undef PAIR_NEXT
+    }
+}
+
+/* Read original bytecode operations, including an attached executor's saved
+ * instruction. Offsets and cache sizes are in code units. */
+static bool
+pair_scan_instruction(PyCodeObject *code, int *pc, int *opcode, int *oparg)
+{
+    unsigned int arg = 0;
+    int units = (int)Py_SIZE(code);
+    for (int n = 0; n < 4 && *pc < units && *pc >= 0; n++) {
+        _Py_CODEUNIT inst = _PyCode_CODE(code)[(*pc)++];
+        int op = inst.op.code;
+        unsigned int low = inst.op.arg;
+        if (op == ENTER_EXECUTOR) {
+            _PyExecutorObject *ex = code->co_executors->executors[low];
+            op = ex->vm_data.opcode;
+            low = ex->vm_data.oparg;
+        }
+        arg = (arg << 8) | low;
+        if (op == EXTENDED_ARG) {
+            continue;
+        }
+        op = _PyOpcode_Deopt[op];
+        *pc += _PyOpcode_Caches[op];
+        if (*pc > units || arg > INT_MAX) {
+            return false;
+        }
+        *opcode = op;
+        *oparg = (int)arg;
+        return true;
+    }
+    return false;
+}
+
+/* Prove both exits of a small, effect-free positional search. Names are
+ * resolved in the callee at execution time; no benchmark names are special. */
+static bool
+attribute_search_body(PyCodeObject *code, uint64_t *options, uint64_t *fields)
+{
+    if (code->co_argcount != 2 || code->co_kwonlyargcount ||
+        code->co_nlocalsplus != 4 || PyBytes_GET_SIZE(code->co_exceptiontable) ||
+        (code->co_flags & (CO_VARARGS | CO_VARKEYWORDS | CO_GENERATOR |
+                          CO_COROUTINE | CO_ASYNC_GENERATOR))) {
+        return false;
+    }
+    int pc = 0, op, arg;
+#define SEARCH_READ(OP) do { \
+    if (!pair_scan_instruction(code, &pc, &op, &arg) || op != (OP)) return false; \
+} while (0)
+#define SEARCH_ARG(OP, ARG) do { SEARCH_READ(OP); if (arg != (ARG)) return false; } while (0)
+    SEARCH_ARG(RESUME, 0);
+    SEARCH_READ(LOAD_GLOBAL);
+    if (!(arg & 1) || (arg >> 1) > UINT8_MAX) return false;
+    *options = (uint64_t)(arg >> 1) << 32;
+    SEARCH_ARG(LOAD_FAST_BORROW, 0);
+    SEARCH_READ(LOAD_ATTR);
+    if (arg & 1) return false;
+    int attribute = arg;
+    SEARCH_ARG(CALL, 1);
+    SEARCH_ARG(GET_ITER, 0);
+    int loop = pc;
+    SEARCH_READ(FOR_ITER);
+    int exhausted = pc + arg;
+    SEARCH_ARG(UNPACK_SEQUENCE, 2);
+    SEARCH_ARG(STORE_FAST_STORE_FAST, 0x23);
+    SEARCH_ARG(LOAD_FAST_BORROW, 3);
+    SEARCH_READ(LOAD_SMALL_INT);
+    if (arg > 31) return false;
+    *fields = (uint64_t)arg << 52;
+    SEARCH_ARG(BINARY_OP, NB_SUBSCR);
+    SEARCH_ARG(LOAD_FAST_BORROW, 1);
+    SEARCH_READ(COMPARE_OP);
+    unsigned int mask = arg & 15;
+    static const unsigned int masks[] = {2, 10, 8, 7, 4, 12};
+    if (!(arg & 16) || (arg >> 5) > Py_GE || mask != masks[arg >> 5]) return false;
+    *fields |= (uint64_t)(arg >> 5) << 57;
+    SEARCH_READ(POP_JUMP_IF_TRUE);
+    int matched = pc + arg;
+    SEARCH_READ(NOT_TAKEN);
+    SEARCH_READ(JUMP_BACKWARD);
+    if (pc - arg != loop || pc != matched) return false;
+    SEARCH_ARG(LOAD_FAST_BORROW, 2);
+    SEARCH_ARG(SWAP, 3);
+    SEARCH_READ(POP_TOP);
+    SEARCH_READ(POP_TOP);
+    SEARCH_READ(RETURN_VALUE);
+    if (pc != exhausted) return false;
+    SEARCH_READ(END_FOR);
+    SEARCH_READ(POP_ITER);
+    SEARCH_READ(LOAD_GLOBAL);
+    if (!(arg & 1) || (arg >> 1) > UINT8_MAX) return false;
+    *options |= (uint64_t)(arg >> 1) << 40;
+    SEARCH_ARG(LOAD_FAST_BORROW, 0);
+    SEARCH_ARG(LOAD_ATTR, attribute);
+    SEARCH_ARG(CALL, 1);
+    SEARCH_READ(RETURN_VALUE);
+    return pc == Py_SIZE(code);
+#undef SEARCH_ARG
+#undef SEARCH_READ
+}
+
+static void
+inline_attribute_search_calls(_PyUOpInstruction *buffer, int length)
+{
+#if defined(WITH_DTRACE) || defined(__EMSCRIPTEN__)
+    return;
+#else
+    if (!region_enabled("PYTHON_TIER2_CALL_REGIONS")) return;
+    for (int start = 0; start < length; start++) {
+        int nargs = buffer[start].oparg;
+        if (buffer[start].opcode != _INIT_CALL_PY_EXACT_ARGS ||
+            nargs < 1 || nargs > 2) continue;
+        PyFunctionObject *func = NULL;
+        for (int i = start - 1; i >= 0 && i >= start - 16; i--) {
+            int op = buffer[i].opcode;
+            if (op == _RECORD_CALLABLE || op == _RECORD_BOUND_METHOD) {
+                PyObject *obj = (PyObject *)buffer[i].operand0;
+                if (obj != NULL && PyMethod_Check(obj)) obj = PyMethod_GET_FUNCTION(obj);
+                if (obj != NULL && PyFunction_Check(obj)) func = (PyFunctionObject *)obj;
+                break;
+            }
+        }
+        uint64_t options, fields;
+        if (func == NULL || !_PyFunction_IsVersionValid(func->func_version) ||
+            !attribute_search_body((PyCodeObject *)func->func_code, &options, &fields)) {
+            continue;
+        }
+        int end = Py_MIN(length, start + 64);
+        int pc = start + 1;
+#define SEARCH_NEXT() (pc = trivial_call_skip(buffer, pc, end), \
+                       pc < end ? region_opcode(&buffer[pc]) : 0)
+#define SEARCH_EXPECT(OP) do { if (SEARCH_NEXT() != (OP)) goto next_search; pc++; } while (0)
+        if (SEARCH_NEXT() != _SAVE_RETURN_OFFSET || buffer[pc].oparg > UINT16_MAX) continue;
+        options |= (uint64_t)buffer[pc++].oparg << 48;
+        SEARCH_EXPECT(_PUSH_FRAME);
+        SEARCH_EXPECT(_TIER2_RESUME_CHECK);
+        if (SEARCH_NEXT() == _GUARD_GLOBALS_VERSION ||
+            SEARCH_NEXT() == _GUARD_GLOBALS_VERSION_AND_IDENTITY) pc++;
+        if (SEARCH_NEXT() == _GUARD_BUILTINS_IDENTITY) pc++;
+        int op = SEARCH_NEXT();
+        if ((op != _LOAD_CONST_INLINE && op != _LOAD_CONST_INLINE_BORROW) ||
+            buffer[pc++].operand0 != (uintptr_t)&PyEnum_Type) continue;
+        SEARCH_EXPECT(_PUSH_NULL);
+        uint64_t descriptor;
+        if (trivial_attribute_load(buffer, pc, end, 1, &descriptor) < 0 ||
+            (descriptor & 7) != 0) continue;
+        buffer[start].opcode = _CALL_PY_ATTRIBUTE_SEARCH;
+        buffer[start].oparg = 6 * (nargs - 1) + (fields >> 57);
+        buffer[start].operand0 = descriptor | fields;
+        buffer[start].operand1 = options | func->func_version;
+        /* The full body proof covers returns not present on this trace.
+         * Resume the real caller after CALL, with the one result on its stack.
+         * Retain recorded references for the normal tracer cleanup. */
+        for (int i = start + 1; i < length; i++) {
+            if (!(_PyUop_Flags[buffer[i].opcode] & HAS_RECORDS_VALUE_FLAG)) {
+                buffer[i].opcode = _NOP;
+            }
+        }
+        buffer[length - 1].opcode = _DYNAMIC_EXIT;
+        buffer[length - 1].oparg = 0;
+        buffer[length - 1].target = 0;
+        buffer[length - 1].operand0 = buffer[length - 1].operand1 = 0;
+        return;
+next_search:
+        ;
+#undef SEARCH_EXPECT
+#undef SEARCH_NEXT
+    }
+#endif
+}
+
+/* A complete conditional removal body. Prove both branches before omitting
+ * the callee, including that the mutating method is exactly list.remove. */
+static bool
+list_remove_body(PyCodeObject *code, uint64_t *returns)
+{
+    if (code->co_argcount != 3 || code->co_kwonlyargcount ||
+        Py_SIZE(code) > UINT16_MAX || code->co_nlocalsplus != 3 || PyBytes_GET_SIZE(code->co_exceptiontable) ||
+        (code->co_flags & (CO_VARARGS | CO_VARKEYWORDS | CO_GENERATOR |
+                          CO_COROUTINE | CO_ASYNC_GENERATOR))) return false;
+    int pc = 0, op, arg;
+#define REMOVE_READ(OP) do { \
+    if (!pair_scan_instruction(code, &pc, &op, &arg) || op != (OP)) return false; \
+} while (0)
+#define REMOVE_ARG(OP, ARG) do { REMOVE_READ(OP); if (arg != (ARG)) return false; } while (0)
+    REMOVE_ARG(RESUME, 0);
+    REMOVE_ARG(LOAD_FAST_BORROW_LOAD_FAST_BORROW, 0x20);
+    REMOVE_READ(LOAD_ATTR);
+    if (arg & 1) return false;
+    int attribute = arg;
+    REMOVE_ARG(LOAD_FAST_BORROW, 1);
+    REMOVE_ARG(BINARY_OP, NB_SUBSCR);
+    REMOVE_ARG(CONTAINS_OP, 0);
+    REMOVE_READ(POP_JUMP_IF_FALSE);
+    int missing = pc + arg;
+    REMOVE_READ(NOT_TAKEN);
+    REMOVE_ARG(LOAD_FAST_BORROW, 0);
+    REMOVE_ARG(LOAD_ATTR, attribute);
+    REMOVE_ARG(LOAD_FAST_BORROW, 1);
+    REMOVE_ARG(BINARY_OP, NB_SUBSCR);
+    REMOVE_READ(LOAD_ATTR);
+    if (!(arg & 1) || (arg >> 1) >= PyTuple_GET_SIZE(code->co_names) ||
+        !PyUnicode_CheckExact(PyTuple_GET_ITEM(code->co_names, arg >> 1)) ||
+        PyUnicode_CompareWithASCIIString(PyTuple_GET_ITEM(code->co_names, arg >> 1),
+                                       "remove") != 0) return false;
+    REMOVE_ARG(LOAD_FAST_BORROW, 2);
+    REMOVE_ARG(CALL, 1);
+    REMOVE_READ(POP_TOP);
+    REMOVE_ARG(LOAD_COMMON_CONSTANT, CONSTANT_TRUE);
+    *returns = (uint64_t)pc << 16;
+    REMOVE_READ(RETURN_VALUE);
+    if (pc != missing) return false;
+    REMOVE_ARG(LOAD_COMMON_CONSTANT, CONSTANT_FALSE);
+    *returns |= pc;
+    REMOVE_READ(RETURN_VALUE);
+    return pc == Py_SIZE(code);
+#undef REMOVE_ARG
+#undef REMOVE_READ
+}
+
+static void
+inline_list_remove_calls(_PyUOpInstruction *buffer, int length)
+{
+#if defined(WITH_DTRACE) || defined(__EMSCRIPTEN__)
+    return;
+#else
+    if (!region_enabled("PYTHON_TIER2_CALL_REGIONS")) return;
+    for (int start = 0; start < length; start++) {
+        int nargs = buffer[start].oparg;
+        if (buffer[start].opcode != _INIT_CALL_PY_EXACT_ARGS ||
+            nargs < 2 || nargs > 3) continue;
+        PyFunctionObject *func = NULL;
+        for (int i = start - 1; i >= 0 && i >= start - 16; i--) {
+            int op = buffer[i].opcode;
+            if (op == _RECORD_CALLABLE || op == _RECORD_BOUND_METHOD) {
+                PyObject *obj = (PyObject *)buffer[i].operand0;
+                if (obj != NULL && PyMethod_Check(obj)) obj = PyMethod_GET_FUNCTION(obj);
+                if (obj != NULL && PyFunction_Check(obj)) func = (PyFunctionObject *)obj;
+                break;
+            }
+        }
+        uint64_t returns;
+        if (func == NULL || !_PyFunction_IsVersionValid(func->func_version) ||
+            !list_remove_body((PyCodeObject *)func->func_code, &returns)) continue;
+        int end = Py_MIN(length, start + 64);
+        int pc = start + 1;
+#define REMOVE_NEXT() (pc = trivial_call_skip(buffer, pc, end), \
+                       pc < end ? region_opcode(&buffer[pc]) : 0)
+#define REMOVE_EXPECT(OP) do { if (REMOVE_NEXT() != (OP)) goto next_remove; pc++; } while (0)
+        if (REMOVE_NEXT() != _SAVE_RETURN_OFFSET) continue;
+        uint64_t options = (uint64_t)buffer[pc++].oparg << 48;
+        REMOVE_EXPECT(_PUSH_FRAME);
+        REMOVE_EXPECT(_TIER2_RESUME_CHECK);
+        int op = REMOVE_NEXT();
+        if ((op != _LOAD_FAST && op != _LOAD_FAST_BORROW) || buffer[pc++].oparg != 2) continue;
+        uint64_t descriptor;
+        if (trivial_attribute_load(buffer, pc, end, 2, &descriptor) < 0 ||
+            (descriptor & 7) != 0) continue;
+        buffer[start].opcode = _CALL_PY_LIST_REMOVE;
+        buffer[start].oparg = nargs - 2;
+        buffer[start].operand0 = descriptor;
+        buffer[start].operand1 = options | func->func_version;
+        /* Both original returns are proved. The mutation completes before
+         * leaving this trace at the instruction following the caller's CALL. */
+        for (int i = start + 1; i < length; i++) {
+            if (!(_PyUop_Flags[buffer[i].opcode] & HAS_RECORDS_VALUE_FLAG)) {
+                buffer[i].opcode = _NOP;
+            }
+        }
+        buffer[length - 1].opcode = _DYNAMIC_EXIT;
+        buffer[length - 1].oparg = 0;
+        buffer[length - 1].target = 0;
+        buffer[length - 1].operand0 = buffer[length - 1].operand1 = 0;
+        return;
+next_remove:
+        ;
+#undef REMOVE_EXPECT
+#undef REMOVE_NEXT
+    }
+#endif
+}
+
+static void
+inline_local_list_remove(_PyThreadStateImpl *tstate, _PyUOpInstruction *buffer, int length)
+{
+    if (!region_enabled("PYTHON_TIER2_CALL_REGIONS")) return;
+    const _PyJitTracerState *tracer = tstate->jit_tracer_state;
+    PyCodeObject *code = tracer->initial_state.code;
+    uint64_t returns;
+    if (tracer->initial_state.start_instr != _PyCode_CODE(code) ||
+        tracer->initial_state.stack_depth != 0 ||
+        !list_remove_body(code, &returns)) return;
+    int pc = 0;
+    if (length < 4 || buffer[pc++].opcode != _START_EXECUTOR) return;
+    if (buffer[pc].opcode == _MAKE_WARM) pc++;
+    pc = trivial_call_skip(buffer, pc, length);
+    if (pc >= length || buffer[pc++].opcode != _TIER2_RESUME_CHECK) return;
+    pc = trivial_call_skip(buffer, pc, length);
+    int start = pc;
+    if (pc >= length || (region_opcode(&buffer[pc]) != _LOAD_FAST_BORROW &&
+                         region_opcode(&buffer[pc]) != _LOAD_FAST) ||
+        buffer[pc++].oparg != 2) return;
+    uint64_t descriptor;
+    if (trivial_attribute_load(buffer, pc, length, 2, &descriptor) < 0 ||
+        (descriptor & 7) != 0) return;
+    buffer[start].opcode = _LIST_REMOVE_LOCAL;
+    buffer[start].oparg = 0;
+    buffer[start].operand0 = descriptor;
+    buffer[start].operand1 = returns;
+    for (int i = start + 1; i < length; i++) {
+        if (!(_PyUop_Flags[buffer[i].opcode] & HAS_RECORDS_VALUE_FLAG)) {
+            buffer[i].opcode = _NOP;
+        }
+    }
+    buffer[length - 1].opcode = _DYNAMIC_EXIT;
+    buffer[length - 1].oparg = 0;
+    buffer[length - 1].target = 0;
+    buffer[length - 1].operand0 = buffer[length - 1].operand1 = 0;
+}
+
+/* Side traces can start after the header. Prove that their backedge repeats
+ * exactly `index < global_name(source) - 1`, followed by this same pair read.
+ * The uop checks that global_name still resolves to the canonical len. */
+static int
+pair_scan_len_name(PyCodeObject *code, int edge, int body,
+                   int index_local, int list_local)
+{
+    int pc = edge, opcode, arg;
+#define HEADER_READ(OP) do { \
+    if (!pair_scan_instruction(code, &pc, &opcode, &arg) || opcode != (OP)) return -1; \
+} while (0)
+    HEADER_READ(JUMP_BACKWARD);
+    pc -= arg;
+    HEADER_READ(LOAD_FAST_BORROW);
+    if (arg != index_local) return -1;
+    HEADER_READ(LOAD_GLOBAL);
+    if (!(arg & 1)) return -1;
+    int name = arg >> 1;
+    HEADER_READ(LOAD_FAST_BORROW);
+    if (arg != list_local) return -1;
+    HEADER_READ(CALL);
+    if (arg != 1) return -1;
+    HEADER_READ(LOAD_SMALL_INT);
+    if (arg != 1) return -1;
+    HEADER_READ(BINARY_OP);
+    if (arg != NB_SUBTRACT) return -1;
+    HEADER_READ(COMPARE_OP);
+    if (arg != ((Py_LT << 5) | 16 | 2)) return -1;
+    HEADER_READ(POP_JUMP_IF_FALSE);
+    if (pc < body) {
+        HEADER_READ(NOT_TAKEN);
+    }
+    return pc == body ? name : -1;
+#undef HEADER_READ
+}
+
+static void
+inline_list_pair_append_scan(_PyThreadStateImpl *tstate,
+                             _PyUOpInstruction *buffer, int length)
+{
+    if (!region_enabled("PYTHON_TIER2_BUILTIN_REGIONS")) {
+        return;
+    }
+    PyCodeObject *code = (PyCodeObject *)tstate->jit_tracer_state->initial_state.func->func_code;
+    for (int start = 0; start < length; start++) {
+        if (buffer[start].opcode == _PUSH_FRAME || buffer[start].opcode == _RETURN_VALUE) {
+            /* All instruction offsets below must belong to the root frame. */
+            return;
+        }
+        if (region_opcode(&buffer[start]) != _LOAD_FAST_BORROW) {
+            continue;
+        }
+        int list_local = buffer[start].oparg;
+        int end = Py_MIN(start + 96, length);
+        int pc = start + 1;
+#define APPEND_NEXT() (pc = trivial_call_skip(buffer, pc, end), \
+                       pc < end ? region_opcode(&buffer[pc]) : -1)
+#define APPEND_EXPECT(OP) do { \
+    if (APPEND_NEXT() != (OP)) goto next_append_scan; \
+    pc++; \
+} while (0)
+#define APPEND_LOCAL(LOCAL) do { \
+    if (APPEND_NEXT() != _LOAD_FAST_BORROW || buffer[pc++].oparg != (LOCAL)) \
+        goto next_append_scan; \
+} while (0)
+        if (APPEND_NEXT() != _LOAD_FAST_BORROW) continue;
+        int index_local = buffer[pc++].oparg;
+        if (APPEND_NEXT() == _GUARD_TOS_INT) pc++;
+        int scan = pc;
+        APPEND_EXPECT(_GUARD_NOS_LIST);
+        if (APPEND_NEXT() != _COMPARE_LIST_PAIR || buffer[pc].oparg != 0) continue;
+        int pair_local = (int)buffer[pc++].operand0;
+        APPEND_EXPECT(_POP_TOP_NOP);
+        APPEND_EXPECT(_POP_TOP_NOP);
+        int op = APPEND_NEXT();
+        if (pc >= end) continue;
+        if (op != _GUARD_IS_FALSE_POP) {
+            int bit = buffer[pc].oparg;
+            if ((op != _GUARD_BIT_IS_SET_POP && op != _GUARD_BIT_IS_UNSET_POP) ||
+                bit != get_test_bit_for_bools() ||
+                ((test_bit_set_in_true(bit) != 0) == (op == _GUARD_BIT_IS_SET_POP))) {
+                continue;
+            }
+        }
+        pc++;
+        if (APPEND_NEXT() != _LOAD_FAST_BORROW) continue;
+        int output_local = buffer[pc++].oparg;
+        APPEND_EXPECT(_GUARD_TYPE_VERSION);
+        if (APPEND_NEXT() != _LOAD_CONST_INLINE_BORROW ||
+            buffer[pc++].operand0 != (uintptr_t)tstate->base.interp->callable_cache.list_append ||
+            APPEND_NEXT() != _SWAP || buffer[pc++].oparg != 2) {
+            continue;
+        }
+        APPEND_LOCAL(list_local);
+        APPEND_LOCAL(index_local);
+        if (APPEND_NEXT() == _GUARD_TOS_INT) pc++;
+        if (APPEND_NEXT() == _GUARD_NOS_LIST) pc++;
+        APPEND_EXPECT(_BINARY_OP_SUBSCR_LIST_INT);
+        APPEND_EXPECT(_POP_TOP_NOP);
+        APPEND_EXPECT(_POP_TOP_NOP);
+        if (APPEND_NEXT() != _CALL_LIST_APPEND || buffer[pc++].oparg != 1) continue;
+        APPEND_EXPECT(_POP_TOP_NOP);
+        APPEND_EXPECT(_POP_TOP);
+        APPEND_EXPECT(_POP_TOP_NOP);
+        APPEND_LOCAL(index_local);
+        op = APPEND_NEXT();
+        if (op == _LOAD_SMALL_INT && buffer[pc].oparg == 1) pc++;
+        else if (op == _LOAD_CONST_INLINE_BORROW &&
+                 buffer[pc].operand0 == (uintptr_t)_PyLong_GetOne()) pc++;
+        else continue;
+        if (APPEND_NEXT() == _GUARD_TOS_INT) pc++;
+        if (APPEND_NEXT() == _GUARD_NOS_INT) pc++;
+        APPEND_EXPECT(_BINARY_OP_ADD_INT);
+        APPEND_EXPECT(_POP_TOP_NOP);
+        APPEND_EXPECT(_POP_TOP_NOP);
+        if (APPEND_NEXT() != _SWAP_FAST || buffer[pc++].oparg != index_local) continue;
+        op = APPEND_NEXT();
+        if (op != _POP_TOP_INT && op != _POP_TOP_NOP) continue;
+        pc++;
+        op = APPEND_NEXT();
+        if (op != _EXIT_TRACE && op != _JUMP_TO_TOP) continue;
+        int edge = op == _EXIT_TRACE ? buffer[pc].target : buffer[0].target;
+        int name = pair_scan_len_name(code, edge, buffer[start].target,
+                                      index_local, list_local);
+        int locals[] = {index_local, list_local, output_local, pair_local};
+        if (name < 0 || name >= PyTuple_GET_SIZE(code->co_names) ||
+            !PyUnicode_CheckExact(PyTuple_GET_ITEM(code->co_names, name))) continue;
+        for (int i = 0; i < 4; i++) {
+            if (locals[i] < 0 || locals[i] > 255) goto next_append_scan;
+            for (int j = 0; j < i; j++) {
+                if (locals[i] == locals[j]) goto next_append_scan;
+            }
+        }
+        buffer[scan].opcode = _LIST_PAIR_APPEND_SCAN;
+        buffer[scan].oparg = 0;
+        buffer[scan].operand0 = index_local | ((uint64_t)list_local << 8) |
+            ((uint64_t)output_local << 16) | ((uint64_t)pair_local << 24);
+        buffer[scan].operand1 = name;
+        start = pc;
+next_append_scan:
+        ;
+#undef APPEND_LOCAL
+#undef APPEND_EXPECT
+#undef APPEND_NEXT
+    }
+}
+
+static void
+fuse_list_length_predicates(_PyUOpInstruction *buffer, int length)
+{
+    if (!region_enabled("PYTHON_TIER2_BUILTIN_REGIONS")) {
+        return;
+    }
+    for (int start = 0; start < length; start++) {
+        if (buffer[start].opcode != _BINARY_OP_SUBSCR_LIST_INT) {
+            continue;
+        }
+        int end = Py_MIN(length, start + 32);
+        int pc = start + 1;
+        for (int i = 0; i < 2; i++) {
+            pc = trivial_call_skip(buffer, pc, end);
+            if (pc >= end || (buffer[pc].opcode != _POP_TOP &&
+                              buffer[pc].opcode != _POP_TOP_NOP)) {
+                goto next_list_length;
+            }
+            pc++;
+        }
+        pc = trivial_call_skip(buffer, pc, end);
+        if (pc >= end || buffer[pc].opcode != _CALL_LEN_CONSUMER ||
+            !(buffer[pc].oparg & 16)) {
+            continue;
+        }
+        int comparison = buffer[pc].oparg;
+        uint64_t right = buffer[pc++].operand0;
+        for (int i = 0; i < 2; i++) {
+            pc = trivial_call_skip(buffer, pc, end);
+            if (pc >= end || (buffer[pc].opcode != _POP_TOP &&
+                              buffer[pc].opcode != _POP_TOP_NOP)) {
+                goto next_list_length;
+            }
+            pc++;
+        }
+        buffer[start].opcode = _LEN_SUBSCR_LIST;
+        buffer[start].oparg = comparison;
+        buffer[start].operand0 = right;
+        for (int i = start + 1; i < pc; i++) {
+            if (!(_PyUop_Flags[buffer[i].opcode] & HAS_RECORDS_VALUE_FLAG)) {
+                buffer[i].opcode = _NOP;
+            }
+        }
+        start = pc - 1;
+next_list_length:
+        ;
+    }
+}
+
+static void
+fuse_dict_pair_increments(_PyUOpInstruction *buffer, int length)
+{
+    if (!region_enabled("PYTHON_TIER2_BUILTIN_REGIONS")) {
+        return;
+    }
+    for (int start = 0; start < length; start++) {
+        if (buffer[start].opcode != _BINARY_OP_SUBSCR_DICT) {
+            continue;
+        }
+        /* A side trace starting at a failed subscription must retain ordinary
+         * lookup instead of immediately repeating this guard. Require the
+         * original augmented assignment's two operand copies in this trace. */
+        int copies = 0;
+        for (int p = start - 1; p >= 0 && p >= start - 12; p--) {
+            int op = region_opcode(&buffer[p]);
+            if (op == _NOP || op == _SET_IP || op == _CHECK_VALIDITY ||
+                op == _GUARD_NOS_TYPE || op == _GUARD_NOS_DICT_SUBSCRIPT ||
+                (_PyUop_Flags[buffer[p].opcode] & HAS_RECORDS_VALUE_FLAG)) {
+                continue;
+            }
+            if (op != _COPY || buffer[p].oparg != 2) {
+                break;
+            }
+            if (++copies == 2) {
+                break;
+            }
+        }
+        if (copies != 2) {
+            continue;
+        }
+        int end = Py_MIN(length, start + 40);
+        int pc = start + 1;
+#define DICT_NEXT() (pc = trivial_call_skip(buffer, pc, end), \
+                     pc < end ? region_opcode(&buffer[pc]) : 0)
+        for (int i = 0; i < 2; i++) {
+            int op = DICT_NEXT();
+            if (op != _POP_TOP && op != _POP_TOP_NOP) {
+                goto next_dict_pair;
+            }
+            pc++;
+        }
+        int op = DICT_NEXT();
+        unsigned int addend;
+        if (op == _LOAD_SMALL_INT) {
+            addend = buffer[pc++].oparg;
+        }
+        else if (op == _LOAD_CONST_INLINE_BORROW) {
+            PyObject *value = (PyObject *)buffer[pc++].operand0;
+            if (!PyLong_CheckExact(value) || !_PyLong_IsCompact((PyLongObject *)value)) {
+                continue;
+            }
+            addend = (unsigned int)_PyLong_CompactValue((PyLongObject *)value);
+        }
+        else {
+            continue;
+        }
+        if (addend > UINT16_MAX) {
+            continue;
+        }
+        while ((op = DICT_NEXT()) == _GUARD_TOS_INT || op == _GUARD_NOS_INT) {
+            pc++;
+        }
+        if (DICT_NEXT() != _BINARY_OP_ADD_INT) {
+            continue;
+        }
+        uint32_t add_target = buffer[pc++].target;
+        for (int i = 0; i < 2; i++) {
+            op = DICT_NEXT();
+            if (op != _POP_TOP_INT && op != _POP_TOP_NOP) {
+                goto next_dict_pair;
+            }
+            pc++;
+        }
+        if (DICT_NEXT() != _SWAP || buffer[pc++].oparg != 3 ||
+            DICT_NEXT() != _SWAP || buffer[pc++].oparg != 2) {
+            continue;
+        }
+        if (DICT_NEXT() != _STORE_SUBSCR_DICT_INHERITED || buffer[pc].operand0 == 0) {
+            continue;
+        }
+        uint32_t store_target = buffer[pc].target;
+        uint32_t first_target = buffer[start].target;
+        if (add_target < first_target || store_target < add_target ||
+            store_target - first_target > UINT16_MAX) {
+            continue;
+        }
+        buffer[start].opcode = _DICT_PAIR_INCREMENT;
+        buffer[start].oparg = addend;
+        buffer[start].operand0 = buffer[pc].operand0 |
+            ((uint64_t)(add_target - first_target) << 32) |
+            ((uint64_t)(store_target - first_target) << 48);
+        for (int i = start + 1; i <= pc; i++) {
+            if (!(_PyUop_Flags[buffer[i].opcode] & HAS_RECORDS_VALUE_FLAG)) {
+                buffer[i].opcode = _NOP;
+            }
+        }
+        start = pc;
+next_dict_pair:
+        ;
+#undef DICT_NEXT
+    }
+}
+
+static void
+inline_enumerate_list(_PyUOpInstruction *buffer, int length)
+{
+    if (!region_enabled("PYTHON_TIER2_BUILTIN_REGIONS")) {
+        return;
+    }
+    for (int pc = 0; pc < length; pc++) {
+        if (buffer[pc].opcode != _GUARD_TYPE_ITER ||
+            buffer[pc].operand0 != (uintptr_t)&PyEnum_Type) {
+            continue;
+        }
+        int end = Py_MIN(pc + 8, length);
+        int next = region_skip(buffer, pc + 1, end);
+        if (next >= end || buffer[next].opcode != _ITER_NEXT_INLINE ||
+            buffer[next].operand0 != (uintptr_t)PyEnum_Type.tp_iternext) {
+            continue;
+        }
+        /* The guard exits at FOR_ITER. The original next uop instead exits
+         * after END_FOR; an unsupported inner iterator must not use that exit. */
+        buffer[pc].opcode = _GUARD_ENUM_LIST;
+        buffer[next].opcode = _ITER_NEXT_ENUM_LIST;
+        /* Normal exhaustion keeps next's after-END_FOR target; exceptions
+         * need the original FOR_ITER location instead. */
+        buffer[next].operand0 = buffer[pc].target;
+    }
+}
+
+static void
+inline_zip_list_pairs(_PyUOpInstruction *buffer, int length)
+{
+    if (!region_enabled("PYTHON_TIER2_BUILTIN_REGIONS")) {
+        return;
+    }
+    for (int pc = 0; pc < length; pc++) {
+        if (buffer[pc].opcode != _GUARD_TYPE_ITER ||
+            buffer[pc].operand0 != (uintptr_t)&PyZip_Type) {
+            continue;
+        }
+        int end = Py_MIN(pc + 8, length);
+        int next = region_skip(buffer, pc + 1, end);
+        if (next < end && buffer[next].opcode == _ITER_NEXT_INLINE &&
+            buffer[next].operand0 == (uintptr_t)PyZip_Type.tp_iternext) {
+            buffer[next].opcode = _ITER_NEXT_ZIP_LIST_PAIR;
+            /* Keep exhaustion's after-END_FOR target. Errors still belong
+             * to the original FOR_ITER instruction, before any cleanup. */
+            buffer[next].operand0 = buffer[pc].target;
+        }
+    }
+}
+
+/* Skip a bounded sequence of iterations that only unpack enumerate, read an
+ * integer tuple field, and compare it with an unchanged local. Keep the
+ * original iteration for the first different branch or unsupported value. */
+static void
+inline_enumerate_int_scan(_PyUOpInstruction *buffer, int length)
+{
+    if (!region_enabled("PYTHON_TIER2_BUILTIN_REGIONS")) {
+        return;
+    }
+    int end = Py_MIN(length, 64);
+    int pc = 0;
+#define SCAN_NEXT() (pc = trivial_call_skip(buffer, pc, end), \
+                    pc < end ? region_opcode(&buffer[pc]) : -1)
+#define SCAN_EXPECT(OP) do { \
+    if (SCAN_NEXT() != (OP)) return; \
+    pc++; \
+} while (0)
+    SCAN_EXPECT(_START_EXECUTOR);
+    SCAN_EXPECT(_MAKE_WARM);
+    SCAN_EXPECT(_CHECK_PERIODIC);
+    if (SCAN_NEXT() != _GUARD_ENUM_LIST) {
+        return;
+    }
+    int start = pc++;
+    SCAN_EXPECT(_ITER_NEXT_ENUM_LIST);
+    if (SCAN_NEXT() != _GUARD_TOS_TUPLE || buffer[pc++].oparg != 2) {
+        return;
+    }
+    SCAN_EXPECT(_UNPACK_SEQUENCE_TWO_TUPLE);
+    if (SCAN_NEXT() != _SWAP_FAST) {
+        return;
+    }
+    int index_local = buffer[pc++].oparg;
+    SCAN_EXPECT(_POP_TOP);
+    if (SCAN_NEXT() != _SWAP_FAST) {
+        return;
+    }
+    int item_local = buffer[pc++].oparg;
+    SCAN_EXPECT(_POP_TOP);
+    if (SCAN_NEXT() != _LOAD_FAST_BORROW ||
+        buffer[pc++].oparg != item_local) {
+        return;
+    }
+    int field;
+    int op = SCAN_NEXT();
+    if (op == _LOAD_SMALL_INT) {
+        field = buffer[pc++].oparg;
+    }
+    else if (op == _LOAD_CONST_INLINE_BORROW) {
+        PyObject *constant = (PyObject *)buffer[pc++].operand0;
+        if (!PyLong_CheckExact(constant) || !_PyLong_IsCompact((PyLongObject *)constant)) {
+            return;
+        }
+        Py_ssize_t value = _PyLong_CompactValue((PyLongObject *)constant);
+        if (value < 0 || value > UINT16_MAX) {
+            return;
+        }
+        field = (int)value;
+    }
+    else {
+        return;
+    }
+    SCAN_EXPECT(_GUARD_NOS_TUPLE);
+    SCAN_EXPECT(_GUARD_BINARY_OP_SUBSCR_TUPLE_INT_BOUNDS);
+    SCAN_EXPECT(_BINARY_OP_SUBSCR_TUPLE_INT);
+    SCAN_EXPECT(_POP_TOP_NOP);
+    SCAN_EXPECT(_POP_TOP_NOP);
+    if (SCAN_NEXT() != _LOAD_FAST_BORROW) {
+        return;
+    }
+    int key_local = buffer[pc++].oparg;
+    while ((op = SCAN_NEXT()) == _GUARD_TOS_INT || op == _GUARD_NOS_INT) {
+        pc++;
+    }
+    if (SCAN_NEXT() != _COMPARE_OP_INT) {
+        return;
+    }
+    int mask = buffer[pc++].oparg & 14;
+    SCAN_EXPECT(_POP_TOP_NOP);
+    SCAN_EXPECT(_POP_TOP_INT);
+    op = SCAN_NEXT();
+    bool on_true;
+    if (op == _GUARD_IS_TRUE_POP || op == _GUARD_IS_FALSE_POP) {
+        on_true = op == _GUARD_IS_TRUE_POP;
+    }
+    else if (op == _GUARD_BIT_IS_SET_POP || op == _GUARD_BIT_IS_UNSET_POP) {
+        int bit = buffer[pc].oparg;
+        if (bit != get_test_bit_for_bools()) {
+            return;
+        }
+        on_true = (test_bit_set_in_true(bit) != 0) == (op == _GUARD_BIT_IS_SET_POP);
+    }
+    else {
+        return;
+    }
+    pc++;
+    SCAN_EXPECT(_JUMP_TO_TOP);
+    if (index_local > 255 || item_local > 255 || key_local > 255 ||
+        index_local == item_local || key_local == index_local || key_local == item_local) {
+        return;
+    }
+    mask = on_true ? mask : mask ^ 14;
+    int comparison;
+    switch (mask) {
+        case 2: comparison = Py_LT; break;
+        case 10: comparison = Py_LE; break;
+        case 8: comparison = Py_EQ; break;
+        case 6: comparison = Py_NE; break;
+        case 4: comparison = Py_GT; break;
+        case 12: comparison = Py_GE; break;
+        default: return;
+    }
+    buffer[start].opcode = _ENUM_LIST_INT_SCAN;
+    buffer[start].oparg = comparison;
+    buffer[start].operand0 = key_local | ((uint64_t)index_local << 8) |
+                            ((uint64_t)item_local << 16);
+    buffer[start].operand1 = field;
+#undef SCAN_EXPECT
+#undef SCAN_NEXT
+}
+
 //  0 - failure, no error raised, just fall back to Tier 1
 // -1 - failure, and raise error
 //  > 0 - length of optimized trace
@@ -812,6 +2547,11 @@ _Py_uop_analyze_and_optimize(
 {
     OPT_STAT_INC(optimizer_attempts);
 
+    annotate_attribute_versions(buffer, length);
+    lower_bounded_int_regions(buffer, length);
+    lower_int_regions(buffer, length);
+    lower_len_regions(buffer, length);
+    lower_tuple_comparisons(buffer, length);
     length = optimize_uops(
         tstate, buffer, length, curr_stacklen, output, dependencies);
 
@@ -821,8 +2561,25 @@ _Py_uop_analyze_and_optimize(
 
     assert(length > 0);
 
+    length = remove_folded_constant_traffic(output, length);
+    eliminate_trivial_frames(output, length);
+    inline_conditional_attribute_calls(output, length);
+    inline_list_attribute_calls(output, length);
+    inline_attribute_search_calls(output, length);
+    inline_list_remove_calls(output, length);
+    inline_local_list_remove(tstate, output, length);
+    inline_attribute_initializers(output, length);
+    fuse_list_pair_comparisons(output, length);
+    inline_list_pair_append_scan(tstate, output, length);
+    fuse_list_length_predicates(output, length);
+    fuse_dict_pair_increments(output, length);
+    inline_enumerate_list(output, length);
+    inline_zip_list_pairs(output, length);
+    inline_enumerate_int_scan(output, length);
     length = remove_unneeded_uops(output, length);
     assert(length > 0);
+    fuse_float_attribute_products(output, length);
+    fuse_float_product_updates(output, length);
 
     OPT_STAT_INC(optimizer_successes);
     return length;

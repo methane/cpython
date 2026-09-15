@@ -14,17 +14,20 @@
 #include "pycore_ceval.h"         // _PyEval_LazyImportName(), _PyEval_LazyImportFrom()
 #include "pycore_code.h"
 #include "pycore_emscripten_signal.h"  // _Py_CHECK_EMSCRIPTEN_SIGNALS
+#include "pycore_enumobject.h"    // _PyEnumObject
 #include "pycore_function.h"
 #include "pycore_import.h"        // _PyImport_LoadLazyImportTstate()
 #include "pycore_instruments.h"
 #include "pycore_interpolation.h" // _PyInterpolation_Build()
 #include "pycore_intrinsics.h"
+#include "pycore_iterobject.h"    // _PyZip_NextListPair()
 #include "pycore_lazyimportobject.h"  // PyLazyImport_CheckExact()
 #include "pycore_long.h"          // _PyLong_ExactDealloc(), _PyLong_GetZero()
 #include "pycore_moduleobject.h"  // PyModuleObject
 #include "pycore_object.h"        // _PyObject_GC_TRACK()
 #include "pycore_opcode_metadata.h"  // uop names
 #include "pycore_opcode_utils.h"  // MAKE_FUNCTION_*
+#include "pycore_optimizer.h"    // _PyRegion_AllocationFails()
 #include "pycore_pyatomic_ft_wrappers.h" // FT_ATOMIC_*
 #include "pycore_pyerrors.h"      // _PyErr_GetRaisedException()
 #include "pycore_pystate.h"       // _PyInterpreterState_GET()
@@ -714,6 +717,192 @@ dummy_func(
         macro(BINARY_OP_SUBTRACT_INT) =
             _GUARD_TOS_INT + _GUARD_NOS_INT + unused/5 + _BINARY_OP_SUBTRACT_INT + _POP_TOP_INT + _POP_TOP_INT;
 
+        /* A bounded region has no exits or escaping operations after START
+         * until BOX has consumed its sole native live-out. Tagged integers
+         * use the ordinary stack/cache slots, never object references. */
+        replicate(5) tier2 op(_INT_REGION_START, (left, right, locals/4 -- a, b)) {
+            current_executor->region_bounded_entries++;
+            intptr_t av, bv;
+            bool valid = _PyRegion_BoundedInput(left, &av) &&
+                         _PyRegion_BoundedInput(right, &bv);
+            PyObject *left_o = PyStackRef_AsPyObjectBorrow(left);
+            PyObject *right_o = PyStackRef_AsPyObjectBorrow(right);
+            valid = valid &&
+                    (!PyStackRef_RefcountOnObject(left) || _Py_IsImmortal(left_o)) &&
+                    (!PyStackRef_RefcountOnObject(right) || _Py_IsImmortal(right_o));
+            uint64_t config = (uint64_t)(uintptr_t)locals;
+            for (int i = 0; valid && i < oparg; i++) {
+                int local = (config >> (16 * i)) & 0xffff;
+                intptr_t unused;
+                valid = _PyRegion_BoundedInput(GETLOCAL(local), &unused);
+            }
+            if (!valid) {
+                current_executor->region_bounded_guard_exits++;
+                EXIT_IF(true);
+            }
+            a = PyStackRef_TagInt(av);
+            b = PyStackRef_TagInt(bv);
+            INPUTS_DEAD();
+        }
+
+        tier2 op(_INT_REGION_LOCAL, (-- value)) {
+            PyLongObject *obj = (PyLongObject *)PyStackRef_AsPyObjectBorrow(GETLOCAL(oparg));
+            assert(PyLong_CheckExact(obj) && _PyLong_IsCompact(obj));
+            value = PyStackRef_TagInt(_PyLong_CompactValue(obj));
+        }
+
+        tier2 op(_INT_REGION_CONST, (-- value)) {
+            value = PyStackRef_TagInt(oparg);
+        }
+
+        tier2 op(_INT_REGION_DUP, (value -- value, copy)) {
+            assert(PyStackRef_IsTaggedInt(value));
+            copy = value;
+        }
+
+        replicate(4) tier2 op(_INT_REGION_BINARY, (left, right -- value)) {
+            intptr_t a = PyStackRef_UntagInt(left);
+            intptr_t b = PyStackRef_UntagInt(right);
+            intptr_t result;
+            if (oparg == 0) {
+                result = a + b;
+            }
+            else if (oparg == 1) {
+                result = a - b;
+            }
+            else if (oparg == 2) {
+                result = a * b;
+            }
+            else {
+                assert(oparg == 3 && b != 0);
+                result = a / b - ((a % b != 0) && ((a < 0) != (b < 0)));
+            }
+            value = PyStackRef_TagInt(result);
+            INPUTS_DEAD();
+        }
+
+        tier2 op(_INT_REGION_RSHIFT, (left, right -- value)) {
+            (void)right;
+            intptr_t a = PyStackRef_UntagInt(left);
+            value = PyStackRef_TagInt(Py_ARITHMETIC_RIGHT_SHIFT(intptr_t, a, oparg));
+            INPUTS_DEAD();
+        }
+
+        tier2 op(_INT_REGION_BOX, (value -- res)) {
+            intptr_t result = PyStackRef_UntagInt(value);
+            INPUTS_DEAD();
+            PyObject *obj = _PyRegion_AllocationFails("bounded")
+                            ? NULL : PyLong_FromSsize_t(result);
+            if (obj == NULL) {
+                current_executor->region_allocation_errors++;
+                ERROR_NO_POP();
+            }
+            current_executor->region_bounded_boxes++;
+            res = PyStackRef_FromPyObjectSteal(obj);
+        }
+
+        tier2 op(_INT_REGION_GUARD_FLOAT, (numerator, left, right -- numerator, left, right)) {
+            PyObject *obj = PyStackRef_AsPyObjectBorrow(numerator);
+            if (!PyFloat_CheckExact(obj) ||
+                (PyStackRef_RefcountOnObject(numerator) && !_Py_IsImmortal(obj))) {
+                current_executor->region_bounded_guard_exits++;
+                EXIT_IF(true);
+            }
+        }
+
+        tier2 op(_INT_REGION_DIVIDE, (numerator, value -- res)) {
+            double dividend = PyFloat_AS_DOUBLE(PyStackRef_AsPyObjectBorrow(numerator));
+            intptr_t integer = PyStackRef_UntagInt(value);
+            INPUTS_DEAD();
+            if (integer == 0) {
+                PyErr_SetString(PyExc_ZeroDivisionError, "division by zero");
+                ERROR_NO_POP();
+            }
+            double divisor;
+            if (integer >= -(INT64_C(1) << 53) && integer <= (INT64_C(1) << 53)) {
+                divisor = (double)integer;
+            }
+            else {
+                /* Reuse Python's round-to-nearest-even conversion for large
+                 * integers, including under a nondefault hardware rounding
+                 * mode. The common, exactly representable case needs no box. */
+                PyObject *obj = _PyRegion_AllocationFails("bounded_conversion")
+                                ? NULL : PyLong_FromSsize_t(integer);
+                if (obj == NULL) {
+                    current_executor->region_allocation_errors++;
+                    ERROR_NO_POP();
+                }
+                current_executor->region_bounded_boxes++;
+                divisor = PyLong_AsDouble(obj);
+                Py_DECREF(obj);
+                /* A tagged integer cannot overflow binary64. */
+                assert(!PyErr_Occurred());
+            }
+            PyObject *obj = _PyRegion_AllocationFails("bounded_float")
+                            ? NULL : PyFloat_FromDouble(dividend / divisor);
+            if (obj == NULL) {
+                current_executor->region_allocation_errors++;
+                ERROR_NO_POP();
+            }
+            current_executor->region_bounded_divisions++;
+            res = PyStackRef_FromPyObjectSteal(obj);
+        }
+
+        /* The entry stack belongs to the first Python operation. Nothing is
+         * consumed until every type/range/overflow check has succeeded. */
+        replicate(9) tier2 op(_INT_REGION, (left, right, config/4 -- res, l, r)) {
+            current_executor->region_int_entries++;
+            int64_t a, b, c, intermediate, value;
+            bool valid = _PyRegion_AsInt64(left, &a) &&
+                         _PyRegion_AsInt64(right, &b) &&
+                         _PyRegion_AsInt64(GETLOCAL((uintptr_t)config & 0xffff), &c);
+            if (!valid) {
+                current_executor->region_int_guard_exits++;
+                EXIT_IF(true);
+            }
+            bool fits = _PyRegion_Arithmetic(a, b, oparg % 3, &intermediate) &&
+                        _PyRegion_Arithmetic(intermediate, c, oparg / 3, &value);
+            if (!fits) {
+                current_executor->region_int_overflow_exits++;
+                EXIT_IF(true);
+            }
+            PyObject *result = _PyRegion_AllocationFails("int")
+                               ? NULL : PyLong_FromLongLong(value);
+            if (result == NULL) {
+                current_executor->region_allocation_errors++;
+                ERROR_NO_POP();
+            }
+            current_executor->region_int_boxes++;
+            res = PyStackRef_FromPyObjectSteal(result);
+            l = left;
+            r = right;
+            INPUTS_DEAD();
+        }
+
+        replicate(9) tier2 op(_INT_REGION_COMPARE, (left, right, config/4 -- res, l, r)) {
+            current_executor->region_int_entries++;
+            int64_t a, b, c, limit, intermediate, value;
+            bool valid = _PyRegion_AsInt64(left, &a) &&
+                         _PyRegion_AsInt64(right, &b) &&
+                         _PyRegion_AsInt64(GETLOCAL((uintptr_t)config & 0xffff), &c) &&
+                         _PyRegion_AsInt64(GETLOCAL(((uintptr_t)config >> 16) & 0xffff), &limit);
+            if (!valid) {
+                current_executor->region_int_guard_exits++;
+                EXIT_IF(true);
+            }
+            bool fits = _PyRegion_Arithmetic(a, b, oparg % 3, &intermediate) &&
+                        _PyRegion_Arithmetic(intermediate, c, oparg / 3, &value);
+            if (!fits) {
+                current_executor->region_int_overflow_exits++;
+                EXIT_IF(true);
+            }
+            res = (COMPARISON_BIT(value, limit) & ((uint64_t)(uintptr_t)config >> 32))
+                  ? PyStackRef_True : PyStackRef_False;
+            l = left;
+            r = right;
+            INPUTS_DEAD();
+        }
+
         // Inplace compact int ops: mutate the uniquely-referenced operand
         // when possible. The op handles decref of TARGET internally so
         // the following _POP_TOP_INT becomes _POP_TOP_NOP. Tier 2 only.
@@ -873,6 +1062,232 @@ dummy_func(
             res = left;
             l = PyStackRef_NULL;
             r = right;
+            INPUTS_DEAD();
+        }
+
+        // Fuse ``acc + left * right`` when acc is a unique temporary.  This
+        // keeps the product unboxed and reuses acc for the sole live result.
+        // Keep the two operations separate: contraction would change Python's
+        // binary64 rounding semantics.
+        tier2 pure op(_BINARY_OP_MULTIPLY_ADD_FLOAT_INPLACE,
+                 (acc, left, right -- res)) {
+            current_executor->region_float_unique_entries++;
+            PyObject *acc_o = PyStackRef_AsPyObjectBorrow(acc);
+            PyObject *left_o = PyStackRef_AsPyObjectBorrow(left);
+            PyObject *right_o = PyStackRef_AsPyObjectBorrow(right);
+            assert(PyFloat_CheckExact(acc_o));
+            assert(PyFloat_CheckExact(left_o));
+            assert(PyFloat_CheckExact(right_o));
+            assert(_PyObject_IsUniquelyReferenced(acc_o));
+            double value = _PyFloat_MultiplyThenUpdate(
+                ((PyFloatObject *)acc_o)->ob_fval,
+                ((PyFloatObject *)left_o)->ob_fval,
+                ((PyFloatObject *)right_o)->ob_fval, false);
+            ((PyFloatObject *)acc_o)->ob_fval = value;
+            /* The matcher consumed _POP_TOP_NOP for both operands.  They are
+             * borrowed stack references (or immortal), so closing them here
+             * would invent escaping decrefs and force stack publication. */
+            assert(!PyStackRef_RefcountOnObject(left) || _Py_IsImmortal(left_o));
+            assert(!PyStackRef_RefcountOnObject(right) || _Py_IsImmortal(right_o));
+            DEAD(left);
+            DEAD(right);
+            res = acc;
+            INPUTS_DEAD();
+        }
+
+        // Fuse ``acc - left * right`` under the same ownership contract.
+        tier2 pure op(_BINARY_OP_MULTIPLY_SUBTRACT_FLOAT_INPLACE,
+                 (acc, left, right -- res)) {
+            current_executor->region_float_unique_entries++;
+            PyObject *acc_o = PyStackRef_AsPyObjectBorrow(acc);
+            PyObject *left_o = PyStackRef_AsPyObjectBorrow(left);
+            PyObject *right_o = PyStackRef_AsPyObjectBorrow(right);
+            assert(PyFloat_CheckExact(acc_o));
+            assert(PyFloat_CheckExact(left_o));
+            assert(PyFloat_CheckExact(right_o));
+            assert(_PyObject_IsUniquelyReferenced(acc_o));
+            double value = _PyFloat_MultiplyThenUpdate(
+                ((PyFloatObject *)acc_o)->ob_fval,
+                ((PyFloatObject *)left_o)->ob_fval,
+                ((PyFloatObject *)right_o)->ob_fval, true);
+            ((PyFloatObject *)acc_o)->ob_fval = value;
+            assert(!PyStackRef_RefcountOnObject(left) || _Py_IsImmortal(left_o));
+            assert(!PyStackRef_RefcountOnObject(right) || _Py_IsImmortal(right_o));
+            DEAD(left);
+            DEAD(right);
+            res = acc;
+            INPUTS_DEAD();
+        }
+
+        // Six cached float attributes, three products, and two left-associated
+        // additions. The two owner locals keep every field alive without
+        // temporary references. All guards precede any floating-point work.
+        tier2 op(_FLOAT_ATTRIBUTE_SUM_PRODUCTS, (fields/4, layout/4 -- res)) {
+            uint64_t config = (uintptr_t)layout;
+            _PyStackRef first = GETLOCAL(config & 7);
+            _PyStackRef second = GETLOCAL((config >> 3) & 7);
+            if (PyStackRef_IsNull(first) || PyStackRef_IsNull(second)) {
+                current_executor->region_float_guard_exits++;
+                EXIT_IF(true);
+            }
+            PyObject *left = PyStackRef_AsPyObjectBorrow(first);
+            PyObject *right = PyStackRef_AsPyObjectBorrow(second);
+            uint32_t version = (uint32_t)(config >> 6);
+            if (Py_TYPE(left)->tp_version_tag != version ||
+                Py_TYPE(right)->tp_version_tag != version) {
+                current_executor->region_float_guard_exits++;
+                EXIT_IF(true);
+            }
+            if ((config >> 38) & 1) {
+                if (!_PyObject_InlineValues(left)->valid ||
+                    !_PyObject_InlineValues(right)->valid) {
+                    current_executor->region_float_guard_exits++;
+                    EXIT_IF(true);
+                }
+            }
+            uint64_t offsets = (uintptr_t)fields;
+            PyObject *a = _PyRegion_FloatAttribute(left, (offsets & 255) * sizeof(PyObject *));
+            if (a == NULL) {
+                current_executor->region_float_guard_exits++;
+                EXIT_IF(true);
+            }
+            PyObject *b = _PyRegion_FloatAttribute(right, ((offsets >> 8) & 255) * sizeof(PyObject *));
+            if (b == NULL) {
+                current_executor->region_float_guard_exits++;
+                EXIT_IF(true);
+            }
+            PyObject *c = _PyRegion_FloatAttribute(left, ((offsets >> 16) & 255) * sizeof(PyObject *));
+            if (c == NULL) {
+                current_executor->region_float_guard_exits++;
+                EXIT_IF(true);
+            }
+            PyObject *d = _PyRegion_FloatAttribute(right, ((offsets >> 24) & 255) * sizeof(PyObject *));
+            if (d == NULL) {
+                current_executor->region_float_guard_exits++;
+                EXIT_IF(true);
+            }
+            PyObject *e = _PyRegion_FloatAttribute(left, ((offsets >> 32) & 255) * sizeof(PyObject *));
+            if (e == NULL) {
+                current_executor->region_float_guard_exits++;
+                EXIT_IF(true);
+            }
+            PyObject *f = _PyRegion_FloatAttribute(right, ((offsets >> 40) & 255) * sizeof(PyObject *));
+            if (f == NULL) {
+                current_executor->region_float_guard_exits++;
+                EXIT_IF(true);
+            }
+            volatile double product = ((PyFloatObject *)a)->ob_fval * ((PyFloatObject *)b)->ob_fval;
+            volatile double partial = _PyFloat_MultiplyThenUpdate(
+                product, ((PyFloatObject *)c)->ob_fval, ((PyFloatObject *)d)->ob_fval, false);
+            double value = _PyFloat_MultiplyThenUpdate(
+                partial, ((PyFloatObject *)e)->ob_fval, ((PyFloatObject *)f)->ob_fval, false);
+            frame->instr_ptr = _PyFrame_GetBytecode(frame) + ((config >> 39) & UINT16_MAX);
+            PyObject *result = _PyRegion_AllocationFails("float_attributes")
+                ? NULL : PyFloat_FromDouble(value);
+            if (result == NULL) {
+                current_executor->region_allocation_errors++;
+                ERROR_NO_POP();
+            }
+            res = PyStackRef_FromPyObjectSteal(result);
+            current_executor->region_float_attribute_entries++;
+        }
+
+        // Keep owned factor references for the original specialized cleanup.
+        // Exact-float decrements cannot invoke Python, so the update can run
+        // before those decrements without publishing an intermediate product.
+        tier2 pure op(_BINARY_OP_MULTIPLY_ADD_FLOAT_OWNED,
+                 (acc, left, right -- res, l, r)) {
+            PyObject *acc_o = PyStackRef_AsPyObjectBorrow(acc);
+            PyObject *left_o = PyStackRef_AsPyObjectBorrow(left);
+            PyObject *right_o = PyStackRef_AsPyObjectBorrow(right);
+            assert(PyFloat_CheckExact(acc_o));
+            assert(PyFloat_CheckExact(left_o));
+            assert(PyFloat_CheckExact(right_o));
+            assert(_PyObject_IsUniquelyReferenced(acc_o));
+            ((PyFloatObject *)acc_o)->ob_fval = _PyFloat_MultiplyThenUpdate(
+                ((PyFloatObject *)acc_o)->ob_fval,
+                ((PyFloatObject *)left_o)->ob_fval,
+                ((PyFloatObject *)right_o)->ob_fval, false);
+            current_executor->region_float_unique_entries++;
+            current_executor->region_float_owned_entries++;
+            res = acc;
+            l = left;
+            r = right;
+            INPUTS_DEAD();
+        }
+
+        tier2 pure op(_BINARY_OP_MULTIPLY_SUBTRACT_FLOAT_OWNED,
+                 (acc, left, right -- res, l, r)) {
+            PyObject *acc_o = PyStackRef_AsPyObjectBorrow(acc);
+            PyObject *left_o = PyStackRef_AsPyObjectBorrow(left);
+            PyObject *right_o = PyStackRef_AsPyObjectBorrow(right);
+            assert(PyFloat_CheckExact(acc_o));
+            assert(PyFloat_CheckExact(left_o));
+            assert(PyFloat_CheckExact(right_o));
+            assert(_PyObject_IsUniquelyReferenced(acc_o));
+            ((PyFloatObject *)acc_o)->ob_fval = _PyFloat_MultiplyThenUpdate(
+                ((PyFloatObject *)acc_o)->ob_fval,
+                ((PyFloatObject *)left_o)->ob_fval,
+                ((PyFloatObject *)right_o)->ob_fval, true);
+            current_executor->region_float_unique_entries++;
+            current_executor->region_float_owned_entries++;
+            res = acc;
+            l = left;
+            r = right;
+            INPUTS_DEAD();
+        }
+
+        // Fuse a borrowed accumulator update when the product is the unique
+        // right operand in the original in-place operation.  Unlike the
+        // unique-left forms above, this must allocate the final result: the
+        // accumulator may be externally aliased and must not be mutated.
+        tier2 op(_BINARY_OP_MULTIPLY_ADD_FLOAT_SHARED,
+                 (acc, left, right -- res)) {
+            current_executor->region_float_shared_entries++;
+            PyObject *acc_o = PyStackRef_AsPyObjectBorrow(acc);
+            PyObject *left_o = PyStackRef_AsPyObjectBorrow(left);
+            PyObject *right_o = PyStackRef_AsPyObjectBorrow(right);
+            if (!PyFloat_CheckExact(acc_o) || !PyFloat_CheckExact(left_o) ||
+                !PyFloat_CheckExact(right_o)) {
+                current_executor->region_float_guard_exits++;
+                EXIT_IF(true);
+            }
+            double value = _PyFloat_MultiplyThenUpdate(
+                ((PyFloatObject *)acc_o)->ob_fval,
+                ((PyFloatObject *)left_o)->ob_fval,
+                ((PyFloatObject *)right_o)->ob_fval, false);
+            PyObject *result = _PyRegion_AllocationFails("float")
+                               ? NULL : PyFloat_FromDouble(value);
+            if (result == NULL) {
+                current_executor->region_allocation_errors++;
+                ERROR_NO_POP();
+            }
+            res = PyStackRef_FromPyObjectSteal(result);
+            INPUTS_DEAD();
+        }
+
+        tier2 op(_BINARY_OP_MULTIPLY_SUBTRACT_FLOAT_SHARED,
+                 (acc, left, right -- res)) {
+            current_executor->region_float_shared_entries++;
+            PyObject *acc_o = PyStackRef_AsPyObjectBorrow(acc);
+            PyObject *left_o = PyStackRef_AsPyObjectBorrow(left);
+            PyObject *right_o = PyStackRef_AsPyObjectBorrow(right);
+            if (!PyFloat_CheckExact(acc_o) || !PyFloat_CheckExact(left_o) ||
+                !PyFloat_CheckExact(right_o)) {
+                current_executor->region_float_guard_exits++;
+                EXIT_IF(true);
+            }
+            double value = _PyFloat_MultiplyThenUpdate(
+                ((PyFloatObject *)acc_o)->ob_fval,
+                ((PyFloatObject *)left_o)->ob_fval,
+                ((PyFloatObject *)right_o)->ob_fval, true);
+            PyObject *result = _PyRegion_AllocationFails("float")
+                               ? NULL : PyFloat_FromDouble(value);
+            if (result == NULL) {
+                current_executor->region_allocation_errors++;
+                ERROR_NO_POP();
+            }
+            res = PyStackRef_FromPyObjectSteal(result);
             INPUTS_DEAD();
         }
 
@@ -1414,7 +1829,74 @@ dummy_func(
             ERROR_IF(err);
         }
 
-        macro(STORE_SUBSCR) = _SPECIALIZE_STORE_SUBSCR + _STORE_SUBSCR;
+        macro(STORE_SUBSCR) = _SPECIALIZE_STORE_SUBSCR + _RECORD_NOS_TYPE + _STORE_SUBSCR;
+
+        tier2 op(_DICT_PAIR_INCREMENT, (config/4, store_dict, store_key, dict_copy, key_copy --)) {
+            PyObject *dict_o = PyStackRef_AsPyObjectBorrow(dict_copy);
+            PyObject *key = PyStackRef_AsPyObjectBorrow(key_copy);
+            uint64_t options = (uintptr_t)config;
+            uint32_t type_version = (uint32_t)options;
+            bool valid = PyDict_Check(dict_o) && Py_TYPE(dict_o)->tp_version_tag == type_version &&
+                Py_TYPE(dict_o)->tp_as_mapping->mp_subscript == _PyDict_Subscript &&
+                PyStackRef_AsPyObjectBorrow(store_dict) == dict_o &&
+                PyStackRef_AsPyObjectBorrow(store_key) == key;
+            PyDictObject *dict = (PyDictObject *)dict_o;
+            Py_ssize_t ix = valid ? _PyDict_LookupExactBytesPair(dict, key) : -1;
+            PyObject *old_value = NULL;
+            if (ix >= 0) {
+                old_value = DK_ENTRIES(dict->ma_keys)[ix].me_value;
+                valid = old_value != NULL && PyLong_CheckExact(old_value) &&
+                    _PyLong_IsCompact((PyLongObject *)old_value);
+            }
+            else {
+                valid = false;
+            }
+            if (!valid) {
+                current_executor->region_dict_update_guard_exits++;
+                EXIT_IF(true);
+            }
+            /* All key comparisons above are callback-free, the dict has no
+             * watchers, and compact-int boxing cannot schedule GC. Thus its
+             * existing entry remains stable until this replacement. */
+            long value = (long)_PyLong_CompactValue((PyLongObject *)old_value) + oparg;
+            _Py_CODEUNIT *first_ip = frame->instr_ptr;
+            frame->instr_ptr = first_ip + ((options >> 32) & UINT16_MAX);
+            PyObject *new_value = _PyRegion_AllocationFails("dict_update")
+                ? NULL : PyLong_FromLong(value);
+            if (new_value == NULL) {
+                current_executor->region_allocation_errors++;
+                ERROR_NO_POP();
+            }
+            frame->instr_ptr = first_ip + (options >> 48);
+            DK_ENTRIES(dict->ma_keys)[ix].me_value = new_value;
+            _PyStackRef previous = PyStackRef_FromPyObjectSteal(old_value);
+            PyStackRef_CLOSE_SPECIALIZED(previous, _PyLong_ExactDealloc);
+            current_executor->region_dict_update_entries++;
+            _PyStackRef cleanup[4] = {key_copy, dict_copy, store_key, store_dict};
+            INPUTS_DEAD();
+            for (int i = 0; i < 4; i++) {
+                PyStackRef_CLOSE(cleanup[i]);
+            }
+        }
+
+        tier2 op(_STORE_SUBSCR_DICT_INHERITED, (type_version/2, v, container, sub --)) {
+            PyObject *dict = PyStackRef_AsPyObjectBorrow(container);
+            int err;
+            assert(type_version != 0);
+            if (Py_TYPE(dict)->tp_version_tag == type_version) {
+                assert(PyDict_Check(dict));
+                current_executor->region_dict_store_entries++;
+                err = PyDict_SetItem(dict, PyStackRef_AsPyObjectBorrow(sub),
+                                     PyStackRef_AsPyObjectBorrow(v));
+            }
+            else {
+                current_executor->region_dict_store_fallbacks++;
+                err = PyObject_SetItem(dict, PyStackRef_AsPyObjectBorrow(sub),
+                                      PyStackRef_AsPyObjectBorrow(v));
+            }
+            DECREF_INPUTS();
+            ERROR_IF(err);
+        }
 
         macro(STORE_SUBSCR_LIST_INT) =
             _GUARD_TOS_INT + _GUARD_NOS_LIST + unused/1 + _STORE_SUBSCR_LIST_INT + _POP_TOP_INT + POP_TOP;
@@ -2318,6 +2800,23 @@ dummy_func(
             assert(keys->dk_kind == DICT_KEYS_UNICODE);
         }
 
+        tier2 op(_GUARD_GLOBALS_VERSION_AND_IDENTITY, (version/4, namespace/4 --)) {
+            /* Dict copies can preserve their keys version while holding
+             * different values. Constant folding depends on the mapping too. */
+            uint32_t expected_version = (uint32_t)(uintptr_t)version;
+            PyDictObject *dict = (PyDictObject *)GLOBALS();
+            DEOPT_IF(dict != (PyDictObject *)(uintptr_t)namespace);
+            assert(PyDict_CheckExact(dict));
+            PyDictKeysObject *keys = FT_ATOMIC_LOAD_PTR_ACQUIRE(dict->ma_keys);
+            DEOPT_IF(FT_ATOMIC_LOAD_UINT32_RELAXED(keys->dk_version) != expected_version);
+            assert(keys->dk_kind == DICT_KEYS_UNICODE);
+        }
+
+        tier2 op(_GUARD_BUILTINS_IDENTITY, (--)) {
+            /* Function versions alone do not identify the builtins mapping. */
+            DEOPT_IF(BUILTINS() != tstate->interp->builtins);
+        }
+
         op(_LOAD_GLOBAL_MODULE, (version/1, unused/1, index/1 -- res))
         {
             PyDictObject *dict = (PyDictObject *)GLOBALS();
@@ -2891,6 +3390,11 @@ dummy_func(
             EXIT_IF(tp != (PyTypeObject *)type);
         }
 
+        tier2 op(_GUARD_NOS_TYPE, (type/4, owner, unused -- owner, unused)) {
+            PyTypeObject *tp = Py_TYPE(PyStackRef_AsPyObjectBorrow(owner));
+            EXIT_IF(tp != (PyTypeObject *)type);
+        }
+
         op(_CHECK_MANAGED_OBJECT_HAS_VALUES, (owner -- owner)) {
             PyObject *owner_o = PyStackRef_AsPyObjectBorrow(owner);
             assert(Py_TYPE(owner_o)->tp_dictoffset < 0);
@@ -3240,6 +3744,151 @@ dummy_func(
             #endif  /* ENABLE_SPECIALIZATION */
         }
 
+        replicate(2) tier2 op(_COMPARE_TUPLE_PAIR, (local/4, first, second -- res, f, s)) {
+            current_executor->region_tuple_entries++;
+            PyObject *right = PyStackRef_AsPyObjectBorrow(GETLOCAL((uintptr_t)local));
+            PyObject *first_o = PyStackRef_AsPyObjectBorrow(first);
+            PyObject *second_o = PyStackRef_AsPyObjectBorrow(second);
+            bool valid = PyTuple_CheckExact(right) && PyTuple_GET_SIZE(right) == 2 &&
+                         _PyRegion_EqualityType(Py_TYPE(first_o)) &&
+                         _PyRegion_EqualityType(Py_TYPE(second_o)) &&
+                         Py_TYPE(first_o) == Py_TYPE(PyTuple_GET_ITEM(right, 0)) &&
+                         Py_TYPE(second_o) == Py_TYPE(PyTuple_GET_ITEM(right, 1));
+            if (!valid) {
+                current_executor->region_tuple_guard_exits++;
+                EXIT_IF(true);
+            }
+            bool equal = _PyRegion_ImmutableEqual(first_o, PyTuple_GET_ITEM(right, 0)) &&
+                         _PyRegion_ImmutableEqual(second_o, PyTuple_GET_ITEM(right, 1));
+            res = (equal ^ oparg) ? PyStackRef_True : PyStackRef_False;
+            f = first;
+            s = second;
+            INPUTS_DEAD();
+        }
+
+        tier2 op(_LIST_PAIR_APPEND_SCAN, (config/4, name/4, container, index -- container, index)) {
+            PyObject *source = PyStackRef_AsPyObjectBorrow(container);
+            EXIT_IF(!PyList_CheckExact(source));
+            PyObject *index_o = PyStackRef_AsPyObjectBorrow(index);
+            Py_ssize_t count = 0;
+            Py_ssize_t position = -1;
+            if (PyLong_CheckExact(index_o) && _PyLong_IsCompact((PyLongObject *)index_o)) {
+                position = _PyLong_CompactValue((PyLongObject *)index_o);
+            }
+            /* Short suffixes are common: reject them before reading unrelated
+             * locals, validating the output/pair, or resolving the global. */
+            if (position >= 0 && position < _PY_NSMALLPOSINTS - 1 &&
+                position < PyList_GET_SIZE(source) - 2) {
+                uint64_t slots = (uint64_t)(uintptr_t)config;
+                int index_local = slots & 255;
+                int list_local = (slots >> 8) & 255;
+                int output_local = (slots >> 16) & 255;
+                int pair_local = (slots >> 24) & 255;
+                _PyStackRef old_index = GETLOCAL(index_local);
+                _PyStackRef output_ref = GETLOCAL(output_local);
+                _PyStackRef pair_ref = GETLOCAL(pair_local);
+                PyObject *output = NULL;
+                PyObject *pair = NULL;
+                bool direct = !PyStackRef_IsNull(old_index) &&
+                    !PyStackRef_IsNull(GETLOCAL(list_local)) &&
+                    !PyStackRef_IsNull(output_ref) && !PyStackRef_IsNull(pair_ref) &&
+                    PyStackRef_AsPyObjectBorrow(old_index) == index_o &&
+                    PyStackRef_AsPyObjectBorrow(GETLOCAL(list_local)) == source;
+                if (direct) {
+                    output = PyStackRef_AsPyObjectBorrow(output_ref);
+                    pair = PyStackRef_AsPyObjectBorrow(pair_ref);
+                    direct = PyList_CheckExact(output) && output != source &&
+                        PyList_GET_SIZE(output) < ((PyListObject *)output)->allocated &&
+                        PyTuple_CheckExact(pair) && PyTuple_GET_SIZE(pair) == 2 &&
+                        PyBytes_CheckExact(PyTuple_GET_ITEM(pair, 0)) &&
+                        PyBytes_CheckExact(PyTuple_GET_ITEM(pair, 1));
+                }
+                if (direct && _PyRegion_HasBuiltinLen(frame,
+                        PyTuple_GET_ITEM(_PyFrame_GetCode(frame)->co_names, (uintptr_t)name),
+                        tstate->interp->callable_cache.len)) {
+                    Py_ssize_t size = PyList_GET_SIZE(output);
+                    Py_ssize_t stop = Py_MIN(64, ((PyListObject *)output)->allocated - size);
+                    stop = Py_MIN(stop, _PY_NSMALLPOSINTS - 1 - position);
+                    /* Leave one complete pair for the original iteration:
+                     * its header condition has already been evaluated. */
+                    stop = Py_MIN(stop, PyList_GET_SIZE(source) - 2 - position);
+                    while (count < stop) {
+                        PyObject *a = PyList_GET_ITEM(source, position + count);
+                        PyObject *b = PyList_GET_ITEM(source, position + count + 1);
+                        if (!PyBytes_CheckExact(a) || !PyBytes_CheckExact(b) ||
+                            (_PyRegion_BytesEqual(a, PyTuple_GET_ITEM(pair, 0)) &&
+                             _PyRegion_BytesEqual(b, PyTuple_GET_ITEM(pair, 1)))) {
+                            break;
+                        }
+                        /* No resize, allocation, Python callback, or decref.
+                         * The remaining iteration retains the ordinary append
+                         * and its error location when capacity is exhausted. */
+                        PyList_SET_ITEM(output, size + count, Py_NewRef(a));
+                        count++;
+                    }
+                    if (count) {
+                        Py_SET_SIZE(output, size + count);
+                        PyObject *next_index = (PyObject *)&_PyLong_SMALL_INTS[
+                            _PY_NSMALLNEGINTS + position + count];
+                        GETLOCAL(index_local) = PyStackRef_FromPyObjectNew(next_index);
+                        index = PyStackRef_Borrow(GETLOCAL(index_local));
+                        PyStackRef_CLOSE_SPECIALIZED(old_index, _PyLong_ExactDealloc);
+                    }
+                }
+            }
+            if (count) {
+                current_executor->region_pair_scan_entries++;
+                current_executor->region_pair_scan_iterations += count;
+            }
+            else {
+                current_executor->region_pair_scan_misses++;
+            }
+        }
+
+        replicate(2) tier2 op(_COMPARE_LIST_PAIR, (local/4, container, index -- res, c, i)) {
+            current_executor->region_tuple_entries++;
+            PyObject *list = PyStackRef_AsPyObjectBorrow(container);
+            PyObject *index_o = PyStackRef_AsPyObjectBorrow(index);
+            PyObject *right = PyStackRef_AsPyObjectBorrow(GETLOCAL((uintptr_t)local));
+            bool valid = PyList_CheckExact(list) && PyLong_CheckExact(index_o) &&
+                _PyLong_IsCompact((PyLongObject *)index_o) &&
+                PyTuple_CheckExact(right) && PyTuple_GET_SIZE(right) == 2;
+            PyObject *first = NULL, *second = NULL;
+            if (valid) {
+                Py_ssize_t a = _PyLong_CompactValue((PyLongObject *)index_o);
+                Py_ssize_t b = a + 1;
+                Py_ssize_t size = PyList_GET_SIZE(list);
+                if (a < 0) {
+                    a += size;
+                }
+                if (b < 0) {
+                    b += size;
+                }
+                valid = (size_t)a < (size_t)size && (size_t)b < (size_t)size;
+                if (valid) {
+                    first = PyList_GET_ITEM(list, a);
+                    second = PyList_GET_ITEM(list, b);
+                    valid = _PyRegion_EqualityType(Py_TYPE(first)) &&
+                        _PyRegion_EqualityType(Py_TYPE(second)) &&
+                        Py_TYPE(first) == Py_TYPE(PyTuple_GET_ITEM(right, 0)) &&
+                        Py_TYPE(second) == Py_TYPE(PyTuple_GET_ITEM(right, 1));
+                }
+            }
+            if (!valid) {
+                current_executor->region_tuple_guard_exits++;
+                EXIT_IF(true);
+            }
+            /* The unchanged list local owns both elements throughout these
+             * callback-free comparisons, so no temporary references escape. */
+            bool equal = _PyRegion_ImmutableEqual(first, PyTuple_GET_ITEM(right, 0)) &&
+                         _PyRegion_ImmutableEqual(second, PyTuple_GET_ITEM(right, 1));
+            current_executor->region_tuple_list_entries++;
+            res = (equal ^ oparg) ? PyStackRef_True : PyStackRef_False;
+            c = container;
+            i = index;
+            INPUTS_DEAD();
+        }
+
         op(_COMPARE_OP, (left, right -- res)) {
             PyObject *left_o = PyStackRef_AsPyObjectBorrow(left);
             PyObject *right_o = PyStackRef_AsPyObjectBorrow(right);
@@ -3350,6 +3999,48 @@ dummy_func(
             int res = PySequence_Contains(right_o, left_o);
             if (res < 0) {
                 ERROR_NO_POP();
+            }
+            b = (res ^ oparg) ? PyStackRef_True : PyStackRef_False;
+            l = left;
+            r = right;
+            INPUTS_DEAD();
+        }
+
+        tier2 op(_CONTAINS_OP_LIST_INT, (left, right -- b, l, r)) {
+            PyObject *left_o = PyStackRef_AsPyObjectBorrow(left);
+            PyObject *right_o = PyStackRef_AsPyObjectBorrow(right);
+            int res = -1;
+            Py_ssize_t checked = 0;
+            if (PyList_CheckExact(right_o) && PyLong_CheckExact(left_o) &&
+                _PyLong_IsCompact((PyLongObject *)left_o)) {
+                Py_ssize_t value = _PyLong_CompactValue((PyLongObject *)left_o);
+                res = 0;
+                for (Py_ssize_t i = 0; i < PyList_GET_SIZE(right_o); i++) {
+                    PyObject *item = PyList_GET_ITEM(right_o, i);
+                    if (!PyLong_CheckExact(item) || !_PyLong_IsCompact((PyLongObject *)item)) {
+                        /* Only exact integer comparisons preceded this point.
+                         * They cannot invoke Python or mutate the list, so
+                         * restarting the ordinary operation repeats no effects. */
+                        res = -1;
+                        break;
+                    }
+                    checked++;
+                    if (_PyLong_CompactValue((PyLongObject *)item) == value) {
+                        res = 1;
+                        break;
+                    }
+                }
+            }
+            current_executor->region_contains_iterations += checked;
+            if (res < 0) {
+                current_executor->region_contains_fallbacks++;
+                res = PySequence_Contains(right_o, left_o);
+                if (res < 0) {
+                    ERROR_NO_POP();
+                }
+            }
+            else {
+                current_executor->region_contains_entries++;
             }
             b = (res ^ oparg) ? PyStackRef_True : PyStackRef_False;
             l = left;
@@ -3792,6 +4483,25 @@ dummy_func(
             index_or_null = PyStackRef_NULL;
         }
 
+        tier2 op(_GET_ITER_RANGE, (iterable -- iter, index_or_null)) {
+            _PyRangeObject *range = (_PyRangeObject *)PyStackRef_AsPyObjectBorrow(iterable);
+            assert(PyRange_Check(range));
+            EXIT_IF(!_PyLong_CheckExactAndCompact(range->start) ||
+                    !_PyLong_CheckExactAndCompact(range->stop) ||
+                    !_PyLong_CheckExactAndCompact(range->step) ||
+                    !_PyLong_CheckExactAndCompact(range->length));
+            PyObject *iter_o = _PyRegion_AllocationFails("range_iter")
+                ? NULL : _PyRangeIter_FromCompactRange((PyObject *)range);
+            PyStackRef_CLOSE(iterable);
+            if (iter_o == NULL) {
+                current_executor->region_allocation_errors++;
+                ERROR_NO_POP();
+            }
+            current_executor->region_range_iter_entries++;
+            iter = PyStackRef_FromPyObjectSteal(iter_o);
+            index_or_null = PyStackRef_NULL;
+        }
+
         // Most members of this family are "secretly" super-instructions.
         // When the loop is exhausted, they jump, and the jump target is
         // always END_FOR, which pops two values off the stack.
@@ -3869,6 +4579,194 @@ dummy_func(
             }
             STAT_INC(FOR_ITER, hit);
             next = PyStackRef_FromPyObjectSteal(item);
+        }
+
+        tier2 op(_GUARD_ENUM_LIST, (iter, null_or_index -- iter, null_or_index)) {
+            if (Py_TYPE(PyStackRef_AsPyObjectBorrow(iter)) != &PyEnum_Type) {
+                current_executor->region_enum_guard_exits++;
+                EXIT_IF(true);
+            }
+        }
+
+        replicate(6) tier2 op(_ENUM_LIST_INT_SCAN, (config/4, field/4, iter, null_or_index -- iter, null_or_index)) {
+            PyObject *obj = PyStackRef_AsPyObjectBorrow(iter);
+            if (Py_TYPE(obj) != &PyEnum_Type) {
+                current_executor->region_enum_guard_exits++;
+                EXIT_IF(true);
+            }
+            _PyEnumObject *en = (_PyEnumObject *)obj;
+            uint64_t slots = (uint64_t)(uintptr_t)config;
+            int key_local = slots & 255;
+            int index_local = (slots >> 8) & 255;
+            int item_local = (slots >> 16) & 255;
+            _PyStackRef key_ref = GETLOCAL(key_local);
+            _PyStackRef index_ref = GETLOCAL(index_local);
+            _PyStackRef item_ref = GETLOCAL(item_local);
+            bool direct = !PyStackRef_IsNull(key_ref) &&
+                !PyStackRef_IsNull(index_ref) && !PyStackRef_IsNull(item_ref) &&
+                en->en_index >= -_PY_NSMALLNEGINTS &&
+                en->en_index < _PY_NSMALLPOSINTS &&
+                Py_TYPE(en->en_sit) == &PyListIter_Type &&
+                _PyObject_IsUniquelyReferenced(en->en_result);
+            _PyListIterObject *it = NULL;
+            PyObject *key = NULL;
+            if (direct) {
+                it = (_PyListIterObject *)en->en_sit;
+                key = PyStackRef_AsPyObjectBorrow(key_ref);
+                PyObject *old_item = PyStackRef_AsPyObjectBorrow(item_ref);
+                PyObject *old_index = PyStackRef_AsPyObjectBorrow(index_ref);
+                /* All removed decrefs must be unable to run finalizers. The
+                 * list still owns the old item, as it owns every new item.
+                 * A mutation at the header's periodic check can break this
+                 * relationship: retain the original next/unpack in that case. */
+                direct = PyLong_CheckExact(key) && _PyLong_IsCompact((PyLongObject *)key) &&
+                    PyLong_CheckExact(old_index) && it->it_seq != NULL &&
+                    it->it_index > 0 && it->it_index <= PyList_GET_SIZE(it->it_seq) &&
+                    PyList_GET_ITEM(it->it_seq, it->it_index - 1) == old_item &&
+                    PyTuple_GET_ITEM(en->en_result, 0) == old_index &&
+                    PyTuple_GET_ITEM(en->en_result, 1) == old_item;
+            }
+            Py_ssize_t count = 0;
+            if (direct) {
+                Py_ssize_t stop = Py_MIN(PyList_GET_SIZE(it->it_seq) - it->it_index, 64);
+                stop = Py_MIN(stop, _PY_NSMALLPOSINTS - en->en_index);
+                Py_ssize_t limit = _PyLong_CompactValue((PyLongObject *)key);
+                while (count < stop) {
+                    PyObject *item = PyList_GET_ITEM(it->it_seq, it->it_index + count);
+                    if (!PyTuple_CheckExact(item) ||
+                        (size_t)PyTuple_GET_SIZE(item) <= (uintptr_t)field) {
+                        break;
+                    }
+                    PyObject *value = PyTuple_GET_ITEM(item, (uintptr_t)field);
+                    if (!PyLong_CheckExact(value) || !_PyLong_IsCompact((PyLongObject *)value)) {
+                        break;
+                    }
+                    Py_ssize_t integer = _PyLong_CompactValue((PyLongObject *)value);
+                    /* Replication folds this to one comparison. Bitwise
+                     * operators also keep the unused generic stencil free
+                     * of a jump table through the assembly optimizer. */
+                    bool follows =
+                        ((oparg == Py_LT) & (integer < limit)) |
+                        ((oparg == Py_LE) & (integer <= limit)) |
+                        ((oparg == Py_EQ) & (integer == limit)) |
+                        ((oparg == Py_NE) & (integer != limit)) |
+                        ((oparg == Py_GT) & (integer > limit)) |
+                        ((oparg == Py_GE) & (integer >= limit));
+                    if (!follows) {
+                        break;
+                    }
+                    count++;
+                }
+            }
+            if (count) {
+                PyObject *result = en->en_result;
+                PyObject *old_index = PyTuple_GET_ITEM(result, 0);
+                PyObject *old_item = PyTuple_GET_ITEM(result, 1);
+                PyObject *last_item = PyList_GET_ITEM(it->it_seq, it->it_index + count - 1);
+                PyObject *last_index = (PyObject *)&_PyLong_SMALL_INTS[
+                    _PY_NSMALLNEGINTS + en->en_index + count - 1];
+                it->it_index += count;
+                en->en_index += count;
+                PyTuple_SET_ITEM(result, 0, Py_NewRef(last_index));
+                PyTuple_SET_ITEM(result, 1, Py_NewRef(last_item));
+                Py_DECREF(old_index);
+                Py_DECREF(old_item);
+                _PyTuple_Recycle(result);
+                GETLOCAL(index_local) = PyStackRef_FromPyObjectNew(last_index);
+                PyStackRef_CLOSE(index_ref);
+                GETLOCAL(item_local) = PyStackRef_FromPyObjectNew(last_item);
+                PyStackRef_CLOSE(item_ref);
+                current_executor->region_enum_scan_entries++;
+                current_executor->region_enum_scan_iterations += count;
+            }
+            else {
+                current_executor->region_enum_scan_misses++;
+            }
+        }
+
+        tier2 op(_ITER_NEXT_ENUM_LIST, (iter, null_or_index -- iter, null_or_index, next)) {
+            _PyEnumObject *en = (_PyEnumObject *)PyStackRef_AsPyObjectBorrow(iter);
+            bool direct = en->en_index >= -_PY_NSMALLNEGINTS &&
+                en->en_index < _PY_NSMALLPOSINTS &&
+                Py_TYPE(en->en_sit) == &PyListIter_Type &&
+                _PyObject_IsUniquelyReferenced(en->en_result);
+            _PyListIterObject *it = NULL;
+            if (direct) {
+                it = (_PyListIterObject *)en->en_sit;
+                direct = it->it_seq != NULL &&
+                    (size_t)it->it_index < (size_t)PyList_GET_SIZE(it->it_seq);
+            }
+            if (direct) {
+                PyObject *next_item = Py_NewRef(PyList_GET_ITEM(it->it_seq, it->it_index));
+                it->it_index++;
+                PyObject *next_index = Py_NewRef((PyObject *)&_PyLong_SMALL_INTS[
+                    _PY_NSMALLNEGINTS + en->en_index]);
+                en->en_index++;
+                PyObject *result = en->en_result;
+                assert(_PyObject_IsUniquelyReferenced(result));
+                PyObject *old_index = PyTuple_GET_ITEM(result, 0);
+                PyObject *old_item = PyTuple_GET_ITEM(result, 1);
+                next = PyStackRef_FromPyObjectNew(result);
+                PyTuple_SET_ITEM(result, 0, next_index);
+                PyTuple_SET_ITEM(result, 1, next_item);
+                /* Preserve enum_next's publication and cleanup order, including
+                 * an old element's finalizer re-entering this same enumerate. */
+                Py_DECREF(old_index);
+                Py_DECREF(old_item);
+                _PyTuple_Recycle(result);
+                current_executor->region_enum_entries++;
+            }
+            else {
+                /* Unsupported inner iterators and shared cached tuples can
+                 * continue through the ordinary enum implementation in this
+                 * trace, instead of repeatedly exiting at FOR_ITER. */
+                current_executor->region_enum_fallbacks++;
+                volatile iternextfunc next_fn = PyEnum_Type.tp_iternext;
+                PyObject *item = next_fn((PyObject *)en);
+                if (item == NULL) {
+                    if (_PyErr_Occurred(tstate)) {
+                        if (_PyErr_ExceptionMatches(tstate, PyExc_StopIteration)) {
+                            _PyEval_MonitorRaise(tstate, frame, frame->instr_ptr);
+                            _PyErr_Clear(tstate);
+                        }
+                        else {
+                            ERROR_NO_POP();
+                        }
+                    }
+                    EXIT_IF(true);
+                }
+                next = PyStackRef_FromPyObjectSteal(item);
+            }
+            STAT_INC(FOR_ITER, hit);
+        }
+
+        tier2 op(_ITER_NEXT_ZIP_LIST_PAIR, (iter, null_or_index -- iter, null_or_index, next)) {
+            int direct;
+            PyObject *item = _PyZip_NextListPair(PyStackRef_AsPyObjectBorrow(iter), &direct);
+            if (direct == 0) {
+                current_executor->region_zip_fallbacks++;
+            }
+            if (item == NULL) {
+                if (direct == 2) {
+                    current_executor->region_allocation_errors++;
+                }
+                if (_PyErr_Occurred(tstate)) {
+                    if (_PyErr_ExceptionMatches(tstate, PyExc_StopIteration)) {
+                        _PyEval_MonitorRaise(tstate, frame, frame->instr_ptr);
+                        _PyErr_Clear(tstate);
+                    }
+                    else {
+                        ERROR_NO_POP();
+                    }
+                }
+                EXIT_IF(true);
+            }
+            if (direct != 0) {
+                current_executor->region_zip_entries++;
+                current_executor->region_zip_reused_entries += direct == 1;
+            }
+            next = PyStackRef_FromPyObjectSteal(item);
+            STAT_INC(FOR_ITER, hit);
         }
 
         op(_GUARD_NOS_ITER_VIRTUAL, (iter, null_or_index -- iter, null_or_index)) {
@@ -4622,6 +5520,431 @@ dummy_func(
             new_frame = PyStackRef_Wrap(pushed_frame);
         }
 
+        replicate(5) tier2 op(_CALL_PY_TRIVIAL, (source/4, callable, self_or_null, args[oparg] -- res)) {
+            assert(oparg <= 4);
+            current_executor->region_call_entries++;
+            PyFunctionObject *func = (PyFunctionObject *)PyStackRef_AsPyObjectBorrow(callable);
+            assert(PyFunction_Check(func));
+            PyCodeObject *code = (PyCodeObject *)func->func_code;
+            uintptr_t version = FT_ATOMIC_LOAD_UINTPTR_ACQUIRE(code->_co_instrumentation_version);
+            bool valid = _Py_atomic_load_uintptr_relaxed(&tstate->eval_breaker) == version;
+            int has_self = !PyStackRef_IsNull(self_or_null);
+            if ((uintptr_t)source & 1) {
+                valid = valid && ((uintptr_t)source >> 1) < (uintptr_t)(oparg + has_self);
+            }
+            if (!valid) {
+                current_executor->region_call_guard_exits++;
+                DEOPT_IF(true);
+            }
+            /* The real frame retains its code until after locals and the
+             * callable have been cleared. A finalizer may replace __code__;
+             * preserve that lifetime even though the frame is omitted. */
+            Py_INCREF(code);
+            if ((uintptr_t)source & 1) {
+                int index = (uintptr_t)source >> 1;
+                _PyStackRef value = has_self && index == 0 ? self_or_null : args[index - has_self];
+                res = PyStackRef_FromPyObjectNew(PyStackRef_AsPyObjectBorrow(value));
+            }
+            else {
+                assert(_Py_IsImmortal((PyObject *)source));
+                res = PyStackRef_FromPyObjectBorrow(source);
+            }
+            /* Match the unlinked callee's reverse-local cleanup order. Keep
+             * refs off the visible value stack during arbitrary finalizers;
+             * reentry may reuse the caller's consumed argument slots. */
+            _PyStackRef cleanup[6];
+            cleanup[0] = callable;
+            cleanup[1] = self_or_null;
+            for (int i = 0; i < oparg; i++) {
+                cleanup[i + 2] = args[i];
+            }
+            INPUTS_DEAD();
+            for (int i = oparg + 1; i >= 0; i--) {
+                PyStackRef_XCLOSE(cleanup[i]);
+            }
+            Py_DECREF(code);
+        }
+
+        replicate(5) tier2 op(_CALL_PY_ATTRIBUTE, (source/4, config/4, callable, self_or_null, args[oparg] -- res)) {
+            assert(oparg <= 4);
+            current_executor->region_call_entries++;
+            PyFunctionObject *func = (PyFunctionObject *)PyStackRef_AsPyObjectBorrow(callable);
+            assert(PyFunction_Check(func));
+            PyCodeObject *code = (PyCodeObject *)func->func_code;
+            uintptr_t version = FT_ATOMIC_LOAD_UINTPTR_ACQUIRE(code->_co_instrumentation_version);
+            bool valid = _Py_atomic_load_uintptr_relaxed(&tstate->eval_breaker) == version;
+            int has_self = !PyStackRef_IsNull(self_or_null);
+            PyObject *attribute = NULL;
+            PyObject *other_attribute = NULL;
+            uint64_t descriptor = (uintptr_t)source >> 2;
+            {
+                int index = descriptor & 7;
+                valid = valid && index < oparg + has_self;
+                if (valid) {
+                    _PyStackRef owner = has_self && index == 0 ? self_or_null : args[index - has_self];
+                    attribute = _PyRegion_CallAttribute(owner, descriptor);
+                    valid = attribute != NULL;
+                }
+                if (valid && ((descriptor >> 52) & 3) == 3) {
+                    uint64_t other = (uintptr_t)config;
+                    index = other & 7;
+                    valid = index < oparg + has_self;
+                    if (valid) {
+                        _PyStackRef owner = has_self && index == 0 ? self_or_null : args[index - has_self];
+                        other_attribute = _PyRegion_CallAttribute(owner, other);
+                        valid = other_attribute != NULL && PyLong_CheckExact(attribute) &&
+                            PyLong_CheckExact(other_attribute) &&
+                            _PyLong_BothAreCompact((PyLongObject *)attribute, (PyLongObject *)other_attribute);
+                    }
+                }
+            }
+            if (!valid) {
+                current_executor->region_call_guard_exits++;
+                DEOPT_IF(true);
+            }
+            /* The real frame retains its code until after locals and the
+             * callable have been cleared. A finalizer may replace __code__;
+             * preserve that lifetime even though the frame is omitted. */
+            Py_INCREF(code);
+            {
+                int mode = (descriptor >> 52) & 3;
+                if (mode == 0) {
+                    res = PyStackRef_FromPyObjectNew(attribute);
+                }
+                else {
+                    bool result;
+                    if (mode == 3) {
+                        sdigit left = _PyLong_CompactValue((PyLongObject *)attribute);
+                        sdigit right = _PyLong_CompactValue((PyLongObject *)other_attribute);
+                        result = COMPARISON_BIT(left, right) & ((uintptr_t)config >> 52);
+                    }
+                    else {
+                        result = (attribute == Py_None) ^ (mode == 2);
+                    }
+                    res = result ? PyStackRef_True : PyStackRef_False;
+                }
+                current_executor->region_call_attr_entries++;
+            }
+            /* Match the unlinked callee's reverse-local cleanup order. Keep
+             * refs off the visible value stack during arbitrary finalizers;
+             * reentry may reuse the caller's consumed argument slots. */
+            _PyStackRef cleanup[6];
+            cleanup[0] = callable;
+            cleanup[1] = self_or_null;
+            for (int i = 0; i < oparg; i++) {
+                cleanup[i + 2] = args[i];
+            }
+            INPUTS_DEAD();
+            for (int i = oparg + 1; i >= 0; i--) {
+                PyStackRef_XCLOSE(cleanup[i]);
+            }
+            Py_DECREF(code);
+        }
+
+        replicate(5) tier2 op(_GUARD_CALL_GLOBALS_IDENTITY, (namespace/4, callable, unused, unused[oparg] -- callable, unused, unused[oparg])) {
+            PyFunctionObject *func = (PyFunctionObject *)PyStackRef_AsPyObjectBorrow(callable);
+            assert(PyFunction_Check(func));
+            /* A dict dependency protects this borrowed mapping pointer.
+             * Distinct functions can share a code/function version. */
+            if (func->func_globals != namespace) {
+                current_executor->region_call_guard_exits++;
+                DEOPT_IF(true);
+            }
+        }
+
+        replicate(5) tier2 op(_CALL_PY_ATTRIBUTE_IF, (source/4, config/4, callable, self_or_null, args[oparg] -- res)) {
+            assert(oparg <= 4);
+            current_executor->region_call_entries++;
+            PyFunctionObject *func = (PyFunctionObject *)PyStackRef_AsPyObjectBorrow(callable);
+            assert(PyFunction_Check(func));
+            PyCodeObject *code = (PyCodeObject *)func->func_code;
+            uintptr_t version = FT_ATOMIC_LOAD_UINTPTR_ACQUIRE(code->_co_instrumentation_version);
+            bool valid = _Py_atomic_load_uintptr_relaxed(&tstate->eval_breaker) == version;
+            int has_self = !PyStackRef_IsNull(self_or_null);
+            uint64_t selector = (uintptr_t)source;
+            uint64_t result = (uintptr_t)config;
+            int index = selector & 7;
+            valid = valid && index < oparg + has_self;
+            if (valid) {
+                _PyStackRef owner = has_self && index == 0 ? self_or_null : args[index - has_self];
+                PyObject *attribute = _PyRegion_CallAttribute(owner, selector);
+                valid = attribute != NULL && PyLong_CheckExact(attribute) &&
+                        _PyLong_IsCompact((PyLongObject *)attribute);
+                if (valid) {
+                    sdigit value = _PyLong_CompactValue((PyLongObject *)attribute);
+                    sdigit constant = (int8_t)(selector >> 52);
+                    valid = (COMPARISON_BIT(value, constant) & (selector >> 60)) != 0;
+                }
+            }
+            index = result & 7;
+            valid = valid && index < oparg + has_self;
+            PyObject *attribute = NULL;
+            if (valid) {
+                _PyStackRef owner = has_self && index == 0 ? self_or_null : args[index - has_self];
+                attribute = _PyRegion_CallAttribute(owner, result);
+                valid = attribute != NULL;
+            }
+            if (!valid) {
+                current_executor->region_call_guard_exits++;
+                DEOPT_IF(true);
+            }
+            /* Keep the original code and result alive through reverse-local
+             * cleanup, which can run finalizers with the caller visible. */
+            Py_INCREF(code);
+            res = PyStackRef_FromPyObjectNew(attribute);
+            current_executor->region_call_conditional_entries++;
+            _PyStackRef cleanup[6];
+            cleanup[0] = callable;
+            cleanup[1] = self_or_null;
+            for (int i = 0; i < oparg; i++) {
+                cleanup[i + 2] = args[i];
+            }
+            INPUTS_DEAD();
+            for (int i = oparg + 1; i >= 0; i--) {
+                PyStackRef_XCLOSE(cleanup[i]);
+            }
+            Py_DECREF(code);
+        }
+
+        replicate(10) tier2 op(_CALL_PY_LIST, (source/4, config/4, callable, self_or_null, args[oparg % 5] -- res)) {
+            current_executor->region_call_entries++;
+            PyFunctionObject *func = (PyFunctionObject *)PyStackRef_AsPyObjectBorrow(callable);
+            assert(PyFunction_Check(func));
+            PyCodeObject *code = (PyCodeObject *)func->func_code;
+            uint64_t options = (uintptr_t)config;
+            uint64_t descriptor = (uintptr_t)source;
+            int nargs = oparg % 5;
+            int has_self = !PyStackRef_IsNull(self_or_null);
+            int owner_index = descriptor & 7;
+            int index_arg = options & 7;
+            bool direct_length = oparg >= 5;
+            bool valid = _Py_atomic_load_uintptr_relaxed(&tstate->eval_breaker) ==
+                FT_ATOMIC_LOAD_UINTPTR_ACQUIRE(code->_co_instrumentation_version) &&
+                owner_index < nargs + has_self &&
+                (direct_length ? (options & 8) != 0 : index_arg < nargs + has_self);
+            PyObject *item = NULL;
+            Py_ssize_t size = 0;
+            if (valid && (options & 8)) {
+                valid = func->func_builtins == tstate->interp->builtins;
+                uint32_t version = options >> 24;
+                if (version) {
+                    PyDictObject *globals = (PyDictObject *)func->func_globals;
+                    valid = valid && PyDict_CheckExact(globals) &&
+                        globals->ma_keys->dk_version == version;
+                }
+            }
+            if (valid) {
+                _PyStackRef owner = has_self && owner_index == 0
+                    ? self_or_null : args[owner_index - has_self];
+                PyObject *list = _PyRegion_CallAttribute(owner, descriptor);
+                valid = list != NULL && PyList_CheckExact(list);
+                if (valid && direct_length) {
+                    size = PyList_GET_SIZE(list);
+                }
+                else if (valid) {
+                    _PyStackRef sub = has_self && index_arg == 0
+                        ? self_or_null : args[index_arg - has_self];
+                    PyObject *index_o = PyStackRef_AsPyObjectBorrow(sub);
+                    valid = PyLong_CheckExact(index_o) &&
+                        _PyLong_IsCompact((PyLongObject *)index_o);
+                    if (valid) {
+                        Py_ssize_t index = _PyLong_CompactValue((PyLongObject *)index_o);
+                        if (index < 0) {
+                            index += PyList_GET_SIZE(list);
+                        }
+                        valid = (size_t)index < (size_t)PyList_GET_SIZE(list);
+                        if (valid) {
+                            item = PyList_GET_ITEM(list, index);
+                            if (options & 8) {
+                                valid = _PyRegion_Length(PyStackRef_FromPyObjectBorrow(item), &size);
+                            }
+                        }
+                    }
+                }
+            }
+            if (!valid) {
+                current_executor->region_call_guard_exits++;
+                DEOPT_IF(true);
+            }
+            Py_INCREF(code);
+            if (options & 8) {
+                Py_ssize_t right = (options >> 8) & UINT16_MAX;
+                res = (COMPARISON_BIT(size, right) & (options >> 4))
+                    ? PyStackRef_True : PyStackRef_False;
+            }
+            else {
+                res = PyStackRef_FromPyObjectNew(item);
+            }
+            frame->return_offset = options >> 56;
+            current_executor->region_call_list_entries++;
+            _PyStackRef cleanup[6];
+            cleanup[0] = callable;
+            cleanup[1] = self_or_null;
+            for (int i = 0; i < nargs; i++) {
+                cleanup[i + 2] = args[i];
+            }
+            INPUTS_DEAD();
+            for (int i = nargs + 1; i >= 0; i--) {
+                PyStackRef_XCLOSE(cleanup[i]);
+            }
+            Py_DECREF(code);
+        }
+
+        replicate(12) tier2 op(_CALL_PY_ATTRIBUTE_SEARCH, (source/4, config/4, callable, self_or_null, args[1 + oparg / 6] -- res)) {
+            uint64_t descriptor = (uintptr_t)source;
+            uint64_t options = (uintptr_t)config;
+            current_executor->region_call_entries++;
+            PyFunctionObject *func = (PyFunctionObject *)PyStackRef_AsPyObjectBorrow(callable);
+            assert(PyFunction_Check(func));
+            PyCodeObject *code = (PyCodeObject *)func->func_code;
+            int nargs = 1 + oparg / 6;
+            int has_self = !PyStackRef_IsNull(self_or_null);
+            bool valid = nargs + has_self == 2 &&
+                func->func_version == (uint32_t)options &&
+                _Py_atomic_load_uintptr_relaxed(&tstate->eval_breaker) ==
+                    FT_ATOMIC_LOAD_UINTPTR_ACQUIRE(code->_co_instrumentation_version);
+            Py_ssize_t position = 0;
+            if (valid) {
+                valid = _PyRegion_HasBuiltin(func->func_globals, func->func_builtins,
+                    PyTuple_GET_ITEM(code->co_names, (options >> 32) & 255),
+                    (PyObject *)&PyEnum_Type) &&
+                    _PyRegion_HasBuiltin(func->func_globals, func->func_builtins,
+                    PyTuple_GET_ITEM(code->co_names, (options >> 40) & 255),
+                    tstate->interp->callable_cache.len);
+            }
+            if (valid) {
+                _PyStackRef owner = has_self ? self_or_null : args[0];
+                PyObject *list = _PyRegion_CallAttribute(owner, descriptor);
+                PyObject *key = PyStackRef_AsPyObjectBorrow(args[1 - has_self]);
+                valid = list != NULL && PyList_CheckExact(list) &&
+                    PyList_GET_SIZE(list) <= 64 && PyLong_CheckExact(key) &&
+                    _PyLong_IsCompact((PyLongObject *)key);
+                if (valid) {
+                    sdigit right = _PyLong_CompactValue((PyLongObject *)key);
+                    Py_ssize_t field = (descriptor >> 52) & 31;
+                    assert(((descriptor >> 57) & 7) == (unsigned int)(oparg % 6));
+                    for (; position < PyList_GET_SIZE(list); position++) {
+                        PyObject *item = PyList_GET_ITEM(list, position);
+                        if (!PyTuple_CheckExact(item) || field >= PyTuple_GET_SIZE(item)) {
+                            valid = false;
+                            break;
+                        }
+                        PyObject *value = PyTuple_GET_ITEM(item, field);
+                        if (!PyLong_CheckExact(value) || !_PyLong_IsCompact((PyLongObject *)value)) {
+                            valid = false;
+                            break;
+                        }
+                        sdigit left = _PyLong_CompactValue((PyLongObject *)value);
+                        /* Bitwise boolean composition keeps the unused generic
+                         * stencil free of jump tables. Replicas fold to one
+                         * comparison, without branches on the operation. */
+                        bool matches =
+                            ((oparg % 6 == Py_LT) & (left < right)) |
+                            ((oparg % 6 == Py_LE) & (left <= right)) |
+                            ((oparg % 6 == Py_EQ) & (left == right)) |
+                            ((oparg % 6 == Py_NE) & (left != right)) |
+                            ((oparg % 6 == Py_GT) & (left > right)) |
+                            ((oparg % 6 == Py_GE) & (left >= right));
+                        if (matches) {
+                            break;
+                        }
+                    }
+                }
+            }
+            if (!valid) {
+                current_executor->region_call_guard_exits++;
+                DEOPT_IF(true);
+            }
+            /* All reads are borrowed from the still-owned list. The elided
+             * iterator, tuple, and local references cannot finalize anything
+             * before reverse argument cleanup. The result is immortal. */
+            Py_INCREF(code);
+            res = PyStackRef_FromPyObjectBorrow(_PyLong_FromUnsignedChar((unsigned char)position));
+            current_executor->region_call_search_entries++;
+            current_executor->region_call_search_iterations += position;
+            frame->return_offset = options >> 48;
+            _PyStackRef cleanup[4];
+            cleanup[0] = callable;
+            cleanup[1] = self_or_null;
+            for (int i = 0; i < nargs; i++) {
+                cleanup[i + 2] = args[i];
+            }
+            INPUTS_DEAD();
+            for (int i = nargs + 1; i >= 0; i--) {
+                PyStackRef_XCLOSE(cleanup[i]);
+            }
+            Py_DECREF(code);
+            frame->instr_ptr += frame->return_offset;
+        }
+
+        replicate(2) tier2 op(_CALL_PY_LIST_REMOVE, (source/4, config/4, callable, self_or_null, args[2 + oparg] -- res)) {
+            uint64_t descriptor = (uintptr_t)source;
+            uint64_t options = (uintptr_t)config;
+            current_executor->region_call_entries++;
+            PyFunctionObject *func = (PyFunctionObject *)PyStackRef_AsPyObjectBorrow(callable);
+            assert(PyFunction_Check(func));
+            PyCodeObject *code = (PyCodeObject *)func->func_code;
+            int nargs = 2 + oparg;
+            int has_self = !PyStackRef_IsNull(self_or_null);
+            bool valid = nargs + has_self == 3 &&
+                func->func_version == (uint32_t)options &&
+                _Py_atomic_load_uintptr_relaxed(&tstate->eval_breaker) ==
+                    FT_ATOMIC_LOAD_UINTPTR_ACQUIRE(code->_co_instrumentation_version);
+            Py_ssize_t checked = 0;
+            int removed = -1;
+            if (valid) {
+                removed = _PyRegion_RemoveListItem(has_self ? self_or_null : args[0],
+                    args[1 - has_self], args[2 - has_self], descriptor, &checked);
+            }
+            valid = valid && removed >= 0;
+            if (!valid) {
+                current_executor->region_call_guard_exits++;
+                DEOPT_IF(true);
+            }
+            Py_INCREF(code);
+            res = removed ? PyStackRef_True : PyStackRef_False;
+            current_executor->region_call_remove_hits += removed;
+            current_executor->region_call_remove_entries++;
+            current_executor->region_call_remove_iterations += checked;
+            frame->return_offset = options >> 48;
+            _PyStackRef cleanup[5];
+            cleanup[0] = callable;
+            cleanup[1] = self_or_null;
+            for (int i = 0; i < nargs; i++) {
+                cleanup[i + 2] = args[i];
+            }
+            INPUTS_DEAD();
+            for (int i = nargs + 1; i >= 0; i--) {
+                PyStackRef_XCLOSE(cleanup[i]);
+            }
+            Py_DECREF(code);
+            frame->instr_ptr += frame->return_offset;
+        }
+
+        tier2 op(_LIST_REMOVE_LOCAL, (source/4, returns/4 -- res)) {
+            PyCodeObject *code = _PyFrame_GetCode(frame);
+            bool valid = _Py_atomic_load_uintptr_relaxed(&tstate->eval_breaker) ==
+                FT_ATOMIC_LOAD_UINTPTR_ACQUIRE(code->_co_instrumentation_version);
+            Py_ssize_t checked = 0;
+            int removed = -1;
+            if (valid) {
+                removed = _PyRegion_RemoveListItem(GETLOCAL(0), GETLOCAL(1), GETLOCAL(2),
+                                                   (uintptr_t)source, &checked);
+            }
+            if (removed < 0) {
+                current_executor->region_call_guard_exits++;
+                DEOPT_IF(true);
+            }
+            res = removed ? PyStackRef_True : PyStackRef_False;
+            current_executor->region_call_remove_entries++;
+            current_executor->region_call_remove_hits += removed;
+            current_executor->region_call_remove_iterations += checked;
+            /* Keep the actual callee frame. Tier 1 executes its corresponding
+             * RETURN_VALUE with the result already on the value stack. */
+            frame->instr_ptr = _PyCode_CODE(code) +
+                (((uintptr_t)returns >> (removed * 16)) & UINT16_MAX);
+        }
+
         op(_PUSH_FRAME, (new_frame -- )) {
             assert(!IS_PEP523_HOOKED(tstate));
             _PyInterpreterFrame *temp = PyStackRef_Unwrap(new_frame);
@@ -4811,6 +6134,104 @@ dummy_func(
             init_frame = PyStackRef_Wrap(temp);
         }
 
+        replicate(5) tier2 op(_CALL_CLASS_ATTRIBUTES, (versions/4, fields/4, callable, null, args[oparg] -- res)) {
+            PyTypeObject *tp = (PyTypeObject *)PyStackRef_AsPyObjectBorrow(callable);
+            uint32_t type_version = (uint64_t)versions >> 32;
+            uint32_t func_version = (uint32_t)(uint64_t)versions;
+            bool valid = PyStackRef_IsNull(null) && PyType_Check(tp) &&
+                tp->tp_version_tag == type_version &&
+                (tp->tp_flags & Py_TPFLAGS_HEAPTYPE) &&
+                (tp->tp_flags & Py_TPFLAGS_INLINE_VALUES) &&
+                tp->tp_new == PyBaseObject_Type.tp_new && tp->tp_alloc == PyType_GenericAlloc;
+            PyFunctionObject *init_func = NULL;
+            PyCodeObject *code = NULL;
+            if (valid) {
+                init_func = (PyFunctionObject *)((PyHeapTypeObject *)tp)->_spec_cache.init;
+                valid = init_func != NULL && PyFunction_Check(init_func) &&
+                    init_func->func_version == func_version;
+            }
+            if (valid) {
+                code = (PyCodeObject *)init_func->func_code;
+                valid = code->co_argcount == oparg + 1 && code->co_kwonlyargcount == 0 &&
+                    (code->co_flags & (CO_OPTIMIZED | CO_VARARGS | CO_VARKEYWORDS)) == CO_OPTIMIZED &&
+                    _Py_atomic_load_uintptr_relaxed(&tstate->eval_breaker) ==
+                        FT_ATOMIC_LOAD_UINTPTR_ACQUIRE(code->_co_instrumentation_version) &&
+                    _PyThreadState_HasStackSpace(tstate, code->co_framesize + _Py_InitCleanup.co_framesize);
+            }
+            if (!valid) {
+                current_executor->region_class_guard_exits++;
+                DEOPT_IF(true);
+            }
+            PyObject *self_o = _PyRegion_AllocationFails("class_call")
+                ? NULL : PyType_GenericAlloc(tp, 0);
+            if (self_o == NULL) {
+                current_executor->region_allocation_errors++;
+                ERROR_NO_POP();
+            }
+            PyDictValues *values = _PyObject_InlineValues(self_o);
+            Py_ssize_t first = (char *)values->values - (char *)self_o;
+            valid = values->valid && values->size == 0 && values->capacity >= oparg &&
+                _PyObject_GetManagedDict(self_o) == NULL &&
+                _Py_atomic_load_uintptr_relaxed(&tstate->eval_breaker) ==
+                    FT_ATOMIC_LOAD_UINTPTR_ACQUIRE(code->_co_instrumentation_version);
+            for (int i = 0; valid && i < oparg; i++) {
+                Py_ssize_t offset = (((uint64_t)fields >> (10 * i)) & 255) * 8;
+                Py_ssize_t index = (offset - first) / (Py_ssize_t)sizeof(PyObject *);
+                valid = offset >= first && (offset - first) % sizeof(PyObject *) == 0 &&
+                    index < values->capacity && values->values[index] == NULL;
+            }
+            if (!valid) {
+                /* Allocation can schedule GC. Materialize the same two frames
+                 * and resume at initializer entry before any attribute store,
+                 * so callbacks see the original arguments, locals, and object. */
+                current_executor->region_class_materializations++;
+                null = PyStackRef_FromPyObjectSteal(self_o);
+                _PyStackRef previous = callable;
+                callable = PyStackRef_FromPyObjectNew(init_func);
+                PyStackRef_CLOSE(previous);
+                _PyInterpreterFrame *shim = _PyFrame_PushTrampolineUnchecked(
+                    tstate, (PyCodeObject *)&_Py_InitCleanup, 1, frame);
+                shim->localsplus[0] = PyStackRef_DUP(null);
+                _PyInterpreterFrame *temp = _PyEvalFramePushAndInit(
+                    tstate, callable, NULL, args-1, oparg+1, NULL, shim);
+                INPUTS_DEAD();
+                SYNC_SP();
+                if (temp == NULL) {
+                    _PyEval_FrameClearAndPop(tstate, shim);
+                    ERROR_NO_POP();
+                }
+                frame->return_offset = 1 + INLINE_CACHE_ENTRIES_CALL;
+                SAVE_STACK();
+                frame = tstate->current_frame = temp;
+                tstate->py_recursion_remaining -= 2;
+                RELOAD_STACK();
+                LOAD_IP(0);
+                GOTO_TIER_ONE(frame->instr_ptr);
+            }
+            for (int i = 0; i < oparg; i++) {
+                uint64_t field = (uint64_t)fields >> (10 * i);
+                Py_ssize_t offset = (field & 255) * 8;
+                Py_ssize_t index = (offset - first) / sizeof(PyObject *);
+                int arg = (field >> 8) & 3;
+                _PyStackRef value = args[arg];
+                values->values[index] = PyStackRef_AsPyObjectSteal(value);
+                _PyDictValues_AddToInsertionOrder(values, index);
+            }
+            current_executor->region_class_entries++;
+            /* Return guards after the removed cleanup frame still use the
+             * caller's offset to identify the continuation of this CALL. */
+            frame->return_offset = 1 + INLINE_CACHE_ENTRIES_CALL;
+            res = PyStackRef_FromPyObjectSteal(self_o);
+            _PyStackRef previous = callable;
+            INPUTS_DEAD();
+            PyStackRef_CLOSE(previous);
+            if ((uint64_t)fields >> 63) {
+                /* The following dynamic exit replaces a trace ending at the
+                 * cleanup trampoline's RETURN_VALUE. */
+                frame->instr_ptr += 1 + INLINE_CACHE_ENTRIES_CALL;
+            }
+        }
+
         macro(CALL_ALLOC_AND_ENTER_INIT) =
             _RECORD_CALLABLE +
             unused/1 +
@@ -4867,6 +6288,23 @@ dummy_func(
             _POP_TOP_OPARG +
             POP_TOP +
             _CHECK_PERIODIC_AT_END;
+
+        tier2 op(_CALL_RANGE_COMPACT, (callable, self_or_null, stop -- callable, self_or_null, stop)) {
+            EXIT_IF(PyStackRef_AsPyObjectBorrow(callable) != (PyObject *)&PyRange_Type ||
+                    !PyStackRef_IsNull(self_or_null) ||
+                    !_PyLong_CheckExactAndCompact(PyStackRef_AsPyObjectBorrow(stop)));
+            PyObject *result = _PyRegion_AllocationFails("range_call")
+                ? NULL : _PyRange_FromCompactStop(PyStackRef_AsPyObjectBorrow(stop));
+            if (result == NULL) {
+                current_executor->region_allocation_errors++;
+                ERROR_NO_POP();
+            }
+            _PyStackRef previous = callable;
+            callable = PyStackRef_FromPyObjectSteal(result);
+            PyStackRef_CLOSE(previous);
+            current_executor->region_range_call_entries++;
+            STAT_INC(CALL, hit);
+        }
 
         op(_GUARD_CALLABLE_BUILTIN_O, (callable, self_or_null, args[oparg] -- callable, self_or_null, args[oparg])) {
             PyObject *callable_o = PyStackRef_AsPyObjectBorrow(callable);
@@ -5018,6 +6456,129 @@ dummy_func(
             res = PyStackRef_FromPyObjectSteal(res_o);
         }
 
+        tier2 op(_LEN_SUBSCR_LIST, (local/4, callable, null, container, sub -- res)) {
+            PyObject *list = PyStackRef_AsPyObjectBorrow(container);
+            PyObject *index_o = PyStackRef_AsPyObjectBorrow(sub);
+            bool valid = PyStackRef_IsNull(null) &&
+                PyStackRef_AsPyObjectBorrow(callable) == tstate->interp->callable_cache.len &&
+                PyList_CheckExact(list) && PyLong_CheckExact(index_o) &&
+                _PyLong_IsCompact((PyLongObject *)index_o) &&
+                (!PyStackRef_RefcountOnObject(container) || Py_REFCNT(list) > 1);
+            Py_ssize_t size = 0;
+            int64_t right = 0;
+            if (valid) {
+                Py_ssize_t index = _PyLong_CompactValue((PyLongObject *)index_o);
+                if (index < 0) {
+                    index += PyList_GET_SIZE(list);
+                }
+                valid = (size_t)index < (size_t)PyList_GET_SIZE(list);
+                if (valid) {
+                    PyObject *item = PyList_GET_ITEM(list, index);
+                    valid = _PyRegion_Length(PyStackRef_FromPyObjectBorrow(item), &size);
+                }
+            }
+            if (oparg & 32) {
+                right = (uintptr_t)local;
+            }
+            else {
+                valid = valid && _PyRegion_AsInt64(GETLOCAL((uintptr_t)local), &right);
+            }
+            if (!valid) {
+                current_executor->region_len_guard_exits++;
+                DEOPT_IF(true);
+            }
+            res = (COMPARISON_BIT(size, right) & oparg) ? PyStackRef_True : PyStackRef_False;
+            current_executor->region_len_subscript_entries++;
+            /* Closing the list must not run finalizers before the length
+             * operation. Its surviving owner also retains the selected item. */
+            _PyStackRef old_sub = sub;
+            _PyStackRef old_list = container;
+            _PyStackRef old_callable = callable;
+            INPUTS_DEAD();
+            PyStackRef_CLOSE(old_sub);
+            PyStackRef_CLOSE(old_list);
+            PyStackRef_CLOSE(old_callable);
+        }
+
+        tier2 op(_CALL_LEN_CONSUMER, (callable, null, arg, local/4 -- res, a, c)) {
+            current_executor->region_len_entries++;
+            Py_ssize_t size;
+            int64_t right;
+            bool valid = _PyRegion_Length(arg, &size);
+            if (oparg & 32) {
+                right = (uintptr_t)local;
+            }
+            else {
+                valid = valid &&
+                        _PyRegion_AsInt64(GETLOCAL((uintptr_t)local), &right);
+            }
+            if (!valid) {
+                current_executor->region_len_guard_exits++;
+                EXIT_IF(true);
+            }
+            if (oparg & 16) {
+                res = (COMPARISON_BIT(size, right) & oparg)
+                      ? PyStackRef_True : PyStackRef_False;
+            }
+            else {
+                int64_t value;
+                if (!_PyRegion_Arithmetic(size, right, oparg & 15, &value)) {
+                    current_executor->region_len_guard_exits++;
+                    EXIT_IF(true);
+                }
+                PyObject *result = _PyRegion_AllocationFails("len")
+                                   ? NULL : PyLong_FromLongLong(value);
+                if (result == NULL) {
+                    current_executor->region_allocation_errors++;
+                    ERROR_NO_POP();
+                }
+                res = PyStackRef_FromPyObjectSteal(result);
+            }
+            a = arg;
+            c = callable;
+            INPUTS_DEAD();
+        }
+
+        tier2 op(_CALL_LEN_LEFT_COMPARE, (offset/4, left, callable, null, arg -- res, l, a, c)) {
+            current_executor->region_len_entries++;
+            Py_ssize_t size;
+            int64_t left_value, right_value;
+            bool valid = _PyRegion_Length(arg, &size) &&
+                         _PyRegion_AsInt64(left, &left_value) &&
+                         _PyRegion_Arithmetic(size, (uintptr_t)offset,
+                                              oparg & 1, &right_value);
+            if (!valid) {
+                current_executor->region_len_guard_exits++;
+                EXIT_IF(true);
+            }
+            res = (COMPARISON_BIT(left_value, right_value) & (oparg >> 1))
+                  ? PyStackRef_True : PyStackRef_False;
+            l = left;
+            a = arg;
+            c = callable;
+            INPUTS_DEAD();
+        }
+
+        tier2 op(_CALL_STR_TAILMATCH, (callable, self_st, arg, descriptor/4 -- callable, self_st, arg)) {
+            current_executor->region_method_entries++;
+            PyObject *self = PyStackRef_AsPyObjectBorrow(self_st);
+            PyObject *prefix = PyStackRef_AsPyObjectBorrow(arg);
+            bool valid = PyStackRef_AsPyObjectBorrow(callable) == (PyObject *)descriptor &&
+                         PyUnicode_CheckExact(self) && PyUnicode_CheckExact(prefix);
+            if (!valid) {
+                current_executor->region_method_guard_exits++;
+                EXIT_IF(true);
+            }
+            int match = PyUnicode_Tailmatch(self, prefix, 0, PY_SSIZE_T_MAX,
+                                           oparg ? 1 : -1);
+            if (match < 0) {
+                ERROR_NO_POP();
+            }
+            _PyStackRef previous = callable;
+            callable = match ? PyStackRef_True : PyStackRef_False;
+            PyStackRef_CLOSE(previous);
+        }
+
         op(_GUARD_CALLABLE_ISINSTANCE, (callable, unused, unused, unused -- callable, unused, unused, unused)) {
             PyObject *callable_o = PyStackRef_AsPyObjectBorrow(callable);
             PyInterpreterState *interp = tstate->interp;
@@ -5095,7 +6656,7 @@ dummy_func(
             EXIT_IF(total_args != 2);
             PyObject *self = PyStackRef_AsPyObjectBorrow(
                 PyStackRef_IsNull(self_or_null) ? args[0] : self_or_null);
-            EXIT_IF(!Py_IS_TYPE(self, method->d_common.d_type));
+            EXIT_IF(!PyObject_TypeCheck(self, method->d_common.d_type));
         }
 
          op(_CALL_METHOD_DESCRIPTOR_O, (callable, self_or_null, args[oparg] -- res, c, s, a)) {
@@ -5171,7 +6732,7 @@ dummy_func(
             }
             EXIT_IF(total_args == 0);
             PyObject *self = PyStackRef_AsPyObjectBorrow(arguments[0]);
-            EXIT_IF(!Py_IS_TYPE(self, method->d_common.d_type));
+            EXIT_IF(!PyObject_TypeCheck(self, method->d_common.d_type));
         }
 
         op(_CALL_METHOD_DESCRIPTOR_FAST_WITH_KEYWORDS, (callable, self_or_null, args[oparg] -- callable, self_or_null, args[oparg])) {
@@ -5244,7 +6805,7 @@ dummy_func(
             EXIT_IF(total_args != 1);
             PyObject *self = PyStackRef_AsPyObjectBorrow(
                 PyStackRef_IsNull(self_or_null) ? args[0] : self_or_null);
-            EXIT_IF(!Py_IS_TYPE(self, method->d_common.d_type));
+            EXIT_IF(!PyObject_TypeCheck(self, method->d_common.d_type));
         }
 
         op(_CALL_METHOD_DESCRIPTOR_NOARGS, (callable, self_or_null, args[oparg] -- res, c, s)) {
@@ -5313,7 +6874,7 @@ dummy_func(
             EXIT_IF(total_args == 0);
             PyObject *self = PyStackRef_AsPyObjectBorrow(
                 PyStackRef_IsNull(self_or_null) ? args[0] : self_or_null);
-            EXIT_IF(!Py_IS_TYPE(self, method->d_common.d_type));
+            EXIT_IF(!PyObject_TypeCheck(self, method->d_common.d_type));
         }
 
         op(_CALL_METHOD_DESCRIPTOR_FAST, (callable, self_or_null, args[oparg] -- callable, self_or_null, args[oparg])) {
@@ -6121,6 +7682,208 @@ dummy_func(
             JUMP_TO_JUMP_TARGET();
         }
 
+        tier2 op(_FLOAT_RANGE_GUARD, (config/4, callable/4, iter, index -- iter, index)) {
+            uint64_t slots = (uint64_t)(uintptr_t)config;
+            int accumulator = slots & 255;
+            int induction = (slots >> 8) & 255;
+            _PyRangeIterObject *range = (_PyRangeIterObject *)PyStackRef_AsPyObjectBorrow(iter);
+            _PyStackRef acc = GETLOCAL(accumulator);
+            _PyStackRef old_index = GETLOCAL(induction);
+            bool valid = Py_TYPE(range) == &PyRangeIter_Type && range->step == 1 &&
+                range->len > 1 && range->len <= _PY_NSMALLNEGINTS + _PY_NSMALLPOSINTS &&
+                range->start >= -_PY_NSMALLNEGINTS &&
+                range->start < _PY_NSMALLPOSINTS - range->len + 1 &&
+                !PyStackRef_IsNull(acc) && PyStackRef_RefcountOnObject(acc);
+            if (valid) {
+                PyObject *obj = PyStackRef_AsPyObjectBorrow(acc);
+                /* Keep NaN payload selection on Python's original path.
+                 * Even constrained FP permits operand-register choices
+                 * that select a different payload when both inputs are NaN. */
+                valid = PyFloat_CheckExact(obj) && _PyObject_IsUniquelyReferenced(obj) &&
+                        !isnan(PyFloat_AS_DOUBLE(obj));
+            }
+            if (!PyStackRef_IsNull(old_index)) {
+                valid = valid && PyLong_CheckExact(PyStackRef_AsPyObjectBorrow(old_index));
+            }
+            for (int i = 0; valid && i < (int)(slots >> 48); i++) {
+                int local = (slots >> (16 + 8*i)) & 255;
+                intptr_t value;
+                valid = local == induction || _PyRegion_BoundedInput(GETLOCAL(local), &value);
+            }
+            PyCodeObject *code = (PyCodeObject *)((PyFunctionObject *)callable)->func_code;
+            uintptr_t version = FT_ATOMIC_LOAD_UINTPTR_ACQUIRE(code->_co_instrumentation_version);
+            valid = valid && version == _Py_atomic_load_uintptr_relaxed(&tstate->eval_breaker);
+            if (!valid) {
+                current_executor->region_range_guard_exits++;
+                EXIT_IF(true);
+            }
+            current_executor->region_poly_valid = true;
+        }
+
+        tier2 op(_POLY_SCALAR_CONST, (constant/4 -- value)) {
+            value = PyStackRef_TagInt((intptr_t)constant);
+        }
+
+        tier2 op(_POLY_SCALAR_RSHIFT, (value -- result)) {
+            intptr_t number = PyStackRef_UntagInt(value);
+            int shift = oparg & 63;
+            if (oparg & 64) {
+                uintptr_t mask = (UINT64_C(1) << shift) - 1;
+                current_executor->region_poly_valid = current_executor->region_poly_valid &&
+                    ((uintptr_t)number & mask) == 0;
+            }
+            result = PyStackRef_TagInt(Py_ARITHMETIC_RIGHT_SHIFT(intptr_t, number, shift));
+            INPUTS_DEAD();
+        }
+
+        tier2 op(_POLY_SCALAR_DIVIDE, (divisor/4, value -- result)) {
+            intptr_t number = PyStackRef_UntagInt(value);
+            intptr_t denominator = (intptr_t)divisor;
+            assert(denominator != 0);
+            intptr_t remainder = number % denominator;
+            if (oparg) {
+                current_executor->region_poly_valid = current_executor->region_poly_valid && remainder == 0;
+            }
+            intptr_t quotient = number / denominator -
+                ((remainder != 0) && ((number < 0) != (denominator < 0)));
+            result = PyStackRef_TagInt(quotient);
+            INPUTS_DEAD();
+        }
+
+        replicate(3) tier2 op(_POLY_STORE, (value --)) {
+            current_executor->region_poly_scratch[0][oparg] = PyStackRef_UntagInt(value);
+            INPUTS_DEAD();
+        }
+
+        tier2 op(_POLY_LOCAL, (slot/4 --)) {
+            intptr_t value;
+            bool valid = _PyRegion_BoundedInput(GETLOCAL(oparg), &value);
+            assert(valid);
+            int64_t *poly = current_executor->region_poly_scratch[(uintptr_t)slot];
+            poly[0] = value;
+            poly[1] = 0;
+            poly[2] = 0;
+        }
+
+        tier2 op(_POLY_INDUCTION, (slot/4 --)) {
+            int64_t *poly = current_executor->region_poly_scratch[(uintptr_t)slot];
+            poly[0] = 0;
+            poly[1] = 1;
+            poly[2] = 0;
+        }
+
+        tier2 op(_POLY_CONST, (slot/4 --)) {
+            int64_t *poly = current_executor->region_poly_scratch[(uintptr_t)slot];
+            poly[0] = oparg;
+            poly[1] = 0;
+            poly[2] = 0;
+        }
+
+        tier2 op(_POLY_DUP, (--)) {
+            int64_t *poly = current_executor->region_poly_scratch[oparg];
+            int64_t *copy = current_executor->region_poly_scratch[oparg + 1];
+            copy[0] = poly[0];
+            copy[1] = poly[1];
+            copy[2] = poly[2];
+        }
+
+        replicate(4) tier2 op(_POLY_BINARY, (slot/4 --)) {
+            int64_t *a = current_executor->region_poly_scratch[(uintptr_t)slot];
+            int64_t *b = current_executor->region_poly_scratch[(uintptr_t)slot + 1];
+            current_executor->region_poly_valid = current_executor->region_poly_valid &&
+                _PyRegion_PolyBinary(a[0], a[1], a[2], b[0], b[1], b[2],
+                                    oparg, &a[0], &a[1], &a[2]);
+        }
+
+        tier2 op(_POLY_RSHIFT, (slot/4 --)) {
+            int64_t *poly = current_executor->region_poly_scratch[(uintptr_t)slot];
+            uint64_t mask = (UINT64_C(1) << oparg) - 1;
+            current_executor->region_poly_valid = current_executor->region_poly_valid &&
+                (((uint64_t)poly[1] | (uint64_t)poly[2]) & mask) == 0;
+            poly[0] = Py_ARITHMETIC_RIGHT_SHIFT(int64_t, poly[0], oparg);
+            poly[1] = Py_ARITHMETIC_RIGHT_SHIFT(int64_t, poly[1], oparg);
+            poly[2] = Py_ARITHMETIC_RIGHT_SHIFT(int64_t, poly[2], oparg);
+        }
+
+        replicate(2) tier2 op(_FLOAT_RANGE_PREPARE, (iter, index -- iter, index)) {
+            _PyRangeIterObject *range = (_PyRangeIterObject *)PyStackRef_AsPyObjectBorrow(iter);
+            bool valid = current_executor->region_poly_valid;
+            if (valid) {
+                int64_t *poly = current_executor->region_poly_scratch[0];
+                if (oparg) {
+                    valid = _PyRegion_RangeStart64(poly, range->start, range->len);
+                }
+                else {
+#ifdef __SIZEOF_INT128__
+                    valid = _PyRegion_RangeStart128(poly, range->start, range->len);
+#else
+                    valid = false;
+#endif
+                }
+            }
+            current_executor->region_poly_valid = valid;
+        }
+
+        tier2 op(_FLOAT_RANGE_REDUCE, (numerator/4, iter, index -- iter, index)) {
+            bool valid = current_executor->region_poly_valid;
+            _PyRangeIterObject *range = (_PyRangeIterObject *)PyStackRef_AsPyObjectBorrow(iter);
+            int64_t denominator = current_executor->region_poly_scratch[0][0];
+            int64_t delta = current_executor->region_poly_scratch[0][1];
+            int64_t difference = current_executor->region_poly_scratch[0][2];
+            long count = range->len;
+            if (!valid) {
+                current_executor->region_range_guard_exits++;
+                EXIT_IF(true);
+            }
+            int accumulator = oparg >> 8;
+            int induction = oparg & 255;
+            PyFloatObject *acc = (PyFloatObject *)PyStackRef_AsPyObjectBorrow(GETLOCAL(accumulator));
+            double total = acc->ob_fval;
+            double dividend = PyFloat_AS_DOUBLE(numerator);
+            long remaining = count;
+            bool paired = _PyRegion_CanDividePair();
+            if (paired && _PyRegion_RangeFitsInt32(denominator, delta, difference, count)) {
+                total = _PyRegion_SumInt32Range(total, dividend, denominator,
+                                                delta, difference, count);
+                current_executor->region_range_int32_iterations += count;
+                remaining = 0;
+            }
+            while (paired && remaining > 2) {
+                int64_t second = denominator + delta;
+                total = _PyRegion_DividePairThenAdd(total, dividend, denominator, second);
+                delta += difference;
+                denominator = second + delta;
+                delta += difference;
+                remaining -= 2;
+            }
+            /* Keep the final one or two terms outside the recurrence loop.
+             * Every integer update stays within the proved endpoint and
+             * last-step bounds, including for an odd number of terms. */
+            if (paired && remaining == 2) {
+                total = _PyRegion_DividePairThenAdd(total, dividend,
+                                                   denominator, denominator + delta);
+            }
+            else if (remaining) {
+                while (remaining > 1) {
+                    total = _PyRegion_DivideThenAdd(total, dividend, denominator);
+                    denominator += delta;
+                    delta += difference;
+                    remaining--;
+                }
+                total = _PyRegion_DivideThenAdd(total, dividend, denominator);
+            }
+            acc->ob_fval = total;
+            long last_index = range->start + count - 1;
+            range->start += count;
+            range->len -= count;
+            _PyStackRef old_index = GETLOCAL(induction);
+            PyObject *last_obj = (PyObject *)&_PyLong_SMALL_INTS[_PY_NSMALLNEGINTS + last_index];
+            GETLOCAL(induction) = PyStackRef_FromPyObjectNew(last_obj);
+            PyStackRef_XCLOSE(old_index);
+            current_executor->region_range_entries++;
+            current_executor->region_range_iterations += count;
+        }
+
         tier2 op(_TIER3_RANGE_CHUNK, (iter, index -- iter, index)) {
             int sum_local = oparg >> 4;
             int induction_local = oparg & 15;
@@ -6141,8 +7904,7 @@ dummy_func(
             _PyRangeIterObject *range = (_PyRangeIterObject *)iter_obj;
             int conversion_overflow = 0;
             int64_t total = 0;
-            if (Py_TYPE(iter_obj) == &PyRangeIter_Type &&
-                range->step == 1 && PyLong_CheckExact(sum_obj))
+            if (Py_TYPE(iter_obj) == &PyRangeIter_Type && PyLong_CheckExact(sum_obj))
             {
                 total = PyLong_AsLongLongAndOverflow(
                     sum_obj, &conversion_overflow);
@@ -6170,7 +7932,7 @@ dummy_func(
                     total = new_total;
                     last = next;
                     remaining--;
-                    next++;
+                    next += range->step;
                     completed++;
                 }
                 if (completed != 0) {
@@ -6224,7 +7986,7 @@ dummy_func(
             _PyRangeIterObject *range = (_PyRangeIterObject *)iter_obj;
             int conversion_overflow = 0;
             int64_t total = 0;
-            if (Py_TYPE(iter_obj) == &PyRangeIter_Type && range->step == 1 &&
+            if (Py_TYPE(iter_obj) == &PyRangeIter_Type &&
                 PyLong_CheckExact(sum_obj)) {
                 total = PyLong_AsLongLongAndOverflow(
                     sum_obj, &conversion_overflow);
@@ -6235,73 +7997,67 @@ dummy_func(
                 conversion_overflow = 1;
             }
             if (conversion_overflow == 0) {
-                long next = range->start;
-                long remaining = range->len;
-                long completed = 0;
-                uint64_t polls = 0;
-                long last = 0;
-                bool overflow = false;
+                int materialized = 0;
                 bool pending = false;
                 bool invalid = false;
-                uintptr_t iversion = FT_ATOMIC_LOAD_UINTPTR_ACQUIRE(
-                    _PyFrame_GetCode(frame)->_co_instrumentation_version);
-                while (completed < remaining - 1) {
-                    polls++;
-                    uintptr_t eval_breaker = _Py_atomic_load_uintptr_relaxed(
-                        &tstate->eval_breaker);
-                    invalid = !current_executor->vm_data.valid;
-                    pending = eval_breaker != iversion;
-                    if (pending || invalid) {
-                        break;
-                    }
-                    int64_t new_total;
-                    if (__builtin_add_overflow(total, (int64_t)next,
-                                               &new_total)) {
-                        overflow = true;
-                        break;
-                    }
-                    total = new_total;
-                    last = next;
-                    completed++;
-                    next++;
+                _Py_TIER3_RESIDENT_LOOP(
+                    __builtin_add_overflow(total, (int64_t)next, &new_total));
+                ERROR_IF(materialized < 0);
+                HANDLE_PENDING_AND_DEOPT_IF(pending || invalid);
+            }
+        }
+
+        /* Parameterized affine reduction.  Operand1 describes guarded
+         * invariant locals or bounded literals; all conversions happen once
+         * at entry, outside the checked arithmetic/poll loop. */
+        tier2 op(_TIER3_RANGE_CHUNK_RESIDENT_AFFINE, (iter, index -- iter, index)) {
+            int sum_local = oparg >> 4;
+            int induction_local = oparg & 15;
+            uint64_t config = CURRENT_OPERAND1_64();
+            int scale_local = config & 15;
+            int bias_local = (config >> 4) & 15;
+            bool scale_constant = (config >> 8) & 1;
+            bool bias_constant = (config >> 9) & 1;
+            PyObject *iter_obj = PyStackRef_AsPyObjectBorrow(iter);
+            PyObject *sum_obj = PyStackRef_AsPyObjectBorrow(
+                frame->localsplus[sum_local]);
+            _PyRangeIterObject *range = (_PyRangeIterObject *)iter_obj;
+            int conversion_overflow = 0;
+            int64_t total = 0;
+            int64_t scale = (int64_t)(config << 24) >> 40;
+            int64_t bias = (int64_t)config >> 40;
+            PyObject *scale_obj = scale_constant ? NULL : PyStackRef_AsPyObjectBorrow(
+                frame->localsplus[scale_local]);
+            PyObject *bias_obj = bias_constant ? NULL : PyStackRef_AsPyObjectBorrow(
+                frame->localsplus[bias_local]);
+            if (Py_TYPE(iter_obj) == &PyRangeIter_Type &&
+                PyLong_CheckExact(sum_obj) &&
+                (scale_constant || PyLong_CheckExact(scale_obj)) &&
+                (bias_constant || PyLong_CheckExact(bias_obj))) {
+                total = PyLong_AsLongLongAndOverflow(sum_obj, &conversion_overflow);
+                if (!conversion_overflow && !scale_constant) {
+                    scale = PyLong_AsLongLongAndOverflow(scale_obj, &conversion_overflow);
                 }
-                /* Statistics are published only as the resident region is
-                 * left, never by the generated arithmetic/poll backedge. */
-                current_executor->tier3_resident_polls += polls;
-                if (pending || invalid) {
-                    current_executor->tier3_resident_pending_polls++;
+                if (!conversion_overflow && !bias_constant) {
+                    bias = PyLong_AsLongLongAndOverflow(bias_obj, &conversion_overflow);
                 }
-                if (completed != 0) {
-                    PyObject *new_sum = PyLong_FromLongLong(total);
-                    ERROR_IF(new_sum == NULL);
-                    PyObject *new_induction = PyLong_FromLong(last);
-                    if (new_induction == NULL) {
-                        Py_DECREF(new_sum);
-                        ERROR_IF(true);
-                    }
-                    _PyStackRef old_sum = frame->localsplus[sum_local];
-                    _PyStackRef old_induction =
-                        frame->localsplus[induction_local];
-                    frame->localsplus[sum_local] =
-                        PyStackRef_FromPyObjectSteal(new_sum);
-                    frame->localsplus[induction_local] =
-                        PyStackRef_FromPyObjectSteal(new_induction);
-                    PyStackRef_XCLOSE(old_sum);
-                    PyStackRef_XCLOSE(old_induction);
-                    range->start = next;
-                    range->len -= completed;
-                    current_executor->tier3_resident_entries++;
-                    current_executor->tier3_resident_iterations += completed;
-                    if (pending || invalid) {
-                        current_executor->tier3_resident_deopt_materializations++;
-                    }
-                    else {
-                        current_executor->tier3_resident_normal_materializations++;
-                    }
-                }
-                if (overflow) {
-                    current_executor->tier3_resident_overflow_exits++;
-                }
+                int conversion_error = PyErr_Occurred() != NULL;
+                ERROR_IF(conversion_error);
+            }
+            else {
+                conversion_overflow = 1;
+            }
+            if (conversion_overflow == 0) {
+                int materialized = 0;
+                bool pending = false;
+                bool invalid = false;
+                int64_t scaled;
+                int64_t term;
+                _Py_TIER3_RESIDENT_LOOP(
+                    __builtin_mul_overflow(scale, (int64_t)next, &scaled) ||
+                    __builtin_add_overflow(scaled, bias, &term) ||
+                    __builtin_add_overflow(total, term, &new_total));
+                ERROR_IF(materialized < 0);
                 HANDLE_PENDING_AND_DEOPT_IF(pending || invalid);
             }
         }
@@ -6317,7 +8073,7 @@ dummy_func(
             _PyRangeIterObject *range = (_PyRangeIterObject *)iter_obj;
             int conversion_overflow = 0;
             int64_t total = 0;
-            if (Py_TYPE(iter_obj) == &PyRangeIter_Type && range->step == 1 &&
+            if (Py_TYPE(iter_obj) == &PyRangeIter_Type &&
                 PyLong_CheckExact(sum_obj)) {
                 total = PyLong_AsLongLongAndOverflow(
                     sum_obj, &conversion_overflow);
@@ -6328,75 +8084,14 @@ dummy_func(
                 conversion_overflow = 1;
             }
             if (conversion_overflow == 0) {
-                long next = range->start;
-                long remaining = range->len;
-                long completed = 0;
-                uint64_t polls = 0;
-                long last = 0;
-                bool overflow = false;
+                int materialized = 0;
                 bool pending = false;
                 bool invalid = false;
-                uintptr_t iversion = FT_ATOMIC_LOAD_UINTPTR_ACQUIRE(
-                    _PyFrame_GetCode(frame)->_co_instrumentation_version);
-                while (completed < remaining - 1) {
-                    polls++;
-                    uintptr_t eval_breaker = _Py_atomic_load_uintptr_relaxed(
-                        &tstate->eval_breaker);
-                    invalid = !current_executor->vm_data.valid;
-                    pending = eval_breaker != iversion;
-                    if (pending || invalid) {
-                        break;
-                    }
-                    int64_t square;
-                    int64_t new_total;
-                    if (__builtin_mul_overflow((int64_t)next, (int64_t)next,
-                                               &square) ||
-                        __builtin_add_overflow(total, square, &new_total)) {
-                        overflow = true;
-                        break;
-                    }
-                    total = new_total;
-                    last = next;
-                    completed++;
-                    next++;
-                }
-                /* Statistics are published only as the resident region is
-                 * left, never by the generated arithmetic/poll backedge. */
-                current_executor->tier3_resident_polls += polls;
-                if (pending || invalid) {
-                    current_executor->tier3_resident_pending_polls++;
-                }
-                if (completed != 0) {
-                    PyObject *new_sum = PyLong_FromLongLong(total);
-                    ERROR_IF(new_sum == NULL);
-                    PyObject *new_induction = PyLong_FromLong(last);
-                    if (new_induction == NULL) {
-                        Py_DECREF(new_sum);
-                        ERROR_IF(true);
-                    }
-                    _PyStackRef old_sum = frame->localsplus[sum_local];
-                    _PyStackRef old_induction =
-                        frame->localsplus[induction_local];
-                    frame->localsplus[sum_local] =
-                        PyStackRef_FromPyObjectSteal(new_sum);
-                    frame->localsplus[induction_local] =
-                        PyStackRef_FromPyObjectSteal(new_induction);
-                    PyStackRef_XCLOSE(old_sum);
-                    PyStackRef_XCLOSE(old_induction);
-                    range->start = next;
-                    range->len -= completed;
-                    current_executor->tier3_resident_entries++;
-                    current_executor->tier3_resident_iterations += completed;
-                    if (pending || invalid) {
-                        current_executor->tier3_resident_deopt_materializations++;
-                    }
-                    else {
-                        current_executor->tier3_resident_normal_materializations++;
-                    }
-                }
-                if (overflow) {
-                    current_executor->tier3_resident_overflow_exits++;
-                }
+                int64_t square;
+                _Py_TIER3_RESIDENT_LOOP(
+                    __builtin_mul_overflow((int64_t)next, (int64_t)next, &square) ||
+                    __builtin_add_overflow(total, square, &new_total));
+                ERROR_IF(materialized < 0);
                 HANDLE_PENDING_AND_DEOPT_IF(pending || invalid);
             }
         }

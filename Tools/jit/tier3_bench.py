@@ -20,10 +20,39 @@ def sum_from(n, initial):
     return total
 
 
-def executors():
-    for offset in range(0, len(sum_from.__code__.co_code), 2):
+def sum_squares_from(n, initial):
+    total = initial
+    for item in range(n):
+        total += item * item
+    return total
+
+
+def constant_from(n, initial, scale, bias):
+    total = initial
+    for _item in range(n):
+        total += bias
+    return total
+
+
+def affine_from(n, initial, scale, bias):
+    total = initial
+    for item in range(n):
+        total += scale * item + bias
+    return total
+
+
+WORKLOADS = {
+    "sum": sum_from,
+    "squares": sum_squares_from,
+    "constant": constant_from,
+    "affine": affine_from,
+}
+
+
+def executors(function):
+    for offset in range(0, len(function.__code__.co_code), 2):
         try:
-            yield offset, _opcode.get_executor(sum_from.__code__, offset)
+            yield offset, _opcode.get_executor(function.__code__, offset)
         except (RuntimeError, ValueError):
             pass
 
@@ -35,15 +64,102 @@ def positive(value):
     return value
 
 
-def tier3_executor():
+def measure_sample(function, n, initial, expected, loops, lookup=None, extra_args=()):
+    """Measure calls made while one executor remains selected.
+
+    Executor-derived evidence is deliberately kept on the sample that observed
+    it.  In particular, callers must not combine an old stable sample with a
+    later lookup that returned no executor or a replacement.
+    """
+    if lookup is None:
+        lookup = tier3_executor
+    selected = lookup(function)
+    valid_before = selected is not None and selected[1].is_valid()
+    before = selected[1].get_tier3_stats() if valid_before else None
+    start = time.perf_counter_ns()
+    for _ in range(loops):
+        result = function(n, initial, *extra_args)
+        if result != expected:
+            raise AssertionError((result, expected))
+    elapsed = (time.perf_counter_ns() - start) / loops
+    selected_after = lookup(function)
+    stable = (
+        selected is not None
+        and selected_after is not None
+        and selected[1] is selected_after[1]
+        and valid_before
+        and selected_after[1].is_valid()
+    )
+    after = selected[1].get_tier3_stats() if stable else None
+    delta = {key: after[key] - before[key] for key in before} if stable else None
+    native_code_bytes = 0
+    if stable:
+        try:
+            native_code = selected[1].get_jit_code()
+        except RuntimeError:
+            native_code = None
+        native_code_bytes = len(native_code) if native_code else 0
+    return {
+        "elapsed_ns": elapsed,
+        "status": (
+            "stable"
+            if stable
+            else (
+                "executor invalidated"
+                if selected is not None
+                and selected_after is not None
+                and selected[1] is selected_after[1]
+                else (
+                    "executor replaced"
+                    if selected is not None and selected_after is not None
+                    else "unavailable"
+                )
+            )
+        ),
+        "tier3_delta": delta,
+        "executor_offset": selected[0] if stable else None,
+        "executor_identity": id(selected[1]) if stable else None,
+        "native_code_bytes": native_code_bytes,
+    }
+
+
+def tier3_executor(function):
     fallback = None
-    for offset, candidate in executors():
+    for offset, candidate in executors(function):
         if fallback is None:
             fallback = (offset, candidate)
         stats = candidate.get_tier3_stats()
         if stats["entries"] or stats["native_entries"] or stats["resident_entries"]:
             return offset, candidate
     return fallback
+
+
+def aggregate_measurements(measurements, repeat):
+    """Aggregate only a complete run of stable samples.
+
+    Keep diagnostics for every sample, but never derive timing or native-code
+    claims from a stable subset of a run that also observed invalidation,
+    replacement, or disappearance.
+    """
+    eligible = len(measurements) == repeat and all(
+        item["status"] == "stable" for item in measurements
+    )
+    if not eligible:
+        return None
+    delta = {
+        key: sum(item["tier3_delta"][key] for item in measurements)
+        for key in measurements[0]["tier3_delta"]
+    }
+    code_sizes = [item["native_code_bytes"] for item in measurements]
+    return {
+        "median_ns": statistics.median(item["elapsed_ns"] for item in measurements),
+        "samples_ns": [item["elapsed_ns"] for item in measurements],
+        "tier3_delta": delta,
+        "executor_offset": measurements[-1]["executor_offset"],
+        "executor_identity": measurements[-1]["executor_identity"],
+        "native_code_verified": all(size > 0 for size in code_sizes),
+        "native_code_bytes": min(code_sizes, default=0),
+    }
 
 
 def configuration():
@@ -56,9 +172,28 @@ def configuration():
         ).strip()
     except (OSError, subprocess.CalledProcessError):
         commit = None
+    try:
+        tree = subprocess.check_output(
+            ["git", "rev-parse", "HEAD^{tree}"],
+            text=True,
+            cwd=os.path.dirname(__file__),
+            stderr=subprocess.DEVNULL,
+        ).strip()
+        tracked_dirty = (
+            subprocess.run(
+                ["git", "diff", "--quiet", "HEAD", "--"],
+                cwd=os.path.dirname(__file__),
+            ).returncode
+            != 0
+        )
+    except (OSError, subprocess.CalledProcessError):
+        tree = None
+        tracked_dirty = None
     return {
         "python": sys.version,
         "commit": commit,
+        "tree": tree,
+        "tracked_dirty": tracked_dirty,
         "compiler": platform.python_compiler(),
         "architecture": platform.machine(),
         "configure_args": sysconfig.get_config_var("CONFIG_ARGS"),
@@ -73,67 +208,53 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--n", type=int, default=1000)
     parser.add_argument("--initial", type=int, default=0)
+    parser.add_argument("--scale", type=int, default=3)
+    parser.add_argument("--bias", type=int, default=-7)
+    parser.add_argument("--workload", choices=WORKLOADS, default="sum")
+    parser.add_argument(
+        "--training-profile",
+        choices=("same-input", "compact-seeded"),
+        default="same-input",
+    )
     parser.add_argument("--warmup", type=positive, default=3000)
     parser.add_argument("--repeat", type=positive, default=9)
     parser.add_argument("--loops", type=positive, default=10000)
     args = parser.parse_args()
+    build_manifest = configuration()
 
-    expected = args.initial + sum(range(args.n))
-    # Record the supported whole-loop trace from a compact accumulator before
-    # measuring entry from a potentially non-compact exact int.
+    function = WORKLOADS[args.workload]
+    extra_args = (
+        (args.scale, args.bias) if args.workload in {"constant", "affine"} else ()
+    )
+    if args.workload == "squares":
+        terms = (item * item for item in range(args.n))
+    elif args.workload == "constant":
+        terms = (args.bias for _ in range(args.n))
+    elif args.workload == "affine":
+        terms = (args.scale * item + args.bias for item in range(args.n))
+    else:
+        terms = iter(range(args.n))
+    expected = args.initial + sum(terms)
+    if args.training_profile == "compact-seeded":
+        for _ in range(args.warmup):
+            function(min(args.n, 1000), 0, *extra_args)
     for _ in range(args.warmup):
-        sum_from(min(args.n, 1000), 0)
-    for _ in range(args.warmup):
-        assert sum_from(args.n, args.initial) == expected
+        assert function(args.n, args.initial, *extra_args) == expected
 
-    selected = tier3_executor()
-    samples = []
     measurements = []
     for _ in range(args.repeat):
-        selected = tier3_executor()
-        before = selected[1].get_tier3_stats() if selected else None
-        start = time.perf_counter_ns()
-        for _ in range(args.loops):
-            result = sum_from(args.n, args.initial)
-        elapsed = (time.perf_counter_ns() - start) / args.loops
-        selected_after = tier3_executor()
-        stable = (
-            selected is not None
-            and selected_after is not None
-            and selected[1] is selected_after[1]
+        measurement = measure_sample(
+            function,
+            args.n,
+            args.initial,
+            expected,
+            args.loops,
+            extra_args=extra_args,
         )
-        after = selected[1].get_tier3_stats() if stable else None
-        delta = {key: after[key] - before[key] for key in before} if stable else None
-        measurements.append(
-            {
-                "elapsed_ns": elapsed,
-                "status": (
-                    "stable"
-                    if stable
-                    else ("executor replaced" if selected else "unavailable")
-                ),
-                "tier3_delta": delta,
-            }
-        )
-        if stable:
-            samples.append(elapsed)
-    if result != expected:
-        raise AssertionError((result, expected))
-
-    stable_measurements = [item for item in measurements if item["status"] == "stable"]
-    stable = bool(stable_measurements)
-    try:
-        native_code_verified = stable and selected[1].get_jit_code() is not None
-    except RuntimeError:
-        native_code_verified = False
-    delta = (
-        {
-            key: sum(item["tier3_delta"][key] for item in stable_measurements)
-            for key in stable_measurements[0]["tier3_delta"]
-        }
-        if stable
-        else None
-    )
+        measurements.append(measurement)
+    aggregate = aggregate_measurements(measurements, args.repeat)
+    stable = aggregate is not None
+    delta = aggregate["tier3_delta"] if aggregate else None
     entered = delta is not None and (
         delta["entries"] > 0
         or delta["native_entries"] > 0
@@ -144,32 +265,53 @@ def main():
         if entered
         else 0
     )
-    requested = max(args.n, 0) * args.loops * len(samples)
+    requested = max(args.n, 0) * args.loops * args.repeat if stable else 0
+    rejection_reason = None
+    if not entered:
+        if not stable:
+            rejection_reason = (
+                "executor unavailable, invalidated, or replaced during measurement"
+            )
+        elif os.environ.get("PYTHON_TIER3_JIT") not in {"3", "resident"}:
+            rejection_reason = "resident experiment disabled"
+        else:
+            rejection_reason = (
+                "stable executor made no Tier-3 range progress; "
+                "compiler rejection was not captured"
+            )
     print(
         json.dumps(
             {
-                "configuration": configuration(),
+                "configuration": build_manifest,
                 "workload": vars(args),
-                "result": result,
+                "callable": function.__name__,
+                "result": expected,
                 "expected": expected,
-                "median_ns": statistics.median(samples) if samples else None,
-                "samples_ns": samples,
+                "median_ns": aggregate["median_ns"] if aggregate else None,
+                "samples_ns": aggregate["samples_ns"] if aggregate else [],
                 "measurements": measurements,
-                "executor_offset": selected[0] if selected else None,
+                "executor_offset": (
+                    aggregate["executor_offset"] if aggregate else None
+                ),
+                "executor_identity": (
+                    aggregate["executor_identity"] if aggregate else None
+                ),
                 "tier3_status": (
                     "entered"
                     if entered
                     else (
-                        "executor replaced"
-                        if selected and not stable
-                        else ("not entered" if selected else "unavailable")
+                        "zero native progress" if stable else "unavailable or replaced"
                     )
                 ),
                 "tier3_delta": delta,
+                "rejection_reason": rejection_reason,
                 "kernel_iterations": processed,
                 "requested_iterations": requested,
                 "kernel_fraction": processed / requested if requested else 0.0,
-                "native_code_verified": native_code_verified,
+                "native_code_verified": (
+                    aggregate["native_code_verified"] if aggregate else False
+                ),
+                "native_code_bytes": aggregate["native_code_bytes"] if aggregate else 0,
             },
             indent=2,
         )

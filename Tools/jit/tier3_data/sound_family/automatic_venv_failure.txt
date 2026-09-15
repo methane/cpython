@@ -1,0 +1,62 @@
+Python benchmark suite 1.14.0
+
+Creating the virtual environment /workspace/cpython/venv/cpython3.16-235a0fde3d44-compat-31b33d68c68a
+# /workspace/cpython/build-jit/python -m venv --without-pip /workspace/cpython/venv/cpython3.16-235a0fde3d44-compat-31b33d68c68a
+# /workspace/cpython/venv/cpython3.16-235a0fde3d44-compat-31b33d68c68a/bin/python -m ensurepip -v -U
+Using pip 26.2.1 from /tmp/tmp_1ttx628/pip-26.2.1-py3-none-any.whl/pip (python 3.16)
+Looking in links: /tmp/tmp_1ttx628
+Processing /tmp/tmp_1ttx628/pip-26.2.1-py3-none-any.whl
+Installing collected packages: pip
+  changing mode of /workspace/cpython/venv/cpython3.16-235a0fde3d44-compat-31b33d68c68a/bin/pip3 to 755
+  changing mode of /workspace/cpython/venv/cpython3.16-235a0fde3d44-compat-31b33d68c68a/bin/pip3.16 to 755
+Successfully installed pip-26.2.1
+# /workspace/cpython/venv/cpython3.16-235a0fde3d44-compat-31b33d68c68a/bin/python -m pip install -U 'setuptools>=18.5' wheel
+WARNING: Cache entry deserialization failed, entry ignored
+WARNING: Cache entry deserialization failed, entry ignored
+WARNING: Cache entry deserialization failed, entry ignored
+WARNING: Cache entry deserialization failed, entry ignored
+WARNING: Retrying (Retry(total=4, connect=None, read=None, redirect=None, status=None)) after connection broken by 'NewConnectionError("HTTPSConnection(host='pypi.org', port=443): Failed to establish a new connection: [Errno 101] Network is unreachable")': /simple/setuptools/
+WARNING: Retrying (Retry(total=3, connect=None, read=None, redirect=None, status=None)) after connection broken by 'NewConnectionError("HTTPSConnection(host='pypi.org', port=443): Failed to establish a new connection: [Errno 101] Network is unreachable")': /simple/setuptools/
+WARNING: Retrying (Retry(total=2, connect=None, read=None, redirect=None, status=None)) after connection broken by 'NewConnectionError("HTTPSConnection(host='pypi.org', port=443): Failed to establish a new connection: [Errno 101] Network is unreachable")': /simple/setuptools/
+WARNING: Retrying (Retry(total=1, connect=None, read=None, redirect=None, status=None)) after connection broken by 'NewConnectionError("HTTPSConnection(host='pypi.org', port=443): Failed to establish a new connection: [Errno 101] Network is unreachable")': /simple/setuptools/
+WARNING: Retrying (Retry(total=0, connect=None, read=None, redirect=None, status=None)) after connection broken by 'NewConnectionError("HTTPSConnection(host='pypi.org', port=443): Failed to establish a new connection: [Errno 101] Network is unreachable")': /simple/setuptools/
+ERROR: Could not find a version that satisfies the requirement setuptools>=18.5 (from versions: none)
+ERROR: No matching distribution found for setuptools>=18.5
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/root/.local/lib/python3.14/site-packages/pyperformance/__main__.py", line 3, in <module>
+    pyperformance.cli.main()
+    ~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/root/.local/lib/python3.14/site-packages/pyperformance/cli.py", line 422, in main
+    _main()
+    ~~~~~^^
+  File "/root/.local/lib/python3.14/site-packages/pyperformance/cli.py", line 406, in _main
+    cmd_run(options, benchmarks)
+    ~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.local/lib/python3.14/site-packages/pyperformance/commands.py", line 181, in cmd_run
+    suite, errors = run_benchmarks(benchmarks, executable, options)
+                    ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.local/lib/python3.14/site-packages/pyperformance/run.py", line 83, in run_benchmarks
+    common = VenvForBenchmarks.ensure(
+        _venv.get_venv_root(runid.name, python=info),
+    ...<2 lines>...
+        inherit_environ=options.inherit_environ,
+    )
+  File "/root/.local/lib/python3.14/site-packages/pyperformance/venv.py", line 200, in ensure
+    return cls.create(
+           ~~~~~~~~~~^
+        root, python, inherit_environ=inherit_environ, upgrade=upgrade, **kwargs
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/root/.local/lib/python3.14/site-packages/pyperformance/venv.py", line 169, in create
+    self.ensure_pip(upgrade=upgrade)
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "/root/.local/lib/python3.14/site-packages/pyperformance/_venv.py", line 229, in ensure_pip
+    raise RequirementsInstallationFailedError("wheel")
+pyperformance._venv.RequirementsInstallationFailedError: wheel
+Command failed with exit code 1
+Remove directory /workspace/cpython/venv/cpython3.16-235a0fde3d44-compat-31b33d68c68a
+
+exit_status=1

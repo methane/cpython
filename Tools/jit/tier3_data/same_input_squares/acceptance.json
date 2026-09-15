@@ -1,0 +1,27 @@
+{
+  "n": 1000,
+  "initial": 1099511627776,
+  "actual": 1099844461276,
+  "expected_formula": 1099844461276,
+  "match": true,
+  "counter_delta": {
+    "entries": 0,
+    "iterations": 0,
+    "budget_exits": 0,
+    "overflow_exits": 0,
+    "native_entries": 0,
+    "native_iterations": 0,
+    "native_budget_exits": 0,
+    "native_overflow_exits": 0,
+    "native_materialization_exits": 0,
+    "resident_entries": 1,
+    "resident_iterations": 998,
+    "resident_polls": 998,
+    "resident_pending_polls": 0,
+    "resident_overflow_exits": 0,
+    "resident_normal_materializations": 1,
+    "resident_deopt_materializations": 0
+  },
+  "python_executable": "/workspace/cpython/build-tier2-debug/python",
+  "python_sha256": "bf05c7e839aa8921f1a3ccfe5d09efe7d2a5da3fb5994408017e1021060b3927"
+}

@@ -1,0 +1,41 @@
+Tier-2 debug diagnosis and acceptance (2026-09-12)
+==================================================
+
+Build:
+  ./configure --with-pydebug --enable-experimental-jit=interpreter
+  make -j4
+
+Fresh-process environment:
+  PYTHON_LLTRACE=2 PYTHON_TIER3_JIT=resident PYTHON_TIER3_DUMP=1 PYTHON_JIT_STRESS=1
+
+With same-input-only training of squares_from(1000, 2**40), the recorded
+arithmetic was:
+  _BINARY_OP_MULTIPLY_INT oparg=5 (NB_MULTIPLY), target=21
+  _BINARY_OP oparg=13 (NB_INPLACE_ADD), target=27
+
+Before this change, the builder recognized the induction square, set saw_mul,
+and then rejected the generic add because generic_add required !saw_mul.  A
+compact-seeded process instead retained compact guards for the accumulator and
+used _BINARY_OP_ADD_INT_INPLACE.
+
+After this change the same-input-only process reports:
+  tier3-region acc=local[2] induction=local[3]
+    result=add(acc,mul(induction,induction))
+    lowering=_TIER3_RANGE_CHUNK_RESIDENT_SQUARES
+    periodic=34 overflow=27 error=27
+  node=1 induction type=i64 compact=retained-guard
+  node=2 accumulator type=i64 compact=none
+  node=3 checked-mul type=i64 compact=checked-operation inputs=(1,1)
+  node=4 checked-add type=i64 compact=none inputs=(2,3)
+
+A separately measured squares_from(1000, 2**40) call returned 1099844461276,
+matching the independent formula ``2**40 + 1000*999*1999//6``, and advanced
+resident_iterations by 998.  The previously recorded value was a transcription
+error, not reproduced execution output.  The machine-readable rerun is in
+``acceptance.json``.  No call with a compact accumulator
+preceded it.  The generic add is accepted only after its left input is proven
+to be the live accumulator and its right input is the recognized induction
+square.  Generic multiplication is likewise accepted only for two copies of
+the range induction value; the resident entry guards and checked arithmetic
+supply the exact-int and signed-i64 runtime contract without inventing a
+compact-PyLong fact.
