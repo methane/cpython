@@ -4095,3 +4095,46 @@ build-jit/python -m test test_capi.test_opt_regions test_capi.test_opt test_tier
   `Lib/base64.py`やopt-in JIT変換のsemantic regressionとして扱わない。詳細を`base16-diagnosis/summary.md`へ保存した。
 - 事後感度としてBase16 2結果を外すと115結果の幾何平均は**0.970367**（主結果0.972383）。主結果は事前集合のまま変更しない。
   次のJIT高速化でbytes coreへ配置hackは追加せず、Base16はfixed binary identity付きのlayout confoundとして報告する。
+
+## 22. `main`で発見した不具合の整理（2026-09-15）
+
+- method JIT着手前の依頼により、ここまでの作業で`main`に対する再現またはsource-levelの根拠が得られた不具合を
+  `bugs_report.md`へ英語で整理した。正しさ3件、JIT lifecycle/resource 2件、generator/build/LLVM 7件、確認済みの
+  性能上の制約2件を分類し、各項目に影響、期待値と実測、原因、再現物、ローカル修正commitまたは未修正状態を記載した。
+- 発見時の固定mainは`a60343ed17785ebbcd43de9080cadd8e2541db6f`、binary SHA-256は
+  `8fb6c5b87dec8e272c1acfad0197dc086bcd3e0c93912d949d43d5c4d9603407`。現在のlocal main
+  `2fcb0e27d959345151750b756af79054c3230531`までの差分が対象JIT/optimizer/generator fileを変更していないことも確認した。
+- 固定main binaryに現在の回帰testを読ませ、copied builtinsが期待42に対して1、短いloop counterが期待4000に対して8190、
+  dict receiver用guardの代わりにTOS guardを生成する失敗を再確認した。copied globalsの独立reproducerも期待152に対して68を返した。
+  現candidateでは対応する5重点testがすべて成功した。
+- report内の相対link 20件は全て実在し、`git diff --check`対象の末尾空白はない。Base16のbuild/layout感度、pyperformance timeout、
+  実験uop固有の不具合などは`main`のbugとして混同せず除外理由を明記した。GitHub投稿、push、PR変更は行っていない。
+- 次の作業は、保留しているPEP 836型method JITとpyperformance 20%目標について、現trace frontendから再利用するmiddle-end/backend、
+  method CFG/SSA、type profiling、path splitting、generic unboxing・refcount除去・call最適化の段階的実装計画を確定すること。
+
+## 23. pyperformance全成功resultのmethod JIT向け調査（2026-09-15）
+
+- `jit-artifacts/pyperformance-rerun-current/`の成功93 specificationが生成した119 resultについて、benchmark driverの登録関数、
+  main loop、import/call先を読み、`pyperf_report.md`へ日本語で一件ずつ記録した。各行にcandidate/main比、Python JITへの優先度、
+  支配すると考えられる処理、method JITまたはJIT外で必要な高速化を対応付けた。失敗した`asyncio_websockets`、`dask`、`genshi`は
+  成功集合と混同せず対象外とした。
+- 比率は固定済み`ratios.csv`から照合した。表のresultは**119行・119 unique**で、CSVとの差集合と重複が空、丸めた比率の転記誤差も
+  空であることをscriptで確認した。`deepcopy_memo`/`deepcopy_reduce`のloop不一致、標準偏差5%以上のresult、1%精度不足warningを明記し、
+  3%未満の差をmethod JIT設計の一次根拠にしない方針とした。`git diff --check`も成功した。
+- source調査から、method JITの共通優先機能を (1) method全体CFGとOSR、(2) type/function/globals dependency付きPython call inline、
+  (3) layout既知の属性load/store、(4) method/loopをまたぐint/float unbox、(5) exact list/dict/set lowering、(6) iterator・短命objectの
+  virtualization/scalar replacement、(7) generator/coroutine状態機械化、と判断した。`richards`、template、SQLGlot、NetworkX、
+  pure-Python pickle、Pyflate、SciMark、async-treeを段階ごとの代表cohortに割り当てた。
+- 既存native profileと専用counterがあるSpectral Norm **0.4835**、Hexiom **0.5794**、Raytrace **0.7296**、Go **0.7776**、
+  BPE **0.8013**を詳細節で再評価した。DeltaBlueとpyperformance外のstandalone B-treeも、method inline、container loop、unboxへ
+  一般化できる成功例として記録した。その他の見かけ上の改善は、対応counter/profileがない限り既存JIT変換へ帰属させない。
+- startup/process、TCP/SSL/event loop、C codec/JSON/pickle/regex/XML、GC/allocator、big-int/Fraction/Decimal/SQLiteはJIT外の支配領域として
+  分離した。suite全体20%をmethod JIT単独の最初の採否条件にはせず、まずPython bytecode支配cohortで20%を測り、その後all-suiteと
+  JIT対象外cohortの幾何平均を併記してAmdahl上限とlayout影響を判断する。
+- PEP 836本文を再確認し、method frontendは既存uop middle-end/Copy-and-Patch backendをほぼ再利用し、CFG、merge点のtype join、
+  SSA的stack、region/worklistを追加する範囲であることをreportへ反映した。PEPの20%はfree-threaded JIT対free-threaded interpreterの
+  Tier 1平均であり、今回のGIL build一台の0.972383を直接の合否値にしない。local比較はoptimizer/runtimeの優先順位と回帰検出に使う。
+- 次の作業は第一段階のmethod JIT prototypeとして、monomorphic Python method inline、既知instance layoutのfield load/store、
+  loop backedge OSRの最小IR/guard契約を既存Tier 2/Tier 3へ接続することである。最初は`richards`、`raytrace`、`deltablue`、`go`、
+  template cohortでexecutor coverageとnative profileを取り、frame/dispatch/lookup/allocationの減少を確認してからnumeric/container/
+  generator段階へ進む。
