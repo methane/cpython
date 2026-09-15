@@ -1,27 +1,32 @@
 # Tier 2 region optimizations: design and experimental results
 
-This report describes the local optimizations implemented and validated through
-commit `a021ff543bcf618671bcb5fb5abe29944db608f6`, for review by CPython core
-developers. The implementation extends the existing Tier 2 optimizer and
-copy-and-patch backend: it removes intermediate object representations, combines
-builtin calls with their consumers, eliminates selected leaf-call frames, and
-lowers a restricted numeric loop to a native recurrence.
+This report describes local optimizations implemented for review by CPython
+core developers. The early sections retain the implementation and measurements
+through commit `a021ff543bcf618671bcb5fb5abe29944db608f6`. The final section
+describes the current working-tree checkpoint based on commit
+`43061656d481a937e2c07500f457b7e81ff1c3bd`, including later builtin, scan,
+floating-point, and Python-call optimizations. The implementation extends the
+existing Tier 2 optimizer and copy-and-patch backend: it removes intermediate
+object representations, combines builtin calls with their consumers, eliminates
+selected call frames, and lowers restricted loops to native operations.
 
-With all six experimental options enabled, the six standalone scripts in
+At the current checkpoint, with all six experimental options enabled and the
+resident native-JIT policy selected, the six standalone scripts in
 [`benchmarks/`](../../benchmarks/) had a geometric mean execution-time ratio of
-**0.492077 relative to the fixed main build**, or **2.032 times faster**. This
-result is strongly concentrated in the Spectral Norm kernel: its ratio was
-0.018425, while the other five scripts together had a ratio of 0.949200.
-Whole-process time, including startup and warmup, had a ratio of 0.628911.
-These are local, exploratory results on one Linux x86-64 machine. The options
-remain disabled by default.
+**0.379094 relative to the fixed main build**, or **2.638 times faster**. The
+Spectral Norm ratio was 0.018662; the other five scripts together had a
+geometric mean ratio of 0.692316. The earlier September 13 checkpoint was
+0.492077 overall and 0.949200 without Spectral Norm. These are local,
+exploratory results on one Linux x86-64 machine. The options remain disabled by
+default.
 
-The measurement checkpoint is dated September 13, 2026. This report was written
-on September 14 from the implementation, test logs, native-code probes, and raw
-measurements. [`regions.md`](regions.md) is the compact usage and implementation
-contract; [`plan.md`](../../plan.md) contains the development record.
-The final section records a later local checkpoint using an arithmetic-mean
-objective; the historical results above retain their original scope.
+The first measurement checkpoint is dated September 13, 2026; the current one
+is dated September 14. This report was written from the implementation, test
+logs, native-code probes, and raw measurements. [`regions.md`](regions.md) is
+the compact usage and implementation contract; [`plan.md`](../../plan.md)
+contains the chronological development record. Historical tables below retain
+their original scope. The September 15 section at the end is the latest Go
+checkpoint and supersedes the earlier executable identity for that workload.
 
 ## Scope and integration
 
@@ -1130,3 +1135,332 @@ unmet. The earlier nearly flat screen, the slower-control block in the
 repeat, the counter-placement comparisons, and the failed stencil build
 remain part of the development record; none is silently replaced by this
 final result.
+
+
+## Current checkpoint: generator aggregation, bounded scans, and call removal
+
+The following transformations were added after the conditional-attribute
+checkpoint. They are part of the current working tree. Each still requires its
+existing opt-in group; none changes default CPython execution. They target hot
+paths found by executor-counter coverage and native `perf` profiles rather than
+by source filename or function name.
+
+### Aggregating `sum` over a list-membership generator
+
+Hexiom spent a material part of its time in the generator protocol for this
+shape:
+
+```python
+sum(1 if key in item else 0 for item in iterable)
+```
+
+`_Py_SumListIntContainsBody` proves the complete generator bytecode, including
+both conditional arms, the yield/resume sequence, loop backedge, normal return,
+and generator `StopIteration` handling. The runtime path accepts a just-created,
+exact, uniquely referenced generator which has not started and has no exposed
+frame or weak references. Its captured key must be an exact compact integer.
+The outer iterable and every member must be exact lists, each limited to 64
+elements, and every inspected member must be an exact compact integer.
+
+The direct operation scans the two list levels, counts at most one match per
+inner list, and returns the cached integer count. Exact compact-integer
+comparisons cannot invoke callbacks. The implementation also checks the
+generator code version, pending work, and all active local or interpreter-wide
+monitoring events. A failed check leaves the generator and CALL stack unchanged
+and executes the ordinary builtin and generator protocol.
+
+The first implementation only rewrote an already formed Tier 2 trace. The
+specialized trace did not appear until workload invocation 14, while the
+declared measurement consisted of three warmups and ten values. It improved a
+long-running resident diagnostic by about 19%, but had no effect in the actual
+measurement. The retained design adds `CALL_SUM_LIST_INT_CONTAINS` to the Tier 1
+CALL family, using the existing call cache for the generator code version. It
+can therefore specialize on the second call, and the same operation is reused
+if Tier 2 later translates it.
+
+With the declared policy, Hexiom's three matched ratios against the preceding
+candidate were 0.754466, 0.749710, and 0.755896 (geometric mean 0.753353). The
+six-workload screen at that checkpoint had an arithmetic mean ratio of
+0.621338 to fixed main, down from 0.657272. The subsequent monitoring fix was
+neutral within run variation (geometric mean 0.998050 against the first
+specialization).
+
+### Bounded equality-constraint propagation
+
+DeltaBlue repeatedly walks a list of equality constraints. Each ordinary
+iteration calls the constraint's `execute`, `input`, and `output` methods,
+checks a small integer direction, reads an exact integer from a source object,
+and assigns it to a destination object. `_LIST_EQUALITY_SCAN` keeps one complete
+ordinary iteration and recognizes the entire call/return and loop-back shape.
+It then performs up to 64 following iterations directly.
+
+The cache contains two type versions, four attribute offsets, the signed-byte
+direction constant, and the comparison mask. It contains no function or
+instance pointers. The matcher requires the existing exact function guards,
+recorded layouts, and complete conditional-call bodies. It also proves that
+each method function occurs under its unique class-dictionary key; aliases with
+the same function object are rejected.
+
+At runtime the iterator must be an exact list iterator. Its underlying object
+may be a list subtype because list iteration itself reads that storage without
+subclass callbacks. Each constraint must have the recorded type, unshadowed
+methods, and no materialized instance dictionary. Source and destination
+objects must retain their recorded layouts, and both old and new values must be
+exact compact integers. Each successful copy is committed in Python iteration
+order. The first unsupported or differently directed element and the final
+list element remain unconsumed for the original loop. Consequently an early
+successful prefix remains visible exactly as it would after that many ordinary
+iterations, while the fallback element still receives its real calls,
+traceback, and periodic check.
+
+A representative native sample performed 200 scan entries and 9,700 copied
+iterations, reducing the existing fused-call count from about 21,500 to 2,792.
+The matched DeltaBlue ratios were 0.871664, 0.874839, and 0.873301 (geometric
+mean 0.873267). In the direct six-workload comparison, the geometric mean ratio
+to fixed main changed from 0.395252 to 0.385951. Tests cover list subtypes and
+length boundaries, propagation over 130 links, reference stability, the first
+unsupported element, method and code replacement, instance shadowing,
+monitoring, and deliberately similar bodies that must not form the scan.
+
+### Lightweight float-dot call fusion
+
+The pre-existing `_FLOAT_ATTRIBUTE_SUM_PRODUCTS` operation retains its Python
+callee frame. Raytrace still made hundreds of thousands of calls whose complete
+callee body had this form:
+
+```python
+other.guard()
+return self.x * other.x + self.y * other.y + self.z * other.z
+```
+
+`inline_float_dot_calls` proves the complete outer body, the trivial inner
+guard body, the existing exact-call guards, the six-attribute float operation,
+and the return. `_CALL_PY_FLOAT_DOT` then omits both frames. Its runtime checks
+cover pending work, two frames of recursion and stack space, the recorded type
+version, valid inline values, and six exact floats. Function, type, keys, and
+monitoring dependencies already registered by the optimizer invalidate the
+executor when the method, code, layout, instance method resolution, or
+instrumentation changes.
+
+The arithmetic uses explicit C evaluation boundaries for all three
+multiplications and both left-associated additions. It therefore retains five
+binary64 rounding points even if an embedding compiler enables contraction.
+Only the final float is allocated. If that allocation fails in a debug
+injection, the operation reconstructs the omitted outer frame, restores
+`self` and `other`, and resumes Tier 1 at the final addition so the traceback
+and exception handling retain the callee.
+
+An initial conservative uop repeated method lookup, shared-key lookup, and a
+full monitoring-event scan on every call. It removed 352,553 generic calls in
+one Raytrace workload, but regressed all three timing blocks; its geometric
+mean ratio was 1.071323. That version was removed. The retained lightweight
+version relies on optimizer dependencies and the original call guards, while
+keeping the dynamic checks listed above. It handled the same 352,553 calls,
+reduced generic call entries from 814,015 to 461,462, and reduced reachable
+native code from 1,093,632 to 1,019,904 bytes. Its three Raytrace ratios were
+0.954337, 0.958651, and 0.945995 (geometric mean 0.952980). The corresponding
+six-workload geometric mean to fixed main improved from 0.385389 to 0.384949.
+
+### Exact same-type Python subtraction
+
+For two operands of the same exact type, the standard `slot_nb_subtract`
+dispatch calls that type's `__sub__` once and does not give a distinct reflected
+implementation priority. `get_exact_python_subtract` recognizes only this case:
+the recorded operand types must be identical, the type must own the standard
+numeric slot and a direct exact Python-function `__sub__`, and both type and
+function versions must be valid. Inherited methods, static methods, C slots,
+mixed types, and in-place operations retain generic binary dispatch.
+
+`_BINARY_OP_PY_SUBTRACT_EXACT` guards both current operand types before using
+the cached function, then checks its function version and required frame space.
+It pushes a real interpreter frame directly, places the two arguments in
+`localsplus`, and enters `_PyEval_EvalFrame`. This avoids special-method lookup,
+generic vectorcall, and `initialize_locals`, while preserving current-frame
+links, recursion behavior, monitoring, PEP 523, tracebacks, locals exposure,
+and ordinary frame cleanup. The pushed frame owns the function and arguments.
+If the exact same-type method returns `NotImplemented`, the operation raises the
+same unsupported-operands `TypeError` as the generic same-type path.
+
+In Raytrace the operation handled 277,784 subtractions with no observed guard
+exit. It appeared in 27 reachable executors; total reachable native code grew
+by 4 KiB after the direct-frame refinement. The direct-dispatch prototype first
+improved Raytrace by a geometric mean of 0.974165. Direct frame initialization
+then improved that prototype by another 0.961557. In the six-workload screen,
+the final fast-frame version had a geometric mean ratio of 0.991187 against the
+direct-dispatch version and 0.380760 against fixed main.
+
+The equivalent same-type `__add__` extension formed successfully and covered
+19,800 Raytrace additions, but its nine matched ratios had a geometric mean of
+0.997848, a median of 0.998399, and a 0.975375--1.019675 range. The estimated
+gain was smaller than the observed run variation and the extension added 4 KiB
+of native code, so its source, tests, counters, and generated identifiers were
+removed. The retained executable contains only exact subtraction.
+
+### Direct `max(mapping, key=lambda key: mapping[key])`
+
+BPE profiling found 1,815,343 calls to the key lambda in this expression:
+
+```python
+max(mapping, key=lambda key: mapping[key])
+```
+
+The current path leaves Tier 1 specialization as `CALL_KW_NON_PY`. In its
+existing Tier 2 `_CALL_KW_NON_PY` operation, an exact cached builtin `max`, two
+arguments, a null bound receiver, and the builtin-region opt-in permit an
+attempt through `_Py_TryMaxDictIntKey`. All other calls take the unchanged
+vectorcall path in the same uop.
+
+The helper proves the current key function body is exactly
+`lambda key: mapping[key]`, checks that its single closure cell is the mapping
+argument, and requires ordinary Python vectorcall. The mapping must be a dict
+or dict subtype whose iteration and subscript slots are the original dict
+slots. This admits the measured `collections.Counter` receiver without
+admitting overridden lookup or iteration. PEP 523, recursion, pending work,
+and active monitoring for both caller and key function are checked before the
+scan. The eval breaker is checked again for every dictionary entry.
+
+The scan uses insertion order. Every key must be an exact two-tuple containing
+two exact bytes objects, and every value must be an exact compact integer. It
+updates the winner only on strict `>`, preserving `max`'s first-item tie rule.
+No accepted comparison can call Python or mutate the mapping. Empty mappings
+and any unsupported entry return to the original call before the CALL stack is
+changed; restarting repeats only callback-free reads. On success, the helper
+returns a new reference to the winning key and the uop closes keywords,
+arguments, and callable in vectorcall-compatible reverse order.
+
+The first prototype added `CALL_KW_MAX_DICT_INT_KEY` and a dedicated Tier 2
+uop. It improved BPE by a geometric mean of 0.954354, but shifted every later
+specialized opcode ID and grew executable text by 5,776 bytes. Workloads that
+never formed the operation moved in one direction, and the six-workload
+geometric mean against the preceding candidate was 1.000444. That prototype
+was rejected.
+
+The retained compact design restores all opcode IDs and adds no dedicated uop.
+Its text growth is 3,392 bytes. BPE coverage recorded 768 direct calls,
+1,815,343 inspected entries, and no guard exit, exactly matching the previously
+counted lambda calls. Its dedicated BPE comparison had ratios 0.972621,
+0.969655, and 0.971683 (geometric mean 0.971319). In the full screen its
+six-workload geometric mean against the preceding fast-frame candidate was
+0.991913. Raytrace was about 1% slower in that screen, but before/after coverage
+had identical counters, 71 reachable executors, 1,032,192 native bytes, and no
+executor containing `_CALL_KW_NON_PY`; the max branch did not execute there.
+
+### Current validation and performance result
+
+The current executable is
+`build-jit/python-max-dict-compact`, SHA-256
+`6b5be38ebfc9cd01e0f29ca064debc33f8c1fc2e648a8f7377db0f617eae6bbe`.
+It was built with LLVM 21.1.8, the stencil vectorization workaround, ordinary
+release `-O3`, and no PGO or LTO. `sys._jit.is_available()` and
+`sys._jit.is_enabled()` were both true in the native probes.
+
+The final matched screen pinned CPU 2 and rotated the start order of fixed main,
+the preceding exact-subtract candidate, and the compact-max candidate. It used
+three process blocks per workload, three warmups and ten measured values per
+process, and the resident Tier 3 policy. All 540 result checksums matched, no
+sample was excluded, and all executable and script hashes were unchanged at
+the end of the run.
+
+| Workload | Current / preceding candidate | Current / fixed main |
+| --- | ---: | ---: |
+| BPE tokeniser | 0.977017 | 0.798325 |
+| B-tree | 0.992311 | 0.555844 |
+| DeltaBlue | 0.991979 | 0.761954 |
+| Hexiom | 0.981036 | 0.625961 |
+| Raytrace | 1.009687 | 0.751472 |
+| Spectral Norm | 0.999813 | 0.018662 |
+| **Six-workload arithmetic mean** | **0.991974** | **0.585370** |
+| **Six-workload geometric mean** | **0.991913** | **0.379094** |
+
+The current debug Tier 2 build completed 226 region tests, 14 Tier 3 tests, and
+321 C API optimizer tests (561 cases, three configuration skips). The native
+JIT build completed the same 561 cases with 15 configuration skips. These runs
+include direct, fallback, monitoring, replacement, ownership, traceback,
+rounding, and allocation-error coverage for the retained paths. Thirty tracked
+source/generated files had identical SHA-256 values before and after a second
+full `regen-cases`, and `git diff --check` passed.
+
+The current evidence is under `jit-artifacts/benchmark-suite/`, including the
+[final comparison summary](../../jit-artifacts/benchmark-suite/max-dict-compact-full-summary.json),
+[BPE comparison summary](../../jit-artifacts/benchmark-suite/max-dict-compact-bpe-summary.json),
+and [BPE native coverage](../../jit-artifacts/benchmark-suite/max-dict-compact-bpe-native.json).
+Earlier accepted and rejected stages remain in the same directory. The current
+implementation is primarily in
+[`optimizer_analysis.c`](../../Python/optimizer_analysis.c),
+[`bytecodes.c`](../../Python/bytecodes.c),
+[`specialize.c`](../../Python/specialize.c), and
+[`test_opt_regions.py`](../../Lib/test/test_capi/test_opt_regions.py).
+
+These results establish profitability only for the stated local scripts,
+binary identities, inputs, and machine. The paired screens deliberately retain
+non-target workload movement because opcode numbering, stencil layout, and
+native code size are part of the implementation cost. Independent-machine and
+broader workload measurements remain necessary before any proposal to enable
+these experiments by default.
+
+## September 15, 2026: Go recursive-root checkpoint
+
+The pyperformance Go workload was copied into
+[`benchmarks/go.py`](../../benchmarks/go.py) as a dependency-free executable
+script. It retains the 9 by 9 board, random seed 1, 200 Monte Carlo games, and
+the original `versus_cpu()` timing boundary. Every measured operation verifies
+the selected move (5), `TIMESTAMP` increment (81,059), and `MOVES` increment
+(21,401). Its CLI exposes loops, warmups, values, and JSON output so matched
+builds can run without the pyperformance harness changing the workload.
+
+Profiling and executor coverage identified recursive union-find-style root
+lookup as the largest remaining Go cost. The proved Python shape follows an
+inline reference while its exact compact-integer position differs from the
+receiver's position, passes an optional Boolean to the recursive call, performs
+path compression on recursive return when requested, and returns the root.
+Three replacements cover an explicit read-only call, a call whose sole omitted
+default is exact `False`, and an executor attached to the callee's initial
+`RESUME`. The two call-site forms omit the callee and recursive frame chain;
+the local form retains its real frame and supports path compression.
+
+The default-argument form is significant for this workload: `Board.useful`
+uses `neighbour.find()`, which records as `CALL_PY_GENERAL` and previously
+allocated the callee frame before root lookup could be optimized. In one Go
+operation, `_CALL_PY_REFERENCE_ROOT_DEFAULT` handled 47,746 calls and 137,936
+links. The local form and explicit-call form cover the other hot root lookups.
+The local true path first records and validates the complete chain, then writes
+references from the deepest node outward, preserving recursive unwind order.
+
+Attribute recording now retains the receiver type for this later matcher. At
+executor compilation, the optimizer checks the recorded type version and exact
+Python class method, resolves the method name in the type's cached split keys,
+and encodes the resulting instance slot. Runtime traversal checks that type
+version and that the encoded slot remains null on each non-root node. This
+removes repeated class-descriptor and split-key lookup while still rejecting an
+instance method override. Valid-inline-values, exact-int, recursion-budget,
+64-link, function/default, and instrumentation checks preserve the ordinary
+path for unsupported or changed objects. Every guard precedes path-compression
+writes.
+
+The final native executable was built with LLVM 21, ordinary release `-O3`, and
+no PGO or LTO. Its SHA-256 is
+`ebb86d4a70b9dda5c4f70d4d49196cc5a87986c41ced14951f73dd0eef2fb457`;
+the fixed main executable is
+`8fb6c5b87dec8e272c1acfad0197dc086bcd3e0c93912d949d43d5c4d9603407`.
+Measurements pinned CPU 2, selected the resident native-JIT policy, enabled all
+six experimental groups, alternated process order across three blocks, and used
+five warmups plus ten values per process.
+
+| Block | Candidate median | Main median | Candidate / main |
+| --- | ---: | ---: | ---: |
+| 1 | 49.394 ms | 62.991 ms | 0.784139 |
+| 2 | 49.115 ms | 63.570 ms | 0.772610 |
+| 3 | 49.098 ms | 62.811 ms | 0.781677 |
+| **Geometric mean** |  |  | **0.779460** |
+
+All three blocks are below the requested 0.8 threshold. Debug and native builds
+both preserve read-only traversal, path compression, omitted-default behavior,
+changed defaults, class-method replacement, an intermediate instance override,
+and fallback beyond 64 links. The final validation ran 229 region tests on each
+build, as well as the Tier 3 and C API optimizer suites. During this validation,
+the `get_region_stats()` `Py_BuildValue` format was corrected from 77 to all 86
+supplied counter pairs. The optimizer cases were then fully regenerated, and
+the LLVM 21 stencils rebuilt with vectorization disabled. These steps changed
+the executable identity; the table above was measured again after both. Raw samples and
+the immutable identities are in the
+[final Go summary](../../jit-artifacts/go-goal-20260915/final-validated/summary.json).

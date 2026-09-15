@@ -605,7 +605,17 @@ get_region_stats(PyObject *self, PyObject *Py_UNUSED(ignored))
 {
     _PyExecutorObject *executor = _PyExecutorObject_CAST(self);
     return Py_BuildValue(
-        "{s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K}",
+        "{"
+        "s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,"
+        "s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,"
+        "s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,"
+        "s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,"
+        "s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,"
+        "s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,"
+        "s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,"
+        "s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,"
+        "s:K,s:K,s:K,s:K,s:K,s:K"
+        "}",
         "bounded_entries", executor->region_bounded_entries,
         "bounded_guard_exits", executor->region_bounded_guard_exits,
         "bounded_boxes", executor->region_bounded_boxes,
@@ -655,6 +665,8 @@ get_region_stats(PyObject *self, PyObject *Py_UNUSED(ignored))
         "float_unique_entries", executor->region_float_unique_entries,
         "float_owned_entries", executor->region_float_owned_entries,
         "float_attribute_entries", executor->region_float_attribute_entries,
+        "float_call_entries", executor->region_float_call_entries,
+        "float_call_guard_exits", executor->region_float_call_guard_exits,
         "float_shared_entries", executor->region_float_shared_entries,
         "float_guard_exits", executor->region_float_guard_exits,
         "allocation_errors", executor->region_allocation_errors,
@@ -663,9 +675,33 @@ get_region_stats(PyObject *self, PyObject *Py_UNUSED(ignored))
         "zip_fallbacks", executor->region_zip_fallbacks,
         "call_search_entries", executor->region_call_search_entries,
         "call_search_iterations", executor->region_call_search_iterations,
+        "call_root_entries", executor->region_call_root_entries,
+        "call_root_iterations", executor->region_call_root_iterations,
+        "local_root_entries", executor->region_local_root_entries,
+        "local_root_iterations", executor->region_local_root_iterations,
+        "call_list_set_entries", executor->region_call_list_set_entries,
+        "local_list_set_entries", executor->region_local_list_set_entries,
+        "call_set_contains_entries", executor->region_call_set_contains_entries,
+        "call_xor_entries", executor->region_call_xor_entries,
+        "local_xor_entries", executor->region_local_xor_entries,
+        "call_any_attr_entries", executor->region_call_any_attr_entries,
+        "call_any_attr_iterations", executor->region_call_any_attr_iterations,
+        "local_any_attr_entries", executor->region_local_any_attr_entries,
+        "local_any_attr_iterations", executor->region_local_any_attr_iterations,
         "call_remove_entries", executor->region_call_remove_entries,
         "call_remove_hits", executor->region_call_remove_hits,
-        "call_remove_iterations", executor->region_call_remove_iterations);
+        "call_remove_iterations", executor->region_call_remove_iterations,
+        "sum_gen_entries", executor->region_sum_gen_entries,
+        "sum_gen_iterations", executor->region_sum_gen_iterations,
+        "sum_gen_guard_exits", executor->region_sum_gen_guard_exits,
+        "equality_scan_entries", executor->region_equality_scan_entries,
+        "equality_scan_iterations", executor->region_equality_scan_iterations,
+        "equality_scan_misses", executor->region_equality_scan_misses,
+        "max_dict_entries", executor->region_max_dict_entries,
+        "max_dict_iterations", executor->region_max_dict_iterations,
+        "max_dict_guard_exits", executor->region_max_dict_guard_exits,
+        "binary_call_entries", executor->region_binary_call_entries,
+        "binary_call_guard_exits", executor->region_binary_call_guard_exits);
 }
 
 static PyMethodDef uop_executor_methods[] = {
@@ -1723,6 +1759,8 @@ allocate_executor(int exit_count, int length)
     res->region_float_unique_entries = 0;
     res->region_float_owned_entries = 0;
     res->region_float_attribute_entries = 0;
+    res->region_float_call_entries = 0;
+    res->region_float_call_guard_exits = 0;
     res->region_float_shared_entries = 0;
     res->region_float_guard_exits = 0;
     res->region_allocation_errors = 0;
@@ -1731,9 +1769,33 @@ allocate_executor(int exit_count, int length)
     res->region_zip_fallbacks = 0;
     res->region_call_search_entries = 0;
     res->region_call_search_iterations = 0;
+    res->region_call_root_entries = 0;
+    res->region_call_root_iterations = 0;
+    res->region_local_root_entries = 0;
+    res->region_local_root_iterations = 0;
+    res->region_call_list_set_entries = 0;
+    res->region_local_list_set_entries = 0;
+    res->region_call_set_contains_entries = 0;
+    res->region_call_xor_entries = 0;
+    res->region_local_xor_entries = 0;
+    res->region_call_any_attr_entries = 0;
+    res->region_call_any_attr_iterations = 0;
+    res->region_local_any_attr_entries = 0;
+    res->region_local_any_attr_iterations = 0;
     res->region_call_remove_entries = 0;
     res->region_call_remove_hits = 0;
     res->region_call_remove_iterations = 0;
+    res->region_sum_gen_entries = 0;
+    res->region_sum_gen_iterations = 0;
+    res->region_sum_gen_guard_exits = 0;
+    res->region_equality_scan_entries = 0;
+    res->region_equality_scan_iterations = 0;
+    res->region_equality_scan_misses = 0;
+    res->region_max_dict_entries = 0;
+    res->region_max_dict_iterations = 0;
+    res->region_max_dict_guard_exits = 0;
+    res->region_binary_call_entries = 0;
+    res->region_binary_call_guard_exits = 0;
     res->tier3_resident_iterations = 0;
     res->tier3_resident_polls = 0;
     res->tier3_resident_pending_polls = 0;

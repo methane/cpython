@@ -715,6 +715,8 @@ struct _Py_unicode_state {
 struct callable_cache {
     PyObject *isinstance;
     PyObject *len;
+    PyObject *max;
+    PyObject *sum;
     PyObject *list_append;
     PyObject *object__getattribute__;
 };

@@ -775,6 +775,28 @@ _PyRegion_CallAttribute(_PyStackRef owner, uint64_t descriptor)
     return *(PyObject **)((char *)obj + offset);
 }
 
+static inline bool
+_PyRegion_EqualityMethodsUnshadowed(PyTypeObject *type)
+{
+    if (!(type->tp_flags & Py_TPFLAGS_HEAPTYPE) ||
+        !(type->tp_flags & Py_TPFLAGS_INLINE_VALUES)) {
+        return false;
+    }
+    PyDictKeysObject *keys =
+        ((PyHeapTypeObject *)type)->ht_cached_keys;
+    if (keys == NULL) {
+        return false;
+    }
+    Py_ssize_t execute_index = _PyDictKeys_StringLookupSplit(
+        keys, &_Py_ID(execute));
+    Py_ssize_t input_index = _PyDictKeys_StringLookupSplit(
+        keys, &_Py_ID(input));
+    Py_ssize_t output_index = _PyDictKeys_StringLookupSplit(
+        keys, &_Py_ID(output));
+    return execute_index == DKIX_EMPTY && input_index == DKIX_EMPTY &&
+        output_index == DKIX_EMPTY;
+}
+
 /* Return -1 before effects for unsupported input, 0 for absence, or 1
  * after deleting the first match. No path calls Python or raises an error. */
 static inline int
@@ -838,6 +860,30 @@ _PyRegion_AsInt64(_PyStackRef ref, int64_t *value)
     int overflow;
     *value = PyLong_AsLongLongAndOverflow(obj, &overflow);
     return overflow == 0;
+}
+
+/* Convert an exact, non-negative int without raising or invoking Python.
+ * Region guards use this before eliding multi-digit bitwise operations. */
+static inline bool
+_PyRegion_AsUInt64(PyObject *obj, uint64_t *value)
+{
+    if (!PyLong_CheckExact(obj) || _PyLong_IsNegative((PyLongObject *)obj)) {
+        return false;
+    }
+    PyLongObject *long_obj = (PyLongObject *)obj;
+    Py_ssize_t count = _PyLong_DigitCount(long_obj);
+    uint64_t result = 0;
+    for (Py_ssize_t i = count; i-- > 0;) {
+        digit next = long_obj->long_value.ob_digit[i];
+        if (result > (UINT64_MAX >> PyLong_SHIFT) ||
+            (result == (UINT64_MAX >> PyLong_SHIFT) &&
+             next > (UINT64_MAX & PyLong_MASK))) {
+            return false;
+        }
+        result = (result << PyLong_SHIFT) | next;
+    }
+    *value = result;
+    return true;
 }
 
 /* Restrict lookup to unicode-key tables: a general-key table could invoke

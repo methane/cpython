@@ -287,6 +287,8 @@ typedef struct _PyExecutorObject {
     uint64_t region_float_unique_entries;
     uint64_t region_float_owned_entries;
     uint64_t region_float_attribute_entries;
+    uint64_t region_float_call_entries;
+    uint64_t region_float_call_guard_exits;
     uint64_t region_float_shared_entries;
     uint64_t region_float_guard_exits;
     uint64_t region_allocation_errors;
@@ -295,10 +297,34 @@ typedef struct _PyExecutorObject {
     uint64_t region_zip_fallbacks;
     uint64_t region_call_search_entries;
     uint64_t region_call_search_iterations;
+    uint64_t region_call_root_entries;
+    uint64_t region_call_root_iterations;
+    uint64_t region_local_root_entries;
+    uint64_t region_local_root_iterations;
+    uint64_t region_call_list_set_entries;
+    uint64_t region_local_list_set_entries;
+    uint64_t region_call_set_contains_entries;
+    uint64_t region_call_xor_entries;
+    uint64_t region_local_xor_entries;
+    uint64_t region_call_any_attr_entries;
+    uint64_t region_call_any_attr_iterations;
+    uint64_t region_local_any_attr_entries;
+    uint64_t region_local_any_attr_iterations;
     uint64_t region_call_remove_entries;
     uint64_t region_call_remove_hits;
     uint64_t region_call_remove_iterations;
     uint64_t region_call_conditional_entries;
+    uint64_t region_sum_gen_entries;
+    uint64_t region_sum_gen_iterations;
+    uint64_t region_sum_gen_guard_exits;
+    uint64_t region_equality_scan_entries;
+    uint64_t region_equality_scan_iterations;
+    uint64_t region_equality_scan_misses;
+    uint64_t region_max_dict_entries;
+    uint64_t region_max_dict_iterations;
+    uint64_t region_max_dict_guard_exits;
+    uint64_t region_binary_call_entries;
+    uint64_t region_binary_call_guard_exits;
     _PyExitData exits[1];
 } _PyExecutorObject;
 
@@ -316,6 +342,18 @@ PyAPI_FUNC(_PyExecutorObject*) _Py_GetExecutor(PyCodeObject *code, int offset);
 int _Py_ExecutorInit(_PyExecutorObject *, const _PyBloomFilter *);
 PyAPI_FUNC(void) _Py_ExecutorDetach(_PyExecutorObject *);
 PyAPI_FUNC(void) _Py_Executor_DependsOn(_PyExecutorObject *executor, void *obj);
+
+#ifdef _Py_TIER2
+bool _Py_SumListIntContainsBody(PyCodeObject *code);
+bool _Py_MaxDictIntKeyBody(PyCodeObject *code);
+#endif
+PyObject *_Py_TryMaxDictIntKey(
+    PyThreadState *tstate,
+    _PyInterpreterFrame *frame,
+    PyObject *mapping,
+    PyObject *key_callable,
+    PyObject *kwnames,
+    Py_ssize_t *checked);
 
 /* We use a bloomfilter with k = 6, m = 256
  * The choice of k and the following constants

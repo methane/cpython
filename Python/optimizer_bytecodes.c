@@ -326,6 +326,9 @@ dummy_func(void) {
                                   || oparg == NB_MULTIPLY
                                   || oparg == NB_INPLACE_MULTIPLY);
         int emit_op = _BINARY_OP;
+        uint64_t emit_operand0 = 0;
+        uint64_t emit_operand1 = 0;
+        bool direct_python_subtract = false;
         // Promote probable-float operands to known floats via speculative
         // guards. _RECORD_TOS_TYPE / _RECORD_NOS_TYPE in the BINARY_OP macro
         // record the observed operand type during tracing, which
@@ -351,7 +354,29 @@ dummy_func(void) {
                 lhs_float = true;
             }
         }
-        if (is_float_chain_op && lhs_float && rhs_float) {
+        PyTypeObject *lhs_type = sym_get_type(lhs);
+        PyTypeObject *rhs_type = sym_get_type(rhs);
+        if (lhs_type == NULL) {
+            lhs_type = sym_get_probable_type(lhs);
+        }
+        if (rhs_type == NULL) {
+            rhs_type = sym_get_probable_type(rhs);
+        }
+        PyObject *subtract = get_exact_python_subtract(
+            oparg == NB_SUBTRACT &&
+                region_enabled("PYTHON_TIER2_CALL_REGIONS"),
+            lhs_type, rhs_type, dependencies);
+        if (subtract != NULL) {
+            emit_op = _BINARY_OP_PY_SUBTRACT_EXACT;
+            emit_operand0 = (uintptr_t)subtract;
+            emit_operand1 = lhs_type->tp_version_tag |
+                ((uint64_t)((PyFunctionObject *)subtract)->func_version << 32);
+            direct_python_subtract = true;
+        }
+        if (direct_python_subtract) {
+            res = sym_new_not_null(ctx);
+        }
+        else if (is_float_chain_op && lhs_float && rhs_float) {
             int plain_op;
             int inplace_op;
             int inplace_right_op;
@@ -454,7 +479,8 @@ dummy_func(void) {
         else {
             res = PyJitRef_MakeUnique(sym_new_type(ctx, &PyFloat_Type));
         }
-        ADD_OP(emit_op, oparg, 0);
+        ADD_OP(emit_op, oparg, emit_operand0);
+        uop_buffer_last(&ctx->out_buffer)->operand1 = emit_operand1;
     }
 
     op(_BINARY_OP_ADD_INT, (left, right -- res, l, r)) {
@@ -2659,7 +2685,9 @@ dummy_func(void) {
     op(_GUARD_GLOBALS_VERSION, (version/1 --)) {
         if (ctx->frame->func != NULL) {
             PyObject *globals = ctx->frame->func->func_globals;
-            bool named = region_enabled("PYTHON_TIER2_CALL_REGIONS");
+            bool named = region_enabled("PYTHON_TIER2_CALL_REGIONS") &&
+                         !code_stores_global(get_current_code_object(ctx)) &&
+                         !namespace_has_global_writer(globals);
             if (incorrect_keys(globals, version)) {
                 OPT_STAT_INC(remove_globals_incorrect_keys);
                 ctx->done = true;
@@ -2737,7 +2765,9 @@ dummy_func(void) {
         PyObject *cnst = NULL;
         if (ctx->frame->func != NULL) {
             PyObject *globals = ctx->frame->func->func_globals;
-            bool named = region_enabled("PYTHON_TIER2_CALL_REGIONS");
+            bool named = region_enabled("PYTHON_TIER2_CALL_REGIONS") &&
+                         !code_stores_global(get_current_code_object(ctx)) &&
+                         !namespace_has_global_writer(globals);
             if (incorrect_keys(globals, version)) {
                 OPT_STAT_INC(remove_globals_incorrect_keys);
                 ctx->done = true;
@@ -2763,6 +2793,9 @@ dummy_func(void) {
                     ctx->frame->globals_checked_version = version;
                 }
                 if (ctx->frame->globals_checked_version == version) {
+                    /* Folding a name that this code writes makes the
+                     * executor invalidate itself at the matching
+                     * STORE_GLOBAL. Keep the specialized lookup instead. */
                     cnst = convert_global_to_const(this_instr, globals);
                     if (cnst != NULL && named) {
                         PyDictObject *dict = (PyDictObject *)globals;

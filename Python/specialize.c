@@ -8,6 +8,11 @@
 #include "pycore_descrobject.h"   // _PyMethodWrapper_Type
 #include "pycore_dict.h"          // DICT_KEYS_UNICODE
 #include "pycore_function.h"      // _PyFunction_GetVersionForCurrentState()
+#ifdef _Py_TIER2
+#include "pycore_frame.h"         // FRAME_CREATED
+#include "pycore_genobject.h"
+#include "pycore_optimizer.h"
+#endif
 #include "pycore_interpframe.h"   // FRAME_SPECIALS_SIZE
 #include "pycore_lazyimportobject.h" // PyLazyImport_CheckExact
 #include "pycore_list.h"          // _PyListIterObject, _PyList_Concat
@@ -1825,8 +1830,49 @@ specialize_py_call_kw(PyFunctionObject *func, _Py_CODEUNIT *instr, int nargs,
     return 0;
 }
 
+#ifdef _Py_TIER2
+static bool
+specialize_sum_list_int_contains(_PyStackRef *args, _Py_CODEUNIT *instr,
+                                 int nargs)
+{
+#if (defined(__GNUC__) || defined(__clang__)) && \
+    !defined(Py_GIL_DISABLED) && SIZEOF_VOID_P == 8
+    const char *enabled = Py_GETENV("PYTHON_TIER2_BUILTIN_REGIONS");
+    if (enabled == NULL || strcmp(enabled, "1") != 0 || nargs != 1 ||
+        instr->op.arg != 1 || PyStackRef_IsNullOrInt(args[0])) {
+        return false;
+    }
+    PyObject *gen_o = PyStackRef_AsPyObjectBorrow(args[0]);
+    if (!Py_IS_TYPE(gen_o, &PyGen_Type) ||
+        !_PyObject_IsUniquelyReferenced(gen_o)) {
+        return false;
+    }
+    PyGenObject *gen = (PyGenObject *)gen_o;
+    _PyInterpreterFrame *gen_frame = &gen->gi_iframe;
+    if (gen->gi_frame_state != FRAME_CREATED || gen->gi_weakreflist != NULL ||
+        gen_frame->frame_obj != NULL ||
+        gen_frame->owner != FRAME_OWNED_BY_GENERATOR ||
+        PyStackRef_IsNull(gen_frame->f_executable)) {
+        return false;
+    }
+    PyCodeObject *code = _PyFrame_GetCode(gen_frame);
+    if (code->co_version == 0 || !_Py_SumListIntContainsBody(code)) {
+        return false;
+    }
+    _PyCallCache *cache = (_PyCallCache *)(instr + 1);
+    write_u32(cache->func_version, code->co_version);
+    specialize(instr, CALL_SUM_LIST_INT_CONTAINS);
+    return true;
+#else
+    return false;
+#endif
+}
+
+#endif
+
 static int
-specialize_c_call(PyObject *callable, _Py_CODEUNIT *instr, int nargs)
+specialize_c_call(PyObject *callable, _PyStackRef *args,
+                  _Py_CODEUNIT *instr, int nargs)
 {
     if (PyCFunction_GET_FUNCTION(callable) == NULL) {
         SPECIALIZATION_FAIL(CALL, SPEC_FAIL_OTHER);
@@ -1862,6 +1908,13 @@ specialize_c_call(PyObject *callable, _Py_CODEUNIT *instr, int nargs)
             return 0;
         }
         case METH_FASTCALL | METH_KEYWORDS: {
+#ifdef _Py_TIER2
+            PyInterpreterState *interp = _PyInterpreterState_GET();
+            if (callable == interp->callable_cache.sum &&
+                specialize_sum_list_int_contains(args, instr, nargs)) {
+                return 0;
+            }
+#endif
             specialize(instr, CALL_BUILTIN_FAST_WITH_KEYWORDS);
             return 0;
         }
@@ -1872,7 +1925,8 @@ specialize_c_call(PyObject *callable, _Py_CODEUNIT *instr, int nargs)
 }
 
 Py_NO_INLINE void
-_Py_Specialize_Call(_PyStackRef callable_st, _PyStackRef self_or_null_st, _Py_CODEUNIT *instr, int nargs)
+_Py_Specialize_Call(_PyStackRef callable_st, _PyStackRef self_or_null_st,
+                    _PyStackRef *args, _Py_CODEUNIT *instr, int nargs)
 {
     PyObject *callable = PyStackRef_AsPyObjectBorrow(callable_st);
 
@@ -1881,7 +1935,7 @@ _Py_Specialize_Call(_PyStackRef callable_st, _PyStackRef self_or_null_st, _Py_CO
     assert(_Py_OPCODE(*instr) != INSTRUMENTED_CALL);
     int fail;
     if (PyCFunction_CheckExact(callable)) {
-        fail = specialize_c_call(callable, instr, nargs);
+        fail = specialize_c_call(callable, args, instr, nargs);
     }
     else if (PyFunction_Check(callable)) {
         fail = specialize_py_call((PyFunctionObject *)callable, instr, nargs, false);

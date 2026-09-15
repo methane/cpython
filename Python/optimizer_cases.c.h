@@ -1234,6 +1234,16 @@
             break;
         }
 
+        case _CALL_PY_FLOAT_DOT: {
+            JitOptRef res;
+            res = sym_new_not_null(ctx);
+            CHECK_STACK_BOUNDS(-2);
+            stack_pointer[-3] = res;
+            stack_pointer += -2;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            break;
+        }
+
         case _BINARY_OP_MULTIPLY_ADD_FLOAT_OWNED: {
             JitOptRef res;
             JitOptRef l;
@@ -2462,7 +2472,9 @@
             uint16_t version = (uint16_t)this_instr->operand0;
             if (ctx->frame->func != NULL) {
                 PyObject *globals = ctx->frame->func->func_globals;
-                bool named = region_enabled("PYTHON_TIER2_CALL_REGIONS");
+                bool named = region_enabled("PYTHON_TIER2_CALL_REGIONS") &&
+                !code_stores_global(get_current_code_object(ctx)) &&
+                !namespace_has_global_writer(globals);
                 if (incorrect_keys(globals, version)) {
                     OPT_STAT_INC(remove_globals_incorrect_keys);
                     ctx->done = true;
@@ -2508,7 +2520,9 @@
             PyObject *cnst = NULL;
             if (ctx->frame->func != NULL) {
                 PyObject *globals = ctx->frame->func->func_globals;
-                bool named = region_enabled("PYTHON_TIER2_CALL_REGIONS");
+                bool named = region_enabled("PYTHON_TIER2_CALL_REGIONS") &&
+                !code_stores_global(get_current_code_object(ctx)) &&
+                !namespace_has_global_writer(globals);
                 if (incorrect_keys(globals, version)) {
                     OPT_STAT_INC(remove_globals_incorrect_keys);
                     ctx->done = true;
@@ -4105,6 +4119,13 @@
             break;
         }
 
+        case _LIST_EQUALITY_SCAN: {
+            CHECK_STACK_BOUNDS(-1);
+            stack_pointer += -1;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            break;
+        }
+
         case _ITER_NEXT_ENUM_LIST: {
             JitOptRef next;
             next = sym_new_not_null(ctx);
@@ -4686,6 +4707,104 @@
             break;
         }
 
+        case _REFERENCE_ROOT_LOCAL: {
+            JitOptRef res;
+            res = sym_new_not_null(ctx);
+            CHECK_STACK_BOUNDS(1);
+            stack_pointer[0] = res;
+            stack_pointer += 1;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            break;
+        }
+
+        case _CALL_PY_REFERENCE_ROOT_DEFAULT: {
+            JitOptRef res;
+            res = sym_new_not_null(ctx);
+            CHECK_STACK_BOUNDS(-1);
+            stack_pointer[-2] = res;
+            stack_pointer += -1;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            break;
+        }
+
+        case _CALL_PY_REFERENCE_ROOT: {
+            JitOptRef res;
+            res = sym_new_not_null(ctx);
+            CHECK_STACK_BOUNDS(-2);
+            stack_pointer[-3] = res;
+            stack_pointer += -2;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            break;
+        }
+
+        case _LIST_SET_PAIR_LOCAL: {
+            break;
+        }
+
+        case _CALL_PY_LIST_SET_PAIR: {
+            JitOptRef res;
+            res = sym_new_not_null(ctx);
+            CHECK_STACK_BOUNDS(-3);
+            stack_pointer[-4] = res;
+            stack_pointer += -3;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            break;
+        }
+
+        case _CALL_PY_SET_CONTAINS: {
+            JitOptRef res;
+            res = sym_new_not_null(ctx);
+            CHECK_STACK_BOUNDS(-1);
+            stack_pointer[-2] = res;
+            stack_pointer += -1;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            break;
+        }
+
+        case _LIST_ANY_ATTR_ITER_LOCAL: {
+            JitOptRef res;
+            res = sym_new_not_null(ctx);
+            CHECK_STACK_BOUNDS(-1);
+            stack_pointer[-2] = res;
+            stack_pointer += -1;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            break;
+        }
+
+        case _LIST_ANY_ATTR_LOCAL: {
+            JitOptRef res;
+            res = sym_new_not_null(ctx);
+            CHECK_STACK_BOUNDS(1);
+            stack_pointer[0] = res;
+            stack_pointer += 1;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            break;
+        }
+
+        case _CALL_PY_LIST_ANY_ATTR: {
+            JitOptRef res;
+            res = sym_new_not_null(ctx);
+            CHECK_STACK_BOUNDS(-2);
+            stack_pointer[-3] = res;
+            stack_pointer += -2;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            break;
+        }
+
+        case _XOR_ATTR_LIST_PAIR_LOCAL: {
+            break;
+        }
+
+        case _CALL_PY_XOR_ATTR_LIST_PAIR: {
+            JitOptRef res;
+            res = sym_new_not_null(ctx);
+            CHECK_STACK_BOUNDS(-3);
+            stack_pointer[-4] = res;
+            stack_pointer += -3;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            break;
+        }
+
         case _CALL_PY_LIST_REMOVE: {
             JitOptRef res;
             res = sym_new_not_null(ctx);
@@ -5073,6 +5192,10 @@
             else {
                 sym_set_type(callable, &PyCFunction_Type);
             }
+            break;
+        }
+
+        case _CALL_SUM_LIST_INT_CONTAINS: {
             break;
         }
 
@@ -5901,6 +6024,9 @@
                                   || oparg == NB_MULTIPLY
                                   || oparg == NB_INPLACE_MULTIPLY);
             int emit_op = _BINARY_OP;
+            uint64_t emit_operand0 = 0;
+            uint64_t emit_operand1 = 0;
+            bool direct_python_subtract = false;
             if (is_float_chain_op || is_truediv || is_remainder) {
                 if (!sym_has_type(rhs)
                     && sym_get_probable_type(rhs) == &PyFloat_Type) {
@@ -5915,7 +6041,32 @@
                     lhs_float = true;
                 }
             }
-            if (is_float_chain_op && lhs_float && rhs_float) {
+            PyTypeObject *lhs_type = sym_get_type(lhs);
+            PyTypeObject *rhs_type = sym_get_type(rhs);
+            if (lhs_type == NULL) {
+                lhs_type = sym_get_probable_type(lhs);
+            }
+            if (rhs_type == NULL) {
+                rhs_type = sym_get_probable_type(rhs);
+            }
+            CHECK_STACK_BOUNDS(-2);
+            stack_pointer += -2;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            PyObject *subtract = get_exact_python_subtract(
+                oparg == NB_SUBTRACT &&
+                region_enabled("PYTHON_TIER2_CALL_REGIONS"),
+                lhs_type, rhs_type, dependencies);
+            if (subtract != NULL) {
+                emit_op = _BINARY_OP_PY_SUBTRACT_EXACT;
+                emit_operand0 = (uintptr_t)subtract;
+                emit_operand1 = lhs_type->tp_version_tag |
+                ((uint64_t)((PyFunctionObject *)subtract)->func_version << 32);
+                direct_python_subtract = true;
+            }
+            if (direct_python_subtract) {
+                res = sym_new_not_null(ctx);
+            }
+            else if (is_float_chain_op && lhs_float && rhs_float) {
                 int plain_op;
                 int inplace_op;
                 int inplace_right_op;
@@ -6000,7 +6151,24 @@
             else {
                 res = PyJitRef_MakeUnique(sym_new_type(ctx, &PyFloat_Type));
             }
-            ADD_OP(emit_op, oparg, 0);
+            ADD_OP(emit_op, oparg, emit_operand0);
+            CHECK_STACK_BOUNDS(3);
+            stack_pointer[0] = res;
+            stack_pointer[1] = l;
+            stack_pointer[2] = r;
+            stack_pointer += 3;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            uop_buffer_last(&ctx->out_buffer)->operand1 = emit_operand1;
+            break;
+        }
+
+        case _BINARY_OP_PY_SUBTRACT_EXACT: {
+            JitOptRef res;
+            JitOptRef l;
+            JitOptRef r;
+            res = sym_new_not_null(ctx);
+            l = sym_new_not_null(ctx);
+            r = sym_new_not_null(ctx);
             CHECK_STACK_BOUNDS(1);
             stack_pointer[-2] = res;
             stack_pointer[-1] = l;

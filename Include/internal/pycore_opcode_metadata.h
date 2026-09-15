@@ -148,6 +148,8 @@ int _PyOpcode_num_popped(int opcode, int oparg)  {
             return 2 + oparg;
         case CALL_STR_1:
             return 3;
+        case CALL_SUM_LIST_INT_CONTAINS:
+            return 1 + oparg;
         case CALL_TUPLE_1:
             return 3;
         case CALL_TYPE_1:
@@ -643,6 +645,8 @@ int _PyOpcode_num_pushed(int opcode, int oparg)  {
             return 0;
         case CALL_STR_1:
             return 1;
+        case CALL_SUM_LIST_INT_CONTAINS:
+            return 0;
         case CALL_TUPLE_1:
             return 1;
         case CALL_TYPE_1:
@@ -1155,6 +1159,7 @@ const struct opcode_metadata _PyOpcode_opcode_metadata[267] = {
     [CALL_PY_EXACT_ARGS] = { true, INSTR_FMT_IBC00, HAS_ARG_FLAG | HAS_DEOPT_FLAG | HAS_EXIT_FLAG | HAS_SYNC_SP_FLAG | HAS_NEEDS_GUARD_IP_FLAG | HAS_RECORDS_VALUE_FLAG },
     [CALL_PY_GENERAL] = { true, INSTR_FMT_IBC00, HAS_ARG_FLAG | HAS_DEOPT_FLAG | HAS_EXIT_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG | HAS_SYNC_SP_FLAG | HAS_NEEDS_GUARD_IP_FLAG | HAS_RECORDS_VALUE_FLAG },
     [CALL_STR_1] = { true, INSTR_FMT_IBC00, HAS_ARG_FLAG | HAS_EVAL_BREAK_FLAG | HAS_EXIT_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG },
+    [CALL_SUM_LIST_INT_CONTAINS] = { true, INSTR_FMT_IBC00, HAS_ARG_FLAG | HAS_EVAL_BREAK_FLAG | HAS_EXIT_FLAG | HAS_ERROR_FLAG | HAS_ESCAPES_FLAG },
     [CALL_TUPLE_1] = { true, INSTR_FMT_IBC00, HAS_ARG_FLAG | HAS_EVAL_BREAK_FLAG | HAS_EXIT_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG },
     [CALL_TYPE_1] = { true, INSTR_FMT_IBC00, HAS_ARG_FLAG | HAS_EXIT_FLAG | HAS_ESCAPES_FLAG },
     [CHECK_EG_MATCH] = { true, INSTR_FMT_IX, HAS_ERROR_FLAG | HAS_ESCAPES_FLAG },
@@ -1406,6 +1411,7 @@ _PyOpcode_macro_expansion[256] = {
     [CALL_PY_EXACT_ARGS] = { .nuops = 9, .uops = { { _RECORD_CALLABLE, OPARG_SIMPLE, 0 }, { _CHECK_PEP_523, OPARG_SIMPLE, 1 }, { _CHECK_FUNCTION_VERSION, 2, 1 }, { _CHECK_FUNCTION_EXACT_ARGS, OPARG_SIMPLE, 3 }, { _CHECK_STACK_SPACE, OPARG_SIMPLE, 3 }, { _CHECK_RECURSION_REMAINING, OPARG_SIMPLE, 3 }, { _INIT_CALL_PY_EXACT_ARGS, OPARG_SIMPLE, 3 }, { _SAVE_RETURN_OFFSET, OPARG_SAVE_RETURN_OFFSET, 3 }, { _PUSH_FRAME, OPARG_SIMPLE, 3 } } },
     [CALL_PY_GENERAL] = { .nuops = 7, .uops = { { _RECORD_CALLABLE, OPARG_SIMPLE, 0 }, { _CHECK_PEP_523, OPARG_SIMPLE, 1 }, { _CHECK_FUNCTION_VERSION, 2, 1 }, { _CHECK_RECURSION_REMAINING, OPARG_SIMPLE, 3 }, { _PY_FRAME_GENERAL, OPARG_SIMPLE, 3 }, { _SAVE_RETURN_OFFSET, OPARG_SAVE_RETURN_OFFSET, 3 }, { _PUSH_FRAME, OPARG_SIMPLE, 3 } } },
     [CALL_STR_1] = { .nuops = 5, .uops = { { _GUARD_NOS_NULL, OPARG_SIMPLE, 3 }, { _GUARD_CALLABLE_STR_1, OPARG_SIMPLE, 3 }, { _CALL_STR_1, OPARG_SIMPLE, 3 }, { _POP_TOP, OPARG_SIMPLE, 3 }, { _CHECK_PERIODIC_AT_END, OPARG_REPLACED, 3 } } },
+    [CALL_SUM_LIST_INT_CONTAINS] = { .nuops = 4, .uops = { { _CALL_SUM_LIST_INT_CONTAINS, 2, 1 }, { _POP_TOP_OPARG, OPARG_SIMPLE, 3 }, { _POP_TOP, OPARG_SIMPLE, 3 }, { _CHECK_PERIODIC_AT_END, OPARG_REPLACED, 3 } } },
     [CALL_TUPLE_1] = { .nuops = 5, .uops = { { _GUARD_NOS_NULL, OPARG_SIMPLE, 3 }, { _GUARD_CALLABLE_TUPLE_1, OPARG_SIMPLE, 3 }, { _CALL_TUPLE_1, OPARG_SIMPLE, 3 }, { _POP_TOP, OPARG_SIMPLE, 3 }, { _CHECK_PERIODIC_AT_END, OPARG_REPLACED, 3 } } },
     [CALL_TYPE_1] = { .nuops = 4, .uops = { { _GUARD_NOS_NULL, OPARG_SIMPLE, 3 }, { _GUARD_CALLABLE_TYPE_1, OPARG_SIMPLE, 3 }, { _CALL_TYPE_1, OPARG_SIMPLE, 3 }, { _POP_TOP, OPARG_SIMPLE, 3 } } },
     [CHECK_EG_MATCH] = { .nuops = 1, .uops = { { _CHECK_EG_MATCH, OPARG_SIMPLE, 0 } } },
@@ -1607,6 +1613,7 @@ const char *_PyOpcode_OpName[267] = {
     [CALL_PY_EXACT_ARGS] = "CALL_PY_EXACT_ARGS",
     [CALL_PY_GENERAL] = "CALL_PY_GENERAL",
     [CALL_STR_1] = "CALL_STR_1",
+    [CALL_SUM_LIST_INT_CONTAINS] = "CALL_SUM_LIST_INT_CONTAINS",
     [CALL_TUPLE_1] = "CALL_TUPLE_1",
     [CALL_TYPE_1] = "CALL_TYPE_1",
     [CHECK_EG_MATCH] = "CHECK_EG_MATCH",
@@ -1838,7 +1845,6 @@ const uint8_t _PyOpcode_Deopt[256] = {
     [125] = 125,
     [126] = 126,
     [127] = 127,
-    [219] = 219,
     [220] = 220,
     [221] = 221,
     [222] = 222,
@@ -1907,6 +1913,7 @@ const uint8_t _PyOpcode_Deopt[256] = {
     [CALL_PY_EXACT_ARGS] = CALL,
     [CALL_PY_GENERAL] = CALL,
     [CALL_STR_1] = CALL,
+    [CALL_SUM_LIST_INT_CONTAINS] = CALL,
     [CALL_TUPLE_1] = CALL,
     [CALL_TYPE_1] = CALL,
     [CHECK_EG_MATCH] = CHECK_EG_MATCH,
@@ -2099,7 +2106,6 @@ const uint8_t _PyOpcode_Deopt[256] = {
     case 125: \
     case 126: \
     case 127: \
-    case 219: \
     case 220: \
     case 221: \
     case 222: \

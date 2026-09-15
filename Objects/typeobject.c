@@ -10683,6 +10683,13 @@ SLOT1BIN(slot_nb_matrix_multiply, nb_matrix_multiply, __matmul__, __rmatmul__)
 SLOT1BIN(slot_nb_remainder, nb_remainder, __mod__, __rmod__)
 SLOT1BIN(slot_nb_divmod, nb_divmod, __divmod__, __rdivmod__)
 
+int
+_PyType_HasSlotNbSubtract(PyTypeObject *type)
+{
+    return type->tp_as_number != NULL &&
+        type->tp_as_number->nb_subtract == slot_nb_subtract;
+}
+
 static PyObject *slot_nb_power(PyObject *, PyObject *, PyObject *);
 
 SLOT1BINFULL(slot_nb_power_binary, slot_nb_power, nb_power, __pow__, __rpow__)

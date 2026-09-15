@@ -1749,6 +1749,7 @@ _PyStaticObjects_CheckRefcnt(PyInterpreterState *interp) {
     _PyStaticObject_CheckRefcnt((PyObject *)&_Py_ID(exc_value));
     _PyStaticObject_CheckRefcnt((PyObject *)&_Py_ID(excepthook));
     _PyStaticObject_CheckRefcnt((PyObject *)&_Py_ID(exception));
+    _PyStaticObject_CheckRefcnt((PyObject *)&_Py_ID(execute));
     _PyStaticObject_CheckRefcnt((PyObject *)&_Py_ID(existing_file_name));
     _PyStaticObject_CheckRefcnt((PyObject *)&_Py_ID(exit));
     _PyStaticObject_CheckRefcnt((PyObject *)&_Py_ID(exp));
@@ -1983,6 +1984,7 @@ _PyStaticObjects_CheckRefcnt(PyInterpreterState *interp) {
     _PyStaticObject_CheckRefcnt((PyObject *)&_Py_ID(out_fd));
     _PyStaticObject_CheckRefcnt((PyObject *)&_Py_ID(outgoing));
     _PyStaticObject_CheckRefcnt((PyObject *)&_Py_ID(outpath));
+    _PyStaticObject_CheckRefcnt((PyObject *)&_Py_ID(output));
     _PyStaticObject_CheckRefcnt((PyObject *)&_Py_ID(overlapped));
     _PyStaticObject_CheckRefcnt((PyObject *)&_Py_ID(owner));
     _PyStaticObject_CheckRefcnt((PyObject *)&_Py_ID(pad));

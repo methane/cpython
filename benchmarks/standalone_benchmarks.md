@@ -1,6 +1,6 @@
 # CPython / JIT 向けの単体ベンチマーク
 
-`spectral_norm.py` の次に、Python の異なる実行パターンを見るための5本。
+`spectral_norm.py` の次に、Python の異なる実行パターンを見るための6本。
 各 `.py` にアルゴリズム・入力・計測コードを収めてあるので、そのファイルだけを
 別のディレクトリにコピーして実行できる。外部パッケージ、`pyperf`、データファイル、
 ネットワーク接続は不要。Python 3.10 以降の標準ライブラリだけを使う。
@@ -11,6 +11,7 @@
 | [btree.py](btree.py) | 20,000レコードを B-tree に挿入し、20%を削除・再挿入、全件走査と個別検索 | 再帰、`__slots__`、添字アクセス、`yield from`、リスト操作、属性アクセス |
 | [deltablue.py](deltablue.py) | 長さ100の等値制約チェーンと100組のスケール・オフセット制約を構築・更新 | 継承、`super()`、多態的なメソッド呼び出し、属性の読み書き、オブジェクトグラフ |
 | [hexiom.py](hexiom.py) | 元の level 25 を同じ探索順序で解く | 分岐の多い再帰探索、ネストしたリスト、可変状態の複製、辞書検索 |
+| [go.py](go.py) | 9×9盤面で200回のMonte Carlo探索を行い、次の一手を選ぶ | 属性の読み書き、短いPythonメソッド、リスト・集合、整数・浮動小数点演算、頻繁なglobal更新 |
 | [raytrace.py](raytrace.py) | 元の球と市松模様のシーンを100×100画素で描画 | 演算子オーバーロード、短命オブジェクト、メソッド呼び出し、浮動小数点演算、再帰 |
 
 文字列処理から始めるなら `bpe_tokeniser.py`、数値カーネルからオブジェクトを使う
@@ -29,6 +30,7 @@
 
 ```sh
 python3 bpe_tokeniser.py
+python3 go.py --loops 2 --warmups 5 --values 10
 python3 hexiom.py --loops 20 --warmups 5 --values 10
 python3 raytrace.py --loops 1 --warmups 3 --values 10 --json > raytrace.json
 ```
@@ -75,6 +77,8 @@ JSON の `jit_enabled` は `sys._jit.is_enabled()` の値で、API がない Pyt
   最終的な伝播値を戻して全件検証する。
 - Hexiom: 入力を元のデフォルト level 25 に固定。探索結果の状態と、元コードにある
   期待解の全文を照合する。
+- Go: 元の9×9盤面、200 games、乱数seed 1、`versus_cpu()`の計測境界を保持。
+  選択手5に加えて、各operationの`TIMESTAMP`増分81,059と`MOVES`増分21,401を検証する。
 - Raytrace: 元のシーンと100×100画素を保持。ファイル出力を行わず、元コードで取得した
   RGB 全30,000バイトの SHA-256 を検証する。
 

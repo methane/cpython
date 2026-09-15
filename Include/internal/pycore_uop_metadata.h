@@ -164,6 +164,7 @@ const uint32_t _PyUop_Flags[MAX_UOP_ID+1] = {
     [_BINARY_OP_MULTIPLY_ADD_FLOAT_INPLACE] = HAS_PURE_FLAG,
     [_BINARY_OP_MULTIPLY_SUBTRACT_FLOAT_INPLACE] = HAS_PURE_FLAG,
     [_FLOAT_ATTRIBUTE_SUM_PRODUCTS] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG,
+    [_CALL_PY_FLOAT_DOT] = HAS_ARG_FLAG | HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG | HAS_SYNC_SP_FLAG,
     [_BINARY_OP_MULTIPLY_ADD_FLOAT_OWNED] = HAS_PURE_FLAG,
     [_BINARY_OP_MULTIPLY_SUBTRACT_FLOAT_OWNED] = HAS_PURE_FLAG,
     [_BINARY_OP_MULTIPLY_ADD_FLOAT_SHARED] = HAS_EXIT_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG,
@@ -334,6 +335,7 @@ const uint32_t _PyUop_Flags[MAX_UOP_ID+1] = {
     [_ENUM_LIST_INT_SCAN_4] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG | HAS_ESCAPES_FLAG,
     [_ENUM_LIST_INT_SCAN_5] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG | HAS_ESCAPES_FLAG,
     [_ENUM_LIST_INT_SCAN] = HAS_ARG_FLAG | HAS_LOCAL_FLAG | HAS_EXIT_FLAG | HAS_ESCAPES_FLAG,
+    [_LIST_EQUALITY_SCAN] = HAS_LOCAL_FLAG | HAS_ESCAPES_FLAG,
     [_ITER_NEXT_ENUM_LIST] = HAS_EXIT_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG,
     [_ITER_NEXT_ZIP_LIST_PAIR] = HAS_EXIT_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG,
     [_GUARD_NOS_ITER_VIRTUAL] = HAS_EXIT_FLAG,
@@ -427,6 +429,17 @@ const uint32_t _PyUop_Flags[MAX_UOP_ID+1] = {
     [_CALL_PY_ATTRIBUTE_SEARCH_10] = HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
     [_CALL_PY_ATTRIBUTE_SEARCH_11] = HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
     [_CALL_PY_ATTRIBUTE_SEARCH] = HAS_ARG_FLAG | HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
+    [_REFERENCE_ROOT_LOCAL] = HAS_LOCAL_FLAG | HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
+    [_CALL_PY_REFERENCE_ROOT_DEFAULT] = HAS_ARG_FLAG | HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
+    [_CALL_PY_REFERENCE_ROOT] = HAS_ARG_FLAG | HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
+    [_LIST_SET_PAIR_LOCAL] = HAS_LOCAL_FLAG | HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
+    [_CALL_PY_LIST_SET_PAIR] = HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
+    [_CALL_PY_SET_CONTAINS] = HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
+    [_LIST_ANY_ATTR_ITER_LOCAL] = HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
+    [_LIST_ANY_ATTR_LOCAL] = HAS_LOCAL_FLAG | HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
+    [_CALL_PY_LIST_ANY_ATTR] = HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
+    [_XOR_ATTR_LIST_PAIR_LOCAL] = HAS_ARG_FLAG | HAS_LOCAL_FLAG | HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
+    [_CALL_PY_XOR_ATTR_LIST_PAIR] = HAS_ARG_FLAG | HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG | HAS_SYNC_SP_FLAG,
     [_CALL_PY_LIST_REMOVE_0] = HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
     [_CALL_PY_LIST_REMOVE_1] = HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
     [_CALL_PY_LIST_REMOVE] = HAS_ARG_FLAG | HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
@@ -458,6 +471,7 @@ const uint32_t _PyUop_Flags[MAX_UOP_ID+1] = {
     [_GUARD_CALLABLE_BUILTIN_FAST] = HAS_ARG_FLAG | HAS_EXIT_FLAG,
     [_CALL_BUILTIN_FAST] = HAS_ARG_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG,
     [_GUARD_CALLABLE_BUILTIN_FAST_WITH_KEYWORDS] = HAS_ARG_FLAG | HAS_EXIT_FLAG,
+    [_CALL_SUM_LIST_INT_CONTAINS] = HAS_EXIT_FLAG | HAS_ESCAPES_FLAG,
     [_CALL_BUILTIN_FAST_WITH_KEYWORDS] = HAS_ARG_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG,
     [_GUARD_CALLABLE_LEN] = HAS_EXIT_FLAG,
     [_CALL_LEN] = HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG,
@@ -506,6 +520,7 @@ const uint32_t _PyUop_Flags[MAX_UOP_ID+1] = {
     [_COPY_3] = HAS_PURE_FLAG,
     [_COPY] = HAS_ARG_FLAG | HAS_PURE_FLAG,
     [_BINARY_OP] = HAS_ARG_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG,
+    [_BINARY_OP_PY_SUBTRACT_EXACT] = HAS_DEOPT_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG,
     [_SWAP_2] = HAS_PURE_FLAG,
     [_SWAP_3] = HAS_PURE_FLAG,
     [_SWAP] = HAS_ARG_FLAG | HAS_PURE_FLAG,
@@ -1781,6 +1796,15 @@ const _PyUopCachingInfo _PyUop_Caching[MAX_UOP_ID+1] = {
             { -1, -1, -1 },
             { -1, -1, -1 },
             { -1, -1, -1 },
+        },
+    },
+    [_CALL_PY_FLOAT_DOT] = {
+        .best = { 3, 3, 3, 3 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 1, 1, _CALL_PY_FLOAT_DOT_r31 },
         },
     },
     [_BINARY_OP_MULTIPLY_ADD_FLOAT_OWNED] = {
@@ -3313,6 +3337,15 @@ const _PyUopCachingInfo _PyUop_Caching[MAX_UOP_ID+1] = {
             { -1, -1, -1 },
         },
     },
+    [_LIST_EQUALITY_SCAN] = {
+        .best = { 3, 3, 3, 3 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 2, 3, _LIST_EQUALITY_SCAN_r32 },
+        },
+    },
     [_ITER_NEXT_ENUM_LIST] = {
         .best = { 2, 2, 2, 2 },
         .entries = {
@@ -4150,6 +4183,105 @@ const _PyUopCachingInfo _PyUop_Caching[MAX_UOP_ID+1] = {
             { -1, -1, -1 },
         },
     },
+    [_REFERENCE_ROOT_LOCAL] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 1, 0, _REFERENCE_ROOT_LOCAL_r01 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_CALL_PY_REFERENCE_ROOT_DEFAULT] = {
+        .best = { 2, 2, 2, 2 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 1, 2, _CALL_PY_REFERENCE_ROOT_DEFAULT_r21 },
+            { -1, -1, -1 },
+        },
+    },
+    [_CALL_PY_REFERENCE_ROOT] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 1, 0, _CALL_PY_REFERENCE_ROOT_r01 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_LIST_SET_PAIR_LOCAL] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 0, 0, _LIST_SET_PAIR_LOCAL_r00 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_CALL_PY_LIST_SET_PAIR] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 1, 0, _CALL_PY_LIST_SET_PAIR_r01 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_CALL_PY_SET_CONTAINS] = {
+        .best = { 2, 2, 2, 2 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 1, 2, _CALL_PY_SET_CONTAINS_r21 },
+            { -1, -1, -1 },
+        },
+    },
+    [_LIST_ANY_ATTR_ITER_LOCAL] = {
+        .best = { 2, 2, 2, 2 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 1, 2, _LIST_ANY_ATTR_ITER_LOCAL_r21 },
+            { -1, -1, -1 },
+        },
+    },
+    [_LIST_ANY_ATTR_LOCAL] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 1, 0, _LIST_ANY_ATTR_LOCAL_r01 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_CALL_PY_LIST_ANY_ATTR] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 1, 0, _CALL_PY_LIST_ANY_ATTR_r01 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_XOR_ATTR_LIST_PAIR_LOCAL] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 0, 0, _XOR_ATTR_LIST_PAIR_LOCAL_r00 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_CALL_PY_XOR_ATTR_LIST_PAIR] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 1, 1, _CALL_PY_XOR_ATTR_LIST_PAIR_r01 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
     [_CALL_PY_LIST_REMOVE_0] = {
         .best = { 0, 0, 0, 0 },
         .entries = {
@@ -4424,6 +4556,15 @@ const _PyUopCachingInfo _PyUop_Caching[MAX_UOP_ID+1] = {
         .best = { 0, 0, 0, 0 },
         .entries = {
             { 0, 0, _GUARD_CALLABLE_BUILTIN_FAST_WITH_KEYWORDS_r00 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_CALL_SUM_LIST_INT_CONTAINS] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 0, 0, _CALL_SUM_LIST_INT_CONTAINS_r00 },
             { -1, -1, -1 },
             { -1, -1, -1 },
             { -1, -1, -1 },
@@ -4858,6 +4999,15 @@ const _PyUopCachingInfo _PyUop_Caching[MAX_UOP_ID+1] = {
             { -1, -1, -1 },
             { -1, -1, -1 },
             { 3, 2, _BINARY_OP_r23 },
+            { -1, -1, -1 },
+        },
+    },
+    [_BINARY_OP_PY_SUBTRACT_EXACT] = {
+        .best = { 2, 2, 2, 2 },
+        .entries = {
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { 3, 2, _BINARY_OP_PY_SUBTRACT_EXACT_r23 },
             { -1, -1, -1 },
         },
     },
@@ -5849,6 +5999,7 @@ const uint16_t _PyUop_Uncached[MAX_UOP_REGS_ID+1] = {
     [_BINARY_OP_MULTIPLY_ADD_FLOAT_INPLACE_r31] = _BINARY_OP_MULTIPLY_ADD_FLOAT_INPLACE,
     [_BINARY_OP_MULTIPLY_SUBTRACT_FLOAT_INPLACE_r31] = _BINARY_OP_MULTIPLY_SUBTRACT_FLOAT_INPLACE,
     [_FLOAT_ATTRIBUTE_SUM_PRODUCTS_r01] = _FLOAT_ATTRIBUTE_SUM_PRODUCTS,
+    [_CALL_PY_FLOAT_DOT_r31] = _CALL_PY_FLOAT_DOT,
     [_BINARY_OP_MULTIPLY_ADD_FLOAT_OWNED_r33] = _BINARY_OP_MULTIPLY_ADD_FLOAT_OWNED,
     [_BINARY_OP_MULTIPLY_SUBTRACT_FLOAT_OWNED_r33] = _BINARY_OP_MULTIPLY_SUBTRACT_FLOAT_OWNED,
     [_BINARY_OP_MULTIPLY_ADD_FLOAT_SHARED_r31] = _BINARY_OP_MULTIPLY_ADD_FLOAT_SHARED,
@@ -6168,6 +6319,7 @@ const uint16_t _PyUop_Uncached[MAX_UOP_REGS_ID+1] = {
     [_ENUM_LIST_INT_SCAN_4_r22] = _ENUM_LIST_INT_SCAN_4,
     [_ENUM_LIST_INT_SCAN_5_r22] = _ENUM_LIST_INT_SCAN_5,
     [_ENUM_LIST_INT_SCAN_r22] = _ENUM_LIST_INT_SCAN,
+    [_LIST_EQUALITY_SCAN_r32] = _LIST_EQUALITY_SCAN,
     [_ITER_NEXT_ENUM_LIST_r23] = _ITER_NEXT_ENUM_LIST,
     [_ITER_NEXT_ZIP_LIST_PAIR_r23] = _ITER_NEXT_ZIP_LIST_PAIR,
     [_GUARD_NOS_ITER_VIRTUAL_r02] = _GUARD_NOS_ITER_VIRTUAL,
@@ -6326,6 +6478,17 @@ const uint16_t _PyUop_Uncached[MAX_UOP_REGS_ID+1] = {
     [_CALL_PY_ATTRIBUTE_SEARCH_10_r01] = _CALL_PY_ATTRIBUTE_SEARCH_10,
     [_CALL_PY_ATTRIBUTE_SEARCH_11_r01] = _CALL_PY_ATTRIBUTE_SEARCH_11,
     [_CALL_PY_ATTRIBUTE_SEARCH_r01] = _CALL_PY_ATTRIBUTE_SEARCH,
+    [_REFERENCE_ROOT_LOCAL_r01] = _REFERENCE_ROOT_LOCAL,
+    [_CALL_PY_REFERENCE_ROOT_DEFAULT_r21] = _CALL_PY_REFERENCE_ROOT_DEFAULT,
+    [_CALL_PY_REFERENCE_ROOT_r01] = _CALL_PY_REFERENCE_ROOT,
+    [_LIST_SET_PAIR_LOCAL_r00] = _LIST_SET_PAIR_LOCAL,
+    [_CALL_PY_LIST_SET_PAIR_r01] = _CALL_PY_LIST_SET_PAIR,
+    [_CALL_PY_SET_CONTAINS_r21] = _CALL_PY_SET_CONTAINS,
+    [_LIST_ANY_ATTR_ITER_LOCAL_r21] = _LIST_ANY_ATTR_ITER_LOCAL,
+    [_LIST_ANY_ATTR_LOCAL_r01] = _LIST_ANY_ATTR_LOCAL,
+    [_CALL_PY_LIST_ANY_ATTR_r01] = _CALL_PY_LIST_ANY_ATTR,
+    [_XOR_ATTR_LIST_PAIR_LOCAL_r00] = _XOR_ATTR_LIST_PAIR_LOCAL,
+    [_CALL_PY_XOR_ATTR_LIST_PAIR_r01] = _CALL_PY_XOR_ATTR_LIST_PAIR,
     [_CALL_PY_LIST_REMOVE_0_r01] = _CALL_PY_LIST_REMOVE_0,
     [_CALL_PY_LIST_REMOVE_1_r01] = _CALL_PY_LIST_REMOVE_1,
     [_CALL_PY_LIST_REMOVE_r01] = _CALL_PY_LIST_REMOVE,
@@ -6375,6 +6538,7 @@ const uint16_t _PyUop_Uncached[MAX_UOP_REGS_ID+1] = {
     [_GUARD_CALLABLE_BUILTIN_FAST_r00] = _GUARD_CALLABLE_BUILTIN_FAST,
     [_CALL_BUILTIN_FAST_r00] = _CALL_BUILTIN_FAST,
     [_GUARD_CALLABLE_BUILTIN_FAST_WITH_KEYWORDS_r00] = _GUARD_CALLABLE_BUILTIN_FAST_WITH_KEYWORDS,
+    [_CALL_SUM_LIST_INT_CONTAINS_r00] = _CALL_SUM_LIST_INT_CONTAINS,
     [_CALL_BUILTIN_FAST_WITH_KEYWORDS_r00] = _CALL_BUILTIN_FAST_WITH_KEYWORDS,
     [_GUARD_CALLABLE_LEN_r03] = _GUARD_CALLABLE_LEN,
     [_GUARD_CALLABLE_LEN_r13] = _GUARD_CALLABLE_LEN,
@@ -6454,6 +6618,7 @@ const uint16_t _PyUop_Uncached[MAX_UOP_REGS_ID+1] = {
     [_COPY_3_r33] = _COPY_3,
     [_COPY_r01] = _COPY,
     [_BINARY_OP_r23] = _BINARY_OP,
+    [_BINARY_OP_PY_SUBTRACT_EXACT_r23] = _BINARY_OP_PY_SUBTRACT_EXACT,
     [_SWAP_2_r02] = _SWAP_2,
     [_SWAP_2_r12] = _SWAP_2,
     [_SWAP_2_r22] = _SWAP_2,
@@ -6795,6 +6960,8 @@ const char *const _PyOpcode_uop_name[MAX_UOP_REGS_ID+1] = {
     [_BINARY_OP_MULTIPLY_SUBTRACT_FLOAT_OWNED_r33] = "_BINARY_OP_MULTIPLY_SUBTRACT_FLOAT_OWNED_r33",
     [_BINARY_OP_MULTIPLY_SUBTRACT_FLOAT_SHARED] = "_BINARY_OP_MULTIPLY_SUBTRACT_FLOAT_SHARED",
     [_BINARY_OP_MULTIPLY_SUBTRACT_FLOAT_SHARED_r31] = "_BINARY_OP_MULTIPLY_SUBTRACT_FLOAT_SHARED_r31",
+    [_BINARY_OP_PY_SUBTRACT_EXACT] = "_BINARY_OP_PY_SUBTRACT_EXACT",
+    [_BINARY_OP_PY_SUBTRACT_EXACT_r23] = "_BINARY_OP_PY_SUBTRACT_EXACT_r23",
     [_BINARY_OP_SUBSCR_CHECK_FUNC] = "_BINARY_OP_SUBSCR_CHECK_FUNC",
     [_BINARY_OP_SUBSCR_CHECK_FUNC_r23] = "_BINARY_OP_SUBSCR_CHECK_FUNC_r23",
     [_BINARY_OP_SUBSCR_DICT] = "_BINARY_OP_SUBSCR_DICT",
@@ -6979,6 +7146,8 @@ const char *const _PyOpcode_uop_name[MAX_UOP_REGS_ID+1] = {
     [_CALL_PY_ATTRIBUTE_SEARCH_8_r01] = "_CALL_PY_ATTRIBUTE_SEARCH_8_r01",
     [_CALL_PY_ATTRIBUTE_SEARCH_9] = "_CALL_PY_ATTRIBUTE_SEARCH_9",
     [_CALL_PY_ATTRIBUTE_SEARCH_9_r01] = "_CALL_PY_ATTRIBUTE_SEARCH_9_r01",
+    [_CALL_PY_FLOAT_DOT] = "_CALL_PY_FLOAT_DOT",
+    [_CALL_PY_FLOAT_DOT_r31] = "_CALL_PY_FLOAT_DOT_r31",
     [_CALL_PY_LIST] = "_CALL_PY_LIST",
     [_CALL_PY_LIST_r01] = "_CALL_PY_LIST_r01",
     [_CALL_PY_LIST_0] = "_CALL_PY_LIST_0",
@@ -7001,12 +7170,22 @@ const char *const _PyOpcode_uop_name[MAX_UOP_REGS_ID+1] = {
     [_CALL_PY_LIST_8_r01] = "_CALL_PY_LIST_8_r01",
     [_CALL_PY_LIST_9] = "_CALL_PY_LIST_9",
     [_CALL_PY_LIST_9_r01] = "_CALL_PY_LIST_9_r01",
+    [_CALL_PY_LIST_ANY_ATTR] = "_CALL_PY_LIST_ANY_ATTR",
+    [_CALL_PY_LIST_ANY_ATTR_r01] = "_CALL_PY_LIST_ANY_ATTR_r01",
     [_CALL_PY_LIST_REMOVE] = "_CALL_PY_LIST_REMOVE",
     [_CALL_PY_LIST_REMOVE_r01] = "_CALL_PY_LIST_REMOVE_r01",
     [_CALL_PY_LIST_REMOVE_0] = "_CALL_PY_LIST_REMOVE_0",
     [_CALL_PY_LIST_REMOVE_0_r01] = "_CALL_PY_LIST_REMOVE_0_r01",
     [_CALL_PY_LIST_REMOVE_1] = "_CALL_PY_LIST_REMOVE_1",
     [_CALL_PY_LIST_REMOVE_1_r01] = "_CALL_PY_LIST_REMOVE_1_r01",
+    [_CALL_PY_LIST_SET_PAIR] = "_CALL_PY_LIST_SET_PAIR",
+    [_CALL_PY_LIST_SET_PAIR_r01] = "_CALL_PY_LIST_SET_PAIR_r01",
+    [_CALL_PY_REFERENCE_ROOT] = "_CALL_PY_REFERENCE_ROOT",
+    [_CALL_PY_REFERENCE_ROOT_r01] = "_CALL_PY_REFERENCE_ROOT_r01",
+    [_CALL_PY_REFERENCE_ROOT_DEFAULT] = "_CALL_PY_REFERENCE_ROOT_DEFAULT",
+    [_CALL_PY_REFERENCE_ROOT_DEFAULT_r21] = "_CALL_PY_REFERENCE_ROOT_DEFAULT_r21",
+    [_CALL_PY_SET_CONTAINS] = "_CALL_PY_SET_CONTAINS",
+    [_CALL_PY_SET_CONTAINS_r21] = "_CALL_PY_SET_CONTAINS_r21",
     [_CALL_PY_TRIVIAL] = "_CALL_PY_TRIVIAL",
     [_CALL_PY_TRIVIAL_r01] = "_CALL_PY_TRIVIAL_r01",
     [_CALL_PY_TRIVIAL_0] = "_CALL_PY_TRIVIAL_0",
@@ -7019,12 +7198,16 @@ const char *const _PyOpcode_uop_name[MAX_UOP_REGS_ID+1] = {
     [_CALL_PY_TRIVIAL_3_r01] = "_CALL_PY_TRIVIAL_3_r01",
     [_CALL_PY_TRIVIAL_4] = "_CALL_PY_TRIVIAL_4",
     [_CALL_PY_TRIVIAL_4_r01] = "_CALL_PY_TRIVIAL_4_r01",
+    [_CALL_PY_XOR_ATTR_LIST_PAIR] = "_CALL_PY_XOR_ATTR_LIST_PAIR",
+    [_CALL_PY_XOR_ATTR_LIST_PAIR_r01] = "_CALL_PY_XOR_ATTR_LIST_PAIR_r01",
     [_CALL_RANGE_COMPACT] = "_CALL_RANGE_COMPACT",
     [_CALL_RANGE_COMPACT_r33] = "_CALL_RANGE_COMPACT_r33",
     [_CALL_STR_1] = "_CALL_STR_1",
     [_CALL_STR_1_r32] = "_CALL_STR_1_r32",
     [_CALL_STR_TAILMATCH] = "_CALL_STR_TAILMATCH",
     [_CALL_STR_TAILMATCH_r33] = "_CALL_STR_TAILMATCH_r33",
+    [_CALL_SUM_LIST_INT_CONTAINS] = "_CALL_SUM_LIST_INT_CONTAINS",
+    [_CALL_SUM_LIST_INT_CONTAINS_r00] = "_CALL_SUM_LIST_INT_CONTAINS_r00",
     [_CALL_TUPLE_1] = "_CALL_TUPLE_1",
     [_CALL_TUPLE_1_r32] = "_CALL_TUPLE_1_r32",
     [_CALL_TYPE_1] = "_CALL_TYPE_1",
@@ -7882,14 +8065,22 @@ const char *const _PyOpcode_uop_name[MAX_UOP_REGS_ID+1] = {
     [_JUMP_TO_TOP_r00] = "_JUMP_TO_TOP_r00",
     [_LEN_SUBSCR_LIST] = "_LEN_SUBSCR_LIST",
     [_LEN_SUBSCR_LIST_r31] = "_LEN_SUBSCR_LIST_r31",
+    [_LIST_ANY_ATTR_ITER_LOCAL] = "_LIST_ANY_ATTR_ITER_LOCAL",
+    [_LIST_ANY_ATTR_ITER_LOCAL_r21] = "_LIST_ANY_ATTR_ITER_LOCAL_r21",
+    [_LIST_ANY_ATTR_LOCAL] = "_LIST_ANY_ATTR_LOCAL",
+    [_LIST_ANY_ATTR_LOCAL_r01] = "_LIST_ANY_ATTR_LOCAL_r01",
     [_LIST_APPEND] = "_LIST_APPEND",
     [_LIST_APPEND_r10] = "_LIST_APPEND_r10",
+    [_LIST_EQUALITY_SCAN] = "_LIST_EQUALITY_SCAN",
+    [_LIST_EQUALITY_SCAN_r32] = "_LIST_EQUALITY_SCAN_r32",
     [_LIST_EXTEND] = "_LIST_EXTEND",
     [_LIST_EXTEND_r11] = "_LIST_EXTEND_r11",
     [_LIST_PAIR_APPEND_SCAN] = "_LIST_PAIR_APPEND_SCAN",
     [_LIST_PAIR_APPEND_SCAN_r22] = "_LIST_PAIR_APPEND_SCAN_r22",
     [_LIST_REMOVE_LOCAL] = "_LIST_REMOVE_LOCAL",
     [_LIST_REMOVE_LOCAL_r01] = "_LIST_REMOVE_LOCAL_r01",
+    [_LIST_SET_PAIR_LOCAL] = "_LIST_SET_PAIR_LOCAL",
+    [_LIST_SET_PAIR_LOCAL_r00] = "_LIST_SET_PAIR_LOCAL_r00",
     [_LOAD_ATTR] = "_LOAD_ATTR",
     [_LOAD_ATTR_r10] = "_LOAD_ATTR_r10",
     [_LOAD_ATTR_CLASS] = "_LOAD_ATTR_CLASS",
@@ -8258,6 +8449,8 @@ const char *const _PyOpcode_uop_name[MAX_UOP_REGS_ID+1] = {
     [_RECORD_NOS_TYPE] = "_RECORD_NOS_TYPE",
     [_RECORD_TOS] = "_RECORD_TOS",
     [_RECORD_TOS_TYPE] = "_RECORD_TOS_TYPE",
+    [_REFERENCE_ROOT_LOCAL] = "_REFERENCE_ROOT_LOCAL",
+    [_REFERENCE_ROOT_LOCAL_r01] = "_REFERENCE_ROOT_LOCAL_r01",
     [_REPLACE_WITH_TRUE] = "_REPLACE_WITH_TRUE",
     [_REPLACE_WITH_TRUE_r02] = "_REPLACE_WITH_TRUE_r02",
     [_REPLACE_WITH_TRUE_r12] = "_REPLACE_WITH_TRUE_r12",
@@ -8477,6 +8670,8 @@ const char *const _PyOpcode_uop_name[MAX_UOP_REGS_ID+1] = {
     [_UNPACK_SEQUENCE_UNIQUE_TWO_TUPLE_r23] = "_UNPACK_SEQUENCE_UNIQUE_TWO_TUPLE_r23",
     [_WITH_EXCEPT_START] = "_WITH_EXCEPT_START",
     [_WITH_EXCEPT_START_r33] = "_WITH_EXCEPT_START_r33",
+    [_XOR_ATTR_LIST_PAIR_LOCAL] = "_XOR_ATTR_LIST_PAIR_LOCAL",
+    [_XOR_ATTR_LIST_PAIR_LOCAL_r00] = "_XOR_ATTR_LIST_PAIR_LOCAL_r00",
     [_YIELD_VALUE] = "_YIELD_VALUE",
     [_YIELD_VALUE_r11] = "_YIELD_VALUE_r11",
 };
@@ -8741,6 +8936,8 @@ int _PyUop_num_popped(int opcode, int oparg)
             return 3;
         case _FLOAT_ATTRIBUTE_SUM_PRODUCTS:
             return 0;
+        case _CALL_PY_FLOAT_DOT:
+            return 3;
         case _BINARY_OP_MULTIPLY_ADD_FLOAT_OWNED:
             return 3;
         case _BINARY_OP_MULTIPLY_SUBTRACT_FLOAT_OWNED:
@@ -9081,6 +9278,8 @@ int _PyUop_num_popped(int opcode, int oparg)
             return 0;
         case _ENUM_LIST_INT_SCAN:
             return 0;
+        case _LIST_EQUALITY_SCAN:
+            return 1;
         case _ITER_NEXT_ENUM_LIST:
             return 0;
         case _ITER_NEXT_ZIP_LIST_PAIR:
@@ -9267,6 +9466,28 @@ int _PyUop_num_popped(int opcode, int oparg)
             return 2 + (1 + oparg / 6);
         case _CALL_PY_ATTRIBUTE_SEARCH:
             return 2 + (1 + oparg / 6);
+        case _REFERENCE_ROOT_LOCAL:
+            return 0;
+        case _CALL_PY_REFERENCE_ROOT_DEFAULT:
+            return 2;
+        case _CALL_PY_REFERENCE_ROOT:
+            return 3;
+        case _LIST_SET_PAIR_LOCAL:
+            return 0;
+        case _CALL_PY_LIST_SET_PAIR:
+            return 4;
+        case _CALL_PY_SET_CONTAINS:
+            return 2;
+        case _LIST_ANY_ATTR_ITER_LOCAL:
+            return 2;
+        case _LIST_ANY_ATTR_LOCAL:
+            return 0;
+        case _CALL_PY_LIST_ANY_ATTR:
+            return 3;
+        case _XOR_ATTR_LIST_PAIR_LOCAL:
+            return 0;
+        case _CALL_PY_XOR_ATTR_LIST_PAIR:
+            return 4;
         case _CALL_PY_LIST_REMOVE_0:
             return 2 + (2 + oparg);
         case _CALL_PY_LIST_REMOVE_1:
@@ -9328,6 +9549,8 @@ int _PyUop_num_popped(int opcode, int oparg)
         case _CALL_BUILTIN_FAST:
             return 0;
         case _GUARD_CALLABLE_BUILTIN_FAST_WITH_KEYWORDS:
+            return 0;
+        case _CALL_SUM_LIST_INT_CONTAINS:
             return 0;
         case _CALL_BUILTIN_FAST_WITH_KEYWORDS:
             return 0;
@@ -9424,6 +9647,8 @@ int _PyUop_num_popped(int opcode, int oparg)
         case _COPY:
             return 0;
         case _BINARY_OP:
+            return 2;
+        case _BINARY_OP_PY_SUBTRACT_EXACT:
             return 2;
         case _SWAP_2:
             return 0;

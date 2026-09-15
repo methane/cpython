@@ -468,6 +468,40 @@ elements across both paths. `call_entries` counts only the call-site variant;
 `call_guard_exits` includes failures from either variant. These counters are
 per executor; probe the relevant roots and their outgoing executor links.
 
+Recursive reference-root methods have a separate complete-body specialization.
+The recognized shape reads a `reference`-like inline attribute, compares an
+exact compact-integer position on that object with the receiver's position,
+recurses while they differ, optionally replaces the reference during unwind,
+and returns the root. Attribute and method names are taken from the bytecode;
+the transformation does not depend on the source names. The body proof includes
+both branches, the recursive method call, the optional Boolean argument, the
+store, and the sole return.
+
+`_CALL_PY_REFERENCE_ROOT` handles an explicit exact `False` argument.
+`_CALL_PY_REFERENCE_ROOT_DEFAULT` also handles `CALL_PY_GENERAL` when the
+single omitted default is currently exact `False`; this matters because that
+call form would otherwise create the callee frame before the recursive part
+could be combined. Both call-site operations omit the complete callee and
+recursive frame chain, preserve reverse CALL-input cleanup and code lifetime,
+then leave the trace at the real caller's return offset. `_REFERENCE_ROOT_LOCAL`
+handles an executor attached at the callee's initial `RESUME`. It keeps the real
+frame and supports both Boolean values. Its true path records at most 64
+non-root nodes, validates the whole path first, and applies path compression in
+the same inner-to-outer order as recursive return.
+
+The optimizer obtains the recorded receiver type from the attribute trace. It
+validates the class descriptor and resolves the method's split-key slot once
+while compiling the executor, encoding that slot in the replacement operand.
+Runtime traversal consequently needs only the type-version guard and a null
+check in that instance slot to reject method shadowing; it performs no class or
+split-key lookup per link. Each traversal also checks valid inline values,
+exact compact-integer positions, the eval breaker/instrumentation version, the
+recursion budget, and a 64-link bound. Unsupported layouts, changed defaults or
+class methods, instance overrides, long chains, and noncompact values deopt
+before any write. `call_root_entries`/`call_root_iterations` and
+`local_root_entries`/`local_root_iterations` report successful coverage;
+ordinary call-region guard failures use `call_guard_exits`.
+
 
 `_CALL_PY_LIST` extends call frame elimination to a cached attribute's exact
 list item, optionally consumed by a builtin length comparison against a small
@@ -590,6 +624,67 @@ counts failed entry checks, and debug allocation injection accepts
 `PYTHON_TIER2_REGION_FAIL_ALLOC=float_attributes`. The 64-bit GIL and GCC/Clang
 restrictions apply to this new attribute region; it does not require call
 regions to be enabled.
+
+The builtin group also specializes
+`sum(1 if key in item else 0 for item in iterable)`. The complete generator
+body must match that expression. `CALL_SUM_LIST_INT_CONTAINS` accepts only a
+new, uniquely referenced exact generator with no exposed frame or weakrefs;
+an exact compact-integer key; exact outer and inner lists no longer than 64;
+and exact compact-integer elements. It checks pending work and every active
+monitoring event before reading the lists. A failed check leaves the generator
+and CALL operands unchanged. The operation is available in Tier 1 so short
+workloads need not wait for a Tier 2 trace; Tier 2 reuses the same operation.
+`sum_gen_entries`, `sum_gen_iterations`, and `sum_gen_guard_exits` record the
+direct calls, inspected elements, and fallback attempts.
+
+For `max(mapping, key=lambda key: mapping[key])`, the existing
+`_CALL_KW_NON_PY` Tier 2 operation may call `_Py_TryMaxDictIntKey`. The callable
+must be the cached exact builtin, the keyword must be `key`, and the exact
+Python key function must have the proved single-subscript body and capture the
+same mapping. The mapping may be a dict subtype only when its iteration and
+subscription slots are the ordinary dict slots. Every key must be an exact
+two-tuple of exact bytes and every value an exact compact integer. The scan
+checks pending work for every entry and uses strict `>` in insertion order, so
+ties retain the first key. PEP 523, recursion, caller/key-function monitoring,
+empty mappings, and unsupported entries use the unchanged vectorcall path
+before any CALL operand is consumed. `max_dict_entries`,
+`max_dict_iterations`, and `max_dict_guard_exits` report this path.
+
+The call group can replace a completed equality-style constraint iteration
+with `_LIST_EQUALITY_SCAN`, consuming up to 64 following elements from the same
+list iterator. The matched body must call uniquely named `execute`, `input`,
+and `output` Python methods and implement
+`self.output().value = self.input().value` under the same compact-integer
+condition. The cache stores only type versions, attribute slots, and the
+condition. Runtime checks reject method shadowing, materialized constraint
+dicts, changed layouts, and noncompact values. Successful prefix assignments
+commit in iteration order; the first unsupported item and final list item stay
+for the ordinary loop. `equality_scan_entries`, `equality_scan_iterations`,
+and `equality_scan_misses` distinguish useful scans from empty attempts.
+
+When both call and float-fusion groups are enabled,
+`_CALL_PY_FLOAT_DOT` can omit two Python frames for a proved body consisting of
+a trivial guard call followed by three products of corresponding managed
+inline float attributes and two left-associated additions. Existing optimizer
+dependencies protect method resolution and monitoring. Runtime checks cover
+pending work, recursion and stack capacity, type/layout versions, and all six
+exact floats. Explicit C evaluation boundaries preserve the five binary64
+rounding points. If final allocation fails, the operation reconstructs the
+outer frame at the original last-add offset before exception handling.
+`float_call_entries` and `float_call_guard_exits` report this path; debug
+allocation injection accepts `float_call`.
+
+With call regions enabled, `_BINARY_OP_PY_SUBTRACT_EXACT` handles subtraction
+between two objects of the same exact type when that type uses CPython's
+generic binary slot and owns an exact, valid two-positional-argument Python
+`__sub__`. Inherited methods, static methods, mixed types, C slots, and other
+signatures keep generic dispatch. Type and function-version guards run before
+the cached function is used. The operation pushes a real frame, installs the
+two locals directly, and enters the ordinary evaluator, preserving monitoring,
+PEP 523, recursion, tracebacks, and frame cleanup while avoiding generic
+argument binding. A same-type `NotImplemented` result becomes the ordinary
+unsupported-operands `TypeError`. `binary_call_entries` and
+`binary_call_guard_exits` report this path.
 
 `executor.get_region_stats()` reports entries, guard/overflow exits, integer
 boxing operations, and allocation errors. Counters are per executor; an entry

@@ -1302,10 +1302,11 @@ build-jit/python -m test test_capi.test_opt_regions test_capi.test_opt test_tier
   再実行はしていない。次に公開や既定値変更を検討する際のレビュー課題を文書末尾へ記載。
   GitHub投稿・push・PR変更は行っていない。
 
-## 17. 継続目標：6本のmain比の算術平均を0.5以下へ（2026-09-14）
+## 17. 継続目標：6本のmain比を改善（主指標は幾何平均、2026-09-14）
 
-- 新しいgoalと「JITの高速化を続けて」という指示に従い、前回の幾何平均の達成を新指標の
-  達成とは扱わない。前turnは英文ドキュメントの完成と数値監査で進捗あり。新工程は
+- この工程は当初、算術平均0.5以下を主指標として開始した。その後ユーザーが主指標を幾何平均へ更新したため、
+  以下の算術平均は当時の診断値として保持し、最終採否とgoal判定には6本同重みの幾何平均を使う。
+  前turnは英文ドキュメントの完成と数値監査で進捗あり。新工程は
   `36846454143`（ユーザーのreport commit）から開始し、残る`regions.md`のリンク差分を保持。
 - 最終480値を再計算すると、script別の算術平均比はBPE0.9098765、B-tree0.9303600、
   DeltaBlue1.0002993、Hexiom0.9610843、Raytrace0.9469058、Spectral0.0184252。
@@ -2739,3 +2740,1358 @@ build-jit/python -m test test_capi.test_opt_regions test_capi.test_opt test_tier
   refcountのどれが残り時間を占めるかを決める。次の変更はprofileで支配的な一経路に限定し、
   機能test、native counter/code、対応するbefore/after測定の順に採否を判断する。
   目標算術平均0.5は未達のためgoalを継続する。
+
+
+### BPEのzip/Counter連続更新
+
+- 修復後nativeでBPEをCPU 2へ固定して再probeした。主要executorは
+  `_ITER_NEXT_ZIP_LIST_PAIR`を20,062,134回通る一方、13,102,243回は共有された
+  zip結果タプルのため通常経路へ戻り、`_DICT_PAIR_INCREMENT`は13,553,249回成功、
+  6,508,885回guard退出した。`perf`のJIT有効プロファイルでもtupleの確保・解放、
+  object allocator、GC、dict lookup、`_PyZip_NextListPair`が上位を占めた。
+  最初に指定した`PYTHON_PERF_JIT_SUPPORT=1`はこのforkではJITを無効化したため、その
+  profileは削除し、JIT available/enabledを確認した通常の`perf record`だけを根拠にした。
+- 単純にループ変数が持つzip結果タプルの参照を外して再利用する案は不採用。
+  `id(pair)`とperiodic checkからフレームを調べるsignal handlerに同一性の違いが見える。
+  採用候補は、exact zipの異なる二つのexact list iterator、exact bytes要素、callback-freeな
+  既存dict key、small-int範囲のCounter値という条件で、更新を偶数個ずつ先行処理する
+  bounded scan。次の一反復は元のzip/store/dict uopへ必ず残す。これによりscan全体は
+  奇数反復となり、zipのcached tupleとループlocalの同一性の交替を境界で維持し、枯渇、
+  missing key、衝突、監視dict、subclass callbackは未消費のまま元処理へ渡す。
+- workloadを変更せずCounterの各outer iteration後に値分布だけを集計した診断では、
+  既存key更新3,712,720回のうち3,703,435回（99.75%）が更新後256以下だった。このtreeの
+  small-int cacheは実際には0〜1024であり、この数値は保守的な下限だった。したがって
+  初版は値boxを新規確保しないsmall-int cache内だけをscanし、allocation failure後の
+  部分進行を扱う複雑さを入れない。最大62反復を先行し、既存の最大64反復scanと同程度に
+  periodic checkの遅延を制限する。
+- 同じ診断を実上限1024で再集計すると3,712,720/3,712,720回が範囲内だった。これは
+  workloadの値分布であり一般入力の保証ではないため、helperは上限外で必ず元処理へ戻る。
+- 次は二つのbytes pairをcallbackなしで検索・更新するdict helper、zip iteratorを進める
+  helper、厳密なtrace matcherと専用counterを実装する。同一keyを二回更新する場合も
+  最終値を正しく合成する。形成拒否、missing/collision、値境界、保持tupleのidentity、
+  unequal/strict exhaustion、monitoring、実行counterをdebugで検証し、native再生成後に
+  BPE単独の対応比較を先に行う。改善しなければ全6本screenへ進めず撤回する。
+
+- prototypeを実装した。二つのpairを同じdict stateで検索し、同一keyならaddendを二回分
+  合成する。異なるkeyも含め、最終値が0〜1024のsmall-int singletonならcallback・確保なしで
+  置換する。zip helperは短い側に最低1 pairを残し、最大62 pairを偶数単位で進める。
+  trace matcherはzip next直後の同じ`pair` local、closure cellのCounter、二つのCOPY、既存の
+  `_DICT_PAIR_INCREMENT`、直後のloop backを全て要求する。bodyに`id(pair)`を記録する処理を
+  足した形は形成されない。
+- debug Tier-2の形成probeでは新uop、元zip next、元dict incrementが同じexecutorに入り、
+  96要素の反復を正しいCounter値と最終localで実行した。固定seedで長さ0〜129、addend
+  0/1/2/17、複数bytes pairを参照計算と比較した追加診断も成功した。正式に追加した7 testsは
+  値/長さ境界、addendとsmall-int上限、missing・衝突・bytes subclass、strict unequal、
+  pinned cached tupleの内容/hash/identity、Counter subclassのsetter、monitoring、matcher拒否を
+  検証して全件成功した。
+- debugでは領域test 207件（skip 10）、Tier 3/C API統合335件（skip 4）が成功した。
+  LLVM 21で再生成したnativeでも新規7件と同じ統合335件が成功し、JIT available/enabledと
+  `bpe_train` executor内の新uopを確認した。初版native SHA-256は`91fdf8dc1b4c...`、短い
+  suffixをdict/cell検査前に除く版は`037c5985bbc0...`で、PGO/LTOは使用していない。
+- resident probeでは1 sampleあたりscan 302,290回、795,262 pairを先行処理したが、空振りは
+  4,430,511回だった。同じ入力を逐次再現すると、空振り3,449,524回中2,839,903回は残りが
+  2 pair以下、490,337回は第一key missing、149,668回は第二key missingだった。値のcache
+  上限による失敗はなく、短いsuffixを先に除く版も3-sample平均2.4699秒で初版2.4688秒と
+  同等だった。診断は`zip-dict-scan{-short-reject}-bpe-native.*`へ保存した。
+- 固定CPU 2、各process warmup 3・10 values、開始順を回転したBPE 3-block比較では、直前候補
+  に対する比が1.003812、1.005625、1.003865、幾何平均1.004434となり、3 blockすべてで
+  回帰した。main比は0.815667、0.818993、0.804307、幾何平均0.812965。全checksum一致、除外0で、
+  `zip-dict-scan-bpe-{rows,summary}.json`に保存した。79.5万pair分のtuple/更新処理を省いても、
+  仮想pairの重複lookupと短いpieceでのhelper呼び出しが上回るため、このprototypeとtests、
+  counters、生成uopは撤回した。測定用binaryだけを
+  `build-jit/python-zip-dict-scan-short-reject`に保存した。
+- 次は採用済みsourceからnativeを戻し、BPE専用scanではなく全体比の大きいDeltaBlue、Hexiom、
+  raytraceを最新候補で再profileする。executor coverageとself timeを照合し、複数workloadで
+  再利用できる既存uop/call/attribute経路の一つを選ぶ。目標算術平均0.5は未達なので継続する。
+
+
+### generator式を受けるsumのnative集約
+
+- zip/Counter試作を撤回した採用sourceから、PGO/LTOなしのnative JITを再生成・再構築した。
+  binary SHA-256は`a176f2fd72a356a71820afc59a63efb35b2915083bfe873da404b66d284852b1`、
+  `PYTHON_JIT=1`でavailable/enabledともtrue、diff checkも成功した。source差分はこの
+  `plan.md`だけで、却下したuop/tests/counters/生成物が残っていないことを確認した。
+- 固定CPU 2、全採用flag、到達可能side traceを含むresident probeをDeltaBlue、Hexiom、
+  raytraceへ実行した。1 workload当たりの主な成功counterは、DeltaBlueが条件付き短縮call
+  20,014回、Hexiomがlist contains 33,588回・短縮call 14,336回・`len(subscript)` 17,577回、
+  raytraceが短縮call 811,897回・float属性融合356,133回・class初期化278,913回だった。
+  binary hash、環境、全executor/uop列、native bytes、sample窓を
+  `latest-adopted-{deltablue,hexiom,raytrace}.json`へ保存した。
+- 同じbinaryとflagで通常のJIT有効CLIを十分に反復し、`cycles:u`をprofileした。self timeの
+  `_PyEval_EvalFrameDefault`はDeltaBlue 10.88%、Hexiom 15.39%、Raytrace 4.14%。DeltaBlueは
+  list iterator 3.59%、method lookupとbound-method生成も残り、Raytraceはframe cleanup、
+  float/object allocationと特殊メソッド呼び出しが残った。Hexiomではevaluatorの12.42%分が
+  `builtin_sum -> PyIter_Next -> gen_iternext`配下で、さらに`gen_iternext`自体2.98%、
+  `builtin_sum`0.77%だった。生data/reportは`latest-adopted-*-perf.{data,txt}`へ保存した。
+- Hexiomを100回warmupすると78 executorsが形成され、offset 772/934のcaller traceに
+  `_MAKE_FUNCTION`、`_RETURN_GENERATOR`、`_CALL_BUILTIN_FAST_WITH_KEYWORDS`が同居した。
+  genexpr側にもoffset 54/60のnative executorがあるが、yieldごとにbuiltinからevaluatorへ
+  往復するため、bodyのcontains融合だけでは上記コストを消せない。論理call countでも
+  genexprは29,920回/workloadで、profileと一致する。
+- 次は、`sum(1 if key in item else 0 for item in exact_list)`という完全なgenerator code形と、
+  直前にその場で生成され外へ公開されていないことをoptimizerで同時に確認し、汎用builtin
+  callを専用uopへ置換する。実行時はexact generator/code/frame、唯一参照、未開始状態、
+  exact outer/inner lists、compact exact ints、最大64要素をすべて読むだけで検証する。
+  失敗時はgeneratorのframe/index/refcountを変えず元CALLへdeoptする。成功時だけcallbackなしで
+  membership数をsmall-intとして返す。形成拒否、共有/開始済みgenerator、list/int subclass、
+  pending work、空/重複/negative値、monitoringとcounterをdebugで検証してからnative再生成し、
+  Hexiomの対応比較で採否を決める。
+
+- 初版の専用uopはdebug Tier-2で最初の実行時にsegfaultした。原因はデータ参照ではなく、
+  `#ifdef Py_GIL_DISABLED`内の`DEOPT_IF(true)`をcase generatorが無条件終了と判定し、通常GIL
+  buildにもcase末尾のstack-cache反映・`break`を生成しなかったことだった。`valid=false`を
+  GIL無効側で設定し、共通の`DEOPT_IF(!valid)`へ流す形に変更した。生成Cにcase末尾が戻り、
+  hot probeのクラッシュは解消した。結果のsmall intはnew referenceなのでstack refへstealし、
+  誤ったtrace照合でもtagged int引数をobjectとして参照しないguardも追加した。
+- optimizerはgenerator bodyの全命令、sumのcached callable、その場のMAKE/RETURN/CALLを照合し、
+  runtimeは未開始・唯一参照・frame未公開のexact generator、code/instrumentation、exact list二層、
+  compact exact int、各長さ64以下を検証する。成功probeは100集約、400比較、guard退出0を記録した。
+  exact値/負値/compact境界/空・重複、参照数、list subclass callback、bool/巨大int/tuple/長さ上限の
+  fallback、類似するbool generatorの形成拒否を3 testsへ追加した。新規3件とregion全203件は
+  debug Tier-2で成功した。
+- 次は採用済みnative binaryをbeforeとして固定保存し、LLVM 21/no-vectorization、PGO/LTOなしで
+  stencilとnative executableを再生成する。JIT code内の専用uopとHexiomの成功counterを確認後、
+  固定CPU 2・同じ入力・warmup/sample数・開始順回転の3-block対応比較を行う。改善しなければ
+  全6本screenへ進めず、このprototype、tests、counter、生成物を撤回する。
+
+- 初版nativeはLLVM 21、`-fno-vectorize -fno-slp-vectorize`、PGO/LTOなしで再生成し、
+  専用uopを12/8 KiBのHexiom side trace内に確認した。resident policyで20 warmups後に測る
+  steady-state比較はbefore比0.811551/0.830154/0.779148、3-block幾何平均
+  **0.806674**で、generator往復を除く集約自体には約19.3%の効果があった。一方、既定policy、
+  3 warmups・10 valuesの正式比較は1.001265/1.004276/0.999890、幾何平均
+  **1.001809**で効果がなかった。全checksum一致、除外0で、両結果をartifactへ保存した。
+- 既定policyを呼び出し単位で追跡すると、専用Tier-2 traceはworkload実行14回目に初めて形成され、
+  実行1〜13回目は専用uop/counterとも0だった。正式測定は3 warmupsと10 valuesの計13回で
+  終わるため、効果がない原因はnative集約の速度ではなく形成時期だった。この形のまま全6本へ
+  進める判断を撤回し、同じ厳密なgenerator code/runtime条件をCALLのTier-1 specializationへ
+  移した。
+- `CALL_SUM_LIST_INT_CONTAINS`をCALL familyへ追加し、最初のadaptive specialization時に
+  cached builtin `sum`、引数1個、その場のexact/unique/unstarted generator、code versionと
+  generator body形を確認してcode versionをinline cacheへ保存する。実行時はbuiltin/self/code、
+  instrumentation/pending work、frame、outer/inner list、compact exact int、各長さ64以下を再検証し、
+  失敗時は未消費のgeneratorと元のstackを保って通常CALLへ戻す。成功時は同じopcodeがTier-1で
+  直接集約し、後にTier-2へ変換された場合も同じuopを再利用する。opt-in flag無効、free-threaded、
+  DTrace/Emscripten条件では通常経路を維持する。
+- 生成物を更新したdebug buildはコンパイル成功。新opcodeはflag有効時の2回目の呼び出しで成立し、
+  Tier-2閾値より前に実行された。exact/fallback/shape拒否に加え、adaptive disassemblyでの形成と
+  flag無効時の非形成を検査する4 testsはすべて成功した。初回コンパイルで不足していた
+  `FRAME_CREATED`の定義headerと、test中の旧uop名2か所も修正した。
+- 次はregion全件とTier-3/C API統合をdebugで実行する。成功後にLLVM 21でstencilとnativeを
+  強制再生成し、同じ統合test、JIT availability、adaptive opcodeとnative uopを確認する。
+  その後、保存済みbefore binary `python-sum-gen-before`とのHexiom 3-block対応比較を既定policyの
+  まま再実行する。全blockで意味のある改善が再現した場合だけ全6本screenへ進め、改善しなければ
+  Tier-1を含む試作全体を撤回する。
+
+- debugでは関連testを別々の一時directoryで順次実行し、Tier3 14件、C API opt 321件、region
+  204件の計539件が成功した（skip 3）。3 test filesを同一workerで連続実行した診断だけは、
+  warmup回数ちょうどでexecutor形成を要求する既存testが毎回異なる1件で形成されない順序依存を
+  示したが、各fileと失敗testの単独再実行は成功した。専用4 tests、生成物再生成のbyte同一性、
+  `git diff --check`も成功した。
+- LLVM 21/no-vectorizationでstencilを強制再生成し、PGO/LTOなしのnative executableを構築した。
+  SHA-256は`98e973075d7a8245c2bbf53b1f4ede778f04d716ed957b9ed807ff79c39bf12b`。
+  JIT available/enabled、flag無効時の通常CALL、flag有効時の2回目でのTier-1 specializationを
+  それぞれ確認した。nativeでもTier3 14件、C API opt 321件、region 204件が成功した
+  （release固有skip計14）。専用region testは形成したnative executorのuopと成功counterも検査した。
+- 既定policy、固定CPU 2、3 warmups・10 values、開始順回転のHexiom対応比較はbefore比
+  **0.754466/0.749710/0.755896、幾何平均0.753353**で3 blockすべて短縮した。main比は
+  0.627293/0.628162/0.624514、幾何平均0.626654。全checksum一致、除外0で、binary/script hashと
+  全raw値を`sum-gen-tier1-hexiom-*`へ保存した。既定policyで約24.7%短縮したため、このTier-1候補を
+  撤回せず全6本screenへ進める。
+- 次は同じ三つの固定binary・全opt-in flag・固定CPU 2で、BPE/Btree/DeltaBlue/Hexiom/Raytrace/
+  spectral-normを各3 blocks測る。候補/beforeだけでなくmain比も保持し、全checksumとbinary hashを
+  検証する。Hexiom以外のopcode番号移動やCALL signature変更による回帰もここで判定し、目標の
+  6本main比算術平均を更新する。採用判断後はmonitoring/pending-workと特殊call形の追加test、
+  generated-file check、Ruff/format相当を仕上げる。
+
+- 全6本・各3 blocks（540値）は全checksum一致、除外0、終了時binary/script hash再検証成功。
+  候補/main算術平均は**0.6213384**で、block別0.621356/0.620076/0.622584と安定した。個別は
+  BPE 0.812731、Btree 0.558171、DeltaBlue 0.891080、Hexiom 0.629840、Raytrace 0.817282、
+  spectral-norm 0.018925。直前before/mainは0.6572716、候補/beforeは**0.9590923**だった。
+  raw値、process時間、環境、hashを`sum-gen-tier1-full-*`へ保存した。
+- 候補/beforeではHexiomが0.763138/0.755717/0.754421（平均0.757758）と全block短縮し、
+  Raytraceも0.990964/0.953603/0.987319（平均0.977295）。BPE 1.002164、DeltaBlue 0.995298は
+  方向混在、Btree 1.013977は第1 blockだけ遅く後半は同等、絶対時間約0.6 msのspectralは
+  1.008062で方向混在だった。目的workloadの大幅改善、全体平均の改善、他5本に一貫した大回帰が
+  ないため、Tier-1 sum集約を現時点の採用候補とする。
+- 次は現候補binaryを固定保存し、DeltaBlue/Raytrace/BPEの最新profileと到達可能side traceを
+  取り直す。既存counterで成功/guard退出比を確認し、evaluator内のCALL、iterator、allocation、
+  lookupのself timeと照合する。次のprototypeは複数workloadへ波及する一経路、または最も比率の
+  高いDeltaBlueの一つの支配経路に限定する。専用sumの追加monitoring/pending-work/call-shape testと
+  lintは次のsource変更前にも実施可能なため並行して仕上げる。目標算術平均0.5は未達で継続する。
+
+- 追加した監視回帰testにより、generator codeのinstrumentation versionが最新でもlocal
+  instruction monitoringが有効な状態ではTier-1専用opcodeがgenerator本体を省略し、callbackが
+  発火しない不具合を検出した。version比較は更新待ちの有無だけを示し、active monitorが空である
+  ことを保証しない。実行時にgenerator codeの`active_monitors`を全イベント分検査し、monitoring
+  data未割当時はinterpreterのglobal monitorsを検査して、一つでも有効なら通常CALLへ戻すよう
+  修正した。testはlocalとglobalのinstruction callbackが入力を途中変更する場合の結果、イベント
+  発火、専用counter不変に加え、builtin `sum`差し替え後の通常callを検証する。
+- 次は生成物を更新してこのtestをdebug/native両方で先に通す。その後、関連3 test filesを順次
+  再実行し、LLVM stencilと実行ファイルを作り直す。監視ガードによる通常時の性能影響をHexiomの
+  対応比較で確認してから、最新profileに基づく次の支配経路へ進む。
+
+- 固定bootstrap `build-tier2-debug/python`で全case生成物を更新し、debug Tier-2を再構築した。
+  local/global monitoringとbuiltin差し替えを含む追加testは成功した。関連fileを共有workerの
+  順序依存から分離して実行し、region 205件、Tier3 14件、C API opt 321件の計540件が成功した
+  （skip 3）。監視中はcallbackが発火して途中変更後の結果2を返し、専用成功counterは増えない。
+- 次は同じbootstrapで再生成してbyte同一性を確認する。続いてLLVM 21/no-vectorizationでnative
+  stencilを強制更新し、PGO/LTOなしでnative実行ファイルを再リンクする。nativeでも追加testと
+  540件を再検証し、通常時の専用counterおよびJIT codeを確認する。
+
+- 2回目の全case再生成は対象12生成物のSHA-256がすべて一致した。LLVM 21.1.8、
+  `-fno-vectorize -fno-slp-vectorize`でstencilを強制再生成し、PGO/LTOなしのnative buildを
+  更新した。JIT available/enabledはともにtrue。nativeでも追加監視test、region 205件、Tier3
+  14件、C API opt 321件の計540件が成功した（release固有skip計14）。修正後binaryのSHA-256は
+  `fee258fedf9c8926fc9a7d6c64d14d18d05630de4c07fc45bc7e39cd97953532`。
+- 監視ガード直前binaryとのHexiom既定policy比較は、固定CPU 2、3 warmups・10 values、開始順
+  回転の3 blocksで0.999994/0.999913/0.994255、幾何平均**0.998050**だった。全checksum一致、
+  除外0、開始/終了hash一致で、`sum-monitor-guard-*`へ保存した。通常実行の有意な回帰はなく、
+  修正後binaryを`python-sum-gen-tier1`として固定し、旧版を
+  `python-sum-gen-tier1-before-monitor-guard`へ保存した。
+- 次は修正後binaryでDeltaBlueの到達可能side trace、専用counter、native perf self timeを再採取
+  する。`Plan.execute`のexact-list iterationと`EqualityConstraint.execute`の高頻度callが支配的
+  という以前の観測を検証し、genericな型・code・layout guardで安全に省略できる範囲を決める。
+  prototypeはまず単一call fusionかbounded scanの小さい方を実装し、形成/callback/monitoring/
+  invalidation testと単独対応測定で採否を決める。
+
+- 修正後nativeのresident probeはDeltaBlueに14 executors、151,552 native bytesを形成した。
+  `Plan.execute` traceは各workloadで約1万件の`EqualityConstraint.execute`をinlineし、その各回で
+  `input`/`output`相当の条件付きcallを2回実行する。10 warmups後の3 samplesではcall fusionが
+  1 sample当たり21,594〜22,192回成功した。2000 measured valuesの`cycles:u` profileはlost sample
+  0で、evaluator 17.50%、frame clear/pop 5.53%、list iterator 3.07%、type/method lookup約4%、GC
+  3.31%を示した。生probeとperf dataを`sum-guard-current-deltablue*`へ保存した。
+- 単一callだけを専用化してもlist iterationと各constraintのframe境界が残るため、より小さな
+  bounded scanを採る。`Plan.execute`で1件を通常どおり実行し、execute/input/outputのfunction
+  version、型・属性layout、monitoring/pending checkが全て通った直後だけ、同じexact-list iterator
+  の後続最大64件を処理する。各件は同じ型version・条件分岐・属性offsetを要求し、source/old
+  destination valueがcompact exact intの場合だけ順番に参照コピーする。不一致の要素と最後の
+  1件は未消費のまま通常loopへ残す。
+- scan中に減る可能性がある参照はexact intだけで、allocation、Python callback、frame transitionを
+  起こさない。iterator indexとloop localは最後に処理した要素へ更新するため、次のheader periodic
+  checkから見える状態も通常反復と一致する。先行する通常1件のfunction/instrumentation guardsを
+  再利用することで、raw function pointerを追加cacheへ保持せずcode差し替えにも対応する。次は
+  このstrict trace matcher、packed layout、専用counterと値伝播/停止/監視/invalidation testsを
+  debug Tier-2へ実装する。
+
+- bounded equality scanの初版uopとtrace matcherを実装した。matcherはexact list iterator、同じ
+  loop local、`execute`のtype/function guard、完全なcall frame、既存の二つの条件付き属性call、
+  source value load、destination value store、None return、直後のloop backを全て要求する。
+  cacheには二つのtype version、4属性offset、directionのint8定数と比較maskだけを保持し、関数や
+  一時traceへのraw pointerは追加していない。runtimeは最後の1件と最初の不一致を未消費で残す。
+- instanceごとの同名method差し替えはtype versionだけでは除外できないため、constraint型のinline
+  shared keysに`execute`/`input`/`output`のいずれかが現れた時点でscan全体を停止する。各後続要素に
+  materialized dictがある場合も停止する。通常の`v1`/`v2`/`direction`などのinline属性は許可する。
+  source/destinationは観測済みtype/layoutを再検証してからdict pointerへ触れるようにし、NULLに
+  なり得る終了済みlist iteratorのsequenceも先に検査する。
+- 次はcase/global-object生成物を更新してdebug buildをコンパイルし、最小DeltaBlue型probeで
+  matcher形成、値伝播、counter、長さ境界を確認する。形成しなければoptimizer各段階の実uop列と
+  matcherの最初の不一致を調べて形を狭く修正する。形成後に正式なfallback/monitoring/invalidation
+  testsを追加する。
+
+- case生成時、結果Noneを捨てる`DEAD(result)`より前でstack outputを同期しようとしてgeneratorが
+  live input errorを出したため、assert直後にresultをdeadとした。またmethod shadow helperをCの
+  条件block内で呼ぶと生成されたstack pointerのbranch mergeが不整合になったため、安全な型を
+  選んで単一の直線代入式から呼ぶ形にした。debug生成Cのstack cache遷移と実行assertを確認し、
+  crashなく反復できる状態にした。
+- DeltaBlueのPlanは`OrderedCollection(list)`を反復する。iteratorはexact `PyListIter_Type`であり、
+  list subclassの内部配列を直接読むのは通常iteratorと同じ意味なので、underlying sequenceは
+  `PyList_Check`まで許可した。変更後のdebug probeは新uopを形成し、5 workloadsで921 entries、
+  44,656 iterationsをscanした（短い末尾によるmiss 461）。benchmarkの完全なresult検査も成功した。
+- methodの`__name__`だけでは、別名のclass attributeに同じfunctionを置いた場合のshadow keyを証明
+  できない。optimizerでconstraintのrecorded typeを取得し、generic getattroとMRO全dictを調べ、
+  各functionが`execute`/`input`/`output`という唯一のkeyにだけ格納される場合に限定した。runtimeの
+  shared-key検査が実際のlookup名を保護する。function aliasや追加effectのあるexecuteは形成拒否する。
+- 4つの正式debug testsを追加し、list subclass・長さ0/1/2/3/64/65/66/129、130-link伝播、同一intの
+  refcount安定、direction不一致、int subclass、old-value finalizer、3種類のinstance method shadow、
+  `execute.__code__`差し替え、execute/input/outputのlocal monitoring、追加effectと別名functionの
+  形成拒否を検証した。追加4件は全て成功した。
+- `regen-global-objects`の通常make targetは、untracked artifact内の保存sourceまでArgument Clinicが
+  走って既存の古いclinic記法で停止した。case生成自体は固定debug bootstrapで成功し、global object
+  generatorを直接実行して`execute`/`output` IDを正しく更新した。次は診断文字列が残っていないことと
+  2回目生成のbyte同一性を確認し、region file全体、Tier3、C API optを別tempdirで順次実行する。
+  その後だけLLVM 21 native stencilを更新し、DeltaBlue単独の対応比較で採否を決める。
+
+- bounded equality scanのcase/global-object生成を固定bootstrapで再実行し、対象16生成物のSHA-256が
+  すべて一致した。診断出力はsourceに残っておらず、`git diff --check`も成功した。debug Tier-2では
+  region 209件（追加4件を含む）、Tier3 14件、C API opt 321件の計544件が成功した（skip 3）。
+  C API optは先の出力切り詰めで終了状態を判定できなかったため別tempdirで再実行し、321件全成功を
+  明示的に確認した。
+- 次は保存済み採用候補`build-jit/python-sum-gen-tier1`を比較基準として維持したまま、LLVM 21.1.8と
+  `-fno-vectorize -fno-slp-vectorize`でnative stencilを強制再生成し、PGO/LTOなしで再リンクする。
+  nativeでJIT availability、scan形成/counter、同じ544件を確認してから、DeltaBlueを固定CPU・開始順
+  回転・複数blockで対応測定する。改善が測定ノイズを越えない場合はこのprototype全体を戻す。
+
+- LLVM 21.1.8と指定のvectorize無効化だけでnative stencilを強制再生成し、PGO/LTOなしの`-O3`
+  buildを更新した。新binaryのSHA-256は
+  `3ff5d4ca8d8dc4148c3ac7caed093f9d5f27e98f7e638310cf26816416a49860`で、保存済み比較基準は
+  `fee258fedf9c8926fc9a7d6c64d14d18d05630de4c07fc45bc7e39cd97953532`のまま保持している。
+  `PYTHON_JIT=1`でavailable/enabledはいずれもtrueだった。
+- DeltaBlueのresident native probeは14 executors、151,552 native bytesを確認した。1 sampleでscan
+  200 entries・9,700 iterations・100 missesとなり、call entriesは従来probeの約21,500から2,792へ
+  減った。checksum検査も成功しており、狙ったEqualityConstraint経路をnative codeで処理している。
+  nativeでは追加4件、region全209件、Tier3 14件、C API opt 321件の計544件がすべて成功した
+  （release構成のskip計14）。
+- 次はDeltaBlueだけを比較基準と新binaryで対応測定する。CPU 2へ固定し、同一のresident/全実験flag、
+  3 warmups・10 values、開始順を回転する3 blocksを使う。各blockのchecksum・binary/script hashと
+  実験環境を保存し、after/before比の方向と分散から採否を決める。採用できれば全6本screenを再実行し、
+  算術平均と幾何平均の両方を更新する。
+
+- DeltaBlue単独のbefore/after対応測定は、固定CPU 2、resident、全実験flag、3 warmups・10 values、
+  開始順回転の3 blocksでafter/beforeが0.871664/0.874839/0.873301、幾何平均**0.873267**だった。
+  全checksum一致、除外sample 0、測定前後のbinary/script hash一致で、artifactは`equality-scan-*`へ
+  保存した。3 blockの方向と大きさが揃っており、bounded scanはDeltaBlueを約12.7%改善するため
+  採用候補として維持する。
+- 次は同じ二つのbinaryと条件で6 workloadを3 blocks測定する。Equality scanが形成しない5本で
+  matcher追加と大きなstencilによる回帰がないことを確認し、before比を保存済みmain比へ合成して
+  新しい算術/幾何平均を求める。必要ならmainも同じblock内に加えて直接再測定する。
+
+- main・直前候補・scan候補を同じblock内で直接比較する6-workload screenを完了した。固定CPU 2、
+  3 warmups・10 values、3 blocks、3者の開始順回転で、scan候補のmain比はBPE 0.816590、Btree
+  0.550218、DeltaBlue **0.765325**、Hexiom 0.621888、Raytrace 0.829096、spectral 0.018642。
+  算術平均は**0.600293**（直前0.619313）、幾何平均は**0.385951**（直前0.395252）まで改善した。
+- scan候補/直前候補はBPE 1.000102、Btree 0.998343、DeltaBlue **0.871802**、Hexiom 0.997822、
+  Raytrace 1.000858、spectral 0.997275、全体算術平均0.977700だった。全checksum一致、除外sample 0、
+  開始/終了hash一致で、artifactは`equality-scan-full-*`へ保存した。目的経路以外に一貫した回帰は
+  なく、このprototypeを採用し、binaryを`build-jit/python-equality-scan`として固定した。
+- 次は現在比率が最も高いRaytraceとBPEを優先してresident probeとnative `perf`を取り直す。
+  既存のcall/float/int/iterator counterと到達可能side traceを照合し、複数workloadに効く残存経路、
+  またはRaytraceの単一支配経路を一つ選ぶ。新prototypeもsource変更前binaryとの単独対応比較を先に
+  行い、改善が確認できた場合だけ6本screenへ進む。目標算術平均0.5は未達のため継続する。
+
+- 固定したscan版でRaytrace/BPEのresident coverageと`cycles:u` profileを再採取した。Raytraceは
+  74 executors・1,093,632 bytes、1 sampleで短縮call 814,015、class初期化278,389、float属性融合
+  357,438。lost sample 0のprofileはevaluator 4.27%、frame clear/pop約6.7%、managed-dict/object
+  deallocation、float allocation、frame初期化を上位に示した。monitoringによる別診断では1 workloadに
+  `Vector.dot` 509,871 calls、`mustBeVector` 520,539 calls、Vector初期化452,943 callsがあった。
+- BPEは37 executors・192,512 bytesで、1 sampleにlen融合13,765,892、zip 3,344,210、tuple比較
+  3,842,834、pair scan 1,672,794 iterationsを確認した。lost sample 0のprofile上位はdict lookup、
+  tuple/list確保・破棄、GC、slice、zip/list iteratorであり、一つの安全な既存uop境界より複数allocationの
+  合成だった。以前のzip/Counter scanは空振り費用で回帰しているため、同じ案は繰り返さない。
+- 次のprototypeはRaytraceの`Vector.dot`型call境界を対象にする。完全なcallee code形
+  `guard_method(); a.x*b.x + a.y*b.y + a.z*b.z`と、既に形成した6属性float融合を同時に要求し、
+  callee frameとguard method frameを省く。runtimeはouter/inner function version、instrumentation/
+  pending work、type version、instance method shadow、6属性layoutとexact floatを再検証する。演算は
+  3 multiplyと2 addのbinary64境界を維持し、結果floatを1個だけ生成して元の逆順cleanupを行う。
+  まずdebugで形成・code/method/shape変更・monitoring・丸め・allocation failureを検証し、nativeで
+  約51万callへの適用とRaytrace単独比を確認してから採否を決める。
+
+- `Vector.dot`型call fusionの初版を実装した。callee全bytecodeを走査し、引数2個、例外tableなし、
+  `other.guard(); self.x*other.x+self.y*other.y+self.z*other.z`だけであること、guard側も引数をそのまま
+  返す3命令だけであることを証明する。recorded trace側では通常のfunction/stack/recursion guard、
+  inner trivial call、既存6属性float融合、RETURNまでを完全一致させる。slot-only型は対象外とした。
+- 新uopのcacheは6個の属性offset、type/inner-function version、guard名index、caller復帰offset、
+  最終加算offsetの整数だけで、関数・型pointerは保持しない。runtimeはouter/inner codeのpending workと
+  active monitor、PEP 523、同一type/version、inline-values有効性、shared-key上のinstance method shadow、
+  exact floatを演算前に検査する。確保失敗時だけ省略したcallee frameを再構築し、最終加算位置から
+  Tier 1の例外処理へ渡す経路も追加した。
+- 次はcase generatorを先に実行し、stack-effect解析とnative移行分岐が受理されるか確認する。生成または
+  compile errorはその場でcache packing/ownershipを修正する。debug build後、最小guard付きdotで形成と
+  counterを確認してから、正式なinvalidation/monitoring/rounding/allocation-failure testsを追加する。
+
+- Tier-2 generatorのownership検査とdebug compileは成功した。最小guard付きdotは新しい
+  `_CALL_PY_FLOAT_DOT`を形成し、入力8反復のうちtrace到達後7回を専用counterで確認して結果56.0を
+  返した。既存float融合後には消去済みuop/recordが多数残るため、matcherの探索上限を80から192へ
+  広げたが、callee全bytecodeとRETURNまでの完全証明条件は変えていない。
+- 確保失敗の初回probeは、新frameを作った後のstackpointerがvalidな状態で`RELOAD_STACK`がinvalidを
+  仮定するdebug assertionを検出した。通常の`_PUSH_FRAME`と同じくcallerを`SAVE_STACK`してからframeを
+  切り替えるよう修正した。再probeではMemoryErrorの最内tracebackがdot codeの最終加算offset 216、
+  localsのself/otherが元objectとなり、例外後の反復も56.0を返した。
+- 正式testを5件追加し、形成・counter・参照数・同一object入力、operationごとのbinary64 rounding、
+  instance guard shadow、guard/dotの`__code__`差し替え、float subclass、materialized dict、slot-only型と
+  副作用付きguardの形成拒否、dot/guard双方のlocal instruction monitoring、debug allocation failureを
+  検証した。5件はdebug Tier-2で全成功した。
+- 次はglobal monitoring caseも同じtestへ加え、既存float test群とregion file全体を順次実行する。
+  その後case生成をもう一度行ってbyte同一性と`git diff --check`を確認する。debug回帰がなければ、
+  LLVM 21/no-vectorizationでnative stencilを更新し、native tests、Raytrace coverage、対応測定へ進む。
+
+- `Vector.dot` call fusionにglobal instruction monitoringも追加し、outer/inner local monitoringと合わせて
+  専用uopを使わず通常の監視イベントを出すことを確認した。region全214件、Tier3 14件、C API opt
+  321件の計549件がdebug Tier-2で成功した（skip 3）。確保失敗時のcallee frame、最終加算offset、
+  self/other localsの復元もfull region run内で成功している。
+- full regionの初回実行では既存equality-scan 4 testが統計辞書の末尾key欠落を検出した。新しい
+  float call counterを2個追加した際、`Py_BuildValue`のformatだけ66項目のままだったためで、formatを
+  実際の68 key/value pairに合わせた。equality scanの実行・counter本体に異常はなく、修正後は同じ
+  214件が全成功した。
+- 次は固定したdebug executableでtier2/uop-id/uop-metadata生成を再実行し、全tracked変更の前後hashが
+  一致することと`git diff --check`を確認する。続いてLLVM 21.1.8、vectorize無効化、PGO/LTOなしで
+  native stencilとbinaryを更新し、同じ549 testとnative code形成を確認する。その後Raytrace単独の
+  scan版/float-call版を固定CPU・開始順回転で測定し、改善が安定した場合だけ6本screenへ進む。
+
+- 固定debug executableでtier2/uop-id/uop-metadata generatorを再実行した。tracked変更27ファイルの
+  SHA-256は生成前後ですべて一致し、`git diff --check`も成功した。`FLOATDOT`等の一時診断文字列は
+  残っておらず、stats formatとkeyはいずれも68項目で一致している。
+- 次は保存済みscan版`build-jit/python-equality-scan`のhashを再確認して保持し、LLVM 21.1.8と
+  `-fno-vectorize -fno-slp-vectorize`でnative stencilを強制再生成する。PGO/LTOなしの通常`-O3`
+  link後にavailability/enabled、専用uopのnative code、同じ549 testを確認する。
+
+- LLVM 21.1.8と指定のvectorize無効化でnative stencilを強制再生成し、PGO/LTOなしの`-O3` binaryを
+  更新した。新binaryはSHA-256 `b04b2d4aee6a44b03461162279eea112b85c5c499c6136351e075c986f30d743`、
+  保存済みscan版は`3ff5d4ca8d8dc4148c3ac7caed093f9d5f27e98f7e638310cf26816416a49860`
+  のままである。`PYTHON_JIT=1`でavailable/enabledはいずれもtrueだった。
+- native最小probeは`_CALL_PY_FLOAT_DOT`を含む43 uopsのexecutorを形成し、8反復で7 entries、結果
+  56.0、`get_jit_code()` 4096 bytesを確認した。release nativeでもregion 214件、Tier3 14件、
+  C API opt 321件の計549件がすべて成功した（構成依存skip 15）。
+- 次はRaytrace一回分の前後で到達可能side traceを含むexecutor counterを集計し、専用call entries、
+  generic call削減、native bytes、checksumを確認する。その後scan版とのRaytrace対応測定を行う。
+
+- Raytrace native coverageでは専用uopが352,553 callsを処理し、generic call entriesを814,015から
+  461,462へ同数削減した。exact-float条件を満たさない60,002 callsは安全にguard exitし、float属性
+  fusionは357,438から4,885へ減った。到達可能executorは74から71、native bytesは1,093,632から
+  1,032,192へ減り、checksumも一致した。
+- しかしscan版との固定CPU 2・resident・3 warmups・10 values・開始順回転3 blocksのRaytrace対応
+  測定はafter/before 1.055000/1.076744/1.082423、幾何平均**1.071323**で全block回帰した。
+  checksum、binary/script hashは全て一致し、除外sampleは0。毎callのtype lookup、shared-key lookup、
+  monitoring全event走査を含むruntime再検証が、frame省略の利益を上回ったため初版は不採用とした。
+- 初版binaryとcoverage/perf/measurement artifactは`python-float-dot-call-rejected`および
+  `float-dot-call-*`へ保存した。専用source/test/counterを削除して3 generatorを再実行し、識別子が
+  source/generated filesから消え、stats format/keyが既存66項目へ戻り、`git diff --check`も成功した。
+- 次は同じ完全body proofを使いつつ、既存optimizer dependencyとcall直前のfunction/type guardsを保持する
+  軽量版を試す。実測probeではguard/dotの`__code__`変更、class method置換、instance shadow、local
+  monitoringの全てが親executorを即時invalidateしている。したがって軽量uopは既存float属性uopと同じ
+  type/layout/exact-float guards、eval breaker、合成frameのstack-space/recursion条件だけをruntimeで検査し、
+  lookupとmonitor配列走査を行わない。まずdebug安全性を再検証し、Raytrace単独で初版より先に採否を決める。
+
+- 軽量`_CALL_PY_FLOAT_DOT`を実装した。初版のtype lookup、shared-key lookup、全monitor event走査を除き、
+  post-pass前にoptimizerが登録済みのtype/function/keys/monitoring dependenciesと、call直前に残るouter
+  function guardを利用する。runtimeはdot codeのeval breaker、二重call相当のrecursion/stack space、
+  元の`_FLOAT_ATTRIBUTE_SUM_PRODUCTS`と同じtype version・inline-values・6 exact floatsだけを検査する。
+  cacheは6 offsets、inner identity frame size、元のlayout、caller return offsetのみでpointerを保持しない。
+- 軽量版には形成/counter、参照所有、同一object、operation単位binary64丸め、instance method shadow、
+  guard/dot code変更、float subclass、置換`__dict__`、slot-only/副作用body拒否、local/global monitoring、
+  低recursion limitでの保守的deopt、debug allocation failureの6 testを追加した。region 215件、Tier3
+  14件、C API opt 321件の計550件がdebug Tier-2で成功した（skip 3）。
+- 次は3 generatorを再実行してbyte同一性とdiff/styleを確認する。問題がなければnative stencilを更新し、
+  native550件とcoverageを確認後、Raytraceをscan版と3 blocks対応測定する。初版比ではなく保存済みscan版を
+  採否基準とし、改善しない場合は軽量版も削除する。
+
+- 軽量版のtier2/uop-id/uop-metadata generatorを固定debug executableで再実行し、tracked変更27ファイルの
+  SHA-256は前後ですべて一致した。stats format/keyは68対68、臨時診断なし、`git diff --check`成功。
+- 次はLLVM 21.1.8、vectorize無効化、PGO/LTOなしでnative stencilを強制再生成し、軽量版binaryのhash、
+  JIT availability、専用native code、release nativeの550 testを確認する。
+
+- LLVM 21.1.8と`-fno-vectorize -fno-slp-vectorize`でnative stencilを強制再生成し、PGO/LTOなしの
+  release JITを更新した。軽量版binaryのSHA-256は
+  `c3cecc642adb71b95585f8fabbc642db1db6a697ec96972f41d27fe39033f0ea`、比較用scan版は
+  `3ff5d4ca8d8dc4148c3ac7caed093f9d5f27e98f7e638310cf26816416a49860`のままで、
+  `PYTHON_JIT=1`でavailable/enabledはいずれもtrueだった。
+- native最小probeは43 uopsのexecutor内に`_CALL_PY_FLOAT_DOT`を形成し、8反復で7 entries、結果56.0、
+  `get_jit_code()` 4096 bytesを確認した。release JITでもregion 215件、Tier3 14件、C API opt 321件の
+  計550件が成功した（構成依存skip 15）。
+- 次は固定CPU 2・同一resident設定でRaytrace一回分の前後counter、到達可能side trace、native bytes、
+  checksumを採取する。専用callが初版同等の対象を処理し、削除したlookup/monitor走査なしで安全に動くことを
+  確認後、保存済みscan版との3 blocks対応測定で採否を決める。
+
+- 軽量版のRaytrace native coverageは専用call 352,553 entries、exact-float等のguard exit 60,002で、
+  初版と同じ対象を処理した。generic callは814,015から461,462、float属性融合は357,438から4,885へ減り、
+  到達可能executorは74から71、native bytesは1,093,632から1,019,904へ減った。専用lookup/monitor走査を
+  除いた状態でもchecksumは保存済みscan版と一致した。
+- 固定CPU 2・resident・3 warmups・10 values・開始順回転3 blocksのscan版/軽量版Raytrace対応測定は、
+  after/before 0.954337/0.958651/0.945995、幾何平均**0.952980**で全block改善した。binary/script hashは
+  開始時と終了時で一致、pixel checksum一致、除外sample 0だった。軽量版を
+  `build-jit/python-float-dot-light`（SHA-256
+  `c3cecc642adb71b95585f8fabbc642db1db6a697ec96972f41d27fe39033f0ea`）として固定した。
+- 次はmain・保存済みscan・軽量dotの3 binaryを6 benchmarkで同じCPU、warmup/value数、開始順回転により
+  直接比較する。Raytrace改善が他workloadの形成探索やnative code layoutを悪化させず、6本のmain比幾何平均を
+  改善することを確認してから採用を確定する。
+
+- main・scan・軽量dotの6本直接比較を固定CPU 2、3 blocks、各3 warmups/10 values、開始順回転で完了した。
+  軽量dot/mainはBPE 0.821280、Btree 0.555937、DeltaBlue 0.758677、Hexiom 0.628831、Raytrace
+  **0.803884**、spectral 0.018583で、6本算術平均**0.597865**、幾何平均**0.384949**だった。
+  scan/mainは同じrunで算術平均0.599305、幾何平均0.385389であり、軽量dotは両方を改善した。
+- 軽量dot/scanはRaytrace 0.975258、他はBPE 1.004726、Btree 1.004678、DeltaBlue 1.000552、
+  Hexiom 1.007879、spectral 1.000490、全体算術平均0.998930、幾何平均0.998870だった。全checksum一致、
+  除外sample 0、binary/script hash不変。対象外5本の小幅なcode-layout回帰を含めても全体指標は改善するため、
+  軽量dot fusionを採用する。
+- 次は軽量dot版Raytraceの`cycles:u` profileと残存counterを採取する。dot frameを除いた後も多いVectorの
+  class construction、他の算術method call、result allocation/cleanupのどれが支配的かを特定し、完全body proofを
+  再利用できる単一経路を選ぶ。候補ごとに保存済み軽量dot binaryとのRaytrace対応測定を先に行う。
+
+- 軽量dot版Raytraceの`cycles:u` profileはlost sample 0で、evaluator 7.23%、frame clear/pop約6%、
+  object/managed-dict解放約5%、float確保2.74%、frame push/local初期化約4%が残った。Python call診断では
+  1 workloadに`Point.__sub__`/`Point.isPoint`各277,865回、`Vector.scale`149,743回、
+  `Vector.normalized`/`magnitude`各109,887回、`Ray.__init__`98,172回を確認した。
+- `Point.__sub__`は同一exact heap type同士の減算が支配的で、通常のnumeric dispatchが毎回
+  `slot_nb_subtract`、special-method lookup、Python vectorcallを経る。次のprototypeはoptimizerが観測した左右typeが
+  同一で、type自身のgeneric `slot_nb_subtract`とexact Python `__sub__`を確認した場合だけ、type/function dependencyと
+  一体の専用uopへ置換する。uopは両exact typeをguardして関数を直接vectorcallし、`NotImplemented`なら通常と同じ
+  TypeErrorにするため、反射演算やsubclass優先順位を変えない。
+- まずgeneric slot判定helper、末尾配置の専用counter、同一type/NotImplemented/method・code変更/monitoring/refcountの
+  testsをdebug Tier-2で検証する。native化後はPoint減算の適用回数とRaytrace単独の保存済み軽量dot比で採否を決める。
+
+- 同一exact typeのPython `__sub__`を直接vectorcallする`_BINARY_OP_PY_SUBTRACT_EXACT`を実装した。
+  optimizerはCALL_REGIONS有効時の`NB_SUBTRACT`に限り、左右の観測type一致、非ゼロtype version、標準の
+  `slot_nb_subtract`、type自身のdictにあるexact `PyFunctionObject`を要求する。継承method、staticmethod、
+  異種type、C実装slotは通常経路に残す。
+- cacheはfunction pointerとtype versionで、runtimeは左右のexact type一致とversionを関数pointerの参照前に
+  guardする。呼び出し中にtype dictから旧functionが除かれても安全なよう一時INCREFし、同一typeで
+  `NotImplemented`が返れば通常のbinary dispatchと同じTypeErrorを生成する。type pointerだけをcacheする案は、
+  実行中のmethod変更後も同じtypeなら古い関数を呼べるため採用しなかった。
+- 4 generatorのうち最初の3つは直ちに成功した。optimizer generatorは条件内のdict lookupが分岐片側だけ
+  stackをmaterializeするため初回失敗したので、判定・type watch・function dependencyを
+  `get_exact_python_subtract()`へまとめ、全経路で一度呼ぶ形にして成功した。debug Tier-2 buildも完了し、
+  最小probeは1 executorに専用uopを形成、8反復中7 entries、guard exit 0、結果12を確認した。
+- focused 5 testsは全成功した。形成/counter/refcount/同一object、異種typeから`__rsub__`へのdeopt、同一typeの
+  `NotImplemented`で反射methodを呼ばないこと、method・`__code__`変更、呼び出し中のmethod置換、local instruction
+  monitoringを検証した。継承method、staticmethod、int subclassのC/inherited slotには形成しないことも確認した。
+- 次はregion file全体、Tier3、C API optをdebugで順次実行する。成功後に4 generatorを再実行してbyte同一性と
+  `git diff --check`を確認し、LLVM 21・PGO/LTOなしのnative buildへ進む。
+
+- 最終helper差分を反映したdebug Tier-2でregion **220件**、Tier3 14件、C API opt 321件が全成功した
+  （C API optの既存skip 3）。method置換ではexecutorの即時invalidateまたはtype-version guard exitの
+  どちらでも旧functionを呼ばないことをtestし、今回のbuildではguard exit経路も通った。
+- tier2/uop-id/uop-metadata/optimizerの4 generatorを再実行し、tracked差分30ファイルの生成前後SHA-256は
+  全て一致した。`git diff --check`成功、stats formatとkey/counterは70対70で一致している。
+- 次はLLVM 21 preflightを再確認し、`-fno-vectorize -fno-slp-vectorize`でnative stencilを強制再生成する。
+  PGO/LTOなしのrelease JITをlink後、専用uopのnative code、同じ555 test、Raytrace counterを確認する。
+
+- `/usr/lib/llvm-21`（LLVM 21.1.8）をpreflightで再確認し、vectorization無効化でnative stencilを
+  強制再生成した。PGO/LTOなし、`-O3`のrelease JITをlinkし、候補binaryのSHA-256は
+  `9c155019d26288da7d08a276b58507925631161f34402bc1c00dd147700551b1`。比較対象の軽量dot版は
+  `c3cecc642adb71b95585f8fabbc642db1db6a697ec96972f41d27fe39033f0ea`のままである。
+- `PYTHON_JIT=1`でJIT available/enabledはいずれもtrue。native最小probeはexecutor内に
+  `_BINARY_OP_PY_SUBTRACT_EXACT`を形成し、8反復で7 entries、guard exit 0、結果12、native code
+  4096 bytesを確認した。release nativeでもregion **220件**（skip 11）、Tier3 14件（skip 1）、
+  C API opt 321件（skip 3）の計**555件**が成功した。
+- 次は固定CPU 2・resident設定でRaytrace一回の到達可能executorを前後追跡し、専用subtract entries、
+  generic binary/call counter、guard exit、executor数、native bytes、checksumを軽量dot版と比較する。
+
+- Raytraceの同時点coverage比較では、専用subtractが1 workloadで **277,784 entries**、guard exit 0を
+  記録した。Python call profileの`Point.__sub__` 277,865回のほぼ全てを処理し、`check_result()`も成功した。
+  uopは到達可能side traceを含む27 executorsに形成されるが、到達可能executor総数は前後とも71である。
+- 他のregion counterは前後で一致した。native code総量は1,019,904から1,028,096 bytesへ8,192 bytes増加した。
+  dispatch削減の利益と27 traceへのcode複製によるI-cacheコストはcoverageだけでは決められないため、
+  保存済み軽量dot版と固定CPU 2、同一resident環境、3 warmups・10 values・開始順回転3 blocksで直接比較する。
+
+- 軽量dot版とのRaytrace対応測定はcandidate/before **0.987373 / 0.978972 / 0.956414**、
+  幾何平均 **0.974165**で3 blocks全て改善した。pixel checksum、開始・終了時のbinary/script hashは一致し、
+  除外sampleは0。専用uopの約27.8万dispatch削減は8 KiBのcode増加を含めても実時間を改善した。
+- 次はmain・軽量dot版・subtract候補の3 binaryを6 benchmarkで直接測定する。対象外workloadのcode layout変動を
+  含む候補/軽量dot比と、同じrun内の候補/main比（各workloadおよび6本の算術・幾何平均）を確認して採否を決める。
+
+- 6本の三者直接比較を固定CPU 2、3 blocks、各3 warmups/10 values、開始順回転で完了した。
+  subtract候補/軽量dot版はBPE 1.005618、Btree 1.001924、DeltaBlue 0.998917、Hexiom 0.997244、
+  Raytrace **0.970757**、spectral 0.997693。6本算術平均 **0.995359**、幾何平均 **0.995293**だった。
+  Raytraceは0.971579/0.971372/0.969319と全block改善し、BPEの0.56%回帰を含めても全体指標は改善した。
+- 同じrunの候補/mainはBPE 0.822950、Btree 0.551901、DeltaBlue 0.766383、Hexiom 0.625179、
+  Raytrace **0.771098**、spectral 0.018617。6本算術平均 **0.592688**、幾何平均 **0.382339**。
+  軽量dot/mainの0.596054/0.384151も同時に再測定しており、候補は両指標を改善した。全checksum一致、
+  除外sample 0、binary/script hash不変のため、exact Python subtract直接呼び出しを採用する。
+- 次はこの採用binaryを固定する。更新後のRaytrace profileとexecutorを調べ、残る`Point.isPoint`等のtrivial call、
+  object生成、frame cleanupのうち、意味論を狭く証明できて反復回数の多い経路を次のprototypeに選ぶ。
+
+- 採用版を`build-jit/python-python-subtract`へ固定した。SHA-256は候補と同じ
+  `9c155019d26288da7d08a276b58507925631161f34402bc1c00dd147700551b1`である。
+  更新後Raytraceの`cycles:u` profileはlost sample 0で、evaluator 5.98%、`_PyFrame_ClearExceptCode` 3.84%、
+  `_PyEval_FrameClearAndPop` 2.66%、frame push/initと`initialize_locals`が各1.53%、`_PyEval_Vector` 0.97%だった。
+  以前3.27%あった`slot_nb_subtract`支配経路は上位から消え、対応測定の改善と整合する。
+- `Point.__sub__` 277,865回の座標typeを別診断したところ、全座標exact-floatの組はなく、int-float混在が
+  109,005回、x/y float-floatかつz int-floatが93,526回、別の混在が60,000回などだった。このため
+  exact-float 3項減算のbody融合は適用範囲がほぼなく、次候補にはしない。
+- 次のprototypeは、既に限定したexact Python `__sub__`について、関数codeが通常の最適化済み2引数関数であることを
+  optimizerで証明し、type/function versionとstack spaceをguardした上で`_PyFrame_PushUnchecked`へ引数を直接置く。
+  汎用function vectorcallと`initialize_locals`のbindingを省く一方、実frameと通常evaluatorを使ってtraceback、
+  recursion、monitoring、例外意味論を保つ。保存済み採用版とのRaytrace単独比較で小さな利益も再現しなければ戻す。
+  その後、同じbinary二つを3 blocksの対応測定にかけ、安定した実時間改善がある場合だけ採用する。
+
+- exact Python subtractのfast-frame prototypeを実装した。形成時に有効なfunction version、位置引数2、keyword-only 0、
+  `CO_OPTIMIZED`を要求し、varargs/varkwargs/generator/coroutine/async-generatorは除外する。cacheにはtype versionと
+  function versionを32 bitずつ格納し、runtimeで両方とdata-stack容量をguardしてから`_PyFrame_PushUnchecked`で
+  `self`/`other`を直接localsへ置き、通常の`_PyEval_EvalFrame`で実行する。deopt時は従来のgeneric binary dispatchへ戻る。
+- フレーム観測、`f_back`、`f_locals`、例外traceback、既存のmethod/code変更、monitoring、refcount、
+  `NotImplemented`に加え、defaulted 3引数、varargs、keyword-only形の形成拒否を集中6 testで検証し全成功した。
+  初回のtraceback test失敗は`assertRaisesRegex`が終了時に例外tracebackを消すtest側の問題で、`except`内検査へ修正した。
+  `_PyEval_EvalFrame`はPEP 523 hook、再帰検査、current-frame接続、通常のframe cleanupをそのまま通り、stack不足だけを
+  specialization前へdeoptする設計が既存のexact-call frame初期化と整合することもsource上で確認した。
+- 次はdebug Tier-2でregion file全体、Tier3、C API optを逐次実行する。成功後に4 generatorの冪等性と
+  `git diff --check`を確認し、LLVM 21・vectorization無効・PGO/LTOなしのnative buildとRaytrace対応測定へ進む。
+
+- 全region初回実行でfast-frame testだけがgeneric `_BINARY_OP`に残った原因は、test内で
+  `PYTHON_TIER2_CALL_REGIONS=1`を設定していなかったことだった。focused実行時の外部環境が欠落を隠していた。
+  opt-inをtest自身へ移し、余分な動的code生成を使わず順序非依存にした後、region **221件**、Tier3 14件、
+  C API opt 321件の計**556件**がdebug Tier-2で成功した（既存skip 3）。
+- 固定debug executableでtier2/uop-id/uop-metadata/optimizerの4 generatorを再実行した。tracked差分30ファイルの
+  SHA-256は生成前後ですべて一致し、`git diff --check`も成功した。
+- 次は`/usr/lib/llvm-21`の完全prefixを再確認し、`-fno-vectorize -fno-slp-vectorize`でnative stencilを
+  強制再生成する。PGO/LTOなしの通常`-O3` link後にJIT availability、専用native code、同じ556 testを確認する。
+
+- LLVM 21.1.8 preflightは`/usr/lib/llvm-21`の4 toolsを全て確認した。system `python3.13`でのstencil生成は
+  LLVM subprocess待機で進まない既知症状を再現したため中断し、AGENTS.md記載の固定
+  `build-tier2-debug/python`へ切り替えると約34秒で正常完了した。vectorization無効化を維持し、成功後だけ
+  `.jit-stamp`を更新した。PGO/LTOなし、通常`-O3`のrelease JIT linkも成功した。
+- fast-frame候補binaryのSHA-256は
+  `1503d9cf4f99d4dbe8fa90d44066b5c095a7a4724344b8b5ca52d50373157dd6`。`PYTHON_JIT=1`で
+  available/enabledはいずれもtrue。native最小probeは34 uopsのexecutorに専用subtractを形成し、8反復で
+  7 entries、guard exit 0、結果12、`get_jit_code()` 4096 bytesを確認した。
+- release nativeでもregion **221件**（skip 11）、Tier3 14件（skip 1）、C API opt 321件（skip 3）の
+  計**556件**が成功した。次はRaytrace一回の同時点counterと到達可能executorを保存済みdirect-subtract版と比較し、
+  その後固定CPU 2・resident・3 warmups/10 values・開始順回転3 blocksの対応測定で採否を決める。
+
+- Raytrace同時点coverageではfast-frame版と保存済みdirect-subtract版のregion counterが全項目一致し、専用subtractは
+  **277,784 entries**、guard exit 0だった。到達可能executorは両方71、専用uopを含むexecutorは両方27で、
+  native code総量だけが1,028,096から1,032,192 bytesへ4 KiB増えた。`check_result()`とscript hashも一致した。
+- 固定CPU 2・resident・3 warmups/10 values・開始順回転3 blocksのRaytrace対応測定はcandidate/before
+  **0.945876 / 0.975590 / 0.963437**、幾何平均 **0.961557**で全block改善した。checksum、開始・終了時の
+  binary/script hashは一致し、除外sample 0。generic vectorcallと`initialize_locals`を省く変更だけで約3.8%改善した。
+- 次はmain・保存済みdirect-subtract・fast-frameの3 binaryを6 benchmarkで同じprotocolにより直接比較する。
+  Raytrace以外のcode-layout変動を含む全体幾何平均が改善した場合だけfast-frame版を採用する。
+
+- 6本三者比較を固定CPU 2、3 blocks、各3 warmups/10 values、開始順回転で完了した。fast-frame/direct-subtractは
+  BPE 0.993938、Btree 0.995356、DeltaBlue 0.997301、Hexiom 1.004323、Raytrace **0.959154**、
+  spectral 0.997719。6本算術平均 **0.991299**、幾何平均 **0.991187**で全体を改善した。
+- 同じrunのfast-frame/mainはBPE 0.819324、Btree 0.553119、DeltaBlue 0.762561、Hexiom 0.631762、
+  Raytrace **0.749234**、spectral 0.018629。6本算術平均 **0.589105**、幾何平均 **0.380760**だった。
+  direct-subtract/mainは0.595644/0.384177で、fast-frameは両指標を改善した。全checksum一致、除外sample 0、
+  binary/script hash不変のためfast-frame版を採用した。
+- 採用binaryを`build-jit/python-python-subtract-fast-frame`へ固定した。SHA-256は
+  `1503d9cf4f99d4dbe8fa90d44066b5c095a7a4724344b8b5ca52d50373157dd6`。次はこの版のRaytrace
+  `cycles:u` profileとPython call回数を再取得し、frame binding削減後の支配経路から次の限定的prototypeを選ぶ。
+
+- 採用版Raytrace perfは6,449 samples、lost 0。`initialize_locals`はdirect-subtract版の1.53%から0.92%、
+  `_PyEval_Vector`は0.97%から0.23%へ低下し、fast-frameの狙いと対応した。残る上位はevaluator 6.32%、
+  frame clear 4.10%、float確保2.74%、object malloc/free各約2.3%である。
+- Python callの型組を診断すると、同一exact typeの`Point - Point` 277,865回に続き、`Vector + Vector`が
+  **20,000回**、`Vector - Vector`が5,333回、異種`Point + Vector`が5,333回だった。次のprototypeは同じ
+  type/function-version/2引数frame証明をplain `NB_ADD`へ拡張する。異種型とin-place演算は反射・`__iadd__`
+  規則が異なるため対象外に保つ。まずaddの形成・counter・反射guard・`NotImplemented`意味論をdebugで検証し、
+  Raytrace coverageで実適用数を確認する。
+
+- plain `NB_ADD`について、同一exact typeが標準`slot_nb_add`を持ち、type自身の`__add__`が有効なversionを持つ
+  通常の2引数`PyFunctionObject`である場合だけ`_BINARY_OP_PY_ADD_EXACT`を形成するよう拡張した。
+  subtractと同じtype/function versionおよびstack-space guardを使い、`self`/`other`を新しい実frameのlocalsへ
+  直接置く。異種type、継承method、C slot、in-place addは従来dispatchに残り、同一typeで`NotImplemented`なら
+  反射methodを再試行せず通常のTypeErrorを生成する。
+- addの形成・entry counter・refcount・同一object結果と、異種typeの`__radd__`、`__code__`変更による無効化、
+  同一typeの`NotImplemented`を集中2 testで確認した。test間で同じcode objectを再利用すると先に形成されたexecutorを
+  引き継ぐため、add helperは毎回新しいcode objectを生成して順序依存を除いた。debug Tier-2ではfocused 2件、
+  region **223件**、Tier3 14件、C API opt 321件（既存skip 3）がすべて成功した。
+- 次は4 generatorを再実行してtracked生成物のSHA-256が変わらないことと`git diff --check`を確認する。その後
+  LLVM 21・vectorization無効・PGO/LTOなしでnative stencilとrelease JITを再構築し、add専用uopのnative code、
+  同じcorrectness suite、Raytraceでの実entry数を検証する。
+
+- 固定した`build-tier2-debug/python`でtier2/uop-id/uop-metadata/optimizerの4 generatorを再実行した。
+  tracked差分30ファイルのSHA-256は生成前後ですべて一致し、`git diff --check`も成功した。手書き定義と4系統の
+  生成物は同期している。
+- 次は`/usr/lib/llvm-21`の完全prefixをpreflightし、`-fno-vectorize -fno-slp-vectorize`を付けてnative stencilを
+  強制再生成する。生成成功後だけ`.jit-stamp`を更新し、PGO/LTOなしの通常`-O3` binaryをlinkする。
+
+- LLVM 21.1.8の4 toolsを`/usr/lib/llvm-21`で再確認し、固定debug executableによるnative stencil生成が
+  約32秒で成功した。vectorization無効化を維持し、成功後だけ`.jit-stamp`を更新した。PGO/LTOなし、通常
+  `-O3`のrelease JIT linkも成功し、候補binaryのSHA-256は
+  `7522cfaf750982459ef83f0b117c361bcb28a5337bfbd2c7986de4ad8b715e77`である。
+- 固定CPU 2、`PYTHON_JIT=1`、resident設定のnative最小probeは34 uopsのexecutorに
+  `_BINARY_OP_PY_ADD_EXACT`を形成した。8反復中7 entries、guard exit 0、結果22、native code 4096 bytesで、
+  JIT available/enabledはいずれもtrueだった。
+- 次はrelease nativeでregion 223件、Tier3、C API optを逐次実行する。全成功後にRaytrace一回の同時点coverageを
+  保存済みfast-frame subtract版と比較し、add entry数、guard exit、executor数、native code量を確認する。
+
+- release nativeでもregion **223件**（skip 11）、Tier3 14件（skip 1）、C API opt 321件（skip 3）の
+  計**558件**が成功した。最初にベンチ専用の`PYTHON_TIER3_JIT=resident`まで全region testへ渡すと、既存int領域
+  27ケースが通常uop列のままで専用`_INT_REGION`を形成しなかった。これはaddの実行失敗ではなく形成期待の差であり、
+  AGENTS.mdの検証条件どおり`PYTHON_JIT=1`だけで再実行して全成功を確認した。residentを使ったadd最小probe自体は
+  native codeとcounterを検証済みである。
+- 次は固定CPU 2、resident環境でRaytrace coverageを1 workload採取する。到達可能side traceを再帰的に含めて、
+  add/subtract合計entry、add専用uopを含むexecutor数、guard exit、native code総量、checksumを保存済み
+  fast-frame subtract版と比較する。
+
+- Raytrace同時点coverageでadd拡張版は`binary_call_entries`が277,784から**297,584**へ19,800増え、
+  guard exitは0のままだった。add専用uopは1 executor、既存subtract専用uopは両版とも27 executorsにあり、
+  到達可能executor総数も両版71で一致した。他の全region counterとscript hashも一致している。
+- native code総量は1,032,192から1,036,288 bytesへ4 KiB増えた。20,000回の論理`Vector + Vector`のうち
+  warmup境界を除くほぼ全てに適用できているため、保存済みfast-frame subtract版と固定CPU 2、resident、
+  3 warmups/10 values、開始順回転3 blocksの対応測定を行う。全blockでchecksumとbinary/script hashを検証する。
+
+- 最初のRaytrace対応測定はcandidate/before **0.999516 / 1.019675 / 1.003120**、幾何平均
+  **1.007399**で、安定した改善を示さなかった。checksum、開始・終了時のbinary/script hashは一致し、除外sampleは0。
+  2番目のblockだけ約2%遅く、他2本は±0.3%内なので、20,000 dispatch削減の効果よりrun間変動が大きい可能性がある。
+- この一組だけで採否を決めず、同じ固定CPU・環境・binaryを6 blocks（12 process）で再測定する。追加測定でも
+  幾何平均改善が再現しなければ、4 KiBのcode増加に見合う実時間効果なしとしてadd拡張を戻す。
+
+- 追加6 blocksはcandidate/before 0.982694、0.996248、1.018579、0.998399、0.975375、0.987910で、
+  幾何平均0.993106だった。しかし最初の3 blocksと合わせた全9組では幾何平均 **0.997848**、中央値
+  **0.998399**、改善6組・悪化3組、範囲0.975375〜1.019675で、推定利益0.22%はrun間変動より小さい。
+  全checksum、binary/script hashは一致し、除外sampleは0である。
+- addが観測されたのはRaytraceの約19,800 entriesだけなので、6本全体への期待値はさらに約1/6へ薄まる。
+  新しい意味論経路と4 KiBのcode増加を採用する再現性がないため、このprototypeは不採用とする。候補binaryと
+  coverage/対応測定artifactを保存してadd固有の手書き定義・testsを戻し、4 generatorと両buildを採用済み
+  fast-frame subtract状態へ同期する。その後、残る高頻度経路をprofileから選ぶ。
+
+- 不採用候補を`build-jit/python-python-add-fast-frame-rejected`へ保存した（SHA-256
+  `7522cfaf750982459ef83f0b117c361bcb28a5337bfbd2c7986de4ad8b715e77`）。add固有のtype-slot helper、
+  optimizer分岐、uop、集中2 testを除き、4 generatorを再実行した。tracked source/generated treeから
+  `_BINARY_OP_PY_ADD_EXACT`と関連名が消え、`git diff --check`も成功した。
+- 戻したdebug Tier-2でregion **221件**、Tier3 14件、C API opt 321件（既存skip 3）の計**556件**が
+  全成功した。次はnative stencilを同じLLVM 21条件で再生成し、release JITをlinkして保存済み
+  `python-python-subtract-fast-frame`とのbinary hashを照合する。
+
+- LLVM 21でstencilを再生成してrelease JITをlinkした。全binary SHAはbuild timestamp/debug情報により
+  `c424435a60ea33df7f060d1cb4c419f5cf8faddfb96e7274fb04cadb9d57a590`となったが、ELF `.text`は保存済み
+  fast-frame subtract版とbyte-for-byte一致し、両方のSHA-256は
+  `f4ca678828b1ee140b62d8c7412576fc16c30186c2270c3a523d0ca0b32c4e6e`だった。
+- 現在のnative binaryでsubtract最小probeは専用uop、7 entries、guard exit 0、native code 4096 bytesを確認した。
+  region 221件（skip 11）、Tier3 14件（skip 1）、C API opt 321件（skip 3）の計556件も全成功し、
+  不採用add試作からの復元を完了した。
+- 次は採用版の残り5 workloadを既存coverage/profile artifactと照合し、実行回数とCPU比率がともに大きい未融合経路を
+  選ぶ。Raytraceの20,000回addのように測定ノイズ以下の候補は避け、複数workloadまたは数十万反復へ効く変更を優先する。
+
+- 現在の採用版で5 workloadを再計測した。BPEではbytes-pair scanが956,013 entries、dict updateが
+  2,259,345 entries、tuple構築が3,842,994 entries、zipが3,344,210 entriesに到達する一方、`cycles:u`
+  profile（59,296 samples、lost 0）は評価器5.78%、dict lookup 4.14%、object free 4.08%、tuple dealloc
+  3.98%、GC 3.47%、malloc 3.02%などへ分散していた。既存の限定uopをさらに細分化するより、残るPython callを
+  調べる方が大きな削減余地を持つ。
+- BPEの論理Python callを数えると、`most_common_pair = max(stats, key=lambda x: stats[x])`のlambdaが
+  **1,815,343回**で突出し、`bpe_encode`自身は6,462回だった。現在のexecutorでは`max`を
+  `_CALL_KW_NON_PY`で呼び、各候補についてlambda frameとgeneric dict subscriptを実行している。
+- 次のprototypeはbuiltin `max(mapping, key=lambda key: mapping[key])`だけを認識する。形成時にbuiltin identity、
+  keyword tuple、exact Python functionのcode/closure形、辞書のiteration/subscript slotを確認する。実行時には
+  code version、monitoring/PEP 523、closure identity、dict layout、exact 2-tuple/exact bytes key、compact exact-int valueを
+  全てguardし、辞書の挿入順を直接走査してstrict `>`だけで最初の最大keyを返す。空辞書・subclass・非compact値・
+  callbackが必要な状態ではcall stackを変更する前にgeneric `CALL_KW`へ戻し、`max`の例外・tie・監視意味論を保つ。
+- まずCALL_KWの既存3-word cacheにkey functionのcode versionを置く限定opcodeと、entry/iteration/guard-exit counter、
+  形成・tie/identity・fallback・monitoring・builtin/code変更の集中testを実装する。debug Tier-2で通した後だけgenerator、
+  native JIT、BPE coverage、保存済み採用版との対応測定へ進み、実時間改善が再現しなければprototypeを戻す。
+
+- `CALL_KW_MAX_DICT_INT_KEY`を実装した。CALL_KWの3-word cache幅は変えずlambda code versionを保存し、runtimeで
+  builtin identity、keyword、normal vectorcall、code/closure、caller/callee monitoring version、PEP 523、recursion、
+  dict iteration/subscript slotを再確認する。全keyがexact bytes 2個のexact tuple、全valueがcompact exact intの場合だけ
+  `PyDict_Next`の挿入順をstrict `>`で走査し、成功後にgeneric vectorcallと同じ順でstack refsを解放する。
+  eval breakerは各要素で確認し、途中までの非公開走査を捨ててgeneric callへ戻せる。
+- 新opcodeを含む全cases生成器は成功し、PGO/LTOなしのdebug Tier-2 buildも成功した。初回fallback testでcounterが
+  増えなかったのは`n=1`ではloop backedge executorへ入らないためで、同じ処理を8反復して専用uopのguard exitを
+  実際に通すよう修正した。集中5 testは全成功し、Counter subtypeでentry 8・iteration 768も確認した。
+- 次はdebug buildでregion file全体、Tier3、C API optを別tempdir・逐次で実行する。成功後に全生成器の冪等性と
+  `git diff --check`を確認し、LLVM 21 native stencilをvectorization無効、PGO/LTOなしで再生成する。
+
+- debug全region初回では既存range形成4件が後半だけ失敗した。原因はbuiltin置換testがprocess全体の実builtins辞書を
+  変更し、先行する既存test群と合わせてdict watcherの変更閾値を越えたことだった。max用関数へbuiltins辞書のcopyを
+  渡し、そのcopyだけで置換を検証するようにしてglobal test stateを消した。またregion statsのformat項目数を
+  `range_int32_iterations`を含む実73項目へ合わせ、末尾counter欠落を修正した。
+- 修正後、debug Tier-2でregion **226件**、Tier3 14件、C API opt 321件の計**561件**が全成功した
+  （既存skip 3）。max集中5件は全体順序内でも成功し、既存rangeの専用形成も復元した。
+- 次は固定debug executableで`regen-cases`全体を再実行し、tracked生成物が冪等であることと`git diff --check`を
+  確認する。その後LLVM 21の4 toolsをpreflightし、vectorization無効でnative stencilを強制再生成する。
+
+- tracked差分30ファイルのSHA-256を固定して`regen-cases`全体を再実行し、全hashと対象ファイル集合が一致した。
+  `git diff --check`も成功し、手書き定義とTier1/Tier2/optimizer生成物の同期を確認した。
+- LLVM 21.1.8の4 toolsを`/usr/lib/llvm-21`で確認し、固定debug Pythonと
+  `-fno-vectorize -fno-slp-vectorize`でnative stencilを強制再生成した。生成成功後だけ`.jit-stamp`を更新し、
+  PGO/LTOなしの通常`-O3` release JITをlinkした。候補binaryのSHA-256は
+  `e6a3174b48d4519d47b47ab9c3e87a52b32628ee919b830e9fbb382d8317b2a7`で、JIT available/enabledはいずれもtrue。
+- 固定CPU 2・residentのnative最小probeは55 uopsのexecutorに`_CALL_KW_MAX_DICT_INT_KEY`を形成した。
+  8呼び出し中7 entries、96要素ずつ計672 iterations、guard exit 0、結果identity維持、native code 4096 bytesを
+  確認した。次はこのbinaryを固定保存し、release nativeでregion 226件、Tier3、C API optを逐次検証する。
+
+- 候補binaryを`build-jit/python-max-dict-int-key-candidate`へ固定した。release nativeでもregion **226件**
+  （skip 11）、Tier3 14件（skip 1）、C API opt 321件（skip 3）の計**561件**が全成功した。
+  各regrtestはresident設定を外し別tempdirで逐次実行した。
+- 次は固定CPU 2・residentでBPE一回のcoverageを採取し、保存済みfast-frame版の同時点artifactと、専用entry/
+  iteration、guard exit、到達可能executor、native code量、checksumを照合する。実適用がlambda callの規模と
+  対応した後にだけ、固定binary同士の対応timingへ進む。
+
+- BPE native coverageで専用maxは**768 entries**、内部走査**1,815,343 iterations**、guard exit 0だった。
+  これは事前profileのlambda call 1,815,343回と完全に一致する。ほかの主要counterは直前版と一致し、到達可能
+  executorは37から36、native code総量は192,512から188,416 bytesへ4 KiB減った。`check_result()`も成功した。
+- 固定CPU 2・resident・各process warmup 3/10 values・開始順反転のBPE 3-block対応測定は、候補/直前版
+  **0.946426 / 0.960982 / 0.955712**、幾何平均 **0.954354**で全block改善した。checksumは全一致、
+  除外sample 0、開始・終了時のbinary/script hashも一致し、約4.6%短縮を確認した。
+- 次はmain・直前fast-frame版・max候補の固定3 binaryを全6 workloadで測る。既存の目標値と直接比較するため、
+  fast-frame採用時と同一の3 blocks・3 warmups/10 values・固定CPU 2・開始順回転protocolを使い、全体幾何平均と
+  非BPE workloadのcode-layout変動を含めて採否を決める。
+
+- 全6本の3者screenではmax候補/直前版のBPE比が**0.955005 / 0.957254 / 0.960908**、平均
+  **0.957722**で全block改善した。一方、非適用workloadはBtree 1.010803、DeltaBlue 1.000685、Hexiom
+  1.000308、Raytrace 1.018176、Spectral 1.016241で、6本算術平均 **1.000656**、幾何平均 **1.000444**だった。
+  checksum全一致、除外0、hash不変なので、BPEの直接利益は明確だがこの形の全体採用根拠はない。
+- 同じrunの候補/mainはBPE 0.781056、Btree 0.560170、DeltaBlue 0.765081、Hexiom 0.636283、Raytrace
+  0.756742、Spectral 0.019001、算術平均 **0.586389**、幾何平均 **0.381079**。直前版/mainの
+  0.588830 / **0.380979**に対し算術平均は改善するが、ユーザー指定の幾何平均は僅かに悪化した。
+- 専用経路が形成されないBtree/Raytraceで3 blockすべて同方向の変化があるため、まず追加したTier1 opcode/uopが
+  後続IDとdispatch/native stencil配置を動かした範囲を調べる。既存`CALL_KW_NON_PY`を保持し、trace/optimizerでだけ
+  限定uopへ置換できるなら、BPEの約4.2%利益を保ちながら非対象code layout変動を縮める。縮小案を実装・同じ
+  correctness/coverage/BPE対応測定で検証し、全6本幾何平均が改善しない形は採用しない。
+
+- 初版は`CALL_KW_NON_PY`以降の全specialized opcode IDを1ずつ動かし、release textを5,776 bytes増やしていた。
+  縮小版ではTier1 specializationを元の`CALL_KW_NON_PY=155`のままにし、その既存Tier2 uop内でbuiltin max、2引数、
+  opt-inを先に確認してから外部helperを呼ぶ。helperは現在のlambda body/closure、mapping slot、monitoring/PEP 523/
+  recursion、全key/valueを毎回再検査し、成功時だけnew-ref結果を返す。失敗時は同じuopで元のvectorcallを実行する。
+- 専用Tier1 opcode/uopとCALL_KW cache利用を除き、全casesを再生成した。`CALL_KW_MAX_DICT_INT_KEY`はsource/generated
+  treeから消え、後続opcode IDも初版前へ戻った。縮小版debug Tier-2 buildは成功し、max集中5 testは全成功した。
+  次はdebug region 226件、Tier3、C API optを逐次実行し、生成冪等性確認後にnative codeを再生成する。
+
+- 縮小版debug Tier-2でregion **226件**、Tier3 14件、C API opt 321件の計**561件**が全成功した
+  （既存skip 3）。direct成功、同一uop内generic fallback、monitoring、code/closure変更を含む集中5件も全体順序内で
+  成功している。次はtracked生成差分のhashを固定して`regen-cases`を再実行し、冪等性と`git diff --check`を確認する。
+
+- tracked差分30ファイルのSHA-256は`regen-cases`再実行前後で全一致し、`git diff --check`も成功した。最初のnative
+  stencil生成は単独translation unitからhelper prototypeが見えず停止したため、実装のTier2限定は維持したまま宣言を
+  既存JIT helperと同様に公開した。失敗時は`.jit-stamp`を更新せず、修正後の強制生成はLLVM 21で成功した。
+- PGO/LTOなしの通常`-O3` release JIT linkも成功した。縮小候補binary
+  `build-jit/python-max-dict-compact-candidate`のSHA-256は
+  `6b5be38ebfc9cd01e0f29ca064debc33f8c1fc2e648a8f7377db0f617eae6bbe`。直前版比のtext増分は初版5,776 bytesから
+  **3,392 bytes**へ縮み、JIT available/enabledはいずれもtrue。native最小probeは既存`_CALL_KW_NON_PY`を含む
+  57 uops、7 direct entries、672 iterations、guard exit 0、native code 4096 bytesを確認した。
+- 縮小版release nativeでもregion **226件**（skip 11）、Tier3 14件（skip 1）、C API opt 321件（skip 3）の
+  計**561件**が全成功した。次にBPE coverageで1,815,343回の走査削減が維持されたことを確認し、初版と同じ固定CPU・
+  resident対応測定を縮小候補/直前版で行う。
+
+- 縮小版BPE coverageも専用max 768 entries、**1,815,343 iterations**、guard exit 0で初版と一致した。既存opcodeを
+  使うためwarmup中のlambda executorは残り、到達可能executor 37・native code 192,512 bytesは直前版と同数だが、
+  測定区間のlambda相当処理はdirect scanで全て覆っている。ほかの主要counterと`check_result()`も一致した。
+- 固定CPU 2・residentのBPE 3-block対応測定は縮小候補/直前版
+  **0.972621 / 0.969655 / 0.971683**、幾何平均 **0.971319**で全block改善した。初版の0.954354より利益は
+  小さいが、約2.9%の短縮は安定している。checksum全一致、除外0、binary/script hashも不変。
+- 次は縮小候補・直前版・mainの全6本screenを、初版と同一protocolで実行する。後続opcode IDを戻したことで
+  非対象Btree/Raytraceの一方向回帰が消え、6本幾何平均が直前版より改善するかを採用条件とする。
+
+- 縮小版の全6本screenでは候補/直前版がBPE **0.977017**、Btree 0.992311、DeltaBlue 0.991979、Hexiom
+  0.981036、Raytrace 1.009687、Spectral 0.999813。6本算術平均 **0.991974**、幾何平均 **0.991913**で
+  全体を約0.8%改善し、初版の1.000444から採否を反転できた。checksum全一致、除外0、hash不変。
+- 同じrunの縮小版/mainはBPE 0.798325、Btree 0.555844、DeltaBlue 0.761954、Hexiom 0.625961、Raytrace
+  0.751472、Spectral 0.018662、算術平均 **0.585370**、ユーザー指定の幾何平均 **0.379094**。対応する
+  直前版/mainは0.591148 / 0.382238だった。縮小版を採用し、固定binaryとartifactを保持する。
+- ただし専用maxが形成されないRaytraceだけは平均約1.0%悪化した。次に直前版と縮小版のRaytrace coverageで
+  `_CALL_KW_NON_PY`のexecutor/実行形を比較する。Raytraceが既存uop内のmax判定を高頻度に通るなら、callable identity
+  判定をtrace時に省ける配置安定な方法を探し、BPE利益と全体幾何平均をさらに改善する。
+
+- Raytraceの対応coverageは直前版と縮小版で全region counterが一致し、到達可能executor **71**、native code
+  **1,032,192 bytes**も一致した。両版とも`_CALL_KW_NON_PY`を含むexecutorは0で、新しいmax判定を実行していない。
+  約1%差は専用経路の実コストではなくbinary layout/run変動なので、BPEの直接利益と6本幾何平均改善を優先して
+  縮小版を採用する。採用binaryは`build-jit/python-max-dict-compact`に固定済み。
+- 次はcore developer向け`Tools/jit/optimization_report.md`へ、exact Python subtract fast-frame化、max-dict scanの
+  初版不採用と縮小設計、guard/意味論、coverage、最新の幾何平均を追記する。その後最終生成・test・diff整合性を
+  再確認し、次のprofile対象を記録する。
+
+- core developer向け英文`Tools/jit/optimization_report.md`を現在の採用sourceへ更新した。冒頭の主指標を
+  最新の6本main比幾何平均**0.379094**へ改め、Tier-1 sum集約、bounded equality scan、軽量float-dot call、
+  exact Python subtract fast-frame、compact max-dict scanのbody proof、runtime guard、所有権・例外・monitoring、
+  coverageと対応測定を追記した。専用max opcode初版、重いfloat-dot初版、exact addを不採用にした根拠も残した。
+- `Tools/jit/regions.md`の実装contractにも上記5経路のopt-in条件、fallback地点、counterを追加した。これで報告書が
+  参照する短いcontractと実sourceの現状が一致する。次は固定debug bootstrapで全casesを再生成し、変更前後hash、
+  Markdown内のlocal link、`git diff --check`を確認する。コードは最終561件が成功した後に変えていないため、同じ
+  全suiteを重複実行せず、release/debugのmax集中testとJIT availability・採用binary hashを最終確認する。
+
+- `build-tier2-debug/python`を固定bootstrapにして`make regen-cases`の全12生成targetを再実行した。生成前に固定した
+  tracked差分32ファイルのSHA-256は文書とplanを含めて全件一致し、生成物の冪等性を再確認した。英文2文書の全local
+  Markdown linkも解決し、`git diff --check`は成功した。
+- max集中5件はdebug Tier-2と`PYTHON_JIT=1`のrelease nativeでそれぞれ全成功した。固定CPU 2・residentの最小probeは
+  JIT available/enabledともtrue、既存`_CALL_KW_NON_PY`を含む57 uops、7 direct entries、672 iterations、guard exit 0、
+  native code 4096 bytes、first-maximum identity一致を再確認した。
+- 現在の`build-jit/python`と保存済み`build-jit/python-max-dict-compact`は同じSHA-256
+  `6b5be38ebfc9cd01e0f29ca064debc33f8c1fc2e648a8f7377db0f617eae6bbe`。コード変更後の最終統合結果はdebug/nativeとも
+  region 226件、Tier3 14件、C API opt 321件の計561件成功であり、文書変更後の集中再確認も完了した。
+- 6本main比の主指標は幾何平均**0.379094**で0.5を下回り、今回の採用条件と更新後goalを達成した。次にさらに進める
+  場合はcompact max適用後のBPEとRaytraceを同じ固定binaryで再profileし、BPEのdict lookup・tuple/list allocation・GC、
+  Raytraceのframe clear/object allocationのうち10万回以上かつcallback-freeにまとめられる経路だけを候補にする。
+  GitHub投稿、push、PR変更は行っていない。
+
+## 18. pyperformanceによるfixed main/native JIT比較（2026-09-15）
+
+- ユーザー指示により、保存済みfixed main `build-main-jit/python`と現在の採用版`build-jit/python`を
+  pyperformanceで比較する。CPython AI利用方針（2026-07-21更新）と更新後AGENTS.md、
+  `benchmark-stability`のmeasurement/CPython手順を再確認した。sourceやbuildは変更せず、固定binaryを測る。
+- main SHA-256は`8fb6c5b87dec8e272c1acfad0197dc086bcd3e0c93912d949d43d5c4d9603407`、採用版は
+  `6b5be38ebfc9cd01e0f29ca064debc33f8c1fc2e648a8f7377db0f617eae6bbe`。両buildともGCC 13.3.0、
+  `-O3 -fno-omit-frame-pointer -mno-omit-leaf-frame-pointer`、`--enable-experimental-jit=yes`で、PGO/LTOなし。
+  `PYTHON_JIT=1`でavailable/enabledともtrueを確認した。
+- 測定は従来と同じCPU 2へ固定し、main/candidate双方のworkerへ`PYTHON_JIT=1`、resident policy、全6 opt-in flagを
+  同じallowlistで渡す。CPU 2は最大4.4GHzのperformance coreでCPU 3とSMT sibling、governorはpowersaveであり、
+  system tuningは変更しない。完全suiteを二群へ固定分割し、片群をmain→candidate、他方をcandidate→mainの順で
+  実行する。共通benchmark全件のcandidate/main時間比を同重み幾何平均し、失敗・欠落・pyperf警告を除外せず記録する。
+- system Pythonにはpyperformance/pyperfが未導入だった。次はworkspace内の専用controller venvへ固定版を導入し、
+  version/help/manifest、target venvの依存、実workerのJIT環境を短いprobeで確認する。probe成功後に通常presetの全suiteを
+  実行し、結果JSON、stdout/stderr、binary/workload/dependency identityを`jit-artifacts/pyperformance-20260915/`へ保存する。
+
+- 採用版Pythonでcontroller venvを作り、pyperformance 1.14.0、pyperf 2.10.0、psutil 7.2.2、packaging 26.3を
+  導入した。default manifestは97 benchmark。全依存を作る初回試行は`fastapi`が要求するpydantic-core 2.46.5の
+  PyO3 0.28.3がPython 3.16を最大対応3.14より新しいとしてwheel buildを拒否し停止した。
+- `PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1`で未検証buildを強制せず、事前に`fastapi`だけをunsupportedとして除外する。
+  残る96 benchmarkのtarget venvを両比較側で同じ固定requirementsから作り、freezeとimport backendを照合する。
+  この除外は性能結果を見た後の選別ではなく依存構築不能によるmanifest-level欠落として全体結果に残す。
+
+- pyperformance自身の`venv create -p`はcontroller Pythonで環境を作るため、比較対象を実行基盤にするよう各binaryの
+  `-m venv`で`venv-main`と`venv-candidate`を作り直した。両方へmain側から固定した同一67 packageを導入し、
+  `pip freeze`はbyte単位で一致（SHA-256
+  `1a300b59650478e5092240511009dd1732e96f006dfbe209e4d96be2f21684fb`）。外部native extension 14個も対応する
+  `.so`のSHA-256が全て一致した。これによりPython本体以外のsuite依存差を除いた。
+- CPU 2固定・同一8環境変数・同じpyperf allowlistを通る中立worker probeを両環境で実行した。main/candidateとも
+  `sys._jit.is_available()`/`is_enabled()`がtrueで、reachable executorから非空`get_jit_code()`を確認した。
+  probe平均はmain 2.57 ms、candidate 260 usだったが、これは整数loopの動作確認値でありpyperformance総合指標には
+  含めない。次は96件の名前と交互開始順を結果を見る前にartifactへ固定し、各benchmarkを通常presetで対応測定する。
+
+- defaultから`fastapi`を除く実効96件を`benchmarks.txt`へ固定し、suiteのlist出力と完全一致を確認した。偶数位置48件を
+  group A（main→candidate）、奇数位置48件をgroup B（candidate→main）とし、binary/manifest/dependency/list hash、
+  CPU、環境、同重み幾何平均を`protocol.json`へ結果を見る前に記録した。各群の後発側は先発JSONの`--same-loops`を使う。
+- 最初のsmokeはrunnerがvenv entry pointのsymlinkをbase binaryへ解決したためpackageを見失って即時失敗し、測定値を
+  生成しなかった。起動pathを解決せず保持するよう修正した。その後、pyperformanceがさらにbinary ID別のworker venvを
+  自動作成することを確認し、各binaryで構築済みの同一67-package環境を対応cacheへ独立コピーした。cache側の
+  `sys._base_executable`はmain/candidateを正しく指し、`pip freeze --all` hashも双方一致した。
+- 修正後のBPE、float、Richards、spectral normのdebug-single-value smokeは8 run全て成功した。metadataはCPU affinity 2、
+  GCC 13.3.0、同じ`-O3` flagsを示し、ログ内の実worker commandにも全8 JIT変数のallowlistが渡っている。BPEの
+  `--same-loops`も成立した。smoke値は本結果に混ぜない。次は96件を二群4 commandの通常presetで逐次実行する。
+
+- 通常presetのgroup A/mainを開始した。27件目までにBPEは3.01 s +/- 0.01 sなど22件が値を返し、`2to3`、
+  `asyncio_tcp`、`asyncio_websockets`、`concurrent_imap`、`dask`はworker終了で失敗した。28件目`networkx`は
+  worker開始後に出力せず、事前固定した1800秒でpyperf timeout（exit 124）となった。手動介入やtimeout変更はせず、
+  runnerが29件目へ継続した。次はmain群の残りを完了し、candidate側で同じ項目の完走可否とloop対応を確認する。
+
+- group A/mainは2976.2秒で完了し、48 manifest項目中40件が成功、`pprint`の2出力を含む41 pyperf benchmarkを
+  JSONへ保存した。失敗は上記5件と`networkx`に加えて`networkx_k_core`、`tornado_http`の計8件
+  （worker終了7、timeout 1）。binary SHA-256は開始時と一致した。runnerは直ちにgroup A/candidateを開始し、
+  main JSONに存在する全benchmarkへ`--same-loops`を適用している。次はcandidate側の成功集合、特にnetworkxの
+  完走可否を確認し、A群の共通名を比較する。
+
+- ユーザー指示により、以後の`networkx` timeoutを早める。group A/candidateは10件目の途中で中断したが、suite JSONは
+  群完了時にだけ書かれるため性能結果は未生成で、確定済みmain JSONには影響しない。中断logは別名で保存した。
+  runnerを300秒上限へ変更し、protocolへ「A/mainのみ1800秒、以後300秒」のamendmentと新runner hashを記録した。
+  次はstateからA/mainをskipし、A/candidateを先頭から同じloops・CPU・環境で再実行する。B群は両側とも300秒で揃える。
+
+- 300秒上限で再実行したgroup A/candidateは1532.2秒で完了し、mainと同じ41 pyperf benchmarkを保存した。失敗項目も
+  同じ8件で、`networkx`は300秒timeout、`networkx_k_core`はcandidateでは300秒timeout（mainはworker終了）。
+  pyperfの有意差表示でA群は約1.05x faster、主な値はBPE 3.01→2.42 s、DeltaBlue 1.72→1.18 ms、Raytrace
+  156→118 ms、Spectral Norm 42.1→20.7 ms。Goだけは63.6→84.5 ms（1.33x slower）で大きな回帰候補となった。
+- group B/candidateは1538.9秒で完了した。48 manifest項目中45件が成功し、Base64 11件、Deepcopy 3件、Logging
+  3件、SciMark 5件、SymPy 4件、XML 4件などを含む69 pyperf benchmarkを保存した。失敗は`asyncio_tcp_ssl`、
+  `genshi`のworker終了と`networkx_connected_components`の300秒timeoutの計3件。binary hashは不変。
+  runnerはgroup B/mainを開始し、candidate JSONの全69名へ`--same-loops`を適用している。次はmain側の成功集合を
+  確定し、A+B共通全名（現状最大110件）の同重み幾何平均、pyperf有意差、警告、失敗を集計する。
+
+- group B/mainは1421.1秒で完了した。candidateと同じ69 pyperf benchmarkを保存し、失敗項目も
+  `asyncio_tcp_ssl`、`genshi`、`networkx_connected_components`の3件で一致した。最後のnetworkx系もユーザー指定どおり
+  300秒で打ち切った。A群41名、B群69名は重複せず、両binaryに共通する比較対象は計110名となった。
+- 最終JSONのSHA-256はA/main `97a57d...6050`、A/candidate `970ec2...e2e`、B/main
+  `7b9006...3f62`、B/candidate `4c59f5...744a`。main/candidate binaryも開始時の`8fb6c5...3407` /
+  `6b5be3...6bbe`から不変だった。次は4 JSONのloop/metadata対応を機械確認してside別に統合し、110名を同重みとする
+  candidate/main時間比の幾何平均とworkload-bootstrap区間、pyperf有意差、最大改善・回帰、unstable警告を出す。
+
+- 110名の機械照合で、`deepcopy`が返す3結果のうち`deepcopy_reduce`と`deepcopy_memo`だけloop不一致を検出した。
+  B群後発mainへ渡された`--same-loops=1024`が複数Runner全体へ適用され、先発candidateで個別校正された65536 / 8192を
+  保持できないpyperformance側の制約である。ほか108名のloopsは一致した。
+- 主解析へ不一致を残さないため、結果値を見る前にdeepcopy 3件を両側共通8192 loops、通常6 processes x 10 valuesで
+  一度だけ補正測定する。長いB群とは逆のmain→candidate順、同じCPU 2、JIT/resident/全opt-in、300秒worker timeoutを使い、
+  workload/binary hashを前後照合する。元JSONは変更せず保存し、補正3件だけを統合suiteで置き換える。
+
+- deepcopy補正はmain/candidate各約95秒で完了し、3結果とも8192 loops、6 measured processes、60 valuesで一致した。
+  main→candidateはdeepcopy 153→151 us、reduce 1.81→1.78 us、memo 12.6→13.3 us。両binaryと同一workload script
+  SHA-256 `9e1550...078`は前後不変で、補正JSONを元の4 suite JSONと別に保存した。
+- 補正後110結果の主指標candidate/main時間比は同重み幾何平均 **0.969162**（**3.08%短縮、1.032x**）。各側の
+  6 measured process meanを独立再抽出した20,000回bootstrap（seed 20260915）の95%区間は
+  **[0.968083, 0.970242]**、全value中央値による感度分析は0.968572だった。この区間は固定binary/host/CPU内だけで、
+  rebuildやcode layout、別hostの変動は含まない。
+- 名目上68件改善、42件回帰。pyperfの既定t-testでは48件改善、32件回帰、30件有意差なし。最大改善はSpectral Norm
+  0.4918、Hexiom 0.5844、async-tree eager 0.6021、DeltaBlue 0.6890。最大回帰はbase16 large 1.4735、
+  base16 small 1.3345、Go 1.3275で、いずれも各側の標準偏差は2.2%未満だった。
+- この3回帰の順序ドリフトを調べるため、主集計は変えず各1 blockだけ逆順再測定する。base16はpyperformanceの未変更
+  関数をsmall 512 / large 32 loopsでmain→candidate、Goは2 loopsでcandidate→main、全て通常6 x 10 values、CPU 2、
+  同一JIT環境を使う。再現すれば回帰を実装またはbinary layout起因の未解決課題として明示する。
+
+- 逆順blockでもbase16 small 1.3409、large 1.4979、Go 1.3308と主測定を再現した。各側60 values、標準偏差は
+  1.8%以下、binary/workload hash不変なので、長時間suiteの順序ドリフトではない。
+- candidateで全6 opt-in flagを外した診断では、Goはmain比 **1.0034**へ戻った一方、base16 small/largeは
+  **1.3297 / 1.4855**のままだった。従ってGoはopt-in変換の実コスト、Base16は変換が形成されなくても残るcandidate
+  binary/source/code-layout差である。次はGoを各flag単独有効で測って原因を特定し、Base16を両側JIT無効で測って
+  native JIT固有かTier 1/core固有かを切り分ける。これらの診断値は110件の主集計を変更しない。
+
+- Goを各flag単独で測ると、call-regionsだけmain比 **1.3302**で全ONの1.3308を再現し、ほか5 flagは
+  1.0033–1.0063だった。call-regions有効/全flag無効coverageは時間0.08325/0.06359 s、到達executor **87/132**、
+  native code **602,112/1,257,472 bytes**。専用region counterは全て0なのでfast pathの実行コストではない。
+- sourceではcall-regions有効時に`_GUARD_GLOBALS_VERSION`と`_LOAD_GLOBAL_MODULE`がnamed dependencyを選び、通常の
+  globals mutation上限を越えてwatchを継続する。Goは`TIMESTAMP`と`MOVES`を高頻度に書き換えるため、named dependencyの
+  invalidationでexecutor coverageを失うことが観測と一致する。次の実装修正候補はnamed監視を実際にfoldした名前へ限定し、
+  専用call regionを形成しないtraceでは既存mutation上限を維持すること。今回は比較依頼のためsource修正や再buildへ広げない。
+- Base16は両側`PYTHON_JIT=0`でもsmall/large **1.3168 / 1.4586**で回帰した。固定mainの`Lib/base64.py`
+  （SHA `4b0f87...64fb`）は`ignorechars`が空なら`bytes.translate`を省くが、candidate側（`93319e...978`）は常に呼ぶ。
+  main版moduleだけcandidateへoverlayしたJIT-off測定はmain比 **1.0326 / 0.9836**へ戻り、回帰のほぼ全てがbranch間の
+  標準ライブラリrevision差で、今回のJIT最適化ではないことを確認した。
+- 既知のBase16 source差2結果を除く副次感度は108結果で0.962555、さらに診断済みGoを除くと107結果で0.959667。
+  選別後の値なので主結論にはせず、事前定義した全110結果の **0.969162**を維持する。次はofficial `pyperf check`/
+  `compare_to`出力、失敗分類、生JSON、補正・診断、解析scriptのhash manifestを固定し、最終整合性を確認する。
+
+- official pyperf 2.10.0 `compare_to`も**1.03x faster**を表示し、独立計算と一致した。有意差なしは30件。
+  `pyperf check`のunstable警告はmain 49、candidate 45件で、大半は「1%未満の変動を95%確度で得るにはsample不足」。
+  警告項目も除外せず、各benchmark 6 measured processes / 60 valuesをprocess単位bootstrapへ使用した。
+- default 97 manifest中、`fastapi`は事前のPython 3.16依存非互換で除外。残る96 specification中85が完了した。
+  socket bind禁止4件、process権限1件、offline `2to3` vendor 1件、Python 3.16非互換2件、networkx系3件の計11件は
+  比較値なし。networkx系は以後300秒で打ち切り、一般networkxは両側timeout、k-coreはmain signal 11/candidate timeout、
+  connected-componentsは両側timeoutだった。これらについて速度結論は出さない。
+- 最終英語reportは`jit-artifacts/pyperformance-20260915/analysis/summary.md`、全110比は`ratios.csv`、機械可読集計は
+  `analysis.json`、official出力は`pyperf-compare.md`と`pyperf-check-*.txt`、診断は`diagnostics.json`に保存した。
+  生の4 suite JSON/log、deepcopy補正、逆順再測定、flag/JIT/source診断も別ディレクトリに保持している。
+- 315 evidence filesとmain/candidate binary、両`base64.py`を照合する`artifact-manifest.json`を生成し、manifest自身の
+  SHA-256は`57f948c6001159acf56cdf37094d93255903401b106a311c1e9eea350e03ac59`。56 JSONのparse、全manifest hash、
+  analysis/official pyperf整合性、全解析scriptの`py_compile`、`git diff --check`が成功した。最終binary hashも不変。
+- 結論は固定build全体で**3.08%短縮**。次のJIT実装作業ではGoで判明したnamed-global dependencyの監視範囲を狭め、
+  専用call regionが形成されない高頻度globals更新workloadのexecutor invalidationを防ぐ。その修正は別candidateとして
+  correctness、Go逆順block、選択前の全suiteで再検証する。今回はGitHub投稿、push、PR変更を行っていない。
+
+## 19. main統合とGo 0.8目標（2026-09-15）
+
+- ユーザー指示によりlocal `main` `a60343ed17785ebbcd43de9080cadd8e2541db6f`を、作業HEAD
+  `43061656d481a937e2c07500f457b7e81ff1c3bd`へマージした。追跡済みdirty差分は事前にstashし、完全patchを
+  `/tmp/cpython-gc-pre-main-merge.patch`（SHA-256
+  `4dd841cb3f39f4ed9a9054f5ffbe5ebc710f3a3d74a1c8f6c207a024c5396f11`）へ保存した。マージcommitは
+  `9db7c47c5fb`、競合なし。stash適用後もunmerged pathと`git diff --check`エラーはなく、復元を確認してstashを削除した。
+- merge後の`Lib/base64.py`は`main`との差が0で、空の`ignorechars`では不要な`translate()`を呼ばないmain側実装になった。
+  以前のbase16回帰はこの標準ライブラリ差が原因と診断済みなので、次回比較からその差は入らない。
+- pyperformance 1.14.0の`bm_go/run_benchmark.py`を`benchmarks/go.py`へ標準ライブラリだけで動く形に移植した。
+  元の9×9盤面、200 games、seed 1、`versus_cpu()`の計測境界は変えず、各operationで選択手5、
+  `TIMESTAMP`増分81,059、`MOVES`増分21,401を検証する。共通CLIとJSON出力を追加し、一覧文書も更新した。
+- 元版の全9 function/classと移植版のASTが一致した。固定mainで2 loopsを実行し、選択手5、`TIMESTAMP` 162,118、
+  `MOVES` 42,802を確認した。`py_compile`、JSON出力、`git diff --check`も成功し、移植工程を完了した。
+- 次は移植版を元pyperformance関数と照合し、merged sourceからPGO/LTOなしのnative JITを再生成する。固定mainと
+  CPU 2・resident・同じopt-in環境でbaselineを取り、まずnamed-global監視のmutation上限を保つ修正で既知の1.33倍回帰を
+  除く。その後coverage/perfからGoのhot pathを選び、対応blockのcandidate/mainが**0.8以下**になるまで実装と検証を続ける。
+
+- LLVM 21.1.8と固定debug bootstrapを使い、`-fno-vectorize -fno-slp-vectorize`でmerge後のnative stencilを強制再生成した。
+  configure更新による全再コンパイル後もPGO/LTOなし、JIT available/enabledを確認した。成功した手動生成のprefix/flagsを
+  ここへ記録してから`.jit-stamp`を更新し、merged baseline binary
+  `build-jit/python-go-merged-baseline`（SHA-256 `ebc3a1d9...c34a1`）を固定した。
+- CPU 2・resident・全6 opt-in・各process warmup 5/value 10の交互順3 blockで、merged baseline/mainは
+  **1.342284 / 1.344402 / 1.354144**、幾何平均 **1.346933**。main統合後もcall-region起因の回帰を安定再現した。
+- 最初の修正では、現在のcode object自身が`STORE_GLOBAL`する名前をbytecodeから検出し、その名前の
+  `_LOAD_GLOBAL_MODULE`だけconstant foldingせず特殊化lookupを残した。名前別dependencyによるstable globalの最適化は維持する。
+  新規self-invalidating counter testと既存named-global 3 testはnative JITで成功した。
+- 修正版（SHA-256 `aa58ca12...3b29`）のmain比は3 block **1.293755 / 1.274421 / 1.277661**、幾何平均
+  **1.281918**。改善したが目標未達で、別functionから`TIMESTAMP`を読むexecutorは依然として書換えのたびに無効化される。
+  次はmutation上限へ達したmoduleで、頻繁に再束縛されるmortal exact-int globalをfoldしない限定heuristicを追加する。
+  `stable` objectを差し替えて再形成する既存named-global contractは維持し、別writer関数のcounter testで区別を固定する。
+
+- exact mortal-intだけを対象にした試作は3 block幾何平均 **1.317042**、書込対象名だけをmodule内functionから探す試作は
+  **1.334103**で、別reader executorの再形成を十分に止められなかったため撤回した。どちらも最終sourceには残していない。
+- 現在の実装は、同じglobalsを使うmodule functionまたは直下class methodに`STORE_GLOBAL`が一つでもある場合、named dependencyを
+  選ばず既存のglobals mutation上限へ戻す。初期の少数回は従来どおりfoldし、その後は`_LOAD_GLOBAL_MODULE`を残すため、頻繁な
+  module counter更新でもexecutorが安定する。外部からだけ変更されるstable globalsは従来の名前別dependencyとfoldを維持する。
+- 自己書込、別function書込、無関係名の差替え、mutation後の再compile、legacy dependencyのfocused 5 testはnative JITで成功した。
+  binary `build-jit/python-go-mutable-module-fix`（SHA-256 `9e019f1c...5929`）のmain比は3 block
+  **0.979738 / 0.992641 / 1.018712**、幾何平均 **0.996899**。既知の1.35倍回帰は除いたが0.8目標には未達である。
+- JITを外した1 operationの`cProfile`では`Square.find`が46.4万call（18.3万primitive）、`Board.useful` 5.97万、
+  `EmptySet.random_choice` 2.18万、`Square.move` 2.14万。leafでは`EmptySet.set` 6.66万、`ZobristHash.update`
+  6.82万、`ZobristHash.dupe` 3.15万が多い。次は現在binaryでexecutor/uop coverageとflag別寄与を取り直し、既存の
+  generic call-region matcherへ安全に載せられるhot leafまたは`Square.find`を選ぶ。新しい変換はcode shape、type layout、
+  globalsのguardで一般化し、Go固有のfunction名には依存させない。focused correctnessと交互順3 blockを各iterationで行う。
+
+- `Square.find(update=False)`の正確なbytecode形を証明する再帰参照root変換を追加した。exact function/type/layout、
+  compact exact-int position、instrumentation/eval breaker、recursion残量を全て副作用前にguardし、最大64 linkを直接たどる。
+  最初の版はtype versionを16 bitへ切り詰めて全entryがguard exitしたため、operandへ32 bitを保持するよう修正した。
+  次の版は再帰frameだけを省きながら記録済みtraceの後半へ進み、消したframeのlocalを後続uopが読むためGoの結果を壊した。
+  採用版はcall以後を`_DYNAMIC_EXIT`へ置換し、実callerのreturn offsetへ戻すことでこの不変条件違反を解消した。
+- debug Tier-2とnative JITで選択手5、`TIMESTAMP` 81,059、`MOVES` 21,401を再確認した。native 1 operationでは
+  56,840 entry、133,595 link iterationを実行。固定CPU 2の交互順3 blockはmain比
+  **0.972517 / 0.969855 / 0.967606**、幾何平均 **0.969991**だった。artifactは
+  `jit-artifacts/go-goal-20260915/reference-root-v3/`。LLVM stencil生成は固定debug bootstrapへ
+  `-X cpu_count=2`を渡すと並列clang crashを避けられ、成功後だけ`.jit-stamp`を更新した。
+- 続いて、exact ownerの二つのinline-value属性がexact listで、compact exact-intの二引数を順に代入する短いmethodを
+  一つの`_CALL_PY_LIST_SET_PAIR`へ置換した。対象bodyの全bytecode形、function/type version/layout、list/index、既存elementの
+  exact型を副作用前にguardする。Pythonと同じ二つのstore順と参照数操作を保ち、call後は実callerへdynamic exitする。
+  実Go traceは汎用fixtureと異なりstore直前が`_GUARD_TOS_INT`だったためmatcherへ追加し、checksumを保ったまま
+  1 operationで26,095 callを融合できた。
+- pair-store版binary SHA-256は`551cb7ec...f0dd`。同条件3 blockはmain比
+  **0.982549 / 0.955621 / 0.955803**、幾何平均 **0.964576**で、reference-root版からさらに約0.56%短縮した。
+  artifactは`jit-artifacts/go-goal-20260915/list-set-pair/`。目標0.8には未達なので、次は3.15万callの
+  `ZobristHash.dupe`（exact set membership）または6.82万callの`ZobristHash.update`を一般的なguard付きleaf callへ融合する。
+  まず副作用を持たないset membershipを実装・focused test・coverage確認し、効果が足りなければupdateと上位loopへ進む。
+
+- `return self.key in self.values`という完全なbodyを、exact function/type/layout、exact-int key、exact setで証明する
+  `_CALL_PY_SET_CONTAINS`を試した。set probeはCPython本体と同じperturb列をたどり、exact-int同士だけを直接比較し、hash collisionした
+  non-int keyは`__eq__`を呼ぶ前にdeoptする。hit/miss、巨大int、custom collisionのfocused確認とGo checksumは成功し、1 operationで
+  18,647 entryを観測した。しかしcallerへdynamic exitする版の3 block幾何平均は**0.966091**で、pair-store版
+  **0.964576**から改善しなかった。
+- 次に`Board.useful_fast`型の「bool属性を検査し、list属性中のobject属性がglobal intと一致するか」を一callへまとめる
+  `_CALL_PY_LIST_ANY_ATTR`を試した。Goでは27,903 call / 28,246 list elementを処理しchecksumも一致したが、recorded traceがcalleeの
+  loop内部で終わるため各call後のdynamic exitを避けられず、3 block幾何平均は**0.975291**へ悪化した。この変換は不採用とし、
+  source、counter、optimizer pass、生成uopから完全に削除した。
+- pair-storeとset-containsの実traceにはcalleeの`RETURN_VALUE`後にcaller uopが記録されていたため、matcherをreturnまで厳密に照合し、
+  callee区間だけをNOP化してcaller traceを継続するよう変更した。debug Tier-2で選択手5、`TIMESTAMP` 81,059、`MOVES` 21,401を確認。
+  pairは38,982 entry、setは18,647 entryへ到達し、全てのspecialized uop直後が`_DYNAMIC_EXIT`ではなくcaller側の
+  `_CHECK_VALIDITY`等であることを機械確認した。set collision fixtureも成功した。次はLLVM stencilを強制再生成してnative buildを
+  relinkし、同じ3 blockでこのtrace継続の効果を測る。0.8に届かなければnative profileを取り直して次のhot regionへ進む。
+
+- LLVM 21で全stencilを強制再生成し、PGO/LTOなしのrelease native JITを全rebuildした。nativeでもJIT available/enabled、Go checksum、
+  pair 38,982 entry、set 18,647 entry、caller trace継続、collision fallbackを再確認した。binary SHA-256は
+  `c70419dd...86b6`。交互順3 blockのmain比は**0.945363 / 0.950447 / 0.953476**、幾何平均
+  **0.949756**。dynamic exit削減はpair-store版から約1.5%改善したが、0.8目標にはまだ約15.8%必要である。
+- 現binaryを`cpu-clock:u` 999 Hzで10 operation profileし637 sampleを取得した。self timeはTier 1 interpreter 19.6%、
+  frame clear/init/pop/pushが合計約5%、long XOR本体1.7%に加えてそのallocationが約1.4%、method/type/instance lookupも数%を占める。
+  次は68,206 call/operationの`ZobristHash.update`を対象に、二つの非負exact-int XORと同じ属性へのstoreを一つの
+  callback-free leaf callへ融合する。中間long allocationとPython frameを除き、最終long、store順に関係する例外・参照寿命、
+  type/function/layout/list/index guardをfocused testで固定する。効果が不足する場合は`Board.useful_fast`のlocal list scanへ進む。
+
+- `self.value ^= item.values[item.index]; self.value ^= item.values[index]`という完全なmethod bodyを証明する
+  `_CALL_PY_XOR_ATTR_LIST_PAIR`を追加した。exact function/type version、inline-value layout、exact list、compact index、
+  非負uint64 exact-intを副作用前にguardし、二つのXORと中間store/allocationを一つのXOR・最終long/storeへまとめる。
+  allocation失敗時は省略したcallee frameと第二XOR位置のtracebackを復元する。debug Tier-2の境界値、負/巨大int、bool index、
+  reflected XOR、IndexError、targeted allocation failureで通常経路へのfallbackと例外伝播を確認した。
+- native JITでも選択手5、`TIMESTAMP` 81,059、`MOVES` 21,401を維持し、1 operationでXOR uop 17,068 entryを観測した。
+  binary SHA-256は`d9edb038...e1fb2`。CPU 2・resident・全opt-in・warmup 5/value 10の交互順3 blockはmain比
+  **0.904158 / 0.894691 / 0.895889**、幾何平均 **0.898236**。caller継続版から約5.4%短縮したが0.8目標には
+  さらに約10.9%必要である。artifactは`jit-artifacts/go-goal-20260915/xor-call/`へ保存した。
+- 更新後の20-operation native profileではTier 1 interpreterがself 17.6%、frame clear/init/pop/pushが合計約8%、
+  dict insert/lookup、method/type/instance lookup、compact-int加減算が次の費用である。次は約5.97万callの
+  `Board.useful_fast`について、以前成功したcallback-free list scanへcalleeのreturnとcaller継続を加えて再実装する。
+  checksum、early return、used case、属性/type/global変更のfallbackを固定してから同じ3 blockで採否を決める。
+
+- 再帰参照rootについて、recorded trace内のnested `PUSH_FRAME`/`RETURN_VALUE`深さを追跡し、callee区間後もcallerを継続する
+  試作を行った。単純な再帰fixtureでは成立したが、Goでは選択手51、`TIMESTAMP` 80,360、`MOVES` 21,165へ壊れた。
+  inlined recursive frameをNOP化した後のstack/local所有権がrecorded caller mappingと一致しないためである。この案と診断用envは
+  完全に撤回し、採用版の実caller return offsetへのdynamic exitを維持した。再帰callを越える継続は、frameを保持するlocal uopで
+  bodyだけを融合する場合に限って再検討する。
+- `Board.useful_fast`の完全なbodyを再証明し、`used`がfalseなら最大64件のexact-listを走査して各exact memberのinline属性を
+  actual callee globals内のcompact exact-intと比較する`_CALL_PY_LIST_ANY_ATTR`を追加した。callee returnまで記録されたtraceだけを
+  変換してcallerへ継続する。記録時のbool returnでcaller分岐が定数化されているため、runtime探索結果がそのrecorded pathと一致する
+  guardも入れた。このguardがない試作はGo checksumを壊し、分岐結果のownershipをguardする必要性を実測で確認した。
+- debug/nativeとも選択手5、`TIMESTAMP` 81,059、`MOVES` 21,401を維持した。native 1 operationで8,999 call、11,943 elementを
+  専用uopが処理し、binary SHA-256は`a94f6e3f...6455c`。CPU 2・resident・全opt-in・warmup 5/value 10の交互順3 blockはmain比
+  **0.895821 / 0.895876 / 0.892441**、幾何平均 **0.894711**。XOR版から約0.39%の再現性ある短縮なので採用し、artifactは
+  `jit-artifacts/go-goal-20260915/any-attr-continuity/`へ保存した。
+- 0.8目標にはさらに約10.6%必要である。次は68,206回のZobrist更新のうちcall融合で届いていない約5万回を対象に、callee frameを
+  消さず二つのXOR bodyだけをlocal-frame uopへ置換する。これによりrecursive/callee-attached traceのlocal所有権を維持したまま、
+  中間long allocationと属性lookup/storeを除ける可能性を検証する。body境界、例外位置、負値・巨大int・custom fallbackをdebugで
+  固定し、native coverageと同じ3 blockで採否を決める。
+
+- 関数先頭・空スタックから始まるcallee-attached executorだけに`_XOR_ATTR_LIST_PAIR_LOCAL`を追加した。実callee frameと
+  `RETURN_VALUE`を維持し、全code shapeを証明した二つのXOR文だけを置換する。exact type/version、inline layout、exact list、
+  compact index、非負uint64 exact-intを副作用前にguardし、一つの最終longだけを割り当てて属性へ格納する。
+- debug fault injectionの初版は`JUMP_TO_ERROR()`がdeopt targetをerror targetにも使い、例外を保持したままexecutorへ再入した。
+  `ERROR_NO_POP()`も一target形式では同じ問題になるため、現在frameのfirst-XOR offsetを設定して`GOTO_TIER_ONE(NULL)`へ直接戻す形に
+  修正した。これでTier 1の通常error handlerが処理する。MemoryErrorのcallee traceback、属性未変更、負値・巨大int・範囲外indexの
+  通常Python fallbackをdebugで確認した。一時診断assert/printは全て削除した。
+- nativeでもGo checksumを維持し、local XOR **42,237 entry**、call XOR 17,767 entryで合計60,004 updateを融合した。binary
+  SHA-256は`c4443a3e...3a4d`。最初の3 blockはmain側が63.2→65.6 msへドリフトして幾何平均0.879460だったため、同一binaryで
+  直ちに3 blockを追加した。追加は**0.896379 / 0.889554 / 0.893086**、幾何平均 **0.893002**、6 block合成は
+  **0.886205**。候補は全6 block 56.4–56.8 msで安定し、直前版56.4–57.2 msに対する実効差は約0.3%だった。
+- 小さいが安定した短縮と42,237 entryの明確なcoverageがあるためlocal XORを採用する。単独の目標判定はrepeatの**0.893002**を
+  重視し、0.8には約10.4%必要とみなす。次は現binaryをnative `perf`で再採取し、Tier 1、frame処理、dict/method lookupのうち
+  Goの具体的な高頻度functionへ対応する費用を選ぶ。大きなleaf融合がなければ`Board.useful`本体のcallback-free prefixまたは
+  `EmptySet.random_choice`を、frameを保持するlocal uopとして検討する。
+
+- 20-operationの`cpu-clock:u` 999 Hz profileは1,168 samples、lost 0。selfはTier 1 20.91%、frame clear/pop/init/push
+  合計7.58%、compact-long add/subtract 2.40%、dict lookup/insertとmethod/type/instance lookupが各0.3–1.5%だった。raw dataと
+  reportは`jit-artifacts/go-goal-20260915/local-xor-profile/`へ保存した。code-attached `Square.find` executorは関数先頭から
+  recursive callへ戻る55 uopで、専用root変換がなく、再帰frame削減の余地があると判断した。
+- `Square.find`型の完全bodyに対して、実callee frameを保持した`_REFERENCE_ROOT_LOCAL`を追加した。`update` local、type/layout、
+  compact position、各nodeのmethodが同一codeを持つexact Python functionであること、最大64 linkと再帰残量をguardし、root resultを
+  元の`RETURN_VALUE`へ渡す。独立fixtureでread-only traversal、path compression、instance method overrideを確認した。
+- 最初の`update=False`限定版は成功45,597回/124,978 linkに対して`update=True` call約12万回を全てguard exitし、main比
+  **0.917029**、候補57.50–58.44 msへ明確に回帰した。そこで最大64件のnon-root nodeを一時保持し、元のrecursive unwindと同じ
+  最深部からouterへの順でreferenceをrootへ更新・参照解放する`update=True`経路を追加した。書込前に全chain/methodを検証する。
+- 完成版はdebug/nativeともGo checksumを維持し、1 operationで**105,904 entry / 245,539 link**、追加guard exit 0。binary
+  SHA-256は`896198e0...1911`。固定CPU 2の3 blockはmain比**0.884650 / 0.887458 / 0.891312**、幾何平均
+  **0.887803**、候補56.08–56.27 ms。local-XOR repeatから候補時間を約0.9%短縮したため採用する。artifactは
+  `jit-artifacts/go-goal-20260915/local-root-update/`。
+- 0.8にはさらに約9.9%必要である。次は`Board.useful_fast`でcallee loop内に終わるためcall-continuity版が届かないtraceを対象にする。
+  call/PUSH_FRAMEは残し、callee localからcallback-free list scanを実行してtrue/falseの元`RETURN_VALUE`へ戻すlocal uopへ置換する。
+  これにより以前回帰した「callee frameを消して毎call dynamic exit」と異なり、stack/local所有権を維持してloopだけを省ける。
+
+- `Board.useful_fast`のcall traceがcallee loop内で終わる場合に、call setupと実callee frameを維持したままloop bodyを
+  `_LIST_ANY_ATTR_LOCAL`へ置換する解析を追加した。完全なbytecode bodyからtrue/false両方の`RETURN_VALUE` offsetを取得し、
+  runtimeではexact type/version、inline-value layout、bool、最大64件のexact list、compact exact-int、actual callee globalsをguardする。
+  欠落したinline属性をNULLのまま型判定しないようcall/local両経路も修正した。
+- debug/nativeともGo checksumを維持し、1 operationでlocal走査**1,784 entry / 1,407 element**を観測した。native JITの
+  available/enabledも確認し、binary SHA-256は`66b9684d...d2e0`。固定CPU 2の3 blockはmain比
+  **0.888795 / 0.891271 / 0.896617**、幾何平均**0.892222**だった。mainが直前測定より速い62.76–63.27 msへ移動した一方、
+  candidate medianは55.92–56.07 msで直前版56.08–56.27 msよりわずかに短い。適用数と効果は小さいが候補を維持し、artifactは
+  `jit-artifacts/go-goal-20260915/local-any/`へ保存した。
+- 0.8目標には現在比でさらに約10.3%必要である。次は現binaryのnative sampleを採り直し、専用uop適用後に残るTier 1、frame、
+  int/dict/method費用を実call siteへ対応付ける。大きい残存loopを一つ選び、実frameを保つlocal uopまたはcaller continuityで融合し、
+  checksum・fallback・coverageをdebugで固定してから同じblock測定を繰り返す。
+
+- local-any版を30 operation、`cpu-clock:u` 999 Hzで再profileした。1,738 sample、lost 0。Tier 1は20.51%、frame
+  clear/init/pop/pushは合計6.57%、`unicodekeys_lookup_unicode` 2.13%、`_PyObject_GetMethod` 1.73%、
+  `_PyTypeCache_Lookup` 1.44%だった。artifactは`jit-artifacts/go-goal-20260915/local-any-profile/`。
+- 1 operation約6.7万callの`EmptySet.set`について、call融合に入らないcode-attached executorの二つのlist storeを
+  `_LIST_SET_PAIR_LOCAL`へ置換した。exact type/layout/list/compact-int indexと既存exact-int要素を副作用前にguardし、元のstore・
+  decref順を維持する。独立fixtureで負index、第一/第二index範囲外、属性削除、既存要素の`__del__`を確認し、debug/nativeの
+  Go checksumと**11,252 local entry**を確認した。binary SHA-256は`7728c92b...31a4`。
+- 固定CPU 2の3 blockはmain比**0.889638 / 0.855016 / 0.894652**、幾何平均**0.879591**。中央blockはmainだけ
+  65.63 msへ遅く、candidateは全block 55.93–56.25 msでlocal-any版と同等だった。artifactは
+  `jit-artifacts/go-goal-20260915/local-list-set/`。正しさとcoverageはあるが実効短縮はなく、次はlocal rootの各linkで行う
+  method/type lookupを、class method一回の解決とinstance override検査へ分解して重複lookupを除く。
+
+- call/local rootのrecursive method検証を、各linkの`_PyObject_GetMethod`から、uop入口でのclass descriptor一回の検証と
+  各inline instanceのoverride不在検査へ変更した。debug/nativeとも全coverageとchecksumを維持し、instance override fixtureも成功。
+  binary SHA-256は`2f7cfe02...bced`、3 blockは**0.888214 / 0.872541 / 0.887691**、幾何平均
+  **0.882785**。candidateは55.84–56.09 msで小幅短縮に留まった。artifactは
+  `jit-artifacts/go-goal-20260915/root-method-once/`。
+- `Board.useful_fast`のcode-attached executorはFOR_ITERでなくbytecode backedge offset 57から記録され、entry stackにexact listと
+  tagged indexを保持していた。完全body proofからbackedge、global名、両return offsetを取得し、現在indexからlist末尾までを
+  `_LIST_ANY_ATTR_ITER_LOCAL`で走査して元のtrue/false `RETURN_VALUE`へ戻すようにした。一時offset診断は削除済み。
+- debug/nativeでchecksumを維持し、1 operationでloop版**3,697 entry / 8,033 element**、三つのany-attr経路合計
+  14,480 entryを観測した。false/early true/used、global差替え、属性削除、custom `__eq__`のfixtureも成功。binary SHA-256は
+  `c56d62ac...359a`。固定CPU 2の3 blockはmain比**0.867511 / 0.881469 / 0.880922**、幾何平均
+  **0.876610**。candidate後半2 blockは55.31/55.37 msで直前より約1.1%短いため採用する。artifactは
+  `jit-artifacts/go-goal-20260915/useful-fast-loop/`。
+- 0.8には現在candidateからさらに約8.8%必要。小さいleafの追加だけでは不足するため、perf trampolineを有効にしたfunction別
+  sampleを採り、`Board.useful`、`Square.move/remove`、`EmptySet.random_choice`のどのframe/loop境界をまとめると最大のTier 1と
+  frame費用を除けるか選ぶ。次の融合もcode shapeとruntime guardで一般化し、checksum/fallback/coverage後にblock測定する。
+
+- CPythonのperf trampolineはexperimental JITと同時に有効化できず、`-X perf`/`-X perf_jit`はいずれもJITを停止することを
+  実機で確認した。補助資料としてJITなし50 operationを`-X perf`で採取し、5,000 sample・lost 0を
+  `jit-artifacts/go-goal-20260915/perf-trampoline-nojit/`へ保存した。`cProfile`でも5 operationを確認し、self time上位は
+  `Square.find` 22.7%、`Board.useful` 18.3%、`EmptySet.random_choice` 9.5%、`Square.move` 8.1%だった。JIT有効時の判断は
+  既存のnative C sample、executor coverage、実trace形を組み合わせる。
+- call/local rootのinstance-method override確認で、各chain linkごとに同じUnicode keyをsplit keysから検索していた処理を除いた。
+  class descriptor検証時にcached-key slotを一度だけ解決し、type versionとvalid inline-valuesで守られた各nodeではそのslotがNULLかを
+  直接確認する。debug/nativeでread-only traversal、path compression、instance override、Go checksumと従来coverageを維持した。
+  binary SHA-256は`ff750b2f...3808`。固定CPU 2の3 blockはmain比
+  **0.873067 / 0.871578 / 0.875041**、幾何平均 **0.873227**で、直前の0.876610から約0.4%短縮した。
+  artifactは`jit-artifacts/go-goal-20260915/root-method-slot/`。0.8にはさらに約8.4%必要なので、次はJIT有効時に残る
+  `Board.useful`/`EmptySet.random_choice`のloop executor境界を特定し、frameを保つlocal loop融合でまとまったTier 1実行を除く。
+
+- `Board.useful`の`neighbour.find()`は省略された`update=False`を補う`CALL_PY_GENERAL`であり、従来のcall-root変換は
+  Python frameを生成した後の再帰部分しか融合できていなかった。calleeの完全なroot body、valid function version、exactな
+  defaults tuple `(False,)`、type/layout/compact-int position、class descriptorとinstance override不在を証明する
+  `_CALL_PY_REFERENCE_ROOT_DEFAULT`を追加した。呼出し入口から最大64 linkを直接走査し、実callerのreturn offsetへ戻って
+  dynamic exitするため、callee frameを生成しない。defaults・method・layout変更時は副作用前に通常経路へdeoptする。
+- debug Tier-2でGo checksumを維持し、1 operationで**47,746 call / 137,936 link**を新uopが処理した。LLVM 21 stencilを
+  `-fno-vectorize -fno-slp-vectorize`と固定debug bootstrapで再生成し、PGO/LTOなしでnative JITを全rebuildした。nativeでも
+  JIT enabled、選択手5、`TIMESTAMP` 81,059、`MOVES` 21,401を確認した。binary SHA-256は
+  `bfe767bb5b5b1a818fe21583d711f5262099829b0bff9f121e088966439150e4`。
+- CPU 2・resident・全6 opt-in・warmup 5/value 10の交互順3 blockはmain比
+  **0.814678 / 0.808799 / 0.809721**、幾何平均 **0.811062**。root-method-slot版からcandidate時間を約7.1%短縮し、
+  目標0.8まで残り約1.4%になった。artifactは`jit-artifacts/go-goal-20260915/root-default-call/`。
+  次は新しいdefaults呼出しの変更・instance override・長いchain fallbackをfocused testへ固定する。同時に残存traceを調べ、
+  `Board.useful`または`EmptySet.random_choice`の短いhot loopをframeを保つlocal uopへまとめ、同じblock測定で0.8以下を確認する。
+
+- root三経路の各linkについて、同じobjectへの重複type/version検査を一回へまとめ、inline属性をoffsetから直接読む試作を行った。
+  最初のinline helper版はTier-2 generatorがhelperをescape扱いしてloopごとにstack syncを挿入し、debugのstack bound検査が即座に
+  検出した。helperを使わないatomic loadへ修正後はdebug/nativeのGo checksum、path compression、instance overrideを維持した。
+- 修正版binary `eebd709c...f428a`のcandidate medianは51.43–51.69 msで直前版51.30–51.64 msから改善せず、main側の
+  測定移動もあって3 blockは**0.811382 / 0.822354 / 0.820184**、幾何平均**0.817960**だった。artifactは
+  `jit-artifacts/go-goal-20260915/root-direct-offset/`。効果がなくguard実装が複雑になるため試作をsourceから撤回した。
+  次は47,746回のdefault root呼出し後のdynamic exitを減らす。callee frameを消したままcaller traceを安全に継続できる
+  非再帰return pathを限定して照合するか、`Board.useful`の現在loop frameを保持したuopでfind後のcallback-free処理までまとめる。
+
+- direct-call rootでは、recorded callableとselfのtype versionがclass descriptorを既に特定しているため、実行時の
+  `_PyType_LookupRefAndVersion`をtype-version guardへ置き換えた。default変更、途中nodeのinstance override、class method差替え、
+  64 link超過を含むfocused fixtureとdebug/nativeのGo checksumは成功した。binary `e30f69d3...de4da72`の3 blockは
+  **0.805222 / 0.792947 / 0.824701**、幾何平均**0.807518**。候補前半は50.61/50.82 msまで下がったが、
+  3 block目が51.85 msへ移動したため目標達成とは判定しなかった。artifactは
+  `jit-artifacts/go-goal-20260915/root-call-type-guard/`。
+- attribute traceの`_RECORD_TOS_TYPE`/`_RECORD_TOS`を後段matcherでも取得できるtype-aware parserを追加した。executor生成時に
+  recorded type、type version、exact function、class descriptorを照合し、split-keyのmethod slotを0–254へ限定してuop operandへ
+  符号化する。これによりcall/default/local rootの実行時class lookupとsplit-key lookupを全て除き、type versionと各nodeの
+  inline instance slot NULL guardだけで変更を検知する。unbound callでclass methodが実行中functionと一致しない場合は変換しない。
+- debug/nativeでdefault、read-only、path compression、instance/class override、defaults変更、長鎖fallbackとGo checksumを維持し、
+  従来のroot coverageも維持した。PGO/LTOなしのnative binary SHA-256は
+  `a9cf6d08d2c5571f2d3472f7b83d39a63dd911776cc0d302bd020eb9ab0cca00`。CPU 2・resident・全6 opt-in・
+  warmup 5/value 10の交互順3 blockはcandidate **49.266 / 49.043 / 49.041 ms**、main
+  **62.841 / 62.946 / 62.778 ms**、比 **0.785798 / 0.776873 / 0.783487**、幾何平均
+  **0.782043**。全blockで0.8を下回り、Goの目標を達成した。artifactは
+  `jit-artifacts/go-goal-20260915/root-method-slot-recorded/`。
+- 次はdefault rootのfocused fixtureを`test_opt_regions`へ移し、debug/nativeの`test_tier3`と`test_capi.test_opt`を順次実行する。
+  生成物、`git diff --check`、一時診断文字列、JIT docsとstandalone benchmark文書を確認し、最終結果をこの節へ追記する。
+
+- default/local rootのfocused fixtureを`TestRegions.test_reference_root_default_and_local`として正式testへ移した。`def`を`exec`で
+  生成して有効なfunction versionを持たせ、default call uopとlocal uopのcounter増加、read-only traversal、path compression、
+  中間nodeのinstance method override、defaults変更、64 link超過fallback、class method差替えを一つのfixtureで検証する。
+- 全region testの途中で、`get_region_stats()`へcounterを追加した際に`Py_BuildValue`のformatが77 pairのまま、実引数86 pairに
+  増えていたため末尾9 counterが辞書から欠落する不具合を発見した。formatを10 pair単位の隣接文字列へ整形して86 pairへ修正し、
+  format数と引数数が一致することを機械的に確認した。修正後、debug/nativeとも`test_capi.test_opt_regions` **229 tests**が成功した。
+  nativeの`test_tier3 test_capi.test_opt`も**335 tests、4 skipped**で成功し、debugの`test_capi.test_opt`は
+  **321 tests、3 skipped**、debug `test_tier3`は**14 tests**で成功している。全opt-inをprocess開始時から同時指定すると個別testが
+  期待する変換順を変えるため、正式suiteはtest自身の`setUp`/個別contextが指定する環境で実行した。
+- counter修正と全generator再実行でnative executable identityが変わったため、現binaryを同じCPU 2、resident、全6 opt-in、
+  warmup 5/value 10、交互順3 blockで再測定した。最終再リンク後のcandidateは**49.394 / 49.115 / 49.098 ms**、mainは
+  **62.991 / 63.570 / 62.811 ms**、比は**0.784139 / 0.772610 / 0.781677**、幾何平均
+  **0.779460**。現binary SHA-256は`ebb86d4a...fb457`で、全blockが0.8未満のまま目標を達成している。artifactは
+  `jit-artifacts/go-goal-20260915/final-validated/`。root body proof、default call frame省略、recorded typeからのmethod slot事前解決、
+  guard/fallback、現測定値をcore developer向け英語文書`Tools/jit/regions.md`と`Tools/jit/optimization_report.md`へ反映した。
+- 次はgenerated fileの再生成差分、standalone checksum/JIT状態、base64のmain差分、一時診断文字列、`git diff --check`とrepository hookを
+  最終確認する。新しいGo専用変換は追加せず、達成済みの小さい実装をこの検証状態で固定する。
+
+- 全case generatorを固定debug bootstrapで再実行したところ、`Python/optimizer_cases.c.h`だけに未反映の正当な差分があり、追加uopの
+  symbolic stack effectと既存optimizer定義を生成し直した。他の15生成物は前後SHA-256一致。native stencilは既定makeの再生成を
+  途中で止め、`/usr/lib/llvm-21`、`-fno-vectorize -fno-slp-vectorize`、固定debug bootstrapでforce生成を成功させてからstampを更新した。
+  PGO/LTOは使用していない。再生成後にdebug/native双方でregion **229 tests**、Tier 3/C API optimizer **335 tests**を再実行して成功し、
+  上記0.779460はこの完全再生成・最終再リンク後binaryの測定値である。
+- 次はstandaloneのsyntax/checksum/JIT状態、base64差分、診断文字列、diffとhookだけを確認する。性能目標と実装・回帰検証は完了済み。
+
+- standaloneは`py_compile`に成功し、nativeで`sys._jit.is_available()`/`is_enabled()`がともにtrue、move 5、timestamp差81,059、
+  moves差21,401を再確認した。`Lib/base64.py`のmain差分は空、診断文字列は残存せず、`git diff --check`とoptimizer generatorの
+  冪等性も成功した。`prek`はこのPCに未導入だったため、pushしない本作業ではnetwork installを行わずrepositoryの`patchcheck`を試したが、
+  local branchにupstream PR情報がなく`base_branch=None`でコード検査前に停止した。これによるsource変更はない。必要な実装、性能、
+  correctness、生成物、文書の確認は完了した。
+
+## 20. pyperformance再比較のローカル実行準備（2026-09-15）
+
+- ユーザーがsandbox外のterminalでpyperformanceを実行する方針になったため、この工程ではbenchmark本体を起動しない。比較対象は
+  fixed main `build-main-jit/python` (`8fb6c5b...3407`) と完全再生成後candidate `build-jit/python`
+  (`ebb86d4a...fb457`)。両target venvのpyperformance **1.14.0**、pyperf **2.10.0**、67 packageのfreeze SHA-256
+  `84a767bb...8cbf`が一致し、JIT available/enabledも確認した。
+- candidate再リンクでpyperformance worker cache IDが`cpython3.16-8a5d1efb5ad3-compat-31b33d68c68a`へ変わっていた。
+  旧candidate cacheは同じ`build-jit/python`をbase executableとし同一依存を持つため、新IDへoffline複製した。
+  `pyperformance venv show`がalready createdを返し、新cacheからpyperformance/pyperf/networkxのimport、base executable、
+  freeze hash一致を確認した。main cacheもalready createdのまま。
+- `benchmarks/run_pyperformance_compare.sh`を追加した。binary、group、runner、dependency hash、CPU affinity、両側JIT状態を実行時に
+  preflightし、前回固定したfastapi除外後96 specificationをA: main→candidate、B: candidate→mainで逐次実行する。後発側には
+  同群の`--same-loops`を渡す。簡潔なrunnerにするためworker timeoutは全項目60秒で、従来300秒だったnetworkx系を早く打ち切る。
+  4 raw JSON/log/state/return codeを保存し、A+Bをside別にmergeしてofficial `pyperf compare_to`表とcheck結果も同じ出力先へ生成する。
+  個別benchmarkの失敗やtimeoutでrunnerが1を返しても4 suite JSONがあれば比較生成まで進む。出力先を固定して再実行すれば、
+  `run_groups.py`が完了済みstepをhash確認後skipする。
+- 次はユーザーがsandbox外で
+  `./benchmarks/run_pyperformance_compare.sh jit-artifacts/pyperformance-rerun-current`を実行する。完了後、`compare.md`、4 log、
+  `state.json`、merged JSONを解析し、共通成功集合・loop一致・幾何平均・失敗分類を現candidateについて更新する。
+- scriptへ`PYPERFORMANCE_PREFLIGHT_ONLY=1`を追加し、実行本体と同じbinary/group/runner/dependency hash、CPU 2、両JIT状態の
+  preflightをbenchmarkなしで完走した。Bash構文と`git diff --check`も成功。script SHA-256は
+  `93b7814e3598fc978f149d8fba5062fb4c4c07caa90ee0f24e21b01c1b86650c`。
+
+## 21. 現candidateのpyperformance再比較結果（2026-09-15）
+
+- ユーザーがsandbox外で`benchmarks/run_pyperformance_compare.sh`を完走した。固定main
+  `8fb6c5b87dec8e272c1acfad0197dc086bcd3e0c93912d949d43d5c4d9603407`、candidate
+  `ebb86d4a70b9dda5c4f70d4d49196cc5a87986c41ced14951f73dd0eef2fb457`、CPU 2、resident JITと全6 opt-in、
+  pyperformance 1.14.0 / pyperf 2.10.0、worker timeout 60秒である。4 raw JSONのhashを固定し、A/Bともmainとcandidateの
+  result名が一致すること、metadataのCPU/version、各resultの6 measured processを機械確認した。
+- fastapiを事前除外した96 specification中、**93件**が両側で完了して**119 result名**を生成した。以前sandboxで失敗した
+  `2to3`、`asyncio_tcp`、`asyncio_tcp_ssl`、`concurrent_imap`由来の2結果、`tornado_http`、NetworkXの3結果を新たに取得した。
+  失敗は両側で同じ3件だけで、`asyncio_websockets`はTCP 8001の使用中、`dask`はcloudpickleの`DELETE_GLOBAL`依存、
+  `genshi`はPython 3.16の`ast.Expression` constructor非互換だった。runner return code 1はこの対称な欠落を表し、4 suiteの
+  比較生成自体は完了している。
+- B群の`deepcopy_reduce`と`deepcopy_memo`だけ、先発candidateが個別校正した65,536 / 8,192 loopsを後発mainの
+  `--same-loops`が保持できず、mainは両方1,024 loopsになった。主指標はこの2件を除く**117 loop一致result**の同重み幾何平均とした。
+  candidate/mainは **0.972383**、すなわち**実行時間2.76%減、1.028倍**。各側の6 process meanを独立再抽出する20,000回
+  bootstrap（seed 20260915）の95%区間は**[0.970999, 0.973748]**である。2件も含む119結果の感度値は0.972324、official
+  `pyperf compare_to`の丸め表示も**1.03x faster**で整合した。
+- 名目上は76改善/41回帰、pyperf既定t-testでは**51改善/33回帰/33有意差なし**。unstable warningはmain 56、candidate 48。
+  A/B群の幾何平均は0.961057 / 0.980341。tag別はapps 0.9742、asyncio 0.9861、math 0.9777、template 0.9450に対し、
+  regex 1.0139、serialize 1.0056、startup 1.0049だった。
+- 最大改善はSpectral Norm **0.4835**、Hexiom **0.5794**、Raytrace **0.7296**、Go **0.7776**、BPE **0.8013**、
+  `k_core` **0.8518**。Goはfull pyperformanceでも0.8目標を満たした。最大回帰は`base16_large` **1.1240**、
+  `base16_small` **1.0680**、`base32_small` **1.0539**、`regex_v8` **1.0530**、Telco **1.0505**だった。
+  main統合済みなので今回のBase16差は以前診断した`Lib/base64.py`のrevision差ではない。
+- NetworkXは短い60秒timeoutでも3 specificationすべて完了した。`shortest_path` 1.0179、`k_core` 0.8518、
+  `connected_components` 1.0160。ただしmainの`k_core`は標準偏差9.6%で、改善量の精度は他の上位結果より低い。
+- 前回解析にも存在し今回loop一致した108結果に限定すると、旧candidate/main 0.968231、現candidate/main 0.971144で、
+  現runは相対0.3%悪い。旧candidateはmain統合前、現candidateはmain統合とGo最適化後であり、main側sampleも別runなので、
+  この差を個別JIT変更の効果とは断定しない。現在のsource整合性と広いcoverageを持つ0.972383を現candidateの代表値とする。
+- 再現可能な解析を`jit-artifacts/pyperformance-rerun-current/analyze.py`へ保存した。固定input/binary hash、loop一致、幾何平均、
+  process-bootstrap、pyperf有意差/warning、以前との共通集合を検査し、`analysis.json`、`ratios.csv`、`warnings.json`、
+  `summary.md`を生成する。次に厳密な全119結果の値が必要ならdeepcopy 3結果だけを共通8,192 loopsで補正する。高速化を続ける場合は
+  現在のBase16/regex回帰と、旧版から利益が減ったasync-treeをmerged baselineとの限定比較で切り分け、JIT変換に帰属できるものから直す。
+
+- Base16はmain統合でsource差を除いたはずとの指摘を受け、両workerが読む`base64.py`を実path/hash付きで再確認した。mainは保存snapshot、
+  candidateはcheckoutのファイルを読むが、ともにSHA-256 `4b0f8781...64fb`で内容は同一、benchmark driverも両側で同一である。
+  現binary用の固定診断script `base16-diagnosis/diagnose_base16.py`を追加し、CPU 2、small 512 / large 32 loops、通常6 process x
+  10 values、candidate→mainでJIT無効を再測定した。結果はsmall **1.08617**、large **1.13667** candidate/mainで、各側の
+  標準偏差は1.2%以下、loopも一致した。したがって今回の回帰は`Lib/base64.py`差ではなく、candidate binaryに含まれるJIT外の
+  runtime差またはbuild/code-layout差でも再現する。次はJIT有効・全opt-inなしを同じdriverで測り、native JITの寄与を分離する。
+
+- JIT有効・全opt-inなしのfocused再測定はsmall **1.05954**、large **1.12894**で、full-suite値をほぼ再現した。JITはsmallの差を
+  むしろ少し縮め、largeの差にはほぼ影響しない。さらにmain統合直後・Go修正前の保存binary
+  `python-go-merged-baseline` (`ebc3a1d9...c34a1`)をJIT無効で測るとsmall **1.06240**、large **1.13531**だった。
+  現candidateのGo向け変更より前から存在するため、それらはBase16回帰の原因ではない。`binascii` extensionの`.text` hashは
+  main/candidateで同一。一方、実行ファイル内の`_Py_bytes_upper`は命令列が同一でもmainの0x10ce50からcandidateの0x112420へ移動し、
+  merged baselineと現candidateは同じ配置だった。次はBase16のC処理を要素別に測り、bytes upperの配置差を原因として再現できるか確認する。
+
+- JIT無効focused測定をmain→candidateへ反転してもsmall **1.08533**、large **1.13309**で再現し、二block幾何平均は
+  **1.08575 / 1.13488**。実行順やCPU warmupではなかった。1 MiB入力を分解した反転2 blockの幾何平均は`hexlify` 1.05674、
+  `bytes.upper` 1.05453、6回の不在membership scan 1.01771、`unhexlify` 1.00197、完全encode **1.34161**、完全decode
+  **1.00946**。large回帰は主に、2 MiB級のencode戻り値をbenchmarkが即解放する経路にある。
+- benchmarkと同じ即解放encodeを800回行うsequential `perf stat`では、両binaryのinstruction数とminor fault数（約816,000回）が
+  ほぼ同じだった。kernel cycle/syscall回数も近い一方、candidateのuser cycleが多くIPCが低い。診断専用にglibcのmmap/trim/top-pad
+  thresholdを8 MiBへ上げるとminor faultは約2,600回へ減り、task-clock差は約1.4から約1.06へ縮んだ。このallocator設定は
+  suite測定や結論には使用しない。
+- `binascii` extensionの`.text`と`_Py_bytes_upper`の命令列は両側で同一。ただしupperのhot loopはmainで32-byte block内のoffset 8、
+  candidateでoffset 24から始まり後者だけblock境界をまたぐ。merged pre-Go binaryも現candidateと同じaddressである。source mergeは
+  成功しており、残ったBase16差は大容量一時bytesのallocation/page faultで増幅される**rebuild/code-layout感度**と判断する。
+  `Lib/base64.py`やopt-in JIT変換のsemantic regressionとして扱わない。詳細を`base16-diagnosis/summary.md`へ保存した。
+- 事後感度としてBase16 2結果を外すと115結果の幾何平均は**0.970367**（主結果0.972383）。主結果は事前集合のまま変更しない。
+  次のJIT高速化でbytes coreへ配置hackは追加せず、Base16はfixed binary identity付きのlayout confoundとして報告する。

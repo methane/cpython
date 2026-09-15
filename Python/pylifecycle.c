@@ -870,6 +870,18 @@ pycore_init_builtins(PyThreadState *tstate)
     }
     interp->callable_cache.len = len;
 
+    PyObject *max = PyDict_GetItemString(builtins_dict, "max");
+    if (!max) {
+        goto error;
+    }
+    interp->callable_cache.max = max;
+
+    PyObject *sum = PyDict_GetItemString(builtins_dict, "sum");
+    if (!sum) {
+        goto error;
+    }
+    interp->callable_cache.sum = sum;
+
     PyObject *all = PyDict_GetItemWithError(builtins_dict, &_Py_ID(all));
     if (!all) {
         goto error;

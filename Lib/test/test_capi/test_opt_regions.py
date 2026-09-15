@@ -3,6 +3,7 @@
 import builtins
 import collections
 import gc
+import itertools
 import math
 import operator
 import os
@@ -17,7 +18,7 @@ from unittest import mock
 
 from test import support
 from test.test_capi.test_opt import get_all_executors, get_opnames
-from _testinternalcapi import TIER2_THRESHOLD
+from _testinternalcapi import TIER2_RESUME_THRESHOLD, TIER2_THRESHOLD
 
 
 SETTINGS = {
@@ -113,6 +114,87 @@ class TestRegions(unittest.TestCase):
         run = namespace["run"]
         run([[object()]], 0, 1, TIER2_THRESHOLD)
         return run, self.executor(run, "_LEN_SUBSCR_LIST")
+
+    def warm_sum_list_int_contains(self):
+        def run(key, cells, n):
+            result = None
+            for _ in range(n):
+                result = sum(1 if key in cell else 0 for cell in cells)
+            return result
+
+        cells = [[1, 2], [3, 1], [], [1]]
+        self.assertEqual(run(1, cells, TIER2_THRESHOLD + 8), 3)
+        ex = self.executor(run, "_CALL_SUM_LIST_INT_CONTAINS")
+        self.assertGreater(ex.get_region_stats()["sum_gen_entries"], 0)
+        return run, ex
+
+    def warm_max_dict_int_key(self):
+        namespace = {"__builtins__": vars(builtins).copy()}
+        exec(
+            "def run(mapping, n):\n"
+            "    result = None\n"
+            "    for _ in range(n):\n"
+            "        result = max(mapping, key=lambda key: mapping[key])\n"
+            "    return result\n",
+            namespace,
+        )
+        run = namespace["run"]
+        keys = [(i.to_bytes(2, "little"), bytes([i])) for i in range(96)]
+        mapping = collections.Counter({key: i - 48
+                                       for i, key in enumerate(keys)})
+        self.assertIs(run(mapping, TIER2_THRESHOLD + 8), keys[-1])
+        ex = self.executor(run, "_CALL_KW_NON_PY")
+        self.assertGreater(ex.get_region_stats()["max_dict_entries"], 0)
+        return run, mapping, keys, ex
+
+    def warm_equality_scan(self, size=96):
+        self.enterContext(mock.patch.dict(
+            os.environ, {"PYTHON_TIER2_CALL_REGIONS": "1"}))
+        namespace = {}
+        exec(
+            "class Value:\n"
+            "    def __init__(self, value):\n"
+            "        self.value = value\n"
+            "class Direction:\n"
+            "    FORWARD = 1\n"
+            "class Binary:\n"
+            "    def __init__(self, left, right, direction=1):\n"
+            "        self.left = left\n"
+            "        self.right = right\n"
+            "        self.direction = direction\n"
+            "    def input(self):\n"
+            "        if self.direction == Direction.FORWARD:\n"
+            "            return self.left\n"
+            "        return self.right\n"
+            "    def output(self):\n"
+            "        if self.direction == Direction.FORWARD:\n"
+            "            return self.right\n"
+            "        return self.left\n"
+            "class Equality(Binary):\n"
+            "    def execute(self):\n"
+            "        self.output().value = self.input().value\n"
+            "class Items(list):\n"
+            "    pass\n"
+            "def run(items):\n"
+            "    for item in items:\n"
+            "        item.execute()\n",
+            namespace,
+        )
+        Value = namespace["Value"]
+        Equality = namespace["Equality"]
+        values = [Value(i) for i in range(size + 1)]
+        items = namespace["Items"](
+            Equality(values[i], values[i + 1]) for i in range(size)
+        )
+        values[0].value = 700
+        run = namespace["run"]
+        for _ in range(TIER2_THRESHOLD + 8):
+            run(items)
+        self.assertEqual(values[-1].value, 700)
+        ex = self.executor(run, "_LIST_EQUALITY_SCAN")
+        self.assertGreater(
+            ex.get_region_stats()["equality_scan_iterations"], 0)
+        return namespace, run, items, values, ex
 
     def warm_dict_update(self, cls=collections.Counter, addend=1):
         namespace = {}
@@ -558,6 +640,503 @@ case.doCleanups()
                    for ex in get_all_executors(function)):
                 return run, left, right, self.executor(function, "_FLOAT_ATTRIBUTE_SUM_PRODUCTS")
         self.fail([get_opnames(ex) for f in candidates for ex in get_all_executors(f)])
+
+    def warm_float_dot_call(self):
+        self.enterContext(mock.patch.dict(
+            os.environ, {"PYTHON_TIER2_CALL_REGIONS": "1"}))
+        namespace = {}
+        exec("class Vector:\n"
+             "    def guard(self):\n"
+             "        return self\n"
+             "    def dot(self, other):\n"
+             "        other.guard()\n"
+             "        return self.x * other.x + self.y * other.y + self.z * other.z\n"
+             "def run(left, right, n):\n"
+             "    for _ in range(n):\n"
+             "        result = left.dot(right)\n"
+             "    return result\n", namespace)
+        cls = namespace["Vector"]
+        left, right = cls(), cls()
+        left.x, left.y, left.z = map(float, (2, 3, 4))
+        right.x, right.y, right.z = map(float, (5, 6, 7))
+        run = namespace["run"]
+        run(left, right, TIER2_THRESHOLD)
+        return namespace, left, right, run, self.executor(
+            run, "_CALL_PY_FLOAT_DOT")
+
+    def warm_python_subtract(self):
+        self.enterContext(mock.patch.dict(
+            os.environ, {"PYTHON_TIER2_CALL_REGIONS": "1"}))
+
+        class Point:
+            def __init__(self, value):
+                self.value = value
+
+            def __sub__(self, other):
+                if type(self) is not type(other):
+                    return NotImplemented
+                return self.value - other.value
+
+        def run(left, right, n):
+            result = None
+            for _ in range(n):
+                result = left - right
+            return result
+
+        left = Point(17)
+        right = Point(5)
+        self.assertEqual(run(left, right, TIER2_THRESHOLD), 12)
+        return Point, left, right, run, self.executor(
+            run, "_BINARY_OP_PY_SUBTRACT_EXACT")
+
+    def test_float_dot_call(self):
+        _, left, right, run, ex = self.warm_float_dot_call()
+        values = (left, right, left.x, left.y, left.z,
+                  right.x, right.y, right.z)
+        references = [sys.getrefcount(value) for value in values]
+        before = ex.get_region_stats()
+        first = run(left, right, 8)
+        after = ex.get_region_stats()
+        self.assertEqual(first, 56.0)
+        self.assertGreater(after["float_call_entries"],
+                           before["float_call_entries"])
+        self.assertEqual(after["float_call_guard_exits"],
+                         before["float_call_guard_exits"])
+        second = run(left, right, 1000)
+        self.assertEqual(second, first)
+        self.assertIsNot(second, first)
+        self.assertEqual([sys.getrefcount(value) for value in values], references)
+
+        epsilon = 2.0 ** -27
+        left.x, right.x = -1.0, 1.0
+        left.y, right.y = 1.0 + epsilon, 1.0 - epsilon
+        left.z = right.z = 0.0
+        expected = (-1.0 * 1.0) + ((1.0 + epsilon) * (1.0 - epsilon))
+        actual = run(left, right, 8)
+        self.assertEqual(struct.pack("=d", actual), struct.pack("=d", expected))
+
+    def test_float_dot_call_guards(self):
+        for change in ("instance_method", "guard_code", "dot_code",
+                       "float_subclass", "materialized_dict"):
+            with self.subTest(change=change):
+                namespace, left, right, run, ex = self.warm_float_dot_call()
+                events = []
+                namespace["events"] = events
+                before = ex.get_region_stats()["float_call_entries"]
+                expected = 56.0
+                if change == "instance_method":
+                    right.guard = lambda: events.append(right) or right
+                elif change == "guard_code":
+                    exec("def replacement(self):\n"
+                         "    events.append(self)\n"
+                         "    return self\n", namespace)
+                    namespace["Vector"].guard.__code__ = \
+                        namespace["replacement"].__code__
+                elif change == "dot_code":
+                    exec("def replacement(self, other):\n"
+                         "    events.append(other)\n"
+                         "    return 99.0\n", namespace)
+                    namespace["Vector"].dot.__code__ = \
+                        namespace["replacement"].__code__
+                    expected = 99.0
+                elif change == "float_subclass":
+                    class Number(float):
+                        def __mul__(self, other):
+                            events.append(float(self))
+                            return super().__mul__(other)
+                    left.y = Number(3.0)
+                else:
+                    right.__dict__ = {"x": 5.0, "y": 6.0, "z": 7.0}
+                self.assertEqual(run(left, right, 8), expected)
+                self.assertEqual(ex.get_region_stats()["float_call_entries"],
+                                 before)
+                if change in ("instance_method", "guard_code", "dot_code"):
+                    self.assertEqual(len(events), 8)
+                elif change == "float_subclass":
+                    self.assertEqual(events, [3.0] * 8)
+
+    def test_float_dot_call_shape_rejections(self):
+        for slots, guard in (
+            (True, "return self"),
+            (False, "self.hits += 1; return self"),
+        ):
+            with self.subTest(slots=slots, guard=guard):
+                namespace = {}
+                exec("class Vector:\n"
+                     + ("    __slots__ = ('x', 'y', 'z', 'hits')\n"
+                        if slots else "")
+                     + "    def guard(self):\n"
+                     f"        {guard}\n"
+                     "    def dot(self, other):\n"
+                     "        other.guard()\n"
+                     "        return self.x * other.x + self.y * other.y + self.z * other.z\n"
+                     "def run(left, right, n):\n"
+                     "    for _ in range(n):\n"
+                     "        result = left.dot(right)\n"
+                     "    return result\n", namespace)
+                cls = namespace["Vector"]
+                left, right = cls(), cls()
+                left.x, left.y, left.z = map(float, (2, 3, 4))
+                right.x, right.y, right.z = map(float, (5, 6, 7))
+                left.hits = right.hits = 0
+                run = namespace["run"]
+                self.assertEqual(run(left, right, TIER2_THRESHOLD), 56.0)
+                self.assertFalse(any(
+                    "_CALL_PY_FLOAT_DOT" in get_opnames(ex)
+                    for ex in get_all_executors(run)))
+                self.assertEqual(run(left, right, 8), 56.0)
+                self.assertEqual(right.hits, 0 if slots else TIER2_THRESHOLD + 8)
+
+    def test_float_dot_call_monitoring(self):
+        for target in ("dot", "guard"):
+            with self.subTest(target=target):
+                namespace, left, right, run, ex = self.warm_float_dot_call()
+                code = getattr(namespace["Vector"], target).__code__
+                monitoring = sys.monitoring
+                tool = monitoring.PROFILER_ID
+                monitoring.use_tool_id(tool, "float dot call")
+                events = []
+                before = ex.get_region_stats()["float_call_entries"]
+
+                def on_instruction(code, offset):
+                    events.append((code, offset))
+                    right.z = 10.0
+
+                try:
+                    monitoring.register_callback(
+                        tool, monitoring.events.INSTRUCTION, on_instruction)
+                    monitoring.set_local_events(
+                        tool, code, monitoring.events.INSTRUCTION)
+                    self.assertEqual(run(left, right, 8), 68.0)
+                    self.assertTrue(events)
+                    self.assertTrue(all(event[0] is code for event in events))
+                    self.assertEqual(ex.get_region_stats()["float_call_entries"],
+                                     before)
+                finally:
+                    monitoring.set_local_events(tool, code, 0)
+                    monitoring.register_callback(
+                        tool, monitoring.events.INSTRUCTION, None)
+                    monitoring.free_tool_id(tool)
+
+        namespace, left, right, run, ex = self.warm_float_dot_call()
+        codes = {namespace["Vector"].dot.__code__,
+                 namespace["Vector"].guard.__code__}
+        monitoring = sys.monitoring
+        tool = monitoring.PROFILER_ID
+        monitoring.use_tool_id(tool, "float dot call global")
+        events = []
+        before = ex.get_region_stats()["float_call_entries"]
+
+        def on_instruction(code, offset):
+            if code in codes:
+                events.append((code, offset))
+                right.z = 10.0
+
+        try:
+            monitoring.register_callback(
+                tool, monitoring.events.INSTRUCTION, on_instruction)
+            monitoring.set_events(tool, monitoring.events.INSTRUCTION)
+            self.assertEqual(run(left, right, 8), 68.0)
+            self.assertEqual({event[0] for event in events}, codes)
+            self.assertEqual(ex.get_region_stats()["float_call_entries"],
+                             before)
+        finally:
+            monitoring.set_events(tool, 0)
+            monitoring.register_callback(
+                tool, monitoring.events.INSTRUCTION, None)
+            monitoring.free_tool_id(tool)
+
+    def test_float_dot_call_recursion_guard(self):
+        from _testinternalcapi import get_recursion_depth
+
+        _, left, right, run, ex = self.warm_float_dot_call()
+        old_limit = sys.getrecursionlimit()
+        depth = get_recursion_depth()
+        before = ex.get_region_stats()["float_call_entries"]
+        try:
+            sys.setrecursionlimit(depth + 3)
+            self.assertEqual(run(left, right, 1), 56.0)
+        finally:
+            sys.setrecursionlimit(old_limit)
+        self.assertEqual(ex.get_region_stats()["float_call_entries"], before)
+
+    @unittest.skipUnless(support.Py_DEBUG, "uses debug allocation injection")
+    def test_float_dot_call_allocation_error(self):
+        import dis
+
+        namespace, left, right, run, ex = self.warm_float_dot_call()
+        code = namespace["Vector"].dot.__code__
+        add = max(instruction.offset for instruction in dis.get_instructions(code)
+                  if instruction.opname == "BINARY_OP" and
+                  instruction.argrepr == "+")
+        before = ex.get_region_stats()["allocation_errors"]
+        with mock.patch.dict(
+                os.environ,
+                {"PYTHON_TIER2_REGION_FAIL_ALLOC": "float_call"}):
+            try:
+                run(left, right, 8)
+            except MemoryError as exc:
+                traceback = exc.__traceback__
+                while traceback.tb_next is not None:
+                    traceback = traceback.tb_next
+                self.assertIs(traceback.tb_frame.f_code, code)
+                self.assertEqual(traceback.tb_lasti, add)
+                self.assertIs(traceback.tb_frame.f_locals["self"], left)
+                self.assertIs(traceback.tb_frame.f_locals["other"], right)
+            else:
+                self.fail("MemoryError was lost")
+        self.assertGreater(ex.get_region_stats()["allocation_errors"], before)
+        self.assertEqual(run(left, right, 8), 56.0)
+
+    @requires_call_regions
+    def test_python_subtract_exact(self):
+        _, left, right, run, ex = self.warm_python_subtract()
+        references = sys.getrefcount(left), sys.getrefcount(right)
+        before = ex.get_region_stats()
+        self.assertEqual(run(left, right, 8), 12)
+        after = ex.get_region_stats()
+        self.assertGreater(after["binary_call_entries"],
+                           before["binary_call_entries"])
+        self.assertEqual(after["binary_call_guard_exits"],
+                         before["binary_call_guard_exits"])
+        self.assertEqual(run(left, left, 1000), 0)
+        self.assertEqual(
+            (sys.getrefcount(left), sys.getrefcount(right)), references)
+
+    @requires_call_regions
+    def test_python_subtract_reflected_guard(self):
+        _, left, _, run, ex = self.warm_python_subtract()
+        events = []
+
+        class Other:
+            def __rsub__(self, other):
+                events.append(other)
+                return 99
+
+        other = Other()
+        before = ex.get_region_stats()["binary_call_guard_exits"]
+        self.assertEqual(run(left, other, 8), 99)
+        self.assertGreater(
+            ex.get_region_stats()["binary_call_guard_exits"], before)
+        self.assertEqual(events, [left] * 8)
+
+    @requires_call_regions
+    def test_python_subtract_not_implemented(self):
+        state = {"enabled": True, "reflected": 0}
+
+        class Value:
+            def __sub__(self, other):
+                if state["enabled"]:
+                    return 1
+                return NotImplemented
+
+            def __rsub__(self, other):
+                state["reflected"] += 1
+                return 2
+
+        def run(left, right, n):
+            result = None
+            for _ in range(n):
+                result = left - right
+            return result
+
+        left = Value()
+        right = Value()
+        self.enterContext(mock.patch.dict(
+            os.environ, {"PYTHON_TIER2_CALL_REGIONS": "1"}))
+        self.assertEqual(run(left, right, TIER2_THRESHOLD), 1)
+        ex = self.executor(run, "_BINARY_OP_PY_SUBTRACT_EXACT")
+        state["enabled"] = False
+        references = sys.getrefcount(left), sys.getrefcount(right)
+        with self.assertRaisesRegex(
+                TypeError,
+                "unsupported operand type\\(s\\) for -: 'Value' and 'Value'"):
+            run(left, right, 1)
+        self.assertEqual(state["reflected"], 0)
+        self.assertEqual(
+            (sys.getrefcount(left), sys.getrefcount(right)), references)
+        self.assertTrue(ex.is_valid())
+
+    @requires_call_regions
+    def test_python_subtract_frame_and_exception(self):
+        self.enterContext(mock.patch.dict(
+            os.environ, {"PYTHON_TIER2_CALL_REGIONS": "1"}))
+
+        class Value:
+            def __init__(self, value):
+                self.value = value
+                self.state = {
+                    "observe": False,
+                    "raise": False,
+                    "events": [],
+                }
+
+            def __sub__(self, other):
+                if self.state["observe"]:
+                    current = sys._getframe()
+                    self.state["events"].append(
+                        (current.f_code, current.f_back.f_code,
+                         current.f_locals.copy()))
+                if self.state["raise"]:
+                    raise RuntimeError("subtract failed")
+                return self.value - other.value
+
+        def run(left, right, n):
+            result = None
+            for _ in range(n):
+                result = left - right
+            return result
+
+        left, right = Value(11), Value(4)
+        self.assertEqual(run(left, right, TIER2_THRESHOLD), 7)
+        ex = self.executor(run, "_BINARY_OP_PY_SUBTRACT_EXACT")
+        before = ex.get_region_stats()["binary_call_entries"]
+        left.state["observe"] = True
+        self.assertEqual(run(left, right, 8), 7)
+        self.assertGreater(
+            ex.get_region_stats()["binary_call_entries"], before)
+        self.assertEqual(len(left.state["events"]), 8)
+        for code, caller, local_vars in left.state["events"]:
+            self.assertIs(code, Value.__sub__.__code__)
+            self.assertIs(caller, run.__code__)
+            self.assertIs(local_vars["self"], left)
+            self.assertIs(local_vars["other"], right)
+
+        left.state["raise"] = True
+        try:
+            run(left, right, 1)
+        except RuntimeError as exc:
+            self.assertRegex(str(exc), "subtract failed")
+            traceback = exc.__traceback__
+            codes = []
+            while traceback is not None:
+                codes.append(traceback.tb_frame.f_code)
+                traceback = traceback.tb_next
+            self.assertIn(run.__code__, codes)
+            self.assertIn(Value.__sub__.__code__, codes)
+        else:
+            self.fail("RuntimeError was lost")
+
+    @requires_call_regions
+    def test_python_subtract_mutations(self):
+        for change in ("method", "code"):
+            with self.subTest(change=change):
+                Point, left, right, run, ex = self.warm_python_subtract()
+
+                def replacement(self, other):
+                    return 101
+
+                if change == "method":
+                    before = ex.get_region_stats()["binary_call_guard_exits"]
+                    Point.__sub__ = replacement
+                else:
+                    Point.__sub__.__code__ = replacement.__code__
+                self.assertEqual(run(left, right, 8), 101)
+                if change == "method":
+                    self.assertTrue(
+                        not ex.is_valid() or
+                        ex.get_region_stats()["binary_call_guard_exits"] > before)
+
+        state = {"replace": False}
+        events = []
+
+        class Mutable:
+            def __sub__(self, other):
+                events.append("old")
+                if state["replace"]:
+                    type(self).__sub__ = replacement
+                    state["replace"] = False
+                return 1
+
+        def replacement(self, other):
+            events.append("new")
+            return 2
+
+        def run(left, right, n):
+            result = None
+            for _ in range(n):
+                result = left - right
+            return result
+
+        left = Mutable()
+        right = Mutable()
+        run(left, right, TIER2_THRESHOLD)
+        ex = self.executor(run, "_BINARY_OP_PY_SUBTRACT_EXACT")
+        events.clear()
+        state["replace"] = True
+        self.assertEqual(run(left, right, 8), 2)
+        self.assertEqual(events, ["old"] + ["new"] * 7)
+        self.assertFalse(ex.is_valid())
+
+    @requires_call_regions
+    def test_python_subtract_monitoring_and_rejections(self):
+        Point, left, right, run, _ = self.warm_python_subtract()
+        code = Point.__sub__.__code__
+        monitoring = sys.monitoring
+        tool = monitoring.PROFILER_ID
+        monitoring.use_tool_id(tool, "python subtract")
+        events = []
+
+        def on_instruction(event_code, offset):
+            if event_code is code:
+                events.append(offset)
+
+        try:
+            monitoring.register_callback(
+                tool, monitoring.events.INSTRUCTION, on_instruction)
+            monitoring.set_local_events(
+                tool, code, monitoring.events.INSTRUCTION)
+            self.assertEqual(run(left, right, 8), 12)
+            self.assertTrue(events)
+        finally:
+            monitoring.set_local_events(tool, code, 0)
+            monitoring.register_callback(
+                tool, monitoring.events.INSTRUCTION, None)
+            monitoring.free_tool_id(tool)
+
+        class Base:
+            def __sub__(self, other):
+                return 3
+
+        class Inherited(Base):
+            pass
+
+        class Static:
+            @staticmethod
+            def __sub__(other):
+                return 4
+
+        class Number(int):
+            pass
+
+        class Defaulted:
+            def __sub__(self, other, extra=5):
+                return extra
+
+        class VarArgs:
+            def __sub__(self, *others):
+                return len(others)
+
+        class KeywordOnly:
+            def __sub__(self, other, *, value=6):
+                return value
+
+        for cls, expected in ((Inherited, 3), (Static, 4), (Number, 0),
+                              (Defaulted, 5), (VarArgs, 1),
+                              (KeywordOnly, 6)):
+            with self.subTest(cls=cls):
+                def rejected(left, right, n):
+                    result = None
+                    for _ in range(n):
+                        result = left - right
+                    return result
+
+                value = cls()
+                self.assertEqual(
+                    rejected(value, value, TIER2_THRESHOLD), expected)
+                self.assertFalse(any(
+                    "_BINARY_OP_PY_SUBTRACT_EXACT" in get_opnames(ex)
+                    for ex in get_all_executors(rejected)))
 
     def test_float_attribute_products(self):
         for slots in (False, True):
@@ -1040,6 +1619,537 @@ case.doCleanups()
         self.assertEqual(mapping[key], 1001)
         self.assertGreater(ex.get_region_stats()["allocation_errors"], before)
 
+    def test_sum_list_int_contains(self):
+        run, ex = self.warm_sum_list_int_contains()
+        cases = (
+            (1, [], 0),
+            (1, [[], [1], [2, 1], [1, 1]], 3),
+            (-10000, [[-10000], [0, -10000], [10000]], 2),
+            (2**30 - 1, [[0, 2**30 - 1], [-(2**30 - 1)]], 1),
+        )
+        before = ex.get_region_stats()["sum_gen_entries"]
+        for key, cells, expected in cases:
+            with self.subTest(key=key, cells=cells):
+                self.assertEqual(run(key, cells, 8), expected)
+        self.assertGreater(ex.get_region_stats()["sum_gen_entries"], before)
+
+        key = int("10000")
+        cells = [[key], [0, key], []]
+        refs = sys.getrefcount(key), sys.getrefcount(cells)
+        self.assertEqual(run(key, cells, 100), 2)
+        self.assertEqual((sys.getrefcount(key), sys.getrefcount(cells)), refs)
+
+    def test_sum_list_int_contains_tier1_specialization(self):
+        import dis
+
+        def run(key, cells):
+            return sum(1 if key in cell else 0 for cell in cells)
+
+        for _ in range(32):
+            self.assertEqual(run(1, [[1], [2]]), 1)
+        self.assertIn("CALL_SUM_LIST_INT_CONTAINS",
+                      {instruction.opname for instruction in
+                       dis.get_instructions(run, adaptive=True)})
+
+        with mock.patch.dict(os.environ,
+                             {"PYTHON_TIER2_BUILTIN_REGIONS": "0"}):
+            def disabled(key, cells):
+                return sum(1 if key in cell else 0 for cell in cells)
+
+            for _ in range(32):
+                self.assertEqual(disabled(1, [[1], [2]]), 1)
+            self.assertNotIn("CALL_SUM_LIST_INT_CONTAINS",
+                             {instruction.opname for instruction in
+                              dis.get_instructions(disabled, adaptive=True)})
+
+    def test_sum_list_int_contains_fallback(self):
+        run, ex = self.warm_sum_list_int_contains()
+        calls = []
+
+        class Cell(list):
+            def __contains__(self, key):
+                calls.append(key)
+                return False
+
+        before = ex.get_region_stats()["sum_gen_guard_exits"]
+        self.assertEqual(run(1, [Cell([1])], 100), 0)
+        self.assertEqual(calls, [1] * 100)
+        self.assertGreater(ex.get_region_stats()["sum_gen_guard_exits"], before)
+
+        for key, cells in (
+            (True, [[0, 1]]),
+            (2**100, [[0, 2**100]]),
+            (1, [[True], [1]]),
+            (1, [(0, 1)]),
+            (1, [[1]] * 65),
+            (1, [[0] * 65]),
+        ):
+            with self.subTest(key=key, cells_type=type(cells)):
+                self.assertEqual(run(key, cells, 8),
+                                 sum(1 if key in cell else 0 for cell in cells))
+
+    def test_sum_list_int_contains_monitoring_and_builtin_change(self):
+        run, ex = self.warm_sum_list_int_contains()
+        gen_code = next(constant for constant in run.__code__.co_consts
+                        if isinstance(constant, types.CodeType))
+        monitoring = sys.monitoring
+        tool = monitoring.PROFILER_ID
+        monitoring.use_tool_id(tool, "sum list membership")
+        cells = [[1], [2]]
+        events = []
+        before = ex.get_region_stats()["sum_gen_entries"]
+
+        def on_instruction(code, offset):
+            if code is gen_code:
+                events.append(offset)
+            if len(events) == 1 and code is gen_code:
+                cells[1].append(1)
+
+        try:
+            monitoring.register_callback(
+                tool, monitoring.events.INSTRUCTION, on_instruction)
+            monitoring.set_local_events(
+                tool, gen_code, monitoring.events.INSTRUCTION)
+            self.assertEqual(run(1, cells, 8), 2)
+            self.assertTrue(events)
+            self.assertEqual(ex.get_region_stats()["sum_gen_entries"], before)
+        finally:
+            monitoring.set_local_events(tool, gen_code, 0)
+            monitoring.register_callback(
+                tool, monitoring.events.INSTRUCTION, None)
+            monitoring.free_tool_id(tool)
+
+        monitoring.use_tool_id(tool, "sum list membership global")
+        cells = [[1], [2]]
+        events.clear()
+        try:
+            monitoring.register_callback(
+                tool, monitoring.events.INSTRUCTION, on_instruction)
+            monitoring.set_events(tool, monitoring.events.INSTRUCTION)
+            self.assertEqual(run(1, cells, 8), 2)
+            self.assertTrue(events)
+            self.assertEqual(ex.get_region_stats()["sum_gen_entries"], before)
+        finally:
+            monitoring.set_events(tool, 0)
+            monitoring.register_callback(
+                tool, monitoring.events.INSTRUCTION, None)
+            monitoring.free_tool_id(tool)
+
+        calls = []
+
+        def replacement(iterable):
+            calls.append(tuple(iterable))
+            return 42
+
+        with mock.patch.object(builtins, "sum", replacement):
+            self.assertEqual(run(1, [[1], [2]], 8), 42)
+        self.assertEqual(calls, [(1, 0)] * 8)
+
+    def test_sum_list_int_contains_shape(self):
+        def run(key, cells, n):
+            result = None
+            for _ in range(n):
+                result = sum(key in cell for cell in cells)
+            return result
+
+        self.assertEqual(run(1, [[1], [2]], TIER2_THRESHOLD), 1)
+        self.assertFalse(any(
+            any(name.startswith("_CALL_SUM_LIST_INT_CONTAINS")
+                for name in get_opnames(ex))
+            for ex in get_all_executors(run)
+        ))
+
+    def test_max_dict_int_key(self):
+        run, mapping, keys, ex = self.warm_max_dict_int_key()
+        first = keys[10]
+        second = keys[20]
+        mapping.clear()
+        mapping[first] = 2**30 - 1
+        mapping[second] = 2**30 - 1
+        mapping[keys[30]] = -(2**30 - 1)
+        references = (sys.getrefcount(mapping), sys.getrefcount(first),
+                      sys.getrefcount(second))
+        result = self.executed(
+            ex, "max_dict_entries", run, mapping, 100)
+        self.assertIs(result, first)
+        del result
+        self.assertEqual(
+            (sys.getrefcount(mapping), sys.getrefcount(first),
+             sys.getrefcount(second)),
+            references,
+        )
+        self.assertGreaterEqual(
+            ex.get_region_stats()["max_dict_iterations"], 300)
+
+    def test_max_dict_int_key_non_py_call_entry(self):
+        import dis
+
+        namespace = {}
+        exec(
+            "def run(mapping):\n"
+            "    return max(mapping, key=lambda key: mapping[key])\n",
+            namespace,
+        )
+        run = namespace["run"]
+        mapping = {(bytes([i]), bytes([i + 1])): i for i in range(64)}
+        for _ in range(32):
+            self.assertEqual(run(mapping), (b"?", b"@"))
+        self.assertIn(
+            "CALL_KW_NON_PY",
+            {instruction.opname
+             for instruction in dis.get_instructions(run, adaptive=True)},
+        )
+
+        with mock.patch.dict(
+                os.environ, {"PYTHON_TIER2_BUILTIN_REGIONS": "0"}):
+            disabled_namespace = {}
+            exec(
+                "def disabled(mapping, n):\n"
+                "    result = None\n"
+                "    for _ in range(n):\n"
+                "        result = max(mapping, key=lambda key: mapping[key])\n"
+                "    return result\n",
+                disabled_namespace,
+            )
+            disabled = disabled_namespace["disabled"]
+            self.assertEqual(
+                disabled(mapping, TIER2_THRESHOLD + 8), (b"?", b"@"))
+            ex = self.executor(disabled, "_CALL_KW_NON_PY")
+            self.assertEqual(
+                ex.get_region_stats()["max_dict_entries"], 0,
+            )
+
+    def test_max_dict_int_key_fallbacks(self):
+        run, mapping, keys, ex = self.warm_max_dict_int_key()
+
+        def check(candidate):
+            before = ex.get_region_stats()["max_dict_guard_exits"]
+            expected = max(candidate, key=lambda key: candidate[key])
+            self.assertIs(run(candidate, 8), expected)
+            self.assertGreater(
+                ex.get_region_stats()["max_dict_guard_exits"], before)
+
+        check({keys[0]: 2**100, keys[1]: 2**101})
+        check({keys[0]: 1.5, keys[1]: 2.5})
+
+        class Pair(tuple):
+            pass
+
+        check({Pair(keys[0]): 1, Pair(keys[1]): 2})
+
+        class Byte(bytes):
+            pass
+
+        check({(Byte(b"a"), b"b"): 1, (Byte(b"c"), b"d"): 2})
+
+        events = []
+
+        class Mapping(collections.Counter):
+            def __iter__(self):
+                events.append("iter")
+                return super().__iter__()
+
+            def __getitem__(self, key):
+                events.append(("getitem", key))
+                return super().__getitem__(key)
+
+        custom = Mapping({keys[0]: 1, keys[1]: 2})
+        before = ex.get_region_stats()["max_dict_guard_exits"]
+        self.assertIs(run(custom, 8), keys[1])
+        self.assertEqual(
+            events,
+            ["iter", ("getitem", keys[0]), ("getitem", keys[1])] * 8,
+        )
+        self.assertGreater(
+            ex.get_region_stats()["max_dict_guard_exits"], before)
+
+        with self.assertRaises(ValueError):
+            run({}, 1)
+
+    def test_max_dict_int_key_code_and_closure_changes(self):
+        namespace = {}
+        exec(
+            "def run(mapping, key_function, n):\n"
+            "    result = None\n"
+            "    for _ in range(n):\n"
+            "        result = max(mapping, key=key_function)\n"
+            "    return result\n"
+            "def make_key(mapping):\n"
+            "    return lambda key: mapping[key]\n"
+            "def make_reverse_key(mapping):\n"
+            "    return lambda key: -mapping[key]\n",
+            namespace,
+        )
+        run = namespace["run"]
+        keys = [(bytes([i]), bytes([i + 1])) for i in range(64)]
+        mapping = {key: i for i, key in enumerate(keys)}
+        key_function = namespace["make_key"](mapping)
+        self.assertIs(
+            run(mapping, key_function, TIER2_THRESHOLD + 8), keys[-1])
+        ex = self.executor(run, "_CALL_KW_NON_PY")
+
+        replacement = namespace["make_reverse_key"](mapping)
+        key_function.__code__ = replacement.__code__
+        before = ex.get_region_stats()["max_dict_guard_exits"]
+        self.assertIs(run(mapping, key_function, 8), keys[0])
+        self.assertGreater(
+            ex.get_region_stats()["max_dict_guard_exits"], before)
+
+        other = {key: -value for key, value in mapping.items()}
+        other_key = namespace["make_key"](other)
+        self.assertIs(run(mapping, other_key, 8), keys[0])
+
+    def test_max_dict_int_key_monitoring_and_builtin_change(self):
+        run, mapping, keys, ex = self.warm_max_dict_int_key()
+        key_code = next(constant for constant in run.__code__.co_consts
+                        if isinstance(constant, types.CodeType))
+        monitoring = sys.monitoring
+        tool = monitoring.PROFILER_ID
+        events = []
+        entries = ex.get_region_stats()["max_dict_entries"]
+        monitoring.use_tool_id(tool, "max dict key")
+
+        def on_instruction(code, offset):
+            events.append((code, offset))
+
+        try:
+            monitoring.register_callback(
+                tool, monitoring.events.INSTRUCTION, on_instruction)
+            monitoring.set_local_events(
+                tool, key_code, monitoring.events.INSTRUCTION)
+            self.assertIs(run(mapping, 8), keys[-1])
+            self.assertTrue(events)
+            self.assertEqual(
+                ex.get_region_stats()["max_dict_entries"], entries)
+        finally:
+            monitoring.set_local_events(tool, key_code, 0)
+            monitoring.register_callback(
+                tool, monitoring.events.INSTRUCTION, None)
+            monitoring.free_tool_id(tool)
+
+        calls = []
+
+        def replacement(iterable, *, key):
+            calls.append((tuple(iterable), key))
+            return "replacement"
+
+        with mock.patch.dict(run.__builtins__, {"max": replacement}):
+            self.assertEqual(run(mapping, 2), "replacement")
+        self.assertEqual(len(calls), 2)
+
+    @requires_call_regions
+    def test_equality_scan_propagation_and_references(self):
+        ns, run, items, values, ex = self.warm_equality_scan(130)
+        value = int("12345")
+        values[0].value = value
+        before = ex.get_region_stats()["equality_scan_iterations"]
+        run(items)
+        self.assertTrue(all(item.value is value for item in values))
+        references = sys.getrefcount(value)
+        for _ in range(100):
+            run(items)
+        self.assertEqual(sys.getrefcount(value), references)
+        self.assertGreater(
+            ex.get_region_stats()["equality_scan_iterations"], before)
+
+        Value = ns["Value"]
+        Equality = ns["Equality"]
+        Items = ns["Items"]
+        entries = ex.get_region_stats()["equality_scan_entries"]
+        for size in (0, 1, 2, 3, 64, 65, 66, 129):
+            with self.subTest(size=size):
+                short_values = [Value(i) for i in range(size + 1)]
+                short_items = Items(
+                    Equality(short_values[i], short_values[i + 1])
+                    for i in range(size)
+                )
+                short_values[0].value = 9000 + size
+                run(short_items)
+                self.assertEqual(short_values[-1].value, 9000 + size)
+        self.assertGreater(
+            ex.get_region_stats()["equality_scan_entries"], entries)
+
+    @requires_call_regions
+    def test_equality_scan_fallback_order(self):
+        ns, run, items, values, ex = self.warm_equality_scan()
+        before = ex.get_region_stats()["equality_scan_iterations"]
+        expected = values[31].value
+        values[0].value = 8000
+        items[30].direction = 0
+        run(items)
+        self.assertEqual(values[-1].value, expected)
+        self.assertGreater(
+            ex.get_region_stats()["equality_scan_iterations"], before)
+
+        class Marker(int):
+            pass
+
+        marker = Marker(81)
+        values[0].value = marker
+        for item in items:
+            item.direction = 1
+        run(items)
+        self.assertTrue(all(value.value is marker for value in values))
+
+        finalized = []
+
+        class Payload(int):
+            def __del__(self):
+                finalized.append("finalized")
+
+        values[0].value = 73
+        values[10].value = Payload(10)
+        run(items)
+        self.assertEqual(values[-1].value, 73)
+        self.assertEqual(finalized, ["finalized"])
+
+    @requires_call_regions
+    def test_equality_scan_method_and_code_changes(self):
+        for method in ("execute", "input", "output"):
+            with self.subTest(method=method):
+                ns, run, items, values, ex = self.warm_equality_scan(32)
+                calls = []
+                replacement = ns["Value"](444)
+                expected = values[11].value
+                if method == "execute":
+                    setattr(items[10], method,
+                            lambda: calls.append("execute"))
+                elif method == "input":
+                    setattr(items[10], method, lambda: replacement)
+                    expected = replacement.value
+                else:
+                    setattr(items[10], method, lambda: replacement)
+                values[0].value = 300
+                before = ex.get_region_stats()["equality_scan_iterations"]
+                run(items)
+                self.assertEqual(
+                    ex.get_region_stats()["equality_scan_iterations"],
+                    before,
+                )
+                self.assertEqual(values[-1].value, expected)
+                if method == "execute":
+                    self.assertEqual(calls, ["execute"])
+                elif method == "output":
+                    self.assertEqual(replacement.value, 300)
+
+        ns, run, items, values, ex = self.warm_equality_scan(32)
+        Equality = ns["Equality"]
+        original = Equality.execute.__code__
+        exec(
+            "def changed(self):\n"
+            "    self.output().value = self.input().value + 1\n",
+            ns,
+        )
+        for value in values:
+            value.value = 0
+        before = ex.get_region_stats()["equality_scan_iterations"]
+        try:
+            Equality.execute.__code__ = ns["changed"].__code__
+            run(items)
+        finally:
+            Equality.execute.__code__ = original
+        self.assertEqual(values[-1].value, len(items))
+        self.assertEqual(
+            ex.get_region_stats()["equality_scan_iterations"], before)
+
+    @requires_call_regions
+    def test_equality_scan_monitoring_and_shape(self):
+        ns, run, items, values, ex = self.warm_equality_scan(32)
+        codes = {
+            ns["Equality"].execute.__code__,
+            ns["Binary"].input.__code__,
+            ns["Binary"].output.__code__,
+        }
+        events = []
+        monitoring = sys.monitoring
+        tool = monitoring.PROFILER_ID
+        monitoring.use_tool_id(tool, "equality scan")
+
+        def started(code, offset):
+            events.append(("start", code))
+
+        def returned(code, offset, value):
+            events.append(("return", code))
+
+        before = ex.get_region_stats()["equality_scan_iterations"]
+        try:
+            monitoring.register_callback(
+                tool, monitoring.events.PY_START, started)
+            monitoring.register_callback(
+                tool, monitoring.events.PY_RETURN, returned)
+            for code in codes:
+                monitoring.set_local_events(
+                    tool, code,
+                    monitoring.events.PY_START |
+                    monitoring.events.PY_RETURN,
+                )
+            values[0].value = 123
+            run(items)
+            for code in codes:
+                self.assertEqual(events.count(("start", code)), len(items))
+                self.assertEqual(events.count(("return", code)), len(items))
+            self.assertEqual(values[-1].value, 123)
+            self.assertEqual(
+                ex.get_region_stats()["equality_scan_iterations"], before)
+        finally:
+            for code in codes:
+                monitoring.set_local_events(tool, code, 0)
+            monitoring.register_callback(
+                tool, monitoring.events.PY_START, None)
+            monitoring.register_callback(
+                tool, monitoring.events.PY_RETURN, None)
+            monitoring.free_tool_id(tool)
+
+        exec(
+            "class Different(Binary):\n"
+            "    def __init__(self, left, right):\n"
+            "        super().__init__(left, right)\n"
+            "        self.seen = 0\n"
+            "    def execute(self):\n"
+            "        self.output().value = self.input().value\n"
+            "        self.seen += 1\n"
+            "def run_different(items):\n"
+            "    for item in items:\n"
+            "        item.execute()\n",
+            ns,
+        )
+        Value = ns["Value"]
+        different_values = [Value(i) for i in range(33)]
+        different = ns["Items"](
+            ns["Different"](different_values[i], different_values[i + 1])
+            for i in range(32)
+        )
+        for _ in range(TIER2_THRESHOLD + 8):
+            ns["run_different"](different)
+        self.assertTrue(all(item.seen == TIER2_THRESHOLD + 8
+                            for item in different))
+        self.assertFalse(any(
+            "_LIST_EQUALITY_SCAN" in get_opnames(candidate)
+            for candidate in get_all_executors(ns["run_different"])
+        ))
+
+        exec(
+            "class Aliased(Binary):\n"
+            "    def copied(self):\n"
+            "        self.output().value = self.input().value\n"
+            "    copied.__name__ = 'execute'\n"
+            "def run_aliased(items):\n"
+            "    for item in items:\n"
+            "        item.copied()\n",
+            ns,
+        )
+        aliased_values = [Value(i) for i in range(33)]
+        aliased = ns["Items"](
+            ns["Aliased"](aliased_values[i], aliased_values[i + 1])
+            for i in range(32)
+        )
+        for _ in range(TIER2_THRESHOLD + 8):
+            ns["run_aliased"](aliased)
+        self.assertFalse(any(
+            "_LIST_EQUALITY_SCAN" in get_opnames(candidate)
+            for candidate in get_all_executors(ns["run_aliased"])
+        ))
+
     def test_len_subscript_comparisons(self):
         values = [[], [1], (1, 2), "abc", b"x", {1: 2}]
         for constant in (False, True):
@@ -1483,6 +2593,87 @@ case.doCleanups()
         del result
         self.assertEqual(len(deleted), 16)
         self.assertTrue(all(ref() is None for ref in refs))
+
+    @requires_call_regions
+    def test_reference_root_default_and_local(self):
+        self.enterContext(mock.patch.dict(
+            os.environ, {"PYTHON_TIER2_CALL_REGIONS": "1"}))
+        namespace = {}
+        exec(
+            "class Node:\n"
+            "    def __init__(self, position):\n"
+            "        self.position = position\n"
+            "        self.reference = self\n"
+            "    def find(self, update=False):\n"
+            "        reference = self.reference\n"
+            "        if reference.position != self.position:\n"
+            "            reference = reference.find(update)\n"
+            "            if update:\n"
+            "                self.reference = reference\n"
+            "        return reference\n"
+            "def caller(node):\n"
+            "    return node.find()\n",
+            namespace,
+        )
+        Node = namespace["Node"]
+        caller = namespace["caller"]
+        root = Node(0)
+        first = Node(1)
+        second = Node(2)
+        first.reference = root
+        second.reference = first
+        count = TIER2_RESUME_THRESHOLD * 20
+        self.assertTrue(all(value is root for value in
+                            map(caller, itertools.repeat(second, count))))
+
+        call_ex = self.executor(caller, "_CALL_PY_REFERENCE_ROOT_DEFAULT")
+        self.assertIs(
+            self.executed(call_ex, "call_root_entries", caller, second), root)
+        self.assertIs(second.reference, first)
+
+        local_ex = self.executor(Node.find, "_REFERENCE_ROOT_LOCAL")
+        self.assertIs(
+            self.executed(local_ex, "local_root_entries",
+                          Node.find, second, False), root)
+        self.assertIs(second.reference, first)
+        self.assertIs(
+            self.executed(local_ex, "local_root_entries",
+                          Node.find, second, True), root)
+        self.assertIs(second.reference, root)
+
+        second.reference = first
+        called = []
+
+        def replacement(update=False):
+            called.append(update)
+            return first
+
+        first.find = replacement
+        self.assertIs(caller(second), first)
+        self.assertEqual(called, [False])
+        del first.find
+
+        second.reference = first
+        defaults = Node.find.__defaults__
+        self.addCleanup(setattr, Node.find, "__defaults__", defaults)
+        Node.find.__defaults__ = (True,)
+        self.assertIs(caller(second), root)
+        self.assertIs(second.reference, root)
+        Node.find.__defaults__ = defaults
+
+        long_root = Node(1000)
+        head = long_root
+        for position in range(1001, 1071):
+            node = Node(position)
+            node.reference = head
+            head = node
+        self.assertIs(caller(head), long_root)
+
+        original_find = Node.find
+        sentinel = object()
+        self.addCleanup(setattr, Node, "find", original_find)
+        Node.find = lambda self: sentinel
+        self.assertIs(caller(second), sentinel)
 
     def executor(self, func, opcode):
         matches = [ex for ex in get_all_executors(func)
@@ -2213,6 +3404,65 @@ case.doCleanups()
                       [uop[0] for uop in ex])
         ns["unrelated"] = 99
         self.assertEqual(run(8), 120)
+
+    def test_named_global_written_by_code_is_not_folded(self):
+        self.enterContext(mock.patch.dict(
+            os.environ, {"PYTHON_TIER2_CALL_REGIONS": "1"}))
+        ns = {}
+        exec("counter = 0\n"
+             "def bump(n):\n"
+             "    global counter\n"
+             "    for _ in range(n):\n"
+             "        counter += 1\n"
+             "    return counter\n", ns)
+        bump = ns["bump"]
+        self.assertEqual(bump(TIER2_THRESHOLD), TIER2_THRESHOLD)
+        expected = TIER2_THRESHOLD
+        for _ in range(8):
+            expected += TIER2_THRESHOLD
+            self.assertEqual(bump(TIER2_THRESHOLD), expected)
+            ex = next(iter(get_all_executors(bump)))
+            if "_LOAD_GLOBAL_MODULE" in [uop[0] for uop in ex]:
+                break
+        self.assertIn("_LOAD_GLOBAL_MODULE", [uop[0] for uop in ex])
+        self.assertTrue(ex.is_valid())
+        for index in range(16):
+            expected += 8
+            self.assertEqual(bump(8), expected)
+            self.assertTrue(ex.is_valid())
+
+    def test_named_mutable_int_written_by_other_code_is_not_folded(self):
+        self.enterContext(mock.patch.dict(
+            os.environ, {"PYTHON_TIER2_CALL_REGIONS": "1"}))
+        ns = {}
+        exec("counter = 10000\n"
+             "def replace(value):\n"
+             "    global counter\n"
+             "    counter = value\n"
+             "def read(n):\n"
+             "    total = 0\n"
+             "    for _ in range(n):\n"
+             "        total += counter\n"
+             "    return total\n", ns)
+        replace, read = ns["replace"], ns["read"]
+        self.assertEqual(read(TIER2_THRESHOLD), 10000 * TIER2_THRESHOLD)
+        ex = next(iter(get_all_executors(read)))
+        invalidations = 0
+        for value in range(10001, 10009):
+            replace(value)
+            if ex.is_valid():
+                self.assertEqual(read(8), value * 8)
+                continue
+            invalidations += 1
+            self.assertEqual(read(TIER2_THRESHOLD), value * TIER2_THRESHOLD)
+            ex = next(iter(get_all_executors(read)))
+        self.assertGreater(invalidations, 0)
+        self.assertTrue(ex.is_valid())
+        self.assertIn("_LOAD_GLOBAL_MODULE", [uop[0] for uop in ex])
+        for value in range(10009, 10025):
+            replace(value)
+            self.assertEqual(read(8), value * 8)
+            self.assertTrue(ex.is_valid())
 
     def test_named_globals_legacy_dependency(self):
         run, unused, ns = self.warm_named_globals()

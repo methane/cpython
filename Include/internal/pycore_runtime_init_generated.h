@@ -1747,6 +1747,7 @@ extern "C" {
     INIT_ID(exc_value), \
     INIT_ID(excepthook), \
     INIT_ID(exception), \
+    INIT_ID(execute), \
     INIT_ID(existing_file_name), \
     INIT_ID(exit), \
     INIT_ID(exp), \
@@ -1981,6 +1982,7 @@ extern "C" {
     INIT_ID(out_fd), \
     INIT_ID(outgoing), \
     INIT_ID(outpath), \
+    INIT_ID(output), \
     INIT_ID(overlapped), \
     INIT_ID(owner), \
     INIT_ID(pad), \
