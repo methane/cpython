@@ -3266,7 +3266,45 @@ static PyTypeObject SelfInterruptingContextManager_Type = {
 };
 
 
+#ifdef Py_GIL_DISABLED
+static PyObject *
+test_mimalloc_qsbr(PyObject *self, PyObject *Py_UNUSED(args))
+{
+    // A singleton page enters the full queue on allocation. Its last free
+    // must move it out again, even when QSBR delays releasing the page.
+    const size_t size = 1024 * 1024;
+    void *ptr = PyObject_Malloc(size);
+    if (ptr == NULL) {
+        return PyErr_NoMemory();
+    }
+    _PyThreadStateImpl *tstate = (_PyThreadStateImpl *)PyThreadState_Get();
+    mi_heap_t *heap = tstate->mimalloc.current_object_heap;
+    mi_page_t *page = heap->pages[MI_BIN_FULL].first;
+    uintptr_t address = (uintptr_t)ptr;
+    while (page != NULL) {
+        uintptr_t start = (uintptr_t)page->page_start;
+        if (address >= start && address - start < page->block_size) {
+            break;
+        }
+        page = page->next;
+    }
+    assert(page != NULL);
+    assert(page->used == 1);
+    assert(page->use_qsbr);
+    PyObject_Free(ptr);
+    assert(page->used == 0);
+    assert(page->qsbr_goal != 0);
+    assert(page->qsbr_node.next != NULL);
+    assert(!page->flags.x.in_full);
+
+    Py_RETURN_NONE;
+}
+#endif
+
 static PyMethodDef module_functions[] = {
+#ifdef Py_GIL_DISABLED
+    {"test_mimalloc_qsbr", test_mimalloc_qsbr, METH_NOARGS},
+#endif
     {"get_configs", get_configs, METH_NOARGS},
     {"get_eval_frame_stats", get_eval_frame_stats, METH_NOARGS, NULL},
     {"get_recursion_depth", get_recursion_depth, METH_NOARGS},
