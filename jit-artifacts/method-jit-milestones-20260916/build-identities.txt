@@ -1,0 +1,9 @@
+candidate-gil:
+3.16.0a0 (heads/codex/method-jit-dirty:20269941716, Sep 16 2026, 02:37:42) [GCC 13.3.0]
+'--enable-experimental-jit=yes'
+jit True True
+candidate-free-threaded:
+3.16.0a0 free-threading build (heads/codex/method-jit-dirty:20269941716, Sep 16 2026, 02:38:00) [GCC 13.3.0]
+'--disable-gil' '--enable-experimental-jit=yes'
+gil False
+jit True True

@@ -2,6 +2,28 @@
 
 更新日: 2026-09-16
 
+## 今回の更新（milestones 1〜6）
+
+block単位の型・定数状態、保守的merge、loop fixed pointを実装した。
+returnは `_RETURN_VALUE` と `_METHOD_EXIT` でframeを破棄してTier 1のcallerへ戻す。
+straight-line methodと、小さい直線的な `CALL_PY_EXACT_ARGS` calleeのinliningに対応した。
+inlined calleeのcode変更によるinvalidation、NetworkXで見つかった完了済みcall後の
+periodic side-exit復帰先も検証・修正した。Tier 2 callerへの直接native returnは未実装である。
+
+GIL/free-threadedそれぞれのdebug interpreter JITとnative JITで
+`test_capi.test_opt` 332件が成功した（GILは4件、free-threadedは3件skip）。
+generator/optimizer関連テストと、生成物12ファイルの2回の再生成比較も成功した。
+
+前回の測定はRichards 0.9936、NetworkX 0.9932、Go 1.3418だった。ただし比較先は
+9月13日の旧main `a60343ed` の保存済みbinaryで、現在の基点・JITビルド設定とは異なる。
+Goの差全体を今回の変更に帰属させることはできない。次は同条件のcontrolを用意し、
+実行時のside exit、call/return、spill、validity checkのコストを切り分ける。
+
+詳細と次の作業順序は [plan.md](plan.md#next-work)、測定記録は
+[benchmark summary](jit-artifacts/method-jit-milestones-20260916/summary.md) を参照。
+
+以下はコミット `20269941716` 時点の初期prototypeの記録である。
+
 ## スナップショット
 
 この変更は `codex/method-jit` ブランチ上で、CPython `main` の

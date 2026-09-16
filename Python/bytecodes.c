@@ -6246,6 +6246,10 @@ dummy_func(
             GOTO_TIER_ONE(_PyFrame_GetBytecode(frame) + CURRENT_TARGET());
         }
 
+        tier2 op(_METHOD_EXIT, (--)) {
+            GOTO_TIER_ONE(frame->instr_ptr + frame->return_offset);
+        }
+
         op(_JUMP_TO_TOP, (--)) {
             JUMP_TO_JUMP_TARGET();
         }

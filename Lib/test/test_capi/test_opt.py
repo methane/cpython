@@ -109,7 +109,8 @@ class TestMethodFrontend(unittest.TestCase):
         opnames = get_opnames(executor)
         self.assertIn("_METHOD_POP_JUMP_IF_FALSE", opnames)
         self.assertIn("_METHOD_JUMP", opnames)
-        self.assertIn("_METHOD_DEOPT", opnames)
+        self.assertIn("_METHOD_EXIT", opnames)
+        self.assertIn("_RETURN_VALUE", opnames)
 
         # The false arm was not executed while warming, but it is part of the
         # compiled control-flow graph.
@@ -131,11 +132,175 @@ class TestMethodFrontend(unittest.TestCase):
         opnames = get_opnames(executor)
         self.assertIn("_METHOD_ITER_JUMP_RANGE", opnames)
         self.assertIn("_METHOD_JUMP", opnames)
-        self.assertIn("_METHOD_DEOPT", opnames)
+        self.assertIn("_METHOD_EXIT", opnames)
+        self.assertIn("_RETURN_VALUE", opnames)
+        self.assertNotIn("_GUARD_TOS_INT", opnames)
+        self.assertNotIn("_GUARD_NOS_INT", opnames)
+        self.assertIn("_GUARD_NOS_OVERFLOWED", opnames)
         self.assertEqual(
             [range_sum(n) for n in range(12)],
             [sum(range(n)) for n in range(12)],
         )
+
+    def test_merges_same_type_across_diamond(self):
+        def diamond(flag):
+            if flag:
+                value = 10
+            else:
+                value = 20
+            value += 1
+            value *= 2
+            value -= 3
+            value *= 4
+            return value
+
+        self.assertEqual(
+            list(map(diamond, [True] * TIER2_RESUME_THRESHOLD)),
+            [76] * TIER2_RESUME_THRESHOLD,
+        )
+        executor = _opcode.get_executor(diamond.__code__, 0)
+        opnames = get_opnames(executor)
+        self.assertIn("_METHOD_POP_JUMP_IF_FALSE", opnames)
+        self.assertNotIn("_GUARD_NOS_INT", opnames)
+        self.assertIn("_GUARD_NOS_OVERFLOWED", opnames)
+        self.assertEqual(diamond(False), 156)
+
+    def test_merges_float_type_across_diamond(self):
+        def diamond(flag):
+            if flag:
+                value = 1.25
+            else:
+                value = 2.5
+            value += 0.5
+            value *= 2.0
+            return value
+
+        self.assertEqual(
+            list(map(diamond, [True] * TIER2_RESUME_THRESHOLD)),
+            [3.5] * TIER2_RESUME_THRESHOLD,
+        )
+        executor = _opcode.get_executor(diamond.__code__, 0)
+        opnames = get_opnames(executor)
+        self.assertIn("_METHOD_POP_JUMP_IF_FALSE", opnames)
+        self.assertNotIn("_GUARD_TOS_FLOAT", opnames)
+        self.assertNotIn("_GUARD_NOS_FLOAT", opnames)
+        self.assertEqual(diamond(False), 6.0)
+
+    def test_mixed_type_diamond_keeps_guards(self):
+        def diamond(flag):
+            if flag:
+                value = 10
+            else:
+                value = "a"
+            value += value
+            value += value
+            value += value
+            value += value
+            return value
+
+        self.assertEqual(
+            list(map(diamond, [True] * TIER2_RESUME_THRESHOLD)),
+            [160] * TIER2_RESUME_THRESHOLD,
+        )
+        executor = _opcode.get_executor(diamond.__code__, 0)
+        opnames = get_opnames(executor)
+        self.assertIn("_GUARD_TOS_INT", opnames)
+        self.assertIn("_GUARD_NOS_INT", opnames)
+        self.assertEqual(diamond(False), "a" * 16)
+
+    def test_nested_loop_fixpoint(self):
+        def nested_sum(n):
+            total = 0
+            for outer in range(n):
+                for inner in range(outer):
+                    total += inner
+            return total
+
+        expected = sum(sum(range(i)) for i in range(6))
+        self.assertEqual(
+            list(map(nested_sum, [6] * TIER2_RESUME_THRESHOLD)),
+            [expected] * TIER2_RESUME_THRESHOLD,
+        )
+        executor = _opcode.get_executor(nested_sum.__code__, 0)
+        opnames = get_opnames(executor)
+        self.assertEqual(opnames.count("_METHOD_ITER_JUMP_RANGE"), 2)
+        self.assertGreaterEqual(opnames.count("_METHOD_JUMP"), 2)
+        self.assertEqual(
+            [nested_sum(n) for n in range(9)],
+            [sum(sum(range(i)) for i in range(n)) for n in range(9)],
+        )
+
+    def test_straight_line_return_to_c_and_python(self):
+        def leaf(value):
+            return value + 1
+
+        self.assertEqual(
+            list(map(leaf, [4] * TIER2_RESUME_THRESHOLD)),
+            [5] * TIER2_RESUME_THRESHOLD,
+        )
+        executor = _opcode.get_executor(leaf.__code__, 0)
+        opnames = get_opnames(executor)
+        self.assertIn("_RETURN_VALUE", opnames)
+        self.assertIn("_METHOD_EXIT", opnames)
+        self.assertNotIn("_METHOD_DEOPT", opnames)
+
+        def python_caller(value):
+            return leaf(value) * 2
+
+        self.assertEqual(python_caller(8), 18)
+
+    def test_inlines_exact_python_call_and_invalidates(self):
+        def callee(value):
+            return value * 2
+
+        def replacement(value):
+            return value * 3
+
+        def caller(function, value):
+            return function(value) + 1
+
+        arguments = itertools.repeat(
+            (callee, 7), TIER2_RESUME_THRESHOLD)
+        self.assertEqual(
+            list(itertools.starmap(caller, arguments)),
+            [15] * TIER2_RESUME_THRESHOLD,
+        )
+        executor = _opcode.get_executor(caller.__code__, 0)
+        opnames = get_opnames(executor)
+        self.assertEqual(opnames.count("_PUSH_FRAME"), 1)
+        self.assertGreaterEqual(opnames.count("_RETURN_VALUE"), 2)
+        self.assertIn("_METHOD_EXIT", opnames)
+        self.assertNotIn("_METHOD_DEOPT", opnames)
+        self.assertEqual(caller(callee, 8), 17)
+        with self.assertRaises(TypeError):
+            caller(callee, "x")
+
+        callee.__code__ = replacement.__code__
+        self.assertFalse(executor.is_valid())
+        self.assertEqual(caller(callee, 8), 25)
+
+    def test_periodic_exit_after_completed_call(self):
+        class Container:
+            factory = dict
+
+            def __init__(self):
+                self.mapping = {"key": {}}
+
+            def lookup(self, pairs):
+                result = None
+                for key, value in pairs:
+                    result = self.mapping[key].get(value, self.factory())
+                return result
+
+        container = Container()
+        pairs = [("key", "missing")]
+        calls = TIER2_RESUME_THRESHOLD + TIER2_THRESHOLD
+        results = list(map(container.lookup, itertools.repeat(pairs, calls)))
+        self.assertEqual(results, [{}] * calls)
+
+        executor = _opcode.get_executor(Container.lookup.__code__, 0)
+        self.assertIn("_TIER2_RESUME_CHECK", get_opnames(executor))
+        self.assertEqual(container.lookup(pairs), {})
 
     def test_generic_iterator_error(self):
         class EmptyIterator:
@@ -5417,10 +5582,9 @@ class TestUopsOptimization(unittest.TestCase):
         self.assertIsNotNone(ex)
         uops = get_opnames(ex)
 
-        # Constants owned by code objects use deferred refcounting in a
-        # free-threaded build, so discarding the returned borrow is a no-op.
-        expected = "_POP_TOP_NOP" if Py_GIL_DISABLED else "_POP_TOP_INT"
-        self.assertIn(expected, uops)
+        # Int constants are not GC tracked, so they cannot use deferred
+        # refcounting in a free-threaded build.
+        self.assertIn("_POP_TOP_INT", uops)
 
     def test_pop_top_specialize_float(self):
         def testfunc(n):
@@ -5433,8 +5597,9 @@ class TestUopsOptimization(unittest.TestCase):
         self.assertIsNotNone(ex)
         uops = get_opnames(ex)
 
-        expected = "_POP_TOP_NOP" if Py_GIL_DISABLED else "_POP_TOP_FLOAT"
-        self.assertIn(expected, uops)
+        # Float constants are not GC tracked, so they cannot use deferred
+        # refcounting in a free-threaded build.
+        self.assertIn("_POP_TOP_FLOAT", uops)
 
 
     def test_unary_negative_long_float_type(self):

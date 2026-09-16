@@ -22968,6 +22968,13 @@
             GOTO_TIER_ONE(_PyFrame_GetBytecode(frame) + CURRENT_TARGET());
         }
 
+        case _METHOD_EXIT_r00: {
+            CHECK_CURRENT_CACHED_VALUES(0);
+            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
+            SET_CURRENT_CACHED_VALUES(0);
+            GOTO_TIER_ONE(frame->instr_ptr + frame->return_offset);
+        }
+
         case _JUMP_TO_TOP_r00: {
             CHECK_CURRENT_CACHED_VALUES(0);
             ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);

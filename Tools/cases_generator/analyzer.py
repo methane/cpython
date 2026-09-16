@@ -1418,6 +1418,7 @@ def get_uop_cache_depths(uop: Uop) -> Iterator[tuple[int, int, int]]:
         "_METHOD_ITER_JUMP_TUPLE",
         "_METHOD_ITER_JUMP_RANGE",
         "_METHOD_DEOPT",
+        "_METHOD_EXIT",
     ):
         yield 0, 0, 0
         return

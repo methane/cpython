@@ -402,6 +402,7 @@ const uint32_t _PyUop_Flags[MAX_UOP_ID+1] = {
     [_METHOD_ITER_JUMP_TUPLE] = 0,
     [_METHOD_ITER_JUMP_RANGE] = 0,
     [_METHOD_DEOPT] = 0,
+    [_METHOD_EXIT] = 0,
     [_JUMP_TO_TOP] = 0,
     [_SET_IP] = 0,
     [_CHECK_STACK_SPACE_OPERAND] = HAS_DEOPT_FLAG,
@@ -3759,6 +3760,15 @@ const _PyUopCachingInfo _PyUop_Caching[MAX_UOP_ID+1] = {
             { -1, -1, -1 },
         },
     },
+    [_METHOD_EXIT] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 0, 0, _METHOD_EXIT_r00 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
     [_JUMP_TO_TOP] = {
         .best = { 0, 0, 0, 0 },
         .entries = {
@@ -4849,6 +4859,7 @@ const uint16_t _PyUop_Uncached[MAX_UOP_REGS_ID+1] = {
     [_METHOD_ITER_JUMP_TUPLE_r00] = _METHOD_ITER_JUMP_TUPLE,
     [_METHOD_ITER_JUMP_RANGE_r00] = _METHOD_ITER_JUMP_RANGE,
     [_METHOD_DEOPT_r00] = _METHOD_DEOPT,
+    [_METHOD_EXIT_r00] = _METHOD_EXIT,
     [_JUMP_TO_TOP_r00] = _JUMP_TO_TOP,
     [_SET_IP_r00] = _SET_IP,
     [_SET_IP_r11] = _SET_IP,
@@ -6034,6 +6045,8 @@ const char *const _PyOpcode_uop_name[MAX_UOP_REGS_ID+1] = {
     [_MAYBE_EXPAND_METHOD_KW_r11] = "_MAYBE_EXPAND_METHOD_KW_r11",
     [_METHOD_DEOPT] = "_METHOD_DEOPT",
     [_METHOD_DEOPT_r00] = "_METHOD_DEOPT_r00",
+    [_METHOD_EXIT] = "_METHOD_EXIT",
+    [_METHOD_EXIT_r00] = "_METHOD_EXIT_r00",
     [_METHOD_FOR_ITER] = "_METHOD_FOR_ITER",
     [_METHOD_FOR_ITER_r00] = "_METHOD_FOR_ITER_r00",
     [_METHOD_ITER_JUMP_LIST] = "_METHOD_ITER_JUMP_LIST",
@@ -7060,6 +7073,8 @@ int _PyUop_num_popped(int opcode, int oparg)
         case _METHOD_ITER_JUMP_RANGE:
             return 0;
         case _METHOD_DEOPT:
+            return 0;
+        case _METHOD_EXIT:
             return 0;
         case _JUMP_TO_TOP:
             return 0;

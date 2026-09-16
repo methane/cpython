@@ -1,0 +1,10 @@
+# started on Wed Sep 16 02:45:06 2026
+
+3140537255,,cpu_atom/cycles/,1869988,0.00,,
+7106331986,,cpu_core/cycles/,1622758448,99.00,,
+2912285052,,cpu_atom/instructions/,1869988,0.00,0.93,insn per cycle
+22468622970,,cpu_core/instructions/,1622758448,99.00,3.16,insn per cycle
+533767713,,cpu_atom/branches/,1869988,0.00,,
+3634683164,,cpu_core/branches/,1622758448,99.00,,
+16701635,,cpu_atom/branch-misses/,1869988,0.00,3.13,of all branches
+26374694,,cpu_core/branch-misses/,1622758448,99.00,0.73,of all branches

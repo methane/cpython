@@ -2773,6 +2773,10 @@ dummy_func(void) {
         }
     }
 
+    op(_METHOD_EXIT, (--)) {
+        ctx->done = true;
+    }
+
 // END BYTECODES //
 
 }

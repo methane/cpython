@@ -5603,6 +5603,11 @@
             break;
         }
 
+        case _METHOD_EXIT: {
+            ctx->done = true;
+            break;
+        }
+
         case _JUMP_TO_TOP: {
             ctx->done = true;
             break;
