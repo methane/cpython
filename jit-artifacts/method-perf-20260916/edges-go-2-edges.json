@@ -1,0 +1,41 @@
+{
+  "benchmark": "go",
+  "runtime": "Python 3.16.0a0 (CPython)",
+  "executable": "/home/methane/work/python/cpython-gc/build-method-jit/python-edges",
+  "python_version": "3.16.0a0 (heads/codex/method-jit-dirty:15c0e6113c1, Sep 16 2026, 03:54:33) [GCC 13.3.0]",
+  "jit_enabled": true,
+  "workload": "choose one move on a 9x9 board using 200 Monte Carlo games",
+  "games_per_operation": 200,
+  "loops": 1,
+  "warmups": 5,
+  "values": 20,
+  "median_seconds": 0.07049775728955865,
+  "minimum_seconds": 0.06858269963413477,
+  "samples_seconds": [
+    0.07157263346016407,
+    0.07112951949238777,
+    0.06997628323733807,
+    0.07276042271405458,
+    0.0706707127392292,
+    0.07153059542179108,
+    0.07013927586376667,
+    0.07051962800323963,
+    0.07081871293485165,
+    0.07071917038410902,
+    0.07017054222524166,
+    0.07088758051395416,
+    0.070708516985178,
+    0.06977065466344357,
+    0.07047588657587767,
+    0.0701112849637866,
+    0.06979417987167835,
+    0.06979953870177269,
+    0.07016067486256361,
+    0.06858269963413477
+  ],
+  "checksum": {
+    "move": 5,
+    "timestamp_delta": 81059,
+    "moves_delta": 21401
+  }
+}

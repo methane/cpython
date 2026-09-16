@@ -1,0 +1,53 @@
+# To display the perf.data header info, please use --header/--header-only options.
+#
+#
+# Total Lost Samples: 0
+#
+# Samples: 4K of event 'cpu_core/cycles/u'
+# Event count (approx.): 20684492358
+#
+# Overhead  Command        Shared Object                            Symbol
+# ........  .............  .......................................  .............................................
+#
+    28.60%  python-before  python-before                            [.] _PyEval_EvalFrameDefault
+    10.78%  python-before  python-before                            [.] invalidate_dependencies
+     3.64%  python-before  python-before                            [.] _Py_Executors_InvalidateGlobalDependency
+     2.90%  python-before  python-before                            [.] _PyFrame_ClearExceptCode
+     1.52%  python-before  python-before                            [.] _PyEval_FrameClearAndPop
+     1.30%  python-before  python-before                            [.] _PyObject_Malloc
+     1.22%  python-before  python-before                            [.] long_bitwise
+     1.22%  python-before  python-before                            [.] initialize_locals
+     1.16%  python-before  python-before                            [.] insertdict
+     1.07%  python-before  python-before                            [.] _PyObject_Free
+     0.88%  python-before  python-before                            [.] _PyCompactLong_Add
+     0.86%  python-before  python-before                            [.] _Py_Dealloc
+     0.82%  python-before  python-before                            [.] PyList_New
+     0.69%  python-before  python-before                            [.] _PyThreadState_PopFrame
+     0.53%  python-before  python-before                            [.] _PyJIT_Entry
+     0.51%  python-before  python-before                            [.] set_add_entry_takeref
+     0.50%  python-before  python-before                            [.] _PyEvalFramePushAndInit
+     0.44%  python-before  python-before                            [.] _PyCompactLong_Subtract
+     0.42%  python-before  python-before                            [.] long_dealloc
+     0.42%  python-before  python-before                            [.] PyDict_SetItem
+     0.38%  python-before  [JIT] tid 6                              [.] 0x00007d4a2039181e
+     0.30%  python-before  _random.cpython-316-x86_64-linux-gnu.so  [.] genrand_uint32
+     0.27%  python-before  python-before                            [.] long_alloc
+     0.27%  python-before  [JIT] tid 6                              [.] 0x00007d4a203910e8
+     0.25%  python-before  python-before                            [.] PyNumber_InPlaceXor
+     0.25%  python-before  python-before                            [.] set_lookkey
+     0.25%  python-before  [JIT] tid 6                              [.] 0x00007d4a2036f44c
+     0.25%  python-before  python-before                            [.] unicodekeys_lookup_unicode
+     0.23%  python-before  python-before                            [.] set_table_resize
+     0.23%  python-before  python-before                            [.] _Py_dict_lookup
+     0.21%  python-before  python-before                            [.] PyLong_FromLong
+     0.21%  python-before  [JIT] tid 6                              [.] 0x00007d4a2036fa29
+     0.21%  python-before  python-before                            [.] list_dealloc
+     0.21%  python-before  python-before                            [.] PyFloat_FromDouble
+     0.21%  python-before  python-before                            [.] float_dealloc
+     0.21%  python-before  python-before                            [.] PyObject_GC_UnTrack
+     0.21%  python-before  python-before                            [.] gc_collect_main
+
+
+#
+# (Cannot load tips.txt file, please install perf!)
+#

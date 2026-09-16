@@ -1,0 +1,41 @@
+{
+  "benchmark": "go",
+  "runtime": "Python 3.16.0a0 (CPython)",
+  "executable": "/home/methane/work/python/cpython-gc/build-method-jit/python-cache-full",
+  "python_version": "3.16.0a0 (heads/codex/method-jit-dirty:15c0e6113c1, Sep 16 2026, 03:52:50) [GCC 13.3.0]",
+  "jit_enabled": true,
+  "workload": "choose one move on a 9x9 board using 200 Monte Carlo games",
+  "games_per_operation": 200,
+  "loops": 1,
+  "warmups": 5,
+  "values": 20,
+  "median_seconds": 0.07100574066862464,
+  "minimum_seconds": 0.06965241488069296,
+  "samples_seconds": [
+    0.07103787269443274,
+    0.0716024674475193,
+    0.07117068953812122,
+    0.07443110086023808,
+    0.07162299938499928,
+    0.07095992192626,
+    0.07097360864281654,
+    0.07043380383402109,
+    0.071187992580235,
+    0.07118240557610989,
+    0.07149372342973948,
+    0.07071845047175884,
+    0.0718213701620698,
+    0.07021454907953739,
+    0.0717248972505331,
+    0.07084275595843792,
+    0.06965241488069296,
+    0.07087706122547388,
+    0.06996813789010048,
+    0.06971119251102209
+  ],
+  "checksum": {
+    "move": 5,
+    "timestamp_delta": 81059,
+    "moves_delta": 21401
+  }
+}

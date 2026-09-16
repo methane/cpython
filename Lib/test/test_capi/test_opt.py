@@ -108,7 +108,7 @@ class TestMethodFrontend(unittest.TestCase):
         executor = _opcode.get_executor(choose.__code__, 0)
         opnames = get_opnames(executor)
         self.assertIn("_METHOD_POP_JUMP_IF_FALSE", opnames)
-        self.assertIn("_METHOD_JUMP", opnames)
+        # Adjacent single-predecessor edges need no jump or spill.
         self.assertIn("_METHOD_EXIT", opnames)
         self.assertIn("_RETURN_VALUE", opnames)
 
@@ -278,6 +278,121 @@ class TestMethodFrontend(unittest.TestCase):
         callee.__code__ = replacement.__code__
         self.assertFalse(executor.is_valid())
         self.assertEqual(caller(callee, 8), 25)
+
+    def test_inlines_branching_callee_multiple_returns(self):
+        def callee(flag, value):
+            if flag:
+                return value * 2
+            return value + 3
+
+        def caller(function, flag, value):
+            return function(flag, value) + 1
+
+        arguments = itertools.repeat((callee, True, 7), TIER2_RESUME_THRESHOLD)
+        self.assertEqual(list(itertools.starmap(caller, arguments)),
+                         [15] * TIER2_RESUME_THRESHOLD)
+        executor = _opcode.get_executor(caller.__code__, 0)
+        opnames = get_opnames(executor)
+        self.assertEqual(opnames.count("_PUSH_FRAME"), 1)
+        self.assertIn("_METHOD_POP_JUMP_IF_FALSE", opnames)
+        self.assertEqual(opnames.count("_RETURN_VALUE"), 3)
+        self.assertNotIn("_METHOD_DEOPT", opnames)
+        self.assertEqual(caller(callee, False, 7), 11)
+        self.assertEqual(caller(callee, True, 2**100), 2**101 + 1)
+        self.assertEqual(caller(callee, False, 2**100), 2**100 + 4)
+        self.assertEqual(caller(callee, True, 1.5), 4.0)
+
+        try:
+            caller(callee, False, "x")
+        except TypeError as exc:
+            tb = exc.__traceback__
+            while tb.tb_next is not None:
+                tb = tb.tb_next
+            self.assertIs(tb.tb_frame.f_code, callee.__code__)
+            self.assertEqual(tb.tb_lineno, callee.__code__.co_firstlineno + 3)
+        else:
+            self.fail("TypeError not raised")
+
+        def replacement(flag, value):
+            return 42
+
+        callee.__code__ = replacement.__code__
+        self.assertFalse(executor.is_valid())
+        self.assertEqual(caller(callee, False, 7), 43)
+
+    def test_inlined_callee_mixed_join(self):
+        def callee(flag):
+            if flag:
+                value = 10
+            else:
+                value = "a"
+            return value + value
+
+        def caller(function, flag):
+            return function(flag)
+
+        arguments = itertools.repeat((callee, True), TIER2_RESUME_THRESHOLD)
+        self.assertEqual(list(itertools.starmap(caller, arguments)),
+                         [20] * TIER2_RESUME_THRESHOLD)
+        executor = _opcode.get_executor(caller.__code__, 0)
+        self.assertIn("_PUSH_FRAME", get_opnames(executor))
+        self.assertIn("_METHOD_POP_JUMP_IF_FALSE", get_opnames(executor))
+        self.assertNotIn("_METHOD_DEOPT", get_opnames(executor))
+        self.assertEqual(caller(callee, False), "aa")
+
+    def test_cleanup_keeps_check_after_callback(self):
+        def callee(flag):
+            if flag:
+                return 10
+            return 20
+
+        def replacement(flag):
+            return 99
+
+        class Argument:
+            invalidate = False
+
+            def __len__(self):
+                if self.invalidate:
+                    callee.__code__ = replacement.__code__
+                return 1
+
+        def caller(function, obj):
+            count = len(obj)
+            return function(True) + count
+
+        obj = Argument()
+        arguments = itertools.repeat((callee, obj), TIER2_RESUME_THRESHOLD)
+        self.assertEqual(list(itertools.starmap(caller, arguments)),
+                         [11] * TIER2_RESUME_THRESHOLD)
+        executor = _opcode.get_executor(caller.__code__, 0)
+        self.assertIn("_PUSH_FRAME", get_opnames(executor))
+        obj.invalidate = True
+        self.assertEqual(caller(callee, obj), 100)
+        self.assertFalse(executor.is_valid())
+
+    def test_cleanup_keeps_ip_for_each_call(self):
+        def caller(a, b):
+            first = len(a)
+            second = len(b)
+            return first + second
+
+        arguments = itertools.repeat(([1], [2]), TIER2_RESUME_THRESHOLD)
+        self.assertEqual(list(itertools.starmap(caller, arguments)),
+                         [2] * TIER2_RESUME_THRESHOLD)
+        executor = _opcode.get_executor(caller.__code__, 0)
+        self.assertIn("_METHOD_EXIT", get_opnames(executor))
+        for a, b, line in ((None, [], 1), ([], None, 2)):
+            with self.subTest(line=line):
+                try:
+                    caller(a, b)
+                except TypeError as exc:
+                    tb = exc.__traceback__.tb_next
+                    self.assertIs(tb.tb_frame.f_code, caller.__code__)
+                    self.assertEqual(tb.tb_lineno,
+                                     caller.__code__.co_firstlineno + line)
+                else:
+                    self.fail("TypeError not raised")
 
     def test_periodic_exit_after_completed_call(self):
         class Container:
@@ -1273,6 +1388,38 @@ class TestUopsOptimization(unittest.TestCase):
             self.assertFalse(executor.is_valid())
             self.assertEqual(read(8), 88)
         self.assertTrue(retained)
+
+    def test_named_global_miss_cache_new_dependency(self):
+        read, executor, namespace = self._warm_named_global("unrelated")
+        # Repeated replacements can cache a negative dependency lookup.
+        for value in range(20):
+            namespace["unrelated"] = value
+        exec("def read_other(n):\n"
+             "    total = 0\n"
+             "    for _ in range(n):\n"
+             "        total += unrelated\n"
+             "    return total\n", namespace)
+        other = namespace["read_other"]
+        self.assertEqual(other(TIER2_THRESHOLD), 19 * TIER2_THRESHOLD)
+        dependent = get_first_executor(other)
+        self.assertIsNotNone(dependent)
+        namespace["unrelated"] = 23
+        self.assertFalse(dependent.is_valid())
+        self.assertEqual(other(8), 184)
+        self.assertEqual(read(8), 56)
+
+    def test_named_global_miss_cache_extended_dependency(self):
+        read, executor, namespace = self._warm_named_global("unrelated")
+        for value in range(20):
+            namespace["unrelated"] = value
+        # A Bloom collision may already have invalidated this executor.
+        if not executor.is_valid():
+            read(TIER2_THRESHOLD)
+            executor = get_first_executor(read)
+        _testinternalcapi.add_executor_dependency(executor, namespace)
+        namespace["unrelated"] = 23
+        self.assertFalse(executor.is_valid())
+        self.assertEqual(read(8), 56)
 
     def test_named_global_recompiles_after_mutation_limit(self):
         read, executor, namespace = self._warm_named_global("unrelated")
@@ -5582,9 +5729,11 @@ class TestUopsOptimization(unittest.TestCase):
         self.assertIsNotNone(ex)
         uops = get_opnames(ex)
 
-        # Int constants are not GC tracked, so they cannot use deferred
-        # refcounting in a free-threaded build.
-        self.assertIn("_POP_TOP_INT", uops)
+        # Constant immortalization depends on how the test code was loaded.
+        # Borrowed immortal constants need no decref, in either frontend.
+        constant, = testfunc.__code__.co_consts
+        expected = "_POP_TOP_NOP" if sys._is_immortal(constant) else "_POP_TOP_INT"
+        self.assertIn(expected, uops)
 
     def test_pop_top_specialize_float(self):
         def testfunc(n):
@@ -5597,9 +5746,9 @@ class TestUopsOptimization(unittest.TestCase):
         self.assertIsNotNone(ex)
         uops = get_opnames(ex)
 
-        # Float constants are not GC tracked, so they cannot use deferred
-        # refcounting in a free-threaded build.
-        self.assertIn("_POP_TOP_FLOAT", uops)
+        constant, = testfunc.__code__.co_consts
+        expected = "_POP_TOP_NOP" if sys._is_immortal(constant) else "_POP_TOP_FLOAT"
+        self.assertIn(expected, uops)
 
 
     def test_unary_negative_long_float_type(self):

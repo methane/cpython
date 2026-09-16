@@ -1739,8 +1739,9 @@ stack_allocate(
  *
  * The tracing frontend can carry cached stack entries across a single known
  * path. A method has merge points, so its control-flow uops have an empty
- * cache signature. stack_allocate() consequently spills before every edge,
- * and every block starts with the Python value stack as its only state.
+ * cache signature. stack_allocate() spills before retained edges, so joins
+ * use the Python value stack as their only state. Adjacent single-predecessor
+ * edges may be elided to preserve cached values.
  */
 
 typedef enum {
@@ -2389,8 +2390,19 @@ method_apply_uop_effect(
     }
 }
 
+#define METHOD_TARGET_OFFSET_FLAG (UINT64_C(1) << 63)
+
+static bool
+method_is_edge(int opcode)
+{
+    return opcode == _METHOD_POP_JUMP_IF_FALSE ||
+        opcode == _METHOD_POP_JUMP_IF_TRUE || opcode == _METHOD_JUMP ||
+        opcode == _METHOD_FOR_ITER || opcode == _METHOD_ITER_JUMP_LIST ||
+        opcode == _METHOD_ITER_JUMP_TUPLE || opcode == _METHOD_ITER_JUMP_RANGE;
+}
+
 static int
-method_inline_straight_line(
+method_inline_small_cfg(
     PyThreadState *tstate,
     PyCodeObject *root_code,
     PyFunctionObject *func,
@@ -2583,7 +2595,7 @@ method_translate_instruction(
             if (func == NULL) {
                 return 0;
             }
-            int inlined = method_inline_straight_line(
+            int inlined = method_inline_small_cfg(
                 tstate, root_code, func, dependencies,
                 buffer, length, limit);
             Py_DECREF(func);
@@ -2981,7 +2993,7 @@ next_block:
 }
 
 static int
-method_inline_straight_line(
+method_inline_small_cfg(
     PyThreadState *tstate,
     PyCodeObject *root_code,
     PyFunctionObject *func,
@@ -3011,6 +3023,7 @@ method_inline_straight_line(
         code_size, sizeof(*offset_to_instruction));
     int16_t *instruction_to_block = PyMem_Calloc(
         code_size, sizeof(*instruction_to_block));
+    _PyMethodValue *states = NULL;
     _PyMethodValue *state = NULL;
     _PyMethodValue *uop_state = NULL;
     if (instructions == NULL || blocks == NULL ||
@@ -3030,8 +3043,7 @@ method_inline_straight_line(
     if (decoded < 0) {
         goto error;
     }
-    if (decoded == 0 || block_count != 1 ||
-        blocks[0].terminator != METHOD_RETURN ||
+    if (decoded == 0 ||
         _PyOpcode_Deopt[instructions[0].opcode] != RESUME)
     {
         goto unsupported;
@@ -3043,50 +3055,117 @@ method_inline_straight_line(
     if (state_width <= 0) {
         goto unsupported;
     }
+    states = PyMem_Calloc((size_t)block_count * state_width, sizeof(*states));
     state = PyMem_Calloc((size_t)state_width, sizeof(*state));
     uop_state = PyMem_Calloc((size_t)state_width, sizeof(*uop_state));
-    if (state == NULL || uop_state == NULL) {
+    if (states == NULL || state == NULL || uop_state == NULL) {
         PyErr_NoMemory();
         goto error;
     }
 
-    int stack_depth = 0;
-    _PyMethodBlock *block = &blocks[0];
-    for (int i = block->first; i <= block->last; i++) {
-        _PyMethodInstruction *mi = &instructions[i];
-        if (i == block->last) {
-            if (!method_emit(buffer, length, limit, _SET_IP, 0,
-                             (uintptr_t)(bytecode + mi->offset), mi->offset) ||
-                !method_emit(buffer, length, limit, _MAKE_HEAP_SAFE,
-                             0, 0, mi->offset) ||
-                !method_emit(buffer, length, limit, _RETURN_VALUE,
-                             0, 0, mi->offset))
-            {
-                goto unsupported;
-            }
-            break;
+    int analyzed = method_analyze_cfg(
+        code, instructions, blocks, block_count, states, state_width,
+        locals_count, stack_capacity);
+    if (analyzed < 0) {
+        goto error;
+    }
+    if (analyzed == 0) {
+        goto unsupported;
+    }
+    for (int b = 0; b < block_count; b++) {
+        _PyMethodBlock *block = &blocks[b];
+        if (!block->initialized) {
+            continue;
         }
-        int translated = method_translate_instruction(
-            tstate, root_code, dependencies, false,
-            code, bytecode, mi, -1,
-            state, locals_count, stack_depth, stack_capacity, uop_state,
-            buffer, length, limit);
-        if (translated < 0) {
-            goto error;
-        }
-        if (translated == 0 ||
-            !method_apply_stack_effect(
-                code, mi, state, locals_count, stack_capacity,
-                &stack_depth, false))
+        /* Bound both code size and control-flow complexity. Loops and nested
+         * Python calls continue in Tier 1; forward diamonds may be inlined. */
+        if ((block->target >= 0 && block->target <= b) ||
+            (block->fallthrough >= 0 && block->fallthrough <= b))
         {
             goto unsupported;
         }
+        memcpy(state, states + b * state_width,
+               (size_t)state_width * sizeof(*state));
+        int stack_depth = block->stack_depth;
+        block->uop_offset = (uint16_t)*length;
+        for (int i = block->first; i <= block->last; i++) {
+            _PyMethodInstruction *mi = &instructions[i];
+            if (i == block->last && block->terminator == METHOD_RETURN) {
+                if (!method_emit(buffer, length, limit, _SET_IP, 0,
+                                 (uintptr_t)(bytecode + mi->offset), mi->offset) ||
+                    !method_emit(buffer, length, limit, _MAKE_HEAP_SAFE,
+                                 0, 0, mi->offset) ||
+                    !method_emit(buffer, length, limit, _RETURN_VALUE,
+                                 0, 0, mi->offset) ||
+                    !method_emit(buffer, length, limit, _METHOD_JUMP,
+                                 0, 0, mi->offset))
+                {
+                    goto unsupported;
+                }
+                buffer[*length - 1].operand1 = UINT64_MAX;
+                break;
+            }
+            if (i == block->last && block->terminator == METHOD_JUMP) {
+                if (!method_emit(buffer, length, limit, _METHOD_JUMP,
+                                 0, 0, mi->offset))
+                {
+                    goto unsupported;
+                }
+                buffer[*length - 1].operand1 = (uint64_t)block->target;
+                break;
+            }
+            int translated = method_translate_instruction(
+                tstate, root_code, dependencies, false,
+                code, bytecode, mi, i == block->last ? block->target : -1,
+                state, locals_count, stack_depth, stack_capacity, uop_state,
+                buffer, length, limit);
+            if (translated < 0) {
+                goto error;
+            }
+            if (translated == 0 ||
+                !method_apply_stack_effect(
+                    code, mi, state, locals_count, stack_capacity,
+                    &stack_depth, false))
+            {
+                goto unsupported;
+            }
+        }
+        if (block->terminator == METHOD_BRANCH ||
+            block->terminator == METHOD_FALLTHROUGH)
+        {
+            if (block->fallthrough < 0 ||
+                !method_emit(buffer, length, limit, _METHOD_JUMP,
+                             0, 0, instructions[block->last].offset))
+            {
+                goto unsupported;
+            }
+            buffer[*length - 1].operand1 = (uint64_t)block->fallthrough;
+        }
+    }
+    /* Resolve local block numbers before the callee CFG is freed. Returns
+     * join at the caller continuation with the ordinary empty cache ABI. */
+    for (int pc = start_length; pc < *length; pc++) {
+        if (!method_is_edge(buffer[pc].opcode)) {
+            continue;
+        }
+        uint64_t target = buffer[pc].operand1;
+        if (target == UINT64_MAX) {
+            target = (uint64_t)*length;
+        }
+        else {
+            if (target >= (uint64_t)block_count || !blocks[target].initialized) {
+                goto unsupported;
+            }
+            target = blocks[target].uop_offset;
+        }
+        buffer[pc].operand1 = target | METHOD_TARGET_OFFSET_FLAG;
     }
     _Py_BloomFilter_Add(dependencies, func);
     PyMem_Free(instructions);
     PyMem_Free(blocks);
     PyMem_Free(offset_to_instruction);
     PyMem_Free(instruction_to_block);
+    PyMem_Free(states);
     PyMem_Free(state);
     PyMem_Free(uop_state);
     return 1;
@@ -3097,6 +3176,7 @@ unsupported:
     PyMem_Free(blocks);
     PyMem_Free(offset_to_instruction);
     PyMem_Free(instruction_to_block);
+    PyMem_Free(states);
     PyMem_Free(state);
     PyMem_Free(uop_state);
     return 0;
@@ -3107,6 +3187,7 @@ error:
     PyMem_Free(blocks);
     PyMem_Free(offset_to_instruction);
     PyMem_Free(instruction_to_block);
+    PyMem_Free(states);
     PyMem_Free(state);
     PyMem_Free(uop_state);
     return -1;
@@ -3121,6 +3202,78 @@ method_finish_uops(
     const _PyMethodBlock *blocks,
     int block_count)
 {
+    bool block_start[UOP_MAX_TRACE_LENGTH] = {false};
+    uint16_t predecessors[UOP_MAX_TRACE_LENGTH] = {0};
+    for (int b = 0; b < block_count; b++) {
+        if (blocks[b].initialized) {
+            block_start[blocks[b].uop_offset] = true;
+        }
+    }
+    for (int pc = 0; pc < input_length; pc++) {
+        if (!method_is_edge(input[pc].opcode)) {
+            continue;
+        }
+        uint64_t target = input[pc].operand1;
+        if (target & METHOD_TARGET_OFFSET_FLAG) {
+            target &= ~METHOD_TARGET_OFFSET_FLAG;
+        }
+        else {
+            if (target >= (uint64_t)block_count || !blocks[target].initialized) {
+                return 0;
+            }
+            target = blocks[target].uop_offset;
+        }
+        if (target >= (uint64_t)input_length) {
+            return 0;
+        }
+        input[pc].operand1 = target;
+        block_start[target] = true;
+        predecessors[target]++;
+    }
+    /* Preserve the TOS cache across an adjacent edge only when no other
+     * predecessor needs the empty entry convention. Joins keep that ABI. */
+    for (int pc = 0; pc + 1 < input_length; pc++) {
+        if (input[pc].opcode == _METHOD_JUMP &&
+            input[pc].operand1 == (uint64_t)(pc + 1) &&
+            predecessors[pc + 1] == 1)
+        {
+            input[pc].opcode = _NOP;
+        }
+    }
+    /* Facts about the last escape and saved IP are local to a basic block.
+     * Never carry them through a join or across an inlined frame change. */
+    int last_set_ip = -1;
+    bool may_have_escaped = true;
+    for (int pc = 0; pc < input_length; pc++) {
+        if (block_start[pc]) {
+            last_set_ip = -1;
+            may_have_escaped = true;
+        }
+        int opcode = input[pc].opcode;
+        if (opcode == _SET_IP) {
+            input[pc].opcode = _NOP;
+            last_set_ip = pc;
+        }
+        else if (opcode == _CHECK_VALIDITY) {
+            if (!may_have_escaped) {
+                input[pc].opcode = _NOP;
+            }
+            may_have_escaped = false;
+        }
+        else {
+            uint16_t flags = _PyUop_Flags[opcode];
+            bool changes_frame = opcode == _PUSH_FRAME || opcode == _RETURN_VALUE;
+            if ((flags & (HAS_ESCAPES_FLAG | HAS_ERROR_FLAG)) || changes_frame) {
+                if (last_set_ip >= 0) {
+                    input[last_set_ip].opcode = _SET_IP;
+                    last_set_ip = -1;
+                }
+            }
+            if ((flags & (HAS_ESCAPES_FLAG | HAS_PERIODIC_FLAG)) || changes_frame) {
+                may_have_escaped = true;
+            }
+        }
+    }
     for (int pc = 0; pc < input_length; pc++) {
         int opcode = input[pc].opcode;
         int oparg = input[pc].oparg;
@@ -3148,24 +3301,11 @@ method_finish_uops(
     length = prepare_for_execution(output, length);
     for (int i = 0; i < length; i++) {
         int opcode = _PyUop_Uncached[output[i].opcode];
-        if (opcode != _METHOD_POP_JUMP_IF_FALSE &&
-            opcode != _METHOD_POP_JUMP_IF_TRUE &&
-            opcode != _METHOD_JUMP &&
-            opcode != _METHOD_FOR_ITER &&
-            opcode != _METHOD_ITER_JUMP_LIST &&
-            opcode != _METHOD_ITER_JUMP_TUPLE &&
-            opcode != _METHOD_ITER_JUMP_RANGE)
-        {
+        if (!method_is_edge(opcode)) {
             continue;
         }
-        int target_block = (int)output[i].operand1;
-        if (target_block < 0 || target_block >= block_count) {
-            return 0;
-        }
-        int input_target = blocks[target_block].uop_offset;
-        if (input_target < 0 || input_target >= input_length) {
-            return 0;
-        }
+        int input_target = (int)output[i].operand1;
+        assert(input_target >= 0 && input_target < input_length);
         output[i].jump_target = offset_map[input_target];
         output[i].format = UOP_FORMAT_JUMP;
         output[i].operand1 = 0;
@@ -3545,6 +3685,8 @@ link_executor(_PyExecutorObject *executor, const _PyBloomFilter *bloom)
         interp->executor_ptrs = new_ptrs;
         interp->executor_capacity = new_cap;
     }
+    memset(interp->executor_global_misses, 0,
+           sizeof(interp->executor_global_misses));
     size_t idx = interp->executor_count++;
     interp->executor_blooms[idx] = *bloom;
     interp->executor_ptrs[idx] = executor;
@@ -3699,14 +3841,17 @@ _Py_Executor_DependsOn(_PyExecutorObject *executor, void *obj)
     PyInterpreterState *interp = _PyInterpreterState_GET();
     int32_t idx = executor->vm_data.bloom_array_idx;
     assert(idx >= 0 && (size_t)idx < interp->executor_count);
+    memset(interp->executor_global_misses, 0,
+           sizeof(interp->executor_global_misses));
     _Py_BloomFilter_Add(&interp->executor_blooms[idx], obj);
 }
 
 /* Invalidate all executors that depend on `obj`
  * May cause other executors to be invalidated as well.
  * Uses contiguous bloom filter array for cache-friendly scanning.
+ * Return true only when no executor matched.
  */
-static void
+static bool
 invalidate_dependencies(
     PyInterpreterState *interp,
     const _PyBloomFilter *filter,
@@ -3731,6 +3876,7 @@ invalidate_dependencies(
             goto error;
         }
     }
+    bool no_matches = PyList_GET_SIZE(invalidate) == 0;
     for (Py_ssize_t i = 0; i < PyList_GET_SIZE(invalidate); i++) {
         PyObject *exec = PyList_GET_ITEM(invalidate, i);
         executor_invalidate(exec);
@@ -3739,12 +3885,13 @@ invalidate_dependencies(
         }
     }
     Py_DECREF(invalidate);
-    return;
+    return no_matches;
 error:
     PyErr_Clear();
     Py_XDECREF(invalidate);
     // If we're truly out of memory, wiping out everything is a fine fallback:
     _Py_Executors_InvalidateAll(interp, is_invalidation);
+    return false;
 }
 
 void
@@ -3764,6 +3911,23 @@ _Py_Executors_InvalidateGlobalDependency(
     Py_hash_t key_hash,
     bool value_only)
 {
+    size_t slot = (size_t)key_hash % Py_ARRAY_LENGTH(interp->executor_global_misses);
+    if (value_only) {
+        for (size_t i = 0; i < Py_ARRAY_LENGTH(interp->executor_global_misses); i++) {
+            if (interp->executor_global_misses[i].dict == NULL) {
+                slot = i;
+            }
+            else if (interp->executor_global_misses[i].dict == dict &&
+                     interp->executor_global_misses[i].key_hash == key_hash)
+            {
+                /* Unlinking executors cannot create a dependency. Linking one
+                 * or extending its dependencies clears this cache. Raw dict
+                 * addresses are never dereferenced; reuse is safe for the same
+                 * reason. Hash collisions conservatively share dependents. */
+                return true;
+            }
+        }
+    }
     _PyBloomFilter legacy;
     _PyBloomFilter changed;
     _PyBloomFilter structure;
@@ -3774,11 +3938,15 @@ _Py_Executors_InvalidateGlobalDependency(
     _Py_BloomFilter_AddGlobal(
         &changed, dict, value_only ? key_hash : 0, !value_only);
     _Py_BloomFilter_AddGlobal(&structure, dict, 0, true);
-    invalidate_dependencies(interp, &legacy, &changed, 1);
+    bool no_matches = invalidate_dependencies(interp, &legacy, &changed, 1);
     for (size_t i = 0; i < interp->executor_count; i++) {
         if (bloom_filter_may_contain(
                 &interp->executor_blooms[i], &structure))
         {
+            if (value_only && no_matches) {
+                interp->executor_global_misses[slot].dict = dict;
+                interp->executor_global_misses[slot].key_hash = key_hash;
+            }
             return true;
         }
     }

@@ -399,3 +399,139 @@ comparisons, but do not attribute the whole difference to the method frontend.
 `git diff --check` passes. `make patchcheck` remains blocked by default-branch
 discovery (`None` base branch); no source check failure was reported before it
 stopped. No GitHub post, push, or PR change has been made.
+
+# Controlled method-JIT performance follow-up
+
+## Protocol and progress
+
+- Compare three controls on the same patched d95f295 source base and the same
+  GCC/LLVM 21 flags: trace-only (method compile returns unsupported), the prior
+  prototype frontend, and the committed merge-aware frontend. Standard-library
+  sources, native extensions and stencils are shared. Save distinct executables
+  after each incremental link and record hashes in controls.json.
+- Screen Go in three rotated process blocks, five warmups and twenty measured
+  fixed-workload values. Use process means and geometric means of paired ratios.
+  No builds run during measurements. Keep all runs, including failures.
+- Artifact directory: jit-artifacts/method-perf-20260916. No PGO or LTO.
+- First isolated candidate removes redundant validity/IP operations within
+  basic blocks. It resets reasoning at every block entry and frame change,
+  preserves IP before errors/escapes, and preserves validity after escapes.
+  CFG joins and stack-cache conventions are unchanged in this experiment.
+
+## Controlled diagnosis
+
+- Rebuilt d95f295 main with identical LLVM 21 flags, plus only the prerequisite
+  stencil local-reference reachability fix in Tools/jit/_optimizers.py.
+  Go remains about 63.5 ms versus 84--89 ms for frontend controls. JIT-off is
+  about 69.6 ms on main and 71--73 ms on this branch. Thus the historical LLVM
+  flag difference does not explain the regression.
+- A separate 55-operation native perf recording attributes 10.78% of samples
+  to invalidate_dependencies and 3.64% to global-dependency invalidation.
+  Named-global watching survives unrelated value changes but rescans every
+  executor on each change. This is shared by trace and method controls.
+- Add a four-slot negative dependency cache keyed by dictionary address and
+  name hash, cleared on every executor link and dependency extension. Only
+  value-only changes with no matching executor can enter the cache. Structural
+  changes still scan, and removal of executors cannot introduce dependencies.
+  This experiment retains the prior IP/validity cleanup; compare to that binary
+  to isolate the cache contribution. Correctness tests cover dependency creation
+  and extension after repeated negative lookups.
+
+## Inline and edge implementation
+
+- Extended the 128-code-unit inline budget to acyclic callee CFGs. Analyze
+  callee joins independently; map each forward edge to a uop offset and each
+  return to one caller continuation. Recursive/nested Python calls, loops,
+  generators and exception-table callees remain outside this bounded subset.
+- Remove adjacent unconditional edges only with one incoming edge. That lets
+  the existing allocator retain cached values into that successor; multi-input
+  joins keep the empty-stack-cache convention. Do not speculate across joins.
+- New tests exercise both callee return paths, mixed joins, overflow, callback
+  invalidation, and traceback instruction positions. GIL debug: 338 tests pass.
+- Go after associative global miss caching and inline extension is about
+  70.5 ms; adjacent-edge elimination is neutral in the isolated Go screen.
+  Broader fixed cohort is predeclared in cohort.py: 24 workloads, identical
+  calibrated loops, two reversed blocks of main/before/candidate, CPU 2,
+  five measured values after three warmups, 45-second process cap (NetworkX
+  15 seconds). All failures and raw pyperf data will be retained.
+- An isolated instrumented native build will count method entries, exits and
+  uops and method compilation time. Its timings are diagnostic only; unmodified
+  executables are used for all performance comparisons.
+
+## Dynamic diagnosis and validation
+
+- Isolated native instrumentation counts Go's five steady-state operations:
+  2,367,446 method entries, 1,043,586 unsupported-bytecode exits (44.1%),
+  1,323,860 root returns, and no guard/periodic exits during this segment.
+  Entries and return/exit counts are unchanged by this patch. Validity checks
+  drop from 41,462,069 to 23,170,322 (-44.1%), saved IPs from 40,418,483 to
+  17,218,663 (-57.4%), and method jumps from 2,286,412 to 626,499 (-72.6%).
+  Spill/reload operations remain 21,923,473: adjacent-edge removal helps code
+  shape but does not reduce Go's dynamic spilling. Branching inlining does not
+  remove Go's remaining unsupported-call transitions.
+- Method compilation during five warmup operations takes approximately
+  0.77 ms before and 1.12 ms after (12 successes); five steady operations
+  contain 15 failed attempts taking 0.31/0.26 ms. Instrumented wall times are
+  not performance comparisons. Native perf and controlled timings are separate.
+- GIL native release: 338 optimizer tests pass. GIL debug numeric, generator,
+  tracing, monitoring and threading tests pass. Socket-based concurrent.futures
+  tests initially fail in the sandbox; the authorized unsandboxed rerun passes
+  all 746 tests across ten files (26 skips, including optimizer tests).
+- Free-threaded debug and release optimizer suites each pass 338 tests after
+  correcting two old assertions: numeric constants can be immortal depending
+  on test-code loading, and then POP_TOP_NOP is the correct specialization.
+  The tests now inspect the actual constant's immortality rather than assuming
+  deferred refcounting or ordinary refcounting. FT threading/monitoring also pass.
+
+## Fixed-cohort result
+
+- All 24 workloads completed all paired runs; no timeout/failure. Main was
+  calibrated once per workload and all three executables used those loop counts.
+  Final identity checks passed. The equal-weight geometric-mean runtime ratio
+  is 1.0076 versus main and 0.9984 versus the starting implementation: broadly
+  neutral, not a 20% improvement. Go is 0.8375 versus the starting implementation
+  (16.25% shorter), but still 1.1240 versus main. Richards is 1.0286 versus main.
+- Retain all primary results, including Chaos's 0.984--1.135 and NetworkX's
+  0.991--1.288 paired-ratio spread. Predeclare three additional rotated process
+  blocks for Chaos, NetworkX, Raytrace and regex_dna to characterize process
+  variability and the material non-Go differences; do not replace the primary
+  aggregate with favorable samples. NetworkX retains its 15-second cap.
+
+## Final attribution and supplementary measurements
+
+- Three additional process blocks completed without failures/timeouts. NetworkX
+  showed the ~399 ms slow mode in the starting implementation as well as in the
+  primary candidate run; most processes were ~307--314 ms. Combining all five
+  processes per binary gives candidate/before 0.9984 for NetworkX. Do not call
+  the primary 12.7% difference a stable patch regression. Chaos remains variable;
+  Raytrace's initial regression did not reproduce in the additional blocks.
+  regex_dna's ~4.7% improvement reproduces, but its cause is not established.
+- A final trace-only control with the new global miss cache runs Go at
+  67.3--68.1 ms, versus final method 70.8--71.3 ms and main 63.4--63.7 ms.
+  The residual cost is shared-runtime changes plus about 5% additional runtime
+  with the method frontend; it is not exclusively method CFG/inlining cost.
+- Primary 24-workload data and aggregate remain unchanged. Supplementary data,
+  dynamic counts, control source snapshots, and build identities are retained.
+  See method_jit_performance.md for current conclusions and remaining limits.
+
+## Completion of requested steps 1--4
+
+- Final native perf: global-dependency invalidation is 0.57% of samples;
+  invalidate_dependencies falls below the 0.2% report threshold, versus
+  3.64% and 10.78% respectively before. This corroborates the cache attribution.
+- Final constant-specialization assertions pass independently on all four
+  configurations. Optimizer/generator/JIT-tool checks pass another 110 tests;
+  git diff --check passes. Diagnostic controls were restored to the actual
+  implementation at build-method-jit/python. No PGO/LTO, GitHub post, push,
+  PR modification, or commit was performed in this follow-up.
+- Steps 1--4 are complete within the bounded inline/single-predecessor subset
+  documented above. The broader 20% goal remains unmet. Next: classify the
+  remaining dynamic unsupported call exits, expand the frequent call protocols,
+  and measure multi-predecessor stack-cache propagation separately.
+
+## Commit checkpoint
+
+At the user's request, package the implementation, regression tests, reports,
+and benchmark evidence in a local commit. Previously completed correctness
+checks and the 24-workload results were verified; git diff --check passes.
+Build directories and unrelated earlier experiments remain local.

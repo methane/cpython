@@ -1,0 +1,41 @@
+{
+  "benchmark": "go",
+  "runtime": "Python 3.16.0a0 (CPython)",
+  "executable": "/home/methane/work/python/cpython-gc/build-method-jit/python-trace-final",
+  "python_version": "3.16.0a0 (heads/codex/method-jit-dirty:15c0e6113c1, Sep 16 2026, 04:23:05) [GCC 13.3.0]",
+  "jit_enabled": true,
+  "workload": "choose one move on a 9x9 board using 200 Monte Carlo games",
+  "games_per_operation": 200,
+  "loops": 1,
+  "warmups": 5,
+  "values": 20,
+  "median_seconds": 0.06772083509713411,
+  "minimum_seconds": 0.06632557697594166,
+  "samples_seconds": [
+    0.06900074519217014,
+    0.06811584252864122,
+    0.06700851581990719,
+    0.07025663275271654,
+    0.06745651550590992,
+    0.06843027751892805,
+    0.06772891525179148,
+    0.06834401376545429,
+    0.0679473103955388,
+    0.0676812818273902,
+    0.06789452582597733,
+    0.06678582448512316,
+    0.06801739148795605,
+    0.06693980097770691,
+    0.067516946233809,
+    0.06771275494247675,
+    0.06745839025825262,
+    0.06632557697594166,
+    0.0680123558267951,
+    0.06726891361176968
+  ],
+  "checksum": {
+    "move": 5,
+    "timestamp_delta": 81059,
+    "moves_delta": 21401
+  }
+}

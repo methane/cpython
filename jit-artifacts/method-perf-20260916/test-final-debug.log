@@ -1,0 +1,3448 @@
+Using random seed: 1034501423
+0:00:00 load avg: 0.35 mem: 22.7 MiB Run 17 tests sequentially in a single process
+0:00:00 load avg: 0.35 mem: 22.7 MiB [ 1/17] test_capi.test_opt
+test test_capi.test_opt failed -- Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/test/test_capi/test_opt.py", line 111, in test_compiles_both_sides_of_branch
+    self.assertIn("_METHOD_JUMP", opnames)
+    ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: '_METHOD_JUMP' not found in ['_START_EXECUTOR', '_MAKE_WARM', '_CHECK_VALIDITY', '_TIER2_RESUME_CHECK', '_CHECK_VALIDITY', '_LOAD_FAST_BORROW_0', '_TO_BOOL_BOOL', '_SPILL_OR_RELOAD', '_METHOD_POP_JUMP_IF_FALSE', '_CHECK_VALIDITY', '_LOAD_SMALL_INT', '_SET_IP', '_SWAP_FAST_1', '_POP_TOP', '_CHECK_VALIDITY', '_LOAD_FAST_BORROW_1', '_SET_IP', '_MAKE_HEAP_SAFE', '_RETURN_VALUE', '_SPILL_OR_RELOAD', '_METHOD_EXIT', '_CHECK_VALIDITY', '_LOAD_SMALL_INT', '_SET_IP', '_SWAP_FAST_1', '_POP_TOP', '_CHECK_VALIDITY', '_LOAD_FAST_BORROW_1', '_SET_IP', '_MAKE_HEAP_SAFE', '_RETURN_VALUE', '_SPILL_OR_RELOAD', '_METHOD_EXIT', '_DEOPT', '_HANDLE_PENDING_AND_DEOPT', '_DEOPT', '_EXIT_TRACE', '_DEOPT', '_DEOPT', '_DEOPT', '_DEOPT']
+
+0:00:16 load avg: 0.71 mem: 28.4 MiB [ 1/17/1] test_capi.test_opt failed (1 failure)
+0:00:16 load avg: 0.71 mem: 28.4 MiB [ 2/17/1] test_float
+0:00:16 load avg: 0.71 mem: 28.5 MiB [ 2/17/1] test_float passed
+0:00:16 load avg: 1.06 mem: 28.5 MiB [ 3/17/1] test_long
+0:00:20 load avg: 1.06 mem: 28.5 MiB [ 3/17/1] test_long passed
+0:00:20 load avg: 1.06 mem: 28.5 MiB [ 4/17/1] test_generators
+0:00:21 load avg: 1.06 mem: 30.2 MiB [ 4/17/1] test_generators passed
+0:00:21 load avg: 1.06 mem: 30.2 MiB [ 5/17/1] test_sys_settrace
+0:00:22 load avg: 1.37 mem: 30.4 MiB [ 5/17/1] test_sys_settrace passed
+0:00:22 load avg: 1.37 mem: 30.4 MiB [ 6/17/1] test_sys_setprofile
+0:00:23 load avg: 1.37 mem: 30.4 MiB [ 6/17/1] test_sys_setprofile passed
+0:00:23 load avg: 1.37 mem: 30.4 MiB [ 7/17/1] test_monitoring
+0:00:23 load avg: 1.37 mem: 30.4 MiB [ 7/17/1] test_monitoring passed
+0:00:23 load avg: 1.37 mem: 30.4 MiB [ 8/17/1] test_threading
+0:01:05 load avg: 5.56 mem: 34.5 MiB [ 8/17/1] test_threading passed in 42.1 sec
+0:01:05 load avg: 5.56 mem: 34.5 MiB [ 9/17/1] test_concurrent_futures.test_as_completed
+Process SyncManager-1:
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/process.py", line 320, in _bootstrap
+    self.run()
+    ~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/managers.py", line 595, in _run_server
+    server = cls._Server(registry, address, authkey, serializer)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/managers.py", line 160, in __init__
+    self.listener = Listener(address=address, backlog=128)
+                    ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/connection.py", line 500, in __init__
+    self._listener = SocketListener(address, family, backlog)
+                     ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/connection.py", line 647, in __init__
+    self._socket.setsockopt(socket.SOL_SOCKET,
+    ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+                            socket.SO_REUSEADDR, 1)
+                            ^^^^^^^^^^^^^^^^^^^^^^^
+PermissionError: [Errno 1] Operation not permitted
+Process SyncManager-2:
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/process.py", line 320, in _bootstrap
+    self.run()
+    ~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/managers.py", line 595, in _run_server
+    server = cls._Server(registry, address, authkey, serializer)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/managers.py", line 160, in __init__
+    self.listener = Listener(address=address, backlog=128)
+                    ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/connection.py", line 500, in __init__
+    self._listener = SocketListener(address, family, backlog)
+                     ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/connection.py", line 647, in __init__
+    self._socket.setsockopt(socket.SOL_SOCKET,
+    ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+                            socket.SO_REUSEADDR, 1)
+                            ^^^^^^^^^^^^^^^^^^^^^^^
+PermissionError: [Errno 1] Operation not permitted
+Process SyncManager-3:
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/process.py", line 320, in _bootstrap
+    self.run()
+    ~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/managers.py", line 595, in _run_server
+    server = cls._Server(registry, address, authkey, serializer)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/managers.py", line 160, in __init__
+    self.listener = Listener(address=address, backlog=128)
+                    ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/connection.py", line 500, in __init__
+    self._listener = SocketListener(address, family, backlog)
+                     ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/connection.py", line 647, in __init__
+    self._socket.setsockopt(socket.SOL_SOCKET,
+    ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+                            socket.SO_REUSEADDR, 1)
+                            ^^^^^^^^^^^^^^^^^^^^^^^
+PermissionError: [Errno 1] Operation not permitted
+Process SyncManager-4:
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/process.py", line 320, in _bootstrap
+    self.run()
+    ~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/managers.py", line 595, in _run_server
+    server = cls._Server(registry, address, authkey, serializer)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/managers.py", line 160, in __init__
+    self.listener = Listener(address=address, backlog=128)
+                    ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/connection.py", line 500, in __init__
+    self._listener = SocketListener(address, family, backlog)
+                     ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/connection.py", line 647, in __init__
+    self._socket.setsockopt(socket.SOL_SOCKET,
+    ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+                            socket.SO_REUSEADDR, 1)
+                            ^^^^^^^^^^^^^^^^^^^^^^^
+PermissionError: [Errno 1] Operation not permitted
+Process SyncManager-5:
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/process.py", line 320, in _bootstrap
+    self.run()
+    ~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/managers.py", line 595, in _run_server
+    server = cls._Server(registry, address, authkey, serializer)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/managers.py", line 160, in __init__
+    self.listener = Listener(address=address, backlog=128)
+                    ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/connection.py", line 500, in __init__
+    self._listener = SocketListener(address, family, backlog)
+                     ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/connection.py", line 647, in __init__
+    self._socket.setsockopt(socket.SOL_SOCKET,
+    ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+                            socket.SO_REUSEADDR, 1)
+                            ^^^^^^^^^^^^^^^^^^^^^^^
+PermissionError: [Errno 1] Operation not permitted
+Process SyncManager-11:
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/process.py", line 320, in _bootstrap
+    self.run()
+    ~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/managers.py", line 595, in _run_server
+    server = cls._Server(registry, address, authkey, serializer)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/managers.py", line 160, in __init__
+    self.listener = Listener(address=address, backlog=128)
+                    ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/connection.py", line 500, in __init__
+    self._listener = SocketListener(address, family, backlog)
+                     ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/connection.py", line 647, in __init__
+    self._socket.setsockopt(socket.SOL_SOCKET,
+    ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+                            socket.SO_REUSEADDR, 1)
+                            ^^^^^^^^^^^^^^^^^^^^^^^
+PermissionError: [Errno 1] Operation not permitted
+Process SyncManager-12:
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/process.py", line 320, in _bootstrap
+    self.run()
+    ~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/managers.py", line 595, in _run_server
+    server = cls._Server(registry, address, authkey, serializer)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/managers.py", line 160, in __init__
+    self.listener = Listener(address=address, backlog=128)
+                    ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/connection.py", line 500, in __init__
+    self._listener = SocketListener(address, family, backlog)
+                     ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/connection.py", line 647, in __init__
+    self._socket.setsockopt(socket.SOL_SOCKET,
+    ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+                            socket.SO_REUSEADDR, 1)
+                            ^^^^^^^^^^^^^^^^^^^^^^^
+PermissionError: [Errno 1] Operation not permitted
+Process SyncManager-13:
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/process.py", line 320, in _bootstrap
+    self.run()
+    ~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/managers.py", line 595, in _run_server
+    server = cls._Server(registry, address, authkey, serializer)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/managers.py", line 160, in __init__
+    self.listener = Listener(address=address, backlog=128)
+                    ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/connection.py", line 500, in __init__
+    self._listener = SocketListener(address, family, backlog)
+                     ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/connection.py", line 647, in __init__
+    self._socket.setsockopt(socket.SOL_SOCKET,
+    ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+                            socket.SO_REUSEADDR, 1)
+                            ^^^^^^^^^^^^^^^^^^^^^^^
+PermissionError: [Errno 1] Operation not permitted
+Process SyncManager-14:
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/process.py", line 320, in _bootstrap
+    self.run()
+    ~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/managers.py", line 595, in _run_server
+    server = cls._Server(registry, address, authkey, serializer)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/managers.py", line 160, in __init__
+    self.listener = Listener(address=address, backlog=128)
+                    ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/connection.py", line 500, in __init__
+    self._listener = SocketListener(address, family, backlog)
+                     ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/connection.py", line 647, in __init__
+    self._socket.setsockopt(socket.SOL_SOCKET,
+    ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+                            socket.SO_REUSEADDR, 1)
+                            ^^^^^^^^^^^^^^^^^^^^^^^
+PermissionError: [Errno 1] Operation not permitted
+Process SyncManager-15:
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/process.py", line 320, in _bootstrap
+    self.run()
+    ~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/managers.py", line 595, in _run_server
+    server = cls._Server(registry, address, authkey, serializer)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/managers.py", line 160, in __init__
+    self.listener = Listener(address=address, backlog=128)
+                    ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/connection.py", line 500, in __init__
+    self._listener = SocketListener(address, family, backlog)
+                     ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/connection.py", line 647, in __init__
+    self._socket.setsockopt(socket.SOL_SOCKET,
+    ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+                            socket.SO_REUSEADDR, 1)
+                            ^^^^^^^^^^^^^^^^^^^^^^^
+PermissionError: [Errno 1] Operation not permitted
+Warning -- reap_children() reaped child process 1248
+Warning -- reap_children() reaped child process 1249
+/home/methane/work/python/cpython-gc/Lib/multiprocessing/resource_tracker.py:475: UserWarning: resource_tracker: There appear to be 50 leaked semaphore objects to clean up at shutdown: {'/mp-xns8_8j3', '/mp-cyf4si_e', '/mp-u8sn3nuh', '/mp-lbjfih0d', '/mp-5vuk7z86', '/mp-xdj5w6q8', '/mp-_dmhwbcb', '/mp-p4s77z6w', '/mp-95s94u1m', '/mp-5t_hhv63', '/mp-tkmsn12m', '/mp-fa59vd6p', '/mp-oa49eigr', '/mp-i_8ymel0', '/mp-8w26obqr', '/mp-qag0xlnt', '/mp-0rrcjgq7', '/mp-jtfcwmfs', '/mp-ccib761d', '/mp-pltgsgwe', '/mp-5ht99_0m', '/mp-h0d6_hp7', '/mp-c60k3npq', '/mp-iwy3huuo', '/mp-qika9oyh', '/mp-ebjhmi40', '/mp-fjt2paz9', '/mp-j9ji_b14', '/mp-cunup2ww', '/mp-8ehqoxnl', '/mp-le21yh94', '/mp-r0l_6eh8', '/mp-iyp2e2oz', '/mp-uaylgejg', '/mp-7pt5ovxr', '/mp-a1a1et_q', '/mp-zyfnudid', '/mp-5pzxsf58', '/mp-a63yrdgj', '/mp-0eyzv7kw', '/mp-1w5rkvcm', '/mp-igwti_65', '/mp-i4h75aui', '/mp-6u4cda1o', '/mp-al3uldhh', '/mp-fxmnlhbx', '/mp-f3fj_e2n', '/mp-i742cw79', '/mp-u_77uuiw', '/mp-b51uu93a'}
+  warnings.warn(
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+test test_concurrent_futures.test_as_completed failed -- multiple errors occurred; run in verbose mode for details
+0:01:12 load avg: 4.70 mem: 48.8 MiB [ 9/17/2] test_concurrent_futures.test_as_completed failed (15 errors)
+0:01:12 load avg: 4.70 mem: 48.8 MiB [10/17/2] test_concurrent_futures.test_deadlock
+Process SyncManager-16:
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/process.py", line 320, in _bootstrap
+    self.run()
+    ~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/managers.py", line 595, in _run_server
+    server = cls._Server(registry, address, authkey, serializer)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/managers.py", line 160, in __init__
+    self.listener = Listener(address=address, backlog=128)
+                    ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/connection.py", line 500, in __init__
+    self._listener = SocketListener(address, family, backlog)
+                     ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/connection.py", line 647, in __init__
+    self._socket.setsockopt(socket.SOL_SOCKET,
+    ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+                            socket.SO_REUSEADDR, 1)
+                            ^^^^^^^^^^^^^^^^^^^^^^^
+PermissionError: [Errno 1] Operation not permitted
+Process SyncManager-17:
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/process.py", line 320, in _bootstrap
+    self.run()
+    ~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/managers.py", line 595, in _run_server
+    server = cls._Server(registry, address, authkey, serializer)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/managers.py", line 160, in __init__
+    self.listener = Listener(address=address, backlog=128)
+                    ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/connection.py", line 500, in __init__
+    self._listener = SocketListener(address, family, backlog)
+                     ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/connection.py", line 647, in __init__
+    self._socket.setsockopt(socket.SOL_SOCKET,
+    ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+                            socket.SO_REUSEADDR, 1)
+                            ^^^^^^^^^^^^^^^^^^^^^^^
+PermissionError: [Errno 1] Operation not permitted
+Process SyncManager-18:
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/process.py", line 320, in _bootstrap
+    self.run()
+    ~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/managers.py", line 595, in _run_server
+    server = cls._Server(registry, address, authkey, serializer)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/managers.py", line 160, in __init__
+    self.listener = Listener(address=address, backlog=128)
+                    ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/connection.py", line 500, in __init__
+    self._listener = SocketListener(address, family, backlog)
+                     ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/connection.py", line 647, in __init__
+    self._socket.setsockopt(socket.SOL_SOCKET,
+    ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+                            socket.SO_REUSEADDR, 1)
+                            ^^^^^^^^^^^^^^^^^^^^^^^
+PermissionError: [Errno 1] Operation not permitted
+Process SyncManager-19:
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/process.py", line 320, in _bootstrap
+    self.run()
+    ~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/managers.py", line 595, in _run_server
+    server = cls._Server(registry, address, authkey, serializer)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/managers.py", line 160, in __init__
+    self.listener = Listener(address=address, backlog=128)
+                    ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/connection.py", line 500, in __init__
+    self._listener = SocketListener(address, family, backlog)
+                     ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/connection.py", line 647, in __init__
+    self._socket.setsockopt(socket.SOL_SOCKET,
+    ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+                            socket.SO_REUSEADDR, 1)
+                            ^^^^^^^^^^^^^^^^^^^^^^^
+PermissionError: [Errno 1] Operation not permitted
+Process SyncManager-20:
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/process.py", line 320, in _bootstrap
+    self.run()
+    ~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/managers.py", line 595, in _run_server
+    server = cls._Server(registry, address, authkey, serializer)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/managers.py", line 160, in __init__
+    self.listener = Listener(address=address, backlog=128)
+                    ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/connection.py", line 500, in __init__
+    self._listener = SocketListener(address, family, backlog)
+                     ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/connection.py", line 647, in __init__
+    self._socket.setsockopt(socket.SOL_SOCKET,
+    ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+                            socket.SO_REUSEADDR, 1)
+                            ^^^^^^^^^^^^^^^^^^^^^^^
+PermissionError: [Errno 1] Operation not permitted
+Process SyncManager-21:
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/process.py", line 320, in _bootstrap
+    self.run()
+    ~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/managers.py", line 595, in _run_server
+    server = cls._Server(registry, address, authkey, serializer)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/managers.py", line 160, in __init__
+    self.listener = Listener(address=address, backlog=128)
+                    ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/connection.py", line 500, in __init__
+    self._listener = SocketListener(address, family, backlog)
+                     ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/connection.py", line 647, in __init__
+    self._socket.setsockopt(socket.SOL_SOCKET,
+    ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+                            socket.SO_REUSEADDR, 1)
+                            ^^^^^^^^^^^^^^^^^^^^^^^
+PermissionError: [Errno 1] Operation not permitted
+Process SyncManager-22:
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/process.py", line 320, in _bootstrap
+    self.run()
+    ~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/managers.py", line 595, in _run_server
+    server = cls._Server(registry, address, authkey, serializer)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/managers.py", line 160, in __init__
+    self.listener = Listener(address=address, backlog=128)
+                    ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/connection.py", line 500, in __init__
+    self._listener = SocketListener(address, family, backlog)
+                     ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/connection.py", line 647, in __init__
+    self._socket.setsockopt(socket.SOL_SOCKET,
+    ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+                            socket.SO_REUSEADDR, 1)
+                            ^^^^^^^^^^^^^^^^^^^^^^^
+PermissionError: [Errno 1] Operation not permitted
+Process SyncManager-23:
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/process.py", line 320, in _bootstrap
+    self.run()
+    ~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/managers.py", line 595, in _run_server
+    server = cls._Server(registry, address, authkey, serializer)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/managers.py", line 160, in __init__
+    self.listener = Listener(address=address, backlog=128)
+                    ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/connection.py", line 500, in __init__
+    self._listener = SocketListener(address, family, backlog)
+                     ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/connection.py", line 647, in __init__
+    self._socket.setsockopt(socket.SOL_SOCKET,
+    ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+                            socket.SO_REUSEADDR, 1)
+                            ^^^^^^^^^^^^^^^^^^^^^^^
+PermissionError: [Errno 1] Operation not permitted
+Process SyncManager-24:
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/process.py", line 320, in _bootstrap
+    self.run()
+    ~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/managers.py", line 595, in _run_server
+    server = cls._Server(registry, address, authkey, serializer)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/managers.py", line 160, in __init__
+    self.listener = Listener(address=address, backlog=128)
+                    ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/connection.py", line 500, in __init__
+    self._listener = SocketListener(address, family, backlog)
+                     ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/connection.py", line 647, in __init__
+    self._socket.setsockopt(socket.SOL_SOCKET,
+    ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+                            socket.SO_REUSEADDR, 1)
+                            ^^^^^^^^^^^^^^^^^^^^^^^
+PermissionError: [Errno 1] Operation not permitted
+Process SyncManager-25:
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/process.py", line 320, in _bootstrap
+    self.run()
+    ~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/managers.py", line 595, in _run_server
+    server = cls._Server(registry, address, authkey, serializer)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/managers.py", line 160, in __init__
+    self.listener = Listener(address=address, backlog=128)
+                    ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/connection.py", line 500, in __init__
+    self._listener = SocketListener(address, family, backlog)
+                     ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/connection.py", line 647, in __init__
+    self._socket.setsockopt(socket.SOL_SOCKET,
+    ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+                            socket.SO_REUSEADDR, 1)
+                            ^^^^^^^^^^^^^^^^^^^^^^^
+PermissionError: [Errno 1] Operation not permitted
+Process SyncManager-26:
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/process.py", line 320, in _bootstrap
+    self.run()
+    ~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/managers.py", line 595, in _run_server
+    server = cls._Server(registry, address, authkey, serializer)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/managers.py", line 160, in __init__
+    self.listener = Listener(address=address, backlog=128)
+                    ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/connection.py", line 500, in __init__
+    self._listener = SocketListener(address, family, backlog)
+                     ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/connection.py", line 647, in __init__
+    self._socket.setsockopt(socket.SOL_SOCKET,
+    ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+                            socket.SO_REUSEADDR, 1)
+                            ^^^^^^^^^^^^^^^^^^^^^^^
+PermissionError: [Errno 1] Operation not permitted
+Process SyncManager-27:
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/process.py", line 320, in _bootstrap
+    self.run()
+    ~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/managers.py", line 595, in _run_server
+    server = cls._Server(registry, address, authkey, serializer)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/managers.py", line 160, in __init__
+    self.listener = Listener(address=address, backlog=128)
+                    ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/connection.py", line 500, in __init__
+    self._listener = SocketListener(address, family, backlog)
+                     ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/connection.py", line 647, in __init__
+    self._socket.setsockopt(socket.SOL_SOCKET,
+    ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+                            socket.SO_REUSEADDR, 1)
+                            ^^^^^^^^^^^^^^^^^^^^^^^
+PermissionError: [Errno 1] Operation not permitted
+Process SyncManager-28:
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/process.py", line 320, in _bootstrap
+    self.run()
+    ~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/managers.py", line 595, in _run_server
+    server = cls._Server(registry, address, authkey, serializer)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/managers.py", line 160, in __init__
+    self.listener = Listener(address=address, backlog=128)
+                    ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/connection.py", line 500, in __init__
+    self._listener = SocketListener(address, family, backlog)
+                     ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/connection.py", line 647, in __init__
+    self._socket.setsockopt(socket.SOL_SOCKET,
+    ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+                            socket.SO_REUSEADDR, 1)
+                            ^^^^^^^^^^^^^^^^^^^^^^^
+PermissionError: [Errno 1] Operation not permitted
+Process SyncManager-29:
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/process.py", line 320, in _bootstrap
+    self.run()
+    ~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/managers.py", line 595, in _run_server
+    server = cls._Server(registry, address, authkey, serializer)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/managers.py", line 160, in __init__
+    self.listener = Listener(address=address, backlog=128)
+                    ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/connection.py", line 500, in __init__
+    self._listener = SocketListener(address, family, backlog)
+                     ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/connection.py", line 647, in __init__
+    self._socket.setsockopt(socket.SOL_SOCKET,
+    ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+                            socket.SO_REUSEADDR, 1)
+                            ^^^^^^^^^^^^^^^^^^^^^^^
+PermissionError: [Errno 1] Operation not permitted
+Process SyncManager-30:
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/process.py", line 320, in _bootstrap
+    self.run()
+    ~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/managers.py", line 595, in _run_server
+    server = cls._Server(registry, address, authkey, serializer)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/managers.py", line 160, in __init__
+    self.listener = Listener(address=address, backlog=128)
+                    ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/connection.py", line 500, in __init__
+    self._listener = SocketListener(address, family, backlog)
+                     ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/connection.py", line 647, in __init__
+    self._socket.setsockopt(socket.SOL_SOCKET,
+    ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+                            socket.SO_REUSEADDR, 1)
+                            ^^^^^^^^^^^^^^^^^^^^^^^
+PermissionError: [Errno 1] Operation not permitted
+Process SyncManager-31:
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/process.py", line 320, in _bootstrap
+    self.run()
+    ~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/managers.py", line 595, in _run_server
+    server = cls._Server(registry, address, authkey, serializer)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/managers.py", line 160, in __init__
+    self.listener = Listener(address=address, backlog=128)
+                    ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/connection.py", line 500, in __init__
+    self._listener = SocketListener(address, family, backlog)
+                     ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/connection.py", line 647, in __init__
+    self._socket.setsockopt(socket.SOL_SOCKET,
+    ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+                            socket.SO_REUSEADDR, 1)
+                            ^^^^^^^^^^^^^^^^^^^^^^^
+PermissionError: [Errno 1] Operation not permitted
+Process SyncManager-48:
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/process.py", line 320, in _bootstrap
+    self.run()
+    ~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/managers.py", line 595, in _run_server
+    server = cls._Server(registry, address, authkey, serializer)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/managers.py", line 160, in __init__
+    self.listener = Listener(address=address, backlog=128)
+                    ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/connection.py", line 500, in __init__
+    self._listener = SocketListener(address, family, backlog)
+                     ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/connection.py", line 647, in __init__
+    self._socket.setsockopt(socket.SOL_SOCKET,
+    ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+                            socket.SO_REUSEADDR, 1)
+                            ^^^^^^^^^^^^^^^^^^^^^^^
+PermissionError: [Errno 1] Operation not permitted
+Process SyncManager-49:
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/process.py", line 320, in _bootstrap
+    self.run()
+    ~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/managers.py", line 595, in _run_server
+    server = cls._Server(registry, address, authkey, serializer)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/managers.py", line 160, in __init__
+    self.listener = Listener(address=address, backlog=128)
+                    ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/connection.py", line 500, in __init__
+    self._listener = SocketListener(address, family, backlog)
+                     ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/connection.py", line 647, in __init__
+    self._socket.setsockopt(socket.SOL_SOCKET,
+    ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+                            socket.SO_REUSEADDR, 1)
+                            ^^^^^^^^^^^^^^^^^^^^^^^
+PermissionError: [Errno 1] Operation not permitted
+Process SyncManager-50:
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/process.py", line 320, in _bootstrap
+    self.run()
+    ~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/managers.py", line 595, in _run_server
+    server = cls._Server(registry, address, authkey, serializer)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/managers.py", line 160, in __init__
+    self.listener = Listener(address=address, backlog=128)
+                    ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/connection.py", line 500, in __init__
+    self._listener = SocketListener(address, family, backlog)
+                     ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/connection.py", line 647, in __init__
+    self._socket.setsockopt(socket.SOL_SOCKET,
+    ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+                            socket.SO_REUSEADDR, 1)
+                            ^^^^^^^^^^^^^^^^^^^^^^^
+PermissionError: [Errno 1] Operation not permitted
+Process SyncManager-51:
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/process.py", line 320, in _bootstrap
+    self.run()
+    ~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/managers.py", line 595, in _run_server
+    server = cls._Server(registry, address, authkey, serializer)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/managers.py", line 160, in __init__
+    self.listener = Listener(address=address, backlog=128)
+                    ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/connection.py", line 500, in __init__
+    self._listener = SocketListener(address, family, backlog)
+                     ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/connection.py", line 647, in __init__
+    self._socket.setsockopt(socket.SOL_SOCKET,
+    ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+                            socket.SO_REUSEADDR, 1)
+                            ^^^^^^^^^^^^^^^^^^^^^^^
+PermissionError: [Errno 1] Operation not permitted
+Process SyncManager-52:
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/process.py", line 320, in _bootstrap
+    self.run()
+    ~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/managers.py", line 595, in _run_server
+    server = cls._Server(registry, address, authkey, serializer)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/managers.py", line 160, in __init__
+    self.listener = Listener(address=address, backlog=128)
+                    ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/connection.py", line 500, in __init__
+    self._listener = SocketListener(address, family, backlog)
+                     ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/connection.py", line 647, in __init__
+    self._socket.setsockopt(socket.SOL_SOCKET,
+    ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+                            socket.SO_REUSEADDR, 1)
+                            ^^^^^^^^^^^^^^^^^^^^^^^
+PermissionError: [Errno 1] Operation not permitted
+Process SyncManager-53:
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/process.py", line 320, in _bootstrap
+    self.run()
+    ~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/managers.py", line 595, in _run_server
+    server = cls._Server(registry, address, authkey, serializer)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/managers.py", line 160, in __init__
+    self.listener = Listener(address=address, backlog=128)
+                    ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/connection.py", line 500, in __init__
+    self._listener = SocketListener(address, family, backlog)
+                     ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/connection.py", line 647, in __init__
+    self._socket.setsockopt(socket.SOL_SOCKET,
+    ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+                            socket.SO_REUSEADDR, 1)
+                            ^^^^^^^^^^^^^^^^^^^^^^^
+PermissionError: [Errno 1] Operation not permitted
+Process SyncManager-54:
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/process.py", line 320, in _bootstrap
+    self.run()
+    ~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/managers.py", line 595, in _run_server
+    server = cls._Server(registry, address, authkey, serializer)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/managers.py", line 160, in __init__
+    self.listener = Listener(address=address, backlog=128)
+                    ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/connection.py", line 500, in __init__
+    self._listener = SocketListener(address, family, backlog)
+                     ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/connection.py", line 647, in __init__
+    self._socket.setsockopt(socket.SOL_SOCKET,
+    ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+                            socket.SO_REUSEADDR, 1)
+                            ^^^^^^^^^^^^^^^^^^^^^^^
+PermissionError: [Errno 1] Operation not permitted
+Process SyncManager-55:
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/process.py", line 320, in _bootstrap
+    self.run()
+    ~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/managers.py", line 595, in _run_server
+    server = cls._Server(registry, address, authkey, serializer)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/managers.py", line 160, in __init__
+    self.listener = Listener(address=address, backlog=128)
+                    ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/connection.py", line 500, in __init__
+    self._listener = SocketListener(address, family, backlog)
+                     ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/connection.py", line 647, in __init__
+    self._socket.setsockopt(socket.SOL_SOCKET,
+    ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+                            socket.SO_REUSEADDR, 1)
+                            ^^^^^^^^^^^^^^^^^^^^^^^
+PermissionError: [Errno 1] Operation not permitted
+Process SyncManager-56:
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/process.py", line 320, in _bootstrap
+    self.run()
+    ~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/managers.py", line 595, in _run_server
+    server = cls._Server(registry, address, authkey, serializer)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/managers.py", line 160, in __init__
+    self.listener = Listener(address=address, backlog=128)
+                    ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/connection.py", line 500, in __init__
+    self._listener = SocketListener(address, family, backlog)
+                     ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/connection.py", line 647, in __init__
+    self._socket.setsockopt(socket.SOL_SOCKET,
+    ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+                            socket.SO_REUSEADDR, 1)
+                            ^^^^^^^^^^^^^^^^^^^^^^^
+PermissionError: [Errno 1] Operation not permitted
+Process SyncManager-57:
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/process.py", line 320, in _bootstrap
+    self.run()
+    ~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/managers.py", line 595, in _run_server
+    server = cls._Server(registry, address, authkey, serializer)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/managers.py", line 160, in __init__
+    self.listener = Listener(address=address, backlog=128)
+                    ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/connection.py", line 500, in __init__
+    self._listener = SocketListener(address, family, backlog)
+                     ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/connection.py", line 647, in __init__
+    self._socket.setsockopt(socket.SOL_SOCKET,
+    ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+                            socket.SO_REUSEADDR, 1)
+                            ^^^^^^^^^^^^^^^^^^^^^^^
+PermissionError: [Errno 1] Operation not permitted
+Process SyncManager-58:
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/process.py", line 320, in _bootstrap
+    self.run()
+    ~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/managers.py", line 595, in _run_server
+    server = cls._Server(registry, address, authkey, serializer)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/managers.py", line 160, in __init__
+    self.listener = Listener(address=address, backlog=128)
+                    ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/connection.py", line 500, in __init__
+    self._listener = SocketListener(address, family, backlog)
+                     ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/connection.py", line 647, in __init__
+    self._socket.setsockopt(socket.SOL_SOCKET,
+    ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+                            socket.SO_REUSEADDR, 1)
+                            ^^^^^^^^^^^^^^^^^^^^^^^
+PermissionError: [Errno 1] Operation not permitted
+Process SyncManager-59:
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/process.py", line 320, in _bootstrap
+    self.run()
+    ~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/managers.py", line 595, in _run_server
+    server = cls._Server(registry, address, authkey, serializer)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/managers.py", line 160, in __init__
+    self.listener = Listener(address=address, backlog=128)
+                    ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/connection.py", line 500, in __init__
+    self._listener = SocketListener(address, family, backlog)
+                     ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/connection.py", line 647, in __init__
+    self._socket.setsockopt(socket.SOL_SOCKET,
+    ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+                            socket.SO_REUSEADDR, 1)
+                            ^^^^^^^^^^^^^^^^^^^^^^^
+PermissionError: [Errno 1] Operation not permitted
+Process SyncManager-60:
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/process.py", line 320, in _bootstrap
+    self.run()
+    ~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/managers.py", line 595, in _run_server
+    server = cls._Server(registry, address, authkey, serializer)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/managers.py", line 160, in __init__
+    self.listener = Listener(address=address, backlog=128)
+                    ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/connection.py", line 500, in __init__
+    self._listener = SocketListener(address, family, backlog)
+                     ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/connection.py", line 647, in __init__
+    self._socket.setsockopt(socket.SOL_SOCKET,
+    ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+                            socket.SO_REUSEADDR, 1)
+                            ^^^^^^^^^^^^^^^^^^^^^^^
+PermissionError: [Errno 1] Operation not permitted
+Process SyncManager-61:
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/process.py", line 320, in _bootstrap
+    self.run()
+    ~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/managers.py", line 595, in _run_server
+    server = cls._Server(registry, address, authkey, serializer)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/managers.py", line 160, in __init__
+    self.listener = Listener(address=address, backlog=128)
+                    ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/connection.py", line 500, in __init__
+    self._listener = SocketListener(address, family, backlog)
+                     ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/connection.py", line 647, in __init__
+    self._socket.setsockopt(socket.SOL_SOCKET,
+    ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+                            socket.SO_REUSEADDR, 1)
+                            ^^^^^^^^^^^^^^^^^^^^^^^
+PermissionError: [Errno 1] Operation not permitted
+Process SyncManager-62:
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/process.py", line 320, in _bootstrap
+    self.run()
+    ~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/managers.py", line 595, in _run_server
+    server = cls._Server(registry, address, authkey, serializer)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/managers.py", line 160, in __init__
+    self.listener = Listener(address=address, backlog=128)
+                    ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/connection.py", line 500, in __init__
+    self._listener = SocketListener(address, family, backlog)
+                     ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/connection.py", line 647, in __init__
+    self._socket.setsockopt(socket.SOL_SOCKET,
+    ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+                            socket.SO_REUSEADDR, 1)
+                            ^^^^^^^^^^^^^^^^^^^^^^^
+PermissionError: [Errno 1] Operation not permitted
+Process SyncManager-63:
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/process.py", line 320, in _bootstrap
+    self.run()
+    ~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/managers.py", line 595, in _run_server
+    server = cls._Server(registry, address, authkey, serializer)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/managers.py", line 160, in __init__
+    self.listener = Listener(address=address, backlog=128)
+                    ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/connection.py", line 500, in __init__
+    self._listener = SocketListener(address, family, backlog)
+                     ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/connection.py", line 647, in __init__
+    self._socket.setsockopt(socket.SOL_SOCKET,
+    ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+                            socket.SO_REUSEADDR, 1)
+                            ^^^^^^^^^^^^^^^^^^^^^^^
+PermissionError: [Errno 1] Operation not permitted
+/home/methane/work/python/cpython-gc/Lib/multiprocessing/resource_tracker.py:475: UserWarning: resource_tracker: There appear to be 160 leaked semaphore objects to clean up at shutdown: {'/mp-g6nq5k_8', '/mp-42jixe61', '/mp-y0l65gq8', '/mp-s3r74ht6', '/mp-_1wfiwqu', '/mp-4kexyt2v', '/mp-dzdodzhr', '/mp-d74wskh6', '/mp-wwrf_rq1', '/mp-ueg4312r', '/mp-4_e45cdk', '/mp-x13354rx', '/mp-iugtt9bg', '/mp-dy0mn1bo', '/mp-wmhkbmrh', '/mp-o7o4jjvn', '/mp-eroqudbo', '/mp-4eopdyw8', '/mp-35c65hat', '/mp-6k96off4', '/mp-5rqwjfgh', '/mp-t007yk1a', '/mp-fhes3v4h', '/mp-kfbmhiwe', '/mp-uj00nmd9', '/mp-ottw3nhm', '/mp-d8gmp4xs', '/mp-s89ql9sl', '/mp-sb377mun', '/mp-spa0434h', '/mp-xbeflhb0', '/mp-pi93cvf9', '/mp-qvxoql6_', '/mp-pnlr2mst', '/mp-ikde_9rs', '/mp-bnjxnmql', '/mp-qzzv7fwj', '/mp-22qvuwa3', '/mp-tjwzj7x5', '/mp-1z48keb2', '/mp-i4yayjvd', '/mp-bk83pgog', '/mp-5kgze93p', '/mp-yzw975oi', '/mp-d84u0sm7', '/mp-tv49t6lk', '/mp-nnik7eq_', '/mp-t3jg61jd', '/mp-b5ey1k_v', '/mp-id6wan5z', '/mp-ph0wa9ck', '/mp-vdvznvym', '/mp-jktfpl3e', '/mp-79bwmdx7', '/mp-0fi7fvyz', '/mp-gplh4qk_', '/mp-pjamur_b', '/mp-_sfzjaiu', '/mp-_3t1gp99', '/mp-de_g2tb5', '/mp-ul5bfj29', '/mp-25xyxipp', '/mp-ip1mbmv_', '/mp-y6n4i8ul', '/mp-f04eup7o', '/mp-iwyzv_9k', '/mp-i2v10ah3', '/mp-m4d5qpqa', '/mp-h7vl62_p', '/mp-qrz4o4c0', '/mp-u05hc9wt', '/mp-zp7tt3pg', '/mp-y7vztx62', '/mp-dg8wx79n', '/mp-01ftrc71', '/mp-yqo7uikm', '/mp-phdebq70', '/mp-3mltydv1', '/mp-l0p91s4z', '/mp-63xruj8v', '/mp-_1qqymry', '/mp-razkff03', '/mp-v0d96tya', '/mp-yna4v8a9', '/mp-av0cj3qj', '/mp-l4zcszzw', '/mp-0c55c7ry', '/mp-r5jhc9sj', '/mp-gbps4abu', '/mp-v692h15u', '/mp-8ptw7kxw', '/mp-tpxuczy7', '/mp-2ta9dzlj', '/mp-2ywni4zp', '/mp-5ws0kluo', '/mp-mau9e1vx', '/mp-zsupmo57', '/mp-ctz_quxw', '/mp-009_vobs', '/mp-px12f5ti', '/mp-7rz8nqej', '/mp-9e3mmlth', '/mp-8x_vtz1w', '/mp-_8yf7f97', '/mp-jq8zbhue', '/mp-bwtclej8', '/mp-l5vzsz5x', '/mp-i5wzd3ur', '/mp-14tut9oj', '/mp-nniamsyf', '/mp-4kmezl1t', '/mp-bmgxlyhk', '/mp-v4r3yw0c', '/mp-ag8hws3p', '/mp-21of1z4j', '/mp-tzens7cf', '/mp-9e0e5fzg', '/mp-uexih_18', '/mp-kd_uejsj', '/mp-nadsvay0', '/mp-mimsnwri', '/mp-6q64j12b', '/mp-wbee3481', '/mp-znd0ztuf', '/mp-vxmygw53', '/mp-ule_c3pz', '/mp-hpqaojsx', '/mp-yev6b1rg', '/mp-tf4_cgds', '/mp-x0o_gq6w', '/mp-v8ldrjfh', '/mp-3sunn5gd', '/mp-zlspm8to', '/mp-0k_y4zla', '/mp-aq0kb80c', '/mp-2o4dnhha', '/mp-5sf8z11q', '/mp-ztp_gcgp', '/mp-9clud65k', '/mp-wvhb66zx', '/mp-fb0rzpl0', '/mp-z3mbru5m', '/mp-_n3uy9l3', '/mp-cyr7l4ai', '/mp-cg8nbtt0', '/mp-hmqerl2d', '/mp-89991wmu', '/mp-as31xsz1', '/mp-f13tx9s4', '/mp-p68fsdgm', '/mp-aauk82te', '/mp-5ldpc5sp', '/mp-wsg4g6zs', '/mp-a5xq5zao', '/mp-1gxqyra0', '/mp-aqx41tc1', '/mp-curd06kc', '/mp-k2qzo8zu', '/mp-j729hu57', '/mp-5jt2nu7c'}
+  warnings.warn(
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Warning -- reap_children() reaped child process 1286
+Warning -- multiprocessing.process._dangling was modified by test_concurrent_futures.test_deadlock
+Warning --   Before: {<weakref at 0x74c38cf7fee0; to 'multiprocessing.context.SpawnProcess' at 0x74c38cfb06a0>, <weakref at 0x74c38cf7f7e0; to 'multiprocessing.context.SpawnProcess' at 0x74c38c37c840>}
+Warning --   After:  {<weakref at 0x74c38d177f50; to 'multiprocessing.context.SpawnProcess' at 0x74c38cfb06a0>, <weakref at 0x74c38c288360; to 'multiprocessing.context.SpawnProcess' at 0x74c38c37c840>, <weakref at 0x74c38d11ed60; to 'multiprocessing.context.SpawnProcess' at 0x74c38c42c5a0>}
+test test_concurrent_futures.test_deadlock failed -- multiple errors occurred; run in verbose mode for details
+0:01:15 load avg: 4.70 mem: 49.1 MiB [10/17/3] test_concurrent_futures.test_deadlock failed (48 errors)
+0:01:15 load avg: 4.70 mem: 49.1 MiB [11/17/3] test_concurrent_futures.test_future
+0:01:18 load avg: 4.33 mem: 49.1 MiB [11/17/3] test_concurrent_futures.test_future passed
+0:01:18 load avg: 4.33 mem: 49.1 MiB [12/17/3] test_concurrent_futures.test_init
+Process SyncManager-65:
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/process.py", line 320, in _bootstrap
+    self.run()
+    ~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/managers.py", line 595, in _run_server
+    server = cls._Server(registry, address, authkey, serializer)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/managers.py", line 160, in __init__
+    self.listener = Listener(address=address, backlog=128)
+                    ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/connection.py", line 500, in __init__
+    self._listener = SocketListener(address, family, backlog)
+                     ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/connection.py", line 647, in __init__
+    self._socket.setsockopt(socket.SOL_SOCKET,
+    ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+                            socket.SO_REUSEADDR, 1)
+                            ^^^^^^^^^^^^^^^^^^^^^^^
+PermissionError: [Errno 1] Operation not permitted
+Warning -- reap_children() reaped child process 1296
+Process SyncManager-66:
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/process.py", line 320, in _bootstrap
+    self.run()
+    ~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/managers.py", line 595, in _run_server
+    server = cls._Server(registry, address, authkey, serializer)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/managers.py", line 160, in __init__
+    self.listener = Listener(address=address, backlog=128)
+                    ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/connection.py", line 500, in __init__
+    self._listener = SocketListener(address, family, backlog)
+                     ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/connection.py", line 647, in __init__
+    self._socket.setsockopt(socket.SOL_SOCKET,
+    ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+                            socket.SO_REUSEADDR, 1)
+                            ^^^^^^^^^^^^^^^^^^^^^^^
+PermissionError: [Errno 1] Operation not permitted
+Process SyncManager-67:
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/process.py", line 320, in _bootstrap
+    self.run()
+    ~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/managers.py", line 595, in _run_server
+    server = cls._Server(registry, address, authkey, serializer)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/managers.py", line 160, in __init__
+    self.listener = Listener(address=address, backlog=128)
+                    ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/connection.py", line 500, in __init__
+    self._listener = SocketListener(address, family, backlog)
+                     ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/connection.py", line 647, in __init__
+    self._socket.setsockopt(socket.SOL_SOCKET,
+    ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+                            socket.SO_REUSEADDR, 1)
+                            ^^^^^^^^^^^^^^^^^^^^^^^
+PermissionError: [Errno 1] Operation not permitted
+Process SyncManager-70:
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/process.py", line 320, in _bootstrap
+    self.run()
+    ~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/managers.py", line 595, in _run_server
+    server = cls._Server(registry, address, authkey, serializer)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/managers.py", line 160, in __init__
+    self.listener = Listener(address=address, backlog=128)
+                    ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/connection.py", line 500, in __init__
+    self._listener = SocketListener(address, family, backlog)
+                     ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/connection.py", line 647, in __init__
+    self._socket.setsockopt(socket.SOL_SOCKET,
+    ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+                            socket.SO_REUSEADDR, 1)
+                            ^^^^^^^^^^^^^^^^^^^^^^^
+PermissionError: [Errno 1] Operation not permitted
+Process SyncManager-71:
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/process.py", line 320, in _bootstrap
+    self.run()
+    ~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/managers.py", line 595, in _run_server
+    server = cls._Server(registry, address, authkey, serializer)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/managers.py", line 160, in __init__
+    self.listener = Listener(address=address, backlog=128)
+                    ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/connection.py", line 500, in __init__
+    self._listener = SocketListener(address, family, backlog)
+                     ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/connection.py", line 647, in __init__
+    self._socket.setsockopt(socket.SOL_SOCKET,
+    ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+                            socket.SO_REUSEADDR, 1)
+                            ^^^^^^^^^^^^^^^^^^^^^^^
+PermissionError: [Errno 1] Operation not permitted
+Warning -- reap_children() reaped child process 1303
+Warning -- reap_children() reaped child process 1304
+/home/methane/work/python/cpython-gc/Lib/multiprocessing/resource_tracker.py:475: UserWarning: resource_tracker: There appear to be 26 leaked semaphore objects to clean up at shutdown: {'/mp-6z25kazb', '/mp-tncy8oum', '/mp-eo0ctj2d', '/mp-6g_3zi9r', '/mp-m_433j_q', '/mp-pa305dix', '/mp-na2uow2l', '/mp-c394nqpd', '/mp-ouomjs0u', '/mp-j1iemdzs', '/mp-m2g9nqvi', '/mp-avpl0z4l', '/mp-jhbdm_fv', '/mp-mul25de3', '/mp-odt6555h', '/mp-q5gohmd5', '/mp-8ysmrvlh', '/mp-ss4jc8ve', '/mp-1rwm7ody', '/mp-naub2kv1', '/mp-eojnztr4', '/mp-bf9d7pn8', '/mp-le9r6hk3', '/mp-00vq689e', '/mp-7l04cpkb', '/mp-gax0tnj_'}
+  warnings.warn(
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Traceback (most recent call last):
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 396, in _run_finalizers
+    finalizer()
+    ~~~~~~~~~^^
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/util.py", line 320, in __call__
+    res = self._callback(*self._args, **self._kwargs)
+  File "/home/methane/work/python/cpython-gc/Lib/multiprocessing/synchronize.py", line 86, in _cleanup
+    sem_unlink(name)
+    ~~~~~~~~~~^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+Warning -- multiprocessing.process._dangling was modified by test_concurrent_futures.test_init
+Warning --   Before: {<weakref at 0x74c38cf02580; to 'multiprocessing.context.SpawnProcess' at 0x74c38cfb06a0>, <weakref at 0x74c38cf02c10; to 'multiprocessing.context.SpawnProcess' at 0x74c38c37c840>}
+Warning --   After:  {<weakref at 0x74c38c36de80; to 'multiprocessing.context.SpawnProcess' at 0x74c38c37c840>, <weakref at 0x74c38c2d0440; to 'multiprocessing.context.SpawnProcess' at 0x74c38cfb06a0>, <weakref at 0x74c38cec2350; to 'multiprocessing.context.SpawnProcess' at 0x74c38c1e4f60>, <weakref at 0x74c38c2d0050; to 'multiprocessing.context.SpawnProcess' at 0x74c38c1e6fa0>, <weakref at 0x74c38c2d0130; to 'multiprocessing.context.SpawnProcess' at 0x74c38c1e6be0>}
+test test_concurrent_futures.test_init failed -- multiple errors occurred; run in verbose mode for details
+0:01:19 load avg: 4.33 mem: 53.4 MiB [12/17/4] test_concurrent_futures.test_init failed (6 errors)
+0:01:19 load avg: 4.33 mem: 53.4 MiB [13/17/4] test_concurrent_futures.test_interpreter_pool

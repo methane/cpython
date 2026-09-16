@@ -1,0 +1,41 @@
+{
+  "benchmark": "go",
+  "runtime": "Python 3.16.0a0 (CPython)",
+  "executable": "/home/methane/work/python/cpython-gc/build-method-jit/python-inline",
+  "python_version": "3.16.0a0 (heads/codex/method-jit-dirty:15c0e6113c1, Sep 16 2026, 03:51:59) [GCC 13.3.0]",
+  "jit_enabled": true,
+  "workload": "choose one move on a 9x9 board using 200 Monte Carlo games",
+  "games_per_operation": 200,
+  "loops": 1,
+  "warmups": 5,
+  "values": 20,
+  "median_seconds": 0.07010738179087639,
+  "minimum_seconds": 0.06799239572137594,
+  "samples_seconds": [
+    0.07129283901304007,
+    0.0710827512666583,
+    0.070099544711411,
+    0.072846919298172,
+    0.07058473024517298,
+    0.07101186458021402,
+    0.06998980045318604,
+    0.07131338678300381,
+    0.07013693451881409,
+    0.0702747218310833,
+    0.06978268641978502,
+    0.07019956223666668,
+    0.07011521887034178,
+    0.06915517151355743,
+    0.07000444922596216,
+    0.06982296425849199,
+    0.06938308104872704,
+    0.06933572795242071,
+    0.06947673298418522,
+    0.06799239572137594
+  ],
+  "checksum": {
+    "move": 5,
+    "timestamp_delta": 81059,
+    "moves_delta": 21401
+  }
+}

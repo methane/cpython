@@ -1008,6 +1008,11 @@ struct _is {
     struct _PyExecutorObject **executor_ptrs;    // Corresponding executor pointer array
     size_t executor_count;                       // Number of valid executors
     size_t executor_capacity;                    // Array capacity
+    // Negative global-dependency results, cleared when dependencies are added.
+    struct {
+        void *dict;
+        Py_hash_t key_hash;
+    } executor_global_misses[4];
     struct _PyExecutorObject *executor_deletion_list_head;
     struct _PyExecutorObject *cold_executor;
     struct _PyExecutorObject *cold_dynamic_executor;

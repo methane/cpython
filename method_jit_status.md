@@ -2,7 +2,21 @@
 
 更新日: 2026-09-16
 
-## 今回の更新（milestones 1〜6）
+## 今回の更新（比較・分析・最適化の1〜4）
+
+main対照を同じLLVM設定で作り直し、trace / prototype / 開始時点との比較、nativeの
+動的uop計測とperfを実施した。global依存関係のnegative cache、block内のvalidity/IP
+cleanup、小さい分岐calleeのinline、隣接する単一先行edgeの削除を実装した。
+
+24ワークロードの幾何平均実行時間はmain比1.0076、開始時点比0.9984で、20%目標は未達。
+Goは開始時点比0.8375へ短縮したがmain比1.1240。methodからTier 1への未対応bytecode
+復帰は44.1%残り、今回のinline拡張ではGoの復帰回数は変わらなかった。
+
+詳細な設計・検証・測定条件と個別結果は
+[method_jit_performance.md](method_jit_performance.md) を参照。
+以下は前回までの記録である。
+
+## 前回の更新（milestones 1〜6）
 
 block単位の型・定数状態、保守的merge、loop fixed pointを実装した。
 returnは `_RETURN_VALUE` と `_METHOD_EXIT` でframeを破棄してTier 1のcallerへ戻す。

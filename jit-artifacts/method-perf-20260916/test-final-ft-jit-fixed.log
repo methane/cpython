@@ -1,0 +1,13 @@
+Using random seed: 2201554781
+0:00:00 load avg: 1.95 mem: 26.2 MiB Run 1 test sequentially in a single process
+0:00:00 load avg: 1.95 mem: 26.2 MiB [1/1] test_capi.test_opt
+0:00:03 load avg: 1.87 mem: 37.2 MiB [1/1] test_capi.test_opt passed
+
+== Tests result: SUCCESS ==
+
+1 test OK.
+
+Total duration: 3.1 sec
+Total tests: run=338 skipped=3
+Total test files: run=1/1
+Result: SUCCESS

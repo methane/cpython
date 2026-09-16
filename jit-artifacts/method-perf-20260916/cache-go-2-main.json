@@ -1,0 +1,41 @@
+{
+  "benchmark": "go",
+  "runtime": "Python 3.16.0a0 (CPython)",
+  "executable": "/home/methane/work/python/cpython-gc/jit-artifacts/method-perf-20260916/main-build/python",
+  "python_version": "3.16.0a0 (main, Sep 16 2026, 03:43:53) [GCC 13.3.0]",
+  "jit_enabled": true,
+  "workload": "choose one move on a 9x9 board using 200 Monte Carlo games",
+  "games_per_operation": 200,
+  "loops": 1,
+  "warmups": 5,
+  "values": 20,
+  "median_seconds": 0.0633725505322218,
+  "minimum_seconds": 0.062203255482017994,
+  "samples_seconds": [
+    0.06271358672529459,
+    0.06332678347826004,
+    0.062203255482017994,
+    0.06516199465841055,
+    0.06295148096978664,
+    0.06390811316668987,
+    0.0631568105891347,
+    0.06394429784268141,
+    0.06335575692355633,
+    0.06345430668443441,
+    0.06295440252870321,
+    0.063599469140172,
+    0.06299901753664017,
+    0.06388249713927507,
+    0.06329616904258728,
+    0.06498971953988075,
+    0.06374335568398237,
+    0.06338934414088726,
+    0.06347652710974216,
+    0.06323977094143629
+  ],
+  "checksum": {
+    "move": 5,
+    "timestamp_delta": 81059,
+    "moves_delta": 21401
+  }
+}

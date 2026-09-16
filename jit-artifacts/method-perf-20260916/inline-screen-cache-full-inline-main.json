@@ -1,0 +1,173 @@
+[
+  {
+    "block": 0,
+    "variant": "cache-full",
+    "sha256": "b3960c963c468157506b7fbe49bc4ef3a58e3b6f3b6e79759cd622a468014ec2",
+    "mean": 0.07108137076720596,
+    "wall": 1.9218359226360917,
+    "command": [
+      "taskset",
+      "-c",
+      "2",
+      "/home/methane/work/python/cpython-gc/build-method-jit/python-cache-full",
+      "/home/methane/work/python/cpython-gc/benchmarks/go.py",
+      "--warmups",
+      "5",
+      "--values",
+      "20",
+      "--json"
+    ]
+  },
+  {
+    "block": 0,
+    "variant": "inline",
+    "sha256": "d634e607340f8a9a5a42f1b41ad68ee3b24f5d8891df42240bf5e7b8b3551b47",
+    "mean": 0.07075538653880357,
+    "wall": 1.9134513083845377,
+    "command": [
+      "taskset",
+      "-c",
+      "2",
+      "/home/methane/work/python/cpython-gc/build-method-jit/python-inline",
+      "/home/methane/work/python/cpython-gc/benchmarks/go.py",
+      "--warmups",
+      "5",
+      "--values",
+      "20",
+      "--json"
+    ]
+  },
+  {
+    "block": 0,
+    "variant": "main",
+    "sha256": "a245f5d91e4e5007af841be2296e55634aa8a29605b03af70fb3f772a6e7370b",
+    "mean": 0.06636118609458208,
+    "wall": 1.6893064733594656,
+    "command": [
+      "taskset",
+      "-c",
+      "2",
+      "/home/methane/work/python/cpython-gc/jit-artifacts/method-perf-20260916/main-build/python",
+      "/home/methane/work/python/cpython-gc/benchmarks/go.py",
+      "--warmups",
+      "5",
+      "--values",
+      "20",
+      "--json"
+    ]
+  },
+  {
+    "block": 1,
+    "variant": "inline",
+    "sha256": "d634e607340f8a9a5a42f1b41ad68ee3b24f5d8891df42240bf5e7b8b3551b47",
+    "mean": 0.07080942345783114,
+    "wall": 1.810977429151535,
+    "command": [
+      "taskset",
+      "-c",
+      "2",
+      "/home/methane/work/python/cpython-gc/build-method-jit/python-inline",
+      "/home/methane/work/python/cpython-gc/benchmarks/go.py",
+      "--warmups",
+      "5",
+      "--values",
+      "20",
+      "--json"
+    ]
+  },
+  {
+    "block": 1,
+    "variant": "main",
+    "sha256": "a245f5d91e4e5007af841be2296e55634aa8a29605b03af70fb3f772a6e7370b",
+    "mean": 0.06298981723375618,
+    "wall": 1.6101825088262558,
+    "command": [
+      "taskset",
+      "-c",
+      "2",
+      "/home/methane/work/python/cpython-gc/jit-artifacts/method-perf-20260916/main-build/python",
+      "/home/methane/work/python/cpython-gc/benchmarks/go.py",
+      "--warmups",
+      "5",
+      "--values",
+      "20",
+      "--json"
+    ]
+  },
+  {
+    "block": 1,
+    "variant": "cache-full",
+    "sha256": "b3960c963c468157506b7fbe49bc4ef3a58e3b6f3b6e79759cd622a468014ec2",
+    "mean": 0.07252666372805834,
+    "wall": 1.85750284884125,
+    "command": [
+      "taskset",
+      "-c",
+      "2",
+      "/home/methane/work/python/cpython-gc/build-method-jit/python-cache-full",
+      "/home/methane/work/python/cpython-gc/benchmarks/go.py",
+      "--warmups",
+      "5",
+      "--values",
+      "20",
+      "--json"
+    ]
+  },
+  {
+    "block": 2,
+    "variant": "main",
+    "sha256": "a245f5d91e4e5007af841be2296e55634aa8a29605b03af70fb3f772a6e7370b",
+    "mean": 0.06313449018634856,
+    "wall": 1.6128442687913775,
+    "command": [
+      "taskset",
+      "-c",
+      "2",
+      "/home/methane/work/python/cpython-gc/jit-artifacts/method-perf-20260916/main-build/python",
+      "/home/methane/work/python/cpython-gc/benchmarks/go.py",
+      "--warmups",
+      "5",
+      "--values",
+      "20",
+      "--json"
+    ]
+  },
+  {
+    "block": 2,
+    "variant": "cache-full",
+    "sha256": "b3960c963c468157506b7fbe49bc4ef3a58e3b6f3b6e79759cd622a468014ec2",
+    "mean": 0.07421999438665808,
+    "wall": 1.8979999842122197,
+    "command": [
+      "taskset",
+      "-c",
+      "2",
+      "/home/methane/work/python/cpython-gc/build-method-jit/python-cache-full",
+      "/home/methane/work/python/cpython-gc/benchmarks/go.py",
+      "--warmups",
+      "5",
+      "--values",
+      "20",
+      "--json"
+    ]
+  },
+  {
+    "block": 2,
+    "variant": "inline",
+    "sha256": "d634e607340f8a9a5a42f1b41ad68ee3b24f5d8891df42240bf5e7b8b3551b47",
+    "mean": 0.07043750821612775,
+    "wall": 1.8100082539021969,
+    "command": [
+      "taskset",
+      "-c",
+      "2",
+      "/home/methane/work/python/cpython-gc/build-method-jit/python-inline",
+      "/home/methane/work/python/cpython-gc/benchmarks/go.py",
+      "--warmups",
+      "5",
+      "--values",
+      "20",
+      "--json"
+    ]
+  }
+]

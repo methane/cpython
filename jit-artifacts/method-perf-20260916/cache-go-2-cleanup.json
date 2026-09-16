@@ -1,0 +1,41 @@
+{
+  "benchmark": "go",
+  "runtime": "Python 3.16.0a0 (CPython)",
+  "executable": "/home/methane/work/python/cpython-gc/build-method-jit/python-cleanup",
+  "python_version": "3.16.0a0 (heads/codex/method-jit-dirty:15c0e6113c1, Sep 16 2026, 03:45:00) [GCC 13.3.0]",
+  "jit_enabled": true,
+  "workload": "choose one move on a 9x9 board using 200 Monte Carlo games",
+  "games_per_operation": 200,
+  "loops": 1,
+  "warmups": 5,
+  "values": 20,
+  "median_seconds": 0.08482900727540255,
+  "minimum_seconds": 0.08329328149557114,
+  "samples_seconds": [
+    0.08422291092574596,
+    0.08446161355823278,
+    0.08329328149557114,
+    0.08649241086095572,
+    0.08462508767843246,
+    0.08568763174116611,
+    0.08460687007755041,
+    0.08453817758709192,
+    0.08453160338103771,
+    0.08504478167742491,
+    0.0842126002535224,
+    0.08517418336123228,
+    0.08501298353075981,
+    0.08400166686624289,
+    0.08480552677065134,
+    0.08528613578528166,
+    0.08520791213959455,
+    0.08500830177217722,
+    0.08554685488343239,
+    0.08485248778015375
+  ],
+  "checksum": {
+    "move": 5,
+    "timestamp_delta": 81059,
+    "moves_delta": 21401
+  }
+}

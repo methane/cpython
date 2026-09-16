@@ -1,0 +1,15 @@
+Using random seed: 3751361641
+0:00:00 load avg: 3.44 mem: 26.1 MiB Run 1 test sequentially in a single process
+0:00:00 load avg: 3.44 mem: 26.1 MiB [1/1] test_capi.test_opt
+test test_capi.test_opt failed -- multiple errors occurred; run in verbose mode for details
+0:00:03 load avg: 3.44 mem: 37.7 MiB [1/1/1] test_capi.test_opt failed (2 failures)
+
+== Tests result: FAILURE ==
+
+1 test failed:
+    test_capi.test_opt
+
+Total duration: 3.1 sec
+Total tests: run=338 failures=2 skipped=3
+Total test files: run=1/1 failed=1
+Result: FAILURE
