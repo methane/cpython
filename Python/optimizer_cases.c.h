@@ -1500,7 +1500,7 @@
                     ADD_OP(_NOP, 0, 0);
                 }
                 else {
-                    ADD_OP(_GUARD_TYPE, 0, (uintptr_t)tp);
+                    ADD_OP(_GUARD_NOS_TYPE, 0, (uintptr_t)tp);
                     sym_set_type(nos, tp);
                 }
                 PyType_Watch(TYPE_WATCHER_ID, (PyObject *)tp);
@@ -1524,7 +1524,7 @@
                     ADD_OP(_NOP, 0, 0);
                 }
                 else {
-                    ADD_OP(_GUARD_TYPE, 0, (uintptr_t)tp);
+                    ADD_OP(_GUARD_NOS_TYPE, 0, (uintptr_t)tp);
                     sym_set_type(nos, tp);
                 }
                 PyType_Watch(TYPE_WATCHER_ID, (PyObject *)tp);
@@ -2222,20 +2222,31 @@
                     OPT_STAT_INC(remove_globals_incorrect_keys);
                     ctx->done = true;
                 }
-                else if (get_mutations(globals) >= _Py_MAX_ALLOWED_GLOBALS_MODIFICATIONS) {
-                }
                 else {
                     if (!ctx->frame->globals_watched) {
                         PyDict_Watch(GLOBALS_WATCHER_ID, globals);
-                        _Py_BloomFilter_Add(dependencies, globals);
+                        _Py_BloomFilter_AddGlobal(dependencies, globals, 0, true);
                         ctx->frame->globals_watched = true;
                     }
                     if (ctx->frame->globals_checked_version == version) {
                         ADD_OP(_NOP, 0, 0);
                     }
+                    else {
+                        ADD_OP(_GUARD_GLOBALS_VERSION_AND_IDENTITY, 0, version);
+                        uop_buffer_last(&ctx->out_buffer)->operand1 =
+                        (uintptr_t)globals;
+                    }
                 }
             }
             ctx->frame->globals_checked_version = version;
+            break;
+        }
+
+        case _GUARD_GLOBALS_VERSION_AND_IDENTITY: {
+            break;
+        }
+
+        case _GUARD_BUILTINS_IDENTITY: {
             break;
         }
 
@@ -2251,20 +2262,31 @@
                     OPT_STAT_INC(remove_globals_incorrect_keys);
                     ctx->done = true;
                 }
-                else if (get_mutations(globals) >= _Py_MAX_ALLOWED_GLOBALS_MODIFICATIONS) {
-                }
                 else {
                     if (!ctx->frame->globals_watched) {
                         PyDict_Watch(GLOBALS_WATCHER_ID, globals);
-                        _Py_BloomFilter_Add(dependencies, globals);
+                        _Py_BloomFilter_AddGlobal(dependencies, globals, 0, true);
                         ctx->frame->globals_watched = true;
                     }
                     if (ctx->frame->globals_checked_version != version && this_instr[-1].opcode == _NOP) {
-                        REPLACE_OP(uop_buffer_last(&ctx->out_buffer), _GUARD_GLOBALS_VERSION, 0, version);
+                        REPLACE_OP(uop_buffer_last(&ctx->out_buffer),
+                               _GUARD_GLOBALS_VERSION_AND_IDENTITY, 0, version);
+                        uop_buffer_last(&ctx->out_buffer)->operand1 =
+                        (uintptr_t)globals;
                         ctx->frame->globals_checked_version = version;
                     }
                     if (ctx->frame->globals_checked_version == version) {
                         cnst = convert_global_to_const(this_instr, globals);
+                        if (cnst != NULL) {
+                            PyDictObject *dict = (PyDictObject *)globals;
+                            PyObject *key =
+                            DK_UNICODE_ENTRIES(dict->ma_keys)[index].me_key;
+                            assert(PyUnicode_CheckExact(key));
+                            Py_hash_t hash = PyObject_Hash(key);
+                            assert(hash != -1);
+                            _Py_BloomFilter_AddGlobal(
+                                dependencies, globals, hash, false);
+                        }
                     }
                 }
             }
@@ -2295,7 +2317,11 @@
             PyObject *cnst = NULL;
             PyInterpreterState *interp = _PyInterpreterState_GET();
             PyObject *builtins = interp->builtins;
-            if (incorrect_keys(builtins, version)) {
+            if (ctx->frame->func == NULL ||
+                ctx->frame->func->func_builtins != builtins)
+            {
+            }
+            else if (incorrect_keys(builtins, version)) {
                 OPT_STAT_INC(remove_globals_incorrect_keys);
                 ctx->done = true;
             }
@@ -2308,6 +2334,11 @@
                 }
                 if (ctx->frame->globals_checked_version != 0 && ctx->frame->globals_watched) {
                     cnst = convert_global_to_const(this_instr, builtins);
+                    if (cnst != NULL) {
+                        ADD_OP(_GUARD_BUILTINS_IDENTITY, 0, 0);
+                        ADD_OP(this_instr->opcode, this_instr->oparg,
+                           this_instr->operand0);
+                    }
                 }
             }
             if (cnst == NULL) {
@@ -2523,6 +2554,10 @@
         }
 
         case _GUARD_NOS_TYPE_VERSION: {
+            break;
+        }
+
+        case _GUARD_NOS_TYPE: {
             break;
         }
 
@@ -5533,6 +5568,38 @@
             CHECK_STACK_BOUNDS(-1);
             stack_pointer += -1;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            break;
+        }
+
+        case _METHOD_POP_JUMP_IF_FALSE: {
+            break;
+        }
+
+        case _METHOD_POP_JUMP_IF_TRUE: {
+            break;
+        }
+
+        case _METHOD_JUMP: {
+            break;
+        }
+
+        case _METHOD_FOR_ITER: {
+            break;
+        }
+
+        case _METHOD_ITER_JUMP_LIST: {
+            break;
+        }
+
+        case _METHOD_ITER_JUMP_TUPLE: {
+            break;
+        }
+
+        case _METHOD_ITER_JUMP_RANGE: {
+            break;
+        }
+
+        case _METHOD_DEOPT: {
             break;
         }
 

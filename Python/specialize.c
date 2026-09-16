@@ -19,6 +19,7 @@
 #include "pycore_uop_metadata.h"    // _PyOpcode_uop_name
 #include "pycore_uop_ids.h"       // MAX_UOP_ID
 #include "pycore_opcode_utils.h"  // RESUME_AT_FUNC_START
+#include "pycore_optimizer.h"     // _PyJit_IsOnlyStrongReferenceBesidesTracer()
 #include "pycore_pylifecycle.h"   // _PyOS_URandomNonblock()
 #include "pycore_runtime.h"       // _Py_ID()
 #include "pycore_unicodeobject.h" // _PyUnicodeASCIIIter_Type
@@ -325,7 +326,7 @@ _PyCode_Quicken(_Py_CODEUNIT *instructions, Py_ssize_t size, int enable_counters
 static inline int
 set_opcode(_Py_CODEUNIT *instr, uint8_t opcode)
 {
-#ifdef Py_GIL_DISABLED
+#if defined(Py_GIL_DISABLED) && defined(_Py_TIER2)
     uint8_t old_op = _Py_atomic_load_uint8_relaxed(&instr->op.code);
     if (old_op >= MIN_INSTRUMENTED_OPCODE) {
         /* Lost race with instrumentation */
@@ -2693,7 +2694,9 @@ _Py_Specialize_ForIter(_PyStackRef iter, _PyStackRef null_or_index, _Py_CODEUNIT
             // than we need (even `it = iter(mylist); for item in it:` won't get
             // specialized) but we don't have a way to check whether we're the only
             // _thread_ who has access to the object.
-            if (!_PyObject_IsUniquelyReferenced(iter_o)) {
+            if (!_PyObject_IsUniquelyReferenced(iter_o) &&
+                !_PyJit_IsOnlyStrongReferenceBesidesTracer(
+                    _PyThreadState_GET(), iter_o)) {
                 goto failure;
             }
 #endif
@@ -2955,7 +2958,13 @@ void
 _Py_Specialize_Resume(_Py_CODEUNIT *instr, PyThreadState *tstate, _PyInterpreterFrame *frame)
 {
     if (tstate->tracing == 0 && instr->op.code == RESUME) {
-        if (tstate->interp->jit) {
+        bool can_jit = FT_ATOMIC_LOAD_UINT8(tstate->interp->jit);
+#if defined(Py_GIL_DISABLED) && defined(_Py_TIER2)
+        // JIT availability changes as the interpreter moves between one and
+        // multiple threads. Keep the check in the specialized instruction.
+        can_jit = true;
+#endif
+        if (can_jit) {
             PyCodeObject *co = (PyCodeObject *)PyStackRef_AsPyObjectBorrow(frame->f_executable);
             if (co != NULL &&
                 PyCode_Check(co) &&

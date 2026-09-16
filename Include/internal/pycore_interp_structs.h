@@ -999,7 +999,7 @@ struct _is {
     struct types_state types;
     struct callable_cache callable_cache;
     _PyStackRef common_consts[NUM_COMMON_CONSTANTS];
-    bool jit;
+    uint8_t jit;
     bool compiling;
 
     // Optimization configuration (thresholds and flags for JIT and interpreter)

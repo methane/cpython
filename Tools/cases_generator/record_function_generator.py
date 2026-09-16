@@ -24,7 +24,7 @@ from tier1_generator import write_uop, Emitter, declare_variable
 from lexer import Token
 from stack import Stack, Storage
 
-DEFAULT_OUTPUT = ROOT / "Python/recorder_functions.c.h"
+DEFAULT_OUTPUT = ROOT / "Python/record_functions.c.h"
 
 # Must match MAX_RECORDED_VALUES in Include/internal/pycore_optimizer.h.
 MAX_RECORDED_VALUES = 3

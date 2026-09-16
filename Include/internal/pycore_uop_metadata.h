@@ -194,6 +194,8 @@ const uint32_t _PyUop_Flags[MAX_UOP_ID+1] = {
     [_LOAD_GLOBAL] = HAS_ARG_FLAG | HAS_NAME_FLAG | HAS_ERROR_FLAG | HAS_ESCAPES_FLAG,
     [_PUSH_NULL_CONDITIONAL] = HAS_ARG_FLAG,
     [_GUARD_GLOBALS_VERSION] = HAS_DEOPT_FLAG,
+    [_GUARD_GLOBALS_VERSION_AND_IDENTITY] = HAS_DEOPT_FLAG,
+    [_GUARD_BUILTINS_IDENTITY] = HAS_DEOPT_FLAG,
     [_LOAD_GLOBAL_MODULE] = HAS_DEOPT_FLAG,
     [_LOAD_GLOBAL_BUILTINS] = HAS_DEOPT_FLAG,
     [_DELETE_FAST] = HAS_ARG_FLAG | HAS_LOCAL_FLAG | HAS_ERROR_FLAG | HAS_ESCAPES_FLAG,
@@ -218,6 +220,7 @@ const uint32_t _PyUop_Flags[MAX_UOP_ID+1] = {
     [_MAP_ADD] = HAS_ARG_FLAG | HAS_ERROR_FLAG | HAS_ESCAPES_FLAG,
     [_LOAD_SUPER_ATTR_ATTR] = HAS_ARG_FLAG | HAS_NAME_FLAG | HAS_EXIT_FLAG | HAS_ERROR_FLAG | HAS_ESCAPES_FLAG,
     [_GUARD_NOS_TYPE_VERSION] = HAS_EXIT_FLAG,
+    [_GUARD_NOS_TYPE] = HAS_EXIT_FLAG,
     [_GUARD_LOAD_SUPER_ATTR_METHOD] = HAS_ARG_FLAG | HAS_EXIT_FLAG,
     [_LOAD_SUPER_ATTR_METHOD] = HAS_ARG_FLAG | HAS_NAME_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG,
     [_LOAD_ATTR] = HAS_ARG_FLAG | HAS_NAME_FLAG | HAS_ERROR_FLAG | HAS_ESCAPES_FLAG,
@@ -391,6 +394,14 @@ const uint32_t _PyUop_Flags[MAX_UOP_ID+1] = {
     [_GUARD_BIT_IS_UNSET_POP] = HAS_ARG_FLAG | HAS_EXIT_FLAG,
     [_GUARD_IS_NONE_POP] = HAS_EXIT_FLAG,
     [_GUARD_IS_NOT_NONE_POP] = HAS_EXIT_FLAG | HAS_ESCAPES_FLAG,
+    [_METHOD_POP_JUMP_IF_FALSE] = 0,
+    [_METHOD_POP_JUMP_IF_TRUE] = 0,
+    [_METHOD_JUMP] = 0,
+    [_METHOD_FOR_ITER] = HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG,
+    [_METHOD_ITER_JUMP_LIST] = 0,
+    [_METHOD_ITER_JUMP_TUPLE] = 0,
+    [_METHOD_ITER_JUMP_RANGE] = 0,
+    [_METHOD_DEOPT] = 0,
     [_JUMP_TO_TOP] = 0,
     [_SET_IP] = 0,
     [_CHECK_STACK_SPACE_OPERAND] = HAS_DEOPT_FLAG,
@@ -1876,6 +1887,24 @@ const _PyUopCachingInfo _PyUop_Caching[MAX_UOP_ID+1] = {
             { 3, 3, _GUARD_GLOBALS_VERSION_r33 },
         },
     },
+    [_GUARD_GLOBALS_VERSION_AND_IDENTITY] = {
+        .best = { 0, 1, 2, 3 },
+        .entries = {
+            { 0, 0, _GUARD_GLOBALS_VERSION_AND_IDENTITY_r00 },
+            { 1, 1, _GUARD_GLOBALS_VERSION_AND_IDENTITY_r11 },
+            { 2, 2, _GUARD_GLOBALS_VERSION_AND_IDENTITY_r22 },
+            { 3, 3, _GUARD_GLOBALS_VERSION_AND_IDENTITY_r33 },
+        },
+    },
+    [_GUARD_BUILTINS_IDENTITY] = {
+        .best = { 0, 1, 2, 3 },
+        .entries = {
+            { 0, 0, _GUARD_BUILTINS_IDENTITY_r00 },
+            { 1, 1, _GUARD_BUILTINS_IDENTITY_r11 },
+            { 2, 2, _GUARD_BUILTINS_IDENTITY_r22 },
+            { 3, 3, _GUARD_BUILTINS_IDENTITY_r33 },
+        },
+    },
     [_LOAD_GLOBAL_MODULE] = {
         .best = { 0, 0, 0, 0 },
         .entries = {
@@ -2090,6 +2119,15 @@ const _PyUopCachingInfo _PyUop_Caching[MAX_UOP_ID+1] = {
             { 2, 1, _GUARD_NOS_TYPE_VERSION_r12 },
             { 2, 2, _GUARD_NOS_TYPE_VERSION_r22 },
             { 3, 3, _GUARD_NOS_TYPE_VERSION_r33 },
+        },
+    },
+    [_GUARD_NOS_TYPE] = {
+        .best = { 0, 1, 2, 3 },
+        .entries = {
+            { 2, 0, _GUARD_NOS_TYPE_r02 },
+            { 2, 1, _GUARD_NOS_TYPE_r12 },
+            { 2, 2, _GUARD_NOS_TYPE_r22 },
+            { 3, 3, _GUARD_NOS_TYPE_r33 },
         },
     },
     [_GUARD_LOAD_SUPER_ATTR_METHOD] = {
@@ -3649,6 +3687,78 @@ const _PyUopCachingInfo _PyUop_Caching[MAX_UOP_ID+1] = {
             { -1, -1, -1 },
         },
     },
+    [_METHOD_POP_JUMP_IF_FALSE] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 0, 0, _METHOD_POP_JUMP_IF_FALSE_r00 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_METHOD_POP_JUMP_IF_TRUE] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 0, 0, _METHOD_POP_JUMP_IF_TRUE_r00 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_METHOD_JUMP] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 0, 0, _METHOD_JUMP_r00 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_METHOD_FOR_ITER] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 0, 0, _METHOD_FOR_ITER_r00 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_METHOD_ITER_JUMP_LIST] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 0, 0, _METHOD_ITER_JUMP_LIST_r00 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_METHOD_ITER_JUMP_TUPLE] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 0, 0, _METHOD_ITER_JUMP_TUPLE_r00 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_METHOD_ITER_JUMP_RANGE] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 0, 0, _METHOD_ITER_JUMP_RANGE_r00 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_METHOD_DEOPT] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 0, 0, _METHOD_DEOPT_r00 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
     [_JUMP_TO_TOP] = {
         .best = { 0, 0, 0, 0 },
         .entries = {
@@ -4313,6 +4423,14 @@ const uint16_t _PyUop_Uncached[MAX_UOP_REGS_ID+1] = {
     [_GUARD_GLOBALS_VERSION_r11] = _GUARD_GLOBALS_VERSION,
     [_GUARD_GLOBALS_VERSION_r22] = _GUARD_GLOBALS_VERSION,
     [_GUARD_GLOBALS_VERSION_r33] = _GUARD_GLOBALS_VERSION,
+    [_GUARD_GLOBALS_VERSION_AND_IDENTITY_r00] = _GUARD_GLOBALS_VERSION_AND_IDENTITY,
+    [_GUARD_GLOBALS_VERSION_AND_IDENTITY_r11] = _GUARD_GLOBALS_VERSION_AND_IDENTITY,
+    [_GUARD_GLOBALS_VERSION_AND_IDENTITY_r22] = _GUARD_GLOBALS_VERSION_AND_IDENTITY,
+    [_GUARD_GLOBALS_VERSION_AND_IDENTITY_r33] = _GUARD_GLOBALS_VERSION_AND_IDENTITY,
+    [_GUARD_BUILTINS_IDENTITY_r00] = _GUARD_BUILTINS_IDENTITY,
+    [_GUARD_BUILTINS_IDENTITY_r11] = _GUARD_BUILTINS_IDENTITY,
+    [_GUARD_BUILTINS_IDENTITY_r22] = _GUARD_BUILTINS_IDENTITY,
+    [_GUARD_BUILTINS_IDENTITY_r33] = _GUARD_BUILTINS_IDENTITY,
     [_LOAD_GLOBAL_MODULE_r01] = _LOAD_GLOBAL_MODULE,
     [_LOAD_GLOBAL_BUILTINS_r01] = _LOAD_GLOBAL_BUILTINS,
     [_DELETE_FAST_r00] = _DELETE_FAST,
@@ -4343,6 +4461,10 @@ const uint16_t _PyUop_Uncached[MAX_UOP_REGS_ID+1] = {
     [_GUARD_NOS_TYPE_VERSION_r12] = _GUARD_NOS_TYPE_VERSION,
     [_GUARD_NOS_TYPE_VERSION_r22] = _GUARD_NOS_TYPE_VERSION,
     [_GUARD_NOS_TYPE_VERSION_r33] = _GUARD_NOS_TYPE_VERSION,
+    [_GUARD_NOS_TYPE_r02] = _GUARD_NOS_TYPE,
+    [_GUARD_NOS_TYPE_r12] = _GUARD_NOS_TYPE,
+    [_GUARD_NOS_TYPE_r22] = _GUARD_NOS_TYPE,
+    [_GUARD_NOS_TYPE_r33] = _GUARD_NOS_TYPE,
     [_GUARD_LOAD_SUPER_ATTR_METHOD_r03] = _GUARD_LOAD_SUPER_ATTR_METHOD,
     [_GUARD_LOAD_SUPER_ATTR_METHOD_r13] = _GUARD_LOAD_SUPER_ATTR_METHOD,
     [_GUARD_LOAD_SUPER_ATTR_METHOD_r23] = _GUARD_LOAD_SUPER_ATTR_METHOD,
@@ -4719,6 +4841,14 @@ const uint16_t _PyUop_Uncached[MAX_UOP_REGS_ID+1] = {
     [_GUARD_IS_NONE_POP_r21] = _GUARD_IS_NONE_POP,
     [_GUARD_IS_NONE_POP_r32] = _GUARD_IS_NONE_POP,
     [_GUARD_IS_NOT_NONE_POP_r10] = _GUARD_IS_NOT_NONE_POP,
+    [_METHOD_POP_JUMP_IF_FALSE_r00] = _METHOD_POP_JUMP_IF_FALSE,
+    [_METHOD_POP_JUMP_IF_TRUE_r00] = _METHOD_POP_JUMP_IF_TRUE,
+    [_METHOD_JUMP_r00] = _METHOD_JUMP,
+    [_METHOD_FOR_ITER_r00] = _METHOD_FOR_ITER,
+    [_METHOD_ITER_JUMP_LIST_r00] = _METHOD_ITER_JUMP_LIST,
+    [_METHOD_ITER_JUMP_TUPLE_r00] = _METHOD_ITER_JUMP_TUPLE,
+    [_METHOD_ITER_JUMP_RANGE_r00] = _METHOD_ITER_JUMP_RANGE,
+    [_METHOD_DEOPT_r00] = _METHOD_DEOPT,
     [_JUMP_TO_TOP_r00] = _JUMP_TO_TOP,
     [_SET_IP_r00] = _SET_IP,
     [_SET_IP_r11] = _SET_IP,
@@ -5292,6 +5422,11 @@ const char *const _PyOpcode_uop_name[MAX_UOP_REGS_ID+1] = {
     [_GUARD_BIT_IS_UNSET_POP_7_r10] = "_GUARD_BIT_IS_UNSET_POP_7_r10",
     [_GUARD_BIT_IS_UNSET_POP_7_r21] = "_GUARD_BIT_IS_UNSET_POP_7_r21",
     [_GUARD_BIT_IS_UNSET_POP_7_r32] = "_GUARD_BIT_IS_UNSET_POP_7_r32",
+    [_GUARD_BUILTINS_IDENTITY] = "_GUARD_BUILTINS_IDENTITY",
+    [_GUARD_BUILTINS_IDENTITY_r00] = "_GUARD_BUILTINS_IDENTITY_r00",
+    [_GUARD_BUILTINS_IDENTITY_r11] = "_GUARD_BUILTINS_IDENTITY_r11",
+    [_GUARD_BUILTINS_IDENTITY_r22] = "_GUARD_BUILTINS_IDENTITY_r22",
+    [_GUARD_BUILTINS_IDENTITY_r33] = "_GUARD_BUILTINS_IDENTITY_r33",
     [_GUARD_CALLABLE_BUILTIN_CLASS] = "_GUARD_CALLABLE_BUILTIN_CLASS",
     [_GUARD_CALLABLE_BUILTIN_CLASS_r00] = "_GUARD_CALLABLE_BUILTIN_CLASS_r00",
     [_GUARD_CALLABLE_BUILTIN_FAST] = "_GUARD_CALLABLE_BUILTIN_FAST",
@@ -5368,6 +5503,11 @@ const char *const _PyOpcode_uop_name[MAX_UOP_REGS_ID+1] = {
     [_GUARD_GLOBALS_VERSION_r11] = "_GUARD_GLOBALS_VERSION_r11",
     [_GUARD_GLOBALS_VERSION_r22] = "_GUARD_GLOBALS_VERSION_r22",
     [_GUARD_GLOBALS_VERSION_r33] = "_GUARD_GLOBALS_VERSION_r33",
+    [_GUARD_GLOBALS_VERSION_AND_IDENTITY] = "_GUARD_GLOBALS_VERSION_AND_IDENTITY",
+    [_GUARD_GLOBALS_VERSION_AND_IDENTITY_r00] = "_GUARD_GLOBALS_VERSION_AND_IDENTITY_r00",
+    [_GUARD_GLOBALS_VERSION_AND_IDENTITY_r11] = "_GUARD_GLOBALS_VERSION_AND_IDENTITY_r11",
+    [_GUARD_GLOBALS_VERSION_AND_IDENTITY_r22] = "_GUARD_GLOBALS_VERSION_AND_IDENTITY_r22",
+    [_GUARD_GLOBALS_VERSION_AND_IDENTITY_r33] = "_GUARD_GLOBALS_VERSION_AND_IDENTITY_r33",
     [_GUARD_IP_RETURN_GENERATOR] = "_GUARD_IP_RETURN_GENERATOR",
     [_GUARD_IP_RETURN_GENERATOR_r00] = "_GUARD_IP_RETURN_GENERATOR_r00",
     [_GUARD_IP_RETURN_GENERATOR_r11] = "_GUARD_IP_RETURN_GENERATOR_r11",
@@ -5475,6 +5615,11 @@ const char *const _PyOpcode_uop_name[MAX_UOP_REGS_ID+1] = {
     [_GUARD_NOS_TUPLE_r12] = "_GUARD_NOS_TUPLE_r12",
     [_GUARD_NOS_TUPLE_r22] = "_GUARD_NOS_TUPLE_r22",
     [_GUARD_NOS_TUPLE_r33] = "_GUARD_NOS_TUPLE_r33",
+    [_GUARD_NOS_TYPE] = "_GUARD_NOS_TYPE",
+    [_GUARD_NOS_TYPE_r02] = "_GUARD_NOS_TYPE_r02",
+    [_GUARD_NOS_TYPE_r12] = "_GUARD_NOS_TYPE_r12",
+    [_GUARD_NOS_TYPE_r22] = "_GUARD_NOS_TYPE_r22",
+    [_GUARD_NOS_TYPE_r33] = "_GUARD_NOS_TYPE_r33",
     [_GUARD_NOS_TYPE_VERSION] = "_GUARD_NOS_TYPE_VERSION",
     [_GUARD_NOS_TYPE_VERSION_r02] = "_GUARD_NOS_TYPE_VERSION_r02",
     [_GUARD_NOS_TYPE_VERSION_r12] = "_GUARD_NOS_TYPE_VERSION_r12",
@@ -5887,6 +6032,22 @@ const char *const _PyOpcode_uop_name[MAX_UOP_REGS_ID+1] = {
     [_MAYBE_EXPAND_METHOD_r00] = "_MAYBE_EXPAND_METHOD_r00",
     [_MAYBE_EXPAND_METHOD_KW] = "_MAYBE_EXPAND_METHOD_KW",
     [_MAYBE_EXPAND_METHOD_KW_r11] = "_MAYBE_EXPAND_METHOD_KW_r11",
+    [_METHOD_DEOPT] = "_METHOD_DEOPT",
+    [_METHOD_DEOPT_r00] = "_METHOD_DEOPT_r00",
+    [_METHOD_FOR_ITER] = "_METHOD_FOR_ITER",
+    [_METHOD_FOR_ITER_r00] = "_METHOD_FOR_ITER_r00",
+    [_METHOD_ITER_JUMP_LIST] = "_METHOD_ITER_JUMP_LIST",
+    [_METHOD_ITER_JUMP_LIST_r00] = "_METHOD_ITER_JUMP_LIST_r00",
+    [_METHOD_ITER_JUMP_RANGE] = "_METHOD_ITER_JUMP_RANGE",
+    [_METHOD_ITER_JUMP_RANGE_r00] = "_METHOD_ITER_JUMP_RANGE_r00",
+    [_METHOD_ITER_JUMP_TUPLE] = "_METHOD_ITER_JUMP_TUPLE",
+    [_METHOD_ITER_JUMP_TUPLE_r00] = "_METHOD_ITER_JUMP_TUPLE_r00",
+    [_METHOD_JUMP] = "_METHOD_JUMP",
+    [_METHOD_JUMP_r00] = "_METHOD_JUMP_r00",
+    [_METHOD_POP_JUMP_IF_FALSE] = "_METHOD_POP_JUMP_IF_FALSE",
+    [_METHOD_POP_JUMP_IF_FALSE_r00] = "_METHOD_POP_JUMP_IF_FALSE_r00",
+    [_METHOD_POP_JUMP_IF_TRUE] = "_METHOD_POP_JUMP_IF_TRUE",
+    [_METHOD_POP_JUMP_IF_TRUE_r00] = "_METHOD_POP_JUMP_IF_TRUE_r00",
     [_NOP] = "_NOP",
     [_NOP_r00] = "_NOP_r00",
     [_NOP_r11] = "_NOP_r11",
@@ -6484,6 +6645,10 @@ int _PyUop_num_popped(int opcode, int oparg)
             return 0;
         case _GUARD_GLOBALS_VERSION:
             return 0;
+        case _GUARD_GLOBALS_VERSION_AND_IDENTITY:
+            return 0;
+        case _GUARD_BUILTINS_IDENTITY:
+            return 0;
         case _LOAD_GLOBAL_MODULE:
             return 0;
         case _LOAD_GLOBAL_BUILTINS:
@@ -6531,6 +6696,8 @@ int _PyUop_num_popped(int opcode, int oparg)
         case _LOAD_SUPER_ATTR_ATTR:
             return 3;
         case _GUARD_NOS_TYPE_VERSION:
+            return 0;
+        case _GUARD_NOS_TYPE:
             return 0;
         case _GUARD_LOAD_SUPER_ATTR_METHOD:
             return 0;
@@ -6878,6 +7045,22 @@ int _PyUop_num_popped(int opcode, int oparg)
             return 1;
         case _GUARD_IS_NOT_NONE_POP:
             return 1;
+        case _METHOD_POP_JUMP_IF_FALSE:
+            return 0;
+        case _METHOD_POP_JUMP_IF_TRUE:
+            return 0;
+        case _METHOD_JUMP:
+            return 0;
+        case _METHOD_FOR_ITER:
+            return 0;
+        case _METHOD_ITER_JUMP_LIST:
+            return 0;
+        case _METHOD_ITER_JUMP_TUPLE:
+            return 0;
+        case _METHOD_ITER_JUMP_RANGE:
+            return 0;
+        case _METHOD_DEOPT:
+            return 0;
         case _JUMP_TO_TOP:
             return 0;
         case _SET_IP:

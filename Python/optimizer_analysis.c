@@ -142,10 +142,20 @@ globals_watcher_callback(PyDict_WatchEvent event, PyObject* dict,
                          PyObject* key, PyObject* new_value)
 {
     RARE_EVENT_STAT_INC(watched_globals_modification);
-    assert(get_mutations(dict) < _Py_MAX_ALLOWED_GLOBALS_MODIFICATIONS);
-    _Py_Executors_InvalidateDependency(_PyInterpreterState_GET(), dict, 1);
-    increment_mutations(dict);
-    PyDict_Unwatch(GLOBALS_WATCHER_ID, dict);
+    bool value_only = (
+        event == PyDict_EVENT_MODIFIED &&
+        key != NULL &&
+        PyUnicode_CheckExact(key));
+    Py_hash_t hash = value_only ? PyObject_Hash(key) : 0;
+    assert(!value_only || hash != -1);
+    bool keep_watch = _Py_Executors_InvalidateGlobalDependency(
+        _PyInterpreterState_GET(), dict, hash, value_only);
+    if (get_mutations(dict) < _Py_MAX_ALLOWED_GLOBALS_MODIFICATIONS) {
+        increment_mutations(dict);
+    }
+    if (!keep_watch) {
+        PyDict_Unwatch(GLOBALS_WATCHER_ID, dict);
+    }
     return 0;
 }
 
@@ -199,7 +209,7 @@ convert_global_to_const(_PyUOpInstruction *inst, PyObject *obj)
     if (res == NULL) {
         return NULL;
     }
-    if (_Py_IsImmortal(res)) {
+    if (_Py_IsImmortal(res) || _PyObject_HasDeferredRefcount(res)) {
         inst->opcode = _LOAD_CONST_INLINE_BORROW;
     } else {
         inst->opcode = _LOAD_CONST_INLINE;
@@ -412,7 +422,9 @@ lookup_attr(JitOptContext *ctx, _PyBloomFilter *dependencies, _PyUOpInstruction 
     if (type && PyType_Check(type)) {
         PyObject *lookup = _PyType_Lookup(type, name);
         if (lookup) {
-            bool immortal = _Py_IsImmortal(lookup) || (type->tp_flags & Py_TPFLAGS_IMMUTABLETYPE);
+            bool immortal = _Py_IsImmortal(lookup) ||
+                _PyObject_HasDeferredRefcount(lookup) ||
+                (type->tp_flags & Py_TPFLAGS_IMMUTABLETYPE);
             if (prefix != _NOP) {
                 ADD_OP(prefix, 0, 0);
             }

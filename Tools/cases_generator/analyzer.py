@@ -630,8 +630,10 @@ NON_ESCAPING_FUNCTIONS = (
     "PyBytes_GET_SIZE",
     "PyDict_GET_SIZE",
     "PySet_GET_SIZE",
+    "Py_SET_SIZE",
     "PyTuple_GET_ITEM",
     "PyTuple_GET_SIZE",
+    "PyTuple_SET_ITEM",
     "PyType_HasFeature",
     "PyUnicode_Concat",
     "PyUnicode_GET_LENGTH",
@@ -642,6 +644,8 @@ NON_ESCAPING_FUNCTIONS = (
     "Py_FatalError",
     "Py_INCREF",
     "Py_IS_TYPE",
+    "Py_MAX",
+    "Py_MIN",
     "Py_NewRef",
     "Py_REFCNT",
     "Py_SIZE",
@@ -686,6 +690,7 @@ NON_ESCAPING_FUNCTIONS = (
     "_PyThreadState_HasStackSpace",
     "_PyTuple_FromStackRefStealOnSuccess",
     "_PyTuple_ITEMS",
+    "_PyTuple_Recycle",
     "_PyType_HasFeature",
     "_PyType_NewManagedObject",
     "_PyUnicode_Equal",
@@ -724,6 +729,7 @@ NON_ESCAPING_FUNCTIONS = (
     "_PyLong_CheckExactAndCompact",
     "_PyExecutor_FromExit",
     "_PyJit_TryInitializeTracing",
+    "_PyJit_IsOnlyStrongReferenceBesidesTracer",
     "_Py_unset_eval_breaker_bit",
     "_Py_set_eval_breaker_bit",
     "trigger_backoff_counter",
@@ -1400,7 +1406,19 @@ def get_uop_cache_depths(uop: Uop) -> Iterator[tuple[int, int, int]]:
         for i in range(MAX_CACHED_REGISTER+1):
             yield i, 0, 0
         return
-    if uop.name in ("_START_EXECUTOR", "_JUMP_TO_TOP", "_COLD_EXIT"):
+    if uop.name in (
+        "_START_EXECUTOR",
+        "_JUMP_TO_TOP",
+        "_COLD_EXIT",
+        "_METHOD_POP_JUMP_IF_FALSE",
+        "_METHOD_POP_JUMP_IF_TRUE",
+        "_METHOD_JUMP",
+        "_METHOD_FOR_ITER",
+        "_METHOD_ITER_JUMP_LIST",
+        "_METHOD_ITER_JUMP_TUPLE",
+        "_METHOD_ITER_JUMP_RANGE",
+        "_METHOD_DEOPT",
+    ):
         yield 0, 0, 0
         return
     if uop.name == "_ERROR_POP_N":

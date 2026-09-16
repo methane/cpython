@@ -2216,7 +2216,7 @@ dummy_func(void) {
                 ADD_OP(_NOP, 0, 0);
             }
             else {
-                ADD_OP(_GUARD_TYPE, 0, (uintptr_t)tp);
+                ADD_OP(_GUARD_NOS_TYPE, 0, (uintptr_t)tp);
                 sym_set_type(nos, tp);
             }
             PyType_Watch(TYPE_WATCHER_ID, (PyObject *)tp);
@@ -2237,7 +2237,7 @@ dummy_func(void) {
                 ADD_OP(_NOP, 0, 0);
             }
             else {
-                ADD_OP(_GUARD_TYPE, 0, (uintptr_t)tp);
+                ADD_OP(_GUARD_NOS_TYPE, 0, (uintptr_t)tp);
                 sym_set_type(nos, tp);
             }
             PyType_Watch(TYPE_WATCHER_ID, (PyObject *)tp);
@@ -2489,17 +2489,19 @@ dummy_func(void) {
                 OPT_STAT_INC(remove_globals_incorrect_keys);
                 ctx->done = true;
             }
-            else if (get_mutations(globals) >= _Py_MAX_ALLOWED_GLOBALS_MODIFICATIONS) {
-                /* Do nothing */
-            }
             else {
                 if (!ctx->frame->globals_watched) {
                     PyDict_Watch(GLOBALS_WATCHER_ID, globals);
-                    _Py_BloomFilter_Add(dependencies, globals);
+                    _Py_BloomFilter_AddGlobal(dependencies, globals, 0, true);
                     ctx->frame->globals_watched = true;
                 }
                 if (ctx->frame->globals_checked_version == version) {
                     ADD_OP(_NOP, 0, 0);
+                }
+                else {
+                    ADD_OP(_GUARD_GLOBALS_VERSION_AND_IDENTITY, 0, version);
+                    uop_buffer_last(&ctx->out_buffer)->operand1 =
+                        (uintptr_t)globals;
                 }
             }
         }
@@ -2512,7 +2514,14 @@ dummy_func(void) {
         PyObject *cnst = NULL;
         PyInterpreterState *interp = _PyInterpreterState_GET();
         PyObject *builtins = interp->builtins;
-        if (incorrect_keys(builtins, version)) {
+        if (ctx->frame->func == NULL ||
+            ctx->frame->func->func_builtins != builtins)
+        {
+            /* Only the interpreter's builtins are covered by this watcher.
+             * A copied dict can share a keys version while its values
+             * differ. */
+        }
+        else if (incorrect_keys(builtins, version)) {
             OPT_STAT_INC(remove_globals_incorrect_keys);
             ctx->done = true;
         }
@@ -2526,6 +2535,11 @@ dummy_func(void) {
             }
             if (ctx->frame->globals_checked_version != 0 && ctx->frame->globals_watched) {
                 cnst = convert_global_to_const(this_instr, builtins);
+                if (cnst != NULL) {
+                    ADD_OP(_GUARD_BUILTINS_IDENTITY, 0, 0);
+                    ADD_OP(this_instr->opcode, this_instr->oparg,
+                           this_instr->operand0);
+                }
             }
         }
         if (cnst == NULL) {
@@ -2550,21 +2564,31 @@ dummy_func(void) {
                 OPT_STAT_INC(remove_globals_incorrect_keys);
                 ctx->done = true;
             }
-            else if (get_mutations(globals) >= _Py_MAX_ALLOWED_GLOBALS_MODIFICATIONS) {
-                /* Do nothing */
-            }
             else {
                 if (!ctx->frame->globals_watched) {
                     PyDict_Watch(GLOBALS_WATCHER_ID, globals);
-                    _Py_BloomFilter_Add(dependencies, globals);
+                    _Py_BloomFilter_AddGlobal(dependencies, globals, 0, true);
                     ctx->frame->globals_watched = true;
                 }
                 if (ctx->frame->globals_checked_version != version && this_instr[-1].opcode == _NOP) {
-                    REPLACE_OP(uop_buffer_last(&ctx->out_buffer), _GUARD_GLOBALS_VERSION, 0, version);
+                    REPLACE_OP(uop_buffer_last(&ctx->out_buffer),
+                               _GUARD_GLOBALS_VERSION_AND_IDENTITY, 0, version);
+                    uop_buffer_last(&ctx->out_buffer)->operand1 =
+                        (uintptr_t)globals;
                     ctx->frame->globals_checked_version = version;
                 }
                 if (ctx->frame->globals_checked_version == version) {
                     cnst = convert_global_to_const(this_instr, globals);
+                    if (cnst != NULL) {
+                        PyDictObject *dict = (PyDictObject *)globals;
+                        PyObject *key =
+                            DK_UNICODE_ENTRIES(dict->ma_keys)[index].me_key;
+                        assert(PyUnicode_CheckExact(key));
+                        Py_hash_t hash = PyObject_Hash(key);
+                        assert(hash != -1);
+                        _Py_BloomFilter_AddGlobal(
+                            dependencies, globals, hash, false);
+                    }
                 }
             }
         }

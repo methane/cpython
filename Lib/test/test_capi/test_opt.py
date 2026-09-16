@@ -6,7 +6,10 @@ import textwrap
 import unittest
 import gc
 import os
+import struct
+import threading
 import types
+import weakref
 
 import _opcode
 
@@ -85,9 +88,178 @@ def count_ops(ex, name):
 
 
 @requires_specialization
-@unittest.skipIf(Py_GIL_DISABLED, "optimizer not yet supported in free-threaded builds")
+@requires_jit_enabled
+class TestMethodFrontend(unittest.TestCase):
+
+    def test_compiles_both_sides_of_branch(self):
+        def choose(flag):
+            if flag:
+                value = 10
+            else:
+                value = 20
+            return value
+
+        # Call from C so the function's own RESUME counter reaches the method
+        # compilation threshold without a Python caller trace inlining it.
+        self.assertEqual(
+            list(map(choose, [True] * TIER2_RESUME_THRESHOLD)),
+            [10] * TIER2_RESUME_THRESHOLD,
+        )
+        executor = _opcode.get_executor(choose.__code__, 0)
+        opnames = get_opnames(executor)
+        self.assertIn("_METHOD_POP_JUMP_IF_FALSE", opnames)
+        self.assertIn("_METHOD_JUMP", opnames)
+        self.assertIn("_METHOD_DEOPT", opnames)
+
+        # The false arm was not executed while warming, but it is part of the
+        # compiled control-flow graph.
+        self.assertEqual([choose(True), choose(False)], [10, 20])
+
+    def test_compiles_range_loop(self):
+        def range_sum(n):
+            total = 0
+            for value in range(n):
+                total += value
+            return total
+
+        expected = sum(range(5))
+        self.assertEqual(
+            list(map(range_sum, [5] * TIER2_RESUME_THRESHOLD)),
+            [expected] * TIER2_RESUME_THRESHOLD,
+        )
+        executor = _opcode.get_executor(range_sum.__code__, 0)
+        opnames = get_opnames(executor)
+        self.assertIn("_METHOD_ITER_JUMP_RANGE", opnames)
+        self.assertIn("_METHOD_JUMP", opnames)
+        self.assertIn("_METHOD_DEOPT", opnames)
+        self.assertEqual(
+            [range_sum(n) for n in range(12)],
+            [sum(range(n)) for n in range(12)],
+        )
+
+    def test_generic_iterator_error(self):
+        class EmptyIterator:
+            def __iter__(self):
+                return self
+
+            def __next__(self):
+                raise StopIteration
+
+        class BadIterator:
+            def __iter__(self):
+                return self
+
+            def __next__(self):
+                raise ValueError("iterator failed")
+
+        def consume(iterator):
+            total = 0
+            for value in iterator:
+                total += value
+            return total
+
+        empty = EmptyIterator()
+        self.assertEqual(
+            list(map(
+                consume,
+                itertools.repeat(empty, TIER2_RESUME_THRESHOLD),
+            )),
+            [0] * TIER2_RESUME_THRESHOLD,
+        )
+        executor = _opcode.get_executor(consume.__code__, 0)
+        self.assertIn("_METHOD_FOR_ITER", get_opnames(executor))
+        with self.assertRaisesRegex(ValueError, "iterator failed"):
+            consume(BadIterator())
+
+
+@requires_specialization
 @requires_jit_enabled
 class TestExecutorInvalidation(unittest.TestCase):
+
+    def test_loop_retry_after_invalidation(self):
+        for padding in (0, 40):
+            with self.subTest(padding=padding):
+                ns = {}
+                exec("def loop(n):\n    total = 0\n    for i in range(n):\n"
+                     + "        total += i\n" * (padding + 1)
+                     + "    return total\n", ns)
+                loop = ns["loop"]
+                backward = next(inst for inst in dis.get_instructions(loop)
+                                if inst.opname == "JUMP_BACKWARD")
+                self.assertEqual(backward.arg > 255, bool(padding))
+                expected = (padding + 1) * sum(range(TIER2_THRESHOLD))
+                self.assertEqual(loop(TIER2_THRESHOLD), expected)
+                first = get_first_executor(loop)
+                self.assertIsNotNone(first)
+                # The successful trace must reset the loop countdown, even
+                # when ENTER_EXECUTOR replaced JUMP_BACKWARD rather than an
+                # EXTENDED_ARG prefix. The low three bits hold the backoff.
+                counter, = struct.unpack_from(
+                    "=H", loop.__code__._co_code_adaptive, backward.offset + 2)
+                self.assertEqual(counter >> 3, TIER2_THRESHOLD - 2)
+                _testinternalcapi.invalidate_executors(loop.__code__)
+                self.assertFalse(first.is_valid())
+                self.assertEqual(loop(TIER2_THRESHOLD), expected)
+                second = get_first_executor(loop)
+                self.assertIsNotNone(second)
+                self.assertIsNot(second, first)
+                self.assertTrue(second.is_valid())
+
+    def test_resume_counter_after_compilation(self):
+        ns = {}
+        exec("def leaf(value):\n    return value + 1\n", ns)
+        leaf = ns["leaf"]
+        # Call from C so a caller trace cannot inline the function and avoid
+        # executing its RESUME counter.
+        self.assertEqual(list(map(leaf, [1] * TIER2_RESUME_THRESHOLD)),
+                         [2] * TIER2_RESUME_THRESHOLD)
+        self.assertIsNotNone(get_first_executor(leaf))
+        counter, = struct.unpack_from("=H", leaf.__code__._co_code_adaptive, 2)
+        self.assertEqual(counter >> 3, TIER2_RESUME_THRESHOLD - 2)
+
+    @unittest.skipUnless(Py_GIL_DISABLED, "requires a free-threaded build")
+    def test_jit_disabled_and_reenabled_for_second_thread(self):
+        def loop(n):
+            total = 0
+            for i in range(n):
+                total += i
+            return total
+
+        expected = sum(range(5))
+        self.assertEqual(
+            list(map(loop, [5] * TIER2_RESUME_THRESHOLD)),
+            [expected] * TIER2_RESUME_THRESHOLD,
+        )
+        executor = _opcode.get_executor(loop.__code__, 0)
+        self.assertIn("_METHOD_ITER_JUMP_RANGE", get_opnames(executor))
+
+        ready = threading.Event()
+        release = threading.Event()
+
+        def worker():
+            ready.set()
+            release.wait()
+
+        thread = threading.Thread(target=worker)
+        thread.start()
+        try:
+            self.assertTrue(ready.wait(SHORT_TIMEOUT))
+            self.assertFalse(sys._jit.is_enabled())
+            self.assertFalse(executor.is_valid())
+            self.assertEqual(loop(5), expected)
+            self.assertIsNone(get_first_executor(loop))
+        finally:
+            release.set()
+            thread.join()
+
+        self.assertTrue(sys._jit.is_enabled())
+        self.assertEqual(
+            list(map(loop, [5] * TIER2_RESUME_THRESHOLD)),
+            [expected] * TIER2_RESUME_THRESHOLD,
+        )
+        replacement = _opcode.get_executor(loop.__code__, 0)
+        self.assertIsNot(replacement, executor)
+        self.assertIn("_METHOD_ITER_JUMP_RANGE", get_opnames(replacement))
 
     def test_invalidate_object(self):
         # Generate a new set of functions at each call
@@ -179,7 +351,6 @@ def get_bool_guard_ops():
 
 
 @requires_specialization
-@unittest.skipIf(Py_GIL_DISABLED, "optimizer not yet supported in free-threaded builds")
 @requires_jit_enabled
 @unittest.skipIf(os.getenv("PYTHON_UOPS_OPTIMIZE") == "0", "Needs uop optimizer to run.")
 class TestUops(unittest.TestCase):
@@ -626,7 +797,6 @@ class TestUops(unittest.TestCase):
 
 
 @requires_specialization
-@unittest.skipIf(Py_GIL_DISABLED, "optimizer not yet supported in free-threaded builds")
 @requires_jit_enabled
 @unittest.skipIf(os.getenv("PYTHON_UOPS_OPTIMIZE") == "0", "Needs uop optimizer to run.")
 class TestUopsOptimization(unittest.TestCase):
@@ -841,6 +1011,154 @@ class TestUopsOptimization(unittest.TestCase):
         assert "_LOAD_CONST_INLINE_BORROW" in uops
         """), PYTHON_JIT="1")
         self.assertEqual(result[0].rc, 0, result)
+
+    def test_copied_builtins_value_change(self):
+        import builtins
+
+        namespace = {"__builtins__": vars(builtins).copy()}
+        exec("def size(value):\n"
+             "    return len(value)\n"
+             "def run(value, n):\n"
+             "    for _ in range(n):\n"
+             "        result = size(value)\n"
+             "    return result\n", namespace)
+        self.assertEqual(namespace["run"]([1], TIER2_THRESHOLD), 1)
+        namespace["__builtins__"]["len"] = lambda value: 42
+        self.assertEqual(namespace["run"]([1], 8), 42)
+
+    def test_same_function_version_different_builtins(self):
+        import builtins
+
+        def make_size():
+            def size(value):
+                return len(value)
+            return size
+
+        def run(functions, value):
+            result = None
+            for function in functions:
+                result = function(value)
+            return result
+
+        size = make_size()
+        self.assertEqual(run([size] * TIER2_THRESHOLD, [1]), 1)
+        namespace = {"__builtins__": vars(builtins).copy()}
+        namespace["__builtins__"]["len"] = lambda value: 42
+        custom_size = types.FunctionType(make_size.__code__, namespace)()
+        self.assertEqual(run([size, custom_size], [1]), 42)
+
+    def test_global_guard_copied_namespace(self):
+        namespace = {}
+        exec("class Box:\n"
+             "    pass\n"
+             "stable = Box()\n"
+             "stable.value = 7\n"
+             "def read(n):\n"
+             "    total = 0\n"
+             "    for _ in range(n):\n"
+             "        total += stable.value\n"
+             "    return total\n", namespace)
+        read = namespace["read"]
+        self.assertEqual(read(TIER2_THRESHOLD), 7 * TIER2_THRESHOLD)
+        executor = get_first_executor(read)
+        self.assertIsNotNone(executor)
+        self.assertIn("_GUARD_GLOBALS_VERSION_AND_IDENTITY",
+                      get_opnames(executor))
+
+        copied = namespace.copy()
+        copied["stable"] = namespace["Box"]()
+        copied["stable"].value = 19
+        alias = types.FunctionType(read.__code__, copied)
+        self.assertEqual(alias(8), 152)
+        self.assertEqual(read(8), 56)
+
+    def _warm_named_global(self, unrelated):
+        namespace = {unrelated: 0}
+        exec("class Box:\n"
+             "    pass\n"
+             "stable = Box()\n"
+             "stable.value = 7\n"
+             "def read(n):\n"
+             "    total = 0\n"
+             "    for _ in range(n):\n"
+             "        total += stable.value\n"
+             "    return total\n", namespace)
+        read = namespace["read"]
+        self.assertEqual(read(TIER2_THRESHOLD), 7 * TIER2_THRESHOLD)
+        executor = get_first_executor(read)
+        self.assertIsNotNone(executor)
+        self.assertIn("_GUARD_GLOBALS_VERSION_AND_IDENTITY",
+                      get_opnames(executor))
+        return read, executor, namespace
+
+    def test_named_global_ignores_unrelated_replacements(self):
+        # Bloom collisions may conservatively invalidate an executor, so try
+        # several independent names and require at least one precise result.
+        retained = False
+        for attempt in range(8):
+            name = f"unrelated_{attempt}"
+            read, executor, namespace = self._warm_named_global(name)
+            namespace[name] = 1
+            self.assertEqual(read(8), 56)
+            retained |= executor.is_valid()
+
+            replacement = namespace["Box"]()
+            replacement.value = 11
+            namespace["stable"] = replacement
+            self.assertFalse(executor.is_valid())
+            self.assertEqual(read(8), 88)
+        self.assertTrue(retained)
+
+    def test_named_global_recompiles_after_mutation_limit(self):
+        read, executor, namespace = self._warm_named_global("unrelated")
+        for value in range(1, 9):
+            replacement = namespace["Box"]()
+            replacement.value = value
+            namespace["stable"] = replacement
+            self.assertFalse(executor.is_valid())
+            self.assertEqual(read(TIER2_THRESHOLD), value * TIER2_THRESHOLD)
+            executor = get_first_executor(read)
+            self.assertIsNotNone(executor)
+            self.assertTrue(executor.is_valid())
+        self.assertIn("_GUARD_GLOBALS_VERSION_AND_IDENTITY",
+                      get_opnames(executor))
+
+    def test_named_global_structure_change_invalidates(self):
+        read, executor, namespace = self._warm_named_global("unrelated")
+        namespace["new_global"] = 1
+        self.assertFalse(executor.is_valid())
+        self.assertEqual(read(8), 56)
+
+    def test_global_guard_namespace_lifetime(self):
+        read, executor, namespace = self._warm_named_global("unrelated")
+        original = weakref.ref(namespace["stable"])
+        copied = namespace.copy()
+        del copied["read"]
+        copied["stable"] = namespace["Box"]()
+        copied["stable"].value = 19
+        alias = types.FunctionType(read.__code__, copied)
+
+        del read, namespace
+        gc.collect()
+        self.assertIsNone(original())
+        self.assertFalse(executor.is_valid())
+        self.assertEqual(alias(8), 152)
+
+    def test_named_global_general_key_invalidates(self):
+        read, executor, namespace = self._warm_named_global("unrelated")
+
+        class Key:
+            def __hash__(self):
+                return hash("stable")
+
+            def __eq__(self, other):
+                return other == "stable"
+
+        replacement = namespace["Box"]()
+        replacement.value = 23
+        namespace[Key()] = replacement
+        self.assertFalse(executor.is_valid())
+        self.assertEqual(read(8), 184)
 
     def test_float_add_constant_propagation(self):
         def testfunc(n):
@@ -2445,7 +2763,125 @@ class TestUopsOptimization(unittest.TestCase):
         self.assertEqual(uops.count("_STORE_SUBSCR_DICT_KNOWN_HASH"), 1)
         self.assertEqual(uops.count("_GUARD_NOS_DICT_SUBSCRIPT"), 0)
         self.assertEqual(uops.count("_GUARD_NOS_DICT_STORE_SUBSCRIPT"), 0)
-        self.assertEqual(uops.count("_GUARD_TYPE"), 1)
+        self.assertEqual(uops.count("_GUARD_NOS_TYPE"), 1)
+
+    def test_dict_subclass_guards_receiver(self):
+        class HashableDict(dict):
+            __hash__ = object.__hash__
+
+        key = HashableDict()
+        receiver = HashableDict({key: 1})
+
+        def read(n):
+            for _ in range(n):
+                value = receiver[key]
+            return value
+
+        def write(n):
+            for _ in range(n):
+                receiver[key] = 2
+
+        for func in (read, write):
+            _, ex = self._run_with_optimizer(func, TIER2_THRESHOLD)
+            self.assertIsNotNone(ex)
+            self.assertIn("_GUARD_NOS_TYPE", get_opnames(ex))
+
+        # The key has the recorded receiver type, but is not the receiver.
+        # Guarding TOS would incorrectly admit a non-dict to the dict uop.
+        stores = []
+        class Other:
+            def __getitem__(self, sub):
+                assert sub is key
+                return 42
+
+            def __setitem__(self, sub, value):
+                stores.append((sub, value))
+
+        receiver = Other()
+        self.assertEqual(read(8), 42)
+        write(8)
+        self.assertEqual(stores, [(key, 2)] * 8)
+
+    def test_method_descriptor_subclass_calls(self):
+        cases = (
+            ("receiver.append(1)", "_CALL_METHOD_DESCRIPTOR_O"),
+            ("receiver.copy()", "_CALL_METHOD_DESCRIPTOR_NOARGS"),
+            ("receiver.count(1)", "_CALL_METHOD_DESCRIPTOR_O"),
+            ("receiver.index(1)", "_CALL_METHOD_DESCRIPTOR_FAST"),
+            ("receiver.sort()", "_CALL_METHOD_DESCRIPTOR_FAST_WITH_KEYWORDS"),
+        )
+        for expression, opcode in cases:
+            for unbound in (False, True):
+                with self.subTest(expression=expression, unbound=unbound):
+                    class MyList(list):
+                        pass
+                    receiver = MyList([3, 1, 2])
+                    call = expression
+                    if unbound:
+                        method_call = expression.removeprefix("receiver.")
+                        name, args = method_call.split("(", 1)
+                        separator = ", " if args != ")" else ""
+                        call = f"list.{name}(receiver{separator}{args}"
+                    namespace = {}
+                    exec("def run(receiver, n):\n"
+                         "    for _ in range(n):\n"
+                         f"        result = {call}\n"
+                         "    return result\n", namespace)
+                    run = namespace["run"]
+                    run(receiver, TIER2_THRESHOLD)
+                    ex = get_first_executor(run)
+                    self.assertIsNotNone(ex)
+                    self.assertTrue(
+                        any(
+                            name == opcode or name == opcode + "_INLINE"
+                            for name in get_opnames(ex)
+                        ),
+                        get_opnames(ex),
+                    )
+                    reference = MyList(receiver)
+                    expected = eval(expression, {"receiver": reference})
+                    self.assertEqual(run(receiver, 1), expected)
+                    self.assertEqual(receiver, reference)
+
+    def test_method_descriptor_subclass_override_and_error(self):
+        class MyList(list):
+            pass
+
+        def copy(receiver, n):
+            for _ in range(n):
+                result = receiver.copy()
+            return result
+
+        copy(MyList([1]), TIER2_THRESHOLD)
+        self.assertIn("_CALL_METHOD_DESCRIPTOR_NOARGS_INLINE",
+                      get_opnames(get_first_executor(copy)))
+        MyList.copy = lambda self: "overridden"
+        self.assertEqual(copy(MyList([1]), 8), "overridden")
+
+        def pop(receiver, n):
+            for _ in range(n):
+                result = list.pop(receiver)
+            return result
+
+        pop(MyList(range(TIER2_THRESHOLD)), TIER2_THRESHOLD)
+        ex = get_first_executor(pop)
+        self.assertIsNotNone(ex)
+        self.assertTrue(any(name.startswith("_CALL_METHOD_DESCRIPTOR_FAST")
+                            for name in get_opnames(ex)), get_opnames(ex))
+        with self.assertRaises(TypeError):
+            pop({}, 8)
+        receiver = MyList([1])
+        try:
+            pop(receiver, 8)
+        except IndexError as error:
+            self.assertEqual(str(error), "pop from empty list")
+            tb = error.__traceback__
+            while tb.tb_frame.f_code is not pop.__code__:
+                tb = tb.tb_next
+            self.assertEqual(tb.tb_lineno, pop.__code__.co_firstlineno + 2)
+        else:
+            self.fail("empty-list error was skipped")
+        self.assertEqual(receiver, [])
 
     def test_dict_subclass_subscr_with_override(self):
         class MyDict(dict):
@@ -4981,7 +5417,10 @@ class TestUopsOptimization(unittest.TestCase):
         self.assertIsNotNone(ex)
         uops = get_opnames(ex)
 
-        self.assertIn("_POP_TOP_INT", uops)
+        # Constants owned by code objects use deferred refcounting in a
+        # free-threaded build, so discarding the returned borrow is a no-op.
+        expected = "_POP_TOP_NOP" if Py_GIL_DISABLED else "_POP_TOP_INT"
+        self.assertIn(expected, uops)
 
     def test_pop_top_specialize_float(self):
         def testfunc(n):
@@ -4994,7 +5433,8 @@ class TestUopsOptimization(unittest.TestCase):
         self.assertIsNotNone(ex)
         uops = get_opnames(ex)
 
-        self.assertIn("_POP_TOP_FLOAT", uops)
+        expected = "_POP_TOP_NOP" if Py_GIL_DISABLED else "_POP_TOP_FLOAT"
+        self.assertIn(expected, uops)
 
 
     def test_unary_negative_long_float_type(self):

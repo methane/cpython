@@ -11571,13 +11571,6 @@ fi
 { printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: $tier2_flags $jit_flags" >&5
 printf "%s\n" "$tier2_flags $jit_flags" >&6; }
 
-if test "$disable_gil" = "yes" -a "$enable_experimental_jit" != "no"; then
-  # GH-133171: This configuration builds the JIT but never actually uses it,
-  # which is surprising (and strictly worse than not building it at all):
-  { printf "%s\n" "$as_me:${as_lineno-$LINENO}: WARNING: --enable-experimental-jit does not work correctly with --disable-gil." >&5
-printf "%s\n" "$as_me: WARNING: --enable-experimental-jit does not work correctly with --disable-gil." >&2;}
-fi
-
 case "$ac_cv_cc_name" in
 mpicc)
     CFLAGS_NODIST="$CFLAGS_NODIST"
@@ -40265,4 +40258,3 @@ if test "$ac_cv_header_stdatomic_h" != "yes"; then
   { printf "%s\n" "$as_me:${as_lineno-$LINENO}: Your compiler or platform does have a working C11 stdatomic.h. A future version of Python may require stdatomic.h." >&5
 printf "%s\n" "$as_me: Your compiler or platform does have a working C11 stdatomic.h. A future version of Python may require stdatomic.h." >&6;}
 fi
-

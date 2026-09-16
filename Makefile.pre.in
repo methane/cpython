@@ -2195,6 +2195,7 @@ Python/flowgraph.o: \
 		$(srcdir)/Include/internal/pycore_opcode_metadata.h
 
 Python/optimizer.o: \
+		$(srcdir)/Python/record_functions.c.h \
 		$(srcdir)/Python/executor_cases.c.h \
 		$(srcdir)/Include/internal/pycore_opcode_metadata.h \
 		$(srcdir)/Include/internal/pycore_optimizer.h
@@ -3166,6 +3167,7 @@ JIT_DEPS = \
 		$(srcdir)/Tools/jit/*.h \
 		$(srcdir)/Tools/jit/*.py \
 		$(srcdir)/Python/executor_cases.c.h \
+		$(srcdir)/Include/internal/pycore_optimizer.h \
 		pyconfig.h
 
 $(JIT_GENERATED_STAMP): $(JIT_DEPS)

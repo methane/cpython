@@ -130,6 +130,17 @@ do {                                                                      \
 #define ASSERT_WITHIN_STACK_BOUNDS(F, L) (void)0
 #endif
 
+// The free-threaded JIT currently runs only while its interpreter has one
+// thread.  Generate the same lock-free object operations as the GIL build.
+#undef LOCK_OBJECT
+#undef UNLOCK_OBJECT
+#define LOCK_OBJECT(op) (1)
+#define UNLOCK_OBJECT(op) ((void)0)
+
+#ifdef Py_GIL_DISABLED
+#undef Py_GIL_DISABLED
+#endif
+
 __attribute__((preserve_none)) _Py_CODEUNIT *
 _JIT_ENTRY(
     _PyExecutorObject *executor, _PyInterpreterFrame *frame, _PyStackRef *stack_pointer, PyThreadState *tstate,
