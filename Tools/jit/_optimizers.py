@@ -814,3 +814,32 @@ class OptimizerX86(Optimizer):  # pylint: disable = too-few-public-methods
     # https://www.felixcloutier.com/x86/ret
     _re_return = re.compile(r"\s*retq?\b")
     _frame_pointer_modify = re.compile(r"\s*movq?\s+%(\w+),\s+%rbp.*")
+
+
+class OptimizerX86ELF(OptimizerX86):
+    """Use unsigned 32-bit relocations for bounded operand field values."""
+
+    _re_operand_field = re.compile(
+        r"\s*movabsq?\s+\$(?P<symbol>_JIT_OPERAND[01]_FIELD_"
+        r"(?P<shift>\d+)_(?P<width>\d+)),\s*%"
+        r"(?P<register>r(?:ax|bx|cx|dx|si|di|bp|sp|[89]|1[0-5]))"
+        r"(?P<comment>\s*(?:#.*)?)$"
+    )
+
+    def _fixup_constants(self) -> None:
+        for block in self._blocks():
+            for index, instruction in enumerate(block.instructions):
+                match = self._re_operand_field.fullmatch(instruction.text)
+                if match is None:
+                    continue
+                shift, width = int(match["shift"]), int(match["width"])
+                if not (0 <= shift < 64 and 1 <= width <= 32 and shift + width <= 64):
+                    continue
+                # These are values, not addresses. The patcher masks each
+                # field to at most 32 bits, and movl zeroes the upper half.
+                # Do not transform symbols with addends or ordinary pointers.
+                register = match["register"]
+                register = (register + "d" if register[1:].isdigit()
+                            else "e" + register[1:])
+                text = f"\tmovl ${match['symbol']}, %{register}{match['comment']}"
+                block.instructions[index] = self._parse_instruction(text)

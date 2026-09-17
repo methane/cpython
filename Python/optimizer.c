@@ -8,17 +8,22 @@
 #include "pycore_bitutils.h"        // _Py_popcount32()
 #include "pycore_ceval.h"       // _Py_set_eval_breaker_bit
 #include "pycore_code.h"            // _Py_GetBaseCodeUnit
+#include "pycore_dict.h"
 #include "pycore_function.h"        // _PyFunction_Vectorcall()
 #include "pycore_interpframe.h"
+#include "pycore_iterobject.h"    // _PyZip_NextListPair()
 #include "pycore_object.h"          // _PyObject_GC_UNTRACK()
 #include "pycore_opcode_metadata.h" // _PyOpcode_OpName[]
 #include "pycore_opcode_utils.h"  // MAX_REAL_OPCODE
 #include "pycore_optimizer.h"     // _Py_uop_analyze_and_optimize()
 #include "pycore_pystate.h"       // _PyInterpreterState_GET()
 #include "pycore_tuple.h"         // _PyTuple_FromArraySteal
+#include "pycore_typeobject.h"    // _PyType_LookupByVersion()
 #include "pycore_unicodeobject.h" // _PyUnicode_FromASCII
 #include "pycore_uop_ids.h"
 #include "pycore_jit.h"
+#include "pycore_jit_call.h"
+#include "pycore_long.h"           // _PyLong_GetOne()
 #include <stdbool.h>
 #include <stdint.h>
 #include <stddef.h>
@@ -28,7 +33,8 @@
 #undef NEED_OPCODE_METADATA
 
 #define MAX_EXECUTORS_SIZE 256
-#define METHOD_INLINE_MAX_CODE_SIZE 128
+
+static bool method_is_edge(int opcode);
 
 // Trace too short, no progress:
 // _START_EXECUTOR
@@ -154,6 +160,16 @@ make_executor_from_uops(
     const _PyBloomFilter *dependencies,
     int chain_depth,
     bool is_method);
+
+static void invalidate_inlined_method_traces(
+    PyInterpreterState *interp, PyCodeObject *code);
+
+_Py_CODEUNIT *
+_PyJit_CallMethod(PyThreadState *tstate, _PyExecutorObject *caller_executor,
+                  _PyInterpreterFrame **frame)
+{
+    return _PyJit_CallMethodImpl(tstate, caller_executor, frame, _Py_jit_entry);
+}
 
 static int
 uop_optimize(_PyInterpreterFrame *frame, PyThreadState *tstate,
@@ -303,8 +319,12 @@ static void executor_invalidate(PyObject *op);
 static void
 executor_clear_exits(_PyExecutorObject *executor)
 {
-    _PyExecutorObject *cold = _PyExecutor_GetColdExecutor();
-    _PyExecutorObject *cold_dynamic = _PyExecutor_GetColdDynamicExecutor();
+    /* Thread creation can invalidate another interpreter while its world is
+     * stopped. These sentinels were created before linking the executor. */
+    PyInterpreterState *interp = executor->vm_data.interp;
+    _PyExecutorObject *cold = interp->cold_executor;
+    _PyExecutorObject *cold_dynamic = interp->cold_dynamic_executor;
+    assert(cold != NULL && cold_dynamic != NULL);
     for (uint32_t i = 0; i < executor->exit_count; i++) {
         _PyExitData *exit = &executor->exits[i];
         exit->temperature = initial_unreachable_backoff_counter();
@@ -361,7 +381,7 @@ add_to_pending_deletion_list(_PyExecutorObject *self)
         return;
     }
     self->vm_data.pending_deletion = 1;
-    PyInterpreterState *interp = PyInterpreterState_Get();
+    PyInterpreterState *interp = self->vm_data.interp;
     self->vm_data.links.previous = NULL;
     self->vm_data.links.next = interp->executor_deletion_list_head;
     interp->executor_deletion_list_head = self;
@@ -1101,6 +1121,16 @@ _PyJit_translate_single_bytecode_to_trace(
                 }
                 // All other instructions
                 ADD_TO_TRACE(uop, oparg, operand, target);
+                if (uop == _LOAD_ATTR_SLOT || uop == _LOAD_ATTR_INSTANCE_VALUE) {
+                    _PyAttrCache *cache = (_PyAttrCache *)(this_instr + 1);
+                    uop_buffer_last(trace)->operand1 = read_u32(cache->version) |
+                        ((uint64_t)(uop == _LOAD_ATTR_INSTANCE_VALUE) << 32);
+                }
+                else if (uop == _BINARY_OP_ADD_INT || uop == _BINARY_OP_SUBTRACT_INT) {
+                    /* Keep the error location for post-analysis regions even
+                     * when analysis removes the preceding _SET_IP. */
+                    uop_buffer_last(trace)->operand1 = (uintptr_t)this_instr;
+                }
             }
             break;
         }  // End default
@@ -1411,7 +1441,7 @@ prepare_for_execution(_PyUOpInstruction *buffer, int length)
         assert(inst->opcode != _NOP);
         int32_t target = (int32_t)uop_get_target(inst);
         uint16_t exit_flags = _PyUop_Flags[base_opcode] & (HAS_EXIT_FLAG | HAS_DEOPT_FLAG | HAS_PERIODIC_FLAG);
-        if (exit_flags) {
+        if (exit_flags && !method_is_edge(base_opcode)) {
             uint16_t base_exit_op = _EXIT_TRACE;
             if (exit_flags & HAS_DEOPT_FLAG) {
                 base_exit_op = _DEOPT;
@@ -1440,12 +1470,17 @@ prepare_for_execution(_PyUOpInstruction *buffer, int length)
         if (_PyUop_Flags[base_opcode] & HAS_ERROR_FLAG) {
             int popped = (_PyUop_Flags[base_opcode] & HAS_ERROR_NO_POP_FLAG) ?
                 0 : _PyUop_num_popped(base_opcode, inst->oparg);
-            if (target != current_error_target || popped != current_popped) {
+            bool region_sets_ip = base_opcode == _UPDATE_INT_ATTRIBUTE ||
+                base_opcode == _FLOAT_ATTRIBUTE_SUM_PRODUCTS ||
+                base_opcode == _FLOAT_ATTRIBUTE_SUM_PRODUCTS_0 ||
+                base_opcode == _FLOAT_ATTRIBUTE_SUM_PRODUCTS_1;
+            int32_t error_target = region_sets_ip ? -1 : target;
+            if (error_target != current_error_target || popped != current_popped) {
                 current_popped = popped;
                 current_error = next_spare;
-                current_error_target = target;
+                current_error_target = error_target;
                 make_exit(&buffer[next_spare], _ERROR_POP_N_r00, 0, false);
-                buffer[next_spare].operand0 = target;
+                buffer[next_spare].operand0 = (uint32_t)error_target;
                 next_spare++;
             }
             buffer[i].error_target = current_error;
@@ -1477,6 +1512,7 @@ allocate_executor(int exit_count, int length)
     res->code_size = length;
     res->exit_count = exit_count;
     res->jit_registration = NULL;
+    res->vm_data.interp = _PyInterpreterState_GET();
     return res;
 }
 
@@ -1650,9 +1686,6 @@ make_executor_from_uops(
 #ifdef _Py_JIT
     executor->jit_code = NULL;
     executor->jit_size = 0;
-    // This is initialized to false so we can prevent the executor
-    // from being immediately detected as cold and invalidated.
-    executor->vm_data.cold = false;
     if (_PyJIT_Compile(executor, executor->trace, length)) {
         Py_DECREF(executor);
         return NULL;
@@ -1703,6 +1736,22 @@ stack_allocate(
     int depth = 0;
     _PyUOpInstruction *write = output;
     for (int i = 0; i < length; i++) {
+        int uop = buffer[i].opcode;
+        if (offset_map != NULL && uop == _METHOD_LABEL) {
+            int entry_depth = buffer[i].oparg;
+            assert(entry_depth <= 2);
+            if (entry_depth != depth) {
+                *write++ = (_PyUOpInstruction) {
+                    .opcode = _PyUop_SpillsAndReloads[depth][entry_depth],
+                    .format = UOP_FORMAT_TARGET,
+                };
+                depth = entry_depth;
+            }
+            /* Incoming edges already use the block ABI. Only the linear
+             * fallthrough executes the conversion emitted above. */
+            offset_map[i] = (uint16_t)(write - output);
+            continue;
+        }
         if (offset_map != NULL) {
             ptrdiff_t offset = write - output;
             if (offset > UINT16_MAX) {
@@ -1710,11 +1759,18 @@ stack_allocate(
             }
             offset_map[i] = (uint16_t)offset;
         }
-        int uop = buffer[i].opcode;
         if (uop == _NOP) {
             continue;
         }
         int new_depth = _PyUop_Caching[uop].best[depth];
+        if (offset_map != NULL && method_is_edge(uop)) {
+            uint64_t target = buffer[i].operand1;
+            assert(target < (uint64_t)length);
+            assert(buffer[target].opcode == _METHOD_LABEL);
+            new_depth = buffer[target].oparg +
+                (uop == _METHOD_POP_JUMP_IF_FALSE ||
+                 uop == _METHOD_POP_JUMP_IF_TRUE);
+        }
         if (new_depth != depth) {
             write->opcode = _PyUop_SpillsAndReloads[depth][new_depth];
             assert(write->opcode != 0);
@@ -1738,10 +1794,9 @@ stack_allocate(
 /* Method frontend
  *
  * The tracing frontend can carry cached stack entries across a single known
- * path. A method has merge points, so its control-flow uops have an empty
- * cache signature. stack_allocate() spills before retained edges, so joins
- * use the Python value stack as their only state. Adjacent single-predecessor
- * edges may be elided to preserve cached values.
+ * path. Method block labels define a common cache depth for incoming edges.
+ * stack_allocate() converts each predecessor to that convention and removes
+ * the labels. Iterator exhaustion edges retain their two iterator operands.
  */
 
 typedef enum {
@@ -1782,6 +1837,12 @@ typedef struct {
     PyObject *object;
     uint8_t kind;
     uint8_t compact_int;
+    uint8_t unique;
+    uint8_t borrowed;
+    // Bit 0: valid inline values; bit 1: no materialized dictionary.
+    uint8_t managed_guards;
+    uint16_t origin;
+    uint32_t type_version;
 } _PyMethodValue;
 
 static _PyMethodValue
@@ -1835,7 +1896,23 @@ method_value_equal(_PyMethodValue left, _PyMethodValue right)
 {
     return left.kind == right.kind &&
         left.object == right.object &&
-        left.compact_int == right.compact_int;
+        left.compact_int == right.compact_int &&
+        left.unique == right.unique && left.borrowed == right.borrowed &&
+        left.origin == right.origin && left.type_version == right.type_version &&
+        left.managed_guards == right.managed_guards;
+}
+
+static bool
+method_close_cannot_escape(_PyMethodValue value)
+{
+    if (value.kind == METHOD_VALUE_NULL ||
+        (value.kind == METHOD_VALUE_CONST && _Py_IsImmortal(value.object))) {
+        return true;
+    }
+    PyTypeObject *type = method_value_get_type(value);
+    return type == &PyLong_Type || type == &PyFloat_Type ||
+        type == &PyBool_Type || type == &PyUnicode_Type ||
+        type == &PyBytes_Type || type == &_PyNone_Type;
 }
 
 static _PyMethodValue
@@ -1854,7 +1931,122 @@ method_value_merge(_PyMethodValue left, _PyMethodValue right)
 }
 
 static int
+method_specialize_local_cleanup(_PyMethodValue value)
+{
+    PyTypeObject *type = method_value_get_type(value);
+    if (value.kind == METHOD_VALUE_NULL || value.borrowed ||
+        (value.kind == METHOD_VALUE_CONST && _Py_IsImmortal(value.object)) ||
+        type == &PyBool_Type || type == &_PyNone_Type)
+    {
+        return _POP_TOP_NOP;
+    }
+    if (type == &PyLong_Type) {
+        return _POP_TOP_INT;
+    }
+    if (type == &PyFloat_Type) {
+        return _POP_TOP_FLOAT;
+    }
+    if (type == &PyUnicode_Type) {
+        return _POP_TOP_UNICODE;
+    }
+    return _POP_TOP;
+}
+
+static bool
+method_checked_local_store(int opcode, uint32_t local,
+                           const _PyMethodValue *values,
+                           int locals_count, int depth)
+{
+#ifdef Py_GIL_DISABLED
+    return false;
+#else
+    return opcode == STORE_FAST && local < (uint32_t)locals_count && depth > 0 &&
+        !method_close_cannot_escape(values[local]) &&
+        method_close_cannot_escape(values[locals_count + depth - 1]);
+#endif
+}
+
+/* Fold immortal bindings only. Value changes remain covered by named
+ * dependencies; mapping identity guards handle code shared across globals. */
+static PyObject *
+method_global_constant(PyFunctionObject *func, PyCodeObject *code,
+                       const _PyMethodInstruction *mi)
+{
+    if (mi->opcode != LOAD_GLOBAL_MODULE && mi->opcode != LOAD_GLOBAL_BUILTIN) {
+        return NULL;
+    }
+    _PyLoadGlobalCache *cache = (_PyLoadGlobalCache *)(
+        _PyCode_CODE(code) + mi->opcode_offset + 1);
+    PyObject *mapping = func->func_globals;
+    if (!PyDict_CheckExact(mapping) ||
+        ((PyDictObject *)mapping)->ma_keys->dk_version != cache->module_keys_version) {
+        return NULL;
+    }
+    uint32_t version = cache->module_keys_version;
+    if (mi->opcode == LOAD_GLOBAL_BUILTIN) {
+        PyInterpreterState *interp = _PyInterpreterState_GET();
+        mapping = func->func_builtins;
+        if (mapping != interp->builtins ||
+            interp->rare_events.builtin_dict >= _Py_MAX_ALLOWED_BUILTINS_MODIFICATIONS) {
+            return NULL;
+        }
+        version = cache->builtin_keys_version;
+    }
+    PyDictObject *dict = (PyDictObject *)mapping;
+    if (!PyDict_CheckExact(mapping) || dict->ma_keys->dk_version != version ||
+        dict->ma_keys->dk_kind != DICT_KEYS_UNICODE ||
+        cache->index >= dict->ma_keys->dk_nentries) {
+        return NULL;
+    }
+    PyObject *value = DK_UNICODE_ENTRIES(dict->ma_keys)[cache->index].me_value;
+    return value != NULL && _Py_IsImmortal(value) ? value : NULL;
+}
+
+static bool
+method_is_empty_set_call(int opcode, uint32_t oparg,
+                         const _PyMethodValue *values, int locals_count,
+                         int depth)
+{
+    return opcode == CALL_BUILTIN_CLASS && oparg == 0 && depth >= 2 &&
+        values[locals_count + depth - 1].kind == METHOD_VALUE_NULL &&
+        values[locals_count + depth - 2].kind == METHOD_VALUE_CONST &&
+        values[locals_count + depth - 2].object == (PyObject *)&PySet_Type;
+}
+
+static PyObject *
+method_attribute_default(PyCodeObject *code, const _PyMethodInstruction *mi)
+{
+#ifdef Py_GIL_DISABLED
+    return NULL;
+#else
+    if (mi->opcode != LOAD_ATTR_INSTANCE_VALUE) {
+        return NULL;
+    }
+    _PyAttrCache *cache = (_PyAttrCache *)(
+        _PyCode_CODE(code) + mi->opcode_offset + 1);
+    PyTypeObject *type = _PyType_LookupByVersion(read_u32(cache->version));
+    if (type == NULL) {
+        return NULL;
+    }
+    PyObject *name = PyTuple_GET_ITEM(code->co_names, mi->oparg >> 1);
+    PyObject *value = _PyType_LookupRef(type, name);
+    if (value == NULL) {
+        return NULL;
+    }
+    /* The existing type-version guard covers the class binding. Restrict
+     * defaults to immortal non-descriptors with immutable types, so neither
+     * the pointer nor descriptor behavior can change behind that guard. */
+    bool usable = _Py_IsImmortal(value) &&
+        (Py_TYPE(value)->tp_flags & Py_TPFLAGS_IMMUTABLETYPE) &&
+        Py_TYPE(value)->tp_descr_get == NULL;
+    Py_DECREF(value);
+    return usable ? value : NULL;
+#endif
+}
+
+static int
 method_apply_stack_effect(
+    PyFunctionObject *func,
     PyCodeObject *code,
     const _PyMethodInstruction *mi,
     _PyMethodValue *values,
@@ -1866,6 +2058,77 @@ method_apply_stack_effect(
     int opcode = mi->opcode;
     int base_opcode = _PyOpcode_Deopt[opcode];
     _PyMethodValue *stack = values + locals_count;
+
+    bool borrowed_attribute =
+        (opcode == LOAD_ATTR_INSTANCE_VALUE ||
+         opcode == LOAD_ATTR_INSTANCE_VALUE_NONDATA || opcode == LOAD_ATTR_SLOT) &&
+        *depth > 0 && stack[*depth - 1].borrowed;
+    bool guarded_deref = false;
+    bool borrowed_store = false;
+#ifndef Py_GIL_DISABLED
+    guarded_deref = opcode == LOAD_DEREF;
+    borrowed_store = (opcode == STORE_ATTR_INSTANCE_VALUE ||
+                      opcode == STORE_ATTR_INSTANCE_VALUE_NONDATA ||
+                      opcode == STORE_ATTR_SLOT) &&
+        *depth >= 2 && stack[*depth - 1].borrowed;
+#endif
+    bool safe_store = base_opcode == STORE_FAST &&
+        mi->oparg < (uint32_t)locals_count &&
+        method_close_cannot_escape(values[mi->oparg]);
+    safe_store |= method_checked_local_store(opcode, mi->oparg, values,
+                                            locals_count, *depth);
+    if (opcode == STORE_FAST_LOAD_FAST && mi->oparg <= UINT8_MAX &&
+        (mi->oparg >> 4) < (uint32_t)locals_count) {
+        safe_store = method_close_cannot_escape(values[mi->oparg >> 4]);
+    }
+    if (opcode == STORE_FAST_STORE_FAST && mi->oparg <= UINT8_MAX) {
+        uint32_t first = mi->oparg >> 4;
+        uint32_t second = mi->oparg & 15;
+        safe_store = first != second && first < (uint32_t)locals_count &&
+            second < (uint32_t)locals_count &&
+            method_close_cannot_escape(values[first]) &&
+            method_close_cannot_escape(values[second]);
+    }
+    // Python calls transfer to another frame without necessarily having a
+    // C-level escaping operation in their macro (notably CALL_PY_EXACT_ARGS).
+    bool may_escape = OPCODE_HAS_ESCAPES(opcode) ||
+        base_opcode == CALL || base_opcode == CALL_KW;
+    if (may_escape && !borrowed_attribute &&
+        !guarded_deref && !safe_store && !borrowed_store &&
+        !(opcode == BUILD_MAP && mi->oparg == 0) &&
+        !method_is_empty_set_call(opcode, mi->oparg, values, locals_count, *depth)) {
+        for (int i = 0; i < *depth; i++) {
+            stack[i].unique = stack[i].borrowed = false;
+            stack[i].origin = stack[i].type_version = 0;
+            stack[i].managed_guards = 0;
+        }
+        for (int i = 0; i < locals_count; i++) {
+            values[i].type_version = 0;
+            values[i].managed_guards = 0;
+        }
+    }
+    if (borrowed_attribute || borrowed_store) {
+        // A borrowed receiver's guarded store either exits before mutation
+        // or completes without a callback, preserving its type version.
+        int origin = stack[*depth - 1].origin;
+        if (origin > 0 && origin <= locals_count) {
+            _PyAttrCache *cache = (_PyAttrCache *)(
+                _PyCode_CODE(code) + mi->opcode_offset + 1);
+            values[origin - 1].type_version = read_u32(cache->version);
+#ifndef Py_GIL_DISABLED
+            if (opcode == STORE_ATTR_INSTANCE_VALUE ||
+                opcode == STORE_ATTR_INSTANCE_VALUE_NONDATA)
+            {
+                values[origin - 1].managed_guards = 3;
+            }
+            else if (opcode == LOAD_ATTR_INSTANCE_VALUE ||
+                     opcode == LOAD_ATTR_INSTANCE_VALUE_NONDATA)
+            {
+                values[origin - 1].managed_guards |= 1;
+            }
+#endif
+        }
+    }
 
     /* The generated stack-effect tables deliberately treat superinstructions
      * as opaque.  Preserve their local-state transfers here so that facts can
@@ -1883,6 +2146,11 @@ method_apply_stack_effect(
         }
         stack[(*depth)++] = values[first];
         stack[(*depth)++] = values[second];
+        stack[*depth - 2].origin = first + 1;
+        stack[*depth - 1].origin = second + 1;
+        if (opcode == LOAD_FAST_BORROW_LOAD_FAST_BORROW) {
+            stack[*depth - 1].borrowed = stack[*depth - 2].borrowed = true;
+        }
         return 1;
     }
     if (opcode == STORE_FAST_LOAD_FAST) {
@@ -1894,7 +2162,10 @@ method_apply_stack_effect(
             return 0;
         }
         values[store] = stack[--(*depth)];
+        values[store].unique = values[store].borrowed = false;
+        values[store].origin = 0;
         stack[(*depth)++] = values[load];
+        stack[*depth - 1].origin = load + 1;
         return 1;
     }
     if (opcode == STORE_FAST_STORE_FAST) {
@@ -1907,6 +2178,9 @@ method_apply_stack_effect(
         }
         values[first] = stack[*depth - 1];
         values[second] = stack[*depth - 2];
+        values[first].unique = values[first].borrowed = false;
+        values[second].unique = values[second].borrowed = false;
+        values[first].origin = values[second].origin = 0;
         *depth -= 2;
         return 1;
     }
@@ -1917,15 +2191,47 @@ method_apply_stack_effect(
             return 0;
         }
         stack[(*depth)++] = values[mi->oparg];
+        stack[*depth - 1].borrowed = true;
+        stack[*depth - 1].origin = mi->oparg + 1;
         return 1;
     }
-    if (opcode == CALL_PY_EXACT_ARGS) {
-        int popped = 2 + (int)mi->oparg;
+    if (base_opcode == CALL || base_opcode == CALL_KW) {
+        int popped = 2 + (base_opcode == CALL_KW) + (int)mi->oparg;
         if (popped > *depth || *depth - popped >= stack_capacity) {
             return 0;
         }
+        _PyMethodValue callable = stack[*depth - popped];
+        _PyMethodValue result = method_value_unknown();
+        if (callable.kind == METHOD_VALUE_CONST &&
+            (callable.object == (PyObject *)&PyEnum_Type ||
+             callable.object == (PyObject *)&PyZip_Type)) {
+            result = method_value_type((PyTypeObject *)callable.object, false);
+        }
         *depth -= popped;
-        stack[(*depth)++] = method_value_unknown();
+        stack[(*depth)++] = result;
+        return 1;
+    }
+
+    if (base_opcode == GET_ITER && *depth > 0 && *depth < stack_capacity) {
+        PyTypeObject *type = method_value_get_type(stack[*depth - 1]);
+        if (type == &PyEnum_Type || type == &PyZip_Type) {
+            /* These immutable builtin types always return themselves from
+             * tp_iter, and use the ordinary (non-virtual) iterator protocol. */
+            stack[(*depth)++] = method_value_null();
+            return 1;
+        }
+    }
+
+    if (base_opcode == LOAD_GLOBAL) {
+        if (*depth + 1 + (mi->oparg & 1) > stack_capacity) {
+            return 0;
+        }
+        PyObject *constant = method_global_constant(func, code, mi);
+        stack[(*depth)++] = constant == NULL
+            ? method_value_unknown() : method_value_const(constant);
+        if (mi->oparg & 1) {
+            stack[(*depth)++] = method_value_null();
+        }
         return 1;
     }
 
@@ -1972,6 +2278,7 @@ method_apply_stack_effect(
                 return 0;
             }
             stack[(*depth)++] = values[mi->oparg];
+            stack[*depth - 1].origin = mi->oparg + 1;
             return 1;
         case LOAD_FAST_AND_CLEAR:
             if (mi->oparg >= (uint32_t)locals_count ||
@@ -1987,6 +2294,8 @@ method_apply_stack_effect(
                 return 0;
             }
             values[mi->oparg] = stack[--(*depth)];
+            values[mi->oparg].unique = values[mi->oparg].borrowed = false;
+            values[mi->oparg].origin = 0;
             return 1;
         case DELETE_FAST:
             if (mi->oparg >= (uint32_t)locals_count) {
@@ -2006,6 +2315,7 @@ method_apply_stack_effect(
             {
                 return 0;
             }
+            stack[*depth - (int)mi->oparg].unique = false;
             stack[*depth] = stack[*depth - (int)mi->oparg];
             (*depth)++;
             return 1;
@@ -2021,8 +2331,12 @@ method_apply_stack_effect(
             return 1;
     }
 
-    int popped = _PyOpcode_num_popped(opcode, mi->oparg);
-    int pushed = _PyOpcode_num_pushed(opcode, mi->oparg);
+    /* A CFG edge describes the completed bytecode, including a Python callee's
+     * eventual return. Specialized frame-pushing opcodes describe the immediate
+     * evaluator transition instead (for example LOAD_ATTR_PROPERTY pushes zero
+     * values). Their unspecialized opcode gives the logical stack effect here. */
+    int popped = _PyOpcode_num_popped(base_opcode, mi->oparg);
+    int pushed = _PyOpcode_num_pushed(base_opcode, mi->oparg);
     if (popped < 0 || pushed < 0 || popped > *depth ||
         *depth - popped + pushed > stack_capacity)
     {
@@ -2040,6 +2354,7 @@ method_apply_stack_effect(
         case BINARY_OP_SUBTRACT_FLOAT:
         case BINARY_OP_MULTIPLY_FLOAT:
             result = method_value_type(&PyFloat_Type, false);
+            result.unique = true;
             break;
         case BINARY_OP_ADD_UNICODE:
             result = method_value_type(&PyUnicode_Type, false);
@@ -2094,6 +2409,10 @@ method_merge_block(
     int active = locals_count + depth;
     if (!block->initialized) {
         memcpy(destination, source, active * sizeof(*destination));
+        for (int i = 0; i < active; i++) {
+            destination[i].unique = destination[i].borrowed = false;
+            destination[i].origin = 0;
+        }
         block->stack_depth = (uint16_t)depth;
         block->initialized = 1;
         return 1;
@@ -2104,6 +2423,8 @@ method_merge_block(
     int changed = 0;
     for (int i = 0; i < active; i++) {
         _PyMethodValue merged = method_value_merge(destination[i], source[i]);
+        merged.unique = merged.borrowed = false;
+        merged.origin = 0;
         if (!method_value_equal(destination[i], merged)) {
             destination[i] = merged;
             changed = 1;
@@ -2157,6 +2478,236 @@ method_emit(
     return 1;
 }
 
+/* A leaf whose body cannot call Python needs no materialized interpreter
+ * frame. Value-dependent guards preserve callbacks and their frame visibility.
+ * Call-site guards and argument cleanup remain in the caller. */
+static int
+method_trivial_return(PyThreadState *tstate, PyFunctionObject *function,
+                      _PyBloomFilter *dependencies, uint64_t *operand)
+{
+#if defined(Py_GIL_DISABLED) || defined(WITH_DTRACE)
+    return 0;
+#endif
+    PyCodeObject *code = (PyCodeObject *)function->func_code;
+    bool indexed_attribute = Py_SIZE(code) ==
+        7 + INLINE_CACHE_ENTRIES_LOAD_ATTR + INLINE_CACHE_ENTRIES_BINARY_OP;
+    if (function->vectorcall != _PyFunction_Vectorcall ||
+        !(code->co_flags & CO_OPTIMIZED) ||
+        (code->co_flags & (CO_GENERATOR | CO_COROUTINE | CO_ASYNC_GENERATOR |
+                          CO_VARARGS | CO_VARKEYWORDS)) ||
+        code->co_kwonlyargcount != 0 ||
+        code->co_nlocalsplus != code->co_argcount || code->co_argcount > 255 ||
+        (!indexed_attribute && Py_SIZE(code) != 4 &&
+         Py_SIZE(code) != 5 + INLINE_CACHE_ENTRIES_LOAD_ATTR &&
+         Py_SIZE(code) != 6 + INLINE_CACHE_ENTRIES_STORE_ATTR &&
+         Py_SIZE(code) != 7 + INLINE_CACHE_ENTRIES_STORE_ATTR) ||
+        PyBytes_GET_SIZE(code->co_exceptiontable) != 0)
+    {
+        return 0;
+    }
+    for (int event = 0; event < _PY_MONITORING_UNGROUPED_EVENTS; event++) {
+        if (tstate->interp->monitors.tools[event] ||
+            (code->_co_monitoring != NULL &&
+             (code->_co_monitoring->local_monitors.tools[event] ||
+              code->_co_monitoring->active_monitors.tools[event])))
+        {
+            return 0;
+        }
+    }
+    _Py_CODEUNIT *instructions = _PyCode_CODE(code);
+    int entry = instructions[0].op.code;
+    if (entry == ENTER_EXECUTOR) {
+        entry = code->co_executors->executors[instructions[0].op.arg]->vm_data.opcode;
+    }
+    if (_PyOpcode_Deopt[entry] != RESUME ||
+        instructions[Py_SIZE(code) - 1].op.code != RETURN_VALUE)
+    {
+        return 0;
+    }
+    int opcode = instructions[2].op.code;
+    int arg = instructions[2].op.arg;
+    int result = _CALL_RETURN_ARGUMENT;
+    if (Py_SIZE(code) == 6 + INLINE_CACHE_ENTRIES_STORE_ATTR ||
+        Py_SIZE(code) == 7 + INLINE_CACHE_ENTRIES_STORE_ATTR)
+    {
+        int value_arg, owner_arg, pc = 2;
+        if (opcode == LOAD_FAST_LOAD_FAST ||
+            opcode == LOAD_FAST_BORROW_LOAD_FAST_BORROW)
+        {
+            value_arg = arg >> 4;
+            owner_arg = arg & 15;
+            pc++;
+        }
+        else if (opcode == LOAD_FAST || opcode == LOAD_FAST_BORROW) {
+            value_arg = arg;
+            opcode = instructions[++pc].op.code;
+            owner_arg = instructions[pc++].op.arg;
+            if (opcode != LOAD_FAST && opcode != LOAD_FAST_BORROW) {
+                return 0;
+            }
+        }
+        else {
+            return 0;
+        }
+        int attribute = instructions[pc].op.code;
+        if (value_arg >= code->co_argcount || owner_arg >= code->co_argcount ||
+            value_arg > 15 || owner_arg > 15 ||
+            (attribute != STORE_ATTR_SLOT && attribute != STORE_ATTR_INSTANCE_VALUE))
+        {
+            return 0;
+        }
+        _PyAttrCache *cache = (_PyAttrCache *)&instructions[pc + 1];
+        pc += 1 + INLINE_CACHE_ENTRIES_STORE_ATTR;
+        if (pc + 2 != Py_SIZE(code)) {
+            return 0;
+        }
+        PyObject *constant = NULL;
+        opcode = instructions[pc].op.code;
+        arg = instructions[pc].op.arg;
+        if (opcode == LOAD_CONST && arg < PyTuple_GET_SIZE(code->co_consts)) {
+            constant = PyTuple_GET_ITEM(code->co_consts, arg);
+        }
+        else if (opcode == LOAD_COMMON_CONSTANT && arg < NUM_COMMON_CONSTANTS) {
+            constant = PyStackRef_AsPyObjectBorrow(tstate->interp->common_consts[arg]);
+        }
+        uint32_t version = read_u32(cache->version);
+        if (constant != Py_None || version == 0) {
+            return 0;
+        }
+        *operand = (uint64_t)owner_arg | ((uint64_t)value_arg << 4) |
+                   ((uint64_t)cache->index << 8) | ((uint64_t)version << 24) |
+                   ((uint64_t)(attribute == STORE_ATTR_INSTANCE_VALUE) << 56);
+        result = _CALL_STORE_ATTRIBUTE;
+    }
+    else if (indexed_attribute || Py_SIZE(code) == 5 + INLINE_CACHE_ENTRIES_LOAD_ATTR) {
+        int attribute = instructions[3].op.code;
+        if ((opcode != LOAD_FAST && opcode != LOAD_FAST_BORROW) ||
+            arg >= code->co_argcount || (instructions[3].op.arg & 1) ||
+            (attribute != LOAD_ATTR_SLOT && attribute != LOAD_ATTR_INSTANCE_VALUE))
+        {
+            return 0;
+        }
+        _PyAttrCache *cache = (_PyAttrCache *)&instructions[4];
+        uint32_t version = read_u32(cache->version);
+        if (version == 0) {
+            return 0;
+        }
+        *operand = (uint64_t)arg | ((uint64_t)cache->index << 8) |
+                   ((uint64_t)version << 24) |
+                   ((uint64_t)(attribute == LOAD_ATTR_INSTANCE_VALUE) << 56);
+        result = _CALL_RETURN_ATTRIBUTE;
+        if (indexed_attribute) {
+            int pc = 4 + INLINE_CACHE_ENTRIES_LOAD_ATTR;
+            int load_key = instructions[pc].op.code;
+            int key_arg = instructions[pc].op.arg;
+            int subscript = instructions[pc + 1].op.code;
+            if ((load_key != LOAD_FAST && load_key != LOAD_FAST_BORROW) ||
+                key_arg >= code->co_argcount || key_arg >= 128 ||
+                (subscript != BINARY_OP_SUBSCR_TUPLE_INT &&
+                 subscript != BINARY_OP_SUBSCR_LIST_INT))
+            {
+                return 0;
+            }
+            *operand |= (uint64_t)key_arg << 57;
+            result = _CALL_RETURN_ATTRIBUTE_ITEM;
+        }
+    }
+    else if (opcode == LOAD_FAST || opcode == LOAD_FAST_BORROW) {
+        if (arg >= code->co_argcount) {
+            return 0;
+        }
+        *operand = arg;
+    }
+    else {
+        PyObject *constant = NULL;
+        if (opcode == LOAD_CONST && arg < PyTuple_GET_SIZE(code->co_consts)) {
+            constant = PyTuple_GET_ITEM(code->co_consts, arg);
+        }
+        else if (opcode == LOAD_COMMON_CONSTANT && arg < NUM_COMMON_CONSTANTS) {
+            constant = PyStackRef_AsPyObjectBorrow(tstate->interp->common_consts[arg]);
+        }
+        else if (opcode == LOAD_SMALL_INT) {
+            constant = (PyObject *)&_PyLong_SMALL_INTS[_PY_NSMALLNEGINTS + arg];
+        }
+        if (constant == NULL || !_Py_IsImmortal(constant)) {
+            return 0;
+        }
+        *operand = (uintptr_t)constant;
+        result = _CALL_RETURN_CONSTANT;
+    }
+    /* Local monitoring changes must invalidate a caller that removed this
+     * callee's frame, even though its function version need not change. */
+    _Py_BloomFilter_Add(dependencies, code);
+    _Py_BloomFilter_Add(dependencies, function);
+    return result;
+}
+
+/* C vectorcall arguments remain owned by the caller. These recognized bodies
+ * neither allocate nor call Python, so omitting their temporary frame cannot
+ * move a finalizer across the call boundary. NULL means ordinary evaluation. */
+PyObject *
+_PyJit_TryTrivialCall(PyThreadState *tstate, PyCodeObject *code,
+                      PyObject *const *args, Py_ssize_t nargs, PyObject *kwnames)
+{
+#if !defined(Py_GIL_DISABLED) && !defined(WITH_DTRACE)
+    _Py_CODEUNIT *entry = _PyCode_CODE(code);
+    assert(entry->op.code == ENTER_EXECUTOR);
+    _PyExecutorObject *executor = code->co_executors->executors[entry->op.arg];
+    if (!executor->trivial_call || !executor->vm_data.valid ||
+        !tstate->interp->jit || tstate->interp->eval_frame != NULL ||
+        tstate->c_tracefunc != NULL || tstate->c_profilefunc != NULL ||
+        kwnames != NULL || nargs != code->co_argcount ||
+        tstate->py_recursion_remaining <= 1 ||
+        _Py_ReachedRecursionLimitWithMargin(tstate, 2) ||
+        _Py_atomic_load_uintptr_relaxed(&tstate->eval_breaker) !=
+            code->_co_instrumentation_version)
+    {
+        return NULL;
+    }
+    /* This entry bypasses the executor's _MAKE_WARM instruction. */
+    executor->vm_data.cold = false;
+    uint64_t operand = executor->trivial_operand;
+    switch (executor->trivial_call) {
+        case _CALL_RETURN_ARGUMENT:
+            return Py_NewRef(args[operand]);
+        case _CALL_RETURN_CONSTANT:
+            return Py_NewRef((PyObject *)(uintptr_t)operand);
+        case _CALL_RETURN_ATTRIBUTE:
+        case _CALL_RETURN_ATTRIBUTE_ITEM: {
+            PyObject *owner = args[operand & 255];
+            uint32_t version = (uint32_t)(operand >> 24);
+            if (Py_TYPE(owner)->tp_version_tag != version ||
+                (((operand >> 56) & 1) && !_PyObject_InlineValues(owner)->valid))
+            {
+                return NULL;
+            }
+            uint16_t offset = (uint16_t)(operand >> 8);
+            PyObject *value = *(PyObject **)((char *)owner + offset);
+            if (executor->trivial_call == _CALL_RETURN_ATTRIBUTE_ITEM) {
+                PyObject *key = args[operand >> 57];
+                if (value == NULL ||
+                    (!PyTuple_CheckExact(value) && !PyList_CheckExact(value)) ||
+                    !PyLong_CheckExact(key) || !_PyLong_IsCompact((PyLongObject *)key))
+                {
+                    return NULL;
+                }
+                Py_ssize_t index = _PyLong_CompactValue((PyLongObject *)key);
+                Py_ssize_t length = Py_SIZE(value);
+                if (index < 0) {
+                    index += length;
+                }
+                if ((size_t)index >= (size_t)length) {
+                    return NULL;
+                }
+                value = PySequence_Fast_GET_ITEM(value, index);
+            }
+            return Py_XNewRef(value);
+        }
+    }
+#endif
+    return NULL;
+}
+
 static bool
 method_is_conditional_jump(int opcode)
 {
@@ -2165,6 +2716,123 @@ method_is_conditional_jump(int opcode)
            opcode == POP_JUMP_IF_NONE ||
            opcode == POP_JUMP_IF_NOT_NONE ||
            opcode == FOR_ITER;
+}
+
+/* Recognize a small initializer that only copies positional arguments into
+ * distinct specialized fields. This describes ordinary record constructors,
+ * without depending on class, attribute or parameter names. */
+static uint64_t
+method_simple_initializer(PyThreadState *tstate, PyFunctionObject *function,
+                          int nargs, uint32_t type_version,
+                          _PyBloomFilter *dependencies)
+{
+#if defined(Py_GIL_DISABLED) || defined(WITH_DTRACE)
+    return 0;
+#endif
+    PyCodeObject *code = (PyCodeObject *)function->func_code;
+    if (nargs < 1 || nargs > 3 || type_version == 0 ||
+        function->vectorcall != _PyFunction_Vectorcall ||
+        !(code->co_flags & CO_OPTIMIZED) ||
+        (code->co_flags & (CO_GENERATOR | CO_COROUTINE | CO_ASYNC_GENERATOR |
+                          CO_VARARGS | CO_VARKEYWORDS)) ||
+        code->co_argcount != nargs + 1 || code->co_kwonlyargcount != 0 ||
+        code->co_nlocalsplus != code->co_argcount ||
+        PyBytes_GET_SIZE(code->co_exceptiontable) != 0)
+    {
+        return 0;
+    }
+    for (int event = 0; event < _PY_MONITORING_UNGROUPED_EVENTS; event++) {
+        if (tstate->interp->monitors.tools[event] ||
+            (code->_co_monitoring != NULL &&
+             (code->_co_monitoring->local_monitors.tools[event] ||
+              code->_co_monitoring->active_monitors.tools[event])))
+        {
+            return 0;
+        }
+    }
+    _Py_CODEUNIT *instructions = _PyCode_CODE(code);
+    int entry = _Py_GetBaseCodeUnit(code, 0).op.code;
+    if (_PyOpcode_Deopt[entry] != RESUME) {
+        return 0;
+    }
+    int pc = 1 + _PyOpcode_Caches[RESUME];
+    int kind = -1;
+    uint64_t fields = 0;
+    unsigned seen_args = 0;
+    uint16_t offsets[3];
+    for (int field = 0; field < nargs; field++) {
+        if (pc + 2 >= Py_SIZE(code)) {
+            return 0;
+        }
+        int opcode = instructions[pc].op.code;
+        int arg;
+        if (opcode == LOAD_FAST_LOAD_FAST || opcode == LOAD_FAST_BORROW_LOAD_FAST_BORROW) {
+            arg = instructions[pc].op.arg >> 4;
+            if ((instructions[pc].op.arg & 15) != 0) {
+                return 0;
+            }
+            pc++;
+        }
+        else if (opcode == LOAD_FAST || opcode == LOAD_FAST_BORROW) {
+            arg = instructions[pc++].op.arg;
+            opcode = instructions[pc].op.code;
+            if ((opcode != LOAD_FAST && opcode != LOAD_FAST_BORROW) ||
+                instructions[pc++].op.arg != 0)
+            {
+                return 0;
+            }
+        }
+        else {
+            return 0;
+        }
+        if (arg < 1 || arg > nargs || (seen_args & (1U << arg)) ||
+            pc + (int)INLINE_CACHE_ENTRIES_STORE_ATTR >= Py_SIZE(code))
+        {
+            return 0;
+        }
+        seen_args |= 1U << arg;
+        opcode = instructions[pc].op.code;
+        if ((opcode != STORE_ATTR_SLOT && opcode != STORE_ATTR_INSTANCE_VALUE) ||
+            (kind >= 0 && kind != opcode))
+        {
+            return 0;
+        }
+        kind = opcode;
+        _PyAttrCache *cache = (_PyAttrCache *)&instructions[pc + 1];
+        int offset = cache->index;
+        if (read_u32(cache->version) != type_version ||
+            offset % SIZEOF_VOID_P || offset / SIZEOF_VOID_P > 255)
+        {
+            return 0;
+        }
+        for (int previous = 0; previous < field; previous++) {
+            if (offsets[previous] == offset) {
+                return 0;
+            }
+        }
+        offsets[field] = offset;
+        fields |= (uint64_t)((offset / SIZEOF_VOID_P) | ((arg - 1) << 8)) << (10 * field);
+        pc += 1 + INLINE_CACHE_ENTRIES_STORE_ATTR;
+    }
+    if (pc + 2 != Py_SIZE(code) || instructions[pc + 1].op.code != RETURN_VALUE) {
+        return 0;
+    }
+    int opcode = instructions[pc].op.code;
+    int arg = instructions[pc].op.arg;
+    PyObject *constant = NULL;
+    if (opcode == LOAD_CONST && arg < PyTuple_GET_SIZE(code->co_consts)) {
+        constant = PyTuple_GET_ITEM(code->co_consts, arg);
+    }
+    else if (opcode == LOAD_COMMON_CONSTANT && arg < NUM_COMMON_CONSTANTS) {
+        constant = PyStackRef_AsPyObjectBorrow(tstate->interp->common_consts[arg]);
+    }
+    if (constant != Py_None) {
+        return 0;
+    }
+    _Py_BloomFilter_Add(dependencies, function);
+    _Py_BloomFilter_Add(dependencies, code);
+    return fields | ((uint64_t)(kind == STORE_ATTR_INSTANCE_VALUE) << 30) |
+           ((uint64_t)type_version << 32);
 }
 
 static bool
@@ -2200,10 +2868,31 @@ method_replacement(int uop)
 static int
 method_optimize_guard(
     int uop,
+    uint64_t operand,
     const _PyMethodValue *values,
     int locals_count,
     int stack_depth)
 {
+    bool type_version_guard = uop == _GUARD_TYPE_VERSION;
+#ifndef Py_GIL_DISABLED
+    // Locking is a no-op with the GIL, so the same receiver fact applies.
+    type_version_guard |= uop == _GUARD_TYPE_VERSION_LOCKED;
+    if (uop == _LOCK_OBJECT) {
+        return _NOP;
+    }
+    if (stack_depth > 0) {
+        int guards = values[locals_count + stack_depth - 1].managed_guards;
+        if ((uop == _GUARD_DORV_NO_DICT && guards == 3) ||
+            (uop == _CHECK_MANAGED_OBJECT_HAS_VALUES && (guards & 1)))
+        {
+            return _NOP;
+        }
+    }
+#endif
+    if (type_version_guard && operand != 0 && stack_depth > 0 &&
+        values[locals_count + stack_depth - 1].type_version == operand) {
+        return _NOP;
+    }
     int stack_index = -1;
     PyTypeObject *expected = NULL;
     bool compact = false;
@@ -2308,6 +2997,8 @@ method_apply_uop_effect(
         case _LOAD_FAST_BORROW:
             if (oparg < locals_count && *stack_depth < stack_capacity) {
                 stack[(*stack_depth)++] = values[oparg];
+                stack[*stack_depth - 1].borrowed = uop == _LOAD_FAST_BORROW;
+                stack[*stack_depth - 1].origin = oparg + 1;
             }
             return;
         case _LOAD_SMALL_INT:
@@ -2332,6 +3023,8 @@ method_apply_uop_effect(
             if (oparg < locals_count && *stack_depth > 0) {
                 _PyMethodValue tmp = values[oparg];
                 values[oparg] = stack[*stack_depth - 1];
+                values[oparg].unique = values[oparg].borrowed = false;
+                values[oparg].origin = 0;
                 stack[*stack_depth - 1] = tmp;
             }
             return;
@@ -2366,6 +3059,7 @@ method_apply_uop_effect(
                          uop == _BINARY_OP_MULTIPLY_FLOAT)
                 {
                     result = method_value_type(&PyFloat_Type, false);
+                    result.unique = true;
                 }
                 else {
                     result = method_value_type(&PyBool_Type, false);
@@ -2377,14 +3071,21 @@ method_apply_uop_effect(
             }
             return;
         case _TO_BOOL:
+            if (*stack_depth > 0) {
+                stack[*stack_depth - 1] =
+                    method_value_type(&PyBool_Type, false);
+            }
+            return;
         case _TO_BOOL_INT:
         case _TO_BOOL_LIST:
         case _TO_BOOL_STR:
+        case _REPLACE_WITH_TRUE:
             if (*stack_depth > 0 && *stack_depth < stack_capacity) {
+                _PyMethodValue value = stack[*stack_depth - 1];
                 (*stack_depth)--;
                 stack[(*stack_depth)++] =
                     method_value_type(&PyBool_Type, false);
-                stack[(*stack_depth)++] = method_value_unknown();
+                stack[(*stack_depth)++] = value;
             }
             return;
     }
@@ -2397,7 +3098,12 @@ method_is_edge(int opcode)
 {
     return opcode == _METHOD_POP_JUMP_IF_FALSE ||
         opcode == _METHOD_POP_JUMP_IF_TRUE || opcode == _METHOD_JUMP ||
-        opcode == _METHOD_FOR_ITER || opcode == _METHOD_ITER_JUMP_LIST ||
+        opcode == _METHOD_FOR_ITER || opcode == _METHOD_ITER_NEXT_INLINE ||
+        opcode == _METHOD_TRY_SIMPLE_INIT ||
+        opcode == _METHOD_TRY_SIMPLE_INIT_1 ||
+        opcode == _METHOD_TRY_SIMPLE_INIT_2 ||
+        opcode == _METHOD_TRY_SIMPLE_INIT_3 ||
+        opcode == _METHOD_ITER_JUMP_LIST ||
         opcode == _METHOD_ITER_JUMP_TUPLE || opcode == _METHOD_ITER_JUMP_RANGE;
 }
 
@@ -2418,6 +3124,7 @@ method_translate_instruction(
     PyCodeObject *root_code,
     _PyBloomFilter *dependencies,
     bool allow_inline,
+    PyFunctionObject *func,
     PyCodeObject *code,
     _Py_CODEUNIT *bytecode,
     const _PyMethodInstruction *mi,
@@ -2442,13 +3149,45 @@ method_translate_instruction(
     if (!method_emit(buffer, length, limit, _CHECK_VALIDITY, 0, 0, target)) {
         return 0;
     }
+    PyObject *constant = method_global_constant(func, code, mi);
+    if (constant != NULL) {
+        bool builtin = opcode == LOAD_GLOBAL_BUILTIN;
+        PyObject *name = PyTuple_GET_ITEM(code->co_names, oparg >> 1);
+        if (_PyJit_WatchMethodGlobal(tstate, func->func_globals, name,
+                                    builtin, dependencies) < 0) {
+            return -1;
+        }
+        _PyLoadGlobalCache *cache = (_PyLoadGlobalCache *)(instr + 1);
+        if (!method_emit(buffer, length, limit, _GUARD_GLOBALS_VERSION_AND_IDENTITY,
+                         0, cache->module_keys_version, target)) {
+            return 0;
+        }
+        buffer[*length - 1].operand1 = (uintptr_t)func->func_globals;
+        if (builtin && !method_emit(buffer, length, limit,
+                                   _GUARD_BUILTINS_IDENTITY, 0, 0, target)) {
+            return 0;
+        }
+        if (!method_emit(buffer, length, limit, _LOAD_CONST_INLINE_BORROW,
+                         0, (uintptr_t)constant, target)) {
+            return 0;
+        }
+        return !(oparg & 1) || method_emit(
+            buffer, length, limit, _PUSH_NULL, 0, 0, target);
+    }
     if (opcode == RESUME || opcode == RESUME_CHECK_JIT || opcode == RESUME_CHECK) {
         return method_emit(
             buffer, length, limit, _TIER2_RESUME_CHECK, 0, 0, target);
     }
+    if (method_checked_local_store(opcode, oparg, state, locals_count, stack_depth)) {
+        return method_emit(buffer, length, limit, _STORE_FAST_NOESCAPE,
+                           (uint16_t)oparg, 0, target);
+    }
     if (OPCODE_HAS_NEEDS_GUARD_IP(opcode) &&
         _PyOpcode_Deopt[opcode] != RETURN_VALUE &&
-        !(allow_inline && opcode == CALL_PY_EXACT_ARGS))
+        !(opcode == CALL_PY_EXACT_ARGS || opcode == CALL_PY_GENERAL ||
+          opcode == CALL_BOUND_METHOD_EXACT_ARGS ||
+          opcode == CALL_BOUND_METHOD_GENERAL || opcode == CALL_KW_PY ||
+          opcode == CALL_KW_BOUND_METHOD || opcode == CALL_ALLOC_AND_ENTER_INIT))
     {
         return 0;
     }
@@ -2460,34 +3199,89 @@ method_translate_instruction(
         return 0;
     }
 
+    if (method_is_empty_set_call(opcode, oparg, state, locals_count, stack_depth))
+    {
+        // Keep the ordinary call boundary check after the completed result.
+        return method_emit(buffer, length, limit, _CALL_SET_EMPTY, 0, 0, target) &&
+            method_emit(buffer, length, limit, _POP_TOP_NOP, 0, 0, target) &&
+            method_emit(buffer, length, limit, _TIER2_RESUME_CHECK,
+                        0, 0, mi->next_offset);
+    }
+
     const struct opcode_macro_expansion *expansion =
         &_PyOpcode_macro_expansion[opcode];
     if (expansion->nuops == 0) {
         return 0;
     }
+    PyObject *attribute_default = method_attribute_default(code, mi);
     uint32_t inline_version = 0;
+    uint32_t constructor_version = 0;
     bool pushes_frame = false;
     for (int i = 0; i < expansion->nuops; i++) {
         if (expansion->uops[i].uop == _PUSH_FRAME) {
             pushes_frame = true;
         }
-        if (expansion->uops[i].uop == _CHECK_FUNCTION_VERSION &&
+        if ((expansion->uops[i].uop == _CHECK_FUNCTION_VERSION ||
+             expansion->uops[i].uop == _CHECK_METHOD_VERSION ||
+             expansion->uops[i].uop == _CHECK_FUNCTION_VERSION_KW ||
+             expansion->uops[i].uop == _CHECK_METHOD_VERSION_KW) &&
             expansion->uops[i].size == OPARG_CACHE_2)
         {
             int offset = expansion->uops[i].offset + 1;
             inline_version = read_u32(&instr[offset].cache);
         }
+#ifndef Py_GIL_DISABLED
+        if (opcode == CALL_ALLOC_AND_ENTER_INIT &&
+            expansion->uops[i].uop == _CHECK_OBJECT)
+        {
+            int offset = expansion->uops[i].offset + 1;
+            constructor_version = read_u32(&instr[offset].cache);
+            PyTypeObject *type = _PyType_LookupByVersion(constructor_version);
+            if (type != NULL && (type->tp_flags & Py_TPFLAGS_HEAPTYPE)) {
+                PyObject *init = ((PyHeapTypeObject *)type)->_spec_cache.init;
+                if (init != NULL && PyFunction_Check(init)) {
+                    inline_version = _PyFunction_GetVersionForCurrentState(
+                        (PyFunctionObject *)init);
+                }
+            }
+        }
+#endif
     }
-    if (pushes_frame &&
-        (!allow_inline || opcode != CALL_PY_EXACT_ARGS ||
-         inline_version < FUNC_VERSION_FIRST_VALID))
+    if (pushes_frame && opcode != CALL_ALLOC_AND_ENTER_INIT &&
+        inline_version < FUNC_VERSION_FIRST_VALID)
     {
         return 0;
+    }
+
+    int callee_framesize = -1;
+    int callee_argcount = -1;
+    int trivial_return = 0;
+    uint64_t trivial_operand = 0;
+    uint64_t initializer_fields = 0;
+    if (inline_version >= FUNC_VERSION_FIRST_VALID) {
+        PyFunctionObject *callee = method_lookup_function(
+            tstate->interp, inline_version);
+        if (callee != NULL) {
+            PyCodeObject *callee_code = (PyCodeObject *)callee->func_code;
+            callee_framesize = callee_code->co_framesize;
+            callee_argcount = callee_code->co_argcount;
+            if (opcode == CALL_PY_EXACT_ARGS || opcode == CALL_BOUND_METHOD_EXACT_ARGS) {
+                trivial_return = method_trivial_return(
+                    tstate, callee, dependencies, &trivial_operand);
+            }
+            if (allow_inline && opcode == CALL_ALLOC_AND_ENTER_INIT) {
+                initializer_fields = method_simple_initializer(
+                    tstate, callee, oparg, constructor_version, dependencies);
+            }
+            Py_DECREF(callee);
+        }
     }
 
     uint32_t orig_oparg = oparg;
     uint32_t orig_target = target;
     int direct_jump_index = -1;
+    int skip_float_cleanup = -1;
+    int initializer_jump = -1;
     for (int i = 0; i < expansion->nuops; i++) {
         oparg = orig_oparg;
         target = orig_target;
@@ -2559,9 +3353,186 @@ method_translate_instruction(
             default:
                 return 0;
         }
+        if (uop == _METHOD_FOR_ITER && stack_depth >= 2) {
+            PyTypeObject *type = method_value_get_type(
+                state[locals_count + stack_depth - 2]);
+            if (type == &PyEnum_Type || type == &PyZip_Type) {
+                uop = _METHOD_ITER_NEXT_INLINE;
+                operand = (uintptr_t)type->tp_iternext;
+#ifndef Py_GIL_DISABLED
+                if (type == &PyZip_Type) {
+                    operand = (uintptr_t)_PyZip_NextListPair;
+                }
+#endif
+            }
+        }
+#ifndef Py_GIL_DISABLED
+        if (uop == _GUARD_STORE_ATTR_NONDATA) {
+            _PyAttrCache *cache = (_PyAttrCache *)(instr + 1);
+            PyTypeObject *type = _PyType_LookupByVersion(read_u32(cache->version));
+            PyObject *descr = type == NULL ? NULL : _PyType_LookupRef(
+                type, PyTuple_GET_ITEM(code->co_names, oparg));
+            if (descr == NULL) {
+                return 0;
+            }
+            // No Python can run between the owner guard and this check.
+            operand = (uintptr_t)descr;
+            Py_DECREF(descr);
+            uop = _GUARD_STORE_ATTR_NONDATA_CACHED;
+        }
+        if (uop == _STORE_ATTR_INSTANCE_VALUE) {
+            uop = _STORE_ATTR_INSTANCE_VALUE_NOESCAPE;
+        }
+        else if (uop == _STORE_ATTR_SLOT) {
+            uop = _STORE_ATTR_SLOT_NOESCAPE;
+        }
+        else if (uop == _POP_TOP &&
+                 (opcode == STORE_ATTR_INSTANCE_VALUE ||
+                  opcode == STORE_ATTR_INSTANCE_VALUE_NONDATA || opcode == STORE_ATTR_SLOT) &&
+                 stack_depth >= 2 && state[locals_count + stack_depth - 1].borrowed)
+        {
+            // The guarded store cannot call Python or change the borrowed
+            // receiver's lifetime before discarding this stack reference.
+            uop = _POP_TOP_NOP;
+        }
+#endif
+        if (uop == _BUILD_MAP && oparg == 0) {
+            uop = _BUILD_EMPTY_MAP;
+        }
         int original_uop = (int)uop;
+        if (uop == _CREATE_INIT_FRAME && initializer_fields != 0) {
+            int guard = *length;
+            if (!method_emit(buffer, length, limit, _METHOD_TRY_SIMPLE_INIT,
+                             (uint16_t)oparg, initializer_fields, target) ||
+                !method_emit(buffer, length, limit, _METHOD_JUMP, 0, 0, target))
+            {
+                return 0;
+            }
+            initializer_jump = *length - 1;
+            buffer[guard].operand1 = (uint64_t)*length | METHOD_TARGET_OFFSET_FLAG;
+            if (!method_emit(buffer, length, limit, _METHOD_LABEL, 0, 0, target)) {
+                return 0;
+            }
+        }
+        if (uop == _INIT_CALL_PY_EXACT_ARGS && trivial_return != 0) {
+            /* Retain an entry periodic check before consuming arguments.
+             * The replacement closes them in normal frame-clear order. */
+            return method_emit(buffer, length, limit, _TIER2_RESUME_CHECK,
+                               0, 0, target) &&
+                   method_emit(buffer, length, limit, trivial_return,
+                               (uint16_t)oparg, trivial_operand, target);
+        }
+        if (uop == _CHECK_PEP_523 && tstate->interp->eval_frame == NULL) {
+            /* Changing the evaluation hook invalidates all executors. */
+            uop = _NOP;
+        }
+#ifndef Py_GIL_DISABLED
+        if (uop == _LOAD_DEREF) {
+            /* Loading a populated cell cannot run Python. Leave unbound-cell
+             * errors to the original bytecode, avoiding escape bookkeeping
+             * on every successful load. FT retains its lock-free getter. */
+            uop = _LOAD_DEREF_GUARDED;
+        }
+#endif
+        if (uop == _CHECK_STACK_SPACE && callee_framesize >= 0) {
+            /* The preceding function-version guard also guards its code
+             * object and hence the immutable frame size. */
+            uop = _CHECK_STACK_SPACE_OPERAND;
+            operand = callee_framesize;
+            oparg = 0;
+        }
+        if (uop == _CHECK_FUNCTION_EXACT_ARGS && callee_argcount >= 0) {
+            int self_index = stack_depth - (int)mi->oparg - 1;
+            bool bound = opcode == CALL_BOUND_METHOD_EXACT_ARGS;
+            bool null = self_index >= 0 &&
+                state[locals_count + self_index].kind == METHOD_VALUE_NULL;
+            if ((bound && callee_argcount == (int)mi->oparg + 1) ||
+                (!bound && null && callee_argcount == (int)mi->oparg))
+            {
+                uop = _NOP;
+            }
+        }
         uop = method_optimize_guard(
-            original_uop, uop_state, locals_count, uop_stack_depth);
+            (int)uop, operand, uop_state, locals_count, uop_stack_depth);
+        if (uop == _PUSH_NULL_CONDITIONAL) {
+            /* Resolve the static stack effect before assigning stack-cache
+             * registers, just as the tracing optimizer does. */
+            uop = (oparg & 1) ? _PUSH_NULL : _NOP;
+        }
+        if (uop == _POP_TOP && uop_stack_depth > 0 &&
+            (opcode == STORE_FAST || opcode == STORE_FAST_LOAD_FAST ||
+             opcode == STORE_FAST_STORE_FAST))
+        {
+            /* _SWAP_FAST leaves the previous local on top. Its facts are
+             * exact here, including each component of a superinstruction. */
+            uop = method_specialize_local_cleanup(
+                uop_state[locals_count + uop_stack_depth - 1]);
+        }
+        if ((opcode == TO_BOOL_INT || opcode == TO_BOOL_LIST ||
+             opcode == TO_BOOL_STR || opcode == TO_BOOL_ALWAYS_TRUE) &&
+            (uop == _POP_TOP || uop == _POP_TOP_INT ||
+             uop == _POP_TOP_UNICODE) &&
+            uop_stack_depth > 0 &&
+            uop_state[locals_count + uop_stack_depth - 1].borrowed)
+        {
+            /* Specialized truth tests return the untouched input above the
+             * boolean. A borrowed input needs no closing or escape check. */
+            uop = _POP_TOP_NOP;
+        }
+        if (uop == _POP_TOP &&
+            (opcode == LOAD_ATTR_SLOT || opcode == LOAD_ATTR_INSTANCE_VALUE ||
+             opcode == LOAD_ATTR_INSTANCE_VALUE_NONDATA) &&
+            stack_depth > 0 && state[locals_count + stack_depth - 1].borrowed)
+        {
+            /* These expansions return the receiver above the attribute.
+             * Closing a borrowed receiver cannot escape or need a spill. */
+            uop = _POP_TOP_NOP;
+        }
+        if (uop == _POP_TOP &&
+            (opcode == BINARY_OP_SUBSCR_LIST_INT ||
+             opcode == BINARY_OP_SUBSCR_TUPLE_INT) &&
+            stack_depth >= 2 && state[locals_count + stack_depth - 2].borrowed)
+        {
+            uop = _POP_TOP_NOP;
+        }
+        if (uop == _POP_TOP_INT &&
+            (opcode == BINARY_OP_SUBSCR_LIST_INT ||
+             opcode == BINARY_OP_SUBSCR_TUPLE_INT) &&
+            stack_depth >= 2 && state[locals_count + stack_depth - 1].borrowed)
+        {
+            uop = _POP_TOP_NOP;
+        }
+        if (i == skip_float_cleanup) {
+            assert(uop == _POP_TOP_FLOAT);
+            uop = _POP_TOP_NOP;
+        }
+        if (uop_stack_depth >= 2) {
+            _PyMethodValue *stack = uop_state + locals_count;
+            bool left = stack[uop_stack_depth - 2].unique;
+            bool right = stack[uop_stack_depth - 1].unique;
+            if (left || right) {
+                switch (uop) {
+                    case _BINARY_OP_ADD_FLOAT:
+                        uop = left ? _BINARY_OP_ADD_FLOAT_INPLACE
+                                   : _BINARY_OP_ADD_FLOAT_INPLACE_RIGHT;
+                        break;
+                    case _BINARY_OP_SUBTRACT_FLOAT:
+                        uop = left ? _BINARY_OP_SUBTRACT_FLOAT_INPLACE
+                                   : _BINARY_OP_SUBTRACT_FLOAT_INPLACE_RIGHT;
+                        break;
+                    case _BINARY_OP_MULTIPLY_FLOAT:
+                        uop = left ? _BINARY_OP_MULTIPLY_FLOAT_INPLACE
+                                   : _BINARY_OP_MULTIPLY_FLOAT_INPLACE_RIGHT;
+                        break;
+                }
+                if (uop != (uint32_t)original_uop &&
+                    (original_uop == _BINARY_OP_ADD_FLOAT ||
+                     original_uop == _BINARY_OP_SUBTRACT_FLOAT ||
+                     original_uop == _BINARY_OP_MULTIPLY_FLOAT)) {
+                    skip_float_cleanup = i + (left ? 2 : 1);
+                }
+            }
+        }
         if (_PyUop_Flags[uop] & HAS_RECORDS_VALUE_FLAG) {
             continue;
         }
@@ -2580,6 +3551,15 @@ method_translate_instruction(
             }
             operand = next->op.arg;
         }
+        if (uop == _METHOD_ITER_NEXT_INLINE &&
+            operand == (uintptr_t)PyEnum_Type.tp_iternext &&
+            !method_emit(buffer, length, limit, _NOP, 0, 0, target))
+        {
+            return 0;
+        }
+        if (uop == _LOAD_ATTR_INSTANCE_VALUE && attribute_default != NULL) {
+            uop = _LOAD_ATTR_INSTANCE_VALUE_OR_DEFAULT;
+        }
         if (!method_emit(
                 buffer, length, limit, (uint16_t)uop, (uint16_t)oparg,
                 operand, target))
@@ -2589,28 +3569,54 @@ method_translate_instruction(
         method_apply_uop_effect(
             original_uop, (int)oparg, operand, uop_state,
             locals_count, stack_capacity, &uop_stack_depth);
+        if (uop == _LOAD_ATTR_INSTANCE_VALUE_OR_DEFAULT) {
+            buffer[*length - 1].operand1 = (uintptr_t)attribute_default;
+        }
+        if (uop == _LOAD_ATTR_SLOT || uop == _LOAD_ATTR_INSTANCE_VALUE) {
+            _PyAttrCache *cache = (_PyAttrCache *)(
+                bytecode + mi->opcode_offset + 1);
+            buffer[*length - 1].operand1 = read_u32(cache->version) |
+                ((uint64_t)(uop == _LOAD_ATTR_INSTANCE_VALUE) << 32);
+        }
         if (uop == _PUSH_FRAME) {
-            PyFunctionObject *func =
-                method_lookup_function(tstate->interp, inline_version);
-            if (func == NULL) {
+            PyFunctionObject *func = allow_inline && inline_version >= FUNC_VERSION_FIRST_VALID
+                ? method_lookup_function(tstate->interp, inline_version) : NULL;
+            int inlined = 0;
+            if (func != NULL) {
+                inlined = method_inline_small_cfg(
+                    tstate, root_code, func, dependencies,
+                    buffer, length, limit);
+                Py_DECREF(func);
+            }
+            if (inlined < 0) {
+                return inlined;
+            }
+            if (inlined > 0 && opcode == CALL_ALLOC_AND_ENTER_INIT &&
+                !method_emit(buffer, length, limit, _METHOD_CALL, 2, 0, target))
+            {
                 return 0;
             }
-            int inlined = method_inline_small_cfg(
-                tstate, root_code, func, dependencies,
-                buffer, length, limit);
-            Py_DECREF(func);
-            if (inlined <= 0) {
-                return inlined;
+            if (inlined == 0 && !method_emit(
+                    buffer, length, limit, _METHOD_CALL,
+                    opcode == CALL_ALLOC_AND_ENTER_INIT, 0, target)) {
+                return 0;
             }
         }
         if (uop == _METHOD_POP_JUMP_IF_FALSE ||
             uop == _METHOD_POP_JUMP_IF_TRUE ||
             uop == _METHOD_FOR_ITER ||
+            uop == _METHOD_ITER_NEXT_INLINE ||
             uop == _METHOD_ITER_JUMP_LIST ||
             uop == _METHOD_ITER_JUMP_TUPLE ||
             uop == _METHOD_ITER_JUMP_RANGE)
         {
             direct_jump_index = *length - 1;
+        }
+    }
+    if (initializer_jump >= 0) {
+        buffer[initializer_jump].operand1 = (uint64_t)*length | METHOD_TARGET_OFFSET_FLAG;
+        if (!method_emit(buffer, length, limit, _METHOD_LABEL, 0, 0, orig_target)) {
+            return 0;
         }
     }
     if (direct_jump_index >= 0) {
@@ -2626,6 +3632,7 @@ static int
 method_decode_cfg(
     PyCodeObject *code,
     _Py_CODEUNIT *bytecode,
+    int entry_offset,
     _PyMethodInstruction *instructions,
     int *instruction_count,
     int16_t *offset_to_instruction,
@@ -2645,7 +3652,7 @@ method_decode_cfg(
     }
 
     int count = 0;
-    for (int offset = 0; offset < code_size;) {
+    for (int offset = entry_offset; offset < code_size;) {
         int start = offset;
         uint32_t oparg = 0;
         int opcode;
@@ -2695,7 +3702,46 @@ method_decode_cfg(
         return 0;
     }
 
-    block_start[0] = 1;
+    block_start[entry_offset] = 1;
+    /* Compile normal control flow in protected regions. Errors return to
+     * Tier 1 with the real frame and bytecode position; handler entries do
+     * not become additional roots of this CFG. Keep protection boundaries
+     * as block boundaries so region lowering cannot move errors between
+     * different handlers. Reject malformed tables rather than reading past
+     * their end during compilation. */
+    const unsigned char *table = (const unsigned char *)
+        PyBytes_AS_STRING(code->co_exceptiontable);
+    const unsigned char *table_end = table + PyBytes_GET_SIZE(code->co_exceptiontable);
+    while (table < table_end) {
+        unsigned int fields[4] = {0};
+        for (int field = 0; field < 4; field++) {
+            unsigned char byte;
+            do {
+                if (table == table_end || fields[field] > (UINT_MAX >> 6)) {
+                    PyMem_Free(block_start);
+                    return 0;
+                }
+                byte = *table++;
+                fields[field] = (fields[field] << 6) | (byte & 63);
+            } while (byte & 64);
+        }
+        unsigned int start = fields[0], size = fields[1], handler = fields[2];
+        if (start >= (unsigned int)code_size ||
+            size > (unsigned int)code_size - start ||
+            handler >= (unsigned int)code_size ||
+            offset_to_instruction[start] < 0 ||
+            offset_to_instruction[handler] < 0 ||
+            (start + size < (unsigned int)code_size &&
+             offset_to_instruction[start + size] < 0))
+        {
+            PyMem_Free(block_start);
+            return 0;
+        }
+        block_start[start] = block_start[handler] = 1;
+        if (start + size < (unsigned int)code_size) {
+            block_start[start + size] = 1;
+        }
+    }
     for (int i = 0; i < count; i++) {
         _PyMethodInstruction *mi = &instructions[i];
         int opcode = _PyOpcode_Deopt[mi->opcode];
@@ -2804,6 +3850,7 @@ method_decode_cfg(
 
 static int
 method_analyze_cfg(
+    PyFunctionObject *func,
     PyCodeObject *code,
     const _PyMethodInstruction *instructions,
     _PyMethodBlock *blocks,
@@ -2827,8 +3874,15 @@ method_analyze_cfg(
     }
 
     _PyMethodValue *entry = states;
+    int arguments = code->co_argcount + code->co_kwonlyargcount +
+        !!(code->co_flags & CO_VARARGS) + !!(code->co_flags & CO_VARKEYWORDS);
     for (int i = 0; i < locals_count; i++) {
-        entry[i] = method_value_unknown();
+        _PyLocals_Kind kind = _PyLocals_GetKind(code->co_localspluskinds, i);
+        /* Cell creation and free-variable binding precede the entry RESUME
+         * and have already run in Tier 1. Their slots are live even when
+         * they are not arguments. Never treat them as empty locals. */
+        entry[i] = (i < arguments || (kind & (CO_FAST_CELL | CO_FAST_FREE)))
+            ? method_value_unknown() : method_value_null();
     }
     blocks[0].initialized = 1;
     blocks[0].in_queue = 1;
@@ -2877,10 +3931,10 @@ method_analyze_cfg(
                        (size_t)state_width * sizeof(*jump));
                 int jump_depth = fallthrough_depth;
                 if (!method_apply_stack_effect(
-                        code, mi, jump, locals_count, stack_capacity,
+                        func, code, mi, jump, locals_count, stack_capacity,
                         &jump_depth, true) ||
                     !method_apply_stack_effect(
-                        code, mi, fallthrough, locals_count, stack_capacity,
+                        func, code, mi, fallthrough, locals_count, stack_capacity,
                         &fallthrough_depth, false))
                 {
                     PyMem_Free(queue);
@@ -2932,7 +3986,7 @@ method_analyze_cfg(
                 goto next_block;
             }
             if (!method_apply_stack_effect(
-                    code, mi, fallthrough, locals_count, stack_capacity,
+                    func, code, mi, fallthrough, locals_count, stack_capacity,
                     &fallthrough_depth, false))
             {
                 PyMem_Free(queue);
@@ -3003,7 +4057,7 @@ method_inline_small_cfg(
     int limit)
 {
     PyCodeObject *code = (PyCodeObject *)func->func_code;
-    if (func->vectorcall != _PyFunction_Vectorcall || code == root_code ||
+    if (func->vectorcall != _PyFunction_Vectorcall ||
         !(code->co_flags & CO_OPTIMIZED) ||
         (code->co_flags & (CO_GENERATOR | CO_COROUTINE |
                            CO_ASYNC_GENERATOR | CO_VARARGS |
@@ -3037,7 +4091,7 @@ method_inline_small_cfg(
     int instruction_count = 0;
     int block_count = 0;
     int decoded = method_decode_cfg(
-        code, bytecode, instructions, &instruction_count,
+        code, bytecode, 0, instructions, &instruction_count,
         offset_to_instruction, blocks, &block_count,
         instruction_to_block);
     if (decoded < 0) {
@@ -3064,7 +4118,7 @@ method_inline_small_cfg(
     }
 
     int analyzed = method_analyze_cfg(
-        code, instructions, blocks, block_count, states, state_width,
+        func, code, instructions, blocks, block_count, states, state_width,
         locals_count, stack_capacity);
     if (analyzed < 0) {
         goto error;
@@ -3077,17 +4131,16 @@ method_inline_small_cfg(
         if (!block->initialized) {
             continue;
         }
-        /* Bound both code size and control-flow complexity. Loops and nested
-         * Python calls continue in Tier 1; forward diamonds may be inlined. */
-        if ((block->target >= 0 && block->target <= b) ||
-            (block->fallthrough >= 0 && block->fallthrough <= b))
-        {
-            goto unsupported;
-        }
+        /* Code size bounds expansion. Further calls use method entry rather
+         * than recursive inlining, including calls back to the root. */
         memcpy(state, states + b * state_width,
                (size_t)state_width * sizeof(*state));
         int stack_depth = block->stack_depth;
         block->uop_offset = (uint16_t)*length;
+        if (!method_emit(buffer, length, limit, _METHOD_LABEL,
+                         Py_MIN(stack_depth, 2), 0, 0)) {
+            goto unsupported;
+        }
         for (int i = block->first; i <= block->last; i++) {
             _PyMethodInstruction *mi = &instructions[i];
             if (i == block->last && block->terminator == METHOD_RETURN) {
@@ -3106,6 +4159,14 @@ method_inline_small_cfg(
                 break;
             }
             if (i == block->last && block->terminator == METHOD_JUMP) {
+                int opcode = _PyOpcode_Deopt[mi->opcode];
+                if (opcode != JUMP_BACKWARD_NO_INTERRUPT &&
+                    opcode != JUMP_FORWARD &&
+                    !method_emit(buffer, length, limit, _CHECK_PERIODIC,
+                                 0, 0, mi->offset))
+                {
+                    goto unsupported;
+                }
                 if (!method_emit(buffer, length, limit, _METHOD_JUMP,
                                  0, 0, mi->offset))
                 {
@@ -3116,7 +4177,7 @@ method_inline_small_cfg(
             }
             int translated = method_translate_instruction(
                 tstate, root_code, dependencies, false,
-                code, bytecode, mi, i == block->last ? block->target : -1,
+                func, code, bytecode, mi, i == block->last ? block->target : -1,
                 state, locals_count, stack_depth, stack_capacity, uop_state,
                 buffer, length, limit);
             if (translated < 0) {
@@ -3124,7 +4185,7 @@ method_inline_small_cfg(
             }
             if (translated == 0 ||
                 !method_apply_stack_effect(
-                    code, mi, state, locals_count, stack_capacity,
+                    func, code, mi, state, locals_count, stack_capacity,
                     &stack_depth, false))
             {
                 goto unsupported;
@@ -3142,15 +4203,19 @@ method_inline_small_cfg(
             buffer[*length - 1].operand1 = (uint64_t)block->fallthrough;
         }
     }
-    /* Resolve local block numbers before the callee CFG is freed. Returns
-     * join at the caller continuation with the ordinary empty cache ABI. */
-    for (int pc = start_length; pc < *length; pc++) {
+    /* Returns join at the caller continuation with an empty cache ABI. */
+    int continuation = *length;
+    if (!method_emit(buffer, length, limit, _METHOD_LABEL, 0, 0, 0)) {
+        goto unsupported;
+    }
+    /* Resolve local block numbers before the callee CFG is freed. */
+    for (int pc = start_length; pc < continuation; pc++) {
         if (!method_is_edge(buffer[pc].opcode)) {
             continue;
         }
         uint64_t target = buffer[pc].operand1;
         if (target == UINT64_MAX) {
-            target = (uint64_t)*length;
+            target = (uint64_t)continuation;
         }
         else {
             if (target >= (uint64_t)block_count || !blocks[target].initialized) {
@@ -3161,6 +4226,7 @@ method_inline_small_cfg(
         buffer[pc].operand1 = target | METHOD_TARGET_OFFSET_FLAG;
     }
     _Py_BloomFilter_Add(dependencies, func);
+    _Py_BloomFilter_Add(dependencies, code);
     PyMem_Free(instructions);
     PyMem_Free(blocks);
     PyMem_Free(offset_to_instruction);
@@ -3193,6 +4259,132 @@ error:
     return -1;
 }
 
+#include "optimizer_regions.h"
+
+/* Ignore only metadata and labels with one predecessor. A matched body must
+ * have no entry that bypasses its unpack or comparison. */
+static int
+method_scan_next(_PyUOpInstruction *input, int length, int pc,
+                 const uint16_t *predecessors)
+{
+    while (pc < length) {
+        int op = input[pc].opcode;
+        if (op == _NOP || op == _SET_IP || op == _CHECK_VALIDITY ||
+            (op == _METHOD_LABEL && predecessors[pc] <= 1))
+        {
+            pc++;
+            continue;
+        }
+        break;
+    }
+    return pc;
+}
+
+static void
+method_fuse_enum_scans(_PyUOpInstruction *input, int length,
+                      const uint16_t *predecessors)
+{
+    for (int next = 1; next < length; next++) {
+        if (input[next].opcode != _METHOD_ITER_NEXT_INLINE ||
+            input[next].operand0 != (uintptr_t)PyEnum_Type.tp_iternext ||
+            input[next - 1].opcode != _NOP)
+        {
+            continue;
+        }
+        int header = next - 2;
+        while (header >= 0 && (input[header].opcode == _NOP ||
+               input[header].opcode == _CHECK_VALIDITY ||
+               input[header].opcode == _SET_IP))
+        {
+            header--;
+        }
+        if (header < 0 || input[header].opcode != _METHOD_LABEL) {
+            continue;
+        }
+        int pc = next + 1;
+        int index_local, item_local, key_local, field, mask;
+#define SCAN_NEXT() \
+        (pc = method_scan_next(input, length, pc, predecessors))
+#define SCAN_EXPECT(OP) \
+        do { \
+            if (SCAN_NEXT() >= length || input[pc].opcode != (OP)) { \
+                goto no_scan; \
+            } \
+            pc++; \
+        } while (0)
+#define SCAN_OPTIONAL(OP) \
+        do { \
+            if (SCAN_NEXT() < length && input[pc].opcode == (OP)) { \
+                pc++; \
+            } \
+        } while (0)
+        SCAN_OPTIONAL(_GUARD_TOS_TUPLE);
+        SCAN_EXPECT(_UNPACK_SEQUENCE_TWO_TUPLE);
+        SCAN_EXPECT(_SWAP_FAST);
+        index_local = input[pc - 1].oparg;
+        SCAN_EXPECT(_POP_TOP);
+        SCAN_EXPECT(_SWAP_FAST);
+        item_local = input[pc - 1].oparg;
+        SCAN_EXPECT(_POP_TOP);
+        SCAN_EXPECT(_LOAD_FAST_BORROW);
+        if (input[pc - 1].oparg != item_local) {
+            continue;
+        }
+        SCAN_EXPECT(_LOAD_SMALL_INT);
+        field = input[pc - 1].oparg;
+        SCAN_OPTIONAL(_GUARD_NOS_TUPLE);
+        SCAN_EXPECT(_GUARD_BINARY_OP_SUBSCR_TUPLE_INT_BOUNDS);
+        SCAN_EXPECT(_BINARY_OP_SUBSCR_TUPLE_INT);
+        SCAN_EXPECT(_POP_TOP_INT);
+        if (SCAN_NEXT() >= length ||
+            (input[pc].opcode != _POP_TOP && input[pc].opcode != _POP_TOP_NOP))
+        {
+            continue;
+        }
+        pc++;
+        SCAN_EXPECT(_LOAD_FAST_BORROW);
+        key_local = input[pc - 1].oparg;
+        SCAN_OPTIONAL(_GUARD_TOS_INT);
+        SCAN_OPTIONAL(_GUARD_NOS_INT);
+        SCAN_EXPECT(_COMPARE_OP_INT);
+        mask = input[pc - 1].oparg & 15;
+        SCAN_EXPECT(_POP_TOP_INT);
+        SCAN_EXPECT(_POP_TOP_INT);
+        if (SCAN_NEXT() >= length ||
+            (input[pc].opcode != _METHOD_POP_JUMP_IF_TRUE &&
+             input[pc].opcode != _METHOD_POP_JUMP_IF_FALSE))
+        {
+            continue;
+        }
+        /* Only batch the fallthrough continue path. The taken path, including
+         * its reference releases and returned values, is always executed
+         * by the original uops. */
+        if (input[pc].opcode == _METHOD_POP_JUMP_IF_TRUE) {
+            mask ^= 15;
+        }
+        pc++;
+        SCAN_EXPECT(_CHECK_PERIODIC);
+        SCAN_EXPECT(_METHOD_JUMP);
+        if (input[pc - 1].operand1 != (uint64_t)header ||
+            index_local > 255 || item_local > 255 || key_local > 255 ||
+            index_local == item_local || index_local == key_local ||
+            item_local == key_local)
+        {
+            continue;
+        }
+        input[next - 1].opcode = _ENUM_LIST_INT_SCAN;
+        input[next - 1].oparg = mask;
+        input[next - 1].operand0 = key_local | (index_local << 8) |
+                                  (item_local << 16);
+        input[next - 1].operand1 = field;
+no_scan:
+        ;
+#undef SCAN_NEXT
+#undef SCAN_EXPECT
+#undef SCAN_OPTIONAL
+    }
+}
+
 static int
 method_finish_uops(
     _PyUOpInstruction *input,
@@ -3204,6 +4396,11 @@ method_finish_uops(
 {
     bool block_start[UOP_MAX_TRACE_LENGTH] = {false};
     uint16_t predecessors[UOP_MAX_TRACE_LENGTH] = {0};
+    for (int pc = 0; pc < input_length; pc++) {
+        if (input[pc].opcode == _METHOD_LABEL) {
+            block_start[pc] = true;
+        }
+    }
     for (int b = 0; b < block_count; b++) {
         if (blocks[b].initialized) {
             block_start[blocks[b].uop_offset] = true;
@@ -3227,11 +4424,12 @@ method_finish_uops(
             return 0;
         }
         input[pc].operand1 = target;
+        assert(input[target].opcode == _METHOD_LABEL);
         block_start[target] = true;
         predecessors[target]++;
     }
-    /* Preserve the TOS cache across an adjacent edge only when no other
-     * predecessor needs the empty entry convention. Joins keep that ABI. */
+    /* Elide an adjacent edge with one predecessor. The remaining label
+     * still enforces its entry convention for physical fallthrough. */
     for (int pc = 0; pc + 1 < input_length; pc++) {
         if (input[pc].opcode == _METHOD_JUMP &&
             input[pc].operand1 == (uint64_t)(pc + 1) &&
@@ -3240,14 +4438,68 @@ method_finish_uops(
             input[pc].opcode = _NOP;
         }
     }
-    /* Facts about the last escape and saved IP are local to a basic block.
-     * Never carry them through a join or across an inlined frame change. */
+    method_fuse_enum_scans(input, input_length, predecessors);
+    /* Region lowering must never cross an incoming CFG edge. */
+    for (int start = 0; start < input_length;) {
+        int end = start + 1;
+        while (end < input_length && !block_start[end]) {
+            end++;
+        }
+        lower_int_attribute_updates(input + start, end - start);
+        lower_bounded_int_regions(input + start, end - start);
+        lower_len_regions(input + start, end - start);
+        lower_tuple_comparisons(input + start, end - start);
+        lower_float_attribute_products(input + start, end - start);
+        lower_int_attribute_comparisons(input + start, end - start);
+        fuse_borrowed_input_cleanup(input + start, end - start);
+        start = end;
+    }
+    /* A validity check is redundant at a join only when every predecessor
+     * has checked the executor since its last escape or periodic check.
+     * Propagate the may-escape bit to a fixed point, including backedges and
+     * inlined frame transitions. Saved instruction pointers remain local. */
+    bool unchecked_escape[UOP_MAX_TRACE_LENGTH] = {true};
+    bool changed;
+    do {
+        changed = false;
+        for (int pc = 0; pc < input_length; pc++) {
+            int opcode = input[pc].opcode;
+            bool escaped = unchecked_escape[pc];
+            if (opcode == _CHECK_VALIDITY) {
+                escaped = false;
+            }
+            else if ((_PyUop_Flags[opcode] &
+                      (HAS_ESCAPES_FLAG | HAS_PERIODIC_FLAG)) ||
+                     opcode == _PUSH_FRAME || opcode == _RETURN_VALUE ||
+                     opcode == _METHOD_CALL)
+            {
+                escaped = true;
+            }
+            if (!escaped) {
+                continue;
+            }
+            if (method_is_edge(opcode)) {
+                int target = (int)input[pc].operand1;
+                if (!unchecked_escape[target]) {
+                    unchecked_escape[target] = true;
+                    changed = true;
+                }
+            }
+            if (pc + 1 < input_length && opcode != _METHOD_JUMP &&
+                opcode != _METHOD_EXIT && !is_terminator(&input[pc]) &&
+                !unchecked_escape[pc + 1])
+            {
+                unchecked_escape[pc + 1] = true;
+                changed = true;
+            }
+        }
+    } while (changed);
     int last_set_ip = -1;
     bool may_have_escaped = true;
     for (int pc = 0; pc < input_length; pc++) {
         if (block_start[pc]) {
             last_set_ip = -1;
-            may_have_escaped = true;
+            may_have_escaped = unchecked_escape[pc];
         }
         int opcode = input[pc].opcode;
         if (opcode == _SET_IP) {
@@ -3262,7 +4514,8 @@ method_finish_uops(
         }
         else {
             uint16_t flags = _PyUop_Flags[opcode];
-            bool changes_frame = opcode == _PUSH_FRAME || opcode == _RETURN_VALUE;
+            bool changes_frame = opcode == _PUSH_FRAME ||
+                                 opcode == _RETURN_VALUE || opcode == _METHOD_CALL;
             if ((flags & (HAS_ESCAPES_FLAG | HAS_ERROR_FLAG)) || changes_frame) {
                 if (last_set_ip >= 0) {
                     input[last_set_ip].opcode = _SET_IP;
@@ -3313,6 +4566,21 @@ method_finish_uops(
     return length;
 }
 
+static void
+method_debug_rejection(PyCodeObject *code, const char *phase, int length)
+{
+#ifdef Py_DEBUG
+    const char *debug = Py_GETENV("PYTHON_LLTRACE");
+    if (debug != NULL && *debug >= '1' && *debug <= '9') {
+        const char *name = PyUnicode_IS_COMPACT_ASCII(code->co_qualname)
+            ? (const char *)PyUnicode_1BYTE_DATA(code->co_qualname)
+            : "<non-ASCII name>";
+        fprintf(stderr, "Method rejected: %s, phase=%s, uops=%d, code_units=%zd\n",
+                name, phase, length, Py_SIZE(code));
+    }
+#endif
+}
+
 int
 _PyJit_CompileMethod(PyThreadState *tstate, _PyInterpreterFrame *frame)
 {
@@ -3320,15 +4588,23 @@ _PyJit_CompileMethod(PyThreadState *tstate, _PyInterpreterFrame *frame)
     if (!FT_ATOMIC_LOAD_UINT8(interp->jit) || interp->compiling) {
         return 0;
     }
+    PyObject *function = PyStackRef_AsPyObjectBorrow(frame->f_funcobj);
+    if (function == NULL || !PyFunction_Check(function)) {
+        return 0;
+    }
+    PyFunctionObject *func = (PyFunctionObject *)function;
     PyCodeObject *code = _PyFrame_GetCode(frame);
     if ((code->co_flags & (CO_GENERATOR | CO_COROUTINE | CO_ASYNC_GENERATOR)) ||
-        PyBytes_GET_SIZE(code->co_exceptiontable) != 0 ||
         Py_SIZE(code) <= 0 || Py_SIZE(code) > INT16_MAX)
     {
         return 0;
     }
     _Py_CODEUNIT *bytecode = _PyCode_CODE(code);
-    _Py_CODEUNIT *entry = bytecode;
+    int entry_offset = code->_co_firsttraceable;
+    if (entry_offset < 0 || entry_offset >= Py_SIZE(code)) {
+        return 0;
+    }
+    _Py_CODEUNIT *entry = bytecode + entry_offset;
     if (entry->op.code == ENTER_EXECUTOR) {
         return 1;
     }
@@ -3356,6 +4632,8 @@ _PyJit_CompileMethod(PyThreadState *tstate, _PyInterpreterFrame *frame)
     _PyMethodValue *states = NULL;
     _PyMethodValue *state = NULL;
     _PyMethodValue *uop_state = NULL;
+    const char *failure_phase = "decode";
+    int length = 0;
     if (instructions == NULL || blocks == NULL ||
         offset_to_instruction == NULL || instruction_to_block == NULL ||
         input == NULL || output == NULL || offset_map == NULL)
@@ -3367,7 +4645,7 @@ _PyJit_CompileMethod(PyThreadState *tstate, _PyInterpreterFrame *frame)
     int instruction_count = 0;
     int block_count = 0;
     int decoded = method_decode_cfg(
-        code, bytecode, instructions, &instruction_count,
+        code, bytecode, entry_offset, instructions, &instruction_count,
         offset_to_instruction, blocks, &block_count,
         instruction_to_block);
     if (decoded <= 0) {
@@ -3393,8 +4671,9 @@ _PyJit_CompileMethod(PyThreadState *tstate, _PyInterpreterFrame *frame)
         PyErr_NoMemory();
         goto error;
     }
+    failure_phase = "analyze";
     int analyzed = method_analyze_cfg(
-        code, instructions, blocks, block_count, states, state_width,
+        func, code, instructions, blocks, block_count, states, state_width,
         locals_count, stack_capacity);
     if (analyzed <= 0) {
         if (analyzed < 0) {
@@ -3407,12 +4686,22 @@ _PyJit_CompileMethod(PyThreadState *tstate, _PyInterpreterFrame *frame)
     _Py_BloomFilter_Init(&dependencies);
     _Py_BloomFilter_Add(&dependencies, code);
 
-    int length = 0;
+    failure_phase = "emit";
     int limit = UOP_MAX_TRACE_LENGTH / 2;
+    int remaining_blocks = 0;
+    for (int b = 0; b < block_count; b++) {
+        remaining_blocks += blocks[b].initialized != 0;
+    }
+    /* Every reachable block needs a label and at least a deopt stub. Keep
+     * room for those even if an earlier block consumes its code budget.
+     * Also guarantee progress past the entry RESUME before any budget exit. */
+    if (remaining_blocks > (limit - 8) / 2) {
+        goto unsupported;
+    }
     if (!method_emit(
             input, &length, limit, _START_EXECUTOR, 0,
-            (uintptr_t)entry, 0) ||
-        !method_emit(input, &length, limit, _MAKE_WARM, 0, 0, 0))
+            (uintptr_t)entry, entry_offset) ||
+        !method_emit(input, &length, limit, _MAKE_WARM, 0, 0, entry_offset))
     {
         goto unsupported;
     }
@@ -3423,24 +4712,38 @@ _PyJit_CompileMethod(PyThreadState *tstate, _PyInterpreterFrame *frame)
         if (!block->initialized) {
             continue;
         }
+        remaining_blocks--;
+        int block_limit = limit - 2 * remaining_blocks;
         memcpy(state, states + block_index * state_width,
                (size_t)state_width * sizeof(*state));
         int stack_depth = block->stack_depth;
         block->uop_offset = (uint16_t)length;
+        if (!method_emit(input, &length, block_limit, _METHOD_LABEL,
+                         Py_MIN(stack_depth, 2), 0, 0)) {
+            goto unsupported;
+        }
         bool supported = true;
         for (int i = block->first; i <= block->last; i++) {
             _PyMethodInstruction *mi = &instructions[i];
             int target_block = i == block->last ? block->target : -1;
             int opcode = _PyOpcode_Deopt[mi->opcode];
+            if (length + 4 > block_limit) {
+                if (!method_emit(input, &length, block_limit, _METHOD_DEOPT,
+                                 0, 0, mi->offset)) {
+                    goto unsupported;
+                }
+                supported = false;
+                break;
+            }
             if (i == block->last && block->terminator == METHOD_RETURN) {
-                if (!method_emit(input, &length, limit, _SET_IP, 0,
+                if (!method_emit(input, &length, block_limit, _SET_IP, 0,
                                  (uintptr_t)(bytecode + mi->offset),
                                  mi->offset) ||
-                    !method_emit(input, &length, limit, _MAKE_HEAP_SAFE,
+                    !method_emit(input, &length, block_limit, _MAKE_HEAP_SAFE,
                                  0, 0, mi->offset) ||
-                    !method_emit(input, &length, limit, _RETURN_VALUE,
+                    !method_emit(input, &length, block_limit, _RETURN_VALUE,
                                  0, 0, mi->offset) ||
-                    !method_emit(input, &length, limit, _METHOD_EXIT,
+                    !method_emit(input, &length, block_limit, _METHOD_EXIT,
                                  0, 0, mi->offset))
                 {
                     goto unsupported;
@@ -3451,13 +4754,13 @@ _PyJit_CompileMethod(PyThreadState *tstate, _PyInterpreterFrame *frame)
             if (i == block->last && method_is_unconditional_jump(opcode)) {
                 if (opcode != JUMP_BACKWARD_NO_INTERRUPT &&
                     !method_emit(
-                        input, &length, limit, _CHECK_PERIODIC, 0, 0,
+                        input, &length, block_limit, _CHECK_PERIODIC, 0, 0,
                         mi->offset))
                 {
                     goto unsupported;
                 }
                 if (!method_emit(
-                        input, &length, limit, _METHOD_JUMP, 0, 0,
+                        input, &length, block_limit, _METHOD_JUMP, 0, 0,
                         mi->offset))
                 {
                     goto unsupported;
@@ -3469,10 +4772,10 @@ _PyJit_CompileMethod(PyThreadState *tstate, _PyInterpreterFrame *frame)
             int instruction_start = length;
             int instruction_translated = method_translate_instruction(
                     tstate, code, &dependencies, true,
-                    code, bytecode, mi, target_block,
+                    func, code, bytecode, mi, target_block,
                     state, locals_count, stack_depth,
                     stack_capacity, uop_state,
-                    input, &length, limit);
+                    input, &length, block_limit - 1);
             if (instruction_translated <= 0) {
                 length = instruction_start;
                 if (instruction_translated < 0) {
@@ -3480,7 +4783,7 @@ _PyJit_CompileMethod(PyThreadState *tstate, _PyInterpreterFrame *frame)
                 }
                 supported = false;
                 if (!method_emit(
-                        input, &length, limit, _METHOD_DEOPT, 0, 0,
+                        input, &length, block_limit, _METHOD_DEOPT, 0, 0,
                         mi->offset))
                 {
                     goto unsupported;
@@ -3489,7 +4792,7 @@ _PyJit_CompileMethod(PyThreadState *tstate, _PyInterpreterFrame *frame)
             }
             translated++;
             if (!method_apply_stack_effect(
-                    code, mi, state, locals_count, stack_capacity,
+                    func, code, mi, state, locals_count, stack_capacity,
                     &stack_depth, false))
             {
                 goto unsupported;
@@ -3503,7 +4806,7 @@ _PyJit_CompileMethod(PyThreadState *tstate, _PyInterpreterFrame *frame)
         {
             if (block->fallthrough < 0 ||
                 !method_emit(
-                    input, &length, limit, _METHOD_JUMP, 0, 0,
+                        input, &length, block_limit, _METHOD_JUMP, 0, 0,
                     instructions[block->last].offset))
             {
                 goto unsupported;
@@ -3515,10 +4818,17 @@ _PyJit_CompileMethod(PyThreadState *tstate, _PyInterpreterFrame *frame)
         goto unsupported;
     }
 
+    failure_phase = "finish";
     length = method_finish_uops(
         input, length, output, offset_map, blocks, block_count);
     if (length <= 0) {
         goto unsupported;
+    }
+    uint64_t trivial_operand = 0;
+    int trivial_call = method_trivial_return(
+        tstate, func, &dependencies, &trivial_operand);
+    if (trivial_call == _CALL_STORE_ATTRIBUTE) {
+        trivial_call = 0;
     }
     interp->compiling = true;
     _PyExecutorObject *executor = make_executor_from_uops(
@@ -3532,8 +4842,15 @@ _PyJit_CompileMethod(PyThreadState *tstate, _PyInterpreterFrame *frame)
         Py_DECREF(executor);
         goto error;
     }
+    executor->trivial_call = trivial_call;
+    executor->trivial_operand = trivial_operand;
     insert_executor(code, entry, index, executor);
     executor->vm_data.chain_depth = 0;
+    if (Py_SIZE(code) > METHOD_INLINE_MAX_CODE_SIZE) {
+        /* Older loop traces may have inlined this body before its method
+         * entry became hot. Rebuild those traces with the method boundary. */
+        invalidate_inlined_method_traces(interp, code);
+    }
     Py_DECREF(executor);
     PyMem_Free(instructions);
     PyMem_Free(blocks);
@@ -3548,6 +4865,7 @@ _PyJit_CompileMethod(PyThreadState *tstate, _PyInterpreterFrame *frame)
     return 1;
 
 unsupported:
+    method_debug_rejection(code, failure_phase, length);
     PyMem_Free(instructions);
     PyMem_Free(blocks);
     PyMem_Free(offset_to_instruction);
@@ -3599,6 +4917,9 @@ uop_optimize(
     _PyBloomFilter dependencies;
     _Py_BloomFilter_Init(&dependencies);
     if (!is_noopt) {
+        lower_bounded_int_regions(buffer, length);
+        lower_len_regions(buffer, length);
+        lower_tuple_comparisons(buffer, length);
         _PyUOpInstruction *output = &_tstate->jit_tracer_state->uop_array[UOP_MAX_TRACE_LENGTH];
         length = _Py_uop_analyze_and_optimize(
             _tstate, buffer, length, curr_stackentries,
@@ -3608,6 +4929,20 @@ uop_optimize(
             return length;
         }
         buffer = output;
+        /* Analysis has consumed the recorded observations. Drop them before
+         * matching regions, which contain only executable operations. */
+        for (int pc = 0; pc < length; pc++) {
+            if (_PyUop_Flags[buffer[pc].opcode] & HAS_RECORDS_VALUE_FLAG) {
+                Py_XDECREF((PyObject *)(uintptr_t)buffer[pc].operand0);
+                buffer[pc].opcode = _NOP;
+            }
+        }
+        fuse_list_pair_comparisons(buffer, length);
+        fuse_list_length_predicates(buffer, length);
+        lower_float_attribute_products(buffer, length);
+        lower_int_attribute_comparisons(buffer, length);
+        lower_int_attribute_updates(buffer, length);
+        fuse_borrowed_input_cleanup(buffer, length);
     }
     assert(length < UOP_MAX_TRACE_LENGTH);
     assert(length >= 1);
@@ -3697,9 +5032,10 @@ link_executor(_PyExecutorObject *executor, const _PyBloomFilter *bloom)
 static void
 unlink_executor(_PyExecutorObject *executor)
 {
-    PyInterpreterState *interp = PyInterpreterState_Get();
+    PyInterpreterState *interp = executor->vm_data.interp;
     int32_t idx = executor->vm_data.bloom_array_idx;
     assert(idx >= 0 && (size_t)idx < interp->executor_count);
+    assert(interp->executor_ptrs[idx] == executor);
     size_t last = --interp->executor_count;
     if ((size_t)idx != last) {
         /* Swap-remove: move the last element into the vacated slot */
@@ -3715,7 +5051,12 @@ int
 _Py_ExecutorInit(_PyExecutorObject *executor, const _PyBloomFilter *dependency_set)
 {
     FT_ATOMIC_STORE_UINT8(executor->vm_data.valid, true);
+    /* An installed executor may be scanned before its first execution, in
+     * both native and interpreted Tier 2 builds. */
+    executor->vm_data.cold = false;
     executor->vm_data.is_method = false;
+    executor->trivial_call = 0;
+    executor->trivial_operand = 0;
     executor->vm_data.pending_deletion = 0;
     executor->vm_data.code = NULL;
     if (link_executor(executor, dependency_set) < 0) {
@@ -3735,6 +5076,8 @@ make_cold_executor(uint16_t opcode)
     // Cold executors bypass _Py_ExecutorInit().
     FT_ATOMIC_STORE_UINT8(cold->vm_data.valid, true);
     cold->vm_data.is_method = false;
+    cold->trivial_call = 0;
+    cold->trivial_operand = 0;
     cold->vm_data.pending_deletion = 0;
     cold->vm_data.code = NULL;
 
@@ -3856,7 +5199,8 @@ invalidate_dependencies(
     PyInterpreterState *interp,
     const _PyBloomFilter *filter,
     const _PyBloomFilter *other,
-    int is_invalidation)
+    int is_invalidation,
+    bool traces_only)
 {
     /* Scan contiguous bloom filter array */
     PyObject *invalidate = PyList_New(0);
@@ -3868,6 +5212,9 @@ invalidate_dependencies(
     for (size_t i = 0; i < interp->executor_count; i++) {
         assert(FT_ATOMIC_LOAD_UINT8(
             interp->executor_ptrs[i]->vm_data.valid));
+        if (traces_only && interp->executor_ptrs[i]->vm_data.is_method) {
+            continue;
+        }
         if ((bloom_filter_may_contain(&interp->executor_blooms[i], filter) ||
              (other != NULL &&
               bloom_filter_may_contain(&interp->executor_blooms[i], other))) &&
@@ -3889,9 +5236,22 @@ invalidate_dependencies(
 error:
     PyErr_Clear();
     Py_XDECREF(invalidate);
-    // If we're truly out of memory, wiping out everything is a fine fallback:
-    _Py_Executors_InvalidateAll(interp, is_invalidation);
+    // Dependency invalidations must complete even when allocation fails.
+    // Replacing old inlined traces is optional: retain them and the new
+    // method rather than invalidating the method we just compiled.
+    if (!traces_only) {
+        _Py_Executors_InvalidateAll(interp, is_invalidation);
+    }
     return false;
+}
+
+static void
+invalidate_inlined_method_traces(PyInterpreterState *interp, PyCodeObject *code)
+{
+    _PyBloomFilter filter;
+    _Py_BloomFilter_Init(&filter);
+    _Py_BloomFilter_Add(&filter, code);
+    invalidate_dependencies(interp, &filter, NULL, 0, true);
 }
 
 void
@@ -3901,7 +5261,7 @@ _Py_Executors_InvalidateDependency(
     _PyBloomFilter filter;
     _Py_BloomFilter_Init(&filter);
     _Py_BloomFilter_Add(&filter, obj);
-    invalidate_dependencies(interp, &filter, NULL, is_invalidation);
+    invalidate_dependencies(interp, &filter, NULL, is_invalidation, false);
 }
 
 bool
@@ -3938,7 +5298,7 @@ _Py_Executors_InvalidateGlobalDependency(
     _Py_BloomFilter_AddGlobal(
         &changed, dict, value_only ? key_hash : 0, !value_only);
     _Py_BloomFilter_AddGlobal(&structure, dict, 0, true);
-    bool no_matches = invalidate_dependencies(interp, &legacy, &changed, 1);
+    bool no_matches = invalidate_dependencies(interp, &legacy, &changed, 1, false);
     for (size_t i = 0; i < interp->executor_count; i++) {
         if (bloom_filter_may_contain(
                 &interp->executor_blooms[i], &structure))

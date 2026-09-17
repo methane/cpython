@@ -2,11 +2,14 @@
 #include "pycore_call.h"          // _PyObject_CallNoArgsTstate()
 #include "pycore_ceval.h"         // _Py_EnterRecursiveCallTstate()
 #include "pycore_dict.h"          // _PyDict_FromItems()
+#include "pycore_interpframe.h"   // _PyFrame_PushUnchecked()
 #include "pycore_function.h"      // _PyFunction_Vectorcall() definition
 #include "pycore_modsupport.h"    // _Py_VaBuildStack()
 #include "pycore_object.h"        // _PyCFunctionWithKeywords_TrampolineCall()
 #include "pycore_pyerrors.h"      // _PyErr_Occurred()
 #include "pycore_pystate.h"       // _PyThreadState_GET()
+#include "pycore_optimizer.h"     // _PyJit_TryTrivialCall()
+#include "opcode_ids.h"           // ENTER_EXECUTOR
 #include "pycore_tuple.h"         // _PyTuple_ITEMS()
 
 
@@ -409,6 +412,38 @@ _PyFunction_Vectorcall(PyObject *func, PyObject* const* stack,
     PyThreadState *tstate = _PyThreadState_GET();
     assert(nargs == 0 || stack != NULL);
     EVAL_CALL_STAT_INC(EVAL_CALL_FUNCTION_VECTORCALL);
+#if defined(_Py_TIER2) && !defined(Py_GIL_DISABLED) && !defined(WITH_DTRACE)
+    PyCodeObject *code = (PyCodeObject *)f->func_code;
+    _Py_CODEUNIT *entry = _PyCode_CODE(code) + code->_co_firsttraceable;
+    if (code->_co_firsttraceable < Py_SIZE(code) && entry->op.code == ENTER_EXECUTOR) {
+        _PyExecutorObject *executor = code->co_executors->executors[entry->op.arg];
+        if (executor->trivial_call) {
+            PyObject *result = _PyJit_TryTrivialCall(tstate, code, stack, nargs, kwnames);
+            if (result != NULL) {
+                return result;
+            }
+        }
+        /* A compiled method with exact positional arguments needs neither
+         * a temporary argument array nor the general argument binder. Keep
+         * the ordinary frame and evaluation entry, including observer hooks,
+         * recursion checks, closure setup and exception handling. */
+        if (executor->vm_data.is_method && executor->vm_data.valid &&
+            tstate->interp->jit && kwnames == NULL && nargs == code->co_argcount &&
+            code->co_kwonlyargcount == 0 && (code->co_flags & CO_OPTIMIZED) &&
+            !(code->co_flags & (CO_VARARGS | CO_VARKEYWORDS | CO_GENERATOR |
+                               CO_COROUTINE | CO_ASYNC_GENERATOR)) &&
+            _PyThreadState_HasStackSpace(tstate, code->co_framesize))
+        {
+            _PyInterpreterFrame *frame = _PyFrame_PushUnchecked(
+                tstate, PyStackRef_FromPyObjectNew(f), (int)nargs, NULL);
+            for (Py_ssize_t i = 0; i < nargs; i++) {
+                frame->localsplus[i] = PyStackRef_FromPyObjectNew(stack[i]);
+            }
+            EVAL_CALL_STAT_INC(EVAL_CALL_VECTOR);
+            return _PyEval_EvalFrame(tstate, frame, 0);
+        }
+    }
+#endif
     if (((PyCodeObject *)f->func_code)->co_flags & CO_OPTIMIZED) {
         return _PyEval_Vector(tstate, f, NULL, stack, nargs, kwnames);
     }

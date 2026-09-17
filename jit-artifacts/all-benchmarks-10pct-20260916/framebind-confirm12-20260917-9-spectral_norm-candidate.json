@@ -1,0 +1,20 @@
+{
+  "benchmark": "spectral_norm_kernel",
+  "runtime": "Python 3.16.0a0 (CPython)",
+  "eval_A_calls_per_operation": 676000,
+  "loops": 1,
+  "warmups": 3,
+  "values": 7,
+  "median_seconds": 0.012761810794472694,
+  "minimum_seconds": 0.012717120349407196,
+  "samples_seconds": [
+    0.012747817672789097,
+    0.012761854566633701,
+    0.012761810794472694,
+    0.012771861627697945,
+    0.012765569612383842,
+    0.012717120349407196,
+    0.012744235806167126
+  ],
+  "checksum": 409.3151805348543
+}

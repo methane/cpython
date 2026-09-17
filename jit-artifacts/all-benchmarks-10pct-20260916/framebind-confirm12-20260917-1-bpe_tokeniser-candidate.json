@@ -1,0 +1,26 @@
+{
+  "benchmark": "bpe_tokeniser",
+  "runtime": "Python 3.16.0a0 (CPython)",
+  "executable": "/home/methane/work/python/cpython-gc/build-method-jit/python-goal-framebind",
+  "python_version": "3.16.0a0 (heads/codex/method-jit-dirty:2fa7dae77b9, Sep 16 2026, 15:49:13) [GCC 13.3.0]",
+  "jit_enabled": true,
+  "workload": "train a 1024-token vocabulary and encode the Frankenstein introduction",
+  "loops": 1,
+  "warmups": 3,
+  "values": 7,
+  "median_seconds": 2.5838242573663592,
+  "minimum_seconds": 2.5799636598676443,
+  "samples_seconds": [
+    2.5799636598676443,
+    2.583427927456796,
+    2.58441642485559,
+    2.580526325851679,
+    2.5838242573663592,
+    2.5898466669023037,
+    2.5870262309908867
+  ],
+  "checksum": {
+    "tokens": 10335,
+    "token_sha256": "ae6aed60fc44c7a735e5d9e9f896ece86ad7209ab658e0599c332534c604242e"
+  }
+}

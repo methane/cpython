@@ -41,6 +41,7 @@ The fixes were reapplied and verified on `codex/method-jit`, starting from
 | M-12 | Stencil optimization | Jump-table targets can be removed from a generic stencil | Fixed on `codex/method-jit` |
 | P-1 | Optimization coverage | Valid method-descriptor calls on subclasses are rejected | Fixed on `codex/method-jit` |
 | P-2 | Optimization precision | Unrelated global writes invalidate optimized code | Fixed on `codex/method-jit` |
+| P-3 | Optimization coverage | Materialized dictionaries prevent valid inline attribute loads from specializing | Fixed locally for GIL builds |
 
 ## M-1: dict-subscript guards inspect the wrong stack value
 
@@ -318,6 +319,27 @@ The same local-reference traversal now treats the preserved jump table as a
 root and retains every case block named by its entries.  A focused assembly
 fixture reproduces both the constant-pool and jump-table forms.
 
+## M-13: a ready JIT counter wraps while another trace is active
+
+**Impact:** hot functions can wait another 8192 calls for compilation after
+being encountered during tracing.
+
+The tracer sets specialization counters to zero. In `_JIT`, tracing suppresses
+compilation, but the fallback still decrements that zero counter. Its 16-bit
+representation becomes 65528, whose countdown value is 8191. A caller loop with
+4002 iterations reproduces this on the matched `main` build; the next direct
+leaf call still does not create an entry executor.
+
+Evidence: [reproducer](jit-artifacts/all-benchmarks-10pct-20260916/check-ready-counter.py)
+and [main result](jit-artifacts/all-benchmarks-10pct-20260916/ready-counter-main.json).
+The local fix preserves an already-ready counter when compilation is temporarily
+blocked. The regression test checks both the counter and compilation on the
+next direct call. The candidate preserves zero and creates an entry executor
+on that call: [candidate result](jit-artifacts/all-benchmarks-10pct-20260916/ready-counter-candidate.json).
+All 362 GIL native optimizer tests pass (four skips). The existing super-call
+test now accepts a replacement trace rooted in its callee and additionally
+checks invalidation after changing the second superclass method.
+
 ## P-1: method-descriptor specialization rejects compatible subclasses
 
 **Impact:** avoidable call overhead and premature trace termination for inherited
@@ -359,6 +381,41 @@ dict separately, and invalidates through per-name dependencies.  It is in commit
 `4a0328435496475ecc2ced6605c36c3ac8fb97fa`.  The namespace-identity guard from
 M-3 remains necessary; precise name dependencies do not make a keys version
 identify a mapping.
+
+## P-3: materializing a dictionary prevents inline attribute-load specialization
+
+**Impact:** ordinary attribute reads remain generic after `obj.__dict__` is
+accessed, even while the object's inline values remain valid. This affects
+Tier 1 and both JIT frontends; it is an optimization limitation, not a
+wrong-result bug.
+
+Reproduced on the matched `main` revision
+`d95f29589e03603aa13d8ca9d4f817dce77d357c`, executable SHA-256
+`a245f5d91e4e5007af841be2296e55634aa8a29605b03af70fb3f772a6e7370b`.
+The [reproducer](jit-artifacts/all-benchmarks-10pct-20260916/check-materialized-load.py)
+materializes a dict subclass's attribute dictionary before warming a getter
+10,000 times. With the JIT disabled,
+[main](jit-artifacts/all-benchmarks-10pct-20260916/materialized-load-main.json)
+retains `LOAD_ATTR`, whereas the
+[local debug build](jit-artifacts/all-benchmarks-10pct-20260916/materialized-load-debug.json)
+uses `LOAD_ATTR_INSTANCE_VALUE`. Both observe a subsequent dictionary write.
+
+`specialize_dict_access()` checks that inline values are valid, but then
+rejects an already materialized dictionary as though materialization had just
+raced with specialization. In a GIL build, reads may use the same valid inline
+storage, guarded by the existing type-version and inline-validity checks.
+The local fix permits this case only for loads. Stores retain the dictionary
+restriction so that dictionary watchers are honored. Free-threaded builds keep
+the previous policy because materialized-dictionary mutation can invalidate
+inline storage independently of the owner lock.
+
+The regression covers a dictionary materialized before warming, mutation through
+that dictionary, clearing it, replacing it, and adding a data descriptor.
+All four GIL/free-threaded debug/native builds pass 83 JIT-disabled opcode-cache
+tests and 1,312 JIT-enabled regression tests (four/five skips). The
+[native reproducer result](jit-artifacts/all-benchmarks-10pct-20260916/materialized-load-native.json)
+also confirms specialization. No timing benefit is claimed by this reproducer;
+benchmark results are recorded separately in `plan.md`.
 
 ## Observations deliberately excluded from the defect list
 

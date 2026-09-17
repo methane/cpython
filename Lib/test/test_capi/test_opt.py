@@ -2,6 +2,7 @@ import contextlib
 import dis
 import itertools
 import sys
+import sysconfig
 import textwrap
 import unittest
 import gc
@@ -15,7 +16,7 @@ import _opcode
 
 from test.support import (script_helper, requires_specialization,
                           import_helper, Py_GIL_DISABLED, requires_jit_enabled,
-                          reset_code, SHORT_TIMEOUT, isolation)
+                          reset_code, SHORT_TIMEOUT, isolation, disable_gc)
 
 _testinternalcapi = import_helper.import_module("_testinternalcapi")
 
@@ -90,6 +91,2951 @@ def count_ops(ex, name):
 @requires_specialization
 @requires_jit_enabled
 class TestMethodFrontend(unittest.TestCase):
+
+    def test_method_python_call_clears_receiver_facts(self):
+        script_helper.assert_python_ok("-c", textwrap.dedent("""
+            import gc
+            import itertools
+            from _testinternalcapi import TIER2_RESUME_THRESHOLD
+            from test.test_capi.test_opt import get_first_executor
+
+            gc.disable()
+            class Record:
+                pass
+            for padding in (0, 200):
+                # Exercise both an inlined callee and a method call.
+                source = 'def change(obj, mutate):\\n' + '    pass\\n' * padding
+                source += ('    if mutate:\\n'
+                           '        obj.__dict__ = {"a": 10, "b": 20}\\n'
+                           '    return 42\\n')
+                exec(source, globals())
+                for _ in range(100):
+                    change(Record(), True)
+                def update(obj, mutate):
+                    obj.a = 1
+                    obj.b = change(obj, mutate)
+                    return obj.b
+                update.__code__ = update.__code__.replace()
+                obj = Record()
+                obj.a = obj.b = 0
+                list(itertools.starmap(update, itertools.repeat(
+                    (obj, False), TIER2_RESUME_THRESHOLD)))
+                assert get_first_executor(update) is not None
+                assert update(obj, True) == 42
+                assert obj.__dict__ == {"a": 10, "b": 42}
+        """))
+
+    @disable_gc()
+    def test_method_empty_set_call(self):
+        namespace = {"factory": set}
+        exec("def make(ignored): return factory()", namespace)
+        make = namespace["make"]
+        results = list(map(make, itertools.repeat(None, TIER2_RESUME_THRESHOLD)))
+        self.assertEqual(results, [set()] * TIER2_RESUME_THRESHOLD)
+        self.assertIsNot(results[0], results[1])
+        results[0].add(42)
+        self.assertEqual(results[1], set())
+        executor = get_first_executor(make)
+        self.assertIsNotNone(executor)
+        ops = get_opnames(executor)
+        self.assertIn("_CALL_SET_EMPTY", ops)
+        self.assertGreaterEqual(ops.count("_TIER2_RESUME_CHECK"), 2)
+        events = []
+        namespace["factory"] = lambda: events.append("called") or 99
+        self.assertEqual(make(None), 99)
+        self.assertEqual(events, ["called"])
+        namespace["factory"] = set
+        self.assertEqual(make(None), set())
+
+        class Record:
+            pass
+        def construct(record):
+            record.a = 1
+            result = set()
+            record.b = 2
+            return result
+        record = Record()
+        list(map(construct, itertools.repeat(record, TIER2_RESUME_THRESHOLD)))
+        ops = get_opnames(get_first_executor(construct))
+        self.assertIn("_CALL_SET_EMPTY", ops)
+        if not Py_GIL_DISABLED:
+            self.assertEqual(sum(op in ("_GUARD_TYPE_VERSION", "_GUARD_TYPE_VERSION_LOCKED")
+                                 for op in ops), 1)
+
+    def test_method_empty_set_allocation_error_location(self):
+        script_helper.assert_python_ok("-c", textwrap.dedent("""
+            import _opcode
+            import _testcapi
+            import dis
+            import gc
+            import itertools
+            from _testinternalcapi import TIER2_RESUME_THRESHOLD
+
+            def pack(value):
+                return set()
+
+            gc.disable()
+            list(map(pack, itertools.repeat(None, TIER2_RESUME_THRESHOLD)))
+            executor = _opcode.get_executor(pack.__code__, 0)
+            assert any(op[0] == '_CALL_SET_EMPTY' for op in executor)
+            held = [set() for _ in range(1000)]
+            failed = False
+            _testcapi.set_nomemory(0, 1)
+            try:
+                pack(None)
+            except MemoryError as exc:
+                _testcapi.remove_mem_hooks()
+                failed = True
+                tb = exc.__traceback__
+                while tb.tb_next is not None:
+                    tb = tb.tb_next
+                assert tb.tb_frame.f_code is pack.__code__
+                assert dis.opname[pack.__code__.co_code[tb.tb_lasti]] == 'CALL'
+            finally:
+                _testcapi.remove_mem_hooks()
+            assert failed
+            assert pack(None) == set()
+        """))
+
+    @disable_gc()
+    def test_method_empty_dict_preserves_receiver_facts(self):
+        class Record:
+            pass
+        record = Record()
+        def construct(record):
+            record.a = 42
+            result = {}
+            record.b = 43
+            return result
+        results = list(map(construct, itertools.repeat(record, TIER2_RESUME_THRESHOLD)))
+        self.assertEqual(results, [{}] * TIER2_RESUME_THRESHOLD)
+        self.assertIsNot(results[0], results[1])
+        results[0]["changed"] = True
+        self.assertEqual(results[1], {})
+        executor = get_first_executor(construct)
+        self.assertIsNotNone(executor)
+        ops = get_opnames(executor)
+        index = ops.index("_BUILD_EMPTY_MAP")
+        self.assertNotEqual(ops[index + 1], "_CHECK_VALIDITY")
+        if not Py_GIL_DISABLED:
+            self.assertEqual(sum(op in ("_GUARD_TYPE_VERSION", "_GUARD_TYPE_VERSION_LOCKED")
+                                 for op in ops), 1)
+
+    def test_method_empty_dict_allocation_error_location(self):
+        script_helper.assert_python_ok("-c", textwrap.dedent("""
+            import _opcode
+            import _testcapi
+            import dis
+            import gc
+            import itertools
+            from _testinternalcapi import TIER2_RESUME_THRESHOLD
+
+            def pack(value):
+                return {}
+
+            gc.disable()
+            list(map(pack, itertools.repeat(None, TIER2_RESUME_THRESHOLD)))
+            executor = _opcode.get_executor(pack.__code__, 0)
+            assert any(op[0] == '_BUILD_EMPTY_MAP' for op in executor)
+            held = [{} for _ in range(1000)]  # Drain the dictionary freelist.
+            failed = False
+            _testcapi.set_nomemory(0, 1)
+            try:
+                pack(None)
+            except MemoryError as exc:
+                _testcapi.remove_mem_hooks()
+                failed = True
+                tb = exc.__traceback__
+                while tb.tb_next is not None:
+                    tb = tb.tb_next
+                assert tb.tb_frame.f_code is pack.__code__
+                assert dis.opname[pack.__code__.co_code[tb.tb_lasti]] == 'BUILD_MAP'
+            finally:
+                _testcapi.remove_mem_hooks()
+            assert failed
+            assert pack(None) == {}
+        """))
+
+    @disable_gc()
+    def test_method_store_over_mutable_class_default(self):
+        for has_get in (False, True):
+            events = []
+            class Default:
+                pass
+            if has_get:
+                Default.__get__ = lambda *args: events.append("get")
+            default = Default()
+            class Record:
+                value = default
+            record = Record()
+            @reset_code
+            def store(record, value):
+                record.value = value
+            self.assertEqual(list(itertools.starmap(store, itertools.repeat(
+                (record, 42), TIER2_RESUME_THRESHOLD))),
+                [None] * TIER2_RESUME_THRESHOLD)
+            executor = get_first_executor(store)
+            self.assertIsNotNone(executor)
+            if not Py_GIL_DISABLED:
+                self.assertIn("_GUARD_STORE_ATTR_NONDATA_CACHED", get_opnames(executor))
+            self.assertEqual(record.value, 42)
+            self.assertEqual(events, [])
+            Default.__set__ = lambda self, obj, value: events.append(value)
+            store(record, 43)
+            self.assertEqual(events, [43])
+            del Default.__set__
+            store(record, 44)
+            self.assertEqual(record.value, 44)
+            Default.__delete__ = lambda self, obj: None
+            with self.assertRaises(AttributeError):
+                store(record, 45)
+            del Default.__delete__
+            class Data:
+                def __set__(self, obj, value):
+                    events.append(value)
+            default.__class__ = Data
+            store(record, 46)
+            self.assertEqual(events, [43, 46])
+            # Drop the cached binding while retaining the compiled executor.
+            Record.value = None
+            del default
+            store(record, 47)
+            self.assertEqual(record.value, 47)
+            namespace = vars(record)
+            store(record, 48)
+            self.assertEqual(namespace["value"], 48)
+            record.__dict__ = {}
+            store(record, 49)
+            self.assertEqual(record.value, 49)
+
+    @disable_gc()
+    def test_method_stores_preserve_receiver_version(self):
+        class Slot:
+            __slots__ = ("a", "b")
+        class Managed:
+            pass
+        class Default:
+            pass
+        class ManagedDefaults:
+            a = Default()
+            b = Default()
+        for cls in (Slot, Managed, ManagedDefaults):
+            obj = cls()
+            obj.a = obj.b = 0
+            @reset_code
+            def update(obj, a, b):
+                obj.a = a
+                obj.b = b
+                return obj.b
+            results = list(itertools.starmap(update, itertools.repeat(
+                (obj, 1, 2), TIER2_RESUME_THRESHOLD)))
+            self.assertEqual(results, [2] * TIER2_RESUME_THRESHOLD)
+            executor = get_first_executor(update)
+            self.assertIsNotNone(executor)
+            if not Py_GIL_DISABLED:
+                self.assertEqual(sum(op in ("_GUARD_TYPE_VERSION", "_GUARD_TYPE_VERSION_LOCKED")
+                                     for op in get_opnames(executor)), 1)
+                ops = get_opnames(executor)
+                self.assertNotIn("_LOCK_OBJECT", ops)
+                if cls is not Slot:
+                    self.assertEqual(ops.count("_GUARD_DORV_NO_DICT"), 1)
+                    self.assertNotIn("_CHECK_MANAGED_OBJECT_HAS_VALUES", ops)
+            if cls is not Slot:
+                materialized = cls()
+                materialized.b = 0
+                snapshots = []
+                class Materializer:
+                    def __del__(self):
+                        snapshots.append(vars(materialized).copy())
+                materialized.a = Materializer()
+                self.assertEqual(update(materialized, 3, 4), 4)
+                self.assertEqual(snapshots, [{"b": 0, "a": 3}])
+                self.assertEqual(vars(materialized), {"b": 4, "a": 3})
+            events = []
+            class Finalizer:
+                def __del__(self):
+                    cls.b = property(lambda self: 99,
+                        lambda self, value: events.append(value))
+            obj.a = Finalizer()
+            self.assertEqual(update(obj, 3, 4), 99)
+            self.assertEqual(obj.a, 3)
+            self.assertEqual(events, [4])
+
+    @disable_gc()
+    def test_method_store_over_nondata_descriptor(self):
+        events = []
+        class Descriptor:
+            def __get__(self, instance, owner):
+                events.append("get")
+                return 99
+        import_helper.import_module("_testlimitedcapi").type_freeze(Descriptor)
+        descriptors = (lambda self: 99, staticmethod(lambda: 99),
+                       classmethod(lambda cls: 99), list.append,
+                       vars(dict)["fromkeys"], Descriptor())
+        for descriptor in descriptors:
+            class Record:
+                value = descriptor
+            obj = Record()
+            @reset_code
+            def store(obj, value):
+                obj.value = value
+                return obj.value
+            results = list(itertools.starmap(store, itertools.repeat(
+                (obj, 42), TIER2_RESUME_THRESHOLD)))
+            self.assertEqual(results, [42] * TIER2_RESUME_THRESHOLD)
+            executor = get_first_executor(store)
+            self.assertIsNotNone(executor)
+            if not Py_GIL_DISABLED:
+                self.assertIn("_STORE_ATTR_INSTANCE_VALUE_NOESCAPE", get_opnames(executor))
+            self.assertEqual(events, [])
+            self.assertIs(vars(Record)["value"], descriptor)
+            del obj.value
+            self.assertEqual(store(obj, 43), 43)
+            obj.__dict__ = {}
+            self.assertEqual(store(obj, 44), 44)
+            Record.value = property(lambda self: 99,
+                lambda self, value: events.append(value))
+            self.assertEqual(store(obj, 45), 99)
+            self.assertEqual(events, [45])
+            events.clear()
+
+    @disable_gc()
+    def test_method_store_attribute_cleanup_and_aliases(self):
+        class Slot:
+            __slots__ = ("value",)
+        class Managed:
+            pass
+        def store(obj, value):
+            obj.value = value
+            return obj.value
+        for cls, opname in ((Slot, "_STORE_ATTR_SLOT_NOESCAPE"),
+                            (Managed, "_STORE_ATTR_INSTANCE_VALUE_NOESCAPE")):
+            obj = cls()
+            with clear_executors(store):
+                self.assertEqual(list(itertools.starmap(store, itertools.repeat(
+                    (obj, 42), TIER2_RESUME_THRESHOLD))),
+                    [42] * TIER2_RESUME_THRESHOLD)
+                executor = _opcode.get_executor(store.__code__, 0)
+                if not Py_GIL_DISABLED:
+                    self.assertIn(opname, get_opnames(executor))
+                events = []
+                class Finalizer:
+                    def __del__(self):
+                        events.append((sys._getframe(1).f_code.co_name, obj.value))
+                obj.value = Finalizer()
+                self.assertEqual(store(obj, 43), 43)
+                self.assertEqual(events, [("store", 43)])
+                del obj.value
+                self.assertEqual(store(obj, 44), 44)
+                if cls is Managed:
+                    obj.__dict__ = {}
+                    self.assertEqual(store(obj, 45), 45)
+                    self.assertEqual(obj.__dict__, {"value": 45})
+
+        def alias(obj, value):
+            first = value + 1.0
+            obj.value = first
+            return first + 1.0, obj.value
+        obj = Managed()
+        results = list(itertools.starmap(alias, itertools.repeat(
+            (obj, 2.5), TIER2_RESUME_THRESHOLD)))
+        self.assertEqual(results, [(4.5, 3.5)] * TIER2_RESUME_THRESHOLD)
+        self.assertIsNotNone(get_first_executor(alias))
+        self.assertEqual(alias(obj, 4.25), (6.25, 5.25))
+
+    @disable_gc()
+    def test_method_list_slice_bounds_and_callbacks(self):
+        def sliced(values, start, stop):
+            return values[start:stop]
+
+        values = [object() for _ in range(10)]
+        results = list(itertools.starmap(sliced, itertools.repeat(
+            (values, 1, -1), TIER2_RESUME_THRESHOLD)))
+        self.assertEqual(results[-1], values[1:-1])
+        executor = get_first_executor(sliced)
+        self.assertIsNotNone(executor)
+        self.assertIn("_BINARY_SLICE", get_opnames(executor))
+        bounds = [None, -100, -10, -1, 0, 1, 10, 100, -(1 << 100), 1 << 100]
+        for start in bounds:
+            for stop in bounds:
+                self.assertEqual(sliced(values, start, stop),
+                                 list.__getitem__(values, slice(start, stop)))
+                self.assertEqual(sliced([], start, stop), [])
+        self.assertIsNot(sliced(values, None, None), values)
+        events = []
+        class Start:
+            def __index__(self):
+                events.append("start")
+                values[:] = [1, 2, 3]
+                return 1
+        class Stop:
+            def __index__(self):
+                events.append("stop")
+                values.append(4)
+                return 4
+        self.assertEqual(sliced(values, Start(), Stop()), [2, 3, 4])
+        self.assertEqual(events, ["start", "stop"])
+        class Failure:
+            def __index__(self):
+                raise ValueError("slice bound failure")
+        with self.assertRaisesRegex(ValueError, "slice bound failure"):
+            sliced(values, Failure(), None)
+        with self.assertRaises(TypeError):
+            sliced(values, 1.5, None)
+        class Sequence(list):
+            def __getitem__(self, key):
+                return key.start, key.stop, key.step
+        self.assertEqual(sliced(Sequence(values), 1, 3), (1, 3, None))
+        self.assertEqual(sliced((1, 2, 3), 1, None), (2, 3))
+        self.assertEqual(sliced("abc", 1, None), "bc")
+
+    @disable_gc()
+    def test_method_uint64_bitwise(self):
+        def operate(a, b):
+            return (a ^ b) & (a | b)
+        args = ((1 << 64) - 1, 1 << 63)
+        expected = int.__xor__(*args)
+        self.assertEqual(list(itertools.starmap(operate, itertools.repeat(
+            args, TIER2_RESUME_THRESHOLD))), [expected] * TIER2_RESUME_THRESHOLD)
+        executor = get_first_executor(operate)
+        self.assertIsNotNone(executor)
+        self.assertIn("_BINARY_OP_EXTEND", get_opnames(executor))
+        boundaries = [0, 1, (1 << 30) - 1, 1 << 30, 1 << 60, 1 << 63,
+                      (1 << 64) - 1, 1 << 64, -(1 << 64), 1 << 100]
+        for a in boundaries:
+            for b in boundaries:
+                self.assertEqual(operate(a, b), int.__xor__(a, b))
+        class Value(int):
+            def __xor__(self, other):
+                return 42
+        self.assertEqual(operate(Value(1 << 63), (1 << 64) - 1), 42)
+        with self.assertRaises(TypeError):
+            operate(1 << 63, 1.0)
+
+    @disable_gc()
+    def test_method_zip_retained_list_pairs(self):
+        def collect(left, right):
+            result = []
+            for pair in zip(left, right):
+                result.append(pair)
+            return result
+
+        left, right = [1, 2, 3], [4, 5, 6]
+        results = list(itertools.starmap(collect, itertools.repeat(
+            (left, right), TIER2_RESUME_THRESHOLD)))
+        self.assertEqual(results[-1], [(1, 4), (2, 5), (3, 6)])
+        executor = get_first_executor(collect)
+        self.assertIsNotNone(executor)
+        self.assertIn("_METHOD_ITER_NEXT_INLINE", get_opnames(executor))
+        if not Py_GIL_DISABLED:
+            self.assertFalse(gc.is_tracked(results[-1][1]))
+        self.assertIsNot(results[-1][0], results[-1][1])
+        self.assertEqual(collect([1, 2, 3], [4]), [(1, 4)])
+        self.assertEqual(collect([], [1, 2]), [])
+        shared = iter([1, 2, 3, 4])
+        self.assertEqual(collect(shared, shared), [(1, 2), (3, 4)])
+        self.assertEqual(collect(iter([1, 2]), iter([3, 4])), [(1, 3), (2, 4)])
+        rows = collect([[], [], []], [[], [], []])
+        self.assertTrue(gc.is_tracked(rows[1]))
+        self.assertIsNot(rows[0][0], rows[1][0])
+        events = []
+        def raising():
+            yield 4
+            events.append("raise")
+            raise ValueError("zip iterator failure")
+        with self.assertRaisesRegex(ValueError, "zip iterator failure"):
+            collect([1, 2, 3], raising())
+        self.assertEqual(events, ["raise"])
+
+    @disable_gc()
+    def test_method_zip_recycled_list_pairs(self):
+        def consume(left, right):
+            count = 0
+            for a, b in zip(left, right):
+                count += 1
+                # Release body references before the next tuple replacement.
+                a = b = None
+                if count == 1:
+                    left[0] = None
+                    right[0] = None
+            return count
+
+        results = list(itertools.starmap(consume, itertools.repeat(
+            ([None, 1, 2], [None, 3, 4]), TIER2_RESUME_THRESHOLD)))
+        self.assertEqual(results[-1], 3)
+        self.assertIsNotNone(get_first_executor(consume))
+        self.assertEqual(consume([None, [], []], [None, [], []]), 3)
+        events = []
+        right = [0, 1, 2]
+        class Finalizer:
+            def __del__(self):
+                events.append("released")
+                right.clear()
+        # Only the recycled result tuple still owns the first item when the
+        # next iteration begins. Its finalizer empties the second list before
+        # zip advances that iterator.
+        self.assertEqual(consume([Finalizer(), 1, 2], right), 1)
+        self.assertEqual(events, ["released"])
+        events.clear()
+        right = [None, 1, 2]
+        value = Finalizer()
+        left = [value, 1, 2]
+        right[0] = value
+        del value
+        # Two tuple slots holding the same object are not independent owners.
+        self.assertEqual(consume(left, right), 2)
+        self.assertEqual(events, ["released"])
+
+    @disable_gc()
+    def test_method_zip_retained_list_pairs_strict(self):
+        def collect(left, right):
+            result = []
+            for pair in zip(left, right, strict=True):
+                result.append(pair)
+            return result
+
+        results = list(itertools.starmap(collect, itertools.repeat(
+            ([1, 2, 3], [4, 5, 6]), TIER2_RESUME_THRESHOLD)))
+        self.assertEqual(results[-1], [(1, 4), (2, 5), (3, 6)])
+        if not Py_GIL_DISABLED:
+            self.assertFalse(gc.is_tracked(results[-1][1]))
+        with self.assertRaisesRegex(ValueError, "shorter"):
+            collect([1, 2, 3], [4, 5])
+        with self.assertRaisesRegex(ValueError, "longer"):
+            collect([1, 2], [3, 4, 5])
+        self.assertEqual(collect([], []), [])
+        shared = iter([1, 2, 3, 4])
+        self.assertEqual(collect(shared, shared), [(1, 2), (3, 4)])
+
+    @disable_gc()
+    def test_method_delete_inline_instance_attribute(self):
+        capi = import_helper.import_module("_testcapi")
+        class Record:
+            def value(self):
+                return 99
+        record = Record()
+        namespace = record.__dict__
+        def erase(value):
+            record.value = value
+            del record.value
+        list(map(erase, itertools.repeat(42, TIER2_RESUME_THRESHOLD)))
+        executor = get_first_executor(erase)
+        self.assertIsNotNone(executor)
+        if not Py_GIL_DISABLED:
+            self.assertIn("_DELETE_ATTR_INSTANCE_VALUE", get_opnames(executor))
+        self.assertEqual(record.value(), 99)
+        self.assertEqual(namespace, {})
+        wid = capi.add_dict_watcher(0)
+        try:
+            capi.watch_dict(wid, namespace)
+            erase(43)
+            self.assertEqual(capi.get_dict_watcher_events(),
+                             ["new:value:43", "del:value"])
+        finally:
+            capi.unwatch_dict(wid, namespace)
+            capi.clear_dict_watcher(wid)
+        record.__dict__ = {"new": True}
+        erase(44)
+        self.assertEqual(record.__dict__, {"new": True})
+        events = []
+        class Descriptor:
+            def __set__(self, instance, value):
+                events.append(value)
+            def __delete__(self, instance):
+                events.append("delete")
+        Record.value = Descriptor()
+        erase(45)
+        self.assertEqual(events, [45, "delete"])
+
+    @disable_gc()
+    def test_method_list_construction_preserves_aliases(self):
+        def construct(value):
+            first = value + 1.0
+            items = [first, first]
+            return items, first + 1.0
+
+        results = list(map(construct, itertools.repeat(2.5, TIER2_RESUME_THRESHOLD)))
+        self.assertEqual(results[-1], ([3.5, 3.5], 4.5))
+        self.assertIs(results[-1][0][0], results[-1][0][1])
+        executor = get_first_executor(construct)
+        self.assertIsNotNone(executor)
+        ops = get_opnames(executor)
+        index = ops.index("_BUILD_LIST")
+        self.assertNotEqual(ops[index + 1], "_CHECK_VALIDITY")
+        self.assertEqual(construct(5.25), ([6.25, 6.25], 7.25))
+
+    def test_method_list_allocation_error_location(self):
+        script_helper.assert_python_ok("-c", textwrap.dedent("""
+            import _opcode
+            import _testcapi
+            import dis
+            import gc
+            import itertools
+            from _testinternalcapi import TIER2_RESUME_THRESHOLD
+
+            def pack(value):
+                return [value, value]
+
+            gc.disable()
+            value = object()
+            list(map(pack, itertools.repeat(value, TIER2_RESUME_THRESHOLD)))
+            executor = _opcode.get_executor(pack.__code__, 0)
+            assert any(op[0] == '_BUILD_LIST' for op in executor)
+            failed = False
+            _testcapi.set_nomemory(0, 1)
+            try:
+                pack(value)
+            except MemoryError as exc:
+                _testcapi.remove_mem_hooks()
+                failed = True
+                tb = exc.__traceback__
+                while tb.tb_next is not None:
+                    tb = tb.tb_next
+                assert tb.tb_frame.f_code is pack.__code__
+                assert dis.opname[pack.__code__.co_code[tb.tb_lasti]] == 'BUILD_LIST'
+            finally:
+                _testcapi.remove_mem_hooks()
+            assert failed
+            result = pack(value)
+            assert result[0] is result[1] is value
+        """))
+
+    @disable_gc()
+    def test_method_store_over_class_default(self):
+        class Base:
+            value = None
+        class Record(Base):
+            pass
+        record = Record()
+        def store(value):
+            record.value = value
+        list(map(store, itertools.repeat(42, TIER2_RESUME_THRESHOLD)))
+        executor = get_first_executor(store)
+        self.assertIsNotNone(executor)
+        if not Py_GIL_DISABLED:
+            self.assertIn("_STORE_ATTR_INSTANCE_VALUE_NOESCAPE", get_opnames(executor))
+        self.assertIsNone(Base.value)
+        del record.value
+        store(43)
+        self.assertEqual(record.value, 43)
+        events = []
+        Base.value = property(lambda self: 99,
+                              lambda self, value: events.append(value))
+        store(44)
+        self.assertEqual(events, [44])
+        self.assertEqual(record.value, 99)
+        self.assertEqual(record.__dict__["value"], 43)
+
+    @disable_gc()
+    def test_method_materialized_inline_dict_store(self):
+        capi = import_helper.import_module("_testcapi")
+        class Record:
+            pass
+
+        record = Record()
+        record.value = 0
+        namespace = record.__dict__
+        def store(value):
+            record.value = value
+
+        list(map(store, itertools.repeat(42, TIER2_RESUME_THRESHOLD)))
+        executor = get_first_executor(store)
+        self.assertIsNotNone(executor)
+        if not Py_GIL_DISABLED:
+            self.assertIn("_STORE_ATTR_INLINE_WITH_DICT", get_opnames(executor))
+        del namespace["value"]
+        store(43)
+        self.assertEqual(namespace, {"value": 43})
+        wid = capi.add_dict_watcher(0)
+        try:
+            capi.watch_dict(wid, namespace)
+            store(44)
+            self.assertEqual(capi.get_dict_watcher_events(), ["mod:value:44"])
+        finally:
+            capi.unwatch_dict(wid, namespace)
+            capi.clear_dict_watcher(wid)
+        events = []
+        class Previous:
+            def __del__(self):
+                events.append(record.value)
+        record.value = Previous()
+        store(45)
+        self.assertEqual(events, [45])
+        record.__dict__ = {"new": True}
+        store(46)
+        self.assertEqual(record.__dict__, {"new": True, "value": 46})
+        Record.value = property(lambda self: 99)
+        with self.assertRaises(AttributeError):
+            store(47)
+
+    @disable_gc()
+    def test_method_cached_descriptor_binding(self):
+        class Record:
+            @staticmethod
+            def callback(value):
+                return value + 1
+
+        record = Record()
+        def call(record, value):
+            return record.callback(value)
+
+        self.assertEqual(list(itertools.starmap(call, itertools.repeat(
+            (record, 2), TIER2_RESUME_THRESHOLD))),
+            [3] * TIER2_RESUME_THRESHOLD)
+        executor = get_first_executor(call)
+        self.assertIsNotNone(executor)
+        if not Py_GIL_DISABLED:
+            self.assertIn("_LOAD_ATTR_DESCRIPTOR", get_opnames(executor))
+        descriptor = Record.__dict__["callback"]
+        descriptor.__init__(lambda value: value + 10)
+        self.assertEqual(call(record, 2), 12)
+        record.callback = lambda value: value + 20
+        self.assertEqual(call(record, 2), 22)
+        del record.callback
+        descriptor.__init__(None)
+        with self.assertRaises(TypeError):
+            call(record, 2)
+        del Record.callback
+        with self.assertRaises(AttributeError):
+            call(record, 2)
+
+    @disable_gc()
+    def test_method_descriptor_getattr_fallback(self):
+        type_freeze = import_helper.import_module("_testlimitedcapi").type_freeze
+        calls = []
+
+        class Descriptor:
+            missing = False
+
+            def __get__(self, instance, owner):
+                calls.append("get")
+                if self.missing:
+                    raise AttributeError("descriptor unavailable")
+                return 42
+
+        type_freeze(Descriptor)
+        descriptor = Descriptor()
+
+        class Record:
+            value = descriptor
+
+            def __getattr__(self, name):
+                calls.append(name)
+                return 99
+
+        def read(record):
+            return record.value
+
+        record = Record()
+        self.assertEqual(list(map(read, itertools.repeat(
+            record, TIER2_RESUME_THRESHOLD))), [42] * TIER2_RESUME_THRESHOLD)
+        self.assertIsNotNone(get_first_executor(read))
+        calls.clear()
+        descriptor.missing = True
+        self.assertEqual(read(record), 99)
+        self.assertEqual(calls, ["get", "value"])
+
+    @disable_gc()
+    def test_method_mutable_descriptor_instance_override(self):
+        class Descriptor:
+            def __get__(self, instance, owner):
+                return lambda value: value + 10
+
+        class Record:
+            callback = Descriptor()
+
+        record = Record()
+        record.__dict__["callback"] = lambda value: value + 1
+
+        def call(record, value):
+            return record.callback(value)
+
+        self.assertEqual(list(itertools.starmap(call, itertools.repeat(
+            (record, 2), TIER2_RESUME_THRESHOLD))),
+            [3] * TIER2_RESUME_THRESHOLD)
+        executor = get_first_executor(call)
+        self.assertIsNotNone(executor)
+        if not Py_GIL_DISABLED:
+            self.assertIn("_LOAD_ATTR_INSTANCE_VALUE_NONDATA",
+                          get_opnames(executor))
+        Descriptor.__set__ = lambda self, instance, value: None
+        self.assertEqual(call(record, 2), 12)
+        del Descriptor.__set__
+        self.assertEqual(call(record, 2), 3)
+        del record.callback
+        self.assertEqual(call(record, 2), 12)
+        record.callback = lambda value: value + 2
+        self.assertEqual(call(record, 2), 4)
+        previous = weakref.ref(Record.__dict__["callback"])
+        Record.callback = property(lambda self: lambda value: value + 20)
+        gc.collect()
+        self.assertIsNone(previous())
+        self.assertEqual(call(record, 2), 22)
+        del Record.callback
+        del record.callback
+        with self.assertRaises(AttributeError):
+            call(record, 2)
+
+    @disable_gc()
+    def test_method_resolves_conditional_null(self):
+        class Record:
+            pass
+
+        record = Record()
+        record.value = 42
+        record.function = abs
+
+        def read(record):
+            return record.value
+
+        def call(record, value):
+            return record.function(value)
+
+        self.assertEqual(list(map(read, itertools.repeat(
+            record, TIER2_RESUME_THRESHOLD))), [42] * TIER2_RESUME_THRESHOLD)
+        self.assertEqual(list(itertools.starmap(call, itertools.repeat(
+            (record, -42), TIER2_RESUME_THRESHOLD))),
+            [42] * TIER2_RESUME_THRESHOLD)
+        for function in (read, call):
+            executor = get_first_executor(function)
+            self.assertIsNotNone(executor)
+            self.assertNotIn("_PUSH_NULL_CONDITIONAL", get_opnames(executor))
+        self.assertIn("_PUSH_NULL", get_opnames(get_first_executor(call)))
+        record.function = len
+        self.assertEqual(call(record, [1, 2, 3]), 3)
+        record.function = 42
+        with self.assertRaises(TypeError):
+            call(record, 0)
+        del record.function
+        with self.assertRaises(AttributeError):
+            call(record, 0)
+
+    @disable_gc()
+    def test_method_instance_attribute_class_default(self):
+        class Base:
+            flag = False
+
+        class Record(Base):
+            pass
+
+        def read(record):
+            value = record.flag
+            return value, sys._jit.is_active()
+
+        record = Record()
+        record.flag = True
+        list(map(read, itertools.repeat(record, TIER2_RESUME_THRESHOLD)))
+        executor = get_first_executor(read)
+        self.assertIsNotNone(executor)
+        if not Py_GIL_DISABLED:
+            self.assertIn("_LOAD_ATTR_INSTANCE_VALUE_OR_DEFAULT",
+                          get_opnames(executor))
+        del record.flag
+        for value in (False, 123, None):
+            if value is not False:
+                record.flag = value
+            result, active = read(record)
+            self.assertIs(result, value)
+            if not Py_GIL_DISABLED:
+                self.assertTrue(active)
+        del record.flag
+        Base.flag = 42
+        self.assertEqual(read(record)[0], 42)
+
+        Record.flag = property(lambda self: "descriptor")
+        record.__dict__["flag"] = "shadowed"
+        self.assertEqual(read(record)[0], "descriptor")
+        del Record.flag
+        self.assertEqual(read(record)[0], "shadowed")
+        record.__dict__ = {}
+        self.assertEqual(read(record)[0], 42)
+        del Base.flag
+        with self.assertRaises(AttributeError):
+            read(record)
+        Record.__getattr__ = lambda self, name: "missing"
+        self.assertEqual(read(record)[0], "missing")
+
+    @disable_gc()
+    def test_method_proven_local_cleanup(self):
+        def save(value):
+            result = value
+            return result
+
+        token = object()
+        self.assertEqual(list(map(save, itertools.repeat(
+            token, TIER2_RESUME_THRESHOLD))), [token] * TIER2_RESUME_THRESHOLD)
+        names = get_opnames(get_first_executor(save))
+        self.assertIn("_POP_TOP_NOP", names)
+        self.assertNotIn("_POP_TOP", names)
+
+        def replace_float(value, replacement):
+            value = value + 0.5
+            value = replacement
+            return value
+
+        self.assertEqual(list(itertools.starmap(replace_float, itertools.repeat(
+            (0.5, token), TIER2_RESUME_THRESHOLD))),
+            [token] * TIER2_RESUME_THRESHOLD)
+        names = [name for name in get_opnames(get_first_executor(replace_float))
+                 if name not in ("_SPILL_OR_RELOAD", "_SET_IP", "_CHECK_VALIDITY")]
+        self.assertIn(("_SWAP_FAST_0", "_POP_TOP_FLOAT"),
+                      list(zip(names, names[1:])))
+
+        events = []
+        class Previous:
+            def __del__(self):
+                frame = sys._getframe(1)
+                events.append((frame.f_code.co_name, frame.f_locals["value"]))
+
+        def replace_after_call(callback, replacement):
+            value = 1.5
+            callback()
+            value = replacement
+            return value
+
+        def noop():
+            pass
+        self.assertEqual(list(itertools.starmap(replace_after_call,
+            itertools.repeat((noop, token), TIER2_RESUME_THRESHOLD))),
+            [token] * TIER2_RESUME_THRESHOLD)
+
+        def mutate():
+            sys._getframe(1).f_locals["value"] = Previous()
+
+        # Writing through f_locals invalidates the facts before the store.
+        # The replacement is installed before closing the previous value.
+        self.assertIs(replace_after_call(mutate, token), token)
+        self.assertEqual(events, [("replace_after_call", token)])
+
+    @disable_gc()
+    def test_trace_preserves_existing_method_entry(self):
+        source = ["def factory(offset):", "    def callee(value):"]
+        source.extend(["        value += offset"] * 40)
+        source.extend(["        return value", "    return callee"])
+        namespace = {}
+        exec("\n".join(source), namespace)
+        factory = namespace["factory"]
+
+        # Generators use the tracing fallback. Its loop should call the
+        # existing method rather than inline only a prefix of its body.
+        def caller(function, count):
+            for value in range(count):
+                yield function(value)
+
+        function = factory(10)
+        self.assertEqual(list(caller(function, TIER2_THRESHOLD)),
+                         list(range(400, TIER2_THRESHOLD + 400)))
+        old_traces = [trace for trace in get_all_executors(caller)
+                      if "_BINARY_OP_ADD_INT" in get_opnames(trace)]
+        self.assertTrue(old_traces)
+        self.assertIsNone(get_first_executor(function))
+        self.assertEqual(list(map(function, itertools.repeat(
+            2, TIER2_RESUME_THRESHOLD))), [402] * TIER2_RESUME_THRESHOLD)
+        method = get_first_executor(function)
+        self.assertIn("_METHOD_EXIT", get_opnames(method))
+        self.assertTrue(method.is_valid())
+        self.assertTrue(all(not trace.is_valid() for trace in old_traces))
+
+        count = TIER2_THRESHOLD * 3
+        self.assertEqual(list(caller(function, count)),
+                         list(range(400, count + 400)))
+        traces = get_all_executors(caller)
+        self.assertTrue(traces)
+        names = [name for trace in traces for name in get_opnames(trace)]
+        self.assertIn("_PUSH_FRAME", names)
+        self.assertNotIn("_BINARY_OP_ADD_INT", names)
+        self.assertEqual(list(caller(factory(20), 3)), [800, 801, 802])
+        self.assertEqual(list(caller(lambda value: value * 2, 3)), [0, 2, 4])
+        with self.assertRaises(TypeError):
+            list(caller(factory("wrong type"), 3))
+
+    @disable_gc()
+    def test_method_closure_returns_to_compiled_caller(self):
+        def factory(offset):
+            def add(value):
+                return value + offset
+            return add
+
+        def caller(function, value):
+            result = function(value)
+            return result, sys._jit.is_active()
+
+        first = factory(10)
+        list(map(first, itertools.repeat(2, TIER2_RESUME_THRESHOLD)))
+        list(itertools.starmap(caller, itertools.repeat(
+            (first, 2), TIER2_RESUME_THRESHOLD)))
+        cell = first.__closure__[0]
+        references = sys.getrefcount(cell)
+        for _ in range(20):
+            result, active = caller(first, 2)
+            self.assertEqual(result, 12)
+            if not Py_GIL_DISABLED:
+                self.assertTrue(active)
+        if not Py_GIL_DISABLED:
+            self.assertEqual(sys.getrefcount(cell), references)
+        for offset in range(20):
+            result, active = caller(factory(offset), 3)
+            self.assertEqual(result, offset + 3)
+            if not Py_GIL_DISABLED:
+                self.assertTrue(active)
+        with self.assertRaises(TypeError):
+            caller(factory("wrong type"), 3)
+
+    @disable_gc()
+    def test_method_call_shared_closure_code(self):
+        def factory(offset):
+            def add(value, scale=1):
+                return (value + offset) * scale
+            return add
+
+        def call(function, value):
+            return function(value)
+
+        first = factory(10)
+        self.assertEqual(list(itertools.starmap(call, itertools.repeat(
+            (first, 2), TIER2_RESUME_THRESHOLD))),
+            [12] * TIER2_RESUME_THRESHOLD)
+        executor = _opcode.get_executor(call.__code__, 0)
+        self.assertIn("_CHECK_FUNCTION_VERSION", get_opnames(executor))
+        second = factory(20)
+        second.__defaults__ = (3,)
+        for _ in range(20):
+            self.assertEqual(call(first, 2), 12)
+            self.assertEqual(call(second, 2), 66)
+        self.assertTrue(executor.is_valid())
+        second.__defaults__ = None
+        with self.assertRaises(TypeError):
+            call(second, 2)
+
+        def other_factory(offset):
+            def subtract(value):
+                return value - offset
+            return subtract
+
+        first.__code__ = other_factory(0).__code__
+        self.assertEqual(call(first, 2), -8)
+        self.assertEqual(call(lambda value: value * 4, 3), 12)
+        with self.assertRaises(TypeError):
+            call(None, 2)
+
+    @disable_gc()
+    def test_method_exact_call_shared_closure_code(self):
+        def factory(offset):
+            def add(value):
+                return value + offset
+            return add
+
+        def call(function, value):
+            return function(value)
+
+        first = factory(10)
+        self.assertEqual(list(itertools.starmap(call, itertools.repeat(
+            (first, 2), TIER2_RESUME_THRESHOLD))),
+            [12] * TIER2_RESUME_THRESHOLD)
+        self.assertIn("_CHECK_FUNCTION_VERSION", get_opnames(
+            _opcode.get_executor(call.__code__, 0)))
+        for offset in range(20):
+            self.assertEqual(call(factory(offset), 3), offset + 3)
+        first.__defaults__ = (100,)
+        self.assertEqual(call(first, 2), 12)
+        from _testcapi import function_setvectorcall
+        function_setvectorcall(first)
+        self.assertEqual(call(first, 2), "overridden")
+        with self.assertRaises(TypeError):
+            call(factory("wrong type"), 3)
+
+    @disable_gc()
+    def test_borrowed_truth_test_cleanup(self):
+        class AlwaysTrue:
+            pass
+
+        for value, false_value in (([1], []), ("abc", ""),
+                                   (12345, 0), (AlwaysTrue(), None)):
+            with self.subTest(value=value):
+                def choose(value):
+                    if value:
+                        return 42
+                    return 17
+
+                self.assertEqual(list(map(choose, itertools.repeat(
+                    value, TIER2_RESUME_THRESHOLD))),
+                    [42] * TIER2_RESUME_THRESHOLD)
+                names = get_opnames(_opcode.get_executor(choose.__code__, 0))
+                self.assertIn("_POP_TOP_NOP", names)
+                self.assertNotIn("_POP_TOP", names)
+                self.assertNotIn("_POP_TOP_INT", names)
+                self.assertNotIn("_POP_TOP_UNICODE", names)
+                self.assertEqual(choose(false_value), 17)
+                if isinstance(value, AlwaysTrue):
+                    AlwaysTrue.__bool__ = lambda self: False
+                    self.assertEqual(choose(value), 17)
+
+                class Broken:
+                    def __bool__(self):
+                        raise ValueError("truth test")
+
+                with self.assertRaisesRegex(ValueError, "truth test"):
+                    choose(Broken())
+                reset_code(choose)
+
+        events = []
+
+        class Temporary:
+            def __del__(self):
+                events.append("closed")
+
+        def choose_temporary(factory):
+            if factory():
+                events.append("body")
+                return 42
+            return 17
+
+        self.assertEqual(list(map(choose_temporary, itertools.repeat(
+            Temporary, TIER2_RESUME_THRESHOLD))),
+            [42] * TIER2_RESUME_THRESHOLD)
+        self.assertEqual(events, ["closed", "body"] * TIER2_RESUME_THRESHOLD)
+        self.assertIn("_POP_TOP", get_opnames(get_first_executor(choose_temporary)))
+
+    @disable_gc()
+    def test_guarded_scalar_local_store_cleanup(self):
+        def replace(value):
+            value = 42
+            return 123
+
+        self.assertEqual(list(map(replace,
+            itertools.repeat(None, TIER2_RESUME_THRESHOLD))),
+            [123] * TIER2_RESUME_THRESHOLD)
+        if not Py_GIL_DISABLED:
+            self.assertIn("_STORE_FAST_NOESCAPE", get_opnames(
+                _opcode.get_executor(replace.__code__, 0)))
+        events = []
+        class Previous:
+            def __del__(self):
+                frame = sys._getframe(1)
+                events.append((frame.f_code.co_name, frame.f_locals.get("value")))
+
+        # Sole ownership must take the ordinary store path. The finalizer
+        # observes the replacement already installed in the real frame.
+        self.assertEqual(replace(Previous()), 123)
+        self.assertEqual(events, [("replace", 42)])
+        shared = Previous()
+        self.assertEqual(replace(shared), 123)
+        self.assertEqual(len(events), 1)
+        for previous in (None, True, 12345, 1.25, "text", b"bytes", 2**100):
+            self.assertEqual(replace(previous), 123)
+
+    @disable_gc()
+    def test_validity_checks_across_method_branches(self):
+        def choose(left, right):
+            if left < right:
+                return left + 1
+            return right + 1
+
+        arguments = itertools.cycle(((1, 3), (3, 1)))
+        results = list(itertools.starmap(choose,
+            itertools.islice(arguments, TIER2_RESUME_THRESHOLD)))
+        self.assertEqual(results, [2] * TIER2_RESUME_THRESHOLD)
+        executor = _opcode.get_executor(choose.__code__, 0)
+        self.assertLessEqual(count_ops(executor, "_CHECK_VALIDITY"), 2)
+
+        calls = []
+        class Compare:
+            def __lt__(self, other):
+                calls.append("compare")
+                return True
+            def __add__(self, other):
+                return 42
+        self.assertEqual(choose(Compare(), 3), 42)
+        self.assertEqual(calls, ["compare"])
+
+        namespace = {"VALUE": 10, "change": [False]}
+        exec(textwrap.dedent("""
+            def callback():
+                global VALUE
+                if change[0]:
+                    VALUE = 20
+            def branch(flag):
+                if flag:
+                    callback()
+                return VALUE
+        """), namespace)
+        branch = namespace["branch"]
+        flags = itertools.islice(itertools.cycle((False, True)),
+                                 TIER2_RESUME_THRESHOLD)
+        self.assertEqual(list(map(branch, flags)), [10] * TIER2_RESUME_THRESHOLD)
+        namespace["change"][0] = True
+        self.assertEqual(branch(True), 20)
+        self.assertEqual(branch(False), 20)
+
+    @unittest.skipIf(Py_GIL_DISABLED, "attribute regions require the GIL")
+    def test_attribute_region_allocation_error_location(self):
+        script_helper.assert_python_ok("-c", textwrap.dedent("""
+            import _opcode
+            import _testcapi
+            import dis
+            import gc
+            import sys
+            from _testinternalcapi import TIER2_RESUME_THRESHOLD
+
+            class Value:
+                pass
+            def increment(obj):
+                obj.value += 1
+                return obj.value
+
+            gc.disable()
+            obj = Value()
+            obj.value = 1000
+            list(map(increment, [obj] * TIER2_RESUME_THRESHOLD))
+            executor = _opcode.get_executor(increment.__code__, 0)
+            assert any(op[0] == '_UPDATE_INT_ATTRIBUTE' for op in executor)
+            # Crossing a digit boundary bypasses the single-digit freelist.
+            obj.value = (1 << sys.int_info.bits_per_digit) - 1
+            failed = False
+            _testcapi.set_nomemory(0, 1)
+            try:
+                increment(obj)
+            except MemoryError as exc:
+                _testcapi.remove_mem_hooks()
+                failed = True
+                tb = exc.__traceback__
+                while tb.tb_next is not None:
+                    tb = tb.tb_next
+                assert tb.tb_frame.f_code is increment.__code__
+                assert dis.opname[increment.__code__.co_code[tb.tb_lasti]] == 'BINARY_OP'
+                assert obj.value == (1 << sys.int_info.bits_per_digit) - 1
+            finally:
+                _testcapi.remove_mem_hooks()
+            assert failed
+
+            def dot(obj):
+                return obj.x * obj.x + obj.y * obj.y
+            obj.x, obj.y = 1.5, 2.5
+            list(map(dot, [obj] * TIER2_RESUME_THRESHOLD))
+            executor = _opcode.get_executor(dot.__code__, 0)
+            assert any(op[0].startswith('_FLOAT_ATTRIBUTE_SUM_PRODUCTS') for op in executor)
+            # Keep enough floats alive to exhaust the float freelist.
+            held = [float(i) for i in range(1000)]
+            failed = False
+            _testcapi.set_nomemory(0, 1)
+            try:
+                dot(obj)
+            except MemoryError as exc:
+                _testcapi.remove_mem_hooks()
+                failed = True
+                tb = exc.__traceback__
+                while tb.tb_next is not None:
+                    tb = tb.tb_next
+                assert tb.tb_frame.f_code is dot.__code__
+                assert dis.opname[dot.__code__.co_code[tb.tb_lasti]] == 'BINARY_OP'
+            finally:
+                _testcapi.remove_mem_hooks()
+            assert failed
+        """))
+
+    @disable_gc()
+    def test_attribute_regions_in_loop_traces(self):
+        class Value:
+            def __init__(self, x, y, z):
+                self.x, self.y, self.z = x, y, z
+                self.count = 0
+        def dot_loop(a, b, n, completed):
+            result = 0.0
+            try:
+                for _ in range(n):
+                    result += a.x * b.x + a.y * b.y + a.z * b.z
+            finally:
+                completed.append(True)
+            return result
+        def update_loop(a, n, completed):
+            try:
+                for _ in range(n):
+                    a.count += 1
+            finally:
+                completed.append(True)
+            return a.count
+
+        a, b = Value(1.0, 2.0, 3.0), Value(4.0, 5.0, 6.0)
+        completed = []
+        n = TIER2_THRESHOLD * 32
+        self.assertEqual(dot_loop(a, b, n, completed), 32.0 * n)
+        self.assertEqual(update_loop(a, n, completed), n)
+        self.assertEqual(completed, [True, True])
+        for function, opcode in ((dot_loop, "_FLOAT_ATTRIBUTE_SUM_PRODUCTS"),
+                                 (update_loop, "_UPDATE_INT_ATTRIBUTE")):
+            executors = get_all_executors(function)
+            self.assertTrue(executors)
+            if not Py_GIL_DISABLED:
+                self.assertTrue(any(op[0].startswith(opcode)
+                                    for executor in executors for op in executor))
+        del a.x
+        with self.assertRaises(AttributeError):
+            dot_loop(a, b, n, completed)
+        self.assertEqual(completed, [True, True, True])
+
+    @disable_gc()
+    def test_integer_attribute_updates_and_fallbacks(self):
+        class Slot:
+            __slots__ = ("value",)
+        class Managed:
+            pass
+        def increment(obj):
+            obj.value += 1
+            return obj.value
+        def decrement(obj):
+            obj.value -= 2
+            return obj.value
+
+        for cls in (Slot, Managed):
+            for function, delta in ((increment, 1), (decrement, -2)):
+                obj = cls()
+                with clear_executors(function):
+                    obj.value = 0
+                    list(map(function, itertools.repeat(obj, TIER2_RESUME_THRESHOLD)))
+                    executor = _opcode.get_executor(function.__code__, 0)
+                    if not Py_GIL_DISABLED:
+                        self.assertIn("_UPDATE_INT_ATTRIBUTE", get_opnames(executor))
+                    for value in (0, -1, (1 << 30) - 1, -(1 << 30) + 1,
+                                  1 << 100, -(1 << 100), True, 1.25):
+                        obj.value = value
+                        self.assertEqual(function(obj), value + delta)
+                    del obj.value
+                    with self.assertRaises(AttributeError):
+                        function(obj)
+                    if cls is Managed:
+                        obj.__dict__ = {"value": 50}
+                        self.assertEqual(function(obj), 50 + delta)
+
+    @disable_gc()
+    def test_integer_attribute_update_callback_changes_descriptor(self):
+        class Item:
+            pass
+        def increment(obj):
+            obj.value += 1
+            return obj.value
+
+        obj = Item()
+        obj.value = 0
+        list(map(increment, itertools.repeat(obj, TIER2_RESUME_THRESHOLD)))
+        _opcode.get_executor(increment.__code__, 0)
+        stored = []
+        class Number(int):
+            def __iadd__(self, value):
+                Item.value = property(lambda self: 99,
+                                      lambda self, value: stored.append(value))
+                return int(self) + value
+        obj.value = Number(41)
+        self.assertEqual(increment(obj), 99)
+        self.assertEqual(stored, [42])
+
+    @disable_gc()
+    def test_positional_default_frame_binding(self):
+        token = object()
+        def callee(a, /, b=token, c=42):
+            return (a, b, c)
+        def caller(function, value):
+            return function(value)
+
+        self.assertEqual(list(itertools.starmap(caller, itertools.repeat(
+            (callee, 1), TIER2_RESUME_THRESHOLD))),
+            [(1, token, 42)] * TIER2_RESUME_THRESHOLD)
+        _opcode.get_executor(caller.__code__, 0)
+        callee.__defaults__ = (12, 34)
+        self.assertEqual(caller(callee, 2), (2, 12, 34))
+        callee.__defaults__ = None
+        with self.assertRaises(TypeError):
+            caller(callee, 2)
+
+        # Defaults can own arbitrary objects, and their references must stay
+        # alive in an escaped callee frame after the function defaults change.
+        def retain(a, b=token):
+            return sys._getframe()
+        with clear_executors(caller):
+            frames = list(itertools.starmap(caller, itertools.repeat(
+                (retain, 1), TIER2_RESUME_THRESHOLD)))
+            _opcode.get_executor(caller.__code__, 0)
+            retain.__defaults__ = None
+            for frame in frames:
+                self.assertIs(frame.f_locals["b"], token)
+                frame.clear()
+
+    @disable_gc()
+    def test_trivial_attribute_setter_and_fallbacks(self):
+        capi = import_helper.import_module("_testcapi")
+        class Slot:
+            __slots__ = ("value",)
+            def set(self, value):
+                self.value = value
+        class Managed:
+            def set(self, value):
+                self.value = value
+        def caller(function, obj, value):
+            return function(obj, value)
+
+        for cls in (Slot, Managed):
+            obj = cls()
+            with clear_executors(caller):
+                results = list(itertools.starmap(caller, itertools.repeat(
+                    (cls.set, obj, 42), TIER2_RESUME_THRESHOLD)))
+                self.assertEqual(results, [None] * TIER2_RESUME_THRESHOLD)
+                executor = _opcode.get_executor(caller.__code__, 0)
+                if not Py_GIL_DISABLED and not sysconfig.get_config_var("WITH_DTRACE"):
+                    self.assertIn("_CALL_STORE_ATTRIBUTE", get_opnames(executor))
+                self.assertIsNone(caller(cls.set, obj, 43))
+                self.assertEqual(obj.value, 43)
+                del obj.value
+                caller(cls.set, obj, 44)
+                self.assertEqual(obj.value, 44)
+                events = []
+                class Finalizer:
+                    def __del__(self):
+                        events.append(sys._getframe(1).f_code.co_name)
+                        events.append(obj.value)
+                obj.value = Finalizer()
+                caller(cls.set, obj, 45)
+                self.assertEqual(events, ["set", 45])
+                if cls is Managed:
+                    namespace = obj.__dict__
+                    wid = capi.add_dict_watcher(0)
+                    try:
+                        capi.watch_dict(wid, namespace)
+                        caller(cls.set, obj, 46)
+                        self.assertEqual(capi.get_dict_watcher_events(), ["mod:value:46"])
+                    finally:
+                        capi.unwatch_dict(wid, namespace)
+                        capi.clear_dict_watcher(wid)
+                    obj.__dict__ = {}
+                    caller(cls.set, obj, 47)
+                    self.assertEqual(obj.__dict__, {"value": 47})
+                events.clear()
+                def changed(instance, value):
+                    events.append((sys._getframe(1).f_code.co_name, value))
+                cls.value = property(lambda self: None, changed)
+                caller(cls.set, obj, 48)
+                self.assertEqual(events, [("set", 48)])
+
+    @disable_gc()
+    def test_trivial_bound_setter_monitoring(self):
+        class Record:
+            def set(self, value):
+                self.value = value
+        def caller(function, value):
+            return function(value)
+        obj = Record()
+        bound = obj.set
+        list(itertools.starmap(caller, itertools.repeat(
+            (bound, 42), TIER2_RESUME_THRESHOLD)))
+        executor = _opcode.get_executor(caller.__code__, 0)
+        if not Py_GIL_DISABLED and not sysconfig.get_config_var("WITH_DTRACE"):
+            self.assertIn("_CALL_STORE_ATTRIBUTE", get_opnames(executor))
+        caller(bound, 43)
+        self.assertEqual(obj.value, 43)
+        monitoring = sys.monitoring
+        tool = next(i for i in range(6) if monitoring.get_tool(i) is None)
+        seen = []
+        monitoring.use_tool_id(tool, "test setter call")
+        try:
+            monitoring.register_callback(tool, monitoring.events.PY_RETURN,
+                lambda code, offset, value: seen.append((code, value)))
+            monitoring.set_local_events(tool, Record.set.__code__, monitoring.events.PY_RETURN)
+            caller(bound, 44)
+            self.assertEqual(obj.value, 44)
+            self.assertEqual(seen, [(Record.set.__code__, None)])
+        finally:
+            monitoring.set_local_events(tool, Record.set.__code__, 0)
+            monitoring.register_callback(tool, monitoring.events.PY_RETURN, None)
+            monitoring.free_tool_id(tool)
+
+    @disable_gc()
+    def test_trivial_setter_argument_order_and_code_change(self):
+        class Record:
+            pass
+        def setter(value, record):
+            record.value = value
+        def caller(function, record, value):
+            return function(value, record)
+        obj = Record()
+        list(itertools.starmap(caller, itertools.repeat(
+            (setter, obj, 42), TIER2_RESUME_THRESHOLD)))
+        executor = _opcode.get_executor(caller.__code__, 0)
+        if not Py_GIL_DISABLED and not sysconfig.get_config_var("WITH_DTRACE"):
+            self.assertIn("_CALL_STORE_ATTRIBUTE", get_opnames(executor))
+        self.assertIsNone(caller(setter, obj, 99))
+        self.assertEqual(obj.value, 99)
+        def replacement(value, record):
+            record.changed = value
+            return "changed"
+        setter.__code__ = replacement.__code__
+        self.assertEqual(caller(setter, obj, 100), "changed")
+        self.assertEqual(obj.changed, 100)
+        self.assertEqual(obj.value, 99)
+
+    @disable_gc()
+    def test_trivial_attribute_call_and_fallbacks(self):
+        class Slot:
+            __slots__ = ("value",)
+            def get(self):
+                return self.value
+        class Managed:
+            def get(self):
+                return self.value
+        def caller(function, obj):
+            return function(obj)
+
+        token = object()
+        for cls in (Slot, Managed):
+            obj = cls()
+            obj.value = token
+            with clear_executors(caller):
+                self.assertEqual(list(itertools.starmap(caller, itertools.repeat(
+                    (cls.get, obj), TIER2_RESUME_THRESHOLD))),
+                    [token] * TIER2_RESUME_THRESHOLD)
+                if not Py_GIL_DISABLED and not sysconfig.get_config_var("WITH_DTRACE"):
+                    self.assertIn("_CALL_RETURN_ATTRIBUTE", get_opnames(
+                        _opcode.get_executor(caller.__code__, 0)))
+                obj.value = 42
+                self.assertEqual(caller(cls.get, obj), 42)
+                del obj.value
+                with self.assertRaises(AttributeError):
+                    caller(cls.get, obj)
+                if cls is Managed:
+                    obj.__dict__ = {"value": token}
+                    self.assertIs(caller(cls.get, obj), token)
+                cls.value = property(lambda self: sys._getframe().f_back.f_code.co_name)
+                self.assertEqual(caller(cls.get, obj), "get")
+
+    @disable_gc()
+    def test_simple_constructor_fields_and_order(self):
+        class Managed:
+            def __init__(self, a, b, c):
+                self.third = c
+                self.first = a
+                self.second = b
+        class Slot:
+            __slots__ = ("first", "second", "third")
+            def __init__(self, a, b, c):
+                self.third = c
+                self.first = a
+                self.second = b
+        def make(cls, a, b, c):
+            return cls(a, b, c)
+
+        tokens = (object(), object(), object())
+        for cls in (Managed, Slot):
+            with clear_executors(make):
+                objects = list(itertools.starmap(make, itertools.repeat(
+                    (cls, *tokens), TIER2_RESUME_THRESHOLD)))
+                executor = _opcode.get_executor(make.__code__, 0)
+                if not Py_GIL_DISABLED and not sysconfig.get_config_var("WITH_DTRACE"):
+                    self.assertTrue(any(op[0].startswith("_METHOD_TRY_SIMPLE_INIT")
+                                        for op in executor))
+                for obj in objects:
+                    self.assertIs(obj.first, tokens[0])
+                    self.assertIs(obj.second, tokens[1])
+                    self.assertIs(obj.third, tokens[2])
+                if cls is Managed:
+                    self.assertEqual(list(objects[-1].__dict__),
+                                     ["third", "first", "second"])
+
+    @disable_gc()
+    @unittest.skipIf(Py_GIL_DISABLED, "GIL-only constructor fast path")
+    def test_simple_constructor_gc_observes_initializer_frame(self):
+        class Item:
+            def __init__(self, value):
+                self.value = value
+        def make(cls, value):
+            return cls(value)
+        seen = []
+        class Previous:
+            def __del__(self):
+                seen.append(("destroyed", sys._getframe(1).f_code.co_name))
+        def callback(phase, info):
+            frame = sys._getframe(1)
+            if phase == "start" and frame.f_code is Item.__init__.__code__ and not seen:
+                seen.append(("entered", frame.f_code.co_name))
+                frame.f_locals["self"].value = Previous()
+
+        list(itertools.starmap(make, itertools.repeat(
+            (Item, 42), TIER2_RESUME_THRESHOLD)))
+        _opcode.get_executor(make.__code__, 0)
+        thresholds = gc.get_threshold()
+        try:
+            gc.callbacks.append(callback)
+            gc.set_threshold(1, 1, 1)
+            gc.enable()
+            for _ in range(30):
+                self.assertEqual(make(Item, 42).value, 42)
+                if seen:
+                    break
+            self.assertEqual(seen, [("entered", "__init__"),
+                                    ("destroyed", "__init__")])
+        finally:
+            gc.disable()
+            gc.callbacks.remove(callback)
+            gc.set_threshold(*thresholds)
+
+    @disable_gc()
+    def test_simple_constructor_local_monitoring(self):
+        class Item:
+            def __init__(self, value):
+                self.value = value
+        def make(cls, value):
+            return cls(value)
+
+        list(itertools.starmap(make, itertools.repeat(
+            (Item, 1), TIER2_RESUME_THRESHOLD)))
+        _opcode.get_executor(make.__code__, 0)
+        monitoring = sys.monitoring
+        tool = next(i for i in range(6) if monitoring.get_tool(i) is None)
+        seen = []
+        monitoring.use_tool_id(tool, "test constructor monitoring")
+        try:
+            monitoring.register_callback(tool, monitoring.events.PY_RETURN,
+                                         lambda code, offset, value: seen.append(value))
+            monitoring.set_local_events(tool, Item.__init__.__code__, monitoring.events.PY_RETURN)
+            self.assertEqual(make(Item, 42).value, 42)
+            self.assertEqual(seen, [None])
+        finally:
+            monitoring.set_local_events(tool, Item.__init__.__code__, 0)
+            monitoring.register_callback(tool, monitoring.events.PY_RETURN, None)
+            monitoring.free_tool_id(tool)
+
+    @disable_gc()
+    def test_constructor_method_call_and_changes(self):
+        class Item:
+            def __init__(self, value):
+                self.value = value
+
+        def make(cls, value):
+            return cls(value)
+
+        instances = list(itertools.starmap(make, itertools.repeat(
+            (Item, 42), TIER2_RESUME_THRESHOLD)))
+        self.assertTrue(all(obj.value == 42 for obj in instances))
+        executor = _opcode.get_executor(make.__code__, 0)
+        self.assertTrue(any(op[0] == "_METHOD_CALL" and op[1] in (1, 2)
+                            for op in executor))
+        self.assertEqual(make(Item, 12).value, 12)
+
+        def replacement(self, value):
+            self.value = value + 1
+        Item.__init__ = replacement
+        self.assertEqual(make(Item, 12).value, 13)
+        token = object()
+        Item.__new__ = staticmethod(lambda cls, value: token)
+        self.assertIs(make(Item, 12), token)
+
+    @disable_gc()
+    def test_constructor_nested_calls_and_recursion(self):
+        class Item:
+            def __init__(self, depth):
+                if depth:
+                    self.child = type(self)(depth - 1)
+                self.depth = depth
+
+        def make(cls, depth):
+            return (cls(depth), cls(depth)).count(None)
+
+        self.assertEqual(list(itertools.starmap(make, itertools.repeat(
+            (Item, 2), TIER2_RESUME_THRESHOLD))),
+            [0] * TIER2_RESUME_THRESHOLD)
+        _opcode.get_executor(make.__code__, 0)
+        with self.assertRaises(RecursionError):
+            make(Item, sys.getrecursionlimit() * 2)
+        self.assertEqual(make(Item, 2), 0)
+
+    @disable_gc()
+    def test_constructor_argument_binding(self):
+        class Default:
+            def __init__(self, value, extra=4):
+                self.value = value + extra
+        class Keywords:
+            def __init__(self, value, *, extra=4):
+                self.value = value + extra
+        class Varargs:
+            def __init__(self, *values):
+                self.value = sum(values) + 4
+        class Varkw:
+            def __init__(self, value, **kwargs):
+                self.value = value + kwargs.get("extra", 4)
+        def make(cls, value):
+            return cls(value).value
+
+        for cls in (Default, Keywords, Varargs, Varkw):
+            with clear_executors(make):
+                self.assertEqual(list(itertools.starmap(make, itertools.repeat(
+                    (cls, 3), TIER2_RESUME_THRESHOLD))),
+                    [7] * TIER2_RESUME_THRESHOLD)
+                _opcode.get_executor(make.__code__, 0)
+                self.assertEqual(make(cls, 5), 9)
+
+    @disable_gc()
+    def test_constructor_errors_and_materialized_frame(self):
+        class Item:
+            def __init__(self, value):
+                if value == 1:
+                    return 42
+                if value == 2:
+                    raise ValueError("init failed")
+                if value == 3:
+                    self.frame = sys._getframe()
+                self.value = value
+
+        def make(cls, value):
+            return cls(value)
+
+        list(itertools.starmap(make, itertools.repeat(
+            (Item, 0), TIER2_RESUME_THRESHOLD)))
+        _opcode.get_executor(make.__code__, 0)
+        with self.assertRaisesRegex(TypeError, "__init__.*should return None"):
+            make(Item, 1)
+        with self.assertRaisesRegex(ValueError, "init failed"):
+            make(Item, 2)
+        obj = make(Item, 3)
+        self.assertIs(obj.frame.f_locals["self"], obj)
+        self.assertEqual(obj.frame.f_locals["value"], 3)
+        obj.frame.clear()
+        self.assertEqual(make(Item, 4).value, 4)
+        def needs_two(self, value, extra):
+            self.value = value + extra
+        Item.__init__.__code__ = needs_two.__code__
+        with self.assertRaises(TypeError):
+            make(Item, 1)
+
+    @disable_gc()
+    def test_compiled_c_vectorcall_frame_arguments(self):
+        def target(a, b, c, d, e, f, g, h, i, inspect_frame=False):
+            if inspect_frame:
+                return sys._getframe()
+            return a, b, c, d, e, f, g, h, i
+        tokens = tuple(object() for _ in range(9))
+        args = (*tokens, False)
+        self.assertEqual(list(itertools.starmap(target, itertools.repeat(
+            args, TIER2_RESUME_THRESHOLD))), [tokens] * TIER2_RESUME_THRESHOLD)
+        _opcode.get_executor(target.__code__, 0)
+        frame = next(itertools.starmap(target, [(*tokens, True)]))
+        self.assertIs(frame.f_code, target.__code__)
+        self.assertEqual(tuple(frame.f_locals[name] for name in "abcdefghi"), tokens)
+        self.assertIs(frame.f_locals["inspect_frame"], True)
+        frame.clear()
+        self.assertEqual(target(*tokens), tokens)
+        self.assertEqual(target(*tokens, inspect_frame=False), tokens)
+        with self.assertRaises(TypeError):
+            next(itertools.starmap(target, [tokens[:8]]))
+        with self.assertRaises(TypeError):
+            next(itertools.starmap(target, [(*tokens, False, None)]))
+
+    @disable_gc()
+    def test_compiled_c_vectorcall_closure(self):
+        captured = object()
+        def target(value, inspect_frame=False):
+            if inspect_frame:
+                return sys._getframe()
+            return value, captured
+        token = object()
+        self.assertEqual(list(itertools.starmap(target, itertools.repeat(
+            (token, False), TIER2_RESUME_THRESHOLD))),
+            [(token, captured)] * TIER2_RESUME_THRESHOLD)
+        self.assertIsNotNone(get_first_executor(target))
+        frame = next(itertools.starmap(target, [(token, True)]))
+        self.assertIs(frame.f_locals["value"], token)
+        self.assertIs(frame.f_locals["captured"], captured)
+        frame.clear()
+        captured = object()
+        self.assertEqual(next(itertools.starmap(target, [(token, False)])),
+                         (token, captured))
+
+    @disable_gc()
+    def test_compiled_c_vectorcall_recursive_callback(self):
+        def recurse(depth):
+            if depth:
+                return next(map(recurse, (depth - 1,)))
+            return 42
+        list(map(recurse, itertools.repeat(0, TIER2_RESUME_THRESHOLD)))
+        self.assertIsNotNone(get_first_executor(recurse))
+        self.assertEqual(next(map(recurse, [5])), 42)
+        with self.assertRaises(RecursionError):
+            next(map(recurse, [sys.getrecursionlimit() * 2]))
+        self.assertEqual(next(map(recurse, [5])), 42)
+
+    def test_c_vectorcall_without_resume(self):
+        def target():
+            return 42
+        code = target.__code__
+        instructions = list(dis.get_instructions(code))
+        self.assertEqual(instructions[0].opname, "RESUME")
+        target.__code__ = code.replace(co_code=code.co_code[instructions[1].offset:])
+        self.assertEqual(next(itertools.starmap(target, [()])), 42)
+
+    @disable_gc()
+    def test_trivial_root_c_vectorcall_stays_warm(self):
+        def identity(value):
+            return value
+        list(map(identity, itertools.repeat(42, TIER2_RESUME_THRESHOLD)))
+        executor = _opcode.get_executor(identity.__code__, 0)
+        _testinternalcapi.invalidate_cold_executors()
+        self.assertTrue(executor.is_valid())
+        self.assertEqual(list(map(identity, [42])), [42])
+        _testinternalcapi.invalidate_cold_executors()
+        self.assertTrue(executor.is_valid())
+        # Without an intervening call it should still be collected normally.
+        _testinternalcapi.invalidate_cold_executors()
+        self.assertFalse(executor.is_valid())
+
+    @disable_gc()
+    def test_trivial_root_c_vectorcall(self):
+        def identity(value, unused=None):
+            return value
+        def constant(value):
+            return False
+        token = object()
+        for function, expected in ((identity, token), (constant, False)):
+            args = (token, None) if function is identity else (token,)
+            self.assertEqual(list(itertools.starmap(
+                function, itertools.repeat(args, TIER2_RESUME_THRESHOLD))),
+                [expected] * TIER2_RESUME_THRESHOLD)
+            _opcode.get_executor(function.__code__, 0)
+            self.assertIs(list(itertools.starmap(function, [args]))[0], expected)
+            self.assertIs(function(value=token), expected)
+            with self.assertRaises(TypeError):
+                function()
+            with self.assertRaises(TypeError):
+                list(itertools.starmap(function, [(token, None, None)]))
+        self.assertIs(identity(token), token)
+        seen = []
+        class Disposable:
+            def __del__(self):
+                seen.append(sys._getframe(1).f_code is identity.__code__)
+        self.assertIs(list(itertools.starmap(identity, [(token, Disposable())]))[0], token)
+        self.assertEqual(seen, [False])
+        def replacement(value):
+            return True
+        constant.__code__ = replacement.__code__
+        self.assertEqual(list(map(constant, [token])), [True])
+
+    @disable_gc()
+    def test_trivial_root_c_vectorcall_attribute_fallbacks(self):
+        class Slot:
+            __slots__ = ("value",)
+        class Managed:
+            pass
+        for cls in (Slot, Managed):
+            def getter(obj):
+                return obj.value
+            obj = cls()
+            obj.value = token = object()
+            self.assertEqual(list(map(getter, itertools.repeat(
+                obj, TIER2_RESUME_THRESHOLD))), [token] * TIER2_RESUME_THRESHOLD)
+            _opcode.get_executor(getter.__code__, 0)
+            obj.value = other = object()
+            self.assertEqual(list(map(getter, [obj])), [other])
+            del obj.value
+            with self.assertRaises(AttributeError):
+                list(map(getter, [obj]))
+            # The fallback must retain the getter's traceback frame.
+            # assertRaises clears its traceback, so capture a separate call.
+            try:
+                list(map(getter, [obj]))
+            except AttributeError as exc:
+                self.assertIs(exc.__traceback__.tb_next.tb_frame.f_code, getter.__code__)
+            if cls is Managed:
+                obj.__dict__ = {"value": token}
+                self.assertEqual(list(map(getter, [obj])), [token])
+                obj.__dict__["value"] = other
+                self.assertEqual(list(map(getter, [obj])), [other])
+            frames = []
+            def descriptor(self):
+                frames.append(sys._getframe(1).f_code)
+                return token
+            cls.value = property(descriptor)
+            self.assertEqual(list(map(getter, [obj])), [token])
+            self.assertEqual(frames, [getter.__code__])
+
+    @disable_gc()
+    def test_trivial_attribute_item_calls(self):
+        class Slot:
+            __slots__ = ("data",)
+        class Managed:
+            pass
+        for cls in (Slot, Managed):
+            # MAKE_FUNCTION must initialize function versions on fresh code.
+            # reset_code clears that version; FunctionType never assigns it.
+            namespace = {}
+            exec("def getter(obj, key): return obj.data[key]\n"
+                 "def caller(obj, key): return getter(obj, key)\n", namespace)
+            getter, caller = namespace["getter"], namespace["caller"]
+            obj = cls()
+            first, second = object(), object()
+            obj.data = (first, second)
+            self.assertEqual(list(itertools.starmap(getter, itertools.repeat(
+                (obj, 0), TIER2_RESUME_THRESHOLD))), [first] * TIER2_RESUME_THRESHOLD)
+            _opcode.get_executor(getter.__code__, 0)
+            self.assertEqual(list(itertools.starmap(caller, itertools.repeat(
+                (obj, 0), TIER2_RESUME_THRESHOLD))), [first] * TIER2_RESUME_THRESHOLD)
+            if not Py_GIL_DISABLED and not sysconfig.get_config_var("WITH_DTRACE"):
+                self.assertIn("_CALL_RETURN_ATTRIBUTE_ITEM", get_opnames(
+                    _opcode.get_executor(caller.__code__, 0)))
+            for function in (getter, caller):
+                for sequence in ((first, second), [first, second]):
+                    obj.data = sequence
+                    for key, expected in ((0, first), (1, second), (-1, second), (-2, first)):
+                        self.assertEqual(list(itertools.starmap(function, [(obj, key)])), [expected])
+                    for key, error in ((2, IndexError), (-3, IndexError),
+                                       (10**100, IndexError), ("x", TypeError)):
+                        try:
+                            list(itertools.starmap(function, [(obj, key)]))
+                        except error as exc:
+                            tb = exc.__traceback__
+                            while tb.tb_next is not None:
+                                tb = tb.tb_next
+                            self.assertIs(tb.tb_frame.f_code, getter.__code__)
+                        else:
+                            self.fail("missing subscript error")
+                frames = []
+                class Key:
+                    def __index__(self):
+                        frames.append(sys._getframe(1).f_code)
+                        return 1
+                self.assertIs(function(obj, Key()), second)
+                self.assertEqual(frames, [getter.__code__])
+                class Sequence(list):
+                    def __getitem__(self, key):
+                        frames.append(sys._getframe(1).f_code)
+                        return first
+                obj.data = Sequence()
+                self.assertIs(function(obj, 0), first)
+                self.assertEqual(frames[-1], getter.__code__)
+                obj.data = []
+                with self.assertRaises(IndexError):
+                    function(obj, 0)
+            if cls is Managed:
+                obj.__dict__ = {"data": [second]}
+                self.assertIs(getter(obj, 0), second)
+                self.assertIs(caller(obj, 0), second)
+            cls.data = property(lambda self: [first])
+            self.assertIs(getter(obj, 0), first)
+            self.assertIs(caller(obj, 0), first)
+
+    @disable_gc()
+    def test_trivial_root_c_vectorcall_observers(self):
+        def identity(value):
+            return value
+        list(map(identity, range(TIER2_RESUME_THRESHOLD)))
+        _opcode.get_executor(identity.__code__, 0)
+        seen = []
+        def observer(frame, event, arg):
+            if frame.f_code is identity.__code__:
+                seen.append(event)
+            return observer
+        for install in (sys.settrace, sys.setprofile):
+            seen.clear()
+            install(observer)
+            try:
+                self.assertEqual(list(map(identity, [42])), [42])
+            finally:
+                install(None)
+            self.assertIn("call", seen)
+            self.assertIn("return", seen)
+        list(map(identity, range(TIER2_RESUME_THRESHOLD)))
+        monitoring = sys.monitoring
+        tool = next(i for i in range(6) if monitoring.get_tool(i) is None)
+        monitoring.use_tool_id(tool, "trivial root vectorcall")
+        seen.clear()
+        try:
+            monitoring.register_callback(tool, monitoring.events.PY_RETURN,
+                                         lambda code, offset, value: seen.append(value))
+            monitoring.set_local_events(tool, identity.__code__, monitoring.events.PY_RETURN)
+            self.assertEqual(list(map(identity, [43])), [43])
+            self.assertEqual(seen, [43])
+        finally:
+            monitoring.set_local_events(tool, identity.__code__, 0)
+            monitoring.register_callback(tool, monitoring.events.PY_RETURN, None)
+            monitoring.free_tool_id(tool)
+
+    @disable_gc()
+    def test_trivial_call_returns_and_code_changes(self):
+        def identity(value):
+            return value
+        def constant(value):
+            return False
+        def replacement(value):
+            return True
+        def caller(function, value):
+            return function(value)
+
+        token = object()
+        for function, expected, opcode in (
+            (identity, token, "_CALL_RETURN_ARGUMENT"),
+            (constant, False, "_CALL_RETURN_CONSTANT"),
+        ):
+            with clear_executors(caller):
+                self.assertEqual(list(itertools.starmap(caller, itertools.repeat(
+                    (function, token), TIER2_RESUME_THRESHOLD))),
+                    [expected] * TIER2_RESUME_THRESHOLD)
+                names = get_opnames(_opcode.get_executor(caller.__code__, 0))
+                if not Py_GIL_DISABLED and not sysconfig.get_config_var("WITH_DTRACE"):
+                    self.assertIn(opcode, names)
+                    self.assertNotIn("_PUSH_FRAME", names)
+                self.assertIs(caller(function, token), expected)
+                if function is constant:
+                    constant.__code__ = replacement.__code__
+                    self.assertIs(caller(constant, token), True)
+
+    @disable_gc()
+    def test_trivial_bound_call_and_argument_lifetimes(self):
+        class Receiver:
+            def pick(self, value, unused):
+                return value
+            def identity(self):
+                return self
+
+        def caller(method, value, other):
+            return method(value, other)
+        def identity(obj):
+            return obj.identity()
+
+        obj = Receiver()
+        token = object()
+        self.assertEqual(list(itertools.starmap(caller, itertools.repeat(
+            (obj.pick, token, None), TIER2_RESUME_THRESHOLD))),
+            [token] * TIER2_RESUME_THRESHOLD)
+        self.assertEqual(list(map(identity, itertools.repeat(
+            obj, TIER2_RESUME_THRESHOLD))), [obj] * TIER2_RESUME_THRESHOLD)
+        if not Py_GIL_DISABLED and not sysconfig.get_config_var("WITH_DTRACE"):
+            for function in (caller, identity):
+                self.assertIn("_CALL_RETURN_ARGUMENT", get_opnames(
+                    _opcode.get_executor(function.__code__, 0)))
+        observations = []
+        class Disposable:
+            def __del__(self):
+                observations.append(sys._getframe(1).f_code is Receiver.pick.__code__)
+                gc.collect()
+        self.assertIs(caller(obj.pick, token, Disposable()), token)
+        self.assertEqual(observations, [False])
+
+    @disable_gc()
+    def test_trivial_call_local_monitoring_invalidates_caller(self):
+        def callee(value):
+            return False
+        def caller(function, value):
+            return function(value)
+
+        self.assertEqual(list(itertools.starmap(caller, itertools.repeat(
+            (callee, 1), TIER2_RESUME_THRESHOLD))),
+            [False] * TIER2_RESUME_THRESHOLD)
+        if not Py_GIL_DISABLED and not sysconfig.get_config_var("WITH_DTRACE"):
+            self.assertIn("_CALL_RETURN_CONSTANT", get_opnames(
+                _opcode.get_executor(caller.__code__, 0)))
+        monitoring = sys.monitoring
+        tool = next(i for i in range(6) if monitoring.get_tool(i) is None)
+        seen = []
+        monitoring.use_tool_id(tool, "test trivial call")
+        try:
+            monitoring.register_callback(tool, monitoring.events.PY_RETURN,
+                                         lambda code, offset, value: seen.append((code, value)))
+            monitoring.set_local_events(tool, callee.__code__, monitoring.events.PY_RETURN)
+            self.assertIs(caller(callee, 2), False)
+            self.assertEqual(seen, [(callee.__code__, False)])
+        finally:
+            monitoring.set_local_events(tool, callee.__code__, 0)
+            monitoring.register_callback(tool, monitoring.events.PY_RETURN, None)
+            monitoring.free_tool_id(tool)
+
+    @disable_gc()
+    def test_return_keeps_materialized_frames(self):
+        def keep(value, frames):
+            frames.append(sys._getframe())
+            return value
+
+        token = object()
+        frames = []
+        self.assertEqual(list(itertools.starmap(keep, itertools.repeat(
+            (token, frames), TIER2_RESUME_THRESHOLD))),
+            [token] * TIER2_RESUME_THRESHOLD)
+        _opcode.get_executor(keep.__code__, 0)
+        self.assertEqual(len(frames), TIER2_RESUME_THRESHOLD)
+        for frame in frames:
+            self.assertIs(frame.f_code, keep.__code__)
+            self.assertIs(frame.f_locals["value"], token)
+            frame.clear()
+        frames.clear()
+
+    @disable_gc()
+    def test_return_finalizer_reentry_and_collection(self):
+        def return_value(value, disposable):
+            return value
+
+        token = object()
+        self.assertEqual(list(itertools.starmap(return_value, itertools.repeat(
+            (token, None), TIER2_RESUME_THRESHOLD))),
+            [token] * TIER2_RESUME_THRESHOLD)
+        _opcode.get_executor(return_value.__code__, 0)
+        observations = []
+        class Disposable:
+            def __del__(self):
+                caller = sys._getframe(1)
+                observations.append(caller.f_code is return_value.__code__)
+                observations.append(return_value(42, None))
+                gc.collect()
+        self.assertIs(return_value(token, Disposable()), token)
+        self.assertEqual(observations, [False, 42])
+
+    @disable_gc()
+    def test_integer_sequence_containment(self):
+        def contains(sequence, key):
+            return key in sequence
+
+        def excludes(sequence, key):
+            return key not in sequence
+
+        for function, expected in ((contains, True), (excludes, False)):
+            self.assertEqual(list(itertools.starmap(function, itertools.repeat(
+                (list(range(10)), 5), TIER2_RESUME_THRESHOLD))),
+                [expected] * TIER2_RESUME_THRESHOLD)
+            self.assertIn("_CONTAINS_OP", get_opnames(
+                _opcode.get_executor(function.__code__, 0)))
+        for sequence in ([], (), [1, 2, 3], (1, 2, 3), [2**100, 3],
+                         [True, False], [1.0, None, 3]):
+            for key in (-5, 0, 1, 3, 8, 2**100, True):
+                self.assertEqual(contains(sequence, key), key in sequence)
+                self.assertEqual(excludes(sequence, key), key not in sequence)
+
+        calls = []
+        class Equal:
+            def __eq__(self, other):
+                calls.append(other)
+                sequence.clear()
+                return False
+        sequence = [1, 2, Equal(), 5]
+        self.assertFalse(contains(sequence, 5))
+        self.assertEqual(calls, [5])
+        self.assertEqual(sequence, [])
+
+        class Broken:
+            def __eq__(self, other):
+                raise ValueError("comparison")
+        with self.assertRaisesRegex(ValueError, "comparison"):
+            contains([1, 2, Broken()], 5)
+
+        class CustomList(list):
+            def __contains__(self, key):
+                calls.append(key)
+                return True
+        self.assertTrue(contains(CustomList(), 42))
+        self.assertEqual(calls, [5, 42])
+
+    @disable_gc()
+    def test_borrowed_subscript_container_cleanup(self):
+        def read(sequence, index):
+            return sequence[index]
+
+        token = object()
+        sequence = [token]
+        self.assertEqual(list(itertools.starmap(read, itertools.repeat(
+            (sequence, 0), TIER2_RESUME_THRESHOLD))),
+            [token] * TIER2_RESUME_THRESHOLD)
+        names = get_opnames(_opcode.get_executor(read.__code__, 0))
+        self.assertIn("_POP_TOP_NOP" if Py_GIL_DISABLED else
+                      "_BINARY_OP_SUBSCR_BORROWED_0", names)
+        self.assertNotIn("_POP_TOP", names)
+        with self.assertRaises(IndexError):
+            read(sequence, 3)
+        self.assertIs(read(sequence, -1), token)
+
+        def read_tuple(sequence, index):
+            return sequence[index]
+        sequence_tuple = (token,)
+        self.assertEqual(list(itertools.starmap(read_tuple, itertools.repeat(
+            (sequence_tuple, 0), TIER2_RESUME_THRESHOLD))),
+            [token] * TIER2_RESUME_THRESHOLD)
+        if not Py_GIL_DISABLED:
+            self.assertIn("_BINARY_OP_SUBSCR_BORROWED_1", get_opnames(
+                _opcode.get_executor(read_tuple.__code__, 0)))
+        self.assertIs(read_tuple(sequence_tuple, -1), token)
+        with self.assertRaises(IndexError):
+            read_tuple(sequence_tuple, 1)
+
+        calls = []
+        class Other:
+            def __del__(self):
+                calls.append("closed")
+        def factory():
+            return [token, Other()]
+        def read_temporary(factory):
+            return factory()[0]
+        self.assertEqual(list(map(read_temporary, itertools.repeat(
+            factory, TIER2_RESUME_THRESHOLD))), [token] * TIER2_RESUME_THRESHOLD)
+        self.assertEqual(calls, ["closed"] * TIER2_RESUME_THRESHOLD)
+        self.assertIn("_POP_TOP", get_opnames(
+            _opcode.get_executor(read_temporary.__code__, 0)))
+
+    @disable_gc()
+    def test_integer_attribute_comparisons(self):
+        class Left:
+            __slots__ = ("value",)
+        class Right:
+            pass
+
+        left, right = Left(), Right()
+        left.value, right.value = 3, 5
+        for expression, arguments, expected in (
+            ("left.value < right.value", (left, right), True),
+            ("left.value == right", (left, 3), True),
+            ("left > right.value", (10, right), True),
+            ("left.value > 0", (left, right), True),
+            ("-1 < right.value", (left, right), True),
+        ):
+            with self.subTest(expression=expression):
+                namespace = {}
+                exec(f"def compare(left, right):\n    return {expression}\n", namespace)
+                compare = namespace["compare"]
+                self.assertEqual(list(itertools.starmap(compare, itertools.repeat(
+                    arguments, TIER2_RESUME_THRESHOLD))),
+                    [expected] * TIER2_RESUME_THRESHOLD)
+                if not Py_GIL_DISABLED and struct.calcsize("P") == 8:
+                    self.assertTrue(any(name.startswith("_COMPARE_INT_INPUTS_")
+                        for name in get_opnames(_opcode.get_executor(compare.__code__, 0))))
+
+        def compare_later_local(a, b, c, d, e, f, g, h, obj):
+            return obj.value == 3
+
+        arguments = (None,) * 8 + (left,)
+        self.assertEqual(list(itertools.starmap(compare_later_local,
+            itertools.repeat(arguments, TIER2_RESUME_THRESHOLD))),
+            [True] * TIER2_RESUME_THRESHOLD)
+        if not Py_GIL_DISABLED and struct.calcsize("P") == 8:
+            self.assertTrue(any(name.startswith("_COMPARE_INT_INPUTS_")
+                for name in get_opnames(_opcode.get_executor(compare_later_local.__code__, 0))))
+        for value in (0, 3, -3, 2**100, True, 3.0):
+            left.value = value
+            self.assertEqual(compare_later_local(*arguments), value == 3)
+        left.value = 3
+
+        def compare(left, right):
+            return left.value < right.value
+
+        self.assertEqual(list(itertools.starmap(compare, itertools.repeat(
+            (left, right), TIER2_RESUME_THRESHOLD))),
+            [True] * TIER2_RESUME_THRESHOLD)
+        for a, b in ((-5, 5), (5, -5), (0, 0), (2**100, 2**101),
+                     (2**100, 0), (3.5, 4.5)):
+            left.value, right.value = a, b
+            self.assertEqual(compare(left, right), a < b)
+        right.__dict__ = {"value": 10}
+        self.assertTrue(compare(left, right))
+        del left.value
+        with self.assertRaises(AttributeError):
+            compare(left, right)
+
+        calls = []
+        class Value:
+            def __lt__(self, other):
+                calls.append(other)
+                return "custom result"
+        left.value = Value()
+        self.assertEqual(compare(left, right), "custom result")
+        self.assertEqual(calls, [10])
+
+    @disable_gc()
+    def test_call_checks_use_guarded_function_metadata(self):
+        def callee(left, right):
+            return left + right
+
+        def caller(function, value):
+            return function(value, 2)
+
+        args = itertools.repeat((callee, 40), TIER2_RESUME_THRESHOLD)
+        self.assertEqual(list(itertools.starmap(caller, args)),
+                         [42] * TIER2_RESUME_THRESHOLD)
+        names = get_opnames(_opcode.get_executor(caller.__code__, 0))
+        self.assertIn("_CHECK_FUNCTION_VERSION", names)
+        self.assertIn("_CHECK_STACK_SPACE_OPERAND", names)
+        self.assertNotIn("_CHECK_STACK_SPACE", names)
+        self.assertNotIn("_CHECK_FUNCTION_EXACT_ARGS", names)
+        self.assertNotIn("_CHECK_PEP_523", names)
+
+        def replacement(left, right, extra):
+            return left + right + extra
+
+        callee.__code__ = replacement.__code__
+        with self.assertRaises(TypeError):
+            caller(callee, 40)
+        callee.__defaults__ = (3,)
+        self.assertEqual(caller(callee, 40), 45)
+
+        # A larger replacement frame must use its own stack-space checks.
+        namespace = {}
+        exec("def larger(left, right):\n" +
+             "".join(f"    local_{i} = left\n" for i in range(100)) +
+             "    return local_99 + right\n", namespace)
+        callee.__code__ = namespace["larger"].__code__
+        self.assertEqual(caller(callee, 40), 42)
+
+    @disable_gc()
+    def test_borrowed_attribute_receiver_cleanup(self):
+        class Holder:
+            def __init__(self, value):
+                self.value = value
+
+        def read(obj):
+            return obj.value
+
+        token = object()
+        holder = Holder(token)
+        self.assertEqual(list(map(read, itertools.repeat(
+            holder, TIER2_RESUME_THRESHOLD))), [token] * TIER2_RESUME_THRESHOLD)
+        names = get_opnames(_opcode.get_executor(read.__code__, 0))
+        self.assertIn("_POP_TOP_NOP" if Py_GIL_DISABLED else
+                      "_LOAD_ATTR_BORROWED_OWNER", names)
+        self.assertNotIn("_POP_TOP", names)
+
+        class Slot:
+            __slots__ = ("value",)
+        slot = Slot()
+        slot.value = token
+        def read_slot(obj):
+            return obj.value
+        self.assertEqual(list(map(read_slot, itertools.repeat(
+            slot, TIER2_RESUME_THRESHOLD))), [token] * TIER2_RESUME_THRESHOLD)
+        if not Py_GIL_DISABLED:
+            self.assertIn("_LOAD_ATTR_BORROWED_OWNER", get_opnames(
+                _opcode.get_executor(read_slot.__code__, 0)))
+        del slot.value
+        with self.assertRaises(AttributeError):
+            read_slot(slot)
+        Slot.value = property(lambda self: "replacement")
+        self.assertEqual(read_slot(slot), "replacement")
+
+        calls = []
+        class Temporary:
+            def __init__(self):
+                self.value = token
+            def __del__(self):
+                calls.append("closed")
+
+        def read_temporary(factory):
+            return factory().value
+
+        def factory():
+            return Temporary()
+
+        self.assertEqual(list(map(read_temporary, itertools.repeat(
+            factory, TIER2_RESUME_THRESHOLD))), [token] * TIER2_RESUME_THRESHOLD)
+        self.assertEqual(calls, ["closed"] * TIER2_RESUME_THRESHOLD)
+        self.assertIn("_POP_TOP", get_opnames(
+            _opcode.get_executor(read_temporary.__code__, 0)))
+
+    @disable_gc()
+    def test_float_attribute_products_mixed_integers(self):
+        class Vector:
+            pass
+
+        def dot(left, right):
+            return left.x * right.x + left.y * right.y + left.z * right.z
+
+        left, right = Vector(), Vector()
+        left.x, left.y, left.z = 2.0, 5, 4.0
+        right.x, right.y, right.z = 3, 7.0, 2
+        self.assertEqual(list(itertools.starmap(dot, itertools.repeat(
+            (left, right), TIER2_RESUME_THRESHOLD))),
+            [49.0] * TIER2_RESUME_THRESHOLD)
+        if not Py_GIL_DISABLED and struct.calcsize("P") == 8:
+            self.assertIn("_FLOAT_ATTRIBUTE_SUM_PRODUCTS_1", get_opnames(
+                _opcode.get_executor(dot.__code__, 0)))
+        for values in ((2, 3, 4, 5, 6, 7),
+                       (2.0, 3.0, 4.0, 5.0, 6.0, 7.0),
+                       (2**70, 3.0, 4.0, 5, 6.0, 7),
+                       (2.0, 3, 4.0, 5, 6.0, 7),
+                       (2, 3.0, 4, 5.0, 6, 7.0)):
+            left.x, right.x, left.y, right.y, left.z, right.z = values
+            expected = values[0] * values[1] + values[2] * values[3] + values[4] * values[5]
+            result = dot(left, right)
+            self.assertEqual(result, expected)
+            self.assertIs(type(result), type(expected))
+        left.x = 2**2000
+        with self.assertRaises(OverflowError):
+            dot(left, right)
+
+    @disable_gc()
+    def test_float_attribute_products(self):
+        for slots in (False, True):
+            for terms in (2, 3):
+                with self.subTest(slots=slots, terms=terms):
+                    namespace = {"__slots__": ("x", "y", "z")} if slots else {}
+                    Vector = type("Vector", (), namespace)
+                    left, right = Vector(), Vector()
+                    left.x, left.y, left.z = 2.0, 3.0, 4.0
+                    right.x, right.y, right.z = 5.0, 6.0, 7.0
+                    expr = "left.x * right.x + left.y * right.y"
+                    if terms == 3:
+                        expr += " + left.z * right.z"
+                    namespace = {}
+                    exec(f"def dot(left, right):\n    return {expr}\n", namespace)
+                    dot = namespace["dot"]
+                    expected = 28.0 if terms == 2 else 56.0
+                    self.assertEqual(list(itertools.starmap(dot, itertools.repeat(
+                        (left, right), TIER2_RESUME_THRESHOLD))),
+                        [expected] * TIER2_RESUME_THRESHOLD)
+                    if not Py_GIL_DISABLED and struct.calcsize("P") == 8:
+                        self.assertIn(f"_FLOAT_ATTRIBUTE_SUM_PRODUCTS_{terms - 2}",
+                                      get_opnames(_opcode.get_executor(dot.__code__, 0)))
+
+                    # Multiplication rounds before addition; contraction to
+                    # FMA would produce a different answer for these inputs.
+                    left.x, right.x = 1.0 + 2**-27, 1.0 - 2**-27
+                    left.y, right.y = -1.0, 1.0
+                    left.z, right.z = 0.0, 1.0
+                    self.assertEqual(dot(left, right).hex(), "0x0.0p+0")
+                    if terms == 3:
+                        left.x, right.x = 1e16, 1.0
+                        left.y, right.y = -1e16, 1.0
+                        left.z, right.z = 1.0, 1.0
+                        self.assertEqual(dot(left, right), 1.0)
+                    left.x, right.x = float("inf"), 0.0
+                    result = dot(left, right)
+                    self.assertNotEqual(result, result)
+                    left.x, right.x = -0.0, 1.0
+                    left.y, right.y = -0.0, 1.0
+                    left.z, right.z = -0.0, 1.0
+                    self.assertEqual(dot(left, right).hex(), "-0x0.0p+0")
+
+                    calls = []
+                    class Number(float):
+                        def __mul__(self, other):
+                            calls.append(other)
+                            left.y = 5.0
+                            return 7.0
+                    left.x = Number(2.0)
+                    self.assertEqual(dot(left, right), 12.0)
+                    self.assertEqual(calls, [1.0])
+                    del left.y
+                    left.x = 2.0
+                    with self.assertRaises(AttributeError):
+                        dot(left, right)
+                    if not slots:
+                        left.__dict__ = dict(x=2.0, y=3.0, z=4.0)
+                        self.assertEqual(dot(left, right), 5.0 if terms == 2 else 9.0)
+
+    @disable_gc()
+    def test_enumerate_integer_tuple_scan(self):
+        def find(rows, key):
+            index, item = -1, None
+            for index, item in enumerate(rows):
+                if item[0] >= key:
+                    return index, item
+            return index, item
+
+        rows = [(i, object()) for i in range(400)]
+        self.assertEqual(list(itertools.starmap(find, itertools.repeat(
+            (rows, 90), TIER2_RESUME_THRESHOLD))),
+            [(90, rows[90])] * TIER2_RESUME_THRESHOLD)
+        executor = _opcode.get_executor(find.__code__, 0)
+        self.assertIn("_ENUM_LIST_INT_SCAN", get_opnames(executor))
+        for key in (-1, 0, 1, 63, 64, 65, 254, 255, 256, 399, 400, 10**50):
+            expected = min(max(key, 0), 399)
+            self.assertEqual(find(rows, key), (expected, rows[expected]))
+        self.assertEqual(find([], 10), (-1, None))
+        self.assertEqual(find(rows[:3], 10), (2, rows[2]))
+        self.assertEqual(find(tuple(rows), 80), (80, rows[80]))
+        with self.assertRaises(IndexError):
+            find(rows[:80] + [()], 100)
+        with self.assertRaises(TypeError):
+            find(rows[:80] + [(None,)], 100)
+
+        calls = []
+        class Key:
+            def __ge__(self, other):
+                calls.append(other)
+                return True
+        item = (Key(),)
+        self.assertEqual(find(rows[:80] + [item], 100), (80, item))
+        self.assertEqual(calls, [100])
+
+        # A callback may replace elements already visited by the loop. It
+        # must run at the original comparison, before any later iteration.
+        class MutatingKey:
+            def __ge__(self, other):
+                mutable.clear()
+                return False
+        item = (MutatingKey(),)
+        mutable = rows[:80] + [item] + rows[81:]
+        self.assertEqual(find(mutable, 100), (80, item))
+        self.assertEqual(mutable, [])
+
+    @disable_gc()
+    def test_enumerate_scan_index_and_local_lifetimes(self):
+        def find(rows, key, start, index, item):
+            for index, item in enumerate(rows, start):
+                if item[0] >= key:
+                    return index, item
+            return index, item
+
+        rows = [(i,) for i in range(100)]
+        self.assertEqual(list(itertools.starmap(find, itertools.repeat(
+            (rows, 90, 0, None, None), TIER2_RESUME_THRESHOLD))),
+            [(90, rows[90])] * TIER2_RESUME_THRESHOLD)
+        self.assertIn("_ENUM_LIST_INT_SCAN", get_opnames(
+            _opcode.get_executor(find.__code__, 0)))
+        for start in (-10, -5, 0, 200, 255, 256, 10**50):
+            self.assertEqual(find(rows, 90, start, None, None),
+                             (start + 90, rows[90]))
+            self.assertEqual(find(rows, 200, start, None, None),
+                             (start + 99, rows[99]))
+        calls = []
+        class Previous:
+            def __del__(self):
+                calls.append("closed")
+        self.assertEqual(find(rows, 90, 0, Previous(), Previous()),
+                         (90, rows[90]))
+        self.assertEqual(calls, ["closed", "closed"])
+
+    @disable_gc()
+    def test_enumerate_scan_comparison_direction(self):
+        for compare in ("<", "<=", "==", "!=", ">", ">="):
+            with self.subTest(compare=compare):
+                namespace = {}
+                exec(f"""
+def find(rows, key):
+    for index, item in enumerate(rows):
+        if item[1] {compare} key:
+            return index
+    return -1
+""", namespace)
+                find = namespace["find"]
+                rows = [(None, i) for i in range(80)]
+                expected = next((i for i in range(80)
+                                 if eval(f"i {compare} 40")), -1)
+                self.assertEqual(list(itertools.starmap(find, itertools.repeat(
+                    (rows, 40), TIER2_RESUME_THRESHOLD))),
+                    [expected] * TIER2_RESUME_THRESHOLD)
+                # Some directions return on the first iteration: still
+                # exercise long runs after their entry has warmed up.
+                for key in (-100, 0, 40, 100):
+                    expected = next((i for i in range(80)
+                                     if eval(f"i {compare} {key}")), -1)
+                    self.assertEqual(find(rows, key), expected)
+
+    @disable_gc()
+    def test_cached_values_across_expression_join(self):
+        def select(flag, left, right):
+            return (10, left if flag else right, 20)
+
+        args = itertools.cycle(((True, 3, 4.5), (False, 3, 4.5)))
+        result = list(itertools.starmap(select, itertools.islice(
+            args, TIER2_RESUME_THRESHOLD)))
+        self.assertEqual(result, [(10, 3, 20), (10, 4.5, 20)] *
+                         (TIER2_RESUME_THRESHOLD // 2))
+        executor = _opcode.get_executor(select.__code__, 0)
+        self.assertNotIn("_METHOD_LABEL", get_opnames(executor))
+        token = object()
+        self.assertEqual(select(True, token, None), (10, token, 20))
+
+    @disable_gc()
+    def test_cached_values_across_nested_loop_edges(self):
+        def walk(rows):
+            total = 0
+            for row in rows:
+                for value in row:
+                    if value < 0:
+                        continue
+                    if value == 0:
+                        break
+                    total += value
+            return total
+
+        rows = [[1, 2, 0, 20], [-1, 3], [4]]
+        self.assertEqual(list(map(walk, itertools.repeat(
+            rows, TIER2_RESUME_THRESHOLD))), [10] * TIER2_RESUME_THRESHOLD)
+        executor = _opcode.get_executor(walk.__code__, 0)
+        self.assertIn("_METHOD_ITER_JUMP_LIST", get_opnames(executor))
+        self.assertNotIn("_METHOD_LABEL", get_opnames(executor))
+        self.assertEqual(walk([]), 0)
+        self.assertEqual(walk([[], [2], []]), 2)
+        self.assertEqual(walk([(1, 2), [3]]), 6)
+        with self.assertRaises(TypeError):
+            walk([[1], [None]])
+
+    @disable_gc()
+    def test_attribute_layout_across_scalar_stores_and_branch(self):
+        class Value:
+            def __init__(self):
+                self.x = 2
+                self.y = 3
+        def read(value, branch):
+            first = value.x
+            marker = 1
+            if branch:
+                marker = 2
+            return first + value.y + marker
+
+        value = Value()
+        args = itertools.cycle(((value, True), (value, False)))
+        results = list(itertools.starmap(read, itertools.islice(
+            args, TIER2_RESUME_THRESHOLD)))
+        self.assertEqual(results, [7, 6] * (TIER2_RESUME_THRESHOLD // 2))
+        executor = _opcode.get_executor(read.__code__, 0)
+        self.assertEqual(get_opnames(executor).count("_GUARD_TYPE_VERSION"), 1)
+
+    @disable_gc()
+    def test_attribute_layout_cleared_by_store_finalizer(self):
+        class Before:
+            def __init__(self):
+                self.x = 1
+                self.y = 2
+        class After:
+            x = 1
+            @property
+            def y(self):
+                return 10
+        def read(value, previous):
+            first = value.x
+            previous = None
+            return first + value.y
+
+        value = Before()
+        args = itertools.repeat((value, 0), TIER2_RESUME_THRESHOLD)
+        self.assertEqual(list(itertools.starmap(read, args)),
+                         [3] * TIER2_RESUME_THRESHOLD)
+        _opcode.get_executor(read.__code__, 0)
+        class Switch:
+            def __del__(self):
+                value.__class__ = After
+        self.assertEqual(read(value, Switch()), 11)
+
+    def test_list_subscript_length_comparison(self):
+        def compare(items, index):
+            result = False
+            for _ in range(TIER2_THRESHOLD):
+                result = len(items[index]) == 1
+            return result
+
+        self.assertTrue(compare([[1], []], 0))
+        self.assertTrue(compare([[1], []], 0))
+        names = [name for executor in get_all_executors(compare)
+                 for name in get_opnames(executor)]
+        if struct.calcsize("P") == 8:
+            self.assertIn("_LEN_SUBSCR_LIST", names)
+        self.assertFalse(compare([[1], []], -1))
+        self.assertTrue(compare([[1], []], -2))
+        with self.assertRaises(IndexError):
+            compare([], 0)
+        with self.assertRaises(TypeError):
+            compare([None], 0)
+        calls = []
+        class Sized:
+            def __len__(self):
+                calls.append("len")
+                return 1
+        self.assertTrue(compare([Sized()], 0))
+        self.assertEqual(calls, ["len"] * TIER2_THRESHOLD)
+        class Items:
+            def __getitem__(self, index):
+                calls.append(index)
+                return [1]
+        calls.clear()
+        self.assertTrue(compare(Items(), 0))
+        self.assertEqual(calls, [0] * TIER2_THRESHOLD)
+
+    def test_adjacent_list_pair_comparison(self):
+        def compare(items, index, pair):
+            result = False
+            for _ in range(TIER2_THRESHOLD):
+                result = (items[index], items[index + 1]) == pair
+            return result
+
+        self.assertTrue(compare([b"a", b"b"], 0, (b"a", b"b")))
+        self.assertTrue(compare([b"a", b"b"], 0, (b"a", b"b")))
+        names = [name for executor in get_all_executors(compare)
+                 for name in get_opnames(executor)]
+        self.assertIn("_COMPARE_LIST_PAIR_0", names)
+        self.assertTrue(compare([b"a", b"b"], -2, (b"a", b"b")))
+        self.assertTrue(compare([b"a", b"b"], -1, (b"b", b"a")))
+        self.assertFalse(compare([b"a", b"b"], 0, (b"a", b"c")))
+        # Check both subscriptions even when the first comparison is false.
+        with self.assertRaises(IndexError):
+            compare([b"a"], 0, (b"different", b"b"))
+        nan = float("nan")
+        self.assertTrue(compare([nan, 1.0], 0, (nan, 1.0)))
+        calls = []
+        class Element:
+            def __eq__(self, other):
+                calls.append(other)
+                return True
+        value = Element()
+        self.assertTrue(compare([value, 1], 0, (None, 1)))
+        self.assertEqual(len(calls), TIER2_THRESHOLD)
+        calls.clear()
+        self.assertFalse(compare([b"a", value], 0, (b"b", None)))
+        self.assertEqual(calls, [])
+        self.assertTrue(compare([b"a", value], 0, (b"a", None)))
+        self.assertEqual(calls, [None] * TIER2_THRESHOLD)
+        class Items:
+            def __getitem__(self, index):
+                calls.append(index)
+                return index
+        calls.clear()
+        self.assertTrue(compare(Items(), 0, (0, 1)))
+        self.assertEqual(calls, [0, 1] * TIER2_THRESHOLD)
+
+    def test_bounded_integer_expression(self):
+        def expression(a, b):
+            return ((a + b) * (a + b + 1) // 2 + a + 1)
+
+        arguments = itertools.repeat((17, 29), TIER2_RESUME_THRESHOLD)
+        self.assertEqual(list(itertools.starmap(expression, arguments)),
+                         [1099] * TIER2_RESUME_THRESHOLD)
+        executor = _opcode.get_executor(expression.__code__, 0)
+        if struct.calcsize("P") == 8:
+            self.assertIn("_INT_REGION_START_0", get_opnames(executor))
+        import operator as op
+        for a, b in [(0, 0), (-7, 3), (7, -23), (2**27, 91),
+                     (2**28, 0), (2**100, 2**80), (True, False), (1.5, 3.0)]:
+            total = op.add(a, b)
+            expected = op.add(op.add(op.floordiv(
+                op.mul(total, op.add(total, 1)), 2), a), 1)
+            self.assertEqual(expression(a, b), expected)
+
+    def test_bounded_integer_float_division(self):
+        def expression(a, b):
+            return 1.0 / ((a + b) * (a + b + 1) // 2 + a + 1)
+
+        arguments = itertools.repeat((17, 29), TIER2_RESUME_THRESHOLD)
+        self.assertEqual(list(itertools.starmap(expression, arguments)),
+                         [1.0 / 1099] * TIER2_RESUME_THRESHOLD)
+        executor = _opcode.get_executor(expression.__code__, 0)
+        if struct.calcsize("P") == 8:
+            self.assertIn("_INT_REGION_DIVIDE", get_opnames(executor))
+        import operator as op
+        for a, b in [(0, 0), (-7, 3), (7, -23), (2**27, 91),
+                     (2**28, 0), (2**100, 2**80), (True, False), (1.5, 3.0)]:
+            total = op.add(a, b)
+            denominator = op.add(op.add(op.floordiv(
+                op.mul(total, op.add(total, 1)), 2), a), 1)
+            if denominator == 0:
+                with self.assertRaises(ZeroDivisionError):
+                    expression(a, b)
+            else:
+                self.assertEqual(expression(a, b), op.truediv(1.0, denominator))
+        with self.assertRaises(ZeroDivisionError):
+            expression(-1, 1)
+
+    def test_bounded_integer_expression_in_loop_trace(self):
+        def loop(a, b):
+            total = 0
+            for _ in range(TIER2_THRESHOLD):
+                total += ((a + b) * (a + b + 1) // 2 + a + 1)
+            return total
+
+        self.assertEqual(loop(17, 29), 1099 * TIER2_THRESHOLD)
+        self.assertEqual(loop(17, 29), 1099 * TIER2_THRESHOLD)
+        if struct.calcsize("P") == 8:
+            opnames = [name for ex in get_all_executors(loop)
+                       for name in get_opnames(ex)]
+            self.assertIn("_INT_REGION_START_0", opnames)
+        self.assertEqual(loop(-7, 3), 0)
+        self.assertEqual(loop(2**100, 0),
+                         ((2**100 * (2**100 + 1) // 2) + 2**100 + 1) * TIER2_THRESHOLD)
+
+    def test_length_consumer_and_python_fallback(self):
+        def compare(obj, index):
+            return index < len(obj) - 1
+
+        args = itertools.repeat(([1, 2, 3], 1), TIER2_RESUME_THRESHOLD)
+        self.assertEqual(list(itertools.starmap(compare, args)),
+                         [True] * TIER2_RESUME_THRESHOLD)
+        if struct.calcsize("P") == 8:
+            opname = ("_CALL_LEN_LEFT_COMPARE" if Py_GIL_DISABLED else
+                      "_CALL_LEN_LEFT_COMPARE_CLEAN")
+            self.assertIn(opname, get_opnames(
+                _opcode.get_executor(compare.__code__, 0)))
+        for obj in ([], (), b"abc", "abc", {1: 2}):
+            for index in (-2**100, -1, 0, 1, 2**100):
+                self.assertEqual(compare(obj, index), index < len(obj) - 1)
+
+        calls = []
+        class Sized:
+            def __len__(self):
+                calls.append("len")
+                return 4
+        self.assertTrue(compare(Sized(), 2))
+        self.assertEqual(calls, ["len"])
+
+    @disable_gc()
+    def test_length_comparison_cleanup_fallback(self):
+        def compare(factory, index):
+            result = index < len(factory()) - 1
+            events.append("compared")
+            return result
+
+        events = []
+        class Element:
+            def __del__(self):
+                events.append("finalized")
+
+        def factory():
+            return [Element(), 2, 3]
+        self.assertEqual(list(itertools.starmap(compare, itertools.repeat(
+            (factory, 1), TIER2_RESUME_THRESHOLD))),
+            [True] * TIER2_RESUME_THRESHOLD)
+        executor = get_first_executor(compare)
+        self.assertIsNotNone(executor)
+        if struct.calcsize("P") == 8 and not Py_GIL_DISABLED:
+            self.assertIn("_CALL_LEN_LEFT_COMPARE_CLEAN", get_opnames(executor))
+
+        events.clear()
+        self.assertTrue(compare(factory, 1))
+        self.assertEqual(events, ["finalized", "compared"])
+        events.clear()
+        with self.assertRaises(TypeError):
+            compare(factory, object())
+        self.assertEqual(events, ["finalized"])
+
+        class Sized:
+            def __len__(self):
+                events.append("len")
+                raise RuntimeError("length")
+        with self.assertRaisesRegex(RuntimeError, "length"):
+            compare(Sized, 1)
+        self.assertEqual(events, ["finalized", "len"])
+
+    def test_tuple_pair_comparison_preserves_nan_identity(self):
+        def compare(first, second, pair):
+            return (first, second) == pair
+
+        args = itertools.repeat((b"a", b"b", (b"a", b"b")),
+                                TIER2_RESUME_THRESHOLD)
+        self.assertEqual(list(itertools.starmap(compare, args)),
+                         [True] * TIER2_RESUME_THRESHOLD)
+        if struct.calcsize("P") == 8:
+            self.assertIn("_COMPARE_TUPLE_PAIR_0", get_opnames(
+                _opcode.get_executor(compare.__code__, 0)))
+        nan = float("nan")
+        self.assertTrue(compare(nan, 1.0, (nan, 1.0)))
+        self.assertFalse(compare(nan, 1.0, (float("nan"), 1.0)))
+        self.assertTrue(compare(2**100, "abc", (2**100, "abc")))
+        self.assertFalse(compare(b"a", b"b", (b"a", b"c")))
+        self.assertTrue(compare(b"", b"\x00", (b"", b"\x00")))
+        self.assertFalse(compare(b"\x00ab", b"x", (b"\x00ac", b"x")))
+        self.assertFalse(compare(b"a", b"b", (b"a",)))
+        calls = []
+        class Item:
+            def __eq__(self, other):
+                calls.append(other)
+                return True
+        other = object()
+        self.assertTrue(compare(Item(), 2, (other, 2)))
+        self.assertEqual(calls, [other])
+        calls.clear()
+        self.assertFalse(compare(b"a", Item(), (b"b", other)))
+        self.assertEqual(calls, [])
+        self.assertTrue(compare(b"a", Item(), (b"a", other)))
+        self.assertEqual(calls, [other])
+
+    def test_reuses_unique_float_temporaries(self):
+        def expression(a, b, c, d):
+            return a * b + c * d
+
+        args = itertools.repeat((2.0, 3.0, 5.0, 7.0), TIER2_RESUME_THRESHOLD)
+        self.assertEqual(list(itertools.starmap(expression, args)),
+                         [41.0] * TIER2_RESUME_THRESHOLD)
+        opnames = get_opnames(_opcode.get_executor(expression.__code__, 0))
+        self.assertIn("_BINARY_OP_ADD_FLOAT_INPLACE", opnames)
+        self.assertEqual(expression(-2.0, 3.5, 5.5, -7.0), -45.5)
+
+    def test_float_temporaries_across_borrowed_attribute_reads(self):
+        class Point:
+            def __init__(self, x, y):
+                self.x, self.y = x, y
+
+        def expression(a, b):
+            # Keep this outside sum-of-products fusion so it still exercises
+            # ownership tracking across individual attribute reads.
+            return a.x * b.x + a.y + b.y
+
+        a, b = Point(2.0, 5.0), Point(3.0, 7.0)
+        args = itertools.repeat((a, b), TIER2_RESUME_THRESHOLD)
+        self.assertEqual(list(itertools.starmap(expression, args)),
+                         [18.0] * TIER2_RESUME_THRESHOLD)
+        opnames = get_opnames(_opcode.get_executor(expression.__code__, 0))
+        self.assertIn("_BINARY_OP_ADD_FLOAT_INPLACE", opnames)
+        self.assertEqual((a.x, a.y, b.x, b.y), (2.0, 5.0, 3.0, 7.0))
+        self.assertEqual(opnames.count("_GUARD_TYPE_VERSION"), 2)
+
+    def test_attribute_layout_fact_cleared_at_callback(self):
+        class Changed:
+            @property
+            def y(self):
+                return 100
+
+        class Point:
+            def __init__(self):
+                self.x, self.y = 2, 3
+                self.change = False
+                self.target = Changed
+
+        def callback(obj):
+            if obj.change:
+                obj.__class__ = obj.target
+            return 0
+
+        def expression(obj, function):
+            return obj.x + function(obj) + obj.y
+
+        obj = Point()
+        args = itertools.repeat((obj, callback), TIER2_RESUME_THRESHOLD)
+        self.assertEqual(list(itertools.starmap(expression, args)),
+                         [5] * TIER2_RESUME_THRESHOLD)
+        self.assertIsNotNone(_opcode.get_executor(expression.__code__, 0))
+        obj.change = True
+        self.assertEqual(expression(obj, callback), 102)
+
+    def test_float_temporary_alias_prevents_reuse(self):
+        def expression(a, b):
+            return (value := a * b) + value
+
+        args = itertools.repeat((2.0, 3.0), TIER2_RESUME_THRESHOLD)
+        self.assertEqual(list(itertools.starmap(expression, args)),
+                         [12.0] * TIER2_RESUME_THRESHOLD)
+        opnames = get_opnames(_opcode.get_executor(expression.__code__, 0))
+        self.assertNotIn("_BINARY_OP_ADD_FLOAT_INPLACE", opnames)
+        self.assertNotIn("_BINARY_OP_ADD_FLOAT_INPLACE_RIGHT", opnames)
+        self.assertEqual(expression(3.0, 5.0), 30.0)
+
+    def test_method_global_constant_mapping_and_rebinding(self):
+        namespace = {"VALUE": 10, "noise": 0}
+        exec("def function(unused):\n    return VALUE + 2\n", namespace)
+        function = namespace["function"]
+        self.assertEqual(list(map(function, [None] * TIER2_RESUME_THRESHOLD)),
+                         [12] * TIER2_RESUME_THRESHOLD)
+        executor = _opcode.get_executor(function.__code__, 0)
+        opnames = get_opnames(executor)
+        self.assertIn("_GUARD_GLOBALS_VERSION_AND_IDENTITY", opnames)
+        self.assertNotIn("_LOAD_GLOBAL_MODULE", opnames)
+        copied = namespace.copy()
+        copied["VALUE"] = 90
+        other = types.FunctionType(function.__code__, copied)
+        self.assertEqual(other(None), 92)
+        self.assertEqual(function(None), 12)
+        namespace["VALUE"] = 30
+        self.assertFalse(executor.is_valid())
+        self.assertEqual(function(None), 32)
+
+    def test_method_builtin_constant_checks_builtins_identity(self):
+        import builtins
+        namespace = {"__builtins__": builtins.__dict__}
+        exec("def function(unused):\n    return Ellipsis\n", namespace)
+        function = namespace["function"]
+        self.assertEqual(list(map(function, [None] * TIER2_RESUME_THRESHOLD)),
+                         [Ellipsis] * TIER2_RESUME_THRESHOLD)
+        executor = _opcode.get_executor(function.__code__, 0)
+        self.assertIn("_GUARD_BUILTINS_IDENTITY", get_opnames(executor))
+        custom = builtins.__dict__.copy()
+        custom["Ellipsis"] = 42
+        namespace["__builtins__"] = custom
+        other = types.FunctionType(function.__code__, namespace)
+        namespace["__builtins__"] = builtins.__dict__
+        self.assertEqual(other(None), 42)
+        self.assertIs(function(None), Ellipsis)
 
     def test_compiles_both_sides_of_branch(self):
         def choose(flag):
@@ -279,6 +3225,383 @@ class TestMethodFrontend(unittest.TestCase):
         self.assertFalse(executor.is_valid())
         self.assertEqual(caller(callee, 8), 25)
 
+    def test_inlines_python_call_with_defaults(self):
+        def callee(value, increment=3):
+            return value + increment
+
+        def caller(function, value):
+            return function(value) * 2
+
+        arguments = itertools.repeat((callee, 7), TIER2_RESUME_THRESHOLD)
+        self.assertEqual(list(itertools.starmap(caller, arguments)),
+                         [20] * TIER2_RESUME_THRESHOLD)
+        executor = _opcode.get_executor(caller.__code__, 0)
+        opnames = get_opnames(executor)
+        self.assertIn("_PY_FRAME_GENERAL", opnames)
+        self.assertIn("_PUSH_FRAME", opnames)
+        self.assertNotIn("_METHOD_DEOPT", opnames)
+        self.assertEqual(caller(callee, 2**100), (2**100 + 3) * 2)
+
+        callee.__defaults__ = (9,)
+        self.assertFalse(executor.is_valid())
+        self.assertEqual(caller(callee, 7), 32)
+        callee.__defaults__ = None
+        with self.assertRaises(TypeError):
+            caller(callee, 7)
+
+    @disable_gc()
+    def test_method_code_budget_preserves_partial_cfg(self):
+        lines = ["def large(value, events):",
+                 "    if value < 0:",
+                 "        return -value",
+                 "    total = value"]
+        for i in range(200):
+            lines.append(f"    total += value + {i % 7}")
+        lines.extend(["    events.append(total)", "    return total"])
+        namespace = {}
+        exec("\n".join(lines), namespace)
+        large = namespace["large"]
+        constant = sum(i % 7 for i in range(200))
+        events = []
+        expected = 201 + constant
+        args = itertools.repeat((1, events), TIER2_RESUME_THRESHOLD)
+        self.assertEqual(list(itertools.starmap(large, args)),
+                         [expected] * TIER2_RESUME_THRESHOLD)
+        names = get_opnames(_opcode.get_executor(large.__code__, 0))
+        self.assertIn("_METHOD_EXIT", names)
+        self.assertIn("_METHOD_DEOPT", names)
+        self.assertEqual(events, [expected] * TIER2_RESUME_THRESHOLD)
+        events.clear()
+        self.assertEqual(large(-3, events), 3)
+        self.assertEqual(events, [])
+        for value in (0, 5, 2**60):
+            expected = value * 201 + constant
+            self.assertEqual(large(value, events), expected)
+            self.assertEqual(events.pop(), expected)
+            self.assertEqual(events, [])
+
+        class BrokenEvents:
+            def append(self, value):
+                raise ValueError(value)
+        # The call after the budget exit observes the full computed value
+        # and propagates its error through the original function frame.
+        with self.assertRaisesRegex(ValueError, str(5 * 201 + constant)):
+            large(5, BrokenEvents())
+
+    @disable_gc()
+    def test_method_empty_cell_uses_original_exception_handler(self):
+        def factory(value):
+            def read():
+                try:
+                    return value
+                except NameError:
+                    return "empty"
+            return read
+
+        read = factory(42)
+        self.assertEqual(list(itertools.starmap(read, itertools.repeat(
+            (), TIER2_RESUME_THRESHOLD))), [42] * TIER2_RESUME_THRESHOLD)
+        if not Py_GIL_DISABLED:
+            self.assertIn("_LOAD_DEREF_GUARDED", get_opnames(
+                get_first_executor(read)))
+        cell = read.__closure__[0]
+        del cell.cell_contents
+        self.assertEqual(read(), "empty")
+        token = object()
+        cell.cell_contents = token
+        self.assertIs(read(), token)
+        cell.cell_contents = None
+        self.assertIsNone(read())
+
+    @disable_gc()
+    def test_method_closure_entry_and_cell_mutation(self):
+        def factory(value):
+            def read(delta):
+                return value + delta
+            def replace(new_value):
+                nonlocal value
+                value = new_value
+            return read, replace
+
+        read, replace = factory(40)
+        other, _ = factory(100)
+        entry = next(instruction.offset for instruction in
+                     dis.get_instructions(read) if instruction.opname == "RESUME")
+        self.assertGreater(entry, 0)
+        self.assertEqual(list(map(read, itertools.repeat(
+            2, TIER2_RESUME_THRESHOLD))), [42] * TIER2_RESUME_THRESHOLD)
+        names = get_opnames(_opcode.get_executor(read.__code__, entry))
+        self.assertIn("_METHOD_EXIT", names)
+        if not Py_GIL_DISABLED:
+            self.assertIn("_LOAD_DEREF_GUARDED", names)
+        self.assertIn("_BINARY_OP_ADD_INT", names)
+        self.assertNotIn("_COPY_FREE_VARS", names)
+        self.assertEqual(other(2), 102)
+        replace(50)
+        self.assertEqual(read(2), 52)
+        self.assertEqual(other(2), 102)
+        replace("a")
+        self.assertEqual(read("b"), "ab")
+        with self.assertRaises(TypeError):
+            read(1)
+        del read.__closure__[0].cell_contents
+        with self.assertRaises(NameError):
+            read(1)
+        replace(70)
+        self.assertEqual(read(2), 72)
+
+    @disable_gc()
+    def test_method_cell_initialization_runs_once(self):
+        def make_reader(value):
+            def read():
+                return value
+            return read
+
+        entry = next(instruction.offset for instruction in
+                     dis.get_instructions(make_reader)
+                     if instruction.opname == "RESUME")
+        self.assertGreater(entry, 0)
+        readers = list(map(make_reader, range(TIER2_RESUME_THRESHOLD)))
+        self.assertEqual([read() for read in readers],
+                         list(range(TIER2_RESUME_THRESHOLD)))
+        executor = _opcode.get_executor(make_reader.__code__, entry)
+        names = get_opnames(executor)
+        self.assertIn("_METHOD_EXIT", names)
+        self.assertNotIn("_MAKE_CELL", names)
+        # A later call must create its own cell before entering the executor.
+        new_reader = make_reader("new")
+        self.assertEqual(new_reader(), "new")
+        self.assertIsNot(new_reader.__closure__[0], readers[-1].__closure__[0])
+        self.assertEqual(readers[-1](), TIER2_RESUME_THRESHOLD - 1)
+
+    @disable_gc()
+    def test_method_protected_regions(self):
+        def read(sequence, index, events):
+            try:
+                value = sequence[index]
+            except IndexError:
+                events.append(type(sys.exception()))
+                return "missing"
+            else:
+                return value
+            finally:
+                events.append("finally")
+
+        events = []
+        args = itertools.repeat(([42], 0, events), TIER2_RESUME_THRESHOLD)
+        self.assertEqual(list(itertools.starmap(read, args)),
+                         [42] * TIER2_RESUME_THRESHOLD)
+        executor = _opcode.get_executor(read.__code__, 0)
+        names = get_opnames(executor)
+        self.assertIn("_METHOD_EXIT", names)
+        self.assertIn("_BINARY_OP_SUBSCR_LIST_INT" if Py_GIL_DISABLED else
+                      "_BINARY_OP_SUBSCR_BORROWED_0", names)
+        self.assertEqual(events, ["finally"] * TIER2_RESUME_THRESHOLD)
+        events.clear()
+        self.assertEqual(read([42], 1, events), "missing")
+        self.assertEqual(events, [IndexError, "finally"])
+        events.clear()
+
+        class Broken:
+            def __getitem__(self, index):
+                raise ValueError("lookup")
+
+        with self.assertRaisesRegex(ValueError, "lookup"):
+            read(Broken(), 0, events)
+        self.assertEqual(events, ["finally"])
+        events.clear()
+        # An exception active in the caller survives both normal execution
+        # and an exception handled inside the compiled function.
+        try:
+            raise RuntimeError("outer")
+        except RuntimeError as outer:
+            self.assertEqual(read([42], 0, events), 42)
+            self.assertIs(sys.exception(), outer)
+            self.assertEqual(read([], 0, events), "missing")
+            self.assertIs(sys.exception(), outer)
+
+    @disable_gc()
+    def test_method_error_enters_correct_handler(self):
+        def divide(numerator, divisor, events):
+            try:
+                result = numerator / divisor
+            except ZeroDivisionError:
+                events.append("zero")
+                result = -1.0
+            try:
+                return result + events[0]
+            except TypeError:
+                return result
+
+        args = itertools.repeat((6.0, 2.0, [1.0]), TIER2_RESUME_THRESHOLD)
+        self.assertEqual(list(itertools.starmap(divide, args)),
+                         [4.0] * TIER2_RESUME_THRESHOLD)
+        names = get_opnames(_opcode.get_executor(divide.__code__, 0))
+        self.assertIn("_METHOD_EXIT", names)
+        self.assertTrue(set(names) & {"_BINARY_OP_TRUEDIV_FLOAT",
+                                      "_BINARY_OP_EXTEND", "_BINARY_OP"})
+        # This error originates in compiled arithmetic, not a guard exit.
+        events = [1.0]
+        self.assertEqual(divide(6.0, 0.0, events), 0.0)
+        self.assertEqual(events, [1.0, "zero"])
+        self.assertEqual(divide(6.0, 2.0, ["other"]), 3.0)
+        with self.assertRaises(IndexError):
+            divide(6.0, 2.0, [])
+
+    def test_calls_method_executor_and_propagates_exception(self):
+        def callee(n):
+            total = 0
+            for i in range(n):
+                total += i
+            if n < 0:
+                raise ValueError("negative")
+            return total
+
+        def caller(function, n):
+            return function(n) + 7
+
+        self.assertEqual(list(map(callee, [8] * TIER2_RESUME_THRESHOLD)),
+                         [28] * TIER2_RESUME_THRESHOLD)
+        args = itertools.repeat((callee, 8), TIER2_RESUME_THRESHOLD)
+        self.assertEqual(list(itertools.starmap(caller, args)),
+                         [35] * TIER2_RESUME_THRESHOLD)
+        self.assertIn("_METHOD_CALL", get_opnames(
+            _opcode.get_executor(caller.__code__, 0)))
+        self.assertEqual(caller(callee, 21), 217)
+        with self.assertRaisesRegex(ValueError, "negative"):
+            caller(callee, -1)
+        self.assertEqual(caller(callee, 4), 13)
+
+    def test_method_call_keeps_invalidated_caller_alive(self):
+        def callee(obj):
+            # Exceed the inline size limit while remaining compilable as a
+            # method, so this exercises an actual nested executor entry.
+            return (len(obj) + len(obj) + len(obj) + len(obj) +
+                    len(obj) + len(obj) + len(obj) + len(obj) +
+                    len(obj) + len(obj) + len(obj) + len(obj) +
+                    len(obj) + len(obj) + len(obj) + len(obj))
+
+        def caller(function, obj):
+            return function(obj) + 7
+
+        def replacement(function, obj):
+            return 900
+
+        class Argument:
+            invalidate = False
+
+            def __len__(self):
+                if self.invalidate:
+                    caller.__code__ = replacement.__code__
+                    gc.collect()
+                return 1
+
+        obj = Argument()
+        list(map(callee, [obj] * TIER2_RESUME_THRESHOLD))
+        args = itertools.repeat((callee, obj), TIER2_RESUME_THRESHOLD)
+        self.assertEqual(list(itertools.starmap(caller, args)),
+                         [23] * TIER2_RESUME_THRESHOLD)
+        # Do not retain an executor reference: the nested call must keep the
+        # invalidated native return address alive by itself.
+        self.assertIn("_METHOD_CALL", get_opnames(
+            _opcode.get_executor(caller.__code__, 0)))
+        obj.invalidate = True
+        self.assertEqual(caller(callee, obj), 23)
+        self.assertEqual(caller(callee, obj), 900)
+
+    def test_recursive_method_calls(self):
+        namespace = {}
+        exec("def recurse(n):\n"
+             "    if n:\n"
+             "        return recurse(n - 1) + 1\n"
+             "    return 0\n", namespace)
+        recurse = namespace["recurse"]
+        self.assertEqual(list(map(recurse, [8] * TIER2_RESUME_THRESHOLD)),
+                         [8] * TIER2_RESUME_THRESHOLD)
+        self.assertIn("_METHOD_CALL", get_opnames(
+            _opcode.get_executor(recurse.__code__, 0)))
+        self.assertEqual(recurse(300), 300)
+        with self.assertRaises(RecursionError):
+            recurse(sys.getrecursionlimit() + 1)
+        previous_limit = sys.getrecursionlimit()
+        try:
+            # Exercise native stack fallback independently of the Python limit.
+            sys.setrecursionlimit(100_000)
+            self.assertEqual(recurse(20_000), 20_000)
+        finally:
+            sys.setrecursionlimit(previous_limit)
+
+    def test_inlines_short_loop_with_periodic_check(self):
+        def callee(n):
+            total = 0
+            while n > 0:
+                n -= 1
+                total += n
+            return total
+
+        def caller(function, n):
+            return function(n) * 2
+
+        list(map(callee, [8] * TIER2_RESUME_THRESHOLD))
+        args = itertools.repeat((callee, 8), TIER2_RESUME_THRESHOLD)
+        self.assertEqual(list(itertools.starmap(caller, args)),
+                         [56] * TIER2_RESUME_THRESHOLD)
+        opnames = get_opnames(_opcode.get_executor(caller.__code__, 0))
+        self.assertIn("_PUSH_FRAME", opnames)
+        self.assertIn("_CHECK_PERIODIC", opnames)
+        self.assertNotIn("_METHOD_CALL", opnames)
+        for n in (0, -3, 21, 20000):
+            self.assertEqual(caller(callee, n), max(n, 0) * max(n - 1, 0))
+
+    def test_inlines_stored_bound_method(self):
+        class Number:
+            def __init__(self, value):
+                self.value = value
+
+            def add(self, increment):
+                return self.value + increment
+
+        def caller(method, value):
+            return method(value) * 2
+
+        first = Number(3)
+        second = Number(9)
+        arguments = itertools.repeat((first.add, 7), TIER2_RESUME_THRESHOLD)
+        self.assertEqual(list(itertools.starmap(caller, arguments)),
+                         [20] * TIER2_RESUME_THRESHOLD)
+        executor = _opcode.get_executor(caller.__code__, 0)
+        opnames = get_opnames(executor)
+        self.assertIn("_PUSH_FRAME", opnames)
+        self.assertNotIn("_METHOD_DEOPT", opnames)
+        self.assertEqual(caller(second.add, 7), 32)
+        self.assertEqual(caller(lambda value: value - 1, 7), 12)
+        with self.assertRaises(TypeError):
+            caller(first.add, "x")
+
+    def test_inlines_stored_bound_method_with_defaults(self):
+        class Number:
+            def __init__(self, value):
+                self.value = value
+
+            def add(self, increment=3):
+                return self.value + increment
+
+        def caller(method):
+            return method() * 2
+
+        obj = Number(7)
+        self.assertEqual(list(map(caller, [obj.add] * TIER2_RESUME_THRESHOLD)),
+                         [20] * TIER2_RESUME_THRESHOLD)
+        executor = _opcode.get_executor(caller.__code__, 0)
+        opnames = get_opnames(executor)
+        self.assertIn("_CHECK_METHOD_VERSION", opnames)
+        self.assertIn("_PY_FRAME_GENERAL", opnames)
+        self.assertNotIn("_METHOD_DEOPT", opnames)
+        self.assertEqual(caller(Number(9).add), 24)
+        Number.add.__defaults__ = (5,)
+        self.assertFalse(executor.is_valid())
+        self.assertEqual(caller(obj.add), 24)
+
     def test_inlines_branching_callee_multiple_returns(self):
         def callee(flag, value):
             if flag:
@@ -417,7 +3740,11 @@ class TestMethodFrontend(unittest.TestCase):
         self.assertIn("_TIER2_RESUME_CHECK", get_opnames(executor))
         self.assertEqual(container.lookup(pairs), {})
 
+    @disable_gc()
     def test_generic_iterator_error(self):
+        # Collecting unrelated types can invalidate a just-created executor
+        # through its dependency Bloom filter. Keep it alive for this assertion;
+        # executor invalidation during callbacks is covered separately.
         class EmptyIterator:
             def __iter__(self):
                 return self
@@ -450,6 +3777,86 @@ class TestMethodFrontend(unittest.TestCase):
         self.assertIn("_METHOD_FOR_ITER", get_opnames(executor))
         with self.assertRaisesRegex(ValueError, "iterator failed"):
             consume(BadIterator())
+
+    @disable_gc()
+    def test_known_enumerate_iterator(self):
+        def consume(values):
+            result = 0
+            for index, value in enumerate(values):
+                result += index * value
+            return result
+
+        values = [2, 3, 4]
+        self.assertEqual(list(map(consume, itertools.repeat(
+            values, TIER2_RESUME_THRESHOLD))), [11] * TIER2_RESUME_THRESHOLD)
+        executor = _opcode.get_executor(consume.__code__, 0)
+        self.assertIn("_METHOD_ITER_NEXT_INLINE", get_opnames(executor))
+        self.assertEqual(consume([]), 0)
+        self.assertEqual(consume(iter(values)), 11)
+
+        class BadIterator:
+            def __iter__(self):
+                return self
+            def __next__(self):
+                raise ValueError("iterator failed")
+
+        with self.assertRaisesRegex(ValueError, "iterator failed"):
+            consume(BadIterator())
+
+    @disable_gc()
+    def test_known_zip_iterator(self):
+        def consume(first, second):
+            result = 0
+            for a, b in zip(first, second):
+                result += a * b
+            return result
+
+        args = itertools.repeat(([1, 2], [3, 4]), TIER2_RESUME_THRESHOLD)
+        self.assertEqual(list(itertools.starmap(consume, args)),
+                         [11] * TIER2_RESUME_THRESHOLD)
+        executor = _opcode.get_executor(consume.__code__, 0)
+        self.assertIn("_METHOD_ITER_NEXT_INLINE", get_opnames(executor))
+        self.assertEqual(consume([1, 2], [3]), 3)
+        self.assertEqual(consume([], [3, 4]), 0)
+
+    @disable_gc()
+    def test_inlines_keyword_python_call(self):
+        def callee(value, *, increment=2):
+            return value + increment
+        def caller(value, callee=callee):
+            return callee(value, increment=3) * 2
+
+        self.assertEqual(list(map(caller, itertools.repeat(
+            5, TIER2_RESUME_THRESHOLD))), [16] * TIER2_RESUME_THRESHOLD)
+        executor = _opcode.get_executor(caller.__code__, 0)
+        self.assertIn("_PY_FRAME_KW", get_opnames(executor))
+        self.assertNotIn("_METHOD_DEOPT", get_opnames(executor))
+        def changed(value, *, increment):
+            raise ValueError(increment)
+        callee.__code__ = changed.__code__
+        with self.assertRaisesRegex(ValueError, "3"):
+            caller(5)
+
+    @disable_gc()
+    def test_keyword_bound_method_binding(self):
+        class Value:
+            def add(self, value, *, increment=2):
+                return value + increment
+        method = Value().add
+        def caller(value, method=method):
+            return method(value, increment=4)
+
+        self.assertEqual(list(map(caller, itertools.repeat(
+            5, TIER2_RESUME_THRESHOLD))), [9] * TIER2_RESUME_THRESHOLD)
+        executor = _opcode.get_executor(caller.__code__, 0)
+        self.assertIn("_EXPAND_METHOD_KW", get_opnames(executor))
+        self.assertNotIn("_METHOD_DEOPT", get_opnames(executor))
+        def changed(self, value):
+            return value
+        Value.add.__code__ = changed.__code__
+        with self.assertRaisesRegex(TypeError, "unexpected keyword"):
+            caller(5)
+
 
 
 @requires_specialization
@@ -496,6 +3903,49 @@ class TestExecutorInvalidation(unittest.TestCase):
         self.assertIsNotNone(get_first_executor(leaf))
         counter, = struct.unpack_from("=H", leaf.__code__._co_code_adaptive, 2)
         self.assertEqual(counter >> 3, TIER2_RESUME_THRESHOLD - 2)
+
+    @disable_gc()
+    def test_tracing_does_not_wrap_ready_resume_counter(self):
+        ns = {}
+        exec("def leaf(value):\n    return value + 1\n"
+             "def caller(n):\n    total = 0\n    for i in range(n):\n"
+             "        total += leaf(i)\n    return total\n", ns)
+        n = TIER2_THRESHOLD
+        self.assertEqual(ns["caller"](n), n * (n + 1) // 2)
+        leaf = ns["leaf"]
+        # The caller trace forces the leaf's specialization counter to zero.
+        # RESUME must leave it ready while tracing, not wrap it to 8191.
+        counter, = struct.unpack_from("=H", leaf.__code__._co_code_adaptive, 2)
+        self.assertEqual(counter, 0)
+        self.assertEqual(leaf(1), 2)
+        self.assertIsNotNone(get_first_executor(leaf))
+
+    def test_subinterpreter_creation_invalidates_owner_executors(self):
+        # Bootstrapping a subinterpreter temporarily attaches another thread
+        # state to the main interpreter while the subinterpreter is current.
+        # In free-threaded builds this invalidates the main interpreter's JIT.
+        code = """
+            import _opcode
+            import sys
+            from test import support
+            from test.support import Py_GIL_DISABLED
+            from test.test_capi.test_opt import TIER2_RESUME_THRESHOLD
+
+            def leaf(value):
+                return value + 1
+
+            assert list(map(leaf, [41] * TIER2_RESUME_THRESHOLD)) == (
+                [42] * TIER2_RESUME_THRESHOLD)
+            executor = _opcode.get_executor(leaf.__code__, 0)
+            assert executor is not None and executor.is_valid()
+            for _ in range(3):
+                assert support.run_in_subinterp("pass") == 0
+                assert leaf(41) == 42
+            if Py_GIL_DISABLED:
+                assert not executor.is_valid()
+            assert sys._jit.is_enabled()
+        """
+        script_helper.assert_python_ok("-c", textwrap.dedent(code), PYTHON_JIT="1")
 
     @unittest.skipUnless(Py_GIL_DISABLED, "requires a free-threaded build")
     def test_jit_disabled_and_reenabled_for_second_thread(self):
@@ -820,10 +4270,10 @@ class TestUops(unittest.TestCase):
         ex = get_first_executor(testfunc)
         self.assertIsNotNone(ex)
         uops = get_opnames(ex)
-        # 0. _START_EXECUTOR
-        # 1. _MAKE_WARM
-        # 2. _TIER2_RESUME_CHECK
-        self.assertEqual(uops[2], "_TIER2_RESUME_CHECK")
+        # The recursive closure now uses the method frontend, which validates
+        # the executor before the entry periodic check.
+        self.assertEqual(uops[:4], ["_START_EXECUTOR", "_MAKE_WARM",
+                                    "_CHECK_VALIDITY", "_TIER2_RESUME_CHECK"])
 
     def test_jump_forward(self):
         def testfunc(n):
@@ -1081,6 +4531,55 @@ class TestUops(unittest.TestCase):
 @unittest.skipIf(os.getenv("PYTHON_UOPS_OPTIMIZE") == "0", "Needs uop optimizer to run.")
 class TestUopsOptimization(unittest.TestCase):
 
+    def test_empty_set_call(self):
+        def collect(count):
+            result = []
+            for _ in range(count):
+                result.append(set())
+            return result
+        result = collect(TIER2_THRESHOLD)
+        executor = get_first_executor(collect)
+        self.assertIsNotNone(executor)
+        self.assertIn("_CALL_SET_EMPTY", get_opnames(executor))
+        self.assertEqual(result, [set()] * TIER2_THRESHOLD)
+        result[0].add(42)
+        self.assertEqual(result[1], set())
+
+    def test_empty_dict_allocation(self):
+        def collect(count):
+            result = []
+            for _ in range(count):
+                result.append({})
+            return result
+        result = collect(TIER2_THRESHOLD)
+        executor = get_first_executor(collect)
+        self.assertIsNotNone(executor)
+        self.assertIn("_BUILD_EMPTY_MAP", get_opnames(executor))
+        self.assertEqual(result, [{}] * TIER2_THRESHOLD)
+        result[0]["changed"] = True
+        self.assertEqual(result[1], {})
+
+    def test_store_mutable_default_descriptor_change(self):
+        events = []
+        class Default:
+            pass
+        class Record:
+            value = Default()
+        record = Record()
+        def loop(count):
+            for value in range(count):
+                record.value = value
+        loop(TIER2_THRESHOLD)
+        executor = get_first_executor(loop)
+        self.assertIsNotNone(executor)
+        if not Py_GIL_DISABLED:
+            self.assertIn("_GUARD_STORE_ATTR_NONDATA_CACHED", get_opnames(executor))
+        self.assertEqual(record.value, TIER2_THRESHOLD - 1)
+        Default.__set__ = lambda self, obj, value: events.append(value)
+        loop(10)
+        self.assertEqual(events, list(range(10)))
+        self.assertEqual(record.value, TIER2_THRESHOLD - 1)
+
     def setUp(self):
         self.guard_is_false, self.guard_is_true = get_bool_guard_ops()
 
@@ -1211,11 +4710,13 @@ class TestUopsOptimization(unittest.TestCase):
                 z = x
                 a = z
                 b = a
-                res = x + z + a + b
+                # Separate consumers exercise alias-based guard elimination
+                # without forming one bounded arithmetic region.
+                res = (x + z, a + b)
             return res
 
         res, ex = self._run_with_optimizer(testfunc, TIER2_THRESHOLD)
-        self.assertEqual(res, 4)
+        self.assertEqual(res, (2, 2))
         self.assertIsNotNone(ex)
         uops = get_opnames(ex)
         self.assertIn("_GUARD_TOS_INT", uops)
@@ -3233,7 +6734,8 @@ class TestUopsOptimization(unittest.TestCase):
         self.assertEqual(uops.count("_STORE_SUBSCR_LIST_INT"), 1)
         self.assertEqual(uops.count("_GUARD_TOS_LIST"), 0)
         self.assertEqual(uops.count("_UNPACK_SEQUENCE_LIST"), 1)
-        self.assertEqual(uops.count("_BINARY_OP_SUBSCR_LIST_INT"), 1)
+        self.assertEqual(uops.count(("_BINARY_OP_SUBSCR_LIST_INT" if Py_GIL_DISABLED else
+                       "_BINARY_OP_SUBSCR_BORROWED_0")), 1)
         self.assertEqual(uops.count("_TO_BOOL_LIST"), 1)
 
     def test_unique_tuple_unpack(self):
@@ -3388,7 +6890,8 @@ class TestUopsOptimization(unittest.TestCase):
         self.assertIn("_UNPACK_SEQUENCE_TUPLE", uops)
         self.assertIn("_UNPACK_SEQUENCE_TWO_TUPLE", uops)
         self.assertNotIn("_GUARD_NOS_TUPLE", uops)
-        self.assertIn("_BINARY_OP_SUBSCR_TUPLE_INT", uops)
+        self.assertIn(("_BINARY_OP_SUBSCR_TUPLE_INT" if Py_GIL_DISABLED else
+                       "_BINARY_OP_SUBSCR_BORROWED_1"), uops)
 
     def test_remove_guard_for_known_type_slice(self):
         def f(n):
@@ -3420,7 +6923,8 @@ class TestUopsOptimization(unittest.TestCase):
         self.assertIsNotNone(ex)
         uops = get_opnames(ex)
         self.assertNotIn("_GUARD_BINARY_OP_SUBSCR_TUPLE_INT_BOUNDS", uops)
-        self.assertIn("_BINARY_OP_SUBSCR_TUPLE_INT", uops)
+        self.assertIn(("_BINARY_OP_SUBSCR_TUPLE_INT" if Py_GIL_DISABLED else
+                       "_BINARY_OP_SUBSCR_BORROWED_1"), uops)
 
     def test_binary_subcsr_str_int_narrows_to_str(self):
         def testfunc(n):
@@ -3840,7 +7344,8 @@ class TestUopsOptimization(unittest.TestCase):
         self.assertIsNotNone(ex)
         uops = get_opnames(ex)
         self.assertIn("_CALL_TUPLE_1", uops)
-        self.assertIn("_BINARY_OP_SUBSCR_TUPLE_INT", uops)
+        self.assertIn(("_BINARY_OP_SUBSCR_TUPLE_INT" if Py_GIL_DISABLED else
+                       "_BINARY_OP_SUBSCR_BORROWED_1"), uops)
         self.assertNotIn("_GUARD_NOS_TUPLE", uops)
 
     def test_call_tuple_1_result_propagates_for_tuple_input(self):
@@ -3876,10 +7381,11 @@ class TestUopsOptimization(unittest.TestCase):
         uops = get_opnames(ex)
         self.assertNotIn("_GUARD_NOS_NULL", uops)
         self.assertNotIn("_GUARD_CALLABLE_LEN", uops)
-        self.assertIn("_CALL_LEN", uops)
+        self.assertTrue("_CALL_LEN" in uops or "_CALL_LEN_CONSUMER" in uops)
         self.assertNotIn("_GUARD_NOS_INT", uops)
         self.assertNotIn("_GUARD_TOS_INT", uops)
-        self.assertIn("_POP_TOP_NOP", uops)
+        if "_CALL_LEN" in uops:
+            self.assertIn("_POP_TOP_NOP", uops)
 
     def test_check_is_not_py_callable(self):
         def testfunc(n):
@@ -4037,8 +7543,9 @@ class TestUopsOptimization(unittest.TestCase):
         self.assertIn("_CALL_BUILTIN_FAST", uops)
         self.assertNotIn("_GUARD_CALLABLE_BUILTIN_FAST", uops)
         # divmod(10, 3) should have at least 3 _POP_TOP_NOP
-        # x += y[0] produces at least 3 _POP_TOP_NOP
-        self.assertGreaterEqual(count_ops(ex, "_POP_TOP_NOP"), 6)
+        # The borrowed subscript fuses two of the three cleanups for y[0].
+        self.assertGreaterEqual(count_ops(ex, "_POP_TOP_NOP"),
+                                6 if Py_GIL_DISABLED else 4)
 
     def test_call_builtin_fast_with_keywords(self):
         def testfunc(n):
@@ -4232,7 +7739,8 @@ class TestUopsOptimization(unittest.TestCase):
         self.assertEqual(res, TIER2_THRESHOLD)
         self.assertIsNotNone(ex)
         uops = get_opnames(ex)
-        self.assertIn("_BINARY_OP_SUBSCR_TUPLE_INT", uops)
+        self.assertIn(("_BINARY_OP_SUBSCR_TUPLE_INT" if Py_GIL_DISABLED else
+                       "_BINARY_OP_SUBSCR_BORROWED_1"), uops)
         self.assertNotIn("_COMPARE_OP_INT", uops)
         self.assertNotIn(self.guard_is_true, uops)
 
@@ -5094,8 +8602,9 @@ class TestUopsOptimization(unittest.TestCase):
             "_BINARY_OP_ADD_INT_INPLACE" in uops
             or "_BINARY_OP_ADD_INT_INPLACE_RIGHT" in uops
         )
-        self.assertTrue(inplace_add,
-            "Expected an inplace add for unique intermediate results")
+        unboxed = any(name.startswith("_INT_REGION_START") for name in uops)
+        self.assertTrue(inplace_add or unboxed,
+            "Expected unboxed arithmetic or an inplace add for unique results")
 
     def test_load_attr_instance_value(self):
         def testfunc(n):
@@ -5112,9 +8621,13 @@ class TestUopsOptimization(unittest.TestCase):
         self.assertIsNotNone(ex)
         uops = get_opnames(ex)
 
-        self.assertIn("_LOAD_ATTR_INSTANCE_VALUE", uops)
+        self.assertIn(("_LOAD_ATTR_INSTANCE_VALUE" if Py_GIL_DISABLED else
+                       "_LOAD_ATTR_BORROWED_OWNER"), uops)
         self.assertLessEqual(count_ops(ex, "_POP_TOP"), 2)
-        self.assertIn("_POP_TOP_NOP", uops)
+        if Py_GIL_DISABLED:
+            self.assertIn("_POP_TOP_NOP", uops)
+        else:
+            self.assertNotIn("_POP_TOP_NOP", uops)
 
     def test_load_attr_module(self):
         def testfunc(n):
@@ -5169,7 +8682,8 @@ class TestUopsOptimization(unittest.TestCase):
         self.assertIsNotNone(ex)
         uops = get_opnames(ex)
 
-        self.assertIn("_LOAD_ATTR_SLOT", uops)
+        self.assertIn(("_LOAD_ATTR_SLOT" if Py_GIL_DISABLED else
+                       "_LOAD_ATTR_BORROWED_OWNER"), uops)
         self.assertLessEqual(count_ops(ex, "_POP_TOP"), 2)
         self.assertIn("_POP_TOP_NOP", uops)
 
@@ -5391,7 +8905,8 @@ class TestUopsOptimization(unittest.TestCase):
         self.assertIn("_BINARY_OP_EXTEND", uops)
         # The c[0] subscript emits _GUARD_NOS_LIST before _BINARY_OP_SUBSCR_LIST_INT;
         # since _BINARY_OP_EXTEND now propagates PyList_Type, that guard is gone.
-        self.assertIn("_BINARY_OP_SUBSCR_LIST_INT", uops)
+        self.assertIn(("_BINARY_OP_SUBSCR_LIST_INT" if Py_GIL_DISABLED else
+                       "_BINARY_OP_SUBSCR_BORROWED_0"), uops)
         self.assertNotIn("_GUARD_NOS_LIST", uops)
 
     def test_binary_op_extend_tuple_concat_type_propagation(self):
@@ -5497,6 +9012,24 @@ class TestUopsOptimization(unittest.TestCase):
         self.assertNotIn("_GUARD_TOS_INT", uops)
         self.assertNotIn("_GUARD_NOS_INT", uops)
 
+    def test_store_attr_preserves_float_alias(self):
+        class Record:
+            pass
+        def loop(n, obj):
+            value = 1.25
+            for _ in range(n):
+                first = value + 1.0
+                obj.value = first
+                value = first + 1.0
+                if value - obj.value != 1.0:
+                    raise AssertionError("attribute alias was mutated")
+            return value
+        obj = Record()
+        result = loop(TIER2_THRESHOLD, obj)
+        executor = get_first_executor(loop)
+        self.assertEqual(result, 1.25 + 2 * TIER2_THRESHOLD)
+        self.assertIsNotNone(executor)
+
     def test_store_attr_instance_value(self):
         def testfunc(n):
             class C:
@@ -5510,7 +9043,8 @@ class TestUopsOptimization(unittest.TestCase):
         self.assertIsNotNone(ex)
         uops = get_opnames(ex)
 
-        self.assertIn("_STORE_ATTR_INSTANCE_VALUE", uops)
+        self.assertIn("_STORE_ATTR_INSTANCE_VALUE" if Py_GIL_DISABLED else
+                      "_STORE_ATTR_INSTANCE_VALUE_NOESCAPE", uops)
         self.assertLessEqual(count_ops(ex, "_POP_TOP"), 1)
         self.assertIn("_POP_TOP_NOP", uops)
 
@@ -5568,7 +9102,8 @@ class TestUopsOptimization(unittest.TestCase):
         self.assertEqual(res, 42)
         self.assertIsNotNone(ex)
         uops = get_opnames(ex)
-        self.assertIn("_STORE_ATTR_SLOT", uops)
+        self.assertIn("_STORE_ATTR_SLOT" if Py_GIL_DISABLED else
+                      "_STORE_ATTR_SLOT_NOESCAPE", uops)
         self.assertIn("_POP_TOP_NOP", uops)
 
     def test_store_subscr_dict(self):
@@ -6054,7 +9589,8 @@ class TestUopsOptimization(unittest.TestCase):
         self.assertIsNotNone(ex)
         uops = get_opnames(ex)
 
-        self.assertIn("_BINARY_OP_SUBSCR_LIST_INT", uops)
+        self.assertIn(("_BINARY_OP_SUBSCR_LIST_INT" if Py_GIL_DISABLED else
+                       "_BINARY_OP_SUBSCR_BORROWED_0"), uops)
         self.assertLessEqual(count_ops(ex, "_POP_TOP"), 2)
         self.assertLessEqual(count_ops(ex, "_POP_TOP_INT"), 1)
         self.assertIn("_POP_TOP_NOP", uops)
@@ -6073,7 +9609,8 @@ class TestUopsOptimization(unittest.TestCase):
         self.assertIsNotNone(ex)
         uops = get_opnames(ex)
 
-        self.assertIn("_BINARY_OP_SUBSCR_TUPLE_INT", uops)
+        self.assertIn(("_BINARY_OP_SUBSCR_TUPLE_INT" if Py_GIL_DISABLED else
+                       "_BINARY_OP_SUBSCR_BORROWED_1"), uops)
         self.assertLessEqual(count_ops(ex, "_POP_TOP"), 3)
         self.assertLessEqual(count_ops(ex, "_POP_TOP_INT"), 1)
         self.assertIn("_POP_TOP_NOP", uops)
@@ -6964,13 +10501,22 @@ class TestUopsOptimization(unittest.TestCase):
         # this should change the type version of A, which should invalidate the executor
         A.method1 = lambda self: 1
         self.assertFalse(ex.is_valid())
-        # re-running should create a new executor
+        # Re-running should create a new executor. A callee left ready by the
+        # first trace can now start the replacement trace itself. Its initial
+        # receiver is unknown, so that first super load may remain generic.
         res, ex = self._run_with_optimizer(testfunc, 4 * TIER2_THRESHOLD)
         self.assertEqual(res, 4 * 22 * TIER2_THRESHOLD)
+        caller_entry = ex is not None
+        if not caller_entry:
+            ex = get_first_executor(B.method1)
         self.assertIsNotNone(ex)
         uops = get_opnames(ex)
-        self.assertNotIn("_LOAD_SUPER_ATTR_METHOD", uops)
+        if caller_entry:
+            self.assertNotIn("_LOAD_SUPER_ATTR_METHOD", uops)
         self.assertEqual(uops.count("_GUARD_NOS_TYPE_VERSION"), 2)
+        A.method2 = lambda self: 2
+        self.assertFalse(ex.is_valid())
+        self.assertEqual(testfunc(10), 30)
 
     def test_settrace_then_polymorphic_call_does_not_crash(self):
         script_helper.assert_python_ok("-c", textwrap.dedent("""

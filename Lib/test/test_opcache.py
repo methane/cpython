@@ -2,12 +2,15 @@ import collections
 import copy
 import pickle
 import dis
+import gc
 import threading
 import types
 import unittest
+import weakref
 from test.support import (threading_helper, check_impl_detail,
                           requires_specialization,
-                          cpython_only, requires_jit_disabled, reset_code)
+                          cpython_only, requires_jit_disabled, reset_code,
+                          Py_GIL_DISABLED)
 from test.support.import_helper import import_module
 
 # Skip this module on other interpreters, it is cpython specific:
@@ -64,6 +67,157 @@ class TestLoadSuperAttrCache(unittest.TestCase):
 
 
 class TestLoadAttrCache(unittest.TestCase):
+    @requires_specialization
+    @requires_jit_disabled
+    def test_cached_descriptor_binding(self):
+        class Record:
+            @staticmethod
+            def static(value):
+                return value + 1
+
+            @classmethod
+            def classed(cls):
+                return cls
+
+            def bound(self):
+                return self
+
+        def read(record):
+            return record.static, record.classed, record.bound
+
+        record = Record()
+        for _ in range(_testinternalcapi.SPECIALIZATION_THRESHOLD):
+            read(record)
+        if not Py_GIL_DISABLED:
+            self.assertEqual(sum(instruction.opname ==
+                "LOAD_ATTR_DESCRIPTOR_WITH_VALUES"
+                for instruction in dis.get_instructions(read, adaptive=True)), 3)
+        static, classed, bound = read(record)
+        self.assertEqual(static(2), 3)
+        self.assertIs(classed(), Record)
+        self.assertIs(bound(), record)
+        del static, classed, bound
+
+        # Reinitializing a descriptor does not change the owning class.
+        Record.__dict__["static"].__init__(lambda value: value + 20)
+        Record.__dict__["classed"].__init__(lambda cls: (cls, 21))
+        self.assertEqual(read(record)[0](2), 22)
+        self.assertEqual(read(record)[1](), (Record, 21))
+        record.static = lambda value: value + 30
+        self.assertEqual(read(record)[0](2), 32)
+        record.__dict__ = {"static": lambda value: value + 40}
+        self.assertEqual(read(record)[0](2), 42)
+
+        previous = weakref.ref(Record.__dict__["bound"])
+        Record.bound = property(lambda self: "replacement")
+        gc.collect()
+        self.assertIsNone(previous())
+        self.assertEqual(read(record)[2], "replacement")
+
+    @requires_specialization
+    @requires_jit_disabled
+    def test_cached_descriptor_getattr_fallback(self):
+        type_freeze = import_module("_testlimitedcapi").type_freeze
+        calls = []
+
+        class Descriptor:
+            missing = False
+
+            def __get__(self, instance, owner):
+                calls.append("get")
+                if self.missing:
+                    raise AttributeError("descriptor unavailable")
+                return 42
+
+        type_freeze(Descriptor)
+        descriptor = Descriptor()
+
+        class Record:
+            value = descriptor
+
+            def __getattr__(self, name):
+                calls.append(name)
+                return 99
+
+        def read(record):
+            return record.value
+
+        record = Record()
+        for _ in range(_testinternalcapi.SPECIALIZATION_THRESHOLD):
+            self.assertEqual(read(record), 42)
+        calls.clear()
+        descriptor.missing = True
+        self.assertEqual(read(record), 99)
+        self.assertEqual(calls, ["get", "value"])
+
+    @requires_specialization
+    @requires_jit_disabled
+    def test_mutable_descriptor_instance_override(self):
+        class Descriptor:
+            def __get__(self, instance, owner):
+                return 99
+
+        class Record:
+            value = Descriptor()
+
+        record = Record()
+        record.__dict__["value"] = 42
+
+        def read(record):
+            return record.value
+
+        for _ in range(_testinternalcapi.SPECIALIZATION_THRESHOLD):
+            self.assertEqual(read(record), 42)
+        if not Py_GIL_DISABLED:
+            self.assertIn("LOAD_ATTR_INSTANCE_VALUE_NONDATA", {
+                instruction.opname
+                for instruction in dis.get_instructions(read, adaptive=True)
+            })
+        Descriptor.__set__ = lambda self, instance, value: None
+        self.assertEqual(read(record), 99)
+        del Descriptor.__set__
+        self.assertEqual(read(record), 42)
+        Descriptor.__get__ = lambda self, instance, owner: 100
+        self.assertEqual(read(record), 42)
+        del record.value
+        self.assertEqual(read(record), 100)
+        record.value = 43
+        self.assertEqual(read(record), 43)
+        Record.value = property(lambda self: 101)
+        self.assertEqual(read(record), 101)
+
+    @requires_specialization
+    @requires_jit_disabled
+    def test_materialized_inline_dict_load(self):
+        class Record(dict):
+            pass
+
+        record = Record()
+        record.value = 42
+        namespace = record.__dict__
+
+        def read(record):
+            return record.value
+
+        for _ in range(_testinternalcapi.SPECIALIZATION_THRESHOLD):
+            self.assertEqual(read(record), 42)
+        if not Py_GIL_DISABLED:
+            self.assertIn("LOAD_ATTR_INSTANCE_VALUE", {
+                instruction.opname
+                for instruction in dis.get_instructions(read, adaptive=True)
+            })
+        namespace["value"] = 43
+        self.assertEqual(read(record), 43)
+        namespace.clear()
+        with self.assertRaises(AttributeError):
+            read(record)
+        record.value = 44
+        self.assertEqual(read(record), 44)
+        record.__dict__ = {"value": 45}
+        self.assertEqual(read(record), 45)
+        Record.value = property(lambda self: 46)
+        self.assertEqual(read(record), 46)
+
     def test_descriptor_added_after_optimization(self):
         class Descriptor:
             pass
@@ -305,6 +459,296 @@ class TestLoadAttrCache(unittest.TestCase):
         for _ in range(_testinternalcapi.SPECIALIZATION_THRESHOLD):
             with self.assertRaises(TypeError):
                 f(o)
+
+
+class TestStoreAttrCache(unittest.TestCase):
+    @requires_specialization
+    @requires_jit_disabled
+    def test_delete_inline_instance_attribute(self):
+        for materialize in (False, True):
+            with self.subTest(materialize=materialize):
+                class Record:
+                    value = None
+                record = Record()
+                record.tail = 1
+                if materialize:
+                    vars(record)
+
+                @reset_code
+                def erase(record):
+                    del record.value
+
+                for _ in range(_testinternalcapi.SPECIALIZATION_THRESHOLD):
+                    record.value = 42
+                    erase(record)
+                if not Py_GIL_DISABLED:
+                    self.assertIn("DELETE_ATTR_INSTANCE_VALUE", {
+                        instruction.opname for instruction
+                        in dis.get_instructions(erase, adaptive=True)
+                    })
+                self.assertIsNone(record.value)
+                with self.assertRaises(AttributeError):
+                    erase(record)
+                record.value = 43
+                namespace = record.__dict__
+                iterator = iter(namespace)
+                erase(record)
+                self.assertEqual(namespace, {"tail": 1})
+                with self.assertRaises(RuntimeError):
+                    next(iterator)
+                record.value = 44
+                self.assertEqual(list(namespace), ["tail", "value"])
+                events = []
+                class Previous:
+                    def __del__(self):
+                        events.append((namespace.copy(), len(namespace)))
+                        record.__dict__ = {"replacement": True}
+                record.value = Previous()
+                erase(record)
+                self.assertEqual(events, [({"tail": 1}, 1)])
+                self.assertEqual(record.__dict__, {"replacement": True})
+                record.value = 45
+                erase(record)
+                record.__dict__.clear()
+                with self.assertRaises(AttributeError):
+                    erase(record)
+                class Descriptor:
+                    def __delete__(self, instance):
+                        events.append("delete")
+                Record.value = Descriptor()
+                erase(record)
+                self.assertEqual(events[-1], "delete")
+
+    @requires_specialization
+    @requires_jit_disabled
+    def test_delete_inline_instance_attribute_watcher(self):
+        capi = import_module("_testcapi")
+        class Record:
+            pass
+        record = Record()
+        namespace = record.__dict__
+        def erase(record):
+            del record.value
+        for _ in range(_testinternalcapi.SPECIALIZATION_THRESHOLD):
+            record.value = 42
+            erase(record)
+        record.value = 43
+        wid = capi.add_dict_watcher(0)
+        try:
+            capi.watch_dict(wid, namespace)
+            erase(record)
+            self.assertEqual(capi.get_dict_watcher_events(), ["del:value"])
+        finally:
+            capi.unwatch_dict(wid, namespace)
+            capi.clear_dict_watcher(wid)
+
+    @requires_specialization
+    @requires_jit_disabled
+    def test_store_over_mutable_class_default(self):
+        for has_get in (False, True):
+            events = []
+            class Default:
+                pass
+            if has_get:
+                Default.__get__ = lambda *args: events.append("get")
+            default = Default()
+            class Record:
+                value = default
+            record = Record()
+            @reset_code
+            def store(record, value):
+                record.value = value
+            for _ in range(_testinternalcapi.SPECIALIZATION_THRESHOLD):
+                store(record, 42)
+            if not Py_GIL_DISABLED:
+                self.assertIn("STORE_ATTR_INSTANCE_VALUE_NONDATA", {
+                    instruction.opname for instruction
+                    in dis.get_instructions(store, adaptive=True)
+                })
+            self.assertEqual(record.value, 42)
+            self.assertEqual(events, [])
+            Default.__set__ = lambda self, obj, value: events.append(value)
+            store(record, 43)
+            self.assertEqual(events, [43])
+            del Default.__set__
+            store(record, 44)
+            self.assertEqual(record.value, 44)
+            Default.__delete__ = lambda self, obj: None
+            with self.assertRaises(AttributeError):
+                store(record, 45)
+            del Default.__delete__
+            class Data:
+                def __set__(self, obj, value):
+                    events.append(value)
+            default.__class__ = Data
+            store(record, 46)
+            self.assertEqual(events, [43, 46])
+            Record.value = None
+            store(record, 47)
+            namespace = vars(record)
+            store(record, 48)
+            self.assertEqual(namespace["value"], 48)
+            record.__dict__ = {}
+            store(record, 49)
+            self.assertEqual(record.value, 49)
+
+    @requires_specialization
+    @requires_jit_disabled
+    def test_store_over_immutable_nondata_descriptor(self):
+        events = []
+        class Descriptor:
+            def __get__(self, instance, owner):
+                events.append("get")
+                return 99
+        import_module("_testlimitedcapi").type_freeze(Descriptor)
+        descriptors = (lambda self: 99, staticmethod(lambda: 99),
+                       classmethod(lambda cls: 99), list.append,
+                       vars(dict)["fromkeys"], Descriptor())
+        for descriptor in descriptors:
+            for materialize in (False, True):
+                with self.subTest(descriptor=descriptor, materialize=materialize):
+                    class Record:
+                        value = descriptor
+                    record = Record()
+                    if materialize:
+                        vars(record)
+                    @reset_code
+                    def store(record, value):
+                        record.value = value
+                    for _ in range(_testinternalcapi.SPECIALIZATION_THRESHOLD):
+                        store(record, 42)
+                    if not Py_GIL_DISABLED:
+                        self.assertIn("STORE_ATTR_INLINE_WITH_DICT" if materialize
+                                      else "STORE_ATTR_INSTANCE_VALUE", {
+                            instruction.opname for instruction
+                            in dis.get_instructions(store, adaptive=True)
+                        })
+                    self.assertEqual(record.value, 42)
+                    self.assertIs(vars(Record)["value"], descriptor)
+                    self.assertEqual(events, [])
+                    del record.value
+                    store(record, 43)
+                    self.assertEqual(record.value, 43)
+                    Record.value = property(lambda self: 99,
+                        lambda self, value: events.append(value))
+                    store(record, 44)
+                    self.assertEqual(events, [44])
+                    self.assertEqual(record.value, 99)
+                    self.assertEqual(record.__dict__["value"], 43)
+                    events.clear()
+
+    @requires_specialization
+    @requires_jit_disabled
+    def test_store_over_immutable_class_default(self):
+        for materialize in (False, True):
+            with self.subTest(materialize=materialize):
+                class Base:
+                    value = None
+                class Record(Base):
+                    pass
+                record = Record()
+                if materialize:
+                    vars(record)
+
+                @reset_code
+                def store(record, value):
+                    record.value = value
+
+                for _ in range(_testinternalcapi.SPECIALIZATION_THRESHOLD):
+                    store(record, 42)
+                if not Py_GIL_DISABLED:
+                    self.assertIn("STORE_ATTR_INLINE_WITH_DICT" if materialize
+                                  else "STORE_ATTR_INSTANCE_VALUE", {
+                        instruction.opname for instruction
+                        in dis.get_instructions(store, adaptive=True)
+                    })
+                self.assertIsNone(Base.value)
+                del record.value
+                self.assertIsNone(record.value)
+                store(record, 43)
+                self.assertEqual(record.value, 43)
+                events = []
+                Base.value = property(lambda self: 99,
+                                      lambda self, value: events.append(value))
+                store(record, 44)
+                self.assertEqual(events, [44])
+                self.assertEqual(record.value, 99)
+                self.assertEqual(record.__dict__["value"], 43)
+
+    @requires_specialization
+    @requires_jit_disabled
+    def test_materialized_inline_dict_store(self):
+        class Record:
+            pass
+
+        record = Record()
+        record.value = 0
+        record.tail = 1
+        namespace = record.__dict__
+
+        def store(record, value):
+            record.value = value
+
+        for _ in range(_testinternalcapi.SPECIALIZATION_THRESHOLD):
+            store(record, 42)
+        if not Py_GIL_DISABLED:
+            self.assertIn("STORE_ATTR_INLINE_WITH_DICT", {
+                instruction.opname
+                for instruction in dis.get_instructions(store, adaptive=True)
+            })
+        del namespace["value"]
+        iterator = iter(namespace)
+        store(record, 43)
+        self.assertEqual(namespace, {"tail": 1, "value": 43})
+        self.assertEqual(list(namespace), ["tail", "value"])
+        with self.assertRaises(RuntimeError):
+            next(iterator)
+
+        events = []
+        class Previous:
+            def __del__(self):
+                events.append((namespace.copy(), len(namespace)))
+                record.__dict__ = {"replacement": True}
+
+        record.value = Previous()
+        store(record, 44)
+        self.assertEqual(events, [({"tail": 1, "value": 44}, 2)])
+        self.assertEqual(record.__dict__, {"replacement": True})
+        store(record, 45)
+        self.assertEqual(record.value, 45)
+        record.__dict__.clear()
+        store(record, 46)
+        self.assertEqual(record.__dict__, {"value": 46})
+        Record.value = property(lambda self: 99)
+        with self.assertRaises(AttributeError):
+            store(record, 47)
+
+    @requires_specialization
+    @requires_jit_disabled
+    def test_materialized_inline_dict_store_watcher(self):
+        capi = import_module("_testcapi")
+        class Record:
+            pass
+
+        record = Record()
+        record.value = 0
+        namespace = record.__dict__
+        def store(record, value):
+            record.value = value
+
+        for _ in range(_testinternalcapi.SPECIALIZATION_THRESHOLD):
+            store(record, 42)
+        wid = capi.add_dict_watcher(0)
+        try:
+            capi.watch_dict(wid, namespace)
+            store(record, 43)
+            del namespace["value"]
+            store(record, 44)
+            self.assertEqual(capi.get_dict_watcher_events(),
+                             ["mod:value:43", "del:value", "new:value:44"])
+        finally:
+            capi.unwatch_dict(wid, namespace)
+            capi.clear_dict_watcher(wid)
 
 
 class TestLoadMethodCache(unittest.TestCase):
@@ -1535,6 +1979,40 @@ class TestSpecializer(TestBase):
         binary_op_bitwise_extend()
         self.assert_specialized(binary_op_bitwise_extend, "BINARY_OP_EXTEND")
         self.assert_no_opcode(binary_op_bitwise_extend, "BINARY_OP")
+
+    @requires_specialization
+    @requires_jit_disabled
+    def test_uint64_bitwise_specialization(self):
+        def operate(a, b):
+            x, y, z = a, a, a
+            x |= b
+            y &= b
+            z ^= b
+            return a | b, a & b, a ^ b, x, y, z
+
+        for _ in range(_testinternalcapi.SPECIALIZATION_THRESHOLD):
+            operate((1 << 64) - 1, 1 << 63)
+        self.assertEqual(sum(instruction.opname == "BINARY_OP_EXTEND"
+                             for instruction in
+                             dis.get_instructions(operate, adaptive=True)), 6)
+        boundaries = [0, 1, (1 << 30) - 1, 1 << 30, 1 << 32, 1 << 60,
+                      1 << 63, (1 << 64) - 1, 1 << 64, 1 << 100,
+                      -1, -(1 << 64), True, False]
+        for a in boundaries:
+            for b in boundaries:
+                expected = (int.__or__(a, b), int.__and__(a, b), int.__xor__(a, b))
+                self.assertEqual(operate(a, b), expected * 2)
+        class Value(int):
+            def __or__(self, other):
+                return "or"
+            def __and__(self, other):
+                return "and"
+            def __xor__(self, other):
+                return "xor"
+        self.assertEqual(operate(Value(1 << 63), 1 << 62),
+                         ("or", "and", "xor") * 2)
+        with self.assertRaises(TypeError):
+            operate(1 << 63, 1.0)
 
     @cpython_only
     @requires_specialization

@@ -1,0 +1,27 @@
+{
+  "benchmark": "deltablue",
+  "runtime": "Python 3.16.0a0 (CPython)",
+  "executable": "/home/methane/work/python/cpython-gc/jit-artifacts/method-perf-20260916/main-build/python",
+  "python_version": "3.16.0a0 (main, Sep 16 2026, 03:43:53) [GCC 13.3.0]",
+  "jit_enabled": true,
+  "workload": "100-link equality chain and 100 scale/offset constraints",
+  "loops": 32,
+  "warmups": 3,
+  "values": 7,
+  "median_seconds": 0.0016823681362438947,
+  "minimum_seconds": 0.001672631740802899,
+  "samples_seconds": [
+    0.0016894219443202019,
+    0.0016814989794511348,
+    0.0016823681362438947,
+    0.0017027070571202785,
+    0.0016778000572230667,
+    0.0017474214546382427,
+    0.001672631740802899
+  ],
+  "checksum": {
+    "chain_last": 99,
+    "source_last": -190.0,
+    "projection_sum": 223305
+  }
+}

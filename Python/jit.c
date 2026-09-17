@@ -1,6 +1,7 @@
 #ifdef _Py_JIT
 
 #include "Python.h"
+#include "pycore_enumobject.h"    // _PyEnum_AdvanceIntTuple()
 
 #include "pycore_abstract.h"
 #include "pycore_bitutils.h"

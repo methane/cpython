@@ -1,0 +1,26 @@
+{
+  "benchmark": "raytrace",
+  "runtime": "Python 3.16.0a0 (CPython)",
+  "executable": "/home/methane/work/python/cpython-gc/jit-artifacts/method-perf-20260916/main-build/python",
+  "python_version": "3.16.0a0 (main, Sep 16 2026, 03:43:53) [GCC 13.3.0]",
+  "jit_enabled": true,
+  "workload": "render the original sphere/checkerboard scene at 100 x 100 pixels",
+  "loops": 1,
+  "warmups": 3,
+  "values": 7,
+  "median_seconds": 0.15508517902344465,
+  "minimum_seconds": 0.15472941100597382,
+  "samples_seconds": [
+    0.15569419600069523,
+    0.15472941100597382,
+    0.15575603116303682,
+    0.15508517902344465,
+    0.1547542903572321,
+    0.1548842443153262,
+    0.15514478739351034
+  ],
+  "checksum": {
+    "pixels": 10000,
+    "pixel_sha256": "11f2c36b02044f115c3937cae1156e9528b95da70f9d6b737a262f06757c2e6b"
+  }
+}

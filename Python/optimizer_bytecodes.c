@@ -162,6 +162,36 @@ dummy_func(void) {
     }
 
     op(_STORE_ATTR_INSTANCE_VALUE, (offset/1, value, owner -- o)) {
+#ifndef Py_GIL_DISABLED
+        ADD_OP(_STORE_ATTR_INSTANCE_VALUE_NOESCAPE, oparg, offset);
+#endif
+        (void)offset;
+        (void)value;
+        o = owner;
+    }
+
+    op(_GUARD_STORE_ATTR_NONDATA, (owner -- owner)) {
+#ifndef Py_GIL_DISABLED
+        PyTypeObject *type = sym_get_type(owner);
+        PyCodeObject *code = get_current_code_object(ctx);
+        if (type != NULL && code != NULL) {
+            PyObject *descr = _PyType_LookupRef(
+                type, PyTuple_GET_ITEM(code->co_names, oparg));
+            if (descr != NULL) {
+                ADD_OP(_GUARD_STORE_ATTR_NONDATA_CACHED, oparg, (uintptr_t)descr);
+                Py_DECREF(descr);
+            }
+        }
+#endif
+    }
+
+    op(_DELETE_ATTR_INSTANCE_VALUE, (offset/1, value, owner -- o)) {
+        (void)offset;
+        (void)value;
+        o = owner;
+    }
+
+    op(_STORE_ATTR_INLINE_WITH_DICT, (offset/1, value, owner -- o)) {
         (void)offset;
         (void)value;
         o = owner;
@@ -186,6 +216,9 @@ dummy_func(void) {
     }
 
     op(_STORE_ATTR_SLOT, (index/1, value, owner -- o)) {
+#ifndef Py_GIL_DISABLED
+        ADD_OP(_STORE_ATTR_SLOT_NOESCAPE, oparg, index);
+#endif
         (void)index;
         (void)value;
         o = owner;
@@ -955,6 +988,19 @@ dummy_func(void) {
         o = owner;
     }
 
+    op(_LOAD_ATTR_INSTANCE_VALUE_NONDATA, (offset/1, descr/4, owner -- attr, o)) {
+        (void)offset;
+        (void)descr;
+        attr = sym_new_not_null(ctx);
+        o = owner;
+    }
+
+    op(_LOAD_ATTR_DESCRIPTOR, (descr/4, owner -- attr, o)) {
+        (void)descr;
+        attr = sym_new_not_null(ctx);
+        o = owner;
+    }
+
     op(_LOAD_ATTR_MODULE, (dict_version/2, index/1, owner -- attr, o)) {
         (void)dict_version;
         (void)index;
@@ -1475,7 +1521,13 @@ dummy_func(void) {
                 ADD_OP(_GUARD_TYPE_ITER, 0, (uintptr_t)type);
                 uop_buffer_last(&ctx->out_buffer)->target = orig_target;
             }
-            ADD_OP(_ITER_NEXT_INLINE, 0, (uintptr_t)type->tp_iternext);
+            iternextfunc next_func = type->tp_iternext;
+#ifndef Py_GIL_DISABLED
+            if (type == &PyZip_Type) {
+                next_func = _PyZip_NextListPair;
+            }
+#endif
+            ADD_OP(_ITER_NEXT_INLINE, 0, (uintptr_t)next_func);
         }
         next = sym_new_not_null(ctx);
     }
@@ -1768,7 +1820,15 @@ dummy_func(void) {
     }
 
     op(_CALL_BUILTIN_CLASS, (callable, self_or_null, args[oparg] -- callable, self_or_null, args[oparg])) {
-        callable = sym_new_not_null(ctx);
+        if (oparg == 0 && sym_is_null(self_or_null) &&
+            sym_get_const(ctx, callable) == (PyObject *)&PySet_Type)
+        {
+            ADD_OP(_CALL_SET_EMPTY, 0, 0);
+            callable = sym_new_type(ctx, &PySet_Type);
+        }
+        else {
+            callable = sym_new_not_null(ctx);
+        }
     }
 
     op(_GUARD_CALLABLE_METHOD_DESCRIPTOR_O, (callable, self_or_null, args[oparg] -- callable, self_or_null, args[oparg])) {
@@ -2107,6 +2167,9 @@ dummy_func(void) {
     }
 
     op(_BUILD_MAP, (values[oparg*2] -- map)) {
+        if (oparg == 0) {
+            ADD_OP(_BUILD_EMPTY_MAP, 0, 0);
+        }
         map = sym_new_type(ctx, &PyDict_Type);
     }
 
@@ -2376,6 +2439,86 @@ dummy_func(void) {
         else {
             sym_set_const(callable, (PyObject *)&PyUnicode_Type);
         }
+    }
+
+    op(_LEN_SUBSCR_LIST, (local/4, callable, null, container, sub -- res)) {
+        res = sym_new_type(ctx, &PyBool_Type);
+    }
+
+    op(_CALL_LEN_CONSUMER, (callable, null, arg, local/4 -- res, a, c)) {
+        res = sym_new_type(ctx, (oparg & 16) ? &PyBool_Type : &PyLong_Type);
+        a = arg;
+        c = callable;
+    }
+
+    op(_CALL_LEN_LEFT_COMPARE, (offset/4, left, callable, null, arg -- res, l, a, c)) {
+        res = sym_new_type(ctx, &PyBool_Type);
+        l = left;
+        a = arg;
+        c = callable;
+    }
+
+    op(_CALL_LEN_LEFT_COMPARE_CLEAN, (offset/4, left, callable, null, arg -- res)) {
+        (void)offset;
+        res = sym_new_type(ctx, &PyBool_Type);
+    }
+
+    op(_COMPARE_TUPLE_PAIR, (local/4, first, second -- res, f, s)) {
+        res = sym_new_type(ctx, &PyBool_Type);
+        f = first;
+        s = second;
+    }
+
+    op(_COMPARE_LIST_PAIR, (local/4, container, index -- res, c, i)) {
+        res = sym_new_type(ctx, &PyBool_Type);
+        c = container;
+        i = index;
+    }
+
+    // Native region values are opaque to the object-value optimizer.
+    op(_INT_REGION_START, (left, right, locals/4 -- a, b)) {
+        a = sym_new_unknown(ctx);
+        b = sym_new_unknown(ctx);
+    }
+
+    op(_INT_REGION_LOCAL, (-- value)) {
+        value = sym_new_unknown(ctx);
+    }
+
+    op(_INT_REGION_CONST, (-- value)) {
+        value = sym_new_unknown(ctx);
+    }
+
+    op(_INT_REGION_DUP, (value -- value, copy)) {
+        copy = value;
+    }
+
+    op(_INT_REGION_BINARY, (left, right -- value)) {
+        value = sym_new_unknown(ctx);
+    }
+
+    op(_INT_REGION_RSHIFT, (left, right -- value)) {
+        value = sym_new_unknown(ctx);
+    }
+
+    op(_INT_REGION_GUARD_FLOAT, (numerator, left, right -- numerator, left, right)) {
+        sym_set_type(numerator, &PyFloat_Type);
+    }
+
+    op(_INT_REGION_BOX, (value -- res)) {
+        res = PyJitRef_MakeUnique(sym_new_type(ctx, &PyLong_Type));
+    }
+
+    op(_INT_REGION_DIVIDE, (numerator, value -- res)) {
+        res = PyJitRef_MakeUnique(sym_new_type(ctx, &PyFloat_Type));
+    }
+
+    op(_FLOAT_ATTRIBUTE_SUM_PRODUCTS, (fields/4, layout/4 -- res)) {
+        res = PyJitRef_MakeUnique(sym_new_type(ctx, &PyFloat_Type));
+    }
+
+    op(_COMPARE_INT_INPUTS, (left/4, right/4 -- res)) {
+        res = sym_new_type(ctx, &PyBool_Type);
     }
 
     op(_CALL_LEN, (callable, null, arg -- res, a, c)) {

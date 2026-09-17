@@ -1,0 +1,28 @@
+{
+  "benchmark": "go",
+  "runtime": "Python 3.16.0a0 (CPython)",
+  "executable": "/home/methane/work/python/cpython-gc/build-method-jit/python-goal-framebind",
+  "python_version": "3.16.0a0 (heads/codex/method-jit-dirty:2fa7dae77b9, Sep 16 2026, 15:49:13) [GCC 13.3.0]",
+  "jit_enabled": true,
+  "workload": "choose one move on a 9x9 board using 200 Monte Carlo games",
+  "games_per_operation": 200,
+  "loops": 1,
+  "warmups": 3,
+  "values": 7,
+  "median_seconds": 0.05616734270006418,
+  "minimum_seconds": 0.05570693127810955,
+  "samples_seconds": [
+    0.05628275591880083,
+    0.055886248126626015,
+    0.05616734270006418,
+    0.05584080331027508,
+    0.05628066323697567,
+    0.05818974319845438,
+    0.05570693127810955
+  ],
+  "checksum": {
+    "move": 5,
+    "timestamp_delta": 81059,
+    "moves_delta": 21401
+  }
+}

@@ -2,6 +2,9 @@
 
 #include "Python.h"
 #include "pycore_call.h"          // _PyObject_CallNoArgs()
+#include "pycore_enumobject.h"    // _PyEnum_AdvanceIntTuple()
+#include "pycore_interpframe.h"   // _PyInterpreterFrame
+#include "pycore_list.h"          // _PyListIterObject
 #include "pycore_long.h"          // _PyLong_GetOne()
 #include "pycore_modsupport.h"    // _PyArg_NoKwnames()
 #include "pycore_object.h"        // _PyObject_GC_TRACK()
@@ -26,6 +29,86 @@ typedef struct {
 } enumobject;
 
 #define _enumobject_CAST(op)    ((enumobject *)(op))
+
+void
+_PyEnum_AdvanceIntTuple(PyObject *iterator, _PyInterpreterFrame *frame,
+                        uint32_t slots, Py_ssize_t field, int mask)
+{
+#ifndef Py_GIL_DISABLED
+    if (Py_TYPE(iterator) != &PyEnum_Type) {
+        return;
+    }
+    enumobject *en = (enumobject *)iterator;
+    int key_local = slots & 255;
+    int index_local = (slots >> 8) & 255;
+    int item_local = (slots >> 16) & 255;
+    _PyStackRef key_ref = frame->localsplus[key_local];
+    _PyStackRef index_ref = frame->localsplus[index_local];
+    _PyStackRef item_ref = frame->localsplus[item_local];
+    if (PyStackRef_IsNull(key_ref) || PyStackRef_IsNull(index_ref) ||
+        PyStackRef_IsNull(item_ref) ||
+        en->en_index < -_PY_NSMALLNEGINTS ||
+        en->en_index >= _PY_NSMALLPOSINTS ||
+        Py_TYPE(en->en_sit) != &PyListIter_Type ||
+        !_PyObject_IsUniquelyReferenced(en->en_result))
+    {
+        return;
+    }
+    _PyListIterObject *it = (_PyListIterObject *)en->en_sit;
+    PyObject *key = PyStackRef_AsPyObjectBorrow(key_ref);
+    PyObject *old_index = PyStackRef_AsPyObjectBorrow(index_ref);
+    PyObject *old_item = PyStackRef_AsPyObjectBorrow(item_ref);
+    /* A periodic check can mutate the list. Retain the original next/unpack
+     * unless all replaced references are still owned elsewhere: releasing
+     * them must not run a finalizer, even indirectly through a tuple. */
+    if (!PyLong_CheckExact(key) || !_PyLong_IsCompact((PyLongObject *)key) ||
+        !PyLong_CheckExact(old_index) || it->it_seq == NULL ||
+        it->it_index <= 0 || it->it_index > PyList_GET_SIZE(it->it_seq) ||
+        PyList_GET_ITEM(it->it_seq, it->it_index - 1) != old_item ||
+        PyTuple_GET_ITEM(en->en_result, 0) != old_index ||
+        PyTuple_GET_ITEM(en->en_result, 1) != old_item)
+    {
+        return;
+    }
+    Py_ssize_t stop = Py_MIN(PyList_GET_SIZE(it->it_seq) - it->it_index, 64);
+    stop = Py_MIN(stop, _PY_NSMALLPOSINTS - en->en_index);
+    Py_ssize_t limit = _PyLong_CompactValue((PyLongObject *)key);
+    Py_ssize_t count = 0;
+    while (count < stop) {
+        PyObject *item = PyList_GET_ITEM(it->it_seq, it->it_index + count);
+        if (!PyTuple_CheckExact(item) ||
+            (size_t)field >= (size_t)PyTuple_GET_SIZE(item)) {
+            break;
+        }
+        PyObject *value = PyTuple_GET_ITEM(item, field);
+        if (!PyLong_CheckExact(value) || !_PyLong_IsCompact((PyLongObject *)value)) {
+            break;
+        }
+        Py_ssize_t integer = _PyLong_CompactValue((PyLongObject *)value);
+        if (!(COMPARISON_BIT(integer, limit) & mask)) {
+            break;
+        }
+        count++;
+    }
+    if (count == 0) {
+        return;
+    }
+    PyObject *last_item = PyList_GET_ITEM(it->it_seq, it->it_index + count - 1);
+    PyObject *last_index = (PyObject *)&_PyLong_SMALL_INTS[
+        _PY_NSMALLNEGINTS + en->en_index + count - 1];
+    it->it_index += count;
+    en->en_index += count;
+    PyTuple_SET_ITEM(en->en_result, 0, Py_NewRef(last_index));
+    PyTuple_SET_ITEM(en->en_result, 1, Py_NewRef(last_item));
+    Py_DECREF(old_index);
+    Py_DECREF(old_item);
+    _PyTuple_Recycle(en->en_result);
+    frame->localsplus[index_local] = PyStackRef_FromPyObjectNew(last_index);
+    frame->localsplus[item_local] = PyStackRef_FromPyObjectNew(last_item);
+    PyStackRef_CLOSE(index_ref);
+    PyStackRef_CLOSE(item_ref);
+#endif
+}
 
 /*[clinic input]
 @vectorcall

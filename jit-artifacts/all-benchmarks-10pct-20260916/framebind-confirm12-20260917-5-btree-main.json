@@ -1,0 +1,27 @@
+{
+  "benchmark": "btree",
+  "runtime": "Python 3.16.0a0 (CPython)",
+  "executable": "/home/methane/work/python/cpython-gc/jit-artifacts/method-perf-20260916/main-build/python",
+  "python_version": "3.16.0a0 (main, Sep 16 2026, 03:43:53) [GCC 13.3.0]",
+  "jit_enabled": true,
+  "workload": "20000 records: insert, delete/reinsert 20%, traverse and look up",
+  "loops": 1,
+  "warmups": 3,
+  "values": 7,
+  "median_seconds": 0.06316322460770607,
+  "minimum_seconds": 0.06016032584011555,
+  "samples_seconds": [
+    0.06016032584011555,
+    0.06317608524113894,
+    0.06265329569578171,
+    0.06297390721738338,
+    0.06329938862472773,
+    0.0631782952696085,
+    0.06316322460770607
+  ],
+  "checksum": {
+    "records": 20000,
+    "total": 9960.672765258027,
+    "lookup_total": 508.57815295215465
+  }
+}

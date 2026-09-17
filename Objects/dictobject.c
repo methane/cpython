@@ -2934,24 +2934,6 @@ _PyDict_SetItem_KnownHash(PyObject *op, PyObject *key, PyObject *value,
 }
 
 static void
-delete_index_from_values(PyDictValues *values, Py_ssize_t ix)
-{
-    uint8_t *array = get_insertion_order_array(values);
-    int size = values->size;
-    assert(size <= values->capacity);
-    int i;
-    for (i = 0; array[i] != ix; i++) {
-        assert(i < size);
-    }
-    assert(i < size);
-    size--;
-    for (; i < size; i++) {
-        array[i] = array[i+1];
-    }
-    values->size = size;
-}
-
-static void
 delitem_common(PyDictObject *mp, Py_hash_t hash, Py_ssize_t ix,
                PyObject *old_value)
 {
@@ -2968,7 +2950,7 @@ delitem_common(PyDictObject *mp, Py_hash_t hash, Py_ssize_t ix,
         STORE_SPLIT_VALUE(mp, ix, NULL);
         assert(ix < SHARED_KEYS_MAX_SIZE);
         /* Update order */
-        delete_index_from_values(mp->ma_values, ix);
+        _PyDictValues_RemoveFromInsertionOrder(mp->ma_values, ix);
         ASSERT_CONSISTENT(mp);
     }
     else {
@@ -6093,7 +6075,7 @@ dictiter_iternext_threadsafe(PyDictObject *d, PyObject *self,
             goto fail;
         }
 
-        // We're racing against writes to the order from delete_index_from_values, but
+        // We're racing against writes to the order from _PyDictValues_RemoveFromInsertionOrder, but
         // single threaded can suffer from concurrent modification to those as well and
         // can have either duplicated or skipped attributes, so we strive to do no better
         // here.
@@ -7524,7 +7506,7 @@ store_instance_attr_lock_held(PyObject *obj, PyDictValues *values,
     }
     else {
         if (value == NULL) {
-            delete_index_from_values(values, ix);
+            _PyDictValues_RemoveFromInsertionOrder(values, ix);
             if (dict) {
                 assert(dict->ma_values == values);
                 STORE_USED(dict, dict->ma_used - 1);

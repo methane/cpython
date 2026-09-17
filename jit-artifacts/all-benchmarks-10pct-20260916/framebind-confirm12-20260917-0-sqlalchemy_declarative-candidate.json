@@ -1,0 +1,31 @@
+{
+  "benchmark": "sqlalchemy_declarative",
+  "runtime": "Python 3.16.0a0 (CPython)",
+  "executable": "/home/methane/work/python/cpython-gc/build-method-jit/python-goal-framebind",
+  "python_version": "3.16.0a0 (heads/codex/method-jit-dirty:2fa7dae77b9, Sep 16 2026, 15:49:13) [GCC 13.3.0]",
+  "jit_enabled": true,
+  "sqlalchemy_version": "1.4.19",
+  "sqlite_version": "3.45.1",
+  "workload": "insert 100 people and addresses, commit each object, load all people 100 times",
+  "rows": 100,
+  "loops": 1,
+  "warmups": 3,
+  "values": 7,
+  "median_seconds": 0.08063828479498625,
+  "minimum_seconds": 0.0793269770219922,
+  "samples_seconds": [
+    0.07949159946292639,
+    0.0793269770219922,
+    0.0811350466683507,
+    0.08036639634519815,
+    0.08063828479498625,
+    0.08085502404719591,
+    0.08083837013691664
+  ],
+  "checksum": {
+    "people": 100,
+    "addresses": 100,
+    "person_id_sum": 5050,
+    "post_code_sum": 4950
+  }
+}

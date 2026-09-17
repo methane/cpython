@@ -1,0 +1,23 @@
+{
+  "benchmark": "hexiom",
+  "runtime": "Python 3.16.0a0 (CPython)",
+  "executable": "/home/methane/work/python/cpython-gc/build-method-jit/python-goal-framebind",
+  "python_version": "3.16.0a0 (heads/codex/method-jit-dirty:2fa7dae77b9, Sep 16 2026, 15:49:13) [GCC 13.3.0]",
+  "jit_enabled": true,
+  "workload": "solve Hexiom level 25 with the original first-cell/descending strategy",
+  "loops": 16,
+  "warmups": 3,
+  "values": 7,
+  "median_seconds": 0.0028819129220210016,
+  "minimum_seconds": 0.0028463838971219957,
+  "samples_seconds": [
+    0.0029209021595306695,
+    0.00290991785004735,
+    0.0029019253561273217,
+    0.0028819129220210016,
+    0.0028463838971219957,
+    0.002850694116204977,
+    0.002848773612640798
+  ],
+  "checksum": "  3 4 2\n 2 4 4 .\n. . . 4 2\n . 2 4 3\n  . 2 ."
+}

@@ -11,6 +11,7 @@
 #include "pycore_interp.h"        // _PyInterpreterState_GetConfig()
 #include "pycore_import.h"        // _PyImport_LazyImportModuleLevelObject  ()
 #include "pycore_iterobject.h"    // _PyCallIter_NewEx()
+#include "pycore_list.h"          // _PyListIterObject
 #include "pycore_long.h"          // _PyLong_CompactValue
 #include "pycore_modsupport.h"    // _PyArg_NoKwnames()
 #include "pycore_object.h"        // _Py_AddToAllObjects()
@@ -3373,6 +3374,71 @@ check:
     }
     // All arguments are exhausted. Success!
     return NULL;
+}
+
+PyObject *
+_PyZip_NextListPair(PyObject *self)
+{
+#ifndef Py_GIL_DISABLED
+    assert(Py_IS_TYPE(self, &PyZip_Type));
+    zipobject *lz = _zipobject_CAST(self);
+    if (lz->tuplesize == 2) {
+        PyObject *first = PyTuple_GET_ITEM(lz->ittuple, 0);
+        PyObject *second = PyTuple_GET_ITEM(lz->ittuple, 1);
+        // zip(it, it) advances one iterator twice; keep that ordering in the
+        // ordinary path, along with arbitrary iterators.
+        if (first != second && Py_IS_TYPE(first, &PyListIter_Type) &&
+            Py_IS_TYPE(second, &PyListIter_Type))
+        {
+            _PyListIterObject *a = (_PyListIterObject *)first;
+            _PyListIterObject *b = (_PyListIterObject *)second;
+            PyListObject *left = a->it_seq;
+            PyListObject *right = b->it_seq;
+            Py_ssize_t i = a->it_index;
+            Py_ssize_t j = b->it_index;
+            if (left != NULL && right != NULL &&
+                (size_t)i < (size_t)PyList_GET_SIZE(left) &&
+                (size_t)j < (size_t)PyList_GET_SIZE(right))
+            {
+                PyObject *result = lz->result;
+                if (_PyObject_IsUniquelyReferenced(result)) {
+                    PyObject *old_a = PyTuple_GET_ITEM(result, 0);
+                    PyObject *old_b = PyTuple_GET_ITEM(result, 1);
+                    // Replacing either element must not run a finalizer that
+                    // changes the second list or reenters these iterators.
+                    // Two equal old elements account for two references.
+                    Py_ssize_t held = old_a == old_b ? 2 : 1;
+                    if (Py_REFCNT(old_a) <= held || Py_REFCNT(old_b) <= held) {
+                        return zip_next(self);
+                    }
+                    Py_INCREF(result);
+                    PyTuple_SET_ITEM(result, 0,
+                                     Py_NewRef(PyList_GET_ITEM(left, i)));
+                    a->it_index = i + 1;
+                    Py_DECREF(old_a);
+                    PyTuple_SET_ITEM(result, 1,
+                                     Py_NewRef(PyList_GET_ITEM(right, j)));
+                    b->it_index = j + 1;
+                    Py_DECREF(old_b);
+                    _PyTuple_Recycle(result);
+                    return result;
+                }
+                // Neither iterator invokes Python. Allocate before advancing,
+                // as zip_next does when it cannot recycle its result tuple.
+                // The pair helper also avoids GC tracking for scalar items.
+                result = _PyTuple_FromPair(PyList_GET_ITEM(left, i),
+                                                    PyList_GET_ITEM(right, j));
+                if (result != NULL) {
+                    a->it_index = i + 1;
+                    b->it_index = j + 1;
+                }
+                return result;
+            }
+        }
+    }
+#endif
+    // Preserve exhaustion, strict-mode checking and iterator cleanup.
+    return zip_next(self);
 }
 
 static PyObject *

@@ -16,6 +16,12 @@ extern "C" {
 #include "pycore_optimizer_types.h"
 #include <stdbool.h>
 
+/* Bound checked at every native integer region entry. */
+#define _PY_INT_REGION_INPUT_MAX ((INT64_C(1) << 28) - 1)
+
+/* Use the same bound for CFG inlining and tracing through method entries. */
+#define METHOD_INLINE_MAX_CODE_SIZE 128
+
 /* Fitness controls how long a trace can grow.
  * Starts at FITNESS_INITIAL, then decreases from per-bytecode buffer usage
  * plus branch/frame heuristics. The trace stops when fitness drops below the
@@ -181,6 +187,7 @@ typedef struct {
     uint8_t pending_deletion;
     int32_t index;           // Index of ENTER_EXECUTOR (if code isn't NULL, below).
     int32_t bloom_array_idx;        // Index in interp->executor_blooms/executor_ptrs.
+    PyInterpreterState *interp;  // Owner of the registry and deletion list.
     _PyExecutorLinkListNode links;  // Used by deletion list.
     PyCodeObject *code;  // Weak (NULL if no corresponding ENTER_EXECUTOR).
 } _PyVMData;
@@ -201,11 +208,17 @@ typedef struct _PyExecutorObject {
     _PyVMData vm_data; /* Used by the VM, but opaque to the optimizer */
     uint32_t exit_count;
     uint32_t code_size;
+    uint16_t trivial_call;  // Recognized allocation-free method return, or zero.
+    uint64_t trivial_operand;
     size_t jit_size;
     void *jit_code;
     _PyJitCodeRegistration *jit_registration;
     _PyExitData exits[1];
 } _PyExecutorObject;
+
+PyObject *_PyJit_TryTrivialCall(
+    PyThreadState *tstate, PyCodeObject *code, PyObject *const *args,
+    Py_ssize_t nargs, PyObject *kwnames);
 
 // Export for '_opcode' shared extension (JIT compiler).
 PyAPI_FUNC(_PyExecutorObject*) _Py_GetExecutor(PyCodeObject *code, int offset);
@@ -531,6 +544,14 @@ PyAPI_FUNC(int) _PyOptimizer_Optimize(_PyInterpreterFrame *frame, PyThreadState 
 PyAPI_FUNC(int) _PyJit_CompileMethod(
     PyThreadState *tstate,
     _PyInterpreterFrame *frame);
+
+PyAPI_FUNC(_Py_CODEUNIT *) _PyJit_CallMethod(
+    PyThreadState *tstate, _PyExecutorObject *caller_executor,
+    _PyInterpreterFrame **frame);
+
+PyAPI_FUNC(int) _PyJit_WatchMethodGlobal(
+    PyThreadState *tstate, PyObject *globals, PyObject *name, bool builtin,
+    _PyBloomFilter *dependencies);
 
 static inline _PyExecutorObject *_PyExecutor_FromExit(_PyExitData *exit)
 {

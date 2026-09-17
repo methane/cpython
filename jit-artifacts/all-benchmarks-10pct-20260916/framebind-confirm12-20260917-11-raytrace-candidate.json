@@ -1,0 +1,26 @@
+{
+  "benchmark": "raytrace",
+  "runtime": "Python 3.16.0a0 (CPython)",
+  "executable": "/home/methane/work/python/cpython-gc/build-method-jit/python-goal-framebind",
+  "python_version": "3.16.0a0 (heads/codex/method-jit-dirty:2fa7dae77b9, Sep 16 2026, 15:49:13) [GCC 13.3.0]",
+  "jit_enabled": true,
+  "workload": "render the original sphere/checkerboard scene at 100 x 100 pixels",
+  "loops": 1,
+  "warmups": 3,
+  "values": 7,
+  "median_seconds": 0.13349177036434412,
+  "minimum_seconds": 0.13304963149130344,
+  "samples_seconds": [
+    0.13413810823112726,
+    0.1340412786230445,
+    0.13329345639795065,
+    0.13349177036434412,
+    0.1335503589361906,
+    0.13337629940360785,
+    0.13304963149130344
+  ],
+  "checksum": {
+    "pixels": 10000,
+    "pixel_sha256": "11f2c36b02044f115c3937cae1156e9528b95da70f9d6b737a262f06757c2e6b"
+  }
+}

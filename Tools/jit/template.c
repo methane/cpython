@@ -41,6 +41,27 @@
 #include "ceval_macros.h"
 
 #include "jit.h"
+#include "pycore_jit_call.h"
+
+/* Enter a nested method directly with the stencil calling convention. The
+ * interpreter's ordinary-C entry shim would save registers a second time. */
+static inline Py_ALWAYS_INLINE _Py_CODEUNIT *
+_PyJit_DirectMethodEntry(_PyExecutorObject *executor,
+                         _PyInterpreterFrame *frame,
+                         _PyStackRef *stack_pointer, PyThreadState *tstate)
+{
+    jit_func_preserve_none jitted = (jit_func_preserve_none)executor->jit_code;
+    return jitted(executor, frame, stack_pointer, tstate,
+                  PyStackRef_ZERO_BITS, PyStackRef_ZERO_BITS, PyStackRef_ZERO_BITS);
+}
+
+static inline Py_ALWAYS_INLINE _Py_CODEUNIT *
+_PyJit_CallMethodNative(PyThreadState *tstate, _PyExecutorObject *executor,
+                         _PyInterpreterFrame **frame)
+{
+    return _PyJit_CallMethodImpl(tstate, executor, frame, _PyJit_DirectMethodEntry);
+}
+
 
 #ifndef NDEBUG
 #undef assert
@@ -52,6 +73,19 @@
 
 #undef CURRENT_OPERAND1_64
 #define CURRENT_OPERAND1_64() (_operand1_64)
+
+#if SIZEOF_VOID_P == 8
+// Extract packed fields once while emitting code. Keep the patched value
+// narrower than a pointer so LLVM cannot assume that it is nonzero.
+#define JIT_OPERAND_FIELD(INDEX, SHIFT, WIDTH) ({ \
+    PATCH_VALUE(uint32_t, field, _JIT_OPERAND##INDEX##_FIELD_##SHIFT##_##WIDTH) \
+    field; \
+})
+#undef OPERAND0_FIELD
+#undef OPERAND1_FIELD
+#define OPERAND0_FIELD(VALUE, SHIFT, WIDTH) JIT_OPERAND_FIELD(0, SHIFT, WIDTH)
+#define OPERAND1_FIELD(VALUE, SHIFT, WIDTH) JIT_OPERAND_FIELD(1, SHIFT, WIDTH)
+#endif
 
 
 #undef CURRENT_OPARG

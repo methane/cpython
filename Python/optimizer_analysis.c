@@ -23,6 +23,7 @@
 #include "pycore_uop_metadata.h"
 #include "pycore_long.h"
 #include "pycore_interpframe.h"  // _PyFrame_GetCode
+#include "pycore_iterobject.h"  // _PyZip_NextListPair()
 #include "pycore_optimizer.h"
 #include "pycore_object.h"
 #include "pycore_function.h"
@@ -186,6 +187,26 @@ watch_type(PyTypeObject *type, _PyBloomFilter *filter)
     }
     PyType_Watch(TYPE_WATCHER_ID, (PyObject *)type);
     _Py_BloomFilter_Add(filter, type);
+}
+
+int
+_PyJit_WatchMethodGlobal(PyThreadState *tstate, PyObject *globals,
+                         PyObject *name, bool builtin,
+                         _PyBloomFilter *dependencies)
+{
+    _PyOnceFlag_CallOnce(&tstate->interp->dict_state.watcher_setup_once,
+                         _setup_optimizer_watchers, NULL);
+    if (PyDict_Watch(GLOBALS_WATCHER_ID, globals) < 0) {
+        return -1;
+    }
+    _Py_BloomFilter_AddGlobal(dependencies, globals, 0, true);
+    if (builtin) {
+        return PyDict_Watch(BUILTINS_WATCHER_ID, tstate->interp->builtins);
+    }
+    Py_hash_t hash = PyObject_Hash(name);
+    assert(hash != -1);
+    _Py_BloomFilter_AddGlobal(dependencies, globals, hash, false);
+    return 0;
 }
 
 static PyObject *

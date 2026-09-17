@@ -1801,6 +1801,13 @@ invalidate_executors(PyObject *self, PyObject *obj)
 }
 
 static PyObject *
+invalidate_cold_executors(PyObject *self, PyObject *Py_UNUSED(ignored))
+{
+    _Py_Executors_InvalidateCold(PyInterpreterState_Get());
+    Py_RETURN_NONE;
+}
+
+static PyObject *
 clear_executor_deletion_list(PyObject *self, PyObject *Py_UNUSED(ignored))
 {
     PyInterpreterState *interp = PyInterpreterState_Get();
@@ -3315,6 +3322,7 @@ static PyMethodDef module_functions[] = {
 #ifdef _Py_TIER2
     {"add_executor_dependency", add_executor_dependency, METH_VARARGS, NULL},
     {"invalidate_executors", invalidate_executors, METH_O, NULL},
+    {"invalidate_cold_executors", invalidate_cold_executors, METH_NOARGS, NULL},
     {"clear_executor_deletion_list", clear_executor_deletion_list, METH_NOARGS, NULL},
     {"get_exit_executor", get_exit_executor, METH_O, NULL},
 #endif

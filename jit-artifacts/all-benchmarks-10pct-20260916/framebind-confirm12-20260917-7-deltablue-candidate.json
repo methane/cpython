@@ -1,0 +1,27 @@
+{
+  "benchmark": "deltablue",
+  "runtime": "Python 3.16.0a0 (CPython)",
+  "executable": "/home/methane/work/python/cpython-gc/build-method-jit/python-goal-framebind",
+  "python_version": "3.16.0a0 (heads/codex/method-jit-dirty:2fa7dae77b9, Sep 16 2026, 15:49:13) [GCC 13.3.0]",
+  "jit_enabled": true,
+  "workload": "100-link equality chain and 100 scale/offset constraints",
+  "loops": 32,
+  "warmups": 3,
+  "values": 7,
+  "median_seconds": 0.0015035353426355869,
+  "minimum_seconds": 0.0014877491630613804,
+  "samples_seconds": [
+    0.0015035353426355869,
+    0.0015058224962558597,
+    0.0014913641207385808,
+    0.0015144342614803463,
+    0.0014929418393876404,
+    0.0015602840285282582,
+    0.0014877491630613804
+  ],
+  "checksum": {
+    "chain_last": 99,
+    "source_last": -190.0,
+    "projection_sum": 223305
+  }
+}

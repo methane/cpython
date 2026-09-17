@@ -2195,6 +2195,10 @@ Python/flowgraph.o: \
 		$(srcdir)/Include/internal/pycore_opcode_metadata.h
 
 Python/optimizer.o: \
+		$(srcdir)/Include/internal/pycore_jit_call.h \
+		$(srcdir)/Include/internal/pycore_enumobject.h \
+		$(srcdir)/Python/optimizer_regions.h \
+		$(srcdir)/Python/optimizer_region_bounds.h \
 		$(srcdir)/Python/record_functions.c.h \
 		$(srcdir)/Python/executor_cases.c.h \
 		$(srcdir)/Include/internal/pycore_opcode_metadata.h \
@@ -3168,6 +3172,9 @@ JIT_DEPS = \
 		$(srcdir)/Tools/jit/*.py \
 		$(srcdir)/Python/executor_cases.c.h \
 		$(srcdir)/Include/internal/pycore_optimizer.h \
+		$(srcdir)/Include/internal/pycore_jit_call.h \
+		$(srcdir)/Include/internal/pycore_enumobject.h \
+		$(srcdir)/Python/ceval_macros.h \
 		pyconfig.h
 
 $(JIT_GENERATED_STAMP): $(JIT_DEPS)

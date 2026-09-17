@@ -106,6 +106,12 @@ typedef struct {
 } _PyAttrCache;
 
 typedef struct {
+    _PyAttrCache attr;
+    uint16_t descr[4];
+    uint16_t unused;
+} _PyLoadAttrNonDataCache;
+
+typedef struct {
     _Py_BackoffCounter counter;
     uint16_t type_version[2];
     union {
@@ -309,6 +315,8 @@ PyAPI_FUNC(void) _Py_Specialize_LoadAttr(_PyStackRef owner, _Py_CODEUNIT *instr,
                                     PyObject *name);
 PyAPI_FUNC(void) _Py_Specialize_StoreAttr(_PyStackRef owner, _Py_CODEUNIT *instr,
                                      PyObject *name);
+PyAPI_FUNC(void) _Py_Specialize_DeleteAttr(_PyStackRef owner, _Py_CODEUNIT *instr,
+                                       PyObject *name);
 PyAPI_FUNC(void) _Py_Specialize_LoadGlobal(PyObject *globals, PyObject *builtins,
                                       _Py_CODEUNIT *instr, PyObject *name);
 PyAPI_FUNC(void) _Py_Specialize_StoreSubscr(_PyStackRef container, _PyStackRef sub,

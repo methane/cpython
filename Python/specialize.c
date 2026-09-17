@@ -707,6 +707,18 @@ specialize_dict_access(
         SPECIALIZATION_FAIL(base_op, SPEC_FAIL_ATTR_NOT_MANAGED_DICT);
         return 0;
     }
+#ifndef Py_GIL_DISABLED
+    if (base_op == STORE_ATTR &&
+        (type->tp_flags & Py_TPFLAGS_INLINE_VALUES) &&
+        _PyObject_InlineValues(owner)->valid)
+    {
+        PyDictObject *dict = _PyObject_GetManagedDict(owner);
+        if (dict != NULL && !(dict->_ma_watcher_tag & DICT_WATCHER_MASK)) {
+            return specialize_dict_access_inline(owner, instr, type, name,
+                tp_version, base_op, STORE_ATTR_INLINE_WITH_DICT);
+        }
+    }
+#endif
     if (type->tp_flags & Py_TPFLAGS_INLINE_VALUES &&
         FT_ATOMIC_LOAD_UINT8(_PyObject_InlineValues(owner)->valid) &&
         !(base_op == STORE_ATTR && _PyObject_GetManagedDict(owner) != NULL))
@@ -714,8 +726,15 @@ specialize_dict_access(
         int res;
         Py_BEGIN_CRITICAL_SECTION(owner);
         PyDictObject *dict = _PyObject_GetManagedDict(owner);
-        if (dict == NULL) {
-            // managed dict, not materialized, inline values valid
+        if (dict == NULL
+#ifndef Py_GIL_DISABLED
+            || base_op == LOAD_ATTR
+#endif
+        ) {
+            // Loads can use valid inline values after dict materialization.
+            // Stores still require no dict, so that dict watchers are honored.
+            // Keep the FT materialized-dict path unchanged: dict mutation can
+            // invalidate its inline values independently of the owner lock.
             res = specialize_dict_access_inline(owner, instr, type, name,
                                                 tp_version, base_op, values_op);
         }
@@ -816,6 +835,11 @@ do_specialize_instance_load_attr(PyObject* owner, _Py_CODEUNIT* instr, PyObject*
                     return -1;
                 }
             }
+            if (specialize_attr_loadclassattr(owner, instr, name, descr,
+                                              tp_version, kind, false,
+                                              shared_keys_version)) {
+                return 0;
+            }
             SPECIALIZATION_FAIL(LOAD_ATTR, SPEC_FAIL_ATTR_METHOD);
             return -1;
         }
@@ -903,6 +927,27 @@ do_specialize_instance_load_attr(PyObject* owner, _Py_CODEUNIT* instr, PyObject*
             SPECIALIZATION_FAIL(LOAD_ATTR, SPEC_FAIL_ATTR_NON_OBJECT_SLOT);
             return -1;
         case MUTABLE:
+#ifndef Py_GIL_DISABLED
+            if (shadow && Py_TYPE(descr)->tp_descr_set == NULL &&
+                (type->tp_flags & Py_TPFLAGS_INLINE_VALUES) &&
+                _PyObject_InlineValues(owner)->valid)
+            {
+                // A mutable descriptor's type may later acquire __set__.
+                // Guard that at runtime before reading an instance override.
+                int specialized = specialize_dict_access_inline(
+                    owner, instr, type, name, tp_version, LOAD_ATTR,
+                    LOAD_ATTR_INSTANCE_VALUE_NONDATA);
+                if (specialized) {
+                    _PyLoadAttrNonDataCache *nd_cache =
+                        (_PyLoadAttrNonDataCache *)(instr + 1);
+                    static_assert(sizeof(*nd_cache) == sizeof(_PyLoadMethodCache));
+                    // The preceding owner type-version guard protects this
+                    // borrowed descriptor, as for cached class methods.
+                    write_ptr(nd_cache->descr, descr);
+                    return 0;
+                }
+            }
+#endif
             SPECIALIZATION_FAIL(LOAD_ATTR, SPEC_FAIL_ATTR_MUTABLE_CLASS);
             return -1;
         case GETSET_OVERRIDDEN:
@@ -946,6 +991,16 @@ do_specialize_instance_load_attr(PyObject* owner, _Py_CODEUNIT* instr, PyObject*
         case NON_OVERRIDING:
             if (shadow) {
                 goto try_instance;
+            }
+            // The generic method-load path already returns a classmethod's
+            // function and class separately, without a bound-method object.
+            if (kind == PYTHON_CLASSMETHOD && (oparg & 1)) {
+                return -1;
+            }
+            if (specialize_attr_loadclassattr(owner, instr, name, descr,
+                                              tp_version, kind, false,
+                                              shared_keys_version)) {
+                return 0;
             }
             return -1;
         case NON_DESCRIPTOR:
@@ -1027,6 +1082,36 @@ _Py_Specialize_LoadAttr(_PyStackRef owner_st, _Py_CODEUNIT *instr, PyObject *nam
 }
 
 Py_NO_INLINE void
+_Py_Specialize_DeleteAttr(_PyStackRef owner_st, _Py_CODEUNIT *instr, PyObject *name)
+{
+#ifndef Py_GIL_DISABLED
+    PyObject *owner = PyStackRef_AsPyObjectBorrow(owner_st);
+    PyTypeObject *type = Py_TYPE(owner);
+    if (_PyType_IsReady(type) && (type->tp_flags & Py_TPFLAGS_INLINE_VALUES) &&
+        _PyObject_InlineValues(owner)->valid)
+    {
+        PyObject *descr = NULL;
+        unsigned int version = 0;
+        DescriptorClassification kind = analyze_descriptor_store(
+            type, name, &descr, &version);
+        bool non_overriding = kind == ABSENT || kind == NON_DESCRIPTOR ||
+            kind == METHOD || kind == NON_OVERRIDING ||
+            kind == BUILTIN_CLASSMETHOD || kind == PYTHON_CLASSMETHOD;
+        Py_XDECREF(descr);
+        PyDictObject *dict = _PyObject_GetManagedDict(owner);
+        if (version != 0 && non_overriding &&
+            (dict == NULL || !(dict->_ma_watcher_tag & DICT_WATCHER_MASK)) &&
+            specialize_dict_access_inline(owner, instr, type, name, version,
+                STORE_ATTR, DELETE_ATTR_INSTANCE_VALUE))
+        {
+            return;
+        }
+    }
+#endif
+    unspecialize(instr);
+}
+
+Py_NO_INLINE void
 _Py_Specialize_StoreAttr(_PyStackRef owner_st, _Py_CODEUNIT *instr, PyObject *name)
 {
     PyObject *owner = PyStackRef_AsPyObjectBorrow(owner_st);
@@ -1053,6 +1138,22 @@ _Py_Specialize_StoreAttr(_PyStackRef owner_st, _Py_CODEUNIT *instr, PyObject *na
         goto fail;
     }
     assert(descr != NULL || kind == ABSENT || kind == GETSET_OVERRIDDEN);
+#ifndef Py_GIL_DISABLED
+    if (kind == METHOD || kind == NON_OVERRIDING ||
+        kind == BUILTIN_CLASSMETHOD || kind == PYTHON_CLASSMETHOD)
+    {
+        // classify_descriptor accepts these only for immutable descriptor
+        // types without tp_descr_set. Binding is irrelevant to assignment;
+        // the owner's version guards replacement by a data descriptor.
+        if (specialize_dict_access(owner, instr, type, kind, name, tp_version,
+                                   STORE_ATTR, STORE_ATTR_INSTANCE_VALUE,
+                                   STORE_ATTR_WITH_HINT))
+        {
+            goto success;
+        }
+        goto fail;
+    }
+#endif
     switch(kind) {
         case OVERRIDING:
             SPECIALIZATION_FAIL(STORE_ATTR, SPEC_FAIL_ATTR_OVERRIDING_DESCRIPTOR);
@@ -1096,6 +1197,17 @@ _Py_Specialize_StoreAttr(_PyStackRef owner_st, _Py_CODEUNIT *instr, PyObject *na
             SPECIALIZATION_FAIL(STORE_ATTR, SPEC_FAIL_ATTR_NON_OBJECT_SLOT);
             goto fail;
         case MUTABLE:
+#ifndef Py_GIL_DISABLED
+            if (Py_TYPE(descr)->tp_descr_set == NULL &&
+                (type->tp_flags & Py_TPFLAGS_INLINE_VALUES) &&
+                _PyObject_InlineValues(owner)->valid &&
+                _PyObject_GetManagedDict(owner) == NULL &&
+                specialize_dict_access_inline(owner, instr, type, name,
+                    tp_version, STORE_ATTR, STORE_ATTR_INSTANCE_VALUE_NONDATA))
+            {
+                goto success;
+            }
+#endif
             SPECIALIZATION_FAIL(STORE_ATTR, SPEC_FAIL_ATTR_MUTABLE_CLASS);
             goto fail;
         case GETATTRIBUTE_IS_PYTHON_FUNCTION:
@@ -1112,8 +1224,15 @@ _Py_Specialize_StoreAttr(_PyStackRef owner_st, _Py_CODEUNIT *instr, PyObject *na
             SPECIALIZATION_FAIL(STORE_ATTR, SPEC_FAIL_ATTR_CLASS_ATTR_DESCRIPTOR);
             goto fail;
         case NON_DESCRIPTOR:
+#ifdef Py_GIL_DISABLED
             SPECIALIZATION_FAIL(STORE_ATTR, SPEC_FAIL_ATTR_CLASS_ATTR_SIMPLE);
             goto fail;
+#else
+            // An immutable non-descriptor class default does not intercept
+            // instance assignment. The ordinary type-version guard also
+            // covers replacing it with a data descriptor.
+            _Py_FALLTHROUGH;
+#endif
         case ABSENT:
             if (specialize_dict_access(owner, instr, type, kind, name, tp_version,
                                        STORE_ATTR, STORE_ATTR_INSTANCE_VALUE,
@@ -1269,11 +1388,24 @@ specialize_attr_loadclassattr(PyObject *owner, _Py_CODEUNIT *instr,
 {
     _PyLoadMethodCache *cache = (_PyLoadMethodCache *)(instr + 1);
     PyTypeObject *owner_cls = Py_TYPE(owner);
+    bool bind_descriptor = !is_method && kind != NON_DESCRIPTOR;
 
     assert(descr != NULL);
-    assert((is_method && kind == METHOD) || (!is_method && kind == NON_DESCRIPTOR));
+    assert((is_method && kind == METHOD) || (!is_method &&
+           (kind == NON_DESCRIPTOR || kind == METHOD || kind == NON_OVERRIDING ||
+            kind == BUILTIN_CLASSMETHOD || kind == PYTHON_CLASSMETHOD)));
+    assert(!bind_descriptor || Py_TYPE(descr)->tp_descr_get != NULL);
+
+    // Binding can raise AttributeError. Leave __getattr__ handling to the
+    // generic lookup, which must invoke that hook exactly once on failure.
+    if (bind_descriptor && owner_cls->tp_getattro != PyObject_GenericGetAttr) {
+        return 0;
+    }
 
     #ifdef Py_GIL_DISABLED
+    if (bind_descriptor) {
+        return 0;
+    }
     if (!_PyObject_HasDeferredRefcount(descr)) {
         SPECIALIZATION_FAIL(LOAD_ATTR, SPEC_FAIL_ATTR_DESCR_NOT_DEFERRED);
         return 0;
@@ -1290,9 +1422,14 @@ specialize_attr_loadclassattr(PyObject *owner, _Py_CODEUNIT *instr,
             SPECIALIZATION_FAIL(LOAD_ATTR, SPEC_FAIL_OUT_OF_VERSIONS);
             return 0;
         }
-        specialize(instr, is_method ? LOAD_ATTR_METHOD_WITH_VALUES : LOAD_ATTR_NONDESCRIPTOR_WITH_VALUES);
+        specialize(instr, is_method ? LOAD_ATTR_METHOD_WITH_VALUES :
+                   bind_descriptor ? LOAD_ATTR_DESCRIPTOR_WITH_VALUES :
+                   LOAD_ATTR_NONDESCRIPTOR_WITH_VALUES);
     }
     else {
+        if (bind_descriptor) {
+            return 0;
+        }
         Py_ssize_t dictoffset;
         if (tp_flags & Py_TPFLAGS_MANAGED_DICT) {
             dictoffset = MANAGED_DICT_OFFSET;
@@ -2180,6 +2317,67 @@ BITWISE_LONGS_ACTION(compactlongs_and, &)
 BITWISE_LONGS_ACTION(compactlongs_xor, ^)
 #undef BITWISE_LONGS_ACTION
 
+/* Non-negative bitsets and hashes often span several Python digits while
+ * still fitting in one machine-independent uint64_t. Keep the compact
+ * signed-integer specialization first, and reject larger or negative inputs. */
+static inline int
+is_uint64long(PyObject *value)
+{
+    if (!PyLong_CheckExact(value)) {
+        return 0;
+    }
+    PyLongObject *integer = (PyLongObject *)value;
+    if (_PyLong_IsNegative(integer)) {
+        return 0;
+    }
+    const Py_ssize_t digits = (64 + PyLong_SHIFT - 1) / PyLong_SHIFT;
+    Py_ssize_t size = _PyLong_DigitCount(integer);
+    return size < digits || (size == digits &&
+        integer->long_value.ob_digit[digits - 1] <
+            ((digit)1 << (64 - (digits - 1) * PyLong_SHIFT)));
+}
+
+static int
+uint64longs_guard(PyObject *lhs, PyObject *rhs)
+{
+    return is_uint64long(lhs) && is_uint64long(rhs);
+}
+
+static inline uint64_t
+uint64long_value(PyObject *value)
+{
+    PyLongObject *integer = (PyLongObject *)value;
+    Py_ssize_t size = _PyLong_DigitCount(integer);
+    const digit *digits = integer->long_value.ob_digit;
+#if PyLong_SHIFT == 30
+    uint64_t result = size ? digits[0] : 0;
+    if (size > 1) {
+        result |= (uint64_t)digits[1] << 30;
+    }
+    if (size > 2) {
+        result |= (uint64_t)digits[2] << 60;
+    }
+    return result;
+#else
+    uint64_t result = 0;
+    while (size > 0) {
+        result = (result << PyLong_SHIFT) | digits[--size];
+    }
+    return result;
+#endif
+}
+
+#define BITWISE_UINT64_ACTION(NAME, OP) \
+    static PyObject * \
+    (NAME)(PyObject *lhs, PyObject *rhs) \
+    { \
+        return PyLong_FromUInt64(uint64long_value(lhs) OP uint64long_value(rhs)); \
+    }
+BITWISE_UINT64_ACTION(uint64longs_or, |)
+BITWISE_UINT64_ACTION(uint64longs_and, &)
+BITWISE_UINT64_ACTION(uint64longs_xor, ^)
+#undef BITWISE_UINT64_ACTION
+
 /* float-long */
 
 static inline int
@@ -2259,6 +2457,13 @@ static _PyBinaryOpSpecializationDescr binaryop_extend_descrs[] = {
     {NB_INPLACE_OR, compactlongs_guard, compactlongs_or, &PyLong_Type, 1, NULL, NULL},
     {NB_INPLACE_AND, compactlongs_guard, compactlongs_and, &PyLong_Type, 1, NULL, NULL},
     {NB_INPLACE_XOR, compactlongs_guard, compactlongs_xor, &PyLong_Type, 1, NULL, NULL},
+
+    {NB_OR, uint64longs_guard, uint64longs_or, &PyLong_Type, 1, NULL, NULL},
+    {NB_AND, uint64longs_guard, uint64longs_and, &PyLong_Type, 1, NULL, NULL},
+    {NB_XOR, uint64longs_guard, uint64longs_xor, &PyLong_Type, 1, NULL, NULL},
+    {NB_INPLACE_OR, uint64longs_guard, uint64longs_or, &PyLong_Type, 1, NULL, NULL},
+    {NB_INPLACE_AND, uint64longs_guard, uint64longs_and, &PyLong_Type, 1, NULL, NULL},
+    {NB_INPLACE_XOR, uint64longs_guard, uint64longs_xor, &PyLong_Type, 1, NULL, NULL},
 
     /* float-long arithmetic: guards also check NaN and compactness. */
     {NB_ADD, float_compactlong_guard, float_compactlong_add, &PyFloat_Type, 1, NULL, NULL},

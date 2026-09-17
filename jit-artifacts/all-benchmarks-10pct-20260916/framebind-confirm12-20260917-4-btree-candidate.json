@@ -1,0 +1,27 @@
+{
+  "benchmark": "btree",
+  "runtime": "Python 3.16.0a0 (CPython)",
+  "executable": "/home/methane/work/python/cpython-gc/build-method-jit/python-goal-framebind",
+  "python_version": "3.16.0a0 (heads/codex/method-jit-dirty:2fa7dae77b9, Sep 16 2026, 15:49:13) [GCC 13.3.0]",
+  "jit_enabled": true,
+  "workload": "20000 records: insert, delete/reinsert 20%, traverse and look up",
+  "loops": 1,
+  "warmups": 3,
+  "values": 7,
+  "median_seconds": 0.05026565957814455,
+  "minimum_seconds": 0.0474836016073823,
+  "samples_seconds": [
+    0.0474836016073823,
+    0.050214228220283985,
+    0.04986948147416115,
+    0.05026565957814455,
+    0.050482685677707195,
+    0.05036698468029499,
+    0.050663446076214314
+  ],
+  "checksum": {
+    "records": 20000,
+    "total": 9960.672765258027,
+    "lookup_total": 508.57815295215465
+  }
+}

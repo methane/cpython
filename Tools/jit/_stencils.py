@@ -2,6 +2,7 @@
 
 import dataclasses
 import enum
+import re
 import typing
 
 import _schema
@@ -40,6 +41,10 @@ class HoleValue(enum.Enum):
     # The current uop's operand1 on 32-bit platforms (exposed as _JIT_OPERAND1_HI/LO):
     OPERAND1_HI = enum.auto()
     OPERAND1_LO = enum.auto()
+    # A bounded bit field extracted at patch time, rather than at run time.
+    # The original symbol records the operand number, shift and width.
+    OPERAND0_FIELD = enum.auto()
+    OPERAND1_FIELD = enum.auto()
     # The current uop's target (exposed as _JIT_TARGET):
     TARGET = enum.auto()
     # The base address of the machine code for the jump target (exposed as _JIT_JUMP_TARGET):
@@ -90,6 +95,7 @@ _PATCH_FUNCS = {
     "R_AARCH64_MOVW_UABS_G2_NC": "patch_aarch64_16c",
     "R_AARCH64_MOVW_UABS_G3": "patch_aarch64_16d",
     # x86_64-unknown-linux-gnu:
+    "R_X86_64_32": "patch_32",
     "R_X86_64_64": "patch_64",
     "R_X86_64_GOTPCRELX": "patch_x86_64_32rx",
     "R_X86_64_PLT32": "patch_32r",
@@ -120,6 +126,8 @@ _HOLE_EXPRS = {
     HoleValue.OPERAND1_32: "instruction->operand1",
     HoleValue.OPERAND1_HI: "(instruction->operand1 >> 32)",
     HoleValue.OPERAND1_LO: "(instruction->operand1 & UINT32_MAX)",
+    HoleValue.OPERAND0_FIELD: "instruction->operand0",
+    HoleValue.OPERAND1_FIELD: "instruction->operand1",
     HoleValue.TARGET: "instruction->target",
     HoleValue.JUMP_TARGET: "state->instruction_starts[instruction->jump_target]",
     HoleValue.ERROR_TARGET: "state->instruction_starts[instruction->error_target]",
@@ -197,7 +205,11 @@ class Hole:
             value = self.custom_value
         else:
             value = _HOLE_EXPRS[self.value]
-            if self.symbol:
+            if self.value in {HoleValue.OPERAND0_FIELD, HoleValue.OPERAND1_FIELD}:
+                assert self.symbol is not None
+                _, shift, width = _operand_field(self.symbol)
+                value = f"(({value} >> {shift}) & UINT64_C({(1 << width) - 1:#x}))"
+            elif self.symbol:
                 if value:
                     value += " + "
                 if self.symbol.startswith("CONST"):
@@ -430,6 +442,16 @@ class StencilGroup:
         return f"{{emit_{opname}, {len(self.code.body)}, {len(self.data.body)}, {self._get_trampoline_mask()}, {self._get_got_mask()}}}"
 
 
+def _operand_field(symbol: str) -> tuple[int, int, int]:
+    match = re.fullmatch(r"_JIT_OPERAND([01])_FIELD_(\d+)_(\d+)", symbol)
+    if match is None:
+        raise ValueError(f"Invalid operand field: {symbol}")
+    operand, shift, width = map(int, match.groups())
+    if not (0 <= shift < 64 and 1 <= width <= 32 and shift + width <= 64):
+        raise ValueError(f"Invalid operand field: {symbol}")
+    return operand, shift, width
+
+
 def symbol_to_value(symbol: str) -> tuple[HoleValue, str | None]:
     """
     Convert a symbol name to a HoleValue and a symbol name.
@@ -438,6 +460,9 @@ def symbol_to_value(symbol: str) -> tuple[HoleValue, str | None]:
     own HoleValues.
     """
     if symbol.startswith("_JIT_"):
+        if symbol.startswith(("_JIT_OPERAND0_FIELD_", "_JIT_OPERAND1_FIELD_")):
+            operand, _, _ = _operand_field(symbol)
+            return HoleValue[f"OPERAND{operand}_FIELD"], symbol
         try:
             return HoleValue[symbol.removeprefix("_JIT_")], None
         except KeyError:

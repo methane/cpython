@@ -11,6 +11,9 @@ extern "C" {
 extern PyTypeObject _PyACallIter_Type;
 extern PyTypeObject _PyACallIterAwaitable_Type;
 
+// JIT fast path for retained pairs from two independent list iterators.
+PyAPI_FUNC(PyObject *) _PyZip_NextListPair(PyObject *iterator);
+
 // Like PyCallIter_New(), but the iteration also stops when *callable* raises
 // an exception matching *stop_exc* (an exception class or a tuple of exception
 // classes).  *sentinel* can be NULL; NULL *stop_exc* means StopIteration.

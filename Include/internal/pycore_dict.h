@@ -353,6 +353,24 @@ _PyDictValues_AddToInsertionOrder(PyDictValues *values, Py_ssize_t ix)
     values->size = size+1;
 }
 
+static inline void
+_PyDictValues_RemoveFromInsertionOrder(PyDictValues *values, Py_ssize_t ix)
+{
+    uint8_t *array = get_insertion_order_array(values);
+    int size = values->size;
+    assert(size <= values->capacity);
+    int i;
+    for (i = 0; array[i] != ix; i++) {
+        assert(i < size);
+    }
+    assert(i < size);
+    size--;
+    for (; i < size; i++) {
+        array[i] = array[i+1];
+    }
+    values->size = size;
+}
+
 // Exported for external JIT support
 PyAPI_FUNC(void)
 _PyDict_InsertSplitValue(PyDictObject *mp, PyObject *key, PyObject *value, Py_ssize_t ix);

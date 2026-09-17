@@ -1,5 +1,7 @@
 // Macros and other things needed by ceval.c, and bytecodes.c
 
+#include "pycore_enumobject.h"
+
 /* Computed GOTOs, or
        the-optimization-commonly-but-improperly-known-as-"threaded code"
    using gcc's labels-as-values extension
@@ -507,6 +509,9 @@ do {                                                   \
 #define CURRENT_OPERAND1_32() (next_uop[-1].operand1)
 #define CURRENT_OPERAND0_16() (next_uop[-1].operand0)
 #define CURRENT_OPERAND1_16() (next_uop[-1].operand1)
+#define OPERAND0_FIELD(VALUE, SHIFT, WIDTH) \
+    (((uint64_t)(uintptr_t)(VALUE) >> (SHIFT)) & (UINT64_MAX >> (64 - (WIDTH))))
+#define OPERAND1_FIELD(VALUE, SHIFT, WIDTH) OPERAND0_FIELD(VALUE, SHIFT, WIDTH)
 #define CURRENT_TARGET()   (next_uop[-1].target)
 
 #define JUMP_TO_JUMP_TARGET() goto jump_to_jump_target
@@ -681,3 +686,403 @@ gen_try_set_executing(PyGenObject *gen)
 
 #define CALL_TP_ITERITEM_NO_ESCAPE(ITER, INDEX) \
     Py_TYPE(ITER)->_tp_iteritem((ITER), (INDEX))
+
+#if defined(_Py_TIER2) || defined(_Py_JIT)
+/* Declining this fast path leaves every input owned by the caller and does
+ * not set an exception. Successful frame setup cannot call Python or GC. */
+static inline _PyInterpreterFrame *
+_PyJit_PushSimpleFrame(PyThreadState *tstate, _PyStackRef callable,
+                       const _PyStackRef *args, int nargs,
+                       _PyInterpreterFrame *previous)
+{
+#ifdef Py_GIL_DISABLED
+    return NULL;
+#else
+    PyFunctionObject *function = (PyFunctionObject *)PyStackRef_AsPyObjectBorrow(callable);
+    PyCodeObject *code = (PyCodeObject *)function->func_code;
+    if (!(code->co_flags & CO_OPTIMIZED) ||
+        (code->co_flags & (CO_VARARGS | CO_VARKEYWORDS)) ||
+        code->co_kwonlyargcount != 0 || nargs > code->co_argcount ||
+        !_PyThreadState_HasStackSpace(tstate, code->co_framesize))
+    {
+        return NULL;
+    }
+    PyObject *defaults = function->func_defaults;
+    int missing = code->co_argcount - nargs;
+    Py_ssize_t ndefaults = defaults == NULL ? 0 : PyTuple_GET_SIZE(defaults);
+    if (missing > ndefaults) {
+        return NULL;
+    }
+    _PyInterpreterFrame *result = _PyFrame_PushUnchecked(
+        tstate, callable, code->co_argcount, previous);
+    for (int i = 0; i < nargs; i++) {
+        result->localsplus[i] = args[i];
+    }
+    for (int i = 0; i < missing; i++) {
+        result->localsplus[nargs + i] = PyStackRef_FromPyObjectNew(
+            PyTuple_GET_ITEM(defaults, ndefaults - missing + i));
+    }
+    return result;
+#endif
+}
+
+static inline bool
+_PyJit_CanBindInitExactly(PyThreadState *tstate, PyCodeObject *code, int nargs)
+{
+#ifdef Py_GIL_DISABLED
+    return false;
+#else
+    /* Allocation can run GC callbacks that replace the initializer's code,
+     * so recheck its frame size after allocating the instance and shim. */
+    return code->co_argcount == nargs && code->co_kwonlyargcount == 0 &&
+           !(code->co_flags & (CO_VARARGS | CO_VARKEYWORDS)) &&
+           _PyThreadState_HasStackSpace(tstate, code->co_framesize);
+#endif
+}
+
+static inline Py_ALWAYS_INLINE void
+_PyJit_FrameClearAndPop(PyThreadState *tstate, _PyInterpreterFrame *dying)
+{
+#ifndef Py_GIL_DISABLED
+    PyObject **base = (PyObject **)dying;
+    if (dying->owner == FRAME_OWNED_BY_THREAD &&
+        dying->frame_obj == NULL && dying->f_locals == NULL &&
+        base != &tstate->datastack_chunk->data[0])
+    {
+        /* Match the ordinary clear order, with the frame already unlinked.
+         * Destructors may re-enter Python while this frame's stack storage
+         * remains reserved. Release that storage only after all references. */
+        assert(tstate->current_frame != dying);
+        assert(base + _PyFrame_GetCode(dying)->co_framesize ==
+               tstate->datastack_top);
+        _PyThreadState_UpdateLastProfiledFrame(tstate, dying, tstate->current_frame);
+        _PyStackRef *sp = dying->stackpointer;
+        _PyStackRef *locals = dying->localsplus;
+        assert(sp != NULL);
+        dying->stackpointer = locals;
+        while (sp > locals) {
+            sp--;
+            PyStackRef_XCLOSE(*sp);
+        }
+        PyStackRef_CLEAR(dying->f_funcobj);
+        PyStackRef_CLEAR(dying->f_executable);
+        tstate->datastack_top = base;
+        return;
+    }
+#endif
+    _PyEval_FrameClearAndPop(tstate, dying);
+}
+
+/* Return -1 without setting an exception when ordinary containment is needed.
+ * A skipped prefix contains only exact compact integers, so restarting the
+ * generic search cannot duplicate a comparison callback. */
+static inline int
+_PyRegion_SequenceContainsInt(PyObject *sequence, PyObject *key)
+{
+#ifdef Py_GIL_DISABLED
+    return -1;
+#else
+    if (!PyLong_CheckExact(key) || !_PyLong_IsCompact((PyLongObject *)key)) {
+        return -1;
+    }
+    PyObject **items;
+    Py_ssize_t size;
+    if (PyList_CheckExact(sequence)) {
+        items = ((PyListObject *)sequence)->ob_item;
+        size = PyList_GET_SIZE(sequence);
+    }
+    else if (PyTuple_CheckExact(sequence)) {
+        items = ((PyTupleObject *)sequence)->ob_item;
+        size = PyTuple_GET_SIZE(sequence);
+    }
+    else {
+        return -1;
+    }
+    Py_ssize_t integer = _PyLong_CompactValue((PyLongObject *)key);
+    for (Py_ssize_t i = 0; i < size; i++) {
+        PyObject *item = items[i];
+        if (item == key) {
+            return 1;
+        }
+        if (!PyLong_CheckExact(item) || !_PyLong_IsCompact((PyLongObject *)item)) {
+            return -1;
+        }
+        if (_PyLong_CompactValue((PyLongObject *)item) == integer) {
+            return 1;
+        }
+    }
+    return 0;
+#endif
+}
+
+static inline bool
+_PyRegion_IntInput(_PyInterpreterFrame *frame, unsigned int kind,
+                   uint8_t local, uint16_t offset, uint32_t version,
+                   bool managed, int32_t constant, Py_ssize_t *integer)
+{
+    if (kind == 2) {
+        *integer = constant;
+        return true;
+    }
+    _PyStackRef ref = frame->localsplus[local];
+    if (PyStackRef_IsNull(ref)) {
+        return false;
+    }
+    PyObject *value = PyStackRef_AsPyObjectBorrow(ref);
+    if (kind == 0) {
+        if (Py_TYPE(value)->tp_version_tag != version ||
+            (managed && !_PyObject_InlineValues(value)->valid))
+        {
+            return false;
+        }
+        value = *(PyObject **)((char *)value + offset);
+    }
+    if (value == NULL || !PyLong_CheckExact(value) ||
+        !_PyLong_IsCompact((PyLongObject *)value))
+    {
+        return false;
+    }
+    *integer = _PyLong_CompactValue((PyLongObject *)value);
+    return true;
+}
+
+/* Common list slices have exact compact integer bounds or None. Avoid the
+ * generic __index__ conversion and step handling, retaining the ordinary
+ * path for callbacks, wide integers, and free-threaded list locking. */
+static inline PyObject *
+_PyJit_ListBinarySlice(PyObject *container, PyObject *start, PyObject *stop)
+{
+#ifndef Py_GIL_DISABLED
+    if ((start == Py_None || (PyLong_CheckExact(start) &&
+                             _PyLong_IsCompact((PyLongObject *)start))) &&
+        (stop == Py_None || (PyLong_CheckExact(stop) &&
+                            _PyLong_IsCompact((PyLongObject *)stop))))
+    {
+        Py_ssize_t low = start == Py_None ? 0 :
+            _PyLong_CompactValue((PyLongObject *)start);
+        Py_ssize_t high = stop == Py_None ? PY_SSIZE_T_MAX :
+            _PyLong_CompactValue((PyLongObject *)stop);
+        Py_ssize_t length = PyList_GET_SIZE(container);
+        if (low < 0) {
+            low += length;
+        }
+        if (high < 0) {
+            high += length;
+        }
+        // GetSlice clips both bounds to the valid range. Adding a negative
+        // compact integer to the nonnegative length cannot overflow.
+        return PyList_GetSlice(container, low, high);
+    }
+#endif
+    return _PyList_BinarySlice(container, start, stop);
+}
+
+static inline bool
+_PyJit_CanDecRefNoEscape(PyObject *obj)
+{
+#ifdef Py_GIL_DISABLED
+    return false;
+#else
+    return Py_REFCNT(obj) > 1 || PyLong_CheckExact(obj) ||
+        PyFloat_CheckExact(obj) || PyUnicode_CheckExact(obj) ||
+        PyBytes_CheckExact(obj);
+#endif
+}
+
+static inline PyObject *
+_PyJit_NewEmptySet(void)
+{
+    // Unlike general set construction, this cannot invoke an iterator.
+    return PySet_New(NULL);
+}
+
+static inline bool
+_PyJit_CanCloseNoEscape(_PyStackRef value)
+{
+#ifdef Py_GIL_DISABLED
+    return false;
+#else
+    if (PyStackRef_IsNull(value) || !PyStackRef_RefcountOnObject(value)) {
+        return true;
+    }
+    return _PyJit_CanDecRefNoEscape(PyStackRef_AsPyObjectBorrow(value));
+#endif
+}
+
+/* All guards precede reference transfer. On failure the ordinary store still
+ * owns both stack inputs and can run an old-value finalizer in its frame. */
+static inline bool
+_PyJit_StoreAttributeNoEscape(PyObject *owner, _PyStackRef value,
+                             Py_ssize_t offset, bool managed)
+{
+#ifdef Py_GIL_DISABLED
+    return false;
+#else
+    PyObject **slot = (PyObject **)((char *)owner + offset);
+    PyObject *old = *slot;
+    if (old != NULL && !_PyJit_CanDecRefNoEscape(old)) {
+        return false;
+    }
+    *slot = PyStackRef_AsPyObjectSteal(value);
+    if (managed && old == NULL) {
+        PyDictValues *values = _PyObject_InlineValues(owner);
+        _PyDictValues_AddToInsertionOrder(values, slot - values->values);
+    }
+    Py_XDECREF(old);
+    return true;
+#endif
+}
+
+static inline void
+_PyJit_CloseNoEscape(_PyStackRef value)
+{
+    assert(_PyJit_CanCloseNoEscape(value));
+    PyStackRef_XCLOSE(value);
+}
+
+static inline PyObject *
+_PyRegion_NumberAttribute(PyObject *owner, Py_ssize_t offset)
+{
+    PyObject *value = *(PyObject **)((char *)owner + offset);
+    if (value != NULL && (PyFloat_CheckExact(value) ||
+        (PyLong_CheckExact(value) && _PyLong_IsCompact((PyLongObject *)value))))
+    {
+        return value;
+    }
+    return NULL;
+}
+
+static inline double
+_PyRegion_NumberAsDouble(PyObject *value)
+{
+    return PyFloat_CheckExact(value) ? PyFloat_AS_DOUBLE(value)
+        : (double)_PyLong_CompactValue((PyLongObject *)value);
+}
+
+static inline bool
+_PyRegion_BoundedInput(_PyStackRef ref, intptr_t *value)
+{
+    if (PyStackRef_IsNull(ref)) {
+        return false;
+    }
+    PyObject *obj = PyStackRef_AsPyObjectBorrow(ref);
+    if (!PyLong_CheckExact(obj) || !_PyLong_IsCompact((PyLongObject *)obj)) {
+        return false;
+    }
+    *value = _PyLong_CompactValue((PyLongObject *)obj);
+    return *value >= -_PY_INT_REGION_INPUT_MAX &&
+           *value <= _PY_INT_REGION_INPUT_MAX;
+}
+
+static inline bool
+_PyRegion_AsInt64(_PyStackRef ref, int64_t *value)
+{
+    if (PyStackRef_IsNull(ref)) {
+        return false;
+    }
+    PyObject *obj = PyStackRef_AsPyObjectBorrow(ref);
+    if (!PyLong_CheckExact(obj)) {
+        return false;
+    }
+    if (_PyLong_IsCompact((PyLongObject *)obj)) {
+        *value = _PyLong_CompactValue((PyLongObject *)obj);
+        return true;
+    }
+    int overflow;
+    *value = PyLong_AsLongLongAndOverflow(obj, &overflow);
+    return overflow == 0;
+}
+
+static inline bool
+_PyRegion_Length(_PyStackRef ref, Py_ssize_t *size)
+{
+    PyObject *obj = PyStackRef_AsPyObjectBorrow(ref);
+    /* Closing the original receiver must not run a finalizer before the
+     * consumer. Another strong reference also suffices under the GIL. */
+    if (PyStackRef_RefcountOnObject(ref) &&
+        !_Py_IsImmortal(obj) && Py_REFCNT(obj) <= 1) {
+        return false;
+    }
+    if (PyUnicode_CheckExact(obj)) {
+        *size = PyUnicode_GET_LENGTH(obj);
+    }
+    else if (PyBytes_CheckExact(obj)) {
+        *size = PyBytes_GET_SIZE(obj);
+    }
+    else if (PyTuple_CheckExact(obj)) {
+        *size = PyTuple_GET_SIZE(obj);
+    }
+    else if (PyList_CheckExact(obj)) {
+        *size = PyList_GET_SIZE(obj);
+    }
+    else if (PyDict_CheckExact(obj)) {
+        *size = PyDict_GET_SIZE(obj);
+    }
+    else {
+        return false;
+    }
+    return true;
+}
+
+static inline bool
+_PyRegion_EqualityType(PyTypeObject *type)
+{
+    return type == &PyBytes_Type || type == &PyUnicode_Type ||
+           type == &PyLong_Type || type == &PyFloat_Type;
+}
+
+/* Both operands have the same exact immutable builtin type. These equality
+ * operations cannot call Python, issue BytesWarning, or allocate a result.
+ * Preserve tuple comparison's identity shortcut, particularly for NaNs. */
+static inline bool
+_PyRegion_ImmutableEqual(PyObject *left, PyObject *right)
+{
+    assert(Py_TYPE(left) == Py_TYPE(right));
+    assert(_PyRegion_EqualityType(Py_TYPE(left)));
+    if (left == right) {
+        return true;
+    }
+    if (PyBytes_CheckExact(left)) {
+        Py_ssize_t size = PyBytes_GET_SIZE(left);
+        return size == PyBytes_GET_SIZE(right) &&
+               PyBytes_AS_STRING(left)[0] == PyBytes_AS_STRING(right)[0] &&
+               (size <= 1 ||
+                memcmp(PyBytes_AS_STRING(left), PyBytes_AS_STRING(right), size) == 0);
+    }
+    if (PyUnicode_CheckExact(left)) {
+        return _PyUnicode_Equal(left, right);
+    }
+    if (PyFloat_CheckExact(left)) {
+        return PyFloat_AS_DOUBLE(left) == PyFloat_AS_DOUBLE(right);
+    }
+    if (_PyLong_BothAreCompact((PyLongObject *)left, (PyLongObject *)right)) {
+        return _PyLong_CompactValue((PyLongObject *)left) ==
+               _PyLong_CompactValue((PyLongObject *)right);
+    }
+    PyLongObject *a = (PyLongObject *)left;
+    PyLongObject *b = (PyLongObject *)right;
+    Py_ssize_t digits = _PyLong_DigitCount(a);
+    return _PyLong_SameSign(a, b) && digits == _PyLong_DigitCount(b) &&
+           memcmp(a->long_value.ob_digit, b->long_value.ob_digit,
+                  (size_t)digits * sizeof(digit)) == 0;
+}
+
+/* A fixed pair of checked operations, not a runtime IR interpreter. The
+ * selector is a stencil immediate: 0 = add, 1 = subtract, 2 = multiply. */
+static inline bool
+_PyRegion_Arithmetic(int64_t left, int64_t right, int op, int64_t *result)
+{
+#if defined(__GNUC__) || defined(__clang__)
+    switch (op) {
+        case 0: return !__builtin_add_overflow(left, right, result);
+        case 1: return !__builtin_sub_overflow(left, right, result);
+        case 2: return !__builtin_mul_overflow(left, right, result);
+        default: Py_UNREACHABLE();
+    }
+#else
+    /* The experimental matcher is disabled without checked arithmetic. */
+    return false;
+#endif
+}
+
+#endif
