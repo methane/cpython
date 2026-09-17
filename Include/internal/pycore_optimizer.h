@@ -19,8 +19,12 @@ extern "C" {
 /* Bound checked at every native integer region entry. */
 #define _PY_INT_REGION_INPUT_MAX ((INT64_C(1) << 28) - 1)
 
-/* Use the same bound for CFG inlining and tracing through method entries. */
+/* Bound recursive CFG expansion, including inline-cache storage. */
 #define METHOD_INLINE_MAX_CODE_SIZE 128
+
+/* Inline caches consume no trace instructions. Do not let attribute-heavy
+ * callees fragment caller traces just because their caches are large. */
+#define METHOD_TRACE_MAX_INSTRUCTIONS 128
 
 /* Fitness controls how long a trace can grow.
  * Starts at FITNESS_INITIAL, then decreases from per-bytecode buffer usage
@@ -184,6 +188,7 @@ typedef struct {
     uint8_t chain_depth;  // Must be big enough for MAX_CHAIN_DEPTH - 1.
     bool cold;
     bool is_method;
+    bool preserves_method;
     uint8_t pending_deletion;
     int32_t index;           // Index of ENTER_EXECUTOR (if code isn't NULL, below).
     int32_t bloom_array_idx;        // Index in interp->executor_blooms/executor_ptrs.

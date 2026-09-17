@@ -1050,6 +1050,58 @@ class TestMethodFrontend(unittest.TestCase):
             list(caller(factory("wrong type"), 3))
 
     @disable_gc()
+    def test_trace_inlines_method_with_large_attribute_caches(self):
+        namespace = {}
+        source = ["def callee(record, value):"]
+        source.extend(["    value += record.increment"] * 12)
+        source.append("    return value")
+        exec("\n".join(source), namespace)
+        function = namespace["callee"]
+        # The caches make this exceed the old 128-code-unit limit, although
+        # the actual instruction stream is short enough to trace through.
+        self.assertGreater(len(function.__code__.co_code) // 2, 128)
+        self.assertLess(len(list(dis.get_instructions(function))), 128)
+
+        class Record:
+            increment = 10
+
+        record = Record()
+        record.increment = 10
+
+        def caller(function, record, count):
+            for value in range(count):
+                yield function(record, value)
+
+        count = TIER2_THRESHOLD
+        self.assertEqual(list(caller(function, record, count)),
+                         list(range(120, count + 120)))
+        old_traces = [trace for trace in get_all_executors(caller)
+                      if "_BINARY_OP_ADD_INT" in get_opnames(trace)]
+        self.assertTrue(old_traces)
+        self.assertIsNone(get_first_executor(function))
+        self.assertEqual(list(itertools.starmap(function, itertools.repeat(
+            (record, 2), TIER2_RESUME_THRESHOLD))),
+            [122] * TIER2_RESUME_THRESHOLD)
+        method = get_first_executor(function)
+        self.assertIn("_METHOD_EXIT", get_opnames(method))
+        self.assertTrue(all(trace.is_valid() for trace in old_traces))
+
+        # Also check a fresh caller trace after the method is installed.
+        reset_code(caller)
+        self.assertEqual(list(caller(function, record, count * 3)),
+                         list(range(120, count * 3 + 120)))
+        names = [name for trace in get_all_executors(caller)
+                 for name in get_opnames(trace)]
+        self.assertIn("_BINARY_OP_ADD_INT", names)
+        self.assertTrue(method.is_valid())
+
+        record.increment = 20
+        self.assertEqual(list(caller(function, record, 3)), [240, 241, 242])
+        record.increment = "wrong type"
+        with self.assertRaises(TypeError):
+            list(caller(function, record, 3))
+
+    @disable_gc()
     def test_method_closure_returns_to_compiled_caller(self):
         def factory(offset):
             def add(value):

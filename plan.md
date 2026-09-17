@@ -1811,3 +1811,405 @@ process sample files, identity manifest, comparison scripts and final test logs;
 exclude build trees, dependency installations and intermediate experiments.
 The pre-existing executable-bit change to benchmarks/go.py remains outside
 this commit. No push, GitHub post or PR change is authorized or performed.
+
+## 2026-09-17: Full free-threaded pyperformance comparison preparation
+
+The user will run the benchmark suite locally. Prepare a script that freezes
+local main and HEAD, builds both with --disable-gil, native JIT and -O3, and
+explicitly disables PGO, LTO and pydebug. Main receives only the previously
+documented LLVM 21 local-reference reachability build fix. Do not reuse the
+GIL-enabled eight-workload measurements for this new comparison.
+
+Select pyperformance 1.14.0's all group, including explicit records for Python
+version exclusions and dependency failures. Prepare identical external wheels
+for both FT environments before timing. Run two reversed-order blocks, retaining
+all failures and samples; check actual worker GIL/JIT state via a pyperf hook.
+Keep NetworkX's worker timeout at 15 seconds and bound its complete process
+tree at 180 seconds. Parallel workloads retain a shared multiple-CPU affinity.
+
+Implementation: benchmarks/run_pyperformance_compare.sh, the helper and hook in
+Tools/benchmarks/, and benchmarks/pyperformance_compare.md. Preparation and
+runner validation are in progress; the full timing run is reserved for the user.
+
+Preparation validation: six harness regression tests pass, including rejection
+of wrong GIL/JIT/PGO/LTO state, equal weighting of worker means, dependency and
+missing-run reporting, immutable input hashing, and killing grandchildren on
+timeout. Real pyperf 2.10 JSON loading/multi-result aggregation also passes, and
+the hook reports FT=1, GIL=0, JIT=1 on the existing native FT interpreter.
+Separate build and runtime environments: PYTHON_GIL=0 cannot be passed to the
+ordinary host bootstrap Python. The installed 3.13 again stalled reaping LLVM
+children; use PYTHON_FOR_REGEN=/usr/bin/python3.12 as recorded earlier in this
+plan. Main now builds successfully; candidate/dependency preparation continues.
+
+Preparation completed for main d95f29589e03 and candidate 20c964a7486c from
+committed source archives. Both report cpython-316t, GIL disabled, JIT enabled,
+GCC -O3/frame pointers, and explicit PGO/LTO/pydebug disable flags. Artifacts:
+jit-artifacts/pyperformance-ft-20260917/. The selected suite has 97 specifications
+and 22 dependency groups; 94 specifications are ready. FastAPI's pydantic-core
+uses PyO3 with a Python 3.14 maximum, and both SQLAlchemy specifications require
+greenlet code referring to the removed FRAME_OWNED_BY_CSTACK. These three
+dependency failures remain explicit in suite.json, not silently excluded.
+
+Reuse pure-Python wheels to avoid obsolete packaging backends (observed with
+cloudpickle/flit), while native dependencies are source-built with shared flags
+and the same wheels installed on both sides. Preserve the previous failed
+preparation and its logs. Seven harness tests pass, including actual pyperf JSON
+roundtrips, multi-result aggregation and corruption detection; Ruff, shell
+syntax and diff checks pass. The final end-to-end runner validation uses base64
+and json_dumps, both binaries and two reversed blocks: all eight commands pass,
+with worker runtime metadata and pre/post identities verified. It is stored
+separately in runner-validation-v2 and is not a performance comparison. The
+first validation exposed a symlinked-venv path comparison issue; retain it too.
+The runner now compares canonical venv directories and checks each venv binary
+hash against its intended build.
+
+Before finalizing identities.json, verified that both builds, stdlib trees,
+workload files and all prepared dependency trees are unchanged. No full timing
+run has started. Next action belongs to the user: execute
+benchmarks/run_pyperformance_compare.sh --run-only
+jit-artifacts/pyperformance-ft-20260917. It records all outcomes and writes
+compare.md; an exit status of 1 is expected while any specification remains
+unavailable or fails. No runtime implementation changes, commits, pushes,
+GitHub posts or PR edits were made for this preparation task.
+
+## 2026-09-17: User-run free-threaded pyperformance results
+
+The user completed the full run. Analyze the saved data without rebuilding,
+rerunning benchmarks or profiling. The runner finished all 376 scheduled
+commands and verified post-run identities. A separate read-only verification
+also confirms that binaries, extensions, stdlib, dependencies, workloads and
+the frozen runner still match their recorded identities. Verify every saved
+JSON hash and reproduce the original 105 result aggregates from raw values.
+
+The original compare.md contains 83 complete specifications / 105 results,
+with a candidate/main runtime geometric mean of 0.933551 (6.64% reduction).
+The two startup specifications actually completed successfully: our collector
+incorrectly required python_executable metadata for bench_command, which uses
+command instead. Audit all eight raw command results, executable paths,
+arguments, runtime metadata and measured workers, then supplement the analysis
+without changing state.json, raw JSON or the original comparison. Startup
+ratios are 1.001232 and 1.001814. Their hook checks the measuring interpreter,
+not the internal state of each spawned startup child; retain this limitation.
+
+The supplemented comparison covers 85 of 97 specifications / 107 results.
+Its geometric mean is 0.934779: 6.52% less elapsed time, about 1.070x speed.
+There are 23 results with >=10% reduction, 37 with 2--10% reduction, 41 within
+2%, and six with >2% increases. These are descriptive effect bands, not
+significance tests. The median ratio is 0.974896. Improvements include
+spectral_norm (-64.52%), richards (-42.14%), nbody (-40.72%), html5lib (-15.03%),
+go (-13.94%), Mako (-11.80%) and Chameleon (-10.80%). Excluding six names
+overlapping earlier standalone targets gives 0.948056, but this post-hoc
+sensitivity check is not an independent holdout evaluation.
+
+The largest regression is unpack_sequence: 1.361553 (+36.16%), with both
+ordering blocks regressing (1.3775 / 1.3458). Its cause remains unprofiled.
+Other >2% increases are deepcopy_reduce (+5.34%), regex_dna (+3.45%), regex_v8
+(+3.41%), asyncio_tcp (+3.33%) and generators (+3.00%). Two blocks and the
+pyperf stability warnings do not justify narrow confidence claims.
+
+Twelve specifications remain incomplete. Distinguish dependency/API failures,
+our missing pip/distutils compatibility preparation, port 8001 already in use,
+and NetworkX's retained 15-second worker timeout from performance regressions.
+Both SQLAlchemy workloads remain unavailable because greenlet fails to build.
+Candidate tornado_http (both blocks) and concurrent_imap (one block) fail the
+hook's final JIT-enabled check, rather than crashing. Python/pystate.c disables
+FT JIT and invalidates executors when a second thread state joins, and can
+re-enable JIT on returning to a single thread state. The observations are
+consistent with this safety guard; no transition timeline was recorded and
+no parallel specification supplies a complete paired comparison. Before/after
+hooks do not prove uninterrupted JIT operation during the measured interval.
+
+Evidence and the Japanese report are in
+jit-artifacts/pyperformance-ft-20260917/{summary.md,ratios.csv,analysis.json,
+summarize_results.py}. Both branches used FT, JIT enabled, -O3, no PGO/LTO;
+these results must not be substituted for the earlier GIL standalone goal.
+The comparison shows broader improvements, but does not establish a 20%
+suite-wide gain or a 10% gain for every benchmark. Without a JIT-off control,
+attribute the result to the branch, not solely to method JIT.
+
+Next proposed work: diagnose unpack_sequence; address the multiple-thread JIT
+restriction; fix startup/vendor/compatibility preparation for future runs;
+then investigate the smaller regressions and mostly unchanged workloads.
+This analysis task changes neither runtime implementation nor the frozen
+runner, and performs no commit, push, GitHub post or PR edit.
+
+## 2026-09-17: GIL-enabled PGO/full-LTO comparison preparation
+
+The user requests another full pyperformance comparison, this time with the
+ordinary GIL build and PGO plus LTO enabled. Prepare committed local main and
+HEAD in a new directory, jit-artifacts/pyperformance-gil-pgo-lto-20260917; leave
+the full timing run to the user. Both sides retain native JIT, GCC -O3 and
+frame pointers. Main keeps only the documented LLVM 21 reachability patch.
+
+Add a gil-pgo-lto profile and a dedicated shell entry point. Use the standard
+PGO test selection with random seed 0, JIT disabled during training, and a
+private cold pycache prefix with bytecode writes disabled. Preserve build logs
+and per-build GCC profile hashes. This is one fixed independently trained
+binary per branch, not a measurement of variance across rebuilds.
+
+Fix command-based pyperf metadata validation for startup/2to3 and install the
+vendored lib2to3 plus pinned setuptools before timing, so legacy distutils users
+can import and benchmark execution does not install dependencies. Preserve the
+previous FT runner under its experiment's frozen-runner/ directory, matching
+the original recorded source hashes. No previous raw data or identities change.
+
+Initial harness validation passes eight tests; one real-pyperf roundtrip test
+requires the prepared controller. Build/dependency preparation and end-to-end
+validation are in progress. NetworkX keeps its 15-second worker timeout.
+
+The first main PGO training attempt fails test_re because the sandbox prohibits
+the multiprocessing forkserver's socket bind. Preserve that log and all its
+profiles; do not accept incomplete training. Split profile generation, training
+and final linking into explicit stages. Before training either side, move all
+bootstrap or failed-attempt .gcda files to an archival directory so they cannot
+accumulate into the successful training. Resume preparation with the required
+ordinary socket/network permissions. All nine harness tests, including real
+pyperf roundtrips, pass; Ruff and shell/diff checks also pass.
+
+Main's ordinary-permission PGO training passes all 43 selected test files
+(10,468 tests, 460 skips), and its final build confirms GIL=1, JIT=1,
+-fprofile-use/-fprofile-correction and GCC full LTO. Its binary SHA is
+dd63a277fd879d2f0993655c0502ee26f98bf37656890ae30fdeedb734287c49.
+The candidate build is underway. All 84 source files in the selected training
+test modules are byte-identical between the two commits; save training-corpus.json
+and representative parser/compiler profile-counter dumps. _decimal and _tkinter
+are unavailable in this host configuration; record the Python Decimal fallback
+explicitly rather than presenting it as the native backend.
+
+Candidate PGO training also passes 43/43 files (10,468 tests, 460 skips), in
+the same recorded order as main. Representative GCC parser/compiler profiles
+have matching function/counter counts, but aggregate arc counts differ by
+about 0.7--0.8%; do not claim identical executed training work from matching
+test sources and seeds. Retain both raw counter dumps and training-validation.json.
+The final candidate PGO/LTO link and dependency preparation are still pending.
+
+Preparation complete. Candidate's final SHA is
+bdf6485883f352519b20ba77efbb7674bef4ae30e8be4be94f021cbaf09497e4;
+both builds verify GIL=1/JIT=1, actual PGO/full-LTO flags and frame pointers
+in representative native functions. All 97 specifications remain selected;
+94 have installed dependencies across 23 groups. FastAPI and both SQLAlchemy
+specifications retain their Python 3.16 dependency build errors. Untimed checks
+confirm Django/SymPy imports now work with the distutils compatibility package;
+Dask/cloudpickle still fails on DELETE_GLOBAL and Genshi expression compilation
+still fails on ast.Expression's required body argument. Preserve these results
+in preflight.json and logs instead of dropping the specifications.
+
+The actual prepared PGO/LTO controller passes all nine harness tests. End-to-end
+runner validation covers 2to3, base64 and both startup specifications on both
+binaries in two reversed blocks: all 16 commands pass, with runtime metadata,
+result parsing and pre/post identity checks. Its 1-worker/1-value data is only
+validation, saved separately in runner-validation/, not a speed comparison.
+A final --prepare-only reuse verifies the frozen preparation without rebuilding.
+Ruff, shell syntax and git diff --check pass. Main and candidate PGO/profile
+artifacts, backend inventory, compiler identities and frozen runner copies are
+preserved. The Japanese preparation report is preparation.md in the new output
+directory; benchmarks/pyperformance_compare.md documents both profiles.
+
+The full timing run remains unstarted (no top-level state.json). User command:
+benchmarks/run_pyperformance_gil_pgo_lto.sh --run-only
+jit-artifacts/pyperformance-gil-pgo-lto-20260917.
+No runtime implementation changes, commits, pushes, GitHub posts or PR edits.
+
+## 2026-09-17: GIL/PGO/full-LTO user-run results
+
+The user completed the full comparison. Analyze saved data only: no rebuild,
+benchmark rerun or profiling. All 376 scheduled commands finished: 360 succeed,
+12 fail and four reach the NetworkX worker timeout. Three specifications have
+dependency preparation failures. Ninety of 97 specifications / 116 results
+have complete main/candidate data in both blocks.
+
+The runtime geometric mean is 1.026787: candidate takes 2.68% longer than main.
+The two block geometric means are 1.025716 and 1.027859. Seventeen results
+improve by >=2%, 45 are within 2%, and 54 regress by >=2%; only four improve by
+>=10%. These are descriptive bands, not significance tests. The median ratio
+is 1.014633; equal weighting of specifications gives 1.022469.
+
+Improvements remain for spectral_norm (-44.94%), hexiom (-12.77%), raytrace
+(-11.51%), BPE (-11.41%), deltablue (-7.87%) and go (-6.62%). Major regressions
+include richards_super (+49.31%), richards (+41.57%), logging_format (+20.17%),
+pprint_safe_repr (+18.20%) and deepcopy_memo (+17.28%). Both Richards results
+regress in both ordering blocks with worker-mean CVs around 0.3--1.2%; these
+large differences merit investigation. Their causes remain unprofiled.
+
+bench_mp_pool averages +59.78% but is highly variable (block ratios 1.4763 /
+1.7293, worker-mean CVs 44.9% / 31.4%). Keep it in the primary aggregate.
+The post-hoc aggregate without it still regresses by 2.28%, so the suite-level
+direction is not solely due to this unstable result. Telco uses Python Decimal
+because both builds lack _decimal; excluding it still gives 1.025659.
+
+On the 107 results common with the earlier FT/no-PGO/no-LTO experiment, the
+branch ratio changes from 0.934779 to 1.023079. Thus the larger completed set
+does not explain the reversal. Richards changes from a large gain to a large
+regression, while the previous unpack_sequence regression disappears (0.9991).
+GIL and PGO/LTO changed together, with some dependency preparation changes too;
+do not attribute the reversal to PGO alone. Neither experiment has a JIT-off
+control or independent replicate builds.
+
+Remaining failures: port 8001 occupied for asyncio_websockets; cloudpickle's
+DELETE_GLOBAL incompatibility for Dask; Genshi's required ast.Expression body;
+NetworkX k_core's retained 15-second timeout; PyO3's Python-version limit for
+FastAPI; greenlet's removed FRAME_OWNED_BY_CSTACK reference for both SQLAlchemy
+specifications. 2to3, Django, SymPy, tornado_http and concurrent_imap now complete.
+
+Verify every saved JSON SHA, all accepted workers' GIL/JIT states, executable
+paths, worker/value/warmup counts and means against raw data. All 116 aggregates
+match the original runner. Recheck current binaries, extensions, stdlib,
+dependencies, workloads and runner against frozen identities: all match.
+Recompute the previous common FT ratios from their raw data as well. Retain
+pyperf warnings (42 main / 45 candidate results) and the two-block limitation.
+
+Save summary.md, ratios.csv, compare_ft.csv, analysis.json and the reproducible
+summarize_results.py under jit-artifacts/pyperformance-gil-pgo-lto-20260917/;
+preserve original compare.md, state.json and raw results. The analysis script
+passes Ruff and git diff --check is clean. Suggested next investigation is the
+Richards regression, with a GIL/no-PGO/no-LTO control to separate build factors,
+then logging/deepcopy/pprint. This turn performs analysis only, with no runtime
+or runner changes, commits, pushes, GitHub posts or PR edits.
+
+## 2026-09-17: Richards Super regression investigation
+
+The user requests diagnosis and a JIT improvement. Preserve the completed
+pyperformance experiments and use a new richards-super-20260917 artifact tree.
+The fixed-work driver imports the unmodified pyperformance implementation,
+checks its return value and final counters, and uses identical iteration counts.
+Two reversed screening blocks reproduce the regression in both configurations:
+PGO/LTO main about 13.0ms versus candidate 17.6ms; no-PGO/no-LTO main about
+13.5ms versus candidate 18.7ms. These exploratory timings include identical
+warmup/iteration growth and are not substitutes for the original pyperf data.
+The regression is not exclusive to PGO. Next inspect generated method/loop
+executors and profile fixed work before deciding on a runtime change.
+
+Fixed-work perf (300 iterations, CPU 2, cpu_core/cycles/u, FP call graphs)
+records no lost samples. Candidate spends more cycles in type/attribute/super
+lookup; main's trace optimizer folds super lookup, whereas candidate methods
+retain _LOAD_SUPER_ATTR_METHOD. JIT-off controls instead slightly favor the
+candidate (about 28.7ms versus 29.8ms), localizing this regression to JIT paths.
+The main trace crosses Task.runTask into subclass fn; the candidate loop ends
+at the runTask method entry because its 130 code units exceed the 128-unit
+tracing boundary. Attribute inline caches inflate that size without executing
+instructions. An ablation removing the boundary/invalidation screens at 15.0ms
+versus the frozen pre-change 18.7ms (no PGO/LTO); it remains slower than main.
+This is exploratory evidence, not the final performance comparison.
+
+Implement a focused alternative: retain the CFG inliner's existing budget,
+but decide trace-through eligibility from decoded instruction count (128),
+excluding cache storage. Store the decision before publishing the executor;
+use it consistently for ENTER_EXECUTOR and invalidating older caller traces.
+Retain the existing 40-addition long-method boundary test and add a short,
+attribute-heavy callee regression: both existing and newly generated caller
+traces must inline, while method entry, changed values and TypeError still
+work. Build and validate this version before selecting it; then compare both
+Richards variants and the previous standalone workloads. Preserve all frozen
+experiment executables and original pyperformance results.
+
+The instruction-count variant passes the new regression and existing large
+callee boundary test. The new test fails on the frozen pre-change executable
+because installing the callee invalidates an already useful caller trace.
+GIL native/debug and FT debug each pass 1,346 JIT, monitoring, tracing,
+generator, coroutine and call tests (five/six expected skips). FT native is
+building. No ownership/arithmetic operation or workload is changed.
+
+Two reversed no-PGO screening blocks give richards_super main 13.53/13.69ms,
+before 18.85/19.00ms, after 14.60/14.64ms; richards main 12.19/12.26ms,
+before 16.75/16.76ms, after 12.83/12.82ms. All outputs/counters check out.
+These are fixed-work exploratory results with ten warmup iterations, five
+values of ten iterations, fresh processes and CPU 2. Preserve the raw samples
+and binaries. The residual main gap remains; do not claim it is eliminated.
+
+Prepare an isolated PGO/full-LTO candidate from HEAD plus the five runtime/test
+files, leaving the previous PGO experiment untouched. Use the original GCC/FP
+configure flags and standard --pgo training, JIT disabled, seed zero, private
+cold pycache, and isolate bootstrap profiles before training. PGO is needed
+here specifically to validate the reported optimized-build regression. Final
+measurements will start only after all builds/tests stop, compare the original
+pyperformance Richards workloads, and screen the existing standalone cohort.
+
+FT native also passes all 1,346 related tests (six skips), completing validation
+in all four configurations. Preserve the expected failing new-test-before.log
+as evidence that the regression test distinguishes the old policy. Static
+inspection counts Task.runTask at 130 code units but only 36 instructions;
+Device/Idle/Work fn likewise have 55/69/82 instructions despite their cache-
+expanded sizes. The helper profile alone does not explain every excess cycle.
+
+The final PGO comparison protocol is fixed before timing: original unmodified
+richards and richards_super scripts, main/before/after in three rotating order
+blocks, four fresh workers per variant/block, five warmups and five measured
+values with eight loops (matching the original experiment's loop count), CPU 2.
+Use the runtime-checking pyperf hook, verify worker GIL/JIT state and exact
+counts, and retain warnings/raw results. Report geometric means of block ratios
+and log-ratio t intervals over the three blocks; these do not cover build/CPU
+variation. No outlier removal or early success stopping. Then screen all eight
+standalone workloads against the frozen pre-change no-PGO binary with two
+reversed blocks, three warmups and five values. The full pyperformance suite
+is not being rerun for this focused change.
+
+The first PGO training attempt fails solely in test_re's forkserver startup:
+AF_UNIX listener.bind raises PermissionError under the sandbox. It runs 10,468
+tests with 460 skips, but is not accepted as training data. Preserve its log
+and move all .gcda files and any private pycache into the failed-training
+artifact directories. Re-run the identical 43-file standard training under
+approved sandbox escalation, then perform the PGO/LTO rebuild. Do not skip the
+failed test or mix its profiles with the successful retry. finish_pgo.py and
+pgo-retry-progress.log record this recovery. Performance timing remains paused.
+
+PGO training retry succeeds with the same 10,468 tests / 460 skips as the
+original experiment. The final private PGO/full-LTO binary SHA is
+cf8599235cf221e63aa750218f6daf07a1d7a0ddb7f3dc3128dbaac1fa6ed6a1.
+It also passes the 1,346 related tests and the fixed-work Richards output checks.
+The private source snapshot still matches the five validated working files.
+
+The two-block no-PGO standalone screen completes all 32 runs with hashes and
+checksums verified. After/before ratios: BPE 1.0029, btree 1.0598, deltablue
+0.9990, go 1.0022, hexiom 1.0014, raytrace 0.9996, spectral_norm 0.9988,
+SQLAlchemy 0.9947. Btree regresses in both blocks (1.0613/1.0582): this is a
+material tradeoff, not noise to omit or a claim of universal improvement.
+Seven other point estimates remain within 0.6% of before, with only two blocks.
+The original pyperformance Richards comparison is now running without build,
+test, profiler or other benchmark overlap. Final report must include the btree
+regression and the residual main gap, not only Richards improvements.
+
+Final PGO/LTO comparison completes all 18 commands / 72 timed workers. All
+binary/extension/dependency/workload identities match before and after; runtime
+hooks confirm GIL=1, JIT=1, non-FT, CPU 2 and the declared loop/value/warmup
+counts. Recompute each saved JSON SHA and worker mean from raw data: all match.
+The three-block geometric after/before ratios are richards_super 0.720512
+(95% block-log t interval 0.704350--0.737044) and richards 0.723878
+(0.667661--0.784829). Mean times are 19.399ms -> 13.977ms for richards_super
+and 16.896ms -> 12.225ms for richards. Main averages 13.028ms / 11.672ms.
+After/main ratios remain 1.072811 and 1.047437: the regression is reduced,
+not eliminated. Nine of 18 results retain pyperf stability warnings; before
+richards worker means vary 16.18--20.00ms (CV 6.84%). Keep every worker.
+Richards_super CVs are main 1.23%, before 0.82%, after 0.31%. This is a
+fixed-build comparison, not a claim about independent rebuilds or the suite.
+
+After timing stops, repeat the fixed-work native profile with the original
+300 measured iterations + 10 warmups and identical perf event/period. No lost
+samples. Cycles fall from 11.424 to 9.058 billion (20.7%); type lookup self share
+4.47% -> 2.39%, instance attribute lookup 2.49% -> 1.13%, super lookup 2.21% ->
+about 0.01%. These measurements use the diagnostic driver, not the pyperf timing
+protocol, and retain the anonymous-JIT-symbol limitation. They support the
+cross-function optimization explanation, without assigning every saved cycle.
+
+Record the implementation, original-policy reproducer, four configuration
+validations plus final PGO validation, primary comparison/intervals/warnings,
+no-PGO cohort regression, binaries and artifact paths in
+benchmarks/richards_super_report.md. Keep this as a local JIT improvement with
+an explicit btree tradeoff; do not claim all eight improve or that the earlier
+main-relative ten-percent goal has been revalidated. Next work is to profile
+btree's newly traceable callees (including loops) to refine boundary selection,
+and inspect the remaining Richards method guards/polymorphic exits. No new
+runtime edits are made after the validated/frozen snapshot. No commit, push,
+GitHub post or PR change is performed. Preserve the user's go.py mode change.
+
+## 2026-09-17: Continue Richards Super and B-tree optimization
+
+The user explicitly requests committing the current JIT change, then continuing
+until richards_super and btree are each faster than the frozen main baseline.
+Commit the focused runtime change, both generated evaluation-loop headers,
+regression test, report and progress log; preserve unrelated working changes
+and all existing frozen binaries. No push, GitHub post or PR edit is authorized.
+Use richards-btree-20260917 for new experiments. Iterate with GIL/no-PGO/no-LTO
+builds, retaining FT correctness checks, and validate the final candidate with
+the GIL/PGO/full-LTO configuration that exposed Richards Super's regression.
+Measure btree against main directly (the preceding 6% loss was against the
+older candidate, not main). Keep workload/input/output checks unchanged.

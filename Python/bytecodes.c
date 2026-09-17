@@ -3985,12 +3985,10 @@ dummy_func(
                 int og_opcode = executor->vm_data.opcode;
                 int og_oparg = (oparg & ~255) | executor->vm_data.oparg;
                 next_instr = this_instr;
-                /* Preserve large methods instead of tracing a prefix and
-                 * abandoning the compiled continuation at a later exit.
-                 * Small methods retain profitable trace inlining, using
-                 * the same size bound as the method frontend. */
-                if ((!executor->vm_data.is_method ||
-                     Py_SIZE(code) <= METHOD_INLINE_MAX_CODE_SIZE) &&
+                /* Preserve methods too large to trace through. Count actual
+                 * instructions rather than inline-cache storage when the
+                 * method is compiled, so attribute-heavy callees can inline. */
+                if (!executor->vm_data.preserves_method &&
                     _PyJit_EnterExecutorShouldStopTracing(og_opcode)) {
                     if (_PyOpcode_Caches[_PyOpcode_Deopt[og_opcode]]) {
                         PAUSE_ADAPTIVE_COUNTER(this_instr[1].counter);

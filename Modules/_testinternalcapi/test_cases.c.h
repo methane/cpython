@@ -6292,8 +6292,7 @@
                 int og_opcode = executor->vm_data.opcode;
                 int og_oparg = (oparg & ~255) | executor->vm_data.oparg;
                 next_instr = this_instr;
-                if ((!executor->vm_data.is_method ||
-                     Py_SIZE(code) <= METHOD_INLINE_MAX_CODE_SIZE) &&
+                if (!executor->vm_data.preserves_method &&
                     _PyJit_EnterExecutorShouldStopTracing(og_opcode)) {
                     if (_PyOpcode_Caches[_PyOpcode_Deopt[og_opcode]]) {
                         PAUSE_ADAPTIVE_COUNTER(this_instr[1].counter);

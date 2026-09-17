@@ -1667,6 +1667,7 @@ make_executor_from_uops(
         return NULL;
     }
     executor->vm_data.is_method = is_method;
+    executor->vm_data.preserves_method = false;
 #ifdef Py_DEBUG
     char *python_lltrace = Py_GETENV("PYTHON_LLTRACE");
     int lltrace = 0;
@@ -4844,9 +4845,11 @@ _PyJit_CompileMethod(PyThreadState *tstate, _PyInterpreterFrame *frame)
     }
     executor->trivial_call = trivial_call;
     executor->trivial_operand = trivial_operand;
+    executor->vm_data.preserves_method =
+        instruction_count > METHOD_TRACE_MAX_INSTRUCTIONS;
     insert_executor(code, entry, index, executor);
     executor->vm_data.chain_depth = 0;
-    if (Py_SIZE(code) > METHOD_INLINE_MAX_CODE_SIZE) {
+    if (executor->vm_data.preserves_method) {
         /* Older loop traces may have inlined this body before its method
          * entry became hot. Rebuild those traces with the method boundary. */
         invalidate_inlined_method_traces(interp, code);
@@ -5055,6 +5058,7 @@ _Py_ExecutorInit(_PyExecutorObject *executor, const _PyBloomFilter *dependency_s
      * both native and interpreted Tier 2 builds. */
     executor->vm_data.cold = false;
     executor->vm_data.is_method = false;
+    executor->vm_data.preserves_method = false;
     executor->trivial_call = 0;
     executor->trivial_operand = 0;
     executor->vm_data.pending_deletion = 0;
@@ -5076,6 +5080,7 @@ make_cold_executor(uint16_t opcode)
     // Cold executors bypass _Py_ExecutorInit().
     FT_ATOMIC_STORE_UINT8(cold->vm_data.valid, true);
     cold->vm_data.is_method = false;
+    cold->vm_data.preserves_method = false;
     cold->trivial_call = 0;
     cold->trivial_operand = 0;
     cold->vm_data.pending_deletion = 0;
