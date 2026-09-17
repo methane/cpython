@@ -572,7 +572,7 @@ fuse_list_pair_comparisons(_PyUOpInstruction *buffer, int length)
         uint64_t tuple_local = buffer[pc++].operand0;
         for (int i = 0; i < 2; i++) {
             int pop = PAIR_NEXT();
-            if (pop != _POP_TOP && pop != _POP_TOP_NOP) {
+            if (pop != _POP_TOP && pop != _POP_TOP_NOP && pop != _POP_TOP_SHARED) {
                 goto next_pair;
             }
             pc++;
@@ -612,6 +612,7 @@ fuse_list_length_predicates(_PyUOpInstruction *buffer, int length)
         for (int i = 0; i < 2; i++) {
             pc = region_skip_recorded(buffer, pc, end);
             if (pc >= end || (buffer[pc].opcode != _POP_TOP &&
+                              buffer[pc].opcode != _POP_TOP_SHARED &&
                               buffer[pc].opcode != _POP_TOP_NOP)) {
                 goto next_list_length;
             }
@@ -627,6 +628,7 @@ fuse_list_length_predicates(_PyUOpInstruction *buffer, int length)
         for (int i = 0; i < 2; i++) {
             pc = region_skip_recorded(buffer, pc, end);
             if (pc >= end || (buffer[pc].opcode != _POP_TOP &&
+                              buffer[pc].opcode != _POP_TOP_SHARED &&
                               buffer[pc].opcode != _POP_TOP_NOP)) {
                 goto next_list_length;
             }
@@ -899,9 +901,10 @@ lower_int_attribute_updates(_PyUOpInstruction *buffer, int length)
         return;
     }
     for (int start = 0; start < length; start++) {
-        int local;
+        int local = 0;
         int end = Py_MIN(length, start + 64);
-        int pc = region_local(buffer, start, end, &local);
+        bool stack_owner = buffer[start].opcode == _COPY && buffer[start].oparg == 1;
+        int pc = stack_owner ? start : region_local(buffer, start, end, &local);
         if (pc < 0 || local > 255) {
             continue;
         }
@@ -929,7 +932,9 @@ lower_int_attribute_updates(_PyUOpInstruction *buffer, int length)
         bool managed = buffer[pc].opcode == _LOAD_ATTR_INSTANCE_VALUE;
         uint64_t offset = buffer[pc].operand0;
         pc = region_skip(buffer, pc + 1, end);
-        if (pc >= end || (buffer[pc].opcode != _POP_TOP && buffer[pc].opcode != _POP_TOP_NOP)) {
+        if (pc >= end || (buffer[pc].opcode != _POP_TOP &&
+                         buffer[pc].opcode != _POP_TOP_SHARED &&
+                         buffer[pc].opcode != _POP_TOP_NOP)) {
             continue;
         }
         pc = region_skip(buffer, pc + 1, end);
@@ -980,10 +985,7 @@ lower_int_attribute_updates(_PyUOpInstruction *buffer, int length)
             }
             pc = region_skip(buffer, pc + 1, end);
         }
-        if (managed) {
-            if (pc >= end || buffer[pc].opcode != _GUARD_DORV_NO_DICT) {
-                continue;
-            }
+        if (pc < end && buffer[pc].opcode == _GUARD_DORV_NO_DICT) {
             pc = region_skip(buffer, pc + 1, end);
         }
         int store_op = managed ? _STORE_ATTR_INSTANCE_VALUE : _STORE_ATTR_SLOT;
@@ -998,13 +1000,17 @@ lower_int_attribute_updates(_PyUOpInstruction *buffer, int length)
             continue;
         }
         pc = region_skip(buffer, pc + 1, end);
-        if (pc >= end || (buffer[pc].opcode != _POP_TOP && buffer[pc].opcode != _POP_TOP_NOP)) {
+        if (pc >= end || (buffer[pc].opcode != _POP_TOP &&
+                         buffer[pc].opcode != _POP_TOP_SHARED &&
+                         buffer[pc].opcode != _POP_TOP_NOP)) {
             continue;
         }
         uintptr_t arithmetic_ip = buffer[arithmetic_end - 3].operand1;
-        for (int i = start; i < arithmetic_end; i++) {
-            if (buffer[i].opcode == _SET_IP) {
-                arithmetic_ip = buffer[i].operand0;
+        if (arithmetic_ip == 0) {
+            for (int i = start; i < arithmetic_end; i++) {
+                if (buffer[i].opcode == _SET_IP) {
+                    arithmetic_ip = buffer[i].operand0;
+                }
             }
         }
         if (arithmetic_ip == 0 ||
@@ -1012,12 +1018,95 @@ lower_int_attribute_updates(_PyUOpInstruction *buffer, int length)
         {
             continue;
         }
-        buffer[start].opcode = _UPDATE_INT_ATTRIBUTE;
+        buffer[start].opcode = stack_owner ? _UPDATE_INT_ATTRIBUTE_STACK
+                                          : _UPDATE_INT_ATTRIBUTE;
         buffer[start].oparg = 0;
         buffer[start].operand0 = (uint64_t)local | (offset << 8) |
             ((uint64_t)version << 24) | ((uint64_t)managed << 56) |
             ((uint64_t)operation << 57) | ((uint64_t)constant << 58);
         buffer[start].operand1 = arithmetic_ip;
+        /* A stack receiver remains live through the update and is closed
+         * in its original position, after the store has completed. */
+        for (int i = start + 1; i < pc + !stack_owner; i++) {
+            buffer[i].opcode = _NOP;
+        }
+        start = pc;
+    }
+}
+
+/* Combine an immortal constant and local receiver with a guarded field store.
+ * The local keeps the receiver alive, and all guards precede mutation. */
+static void
+lower_constant_attribute_stores(_PyUOpInstruction *buffer, int length)
+{
+#ifdef Py_GIL_DISABLED
+    return;
+#endif
+    if (SIZEOF_VOID_P != 8) {
+        return;
+    }
+    for (int start = 0; start < length; start++) {
+        PyObject *constant = NULL;
+        if (buffer[start].opcode == _LOAD_CONST_INLINE_BORROW) {
+            constant = (PyObject *)(uintptr_t)buffer[start].operand0;
+        }
+        else if (buffer[start].opcode == _LOAD_COMMON_CONSTANT &&
+                 buffer[start].oparg < NUM_COMMON_CONSTANTS)
+        {
+            constant = PyStackRef_AsPyObjectBorrow(
+                _PyInterpreterState_GET()->common_consts[buffer[start].oparg]);
+        }
+        else if (buffer[start].opcode == _LOAD_SMALL_INT &&
+                 buffer[start].oparg < _PY_NSMALLPOSINTS)
+        {
+            constant = (PyObject *)&_PyLong_SMALL_INTS[
+                _PY_NSMALLNEGINTS + buffer[start].oparg];
+        }
+        if (constant == NULL || !_Py_IsImmortal(constant)) {
+            continue;
+        }
+        int end = Py_MIN(length, start + 16);
+        int local;
+        int pc = region_local(buffer, start + 1, end, &local);
+        if (pc < 0 || local > 255) {
+            continue;
+        }
+        pc = region_skip(buffer, pc, end);
+        if (pc < end && buffer[pc].opcode == _LOCK_OBJECT) {
+            pc = region_skip(buffer, pc + 1, end);
+        }
+        unsigned guards = 0;
+        if (pc < end && (buffer[pc].opcode == _GUARD_TYPE_VERSION ||
+                        buffer[pc].opcode == _GUARD_TYPE_VERSION_LOCKED))
+        {
+            guards |= 1;
+            pc = region_skip(buffer, pc + 1, end);
+        }
+        if (pc < end && buffer[pc].opcode == _GUARD_DORV_NO_DICT) {
+            guards |= 2;
+            pc = region_skip(buffer, pc + 1, end);
+        }
+        if (pc >= end || (buffer[pc].opcode != _STORE_ATTR_INSTANCE_VALUE_NOESCAPE &&
+                          buffer[pc].opcode != _STORE_ATTR_SLOT_NOESCAPE) ||
+            buffer[pc].operand0 > UINT16_MAX || buffer[pc].operand1 == 0 ||
+            buffer[pc].operand1 > UINT32_MAX)
+        {
+            continue;
+        }
+        bool managed = buffer[pc].opcode == _STORE_ATTR_INSTANCE_VALUE_NOESCAPE;
+        uint64_t layout = local | (buffer[pc].operand0 << 8) |
+            (buffer[pc].operand1 << 24) | ((uint64_t)managed << 56);
+        pc = region_skip(buffer, pc + 1, end);
+        if (pc >= end || (buffer[pc].opcode != _POP_TOP_NOP &&
+                         buffer[pc].opcode != _POP_TOP &&
+                         buffer[pc].opcode != _POP_TOP_SHARED))
+        {
+            continue;
+        }
+        buffer[start].opcode = _STORE_CONST_ATTRIBUTE;
+        buffer[start].oparg = guards;
+        buffer[start].operand0 = layout;
+        buffer[start].operand1 = (uintptr_t)constant;
         for (int i = start + 1; i <= pc; i++) {
             buffer[i].opcode = _NOP;
         }

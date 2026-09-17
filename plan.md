@@ -2213,3 +2213,225 @@ builds, retaining FT correctness checks, and validate the final candidate with
 the GIL/PGO/full-LTO configuration that exposed Richards Super's regression.
 Measure btree against main directly (the preceding 6% loss was against the
 older candidate, not main). Keep workload/input/output checks unchanged.
+
+Committed the preceding change as c2def12a37e. The generated-case test suite
+also passes all 102 tests. A direct two-block PGO comparison of standalone
+btree confirms the current candidate is already faster than main (roughly
+49ms versus 57ms); the earlier 6% regression used an older candidate baseline.
+
+Inspecting method translation reveals both root and inlined CFG compilation
+emit _CHECK_PERIODIC before JUMP_FORWARD as well as backward jumps. Match
+normal bytecode semantics: keep checks only for JUMP_BACKWARD, retain the
+no-interrupt backward variant, and preserve method-entry/call checks. Add a
+branching root/inlined-callee regression and retain the existing short-loop
+periodic regression. Screen this C-only change before adding other optimizations.
+
+The forward-jump fix passes the three periodic-check tests. Its two reversed
+fixed-work screens show little Richards Super benefit; retain it for matching
+bytecode semantics, without claiming it closes the main gap. The first test
+body was too small (the bytecode optimizer duplicated its tail and removed
+JUMP_FORWARD); a larger shared tail now tests the intended CFG edge.
+
+A named-executor native profile identifies repeated None guards and inline-value
+checks in the hot cross-function traces. Introduce borrowed-reference None
+operations in both trace and method compilation. They discard only references
+already proved borrowed, preserve branch side exits, and cannot call finalizers.
+Keep ordinary owned-reference tests on the original closing operation. Seven
+focused None tests pass, including an owned temporary with an observed finalizer
+and both borrowed guard side exits. Two reversed no-PGO screens improve Richards
+Super from approximately 14.64ms to 14.34ms, still behind main's 13.54ms.
+
+Next experiment removes repeated managed-inline-value guards for the same
+symbol in a trace until an emitted operation can escape. A no-dict store guard
+also proves the weaker read guard. Restrict this to GIL builds: another thread
+can change inline values in FT. Add regressions for repeated reads, replacing
+__dict__, and the same callback changing __dict__ after trace warmup. Artifacts
+are in richards-btree-20260917; none of these exploratory timings overlap builds,
+correctness tests, or profiling. Final correctness and PGO validation remain.
+
+The managed-guard screen gives only a small additional benefit, with substantial
+main-process variation (14.94ms then 13.72ms); it is not sufficient evidence that
+main has been beaten. Add a GIL-only shared-reference cleanup: an owned local
+alias or an existing embedded executor constant proves that closing the stack
+reference cannot call a finalizer. Keep the decrement, and fail loudly if the
+ownership proof is broken. Tests cover returned aliases, reference counts,
+finalizer order, embedded constants and global replacement. The initial full
+optimizer run exposes one region-matcher interaction and a cleanup-count
+expectation; teach existing length/list regions to accept shared cleanup and
+retain the original reference releases. All 460 optimizer tests then pass
+(4 skips). The shared-cleanup screen is about 14.15ms versus 14.28ms before;
+main again varies by process (15.93ms / 13.63ms), so use the final multi-worker
+protocol rather than selecting the favorable main process.
+
+Extend existing integer-attribute update fusion to a receiver already on the
+stack, including globals and temporary call results. Preserve that receiver
+and its final cleanup after the completed store; guard type, dictionary layout
+and exact compact integers before any mutation. This retains the existing
+fallbacks and arithmetic error location. Tests will cover integer boundaries,
+float fallback, dictionary replacement and a temporary receiver whose finalizer
+observes the new value. This targets ordinary attribute counters, not benchmark
+names or inputs. Final configuration matrix and PGO comparison remain pending.
+
+Integer attribute fusion needs the BINARY_OP annotation to take precedence over
+an earlier saved LOAD_ATTR IP. The temporary-receiver regression exposed that
+missed match; fix it and keep both failure logs. Extend the guarded region to
+reuse an exact compact integer only when the field has the sole reference,
+excluding cached small integers and representation overflow. Test aliases,
+compact boundaries, large-int/float fallback, and finalizer order. Mark the
+sign/digit-count setter as non-escaping in the case generator; it only writes
+integer representation fields. All 462 optimizer tests pass (4 skips).
+
+A further borrowed-owner store-fusion experiment passes correctness tests but
+regresses Richards Super (~14.02ms versus reuse's 13.86ms in two reversed
+blocks). Reject that experiment and restore the unfused stores. Preserve its
+binaries/results. The accepted runtime is the reuse2 candidate, approximately
+1% behind the faster main processes without PGO. Freeze that source and run the
+full correctness matrix and original PGO/full-LTO build before judging the
+requested main comparison. A six-block/four-worker protocol (all permutations
+of main, c2def-before, after) is prepared for both Richards Super and standalone
+B-tree; its outcome is not yet known.
+
+The frozen accepted source passes all seven related test files in both debug
+configurations: 1,458 tests with 5 GIL skips and 11 FT skips. This includes
+reference/debug assertions and generated-case tests, not just timing checks.
+The native GIL/FT matrix and a private PGO/full-LTO build are in progress. PGO
+uses the original standard task, hash seed and compiler flags, with JIT disabled
+during training and isolated bootstrap profiles; local IPC is permitted for
+the standard test task. No performance measurements run alongside these jobs.
+
+Native GIL and FT also pass the same 1,458-test matrix (5 / 11 skips).
+The complete standard PGO training passes 43 files / 10,468 tests (460 skips),
+with no failed profiles mixed into the build. The final profile-use/LTO link is
+in progress. Working runtime and test hashes match all 12 changed files in the
+private source manifest. Final comparisons additionally probe GIL/JIT/debug,
+frame-pointer, optimization, PGO and LTO settings for every binary.
+
+The first complete PGO comparison verifies all 36 result files / 144 processes
+and all identities. Richards Super: main 12.998ms, c2def-before 13.980ms,
+after 13.379ms. After/before improves 4.3%, but after/main is still about 1.0294.
+B-tree: main 56.815ms, before 49.481ms, after 48.923ms; after/main 0.86109
+(95% block interval 0.85740--0.86479). The target is not achieved yet. Keep all
+six blocks and continue; these frozen results belong to the reuse2 source.
+
+A subsequent attempt to remove globals/builtins guards using a symbolic
+constant function is rejected by two existing semantic regressions: functions
+sharing code/version can have different globals or builtins. The symbolic
+optimizer can learn a function constant from a version guard, so this is not
+proof of exact function identity. Restore all mapping identity guards; do not
+weaken those tests. Preserve the failed logs. Continue with guarded constant
+attribute stores, whose type/layout and value proofs are explicit.
+
+Constant attribute stores now fuse an immortal value and a guarded local
+receiver. Preserve exactly the type/layout checks that remain in the input;
+write only after proving the old value can be closed without calling Python.
+Skip the write when the field already holds the constant. Managed dictionaries
+retain insertion-order updates. Slot/managed tests cover finalizer order,
+deleted fields and replaced dictionaries. All 463 optimizer tests pass. Two
+reversed screening blocks improve about 1.2% over reuse2; PGO is still pending.
+
+Splitting exact-call argument binding into known-self/absent-self operations
+passes 653 optimizer/call tests, but does not show a reproducible timing gain.
+Keep the initial 16.54ms slow process and all six follow-up processes (roughly
+13.7--13.9ms); the outlier is not explained by those repetitions. Remove that
+split. Try fusing exact-call initialization, saved return offset and frame
+entry after symbolic analysis instead. The real Python frame, recursion count,
+stack state and instrumentation entry remain present. Initially apply only to
+three adjacent tracing operations; method CFG lowering is unchanged. This is
+an experiment, not an accepted speedup.
+
+Frame-entry fusion also shows no improvement (~13.84ms versus ~13.81ms), so
+remove it. A warmed-up-only perf recording maps all 59 live JIT ranges and
+attributes most time to schedule traces and their side traces; the previous
+unmapped side traces are now visible. Preserve the perf data, map, binary
+images and samples. A fixed inline-values offset prototype passes optimizer
+tests but is slower in its short screen, including one 15.99ms process; remove
+it rather than retaining an unproved optimization.
+
+The traces still contain generic isinstance calls even when the observed
+instance has exactly the constant class being tested. Record the instance type
+in CALL_ISINSTANCE, and emit an exact-type guard before folding a witnessed
+exact match. Do not assume unrelated types return false: __class__ can invoke
+Python or raise. Tuple class sets and custom metaclasses retain existing
+behavior. Add fallback tests for subclasses, unrelated objects, __class__
+properties and raised exceptions. Validate correctness and screen the change
+before another PGO build. None of these exploratory screens replaces the
+completed phase-one PGO comparison.
+
+The first isinstance recording prototype crashes during bootstrap: recording
+shapes are shared across the CALL family, and a fixed NOS read can dereference
+the absent-self NULL marker on a one-argument call. gdb confirms the fault in
+that recorder. Replace it with an argument-array recorder that first checks
+oparg > 0. Add a regression mixing zero/one-argument, bound-method and builtin
+calls. Keep the failed build and debugger output; only a rebuilt and fully
+validated candidate can be benchmarked or accepted.
+
+The safe recorder and exact-match isinstance optimization pass all 465
+optimizer tests (4 skips). The witnessed-match candidate takes 13.52/13.59ms
+in two reversed screening blocks versus main 13.74/13.79ms. Keep the slow
+16.87ms const-store process too; do not use it to inflate the claimed gain.
+The no-PGO screen is promising, but primary PGO confirmation remains required.
+
+Extend the existing GIL method _LOAD_DEREF_GUARDED operation to tracing.
+Successful cell reads cannot invoke Python; empty cells exit without changing
+the stack and execute the original unbound-cell error path. FT retains its
+existing getter. Add a traced-cell mutation, deletion and repopulation test.
+Prepare a separate v2 artifact directory for final source/build identities;
+never overwrite or relabel the completed phase-one PGO measurements.
+
+Freeze the phase-two source (constant stores, witnessed isinstance matches,
+traced guarded cell reads) for the final matrix. GIL native and debug each pass
+all seven files / 1,462 tests (5 skips). The FT builds and private v2 PGO/full-LTO
+build run without simultaneous performance measurements. The new report now
+separates phase-one measured results from pending phase-two results and records
+the rejected experiments and recording-layout failure.
+
+The native FT build also passes all seven files / 1,462 tests (13 skips).
+All four correctness configurations are now complete. The private PGO
+source matches all 14 changed runtime/test files. Performance timing remains
+paused until the full PGO training and final link have completed.
+
+The v2 PGO training completes successfully using the standard task; the
+profile-use/LTO build is now running. A separate, untimed executor dump confirms
+that the sampled schedule trace contains the new exact-type guard and guarded
+cell load, with no generic isinstance call or generic cell load in that trace.
+The dump is diagnostic only: its incidental timing is excluded from all
+performance comparisons.
+
+The v2 PGO/full-LTO binary is complete, SHA-256
+babf6145453655e71b4abc068f5f4a232caed4e7069259cf3821a1039f54d861.
+Its JIT-enabled seven-file validation passes 1,462 tests (5 skips), and the
+working runtime/test files match the frozen source manifest. The six-block
+primary comparison is running with no overlapping builds or tests. Early
+blocks suggest Richards around 12.9ms versus main 13.1ms, and B-tree around
+48.5ms versus main 57.0ms; retain these as preliminary observations only until
+all blocks and the independent worker-file audit complete.
+
+The completed v2 PGO comparison achieves the requested fixed-build target:
+Richards Super main 12.990626ms, before 14.014115ms, after 12.902483ms;
+after/main geometric ratio 0.993224 (95% block interval 0.989157--0.997309),
+after/before 0.920696. B-tree main 56.944422ms, before 49.619643ms,
+after 48.539315ms; after/main 0.852399 (0.850716--0.854084),
+after/before 0.978237. Both beat main in every block. Preserve all 144 workers,
+including slower before samples; all 36 raw files/checksums/identities pass the
+independent audit. Richards' 0.68% margin is small and specific to these fixed
+GIL/PGO/full-LTO builds. Do not generalize it to FT or the whole suite.
+
+Run a separate reversed two-block screen of all eight standalone workloads
+against c2def-before, because these optimizations affect shared JIT paths.
+Finish the report with those results and keep benchmarks/go.py's unrelated
+executable-bit change outside the implementation commits.
+
+The separate standalone regression screen completes all eight workloads /
+32 processes, with identical result checks and verified binary, extension,
+workload and dependency identities. Candidate/c2def-before ratios: BPE 0.9922,
+B-tree 0.9695, DeltaBlue 0.9858, Go 0.9856, Hexiom 0.9867, raytrace 1.0062,
+spectral_norm 0.9962, SQLAlchemy 1.0005. This small screen is not a significance
+test; retain raytrace's +0.62% point estimate and SQLAlchemy's flat result.
+The larger 24-worker main comparison establishes the requested two-workload
+outcome. The implementation and report are complete; no further code change or
+performance tuning is needed for this task. Future work can test independent
+rebuilds and the full pyperformance suite, rather than inferring those results
+from the two targets. Initial changes were committed as c2def12a37e; this
+follow-up implementation, tests, generated files and report are included in
+this commit at the user's request. The unrelated benchmarks/go.py mode change
+is excluded.

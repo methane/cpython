@@ -1126,6 +1126,10 @@ _PyJit_translate_single_bytecode_to_trace(
                     uop_buffer_last(trace)->operand1 = read_u32(cache->version) |
                         ((uint64_t)(uop == _LOAD_ATTR_INSTANCE_VALUE) << 32);
                 }
+                else if (uop == _STORE_ATTR_SLOT || uop == _STORE_ATTR_INSTANCE_VALUE) {
+                    _PyAttrCache *cache = (_PyAttrCache *)(this_instr + 1);
+                    uop_buffer_last(trace)->operand1 = read_u32(cache->version);
+                }
                 else if (uop == _BINARY_OP_ADD_INT || uop == _BINARY_OP_SUBTRACT_INT) {
                     /* Keep the error location for post-analysis regions even
                      * when analysis removes the preceding _SET_IP. */
@@ -2064,6 +2068,9 @@ method_apply_stack_effect(
         (opcode == LOAD_ATTR_INSTANCE_VALUE ||
          opcode == LOAD_ATTR_INSTANCE_VALUE_NONDATA || opcode == LOAD_ATTR_SLOT) &&
         *depth > 0 && stack[*depth - 1].borrowed;
+    bool borrowed_none_test =
+        (base_opcode == POP_JUMP_IF_NONE || base_opcode == POP_JUMP_IF_NOT_NONE) &&
+        *depth > 0 && stack[*depth - 1].borrowed;
     bool guarded_deref = false;
     bool borrowed_store = false;
 #ifndef Py_GIL_DISABLED
@@ -2094,7 +2101,7 @@ method_apply_stack_effect(
     // C-level escaping operation in their macro (notably CALL_PY_EXACT_ARGS).
     bool may_escape = OPCODE_HAS_ESCAPES(opcode) ||
         base_opcode == CALL || base_opcode == CALL_KW;
-    if (may_escape && !borrowed_attribute &&
+    if (may_escape && !borrowed_attribute && !borrowed_none_test &&
         !guarded_deref && !safe_store && !borrowed_store &&
         !(opcode == BUILD_MAP && mi->oparg == 0) &&
         !method_is_empty_set_call(opcode, mi->oparg, values, locals_count, *depth)) {
@@ -3455,6 +3462,11 @@ method_translate_instruction(
         }
         uop = method_optimize_guard(
             (int)uop, operand, uop_state, locals_count, uop_stack_depth);
+        if (uop == _IS_NONE && uop_stack_depth > 0 &&
+            uop_state[locals_count + uop_stack_depth - 1].borrowed)
+        {
+            uop = _IS_NONE_BORROW;
+        }
         if (uop == _PUSH_NULL_CONDITIONAL) {
             /* Resolve the static stack effect before assigning stack-cache
              * registers, just as the tracing optimizer does. */
@@ -3578,6 +3590,12 @@ method_translate_instruction(
                 bytecode + mi->opcode_offset + 1);
             buffer[*length - 1].operand1 = read_u32(cache->version) |
                 ((uint64_t)(uop == _LOAD_ATTR_INSTANCE_VALUE) << 32);
+        }
+        else if (uop == _STORE_ATTR_SLOT_NOESCAPE ||
+                 uop == _STORE_ATTR_INSTANCE_VALUE_NOESCAPE)
+        {
+            _PyAttrCache *cache = (_PyAttrCache *)(instr + 1);
+            buffer[*length - 1].operand1 = read_u32(cache->version);
         }
         if (uop == _PUSH_FRAME) {
             PyFunctionObject *func = allow_inline && inline_version >= FUNC_VERSION_FIRST_VALID
@@ -4161,7 +4179,7 @@ method_inline_small_cfg(
             }
             if (i == block->last && block->terminator == METHOD_JUMP) {
                 int opcode = _PyOpcode_Deopt[mi->opcode];
-                if (opcode != JUMP_BACKWARD_NO_INTERRUPT &&
+                if (opcode == JUMP_BACKWARD &&
                     opcode != JUMP_FORWARD &&
                     !method_emit(buffer, length, limit, _CHECK_PERIODIC,
                                  0, 0, mi->offset))
@@ -4447,6 +4465,7 @@ method_finish_uops(
             end++;
         }
         lower_int_attribute_updates(input + start, end - start);
+        lower_constant_attribute_stores(input + start, end - start);
         lower_bounded_int_regions(input + start, end - start);
         lower_len_regions(input + start, end - start);
         lower_tuple_comparisons(input + start, end - start);
@@ -4753,7 +4772,7 @@ _PyJit_CompileMethod(PyThreadState *tstate, _PyInterpreterFrame *frame)
                 break;
             }
             if (i == block->last && method_is_unconditional_jump(opcode)) {
-                if (opcode != JUMP_BACKWARD_NO_INTERRUPT &&
+                if (opcode == JUMP_BACKWARD &&
                     !method_emit(
                         input, &length, block_limit, _CHECK_PERIODIC, 0, 0,
                         mi->offset))
@@ -4945,6 +4964,7 @@ uop_optimize(
         lower_float_attribute_products(buffer, length);
         lower_int_attribute_comparisons(buffer, length);
         lower_int_attribute_updates(buffer, length);
+        lower_constant_attribute_stores(buffer, length);
         fuse_borrowed_input_cleanup(buffer, length);
     }
     assert(length < UOP_MAX_TRACE_LENGTH);

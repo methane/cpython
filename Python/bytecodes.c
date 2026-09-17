@@ -375,6 +375,12 @@ dummy_func(
             DEAD(value);
         }
 
+        tier2 op(_POP_TOP_SHARED, (value --)) {
+            /* Another owned local or an embedded executor constant keeps
+             * the object alive. Closing this reference cannot call Python. */
+            PyStackRef_CLOSE_SPECIALIZED(value, _PyJit_UnreachableDealloc);
+        }
+
         op(_POP_TOP_INT, (value --)) {
             assert(PyLong_CheckExact(PyStackRef_AsPyObjectBorrow(value)));
             PyStackRef_CLOSE_SPECIALIZED(value, _PyLong_ExactDealloc);
@@ -4050,6 +4056,12 @@ dummy_func(
             }
         }
 
+        tier2 op(_IS_NONE_BORROW, (value -- b)) {
+            assert(!PyStackRef_RefcountOnObject(value));
+            b = PyStackRef_IsNone(value) ? PyStackRef_True : PyStackRef_False;
+            DEAD(value);
+        }
+
         macro(POP_JUMP_IF_TRUE) = unused/1 + _POP_JUMP_IF_TRUE;
 
         macro(POP_JUMP_IF_FALSE) = unused/1 + _POP_JUMP_IF_FALSE;
@@ -5735,6 +5747,35 @@ dummy_func(
             INPUTS_DEAD();
         }
 
+        replicate(4) tier2 op(_STORE_CONST_ATTRIBUTE, (layout/4, constant/4 --)) {
+            _PyStackRef receiver = GETLOCAL(OPERAND0_FIELD(layout, 0, 8));
+            EXIT_IF(PyStackRef_IsNull(receiver));
+            PyObject *owner = PyStackRef_AsPyObjectBorrow(receiver);
+            if (oparg & 1) {
+                EXIT_IF(Py_TYPE(owner)->tp_version_tag != OPERAND0_FIELD(layout, 24, 32));
+            }
+            bool managed = OPERAND0_FIELD(layout, 56, 1);
+            if (oparg & 2) {
+                EXIT_IF(_PyObject_GetManagedDict(owner) != NULL ||
+                        !_PyObject_InlineValues(owner)->valid);
+            }
+            assert(_Py_IsImmortal(constant));
+            PyObject **slot = (PyObject **)((char *)owner + OPERAND0_FIELD(layout, 8, 16));
+            PyObject *old = *slot;
+            if (old != constant) {
+                EXIT_IF(old != NULL && !_PyJit_CanDecRefNoEscape(old));
+                *slot = constant;
+                if (managed && old == NULL) {
+                    PyDictValues *values = _PyObject_InlineValues(owner);
+                    _PyDictValues_AddToInsertionOrder(values, slot - values->values);
+                }
+                if (old != NULL) {
+                    _PyStackRef previous = PyStackRef_FromPyObjectSteal(old);
+                    _PyJit_CloseNoEscape(previous);
+                }
+            }
+        }
+
         tier2 op(_UPDATE_INT_ATTRIBUTE, (layout/4, arithmetic_ip/4 --)) {
             _PyStackRef receiver = GETLOCAL(OPERAND0_FIELD(layout, 0, 8));
             EXIT_IF(PyStackRef_IsNull(receiver));
@@ -5750,14 +5791,61 @@ dummy_func(
             Py_ssize_t value = _PyLong_CompactValue((PyLongObject *)old);
             Py_ssize_t constant = OPERAND0_FIELD(layout, 58, 6);
             value = OPERAND0_FIELD(layout, 57, 1) ? value - constant : value + constant;
-            PyObject *result = PyLong_FromSsize_t(value);
-            if (result == NULL) {
-                frame->instr_ptr = (_Py_CODEUNIT *)arithmetic_ip;
-                ERROR_NO_POP();
+            if (_PyObject_IsUniquelyReferenced(old) && !_PY_IS_SMALL_INT(value) &&
+                ((twodigits)((stwodigits)value) + PyLong_MASK <
+                 (twodigits)PyLong_MASK + PyLong_BASE))
+            {
+                /* The field owns the only reference, and no Python code can
+                 * observe the intermediate result of this guarded region. */
+                _PyLong_SetSignAndDigitCount((PyLongObject *)old, value < 0 ? -1 : 1, 1);
+                ((PyLongObject *)old)->long_value.ob_digit[0] =
+                    (digit)(value < 0 ? -value : value);
             }
-            *slot = result;
-            _PyStackRef previous = PyStackRef_FromPyObjectSteal(old);
-            PyStackRef_CLOSE_SPECIALIZED(previous, _PyLong_ExactDealloc);
+            else {
+                PyObject *result = PyLong_FromSsize_t(value);
+                if (result == NULL) {
+                    frame->instr_ptr = (_Py_CODEUNIT *)arithmetic_ip;
+                    ERROR_NO_POP();
+                }
+                *slot = result;
+                _PyStackRef previous = PyStackRef_FromPyObjectSteal(old);
+                PyStackRef_CLOSE_SPECIALIZED(previous, _PyLong_ExactDealloc);
+            }
+        }
+
+        tier2 op(_UPDATE_INT_ATTRIBUTE_STACK, (layout/4, arithmetic_ip/4, owner_st -- owner_st)) {
+            PyObject *owner = PyStackRef_AsPyObjectBorrow(owner_st);
+            EXIT_IF(Py_TYPE(owner)->tp_version_tag != OPERAND0_FIELD(layout, 24, 32));
+            EXIT_IF(OPERAND0_FIELD(layout, 56, 1) &&
+                    (_PyObject_GetManagedDict(owner) != NULL ||
+                     !_PyObject_InlineValues(owner)->valid));
+            PyObject **slot = (PyObject **)((char *)owner + OPERAND0_FIELD(layout, 8, 16));
+            PyObject *old = *slot;
+            EXIT_IF(old == NULL || !PyLong_CheckExact(old) ||
+                    !_PyLong_IsCompact((PyLongObject *)old));
+            Py_ssize_t value = _PyLong_CompactValue((PyLongObject *)old);
+            Py_ssize_t constant = OPERAND0_FIELD(layout, 58, 6);
+            value = OPERAND0_FIELD(layout, 57, 1) ? value - constant : value + constant;
+            if (_PyObject_IsUniquelyReferenced(old) && !_PY_IS_SMALL_INT(value) &&
+                ((twodigits)((stwodigits)value) + PyLong_MASK <
+                 (twodigits)PyLong_MASK + PyLong_BASE))
+            {
+                /* The field owns the only reference, and no Python code can
+                 * observe the intermediate result of this guarded region. */
+                _PyLong_SetSignAndDigitCount((PyLongObject *)old, value < 0 ? -1 : 1, 1);
+                ((PyLongObject *)old)->long_value.ob_digit[0] =
+                    (digit)(value < 0 ? -value : value);
+            }
+            else {
+                PyObject *result = PyLong_FromSsize_t(value);
+                if (result == NULL) {
+                    frame->instr_ptr = (_Py_CODEUNIT *)arithmetic_ip;
+                    ERROR_NO_POP();
+                }
+                *slot = result;
+                _PyStackRef previous = PyStackRef_FromPyObjectSteal(old);
+                PyStackRef_CLOSE_SPECIALIZED(previous, _PyLong_ExactDealloc);
+            }
         }
 
         // Attribute/attribute, attribute/local, attribute/constant and the
@@ -5920,6 +6008,7 @@ dummy_func(
         }
 
         macro(CALL_ISINSTANCE) =
+            _RECORD_CALL_ARG0_TYPE +
             unused/1 +
             unused/2 +
             _GUARD_THIRD_NULL +
@@ -6994,6 +7083,20 @@ dummy_func(
             AT_END_EXIT_IF(is_none);
         }
 
+        tier2 op(_GUARD_IS_NONE_POP_BORROW, (val -- )) {
+            assert(!PyStackRef_RefcountOnObject(val));
+            int is_none = PyStackRef_IsNone(val);
+            DEAD(val);
+            AT_END_EXIT_IF(!is_none);
+        }
+
+        tier2 op(_GUARD_IS_NOT_NONE_POP_BORROW, (val -- )) {
+            assert(!PyStackRef_RefcountOnObject(val));
+            int is_none = PyStackRef_IsNone(val);
+            DEAD(val);
+            AT_END_EXIT_IF(is_none);
+        }
+
         /* Method CFG labels specify a common stack-cache entry convention
          * for all predecessors and disappear during stack allocation. */
         tier2 op(_METHOD_LABEL, (--)) {
@@ -7453,6 +7556,14 @@ dummy_func(
 
         tier2 op(_RECORD_CALLABLE, (func, self, args[oparg] -- func, self, args[oparg])) {
             RECORD_VALUE(PyStackRef_AsPyObjectBorrow(func));
+        }
+
+        tier2 op(_RECORD_CALL_ARG0_TYPE, (func, self, args[oparg] -- func, self, args[oparg])) {
+            /* All CALL specializations share their recording layout. A call
+             * with zero or one argument may have NULL in the NOS position. */
+            if (oparg > 0) {
+                RECORD_VALUE(Py_TYPE(PyStackRef_AsPyObjectBorrow(args[0])));
+            }
         }
 
         tier2 op(_RECORD_CALLABLE_KW, (func, self, args[oparg], kwnames -- func, self, args[oparg], kwnames)) {

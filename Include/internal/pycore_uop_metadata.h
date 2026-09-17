@@ -77,6 +77,7 @@ const uint32_t _PyUop_Flags[MAX_UOP_ID+1] = {
     [_STORE_FAST_NOESCAPE] = HAS_ARG_FLAG | HAS_LOCAL_FLAG | HAS_EXIT_FLAG,
     [_POP_TOP] = HAS_ESCAPES_FLAG | HAS_PURE_FLAG,
     [_POP_TOP_NOP] = 0,
+    [_POP_TOP_SHARED] = 0,
     [_POP_TOP_INT] = 0,
     [_POP_TOP_FLOAT] = 0,
     [_POP_TOP_UNICODE] = 0,
@@ -290,6 +291,7 @@ const uint32_t _PyUop_Flags[MAX_UOP_ID+1] = {
     [_IMPORT_NAME] = HAS_ARG_FLAG | HAS_NAME_FLAG | HAS_ERROR_FLAG | HAS_ESCAPES_FLAG,
     [_IMPORT_FROM] = HAS_ARG_FLAG | HAS_NAME_FLAG | HAS_ERROR_FLAG | HAS_ESCAPES_FLAG,
     [_IS_NONE] = HAS_ESCAPES_FLAG,
+    [_IS_NONE_BORROW] = 0,
     [_GET_LEN] = HAS_ERROR_FLAG | HAS_ESCAPES_FLAG,
     [_MATCH_CLASS] = HAS_ARG_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG,
     [_MATCH_MAPPING] = 0,
@@ -384,7 +386,13 @@ const uint32_t _PyUop_Flags[MAX_UOP_ID+1] = {
     [_CALL_LEN_CONSUMER] = HAS_ARG_FLAG | HAS_LOCAL_FLAG | HAS_EXIT_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG,
     [_CALL_LEN_LEFT_COMPARE] = HAS_ARG_FLAG | HAS_EXIT_FLAG,
     [_CALL_LEN_LEFT_COMPARE_CLEAN] = HAS_ARG_FLAG | HAS_EXIT_FLAG,
-    [_UPDATE_INT_ATTRIBUTE] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG,
+    [_STORE_CONST_ATTRIBUTE_0] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG,
+    [_STORE_CONST_ATTRIBUTE_1] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG,
+    [_STORE_CONST_ATTRIBUTE_2] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG,
+    [_STORE_CONST_ATTRIBUTE_3] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG,
+    [_STORE_CONST_ATTRIBUTE] = HAS_ARG_FLAG | HAS_LOCAL_FLAG | HAS_EXIT_FLAG,
+    [_UPDATE_INT_ATTRIBUTE] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG,
+    [_UPDATE_INT_ATTRIBUTE_STACK] = HAS_EXIT_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG,
     [_COMPARE_INT_INPUTS_0] = HAS_EXIT_FLAG,
     [_COMPARE_INT_INPUTS_1] = HAS_EXIT_FLAG,
     [_COMPARE_INT_INPUTS_2] = HAS_EXIT_FLAG,
@@ -458,6 +466,8 @@ const uint32_t _PyUop_Flags[MAX_UOP_ID+1] = {
     [_GUARD_BIT_IS_UNSET_POP] = HAS_ARG_FLAG | HAS_EXIT_FLAG,
     [_GUARD_IS_NONE_POP] = HAS_EXIT_FLAG,
     [_GUARD_IS_NOT_NONE_POP] = HAS_EXIT_FLAG | HAS_ESCAPES_FLAG,
+    [_GUARD_IS_NONE_POP_BORROW] = HAS_EXIT_FLAG,
+    [_GUARD_IS_NOT_NONE_POP_BORROW] = HAS_EXIT_FLAG,
     [_METHOD_LABEL] = 0,
     [_METHOD_POP_JUMP_IF_FALSE] = HAS_EXIT_FLAG,
     [_METHOD_POP_JUMP_IF_TRUE] = HAS_EXIT_FLAG,
@@ -507,6 +517,7 @@ const uint32_t _PyUop_Flags[MAX_UOP_ID+1] = {
     [_RECORD_3OS_GEN_FUNC] = HAS_RECORDS_VALUE_FLAG,
     [_RECORD_4OS] = HAS_RECORDS_VALUE_FLAG,
     [_RECORD_CALLABLE] = HAS_ARG_FLAG | HAS_RECORDS_VALUE_FLAG,
+    [_RECORD_CALL_ARG0_TYPE] = HAS_ARG_FLAG | HAS_RECORDS_VALUE_FLAG,
     [_RECORD_CALLABLE_KW] = HAS_ARG_FLAG | HAS_RECORDS_VALUE_FLAG,
     [_RECORD_BOUND_METHOD] = HAS_ARG_FLAG | HAS_RECORDS_VALUE_FLAG,
     [_RECORD_CODE] = HAS_RECORDS_VALUE_FLAG,
@@ -522,6 +533,7 @@ const ReplicationRange _PyUop_Replication[MAX_UOP_ID+1] = {
     [_BINARY_OP_SUBSCR_BORROWED] = { 0, 2 },
     [_INIT_CALL_PY_EXACT_ARGS] = { 0, 5 },
     [_METHOD_TRY_SIMPLE_INIT] = { 1, 4 },
+    [_STORE_CONST_ATTRIBUTE] = { 0, 4 },
     [_COMPARE_INT_INPUTS] = { 0, 5 },
     [_FLOAT_ATTRIBUTE_SUM_PRODUCTS] = { 0, 2 },
     [_COMPARE_TUPLE_PAIR] = { 0, 2 },
@@ -909,6 +921,15 @@ const _PyUopCachingInfo _PyUop_Caching[MAX_UOP_ID+1] = {
             { 0, 1, _POP_TOP_NOP_r10 },
             { 1, 2, _POP_TOP_NOP_r21 },
             { 2, 3, _POP_TOP_NOP_r32 },
+        },
+    },
+    [_POP_TOP_SHARED] = {
+        .best = { 0, 1, 2, 3 },
+        .entries = {
+            { 0, 0, _POP_TOP_SHARED_r00 },
+            { 0, 1, _POP_TOP_SHARED_r10 },
+            { 1, 2, _POP_TOP_SHARED_r21 },
+            { 2, 3, _POP_TOP_SHARED_r32 },
         },
     },
     [_POP_TOP_INT] = {
@@ -2828,6 +2849,15 @@ const _PyUopCachingInfo _PyUop_Caching[MAX_UOP_ID+1] = {
             { -1, -1, -1 },
         },
     },
+    [_IS_NONE_BORROW] = {
+        .best = { 0, 1, 2, 3 },
+        .entries = {
+            { 1, 0, _IS_NONE_BORROW_r01 },
+            { 1, 1, _IS_NONE_BORROW_r11 },
+            { 2, 2, _IS_NONE_BORROW_r22 },
+            { 3, 3, _IS_NONE_BORROW_r33 },
+        },
+    },
     [_GET_LEN] = {
         .best = { 1, 1, 1, 1 },
         .entries = {
@@ -3674,11 +3704,65 @@ const _PyUopCachingInfo _PyUop_Caching[MAX_UOP_ID+1] = {
             { 1, 3, _CALL_LEN_LEFT_COMPARE_CLEAN_r31 },
         },
     },
+    [_STORE_CONST_ATTRIBUTE_0] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 0, 0, _STORE_CONST_ATTRIBUTE_0_r00 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_STORE_CONST_ATTRIBUTE_1] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 0, 0, _STORE_CONST_ATTRIBUTE_1_r00 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_STORE_CONST_ATTRIBUTE_2] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 0, 0, _STORE_CONST_ATTRIBUTE_2_r00 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_STORE_CONST_ATTRIBUTE_3] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 0, 0, _STORE_CONST_ATTRIBUTE_3_r00 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_STORE_CONST_ATTRIBUTE] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 0, 0, _STORE_CONST_ATTRIBUTE_r00 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
     [_UPDATE_INT_ATTRIBUTE] = {
         .best = { 0, 0, 0, 0 },
         .entries = {
             { 0, 0, _UPDATE_INT_ATTRIBUTE_r00 },
             { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_UPDATE_INT_ATTRIBUTE_STACK] = {
+        .best = { 1, 1, 1, 1 },
+        .entries = {
+            { -1, -1, -1 },
+            { 1, 1, _UPDATE_INT_ATTRIBUTE_STACK_r11 },
             { -1, -1, -1 },
             { -1, -1, -1 },
         },
@@ -4340,6 +4424,24 @@ const _PyUopCachingInfo _PyUop_Caching[MAX_UOP_ID+1] = {
             { -1, -1, -1 },
         },
     },
+    [_GUARD_IS_NONE_POP_BORROW] = {
+        .best = { 0, 1, 2, 3 },
+        .entries = {
+            { 0, 0, _GUARD_IS_NONE_POP_BORROW_r00 },
+            { 0, 0, _GUARD_IS_NONE_POP_BORROW_r10 },
+            { 1, 1, _GUARD_IS_NONE_POP_BORROW_r21 },
+            { 2, 2, _GUARD_IS_NONE_POP_BORROW_r32 },
+        },
+    },
+    [_GUARD_IS_NOT_NONE_POP_BORROW] = {
+        .best = { 0, 1, 2, 3 },
+        .entries = {
+            { 0, 0, _GUARD_IS_NOT_NONE_POP_BORROW_r00 },
+            { 0, 0, _GUARD_IS_NOT_NONE_POP_BORROW_r10 },
+            { 1, 1, _GUARD_IS_NOT_NONE_POP_BORROW_r21 },
+            { 2, 2, _GUARD_IS_NOT_NONE_POP_BORROW_r32 },
+        },
+    },
     [_METHOD_LABEL] = {
         .best = { 0, 1, 2, 3 },
         .entries = {
@@ -4836,6 +4938,10 @@ const uint16_t _PyUop_Uncached[MAX_UOP_REGS_ID+1] = {
     [_POP_TOP_NOP_r10] = _POP_TOP_NOP,
     [_POP_TOP_NOP_r21] = _POP_TOP_NOP,
     [_POP_TOP_NOP_r32] = _POP_TOP_NOP,
+    [_POP_TOP_SHARED_r00] = _POP_TOP_SHARED,
+    [_POP_TOP_SHARED_r10] = _POP_TOP_SHARED,
+    [_POP_TOP_SHARED_r21] = _POP_TOP_SHARED,
+    [_POP_TOP_SHARED_r32] = _POP_TOP_SHARED,
     [_POP_TOP_INT_r00] = _POP_TOP_INT,
     [_POP_TOP_INT_r10] = _POP_TOP_INT,
     [_POP_TOP_INT_r21] = _POP_TOP_INT,
@@ -5329,6 +5435,10 @@ const uint16_t _PyUop_Uncached[MAX_UOP_REGS_ID+1] = {
     [_IMPORT_NAME_r21] = _IMPORT_NAME,
     [_IMPORT_FROM_r12] = _IMPORT_FROM,
     [_IS_NONE_r11] = _IS_NONE,
+    [_IS_NONE_BORROW_r01] = _IS_NONE_BORROW,
+    [_IS_NONE_BORROW_r11] = _IS_NONE_BORROW,
+    [_IS_NONE_BORROW_r22] = _IS_NONE_BORROW,
+    [_IS_NONE_BORROW_r33] = _IS_NONE_BORROW,
     [_GET_LEN_r12] = _GET_LEN,
     [_MATCH_CLASS_r33] = _MATCH_CLASS,
     [_MATCH_MAPPING_r02] = _MATCH_MAPPING,
@@ -5518,7 +5628,13 @@ const uint16_t _PyUop_Uncached[MAX_UOP_REGS_ID+1] = {
     [_CALL_LEN_LEFT_COMPARE_CLEAN_r11] = _CALL_LEN_LEFT_COMPARE_CLEAN,
     [_CALL_LEN_LEFT_COMPARE_CLEAN_r21] = _CALL_LEN_LEFT_COMPARE_CLEAN,
     [_CALL_LEN_LEFT_COMPARE_CLEAN_r31] = _CALL_LEN_LEFT_COMPARE_CLEAN,
+    [_STORE_CONST_ATTRIBUTE_0_r00] = _STORE_CONST_ATTRIBUTE_0,
+    [_STORE_CONST_ATTRIBUTE_1_r00] = _STORE_CONST_ATTRIBUTE_1,
+    [_STORE_CONST_ATTRIBUTE_2_r00] = _STORE_CONST_ATTRIBUTE_2,
+    [_STORE_CONST_ATTRIBUTE_3_r00] = _STORE_CONST_ATTRIBUTE_3,
+    [_STORE_CONST_ATTRIBUTE_r00] = _STORE_CONST_ATTRIBUTE,
     [_UPDATE_INT_ATTRIBUTE_r00] = _UPDATE_INT_ATTRIBUTE,
+    [_UPDATE_INT_ATTRIBUTE_STACK_r11] = _UPDATE_INT_ATTRIBUTE_STACK,
     [_COMPARE_INT_INPUTS_0_r01] = _COMPARE_INT_INPUTS_0,
     [_COMPARE_INT_INPUTS_1_r01] = _COMPARE_INT_INPUTS_1,
     [_COMPARE_INT_INPUTS_2_r01] = _COMPARE_INT_INPUTS_2,
@@ -5665,6 +5781,14 @@ const uint16_t _PyUop_Uncached[MAX_UOP_REGS_ID+1] = {
     [_GUARD_IS_NONE_POP_r21] = _GUARD_IS_NONE_POP,
     [_GUARD_IS_NONE_POP_r32] = _GUARD_IS_NONE_POP,
     [_GUARD_IS_NOT_NONE_POP_r10] = _GUARD_IS_NOT_NONE_POP,
+    [_GUARD_IS_NONE_POP_BORROW_r00] = _GUARD_IS_NONE_POP_BORROW,
+    [_GUARD_IS_NONE_POP_BORROW_r10] = _GUARD_IS_NONE_POP_BORROW,
+    [_GUARD_IS_NONE_POP_BORROW_r21] = _GUARD_IS_NONE_POP_BORROW,
+    [_GUARD_IS_NONE_POP_BORROW_r32] = _GUARD_IS_NONE_POP_BORROW,
+    [_GUARD_IS_NOT_NONE_POP_BORROW_r00] = _GUARD_IS_NOT_NONE_POP_BORROW,
+    [_GUARD_IS_NOT_NONE_POP_BORROW_r10] = _GUARD_IS_NOT_NONE_POP_BORROW,
+    [_GUARD_IS_NOT_NONE_POP_BORROW_r21] = _GUARD_IS_NOT_NONE_POP_BORROW,
+    [_GUARD_IS_NOT_NONE_POP_BORROW_r32] = _GUARD_IS_NOT_NONE_POP_BORROW,
     [_METHOD_LABEL_r00] = _METHOD_LABEL,
     [_METHOD_LABEL_r11] = _METHOD_LABEL,
     [_METHOD_LABEL_r22] = _METHOD_LABEL,
@@ -6465,8 +6589,18 @@ const char *const _PyOpcode_uop_name[MAX_UOP_REGS_ID+1] = {
     [_GUARD_IS_NONE_POP_r10] = "_GUARD_IS_NONE_POP_r10",
     [_GUARD_IS_NONE_POP_r21] = "_GUARD_IS_NONE_POP_r21",
     [_GUARD_IS_NONE_POP_r32] = "_GUARD_IS_NONE_POP_r32",
+    [_GUARD_IS_NONE_POP_BORROW] = "_GUARD_IS_NONE_POP_BORROW",
+    [_GUARD_IS_NONE_POP_BORROW_r00] = "_GUARD_IS_NONE_POP_BORROW_r00",
+    [_GUARD_IS_NONE_POP_BORROW_r10] = "_GUARD_IS_NONE_POP_BORROW_r10",
+    [_GUARD_IS_NONE_POP_BORROW_r21] = "_GUARD_IS_NONE_POP_BORROW_r21",
+    [_GUARD_IS_NONE_POP_BORROW_r32] = "_GUARD_IS_NONE_POP_BORROW_r32",
     [_GUARD_IS_NOT_NONE_POP] = "_GUARD_IS_NOT_NONE_POP",
     [_GUARD_IS_NOT_NONE_POP_r10] = "_GUARD_IS_NOT_NONE_POP_r10",
+    [_GUARD_IS_NOT_NONE_POP_BORROW] = "_GUARD_IS_NOT_NONE_POP_BORROW",
+    [_GUARD_IS_NOT_NONE_POP_BORROW_r00] = "_GUARD_IS_NOT_NONE_POP_BORROW_r00",
+    [_GUARD_IS_NOT_NONE_POP_BORROW_r10] = "_GUARD_IS_NOT_NONE_POP_BORROW_r10",
+    [_GUARD_IS_NOT_NONE_POP_BORROW_r21] = "_GUARD_IS_NOT_NONE_POP_BORROW_r21",
+    [_GUARD_IS_NOT_NONE_POP_BORROW_r32] = "_GUARD_IS_NOT_NONE_POP_BORROW_r32",
     [_GUARD_IS_TRUE_POP] = "_GUARD_IS_TRUE_POP",
     [_GUARD_IS_TRUE_POP_r00] = "_GUARD_IS_TRUE_POP_r00",
     [_GUARD_IS_TRUE_POP_r10] = "_GUARD_IS_TRUE_POP_r10",
@@ -6777,6 +6911,11 @@ const char *const _PyOpcode_uop_name[MAX_UOP_REGS_ID+1] = {
     [_INT_REGION_START_4_r22] = "_INT_REGION_START_4_r22",
     [_IS_NONE] = "_IS_NONE",
     [_IS_NONE_r11] = "_IS_NONE_r11",
+    [_IS_NONE_BORROW] = "_IS_NONE_BORROW",
+    [_IS_NONE_BORROW_r01] = "_IS_NONE_BORROW_r01",
+    [_IS_NONE_BORROW_r11] = "_IS_NONE_BORROW_r11",
+    [_IS_NONE_BORROW_r22] = "_IS_NONE_BORROW_r22",
+    [_IS_NONE_BORROW_r33] = "_IS_NONE_BORROW_r33",
     [_IS_OP] = "_IS_OP",
     [_IS_OP_r03] = "_IS_OP_r03",
     [_IS_OP_r13] = "_IS_OP_r13",
@@ -7134,6 +7273,11 @@ const char *const _PyOpcode_uop_name[MAX_UOP_REGS_ID+1] = {
     [_POP_TOP_NOP_r32] = "_POP_TOP_NOP_r32",
     [_POP_TOP_OPARG] = "_POP_TOP_OPARG",
     [_POP_TOP_OPARG_r00] = "_POP_TOP_OPARG_r00",
+    [_POP_TOP_SHARED] = "_POP_TOP_SHARED",
+    [_POP_TOP_SHARED_r00] = "_POP_TOP_SHARED_r00",
+    [_POP_TOP_SHARED_r10] = "_POP_TOP_SHARED_r10",
+    [_POP_TOP_SHARED_r21] = "_POP_TOP_SHARED_r21",
+    [_POP_TOP_SHARED_r32] = "_POP_TOP_SHARED_r32",
     [_POP_TOP_UNICODE] = "_POP_TOP_UNICODE",
     [_POP_TOP_UNICODE_r00] = "_POP_TOP_UNICODE_r00",
     [_POP_TOP_UNICODE_r10] = "_POP_TOP_UNICODE_r10",
@@ -7166,6 +7310,7 @@ const char *const _PyOpcode_uop_name[MAX_UOP_REGS_ID+1] = {
     [_RECORD_BOUND_METHOD] = "_RECORD_BOUND_METHOD",
     [_RECORD_CALLABLE] = "_RECORD_CALLABLE",
     [_RECORD_CALLABLE_KW] = "_RECORD_CALLABLE_KW",
+    [_RECORD_CALL_ARG0_TYPE] = "_RECORD_CALL_ARG0_TYPE",
     [_RECORD_CODE] = "_RECORD_CODE",
     [_RECORD_NOS] = "_RECORD_NOS",
     [_RECORD_NOS_GEN_FUNC] = "_RECORD_NOS_GEN_FUNC",
@@ -7255,6 +7400,16 @@ const char *const _PyOpcode_uop_name[MAX_UOP_REGS_ID+1] = {
     [_STORE_ATTR_SLOT_NOESCAPE_r32] = "_STORE_ATTR_SLOT_NOESCAPE_r32",
     [_STORE_ATTR_WITH_HINT] = "_STORE_ATTR_WITH_HINT",
     [_STORE_ATTR_WITH_HINT_r21] = "_STORE_ATTR_WITH_HINT_r21",
+    [_STORE_CONST_ATTRIBUTE] = "_STORE_CONST_ATTRIBUTE",
+    [_STORE_CONST_ATTRIBUTE_r00] = "_STORE_CONST_ATTRIBUTE_r00",
+    [_STORE_CONST_ATTRIBUTE_0] = "_STORE_CONST_ATTRIBUTE_0",
+    [_STORE_CONST_ATTRIBUTE_0_r00] = "_STORE_CONST_ATTRIBUTE_0_r00",
+    [_STORE_CONST_ATTRIBUTE_1] = "_STORE_CONST_ATTRIBUTE_1",
+    [_STORE_CONST_ATTRIBUTE_1_r00] = "_STORE_CONST_ATTRIBUTE_1_r00",
+    [_STORE_CONST_ATTRIBUTE_2] = "_STORE_CONST_ATTRIBUTE_2",
+    [_STORE_CONST_ATTRIBUTE_2_r00] = "_STORE_CONST_ATTRIBUTE_2_r00",
+    [_STORE_CONST_ATTRIBUTE_3] = "_STORE_CONST_ATTRIBUTE_3",
+    [_STORE_CONST_ATTRIBUTE_3_r00] = "_STORE_CONST_ATTRIBUTE_3_r00",
     [_STORE_DEREF] = "_STORE_DEREF",
     [_STORE_DEREF_r10] = "_STORE_DEREF_r10",
     [_STORE_FAST_NOESCAPE] = "_STORE_FAST_NOESCAPE",
@@ -7396,6 +7551,8 @@ const char *const _PyOpcode_uop_name[MAX_UOP_REGS_ID+1] = {
     [_UNPACK_SEQUENCE_UNIQUE_TWO_TUPLE_r23] = "_UNPACK_SEQUENCE_UNIQUE_TWO_TUPLE_r23",
     [_UPDATE_INT_ATTRIBUTE] = "_UPDATE_INT_ATTRIBUTE",
     [_UPDATE_INT_ATTRIBUTE_r00] = "_UPDATE_INT_ATTRIBUTE_r00",
+    [_UPDATE_INT_ATTRIBUTE_STACK] = "_UPDATE_INT_ATTRIBUTE_STACK",
+    [_UPDATE_INT_ATTRIBUTE_STACK_r11] = "_UPDATE_INT_ATTRIBUTE_STACK_r11",
     [_WITH_EXCEPT_START] = "_WITH_EXCEPT_START",
     [_WITH_EXCEPT_START_r33] = "_WITH_EXCEPT_START_r33",
     [_YIELD_VALUE] = "_YIELD_VALUE",
@@ -7487,6 +7644,8 @@ int _PyUop_num_popped(int opcode, int oparg)
         case _POP_TOP:
             return 1;
         case _POP_TOP_NOP:
+            return 1;
+        case _POP_TOP_SHARED:
             return 1;
         case _POP_TOP_INT:
             return 1;
@@ -7914,6 +8073,8 @@ int _PyUop_num_popped(int opcode, int oparg)
             return 0;
         case _IS_NONE:
             return 1;
+        case _IS_NONE_BORROW:
+            return 1;
         case _GET_LEN:
             return 0;
         case _MATCH_CLASS:
@@ -8102,7 +8263,19 @@ int _PyUop_num_popped(int opcode, int oparg)
             return 4;
         case _CALL_LEN_LEFT_COMPARE_CLEAN:
             return 4;
+        case _STORE_CONST_ATTRIBUTE_0:
+            return 0;
+        case _STORE_CONST_ATTRIBUTE_1:
+            return 0;
+        case _STORE_CONST_ATTRIBUTE_2:
+            return 0;
+        case _STORE_CONST_ATTRIBUTE_3:
+            return 0;
+        case _STORE_CONST_ATTRIBUTE:
+            return 0;
         case _UPDATE_INT_ATTRIBUTE:
+            return 0;
+        case _UPDATE_INT_ATTRIBUTE_STACK:
             return 0;
         case _COMPARE_INT_INPUTS_0:
             return 0;
@@ -8250,6 +8423,10 @@ int _PyUop_num_popped(int opcode, int oparg)
             return 1;
         case _GUARD_IS_NOT_NONE_POP:
             return 1;
+        case _GUARD_IS_NONE_POP_BORROW:
+            return 1;
+        case _GUARD_IS_NOT_NONE_POP_BORROW:
+            return 1;
         case _METHOD_LABEL:
             return 0;
         case _METHOD_POP_JUMP_IF_FALSE:
@@ -8347,6 +8524,8 @@ int _PyUop_num_popped(int opcode, int oparg)
         case _RECORD_4OS:
             return 0;
         case _RECORD_CALLABLE:
+            return 0;
+        case _RECORD_CALL_ARG0_TYPE:
             return 0;
         case _RECORD_CALLABLE_KW:
             return 0;

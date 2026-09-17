@@ -683,6 +683,7 @@ NON_ESCAPING_FUNCTIONS = (
     "_PyLong_CompactValue",
     "_PyLong_DigitCount",
     "_PyLong_IsCompact",
+    "_PyLong_SetSignAndDigitCount",
     "_PyRegion_BoundedInput",
     "_PyRegion_NumberAttribute",
     "_PyRegion_NumberAsDouble",

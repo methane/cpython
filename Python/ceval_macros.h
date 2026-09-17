@@ -688,6 +688,13 @@ gen_try_set_executing(PyGenObject *gen)
     Py_TYPE(ITER)->_tp_iteritem((ITER), (INDEX))
 
 #if defined(_Py_TIER2) || defined(_Py_JIT)
+
+static inline void
+_PyJit_UnreachableDealloc(PyObject *op)
+{
+    Py_FatalError("JIT released the last reference to a shared object");
+}
+
 /* Declining this fast path leaves every input owned by the caller and does
  * not set an exception. Successful frame setup cannot call Python or GC. */
 static inline _PyInterpreterFrame *

@@ -482,6 +482,35 @@ optimize_pop_top(JitOptContext *ctx, _PyUOpInstruction *this_instr, JitOptRef va
         ADD_OP(_POP_TOP_UNICODE, 0, 0);
     }
     else {
+#ifndef Py_GIL_DISABLED
+        /* Borrowed locals do not own an additional reference. An owned
+         * alias in any active frame does, including a caller after inlining. */
+        for (int depth = 0; depth < ctx->curr_frame_depth; depth++) {
+            _Py_UOpsAbstractFrame *frame = &ctx->frames[depth];
+            for (int local = 0; local < frame->locals_len; local++) {
+                JitOptRef other = frame->locals[local];
+                if (!PyJitRef_IsBorrowed(other) && !PyJitRef_IsInvalid(other) &&
+                    PyJitRef_Unwrap(other) == PyJitRef_Unwrap(value))
+                {
+                    ADD_OP(_POP_TOP_SHARED, 0, 0);
+                    return;
+                }
+            }
+        }
+        PyObject *constant = sym_get_const(ctx, value);
+        if (constant != NULL) {
+            for (_PyUOpInstruction *op = ctx->out_buffer.start;
+                 op < ctx->out_buffer.next; op++)
+            {
+                if (op->opcode == _LOAD_CONST_INLINE &&
+                    (PyObject *)(uintptr_t)op->operand0 == constant)
+                {
+                    ADD_OP(_POP_TOP_SHARED, 0, 0);
+                    return;
+                }
+            }
+        }
+#endif
         ADD_OP(_POP_TOP, 0, 0);
     }
 }
@@ -640,6 +669,16 @@ optimize_uops(
 
     _PyUOpInstruction *this_instr = NULL;
     JitOptRef *stack_pointer = ctx->frame->stack_pointer;
+#ifndef Py_GIL_DISABLED
+    /* Inline values remain valid until an operation can call Python. A
+     * no-dict store guard also proves the weaker read guard. Track identities
+     * across inlined frames, without retaining facts across an escape. */
+    struct {
+        JitOptSymbol *owner;
+        unsigned guards;
+    } managed_guards[32];
+    int managed_guard_count = 0;
+#endif
 
     for (int i = 0; i < trace_len; i++) {
         this_instr = &trace[i];
@@ -676,6 +715,37 @@ optimize_uops(
         if (ctx->out_buffer.next == out_ptr) {
             *(ctx->out_buffer.next++) = *this_instr;
         }
+#ifndef Py_GIL_DISABLED
+        if (opcode == _CHECK_MANAGED_OBJECT_HAS_VALUES ||
+            opcode == _GUARD_DORV_NO_DICT)
+        {
+            JitOptSymbol *owner = PyJitRef_Unwrap(stack_pointer[-1]);
+            unsigned guard = opcode == _GUARD_DORV_NO_DICT ? 3 : 1;
+            int index;
+            for (index = 0; index < managed_guard_count; index++) {
+                if (managed_guards[index].owner == owner) {
+                    break;
+                }
+            }
+            if (index < managed_guard_count) {
+                if ((managed_guards[index].guards & guard) == guard) {
+                    out_ptr->opcode = _NOP;
+                }
+                managed_guards[index].guards |= guard;
+            }
+            else if (managed_guard_count < (int)Py_ARRAY_LENGTH(managed_guards)) {
+                managed_guards[index].owner = owner;
+                managed_guards[index].guards = guard;
+                managed_guard_count++;
+            }
+        }
+        for (_PyUOpInstruction *op = out_ptr; op < ctx->out_buffer.next; op++) {
+            if (_PyUop_Flags[op->opcode] & HAS_ESCAPES_FLAG) {
+                managed_guard_count = 0;
+                break;
+            }
+        }
+#endif
         assert(ctx->frame != NULL);
         DUMP_UOPS(ctx, "out", out_ptr, stack_pointer);
         if (!CURRENT_FRAME_IS_INIT_SHIM() && !ctx->done) {

@@ -136,6 +136,13 @@
             break;
         }
 
+        case _POP_TOP_SHARED: {
+            CHECK_STACK_BOUNDS(-1);
+            stack_pointer += -1;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            break;
+        }
+
         case _POP_TOP_INT: {
             JitOptRef value;
             value = stack_pointer[-1];
@@ -2484,6 +2491,10 @@
 
         case _LOAD_DEREF: {
             JitOptRef value;
+            #ifndef Py_GIL_DISABLED
+
+            ADD_OP(_LOAD_DEREF_GUARDED, oparg, 0);
+            #endif
             value = sym_new_not_null(ctx);
             CHECK_STACK_BOUNDS(1);
             stack_pointer[0] = value;
@@ -3760,6 +3771,13 @@
             else {
                 b = sym_new_type(ctx, &PyBool_Type);
             }
+            stack_pointer[-1] = b;
+            break;
+        }
+
+        case _IS_NONE_BORROW: {
+            JitOptRef b;
+            b = sym_new_not_null(ctx);
             stack_pointer[-1] = b;
             break;
         }
@@ -5114,7 +5132,15 @@
             break;
         }
 
+        case _STORE_CONST_ATTRIBUTE: {
+            break;
+        }
+
         case _UPDATE_INT_ATTRIBUTE: {
+            break;
+        }
+
+        case _UPDATE_INT_ATTRIBUTE_STACK: {
             break;
         }
 
@@ -5210,6 +5236,20 @@
             res = sym_new_type(ctx, &PyBool_Type);
             PyTypeObject *inst_type = sym_get_type(instance);
             PyTypeObject *cls_o = (PyTypeObject *)sym_get_const(ctx, cls);
+            if (inst_type == NULL && cls_o != NULL &&
+                sym_matches_type(cls, &PyType_Type) &&
+                sym_get_probable_type(instance) == cls_o)
+            {
+                ADD_OP(_GUARD_NOS_TYPE, 0, (uintptr_t)cls_o);
+                sym_set_type(instance, cls_o);
+                CHECK_STACK_BOUNDS(-3);
+                stack_pointer[-4] = res;
+                stack_pointer += -3;
+                ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                watch_type(cls_o, dependencies);
+                inst_type = cls_o;
+                stack_pointer += 3;
+            }
             if (inst_type && cls_o && sym_matches_type(cls, &PyType_Type)) {
                 PyObject *out = Py_False;
                 if (inst_type == cls_o || PyType_IsSubtype(inst_type, cls_o)) {
@@ -6039,6 +6079,9 @@
                 assert(!sym_matches_type(val, &_PyNone_Type));
                 eliminate_pop_guard(this_instr, ctx, true);
             }
+            else if (PyJitRef_IsBorrowed(val)) {
+                ADD_OP(_GUARD_IS_NONE_POP_BORROW, 0, 0);
+            }
             sym_set_const(val, Py_None);
             CHECK_STACK_BOUNDS(-1);
             stack_pointer += -1;
@@ -6058,6 +6101,23 @@
                 assert(!sym_matches_type(val, &_PyNone_Type));
                 eliminate_pop_guard(this_instr, ctx, false);
             }
+            else if (PyJitRef_IsBorrowed(val)) {
+                ADD_OP(_GUARD_IS_NOT_NONE_POP_BORROW, 0, 0);
+            }
+            CHECK_STACK_BOUNDS(-1);
+            stack_pointer += -1;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            break;
+        }
+
+        case _GUARD_IS_NONE_POP_BORROW: {
+            CHECK_STACK_BOUNDS(-1);
+            stack_pointer += -1;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            break;
+        }
+
+        case _GUARD_IS_NOT_NONE_POP_BORROW: {
             CHECK_STACK_BOUNDS(-1);
             stack_pointer += -1;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
@@ -6395,6 +6455,15 @@
             JitOptRef func;
             func = stack_pointer[-2 - oparg];
             sym_set_recorded_value(func, (PyObject *)this_instr->operand0);
+            break;
+        }
+
+        case _RECORD_CALL_ARG0_TYPE: {
+            JitOptRef *args;
+            args = &stack_pointer[-oparg];
+            if (oparg > 0) {
+                sym_set_recorded_type(args[0], (PyTypeObject *)this_instr->operand0);
+            }
             break;
         }
 

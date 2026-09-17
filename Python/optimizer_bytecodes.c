@@ -1045,6 +1045,15 @@ dummy_func(void) {
         }
     }
 
+    op(_LOAD_DEREF, (-- value)) {
+#ifndef Py_GIL_DISABLED
+        /* As in the method frontend, an empty cell exits before consuming
+         * anything and lets tier one raise the original unbound-cell error. */
+        ADD_OP(_LOAD_DEREF_GUARDED, oparg, 0);
+#endif
+        value = sym_new_not_null(ctx);
+    }
+
     op(_LOAD_ATTR, (owner -- attr, self_or_null[oparg&1])) {
         (void)owner;
         attr = sym_new_not_null(ctx);
@@ -1717,6 +1726,17 @@ dummy_func(void) {
         res = sym_new_type(ctx, &PyBool_Type);
         PyTypeObject *inst_type = sym_get_type(instance);
         PyTypeObject *cls_o = (PyTypeObject *)sym_get_const(ctx, cls);
+        if (inst_type == NULL && cls_o != NULL &&
+            sym_matches_type(cls, &PyType_Type) &&
+            sym_get_probable_type(instance) == cls_o)
+        {
+            /* Specialize the observed exact match. An unrelated type must
+             * fall back: its __class__ attribute can affect isinstance(). */
+            ADD_OP(_GUARD_NOS_TYPE, 0, (uintptr_t)cls_o);
+            sym_set_type(instance, cls_o);
+            watch_type(cls_o, dependencies);
+            inst_type = cls_o;
+        }
         if (inst_type && cls_o && sym_matches_type(cls, &PyType_Type)) {
             // isinstance(inst, cls) where both inst and cls have
             // known types, meaning we can deduce either True or False
@@ -2072,6 +2092,9 @@ dummy_func(void) {
             assert(!sym_matches_type(val, &_PyNone_Type));
             eliminate_pop_guard(this_instr, ctx, true);
         }
+        else if (PyJitRef_IsBorrowed(val)) {
+            ADD_OP(_GUARD_IS_NONE_POP_BORROW, 0, 0);
+        }
         sym_set_const(val, Py_None);
     }
 
@@ -2084,6 +2107,9 @@ dummy_func(void) {
         else if (sym_has_type(val)) {
             assert(!sym_matches_type(val, &_PyNone_Type));
             eliminate_pop_guard(this_instr, ctx, false);
+        }
+        else if (PyJitRef_IsBorrowed(val)) {
+            ADD_OP(_GUARD_IS_NOT_NONE_POP_BORROW, 0, 0);
         }
     }
 
@@ -2795,6 +2821,12 @@ dummy_func(void) {
 
     op(_RECORD_CALLABLE, (func, self, args[oparg] -- func, self, args[oparg])) {
         sym_set_recorded_value(func, (PyObject *)this_instr->operand0);
+    }
+
+    op(_RECORD_CALL_ARG0_TYPE, (func, self, args[oparg] -- func, self, args[oparg])) {
+        if (oparg > 0) {
+            sym_set_recorded_type(args[0], (PyTypeObject *)this_instr->operand0);
+        }
     }
 
     op(_RECORD_CALLABLE_KW, (func, self, args[oparg], kwnames -- func, self, args[oparg], kwnames)) {
