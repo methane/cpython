@@ -2435,3 +2435,2025 @@ from the two targets. Initial changes were committed as c2def12a37e; this
 follow-up implementation, tests, generated files and report are included in
 this commit at the user's request. The unrelated benchmarks/go.py mode change
 is excluded.
+
+## 2026-09-17: Four existing interpreters for full pyperformance
+
+Prepare `benchmarks/run_pyperformance_four_way.sh` to compare main and the
+current method-JIT implementation under both FT/no-PGO/no-LTO and
+GIL/PGO/full-LTO. Reuse the existing four binaries, including the latest
+`build-method-ft-jit/python` and the Richards/B-tree v2 PGO build. Do not
+rebuild Python or run the full suite inside the sandbox. Main remains
+d95f29589e0 plus the LLVM 21 compatibility patch; the candidate binaries
+contain the implementation committed as 15d10bd6f03, although their embedded
+version strings predate that commit.
+
+Use the existing comparison runner for balanced main/candidate blocks,
+worker runtime checks, process-group timeouts, immutable results and identity
+verification. Prepare both configurations before timing; continue to the GIL
+comparison even if FT benchmarks fail. Keep the networkx limits of 15 seconds
+per worker and 180 seconds per specification invocation. Each configuration
+has its own report; the sequential FT/GIL order does not establish a balanced
+comparison of FT against GIL. Add a wrapper, an offline preparation driver,
+Japanese usage documentation and focused orchestration/dependency tests.
+
+Reuse the same pure Python wheels and workload files in all four environments,
+with native wheels selected for each main build's ABI and shared with its
+candidate. Fresh venvs preserve previous experiments. Include setuptools and
+vendored lib2to3 in FT as well. Effective flags permit FT's implicit configure
+defaults for disabled PGO/LTO; incorrect runtime settings and enabled
+optimization flags still fail validation.
+
+The user requested SQLAlchemy without greenlet. Both upstream specifications
+use synchronous SQLite APIs. SQLAlchemy 1.4.19 handles the absence of greenlet
+and reserves the error for async bridge calls. Install the cached 1.4.19
+wheels with `--no-deps`, explicitly recording the omission of greenlet 3.2.4
+and retaining the original dependency failure. Require greenlet to be absent,
+the requested SQLAlchemy version, and successful C-extension import. Preserve
+the benchmark scripts and their default 100-row workload.
+
+Validation so far: 14 harness tests pass, including continuation after a failed
+profile, preparation-only behavior, changed input rejection, FT wheel selection,
+and the narrowly scoped SQLAlchemy dependency override. The shell syntax check
+passes. Short runs of Richards Super, Python startup and 2to3 succeed on all
+four interpreters (12 invocations). Separate declarative/imperative SQLAlchemy
+runs without greenlet succeed on all four (8 invocations), including worker
+GIL/JIT/executable checks and post-run identities. These are functional smoke
+tests, not performance evidence. Artifacts are under
+`jit-artifacts/pyperformance-four-way-smoke-20260917/` and
+`jit-artifacts/pyperformance-four-way-sqlalchemy-smoke-20260917/`.
+
+The final full-suite preparation is complete in
+`jit-artifacts/pyperformance-four-way-current/`: each profile has 96 runnable
+specifications out of 97, with only FastAPI unavailable, and 22 dependency
+environment pairs (88 venvs total). Both SQLAlchemy specifications are ready
+without greenlet in every interpreter. A second preparation-only invocation
+successfully reuses and verifies every binary, extension, standard library,
+dependency, workload and harness identity. The current 14 changed runtime/test/
+generated source files match the candidate PGO source manifest. The full suite
+has not started; neither profile has a measurement state file. Preserve the
+preparation, verification and 14-test logs in the output directory.
+
+Hand off the following command from the repository root:
+
+```sh
+./benchmarks/run_pyperformance_four_way.sh jit-artifacts/pyperformance-four-way-current --run-only
+```
+
+Results will appear in `ft/compare.md` and `gil-pgo-lto/compare.md`, linked from
+the output directory's `compare.md`. FastAPI's retained preparation failure
+means the all-specification run returns 1 even if every runnable benchmark
+succeeds. Next work is the user's full-suite execution and subsequent result
+analysis. No GitHub operations or commits were performed; benchmarks/go.py's
+unrelated mode change remains untouched.
+
+## 2026-09-17: Completed four-build pyperformance analysis
+
+The user completed the full run. Analyze the saved results without rebuilding,
+rerunning benchmarks, changing runtime/harness code or changing the measurement
+protocol. The Japanese report is `benchmarks/pyperformance_four_way_report.md`;
+reproducible auditing code, detailed JSON and CSV are in
+`jit-artifacts/pyperformance-four-way-current/`.
+
+Both profiles finished and passed their post-run identity checks. Repeat the
+preparation-only verification successfully, then audit all 732 raw JSON hashes.
+For all 730 successful invocations, independently recompute the state means and
+verify actual worker executable, GIL/JIT metadata, six workers and five measured
+values per result. Two FT concurrent_imap partial JSONs remain excluded from
+the complete-specification comparison, but their hashes are also verified.
+
+FT completes 90/97 specifications and 115 result comparisons. The geometric
+candidate/main execution-time ratio is 0.9240197569 (7.60% shorter). Seventy
+results improve by at least 2%, 35 lie inside +/-2%, and ten regress by at least
+2%. Main improvements include spectral_norm (-64.78%), richards_super (-61.67%),
+richards (-61.01%), nbody (-40.87%), scimark_lu (-29.14%), float (-23.44%),
+unpickle_pure_python (-22.49%), pyflate (-19.79%) and SQLAlchemy imperative
+(-18.86%). The largest unresolved regression is unpack_sequence (+36.22%),
+consistent with the older FT run. Other regressions include deepcopy_reduce
+(+5.43%), asyncio_tcp (+4.69%), sympy_sum (+4.48%) and SQLAlchemy declarative
+(+2.83%).
+
+GIL/PGO/full-LTO completes 91/97 specifications and 116 result comparisons.
+The ratio is 1.0104583207 (1.05% longer), with 20 results improving at least 2%,
+50 inside +/-2%, and 46 regressing at least 2%. Improvements include spectral_norm
+(-44.96%), BPE (-13.09%), Hexiom (-13.00%), raytrace (-10.77%), DeltaBlue
+(-10.11%), SQLAlchemy imperative (-10.04%), declarative (-8.40%) and Go (-8.22%).
+Richards Super is only 0.42% shorter; btree is absent from this selection and
+cannot be assessed with this run. The large regressions include pprint_pformat
+(+18.37%), pprint_safe_repr (+18.00%), logging_format (+16.85%), deepcopy_memo
+(+16.80%), pickle_pure_python (+14.65%), telco (+14.15%), logging_simple
+(+13.83%), async I/O variants (+11--13%) and base64_small (+11.32%).
+
+All >=2% regressions have the same direction in both reversed-order blocks;
+worker-median sensitivity also retains their regression direction. The same
+115-result intersection yields FT 0.924020 and GIL 1.010309. Equal-specification
+weighting and removing spectral_norm as sensitivity checks do not reverse the
+overall direction. Save 10,000-replicate worker bootstrap intervals stratified
+by fixed block/interpreter (seed 20260917); these are conditional on the two
+observed blocks, without rebuild/hardware uncertainty or multiplicity correction.
+Do not call the +/-2% categories statistical significance or equivalence tests.
+FT connected_components (-2.31%) is an example whose interval crosses one.
+
+Failures matter separately: FT candidate concurrent_imap and tornado_http fail
+the final JIT-enabled hook in both blocks while main passes. This is consistent
+with the existing second-thread JIT suspension in pystate.c; no thread-state
+timeline was recorded. GIL candidate concurrent_imap times out after 60 seconds
+in both blocks while main passes, so investigate it independently instead of
+assigning a speed ratio or assuming the same cause. Shared failures are port
+8001 contention (websockets), cloudpickle's removed DELETE_GLOBAL assumption
+(dask), obsolete AST construction (Genshi), NetworkX k-core's retained short
+timeout, and the prior FastAPI dependency failure. Both SQLAlchemy benchmarks
+finish on all four builds without greenlet.
+
+The base64, pprint, copy and logging Python sources are byte-identical across
+the four source trees. Their regression causes remain unprofiled; this run
+does not separate JIT changes, other runtime changes, PGO or code layout.
+There is no JIT-off control, and the FT/GIL profiles also change PGO/LTO, so
+attribute the observed differences to these fixed branch builds only.
+
+Next recommended work: resolve candidate-only concurrency failures/constraints,
+investigate FT unpack_sequence, then profile GIL pprint/deepcopy/logging while
+preserving the measured improvements. This analysis task is complete; no runtime
+changes, benchmark reruns, commit, push or GitHub actions were performed.
+
+## 2026-09-17: Fix failed workloads, then eliminate observed regressions
+
+The user now authorizes runtime and benchmark-environment fixes, followed by
+investigation and removal of the measured regressions. Preserve the completed
+four-way raw results and old PGO binaries. Use normal no-PGO/no-LTO builds for
+development; repeat the requested optimized-build comparison only after
+targeted correctness and performance checks justify the expensive build.
+No GitHub operations or automatic commits are authorized.
+
+Start with a bounded multiprocessing reproducer and fault-handler stacks for
+the GIL candidate's concurrent_imap timeout. Local Unix socket creation is
+denied by the sandbox, so request execution of this local diagnostic outside
+the sandbox with a 28-second timeout. FT's JIT-disable failures must retain the
+concurrency safety requirements; do not mask them by removing measurement
+checks or claiming fallback timing as an always-enabled JIT comparison.
+Also investigate external compatibility failures (cloudpickle/Genshi/FastAPI),
+the occupied websocket port and the intentionally limited NetworkX case in a
+fresh experiment directory. Then prioritize FT unpack_sequence and the GIL
+object-processing regressions, while testing the existing improvements too.
+Artifacts and diagnostics: `jit-artifacts/pyperformance-fixes-20260917/`.
+
+Diagnostic update: GIL native candidate Pool repetition can grow from milliseconds
+per Pool to 17.6 seconds and time out; JIT-off candidate and JIT-on main finish
+100 iterations. The debug Tier 2 interpreter also stalls. A diagnostic build
+that disables only method compilation still stalls, so method CFG lowering
+alone does not explain it. Both perf and strace perturb timing enough for some
+runs to finish; retain these successful diagnostics alongside the timeouts.
+A stopped debug process has all Python threads in GIL condition-variable
+handoff, one inside glibc __condvar_quiesce_and_switch_g1. The upstream glibc
+2.39 lost-wakeup repair removes this wait, but an OS-library cause has not been
+established. Do not change global libraries or treat a timing perturbation as a
+runtime fix. Module-local monitoring probes did not isolate the cause.
+
+Add strict, recorded compatibility patches for fresh four-way environments:
+cloudpickle must tolerate removal of DELETE_GLOBAL; Genshi must provide AST
+constructor fields up front (both clone and _new); WebSocket must reserve an
+ephemeral localhost port instead of using occupied port 8001. Cache and completed
+results remain unchanged. Dask import and cloudpickle lambda roundtrip already
+pass; the first Genshi probe exposed its second constructor helper, now patched.
+These are under validation, not yet claimed as resolved benchmark failures.
+
+Compatibility validation (compat-v4): all 5 repaired/clarified specifications
+(websockets, concurrent_imap, dask, Genshi, Tornado) complete on all four builds
+in a one-worker/one-value/one-warmup smoke run, with before/after identity checks.
+These short runs are correctness probes, not performance evidence. Long GIL
+Pool repetition is still unresolved. The FT hook now permits suspension only
+for explicitly selected threaded workloads, records actual start/end state,
+and reports observed fallback separately. It still rejects unexpected JIT-off,
+wrong build/GIL state, and all GIL-build JIT suspension. All 19 harness tests pass.
+FastAPI's cached PyO3 rejects Python 3.16; do not bypass its ABI/version guard.
+NetworkX k-core uses the large Amazon graph and remains subject to the user's
+short timeout; do not shrink the workload or extend that limit silently.
+
+Regression diagnosis: a balanced JIT-on/off screen is in progress. FT unpack
+currently reproduces about +20% rather than the old +36% with identical binaries;
+about +7% remains with JIT disabled. Preserve both experiments. Its trace has
+repeated SWAP_FAST/POP_TOP pairs and validity checks/spills for every pair of
+stores. Add a guarded batch operation for consecutive local stores, preserving
+all original references and the precise deopt point if any old value may invoke
+a finalizer. Extend FT no-escape closing only to null/borrowed references and
+exact primitive types, never based on a racy shared reference count.
+GIL pprint JIT-off main/candidate times agree, whereas main's trace JIT speeds
+it up and the candidate's JIT does not. A partial method currently blocks trace
+inlining solely because the whole function is large. Restrict that preservation
+policy to complete methods, leaving partial methods' short paths traceable.
+Both runtime changes are implementation candidates awaiting builds/tests/timings.
+
+GIL failure diagnosis is now narrower and has a working fix. The same unchanged
+native binary still stalls in both ABBA trials using a private glibc 2.41,
+as well as both system-glibc trials. Thus the glibc-only hypothesis is rejected;
+no system libraries were installed/changed. The GIL waiter restarted its entire
+5 ms timeout after each signal even when the same I/O thread reacquired the GIL.
+A repeatedly ready poll could therefore prevent a drop request indefinitely.
+Keep a deadline until switch_number changes, and request a handoff when total
+waiting time reaches the interval. With this change the debug JIT completes
+three independent 100-Pool repetitions, each previously timing out within 20 s.
+Add a subprocess liveness test with a permanently ready poll descriptor.
+
+Debug validation: new finalizer-order, repeated-store-target and partial-method
+inlining tests pass; 583 JIT/generator tests pass. With the GIL deadline change,
+829 tests pass across threading and those same files; the enclosing command
+reported failure only because it also requested the nonexistent test_lock module.
+Correct the selection to test_thread: all 36 additional primitive-thread tests
+pass. Optimized GIL/FT native and FT debug rebuilds are underway without PGO/LTO.
+
+The normal optimized (no-PGO/no-LTO) GIL candidate now completes concurrent_imap
+with the original 6 workers, 5 warmups, 5 values, 0.1-second minimum, all CPUs,
+and 60-second worker timeout. Both mp_pool and thread_pool have all six workers
+and runtime hook validation. Timing is noisy and this is not a same-PGO
+speed comparison; it establishes completion of the previously failing workload.
+GIL native validation: 865 tests pass (8 skips). FT debug and FT native each pass
+583 JIT/generator tests (12 skips). Balanced no-PGO main/before/after performance
+comparisons now cover FT unpack and the main GIL regressions plus retained gains.
+
+Development v1 results (two reverse-order blocks, four worker processes per
+side, identical no-PGO settings): pprint_pformat changes from 1.150 to 0.993
+times main, pprint_safe_repr 1.159 to 1.001, deepcopy 1.050 to 1.004,
+deepcopy_memo 1.175 to 1.049, and base64_small 1.089 to 0.975. Logging still
+takes 1.12–1.13 times main and telco 1.059. These are development-build results,
+not a replacement for the original PGO comparison. Richards and spectral_norm
+remain faster than main, although spectral_norm is 4.6% slower than before.
+FT unpack worsens from 35.6 to 43.4 ns (main 29.6 ns): retain the adverse result
+and do not accept the generic batch store as a successful optimization. Test
+constant-count replicas so LLVM can unroll the guards and stores, then remove
+or redesign this optimization if it still loses. The logging native profile
+records 10K samples with mapped JIT code; inspect method calls and Tier 1
+fallback to explain its remaining lost tracing benefit.
+
+The constant-count store replicas (v2) still take about 43 ns in FT unpack,
+and spectral_norm remains slower than the previous implementation. Reject this
+form. Replace it with direct sequence-to-local unpacking, removing the temporary
+stack slice as well as the separate stores. Batch guards must use exact primitive
+types, null or borrowed references: checking each old reference count separately
+would be unsound when several locals own the last references to the same object.
+Add that alias/finalizer case to the tests. This flaw was found in the uncommitted
+experiment; it is not a main-branch bug.
+
+Also turn a partial method's unconditional fallback into an ordinary traceable
+side exit. Its unsupported or over-budget continuation currently stays in Tier 1
+even after becoming hot; the existing side-exit machinery can compile that
+observed path without discarding the method CFG. Add a test checking the hot
+continuation link and result/error preservation. These v3 changes await validation.
+
+V3 debug validation now passes all 584 JIT/generator tests (4 skips), including
+hot partial-method continuation links, tuple/list finalizer ordering, shared old
+references, unpack-length errors and repeated targets. Three initial failures
+only expected the old unfused tuple uop; update those assertions to the exact
+new fused operation, preserving their type-propagation and non-unique ownership
+checks. The GIL handoff test is also placed after the complete existing
+test_main_thread body, preserving that test's original thread checks. Native FT
+and GIL development builds are running before the next balanced comparison.
+
+V3 passes 584 tests in each of the four debug/native GIL/FT configurations.
+Balanced no-PGO results recover pprint (1.007/1.017 times main), deepcopy
+(1.013), pickle_pure_python (1.016), and base64_small (0.983); spectral_norm
+returns to 0.498, Richards 0.943 and Richards-super 0.985. Logging still takes
+1.157–1.173 times main, deepcopy_memo 1.051 and telco 1.079. FT unpack remains
+slow at 38.7 ns versus main 29.7 ns and the original candidate 35.6 ns.
+GIL unpack is 39.5 ns versus main 43.7 ns and the original candidate 35.2 ns;
+do not call this new fusion an accepted improvement yet.
+
+A temporary same-binary switch disabling only method compilation (trace JIT
+remains enabled and is verified) restores logging and telco performance and
+improves deepcopy_memo. The source and default binary are restored; the switch
+exists only in python-method-probe, with its source diff and SHA recorded.
+The make-python diagnostic reset pybuilddir.txt to 'none'; restore the existing
+extension-directory marker before verification/measurement. No measurements
+from the failed import probe are counted.
+
+Next adapt partial methods to observed fallback frequency: keep rarely used
+unsupported paths as side traces, but switch a method entry to tracing when
+its native execution repeatedly leaves before completing. Use a bounded entry
+window and a per-code preference so the frontend cannot repeatedly reinstall
+the same ineffective method. Test both rare and frequent fallbacks, including
+invalidation and exceptions. Separately, elide an unpack's identical assignments
+only when the locals already own those objects (or they are immortal); borrowed
+mortal locals must still acquire their original new references. V4 source for
+the latter is written but has not yet been regenerated or built.
+
+V4 adaptive fallback passes the JIT suite after correcting its warmup test:
+executor detachment deliberately restores RESUME, whose specialization resets
+its normal entry counter. A direct probe confirms a trace replaces the invalid
+method after that new warmup. Remove the ineffective counter assignment instead
+of bypassing RESUME's instrumentation checks; allow both sampling and the normal
+warmup in the test. Rare fallback still produces a linked continuation and keeps
+the method. Extended debug tests now cover monitoring, frames, GC and threading;
+optimized GIL/FT and FT debug builds are in progress without PGO/LTO.
+
+The decimal build audit also matters for interpreting telco: all five compared
+interpreters lack _decimal and therefore execute Python's decimal implementation.
+The reported telco regression is not evidence of a regression in libmpdec.
+The same-binary method-off diagnostic improves logging_format by 14.8%,
+logging_simple by 19.0%, deepcopy_memo by 8.8% and telco by 5.2%; logging_silent
+is unchanged. Both diagnostic modes keep trace JIT enabled. This motivates the
+adaptive policy, but only actual v4 measurements can establish its benefit.
+
+V4 validation: GIL debug/native each pass 1,094 tests (17/18 skips).
+FT debug/native each pass 812 tests (26/27 skips), including monitoring, frames
+and GC in addition to the JIT/generator suite. No heavy builds overlap the
+subsequent balanced measurements. The fixed v4 screen selects FT unpack,
+deepcopy and logging, then GIL logging/deepcopy/telco/unpack plus spectral_norm,
+Richards and Richards-super to check retained gains. Keep the earlier v1–v3
+measurements and their adverse unpack results; do not merge versions.
+The original regression selection is frozen in original-regression-selection.json
+for the broader follow-up (10 FT specifications, 40 GIL specifications).
+
+V4 targeted measurements are complete with identities verified before/after.
+FT after/main: unpack 0.7300 (before 1.2062), deepcopy 0.9674,
+deepcopy_memo 0.8103, deepcopy_reduce 1.0038, logging_format 0.8934,
+logging_simple 0.8673, logging_silent 0.8995. deepcopy_reduce differs between
+blocks, so its average alone is not evidence of equivalence.
+GIL no-PGO after/main: logging_format 1.0138 (before 1.1568), logging_simple
+1.0014 (before 1.1596), deepcopy 1.0074, deepcopy_memo 1.0399,
+deepcopy_reduce 0.9856, telco 1.0257, unpack 0.4960, spectral_norm 0.4959,
+Richards-super 0.9723 and Richards 0.9336. Retained gains remain, while memo
+and telco still need attention. The raw worker bootstrap intervals are in
+v4-{ft,gil}-analysis.json and are conditional on these fixed builds/blocks.
+
+Next run all ten original FT regression specifications in reversed-order
+main/after comparisons, without concurrent builds. Then build the candidate
+with the original GIL PGO/full-LTO protocol in a new private directory and
+validate the original GIL regression selection. This is the necessary final
+configuration check; development iterations have used no PGO/LTO.
+
+The broader FT screen completes nine specifications. After/main ratios are
+asyncio_tcp 1.0267, deepcopy_reduce 0.9603, docutils 1.0406,
+gc_traversal 1.0576, generators 1.0337, regex_dna 1.0391, regex_v8 1.0446,
+SQLAlchemy declarative 1.0207 and unpack 0.7301 (memo 0.8183).
+These residuals prevent a no-regression claim. SymPy fails in this auxiliary
+runner because PYTHONPATH alone does not process setuptools' .pth file providing
+distutils; the original venv runner works. Preserve the failed invocations and
+rerun SymPy with normal site-directory processing, without changing SymPy.
+
+Before the final PGO build, isolate four representative FT residuals using
+same-binary JIT on/off ABBA comparisons and a mode-aware runtime hook. Initial
+regex results retain their slowdown with JIT disabled. The main and candidate
+_sre object .text sections are byte-identical (SHA 93df642a...c71af), although
+linked function addresses differ. This refutes attributing the entire regex
+regression to generated JIT code; native layout is a hypothesis to investigate,
+not a proven cause or justification to discard these measurements.
+
+The JIT-mode screen verifies worker states and fixed identities. FT regex_dna
+is 1.0382 times main with JIT and 1.0369 without; regex_v8 is 1.0429/1.0415.
+The candidate's own on/off times are essentially unchanged for both. Generators
+is 1.0212 with JIT versus 1.0008 without. Inspection finds a trace containing
+six nested SEND_GEN frame entries and guards, then an exit before any body work.
+V5 rejects only incomplete generator-delegation prefixes that contain no other
+work; full loops and traces reaching useful body operations remain eligible.
+A deep delegation-chain test checks results and absence of the useless prefix.
+The predicate must ignore recording metadata, which analysis has not removed yet.
+GIL debug and FT native each pass 579 optimizer/generator/yield-from tests so far.
+
+To test the native-layout hypothesis, relink the exact same FT v5 object files
+at four predeclared .text offsets (0/16/32/48 bytes), preserving all four controls.
+Compare both regex workloads in forward/reverse order with JIT disabled and
+runtime-state verification. This is a diagnostic experiment, not a policy of
+selecting the fastest executable or changing system ASLR settings.
+
+V5 passes all 579 selected optimizer/generator/yield-from tests in all four
+GIL/FT debug/native configurations. A 3:3 debug leak check initially reports
+allocated blocks for both the new adaptive test and the existing partial-CFG
+test. The generator-prefix test passes in isolation. These tests deliberately
+disable automatic GC, leaving executor objects in the deferred deletion list.
+Use the existing deletion-list cleanup in those two tests; the combined three
+cases then pass 3:3 with no reference leaks and block deltas [0, -1, 2].
+No runtime collection policy is changed to hide the test result.
+SymPy's corrected FT comparison completes all four results: expand 0.8991,
+integrate 0.9909, str 0.9764, sum 1.0327 times main. The sum residual remains.
+
+The four-layout diagnostic establishes a native-placement effect: regex_dna
+ratios for offsets 0/16/32/48 are 1.0000/1.0409/1.0224/0.9893, and regex_v8
+1.0037/1.0433/1.0541/1.0292. Every binary uses identical object files and JIT-off;
+both orders complete with verified identities. Do not choose the fastest
+layout or attribute this effect to JIT optimization. Continue with the ordinary
+v5 build. Its generator screen improves only partly (about 1.027 times main).
+The fresh GIL PGO/full-LTO build is now running with the original training and
+frame-pointer protocol. The four-way runner's candidate path/provenance and
+instructions are updated for this new candidate; its 19 tests pass.
+
+Final review finds one necessary correction to the GIL repair: after sending a
+handoff request, reset the deadline so a holder continuing in C does not cause
+one-microsecond retry waits. V6 makes that adjustment; debug/native GIL each
+pass all 282 thread/threading tests. The already-running PGO training was
+stopped at test 29/43; preserve its source diff, instrumented executable and
+partial profiles under aborted-v5-pgo. Reuse only unchanged instrumented object
+files, recompile the changed GIL source, quarantine all bootstrap profiles and
+rerun the entire training with fresh profiles. No cross-source profiles are
+used for the final build. Rebuild FT as well to keep source/binary consistency.
+The GIL report is M-14: M-13 was already assigned to the earlier ready-counter
+bug, and its table entry is restored.
+
+V6's full PGO training ran all 43 files, but test_re's multiprocessing forkserver
+failed when the sandbox denied its local socket bind. Preserve and quarantine
+that failed run's profiles, and rerun the same complete training outside the
+sandbox before profile-use compilation. This is an execution-environment failure,
+not evidence of a new runtime regression; no failed training profiles are reused.
+
+The unsandboxed v6 PGO training completes all 43 files (10,468 tests, 460
+skips). Profile-use/full-LTO linking is in progress. The current harness passes
+19 tests using its existing controller environment; an initial invocation with
+system Python lacked pyperf and is retained separately. Freeze v6 for the
+original 10 FT and 40 GIL regression specifications, plus ten GIL gain controls.
+A read-only deepcopy executor probe finds zero counted unsupported-path misses
+in the current sampling window. Its polymorphic callable guards exit through
+ordinary side traces, which are not counted by the current adaptive policy.
+Do not infer that unsupported-path fallback explains the remaining memo residual;
+validate final-config timing before extending the policy.
+
+V6 final GIL PGO/full-LTO build completes with SHA256
+876561f96fb3213f9a535684278db15dee93f5ee8d679313738b712741bb86d5.
+Its 1,088 selected optimizer/generator/thread/monitoring/frame/GC tests pass
+(18 skips). Sequential original-regression comparisons are running, starting
+with FT. Preserve all worker values and both order blocks, and do not treat
+this smaller validation selection as a rerun of the entire original suite.
+
+V6 FT validation completes all ten specifications (15 results) with matching
+binary identities. Ratios after/main: unpack 0.7301, deepcopy/memo/reduce
+0.9765/0.8127/0.9675, regex_dna/v8 0.9947/0.9975. Remaining >=2% regressions:
+docutils 1.0519, SQLAlchemy declarative 1.0245, SymPy sum 1.0335. Generators is
+1.0168; GC traversal is 1.0181 with opposing block ratios 1.0455/0.9915 and an
+interval spanning parity. Retain the disagreement instead of calling GC fixed.
+GIL PGO validation is now running sequentially. Next diagnose the three FT
+residuals with the prepared same-binary JIT-on/off runner. If guard-heavy partial
+methods are responsible, consider counting their side exits in the adaptive
+policy, rather than only unsupported-path exits. This remains a hypothesis.
+
+V6 GIL PGO/full-LTO validation completes 50 specifications / 75 results with no
+failed invocations and verified binary identities. Of 46 original >=2% result
+regressions, 22 remain >=2%; xml_etree_iterparse newly exceeds 2% in this screen.
+The full selected table is v6-validation-summary.md. These are not all-suite
+geomeans and must not be reported as complete regression elimination.
+Logging format exposes two worker regimes: about 3.23us versus 3.94us in the
+same binary, despite the same calibrated loop count (2048). Keep every worker.
+The next JIT-mode diagnostic uses the original 6 worker / 5 warmup / 5 value /
+0.1s minimum protocol for logging, deepcopy and scimark_sor, and saves executor
+shapes after timing. Other diagnostic specifications retain the smaller screen.
+The v7 guard-feedback patch and regression-test snippet are prepared as artifacts
+only; no runtime source or frozen binary has changed during v6 measurements.
+
+The final GIL PGO Pool verification succeeds under the original six-worker
+protocol in 33 seconds (both outputs, runtime-state checks, unchanged binary).
+FT JIT-mode comparisons complete: after/main JIT-on vs JIT-off is docutils
+1.0447/1.0080, SQLAlchemy 1.0191/1.0143, SymPy sum 1.0373/0.9975. The candidate's
+own JIT on/off is 1.0291/1.0169/1.0507, supporting further JIT investigation.
+The GIL diagnostic is aborted because its new executor-dump hook mistakenly ran
+at both warmup and value teardown, colliding on filenames and perturbing warmup.
+Preserve the failed outputs and initial hook source; do not aggregate them.
+The FT diagnostic did not enable dumping and remains valid. Move dumping to
+process exit and validate a small run before repeating GIL diagnostics in a new
+output set. Production benchmark hooks and completed v6 comparisons are unchanged.
+
+The corrected process-exit dump passes a one-worker logging smoke and records
+23 executor snapshots after the benchmark process finishes. Restarted GIL-mode
+diagnostics use the new v6-gil-pgo-modes-b prefix; the aborted run is preserved.
+The first six-worker block has logging_format near parity and deepcopy_memo
+about 2.3% slower, rather than the larger short-screen differences. Await both
+blocks. Snapshots confirm that main's deepcopy helpers have inlined loop traces,
+while v6 also installs complete method entries containing METHOD_CALL and no
+inlining of the large deepcopy callee. A possible subsequent policy is to retain
+an existing useful inlined loop when method compilation would reintroduce that
+call boundary. Keep this distinct from the prepared partial-method guard-exit
+feedback experiment; neither speculative policy has been applied yet.
+
+Further diagnostic reasoning: deepcopy's list/tuple helpers retain closed,
+inlined loop traces (PUSH_FRAME plus JUMP_TO_TOP), but their method entries use
+METHOD_CALL to the oversized deepcopy function. If guard-exit feedback does not
+recover this loss, investigate declining a method that would introduce calls
+where an already compiled loop has useful inlining. Restrict such a policy to
+actual existing inlined loops and methods still containing METHOD_CALL; do not
+blanket-disable methods for every loop or benchmark by name. Preserve improvements
+in go/Richards/spectral_norm when evaluating any such policy.
+
+A second adaptive-policy limitation is visible in the source: a syntactically
+complete method can repeatedly abandon execution at METHOD_CALL if its callee
+has no enterable executor. The current partial_method gate ignores those misses.
+Before extending the draft, probe the actual base64 functions for base16
+(main gains from JIT while v6 does not) and distinguish unsuccessful complete
+callers from useful successful nested method calls. The current b16decode uses
+a six-byte membership loop and binascii, not the older regex implementation;
+re.search is not part of this workload. A possible extension is feedback for incomplete
+methods OR methods with non-inlined METHOD_CALL, retaining zero profiling for
+complete call-free/trivial methods. This requires a targeted complete-caller
+fallback test and gain controls, not just blanket profiling of all methods.
+
+The process-exit SOR snapshots narrow its call-boundary issue: both main and v6
+SOR_execute traces inline five Array2D getters/_idx pairs, but the setters remain
+outside that long trace. Main's __setitem__ entry is a trace inlining _idx;
+v6's entry is a complete method with METHOD_CALL to _idx. The new unpack-to-local
+fusion is absent here (the existing TWO_TUPLE opcode is used), so do not blame
+that fusion for the SOR residual. An alternative, simpler cost-policy experiment
+is to defer small methods that still contain non-inlined METHOD_CALL to entry
+tracing, using the existing METHOD_TRACE_MAX_INSTRUCTIONS boundary. Successful
+nested calls can still be slower than traced inlining, so guard feedback alone
+may not resolve these cases. Evaluate any such policy separately with gain controls.
+
+V6 diagnostic completion is recorded in v6-modes-analysis.log / *-analysis.json.
+The longer GIL protocol gives logging_format 1.0072 and deepcopy_memo 1.0022
+relative to main, so the large short-screen differences are not stable estimates.
+Remaining JIT-specific losses include base16_small (on 1.0836 / off 0.9814),
+SOR (1.0473 / 0.9976), telco (1.0578 / 1.0082), dulwich (1.0568 / 0.9998),
+and docutils (1.0275 / 0.9998). Pickle_dict remains slower even JIT-off
+(1.0492 / 1.0588), supporting a native-runtime/build contribution.
+The base16 probe shows b16encode has a partial method with zero explicit
+unsupported-path misses, while b16decode already uses entry/loop traces.
+
+V7 now moves partial-method fallback accounting to actual side exits, covering
+ordinary type/call guards as well as METHOD_DEOPT. Unsupported-path exits are
+counted once. The new int-to-float short-path test fails on v6 (the stale method
+remains valid) and passes with v7. It never takes the large unsupported branch.
+GIL debug/native and FT debug optimizer/generator suites pass 580 tests so far;
+FT native is rebuilding. No complete-caller or inlined-loop cost policy has been
+applied yet. Save all v6 development binaries and source diff before rebuilding.
+The four-way runner now rejects differing FT/PGO candidate source versions,
+preventing an accidental mixed-version comparison during this work; 20 harness
+tests pass. Rebuild final PGO only after development performance checks warrant it.
+
+V7 correctness validation is complete: all four development configurations pass
+580 selected tests (4 GIL skips, 12 FT skips). The sequential FT comparison is
+running against frozen main and v6, with gain controls. First-block docutils
+and SymPy sum show little change; do not infer elimination from feedback alone.
+Further base16 inspection finds repeated BUILTINS_IDENTITY checks within one
+abstract frame. Frame builtins pointers are immutable for that activation;
+an optimizer fact can retain the first check across calls while fresh frames
+start unchecked. Prepare this separately from partial-CFG inlining, with tests
+for different builtins dictionaries and frame transitions. Main's correctness
+bug must not be restored merely to recover its performance.
+
+V7 FT balanced results (v6 / v7, both relative to main): docutils 1.0514 /
+1.0480; SymPy sum 1.0426 / 1.0359; SQLAlchemy declarative 1.0304 / 1.0204;
+unpack .7323 / .7363; Richards super .3863 / .3909; spectral_norm .3518 / .3539.
+The residuals remain. Preserve this neutral/adverse result as well as the useful
+correctness/feedback test. No GIL performance claim for v7 alone yet.
+
+V8 removes duplicate builtins identity checks in a trace abstract frame. A fresh
+frame resets the fact; the first check is retained, including shared code with a
+different builtins dict. The new regression test observes 4 guards and fails on
+v7, passes with one guard on v8, and verifies custom builtins still work. All479
+GIL optimizer tests pass. Frozen v7 development binaries retained as python-v7;
+the v8 GIL base64/telco comparison is running before any further rebuild.
+
+V9 source preparation, not yet built: inline supported paths of a small callee
+CFG even when a cold arm is unsupported. Keep the callee frame and emit its
+METHOD_DEOPT at that bytecode, require a compiled return, and retain all prior
+size/recursion/exception-table restrictions. This targets the observed SOR
+setter/_idx boundary without a benchmark-name or blanket method-disable policy.
+A test covers cold exception traceback, different argument types, and callee
+code invalidation. Complete v8 timing before v9 builds or tests.
+
+V8 no-PGO GIL comparison (all11 base64 results plus telco, both orders, no
+failed invocation): base16_small v7/main1.0536 -> v8/main1.0304; telco1.0164 ->
+.9908. ASCII85_small moves1.0030 ->1.0226, so retain the adverse observation
+and do not equate the source change with every rebuild-sensitive difference.
+Both binary identities and shared extension identities verified after measuring.
+
+V9 all four build configurations pass582 tests. One old test specifically
+asserted a nested METHOD_CALL for a callee newly eligible for partial inlining;
+keep testing actual nested exception propagation by giving it an exception table,
+which the inliner still rejects. The new cold-arm test fails on v8, passes on v9,
+and checks the callee traceback and invalidation. V9 GIL performance is running;
+SOR/deepcopy use6 workers with5 warmups and5 values, others the smaller development
+screen. First SOR block improves from v8/main1.0205 to v9/main.9791; await reverse
+order and gain controls before drawing a conclusion.
+
+V9 GIL comparison complete, no failed invocations, identities verified. Ratios
+v8/main -> v9/main: SOR1.0087 ->.9775 (both full-protocol blocks improve),
+deepcopy.9685 ->.9805, deepcopy_reduce.9724 ->.9723, deepcopy_memo1.0376 ->1.0376,
+Richards.9677 ->.9700, Richards super1.0025 ->1.0060, spectral_norm.4977 ->.4980,
+go.8974 ->.8945. These are no-PGO builds, not the final PGO claim. FT residual
+checks now run against v7 and main before another rebuild.
+
+V10 source preparation: include complete methods containing METHOD_CALL in the
+same 256-entry fallback-feedback window. They can repeatedly abandon activation
+when a callee requires a MAKE_CELL prefix even though their own body is complete.
+Rename the VM flag from partial_method to method_feedback to reflect this scope;
+complete call-free methods retain no profile uop. A targeted test verifies that
+such a caller initially has METHOD_CALL and no METHOD_DEOPT, then invalidates
+and prefers entry tracing after repeated call failures. V10 is not built yet.
+
+Do not remove mapping identity checks merely because the optimizer's callable
+symbol says constant: CHECK_FUNCTION_VERSION promotes a recorded function to a
+constant, but shared code can share the version across different mappings.
+The V8 per-frame builtins dedup is safe without weakening the first guard.
+
+V9 FT residual comparison complete: v7/main -> v9/main docutils1.0497 ->1.0504,
+SymPy sum1.0372 ->1.0405, SQLAlchemy declarative1.0223 ->1.0178. V9 helps SOR but
+not these dynamic workloads. Read-only executor probes precede the V10 rebuild;
+FT method_window/misses offsets114/116 were read from that binary's DWARF (GIL
+has different offsets98/100). The probes assert the recorded v9 binary SHA.
+
+Report audit: regenerated the early gil-before JIT-mode table from both raw
+blocks with equal worker weights. Corrected missing cells and provisional numbers
+for deepcopy_memo/logging/telco. This is historical original-binary diagnosis,
+not a current-candidate result; preserve the distinction from final v6 and later
+no-PGO development comparisons.
+
+V9 read-only probes find185 docutils methods, including83 complete callers
+without feedback; SymPy has76 methods,24 complete callers without feedback.
+These are executor shapes, not call-frequency or timing measurements. V10's
+MAKE_CELL-callee test fails on v9 because no profile uop exists, and passes on
+v10; all583 GIL native selected tests pass after adapting test_resume to allow
+its recursive method to detach and its replacement entry trace to warm up.
+The resume test still checks a real executor with the entry periodic check.
+Debug and FT builds are running. The next V10 performance screen is a fixed
+v9/v10 candidate-pair comparison (two reversed orders), explicitly NOT a main
+comparison, to isolate this policy before final matched-build validation.
+
+V10 FT debug exposed one structural-test interaction: the shared-closure test
+made40 calls whose FT closure entry intentionally falls back, enough to trigger
+the new32-miss adaptation. Limit this particular identity/invalidation check to
+8 pairs (below adaptation), retaining different closures/defaults, mutation and
+error checks; the dedicated repeated-fallback tests verify adaptation itself.
+FT debug/native validation is continuing. No timing data are discarded for this
+expected policy change, and no performance conclusion is drawn from test changes.
+
+V10 validation is complete in all four development configurations:583 selected
+tests each, with4 GIL and12 FT skips. Capture the final test-adjusted source diff
+and all four binary SHA256 values in v10-development-binaries.json. The FT
+candidate-pair timing is running before any further source/build changes.
+A possible next FT-specific improvement is allowing the same allocation-free
+COPY_FREE_VARS entry prefix already supported in GIL calls, after all recursion,
+instrumentation and TLBC guards. This would retain compiled caller continuations
+instead of relying on fallback adaptation. Ordinary COPY_FREE_VARS uses exactly
+the same tuple-cell acquisition primitive on FT. It needs an FT active-JIT
+return assertion and normal closure mutation/refcount/error tests; not applied yet.
+
+V10 is REJECTED. The GIL candidate-pair comparison gives Go1.2312 vs v9 with
+both blocks near+23%, while docutils improves only1.4% and most other results
+are neutral or slightly worse. GDB at the actual adaptation decision (ASLR
+left enabled) identifies EmptySet.random_choice, Board.random_move and Board.move,
+all detached at32 entries/32 misses. None is a preserved large method, so merely
+excluding large methods would not fix this. Failure rate alone is not an adequate
+cost model for complete callers that already perform useful compiled work.
+Retain all raw data, v10 source/binary hashes and the GDB log. Restore the v9
+partial-only feedback implementation and original structural tests; remove the
+experimental complete-caller test along with the rejected policy.
+
+V11 is now v9 PLUS FT COPY_FREE_VARS entry support, not v10 plus that support.
+Keep the same recursion/instrumentation/TLBC checks before acquiring cell refs;
+MAKE_CELL and extended prefixes still use Tier1. The existing closure-return test
+now asserts active JIT execution for FT too, while retaining distinct closures,
+wrong types and GIL refcount checks. Save rejected v10 binaries as python-v10,
+run the FT assertion against them to establish failure, then rebuild/test all4.
+V11 comparisons use v9 as their baseline, avoiding a misleading improvement claim
+against the rejected Go regression. No PGO build has been started for v7–v11 yet.
+
+V11 validation:582 selected tests pass in each of the4 configurations. The
+expanded FT closure-return assertion fails on frozen v10 and succeeds on v11.
+The restored GIL native .text is byte-identical to v9 (3,948,146 bytes,
+SHA256764e11a94585b52d41edd06024e4d2b389756625b87894bfd904b9d162022f39).
+The FT v11/v9 comparison is running with docutils/SymPy/SQLAlchemy and gain controls.
+Do not describe results as improvements over v10, whose Go regression was rejected.
+
+V11 GIL readonly-data audit also matches v9 except4 bytes in the build timestamp;
+.text is identical. This independently confirms that the rejected v10 runtime
+policy was restored, rather than merely obtaining a favorable timing sample.
+
+Prepare a separate V12 cost policy while frozen v11 FT timing finishes: if a
+complete method still contains METHOD_CALL and the code already has a valid
+closed loop trace with inlined Python calls (PUSH_FRAME plus JUMP_TO_TOP), defer
+to entry tracing. This preserves an observed useful specialization rather than
+judging all callers by failure rate. No loop trace, incomplete methods, or fully
+inlined methods are unaffected by this check. The test establishes the existing
+inlined loop first, warms the function entry, and verifies it is retained without
+introducing METHOD_CALL. This targets the deepcopy helper evidence; test gain
+controls, especially Go, before accepting. V12 source is prepared, not built.
+
+V11 FT candidate-pair results vs v9: docutils.9939, SymPy sum.9938,
+SQLAlchemy1.0003, Richards super.9661, spectral_norm1.0045. The residuals are
+not eliminated. V12's new loop-preservation test fails on v11 (METHOD_CALL in
+the entry) and succeeds on v12; all583 GIL selected tests pass. Measure the
+GIL pair first, with6-worker deepcopy/SOR plus Go/Richards super/docutils controls,
+before investing in the remaining builds. Preserve the complete v11 binary set.
+
+V12 GIL pair complete: deepcopy_memo0.9080, deepcopy0.9914, reduce0.9826,
+Go1.0211, SOR0.9961, Richards super1.0019, docutils0.9889 versus frozen v11.
+Retain the adverse Go result; remaining development builds and FT validation
+are next. This is not a final PGO/main comparison.
+
+V12 passes583 selected tests in each of four development builds. FT timing
+is running against frozen v11. Prepare V13 as a separate guard-only adaptation
+experiment: complete methods count ordinary side exits, but METHOD_CALL failures
+still count only for partial methods. The rejected V10 treated both the same.
+A complete int-specialized method that repeatedly sees float arguments should
+yield to entry tracing. Keep Go and Richards controls, since useful complete
+methods must not be indiscriminately discarded. V13 is not built yet.
+
+V12 FT pair complete: deepcopy_memo0.9557, reduce0.9788, deepcopy0.9955;
+docutils1.0012, SymPy sum0.9971, SQLAlchemy0.9998, Go1.0104, Richards super1.0003,
+spectral_norm0.9961 vs v11. All raw workers and reversed blocks retained.
+V13 adds two complementary checks: repeated complete-method type-guard failures
+adapt, whereas repeated MAKE_CELL call fallback preserves the complete caller.
+The guard-adaptation assertion fails on frozen v12. Build/test all4 next.
+Native pickle memo probe simulation on the unchanged MICRO_DICT graph found
+806 probes with shift3 versus742 with shift4. This is a single address layout,
+not evidence of runtime improvement; no pickle source change is applied.
+
+V13 debug found3 structural-test failures, no wrong runtime results: two
+subtests reuse one code object across different types and now trigger adaptation
+before their one-warmup executor lookup; give each monomorphic case a fresh code
+copy. The resume prefix expectation must include METHOD_PROFILE. Preserve the
+initial failure and verbose logs; rerun the changed assertions and full set.
+
+Pickle memo algorithm diagnostic extended to12 fresh processes in each mode:
+mean probes GIL850.17 ->692.50, FT813.50 ->671.00 (shift3 ->standard rotate4
+for these16-byte-aligned pointers). Keep all addresses/counts in
+pickle-memo-probe-restarts.json. This supports a bounded fixed-core extension
+comparison, not an attribution of the original PGO regression. Do it after
+the V13 JIT pair to keep factors separate; no pickle product change yet.
+
+V13 all585 selected tests pass in each of GIL debug/native and FT debug/native
+(4/12 skips). Freeze python-v13 and source diff. Three-worker reversed-order
+comparisons against frozen v12 are running: FT docutils/SymPy plus Go/Richards
+super/spectral controls, then GIL docutils/Go/Richards/base64/telco/dulwich.
+The next pickle experiment will compile a private copy of _pickle.c and vary
+only that extension against one fixed core with JIT off; no product mutation
+until the fixed-core timing supports the hash change.
+
+V13 FT pair: docutils0.9875, SymPy sum0.9962, Go1.0027, Richards super1.0445,
+spectral_norm1.0040 vs v12. Broad profiling of complete leaf methods has a
+material cost; the first GIL block also has base32_small+5.6%. Finish the planned
+GIL block pair without discarding it. Prepare V14 limiting complete-method guard
+feedback to methods retaining nested Python calls. Complete leaf methods keep
+ordinary side traces and no entry profile; UINT16_MAX marks their inactive
+window, with no executor-layout change. The targeted type-change test now uses
+a non-inlined identity callee to check this narrower policy. Not built yet.
+
+V13 GIL pair is neutral on docutils0.9996, Go0.9982, telco0.9999; Richards
+super1.0053, dulwich1.0119, base32_small1.0292. The latter differs by block
+(first+5.6%, second about+0.3%), so do not equate its mean with a stable cost.
+GDB on frozen V13 FT Richards confirms actual complete-method detachments,
+including TaskState predicates, Task.fn, Task.runTask and Task.addPacket. The
+FT loss may include adaptation decisions as well as entry-counter overhead.
+V14 therefore excludes complete leaf methods from both profiling and helper
+calls at exits. Finish correctness and compare against V12, not V13.
+
+The private pickle a/b builds have identical .text size (GIL70976, FT76208),
+with only18 bytes different in each: exactly9 SAR-by-3 instructions replaced
+by equal-length ROR-by-4 instructions at identical offsets. No other .text
+instruction or relative placement changed; disassembly diffs are retained.
+This controls extension code placement for the forthcoming hash comparison.
+
+V14 passes585 selected tests in each of the4 configurations. The revised
+complete-caller test initially had an unwarmed call in the cold branch, making
+that caller partial; move its single call after the branch to exercise the
+intended complete-caller case. Initial failure log is retained. Freeze V14
+binaries/source, then run the V12/V14 pair and fixed-core pickle comparison
+sequentially, with no builds during timing.
+
+Reject both V13 and V14 complete-method feedback extensions. V14 FT vs V12
+leaves docutils0.9976/SymPy0.9945 but Richards super1.0377 (blocks1.0136/1.0623);
+GIL docutils0.9966, Go1.0045, Richards super1.0098, telco1.0030, dulwich1.0101.
+Small target gains do not justify these adverse effects. Restore the entire
+runtime/test diff byte-for-byte to frozen V12, verified against
+v12-runtime-source.diff. Preserve both rejected binary sets and all measurements.
+The current development executables are still V14 until the next rebuild; use
+frozen python-v12 for residual diagnostics, not the current executable name.
+
+Private pickle test initially failed6 cleanup operations because user site was
+visible and read-only in the sandbox, including the pure-Python test variant.
+No incorrect serialization result was observed. Disable user site (as the
+benchmark runner already does) and repeat with separate logs, then measure.
+
+Accept the small native pickle hash improvement, separate from JIT work:
+fixed-core GIL b/a ratios pickle_dict0.9914, pickle_list0.9783, pickle1.0001;
+FT pickle_dict1.0000, pickle_list1.0007, pickle0.9933. Unpickle controls are
+within about0.5%, so do not overinterpret sub-percent FT differences. Both
+configurations pass1,084 pickle tests (57 skips) with the private candidate
+extension asserted at import. Replace shift3 with _Py_HashPointerRaw in product
+source; this is not enough to claim the original PGO pickle regression fixed.
+No rebuild yet, to keep residual profiling on fixed V12 core/extensions.
+
+Residual FT counter diagnostic, two reversed blocks: V12/main docutils
+instructions0.9501/cycles1.0419, SymPy sum instructions0.9260/cycles1.0733.
+Counts cover whole workload calls (including file reads/cache clears), unlike
+pyperf inner timers. Their separately recorded inner-time ratios are1.0445/1.0785;
+not interchangeable with pyperf results. The first attempt failed after a
+completed count because perf FIFO acknowledgements include a NUL terminator;
+retain it but exclude it from the completed pair. Corrected run label ends-b.
+Named JIT/native perf samples are next; no system tuning is used.
+
+The four-way runner now requires separate final FT and PGO build records,
+including native extensions/configuration hashes, and matching source manifests.
+This prevents an old FT binary or stale extension from being called the same
+source revision just because the working tree matches the PGO snapshot. Final
+records and final PGO build do not exist yet; preparation intentionally fails
+until those builds and their validation are complete.
+
+FT baseline audit: main _PyOptimizer_Optimize returns0 unconditionally under
+Py_GIL_DISABLED. Both named diagnostic workloads installed0 executors despite
+sys._jit.is_enabled()==True. Describe FT as main interpreter versus method JIT;
+the frozen baseline flags/binary are unchanged. Enabled metadata alone is not
+evidence of compiled execution.
+
+V15 bounded experiment: allow small protected callees to use the same normal
+CFG compilation already used for protected method roots. Retain real callee
+frames, exception-table block boundaries, and original error instruction
+positions; handlers still run through Tier1. Add a structural/runtime test for
+caught and propagated exceptions, finally exactly once, and traceback frames.
+No timing verdict yet; build only after the sequential counter diagnostics.
+
+Residual FT hardware counters (two reversed blocks, fixed V12/main):
+branch misses docutils0.9881 / SymPy1.0747; frontend uops not delivered
+1.1815 /1.2041; frontend-retired L1I-miss events1.4523 /1.1411. Cycles remain
+1.0276 /1.0720 in the frontend run despite instructions0.9498 /0.9269.
+This supports frontend/code-footprint pressure as a contributor, not proof
+of one responsible code change. All events ran100%, no system tuning.
+Named record holds executor references, asymmetrically0 in main and284/168
+in candidate, so its GC cost distribution is diagnostic only.
+
+Harness tests with system Python:16 passed/1 skipped (pyperf unavailable in
+that interpreter). Repeat full harness set under the existing controller
+with pyperf before final validation. Documentation now distinguishes main
+FT enabled flags from actual compilation and points to final build records.
+
+V15 passes584 selected tests (JIT/optimizer/generator/yield-from) in each of
+GIL debug/native and FT debug/native. Old V12 fails the new inlining assertion,
+while exception results are correct. Frozen python-v15 copies and source diff
+are preserved. Run two reversed blocks,3 workers/3 warmups/3 values/.05sec,
+V15/V12 first FT(docutils,SymPy sum,SQLAlchemy,Go,Richards super,spectral norm),
+then GIL(docutils,Go,Richards super,base64,telco,dulwich,deepcopy,SOR).
+The native pickle extension is now rebuilt; both sides in these development
+pairs share exactly the same extensions. They isolate the core change, not
+the pickle hash improvement. No rebuild or profiler runs during timing.
+The existing controller passes all20 harness tests without skips.
+
+V15 FT/V12 pair completed without failures; all before/after binary and shared
+extension identities match after measurement. Ratios: docutils0.9960, SymPy
+sum0.9985, SQLAlchemy0.9960, Go0.9914, Richards super0.9988, spectral norm1.0017.
+Richards' first-block slowdown reverses in block2; preserve both rather than
+selecting either. These near-neutral results do not establish the residual
+main-relative regressions resolved. GIL pair is now running sequentially.
+
+Code review following frontend counters found another concrete redundancy:
+method translation emits a builtins-identity guard for each folded builtin
+within one basic block. V8 removed it only in the tracing analyzer. V16 will
+retain the first guard per block/frame and remove subsequent identical guards;
+frame changes and block boundaries reset the fact. Frame builtins identity is
+immutable; executor validity checks/named binding dependencies remain, including
+a callback rebinding a global between builtin calls. Add a structural test plus
+shared-code/custom-builtins and mid-call invalidation checks. This source-only
+edit does not change the frozen V15 binaries in the ongoing GIL pair. Build
+and compare only after that pair completes.
+
+V16 also deduplicates identical folded-global mapping/version guards within
+the same block/frame. Only exactly matching operand pairs are reused. Each
+folded name already has its own invalidation dependency; existing validity
+checks after callbacks continue to cover value insertion/rebinding/deletion.
+A frame's globals mapping itself cannot change. Test asserts one guard of
+each kind and checks rebinding from __len__ before the later folded loads.
+
+V15 GIL/V12 pair completed without failures. docutils0.9980, Go0.9951,
+Richards super1.0001, telco1.0036, dulwich0.9831, deepcopy0.9909/reduce0.9920/
+memo1.0117, SOR0.9986. Base16_small0.9967; base32_large1.0090; other base64
+results0.9849--1.0056. Keep V15 for the protected-call improvement with its
+modest dulwich benefit, while retaining the small adverse memo/base32 results.
+No broad residual-regression claim. V16 correctness build begins after timing
+completes; both debug/native modes preserve V15 snapshots for comparison.
+
+V16 first test fixture failed on both old and new binaries: len itself is not
+an immortal folded binding, so it generated0 identity guards. This was a test
+assumption failure, not an incorrect runtime result. Use immortal builtin types
+list/tuple around an intervening len callback instead. That callback binds a
+global list name, checking invalidation before the later folded load. Preserve
+initial logs, then verify old/new guard counts and rerun the complete set.
+
+The second V16 fixture constructed a tuple, which took the unsupported path
+and adapted away from the method before inspection. Replace it with two
+folded list-type loads around len(values); the callback inspects the earlier
+local through its real caller frame and rebinds list before the final load.
+This directly covers the intended path without unsupported tuple construction.
+The new focused debug check passes. Preserve both previous fixture failures.
+
+The final V16 fixture now fails on frozen V15 with2 versus1 builtin guards
+and passes on V16, including custom builtins, caller-frame locals inspection,
+and rebinding during the compiled call. No runtime source fix was needed
+for the two earlier fixture errors. The small independent FT compilation
+probe also confirms main reports enabled but installs0 executors, while
+frozen V15 installs2 valid loop executors on the identical workload; see
+compilation-ft-{main,v15}.json. This probe is separate from timed workloads.
+
+V16 all4 builds now pass585 selected tests each (4 skips GIL,12 skips FT).
+Snapshots python-v16 and the source diff are preserved. Compare V16/V15 with
+the same two reversed blocks,3 workers,3 warmups,3 values,.05s protocol and
+FT/GIL target/control selections as V15. Builds and profilers are stopped.
+
+Final-validation preparation: build_final_pgo.py snapshots all changed runtime
+and test sources, including Modules/_pickle.c, into a new final-pgo-src tree.
+It keeps the original matched GCC/frame-pointer/PGO-with-JIT-off/full-LTO
+protocol and isolated successful profile data. validate_final_builds.py will
+run10 files including monitoring/frame/GC/threading/pickle on final GIL PGO
+and FT native, then write final-ft-build.json only after success and check
+source/binary/extension identity agreement with the final PGO record.
+compare_final.py is prepared for both modes, including before/after native
+extension/configuration hashes and the original regression/control selection.
+None of these final build/validation/comparison scripts has run yet.
+
+V16 FT/V15 pair completed: docutils0.9968, SymPy sum0.9992, SQLAlchemy0.9996,
+Go1.0046 (blocks0.9987/1.0106), Richards super0.9983, spectral norm0.9975.
+All invocations and identity checks succeeded. The gain is small and does not
+prove the remaining main-relative gaps closed. GIL pair now runs with the
+same predeclared target/control set; no further source experiments during it.
+
+V16 GIL/V15 pair completed: docutils0.9968, Go1.0020, Richards super1.0075,
+telco0.9969, dulwich0.9998, deepcopy1.0102/reduce0.9802/memo0.9953, SOR0.9983.
+Base64 result range0.9928--1.0102. Keep the bounded mapping-check elimination
+with its structural/correctness proof; the measured benefit is small and the
+adverse controls are retained. No claim of main-relative parity from these
+development pairs. All identities and invocations passed.
+
+Start the final matched GIL PGO/full-LTO build from the V16 runtime plus the
+accepted native pickle hash change. Disk has175GiB available. No benchmarks
+or profilers will run during this build. The final source snapshot includes
+all current runtime/test edits; original main and V6 PGO binaries remain intact.
+
+Final snapshot verification: all20 changed runtime/test files still match
+final-pgo-build.json. Configure completed successfully; profile-generation
+build is running. A separate bounded docutils GC diagnostic is prepared but
+not run: frozen V16/main, default versus disabled GC, two reversed blocks,
+original inputs and separately labelled GC-callback/inner-time data. Use it
+only if the final FT docutils gap remains, to separate GC cost from generated
+code/frontend pressure without the named-profiler's retained executors. Do
+not use disabled-GC timings as official benchmark comparisons or product settings.
+
+PGO training succeeded:43 files,10,468 tests,460 skips,141.4seconds, matching
+the original successful training workload. Final full-LTO optimization build
+is now running. For the forthcoming final regression/control screen, retain
+two reversed blocks and2 workers but use5 warmups,5 values and.1s minimum,
+matching the original per-worker warmup/measurement protocol. The original
+full run used6 workers; this selected screen is not a full-suite rerun.
+This protocol is fixed before inspecting any final-binary timings.
+
+Final GIL PGO/full-LTO build succeeded. SHA256
+beb4cea863c62feb8aea145fa3fdb865d2c36b205429d6ad077e09a8df9da8b5.
+The final source diff is byte-identical to the frozen V16 source diff, including
+the native pickle change. Correctness validation now runs on final GIL PGO and
+FT native. Before starting, verify FT core against v16-build-tests.json and all
+FT extensions against the completed v16-ft-pair snapshot, so the new provenance
+record cannot merely relabel an older binary or modified extension as V16.
+
+Final native correctness validation succeeded in both modes:10 test files
+including JIT/optimizer/generators/threading/thread/monitoring/frame/GC/pickle.
+GIL PGO:2,178 tests,75 skips. The separate final FT provenance was written only
+after its validation; candidate_provenance verifies both cores, configuration
+files, native extensions and matching source manifests. Start final4-build
+compatibility smoke for asyncio_websockets,dask,genshi,concurrent_imap,tornado_http
+in fresh private environments, one block/worker/warmup/value. This is functional
+validation, not a performance comparison. Full final regression screens follow.
+
+Final FT correctness count:2,178 tests,90 skips; GIL PGO count2,178/75.
+The final four-way compatibility smoke has completed the FT cases successfully;
+GIL cases follow in the same fresh-environment run. Preserve their result
+timings only as smoke output, not as a speedup estimate.
+
+Final four-way compatibility smoke completed successfully:5 specifications /
+7 results in each of4 builds, all20 specification invocations return0, overall
+runner return0. Logs/patch identities/runtime suspension metadata are under
+compat-final/. FastAPI remains an external unsupported dependency and NetworkX
+retains its15s budget; neither was silently substituted in this smoke selection.
+Start final-ft original regression/control comparison with the predeclared
+2 workers,5 warmups,5 values,.1s minimum and2 reversed blocks.
+
+Final FT screen completed, with all identities verified and no failed
+invocations (18 specifications / 23 results, two reversed blocks). Ratios
+after/main: unpack0.7011, deepcopy0.9295/reduce0.9646/memo0.7748,
+Go0.8810, Richards0.3976/super0.3859, spectral0.3521, regexdna0.9917,
+regexv8 1.0093. Remaining regressions: docutils1.0462, SymPy sum1.0515,
+SQLAlchemy declarative1.0276, generators1.0288, asyncio_tcp1.0279,
+gc_traversal1.0326. These remain unresolved, not rounded into parity.
+Start the final GIL PGO/full-LTO screen with the same predeclared protocol.
+No heavy build/profiler runs concurrently. Investigation of decorator kwargs
+copying is source inspection only: PyDict_Copy can invoke Python for sparse
+general-key dictionaries, so globally marking it non-escaping would be unsafe.
+
+V17 proposal (not built or accepted): fuse empty-dictionary plus borrowed
+local merge/update to a direct copy, but only for exact dictionaries with
+exact Unicode keys. A helper checks key-table kind under the same FT lock
+as the copy; general keys and subclasses deopt before any allocation,
+preserving arbitrary mapping callbacks. The helper schedules GC without
+calling Python, allowing the existing intermediate spills and validity checks
+to be removed. Add mapping fallback, split/sparse table, independent copy,
+keyword forwarding and duplicate-key tests. The final V16 GIL screen uses
+an immutable source/build and continues; no build runs concurrently.
+
+A separate follow-up hypothesis (not applied): compiling a large complete
+method currently invalidates every dependent trace, including closed caller
+loops that already inline its hot path. V12 protected only loops owned by the
+callee. Preserve closed dependent loops during this optional replacement,
+while retaining mandatory dependency invalidation on mutation and replacing
+incomplete prefixes. This may preserve main's tracing benefit without the
+broad complete-method feedback rejected in V10/V13/V14. It needs an explicit
+old-loop lifetime/mutation test and independent before/after measurement; do
+not bundle it into the dictionary-copy experiment.
+
+V17's static pattern is present in six retained docutils executor bodies and
+the hot SymPy cache decorator body in the separate V12 named diagnostic.
+This establishes coverage, not dynamic hit counts or speedup. Test the same
+pattern with both dict-unpack and keyword forwarding, including repeated
+keyword merges that must still detect duplicates. V18's proposed optional
+replacement scan is restricted to bloom-matched traces to avoid scanning
+unrelated executor bodies; mandatory invalidation remains unchanged.
+
+Prepared, not executed: fixed V16 final-PGO concurrent_imap validation with
+the original6 workers/5 warmups/5 values/.1s/60s worker protocol; and separate
+GIL perf-record diagnostics for original async-tree IO and chaos inputs.
+The diagnostic driver retains observed executors for symbol mapping and is
+explicitly excluded from timing evidence. It will follow the ongoing screen,
+not overlap it.
+
+Further source-inspection hypotheses, not implemented: entry varargs/kwargs
+slots are currently abstractly unknown even though the binder supplies exact
+tuple/dict objects (except cell slots). Carrying those facts could remove
+_MAKE_CALLARGS_A_TUPLE in decorators and redundant type guards; assignments,
+CFG joins and f_locals invalidation must remain correct. Separately, method
+global folding accepts only immortal values while tracing also supports owned
+constant loads. Do not extend this without lifetime/invalidation tests: the
+interpreter callable cache contains borrowed references, not strong owners.
+
+V16 GIL PGO/full-LTO screen complete:50 specifications /75 results,200
+invocations, all successful, core/config/extension identities verified.
+24 results exceed+2% in this selected set. After/main: unpack0.4460,
+deepcopy1.0136/reduce0.9537/memo0.9934, pickle_dict0.9721/list0.9758,
+SOR0.9983, Go0.9276, hexiom0.8749, spectral0.5524, SQLdeclarative0.9426.
+Remaining: argparse1.1037, telco1.0939, eagerIO1.0901, IO1.0790,
+chaos1.0882, docutils1.0397, SymPy sum1.0395, Richards super1.0261.
+Chaos workers differ considerably (about30.4--33.9ms after versus28.8--29.4ms
+main); within-worker values are stable. Do not discard the slow worker or
+attribute this directly to ASLR. Raw data and conditional intervals remain.
+Serialized follow-up driver starts Pool validation, then GIL perf-record,
+FT GC diagnosis, and only then V17's non-PGO builds/tests.
+
+V17's new2 focused tests pass in debug. The initial full run fails only the
+existing dict-update/merge structural expectations, now replaced by the fused
+copy; retain logs and update those expectations. Inspection also identified
+that a string-only guard would repeatedly fall back for ordinary integer-key
+dict copies. Broaden the helper to empty dictionaries and the exact dense-table
+cases already cloned by dict_dict_merge, under the same lock. Do NOT accept
+other general-key tables merely because PyDict_Copy would clone them: the
+original merge may invoke equality callbacks there. The sparse collision test
+checks those callbacks run in the original Python caller frame. Retry all4
+builds/tests, preserving the first failed run and before-change failures.
+
+V16 final-PGO concurrent_imap passes both results with6 workers each under
+the original60s worker budget; SHA/runtime flags verified. FT docutils GC
+diagnostic completed both orders: default after/main1.0327 versus disabled
+1.0413 (diagnostic callbacks/driver, not official timings). GC pause totals
+are not higher in the candidate; default collection counts295 versus297.
+This does not support extra GC pause time as the primary cause of the gap.
+
+V16 GIL named perf-record completed. TimerHandle.__lt__ accounts for only
+about1--2% of samples, so its comparator alone cannot explain the IO gap.
+Main's named coverage is26/30 regions, candidate33/89; many candidate side
+traces were not named by the code-attached executor probe. No mapped
+executors were invalidated/replaced. Prepare a diagnostic-only C extension
+against each frozen build's own headers to retain/snapshot all registered
+executors and their exit edges, then map side traces too. Keep these separate
+from official timings; retained references and the driver affect performance.
+Chaos's diagnostic run is nearly tied, whereas official workers vary; retain
+both facts and avoid deriving a speed ratio from the profile.
+
+V17 all4 configurations pass729 selected tests each (4 GIL skips,12 FT
+skips), including the full dict tests. Strengthen the collision fixture to
+cover dense general keys, one deleted entry (where PyDict_Copy alone would
+clone but the original merge calls equality), and a mostly empty table. All4
+focused reruns pass. Freeze python-v17 and the final source diff. Next run the
+expanded diagnostic mapping on immutable V16, then V17/V16 comparisons with
+3 workers/5 warmups/5 values/.1s and two reversed blocks. Predeclared FT set:
+docutils,SymPy sum,SQLdeclarative,Go,Richards super,spectral; GIL set additionally
+argparse,chaos,telco,dulwich,base64,SOR,deepcopy. No PGO/LTO development build.
+
+V17 FT comparison finished: all24 invocations pass and identities match.
+V17/V16: docutils0.9944, SymPy sum0.9917, SQLdeclarative0.9963,
+Go0.9931, Richards super1.0034, spectral1.0104. These are small development
+changes, not proof that the main-relative gaps are gone. Preserve both blocks.
+
+New V18 investigation: expanded asyncio mapping identifies54 nearly identical
+side traces after TimerHandle.cancel/exit18, totaling7.78% rounded self samples.
+A tiny slot-clearing loop reproduces growth from5 such traces at20K iterations
+to26 at100K; depths cycle1,2,3,0 despite MAX_CHAIN_DEPTH=4. Constant-store
+fusion moves a failing old-value destruction guard before the trace's first
+LOAD_CONST, undoing the translator's progress guarantee. Protect the first
+bytecode from region fusion in traces requiring progress, before and after
+abstract optimization. Method lowering remains unchanged. Initial debug probe
+has only depths1..3 at20K and no such chains at100K. Add a deterministic
+correctness/progress regression test, then test all4 development builds.
+Prioritize this defect before the optional caller-loop preservation proposal.
+The previously declared V17 GIL comparison will use frozen python-v17/v16
+and explicitly shared ABI-compatible extensions after V18 correctness work;
+no timing overlaps a build or another performance job.
+
+V18 regression fixture now fails on frozen V17 and passes on the fixed GIL
+debug build. The fixture checks that finalizers run once and that a side trace
+can remain attached at LOAD_COMMON_CONSTANT with an unconditional first load.
+Initial fixture incorrectly checked LOAD_CONST (None now uses COMMON_CONSTANT);
+retain both initial failing logs and the corrected before/after evidence.
+All4 selected correctness suites are running serially. Next predeclared V18
+comparisons, same3-worker/5-warmup/5-value/two-order protocol: GIL async IO,
+IO TaskGroup,chaos,telco,argparse,Richards super,Go,spectral; FT docutils,
+SymPy sum,generators,gc traversal,Go,Richards super. V17 GIL's13-spec comparison
+runs first using immutable python-v16/v17. No new PGO build until these checks.
+
+V18 all4 builds pass730 tests each (GIL4 skips,FT13 including GIL-only
+constant-store regression). Optimized-build reproduction confirms the same
+result as debug: V17 has5/26 repeated fused-store traces at20K/100K iterations,
+V18 has4/0. Frozen python-v18 and v18-runtime-source.diff saved. This fixes a
+branch-specific progress defect; it is not a main-branch bug-report entry.
+Serial V17 GIL / V18 GIL / V18 FT comparisons are now running. Final v16 PGO
+artifacts remain immutable, and their runner provenance deliberately does not
+claim to represent these newer changes.
+
+Read-only follow-up during timings: the54 duplicated async side-trace regions
+occupy221,184 mapped bytes out of548,864 (mapping/allocation size, not exact
+instruction bytes). This strengthens the code-footprint explanation but is
+not a measured speedup. Source review also prepared an unapplied argument-type
+proposal: binders create exact tuple/dict varargs/kwargs, except cell slots;
+propagating those facts could remove MAKE_CALLARGS_A_TUPLE and tuple/dict guards.
+Keep it separate from the more promising optional closed-caller-loop retention
+proposal. Neither proposal is part of the running V17/V18 binaries or results.
+
+Source-review detail for the next experiment: ENTER_EXECUTOR stops tracing at
+preserved large complete methods; it does not emit a returning METHOD_CALL
+inside the caller trace. Thus an already closed/inlined caller loop can lose
+its closed-loop form when optional method compilation invalidates it. The
+prepared retention proposal changes only traces_only profitability invalidation;
+function/type/global mutations still use mandatory invalidation. Retain the
+existing generator test that deliberately rejects an oversized partial trace.
+Consider retention of proven closed loops before any broader inlining-policy
+change; do not silently weaken the existing method-boundary tests.
+
+Prepared (not executed) profile_more_gil.py for frozen main/V16 final-PGO
+argparse many_optionals and telco. It uses original benchmark functions/inputs,
+1000/10 warmup calls and20000/100 diagnostic calls respectively, with the same
+perf FIFO gating and ABI-matched all-executor mapping as the earlier IO probe.
+Run it serially after the current comparisons to check whether retained closed
+caller loops address the remaining large GIL gaps. Profiling times remain
+excluded from speed comparisons. A dict-copy entry-progress reproducer is also
+prepared for a short correctness run after timings; no concurrent workload.
+
+V17 GIL complete:13spec/25results,52 successful invocations, identities match.
+Targeted docutils1.0022,SymPy sum1.0088,SQLdeclarative1.0023; controls Go1.0072,
+super0.9963,spectral1.0022. urlsafe_base64_small1.0222 in both orders;
+telco1.0199 with1.0370/1.0030 blocks; SOR1.0072. All data retained. This does
+not establish a useful general gain from V17; core/layout effects on unrelated
+operations remain possible. Plan to remove the dictionary-copy experiment
+from the final candidate, keeping the independently reproduced V18 progress
+fix. First finish the already declared V18/V17 comparisons; do not stop them
+based on favorable or unfavorable interim values. The running comparison
+contains V17 on both sides and therefore isolates V18.
+
+Corrected the not-yet-run argparse diagnostic budget after checking original
+worker loops: both frozen PGO builds used512 loops and5 warmup/5 value batches.
+Use2560 warmup and2560 measured calls instead of1000/20000. The latter would
+heat the benchmark wrapper beyond the original worker lifetime, changing which
+methods compile. Keep telco's10 warmups/100 measured calls (its wrapper still
+remains below entry hotness); original iterations/input per call unchanged.
+
+V18 GIL pair complete:32 invocations successful and identities match.
+async_tree_io: V18/V17 0.9181, blocks [0.9101212680197397, 0.9261229006979149].
+async_tree_io_tg: V18/V17 0.9311, blocks [0.9358387815211884, 0.9264388546901022].
+chaos: V18/V17 1.0018, blocks [1.0103955745352005, 0.9932296379763218].
+telco: V18/V17 0.9906, blocks [0.9878799188330758, 0.9932739181221985].
+many_optionals: V18/V17 1.0137, blocks [1.0250713765060668, 1.0023687170769295].
+richards_super: V18/V17 1.0005, blocks [0.9966623748618376, 1.0043283514012686].
+go: V18/V17 0.9953, blocks [0.9859263023682117, 1.004825439479973].
+spectral_norm: V18/V17 1.0006, blocks [1.0002679670772652, 1.0008889611063703].
+The IO improvements reproduce both orders; this is still a development
+V18/V17 comparison, not a final PGO/main result. FT comparisons now running.
+
+V18 FT comparison complete:24 invocations pass, identities match.
+docutils: V18/V17 1.0066.
+sympy_sum: V18/V17 1.0004.
+generators: V18/V17 0.9957.
+gc_traversal: V18/V17 0.9985.
+go: V18/V17 1.0025.
+richards_super: V18/V17 1.0047.
+All differences are within1%; no evidence this GIL-focused progress fix
+resolves the larger FT/main gaps. Serial follow-up is now running the small
+caller-loop and dict-progress fixtures, then frozen-PGO argparse/telco perf.
+
+V19 applies only the optional closed-caller-loop retention change, while
+keeping V17 temporarily for an isolated V19/V18 comparison. The prepared
+no-dict rollback is held for the next candidate, not silently mixed into this
+one. Before-change fixture fails exactly because the old loop is invalidated;
+its initial standalone runner also discovered imported test classes (481 tests,
+only the intended fixture failed). Restrict that runner to Regression for later
+focused checks; the repository matrix still runs its normal full selected suite.
+
+Frozen PGO profile_more_gil completed with verified identities and input hashes.
+Argparse mapped148 main /132 after executors (~1.47/1.46MB); no long duplicate
+chain (maximum3 side edges). Telco main has5 closed-loop traces, after hasnone.
+After's Decimal._fix is737uops/partial, __mul__857uops/partial with7 METHOD_CALLs;
+__bool__38uops/complete. These are diagnostic retained-reference observations,
+not timings. Decimal.__bool__ notably retains generic constant loads and both
+Unicode cleanup uops, and a generic bool POP plus a second receiver guard.
+Potential next independent optimization: preserve known input ownership facts
+through arithmetic/comparison, remove guaranteed non-owning primitive cleanup,
+and inline immortal LOAD_CONST. Rebinding/frame invalidation, aliases and
+in-place operands require tests before implementation. No such change yet.
+
+V19 all4 configurations pass731 tests each (4 GIL skips,13 FT). The new test
+also verifies helper.__code__ replacement invalidates the retained loop and
+returns the new results. Freeze python-v19 and v19-runtime-source.diff.
+Predeclare V19/V18 pairs: GIL argparse,telco,chaos,super,Go,docutils,SymPy sum,
+async IO; FT docutils,SymPy sum,generators,gc traversal,Go,super,SQLdeclarative,
+async TCP. Same3 workers/5warmups/5values/.1s/CPU2/two reversed orders. No
+PGO/LTO builds until the development candidates are settled.
+
+Prepared (not applied) entry-frontend-choice-proposal.patch and isolated tests.
+Profiles also show missing loops rooted at small leaf method entries, which
+V19 cannot retain if they were never recorded. Proposed experiment records an
+entry trace first: if it closes a loop through its caller, compile that trace;
+otherwise compile the original function with the method frontend, falling back
+to the recorded trace if unsupported. Factor method compilation into an
+internal (tstate,func,code) helper; keep the frame wrapper for tracing-init
+failure. The original func/code are held by tracer state, and compilation is
+skipped if func.__code__ changed while tracing. Method compilation must happen
+before interp->compiling is set; FinalizeTracing still releases recorded refs.
+This preserves standalone method compilation (C map callers cannot close a
+Python caller loop). Inspect failures rather than weakening method-front-end
+coverage, especially always-raising functions and monitoring. Proposal is only
+an experiment after the current fixed-protocol pairs, not an accepted change.
+
+Independent future cleanup idea grounded in Decimal.__bool__ profile: method
+uop analysis currently replaces both pass-through arithmetic/comparison inputs
+with UNKNOWN, losing borrowed/immortal facts. Generic POP_TOP for known bools
+also clears receiver facts as if it could call Python. Preserving proven input
+ownership, specializing ordinary primitive POP cleanup, and folding immortal
+LOAD_CONST could remove refcount and redundant receiver checks. Avoid broad
+mortal-global folding without lifetime tests; no cleanup changes applied yet.
+
+V19 GIL comparison complete:32 calls pass, identities verified.
+many_optionals: V19/V18 1.0047, blocks [1.0007640776087745, 1.0085995826592467].
+telco: V19/V18 1.0021, blocks [1.0010421558544242, 1.0031169855490316].
+chaos: V19/V18 0.9985, blocks [0.9963865800156351, 1.0005227794611984].
+richards_super: V19/V18 1.0105, blocks [1.0023609025152458, 1.0186107071132489].
+go: V19/V18 1.0013, blocks [1.0000433722484958, 1.0025485086890615].
+docutils: V19/V18 1.0035, blocks [1.0018641843663916, 1.0051248075564525].
+sympy_sum: V19/V18 0.9976, blocks [0.9904414966741855, 1.0048854461220127].
+async_tree_io: V19/V18 1.0012, blocks [0.9938781214001532, 1.0086539547594195].
+No useful broad gain is established; super has about+1%. Retention alone
+cannot recover entry-rooted loops which were never discovered because method
+compilation ran first. FT run continues. Preserve the adverse data. The entry
+frontend-selection proposal remains unapplied; its standalone-method and
+closed-caller-loop tests have not yet been run. Always-raising functions, code
+replacement during tracing, monitoring and shared-code closures need coverage.
+
+After V19 pairs finish, run the prepared entry-choice fixture on frozen V19
+GIL/FT (expected failure only for closed-entry-loop selection; inspect logs),
+then remove V17 with remove-v17-dict-fusion.patch and rebuild/test all4 as V20.
+V20 is a clean baseline for a subsequent independent frontend-choice experiment;
+no V20/V19 speed claim is planned from merely removing the rejected experiment.
+The final main comparisons will validate aggregate performance. Added a draft
+code-replacement-at-entry-warmup test (16 offsets) to cover deferred compilation
+using the original frame's code while func.__code__ is changed.
+
+V19 FT pairs completed:32 calls passed and identities verified. Ratios V19/V18:
+docutils .9976, sympy_sum .9983, generators .9875, gc_traversal 1.0016,
+go 1.0023, richards_super .9913, sqlalchemy_declarative 1.0041, asyncio_tcp .9989.
+No broad improvement established.
+
+V20 removes the rejected V17 dictionary fusion while retaining V18/V19.
+All4 configurations pass729 tests (GIL4 skips, FT13). Initial debug failure
+was2 obsolete dictionary opcode expectations left by the rollback script;
+restored their original V16 assertions. No runtime failure. Frozen V16 source
+hashes were checked and remain unchanged. Logs and both attempts are preserved
+in v20-build-tests.json; immutable python-v20 and v20-runtime-source.diff saved.
+
+V21 entry frontend selection experiment applied after V20 passed. The draft
+3-test fixture on frozen V19 GIL/FT failed only closed-entry-loop selection,
+as expected; standalone method selection and code replacement passed.
+Next: debug build and draft regression tests, then integrate coverage and
+run the four-build correctness matrix before any timings.
+
+V21 debug draft3 tests passed, but the existing full opt suite initially failed
+32 errors/265 assertions (mostly missing executors, no incorrect return values).
+Keep all logs v21-{debug,b,c,d}*. Isolated classes differed, so diagnose the
+interaction rather than lowering assertions. Temporary debug-only diagnostics
+identified TRACE_BUSY: entry exploration rooted in unittest helpers remained
+suspended across C-mediated Python callbacks. Loops inside those callbacks
+could not start tracing and backed off. Removed the diagnostic instrumentation.
+
+Refine V21: only treat closed entry traces with net frame depth zero as loops;
+recursive entry traces still use the method frontend. Stop exploratory entry
+tracing before CALL/CALL_KW/CALL_FUNCTION_EX unless a specialized opcode directly
+enters a Python frame. This lets callback loops compile while retaining direct
+Python caller loops. Adapt the ready-resume-counter test to return via C map
+before checking compilation; the counter assertion is unchanged. Added4 tests:
+closed caller selection/code invalidation, standalone methods, callback-loop
+compilation, and code replacement during entry recording. Full debug suite is
+running; performance comparisons remain deferred until correctness checks pass.
+
+V21-e regeneration failed because the bytecode DSL parser does not accept the
+new C switch statement. Its following build/test commands mistakenly continued
+using the previous generated cases; those results do NOT validate the callback
+fix. Preserve the logs and use checked subprocess return codes / set -e. Replace
+the switch with ordinary comparisons supported by the DSL, then regenerate.
+
+V21-f regenerated cases successfully and the full opt suite passed483 tests
+(4 skips). The callback-boundary refinement removes the large set of missing
+executor failures without weakening their assertions. Temporary diagnostics
+were removed. Next all4 debug/native, GIL/FT builds run opt, optimizer, generators,
+yield_from, dict, monitoring and frame tests, then freeze binaries/source.
+Predeclared V21/V20 pairs: GIL argparse,telco,chaos,super,Go,docutils,SymPy sum,
+async IO; FT docutils,SymPy sum,generators,GC traversal,Go,super,SQLdeclarative,
+async TCP. Each3 workers/5warmups/5values/.1s/CPU2/two reversed orders. Compare
+frozen binaries with explicitly shared ABI-compatible standard extensions.
+
+V21 all4 configurations passed899 tests (GIL12 skips, FT21); frozen python-v21
+and v21-runtime-source.diff. Fixed-protocol V21/V20 pairs running sequentially.
+Initial GIL order has adverse telco/super values; retain them and await the
+reverse order before deciding. No improvement or main-regression resolution
+is claimed yet.
+
+Prepared, not applied: method-primitive-cleanup-proposal.patch. Based on
+Decimal.__bool__ diagnostics, fold immortal LOAD_CONST; recognize primitive
+POP_TOP as nonescaping in CFG state; preserve input ownership across arithmetic
+and comparison uops, skipping borrowed/immortal cleanup. Restrict cleanup to
+known pass-through expansions: generic uop state does not model every opcode.
+The temporary uop stack may lack room for the extra result; in that case the
+unchanged inputs still correctly describe the two cleanup operands. Need tests
+for reference counts, aliases, polymorphic fallback and callback/frame-local
+mutation, then independent before/after comparisons. Do not apply while current
+frozen comparisons are incomplete.
+
+V21 GIL pairs completed:32 calls passed, identities verified. V21/V20:
+many_optionals: 0.9963, blocks [0.9970955825616843, 0.9955764241929066].
+telco: 1.0439, blocks [1.0375460261423384, 1.0503819815648359].
+chaos: 0.9977, blocks [0.9932943743586087, 1.002201002707717].
+richards_super: 1.0262, blocks [1.0222160460254937, 1.030240200916673].
+go: 1.0111, blocks [1.0023035295687421, 1.0199927167956007].
+docutils: 1.0043, blocks [1.004192012239213, 1.0044897347074828].
+sympy_sum: 1.0087, blocks [1.016307189408638, 1.0010832412207809].
+async_tree_io: 1.0030, blocks [0.9831243245849439, 1.0233066297404454].
+Both orders regress telco and super. No useful broad gain; GIL adoption rejected. FT data collection continues. Prepared remove-v21-entry-choice.patch without applying it; all3 original files reconstructed/retained.
+
+Refined unapplied primitive cleanup proposal after inspecting CFG analysis:
+TO_BOOL_BOOL proves only the copied TOS currently, leaving the surviving COPY
+unknown at short-circuit POP_TOP. Give COPY values a block-local alias identity
+(negative bytecode offset; positive origins remain local indices), and narrow
+all live stack aliases after the exact-bool guard. Origins are already cleared
+on escapes and CFG merges. Use signed32 origin (internal optimizer-only type);
+do not speculate about aliases across joins. Draft3-test coverage is
+method_primitive_cleanup_test.py, not yet executed during timing runs.
+
+Another independent, unapplied hypothesis from code inspection: _JIT now reads
+interp->jit on every cold RESUME/backedge, whereas main only checks its hotness
+first. It may be possible to decrement cold counters first and read JIT state
+only at a ready counter. Keep ready counters at zero while JIT is disabled;
+never compile/execute while an FT second thread is attached. This changes cold
+counter freezing, an internal policy, so add a suspension/warmup/resumption
+test before considering it. No timing evidence yet; do not bundle it into the
+primitive ownership experiment.
+
+V21 FT pairs complete:32 calls passed, identities verified. V21/V20:
+docutils: 0.9981, blocks [0.9921275946569927, 1.0041608986173038].
+sympy_sum: 0.9885, blocks [0.9817514852624828, 0.9952281978544084].
+generators: 0.9871, blocks [0.988259948979362, 0.985911157272119].
+gc_traversal: 0.9812, blocks [0.9751725524317328, 0.9872494121777815].
+go: 0.9957, blocks [0.992654260126292, 0.998788324817569].
+richards_super: 1.0282, blocks [1.0113375607354333, 1.0453412891855989].
+sqlalchemy_declarative: 0.9942, blocks [0.9935189459964444, 0.9949642079298259].
+asyncio_tcp: 1.0251, blocks [1.0003847878355236, 1.0503703771411919].
+V21 rejected in BOTH configurations. The modest FT gains do not justify
+super+2.8% and asyncTCP+2.5% (latter varies across blocks). Restore all3 V20
+source files using the prepared patch; preserve V21 binaries, diff, correctness
+and performance evidence. Do not claim main regressions resolved.
+
+V22 applies only the primitive/immortal cleanup proposal on top of V20.
+Before fixtures run on immutable GIL/FT python-v20; inspect failures before
+regeneration/debug build. V21 entry-policy experiments are fully removed.
+
+V22 before fixture failed5 optimization assertions in3 tests on frozen GIL/FT
+V20, as expected. New debug candidate passed the ownership/boolean fixtures,
+but the code-replacement fixture incorrectly expected the old code executor
+to become invalid. Root executors belong to code objects, which may still be
+shared by other functions. Correct the fixture to verify an alias retaining
+the old code and the function using its new constants both return correct
+results. No runtime change was needed for that assertion. Preserve first log.
+
+Audit found enumerate scan fusion expected two owned-int cleanup uops after
+comparison; permit the equivalent borrowed POP_TOP_NOP forms so the new
+ownership optimization does not disable existing fusion. Region arithmetic
+and float matchers already accept these forms. Integrate3 tests and repeat
+debug correctness before four-build matrix.
+
+V22-b debug passed the draft3 tests and all732 tests in opt/optimizer/generator/
+yield_from/dict. Add warmup of the replacement-code function so both the old
+alias and the new function exercise compiled constants. Next all4 configurations
+run those suites plus monitoring/frame, and debug builds run3:3 reference-leak
+checks for the new ownership/alias/constant tests. No timings until completed.
+
+Predeclare V22/V20 development pairs with the same8 specifications per mode
+and protocol used for V21 (3 workers,5 warmup,5 values,min.1s,CPU2,two reversed
+orders). Both sides include V18/V19 and exclude rejected V17/V21. This isolates
+primitive cleanup while retaining improvements and regressions for all controls.
+The comparison scripts are prepared but not yet running.
+
+V22-c full debug correctness passed898 tests, but the new3 tests'3:3 leak
+check reported6/6/7 memory blocks (no reference-count leak). Add the existing
+clear_executor_deletion_list cleanup to these GC-disabled executor tests.
+
+Static review found a real flaw in V22's initial alias narrowing: a positive
+local origin is not a value identity after the local is reassigned while its
+previous value remains on the stack. A valid handcrafted bytecode regression
+reproduces an invalid POP_TOP_NOP assertion in the new debug candidate; frozen
+V20 passes. Logs v22-before-alias-fix.log and v20-alias-reassignment-control.log.
+This is an experimental V22 bug, not a main bug. Keep the failed candidate source.
+
+Fix uses a separate stack_alias field for COPY groups, leaving local origins
+unchanged. Clear alias IDs at local stores, escaping instructions and CFG joins.
+Only aliases established by COPY are narrowed after TO_BOOL_BOOL. Add the
+reassignment/finalizer test; repeat correctness and3:3 leak checks on all4 builds.
+
+V22-d debug passed899 tests after separating stack aliases from local origins.
+The4-test refleak group still reported20 refs/run. Isolated checks showed the
+original3 new tests now pass3:3; only the new handcrafted-bytecode fixture
+retained objects. Frozen V20 shows the identical20 refs/13-15 blocks pattern,
+so this is not introduced by primitive cleanup. The fixture's shared generator
+expression can cache a fresh local Value class on each repetition. Produce
+values via C itertools.starmap instead, preserving the exact drop/finalizer
+workload; rerun3:3 on both frozen V20 and the candidate. Keep both control logs.
+
+The corrected C-factory alias fixture passes3:3 on frozen V20 and fixed V22.
+An immutable pre-alias-fix debug binary was preserved as
+build-method-debug/python-v22-before-alias-fix (SHA8d3a2a8f0f389d3825c4fbb9344a40105523ebec9e930259ffde1fc7ddfd7ab9).
+The final fixture still aborts on that binary at POP_TOP_NOP, so replacing the
+fixture generator has not hidden the actual compiler bug. Preserve the return
+code/log in v22-before-alias-fix-final-fixture.json.
+
+V22-e debug and FT-debug passed899 tests each and all4 new tests'3:3 leak
+checks. GIL native passed899; FT native completing. No timings started yet.
+
+V22-e completed: all4 configurations passed899 tests each (GIL12skip,FT21skip).
+Both debug configurations passed the4 new tests with3:3 reference-leak checks.
+Corrected valid-bytecode alias fixture still aborts the frozen pre-fix candidate
+and passes V20/fixedV22, so it exercises the actual bug. Full source diff and
+binary hashes are in v22-runtime-source.diff and v22-build-tests.json.
+The primitive diagnostic (v22-primitive-cleanup-uops.json) reduced short-circuit
+attribute access from38 to33 GIL uops /38 to34 FT uops; type guards2->1,
+validity checks3->2. This is an instruction diagnostic, not a timing claim.
+V22/V20 pairs are running sequentially; source/builds remain frozen throughout.
+
+V22 GIL pairs completed32 calls, identities verified. V22/V20 ratios:
+many_optionals .9971, telco .9834, chaos .9966, super1.0025, Go .9980,
+docutils1.0061, SymPy sum .9855, async IO .9968. FT pairs continue.
+
+Prepared (NOT applied during timings) v23-validity-proposal.patch and two
+standalone tests. Method validity dataflow currently treats _START_EXECUTOR
+as unchecked and HAS_PERIODIC as escaping. The trace frontend already knows
+START checks validity and a _TIER2_RESUME_CHECK fallthrough cannot run arbitrary
+code: the pending-work arm permanently exits Tier2. Propagate those facts
+through the method CFG, retaining checks after actual escaping operations,
+frame transitions, and periodic backedges that do handle pending work inline.
+Test folded-global invalidation both before entry and through len callbacks.
+This is separate from the previously considered cold-interpreter change.
+
+Prepared v24-cold-jit-proposal.patch independently of V23: check/decrement a
+cold hotness counter before loading interp->jit; hold zero when JIT is disabled
+or another trace is active. A new FT test warms a fresh function while another
+thread is attached, checks that no executor was compiled and the counter stays
+ready, then checks compilation after that thread leaves. This changes only the
+internal cold-counter policy; the multiple-thread JIT suspension remains.
+
+After V22 pairs finish, validate V23 and freeze all4 binaries, then validate V24
+and freeze all4. Both correctness matrices must pass before timing. The next
+performance screen is explicitly the combined V24/V22 change (same8 specs/mode,
+3 workers/5 warmup/5 values/two reversed blocks); do not attribute its timing
+separately to V23 or V24. Frozen V23 permits a focused isolation if an adverse
+result warrants it. No further source edits while those timings run.
+
+V22 FT pairs completed32 calls, all successful, hashes verified. V22/V20:
+docutils: 1.0054, blocks [0.9955224288164336, 1.0152927695918832].
+sympy_sum: 1.0023, blocks [0.9987001942917185, 1.0058446896189739].
+generators: 1.0010, blocks [0.9970681812759962, 1.0049360175174968].
+gc_traversal: 1.0116, blocks [1.004096020414305, 1.0191755942703948].
+go: 0.9937, blocks [0.9943184550818286, 0.993032364279401].
+richards_super: 1.0007, blocks [1.0115970676345811, 0.9899547848508414].
+sqlalchemy_declarative: 0.9913, blocks [0.9892207790745536, 0.993479580845366].
+asyncio_tcp: 1.0080, blocks [1.006535076865469, 1.009443235777843].
+Retain V22 provisionally: GIL SymPy improved, FT Go/SQL modestly improve; FT GC+1.16% and TCP+0.80% remain adverse. This does not resolve main regressions. Begin V23 correctness matrix; V24 stays unapplied until it passes.
+
+V23 complete: the two before fixtures fail exactly the expected redundant-check
+assertion on both frozen V22 builds; callback invalidation already passes.
+Afterward all4 configurations passed901 tests (GIL12skip,FT21skip), both debug
+builds passed the2 new tests'3:3 leak checks. The recursive-resume test now expects
+START_EXECUTOR's existing validity check followed directly by the periodic check.
+V23 binaries/diff are frozen. Begin V24 counter-order correctness validation.
+
+V24 before-control failure confirms the suspended function remains cold (raw
+counter65526). Static inspection caught an overly strict new fixture assertion:
+the countdown's low3 bits contain its backoff, so a ready counter may be6 rather
+than raw0. Correct the fixture to assert countdown (counter>>3)==0, retaining
+backoff bits, and rerun the before control with the final fixture. Runtime policy
+is unchanged; this correction precedes the four-build correctness runs.
+
+V24 GIL debug/native and FT debug passed902 tests each (GIL13skip,FT21skip).
+The new FT suspension test's leak check reports2/1/2 memory blocks without a
+reference-count leak. Add the standard executor deletion-list cleanup used by
+the other new tests and repeat the leak check before finishing the FT matrix.
+No benchmark timings or PGO build have started for V24.
+
+V24 final correctness complete: all4 builds passed902 tests each; GIL13skip,
+FT21skip. The FT suspension test passed3:3 with the executor deletion-list
+cleanup (the initial failed leak log is retained). V24 binaries and full source
+diff frozen. Start predeclared V24/V22 development pairs sequentially, GIL then
+FT; all builds/tests/profilers stay idle while timing. The source remains fixed.
+
+Additional static review during V24 timing: stack alias IDs are bounded by the
+method frontend's INT16_MAX code-size limit; aliases are not retained across
+CFG joins. The START/periodic validity simplification retains checks after
+actual escapes and frame changes, and FT thread publication still uses STW.
+No new runtime edit was made.
+
+A remaining hypothesis (not implemented) concerns cold CFG size. The existing
+V16 diagnostic shows _ActionsContainer.__init__ at1175 uops, Decimal._fix at737,
+and Decimal.__mul__ at857. A possible future experiment would use the existing
+16-bit branch histories (initialized to alternating bits) to leave consistently
+cold blocks as correct deopt continuations in large methods, keeping normal
+analysis and stack conventions. This could reduce code footprint but could also
+increase fallbacks when inputs change; it needs path-change, alias/exception and
+performance controls. Do not present it as an established cause or improvement.
+First finish V24 pairs and, if no material adverse effect is demonstrated,
+rebuild with the matched original PGO/full-LTO protocol and remeasure main. No
+branch-history change will be bundled into that comparison.
+
+V24 GIL pairs complete:32 successful calls, hashes verified. V24/V22:
+many_optionals: 0.9911, blocks [0.9959363172848578, 0.9863035359304984].
+telco: 1.0062, blocks [0.9978052347543586, 1.0146488550068018].
+chaos: 1.0020, blocks [1.00331459534307, 1.0006603957770903].
+richards_super: 0.9999, blocks [0.9983498574800643, 1.001360327716445].
+go: 0.9974, blocks [0.9983089080677885, 0.9964104416202694].
+docutils: 1.0007, blocks [1.0053516003575604, 0.9960097556627989].
+sympy_sum: 1.0003, blocks [1.0041950094675864, 0.996489083308874].
+async_tree_io: 0.9837, blocks [0.9858370395415912, 0.9814965319497582].
+Async IO improves1.6% and argparse0.9%; telco+0.6% remains adverse, other controls nearly neutral. FT continues. No main-relative conclusion yet.
+
+V24 FT pairs complete:32 successful calls, hashes verified. V24/V22:
+docutils: 1.0006, blocks [1.0025054829344735, 0.9987441907160463].
+sympy_sum: 0.9951, blocks [0.9934892863600646, 0.9967309866941216].
+generators: 1.0084, blocks [1.0126799848991164, 1.0041703224897538].
+gc_traversal: 1.0029, blocks [1.0078563698371674, 0.9980131187193861].
+go: 0.9923, blocks [0.9916345441052997, 0.9928684652602364].
+richards_super: 1.0018, blocks [1.003604703478994, 0.9999955278799334].
+sqlalchemy_declarative: 1.0055, blocks [1.000813164441019, 1.0101864038036394].
+asyncio_tcp: 0.9909, blocks [0.9790039517874258, 1.0029112653875054].
+Retain V23/V24 for matched main validation. FT effects are all below1% in their geometric-mean point estimates; preserve generators+0.84% and SQL+0.55%. No no-regression claim. Capture a short diagnostic of current large-method branch histories, without changing code or treating its timing as performance. Then build V24 with the same PGO/full-LTO protocol as main; keep all V16 artifacts immutable.
+
+V24 branch-cache diagnostic completed separately from timing. The helper was
+compiled against the current GIL build/header configuration; binary and standard
+extension hashes were checked. It retains executor references only after warmup.
+This is bytecode reachability from cached histories, not measured execution
+coverage or a performance result. Files v24-method-branches-*.json.
+Examples (normal/profile-reachable bytecodes):
+ActionsContainer.__init__134/134 at1147 uops: root cold-branch pruning alone would
+not reduce it. Decimal._fix313/54 at732uops; __mul__177/94 at849uops;
+quantize226/123 at916uops. Cold CFG size remains a plausible telco hypothesis,
+not a demonstrated cause. A future pruning experiment must preserve loop exits
+regardless of saturated branch histories (e.g. protect conditional edges in SCCs),
+or normal loop termination would become a frequent method fallback.
+
+Matched V24 PGO/full-LTO build started in v24-final-pgo-{src,build}. Source is
+frozen. Retain the old final-pgo-* V16 build and profiles unchanged. The default
+PGO corpus matches main:43 files and expected10468 tests/460 skips; JIT0, seed0,
+separate pycache, bootstrap profiles quarantined before training.
+
+V24 PGO training attempt1 failed only in test_re.test_regression_gh94675:
+sandbox denied forkserver's Unix-domain listener.bind with EPERM. The unchanged
+43-file corpus otherwise completed10468 tests/460skips. Do not use its profiles.
+Quarantine all351 generated .gcda files in v24-final-pgo-rejected-training,
+record their hashes and the instrumented binary hash, and rerun the entire same
+corpus with socket permission. The dedicated training pycache did not exist;
+profile-run-stamp was not created. No runtime/test workaround or skip added.
+The original failed log stays in the build manifest. No timings are running.
+
+Read-only residual-workload audit while PGO runs: bm_gc_traversal times only the
+second gc.collect(), after graph construction and another gc.collect(). Its
+remaining gap cannot be treated as time spent in generated loop code; inspect
+GC/heap/executor population and native collection if it persists. bm_generators
+builds its100000-node tree before its timer; old v5b diagnostics show only tree
+and Tree.__init__ executors after rejecting the delegation-only loop trace.
+Do not generalize the sends>1 filter without first showing new unhelpful traces.
+The frozen main FT _RESUME_CHECK already has the same TLBC-index guard as the
+candidate, so that guard is not a newly introduced explanation of the gap.
+
+V24 matched PGO/full-LTO build completed. The clean training retry passed all43
+files,10468tests/460skips with the unchanged corpus, seed and JIT0 settings.
+The failed attempt's351 profiles remain quarantined. Final binary SHA256:
+bd1cea28f945b03f5ac30bff3107a0a5be901c013b24634ba259eb394e11c159.
+Final source, extension and configuration hashes are in v24-final-pgo-build.json.
+The GIL validation passed2187tests/76skips; FT validation is running next.
+Next: complete correctness, original6-worker Pool validation, update the runner
+to this verified source pair, and rerun the fixed main regression selection.
+
+V24 final correctness completed:2187tests each,76GIL/91FT skips. The original
+6-worker concurrent_imap protocol passed both Pool results with GIL/JIT verified.
+All20 four-build compatibility smokes passed (5specifications/7results perbuild).
+Runner now points to the verified V24 pair;20controller tests and candidate
+provenance checks passed. Old V16 artifacts remain immutable.
+Run full --prepare-only into pyperformance-four-way-v24, then sequentially the
+same selected main comparisons as V16:18FTspec/23results and50GILspec/75results,
+2workers,5warmups,5values,min.1,CPU2,2reversedorders,45sworker/150sspec limits.
+No runtime edits, rebuilds or profiling during these fixed-binary comparisons.
+
+V24 preparation passed for all97 specifications in both configurations; FastAPI
+remains explicitly unavailable. FT timing is in progress without failures.
+Read-only V16 chaos-profile audit provides a narrower next hypothesis than CFG
+pruning: Spline.__call__@0 is partial, has METHOD_CALL and method loop edges,
+while the same code also owns closed inlined traces at984/992. The existing
+V12 profitability check excludes partial methods. Also, its has_method_call
+scan stops at the first METHOD_DEOPT, so widening the condition alone would
+miss calls in later blocks. Prepare a separate partial-loop regression fixture
+and test widening this policy after V24 main comparison. Preserve rare cold
+path correctness and mandatory mutation invalidation. No runtime change yet.
+The larger cold-CFG proposal and three draft semantic tests are saved separately
+as cold-cfg-proposal.patch and method_cold_cfg_test_draft.py, not applied.
+Its loop protection conservatively retains all backward-edge intervals and
+both FOR_ITER successors. Do not combine it with the smaller loop-policy trial.
+
+V24 final FT screen completed:72calls/18specifications/23results, all successful,
+binary/config/standard-extension hashes unchanged. Candidate/main time ratios:
+asyncio_tcp: 1.0278, blocks [1.0360039348823629, 1.0196037813638847].
+deepcopy: 0.9265, blocks [0.9232552597473526, 0.9297150589627742].
+deepcopy_reduce: 0.9667, blocks [0.9675905821214627, 0.9658792171186752].
+deepcopy_memo: 0.7685, blocks [0.7704574607081512, 0.7665112161315195].
+deltablue: 0.7922, blocks [0.7982780819620309, 0.7862183268015229].
+docutils: 1.0468, blocks [1.0512918549609793, 1.0423210105247933].
+gc_traversal: 1.0228, blocks [1.0187879554510304, 1.026858293062319].
+generators: 1.0320, blocks [1.0333995931617441, 1.030553953735181].
+go: 0.8587, blocks [0.8627382884521535, 0.8546749161074603].
+hexiom: 0.8529, blocks [0.8523993674055167, 0.8533275163735135].
+raytrace: 0.8500, blocks [0.8525004756050146, 0.8474560587387492].
+regex_dna: 1.0181, blocks [1.0138544208609015, 1.0223216576870842].
+regex_v8: 1.0490, blocks [1.0488108569901666, 1.049226895355312].
+richards: 0.3987, blocks [0.39762880301935183, 0.3998072067422463].
+richards_super: 0.3900, blocks [0.39025278147084463, 0.38979027574076713].
+spectral_norm: 0.3542, blocks [0.3548618768187032, 0.3536203184767451].
+sqlalchemy_declarative: 1.0253, blocks [1.0273903965358329, 1.0232531549577235].
+sqlalchemy_imperative: 0.8003, blocks [0.8101962074790481, 0.7905035321004787].
+sympy_expand: 0.8941, blocks [0.8988326596802612, 0.8893788669817205].
+sympy_integrate: 0.9980, blocks [0.9981207830245963, 0.9978863131800478].
+sympy_sum: 1.0396, blocks [1.0286289274796696, 1.0507501890047575].
+sympy_str: 0.9501, blocks [0.9505100610590019, 0.9497134951089935].
+unpack_sequence: 0.6988, blocks [0.6969944817641487, 0.7006801564330858].
+Seven point estimates exceed1.02:docutils,regex_v8,SymPy sum,generators,TCP,
+SQLAlchemy declarative,GC traversal. Regex DNA is+1.81%,also adverse.
+These are selected results,not a complete-suite geometric mean. Worker CIs
+are conditional on this fixed pair and two orders; no multiplicity correction.
+GIL PGO comparison follows sequentially. Add regex_v8 JIT-on/off/native
+profiling to the residual investigation; do not dismiss the new+4.9% result.
+
+Before any V25 source edit, isolate the latest V24 counter change using the
+frozen V23/V24 FT binaries on regex_v8,regex_dna,generators:3workers,5warmups,
+5values,min.1,CPU2,2reversedorders,shared current ABI-compatible extensions.
+Prepared compare_v24_counter_pair.py/analyze_v24_counter_pair.py; not run yet.
+V24 also advances cold counters during tracing/suspension, unlike V23, so a
+changed warmup/executor selection is a hypothesis alongside native code layout.
+No attribution without this check. Separate perf scripts preserve original
+timed bodies via timer-boundary gating for FT generators,GC traversal,regex_v8,
+with JIT1/JIT0 and main/candidate; FIFO overhead precludes official time claims.
+
+Static bytecode audit (definitions compiled but no workload calls) confirms an
+independent inlining-limit issue: GVector.linear_combination has40 instructions
+but153 code units, GVector.__add__38/156, GVector.dist28/139, Spline.GetIndex55/170.
+All exceed the128-code-unit small-CFG limit despite modest executable bodies.
+The existing tracing boundary already uses actual instruction count. Consider
+the same distinction for bounded CFG inlining, with a separate allocation bound
+and the existing uop budget. Keep it separate from partial-loop retention and
+cold-CFG pruning. Save sizes in chaos-static-bytecode-sizes-v24.json; this audit
+does not establish a speedup. No source proposal for the limit has been applied.
+
+V24 final GIL PGO/full-LTO screen completed:200calls/50specifications/75results,
+all successful; fixed binary/config/extension hashes verified after measurement.
+23point estimates exceed1.02. Preserve the following residuals:
+many_optionals: 1.1021, blocks [1.0964475792296955, 1.1078787436384565].
+async_generators: 1.0310, blocks [1.0324519186420227, 1.029532015852022].
+async_tree_io: 1.0239, blocks [1.0370834444641392, 1.0107925244848466].
+urlsafe_base64_small: 1.0519, blocks [1.0542976827422177, 1.049416119320428].
+base16_small: 1.0603, blocks [1.0606359399232304, 1.059934699268538].
+base16_large: 1.0477, blocks [1.0532039886849924, 1.0423015122080437].
+base85_small: 1.0752, blocks [1.025408270891324, 1.1273700073236421].
+chaos: 1.0871, blocks [1.1440157588041409, 1.0330639391660827].
+coverage: 1.0379, blocks [1.036680662307723, 1.0392026160618486].
+docutils: 1.0303, blocks [1.028035872328649, 1.0325558378387].
+dulwich_log: 1.0606, blocks [1.040172495613214, 1.0814377777462696].
+fannkuch: 1.0441, blocks [1.0471047189307618, 1.0411174897617586].
+gc_traversal: 1.0416, blocks [1.0471265385537993, 1.0360052758581377].
+meteor_contest: 1.0299, blocks [1.0318273775326638, 1.0280485089986993].
+nbody: 1.0262, blocks [1.02585417742304, 1.0265721873550415].
+pickle_pure_python: 1.0309, blocks [1.0369382795490012, 1.024836459971119].
+pprint_safe_repr: 1.0516, blocks [1.005721109928758, 1.0994731277797607].
+pprint_pformat: 1.0272, blocks [1.0213889119625053, 1.0331342225113347].
+sqlglot_v2_parse: 1.0321, blocks [1.0183926224060473, 1.0459799902162141].
+sqlglot_v2_transpile: 1.0536, blocks [1.0474152329033235, 1.0598066428712156].
+sympy_sum: 1.0487, blocks [1.046044354675442, 1.0513160059764584].
+telco: 1.0836, blocks [1.0837601114526063, 1.083386809266615].
+tornado_http: 1.0263, blocks [1.042324001195413, 1.0105049337005714].
+EagerIO.9920,eagerIOtg1.0057,IO1.0239,IOtg1.0145: prior IO gaps reduced;
+not all erased. Logging format.9887,simple1.0143;Super1.0150;Go.9420;
+SQLdecl.9362. Chaos blocks1.1440/1.0331 and base85small1.0254/1.1274 are
+heterogeneous; all workers retained. Base16large1.0477 is adverse in bothorders,
+so native/JIT0 effects and PGO/build variation also need investigation.
+No claim these inter-build changes identify a source-level cause.
+Start serial post-comparison input audits,V24/V23 FT counter pair,then separate
+FT perf stat/record on generators,GC traversal,regex_v8,JIT1/JIT0. No source edit
+or build until these diagnostic processes finish.
+
+The post-comparison audit passed for both full prepared environments (including
+stdlib), selected original workload/dependency hashes and site bootstrap. Full
+tables are saved in v24-final-comparison.md;23 GIL and7 FT ratios exceed1.02.
+V24/V23 FT counter-isolation pair completed12calls,all successful,hashes verified:
+regex_v8 1.00303,blocks1.00563/1.00044,conditional95%1.00017–1.00768;
+regex_dna1.00174,blocks1.00226/1.00123,CI.99887–1.00546;
+generators1.00767,blocks1.00663/1.00871,CI1.00461–1.01083.
+The counter change alone does not explain regex_v8's4.9% main gap. Keep the
+adverse+0.77% generator result; do not call V24's FT performance equivalent.
+Separate FT native/JIT1/JIT0 counter diagnostics are running sequentially.
+
+New generator diagnostic evidence (not a timing conclusion): current V24 can
+attach a218-uop bench_generators@240 trace with9 SEND_GEN_FRAME,10PUSH_FRAME,
+6attribute loads and3GET_ITER, but noYIELD_VALUE orJUMP_TO_TOP. Unlike the old
+V5b pure-delegation dump, this prefix also starts child generators and reads
+their attributes, so the narrow existing rejection filter does not match.
+Investigate a conservative extension for such setup-only prefixes, preserving
+traces that reach a yield,finish a loop,or perform optimizable body work. This
+is now evidence-based, not the previously rejected blind sends-count heuristic.
+The first main/JIT1 perf-stat generator process was much slower despite nearly
+unchanged instruction count; retain it and inspect both orders, not just a
+favorable subset. FIFO-gated diagnostic times are not official pyperf results.
+
+V24 FTの追加診断を完了した（stat 24回、record 12回、全て成功）。
+実行前後のバイナリ・設定・依存・workloadのハッシュも一致する。
+元の関数と入力を使い、内部タイマー境界でperfを制御した。FIFOの制御が
+加わるため、この時間をpyperfの性能比較には使わない。
+
+- regex_v8: JIT無効でもcandidate/mainのcyclesは1.0583/1.0573。
+  JIT有効では1.0463/1.0477。sre_ucs1_matchが大半を占める。
+  同関数の2,920命令はアドレス差を正規化すると一致する。SHAは
+  1dd352b1f241cd0d7d6c8da7c27ede8fe406d7077edc36cbac15cffb8779a4ea。
+  O3・FP・leaf FPの実効フラグも同等。同関数の命令列の悪化が原因ではないが、
+  アドレス、呼び出し先、メモリなどの影響は未分離。mainとの差は未解消。
+  v5で保存した配置実験も参照し、最速の配置を選ぶ変更は採用しない。
+- GC: 命令数はほぼ等しく、cyclesは順序間で変わる。新しいソース上の原因は未特定。
+- generators: candidateのJIT有効時は無効時より命令数が約0.67%増え、
+  cyclesも約2–3%増える。mainの最初のJIT有効試行の遅い値も保存した。
+
+V25試作では、SENDによる委譲に入った後の子ノードの属性・slot読み取り、
+スタック操作、GET_ITERも「準備だけの接頭部分」に含める。算術、yield、
+閉じたループに達するトレースは維持する。元のbalanced treeから218 uopの
+問題を再現した。単純な委譲・共有部分木だけの最初のfixtureは修正前も成功しており、
+回帰テストとしては採用しなかった。反復を続けて初回拒否のbackoffを越える
+fixtureは修正前のGILあり・なし両方で失敗する。
+
+新しいテストは繰り返し時にコード状態を引き継ぐ問題があり、reset_codeで各回を
+初期化した。最初の失敗ログは保存。修正後FT debugは904テスト、21 skipを通過し、
+追加2テストの3:3参照漏れ検査も成功した。他の構成の検証を続ける。
+V25の採用判断は次の固定比較後に行う。性能向上はまだ未確認。
+
+V25/V24の事前指定比較:
+FTはgenerators、async_generators、docutils、SymPy sum、Richards Super、
+regex_v8、regex_dna、SQL declarative、GC。GILはgenerators、async_generators、
+Richards Super、Go、docutils、SymPy sum。3 worker、5 warmup、5 value、min .1s、
+CPU 2、順序反転2ブロック、PGO/LTOなし。全ての試行を残し、4構成の検証後に開始する。
+
+次は部分methodによる既存の閉じたループの置き換えを抑えるV26の独立試作。
+chaosのSpline.__call__に部分methodと閉じたinlined loopが共存する証拠がある。
+その後の候補として、small CFGのinline上限を実行命令数128と割り当て用の
+code unit上限に分ける案を準備した。現状は40命令/153 code unitsの
+GVector.linear_combination等がcache領域だけで展開対象から外れる。
+これらの案とcold CFG案はまだruntimeソースへ適用していない。
+
+V25の4構成が各904テストを通過した（GIL 13 skip、FT 21 skip）。
+追加2テストはGIL/FT debugの3:3参照漏れ検査も成功。初回のテスト状態の
+引き継ぎによる失敗と、その後の再検証はv25-build-tests.jsonに両方残した。
+python-v25を4構成で凍結し、差分をv25-runtime-source.diffへ保存した。
+通常GIL SHA:5550a7a0d4f180a84736f1ea547b145a92d6f7e66d004539281829c671d3255a。
+FT SHA:3bc8e4f89a439f5c07fe31009c156dba18fe9db36e07e10a6c7166f81ebe44fb。
+事前指定したV25/V24の性能比較を開始。競合するビルドや測定は実行しない。
+
+V25/V24のFT比較36回が全て完了し、前後のハッシュが一致した。
+全workerを含めた点推定はgenerators .98282（両順序 .98176/.98388）、
+async_generators 1.00023、docutils .99315、SymPy sum .99542、
+Richards Super .99947、regex_v8 .99798、regex_dna 1.00219、
+SQL declarative 1.00166、GC 1.00397。GCの順序別は .99447/1.01356で変動する。
+GILの比較とworker区間の集計は継続中。main比ではないため、mainの回帰が
+消えたという判定にはしない。SENDはcoroutineでも使われるので、次の
+4構成の検証にはtest_coroutines/test_asyncgenも追加する。
+
+V25の開発比較はFT 36回、GIL 24回とも成功し、前後hashは一致した。
+比はV25/V24、区間は2つの固定ブロック・固定ビルド内のworker bootstrap 95%。
+ビルド間変動や多重比較を含めた再現性の証明ではない。全workerを保持する。
+ft generators: 0.98282, CI 0.98044–0.98541, blocks 0.98176/0.98388.
+ft async_generators: 1.00023, CI 0.99857–1.00192, blocks 0.99852/1.00194.
+ft docutils: 0.99315, CI 0.98688–0.99943, blocks 0.98756/0.99878.
+ft sympy_sum: 0.99542, CI 0.99081–1.00055, blocks 0.99436/0.99649.
+ft richards_super: 0.99947, CI 0.99712–1.00216, blocks 0.99648/1.00248.
+ft regex_v8: 0.99798, CI 0.99555–1.00083, blocks 0.99936/0.99660.
+ft regex_dna: 1.00219, CI 0.99825–1.00544, blocks 1.00142/1.00297.
+ft sqlalchemy_declarative: 1.00166, CI 0.99849–1.00482, blocks 1.00220/1.00112.
+ft gc_traversal: 1.00397, CI 0.99532–1.01328, blocks 0.99447/1.01356.
+gil generators: 0.98713, CI 0.97916–0.99385, blocks 0.98625/0.98801.
+gil async_generators: 0.99927, CI 0.99515–1.00321, blocks 0.99938/0.99916.
+gil richards_super: 0.99723, CI 0.99433–0.99991, blocks 0.99835/0.99611.
+gil go: 0.99662, CI 0.98873–1.00412, blocks 1.00497/0.98834.
+gil docutils: 0.99315, CI 0.98690–0.99982, blocks 1.00051/0.98585.
+gil sympy_sum: 0.98988, CI 0.97784–1.00128, blocks 0.99827/0.98157.
+generatorsは両構成・両順序で短縮。対照の区間にも明確な悪化はなく、V25を採用する。
+全main回帰が消えたという判定ではない。次のV26は既存の閉じたinlined loopを
+部分methodで置き換えない変更だけとする。冷たい経路のMETHOD_DEOPTを見つけても
+走査を続け、後続のMETHOD_CALLを検出する。cold CFG・inline上限の案は混ぜない。
+元のgenerator reproducerをV24/V25の両通常ビルドで確認し、最終fixtureのV24での
+失敗も再確認してからV26を適用する。V26の事前指定比較はFT chaos/Go/Super/
+docutils/SymPy sum/SQL declarative/generators/unpack、GIL chaos/telco/Go/
+Super/argparse/docutils/SymPy sum/deepcopy。元と同じ3 worker・5 warmup・5 value、
+CPU 2、独立校正、逆順2ブロック。PGO/LTOなし。
+
+元のgenerator reproducerでもV24→V25で不要なexecutorが消えた。
+GILは212 uop→0、FTは218 uop→0（v2{4,5}-generator-original-*.json）。
+reset_codeを含む最終fixtureも、凍結V24のGIL/FT通常ビルドで期待どおり失敗した。
+V26の新しいループ保持fixtureは修正前の両debugで失敗し、修正後の4構成は
+各1,104テストで成功した（GIL 13 skip、FT 21 skip）。coroutine/async generatorも含む。
+追加ループテストの3:3参照漏れ検査は両debugで成功した。
+V26/V25の比較を開始した。source diffと4実行物を凍結し、個別の性能結果が
+揃うまでは次のruntime変更・ビルドを行わない。
+
+V26/V25の比較はFT 32回、GIL 32回とも全て成功し、前後hash一致。
+固定ビルド・2ブロック内のworker bootstrap 95%区間を以下に保存する。
+ft chaos: 0.93245, CI 0.91860–0.94311, blocks 0.94223/0.92278.
+ft go: 0.98906, CI 0.98071–0.99716, blocks 0.98939/0.98872.
+ft richards_super: 1.00688, CI 0.99738–1.02077, blocks 0.99731/1.01655.
+ft docutils: 0.99427, CI 0.98456–1.00443, blocks 1.00175/0.98684.
+ft sympy_sum: 0.99566, CI 0.98531–1.00747, blocks 0.98799/1.00340.
+ft sqlalchemy_declarative: 0.99832, CI 0.99585–1.00078, blocks 0.99427/1.00238.
+ft generators: 0.99716, CI 0.99203–1.00205, blocks 0.99644/0.99788.
+ft unpack_sequence: 0.99902, CI 0.99601–1.00159, blocks 0.99914/0.99890.
+gil chaos: 0.94848, CI 0.93343–0.96482, blocks 0.94103/0.95599.
+gil telco: 0.98832, CI 0.96801–1.00629, blocks 0.98731/0.98934.
+gil go: 0.99868, CI 0.99628–1.00087, blocks 0.99807/0.99930.
+gil richards_super: 1.00734, CI 0.99890–1.02039, blocks 1.00359/1.01109.
+gil many_optionals: 1.00114, CI 0.98752–1.01608, blocks 1.00685/0.99546.
+gil docutils: 0.99812, CI 0.99458–1.00213, blocks 0.99535/1.00089.
+gil sympy_sum: 0.99533, CI 0.98227–1.00785, blocks 0.99677/0.99389.
+gil deepcopy: 0.98517, CI 0.96488–1.00438, blocks 0.98367/0.98667.
+gil deepcopy_reduce: 0.99593, CI 0.98936–1.00318, blocks 0.99327/0.99859.
+gil deepcopy_memo: 0.99691, CI 0.98522–1.00863, blocks 0.99781/0.99600.
+chaosはFT約6.8%、GIL約5.2%短縮した。FT Goも約1.1%短縮。
+Richards Superは両構成で約0.7%増加し、区間は1を含む。この不利な結果も残す。
+元のchaosを40回、Richards Superを80回実行した後のexecutorをV25/V26・両構成で
+採取し、変更したコードとの対応を確認する。これは性能測定ではなく、各workerの
+JIT状態の分布を代表するものとも扱わない。B-treeは既存20,000件のCLI・入力・
+検算を維持し、CPU 2、1 loop、3 warmup、5 value、各3プロセス、順序反転2ブロックで
+V26/V25を比較する。元pyperformanceの大きいB-treeとは混同しない。
+
+V26の補足確認を完了した。chaosのSpline.__call__@0は、GILで727 uopの
+部分method→508 uopのtrace、FTで769→557。GetIndexもmethod entryから
+閉じたループへ変わり、採取した全executorの合計はGIL 5,423→4,957、
+FT 5,646→5,168となった。これは元の入力を使った単独の事後観測で、全workerを
+代表する統計ではない。Richards Superは同じ25 executor、GIL 3,296/FT 4,472 uopで、
+opcode/oparg/targetの列も両構成で一致した。約0.7%の時間差の原因は未特定。
+これだけで配置が原因とは断定せず、最終main比較でも悪化を確認する。
+
+既存の20,000件B-treeは24プロセス全て成功し、元のchecksum、JIT/GIL状態、
+実行前後の実行物・標準拡張・stdlib・workload hashも検証した。
+V26/V25はFT 1.00086、95%区間 .99416–1.00878、順序別 .99777/1.00396。
+GIL 1.00145、区間 .99821–1.00448、順序別1.00289/1.00002。
+chaosの両構成での改善と構造の変化を確認し、V26を採用する。
+
+V27はsmall CFGの上限を実行命令128と疎なbytecode/cache領域1,024 code unitsに分ける。
+1段の展開と既存のuop数の上限を維持する。cacheを多用する短いcalleeを展開する
+テストと、実行処理が多いcalleeは別のmethodとして呼ぶテストを準備した。
+型・calleeコードの変更、元のcallee内の例外処理も確認する。
+性能比較の事前指定はV26と同じ対象にFT argparse/telcoを追加し、B-treeも同条件で
+比較する。4構成での検証後にのみ計測し、cold CFG案はまだ適用しない。
+
+V27の最初のGIL debug検証で、既存のcaller寿命テストのcalleeが新しい基準では
+inline可能になり、METHOD_CALLを通らなくなった。assertを弱めず、lenの加算を
+16個→32個（実行命令129）にして境界を保った。期待値は23→39に更新し、
+callee自体にもMETHOD_EXITがあることを確認する。修正版は凍結V26 debugと
+V27 debugの両方で成功した。初回の失敗ログは保存した。
+その後V27 GIL debugの1,106テストと追加・更新3テストの3:3参照漏れ検査が成功。
+残りの構成を検証してから、事前指定したV27/V26の比較へ進む。
+
+V27の4構成は最終的に各1,106テストで成功した（GIL 13 skip、FT 21 skip）。
+追加2テストと更新したcaller寿命テストは両debug構成の3:3検査も成功した。
+4実行物をpython-v27として保存し、v27-runtime-source.diffを固定した。
+V27/V26の比較を開始した。データ取得中は次のruntime変更や重い処理を行わない。
+
+V27の事前指定した72回のpyperf呼び出し、24回のB-tree対照は全て成功した。
+GILではGo 0.97485、telco 1.02786、many_optionals 1.01278、docutils 1.00418、
+deepcopy 1.00770、memo 1.00928。telcoとargparseは両順序で悪化した。
+FT telco 0.98672の改善もあるが、リグレッション解消の目的ではV27を採用しない。
+全測定・4構成の実行物・失敗を含む検証ログを保存し、変更した3ファイルのみ
+V26とバイト単位で同じ内容へ戻した。runtime全差分もv26-runtime-source.diffと一致。
+次にcold CFG案を独立したV28として検証する。
+
+V27のB-tree対照ではGIL 1.13130（95%区間1.10891–1.15072）、FT .99021だった。
+このGIL約13%の悪化も不採用の根拠として残す。
+
+V28はV26を基準に、128実行命令を超えるroot methodの分岐履歴が0/65535の
+経路を探索し、cold blockを元bytecode位置へのMETHOD_DEOPTへ置き換える。
+全CFGで解析した保守的な状態を維持し、後方辺の区間とFOR_ITERの両辺は残す。
+4テストを追加。変更前は3件が「cold blockが省かれない」assertで両debug構成で
+失敗し、通常のループ終了のテストは成功した。既存のcomplete methodのテストは
+両分岐を交互に暖めて、完全なmethodと既存の閉じたcaller loopを検査する。
+V27の展開上限変更は含めない。4構成での正しさ確認後にV28/V26を比較する。
+
+V28の追加4テストはGIL debugで成功。最初の全体実行では既存2テストが
+未使用分岐のcompileを前提にしていたため失敗した。完全methodのfixtureはcallerから
+正負の両引数を使い、code budgetのfixtureも短いreturnと長いarmを交互に暖める。
+完全method、既存loop保持、部分CFG、元の例外処理に関するassertは維持した。
+調整後の2テストはV28と凍結V26のGIL debugで成功。失敗ログは保存した。
+
+V28の最終検証は4構成で各1,108テスト成功（GIL 13 skip、FT 21 skip）。
+追加4件と調整した既存2件は両debug構成の3:3参照漏れ検査も成功した。
+4実行物をpython-v28として保存し、v28-runtime-source.diffを固定した。
+V28/V26はCPU 2、各3 worker、5 warmup、5 value、min-time .1秒、逆順2ブロック。
+FT 10仕様、GIL 8仕様と既存20,000件B-treeを事前指定し、逐次測定を開始した。
+main比の結果ではなく、性能上の採否は未決定。
+
+V28のFT測定でGoが両順序とも約32%悪化した。V28はそのまま採用しない。
+コード上ではcold blockを早期に省くことで、complete/partial判定、既存loopを保つ
+METHOD_CALL判定、後続blockに残るcode budgetまで変わることを確認した。
+V29案は全CFGの元の生成結果でこれらを判定し、その後cold blockを通常のDEOPTと
+NOPへ置き換える。元々completeだったmethodの呼び出し境界を維持する一方、
+cold経路が多用されれば既存のfallback feedbackで見直す。
+この案と境界検査のテストを準備したが、V28測定中のruntimeにはまだ適用していない。
+
+V29案をさらに限定し、prune前のcomplete/partial判定とentry profile方針も維持する。
+元からunsupported/budget退出があるmethodには従来どおりfallback feedbackを使う。
+省いたcold armがhotへ変わった場合は既存のside traceで継続部分をcompileする。
+この経路変化とcallee書き換えも新しい境界テストで検証する。まだruntimeは変更しない。
+
+V28は不採用。72回のpyperf呼び出しと24回のB-tree対照は全て成功し、hashも確認した。
+ft chaos: 0.99637, CI 0.98952–1.00381, blocks 0.99399/0.99875.
+ft many_optionals: 0.98747, CI 0.97676–0.99945, blocks 0.98128/0.99369.
+ft telco: 0.99590, CI 0.98168–1.01108, blocks 0.99605/0.99575.
+ft go: 1.32024, CI 1.31335–1.32699, blocks 1.31740/1.32308.
+ft richards_super: 1.00448, CI 0.98617–1.02429, blocks 1.02184/0.98742.
+ft docutils: 1.00249, CI 0.99626–1.00896, blocks 1.01203/0.99305.
+ft sympy_sum: 1.00230, CI 0.99151–1.01181, blocks 1.01084/0.99383.
+ft sqlalchemy_declarative: 0.99974, CI 0.99091–1.00811, blocks 0.99768/1.00181.
+ft generators: 0.99994, CI 0.99565–1.00460, blocks 1.00364/0.99625.
+ft unpack_sequence: 1.00052, CI 0.99713–1.00428, blocks 0.99990/1.00114.
+gil chaos: 1.01216, CI 0.99938–1.02560, blocks 1.02880/0.99578.
+gil telco: 0.99331, CI 0.98753–0.99974, blocks 0.99523/0.99139.
+gil go: 1.39556, CI 1.37280–1.41611, blocks 1.40548/1.38571.
+gil richards_super: 1.00355, CI 0.99889–1.00921, blocks 0.99931/1.00780.
+gil many_optionals: 1.00505, CI 0.99186–1.01866, blocks 0.99408/1.01613.
+gil docutils: 0.99998, CI 0.99612–1.00400, blocks 1.00047/0.99949.
+gil sympy_sum: 1.00106, CI 0.99293–1.00951, blocks 1.00425/0.99788.
+gil deepcopy: 1.00235, CI 0.99401–1.01010, blocks 1.01095/0.99382.
+gil deepcopy_reduce: 1.00812, CI 1.00222–1.01421, blocks 1.00354/1.01272.
+gil deepcopy_memo: 0.99991, CI 0.99571–1.00417, blocks 1.00421/0.99564.
+区間は同じ2ビルド・2ブロック内のworker bootstrapで、多重比較補正や再ビルドの変動を含まない。
+GoはFT 1.32024、GIL 1.39556。B-treeはFT 1.00461、GIL .98208（GIL区間 .94719–1.00513）。
+全試行を残す。V29はGoとB-treeを先に比較し、Goが両順序で2%以上悪化してworker区間も1を上回る場合、広い比較には進まない。
+
+V29の境界テストは凍結V28の両debug構成で、calleeの加算がcaller traceへ展開される
+ことを検出して失敗した。V29の後段pruneを適用し、両方向の分岐処理とbudget・
+既存loop・entry profileの判定をprune前のCFGに保つ。既存のcold-pathテストに加え、
+途中のbreakでwhile条件の履歴が偏る場合にもwhile-elseの終了経路を残すテストへ補強した。
+GoとB-treeの対照を先に行う。いずれかが両順序で2%以上悪化し、区間の下限も1を
+上回る場合は広い比較を打ち切る。良ければ他の事前指定項目を測る。
+
+V29の初回GIL debug全体検証は追加した境界テスト1件のみ失敗した。
+原因は「function.__code__を差し替えると旧codeのmethod自体も無効になる」という
+テスト側の誤った前提。executorはcodeに属し、同じ旧codeを使う別functionには使える。
+caller traceの無効化と新しい戻り値のassertは維持し、旧codeで作った別functionの
+正しい戻り値も検査する形へ修正した。修正版の単独検証は成功した。
+境界保持・hotへ変わったcold armのside trace・補強したwhile-elseは通過している。
+Goの単独採取ではV28でBoard.useful@0のmethod（FT879/GIL742 uop）が消えた。
+生成uop合計の減少を速度向上と同一視せず、V29で元のmethodの維持と性能を確認する。
+
+V29も不採用。4構成の最終各1,109テストと両debugの関連7件3:3検査は成功した。
+事前指定したGo/B-treeの対照で打ち切り条件に達したため、他のベンチマークは測らない。
+Go ft: 1.02099, blocks [1.0198703232901423, 1.0221171076089346], CI [1.0171083687807192, 1.023759008276752].
+Go gil: 1.05769, blocks [1.0672843105020497, 1.0481740121233092], CI [1.0470991065786714, 1.0692968215957648].
+GIL Goは両順序で2%以上悪化し区間の下限も1を超えた。FTも平均約2.1%増加。
+B-treeはFT .98888、GIL 1.00362。改善した試行だけを選ばずV26へ戻す。
+ユーザーの追加指示に従い、採用済みの修正と検証レポートをコミットし、そのcommitの
+FT（PGO/LTOなし）とGIL PGO/full-LTOを準備する。mainの同条件2本と合わせて
+夜間に実行できる4構成の全件比較をprepare-onlyまで行う。全件測定はユーザーが実行する。
+
+## 2026-09-18: 採用版を確定して夜間比較へ
+
+V29の追加6診断も正常終了。runtimeをV26へ戻し、Include/Python/Lib/test/Modules/
+Objects/Tools/cases_generatorの全差分がv26-runtime-source.diffと完全一致した。
+最終採用はV26、V27–V29は不採用。現時点でmain比の全回帰を解消したとは言えない。
+
+四者比較runnerをコミット後のビルド記録へ切り替える。未コミット差分だけでなく、
+runtime・標準ライブラリ・ビルド入力の全対象ファイルをFT/PGO両方で照合し、
+commit後の空diffによる同一性検証の抜けを防ぐ。異なるソースコピーの改変、空の
+ソースmanifest、拡張だけの更新を拒否するテストを追加した。
+
+次の順序: ハーネス検証→採用版とレポートをcommit→FTとGIL PGO/full-LTOをbuild→
+最終正しさ・互換性の確認→全97仕様のprepare-only。全件の性能測定は実行しない。
+ビルド・準備の実績はcommitted-final-*.jsonと準備先のpreparation.jsonに記録する。
+
+コミット前のハーネス20テスト、git diff --check、bash構文検査は成功した。
+benchmarks/go.pyの実行権限変更はユーザーの既存変更なのでコミット対象から除外する。
+
+ステージ後の差分検査では既存main-llvm21.patchの空行context（単一空白）2行だけが
+whitespace警告になった。unified diffのcontextと既存キャッシュのSHAを維持するため
+変更しない。このpatchを除くステージ済み全差分のgit diff --checkは成功した。

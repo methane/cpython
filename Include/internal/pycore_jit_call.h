@@ -19,7 +19,6 @@ _PyJit_CallMethodImpl(PyThreadState *tstate, _PyExecutorObject *caller_executor,
     PyCodeObject *code = _PyFrame_GetCode(*frame);
     _Py_CODEUNIT *entry = _PyFrame_GetBytecode(*frame);
     _Py_CODEUNIT *jit_entry = entry;
-#ifndef Py_GIL_DISABLED
     /* COPY_FREE_VARS only acquires cell references. Handle this allocation-
      * free prefix after all entry guards, so a closure call can return to
      * its compiled caller. MAKE_CELL and extended prefixes stay in Tier 1. */
@@ -29,7 +28,6 @@ _PyJit_CallMethodImpl(PyThreadState *tstate, _PyExecutorObject *caller_executor,
     {
         jit_entry++;
     }
-#endif
     if (jit_entry->op.code != ENTER_EXECUTOR ||
         _Py_ReachedRecursionLimitWithMargin(tstate, 2)) {
         return entry;
@@ -45,7 +43,6 @@ _PyJit_CallMethodImpl(PyThreadState *tstate, _PyExecutorObject *caller_executor,
     }
 #endif
     _PyExecutorObject *callee = code->co_executors->executors[jit_entry->op.arg];
-#ifndef Py_GIL_DISABLED
     if (jit_entry != entry) {
         PyFunctionObject *function = (PyFunctionObject *)
             PyStackRef_AsPyObjectBorrow((*frame)->f_funcobj);
@@ -57,7 +54,6 @@ _PyJit_CallMethodImpl(PyThreadState *tstate, _PyExecutorObject *caller_executor,
         }
         (*frame)->instr_ptr = jit_entry;
     }
-#endif
     /* Nested execution temporarily replaces the thread's current executor.
      * Hold the caller alive even if a callback invalidates it and runs GC. */
     Py_INCREF(caller_executor);

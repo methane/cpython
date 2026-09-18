@@ -1,0 +1,60 @@
+--- a/Tools/jit/_optimizers.py
++++ b/Tools/jit/_optimizers.py
+@@ -183,6 +183,7 @@
+     _re_label: typing.ClassVar[re.Pattern[str]] = re.compile(
+         r'\s*(?P<label>[\w."$?@]+):'
+     )
++    _re_symbol: typing.ClassVar[re.Pattern[str]] = re.compile(r'[\w."$?@]+')
+     # Override everything that follows in subclasses:
+     _supports_external_relocations = True
+     supports_small_constants = False
+@@ -364,6 +365,20 @@
+             if pre.target is block or pre.fallthrough and pre.link is block:
+                 yield pre
+ 
++    def _local_references(
++        self, block: _Block
++    ) -> typing.Generator[_Block, None, None]:
++        lines = [
++            *block.noninstructions,
++            *(inst.text for inst in block.instructions),
++        ]
++        for line in lines:
++            line = line.split("#", 1)[0].split("//", 1)[0]
++            for match in self._re_symbol.finditer(line):
++                referenced = self._labels.get(match[0])
++                if referenced is not None and referenced is not block:
++                    yield referenced
++
+     def _insert_continue_label(self) -> None:
+         # Find the block with the last instruction:
+         for end in reversed(list(self._blocks())):
+@@ -473,7 +488,17 @@
+     def _find_live_blocks(self) -> set[_Block]:
+         live: set[_Block] = set()
+         # Externally reachable blocks are live
+-        todo: set[_Block] = {b for b in self._blocks() if b.label in self.globals}
++        blocks = list(self._blocks())
++        todo: set[_Block] = {b for b in blocks if b.label in self.globals}
++        # The continuation and following metadata are retained by
++        # _remove_unreachable(). Treat their local-label references as roots as
++        # well, for example the case labels named by a jump table.
++        continuation = self._lookup_label(f"{self.label_prefix}_JIT_CONTINUE")
++        preserve = False
++        for block in blocks:
++            preserve |= block is continuation
++            if preserve:
++                todo.add(block)
+         while todo:
+             block = todo.pop()
+             live.add(block)
+@@ -484,6 +509,9 @@
+             next = block.target
+             if next is not None and next not in live:
+                 todo.add(next)
++            todo.update(
++                ref for ref in self._local_references(block) if ref not in live
++            )
+         return live
+ 
+     def _remove_unreachable(self) -> None:

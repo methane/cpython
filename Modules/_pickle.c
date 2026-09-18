@@ -17,6 +17,7 @@
 #include "pycore_moduleobject.h"  // _PyModule_GetState()
 #include "pycore_object.h"        // _PyNone_Type
 #include "pycore_pyerrors.h"      // _PyErr_FormatNote
+#include "pycore_pyhash.h"        // _Py_HashPointerRaw()
 #include "pycore_pystate.h"       // _PyThreadState_GET()
 #include "pycore_runtime.h"       // _Py_ID()
 #include "pycore_setobject.h"     // _PySet_NextEntry()
@@ -845,7 +846,7 @@ _PyMemoTable_Lookup(PyMemoTable *self, PyObject *key)
     size_t mask = self->mt_mask;
     PyMemoEntry *table = self->mt_table;
     PyMemoEntry *entry;
-    Py_hash_t hash = (Py_hash_t)key >> 3;
+    Py_hash_t hash = _Py_HashPointerRaw(key);
 
     i = hash & mask;
     entry = &table[i];

@@ -18,6 +18,8 @@ typedef struct {
 typedef struct {
     int size;
     int capacity;
+    /* A partial method that repeatedly falls back should use entry tracing. */
+    unsigned char prefer_trace;
     struct _PyExecutorObject *executors[1];
 } _PyExecutorArray;
 

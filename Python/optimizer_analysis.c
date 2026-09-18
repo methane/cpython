@@ -900,6 +900,60 @@ remove_unneeded_uops(_PyUOpInstruction *buffer, int buffer_size)
     Py_UNREACHABLE();
 }
 
+/* An incomplete chain of generator resumes does no work that the optimizer
+ * can simplify. Its guards and tier transitions cost more than the handful
+ * of SEND/RESUME dispatches it replaces, especially for recursive yield-from.
+ * Loading a child iterator and starting its delegation is still only setup.
+ * Keep traces that compute a value, reach a yield, or complete a loop. */
+static bool
+trace_only_delegates_generators(_PyUOpInstruction *buffer, int length)
+{
+    int sends = 0;
+    for (int i = 0; i < length; i++) {
+        if (_PyUop_Flags[buffer[i].opcode] & HAS_RECORDS_VALUE_FLAG) {
+            continue;
+        }
+        switch (buffer[i].opcode) {
+            case _SEND_GEN_FRAME:
+                sends++;
+                break;
+            case _START_EXECUTOR:
+            case _MAKE_WARM:
+            case _NOP:
+            case _SET_IP:
+            case _CHECK_PERIODIC:
+            case _CHECK_VALIDITY:
+            case _FOR_ITER_GEN_FRAME:
+            case _PUSH_FRAME:
+            case _GUARD_IP__PUSH_FRAME:
+            case _GUARD_CODE_VERSION__PUSH_FRAME:
+            case _TIER2_RESUME_CHECK:
+                break;
+            case _LOAD_FAST_BORROW:
+            case _LOAD_CONST_INLINE_BORROW:
+            case _GUARD_TYPE_VERSION:
+            case _CHECK_MANAGED_OBJECT_HAS_VALUES:
+            case _LOAD_ATTR_INSTANCE_VALUE:
+            case _LOAD_ATTR_SLOT:
+            case _SWAP:
+            case _POP_TOP:
+            case _POP_TOP_NOP:
+            case _GET_ITER:
+                /* Only extend a delegation prefix, not arbitrary work in
+                 * the consumer before it enters the generator chain. */
+                if (sends == 0) {
+                    return false;
+                }
+                break;
+            case _EXIT_TRACE:
+                return sends > 1;
+            default:
+                return false;
+        }
+    }
+    return false;
+}
+
 //  0 - failure, no error raised, just fall back to Tier 1
 // -1 - failure, and raise error
 //  > 0 - length of optimized trace
@@ -926,6 +980,9 @@ _Py_uop_analyze_and_optimize(
 
     length = remove_unneeded_uops(output, length);
     assert(length > 0);
+    if (trace_only_delegates_generators(output, length)) {
+        return 0;
+    }
 
     OPT_STAT_INC(optimizer_successes);
     return length;

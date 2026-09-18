@@ -2250,6 +2250,52 @@ dummy_func(
             DECREF_INPUTS();
         }
 
+        replicate(2:17) tier2 op(_UNPACK_TUPLE_TO_FAST, (first_index/2, seq --)) {
+            PyObject *seq_o = PyStackRef_AsPyObjectBorrow(seq);
+            assert(PyTuple_CheckExact(seq_o));
+            EXIT_IF(PyTuple_GET_SIZE(seq_o) != oparg);
+            PyObject **items = _PyTuple_ITEMS(seq_o);
+            if (!_PyJit_UnpackLocalsUnchanged(&GETLOCAL(first_index), items, oparg)) {
+                /* A batch cannot use refcount > 1 as a no-finalizer proof:
+                 * old locals may own the last references to the same object. */
+                for (int i = 0; i < oparg; i++) {
+                    EXIT_IF(!_PyJit_CanClosePrimitive(GETLOCAL(first_index + i)));
+                }
+                for (int i = 0; i < oparg; i++) {
+                    _PyStackRef previous = GETLOCAL(first_index + i);
+                    GETLOCAL(first_index + i) = PyStackRef_FromPyObjectNew(items[i]);
+                    _PyJit_CloseNoEscape(previous);
+                }
+            }
+            DECREF_INPUTS();
+        }
+
+        replicate(2:17) tier2 op(_UNPACK_LIST_TO_FAST, (first_index/2, seq --)) {
+            PyObject *seq_o = PyStackRef_AsPyObjectBorrow(seq);
+            assert(PyList_CheckExact(seq_o));
+            DEOPT_IF(!LOCK_OBJECT(seq_o));
+            if (PyList_GET_SIZE(seq_o) != oparg) {
+                UNLOCK_OBJECT(seq_o);
+                DEOPT_IF(true);
+            }
+            PyObject **items = _PyList_ITEMS(seq_o);
+            if (!_PyJit_UnpackLocalsUnchanged(&GETLOCAL(first_index), items, oparg)) {
+                for (int i = 0; i < oparg; i++) {
+                    if (!_PyJit_CanClosePrimitive(GETLOCAL(first_index + i))) {
+                        UNLOCK_OBJECT(seq_o);
+                        DEOPT_IF(true);
+                    }
+                }
+                for (int i = 0; i < oparg; i++) {
+                    _PyStackRef previous = GETLOCAL(first_index + i);
+                    GETLOCAL(first_index + i) = PyStackRef_FromPyObjectNew(items[i]);
+                    _PyJit_CloseNoEscape(previous);
+                }
+            }
+            UNLOCK_OBJECT(seq_o);
+            DECREF_INPUTS();
+        }
+
         op(_UNPACK_SEQUENCE_UNIQUE_TUPLE, (seq -- values[oparg])) {
             PyObject *seq_o = PyStackRef_AsPyObjectSteal(seq);
             assert(PyTuple_CheckExact(seq_o));
@@ -3903,18 +3949,16 @@ dummy_func(
 
         tier1 op(_JIT, (--)) {
         #ifdef _Py_TIER2
-            bool is_resume = this_instr->op.code == RESUME_CHECK_JIT;
             _Py_BackoffCounter counter = this_instr[1].counter;
-            bool jit_enabled = FT_ATOMIC_LOAD_UINT8(tstate->interp->jit);
-            if (!jit_enabled) {
-                // Preserve the hotness counter while a free-threaded
-                // interpreter has multiple threads. It becomes usable again
-                // when the JIT is re-enabled.
+            if (!backoff_counter_triggers(counter)) {
+                ADVANCE_ADAPTIVE_COUNTER(this_instr[1].counter);
             }
-            else if ((backoff_counter_triggers(counter) &&
-                !IS_JIT_TRACING() &&
-                (this_instr->op.code == JUMP_BACKWARD_JIT || is_resume)) &&
-                next_instr->op.code != ENTER_EXECUTOR) {
+            else if (FT_ATOMIC_LOAD_UINT8(tstate->interp->jit) &&
+                     !IS_JIT_TRACING() &&
+                     (this_instr->op.code == JUMP_BACKWARD_JIT ||
+                      this_instr->op.code == RESUME_CHECK_JIT) &&
+                     next_instr->op.code != ENTER_EXECUTOR) {
+                bool is_resume = this_instr->op.code == RESUME_CHECK_JIT;
                 int method_compiled = 0;
                 if (is_resume) {
                     method_compiled = _PyJit_CompileMethod(tstate, frame);
@@ -3940,11 +3984,9 @@ dummy_func(
                     }
                 }
             }
-            else if (!backoff_counter_triggers(counter)) {
-                /* A ready counter may be temporarily blocked by another trace.
-                 * Keep it ready: decrementing zero wraps to a cold counter. */
-                ADVANCE_ADAPTIVE_COUNTER(this_instr[1].counter);
-            }
+            /* Keep ready counters at zero while tracing or while a second
+             * thread suspends the JIT. Cold counters can advance without
+             * reading the interpreter's JIT state on every entry/backedge. */
         #endif
         }
 
@@ -7183,8 +7225,18 @@ dummy_func(
             AT_END_EXIT_IF(range->len <= 0);
         }
 
+        tier2 op(_METHOD_PROFILE, (--)) {
+            if (current_executor->method_window == 0) {
+                current_executor->method_window = 256;
+                current_executor->method_misses = 0;
+            }
+            current_executor->method_window--;
+        }
+
         tier2 op(_METHOD_DEOPT, (--)) {
-            GOTO_TIER_ONE(_PyFrame_GetBytecode(frame) + CURRENT_TARGET());
+            /* Rare unsupported or over-budget continuations can still warm
+             * up as side traces while retaining the compiled method CFG. */
+            EXIT_IF(true);
         }
 
         tier2 op(_METHOD_EXIT, (--)) {
@@ -7242,6 +7294,7 @@ dummy_func(
                 next = continuation;
             }
             if (frame != caller || next != continuation) {
+                _PyJit_RecordMethodFallback(current_executor);
                 GOTO_TIER_ONE(next);
             }
             tstate->jit_exit = NULL;
@@ -7271,6 +7324,13 @@ dummy_func(
 
         tier2 op(_EXIT_TRACE, (exit_p/4 --)) {
             _PyExitData *exit = (_PyExitData *)exit_p;
+            if (current_executor->vm_data.partial_method &&
+                _PyJit_RecordMethodFallback(current_executor))
+            {
+                GOTO_TIER_ONE(((frame->owner == FRAME_OWNED_BY_INTERPRETER)
+                    ? _Py_INTERPRETER_TRAMPOLINE_INSTRUCTIONS_PTR
+                    : _PyFrame_GetBytecode(frame)) + exit->target);
+            }
         #if defined(Py_DEBUG) && !defined(_Py_JIT)
             const _Py_CODEUNIT *target = ((frame->owner == FRAME_OWNED_BY_INTERPRETER)
                 ? _Py_INTERPRETER_TRAMPOLINE_INSTRUCTIONS_PTR : _PyFrame_GetBytecode(frame))

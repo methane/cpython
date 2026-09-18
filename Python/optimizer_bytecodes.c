@@ -2705,7 +2705,13 @@ dummy_func(void) {
             if (ctx->frame->globals_checked_version != 0 && ctx->frame->globals_watched) {
                 cnst = convert_global_to_const(this_instr, builtins);
                 if (cnst != NULL) {
-                    ADD_OP(_GUARD_BUILTINS_IDENTITY, 0, 0);
+                    /* A frame keeps its builtins pointer even across calls.
+                     * Check each frame once; a newly pushed frame starts
+                     * unchecked, including one sharing this code object. */
+                    if (!ctx->frame->builtins_identity_checked) {
+                        ADD_OP(_GUARD_BUILTINS_IDENTITY, 0, 0);
+                        ctx->frame->builtins_identity_checked = true;
+                    }
                     ADD_OP(this_instr->opcode, this_instr->oparg,
                            this_instr->operand0);
                 }

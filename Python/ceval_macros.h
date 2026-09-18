@@ -903,15 +903,44 @@ _PyJit_NewEmptySet(void)
     return PySet_New(NULL);
 }
 
+/* Reassigning an identical owned reference has no observable effect. Borrowed
+ * mortal references still need the original conversion to an owning reference. */
 static inline bool
-_PyJit_CanCloseNoEscape(_PyStackRef value)
+_PyJit_UnpackLocalsUnchanged(_PyStackRef *locals, PyObject **items, int count)
 {
-#ifdef Py_GIL_DISABLED
-    return false;
-#else
+    for (int i = 0; i < count; i++) {
+        _PyStackRef previous = locals[i];
+        if (PyStackRef_IsNull(previous) ||
+            PyStackRef_AsPyObjectBorrow(previous) != items[i] ||
+            (!PyStackRef_RefcountOnObject(previous) && !_Py_IsImmortal(items[i])))
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+static inline bool
+_PyJit_CanClosePrimitive(_PyStackRef value)
+{
     if (PyStackRef_IsNull(value) || !PyStackRef_RefcountOnObject(value)) {
         return true;
     }
+    PyObject *obj = PyStackRef_AsPyObjectBorrow(value);
+    return PyLong_CheckExact(obj) || PyFloat_CheckExact(obj) ||
+        PyUnicode_CheckExact(obj) || PyBytes_CheckExact(obj);
+}
+
+static inline bool
+_PyJit_CanCloseNoEscape(_PyStackRef value)
+{
+    if (PyStackRef_IsNull(value) || !PyStackRef_RefcountOnObject(value)) {
+        return true;
+    }
+#ifdef Py_GIL_DISABLED
+    /* A shared reference count is not a no-finalizer proof in FT. */
+    return _PyJit_CanClosePrimitive(value);
+#else
     return _PyJit_CanDecRefNoEscape(PyStackRef_AsPyObjectBorrow(value));
 #endif
 }

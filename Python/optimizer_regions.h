@@ -25,6 +25,54 @@ region_skip(const _PyUOpInstruction *buffer, int pc, int end)
     return pc;
 }
 
+/* Assign an unpacked sequence directly to consecutive locals, without the
+ * intermediate value-stack slice. Runtime guards preserve finalizer ordering
+ * by falling back before unpacking if any old local can run Python. */
+static void
+fuse_unpack_stores(_PyUOpInstruction *buffer, int length)
+{
+    for (int start = 0; start < length; start++) {
+        int opcode = buffer[start].opcode;
+        if (opcode != _UNPACK_SEQUENCE_TUPLE && opcode != _UNPACK_SEQUENCE_LIST) {
+            continue;
+        }
+        int count = buffer[start].oparg;
+        if (count < 2 || count > 16) {
+            continue;
+        }
+        int pc = region_skip(buffer, start + 1, length);
+        if (pc >= length || buffer[pc].opcode != _SWAP_FAST) {
+            continue;
+        }
+        int first = buffer[pc].oparg;
+        int stores = 0;
+        int end = pc;
+        while (pc + 1 < length && stores < count &&
+               buffer[pc].opcode == _SWAP_FAST &&
+               buffer[pc].oparg == first + stores &&
+               (buffer[pc + 1].opcode == _POP_TOP ||
+                buffer[pc + 1].opcode == _POP_TOP_INT ||
+                buffer[pc + 1].opcode == _POP_TOP_FLOAT ||
+                buffer[pc + 1].opcode == _POP_TOP_UNICODE ||
+                buffer[pc + 1].opcode == _POP_TOP_NOP))
+        {
+            stores++;
+            end = pc + 2;
+            pc = region_skip(buffer, end, length);
+        }
+        if (stores != count) {
+            continue;
+        }
+        buffer[start].opcode = opcode == _UNPACK_SEQUENCE_TUPLE
+            ? _UNPACK_TUPLE_TO_FAST : _UNPACK_LIST_TO_FAST;
+        buffer[start].operand0 = first;
+        for (int i = start + 1; i < end; i++) {
+            buffer[i].opcode = _NOP;
+        }
+        start = end - 1;
+    }
+}
+
 static int
 region_arithmetic(int opcode)
 {

@@ -39,6 +39,8 @@ The fixes were reapplied and verified on `codex/method-jit`, starting from
 | M-10 | Generator analysis | Non-escaping operations are classified as escaping | Fixed on `codex/method-jit` |
 | M-11 | LLVM integration | Ordinary LLVM 21 stencil generation fails on a constant pool | Fixed on `codex/method-jit` |
 | M-12 | Stencil optimization | Jump-table targets can be removed from a generic stencil | Fixed on `codex/method-jit` |
+| M-13 | JIT hotness | A ready counter wraps while another trace is active | Fixed on `codex/method-jit` |
+| M-14 | GIL handoff | Repeated short I/O can indefinitely restart a waiter's switching interval | Fixed locally; debug, native and PGO/LTO validation pass |
 | P-1 | Optimization coverage | Valid method-descriptor calls on subclasses are rejected | Fixed on `codex/method-jit` |
 | P-2 | Optimization precision | Unrelated global writes invalidate optimized code | Fixed on `codex/method-jit` |
 | P-3 | Optimization coverage | Materialized dictionaries prevent valid inline attribute loads from specializing | Fixed locally for GIL builds |
@@ -470,3 +472,45 @@ regenerated the stencils before relinking.  All affected generated files were
 regenerated from source, and a second pass produced identical SHA-256 hashes.
 The 25-batch M-5 follow-up reproduced periodic deletion-queue cleanup, confirming
 that its apparent linear growth is bounded temporary retention.
+
+## M-14: short I/O can starve GIL waiters
+
+Added 2026-09-18 while investigating `concurrent_imap`. The relevant
+`take_gil()` and `drop_gil()` implementation in the pre-fix method-JIT branch
+is identical to `main` at `d95f29589e03603aa13d8ca9d4f817dce77d357c`.
+
+Each iteration of `take_gil()` started another full switching-interval wait.
+If the same holder released and reacquired the GIL quickly, its condition-variable
+signals could repeatedly wake the waiter before its timeout. `switch_number`
+did not change, but the waiter never reached the timeout needed to request a
+forced handoff. A permanently ready poll descriptor is a practical trigger:
+the polling thread can prevent the result-consumer thread from running, which
+in turn keeps the descriptor ready.
+
+The candidate native JIT and debug Tier 2 interpreter both reproduced multi-second
+stalls and timeouts while repeatedly constructing `multiprocessing.Pool` and
+consuming 1,000 identity results. Disabling method compilation alone did not
+solve it. The frozen main baseline and JIT-off candidate completed the initial
+control trials; that timing difference does not make the shared GIL algorithm
+correct. A suspected glibc condition-variable defect was not sufficient to
+explain this failure: both ABBA trials with private glibc 2.41 also timed out.
+The system libc and global settings were not changed.
+
+The local repair retains a monotonic deadline until `switch_number` changes
+or a handoff request is sent. After a request, it starts another normal interval
+so a holder still running C code does not cause short retry spinning.
+Repeated signals from the same holder no longer restart the whole interval.
+It affects only the contended acquisition path. A subprocess regression test
+uses a permanently ready pipe and verifies progress while another thread polls.
+Three debug trials of 100 Pools each complete with the repair. The optimized
+GIL candidate also completes both `concurrent_imap` results with the original
+6 workers, 5 warmups and 5 measured values, retaining the 60-second worker limit.
+The final GIL PGO/full-LTO candidate also completes both results with that
+original protocol in 33 seconds, with all 12 measured workers retaining JIT/GIL
+and the executable hash verified unchanged. These are local validation results,
+not an upstream submission or a proof of fairness on every platform.
+
+Evidence: `jit-artifacts/pyperformance-fixes-20260917/`, especially
+`pool-hot-before.log`, `pool-trace-only-debug.log`, `libc-diagnostic/`,
+`pool-deadline-debug-{0,1,2}.log`, `pool-full-gil-native-v1.json`, and
+`pool-full-gil-pgo-v6-state.json`.

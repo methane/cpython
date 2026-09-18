@@ -2223,6 +2223,20 @@
             break;
         }
 
+        case _UNPACK_TUPLE_TO_FAST: {
+            CHECK_STACK_BOUNDS(-1);
+            stack_pointer += -1;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            break;
+        }
+
+        case _UNPACK_LIST_TO_FAST: {
+            CHECK_STACK_BOUNDS(-1);
+            stack_pointer += -1;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            break;
+        }
+
         case _UNPACK_SEQUENCE_UNIQUE_TUPLE: {
             JitOptRef *values;
             values = &stack_pointer[-1];
@@ -2446,7 +2460,10 @@
                 if (ctx->frame->globals_checked_version != 0 && ctx->frame->globals_watched) {
                     cnst = convert_global_to_const(this_instr, builtins);
                     if (cnst != NULL) {
-                        ADD_OP(_GUARD_BUILTINS_IDENTITY, 0, 0);
+                        if (!ctx->frame->builtins_identity_checked) {
+                            ADD_OP(_GUARD_BUILTINS_IDENTITY, 0, 0);
+                            ctx->frame->builtins_identity_checked = true;
+                        }
                         ADD_OP(this_instr->opcode, this_instr->oparg,
                            this_instr->operand0);
                     }
@@ -6179,6 +6196,10 @@
         }
 
         case _METHOD_ITER_JUMP_RANGE: {
+            break;
+        }
+
+        case _METHOD_PROFILE: {
             break;
         }
 

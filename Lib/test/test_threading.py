@@ -780,6 +780,50 @@ class ThreadTests(BaseTestCase):
         th.start()
         th.join()
 
+    @requires_subprocess()
+    @requires_gil_enabled("tests contended GIL handoff")
+    def test_gil_handoff_during_repeated_io(self):
+        select = import_module("select")
+        if not hasattr(select, "poll"):
+            self.skipTest("requires select.poll")
+        code = textwrap.dedent(f"""
+            import faulthandler
+            import os
+            import select
+            import threading
+            import time
+
+            # A ready descriptor makes poll release and reacquire the GIL
+            # quickly. Those signals must not restart another thread's
+            # entire switching interval, preventing it from making progress.
+            faulthandler.dump_traceback_later({support.SHORT_TIMEOUT}, exit=True)
+            reader, writer = os.pipe()
+            os.write(writer, b'x')
+            poll = select.poll()
+            poll.register(reader, select.POLLIN)
+            stop = threading.Event()
+            started = threading.Event()
+
+            def poller():
+                started.set()
+                while not stop.is_set():
+                    poll.poll(0)
+
+            thread = threading.Thread(target=poller)
+            thread.start()
+            started.wait()
+            try:
+                for _ in range(100):
+                    time.sleep(0.001)
+            finally:
+                stop.set()
+                thread.join()
+                os.close(reader)
+                os.close(writer)
+            faulthandler.cancel_dump_traceback_later()
+        """)
+        assert_python_ok("-c", code)
+
     @skip_unless_reliable_fork
     @unittest.skipUnless(hasattr(os, 'waitpid'), "test needs os.waitpid()")
     def test_main_thread_after_fork(self):

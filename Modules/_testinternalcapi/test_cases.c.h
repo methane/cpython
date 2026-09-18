@@ -8639,15 +8639,16 @@
             // _JIT
             {
                 #ifdef _Py_TIER2
-                bool is_resume = this_instr->op.code == RESUME_CHECK_JIT;
                 _Py_BackoffCounter counter = this_instr[1].counter;
-                bool jit_enabled = FT_ATOMIC_LOAD_UINT8(tstate->interp->jit);
-                if (!jit_enabled) {
+                if (!backoff_counter_triggers(counter)) {
+                    ADVANCE_ADAPTIVE_COUNTER(this_instr[1].counter);
                 }
-                else if ((backoff_counter_triggers(counter) &&
-                      !IS_JIT_TRACING() &&
-                      (this_instr->op.code == JUMP_BACKWARD_JIT || is_resume)) &&
+                else if (FT_ATOMIC_LOAD_UINT8(tstate->interp->jit) &&
+                     !IS_JIT_TRACING() &&
+                     (this_instr->op.code == JUMP_BACKWARD_JIT ||
+                      this_instr->op.code == RESUME_CHECK_JIT) &&
                      next_instr->op.code != ENTER_EXECUTOR) {
+                    bool is_resume = this_instr->op.code == RESUME_CHECK_JIT;
                     int method_compiled = 0;
                     if (is_resume) {
                         assert(stack_pointer == _PyFrame_GetStackPointer(frame));
@@ -8675,9 +8676,6 @@
                             this_instr[1].counter = restart_backoff_counter(counter);
                         }
                     }
-                }
-                else if (!backoff_counter_triggers(counter)) {
-                    ADVANCE_ADAPTIVE_COUNTER(this_instr[1].counter);
                 }
                 #endif
             }
@@ -11792,15 +11790,16 @@
             // _JIT
             {
                 #ifdef _Py_TIER2
-                bool is_resume = this_instr->op.code == RESUME_CHECK_JIT;
                 _Py_BackoffCounter counter = this_instr[1].counter;
-                bool jit_enabled = FT_ATOMIC_LOAD_UINT8(tstate->interp->jit);
-                if (!jit_enabled) {
+                if (!backoff_counter_triggers(counter)) {
+                    ADVANCE_ADAPTIVE_COUNTER(this_instr[1].counter);
                 }
-                else if ((backoff_counter_triggers(counter) &&
-                      !IS_JIT_TRACING() &&
-                      (this_instr->op.code == JUMP_BACKWARD_JIT || is_resume)) &&
+                else if (FT_ATOMIC_LOAD_UINT8(tstate->interp->jit) &&
+                     !IS_JIT_TRACING() &&
+                     (this_instr->op.code == JUMP_BACKWARD_JIT ||
+                      this_instr->op.code == RESUME_CHECK_JIT) &&
                      next_instr->op.code != ENTER_EXECUTOR) {
+                    bool is_resume = this_instr->op.code == RESUME_CHECK_JIT;
                     int method_compiled = 0;
                     if (is_resume) {
                         _PyFrame_SetStackPointer(frame, stack_pointer);
@@ -11828,9 +11827,6 @@
                             this_instr[1].counter = restart_backoff_counter(counter);
                         }
                     }
-                }
-                else if (!backoff_counter_triggers(counter)) {
-                    ADVANCE_ADAPTIVE_COUNTER(this_instr[1].counter);
                 }
                 #endif
             }

@@ -7,6 +7,7 @@
 #include "pycore_pylifecycle.h"   // _PyErr_Print()
 #include "pycore_pystats.h"       // _Py_PrintSpecializationStats()
 #include "pycore_runtime.h"       // _PyRuntime
+#include "pycore_time.h"          // _PyDeadline_Init()
 
 
 /*
@@ -324,6 +325,8 @@ take_gil(PyThreadState *tstate)
     tstate->gil_requested = 1;
 
     int drop_requested = 0;
+    PyTime_t switch_deadline = 0;
+    unsigned long deadline_switchnum = gil->switch_number;
     while (_Py_atomic_load_int_relaxed(&gil->locked)) {
         unsigned long saved_switchnum = gil->switch_number;
 
@@ -331,8 +334,21 @@ take_gil(PyThreadState *tstate)
         if (interval < 1) {
             interval = 1;
         }
+        /* A thread performing short I/O operations can repeatedly release
+         * and reacquire the GIL before a waiter gets the mutex. Signals from
+         * those releases must not restart the waiter's switching interval:
+         * that would let the same holder starve all other threads forever. */
+        if (switch_deadline == 0 || deadline_switchnum != saved_switchnum) {
+            switch_deadline = _PyDeadline_Init(
+                _PyTime_FromMicrosecondsClamp(interval));
+            deadline_switchnum = saved_switchnum;
+        }
+        PyTime_t remaining = _PyDeadline_Get(switch_deadline);
+        long long wait_us = remaining > 0
+            ? _PyTime_AsMicroseconds(remaining, _PyTime_ROUND_CEILING) : 1;
         int timed_out = 0;
-        COND_TIMED_WAIT(gil->cond, gil->mutex, interval, timed_out);
+        COND_TIMED_WAIT(gil->cond, gil->mutex, wait_us, timed_out);
+        timed_out |= _PyDeadline_Get(switch_deadline) <= 0;
 
         /* If we timed out and no switch occurred in the meantime, it is time
            to ask the GIL-holding thread to drop it. */
@@ -361,6 +377,9 @@ take_gil(PyThreadState *tstate)
 
             _Py_set_eval_breaker_bit(holder_tstate, _PY_GIL_DROP_REQUEST_BIT);
             drop_requested = 1;
+            /* The holder may stay in C code for a while. Retry at the normal
+             * interval instead of repeatedly waiting on an expired deadline. */
+            switch_deadline = 0;
         }
     }
 

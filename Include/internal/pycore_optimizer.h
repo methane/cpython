@@ -189,6 +189,7 @@ typedef struct {
     bool cold;
     bool is_method;
     bool preserves_method;
+    bool partial_method;
     uint8_t pending_deletion;
     int32_t index;           // Index of ENTER_EXECUTOR (if code isn't NULL, below).
     int32_t bloom_array_idx;        // Index in interp->executor_blooms/executor_ptrs.
@@ -214,6 +215,8 @@ typedef struct _PyExecutorObject {
     uint32_t exit_count;
     uint32_t code_size;
     uint16_t trivial_call;  // Recognized allocation-free method return, or zero.
+    uint16_t method_window;
+    uint16_t method_misses;
     uint64_t trivial_operand;
     size_t jit_size;
     void *jit_code;
@@ -549,6 +552,9 @@ PyAPI_FUNC(int) _PyOptimizer_Optimize(_PyInterpreterFrame *frame, PyThreadState 
 PyAPI_FUNC(int) _PyJit_CompileMethod(
     PyThreadState *tstate,
     _PyInterpreterFrame *frame);
+
+/* Count incomplete executions of a partial method, without running Python. */
+PyAPI_FUNC(int) _PyJit_RecordMethodFallback(_PyExecutorObject *executor);
 
 PyAPI_FUNC(_Py_CODEUNIT *) _PyJit_CallMethod(
     PyThreadState *tstate, _PyExecutorObject *caller_executor,

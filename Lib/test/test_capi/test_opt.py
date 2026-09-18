@@ -91,6 +91,357 @@ def count_ops(ex, name):
 @requires_specialization
 @requires_jit_enabled
 class TestMethodFrontend(unittest.TestCase):
+    @unittest.skipUnless(Py_GIL_DISABLED, 'requires a free-threaded build')
+    def test_suspended_jit_advances_cold_counters(self):
+        self.addCleanup(_testinternalcapi.clear_executor_deletion_list)
+        namespace = {}
+        exec('def leaf(value):\n    return value + 1\n', namespace)
+        leaf = namespace['leaf']
+        ready = threading.Event()
+        release = threading.Event()
+        def worker():
+            ready.set()
+            release.wait()
+        thread = threading.Thread(target=worker)
+        thread.start()
+        try:
+            self.assertTrue(ready.wait(SHORT_TIMEOUT))
+            self.assertFalse(sys._jit.is_enabled())
+            count = 2 * TIER2_RESUME_THRESHOLD
+            self.assertEqual(list(map(leaf, itertools.repeat(41, count))),
+                             [42] * count)
+            self.assertIsNone(get_first_executor(leaf))
+            counter, = struct.unpack_from(
+                '=H', leaf.__code__._co_code_adaptive, 2)
+            # The low three bits retain the backoff, not the countdown.
+            self.assertEqual(counter >> 3, 0)
+        finally:
+            release.set()
+            thread.join(SHORT_TIMEOUT)
+        self.assertFalse(thread.is_alive())
+        self.assertTrue(sys._jit.is_enabled())
+        self.assertEqual(leaf(41), 42)
+        self.assertIsNotNone(get_first_executor(leaf))
+        self.assertEqual(leaf(42), 43)
+
+    @disable_gc()
+    def test_entry_validity_survives_resume_check(self):
+        self.addCleanup(_testinternalcapi.clear_executor_deletion_list)
+        namespace = {'VALUE': 42}
+        exec('def read():\n    return VALUE\n', namespace)
+        read = namespace['read']
+        results = list(itertools.starmap(read, itertools.repeat(
+            (), TIER2_RESUME_THRESHOLD)))
+        self.assertEqual(results, [42] * TIER2_RESUME_THRESHOLD)
+        executor = _opcode.get_executor(read.__code__, 0)
+        names = get_opnames(executor)
+        self.assertIn('_METHOD_EXIT', names)
+        self.assertIn('_TIER2_RESUME_CHECK', names)
+        self.assertNotIn('_CHECK_VALIDITY', names)
+        namespace['VALUE'] = 43
+        self.assertFalse(executor.is_valid())
+        self.assertEqual(read(), 43)
+
+    @disable_gc()
+    def test_callback_invalidates_after_resume_check(self):
+        self.addCleanup(_testinternalcapi.clear_executor_deletion_list)
+        namespace = {'VALUE': 42}
+        exec('def read(callback):\n'
+             '    count = len(callback)\n'
+             '    return VALUE + count\n', namespace)
+        read = namespace['read']
+        class Callback:
+            replace = False
+            def __len__(self):
+                if self.replace:
+                    namespace['VALUE'] = 99
+                return 1
+        callback = Callback()
+        self.assertEqual(list(map(read, itertools.repeat(
+            callback, TIER2_RESUME_THRESHOLD))),
+            [43] * TIER2_RESUME_THRESHOLD)
+        executor = _opcode.get_executor(read.__code__, 0)
+        names = get_opnames(executor)
+        self.assertIn('_TIER2_RESUME_CHECK', names)
+        self.assertIn('_CHECK_VALIDITY', names)
+        callback.replace = True
+        self.assertEqual(read(callback), 100)
+        self.assertFalse(executor.is_valid())
+
+    @disable_gc()
+    def test_reassignment_does_not_alias_previous_stack_value(self):
+        self.addCleanup(_testinternalcapi.clear_executor_deletion_list)
+
+        def drop(value):
+            return None
+
+        # Retain an owned value on the stack while overwriting its local.
+        # A COPY of the new bool must not make the old value immortal.
+        instructions = [
+            ("RESUME", 0), ("LOAD_FAST", 0), ("LOAD_CONST", 0),
+            ("STORE_FAST", 0), ("LOAD_FAST", 0), ("COPY", 1), ("TO_BOOL", 0),
+            ("POP_TOP", 0), ("POP_TOP", 0), ("POP_TOP", 0),
+            ("LOAD_CONST", 1), ("RETURN_VALUE", 0),
+        ]
+        code = bytearray()
+        for name, arg in instructions:
+            code.extend((dis.opmap[name], arg))
+            code.extend(bytes(2 * dis._inline_cache_entries.get(name, 0)))
+        drop.__code__ = drop.__code__.replace(
+            co_code=bytes(code), co_consts=(True, None),
+            co_stacksize=3, co_linetable=b"")
+        destroyed = []
+
+        class Value:
+            def __del__(self):
+                destroyed.append(None)
+
+        count = TIER2_RESUME_THRESHOLD + 100
+        # Keep object production in C; a shared generator-expression trace
+        # could retain a different local Value type on each refleak iteration.
+        values = itertools.starmap(Value, itertools.repeat((), count))
+        self.assertEqual(list(map(drop, values)), [None] * count)
+        self.assertEqual(len(destroyed), count)
+        self.assertIn("_METHOD_EXIT", get_opnames(get_first_executor(drop)))
+
+    @disable_gc()
+    def test_borrowed_arithmetic_and_comparison_inputs(self):
+        self.addCleanup(_testinternalcapi.clear_executor_deletion_list)
+        for symbol, values, cleanup, expected in (
+            ('+', (int('3000'), int('4000')), '_POP_TOP_INT', 7000),
+            ('+', (float('3.25'), float('4.5')), '_POP_TOP_FLOAT', 7.75),
+            ('==', (''.join(['ab', 'cd']), ''.join(['ab', 'cd'])),
+             '_POP_TOP_UNICODE', True),
+        ):
+            with self.subTest(symbol=symbol, values=values):
+                ns = {}
+                exec(f'def calculate(a, b): return a {symbol} b', ns)
+                calculate = ns['calculate']
+                count = TIER2_RESUME_THRESHOLD
+                self.assertEqual(list(itertools.starmap(calculate,
+                                     itertools.repeat(values, count))),
+                                 [expected] * count)
+                ops = get_opnames(get_first_executor(calculate))
+                self.assertIn('_METHOD_EXIT', ops)
+                self.assertNotIn(cleanup, ops)
+                refs = tuple(sys.getrefcount(value) for value in values)
+                results = list(itertools.starmap(calculate,
+                               itertools.repeat(values, count)))
+                self.assertEqual(results, [expected] * count)
+                del results
+                self.assertEqual(tuple(sys.getrefcount(value) for value in values),
+                                 refs)
+                self.assertEqual(calculate(values[0], values[0]),
+                                 values[0] + values[0] if symbol == '+' else True)
+                if symbol == '+':
+                    self.assertEqual(calculate('a', 'b'), 'ab')
+                    with self.assertRaises(TypeError):
+                        calculate(None, 1)
+
+    @disable_gc()
+    def test_boolean_cleanup_preserves_receiver_facts(self):
+        self.addCleanup(_testinternalcapi.clear_executor_deletion_list)
+        class Record:
+            __slots__ = ('special', 'text')
+        def read(obj):
+            return obj.special or obj.text != '0'
+        record = Record()
+        record.special = False
+        record.text = '0'
+        count = TIER2_RESUME_THRESHOLD
+        self.assertEqual(list(map(read, itertools.repeat(record, count))),
+                         [False] * count)
+        ops = get_opnames(get_first_executor(read))
+        self.assertIn('_METHOD_EXIT', ops)
+        self.assertIn('_LOAD_CONST_INLINE_BORROW', ops)
+        self.assertNotIn('_POP_TOP', ops)
+        record.text = '1'
+        self.assertIs(read(record), True)
+        class Change:
+            def __bool__(self):
+                record.text = '0'
+                return False
+        record.special = Change()
+        self.assertIs(read(record), False)
+        record.special = True
+        self.assertIs(read(record), True)
+        class Replacement(Record):
+            __slots__ = ()
+            @property
+            def text(self):
+                return '1'
+        class ChangeType:
+            def __bool__(self):
+                record.__class__ = Replacement
+                return False
+        record.special = ChangeType()
+        self.assertIs(read(record), True)
+
+    @disable_gc()
+    def test_immortal_constant_code_replacement(self):
+        self.addCleanup(_testinternalcapi.clear_executor_deletion_list)
+        def compare(value):
+            return value == '0'
+        count = TIER2_RESUME_THRESHOLD
+        self.assertEqual(list(map(compare, itertools.repeat('1', count))),
+                         [False] * count)
+        executor = get_first_executor(compare)
+        self.assertIn('_LOAD_CONST_INLINE_BORROW', get_opnames(executor))
+        self.assertTrue(sys._is_immortal('0'))
+        alias = types.FunctionType(compare.__code__, compare.__globals__)
+        constants = tuple('1' if value == '0' else value
+                          for value in compare.__code__.co_consts)
+        compare.__code__ = compare.__code__.replace(co_consts=constants)
+        self.assertEqual(list(map(compare, itertools.repeat('1', count))),
+                         [True] * count)
+        self.assertIs(alias('0'), True)
+        self.assertIs(alias('1'), False)
+        self.assertIs(compare('1'), True)
+        self.assertIs(compare('0'), False)
+
+
+    @disable_gc()
+    def test_large_method_keeps_closed_caller_loop(self):
+        source = ["def helper(value):", "    if value >= 0:",
+                  "        return value + 1"]
+        source.extend(["    value += 1"] * 40)
+        source.append("    return value")
+        source.extend(["def caller(count):", "    total = 0",
+                       "    for value in range(count):",
+                       "        total += helper(value)", "    return total"])
+        namespace = {}
+        exec("\n".join(source), namespace)
+        helper, caller = namespace["helper"], namespace["caller"]
+        for _ in range(100):
+            self.assertEqual(helper(-100), -60)
+        count = TIER2_THRESHOLD
+        self.assertEqual(caller(count), count * (count + 1) // 2)
+        loops = [executor for executor in get_all_executors(caller)
+                 if "_JUMP_TO_TOP" in get_opnames(executor) and
+                 "_PUSH_FRAME" in get_opnames(executor)]
+        self.assertTrue(loops)
+        count = TIER2_RESUME_THRESHOLD
+        self.assertEqual(list(map(helper, itertools.repeat(1, count))), [2] * count)
+        method = get_first_executor(helper)
+        self.assertIn("_METHOD_EXIT", get_opnames(method))
+        self.assertNotIn("_METHOD_PROFILE", get_opnames(method))
+        self.assertTrue(all(executor.is_valid() for executor in loops))
+        self.assertEqual(caller(5), 15)
+        self.assertEqual(helper(-100), -60)
+
+        def replacement(value):
+            return value + 10
+        helper.__code__ = replacement.__code__
+        self.assertTrue(all(not executor.is_valid() for executor in loops))
+        self.assertEqual(caller(5), 60)
+
+
+    @unittest.skipIf(Py_GIL_DISABLED, "Constant attribute fusion requires the GIL")
+    def test_fused_store_side_trace_makes_progress(self):
+        script_helper.assert_python_ok("-c", textwrap.dedent("""
+            import dis
+            import gc
+            from test.test_capi.test_opt import get_all_executors
+
+            gc.disable()
+            seen = set()
+            destroyed = []
+            class Owner:
+                __slots__ = ('value',)
+            class Value:
+                def __del__(self):
+                    destroyed.append(None)
+                    seen.update(get_all_executors(clear))
+
+            def clear(obj):
+                obj.value = None
+                return 1
+
+            def work(count):
+                obj = Owner()
+                total = 0
+                for _ in range(count):
+                    obj.value = Value()
+                    total += clear(obj)
+                return total
+
+            assert work(100_000) == 100_000
+            assert len(destroyed) == 100_000
+            # Side traces eventually attach at the constant load. Moving the store's
+            # destruction guard before that load makes the executor immediately
+            # fail, detach itself and start another chain at the same bytecode.
+            loads = [ex for ex in seen
+                     if ex.get_opcode() == dis.opmap['LOAD_COMMON_CONSTANT']]
+            assert loads, 'No side trace made progress past the constant load'
+            for ex in loads:
+                ops = [op[0] for op in ex if op[0] not in (
+                    '_START_EXECUTOR', '_MAKE_WARM', '_SET_IP',
+                    '_CHECK_VALIDITY', '_NOP')]
+                assert ops[0] == '_LOAD_CONST_INLINE_BORROW', ops
+        """))
+
+    @disable_gc()
+    def test_unpack_local_stores_preserve_finalizer_order(self):
+        for sequence in (tuple, list):
+            with self.subTest(sequence=sequence):
+                def unpack(values, previous):
+                    a, b, c = previous.pop()
+                    a, b, c = values
+                    return a, b, c
+
+                reset_code(unpack)
+                args = ((sequence((4, 5, 6)), [(1, 2, 3)])
+                        for _ in range(TIER2_RESUME_THRESHOLD))
+                self.assertEqual(list(itertools.starmap(unpack, args)),
+                                 [(4, 5, 6)] * TIER2_RESUME_THRESHOLD)
+                executors = get_all_executors(unpack)
+                unpack_op = f"_UNPACK_{sequence.__name__.upper()}_TO_FAST"
+                self.assertTrue(any(op.startswith(unpack_op)
+                                    for ex in executors for op in get_opnames(ex)))
+
+                events = []
+                class Previous:
+                    def __init__(self, name):
+                        self.name = name
+                    def __del__(self):
+                        local = sys._getframe(1).f_locals
+                        events.append((self.name, tuple(
+                            isinstance(local[name], Previous) for name in "abc")))
+
+                previous = [(Previous("a"), Previous("b"), Previous("c"))]
+                self.assertEqual(unpack(sequence((7, 8, 9)), previous), (7, 8, 9))
+                self.assertEqual(events, [("a", (False, True, True)),
+                                          ("b", (False, False, True)),
+                                          ("c", (False, False, False))])
+                self.assertEqual(previous, [])
+                # The same old object can be held by several locals. Its initial
+                # refcount > 1 cannot move its finalizer past those stores.
+                events.clear()
+                shared = Previous("shared")
+                previous = [(shared, shared, shared)]
+                del shared
+                self.assertEqual(unpack(sequence((7, 8, 9)), previous), (7, 8, 9))
+                self.assertEqual(events, [("shared", (False, False, False))])
+                with self.assertRaises(ValueError):
+                    unpack(sequence((1, 2)), [(1, 2, 3)])
+                with self.assertRaises(ValueError):
+                    unpack(sequence((1, 2, 3, 4)), [(1, 2, 3)])
+                objects = (object(), object(), object())
+                self.assertEqual(unpack(sequence(objects), [(1, 2, 3)]), objects)
+                # Identical stores may retain existing strong references,
+                # including non-primitive objects.
+                self.assertEqual(unpack(sequence(objects), [objects]), objects)
+
+    @disable_gc()
+    def test_unpack_local_stores_do_not_merge_repeated_target(self):
+        def unpack(values):
+            a, a, b = values
+            return a, b
+
+        for _ in range(TIER2_RESUME_THRESHOLD):
+            self.assertEqual(unpack((1, 2, 3)), (2, 3))
+        objects = [object(), object(), object()]
+        self.assertEqual(unpack(objects), (objects[1], objects[2]))
 
     @unittest.skipIf(Py_GIL_DISABLED or sys.maxsize <= 2**32,
                      "Constant attribute regions require a 64-bit GIL build")
@@ -1120,6 +1471,80 @@ class TestMethodFrontend(unittest.TestCase):
         self.assertEqual(events, [("replace_after_call", token)])
 
     @disable_gc()
+    def test_partial_method_keeps_existing_inlined_loop(self):
+        self.addCleanup(_testinternalcapi.clear_executor_deletion_list)
+        source = ('def helper(value):\n'
+                  '    if value >= 0:\n'
+                  '        return value + 1\n'
+                  '    result = value\n')
+        source += '    result += value + 1\n' * 200
+        source += '    return result\n'
+        source += ('def caller(n):\n'
+                   '    if n < 0:\n'
+                   '        from math import sqrt\n'
+                   '        return sqrt(-n)\n'
+                   '    total = 0\n'
+                   '    for value in range(n):\n'
+                   '        total += helper(value)\n'
+                   '    return total\n')
+        namespace = {}
+        exec(source, namespace)
+        caller = namespace['caller']
+        count = TIER2_THRESHOLD
+        self.assertEqual(caller(count), count * (count + 1) // 2)
+        loops = [executor for executor in get_all_executors(caller)
+                 if '_JUMP_TO_TOP' in get_opnames(executor) and
+                 '_PUSH_FRAME' in get_opnames(executor)]
+        self.assertTrue(loops)
+        count = TIER2_RESUME_THRESHOLD * 2
+        self.assertEqual(list(map(caller, itertools.repeat(5, count))),
+                         [15] * count)
+        entry = _opcode.get_executor(caller.__code__, 0)
+        self.assertNotIn('_METHOD_EXIT', get_opnames(entry))
+        self.assertNotIn('_METHOD_CALL', get_opnames(entry))
+        self.assertTrue(all(executor.is_valid() for executor in loops))
+        self.assertEqual(caller(-9), 3.0)
+        self.assertEqual(caller(0), 0)
+        # Mandatory dependency invalidation must still replace the old loop.
+        def replacement(value):
+            return value + 10
+        namespace['helper'].__code__ = replacement.__code__
+        self.assertTrue(all(not executor.is_valid() for executor in loops))
+        self.assertEqual(caller(5), 60)
+
+    @disable_gc()
+    def test_method_keeps_existing_inlined_loop(self):
+        self.addCleanup(_testinternalcapi.clear_executor_deletion_list)
+        namespace = {}
+        source = ("def helper(value):\n"
+                  "    if value >= 0:\n"
+                  "        return value + 1\n"
+                  "    result = value\n")
+        source += "    result += value + 1\n" * 200
+        source += "    return result\n"
+        source += ("def caller(n):\n"
+                   "    total = 0\n"
+                   "    for value in range(n):\n"
+                   "        total += helper(value)\n"
+                   "    return total\n")
+        exec(source, namespace)
+        caller = namespace["caller"]
+        count = TIER2_THRESHOLD
+        self.assertEqual(caller(count), count * (count + 1) // 2)
+        loops = [executor for executor in get_all_executors(caller)
+                 if "_JUMP_TO_TOP" in get_opnames(executor) and
+                 "_PUSH_FRAME" in get_opnames(executor)]
+        self.assertTrue(loops)
+        count = TIER2_RESUME_THRESHOLD * 2
+        self.assertEqual(list(map(caller, itertools.repeat(5, count))),
+                         [15] * count)
+        entry = _opcode.get_executor(caller.__code__, 0)
+        self.assertNotIn("_METHOD_CALL", get_opnames(entry))
+        self.assertNotIn("_METHOD_EXIT", get_opnames(entry))
+        self.assertTrue(all(executor.is_valid() for executor in loops))
+        self.assertEqual(caller(0), 0)
+
+    @disable_gc()
     def test_trace_preserves_existing_method_entry(self):
         source = ["def factory(offset):", "    def callee(value):"]
         source.extend(["        value += offset"] * 40)
@@ -1233,15 +1658,13 @@ class TestMethodFrontend(unittest.TestCase):
         for _ in range(20):
             result, active = caller(first, 2)
             self.assertEqual(result, 12)
-            if not Py_GIL_DISABLED:
-                self.assertTrue(active)
+            self.assertTrue(active)
         if not Py_GIL_DISABLED:
             self.assertEqual(sys.getrefcount(cell), references)
         for offset in range(20):
             result, active = caller(factory(offset), 3)
             self.assertEqual(result, offset + 3)
-            if not Py_GIL_DISABLED:
-                self.assertTrue(active)
+            self.assertTrue(active)
         with self.assertRaises(TypeError):
             caller(factory("wrong type"), 3)
 
@@ -3201,6 +3624,43 @@ def find(rows, key):
         self.assertEqual(other(None), 42)
         self.assertIs(function(None), Ellipsis)
 
+    def test_method_reuses_mapping_identity_guards(self):
+        import builtins
+        namespace = {"__builtins__": builtins.__dict__}
+        exec("def function(values):\n"
+             "    first = list\n"
+             "    len(values)\n"
+             "    return list\n",
+             namespace)
+        function = namespace["function"]
+        values = [1, 2]
+        self.assertEqual(list(map(function, itertools.repeat(
+            values, TIER2_RESUME_THRESHOLD))),
+            [list] * TIER2_RESUME_THRESHOLD)
+        executor = _opcode.get_executor(function.__code__, 0)
+        opnames = get_opnames(executor)
+        self.assertIn("_METHOD_EXIT", opnames)
+        self.assertEqual(opnames.count("_GUARD_BUILTINS_IDENTITY"), 1)
+        self.assertEqual(
+            opnames.count("_GUARD_GLOBALS_VERSION_AND_IDENTITY"), 1)
+
+        custom = dict(builtins.__dict__, list=42, len=lambda obj: 10)
+        namespace["__builtins__"] = custom
+        other = types.FunctionType(function.__code__, namespace)
+        namespace["__builtins__"] = builtins.__dict__
+        self.assertEqual(other(values), 42)
+        self.assertIs(function(values), list)
+
+        class Rebind:
+            def __len__(obj):
+                self.assertIs(sys._getframe(1).f_locals["first"], list)
+                namespace["list"] = 42
+                return 2
+
+        self.assertTrue(executor.is_valid())
+        self.assertEqual(function(Rebind()), 42)
+        self.assertFalse(executor.is_valid())
+
     def test_compiles_both_sides_of_branch(self):
         def choose(flag):
             if flag:
@@ -3415,6 +3875,7 @@ def find(rows, key):
 
     @disable_gc()
     def test_method_code_budget_preserves_partial_cfg(self):
+        self.addCleanup(_testinternalcapi.clear_executor_deletion_list)
         lines = ["def large(value, events):",
                  "    if value < 0:",
                  "        return -value",
@@ -3438,6 +3899,18 @@ def find(rows, key):
         events.clear()
         self.assertEqual(large(-3, events), 3)
         self.assertEqual(events, [])
+
+        def short_path(n):
+            total = 0
+            for _ in range(n):
+                total += large(-3, events)
+            return total
+
+        self.assertEqual(short_path(TIER2_THRESHOLD * 2),
+                         TIER2_THRESHOLD * 6)
+        traced = get_first_executor(short_path)
+        self.assertIsNotNone(traced)
+        self.assertNotIn("_METHOD_CALL", get_opnames(traced))
         for value in (0, 5, 2**60):
             expected = value * 201 + constant
             self.assertEqual(large(value, events), expected)
@@ -3451,6 +3924,171 @@ def find(rows, key):
         # and propagates its error through the original function frame.
         with self.assertRaisesRegex(ValueError, str(5 * 201 + constant)):
             large(5, BrokenEvents())
+
+    @disable_gc()
+    def test_partial_method_compiles_hot_continuation(self):
+        namespace = {}
+        source = ("def large(value):\n    if value < 0:\n        return -value\n"
+                  "    total = value\n")
+        source += "    total += value + 1\n" * 200
+        source += "    return total\n"
+        exec(source, namespace)
+        large = namespace["large"]
+        # One in eight calls takes the incomplete path, so it can form a
+        # side trace without replacing this useful method entry.
+        count = TIER2_RESUME_THRESHOLD * 8
+        inputs = itertools.islice(itertools.cycle([-1] * 7 + [1]), count)
+        self.assertEqual(list(map(large, inputs)), ([1] * 7 + [401]) * (count // 8))
+        executor = _opcode.get_executor(large.__code__, 0)
+        exits = [executor[op[2]] for op in executor
+                 if op[0] == "_METHOD_DEOPT"]
+        self.assertTrue(exits)
+        for exit in exits:
+            self.assertEqual(exit[0], "_EXIT_TRACE")
+            continuation = _testinternalcapi.get_exit_executor(exit[3])
+            self.assertEqual(continuation[0][0], "_START_EXECUTOR")
+            self.assertTrue(continuation.is_valid())
+        self.assertEqual(large(2**60), (2**60) * 201 + 200)
+        with self.assertRaises(TypeError):
+            large(None)
+
+    @disable_gc()
+    def test_partial_method_repeated_fallback_prefers_entry_trace(self):
+        self.addCleanup(_testinternalcapi.clear_executor_deletion_list)
+        namespace = {}
+        source = "def large(value):\n    total = value\n"
+        source += "    total += value + 1\n" * 200
+        source += "    return total\n"
+        exec(source, namespace)
+        large = namespace["large"]
+        count = TIER2_RESUME_THRESHOLD
+        self.assertEqual(list(map(large, itertools.repeat(1, count))),
+                         [401] * count)
+        method = _opcode.get_executor(large.__code__, 0)
+        self.assertIn("_METHOD_DEOPT", get_opnames(method))
+        # Detaching restores RESUME, which starts its normal warmup again.
+        # Allow both the fallback sampling and that new warmup to complete.
+        self.assertEqual(list(map(large, itertools.repeat(1, count * 2))),
+                         [401] * (count * 2))
+        traced = _opcode.get_executor(large.__code__, 0)
+        self.assertIsNot(traced, method)
+        self.assertFalse(method.is_valid())
+        self.assertNotIn("_METHOD_PROFILE", get_opnames(traced))
+        _testinternalcapi.invalidate_executors(large.__code__)
+        self.assertEqual(list(map(large, itertools.repeat(1, count * 2))),
+                         [401] * (count * 2))
+        traced = _opcode.get_executor(large.__code__, 0)
+        self.assertNotIn("_METHOD_PROFILE", get_opnames(traced))
+        self.assertEqual(large(2**60), (2**60) * 201 + 200)
+        with self.assertRaises(TypeError):
+            large(None)
+
+    @disable_gc()
+    def test_partial_method_repeated_guard_exits_prefer_entry_trace(self):
+        self.addCleanup(_testinternalcapi.clear_executor_deletion_list)
+        namespace = {}
+        source = ("def large(value):\n"
+                  "    if value >= 0:\n"
+                  "        return value + 1\n"
+                  "    result = value\n")
+        source += "    result += value + 1\n" * 200
+        source += "    return result\n"
+        exec(source, namespace)
+        large = namespace["large"]
+        count = TIER2_RESUME_THRESHOLD
+        self.assertEqual(list(map(large, itertools.repeat(1, count))), [2] * count)
+        method = _opcode.get_executor(large.__code__, 0)
+        self.assertIn("_METHOD_PROFILE", get_opnames(method))
+        self.assertIn("_METHOD_DEOPT", get_opnames(method))
+        # The unsupported long path is never entered. Changing the argument
+        # type repeatedly exits an integer guard in the short path.
+        self.assertEqual(list(map(large, itertools.repeat(1.5, count * 2))),
+                         [2.5] * (count * 2))
+        self.assertFalse(method.is_valid())
+        traced = _opcode.get_executor(large.__code__, 0)
+        self.assertNotIn("_METHOD_PROFILE", get_opnames(traced))
+        self.assertEqual(large(2**60), 2**60 + 1)
+        self.assertEqual(large(-1), -1)
+
+    @disable_gc()
+    def test_recursive_generator_setup_does_not_compile_empty_prefix(self):
+        self.addCleanup(_testinternalcapi.clear_executor_deletion_list)
+        class Tree:
+            def __init__(self, child):
+                self.left = child
+                self.right = child
+                self.value = 1
+            def __iter__(self):
+                if self.left:
+                    yield from self.left
+                yield self.value
+                if self.right:
+                    yield from self.right
+        def tree(values):
+            if not values:
+                return None
+            middle = len(values) // 2
+            child = Tree(None)
+            child.left = tree(values[:middle])
+            child.right = tree(values[middle+1:])
+            return child
+        def consume(loops):
+            assert list(tree(range(10))) == [1] * 10
+            iterations = range(loops)
+            iterable = tree(range(100000))
+            for _ in iterations:
+                for item in iterable:
+                    pass
+            return item
+        for function in (Tree.__init__, Tree.__iter__, tree, consume):
+            reset_code(function)
+        # Early attempts can stop before starting a child. Keep traversing
+        # after their backoff to cover a prefix that also initializes one.
+        for _ in range(10):
+            self.assertEqual(consume(8), 1)
+        executors = get_all_executors(consume)
+        self.assertFalse(executors, [get_opnames(e) for e in executors])
+
+    @disable_gc()
+    def test_recursive_generator_body_is_still_traced(self):
+        self.addCleanup(_testinternalcapi.clear_executor_deletion_list)
+        def generate(values):
+            for value in values:
+                yield value + 1
+        def delegate(iterator):
+            yield from iterator
+        def consume(iterator):
+            result = 0
+            for item in iterator:
+                result += item
+            return result
+        for function in (generate, delegate, consume):
+            reset_code(function)
+        count = TIER2_THRESHOLD * 3
+        iterator = delegate(delegate(generate(range(count))))
+        self.assertEqual(consume(iterator), count * (count + 1) // 2)
+        names = [op for e in get_all_executors(consume) for op in get_opnames(e)]
+        self.assertIn('_BINARY_OP_ADD_INT', names)
+        self.assertIn('_JUMP_TO_TOP', names)
+
+    @disable_gc()
+    def test_deep_generator_delegation_does_not_compile_empty_prefix(self):
+        def delegate(iterator):
+            yield from iterator
+
+        def consume(iterator):
+            for item in iterator:
+                pass
+            return item
+
+        count = TIER2_THRESHOLD * 3
+        iterator = iter(range(count))
+        for _ in range(12):
+            iterator = delegate(iterator)
+        self.assertEqual(consume(iterator), count - 1)
+        # The bounded trace can only enter part of the delegation chain.
+        # It cannot reach the yielded value or finish the consumer's loop.
+        self.assertIsNone(get_first_executor(consume))
 
     @disable_gc()
     def test_method_empty_cell_uses_original_exception_handler(self):
@@ -3613,13 +4251,20 @@ def find(rows, key):
             divide(6.0, 2.0, [])
 
     def test_calls_method_executor_and_propagates_exception(self):
+        bias = 0
+
         def callee(n):
             total = 0
             for i in range(n):
                 total += i
-            if n < 0:
-                raise ValueError("negative")
-            return total
+            # The closure prefix keeps this a nested method call, even when
+            # the inliner supports protected regions in smaller CFGs.
+            try:
+                if n < 0:
+                    raise ValueError("negative")
+            except ValueError:
+                raise
+            return total + bias
 
         def caller(function, n):
             return function(n) + 7
@@ -3806,6 +4451,84 @@ def find(rows, key):
         callee.__code__ = replacement.__code__
         self.assertFalse(executor.is_valid())
         self.assertEqual(caller(callee, False, 7), 43)
+
+    def test_inlines_callee_with_cold_unsupported_arm(self):
+        def callee(values, index):
+            if index < 0:
+                raise IndexError(index)
+            return values[index]
+
+        def caller(function, values, index):
+            return function(values, index) + 1
+
+        values = [10, 20]
+        arguments = itertools.repeat((callee, values, 0), TIER2_RESUME_THRESHOLD)
+        self.assertEqual(list(itertools.starmap(caller, arguments)),
+                         [11] * TIER2_RESUME_THRESHOLD)
+        executor = _opcode.get_executor(caller.__code__, 0)
+        opnames = get_opnames(executor)
+        self.assertIn("_PUSH_FRAME", opnames)
+        self.assertIn("_METHOD_DEOPT", opnames)
+        self.assertNotIn("_METHOD_CALL", opnames)
+        self.assertEqual(caller(callee, values, 1), 21)
+        for index in (-1, 2):
+            try:
+                caller(callee, values, index)
+            except IndexError as exc:
+                tb = exc.__traceback__
+                while tb.tb_next is not None:
+                    tb = tb.tb_next
+                self.assertIs(tb.tb_frame.f_code, callee.__code__)
+                self.assertEqual(tb.tb_lineno,
+                                 callee.__code__.co_firstlineno +
+                                 (2 if index < 0 else 3))
+            else:
+                self.fail("IndexError not raised")
+        self.assertEqual(caller(callee, (3.5,), 0), 4.5)
+
+        def replacement(values, index):
+            return 42
+
+        callee.__code__ = replacement.__code__
+        self.assertFalse(executor.is_valid())
+        self.assertEqual(caller(callee, values, -1), 43)
+
+    def test_inlines_protected_callee_and_preserves_handlers(self):
+        def callee(values, index, events):
+            try:
+                return values[index]
+            except IndexError:
+                return 40
+            finally:
+                events[0] += 1
+
+        def caller(function, values, index, events):
+            return function(values, index, events) + 1
+
+        events = [0]
+        arguments = itertools.repeat((callee, [10], 0, events),
+                                     TIER2_RESUME_THRESHOLD)
+        self.assertEqual(list(itertools.starmap(caller, arguments)),
+                         [11] * TIER2_RESUME_THRESHOLD)
+        self.assertEqual(events, [TIER2_RESUME_THRESHOLD])
+        executor = _opcode.get_executor(caller.__code__, 0)
+        opnames = get_opnames(executor)
+        self.assertIn("_PUSH_FRAME", opnames)
+        self.assertNotIn("_METHOD_CALL", opnames)
+        self.assertEqual(caller(callee, [10], 1, events), 41)
+        self.assertEqual(caller(callee, (2.5,), 0, events), 3.5)
+        try:
+            caller(callee, None, 0, events)
+        except TypeError as exc:
+            tb = exc.__traceback__
+            self.assertIs(tb.tb_next.tb_frame.f_code, caller.__code__)
+            self.assertIs(tb.tb_next.tb_next.tb_frame.f_code, callee.__code__)
+            self.assertEqual(tb.tb_next.tb_next.tb_lineno,
+                             callee.__code__.co_firstlineno + 2)
+        else:
+            self.fail("TypeError not raised")
+        self.assertEqual(events, [TIER2_RESUME_THRESHOLD + 3])
+        self.assertEqual(caller(callee, [10], 0, events), 11)
 
     def test_inlined_callee_mixed_join(self):
         def callee(flag):
@@ -4434,10 +5157,10 @@ class TestUops(unittest.TestCase):
         ex = get_first_executor(testfunc)
         self.assertIsNotNone(ex)
         uops = get_opnames(ex)
-        # The recursive closure now uses the method frontend, which validates
-        # the executor before the entry periodic check.
-        self.assertEqual(uops[:4], ["_START_EXECUTOR", "_MAKE_WARM",
-                                    "_CHECK_VALIDITY", "_TIER2_RESUME_CHECK"])
+        # START_EXECUTOR validates the method before the entry periodic
+        # check; a second validity check on this path is redundant.
+        self.assertEqual(uops[:3], ["_START_EXECUTOR", "_MAKE_WARM",
+                                    "_TIER2_RESUME_CHECK"])
 
     def test_jump_forward(self):
         def testfunc(n):
@@ -4970,6 +5693,27 @@ class TestUopsOptimization(unittest.TestCase):
         self.assertEqual(namespace["run"]([1], TIER2_THRESHOLD), 1)
         namespace["__builtins__"]["len"] = lambda value: 42
         self.assertEqual(namespace["run"]([1], 8), 42)
+
+    def test_builtin_identity_guard_reused_in_same_frame(self):
+        import builtins
+
+        namespace = {"__builtins__": vars(builtins)}
+        exec("def run(value, n):\n"
+             "    for _ in range(n):\n"
+             "        result = (len(value), len(value), Ellipsis, NotImplemented)\n"
+             "    return result\n", namespace)
+        run = namespace["run"]
+        self.assertEqual(run([1], TIER2_THRESHOLD),
+                         (1, 1, Ellipsis, NotImplemented))
+        executor = get_first_executor(run)
+        self.assertIsNotNone(executor)
+        self.assertEqual(get_opnames(executor).count("_GUARD_BUILTINS_IDENTITY"), 1)
+
+        custom = vars(builtins).copy()
+        custom.update(len=lambda value: 42, Ellipsis=17, NotImplemented=23)
+        other = types.FunctionType(run.__code__, {"__builtins__": custom})
+        self.assertEqual(other([1], 8), (42, 42, 17, 23))
+        self.assertEqual(run([1], 8), (1, 1, Ellipsis, NotImplemented))
 
     def test_same_function_version_different_builtins(self):
         import builtins
@@ -6940,7 +7684,7 @@ class TestUopsOptimization(unittest.TestCase):
         uops = get_opnames(ex)
 
         self.assertIn("_BUILD_TUPLE", uops)
-        self.assertIn("_UNPACK_SEQUENCE_TUPLE", uops)
+        self.assertIn("_UNPACK_TUPLE_TO_FAST_4", uops)
         self.assertNotIn("_UNPACK_SEQUENCE_UNIQUE_TUPLE", uops)
 
     def test_unique_three_tuple_unpack(self):
@@ -6979,7 +7723,7 @@ class TestUopsOptimization(unittest.TestCase):
         uops = get_opnames(ex)
 
         self.assertIn("_BUILD_TUPLE", uops)
-        self.assertIn("_UNPACK_SEQUENCE_TUPLE", uops)
+        self.assertIn("_UNPACK_TUPLE_TO_FAST_3", uops)
         self.assertNotIn("_UNPACK_SEQUENCE_UNIQUE_THREE_TUPLE", uops)
 
     def test_unique_two_tuple_unpack(self):
@@ -9170,7 +9914,7 @@ class TestUopsOptimization(unittest.TestCase):
         self.assertIsNotNone(ex)
         uops = get_opnames(ex)
         self.assertIn("_BINARY_OP_EXTEND", uops)
-        self.assertIn("_UNPACK_SEQUENCE_TUPLE", uops)
+        self.assertIn("_UNPACK_TUPLE_TO_FAST_4", uops)
         self.assertNotIn("_GUARD_TOS_TUPLE", uops)
 
     def test_binary_op_extend_guard_elimination(self):
@@ -10523,7 +11267,7 @@ class TestUopsOptimization(unittest.TestCase):
         uops = get_opnames(ex)
 
         self.assertIn("_DICT_MERGE", uops)
-        self.assertGreaterEqual(count_ops(ex, "_POP_TOP_NOP"), 1)
+        self.assertEqual(count_ops(ex, "_POP_TOP_NOP"), 1)
         self.assertLessEqual(count_ops(ex, "_POP_TOP"), 2)
 
     def test_list_extend(self):

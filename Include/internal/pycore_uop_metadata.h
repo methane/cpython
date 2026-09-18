@@ -207,6 +207,38 @@ const uint32_t _PyUop_Flags[MAX_UOP_ID+1] = {
     [_UNPACK_SEQUENCE_UNIQUE_TWO_TUPLE] = 0,
     [_UNPACK_SEQUENCE_UNIQUE_THREE_TUPLE] = 0,
     [_UNPACK_SEQUENCE_TUPLE] = HAS_ARG_FLAG | HAS_EXIT_FLAG | HAS_ESCAPES_FLAG,
+    [_UNPACK_TUPLE_TO_FAST_2] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG | HAS_ESCAPES_FLAG,
+    [_UNPACK_TUPLE_TO_FAST_3] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG | HAS_ESCAPES_FLAG,
+    [_UNPACK_TUPLE_TO_FAST_4] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG | HAS_ESCAPES_FLAG,
+    [_UNPACK_TUPLE_TO_FAST_5] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG | HAS_ESCAPES_FLAG,
+    [_UNPACK_TUPLE_TO_FAST_6] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG | HAS_ESCAPES_FLAG,
+    [_UNPACK_TUPLE_TO_FAST_7] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG | HAS_ESCAPES_FLAG,
+    [_UNPACK_TUPLE_TO_FAST_8] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG | HAS_ESCAPES_FLAG,
+    [_UNPACK_TUPLE_TO_FAST_9] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG | HAS_ESCAPES_FLAG,
+    [_UNPACK_TUPLE_TO_FAST_10] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG | HAS_ESCAPES_FLAG,
+    [_UNPACK_TUPLE_TO_FAST_11] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG | HAS_ESCAPES_FLAG,
+    [_UNPACK_TUPLE_TO_FAST_12] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG | HAS_ESCAPES_FLAG,
+    [_UNPACK_TUPLE_TO_FAST_13] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG | HAS_ESCAPES_FLAG,
+    [_UNPACK_TUPLE_TO_FAST_14] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG | HAS_ESCAPES_FLAG,
+    [_UNPACK_TUPLE_TO_FAST_15] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG | HAS_ESCAPES_FLAG,
+    [_UNPACK_TUPLE_TO_FAST_16] = HAS_LOCAL_FLAG | HAS_EXIT_FLAG | HAS_ESCAPES_FLAG,
+    [_UNPACK_TUPLE_TO_FAST] = HAS_ARG_FLAG | HAS_LOCAL_FLAG | HAS_EXIT_FLAG | HAS_ESCAPES_FLAG,
+    [_UNPACK_LIST_TO_FAST_2] = HAS_LOCAL_FLAG | HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
+    [_UNPACK_LIST_TO_FAST_3] = HAS_LOCAL_FLAG | HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
+    [_UNPACK_LIST_TO_FAST_4] = HAS_LOCAL_FLAG | HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
+    [_UNPACK_LIST_TO_FAST_5] = HAS_LOCAL_FLAG | HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
+    [_UNPACK_LIST_TO_FAST_6] = HAS_LOCAL_FLAG | HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
+    [_UNPACK_LIST_TO_FAST_7] = HAS_LOCAL_FLAG | HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
+    [_UNPACK_LIST_TO_FAST_8] = HAS_LOCAL_FLAG | HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
+    [_UNPACK_LIST_TO_FAST_9] = HAS_LOCAL_FLAG | HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
+    [_UNPACK_LIST_TO_FAST_10] = HAS_LOCAL_FLAG | HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
+    [_UNPACK_LIST_TO_FAST_11] = HAS_LOCAL_FLAG | HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
+    [_UNPACK_LIST_TO_FAST_12] = HAS_LOCAL_FLAG | HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
+    [_UNPACK_LIST_TO_FAST_13] = HAS_LOCAL_FLAG | HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
+    [_UNPACK_LIST_TO_FAST_14] = HAS_LOCAL_FLAG | HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
+    [_UNPACK_LIST_TO_FAST_15] = HAS_LOCAL_FLAG | HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
+    [_UNPACK_LIST_TO_FAST_16] = HAS_LOCAL_FLAG | HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
+    [_UNPACK_LIST_TO_FAST] = HAS_ARG_FLAG | HAS_LOCAL_FLAG | HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
     [_UNPACK_SEQUENCE_UNIQUE_TUPLE] = HAS_ARG_FLAG,
     [_UNPACK_SEQUENCE_LIST] = HAS_ARG_FLAG | HAS_DEOPT_FLAG | HAS_ESCAPES_FLAG,
     [_UNPACK_EX] = HAS_ARG_FLAG | HAS_ERROR_FLAG | HAS_ESCAPES_FLAG,
@@ -478,7 +510,8 @@ const uint32_t _PyUop_Flags[MAX_UOP_ID+1] = {
     [_METHOD_ITER_JUMP_LIST] = HAS_EXIT_FLAG,
     [_METHOD_ITER_JUMP_TUPLE] = HAS_EXIT_FLAG,
     [_METHOD_ITER_JUMP_RANGE] = HAS_EXIT_FLAG,
-    [_METHOD_DEOPT] = 0,
+    [_METHOD_PROFILE] = 0,
+    [_METHOD_DEOPT] = HAS_EXIT_FLAG,
     [_METHOD_EXIT] = 0,
     [_METHOD_CALL] = HAS_ARG_FLAG | HAS_ESCAPES_FLAG | HAS_SYNC_SP_FLAG,
     [_JUMP_TO_TOP] = 0,
@@ -531,6 +564,8 @@ const ReplicationRange _PyUop_Replication[MAX_UOP_ID+1] = {
     [_INT_REGION_START] = { 0, 5 },
     [_INT_REGION_BINARY] = { 0, 4 },
     [_BINARY_OP_SUBSCR_BORROWED] = { 0, 2 },
+    [_UNPACK_TUPLE_TO_FAST] = { 2, 17 },
+    [_UNPACK_LIST_TO_FAST] = { 2, 17 },
     [_INIT_CALL_PY_EXACT_ARGS] = { 0, 5 },
     [_METHOD_TRY_SIMPLE_INIT] = { 1, 4 },
     [_STORE_CONST_ATTRIBUTE] = { 0, 4 },
@@ -2089,6 +2124,294 @@ const _PyUopCachingInfo _PyUop_Caching[MAX_UOP_ID+1] = {
         .entries = {
             { -1, -1, -1 },
             { 0, 1, _UNPACK_SEQUENCE_TUPLE_r10 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_UNPACK_TUPLE_TO_FAST_2] = {
+        .best = { 1, 1, 1, 1 },
+        .entries = {
+            { -1, -1, -1 },
+            { 0, 1, _UNPACK_TUPLE_TO_FAST_2_r10 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_UNPACK_TUPLE_TO_FAST_3] = {
+        .best = { 1, 1, 1, 1 },
+        .entries = {
+            { -1, -1, -1 },
+            { 0, 1, _UNPACK_TUPLE_TO_FAST_3_r10 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_UNPACK_TUPLE_TO_FAST_4] = {
+        .best = { 1, 1, 1, 1 },
+        .entries = {
+            { -1, -1, -1 },
+            { 0, 1, _UNPACK_TUPLE_TO_FAST_4_r10 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_UNPACK_TUPLE_TO_FAST_5] = {
+        .best = { 1, 1, 1, 1 },
+        .entries = {
+            { -1, -1, -1 },
+            { 0, 1, _UNPACK_TUPLE_TO_FAST_5_r10 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_UNPACK_TUPLE_TO_FAST_6] = {
+        .best = { 1, 1, 1, 1 },
+        .entries = {
+            { -1, -1, -1 },
+            { 0, 1, _UNPACK_TUPLE_TO_FAST_6_r10 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_UNPACK_TUPLE_TO_FAST_7] = {
+        .best = { 1, 1, 1, 1 },
+        .entries = {
+            { -1, -1, -1 },
+            { 0, 1, _UNPACK_TUPLE_TO_FAST_7_r10 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_UNPACK_TUPLE_TO_FAST_8] = {
+        .best = { 1, 1, 1, 1 },
+        .entries = {
+            { -1, -1, -1 },
+            { 0, 1, _UNPACK_TUPLE_TO_FAST_8_r10 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_UNPACK_TUPLE_TO_FAST_9] = {
+        .best = { 1, 1, 1, 1 },
+        .entries = {
+            { -1, -1, -1 },
+            { 0, 1, _UNPACK_TUPLE_TO_FAST_9_r10 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_UNPACK_TUPLE_TO_FAST_10] = {
+        .best = { 1, 1, 1, 1 },
+        .entries = {
+            { -1, -1, -1 },
+            { 0, 1, _UNPACK_TUPLE_TO_FAST_10_r10 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_UNPACK_TUPLE_TO_FAST_11] = {
+        .best = { 1, 1, 1, 1 },
+        .entries = {
+            { -1, -1, -1 },
+            { 0, 1, _UNPACK_TUPLE_TO_FAST_11_r10 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_UNPACK_TUPLE_TO_FAST_12] = {
+        .best = { 1, 1, 1, 1 },
+        .entries = {
+            { -1, -1, -1 },
+            { 0, 1, _UNPACK_TUPLE_TO_FAST_12_r10 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_UNPACK_TUPLE_TO_FAST_13] = {
+        .best = { 1, 1, 1, 1 },
+        .entries = {
+            { -1, -1, -1 },
+            { 0, 1, _UNPACK_TUPLE_TO_FAST_13_r10 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_UNPACK_TUPLE_TO_FAST_14] = {
+        .best = { 1, 1, 1, 1 },
+        .entries = {
+            { -1, -1, -1 },
+            { 0, 1, _UNPACK_TUPLE_TO_FAST_14_r10 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_UNPACK_TUPLE_TO_FAST_15] = {
+        .best = { 1, 1, 1, 1 },
+        .entries = {
+            { -1, -1, -1 },
+            { 0, 1, _UNPACK_TUPLE_TO_FAST_15_r10 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_UNPACK_TUPLE_TO_FAST_16] = {
+        .best = { 1, 1, 1, 1 },
+        .entries = {
+            { -1, -1, -1 },
+            { 0, 1, _UNPACK_TUPLE_TO_FAST_16_r10 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_UNPACK_TUPLE_TO_FAST] = {
+        .best = { 1, 1, 1, 1 },
+        .entries = {
+            { -1, -1, -1 },
+            { 0, 1, _UNPACK_TUPLE_TO_FAST_r10 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_UNPACK_LIST_TO_FAST_2] = {
+        .best = { 1, 1, 1, 1 },
+        .entries = {
+            { -1, -1, -1 },
+            { 0, 1, _UNPACK_LIST_TO_FAST_2_r10 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_UNPACK_LIST_TO_FAST_3] = {
+        .best = { 1, 1, 1, 1 },
+        .entries = {
+            { -1, -1, -1 },
+            { 0, 1, _UNPACK_LIST_TO_FAST_3_r10 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_UNPACK_LIST_TO_FAST_4] = {
+        .best = { 1, 1, 1, 1 },
+        .entries = {
+            { -1, -1, -1 },
+            { 0, 1, _UNPACK_LIST_TO_FAST_4_r10 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_UNPACK_LIST_TO_FAST_5] = {
+        .best = { 1, 1, 1, 1 },
+        .entries = {
+            { -1, -1, -1 },
+            { 0, 1, _UNPACK_LIST_TO_FAST_5_r10 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_UNPACK_LIST_TO_FAST_6] = {
+        .best = { 1, 1, 1, 1 },
+        .entries = {
+            { -1, -1, -1 },
+            { 0, 1, _UNPACK_LIST_TO_FAST_6_r10 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_UNPACK_LIST_TO_FAST_7] = {
+        .best = { 1, 1, 1, 1 },
+        .entries = {
+            { -1, -1, -1 },
+            { 0, 1, _UNPACK_LIST_TO_FAST_7_r10 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_UNPACK_LIST_TO_FAST_8] = {
+        .best = { 1, 1, 1, 1 },
+        .entries = {
+            { -1, -1, -1 },
+            { 0, 1, _UNPACK_LIST_TO_FAST_8_r10 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_UNPACK_LIST_TO_FAST_9] = {
+        .best = { 1, 1, 1, 1 },
+        .entries = {
+            { -1, -1, -1 },
+            { 0, 1, _UNPACK_LIST_TO_FAST_9_r10 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_UNPACK_LIST_TO_FAST_10] = {
+        .best = { 1, 1, 1, 1 },
+        .entries = {
+            { -1, -1, -1 },
+            { 0, 1, _UNPACK_LIST_TO_FAST_10_r10 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_UNPACK_LIST_TO_FAST_11] = {
+        .best = { 1, 1, 1, 1 },
+        .entries = {
+            { -1, -1, -1 },
+            { 0, 1, _UNPACK_LIST_TO_FAST_11_r10 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_UNPACK_LIST_TO_FAST_12] = {
+        .best = { 1, 1, 1, 1 },
+        .entries = {
+            { -1, -1, -1 },
+            { 0, 1, _UNPACK_LIST_TO_FAST_12_r10 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_UNPACK_LIST_TO_FAST_13] = {
+        .best = { 1, 1, 1, 1 },
+        .entries = {
+            { -1, -1, -1 },
+            { 0, 1, _UNPACK_LIST_TO_FAST_13_r10 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_UNPACK_LIST_TO_FAST_14] = {
+        .best = { 1, 1, 1, 1 },
+        .entries = {
+            { -1, -1, -1 },
+            { 0, 1, _UNPACK_LIST_TO_FAST_14_r10 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_UNPACK_LIST_TO_FAST_15] = {
+        .best = { 1, 1, 1, 1 },
+        .entries = {
+            { -1, -1, -1 },
+            { 0, 1, _UNPACK_LIST_TO_FAST_15_r10 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_UNPACK_LIST_TO_FAST_16] = {
+        .best = { 1, 1, 1, 1 },
+        .entries = {
+            { -1, -1, -1 },
+            { 0, 1, _UNPACK_LIST_TO_FAST_16_r10 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_UNPACK_LIST_TO_FAST] = {
+        .best = { 1, 1, 1, 1 },
+        .entries = {
+            { -1, -1, -1 },
+            { 0, 1, _UNPACK_LIST_TO_FAST_r10 },
             { -1, -1, -1 },
             { -1, -1, -1 },
         },
@@ -4532,6 +4855,15 @@ const _PyUopCachingInfo _PyUop_Caching[MAX_UOP_ID+1] = {
             { 3, 3, _METHOD_ITER_JUMP_RANGE_r33 },
         },
     },
+    [_METHOD_PROFILE] = {
+        .best = { 0, 1, 2, 3 },
+        .entries = {
+            { 0, 0, _METHOD_PROFILE_r00 },
+            { 1, 1, _METHOD_PROFILE_r11 },
+            { 2, 2, _METHOD_PROFILE_r22 },
+            { 3, 3, _METHOD_PROFILE_r33 },
+        },
+    },
     [_METHOD_DEOPT] = {
         .best = { 0, 0, 0, 0 },
         .entries = {
@@ -5267,6 +5599,38 @@ const uint16_t _PyUop_Uncached[MAX_UOP_REGS_ID+1] = {
     [_UNPACK_SEQUENCE_UNIQUE_THREE_TUPLE_r03] = _UNPACK_SEQUENCE_UNIQUE_THREE_TUPLE,
     [_UNPACK_SEQUENCE_UNIQUE_THREE_TUPLE_r13] = _UNPACK_SEQUENCE_UNIQUE_THREE_TUPLE,
     [_UNPACK_SEQUENCE_TUPLE_r10] = _UNPACK_SEQUENCE_TUPLE,
+    [_UNPACK_TUPLE_TO_FAST_2_r10] = _UNPACK_TUPLE_TO_FAST_2,
+    [_UNPACK_TUPLE_TO_FAST_3_r10] = _UNPACK_TUPLE_TO_FAST_3,
+    [_UNPACK_TUPLE_TO_FAST_4_r10] = _UNPACK_TUPLE_TO_FAST_4,
+    [_UNPACK_TUPLE_TO_FAST_5_r10] = _UNPACK_TUPLE_TO_FAST_5,
+    [_UNPACK_TUPLE_TO_FAST_6_r10] = _UNPACK_TUPLE_TO_FAST_6,
+    [_UNPACK_TUPLE_TO_FAST_7_r10] = _UNPACK_TUPLE_TO_FAST_7,
+    [_UNPACK_TUPLE_TO_FAST_8_r10] = _UNPACK_TUPLE_TO_FAST_8,
+    [_UNPACK_TUPLE_TO_FAST_9_r10] = _UNPACK_TUPLE_TO_FAST_9,
+    [_UNPACK_TUPLE_TO_FAST_10_r10] = _UNPACK_TUPLE_TO_FAST_10,
+    [_UNPACK_TUPLE_TO_FAST_11_r10] = _UNPACK_TUPLE_TO_FAST_11,
+    [_UNPACK_TUPLE_TO_FAST_12_r10] = _UNPACK_TUPLE_TO_FAST_12,
+    [_UNPACK_TUPLE_TO_FAST_13_r10] = _UNPACK_TUPLE_TO_FAST_13,
+    [_UNPACK_TUPLE_TO_FAST_14_r10] = _UNPACK_TUPLE_TO_FAST_14,
+    [_UNPACK_TUPLE_TO_FAST_15_r10] = _UNPACK_TUPLE_TO_FAST_15,
+    [_UNPACK_TUPLE_TO_FAST_16_r10] = _UNPACK_TUPLE_TO_FAST_16,
+    [_UNPACK_TUPLE_TO_FAST_r10] = _UNPACK_TUPLE_TO_FAST,
+    [_UNPACK_LIST_TO_FAST_2_r10] = _UNPACK_LIST_TO_FAST_2,
+    [_UNPACK_LIST_TO_FAST_3_r10] = _UNPACK_LIST_TO_FAST_3,
+    [_UNPACK_LIST_TO_FAST_4_r10] = _UNPACK_LIST_TO_FAST_4,
+    [_UNPACK_LIST_TO_FAST_5_r10] = _UNPACK_LIST_TO_FAST_5,
+    [_UNPACK_LIST_TO_FAST_6_r10] = _UNPACK_LIST_TO_FAST_6,
+    [_UNPACK_LIST_TO_FAST_7_r10] = _UNPACK_LIST_TO_FAST_7,
+    [_UNPACK_LIST_TO_FAST_8_r10] = _UNPACK_LIST_TO_FAST_8,
+    [_UNPACK_LIST_TO_FAST_9_r10] = _UNPACK_LIST_TO_FAST_9,
+    [_UNPACK_LIST_TO_FAST_10_r10] = _UNPACK_LIST_TO_FAST_10,
+    [_UNPACK_LIST_TO_FAST_11_r10] = _UNPACK_LIST_TO_FAST_11,
+    [_UNPACK_LIST_TO_FAST_12_r10] = _UNPACK_LIST_TO_FAST_12,
+    [_UNPACK_LIST_TO_FAST_13_r10] = _UNPACK_LIST_TO_FAST_13,
+    [_UNPACK_LIST_TO_FAST_14_r10] = _UNPACK_LIST_TO_FAST_14,
+    [_UNPACK_LIST_TO_FAST_15_r10] = _UNPACK_LIST_TO_FAST_15,
+    [_UNPACK_LIST_TO_FAST_16_r10] = _UNPACK_LIST_TO_FAST_16,
+    [_UNPACK_LIST_TO_FAST_r10] = _UNPACK_LIST_TO_FAST,
     [_UNPACK_SEQUENCE_UNIQUE_TUPLE_r10] = _UNPACK_SEQUENCE_UNIQUE_TUPLE,
     [_UNPACK_SEQUENCE_LIST_r10] = _UNPACK_SEQUENCE_LIST,
     [_UNPACK_EX_r10] = _UNPACK_EX,
@@ -5823,6 +6187,10 @@ const uint16_t _PyUop_Uncached[MAX_UOP_REGS_ID+1] = {
     [_METHOD_ITER_JUMP_RANGE_r12] = _METHOD_ITER_JUMP_RANGE,
     [_METHOD_ITER_JUMP_RANGE_r22] = _METHOD_ITER_JUMP_RANGE,
     [_METHOD_ITER_JUMP_RANGE_r33] = _METHOD_ITER_JUMP_RANGE,
+    [_METHOD_PROFILE_r00] = _METHOD_PROFILE,
+    [_METHOD_PROFILE_r11] = _METHOD_PROFILE,
+    [_METHOD_PROFILE_r22] = _METHOD_PROFILE,
+    [_METHOD_PROFILE_r33] = _METHOD_PROFILE,
     [_METHOD_DEOPT_r00] = _METHOD_DEOPT,
     [_METHOD_EXIT_r00] = _METHOD_EXIT,
     [_METHOD_CALL_r00] = _METHOD_CALL,
@@ -7237,6 +7605,11 @@ const char *const _PyOpcode_uop_name[MAX_UOP_REGS_ID+1] = {
     [_METHOD_POP_JUMP_IF_TRUE_r10] = "_METHOD_POP_JUMP_IF_TRUE_r10",
     [_METHOD_POP_JUMP_IF_TRUE_r21] = "_METHOD_POP_JUMP_IF_TRUE_r21",
     [_METHOD_POP_JUMP_IF_TRUE_r32] = "_METHOD_POP_JUMP_IF_TRUE_r32",
+    [_METHOD_PROFILE] = "_METHOD_PROFILE",
+    [_METHOD_PROFILE_r00] = "_METHOD_PROFILE_r00",
+    [_METHOD_PROFILE_r11] = "_METHOD_PROFILE_r11",
+    [_METHOD_PROFILE_r22] = "_METHOD_PROFILE_r22",
+    [_METHOD_PROFILE_r33] = "_METHOD_PROFILE_r33",
     [_METHOD_TRY_SIMPLE_INIT] = "_METHOD_TRY_SIMPLE_INIT",
     [_METHOD_TRY_SIMPLE_INIT_r01] = "_METHOD_TRY_SIMPLE_INIT_r01",
     [_METHOD_TRY_SIMPLE_INIT_1] = "_METHOD_TRY_SIMPLE_INIT_1",
@@ -7532,6 +7905,38 @@ const char *const _PyOpcode_uop_name[MAX_UOP_REGS_ID+1] = {
     [_UNARY_NOT_r33] = "_UNARY_NOT_r33",
     [_UNPACK_EX] = "_UNPACK_EX",
     [_UNPACK_EX_r10] = "_UNPACK_EX_r10",
+    [_UNPACK_LIST_TO_FAST] = "_UNPACK_LIST_TO_FAST",
+    [_UNPACK_LIST_TO_FAST_r10] = "_UNPACK_LIST_TO_FAST_r10",
+    [_UNPACK_LIST_TO_FAST_10] = "_UNPACK_LIST_TO_FAST_10",
+    [_UNPACK_LIST_TO_FAST_10_r10] = "_UNPACK_LIST_TO_FAST_10_r10",
+    [_UNPACK_LIST_TO_FAST_11] = "_UNPACK_LIST_TO_FAST_11",
+    [_UNPACK_LIST_TO_FAST_11_r10] = "_UNPACK_LIST_TO_FAST_11_r10",
+    [_UNPACK_LIST_TO_FAST_12] = "_UNPACK_LIST_TO_FAST_12",
+    [_UNPACK_LIST_TO_FAST_12_r10] = "_UNPACK_LIST_TO_FAST_12_r10",
+    [_UNPACK_LIST_TO_FAST_13] = "_UNPACK_LIST_TO_FAST_13",
+    [_UNPACK_LIST_TO_FAST_13_r10] = "_UNPACK_LIST_TO_FAST_13_r10",
+    [_UNPACK_LIST_TO_FAST_14] = "_UNPACK_LIST_TO_FAST_14",
+    [_UNPACK_LIST_TO_FAST_14_r10] = "_UNPACK_LIST_TO_FAST_14_r10",
+    [_UNPACK_LIST_TO_FAST_15] = "_UNPACK_LIST_TO_FAST_15",
+    [_UNPACK_LIST_TO_FAST_15_r10] = "_UNPACK_LIST_TO_FAST_15_r10",
+    [_UNPACK_LIST_TO_FAST_16] = "_UNPACK_LIST_TO_FAST_16",
+    [_UNPACK_LIST_TO_FAST_16_r10] = "_UNPACK_LIST_TO_FAST_16_r10",
+    [_UNPACK_LIST_TO_FAST_2] = "_UNPACK_LIST_TO_FAST_2",
+    [_UNPACK_LIST_TO_FAST_2_r10] = "_UNPACK_LIST_TO_FAST_2_r10",
+    [_UNPACK_LIST_TO_FAST_3] = "_UNPACK_LIST_TO_FAST_3",
+    [_UNPACK_LIST_TO_FAST_3_r10] = "_UNPACK_LIST_TO_FAST_3_r10",
+    [_UNPACK_LIST_TO_FAST_4] = "_UNPACK_LIST_TO_FAST_4",
+    [_UNPACK_LIST_TO_FAST_4_r10] = "_UNPACK_LIST_TO_FAST_4_r10",
+    [_UNPACK_LIST_TO_FAST_5] = "_UNPACK_LIST_TO_FAST_5",
+    [_UNPACK_LIST_TO_FAST_5_r10] = "_UNPACK_LIST_TO_FAST_5_r10",
+    [_UNPACK_LIST_TO_FAST_6] = "_UNPACK_LIST_TO_FAST_6",
+    [_UNPACK_LIST_TO_FAST_6_r10] = "_UNPACK_LIST_TO_FAST_6_r10",
+    [_UNPACK_LIST_TO_FAST_7] = "_UNPACK_LIST_TO_FAST_7",
+    [_UNPACK_LIST_TO_FAST_7_r10] = "_UNPACK_LIST_TO_FAST_7_r10",
+    [_UNPACK_LIST_TO_FAST_8] = "_UNPACK_LIST_TO_FAST_8",
+    [_UNPACK_LIST_TO_FAST_8_r10] = "_UNPACK_LIST_TO_FAST_8_r10",
+    [_UNPACK_LIST_TO_FAST_9] = "_UNPACK_LIST_TO_FAST_9",
+    [_UNPACK_LIST_TO_FAST_9_r10] = "_UNPACK_LIST_TO_FAST_9_r10",
     [_UNPACK_SEQUENCE] = "_UNPACK_SEQUENCE",
     [_UNPACK_SEQUENCE_r10] = "_UNPACK_SEQUENCE_r10",
     [_UNPACK_SEQUENCE_LIST] = "_UNPACK_SEQUENCE_LIST",
@@ -7549,6 +7954,38 @@ const char *const _PyOpcode_uop_name[MAX_UOP_REGS_ID+1] = {
     [_UNPACK_SEQUENCE_UNIQUE_TWO_TUPLE_r02] = "_UNPACK_SEQUENCE_UNIQUE_TWO_TUPLE_r02",
     [_UNPACK_SEQUENCE_UNIQUE_TWO_TUPLE_r12] = "_UNPACK_SEQUENCE_UNIQUE_TWO_TUPLE_r12",
     [_UNPACK_SEQUENCE_UNIQUE_TWO_TUPLE_r23] = "_UNPACK_SEQUENCE_UNIQUE_TWO_TUPLE_r23",
+    [_UNPACK_TUPLE_TO_FAST] = "_UNPACK_TUPLE_TO_FAST",
+    [_UNPACK_TUPLE_TO_FAST_r10] = "_UNPACK_TUPLE_TO_FAST_r10",
+    [_UNPACK_TUPLE_TO_FAST_10] = "_UNPACK_TUPLE_TO_FAST_10",
+    [_UNPACK_TUPLE_TO_FAST_10_r10] = "_UNPACK_TUPLE_TO_FAST_10_r10",
+    [_UNPACK_TUPLE_TO_FAST_11] = "_UNPACK_TUPLE_TO_FAST_11",
+    [_UNPACK_TUPLE_TO_FAST_11_r10] = "_UNPACK_TUPLE_TO_FAST_11_r10",
+    [_UNPACK_TUPLE_TO_FAST_12] = "_UNPACK_TUPLE_TO_FAST_12",
+    [_UNPACK_TUPLE_TO_FAST_12_r10] = "_UNPACK_TUPLE_TO_FAST_12_r10",
+    [_UNPACK_TUPLE_TO_FAST_13] = "_UNPACK_TUPLE_TO_FAST_13",
+    [_UNPACK_TUPLE_TO_FAST_13_r10] = "_UNPACK_TUPLE_TO_FAST_13_r10",
+    [_UNPACK_TUPLE_TO_FAST_14] = "_UNPACK_TUPLE_TO_FAST_14",
+    [_UNPACK_TUPLE_TO_FAST_14_r10] = "_UNPACK_TUPLE_TO_FAST_14_r10",
+    [_UNPACK_TUPLE_TO_FAST_15] = "_UNPACK_TUPLE_TO_FAST_15",
+    [_UNPACK_TUPLE_TO_FAST_15_r10] = "_UNPACK_TUPLE_TO_FAST_15_r10",
+    [_UNPACK_TUPLE_TO_FAST_16] = "_UNPACK_TUPLE_TO_FAST_16",
+    [_UNPACK_TUPLE_TO_FAST_16_r10] = "_UNPACK_TUPLE_TO_FAST_16_r10",
+    [_UNPACK_TUPLE_TO_FAST_2] = "_UNPACK_TUPLE_TO_FAST_2",
+    [_UNPACK_TUPLE_TO_FAST_2_r10] = "_UNPACK_TUPLE_TO_FAST_2_r10",
+    [_UNPACK_TUPLE_TO_FAST_3] = "_UNPACK_TUPLE_TO_FAST_3",
+    [_UNPACK_TUPLE_TO_FAST_3_r10] = "_UNPACK_TUPLE_TO_FAST_3_r10",
+    [_UNPACK_TUPLE_TO_FAST_4] = "_UNPACK_TUPLE_TO_FAST_4",
+    [_UNPACK_TUPLE_TO_FAST_4_r10] = "_UNPACK_TUPLE_TO_FAST_4_r10",
+    [_UNPACK_TUPLE_TO_FAST_5] = "_UNPACK_TUPLE_TO_FAST_5",
+    [_UNPACK_TUPLE_TO_FAST_5_r10] = "_UNPACK_TUPLE_TO_FAST_5_r10",
+    [_UNPACK_TUPLE_TO_FAST_6] = "_UNPACK_TUPLE_TO_FAST_6",
+    [_UNPACK_TUPLE_TO_FAST_6_r10] = "_UNPACK_TUPLE_TO_FAST_6_r10",
+    [_UNPACK_TUPLE_TO_FAST_7] = "_UNPACK_TUPLE_TO_FAST_7",
+    [_UNPACK_TUPLE_TO_FAST_7_r10] = "_UNPACK_TUPLE_TO_FAST_7_r10",
+    [_UNPACK_TUPLE_TO_FAST_8] = "_UNPACK_TUPLE_TO_FAST_8",
+    [_UNPACK_TUPLE_TO_FAST_8_r10] = "_UNPACK_TUPLE_TO_FAST_8_r10",
+    [_UNPACK_TUPLE_TO_FAST_9] = "_UNPACK_TUPLE_TO_FAST_9",
+    [_UNPACK_TUPLE_TO_FAST_9_r10] = "_UNPACK_TUPLE_TO_FAST_9_r10",
     [_UPDATE_INT_ATTRIBUTE] = "_UPDATE_INT_ATTRIBUTE",
     [_UPDATE_INT_ATTRIBUTE_r00] = "_UPDATE_INT_ATTRIBUTE_r00",
     [_UPDATE_INT_ATTRIBUTE_STACK] = "_UPDATE_INT_ATTRIBUTE_STACK",
@@ -7904,6 +8341,70 @@ int _PyUop_num_popped(int opcode, int oparg)
         case _UNPACK_SEQUENCE_UNIQUE_THREE_TUPLE:
             return 1;
         case _UNPACK_SEQUENCE_TUPLE:
+            return 1;
+        case _UNPACK_TUPLE_TO_FAST_2:
+            return 1;
+        case _UNPACK_TUPLE_TO_FAST_3:
+            return 1;
+        case _UNPACK_TUPLE_TO_FAST_4:
+            return 1;
+        case _UNPACK_TUPLE_TO_FAST_5:
+            return 1;
+        case _UNPACK_TUPLE_TO_FAST_6:
+            return 1;
+        case _UNPACK_TUPLE_TO_FAST_7:
+            return 1;
+        case _UNPACK_TUPLE_TO_FAST_8:
+            return 1;
+        case _UNPACK_TUPLE_TO_FAST_9:
+            return 1;
+        case _UNPACK_TUPLE_TO_FAST_10:
+            return 1;
+        case _UNPACK_TUPLE_TO_FAST_11:
+            return 1;
+        case _UNPACK_TUPLE_TO_FAST_12:
+            return 1;
+        case _UNPACK_TUPLE_TO_FAST_13:
+            return 1;
+        case _UNPACK_TUPLE_TO_FAST_14:
+            return 1;
+        case _UNPACK_TUPLE_TO_FAST_15:
+            return 1;
+        case _UNPACK_TUPLE_TO_FAST_16:
+            return 1;
+        case _UNPACK_TUPLE_TO_FAST:
+            return 1;
+        case _UNPACK_LIST_TO_FAST_2:
+            return 1;
+        case _UNPACK_LIST_TO_FAST_3:
+            return 1;
+        case _UNPACK_LIST_TO_FAST_4:
+            return 1;
+        case _UNPACK_LIST_TO_FAST_5:
+            return 1;
+        case _UNPACK_LIST_TO_FAST_6:
+            return 1;
+        case _UNPACK_LIST_TO_FAST_7:
+            return 1;
+        case _UNPACK_LIST_TO_FAST_8:
+            return 1;
+        case _UNPACK_LIST_TO_FAST_9:
+            return 1;
+        case _UNPACK_LIST_TO_FAST_10:
+            return 1;
+        case _UNPACK_LIST_TO_FAST_11:
+            return 1;
+        case _UNPACK_LIST_TO_FAST_12:
+            return 1;
+        case _UNPACK_LIST_TO_FAST_13:
+            return 1;
+        case _UNPACK_LIST_TO_FAST_14:
+            return 1;
+        case _UNPACK_LIST_TO_FAST_15:
+            return 1;
+        case _UNPACK_LIST_TO_FAST_16:
+            return 1;
+        case _UNPACK_LIST_TO_FAST:
             return 1;
         case _UNPACK_SEQUENCE_UNIQUE_TUPLE:
             return 1;
@@ -8446,6 +8947,8 @@ int _PyUop_num_popped(int opcode, int oparg)
         case _METHOD_ITER_JUMP_TUPLE:
             return 0;
         case _METHOD_ITER_JUMP_RANGE:
+            return 0;
+        case _METHOD_PROFILE:
             return 0;
         case _METHOD_DEOPT:
             return 0;
