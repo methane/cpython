@@ -4457,3 +4457,72 @@ benchmarks/go.pyの実行権限変更はユーザーの既存変更なのでコ�
 ステージ後の差分検査では既存main-llvm21.patchの空行context（単一空白）2行だけが
 whitespace警告になった。unified diffのcontextと既存キャッシュのSHAを維持するため
 変更しない。このpatchを除くステージ済み全差分のgit diff --checkは成功した。
+
+## コミット後の最終ビルド・準備（2026-09-18）
+
+採用版runtimeは `718d2ff2ef9705a8cdbfa7b345038f5b484a7343` でコミットした。
+コミット内容が保存済みV26のruntime差分と完全一致することも確認済み。
+同commitのソース3,943ファイルがFT作業ツリーとPGO用archiveで一致する。
+
+| 最終候補 | SHA-256 | 正しさの検証 |
+|---|---|---|
+| FT、PGO/LTOなし | `5483c5085c6a50e0891e864305261d0f7c82d5dad7619d5b5a403bb6947d8fb0` | 2,389テスト、91 skip、成功 |
+| GIL、PGO/full LTO | `912a24825e847ef11d469fab72b566c45bb656d765e59cfb7bead6c2c962877c` | 2,389テスト、76 skip、成功 |
+
+GIL PGOはGCC 13.3.0、JIT無効、seed 0、cold private pycacheで43/43学習テスト成功。
+学習成功後の354個のプロファイルを記録し、bootstrapのプロファイルは分離した。
+各開発用ビルドもV26へ再ビルドしてあり、不採用V29のままのlive実行ファイルは残していない。
+
+`jit-artifacts/pyperformance-four-way-fixed/` はFT/GILとも97仕様・23依存グループを
+prepare-onlyで準備済み。mainのSHAは元の2本と一致する。FastAPIは依存未対応として
+残し、同期SQLAlchemy 2仕様はgreenletを省いて準備した。全件のstate.jsonは未作成で、
+本測定は開始していない。短い互換性確認を別ディレクトリで実行中。
+
+ソース・ビルド・正しさ・PGO学習・準備コマンドの記録は
+`jit-artifacts/pyperformance-fixes-20260917/committed-final-*.json` と対応ログにある。
+これらは新しい最終バイナリの速度を実証する結果ではない。main比と回帰の残存は
+夜間の全件比較で評価する。
+
+最終smokeの36呼び出しでFT candidateのDaskだけが校正workerのSIGSEGVで失敗した。
+他35回は成功。本測定は未実行のまま、準備完了の判定を保留して追加診断に進む。
+単独workerとGDBの校正workerは一度ずつ成功。現在main/JIT無効/debugとの対照を
+実行し、全ログをfinal-dask-*へ保存している。この1回の失敗を除外して成功とは扱わない。
+
+## Daskの追加診断と夜間用runnerの更新
+
+初回smokeではFT candidateのDask校正workerが1回SIGSEGV。他35呼び出しは成功した。
+単独worker16回（candidate JIT/debug/main/candidate JIT無効を各4回）、
+元のpyperf親子構成20回、cold import 9回（candidate JIT/main/candidate JIT無効を各3回）は
+全て成功した。別の単独workerとGDBの校正workerも成功したが、原因は未特定。
+再現しないことを根拠に解決済みとはしない。推測だけによるruntime変更は加えていない。
+
+夜間用runnerは全4構成でPYTHONFAULTHANDLER=1をworkerへ継承し、
+faulthandler_enabledを結果metadataに記録する。再発時はPython/Cスタックをログへ残す。
+Daskを測定から外さず、失敗を含む全記録を維持する。ハーネス20テストは成功した。
+本測定の新しい出力先はjit-artifacts/pyperformance-four-way-overnight。
+旧fixed/fixed-smokeは元のハーネスに対応する記録として保存し、再開には使わない。
+runtimeは引き続き718d2ff2ef9で、両ビルドの実行物とソースは変更していない。
+
+## 夜間実行の準備完了
+
+最終出力先 `jit-artifacts/pyperformance-four-way-overnight/` でFT/GILとも
+97仕様・23依存グループの準備と入力同一性の検証が成功した。本測定のstate.jsonは
+両方とも存在せず、全件測定はユーザー実行待ち。
+
+新しい環境でDask/concurrent_imap/python_startupをmain/candidate・FT/GILの
+計12回確認し、全て成功。結果の全workerでfaulthandler_enabled=1を確認した。
+さらに候補GIL PGOの元の6-worker・5 warmup・5 value条件でbench_mp_poolと
+bench_thread_poolが完走し、両方に6 workerがあることとJIT/GIL状態を検証した。
+記録は `jit-artifacts/pyperformance-fixes-20260917/overnight-readiness.json` と
+`overnight-*.log/json`。これらの短い確認をmain比の性能評価には使わない。
+
+Daskの最初のSIGSEGVは原因未特定のまま。再試行の成功で取り消さず、
+all_failures_resolved=falseとして記録する。回帰の全解消も未確認。
+次の作業はユーザーによる全件測定と、その結果の比較・残る失敗/回帰の解析。
+
+```bash
+./benchmarks/run_pyperformance_four_way.sh jit-artifacts/pyperformance-four-way-overnight --run-only
+```
+
+FastAPIの未対応やtimeoutがあれば終了コード1になるが、他の測定は継続して保存される。
+NetworkXのworker上限15秒を維持する。実行中は比較対象ビルド・依存・runnerを変更しない。

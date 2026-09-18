@@ -1,5 +1,6 @@
 """pyperf hook: record the actual worker runtime outside timed regions."""
 
+import faulthandler
 import os
 import sys
 import sysconfig
@@ -47,4 +48,5 @@ class CheckRuntime(HookBase):
             os.environ.get("PYPERF_ALLOW_JIT_SUSPENSION") == "1")
         metadata["jit_suspension_observed"] = int(
             not self.enabled_at_start or not enabled_at_end)
+        metadata["faulthandler_enabled"] = int(faulthandler.is_enabled())
         metadata["performance_version"] = "1.14.0"

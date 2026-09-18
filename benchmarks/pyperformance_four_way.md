@@ -3,7 +3,7 @@
 リポジトリのルートから実行する。
 
 ```bash
-./benchmarks/run_pyperformance_four_way.sh jit-artifacts/pyperformance-four-way-fixed --run-only
+./benchmarks/run_pyperformance_four_way.sh jit-artifacts/pyperformance-four-way-overnight --run-only
 ```
 
 準備済みの環境を使う場合は `--run-only` を付けてもよい。同じコマンドの再実行は
@@ -17,12 +17,14 @@
 | GILあり、PGO/full LTOあり | main | `jit-artifacts/pyperformance-gil-pgo-lto-20260917/main-build/python` |
 | GILあり、PGO/full LTOあり | method-jit | `jit-artifacts/pyperformance-fixes-20260917/committed-final-pgo-build/python` |
 
-全4構成で `PYTHON_JIT=1` を指定する。ただし、このmainのFTビルドは
+全4構成で `PYTHON_JIT=1` を指定する。`PYTHONFAULTHANDLER=1` もworkerへ継承し、
+再発するクラッシュのスタックをログへ残す。workerの有効状態はJSONにも記録する。
+ただし、このmainのFTビルドは
 `_PyOptimizer_Optimize()` が常に0を返すため、JITの有効フラグが立っても
 executorを生成しない。FTの比較は実質的にmainのインタプリタ対method JITである。
 全ビルドは `-O3`、frame pointerあり、非debug。
 mainは `d95f29589e0` にLLVM 21のビルド互換パッチを適用したもの。
-method-jitは今回コミットした失敗・リグレッション修正（採用版V26）を含む。
+method-jitのruntimeは `718d2ff2ef9` の失敗・リグレッション修正（採用版V26）を含む。
 正確なcommitとソースのSHA-256は `jit-artifacts/pyperformance-fixes-20260917/` の
 `committed-final-{ft,pgo}-build.json` に保存する。未コミット差分が空でもソースの
 同一性を検証できるよう、両構成のruntime・標準ライブラリ・ビルド入力を照合する。
@@ -88,10 +90,10 @@ FTのJITは複数スレッドが存在する間、Tier 1へfallbackする現在�
 
 ```bash
 # 準備だけ（測定なし）
-./benchmarks/run_pyperformance_four_way.sh jit-artifacts/pyperformance-four-way-fixed --prepare-only
+./benchmarks/run_pyperformance_four_way.sh jit-artifacts/pyperformance-four-way-overnight --prepare-only
 
 # 保存済みの結果からレポートを再生成
-./benchmarks/run_pyperformance_four_way.sh jit-artifacts/pyperformance-four-way-current --report-only
+./benchmarks/run_pyperformance_four_way.sh jit-artifacts/pyperformance-four-way-overnight --report-only
 ```
 
 短い動作確認を行う場合は別の出力先を使う。
@@ -103,3 +105,9 @@ FTのJITは複数スレッドが存在する間、Tier 1へfallbackする現在�
 ```
 
 短い確認の測定値は性能評価に使わない。
+
+最終確認ではFT candidateのDaskで1回だけworkerのSIGSEGVを観測した。
+その後、main・JIT無効・debug・cold importを含む45回の診断では再現せず、原因は未特定。
+修正済みとは扱わず、今回の全件実行にもDaskを含め、失敗をそのまま保存する。
+以前の `pyperformance-four-way-fixed` / `-fixed-smoke` は診断前のハーネス用なので、
+上記の `pyperformance-four-way-overnight` を使用する。

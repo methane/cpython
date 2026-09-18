@@ -30,7 +30,7 @@ FLAGS = "-O3 -fno-omit-frame-pointer -mno-omit-leaf-frame-pointer"
 CONFIGURE = ["--disable-gil", "--enable-experimental-jit=yes",
              "--disable-optimizations", "--without-lto", "--without-pydebug"]
 RUNTIME = {"PYTHON_JIT": "1", "PYTHON_GIL": "0", "PYTHONHASHSEED": "0",
-           "PYTHONNOUSERSITE": "1"}
+           "PYTHONNOUSERSITE": "1", "PYTHONFAULTHANDLER": "1"}
 PARALLEL = {"concurrent_imap", "dask", "fastapi"}
 THREADED = PARALLEL | {"tornado_http", "asyncio_websockets"}
 BUILD_PROFILE = "ft"
@@ -46,6 +46,7 @@ def select_profile(name):
                  "--with-lto=full" if optimized else "--without-lto", "--without-pydebug"]
     RUNTIME = {"PYTHON_JIT": "1", "PYTHON_GIL": "1" if optimized else "0",
                "PYTHONHASHSEED": "0", "PYTHONNOUSERSITE": "1",
+               "PYTHONFAULTHANDLER": "1",
                "PYPERF_EXPECT_FT": "0" if optimized else "1"}
 
 

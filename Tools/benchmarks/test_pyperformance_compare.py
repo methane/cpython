@@ -36,6 +36,7 @@ class ComparisonTests(unittest.TestCase):
         env = compare.environment(Path("/tmp/compare"))
         self.assertEqual(env["PYTHON_GIL"], "1")
         self.assertEqual(env["PYPERF_EXPECT_FT"], "0")
+        self.assertEqual(env["PYTHONFAULTHANDLER"], "1")
 
     def test_command_results_accept_startup_and_reject_wrong_binary(self):
         compare.select_profile("gil-pgo-lto")
@@ -83,6 +84,7 @@ class ComparisonTests(unittest.TestCase):
         self.assertNotIn("PYTHONPATH", env)
         self.assertNotIn("PYTHON_TIER3_JIT", env)
         self.assertEqual(env["PYTHON_GIL"], "0")
+        self.assertEqual(env["PYTHONFAULTHANDLER"], "1")
         self.assertNotIn("-flto", env["CFLAGS"])
 
     def test_hash_ignores_pyc_but_detects_source_and_native_changes(self):
