@@ -4526,3 +4526,52 @@ all_failures_resolved=falseとして記録する。回帰の全解消も未確�
 
 FastAPIの未対応やtimeoutがあれば終了コード1になるが、他の測定は継続して保存される。
 NetworkXのworker上限15秒を維持する。実行中は比較対象ビルド・依存・runnerを変更しない。
+
+## 2026-09-19: 夜間4構成比較の結果レポート
+
+ユーザー実行済みの `jit-artifacts/pyperformance-four-way-overnight/` を解析し、
+`benchmarks/pyperformance_overnight_report.md` に日本語でまとめた。
+全result一覧、全未完了仕様、前回との共通項目比較、worker単位の区間推定、
+集計対象を変えた感度分析、クラッシュログの停止位置を記載した。
+今回は既存データの解析のみで、追加ベンチマーク・再ビルド・runtime修正は行っていない。
+
+| 構成 | 完了仕様 | result数 | candidate/main幾何平均 | 実行時間変化 | 2%以上悪化 |
+|---|---:|---:|---:|---:|---:|
+| FT、PGO/LTOなし | 94/97 | 121 | 0.910105 | −8.99% | 11 |
+| GIL、PGO/full LTO | 78/97 | 105 | 0.983138 | −1.69% | 23 |
+
+main/candidateの両ブロックが成功した仕様だけを主集計に使用した。
+失敗した仕様の成功ブロックは採用しない。欠落込みの全97仕様の性能とは扱わない。
+2%は効果量の分類であって有意差の基準ではない。FTの悪化11件中unpickleと
+shortest_pathは順序で方向が逆転する。他9件とGILの23件は両順序で悪化し、
+固定ビルド・固定ブロック内のworker bootstrap 95%区間も1を上回った。
+区間は再ビルドや別環境の変動、多重比較の選択効果を含まない。
+
+以前のunpack_sequence、deepcopy、pprint、loggingの大きな悪化は縮小または反転した。
+GoはFT 14.02%、GIL 6.73%短縮。richards_superはFT 61.20%短縮だがGIL 2.30%悪化。
+btreeは今回のpyperformance対象外。同期SQLAlchemyはgreenlet省略で両仕様が完了し、
+declarativeはFT 2.19%悪化、GIL 5.61%短縮だった。
+
+最も大きい新たな回帰はregex_compile（FT 1.745倍、GIL 3.228倍）。
+両ブロックで再現し、前回からmainの時間はほぼ変わらない。停止位置や速度差だけでは
+原因を確定せず、採取入力・仕事量、JITコンパイルと無効化、生成コードを次に調べる。
+GILは最大級の改善3件を除くと幾何平均1.004947で、広範な回帰解消は未達成。
+
+FT DaskのSIGSEGVは第2ブロックcandidateで再発した。faulthandlerと固定バイナリの
+addr2lineから、distributedの別スレッドframeの `f_code` 参照、
+`PyFrame_GetCode` / `Py_INCREF` 中の停止まで特定した。根本原因は未特定。
+GILでは第2ブロックにmain 10回・candidate 11回、計21回のSIGSEGVがあり、
+18ログはGC中。async_tree群とdocutilsに集中した。ほかにSSLエラー、TypeErrorもある。
+mainでも起きることを理由にcandidateの問題を否定せず、共通原因も調べる必要がある。
+FastAPI未対応とNetworkXのtimeoutは継続。NetworkX k-coreは約18秒で打ち切られ、
+worker上限15秒は機能した。WebSocket・Genshi・concurrent_imapは完了した。
+
+検証: FT/GILとも完走記録と測定後同一性検証はtrue。今回の `--phase verify` も両方成功。
+成功生JSONから全workerの値とstateの平均を再計算し、保存SHAと一致した。
+前回結果のSHA、共通仕様スクリプト、mainバイナリの不変性も確認した。
+解析とアドレス解決の記録は `jit-artifacts/pyperformance-overnight-analysis-20260919/`。
+候補runtimeは718d2ff2ef9のまま、ハーネスは08a1b60bdfc。
+
+次の優先順位は、(1) FT DaskとGIL両側のクラッシュを分けて再現・切り分け、
+(2) regex_compileの大幅悪化を導入した差分の特定、(3) GILのtelco・Genshi・
+argparse・pickle・richards_superとFTの残る悪化の調査。
