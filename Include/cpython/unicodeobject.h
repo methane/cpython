@@ -499,78 +499,23 @@ PyAPI_FUNC(int) PyUnicodeWriter_DecodeUTF8Stateful(
 /* --- Private _PyUnicodeWriter API --------------------------------------- */
 
 typedef struct {
-    PyObject *buffer;
-    void *data;
-    int kind;
-    Py_UCS4 maxchar;
-    Py_ssize_t size;
-    Py_ssize_t pos;
-
-    /* minimum number of allocated characters (default: 0) */
-    Py_ssize_t min_length;
-
-    /* minimum character (default: 127, ASCII) */
-    Py_UCS4 min_char;
-
-    /* If non-zero, overallocate the buffer (default: 0). */
-    unsigned char overallocate;
-
-    /* If readonly is 1, buffer is a shared string (cannot be modified)
-       and size is set to 0. */
-    unsigned char readonly;
-
-    /* Native append storage. pos remains a code point count. Preparing a
-       direct-write buffer switches to the legacy FSR fields. */
-    unsigned char utf8_mode;
+    /* A sole immutable primary UTF-8 string, retained for result identity. */
+    PyObject *readonly;
     char *utf8;
     Py_ssize_t utf8_pos;
     Py_ssize_t utf8_size;
+    Py_ssize_t pos;  /* code point count */
+    Py_ssize_t min_length;  /* minimum byte capacity (default: 0) */
+    unsigned char overallocate;
 } _PyUnicodeWriter;
 
 // Initialize a Unicode writer.
 //
-// By default, the minimum buffer size is 0 character and overallocation is
-// disabled. Set min_length, min_char and overallocate attributes to control
+// By default, the minimum buffer size is 0 bytes and overallocation is
+// disabled. Set min_length and overallocate attributes to control
 // the allocation of the buffer.
 _Py_DEPRECATED_EXTERNALLY(3.14) PyAPI_FUNC(void) _PyUnicodeWriter_Init(
     _PyUnicodeWriter *writer);
-
-/* Prepare the buffer to write 'length' characters
-   with the specified maximum character.
-
-   Return 0 on success, raise an exception and return -1 on error. */
-#define _PyUnicodeWriter_Prepare(WRITER, LENGTH, MAXCHAR)             \
-    ((WRITER)->utf8_mode                                             \
-     ? _PyUnicodeWriter_PrepareInternal((WRITER), (LENGTH), (MAXCHAR))  \
-     : (((MAXCHAR) <= (WRITER)->maxchar                                  \
-      && (LENGTH) <= (WRITER)->size - (WRITER)->pos)                  \
-     ? 0                                                              \
-     : (((LENGTH) == 0)                                               \
-        ? 0                                                           \
-        : _PyUnicodeWriter_PrepareInternal((WRITER), (LENGTH), (MAXCHAR)))))
-
-/* Don't call this function directly, use the _PyUnicodeWriter_Prepare() macro
-   instead. */
-_Py_DEPRECATED_EXTERNALLY(3.14) PyAPI_FUNC(int) _PyUnicodeWriter_PrepareInternal(
-    _PyUnicodeWriter *writer,
-    Py_ssize_t length,
-    Py_UCS4 maxchar);
-
-/* Prepare the buffer to have at least the kind KIND.
-   For example, kind=PyUnicode_2BYTE_KIND ensures that the writer will
-   support characters in range U+000-U+FFFF.
-
-   Return 0 on success, raise an exception and return -1 on error. */
-#define _PyUnicodeWriter_PrepareKind(WRITER, KIND)                    \
-    ((KIND) <= (WRITER)->kind                                         \
-     ? 0                                                              \
-     : _PyUnicodeWriter_PrepareKindInternal((WRITER), (KIND)))
-
-/* Don't call this function directly, use the _PyUnicodeWriter_PrepareKind()
-   macro instead. */
-_Py_DEPRECATED_EXTERNALLY(3.14) PyAPI_FUNC(int) _PyUnicodeWriter_PrepareKindInternal(
-    _PyUnicodeWriter *writer,
-    int kind);
 
 /* Append a Unicode character.
    Return 0 on success, raise an exception and return -1 on error. */

@@ -3219,13 +3219,7 @@ unicodewriter_overflow(PyObject *self, PyObject *unused)
     }
 
     _PyUnicodeWriter *impl = (_PyUnicodeWriter*)writer;
-    if (impl->utf8_mode) {
-        impl->utf8[impl->utf8_size] = '#';  // overflow!
-    }
-    else {
-        Py_ssize_t index = PyUnicode_GET_LENGTH(impl->buffer);
-        PyUnicode_WRITE(impl->kind, impl->data, index, '#');
-    }
+    impl->utf8[impl->utf8_size] = '#';  // overflow!
 
     // Spoiler: the function doesn't return if an overflow is detected
     // in debug mode

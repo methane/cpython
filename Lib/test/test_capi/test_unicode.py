@@ -35,6 +35,81 @@ class UTF8StorageTests(unittest.TestCase):
     def make_string(self, text):
         return text.encode('utf-8', 'surrogatepass').decode('utf-8', 'surrogatepass')
 
+    def test_maketrans_without_fsr(self):
+        for factory in (self.make_string, Str):
+            with self.subTest(factory=factory):
+                x = factory('é日😀\ud800é')
+                y = factory('a語\udcff😀b')
+                z = factory('日\ud800')
+                before = [_testcapi.unicode_storage(v) for v in (x, y, z)]
+                self.assertEqual(str.maketrans(x, y, z), {
+                    ord('é'): ord('b'), ord('日'): None,
+                    ord('😀'): ord('\udcff'), ord('\ud800'): None,
+                })
+                self.assertEqual([_testcapi.unicode_storage(v)
+                                  for v in (x, y, z)], before)
+        for text in ('日', '😀', '\ud800', '\udcff'):
+            key = self.make_string(text)
+            self.assertEqual(str.maketrans({key: 'value'}),
+                             {ord(text): 'value'})
+            self.assertEqual(_testcapi.unicode_storage(key)[3], 0)
+
+    def test_numeric_input_without_fsr(self):
+        for convert, text, expected in (
+            (int, '\u2003-１２٣\u2002', -123),
+            (float, '\u2003１２.٥\u2002', 12.5),
+            (complex, '１２+٣j', 12+3j),
+        ):
+            for factory in (self.make_string, Str):
+                with self.subTest(convert=convert, factory=factory):
+                    value = factory(text)
+                    before = _testcapi.unicode_storage(value)
+                    self.assertEqual(convert(value), expected)
+                    self.assertEqual(_testcapi.unicode_storage(value), before)
+        for text in ('１２\ud800', '１２日', '１２\x7f'):
+            value = self.make_string(text)
+            with self.assertRaises(ValueError):
+                int(value)
+            self.assertEqual(_testcapi.unicode_storage(value)[3], 0)
+
+    def test_syntaxerror_basename_without_fsr(self):
+        import os
+        for tail in ('file.py', '日😀\udcff.py', ''):
+            for factory in (self.make_string, Str):
+                with self.subTest(tail=ascii(tail), factory=factory):
+                    filename = factory(os.sep.join(('日', '😀', tail)))
+                    before = _testcapi.unicode_storage(filename)
+                    error = SyntaxError('bad', (filename, 3, 1, 'x'))
+                    self.assertEqual(str(error), f'bad ({tail}, line 3)')
+                    self.assertEqual(_testcapi.unicode_storage(filename), before)
+
+    def test_encode_and_ucs4_without_fsr(self):
+        for text in ('café', '日😀', 'a\0b', 'a\ud800\udcffb'):
+            for factory in (self.make_string, Str):
+                for encoding in ('utf-7', 'unicode_escape', 'raw_unicode_escape'):
+                    with self.subTest(text=ascii(text), factory=factory,
+                                      encoding=encoding):
+                        value = factory(text)
+                        before = _testcapi.unicode_storage(value)
+                        self.assertEqual(value.encode(encoding), text.encode(encoding))
+                        self.assertEqual(_testcapi.unicode_storage(value), before)
+                value = factory(text)
+                before = _testcapi.unicode_storage(value)
+                self.assertEqual(_testcapi.unicode_asucs4copy(value), text + '\0')
+                self.assertEqual(_testcapi.unicode_asucs4(value, len(text), 1),
+                                 text + '\0')
+                self.assertEqual(_testcapi.unicode_storage(value), before)
+
+    def test_fromhex_without_fsr(self):
+        for cls in (bytes, bytearray):
+            for factory in (self.make_string, Str):
+                for char in ('é', '日', '😀', '\udcff'):
+                    value = factory('00 12' + char + '34')
+                    before = _testcapi.unicode_storage(value)
+                    with self.assertRaisesRegex(ValueError, 'position 5'):
+                        cls.fromhex(value)
+                    self.assertEqual(_testcapi.unicode_storage(value), before)
+
     def test_lazy_fsr(self):
         for text in ('café', '日本語', 'a😀b', 'x\0é', 'a\ud800\udcffb',
                      '\ud800\udc00'):
@@ -81,6 +156,27 @@ class UTF8StorageTests(unittest.TestCase):
         value = raw.decode('utf-8', 'surrogateescape')
         self.assertEqual(_testcapi.unicode_storage(value)[2], 1)
         self.assertEqual(value.encode('utf-8', 'surrogateescape'), raw)
+
+    def test_decoder_native_outputs(self):
+        text = '日😀\udcff'
+        cases = [(encoding, text.encode(encoding, 'surrogatepass'),
+                  'surrogatepass', text)
+                 for encoding in ('utf-8', 'utf-7', 'utf-16-le', 'utf-16-be',
+                                  'utf-32-le', 'utf-32-be', 'unicode_escape',
+                                  'raw_unicode_escape')]
+        cases.extend((
+            ('ascii', b'x\xff', 'surrogateescape', 'x\udcff'),
+            ('utf-8', b'\xe6\x97\xa5\xff', 'replace', '日\ufffd'),
+            ('euc_jis_2004', b'\xa4\xf7', 'strict', 'か\u309a'),
+        ))
+        for encoding, raw, errors, expected in cases:
+            with self.subTest(encoding=encoding, errors=errors):
+                result = raw.decode(encoding, errors)
+                self.assertEqual(result, expected)
+                state = _testcapi.unicode_storage(result)
+                self.assertEqual((state[0], state[3]), (1, 0))
+                self.assertEqual(state[2], int(any(
+                    0xd800 <= ord(ch) <= 0xdfff for ch in expected)))
 
     def test_count_utf8(self):
         for text in ('', 'aaaa', 'ééaé', '日本日本語', '😀a😀',
@@ -2222,13 +2318,13 @@ class PyUnicodeWriterTest(unittest.TestCase):
         writer = self.create_writer(0)
         text = '日😀\udcff\0'
         writer.write_str(text)
-        self.assertEqual(writer.storage(), (1, 4, 11))
+        self.assertEqual(writer.storage(), (4, 11))
         writer.write_ascii(b'abc', 3)
         writer.write_char(ord('é'))
         writer.write_substring('x日本y', 1, 3)
         expected = text + 'abcé日本'
         self.assertEqual(writer.storage(),
-                         (1, len(expected), len(expected.encode('utf-8', 'surrogatepass'))))
+                         (len(expected), len(expected.encode('utf-8', 'surrogatepass'))))
         self.assertEqual(writer.finish(), expected)
 
     def test_utf8_integer_writes(self):
@@ -2238,7 +2334,9 @@ class PyUnicodeWriterTest(unittest.TestCase):
             writer.write_str(number)
             writer.write_ascii(b'/', 1)
             writer.write_repr(number)
-            self.assertEqual(writer.storage()[0], 1)
+            self.assertEqual(writer.storage(),
+                             (len(f'日\udcff:{number}/{number}'),
+                              len(f'日\udcff:{number}/{number}'.encode('utf-8', 'surrogatepass'))))
             self.assertEqual(writer.finish(), f'日\udcff:{number}/{number}')
 
     def test_utf8_writer_allocation_failures(self):
@@ -2468,7 +2566,8 @@ class PyUnicodeWriterTest(unittest.TestCase):
         writer.write_ucs4("null[\0]".encode(encoding), 7)
         invalid = (b'\x00\x00\x11\x00' if sys.byteorder == 'little' else
                    b'\x00\x11\x00\x00')
-        # CRASHES writer.write_ucs4("invalid".encode(encoding) + invalid)
+        with self.assertRaises(ValueError):
+            writer.write_ucs4("invalid".encode(encoding) + invalid)
         writer.write_ucs4(NULL, 0)
         # CRASHES writer.write_ucs4(NULL, 1)
         self.assertEqual(writer.finish(),
@@ -2516,40 +2615,34 @@ class PyUnicodeWriterTest(unittest.TestCase):
 
 @unittest.skipIf(ctypes is None, 'need ctypes')
 class PyUnicodeWriterFormatTest(unittest.TestCase):
-    def test_fsr_transition(self):
-        from ctypes import pythonapi, c_void_p, c_ssize_t, c_uint, c_int
-        prepare = pythonapi._PyUnicodeWriter_PrepareInternal
-        prepare.argtypes = (c_void_p, c_ssize_t, c_uint)
-        prepare.restype = c_int
+    def test_readonly_utf8_append(self):
+        text = '日\udcff😀'.encode('utf-8', 'surrogatepass').decode('utf-8', 'surrogatepass')
         writer = self.create_writer(0)
-        writer.write_str('日\udcff')
-        self.assertEqual(writer.storage()[0], 1)
-        self.assertEqual(prepare(writer.get_pointer(), 3, 0x10ffff), 0)
-        self.assertEqual(writer.storage()[0], 0)
-        writer.write_char(ord('😀'))
+        writer.set_overallocate(False)
+        writer.write_str(text)
+        self.assertIs(writer.finish(), text)
+        writer = self.create_writer(0)
+        writer.set_overallocate(False)
+        writer.write_str(text)
         writer.write_str(123)
-        self.assertEqual(writer.storage()[0], 1)
         writer.write_str('abc')
-        self.assertEqual(writer.finish(), '日\udcff😀123abc')
+        self.assertEqual(writer.storage(), (9, 16))
+        self.assertEqual(writer.finish(), text + '123abc')
 
-    def test_utf8_transition_allocation_failure(self):
+    def test_utf8_reserve_allocation_failure(self):
         from test.support.script_helper import assert_python_ok
         assert_python_ok('-c', textwrap.dedent(r"""
             import ctypes
             import _testcapi
-            prepare_fsr = ctypes.pythonapi._PyUnicodeWriter_PrepareInternal
-            prepare_fsr.argtypes = (ctypes.c_void_p, ctypes.c_ssize_t, ctypes.c_uint)
-            prepare_fsr.restype = ctypes.c_int
             prepare_utf8 = ctypes.pythonapi._PyUnicodeWriter_PrepareUTF8
             prepare_utf8.argtypes = (ctypes.c_void_p, ctypes.c_ssize_t)
             prepare_utf8.restype = ctypes.c_int
             remove_hooks = _testcapi.remove_mem_hooks
             for fail_at in range(16):
                 writer = _testcapi.PyUnicodeWriter(0)
-                writer.write_str('日\udcff')
+                writer.set_overallocate(False)
+                writer.write_str('日\udcff😀')
                 pointer = writer.get_pointer()
-                prepare_fsr(pointer, 3, 0x10ffff)
-                writer.write_char(ord('😀'))
                 try:
                     _testcapi.set_nomemory(fail_at, fail_at + 1)
                     prepare_utf8(pointer, 100)
@@ -2559,7 +2652,7 @@ class PyUnicodeWriterFormatTest(unittest.TestCase):
                 finally:
                     remove_hooks()
                 prepare_utf8(pointer, 100)
-                assert writer.storage()[0] == 1
+                assert writer.storage() == (3, 10)
                 writer.write_str(123)
                 assert writer.finish() == '日\udcff😀123'
         """))
@@ -2570,7 +2663,7 @@ class PyUnicodeWriterFormatTest(unittest.TestCase):
         writer.write_str('日\udcff:')
         self.writer_format(writer, b'%08d/%08x/%-6d',
                            c_int(-123), c_uint(42), c_int(7))
-        self.assertEqual(writer.storage()[0], 1)
+        self.assertEqual(writer.storage()[1] - writer.storage()[0], 4)
         self.assertEqual(writer.finish(), '日\udcff:-0000123/0000002a/7     ')
 
     def test_utf8_format_rollback(self):

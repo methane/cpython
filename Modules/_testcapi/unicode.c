@@ -643,11 +643,25 @@ writer_storage(PyObject *self_raw, PyObject *unused)
         return NULL;
     }
     _PyUnicodeWriter *writer = (_PyUnicodeWriter *)self->writer;
-    return Py_BuildValue("inn", writer->utf8_mode, writer->pos, writer->utf8_pos);
+    return Py_BuildValue("nn", writer->pos, writer->utf8_pos);
+}
+
+static PyObject *
+writer_set_overallocate(PyObject *self_raw, PyObject *arg)
+{
+    WriterObject *self = (WriterObject *)self_raw;
+    if (writer_check(self) < 0)
+        return NULL;
+    int enabled = PyObject_IsTrue(arg);
+    if (enabled < 0)
+        return NULL;
+    ((_PyUnicodeWriter *)self->writer)->overallocate = enabled;
+    Py_RETURN_NONE;
 }
 
 static PyMethodDef writer_methods[] = {
     {"storage", writer_storage, METH_NOARGS},
+    {"set_overallocate", writer_set_overallocate, METH_O},
     {"write_char", _PyCFunction_CAST(writer_write_char), METH_VARARGS},
     {"write_utf8", _PyCFunction_CAST(writer_write_utf8), METH_VARARGS},
     {"write_ascii", _PyCFunction_CAST(writer_write_ascii), METH_VARARGS},

@@ -2943,28 +2943,15 @@ SyntaxError_traverse(PyObject *op, visitproc visit, void *arg)
 static PyObject*
 my_basename(PyObject *name)
 {
-    Py_ssize_t i, size, offset;
-    int kind;
-    const void *data;
-
-    kind = PyUnicode_KIND(name);
-    data = PyUnicode_DATA(name);
-    if (data == NULL) {
+    Py_ssize_t size = PyUnicode_GET_LENGTH(name);
+    Py_ssize_t offset = PyUnicode_FindChar(name, SEP, 0, size, -1);
+    if (offset == -2) {
         return NULL;
     }
-    size = PyUnicode_GET_LENGTH(name);
-    offset = 0;
-    for(i=0; i < size; i++) {
-        if (PyUnicode_READ(kind, data, i) == SEP) {
-            offset = i + 1;
-        }
+    if (offset >= 0) {
+        return PyUnicode_Substring(name, offset + 1, size);
     }
-    if (offset != 0) {
-        return PyUnicode_Substring(name, offset, size);
-    }
-    else {
-        return Py_NewRef(name);
-    }
+    return Py_NewRef(name);
 }
 
 

@@ -71,7 +71,7 @@ across storage types. Join, padding and repeat allocate a compact UTF-8 result
 and copy bytes directly; FSR metadata is scanned to account for overestimated
 character widths and lone surrogates.
 
-UnicodeWriter normally accumulates UTF-8/surrogatepass bytes. `pos` counts code
+UnicodeWriter only accumulates UTF-8/surrogatepass bytes. `pos` counts code
 points, while `utf8_pos` and `utf8_size` count bytes. The private direct-write API
 is `_PyUnicodeWriter_PrepareUTF8(writer, additional_bytes)`, followed by writing
 at `_PyUnicodeWriter_UTF8Data(writer)` and committing complete code points with
@@ -81,10 +81,19 @@ base-2/8/16 conversion use it directly, with equal byte and character counts.
 Printf-style signs and padding also write to this buffer. Finish validates and
 copies the accumulated bytes into the final compact string.
 
-Legacy direct-write clients can still request the fixed-width buffer through
-`_PyUnicodeWriter_Prepare`; `PrepareUTF8` converts it back when needed. Failed
-conversion preserves the old buffer. Translation and parts of advanced numeric
-formatting still use that compatibility path.
+The fixed-width Writer fields and `Prepare`, `PrepareKind`, and `InitWithBuffer`
+APIs have been removed. Numeric formatting (including locale grouping),
+translation, UTF-7/8/16/32, ASCII, escape, charmap, and CJK decoders now write
+UTF-8. Wide-character and UCS-4 appends encode input arrays directly, and
+substring appends copy UTF-8 byte ranges without constructing temporary strings.
+Decoder error positions and consumed counts still refer to input bytes.
+The separate `wchar_t` decoding API retains its required fixed-width output.
+
+A sole exact primary string may be retained read-only to preserve result
+identity. Preparing a subsequent write copies its UTF-8 bytes into owned storage;
+allocation failure leaves the retained contents intact. Writer buffers never use
+a writable FSR. FSR input strings are encoded on append, and extensions
+using the removed private layout or preparation APIs must migrate to byte writes.
 
 `Tools/scripts/bench_unicode_methods.py` measures first-call CPU time and retained
 input memory; `--warm` measures calls after indexing has materialized a FSR,
@@ -127,7 +136,7 @@ upstream transition schedule or an acceptance threshold for performance.
 The C API storage tests inspect lazy views without materializing them. They cover
 ASCII/Latin-1/BMP/non-BMP values, embedded NUL, surrogatepass/surrogateescape,
 virtual iteration, cache allocation failure and retry, and native operations.
-Writer tests cover byte/character positions, fixed-width-to-UTF-8 transitions,
+Writer tests cover byte/character positions, read-only-to-owned UTF-8 transitions,
 allocation-failure retry, formatting rollback, and direct integer output.
 Existing string, codec, C API, formatting, serialization, and size tests cover
 Python behavior and writable construction APIs. Run both debug GIL and debug

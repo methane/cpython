@@ -16,12 +16,7 @@ extern "C" {
 #define _Py_MAX_UNICODE 0x10ffff
 
 
-// Export for '_multibytecodec' shared extension. _PyUnicodeWriter_CanWrite()
-// calls this function when assertions are enabled.
 PyAPI_FUNC(int) _PyUnicode_IsModifiable(PyObject *unicode);
-extern void _PyUnicodeWriter_InitWithBuffer(
-    _PyUnicodeWriter *writer,
-    PyObject *buffer);
 extern PyObject* _PyUnicode_Result(PyObject *unicode);
 extern int _PyUnicode_DecodeUTF8Writer(
     _PyUnicodeWriter *writer,
@@ -107,38 +102,11 @@ _PyUnicode_EnsureUnicode(PyObject *obj)
     return 0;
 }
 
-#ifndef NDEBUG
-static inline int
-_PyUnicodeWriter_CanWrite(_PyUnicodeWriter *writer)
-{
-    // Code adapted from _PyUnicode_IsModifiable()
-    assert(!writer->readonly);
-    PyObject *buffer = writer->buffer;
-    assert(buffer != NULL);
-    // Do not use _PyObject_IsUniquelyReferenced(): the caller can have its own
-    // lock to prevent a writer from being used by two threads at the same
-    // time.
-    assert(Py_REFCNT(buffer) == 1);
-    assert(PyUnstable_Unicode_GET_CACHED_HASH(buffer) == -1);
-    assert(!PyUnicode_CHECK_INTERNED(buffer));
-    assert(!_Py_IsImmortal(buffer));
-    return 1;
-}
-#endif
-
 static inline int
 _PyUnicodeWriter_WriteCharInline(_PyUnicodeWriter *writer, Py_UCS4 ch)
 {
     assert(ch <= _Py_MAX_UNICODE);
-    if (writer->utf8_mode) {
-        return _PyUnicodeWriter_WriteChar(writer, ch);
-    }
-    if (_PyUnicodeWriter_Prepare(writer, 1, ch) < 0)
-        return -1;
-    assert(_PyUnicodeWriter_CanWrite(writer));
-    PyUnicode_WRITE(writer->kind, writer->data, writer->pos, ch);
-    writer->pos++;
-    return 0;
+    return _PyUnicodeWriter_WriteChar(writer, ch);
 }
 
 /* Internal UTF-8/surrogatepass storage and append operations. */
@@ -158,7 +126,7 @@ extern int _PyUnicodeWriter_WriteFill(_PyUnicodeWriter *, Py_UCS4, Py_ssize_t);
 static inline char *
 _PyUnicodeWriter_UTF8Data(_PyUnicodeWriter *writer)
 {
-    assert(writer->utf8_mode);
+    assert(writer->readonly == NULL);
     return writer->utf8 == NULL ? NULL : writer->utf8 + writer->utf8_pos;
 }
 
@@ -166,7 +134,7 @@ static inline void
 _PyUnicodeWriter_AdvanceUTF8(_PyUnicodeWriter *writer,
                             Py_ssize_t size, Py_ssize_t length)
 {
-    assert(writer->utf8_mode);
+    assert(writer->readonly == NULL);
     assert(size >= length && length >= 0);
     assert(size <= writer->utf8_size - writer->utf8_pos);
     assert(length <= PY_SSIZE_T_MAX - writer->pos);
