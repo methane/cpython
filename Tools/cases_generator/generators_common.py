@@ -98,6 +98,7 @@ def always_true(tkn: Token | None) -> bool:
 NON_ESCAPING_DEALLOCS = {
     "_PyFloat_ExactDealloc",
     "_PyLong_ExactDealloc",
+    "_PyTuple_AfterUnpackDealloc",
     "_PyUnicode_ExactDealloc",
 }
 
@@ -129,7 +130,6 @@ class Emitter:
             "stack_pointer": self.stack_pointer,
             "Py_UNREACHABLE": self.unreachable,
             "TIER1_TO_TIER2": self.tier1_to_tier2,
-            "TIER2_TO_TIER2": self.tier2_to_tier2,
             "GOTO_TIER_ONE": self.goto_tier_one
         }
         self.out = out
@@ -281,8 +281,6 @@ class Emitter:
         emit_to(self.out, tkn_iter, "RPAREN")
         self.out.emit(")")
         return False
-
-    tier2_to_tier2 = tier1_to_tier2
 
     def error_no_pop(
         self,
@@ -791,8 +789,6 @@ def cflags(p: Properties) -> str:
         flags.append("HAS_UNPREDICTABLE_JUMP_FLAG")
     if p.needs_guard_ip:
         flags.append("HAS_NEEDS_GUARD_IP_FLAG")
-    if p.records_value:
-        flags.append("HAS_RECORDS_VALUE_FLAG")
     if flags:
         return " | ".join(flags)
     else:

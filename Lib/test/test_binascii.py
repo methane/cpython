@@ -503,6 +503,43 @@ class BinASCIITest(unittest.TestCase):
             with self.assertRaises(binascii.Error):
                 binascii.a2b_ascii85(self.type2test(a), **kwargs)
 
+    def test_ascii85_complete_groups(self):
+        # Exercise transitions between complete groups, abbreviations,
+        # ignored characters, and a partial final group.
+        prefix = b'!!!!"'  # The four-byte integer 1.
+        decoded_prefix = b'\0\0\0\1'
+        for length in range(14):
+            payload = bytes(range(length))
+            encoded = binascii.b2a_ascii85(payload)
+            for lead, decoded in [(prefix * 2, decoded_prefix * 2),
+                                  (b'z', b'\0' * 4), (b'y', b' ' * 4)]:
+                data = lead + encoded
+                expected = decoded + payload
+                self.assertEqual(binascii.a2b_ascii85(self.type2test(data),
+                                 foldspaces=True), expected)
+                spaced = b' '.join(bytes([ch]) for ch in data)
+                self.assertEqual(binascii.a2b_ascii85(self.type2test(spaced),
+                                 foldspaces=True, ignorechars=b' '), expected)
+        for value in (0, 1, 84, 85, 2**24, 2**31, 2**32 - 1):
+            payload = value.to_bytes(4, 'big')
+            encoded = binascii.b2a_ascii85(payload).replace(b'z', b'!!!!!')
+            self.assertEqual(binascii.a2b_ascii85(
+                self.type2test(prefix + encoded)), decoded_prefix + payload)
+        for bad in (b's8W-"', b'uuuuu'):
+            with self.assertRaisesRegex(binascii.Error, 'Ascii85 overflow'):
+                binascii.a2b_ascii85(self.type2test(prefix + bad))
+        with self.assertRaisesRegex(binascii.Error, 'Non-canonical encoding'):
+            binascii.a2b_ascii85(self.type2test(prefix + b'!!!!!'), canonical=True)
+        for position in range(5):
+            for char in range(256):
+                if ord('!') <= char <= ord('u') or char in b'yz':
+                    continue
+                group = b'!' * position + bytes([char]) + b'!' * (4 - position)
+                with self.subTest(position=position, char=char):
+                    with self.assertRaisesRegex(binascii.Error, 'Non-Ascii85 digit'):
+                        binascii.a2b_ascii85(self.type2test(prefix + group),
+                                            ignorechars=b'')
+
     def test_ascii85_invalid(self):
         # Test Ascii85 with invalid characters interleaved
         lines, i = [], 0
@@ -1399,6 +1436,31 @@ class BinASCIITest(unittest.TestCase):
         eq(a2b_hex(b'A B\nC D\n', ignorechars=b' \n'), b'\xab\xcd')
         eq(a2b_hex(b'A B\nC D\n', ignorechars=bytearray(b' \n')), b'\xab\xcd')
         eq(a2b_hex(b'aBcD', ignorechars=b'ac'), b'\xab\xcd')
+
+    def test_hex_pairs_and_error_precedence(self):
+        for decode in (binascii.a2b_hex, binascii.unhexlify):
+            for ignorechars in (b'', b'\n'):
+                # Exercise both the pair decoder and the separator-aware path.
+                for size in (0, 1, 2, 3, 15, 16, 17, 256):
+                    expected = bytes(range(size))
+                    encoded = expected.hex().encode('ascii')
+                    for data in (encoded, encoded.upper()):
+                        self.assertEqual(decode(self.type2test(data),
+                                                ignorechars=ignorechars), expected)
+                for data in (b'0', b'001', b'01234'):
+                    with self.assertRaisesRegex(binascii.Error,
+                                                'Odd number of hexadecimal digits'):
+                        decode(self.type2test(data), ignorechars=ignorechars)
+                for char in range(256):
+                    if char in b'0123456789abcdefABCDEF\n':
+                        continue
+                    digit = bytes([char])
+                    for data in (digit + b'0', b'0' + digit, b'00' + digit):
+                        # Invalid characters take precedence over odd length,
+                        # including after otherwise complete pairs.
+                        with self.assertRaisesRegex(binascii.Error,
+                                                    'Non-hexadecimal digit found'):
+                            decode(self.type2test(data), ignorechars=ignorechars)
 
     def test_qp(self):
         type2test = self.type2test

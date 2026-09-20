@@ -9,6 +9,15 @@ NULL = None
 
 class BuiltinStaticTypesTests(unittest.TestCase):
 
+    def test_reserved_type_versions(self):
+        # These reserved tags in pycore_typeobject.h allow the optimizer to
+        # recover a builtin type even after its version-cache slot is reused.
+        for typeobj, version in ((int, 1), (float, 2), (list, 3), (tuple, 4),
+                                 (str, 5), (set, 6), (frozenset, 7), (dict, 8),
+                                 (bytearray, 9), (bytes, 10), (complex, 11)):
+            with self.subTest(typeobj=typeobj):
+                self.assertEqual(_testcapi.type_get_version(typeobj), version)
+
     TYPES = [
         object,
         type,

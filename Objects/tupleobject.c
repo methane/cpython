@@ -282,6 +282,16 @@ tuple_dealloc(PyObject *self)
     }
 }
 
+/* All items must already have independent references, as after unpacking
+ * an exact tuple. Releasing the tuple then cannot finalize any of its items.
+ * Keep this separate from the general, potentially escaping deallocator. */
+void
+_PyTuple_AfterUnpackDealloc(PyObject *self)
+{
+    assert(PyTuple_CheckExact(self));
+    tuple_dealloc(self);
+}
+
 static PyObject *
 tuple_repr(PyObject *self)
 {

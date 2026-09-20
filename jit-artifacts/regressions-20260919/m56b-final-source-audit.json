@@ -1,0 +1,14 @@
+{
+  "m56b-ft": {
+    "binary_sha256": "842f4ab84873e8132b08c82210199b5fd4702019acee4db49ebbc97184b48db0",
+    "base_commit": "14defe7e06ef37956989e46c74710293d33df41e",
+    "source_diff_sha256": "6c30ed6fec1151f4cd2354665dc95517779162b05fd0a31f496910af58fad573"
+  },
+  "m56b-gil-pgo-lto": {
+    "binary_sha256": "9cb1ae62d6ae5a61f1bbbc56e7fbb9e9bdaae4128d2f516641b71e212c740e4b",
+    "base_commit": "14defe7e06ef37956989e46c74710293d33df41e",
+    "source_diff_sha256": "6c30ed6fec1151f4cd2354665dc95517779162b05fd0a31f496910af58fad573"
+  },
+  "runtime_patch_sha256": "6c30ed6fec1151f4cd2354665dc95517779162b05fd0a31f496910af58fad573",
+  "working_runtime_matches_frozen_patch": true
+}

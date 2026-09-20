@@ -19,7 +19,6 @@
 #include "pycore_uop_metadata.h"    // _PyOpcode_uop_name
 #include "pycore_uop_ids.h"       // MAX_UOP_ID
 #include "pycore_opcode_utils.h"  // RESUME_AT_FUNC_START
-#include "pycore_optimizer.h"     // _PyJit_IsOnlyStrongReferenceBesidesTracer()
 #include "pycore_pylifecycle.h"   // _PyOS_URandomNonblock()
 #include "pycore_runtime.h"       // _Py_ID()
 #include "pycore_unicodeobject.h" // _PyUnicodeASCIIIter_Type
@@ -1066,7 +1065,7 @@ _Py_Specialize_LoadAttr(_PyStackRef owner_st, _Py_CODEUNIT *instr, PyObject *nam
         SPECIALIZATION_FAIL(LOAD_ATTR, SPEC_FAIL_OTHER);
         fail = true;
     }
-    else if (Py_TYPE(owner)->tp_getattro == PyModule_Type.tp_getattro) {
+    else if (PyModule_CheckExact(owner)) {
         fail = specialize_module_load_attr(owner, instr, name);
     }
     else if (PyType_Check(owner)) {
@@ -2656,6 +2655,11 @@ _Py_Specialize_BinaryOp(_PyStackRef lhs_st, _PyStackRef rhs_st, _Py_CODEUNIT *in
                     _PyInterpreterState_IsSpecializationEnabled(_PyInterpreterState_GET()) && /* Don't specialize if PEP 523 is active */
                     _PyType_CacheGetItemForSpecialization(ht, descriptor, (uint32_t)tp_version))
                 {
+                    _PyBinaryOpSubscrCache *getitem_cache =
+                        (_PyBinaryOpSubscrCache *)cache;
+                    write_u32(getitem_cache->type_version, tp_version);
+                    write_u32(getitem_cache->func_version,
+                              _PyFunction_GetVersionForCurrentState(func));
                     specialize(instr, BINARY_OP_SUBSCR_GETITEM);
                     Py_DECREF(descriptor);
                     return;
@@ -2899,9 +2903,7 @@ _Py_Specialize_ForIter(_PyStackRef iter, _PyStackRef null_or_index, _Py_CODEUNIT
             // than we need (even `it = iter(mylist); for item in it:` won't get
             // specialized) but we don't have a way to check whether we're the only
             // _thread_ who has access to the object.
-            if (!_PyObject_IsUniquelyReferenced(iter_o) &&
-                !_PyJit_IsOnlyStrongReferenceBesidesTracer(
-                    _PyThreadState_GET(), iter_o)) {
+            if (!_PyObject_IsUniquelyReferenced(iter_o)) {
                 goto failure;
             }
 #endif
@@ -3173,7 +3175,9 @@ _Py_Specialize_Resume(_Py_CODEUNIT *instr, PyThreadState *tstate, _PyInterpreter
             PyCodeObject *co = (PyCodeObject *)PyStackRef_AsPyObjectBorrow(frame->f_executable);
             if (co != NULL &&
                 PyCode_Check(co) &&
-                (co->co_flags & (CO_GENERATOR | CO_COROUTINE | CO_ASYNC_GENERATOR)) == 0) {
+                (co->co_flags & (CO_COROUTINE | CO_ASYNC_GENERATOR |
+                                 CO_ITERABLE_COROUTINE)) == 0 &&
+                (instr->op.arg & RESUME_OPARG_LOCATION_MASK) < RESUME_AFTER_YIELD_FROM) {
                 specialize(instr, RESUME_CHECK_JIT);
                 set_counter((_Py_BackoffCounter *)instr + 1, initial_resume_backoff_counter(&tstate->interp->opt_config));
                 return;

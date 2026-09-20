@@ -33,6 +33,7 @@
 #include "pycore_object.h"        // _PyObject_IsFreed()
 #include "pycore_optimizer.h"     // _Py_Executor_DependsOn
 #include "pycore_pathconfig.h"    // _PyPathConfig_ClearGlobal()
+#include "pycore_pyatomic_ft_wrappers.h" // FT_MUTEX_LOCK()
 #include "pycore_pyerrors.h"      // _PyErr_ChainExceptions1()
 #include "pycore_pylifecycle.h"   // _PyInterpreterConfig_InitFromDict()
 #include "pycore_pystate.h"       // _PyThreadState_GET()
@@ -1801,6 +1802,20 @@ invalidate_executors(PyObject *self, PyObject *obj)
 }
 
 static PyObject *
+clear_function_version_cache(PyObject *self, PyObject *Py_UNUSED(ignored))
+{
+#ifdef _Py_TIER2
+    PyInterpreterState *interp = PyInterpreterState_Get();
+    FT_MUTEX_LOCK(&interp->func_state.mutex);
+    // Evict borrowed cache entries without changing live function versions.
+    memset(interp->func_state.func_version_cache, 0,
+           sizeof(interp->func_state.func_version_cache));
+    FT_MUTEX_UNLOCK(&interp->func_state.mutex);
+#endif
+    Py_RETURN_NONE;
+}
+
+static PyObject *
 invalidate_cold_executors(PyObject *self, PyObject *Py_UNUSED(ignored))
 {
     _Py_Executors_InvalidateCold(PyInterpreterState_Get());
@@ -1813,22 +1828,6 @@ clear_executor_deletion_list(PyObject *self, PyObject *Py_UNUSED(ignored))
     PyInterpreterState *interp = PyInterpreterState_Get();
     _Py_ClearExecutorDeletionList(interp);
     Py_RETURN_NONE;
-}
-
-static PyObject *
-get_exit_executor(PyObject *self, PyObject *arg)
-{
-    if (!PyLong_CheckExact(arg)) {
-        PyErr_SetString(PyExc_TypeError, "argument must be an ID to an _PyExitData");
-        return NULL;
-    }
-    uint64_t ptr;
-    if (PyLong_AsUInt64(arg, &ptr) < 0) {
-        // Error set by PyLong API
-        return NULL;
-    }
-    _PyExitData *exit = (_PyExitData *)ptr;
-    return Py_NewRef(exit->executor);
 }
 
 #endif
@@ -3322,9 +3321,9 @@ static PyMethodDef module_functions[] = {
 #ifdef _Py_TIER2
     {"add_executor_dependency", add_executor_dependency, METH_VARARGS, NULL},
     {"invalidate_executors", invalidate_executors, METH_O, NULL},
+    {"clear_function_version_cache", clear_function_version_cache, METH_NOARGS, NULL},
     {"invalidate_cold_executors", invalidate_cold_executors, METH_NOARGS, NULL},
     {"clear_executor_deletion_list", clear_executor_deletion_list, METH_NOARGS, NULL},
-    {"get_exit_executor", get_exit_executor, METH_O, NULL},
 #endif
     {"pending_threadfunc", _PyCFunction_CAST(pending_threadfunc),
      METH_VARARGS | METH_KEYWORDS},

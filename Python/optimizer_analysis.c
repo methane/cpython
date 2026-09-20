@@ -230,6 +230,11 @@ convert_global_to_const(_PyUOpInstruction *inst, PyObject *obj)
     if (res == NULL) {
         return NULL;
     }
+    if (inst->opcode == _LOAD_GLOBAL_MODULE &&
+        _PyJit_IsUnstableGlobal(obj, PyObject_Hash(entries[index].me_key)))
+    {
+        return NULL;
+    }
     if (_Py_IsImmortal(res) || _PyObject_HasDeferredRefcount(res)) {
         inst->opcode = _LOAD_CONST_INLINE_BORROW;
     } else {
@@ -260,7 +265,6 @@ is_terminator_uop(const _PyUOpInstruction *uop)
     return (
         opcode == _EXIT_TRACE ||
         opcode == _JUMP_TO_TOP ||
-        opcode == _DYNAMIC_EXIT ||
         opcode == _DEOPT
     );
 }
@@ -324,7 +328,6 @@ add_op(JitOptContext *ctx, _PyUOpInstruction *this_instr,
 #define sym_truthiness _Py_uop_sym_truthiness
 #define frame_new _Py_uop_frame_new
 #define frame_new_from_symbol _Py_uop_frame_new_from_symbol
-#define frame_pop _Py_uop_frame_pop
 #define sym_new_tuple _Py_uop_sym_new_tuple
 #define sym_tuple_getitem _Py_uop_sym_tuple_getitem
 #define sym_tuple_length _Py_uop_sym_tuple_length
@@ -334,9 +337,7 @@ add_op(JitOptContext *ctx, _PyUOpInstruction *this_instr,
 #define sym_new_truthiness _Py_uop_sym_new_truthiness
 #define sym_new_predicate _Py_uop_sym_new_predicate
 #define sym_apply_predicate_narrowing _Py_uop_sym_apply_predicate_narrowing
-#define sym_set_recorded_type(SYM, TYPE) _Py_uop_sym_set_recorded_type(ctx, SYM, TYPE)
-#define sym_set_recorded_value(SYM, VAL) _Py_uop_sym_set_recorded_value(ctx, SYM, VAL)
-#define sym_set_recorded_gen_func(SYM, VAL) _Py_uop_sym_set_recorded_gen_func(ctx, SYM, VAL)
+#define sym_set_probable_value(SYM, VAL) _Py_uop_sym_set_probable_value(ctx, SYM, VAL)
 #define sym_get_probable_func_code _Py_uop_sym_get_probable_func_code
 #define sym_get_probable_value _Py_uop_sym_get_probable_value
 #define sym_set_stack_depth(DEPTH, SP) _Py_uop_sym_set_stack_depth(ctx, DEPTH, SP)
@@ -446,13 +447,22 @@ lookup_attr(JitOptContext *ctx, _PyBloomFilter *dependencies, _PyUOpInstruction 
             bool immortal = _Py_IsImmortal(lookup) ||
                 _PyObject_HasDeferredRefcount(lookup) ||
                 (type->tp_flags & Py_TPFLAGS_IMMUTABLETYPE);
-            if (prefix != _NOP) {
-                ADD_OP(prefix, 0, 0);
+            if (prefix == _POP_TOP && suffix == _NOP) {
+                /* Keep the owner-to-attribute replacement atomic. Splitting
+                 * it into POP_TOP and a constant load lets a later guarded
+                 * region start after the owner was consumed, although its
+                 * deoptimization target still expects that owner. */
+                ADD_OP(this_instr->opcode, this_instr->oparg, (uintptr_t)lookup);
             }
-            ADD_OP(immortal ? _LOAD_CONST_INLINE_BORROW : _LOAD_CONST_INLINE,
-                   0, (uintptr_t)lookup);
-            if (suffix != _NOP) {
-                ADD_OP(suffix, 2, 0);
+            else {
+                if (prefix != _NOP) {
+                    ADD_OP(prefix, 0, 0);
+                }
+                ADD_OP(immortal ? _LOAD_CONST_INLINE_BORROW : _LOAD_CONST_INLINE,
+                       0, (uintptr_t)lookup);
+                if (suffix != _NOP) {
+                    ADD_OP(suffix, 2, 0);
+                }
             }
             if ((type->tp_flags & Py_TPFLAGS_IMMUTABLETYPE) == 0) {
                 watch_type(type, dependencies);
@@ -633,21 +643,18 @@ _Py_opt_assert_within_stack_bounds(
 #endif
 
 /* >0 (length) for success, 0 for not ready, clears all possible errors. */
-static int
-optimize_uops(
-    _PyThreadStateImpl *tstate,
+int
+_Py_uop_optimize_method_block(
+    PyFunctionObject *func, JitOptContext *ctx,
     _PyUOpInstruction *trace,
     int trace_len,
     int curr_stacklen,
+    const _PyMethodValue *initial_values,
     _PyUOpInstruction *output,
     _PyBloomFilter *dependencies
 )
 {
     assert(!PyErr_Occurred());
-    assert(tstate->jit_tracer_state != NULL);
-    PyFunctionObject *func = tstate->jit_tracer_state->initial_state.func;
-
-    JitOptContext *ctx = &tstate->jit_tracer_state->opt_context;
     uint32_t opcode = UINT16_MAX;
 
     uop_buffer_init(&ctx->out_buffer, output, UOP_MAX_TRACE_LENGTH);
@@ -666,6 +673,36 @@ optimize_uops(
     ctx->curr_frame_depth++;
     ctx->frame = frame;
     _Py_uop_sym_set_stack_depth(ctx, curr_stacklen, frame->stack_pointer);
+
+    /* These facts come from the static CFG, never from recording a running
+     * frame. Joins have already discarded path-specific ownership and aliases. */
+    for (int i = 0; i < frame->locals_len + curr_stacklen; i++) {
+        const _PyMethodValue *value = &initial_values[i];
+        JitOptRef ref;
+        switch (value->kind) {
+            case METHOD_VALUE_NULL:
+                ref = _Py_uop_sym_new_null(ctx);
+                break;
+            case METHOD_VALUE_CONST:
+                ref = _Py_uop_sym_new_const(ctx, value->object);
+                break;
+            case METHOD_VALUE_TYPE:
+                ref = _Py_uop_sym_new_type(ctx, (PyTypeObject *)value->object);
+                if (value->compact_int) {
+                    _Py_uop_sym_set_compact_int(ctx, ref);
+                }
+                break;
+            default:
+                ref = _Py_uop_sym_new_unknown(ctx);
+                break;
+        }
+        if (i < frame->locals_len) {
+            frame->locals[i] = ref;
+        }
+        else {
+            frame->stack[i - frame->locals_len] = ref;
+        }
+    }
 
     _PyUOpInstruction *this_instr = NULL;
     JitOptRef *stack_pointer = ctx->frame->stack_pointer;
@@ -795,197 +832,6 @@ error:
 
     return 0;
 
-}
-
-const uint16_t op_without_push[MAX_UOP_ID + 1] = {
-    [_COPY] = _NOP,
-    [_LOAD_CONST_INLINE] = _NOP,
-    [_LOAD_CONST_INLINE_BORROW] = _NOP,
-    [_LOAD_FAST] = _NOP,
-    [_LOAD_FAST_BORROW] = _NOP,
-    [_LOAD_SMALL_INT] = _NOP,
-    [_PUSH_NULL] = _NOP,
-};
-
-const bool op_skip[MAX_UOP_ID + 1] = {
-    [_NOP] = true,
-    [_CHECK_VALIDITY] = true,
-    [_CHECK_PERIODIC] = true,
-    [_SET_IP] = true,
-};
-
-const uint16_t op_without_pop[MAX_UOP_ID + 1] = {
-    [_POP_TOP] = _NOP,
-    [_POP_TOP_NOP] = _NOP,
-    [_POP_TOP_INT] = _NOP,
-    [_POP_TOP_FLOAT] = _NOP,
-    [_POP_TOP_UNICODE] = _NOP,
-};
-
-
-static int
-remove_unneeded_uops(_PyUOpInstruction *buffer, int buffer_size)
-{
-    /* Remove _SET_IP and _CHECK_VALIDITY where possible.
-     * _SET_IP is needed if the following instruction escapes or
-     * could error. _CHECK_VALIDITY is needed if the previous
-     * instruction could have escaped. */
-    int last_set_ip = -1;
-    bool may_have_escaped = true;
-    for (int pc = 0; pc < buffer_size; pc++) {
-        int opcode = buffer[pc].opcode;
-        switch (opcode) {
-            case _START_EXECUTOR:
-                may_have_escaped = false;
-                break;
-            case _SET_IP:
-                buffer[pc].opcode = _NOP;
-                last_set_ip = pc;
-                break;
-            case _CHECK_VALIDITY:
-                if (may_have_escaped) {
-                    may_have_escaped = false;
-                }
-                else {
-                    buffer[pc].opcode = _NOP;
-                }
-                break;
-            case _EXIT_TRACE:
-            default:
-            {
-                // Cancel out pushes and pops, repeatedly. So:
-                //     _LOAD_FAST + _POP_TOP + _POP_TOP + _LOAD_CONST_INLINE_BORROW + _POP_TOP
-                // ...becomes:
-                //     _NOP + _NOP + _POP_TOP + _NOP + _NOP
-                while (op_without_pop[opcode]) {
-                    _PyUOpInstruction *last = &buffer[pc - 1];
-                    while (op_skip[last->opcode]) {
-                        last--;
-                    }
-                    if (op_without_push[last->opcode] && op_without_pop[opcode]) {
-                        last->opcode = op_without_push[last->opcode];
-                        opcode = buffer[pc].opcode = op_without_pop[opcode];
-                        if (op_without_pop[last->opcode]) {
-                            opcode = last->opcode;
-                            pc = (int)(last - buffer);
-                        }
-                    }
-                    else {
-                        break;
-                    }
-                }
-                /* _PUSH_FRAME doesn't escape or error, but it
-                 * does need the IP for the return address */
-                bool needs_ip = (opcode == _PUSH_FRAME || opcode == _YIELD_VALUE || opcode == _DYNAMIC_EXIT || opcode == _EXIT_TRACE);
-                if (_PyUop_Flags[opcode] & HAS_ESCAPES_FLAG) {
-                    needs_ip = true;
-                    may_have_escaped = true;
-                }
-                if (needs_ip && last_set_ip >= 0) {
-                    assert(buffer[last_set_ip].opcode == _NOP);
-                    buffer[last_set_ip].opcode = _SET_IP;
-                    last_set_ip = -1;
-                }
-                if (opcode == _EXIT_TRACE) {
-                    return pc + 1;
-                }
-                break;
-            }
-            case _JUMP_TO_TOP:
-            case _DYNAMIC_EXIT:
-            case _DEOPT:
-                return pc + 1;
-        }
-    }
-    Py_UNREACHABLE();
-}
-
-/* An incomplete chain of generator resumes does no work that the optimizer
- * can simplify. Its guards and tier transitions cost more than the handful
- * of SEND/RESUME dispatches it replaces, especially for recursive yield-from.
- * Loading a child iterator and starting its delegation is still only setup.
- * Keep traces that compute a value, reach a yield, or complete a loop. */
-static bool
-trace_only_delegates_generators(_PyUOpInstruction *buffer, int length)
-{
-    int sends = 0;
-    for (int i = 0; i < length; i++) {
-        if (_PyUop_Flags[buffer[i].opcode] & HAS_RECORDS_VALUE_FLAG) {
-            continue;
-        }
-        switch (buffer[i].opcode) {
-            case _SEND_GEN_FRAME:
-                sends++;
-                break;
-            case _START_EXECUTOR:
-            case _MAKE_WARM:
-            case _NOP:
-            case _SET_IP:
-            case _CHECK_PERIODIC:
-            case _CHECK_VALIDITY:
-            case _FOR_ITER_GEN_FRAME:
-            case _PUSH_FRAME:
-            case _GUARD_IP__PUSH_FRAME:
-            case _GUARD_CODE_VERSION__PUSH_FRAME:
-            case _TIER2_RESUME_CHECK:
-                break;
-            case _LOAD_FAST_BORROW:
-            case _LOAD_CONST_INLINE_BORROW:
-            case _GUARD_TYPE_VERSION:
-            case _CHECK_MANAGED_OBJECT_HAS_VALUES:
-            case _LOAD_ATTR_INSTANCE_VALUE:
-            case _LOAD_ATTR_SLOT:
-            case _SWAP:
-            case _POP_TOP:
-            case _POP_TOP_NOP:
-            case _GET_ITER:
-                /* Only extend a delegation prefix, not arbitrary work in
-                 * the consumer before it enters the generator chain. */
-                if (sends == 0) {
-                    return false;
-                }
-                break;
-            case _EXIT_TRACE:
-                return sends > 1;
-            default:
-                return false;
-        }
-    }
-    return false;
-}
-
-//  0 - failure, no error raised, just fall back to Tier 1
-// -1 - failure, and raise error
-//  > 0 - length of optimized trace
-int
-_Py_uop_analyze_and_optimize(
-    _PyThreadStateImpl *tstate,
-    _PyUOpInstruction *buffer,
-    int length,
-    int curr_stacklen,
-    _PyUOpInstruction *output,
-    _PyBloomFilter *dependencies
-)
-{
-    OPT_STAT_INC(optimizer_attempts);
-
-    length = optimize_uops(
-        tstate, buffer, length, curr_stacklen, output, dependencies);
-
-    if (length == 0) {
-        return length;
-    }
-
-    assert(length > 0);
-
-    length = remove_unneeded_uops(output, length);
-    assert(length > 0);
-    if (trace_only_delegates_generators(output, length)) {
-        return 0;
-    }
-
-    OPT_STAT_INC(optimizer_successes);
-    return length;
 }
 
 #endif /* _Py_TIER2 */

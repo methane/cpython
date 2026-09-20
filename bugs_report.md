@@ -1,4 +1,4 @@
-# CPython `main` defects found during the tracing-JIT experiments
+# CPython `main` defects found during the JIT experiments
 
 ## Scope and evidence standard
 
@@ -41,6 +41,9 @@ The fixes were reapplied and verified on `codex/method-jit`, starting from
 | M-12 | Stencil optimization | Jump-table targets can be removed from a generic stencil | Fixed on `codex/method-jit` |
 | M-13 | JIT hotness | A ready counter wraps while another trace is active | Fixed on `codex/method-jit` |
 | M-14 | GIL handoff | Repeated short I/O can indefinitely restart a waiter's switching interval | Fixed locally; debug, native and PGO/LTO validation pass |
+| M-15 | Optimizer lookup | Unicode type omits its reserved optimizer version | Fixed locally; GIL and FT validation pass |
+| M-16 | Recursion limit | Specialized Python indexing can exceed the Python recursion limit | Fixed locally; GIL Tier 1 and method tests pass |
+| M-17 | Attribute caching | Reinitializing a property leaves its old getter cached | Confirmed on main; Tier 1 remains unfixed |
 | P-1 | Optimization coverage | Valid method-descriptor calls on subclasses are rejected | Fixed on `codex/method-jit` |
 | P-2 | Optimization precision | Unrelated global writes invalidate optimized code | Fixed on `codex/method-jit` |
 | P-3 | Optimization coverage | Materialized dictionaries prevent valid inline attribute loads from specializing | Fixed locally for GIL builds |
@@ -514,3 +517,150 @@ Evidence: `jit-artifacts/pyperformance-fixes-20260917/`, especially
 `pool-hot-before.log`, `pool-trace-only-debug.log`, `libc-diagnostic/`,
 `pool-deadline-debug-{0,1,2}.log`, `pool-full-gil-native-v1.json`, and
 `pool-full-gil-pgo-v6-state.json`.
+
+## M-15: Unicode type omits its reserved optimizer version
+
+Found 2026-09-19 while validating builtin-method specialization. The frozen
+main at `d95f29589e03603aa13d8ca9d4f817dce77d357c` reports `str.tp_version_tag`
+as 80, although `pycore_typeobject.h` reserves `_Py_TYPE_VERSION_STR` (5).
+`PyUnicode_Type` lacks the initializer present on the other reserved builtin
+types. After a collision in the direct-mapped type-version cache,
+`_PyType_LookupByVersion()` can no longer recover `str` from an attribute cache.
+The reserved-version case cannot help because no attribute cache uses tag 5.
+
+This is a missed-optimization defect, not an observed incorrect Python result.
+The local repair initializes `.tp_version_tag` with the existing reserved
+constant. A regression test fails on both frozen main configurations and passes
+with the repair. The release validation passed 4,688 tests with the GIL and
+4,692 in the free-threaded build, including string C API and concurrent string
+tests. A mutation-free diagnostic also confirms that the original
+`str.replace()` workload can use the direct descriptor call after this repair.
+The isolated GIL performance screen did not show a large improvement; these
+correctness and generated-code checks do not establish that the benchmark
+regressions are resolved. Integrated debug validation subsequently passed in
+both configurations (R23c: 4,906 tests with 59 skipped in FT, 4,863 with 46
+skipped with the GIL); final release performance validation remains pending.
+No upstream submission has been made. Evidence and preserved failed trials are
+under `jit-artifacts/regressions-20260919/`, including
+`unicode-trial-validation-v2.json`, `r11-str-descriptor-probe.json`,
+`r11-vs-r10-dev-analysis.json`, and the earlier `r10-gil-dev-tests.log`.
+
+## M-16: Specialized Python indexing omits the recursion-limit check
+
+Found while adding static method inlining for `BINARY_OP_SUBSCR_GETITEM`.
+This is also reproducible on the fixed `main` revision
+`d95f29589e03603aa13d8ca9d4f817dce77d357c` with `PYTHON_JIT=0`; it does not require
+the experimental method frontend. The main GIL/no-PGO/no-LTO executable has
+SHA-256 `cafdcfa052a142b456095b69ec8f99c7a0fcac701403055bfaae587e0de770ea`.
+
+After specializing a recursive `__getitem__`, limit the available Python
+recursion depth to 40 and evaluate a subscript that recurses 60 times. Main
+returns a value instead of raising `RecursionError`. The reproducing unit test
+is `TestCallCache.test_recursion_check_for_python_subscript` in
+`Lib/test/test_opcache.py`; the before-fix log is
+`jit-artifacts/regressions-20260919/m26-main-recursion-before.log`.
+
+`BINARY_OP_SUBSCR_GETITEM` checked the callee and available frame storage but
+omitted `_CHECK_RECURSION_REMAINING` before `_PUSH_FRAME`. The latter decrements
+`py_recursion_remaining` without checking it. An allocation fallback can
+eventually check the limit, so the observed excess depends on remaining frame
+storage. The fix adds the existing recursion guard before acquiring the callee
+reference or transferring the arguments. It applies to both Tier 1 and the
+method expansion. The new Tier 1 regression test passes, as do 95 JIT-disabled opcode-cache tests,
+the method recursion test, 217 related method tests, and the three new subscript
+tests under `-R 3:3`. The free-threaded debug build also passes its JIT-disabled opcode-cache tests
+and 218 method-related tests (GIL-only inlining cases are skipped there).
+
+
+## M-17: Reinitializing a property leaves the old getter cached
+
+Found 2026-09-20 on frozen main
+`d95f29589e03603aa13d8ca9d4f817dce77d357c` and the M32 method candidate.
+After warming an instance attribute access, calling
+`Owner.value.__init__(new_getter)` changes the descriptor but the specialized
+access continues to call the previous getter. The reproducer keeps both getters
+alive: the old getter returns 1, the new getter returns 2. The warmed access
+returns 1 while `Owner.value.__get__(owner, Owner)` correctly returns 2.
+
+All eight combinations of main/candidate, GIL/free-threaded builds, and
+`PYTHON_JIT=0/1` reproduce this incorrect result. It therefore does not depend
+on either JIT frontend. `LOAD_ATTR_PROPERTY` caches the getter and its function
+version, protected by the owner's type version. Reinitializing the existing
+property changes none of those cached guards. This report establishes a stale
+result; it does not establish a memory-safety failure.
+
+Status: confirmed, not repaired in M32. A repair must also protect descriptor
+and getter lifetimes when another free-threaded thread replaces or reinitializes
+the property. Simply loading a cached descriptor pointer without that protection
+is insufficient. Evidence: `jit-artifacts/regressions-20260919/`, particularly
+`probe_property_reinit.py`, `m32-property-reinit-probes.json`, and the eight
+`m32-property-reinit-*-jit*.log` files. No upstream submission has been made.
+
+M33's method frontend uses the general attribute operation at this boundary.
+Its new regression test observes the replacement getter and propagates its
+exception exactly once. This avoids the stale specialization inside native
+method code; it is not a repair of the underlying Tier 1 specialization.
+
+
+## M-18: Module attribute specialization ignores subclass data descriptors
+
+Found 2026-09-20 on frozen main
+`d95f29589e03603aa13d8ca9d4f817dce77d357c` and the M35b method candidate.
+Warm a function that reads `module.value` from an ordinary module whose
+value is 1000. Change its `__class__` to a `ModuleType` subclass with a
+`value` property returning 2000. A fresh direct access returns 2000, but the
+warmed function returns 1000. A module created as that subclass also starts
+returning its dictionary value once its attribute access specializes.
+
+Both `_Py_Specialize_LoadAttr` and `_LOAD_ATTR_MODULE` accept any type with
+`PyModule_Type.tp_getattro`. A subclass can inherit that getter while defining
+a data descriptor, which takes precedence over the instance dictionary.
+The specialization checks only the dictionary keys version and index, so it
+bypasses the descriptor. A class change need not change either cached value.
+
+The class-change reproducer fails in all eight combinations of main/M35b,
+GIL/free-threaded, and `PYTHON_JIT=0/1`. It is a Tier 1 specialization defect
+shared by both JIT frontends, not introduced by module constant folding.
+The M36 fix restricts both specialization and its execution guard to exact
+modules. Subclasses retain ordinary attribute lookup. Regression tests cover
+class replacement, initially subclassed modules, and a callback changing a
+module class between two loads in native method code. M36 GIL debug, FT debug,
+and both final release configurations pass the new cases. The independent
+class-change probe also passes with JIT enabled and disabled on all three
+final/debug configurations; the new GIL and FT reference-leak checks pass.
+
+Evidence: `jit-artifacts/regressions-20260919/probe_module_property_change.py`,
+`m35b-module-class-probe.json`, eight `m35b-module-class-*-jit*.log` files,
+`m36-main-opcache-before-matched-lib.log` (two semantic failures), and `m36-method-before.log`
+(one failure). Final M35b comparisons were cancelled before any timed runs;
+its completed non-PGO screen is retained as historical evidence.
+No upstream submission has been made.
+
+## Unresolved observation: free-threaded main crashes during Dask profiling
+
+During block 0 of the M56b full comparison on 2026-09-20, the fixed main
+worker terminated with SIGSEGV while calibrating `dask`. The candidate's
+corresponding run completed. This single observation does not establish the
+root cause, reproduce a standalone CPython defect, or demonstrate that the
+candidate fixes it.
+
+The predeclared reversed block subsequently completed on both main and the
+candidate. Thus the four FT Dask run attempts contain one main crash and
+three successes; this is not a deterministic reproduction.
+
+The Python stack ends in `distributed.profile.process`, line 192, while
+reading `prev.f_code.co_filename`. Resolving the native fault offset
+`0x167e71` against the exact main binary yields `Py_INCREF` in
+`PyFrame_GetCode` (`Objects/frameobject.c:2389`), through `frame_code_get`.
+The fault occurred in the free-threaded main build with JIT requested; that
+baseline does not generate JIT executors. The worker exited with code -11,
+which pyperf reports as a controller failure. The incomplete comparison must
+not be interpreted as a performance ratio or silently retried until it passes.
+
+Baseline commit: `d95f29589e03603aa13d8ca9d4f817dce77d357c` with the recorded
+LLVM 21 build patch. Binary SHA-256:
+`44c9f1615910b76898e1eb6cd478a36c151f21cf5bc99ea95aa6ac115c85fefb`.
+Evidence: `jit-artifacts/method-only-m56b-full/ft/results/0-dask-main.log`,
+the matching candidate log, and `ft/state.json` containing the exact commands
+and result identities. Further reproduction and concurrent frame-lifetime
+analysis are needed before proposing a fix. No upstream submission was made.

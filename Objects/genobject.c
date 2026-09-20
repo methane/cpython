@@ -5,6 +5,7 @@
 #include "Python.h"
 #include "pycore_call.h"          // _PyObject_CallNoArgs()
 #include "pycore_ceval.h"         // _PyEval_EvalFrame()
+#include "pycore_code.h"          // _Py_GetBaseCodeUnit()
 #include "pycore_frame.h"         // _PyInterpreterFrame
 #include "pycore_freelist.h"      // _Py_FREELIST_FREE()
 #include "pycore_gc.h"            // _PyGC_CLEAR_FINALIZED()
@@ -498,12 +499,19 @@ gen_close(PyObject *self, PyObject *args)
         Py_DECREF(yf);
     }
 
-    if (is_resume(frame->instr_ptr)) {
+    _Py_CODEUNIT original;
+    _Py_CODEUNIT *resume = frame->instr_ptr;
+    if (FT_ATOMIC_LOAD_UINT8_RELAXED(resume->op.code) == ENTER_EXECUTOR) {
+        original = _Py_GetBaseCodeUnit(
+            _PyFrame_GetCode(frame), (int)(resume - _PyFrame_GetBytecode(frame)));
+        resume = &original;
+    }
+    if (is_resume(resume)) {
         bool no_unwind_tools = _PyEval_NoToolsForUnwind(_PyThreadState_GET(), frame);
         /* We can safely ignore the outermost try block
          * as it is automatically generated to handle
          * StopIteration. */
-        int oparg = frame->instr_ptr->op.arg;
+        int oparg = resume->op.arg;
         if (oparg & RESUME_OPARG_DEPTH1_MASK && no_unwind_tools) {
             // RESUME after YIELD_VALUE and exception depth is 1
             assert((oparg & RESUME_OPARG_LOCATION_MASK) != RESUME_AT_FUNC_START);

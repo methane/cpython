@@ -31,6 +31,8 @@ PYTHON_EXECUTOR_CASES_C_H = CPYTHON / "Python" / "executor_cases.c.h"
 PYCORE_OPTIMIZER_H = CPYTHON / "Include" / "internal" / "pycore_optimizer.h"
 PYCORE_ENUMOBJECT_H = CPYTHON / "Include" / "internal" / "pycore_enumobject.h"
 PYCORE_JIT_CALL_H = CPYTHON / "Include" / "internal" / "pycore_jit_call.h"
+PYCORE_INTERP_STRUCTS_H = CPYTHON / "Include" / "internal" / "pycore_interp_structs.h"
+CPYTHON_CODE_H = CPYTHON / "Include" / "cpython" / "code.h"
 PYTHON_CEVAL_MACROS_H = CPYTHON / "Python" / "ceval_macros.h"
 TOOLS_JIT_TEMPLATE_C = TOOLS_JIT / "template.c"
 
@@ -107,7 +109,9 @@ class _Target(typing.Generic[_S, _R]):
         # These dependencies are also reflected in _JITSources in regen.targets:
         hasher.update(PYTHON_EXECUTOR_CASES_C_H.read_bytes())
         hasher.update(PYCORE_OPTIMIZER_H.read_bytes())
+        hasher.update(PYCORE_INTERP_STRUCTS_H.read_bytes())
         hasher.update(PYCORE_JIT_CALL_H.read_bytes())
+        hasher.update(CPYTHON_CODE_H.read_bytes())
         hasher.update(PYCORE_ENUMOBJECT_H.read_bytes())
         hasher.update(PYTHON_CEVAL_MACROS_H.read_bytes())
         hasher.update((self.pyconfig_dir / "pyconfig.h").read_bytes())

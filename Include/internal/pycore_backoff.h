@@ -21,7 +21,7 @@ extern "C" {
    the counter is reset using exponential backoff.
 
    Another use is for the Tier 2 optimizer to decide when to create
-   a new Tier 2 trace (executor). Again, exponential backoff is used.
+   a new Tier 2 method executor. Again, exponential backoff is used.
 
    The 16-bit counter is structured as a 13-bit unsigned 'value'
    and a 3-bit 'backoff' field. When resetting the counter, the
@@ -122,15 +122,9 @@ trigger_backoff_counter(void)
     return result;
 }
 
-// Initial JUMP_BACKWARD counter.
-// Must be larger than ADAPTIVE_COOLDOWN_VALUE, otherwise when JIT code is
-// invalidated we may construct a new trace before the bytecode has properly
-// re-specialized:
-// Note: this should be a prime number-1. This increases the likelihood of
-// finding a "good" loop iteration to trace.
-// For example, 4095 does not work for the nqueens benchmark on pyperformance
-// as we always end up tracing the loop iteration's
-// exhaustion iteration. Which aborts our current tracer.
+// Initial method OSR counter. Keep this above ADAPTIVE_COOLDOWN_VALUE so
+// bytecode has time to re-specialize before an invalidated method is rebuilt.
+// The existing thresholds are retained for the frontend comparison.
 #define JUMP_BACKWARD_INITIAL_VALUE 4000
 #define JUMP_BACKWARD_INITIAL_BACKOFF 6
 static inline _Py_BackoffCounter
@@ -141,10 +135,8 @@ initial_jump_backoff_counter(_PyOptimizationConfig *opt_config)
         opt_config->jump_backward_initial_backoff);
 }
 
-// This needs to be around 2-4x of JUMP_BACKWARD_INITIAL_VALUE
-// The reasoning is that we always want loop traces to form and inline
-// functions before functions themselves warm up and link to them instead
-// of inlining.
+// A higher function-entry threshold lets hot loops acquire a static OSR
+// entry before an infrequently called function is compiled from RESUME.
 #define RESUME_INITIAL_VALUE 8190
 #define RESUME_INITIAL_BACKOFF 6
 static inline _Py_BackoffCounter
@@ -153,21 +145,6 @@ initial_resume_backoff_counter(_PyOptimizationConfig *opt_config)
     return make_backoff_counter(
         opt_config->resume_initial_value,
         opt_config->resume_initial_backoff);
-}
-
-/* Initial exit temperature.
- * Must be larger than ADAPTIVE_COOLDOWN_VALUE,
- * otherwise when a side exit warms up we may construct
- * a new trace before the Tier 1 code has properly re-specialized. */
-#define SIDE_EXIT_INITIAL_VALUE 4000
-#define SIDE_EXIT_INITIAL_BACKOFF 6
-
-static inline _Py_BackoffCounter
-initial_temperature_backoff_counter(_PyOptimizationConfig *opt_config)
-{
-    return make_backoff_counter(
-        opt_config->side_exit_initial_value,
-        opt_config->side_exit_initial_backoff);
 }
 
 /* Unreachable backoff counter. */

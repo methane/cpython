@@ -144,7 +144,7 @@ class Tier2Emitter(Emitter):
         next(tkn_iter)
         return True
 
-    def tier2_to_tier2(
+    def goto_tier_one(
         self,
         tkn: Token,
         tkn_iter: TokenIterator,
@@ -162,8 +162,6 @@ class Tier2Emitter(Emitter):
         emit_to(self.out, tkn_iter, "RPAREN")
         self.out.emit(")")
         return False
-
-    goto_tier_one = tier2_to_tier2
 
     def exit_if_after(
         self,
@@ -266,8 +264,6 @@ def generate_tier2(
         if uop.properties.tier == 1:
             continue
         if uop.is_super():
-            continue
-        if uop.properties.records_value:
             continue
         why_not_viable = uop.why_not_viable()
         if why_not_viable is not None:

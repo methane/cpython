@@ -6,6 +6,7 @@
 #define assert(TEST) ((TEST) ? 0 : _Py_jit_assertion_failure(__LINE__))
 #endif
 
+#include "pycore_abstract.h"      // _PyObject_RealIsInstance()
 #include "pycore_backoff.h"
 #include "pycore_call.h"
 #include "pycore_cell.h"
@@ -115,16 +116,6 @@ _PyJit_CallMethodNative(PyThreadState *tstate, _PyExecutorObject *executor,
 
 #undef CURRENT_TARGET
 #define CURRENT_TARGET() (_target)
-
-#undef TIER2_TO_TIER2
-#define TIER2_TO_TIER2(EXECUTOR)                                           \
-do {                                                                       \
-    OPT_STAT_INC(traces_executed);                                         \
-    _PyExecutorObject *_executor = (EXECUTOR);                             \
-    jit_func_preserve_none jitted = _executor->jit_code;                   \
-    __attribute__((musttail)) return jitted(_executor, frame, stack_pointer, tstate,  \
-    _tos_cache0, _tos_cache1, _tos_cache2); \
-} while (0)
 
 #undef GOTO_TIER_ONE_SETUP
 #define GOTO_TIER_ONE_SETUP \

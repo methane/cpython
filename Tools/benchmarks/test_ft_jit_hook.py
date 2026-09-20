@@ -42,3 +42,31 @@ class RuntimeHookTests(unittest.TestCase):
         self.runtime(ft=True, enabled=False, allow=True, requested=False)
         with self.assertRaisesRegex(hook.HookError, "request"):
             hook.CheckRuntime()
+
+    def test_c_decimal_is_verified_and_recorded(self):
+        self.runtime(ft=False, enabled=True)
+        decimal_type = object()
+        backend = types.SimpleNamespace(Decimal=decimal_type,
+                                        __file__="/build/_decimal.so",
+                                        __libmpdec_version__="4.0.1")
+        with (patch.dict(os.environ, PYPERF_REQUIRE_C_DECIMAL="1"),
+              patch.dict(hook.sys.modules, _decimal=backend,
+                         decimal=types.SimpleNamespace(Decimal=decimal_type))):
+            check = hook.CheckRuntime()
+            metadata = {}
+            check.teardown(metadata)
+        self.assertEqual(metadata["decimal_c_backend"], 1)
+        self.assertIn("_decimal", metadata["decimal_extension"])
+        self.assertTrue(metadata["libmpdec_version"])
+
+    def test_c_decimal_requirement_rejects_python_fallback(self):
+        self.runtime(ft=False, enabled=True)
+        with patch.dict(os.environ, PYPERF_REQUIRE_C_DECIMAL="1"):
+            with patch.dict(hook.sys.modules, _decimal=None):
+                with self.assertRaisesRegex(hook.HookError, "C decimal"):
+                    hook.CheckRuntime()
+            with patch.dict(hook.sys.modules,
+                            decimal=types.SimpleNamespace(Decimal=object()),
+                            _decimal=types.SimpleNamespace(Decimal=object())):
+                with self.assertRaisesRegex(hook.HookError, "Python backend"):
+                    hook.CheckRuntime()

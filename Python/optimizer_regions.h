@@ -11,6 +11,9 @@ region_opcode(const _PyUOpInstruction *inst)
     if (op >= _LOAD_FAST_BORROW_0 && op <= _LOAD_FAST_BORROW_7) {
         return _LOAD_FAST_BORROW;
     }
+    if (op == _BINARY_OP_SUBSCR_LIST_CONST) {
+        return _BINARY_OP_SUBSCR_LIST_INT;
+    }
     return op;
 }
 
@@ -29,7 +32,8 @@ region_skip(const _PyUOpInstruction *buffer, int pc, int end)
  * intermediate value-stack slice. Runtime guards preserve finalizer ordering
  * by falling back before unpacking if any old local can run Python. */
 static void
-fuse_unpack_stores(_PyUOpInstruction *buffer, int length)
+fuse_unpack_stores(_PyUOpInstruction *buffer, int length, int minimum_count,
+                  bool require_known_cleanup)
 {
     for (int start = 0; start < length; start++) {
         int opcode = buffer[start].opcode;
@@ -37,7 +41,7 @@ fuse_unpack_stores(_PyUOpInstruction *buffer, int length)
             continue;
         }
         int count = buffer[start].oparg;
-        if (count < 2 || count > 16) {
+        if (count < minimum_count || count > 16) {
             continue;
         }
         int pc = region_skip(buffer, start + 1, length);
@@ -50,7 +54,7 @@ fuse_unpack_stores(_PyUOpInstruction *buffer, int length)
         while (pc + 1 < length && stores < count &&
                buffer[pc].opcode == _SWAP_FAST &&
                buffer[pc].oparg == first + stores &&
-               (buffer[pc + 1].opcode == _POP_TOP ||
+               ((!require_known_cleanup && buffer[pc + 1].opcode == _POP_TOP) ||
                 buffer[pc + 1].opcode == _POP_TOP_INT ||
                 buffer[pc + 1].opcode == _POP_TOP_FLOAT ||
                 buffer[pc + 1].opcode == _POP_TOP_UNICODE ||
@@ -77,11 +81,45 @@ static int
 region_arithmetic(int opcode)
 {
     switch (opcode) {
-        case _BINARY_OP_ADD_INT: return 0;
-        case _BINARY_OP_SUBTRACT_INT: return 1;
-        case _BINARY_OP_MULTIPLY_INT: return 2;
+        case _BINARY_OP_ADD_INT:
+        case _BINARY_OP_ADD_INT_INPLACE:
+        case _BINARY_OP_ADD_INT_INPLACE_RIGHT: return 0;
+        case _BINARY_OP_SUBTRACT_INT:
+        case _BINARY_OP_SUBTRACT_INT_INPLACE:
+        case _BINARY_OP_SUBTRACT_INT_INPLACE_RIGHT: return 1;
+        case _BINARY_OP_MULTIPLY_INT:
+        case _BINARY_OP_MULTIPLY_INT_INPLACE:
+        case _BINARY_OP_MULTIPLY_INT_INPLACE_RIGHT: return 2;
         default: return -1;
     }
+}
+
+static bool
+region_small_int(const _PyUOpInstruction *inst, int *value)
+{
+    if (inst->opcode == _LOAD_SMALL_INT) {
+        *value = inst->oparg;
+        return true;
+    }
+    if (inst->opcode == _LOAD_CONST_INLINE_BORROW) {
+        PyObject *obj = (PyObject *)(uintptr_t)inst->operand0;
+        if (PyLong_CheckExact(obj) && _PyLong_IsCompact((PyLongObject *)obj)) {
+            Py_ssize_t number = _PyLong_CompactValue((PyLongObject *)obj);
+            if (number >= 0 && number <= UINT16_MAX) {
+                *value = (int)number;
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+static bool
+region_is_cleanup(int opcode)
+{
+    return opcode == _POP_TOP || opcode == _POP_TOP_SHARED ||
+        opcode == _POP_TOP_NOP || opcode == _POP_TOP_INT ||
+        opcode == _POP_TOP_FLOAT || opcode == _POP_TOP_UNICODE;
 }
 
 /* Match one specialized operation, including its two guards and cleanup.
@@ -166,7 +204,8 @@ lower_bounded_int_regions(_PyUOpInstruction *buffer, int length)
     }
     const RegionBounds input = {-_PY_INT_REGION_INPUT_MAX, _PY_INT_REGION_INPUT_MAX};
     for (int start = 0; start < length; start++) {
-        if (buffer[start].opcode != _GUARD_TOS_INT) {
+        if (buffer[start].opcode != _GUARD_TOS_INT &&
+            buffer[start].opcode != _GUARD_TOS_OVERFLOWED) {
             continue;
         }
         int end = Py_MIN(length, start + REGION_MAX_TRACE);
@@ -216,15 +255,19 @@ lower_bounded_int_regions(_PyUOpInstruction *buffer, int length)
                     continue;
                 }
             }
+            int constant;
+            bool is_constant = region_small_int(&buffer[pc], &constant);
             if (opcode == _LOAD_FAST || opcode == _LOAD_FAST_BORROW ||
-                opcode == _LOAD_SMALL_INT) {
+                is_constant) {
                 if (depth == REGION_MAX_STACK) {
                     break;
                 }
                 int arg = buffer[pc].oparg;
-                if (opcode == _LOAD_SMALL_INT) {
+                if (is_constant) {
+                    arg = constant;
                     stack[depth++] = (RegionBounds){arg, arg};
                     rewrite[pc - start].opcode = _INT_REGION_CONST;
+                    rewrite[pc - start].oparg = (uint16_t)arg;
                 }
                 else {
                     int i;
@@ -254,16 +297,15 @@ lower_bounded_int_regions(_PyUOpInstruction *buffer, int length)
                 /* Generic // is safe here only because both operands are
                  * our own native integers and the divisor is constant. */
                 int arith = pc;
-                while (arith < end &&
-                       (buffer[arith].opcode == _RECORD_TOS_TYPE ||
-                        buffer[arith].opcode == _RECORD_NOS_TYPE)) {
-                    arith++;
-                }
                 if (arith + 2 >= end || buffer[arith].opcode != _BINARY_OP ||
                     (buffer[arith].oparg != NB_FLOOR_DIVIDE &&
                      buffer[arith].oparg != NB_INPLACE_FLOOR_DIVIDE) ||
-                    buffer[arith + 1].opcode != _POP_TOP ||
-                    buffer[arith + 2].opcode != _POP_TOP) {
+                    (buffer[arith + 1].opcode != _POP_TOP &&
+                     buffer[arith + 1].opcode != _POP_TOP_INT &&
+                     buffer[arith + 1].opcode != _POP_TOP_NOP) ||
+                    (buffer[arith + 2].opcode != _POP_TOP &&
+                     buffer[arith + 2].opcode != _POP_TOP_INT &&
+                     buffer[arith + 2].opcode != _POP_TOP_NOP)) {
                     break;
                 }
                 operation = 3;
@@ -324,21 +366,14 @@ lower_bounded_int_regions(_PyUOpInstruction *buffer, int length)
         if (division < end && buffer[division].opcode == _GUARD_BINARY_OP_EXTEND) {
             division++;
         }
-        else {
-            while (division < end &&
-                   (buffer[division].opcode == _RECORD_TOS_TYPE ||
-                    buffer[division].opcode == _RECORD_NOS_TYPE)) {
-                division++;
-            }
-        }
         int box = stop - start - 1;
         if (division + 2 < end &&
             (buffer[division].opcode == _BINARY_OP_EXTEND ||
              buffer[division].opcode == _BINARY_OP) &&
             (buffer[division].oparg == NB_TRUE_DIVIDE ||
              buffer[division].oparg == NB_INPLACE_TRUE_DIVIDE) &&
-            buffer[division + 1].opcode == _POP_TOP &&
-            buffer[division + 2].opcode == _POP_TOP) {
+            region_is_cleanup(buffer[division + 1].opcode) &&
+            region_is_cleanup(buffer[division + 2].opcode)) {
             /* The numerator sits below the two entry integers. Guard it
              * before replacing either operand with a tagged native value. */
             rewrite[0] = buffer[start];
@@ -383,10 +418,9 @@ lower_len_left_compare(_PyUOpInstruction *buffer, int pc, int end)
     int stop = region_int_operation(buffer, pc + 3, end, true, &comparison);
     if (stop < 0) {
         int load = region_skip(buffer, pc + 3, end);
-        if (load >= end || buffer[load].opcode != _LOAD_SMALL_INT) {
+        if (load >= end || !region_small_int(&buffer[load], &offset)) {
             return -1;
         }
-        offset = buffer[load].oparg;
         int next = region_int_operation(buffer, load + 1, end, false, &operation);
         if (next < 0 || operation == 2) {
             return -1;
@@ -423,10 +457,12 @@ lower_len_regions(_PyUOpInstruction *buffer, int length)
     }
     for (int pc = 0; pc + 2 < length; pc++) {
         if (buffer[pc].opcode != _CALL_LEN ||
-            buffer[pc + 1].opcode != _POP_TOP ||
-            buffer[pc + 2].opcode != _POP_TOP) {
+            !region_is_cleanup(buffer[pc + 1].opcode) ||
+            !region_is_cleanup(buffer[pc + 2].opcode)) {
             continue;
         }
+        int callable_cleanup = buffer[pc + 1].opcode;
+        int argument_cleanup = buffer[pc + 2].opcode;
         int end = Py_MIN(length, pc + 32);
         int left_compare = lower_len_left_compare(buffer, pc, end);
         if (left_compare >= 0) {
@@ -438,10 +474,9 @@ lower_len_regions(_PyUOpInstruction *buffer, int length)
         int next = region_local(buffer, pc + 3, end, &local);
         if (next < 0) {
             int load = region_skip(buffer, pc + 3, end);
-            if (load >= end || buffer[load].opcode != _LOAD_SMALL_INT) {
+            if (load >= end || !region_small_int(&buffer[load], &local)) {
                 continue;
             }
-            local = buffer[load].oparg;
             constant = true;
             next = load + 1;
         }
@@ -463,8 +498,8 @@ lower_len_regions(_PyUOpInstruction *buffer, int length)
         }
         /* Preserve the call's original arg/callable cleanup, not the
          * removed integer consumer's operands. */
-        buffer[stop - 2].opcode = _POP_TOP;
-        buffer[stop - 1].opcode = _POP_TOP;
+        buffer[stop - 2].opcode = callable_cleanup;
+        buffer[stop - 1].opcode = argument_cleanup;
         pc = stop - 1;
     }
 }
@@ -506,28 +541,11 @@ lower_tuple_comparisons(_PyUOpInstruction *buffer, int length)
     }
 }
 
-static int
-region_skip_recorded(const _PyUOpInstruction *buffer, int pc, int end)
-{
-    while (pc < end) {
-        pc = region_skip(buffer, pc, end);
-        if (pc == end ||
-            !(_PyUop_Flags[buffer[pc].opcode] & HAS_RECORDS_VALUE_FLAG)) {
-            break;
-        }
-        pc++;
-    }
-    return pc;
-}
-
 /* Run after the higher-level region matchers. Keeping borrowed inputs as
  * explicit outputs until POP_TOP_NOP unnecessarily increases cache depth. */
 static void
 fuse_borrowed_input_cleanup(_PyUOpInstruction *buffer, int length)
 {
-#ifdef Py_GIL_DISABLED
-    return;
-#endif
     for (int pc = 0; pc + 1 < length; pc++) {
         int opcode = buffer[pc].opcode;
         if (buffer[pc + 1].opcode != _POP_TOP_NOP) {
@@ -537,6 +555,7 @@ fuse_borrowed_input_cleanup(_PyUOpInstruction *buffer, int length)
             buffer[pc].opcode = _LOAD_ATTR_BORROWED_OWNER;
             buffer[pc + 1].opcode = _NOP;
         }
+#ifndef Py_GIL_DISABLED
         else if ((opcode == _BINARY_OP_SUBSCR_LIST_INT ||
                   opcode == _BINARY_OP_SUBSCR_TUPLE_INT) &&
                  pc + 2 < length && buffer[pc + 2].opcode == _POP_TOP_NOP)
@@ -545,6 +564,7 @@ fuse_borrowed_input_cleanup(_PyUOpInstruction *buffer, int length)
             buffer[pc].oparg = opcode == _BINARY_OP_SUBSCR_TUPLE_INT;
             buffer[pc + 1].opcode = buffer[pc + 2].opcode = _NOP;
         }
+#endif
     }
 }
 
@@ -558,7 +578,7 @@ fuse_list_pair_comparisons(_PyUOpInstruction *buffer, int length)
         int list_local = buffer[start].oparg;
         int end = Py_MIN(start + 64, length);
         int pc = start + 1;
-#define PAIR_NEXT() (pc = region_skip_recorded(buffer, pc, end), \
+#define PAIR_NEXT() (pc = region_skip(buffer, pc, end), \
                     pc < end ? region_opcode(&buffer[pc]) : -1)
 #define PAIR_EXPECT(OP) do { \
     if (PAIR_NEXT() != (OP)) goto next_pair; \
@@ -567,7 +587,8 @@ fuse_list_pair_comparisons(_PyUOpInstruction *buffer, int length)
 #define PAIR_GUARDS() do { \
     int op; \
     while ((op = PAIR_NEXT()) == _GUARD_TOS_INT || \
-           op == _GUARD_NOS_INT || op == _GUARD_NOS_LIST) { pc++; } \
+           op == _GUARD_NOS_INT || op == _GUARD_NOS_LIST || \
+           op == _GUARD_TOS_OVERFLOWED || op == _GUARD_NOS_OVERFLOWED) { pc++; } \
 } while (0)
         if (PAIR_NEXT() != _LOAD_FAST_BORROW) {
             continue;
@@ -601,8 +622,13 @@ fuse_list_pair_comparisons(_PyUOpInstruction *buffer, int length)
         }
         PAIR_GUARDS();
         PAIR_EXPECT(_BINARY_OP_ADD_INT);
-        PAIR_EXPECT(_POP_TOP_NOP);
-        PAIR_EXPECT(_POP_TOP_NOP);
+        for (int i = 0; i < 2; i++) {
+            int pop = PAIR_NEXT();
+            if (pop != _POP_TOP_NOP && pop != _POP_TOP_INT) {
+                goto next_pair;
+            }
+            pc++;
+        }
         PAIR_GUARDS();
         PAIR_EXPECT(_BINARY_OP_SUBSCR_LIST_INT);
         int cleanup = PAIR_NEXT();
@@ -633,9 +659,7 @@ fuse_list_pair_comparisons(_PyUOpInstruction *buffer, int length)
         buffer[first].oparg = operation;
         buffer[first].operand0 = tuple_local;
         for (int i = first + 1; i < pc; i++) {
-            if (!(_PyUop_Flags[buffer[i].opcode] & HAS_RECORDS_VALUE_FLAG)) {
-                buffer[i].opcode = _NOP;
-            }
+            buffer[i].opcode = _NOP;
         }
         buffer[index_cleanup].opcode = _POP_TOP_NOP;
         buffer[list_cleanup].opcode = _POP_TOP_NOP;
@@ -652,13 +676,13 @@ static void
 fuse_list_length_predicates(_PyUOpInstruction *buffer, int length)
 {
     for (int start = 0; start < length; start++) {
-        if (buffer[start].opcode != _BINARY_OP_SUBSCR_LIST_INT) {
+        if (region_opcode(&buffer[start]) != _BINARY_OP_SUBSCR_LIST_INT) {
             continue;
         }
         int end = Py_MIN(length, start + 32);
         int pc = start + 1;
         for (int i = 0; i < 2; i++) {
-            pc = region_skip_recorded(buffer, pc, end);
+            pc = region_skip(buffer, pc, end);
             if (pc >= end || (buffer[pc].opcode != _POP_TOP &&
                               buffer[pc].opcode != _POP_TOP_SHARED &&
                               buffer[pc].opcode != _POP_TOP_NOP)) {
@@ -666,7 +690,14 @@ fuse_list_length_predicates(_PyUOpInstruction *buffer, int length)
             }
             pc++;
         }
-        pc = region_skip_recorded(buffer, pc, end);
+        pc = region_skip(buffer, pc, end);
+        /* Method CFGs retain callable guards when no recorded value proves
+         * len's identity. The fused operation checks both before consuming
+         * the subscription operands, so these checks can move into it. */
+        while (pc < end && (buffer[pc].opcode == _GUARD_NOS_NULL ||
+                            buffer[pc].opcode == _GUARD_CALLABLE_LEN)) {
+            pc = region_skip(buffer, pc + 1, end);
+        }
         if (pc >= end || buffer[pc].opcode != _CALL_LEN_CONSUMER ||
             !(buffer[pc].oparg & 16)) {
             continue;
@@ -674,7 +705,7 @@ fuse_list_length_predicates(_PyUOpInstruction *buffer, int length)
         int comparison = buffer[pc].oparg;
         uint64_t right = buffer[pc++].operand0;
         for (int i = 0; i < 2; i++) {
-            pc = region_skip_recorded(buffer, pc, end);
+            pc = region_skip(buffer, pc, end);
             if (pc >= end || (buffer[pc].opcode != _POP_TOP &&
                               buffer[pc].opcode != _POP_TOP_SHARED &&
                               buffer[pc].opcode != _POP_TOP_NOP)) {
@@ -686,9 +717,7 @@ fuse_list_length_predicates(_PyUOpInstruction *buffer, int length)
         buffer[start].oparg = comparison;
         buffer[start].operand0 = right;
         for (int i = start + 1; i < pc; i++) {
-            if (!(_PyUop_Flags[buffer[i].opcode] & HAS_RECORDS_VALUE_FLAG)) {
-                buffer[i].opcode = _NOP;
-            }
+            buffer[i].opcode = _NOP;
         }
         start = pc - 1;
 next_list_length:

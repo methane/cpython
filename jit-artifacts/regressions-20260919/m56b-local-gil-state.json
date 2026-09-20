@@ -1,0 +1,3536 @@
+{
+  "tag": "m56b-local-gil",
+  "profile": "gil-pgo-lto",
+  "comparison_limit": 1.1,
+  "binaries": {
+    "main": "/home/methane/work/python/cpython-gc/jit-artifacts/regressions-20260919/r0-gil-main-build/python",
+    "candidate": "/home/methane/work/python/cpython-gc/jit-artifacts/regressions-20260919/m56b-gil-pgo-lto-build/python"
+  },
+  "sha256": {
+    "main": "29f98fde43417b99bad02a6710ad55e55f343a574f8fff306932d1e75b010044",
+    "candidate": "9cb1ae62d6ae5a61f1bbbc56e7fbb9e9bdaae4128d2f516641b71e212c740e4b"
+  },
+  "extensions_sha256": {
+    "main": {
+      "build/lib.linux-x86_64-3.16/_bisect.cpython-316-x86_64-linux-gnu.so": "363469f484eea2e966ff52ae960a5b22010aea9aa1675e67e0d1afab01b64507",
+      "build/lib.linux-x86_64-3.16/_blake2.cpython-316-x86_64-linux-gnu.so": "ffdb38e70db1f354f4a9cfdb85ee0847dc80853e9e3c6f615b676bb1982c6da8",
+      "build/lib.linux-x86_64-3.16/_bz2.cpython-316-x86_64-linux-gnu.so": "d8da04739e2e763451a31736244e98281d343668399e4c8b049b00d464518db1",
+      "build/lib.linux-x86_64-3.16/_codecs_cn.cpython-316-x86_64-linux-gnu.so": "64c6c5f69678f75f7f412afdc5cc32b6fb9f8d72166fb0f62ee38618e7d98831",
+      "build/lib.linux-x86_64-3.16/_codecs_hk.cpython-316-x86_64-linux-gnu.so": "671e96afb56de5cd12f8fde3a6dc660b8a007e146058cb49f055fa41f02e910c",
+      "build/lib.linux-x86_64-3.16/_codecs_iso2022.cpython-316-x86_64-linux-gnu.so": "4ea9a5cb2a73e8d7297642b7bf1c289ba8b153bce45994eec90860fb2059cf4e",
+      "build/lib.linux-x86_64-3.16/_codecs_jp.cpython-316-x86_64-linux-gnu.so": "d23b4aea435925cd2cfe0020833de9157501f9b8d7b893278f23074e8a565b40",
+      "build/lib.linux-x86_64-3.16/_codecs_kr.cpython-316-x86_64-linux-gnu.so": "645f21209e2fe19253107ea4929ff9876f3ca27d07ca492f67971bff144a6b98",
+      "build/lib.linux-x86_64-3.16/_codecs_tw.cpython-316-x86_64-linux-gnu.so": "51639130c285f9e6235d35742a81cd4cf645af0419feb294b6976dad9ebd2a53",
+      "build/lib.linux-x86_64-3.16/_csv.cpython-316-x86_64-linux-gnu.so": "9df1400d4a555ab7ab7d7604d40bc1603cb64087f45a22b22ba8d6b809492ecb",
+      "build/lib.linux-x86_64-3.16/_ctypes.cpython-316-x86_64-linux-gnu.so": "0f3628f51a28741dbc711367fa549c436c8a230a41b11797779e9edbc1ff9ac8",
+      "build/lib.linux-x86_64-3.16/_ctypes_test.cpython-316-x86_64-linux-gnu.so": "a1ef503248315729531dd35c8ccc917a7a2f0bb9374b59cc918a30bbbadd4ad5",
+      "build/lib.linux-x86_64-3.16/_curses.cpython-316-x86_64-linux-gnu.so": "c54539946b4bcb40bdafcbea9310108aaa753ec5d2d2f21d11c6913bb3d6eeac",
+      "build/lib.linux-x86_64-3.16/_curses_panel.cpython-316-x86_64-linux-gnu.so": "162444d45a48cb44b4c6d4e909ff3ab968a9d024e525f70aaf9f33347da07f37",
+      "build/lib.linux-x86_64-3.16/_dbm.cpython-316-x86_64-linux-gnu.so": "bbd88de59f043c48ee653589a2d0e74df4c6084eb359ecee6138e32c117542e0",
+      "build/lib.linux-x86_64-3.16/_decimal.cpython-316-x86_64-linux-gnu.so": "9252ce00ac6100dcca82b7f5a731a5a53e6f74124c9a213cfbdb7478dec6c91a",
+      "build/lib.linux-x86_64-3.16/_elementtree.cpython-316-x86_64-linux-gnu.so": "7bae4945bff0c960da40bd2f410aecac64930f63e976ebb63f6d9242a34055e9",
+      "build/lib.linux-x86_64-3.16/_gdbm.cpython-316-x86_64-linux-gnu.so": "d0ccffdc9cb971ee6b3acb4e6212e6b1e5a6de51c6b1a281d7dd780dcf339b24",
+      "build/lib.linux-x86_64-3.16/_hashlib.cpython-316-x86_64-linux-gnu.so": "ea2f2461e2850f8ec684965002bd41cf833efa971b3e103c19207c36dc228467",
+      "build/lib.linux-x86_64-3.16/_heapq.cpython-316-x86_64-linux-gnu.so": "279a322dbb70267bd89385bf7ab7f2107069432aab07d2863b8543fd03373773",
+      "build/lib.linux-x86_64-3.16/_hmac.cpython-316-x86_64-linux-gnu.so": "9d37c0bacdec67067ff80afaa6e49583b4c6758ddaea5485ad22b8a9dc4031fd",
+      "build/lib.linux-x86_64-3.16/_interpchannels.cpython-316-x86_64-linux-gnu.so": "53093005c1413ba7b16fc96af2f082301cb0b515c28a346290b1f86f0bc70151",
+      "build/lib.linux-x86_64-3.16/_interpqueues.cpython-316-x86_64-linux-gnu.so": "39e5d71f5844a2cddb0357a1dc24177930c3904d18e7bbe17b1d24c5605099b2",
+      "build/lib.linux-x86_64-3.16/_interpreters.cpython-316-x86_64-linux-gnu.so": "982c9f4c2ff79a4bf19c2232934e8222228183753281f7d66132e79f4de7db6b",
+      "build/lib.linux-x86_64-3.16/_json.cpython-316-x86_64-linux-gnu.so": "bd7b2873173b88f07ad96071c46ca15d381796caf7de8ece03a3cd9abd365fb2",
+      "build/lib.linux-x86_64-3.16/_lsprof.cpython-316-x86_64-linux-gnu.so": "e34731be688631e121ac3d817b15a401e8ff7364cd2674b80fb94e9ed3114782",
+      "build/lib.linux-x86_64-3.16/_lzma.cpython-316-x86_64-linux-gnu.so": "5ee988086b9405584304f8d3f6e84f370f2a75205c79bcd981af34369ae94baa",
+      "build/lib.linux-x86_64-3.16/_math_integer.cpython-316-x86_64-linux-gnu.so": "912b37f0e2e000a8b81d719f97da5f0884025aea9e3f55435fdf63451e742c15",
+      "build/lib.linux-x86_64-3.16/_md5.cpython-316-x86_64-linux-gnu.so": "114cd45b415072c2c916f961b051b3ddb87b102f084f441ef6e58b8a289d7278",
+      "build/lib.linux-x86_64-3.16/_multibytecodec.cpython-316-x86_64-linux-gnu.so": "655bac9763db4d7fb4d3b2e7edb4aede79f17caf3b28c9402c1352faa418431a",
+      "build/lib.linux-x86_64-3.16/_multiprocessing.cpython-316-x86_64-linux-gnu.so": "4f83ee57643781c1dc32efab84217f58c608251e5f80517105b45464521f1365",
+      "build/lib.linux-x86_64-3.16/_pickle.cpython-316-x86_64-linux-gnu.so": "2e99a34d7c9997fc4d6db63c55bc35b75bf08cc4687ed83df24f91a3d5729a0b",
+      "build/lib.linux-x86_64-3.16/_posixshmem.cpython-316-x86_64-linux-gnu.so": "981cd5f42c9aedb7b5a8f506236fb949389c34aa5eb1445f52f40436ca7591c8",
+      "build/lib.linux-x86_64-3.16/_posixsubprocess.cpython-316-x86_64-linux-gnu.so": "f202573db304280082ef5022a2e6e9109d4637f07b82126c438fffa09cbfdb3d",
+      "build/lib.linux-x86_64-3.16/_queue.cpython-316-x86_64-linux-gnu.so": "432d4e56f13dd798c6358dffafc773b3d0c0817b2dc5cdce804fc7c31d8c2c40",
+      "build/lib.linux-x86_64-3.16/_random.cpython-316-x86_64-linux-gnu.so": "4d1a43c3c3b4e64a17368fa51ac705402b4a80083c3ad6f9f79bca5e90582b15",
+      "build/lib.linux-x86_64-3.16/_remote_debugging.cpython-316-x86_64-linux-gnu.so": "0e36287d435ca6e3d7ad0a0614481008ed7fa65a2754bb0e72ac455048383ebf",
+      "build/lib.linux-x86_64-3.16/_sha1.cpython-316-x86_64-linux-gnu.so": "da36668ff3a57b7a88f341e59a556c28a5ebdefea0e0c452405ccc5f68737ba8",
+      "build/lib.linux-x86_64-3.16/_sha2.cpython-316-x86_64-linux-gnu.so": "16b70c55ef687a217d077d49d58cadc284312f111dc949a21f24de75f79be8bc",
+      "build/lib.linux-x86_64-3.16/_sha3.cpython-316-x86_64-linux-gnu.so": "4bec73069f464e62bcc76b64c571bfa34496e0784fd723a59b3ed56bab254e2a",
+      "build/lib.linux-x86_64-3.16/_socket.cpython-316-x86_64-linux-gnu.so": "28675788fa7318b83d8827187bc09ac57c5e9fb4923697bafd0c1c1cf72f3bfd",
+      "build/lib.linux-x86_64-3.16/_sqlite3.cpython-316-x86_64-linux-gnu.so": "62458a4636778ecebff31570b1084e4f9d51fc04e8a6ee562b95067d74e38061",
+      "build/lib.linux-x86_64-3.16/_ssl.cpython-316-x86_64-linux-gnu.so": "4a2ab7a150825426888852796eef5c82fbc7aa962964c813d449b2966e9b014d",
+      "build/lib.linux-x86_64-3.16/_statistics.cpython-316-x86_64-linux-gnu.so": "bdb41d5595bc189a364df4360c72ef7802af1f5ca3ccf7d8e67e8bffca69ad11",
+      "build/lib.linux-x86_64-3.16/_struct.cpython-316-x86_64-linux-gnu.so": "019770ec6bd94950022e78c2aac98e4b3487ba4e035ff840794b91f61fc08779",
+      "build/lib.linux-x86_64-3.16/_testbuffer.cpython-316-x86_64-linux-gnu.so": "f2b8997daf77a558145262559c98ccd585367dfe60c0642834fd9816cf99730d",
+      "build/lib.linux-x86_64-3.16/_testcapi.cpython-316-x86_64-linux-gnu.so": "fbc224e34e094af82c9ece94a4bf5a53aa996063ce407ba1fa73e39dcc00ae0c",
+      "build/lib.linux-x86_64-3.16/_testclinic.cpython-316-x86_64-linux-gnu.so": "4fd4ad17f3025b08b2b6055a188ade20939efd6099f48c28973453249a028c84",
+      "build/lib.linux-x86_64-3.16/_testclinic_limited.cpython-316-x86_64-linux-gnu.so": "b8c05d55e6bb4c5af4470bc9017f646d6f4618697d928edad258ef3946cfed74",
+      "build/lib.linux-x86_64-3.16/_testimportmultiple.cpython-316-x86_64-linux-gnu.so": "c3edfa26d3f92b4928f4e18b4b2b52cb24b62f7f6752b80f669c83f1751ed5f3",
+      "build/lib.linux-x86_64-3.16/_testinternalcapi.cpython-316-x86_64-linux-gnu.so": "031f25a265aae0ac17489cb8ad25467e2622d2954b43fa42a5c82f335804d76d",
+      "build/lib.linux-x86_64-3.16/_testlimitedcapi.cpython-316-x86_64-linux-gnu.so": "c5c0243714305632c07a95ae6cde3ecdea8da4c1934caaedc82f170c187c7436",
+      "build/lib.linux-x86_64-3.16/_testmultiphase.cpython-316-x86_64-linux-gnu.so": "9a308279e926f63b6cfa01bee6c353d116f4d86b931e968febaa1ad42a12b0f0",
+      "build/lib.linux-x86_64-3.16/_testsinglephase.cpython-316-x86_64-linux-gnu.so": "c4a82e8ef5d4e42f3a47474a9767327c4d7932c1abb5ad1ac772271be8cf8e6b",
+      "build/lib.linux-x86_64-3.16/_uuid.cpython-316-x86_64-linux-gnu.so": "5a7898111056c425751032da76b8280f309899f2575e6eb689bb04e668594ec7",
+      "build/lib.linux-x86_64-3.16/_xxtestfuzz.cpython-316-x86_64-linux-gnu.so": "54333fe6eea02356a53addddac44eaedf66e240ca2137e249856f9082ccd5c76",
+      "build/lib.linux-x86_64-3.16/_zoneinfo.cpython-316-x86_64-linux-gnu.so": "801846baace66b6ce7a5770a142866c245d9c5ccbfbfa4579cc92342eb8ca77e",
+      "build/lib.linux-x86_64-3.16/_zstd.cpython-316-x86_64-linux-gnu.so": "cdd2f7cad831c296c3e21acd92d905eb8d3bcd2d3f5fb52630e2710b22738da5",
+      "build/lib.linux-x86_64-3.16/array.cpython-316-x86_64-linux-gnu.so": "a79725278ff0154e6ceffcc008899762bf7f9a4fa91de9eb3f0aa4b2de4a33a3",
+      "build/lib.linux-x86_64-3.16/binascii.cpython-316-x86_64-linux-gnu.so": "016587a21481d0401ba19b0ff6e1644b32229e34a7eb0fa51978db3faf28e411",
+      "build/lib.linux-x86_64-3.16/cmath.cpython-316-x86_64-linux-gnu.so": "45c755f97112c007fd11e4f05e9016cbef893fbe6d3b95e88fcfdf8421540795",
+      "build/lib.linux-x86_64-3.16/fcntl.cpython-316-x86_64-linux-gnu.so": "cf7f395ccf328eebac9ddceffb9fd9a5ad20cb563eacd1916a065d6124bd15be",
+      "build/lib.linux-x86_64-3.16/grp.cpython-316-x86_64-linux-gnu.so": "98453227e9556d28f85d11d0456332717b1e3ddf40d8a4991463cb626aee6e3d",
+      "build/lib.linux-x86_64-3.16/math.cpython-316-x86_64-linux-gnu.so": "4b92beb6546547a9fdb2d99a012fbdef1f9d981b0c5cc5e03438f184446f5f6b",
+      "build/lib.linux-x86_64-3.16/mmap.cpython-316-x86_64-linux-gnu.so": "4f3d66c2702786629772a5943785ae2131303aa4bf16157aa7d48828b0bb31b1",
+      "build/lib.linux-x86_64-3.16/pyexpat.cpython-316-x86_64-linux-gnu.so": "944df85b4ab9c2f319cb21db71da44adcbaad1e5e6ebce5224e2d1bb581c571e",
+      "build/lib.linux-x86_64-3.16/readline.cpython-316-x86_64-linux-gnu.so": "a81b47e3e7cec425807c8c9e6109d59434370d8675a3043671170f60c3890a02",
+      "build/lib.linux-x86_64-3.16/resource.cpython-316-x86_64-linux-gnu.so": "f93064fe582280e9bb1f8f5988a839dceec4465589a3d803f8bd7f6207dbc018",
+      "build/lib.linux-x86_64-3.16/select.cpython-316-x86_64-linux-gnu.so": "a8bc81e9597f55148112436c5dfd644a35658de9658845b729a19f8a2bb10aa0",
+      "build/lib.linux-x86_64-3.16/syslog.cpython-316-x86_64-linux-gnu.so": "21a4c82845635827e5f17cc8201de8c0a46c00747f5a3bdcba6aed32723bc61b",
+      "build/lib.linux-x86_64-3.16/termios.cpython-316-x86_64-linux-gnu.so": "d37e3b7a7518ececa23371dff7cb0846deb49366c8c533c4f2d4020b1538d721",
+      "build/lib.linux-x86_64-3.16/unicodedata.cpython-316-x86_64-linux-gnu.so": "3eca1f21e4dc55ceef1795ae241a50314977561d2a3459c6cf48f3807938c4df",
+      "build/lib.linux-x86_64-3.16/xxlimited.cpython-316-x86_64-linux-gnu.so": "07f90d2c37be4d6f831773da46ca425ba6d21f7db8bf8979cf583e0ad7ad27b8",
+      "build/lib.linux-x86_64-3.16/xxlimited_35.cpython-316-x86_64-linux-gnu.so": "02587e7625e16b44bfd4f88152fc09bd076ed5c23513701da42dca635aed2741",
+      "build/lib.linux-x86_64-3.16/xxlimited_3_13.cpython-316-x86_64-linux-gnu.so": "1d75151f6d37c6ad5ae3bee550a57eca6a480f93d170e83c4a15d7ec22eda960",
+      "build/lib.linux-x86_64-3.16/xxsubtype.cpython-316-x86_64-linux-gnu.so": "9e2e7c5d129b35511cda58529dc1d93bc142c27ca692d302490a19fa6bf24d30",
+      "build/lib.linux-x86_64-3.16/zlib.cpython-316-x86_64-linux-gnu.so": "b1c062103ef525bf953a1900fff6b2df5c6a6851c0325175ccd56b944ba2e5cf"
+    },
+    "candidate": {
+      "build/lib.linux-x86_64-3.16/_bisect.cpython-316-x86_64-linux-gnu.so": "4e5c031bceae41f01475c6f1138c2cd869f62f0e5f9e7bf3f2f08fdee9483c1e",
+      "build/lib.linux-x86_64-3.16/_blake2.cpython-316-x86_64-linux-gnu.so": "10d78e51d573cc4fd69e8af542085523d5731d0c88da63d6612f79c8aed26af5",
+      "build/lib.linux-x86_64-3.16/_bz2.cpython-316-x86_64-linux-gnu.so": "f9195e9cf5f7f91ee8adc3a041d0c73115ecebb3da153be79b19f76dbe30b64e",
+      "build/lib.linux-x86_64-3.16/_codecs_cn.cpython-316-x86_64-linux-gnu.so": "9915ebd40ea03235a0ccf3e19840c93313070e5537b61add2bcf7ceec59568bf",
+      "build/lib.linux-x86_64-3.16/_codecs_hk.cpython-316-x86_64-linux-gnu.so": "d9b3265ab403f8da4c2c1a81ece653486ba33bc880b637ee1846e20bd3493986",
+      "build/lib.linux-x86_64-3.16/_codecs_iso2022.cpython-316-x86_64-linux-gnu.so": "45fac62c642f57a264a48141ce3cdbd70d903559c0f07012a11b7289871e4bba",
+      "build/lib.linux-x86_64-3.16/_codecs_jp.cpython-316-x86_64-linux-gnu.so": "4ae93c0871b1bc60bf5d1407e674ad21e2919224b25d8769e2433473640a567e",
+      "build/lib.linux-x86_64-3.16/_codecs_kr.cpython-316-x86_64-linux-gnu.so": "25a2d8751ba04a19d2f71ed4a4ecb92b03326e1255fd457906ca386ab7f5852f",
+      "build/lib.linux-x86_64-3.16/_codecs_tw.cpython-316-x86_64-linux-gnu.so": "4ae819c083cad5ceb644e70e1cf6ee150554850ad1500544b27b213a71f65c11",
+      "build/lib.linux-x86_64-3.16/_csv.cpython-316-x86_64-linux-gnu.so": "087363710d09e4b6f7533306a82692704708db564a8942732ffb8087a62114ca",
+      "build/lib.linux-x86_64-3.16/_ctypes.cpython-316-x86_64-linux-gnu.so": "6b299804809458ed1d4771a4deac3675d5912b72bb02c03ee7c579227d2d0265",
+      "build/lib.linux-x86_64-3.16/_ctypes_test.cpython-316-x86_64-linux-gnu.so": "9f99a9e18c572873708abbb2686985e678dd351c070de1aafab5f5a1b43d3430",
+      "build/lib.linux-x86_64-3.16/_curses.cpython-316-x86_64-linux-gnu.so": "b561a57ee9ec088c3837c8dd03aadcf405258cd0c087c54b304c01e733394229",
+      "build/lib.linux-x86_64-3.16/_curses_panel.cpython-316-x86_64-linux-gnu.so": "99c4aa1f6fd77df28ee052022397f5f1fc5d9f914a99bffdee284b3bf8971dee",
+      "build/lib.linux-x86_64-3.16/_dbm.cpython-316-x86_64-linux-gnu.so": "2e2e66e002bd7cd77df01495d6198dabf39a180a2ad4ca57a2d9647245a0d19f",
+      "build/lib.linux-x86_64-3.16/_decimal.cpython-316-x86_64-linux-gnu.so": "adb558ed4e021e5a39b628888d600b7c4455d36ddd5feb2c01e66b42c3c10662",
+      "build/lib.linux-x86_64-3.16/_elementtree.cpython-316-x86_64-linux-gnu.so": "38ba4b0b921fdb78b1cc9a8e2c00285145db27dbe96b06b9e9ad443ad6430bbc",
+      "build/lib.linux-x86_64-3.16/_gdbm.cpython-316-x86_64-linux-gnu.so": "08a3cf879ced2cece0fcae65ab5aa81f1eec007018714354191bf9f1ef1a8fea",
+      "build/lib.linux-x86_64-3.16/_hashlib.cpython-316-x86_64-linux-gnu.so": "98ea267b923ef085cf294ab99cdd19df7fd0986816dc243b13f5326aeb55ee8f",
+      "build/lib.linux-x86_64-3.16/_heapq.cpython-316-x86_64-linux-gnu.so": "4944c123cc1d981d89691c1283723be16c9387d4e083a5b599b757504e8d910a",
+      "build/lib.linux-x86_64-3.16/_hmac.cpython-316-x86_64-linux-gnu.so": "dd324ce78eeaa4a8b89e23d252090598b46cf2aad3fef8d66181a0d4bce8dbe4",
+      "build/lib.linux-x86_64-3.16/_interpchannels.cpython-316-x86_64-linux-gnu.so": "e997384f71a56a8b477114f434c55e9b3dd365322de081c1b2da90141e1386ef",
+      "build/lib.linux-x86_64-3.16/_interpqueues.cpython-316-x86_64-linux-gnu.so": "11c92276b22f8d9c537cac6e9ff1d1e1ba69a6a7659a849cd5f8ac9d9a3d0303",
+      "build/lib.linux-x86_64-3.16/_interpreters.cpython-316-x86_64-linux-gnu.so": "84fb454857a26f2971732ba2211d1c61e210070da8f7abeaf34bbb22547915bb",
+      "build/lib.linux-x86_64-3.16/_json.cpython-316-x86_64-linux-gnu.so": "1897d3d60480a4dd8b69d27ed7ab932d285b30ce44360764ea6a6c6f328295fe",
+      "build/lib.linux-x86_64-3.16/_lsprof.cpython-316-x86_64-linux-gnu.so": "465cf24a140fa28806f515f5c75663bd5c364866c1ebf541b38e7854cb3e1709",
+      "build/lib.linux-x86_64-3.16/_lzma.cpython-316-x86_64-linux-gnu.so": "7c3a6686d4a3cfb073567cdc9c40c1785aaddc62e7cdcd644069a6eb2abefc34",
+      "build/lib.linux-x86_64-3.16/_math_integer.cpython-316-x86_64-linux-gnu.so": "ef8bb11869cf4910388ede02a2b0229a685c78d9f3a146b3550a469c3181a81e",
+      "build/lib.linux-x86_64-3.16/_md5.cpython-316-x86_64-linux-gnu.so": "7adbc307b121a0ebad69cdc4a87be6087783913c86501aee3a4ddd556736ee81",
+      "build/lib.linux-x86_64-3.16/_multibytecodec.cpython-316-x86_64-linux-gnu.so": "15b2d841c57f7760168454c96ac1d316b229c7cf8b7811a570ba6d0f7e2e645c",
+      "build/lib.linux-x86_64-3.16/_multiprocessing.cpython-316-x86_64-linux-gnu.so": "e8e2def60c38576c2f47d0cadab658e393c8f02b4af4495809d1bbe4e21446f1",
+      "build/lib.linux-x86_64-3.16/_pickle.cpython-316-x86_64-linux-gnu.so": "92dfb30b2033c0debef41a037cbb9385371e680f6b7ba5e7fb70c220f26cad5e",
+      "build/lib.linux-x86_64-3.16/_posixshmem.cpython-316-x86_64-linux-gnu.so": "b0adf96fe30d21da58136cd3eb410613c8b338deb72bd0e736eca3278176bdeb",
+      "build/lib.linux-x86_64-3.16/_posixsubprocess.cpython-316-x86_64-linux-gnu.so": "44b4e470800aa74b36086872be19e2a73ef2e6dd6d33ba2d3df8140018112741",
+      "build/lib.linux-x86_64-3.16/_queue.cpython-316-x86_64-linux-gnu.so": "62a90076aef8f8e0c0919653acf891d1692cf0411b4afce240b63ebe1359a8cd",
+      "build/lib.linux-x86_64-3.16/_random.cpython-316-x86_64-linux-gnu.so": "6866674a2796cb72212c52d12019811c910a33238be3390d5dec09daacf8b824",
+      "build/lib.linux-x86_64-3.16/_remote_debugging.cpython-316-x86_64-linux-gnu.so": "7d6b5a68e0b974ecc8e81f061e73c10b1114bfe555c6eeea53852d4ec8df273a",
+      "build/lib.linux-x86_64-3.16/_sha1.cpython-316-x86_64-linux-gnu.so": "9fbc91b7159cb35e35692775b75d6310027ce166ff7ba27f6654b714f5825b9b",
+      "build/lib.linux-x86_64-3.16/_sha2.cpython-316-x86_64-linux-gnu.so": "b825e3a70f46ed242d492b00e12727ed74b7dc4f592f547f8afc893cb5515f9c",
+      "build/lib.linux-x86_64-3.16/_sha3.cpython-316-x86_64-linux-gnu.so": "f100336d0555fa7a5648c404bffafec420ce0ff350d9349f50624728e3a9e466",
+      "build/lib.linux-x86_64-3.16/_socket.cpython-316-x86_64-linux-gnu.so": "934d8d16ebac4bd73e5c84b12c3f5dbdf11cadf80758345eeb83e453d39c5665",
+      "build/lib.linux-x86_64-3.16/_sqlite3.cpython-316-x86_64-linux-gnu.so": "4005ab5611f20f5718534802bcc007064e3bbb44603316174e5d40d9768a0afe",
+      "build/lib.linux-x86_64-3.16/_ssl.cpython-316-x86_64-linux-gnu.so": "692a352570a02697373b20c139dc58a636ff7de7d13eecc9bd45030bb3fb6391",
+      "build/lib.linux-x86_64-3.16/_statistics.cpython-316-x86_64-linux-gnu.so": "307ad99541225d2acab3f9976ff506b5c15949f622694179ac1309b58b13c7b6",
+      "build/lib.linux-x86_64-3.16/_struct.cpython-316-x86_64-linux-gnu.so": "02b316e9d5876e8ec4341b17d52f7a154bba9a23e73a6fc46f419ee4dcf56567",
+      "build/lib.linux-x86_64-3.16/_testbuffer.cpython-316-x86_64-linux-gnu.so": "dde7ba126bf8ad09448c4f817af6b0eb0e51d5bc1253c27cb853701f4c4bb44d",
+      "build/lib.linux-x86_64-3.16/_testcapi.cpython-316-x86_64-linux-gnu.so": "414ede487f0275d27069bb608a0ce084d71de56de8175b9bbbdecbf6962f5543",
+      "build/lib.linux-x86_64-3.16/_testclinic.cpython-316-x86_64-linux-gnu.so": "290978bd50938935ba56164003be502cfc308cfe33d27b944f7883eb39aa72d9",
+      "build/lib.linux-x86_64-3.16/_testclinic_limited.cpython-316-x86_64-linux-gnu.so": "6c12dbc50fe6792cddedb8cc68f46bf2945f89519163c124726a34524d482eab",
+      "build/lib.linux-x86_64-3.16/_testimportmultiple.cpython-316-x86_64-linux-gnu.so": "229f05ae53b4ed5471d2af64123f19227e17c78b9ae1ae589dd01c7299e8bc3e",
+      "build/lib.linux-x86_64-3.16/_testinternalcapi.cpython-316-x86_64-linux-gnu.so": "7559e63667755478fe27197f20ed99877fe56cb7331ba3b6e69410ac3396f834",
+      "build/lib.linux-x86_64-3.16/_testlimitedcapi.cpython-316-x86_64-linux-gnu.so": "1ecdc44d3446ddff6a5394997c2e8c52edc2ddb34ef7ef6aa4ab8a6159cb639f",
+      "build/lib.linux-x86_64-3.16/_testmultiphase.cpython-316-x86_64-linux-gnu.so": "2f60a8bdaec5e643766a3fd11d4d2903a3fe14725da810786aaeeba89ec9727f",
+      "build/lib.linux-x86_64-3.16/_testsinglephase.cpython-316-x86_64-linux-gnu.so": "2a32b6c9ba547b8a6c6237966e54e7d3204f303fae8f295f0cd136edbea9c2a0",
+      "build/lib.linux-x86_64-3.16/_uuid.cpython-316-x86_64-linux-gnu.so": "9edf316d19dd9a38c2e55e1dc3b5b11d1282990cf917e0be5225533c8d98fff1",
+      "build/lib.linux-x86_64-3.16/_xxtestfuzz.cpython-316-x86_64-linux-gnu.so": "ab32f92e80875c933222181609b2a8c18e50dcd6ffa0f8300a1e7c6154df86c8",
+      "build/lib.linux-x86_64-3.16/_zoneinfo.cpython-316-x86_64-linux-gnu.so": "809246623c6063025c1976f93cce8c77d086f2be76dadc7729ca840993201b26",
+      "build/lib.linux-x86_64-3.16/_zstd.cpython-316-x86_64-linux-gnu.so": "1247a2d6fbc27eb1969dc00980bae36070e2adba664584103a9a46fc1deb9e42",
+      "build/lib.linux-x86_64-3.16/array.cpython-316-x86_64-linux-gnu.so": "743f4763198cd3f5c49b3cf4d8485466601a23498c387a484b4453786fd692d7",
+      "build/lib.linux-x86_64-3.16/binascii.cpython-316-x86_64-linux-gnu.so": "7b03c57ae2fad490c76bd5cc9b3f4af68fb544b891021a28f1c7805ee924c9dd",
+      "build/lib.linux-x86_64-3.16/cmath.cpython-316-x86_64-linux-gnu.so": "06aa182cab1dcafad8a503f0d1ed8274d18e6ac607045a66cfd17bd2a72e22b2",
+      "build/lib.linux-x86_64-3.16/fcntl.cpython-316-x86_64-linux-gnu.so": "65c7151d3e34bb8576236a75da55e1efe02a3f404c899f5a8566f9471d16bbf2",
+      "build/lib.linux-x86_64-3.16/grp.cpython-316-x86_64-linux-gnu.so": "7b97335ca2aeb9c8ce52027f456ec29452f5fe422739a0ede8ca1ebdaa27fe27",
+      "build/lib.linux-x86_64-3.16/math.cpython-316-x86_64-linux-gnu.so": "fd4ba59fe71cba45bb08ed489bd091b777aeebca518d3cf076fb4a7222e28a77",
+      "build/lib.linux-x86_64-3.16/mmap.cpython-316-x86_64-linux-gnu.so": "4a0ec6f153af1766aaca2705520893c4f1b8c94885b280de9f85bc9d5ce62d03",
+      "build/lib.linux-x86_64-3.16/pyexpat.cpython-316-x86_64-linux-gnu.so": "04005aaf3b86783c7552d9966103ee84fac0aa076c4b801d4a78c579281c6962",
+      "build/lib.linux-x86_64-3.16/readline.cpython-316-x86_64-linux-gnu.so": "6ecc7a2b450cd1460b89d4ee93bd9ec186dc83c20db570977dde776f9ef147e5",
+      "build/lib.linux-x86_64-3.16/resource.cpython-316-x86_64-linux-gnu.so": "75dcc25da39e66a2527d8cc44351607fcd4d84299f1cbeb0920e520959a8909c",
+      "build/lib.linux-x86_64-3.16/select.cpython-316-x86_64-linux-gnu.so": "67aa60f3845c6713ab332ed7292d12a0364a211711169ed6b148497de291c0dc",
+      "build/lib.linux-x86_64-3.16/syslog.cpython-316-x86_64-linux-gnu.so": "78bf6b59116ea4ecec9398853d8d2f2b87ef2de1f0e3f747b7c56001f6f5b90a",
+      "build/lib.linux-x86_64-3.16/termios.cpython-316-x86_64-linux-gnu.so": "75b18e5309402735e5e645f55c9bc6562d83ae48b2f78ae89a368e11c36218ed",
+      "build/lib.linux-x86_64-3.16/unicodedata.cpython-316-x86_64-linux-gnu.so": "d4fb18591dafef38ac82379c25182e7509d927e33736713f6e91f0c28ff94601",
+      "build/lib.linux-x86_64-3.16/xxlimited.cpython-316-x86_64-linux-gnu.so": "615bb0520de12893ef0206069fd2d8a0bcca7be05f0ecc1fd9679e65834cf694",
+      "build/lib.linux-x86_64-3.16/xxlimited_35.cpython-316-x86_64-linux-gnu.so": "d41a49942a5476d4f7fdbc06336850b8465f5d18e42b514eefb4dca9d5764c8a",
+      "build/lib.linux-x86_64-3.16/xxlimited_3_13.cpython-316-x86_64-linux-gnu.so": "dcd42961e143433ff56f03fcc00f22aec9cf6a5849c143e39e037b2d3f122f40",
+      "build/lib.linux-x86_64-3.16/xxsubtype.cpython-316-x86_64-linux-gnu.so": "3fd913f1c822d8c81c73600e1596ed8a15702cd4ae9b641ce2b6900a473f674c",
+      "build/lib.linux-x86_64-3.16/zlib.cpython-316-x86_64-linux-gnu.so": "e5c8deb3dd2cdbf1c156e109df10a9ae8ef8339e772bbc44a3eed759a91d2348"
+    }
+  },
+  "workloads": {
+    "bpe_tokeniser": "74e435630251e7ce4da5c40c5dd04b51679ee14ba0a8f3ce33d0fd4434dd9451",
+    "btree": "feb3939a4933aebcc8c2de21b246d51e25dadd642721922e3e7c210932dd7c27",
+    "deltablue": "cb40b4c894dcd5774418497e16faed765cdffdb0e83cf9107df6fc93550c67ff",
+    "go": "eb293129c753fb526d102b57ff96982ad1f1d4a1831671e15b98140b8121eaa6",
+    "hexiom": "b1951cddf324099df14f4282ed4da32982d1d50392f88d6508dfce2b662cf82e",
+    "raytrace": "9b8a45f90f339e6aff62a5e90c7a8cfbeab192fad2ab958f1ebbe8ee5595f383",
+    "spectral_norm": "3e888cd7061073f538d4df509c2d6bdf4c3f7baa4e6b3ad7f9540e0615b8580b",
+    "sqlalchemy_declarative": "27d62b2b33cb41118b023627d4b2e1570496b65b72efd7f6f170571cacec2b66"
+  },
+  "loops": {
+    "bpe_tokeniser": 1,
+    "btree": 1,
+    "deltablue": 32,
+    "go": 1,
+    "hexiom": 16,
+    "raytrace": 1,
+    "spectral_norm": 1,
+    "sqlalchemy_declarative": 1
+  },
+  "cpu": 2,
+  "dependencies": {
+    "paths": {
+      "main": "/home/methane/work/python/cpython-gc/jit-artifacts/pyperformance-four-way-overnight/gil-pgo-lto/dependencies/369abb7d34975e4b/main/lib/python3.16/site-packages",
+      "candidate": "/home/methane/work/python/cpython-gc/jit-artifacts/pyperformance-four-way-overnight/gil-pgo-lto/dependencies/369abb7d34975e4b/main/lib/python3.16/site-packages"
+    },
+    "sha256": {
+      "main": "f0e8768bf42a3d2c00cbe9623a30101c9af108e7d1e2975d18cc6b3ead78a06b",
+      "candidate": "f0e8768bf42a3d2c00cbe9623a30101c9af108e7d1e2975d18cc6b3ead78a06b"
+    }
+  },
+  "warmups": 3,
+  "values": 7,
+  "blocks": 2,
+  "records": [
+    {
+      "block": 0,
+      "name": "bpe_tokeniser",
+      "variant": "main",
+      "rc": 0,
+      "wall": 24.996579167433083,
+      "command": [
+        "taskset",
+        "-c",
+        "2",
+        "/home/methane/work/python/cpython-gc/jit-artifacts/regressions-20260919/r0-gil-main-build/python",
+        "/home/methane/work/python/cpython-gc/benchmarks/bpe_tokeniser.py",
+        "--loops",
+        "1",
+        "--warmups",
+        "3",
+        "--values",
+        "7",
+        "--json"
+      ],
+      "hashseed": 0,
+      "host_before": {
+        "monotonic": 6360805.265711006,
+        "cpu_ticks": {
+          "cpu2": [
+            29434310,
+            5184,
+            2863981,
+            601123771,
+            145166,
+            0,
+            40291,
+            0,
+            0,
+            0
+          ],
+          "cpu3": [
+            3986248,
+            283,
+            956467,
+            630049662,
+            48379,
+            0,
+            8144,
+            0,
+            0,
+            0
+          ]
+        },
+        "clock_ticks": 100,
+        "cpu2_instant_khz": 400000,
+        "cpu3_instant_khz": 2963105
+      },
+      "host_after": {
+        "monotonic": 6360830.262498616,
+        "cpu_ticks": {
+          "cpu2": [
+            29436807,
+            5184,
+            2863982,
+            601123773,
+            145166,
+            0,
+            40291,
+            0,
+            0,
+            0
+          ],
+          "cpu3": [
+            3986255,
+            283,
+            956468,
+            630052152,
+            48379,
+            0,
+            8144,
+            0,
+            0,
+            0
+          ]
+        },
+        "clock_ticks": 100,
+        "cpu2_instant_khz": 677070,
+        "cpu3_instant_khz": 3626424
+      },
+      "worker_cgroup": "0::/user.slice/user-1000.slice/user@1000.service/tmux-spawn-7882e45f-60a7-4a00-a2d8-78980a66e406.scope\n",
+      "child_usage_delta": {
+        "ru_utime": 24.959397,
+        "ru_stime": 0.013996999999999999,
+        "ru_minflt": 4466,
+        "ru_majflt": 0,
+        "ru_nvcsw": 5,
+        "ru_nivcsw": 123
+      },
+      "mean": 2.490501396624105,
+      "checksum": {
+        "tokens": 10335,
+        "token_sha256": "ae6aed60fc44c7a735e5d9e9f896ece86ad7209ab658e0599c332534c604242e"
+      },
+      "sqlalchemy_version": null,
+      "sqlite_version": null
+    },
+    {
+      "block": 0,
+      "name": "bpe_tokeniser",
+      "variant": "candidate",
+      "rc": 0,
+      "wall": 21.182000510394573,
+      "command": [
+        "taskset",
+        "-c",
+        "2",
+        "/home/methane/work/python/cpython-gc/jit-artifacts/regressions-20260919/m56b-gil-pgo-lto-build/python",
+        "/home/methane/work/python/cpython-gc/benchmarks/bpe_tokeniser.py",
+        "--loops",
+        "1",
+        "--warmups",
+        "3",
+        "--values",
+        "7",
+        "--json"
+      ],
+      "hashseed": 0,
+      "host_before": {
+        "monotonic": 6360830.263133189,
+        "cpu_ticks": {
+          "cpu2": [
+            29436807,
+            5184,
+            2863982,
+            601123774,
+            145166,
+            0,
+            40291,
+            0,
+            0,
+            0
+          ],
+          "cpu3": [
+            3986255,
+            283,
+            956468,
+            630052152,
+            48379,
+            0,
+            8144,
+            0,
+            0,
+            0
+          ]
+        },
+        "clock_ticks": 100,
+        "cpu2_instant_khz": 677070,
+        "cpu3_instant_khz": 3626424
+      },
+      "host_after": {
+        "monotonic": 6360851.445329534,
+        "cpu_ticks": {
+          "cpu2": [
+            29438923,
+            5184,
+            2863983,
+            601123774,
+            145166,
+            0,
+            40291,
+            0,
+            0,
+            0
+          ],
+          "cpu3": [
+            3986255,
+            283,
+            956469,
+            630054269,
+            48379,
+            0,
+            8144,
+            0,
+            0,
+            0
+          ]
+        },
+        "clock_ticks": 100,
+        "cpu2_instant_khz": 470683,
+        "cpu3_instant_khz": 400000
+      },
+      "worker_cgroup": "0::/user.slice/user-1000.slice/user@1000.service/tmux-spawn-7882e45f-60a7-4a00-a2d8-78980a66e406.scope\n",
+      "child_usage_delta": {
+        "ru_utime": 21.16508,
+        "ru_stime": 0.008999,
+        "ru_minflt": 4433,
+        "ru_majflt": 0,
+        "ru_nvcsw": 4,
+        "ru_nivcsw": 102
+      },
+      "mean": 2.1074028369039297,
+      "checksum": {
+        "tokens": 10335,
+        "token_sha256": "ae6aed60fc44c7a735e5d9e9f896ece86ad7209ab658e0599c332534c604242e"
+      },
+      "sqlalchemy_version": null,
+      "sqlite_version": null
+    },
+    {
+      "block": 0,
+      "name": "btree",
+      "variant": "main",
+      "rc": 0,
+      "wall": 0.6668268581852317,
+      "command": [
+        "taskset",
+        "-c",
+        "2",
+        "/home/methane/work/python/cpython-gc/jit-artifacts/regressions-20260919/r0-gil-main-build/python",
+        "/home/methane/work/python/cpython-gc/benchmarks/btree.py",
+        "--loops",
+        "1",
+        "--warmups",
+        "3",
+        "--values",
+        "7",
+        "--json"
+      ],
+      "hashseed": 0,
+      "host_before": {
+        "monotonic": 6360851.445906327,
+        "cpu_ticks": {
+          "cpu2": [
+            29438923,
+            5184,
+            2863983,
+            601123774,
+            145166,
+            0,
+            40291,
+            0,
+            0,
+            0
+          ],
+          "cpu3": [
+            3986255,
+            283,
+            956469,
+            630054269,
+            48379,
+            0,
+            8144,
+            0,
+            0,
+            0
+          ]
+        },
+        "clock_ticks": 100,
+        "cpu2_instant_khz": 470683,
+        "cpu3_instant_khz": 400000
+      },
+      "host_after": {
+        "monotonic": 6360852.112921671,
+        "cpu_ticks": {
+          "cpu2": [
+            29438986,
+            5184,
+            2863984,
+            601123777,
+            145166,
+            0,
+            40291,
+            0,
+            0,
+            0
+          ],
+          "cpu3": [
+            3986255,
+            283,
+            956469,
+            630054336,
+            48379,
+            0,
+            8144,
+            0,
+            0,
+            0
+          ]
+        },
+        "clock_ticks": 100,
+        "cpu2_instant_khz": 723985,
+        "cpu3_instant_khz": 400000
+      },
+      "worker_cgroup": "0::/user.slice/user-1000.slice/user@1000.service/tmux-spawn-7882e45f-60a7-4a00-a2d8-78980a66e406.scope\n",
+      "child_usage_delta": {
+        "ru_utime": 0.6269440000000017,
+        "ru_stime": 0.012999,
+        "ru_minflt": 5216,
+        "ru_majflt": 0,
+        "ru_nvcsw": 1,
+        "ru_nivcsw": 6
+      },
+      "mean": 0.056721388229302,
+      "checksum": {
+        "records": 20000,
+        "total": 9960.672765258027,
+        "lookup_total": 508.57815295215465
+      },
+      "sqlalchemy_version": null,
+      "sqlite_version": null
+    },
+    {
+      "block": 0,
+      "name": "btree",
+      "variant": "candidate",
+      "rc": 0,
+      "wall": 0.5666999211534858,
+      "command": [
+        "taskset",
+        "-c",
+        "2",
+        "/home/methane/work/python/cpython-gc/jit-artifacts/regressions-20260919/m56b-gil-pgo-lto-build/python",
+        "/home/methane/work/python/cpython-gc/benchmarks/btree.py",
+        "--loops",
+        "1",
+        "--warmups",
+        "3",
+        "--values",
+        "7",
+        "--json"
+      ],
+      "hashseed": 0,
+      "host_before": {
+        "monotonic": 6360852.113594622,
+        "cpu_ticks": {
+          "cpu2": [
+            29438986,
+            5184,
+            2863984,
+            601123777,
+            145166,
+            0,
+            40291,
+            0,
+            0,
+            0
+          ],
+          "cpu3": [
+            3986255,
+            283,
+            956469,
+            630054336,
+            48379,
+            0,
+            8144,
+            0,
+            0,
+            0
+          ]
+        },
+        "clock_ticks": 100,
+        "cpu2_instant_khz": 723985,
+        "cpu3_instant_khz": 400000
+      },
+      "host_after": {
+        "monotonic": 6360852.68063314,
+        "cpu_ticks": {
+          "cpu2": [
+            29439037,
+            5184,
+            2863985,
+            601123781,
+            145166,
+            0,
+            40291,
+            0,
+            0,
+            0
+          ],
+          "cpu3": [
+            3986255,
+            283,
+            956469,
+            630054392,
+            48379,
+            0,
+            8144,
+            0,
+            0,
+            0
+          ]
+        },
+        "clock_ticks": 100,
+        "cpu2_instant_khz": 875887,
+        "cpu3_instant_khz": 400000
+      },
+      "worker_cgroup": "0::/user.slice/user-1000.slice/user@1000.service/tmux-spawn-7882e45f-60a7-4a00-a2d8-78980a66e406.scope\n",
+      "child_usage_delta": {
+        "ru_utime": 0.5111029999999985,
+        "ru_stime": 0.011978999999999997,
+        "ru_minflt": 5536,
+        "ru_majflt": 0,
+        "ru_nvcsw": 2,
+        "ru_nivcsw": 5
+      },
+      "mean": 0.04524278175085783,
+      "checksum": {
+        "records": 20000,
+        "total": 9960.672765258027,
+        "lookup_total": 508.57815295215465
+      },
+      "sqlalchemy_version": null,
+      "sqlite_version": null
+    },
+    {
+      "block": 0,
+      "name": "deltablue",
+      "variant": "main",
+      "rc": 0,
+      "wall": 0.5668391808867455,
+      "command": [
+        "taskset",
+        "-c",
+        "2",
+        "/home/methane/work/python/cpython-gc/jit-artifacts/regressions-20260919/r0-gil-main-build/python",
+        "/home/methane/work/python/cpython-gc/benchmarks/deltablue.py",
+        "--loops",
+        "32",
+        "--warmups",
+        "3",
+        "--values",
+        "7",
+        "--json"
+      ],
+      "hashseed": 0,
+      "host_before": {
+        "monotonic": 6360852.682500095,
+        "cpu_ticks": {
+          "cpu2": [
+            29439037,
+            5184,
+            2863985,
+            601123782,
+            145166,
+            0,
+            40291,
+            0,
+            0,
+            0
+          ],
+          "cpu3": [
+            3986255,
+            283,
+            956469,
+            630054392,
+            48379,
+            0,
+            8144,
+            0,
+            0,
+            0
+          ]
+        },
+        "clock_ticks": 100,
+        "cpu2_instant_khz": 875887,
+        "cpu3_instant_khz": 400000
+      },
+      "host_after": {
+        "monotonic": 6360853.249832167,
+        "cpu_ticks": {
+          "cpu2": [
+            29439088,
+            5184,
+            2863986,
+            601123786,
+            145166,
+            0,
+            40291,
+            0,
+            0,
+            0
+          ],
+          "cpu3": [
+            3986255,
+            283,
+            956469,
+            630054449,
+            48379,
+            0,
+            8144,
+            0,
+            0,
+            0
+          ]
+        },
+        "clock_ticks": 100,
+        "cpu2_instant_khz": 593655,
+        "cpu3_instant_khz": 400000
+      },
+      "worker_cgroup": "0::/user.slice/user-1000.slice/user@1000.service/tmux-spawn-7882e45f-60a7-4a00-a2d8-78980a66e406.scope\n",
+      "child_usage_delta": {
+        "ru_utime": 0.5110790000000023,
+        "ru_stime": 0.011002000000000005,
+        "ru_minflt": 3112,
+        "ru_majflt": 0,
+        "ru_nvcsw": 1,
+        "ru_nivcsw": 3
+      },
+      "mean": 0.0015118290903046727,
+      "checksum": {
+        "chain_last": 99,
+        "source_last": -190.0,
+        "projection_sum": 223305
+      },
+      "sqlalchemy_version": null,
+      "sqlite_version": null
+    },
+    {
+      "block": 0,
+      "name": "deltablue",
+      "variant": "candidate",
+      "rc": 0,
+      "wall": 0.5669223973527551,
+      "command": [
+        "taskset",
+        "-c",
+        "2",
+        "/home/methane/work/python/cpython-gc/jit-artifacts/regressions-20260919/m56b-gil-pgo-lto-build/python",
+        "/home/methane/work/python/cpython-gc/benchmarks/deltablue.py",
+        "--loops",
+        "32",
+        "--warmups",
+        "3",
+        "--values",
+        "7",
+        "--json"
+      ],
+      "hashseed": 0,
+      "host_before": {
+        "monotonic": 6360853.2519032,
+        "cpu_ticks": {
+          "cpu2": [
+            29439088,
+            5184,
+            2863986,
+            601123786,
+            145166,
+            0,
+            40291,
+            0,
+            0,
+            0
+          ],
+          "cpu3": [
+            3986255,
+            283,
+            956469,
+            630054449,
+            48379,
+            0,
+            8144,
+            0,
+            0,
+            0
+          ]
+        },
+        "clock_ticks": 100,
+        "cpu2_instant_khz": 593655,
+        "cpu3_instant_khz": 400000
+      },
+      "host_after": {
+        "monotonic": 6360853.819341737,
+        "cpu_ticks": {
+          "cpu2": [
+            29439139,
+            5184,
+            2863987,
+            601123792,
+            145166,
+            0,
+            40291,
+            0,
+            0,
+            0
+          ],
+          "cpu3": [
+            3986255,
+            283,
+            956469,
+            630054506,
+            48379,
+            0,
+            8144,
+            0,
+            0,
+            0
+          ]
+        },
+        "clock_ticks": 100,
+        "cpu2_instant_khz": 400000,
+        "cpu3_instant_khz": 400000
+      },
+      "worker_cgroup": "0::/user.slice/user-1000.slice/user@1000.service/tmux-spawn-7882e45f-60a7-4a00-a2d8-78980a66e406.scope\n",
+      "child_usage_delta": {
+        "ru_utime": 0.5101469999999964,
+        "ru_stime": 0.007001999999999994,
+        "ru_minflt": 4467,
+        "ru_majflt": 0,
+        "ru_nvcsw": 1,
+        "ru_nivcsw": 4
+      },
+      "mean": 0.0014883647049178503,
+      "checksum": {
+        "chain_last": 99,
+        "source_last": -190.0,
+        "projection_sum": 223305
+      },
+      "sqlalchemy_version": null,
+      "sqlite_version": null
+    },
+    {
+      "block": 0,
+      "name": "go",
+      "variant": "main",
+      "rc": 0,
+      "wall": 0.6670286431908607,
+      "command": [
+        "taskset",
+        "-c",
+        "2",
+        "/home/methane/work/python/cpython-gc/jit-artifacts/regressions-20260919/r0-gil-main-build/python",
+        "/home/methane/work/python/cpython-gc/benchmarks/go.py",
+        "--loops",
+        "1",
+        "--warmups",
+        "3",
+        "--values",
+        "7",
+        "--json"
+      ],
+      "hashseed": 0,
+      "host_before": {
+        "monotonic": 6360853.821509108,
+        "cpu_ticks": {
+          "cpu2": [
+            29439139,
+            5184,
+            2863987,
+            601123792,
+            145166,
+            0,
+            40291,
+            0,
+            0,
+            0
+          ],
+          "cpu3": [
+            3986255,
+            283,
+            956469,
+            630054506,
+            48379,
+            0,
+            8144,
+            0,
+            0,
+            0
+          ]
+        },
+        "clock_ticks": 100,
+        "cpu2_instant_khz": 400000,
+        "cpu3_instant_khz": 400000
+      },
+      "host_after": {
+        "monotonic": 6360854.48892957,
+        "cpu_ticks": {
+          "cpu2": [
+            29439201,
+            5184,
+            2863988,
+            601123796,
+            145166,
+            0,
+            40291,
+            0,
+            0,
+            0
+          ],
+          "cpu3": [
+            3986255,
+            283,
+            956469,
+            630054573,
+            48379,
+            0,
+            8144,
+            0,
+            0,
+            0
+          ]
+        },
+        "clock_ticks": 100,
+        "cpu2_instant_khz": 400000,
+        "cpu3_instant_khz": 400000
+      },
+      "worker_cgroup": "0::/user.slice/user-1000.slice/user@1000.service/tmux-spawn-7882e45f-60a7-4a00-a2d8-78980a66e406.scope\n",
+      "child_usage_delta": {
+        "ru_utime": 0.6124870000000016,
+        "ru_stime": 0.014010999999999996,
+        "ru_minflt": 3642,
+        "ru_majflt": 0,
+        "ru_nvcsw": 1,
+        "ru_nivcsw": 6
+      },
+      "mean": 0.059001290638531954,
+      "checksum": {
+        "move": 5,
+        "timestamp_delta": 81059,
+        "moves_delta": 21401
+      },
+      "sqlalchemy_version": null,
+      "sqlite_version": null
+    },
+    {
+      "block": 0,
+      "name": "go",
+      "variant": "candidate",
+      "rc": 0,
+      "wall": 0.6172646787017584,
+      "command": [
+        "taskset",
+        "-c",
+        "2",
+        "/home/methane/work/python/cpython-gc/jit-artifacts/regressions-20260919/m56b-gil-pgo-lto-build/python",
+        "/home/methane/work/python/cpython-gc/benchmarks/go.py",
+        "--loops",
+        "1",
+        "--warmups",
+        "3",
+        "--values",
+        "7",
+        "--json"
+      ],
+      "hashseed": 0,
+      "host_before": {
+        "monotonic": 6360854.490826037,
+        "cpu_ticks": {
+          "cpu2": [
+            29439201,
+            5184,
+            2863988,
+            601123796,
+            145166,
+            0,
+            40291,
+            0,
+            0,
+            0
+          ],
+          "cpu3": [
+            3986255,
+            283,
+            956469,
+            630054573,
+            48379,
+            0,
+            8144,
+            0,
+            0,
+            0
+          ]
+        },
+        "clock_ticks": 100,
+        "cpu2_instant_khz": 400000,
+        "cpu3_instant_khz": 400000
+      },
+      "host_after": {
+        "monotonic": 6360855.108541585,
+        "cpu_ticks": {
+          "cpu2": [
+            29439256,
+            5184,
+            2863990,
+            601123801,
+            145166,
+            0,
+            40291,
+            0,
+            0,
+            0
+          ],
+          "cpu3": [
+            3986255,
+            283,
+            956469,
+            630054635,
+            48379,
+            0,
+            8144,
+            0,
+            0,
+            0
+          ]
+        },
+        "clock_ticks": 100,
+        "cpu2_instant_khz": 400000,
+        "cpu3_instant_khz": 400000
+      },
+      "worker_cgroup": "0::/user.slice/user-1000.slice/user@1000.service/tmux-spawn-7882e45f-60a7-4a00-a2d8-78980a66e406.scope\n",
+      "child_usage_delta": {
+        "ru_utime": 0.5586190000000002,
+        "ru_stime": 0.015989000000000003,
+        "ru_minflt": 4944,
+        "ru_majflt": 0,
+        "ru_nvcsw": 1,
+        "ru_nivcsw": 7
+      },
+      "mean": 0.0516776204375284,
+      "checksum": {
+        "move": 5,
+        "timestamp_delta": 81059,
+        "moves_delta": 21401
+      },
+      "sqlalchemy_version": null,
+      "sqlite_version": null
+    },
+    {
+      "block": 0,
+      "name": "hexiom",
+      "variant": "main",
+      "rc": 0,
+      "wall": 0.5665027340874076,
+      "command": [
+        "taskset",
+        "-c",
+        "2",
+        "/home/methane/work/python/cpython-gc/jit-artifacts/regressions-20260919/r0-gil-main-build/python",
+        "/home/methane/work/python/cpython-gc/benchmarks/hexiom.py",
+        "--loops",
+        "16",
+        "--warmups",
+        "3",
+        "--values",
+        "7",
+        "--json"
+      ],
+      "hashseed": 0,
+      "host_before": {
+        "monotonic": 6360855.110882595,
+        "cpu_ticks": {
+          "cpu2": [
+            29439256,
+            5184,
+            2863990,
+            601123801,
+            145166,
+            0,
+            40291,
+            0,
+            0,
+            0
+          ],
+          "cpu3": [
+            3986255,
+            283,
+            956469,
+            630054635,
+            48379,
+            0,
+            8144,
+            0,
+            0,
+            0
+          ]
+        },
+        "clock_ticks": 100,
+        "cpu2_instant_khz": 400000,
+        "cpu3_instant_khz": 400000
+      },
+      "host_after": {
+        "monotonic": 6360855.677664422,
+        "cpu_ticks": {
+          "cpu2": [
+            29439310,
+            5184,
+            2863991,
+            601123803,
+            145166,
+            0,
+            40291,
+            0,
+            0,
+            0
+          ],
+          "cpu3": [
+            3986255,
+            283,
+            956469,
+            630054692,
+            48379,
+            0,
+            8144,
+            0,
+            0,
+            0
+          ]
+        },
+        "clock_ticks": 100,
+        "cpu2_instant_khz": 576136,
+        "cpu3_instant_khz": 400000
+      },
+      "worker_cgroup": "0::/user.slice/user-1000.slice/user@1000.service/tmux-spawn-7882e45f-60a7-4a00-a2d8-78980a66e406.scope\n",
+      "child_usage_delta": {
+        "ru_utime": 0.537347000000004,
+        "ru_stime": 0.011007000000000003,
+        "ru_minflt": 2655,
+        "ru_majflt": 0,
+        "ru_nvcsw": 1,
+        "ru_nivcsw": 6
+      },
+      "mean": 0.003210380457208625,
+      "checksum": "  3 4 2\n 2 4 4 .\n. . . 4 2\n . 2 4 3\n  . 2 .",
+      "sqlalchemy_version": null,
+      "sqlite_version": null
+    },
+    {
+      "block": 0,
+      "name": "hexiom",
+      "variant": "candidate",
+      "rc": 0,
+      "wall": 0.46544709149748087,
+      "command": [
+        "taskset",
+        "-c",
+        "2",
+        "/home/methane/work/python/cpython-gc/jit-artifacts/regressions-20260919/m56b-gil-pgo-lto-build/python",
+        "/home/methane/work/python/cpython-gc/benchmarks/hexiom.py",
+        "--loops",
+        "16",
+        "--warmups",
+        "3",
+        "--values",
+        "7",
+        "--json"
+      ],
+      "hashseed": 0,
+      "host_before": {
+        "monotonic": 6360855.678492566,
+        "cpu_ticks": {
+          "cpu2": [
+            29439310,
+            5184,
+            2863991,
+            601123803,
+            145166,
+            0,
+            40291,
+            0,
+            0,
+            0
+          ],
+          "cpu3": [
+            3986255,
+            283,
+            956469,
+            630054692,
+            48379,
+            0,
+            8144,
+            0,
+            0,
+            0
+          ]
+        },
+        "clock_ticks": 100,
+        "cpu2_instant_khz": 606723,
+        "cpu3_instant_khz": 400000
+      },
+      "host_after": {
+        "monotonic": 6360856.144146704,
+        "cpu_ticks": {
+          "cpu2": [
+            29439354,
+            5184,
+            2863991,
+            601123805,
+            145166,
+            0,
+            40291,
+            0,
+            0,
+            0
+          ],
+          "cpu3": [
+            3986255,
+            283,
+            956469,
+            630054738,
+            48379,
+            0,
+            8144,
+            0,
+            0,
+            0
+          ]
+        },
+        "clock_ticks": 100,
+        "cpu2_instant_khz": 1082294,
+        "cpu3_instant_khz": 400000
+      },
+      "worker_cgroup": "0::/user.slice/user-1000.slice/user@1000.service/tmux-spawn-7882e45f-60a7-4a00-a2d8-78980a66e406.scope\n",
+      "child_usage_delta": {
+        "ru_utime": 0.4361279999999965,
+        "ru_stime": 0.0040010000000000046,
+        "ru_minflt": 3615,
+        "ru_majflt": 0,
+        "ru_nvcsw": 1,
+        "ru_nivcsw": 6
+      },
+      "mean": 0.002528395736590028,
+      "checksum": "  3 4 2\n 2 4 4 .\n. . . 4 2\n . 2 4 3\n  . 2 .",
+      "sqlalchemy_version": null,
+      "sqlite_version": null
+    },
+    {
+      "block": 0,
+      "name": "raytrace",
+      "variant": "main",
+      "rc": 0,
+      "wall": 1.41904301289469,
+      "command": [
+        "taskset",
+        "-c",
+        "2",
+        "/home/methane/work/python/cpython-gc/jit-artifacts/regressions-20260919/r0-gil-main-build/python",
+        "/home/methane/work/python/cpython-gc/benchmarks/raytrace.py",
+        "--loops",
+        "1",
+        "--warmups",
+        "3",
+        "--values",
+        "7",
+        "--json"
+      ],
+      "hashseed": 0,
+      "host_before": {
+        "monotonic": 6360856.145019777,
+        "cpu_ticks": {
+          "cpu2": [
+            29439354,
+            5184,
+            2863991,
+            601123805,
+            145166,
+            0,
+            40291,
+            0,
+            0,
+            0
+          ],
+          "cpu3": [
+            3986255,
+            283,
+            956469,
+            630054739,
+            48379,
+            0,
+            8144,
+            0,
+            0,
+            0
+          ]
+        },
+        "clock_ticks": 100,
+        "cpu2_instant_khz": 1082294,
+        "cpu3_instant_khz": 400000
+      },
+      "host_after": {
+        "monotonic": 6360857.564260051,
+        "cpu_ticks": {
+          "cpu2": [
+            29439494,
+            5184,
+            2863992,
+            601123806,
+            145166,
+            0,
+            40291,
+            0,
+            0,
+            0
+          ],
+          "cpu3": [
+            3986255,
+            283,
+            956469,
+            630054880,
+            48379,
+            0,
+            8144,
+            0,
+            0,
+            0
+          ]
+        },
+        "clock_ticks": 100,
+        "cpu2_instant_khz": 793294,
+        "cpu3_instant_khz": 400000
+      },
+      "worker_cgroup": "0::/user.slice/user-1000.slice/user@1000.service/tmux-spawn-7882e45f-60a7-4a00-a2d8-78980a66e406.scope\n",
+      "child_usage_delta": {
+        "ru_utime": 1.4060619999999986,
+        "ru_stime": 0.009000999999999995,
+        "ru_minflt": 3285,
+        "ru_majflt": 0,
+        "ru_nvcsw": 2,
+        "ru_nivcsw": 10
+      },
+      "mean": 0.137543507452522,
+      "checksum": {
+        "pixels": 10000,
+        "pixel_sha256": "11f2c36b02044f115c3937cae1156e9528b95da70f9d6b737a262f06757c2e6b"
+      },
+      "sqlalchemy_version": null,
+      "sqlite_version": null
+    },
+    {
+      "block": 0,
+      "name": "raytrace",
+      "variant": "candidate",
+      "rc": 0,
+      "wall": 1.418649491854012,
+      "command": [
+        "taskset",
+        "-c",
+        "2",
+        "/home/methane/work/python/cpython-gc/jit-artifacts/regressions-20260919/m56b-gil-pgo-lto-build/python",
+        "/home/methane/work/python/cpython-gc/benchmarks/raytrace.py",
+        "--loops",
+        "1",
+        "--warmups",
+        "3",
+        "--values",
+        "7",
+        "--json"
+      ],
+      "hashseed": 0,
+      "host_before": {
+        "monotonic": 6360857.565246484,
+        "cpu_ticks": {
+          "cpu2": [
+            29439494,
+            5184,
+            2863992,
+            601123806,
+            145166,
+            0,
+            40291,
+            0,
+            0,
+            0
+          ],
+          "cpu3": [
+            3986255,
+            283,
+            956469,
+            630054880,
+            48379,
+            0,
+            8144,
+            0,
+            0,
+            0
+          ]
+        },
+        "clock_ticks": 100,
+        "cpu2_instant_khz": 583856,
+        "cpu3_instant_khz": 400000
+      },
+      "host_after": {
+        "monotonic": 6360858.984110757,
+        "cpu_ticks": {
+          "cpu2": [
+            29439634,
+            5184,
+            2863993,
+            601123807,
+            145166,
+            0,
+            40291,
+            0,
+            0,
+            0
+          ],
+          "cpu3": [
+            3986255,
+            283,
+            956469,
+            630055022,
+            48379,
+            0,
+            8144,
+            0,
+            0,
+            0
+          ]
+        },
+        "clock_ticks": 100,
+        "cpu2_instant_khz": 832180,
+        "cpu3_instant_khz": 400000
+      },
+      "worker_cgroup": "0::/user.slice/user-1000.slice/user@1000.service/tmux-spawn-7882e45f-60a7-4a00-a2d8-78980a66e406.scope\n",
+      "child_usage_delta": {
+        "ru_utime": 1.3986610000000042,
+        "ru_stime": 0.012996999999999995,
+        "ru_minflt": 5413,
+        "ru_majflt": 0,
+        "ru_nvcsw": 1,
+        "ru_nivcsw": 11
+      },
+      "mean": 0.1377698683312961,
+      "checksum": {
+        "pixels": 10000,
+        "pixel_sha256": "11f2c36b02044f115c3937cae1156e9528b95da70f9d6b737a262f06757c2e6b"
+      },
+      "sqlalchemy_version": null,
+      "sqlite_version": null
+    },
+    {
+      "block": 0,
+      "name": "spectral_norm",
+      "variant": "main",
+      "rc": 0,
+      "wall": 0.31531498581171036,
+      "command": [
+        "taskset",
+        "-c",
+        "2",
+        "/home/methane/work/python/cpython-gc/jit-artifacts/regressions-20260919/r0-gil-main-build/python",
+        "/home/methane/work/python/cpython-gc/benchmarks/spectral_norm.py",
+        "--loops",
+        "1",
+        "--warmups",
+        "3",
+        "--values",
+        "7",
+        "--json"
+      ],
+      "hashseed": 0,
+      "host_before": {
+        "monotonic": 6360858.98502059,
+        "cpu_ticks": {
+          "cpu2": [
+            29439634,
+            5184,
+            2863993,
+            601123807,
+            145166,
+            0,
+            40291,
+            0,
+            0,
+            0
+          ],
+          "cpu3": [
+            3986255,
+            283,
+            956469,
+            630055022,
+            48379,
+            0,
+            8144,
+            0,
+            0,
+            0
+          ]
+        },
+        "clock_ticks": 100,
+        "cpu2_instant_khz": 832180,
+        "cpu3_instant_khz": 400000
+      },
+      "host_after": {
+        "monotonic": 6360859.300523663,
+        "cpu_ticks": {
+          "cpu2": [
+            29439665,
+            5184,
+            2863993,
+            601123808,
+            145166,
+            0,
+            40291,
+            0,
+            0,
+            0
+          ],
+          "cpu3": [
+            3986255,
+            283,
+            956469,
+            630055054,
+            48379,
+            0,
+            8144,
+            0,
+            0,
+            0
+          ]
+        },
+        "clock_ticks": 100,
+        "cpu2_instant_khz": 2306588,
+        "cpu3_instant_khz": 400000
+      },
+      "worker_cgroup": "0::/user.slice/user-1000.slice/user@1000.service/tmux-spawn-7882e45f-60a7-4a00-a2d8-78980a66e406.scope\n",
+      "child_usage_delta": {
+        "ru_utime": 0.30332499999999385,
+        "ru_stime": 0.0020020000000000038,
+        "ru_minflt": 2064,
+        "ru_majflt": 0,
+        "ru_nvcsw": 1,
+        "ru_nivcsw": 3
+      },
+      "mean": 0.028115366186414446,
+      "checksum": 409.3151805348543,
+      "sqlalchemy_version": null,
+      "sqlite_version": null
+    },
+    {
+      "block": 0,
+      "name": "spectral_norm",
+      "variant": "candidate",
+      "rc": 0,
+      "wall": 0.21495549008250237,
+      "command": [
+        "taskset",
+        "-c",
+        "2",
+        "/home/methane/work/python/cpython-gc/jit-artifacts/regressions-20260919/m56b-gil-pgo-lto-build/python",
+        "/home/methane/work/python/cpython-gc/benchmarks/spectral_norm.py",
+        "--loops",
+        "1",
+        "--warmups",
+        "3",
+        "--values",
+        "7",
+        "--json"
+      ],
+      "hashseed": 0,
+      "host_before": {
+        "monotonic": 6360859.301505874,
+        "cpu_ticks": {
+          "cpu2": [
+            29439665,
+            5184,
+            2863993,
+            601123808,
+            145166,
+            0,
+            40291,
+            0,
+            0,
+            0
+          ],
+          "cpu3": [
+            3986255,
+            283,
+            956469,
+            630055054,
+            48379,
+            0,
+            8144,
+            0,
+            0,
+            0
+          ]
+        },
+        "clock_ticks": 100,
+        "cpu2_instant_khz": 643831,
+        "cpu3_instant_khz": 400000
+      },
+      "host_after": {
+        "monotonic": 6360859.516854011,
+        "cpu_ticks": {
+          "cpu2": [
+            29439681,
+            5184,
+            2863993,
+            601123812,
+            145166,
+            0,
+            40291,
+            0,
+            0,
+            0
+          ],
+          "cpu3": [
+            3986255,
+            283,
+            956469,
+            630055076,
+            48379,
+            0,
+            8144,
+            0,
+            0,
+            0
+          ]
+        },
+        "clock_ticks": 100,
+        "cpu2_instant_khz": 400000,
+        "cpu3_instant_khz": 400000
+      },
+      "worker_cgroup": "0::/user.slice/user-1000.slice/user@1000.service/tmux-spawn-7882e45f-60a7-4a00-a2d8-78980a66e406.scope\n",
+      "child_usage_delta": {
+        "ru_utime": 0.1660190000000057,
+        "ru_stime": 0.0050000000000000044,
+        "ru_minflt": 2140,
+        "ru_majflt": 0,
+        "ru_nvcsw": 1,
+        "ru_nivcsw": 4
+      },
+      "mean": 0.014665311202406883,
+      "checksum": 409.3151805348543,
+      "sqlalchemy_version": null,
+      "sqlite_version": null
+    },
+    {
+      "block": 0,
+      "name": "sqlalchemy_declarative",
+      "variant": "main",
+      "rc": 0,
+      "wall": 1.3193566082045436,
+      "command": [
+        "taskset",
+        "-c",
+        "2",
+        "/home/methane/work/python/cpython-gc/jit-artifacts/regressions-20260919/r0-gil-main-build/python",
+        "/home/methane/work/python/cpython-gc/benchmarks/sqlalchemy_declarative.py",
+        "--loops",
+        "1",
+        "--warmups",
+        "3",
+        "--values",
+        "7",
+        "--json"
+      ],
+      "hashseed": 0,
+      "host_before": {
+        "monotonic": 6360859.520599147,
+        "cpu_ticks": {
+          "cpu2": [
+            29439681,
+            5184,
+            2863993,
+            601123813,
+            145166,
+            0,
+            40291,
+            0,
+            0,
+            0
+          ],
+          "cpu3": [
+            3986255,
+            283,
+            956469,
+            630055076,
+            48379,
+            0,
+            8144,
+            0,
+            0,
+            0
+          ]
+        },
+        "clock_ticks": 100,
+        "cpu2_instant_khz": 400000,
+        "cpu3_instant_khz": 400000
+      },
+      "host_after": {
+        "monotonic": 6360860.840266144,
+        "cpu_ticks": {
+          "cpu2": [
+            29439808,
+            5184,
+            2863997,
+            601123815,
+            145166,
+            0,
+            40291,
+            0,
+            0,
+            0
+          ],
+          "cpu3": [
+            3986255,
+            283,
+            956469,
+            630055208,
+            48379,
+            0,
+            8144,
+            0,
+            0,
+            0
+          ]
+        },
+        "clock_ticks": 100,
+        "cpu2_instant_khz": 1177576,
+        "cpu3_instant_khz": 400000
+      },
+      "worker_cgroup": "0::/user.slice/user-1000.slice/user@1000.service/tmux-spawn-7882e45f-60a7-4a00-a2d8-78980a66e406.scope\n",
+      "child_usage_delta": {
+        "ru_utime": 1.2645879999999963,
+        "ru_stime": 0.03498899999999999,
+        "ru_minflt": 9232,
+        "ru_majflt": 0,
+        "ru_nvcsw": 2,
+        "ru_nivcsw": 10
+      },
+      "mean": 0.08143943375242609,
+      "checksum": {
+        "people": 100,
+        "addresses": 100,
+        "person_id_sum": 5050,
+        "post_code_sum": 4950
+      },
+      "sqlalchemy_version": "1.4.19",
+      "sqlite_version": "3.45.1"
+    },
+    {
+      "block": 0,
+      "name": "sqlalchemy_declarative",
+      "variant": "candidate",
+      "rc": 0,
+      "wall": 1.2683957936242223,
+      "command": [
+        "taskset",
+        "-c",
+        "2",
+        "/home/methane/work/python/cpython-gc/jit-artifacts/regressions-20260919/m56b-gil-pgo-lto-build/python",
+        "/home/methane/work/python/cpython-gc/benchmarks/sqlalchemy_declarative.py",
+        "--loops",
+        "1",
+        "--warmups",
+        "3",
+        "--values",
+        "7",
+        "--json"
+      ],
+      "hashseed": 0,
+      "host_before": {
+        "monotonic": 6360860.841374689,
+        "cpu_ticks": {
+          "cpu2": [
+            29439808,
+            5184,
+            2863997,
+            601123815,
+            145166,
+            0,
+            40291,
+            0,
+            0,
+            0
+          ],
+          "cpu3": [
+            3986255,
+            283,
+            956469,
+            630055208,
+            48379,
+            0,
+            8144,
+            0,
+            0,
+            0
+          ]
+        },
+        "clock_ticks": 100,
+        "cpu2_instant_khz": 637353,
+        "cpu3_instant_khz": 400000
+      },
+      "host_after": {
+        "monotonic": 6360862.109958183,
+        "cpu_ticks": {
+          "cpu2": [
+            29439929,
+            5184,
+            2864000,
+            601123817,
+            145166,
+            0,
+            40291,
+            0,
+            0,
+            0
+          ],
+          "cpu3": [
+            3986255,
+            283,
+            956469,
+            630055335,
+            48379,
+            0,
+            8144,
+            0,
+            0,
+            0
+          ]
+        },
+        "clock_ticks": 100,
+        "cpu2_instant_khz": 527369,
+        "cpu3_instant_khz": 400000
+      },
+      "worker_cgroup": "0::/user.slice/user-1000.slice/user@1000.service/tmux-spawn-7882e45f-60a7-4a00-a2d8-78980a66e406.scope\n",
+      "child_usage_delta": {
+        "ru_utime": 1.2178979999999981,
+        "ru_stime": 0.026997999999999994,
+        "ru_minflt": 9580,
+        "ru_majflt": 0,
+        "ru_nvcsw": 1,
+        "ru_nivcsw": 8
+      },
+      "mean": 0.076044908325587,
+      "checksum": {
+        "people": 100,
+        "addresses": 100,
+        "person_id_sum": 5050,
+        "post_code_sum": 4950
+      },
+      "sqlalchemy_version": "1.4.19",
+      "sqlite_version": "3.45.1"
+    },
+    {
+      "block": 1,
+      "name": "bpe_tokeniser",
+      "variant": "candidate",
+      "rc": 0,
+      "wall": 21.13254986423999,
+      "command": [
+        "taskset",
+        "-c",
+        "2",
+        "/home/methane/work/python/cpython-gc/jit-artifacts/regressions-20260919/m56b-gil-pgo-lto-build/python",
+        "/home/methane/work/python/cpython-gc/benchmarks/bpe_tokeniser.py",
+        "--loops",
+        "1",
+        "--warmups",
+        "3",
+        "--values",
+        "7",
+        "--json"
+      ],
+      "hashseed": 1,
+      "host_before": {
+        "monotonic": 6360862.111058221,
+        "cpu_ticks": {
+          "cpu2": [
+            29439929,
+            5184,
+            2864000,
+            601123817,
+            145166,
+            0,
+            40291,
+            0,
+            0,
+            0
+          ],
+          "cpu3": [
+            3986255,
+            283,
+            956469,
+            630055335,
+            48379,
+            0,
+            8144,
+            0,
+            0,
+            0
+          ]
+        },
+        "clock_ticks": 100,
+        "cpu2_instant_khz": 527369,
+        "cpu3_instant_khz": 400000
+      },
+      "host_after": {
+        "monotonic": 6360883.243827392,
+        "cpu_ticks": {
+          "cpu2": [
+            29442039,
+            5184,
+            2864000,
+            601123820,
+            145166,
+            0,
+            40291,
+            0,
+            0,
+            0
+          ],
+          "cpu3": [
+            3986256,
+            283,
+            956469,
+            630057447,
+            48379,
+            0,
+            8144,
+            0,
+            0,
+            0
+          ]
+        },
+        "clock_ticks": 100,
+        "cpu2_instant_khz": 484082,
+        "cpu3_instant_khz": 400000
+      },
+      "worker_cgroup": "0::/user.slice/user-1000.slice/user@1000.service/tmux-spawn-7882e45f-60a7-4a00-a2d8-78980a66e406.scope\n",
+      "child_usage_delta": {
+        "ru_utime": 21.094485000000006,
+        "ru_stime": 0.006998000000000004,
+        "ru_minflt": 3540,
+        "ru_majflt": 0,
+        "ru_nvcsw": 3,
+        "ru_nivcsw": 103
+      },
+      "mean": 2.112869158387184,
+      "checksum": {
+        "tokens": 10335,
+        "token_sha256": "ae6aed60fc44c7a735e5d9e9f896ece86ad7209ab658e0599c332534c604242e"
+      },
+      "sqlalchemy_version": null,
+      "sqlite_version": null
+    },
+    {
+      "block": 1,
+      "name": "bpe_tokeniser",
+      "variant": "main",
+      "rc": 0,
+      "wall": 25.097914251498878,
+      "command": [
+        "taskset",
+        "-c",
+        "2",
+        "/home/methane/work/python/cpython-gc/jit-artifacts/regressions-20260919/r0-gil-main-build/python",
+        "/home/methane/work/python/cpython-gc/benchmarks/bpe_tokeniser.py",
+        "--loops",
+        "1",
+        "--warmups",
+        "3",
+        "--values",
+        "7",
+        "--json"
+      ],
+      "hashseed": 1,
+      "host_before": {
+        "monotonic": 6360883.24544235,
+        "cpu_ticks": {
+          "cpu2": [
+            29442039,
+            5184,
+            2864000,
+            601123820,
+            145166,
+            0,
+            40291,
+            0,
+            0,
+            0
+          ],
+          "cpu3": [
+            3986256,
+            283,
+            956469,
+            630057447,
+            48379,
+            0,
+            8144,
+            0,
+            0,
+            0
+          ]
+        },
+        "clock_ticks": 100,
+        "cpu2_instant_khz": 400000,
+        "cpu3_instant_khz": 400000
+      },
+      "host_after": {
+        "monotonic": 6360908.343566907,
+        "cpu_ticks": {
+          "cpu2": [
+            29444547,
+            5184,
+            2864001,
+            601123822,
+            145166,
+            0,
+            40291,
+            0,
+            0,
+            0
+          ],
+          "cpu3": [
+            3986256,
+            283,
+            956469,
+            630059956,
+            48379,
+            0,
+            8144,
+            0,
+            0,
+            0
+          ]
+        },
+        "clock_ticks": 100,
+        "cpu2_instant_khz": 2456723,
+        "cpu3_instant_khz": 400000
+      },
+      "worker_cgroup": "0::/user.slice/user-1000.slice/user@1000.service/tmux-spawn-7882e45f-60a7-4a00-a2d8-78980a66e406.scope\n",
+      "child_usage_delta": {
+        "ru_utime": 25.072923000000003,
+        "ru_stime": 0.008999000000000007,
+        "ru_minflt": 4717,
+        "ru_majflt": 0,
+        "ru_nvcsw": 9,
+        "ru_nivcsw": 117
+      },
+      "mean": 2.5087079239477004,
+      "checksum": {
+        "tokens": 10335,
+        "token_sha256": "ae6aed60fc44c7a735e5d9e9f896ece86ad7209ab658e0599c332534c604242e"
+      },
+      "sqlalchemy_version": null,
+      "sqlite_version": null
+    },
+    {
+      "block": 1,
+      "name": "btree",
+      "variant": "candidate",
+      "rc": 0,
+      "wall": 0.566582452505827,
+      "command": [
+        "taskset",
+        "-c",
+        "2",
+        "/home/methane/work/python/cpython-gc/jit-artifacts/regressions-20260919/m56b-gil-pgo-lto-build/python",
+        "/home/methane/work/python/cpython-gc/benchmarks/btree.py",
+        "--loops",
+        "1",
+        "--warmups",
+        "3",
+        "--values",
+        "7",
+        "--json"
+      ],
+      "hashseed": 1,
+      "host_before": {
+        "monotonic": 6360908.344708366,
+        "cpu_ticks": {
+          "cpu2": [
+            29444547,
+            5184,
+            2864001,
+            601123822,
+            145166,
+            0,
+            40291,
+            0,
+            0,
+            0
+          ],
+          "cpu3": [
+            3986256,
+            283,
+            956469,
+            630059956,
+            48379,
+            0,
+            8144,
+            0,
+            0,
+            0
+          ]
+        },
+        "clock_ticks": 100,
+        "cpu2_instant_khz": 1974218,
+        "cpu3_instant_khz": 400000
+      },
+      "host_after": {
+        "monotonic": 6360908.911665548,
+        "cpu_ticks": {
+          "cpu2": [
+            29444598,
+            5184,
+            2864002,
+            601123826,
+            145166,
+            0,
+            40291,
+            0,
+            0,
+            0
+          ],
+          "cpu3": [
+            3986256,
+            283,
+            956469,
+            630060012,
+            48379,
+            0,
+            8144,
+            0,
+            0,
+            0
+          ]
+        },
+        "clock_ticks": 100,
+        "cpu2_instant_khz": 400000,
+        "cpu3_instant_khz": 400000
+      },
+      "worker_cgroup": "0::/user.slice/user-1000.slice/user@1000.service/tmux-spawn-7882e45f-60a7-4a00-a2d8-78980a66e406.scope\n",
+      "child_usage_delta": {
+        "ru_utime": 0.5171979999999934,
+        "ru_stime": 0.0070029999999999815,
+        "ru_minflt": 5536,
+        "ru_majflt": 0,
+        "ru_nvcsw": 1,
+        "ru_nivcsw": 3
+      },
+      "mean": 0.04526163411459753,
+      "checksum": {
+        "records": 20000,
+        "total": 9960.672765258027,
+        "lookup_total": 508.57815295215465
+      },
+      "sqlalchemy_version": null,
+      "sqlite_version": null
+    },
+    {
+      "block": 1,
+      "name": "btree",
+      "variant": "main",
+      "rc": 0,
+      "wall": 0.6671428326517344,
+      "command": [
+        "taskset",
+        "-c",
+        "2",
+        "/home/methane/work/python/cpython-gc/jit-artifacts/regressions-20260919/r0-gil-main-build/python",
+        "/home/methane/work/python/cpython-gc/benchmarks/btree.py",
+        "--loops",
+        "1",
+        "--warmups",
+        "3",
+        "--values",
+        "7",
+        "--json"
+      ],
+      "hashseed": 1,
+      "host_before": {
+        "monotonic": 6360908.915489738,
+        "cpu_ticks": {
+          "cpu2": [
+            29444598,
+            5184,
+            2864002,
+            601123827,
+            145166,
+            0,
+            40291,
+            0,
+            0,
+            0
+          ],
+          "cpu3": [
+            3986256,
+            283,
+            956469,
+            630060013,
+            48379,
+            0,
+            8144,
+            0,
+            0,
+            0
+          ]
+        },
+        "clock_ticks": 100,
+        "cpu2_instant_khz": 400000,
+        "cpu3_instant_khz": 400000
+      },
+      "host_after": {
+        "monotonic": 6360909.582913257,
+        "cpu_ticks": {
+          "cpu2": [
+            29444662,
+            5184,
+            2864003,
+            601123829,
+            145166,
+            0,
+            40291,
+            0,
+            0,
+            0
+          ],
+          "cpu3": [
+            3986256,
+            283,
+            956469,
+            630060079,
+            48379,
+            0,
+            8144,
+            0,
+            0,
+            0
+          ]
+        },
+        "clock_ticks": 100,
+        "cpu2_instant_khz": 528869,
+        "cpu3_instant_khz": 400000
+      },
+      "worker_cgroup": "0::/user.slice/user-1000.slice/user@1000.service/tmux-spawn-7882e45f-60a7-4a00-a2d8-78980a66e406.scope\n",
+      "child_usage_delta": {
+        "ru_utime": 0.6396119999999996,
+        "ru_stime": 0.009009000000000017,
+        "ru_minflt": 5215,
+        "ru_majflt": 0,
+        "ru_nvcsw": 1,
+        "ru_nivcsw": 5
+      },
+      "mean": 0.05709432065486908,
+      "checksum": {
+        "records": 20000,
+        "total": 9960.672765258027,
+        "lookup_total": 508.57815295215465
+      },
+      "sqlalchemy_version": null,
+      "sqlite_version": null
+    },
+    {
+      "block": 1,
+      "name": "deltablue",
+      "variant": "candidate",
+      "rc": 0,
+      "wall": 0.5160262789577246,
+      "command": [
+        "taskset",
+        "-c",
+        "2",
+        "/home/methane/work/python/cpython-gc/jit-artifacts/regressions-20260919/m56b-gil-pgo-lto-build/python",
+        "/home/methane/work/python/cpython-gc/benchmarks/deltablue.py",
+        "--loops",
+        "32",
+        "--warmups",
+        "3",
+        "--values",
+        "7",
+        "--json"
+      ],
+      "hashseed": 1,
+      "host_before": {
+        "monotonic": 6360909.584122568,
+        "cpu_ticks": {
+          "cpu2": [
+            29444662,
+            5184,
+            2864003,
+            601123829,
+            145166,
+            0,
+            40291,
+            0,
+            0,
+            0
+          ],
+          "cpu3": [
+            3986256,
+            283,
+            956469,
+            630060080,
+            48379,
+            0,
+            8144,
+            0,
+            0,
+            0
+          ]
+        },
+        "clock_ticks": 100,
+        "cpu2_instant_khz": 528869,
+        "cpu3_instant_khz": 400000
+      },
+      "host_after": {
+        "monotonic": 6360910.100336381,
+        "cpu_ticks": {
+          "cpu2": [
+            29444712,
+            5184,
+            2864004,
+            601123829,
+            145166,
+            0,
+            40291,
+            0,
+            0,
+            0
+          ],
+          "cpu3": [
+            3986256,
+            283,
+            956469,
+            630060131,
+            48379,
+            0,
+            8144,
+            0,
+            0,
+            0
+          ]
+        },
+        "clock_ticks": 100,
+        "cpu2_instant_khz": 400000,
+        "cpu3_instant_khz": 400000
+      },
+      "worker_cgroup": "0::/user.slice/user-1000.slice/user@1000.service/tmux-spawn-7882e45f-60a7-4a00-a2d8-78980a66e406.scope\n",
+      "child_usage_delta": {
+        "ru_utime": 0.5031759999999963,
+        "ru_stime": 0.011002999999999985,
+        "ru_minflt": 4465,
+        "ru_majflt": 0,
+        "ru_nvcsw": 1,
+        "ru_nivcsw": 6
+      },
+      "mean": 0.0014960156737028488,
+      "checksum": {
+        "chain_last": 99,
+        "source_last": -190.0,
+        "projection_sum": 223305
+      },
+      "sqlalchemy_version": null,
+      "sqlite_version": null
+    },
+    {
+      "block": 1,
+      "name": "deltablue",
+      "variant": "main",
+      "rc": 0,
+      "wall": 0.5663030128926039,
+      "command": [
+        "taskset",
+        "-c",
+        "2",
+        "/home/methane/work/python/cpython-gc/jit-artifacts/regressions-20260919/r0-gil-main-build/python",
+        "/home/methane/work/python/cpython-gc/benchmarks/deltablue.py",
+        "--loops",
+        "32",
+        "--warmups",
+        "3",
+        "--values",
+        "7",
+        "--json"
+      ],
+      "hashseed": 1,
+      "host_before": {
+        "monotonic": 6360910.101587599,
+        "cpu_ticks": {
+          "cpu2": [
+            29444712,
+            5184,
+            2864004,
+            601123829,
+            145166,
+            0,
+            40291,
+            0,
+            0,
+            0
+          ],
+          "cpu3": [
+            3986256,
+            283,
+            956469,
+            630060131,
+            48379,
+            0,
+            8144,
+            0,
+            0,
+            0
+          ]
+        },
+        "clock_ticks": 100,
+        "cpu2_instant_khz": 918306,
+        "cpu3_instant_khz": 400000
+      },
+      "host_after": {
+        "monotonic": 6360910.668277276,
+        "cpu_ticks": {
+          "cpu2": [
+            29444763,
+            5184,
+            2864004,
+            601123834,
+            145166,
+            0,
+            40291,
+            0,
+            0,
+            0
+          ],
+          "cpu3": [
+            3986256,
+            283,
+            956469,
+            630060188,
+            48379,
+            0,
+            8144,
+            0,
+            0,
+            0
+          ]
+        },
+        "clock_ticks": 100,
+        "cpu2_instant_khz": 400000,
+        "cpu3_instant_khz": 400000
+      },
+      "worker_cgroup": "0::/user.slice/user-1000.slice/user@1000.service/tmux-spawn-7882e45f-60a7-4a00-a2d8-78980a66e406.scope\n",
+      "child_usage_delta": {
+        "ru_utime": 0.5110950000000116,
+        "ru_stime": 0.006002000000000035,
+        "ru_minflt": 3113,
+        "ru_majflt": 0,
+        "ru_nvcsw": 1,
+        "ru_nivcsw": 3
+      },
+      "mean": 0.0015109975564493133,
+      "checksum": {
+        "chain_last": 99,
+        "source_last": -190.0,
+        "projection_sum": 223305
+      },
+      "sqlalchemy_version": null,
+      "sqlite_version": null
+    },
+    {
+      "block": 1,
+      "name": "go",
+      "variant": "candidate",
+      "rc": 0,
+      "wall": 0.6167148146778345,
+      "command": [
+        "taskset",
+        "-c",
+        "2",
+        "/home/methane/work/python/cpython-gc/jit-artifacts/regressions-20260919/m56b-gil-pgo-lto-build/python",
+        "/home/methane/work/python/cpython-gc/benchmarks/go.py",
+        "--loops",
+        "1",
+        "--warmups",
+        "3",
+        "--values",
+        "7",
+        "--json"
+      ],
+      "hashseed": 1,
+      "host_before": {
+        "monotonic": 6360910.671914349,
+        "cpu_ticks": {
+          "cpu2": [
+            29444763,
+            5184,
+            2864004,
+            601123834,
+            145166,
+            0,
+            40291,
+            0,
+            0,
+            0
+          ],
+          "cpu3": [
+            3986256,
+            283,
+            956469,
+            630060188,
+            48379,
+            0,
+            8144,
+            0,
+            0,
+            0
+          ]
+        },
+        "clock_ticks": 100,
+        "cpu2_instant_khz": 400000,
+        "cpu3_instant_khz": 400000
+      },
+      "host_after": {
+        "monotonic": 6360911.28908856,
+        "cpu_ticks": {
+          "cpu2": [
+            29444820,
+            5184,
+            2864005,
+            601123839,
+            145166,
+            0,
+            40291,
+            0,
+            0,
+            0
+          ],
+          "cpu3": [
+            3986256,
+            283,
+            956469,
+            630060250,
+            48379,
+            0,
+            8144,
+            0,
+            0,
+            0
+          ]
+        },
+        "clock_ticks": 100,
+        "cpu2_instant_khz": 877999,
+        "cpu3_instant_khz": 400000
+      },
+      "worker_cgroup": "0::/user.slice/user-1000.slice/user@1000.service/tmux-spawn-7882e45f-60a7-4a00-a2d8-78980a66e406.scope\n",
+      "child_usage_delta": {
+        "ru_utime": 0.5630839999999893,
+        "ru_stime": 0.013001999999999958,
+        "ru_minflt": 4940,
+        "ru_majflt": 0,
+        "ru_nvcsw": 1,
+        "ru_nivcsw": 5
+      },
+      "mean": 0.05164034052618912,
+      "checksum": {
+        "move": 5,
+        "timestamp_delta": 81059,
+        "moves_delta": 21401
+      },
+      "sqlalchemy_version": null,
+      "sqlite_version": null
+    },
+    {
+      "block": 1,
+      "name": "go",
+      "variant": "main",
+      "rc": 0,
+      "wall": 0.6673700958490372,
+      "command": [
+        "taskset",
+        "-c",
+        "2",
+        "/home/methane/work/python/cpython-gc/jit-artifacts/regressions-20260919/r0-gil-main-build/python",
+        "/home/methane/work/python/cpython-gc/benchmarks/go.py",
+        "--loops",
+        "1",
+        "--warmups",
+        "3",
+        "--values",
+        "7",
+        "--json"
+      ],
+      "hashseed": 1,
+      "host_before": {
+        "monotonic": 6360911.293230119,
+        "cpu_ticks": {
+          "cpu2": [
+            29444820,
+            5184,
+            2864005,
+            601123839,
+            145166,
+            0,
+            40291,
+            0,
+            0,
+            0
+          ],
+          "cpu3": [
+            3986256,
+            283,
+            956469,
+            630060250,
+            48379,
+            0,
+            8144,
+            0,
+            0,
+            0
+          ]
+        },
+        "clock_ticks": 100,
+        "cpu2_instant_khz": 877999,
+        "cpu3_instant_khz": 400000
+      },
+      "host_after": {
+        "monotonic": 6360911.961081616,
+        "cpu_ticks": {
+          "cpu2": [
+            29444881,
+            5184,
+            2864007,
+            601123843,
+            145166,
+            0,
+            40291,
+            0,
+            0,
+            0
+          ],
+          "cpu3": [
+            3986256,
+            283,
+            956469,
+            630060317,
+            48379,
+            0,
+            8144,
+            0,
+            0,
+            0
+          ]
+        },
+        "clock_ticks": 100,
+        "cpu2_instant_khz": 400000,
+        "cpu3_instant_khz": 400000
+      },
+      "worker_cgroup": "0::/user.slice/user-1000.slice/user@1000.service/tmux-spawn-7882e45f-60a7-4a00-a2d8-78980a66e406.scope\n",
+      "child_usage_delta": {
+        "ru_utime": 0.6125040000000013,
+        "ru_stime": 0.013988,
+        "ru_minflt": 3643,
+        "ru_majflt": 0,
+        "ru_nvcsw": 1,
+        "ru_nivcsw": 8
+      },
+      "mean": 0.059197032158928256,
+      "checksum": {
+        "move": 5,
+        "timestamp_delta": 81059,
+        "moves_delta": 21401
+      },
+      "sqlalchemy_version": null,
+      "sqlite_version": null
+    },
+    {
+      "block": 1,
+      "name": "hexiom",
+      "variant": "candidate",
+      "rc": 0,
+      "wall": 0.46629424300044775,
+      "command": [
+        "taskset",
+        "-c",
+        "2",
+        "/home/methane/work/python/cpython-gc/jit-artifacts/regressions-20260919/m56b-gil-pgo-lto-build/python",
+        "/home/methane/work/python/cpython-gc/benchmarks/hexiom.py",
+        "--loops",
+        "16",
+        "--warmups",
+        "3",
+        "--values",
+        "7",
+        "--json"
+      ],
+      "hashseed": 1,
+      "host_before": {
+        "monotonic": 6360911.964717346,
+        "cpu_ticks": {
+          "cpu2": [
+            29444881,
+            5184,
+            2864007,
+            601123844,
+            145166,
+            0,
+            40291,
+            0,
+            0,
+            0
+          ],
+          "cpu3": [
+            3986256,
+            283,
+            956469,
+            630060317,
+            48379,
+            0,
+            8144,
+            0,
+            0,
+            0
+          ]
+        },
+        "clock_ticks": 100,
+        "cpu2_instant_khz": 400000,
+        "cpu3_instant_khz": 400000
+      },
+      "host_after": {
+        "monotonic": 6360912.431264959,
+        "cpu_ticks": {
+          "cpu2": [
+            29444925,
+            5184,
+            2864007,
+            601123846,
+            145166,
+            0,
+            40291,
+            0,
+            0,
+            0
+          ],
+          "cpu3": [
+            3986256,
+            283,
+            956469,
+            630060364,
+            48379,
+            0,
+            8144,
+            0,
+            0,
+            0
+          ]
+        },
+        "clock_ticks": 100,
+        "cpu2_instant_khz": 936768,
+        "cpu3_instant_khz": 400000
+      },
+      "worker_cgroup": "0::/user.slice/user-1000.slice/user@1000.service/tmux-spawn-7882e45f-60a7-4a00-a2d8-78980a66e406.scope\n",
+      "child_usage_delta": {
+        "ru_utime": 0.43589900000000625,
+        "ru_stime": 0.007998000000000005,
+        "ru_minflt": 3615,
+        "ru_majflt": 0,
+        "ru_nvcsw": 1,
+        "ru_nivcsw": 5
+      },
+      "mean": 0.002524407297771956,
+      "checksum": "  3 4 2\n 2 4 4 .\n. . . 4 2\n . 2 4 3\n  . 2 .",
+      "sqlalchemy_version": null,
+      "sqlite_version": null
+    },
+    {
+      "block": 1,
+      "name": "hexiom",
+      "variant": "main",
+      "rc": 0,
+      "wall": 0.5663272859528661,
+      "command": [
+        "taskset",
+        "-c",
+        "2",
+        "/home/methane/work/python/cpython-gc/jit-artifacts/regressions-20260919/r0-gil-main-build/python",
+        "/home/methane/work/python/cpython-gc/benchmarks/hexiom.py",
+        "--loops",
+        "16",
+        "--warmups",
+        "3",
+        "--values",
+        "7",
+        "--json"
+      ],
+      "hashseed": 1,
+      "host_before": {
+        "monotonic": 6360912.432836968,
+        "cpu_ticks": {
+          "cpu2": [
+            29444925,
+            5184,
+            2864007,
+            601123846,
+            145166,
+            0,
+            40291,
+            0,
+            0,
+            0
+          ],
+          "cpu3": [
+            3986256,
+            283,
+            956469,
+            630060364,
+            48379,
+            0,
+            8144,
+            0,
+            0,
+            0
+          ]
+        },
+        "clock_ticks": 100,
+        "cpu2_instant_khz": 936768,
+        "cpu3_instant_khz": 400000
+      },
+      "host_after": {
+        "monotonic": 6360912.999360638,
+        "cpu_ticks": {
+          "cpu2": [
+            29444979,
+            5184,
+            2864008,
+            601123848,
+            145166,
+            0,
+            40291,
+            0,
+            0,
+            0
+          ],
+          "cpu3": [
+            3986256,
+            283,
+            956469,
+            630060421,
+            48379,
+            0,
+            8144,
+            0,
+            0,
+            0
+          ]
+        },
+        "clock_ticks": 100,
+        "cpu2_instant_khz": 741216,
+        "cpu3_instant_khz": 400000
+      },
+      "worker_cgroup": "0::/user.slice/user-1000.slice/user@1000.service/tmux-spawn-7882e45f-60a7-4a00-a2d8-78980a66e406.scope\n",
+      "child_usage_delta": {
+        "ru_utime": 0.5395129999999995,
+        "ru_stime": 0.005004999999999982,
+        "ru_minflt": 2654,
+        "ru_majflt": 0,
+        "ru_nvcsw": 1,
+        "ru_nivcsw": 4
+      },
+      "mean": 0.003211897057813725,
+      "checksum": "  3 4 2\n 2 4 4 .\n. . . 4 2\n . 2 4 3\n  . 2 .",
+      "sqlalchemy_version": null,
+      "sqlite_version": null
+    },
+    {
+      "block": 1,
+      "name": "raytrace",
+      "variant": "candidate",
+      "rc": 0,
+      "wall": 1.418993055820465,
+      "command": [
+        "taskset",
+        "-c",
+        "2",
+        "/home/methane/work/python/cpython-gc/jit-artifacts/regressions-20260919/m56b-gil-pgo-lto-build/python",
+        "/home/methane/work/python/cpython-gc/benchmarks/raytrace.py",
+        "--loops",
+        "1",
+        "--warmups",
+        "3",
+        "--values",
+        "7",
+        "--json"
+      ],
+      "hashseed": 1,
+      "host_before": {
+        "monotonic": 6360913.00077192,
+        "cpu_ticks": {
+          "cpu2": [
+            29444979,
+            5184,
+            2864008,
+            601123848,
+            145166,
+            0,
+            40291,
+            0,
+            0,
+            0
+          ],
+          "cpu3": [
+            3986256,
+            283,
+            956469,
+            630060421,
+            48379,
+            0,
+            8144,
+            0,
+            0,
+            0
+          ]
+        },
+        "clock_ticks": 100,
+        "cpu2_instant_khz": 741216,
+        "cpu3_instant_khz": 400000
+      },
+      "host_after": {
+        "monotonic": 6360914.419955508,
+        "cpu_ticks": {
+          "cpu2": [
+            29445118,
+            5184,
+            2864009,
+            601123850,
+            145166,
+            0,
+            40291,
+            0,
+            0,
+            0
+          ],
+          "cpu3": [
+            3986256,
+            283,
+            956469,
+            630060563,
+            48379,
+            0,
+            8144,
+            0,
+            0,
+            0
+          ]
+        },
+        "clock_ticks": 100,
+        "cpu2_instant_khz": 506116,
+        "cpu3_instant_khz": 400000
+      },
+      "worker_cgroup": "0::/user.slice/user-1000.slice/user@1000.service/tmux-spawn-7882e45f-60a7-4a00-a2d8-78980a66e406.scope\n",
+      "child_usage_delta": {
+        "ru_utime": 1.393455000000003,
+        "ru_stime": 0.010011000000000048,
+        "ru_minflt": 5415,
+        "ru_majflt": 0,
+        "ru_nvcsw": 1,
+        "ru_nivcsw": 7
+      },
+      "mean": 0.13697492411094053,
+      "checksum": {
+        "pixels": 10000,
+        "pixel_sha256": "11f2c36b02044f115c3937cae1156e9528b95da70f9d6b737a262f06757c2e6b"
+      },
+      "sqlalchemy_version": null,
+      "sqlite_version": null
+    },
+    {
+      "block": 1,
+      "name": "raytrace",
+      "variant": "main",
+      "rc": 0,
+      "wall": 1.4690592857077718,
+      "command": [
+        "taskset",
+        "-c",
+        "2",
+        "/home/methane/work/python/cpython-gc/jit-artifacts/regressions-20260919/r0-gil-main-build/python",
+        "/home/methane/work/python/cpython-gc/benchmarks/raytrace.py",
+        "--loops",
+        "1",
+        "--warmups",
+        "3",
+        "--values",
+        "7",
+        "--json"
+      ],
+      "hashseed": 1,
+      "host_before": {
+        "monotonic": 6360914.421395706,
+        "cpu_ticks": {
+          "cpu2": [
+            29445118,
+            5184,
+            2864009,
+            601123850,
+            145166,
+            0,
+            40291,
+            0,
+            0,
+            0
+          ],
+          "cpu3": [
+            3986256,
+            283,
+            956469,
+            630060563,
+            48379,
+            0,
+            8144,
+            0,
+            0,
+            0
+          ]
+        },
+        "clock_ticks": 100,
+        "cpu2_instant_khz": 506116,
+        "cpu3_instant_khz": 400000
+      },
+      "host_after": {
+        "monotonic": 6360915.890641189,
+        "cpu_ticks": {
+          "cpu2": [
+            29445262,
+            5184,
+            2864010,
+            601123853,
+            145166,
+            0,
+            40291,
+            0,
+            0,
+            0
+          ],
+          "cpu3": [
+            3986256,
+            283,
+            956469,
+            630060710,
+            48379,
+            0,
+            8144,
+            0,
+            0,
+            0
+          ]
+        },
+        "clock_ticks": 100,
+        "cpu2_instant_khz": 479187,
+        "cpu3_instant_khz": 400000
+      },
+      "worker_cgroup": "0::/user.slice/user-1000.slice/user@1000.service/tmux-spawn-7882e45f-60a7-4a00-a2d8-78980a66e406.scope\n",
+      "child_usage_delta": {
+        "ru_utime": 1.437460999999999,
+        "ru_stime": 0.008996000000000004,
+        "ru_minflt": 3286,
+        "ru_majflt": 0,
+        "ru_nvcsw": 1,
+        "ru_nivcsw": 9
+      },
+      "mean": 0.1411654558032751,
+      "checksum": {
+        "pixels": 10000,
+        "pixel_sha256": "11f2c36b02044f115c3937cae1156e9528b95da70f9d6b737a262f06757c2e6b"
+      },
+      "sqlalchemy_version": null,
+      "sqlite_version": null
+    },
+    {
+      "block": 1,
+      "name": "spectral_norm",
+      "variant": "candidate",
+      "rc": 0,
+      "wall": 0.21501976065337658,
+      "command": [
+        "taskset",
+        "-c",
+        "2",
+        "/home/methane/work/python/cpython-gc/jit-artifacts/regressions-20260919/m56b-gil-pgo-lto-build/python",
+        "/home/methane/work/python/cpython-gc/benchmarks/spectral_norm.py",
+        "--loops",
+        "1",
+        "--warmups",
+        "3",
+        "--values",
+        "7",
+        "--json"
+      ],
+      "hashseed": 1,
+      "host_before": {
+        "monotonic": 6360915.89214317,
+        "cpu_ticks": {
+          "cpu2": [
+            29445262,
+            5184,
+            2864010,
+            601123853,
+            145166,
+            0,
+            40291,
+            0,
+            0,
+            0
+          ],
+          "cpu3": [
+            3986256,
+            283,
+            956469,
+            630060710,
+            48379,
+            0,
+            8144,
+            0,
+            0,
+            0
+          ]
+        },
+        "clock_ticks": 100,
+        "cpu2_instant_khz": 479187,
+        "cpu3_instant_khz": 400000
+      },
+      "host_after": {
+        "monotonic": 6360916.107515897,
+        "cpu_ticks": {
+          "cpu2": [
+            29445278,
+            5184,
+            2864010,
+            601123857,
+            145166,
+            0,
+            40291,
+            0,
+            0,
+            0
+          ],
+          "cpu3": [
+            3986257,
+            283,
+            956469,
+            630060731,
+            48379,
+            0,
+            8144,
+            0,
+            0,
+            0
+          ]
+        },
+        "clock_ticks": 100,
+        "cpu2_instant_khz": 1596156,
+        "cpu3_instant_khz": 400000
+      },
+      "worker_cgroup": "0::/user.slice/user-1000.slice/user@1000.service/tmux-spawn-7882e45f-60a7-4a00-a2d8-78980a66e406.scope\n",
+      "child_usage_delta": {
+        "ru_utime": 0.1654879999999963,
+        "ru_stime": 0.006017999999999968,
+        "ru_minflt": 2136,
+        "ru_majflt": 0,
+        "ru_nvcsw": 1,
+        "ru_nivcsw": 4
+      },
+      "mean": 0.014658771455287933,
+      "checksum": 409.3151805348543,
+      "sqlalchemy_version": null,
+      "sqlite_version": null
+    },
+    {
+      "block": 1,
+      "name": "spectral_norm",
+      "variant": "main",
+      "rc": 0,
+      "wall": 0.3156419266015291,
+      "command": [
+        "taskset",
+        "-c",
+        "2",
+        "/home/methane/work/python/cpython-gc/jit-artifacts/regressions-20260919/r0-gil-main-build/python",
+        "/home/methane/work/python/cpython-gc/benchmarks/spectral_norm.py",
+        "--loops",
+        "1",
+        "--warmups",
+        "3",
+        "--values",
+        "7",
+        "--json"
+      ],
+      "hashseed": 1,
+      "host_before": {
+        "monotonic": 6360916.111742206,
+        "cpu_ticks": {
+          "cpu2": [
+            29445278,
+            5184,
+            2864010,
+            601123858,
+            145166,
+            0,
+            40291,
+            0,
+            0,
+            0
+          ],
+          "cpu3": [
+            3986257,
+            283,
+            956469,
+            630060732,
+            48379,
+            0,
+            8144,
+            0,
+            0,
+            0
+          ]
+        },
+        "clock_ticks": 100,
+        "cpu2_instant_khz": 400000,
+        "cpu3_instant_khz": 400000
+      },
+      "host_after": {
+        "monotonic": 6360916.427646512,
+        "cpu_ticks": {
+          "cpu2": [
+            29445308,
+            5184,
+            2864011,
+            601123858,
+            145166,
+            0,
+            40291,
+            0,
+            0,
+            0
+          ],
+          "cpu3": [
+            3986257,
+            283,
+            956469,
+            630060763,
+            48379,
+            0,
+            8144,
+            0,
+            0,
+            0
+          ]
+        },
+        "clock_ticks": 100,
+        "cpu2_instant_khz": 1573164,
+        "cpu3_instant_khz": 400000
+      },
+      "worker_cgroup": "0::/user.slice/user-1000.slice/user@1000.service/tmux-spawn-7882e45f-60a7-4a00-a2d8-78980a66e406.scope\n",
+      "child_usage_delta": {
+        "ru_utime": 0.30216000000000065,
+        "ru_stime": 0.00700400000000001,
+        "ru_minflt": 2064,
+        "ru_majflt": 0,
+        "ru_nvcsw": 1,
+        "ru_nivcsw": 3
+      },
+      "mean": 0.02797312941402197,
+      "checksum": 409.3151805348543,
+      "sqlalchemy_version": null,
+      "sqlite_version": null
+    },
+    {
+      "block": 1,
+      "name": "sqlalchemy_declarative",
+      "variant": "candidate",
+      "rc": 0,
+      "wall": 0.917381988838315,
+      "command": [
+        "taskset",
+        "-c",
+        "2",
+        "/home/methane/work/python/cpython-gc/jit-artifacts/regressions-20260919/m56b-gil-pgo-lto-build/python",
+        "/home/methane/work/python/cpython-gc/benchmarks/sqlalchemy_declarative.py",
+        "--loops",
+        "1",
+        "--warmups",
+        "3",
+        "--values",
+        "7",
+        "--json"
+      ],
+      "hashseed": 1,
+      "host_before": {
+        "monotonic": 6360916.429191623,
+        "cpu_ticks": {
+          "cpu2": [
+            29445308,
+            5184,
+            2864011,
+            601123858,
+            145166,
+            0,
+            40291,
+            0,
+            0,
+            0
+          ],
+          "cpu3": [
+            3986257,
+            283,
+            956469,
+            630060763,
+            48379,
+            0,
+            8144,
+            0,
+            0,
+            0
+          ]
+        },
+        "clock_ticks": 100,
+        "cpu2_instant_khz": 501819,
+        "cpu3_instant_khz": 400000
+      },
+      "host_after": {
+        "monotonic": 6360917.346739321,
+        "cpu_ticks": {
+          "cpu2": [
+            29445397,
+            5184,
+            2864012,
+            601123860,
+            145166,
+            0,
+            40291,
+            0,
+            0,
+            0
+          ],
+          "cpu3": [
+            3986257,
+            283,
+            956469,
+            630060854,
+            48379,
+            0,
+            8144,
+            0,
+            0,
+            0
+          ]
+        },
+        "clock_ticks": 100,
+        "cpu2_instant_khz": 1792558,
+        "cpu3_instant_khz": 400000
+      },
+      "worker_cgroup": "0::/user.slice/user-1000.slice/user@1000.service/tmux-spawn-7882e45f-60a7-4a00-a2d8-78980a66e406.scope\n",
+      "child_usage_delta": {
+        "ru_utime": 0.8869109999999978,
+        "ru_stime": 0.017998000000000014,
+        "ru_minflt": 8044,
+        "ru_majflt": 0,
+        "ru_nvcsw": 9,
+        "ru_nivcsw": 5
+      },
+      "mean": 0.07573492000145572,
+      "checksum": {
+        "people": 100,
+        "addresses": 100,
+        "person_id_sum": 5050,
+        "post_code_sum": 4950
+      },
+      "sqlalchemy_version": "1.4.19",
+      "sqlite_version": "3.45.1"
+    },
+    {
+      "block": 1,
+      "name": "sqlalchemy_declarative",
+      "variant": "main",
+      "rc": 0,
+      "wall": 0.9675483340397477,
+      "command": [
+        "taskset",
+        "-c",
+        "2",
+        "/home/methane/work/python/cpython-gc/jit-artifacts/regressions-20260919/r0-gil-main-build/python",
+        "/home/methane/work/python/cpython-gc/benchmarks/sqlalchemy_declarative.py",
+        "--loops",
+        "1",
+        "--warmups",
+        "3",
+        "--values",
+        "7",
+        "--json"
+      ],
+      "hashseed": 1,
+      "host_before": {
+        "monotonic": 6360917.348242203,
+        "cpu_ticks": {
+          "cpu2": [
+            29445397,
+            5184,
+            2864012,
+            601123860,
+            145166,
+            0,
+            40291,
+            0,
+            0,
+            0
+          ],
+          "cpu3": [
+            3986257,
+            283,
+            956469,
+            630060855,
+            48379,
+            0,
+            8144,
+            0,
+            0,
+            0
+          ]
+        },
+        "clock_ticks": 100,
+        "cpu2_instant_khz": 885751,
+        "cpu3_instant_khz": 400000
+      },
+      "host_after": {
+        "monotonic": 6360918.315977876,
+        "cpu_ticks": {
+          "cpu2": [
+            29445490,
+            5184,
+            2864014,
+            601123862,
+            145166,
+            0,
+            40291,
+            0,
+            0,
+            0
+          ],
+          "cpu3": [
+            3986257,
+            283,
+            956470,
+            630060950,
+            48379,
+            0,
+            8144,
+            0,
+            0,
+            0
+          ]
+        },
+        "clock_ticks": 100,
+        "cpu2_instant_khz": 1207233,
+        "cpu3_instant_khz": 400000
+      },
+      "worker_cgroup": "0::/user.slice/user-1000.slice/user@1000.service/tmux-spawn-7882e45f-60a7-4a00-a2d8-78980a66e406.scope\n",
+      "child_usage_delta": {
+        "ru_utime": 0.9340239999999937,
+        "ru_stime": 0.01699999999999996,
+        "ru_minflt": 7745,
+        "ru_majflt": 0,
+        "ru_nvcsw": 5,
+        "ru_nivcsw": 11
+      },
+      "mean": 0.08085138909518719,
+      "checksum": {
+        "people": 100,
+        "addresses": 100,
+        "person_id_sum": 5050,
+        "post_code_sum": 4950
+      },
+      "sqlalchemy_version": "1.4.19",
+      "sqlite_version": "3.45.1"
+    }
+  ],
+  "identity_verified_after": true,
+  "summary": {
+    "bpe_tokeniser": {
+      "ratios": [
+        0.8461761313446888,
+        0.8422140888614786
+      ],
+      "ratio": 0.8441927857289458,
+      "complete": true
+    },
+    "btree": {
+      "ratios": [
+        0.7976317781214957,
+        0.7927519514278967
+      ],
+      "ratio": 0.7951881215327092,
+      "complete": true
+    },
+    "deltablue": {
+      "ratios": [
+        0.9844794722252013,
+        0.9900847736764906
+      ],
+      "ratio": 0.9872781449253495,
+      "complete": true
+    },
+    "go": {
+      "ratios": [
+        0.8758727119060564,
+        0.8723467823107849
+      ],
+      "ratio": 0.8741079692721428,
+      "complete": true
+    },
+    "hexiom": {
+      "ratios": [
+        0.7875688786083715,
+        0.7859552321674563
+      ],
+      "ratio": 0.7867616416898487,
+      "complete": true
+    },
+    "raytrace": {
+      "ratios": [
+        1.0016457401949868,
+        0.9703147510948117
+      ],
+      "ratio": 0.9858557891915415,
+      "complete": true
+    },
+    "spectral_norm": {
+      "ratios": [
+        0.5216119578585916,
+        0.5240304450148504
+      ],
+      "ratio": 0.522819802993063,
+      "complete": true
+    },
+    "sqlalchemy_declarative": {
+      "ratios": [
+        0.9337602783040178,
+        0.9367176105322347
+      ],
+      "ratio": 0.9352377754896634,
+      "complete": true
+    }
+  }
+}

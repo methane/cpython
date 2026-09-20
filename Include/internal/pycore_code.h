@@ -80,6 +80,18 @@ typedef struct {
 
 #define INLINE_CACHE_ENTRIES_BINARY_OP CACHE_ENTRIES(_PyBinaryOpCache)
 
+/* BINARY_OP_SUBSCR_GETITEM reuses the external-cache space to describe its
+ * initial Python callee for static method compilation. Tier 1 remains
+ * polymorphic and validates each container's specialization cache. */
+typedef struct {
+    _Py_BackoffCounter counter;
+    uint16_t type_version[2];
+    uint16_t func_version[2];
+} _PyBinaryOpSubscrCache;
+
+static_assert(sizeof(_PyBinaryOpSubscrCache) == sizeof(_PyBinaryOpCache),
+              "Python subscript specialization must retain the BINARY_OP cache size");
+
 typedef struct {
     _Py_BackoffCounter counter;
 } _PyUnpackSequenceCache;
@@ -474,9 +486,6 @@ write_location_entry_start(uint8_t *ptr, int code, int length)
 // Can't assert this in pycore_backoff.h because of header order dependencies
 #if JUMP_BACKWARD_INITIAL_VALUE <= ADAPTIVE_COOLDOWN_VALUE
 #  error  "JIT threshold value should be larger than adaptive cooldown value"
-#endif
-#if SIDE_EXIT_INITIAL_VALUE <= ADAPTIVE_COOLDOWN_VALUE
-#  error  "Cold exit value should be larger than adaptive cooldown value"
 #endif
 
 static inline _Py_BackoffCounter

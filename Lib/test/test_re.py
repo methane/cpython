@@ -119,6 +119,28 @@ class ReTests(unittest.TestCase):
         int_value = int(matchobj.group(0))
         return str(int_value + 1)
 
+    def test_branch_prefix_failure_preserves_captures(self):
+        # Rejected literal/set prefixes must leave the enclosing captures
+        # intact, including within repeats and after another branch failed.
+        for marker in ('a', '\u0100', '\U00010000'):
+            pattern = rf'(?:({re.escape(marker)})|(b))(?:cat|dog|[ef]ox|([gh])at)*!'
+            cases = [
+                (marker + '!', (marker, None, None)),
+                (marker + 'fox!', (marker, None, None)),
+                (marker + 'gathat!', (marker, None, 'h')),
+                ('bcatdog!', (None, 'b', None)),
+            ]
+            for text, groups in cases:
+                with self.subTest(marker=marker, text=text):
+                    self.assertEqual(re.fullmatch(pattern, text).groups(), groups)
+                    if marker == 'a':
+                        expected = tuple(g.encode() if g is not None else None
+                                         for g in groups)
+                        self.assertEqual(re.fullmatch(pattern.encode(),
+                                                      text.encode()).groups(), expected)
+            for tail in ('fog!', 'z!', ''):
+                self.assertIsNone(re.fullmatch(pattern, marker + tail))
+
     def test_basic_re_sub(self):
         self.assertTypedEqual(re.sub('y', 'a', 'xyz'), 'xaz')
         self.assertTypedEqual(re.sub('y', S('a'), S('xyz')), 'xaz')

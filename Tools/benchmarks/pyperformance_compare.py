@@ -483,12 +483,14 @@ def run_suite(args, work, suite, env):
                 networkx = name.startswith("networkx")
                 cpus = parallel if name in PARALLEL else affinity
                 run_env = dict(env, PYPERF_ALLOW_JIT_SUSPENSION=str(int(
-                    BUILD_PROFILE == "ft" and name in THREADED)))
+                    BUILD_PROFILE == "ft" and name in THREADED)),
+                    PYPERF_REQUIRE_C_DECIMAL=str(int(name == "telco")))
                 cmd = [python, spec["script"], *spec["extra_opts"], "--output", target,
                        f"--affinity={cpus}", f"--processes={args.processes}",
                        f"--values={args.values}", f"--warmups={args.warmups}",
                        "--min-time=0.1", f"--timeout={args.networkx_timeout if networkx else args.timeout}",
-                       "--hook=ft_jit", "--inherit-environ=" + ",".join([*RUNTIME, "PYPERF_ALLOW_JIT_SUSPENSION"])]
+                       "--hook=ft_jit", "--inherit-environ=" + ",".join([
+                           *RUNTIME, "PYPERF_ALLOW_JIT_SUSPENSION", "PYPERF_REQUIRE_C_DECIMAL"])]
                 print(f"RUN block {block + 1}/{args.blocks} {index + 1}/{len(names)} {name} {side}", flush=True)
                 result = command(cmd, target.with_suffix(".log"), run_env, cwd=work,
                                  timeout=args.networkx_spec_timeout if networkx else args.spec_timeout)

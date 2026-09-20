@@ -1,8 +1,552 @@
-# JIT bug-remediation plan
+# Method-only JIT implementation and performance plan
 
-Updated: 2026-09-17
+Updated: 2026-09-20
 
-Current goal: completed. All eight standalone workloads, including SQLAlchemy,
+Current goal: achieved for the measured cohort, with the exclusions below.
+The candidate now uses static method compilation
+and Tier 1 fallback only. The recording frontend and dispatch, side traces,
+and tracing fallback have been removed. The user revised the performance goal
+on 2026-09-20: individual regressions above 10% are acceptable; the complete
+suite's geometric mean of candidate/main runtime ratios must be at most 1.00.
+Evaluate GIL and free-threaded configurations separately, report all individual
+regressions and missing specifications, and retain every measured worker.
+
+## Current execution status
+
+M56b is the final measured candidate. Both complete pyperformance profiles,
+the original local eight, correctness validation, identity audits, and the
+report are finished. Compiled runtime sources and generated outputs still
+exactly match the measured snapshot (patch SHA-256
+6c30ed6fec1151f4cd2354665dc95517779162b05fd0a31f496910af58fad573).
+After measurement, the unused TIER2_TO_TIER2 generator handler was removed
+and the retained Tier 1 exit handler was named directly. Regeneration changed
+no output; all 84 generated-cases tests passed. An audit of 3,869 tracked
+source files found only these two generator scripts different from the frozen
+source. The separate cleanup patch and audit are saved as
+`jit-artifacts/regressions-20260919/m56b-final-generator-cleanup.patch` and
+`m56b-postmeasurement-generator-audit.json` in the same directory.
+
+- GIL PGO/full-LTO: 122 results, geometric mean 0.97050770,
+  95% worker-bootstrap interval [0.96825009, 0.97309775]. Runtime is 2.95%
+  lower than tracing main. Both ordered blocks are below 1.00.
+- FT O3, no PGO/LTO: 121 results, geometric mean 0.92705223,
+  interval [0.92648257, 0.92762676]. Runtime is 7.29% lower than main Tier 1;
+  this fixed FT main does not create JIT executors.
+- Remaining GIL point regressions above 10%: shortest_path 1.14919,
+  sympy_expand 1.14804, base32_small 1.10108. They remain in the aggregate.
+  shortest_path has two candidate process speed bands; its cause is unknown.
+- Missing specifications: FastAPI dependencies and networkx_k_core timeouts
+  in both profiles; additionally FT Dask due to main's block-0 SIGSEGV. Dask's
+  other FT runs and all four GIL runs succeeded. Failed attempts are retained.
+- All 64 original local-eight runs passed, including checksums and identities.
+  Separate local geometric means: FT 0.74136, GIL 0.82743. The FT SQLAlchemy
+  declarative ratio is 1.01171; every other local point estimate is below 1.
+- Frozen GIL/debug/FT correctness checks and the eight runner tests passed.
+  The full four-way suite attempted 384 runs per profile. No more builds,
+  timing runs, or required implementation work remain for the revised goal.
+
+Final report: [benchmarks/method_only_m56b_results.md](benchmarks/method_only_m56b_results.md).
+It includes all results, intervals, missing specifications, binary hashes,
+methodology, and the separate boundary confirmation. The comparison includes
+existing C fixes as well as JIT changes; it does not isolate the frontend's
+causal contribution. FT still disables JIT on a second live thread state.
+Potential subsequent work is to diagnose the retained process speed bands and
+SymPy regression, and reproduce main's frame-inspection crash; these are not
+requirements of the user's revised geometric-mean goal. No upstream actions
+were performed. The user subsequently requested a local checkpoint commit of
+the implementation, tests, reports, and principal measurement records.
+
+The checkpoint preserves the measured runtime and both language versions of
+the comparison report. Source identity was checked again against the frozen
+M56b tree: only the two already-validated generator cleanup files differ.
+Saved final validation records all report success; no runtime change requires
+another build or benchmark run. Build trees, dependency caches, and unrelated
+local files remain outside the commit. The pre-existing go.py executable-bit
+change is also left in the working tree.
+
+This is suitable for exploratory design review, with known limits stated.
+Before using it to decide between frontends, align the main revision, runtime
+fixes, and build conditions for a direct three-way comparison. Before asking
+others to reproduce it, replace local build/cache assumptions with documented
+fresh-checkout steps. Concurrent FT JIT, broader platform validation, and
+separating the frontend, optimizations, and C fixes into reviewable changes
+remain future work, not claims of this checkpoint.
+
+## Comparison with the earlier optimized tracing JIT
+
+On 2026-09-20, compared `codex/tracing-jit` (`26c62af79da`) with M56b
+in [Misc/method_gc.md](Misc/method_gc.md), following the user's correction
+that the comparison concerns tracing JIT, not tracing GC. The report covers
+changes from each main baseline, handwritten runtime/test diff sizes,
+full-suite and matched-name performance, implementation effort, and the
+remaining work for concurrent free-threaded JIT execution. The older raw
+JSON hashes and process-mean ratios were rechecked, along with M56b's
+worker-mean ratios. No new runtime changes, builds, or timing runs were needed.
+The two historical GIL results both show about 3% less runtime than their
+respective main baselines; their different build settings and baselines do not
+establish a direct performance advantage for either frontend. A future direct
+comparison requires matching those conditions. No such run is pending here.
+
+## Execution history
+
+The following are chronological status snapshots, including earlier criteria
+and intermediate candidates. They do not replace the final result above.
+
+The complete M56b FT comparison has finished: 384 planned run attempts,
+121 comparable results, all runtime/dependency/workload identities verified.
+The balanced two-block geometric mean is 0.92705223 (7.29% less runtime).
+No individual completed point estimate exceeds 1.10. Missing specifications:
+FastAPI dependencies, networkx_k_core timeouts, and Dask's main block-0 SIGSEGV.
+Dask's other three runs, including main block 1, succeeded; its failed cohort
+is retained and the incomplete specification is excluded. GIL PGO/full-LTO
+measurement is now running. Bootstrap analysis follows both profiles so that
+analysis does not compete with timing. Local eight and final report remain.
+
+The first complete GIL PGO/full-LTO block has 122 comparable results and a
+provisional geometric mean of 0.97018531 (2.98% less runtime than tracing main).
+Individual ratios above 1.10 in that block are sympy_expand 1.14887,
+deepcopy_memo 1.10899, and base32_small 1.10214. These are retained under the
+revised aggregate criterion, not individually tuned away. The reversed GIL
+block is running; await it and the identity audit before accepting the result.
+
+Following that explicit goal change, use the already validated M56b snapshot
+for the full four-way comparison and the original local eight. An unvalidated
+tuple-isinstance prototype was saved as m57-unvalidated-tuple-first-experiment.patch
+and removed from the working runtime; both edited files match the frozen M56b
+source again. Do not introduce another build merely to meet the old individual
+base32 threshold. The existing boundary confirmation is retained, not rerun.
+The new full-suite controller is m56b-full-geomean-controller.log; it reports
+individual regressions without blocking the suite at 1.10. The public runner
+is repinned to the validated M56b GIL PGO/full-LTO and FT O3 no-PGO/no-LTO builds.
+All full-suite/local results and the resulting report must still be inspected.
+
+The full suite is running. FT block 0 Dask completed for the candidate, but
+the fixed main worker crashed during loop calibration with SIGSEGV (-11).
+The Python stack is distributed.profile.process reading prev.f_code (line 192),
+and the native fault resolves to Py_INCREF inside PyFrame_GetCode. This is a new observed failure of
+the comparison baseline, not evidence of a method-JIT regression. Preserve
+the failed run and exclude an incomplete Dask pair from the aggregate; do not
+retry until favorable. Inspect both profiles/blocks and report the failure
+without claiming its root cause or that the candidate fixes it.
+
+FT block 0 completed. Its provisional geometric mean is 0.92677 over 121
+comparable results; this is not the final acceptance estimate. Dask is missing
+because main crashed, and networkx_k_core timed out on both sides at the
+predeclared 15-second worker limit. FastAPI dependencies remain unavailable.
+The reversed second block is running; GIL PGO/full-LTO follows, then the local
+eight and complete identity verification. Do not mix this one-block estimate
+with the earlier screens or the one-off borderline confirmation.
+
+The records below used the previous per-result <=1.10 criterion.
+
+The M56b final FT screen also completed (28 runs, 10 results), with verified
+identities and every confidence-interval upper endpoint below 1.10. The one
+predeclared boundary confirmation is complete: base32_small 1.10183
+[1.10063, 1.10309], deepcopy_memo 1.09651 [1.05581, 1.13812], Genshi XML
+1.09106 [1.08586, 1.09588]. All workers are retained. Consequently the full
+matrix gate stopped before repinning the public runner or starting that suite.
+M56b is not an accepted final candidate. Native perf with the original base32
+worker, fixed binaries and common loops, main/candidate and JIT 0/1, is next.
+Use the resulting evidence for a focused correction; do not repeat the same
+confirmation until favorable. deepcopy_memo's two process speed bands remain
+an uncertainty even though its aggregate point estimate is below the limit.
+
+M56 development is in progress. M55 final FT screen completed all 28 runs,
+10 results, identities verified, no failures; every CI upper endpoint is below
+1.10. Its GIL screen has one point-estimate failure: SQLGlot normalize 1.10958.
+Four separate native perf runs (main/candidate, JIT 0/1) and a debug executor
+dump completed with no errors. Candidate JIT still spends 18.43% of cycles in
+EvalFrame (main 9.32%); special-method lookup/type lookup/isinstance also remain
+material costs. Perf runs are diagnostics, not replacement timing evidence.
+
+M56 adds a guarded default-metaclass isinstance operation. A static namespace
+binding is a compile-time hint only: the live metaclass version must still
+match the version whose __instancecheck__ descriptor was type's default.
+The operation calls _PyObject_RealIsInstance, preserving overridden __class__
+and its errors. Custom checkers and metaclass reassignment deoptimize. Two new
+tests fail on frozen M55 at the missing optimization assertion. The initial
+build lacked pycore_abstract.h in the JIT template; M56b adds that declaration.
+All 1,366 debug/native tests and both new -R 3:3 tests now pass. All 20
+M56b/M55 comparison runs succeed and identities match. Ratios (both method
+JITs, no PGO/LTO): SQLGlot normalize 0.95275 [0.94545, 0.95954], Genshi text
+0.99799, XML 1.00057, nqueens 1.00410, dulwich 1.00575, unpack_sequence 1.00332.
+This supports retaining the change. Final FT debug validation, GIL PGO/full-LTO
+and FT release builds/tests, and balanced main screens are now running in that
+order. Development binary SHA-256:
+1e2701a90487a4da0bd1f9fe83ab76db148bfd76b3fc0118dfe555e316a350b3.
+No complete-suite run or public runner repin yet. All M55 results remain saved.
+
+M56b FT debug validation and all GIL PGO/full-LTO validation groups passed.
+The PGO corpus completed 43 files, 10,632 tests (265 skipped), JIT disabled,
+seed 0; generation/training/final phases took 306.3/139.1/202.5 seconds.
+Final GIL SHA-256: 9cb1ae62d6ae5a61f1bbbc56e7fbb9e9bdaae4128d2f516641b71e212c740e4b.
+FT release build is next. `finish_m56b_full_and_local.py` waits for both final
+screens, refuses any known point estimate above 1.10, then runs the complete
+four-way matrix and original local eight sequentially and writes a full report.
+It cannot mark the task complete; every result/failure still requires review.
+
+Both M56b final-profile builds and all validation groups passed. FT release
+SHA-256: 842f4ab84873e8132b08c82210199b5fd4702019acee4db49ebbc97184b48db0.
+The final GIL screen is running. Both SQLGlot blocks now succeed at roughly
+1.062 combined versus main (M55 was 1.10958): the metaclass correction also
+helps the required PGO/full-LTO profile. Genshi XML is currently below 1.10;
+deepcopy_memo remains noisy and near the boundary. Complete remaining screens
+and the full matrix before making the overall claim; no source edits during
+measurement. The automatic full-suite gate remains at every point ratio <=1.10.
+
+Before any full M56b matrix, one bounded borderline confirmation is now
+predeclared for base32_small and deepcopy_memo: two reversed blocks, six
+independent workers per side/block, five warmups/five values, CPU 2, seed 0,
+original unmodified workload scripts via --worker-task. Common fixed loops:
+1024 for base32_small and 8192 for deepcopy_memo. All workers remain in the
+primary mean; retain confirmation and screening separately. Motivation:
+base32_small's first block is ~1.104, whereas one slower main worker lowers
+the combined mean below 1.10. deepcopy_memo has two visible speed bands.
+Do not declare equivalence from either distribution or discard slow workers.
+`run_m56b_full.py` now runs this confirmation after the final screens and
+refuses the full matrix if either confirmation point estimate exceeds 1.10.
+The comparison is fixed once; do not repeat until favorable. Diagnose and
+change the implementation if the regression is confirmed.
+
+M56b GIL screen finished: 17 specifications / 36 results / 68 successful runs,
+identities verified. All point estimates <=1.10. SQLGlot normalize is 1.06207
+[1.05111, 1.07168]. Three CI upper endpoints cross 1.10: deepcopy_memo 1.09595
+[1.03860, 1.15198], base32_small 1.09437 [1.07546, 1.10499], Genshi XML 1.08795
+[1.07191, 1.10377]. FT screening is running. Before executing the already
+planned borderline confirmation, extend its fixed cases to Genshi XML too:
+original worker task 1, four fixed loops, otherwise the same six workers and
+two reversed blocks. This is one confirmation of each of the three uncertain
+results, not repeated screening until a favorable result appears.
+
+### Previous frozen M55 validation
+
+M55 is frozen for final-profile validation. All 1,364 debug/native tests and
+six targeted -R 3:3 tests pass. All 20 fixed development comparison runs succeed;
+binary/source/dependency identities match. M55/M41 (both method JIT, no PGO/LTO):
+
+- dulwich_log: 0.98596 [0.97749, 0.99602]
+- genshi_text: 0.90435 [0.89866, 0.90960]
+- genshi_xml: 0.97478 [0.96870, 0.98028]
+- nqueens: 0.97285 [0.96857, 0.97648]
+- sqlglot_v2_normalize: 0.99175 [0.98877, 0.99446]
+- unpack_sequence: 0.77574 [0.77378, 0.77809]
+
+FT debug validation passed: 576 optimizer tests (42 skipped), 788 boundary
+tests (1 skipped), and six continuation tests under -R 3:3. GIL PGO/full-LTO
+and FT O3 no-PGO/no-LTO builds and validation also passed. The balanced final
+main screens are running sequentially, without overlapping builds/tests.
+Both GIL SQLGlot normalize blocks remain approximately 1.11: M55 does not yet
+meet the +10% goal. Genshi XML, nqueens and dulwich point estimates have fallen
+below 1.10. After both screens finish, diagnose SQLGlot using separate native
+perf and executor inspection, then validate a focused correction before the
+complete suite and original local-eight comparison. All builds use C _decimal.
+No final main +10% claim yet; retain all M55 screen results even if superseded.
+Frozen development binary SHA-256:
+74fafd3c378cb2e0ebb9a803321f8768724b5a7ffb7f0ac977f50ac4c7186b66.
+Controller: jit-artifacts/regressions-20260919/finalize_m55.py.
+The public four-way runner remains pinned to M40c until a final candidate passes.
+
+M55 final GIL screen completed: 17 specifications, 36 results, 68 successful
+runs; identities verified before/after. Only SQLGlot normalize exceeds the
+point-estimate limit: 1.10958 [1.10165, 1.11812]. Genshi XML is 1.09599
+[1.09001, 1.10199], and deepcopy_memo 1.07616 [1.02740, 1.12958], so their
+intervals still cross 1.10. FT screening is next. Separate four-way SQLGlot
+native perf (main/candidate, JIT 0/1) and an untimed debug executor dump are
+queued after both screens. Complete-suite scripts remain gated; do not run
+them or repin the public runner until known regressions are corrected.
+
+## Historical experiment notes
+
+The following entries retain each experiment's observations and planned next
+step at the time. The current execution status above takes precedence.
+
+M52b passed all 1,359 debug/native tests and -R 3:3. All 16 comparison runs
+succeeded, identities matched. M52b/M41: text 0.97977, XML 1.00906, nqueens
+0.98325, dulwich 0.99787, SQLGlot normalize 0.98723. Retry backoff removes the
+M52 regression but does not materially improve XML. Final-profile builds have
+not started; the main +10% criterion is still unmet.
+
+M51b validation completed: all 1,358 debug/native tests pass and its two new
+tests pass -R 3:3. All 16 development runs succeed with matching identities.
+M51b/M41: genshi_text 0.98413, XML 1.00812, nqueens 0.98542, dulwich 1.00402,
+SQLGlot normalize 0.99367. Identity fusion has not produced a substantial XML
+improvement. M49's removal of native generator connection remains; M45 ordinary
+generator RESUME support and M47/M50 correctness fixes remain. After M52 is
+validated, evaluate GIL PGO/full-LTO and FT snapshots, then complete-suite and
+original local-suite comparisons. The 10% goal remains unmet.
+
+
+M46b development timing exposed a correctness failure in both Genshi variants:
+TypeError on generator iteration; debug asserts that the caller IP is not
+FOR_ITER/SEND. A 270-NOP loop reproduces it without Genshi. The saved IP points
+to EXTENDED_ARG, while generator yield/exhaustion continuations are relative to
+the actual FOR_ITER opcode. M46c saves opcode_offset for normal emitted uops;
+guard exits still restart at the prefix offset. A regression test covers warm
+and cold generators and exhaustion. Both failed timing orders are preserved;
+M46b comparisons are not valid performance evidence. Debug validation comes
+before rebuilding and remeasuring the corrected candidate.
+
+M46c's EXTENDED_ARG fix passes the original Genshi reproducer and all 1,356
+combined debug tests (6 skipped). The new regression test fails on frozen
+M46b as intended. Its first -R 3:3 run retained executor-deletion memory;
+M46d adds the same explicit executor cleanup used by neighboring tests, and
+-R 3:3 passes. A fresh no-PGO/no-LTO snapshot, native tests and a fixed balanced
+comparison against M41 are queued sequentially. Native perf diagnostics will
+follow timing, separately, for Genshi XML and nqueens if needed.
+
+M46d's frozen native build passed all 1,356 tests (8 skipped). Balanced M46d/M41
+comparison completed with no failures and matching identities: Genshi text
+1.04408 [1.03823, 1.04971], XML 1.04799 [1.03810, 1.05769], nqueens 1.04052
+[1.03789, 1.04293], dulwich 1.00090, SQLGlot 0.99241. This is not an accepted
+speedup. Four separate native perf runs completed after timing. Nqueens spends
+less time in EvalFrame (19.39% to 6.99%) but adds per-yield native call overhead.
+Genshi _include/_flatten lack hot resume executors: a debug reproduction reports
+CFG analysis rejection. Investigate that rejection before further design changes.
+
+M47 fixes a second EXTENDED_ARG issue: when a loop executor replaces its first
+prefix, method_decode_cfg unwrapped ENTER_EXECUTOR only after accumulating
+prefixes. It then analyzed the prefix and jump separately with a truncated
+jump distance. This caused Genshi resume roots to follow impossible control
+flow and fail stack analysis. Decode the original code unit before accumulating
+each prefix. A long-generator-loop regression test fails on frozen M46d (missing
+resume executor). The debug Genshi probe now installs _include/_flatten resume
+executors without analysis rejection. Also align dynamic-call return offsets
+with the actual opcode IP fixed in M46c. Full debug/native tests and fixed
+M47/M41 measurements are running sequentially; no full-suite claim yet.
+
+M47 passes 1,357 debug/native tests and the new test's -R 3:3 check. All 16 timing
+runs succeed, identities match, but M47/M41 remains slower: Genshi XML 1.05855
+[1.0486, 1.0685], text 1.0309, nqueens 1.0418, dulwich 0.9929, SQLGlot 0.9989.
+Keep both EXTENDED_ARG correctness fixes regardless of generator-path policy.
+M48 generalizes the existing unknown-type module-binding load to other mutable
+global objects. Watched dictionary bindings supply identity, never a constant
+type; __class__ mutation, custom truth testing, replacement and deletion remain
+observable. The new semantic/optimization regression test fails on M47. Rename
+_LOAD_MODULE_BINDING to _LOAD_GLOBAL_BINDING and regenerate metadata. FT retains
+its immortal-only embedding policy. Validate before fixed-binary comparison.
+
+The current source is M51b development; M41 was debug/native validated. M40c is the
+completed comparison baseline below. M41 passes the initializer object already
+found in the constructor's type cache to method_lookup_function, instead of
+depending on the direct-mapped function-version cache. A cache-eviction and
+initializer-code-mutation regression test fails on M40c (_METHOD_CALL(1)) and
+passes on M41 (_METHOD_CALL(2)). The incremental debug build succeeded in 28.2s;
+isolated test_opt passes 562 tests (5 skipped), and five constructor tests pass
+-R 3:3. The seven related files pass 589 tests. A combined single-process run
+has 35 optimization-expectation failures; the identical order also fails those
+35 tests on frozen M40c. Keep that separate test-isolation issue recorded.
+The fresh GIL development build without PGO/LTO passed native opt (562 tests)
+and related boundaries (589 tests). Its SHA-256 is
+f53e6bcf0a365a4617c12625df56d41e5d55d0c633f2c502dd368a7740a40919.
+Direct fixed-binary M41/M40c float comparison is 0.9292 [0.9240, 0.9348],
+blocks 0.9287 / 0.9296, with identities verified. This is a 7.1% reduction
+without PGO/LTO, not a final main comparison. The 13-specification M41/main
+development screen completed all 52 runs and 32 results, identities verified;
+all 95% interval upper bounds are below 1.10. The slowest is genshi_text
+1.0865 [1.0797, 1.0949]; genshi_xml 1.0769, sqlglot_v2_normalize 1.0748,
+nqueens 1.0666, deepcopy_memo 1.0482 and logging_format 1.0286.
+The frozen M41 GIL PGO/full-LTO build passed (generate 304.9s, standard JIT-off
+PGO training 139.8s, final build 203.0s), with SHA-256
+32486c192eb3bd26ed2046beea1000e6896b7290da60f609f10d6f41369ab4cd.
+All four final native validation groups passed. The 16-specification / 35-result
+targeted screen completed; its results are recorded below. This does not
+replace the unfinished final full-suite verification or FT connected-components
+uncertainty confirmation.
+
+M41 final targeted comparison is complete: all 64 runs / 35 results succeeded,
+with identities verified. Float is 1.0275 [1.0251, 1.0295], but genshi_xml is
+1.1356 [1.1287, 1.1421], dulwich_log 1.1114 [1.0542, 1.1510], and nqueens
+1.1040 [1.0838, 1.1194]. Genshi text, SQLGlot normalize, deepcopy_memo and
+shortest_path also have intervals crossing 1.10. Keep both orders and all workers.
+The goal is still unmet. M42 development now tests generator creation directly
+from the frame whose arguments have already been bound by the call uops.
+It preserves the compiled caller's continuation, uses RETURN_GENERATOR's frame
+transfer, and leaves MAKE_CELL/extended prefixes in Tier 1. This is different
+from rejected M37's vectorcall rebinding. The new native-continuation test fails
+on M41 as expected. Debug build M42 exposed an unavailable ceval-only inline
+helper; M42b uses the equivalent recursion-depth increment and is building.
+A separate test-only setUpModule resets rare-event counters using the existing
+internal test API, to verify the previously recorded 35 order-dependent failures.
+M42c debug creation tests pass for generators, coroutines (including origin
+tracking) and async generators. The OOM expectation was corrected against M41:
+incomplete generator frames do not appear in tracebacks, so the caller CALL is
+the proper location. All 565 isolated optimizer tests passed. Resetting rare-event
+counters removes the earlier 35 combined-order failures; two new continuation
+assertions remain after prior monitoring changes. M42e recognizes creation before
+the first traceable instruction, leaving instrumentation and pending-event handling
+to first RESUME. A local PY_START monitoring test checks that creation emits no
+start event and first resume emits exactly one. M42/M42b build errors were missing
+header/ceval-only helper declarations, fixed without changing the runtime design.
+M42e passes the combined debug order (1,155 tests), coroutine/async-generator
+boundaries (199 tests), and the five creation-related tests. Initial -R 3:3
+reported memory-block growth in the two new in-process tests (no reference-count
+growth). Explicit caller-executor cleanup and draining the deferred deletion list
+resolve it: M42g passes all five tests with blocks [2, -3, 3], sum 2 accepted by
+the harness. Resetting the shared generator code itself was rejected because it
+changes the function-version identity being tested; only caller code is reset.
+No runtime change was needed for that test cleanup. Fresh GIL development and
+FT debug snapshots are now building/validating from m42g-method-only.patch;
+the affected-workload fixed-binary old/new comparison follows sequentially.
+M42g GIL development build completed in 80.9s (configure 21.0s), SHA-256
+2d9e0c32211ef1adc211e11f35aab73ffd0b0dfc95ab5e8eebf6e1e5904db8a0.
+Its native optimizer tests (566, 5 skipped), seven boundary files, and both async
+files pass. Patch SHA-256 is
+612492779d7f461f0969dc6446727b4f58c483ef7d5719e252b0e4ef770bf6b5.
+FT debug completed in 104.1s; all three native validation groups passed,
+including test_opt 566 tests (39 skipped). The fixed M42g/M41 development
+comparison completed 16 runs / 5 results, all identities verified:
+genshi_xml 1.02435 [1.01876, 1.03015], genshi_text 1.00565,
+nqueens 1.01005 [1.00655, 1.01382], SQLGlot normalize 1.01083,
+and dulwich_log 0.99708 [0.99179, 1.00187]. This form is rejected as a speedup.
+The _METHOD_CALL native stencil grew from 761 to 1,247 bytes because each call
+site contains generator allocation and frame-transfer code. M43 moves that code
+to _PyJit_CreateGenerator in optimizer.c, keeping ordinary compiled-method calls
+on their previous inline path. Existing creation/monitoring/OOM/refleak tests
+are reused. Debug validation, a fresh GIL development build, and the same
+M41 comparison are sequential; FT validation of the outlined version remains pending.
+M43 debug creation/combined/async/refleak groups all passed. Its fresh GIL native
+build completed in 81.2s, SHA-256
+d3e0134fec989bdb19c45c1d09d7d6aefdf2997700f7344161591e7a864ff96e.
+Native optimizer/boundary/async groups also passed. The _METHOD_CALL stencil is
+880 bytes, down from M42g's 1,247 but still above M41's 761. The fixed M43/M41
+five-result comparison is now running. Code-size reduction alone is not evidence
+of a runtime improvement.
+M43/M41 measurement completed with all identities verified: Genshi XML 0.99939
+[0.99230, 1.00605], Genshi text 0.99490, dulwich 0.99759, SQLGlot 1.00068,
+but nqueens 1.00834 [1.00355, 1.01369]. Outlining removes the larger slowdown,
+without a useful speedup. Both M42/M43 generator-creation changes and their
+feature-specific tests are reverted; M41 constructor discovery and the independent
+rare-event test isolation fix remain. Frozen snapshots, failures and timings remain.
+M44 lowers specialized FOR_ITER_GEN through existing _METHOD_FOR_ITER so a
+synchronous iterator call can return to a compiled consumer body. It reuses the
+existing exhaustion edge, exception handling and escaping-call semantics; no new
+recording, generator-state prediction or suspension-crossing facts are introduced.
+A native-consumer test fails on M41 (active count 0); an exception/finally-state
+test accompanies it. Debug validation is running. Existing tests that require
+consumer compilation to be unavailable will be reviewed against observed results.
+This experiment may trade direct frame transitions for C-call overhead, so it
+must be retained only if balanced measurements support it.
+M44's two new tests pass. Full debug test_opt runs 564 tests and fails only
+three old expectations that generator consumers cannot have executors; Python
+results and the other 561 tests pass. Those tests now require a useful compiled
+consumer loop, including recursive trees and 12-layer delegation. The five
+consumer-related tests are running -R 3:3; that includes the expensive recursive
+tree fixture. After it passes, the combined debug order, async tests, fresh GIL
+development build/native checks, and fixed M44b/M41 comparison run sequentially.
+The M42/M43 creation experiments remain available as frozen artifacts, but are
+not part of M44b. Any interaction with consumer compilation must be measured
+separately before such a path could be reconsidered.
+M44b's five consumer/delegation tests pass -R 3:3 (three measured iterations
+have no growth; total 123s). Combined debug validation passes 1,153 tests,
+and both async files pass. The frozen GIL development build and native checks
+completed before the four-specification old/new comparison. M44b/M41 results
+reject the generic C-iterator approach: genshi_text 1.24771, genshi_xml 1.29424,
+nqueens 1.13686, dulwich_log 1.00656, SQLGlot normalize 1.01656, with all identities
+verified. The consumer lowering and its feature-specific test changes are reverted.
+Direct FOR_ITER_GEN frame transitions remain unchanged.
+
+M45b enables method compilation at ordinary-generator RESUME locations before
+and after a yield (excluding yield-from, coroutines and async generators). Such
+entries use the live stack depth and unknown locals, just like generator OSR;
+no type or ownership facts cross suspension. CFG layout starts at that resume.
+Generator close decodes an installed executor's original RESUME argument before
+using the existing fast-close condition, preserving finally/unwind behavior.
+Two tests fail on M41 due to absent RESUME executors and pass on M45. Full debug
+optimizer validation passes all 564 tests (5 skipped). The generator assertion
+helper now accepts either RESUME or JUMP_BACKWARD entry. Combined/async/refleak
+validation, fresh GIL native build/tests, then the same old/new performance
+comparison are running sequentially. FT validation and final-profile measurements
+remain pending.
+M45b combined debug validation passes 1,153 tests; async boundaries and both
+new resume tests under -R 3:3 also pass. A fresh GIL development build is now
+completed, along with all native checks. M45b/M41 completed all 16 runs / 5 results,
+identities verified: nqueens 0.98394 [0.98119, 0.98673], dulwich 0.99160,
+Genshi text 0.98810, SQLGlot normalize 0.98858, but Genshi XML 1.02337
+[1.01205, 1.03524]. RESUME compilation alone is insufficient.
+
+M46b retains M45b resume entries and adds a dedicated _METHOD_GENERATOR_CALL.
+FOR_ITER_GEN keeps its direct frame transition and exception-state setup. The new
+helper enters an existing native RESUME executor (handling the initial None pop)
+and returns to the compiled consumer only when the frame and yield continuation
+match. Missing executors, changed instrumentation/TLBC, recursion margin, errors
+or other continuations return to Tier 1 with synchronized frames. Ordinary
+_METHOD_CALL code is unchanged. Frame-transition and optimizer barriers include
+the new uop, and all 11 generated files were regenerated.
+Three new native-consumer/exception/invalidation-GC tests pass. The invalidation
+callback also overwrites the consumer's iterator local; no Python reference to the
+executor is retained by the test. All three pass -R 3:3. Full debug test_opt
+fails only the three old no-consumer-executor expectations; these now validate
+the native-call operation and intact recursive/delegation results. Combined and
+async validation, fresh GIL native build/tests, then fixed M46b/M45b and M46b/M41
+comparisons are sequential. FT and final builds remain pending. Combined debug
+validation passes 1,156 tests and async files pass. The fresh native GIL build
+completed in 81.3s, SHA-256
+8db320e6c2f10453063f05e2b87f38eed56d3da068d1bf3a8b52a240ddc98348;
+its opt/boundary/async groups all pass. Ordinary _METHOD_CALL remains 761 bytes;
+the new dedicated generator-call stencil is 406 bytes. The two fixed-binary
+comparisons are now running, with no concurrent builds or tests.
+
+M40c retains M39's cached-small-int range path and
+retires stale extended-arithmetic guards only after Tier 1 changes their opcode
+or descriptor. Ordinary polymorphic guard misses keep the method valid.
+Deterministic direct-call, inlined-call, descriptor-change and logging elapsed-time
+probes validate this behavior in GIL and free-threaded builds.
+
+All development validation, the 15-result no-PGO/no-LTO screen, both final builds
+and their eight validation groups pass. The final GIL screen completed all 40 runs
+and 26 results with identities verified and every 95% interval upper bound below
+1.10. Nqueens is 1.0842 [1.0807, 1.0875], logging_simple 1.0473 [1.0283, 1.0655],
+and logging_format 1.0784 [1.0642, 1.0946]. This resolves the known M38b screen
+uncertainties; these targeted results do not establish the complete-suite goal.
+
+The public comparison runner pins M40c, and its eight tests pass. The full
+97-specification, four-configuration comparison finished at
+jit-artifacts/method-only-m40c-full with identities verified. Both profiles have
+95 successful specifications / 122 results. Fastapi dependency preparation and
+networkx_k_core's short timeout remain explicit failures.
+FT's geometric mean is 0.9281, with all point estimates below 1.10 (largest:
+gc_traversal 1.0569). GIL's mean is 0.9792, but six results exceed 1.10:
+float 1.1181, genshi_xml 1.1118, deepcopy_memo 1.1094,
+sqlglot_v2_normalize 1.1093, dulwich_log 1.1070, regex_v8 1.1009.
+The local eight finished in both profiles, with all ratios below 1.10 and
+identities/checksums verified. FT ranges from 0.3442 to 1.0063; GIL from
+0.5233 to 0.9925. The complete-suite goal remains unmet.
+Genshi_text, logging_format, and connected_components also have intervals
+crossing 1.10; connected_components needs confirmation in both profiles.
+Preserve all workers and this fixed M40c dataset while diagnosing and fixing
+the remaining regressions. The complete M40c dataset is reported in
+[the fixed M40c results](benchmarks/method_only_m40c_results.md).
+All uninstrumented M40c timing has stopped; a balanced JIT-disabled comparison of deepcopy,
+dulwich_log, float, genshi, regex_v8, sqlglot_v2 and logging completed: all 28 runs
+and 12 results pass, identities verified. JIT-off ratios: float 1.0034,
+genshi_xml 0.9539, deepcopy_memo 0.9816, sqlglot_v2_normalize 1.0108,
+dulwich_log 0.9838, regex_v8 1.0320, logging_format 1.0078.
+Original-worker perf profiles exclude imports, warmups and executor dumps.
+The float candidate spends 9.82% in EvalFrameDefault, versus under 0.3% in main's
+flat profile. Its constructor loop contains _METHOD_CALL(1), with no initializer
+executor. Both binaries report Point.__init__ version 822 evicted by
+ZipExtFile.read1. Main traces inline it; the method compiler finds the initializer
+but omits the known callable hint. This is the concrete M41 fix above.
+
+The first GIL full-suite block has a new over-threshold result: deepcopy_memo
+1.1752 (main worker means 11.854/11.898/11.826 us; candidate
+14.417/12.941/14.452 us). Ordinary deepcopy is 1.0280 and deepcopy_reduce
+1.0039. Finish both orders before diagnosis/profiling, preserving all workers;
+this is an open performance issue, not a successful complete-suite result.
+The complete first GIL block has 95 successful specifications / 122 results,
+geometric mean 0.9814. Its six over-threshold results are deepcopy_memo 1.1752,
+regex_v8 1.1729, float 1.1322, genshi_xml 1.1138, dulwich_log 1.1096 and
+sqlglot_v2_normalize 1.1086. The reverse-order block is now running. After the
+matrix and local eight finish, diagnose these with matched JIT-on/off runs and
+perf before changing runtime code. Keep the completed M40c dataset intact.
+
+The existing main module-subclass descriptor bug is fixed in M36 and retained
+(M-18 in bugs_report.md). Earlier M33 full-suite timing was cancelled for an
+integer-correctness bug, and the first M34 screen was invalidated for overlapping
+a diagnostic. Those logs are retained separately and are not performance evidence
+for the current candidate. See [the current report](benchmarks/method_only_report.md).
+
+Prior goal (the hybrid implementation): all eight standalone workloads, including SQLAlchemy,
 meet candidate/main <=0.90 with each 95% interval upper bound below 0.90 in
 the prespecified 12-block fixed-binary/CPU confirmation. See
 [the final report](benchmarks/jit_comparison.md) and the final entries below.
@@ -12,10 +556,12 @@ history of completed tasks and experiments.
 
 ## Scope
 
-Fix and verify every actionable item in `bugs_report.md` on
-`codex/method-jit`, starting from `d95f29589e03603aa13d8ca9d4f817dce77d357c`.
+Implement and validate the method-only JIT on `codex/method-jit`, comparing
+with main `d95f29589e03603aa13d8ca9d4f817dce77d357c`. Record newly discovered
+main bugs and their fixes in `bugs_report.md`.
 Keep all work local: no GitHub posts, pushes, or pull-request changes.  Builds
-use the installed LLVM 21 and omit PGO and LTO.
+use the installed LLVM 21. Development builds omit PGO and LTO; use them for
+the requested final GIL profile comparison. Both sides use C `_decimal`.
 
 ## Progress
 
@@ -4575,3 +5121,3109 @@ worker上限15秒は機能した。WebSocket・Genshi・concurrent_imapは完了
 次の優先順位は、(1) FT DaskとGIL両側のクラッシュを分けて再現・切り分け、
 (2) regex_compileの大幅悪化を導入した差分の特定、(3) GILのtelco・Genshi・
 argparse・pickle・richards_superとFTの残る悪化の調査。
+
+## 2026-09-19: regex_compileの回帰修正に着手
+
+夜間レポートと計画の更新を `14defe7e06e` にコミットした。既存のユーザー変更である
+benchmarks/go.pyの実行権限は維持した。今回の実装対象はregex_compileの回帰。
+
+まず夜間と同じ固定4バイナリ・同じbenchmarkを使い、JIT有無で採取入力の件数・SHAと
+固定仕事量の時間を確認する。CPU 2、seed 0、5 warmup・5 value、順序を反転した
+2ブロックを診断として保存する。主性能評価には元のpyperf worker構成を使用する。
+探索用ビルドはPGO/LTOなしを基本とし、修正が有望なら元のGIL PGO/full-LTO条件でも確認する。
+修正の対象経路と境界条件をテストし、regex_compileのmain比と修正前比に加え、
+regex_effbot/regex_v8・Go・richards_super・unpack_sequenceへの影響も確認する。
+全試行を `jit-artifacts/regex-compile-20260919/` に残す。
+
+初期診断: 全4バイナリ・JIT有無で入力は4,267件、SHAも一致した。JIT無効時の
+候補/mainはほぼ同時間で、JIT有効時のみ大幅悪化。固定仕事量のperfでは候補の
+cycles sampleの22.33%がmethod_merge_block、8.57%がmethod_decode_cfgだった。
+debug診断の1 warmup・1 value（採取時も含む）では_parseのmethod却下が1,317回。
+735回はinlined loop、582回はanalyze段階で、重いコンパイル再試行を繰り返していた。
+
+修正案は既存の閉じたインライン化ループを優先してmethodを却下した際にも
+co_executors->prefer_traceを保持すること。既存のpartial methodの頻繁なfallbackと
+同じ選択を使い、入口traceの無効化・再作成ごとに同じmethod解析をやり直さない。
+関数名や正規表現に依存する条件は加えない。
+既存テストに依存無効化後・空ループで再warmupする検査を追加した。
+修正前はGIL/FT debugともMETHOD_EXITが再出現して失敗、修正後は両debugと
+GIL releaseで成功した。新しいFT releaseをビルド中。夜間の4バイナリは保持する。
+
+R1検証: _parseのmethod却下は診断で1回になった。関連10ファイル、各1,274テストが
+GIL/FT・debug/releaseの4構成で成功し、debug両方の追加ケース3:3リーク検査も成功。
+最初のsandbox内test_reはforkserverのUnix socketでPermissionErrorだった。
+ローカルソケットを許可した再検証で同テストを含めて成功し、テスト除外は行っていない。
+元のpyperf条件（6 worker、5 warmup/value、逆順2ブロック）のFTは、
+main約117.7ms、修正前約205.4ms、R1約126.0ms。約7%の回帰が残り、R1で完了とはしない。
+
+R2の仮説: TRACE_RECORDがトレース優先にした関数のRESUME/JUMP_BACKWARDにも
+specialization用の強制ゼロを設定し、再試行のbackoffを消している。
+選択済みのprefer_traceに限りそのcountdownを保持する。新規の関数のwarmupや
+既存のゼロcounterのwrap防止は維持する。別callerによる記録後にcountdownが
+ゼロになることをR1で検出したテストを追加し、変更後の動作と性能を検証する。
+テスト初稿で仮定した閉ループは成立せず、必要なPUSH_FRAMEの検査を残した。
+初稿の失敗ログも保存し、countdownそのものの失敗を別ログで確認した。
+
+R2の短い固定仕事量screenはFT約98–100ms（main約118ms、修正前約204ms）、
+GIL PGO/LTOなし約85ms（修正前約242ms）。両順序で改善し、入力SHAは一致。
+これを本測定の代わりにはせず、関連テストを4構成で再検証してから、
+GIL PGO/full-LTOを夜間と同じ43テスト・JIT無効・seed 0・cold private pycacheで新規学習する。
+最終測定はregex_compileを6 worker、残る事前指定5仕様を3 worker、各5 warmup/value、
+2ブロックの逆順でmain/修正前/修正後を比較する。対象はFTとGIL PGO/full-LTO。
+他の重い処理とは競合させない。改善しなかった試行も保存する。
+
+R2の4構成は各1,274テスト成功（GIL release 15 skip/debug 14 skip、
+FT release 23 skip/debug 22 skip）。両debugの追加ケース3:3リーク検査も成功。
+PGO用の隔離ソースは作業ツリーの対象3,943ファイルとSHAが一致する。
+新規PGOビルドを開始し、完了後に同じ関連テストをJIT有効で実行してから最終測定へ進む。
+
+PGOビルド完了: 43/43学習ファイル、10,468テスト（460 skip）、354個の学習profile。
+生成303.0秒・学習141.4秒・最終ビルド201.0秒。JIT有効で関連1,274テスト（15 skip）も成功。
+実行物SHAは `c4f7559ec0b596dc7f4d82be4f11616cecd32de74e38aeed64ef38af0da69d84`。
+ソース・実行物を固定して、FTとGIL PGO/full-LTOの最終6仕様比較を開始した。
+
+最終6仕様は72呼び出し全て成功し、同一性検証も全4測定群で成功。
+regex_compileはFTで修正前/main 1.74483→修正後/main .83210、
+GIL PGO/full-LTOで3.21821→.98135。両順序で改善した。
+GIL Goは修正後6 worker中1つが約64.94ms、他5つが約55–56msで、
+全値の修正後/修正前は1.02897、worker区間 .99887–1.08043。
+遅いworker内の5値はすべて遅く、単発値の外れではない。削除しない。
+追加診断として同じmain/修正前/修正後でGoを各8 worker×逆順2ブロック測定する。
+まず追加分16 worker/側と元の6 worker/側を分けて報告し、遅い群の再発を確認する。
+追加後に都合の良い測定だけへ主集計を置き換えない。
+
+最終判定: regex_compileの回帰修正を採用する。FTは117.563ms→97.825ms
+（修正後/main .83210、95%区間 .82688–.83809）、GIL PGO/full-LTOは
+75.435ms→74.026ms（.98135、区間 .96091–.99609）。修正前からはそれぞれ
+52.31%、69.51%短縮した。中央値を使ったmain比もFT .82899、GIL .99191。
+
+Go追加分の修正後/修正前は .99945、区間 .99553–1.00353、main比 .93216。
+追加16 worker/側では低速群は再発しなかった。初回の1 workerは保持し、原因未特定と記録。
+再現性のあるGoの回帰は未確認。GIL regex_v8の約0.70%増加は両順序で観測した。
+全ベンチマークの回帰解消・完全不変とは扱わない。
+
+性能測定後のFT固定仕事量perfでは、R1からR2でtrace翻訳/最適化のself sample比が
+4.78%/2.66%から両方0.1%未満へ低下し、推定cyclesも197.4億→157.3億。
+import・5 warmup・30反復を含む各1回の診断で、主性能測定とは分けた。lost sampleは両方0。
+
+最終レポートは `benchmarks/regex_compile_regression_report.md`。
+実装はPython/optimizer.cの選択保存とPython/bytecodes.cのbackoff保持、
+生成した2ヘッダ、既存テストの拡張。元の夜間4実行物は保持した。
+今回の修正・新レポート・計画追記は未コミット。最初の比較レポートのコミットは14defe7e06e。
+次は必要に応じてこの修正版で全体比較し、元のレポートに残る他の回帰とクラッシュを調べる。
+
+
+## 2026-09-19: C decimalと3%以上の回帰解消
+
+対象は直近の4構成比較（FT、PGO/LTOなし、およびGIL、PGO/full LTO）の
+main比の実行時間増加3%以上。regex_compile修正済みの作業ツリーを出発点にする。
+元の入力・依存版・仕事量を維持し、まず前回3%以上の全項目とtelcoを逆順2ブロックで
+再測定する。screenは各3 worker、5 warmup/value、min-time 0.1秒、CPU 2、seed 0。
+主集計はworker平均の等重み平均とブロック比の幾何平均。最終確認では全成功仕様も
+対象に含め、新たな回帰を確認する。失敗・timeout・低速workerは保存する。
+
+_decimal不在の原因はconfigure時のlibmpdec未検出。公式mpdecimal 4.0.1をSHA検証して
+専用prefixへビルドする。初期の固定バイナリ比較には各ABI/ヘッダに対応する
+FP有効・PGO/LTOなしの_decimal拡張を外部overlayとして追加し、元の4実行物は保持する。
+coreのGIL PGO/full LTO設定は維持する。両側でdecimal.Decimal is _decimal.Decimalと
+ロードされた拡張SHAを検証する。最終ビルドはconfigureで同ライブラリを検出させる。
+初回libmpdec checkはsandboxのDNS制限で公式テストデータ取得に失敗したため、
+ネットワーク許可を付けて再実行する。数値演算の不一致を示す失敗ではない。
+
+記録先: jit-artifacts/regressions-20260919/。探索時はPGO/LTOを避け、必要な最後の
+GIL比較のみPGO/full LTOで検証する。今回の新たなコミットは依頼されていない。
+
+libmpdecのstatic/shared公式・追加テストは成功。CPython test_decimalは4構成で
+各738テスト（9 skip）成功。初期overlay測定はPGO学習にもtest_decimalが含まれることを
+再確認したため途中で停止し、部分データと理由を保存した。C decimalありの学習を
+両側でそろえた新しい4ビルドをr0-*へ作成する。PGOはJIT無効・seed 0・専用cold pycache、
+bootstrap profile分離という従来の規約を維持する。libmpdecは同一FP有効static library。
+完成後の通常importでC backendを検証し、overlay不要の比較へ移行する。
+
+ビルド中の非計時debug診断ではGenshi XMLの2回描画とargparseの2回実行が成功し、
+regex_compileで見つけたmethod却下の反復ログは出なかった。この小さい診断だけで
+コンパイル費用を否定せず、新しいPGO対照でperfを採って処理箇所を確認する。
+
+測定ハーネスにtelcoのC decimal必須チェックを追加。workerの開始/終了でbackendを
+確認し、_decimalの実パス・libmpdec版をmetadataへ記録する。将来の測定で同名の
+Python fallbackを混ぜない。検証用の旧controllerにも_decimalがないため、追加の
+単体テスト初稿のホスト依存を取り除き、C backendの同一性/欠落/fallbackを明示的に
+模擬する形へ直した。4実行物での実C backend検証は別途成功済み。
+
+C版のtelco出力検証: 元の5,000件の入力をC/Python両backendで計算し、全4実行物で
+出力SHA 0abe923a18fc0268f442198542abcba203623a1e31136bd9e97a7a50343c5617が一致した。
+測定ハーネス22テスト成功。新PGOのmain/候補は両方43/43ファイル・10,623テスト
+（265 skip）で学習成功した。最終リンクおよびFTビルドを継続している。
+
+r0 screenの順序は、1仕様ごとにmain/candidate、candidate/mainの両ブロックを
+連続して測定してから次へ進む。長い仕様間の時刻差を避け、完了した仕様から解析する。
+C版telco、Genshi、pickle、argparseを先に確認し、前回3%以上の全仕様を含める。
+worker数・warmup・value・入力は既定の3/5/5を維持する。
+
+C decimal入りr0の4ビルド完成。通常importでC backend確認済み（overlay不要）。
+
+| Build | Python SHA-256 | libmpdec |
+|---|---|---|
+| r0-ft-main | 44c9f1615910b76898e1eb6cd478a36c151f21cf5bc99ea95aa6ac115c85fefb | 4.0.1 |
+| r0-ft-candidate | af62115344bbcd7accbb325a560cde43cde723a5a01b5158bc3fff6244ed0d7c | 4.0.1 |
+| r0-gil-main | 29f98fde43417b99bad02a6710ad55e55f343a574f8fff306932d1e75b010044 | 4.0.1 |
+| r0-gil-candidate | 4dfb2b28fd032c4366361a1fa3022b499cce8393949c835f774dd1661357e4e5 | 4.0.1 |
+
+4構成の関連テスト後、r0の全回帰screenを逐次実行する。結果はr0-*-state.json、
+分析はr0-*-analysis.jsonに保存する。元の実行物は変更していない。
+
+r0の最初の同一プロセス検証では、test_decimalの後のmain test_capi.test_optに21失敗。
+単独test_capi.test_optは新旧mainとも308テスト（3 skip）成功。C decimalを追加した
+旧mainでもtest_decimal→test_capi.test_optの順で同じ21テストが失敗し、期待された
+builtinsの定数化/ガード削除が行われないことを確認した。値の計算結果の不一致ではない。
+新たなruntime差分やC decimalの誤計算とせず、順序依存の既存問題として全ログを保存。
+各ファイルを別workerで実行する通常のregrtest -j1で全11ファイルを検証する。
+テスト本文・期待値・選択は変更しない。結果を同一プロセス実行成功と表現しない。
+
+r0関連テストは-j1で4構成すべて成功。mainは各1,831テスト（GIL22/FT327 skip）、
+候補は各2,012テスト（GIL24/FT32 skip）。最初の同一プロセス順序依存は未解決として残す。
+
+GIL r0 screenの完了項目の暫定値: telco 1.0111、pickle_list 1.0020、pickle_dict 0.9926。
+前回のこれらの大幅な悪化は新条件で再現しない。ただしC版追加と両側のPGO再学習を
+含む条件変更であり、JIT修正の効果とは呼ばない。Genshi XML1.0923/text1.0785、
+argparse many_optionals1.1264は両順序で悪化する。SymPy sum1.0235は両ブロックで
+1.0110/1.0361と差があり、最終の増強測定で確認する。全項目screenは実行中。
+Genshiでは式評価ごとにglobalsを作る処理とJIT guard/invalidationの関係を仮説とし、
+screen完了後に同じ固定仕事量のperfで調べる。まだ原因を確定したとは扱わない。
+
+R1試作（未ビルド・未採用）: _PyFunction_Vectorcallのmethod入口探索を短くする。
+既存_ExecutorArrayのpaddingに収まるuint16のindex+1を記録し、通常traceや未コンパイルの
+C→Python呼び出しでは先頭bytecode/index/executorの連続ロードを避ける。
+method挿入時に設定、detach/無効化時に消す。既存の引数・validity・JIT状態・観測hookの
+条件は維持する。コード差替え、global無効化直後、再warmup、引数エラーをC側mapから
+検証するテストを追加した。Genshi/argparseの原因をこれと確定したわけではない。
+r0のコピー済みビルド/ソースは不変で、screenにこの試作は入らない。screen完了後に
+perf診断とPGO/LTOなしの対照を行い、有効でなければ試作を取り除く。
+
+r0 screen完了: GIL31結果、FT10結果、失敗0、開始終了のidentity一致。
+GILで残る3%以上はmany_optionals1.1264、genshi_xml1.0923、genshi_text1.0785、
+dulwich_log1.0608、base16_small1.0577、nbody1.0562、sqlglot_v2_optimize1.0407、
+sqlglot_v2_transpile1.0401、pickle_pure_python1.0340。
+FTはdocutils1.0382、regex_v8 1.0361、sympy_sum1.0345。
+このscreenは旧回帰仕様の選択集合であり、全体の回帰なしを意味しない。
+GIL perfではGenshiのtupleiter_next/tuple_iter/汎用unpack費用増を観測した。
+JITコードの帰属を追加診断し、汎用展開に落ちる原因を確認する。
+R1はキーワードあり/引数個数不一致もcache参照前に除外するよう試作を調整。
+まだ未ビルド・未採用。r0のtiming/profile対象は不変。
+
+JIT帰属付きGenshi診断で、候補のTemplate._flatten/WhitespaceFilterのtraceに
+汎用_UNPACK_SEQUENCEが残ることを確認。mainの対応する採取済みexecutorには汎用unpackが
+ない。R2試作として汎用unpack helperのexact tuple・個数一致・starなしの場合に
+iteratorの生成/呼び出しを省く。tuple subclass、個数不一致、star付きは従来経路。
+FTでも不変のtuple要素を新しい所有参照として取得する。polymorphic traceの後のtuple、
+subclassの独自iter、個数エラーを検証するテストを追加。まだ未ビルド。
+R1ビルドのsource snapshot取得後に編集したため、R1にはこの変更は入らない。
+
+nbodyの主traceはmain415uop/16KiB、候補379uop/20KiB。主なuop差は
+UNPACK_LIST_TO_FAST_3とborrowed-input添字取得。少ないuopでも生成コードが大きくなるため、
+融合の利益を分離測定する。まだ原因・採用する修正を確定していない。
+
+R1 GIL開発版は関連5ファイル1,400テスト（22 skip）成功。速度はこれから比較する。
+R2のsource snapshot取得後、R3試作としてtraceの短いunpack融合を制限した。
+method側の適用範囲は維持し、traceの2/3要素は既存stack cacheと通常storeを使う。
+4要素以上は従来どおり。短いlist unpackのtraceと結果を検証するテストを追加。
+採用判断にはnbody、Genshi、unpack_sequence、Go/Richardsの対照を含める。
+なお前記16/20KiBはページ単位のJIT割当範囲であり、実命令バイト数の25%増を意味しない。
+該当する3要素list融合stencilは406bytes、元unpackは131bytesで、融合側には
+3個のループと追加レジスタ退避がある。この費用を時間測定で確認する。
+
+R2 GIL開発版は関連7ファイル1,409テスト（22 skip）成功。
+R3は既存test_non_unique_three_tuple_unpackの「融合命令を生成する」という期待値だけが
+失敗した。短いtrace融合を外す設計に合わせ、通常_UNPACK_SEQUENCE_TUPLEを要求する
+期待値へ変更し、結果とunique参照の区別の検査は維持した。
+R3 binary/source snapshotは不変のまま、PYTHONPATH=作業ツリーLibで修正済みのテストを
+読み、7ファイル1,410テスト（22 skip）成功。旧失敗ログも保持する。
+R1/R0、R2/R1、R3/R2の固定開発版比較を順次実行する。
+
+R4試作（未ビルド）: 全bytecodeを変換できたmethodでも、残ったMETHOD_CALLのcalleeが
+MAKE_CELL等の未対応入口を持つと呼出元に戻れず、毎回Tier 1へ落ちる。従来はcompleteと
+判定してfallback監視を省いていた。argparse採取ではこの分類のmethodが多数存在した。
+METHOD_CALLが残るmethodにも既存256-entry window/32-missの監視を適用する。
+完全変換時のmethod保持方針は最初は維持し、実際の繰返しfallbackでentry traceへ移る。
+calleeのMAKE_CELL入口を使い、従来のcomplete判定・繰返し退出・再加熱後の結果を
+検証するテストを追加。argparseの原因をこれで確定したとはまだ扱わない。
+
+R1/R0開発比較はGenshi text1.0196、XML1.0045、argparse0.9868。
+argparseの2ブロックは1.0111/0.9632と一致せず、Genshi textは悪化。
+入口cache試作の明確な利益を確認できないため採用せず、各単一因子の診断後に外す。
+R2/R1のGenshiは両ブロックで約8%短縮。残りの比較を継続中。
+
+R5試作（未ビルド）: binasciiのignorecharsなし16進デコードを2文字ずつ処理し、
+各文字のhalf-byte状態分岐を省く。C処理の改善でありJIT最適化とは呼ばない。
+末尾が奇数の場合も文字検証を先に行い、既存のinvalid-character優先のエラーを維持。
+空/非空ignorechars、両API、全バイト範囲、ペア/端数/エラー優先度を検査するテストを追加。
+R4/R5の差分を各patchへ固定し、現在実行中の比較に混入させない。
+
+R6試作（未ビルド）: FT regex_v8のperf annotateでBRANCH入口のLASTMARK_SAVE周辺が熱い。
+literal/setの先頭検査だけですべての選択肢を棄却できる場合もcapture情報を保存していた。
+同じ検査で最初の候補を探してから保存するよう変更し、再試行時も同じhelperを使う。
+これはC正規表現エンジンの処理削減であり、命令配置のpaddingを選ぶ方法は使わない。
+ネストしたcapture/repeat、候補の途中失敗、bytesとUnicodeの各幅を検証するテストを追加。
+初回FT perf診断中の無効なoptional-hook追加は既述のharness noteに記録済み。
+採用する原因の説明には固定したscriptでの再診断と通常の時間比較を必要とする。
+
+R3/R2開発比較完了、全6結果成功、identity一致。nbody0.9747、Genshi text0.9592/XML0.9461、
+Go0.9851、unpack_sequence1.0011、richards_super1.0042。短い融合の制限を維持する。
+R1の入口index cacheを作業ツリーから取り除いた（専用の追加テストも除去）。
+凍結済みのr1–r6ビルド/patchは因子を比較するため元のまま保持する。
+作業ツリーの統合候補（R1除去、R2–R6あり）をr7.patchにも保存した。
+R4–R6の個別ビルドとテストをこれから行うため、統合候補の完成はまだ主張しない。
+
+R4初回検証はtest_resumeのexecutor常駐前提と、test_reのsandbox内ソケット拒否で失敗。
+再帰の値は新旧候補の単独診断で一致し、単独ではexecutorも残った。full suiteでは
+fallback監視による加熱中の退避があり得るため、重複した入口validityチェックを調べる
+このテストはcalleeのない関数をmapで同回数温める形にした。入口命令列への要求は維持。
+再帰・再帰上限・callee fallbackの別テストも含め、ローカルソケットを許可して再検証。
+凍結したR4 binaryのまま最新テストを作業ツリーLibから読み、10ファイル1,889テスト
+（41 skip）が成功した。最初の失敗と診断は削除していない。
+R5/R6用にはテスト修正だけを追加したr5b/r6b.patchを作成し、旧patchも保存する。
+
+R5/R6のGIL開発版が完成し、各10ファイル1,889/1,890テスト（41 skip）成功。
+R4/R3はargparse、dulwich、sqlglot 2仕様、pure-Python pickle、SymPy、Go、richards_super、
+R5/R4はbase64全11結果、R6/R5はregex_v8、regex_effbot、regex_compile、docutilsを比較する。
+各比較は3 worker・5 warmup・5 value・逆順2ブロックを維持し、逐次実行する。
+argparseの診断用mappingをwarmup後と測定後の両方で採り、新たに生成されたJITコードの
+帰属漏れを補う。診断workerは各labelの専用コピーへ固定し、終了時にSHAを再検証する。
+
+R4/R3比較のGoで約14%以上の悪化を観測したため、R4の広い監視は不採用。
+complete methodの型ガード退出までpartialと同じように数える点を分離する。
+R8試作ではPROFILEを残し、METHOD_CALLから戻れない場合は数えるが、complete methodの
+通常型ガード退出は従来どおりside traceへ進める。partial methodの監視は維持。
+未対応callee入口からの繰返し退出テストに加え、calleeは使えるがint→floatのguard退出を
+繰り返すcomplete methodが有効なまま残ることを検証するテストを追加（まだ未実行）。
+R4–R6の現在の測定は凍結済みなので、この変更を混ぜずに完了させる。
+
+R4–R6の比較完了、各11/11/4結果、失敗0、identity一致。
+R4のGo1.1405は両ブロック1.1397/1.1413。argparse0.9846、SymPy sum0.9803の利益では
+正当化できず、広い監視は不採用。元Goを40回動かしたexecutor診断ではBoard.move、
+Board.random_move、EmptySet.random_choice等のmethodが消える差を確認した。
+R5のbase16 small0.9105/large0.8683、他base64結果の最大悪化1.0040。
+R6はregex_v8 0.9152、regex_effbot0.9723、regex_compile0.9946、docutils1.0003。
+R8の通常guard退出を数えない変更をR7（R1除去後の広い監視）と比較するため、
+両ソースpatchを固定して新規開発ビルドを行う。最終PGO/FTでのmain比はまだ未確認。
+
+R7/R8は11ファイル3,855/3,856テスト（41 skip）成功。R8のguard保持テストはR6で
+期待どおり失敗しR8で成功したが、GoのR8/R7比1.0081（1.0092/1.0070）はR4の悪化を
+回復しない。R8も不採用として追加比較を途中で停止し、取得済みargparseの4回と
+SymPyの部分結果も保持した（r8-trial-stop.json）。この部分集合を完成比較としない。
+広い監視・狭い監視の両方と専用テストを作業ツリーから除去し、test_resumeも元に戻した。
+R9統合候補はR2/R3/R5/R6と以前のregex_compile修正だけ。これを最終構成でscreenする。
+R6/R5の固定scriptによるperf statはcycles比0.9011、instructions比1.0213。
+capture保存を遅らせた経路で時間は減るが、実行命令数削減とは主張しない。
+
+R9のソースを固定してFT/GIL PGO+LTOのビルドを開始。これと独立にR10を準備した。
+R10はLOAD_ATTR_METHOD_NO_DICTの型guardで確定するimmutable static typeのdescriptorを
+methodの抽象スタックへ伝え、既存FAST/FAST_WITH_KEYWORDS_INLINE命令を使う。
+同じdescriptor・receiver型で証明済みのcallable guardだけを省く。型変更・heap type・FTは
+対象外にし、通常の呼び出し境界・例外・後始末を維持する。dict.getのmissing/default、
+unhashable、subclass override、str.replaceの型変更・エラーを検証するテストを追加。
+まだ未ビルドで、改善したともargparseの原因を確定したとも扱わない。
+R9の測定へ混ぜないようr10.patchへ別途固定した。
+
+R9 FT版は16ファイル4,297テスト（49 skip）成功。GILのPGO学習は43ファイル・
+10,628テスト（265 skip）で成功し、LTOの最終リンク中。mainは10,623テストで、
+候補は追加したC処理のテストを5件多く学習している。この差を隠さず記録し、
+R5/R6そのものの効果の根拠は既述のPGO/LTOなし単一因子比較と区別する。
+四者比較runnerは依存キャッシュと実行物を分離し、新C-decimal main/候補のbuild record・
+source・全標準拡張を照合するよう更新。通常importのC backend確認と同じmpdecimal archive
+のSHA比較を加え、ハーネス23テストが成功。候補の既定値は現時点ではR9。
+R10テストにはdict keyの__hash__からcaller codeを差し替えGCを走らせる場合も追加した。
+
+R9の両最終構成が完成し、各16ファイル4,297テスト成功（GIL41/FT49 skip）。
+四者runnerのprovenanceで候補ソースの同一性・全実行物・通常C-decimal importを確認した。
+R10開発版の初回4,165テストはstr.replaceの直接呼び出し期待値だけ失敗した。
+dict.getの直接化と値の検証は成功。別の初期化漏れを発見し、r0 mainでもstrの型versionは
+予約値5ではなく80、dictは予約値8だった。strの一般version-cache slotが失われると
+_PyType_LookupByVersionで型を取得できない。str以外の予約済みbuiltinは初期値を設定している。
+R10単体のKEYWORDS命令検証には予約値を持つbytes.splitを使い、入力型の変更・例外の要求を
+維持する。凍結R10 binaryで修正後の単独テストは成功（旧失敗ログ・旧snapshotは保存）。
+別因子R11としてstr.tp_version_tagに既存_Py_TYPE_VERSION_STRを設定し、builtinの予約version
+を検証するテストを追加。main/旧候補でのred確認、R10 full suite再確認、R11のGIL/FT開発版を
+検証した後に、既に用意したR9のmain比較と個別変更比較を順に行う。まだ時間改善は未確認。
+
+R10の修正済みfixtureを同じ凍結binaryで読み、13ファイル4,165テスト（42 skip）成功。
+予約versionの新テストはr0 GIL/FT mainとR10でstrの80 != 5だけを検出して失敗した。
+R11 GIL開発版の最初の検証は18ファイル4,483テスト成功、指定したtest_unicodeが
+このリビジョンには存在せず1ファイルだけimport失敗。実際のtest_strとtest_capi.test_unicode
+へ指定を修正して再実行し、FTにはtest_free_threading.test_strも加える。
+補助診断でunsafe version再登録helperをstatic strに使おうとし、変更前のmutable-type
+assertでプロセスが終了した。この失敗・空出力も保持し、修正の証拠には使わない。
+状態を変更しない診断を凍結R10/R11で実施した結果、同じstr.replaceと8,192回の入力で
+version80/汎用call → version5/FAST_WITH_KEYWORDS_INLINEを確認し、値も全件一致した。
+これは生成形の証拠であり、まだ速度の証拠ではない。
+
+R11の最終開発検証はGIL20ファイル4,688テスト（48 skip）、FT21ファイル4,692テスト
+（57 skip）成功。文字列C APIとFT並行文字列テストも含む。通常/FT debug検証はまだ。
+全ビルドが終わってからcompare_integrated.pyを開始した。
+順番はR9/mainのGIL PGO+LTO、R9/mainのFT、R10/R9開発GIL、R11/R10開発GIL、R11/R9 FT。
+main比較と変更単体の比較を混同せず、各仕様3 worker・5 warmup・5 value・逆順2ブロックを
+維持する。今は選択集合のscreenで、全成功仕様の再実行と最終の回帰判定はまだ残る。
+
+R9 GIL PGO+LTO screen完了: 11仕様22結果、失敗0、前後identity一致。
+Genshi text/XML0.9868/0.9934、nbody1.0204、base16 small/large0.8195/0.7779、Go0.9460。
+3%以上は次の6結果（候補/main）:
+many_optionals: 1.1065（95% CI 1.1003–1.1131）。
+regex_v8: 1.1005（95% CI 1.0990–1.1022）。
+sqlglot_v2_transpile: 1.0623（95% CI 1.0527–1.0729）。
+pickle_pure_python: 1.0502（95% CI 1.0358–1.0651）。
+ascii85_large: 1.0485（95% CI 1.0481–1.0490）。
+richards_super: 1.0384（95% CI 1.0343–1.0430）。
+R6のregex helperはPGO後にsre_ucs1_next_branchへのcallとレジスタ退避が3か所残り、
+開発R6には独立helper symbolがない。R12としてその小helperにPy_ALWAYS_INLINEを付ける
+単一因子patch（R9基準）を用意。まだ未ビルド。全体配置だけの影響とは断定しない。
+R10/R11の比較完了後に、残った対象を固定仕事量のperfとJIT無効の対照で切り分ける。
+
+R13試作: R10のdescriptor取得をFTでも予約済みbuiltin version 1–12に限定して許可。
+_PyType_LookupByVersionの固定switchだけを通し、共有の可変version-cacheは読まない。
+immutable static type所有のdescriptorを参照し、既存の直接C-call命令・型guard・cleanupを維持する。
+GIL専用だった直接callの意味検証をFTにも適用。単独因子patchはR11+この変更だけ、
+R12のC inline変更と分離した。まだビルド・性能とも未検証。
+
+R14試作: argparseの最大methodの熱いside exitはroot offset22（最初のreceiver store）で、
+約900uopずつのside traceを2段通る。同じ入口で型が変わるlarge methodだけ早期guard退出を
+既存256-entry windowへ数える。小method、callee内、後半の退出、completeのcallee fallbackは
+対象外。広い監視R4/R8とは区別し、Goのmethod保持を検証する。まだ未ビルド。
+
+R9 FT screen完了、5仕様8結果、失敗0、前後identity一致。
+docutils: 1.0506（1.0407–1.0594）。
+go: 0.8588（0.8526–0.8659）。
+regex_v8: 1.0234（1.0224–1.0246）。
+richards_super: 0.3853（0.3842–0.3862）。
+sympy_expand: 0.8948（0.8918–0.8976）。
+sympy_integrate: 1.0168（1.0009–1.0389）。
+sympy_str: 0.9505（0.9478–0.9531）。
+sympy_sum: 1.0506（1.0417–1.0591）。
+docutils/SymPy sumの3%以上の後退は残る。R10/R11の単独因子比較へ進んだ。
+
+R10/R9 GIL開発版比較完了、6結果・失敗0・identity一致。SQLGlot optimize0.9950、
+argparse1.0089、transpile1.0033、pure pickle1.0098、Go1.0024、richards_super1.0016。
+大きい利益は確認できず、この変更だけを回帰修正成功としない。R11とFT拡張R13を別途評価する。
+R14は入口基本blockとcodeの最初1/8の共通範囲だけを監視し、閾値をEXIT_TRACEの定数opargに
+入れる設計に絞った。loop headerやcallee内の型guard退出は数えない。未生成・未ビルド。
+
+R11/R10 GIL開発比較は8結果、失敗0、identity一致。argparse1.0076、SQLGlot
+optimize0.9965/transpile1.0032、pure pickle1.0044、Go1.0003、richards_super1.0047、
+Genshi text1.0167/XML0.9906。直接call生成は確認できても大きな速度改善は確認できない。
+M-15のレポートをrelease検証済み・debug/最終統合検証待ちへ更新した。
+
+R12–R14に進む前のR14 red testは期待したMETHOD_PROFILE不在を検出した。
+補助driverが失敗exit codeを1と誤って固定していたため停止したが、regrtestの実際の
+テスト失敗コードは2。ログで期待した1件のfailureを確認し、再生成・再実行はせず
+続行用driverでR13 red test、診断、ビルドへ進む。旧driver失敗ログも保持する。
+
+固定仕事量のR9 GIL診断でargparseはcycles1.0819/instructions0.9586、regex_v8は
+1.0955/1.1456、ascii85_largeは1.0465/1.0495。ascii85はC decoderが約70%を占める。
+R15試作はASCII85の通常5文字組をまとめて復号し、tableの0..84/255を使う1回の
+非digit検査と64bitのoverflow検査で、1文字ごとの状態更新を省く。省略・無視文字・
+端数は元のincremental path、canonical/error処理は共通。入力型・境界値・全invalid byte
+位置・前後のgroup遷移を検証するテストを追加。R9基準の単独patchへ固定、まだ未ビルド。
+
+
+R11/R9 FT比較完了、7結果・失敗0・identity一致。docutils0.9959、SymPy sum0.9943、
+integrate0.9884、expand0.9938、str0.9963、regex_v8 0.9785、Go0.9911。
+R13 FTは21ファイル4,692テスト（56 skip）成功。R14 GIL開発版は20ファイルのうち
+19ファイル成功、test_reのみsandboxのsocket拒否。許可されたローカルソケットで
+test_reを単独再実行して成功した。R13/R14の性能はまだ未測定。
+
+R15 GIL開発版の初回4,690テストは新しい4入力型のテストだけ失敗。C APIのignorechars
+既定値を誤って想定したfixtureで、空白を明示した後、同じ凍結binaryでbinascii/base64の
+全テストが成功。新旧C decoderの134,928ケースを固定seedで比較し、値・例外名・message
+が一致した（r15-ascii85-differential.json）。C実装の差し戻しやbinary差し替えはない。
+旧テスト・失敗ログも保存し、今後の統合snapshotにはfixture修正を含める。
+
+continue_r12_and_compare.pyでR12だけのGIL PGO+LTO版を新規ビルド中。
+終了後はR14/R11 GIL開発、R13/R11 FT、R15/R9 GIL開発、R12/R9 GIL PGOを順番に比較。
+各仕様の逆順2ブロック・3 workerを維持し、重いビルドを競合させない。
+
+固定仕事量の追加診断: GIL argparseはJIT無効ではcycles0.9930/instructions0.9995、
+pure pickleは0.9871/0.9971で、JIT有効経路に原因がある。richards_superは無効でも
+cycles1.0343/instructions1.0026で、C配置等の影響も残る。これらは単一perf診断であり
+正式な時間比とは区別する。FT docutilsはcycles1.0372/instructions0.9486、SymPy sumは
+1.0631/0.9240。保持したexecutor mapと生IPから帰属したJIT試料は全体の12.15%/16.86%、
+SymPyのFactKB.deduce_all_factsが3.70%。mappingはexecutor寿命とGCを変える診断に限定する。
+
+R16試作: exact tupleのunpack後は全要素の独立参照が既にあるため、tupleを閉じても
+要素のfinalizerは呼ばれない。専用deallocator経由でこの条件をgeneratorへ伝え、通常の
+2/3要素unpackとtuple→localsの不要なstack同期・validity checkを省く。共有可変listは
+対象外。要素が最後まで生存し、結果破棄後に解放されることと長さエラーのテストを追加。
+R9基準の単独patchへ固定して再生成中。まだビルド・正しさ・速度とも未確認。
+
+
+R16のroot/単独因子snapshotを再生成済み。次のR17はFTのLOAD_DEREFを安全な取得に限定して
+既存GUARDED命令へ変換する試作。通常getterの_Py_TryIncrefCompareは競合時のDECREFで
+finalizerを呼び得るため、全getterをnon-escapingとは宣言しない。atomic load後に
+_Py_TryIncrefFastで現在thread所有またはimmortalだけを取得し、NULL/共有取得は元opcodeへ
+退出する。GIL側getterは同じ。既存のempty/mutated cell・例外テストをFTにも適用し、
+終了した別thread由来の値のfallbackと寿命のテストを追加。R9+R17単独patchも再生成・固定。
+R16/R17はいずれも未ビルドで、性能の結論はまだない。
+
+
+R12 GIL PGO+LTOが完成。学習10,628テスト、関連20ファイル4,686テスト（48 skip）成功。
+独立したsre_ucs1/2/4_next_branch symbolはなくなった。速度比較はR13/R15の後に実行する。
+R14/R11 GIL開発比較は8結果・失敗0・identity一致。argparse1.0150（1.0053–1.0255）、
+Genshi XML1.0187（1.0079–1.0306）、他6結果1.0011–1.0110。改善がなく現状のR14は
+採用しない。実際のmethod状態・退出先を追加診断して設計の対象条件を確認する。
+R13/R15/R12の計時完了を待つ続行driver（after_r12_r17.py）を用意した。
+以後は詳細map診断→R16 FT/GIL開発・R17 FTのビルド/テスト→単独因子比較を逐次行う。
+R16/R17と既存比較の重い作業は重ねない。R16/R17のdebug検証と最終統合suiteはまだ残る。
+
+
+R13/R11 FT比較完了、8結果・失敗0・identity一致。
+docutils: 1.0029（0.9979–1.0077）。
+go: 1.0004（0.9981–1.0033）。
+regex_v8: 1.0223（1.0210–1.0236）。
+richards_super: 0.9940（0.9814–1.0036）。
+sympy_expand: 0.9983（0.9935–1.0030）。
+sympy_integrate: 1.0058（0.9965–1.0152）。
+sympy_str: 1.0042（0.9988–1.0104）。
+sympy_sum: 1.0016（0.9872–1.0168）。
+docutils/SymPy sumの後退を解消できず、regex_v8は2.2%悪化。この直接call拡張は
+現状では採用根拠がなく、R10とともに最終候補から除く方向。C処理への影響とJITによる
+効果は区別し、型version初期値修正R11の採否とは分ける。
+
+
+R15/R9 GIL開発比較完了、base64全11結果・失敗0・identity一致。
+ASCII85 small0.9426（0.9390–0.9452）、large0.9068（0.9035–0.9106）。
+他結果は0.9936–1.0183で、最大のurlsafe smallはCI 0.9976–1.0521と広い。
+全workerを保持する。R15は採用候補とし、PGO最終構成でASCII85のmain比と
+他base64結果の3%閾値を再確認する。開発版の単独効果を最終結果とはしない。
+
+
+R18の単独試作patchをR9基準で作成（まだ未適用・未ビルド）。大きいcomplete methodの
+呼び出し境界を保持する条件へCFG backedgeの存在を加え、acyclicな関数の短いhot returnを
+caller traceが通れるようにする。method自体のコンパイルとCからの呼び出しは維持する。
+既存テストはcaller loopを先に温める順だけだったため、methodを先に温めた場合にも
+callerがhot returnをinlineして閉じたloopになり、実際のコード変更で無効化されるテストを
+追加した。大きいloopの境界を維持し、静的な構造の規則とする。測定前の仮説であり、
+argparse/pure pickle/SQLGlot/FT docutilsに効くと確定したわけではない。
+
+
+R12/R9 GIL PGO+LTO比較完了、6仕様16結果・失敗0・identity一致。regex_v8は
+0.8976（95% CI 0.8914–0.9071）、regex_effbot0.9986、regex_compile0.9982、docutils0.9940。
+一方でbase16 small1.0329、large1.0946、urlsafe base64 small1.0271、richards_super1.0058。
+別ビルドのC処理の差も含むため、R12によるregex改善だけを全体改善とはしない。
+base16はR9/mainで大きな改善があったが、最終統合版/mainで改めて判定する。
+追加map診断v2は存在しないcast macroを使った診断拡張のImportErrorで開始前に失敗した。
+凍結binary/sourceは変更せず、v2ログを残して型を確認するcastへ修正したv3を別作成。
+コンパイル時の暗黙宣言をエラーにし、事前import検証を加えた。continue_r16_r17.pyで
+診断→R16/R17のビルド・検証・計時を再開。R18はこの完了後にred test→開発ビルド→
+単独比較を逐次実行する待機driverを用意。まだR16–R18の性能の結論はない。
+
+
+詳細map診断v3は全コマンド成功・worker/probeの前後identity一致。argparseの
+_ActionsContainer.__init__はR14でもmethodのままで、window125/misses49（約39%）と
+既存50%閾値に届かず、同じside trace列が残った。pickle/SQLのpreserves_methodは0で、
+R18の境界変更だけでは両者への効果を説明できない。pickle putは44命令/140 code units、
+SQL Tokenizer._advanceは52命令/195 unitsで、128 code unitsのinline上限にかかる。
+R19はキャッシュを除く実命令数でcalleeの上限を管理する単独試作。未ビルド・未測定。
+R10/R13/R14は作業ツリーから除去した（旧差分を保存）。生成ファイルの更新はdebugビルド後。
+
+R16 FTビルド成功、20ファイル初回検証は18成功。driverに存在しないtest_cellを指定した
+誤りがあり、今後はtest_scopeとFT cell raceを使う。test_optでは21failure/1errorが発生。
+同じ新テストファイルで旧R9にも再現、旧R9+元ファイルは491テスト成功、TestUopsだけは
+新R16でも24テスト成功。新しい寿命テスト単体→basic_loopは成功し、新テストをsubprocessに
+隔離しても全ファイルでは同じ失敗。GCだけが原因という仮説は確認できず隔離変更は戻した。
+失敗時JITは有効・thread1、basic_loopの最初のtrace試行がbackoffへ進むことまで確認。
+テスト名や結果を削って成功とはしない。FT debugを作り内部ログで追跡し、ログ全件を保存。
+R16の性能、R17/R18/R19のビルド・性能、最終統合suiteはまだ残る。
+
+
+順序依存の原因を特定。JITが壊れて無効になったのではなく、外側のTestSuite.runが
+tracerを保持したままC経由で内側のTestUops suiteを実行していた。再帰的なtrace生成は
+抑止されるので、内側の最初のTIER2_THRESHOLD回だけではexecutorができない。
+固定FT releaseでPYTHON_GIL=0を明示した読み取り診断でも、失敗前後に同じ
+TestSuite.runの114 uopとis_tracing=1を確認した。最初のdebug診断拡張はimport時に
+GILを有効にしてしまったため、FT状態の根拠は再実行したtracer-state-ft-release.logを使う。
+TestUops全クラスを既存isolation.runInSubprocessで隔離し、全492テストが新R16/旧R9
+双方で成功。数値計算やtracerの動作は変更せず、テストのJIT開始条件を独立させた。
+新tupleテストだけの隔離は効かなかったので採用していない。
+
+R16 FT debugの寿命テストで最初は7/7/8 memory blocksが残った。既存パターンの
+clear_executor_deletion_listをテストcleanupへ登録すると3:3の参照リーク検査が成功。
+遅延解放の後始末不足であり、その失敗ログも保存。debugのtuple/unpack/base64/binascii/
+regex/decimal計7ファイル1,264テスト（27 skip）も成功。root生成ファイルも更新済み。
+R16 GIL開発版はcleanupとクラス隔離を含むr16d.patchでビルド中。R17 FTはr17c.patch、
+R18/R19も同じクラス隔離を含む別patchへ固定。待機driverの旧test_cell指定を削除し、
+前段の比較成功を確認した場合だけ順番に進む構成へ更新した。まだ最終統合評価ではない。
+
+
+R16 GIL開発版は19ファイル4,546テスト（42 skip）成功。R17 FT初回は18/19ファイル成功、
+新しいcell寿命テストだけmethod executorなしで失敗。Pythonのfor loopからreadを呼ぶ
+warmupはcaller traceにinlineされ得るため、既存closureテストと同じCのstarmap経由へ変更。
+同じ凍結binaryでtest_opt全492テスト（12 skip）成功、FT cell race2テストも成功。
+R17の実装は差し替えていない。r17d.patchとrootにはwarmup修正を残した。
+R16/R17の個別性能比較を開始し、その終了後にR18/R19の個別ビルド・比較が続く。
+
+richards_superの保存したJIT imageと生IPを照合。Packet.append_to@26はmain440 uop/
+20 KiBのimageに対してR9は341 uop/24 KiB、schedule@332も415/16 KiB対326/20 KiB。
+imageにはdata/paddingも含むため、割り当てサイズを純粋な命令byte数とは扱わない。
+R9のreturnにはframe解放loopのinlineコピーがあり、最熱IPにもそのDECREF分岐が現れる。
+R20はそのGIL側fast cleanupを共有C helperへ出す単独試作を用意（未ビルド・root未適用）。
+FTの既存generic callは維持。意味は同じで既存のframe/finalizer/exception検証を使う。
+新helperはJIT無効PGO学習では実行されない点にも注意し、開発版の結果だけで採用しない。
+
+R20のサイズ診断を補足: 対象固定buildのstencil tableでは_RETURN_VALUE_r11のcode sizeが
+main44 byte、R9 233 byte。これはimageのpaddingを含まないcode量で、各returnの追加
+189 byteを確認できる。r20-return-stencil-sizes.jsonに入力を記録した。R20の速度は未測定。
+
+
+R16/R9 FT比較完了、5仕様8結果・失敗0・identity一致。
+docutils: 0.9963（95% CI 0.9822–1.0106）。
+go: 1.0035（95% CI 1.0001–1.0066）。
+richards_super: 1.0071（95% CI 1.0042–1.0099）。
+sympy_expand: 1.0128（95% CI 0.9989–1.0274）。
+sympy_integrate: 1.0007（95% CI 0.9964–1.0048）。
+sympy_str: 1.0076（95% CI 0.9997–1.0163）。
+sympy_sum: 0.9894（95% CI 0.9819–0.9976）。
+unpack_sequence: 0.9814（95% CI 0.9795–0.9832）。
+SymPy sumとunpack_sequenceに小さい利益があるが、docutilsの改善は未確認。
+残るmain比3%以上の回帰が消えたとはまだいえない。R17/R9 FTの比較へ進んだ。
+R16のGIL開発比較完了後に採否を決める。
+
+
+R16/R9 GIL開発比較は5結果・失敗0・identity一致。pure pickle0.9918、Go0.9982、
+richards_super0.9986、unpack_sequence0.9995、SQL transpile1.0005。FTのunpack/sumの
+小さい利益を踏まえR16は統合候補へ残すが、最終main比較はまだ必要。
+R17/R9 FTは7結果・失敗0・identity一致。docutils0.9943、sum1.0078、integrate1.0076、
+str1.0112、expand0.9916、Go1.0004、richards_super1.0154。明確な利益がなくR17は
+作業ツリーから除去。cellの既存FT経路とテスト条件へ戻し、旧差分・測定は保存した。
+
+R18はred testが旧R9で想定どおり失敗、新GIL開発版で新テストは成功。ただし既存の
+長い直線calleeの境界維持テストが失敗した。これは既存の有益な保護を広く外したためで、
+テストを緩めず、loopまたは分岐のない長いbodyの境界を保持するr18d.patchを別に作成。
+分岐で短い経路を選べるacyclic bodyのみ許可する。R18bを新しい凍結buildとして再検証中。
+以前のR18失敗ログ/実行物は保持し、R19/R20はR18の検証・比較終了を待つ。
+
+
+R21単独試作を用意。methodの部分変換は途中でMETHOD_DEOPTへ退出した後も、bytecode
+CFG上の後続blockを生成していた。保存したexecutorの静的走査でSQLGlot 358/5,748 uop、
+FT docutils704/29,636、SymPy1,087/13,840 uopが到達不能という診断を得た。
+通常edge・guard退出・例外edgeを明示化した後に到達可能部分だけへ圧縮し、全jump/error
+offsetを再対応させる実装を単独patchに固定。codeの意味とside exit先bytecodeは維持する。
+importによる無条件退出以後の積が除かれる例と、別のpredecessorから到達する積が残る例を
+テストに追加。まだred test・ビルド・検証・速度のどれも未実施。rootへは未適用。
+
+
+R18bはGIL/FTとも19ファイル4,546テスト成功（GIL42 skip、FT50 skip）。
+GIL開発のR18b/R9は9結果・失敗0・identity一致:
+chaos: 1.0125（95% CI 1.0033–1.0253）。
+go: 1.0016（95% CI 0.9985–1.0051）。
+many_optionals: 1.0114（95% CI 0.9989–1.0235）。
+nbody: 0.9979（95% CI 0.9938–1.0021）。
+pickle_pure_python: 0.9949（95% CI 0.9842–1.0020）。
+raytrace: 0.9984（95% CI 0.9802–1.0130）。
+richards_super: 0.9932（95% CI 0.9779–1.0062）。
+sqlglot_v2_optimize: 1.0017（95% CI 0.9963–1.0074）。
+sqlglot_v2_transpile: 1.0029（95% CI 0.9913–1.0159）。
+argparse/SQLGlot等の残存回帰を消す利益はまだなく、FT比較の後に採否を確定する。
+
+R22はR20で外へ出したframe cleanupをFTにも適用する単独試作。frame objectの検査は
+FT atomic loadを使い、現在threadの通常frame・f_localsなし・chunk先頭でない場合だけ、
+既存と同じlocals→func→codeの解放順とstack領域の予約期間を維持する。通常のframe
+所有権移動、generator、chunk回収は元helperへ戻す。FT診断でframe解放の複数C helperが
+費用を占めたことが動機。R21までの比較後に19関連ファイルとFT frame/cprofile/monitoring
+を検証してFTの8仕様を比較する。root未適用、ビルド・正しさ・速度とも未確認。
+
+
+R18b/R9 FT比較完了。7結果・失敗0・identity一致。
+docutils: 0.9951（95% CI 0.9852–1.0058）。
+go: 1.0074（95% CI 1.0022–1.0160）。
+richards_super: 1.0008（95% CI 0.9863–1.0098）。
+sympy_expand: 1.0022（95% CI 0.9990–1.0061）。
+sympy_integrate: 1.0064（95% CI 0.9998–1.0136）。
+sympy_str: 1.0077（95% CI 1.0034–1.0124）。
+sympy_sum: 0.9964（95% CI 0.9846–1.0077）。
+GIL/FTとも回帰を消す明確な利益がないためR18bは不採用。元々rootへ適用していない。
+R19の属性cacheが大きいcalleeのテストは旧R9でMETHOD_CALLが残って失敗し、
+想定した制限を確認した。R19 GIL開発版をビルド中。
+
+
+R21のred fixtureをビルド待ち中に事前確認。import、組み込み関数への*argsは実際には
+変換できるため、初案は想定の無条件退出を作らなかった。旧fixture/失敗ログを保存し、
+Python関数への*args（現在methodでは未対応）へ変更したr21c.patchを固定。旧R9で
+退出後の_BINARY_OP_MULTIPLY_INTが残る期待どおりの失敗となり、別predecessorのある
+乗算を保持する対照テストは成功した。測定中のCPU負荷を避け、R19ビルド中に各0.4秒未満の
+fixture検査だけを実行した。待機中のR21 driverは停止してv2へ置換。R21の実装検証は未実施。
+
+
+R19はGIL/FTとも19ファイル4,546テスト成功（42/50 skip）。GIL開発比較は9結果、
+失敗0・identity一致。
+chaos: 1.0066（95% CI 0.9822–1.0316）。
+go: 0.9985（95% CI 0.9965–1.0003）。
+many_optionals: 1.0092（95% CI 0.9966–1.0233）。
+nbody: 1.0020（95% CI 0.9982–1.0062）。
+pickle_pure_python: 1.0013（95% CI 0.9860–1.0177）。
+raytrace: 1.0047（95% CI 0.9895–1.0189）。
+richards_super: 1.0018（95% CI 0.9970–1.0066）。
+sqlglot_v2_optimize: 0.9887（95% CI 0.9831–0.9948）。
+sqlglot_v2_transpile: 0.9892（95% CI 0.9820–0.9984）。
+SQLGlotの2仕様で約1.1%短縮。pure pickleには利益未確認。FTの比較と最終PGO/main
+比較がまだ必要で、3%回帰を消したとは判定しない。
+
+
+R20/R22の統合用差分では、共有helperの宣言にも実装と同じ_TIER2条件を追加した。
+Tier 2なしの構成へ未定義のexport宣言を出さないため。試作用の凍結patch/buildは変更せず、
+今回測るTier 2ありのLinuxでは実効Cコードは同じ。採用後の最終snapshotへ含める。
+
+
+R19/R9 FT比較完了、7結果・失敗0・identity一致。
+docutils: 1.0013（95% CI 0.9909–1.0120）。
+go: 1.0047（95% CI 1.0034–1.0058）。
+richards_super: 1.0017（95% CI 0.9889–1.0165）。
+sympy_expand: 0.9942（95% CI 0.9853–1.0028）。
+sympy_integrate: 1.0015（95% CI 0.9960–1.0065）。
+sympy_str: 1.0095（95% CI 1.0021–1.0149）。
+sympy_sum: 1.0044（95% CI 1.0006–1.0089）。
+FTには明確な利益がなくGo約0.47%、str約0.95%の小さい悪化もある。GILのSQL 2仕様の
+約1.1%改善とcache領域に依存しない上限という設計を踏まえ、R19を統合候補としてrootへ
+適用。採用確定・全回帰解消とはしない。最終FT/GILのmain比較で副作用を含めて判定する。
+R20のGIL開発版をビルド中。
+
+
+R20 GIL開発版が完成（e92b7420c7677a3d2e302348479f7834a2197491d791c589e8f1619a4fb1aadc）。
+19ファイル4,545テスト（42 skip）成功。_RETURN_VALUE_r11のstencil本体は233→44 byteと
+実際に縮小し、r20-return-stencil-sizes-verified.jsonへheader SHAとともに保存。
+個別性能比較を開始。まだPGO構成・main比の性能は未検証。
+
+
+R20/R9 GIL開発比較完了、8仕様9結果・失敗0・identity一致。
+genshi_text: 1.0052（95% CI 0.9918–1.0197）。
+genshi_xml: 0.9899（95% CI 0.9725–1.0086）。
+go: 0.9892（95% CI 0.9816–0.9972）。
+many_optionals: 0.9610（95% CI 0.9521–0.9705）。
+nbody: 0.9992（95% CI 0.9932–1.0049）。
+pickle_pure_python: 0.9914（95% CI 0.9832–0.9990）。
+richards_super: 0.9210（95% CI 0.9157–0.9271）。
+sqlglot_v2_transpile: 0.9768（95% CI 0.9724–0.9817）。
+telco: 1.0035（95% CI 0.9964–1.0101）。
+return stencilの233→44 byte縮小と複数項目の短縮が一致し、R20を統合候補へ採用。
+rootへ共有C helperと_TIER2を含む宣言条件を適用した。PGO学習ではJIT無効なので、
+新helperの学習・配置の影響は最終PGO/mainで別途検証する。R21 GIL開発版をビルド中。
+
+
+R21 GIL/FTは19ファイル各4,547テスト成功（42/50 skip）。GIL開発の6結果・失敗0・identity一致。
+go: 1.0009（95% CI 0.9981–1.0033）。
+many_optionals: 1.0081（95% CI 0.9955–1.0199）。
+pickle_pure_python: 0.9937（95% CI 0.9899–0.9977）。
+richards_super: 1.0072（95% CI 1.0008–1.0145）。
+sqlglot_v2_optimize: 1.0042（95% CI 0.9973–1.0112）。
+sqlglot_v2_transpile: 1.0065（95% CI 0.9997–1.0138）。
+GILでは大きな時間改善を確認できず、FT評価の後に採否を判断する。
+統合検証driver validate_integrated.pyを準備。採用後の固定patchからFT/GIL debugを作り、
+関連24ファイル（FTは5追加）と4つの寿命・frame関連テストの3:3リーク検査を逐次実行。
+テスト後も実行物/標準拡張/source SHAを照合する。まだ統合buildは開始していない。
+
+
+R21/R9 FT比較完了、7結果・失敗0・identity一致。
+docutils: 0.9980（95% CI 0.9913–1.0053）。
+go: 1.0066（95% CI 1.0008–1.0136）。
+richards_super: 1.0056（95% CI 0.9972–1.0196）。
+sympy_expand: 1.0014（95% CI 0.9948–1.0092）。
+sympy_integrate: 1.0042（95% CI 0.9995–1.0083）。
+sympy_str: 1.0145（95% CI 1.0005–1.0296）。
+sympy_sum: 0.9972（95% CI 0.9876–1.0079）。
+code量を削減できてもGIL/FTの回帰を解消する時間改善は確認できず、R21は不採用。
+rootへは適用していない。R22のFT releaseをビルド中。これを最後の個別試作として、
+評価後は統合debug→同一ソースFT/GIL PGO→main比の選択screen/全体比較へ進む。
+
+
+R22 FTは22ファイル4,574テスト（50 skip）成功。frame/cprofile/monitoringのFT専用テストも含む。
+実行物SHAは7e6e152a4ac28744ec47b46fddafc0becf1187448012f82194fea739b46311b1。
+R9比の8仕様を順序反転2ブロックで測定中。結果が揃うまでは採否を確定しない。
+統合後はr23-integrated.patchを固定し、FT/GIL debug、同一ソースFT/GIL PGOを逐次検証する。
+
+
+統合版の最初のmain比較はintegrated_screen.pyに事前固定：FT 9仕様、GIL 13仕様、
+各3 worker/5 warmup/5 value、順序反転2ブロック。既知の回帰に加えGo/super/telco等を含む。
+個別因子の倍率を掛け合わせて統合結果の代用にはしない。screenの後、全97仕様を検証する。
+
+
+R22/R9 FT比較完了。8仕様12結果・失敗0・identity一致。
+docutils: 0.9916（95% CI 0.9829–1.0009）。
+genshi_text: 0.9999（95% CI 0.9950–1.0058）。
+genshi_xml: 0.9893（95% CI 0.9658–1.0151）。
+go: 0.9816（95% CI 0.9766–0.9865）。
+many_optionals: 0.9811（95% CI 0.9733–0.9889）。
+pickle_pure_python: 1.0014（95% CI 0.9748–1.0403）。
+richards_super: 0.9555（95% CI 0.9522–0.9592）。
+sympy_expand: 0.9890（95% CI 0.9794–1.0003）。
+sympy_integrate: 0.9936（95% CI 0.9895–0.9985）。
+sympy_str: 0.9998（95% CI 0.9920–1.0065）。
+sympy_sum: 0.9748（95% CI 0.9606–0.9887）。
+telco: 0.9957（95% CI 0.9764–1.0155）。
+sympy_sum約2.5%、super約4.4%、Go約1.8%、argparse約1.9%改善。
+docutilsのCIは1を跨ぎ、pickleのCIは1.03も跨ぐため無回帰を保証しない。
+R22をR20のFT拡張としてrootへ統合。通常frameのatomic frame_obj検査、参照解放順、
+stack領域を保持する期間を維持。生成ケースを再生成した。
+r23-integrated.patch SHA-256: bcdf36980a2b180ffc801f19d5f74aa44a6292533d209b61f1eb2e7171c4f3bd
+同じpatchからFT/GIL debugを作り、関連テスト・リーク検査を開始する。
+
+
+全体比較ハーネスの候補参照をr23の同一ソースreleaseへ更新した。依存入りcontrollerで
+ハーネス23テスト成功（r23-harness-tests-controller.log）。最初のホストpython3.12実行は
+pyperf/packaging未導入でimport失敗し、そのログも保存。実装の失敗とは区別する。
+
+
+統合R23の初回FT debugビルドはstencil生成で失敗。統合時に追加したhelper宣言の
+_TIER2条件が原因で、stencilのclangには_Py_JITのみ渡されるため宣言が隠れていた。
+headerを_TIER2 || _Py_JITに修正し、非Tier2構成への宣言制限は維持。個別試作の
+R20/R22にはこの統合時条件がなかったため、既測定の性能結果には影響しない。
+失敗成果物を保持し、r23b-integrated.patchから新しいビルドへ進む。SHA-256: ee0afc306868ad5d06aa77d6b44d8d6c8c76b59512466ddbc2b43325638993ce
+
+
+R23b FT debugは29ファイル4,906テスト（59 skip）、新しいtuple/inlineの3:3リーク検査に成功。
+既存return materialized/finalizerのリーク検査は両方失敗。R16 FT debugでも同じ失敗で、
+前者は[3,2,4]、後者は[1,1,2]のmemory block差。executorの遅延解放cleanupだけを
+加えた独立overlayで新旧・両テストとも成功した（r23b-frame-refleak-controls.json,
+r23b-frame-refleak-cleanup.json）。その2行をrootへ適用。期待値・本体処理は変更していない。
+最終ソースr23c-integrated.patchを再固定：98892307d1595ce6c9ce7ec1483cc53e759fe56c7e4235e5f9dcfadbc44253ee。
+C側はR23bと同一。固定したテストを含めてFT/GIL debugから逐次検証を再開する。
+
+
+R23c FT debug: 29ファイル4,906テスト（59 skip）、tuple/属性の多いcallee/保存frame/
+finalizer再入の4件で3:3リーク検査成功。ソース・python・標準拡張の前後SHA一致。
+python SHA-256: 962bcd469d2afbcc4c78fe5e89817980936aed1d1a4493105968319ead866ca0。GIL debugへ進む。
+
+
+R23c GIL debugは24ファイル4,863テスト（46 skip）と4件の3:3リーク検査成功。
+FT/GILの全3,943ソース一致、実行物/標準拡張/ソースの検証後SHA一致。debug段階完了。
+GIL debug SHA-256: de46c0c3d62b64125403652332160b4a8c65cef6af8bbc6a2f1b0ee5dd0579fe。同じpatchでFT releaseとGIL PGO/full LTOを開始。
+
+
+R23c FT releaseも29ファイル4,906テスト（61 skip）成功。GIL PGOのビルドへ進む。
+過去の失敗を再確認：fastapiはベンチマーク実行のTypeErrorではなく、pydantic-coreの
+PyO3がPython 3.16未対応としてwheel構築を拒否した準備失敗（実行callなし）。
+GIL asyncio_tcp_sslでは両側にSSLのBAD_RECORD_MAC系エラーがある。FT Daskは候補の
+distributed/profile.py:62のframe参照中SIGSEGV。現在の原因・修正済みとは判断しない。
+最終分析にdependency preparation failureと実行欠落の対応を追加し、未測定を成功へ数えない。
+
+
+R23c GIL PGO学習は43ファイル10,632テスト（265 skip）成功。mainの10,623に対し
+R5/R6/R15の追加テスト9件が増えている。学習JIT無効・seed0・cold専用pycache・
+bootstrap profile分離の条件を維持し、140.6秒で終了。full LTOの最終ビルド中。
+
+
+R23c release段階完了。GIL PGO/full LTOは24ファイル4,863テスト（48 skip）成功。
+FT/GILの3,943ソース一致、mainを含む4構成のlibmpdec.a SHA一致、通常decimal importで
+C backendを確認。FT SHA-256: 283bd9d4f7927e3c4a5efa1ff58d7e040413e59a025de95840e1a1672339762c。
+GIL SHA-256: 897f9daf8195577eff39e69eab705cc0da5bc11fe1214cb404aa46f172657e8e。
+FT 9仕様→GIL 13仕様のmain比較を開始（r23c-*-main-screen）。全97仕様はまだ未実施。
+
+
+R23c最終機械語の静的確認：共有frame helperはGIL開発R20で473 byte、PGO統合R23cで
+179 byte。PGO版ではlocal/function/codeのPyStackRef_CLOSEが各々out-of-line callになり、
+開発版のinline decrefとは異なる（r23c-frame-cleanup-native.jsonとdisassembly保存）。
+JIT無効学習でhelperが未実行なことと整合するが、サイズ差だけで性能悪化の原因とはしない。
+main screen完了後に差が残る場合、PGOで通常frame処理とfast pathを共有する設計を検討する。
+
+
+待機中の静的設計としてr24-frame-draft.patchを作成（未適用・未ビルド・生成ケース未更新）。
+R23cの既存fast pathを通常の_PyEval_FrameClearAndPopへ共通化し、Tier1/JITの両方から
+呼んで通常PGO学習でも実行される案。新しいrefcount規則は導入しない。現在の固定buildや
+測定ソースは変更していない。現在のmain screen結果を確認後、必要性と採否を判断する。
+
+
+R23c/main FT screen完了。9仕様13結果、失敗0、前後identity一致。
+docutils: 1.0341（95% CI 1.0247–1.0440）。
+sympy_sum: 1.0264（95% CI 1.0224–1.0303）。
+regex_v8: 1.0141（95% CI 1.0115–1.0171）。
+many_optionals: 1.0084（95% CI 0.9975–1.0228）。
+sympy_integrate: 0.9968（95% CI 0.9904–1.0023）。
+telco: 0.9550（95% CI 0.9429–0.9685）。
+sympy_str: 0.9444（95% CI 0.9391–0.9496）。
+genshi_xml: 0.9272（95% CI 0.9161–0.9382）。
+sympy_expand: 0.8811（95% CI 0.8792–0.8836）。
+genshi_text: 0.8705（95% CI 0.8682–0.8728）。
+pickle_pure_python: 0.8556（95% CI 0.8536–0.8576）。
+go: 0.8403（95% CI 0.8345–0.8465）。
+richards_super: 0.3715（95% CI 0.3685–0.3765）。
+docutilsは3.4%回帰が残り、全回帰解消ではない。sympy_sumも点推定2.6%、上端3.03%で
+確認の余地がある。GIL PGO/full LTOの13仕様の比較を続ける。
+
+
+R23c/main GIL PGO/full LTO screen完了。13仕様24結果、失敗0、前後identity一致。
+pickle_pure_python: 1.0842（95% CI 1.0773–1.0912）。
+many_optionals: 1.0674（95% CI 1.0560–1.0784）。
+richards_super: 1.0571（95% CI 1.0347–1.0760）。
+base85_small: 1.0523（95% CI 1.0447–1.0596）。
+regex_compile: 1.0400（95% CI 1.0309–1.0511）。
+nbody: 1.0389（95% CI 1.0348–1.0437）。
+dulwich_log: 1.0367（95% CI 1.0279–1.0466）。
+sqlglot_v2_transpile: 1.0332（95% CI 1.0297–1.0368）。
+genshi_xml: 1.0324（95% CI 1.0027–1.0809）。
+genshi_text: 1.0308（95% CI 1.0208–1.0404）。
+sqlglot_v2_optimize: 1.0304（95% CI 1.0199–1.0398）。
+base32_small: 1.0241（95% CI 1.0222–1.0259）。
+go: 1.0120（95% CI 0.9931–1.0418）。
+telco: 1.0114（95% CI 1.0092–1.0137）。
+base32_large: 1.0102（95% CI 1.0090–1.0115）。
+urlsafe_base64_small: 0.9997（95% CI 0.9926–1.0042）。
+base85_large: 0.9960（95% CI 0.9953–0.9968）。
+base64_small: 0.9924（95% CI 0.9899–0.9941）。
+base64_large: 0.9899（95% CI 0.9891–0.9905）。
+regex_v8: 0.9756（95% CI 0.9742–0.9770）。
+ascii85_small: 0.9364（95% CI 0.9349–0.9380）。
+base16_small: 0.8615（95% CI 0.8603–0.8629）。
+ascii85_large: 0.7958（95% CI 0.7952–0.7964）。
+base16_large: 0.7954（95% CI 0.7928–0.7984）。
+11結果に3%以上の回帰が残る。R20開発版の利益がPGOで保たれていない。
+PGO版helperのout-of-line PyStackRef_CLOSEという機械語の観測を踏まえ、
+通常のframe解放と共通化するR24を次に検証する。R23cの成果物/生データは全て保持する。
+
+
+R23c両構成の選択screen完了後、R24の共通frame解放fast pathをrootへ適用。
+JIT専用の重複helperを除去し、通常の_PyEval_FrameClearAndPopからも同じ処理を使う。
+参照の解放順、frameのunlink、stack領域の保持期間と特殊frameのfallbackは維持。
+PGOでこの経路が学習されることとTier1の多段call削減を検証する。まだ高速化成功とはしない。
+生成ケースを更新しr24-integrated.patchを固定。SHA-256: da454345bc1152c1376422f2b162ed4ba78b6b3aeac4c71836286808ff5a0c8c。
+通常のframe解放も変更するため、cprofile/profile/sys_settraceを追加した
+FT 32/GIL 27ファイルと4件のリーク検査をdebugで実行後、releaseを検証する。
+
+
+R24 FT debugビルド完成（f7fe0fa00f8b65ec73ec0cd11373fc64096560ecf6c6236d9945e78c63489a30）。
+拡張検証は31ファイル5,361テスト（60 skip）成功し、追加名test_cprofileだけModuleNotFoundError。
+このソースではC profilerテストはtest_profiling.test_tracing_profilerに移動済みだった。
+実装失敗ではなくrunnerの指定誤り。全テスト名のファイル存在を事前確認するよう点検し、
+validate_r24_v2.pyで正しいモジュールを実行する。元の失敗ログ/JSONを保持し、通過済み31
+ファイルの結果とSHAを参照してFT debugビルドを再利用。4件リーク検査後にGILへ進む。
+
+
+R24 FT debugの正しいC profilerテスト27件成功。通過済み31ファイルの5,361件と合わせ
+32ファイル5,388件を検証し、4件の3:3リーク検査にも成功。source/python/標準拡張SHA一致。
+再開runnerの失敗code照合はregrtestの実際の値2に修正し、初回のassert失敗ログも保持。
+GIL debugビルドへ進んだ（r24-continue-driver-v2.log）。
+
+
+R24 GIL debugも27ファイル5,345テスト（47 skip）と4件の3:3リーク検査成功。
+FT/GILの3,943ソース一致、実行物/標準拡張/ソースの前後SHA一致。debug段階完了。
+GIL debug SHA-256: 699d26ef64624c8c52f7bda520285dcec17bd495022c8c44146b96221730157b。FT releaseをビルド中。
+
+
+R24 FT release完成。SHA-256: 50f92267bf2a1c995069d5443dd76ec274f5761459651106ef730903e6354679。
+32ファイル5,388テスト（62 skip）成功、前後のsource/python/標準拡張SHA一致。
+GIL PGO学習も正常終了し最終リンク中。性能の採否は固定binaryのmain比較後に判断する。
+
+
+R24 release両構成完了。GIL SHA-256: 363aab337485c903950b692aee73683e77c40a86205a9e7009da62ba540d18f1。
+GIL 27ファイル5,345テスト（49 skip）成功。PGO学習43ファイル成功。
+機械語では_PyEval_FrameClearAndPopのhot部分777 byte、cold28 byteとなり、
+R23cのJIT専用helperに残った各PyStackRef_CLOSEのcallがなく、decrefを直接実行する。
+_RETURN_VALUE_r11 stencilは44 byte。これはコード生成の確認で、性能の結論ではない。
+inspect_cleanup.pyとnative JSON/disassemblyを保存。両releaseはsource/python/標準拡張identity一致。
+同じC decimal mainとのFT 9仕様/GIL 13仕様の選択screenを開始した。
+
+
+R24/main FT選択screen完了。9仕様13結果、失敗0、前後identity一致。
+sympy_sum: 1.0380（95% CI 1.0289–1.0470）。
+docutils: 1.0321（95% CI 1.0242–1.0393）。
+regex_v8: 1.0202（95% CI 1.0175–1.0223）。
+many_optionals: 1.0056（95% CI 0.9999–1.0107）。
+sympy_integrate: 0.9931（95% CI 0.9917–0.9943）。
+telco: 0.9550（95% CI 0.9453–0.9638）。
+sympy_str: 0.9524（95% CI 0.9486–0.9563）。
+genshi_xml: 0.9076（95% CI 0.9038–0.9117）。
+sympy_expand: 0.8838（95% CI 0.8823–0.8854）。
+genshi_text: 0.8828（95% CI 0.8659–0.9005）。
+pickle_pure_python: 0.8446（95% CI 0.8290–0.8545）。
+go: 0.8400（95% CI 0.8356–0.8446）。
+richards_super: 0.3712（95% CI 0.3700–0.3724）。
+docutilsとsympy_sumが3%以上。GIL screen後にJIT有効/無効の固定仕事量の診断を行う。
+両者を未解消とし、FT全体や3%以上全解消とはしない。
+
+
+R24/main GIL PGO/full LTO選択screen完了。13仕様24結果、失敗0、前後identity一致。
+nbody: 1.0436（95% CI 1.0417–1.0455）。
+many_optionals: 1.0366（95% CI 1.0324–1.0404）。
+pickle_pure_python: 1.0243（95% CI 1.0134–1.0353）。
+telco: 1.0241（95% CI 1.0189–1.0293）。
+dulwich_log: 1.0177（95% CI 1.0042–1.0314）。
+sqlglot_v2_optimize: 1.0115（95% CI 1.0053–1.0173）。
+urlsafe_base64_small: 1.0111（95% CI 1.0075–1.0139）。
+base32_large: 1.0089（95% CI 1.0075–1.0101）。
+sqlglot_v2_transpile: 1.0072（95% CI 1.0043–1.0104）。
+base85_large: 0.9963（95% CI 0.9957–0.9969）。
+genshi_text: 0.9944（95% CI 0.9776–1.0121）。
+regex_compile: 0.9918（95% CI 0.9860–0.9981）。
+base64_large: 0.9895（95% CI 0.9889–0.9901）。
+base85_small: 0.9894（95% CI 0.9843–0.9936）。
+genshi_xml: 0.9873（95% CI 0.9575–1.0131）。
+regex_v8: 0.9839（95% CI 0.9795–0.9893）。
+base32_small: 0.9752（95% CI 0.9739–0.9762）。
+richards_super: 0.9414（95% CI 0.9314–0.9486）。
+base64_small: 0.9378（95% CI 0.9282–0.9433）。
+go: 0.9353（95% CI 0.9334–0.9371）。
+ascii85_small: 0.8860（95% CI 0.8841–0.8876）。
+base16_small: 0.8423（95% CI 0.8412–0.8434）。
+base16_large: 0.8400（95% CI 0.8372–0.8432）。
+ascii85_large: 0.7972（95% CI 0.7966–0.7977）。
+3%以上はnbody/argparseの2結果（R23cでは11）。FTのdocutils/sympy_sumと合わせ4件が未解消。
+pure pickle、telco、dulwichは平均3%未満だが最終確認対象に含める。
+diagnose_r24.pyでFT docutils/sympy、GIL argparse/nbodyをJIT 0/1の固定仕事量で逐次診断する。
+診断はperf statのinstructions/cyclesで原因を切り分ける補助であり、pyperfの置き換えではない。
+
+
+R24固定仕事量のJIT切り分け（各1組のperf stat。pyperfの代用ではない）:
+ft docutils JIT=0: cycles 1.0195, instructions 0.9960。
+ft docutils JIT=1: cycles 1.0372, instructions 0.9346。
+ft sympy JIT=0: cycles 0.9881, instructions 0.9861。
+ft sympy JIT=1: cycles 1.0601, instructions 0.9128。
+gil argparse JIT=0: cycles 0.9925, instructions 0.9986。
+gil argparse JIT=1: cycles 1.0020, instructions 0.9634。
+gil nbody JIT=0: cycles 1.0031, instructions 0.9992。
+gil nbody JIT=1: cycles 1.0425, instructions 1.0046。
+FT SymPy/nbodyはJIT経路に差が残る。docutilsにはJIT無効時の差もある。
+argparseの固定仕事量では差が小さく、実際のpyperf worker（512loops/5warmups/5values）
+をprofileする。warmup長さ・呼び出し方・importでのspecialization等を区別し、
+差が小さい診断値を通常pyperfの3.7%回帰の解消として扱わない。
+FT docutils/sympy、GIL argparse/nbodyのJIT map付き診断も逐次実行する。
+mapはexecutor保持がGC/寿命を変えるため、通常時間比に使わない。
+
+
+R24追加profile完了。実pyperf argparse workerでも3.9%/4.3%回帰を再現。
+nbodyのhot loopはmain/candidateともtraceで、候補のuop数は415→394だがimageは16→20KiB
+（data/paddingを含む）。定数添字を毎回Python整数から取り出していることを確認。
+R25はexact compactな非負定数list添字をoperandへ埋め込む専用uopを追加。
+元のstack/exit/cleanup規約とFTのlist取得APIを維持する。負数・動的indexは既存経路。
+listの要素変更、縮小・空listのIndexError、subclassへの切替をテストに追加し、
+旧R24で新uopがないため失敗することを確認した。生成casesを更新し試作patch固定。
+R25 patch SHA-256: a46960cda8022ddcc40dc367ebdc9b32a1d92ea2724914cd9f419c4993da7892。
+
+
+R25は既存のlist pair比較/len融合を維持するため、新命令を対応matcherで同等に扱う
+r25bへ更新して開発ビルド。GIL SHA: 091d346bff1edac698f5509dcaced23ac5fab43751b6df71d359715da7a3eec0。
+18ファイル1,691テストのうち、既存slice型伝播テストが旧list添字命令名を期待した1失敗。
+型ガード1個の条件を保って期待名だけ更新し、同じ固定binaryでtest_optの494件が成功。
+元の失敗ログ/build/sourceを保持。rootはテスト修正のみを含むr25c-integrated.patchへ固定。
+continue_r25.pyでR24 GIL non-PGO control、R25c FTをビルド・検証後、
+GIL 6仕様とFT 5仕様を反転2block・3workerで比較する。まだ性能の採否は未確定。
+
+
+R25c検証: R24 GIL controlは18ファイル1,690件成功、R25c FTは21ファイル1,723件
+（33 skip）成功。FT SHA: 1b931664697fbdc7e81e5b5a191679a0c2356ad8f06a757df6e755e1886813a8。
+定数list添字stencilはGIL 69 byte（従来101/borrowed103）、FT 104 byte（従来137）。
+GIL non-PGO因子比較7結果は失敗0・identity一致: nbody0.9496（CI0.9446–0.9560）、
+argparse0.9973、pickle0.9966、Go1.0046、super0.9937、Genshi text0.9969/XML0.9997。
+これはR24開発版比であり、最終PGO/mainの解消判定ではない。FT比較を続行中。
+
+argparseのR24 mapでは_ActionsContainer.__init__が134命令、1168uop、
+PUSH_FRAME15件、METHOD_CALL1件、分岐0でpreserves_method=true。
+R26-draftは「未inlineのPython呼出しを残すacyclic method」のcaller tracingを許す案。
+loopを持つmethodや、calleeを全てinlineできた大きい直線bodyの境界は維持する。
+既存R18の「分岐のあるacyclic body」案とは対象が異なる。root未適用・未実行。
+R25の性能測定が終わってから新しいgenerator caller/closure変更テストで旧版との差を確認する。
+
+
+R25c FT因子比較完了（8結果、失敗0・identity一致）:
+docutils0.9996、sympy_sum0.9867（CI0.9735–1.0000、block0.9750/0.9986）、
+nbody0.9878、Go0.9964、super1.0004、SymPy他0.9999–1.0047。
+SymPy sumはblock間差があり、main比の解消と扱わない。
+R26新テストは旧R25bでcallerのPUSH_FRAME不足により失敗し、問題の再現を確認。
+R26案をrootへ適用しpatchを固定。開発版の正しさと因子比較へ進む。
+
+
+R26開発版の検証成功: GIL 19ファイル3,658テスト（20 skip）、FT 22ファイル
+3,690テスト（33 skip）。反転2blockの性能比較を実行中。GIL argparseの初回
+2blockは方向が一致せず、改善を確認できていない。全予定の結果を保持して判断する。
+R27-draftはFTのborrowed attribute receiver後の不要なoutput/POP_TOP_NOPを除く案。
+従来FTでfuse_borrowed_input_cleanup全体を無効にしていたが、属性loadだけを対象にし、
+FT uop interpreterでは既存と同じacquire load/TryIncrefCompareStackRefを使う。
+list/tupleのborrowed融合は従来通りFTで無効。属性寿命、削除、dict clear、descriptor変更、
+一時receiverのfinalizer検査を維持・追加する。root未適用・性能未評価。
+FT JIT templateは既存の単一Python thread制約でGIL相当のobject操作を生成しており、
+R25のFT list添字もnative stencilではこの既存経路、FT uop interpreterではGetItemRef経路。
+両者を混同しない。スレッド停止・参照カウントの既存条件は緩めない。
+
+
+R26のGIL 7結果はargparse1.0068（CI0.9891–1.0238）、Genshi text1.0122/XML0.9945、
+Go1.0110、pickle1.0054、nbody1.0017、super0.9976。FTでも完了済みdocutils1.0048、
+SymPy sum0.9975・他1.0018–1.0041で回帰解消につながらないため採用しない方針。
+残りのFT反転比較は終了まで継続し、全結果を保存する。rootからR26を戻しR27を適用。
+R27の生成・ビルド・検証は現在の測定終了後に行う。
+R28はR25cから独立に作ったpatchを固定。大きいcomplete acyclic bodyが未inlineの
+Python呼出しを残す場合、入口からtraceを選び、prefer_traceで再解析を防ぐ試作。
+loopやcalleeを取り込めたbodyは維持する。まだ実行・採用していない。
+
+
+R26 FTも8結果・失敗0・identity一致で完了。採用せず全試行を保持。
+docutils: 1.0048（CI0.9969–1.0131）。
+go: 0.9947（CI0.9844–1.0012）。
+many_optionals: 1.0042（CI0.9935–1.0164）。
+richards_super: 1.0014（CI0.9992–1.0033）。
+sympy_expand: 1.0041（CI0.9950–1.0150）。
+sympy_integrate: 1.0034（CI0.9911–1.0160）。
+sympy_str: 1.0018（CI0.9933–1.0102）。
+sympy_sum: 0.9975（CI0.9837–1.0094）。
+R27/R28のfixtureは旧R25 FT/GILでそれぞれ融合命令の欠落・METHOD_CALLの存在により
+失敗し、差を再現。R27のcases生成・diff checkが成功しpatch固定。
+run_r27_r28.pyでFT属性cleanupとGIL入口trace選択を独立に検証する。
+
+
+R27 FTは24ファイル3,705テスト成功（33 skip）、SHA
+0c9b01763fe21a0877ccd8e6d2b8226e436544a547572df8ce61f12244a5d60b。
+属性loadのr12 stencil 91 byteに対し、borrowed-owner r11は85 byte。
+R28 GIL試作はtest_optの新テストとtest_argparseでSIGSEGV。性能測定へは進めず。
+faulthandlerのPCを固定binaryで解決するとoptimizer.c:5026のprefer_trace書込み。
+初回method compileではco_executorsがまだNULLで、既存inlined-loop判定と異なる。
+R28b-draftは必要な場合のみget_index_for_executorで配列を確保してから記録する。
+確保失敗は既存unsupported経路で安全に戻る。新テストがこのcold初回経路を含む。
+旧R28のbinary/差分/失敗ログは保存。現在R27 FT測定中のためR28bのビルドは終了後。
+
+
+旧overnightのGIL docutils失敗ログにはfaulthandlerのCアドレスが含まれていた。
+旧main/candidate binaryのSHAが当時のpreparation.jsonと一致することを確認し、
+addr2lineでGCのdeduce_unreachable/gc_collect_main付近へ解決した結果を
+old-docutils-faulthandler-symbols.jsonへ保存。native coreやレジスタ状態はなく、
+根本原因を特定したわけではない。最終の全体比較で再発の有無を確認する。
+R28b実行はR27のanalysis.json完成・identity確認後に開始する逐次queueとした。
+
+
+R27 FT因子比較完了（失敗0・identity一致）。
+docutils: 1.0050（CI0.9978–1.0108）。
+go: 0.9910（CI0.9892–0.9931）。
+many_optionals: 1.0011（CI0.9897–1.0139）。
+richards_super: 0.9942（CI0.9897–0.9990）。
+sympy_expand: 0.9952（CI0.9845–1.0038）。
+sympy_integrate: 0.9966（CI0.9927–1.0004）。
+sympy_str: 1.0063（CI0.9954–1.0180）。
+sympy_sum: 1.0009（CI0.9853–1.0156）。
+Go/superには小幅の利益があるがdocutils/SymPy sumの回帰解消にはならない。
+rootはR27を保持し、最終main比で判断する。R29-draftはhotになったreceiver型guard
+のside traceをコンパイルする時にcomplete methodをretireしてentry tracingへ戻す案。
+対象は最初のself load/type guardまでに通常の仕事がないprefixだけ。呼び出し毎の
+新カウンタは追加しない。tracerのstrong refとfinalizationのinvalid分岐を利用する。
+root未適用、性能未評価。
+
+
+R28b GIL検証は19ファイル3,658件成功（20 skip）。SHA:
+5e3b10a5fda2eb2c3a15fdf1f1881f60d167f3cde4b3888f871ff65a5c79beeb。
+argparseは反転2blockとも改善（約0.9945/0.9801、平均0.9873）。最終PGO/mainで確認する。
+R29新テストは旧R27 FTでmethodがvalidのままという期待通りの失敗を確認。
+この単独テスト（実行0.003秒）の終了時刻13:43:00 UTCはR28b Genshi比較の段階と重なった。
+元の全workerを保持し、このGenshi因子の確定には使わず、同じbinaryで両blockを1回だけ
+独立に再測定することを結果確定前に決める。run_r29.pyへ逐次queueを追加。
+R29はその後にFT/GIL開発版をビルド・検証し、GIL/R25・FT/R27を比較する。
+
+
+R28b GIL因子比較完了（7結果・失敗0・identity一致）。
+genshi_text: 1.0144（CI0.9996–1.0333）。
+genshi_xml: 1.0068（CI0.9848–1.0295）。
+go: 1.0075（CI1.0000–1.0169）。
+many_optionals: 0.9873（CI0.9689–1.0061）。
+nbody: 0.9990（CI0.9922–1.0070）。
+pickle_pure_python: 0.9916（CI0.9811–1.0017）。
+richards_super: 1.0062（CI1.0019–1.0106）。
+Genshiには前述の微小な単独テストとの重複があり、固定binaryで確認を実行する。
+argparseは効果候補、他への影響は最終main比較を含めて判断する。
+
+
+R29 FTの新しいpolymorphic receiverテストは成功。既存
+ test_trivial_root_c_vectorcall_attribute_fallbacks が2種類のクラスに同じcodeを使い回し、
+2周目のwarmupでentry tracingを選んだためget_executor(0)がValueErrorとなった。
+クラスごとにfresh codeを使うfixtureへ変更し、既存のexecutor存在・値・例外・traceback・
+descriptorのassertは全て維持する（隣の属性itemテストと同じ隔離方式）。
+rootをR29b試作へ更新しpatch固定。runtimeはR29と同じでテストfixtureだけの変更。
+全体の23ファイルは成功済み。固定binaryで更新test_optを再検証してから比較へ進む。
+
+
+R29b fixtureの再検証は固定FT/GIL binaryともtest_opt 495テストに成功。
+R29b GIL/R25の7結果・失敗0・identity一致: argparse1.0253（CI1.0129–1.0380）、
+Go1.0022、pickle1.0005、nbody1.0004、Genshi text0.9958/XML0.9871、super0.9814。
+目的のargparseを悪化させるため採用しない方向。FT測定を最後まで保持する。
+R30b-draftはR27から独立したclosure prefixのinline対応。既存のnested method helperと
+同じ単独COPY_FREE_VARS・MAKE_CELLなしのprefixを、新しいcallee frameへ一度だけ発行。
+解析はRESUMEから開始し、実行中のfunctionのcellを使う。拡張prefix/MAKE_CELLは従来通り。
+cell更新・別closure・空cell例外・tracebackの新テストを用意し、既存nested methodの
+例外テストはinline命令上限を超えるcalleeへ変更して元の_METHOD_CALL検証を維持する。
+最初の未実行fixtureでassertRaises終了後に消されたtracebackを参照する誤りを静的に
+見つけ、except内の検査へ直したr30b patchを保存。まだビルド・root適用していない。
+
+R29b FTの完了済みdocutilsは両blockとも約1.3–1.5%悪化、SymPy sumも
+改善していない。残りの比較・frontendカウンタ診断を継続しつつ、rootからR29を撤回し
+R30b closure inline試作へ更新。R29のpatch・binary・全workerは保持する。
+R30bのビルドはR29の計測・perf診断終了後に逐次実行する。
+
+
+R29b FT/R27の8結果も失敗0・identity一致で完了。R29は採用しない。
+docutils: 1.0140（CI1.0038–1.0241）。
+go: 1.0106（CI0.9982–1.0295）。
+many_optionals: 1.0138（CI0.9985–1.0272）。
+richards_super: 0.9825（CI0.9636–1.0005）。
+sympy_expand: 1.0015（CI0.9882–1.0142）。
+sympy_integrate: 0.9937（CI0.9833–1.0029）。
+sympy_str: 0.9837（CI0.9766–0.9921）。
+sympy_sum: 1.0113（CI0.9990–1.0225）。
+改善したstr/superも含め全workerを保持。残るfrontend診断は時間測定と分離する。
+
+R29b/main FT frontendカウンタ診断は全5イベント同時計測・稼働率100%、
+全4実行成功・binary/worker identity一致で完了。固定仕事量、各1組の探索的診断で
+通常pyperf時間比とは別。docutils cycles1.0377/instructions0.9332、icache stalls1.5289、
+iTLB walks3.6566。SymPy sum cycles1.0494/instructions0.9084、icache stalls1.6434、
+iTLB walks2.7371。分岐missは約1.006/1.033。この1組だけで因果を確定しない。
+R30bのred testは旧R27で_COPY_FREE_VARSがないという期待した失敗。
+FT/GIL開発版のビルドと検証を開始。比較中は他のCPU負荷を重ねない。
+
+
+R30b closure inlineの検証成功。FT 26ファイル4,183件（34 skip）、GIL 21ファイル
+4,135件（21 skip）、全runtime/source identity一致。SHA:
+FT 2f078116a7217878b09cabb178dfc8f61c5c1e250d918989e64ff23738e43b67、
+GIL 658623b29f74374267416933d9b3cf1d79e5edf3e72e67827cf93201a7997b25。
+FT/R27・GIL/R25の反転2block・3worker因子比較へ進んだ。
+R31-draftはR27起点の独立実験。既存の末尾paddingだけでJIT entryを64-byte刻みに分散。
+総割当ページ数・stencilコード量・W^X条件は変えない。jit_code/jit_sizeはentryから
+allocation末尾までのviewとし、freeでpage先頭を復元する。global連番はatomicで更新。
+ページ先頭へ集中した入口によるL1 instruction cacheの競合を減らす仮説であり、
+iTLBページ数の削減を主張しない。独立FT/GIL正しさ・性能比較、その後FT/R27の
+frontendカウンタをA/B・B/A各1回で比較する計画。まだroot適用・ビルドしていない。
+新テストはcode view・native address分類・無効化/GC/再生成/解放を3×64個で検査。
+
+R31は未実行の静的レビューでpaddingが丸1ページある場合の境界を発見。
+entry offsetが丸1ページになるとfree側のpage切り下げで先頭ページを復元できないため、
+offsetを必ず1ページ未満に制限したR31bを別保存。旧案は実行しない。
+ページ数はそのまま、allocation baseからentryまでのoffsetのみを制限する。
+
+
+R30b FT因子比較は8結果・失敗0・identity一致で完了。
+docutils: 0.9983（CI0.9947–1.0022）。
+go: 1.0061（CI1.0031–1.0095）。
+many_optionals: 1.0070（CI1.0010–1.0137）。
+richards_super: 1.0011（CI0.9983–1.0036）。
+sympy_expand: 1.0098（CI0.9974–1.0223）。
+sympy_integrate: 0.9998（CI0.9926–1.0067）。
+sympy_str: 0.9987（CI0.9923–1.0051）。
+sympy_sum: 0.9995（CI0.9865–1.0127）。
+SymPy sumはblock0.9774/1.0222で改善を確認できない。docutilsもほぼ同速、
+Goは両順序で約0.6%悪化。目的の回帰を解消しないためR30bをrootから撤回。
+GILの残り比較は終了まで保持する。R31b配置試作をrootへ適用し、R30b両構成の
+比較終了後にのみビルドを始める逐次queueを開始。rootのruntimeはR27+R31b。
+
+R31bのnative code viewテストはuop interpreter backendでは実行不可なので、
+get_jit_backendでnative専用のskipを追加したr31c-integrated.patchを保存。
+ビルドlabelはR31bのまま（runtime同一）、queue開始前に使用patchをr31cへ固定。
+旧patchは保持。新しいテストをuop interpreter全体の回帰にしないための検査条件。
+
+
+R30b GIL因子も7結果・失敗0・identity一致で完了。撤回を確定。
+genshi_text: 1.0133（CI1.0041–1.0273）。
+genshi_xml: 1.0035（CI0.9900–1.0146）。
+go: 1.0053（CI0.9994–1.0115）。
+many_optionals: 1.0112（CI1.0006–1.0227）。
+nbody: 0.9973（CI0.9911–1.0013）。
+pickle_pure_python: 0.9884（CI0.9698–1.0024）。
+richards_super: 1.0087（CI1.0010–1.0163）。
+R31b（fixtureを含むpatchはr31c）のFTビルド開始。R30測定との重複はない。
+
+R31b FTは21ファイル4,006テスト成功（37 skip）、SHA
+0078d64f5455813063b24e59144105d58042a73ed67fe1d9291ded5d88d53ae5。
+新しいcode view/反復解放テストとtest_c_stack_unwindを含む。GILビルド継続。
+ビルド中に既存R24 perf.dataをオフライン解析（新規計測なし）。初回の-F ip出力には
+callchainが含まれたため、そのファイルは保持し、-Gでleaf IPだけを抽出して再解析。
+r24-entry-leaf-sample-distribution.jsonが正しいleaf集計。docutilsは59,505中7,442、
+SymPyは51,974中8,593がJIT sample。L1の64-byte/64-setの仮定でset0への集中は
+JIT sampleの12.5%/14.9%、entry先頭256byteは19.5%/23.9%。これはcycle sampleの
+位置分布でありcache missの位置を直接測ったものではない。配置仮説の補助資料。
+
+R31b GILも17ファイル3,965件成功（21 skip）、SHA
+ a5bd576b5e30744a3622fd3f482efa98d4478cea1a383a4588770794ac38dbfc。
+両構成runtime/source identity一致を確認し、FT/R27・GIL/R25の因子比較を開始。
+r31b-ft stencil headerが基準と完全一致: False。
+r31b-gil-dev stencil headerが基準と完全一致: False。
+R31b stencil headerの差は先頭2行のinput digest/build command pathのcommentのみ。
+全emit関数・機械語byte列・patch処理はFT/GILとも基準と完全一致。
+別artifact r31b-stencil-body-identity.jsonへ本文SHAを保存した。
+
+最終検証helperに--reuse-ftを追加。採用patchがR31cのままなら固定済みR31b FTを
+再ビルドせず追加の全関連テストで検証して使える。patch全文、非debug/FT設定、
+source/runtime SHAを照合し、既存の試作テストlogを上書きしない別labelに保存する。
+GILは必要なPGO/full LTO build、debugはFT/GIL新規検証。まだ実行していない。
+
+
+R31b FT/R27の9結果・失敗0・identity一致で完了。
+docutils: 0.9872（CI0.9812–0.9927）。
+go: 1.0013（CI0.9944–1.0073）。
+many_optionals: 0.9916（CI0.9776–1.0043）。
+nbody: 1.0052（CI0.9948–1.0166）。
+richards_super: 0.9711（CI0.9568–0.9830）。
+sympy_expand: 0.9925（CI0.9855–0.9994）。
+sympy_integrate: 0.9952（CI0.9874–1.0034）。
+sympy_str: 0.9840（CI0.9770–0.9921）。
+sympy_sum: 1.0024（CI0.9935–1.0123）。
+docutilsは両順序で改善。sumはほぼ同速。GIL比較とカウンタ診断を継続する。
+
+
+R31b GIL/R25は7結果・失敗0・identity一致で完了。
+genshi_text: 1.0160（CI0.9985–1.0406）。
+genshi_xml: 1.0108（CI1.0045–1.0173）。
+go: 1.0034（CI0.9992–1.0089）。
+many_optionals: 0.9976（CI0.9829–1.0112）。
+nbody: 1.0304（CI0.9891–1.1001）。
+pickle_pure_python: 1.0007（CI0.9966–1.0056）。
+richards_super: 0.9916（CI0.9826–1.0003）。
+nbodyの候補1 workerが約48.3ms（他は約39ms）で、warmup5回・測定5回とも
+遅い状態で安定した。周波数約4.39GHz、runnable1で、一時的外れ値として除外しない。
+最終validationの事前条件（全因子3%未満）によりR32 queueはビルド前に停止した。
+同じbinaryのnbody/Genshiを6worker・反転2blockで1回だけ追加確認すると事前決定。
+元の全workerも保持する。現在はこの確認だけを実行中。
+docutils frontend因子（R31b/R27、A/B・B/A、全稼働率100%）: {"cpu_core/cycles/u": 0.9861051288180608, "cpu_core/instructions/u": 1.0001412791861453, "cpu_core/branch-misses/u": 0.9947275896631197, "cpu_core/icache_data.stalls/u": 0.9265128178197607, "cpu_core/itlb_misses.walk_completed/u": 0.751268139449668}
+sympy frontend因子（R31b/R27、A/B・B/A、全稼働率100%）: {"cpu_core/cycles/u": 0.9953471270056076, "cpu_core/instructions/u": 1.0013877386208831, "cpu_core/branch-misses/u": 1.0358072813977741, "cpu_core/icache_data.stalls/u": 0.949735647669691, "cpu_core/itlb_misses.walk_completed/u": 0.7397220183291605}
+
+
+R31bの追加GIL確認（6worker×反転2block）は全3結果成功・identity一致。
+genshi_text: 0.9988（CI0.9934–1.0041）。
+genshi_xml: 0.9952（CI0.9861–1.0041）。
+nbody: 0.9945（CI0.9931–0.9959）。
+元の48.3ms workerを削除しない。過去の同じR25b baseline計48workerは39.1–40.8ms、
+R31bは通常/追加計18worker中1つが48.3ms、他は38.9–39.6ms。差の原因は未確定。
+同一R31b binaryの私有jit_code_sequenceだけを、単一GILプロセス内で64初期値へ
+固定shuffle順に変える探索的診断を開始。ELF symbol offsetとbinary SHA、writable mapを
+確認し、プロセス内データだけ変更する。OS設定や実行ファイルは変更しない。
+元のbm_nbodyをwarmup5回/測定10回（loops4）実行し、測定後にGCを停止してexecutorを記録。
+通常pyperf測定とは別に扱う。初回probeのenum ID解析とゼロ長stencilの集計不備は修正、
+失敗記録を保持。v2はstencil tableから実際に生成されるIDのみ読み、未生成70 IDを区別する。
+R31dは大きいbodyを配置変更対象から外す未実行案として保存。まだ適用・採用していない。
+
+
+R31bの64条件配置診断が完了（失敗0・binary/worker一致）。phase21の1プロセスで
+warmupも測定も約54.3ms（通常約39ms）という安定した遅延を再現。
+主要advance traceは全条件で18,413byteの同じcached uop列。問題のプロセスでは
+そのentry offset=1,472byte。他の大きいtraceの配置も同時に変わるため、特定offsetだけ
+を原因と断定しない。phase21と22を2回ずつ固定順で追加再現確認する。
+R31dはcode_sizeが1ページ未満の小さいbodyだけに既存余白の分散を適用し、
+既に1ページ分のcache setを跨ぐ大きいbodyは元の配置を維持する。benchmark名や
+module名による分岐はない。rootへ適用しpatch固定、再生診断終了後にFT/GILを検証。
+元のR31bの改善・不利なworker・追加確認・64条件の全結果を保持する。
+
+phase21/22の再生は各2回とも38.7–39.3msで、遅い状態は再現しなかった。
+同じcounter初期値だけを原因と断定しない。64条件では平均39.4ms付近、最大54.3msの
+1プロセスが安定して遅く、実アドレス等も変わるため因果の留保を残す。
+R31dの検証開始。大きいコードの配置を変えない版で通常比較と配置診断を再確認する。
+
+R31d FTは21ファイル4,006件成功（37 skip）、SHA
+27b4801e2cdbb6315a4037a87ae795952e93466695ab840485ba70133389c84b。
+GIL開発版ビルド継続。R31d用の同じ64条件診断を準備するhelperも保存し、
+実際の新binaryのSHA/ELF symbolと対応headerでprobeを作る。まだ診断は実行していない。
+
+R31d GILは17ファイル3,965件成功（21 skip）、SHA
+1970463304e857a8df8b74c2fc1b7dbf8185bf3895363db3b9110dcf67ee177b。
+両構成source/runtime identity一致。GIL/R25比較を先に実行し、その後FT/R27・
+反転frontendカウンタ・64条件診断を逐次実行するqueueを開始。
+通常因子比較と診断が成功した場合の最終検証driver finalize_r31d.pyも準備。
+labelはR33、patchはR31d、FTは固定R31d binary再利用。まだ最終検証は実行しない。
+
+
+R31d GIL/R25の7結果・失敗0・identity一致で完了。
+genshi_text: 1.0032（CI0.9960–1.0102）。
+genshi_xml: 1.0032（CI0.9990–1.0071）。
+go: 0.9919（CI0.9803–0.9998）。
+many_optionals: 0.9834（CI0.9652–0.9986）。
+nbody: 0.9987（CI0.9951–1.0031）。
+pickle_pure_python: 1.0021（CI0.9788–1.0254）。
+richards_super: 1.0027（CI0.9988–1.0066）。
+argparseは両順序で改善。nbodyはほぼ同速で今回の6候補workerに大きな遅延なし。
+FT比較へ進み、追加の64条件診断はその後に実行する。
+
+R31eを未実行の代替案として保存。code_sizeの閾値ではなく、vm_data.is_methodの
+executorだけ入口を分散し、既存tracing frontendのloop traceを元の配置に保つ。
+vm_data.is_methodは_PyJIT_Compile呼出しより前に初期化済み、cold executorではfalseと
+sourceで確認。R31dの最終結果を見て必要な場合だけ比較し、まだrootへは適用しない。
+
+
+R31d FT/R27は9結果、失敗0・identity一致。
+docutils: 0.9993（CI0.9888–1.0099）。
+go: 0.9956（CI0.9915–0.9991）。
+many_optionals: 0.9946（CI0.9909–0.9985）。
+nbody: 0.9992（CI0.9930–1.0051）。
+richards_super: 1.0030（CI1.0017–1.0044）。
+sympy_expand: 1.0000（CI0.9855–1.0158）。
+sympy_integrate: 0.9991（CI0.9929–1.0046）。
+sympy_str: 0.9965（CI0.9923–1.0008）。
+sympy_sum: 1.0058（CI0.9970–1.0144）。
+docutils/sumは改善せず、配置だけでは残る回帰を解消できない。R31dの64条件診断も完了。
+R31e method-only配置案は未実行のまま保留し、R34を独立評価する。
+R34はR27を基点にPOSIX x86-64のmmap hintをインタプリタ付近に置く。
+Linuxは既存patch_x86_64_32rxによるGOT間接call/loadの直接化、Darwinは既存trampoline省略
+を期待する。MAP_FIXEDは使わず既存mappingを置換しない。hint無視・失敗時は従来の
+遠距離relocation経路を維持。page数、W^X、allocation所有権は変更しない。
+rootからR31dの配置変更を除いてR34へ置換し、FT/GIL開発版の正しさ・因子比較へ進む。
+
+R31d配置診断64プロセスの平均時間範囲は38.95–40.46ms。
+FT docutilsのfrontendカウンタ（R27比、反転2block）: cpu_core/cycles/u=0.9988, cpu_core/instructions/u=1.0001, cpu_core/branch-misses/u=1.0073, cpu_core/icache_data.stalls/u=1.0108, cpu_core/itlb_misses.walk_completed/u=1.3823。
+FT sympyのfrontendカウンタ（R27比、反転2block）: cpu_core/cycles/u=1.0011, cpu_core/instructions/u=0.9993, cpu_core/branch-misses/u=1.0142, cpu_core/icache_data.stalls/u=0.9798, cpu_core/itlb_misses.walk_completed/u=1.0018。
+全イベント稼働率100%。通常pyperf比較と診断を区別し、命令供給カウンタだけで原因を断定しない。
+
+R34関連検証完了。FTは21ファイル4,006件（37 skip）、GIL開発版は17ファイル3,965件（21 skip）成功。
+ft SHA: 4de62807fafabb2cdcce13e2ff3b054e70a32b508b9393463180c5ff7a1dbb7d。
+gil-dev SHA: 10045f5d8dc69f8cd02915e13b8ca690961da659a00e8233f7d7470c328339d6。
+両構成source/runtime identity一致。因子比較を継続し、成功時の同一patch最終検証R35を準備。
+FT releaseはR34を再利用し、debug FT/GILとGIL PGO/full LTOを検証後mainと直接比較する。
+
+R34/R25 GIL開発版の7結果・失敗0・identity一致で完了。
+genshi_text: 0.9965（CI0.9910–1.0017）。
+genshi_xml: 0.9807（CI0.9655–0.9939）。
+go: 0.9804（CI0.9644–0.9899）。
+many_optionals: 0.8739（CI0.8656–0.8813）。
+nbody: 1.0003（CI0.9950–1.0059）。
+pickle_pure_python: 1.0057（CI1.0025–1.0080）。
+richards_super: 0.9933（CI0.9875–0.9991）。
+argparseは両順序で約12–13%短縮。これは開発版同士の因子比較であり、PGO/mainの結果ではない。
+
+R34の機械語診断初回はobjdumpのアドレス接頭辞0xを正規表現が認識せず停止。
+生成コードには直接callが存在し、runtimeの失敗ではない。初回出力を保持し、
+parserを修正したv2は新しいファイル名で4バイナリを確認する。
+
+R34/R27 FTの9結果・失敗0・identity一致で完了。
+docutils: 0.9674（CI0.9612–0.9730）。
+go: 0.9958（CI0.9941–0.9976）。
+many_optionals: 0.9249（CI0.9223–0.9268）。
+nbody: 0.9988（CI0.9957–1.0025）。
+richards_super: 1.0013（CI0.9991–1.0036）。
+sympy_expand: 0.9578（CI0.9501–0.9655）。
+sympy_integrate: 0.9923（CI0.9870–0.9974）。
+sympy_str: 0.9140（CI0.9083–0.9201）。
+sympy_sum: 0.9575（CI0.9502–0.9643）。
+単純なmethodの_RETURN_VALUEについて、FT/GILとも旧版はGOT間接call、R34は
+_PyEval_FrameClearAndPopへの直接rel32 callと確認。生成コード・実アドレス・binary SHAを
+r34-native-call-analysis.jsonに保存。これはnear mappingと既存relaxationが働く証拠であり、
+各性能差の全てを単一要因に帰属するものではない。R35のdebug/最終release検証へ進む。
+
+R34/R27 FT固定work診断（反転2block、イベント稼働率100%）:
+docutils: cpu_core/cycles/u=0.9718, cpu_core/instructions/u=1.0013, cpu_core/branch-misses/u=0.8722, cpu_core/icache_data.stalls/u=0.9960, cpu_core/itlb_misses.walk_completed/u=0.7901。
+sympy: cpu_core/cycles/u=0.9301, cpu_core/instructions/u=1.0006, cpu_core/branch-misses/u=0.6785, cpu_core/icache_data.stalls/u=1.0379, cpu_core/itlb_misses.walk_completed/u=0.8543。
+通常pyperf比較とは別に保存し、計数範囲はimport/warmupを除く元benchmark関数全体。
+
+R35 FT debug通常38ファイル5,542件成功（63 skip）。追加3:3反復で
+constant_list_index_checks_current_sizeに[1,1,2]ブロックの残留。
+固定6:10診断はR24の同じ境界値テスト（旧opcode名だけ適合）も+21、R35も+19。
+clear_executors(read)とclear_executor_deletion_listの後始末を加えると両方-1で成功。
+この既存パターンをテストに適用。初回診断driverはregrtestのCLI引数をtests位置引数に
+誤って渡したため停止し、v2の正しい4条件の結果を採用。初回ログも保持。
+R34bはこのテストの2行だけ変更しruntimeはR34と同一。R36としてdebug/releaseを
+新規検証し、同一ソースのFTとGIL PGOを直接mainと比較する。
+R35は未完成の検証記録として保持し、完了とは扱わない。
+
+R36 FT debugは38ファイル5,542件（63 skip）と7種類の3:3参照リーク検査が成功。
+定数リスト添字の後始末修正後は[-1,0,1]ブロック、合計0。JIT allocation/view/releaseも成功。
+R34とR36の凍結ソース全件照合で差はtest_opt.pyの2行のみ、runtimeソースは同一。
+patch SHA: accd970d82f07fcf222bf55a8d109a56b2afcd43d5d80dbe3ba0f2578b91618e。
+
+R36 debug全体が完了。FTは38ファイル5,542件（63 skip）、GILは30ファイル5,476件
+（47 skip）。それぞれ7種類の3:3参照リーク検査も成功し、凍結source/runtime identity一致。
+GIL debug SHA: b990e6984715965f892df7326c5219b6ed9022383df6cac72b8361ff8d972c21。
+FT/GIL release検証へ進む。最終PGO以外はPGO/LTOを使わない。
+
+R36 FT releaseも38ファイル5,542件（65 skip）成功、source/runtime identity一致。
+SHA: f25d4ff55e7f2c48f18c50febe252d0537f70a96110a4da9abf2d2919ab9d22e。C decimalの通常import確認済み。
+GIL PGO/full LTOの学習用ビルドを開始。
+
+R36 release検証完了。FTは38ファイル5,542件（65 skip）、GIL PGO/full LTOは
+30ファイル5,476件（49 skip）、全て成功。両構成の全3,943 source SHA一致。
+GIL SHA: 9d78e3358068c5bc3075c0c243a9ee636ec397a6b6b611e636d8f2a4a3923800。
+PGOはgenerate306.6秒、学習139.7秒（43ファイル10,632件・265 skip成功）、final203.8秒。
+通常C decimalとruntime/source identity検証に成功。mainへの選択screenを開始。
+
+R36/main FTの選択screenが13結果・失敗0・identity一致で完了。
+regex_v8: 1.0179（CI1.0107–1.0279）。
+docutils: 0.9996（CI0.9973–1.0019）。
+sympy_sum: 0.9914（CI0.9849–0.9977）。
+sympy_integrate: 0.9843（CI0.9807–0.9881）。
+telco: 0.9573（CI0.9443–0.9731）。
+many_optionals: 0.9250（CI0.9218–0.9280）。
+genshi_xml: 0.9034（CI0.8992–0.9073）。
+sympy_str: 0.8776（CI0.8752–0.8798）。
+genshi_text: 0.8662（CI0.8643–0.8680）。
+pickle_pure_python: 0.8584（CI0.8560–0.8607）。
+sympy_expand: 0.8488（CI0.8469–0.8507）。
+go: 0.8223（CI0.8205–0.8244）。
+richards_super: 0.3677（CI0.3672–0.3681）。
+3%以上の回帰数: 0。全97仕様はこれから。
+
+R36/main GIL PGOの選択screenは24結果・失敗0・identity一致で完了。
+dulwich_log: 1.0931（CI1.0848–1.1001）。
+regex_v8: 1.0691（CI0.9746–1.2106）。
+pickle_pure_python: 1.0339（CI1.0268–1.0422）。
+richards_super: 1.0098（CI1.0024–1.0185）。
+telco: 1.0075（CI1.0028–1.0125）。
+base32_large: 1.0051（CI1.0040–1.0061）。
+nbody: 1.0009（CI0.9966–1.0050）。
+base32_small: 1.0002（CI0.9965–1.0047）。
+sqlglot_v2_transpile: 0.9998（CI0.9966–1.0031）。
+sqlglot_v2_optimize: 0.9977（CI0.9950–1.0003）。
+base85_small: 0.9977（CI0.9956–0.9998）。
+base85_large: 0.9953（CI0.9949–0.9956）。
+genshi_xml: 0.9934（CI0.9888–0.9972）。
+genshi_text: 0.9860（CI0.9777–0.9941）。
+base64_large: 0.9860（CI0.9856–0.9864）。
+urlsafe_base64_small: 0.9818（CI0.9811–0.9825）。
+many_optionals: 0.9631（CI0.9466–0.9760）。
+base64_small: 0.9531（CI0.9521–0.9541）。
+go: 0.9305（CI0.9271–0.9337）。
+regex_compile: 0.9244（CI0.9186–0.9298）。
+ascii85_small: 0.8891（CI0.8869–0.8915）。
+base16_small: 0.8308（CI0.8277–0.8343）。
+ascii85_large: 0.7979（CI0.7964–0.7994）。
+base16_large: 0.7976（CI0.7924–0.8026）。
+dulwich_log・regex_v8・pickle_pure_pythonに3%以上が残り、全97仕様queueは条件不成立で実行前に停止。
+これは自動承認拒否ではなく性能条件のチェック。2.5%以上の全3仕様を6worker×反転2blockで
+1回追加確認する。最初のscreenと遅いworkerは削除しない。
+
+R36診断初回はDulwichへPathを渡してTypeError。通常benchmarkはstrを渡すため、
+診断driverだけ元workloadと同じstrへ修正しv2別名で再実行。通常pyperf結果には影響なし。
+
+R36 pickle固定work診断v2はpyperfのinner_loops=20正規化を回数見積りから落とし、
+main側が180秒timeout。元のbench_pickleには1loopで60 dumpsがあり、診断だけ反復を
+100×loops64へ固定してv3を実行。pyperf比較のworkload/入力/回数規約は変更しない。
+失敗counterを比較に用いず保持し、反転2blockを新しいlabelで最初から測る。
+
+近接mapping切り分けの初回shimはmmapを捕捉したが、この実行物はmmap64を参照するため
+match=0の事前検証で停止。通常性能比較は開始していない。nmで参照を確認しmmap64版を
+v2別名で作成。実コードの近距離/遠距離配置確認に成功した場合だけ診断比較を開始する。
+
+
+## 2026-09-19: method JIT単独への移行（新しいユーザー指示）
+
+ユーザーの最新指示により、候補からtracing JITを全削除し、mainのtracing JITと
+method JIT単独を比較する。許容回帰は各比較結果の実行時間比1.10以下へ変更。
+従来の3%条件と、R37草案のlarge partial methodをtracingへ戻す案は廃止する。
+C `_decimal`、FT noPGO/noLTO、GIL PGO/fullLTO、変更しないworkload、短いnetworkx
+timeout、binary/依存SHA、順序反転と生データ保存は継続。GitHub投稿/push/PR変更なし。
+
+PEP 836とCPython AI policyを再読。PEPはフロントエンドの置換と既存middle/backendの
+再利用を提案している。実装では記録dispatch、tracer状態、録画開始/翻訳/終了、side trace、
+methodからtraceへの選択を削除する。共通uop最適化、copy-and-patch、executorの安全な
+寿命管理は残す。Pythonのsys.settrace/monitoringはJIT記録と別物であり維持する。
+
+比較上の制約: 現mainのFTはJIT enabledでもexecutorを生成せずTier 1で実行する。
+tracing対methodの直接比較はGIL構成。FTはmain Tier 1対methodとして明記する。
+R36までの結果はhybridの履歴であり、method単独の成績として転用しない。
+
+作業順:
+1. tracingフロントエンドとフォールバックを物理的に削除し、生成器/生成物を更新。
+2. 静的CFGのmethod入口・ループ入口、Tier 1復帰/再試行を実装・検証。
+3. GIL/FTのnoPGO/noLTO開発ビルドで正しさ、監視、例外、寿命、スレッドを検証。
+4. main比較で10%超過を調べ、methodのcoverage/型情報/呼び出しを改善。
+5. 同一ソースの最終2構成で全pyperformanceを比較し、成功/失敗/回帰をレポート。
+
+前タスクの最後の固定バイナリmapping診断は完了（6結果、失敗0、identity一致）。
+near対mirrorはdulwich 0.9172、richards_super 0.9461、pickle 0.9935、
+regex 1.0010、nbody 1.0036、argparse 1.0457。生データを保持し、
+この時点では配置変更を採用しない。旧hybrid sourceはm0-before-tracer-removal.patch
+とR36の凍結source/buildに保存。
+
+M1/M2: 記録dispatch、tracer構造体/寿命管理、開始/翻訳/終了、entry/side trace生成、
+prefer_trace方針、recorder関数生成器/生成物を削除。M1 buildで共通exit処理の
+is_for_iter_test削除過多、M2で旧fitness設定の参照残りを検出し修正。失敗ログは保存。
+M3: side-traceリンク、cold sentinel executor、exit temperature、chain depth、
+jit_exit、タグ付きTier1帰還ポインタも削除。guard失敗は直接Tier1へ復帰。
+CFGをループbackedgeから静的にコンパイルするOSRを追加し、entry stack depthは
+実フレームから取得、locals/stackの値や型は未知から解析する。EXTENDED_ARGも
+挿入点に含め、再試行counterは実opcodeのcacheで更新する。
+記録生成器のテストは削除された機能と共に除去し、一般生成器/最適化器のテストは維持。
+M3 GIL debug（noPGO/noLTO）を凍結ソースからビルド中。性能は未計測。
+
+M4: GIL debug noPGO/noLTOビルド成功。実行物のnmにCompileMethodがあり、
+tracer/trace optimizer/cold-executor生成のシンボルはなし。方法別テスト156件は
+142成功・1skip・13失敗。新規OSR（両分岐、ネストしたiterator、型変更、例外位置）は成功。
+全uop/生成器432件は228failure・3error・4skip。旧trace形状の期待値と、
+method側の型推論/guard除去等の未実装が混在しており、完了扱いしない。
+
+M5: block内list-pair/len-subscript融合をmethodにも適用。methodが保持するlenの
+callable/null guardは融合uop自身が同じチェックを行うため吸収。定数1のint cleanupと
+overflow guardもpair matcherで認識。コンパイル成功時に現在の呼び出しから実行開始し、
+初回のzip専用iterator経路が実際に使われるよう修正。245件中235成功・1skip・
+残る9failureは旧side trace/trace loop期待値。入力/出力・エラー・変更後動作を維持し、
+method CFGまたは明示したgenerator Tier1 fallbackの契約へ書き換えて再検証中。
+main GIL noPGO/noLTO、C decimalビルド完成: cafdcfa052a142b456095b69ec8f99c7a0fcac701403055bfaae587e0de770ea。
+性能比較用の候補は別の凍結ビルドを用意し、開発用増分treeは測定に使わない。
+
+M5凍結GIL noPGO/noLTO releaseビルド成功（C decimal）。SHA
+776fc7083db32d64c76fa3db66b1a03751fcfd5a7364914aa36abfdae1233071。
+method/生成器245件は244成功・1skip（testのspecialized opcode参照を
+`dis._all_opmap`へ修正後、root Libから検証）。初回のKeyErrorもログ保存。
+14仕様のmain比較を3worker×順序反転2blockで開始。旧hybrid結果は流用しない。
+途中値でrichards_superが約2.2倍、Goは約0.90、spectral_normは約0.70。
+全体集計前の数値であり、10%条件は未達。
+
+M6実装中: 共通symbolic uop optimizerを静的CFGの直線部分に適用。
+入力はmethod解析の保証済み事実のみとし、実フレームの値を観察しない。
+frame切り替え/inline CFGを含むblockは除外、短縮分をNOPで埋めてCFGの
+参照先を保存する。古いlinear trace後処理は削除し、methodのCFG対応処理を使う。
+STORE_FAST_NOESCAPEのsymbol更新を追加。現時点で未ビルド・未検証。
+性能測定と重いbuild/testを競合させず、M5比較後にM6 debug検証へ進む。
+
+M5 main比較完了: 14仕様、失敗0、identity一致。10%超過はrichards_super 2.1919、
+pickle_pure_python 1.2191、fannkuch 1.1878、regex_compile 1.1218、deltablue 1.1209。
+Go 0.8999、spectral_norm 0.6976。詳細と不確実性、全14結果を
+benchmarks/method_only_report.mdへ保存した。PGO/FT/全suiteの結果ではない。
+別の非計時40回診断でschedule/HandlerTask.fnにexecutorが残らないことを確認。
+
+M6初回は共通型guard解析のrecorded-type assert、M6bはconstructorの
+probable-callable assertで停止。型はguardのversion cacheから取得し、
+constructorの観察値なしを許す形へ修正。M6cは280件完走、7failure・2skip。
+M7ではsymbolic最適化で残ったNOPを詰め、lenのguard除去結果を採用。
+定数load/inplace整数演算/借用参照cleanupの変化をregion/enum融合でも認識。
+M7は281件完走、7failure・2skip。失敗は形状変化と不足を特定して修正。
+
+M8: CALL_EX_PYをmethodの通常call境界へ対応し、calleeの未知のcode/versionは
+runtimeのcallability checkと通常引数処理で扱う。native calleeが未準備ならTier1。
+len/float-divide融合は簡略化したcleanupも認識し、元の所有権を保存。
+同一localを2回読むdiamondは1つの型guardで十分なことをテストへ反映。
+iteratorの記録型に依存した期待値をstatic CFGの汎用iterator経路へ変更。
+method/OSR・無効化・uop基本動作・生成器281件は279成功・2skip。
+新しいstatic builtin guard除去、local更新後の事実、260回の再コンパイルも成功。
+無効化済みco_executorsの空きslotを再利用する修正を含む。
+M8の旧uop最適化全体と広い動作検証、Richards診断、凍結release比較へ進む。
+
+M8b: 広い19ファイル検証で18ファイルが成功、test_weakrefでコンパイラの
+NULL参照を検出。superの未知のclass引数を定数扱いしていた共通解析を修正。
+custom metaclassを含むsuper再現テストを追加し、weakrefと合わせ140件成功。
+method関連282件は280成功・2skip。旧最適化310件には122failure・3skipが残る。
+これらを一括skipして完了とはしない。静的解析で実現すべき最適化を分類する。
+M8b凍結GIL release SHA 7337b327059a22b91410a3510a00dc4d08777492f7455bc02d83a4f744bb2a0e。
+14仕様比較を進行中。Richardsは依然約2.2倍で、10%条件は未達。
+M9: 記録用pseudouopとDSLのrecords_value属性、関連生成器処理を削除。
+抽象RETURN等の未定義出力で生成器エラーとなり、明示的な出力代入を追加して
+再生成に成功。まだM9のビルド/動作検証は未実施。
+
+M8b比較完了: 14仕様すべて成功、identity一致。Go 0.8970、spectral_norm 0.6885、
+nbody 0.9609。10%超過はrichards_super 2.2337、pickle 1.2130、fannkuch 1.1351、
+regex_compile 1.1305、deltablue 1.1166。float 1.0979の95%CI上限は1.1087。
+M9は記録pseudouop削除後にビルド成功。277件中1failure・2skip。failureは
+warmup呼び出しがcallerのinlineに吸収され、独立したcallee entryが温まらない
+テスト前提による。C mapからwarmupするよう修正し、最適化要求自体は保持する。
+RAISE/RERAISEをCFG終端として扱い、架空のfallthroughの解析を止めた。
+
+M9の非計時Richards診断（元workload40回）: scheduleは519回、HandlerTask.fnは
+113回、WorkTask.fnは22回、Task.qpktは7回、frequent fallbackで破棄されていた。
+code budget不足ではなく、冷たい未対応armを含むmethodに対して普通のguard失敗や
+callee復帰まで退役判定に数えていた。M10では未対応命令のMETHOD_DEOPTのみを
+退役判断へ加算する。多態的guard失敗で元のfast pathを捨てない契約をテストする。
+M10 debug build中。性能改善はまだ未計測。
+
+M10: 277件は275成功・2skip。40回の非計時診断でschedule両backedge、
+HandlerTask.fn/Task.runTask/Task.qpktのmethod executorが有効なまま残ることを確認。
+凍結release SHA d3a1e53109c3d5c721eeded5641fe9e91cde0f6d2fa30004af1279662495f4e5。
+6仕様の再比較中。pickleの回帰は縮小、Richardsは依然約2倍。完成扱いしない。
+M11実装中: recorder専用symbolのtype/gen-functionとframe-pop復元を削除。
+静的lookup由来のprobable valueは共通middle-endとして残し、そのlatticeテストも維持。
+呼び出しの前までのprefixとinline calleeの各blockへ共通最適化を適用。
+追加guardが必要な定数化も採用できるよう、uop増加時は後続label/inline edgeを再配置。
+frameを作るuopより前で解析を止め、calleeのlocalsをcallerのlocalsとして解釈しない。
+未ビルド。比較完了後にM11の動作・既存最適化テストとFTを検証する。
+
+M11c: GIL関連284件は282成功・2skip、FT debug関連284件は280成功・4skip。
+GIL debugの広い19ファイルは1,858件・15skip、すべて成功。旧uop最適化310件は
+98failure・3skip（M8の122failureから減少）。要求される最適化の残りは維持する。
+M11初回buildはObjects/call.cのis_method参照残りで失敗して修正。
+M11bの初回テストはbuild終了前に開始したため、M11cの完了後に再検証した。
+M11c固定release SHA 2763ca5d328b89b5affbf77d2ad5489b8829a5e6e2b68b12b73ef8bd312ed479、
+FT debug SHA 04083db2e2bd5ce20c733b66033c27d5c1a5ed281047b6dcc6a59481091376a5。
+M10の6仕様比較はidentity一致、失敗0。Richards 1.9719、regex 1.1475、
+fannkuch 1.1351、deltablue 1.0946、float 1.0923、pickle 1.0239。
+M10 Richardsの別perf診断（200回、timingではない）はTier1 evaluator自身42.08%、
+native JIT領域26.45%、フレーム破棄5.25%。退出を減らす改善が必要。
+
+M12実装中: COPY_FREE_VARS前置の小さなclosureも静的CFGとしてinlineする。
+GILでは、既存type-version cacheの兄弟型のうち同一属性offset/descriptorを検証
+できる最大4型を1つのguardで受け入れる。ライブ引数の記録も命令列の記録もしない。
+versionは個々の型の変更で失効し、OR条件から特定の型を推論しない。
+属性offsetの異なる兄弟、instanceで隠されたmethod、property差替えをテストする。
+FTでは既存の単一型guardを維持。M11c比較と並行してsource編集のみ。未ビルド。
+
+M12b: GIL method関連280件は278成功・2skip。兄弟型guardのoffset不一致、
+instance shadow、property変更、slots変更も成功。closureをinline可能にしたため、
+実際のnative call境界を検査する既存テストはvariadic calleeで境界を固定した。
+固定release SHA 3bd37807b8aab4d942b25055fd269135dd8e585ce9de5f2b67a7207e9d4887a8。
+4仕様比較は失敗0、identity一致。Richardsは1.4063へ改善したが条件未達。
+regex 1.1579、fannkuch 1.1418、deltablue 1.0809。全suiteではない。
+Regex別perf診断40反復はmethod_merge_block 4.19%、finish_uops 1.18%、
+apply_stack_effect 1.13%を占める。コンパイルの繰り返しも次に調べる。
+M13実装中: 全CFGからOSR位置のbuiltin型を推論し、入口で各localの型をguard。
+実フレームの観察値は使わず、定数値/compact/uniqueの事実は引き継がない。
+guard失敗はbackedgeの設置位置でなくloop headerへ復帰して進捗を保証する。
+list/tuple/dict等の既知のbuiltin constructorの戻り型も伝播。GIL debug build中。
+
+M13: GIL debug関連287件は285成功・2skip。固定releaseも作成したが未計測。
+regex_compileの別診断40反復ではunsupported経路の頻発によるmethod破棄が1,266回。
+M14ではcodeごとの小さなbackoff cacheを追加し、同じbytecodeの再解析を15回分
+遅延する。特殊化が変われば即時再試行し、変わらなくても周期的に再試行するので、
+後からhot pathが変わった場合も永久に最適化を諦めない。
+初回増分buildではcode.h変更がJIT stencilの依存関係に入っておらずSIGSEGV。
+Makefile・Windows regen・stencil digestへcode.hを追加して再生成すると解消。
+M14b関連288件は285成功・2skip・1error。errorは特殊化変更の即時retry検証で、
+fingerprintがGetBaseCodeUnitにより特殊化opcodeを消していたことが原因。
+実opcodeを保持するよう修正。M14b診断で破棄回数は393回に減少（性能値ではない）。
+
+M15実装中: 兄弟型が異なるPythonメソッドを上書きしている場合も型version群を
+検証し、実際のdescriptorをtype lookup cacheから取得する。呼出し側は特定calleeを
+inlineせず、実calleeの現在のcode/defaultsへ引数を束縛してmethod entryを呼ぶ。
+function vectorcall変更・instance shadow・descriptor差替え・例外も検証対象。
+M14のfingerprint修正を含めてGIL debugをbuild中。次は正しさ検証と固定releaseでの
+Richards/regex/fannkuch/deltablue再比較、その後FT検証と全suite。10%条件は未達。
+
+M15: GIL debug関連289件は287成功・2skip、FT debugは282成功・7skip。
+GIL広域19ファイル1,858件（15skip）はすべて成功。元のRichards 40回の結果も正しい。
+固定release SHA 7344398f237ad15c52029cf4b4cdfaff97a21b09c86e42de62cc7834e62a98e4、
+FT debug SHA 80167b7ab8b36f1693279f9c2852825bc5f790d33f9b24d7b04c9df08477aba2。
+4仕様比較中。M14bの診断では_compileに15、_parseに13の異なる入口があり、4slotの
+backoff履歴を頻繁に追い出していた。M16では16slotに広げ、単一入口の周期retryは維持。
+また成功したscalar guardが証明するlocalの型・compactnessをCFGへ伝播する。
+live frameを観察せず、途中のlocal上書きではstackの古いoriginを無効にする。
+分岐先での重複guard削減、walrusによるlocal上書き、巨大int/float/complexのfallbackを
+検証するテストを追加。source編集のみでM15の計測にbuild/testを重ねていない。
+
+M15の4仕様比較完了: 失敗0、identity一致。Richards 1.3547 [1.3488,1.3601]、
+regex 1.1562 [1.1468,1.1662]、fannkuch 1.1361 [1.1340,1.1383]、
+deltablue 1.0775 [1.0710,1.0842]。まだ3仕様が10%を超える。
+別Richards perf診断200回ではTier1自己時間14.23%、FrameClearAndPop 9.17%。
+
+M16増分検証は古いstencilを使いSIGSEGV。code.hを追加した先がJIT_DEPSでなく
+既存PYTHON_HEADERSの同名行だったため、正しい依存箇所へ修正した。
+開発build helperもconfig.status Makefile.preでMakefileを更新するよう修正。
+M16で先に見えた最適化shapeのfailure 2件は新しい型伝播による融合への影響を要調査。
+M17ではlocalsplus数が0〜4のmethod returnについて既存のframe cleanupをinline化。
+通常の逆順decref、関数/codeのcleanup順、finalizer中のstack storage保持を維持する。
+frame object/localsが実体化済み、generator、stack chunk境界は既存cleanupへ戻す。
+各local数のfinalizer順序・再入・GCと、materialized frameを検証する。GIL debug build中。
+
+M17b: GIL関連292件は290成功・2skip。新しいscalar guard伝播、0〜4localsのreturn
+cleanup、既存の2つの融合も成功。融合器がtype既知時のoverflow-only guardを受理する
+よう修正した。tracing frontendなしで動作。M17bの固定GIL releaseとFT debugを新規build中。
+M18では、GIL時に関数の静的namespaceにある非immortal bindingも定数化する。
+既存の名前単位watcherとglobals identity guardで変更を検出し、通常の所有参照loadを
+使う。live frameの値は参照しない。非immortal値の破棄中の再入・GC、同一codeを別globals
+で使う場合、削除後のNameErrorを検証する。FTはimmortal値のみに制限を維持。
+M18のsource/testを編集したが未ビルド。M17b測定候補にはこの変更を含めない。
+
+M17b固定GIL release SHA 43c2e28b42bdb7b29311eeb458c2f008f4ce23d854d637727f108843938c9196、
+FT debug SHA cc3459bf9d8a17c13653147127cd38d34e8fa757d74f3383ededaec9444f6aa7。
+GIL広域19ファイル1,858件（15skip）成功。FT関連テストとM18開発buildを実行中。
+削除済みget_exit_executorを呼ぶ旧テストは、nested-loopの単一method CFGとguard失敗時に
+side executorを生成しないこと・無効化後の再コンパイルを検査するテストへ変更した。
+観察したtuple要素からfloat型を記録する2テストも、未知型のgeneric演算・ゼロ除算・
+独自operandのcallbackを検証する1つのparameterizedテストへ変更。
+静的にfloat型が証明された場合の最適化テストは維持しており、一括skipはしない。
+
+M17b FT関連292件は285成功・7skip。M18の全非immortal binding定数化は、レビューで
+mutable instanceの__class__変更がbinding変更を伴わない問題に気づいたため未実行のまま
+制限した。M18bはPy_TYPEがimmutableでmoduleではない値のみを追加対象とする。
+型が変わり得るインスタンスは従来のguard付きloadを維持する。
+非immortal関数のweakref callback中の再入/GCと、global instanceの__class__変更をテスト。
+M18b GIL開発build中。次は関連テストとM17b固定候補の4仕様比較。
+
+M18b GIL関連294件は292成功・2skip。旧最適化テスト309件は93failure・3skip。
+M11cから改善した検証もあるが、OSR入口/他のCFG経路のcleanup増加やguard除去に伴う
+shape差も含むため、単純にfailure数だけで最適化効果を判断しない。要求される未移植の
+最適化と、削除したfrontend固有の期待を引き続き区別する。
+M17bの4仕様比較は16runすべて成功、identity一致。regex_compileは約1.05倍へ改善し、
+10%条件を満たす。Richardsは約1.35倍、fannkuchは約1.12倍で残る。deltablueは約1.05倍。
+M18b固定GIL release buildとGIL広域テストを開始した。次はその性能比較と、Richardsで
+頻繁な短い属性predicateをframeなしで静的inlineできる範囲を調査する。
+
+M17b確定比: Richards 1.3534 [1.3458,1.3583]、fannkuch 1.1242 [1.1219,1.1269]、
+deltablue 1.0524 [1.0482,1.0567]、regex_compile 1.0491 [1.0374,1.0587]。
+M18b固定release SHA e6bc0b2e51f0915e24eb43c84265ce9fa724ff73e9721dc18947d2974b007db6。
+M18b GIL広域19ファイル1,858件（15skip）成功。固定releaseはまだ未計測。
+M19実装中: stored attribute最大3個の短いboolean predicateの全bytecode CFGから
+truth tableを静的に計算し、引数を消費する前に型version群・属性配置・exact boolを
+検証してframeなしで実行する。callback/descriptor/missing属性/非boolの場合は元のcallへ
+戻し、short-circuitとframe可視性を保つ。監視中・FT・DTraceは対象外。
+dict/slotと兄弟クラス、8通りのtruth table、bound/unbound call、__bool__ callback、
+未評価のmissing属性、property差替え、profile hookを検証するテストを追加した。
+ベンチマーク名の条件分岐やlive frameの記録は使わない。M19 GIL debugをbuild中。
+
+M19初回295件は291成功・2skip・2failure（新predicateテストのdict/slot両ケース）。
+テスト内のreset_codeがfunction versionを無効にしてCALL特殊化を妨げていたので、
+独立したcodeから新規functionを作って隔離する形に修正。bytecodeのNOT_TAKEN markerも
+predicate解析で許可する。callee codeを依存集合へ加え、calleeだけのmonitoring開始でも
+呼出し側のframe省略を無効にする。code変更・local monitoringも検証に追加した。
+M19b GIL debugをbuild中。M18b固定releaseは未計測のまま維持している。
+
+M19c: fresh defで生成するpredicateテストへ修正後、GIL関連295件は293成功・2skip。
+mutable開発treeへテストのみ更新して実行し、固定releaseは更新済みの完全patchから
+新規buildした。SHA 7963e71b42477397fead573cb9eefdc5f6bce70c8cc33e70f4825bcc6e7e5c63。
+元Richards40回すべて成功、scheduleの静的CFGで_CALL_BOOL_ATTRIBUTESを2か所確認。
+M19cの4仕様比較（Richards/fannkuch/regex/deltablue、逆順2block・各3worker）を開始。
+ビルドと重い検証は測定完了まで止める。M18bは未計測。
+
+M20実装中: 元fannkuchのflip分岐でBINARY_OP/TO_BOOL/COMPARE_OPのcounterが9のまま
+残っていた。未実行armの汎用uopを静的CFGへ入れると、以降はnative実行されるため
+Tier 1の特殊化が永久に進まない。初期warmup状態の演算をTier 1 fallbackにし、
+通常の特殊化後にmethodを再構築する。既に特殊化が失敗した汎用命令は引き続き生成。
+冷たいarmを後で熱くするテストとfloat/巨大整数/例外の意味検証を追加。未build・未検証。
+
+M19c比較完了: identity一致。Richards 1.3560 [1.3515,1.3606]、fannkuch 1.1293
+[1.1265,1.1324]、regex_compile 1.0604 [1.0586,1.0624]。deltablue候補は両block失敗。
+M18bとM19cで元deltablueのAttributeErrorを再現、M17bは1,000回成功。
+追加の最小テストも修正前に失敗した。lookup_attrのPOP_TOP＋定数loadへ分解された
+class attribute値を後段のstore融合が取り込み、guard失敗時に消費済みownerが必要な
+LOAD_ATTRへdeoptしていた。prefix POP_TOPの属性置換を元の一つのuopのまま残し、
+定数のsymbol情報と型watcherは維持する修正をM20へ追加した。
+class属性変更・削除・別receiver・property callbackのframeも新規テストで検証する。
+M20 GIL debugをbuild中。M19cはdeltablueの正しさを満たさない候補として保存する。
+
+M20b: GIL関連297件は295成功・2skip。新しい2テストも成功した。
+完全callee CFGを検査する既存2テストは両armを4回ずつ事前実行するよう変更し、
+元の3return/全CFG/例外検証を保持した。未学習armの特殊化は新規専用テストで検証。
+GIL広域19ファイル1,628件（15skip）成功。今回はtest_capi/type/unicodeとmonitoringを
+含む構成で、以前の1,858件セットと対象が異なる。deltablue元workload1,000回成功。
+fannkuch元workload4回すべて30。flip分岐に整数演算・list slice・TO_BOOL_INTが現れ、
+該当する汎用演算は残らない。M20b固定releaseをbuild中。
+
+M20b固定release SHA 87277d53d30dac1f210a51180b2dcf5fff2ccdaa58ba099c7ebebc5f86454b56。
+Richardsの別perf診断（元workload200回、lost 0）ではTier 1自己時間14.72%、
+FrameClearAndPop 2.68%。これらは測定時間比の代用にはしない。
+4仕様のM20b比較を開始し、ビルド・検証を止めた。
+旧最適化309件は93failure・2error・3skip。2errorは定数load分解を止めたための
+opcode期待差であり、他の失敗とともに更新・未移植最適化の分類が必要。
+
+M21実装中: method呼出しのC境界を減らすため、静的inlineを2段まで許可する。
+2段目は48命令以下、全体uop budgetは既存上限。既に解決済みの内側CFG辺を
+外側のblock番号として再解釈しないようにする。Pythonフレームは通常通り残す。
+三関数の値・分岐・callbackからのframe可視性・孫calleeのcode変更によるinvalidation
+を検証するテストを追加した。未build・未検証、M20b測定終了後に検証する。
+
+M20bの4仕様比較は16run成功・identity一致。Richards 1.3577 [1.3469,1.3641]、
+regex_compile 1.0524 [1.0453,1.0599]、deltablue 1.0191 [0.9874,1.0396]、
+fannkuch 0.9158 [0.9135,0.9188]。fannkuchの10%超回帰を解消し、mainより8.4%高速化。
+Richardsは約36%で残る。他仕様・FT・PGO/fullLTOはまだ現候補で比較していない。
+M21 GIL debugをbuild開始。2段inlineの正しさを確認して固定buildでRichardsを比較する。
+
+M21 GIL関連298件は296成功・2skip。元Richards40回も成功。
+未固定・未計測の中間実装として保存する。
+RichardsのM19c生成uopを調べるとDevice/Handler/Idle/Workの4つのfnのsuper().fn呼出しに
+同一の_CALL_STORE_ATTRIBUTE（型version 131883）が埋め込まれていた。共有calleeの
+一つのcacheだけを使うフレーム省略が、他receiverでのTier 1復帰を増やす候補となる。
+M22: 同じlayoutの型familyが既に見つかる小さいgetter/setterは通常の静的callee CFGを
+選び、複数型のguardを維持する。2兄弟型・caller内のfamily guard保持・property差替え
+とsetter frameを検査するテストを追加した。M22 debugをbuild中。M21とM22を統合して
+次の固定releaseで比較するため、両変更の個別寄与は未分離となる。
+
+M22 GIL関連299件は297成功・2skip、Richards元workload40回成功。
+一方deltablueでmethod_finish_uopsのlabel assertionを検出し、性能測定は開始しなかった。
+gdbのsandbox ptrace拒否後、許可された外側実行でcoreとuop列を/tmpへ保存して調査。
+自動承認レビューの拒否はない。globalなgdb/OS設定は変更していない。
+原因: nested calleeの最適化でuop列を伸長するとき、外側calleeの未解決return sentinel
+UINT64_MAXまで絶対offsetとして加算していた。overflowでtarget 0になっていた。
+M22bではsentinelをrelocation対象から外す。nested loop・early return・list subclass
+へのappend・fallback例外を検証するテストも追加（この小さいケース単独では旧版の
+assertionは再現せず、元deltablueが検出した失敗を直接の回帰検証に使う）。build中。
+
+M22b: GIL関連300件は298成功・2skip。GIL広域1,628件（15skip）成功。
+元deltablue1,000回成功で、検出したlabel assertionが解消した。
+完全差分をm22b-method-only.patchへ固定し、GIL/noPGO/noLTO releaseとFT debugを新規build。
+同じpatchから両構成を検証する。タイミング測定は両buildとFT検証が終わってから再開。
+次はRichardsと既知14仕様の比較、全pyperformanceのscreen、残る旧最適化テストの移行。
+
+M22b固定build完成: GIL release SHA 85131c6be05bbfee337737f74247df56ad55f8ac0480480dccebb92c4c55b943、
+FT debug SHA 4a86389cbc44b4fc449e1c2214941bdf10004c953ec19ac9c47d46955d3cf99f。
+新規5テストのGIL参照リーク検査（-R 3:3）は成功。FT関連300件とfree-threadingの8ファイルを
+検証中。旧最適化309件は94failure・2error・3skip。2errorは、属性の原子的uop維持に伴い
+実際の属性loadとcall後のvalidity checkを検査する期待に修正し、個別に成功した。
+このテストのみの修正はM22cと呼び、固定M22bのruntime/build内容は変更しない。
+
+M22b FT関連300件は290成功・10skip。free-threading関連8ファイル66件成功。
+固定GIL releaseでも元deltablue1,000回成功。重いbuild/testを終えて、全97仕様の
+GIL/noPGO/noLTO screenを開始した（m22b-gil-all-screen）。各仕様をmain→candidate、
+candidate→mainの2block、各2worker・5warmup・5value・min-time 0.1秒、CPU 2で実行。
+既知14仕様を先にし、残る83仕様は名前順。networkx workerは15秒、他60秒、仕様300秒。
+全workerを保存し、上限付近/超過や不安定な項目は別の宣言した追加比較で検証する。
+まず固定build一組の開発screenであり、FT/PGO/fullLTOの性能結果ではない。
+測定中はビルド・重い検証・perfを並行しない。
+
+M22b全体screenは14仕様56run成功後、2to3のmetadata検証でKeyError停止。
+command benchmarkの実行ファイルはpython_executableではなくcommandに保存される。
+14完了分の全identityを監査・一致確認して保存し、検証分岐のみ直して残る83仕様を
+m22b-gil-rest-screenへ再開。2to3の未記録JSON/logも保持した。
+14仕様ではRichards 1.3603 [1.3558,1.3649]が10%超。ほか最大float 1.0592、
+fannkuch 0.9081、nbody 0.9038、spectral_norm 0.6661。最新表をmethod_only_report.mdへ更新。
+M21/M22で生成コードは変わったがRichards速度は改善せず、実pyperf workerのexecutorと
+Tier 1復帰を診断する準備を進める。測定中のbuild/test/perfは引き続き止める。
+
+M23実装中: 同じreceiverで繰り返す型family guardの静的な共通化を追加。
+単一型だと仮定せず、最大32個のversion集合をCFG内でinternし、抽象値には小さいIDのみ保持。
+borrowed属性の読み書き後に証明をlocalへ伝え、Pythonへescapeする操作で破棄する。
+同じ集合だけguardを省略し、一部だけ重なる集合は区別する。dict/slot、property変更、
+callback中の__class__変更、異なるoffsetを持つ重なるfamilyのテストを追加した。
+未build・未検証・未計測であり、Richards改善を確認したものではない。
+
+旧named-global検証のfixtureを、__class__変更可能なheap instanceから、属性dictとweakrefを
+持つimmutable typeのfunction objectへ変更。監視対象はnamespaceのbindingであり、
+新frontendが定数化する対象でwatcher・コピーしたglobalsのidentity・寿命を検査する。
+元のheap instanceの__class__変更は専用の意味検証を残す。未実行。
+
+M23に合わせたテスト移行準備: GenericHashの定数keyはimmutableなobject()で検証し、
+heap keyの__class__変更で__hash__が差し替わるfallbackを別テストへ追加。
+部分型guard/aliasの検証は入口で未知な引数へ変更し、OSRの型推論だけで検査が消えるのを防ぐ。
+callee frame数の検証は保持し、全CFGに含まれるcallerのreturnをreturn数へ追加。
+generatorの旧記録frame期待は、Tier 1での値・yield-fromの返却値・非コンパイルを検査する形に移行。
+4種比較runnerも削除済みsourceのmanifest tombstoneを検査できるよう修正し、復活したfileや
+dangling symlinkを拒否するテストを追加。以上まだ未実行。
+
+M22b追加screenでasyncio_tcp、asyncio_tcp_ssl、asyncio_websocketsが両側ともsocketの生成/bindに失敗。
+sandbox内のsystem Pythonによる最小socket生成でもEPERMを確認した。元の失敗ログは保存し、
+本screen後にこの3仕様をsandbox外で両側再測定する。失敗を性能回帰や成功数へ数えない。
+
+M24設計候補（未適用）: dynamic Python method callを専用のEvalFrame境界で実行し、
+callee内部のTier 1復帰後もnative callerを継続する案をm24-dynamic-call-proposal.patchへ保存。
+現在の_METHOD_CALLはcalleeがnativeから外れたときcallerもTier 1へ戻す。
+このC評価境界はcall setupを増やすので、速くなるかは未確定。実workerの診断とM23検証後に
+独立候補として評価する。M23 runtime/test差分はm23-method-only-pending.patchへ固定した。
+
+M22b screenの失敗を追加分類: concurrent_imap/daskは両側ともプロセス同期資源の
+作成でEPERM。fastapiは両側ともhttpx未導入だが、元の準備ログまで遡ると
+pydantic-core 2.46.5 / PyO3 0.28.3がPython 3.16を拒否し、依存group全体が未準備だった。
+httpxだけを追加して解決とは扱わない。固定依存treeは測定中に変更せず、失敗ログを保持する。
+このscreenには準備失敗groupも含めたため、完了後は実行成功、sandbox制限、依存未準備を
+区別して集計する。networkxは15秒worker上限を維持して実行中。
+
+全体screenの途中でlogging_format、nqueens、networkx shortest_pathも10%境界付近/超過を検出。
+まだ最後のidentity監査前の暫定値で、全結果確定後に追加workerで再確認する。
+nqueensの元workloadは探索・順列生成・内包表記がgenerator中心で、現在のTier 1 fallback方針の
+影響を切り分ける必要がある。loggingはvarargsを持つPython calleeから戻った後のcaller継続も
+診断対象とする。ベンチマーク固有の名前による選別やworkload変更は行わない。
+Richards用診断hookにcached opcode番号と固定stencilサイズによるuop別perf mapを追加した。
+これは測定対象外のshadow hookだけの変更で、M22b固定runtime/依存/harnessを変えていない。
+
+InternalDocs/jit.mdを実際のmethod frontend、静的CFG/OSR、Tier 1 fallback、共有uop最適化、
+executor寿命に合わせて更新し、削除済みrecord_functions.c.hの.gitattributes項目を削除。
+FTでは2個目のthread state作成時にJITを無効化し、そのthread終了後も自動再有効化しない
+現在の制限を明記した。旧trace専用の未使用frame/IP guard定義とstats補助関数も残っており、
+M23比較後の削除対象として確認した（現在のmethod生成経路からは参照されない）。
+
+M22b全97仕様screen完了・両区間identity監査一致。89仕様115結果で4run完了、
+成功結果の時間比の幾何平均0.9850。10%超はrichards_super 1.3603、richards 1.2519、
+scimark_lu 1.2477、logging_format 1.1265、nqueens 1.1067、shortest_path 1.1010。
+base32_small 1.0987とlogging_simple 1.0969も追加確認対象。8仕様失敗:
+socket/同期EPERMの6仕様、依存未準備fastapi、15秒timeoutのnetworkx_k_core。
+networkx timeoutは延長しない。全表をbenchmarks/method_only_m22b_screen.mdへ保存。
+
+実pyperf workerのRichards診断成功。perfのtaskset -c2引数エラーを-c 2へ直し、
+失敗記録を別保存して再実行。約19K samples、lost 0。teardown時点のexecutor mapで
+85.77%がnative uopに対応。family guard 13.09%、METHOD_CALL 12.52%、managed values 5.17%、
+stack check 4.03%、C側FrameClearAndPop 2.55%、recursion margin check 2.54%。
+この結果はcalleeのTier 1 fallbackが支配的という仮説を支持しない。型guard共通化を検証し、
+初期にcompileされたcallerがcallee特殊化後のinline機会を取り逃していないかを調べる。
+method_windowは256周期であり、255だから実行1回だけとは解釈しない。
+
+M23の新family guard検証は変更前でdict/slotの2subtestが失敗し、変更後の
+TestMethodFrontend 179件（1skip）成功。旧最適化310件は70failure・3skip・0errorまで移行。
+残る失敗には未移植最適化があり、全テスト成功とは報告しない。4種runnerの8テスト成功。
+完全差分m23-method-only.patchを固定し、GIL release buildと追加GIL検証を開始。
+全測定とperfは終了しており、build/testとのtiming競合はない。
+
+M23追加検証: executor invalidation/TestUopsの34件（1skip）、広域15ファイル2,239件
+（24skip）成功。固定GIL/noPGO/noLTO release SHA
+58af103caacbaf2c95d1ffb506900e49bb9f0bbaa631f94a0885ea00d9a4b318。
+10仕様を各3worker・逆順2blockで比較開始（m23-gil-regression-screen）。測定中のbuild/test/perfを停止。
+
+実workerで最初のwarmup後に元workloadのexecutorを強制invalidateする別診断では、
+再compile後もTask.runTaskのMETHOD_CALL 4個とfamily guard 8個は同じだった。
+次にfunction version cacheを直接診断し、実関数845のslotが4941に上書きされ、
+Task.runTask/他calleeのslotもNULLまたは別versionになっていることを確認。
+next_version=5565で、4096枠のdirect-map cacheがpyperfの起動中に衝突していた。
+slotを失うと生きた関数でもmethod_lookup_functionがNULLを返し、静的inlineができない。
+以前の直接workload診断と実workerの生成codeが異なる原因の一つと考えられる。
+
+M24実装中（未build・未検証）: 呼出し先が静的に分かるglobal/function descriptorを
+抽象値として保持し、version cache検索より先に、その関数とCALL cacheのversion一致を検査する。
+receiver型/family/descriptorとfunction versionの既存guardは維持。異なるoverrideの
+familyは従来のdynamic method経路のまま。キャッシュ容量は変えない。
+テスト用に弱参照のfunction version cacheだけを空にするhelperを追加し、global関数・
+同じ継承methodを持つ兄弟receiverのinline、およびcallee.__code__変更後の値を検査する。
+以前M24と呼んだEvalFrame境界案は未適用proposalとして保留し、このcache衝突対策を優先する。
+
+M23比較は10仕様26結果・40runすべて成功、identity一致。Richards Super 1.2984
+[1.2945,1.3017]、Richards 1.1894 [1.1650,1.2043]で重複family guard削減の改善を確認。
+10%超はほかscimark_lu 1.2493、logging_format 1.1207、nqueens 1.1116。
+shortest_pathは0.9881 [0.9181,1.0333]となり、前screenの10%超は再現しないが、
+block間の変動が大きいのでM23の改善寄与とは断定しない。base32_small 1.0938、
+logging_simple 1.0951は境界付近。regex_compile 1.0541、go 1.0542、fannkuch 0.9127。
+
+M24のcache evictionテストは旧M23 runtimeに試験用のcache-clear shimだけを入れて実行し、
+global関数・継承methodの両subtestでMETHOD_CALLが残る失敗を確認した。
+初回buildでmethod cacheを_PyAttrCacheとして記述した型名誤りを検出。
+正しい_PyLoadMethodCache/type_versionへ直してM24bをbuild中。失敗ログも保持する。
+
+M24b検証完了: TestMethodFrontend 180件（1skip）、executor/TestUops 34件（1skip）、
+新cache evictionテストの-R3:3参照リーク検査、広域15ファイル2,239件（24skip）、
+元Richards 40回とdeltablue 1,000回が成功。旧最適化は310件中70failure・3skipで未移植が残る。
+M24cでは既知calleeのversion照合を既存func_state mutex内に置き、FTの同期規則を統一。
+incremental buildとcache eviction/test_optimizerの7件が成功（test_optimizer単独も6件成功）。完全差分を固定し、
+GIL releaseとFT debugを新規build中。M24の性能効果はまだ未測定。
+
+M24cの新規GIL release SHA 50cec7b24f223690c9ffeda872f6eb999de94270816cf622a42ff1a3e0934638、
+FT debug SHA 8a3971bd724b90fcc6dbebb75eec0efab5a02506f214126f904319c2514d6542。
+GIL/FT method関連214件ずつ、FTの8ファイル、元deltablue1,000回成功。
+5仕様を3worker・逆順2blockで比較中。固定ソースと測定中のbinaryは変更しない。
+
+M26ソース作業（未生成・未build・未検証）: Python __getitem__への静的inlineに着手。
+BINARY_OPの既存5cache unitsを維持し、GETITEMの未使用4unitsに型・関数versionを保存する。
+Tier 1のpolymorphic hit経路はそのまま。methodは型とcompile時関数versionを明示guardし、
+既存のCHECK/INIT_CALL/PUSH_FRAMEとcallee CFGをつなぐ。別call siteによる型の
+getitem cache更新でも古いCFGが新関数を受け入れないよう、固定versionを比較する。
+GILのみ有効。cache衝突、__code__変更・型変更・listへの変更・例外・frame観測のテストを追加。
+旧tracerの未使用8種のframe/IP guard、dynamic exit判定とuop、side-trace用exit flag、
+未使用effective_trace_lengthも削除。生成ファイル更新と変更前後検証は測定完了後に行う。
+
+M24c比較完了: 5仕様11結果20run成功・identity一致。richards 0.8702
+[0.8679,0.8722]、richards_super 1.0220 [1.0202,1.0236]、logging_format 1.0754
+[1.0664,1.0853]で10%以内。nqueens 1.0932 [1.0752,1.1099]は境界を追加確認。
+再比較で10%超はscimark_lu 1.2393 [1.2318,1.2446]のみ。全suiteと最終構成は未測定。
+M26の新3テストはM24c以前runtimeで期待するinline uopがなく3failure（errorなし）。
+生成ファイル11個の再生成成功、開発debug build開始。再帰上限guardとPython
+getitem境界での型family/所有権fact破棄も追加。性能測定との競合なし。
+
+M26初回build成功。新3テストの最初の失敗原因はfixture: 関数入口閾値8192に対し
+ループ閾値4002×2=8004しか呼んでおらず、readのexecutorが未生成だった。
+初回before/afterの3failureだけを変更前の証拠とは扱わない。map経由でcallerによる
+inlineを防ぎ、TIER2_RESUME_THRESHOLD+10へ修正。固定M24cでは3件とも
+_METHOD_SUBSCR_CHECK_FUNCがなく失敗し、M26では値/書換え/frame/例外の2件成功。
+再帰1件でRecursionErrorが出ない問題を発見。
+
+この再帰問題は固定main・JIT=0でも再現した。BINARY_OP_SUBSCR_GETITEMは
+PUSH_FRAME前に再帰残量を検査せず、スタック領域が残っていると上限を超えて進む。
+test_opcacheの新テスト（現在depth+40の上限で60段の添字再帰）もmainで失敗。
+M26bでは既存_CHECK_RECURSION_REMAININGをGETITEM macroへ追加し、Tier 1と
+methodの両方で所有権移動前に検査する。重複するmethod専用チェックは除去。
+生成ファイル更新成功、debug再build中。
+
+M24c実pyperf workerのteardown診断も完了（比較timingとしては使用しない）。
+M22b scheduleは_CALL_BOOL_ATTRIBUTES 0個・METHOD_CALL 2個、M24cはそれぞれ2個・1個。
+Task.runTaskはM24cで独立executorを持たずcaller側のinlineを調べる必要があるため、
+単独uop数の増減は比較しない。元workerの生成codeでもcache修正の反映を確認した。
+
+M26b修正後: 新3件+旧getitem inlineの4件、JIT有効の再帰テスト、JIT無効
+test_opcache 95件、method関連217件（2skip）、添字新3件の-R3:3、広域2,239件
+（24skip）、元deltablue1,000回成功。追加の__class__変更callbackテストも成功。
+旧最適化310件は68failure・3skipへ減少したが、まだ全test_opt成功ではない。
+完全差分M26cを固定し、GIL releaseとFT debugを新規build中。
+tracer削除の再検索でanalyzer.pyに削除済み_DYNAMIC_EXITの文字列だけ残存を発見。
+実行時の生成経路はなく、次のソース整理で削除する。
+
+M26c固定後の小整理（次の候補に反映）: analyzer.pyの削除済み_DYNAMIC_EXIT文字列を除去。
+method_optimize_blocksのframe生成境界へ_BINARY_OP_SUBSCR_INIT_CALLを追加し、
+通常CALLと同じくcallee CFGを独立に最適化する。M26cではunknown callableで
+frame_new_from_symbolがctx->doneを立てて停止していたため、実行時の誤ったframe
+推論は行われないが、明示的に境界を揃えた。M26cの固定ソース・binaryは変えない。
+
+M26c新規build完了: GIL release SHA
+7326bfc1c4842439d1da1edecfab7798244f147ca2172c3b665a44cb439dfe32、
+FT debug SHA e26733ae90e7636ac8362fd5d6f35c1999a4092f1d33dd451bbbb983808d1a4e。
+両方でC _decimalを確認。GIL/FT method関連218件ずつ、FTのJIT無効test_opcacheと
+並行実行8ファイル、元deltablue1,000回成功。7仕様を3worker・逆順2blockで比較開始。
+測定中のbuild/test/perfは停止。
+
+M26cのscimark両blockは完了したが、LUは約1.26で改善しない（全screenの監査待ち）。
+元workerのexecutorと数値出力を測定後に診断するscriptを準備。
+
+M27ソース作業（未build・未検証）: inline calleeを全引数unknownで解析する制限を緩める。
+callerの静的CFGで既に証明済みの、immortal/immutableな組み込み型だけをcallee入口へ渡す。
+通常のCALL_PY_EXACT_ARGSとPython添字アクセスに限定し、bound-methodのslot変換、
+可変引数/default bindingは対象外。定数identity・compact性・所有権・heap型は渡さない。
+これによりrange由来のintやリテラルの型からcallee内isinstanceを定数化できる見込み。
+通常関数/添字双方のinlineとcode変更を検査する新テストを追加。これは実行記録ではなく
+caller CFGの事実の引継ぎであり、M26cの固定比較候補には含まれない。
+
+M26c比較完了: 7仕様23結果28run成功・identity一致。LU 1.2616
+[1.2581,1.2651]で10%条件未達。Richards 0.8712、Richards Super 1.0206、
+logging_format 1.0933（CI上端1.1056）、nqueens 1.0910、base85_small 1.0893。
+scimark_sorはM24c 0.9619→M26c 1.0573となり、10%以内だが悪化を追跡する。
+元LUのサイズ1/2/5/17/100×seed3種×3反復の行列/pivot結果を、
+main/candidate×JIT0/1の4通りで比較し、全SHA-256一致。
+実workerでLU_factorのexecutorが残らず、debugでは頻繁なfallbackで破棄されていた。
+
+M27の引数型伝播は変更前2件で_CALL_ISINSTANCEが残り失敗、変更後6件成功。
+未知入力と__class__を偽装する可変オブジェクトを渡す追加テストも成功。
+method関連220件、広域2,239件、参照リーク検査、元deltablueとLU数値比較が成功。
+旧最適化は310件中67failure・3skip。M27は独立したrelease性能測定を行っていない。
+LUはM27でもuop予算が内側ループのSWAP/STORE_SUBSCR/末尾に達してfallbackし、
+executorが破棄されるため、次の対策を優先する。
+
+M28実装・build中: OSRの静的backedgeが指すループheaderから基本blockを配置し、
+その後に関数の残りを回り込んで配置する。入口型推論は従来のCFGで済ませた後、
+block番号と全edgeを一括で付け替え、両方の分岐経路は維持する。
+またpartial methodだけでnative backedgeを上限8まで数え、十分なloop進行後の
+unsupported exitは破棄理由としない。進行しないentryは従来の32miss閾値で破棄する。
+新counterは既存executorのpaddingに収まり、complete methodには計測uopを追加しない。
+初回fixtureのIMPORT_NAMEは既に対応済みだったため、未対応property参照へ変更。
+修正済みfixtureでは、変更前は有用loopの保持と大きな外側bodyでのOSRが失敗し、
+進行しないloopの破棄は成功。生成ファイル更新成功、M28 debug build中。
+
+M28 debug build成功、新3テスト成功。method関連224件（2skip）、
+追加/関連10件の-R3:3、広域2,239件（24skip）、JIT無効test_opcache 95件、
+元deltablue1,000回、LU数値比較が成功。元LU直接診断では、M26/M27で繰り返していた
+frequent fallbackによるLU_factor executor破棄が消えた。これは性能値ではない。
+旧最適化310件は67failure・3skipのまま。
+完全差分m28-method-only.patchを固定し、GIL release/FT debugを新規build中。
+続いてscimark・logging・regex_compile・nqueens・richards_super・goの6仕様を
+3worker・逆順2blockで比較する。最終構成・全suiteの10%条件はまだ未達/未確認。
+
+M28固定比較完了: 6仕様12結果24runすべて成功、実行前後のidentity一致。
+GIL release SHA 44e2f2ca28440e03c1c5ad2609e095056dd9156098b46dfe27a12893646436f8、
+FT debug SHA 4d700e4a7991c05381f75976a9191f4c3a68ec6709de58497546566f371b3ae5。
+固定GIL/FTのmethod224件ずつ、FT JIT無効opcache95件、並行実行66件成功。
+LU 0.7211 [0.7194,0.7228]まで改善。Richards Super 1.0224、regex_compile 1.0202、
+SOR 1.0290。一方go 1.1312 [1.1208,1.1404]、nqueens 1.1073 [1.1032,1.1112]で
+10%超過。logging_format 1.0965 [1.0862,1.1070]も境界を追跡する。
+次はgo/nqueensの元workerのexecutorをM26cとM28で比較し、最終PGO/FT構成へ進む。
+
+M26cのGoを追加固定比較: 1.1438 [1.1379,1.1508]、4run成功・identity一致。
+Goの10%超はM28 OSR配置以前から再現した。M26c/M28の元nqueens workerでは
+permutations/n_queens/bench_n_queensのすべてにexecutorがない。
+M29実装中: ordinary generatorのbackedge OSRのみを許可し、入口locals/stackは
+毎回unknown。yieldをCFG終端として扱い、yield/returnは既存_DEOPTでTier 1へ戻す。
+callee generatorはinlineせず、FOR_ITER_GENは既存の一般iterator呼び出し経路へ下げる。
+coroutine/async generator/iterable coroutineは対象外。新5テストを追加して検証中。
+
+M29初期buildでjson.dumpが終了しない問題を発見。生成したFOR_ITER_GENの
+exhaustion edgeにtarget blockを設定し忘れていた。GDBのC/Python stackを保存し、
+該当build childだけを停止。設定を追加したM29bはbuild成功・新5テスト成功。
+旧methodテスト229件中5failureはgenerator/consumerにexecutorがないという期待。
+OSR入口・native iterator呼び出し・非native yieldの検査へ更新した。
+-R3:3の初回失敗は参照数判定ではなく2巡目のexecutor存在assert。入力型を変える
+前の実行のcompile backoffが同じcodeへ残るため、各fixtureでreset_codeする。
+修正後7関連テスト成功。M29cを固定してGIL release/FT debugの新規build、
+新テストの参照リーク・広域テスト・旧最適化テストを実行中。性能はまだ未測定。
+
+M29cのGIL/FT build完了。SHA: GIL 65eb49aed0e085b7554035a485cb44555ae6934d7b6fe26616cc1e803cbb8401、
+FT debug fcd1a9c68ec179f8409f1c29d6fb6ee930fd3ddca5dcd50c2ffccd547ffbdcdf。
+両方のmethod229件、新generator5件の-R3:3、FT generator/frame/monitoring、
+FT opcache95件と並行実行66件が成功。debug広域2,239件成功、旧最適化67failure。
+固定比較を実行中。nqueens両blockは約1.23へ悪化、Goも約1.13のまま。
+generator OSRと、FOR_ITER_GENをC境界へ下げる変更を分離して調べる必要がある。
+
+M30ソース案（未build、M29c固定候補とは別）: 名前ごとのglobal依存失効を
+64entryのbounded cacheに記録し、既存の6回閾値を超えたbindingを定数化しない。
+namespace全体を停止せず、無関係なstable bindingの最適化は継続できる設計。
+キャッシュはGIL buildのみ。アドレス/hashの再利用や衝突は定数化の機会にだけ影響し、
+記録値からPython値・型・実行経路を推論しない。frontendと共通optimizer両方で参照。
+新2テストを追加し、測定終了後に変更前の失敗を確認する。
+interp構造体headerをJIT stencilのMakefile依存・digest・Windows再生成入力にも追加。
+
+M29c固定比較完了: 6仕様12結果24run成功・identity一致。
+nqueens 1.2269 [1.2228,1.2310]へ悪化、Go 1.1337 [1.1188,1.1437]。
+LU 0.7198、Richards Super 1.0211、regex_compile 1.0229、logging_format 1.0941。
+M29d実験を作成: M29cからFOR_ITER_GENのC呼び出しloweringだけを取り除き、
+generator OSRの効果と分離する。rootは別のM30候補で、M29dは独立固定ソース。
+M30新globalテスト2件は変更前に両方executorなしで失敗。M30 debug build中。
+
+M29dの分離比較完了: nqueens 1.0609 [1.0239,1.0862]、Go 1.1341 [1.1285,1.1394]。
+両block・全8run成功、identity一致。C経由のFOR_ITER_GEN loweringが大きな悪化を
+起こしており、取り除く。generator本体のOSRとTier 1 suspensionは残す。
+M30 global対策は新2件、method231件、7ケース-R3:3、広域2,239件成功。
+旧最適化67failureは継続。M30は独立したrelease性能を測定していない。
+M31はM30のglobal対策とM29dのgenerator境界を統合した候補。
+非対応consumerのretirementテスト3件を元の期待へ戻し、GIL/FT buildと検証中。
+
+M31固定build完了: GIL 5740afd5177cd0a3c90d56dc72542abe17dbd38d4fe50f82279ddbb375f74fd9、
+FT debug c21fd9e4d63165ca4a767709543d200b5b695ed2ceab86dd4ad0ff70bb1d35fc。
+GIL/FT method231件ずつ、GIL新7件-R3:3、広域2,239件、FT generator関連・
+opcache・並行実行、元deltablue成功。9仕様の固定比較を実行中。
+
+M32テスト移行（runtimeはM31のまま）: OSR上の未知iteratorの型を記録する期待8件を
+METHOD_FOR_ITERへ変更。None判定は片側guardではなく両分岐を検査し、isinstanceの
+未知入力は一般呼び出しを保持する期待へ変更、evalで型の変わる入力も追加した。
+文字列/sequence添字のテストは特殊化と借用cleanupを保持し、whole-CFG内の他blockに
+あるcleanupまで含むtrace時代の個数制約を外した。計21テスト成功。
+固定M31のソース・binaryは変更せず、rootのテスト変更として次のbuildへ含める。
+残る未移植最適化のテストを一括skipしたり、性能値で成功扱いしたりはしない。
+
+
+M31固定比較完了: 9仕様25結果36run成功、実行前後のidentity一致。
+Go 0.8100 [0.7992,0.8179]、LU 0.7235 [0.7223,0.7247]、Richards 0.8678、
+Richards Super 1.0225、nqueens 1.0899、regex_compile 1.0171。
+10%を超える点推定はbase85_small 1.1019 [1.1001,1.1038]のみ。
+logging_format 1.0966 [1.0871,1.1055]も境界として追跡する。
+これらはGIL/noPGO/noLTOの部分比較であり、最終2構成・全suite・local8は未確認。
+生データ: `jit-artifacts/regressions-20260919/m31-gil-regression-screen-state.json`、
+集計: 同名 `-analysis.json`。全worker・逆順両blockを保持した。
+
+M32: M27の引数型伝播で、immutableなModuleTypeを持つinstanceは型も変わらないと
+誤って仮定する不具合を発見。moduleは__class__を変更できるため、calleesとOSR入口に
+渡す安定型からmoduleを除外した。__class__を差し替えた後のisinstanceの結果が
+誤る新テストはM31で失敗し、修正後成功。これは候補で発見した不具合であり、mainの
+バグと確認したものではない。関連・参照リーク・広域検査を継続中。
+
+
+M32開発検証完了: 新module型変更・OSR関連、method232件、参照リーク、広域2,239件成功。
+旧310件は最初47failure。直接return/property fallback等の8テスト移行後には39failureで、
+propertyの残るconstant-load期待を削除し、戻り値とTier 1境界を明示的に検査した。
+さらにlen比較融合、dict receiver guard、tuple→locals融合、store後の借用cleanupを
+現行uopに合わせて検査するテスト変更を準備中。未対応のbranch narrowing・calleeを
+またぐ所有権推論などの期待は一括skipせず、失敗として保存している。
+
+固定 `m32-method-only.patch` からGIL PGO/fullLTOとFT debugを新規build中。
+FT debugの型変更・OSR・generator・並行実行検査後、同じpatchでFT releaseを作る。
+どのbuildにも同じC mpdecimal archiveをリンクする。固定ソースは変更しない。
+以後のrootテスト移行は別のソースidentityとして扱う。
+次は両最終構成の全pyperformanceとlocal8を逆順blockで比較し、1.10超の項目を調べる。
+
+
+M32dのGIL全test_opt 542件成功（5skip）。旧tracing前提のテストを、methodの
+直接return/attribute-return、全CFGの両分岐、callee境界の所有権、Tier 1で行う
+property/特殊メソッドへ移行。定数推論・所有権推論の未移植部分を実装済みとせず、
+通常/未訪問分岐、コード差し替え、参照数、例外・副作用を検査する。
+FT全test_optでは35件の最適化期待が失敗。mutable globalの保持やGIL専用call
+短縮との違いを確認し、FTのguarded load/frame呼び出しと意味論を検査する移行中。
+これらのrootテスト変更は固定M32の性能比較用ソースとは別に記録している。
+
+M32 FT release完成: c853b66f696991c54cbde4c915c2532396b96c26b335a5c389df1035b47905c8。
+FT debugのmethod232件（21skip）・関連12件-R3:3・core635件（9skip）・
+並行実行66件・JIT無効opcache95件成功。FT release method232件成功。
+FTのC系1,154件とGIL PGO学習はtest_reのforkserver socket.bindがsandboxの
+EPERMで失敗。ログと失敗PGOの.gcdaを保存し、空のprofileから同じseed/taskで
+sandbox外の学習をやり直した。再学習は成功、最終PGO/LTOリンクと検査を継続中。
+性能値はまだ測定しておらず、全構成10%条件の達成は未確認。
+
+
+M32fの全test_optはGIL/FTとも542件成功（5/30skip）。新規の一括skipは追加していない。
+FTはmutable globalを一般loadで読むためGIL専用定数化/call短縮の期待を分け、
+値の置換・namespace寿命・構造変更・コード置換後の意味論を両構成で検査した。
+構造変更/namespace解放時はFTでもexecutorを失効させることを確認して期待を維持。
+テストの固定コピー/ハッシュと使用binaryは `m32f-test-provenance.json` に保存。
+rootのLibをPYTHONPATHに指定した正しさの検査であり、性能測定にはこのoverlayを使わない。
+旧branch narrowing、calleeをまたぐ所有権・戻り値の定数推論は未移植のまま。
+現行method CFG/短縮命令と両分岐・参照数・副作用のテストに移行したのであって、
+旧最適化をすべて実装したという意味ではない。
+
+PGOのsandbox外再学習43ファイルは成功（同じrandseed/profile task）。
+FT C系1,154件と元deltablue1,000回もsandbox外で成功。
+最終PGO/fullLTOリンク完了後の検査と、両profileの全suite/local8比較が次の作業。
+
+
+M32最終GIL PGO/fullLTO build完成: 127564ec79cde3ee5a5028583bb7320bcd5684f9a8397ababb22bcbde88b5781。
+method232件、C系1,154件、元deltablue成功。four-way runnerをM32固定候補へ更新し、
+依存を用意した環境でrunner unit8件成功。host Python単体での初回2errorはpackaging未導入。
+10仕様（go/nqueens/scimark/logging/regex_compile/richards_super/richards/base64/networkx/telco）
+をGIL→FTの順で3worker・逆順2block・CPU2・seed0で確認中。計測中のbuild/testは停止。
+networkx worker上限15秒を維持する。終了後に全suiteとlocal8へ進む。
+
+
+M32最終GIL PGO/fullLTOの10仕様26結果40runが完了。全run成功・identity一致。
+10%超の点推定はbase32_small 1.1494 [1.1273,1.1903]、logging_format 1.1071
+[1.1003,1.1138]、nqueens 1.1046 [1.0959,1.1120]。Go 0.8665、LU 0.7557、
+Richards 0.9201、Richards Super 1.0332、C telco 0.9840。
+base85_smallは1.0457 [0.9498,1.1115]で、block比0.9877/1.1072と変動が大きい。
+初期blockだけを改善の根拠にせず、全worker・両blockを保持する。
+結果: `m32-gil-final-screen-state.json` / `m32-gil-final-screen-analysis.json`。
+FTの同じ10仕様を継続測定中。終了後に元logging/base32 workerをJIT有効/無効で
+別途profileし、呼び出し処理とC処理の寄与を分離する。診断値を比較結果へ混ぜない。
+property再初期化時のcache保持についてもソース上の懸念があり、測定後に再現を確認する。
+現段階では新たなmainのバグとして確定/報告していない。
+
+
+比較中のソース確認: CALL_PY_GENERALのdefault/keyword-only引数初期化では、
+callerで証明済みのimmutableな実引数型もcalleeへ渡していない。また、module属性
+loadが必ずpushするNULL self-slotの静的情報が失われる。base32 wrapperの改善候補。
+引数の型だけを伝播し、変更可能なkwdefaultsの値/型や実行中frameからの情報は推論しない。
+現時点では仮説であり、M32の測定用ソースを変更していない。profilingを先に行う。
+
+
+### M32: 最終 FT 確認と呼び出しの診断（2026-09-20）
+
+FT 最終ビルドの 10 specification / 26 結果は、全 40 run が成功し、
+実行ファイル・入力の同一性検証も成功した。全結果の点推定が main 比 1.10 以下。
+最大は logging_silent 1.0627 [1.0577, 1.0680]。
+shortest_path は 1.0233 [0.9755, 1.1079] と幅があり、全体の達成はまだ主張しない。
+GIL 側の base32_small 1.1494、logging_format 1.1071、nqueens 1.1046 は未解決。
+全 suite と local 8 の現在の候補による検証も残っている。
+
+元の logging/base32 workload を JIT 有効・無効で perf 採取した。
+JIT 無効では main と候補の時間は近く、有効時の Python 呼び出しが次の調査対象。
+診断 hook 初版はゼロ長 stencil の名前を解決できず失敗したため、ゼロ長も登録して
+新しい出力先で全 8 run を再実行し成功した。失敗記録を保持し、この計測を
+通常の性能比較には混ぜない。次は一般呼び出しの引数型伝播と inlining を調べる。
+
+property 再初期化後の古い getter 呼び出しを main/candidate × GIL/FT × JIT on/off
+の全 8 通りで確認した。main 由来の未修正バグとして bugs_report.md の M-17 に記録。
+重複していた番号は Python indexing の項目を M-16 に整理した。
+
+
+### M33: 呼び出し境界の改善（実装・検証中）
+
+- `CALL_PY_GENERAL` の NULL self slot が静的に証明できる場合、明示された位置引数の
+  不変組み込み型を callee CFG に渡す。位置・keyword-only default は未知のまま。
+  LOAD_ATTR の展開が必ず NULL を積む場合も、この事実を CFG に残す。
+  新規 2 テストは M32 で失敗、M33a の全 test_opt 544 テストは成功（skip 5）。
+- property と独自 `__getattribute__` は `_LOAD_ATTR` の通常呼び出しへ展開して
+  native continuation へ戻す。キャッシュされた getter の埋め込みは行わない。
+  呼び出し後の receiver guard は破棄する。再初期化・例外・呼び出し回数を検証。
+  M33b の全テストでは旧 Tier 1 fallback 前提の 3 箇所だけが失敗したため、
+  property の期待を新しい通常呼び出しへ更新し、retirement のテストは引き続き
+  未対応命令を使うよう変更した。
+- 実際の base32 worker で module 経由の関数が weak function-version cache から
+  消え、全呼び出しが `_METHOD_CALL` になることを確認した。
+  GIL build で静的名前空間の binding hint を保持してコンパイル対象を回復する。
+  hint は実行時の identity/type の証明には使わず、関数バージョンのガードを残す。
+  cache eviction の再現テストは M33b で失敗。M33c で検証中。
+
+性能への効果はまだ測定していない。次は正当性テスト後に凍結した非 PGO ビルドで
+独立比較し、有効なら最終 4 構成比較へ進む。
+
+
+M33c の全 546 test_opt は、retirement fixture の 1 件を除き成功した。
+generator iteration に置き換えた fixture では保持した executor の破棄条件を
+満たせなかったため、`raise ValueError(total)` で未対応 continuation へ戻る形に
+変更した。長い native loop を保持する場合・短い loop を破棄する場合の両方が成功。
+失敗した fixture の記録は m33c-retirement.log に保存した。
+M33d は runtime を変えずこの fixture だけ修正し、全体を再検証中。
+M33 の固定 patch から GIL release（非 PGO/LTO）と FT debug を作成している。
+
+
+M33d GIL debug: test_opt 全 546 成功（skip 5）、呼び出し境界関連 1,202 成功
+（10 ファイル、skip 5）、新規 4 テストの `-R 3:3` 成功。
+GIL release / FT debug のビルド・FT 検証後、`base64,logging,nqueens` の
+3 worker × 2 逆順 block を実施する自動制御を起動した。
+この制御はすべてのビルドと正当性テストの終了を確認してから計測を開始する。
+
+
+M33 正当性検証完了: GIL debug 全 546（skip 5）と境界関連 1,202（skip 5）、
+FT debug 全 546（skip 31）と境界・並行関連 1,231（skip 5）、
+GIL/FT 新規テスト `-R 3:3`、GIL release method frontend 202（skip 1）が成功した。
+FT の追加 skip 1 は、生の namespace binding hint を使う GIL 専用最適化のテスト。
+新規テストを一括 skip する変更はない。
+
+固定 GIL 非 PGO/LTO 実行ファイル SHA-256:
+`473df2ec1bad758c2ef233bc8a3199a7d183bb3d885a179edc87e2a8e350cb87`。
+固定 FT debug SHA-256:
+`8c1b06d8ab471affdbd1024ad433c6ed6ede9f450c9e3fc867902b847ef43315`。
+全ビルド・正当性テスト終了後、M33 GIL 非 PGO/LTO の 3 specification の
+両順序比較を開始した。結果確定前なので性能改善の達成はまだ主張しない。
+
+
+### M33 非 PGO/LTO screen 結果と namespace lookup の修正
+
+3 specification / 15 結果、両順序の全 12 run が成功し、入力・実行ファイルの
+同一性確認も成功。main 比: base32_small 1.0527 [1.0505, 1.0551]、
+logging_format 1.0647 [1.0379, 1.0862]、nqueens 1.0883 [1.0788, 1.0968]。
+全点推定は 1.10 以下だが、base64_small は 1.0950 [1.0492, 1.1793] で
+block 間にも差（1.1413 / 1.0506）がある。全 worker を保持し、最終ビルドで確認する。
+これは非 PGO/LTO の screen であり、M32 PGO/LTO との差を単独変更の効果とはしない。
+
+レビューで namespace hint の通常辞書検索が任意キーの `__eq__` を実行し得ると
+分かった。M33e の新規テストでは、実行しない分岐のコンパイル中に equality が
+4 回呼ばれることを修正前バイナリで確認した（m33e-binding-before.log）。
+これは今回追加した候補側の不具合で、main の不具合とは分類しない。
+修正は unicode-key 辞書とキャッシュの keys version/index を検証して直接値を読む。
+コンパイル中の Python 呼び出しを避け、関数の実行時ガードもそのまま保持する。
+併せて符号の違う整数比較の警告 2 箇所を整理した。固定 M33 screen のソース・
+バイナリは変更していない。M33e の再検証後に最終ビルドへ進む。
+
+
+M33e の namespace 修正後は GIL debug test_opt 全 547（skip 5）と新規 5 テストの
+`-R 3:3` が成功した。four-way runner の 8 テストも成功。
+worker 単位の集計処理は既存の両構成の完全な比較データで検証し、元の結果を変更せず
+一時ディレクトリへ再集計して成功した。
+
+最終候補は `m33e-method-only.patch` で固定。FT release は完成し SHA-256 は
+`1042e1f4a1cc1ed9319c0f4995b95b693a57c40ed0f395c9e0f17010af3be1fd`。
+GIL PGO/full-LTO は学習用ビルド成功後、sandbox 外で seed 0・JIT 無効の同じ
+PGO 学習 task を実行中。最終リンク後、GIL/FT の JIT・属性・C 関連テストを実施する。
+その完了を待つ four-way controller を起動済み。3 worker、2 block、5 warmup、
+5 value、CPU 2、worker timeout 60 秒（networkx は 15 秒、specification 上限 60 秒）。
+両構成を準備してから FT と GIL を順番に計測する。並行するビルド・テストは行わない。
+出力予定: `jit-artifacts/method-only-m33-full/`。local 8 と独立した確認比較はその後。
+
+
+M33e 最終 GIL PGO/fullLTO が完成。SHA-256:
+`b0d6fefaccd4f69a2c01785cc10e90309dfe08c67af1ebcb4cfe3c80d75dd50c`。
+PGO 学習は一度で成功（139.3 秒）。失敗した profile の再利用はない。
+FT/GIL の最終 native build ともに test_opt 547（skip 32 / 5）、
+属性・呼び出し・monitoring 486（skip 3）、C decimal/binascii/re 1,154（skip 28）が成功。
+実行ファイルの検証前後の SHA も一致した。four-way 全 suite の依存準備を開始した。
+録画frontend・side traceの旧entry/exit名がソース・ビルド定義に残らないことも再確認。
+共通uop backendやPythonのtraceback/tracemallocは別の機能として維持する。
+
+
+全 suite は両構成とも 97 specification、23 dependency group を準備した。
+既存の固定 fastapi group は Python 3.16 非対応の依存により準備できず、失敗を保持。
+残る 96 specification の計測を FT から開始した。各仕様は同じ block 内で
+main/candidate を続けて実行し、全仕様を一巡した後の次 block で順序を逆転する。
+開発用 compare.py の「各仕様で両 block を続けて測る」順序とは区別する。
+最終判定は両 block 完了後の全 worker と測定後 identity 検証に基づく。
+
+
+M33 全体比較の FT 第1 block: asyncio_tcp / asyncio_tcp_ssl / asyncio_websockets が
+main・candidate ともに成功した。以前の sandbox 制限による失敗はこの実行条件では
+再発していない。ここまで 46 run に実行失敗なし。まだ逆順 block の前なので
+この段階の値は最終比較として扱わない。
+
+
+FT 第1 block の networkx と connected_components は両者成功。
+networkx_k_core は main/candidate とも worker の15秒上限で timeout（rc 124）。
+候補側の全体打ち切りは18.9秒で、ログに `Timed out after 15 seconds` を確認。
+上限を延長せず比較不成立として残し、他の仕様の計測を継続した。
+
+
+### M34: rangeのcompactness誤認を修正し、M33比較を中止
+
+静的frontendがFOR_ITER_RANGEの返すC longをcompact intと仮定していた。
+ブロック境界を越えて比較のcompactness guardが消え、`value < 5` が
+`range(1 << 30, (1 << 30) + 20000)` の先頭5個を誤ってtrueとした。
+GIL/FTのM33 release・JIT有効で期待値0に対し5。mainと候補のJIT無効は正常。
+mainに由来する不具合ではなく、このmethod frontendの不具合である。
+別の加算probeはdebug assertionを再現するがreleaseでは正しいため、
+誤結果の根拠は比較probe（m33-range-comparison-results.json）と区別する。
+
+M34はrangeの要素についてexact intだけを伝播し、compactnessを仮定しない。
+新規テストは大小・正負の境界ごとにcodeを初期化して再compileし、先行guard missで
+後続ケースが隠れないようにした。GIL debug全548（skip 5）と新規テストの
+`-R 3:3`が成功（m34b-opt-full.log / m34b-range-refleak.log）。
+修正前FT debugでも同じテストのassertion failureを確認済み。
+
+M33のFT controllerを停止し、実行中worker終了後にcontrollerを終了した。
+計測workerと再現テストは重ねていない。FT第1blockの188 runを保持し、
+GIL・逆順block・local 8は未実施。中止理由・時刻はm33-boundary-pause.json。
+この不完全な旧候補の測定を最終比較として集計しない。
+次は同一M34 patchのFT debugと最終FT/GILビルドを検証し、別出力先
+`jit-artifacts/method-only-m34-full/`で比較を最初から実施する。
+
+
+M33中止後のFT/GIL identity再検証はともに成功。旧runnerも保存してから、
+通常のfour-way runnerをM34の固定buildへ向けた。M34では最終buildの正当性検証後、
+既知のGIL回帰10仕様を3 worker・両順序で先に確認する。点推定1.10超または失敗なら
+そこで止めて調査し、通過後に全97仕様・local 8へ進む。判定前に測定回数を固定し、
+遅いworkerを削除しない。PGOは最終GIL比較だけに使用する。
+
+
+M34のFT debug/releaseビルドが成功（239.2秒 / 218.6秒）。
+FT release SHA-256: `d3c547119584aaa1fb272ff8e36d16186c5f1278538db25591784866bccb3935`。
+GILの新規PGO学習は139.4秒で成功した。同じ標準task、seed 0、JIT無効を維持し、
+前候補のprofileは混ぜていない。最終リンク後に3構成の正当性検証へ進む。
+
+
+M34最終GIL PGO/fullLTO SHA-256:
+`44ca073ed4bca19fd04de31abd553c730ac799bf1a5debb3bc66fcfe05bb22d9`。
+3構成でtest_opt全548、属性・呼び出し・monitoring 486、C関連1,154が成功。
+skip数はFT debug 32/1/27、FT release 32/3/28、GIL release 5/3/28。
+rangeの比較probeは3構成×JIT有効/無効の全6条件で正解し、FT debugの新規テスト
+`-R 3:3`も成功。GIL debugの同テストも既に成功している。
+
+最初のM34先行計測は無効とする。03:03:31 UTCに追加の短い正当性probeを実行し、
+自動開始済みの計測と重なったため。遅い値を理由に除外するものではない。
+controllerを停止し、実行中workerの終了を15.1秒待ってから終了した。
+理由・時刻はm34-screen-protocol-violation.json、生データはm34-gil-final-screen-*に保持。
+ソース・バイナリ・入力を変えず、同じ3 worker×2 block・10仕様すべてを
+`m34b-gil-final-screen-*`へ取り直す。M34bは測定の識別名であり、runtime変更はない。
+以後は計測終了を確認するまで追加の実行診断も行わない。
+
+
+M34b先行比較は29/40 runまで実行失敗なし。両順序が終わった項目では、
+Goは約0.87、Richardsは約0.92、Richards superは約1.04。
+nqueensは約1.115、logging_formatは約1.134で10%超が見えている。
+全runと測定後identity検証・worker単位の区間計算はまだ完了していない。
+
+次の診断候補はgeneratorのsuspension境界とloggingのproperty/callee境界。
+ソース上、現在のgenerator OSRはYIELD_VALUEの直前でTier 1へ戻る。
+propertyは汎用属性取得を通すためgetterを静的inlineしない。
+これらは時間差の原因とまだ確定していない。先行比較終了後、同じ固定buildで
+main/candidate×JIT有効/無効のperfと実際のworkerのexecutorを調べる。
+診断用の拡張・driverは準備だけとし、計測が終わるまでビルド・実行しない。
+
+
+### M34b GIL PGO/fullLTO 先行比較の確定結果
+
+10仕様・26結果、全40 run成功。測定前後のidentityが一致した。3 worker、両順序、全workerを等しく集計した結果。
+
+| Benchmark | candidate/main | worker bootstrap 95% CI |
+|---|---:|---:|
+| logging_format | 1.1339 | [1.1244, 1.1443] |
+| nqueens | 1.1152 | [1.1078, 1.1236] |
+| logging_simple | 1.0917 | [1.0849, 1.0990] |
+| base32_small | 1.0850 | [1.0837, 1.0863] |
+| scimark_sor | 1.0649 | [1.0617, 1.0688] |
+| base85_small | 1.0619 | [1.0563, 1.0667] |
+| base64_small | 1.0591 | [1.0577, 1.0604] |
+| regex_compile | 1.0439 | [1.0301, 1.0556] |
+| richards_super | 1.0373 | [1.0356, 1.0390] |
+| logging_silent | 1.0141 | [1.0107, 1.0176] |
+| base32_large | 1.0088 | [1.0075, 1.0099] |
+| shortest_path | 0.9999 | [0.9966, 1.0035] |
+| telco | 0.9978 | [0.9946, 1.0009] |
+| base85_large | 0.9953 | [0.9943, 0.9962] |
+| base64_large | 0.9884 | [0.9871, 0.9897] |
+| urlsafe_base64_small | 0.9816 | [0.9806, 0.9825] |
+| scimark_fft | 0.9620 | [0.9559, 0.9702] |
+| scimark_sparse_mat_mult | 0.9412 | [0.9327, 0.9547] |
+| ascii85_small | 0.9343 | [0.9322, 0.9363] |
+| richards | 0.9228 | [0.9131, 0.9296] |
+| scimark_monte_carlo | 0.8865 | [0.8847, 0.8885] |
+| base16_small | 0.8740 | [0.8720, 0.8760] |
+| go | 0.8726 | [0.8643, 0.8781] |
+| base16_large | 0.8046 | [0.7064, 0.8523] |
+| ascii85_large | 0.7986 | [0.7973, 0.7997] |
+| scimark_lu | 0.7598 | [0.7585, 0.7610] |
+
+logging_formatとnqueensは区間の下端も1.10超。全suite・local 8を開始せず、修正に戻る。
+logging_simpleは1.0917で境界に近い。base16_largeはblock間の差が大きいが全workerを保持した。
+生データ: `jit-artifacts/regressions-20260919/m34b-gil-final-screen-*`。
+未修正mainのFTはTier 1であり、今の表はGILのtracing/method比較だけを表す。
+測定終了を確認してから、ABIを合わせた診断拡張をビルドし、perfの別実験を開始した。
+
+
+### M35: generator yieldとmodule属性ロードを改善（実装・検証中）
+
+M34のperf診断12 run（3仕様×両者×JIT有効/無効）が完了し、すべて成功した。
+これは比較本番とは別の固定仕事量の診断。loggingは1,048,576 loop、nqueensは64 loop、
+base32_smallは32,768 loop。loggingの各loop内部の反復も含むため、1 runは約1分になる。
+全記録はm34-profiling.jsonとm34-perf-*。perfの時間を先行比較へ混ぜない。
+nqueens候補のEvalFrameDefault selfは22.49%（coldは別に1.79%）。
+ソース行ではFOR_ITER_GEN、YIELD_VALUE、POP_TOP、JUMP_BACKWARD_JIT、RESUME_CHECKが上位。
+実際のexecutorではmainがgenerator間のframe遷移とyieldを含み、候補はyield直前でdeoptする。
+
+M35は既存の_YIELD_VALUEを静的CFGの終端として使い、callerへTier 1で復帰する。
+普通のreturn_offsetはiteratorの「終了先」なので、yieldではSEND/FOR_ITERのcache直後へ
+戻る専用exitを設けた。suspensionを越える型推論やrecordingは追加しない。
+frame遷移としてIP保存を保持し、callbackでmonitoring等が変わった場合のvalidity検査も入れる。
+
+logging候補では、0.3%以上の行だけでも_LOAD_ATTR_MODULEが計4.18%を占めた。
+M35では静的namespace hintから安定した属性を解決し、named dictionary dependencyと
+実行時のexact-module/dictionary-identity検査を組み合わせる。
+module自体を定数型として扱わず、__class__変更後も検査を残す。
+属性値は型が不変なものに限定し、module値は除く。guardと結果ロードを一つのuopに保ち、
+owner消費後のguard失敗でstack契約が壊れる既知パターンを避ける。FTではこの定数化をしない。
+
+generatorのC/Python/yield-from callerと例外状態、moduleのbinding/dictionary/class変更・
+unrelated値更新・値の寿命を含む5テストを追加。旧M34での失敗は新規native経路の不在であり、
+旧候補の意味論の不具合を示すものではない。初回の生成器はFT条件分岐内のDEAD(owner)に対し
+所有権の不一致を検出したため、FTの即時exit後に共通の所有権処理を置く形へ修正した。
+生成器再実行後、非PGO/LTOのdebug buildで検証する。性能への効果はまだ未測定。
+
+### M35b: 新規module命令のコード生成を修正（検証中）
+
+M35の生成器は、専用yield exitのcache depthを0へ固定した後に成功し、
+非PGO/LTO debug buildも成功した。しかし新規テストはnative codeでabortした。
+gdb、最終uop列、stencilの機械語オフセットを照合し、原因はyieldではなく
+_LOAD_ATTR_MODULE_CONSTと確定した。生成器は#ifdef内のEXIT_IF(true)を終端と解釈し、
+後続のmodule guard/loadを削除していた。GIL専用frontendだけがこの命令を発行するため、
+不要な条件付き無条件exitを除去した。11生成物を再生成して再ビルド中。
+monitoringがcallback内で有効になるケースを加え、新規テストは計6件。
+この6件、test_opt全体、refleak、generator/monitoring、生成器/JIT toolを順に検証する。
+失敗したM35のログ・バックトレース・stencil照合結果は保持し、性能測定には使わない。
+
+M35bの修正後、新規6件は成功。test_opt全554件は旧yield非対応を期待する2件だけ失敗し、
+双方をnative yieldと専用exitの存在検査へ更新した。refleak用にgenerator codeを毎回
+resetする。callback自体のreset_codeはfunction versionを恒久的にclearedへ変えるため、
+通常の新規callbackを事前warmupして使う。M35c/dのテスト調整失敗も保存した。
+runtimeはM35bのまま、最終テスト定義でM35e検証を進める。
+
+M35eのGIL debug検証はすべて成功。test_opt 554件（5skip）、新規6件R3:3、
+generator/genexp/yield-from/monitoring 201件、生成器/JITツール91件。
+実行済みruntimeはM35bで、M35eはテスト定義調整後の検証ラベル。
+独立source snapshotからFT debugとGIL release（非PGO/LTO）をビルドし、両者の
+JIT全体・generator・C decimal等を検証してから、nqueens/logging/base64を
+同条件main非PGO/LTOと逆順2block×3workerで測る。ビルド/検証中に測定しない。
+
+### M35b: 独立ビルドの検証と非PGO先行比較が完了
+
+FT debug: test_opt 554件（35skip）、generator/monitoring 201件、新規yield3件R3:3に成功。
+C検証1154件ではtest_reのforkserver socketがsandboxに拒否されたが、通常環境で
+そのファイルを再実行して成功。GIL releaseもtest_opt・generator・C検証に成功。
+GIL非PGO/LTO先行比較は3仕様15結果、全12 run成功、identity一致。
+main非PGO/LTOとの比較であり、PGO/fullLTOの合否には流用しない。
+
+| Result | method/main | 95% CI |
+|---|---:|---:|
+| nqueens | 1.0836 | 1.0681–1.0942 |
+| logging_format | 1.0540 | 1.0414–1.0639 |
+| base32_small | 1.0368 | 1.0330–1.0415 |
+| base64_small | 1.0354 | 1.0337–1.0371 |
+| logging_simple | 1.0309 | 1.0214–1.0390 |
+| base85_small | 1.0192 | 1.0174–1.0210 |
+| base64_large | 1.0074 | 1.0064–1.0085 |
+| base32_large | 1.0036 | 1.0024–1.0050 |
+| base85_large | 1.0010 | 1.0004–1.0017 |
+| logging_silent | 0.9846 | 0.9796–0.9903 |
+| ascii85_small | 0.9666 | 0.9651–0.9681 |
+| base16_small | 0.9610 | 0.9569–0.9654 |
+| urlsafe_base64_small | 0.9537 | 0.9520–0.9554 |
+| ascii85_large | 0.9064 | 0.9061–0.9067 |
+| base16_large | 0.8896 | 0.8871–0.8921 |
+
+同じsource snapshotで最終GIL PGO/fullLTOとFT releaseをビルドする。
+検証後に10仕様screenを行い、合格してから全suiteとlocal8へ進む。
+
+### M36: mainにもあるmodule subclass属性の誤結果を修正
+
+module.__class__をdata descriptor付きsubclassへ変更すると、直接参照は2000を
+返すが、特殊化済み関数は辞書に残る1000を返す。main/M35b×GIL/FT×JIT0/1の
+8構成すべてで再現した。最初からsubclassでも特殊化後に誤結果となる。
+_LOAD_ATTR_MODULEとspecializerがtp_getattroの同一性だけでmodule属性アクセスを
+選んでいたため、継承getterを持つsubclassのdata descriptorを無視していた。
+両者をexact moduleに限定し、subclassは通常の属性探索へ戻す。
+Tier1の2テストとnative method内callback越しの1テストを追加し、修正前の失敗を確認。
+詳細はbugs_report.md M-18。M35bの最終比較・全suite待機プロセスを停止し、
+最終計測は未開始であることをm35b-final-measurements-cancelled.jsonに記録した。
+M35b最終ビルドは参照用に完了させるが、合格候補にはせず、M36を非PGO debugで検証する。
+
+M36 GIL debug検証完了: JIT無効test_opcache 97件、JIT有効test_opt 555件（5skip）、
+property/descriptor/monitoring/generatorと生成器/JIT toolを合わせて491件（1skip）が成功。
+新規native1件とTier1の2件のR3:3も成功した。
+mainへの新規テスト適用は、最初のLib overlayではdisのopcode metadataが候補側になったため、
+そのログを意味論の根拠には使わない。frozen mainのLib/disを保ってテストファイルのみ
+読み込む再実行で、両件とも1000 != 2000という誤結果を確認した
+（m36-main-opcache-before-matched-lib.log）。8構成の独立probeも各binary固有Libを使用した。
+修正済みsnapshotからFT debug/releaseとGIL PGO/fullLTOを作成中。
+
+### M36: 最終ビルドの正しさ検証が完了、先行比較中
+
+FT debug/releaseとGIL PGO/fullLTOの全12検証groupが成功。
+各構成でtest_opt 555件、call/property/descriptor/monitoring/generator 589件、
+C decimal/binascii/re 1154件、JIT無効test_opcache 97件を実行した。
+M18の独立probeは3構成×JIT0/1の全6回が成功。FTのnative1件・Tier1の2件のR3:3も成功。
+最終GIL build SHA-256: 9443d6899ff5ab7dcc116442fd0a82dac61ff06c65d7b1b3dac4b7f689ba55f5。
+同一ソースの2 releaseを固定し、10仕様のGIL先行比較を開始した。
+計測中にビルド・テスト・profilingは実行しない。途中の遅い値も含め、全40 runを保持する。
+
+### M36: 最終先行比較は3項目で10%を超過
+
+GIL PGO/fullLTOの10仕様26結果、全40 runが成功し、前後のidentityも一致。
+logging_format 1.1173（95% CI 1.1015–1.1324）、logging_simple 1.1065
+（1.0860–1.1288）、nqueens 1.1007（1.0991–1.1025）が基準を超えた。
+残る23結果は1.10以下。Go 0.8538、Richards 0.9162、LU 0.7576、
+regex_compile 1.0610、C decimal使用telco 1.0054。全suite/local8は未開始。
+全workerを保持し、判定gateで後続測定を停止した。
+
+測定終了後、固定work量のperf診断12回（3仕様×main/candidate×JIT0/1）を実施、
+全回成功。候補nqueensのEvalFrameは19.37%+cold1.83%、mainは0.50%。
+permutationsの生成器作成CALLは_METHOD_CALLとなり、RETURN_GENERATOR非対応の
+calleeへ入った後、callerのnative継続を失う。生成器本体のnative yieldは既に存在する。
+logging候補のnative _LOAD_ATTR_MODULEが1.94%、_LOAD_GLOBAL_MODULEが1.78%。
+プロファイルは原因調査用で、上記時間比には混ぜない。
+
+次は、生成器作成を通常vectorcallで完了してnative callerへ戻す経路と、
+型を定数と仮定しないmodule bindingロードを実装・検証する。
+既存一般vectorcall helperはPython callableにも対応し、実際のcallableを毎回呼ぶ。
+moduleのbinding監視とruntime属性guardを維持し、__class__変更を型定数化で消さない。
+
+### M37: 生成器作成の継続とmodule bindingロードを実装（未検証）
+
+生成器のcode versionを既存cacheから参照し、通常vectorcallの既存uopを選ぶ。
+cacheのcodeはFT mutex内だけで読み、関数オブジェクトが死んだgenexprにも使える。
+これは選択用hintであり、実際のcallableへの通常呼出しを省略しないため、
+関数code変更や異なるcallableにも意味論を維持する。生成器の反復方法は変更しない。
+
+GILではmoduleのglobal bindingも監視付きで埋め込むが、新規_LOAD_MODULE_BINDINGは
+型不明のsymbolを返す。module値の属性ロードも同様に型を仮定しない。
+既存namespace identity・named dependency・exact module runtime guardを保つ。
+FTは引き続きmodule bindingを定数化しない。
+
+生成器作成後の継続/遅延実行/code変更/引数エラー、短命genexpr関数、
+moduleの直接/入れ子参照での__class__変更、binding置換/削除/寿命の4テストを追加。
+旧M36で新規native経路の不在による5 failure（4テスト）を確認した。
+11生成物の再生成は成功し、非PGO/LTO debug buildで検証を開始する。
+
+M37 GIL debug検証は全4group成功。新規4件、test_opt 559件（5skip）、
+新規4件のR3:3、call/property/descriptor/monitoring/generator/生成器/JIT toolの
+680件（1skip）が通った。codeの種類を変える代入には既存のDeprecationWarningを
+明示的に検査する。凍結patchにもこのテスト定義を含めた。
+FT debugとGIL非PGO/LTO releaseを独立にビルド中。両者のテスト後、
+同設定mainとのnqueens/logging/base64先行比較を2順序×3workerで行う。
+
+M37独立ビルドの検証も成功。FT debug/GIL releaseともtest_opt 559件
+（FT 37skip、GIL 5skip）、関連589件、C decimal/binascii/re 1154件が成功。
+FTの生成器作成2件R3:3も成功した。GIL release SHA-256は
+ d4223de840fbe04fca3e96f665dd753d124d0fdfedb65f91ec1534d9245ca9d2。
+非PGO/LTOの3仕様15結果を計測開始。計測中の追加ビルド・テスト・profilingは行わない。
+後続の最終ビルド、最終検証、10仕様screen、全97仕様×4構成、local8は
+順次のgateで接続した。先行比較が10%を超えれば後続へ進まない。
+
+### M37: 非PGO先行比較で生成器作成の変更を棄却
+
+全12 run・15結果が成功し、identity一致。Nqueensは両順序で悪化し、
+最終ビルドgateで停止した。PGO/FT releaseと全suite/local8は未実行。
+
+| Benchmark | method/main | 95% CI |
+|---|---:|---:|
+| nqueens | 1.1609 | 1.1575–1.1638 |
+| logging_format | 1.0284 | 1.0231–1.0346 |
+| base32_small | 1.0150 | 1.0138–1.0160 |
+| base85_small | 1.0085 | 1.0067–1.0104 |
+| base64_small | 1.0041 | 1.0026–1.0057 |
+| logging_simple | 1.0035 | 0.9976–1.0093 |
+| base64_large | 1.0020 | 1.0017–1.0022 |
+| base85_large | 1.0005 | 0.9999–1.0011 |
+| base32_large | 0.9977 | 0.9953–0.9998 |
+| logging_silent | 0.9763 | 0.9699–0.9829 |
+| base16_small | 0.9591 | 0.9423–0.9867 |
+| urlsafe_base64_small | 0.9385 | 0.9127–0.9600 |
+| ascii85_small | 0.9363 | 0.9349–0.9376 |
+| ascii85_large | 0.9037 | 0.9007–0.9056 |
+| base16_large | 0.8690 | 0.8660–0.8723 |
+
+生成器作成に汎用C vectorcallを挟む変更を外す。native継続を保つだけでは
+追加の呼出し境界を取り戻せなかった。module bindingの改善は残す。
+これは非PGO比較であり、最終PGO構成の性能値にはしない。
+
+### M38: rangeの検査を取り出し地点へ集約（検証中）
+
+_ITER_NEXT_RANGE_COMPACTを追加。現在のC long値が1 Python digit内であることを
+反復子のstart/len更新前に検査し、成功した後続CFGでのみcompact intとする。
+大きい値では同じ未消費の要素をTier1へ渡す。yieldを越えて事実を保持しない。
+従来のM34大整数テストに加え、正負のdigit境界を両方向にまたぐrangeと、
+yield中のiterator.__setstate__変更を検査する2テストを追加。旧M37は新命令の
+不在によりこの2テストで失敗した。11生成物の再生成は成功しdebug build中。
+M38のソース編集は固定M37の終盤に行ったが、M37のfrozen source/binaryは
+変更せず、前後identity一致を確認。再生成とビルドは全計測完了後に開始した。
+
+M38新規検証の初回は5件中、setstateの期待値1件だけ失敗。
+iterator.__setstate__は元のrangeではなく残りのrangeから位置を進めるため、
+すでに1個消費したテスト側のoffsetが1大きかった。mainと候補のJIT0でも
+同じ挙動を確認し、Objects/rangeobject.cの実装に合わせてテストを修正した。
+正負の境界4方向、M34大整数、module2件は成功していた。
+runtimeを変更せず、修正したテストでM38b検証を行う。失敗ログは保持する。
+
+M38bの修正後テストは全group成功。新規range2件・M34大整数・module2件の5件、
+test_opt 559件（5skip）、同5件のR3:3、関連680件（1skip）。
+新range命令のguard失敗は値を消費せず、yield後に変化したiteratorも再検査できた。
+同runtimeと修正済みテストを凍結してFT debug/GIL非PGO releaseをビルド中。
+
+M38b独立ビルド検証は全7group成功。両構成でtest_opt 559件
+（FT 38skip/GIL 5skip）、関連589件、C関連1154件が成功。
+FTのrange検査R3:3も成功し、非PGOの3仕様比較を開始した。
+FTで新規setstateテストをskipするのは、外部と共有されたrange iteratorが
+既存のunique-reference guardでTier1へ戻るため。通常の境界テストは両構成で実行した。
+
+### M38b: 非PGO先行比較は15結果すべて10%以内
+
+全12 run成功、前後identity一致。全workerを保持し、全15結果で95%区間上端も1.10未満。
+同じmain非PGO/LTOとの比較であり、PGO設定の合否には流用しない。
+
+| Benchmark | method/main | 95% CI |
+|---|---:|---:|
+| nqueens | 1.0730 | 1.0687–1.0779 |
+| logging_format | 1.0323 | 1.0200–1.0458 |
+| base32_small | 1.0223 | 1.0215–1.0232 |
+| base85_small | 1.0176 | 1.0079–1.0336 |
+| base85_large | 1.0023 | 1.0004–1.0048 |
+| base64_large | 1.0021 | 1.0016–1.0026 |
+| base64_small | 0.9999 | 0.9982–1.0018 |
+| base32_large | 0.9996 | 0.9992–1.0000 |
+| logging_simple | 0.9927 | 0.9680–1.0103 |
+| logging_silent | 0.9916 | 0.9883–0.9956 |
+| urlsafe_base64_small | 0.9686 | 0.9647–0.9722 |
+| ascii85_small | 0.9427 | 0.9332–0.9596 |
+| base16_small | 0.9356 | 0.9331–0.9380 |
+| ascii85_large | 0.9051 | 0.9047–0.9055 |
+| base16_large | 0.8698 | 0.8616–0.8782 |
+
+生成器作成のC呼出しを外し、range guardを集約した候補を採用する。
+最終比較用FT releaseとGIL PGO/fullLTOのビルドを開始。開発比較は引き続き
+非PGO/LTOで行い、PGOは最終構成の比較にだけ用いる。最終検証後は10仕様screen、
+合格後に4構成の全suiteとlocal8へ進む。
+
+M38bの大きなstepとC long端点の補助検証も成功。5ケースをmain/candidate×GIL/FT×
+JIT0/1の8構成で比較し、全結果が一致。両candidateのJIT1で新compact guardを確認した。
+probe_m38b_range_steps.py と m38b-range-steps.json に入力・結果を保存。
+FT最終releaseのビルドは成功（SHA-256:
+4ae870d62a4e22e0eeabb62f90b7f827cfc4c472141a49a6dec8f962c83719e1）。
+GILはPGO計装ビルド中。これらのビルド・補助検証は先行計測完了後に実行した。
+
+M38bの生成コードを固定入力の補助診断でも確認。元のnqueens(8)を16回実行し、
+毎回92解であることを検査した後、2つのgenexprのexecutorを取得した。
+M36では各bodyに_ITER_NEXT_RANGEと_GUARD_TOS_OVERFLOWEDが2個あった。
+M38bは_ITER_NEXT_RANGE_COMPACTの取り出し時検査で、後続2個を除去できていた。
+タプルのindex boundsと取り出した値の検査は別に行う。
+診断はM36最終GILとM38b開発GILのコード構造比較であり、実行時間は比較していない。
+バイナリ・workload hash、warmup回数、解数、全uopをm38b-nqueens-ir-*.jsonに保存。
+実施時は最終PGO学習中で、性能計測との重複はない。
+
+### M39: small-int range経路を準備（未検証）
+
+最終M38bのNqueensは両順序で約1.10となり、境界に近い。既知screenの95%区間が
+1.10をまたぐ場合は全matrixの前に解決するgateを追加した。全測定は保持する。
+次候補では、compact rangeのうち既存small-int cache内の値を直接borrowし、
+PyLong_FromLongへのC呼出しを省く。それ以外は既存の通常割当てを使う。
+負側・正側のsmall-int cache境界を既存テストに追加。runtime/テストのソース編集のみで、
+M38bの固定binary/sourceは変更していない。再生成・ビルドは最終screenと
+後続gateが停止したことを確認してから実行する。性能効果は未測定。
+
+M38b最終GIL buildも成功。SHA-256:
+eee1d260681749005121575d52af384e1146f6959be6fd7123ee4d624eac55dd。
+PGO計装368.1秒、標準43テストの学習139.0秒、最終ビルド203.4秒。
+FT/GILの全8検証group（JIT559件、関連589件、C関連1154件、JIT0 opcache97件）が成功。
+M18 probeはFT debug/release/GIL×JIT0/1の6回も成功した。最終GIL screenを継続中。
+M39は同screenを最後まで保持し、既知結果が未解決で後続gateが停止した後にだけ再生成・
+ビルド・テストを行う。先行比較・全suite・local8は異なる候補の値を混ぜない。
+
+### M38b: 最終GIL先行比較は全平均が1.10以下、2結果は区間が境界をまたぐ
+
+10仕様26結果、全40 run成功、identity一致。全workerを保持した。
+nqueens 1.0996 [1.0970, 1.1023]、logging_simple 1.0847 [1.0481, 1.1169]。
+他の24結果は95%区間の上端も1.10以下。全suite/local8は未開始。
+平均のgateは通過したが、既知結果の不確かさを解決するgateで後続を停止した。
+
+| Benchmark | method/main | 95% CI |
+|---|---:|---:|
+| nqueens | 1.0996 | 1.0970–1.1023 |
+| base32_small | 1.0869 | 1.0858–1.0880 |
+| logging_simple | 1.0847 | 1.0481–1.1169 |
+| scimark_sor | 1.0792 | 1.0784–1.0801 |
+| logging_format | 1.0604 | 1.0455–1.0739 |
+| regex_compile | 1.0458 | 1.0354–1.0545 |
+| base64_small | 1.0457 | 1.0449–1.0466 |
+| base85_small | 1.0347 | 1.0333–1.0360 |
+| richards_super | 1.0137 | 0.9854–1.0297 |
+| shortest_path | 1.0075 | 1.0034–1.0140 |
+| base32_large | 1.0051 | 1.0044–1.0058 |
+| telco | 1.0008 | 1.0000–1.0016 |
+| base85_large | 0.9974 | 0.9964–0.9983 |
+| logging_silent | 0.9875 | 0.9722–0.9980 |
+| base64_large | 0.9847 | 0.9827–0.9861 |
+| urlsafe_base64_small | 0.9701 | 0.9688–0.9713 |
+| scimark_fft | 0.9583 | 0.9575–0.9591 |
+| scimark_sparse_mat_mult | 0.9540 | 0.9435–0.9681 |
+| ascii85_small | 0.9266 | 0.9242–0.9301 |
+| richards | 0.9226 | 0.9171–0.9276 |
+| scimark_monte_carlo | 0.9220 | 0.9190–0.9242 |
+| go | 0.8612 | 0.8584–0.8637 |
+| base16_small | 0.8513 | 0.8501–0.8527 |
+| base16_large | 0.8077 | 0.8062–0.8095 |
+| ascii85_large | 0.7962 | 0.7956–0.7968 |
+| scimark_lu | 0.7816 | 0.7805–0.7827 |
+
+logging_simpleのcandidate worker平均は約2.928–3.230µsと幅があり、
+中央値での時間比も1.0990。速いworkerを除外したり、平均だけで合格とはしない。
+M39の非PGO比較完了後、最終PGO buildの前に、固定M38b/mainで追加の診断を行う。
+
+### M39: debug検証完了
+
+small-int cacheを直接borrowする変更は、新規/境界5件、test_opt559件（5skip）、
+同5件R3:3、関連680件（1skip）が成功。small-int cacheの正負境界と、
+cache外・compact範囲外の既存ケースを実行した。FT debug/GIL非PGO releaseを
+独立snapshotからビルド中。性能は未測定。M38bの全計測と後続gate停止後に
+再生成・ビルドを開始した。
+
+M39独立ビルドの全検証も成功。GIL/FTともJIT559件、関連589件、C関連1154件、
+FT境界R3:3を通過し、非PGOの15結果比較を開始した。
+PGOの追加ビルドはまだ開始しない。M39の計測完了後、固定M38b/mainでloggingの
+診断を2逆順group×各6worker（合計各12worker）実行する。workloadは元のlogging3項目。
+診断hookは計測後にPIDとexecutor列を保存し、workerの速さと生成コードを対応づける。
+診断の時間を性能目標の判断用データへ混ぜない。診断中はビルド/別測定を行わない。
+
+### M39: 非PGO比較は全15結果で95%区間上端も1.10未満
+
+全12 run成功、identity一致。追加のsmall-int cache経路を採用する。
+nqueensは1.0642 [1.0605, 1.0672]。最終PGOでの効果はまだ測っていない。
+
+| Benchmark | method/main | 95% CI |
+|---|---:|---:|
+| nqueens | 1.0642 | 1.0605–1.0672 |
+| logging_format | 1.0299 | 1.0202–1.0414 |
+| base32_small | 1.0216 | 1.0147–1.0307 |
+| base85_small | 1.0110 | 1.0075–1.0142 |
+| logging_simple | 1.0108 | 1.0056–1.0171 |
+| base64_large | 1.0034 | 1.0031–1.0038 |
+| base85_large | 1.0021 | 1.0003–1.0047 |
+| base32_large | 0.9994 | 0.9989–1.0001 |
+| base64_small | 0.9959 | 0.9805–1.0049 |
+| logging_silent | 0.9759 | 0.9707–0.9810 |
+| urlsafe_base64_small | 0.9621 | 0.9605–0.9639 |
+| ascii85_small | 0.9376 | 0.9362–0.9389 |
+| base16_small | 0.9327 | 0.9057–0.9495 |
+| ascii85_large | 0.9064 | 0.9055–0.9078 |
+| base16_large | 0.8632 | 0.8599–0.8664 |
+
+logging診断の初回はhook名をcheck_runtimeと誤記し、argparse段階で停止。
+測定は未開始で、失敗ログを保持。登録済みft_jitへ修正し、workerへ必要な環境変数を
+明示的に継承してdiagnostic2として再実行する。ABIを一致させたmain/candidateの
+診断helperを用意済み。M39最終PGOのビルドは診断終了・評価まで開始しない。
+
+### M40: stale arithmetic specializationの再現と修正を実装
+
+M38b logging診断は両逆順group、各側12worker、3結果、全4 run成功。binary identity一致。
+同一uop形状でもlogging_simpleは約2.97µsまたは3.28µsとなる。遅いworkerでは
+LogRecord.__init__の経過nanosecond/1e6について、Tier 1は既にBINARY_OPへ戻っているが、
+methodにはcompact int専用の_GUARD_BINARY_OP_EXTENDが残る。
+M39固定binaryで1000→2**32へ変える決定的probeでも、Tier 1が汎用除算へ変わった後、
+同じ古いexecutorが有効なまま残ることを確認。probeのJSONと診断worker全件を保存。
+
+M40ではextended arithmetic guardの失敗出口だけで、実行中frameのopcodeとdescriptorを
+確認する。Tier 1の特殊化が変更済みならexecutorを無効化し、通常の静的method再構築に
+委ねる。単発のguard missでは無効化せず、多態的な処理の有効なmethodを維持する。
+inline calleeでもcallee側の命令を見る。成功するguardには追加処理を入れない。
+直接呼出し・inline calleeの回帰テストを追加し、11生成物を再生成してdebugビルド中。
+次は正しさ・参照リーク・FTを検証し、固定release比較後に最終PGO/fullLTOへ進む。
+
+M40初回ビルドは新規exit uopのdescriptorが生成器でPyObject*型となり、helperの
+uint64_t引数へ暗黙変換できず失敗。明示的なuintptr_t経由の変換を追加してM40bとして
+再生成・再ビルドした。初回失敗ログを保存し、後続検証は新しいlabelへ分離。
+
+### M40c: stale guardの直接・inline回帰テストが成功
+
+M40b runtimeで小→大int probeを再実行し、旧executorが無効化され、
+新executorに汎用_BINARY_OPが含まれることを確認した。単発miss時は旧executorが有効。
+inlineテストは新しい関数にreset_codeをかけてしまい、関数変更によるinlining対象外の
+条件を作っていた。独立namespaceで毎回新規作成する関数をそのまま使用する形へ修正。
+直接/inline両テストが成功。runtimeはM40bと同じで、テスト修正を含むsnapshotをM40c
+として保存する。初回失敗を含む全ログを保持し、広域debug検証からやり直す。
+
+実際のLogRecord.__init__にも決定的probeを追加した。time_nsをmutable値を返す
+関数に固定し、_startTimeとの差を1000ns→2**32nsへ変更する。M39では除算guardと
+同一executorが残り、M40cでは旧executorが無効化され除算guardが消える。
+両方のrelativeCreatedは4294.967296msで一致。構造・正しさの検証であり性能値ではない。
+
+opcodeをBINARY_OP_EXTENDのまま保ち、descriptorだけ変わるint+float→float+intの
+probeも成功。旧methodは無効化され、異なるdescriptorの新methodへ移行した。
+最終FT/GIL検証にもこのprobeとlogging phase probeを加える。
+M40cのGIL debugは新規/境界7件、JIT561件（5skip）、新規7件R3:3、
+関連680件（1skip）がすべて成功。固定FT-debug/GIL非PGO buildに進んだ。
+
+M40cの固定FT debug/GIL releaseのビルドは成功（それぞれ164.2秒/145.5秒）。
+FT JIT561件・関連589件は成功。C関連のtest_reだけforkserverのAF_UNIX bindが
+sandbox制限でPermissionErrorとなり停止した。runtime failureではない。失敗ログと
+元validation JSONを保存し、成功済みgroupはbinary hashを再確認して保持する。
+残りの検証を通常環境で再開し、集約結果はdevelopment-native-validation2.jsonへ保存。
+最終ビルドは開発比較完了まで待機する。途中で測定とビルドを重ねない。
+
+M40c通常環境での再開後、全7group（成功済み2groupを含む）の検証が完了。
+FT/GILともJIT561件、関連589件、C関連1154件に成功し、FT新規/境界5件の
+R3:3も成功した。追加7件のGIL debug R3:3は先に成功済み。
+非PGO比較15結果を開始し、最終ビルドはその完了と合否確認まで待機する。
+
+### M40c: 非PGO比較の全15結果で95%区間上端も1.10未満
+
+全12 run成功、identity一致。遅いworkerを含めてすべて保持した。
+この構成ではnqueens 1.0735、logging_format 1.0299、logging_simple 1.0140。
+最終PGO構成でのloggingのばらつき解消はまだ未確認。GIL PGO/fullLTOと
+FT O3/noPGO/noLTOの最終buildを開始する。全suite/local8はまだ未開始。
+
+| Benchmark | method/main | 95% CI |
+|---|---:|---:|
+| nqueens | 1.0735 | 1.0706–1.0766 |
+| logging_format | 1.0299 | 1.0233–1.0371 |
+| base32_small | 1.0198 | 1.0181–1.0213 |
+| base64_small | 1.0169 | 1.0015–1.0449 |
+| logging_simple | 1.0140 | 1.0052–1.0236 |
+| base85_small | 1.0071 | 1.0059–1.0084 |
+| base64_large | 1.0019 | 0.9998–1.0033 |
+| base32_large | 0.9995 | 0.9985–1.0002 |
+| base85_large | 0.9991 | 0.9964–1.0006 |
+| logging_silent | 0.9857 | 0.9836–0.9877 |
+| urlsafe_base64_small | 0.9608 | 0.9588–0.9627 |
+| base16_small | 0.9494 | 0.9481–0.9507 |
+| ascii85_small | 0.9377 | 0.9360–0.9394 |
+| ascii85_large | 0.9050 | 0.9045–0.9055 |
+| base16_large | 0.8616 | 0.8585–0.8646 |
+
+M40c FT最終release build成功（146.4秒）。SHA-256: a3d144e5e8df2460041dfeb7be350a6cce42442a4f0afcd3f8f953a6e25e0fdb。GIL PGO buildは継続中。最終候補の測定は未開始。
+
+M40c GIL PGO計装ビルド367.3秒、標準43テストの学習139.9秒で成功。
+学習はmainと同じJIT無効・seed=0条件。PGO/fullLTOの最終ビルドへ進んだ。
+
+### M40c: 最終buildと全8検証groupが成功
+
+GIL最終PGO/fullLTO buildは203.6秒、SHA-256: 70920f0a2bf782feab44bd448cd709ff433ac44ef66835c911ab4beda6d969b8。
+FT/GILともJIT561件、関連589件、C関連1154件、JIT0 opcache97件が成功。
+M18 module-class probeはFT debug/release/GIL×JIT0/1の全6回成功。
+M40 descriptor変更・logging phaseのprobeもFT debug/release/GILの全6回成功し、
+いずれも旧executorが無効化されることを確認した。
+最終GIL10仕様26結果の先行比較を開始。全suite/local8はその合否確認後。
+
+M40c最終GIL screen途中経過: Goは両順序で約0.88、nqueensは両順序で約1.084。
+前回nqueensの境界付近の平均から改善している。まだ全26結果の集計前であり、
+区間確認・loggingのphase問題・全suiteでの10%条件は未確認のままとする。
+
+### M40c: 最終GIL screenの全26結果で95%区間上端も1.10未満
+
+10仕様・全40 run成功、実行ファイル/入力のidentity一致、失敗なし。全workerを保持。
+既知のnqueensとlogging_simpleの閾値不確かさを解消し、全suiteへのgateを通過した。
+logging_simpleの候補worker平均は今回2.988–3.152µs（前の診断では最大3.287µs）。
+ばらつきがゼロになったという意味ではない。成功経路のsmall-int cache利用と、
+Tier 1が変更済みの算術特殊化から再コンパイルする処理を維持する。
+
+| Benchmark | method/main | 95% CI |
+|---|---:|---:|
+| nqueens | 1.0842 | 1.0807–1.0875 |
+| logging_format | 1.0784 | 1.0642–1.0946 |
+| base32_small | 1.0668 | 1.0658–1.0676 |
+| scimark_sor | 1.0587 | 1.0576–1.0597 |
+| base64_small | 1.0519 | 1.0511–1.0528 |
+| logging_simple | 1.0473 | 1.0283–1.0655 |
+| regex_compile | 1.0286 | 1.0145–1.0436 |
+| base85_small | 1.0270 | 1.0263–1.0277 |
+| richards_super | 1.0231 | 1.0148–1.0290 |
+| shortest_path | 1.0094 | 1.0078–1.0109 |
+| base32_large | 1.0070 | 1.0046–1.0101 |
+| telco | 0.9993 | 0.9944–1.0046 |
+| logging_silent | 0.9966 | 0.9919–1.0023 |
+| base85_large | 0.9952 | 0.9934–0.9964 |
+| urlsafe_base64_small | 0.9847 | 0.9831–0.9862 |
+| base64_large | 0.9846 | 0.9835–0.9857 |
+| scimark_fft | 0.9706 | 0.9659–0.9783 |
+| scimark_sparse_mat_mult | 0.9698 | 0.9605–0.9850 |
+| ascii85_small | 0.9335 | 0.9330–0.9340 |
+| scimark_monte_carlo | 0.9167 | 0.9155–0.9179 |
+| richards | 0.9155 | 0.9077–0.9217 |
+| base16_small | 0.8884 | 0.8860–0.8909 |
+| go | 0.8779 | 0.8751–0.8809 |
+| base16_large | 0.8051 | 0.8038–0.8064 |
+| ascii85_large | 0.7970 | 0.7961–0.7979 |
+| scimark_lu | 0.7506 | 0.7489–0.7525 |
+
+public four-way runnerの候補をM40cへ固定し、harnessの8テストも成功。
+出力先 jit-artifacts/method-only-m40c-full で全97仕様の準備・実行を開始した。
+FTを先に、次にGILを順次測る。各構成2逆順block、3worker×5warmup×5value。
+fastapiは既知の依存準備失敗が残り、未完了として記録される。
+全suite後にbenchmarks/の元の8本（SQLAlchemy含む）を比較する。全体の10%達成は未確認。
+
+M40c全suiteは両構成の依存環境・入力を固定し、FT block 1の測定を開始。
+fastapiの元の失敗ログを再確認: pydantic-core 2.46.5 / PyO3 0.28.3が
+Python 3.16を拒否しており、runtimeの回帰としては扱わない。
+
+M40c全suite途中: FT block 1の21仕様/42runまで成功。asyncio_tcpのローカル
+ソケットも通常環境で実行成功。ここまでの片順序の最大時間比は約1.017。
+逆順・GIL・local 8は未完了で、全体の合否には使わない。
+
+M40c全suite途中: FT block 1はfastapiを除く40仕様が両者で成功。
+BPE tokeniserは片順序0.804、chaos 0.847、comprehensions 0.909。docutils、
+dulwich、Dask、並列pool、fannkuch、floatも成功。最大の暫定遅れはthread pool約4%。
+まだ逆順を含む最終性能結果ではない。全workerを保持して続行する。
+
+M40c全suite途中: FT block 1の58仕様が両者で成功。networkx_k_coreは両者とも
+worker 15秒上限でtimeout（manager終了まで約19秒、rc=124）。失敗ログを保持し、
+時間比の集計には含めない。既知のfastapi依存失敗と区別する。
+成功分の暫定最大遅れはgc_traversal約6.6%、connected_components約6.4%。
+両順序を揃えた評価はまだ未実施。
+
+M40c全suite途中: FT block 1は76仕様が両者で成功し、成功結果の片順序比は
+すべて1.10以下。Python起動、regex_compile、Richards両種、SciMark、spectral_norm
+も通過。gc_traversal約1.066、connected_components約1.064が暫定で遅い側。
+全体の測定を継続し、逆順の確認と最終identity検証後に評価する。
+
+### M40c: FT全suiteの第1block完了、95仕様で両者が成功
+
+95仕様・122結果が比較でき、片順序の全時間比が1.10以下。最大は
+gc_traversal 1.0657、connected_components 1.0641、logging_silent 1.0515。
+参考の幾何平均は0.9283。これはまだ単独blockの暫定値で、
+FT mainはTier 1、候補はmethod JIT（複数threadstate時はTier 1）である。
+fastapiの依存失敗とnetworkx_k_coreの両者timeoutは未完了として保持。
+順序を反転したFT第2blockを開始した。最終identity検証・区間評価は両block完了後。
+GILの全suiteとlocal 8はまだ未実施。
+
+### M51b validation history
+
+M51b adds a local fusion for unknown-type global binding loads followed by
+identity comparison and right-operand cleanup. It omits the temporary reference
+owned by the watched dictionary; left-operand cleanup stays in its original
+position, including finalizers. The pattern cannot cross a remaining guard exit,
+escaping call or CFG edge. Tests cover is/is-not, rebinding during the function,
+deletion, and finalizer-driven invalidation/GC. All 1,358 debug tests pass and
+both identity tests pass -R 3:3. The initial test mistakenly deleted a global
+named sentinel, which falls back to Python's builtin sentinel rather than
+raising NameError. Rename the test binding to identity_marker; this was a test
+expectation error, not an invalidation bug. The first old-binary test filter ran
+no tests; its corrected rerun and the final-name rerun both fail on the old
+binary because the fusion is absent. All logs are preserved. Native validation
+and the fixed M51b/M41 development comparison are running sequentially.
+M50 independently fixes saved property/module-load IPs after EXTENDED_ARG. Its
+new f_lasti test fails on M48, passes on M50 with -R 3:3, and all 1,356 combined
+debug tests pass. Timing was held until those checks completed.
+M49 removed the unprofitable M46 native generator connection. Its 1,355 debug/
+native tests and prefix test's -R 3:3 pass. All 16 M49/M41 development runs succeed
+and identities match: genshi_text 0.99303 [0.99007, 0.99566], XML 1.00917
+[1.00353, 1.01474], nqueens 0.98426 [0.97992, 0.98881], dulwich 0.99251,
+SQLGlot 0.99176. Generator RESUME compilation, EXTENDED_ARG fixes, M41 constructor
+lookup, and M48 binding loads remain. Next validate/freeze M51, measure the same
+four specifications, then evaluate final GIL PGO/full-LTO and FT snapshots,
+followed by complete-suite and original local-suite comparisons. The 10% goal
+remains unmet until those final-profile comparisons pass.
+
+
+### M52/M52b experiment history
+
+M52b adds retry backoff when an empty native entry is rejected. M52 passed
+all 1,359 debug/native tests and its -R 3:3 check, but its fixed development
+comparison regressed Genshi text/XML and nqueens. All 16 runs succeeded and
+identities matched; these unfavorable results are retained. The same Genshi
+probe shows seven native-reachability rejections per affected generator in M52,
+versus two emitted/retired executors for several such generators in M51b.
+The new rejection path repeated CFG analysis without the deferred retries used
+for retired partial methods. M52b applies that existing cache to rejected empty
+entries. Its regression test also changes from generator to range iteration and
+requires compilation to resume after specialization changes. Debug validation
+precedes a new frozen native comparison. No final PGO build has started.
+
+M52 removes native blocks unreachable after unsupported-operation exits and
+rejects resume/pop/jump-only entries. Native targets are resolved before CFG
+traversal; inlined return edges remain reachable and indices stay stable until
+stack allocation. The pre-fix regression test fails on M51b. Its initial filter
+missed RESUME flag bits; the corrected failure and both attempts are preserved.
+
+### M53 continuation experiment history
+
+M53e fixes entry-guard progress in the experiment with static native continuations after FOR_ITER_GEN. A hot
+backedge which cannot compile its generator frame transition can install an
+executor at the loop body. The generator transition stays in Tier 1, and its
+ordinary yield continuation enters the compiled body. Both CFG successors are
+compiled statically; no recording or side traces are introduced. Continuation
+locals/stack start unknown. FOR_ITER_GEN is a planned Tier 1 boundary for this
+entry. Executor retirement updates a backoff counter only for RESUME/backedge
+entries; ordinary bytecode entries have no such counter. New tests cover native
+body installation, changing globals, iterator/body exceptions and exhaustion.
+The initial two tests fail on M52b and pass on M53b. An initial build caught
+an incorrect STORE_FAST uop name; use the actual store/swap operations. The
+first implementation let a short header executor suppress the body attempt;
+select the static body entry first for FOR_ITER_GEN loops. M53c adds a test that
+retires an executor at a normal instruction without overwriting adjacent
+bytecode. M53d resets that test's reused code between refleak repetitions,
+so a previous run's backoff does not suppress its warmup. All 1,361 debug tests
+and all three new tests under -R 3:3 now pass. The frozen M53d native build and all 1,361 native tests pass, but Genshi
+times out in its first candidate worker. Stop the comparison and retain the
+incomplete state; it is not valid performance evidence. A small tuple/list
+unpacking test reproduces an infinite loop: an entry guard deopts to the same
+ENTER_EXECUTOR without changing its inputs. M53e makes Tier 1 execute the
+original bytecode once when a method returns to its unchanged entry. It looks
+up the executor after returning because callbacks can invalidate/replace it.
+The new regression test times out on M53d. Both it and the actual Genshi
+reproducer pass on M53e. All 1,362 debug tests and four targeted -R 3:3 tests
+also pass. All 1,362 native tests and all 16 comparison runs pass; identities
+match. M53e/M41: text 0.99310, XML 1.03840 [1.02682, 1.05105], nqueens
+1.03720 [1.03408, 1.04062], dulwich 0.99847, SQLGlot normalize 0.99280.
+This is not an accepted performance improvement. Diagnose entry guard returns
+in a separate instrumented development build; do not mix those diagnostics
+with timings. Final GIL/FT builds remain pending.
+
+### M54 unpack experiment history
+
+M54 narrows unpack/store fusion for static generator-loop continuations.
+M53e diagnostic output shows Template._flatten returning to entry 60 with an
+exact tuple: the fused _UNPACK_TUPLE_TO_FAST_3 guard rejects cleanup of old
+non-primitive locals. Thus native entry repeatedly falls back instead of
+executing the body. For continuation roots, fuse only when symbolic cleanup is
+already non-escaping; otherwise retain individual stores so finalizers can run
+and execution can continue natively. Existing non-continuation fusion is kept.
+A new test checks the unfused native body and the sequence of locals visible to
+three finalizers. Its structural assertion fails on M53e. Temporary debug-only
+instrumentation has been removed by the clean development rebuild. Run the
+combined suite, five targeted -R 3:3 tests, a fixed native build, and the same
+four-specification comparison plus unpack_sequence to check collateral impact.
+Final-profile builds have not started; the +10% main criterion remains unmet.
+
+### M55 profitability experiment history
+
+M55 rejects generator-loop continuations with only one useful operation.
+M54's nqueens diagnostic found complete 13-uop executors whose entire useful
+body was one SET_ADD or LIST_APPEND. Repeated native entry/exit for each yielded
+item adds overhead while leaving that operation's C implementation unchanged.
+Keep these bodies in Tier 1, with the same cached retry mechanism. This is a
+structural profitability check, not a benchmark-name special case. The new
+list/set test fails on M54 in both cases. All 1,364 debug tests and six targeted
+-R 3:3 tests pass on M55. A frozen native build, native validation and the same
+five-specification comparison are running sequentially.
+
+M54 passed all 1,363 debug/native tests and five -R 3:3 tests. All 20 comparison
+runs succeeded with matching identities. M54/M41 ratios and intervals are
+recorded below. Genshi improves, while nqueens still needs the M55 correction.
+After validating M55, evaluate final GIL PGO/full-LTO and FT builds, then the
+complete suite and original local eight. The main +10% criterion remains unmet.
+- dulwich_log: 0.99249 [0.98396, 1.00195]
+- genshi_text: 0.91854 [0.91499, 0.92238]
+- genshi_xml: 0.97707 [0.96794, 0.98658]
+- nqueens: 1.03737 [1.03492, 1.04002]
+- sqlglot_v2_normalize: 0.98688 [0.97897, 0.99423]
+- unpack_sequence: 0.77525 [0.77216, 0.77864]

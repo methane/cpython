@@ -10,6 +10,44 @@ import pyperformance_four_way as four
 
 
 class FourWayTests(unittest.TestCase):
+    def test_source_tombstone_requires_absent_path(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "removed.c"
+            self.assertTrue(four.source_matches(path, None))
+            self.assertFalse(four.source_matches(path, "nonexistent digest"))
+            path.write_text("old recording frontend")
+            self.assertFalse(four.source_matches(path, None))
+            digest = four.compare.sha(path)
+            self.assertTrue(four.source_matches(path, digest))
+            path.unlink()
+            path.symlink_to("missing-target")
+            self.assertFalse(four.source_matches(path, None))
+
+    def test_baseline_rejects_stale_extension_or_source(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            build, source = root / "build", root / "source"
+            (build / "lib").mkdir(parents=True)
+            source.mkdir()
+            (build / "pybuilddir.txt").write_text("lib")
+            for name in ("python", "Makefile", "pyconfig.h", "lib/_decimal.so"):
+                (build / name).write_text(name)
+            (source / "runtime.c").write_text("original")
+            record = {"complete": True, "files": four.build_files(build),
+                      "source_files": {"runtime.c": four.compare.sha(source / "runtime.c")},
+                      "decimal_probe": {"version": "4.0.1"}}
+            manifest = root / "build.json"
+            four.compare.save(manifest, record)
+            with patch.object(four, "BASELINES", {"ft": (build, source, manifest)}):
+                self.assertEqual(four.baseline_provenance("ft"), record)
+                (build / "lib/_decimal.so").write_text("different extension")
+                with self.assertRaisesRegex(RuntimeError, "build differs"):
+                    four.baseline_provenance("ft")
+                (build / "lib/_decimal.so").write_text("lib/_decimal.so")
+                (source / "runtime.c").write_text("changed")
+                with self.assertRaisesRegex(RuntimeError, "sources differ"):
+                    four.baseline_provenance("ft")
+
     def test_candidate_pair_rejects_incomplete_or_different_sources(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -30,6 +68,7 @@ class FourWayTests(unittest.TestCase):
                 (sources / source.name).write_text("original")
                 candidates[profile] = (build, sources)
                 records[profile] = {
+                    "complete": True,
                     "base_commit": "same-commit",
                     "sha256": four.compare.sha(build / "python"),
                     "files": four.build_files(build),

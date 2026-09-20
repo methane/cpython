@@ -19,56 +19,12 @@ extern "C" {
 /* Bound checked at every native integer region entry. */
 #define _PY_INT_REGION_INPUT_MAX ((INT64_C(1) << 28) - 1)
 
-/* Bound recursive CFG expansion, including inline-cache storage. */
-#define METHOD_INLINE_MAX_CODE_SIZE 128
+/* Bound callee expansion by instructions, excluding inline caches. */
+#define METHOD_INLINE_MAX_INSTRUCTIONS 128
+#define METHOD_INLINE_MAX_DEPTH 2
 
-/* Inline caches consume no trace instructions. Do not let attribute-heavy
- * callees fragment caller traces just because their caches are large. */
-#define METHOD_TRACE_MAX_INSTRUCTIONS 128
-
-/* Fitness controls how long a trace can grow.
- * Starts at FITNESS_INITIAL, then decreases from per-bytecode buffer usage
- * plus branch/frame heuristics. The trace stops when fitness drops below the
- * current exit_quality.
- *
- * Design targets for the constants below:
- * 1. Reaching the abstract frame-depth limit should drop fitness below
- *    EXIT_QUALITY_SPECIALIZABLE.
- * 2. A backward edge should leave budget for roughly N_BACKWARD_SLACK more
- *    bytecodes, assuming AVG_SLOTS_PER_INSTRUCTION.
- * 3. Roughly seven balanced branches should reduce fitness to
- *    EXIT_QUALITY_DEFAULT after per-slot costs.
- * 4. A push followed by a matching return is net-zero on frame-specific
- *    fitness, excluding per-slot costs.
- */
-#define OPTIMIZER_EFFECTIVENESS    2
-#define MAX_TARGET_LENGTH          (FITNESS_INITIAL / OPTIMIZER_EFFECTIVENESS)
-
-/* Exit quality thresholds: trace stops when fitness < exit_quality.
- * Higher = trace is more willing to stop here. */
-#define EXIT_QUALITY_CLOSE_LOOP      (FITNESS_INITIAL - AVG_SLOTS_PER_INSTRUCTION*4)
-#define EXIT_QUALITY_ENTER_EXECUTOR  (FITNESS_INITIAL * 1 / 8)
-#define EXIT_QUALITY_DEFAULT         (FITNESS_INITIAL / 40)
-#define EXIT_QUALITY_SPECIALIZABLE   (FITNESS_INITIAL / 80)
-
-/* Estimated buffer slots per bytecode, used only to derive heuristics.
- * Runtime charging uses trace-buffer capacity consumed for each bytecode. */
-#define AVG_SLOTS_PER_INSTRUCTION  6
-
-/* Heuristic backward-edge exit quality: leave room for about 1 unroll and
- * N_BACKWARD_SLACK more bytecodes before reaching EXIT_QUALITY_CLOSE_LOOP,
- * based on AVG_SLOTS_PER_INSTRUCTION. */
-#define N_BACKWARD_SLACK           10
-#define EXIT_QUALITY_BACKWARD_EDGE (EXIT_QUALITY_CLOSE_LOOP / 2 - N_BACKWARD_SLACK * AVG_SLOTS_PER_INSTRUCTION)
-
-/* Penalty for a balanced branch.
- * It is sized so repeated balanced branches can drive a trace toward
- * EXIT_QUALITY_DEFAULT, while compute_branch_penalty() keeps any single branch
- * from dominating the budget.
- */
-#define FITNESS_BRANCH_BALANCED    ((FITNESS_INITIAL - EXIT_QUALITY_DEFAULT - \
-                                        (MAX_TARGET_LENGTH / 14 * AVG_SLOTS_PER_INSTRUCTION)) / (14))
-
+/* A partial method can do useful loop work before an unsupported exit. */
+#define METHOD_MIN_BACKEDGES 8
 
 typedef struct _PyJitUopBuffer {
     _PyUOpInstruction *start;
@@ -133,49 +89,6 @@ uop_buffer_remaining_space(_PyJitUopBuffer *trace)
     return (int)(trace->end - trace->next);
 }
 
-typedef struct _PyJitTracerInitialState {
-    int stack_depth;
-    int chain_depth;
-    struct _PyExitData *exit;
-    PyCodeObject *code; // Strong
-    PyFunctionObject *func; // Strong
-    struct _PyExecutorObject *executor; // Strong
-    _Py_CODEUNIT *start_instr;
-    _Py_CODEUNIT *close_loop_instr;
-    _Py_CODEUNIT *jump_backward_instr;
-} _PyJitTracerInitialState;
-
-#define MAX_RECORDED_VALUES 3
-typedef struct _PyJitTracerPreviousState {
-    int instr_oparg;
-    int instr_stacklevel;
-    _Py_CODEUNIT *instr;
-    PyCodeObject *instr_code; // Strong
-    struct _PyInterpreterFrame *instr_frame;
-    PyObject *recorded_values[MAX_RECORDED_VALUES]; // Strong, may be NULL
-    int recorded_count;
-} _PyJitTracerPreviousState;
-
-typedef struct _PyJitTracerTranslatorState {
-    int32_t fitness;              // Current trace fitness, starts high, decrements
-    int frame_depth;              // Current inline depth (0 = root frame)
-} _PyJitTracerTranslatorState;
-
-typedef struct _PyJitTracerState {
-    bool is_tracing;
-    _PyJitTracerInitialState initial_state;
-    _PyJitTracerPreviousState prev_state;
-    _PyJitTracerTranslatorState translator_state;
-    JitOptContext opt_context;
-    _PyJitUopBuffer code_buffer;
-    _PyJitUopBuffer out_buffer;
-    _PyUOpInstruction uop_array[2 * UOP_MAX_TRACE_LENGTH];
-} _PyJitTracerState;
-
-PyAPI_FUNC(int) _PyJit_IsOnlyStrongReferenceBesidesTracer(
-    PyThreadState *tstate,
-    PyObject *obj);
-
 typedef struct _PyExecutorLinkListNode {
     struct _PyExecutorObject *next;
     struct _PyExecutorObject *previous;
@@ -185,10 +98,7 @@ typedef struct {
     uint8_t opcode;
     uint8_t oparg;
     uint8_t valid;
-    uint8_t chain_depth;  // Must be big enough for MAX_CHAIN_DEPTH - 1.
     bool cold;
-    bool is_method;
-    bool preserves_method;
     bool partial_method;
     uint8_t pending_deletion;
     int32_t index;           // Index of ENTER_EXECUTOR (if code isn't NULL, below).
@@ -198,30 +108,20 @@ typedef struct {
     PyCodeObject *code;  // Weak (NULL if no corresponding ENTER_EXECUTOR).
 } _PyVMData;
 
-typedef struct _PyExitData {
-    uint32_t target;
-    uint16_t index:12;
-    uint16_t stack_cache:2;
-    uint16_t is_dynamic:1;
-    uint16_t is_control_flow:1;
-    _Py_BackoffCounter temperature;
-    struct _PyExecutorObject *executor;
-} _PyExitData;
-
 typedef struct _PyExecutorObject {
     PyObject_VAR_HEAD
     const _PyUOpInstruction *trace;
     _PyVMData vm_data; /* Used by the VM, but opaque to the optimizer */
-    uint32_t exit_count;
     uint32_t code_size;
     uint16_t trivial_call;  // Recognized allocation-free method return, or zero.
     uint16_t method_window;
     uint16_t method_misses;
+    uint16_t method_backedges;  // Saturating progress count for the current entry.
     uint64_t trivial_operand;
     size_t jit_size;
     void *jit_code;
     _PyJitCodeRegistration *jit_registration;
-    _PyExitData exits[1];
+    _PyUOpInstruction uops[1];
 } _PyExecutorObject;
 
 PyObject *_PyJit_TryTrivialCall(
@@ -358,9 +258,38 @@ PyAPI_FUNC(void) _Py_Executors_InvalidateCold(PyInterpreterState *interp);
 // This value is arbitrary and was not optimized.
 #define JIT_CLEANUP_THRESHOLD 1000
 
-int _Py_uop_analyze_and_optimize(
-    _PyThreadStateImpl *tstate,
-    _PyUOpInstruction *input, int trace_len, int curr_stackentries,
+typedef enum {
+    METHOD_VALUE_UNKNOWN,
+    METHOD_VALUE_NULL,
+    METHOD_VALUE_TYPE,
+    METHOD_VALUE_CONST,
+    // A namespace binding used only to select guarded call/attribute operations.
+    // It proves neither identity nor type of the value at runtime.
+    METHOD_VALUE_BINDING_HINT,
+} _PyMethodValueKind;
+
+typedef struct {
+    PyObject *object;
+    uint8_t kind;
+    uint8_t compact_int;
+    uint8_t unique;
+    uint8_t borrowed;
+    // Bit 0: valid inline values; bit 1: no materialized dictionary.
+    uint8_t managed_guards;
+    uint8_t dynamic_method;
+    uint16_t origin;
+    uint32_t type_version;
+    // COPY bytecode offset + 1; only retained within one basic block.
+    uint16_t stack_alias;
+    // Index of a guarded version set in the current method CFG; zero is unknown.
+    uint16_t type_family;
+} _PyMethodValue;
+
+
+int _Py_uop_optimize_method_block(
+    PyFunctionObject *func, JitOptContext *ctx,
+    _PyUOpInstruction *input, int length, int stack_depth,
+    const _PyMethodValue *initial_values,
     _PyUOpInstruction *output, _PyBloomFilter *dependencies);
 
 PyAPI_DATA(PyTypeObject) _PyUOpExecutor_Type;
@@ -517,9 +446,7 @@ extern JitOptRef _Py_uop_sym_new_compact_int(JitOptContext *ctx);
 extern void _Py_uop_sym_set_compact_int(JitOptContext *ctx,  JitOptRef sym);
 extern JitOptRef _Py_uop_sym_new_predicate(JitOptContext *ctx, JitOptRef lhs_ref, JitOptRef rhs_ref, JitOptPredicateKind kind);
 extern void _Py_uop_sym_apply_predicate_narrowing(JitOptContext *ctx, JitOptRef sym, bool branch_is_true);
-extern void _Py_uop_sym_set_recorded_value(JitOptContext *ctx, JitOptRef sym, PyObject *value);
-extern void _Py_uop_sym_set_recorded_type(JitOptContext *ctx, JitOptRef sym, PyTypeObject *type);
-extern void _Py_uop_sym_set_recorded_gen_func(JitOptContext *ctx, JitOptRef ref, PyFunctionObject *value);
+extern void _Py_uop_sym_set_probable_value(JitOptContext *ctx, JitOptRef sym, PyObject *value);
 extern PyCodeObject *_Py_uop_sym_get_probable_func_code(JitOptRef sym);
 extern PyObject *_Py_uop_sym_get_probable_value(JitOptRef sym);
 extern PyTypeObject *_Py_uop_sym_get_probable_type(JitOptRef sym);
@@ -540,21 +467,26 @@ extern _Py_UOpsAbstractFrame *_Py_uop_frame_new_from_symbol(
     JitOptRef *args,
     int arg_len);
 
-extern int _Py_uop_frame_pop(JitOptContext *ctx, PyCodeObject *co);
 
 PyAPI_FUNC(PyObject *) _Py_uop_symbols_test(PyObject *self, PyObject *ignored);
 
-PyAPI_FUNC(int) _PyOptimizer_Optimize(_PyInterpreterFrame *frame, PyThreadState *tstate);
-
-/* Compile the reachable control-flow graph rooted at a function's entry.
- * Returns 1 if a method executor was installed, 0 if this method is not yet
- * supported by the method frontend, and -1 on error. */
+/* Compile the reachable control-flow graph rooted at a function's entry
+ * or a loop backedge (OSR). entry_depth describes the live operand stack.
+ * A generator loop may install a static body continuation while leaving
+ * the requested entry in Tier 1. Returns 1 if the requested entry compiled,
+ * 0 if it remains in Tier 1, and -1 on error. */
 PyAPI_FUNC(int) _PyJit_CompileMethod(
     PyThreadState *tstate,
-    _PyInterpreterFrame *frame);
+    _PyInterpreterFrame *frame,
+    _Py_CODEUNIT *entry,
+    int entry_depth);
 
 /* Count incomplete executions of a partial method, without running Python. */
 PyAPI_FUNC(int) _PyJit_RecordMethodFallback(_PyExecutorObject *executor);
+
+/* Retire an extended arithmetic guard only after Tier 1 changes its cache. */
+PyAPI_FUNC(void) _PyJit_InvalidateStaleBinaryOp(
+    _PyExecutorObject *executor, _Py_CODEUNIT *instruction, uint64_t descr);
 
 PyAPI_FUNC(_Py_CODEUNIT *) _PyJit_CallMethod(
     PyThreadState *tstate, _PyExecutorObject *caller_executor,
@@ -564,16 +496,7 @@ PyAPI_FUNC(int) _PyJit_WatchMethodGlobal(
     PyThreadState *tstate, PyObject *globals, PyObject *name, bool builtin,
     _PyBloomFilter *dependencies);
 
-static inline _PyExecutorObject *_PyExecutor_FromExit(_PyExitData *exit)
-{
-    _PyExitData *exit0 = exit - exit->index;
-    return (_PyExecutorObject *)(((char *)exit0) - offsetof(_PyExecutorObject, exits));
-}
-
-extern _PyExecutorObject *_PyExecutor_GetColdExecutor(void);
-extern _PyExecutorObject *_PyExecutor_GetColdDynamicExecutor(void);
-
-PyAPI_FUNC(void) _PyExecutor_ClearExit(_PyExitData *exit);
+PyAPI_FUNC(bool) _PyJit_IsUnstableGlobal(PyObject *globals, Py_hash_t key_hash);
 
 extern void _PyExecutor_Free(_PyExecutorObject *self);
 
@@ -582,45 +505,7 @@ PyAPI_FUNC(int) _PyDumpExecutors(FILE *out);
 PyAPI_FUNC(void) _Py_ClearExecutorDeletionList(PyInterpreterState *interp);
 #endif
 
-PyAPI_FUNC(int) _PyJit_translate_single_bytecode_to_trace(PyThreadState *tstate, _PyInterpreterFrame *frame, _Py_CODEUNIT *next_instr, int stop_tracing_opcode);
-
-PyAPI_FUNC(int)
-_PyJit_TryInitializeTracing(PyThreadState *tstate, _PyInterpreterFrame *frame,
-    _Py_CODEUNIT *curr_instr, _Py_CODEUNIT *start_instr,
-    _Py_CODEUNIT *close_loop_instr, _PyStackRef *stack_pointer, int chain_depth, _PyExitData *exit,
-    int oparg, _PyExecutorObject *current_executor);
-
-PyAPI_FUNC(void) _PyJit_FinalizeTracing(PyThreadState *tstate, int err);
-PyAPI_FUNC(bool) _PyJit_EnterExecutorShouldStopTracing(int og_opcode);
-
 void _PyPrintExecutor(_PyExecutorObject *executor, const _PyUOpInstruction *marker);
-void _PyJit_TracerFree(_PyThreadStateImpl *_tstate);
-
-#ifdef _Py_TIER2
-typedef void (*_Py_RecordFuncPtr)(_PyInterpreterFrame *frame, _PyStackRef *stackpointer, int oparg, PyObject **recorded_value);
-PyAPI_DATA(const _Py_RecordFuncPtr) _PyOpcode_RecordFunctions[];
-
-typedef struct {
-    uint8_t count;
-    uint8_t indices[MAX_RECORDED_VALUES];
-} _PyOpcodeRecordEntry;
-
-typedef struct {
-    uint8_t count;
-    uint8_t transform_mask;
-    uint8_t slots[MAX_RECORDED_VALUES];
-} _PyOpcodeRecordSlotMap;
-
-PyAPI_DATA(const _PyOpcodeRecordEntry) _PyOpcode_RecordEntries[256];
-PyAPI_DATA(const _PyOpcodeRecordSlotMap) _PyOpcode_RecordSlotMaps[256];
-
-/* Convert a family-recorded value to the form a recorder uop expects.
- * If no transform is needed, return the input value unchanged.
- * Takes ownership of `value` and returns a new strong reference or NULL.
- */
-PyAPI_FUNC(PyObject *) _PyOpcode_RecordTransformValue(int uop, PyObject *value);
-#endif
-
 #ifdef __cplusplus
 }
 #endif

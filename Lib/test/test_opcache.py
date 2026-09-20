@@ -10,7 +10,7 @@ import weakref
 from test.support import (threading_helper, check_impl_detail,
                           requires_specialization,
                           cpython_only, requires_jit_disabled, reset_code,
-                          Py_GIL_DISABLED)
+                          Py_GIL_DISABLED, infinite_recursion)
 from test.support.import_helper import import_module
 
 # Skip this module on other interpreters, it is cpython specific:
@@ -67,6 +67,50 @@ class TestLoadSuperAttrCache(unittest.TestCase):
 
 
 class TestLoadAttrCache(unittest.TestCase):
+    @requires_specialization
+    @requires_jit_disabled
+    def test_module_class_change_to_data_descriptor(self):
+        module = types.ModuleType('subject')
+        module.value = 1000
+
+        class ChangedModule(types.ModuleType):
+            @property
+            def value(self):
+                return 2000
+
+        def read(owner):
+            return owner.value
+
+        reset_code(read)
+        count = _testinternalcapi.SPECIALIZATION_THRESHOLD * 3
+        for _ in range(count):
+            self.assertEqual(read(module), 1000)
+        self.assertIn('LOAD_ATTR_MODULE',
+                      {i.opname for i in dis.get_instructions(read, adaptive=True)})
+        module.__class__ = ChangedModule
+        for _ in range(count):
+            self.assertEqual(read(module), 2000)
+        module.__class__ = types.ModuleType
+        self.assertEqual(read(module), 1000)
+
+    @requires_specialization
+    @requires_jit_disabled
+    def test_module_subclass_data_descriptor(self):
+        class ModuleWithProperty(types.ModuleType):
+            @property
+            def value(self):
+                return 2000
+
+        module = ModuleWithProperty('subject')
+        module.__dict__['value'] = 1000
+
+        def read(owner):
+            return owner.value
+
+        reset_code(read)
+        for _ in range(_testinternalcapi.SPECIALIZATION_THRESHOLD * 3):
+            self.assertEqual(read(module), 2000)
+
     @requires_specialization
     @requires_jit_disabled
     def test_cached_descriptor_binding(self):
@@ -1011,6 +1055,22 @@ class TestCallCache(TestBase):
 
         with self.assertRaises(RecursionError):
             test()
+
+    @requires_specialization
+    def test_recursion_check_for_python_subscript(self):
+        class Container:
+            def __getitem__(self, key):
+                if key <= 0:
+                    return 0
+                return self[key - 1] + 1
+
+        container = Container()
+        for _ in range(_testinternalcapi.SPECIALIZATION_THRESHOLD):
+            self.assertEqual(container[10], 10)
+        with infinite_recursion(40):
+            with self.assertRaises(RecursionError):
+                container[60]
+        self.assertEqual(container[10], 10)
 
     def test_dont_specialize_custom_vectorcall(self):
         def f():

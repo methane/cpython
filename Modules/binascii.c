@@ -1135,6 +1135,27 @@ binascii_a2b_ascii85_impl(PyObject *module, Py_buffer *data, int foldspaces,
     int group_pos = 0;
     int from_z = 0;  /* true when current group came from 'z' shorthand */
     for (; ascii_len > 0 || group_pos != 0; ascii_len--, ascii_data++) {
+        if (group_pos == 0 && ascii_len >= 5) {
+            uint32_t a = table_a2b_base85_a85[ascii_data[0]];
+            uint32_t b = table_a2b_base85_a85[ascii_data[1]];
+            uint32_t c = table_a2b_base85_a85[ascii_data[2]];
+            uint32_t d = table_a2b_base85_a85[ascii_data[3]];
+            uint32_t e = table_a2b_base85_a85[ascii_data[4]];
+            /* The table contains digits 0..84 or 255 for a non-digit.
+             * Whitespace and abbreviations use the incremental path below. */
+            if ((a | b | c | d | e) < 128) {
+                uint32_t prefix = ((a * 85 + b) * 85 + c) * 85 + d;
+                uint64_t value = (uint64_t)prefix * 85 + e;
+                if (value > UINT32_MAX) {
+                    goto overflow;
+                }
+                leftchar = (uint32_t)value;
+                group_pos = 5;
+                ascii_len -= 4;
+                ascii_data += 4;
+                goto write_chunk;
+            }
+        }
         /* Shift (in radix-85) data or padding into our buffer. */
         unsigned char this_digit;
         if (ascii_len > 0) {
@@ -1150,11 +1171,7 @@ binascii_a2b_ascii85_impl(PyObject *module, Py_buffer *data, int foldspaces,
                 && (leftchar > UINT32_MAX / 85
                     || leftchar * 85 > UINT32_MAX - this_digit))
             {
-                state = get_binascii_state(module);
-                if (state != NULL) {
-                    PyErr_SetString(state->Error, "Ascii85 overflow");
-                }
-                goto error;
+                goto overflow;
             }
             leftchar = leftchar * 85 + this_digit;
             group_pos++;
@@ -1186,6 +1203,8 @@ binascii_a2b_ascii85_impl(PyObject *module, Py_buffer *data, int foldspaces,
             continue;
         }
 
+write_chunk:
+        assert(group_pos == 5);
         /* Write current chunk. */
         int chunk_len = ascii_len < 1 ? 3 + (int)ascii_len : 4;
 
@@ -1249,6 +1268,11 @@ binascii_a2b_ascii85_impl(PyObject *module, Py_buffer *data, int foldspaces,
 
     return PyBytesWriter_FinishWithPointer(writer, bin_data);
 
+overflow:
+    state = get_binascii_state(module);
+    if (state != NULL) {
+        PyErr_SetString(state->Error, "Ascii85 overflow");
+    }
 error:
     PyBytesWriter_Discard(writer);
     return NULL;
@@ -2307,6 +2331,24 @@ binascii_a2b_hex_impl(PyObject *module, Py_buffer *hexstr,
 
     int pair_pos = 0;
     unsigned char leftchar = 0;
+    if (ignorechars == NULL) {
+        /* With no separators, decode complete pairs without maintaining a
+         * half-byte state for every input character. Check a trailing digit
+         * before reporting odd length, preserving the error precedence. */
+        for (; ascii_len >= 2; ascii_data += 2, ascii_len -= 2) {
+            unsigned char left = _PyLong_DigitValue[ascii_data[0]];
+            unsigned char right = _PyLong_DigitValue[ascii_data[1]];
+            if ((left | right) >= 16) {
+                goto non_hexadecimal;
+            }
+            *bin_data++ = (left << 4) | right;
+        }
+        if (ascii_len && _PyLong_DigitValue[*ascii_data] >= 16) {
+            goto non_hexadecimal;
+        }
+        pair_pos = (int)ascii_len;
+        ascii_len = 0;
+    }
     for (; ascii_len; ascii_data++, ascii_len--) {
         unsigned char this_ch = *ascii_data;
 
@@ -2314,12 +2356,7 @@ binascii_a2b_hex_impl(PyObject *module, Py_buffer *hexstr,
         if (this_digit >= 16) {
             // See RFC 4648, section 3.3.
             if (!ignorechar(this_ch, ignorechars, ignorecache)) {
-                state = get_binascii_state(module);
-                if (state) {
-                    PyErr_SetString(state->Error,
-                                    "Non-hexadecimal digit found");
-                }
-                goto error;
+                goto non_hexadecimal;
             }
             continue;
         }
@@ -2344,6 +2381,11 @@ binascii_a2b_hex_impl(PyObject *module, Py_buffer *hexstr,
 
     return PyBytesWriter_FinishWithPointer(writer, bin_data);
 
+non_hexadecimal:
+    state = get_binascii_state(module);
+    if (state) {
+        PyErr_SetString(state->Error, "Non-hexadecimal digit found");
+    }
 error:
     PyBytesWriter_Discard(writer);
     return NULL;

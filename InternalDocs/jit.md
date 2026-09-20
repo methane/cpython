@@ -11,74 +11,200 @@ and this enables optimizations that span multiple instructions.
 Historically, the adaptive interpreter was referred to as `tier 1` and
 the JIT as `tier 2`. You will see remnants of this in the code.
 
-## The Trace Recorder and Executors
+## Method compilation and executors
 
-There are two interpreters in this section:
-  1. Adaptive interpreter (the default behavior)
-  2. Trace recording interpreter (enabled on JIT builds)
+This branch uses a static method frontend, following the direction described in
+[PEP 836](https://peps.python.org/pep-0836/). The adaptive interpreter starts
+execution and populates the instruction specialization caches. Hot `RESUME`
+and `JUMP_BACKWARD` instructions request compilation through
+`_PyJit_CompileMethod` in [`Python/optimizer.c`](../Python/optimizer.c).
+There is no recording interpreter, recorded execution path, or side-trace
+compiler.
 
-The program begins running on the adaptive interpreter, until a `JUMP_BACKWARD` or
-`RESUME` instruction determines that it is "hot" because the counter in its
-[inline cache](interpreter.md#inline-cache-entries) indicates that it
-executed more than some threshold number of times (see
-[`backoff_counter_triggers`](../Include/internal/pycore_backoff.h)).
-It then calls the function `_PyJit_TryInitializeTracing` in
-[`Python/optimizer.c`](../Python/optimizer.c), passing it the current
-[frame](frames.md), instruction pointer and state.
-The interpreter then switches into "tracing mode" via the macro
-`ENTER_TRACING()`. On platforms that support computed goto and tail-calling
-interpreters, the dispatch table is swapped out, while other platforms that do
-not support either use a single flag in the opcode.
-Execution between the normal interpreter and tracing interpreter are
-interleaved via this dispatch mechanism. This means that while logically
-there are two interpreters, the implementation appears to be a single
-interpreter. 
+The frontend decodes bytecode into basic blocks, computes stack depths, and
+analyzes values across the control-flow graph (CFG). It translates both
+successors of a conditional branch. Specialization caches provide guarded
+hints; they do not supply the current Python frame's local values to the
+optimizer. Compilation at a loop backedge is on-stack replacement (OSR):
+existing stack values start unknown. Builtin local types inferred from the
+function's CFG can be used after checking them at the OSR entry.
+For an OSR entry, block layout starts at the loop header targeted by its
+backedge, then wraps around to the remaining blocks. This gives that loop
+priority within the fixed code budget without recording a path or discarding
+the other successors.
 
-During tracing mode, after each interpreter instruction's `DISPATCH()`,
-the interpreter jumps to the `TRACE_RECORD` instruction. This instruction
-records the previous instruction executed and also any live values of the next
-operation it may require. It then translates the previous instruction to
-a sequence of micro-ops using `_PyJit_translate_single_bytecode_to_trace`.
-To ensure that the adaptive interpreter instructions
-and cache entries are up-to-date, the trace recording interpreter always resets
-the adaptive counters of adaptive instructions it sees.
-This forces a re-specialization of any new instruction should an instruction
-deoptimize. Thus, feeding the trace recorder up-to-date information.
-Finally, the `TRACE_RECORD` instruction decides when to stop tracing 
-using various heuristics.
+An executor contains the resulting micro-operations and their compiled native
+code. It is stored in the code object's `co_executors` array, and its entry
+instruction is replaced by `ENTER_EXECUTOR`. The instruction's argument is the
+executor's index in that array. A newly compiled executor can run immediately.
+`RESUME` entries, OSR entries, and generator-loop body continuations use the
+same static frontend.
+An entry can replace the first `EXTENDED_ARG` of a wide backward jump.
+Decoding an existing executor must recover its original code unit before
+accumulating prefixes. Guard exits restart at the first prefix, whereas the
+saved frame instruction pointer and call/yield return offsets refer to the
+actual opcode after the prefixes.
 
-Once trace recording concludes, `LEAVE_TRACING()` swaps out the dispatch
-table/the opcode flag set earlier by `ENTER_TRACING()` is unset.
-`stop_tracing_and_jit()` then calls `_PyOptimizer_Optimize()` which optimizes
-the trace and constructs an
-[`_PyExecutorObject`](../Include/internal/pycore_optimizer.h).
+Compilation has a bounded code-size budget. An unsupported bytecode or a cold
+adaptive operation can end a compiled region with a return to the adaptive
+interpreter. Repeated unsupported continuations can retire the executor and
+back off recompilation. Changes in specialization caches allow another attempt.
+After translating and optimizing blocks, a native CFG traversal removes blocks
+reachable only through an unsupported-operation exit. Inlined return edges
+remain ordinary native edges. An entry containing only resume, stack cleanup,
+and jump bookkeeping before such an exit is rejected; later useful bytecode
+must not make an otherwise empty native entry appear worthwhile.
+Partial methods count a bounded number of native loop backedges per entry.
+An unsupported continuation after substantial loop progress does not count
+toward retirement. Complete methods omit this progress accounting.
+A speculative guard miss resumes the interpreter without producing another
+trace or connecting an exit to a new executor.
+Extended arithmetic guard exits also compare the active frame's bytecode
+specialization with the compiled descriptor. If Tier 1 has replaced the opcode
+or descriptor, the executor is retired so that a later entry can compile the
+current specialization. A guard miss while the descriptor still matches does
+not retire the method. This handles phase changes such as elapsed nanoseconds
+growing beyond a compact integer without repeatedly discarding useful code
+for occasional polymorphic inputs. Inlined calls use the callee's bytecode for
+this check. Successful guards do not perform it.
 
-JIT execution is set up
-to either return to the adaptive interpreter and resume execution, or
-transfer control to another executor (see `_PyExitData` in
-Include/internal/pycore_optimizer.h). When resuming to the adaptive interpreter,
-a "side exit", generated by an `EXIT_IF` may trigger recording of another trace.
-While a "deopt", generated by a `DEOPT_IF`, does not trigger recording.
-
-The executor is stored on the [`code object`](code_objects.md) of the frame,
-in the `co_executors` field which is an array of executors. The start
-instruction of the trace (the `JUMP_BACKWARD`) is replaced by an
-`ENTER_EXECUTOR` instruction whose `oparg` is equal to the index of the
-executor in `co_executors`.
+Ordinary generators can compile their initial `RESUME`, a `RESUME` after a yield,
+and loop backedges. Entry locals and the live operand stack start with unknown
+values; the frontend does not infer facts across suspension. CFG layout begins
+at the selected resume or loop header. Yield-from resumes, coroutines, and async
+generators retain their interpreter paths.
+A yield terminates the static CFG. Its native implementation suspends the
+generator and returns the caller's instruction pointer just after SEND or
+FOR_ITER and its cache, rather than the iterator-exhaustion offset.
+Consumers resume a generator through the adaptive interpreter's original
+`FOR_ITER_GEN` frame transition. The generator can then enter its own compiled
+resume or loop executor. A hot backedge to `FOR_ITER_GEN` can also compile the
+consumer's body at the instruction immediately after the iteration and its
+cache. Its live stack depth comes from the bytecode's stack effect; locals and
+stack values start unknown. A successful yield reaches that ordinary bytecode
+entry and enters its executor. Returning to `FOR_ITER_GEN` is a planned Tier 1
+boundary. This supports native loop bodies without a native generator call or
+recorded path. Exceptions and exhaustion retain the interpreter's original
+continuations. Retiring a body executor restores its original instruction;
+only RESUME and backedge entries have an adaptive counter to reset.
+If a guard exits to the same entry before consuming its input, Tier 1 executes
+the original bytecode once. Re-entering the executor immediately would repeat
+the guard indefinitely, for example when a tuple unpack entry receives a list.
+The original instruction is recovered after the native call, since callbacks
+may invalidate or replace the executor during execution.
+These continuation entries require at least two useful uops: entering and
+leaving native code around a single list/set insertion adds overhead without
+optimizing the insertion. Unpack/store fusion also requires already-proved
+non-escaping cleanup in a continuation. Otherwise individual stores preserve
+finalizer ordering and allow the native body to continue after each cleanup,
+instead of exiting before unpacking an otherwise suitable tuple.
+The experimental direct native generator-call path
+was removed after balanced measurements showed a slowdown for short generators
+and Genshi pipelines. This avoids adding a native C call for each yielded item.
+Final generator return still transfers the intact frame to the adaptive
+interpreter for exhaustion handling. Generator close reads the original RESUME
+argument when an executor replaces that instruction, preserving the existing
+finally and unwind checks.
+Method range iteration checks that the current value fits in one Python integer
+digit before advancing the iterator. Compiled successors can reuse this
+compactness fact. A failed check resumes Tier 1 with the same unconsumed item;
+the frontend does not assume that all C-long range values are compact.
+For an expression such as `vec[i] + i`, this fact can serve both tuple indexing
+and addition. Tuple index bounds and the value loaded from `vec` are checked
+separately.
+Range values in the small-integer cache are borrowed directly; other compact
+values use normal integer allocation.
+Coroutines, async generators, and iterable coroutines remain in the adaptive
+interpreter. Ordinary Python callees can be statically inlined with their
+Python frames preserved, or entered through their own method executor.
+In the GIL build, specialized Python `__getitem__` calls can also be inlined.
+The frontend uses the container type and function versions stored at
+specialization, then checks both versions before transferring arguments.
+It does not depend on retaining the callee in the bounded function-version
+lookup cache. Recursion and frame-space checks precede the transfer.
+Exact argument types already proved in the caller can seed the callee's
+analysis when their types are immortal and immutable, excluding module types
+whose instances may change `__class__`. Identity, ownership,
+integer compactness, and mutable heap-type facts are not transferred.
+General calls with defaults also propagate explicitly supplied positional
+arguments when a NULL self slot proves their mapping. Default values remain
+unknown, including keyword defaults which can be mutated in place.
+In GIL builds, static module bindings can supply a hint for finding a callee
+evicted from the function-version cache. This hint proves no runtime type or
+identity. Stable bindings can be loaded through watched embedded references,
+but their optimizer symbols retain an unknown type; function-version guards
+remain at specialized calls.
+Other stable globals whose instance types are mutable use
+`_LOAD_GLOBAL_BINDING`. This loads a new reference to the watched object but
+gives the optimizer no type or truth-value fact. Changing the object's
+`__class__` therefore remains observable even when the dictionary binding has
+not changed. Replacing or deleting the binding invalidates the executor through
+the existing named global dependency.
+In GIL builds, a class binding can also select `_CALL_ISINSTANCE_DEFAULT` when
+its metaclass inherits `type.__instancecheck__`. The operation guards the live
+metaclass version before calling `_PyObject_RealIsInstance` directly, avoiding
+repeated descriptor lookup and binding. This preserves custom `__class__`
+attributes and their exceptions. Replacing `__instancecheck__`, changing the
+metaclass's bases, or assigning a different metaclass causes a guard exit;
+the binding hint itself supplies no type proof.
+When that load is followed by `is` or `is not` and cleanup of the loaded
+reference, `_IS_GLOBAL_BINDING` compares directly with the watched value. The
+dictionary already owns the omitted temporary reference. Fusion cannot cross
+an escaping call, guard exit, or CFG edge, and it leaves the other operand's
+cleanup in place so finalizers keep their original ordering.
+Constructor inlining likewise uses the `__init__` function already found in the
+type's specialization cache as a lookup hint. Eviction from the bounded
+function-version cache does not prevent inlining; the existing type and function
+guards and code-object dependencies still enforce validity.
+Stable module attributes can also be folded in GIL builds when the value has
+an immutable type. A module-valued result also keeps an unknown type. A
+combined guard and load checks the
+actual receiver's exact module type and dictionary identity before producing
+the constant. Named dictionary dependencies invalidate the executor before
+the binding changes; unrelated value replacements leave it valid. The guard
+remains necessary after callbacks because a module's `__class__` can change.
+Properties and overridden `__getattribute__` use the general attribute operation
+and return to the native continuation. They do not embed a property's mutable
+getter, and receiver facts are discarded across the call.
+In GIL builds, a bounded cache counts invalidations for individual global
+bindings. A repeatedly changed binding retains a guarded dictionary load,
+allowing methods to survive updates without preventing constant folding of
+unrelated names. The cache controls optimization eligibility only.
+Unsupported callees also use the adaptive interpreter. These are implementation
+limits of this branch, rather than requirements of method compilation.
 
 ## The micro-op optimizer
 
-The micro-op (abbreviated `uop` to approximate `μop`) optimizer is defined in
-[`Python/optimizer.c`](../Python/optimizer.c) as `_PyOptimizer_Optimize`.
-It takes a micro-op sequence from the trace recorder and optimizes with
-`_Py_uop_analyze_and_optimize` in
-[`Python/optimizer_analysis.c`](../Python/optimizer_analysis.c)
-and an instance of `_PyUOpExecutor_Type` is created to contain it.
+The frontend propagates types, constants, ownership, and alias information
+across the CFG. A join retains only facts valid on all incoming paths. Facts
+that can be invalidated by arbitrary Python execution are cleared at escaping
+operations. Optimizations must preserve the stack and instruction pointer
+expected by exception handling and by interpreter fallback.
+Exact integer type and compact representation are separate facts. In particular,
+a specialized range iterator produces a C `long`, which may require multiple
+Python integer digits; its items still need a compactness guard before compact
+arithmetic or comparisons.
+
+`_Py_uop_optimize_method_block` in
+[`Python/optimizer_analysis.c`](../Python/optimizer_analysis.c) applies the
+shared symbolic optimizer to a basic block, using the frontend's incoming
+facts. The frontend also applies arithmetic regions and other uop fusions,
+resolves branch targets after code growth, allocates stack-cache registers,
+and creates the `_PyExecutorObject`. The uop IR and copy-and-patch backend are
+shared infrastructure; names such as `_EXIT_TRACE` remain, but those exits now
+return directly to the adaptive interpreter.
+
+Edge-specific constant narrowing and several ownership and constant-result
+facts across callee boundaries have not yet been ported from the old optimizer.
+The method frontend retains the required operations and guards in those cases.
+Its tests exercise both branch outcomes, code and namespace mutation, reference
+lifetimes, exceptions, and calls that return to the adaptive interpreter.
+Passing these tests does not imply that every old trace optimization is present.
 
 ## The JIT interpreter
 
-After a `JUMP_BACKWARD` instruction invokes the uop optimizer to create a uop
-executor, it transfers control to this executor via the `TIER1_TO_TIER2` macro.
+Hot entry instructions and `ENTER_EXECUTOR` transfer control to an executor
+through the `TIER1_TO_TIER2` macro.
 
 CPython implements two executors. Here we describe the JIT interpreter,
 which is the simpler of them and is therefore useful for debugging and analyzing
@@ -86,8 +212,8 @@ the uops generation and optimization stages. To run it, we configure the
 JIT to run on its interpreter (i.e., python is configured with
 [`--enable-experimental-jit=interpreter`](https://docs.python.org/dev/using/configure.html#cmdoption-enable-experimental-jit)).
 
-When invoked, the executor jumps to the `tier2_dispatch:` label in
-[`Python/ceval.c`](../Python/ceval.c), where there is a loop that
+When invoked, `_PyTier2Interpreter` enters the `tier2_dispatch:` loop in
+[`Python/ceval.c`](../Python/ceval.c), which
 executes the micro-ops. The body of this loop is a switch statement over
 the uops IDs, resembling the one used in the adaptive interpreter.
 
@@ -106,12 +232,23 @@ In addition to being stored on the code object, each executor is also
 inserted into contiguous arrays (`executor_blooms` and `executor_ptrs`)
 stored in the interpreter state. These arrays are used when it is necessary
 to invalidate executors because values they used in their construction may
-have changed.
+have changed. Global bindings, type versions, and inlined code objects are
+among the dependencies. Executor deletion is deferred while native code is
+active; an invalidated executor must remain allocated until it is safe to
+release its code and owned constants.
+
+The free-threaded build currently permits JIT execution only while the
+interpreter has one thread. Creating a second thread state disables JIT
+execution and invalidates its executors; it is not automatically re-enabled
+when that thread exits. The adaptive interpreter continues to support
+concurrent execution.
+GIL-dependent optimizations have additional restrictions in free-threaded
+builds, including the set of globals that may be treated as constants.
 
 ## The JIT
 
 When the full jit is enabled (python was configured with
-[`--enable-experimental-jit`](https://docs.python.org/dev/using/configure.html#cmdoption-enable-experimental-jit),
+[`--enable-experimental-jit`](https://docs.python.org/dev/using/configure.html#cmdoption-enable-experimental-jit)),
 the uop executor's `jit_code` field is populated with a pointer to a compiled
 C function that implements the executor logic. This function's signature is
 defined by `jit_func` in [`pycore_jit.h`](../Include/internal/pycore_jit.h).

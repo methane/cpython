@@ -11,6 +11,10 @@
             break;
         }
 
+        case _METHOD_CHECK_PERIODIC: {
+            break;
+        }
+
         /* _CHECK_PERIODIC_AT_END is not a viable micro-op for tier 2 */
 
         case _CHECK_PERIODIC_IF_NOT_YIELD_FROM: {
@@ -113,6 +117,9 @@
         }
 
         case _STORE_FAST_NOESCAPE: {
+            JitOptRef value;
+            value = stack_pointer[-1];
+            GETLOCAL(oparg) = PyJitRef_RemoveUnique(value);
             CHECK_STACK_BOUNDS(-1);
             stack_pointer += -1;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
@@ -1439,6 +1446,29 @@
             res = sym_new_unknown(ctx);
             ls = list_st;
             ss = sub_st;
+            PyObject *index = sym_get_const(ctx, sub_st);
+            if (index != NULL && PyLong_CheckExact(index) &&
+                _PyLong_IsNonNegativeCompact((PyLongObject *)index))
+            {
+                uint32_t value = ((PyLongObject *)index)->long_value.ob_digit[0];
+                REPLACE_OP(this_instr, _BINARY_OP_SUBSCR_LIST_CONST, 0, value);
+            }
+            CHECK_STACK_BOUNDS(1);
+            stack_pointer[-2] = res;
+            stack_pointer[-1] = ls;
+            stack_pointer[0] = ss;
+            stack_pointer += 1;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            break;
+        }
+
+        case _BINARY_OP_SUBSCR_LIST_CONST: {
+            JitOptRef res;
+            JitOptRef ls;
+            JitOptRef ss;
+            res = sym_new_not_null(ctx);
+            ls = sym_new_not_null(ctx);
+            ss = sym_new_not_null(ctx);
             CHECK_STACK_BOUNDS(1);
             stack_pointer[-2] = res;
             stack_pointer[-1] = ls;
@@ -1788,8 +1818,22 @@
             }
             if (tp != NULL) {
                 PyObject *getitem_o = ((PyHeapTypeObject *)tp)->_spec_cache.getitem;
-                sym_set_recorded_value(getitem, getitem_o);
+                sym_set_probable_value(getitem, getitem_o);
             }
+            CHECK_STACK_BOUNDS(1);
+            stack_pointer[0] = getitem;
+            stack_pointer += 1;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            break;
+        }
+
+        case _METHOD_SUBSCR_CHECK_FUNC: {
+            JitOptRef getitem;
+            uint32_t type_version = (uint32_t)this_instr->operand0;
+            uint32_t func_version = (uint32_t)this_instr->operand1;
+            (void)type_version;
+            (void)func_version;
+            getitem = sym_new_type(ctx, &PyFunction_Type);
             CHECK_STACK_BOUNDS(1);
             stack_pointer[0] = getitem;
             stack_pointer += 1;
@@ -1949,27 +1993,19 @@
             JitOptRef retval;
             JitOptRef res;
             retval = stack_pointer[-1];
-            JitOptRef temp = retval;
-            CHECK_STACK_BOUNDS(-1);
-            stack_pointer += -1;
-            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
-            ctx->frame->stack_pointer = stack_pointer;
-            assert(this_instr[1].opcode == _RECORD_CODE);
-            PyCodeObject *returning_code = (PyCodeObject *)this_instr[1].operand0;
-            assert(PyCode_Check(returning_code));
-            if (returning_code == NULL) {
-                ctx->done = true;
-                break;
-            }
-            if (frame_pop(ctx, returning_code)) {
-                break;
-            }
-            stack_pointer = ctx->frame->stack_pointer;
-            res = temp;
-            CHECK_STACK_BOUNDS(1);
-            stack_pointer[0] = res;
-            stack_pointer += 1;
-            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            res = retval;
+            ctx->done = true;
+            stack_pointer[-1] = res;
+            break;
+        }
+
+        case _METHOD_RETURN_VALUE: {
+            JitOptRef retval;
+            JitOptRef res;
+            retval = stack_pointer[-1];
+            res = retval;
+            ctx->done = true;
+            stack_pointer[-1] = res;
             break;
         }
 
@@ -2078,27 +2114,9 @@
             JitOptRef retval;
             JitOptRef value;
             retval = stack_pointer[-1];
-            JitOptRef temp = retval;
-            CHECK_STACK_BOUNDS(-1);
-            stack_pointer += -1;
-            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
-            ctx->frame->stack_pointer = stack_pointer;
-            assert(this_instr[1].opcode == _RECORD_CODE);
-            PyCodeObject *returning_code = (PyCodeObject *)this_instr[1].operand0;
-            if (returning_code == NULL) {
-                ctx->done = true;
-                break;
-            }
-            assert(PyCode_Check(returning_code));
-            if (frame_pop(ctx, returning_code)) {
-                break;
-            }
-            stack_pointer = ctx->frame->stack_pointer;
-            value = temp;
-            CHECK_STACK_BOUNDS(1);
-            stack_pointer[0] = value;
-            stack_pointer += 1;
-            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            value = retval;
+            ctx->done = true;
+            stack_pointer[-1] = value;
             break;
         }
 
@@ -2721,18 +2739,14 @@
             JitOptRef global_super_st;
             class_st = stack_pointer[-2];
             global_super_st = stack_pointer[-3];
-            if (sym_get_const(ctx, global_super_st) == (PyObject *)&PySuper_Type) {
-                PyTypeObject *probable = (PyTypeObject *)sym_get_probable_value(class_st);
-                PyTypeObject *known = (PyTypeObject *)sym_get_const(ctx, class_st);
-                if (known == NULL && probable != NULL && PyType_Check(probable)) {
-                    ADD_OP(_GUARD_NOS_TYPE_VERSION, 0, probable->tp_version_tag);
-                    known = probable;
-                }
-                sym_set_const(class_st, (PyObject *)known);
+            sym_set_const(global_super_st, (PyObject *)&PySuper_Type);
+            PyObject *known = sym_get_const(ctx, class_st);
+            if (known != NULL && !PyType_Check(known)) {
+                ctx->contradiction = true;
+                ctx->done = true;
             }
-            else {
-                sym_set_const(global_super_st, (PyObject *)&PySuper_Type);
-                sym_set_type(class_st, &PyType_Type);
+            else if (known == NULL) {
+                sym_set_non_null(class_st);
             }
             break;
         }
@@ -2786,12 +2800,11 @@
             owner = stack_pointer[-1];
             uint32_t type_version = (uint32_t)this_instr->operand0;
             assert(type_version);
-            assert(this_instr[-1].opcode == _RECORD_TOS_TYPE || this_instr[-1].opcode == _RECORD_TOS);
             if (sym_matches_type_version(owner, type_version)) {
                 ADD_OP(_NOP, 0, 0);
             }
             else {
-                PyTypeObject *probable_type = sym_get_probable_type(owner);
+                PyTypeObject *probable_type = _PyType_LookupByVersion(type_version);
                 if (probable_type != NULL &&
                     probable_type->tp_version_tag == type_version) {
                     sym_set_type(owner, probable_type);
@@ -2807,6 +2820,17 @@
             break;
         }
 
+        case _GUARD_TYPE_VERSION_FAMILY: {
+            JitOptRef owner;
+            owner = stack_pointer[-1];
+            PyObject *versions01 = (PyObject *)this_instr->operand0;
+            PyObject *versions23 = (PyObject *)this_instr->operand1;
+            (void)versions01;
+            (void)versions23;
+            sym_set_non_null(owner);
+            break;
+        }
+
         case _GUARD_TYPE_VERSION_LOCKED: {
             JitOptRef owner;
             owner = stack_pointer[-1];
@@ -2816,7 +2840,7 @@
                 ADD_OP(_NOP, 0, 0);
             }
             else {
-                PyTypeObject *probable_type = sym_get_probable_type(owner);
+                PyTypeObject *probable_type = _PyType_LookupByVersion(type_version);
                 if (probable_type != NULL &&
                     probable_type->tp_version_tag == type_version) {
                     sym_set_type(owner, probable_type);
@@ -2932,6 +2956,25 @@
             if (PyJitRef_IsNull(attr)) {
                 attr = sym_new_not_null(ctx);
             }
+            o = owner;
+            CHECK_STACK_BOUNDS(1);
+            stack_pointer[-1] = attr;
+            stack_pointer[0] = o;
+            stack_pointer += 1;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            break;
+        }
+
+        case _LOAD_ATTR_MODULE_CONST: {
+            JitOptRef owner;
+            JitOptRef attr;
+            JitOptRef o;
+            owner = stack_pointer[-1];
+            PyObject *dict = (PyObject *)this_instr->operand0;
+            PyObject *value = (PyObject *)this_instr->operand1;
+            (void)dict;
+            attr = PyModule_Check((PyObject *)value)
+            ? sym_new_not_null(ctx) : sym_new_const(ctx, (PyObject *)value);
             o = owner;
             CHECK_STACK_BOUNDS(1);
             stack_pointer[-1] = attr;
@@ -3492,6 +3535,23 @@
             break;
         }
 
+        case _IS_GLOBAL_BINDING: {
+            JitOptRef left;
+            JitOptRef b;
+            JitOptRef l;
+            left = stack_pointer[-1];
+            PyObject *ptr = (PyObject *)this_instr->operand0;
+            (void)ptr;
+            b = sym_new_type(ctx, &PyBool_Type);
+            l = left;
+            CHECK_STACK_BOUNDS(1);
+            stack_pointer[-1] = b;
+            stack_pointer[0] = l;
+            stack_pointer += 1;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            break;
+        }
+
         case _CONTAINS_OP: {
             JitOptRef right;
             JitOptRef left;
@@ -4029,8 +4089,7 @@
                 _Py_BloomFilter_Add(dependencies, type);
                 if (!definite) {
                     sym_set_type(iter, type);
-                    assert((this_instr - 1)->opcode == _RECORD_NOS_TYPE);
-                    int32_t orig_target = (this_instr - 1)->target;
+                    int32_t orig_target = this_instr->target;
                     ADD_OP(_GUARD_TYPE_ITER, 0, (uintptr_t)type);
                     uop_buffer_last(&ctx->out_buffer)->target = orig_target;
                 }
@@ -4178,6 +4237,16 @@
             break;
         }
 
+        case _ITER_NEXT_RANGE_COMPACT: {
+            JitOptRef next;
+            next = sym_new_compact_int(ctx);
+            CHECK_STACK_BOUNDS(1);
+            stack_pointer[0] = next;
+            stack_pointer += 1;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            break;
+        }
+
         case _FOR_ITER_GEN_FRAME: {
             JitOptRef iter;
             JitOptRef gen_frame;
@@ -4275,6 +4344,21 @@
             PyObject *name = get_co_name(ctx, oparg >> 1);
             attr = lookup_attr(ctx, dependencies, this_instr, type, name,
                            _NOP, _SWAP);
+            self = owner;
+            CHECK_STACK_BOUNDS(1);
+            stack_pointer[-1] = attr;
+            stack_pointer[0] = self;
+            stack_pointer += 1;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            break;
+        }
+
+        case _LOAD_ATTR_METHOD_DYNAMIC: {
+            JitOptRef owner;
+            JitOptRef attr;
+            JitOptRef self;
+            owner = stack_pointer[-1];
+            attr = sym_new_type(ctx, &PyFunction_Type);
             self = owner;
             CHECK_STACK_BOUNDS(1);
             stack_pointer[-1] = attr;
@@ -4409,13 +4493,25 @@
             callable = stack_pointer[-2 - oparg];
             uint32_t func_version = (uint32_t)this_instr->operand0;
             PyObject *func = sym_get_probable_value(callable);
-            if (func == NULL || !PyFunction_Check(func) || ((PyFunctionObject *)func)->func_version != func_version) {
+            if (func == NULL) {
+                sym_set_type(callable, &PyFunction_Type);
+            }
+            else if (!PyFunction_Check(func) || ((PyFunctionObject *)func)->func_version != func_version) {
                 ctx->contradiction = true;
                 ctx->done = true;
                 break;
             }
-            sym_set_const(callable, func);
-            _Py_BloomFilter_Add(dependencies, func);
+            else {
+                sym_set_const(callable, func);
+                _Py_BloomFilter_Add(dependencies, func);
+            }
+            break;
+        }
+
+        case _CHECK_PY_FUNCTION: {
+            JitOptRef callable;
+            callable = stack_pointer[-2 - oparg];
+            sym_set_type(callable, &PyFunction_Type);
             break;
         }
 
@@ -4508,6 +4604,22 @@
             break;
         }
 
+        case _GUARD_CALL_TYPE_VERSION_FAMILY: {
+            break;
+        }
+
+        case _CALL_BOOL_ATTRIBUTES: {
+            JitOptRef res;
+            PyObject *layout = (PyObject *)this_instr->operand0;
+            (void)layout;
+            res = sym_new_type(ctx, &PyBool_Type);
+            CHECK_STACK_BOUNDS(-1 - oparg);
+            stack_pointer[-2 - oparg] = res;
+            stack_pointer += -1 - oparg;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            break;
+        }
+
         case _CALL_RETURN_ATTRIBUTE_ITEM: {
             JitOptRef res;
             res = sym_new_not_null(ctx);
@@ -4557,9 +4669,9 @@
             if (bound_method != NULL && Py_TYPE(bound_method) == &PyMethod_Type) {
                 PyMethodObject *method = (PyMethodObject *)bound_method;
                 callable = sym_new_not_null(ctx);
-                sym_set_recorded_value(callable, method->im_func);
+                sym_set_probable_value(callable, method->im_func);
                 self_or_null = sym_new_not_null(ctx);
-                sym_set_recorded_value(self_or_null, method->im_self);
+                sym_set_probable_value(self_or_null, method->im_self);
             }
             else {
                 callable = sym_new_not_null(ctx);
@@ -4792,7 +4904,6 @@
             callable = stack_pointer[-2 - oparg];
             uint32_t type_version = (uint32_t)this_instr->operand0;
             PyObject *probable_callable = sym_get_probable_value(callable);
-            assert(probable_callable != NULL);
             PyObject *const_callable = sym_get_const(ctx, callable);
             bool is_probable = const_callable == NULL && probable_callable != NULL;
             PyObject *callable_o = const_callable != NULL ? const_callable : probable_callable;
@@ -5286,6 +5397,18 @@
             break;
         }
 
+        case _CALL_ISINSTANCE_DEFAULT: {
+            JitOptRef res;
+            uint32_t metaclass_version = (uint32_t)this_instr->operand0;
+            (void)metaclass_version;
+            res = sym_new_type(ctx, &PyBool_Type);
+            CHECK_STACK_BOUNDS(-3);
+            stack_pointer[-4] = res;
+            stack_pointer += -3;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            break;
+        }
+
         case _GUARD_CALLABLE_LIST_APPEND: {
             JitOptRef callable;
             callable = stack_pointer[-3];
@@ -5642,13 +5765,18 @@
             callable = stack_pointer[-3 - oparg];
             uint32_t func_version = (uint32_t)this_instr->operand0;
             PyObject *func = sym_get_probable_value(callable);
-            if (func == NULL || !PyFunction_Check(func) || ((PyFunctionObject *)func)->func_version != func_version) {
+            if (func == NULL) {
+                sym_set_type(callable, &PyFunction_Type);
+            }
+            else if (!PyFunction_Check(func) || ((PyFunctionObject *)func)->func_version != func_version) {
                 ctx->contradiction = true;
                 ctx->done = true;
                 break;
             }
-            sym_set_const(callable, func);
-            _Py_BloomFilter_Add(dependencies, func);
+            else {
+                sym_set_const(callable, func);
+                _Py_BloomFilter_Add(dependencies, func);
+            }
             break;
         }
 
@@ -5786,19 +5914,8 @@
 
         case _RETURN_GENERATOR: {
             JitOptRef res;
-            ctx->frame->stack_pointer = stack_pointer;
-            assert(this_instr[1].opcode == _RECORD_CODE);
-            PyCodeObject *returning_code = (PyCodeObject *)this_instr[1].operand0;
-            if (returning_code == NULL) {
-                ctx->done = true;
-                break;
-            }
-            assert(PyCode_Check(returning_code));
-            if (frame_pop(ctx, returning_code)) {
-                break;
-            }
-            stack_pointer = ctx->frame->stack_pointer;
             res = sym_new_unknown(ctx);
+            ctx->done = true;
             CHECK_STACK_BOUNDS(1);
             stack_pointer[0] = res;
             stack_pointer += 1;
@@ -6203,11 +6320,20 @@
             break;
         }
 
+        case _GUARD_OSR_LOCAL_TYPE: {
+            break;
+        }
+
         case _METHOD_DEOPT: {
             break;
         }
 
         case _METHOD_EXIT: {
+            ctx->done = true;
+            break;
+        }
+
+        case _METHOD_YIELD_EXIT: {
             ctx->done = true;
             break;
         }
@@ -6236,13 +6362,11 @@
         }
 
         case _EXIT_TRACE: {
-            PyObject *exit_p = (PyObject *)this_instr->operand0;
-            (void)exit_p;
             ctx->done = true;
             break;
         }
 
-        case _DYNAMIC_EXIT: {
+        case _EXIT_BINARY_OP: {
             break;
         }
 
@@ -6254,6 +6378,18 @@
             JitOptRef value;
             PyObject *ptr = (PyObject *)this_instr->operand0;
             value = sym_new_const(ctx, ptr);
+            CHECK_STACK_BOUNDS(1);
+            stack_pointer[0] = value;
+            stack_pointer += 1;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            break;
+        }
+
+        case _LOAD_GLOBAL_BINDING: {
+            JitOptRef value;
+            PyObject *ptr = (PyObject *)this_instr->operand0;
+            (void)ptr;
+            value = sym_new_not_null(ctx);
             CHECK_STACK_BOUNDS(1);
             stack_pointer[0] = value;
             stack_pointer += 1;
@@ -6321,190 +6457,4 @@
         case _TIER2_RESUME_CHECK: {
             break;
         }
-
-        case _COLD_EXIT: {
-            break;
-        }
-
-        case _COLD_DYNAMIC_EXIT: {
-            break;
-        }
-
-        case _GUARD_CODE_VERSION__PUSH_FRAME: {
-            uint32_t version = (uint32_t)this_instr->operand0;
-            PyCodeObject *co = get_current_code_object(ctx);
-            if (co->co_version == version) {
-                _Py_BloomFilter_Add(dependencies, co);
-                PyFunctionObject *func = (PyFunctionObject *)sym_get_const(ctx, ctx->frame->callable);
-                if (func != NULL && func->func_version == version) {
-                    REPLACE_OP(this_instr, _NOP, 0, 0);
-                }
-            }
-            else {
-                ctx->done = true;
-            }
-            break;
-        }
-
-        case _GUARD_CODE_VERSION_YIELD_VALUE: {
-            uint32_t version = (uint32_t)this_instr->operand0;
-            (void)version;
-            if (ctx->frame->caller) {
-                REPLACE_OP(this_instr, _NOP, 0, 0);
-            }
-            break;
-        }
-
-        case _GUARD_CODE_VERSION_RETURN_VALUE: {
-            uint32_t version = (uint32_t)this_instr->operand0;
-            (void)version;
-            if (ctx->frame->caller) {
-                REPLACE_OP(this_instr, _NOP, 0, 0);
-            }
-            break;
-        }
-
-        case _GUARD_CODE_VERSION_RETURN_GENERATOR: {
-            uint32_t version = (uint32_t)this_instr->operand0;
-            (void)version;
-            if (ctx->frame->caller) {
-                REPLACE_OP(this_instr, _NOP, 0, 0);
-            }
-            break;
-        }
-
-        case _GUARD_IP__PUSH_FRAME: {
-            PyObject *ip = (PyObject *)this_instr->operand0;
-            (void)ip;
-            stack_pointer = sym_set_stack_depth((int)this_instr->operand1, stack_pointer);
-            PyFunctionObject *func = (PyFunctionObject *)sym_get_const(ctx, ctx->frame->callable);
-            if (func != NULL && func->func_version != 0 &&
-                // We can remove this guard for simple function call targets.
-                (((PyCodeObject *)ctx->frame->func->func_code)->co_flags &
-                    (CO_GENERATOR | CO_COROUTINE | CO_ASYNC_GENERATOR)) == 0) {
-                REPLACE_OP(this_instr, _NOP, 0, 0);
-            }
-            break;
-        }
-
-        case _GUARD_IP_YIELD_VALUE: {
-            PyObject *ip = (PyObject *)this_instr->operand0;
-            (void)ip;
-            if (ctx->frame->caller) {
-                REPLACE_OP(this_instr, _NOP, 0, 0);
-            }
-            stack_pointer = sym_set_stack_depth((int)this_instr->operand1, stack_pointer);
-            break;
-        }
-
-        case _GUARD_IP_RETURN_VALUE: {
-            PyObject *ip = (PyObject *)this_instr->operand0;
-            (void)ip;
-            if (ctx->frame->caller) {
-                REPLACE_OP(this_instr, _NOP, 0, 0);
-            }
-            stack_pointer = sym_set_stack_depth((int)this_instr->operand1, stack_pointer);
-            break;
-        }
-
-        case _GUARD_IP_RETURN_GENERATOR: {
-            PyObject *ip = (PyObject *)this_instr->operand0;
-            (void)ip;
-            if (ctx->frame->caller) {
-                REPLACE_OP(this_instr, _NOP, 0, 0);
-            }
-            stack_pointer = sym_set_stack_depth((int)this_instr->operand1, stack_pointer);
-            break;
-        }
-
-        case _RECORD_TOS: {
-            JitOptRef tos;
-            tos = stack_pointer[-1];
-            sym_set_recorded_value(tos, (PyObject *)this_instr->operand0);
-            break;
-        }
-
-        case _RECORD_TOS_TYPE: {
-            JitOptRef tos;
-            tos = stack_pointer[-1];
-            PyTypeObject *tp = (PyTypeObject *)this_instr->operand0;
-            sym_set_recorded_type(tos, tp);
-            break;
-        }
-
-        case _RECORD_NOS: {
-            JitOptRef nos;
-            nos = stack_pointer[-2];
-            sym_set_recorded_value(nos, (PyObject *)this_instr->operand0);
-            break;
-        }
-
-        case _RECORD_NOS_TYPE: {
-            JitOptRef nos;
-            nos = stack_pointer[-2];
-            PyTypeObject *tp = (PyTypeObject *)this_instr->operand0;
-            sym_set_recorded_type(nos, tp);
-            break;
-        }
-
-        case _RECORD_NOS_GEN_FUNC: {
-            JitOptRef nos;
-            nos = stack_pointer[-2];
-            PyFunctionObject *func = (PyFunctionObject *)this_instr->operand0;
-            assert(func == NULL || PyFunction_Check(func));
-            sym_set_recorded_gen_func(nos, func);
-            break;
-        }
-
-        case _RECORD_3OS_GEN_FUNC: {
-            JitOptRef gen;
-            gen = stack_pointer[-3];
-            PyFunctionObject *func = (PyFunctionObject *)this_instr->operand0;
-            assert(func == NULL || PyFunction_Check(func));
-            sym_set_recorded_gen_func(gen, func);
-            break;
-        }
-
-        case _RECORD_4OS: {
-            JitOptRef value;
-            value = stack_pointer[-4];
-            sym_set_recorded_value(value, (PyObject *)this_instr->operand0);
-            break;
-        }
-
-        case _RECORD_CALLABLE: {
-            JitOptRef func;
-            func = stack_pointer[-2 - oparg];
-            sym_set_recorded_value(func, (PyObject *)this_instr->operand0);
-            break;
-        }
-
-        case _RECORD_CALL_ARG0_TYPE: {
-            JitOptRef *args;
-            args = &stack_pointer[-oparg];
-            if (oparg > 0) {
-                sym_set_recorded_type(args[0], (PyTypeObject *)this_instr->operand0);
-            }
-            break;
-        }
-
-        case _RECORD_CALLABLE_KW: {
-            JitOptRef func;
-            func = stack_pointer[-3 - oparg];
-            sym_set_recorded_value(func, (PyObject *)this_instr->operand0);
-            break;
-        }
-
-        case _RECORD_BOUND_METHOD: {
-            JitOptRef callable;
-            callable = stack_pointer[-2 - oparg];
-            sym_set_recorded_value(callable, (PyObject *)this_instr->operand0);
-            break;
-        }
-
-        case _RECORD_CODE: {
-            break;
-        }
-
-        /* _TRACE_RECORD is not a viable micro-op for tier 2 */
 

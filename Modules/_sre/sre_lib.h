@@ -656,6 +656,24 @@ typedef struct {
     #define DISPATCH goto dispatch
 #endif
 
+/* Skip alternatives whose first character cannot match. This does not change
+ * capture state, so it can precede saving marks for backtracking. */
+static inline Py_ALWAYS_INLINE const SRE_CODE *
+SRE(next_branch)(SRE_STATE* state, const SRE_CODE* pattern,
+                 const SRE_CHAR* ptr, const SRE_CHAR* end)
+{
+    for (; pattern[0]; pattern += pattern[0]) {
+        if (pattern[1] == SRE_OP_LITERAL &&
+            (ptr >= end || (SRE_CODE)*ptr != pattern[2]))
+            continue;
+        if (pattern[1] == SRE_OP_IN &&
+            (ptr >= end || !SRE(charset)(state, pattern + 3, (SRE_CODE)*ptr)))
+            continue;
+        break;
+    }
+    return pattern;
+}
+
 /* check if string matches the given pattern.  returns <0 for
    error, 0 for failure, and 1 for success */
 LOCAL(Py_ssize_t)
@@ -917,19 +935,13 @@ dispatch:
             /* alternation */
             /* <BRANCH> <0=skip> code <JUMP> ... <NULL> */
             TRACE(("|%p|%p|BRANCH\n", pattern, ptr));
+            pattern = SRE(next_branch)(state, pattern, ptr, end);
+            if (!pattern[0])
+                RETURN_FAILURE;
             LASTMARK_SAVE();
             if (state->save_marks)
                 MARK_PUSH(ctx->lastmark);
-            for (; pattern[0]; pattern += pattern[0]) {
-                if (pattern[1] == SRE_OP_LITERAL &&
-                    (ptr >= end ||
-                     (SRE_CODE) *ptr != pattern[2]))
-                    continue;
-                if (pattern[1] == SRE_OP_IN &&
-                    (ptr >= end ||
-                     !SRE(charset)(state, pattern + 3,
-                                   (SRE_CODE) *ptr)))
-                    continue;
+            for (;;) {
                 state->ptr = ptr;
                 DO_JUMP(JUMP_BRANCH, jump_branch, pattern+1);
                 if (ret) {
@@ -941,6 +953,9 @@ dispatch:
                 if (state->save_marks)
                     MARK_POP_KEEP(ctx->lastmark);
                 LASTMARK_RESTORE();
+                pattern = SRE(next_branch)(state, pattern + pattern[0], ptr, end);
+                if (!pattern[0])
+                    break;
             }
             if (state->save_marks)
                 MARK_POP_DISCARD(ctx->lastmark);

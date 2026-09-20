@@ -39,7 +39,6 @@ class Properties:
     uses_opcode: bool
     needs_guard_ip: bool
     unpredictable_jump: bool
-    records_value: bool
     tier: int | None = None
     const_oparg: int = -1
     needs_prev: bool = False
@@ -84,7 +83,6 @@ class Properties:
             no_save_ip=all(p.no_save_ip for p in properties),
             needs_guard_ip=any(p.needs_guard_ip for p in properties),
             unpredictable_jump=any(p.unpredictable_jump for p in properties),
-            records_value=any(p.records_value for p in properties),
         )
 
     @property
@@ -115,7 +113,6 @@ SKIP_PROPERTIES = Properties(
     no_save_ip=False,
     needs_guard_ip=False,
     unpredictable_jump=False,
-    records_value=False,
 )
 
 
@@ -321,16 +318,6 @@ class Family:
     name: str
     size: str
     members: list[Instruction]
-
-    def get_member_record_names(self) -> tuple[str, ...]:
-        seen: set[str] = set()
-        names: list[str] = []
-        for member in self.members:
-            for part in member.parts:
-                if part.properties.records_value and part.name not in seen:
-                    seen.add(part.name)
-                    names.append(part.name)
-        return tuple(names)
 
     def dump(self, indent: str) -> None:
         print(indent, self.name, "= ", ", ".join([m.name for m in self.members]))
@@ -754,9 +741,6 @@ NON_ESCAPING_FUNCTIONS = (
     "PyStackRef_Wrap",
     "PyStackRef_Unwrap",
     "_PyLong_CheckExactAndCompact",
-    "_PyExecutor_FromExit",
-    "_PyJit_TryInitializeTracing",
-    "_PyJit_IsOnlyStrongReferenceBesidesTracer",
     "_Py_unset_eval_breaker_bit",
     "_Py_set_eval_breaker_bit",
     "trigger_backoff_counter",
@@ -1056,7 +1040,6 @@ def compute_properties(op: parser.CodeDef) -> Properties:
                        or variable_used(op, "LOAD_IP")
                        or variable_used(op, "DISPATCH_INLINED"),
         unpredictable_jump=unpredictable_jump,
-        records_value=variable_used(op, "RECORD_VALUE")
     )
 
 def expand(items: list[StackItem], oparg: int) -> list[StackItem]:
@@ -1182,7 +1165,6 @@ def add_macro(
     macro: parser.Macro, instructions: dict[str, Instruction], uops: dict[str, Uop]
 ) -> None:
     parts: list[Part] = []
-    seen_real_uop = False
     for part in macro.uops:
         match part:
             case parser.OpName():
@@ -1194,14 +1176,6 @@ def add_macro(
                             f"No Uop named {part.name}", macro.tokens[0]
                         )
                     uop = uops[part.name]
-                    if uop.properties.records_value:
-                        if seen_real_uop:
-                            raise analysis_error(
-                                f"Recording uop {part.name} must precede all "
-                                f"non-recording, non-specializing uops in macro",
-                                macro.tokens[0])
-                    elif "specializing" not in uop.annotations:
-                        seen_real_uop = True
                     parts.append(uop)
             case parser.CacheEffect():
                 parts.append(Skip(part.size))
@@ -1274,7 +1248,6 @@ def assign_opcodes(
 
     instmap["INSTRUMENTED_LINE"] = 253
     instmap["ENTER_EXECUTOR"] = 254
-    instmap["TRACE_RECORD"] = 255
 
     instrumented = [name for name in instructions if name.startswith("INSTRUMENTED")]
 
@@ -1429,16 +1402,17 @@ def get_uop_cache_depths(uop: Uop) -> Iterator[tuple[int, int, int]]:
                 if inputs != outputs:
                     yield inputs, outputs, inputs
         return
-    if uop.name in ("_DEOPT", "_HANDLE_PENDING_AND_DEOPT", "_EXIT_TRACE", "_DYNAMIC_EXIT"):
+    if uop.name in ("_DEOPT", "_HANDLE_PENDING_AND_DEOPT", "_EXIT_TRACE",
+                    "_EXIT_BINARY_OP"):
         for i in range(MAX_CACHED_REGISTER+1):
             yield i, 0, 0
         return
     if uop.name in (
         "_START_EXECUTOR",
         "_JUMP_TO_TOP",
-        "_COLD_EXIT",
         "_METHOD_DEOPT",
         "_METHOD_EXIT",
+        "_METHOD_YIELD_EXIT",
         "_METHOD_CALL",
     ):
         yield 0, 0, 0

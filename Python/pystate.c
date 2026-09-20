@@ -4,7 +4,7 @@
 #include "Python.h"
 #include "pycore_abstract.h"      // _PyIndex_Check()
 #include "pycore_audit.h"         // _Py_AuditHookEntry
-#include "pycore_backoff.h"       // JUMP_BACKWARD_INITIAL_VALUE, SIDE_EXIT_INITIAL_VALUE
+#include "pycore_backoff.h"       // JUMP_BACKWARD_INITIAL_VALUE
 #include "pycore_ceval.h"         // _PyEval_AcquireLock()
 #include "pycore_codecs.h"        // _PyCodec_Fini()
 #include "pycore_critical_section.h" // _PyCriticalSection_Resume()
@@ -602,11 +602,9 @@ init_interpreter(PyInterpreterState *interp,
     // PYTHON_JIT_STRESS sets aggressive defaults for testing, but can be overridden
     uint16_t jump_default = JUMP_BACKWARD_INITIAL_VALUE;
     uint16_t resume_default = RESUME_INITIAL_VALUE;
-    uint16_t side_exit_default = SIDE_EXIT_INITIAL_VALUE;
 
     if (is_env_enabled("PYTHON_JIT_STRESS")) {
         jump_default = 63;
-        side_exit_default = 63;
         resume_default = 127;
     }
 
@@ -622,18 +620,6 @@ init_interpreter(PyInterpreterState *interp,
     init_policy(&interp->opt_config.resume_initial_backoff,
                 "PYTHON_JIT_RESUME_INITIAL_BACKOFF",
                 RESUME_INITIAL_BACKOFF, 0, MAX_BACKOFF);
-    init_policy(&interp->opt_config.side_exit_initial_value,
-                "PYTHON_JIT_SIDE_EXIT_INITIAL_VALUE",
-                side_exit_default, 1, MAX_VALUE);
-    init_policy(&interp->opt_config.side_exit_initial_backoff,
-                "PYTHON_JIT_SIDE_EXIT_INITIAL_BACKOFF",
-                SIDE_EXIT_INITIAL_BACKOFF, 0, MAX_BACKOFF);
-
-    // Trace fitness configuration
-    init_policy(&interp->opt_config.fitness_initial,
-                "PYTHON_JIT_FITNESS_INITIAL",
-                FITNESS_INITIAL, EXIT_QUALITY_CLOSE_LOOP, FITNESS_INITIAL);
-
     interp->opt_config.specialization_enabled = !is_env_enabled("PYTHON_SPECIALIZATION_OFF");
     interp->opt_config.uops_optimize_enabled = !is_env_disabled("PYTHON_UOPS_OPTIMIZE");
     if (interp != &runtime->_main_interpreter) {
@@ -916,21 +902,6 @@ interpreter_clear(PyInterpreterState *interp, PyThreadState *tstate)
     // Finalize warnings after last gc so that any finalizers can
     // access warnings state
     _PyWarnings_Fini(interp);
-    struct _PyExecutorObject *cold = interp->cold_executor;
-    if (cold != NULL) {
-        interp->cold_executor = NULL;
-        assert(FT_ATOMIC_LOAD_UINT8(cold->vm_data.valid));
-        assert(!cold->vm_data.cold);
-        _PyExecutor_Free(cold);
-    }
-
-    struct _PyExecutorObject *cold_dynamic = interp->cold_dynamic_executor;
-    if (cold_dynamic != NULL) {
-        interp->cold_dynamic_executor = NULL;
-        assert(FT_ATOMIC_LOAD_UINT8(cold_dynamic->vm_data.valid));
-        assert(!cold_dynamic->vm_data.cold);
-        _PyExecutor_Free(cold_dynamic);
-    }
     /* We don't clear sysdict and builtins until the end of this function.
        Because clearing other attributes can execute arbitrary Python code
        which requires sysdict and builtins. */
@@ -1618,7 +1589,6 @@ init_threadstate(_PyThreadStateImpl *_tstate,
     tstate->datastack_cached_chunk = NULL;
     tstate->what_event = -1;
     tstate->current_executor = NULL;
-    tstate->jit_exit = NULL;
     tstate->dict_global_version = 0;
 
     _tstate->c_stack_soft_limit = UINTPTR_MAX;
@@ -1631,9 +1601,6 @@ init_threadstate(_PyThreadStateImpl *_tstate,
     _tstate->asyncio_running_loop = NULL;
     _tstate->asyncio_running_task = NULL;
 
-#ifdef _Py_TIER2
-    _tstate->jit_tracer_state = NULL;
-#endif
     tstate->delete_later = NULL;
 
     llist_init(&_tstate->mem_free_queue);
@@ -1921,9 +1888,6 @@ PyThreadState_Clear(PyThreadState *tstate)
 
     _PyThreadState_ClearMimallocHeaps(tstate);
 
-#ifdef _Py_TIER2
-    _PyJit_TracerFree((_PyThreadStateImpl *)tstate);
-#endif
 
     tstate->_status.cleared = 1;
 
@@ -1978,7 +1942,6 @@ tstate_delete_common(PyThreadState *tstate, int release_gil)
 #endif
 
 #if _Py_TIER2
-    _PyJit_TracerFree((_PyThreadStateImpl *)tstate);
 #  ifdef Py_GIL_DISABLED
     // Re-enable the configured JIT after the interpreter returns to one thread.
     PyThreadState *remaining = interp->threads.head;

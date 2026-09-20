@@ -1,0 +1,286 @@
+[
+  {
+    "tag": "m56b-ft-debug-controller",
+    "command": [
+      "/usr/bin/python3",
+      "/home/methane/work/python/cpython-gc/jit-artifacts/regressions-20260919/build_method.py",
+      "ft",
+      "candidate",
+      "m56b-ft-debug",
+      "--patch",
+      "/home/methane/work/python/cpython-gc/jit-artifacts/regressions-20260919/m56b-method-only.patch",
+      "--debug"
+    ],
+    "returncode": 0,
+    "seconds": 126.9064345061779
+  },
+  {
+    "tag": "m56b-ft-debug-opt",
+    "command": [
+      "/home/methane/work/python/cpython-gc/jit-artifacts/regressions-20260919/m56b-ft-debug-build/python",
+      "-m",
+      "test",
+      "test_capi.test_opt",
+      "--randseed=0",
+      "--timeout=240"
+    ],
+    "returncode": 0,
+    "seconds": 39.890072071924806
+  },
+  {
+    "tag": "m56b-ft-debug-boundaries",
+    "command": [
+      "/home/methane/work/python/cpython-gc/jit-artifacts/regressions-20260919/m56b-ft-debug-build/python",
+      "-m",
+      "test",
+      "test_call",
+      "test_property",
+      "test_descr",
+      "test_monitoring",
+      "test_generators",
+      "test_genexps",
+      "test_yield_from",
+      "test_coroutines",
+      "test_asyncgen",
+      "--randseed=0",
+      "--timeout=240"
+    ],
+    "returncode": 0,
+    "seconds": 3.679538526572287
+  },
+  {
+    "tag": "m56b-ft-debug-entry-refleak",
+    "command": [
+      "/home/methane/work/python/cpython-gc/jit-artifacts/regressions-20260919/m56b-ft-debug-build/python",
+      "-m",
+      "test",
+      "test_capi.test_opt",
+      "-m",
+      "*test_generator_continuation*",
+      "-m",
+      "*test_generator_iteration_compiles_static_continuation*",
+      "-m",
+      "*test_isinstance_default_metaclass_binding*",
+      "-m",
+      "*test_isinstance_metaclass_reassignment*",
+      "-R",
+      "3:3",
+      "--randseed=0",
+      "--timeout=240"
+    ],
+    "returncode": 0,
+    "seconds": 0.6171015687286854
+  },
+  {
+    "tag": "m56b-gil-pgo-lto-controller",
+    "command": [
+      "/usr/bin/python3",
+      "/home/methane/work/python/cpython-gc/jit-artifacts/regressions-20260919/build_method.py",
+      "gil",
+      "candidate",
+      "m56b-gil-pgo-lto",
+      "--patch",
+      "/home/methane/work/python/cpython-gc/jit-artifacts/regressions-20260919/m56b-method-only.patch"
+    ],
+    "returncode": 0,
+    "seconds": 670.8784654997289
+  },
+  {
+    "tag": "m56b-gil-pgo-lto-opt",
+    "command": [
+      "/home/methane/work/python/cpython-gc/jit-artifacts/regressions-20260919/m56b-gil-pgo-lto-build/python",
+      "-m",
+      "test",
+      "test_capi.test_opt",
+      "--randseed=0",
+      "--timeout=240"
+    ],
+    "returncode": 0,
+    "seconds": 5.483651723712683
+  },
+  {
+    "tag": "m56b-gil-pgo-lto-boundaries",
+    "command": [
+      "/home/methane/work/python/cpython-gc/jit-artifacts/regressions-20260919/m56b-gil-pgo-lto-build/python",
+      "-m",
+      "test",
+      "test_call",
+      "test_property",
+      "test_descr",
+      "test_monitoring",
+      "test_generators",
+      "test_genexps",
+      "test_yield_from",
+      "test_coroutines",
+      "test_asyncgen",
+      "--randseed=0",
+      "--timeout=240"
+    ],
+    "returncode": 0,
+    "seconds": 2.02279747184366
+  },
+  {
+    "tag": "m56b-gil-pgo-lto-c",
+    "command": [
+      "/home/methane/work/python/cpython-gc/jit-artifacts/regressions-20260919/m56b-gil-pgo-lto-build/python",
+      "-m",
+      "test",
+      "test_decimal",
+      "test_binascii",
+      "test_re",
+      "--randseed=0",
+      "--timeout=240"
+    ],
+    "returncode": 0,
+    "seconds": 1.3672524644061923
+  },
+  {
+    "tag": "m56b-gil-pgo-lto-opcache",
+    "command": [
+      "/home/methane/work/python/cpython-gc/jit-artifacts/regressions-20260919/m56b-gil-pgo-lto-build/python",
+      "-m",
+      "test",
+      "test_opcache",
+      "--randseed=0",
+      "--timeout=240"
+    ],
+    "returncode": 0,
+    "seconds": 0.46580979600548744
+  },
+  {
+    "tag": "m56b-ft-controller",
+    "command": [
+      "/usr/bin/python3",
+      "/home/methane/work/python/cpython-gc/jit-artifacts/regressions-20260919/build_method.py",
+      "ft",
+      "candidate",
+      "m56b-ft",
+      "--patch",
+      "/home/methane/work/python/cpython-gc/jit-artifacts/regressions-20260919/m56b-method-only.patch"
+    ],
+    "returncode": 0,
+    "seconds": 107.74762149900198
+  },
+  {
+    "tag": "m56b-ft-opt",
+    "command": [
+      "/home/methane/work/python/cpython-gc/jit-artifacts/regressions-20260919/m56b-ft-build/python",
+      "-m",
+      "test",
+      "test_capi.test_opt",
+      "--randseed=0",
+      "--timeout=240"
+    ],
+    "returncode": 0,
+    "seconds": 7.138926743529737
+  },
+  {
+    "tag": "m56b-ft-boundaries",
+    "command": [
+      "/home/methane/work/python/cpython-gc/jit-artifacts/regressions-20260919/m56b-ft-build/python",
+      "-m",
+      "test",
+      "test_call",
+      "test_property",
+      "test_descr",
+      "test_monitoring",
+      "test_generators",
+      "test_genexps",
+      "test_yield_from",
+      "test_coroutines",
+      "test_asyncgen",
+      "--randseed=0",
+      "--timeout=240"
+    ],
+    "returncode": 0,
+    "seconds": 2.2749030562117696
+  },
+  {
+    "tag": "m56b-ft-c",
+    "command": [
+      "/home/methane/work/python/cpython-gc/jit-artifacts/regressions-20260919/m56b-ft-build/python",
+      "-m",
+      "test",
+      "test_decimal",
+      "test_binascii",
+      "test_re",
+      "--randseed=0",
+      "--timeout=240"
+    ],
+    "returncode": 0,
+    "seconds": 1.8204425517469645
+  },
+  {
+    "tag": "m56b-ft-opcache",
+    "command": [
+      "/home/methane/work/python/cpython-gc/jit-artifacts/regressions-20260919/m56b-ft-build/python",
+      "-m",
+      "test",
+      "test_opcache",
+      "--randseed=0",
+      "--timeout=240"
+    ],
+    "returncode": 0,
+    "seconds": 0.7665674854069948
+  },
+  {
+    "tag": "m56b-gil-final-screen-controller",
+    "command": [
+      "/usr/bin/python3",
+      "/home/methane/work/python/cpython-gc/jit-artifacts/regressions-20260919/compare.py",
+      "gil",
+      "m56b-gil-final-screen",
+      "--native-decimal",
+      "--main",
+      "/home/methane/work/python/cpython-gc/jit-artifacts/regressions-20260919/r0-gil-main-build/python",
+      "--candidate",
+      "/home/methane/work/python/cpython-gc/jit-artifacts/regressions-20260919/m56b-gil-pgo-lto-build/python",
+      "--names",
+      "deepcopy,dulwich_log,float,genshi,regex_v8,sqlglot_v2,logging,nqueens,richards,richards_super,go,base64,scimark,regex_compile,networkx,telco,unpack_sequence",
+      "--workers",
+      "3"
+    ],
+    "returncode": 0,
+    "seconds": 992.963470261544
+  },
+  {
+    "tag": "m56b-gil-final-screen-analysis-controller",
+    "command": [
+      "/usr/bin/python3",
+      "/home/methane/work/python/cpython-gc/jit-artifacts/regressions-20260919/analyze.py",
+      "/home/methane/work/python/cpython-gc/jit-artifacts/regressions-20260919/m56b-gil-final-screen-state.json"
+    ],
+    "returncode": 0,
+    "seconds": 3.0761181013658643
+  },
+  {
+    "tag": "m56b-ft-final-screen-controller",
+    "command": [
+      "/usr/bin/python3",
+      "/home/methane/work/python/cpython-gc/jit-artifacts/regressions-20260919/compare.py",
+      "ft",
+      "m56b-ft-final-screen",
+      "--native-decimal",
+      "--main",
+      "/home/methane/work/python/cpython-gc/jit-artifacts/regressions-20260919/r0-ft-main-build/python",
+      "--candidate",
+      "/home/methane/work/python/cpython-gc/jit-artifacts/regressions-20260919/m56b-ft-build/python",
+      "--names",
+      "genshi,dulwich_log,nqueens,networkx,logging,telco,unpack_sequence",
+      "--workers",
+      "3"
+    ],
+    "returncode": 0,
+    "seconds": 401.11442464310676
+  },
+  {
+    "tag": "m56b-ft-final-screen-analysis-controller",
+    "command": [
+      "/usr/bin/python3",
+      "/home/methane/work/python/cpython-gc/jit-artifacts/regressions-20260919/analyze.py",
+      "/home/methane/work/python/cpython-gc/jit-artifacts/regressions-20260919/m56b-ft-final-screen-state.json"
+    ],
+    "returncode": 0,
+    "seconds": 0.8679988356307149
+  }
+]

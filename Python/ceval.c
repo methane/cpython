@@ -1081,21 +1081,6 @@ _PyObjectArray_Free(PyObject **array, PyObject **scratch)
     }
 }
 
-#if _Py_TIER2
-// 0 for success, -1  for error.
-static int
-stop_tracing_and_jit(PyThreadState *tstate, _PyInterpreterFrame *frame)
-{
-    int _is_sys_tracing = (tstate->c_tracefunc != NULL) || (tstate->c_profilefunc != NULL);
-    int err = 0;
-    if (!_PyErr_Occurred(tstate) && !_is_sys_tracing) {
-        err = _PyOptimizer_Optimize(frame, tstate);
-    }
-    _PyJit_FinalizeTracing(tstate, err);
-    return err;
-}
-#endif
-
 /* _PyEval_EvalFrameDefault is too large to optimize for speed with PGO on MSVC.
  */
 #if (defined(_MSC_VER) && \
@@ -1237,7 +1222,6 @@ _PyEval_EvalFrameDefault(PyThreadState *tstate, _PyInterpreterFrame *frame, int 
 #if USE_COMPUTED_GOTOS && !_Py_TAIL_CALL_INTERP
 /* Import the static jump table */
 #include "opcode_targets.h"
-    void **opcode_targets = opcode_targets_table;
 #endif
 
 #ifdef Py_STATS
@@ -1248,7 +1232,6 @@ _PyEval_EvalFrameDefault(PyThreadState *tstate, _PyInterpreterFrame *frame, int 
     int oparg;         /* Current opcode argument, if any */
     assert(tstate->current_frame == NULL || tstate->current_frame->stackpointer != NULL);
 #if !USE_COMPUTED_GOTOS
-    uint8_t tracing_mode = 0;
     uint8_t dispatch_code;
 #endif
 #endif
@@ -1324,9 +1307,9 @@ _PyEval_EvalFrameDefault(PyThreadState *tstate, _PyInterpreterFrame *frame, int 
         _PyFrame_StackPointerInvalidate(frame);
 #if _Py_TAIL_CALL_INTERP
 #   if Py_STATS
-        return _TAIL_CALL_error(frame, stack_pointer, tstate, next_instr, instruction_funcptr_handler_table, 0, lastopcode);
+        return _TAIL_CALL_error(frame, stack_pointer, tstate, next_instr, 0, lastopcode);
 #   else
-        return _TAIL_CALL_error(frame, stack_pointer, tstate, next_instr, instruction_funcptr_handler_table, 0);
+        return _TAIL_CALL_error(frame, stack_pointer, tstate, next_instr, 0);
 #   endif
 #else
         goto error;
@@ -1335,9 +1318,9 @@ _PyEval_EvalFrameDefault(PyThreadState *tstate, _PyInterpreterFrame *frame, int 
 
 #if _Py_TAIL_CALL_INTERP
 #   if Py_STATS
-        return _TAIL_CALL_start_frame(frame, NULL, tstate, NULL, instruction_funcptr_handler_table, 0, lastopcode);
+        return _TAIL_CALL_start_frame(frame, NULL, tstate, NULL, 0, lastopcode);
 #   else
-        return _TAIL_CALL_start_frame(frame, NULL, tstate, NULL, instruction_funcptr_handler_table, 0);
+        return _TAIL_CALL_start_frame(frame, NULL, tstate, NULL, 0);
 #   endif
 #else
     goto start_frame;
@@ -1378,18 +1361,14 @@ _PyTier2Interpreter(
     int oparg;
     /* Set up "jit" state after entry from tier 1.
      * This mimics what the jit shim function does. */
-    tstate->jit_exit = NULL;
     _PyStackRef _tos_cache0 = PyStackRef_ZERO_BITS;
     _PyStackRef _tos_cache1 = PyStackRef_ZERO_BITS;
     _PyStackRef _tos_cache2 = PyStackRef_ZERO_BITS;
     int current_cached_values = 0;
 
-tier2_start:
 
     next_uop = current_executor->trace;
-    assert(next_uop->opcode == _START_EXECUTOR_r00 + current_cached_values ||
-        next_uop->opcode == _COLD_EXIT_r00 + current_cached_values ||
-        next_uop->opcode == _COLD_DYNAMIC_EXIT_r00 + current_cached_values);
+    assert(next_uop->opcode == _START_EXECUTOR_r00 + current_cached_values);
 
 #undef LOAD_IP
 #define LOAD_IP(UNUSED) (void)0
@@ -1411,9 +1390,7 @@ tier2_start:
     uint64_t trace_uop_execution_counter = 0;
 #endif
 
-    assert(next_uop->opcode == _START_EXECUTOR_r00 ||
-        next_uop->opcode == _COLD_EXIT_r00 ||
-        next_uop->opcode == _COLD_DYNAMIC_EXIT_r00);
+    assert(next_uop->opcode == _START_EXECUTOR_r00);
 tier2_dispatch:
     for (;;) {
         uopcode = next_uop->opcode;
@@ -2015,6 +1992,34 @@ _PyEval_FrameClearAndPop(PyThreadState *tstate, _PyInterpreterFrame * frame)
     // By this point, tstate->current_frame is already set to the parent frame.
     _PyThreadState_UpdateLastProfiledFrame(tstate, frame, tstate->current_frame);
 
+    /* Most returning thread frames have no materialized frame or locals.
+     * Keep their cleanup together for both interpreter tiers. */
+    PyObject **base = (PyObject **)frame;
+    if (frame->owner == FRAME_OWNED_BY_THREAD &&
+        FT_ATOMIC_LOAD_PTR_RELAXED(frame->frame_obj) == NULL &&
+        frame->f_locals == NULL &&
+        base != &tstate->datastack_chunk->data[0])
+    {
+        /* Match the ordinary clear order, with the frame already unlinked.
+         * Destructors may re-enter Python while this frame's stack storage
+         * remains reserved. Release that storage only after all references. */
+        assert(tstate->current_frame != frame);
+        assert(base + _PyFrame_GetCode(frame)->co_framesize ==
+               tstate->datastack_top);
+        _PyStackRef *sp = frame->stackpointer;
+        _PyStackRef *locals = frame->localsplus;
+        assert(sp != NULL);
+        frame->stackpointer = locals;
+        while (sp > locals) {
+            sp--;
+            PyStackRef_XCLOSE(*sp);
+        }
+        PyStackRef_CLEAR(frame->f_funcobj);
+        PyStackRef_CLEAR(frame->f_executable);
+        tstate->datastack_top = base;
+        return;
+    }
+
     if (frame->owner == FRAME_OWNED_BY_THREAD) {
         clear_thread_frame(tstate, frame);
     }
@@ -2358,6 +2363,18 @@ _PyEval_UnpackIterableStackRef(PyThreadState *tstate, PyObject *v,
     PyObject *w;
     PyObject *l = NULL; /* variable list */
     assert(v != NULL);
+
+    /* Polymorphic Tier 2 code can keep the generic unpack even when this
+     * particular input is a tuple. Avoid allocating an iterator in that case.
+     * A tuple subclass must still get a chance to override iteration. */
+    if (argcntafter == -1 && PyTuple_CheckExact(v) &&
+        PyTuple_GET_SIZE(v) == argcnt)
+    {
+        for (int index = 0; index < argcnt; index++) {
+            *--sp = PyStackRef_FromPyObjectNew(PyTuple_GET_ITEM(v, index));
+        }
+        return 1;
+    }
 
     it = PyObject_GetIter(v);
     if (it == NULL) {

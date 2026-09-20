@@ -1,0 +1,91 @@
+{
+  "all_common_results_sensitivity": {
+    "geometric_mean_ratio": 0.9723238564116011,
+    "result_count": 119
+  },
+  "binary_sha256": {
+    "candidate": "ebb86d4a70b9dda5c4f70d4d49196cc5a87986c41ced14951f73dd0eef2fb457",
+    "main": "8fb6c5b87dec8e272c1acfad0197dc086bcd3e0c93912d949d43d5c4d9603407"
+  },
+  "definition": "candidate elapsed time / main elapsed time",
+  "failed_specifications": {
+    "asyncio_websockets": "TCP port 8001 was already in use",
+    "dask": "cloudpickle expects the removed DELETE_GLOBAL opcode",
+    "genshi": "incompatible with the Python 3.16 ast.Expression constructor"
+  },
+  "group_geometric_mean_ratios": {
+    "A": 0.961057094597003,
+    "B": 0.980340935593556
+  },
+  "input_sha256": {
+    "a-candidate.json": "eb22445bd6debee318d8a1f7f891328e49fb4e45d9e17779c105b6d00fdec7bf",
+    "a-main.json": "fd1b4f6653dfbf095583b9fa0f8255cdc112ed1a0ddfbe5043e0cd2ea8fe9396",
+    "b-candidate.json": "9e421c6eb04b2580b8b3646245a03482fa5aae3d028fa30dfb9cc8ba24b5acbe",
+    "b-main.json": "3f360cd85e390e35d510e9006d5c43e3b63e8b1a2d1d9ae96f2b8eef5847d188"
+  },
+  "loop_mismatches": [
+    {
+      "candidate_loops": 8192,
+      "candidate_over_main": 0.9928561883679008,
+      "main_loops": 1024,
+      "name": "deepcopy_memo"
+    },
+    {
+      "candidate_loops": 65536,
+      "candidate_over_main": 0.9454359670724753,
+      "main_loops": 1024,
+      "name": "deepcopy_reduce"
+    }
+  ],
+  "newly_covered_result_names": [
+    "2to3",
+    "asyncio_tcp",
+    "asyncio_tcp_ssl",
+    "bench_mp_pool",
+    "bench_thread_pool",
+    "connected_components",
+    "k_core",
+    "shortest_path",
+    "tornado_http"
+  ],
+  "previous_run_common_subset": {
+    "current_candidate_over_main": 0.9711440039275453,
+    "old_candidate_over_main": 0.9682313246298918,
+    "result_count": 108
+  },
+  "primary": {
+    "bootstrap_iterations": 20000,
+    "bootstrap_seed": 20260915,
+    "geometric_mean_ratio": 0.9723832437696083,
+    "loop_matched_results": 117,
+    "nominal_faster": 76,
+    "nominal_slower": 41,
+    "not_significant": 33,
+    "process_bootstrap_95_percent": [
+      0.9709991978437947,
+      0.9737477498581788
+    ],
+    "significant_faster": 51,
+    "significant_slower": 33,
+    "speedup": 1.0284011025563653,
+    "time_reduction_percent": 2.7616756230391726
+  },
+  "tag_geometric_mean_ratios": {
+    "apps": 0.9741510820255802,
+    "asyncio": 0.9860541782301945,
+    "math": 0.9777179344145268,
+    "regex": 1.0138873921646572,
+    "serialize": 1.0055780918386121,
+    "startup": 1.0049434838730043,
+    "template": 0.9450144936514103
+  },
+  "warning_counts": {
+    "candidate": 48,
+    "main": 56
+  },
+  "without_base16_layout_sensitivity": {
+    "geometric_mean_ratio": 0.9703668466163188,
+    "result_count": 115,
+    "status": "post-hoc diagnostic; primary result is unchanged"
+  }
+}

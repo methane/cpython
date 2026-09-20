@@ -58,7 +58,6 @@ FLAGS = [
     "PERIODIC",
     "UNPREDICTABLE_JUMP",
     "NEEDS_GUARD_IP",
-    "RECORDS_VALUE",
 ]
 
 

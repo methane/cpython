@@ -245,7 +245,6 @@ extern "C" {
 #define INSTRUMENTED_JUMP_BACKWARD             252
 #define INSTRUMENTED_LINE                      253
 #define ENTER_EXECUTOR                         254
-#define TRACE_RECORD                           255
 #define ANNOTATIONS_PLACEHOLDER                256
 #define JUMP                                   257
 #define JUMP_IF_FALSE                          258

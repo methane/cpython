@@ -14,21 +14,6 @@
 
 int Test_EvalFrame_Resumes, Test_EvalFrame_Loads;
 
-#ifdef _Py_TIER2
-static int
-stop_tracing_and_jit(PyThreadState *tstate, _PyInterpreterFrame *frame)
-{
-    (void)(frame);
-    // Don't actually JIT-compile in this test eval-frame, but we still must
-    // finalize the tracer so the thread-global is_tracing flag is reset.
-    // Otherwise a trace started inside this duplicated interpreter loop
-    // (reachable under low JIT thresholds, e.g. PYTHON_JIT_STRESS=1) would
-    // leave is_tracing stuck true and permanently disable the JIT.
-    _PyJit_FinalizeTracing(tstate, 0);
-    return 0;
-}
-#endif
-
 _PyJitEntryFuncPtr _Py_jit_entry;
 
 #if _Py_TAIL_CALL_INTERP
@@ -46,7 +31,6 @@ Test_EvalFrame(PyThreadState *tstate, _PyInterpreterFrame *frame, int throwflag)
 #if USE_COMPUTED_GOTOS && !_Py_TAIL_CALL_INTERP
 /* Import the static jump table */
 #include "test_targets.h"
-    void **opcode_targets = opcode_targets_table;
 #endif
 
 #ifdef Py_STATS
@@ -57,7 +41,6 @@ Test_EvalFrame(PyThreadState *tstate, _PyInterpreterFrame *frame, int throwflag)
     int oparg;         /* Current opcode argument, if any */
     assert(tstate->current_frame == NULL || tstate->current_frame->stackpointer != NULL);
 #if !USE_COMPUTED_GOTOS
-    uint8_t tracing_mode = 0;
     uint8_t dispatch_code;
 #endif
 #endif
@@ -126,9 +109,9 @@ Test_EvalFrame(PyThreadState *tstate, _PyInterpreterFrame *frame, int throwflag)
         _PyFrame_StackPointerInvalidate(frame);
 #if _Py_TAIL_CALL_INTERP
 #   if Py_STATS
-        return _TAIL_CALL_error(frame, stack_pointer, tstate, next_instr, instruction_funcptr_handler_table, 0, lastopcode);
+        return _TAIL_CALL_error(frame, stack_pointer, tstate, next_instr, 0, lastopcode);
 #   else
-        return _TAIL_CALL_error(frame, stack_pointer, tstate, next_instr, instruction_funcptr_handler_table, 0);
+        return _TAIL_CALL_error(frame, stack_pointer, tstate, next_instr, 0);
 #   endif
 #else
         goto error;
@@ -137,9 +120,9 @@ Test_EvalFrame(PyThreadState *tstate, _PyInterpreterFrame *frame, int throwflag)
 
 #if _Py_TAIL_CALL_INTERP
 #   if Py_STATS
-        return _TAIL_CALL_start_frame(frame, NULL, tstate, NULL, instruction_funcptr_handler_table, 0, lastopcode);
+        return _TAIL_CALL_start_frame(frame, NULL, tstate, NULL, 0, lastopcode);
 #   else
-        return _TAIL_CALL_start_frame(frame, NULL, tstate, NULL, instruction_funcptr_handler_table, 0);
+        return _TAIL_CALL_start_frame(frame, NULL, tstate, NULL, 0);
 #   endif
 #else
     goto start_frame;

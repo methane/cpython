@@ -18,8 +18,14 @@ typedef struct {
 typedef struct {
     int size;
     int capacity;
-    /* A partial method that repeatedly falls back should use entry tracing. */
-    unsigned char prefer_trace;
+    /* Avoid rebuilding an unchanged method after frequent unsupported exits.
+     * A periodic retry also allows a change in the hot path to take effect. */
+    struct {
+        uint64_t fingerprint;
+        int offset;
+        unsigned int remaining;
+    } method_backoff[16];
+    unsigned int next_method_backoff;
     struct _PyExecutorObject *executors[1];
 } _PyExecutorArray;
 

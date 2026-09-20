@@ -17,14 +17,8 @@ extern "C" {
 
 #define TY_ARENA_SIZE (UOP_MAX_TRACE_LENGTH * 5)
 
-// Need extras for root frame and for overflow frame (see TRACE_STACK_PUSH())
+// Need extras for the root frame and for an overflow frame.
 #define MAX_ABSTRACT_FRAME_DEPTH (16)
-
-// The maximum number of side exits that we can take before requiring forward
-// progress (and inserting a new ENTER_EXECUTOR instruction). In practice, this
-// is the "maximum amount of polymorphism" that an isolated trace tree can
-// handle before rejoining the rest of the program.
-#define MAX_CHAIN_DEPTH 4
 
 /* Symbols */
 /* See explanation in optimizer_symbols.c */
@@ -42,9 +36,7 @@ typedef enum _JitSymType {
     JIT_SYM_TRUTHINESS_TAG = 10,
     JIT_SYM_COMPACT_INT = 11,
     JIT_SYM_PREDICATE_TAG = 12,
-    JIT_SYM_RECORDED_VALUE_TAG = 13,
-    JIT_SYM_RECORDED_TYPE_TAG = 14,
-    JIT_SYM_RECORDED_GEN_FUNC_TAG = 15,
+    JIT_SYM_PROBABLE_VALUE_TAG = 13,
 } JitSymType;
 
 typedef struct _jit_opt_known_class {
@@ -96,23 +88,11 @@ typedef struct {
     uint16_t rhs;
 } JitOptPredicate;
 
-typedef struct _jit_opt_recorded_value {
+typedef struct _jit_opt_probable_value {
     uint8_t tag;
     bool known_type;
     PyObject *value;
-} JitOptRecordedValue;
-
-typedef struct _jit_opt_recorded_type {
-    uint8_t tag;
-    PyTypeObject *type;
-} JitOptRecordedType;
-
-/* Represents a generator, but we record the
- * function as the generator is emphemeral */
-typedef struct _jit_opt_recorded_gen_func {
-    uint8_t tag;
-    PyFunctionObject *func;
-} JitOptRecordedGenFunc;
+} JitOptProbableValue;
 
 typedef struct {
     uint8_t tag;
@@ -128,9 +108,7 @@ typedef union _jit_opt_symbol {
     JitOptTruthiness truthiness;
     JitOptCompactInt compact;
     JitOptPredicate predicate;
-    JitOptRecordedValue recorded_value;
-    JitOptRecordedType recorded_type;
-    JitOptRecordedGenFunc recorded_gen_func;
+    JitOptProbableValue probable_value;
 } JitOptSymbol;
 
 // This mimics the _PyStackRef API

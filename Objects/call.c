@@ -427,7 +427,7 @@ _PyFunction_Vectorcall(PyObject *func, PyObject* const* stack,
          * a temporary argument array nor the general argument binder. Keep
          * the ordinary frame and evaluation entry, including observer hooks,
          * recursion checks, closure setup and exception handling. */
-        if (executor->vm_data.is_method && executor->vm_data.valid &&
+        if (executor->vm_data.valid &&
             tstate->interp->jit && kwnames == NULL && nargs == code->co_argcount &&
             code->co_kwonlyargcount == 0 && (code->co_flags & CO_OPTIMIZED) &&
             !(code->co_flags & (CO_VARARGS | CO_VARKEYWORDS | CO_GENERATOR |

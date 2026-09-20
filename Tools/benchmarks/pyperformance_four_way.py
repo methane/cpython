@@ -26,13 +26,20 @@ ROOT = compare.ROOT
 ARTIFACTS = ROOT / "jit-artifacts"
 CACHES = {name: ARTIFACTS / f"pyperformance-{name}-20260917"
           for name in ("ft", "gil-pgo-lto")}
-CANDIDATES = {
-    "ft": (ROOT / "build-method-ft-jit", ROOT),
-    "gil-pgo-lto": (ARTIFACTS / "pyperformance-fixes-20260917/committed-final-pgo-build",
-                    ARTIFACTS / "pyperformance-fixes-20260917/committed-final-pgo-src"),
+DECIMAL_BUILDS = ARTIFACTS / "regressions-20260919"
+BASELINES = {
+    profile: (DECIMAL_BUILDS / f"r0-{mode}-main-build",
+              DECIMAL_BUILDS / f"r0-{mode}-main-src",
+              DECIMAL_BUILDS / f"r0-{mode}-main-build.json")
+    for profile, mode in (("ft", "ft"), ("gil-pgo-lto", "gil"))
 }
-CANDIDATE_PROVENANCE = ARTIFACTS / "pyperformance-fixes-20260917/committed-final-pgo-build.json"
-CANDIDATE_FT_PROVENANCE = ARTIFACTS / "pyperformance-fixes-20260917/committed-final-ft-build.json"
+CANDIDATES = {
+    profile: (DECIMAL_BUILDS / f"m56b-{label}-build",
+              DECIMAL_BUILDS / f"m56b-{label}-src")
+    for profile, label in (("ft", "ft"), ("gil-pgo-lto", "gil-pgo-lto"))
+}
+CANDIDATE_PROVENANCE = DECIMAL_BUILDS / "m56b-gil-pgo-lto-build.json"
+CANDIDATE_FT_PROVENANCE = DECIMAL_BUILDS / "m56b-ft-build.json"
 SCRIPT = Path(__file__).resolve()
 WRAPPER = ROOT / "benchmarks/run_pyperformance_four_way.sh"
 
@@ -118,13 +125,43 @@ def build_files(build):
     return {str(path.relative_to(build)): compare.sha(path) for path in paths}
 
 
+def source_matches(path, digest):
+    # Build manifests retain deleted tracked files as tombstones. Verify their
+    # absence too, so resurrecting the old recording frontend cannot go unnoticed.
+    if digest is None:
+        return not path.exists() and not path.is_symlink()
+    return path.is_file() and compare.sha(path) == digest
+
+
+def baseline_provenance(profile):
+    build, source, path = BASELINES[profile]
+    manifest = read(path)
+    if not manifest.get("complete") or manifest.get("files") != build_files(build):
+        raise RuntimeError(f"Main {profile} build differs from its provenance")
+    if not manifest.get("source_files") or not manifest.get("decimal_probe"):
+        raise RuntimeError(f"Main {profile} source or C decimal provenance is missing")
+    for relative, digest in manifest["source_files"].items():
+        if not source_matches(source / relative, digest):
+            raise RuntimeError(f"Main {profile} sources differ from the build record: {relative}")
+    return manifest
+
+
+def decimal_identity(python, env):
+    return json.loads(compare.output([python, "-c",
+        "import decimal, _decimal, json; "
+        "assert decimal.Decimal is _decimal.Decimal, 'C decimal is required'; "
+        "print(json.dumps(dict(path=_decimal.__file__, "
+        "version=_decimal.__libmpdec_version__)))"], env))
+
+
 def candidate_provenance():
     provenance = read(CANDIDATE_PROVENANCE)
     ft_provenance = read(CANDIDATE_FT_PROVENANCE)
     for profile, label, manifest in (("gil-pgo-lto", "PGO", provenance),
                                      ("ft", "FT", ft_provenance)):
         files = build_files(CANDIDATES[profile][0])
-        if manifest.get("sha256") != files["python"] or manifest.get("files") != files:
+        if (not manifest.get("complete") or
+                manifest.get("sha256") != files["python"] or manifest.get("files") != files):
             raise RuntimeError(f"Candidate {label} build is incomplete or differs from its provenance")
     if (provenance["base_commit"] != ft_provenance["base_commit"] or
             provenance["changed"] != ft_provenance["changed"] or
@@ -134,7 +171,7 @@ def candidate_provenance():
         raise RuntimeError("Candidate source file provenance is missing")
     for profile, (_, source) in CANDIDATES.items():
         for relative, digest in provenance["source_files"].items():
-            if compare.sha(source / relative) != digest:
+            if not source_matches(source / relative, digest):
                 raise RuntimeError(f"Candidate sources differ from {profile} build record: {relative}")
     return dict(provenance, ft_build=ft_provenance)
 
@@ -142,9 +179,13 @@ def candidate_provenance():
 def prepare(args, work, env):
     provenance = candidate_provenance()
     profile = args.profile
+    main_provenance = baseline_provenance(profile)
+    candidate_record = provenance["ft_build"] if profile == "ft" else provenance
+    if main_provenance["decimal_library"] != candidate_record.get("decimal_library"):
+        raise RuntimeError("The main and candidate mpdecimal libraries differ")
     cache = CACHES[profile]
     for side, (build, source) in {
-        "main": (cache / "main-build", cache / "main-src"),
+        "main": BASELINES[profile][:2],
         "candidate": CANDIDATES[profile],
     }.items():
         link(work / f"{side}-build", build)
@@ -186,21 +227,19 @@ def prepare(args, work, env):
         for field in ("script", "requirements"):
             spec[field] = str(private_workloads / Path(spec[field]).relative_to(original_workloads))
     inputs = {"profile": profile, "selection": args.benchmarks,
-              "main_provenance": read(cache / "build-plan.json"),
+              "main_provenance": main_provenance,
               "candidate_source_and_gil_build_provenance": provenance,
-              "candidate_note": f"Committed benchmark fixes: {provenance['base_commit']}; see source file and binary hashes in the build records.",
+              "candidate_note": f"Base commit: {provenance['base_commit']}; the build records include the source diff and file hashes.",
               "builds": {}, "wheels": {}, "dependency_overrides": {},
               "pyperformance": pyperformance.__version__,
               "compatibility_patches": {"workloads": workload_patches},
               "harness": {str(p): compare.sha(p) for p in (SCRIPT, WRAPPER, Path(compare.__file__), Path(compat.__file__), compare.HERE / "ft_jit_hook.py")}}
-    # The reused cache was built for an older comparison. Its candidate is
-    # unrelated to the current candidate, so don't carry that commit label over.
-    inputs["main_provenance"]["commits"].pop("candidate", None)
     for side in ("main", "candidate"):
         python = work / f"{side}-build/python"
         identity = json.loads(compare.output([python, "-c", compare.PROBE], env))
         compare.validate_build(identity)
         identity.update(path=str(python.resolve()), sha256=compare.sha(python))
+        identity["decimal"] = decimal_identity(python, env)
         inputs["builds"][side] = identity
         print(f"{profile} {side}: {identity['path']} SHA256={identity['sha256']}", flush=True)
     for key in sorted({spec["group"] for spec in suite["benchmarks"].values()}):
@@ -308,7 +347,7 @@ def run_profiles(args, argv):
         results[profile] = child(argv, profile, "report" if args.report_only else "run")
         compare.save(work / "status.json", results)
     lines = ["# main / method-jit: four existing interpreters", "",
-             "All four interpreters request PYTHON_JIT=1. The frozen main FT build does not compile executors, despite reporting JIT enabled; its baseline runs in Tier 1. Each profile has its own balanced main/candidate comparison.",
+             "The candidate uses only static method compilation and Tier 1 fallback. All four interpreters request PYTHON_JIT=1. The frozen main FT build does not compile executors, despite reporting JIT enabled; its baseline runs in Tier 1. Each profile has its own balanced main/candidate comparison.",
              "The profiles run sequentially; GIL versus FT is not a balanced causal comparison.", "",
              "| Profile | Exit status | Results |", "|---|---:|---|"]
     for profile, rc in results.items():

@@ -449,13 +449,6 @@ typedef struct _PyOptimizationConfig {
     uint16_t resume_initial_value;
     uint16_t resume_initial_backoff;
 
-    // JIT optimization thresholds
-    uint16_t side_exit_initial_value;
-    uint16_t side_exit_initial_backoff;
-
-    // Trace fitness thresholds
-    uint16_t fitness_initial;
-
     // Optimization flags
     bool specialization_enabled;
     bool uops_optimize_enabled;
@@ -1013,9 +1006,16 @@ struct _is {
         void *dict;
         Py_hash_t key_hash;
     } executor_global_misses[4];
+#ifndef Py_GIL_DISABLED
+    // Bounded feedback for bindings which repeatedly invalidate executors.
+    // Addresses identify entries only; they are never dereferenced here.
+    struct {
+        void *dict;
+        Py_hash_t key_hash;
+        uint8_t mutations;
+    } executor_global_mutations[64];
+#endif
     struct _PyExecutorObject *executor_deletion_list_head;
-    struct _PyExecutorObject *cold_executor;
-    struct _PyExecutorObject *cold_dynamic_executor;
     size_t executor_creation_counter;
     _rare_events rare_events;
     PyDict_WatchCallback builtins_dict_watcher;

@@ -11,6 +11,35 @@
 #include "pycore_pystate.h"
 #include "opcode_ids.h"
 
+static inline Py_ALWAYS_INLINE void
+_PyJit_ClearSmallFrame(PyThreadState *tstate, _PyInterpreterFrame *frame,
+                       int locals_count)
+{
+    PyObject **base = (PyObject **)frame;
+    if (frame->owner != FRAME_OWNED_BY_THREAD ||
+        FT_ATOMIC_LOAD_PTR_RELAXED(frame->frame_obj) != NULL ||
+        frame->f_locals != NULL ||
+        base == &tstate->datastack_chunk->data[0])
+    {
+        _PyEval_FrameClearAndPop(tstate, frame);
+        return;
+    }
+    assert(tstate->current_frame != frame);
+    assert(locals_count == _PyFrame_GetCode(frame)->co_nlocalsplus);
+    assert(frame->stackpointer == frame->localsplus + locals_count);
+    assert(base + _PyFrame_GetCode(frame)->co_framesize == tstate->datastack_top);
+    _PyThreadState_UpdateLastProfiledFrame(tstate, frame, tstate->current_frame);
+    frame->stackpointer = frame->localsplus;
+    /* Unrolled for small methods. Keep the generic cleanup order and keep
+     * the stack storage reserved while a finalizer can re-enter Python. */
+    for (int i = locals_count; --i >= 0;) {
+        PyStackRef_XCLOSE(frame->localsplus[i]);
+    }
+    PyStackRef_CLEAR(frame->f_funcobj);
+    PyStackRef_CLEAR(frame->f_executable);
+    tstate->datastack_top = base;
+}
+
 static inline Py_ALWAYS_INLINE _Py_CODEUNIT *
 _PyJit_CallMethodImpl(PyThreadState *tstate, _PyExecutorObject *caller_executor,
                      _PyInterpreterFrame **frame, _PyJitEntryFuncPtr enter)
@@ -59,7 +88,6 @@ _PyJit_CallMethodImpl(PyThreadState *tstate, _PyExecutorObject *caller_executor,
     Py_INCREF(caller_executor);
     _PyFrame_StackPointerInvalidate(*frame);
     tstate->current_executor = NULL;
-    tstate->jit_exit = NULL;
     _Py_CODEUNIT *next = enter(callee, *frame, stack_pointer, tstate);
     *frame = tstate->current_frame;
     /* The generated calling uop expects a synchronized frame on return

@@ -38,6 +38,9 @@
 
 #ifndef MS_WINDOWS
     #include <sys/mman.h>
+#  ifdef __x86_64__
+    static uintptr_t jit_mapping_offset;
+#  endif
 #endif
 
 static size_t
@@ -130,7 +133,25 @@ jit_alloc(size_t size)
 #else
     int flags = MAP_ANONYMOUS | MAP_PRIVATE;
     int prot = PROT_READ | PROT_WRITE;
-    unsigned char *memory = mmap(NULL, size, prot, flags, -1, 0);
+    void *hint = NULL;
+#ifdef __x86_64__
+    /* Nearby mappings let the existing relocation code use direct rel32
+     * calls into the interpreter instead of indirect calls through the GOT
+     * or per-executor trampolines.
+     * This is only a hint: never replace an existing mapping. Spread
+     * requests across a bounded window, shared atomically by interpreters. */
+    uintptr_t offset = _Py_atomic_add_uintptr(&jit_mapping_offset, size);
+    offset = (offset & (((uintptr_t)512 << 20) - 1)) +
+        ((uintptr_t)256 << 20);
+    uintptr_t base = (uintptr_t)_PyJIT_Compile & ~(get_page_size() - 1);
+    if (base <= UINTPTR_MAX - offset) {
+        hint = (void *)(base + offset);
+    }
+#endif
+    unsigned char *memory = mmap(hint, size, prot, flags, -1, 0);
+    if (memory == MAP_FAILED && hint != NULL) {
+        memory = mmap(NULL, size, prot, flags, -1, 0);
+    }
     int failed = memory == MAP_FAILED;
     if (!failed) {
         (void)_PyAnnotateMemoryMap(memory, size, "cpython:jit");
@@ -696,7 +717,7 @@ _PyJIT_Compile(_PyExecutorObject *executor, const _PyUOpInstruction trace[], siz
     unsigned char *code = memory;
     state.trampolines.mem = memory + code_size;
     unsigned char *data = memory + code_size + state.trampolines.size + code_padding;
-    assert(trace[0].opcode == _START_EXECUTOR_r00 || trace[0].opcode == _COLD_EXIT_r00 || trace[0].opcode == _COLD_DYNAMIC_EXIT_r00);
+    assert(trace[0].opcode == _START_EXECUTOR_r00);
     state.got_symbols.mem = data + data_size;
     for (size_t i = 0; i < length; i++) {
         const _PyUOpInstruction *instruction = &trace[i];
