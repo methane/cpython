@@ -48,14 +48,20 @@ whitespace splitting, partitioning, line splitting, stripping, joining,
 repetition, padding, zero filling, and tab expansion. Bounded searches translate
 character offsets to byte boundaries; returned indices count code points.
 Suffix operations locate boundaries from the end when that is closer.
+Once indexed access has materialized a FSR, prefix/suffix matching, contiguous
+slices, and forward/reverse searches reuse it. Repeated operations at character
+offsets then avoid rescanning the UTF-8 payload to locate each boundary. Search
+needles are read sequentially or converted into a temporary matching-width
+buffer, without materializing their FSR.
 
-Search, explicit-separator split/partition, replacement and tab expansion use
+UTF-8 search, explicit-separator split/partition, replacement and tab expansion use
 an internal UTF-8 view: primary storage is borrowed, while FSR-primary inputs
 are encoded into temporary owned bytes with surrogatepass. Cleanup is shared,
 and the temporary encoding never populates the public strict UTF-8 cache.
 This removes character-width dispatch and widening from these algorithms.
-FSR-primary inputs pay for encoding on each call; they are compatibility paths,
-and can be slower than their former fixed-width implementations.
+Operations without an existing-FSR path pay for encoding FSR-primary inputs
+on each call; they are compatibility paths, and can be slower than their former
+fixed-width implementations.
 
 Character predicates (`isalpha`, `isalnum`, `isspace`, `isdecimal`, `isdigit`,
 `isnumeric`, `islower`, `isupper`, `istitle`, and `isprintable`) decode sequentially

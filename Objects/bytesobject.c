@@ -2646,25 +2646,17 @@ _PyBytes_FromHex(PyObject *string, int use_bytearray)
         hexlen = PyUnicode_GET_LENGTH(string);
 
         if (!PyUnicode_IS_ASCII(string)) {
-            Py_ssize_t size;
-            const unsigned char *utf8 = (const unsigned char *)
-                _PyUnicode_GetPrimaryUTF8(string, &size);
-            Py_ssize_t i = 0;
-
+            _PyUnicodeUTF8View view;
+            if (_PyUnicodeUTF8View_Init(&view, string) < 0) {
+                return NULL;
+            }
             /* Before the first non-ASCII character, byte and character
                offsets coincide. */
-            if (utf8 != NULL) {
-                while (i < size && utf8[i] < 128) {
-                    i++;
-                }
+            Py_ssize_t i = 0;
+            while (i < view.size && (unsigned char)view.data[i] < 128) {
+                i++;
             }
-            else {
-                const void *data = PyUnicode_DATA(string);
-                int kind = PyUnicode_KIND(string);
-                while (i < hexlen && PyUnicode_READ(kind, data, i) < 128) {
-                    i++;
-                }
-            }
+            _PyUnicodeUTF8View_Clear(&view);
             invalid_char = i;
             goto error;
         }

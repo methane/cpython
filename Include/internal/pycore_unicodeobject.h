@@ -109,6 +109,24 @@ _PyUnicodeWriter_WriteCharInline(_PyUnicodeWriter *writer, Py_UCS4 ch)
     return _PyUnicodeWriter_WriteChar(writer, ch);
 }
 
+/* Allocation-free iteration over immutable Unicode objects. Start at zero;
+   position is an opaque cursor (UTF-8 bytes or FSR code points). Only reuse
+   positions produced for the same object. Next returns 1 on success, or 0
+   at end without changing position or ch. The caller keeps str alive. */
+PyAPI_FUNC(int) _PyUnicode_Next(PyObject *str, Py_ssize_t *position, Py_UCS4 *ch);
+
+/* A surrogate-preserving UTF-8 view. Init borrows primary storage or owns a
+   temporary encoding for FSR-primary strings. Keep str alive until Clear.
+   Clear is also valid after failed initialization and may be repeated. */
+typedef struct {
+    const char *data;
+    Py_ssize_t size;
+    PyObject *owner;
+} _PyUnicodeUTF8View;
+
+PyAPI_FUNC(int) _PyUnicodeUTF8View_Init(_PyUnicodeUTF8View *, PyObject *str);
+PyAPI_FUNC(void) _PyUnicodeUTF8View_Clear(_PyUnicodeUTF8View *);
+
 /* Internal UTF-8/surrogatepass storage and append operations. */
 PyAPI_FUNC(const char *) _PyUnicode_GetPrimaryUTF8(PyObject *, Py_ssize_t *);
 PyAPI_FUNC(int) _PyUnicodeWriter_WriteUTF8(_PyUnicodeWriter *, const char *,

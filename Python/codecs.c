@@ -910,9 +910,10 @@ PyObject *PyCodec_XMLCharRefReplaceErrors(PyObject *exc)
     {
         return NULL;
     }
-    if (PyUnicode_DATA(obj) == NULL) {
-        Py_DECREF(obj);
-        return NULL;
+    Py_ssize_t cursor = 0;
+    Py_UCS4 ch;
+    for (Py_ssize_t i = 0; i < start; i++) {
+        (void)_PyUnicode_Next(obj, &cursor, &ch);
     }
 
 
@@ -927,9 +928,10 @@ PyObject *PyCodec_XMLCharRefReplaceErrors(PyObject *exc)
         slen = Py_MAX(0, end - start);
     }
 
+    Py_ssize_t saved = cursor;
     Py_ssize_t ressize = 0;
     for (Py_ssize_t i = start; i < end; ++i) {
-        Py_UCS4 ch = PyUnicode_READ_CHAR(obj, i);
+        (void)_PyUnicode_Next(obj, &cursor, &ch);
         int k = n_decimal_digits_for_codepoint(ch);
         assert(k != 0);
         assert(k <= 7);
@@ -942,10 +944,11 @@ PyObject *PyCodec_XMLCharRefReplaceErrors(PyObject *exc)
         Py_DECREF(obj);
         return NULL;
     }
+    cursor = saved;
     Py_UCS1 *outp = PyUnicode_1BYTE_DATA(res);
     /* generate replacement */
     for (Py_ssize_t i = start; i < end; ++i) {
-        Py_UCS4 ch = PyUnicode_READ_CHAR(obj, i);
+        (void)_PyUnicode_Next(obj, &cursor, &ch);
         /*
          * Write the decimal representation of 'ch' to the buffer pointed by 'p'
          * using at most 7 characters prefixed by '&#' and suffixed by ';'.
@@ -981,9 +984,10 @@ _PyCodec_BackslashReplaceUnicodeEncodeError(PyObject *exc)
     {
         return NULL;
     }
-    if (PyUnicode_DATA(obj) == NULL) {
-        Py_DECREF(obj);
-        return NULL;
+    Py_ssize_t cursor = 0;
+    Py_UCS4 ch;
+    for (Py_ssize_t i = 0; i < start; i++) {
+        (void)_PyUnicode_Next(obj, &cursor, &ch);
     }
 
 
@@ -999,9 +1003,11 @@ _PyCodec_BackslashReplaceUnicodeEncodeError(PyObject *exc)
         slen = Py_MAX(0, end - start);
     }
 
+    Py_ssize_t saved = cursor;
     Py_ssize_t ressize = 0;
     for (Py_ssize_t i = start; i < end; ++i) {
-        Py_UCS4 c = PyUnicode_READ_CHAR(obj, i);
+        (void)_PyUnicode_Next(obj, &cursor, &ch);
+        Py_UCS4 c = ch;
         ressize += codec_handler_unicode_hex_width(c);
     }
     PyObject *res = PyUnicode_New(ressize, 127);
@@ -1009,9 +1015,11 @@ _PyCodec_BackslashReplaceUnicodeEncodeError(PyObject *exc)
         Py_DECREF(obj);
         return NULL;
     }
+    cursor = saved;
     Py_UCS1 *outp = PyUnicode_1BYTE_DATA(res);
     for (Py_ssize_t i = start; i < end; ++i) {
-        Py_UCS4 c = PyUnicode_READ_CHAR(obj, i);
+        (void)_PyUnicode_Next(obj, &cursor, &ch);
+        Py_UCS4 c = ch;
         codec_handler_write_unicode_hex(&outp, c);
     }
     assert(_PyUnicode_CheckConsistency(res, 1));
@@ -1262,9 +1270,10 @@ _PyCodec_SurrogatePassUnicodeEncodeError(PyObject *exc)
     {
         return NULL;
     }
-    if (PyUnicode_DATA(obj) == NULL) {
-        Py_DECREF(obj);
-        return NULL;
+    Py_ssize_t cursor = 0;
+    Py_UCS4 ch;
+    for (Py_ssize_t i = 0; i < start; i++) {
+        (void)_PyUnicode_Next(obj, &cursor, &ch);
     }
 
 
@@ -1282,7 +1291,7 @@ _PyCodec_SurrogatePassUnicodeEncodeError(PyObject *exc)
 
     unsigned char *outp = (unsigned char *)PyBytes_AsString(res);
     for (Py_ssize_t i = start; i < end; i++) {
-        Py_UCS4 ch = PyUnicode_READ_CHAR(obj, i);
+        (void)_PyUnicode_Next(obj, &cursor, &ch);
         if (!Py_UNICODE_IS_SURROGATE(ch)) {
             /* Not a surrogate, fail with original exception */
             Py_DECREF(obj);
@@ -1445,9 +1454,10 @@ _PyCodec_SurrogateEscapeUnicodeEncodeError(PyObject *exc)
     {
         return NULL;
     }
-    if (PyUnicode_DATA(obj) == NULL) {
-        Py_DECREF(obj);
-        return NULL;
+    Py_ssize_t cursor = 0;
+    Py_UCS4 ch;
+    for (Py_ssize_t i = 0; i < start; i++) {
+        (void)_PyUnicode_Next(obj, &cursor, &ch);
     }
 
 
@@ -1459,7 +1469,7 @@ _PyCodec_SurrogateEscapeUnicodeEncodeError(PyObject *exc)
 
     char *outp = PyBytesWriter_GetData(writer);
     for (Py_ssize_t i = start; i < end; i++) {
-        Py_UCS4 ch = PyUnicode_READ_CHAR(obj, i);
+        (void)_PyUnicode_Next(obj, &cursor, &ch);
         if (ch < 0xdc80 || ch > 0xdcff) {
             /* Not a UTF-8b surrogate, fail with original exception. */
             Py_DECREF(obj);

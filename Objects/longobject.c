@@ -2056,20 +2056,16 @@ pylong_int_to_decimal_string(PyObject *aa,
     }
     else if (bytes_writer) {
         Py_ssize_t size = PyUnicode_GET_LENGTH(s);
-        const void *data = PyUnicode_DATA(s);
-        if (data == NULL) {
-            goto error;
-        }
-        int kind = PyUnicode_KIND(s);
         *bytes_str = PyBytesWriter_GrowAndUpdatePointer(bytes_writer, size,
                                                         *bytes_str);
         if (*bytes_str == NULL) {
             goto error;
         }
         char *p = *bytes_str;
-        for (Py_ssize_t i=0; i < size; i++) {
-            Py_UCS4 ch = PyUnicode_READ(kind, data, i);
-            *p++ = (char) ch;
+        Py_ssize_t cursor = 0;
+        Py_UCS4 ch;
+        while (_PyUnicode_Next(s, &cursor, &ch)) {
+            *p++ = (char)ch;
         }
         (*bytes_str) = p;
         goto success;
