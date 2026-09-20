@@ -187,6 +187,16 @@ raw_free(void *ptr)
 static char *
 tracemalloc_encode_filename(PyObject *obj)
 {
+    PyASCIIObject *ascii = (PyASCIIObject *)obj;
+    if (ascii->state.utf8_storage && !ascii->state.fsr_primary) {
+        PyCompactUnicodeObject *u = (PyCompactUnicodeObject *)obj;
+        size_t size = (size_t)u->utf8_length + 1;
+        char *buffer = raw_malloc(size);
+        if (buffer != NULL) {
+            memcpy(buffer, u + 1, size);
+        }
+        return buffer;
+    }
     int kind = PyUnicode_KIND(obj);
     const void *data = PyUnicode_DATA(obj);
     Py_ssize_t length = PyUnicode_GET_LENGTH(obj);

@@ -282,7 +282,7 @@ _set_char_or_none(const char *name, Py_UCS4 *target, PyObject *src, Py_UCS4 dflt
                          name, len);
             return -1;
         }
-        *target = PyUnicode_READ_CHAR(src, 0);
+        *target = _PyUnicode_ReadCharNoAlloc(src, 0);
     }
     return 0;
 }
@@ -312,7 +312,7 @@ _set_char(const char *name, Py_UCS4 *target, PyObject *src, Py_UCS4 dflt)
                          name, len);
             return -1;
         }
-        *target = PyUnicode_READ_CHAR(src, 0);
+        *target = _PyUnicode_ReadCharNoAlloc(src, 0);
     }
     return 0;
 }
@@ -363,7 +363,7 @@ dialect_init_special_chars_cache(DialectObj *self)
     dialect_add_special_char(self, '\n');
     PyObject *lt = self->lineterminator;
     for (Py_ssize_t i = 0; i < PyUnicode_GET_LENGTH(lt); i++) {
-        dialect_add_special_char(self, PyUnicode_READ_CHAR(lt, i));
+        dialect_add_special_char(self, _PyUnicode_ReadCharNoAlloc(lt, i));
     }
 }
 
@@ -1053,6 +1053,10 @@ Reader_iternext_lock_held(PyObject *op)
         ++self->line_num;
         kind = PyUnicode_KIND(lineobj);
         data = PyUnicode_DATA(lineobj);
+        if (data == NULL) {
+            Py_DECREF(lineobj);
+            return NULL;
+        }
         pos = 0;
         linelen = PyUnicode_GET_LENGTH(lineobj);
         while (linelen--) {
@@ -1340,6 +1344,9 @@ join_append(WriterObj *self, PyObject *field, int quoted)
     if (field != NULL) {
         field_kind = PyUnicode_KIND(field);
         field_data = PyUnicode_DATA(field);
+        if (field_data == NULL) {
+            return 0;
+        }
         field_len = PyUnicode_GET_LENGTH(field);
     }
     if (!field_len && dialect->delimiter == ' ' && dialect->skipinitialspace) {
@@ -1388,6 +1395,9 @@ join_append_lineterminator(WriterObj *self)
 
     term_kind = PyUnicode_KIND(self->dialect->lineterminator);
     term_data = PyUnicode_DATA(self->dialect->lineterminator);
+    if (term_data == NULL) {
+        return 0;
+    }
     for (i = 0; i < terminator_len; i++)
         self->rec[self->rec_len + i] = PyUnicode_READ(term_kind, term_data, i);
     self->rec_len += terminator_len;

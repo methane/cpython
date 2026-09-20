@@ -2949,6 +2949,9 @@ my_basename(PyObject *name)
 
     kind = PyUnicode_KIND(name);
     data = PyUnicode_DATA(name);
+    if (data == NULL) {
+        return NULL;
+    }
     size = PyUnicode_GET_LENGTH(name);
     offset = 0;
     for(i=0; i < size; i++) {

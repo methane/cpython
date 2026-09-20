@@ -8,13 +8,19 @@ Unicode Objects and Codecs
 Unicode Objects
 ^^^^^^^^^^^^^^^
 
-Since the implementation of :pep:`393` in Python 3.3, Unicode objects internally
-use a variety of representations, in order to allow handling the complete range
-of Unicode characters while staying memory efficient.  There are special cases
-for strings where all code points are below 128, 256, or 65536; otherwise, code
-points must be below 1114112 (which is the full Unicode range).
+Unicode objects normally store UTF-8 directly after the object header.
+ASCII strings share this storage with their one-byte code point representation.
+For other strings, the fixed-width representation introduced by :pep:`393`
+is generated on demand and retained until the object is destroyed.
+Its elements have type :c:type:`Py_UCS1`, :c:type:`Py_UCS2`, or :c:type:`Py_UCS4`.
 
-UTF-8 representation is created on demand and cached in the Unicode object.
+Python strings may contain surrogate code points. Internally, these are encoded
+individually using the ``surrogatepass`` convention. This does not change the
+strict UTF-8 encoding APIs, which continue to reject strings containing
+surrogates. String lengths and indices always count code points, not UTF-8 bytes.
+
+Strings under construction with :c:func:`PyUnicode_New` and Unicode subclasses
+may instead own a fixed-width buffer and generate UTF-8 on demand.
 
 .. note::
    The :c:type:`Py_UNICODE` representation has been removed since Python 3.12
@@ -115,6 +121,12 @@ access to internal read-only data of Unicode objects:
    canonical representation has the correct character size; use
    :c:func:`PyUnicode_KIND` to select the right function.
 
+   These functions may allocate the fixed-width buffer. On failure they return
+   ``NULL`` with an exception set. Check the result before dereferencing it.
+
+   .. versionchanged:: 3.16
+      The fixed-width representation is generated on demand.
+
    .. versionadded:: 3.3
 
 
@@ -133,16 +145,26 @@ access to internal read-only data of Unicode objects:
 .. c:function:: int PyUnicode_KIND(PyObject *unicode)
 
    Return one of the PyUnicode kind constants (see above) that indicate how many
-   bytes per character this Unicode object uses to store its data.  *unicode* has to
-   be a Unicode object in the "canonical" representation (not checked).
+   bytes per character its fixed-width representation uses. This metadata query
+   does not allocate or generate that representation. *unicode* must be a Unicode
+   object (not checked).
 
    .. versionadded:: 3.3
 
 
 .. c:function:: void* PyUnicode_DATA(PyObject *unicode)
 
-   Return a void pointer to the raw Unicode buffer.  *unicode* has to be a Unicode
-   object in the "canonical" representation (not checked).
+   Return a pointer to the fixed-width code point buffer, generating it if
+   necessary. *unicode* must be a Unicode object (not checked by the macro).
+   On allocation failure, return ``NULL`` with an exception set. The pointer
+   remains valid while the caller holds a reference to the unchanged object.
+
+   The first request can take time and memory proportional to the string length.
+   Subsequent requests reuse the buffer. This buffer must not be modified unless
+   the string is being constructed with :c:func:`PyUnicode_New`.
+
+   .. versionchanged:: 3.16
+      May allocate and fail. Callers must check the returned pointer.
 
    .. versionadded:: 3.3
 
@@ -154,8 +176,10 @@ access to internal read-only data of Unicode objects:
 
    The *kind* value and *data* pointer must have been obtained from a
    string using :c:func:`PyUnicode_KIND` and :c:func:`PyUnicode_DATA`
-   respectively. You must hold a reference to that string while calling
-   :c:func:`!PyUnicode_WRITE`. All requirements of
+   respectively, and *data* must not be ``NULL``. Direct writes require a
+   construction buffer obtained from :c:func:`PyUnicode_New`; a lazily generated
+   read buffer is not writable. You must hold a reference to the string while
+   calling :c:func:`!PyUnicode_WRITE`. All requirements of
    :c:func:`PyUnicode_WriteChar` also apply.
 
    The function performs no checks for any of its requirements,
@@ -175,9 +199,14 @@ access to internal read-only data of Unicode objects:
 
 .. c:function:: Py_UCS4 PyUnicode_READ_CHAR(PyObject *unicode, Py_ssize_t index)
 
-   Read a character from a Unicode object *unicode*, which must be in the "canonical"
-   representation.  This is less efficient than :c:func:`PyUnicode_READ` if you
-   do multiple consecutive reads.
+   Read a code point, generating the fixed-width representation if necessary.
+   The caller must provide a Unicode object and a valid index. On allocation
+   failure, return ``(Py_UCS4)-1`` with an exception set.
+   For consecutive reads, obtain and check :c:func:`PyUnicode_DATA` once and use
+   :c:func:`PyUnicode_READ` with the cached pointer and kind.
+
+   .. versionchanged:: 3.16
+      May fail when generating the fixed-width representation.
 
    .. versionadded:: 3.3
 
@@ -782,6 +811,8 @@ APIs:
 
    The string must not have been “used” yet.
    See :c:func:`PyUnicode_New` for details.
+   A private, unused UTF-8 string is converted to writable fixed-width storage
+   before the write. This conversion can fail with :exc:`MemoryError`.
 
    .. versionadded:: 3.3
 
@@ -790,7 +821,7 @@ APIs:
 
    Read a character from a string.  This function checks that *unicode* is a
    Unicode object and the index is not out of bounds, in contrast to
-   :c:func:`PyUnicode_READ_CHAR`, which performs no error checking.
+   :c:func:`PyUnicode_READ_CHAR`, which does not validate its object or index.
 
    Return character on success, ``-1`` on error with an exception set.
 

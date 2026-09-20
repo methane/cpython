@@ -199,6 +199,7 @@ extern PyTypeObject _PyExc_MemoryError;
             .compact = 1, \
             .ascii = (ASCII), \
             .statically_allocated = 1, \
+            .utf8_storage = !(ASCII), \
         }, \
     }
 #define _PyASCIIObject_INIT(LITERAL) \
@@ -214,10 +215,11 @@ extern PyTypeObject _PyExc_MemoryError;
     { \
         ._latin1 = { \
             ._base = _PyUnicode_ASCII_BASE_INIT((LITERAL), 0), \
-            .utf8 = (UTF8), \
+            .fsr = (LITERAL), \
             .utf8_length = sizeof(UTF8) - 1, \
+            .inline_length = sizeof(UTF8) - 1, \
         }, \
-        ._data = (LITERAL), \
+        ._data = (UTF8), \
     }
 
 #ifdef __cplusplus

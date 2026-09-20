@@ -150,6 +150,9 @@ class PrettyPrintTests(DebuggerTests):
         # Unified Ideographs area, followed by U+3051 HIRAGANA LETTER KE)
         check_repr('\u6587\u5b57\u5316\u3051')
 
+        # The UTF-8 payload exceeds the debugger's code point read limit.
+        check_repr('\u65e5' * 400)
+
         # Test a character outside the BMP:
         #    U+1D121 MUSICAL SYMBOL C CLEF
         # This is:

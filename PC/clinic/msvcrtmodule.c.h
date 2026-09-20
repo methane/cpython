@@ -417,6 +417,9 @@ msvcrt_putwch(PyObject *module, PyObject *arg)
         goto exit;
     }
     unicode_char = PyUnicode_READ_CHAR(arg, 0);
+    if ((Py_UCS4)unicode_char == (Py_UCS4)-1) {
+        goto exit;
+    }
     return_value = msvcrt_putwch_impl(module, unicode_char);
 
 exit:
@@ -509,6 +512,9 @@ msvcrt_ungetwch(PyObject *module, PyObject *arg)
         goto exit;
     }
     unicode_char = PyUnicode_READ_CHAR(arg, 0);
+    if ((Py_UCS4)unicode_char == (Py_UCS4)-1) {
+        goto exit;
+    }
     return_value = msvcrt_ungetwch_impl(module, unicode_char);
 
 exit:
@@ -743,4 +749,4 @@ exit:
 #ifndef MSVCRT_GETERRORMODE_METHODDEF
     #define MSVCRT_GETERRORMODE_METHODDEF
 #endif /* !defined(MSVCRT_GETERRORMODE_METHODDEF) */
-/*[clinic end generated code: output=58c1771c8b9a209b input=a9049054013a1b77]*/
+/*[clinic end generated code: output=c23099b7cb7fb27b input=a9049054013a1b77]*/

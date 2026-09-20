@@ -2326,6 +2326,9 @@ numeric_as_ascii(PyObject *u, int strip_ws, int ignore_underscores)
 
     kind = PyUnicode_KIND(u);
     data = PyUnicode_DATA(u);
+    if (data == NULL) {
+        return NULL;
+    }
     len =  PyUnicode_GET_LENGTH(u);
 
     cp = res = PyMem_Malloc(len+1);

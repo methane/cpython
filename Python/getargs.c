@@ -989,6 +989,9 @@ convertsimple(PyObject *arg, const char **p_format, va_list *p_va, int flags,
 
         kind = PyUnicode_KIND(arg);
         data = PyUnicode_DATA(arg);
+        if (data == NULL) {
+            RETURN_ERR_OCCURRED;
+        }
         *p = PyUnicode_READ(kind, data, 0);
         break;
     }

@@ -134,7 +134,7 @@ _Py_strhex_impl(const char* argbuf, Py_ssize_t arglen,
                 PyErr_SetString(PyExc_ValueError, "sep must be ASCII.");
                 return NULL;
             }
-            sep_char = PyUnicode_READ_CHAR(sep, 0);
+            sep_char = _PyUnicode_ReadCharNoAlloc(sep, 0);
         }
         else if (PyBytes_Check(sep)) {
             sep_char = PyBytes_AS_STRING(sep)[0];

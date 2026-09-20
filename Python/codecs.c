@@ -910,6 +910,11 @@ PyObject *PyCodec_XMLCharRefReplaceErrors(PyObject *exc)
     {
         return NULL;
     }
+    if (PyUnicode_DATA(obj) == NULL) {
+        Py_DECREF(obj);
+        return NULL;
+    }
+
 
     // The number of characters that each character 'ch' contributes
     // in the result is 2 + k + 1, where k = min{t >= 1 | 10^t > ch}
@@ -976,6 +981,11 @@ _PyCodec_BackslashReplaceUnicodeEncodeError(PyObject *exc)
     {
         return NULL;
     }
+    if (PyUnicode_DATA(obj) == NULL) {
+        Py_DECREF(obj);
+        return NULL;
+    }
+
 
     // The number of characters that each character 'ch' contributes
     // in the result is 1 + 1 + k, where k >= min{t >= 1 | 16^t > ch}
@@ -1091,6 +1101,11 @@ PyObject *PyCodec_NameReplaceErrors(PyObject *exc)
     {
         return NULL;
     }
+    if (PyUnicode_DATA(obj) == NULL) {
+        Py_DECREF(obj);
+        return NULL;
+    }
+
 
     char buffer[256]; /* NAME_MAXLEN in unicodename_db.h */
     Py_ssize_t imax = start, ressize = 0, replsize;
@@ -1247,6 +1262,11 @@ _PyCodec_SurrogatePassUnicodeEncodeError(PyObject *exc)
     {
         return NULL;
     }
+    if (PyUnicode_DATA(obj) == NULL) {
+        Py_DECREF(obj);
+        return NULL;
+    }
+
 
     if (slen > PY_SSIZE_T_MAX / bytelength) {
         end = start + PY_SSIZE_T_MAX / bytelength;
@@ -1425,6 +1445,11 @@ _PyCodec_SurrogateEscapeUnicodeEncodeError(PyObject *exc)
     {
         return NULL;
     }
+    if (PyUnicode_DATA(obj) == NULL) {
+        Py_DECREF(obj);
+        return NULL;
+    }
+
 
     PyBytesWriter *writer = PyBytesWriter_Create(slen);
     if (writer == NULL) {

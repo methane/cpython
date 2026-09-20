@@ -2506,7 +2506,7 @@ class StrTest(string_tests.StringLikeTest,
 
     def test_raiseMemError(self):
         asciifields = "nnb"
-        compactfields = asciifields + "nP"
+        compactfields = asciifields + "nPPn"
         ascii_struct_size = support.calcobjsize(asciifields)
         compact_struct_size = support.calcobjsize(compactfields)
 
@@ -2516,10 +2516,10 @@ class StrTest(string_tests.StringLikeTest,
                 char_size = 1  # sizeof(Py_UCS1)
                 struct_size = ascii_struct_size
             elif code < 0x100:
-                char_size = 1  # sizeof(Py_UCS1)
+                char_size = 2  # UTF-8 Latin-1
                 struct_size = compact_struct_size
             elif code < 0x10000:
-                char_size = 2  # sizeof(Py_UCS2)
+                char_size = 3  # UTF-8 U+20AC
                 struct_size = compact_struct_size
             else:
                 char_size = 4  # sizeof(Py_UCS4)
@@ -2537,7 +2537,7 @@ class StrTest(string_tests.StringLikeTest,
                 # self-check
                 self.assertEqual(
                     sys.getsizeof(char * 42),
-                    struct_size + (char_size * (42 + 1))
+                    struct_size + char_size * 42 + 1
                 )
                 self.assertRaises(MemoryError, alloc)
                 self.assertRaises(MemoryError, alloc)

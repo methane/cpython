@@ -3,6 +3,41 @@
 #include "parts.h"
 #include "util.h"
 
+/* Inspect storage without requesting an FSR or hashing the string. */
+static PyObject *
+unicode_storage(PyObject *self, PyObject *obj)
+{
+    if (!PyUnicode_Check(obj)) {
+        PyErr_SetString(PyExc_TypeError, "expected str");
+        return NULL;
+    }
+    int utf8, compact, surrogates, cached;
+    Py_ssize_t size;
+    Py_BEGIN_CRITICAL_SECTION(obj);
+    PyASCIIObject *ascii = (PyASCIIObject *)obj;
+    utf8 = ascii->state.utf8_storage;
+    compact = ascii->state.compact;
+    surrogates = ascii->state.has_surrogates;
+    cached = !utf8 || ((PyCompactUnicodeObject *)obj)->fsr != NULL;
+    size = ascii->state.ascii ? ascii->length :
+        ((PyCompactUnicodeObject *)obj)->utf8_length;
+    Py_END_CRITICAL_SECTION();
+    return Py_BuildValue("(iiiin)", utf8, compact, surrogates, cached, size);
+}
+
+static PyObject *
+unicode_materialize_fsr(PyObject *self, PyObject *obj)
+{
+    if (!PyUnicode_Check(obj)) {
+        PyErr_SetString(PyExc_TypeError, "expected str");
+        return NULL;
+    }
+    if (PyUnicode_DATA(obj) == NULL) {
+        return NULL;
+    }
+    Py_RETURN_NONE;
+}
+
 /* Test PyUnicode_New() */
 static PyObject *
 unicode_new(PyObject *self, PyObject *args)
@@ -632,6 +667,8 @@ static PyType_Spec Writer_spec = {
 
 
 static PyMethodDef TestMethods[] = {
+    {"unicode_storage", unicode_storage, METH_O},
+    {"unicode_materialize_fsr", unicode_materialize_fsr, METH_O},
     {"unicode_new",              unicode_new,                    METH_VARARGS},
     {"unicode_fill",             unicode_fill,                   METH_VARARGS},
     {"unicode_fromkindanddata",  unicode_fromkindanddata,        METH_VARARGS},

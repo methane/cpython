@@ -226,6 +226,9 @@ ascii_escape_unicode_and_size(const void *input, int kind, Py_ssize_t input_char
 static PyObject *
 ascii_escape_unicode(PyObject *pystr)
 {
+    if (PyUnicode_DATA(pystr) == NULL) {
+        return NULL;
+    }
     /* Take a PyUnicode pystr and return a new ASCII-only escaped PyUnicode */
     Py_ssize_t input_chars = PyUnicode_GET_LENGTH(pystr);
     const void *input = PyUnicode_DATA(pystr);
@@ -242,6 +245,9 @@ ascii_escape_unicode(PyObject *pystr)
 static int
 write_escaped_ascii(PyUnicodeWriter *writer, PyObject *pystr)
 {
+    if (PyUnicode_DATA(pystr) == NULL) {
+        return -1;
+    }
     Py_ssize_t input_chars;
     const void *input;
     int kind;
@@ -372,6 +378,9 @@ escape_unicode_and_size(const void *input, int kind, Py_UCS4 maxchar, Py_ssize_t
 static PyObject *
 escape_unicode(PyObject *pystr)
 {
+    if (PyUnicode_DATA(pystr) == NULL) {
+        return NULL;
+    }
     /* Take a PyUnicode pystr and return a new escaped PyUnicode */
     Py_ssize_t input_chars = PyUnicode_GET_LENGTH(pystr);
     const void *input = PyUnicode_DATA(pystr);
@@ -389,6 +398,9 @@ escape_unicode(PyObject *pystr)
 static int
 write_escaped_unicode(PyUnicodeWriter *writer, PyObject *pystr)
 {
+    if (PyUnicode_DATA(pystr) == NULL) {
+        return -1;
+    }
     Py_ssize_t input_chars = PyUnicode_GET_LENGTH(pystr);
     const void *input = PyUnicode_DATA(pystr);
     int kind = PyUnicode_KIND(pystr);
@@ -491,6 +503,9 @@ scanstring_unicode(PyObject *pystr, Py_ssize_t end, int strict, Py_ssize_t *next
 
     len = PyUnicode_GET_LENGTH(pystr);
     buf = PyUnicode_DATA(pystr);
+    if (buf == NULL) {
+        return NULL;
+    }
     kind = PyUnicode_KIND(pystr);
 
     if (end < 0 || len < end) {
@@ -761,6 +776,9 @@ _parse_object_unicode(PyScannerObject *s, PyObject *memo, PyObject *pystr, Py_ss
     Py_ssize_t comma_idx;
 
     str = PyUnicode_DATA(pystr);
+    if (str == NULL) {
+        return NULL;
+    }
     kind = PyUnicode_KIND(pystr);
     end_idx = PyUnicode_GET_LENGTH(pystr) - 1;
 
@@ -889,11 +907,13 @@ _parse_array_unicode(PyScannerObject *s, PyObject *memo, PyObject *pystr, Py_ssi
     Py_ssize_t next_idx;
     Py_ssize_t comma_idx;
 
+    str = PyUnicode_DATA(pystr);
+    if (str == NULL) {
+        return NULL;
+    }
     rval = PyList_New(0);
     if (rval == NULL)
         return NULL;
-
-    str = PyUnicode_DATA(pystr);
     kind = PyUnicode_KIND(pystr);
     end_idx = PyUnicode_GET_LENGTH(pystr) - 1;
 
@@ -1001,6 +1021,9 @@ _match_number_unicode(PyScannerObject *s, PyObject *pystr, Py_ssize_t start, Py_
     PyObject *custom_func;
 
     str = PyUnicode_DATA(pystr);
+    if (str == NULL) {
+        return NULL;
+    }
     kind = PyUnicode_KIND(pystr);
     end_idx = PyUnicode_GET_LENGTH(pystr) - 1;
 
@@ -1110,6 +1133,9 @@ scan_once_unicode(PyScannerObject *s, PyObject *memo, PyObject *pystr, Py_ssize_
     Py_ssize_t length;
 
     str = PyUnicode_DATA(pystr);
+    if (str == NULL) {
+        return NULL;
+    }
     kind = PyUnicode_KIND(pystr);
     length = PyUnicode_GET_LENGTH(pystr);
 

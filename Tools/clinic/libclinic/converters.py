@@ -351,6 +351,9 @@ class int_converter(CConverter):
                     goto exit;
                 }}}}
                 {paramname} = PyUnicode_READ_CHAR({argname}, 0);
+                if ((Py_UCS4){paramname} == (Py_UCS4)-1) {{{{
+                    goto exit;
+                }}}}
                 """,
                 argname=argname,
                 displayname=displayname,

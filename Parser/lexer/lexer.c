@@ -92,7 +92,7 @@ verify_identifier(struct tok_state *tok)
     assert(invalid >= 0);
     assert(PyUnicode_GET_LENGTH(s) > 0);
     if (invalid < PyUnicode_GET_LENGTH(s)) {
-        Py_UCS4 ch = PyUnicode_READ_CHAR(s, invalid);
+        Py_UCS4 ch = _PyUnicode_ReadCharNoAlloc(s, invalid);
         if (invalid + 1 < PyUnicode_GET_LENGTH(s)) {
             /* Determine the offset in UTF-8 encoded input */
             Py_SETREF(s, PyUnicode_Substring(s, 0, invalid + 1));

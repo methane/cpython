@@ -911,6 +911,9 @@ static PyObject *
 build_string(SubString *input, PyObject *args, PyObject *kwargs,
              int recursion_depth, AutoNumber *auto_number)
 {
+    if (PyUnicode_Check(input->str) && PyUnicode_DATA(input->str) == NULL) {
+        return NULL;
+    }
     _PyUnicodeWriter writer;
 
     /* check the recursion level */
@@ -1103,6 +1106,9 @@ static PyTypeObject PyFormatterIter_Type = {
 static PyObject *
 formatter_parser(PyObject *Py_UNUSED(module), PyObject *self)
 {
+    if (PyUnicode_Check(self) && PyUnicode_DATA(self) == NULL) {
+        return NULL;
+    }
     formatteriterobject *it;
 
     if (!PyUnicode_Check(self)) {
@@ -1239,6 +1245,9 @@ static PyTypeObject PyFieldNameIter_Type = {
 static PyObject *
 formatter_field_name_split(PyObject *Py_UNUSED(module), PyObject *self)
 {
+    if (PyUnicode_Check(self) && PyUnicode_DATA(self) == NULL) {
+        return NULL;
+    }
     SubString first;
     Py_ssize_t first_idx;
     fieldnameiterobject *it;

@@ -503,9 +503,9 @@ display_source_line(PyObject *f, PyObject *filename, int lineno, int indent,
 
     /* Do not attempt to open things like <string> or <stdin> */
     assert(PyUnicode_Check(filename));
-    if (PyUnicode_READ_CHAR(filename, 0) == '<') {
+    if (_PyUnicode_ReadCharNoAlloc(filename, 0) == '<') {
         Py_ssize_t len = PyUnicode_GET_LENGTH(filename);
-        if (len > 0 && PyUnicode_READ_CHAR(filename, len - 1) == '>') {
+        if (len > 0 && _PyUnicode_ReadCharNoAlloc(filename, len - 1) == '>') {
             return 0;
         }
     }
@@ -591,6 +591,10 @@ display_source_line(PyObject *f, PyObject *filename, int lineno, int indent,
     /* remove the indentation of the line */
     kind = PyUnicode_KIND(lineobj);
     data = PyUnicode_DATA(lineobj);
+    if (data == NULL) {
+        Py_DECREF(lineobj);
+        return -1;
+    }
     for (i=0; i < PyUnicode_GET_LENGTH(lineobj); i++) {
         Py_UCS4 ch = PyUnicode_READ(kind, data, i);
         if (ch != ' ' && ch != '\t' && ch != '\014')
@@ -957,7 +961,7 @@ _Py_DumpASCII(int fd, PyObject *text)
     }
 
     for (i=0; i < size; i++) {
-        ch = PyUnicode_READ(kind, data, i);
+        ch = _PyUnicode_ReadCharNoAlloc(text, i);
         if (' ' <= ch && ch <= 126) {
             /* printable ASCII character */
             dump_char(fd, (char)ch);

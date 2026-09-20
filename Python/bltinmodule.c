@@ -2221,7 +2221,7 @@ builtin_ord(PyObject *module, PyObject *c)
     else if (PyUnicode_Check(c)) {
         size = PyUnicode_GET_LENGTH(c);
         if (size == 1) {
-            ord = (long)PyUnicode_READ_CHAR(c, 0);
+            ord = (long)_PyUnicode_ReadCharNoAlloc(c, 0);
             return PyLong_FromLong(ord);
         }
     }

@@ -2849,6 +2849,9 @@ raw_unicode_escape(PyObject *obj)
 {
     Py_ssize_t size = PyUnicode_GET_LENGTH(obj);
     const void *data = PyUnicode_DATA(obj);
+    if (data == NULL) {
+        return NULL;
+    }
     int kind = PyUnicode_KIND(obj);
 
     Py_ssize_t alloc = size;

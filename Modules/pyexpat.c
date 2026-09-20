@@ -1606,6 +1606,10 @@ PyUnknownEncodingHandler(void *encodingHandlerData,
 
     kind = PyUnicode_KIND(u);
     data = PyUnicode_DATA(u);
+    if (data == NULL) {
+        Py_DECREF(u);
+        return XML_STATUS_ERROR;
+    }
     for (i = 0; i < 256; i++) {
         Py_UCS4 ch = PyUnicode_READ(kind, data, i);
         if (ch != Py_UNICODE_REPLACEMENT_CHARACTER)

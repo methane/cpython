@@ -119,7 +119,7 @@ static inline void
 _PyUnicodeWriter_Update(_PyUnicodeWriter *writer)
 {
     writer->maxchar = PyUnicode_MAX_CHAR_VALUE(writer->buffer);
-    writer->data = PyUnicode_DATA(writer->buffer);
+    writer->data = writer->readonly ? NULL : PyUnicode_DATA(writer->buffer);
 
     if (!writer->readonly) {
         writer->kind = PyUnicode_KIND(writer->buffer);
@@ -612,7 +612,7 @@ _PyUnicodeWriter_Finish(_PyUnicodeWriter *writer)
     // Check for buffer overflow
     if (writer->buffer != NULL) {
         Py_ssize_t pos = PyUnicode_GET_LENGTH(writer->buffer);
-        Py_UCS4 ch = PyUnicode_READ_CHAR(writer->buffer, pos);
+        Py_UCS4 ch = _PyUnicode_ReadCharNoAlloc(writer->buffer, pos);
         if (ch != 0) {
             _Py_FatalErrorFormat(__func__,
                                  "Buffer overflow detected in "
@@ -633,7 +633,7 @@ _PyUnicodeWriter_Finish(_PyUnicodeWriter *writer)
     if (writer->readonly) {
         assert(PyUnicode_GET_LENGTH(str) == writer->pos);
         assert(_PyUnicode_CheckConsistency(str, 1));
-        return str;
+        return _PyUnicode_Result(str);
     }
 
     if (PyUnicode_GET_LENGTH(str) != writer->pos) {

@@ -6169,10 +6169,9 @@ is_dunder_name(PyObject *name)
     int kind = PyUnicode_KIND(name);
     /* Special names contain at least "__x__" and are always ASCII. */
     if (length > 4 && kind == PyUnicode_1BYTE_KIND) {
-        const Py_UCS1 *characters = PyUnicode_1BYTE_DATA(name);
         return (
-            ((characters[length-2] == '_') && (characters[length-1] == '_')) &&
-            ((characters[0] == '_') && (characters[1] == '_'))
+            ((_PyUnicode_ReadCharNoAlloc(name, length-2) == '_') && (_PyUnicode_ReadCharNoAlloc(name, length-1) == '_')) &&
+            ((_PyUnicode_ReadCharNoAlloc(name, 0) == '_') && (_PyUnicode_ReadCharNoAlloc(name, 1) == '_'))
         );
     }
     return 0;

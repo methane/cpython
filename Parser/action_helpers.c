@@ -1045,7 +1045,7 @@ _PyPegen_check_fstring_conversion(Parser *p, Token* conv_token, expr_ty conv)
         );
     }
 
-    Py_UCS4 first = PyUnicode_READ_CHAR(conv->v.Name.id, 0);
+    Py_UCS4 first = _PyUnicode_ReadCharNoAlloc(conv->v.Name.id, 0);
     if (PyUnicode_GET_LENGTH(conv->v.Name.id) > 1 ||
             !(first == 's' || first == 'r' || first == 'a')) {
         RAISE_SYNTAX_ERROR_KNOWN_LOCATION(conv,
@@ -1566,7 +1566,7 @@ _get_interpolation_conversion(Parser *p, Token *debug, ResultTokenWithMetadata *
     if (conversion != NULL) {
         expr_ty conversion_expr = (expr_ty) conversion->result;
         assert(conversion_expr->kind == Name_kind);
-        Py_UCS4 first = PyUnicode_READ_CHAR(conversion_expr->v.Name.id, 0);
+        Py_UCS4 first = _PyUnicode_ReadCharNoAlloc(conversion_expr->v.Name.id, 0);
         return Py_SAFE_DOWNCAST(first, Py_UCS4, int);
     }
     else if (debug && !format) {
@@ -1586,7 +1586,7 @@ _strip_interpolation_debug_expr(PyObject *exprstr)
     while (len > 0) {
         int has_newline = 0;
         while (len > 0) {
-            Py_UCS4 c = PyUnicode_READ_CHAR(exprstr, len - 1);
+            Py_UCS4 c = _PyUnicode_ReadCharNoAlloc(exprstr, len - 1);
             if (!_PyUnicode_IsWhitespace(c)) {
                 break;
             }
@@ -1596,7 +1596,7 @@ _strip_interpolation_debug_expr(PyObject *exprstr)
             len--;
         }
         if (!has_newline || len == 0 ||
-            PyUnicode_READ_CHAR(exprstr, len - 1) != '\\')
+            _PyUnicode_ReadCharNoAlloc(exprstr, len - 1) != '\\')
         {
             break;
         }
@@ -1604,7 +1604,7 @@ _strip_interpolation_debug_expr(PyObject *exprstr)
     }
 
     /* Preserve unexpected metadata instead of dropping source text. */
-    if (len == 0 || PyUnicode_READ_CHAR(exprstr, len - 1) != '=') {
+    if (len == 0 || _PyUnicode_ReadCharNoAlloc(exprstr, len - 1) != '=') {
         return Py_NewRef(exprstr);
     }
 

@@ -521,6 +521,9 @@ multibytecodec_encode(const MultibyteCodec *codec,
     buf.inlen = datalen;
     kind = PyUnicode_KIND(buf.inobj);
     data = PyUnicode_DATA(buf.inobj);
+    if (data == NULL) {
+        goto errorexit;
+    }
 
     if (datalen > (PY_SSIZE_T_MAX - 16) / 2) {
         PyErr_NoMemory();

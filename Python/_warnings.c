@@ -687,6 +687,9 @@ show_warning(PyThreadState *tstate, PyObject *filename, int lineno,
 
         kind = PyUnicode_KIND(sourceline);
         data = PyUnicode_DATA(sourceline);
+        if (data == NULL) {
+            goto error;
+        }
         len = PyUnicode_GET_LENGTH(sourceline);
         for (i=0; i<len; i++) {
             ch = PyUnicode_READ(kind, data, i);

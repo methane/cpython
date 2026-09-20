@@ -925,6 +925,10 @@ time_strftime(PyObject *module, PyObject *args)
         PyErr_NoMemory();
         return NULL;
     }
+    if (PyUnicode_DATA(format_arg) == NULL) {
+        PyMem_Free(format);
+        return NULL;
+    }
     PyUnicodeWriter *writer = PyUnicodeWriter_Create(0);
     if (writer == NULL) {
         goto error;

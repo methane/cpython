@@ -345,6 +345,10 @@ _PyIncrementalNewlineDecoder_decode(PyObject *myself,
 
     if (check_decoded(output) < 0)
         return NULL;
+    if (PyUnicode_DATA(output) == NULL) {
+        Py_DECREF(output);
+        return NULL;
+    }
 
     output_len = PyUnicode_GET_LENGTH(output);
     if (self->pendingcr && (final || output_len > 0)) {
@@ -2340,6 +2344,9 @@ _textiowrapper_readline(textio *self, Py_ssize_t limit)
         }
 
         ptr = PyUnicode_DATA(line);
+        if (ptr == NULL) {
+            goto error;
+        }
         line_len = PyUnicode_GET_LENGTH(line);
         kind = PyUnicode_KIND(line);
 

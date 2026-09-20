@@ -3301,13 +3301,13 @@ _Py_IsPrivateName(PyObject *ident)
     }
     Py_ssize_t nlen = PyUnicode_GET_LENGTH(ident);
     if (nlen < 3 ||
-        PyUnicode_READ_CHAR(ident, 0) != '_' ||
-        PyUnicode_READ_CHAR(ident, 1) != '_')
+        _PyUnicode_ReadCharNoAlloc(ident, 0) != '_' ||
+        _PyUnicode_ReadCharNoAlloc(ident, 1) != '_')
     {
         return 0;
     }
-    if (PyUnicode_READ_CHAR(ident, nlen-1) == '_' &&
-        PyUnicode_READ_CHAR(ident, nlen-2) == '_')
+    if (_PyUnicode_ReadCharNoAlloc(ident, nlen-1) == '_' &&
+        _PyUnicode_ReadCharNoAlloc(ident, nlen-2) == '_')
     {
         return 0; /* Don't mangle __whatever__ */
     }
@@ -3320,8 +3320,8 @@ _Py_Mangle(PyObject *privateobj, PyObject *ident)
     /* Name mangling: __private becomes _classname__private.
        This is independent from how the name is used. */
     if (privateobj == NULL || !PyUnicode_Check(privateobj) ||
-        PyUnicode_READ_CHAR(ident, 0) != '_' ||
-        PyUnicode_READ_CHAR(ident, 1) != '_') {
+        _PyUnicode_ReadCharNoAlloc(ident, 0) != '_' ||
+        _PyUnicode_ReadCharNoAlloc(ident, 1) != '_') {
         return Py_NewRef(ident);
     }
     size_t nlen = PyUnicode_GET_LENGTH(ident);
@@ -3335,14 +3335,14 @@ _Py_Mangle(PyObject *privateobj, PyObject *ident)
        TODO(jhylton): Decide whether we want to support
        mangling of the module name, e.g. __M.X.
     */
-    if ((PyUnicode_READ_CHAR(ident, nlen-1) == '_' &&
-         PyUnicode_READ_CHAR(ident, nlen-2) == '_') ||
+    if ((_PyUnicode_ReadCharNoAlloc(ident, nlen-1) == '_' &&
+         _PyUnicode_ReadCharNoAlloc(ident, nlen-2) == '_') ||
         PyUnicode_FindChar(ident, '.', 0, nlen, 1) != -1) {
         return Py_NewRef(ident); /* Don't mangle __whatever__ */
     }
     /* Strip leading underscores from class name */
     size_t ipriv = 0;
-    while (PyUnicode_READ_CHAR(privateobj, ipriv) == '_') {
+    while (_PyUnicode_ReadCharNoAlloc(privateobj, ipriv) == '_') {
         ipriv++;
     }
     if (ipriv == plen) {

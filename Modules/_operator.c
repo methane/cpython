@@ -1293,6 +1293,10 @@ attrgetter_new(PyTypeObject *type, PyObject *args, PyObject *kwds)
         Py_ssize_t item_len = PyUnicode_GET_LENGTH(item);
         int kind = PyUnicode_KIND(item);
         const void *data = PyUnicode_DATA(item);
+        if (data == NULL) {
+            Py_DECREF(attr);
+            return NULL;
+        }
 
         /* check whether the string is dotted */
         dot_count = 0;

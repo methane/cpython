@@ -175,6 +175,11 @@ decode_unicode_with_escapes(Parser *parser, const char *s, size_t len, Token *t)
             }
             kind = PyUnicode_KIND(w);
             data = PyUnicode_DATA(w);
+            if (data == NULL) {
+                Py_DECREF(w);
+                PyMem_Free(buf);
+                return NULL;
+            }
             w_len = PyUnicode_GET_LENGTH(w);
             for (i = 0; i < w_len; i++) {
                 // sprintf() writes a null byte: the buffer is large enough

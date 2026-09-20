@@ -1061,8 +1061,8 @@ _PyModule_ClearDict(PyObject *d)
     pos = 0;
     while (PyDict_Next(d, &pos, &key, &value)) {
         if (value != Py_None && PyUnicode_Check(key)) {
-            if (PyUnicode_READ_CHAR(key, 0) == '_' &&
-                PyUnicode_READ_CHAR(key, 1) != '_') {
+            if (_PyUnicode_ReadCharNoAlloc(key, 0) == '_' &&
+                _PyUnicode_ReadCharNoAlloc(key, 1) != '_') {
                 if (verbose > 1) {
                     const char *s = PyUnicode_AsUTF8(key);
                     if (s != NULL)
@@ -1082,7 +1082,7 @@ _PyModule_ClearDict(PyObject *d)
     pos = 0;
     while (PyDict_Next(d, &pos, &key, &value)) {
         if (value != Py_None && PyUnicode_Check(key)) {
-            if (PyUnicode_READ_CHAR(key, 0) != '_' ||
+            if (_PyUnicode_ReadCharNoAlloc(key, 0) != '_' ||
                 !_PyUnicode_EqualToASCIIString(key, "__builtins__"))
             {
                 if (verbose > 1) {

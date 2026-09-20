@@ -1475,7 +1475,27 @@ class PyUnicodeObjectPtr(PyObjectPtr):
         state = ascii['state']
         is_compact_ascii = (int(state['ascii']) and int(state['compact']))
         field_length = int(ascii['length'])
-        if is_compact_ascii:
+        if int(state['utf8_storage']) and not int(state['fsr_primary']):
+            data = (compact.address + 1).cast(_type_unsigned_char_ptr())
+            # Limit code points, as for the fixed-width representations below.
+            # Limiting bytes can cut a multibyte sequence in the middle.
+            raw = bytearray()
+            offset = 0
+            byte_length = int(compact['utf8_length'])
+            for _ in safe_range(field_length):
+                if offset >= byte_length:
+                    break
+                lead = int(data[offset])
+                width = (1 if lead < 0x80 else 2 if lead < 0xE0
+                         else 3 if lead < 0xF0 else 4)
+                if offset + width > byte_length:
+                    break
+                raw.extend(int(data[offset + i]) for i in range(width))
+                offset += width
+            return raw.decode('utf-8', 'surrogatepass')
+        if int(state['fsr_primary']):
+            field_str = compact['fsr']
+        elif is_compact_ascii:
             field_str = ascii.address + 1
         elif int(state['compact']):
             field_str = compact.address + 1

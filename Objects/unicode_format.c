@@ -853,6 +853,9 @@ unicode_format_arg_output(struct unicode_formatter_t *ctx,
     /* Adjust sign and width */
     kind = PyUnicode_KIND(str);
     pbuf = PyUnicode_DATA(str);
+    if (pbuf == NULL) {
+        return -1;
+    }
     pindex = 0;
     signchar = '\0';
     if (arg->sign) {
@@ -1038,6 +1041,9 @@ PyUnicode_Format(PyObject *format, PyObject *args)
 
     ctx.fmtstr = format;
     ctx.fmtdata = PyUnicode_DATA(ctx.fmtstr);
+    if (ctx.fmtdata == NULL) {
+        return NULL;
+    }
     ctx.fmtkind = PyUnicode_KIND(ctx.fmtstr);
     ctx.fmtcnt = PyUnicode_GET_LENGTH(ctx.fmtstr);
     ctx.fmtpos = 0;

@@ -490,6 +490,9 @@ _new_str_object(_PyXIData_t *xidata)
 static int
 _str_shared(PyThreadState *tstate, PyObject *obj, _PyXIData_t *xidata)
 {
+    if (PyUnicode_DATA(obj) == NULL) {
+        return -1;
+    }
     if (_PyXIData_InitWithSize(
             xidata, tstate->interp, sizeof(struct _shared_str_data), obj,
             _new_str_object

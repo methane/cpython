@@ -2057,6 +2057,9 @@ pylong_int_to_decimal_string(PyObject *aa,
     else if (bytes_writer) {
         Py_ssize_t size = PyUnicode_GET_LENGTH(s);
         const void *data = PyUnicode_DATA(s);
+        if (data == NULL) {
+            goto error;
+        }
         int kind = PyUnicode_KIND(s);
         *bytes_str = PyBytesWriter_GrowAndUpdatePointer(bytes_writer, size,
                                                         *bytes_str);

@@ -612,6 +612,9 @@ canonical_ordering_sort_counting(Py_UCS4 *data, Py_ssize_t length,
 static PyObject*
 nfd_nfkd(PyObject *self, PyObject *input, int k)
 {
+    if (PyUnicode_DATA(input) == NULL) {
+        return NULL;
+    }
     PyObject *result;
     Py_UCS4 *output;
     Py_ssize_t i, o, osize;
@@ -805,6 +808,10 @@ nfc_nfkc(PyObject *self, PyObject *input, int k)
 
     kind = PyUnicode_KIND(result);
     data = PyUnicode_DATA(result);
+    if (data == NULL) {
+        Py_DECREF(result);
+        return NULL;
+    }
     len = PyUnicode_GET_LENGTH(result);
 
     /* We allocate a buffer for the output.
@@ -1012,6 +1019,9 @@ unicodedata_UCD_is_normalized_impl(PyObject *self, PyObject *form,
                                    PyObject *input)
 /*[clinic end generated code: output=11e5a3694e723ca5 input=de66aa679265300b]*/
 {
+    if (PyUnicode_DATA(input) == NULL) {
+        return NULL;
+    }
     if (PyUnicode_GET_LENGTH(input) == 0) {
         /* special case empty input strings. */
         Py_RETURN_TRUE;
@@ -1080,6 +1090,9 @@ unicodedata_UCD_normalize_impl(PyObject *self, PyObject *form,
                                PyObject *input)
 /*[clinic end generated code: output=05ca4385a2ad6983 input=3a5206c0ad2833fb]*/
 {
+    if (PyUnicode_DATA(input) == NULL) {
+        return NULL;
+    }
     if (PyUnicode_GET_LENGTH(input) == 0) {
         /* Special case empty input strings, since resizing
            them  later would cause internal errors. */
@@ -1943,6 +1956,9 @@ _Py_NextGraphemeBreak(_PyGraphemeBreak *iter)
 
     int kind = PyUnicode_KIND(iter->str);
     void *pstr = PyUnicode_DATA(iter->str);
+    if (pstr == NULL) {
+        return -1;
+    }
     while (iter->pos < iter->end) {
         Py_UCS4 chr = PyUnicode_READ(kind, pstr, iter->pos);
         const _PyUnicode_DatabaseRecord *record = _getrecord_ex(chr);

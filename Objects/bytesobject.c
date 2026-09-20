@@ -2647,6 +2647,9 @@ _PyBytes_FromHex(PyObject *string, int use_bytearray)
 
         if (!PyUnicode_IS_ASCII(string)) {
             const void *data = PyUnicode_DATA(string);
+            if (data == NULL) {
+                return NULL;
+            }
             int kind = PyUnicode_KIND(string);
             Py_ssize_t i;
 

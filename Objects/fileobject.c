@@ -92,7 +92,7 @@ PyFile_GetLine(PyObject *f, int n)
             PyErr_SetString(PyExc_EOFError,
                             "EOF when reading a line");
         }
-        else if (PyUnicode_READ_CHAR(result, len-1) == '\n') {
+        else if (_PyUnicode_ReadCharNoAlloc(result, len-1) == '\n') {
             PyObject *v;
             v = PyUnicode_Substring(result, 0, len-1);
             Py_SETREF(result, v);

@@ -1754,7 +1754,7 @@ class SizeofTest(unittest.TestCase):
         def get_gen(): yield 1
         check(get_gen(), size('6P4c' + INTERPRETER_FRAME + 'P'))
         # iterator
-        check(iter('abc'), size('lP'))
+        check(iter('abc'), size('nnP'))
         # callable-iterator
         import re
         check(re.finditer('',''), size('3P'))
@@ -1871,37 +1871,24 @@ class SizeofTest(unittest.TestCase):
         check(newstyleclass, s + calcsize(DICT_KEY_STRUCT_FORMAT) + 64 + 42*calcsize("2P"))
         # dict with shared keys
         check(newstyleclass().__dict__, size('nQ2P') + self.P)
-        # unicode
-        # each tuple contains a string and its expected character size
-        # don't put any static strings here, as they may contain
-        # wchar_t or UTF-8 representations
-        samples = ['1'*100, '\xff'*50,
-                   '\u0100'*40, '\uffff'*100,
-                   '\U00010000'*30, '\U0010ffff'*100]
-        # also update field definitions in test_unicode.test_raiseMemError
+        # Compact strings own their UTF-8 payload. Acquiring a FSR adds a
+        # separate allocation only for non-ASCII strings.
         asciifields = "nnb"
-        compactfields = asciifields + "nP"
-        unicodefields = compactfields + "P"
-        for s in samples:
-            maxchar = ord(max(s))
-            if maxchar < 128:
-                L = size(asciifields) + len(s) + 1
-            elif maxchar < 256:
-                L = size(compactfields) + len(s) + 1
-            elif maxchar < 65536:
-                L = size(compactfields) + 2*(len(s) + 1)
-            else:
-                L = size(compactfields) + 4*(len(s) + 1)
-            check(s, L)
-        # verify that the UTF-8 size is accounted for
-        s = chr(0x4000)   # 4 bytes canonical representation
+        compactfields = asciifields + "nPPn"
+        samples = ['1'*100, '\xff'*50, '\u0100'*40, '\uffff'*100,
+                   '\U00010000'*30, '\U0010ffff'*100]
+        for text in samples:
+            encoded = text.encode('utf-8')
+            s = encoded.decode('utf-8')
+            fields = asciifields if s.isascii() else compactfields
+            check(s, size(fields) + len(encoded) + 1)
+        s = chr(0x4000)
         check(s, size(compactfields) + 4)
-        # compile() will trigger the generation of the UTF-8
-        # representation as a side effect
+        # UTF-8 export no longer allocates another representation.
         compile(s, "<stdin>", "eval")
+        check(s, size(compactfields) + 4)
+        s[0]  # materialize a two-byte FSR, including its terminator
         check(s, size(compactfields) + 4 + 4)
-        # TODO: add check that forces the presence of wchar_t representation
-        # TODO: add check that forces layout of unicodefields
         # weakref
         import weakref
         if support.Py_GIL_DISABLED:

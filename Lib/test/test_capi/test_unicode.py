@@ -30,6 +30,138 @@ class Str(str):
     pass
 
 
+@unittest.skipIf(_testcapi is None, 'need _testcapi module')
+class UTF8StorageTests(unittest.TestCase):
+    def make_string(self, text):
+        return text.encode('utf-8', 'surrogatepass').decode('utf-8', 'surrogatepass')
+
+    def test_lazy_fsr(self):
+        for text in ('café', '日本語', 'a😀b', 'x\0é', 'a\ud800\udcffb',
+                     '\ud800\udc00'):
+            with self.subTest(text=ascii(text)):
+                value = self.make_string(text)
+                before = _testcapi.unicode_storage(value)
+                self.assertEqual(before[:4], (1, 1, int(any(
+                    0xd800 <= ord(c) <= 0xdfff for c in text)), 0))
+                self.assertEqual(before[4], len(text.encode('utf-8', 'surrogatepass')))
+                size = value.__sizeof__()
+                self.assertEqual(value[1], text[1])
+                self.assertEqual(_testcapi.unicode_storage(value)[3], 1)
+                self.assertGreater(value.__sizeof__(), size)
+                size = value.__sizeof__()
+                self.assertEqual(value[-1], text[-1])
+                self.assertEqual(value.__sizeof__(), size)
+
+    def test_native_operations(self):
+        for text in ('café', '日本語', 'a😀b', 'x\0é', '\ud800\udc00'):
+            with self.subTest(text=ascii(text)):
+                value = self.make_string(text)
+                other = self.make_string(text)
+                self.assertEqual(len(value), len(text))
+                self.assertEqual(hash(value), hash(other))
+                self.assertEqual(value, other)
+                self.assertFalse(value < other)
+                self.assertEqual(list(value), list(text))
+                self.assertEqual([c for c in value], list(text))
+                self.assertEqual(value + other, text + text)
+                self.assertEqual({value: 42}[other], 42)
+                self.assertEqual(_testcapi.unicode_storage(value)[3], 0)
+                self.assertEqual(_testcapi.unicode_storage(other)[3], 0)
+
+    def test_surrogate_boundaries(self):
+        high = self.make_string('a\ud800')
+        low = self.make_string('\udc00b')
+        combined = high + low
+        self.assertEqual(len(combined), 4)
+        self.assertEqual(combined.encode('utf-8', 'surrogatepass'),
+                         b'a\xed\xa0\x80\xed\xb0\x80b')
+        self.assertRaises(UnicodeEncodeError, combined.encode, 'utf-8')
+        self.assertRaises(UnicodeEncodeError, _testcapi.unicode_asutf8, combined, 0)
+        raw = b'a\x80\xffb'
+        value = raw.decode('utf-8', 'surrogateescape')
+        self.assertEqual(_testcapi.unicode_storage(value)[2], 1)
+        self.assertEqual(value.encode('utf-8', 'surrogateescape'), raw)
+
+    def test_readonly_writer_preserves_lazy_fsr(self):
+        value = self.make_string('日本😀')
+        result = '{}'.format(value)
+        self.assertEqual(result, value)
+        self.assertEqual(_testcapi.unicode_storage(value)[3], 0)
+        self.assertEqual(_testcapi.unicode_storage(result)[3], 0)
+
+    @threading_helper.requires_working_threading()
+    def test_concurrent_fsr_publication(self):
+        value = self.make_string('a日本語😀' * 100)
+        self.assertEqual(_testcapi.unicode_storage(value)[3], 0)
+        before = value.__sizeof__()
+
+        def read():
+            for _ in range(50):
+                _testcapi.unicode_materialize_fsr(value)
+                self.assertEqual(value[1], '日')
+                self.assertEqual(value[-1], '😀')
+
+        threading_helper.run_concurrently(read, nthreads=8)
+        self.assertEqual(value.__sizeof__() - before, 4 * (len(value) + 1))
+
+    def test_legacy_fsr_equality(self):
+        for ch in (0xa1, 0x100, 0xd800, 0x10000):
+            with self.subTest(ch=ch):
+                legacy = _testcapi.unicode_new(3, ch)
+                compact = self.make_string(chr(ch) * 3)
+                self.assertEqual(_testcapi.unicode_storage(legacy)[0], 0)
+                self.assertEqual(legacy, compact)
+                self.assertEqual(hash(legacy), hash(compact))
+                self.assertEqual({legacy: 42}[compact], 42)
+                self.assertEqual(legacy + compact, compact + legacy)
+
+    def test_operation_allocation_failures(self):
+        from test.support.script_helper import assert_python_ok
+        assert_python_ok('-c', textwrap.dedent(r"""
+            import _testcapi
+            operations = (str.upper, str.lower, str.strip, str.__repr__)
+            raw = 'a日本😀z'.encode()
+            remove_hooks = _testcapi.remove_mem_hooks
+            for operation in operations:
+                s = raw.decode()
+                failed = False
+                try:
+                    _testcapi.set_nomemory(0, 1)
+                    operation(s)
+                except MemoryError:
+                    failed = True
+                finally:
+                    remove_hooks()
+                assert failed
+                assert _testcapi.unicode_storage(s)[3] == 0
+                assert s.encode() == raw
+                operation(s)
+                assert _testcapi.unicode_storage(s)[3] == 1
+        """))
+
+    def test_fsr_failure_retry(self):
+        from test.support.script_helper import assert_python_ok
+        assert_python_ok('-c', textwrap.dedent(r"""
+            import _testcapi
+            s = b'caf\xc3\xa9'.decode()
+            failed = False
+            materialize = _testcapi.unicode_materialize_fsr
+            remove_hooks = _testcapi.remove_mem_hooks
+            try:
+                _testcapi.set_nomemory(0, 1)
+                materialize(s)
+            except MemoryError:
+                failed = True
+            finally:
+                remove_hooks()
+            assert failed
+            assert _testcapi.unicode_storage(s)[3] == 0
+            materialize(s)
+            assert _testcapi.unicode_storage(s)[3] == 1
+            assert s[3] == 'é'
+        """))
+
+
 class CAPITest(unittest.TestCase):
 
     @support.cpython_only

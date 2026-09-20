@@ -171,6 +171,9 @@ static expr_ty
 parse_literal(PyObject *fmt, Py_ssize_t *ppos, PyArena *arena)
 {
     const void *data = PyUnicode_DATA(fmt);
+    if (data == NULL) {
+        return NULL;
+    }
     int kind = PyUnicode_KIND(fmt);
     Py_ssize_t size = PyUnicode_GET_LENGTH(fmt);
     Py_ssize_t start, pos;

@@ -1637,7 +1637,7 @@ append_keyword_tzinfo(PyObject *repr, PyObject *tzinfo)
     if (tzinfo == Py_None)
         return repr;
     /* Get rid of the trailing ')'. */
-    assert(PyUnicode_READ_CHAR(repr, PyUnicode_GET_LENGTH(repr)-1) == ')');
+    assert(_PyUnicode_ReadCharNoAlloc(repr, PyUnicode_GET_LENGTH(repr)-1) == ')');
     temp = PyUnicode_Substring(repr, 0, PyUnicode_GET_LENGTH(repr) - 1);
     Py_DECREF(repr);
     if (temp == NULL)
@@ -1661,7 +1661,7 @@ append_keyword_fold(PyObject *repr, int fold)
     if (fold == 0)
         return repr;
     /* Get rid of the trailing ')'. */
-    assert(PyUnicode_READ_CHAR(repr, PyUnicode_GET_LENGTH(repr)-1) == ')');
+    assert(_PyUnicode_ReadCharNoAlloc(repr, PyUnicode_GET_LENGTH(repr)-1) == ')');
     temp = PyUnicode_Substring(repr, 0, PyUnicode_GET_LENGTH(repr) - 1);
     Py_DECREF(repr);
     if (temp == NULL)
@@ -1927,7 +1927,7 @@ wrap_strftime(PyObject *object, PyObject *format, PyObject *timetuple,
         if (i == flen) {
             break;
         }
-        Py_UCS4 ch = PyUnicode_READ_CHAR(format, i);
+        Py_UCS4 ch = _PyUnicode_ReadCharNoAlloc(format, i);
         i++;
         /* A % has been seen and ch is the character after it. */
         PyObject *replacement = NULL;
@@ -1940,7 +1940,7 @@ wrap_strftime(PyObject *object, PyObject *format, PyObject *timetuple,
             }
             replacement = zreplacement;
         }
-        else if (ch == ':' && i < flen && PyUnicode_READ_CHAR(format, i) == 'z') {
+        else if (ch == ':' && i < flen && _PyUnicode_ReadCharNoAlloc(format, i) == 'z') {
             /* %:z -> +HH:MM */
             i++;
             if (colonzreplacement == NULL) {
@@ -3234,7 +3234,7 @@ date_new(PyTypeObject *type, PyObject *args, PyObject *kw)
         }
         else if (PyUnicode_Check(state)) {
             if (PyUnicode_GET_LENGTH(state) == _PyDateTime_DATE_DATASIZE &&
-                MONTH_IS_SANE(PyUnicode_READ_CHAR(state, 2)))
+                MONTH_IS_SANE(_PyUnicode_ReadCharNoAlloc(state, 2)))
             {
                 state = PyUnicode_AsLatin1String(state);
                 if (state == NULL) {
@@ -4717,7 +4717,7 @@ time_new(PyTypeObject *type, PyObject *args, PyObject *kw)
         }
         else if (PyUnicode_Check(state)) {
             if (PyUnicode_GET_LENGTH(state) == _PyDateTime_TIME_DATASIZE &&
-                (0x7F & PyUnicode_READ_CHAR(state, 0)) < 24)
+                (0x7F & _PyUnicode_ReadCharNoAlloc(state, 0)) < 24)
             {
                 state = PyUnicode_AsLatin1String(state);
                 if (state == NULL) {
@@ -5505,7 +5505,7 @@ datetime_new(PyTypeObject *type, PyObject *args, PyObject *kw)
         }
         else if (PyUnicode_Check(state)) {
             if (PyUnicode_GET_LENGTH(state) == _PyDateTime_DATETIME_DATASIZE &&
-                MONTH_IS_SANE(PyUnicode_READ_CHAR(state, 2) & 0x7F))
+                MONTH_IS_SANE(_PyUnicode_ReadCharNoAlloc(state, 2) & 0x7F))
             {
                 state = PyUnicode_AsLatin1String(state);
                 if (state == NULL) {
@@ -5928,6 +5928,9 @@ _sanitize_isoformat_str(PyObject *dtstr)
     //
     // The result of this, if not NULL, returns a new reference
     const void* const unicode_data = PyUnicode_DATA(dtstr);
+    if (unicode_data == NULL) {
+        return NULL;
+    }
     const int kind = PyUnicode_KIND(dtstr);
 
     // Depending on the format of the string, the separator can only ever be
