@@ -35,6 +35,24 @@ class UTF8StorageTests(unittest.TestCase):
     def make_string(self, text):
         return text.encode('utf-8', 'surrogatepass').decode('utf-8', 'surrogatepass')
 
+    def test_format_spec_without_fsr(self):
+        cases = [('日', '😀>４', '😀😀😀日'),
+                 (42, '\udcff>５d', '\udcff' * 3 + '42'),
+                 (1.25, '>８.１f', '     1.2'),
+                 (42, '０' * 10000 + '５d', '   42')]
+        for value, text, expected in cases:
+            for factory in (self.make_string, Str):
+                spec = factory(text)
+                before = _testcapi.unicode_storage(spec)
+                self.assertEqual(format(value, spec), expected)
+                self.assertEqual(_testcapi.unicode_storage(spec), before)
+        for text in ('😀>４xx', '>１２.日f', '９' * 100):
+            spec = self.make_string(text)
+            before = _testcapi.unicode_storage(spec)
+            with self.assertRaises(ValueError):
+                format(42, spec)
+            self.assertEqual(_testcapi.unicode_storage(spec), before)
+
     def test_marshal_without_fsr(self):
         import marshal
 

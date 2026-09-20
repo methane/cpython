@@ -3,6 +3,7 @@
    of int.__float__, etc., that take and return unicode objects */
 
 #include "Python.h"
+#include "pycore_pyatomic_ft_wrappers.h" // FT_ATOMIC_LOAD_PTR_ACQUIRE()
 #include "pycore_fileutils.h"     // _Py_GetLocaleconvNumeric()
 #include "pycore_long.h"          // _PyLong_FormatWriter()
 #include "pycore_unicodeobject.h" // PyUnicode_MAX_CHAR_VALUE()
@@ -306,15 +307,29 @@ get_integer(PyObject *str, Py_ssize_t *ppos, Py_ssize_t end,
 {
     Py_ssize_t accumulator, digitval, pos = *ppos;
     int numdigits;
-    int kind = PyUnicode_KIND(str);
-    const void *data = PyUnicode_DATA(str);
-    if (data == NULL) {
-        return -1;
+    Py_ssize_t cursor = 0;
+    Py_UCS4 ch;
+    /* str.format() may pass a slice of a large string whose FSR is already
+       cached. Avoid rescanning its prefix when indexed reads are cheap. */
+    int indexed = PyUnicode_IS_ASCII(str) ||
+        !_PyASCIIObject_CAST(str)->state.utf8_storage ||
+        _PyASCIIObject_CAST(str)->state.fsr_primary ||
+        FT_ATOMIC_LOAD_PTR_ACQUIRE(_PyCompactUnicodeObject_CAST(str)->fsr) != NULL;
+    if (!indexed) {
+        for (Py_ssize_t i = 0; i < pos; i++) {
+            (void)_PyUnicode_Next(str, &cursor, &ch);
+        }
     }
 
     accumulator = numdigits = 0;
     for (; pos < end; pos++, numdigits++) {
-        digitval = Py_UNICODE_TODECIMAL(PyUnicode_READ(kind, data, pos));
+        if (indexed) {
+            ch = _PyUnicode_ReadCharNoAlloc(str, pos);
+        }
+        else {
+            (void)_PyUnicode_Next(str, &cursor, &ch);
+        }
+        digitval = Py_UNICODE_TODECIMAL(ch);
         if (digitval < 0)
             break;
         /*
@@ -402,14 +417,9 @@ parse_internal_render_format_spec(PyObject *obj,
                                   char default_align)
 {
     Py_ssize_t pos = start;
-    int kind = PyUnicode_KIND(format_spec);
-    const void *data = PyUnicode_DATA(format_spec);
-    if (data == NULL) {
-        return 0;
-    }
     /* end-pos is used throughout this code to specify the length of
        the input string */
-#define READ_spec(index) PyUnicode_READ(kind, data, index)
+#define READ_spec(index) _PyUnicode_ReadCharNoAlloc(format_spec, index)
 
     Py_ssize_t consumed;
     int align_specified = 0;
@@ -556,9 +566,7 @@ parse_internal_render_format_spec(PyObject *obj,
            specifier. */
         /* Create a temporary object that contains the format spec we're
            operating on.  It's format_spec[start:end] (in Python syntax). */
-        PyObject* actual_format_spec = PyUnicode_FromKindAndData(kind,
-                                         (char*)data + kind*start,
-                                         end-start);
+        PyObject* actual_format_spec = PyUnicode_Substring(format_spec, start, end);
         if (actual_format_spec != NULL) {
             PyErr_Format(PyExc_ValueError,
                 "Invalid format specifier '%U' for object of type '%.200s'",
