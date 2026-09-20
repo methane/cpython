@@ -2,7 +2,7 @@ import sys
 import textwrap
 import unittest
 from test import support
-from test.support import threading_helper
+from test.support import import_helper, threading_helper
 from test.support.script_helper import assert_python_failure
 
 try:
@@ -146,6 +146,115 @@ class UTF8StorageTests(unittest.TestCase):
                 self.assertEqual(datetime.datetime.fromisoformat(value),
                                  datetime.datetime(2026, 1, 2, 3, 4, 5))
                 self.assertEqual(_testcapi.unicode_storage(value)[:4], before[:4])
+
+    def test_json_without_fsr(self):
+        import json
+        _json = import_helper.import_module('_json')
+        scanner = _json.make_scanner(json.JSONDecoder())
+        for factory in (self.make_string, Str):
+            for text in ('café', '日😀', 'a\0\nb', '\ud800\udcff', '"\\日'):
+                with self.subTest(factory=factory, text=ascii(text)):
+                    value = factory(text)
+                    before = _testcapi.unicode_storage(value)
+                    for ascii_only, encode in (
+                        (False, _json.encode_basestring),
+                        (True, _json.encode_basestring_ascii),
+                    ):
+                        encoded = encode(value)
+                        encode_python = (json.encoder.py_encode_basestring_ascii
+                                         if ascii_only else
+                                         json.encoder.py_encode_basestring)
+                        expected = encode_python(text)
+                        self.assertEqual(encoded, expected)
+                        self.assertEqual(json.dumps(value, ensure_ascii=ascii_only),
+                                         expected)
+                        document = factory('日😀[' + encoded + ',12.5,true]')
+                        doc_before = _testcapi.unicode_storage(document)
+                        decoded = json.decoder.py_scanstring(expected, 1)[0]
+                        self.assertEqual(scanner(document, 2),
+                                         ([decoded, 12.5, True], len(document)))
+                        self.assertEqual(_testcapi.unicode_storage(document),
+                                         doc_before)
+                    self.assertEqual(_testcapi.unicode_storage(value), before)
+
+    def test_json_escape_boundaries(self):
+        import json
+        _json = import_helper.import_module('_json')
+        text = (''.join(map(chr, range(32))) + '"\\' +
+                '\x7f\x80\u07ff\u0800\ud7ff\ud800\udfff\ue000\uffff'
+                '\U00010000\U0010ffff')
+        for repeat in (1, 31):
+            value = self.make_string(text * repeat)
+            for ascii_only, encode, reference in (
+                (False, _json.encode_basestring,
+                 json.encoder.py_encode_basestring),
+                (True, _json.encode_basestring_ascii,
+                 json.encoder.py_encode_basestring_ascii),
+            ):
+                with self.subTest(repeat=repeat, ascii_only=ascii_only):
+                    expected = reference(text * repeat)
+                    self.assertEqual(encode(value), expected)
+                    self.assertEqual(
+                        json.dumps([value, value], ensure_ascii=ascii_only),
+                        '[' + expected + ', ' + expected + ']')
+                    self.assertEqual(_testcapi.unicode_storage(value)[3], 0)
+
+    def test_json_hooks_without_fsr(self):
+        import json
+        _json = import_helper.import_module('_json')
+        for factory in (self.make_string, Str):
+            value = factory('{"日":[12,1.5,NaN],"😀":"\udcff"}')
+            before = _testcapi.unicode_storage(value)
+            decoder = json.JSONDecoder(parse_int=str, parse_float=str,
+                                       parse_constant=str,
+                                       object_pairs_hook=tuple,
+                                       array_hook=tuple)
+            self.assertEqual(_json.make_scanner(decoder)(value, 0),
+                             ((("日", ("12", "1.5", "NaN")),
+                               ("😀", "\udcff")), len(value)))
+            self.assertEqual(_testcapi.unicode_storage(value), before)
+
+    def test_json_character_offsets(self):
+        import json
+        _json = import_helper.import_module('_json')
+        scanner = _json.make_scanner(json.JSONDecoder())
+        for document, position in (
+            ('["日😀",]', 5),
+            ('{"日😀":0,}', 7),
+            ('["日😀",?]', 6),
+        ):
+            value = self.make_string(document)
+            try:
+                scanner(value, 0)
+            except json.JSONDecodeError as exc:
+                self.assertEqual(exc.pos, position)
+                self.assertIs(exc.doc, value)
+            except StopIteration as exc:
+                self.assertEqual(exc.value, position)
+            else:
+                self.fail('invalid JSON accepted')
+            self.assertEqual(_testcapi.unicode_storage(value)[3], 0)
+        value = self.make_string('日😀"a\\n語"tail')
+        self.assertEqual(_json.scanstring(value, 3), ('a\n語', 8))
+        self.assertEqual(_testcapi.unicode_storage(value)[3], 0)
+
+    def test_json_invalid_escape_offsets(self):
+        import json
+        _json = import_helper.import_module('_json')
+        for document, message, position in (
+            ('"日\\u12語4"', 'Invalid \\uXXXX escape', 3),
+            ('"日\\ud800\\u日"', 'Invalid \\uXXXX escape', 9),
+            ('"日\n"', 'Invalid control character at', 2),
+            ('"日\\q"', 'Invalid \\escape', 2),
+            ('日😀', 'Unterminated string starting at', 0),
+        ):
+            with self.subTest(document=ascii(document)):
+                value = self.make_string(document)
+                with self.assertRaises(json.JSONDecodeError) as caught:
+                    _json.scanstring(value, 1)
+                self.assertEqual(caught.exception.msg, message)
+                self.assertEqual(caught.exception.pos, position)
+                self.assertEqual(_testcapi.unicode_storage(value)[3], 0)
 
     def test_lazy_fsr(self):
         for text in ('café', '日本語', 'a😀b', 'x\0é', 'a\ud800\udcffb',

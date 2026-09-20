@@ -110,8 +110,8 @@ _PyUnicodeWriter_WriteCharInline(_PyUnicodeWriter *writer, Py_UCS4 ch)
 }
 
 /* Internal UTF-8/surrogatepass storage and append operations. */
-extern const char *_PyUnicode_GetPrimaryUTF8(PyObject *, Py_ssize_t *);
-extern int _PyUnicodeWriter_WriteUTF8(_PyUnicodeWriter *, const char *,
+PyAPI_FUNC(const char *) _PyUnicode_GetPrimaryUTF8(PyObject *, Py_ssize_t *);
+PyAPI_FUNC(int) _PyUnicodeWriter_WriteUTF8(_PyUnicodeWriter *, const char *,
                                       Py_ssize_t, Py_ssize_t);
 extern void _PyUnicodeWriter_Truncate(_PyUnicodeWriter *, Py_ssize_t);
 
