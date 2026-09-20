@@ -929,7 +929,7 @@ int_converter(PyObject *module, PyObject *const *args, Py_ssize_t nargs)
             PyUnicode_GET_LENGTH(args[2]));
         goto exit;
     }
-    c = PyUnicode_READ_CHAR(args[2], 0);
+    c = _PyUnicode_ReadCharNoAlloc(args[2], 0);
     if ((Py_UCS4)c == (Py_UCS4)-1) {
         goto exit;
     }
@@ -5352,4 +5352,4 @@ vc_kwonly_vectorcall(PyObject *type, PyObject *const *args,
         kwnames ? PyTuple_GET_SIZE(kwnames) : 0,
         NULL, kwnames);
 }
-/*[clinic end generated code: output=e2d62f72435c0d87 input=a9049054013a1b77]*/
+/*[clinic end generated code: output=92ff08ad9a74235e input=a9049054013a1b77]*/

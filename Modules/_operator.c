@@ -863,8 +863,8 @@ _operator__compare_digest_impl(PyObject *module, PyObject *a, PyObject *b)
             return NULL;
         }
 
-        rc = _tscmp(PyUnicode_DATA(a),
-                    PyUnicode_DATA(b),
+        rc = _tscmp((const unsigned char *)_PyUnicode_GetPrimaryUTF8(a, NULL),
+                    (const unsigned char *)_PyUnicode_GetPrimaryUTF8(b, NULL),
                     PyUnicode_GET_LENGTH(a),
                     PyUnicode_GET_LENGTH(b));
     }

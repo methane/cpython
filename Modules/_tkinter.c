@@ -1131,9 +1131,9 @@ AsObj(PyObject *value)
             return NULL;
         }
         if (PyUnicode_IS_ASCII(value) &&
-            strlen(PyUnicode_DATA(value)) == (size_t)PyUnicode_GET_LENGTH(value))
+            strlen(_PyUnicode_GetPrimaryUTF8(value, NULL)) == (size_t)size)
         {
-            return Tcl_NewStringObj((const char *)PyUnicode_DATA(value),
+            return Tcl_NewStringObj(_PyUnicode_GetPrimaryUTF8(value, NULL),
                                     (int)size);
         }
 

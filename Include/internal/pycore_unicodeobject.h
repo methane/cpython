@@ -127,7 +127,8 @@ typedef struct {
 PyAPI_FUNC(int) _PyUnicodeUTF8View_Init(_PyUnicodeUTF8View *, PyObject *str);
 PyAPI_FUNC(void) _PyUnicodeUTF8View_Clear(_PyUnicodeUTF8View *);
 
-/* Internal UTF-8/surrogatepass storage and append operations. */
+/* Internal UTF-8/surrogatepass storage and append operations.
+   GetPrimaryUTF8 accepts a NULL size pointer when the length is not needed. */
 PyAPI_FUNC(const char *) _PyUnicode_GetPrimaryUTF8(PyObject *, Py_ssize_t *);
 PyAPI_FUNC(int) _PyUnicodeWriter_WriteUTF8(_PyUnicodeWriter *, const char *,
                                       Py_ssize_t, Py_ssize_t);

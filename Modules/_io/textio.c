@@ -1668,7 +1668,7 @@ _textiowrapper_writeflush(textio *self)
         assert(PyUnicode_IS_ASCII(pending));
         assert(PyUnicode_GET_LENGTH(pending) == self->pending_bytes_count);
         b = PyBytes_FromStringAndSize(
-                PyUnicode_DATA(pending), PyUnicode_GET_LENGTH(pending));
+                _PyUnicode_GetPrimaryUTF8(pending, NULL), PyUnicode_GET_LENGTH(pending));
         if (b == NULL) {
             return -1;
         }
@@ -1689,7 +1689,7 @@ _textiowrapper_writeflush(textio *self)
             Py_ssize_t len;
             if (PyUnicode_Check(obj)) {
                 assert(PyUnicode_IS_ASCII(obj));
-                src = PyUnicode_DATA(obj);
+                src = _PyUnicode_GetPrimaryUTF8(obj, NULL);
                 len = PyUnicode_GET_LENGTH(obj);
             }
             else {

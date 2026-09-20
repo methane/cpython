@@ -235,7 +235,7 @@ skip_optional_pos:
             PyUnicode_GET_LENGTH(args[2]));
         goto exit;
     }
-    order = PyUnicode_READ_CHAR(args[2], 0);
+    order = _PyUnicode_ReadCharNoAlloc(args[2], 0);
     if ((Py_UCS4)order == (Py_UCS4)-1) {
         goto exit;
     }
@@ -535,4 +535,4 @@ skip_optional:
 exit:
     return return_value;
 }
-/*[clinic end generated code: output=915f0c4b914e1b51 input=a9049054013a1b77]*/
+/*[clinic end generated code: output=908a9e5eeac79602 input=a9049054013a1b77]*/

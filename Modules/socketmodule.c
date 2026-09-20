@@ -106,6 +106,7 @@ Local naming conventions:
 #endif
 
 #include "Python.h"
+#include "pycore_unicodeobject.h" // _PyUnicode_GetPrimaryUTF8()
 #include "pycore_capsule.h"       // _PyCapsule_SetTraverse()
 #include "pycore_fileutils.h"     // _Py_set_inheritable()
 #include "pycore_moduleobject.h"  // _PyModule_GetState
@@ -1846,7 +1847,7 @@ idna_converter(PyObject *obj, void *arg)
     }
     else if (PyUnicode_Check(obj)) {
         if (PyUnicode_IS_COMPACT_ASCII(obj)) {
-            data->buf = PyUnicode_DATA(obj);
+            data->buf = _PyUnicode_GetPrimaryUTF8(obj, NULL);
             len = PyUnicode_GET_LENGTH(obj);
         }
         else {

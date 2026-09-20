@@ -375,6 +375,63 @@ class UTF8StorageTests(unittest.TestCase):
         finally:
             codecs.unregister(search)
 
+    def test_normalization_without_fsr(self):
+        ud = import_helper.import_module('unicodedata')
+        for database in (ud, ud.ucd_3_2_0):
+            for text in ('日😀', 'a\u0315\u0300', '\uac01', '\ufdfa',
+                         'x\ud800\udcff'):
+                for form in ('NFC', 'NFD', 'NFKC', 'NFKD'):
+                    expected = database.normalize(form, text)
+                    for factory in (self.make_string, Str):
+                        value = factory(text)
+                        before = _testcapi.unicode_storage(value)
+                        self.assertEqual(database.normalize(form, value), expected)
+                        self.assertEqual(database.is_normalized(form, value),
+                                         expected == text)
+                        self.assertEqual(_testcapi.unicode_storage(value), before)
+        for text, category in (('日', 'Lo'), ('😀', 'So'), ('\udcff', 'Cs')):
+            value = self.make_string(text)
+            self.assertEqual(ud.category(value), category)
+            self.assertEqual(_testcapi.unicode_storage(value)[3], 0)
+
+    def test_graphemes_without_fsr(self):
+        ud = import_helper.import_module('unicodedata')
+        pieces = ['a\u0301', '🇯🇵', '👩\u200d💻', '\r\n', '\udcff']
+        for factory in (self.make_string, Str):
+            value = factory(''.join(pieces))
+            before = _testcapi.unicode_storage(value)
+            self.assertEqual(list(map(str, ud.iter_graphemes(value))), pieces)
+            self.assertEqual(list(map(str, ud.iter_graphemes(value, 2, -1))),
+                             pieces[1:-1])
+            self.assertEqual(list(ud.iter_graphemes(value, PY_SSIZE_T_MAX)), [])
+            self.assertEqual(_testcapi.unicode_storage(value), before)
+        value = self.make_string(''.join(pieces))
+        iterator = ud.iter_graphemes(value)
+        self.assertEqual(str(next(iterator)), pieces[0])
+        _testcapi.unicode_materialize_fsr(value)
+        self.assertEqual(list(map(str, iterator)), pieces[1:])
+
+    def test_decimal_input_without_fsr(self):
+        decimal = import_helper.import_module('_decimal')
+        for factory in (self.make_string, Str):
+            for text, expected in (('\u2003１２_٣.٥\u2002', '123.5'),
+                                   ('１２_ ', '12'), ('_１２_', '12')):
+                value = factory(text)
+                before = _testcapi.unicode_storage(value)
+                self.assertEqual(decimal.Decimal(value), decimal.Decimal(expected))
+                self.assertEqual(_testcapi.unicode_storage(value), before)
+            for text in ('１２ _ ', '１２\u2003_', '１２\0', '１２\udcff'):
+                value = factory(text)
+                before = _testcapi.unicode_storage(value)
+                with self.assertRaises(decimal.InvalidOperation):
+                    decimal.Decimal(value)
+                self.assertEqual(_testcapi.unicode_storage(value), before)
+            value = factory('１２.٥')
+            before = _testcapi.unicode_storage(value)
+            self.assertEqual(decimal.Context().create_decimal(value),
+                             decimal.Decimal('12.5'))
+            self.assertEqual(_testcapi.unicode_storage(value), before)
+
     def test_lazy_fsr(self):
         for text in ('café', '日本語', 'a😀b', 'x\0é', 'a\ud800\udcffb',
                      '\ud800\udc00'):

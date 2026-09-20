@@ -338,6 +338,8 @@ class int_converter(CConverter):
                 """,
                 argname=argname)
         elif self.format_unit == 'C':
+            read_char = ('PyUnicode_ReadChar' if limited_capi else
+                         '_PyUnicode_ReadCharNoAlloc')
             return self.format_code("""
                 if (!PyUnicode_Check({argname})) {{{{
                     {bad_argument}
@@ -350,11 +352,12 @@ class int_converter(CConverter):
                         PyUnicode_GET_LENGTH({argname}));
                     goto exit;
                 }}}}
-                {paramname} = PyUnicode_READ_CHAR({argname}, 0);
+                {paramname} = {read_char}({argname}, 0);
                 if ((Py_UCS4){paramname} == (Py_UCS4)-1) {{{{
                     goto exit;
                 }}}}
                 """,
+                read_char=read_char,
                 argname=argname,
                 displayname=displayname,
                 bad_argument=self.bad_argument(displayname, 'a unicode character', limited_capi=limited_capi),

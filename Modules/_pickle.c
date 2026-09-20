@@ -4231,7 +4231,7 @@ save_pers(PickleState *state, PicklerObject *self, PyObject *obj)
             }
 
             if (_Pickler_Write(self, &persid_op, 1) < 0 ||
-                _Pickler_Write(self, PyUnicode_DATA(pid_str),
+                _Pickler_Write(self, _PyUnicode_GetPrimaryUTF8(pid_str, NULL),
                                PyUnicode_GET_LENGTH(pid_str)) < 0 ||
                 _Pickler_Write(self, "\n", 1) < 0) {
                 Py_DECREF(pid_str);

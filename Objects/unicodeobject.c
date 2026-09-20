@@ -625,13 +625,17 @@ const char *
 _PyUnicode_GetPrimaryUTF8(PyObject *op, Py_ssize_t *size)
 {
     if (PyUnicode_IS_ASCII(op)) {
-        *size = PyUnicode_GET_LENGTH(op);
+        if (size != NULL) {
+            *size = PyUnicode_GET_LENGTH(op);
+        }
         return PyUnicode_DATA(op);
     }
     if (_PyASCIIObject_CAST(op)->state.utf8_storage &&
         !_PyASCIIObject_CAST(op)->state.fsr_primary) {
         PyCompactUnicodeObject *u = _PyCompactUnicodeObject_CAST(op);
-        *size = u->utf8_length;
+        if (size != NULL) {
+            *size = u->utf8_length;
+        }
         return (const char *)(u + 1);
     }
     return NULL;
@@ -7875,7 +7879,7 @@ _PyUnicode_AsASCIIString(PyObject *unicode, const char *errors)
     /* Fast path: if it is an ASCII-only string, construct bytes object
        directly. Else defer to above function to raise the exception. */
     if (PyUnicode_IS_ASCII(unicode))
-        return PyBytes_FromStringAndSize(PyUnicode_DATA(unicode),
+        return PyBytes_FromStringAndSize(_PyUnicode_GetPrimaryUTF8(unicode, NULL),
                                          PyUnicode_GET_LENGTH(unicode));
     return unicode_encode_ucs1(unicode, errors, 128);
 }
@@ -10569,7 +10573,7 @@ static PyObject *
 ascii_upper_or_lower(PyObject *self, int lower)
 {
     Py_ssize_t len = PyUnicode_GET_LENGTH(self);
-    const char *data = PyUnicode_DATA(self);
+    const char *data = _PyUnicode_GetPrimaryUTF8(self, NULL);
     char *resdata;
     PyObject *res;
 
@@ -12051,7 +12055,8 @@ unicode_hash(PyObject *self)
         x = Py_HashBuffer(u + 1, u->utf8_length);
     }
     else if (PyUnicode_IS_ASCII(self)) {
-        x = Py_HashBuffer(PyUnicode_DATA(self), PyUnicode_GET_LENGTH(self));
+        x = Py_HashBuffer(_PyUnicode_GetPrimaryUTF8(self, NULL),
+                          PyUnicode_GET_LENGTH(self));
     }
     else {
         /* Use the same byte sequence for either primary representation,

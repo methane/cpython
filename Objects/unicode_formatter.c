@@ -712,16 +712,16 @@ parse_number(PyObject *s, Py_ssize_t pos, Py_ssize_t end,
              Py_ssize_t *n_remainder, Py_ssize_t *n_frac, int *has_decimal)
 {
     Py_ssize_t frac;
-    int kind = PyUnicode_KIND(s);
-    const void *data = PyUnicode_DATA(s);
+    assert(PyUnicode_IS_ASCII(s));
+    const char *data = _PyUnicode_GetPrimaryUTF8(s, NULL);
 
-    while (pos<end && Py_ISDIGIT(PyUnicode_READ(kind, data, pos))) {
+    while (pos<end && Py_ISDIGIT(data[pos])) {
         ++pos;
     }
     frac = pos;
 
     /* Does remainder start with a decimal point? */
-    *has_decimal = pos<end && PyUnicode_READ(kind, data, frac) == '.';
+    *has_decimal = pos<end && data[frac] == '.';
 
     /* Skip the decimal point. */
     if (*has_decimal) {
@@ -729,7 +729,7 @@ parse_number(PyObject *s, Py_ssize_t pos, Py_ssize_t end,
         pos++;
     }
 
-    while (pos<end && Py_ISDIGIT(PyUnicode_READ(kind, data, pos))) {
+    while (pos<end && Py_ISDIGIT(data[pos])) {
         ++pos;
     }
 

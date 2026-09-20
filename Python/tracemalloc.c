@@ -1,4 +1,5 @@
 #include "Python.h"
+#include "pycore_unicodeobject.h" // _PyUnicode_GetPrimaryUTF8()
 #include "pycore_fileutils.h"     // _Py_write_noraise()
 #include "pycore_gc.h"            // PyGC_Head
 #include "pycore_hashtable.h"     // _Py_hashtable_t
@@ -249,7 +250,7 @@ tracemalloc_intern_filename(PyObject *obj)
     char *encoded = NULL;
     if (PyUnicode_IS_COMPACT_ASCII(obj)) {
         // ASCII string data is valid UTF-8 and is NUL terminated
-        utf8 = (const char *)PyUnicode_DATA(obj);
+        utf8 = _PyUnicode_GetPrimaryUTF8(obj, NULL);
     }
     else {
         encoded = tracemalloc_encode_filename(obj);
