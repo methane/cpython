@@ -14,6 +14,7 @@ module instead.
 #endif
 
 #include "Python.h"
+#include "pycore_unicodeobject.h" // _PyUnicode_Next()
 #include "pycore_pyatomic_ft_wrappers.h"
 
 #include <stddef.h>               // offsetof()
@@ -362,8 +363,10 @@ dialect_init_special_chars_cache(DialectObj *self)
     dialect_add_special_char(self, '\r');
     dialect_add_special_char(self, '\n');
     PyObject *lt = self->lineterminator;
-    for (Py_ssize_t i = 0; i < PyUnicode_GET_LENGTH(lt); i++) {
-        dialect_add_special_char(self, _PyUnicode_ReadCharNoAlloc(lt, i));
+    Py_ssize_t cursor = 0;
+    Py_UCS4 ch;
+    while (_PyUnicode_Next(lt, &cursor, &ch)) {
+        dialect_add_special_char(self, ch);
     }
 }
 
@@ -1007,9 +1010,7 @@ Reader_iternext_lock_held(PyObject *op)
 
     PyObject *fields = NULL;
     Py_UCS4 c;
-    Py_ssize_t pos, linelen;
-    int kind;
-    const void *data;
+    Py_ssize_t pos;
     PyObject *lineobj;
 
     _csvstate *module_state = _csv_state_from_type(Py_TYPE(self),
@@ -1051,21 +1052,12 @@ Reader_iternext_lock_held(PyObject *op)
             return NULL;
         }
         ++self->line_num;
-        kind = PyUnicode_KIND(lineobj);
-        data = PyUnicode_DATA(lineobj);
-        if (data == NULL) {
-            Py_DECREF(lineobj);
-            return NULL;
-        }
         pos = 0;
-        linelen = PyUnicode_GET_LENGTH(lineobj);
-        while (linelen--) {
-            c = PyUnicode_READ(kind, data, pos);
+        while (_PyUnicode_Next(lineobj, &pos, &c)) {
             if (parse_process_char(self, module_state, c) < 0) {
                 Py_DECREF(lineobj);
                 goto err;
             }
-            pos++;
         }
         Py_DECREF(lineobj);
         if (parse_process_char(self, module_state, EOL) < 0)
@@ -1227,12 +1219,12 @@ join_reset(WriterObj *self)
  * record length.
  */
 static Py_ssize_t
-join_append_data(WriterObj *self, int field_kind, const void *field_data,
-                 Py_ssize_t field_len, int *quoted,
+join_append_data(WriterObj *self, PyObject *field, int *quoted,
                  int copy_phase)
 {
     DialectObj *dialect = self->dialect;
-    Py_ssize_t i;
+    Py_ssize_t cursor = 0;
+    Py_UCS4 c;
     Py_ssize_t rec_len;
 
 #define INCLEN \
@@ -1262,8 +1254,7 @@ join_append_data(WriterObj *self, int field_kind, const void *field_data,
 
     /* Copy/count field data */
     /* If field is null just pass over */
-    for (i = 0; field_data && (i < field_len); i++) {
-        Py_UCS4 c = PyUnicode_READ(field_kind, field_data, i);
+    while (field != NULL && _PyUnicode_Next(field, &cursor, &c)) {
         int want_escape = 0;
 
         if (dialect_is_special_char(dialect, c)) {
@@ -1336,17 +1327,10 @@ static int
 join_append(WriterObj *self, PyObject *field, int quoted)
 {
     DialectObj *dialect = self->dialect;
-    int field_kind = -1;
-    const void *field_data = NULL;
     Py_ssize_t field_len = 0;
     Py_ssize_t rec_len;
 
     if (field != NULL) {
-        field_kind = PyUnicode_KIND(field);
-        field_data = PyUnicode_DATA(field);
-        if (field_data == NULL) {
-            return 0;
-        }
         field_len = PyUnicode_GET_LENGTH(field);
     }
     if (!field_len && dialect->delimiter == ' ' && dialect->skipinitialspace) {
@@ -1362,7 +1346,7 @@ join_append(WriterObj *self, PyObject *field, int quoted)
         }
         quoted = 1;
     }
-    rec_len = join_append_data(self, field_kind, field_data, field_len,
+    rec_len = join_append_data(self, field,
                                &quoted, 0);
     if (rec_len < 0)
         return 0;
@@ -1371,7 +1355,7 @@ join_append(WriterObj *self, PyObject *field, int quoted)
     if (!join_check_rec_size(self, rec_len))
         return 0;
 
-    self->rec_len = join_append_data(self, field_kind, field_data, field_len,
+    self->rec_len = join_append_data(self, field,
                                      &quoted, 1);
     self->num_fields++;
 
@@ -1382,8 +1366,6 @@ static int
 join_append_lineterminator(WriterObj *self)
 {
     Py_ssize_t terminator_len, i;
-    int term_kind;
-    const void *term_data;
 
     terminator_len = PyUnicode_GET_LENGTH(self->dialect->lineterminator);
     if (terminator_len == -1)
@@ -1393,13 +1375,12 @@ join_append_lineterminator(WriterObj *self)
     if (!join_check_rec_size(self, self->rec_len + terminator_len))
         return 0;
 
-    term_kind = PyUnicode_KIND(self->dialect->lineterminator);
-    term_data = PyUnicode_DATA(self->dialect->lineterminator);
-    if (term_data == NULL) {
-        return 0;
+    Py_ssize_t cursor = 0;
+    Py_UCS4 ch;
+    for (i = 0; i < terminator_len; i++) {
+        (void)_PyUnicode_Next(self->dialect->lineterminator, &cursor, &ch);
+        self->rec[self->rec_len + i] = ch;
     }
-    for (i = 0; i < terminator_len; i++)
-        self->rec[self->rec_len + i] = PyUnicode_READ(term_kind, term_data, i);
     self->rec_len += terminator_len;
 
     return 1;

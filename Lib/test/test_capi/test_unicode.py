@@ -294,7 +294,8 @@ class UTF8StorageTests(unittest.TestCase):
 
     def test_codec_handlers_without_fsr(self):
         import codecs
-        for handler in (codecs.xmlcharrefreplace_errors,
+        for handler in (codecs.namereplace_errors,
+                        codecs.xmlcharrefreplace_errors,
                         codecs.backslashreplace_errors,
                         codecs.lookup_error('surrogatepass'),
                         codecs.lookup_error('surrogateescape')):
@@ -306,6 +307,73 @@ class UTF8StorageTests(unittest.TestCase):
                     'utf-8', Str('日😀\udc80\udcffz'), 2, 4, 'test'))
                 self.assertEqual(handler(error), expected)
                 self.assertEqual(_testcapi.unicode_storage(value), before)
+
+    def test_csv_without_fsr(self):
+        import csv
+        import io
+        for factory in (self.make_string, Str):
+            for text in ('日😀', '日,"😀', '日\n😀', '日\0\udcff'):
+                value = factory(text)
+                ending = factory('終\r\n')
+                before = [_testcapi.unicode_storage(v) for v in (value, ending)]
+                output = io.StringIO()
+                csv.writer(output, lineterminator=ending).writerow([value])
+                expected = ('"' + text.replace('"', '""') + '"'
+                            if any(c in text for c in ',"\n') else text)
+                self.assertEqual(output.getvalue(), expected + ending)
+                line = factory(expected + '\r\n')
+                line_before = _testcapi.unicode_storage(line)
+                self.assertEqual(list(csv.reader([line])), [[text]])
+                self.assertEqual(_testcapi.unicode_storage(line), line_before)
+                self.assertEqual([_testcapi.unicode_storage(v)
+                                  for v in (value, ending)], before)
+
+    def test_pickle_and_strftime_without_fsr(self):
+        import pickle
+        import time
+        value = self.make_string('日😀\0\n\r\\\x1a\ud800\udcff')
+        self.assertEqual(pickle.loads(pickle.dumps(value, protocol=0)), value)
+        self.assertEqual(_testcapi.unicode_storage(value)[3], 0)
+        for factory in (self.make_string, Str):
+            value = factory('日%Y😀\0%m\udcff%%')
+            before = _testcapi.unicode_storage(value)
+            self.assertEqual(time.strftime(value, (2026, 9, 20, 1, 2, 3, 6, 263, 0)),
+                             '日2026😀\0' '09\udcff%')
+            self.assertEqual(_testcapi.unicode_storage(value), before)
+
+    def test_encoding_map_without_fsr(self):
+        import codecs
+        for first, last in (('\0', '日'), ('X', '日'), ('\0', '😀')):
+            for factory in (self.make_string, Str):
+                table = factory(first + ''.join(map(chr, range(1, 255))) + last)
+                before = _testcapi.unicode_storage(table)
+                mapping = codecs.charmap_build(table)
+                self.assertEqual(codecs.charmap_encode(last, 'strict', mapping),
+                                 (b'\xff', 1))
+                self.assertEqual(_testcapi.unicode_storage(table), before)
+
+    def test_expat_encoding_table_without_fsr(self):
+        import codecs
+        expat = import_helper.import_module('pyexpat')
+        table = self.make_string(''.join(map(chr, range(128))) + '日' +
+                                 ''.join(map(chr, range(129, 256))))
+        def decode(data, errors='strict'):
+            self.assertEqual(bytes(data), bytes(range(256)))
+            return table, 256
+        def search(name):
+            if name == 'test_utf8_cursor_expat':
+                return codecs.CodecInfo(name=name, encode=codecs.latin_1_encode,
+                                        decode=decode)
+        codecs.register(search)
+        try:
+            parser = expat.ParserCreate('test_utf8_cursor_expat')
+            output = []
+            parser.CharacterDataHandler = output.append
+            parser.Parse(b'<x>\x80</x>', True)
+            self.assertEqual(output, ['日'])
+            self.assertEqual(_testcapi.unicode_storage(table)[3], 0)
+        finally:
+            codecs.unregister(search)
 
     def test_lazy_fsr(self):
         for text in ('café', '日本語', 'a😀b', 'x\0é', 'a\ud800\udcffb',

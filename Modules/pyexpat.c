@@ -3,6 +3,7 @@
 #endif
 
 #include "Python.h"
+#include "pycore_unicodeobject.h" // _PyUnicode_Next()
 #include "pycore_ceval.h"         // _Py_EnterRecursiveCall()
 #include "pycore_codecs.h"        // _PyCodec_LookupTextEncoding()
 #include "pycore_import.h"        // _PyImport_SetModule()
@@ -1547,8 +1548,6 @@ PyUnknownEncodingHandler(void *encodingHandlerData,
 {
     PyObject *u;
     int i;
-    const void *data;
-    int kind;
 
     if (PyErr_Occurred())
         return XML_STATUS_ERROR;
@@ -1604,14 +1603,10 @@ PyUnknownEncodingHandler(void *encodingHandlerData,
         return XML_STATUS_ERROR;
     }
 
-    kind = PyUnicode_KIND(u);
-    data = PyUnicode_DATA(u);
-    if (data == NULL) {
-        Py_DECREF(u);
-        return XML_STATUS_ERROR;
-    }
+    Py_ssize_t cursor = 0;
+    Py_UCS4 ch;
     for (i = 0; i < 256; i++) {
-        Py_UCS4 ch = PyUnicode_READ(kind, data, i);
+        (void)_PyUnicode_Next(u, &cursor, &ch);
         if (ch != Py_UNICODE_REPLACEMENT_CHARACTER)
             info->map[i] = ch;
         else

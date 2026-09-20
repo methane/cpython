@@ -9210,10 +9210,6 @@ static PyTypeObject EncodingMapType = {
 PyObject*
 PyUnicode_BuildEncodingMap(PyObject* string)
 {
-    if (string != NULL && PyUnicode_Check(string) &&
-        PyUnicode_DATA(string) == NULL) {
-        return NULL;
-    }
     PyObject *result;
     struct encoding_map *mresult;
     int i;
@@ -9222,8 +9218,6 @@ PyUnicode_BuildEncodingMap(PyObject* string)
     unsigned char level2[512];
     unsigned char *mlevel1, *mlevel2, *mlevel3;
     int count2 = 0, count3 = 0;
-    int kind;
-    const void *data;
     int length;
     Py_UCS4 ch;
 
@@ -9231,8 +9225,6 @@ PyUnicode_BuildEncodingMap(PyObject* string)
         PyErr_BadArgument();
         return NULL;
     }
-    kind = PyUnicode_KIND(string);
-    data = PyUnicode_DATA(string);
     length = (int)Py_MIN(PyUnicode_GET_LENGTH(string), 256);
     memset(level1, 0xFF, sizeof level1);
     memset(level2, 0xFF, sizeof level2);
@@ -9240,11 +9232,14 @@ PyUnicode_BuildEncodingMap(PyObject* string)
     /* If there isn't a one-to-one mapping of NULL to \0,
        or if there are non-BMP characters, we need to use
        a mapping dictionary. */
-    if (PyUnicode_READ(kind, data, 0) != 0)
+    Py_ssize_t cursor = 0;
+    (void)_PyUnicode_Next(string, &cursor, &ch);
+    Py_ssize_t after_first = cursor;
+    if (ch != 0)
         need_dict = 1;
     for (i = 1; i < length; i++) {
         int l1, l2;
-        ch = PyUnicode_READ(kind, data, i);
+        (void)_PyUnicode_Next(string, &cursor, &ch);
         if (ch == 0 || ch > 0xFFFF) {
             need_dict = 1;
             break;
@@ -9267,8 +9262,10 @@ PyUnicode_BuildEncodingMap(PyObject* string)
         PyObject *result = PyDict_New();
         if (!result)
             return NULL;
+        cursor = 0;
         for (i = 0; i < length; i++) {
-            Py_UCS4 c = PyUnicode_READ(kind, data, i);
+            Py_UCS4 c;
+            (void)_PyUnicode_Next(string, &cursor, &c);
             PyObject *key = PyLong_FromLong(c);
             if (key == NULL) {
                 Py_DECREF(result);
@@ -9309,9 +9306,10 @@ PyUnicode_BuildEncodingMap(PyObject* string)
     memset(mlevel2, 0xFF, 16*count2);
     memset(mlevel3, 0, 128*count3);
     count3 = 0;
+    cursor = after_first;
     for (i = 1; i < length; i++) {
         int o1, o2, o3, i2, i3;
-        Py_UCS4 ch = PyUnicode_READ(kind, data, i);
+        (void)_PyUnicode_Next(string, &cursor, &ch);
         if (ch == 0xFFFE)
             /* unmapped character */
             continue;

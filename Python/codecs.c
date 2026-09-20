@@ -1109,16 +1109,18 @@ PyObject *PyCodec_NameReplaceErrors(PyObject *exc)
     {
         return NULL;
     }
-    if (PyUnicode_DATA(obj) == NULL) {
-        Py_DECREF(obj);
-        return NULL;
+    Py_ssize_t cursor = 0;
+    Py_UCS4 c;
+    for (Py_ssize_t i = 0; i < start; i++) {
+        (void)_PyUnicode_Next(obj, &cursor, &c);
     }
+    Py_ssize_t saved = cursor;
 
 
     char buffer[256]; /* NAME_MAXLEN in unicodename_db.h */
     Py_ssize_t imax = start, ressize = 0, replsize;
     for (; imax < end; ++imax) {
-        Py_UCS4 c = PyUnicode_READ_CHAR(obj, imax);
+        (void)_PyUnicode_Next(obj, &cursor, &c);
         if (ucnhash_capi->getname(c, buffer, sizeof(buffer), 1)) {
             // If 'c' is recognized by getname(), the corresponding replacement
             // is '\\' + 'N' + '{' + NAME + '}', i.e. 1 + 1 + 1 + len(NAME) + 1
@@ -1140,9 +1142,10 @@ PyObject *PyCodec_NameReplaceErrors(PyObject *exc)
         return NULL;
     }
 
+    cursor = saved;
     Py_UCS1 *outp = PyUnicode_1BYTE_DATA(res);
     for (Py_ssize_t i = start; i < imax; ++i) {
-        Py_UCS4 c = PyUnicode_READ_CHAR(obj, i);
+        (void)_PyUnicode_Next(obj, &cursor, &c);
         if (ucnhash_capi->getname(c, buffer, sizeof(buffer), 1)) {
             *outp++ = '\\';
             *outp++ = 'N';
