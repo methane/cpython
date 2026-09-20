@@ -613,9 +613,20 @@ class StrTest(string_tests.StringLikeTest,
         s1 = "轘" * 4
         s2 = "&"
         s3 = "&amp;"
+        # The UTF-8 path can reject an absent substring without allocating.
+        with support.memory_error_cm():
+            result = s1.replace(s2, s3)
+        self.assertIs(result, s1)
+
+        class LegacyStr(str):
+            pass
+
+        # Retain coverage of the fixed-width widening allocation that used
+        # to crash, using a subclass with FSR-primary storage.
+        legacy = LegacyStr(s1)
         with self.assertRaises(MemoryError):
             with support.memory_error_cm():
-                s1.replace(s2, s3)  # this line used to crash before
+                legacy.replace(s2, s3)
 
     def test_repeat_id_preserving(self):
         a = '123abc1@'

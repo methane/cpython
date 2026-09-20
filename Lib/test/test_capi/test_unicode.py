@@ -82,6 +82,217 @@ class UTF8StorageTests(unittest.TestCase):
         self.assertEqual(_testcapi.unicode_storage(value)[2], 1)
         self.assertEqual(value.encode('utf-8', 'surrogateescape'), raw)
 
+    def test_count_utf8(self):
+        for text in ('', 'aaaa', 'ééaé', '日本日本語', '😀a😀',
+                     'a\0日本\0', '\ud800\udc00\ud800', 'a\udcffb'):
+            chars = list(text)
+            for needle in ('', 'a', 'é', '日本', '😀', '\0', '\ud800',
+                           '\ud800\udc00', '\udcff'):
+                for start, end in ((0, sys.maxsize), (-4, -1), (1, 3),
+                                   (0, 0), (50, 60), (3, 1), (-50, 50)):
+                    with self.subTest(text=ascii(text), needle=ascii(needle),
+                                      start=start, end=end):
+                        value = self.make_string(text)
+                        sub = self.make_string(needle)
+                        before = [_testcapi.unicode_storage(s) for s in (value, sub)]
+                        part = chars[start:end]
+                        pattern = list(needle)
+                        expected = 0
+                        if not pattern:
+                            expected = (len(part) + 1 if start <= len(chars)
+                                        and max(start, 0) <= end else 0)
+                            if start < 0 or end < 0:
+                                lo, hi, _ = slice(start, end).indices(len(chars))
+                                expected = max(hi - lo + 1, 0)
+                        else:
+                            pos = 0
+                            while pos <= len(part) - len(pattern):
+                                if part[pos:pos + len(pattern)] == pattern:
+                                    expected += 1
+                                    pos += len(pattern)
+                                else:
+                                    pos += 1
+                        self.assertEqual(value.count(sub, start, end), expected)
+                        self.assertEqual(
+                            [_testcapi.unicode_storage(s) for s in (value, sub)], before)
+
+    def test_replace_utf8(self):
+        cases = (
+            ('日本日本語', '日本', '😀', '😀😀語'),
+            ('ééé', 'éé', '日本', '日本é'),
+            ('a😀b', '', '日', '日a日😀日b日'),
+            ('a\0日\0', '\0', '😀', 'a😀日😀'),
+            ('\ud800\udc00', '\ud800', '', '\udc00'),
+            ('\ud800x', 'x', '\udc00', '\ud800\udc00'),
+            ('a\udcffb', '\udcff', 'x', 'axb'),
+            ('a😀a', '😀', '', 'aa'),
+            ('日本', '日本', 'é', 'é'),
+            ('😀', '😀', '', ''),
+            ('日本', 'missing', '😀', '日本'),
+            ('', '', '日本', '日本'),
+        )
+        for text, old, new, expected in cases:
+            for limit in (-1, 0, 1, 2, sys.maxsize):
+                with self.subTest(text=ascii(text), old=ascii(old), limit=limit):
+                    value, sub, replacement = map(self.make_string, (text, old, new))
+                    operands = (value, sub, replacement)
+                    before = [_testcapi.unicode_storage(s) for s in operands]
+                    # A str subclass uses the fixed-width implementation.
+                    reference = Str(text).replace(old, new, limit)
+                    result = value.replace(sub, replacement, limit)
+                    self.assertEqual(result, reference)
+                    if limit < 0:
+                        self.assertEqual(result, expected)
+                    self.assertEqual([_testcapi.unicode_storage(s) for s in operands], before)
+                    state = _testcapi.unicode_storage(result)
+                    if state[0]:
+                        self.assertEqual(state[2], any(
+                            0xd800 <= ord(ch) <= 0xdfff for ch in result))
+                        if len(result) > 1:
+                            self.assertEqual(state[3], 0)
+                    self.assertEqual(result.encode('utf-8', 'surrogatepass'),
+                                     reference.encode('utf-8', 'surrogatepass'))
+
+    def test_count_replace_mixed_storage(self):
+        for ch in (0xe9, 0x65e5, 0xd800, 0x1f600):
+            legacy = _testcapi.unicode_new(4, ch)
+            compact = self.make_string(chr(ch) * 4)
+            for value in (legacy, compact):
+                for old in (legacy, compact):
+                    self.assertEqual(value.count(old), 1)
+                    self.assertEqual(value.replace(old, '日本'), '日本')
+                    self.assertEqual(value.replace(old, legacy), compact)
+
+    def test_utf8_search_bounds(self):
+        for text in ('', 'abcabc', 'é日本😀日\0\ud800\udc00日', '\udcff日'):
+            for needle in ('', '日', '日本', '😀', '\0', '\ud800',
+                           '\ud800\udc00', '\udcff', 'absent'):
+                for start, end in ((0, sys.maxsize), (-5, -1), (1, 4),
+                                   (0, 0), (50, 60), (3, 1), (-50, 50)):
+                    value, sub = map(self.make_string, (text, needle))
+                    before = [_testcapi.unicode_storage(x) for x in (value, sub)]
+                    for method in ('find', 'rfind', 'startswith', 'endswith'):
+                        with self.subTest(method=method, text=ascii(text),
+                                          needle=ascii(needle), start=start, end=end):
+                            self.assertEqual(getattr(value, method)(sub, start, end),
+                                             getattr(Str(text), method)(Str(needle), start, end))
+                    self.assertEqual(sub in value, Str(needle) in Str(text))
+                    self.assertEqual(
+                        [_testcapi.unicode_storage(x) for x in (value, sub)], before)
+
+    def test_utf8_copy_and_scan_methods(self):
+        operations = {
+            'split': lambda s: s.split('日', 2),
+            'rsplit': lambda s: s.rsplit('日', 2),
+            'split_ws': lambda s: s.split(None, 2),
+            'rsplit_ws': lambda s: s.rsplit(None, 2),
+            'split_zero': lambda s: s.split(None, 0),
+            'rsplit_zero': lambda s: s.rsplit(None, 0),
+            'splitlines': lambda s: s.splitlines(),
+            'splitlines_keep': lambda s: s.splitlines(True),
+            'partition': lambda s: s.partition('日'),
+            'rpartition': lambda s: s.rpartition('日'),
+            'strip': lambda s: s.strip(),
+            'lstrip': lambda s: s.lstrip(),
+            'rstrip': lambda s: s.rstrip(),
+            'strip_chars': lambda s: s.strip('日😀\udcff'),
+            'removeprefix': lambda s: s.removeprefix('日'),
+            'removesuffix': lambda s: s.removesuffix('日'),
+            'slice': lambda s: s[1:-1],
+            'join': lambda s: s.join([s, '😀', s]),
+            'repeat': lambda s: s * 3,
+            'ljust': lambda s: s.ljust(30, '😀'),
+            'rjust': lambda s: s.rjust(30, '\udcff'),
+            'center': lambda s: s.center(30, '日'),
+            'zfill': lambda s: s.zfill(30),
+            'expandtabs': lambda s: s.expandtabs(4),
+        }
+        for name in ('islower', 'isupper', 'istitle', 'isspace', 'isalpha',
+                     'isalnum', 'isdecimal', 'isdigit', 'isnumeric',
+                     'isidentifier', 'isprintable', 'upper', 'lower', 'title',
+                     'capitalize', 'swapcase', 'casefold'):
+            operations[name] = getattr(str, name)
+        for text in ('日日本😀\udcff日', '\u3000é\t日\r\n😀\x85日\u2028\u3000',
+                     '\ud800x\udc00', '-日本😀', '+\udcff', 'Éabc\0日', 'éé'):
+            for name, operation in operations.items():
+                with self.subTest(method=name, text=ascii(text)):
+                    value = self.make_string(text)
+                    self.assertEqual(operation(value), operation(Str(text)))
+                    self.assertEqual(_testcapi.unicode_storage(value)[3], 0)
+
+    def test_utf8_case_context(self):
+        for text in ('AΣ', 'AΣA', 'A\u0345Σ\u0301', 'AΣ\u0345A',
+                     'Σ\u0301', 'ßİﬃǅ', '\U00010400\U00010428',
+                     'AΣ\udcffΣ\ud800', 'AΣ\0ΣA'):
+            for name in ('upper', 'lower', 'title', 'capitalize', 'swapcase',
+                         'casefold'):
+                with self.subTest(text=ascii(text), method=name):
+                    value = self.make_string(text)
+                    self.assertEqual(getattr(value, name)(),
+                                     getattr(Str(text), name)())
+                    self.assertEqual(_testcapi.unicode_storage(value)[3], 0)
+
+    def test_utf8_native_allocation_failures(self):
+        from test.support.script_helper import assert_python_ok
+        assert_python_ok('-c', textwrap.dedent(r"""
+            import _testcapi
+            raw = ' 日\t本😀日\n '.encode()
+            remove_hooks = _testcapi.remove_mem_hooks
+            operations = (
+                lambda s: s.split('日'), lambda s: s.rsplit(None, 1),
+                lambda s: s.partition('日'), lambda s: s.rpartition('日'),
+                lambda s: s.splitlines(), lambda s: s.strip(),
+                lambda s: s[1:-1], lambda s: s.join([s, s]),
+                lambda s: s * 3, lambda s: s.center(20, '😀'),
+                lambda s: s.expandtabs(4), lambda s: s.zfill(20),
+                str.upper, str.lower, str.title, str.capitalize,
+                str.swapcase, str.casefold,
+            )
+            for operation in operations:
+                for fail_at in range(10):
+                    s = raw.decode()
+                    try:
+                        _testcapi.set_nomemory(fail_at, fail_at + 1)
+                        operation(s)
+                    except MemoryError:
+                        pass
+                    finally:
+                        remove_hooks()
+                    assert s.encode() == raw
+                    assert _testcapi.unicode_storage(s)[3] == 0
+                    operation(s)
+        """))
+
+    def test_utf8_replace_allocation_failure(self):
+        from test.support.script_helper import assert_python_ok
+        assert_python_ok('-c', textwrap.dedent(r"""
+            import _testcapi
+            s = '日本日本'.encode().decode()
+            old = '日本'.encode().decode()
+            new = '😀😀'.encode().decode()
+            replace = s.replace
+            count = s.count
+            remove_hooks = _testcapi.remove_mem_hooks
+            try:
+                _testcapi.set_nomemory(0, 1)
+                n = count(old)
+            finally:
+                remove_hooks()
+            assert n == 2
+            failed = False
+            try:
+                _testcapi.set_nomemory(0, 1)
+                replace(old, new)
+            except MemoryError:
+                failed = True
+            finally:
+                remove_hooks()
+            assert failed
+            for value in (s, old, new):
+                assert _testcapi.unicode_storage(value)[3] == 0
+            assert replace(old, new) == '😀😀😀😀'
+        """))
+
     def test_readonly_writer_preserves_lazy_fsr(self):
         value = self.make_string('日本😀')
         result = '{}'.format(value)
@@ -97,6 +308,8 @@ class UTF8StorageTests(unittest.TestCase):
 
         def read():
             for _ in range(50):
+                self.assertTrue(value.isprintable())
+                self.assertEqual(value.find('日'), 1)
                 _testcapi.unicode_materialize_fsr(value)
                 self.assertEqual(value[1], '日')
                 self.assertEqual(value[-1], '😀')
@@ -120,7 +333,7 @@ class UTF8StorageTests(unittest.TestCase):
         assert_python_ok('-c', textwrap.dedent(r"""
             import _testcapi
             operations = (str.upper, str.lower, str.strip, str.__repr__)
-            raw = 'a日本😀z'.encode()
+            raw = ' a日本😀z '.encode()
             remove_hooks = _testcapi.remove_mem_hooks
             for operation in operations:
                 s = raw.decode()
@@ -136,7 +349,7 @@ class UTF8StorageTests(unittest.TestCase):
                 assert _testcapi.unicode_storage(s)[3] == 0
                 assert s.encode() == raw
                 operation(s)
-                assert _testcapi.unicode_storage(s)[3] == 1
+                assert _testcapi.unicode_storage(s)[3] == (operation is str.__repr__)
         """))
 
     def test_fsr_failure_retry(self):

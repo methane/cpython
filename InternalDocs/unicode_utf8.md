@@ -32,7 +32,42 @@ Hashing, equality, ordering, UTF-8 output, concatenation, and ordinary and virtu
 iteration consume the primary payload without generating a FSR. Hashing uses
 surrogatepass bytes for both storage forms. Non-ASCII hashes can therefore differ
 from earlier releases. ASCII hashes retain their correspondence with bytes.
-Other string algorithms acquire a FSR before entering their fixed-width loops.
+Algorithms without a native path acquire a FSR before their fixed-width loops.
+
+`str.count` and `str.replace` search the encoded bytes directly when all
+operands have a primary UTF-8 representation (including ASCII). Nonempty UTF-8
+patterns can only match at code point boundaries, including surrogatepass
+sequences. Count bounds are converted from code point offsets to byte offsets;
+empty patterns count code point boundaries. Replacement inserts empty-pattern
+matches only between code points and recomputes the result's character width
+and surrogate flag. Mixed FSR operands retain the fixed-width implementation;
+ASCII-only replacement also retains its existing specialized implementation.
+
+The native UTF-8 paths also cover containment, forward/reverse searches,
+prefix/suffix matching and removal, contiguous slices, explicit-separator and
+whitespace splitting, partitioning, line splitting, stripping, joining,
+repetition, padding, zero filling, and tab expansion. Bounded searches translate
+character offsets to byte boundaries; returned indices count code points.
+Suffix operations locate boundaries from the end when that is closer.
+
+Character predicates (`isalpha`, `isalnum`, `isspace`, `isdecimal`, `isdigit`,
+`isnumeric`, `islower`, `isupper`, `istitle`, and `isprintable`) decode sequentially
+without allocating an FSR, or reuse an existing FSR. `isascii`, `isidentifier`,
+length, iteration, comparisons, hashing and UTF-8 output already have native
+paths. Case conversion decodes sequentially and writes mapped code points into
+a temporary UTF-8 buffer, sharing the existing full mapping tables. Final sigma
+looks backward and forward through the original UTF-8 code points, preserving
+case-ignorable context. Translation, representation and formatting retain their
+fixed-width algorithms and need separate performance work.
+
+`Tools/scripts/bench_unicode_methods.py` measures first-call CPU time and retained
+input memory; `--warm` measures calls after indexing has materialized a FSR.
+Use matching build options. Avoid interpreting debug-build ratios as release
+performance claims. The byte-oriented methods preserve existing ASCII
+specializations where applicable and fall back for FSR-primary operands.
+Whitespace and line splitting also reuse an already materialized FSR to avoid
+paying to decode the same text again. Impossible matches are rejected using
+length and known character-width metadata before scanning either payload.
 
 ## Construction and compatibility
 
