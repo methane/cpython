@@ -421,7 +421,7 @@ formatchar(PyObject *v,
     /* presume that the buffer is at least 3 characters long */
     if (PyUnicode_Check(v)) {
         if (PyUnicode_GET_LENGTH(v) == 1) {
-            return PyUnicode_READ_CHAR(v, 0);
+            return _PyUnicode_ReadCharNoAlloc(v, 0);
         }
         FORMAT_ERROR(PyExc_TypeError,
                      "%%c requires an integer or a unicode character, "

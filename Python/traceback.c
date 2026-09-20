@@ -10,6 +10,7 @@
 #include "pycore_pyerrors.h"      // _PyErr_GetRaisedException()
 #include "pycore_pystate.h"       // _PyThreadState_GET()
 #include "pycore_traceback.h"     // EXCEPTION_TB_HEADER
+#include "pycore_unicodeobject.h" // _PyUnicode_GetPrimaryUTF8()
 
 #include "frameobject.h"          // PyFrame_New()
 #include "../Parser/tokenizer/tokenizer.h"
@@ -494,8 +495,6 @@ display_source_line(PyObject *f, PyObject *filename, int lineno, int indent,
     PyObject *lineobj = NULL;
     PyObject *res;
     char buf[MAXPATHLEN+1];
-    int kind;
-    const void *data;
 
     /* open the file */
     if (filename == NULL)
@@ -589,14 +588,13 @@ display_source_line(PyObject *f, PyObject *filename, int lineno, int indent,
     }
 
     /* remove the indentation of the line */
-    kind = PyUnicode_KIND(lineobj);
-    data = PyUnicode_DATA(lineobj);
-    if (data == NULL) {
-        Py_DECREF(lineobj);
-        return -1;
-    }
+    /* Leading ASCII whitespace has identical byte and character offsets. */
+    Py_ssize_t utf8_size;
+    const unsigned char *utf8 = (const unsigned char *)
+        _PyUnicode_GetPrimaryUTF8(lineobj, &utf8_size);
     for (i=0; i < PyUnicode_GET_LENGTH(lineobj); i++) {
-        Py_UCS4 ch = PyUnicode_READ(kind, data, i);
+        Py_UCS4 ch = utf8 != NULL ? utf8[i]
+            : _PyUnicode_ReadCharNoAlloc(lineobj, i);
         if (ch != ' ' && ch != '\t' && ch != '\014')
             break;
     }

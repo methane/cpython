@@ -975,8 +975,6 @@ convertsimple(PyObject *arg, const char **p_format, va_list *p_va, int flags,
 
     case 'C': {/* unicode char */
         int *p = va_arg(*p_va, int *);
-        int kind;
-        const void *data;
 
         if (!PyUnicode_Check(arg))
             return converterr("a unicode character", arg, msgbuf, bufsize);
@@ -987,12 +985,7 @@ convertsimple(PyObject *arg, const char **p_format, va_list *p_va, int flags,
                                   msgbuf, bufsize);
         }
 
-        kind = PyUnicode_KIND(arg);
-        data = PyUnicode_DATA(arg);
-        if (data == NULL) {
-            RETURN_ERR_OCCURRED;
-        }
-        *p = PyUnicode_READ(kind, data, 0);
+        *p = _PyUnicode_ReadCharNoAlloc(arg, 0);
         break;
     }
 

@@ -5927,12 +5927,6 @@ _sanitize_isoformat_str(PyObject *dtstr)
     // replaces any surrogate character separators with `T`.
     //
     // The result of this, if not NULL, returns a new reference
-    const void* const unicode_data = PyUnicode_DATA(dtstr);
-    if (unicode_data == NULL) {
-        return NULL;
-    }
-    const int kind = PyUnicode_KIND(dtstr);
-
     // Depending on the format of the string, the separator can only ever be
     // in positions 7, 8 or 10. We'll check each of these for a surrogate and
     // if we find one, replace it with `T`. If there is more than one surrogate,
@@ -5948,7 +5942,7 @@ _sanitize_isoformat_str(PyObject *dtstr)
             break;
         }
 
-        if(Py_UNICODE_IS_SURROGATE(PyUnicode_READ(kind, unicode_data, pos))) {
+        if(Py_UNICODE_IS_SURROGATE(_PyUnicode_ReadCharNoAlloc(dtstr, pos))) {
             surrogate_separator = pos;
             break;
         }

@@ -110,6 +110,43 @@ class UTF8StorageTests(unittest.TestCase):
                         cls.fromhex(value)
                     self.assertEqual(_testcapi.unicode_storage(value), before)
 
+    def test_single_character_consumers_without_fsr(self):
+        for text in ('日', '😀', '\ud800', '\udcff'):
+            for factory in (self.make_string, Str):
+                with self.subTest(text=ascii(text), factory=factory):
+                    value = factory(text)
+                    before = _testcapi.unicode_storage(value)
+                    self.assertEqual(_testcapi.getargs_C(value), ord(text))
+                    self.assertEqual('%c' % value, text)
+                    self.assertEqual(_testcapi.unicode_storage(value), before)
+
+    def test_module_consumers_without_fsr(self):
+        import datetime
+        import operator
+        import types
+
+        for factory in (self.make_string, Str):
+            for text in ('日.😀', '.日', '日.', '日..😀', '日.\udcff'):
+                with self.subTest(text=ascii(text), factory=factory):
+                    root = types.SimpleNamespace()
+                    obj = root
+                    parts = text.split('.')
+                    for name in parts[:-1]:
+                        child = types.SimpleNamespace()
+                        setattr(obj, name, child)
+                        obj = child
+                    setattr(obj, parts[-1], 42)
+                    value = factory(text)
+                    before = _testcapi.unicode_storage(value)
+                    self.assertEqual(operator.attrgetter(value)(root), 42)
+                    self.assertEqual(_testcapi.unicode_storage(value)[:4], before[:4])
+            for separator in ('日', '😀', '\ud800', '\udcff'):
+                value = factory('2026-01-02' + separator + '03:04:05')
+                before = _testcapi.unicode_storage(value)
+                self.assertEqual(datetime.datetime.fromisoformat(value),
+                                 datetime.datetime(2026, 1, 2, 3, 4, 5))
+                self.assertEqual(_testcapi.unicode_storage(value)[:4], before[:4])
+
     def test_lazy_fsr(self):
         for text in ('café', '日本語', 'a😀b', 'x\0é', 'a\ud800\udcffb',
                      '\ud800\udc00'):
