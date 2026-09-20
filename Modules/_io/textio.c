@@ -941,8 +941,8 @@ set_newline(textio *self, const char *newline)
     self->writetranslate = (newline == NULL || newline[0] != '\0');
     if (!self->readuniversal && self->readnl != NULL) {
         // validate_newline() accepts only ASCII newlines.
-        assert(PyUnicode_KIND(self->readnl) == PyUnicode_1BYTE_KIND);
-        self->writenl = (const char *)PyUnicode_1BYTE_DATA(self->readnl);
+        assert(PyUnicode_IS_ASCII(self->readnl));
+        self->writenl = _PyUnicode_GetPrimaryUTF8(self->readnl, NULL);
         if (strcmp(self->writenl, "\n") == 0) {
             self->writenl = NULL;
         }
@@ -2245,9 +2245,9 @@ _PyIO_find_line_ending(
     else {
         /* Non-universal mode. */
         Py_ssize_t readnl_len = PyUnicode_GET_LENGTH(readnl);
-        const Py_UCS1 *nl = PyUnicode_1BYTE_DATA(readnl);
+        const Py_UCS1 *nl = (const Py_UCS1 *)_PyUnicode_GetPrimaryUTF8(readnl, NULL);
         /* Assume that readnl is an ASCII character. */
-        assert(PyUnicode_KIND(readnl) == PyUnicode_1BYTE_KIND);
+        assert(PyUnicode_IS_ASCII(readnl));
         if (readnl_len == 1) {
             const char *pos = find_control_char(kind, start, end, nl[0]);
             if (pos != NULL)

@@ -77,7 +77,7 @@ InsertThousandsGrouping_fill(_PyUnicodeWriter *writer, Py_ssize_t *buffer_pos,
     }
     assert(PyUnicode_IS_ASCII(digits));
     memcpy(buffer + *buffer_pos,
-           PyUnicode_1BYTE_DATA(digits) + *digits_pos, n_chars);
+           _PyUnicode_GetPrimaryUTF8(digits, NULL) + *digits_pos, n_chars);
     if (forward) {
         *buffer_pos += n_chars;
         *digits_pos += n_chars;
@@ -1229,7 +1229,7 @@ format_long_internal(PyObject *value, const InternalFormatSpec *format,
 
         /* Is a sign character present in the output?  If so, remember it
            and skip it */
-        if (PyUnicode_READ_CHAR(tmp, inumeric_chars) == '-') {
+        if (_PyUnicode_GetPrimaryUTF8(tmp, NULL)[inumeric_chars] == '-') {
             sign_char = '-';
             ++prefix;
             ++leading_chars_to_skip;
@@ -1381,7 +1381,7 @@ format_float_internal(PyObject *value,
     /* Is a sign character present in the output?  If so, remember it
        and skip it */
     index = 0;
-    if (PyUnicode_READ_CHAR(unicode_tmp, index) == '-') {
+    if (_PyUnicode_GetPrimaryUTF8(unicode_tmp, NULL)[index] == '-') {
         sign_char = '-';
         ++index;
         --n_digits;
@@ -1555,12 +1555,12 @@ format_complex_internal(PyObject *value,
 
     /* Is a sign character present in the output?  If so, remember it
        and skip it */
-    if (PyUnicode_READ_CHAR(re_unicode_tmp, i_re) == '-') {
+    if (_PyUnicode_GetPrimaryUTF8(re_unicode_tmp, NULL)[i_re] == '-') {
         re_sign_char = '-';
         ++i_re;
         --n_re_digits;
     }
-    if (PyUnicode_READ_CHAR(im_unicode_tmp, i_im) == '-') {
+    if (_PyUnicode_GetPrimaryUTF8(im_unicode_tmp, NULL)[i_im] == '-') {
         im_sign_char = '-';
         ++i_im;
         --n_im_digits;

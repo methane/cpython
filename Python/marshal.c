@@ -581,7 +581,7 @@ w_complex_object(PyObject *v, char flag, WFILE *p)
                     W_TYPE(TYPE_SHORT_ASCII_INTERNED, p);
                 else
                     W_TYPE(TYPE_SHORT_ASCII, p);
-                w_short_pstring(PyUnicode_1BYTE_DATA(v),
+                w_short_pstring(_PyUnicode_GetPrimaryUTF8(v, NULL),
                                 PyUnicode_GET_LENGTH(v), p);
             }
             else {
@@ -589,14 +589,13 @@ w_complex_object(PyObject *v, char flag, WFILE *p)
                     W_TYPE(TYPE_ASCII_INTERNED, p);
                 else
                     W_TYPE(TYPE_ASCII, p);
-                w_pstring(PyUnicode_1BYTE_DATA(v),
+                w_pstring(_PyUnicode_GetPrimaryUTF8(v, NULL),
                           PyUnicode_GET_LENGTH(v), p);
             }
         }
         else {
-            PyObject *utf8;
-            utf8 = PyUnicode_AsEncodedString(v, "utf8", "surrogatepass");
-            if (utf8 == NULL) {
+            _PyUnicodeUTF8View utf8;
+            if (_PyUnicodeUTF8View_Init(&utf8, v) < 0) {
                 p->depth--;
                 p->error = true;
                 return;
@@ -605,8 +604,8 @@ w_complex_object(PyObject *v, char flag, WFILE *p)
                 W_TYPE(TYPE_INTERNED, p);
             else
                 W_TYPE(TYPE_UNICODE, p);
-            w_pstring(PyBytes_AS_STRING(utf8), PyBytes_GET_SIZE(utf8), p);
-            Py_DECREF(utf8);
+            w_pstring(utf8.data, utf8.size, p);
+            _PyUnicodeUTF8View_Clear(&utf8);
         }
     }
     else if (PyTuple_CheckExact(v)) {

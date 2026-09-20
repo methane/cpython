@@ -11452,7 +11452,7 @@ PyUnicode_EqualToUTF8AndSize(PyObject *unicode, const char *str, Py_ssize_t size
     if (PyUnicode_IS_ASCII(unicode)) {
         Py_ssize_t len = PyUnicode_GET_LENGTH(unicode);
         return size == len &&
-            memcmp(PyUnicode_1BYTE_DATA(unicode), str, len) == 0;
+            memcmp(_PyUnicode_GetPrimaryUTF8(unicode, NULL), str, len) == 0;
     }
     if (PyUnicode_UTF8(unicode) != NULL) {
         Py_ssize_t len = PyUnicode_UTF8_LENGTH(unicode);
@@ -11528,7 +11528,7 @@ _PyUnicode_EqualToASCIIString(PyObject *unicode, const char *str)
         return 0;
     len = (size_t)PyUnicode_GET_LENGTH(unicode);
     return strlen(str) == len &&
-           memcmp(PyUnicode_1BYTE_DATA(unicode), str, len) == 0;
+           memcmp(_PyUnicode_GetPrimaryUTF8(unicode, NULL), str, len) == 0;
 }
 
 PyObject *

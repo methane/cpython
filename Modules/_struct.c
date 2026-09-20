@@ -8,6 +8,7 @@
 #endif
 
 #include "Python.h"
+#include "pycore_unicodeobject.h" // _PyUnicode_GetPrimaryUTF8()
 #include "pycore_bytesobject.h"   // _PyBytesWriter
 #include "pycore_lock.h"          // _PyOnceFlag_CallOnce()
 #include "pycore_long.h"          // _PyLong_AsByteArray()
@@ -1656,7 +1657,7 @@ prepare_s(PyStructObject *self, PyObject *format)
         PyErr_SetString(PyExc_ValueError, "non-ASCII character in struct format");
         return -1;
     }
-    fmt = (const char *)PyUnicode_1BYTE_DATA(format);
+    fmt = _PyUnicode_GetPrimaryUTF8(format, NULL);
     if (strlen(fmt) != (size_t)PyUnicode_GET_LENGTH(format)) {
         PyErr_SetString(state->StructError,
                         "embedded null character");
@@ -1953,10 +1954,10 @@ static bool
 same_format(PyStructObject *s, PyObject *format)
 {
     Py_ssize_t size = PyUnicode_GET_LENGTH(s->s_format);
-    const void *data = PyUnicode_1BYTE_DATA(s->s_format);
+    const void *data = _PyUnicode_GetPrimaryUTF8(s->s_format, NULL);
     if (PyUnicode_Check(format) && PyUnicode_IS_ASCII(format)) {
         return PyUnicode_GET_LENGTH(format) == size
-            && memcmp(PyUnicode_1BYTE_DATA(format), data, size) == 0;
+            && memcmp(_PyUnicode_GetPrimaryUTF8(format, NULL), data, size) == 0;
     }
     if (PyBytes_Check(format)) {
         return PyBytes_GET_SIZE(format) == size

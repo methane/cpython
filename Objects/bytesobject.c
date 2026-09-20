@@ -906,7 +906,7 @@ _PyBytes_FormatEx(const char *format, Py_ssize_t format_len,
                 if (temp == NULL)
                     goto error;
                 assert(PyUnicode_IS_ASCII(temp));
-                pbuf = (const char *)PyUnicode_1BYTE_DATA(temp);
+                pbuf = _PyUnicode_GetPrimaryUTF8(temp, NULL);
                 len = PyUnicode_GET_LENGTH(temp);
                 if (prec >= 0 && len > prec)
                     len = prec;
@@ -967,7 +967,7 @@ _PyBytes_FormatEx(const char *format, Py_ssize_t format_len,
                 if (!temp)
                     goto error;
                 assert(PyUnicode_IS_ASCII(temp));
-                pbuf = (const char *)PyUnicode_1BYTE_DATA(temp);
+                pbuf = _PyUnicode_GetPrimaryUTF8(temp, NULL);
                 len = PyUnicode_GET_LENGTH(temp);
                 sign = 1;
                 if (flags & F_ZERO)
@@ -2661,8 +2661,8 @@ _PyBytes_FromHex(PyObject *string, int use_bytearray)
             goto error;
         }
 
-        assert(PyUnicode_KIND(string) == PyUnicode_1BYTE_KIND);
-        str = PyUnicode_1BYTE_DATA(string);
+        assert(PyUnicode_IS_ASCII(string));
+        str = (const unsigned char *)_PyUnicode_GetPrimaryUTF8(string, NULL);
     }
     else if (PyObject_CheckBuffer(string)) {
         if (PyObject_GetBuffer(string, &view, PyBUF_SIMPLE) != 0) {

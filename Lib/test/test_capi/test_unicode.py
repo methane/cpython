@@ -35,6 +35,22 @@ class UTF8StorageTests(unittest.TestCase):
     def make_string(self, text):
         return text.encode('utf-8', 'surrogatepass').decode('utf-8', 'surrogatepass')
 
+    def test_marshal_without_fsr(self):
+        import marshal
+
+        for text in ('ascii', 'a' * 300, 'é日😀', 'a\0b', '\ud800\udcff'):
+            for version in range(marshal.version + 1):
+                with self.subTest(text=text, version=version):
+                    value = self.make_string(text)
+                    before = _testcapi.unicode_storage(value)
+                    encoded = marshal.dumps(value, version)
+                    self.assertEqual(marshal.loads(encoded), value)
+                    self.assertEqual(_testcapi.unicode_storage(value), before)
+                    if version == 0:
+                        payload = text.encode('utf-8', 'surrogatepass')
+                        self.assertEqual(encoded, b'u' +
+                                         len(payload).to_bytes(4, 'little') + payload)
+
     def test_maketrans_without_fsr(self):
         for factory in (self.make_string, Str):
             with self.subTest(factory=factory):
