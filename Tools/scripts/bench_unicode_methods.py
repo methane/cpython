@@ -1,7 +1,8 @@
 """Compare native string methods using baseline and modified interpreters.
 
 Use the same build options for both interpreters. Pass --warm to materialize
-the input's FSR before timing. Report median process CPU nanoseconds per call
+the input's FSR before timing, or --fsr to use FSR-primary str subclasses.
+Report median process CPU nanoseconds per call
 and the increase in retained input size; output allocations are not included
 in that size. These small measurements are exploratory, not a pyperformance
 replacement.
@@ -10,9 +11,20 @@ replacement.
 import sys
 import time
 
-if sys.argv[1:] not in ([], ['--warm']):
-    raise SystemExit('usage: bench_unicode_methods.py [--warm]')
+if sys.argv[1:] not in ([], ['--warm'], ['--fsr']):
+    raise SystemExit('usage: bench_unicode_methods.py [--warm | --fsr]')
 warm = '--warm' in sys.argv[1:]
+
+
+class Str(str):
+    pass
+
+
+def make_string(raw):
+    value = raw.decode()
+    return Str(value) if '--fsr' in sys.argv[1:] else value
+
+
 samples = {
     'ascii': 'abc def\tghi\n' * 256,
     'latin1': 'é' * 4096,
@@ -23,6 +35,8 @@ operations = {
     'contains': lambda s: '😀' in s,
     'find': lambda s: s.find('😀'),
     'rfind': lambda s: s.rfind('😀'),
+    'count': lambda s: s.count('😀'),
+    'replace': lambda s: s.replace('a', 'X'),
     'startswith': lambda s: s.startswith('日本'),
     'endswith': lambda s: s.endswith('😀'),
     'split': lambda s: s.split('😀'),
@@ -49,7 +63,7 @@ for name, text in samples.items():
     for opname, operation in operations.items():
         timings = []
         for _ in range(3):
-            pool = [raw.decode() for _ in range(80)]
+            pool = [make_string(raw) for _ in range(80)]
             if warm:
                 for s in pool:
                     s[0]
@@ -57,7 +71,7 @@ for name, text in samples.items():
             for s in pool:
                 operation(s)
             timings.append((time.process_time_ns()-start)/len(pool))
-        s = raw.decode()
+        s = make_string(raw)
         if warm:
             s[0]
         size = sys.getsizeof(s)

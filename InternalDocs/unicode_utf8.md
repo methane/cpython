@@ -34,14 +34,13 @@ surrogatepass bytes for both storage forms. Non-ASCII hashes can therefore diffe
 from earlier releases. ASCII hashes retain their correspondence with bytes.
 Algorithms without a native path acquire a FSR before their fixed-width loops.
 
-`str.count` and `str.replace` search the encoded bytes directly when all
-operands have a primary UTF-8 representation (including ASCII). Nonempty UTF-8
+`str.count` and `str.replace` search the encoded bytes directly. Nonempty UTF-8
 patterns can only match at code point boundaries, including surrogatepass
 sequences. Count bounds are converted from code point offsets to byte offsets;
 empty patterns count code point boundaries. Replacement inserts empty-pattern
 matches only between code points and recomputes the result's character width
-and surrogate flag. Mixed FSR operands retain the fixed-width implementation;
-ASCII-only replacement also retains its existing specialized implementation.
+and surrogate flag. ASCII single-character replacement keeps its in-place
+byte-copy specialization within the shared replacement implementation.
 
 The native UTF-8 paths also cover containment, forward/reverse searches,
 prefix/suffix matching and removal, contiguous slices, explicit-separator and
@@ -50,21 +49,49 @@ repetition, padding, zero filling, and tab expansion. Bounded searches translate
 character offsets to byte boundaries; returned indices count code points.
 Suffix operations locate boundaries from the end when that is closer.
 
+Search, explicit-separator split/partition, replacement and tab expansion use
+an internal UTF-8 view: primary storage is borrowed, while FSR-primary inputs
+are encoded into temporary owned bytes with surrogatepass. Cleanup is shared,
+and the temporary encoding never populates the public strict UTF-8 cache.
+This removes character-width dispatch and widening from these algorithms.
+FSR-primary inputs pay for encoding on each call; they are compatibility paths,
+and can be slower than their former fixed-width implementations.
+
 Character predicates (`isalpha`, `isalnum`, `isspace`, `isdecimal`, `isdigit`,
 `isnumeric`, `islower`, `isupper`, `istitle`, and `isprintable`) decode sequentially
 without allocating an FSR, or reuse an existing FSR. `isascii`, `isidentifier`,
 length, iteration, comparisons, hashing and UTF-8 output already have native
-paths. Case conversion decodes sequentially and writes mapped code points into
-a temporary UTF-8 buffer, sharing the existing full mapping tables. Final sigma
-looks backward and forward through the original UTF-8 code points, preserving
-case-ignorable context. Translation, representation and formatting retain their
-fixed-width algorithms and need separate performance work.
+paths. Case conversion uses one loop over the same sequential reader for both
+representations and writes mapped code points into a temporary UTF-8 buffer.
+Final sigma copies the reader to look backward and forward through the original
+code points, preserving case-ignorable context. `repr` writes escapes and printable
+characters to a UTF-8 writer. Comparison uses byte ordering for two primary UTF-8
+strings and a common sequential reader otherwise. Strip shares its UTF-8 loop
+across storage types. Join, padding and repeat allocate a compact UTF-8 result
+and copy bytes directly; FSR metadata is scanned to account for overestimated
+character widths and lone surrogates.
+
+UnicodeWriter normally accumulates UTF-8/surrogatepass bytes. `pos` counts code
+points, while `utf8_pos` and `utf8_size` count bytes. The private direct-write API
+is `_PyUnicodeWriter_PrepareUTF8(writer, additional_bytes)`, followed by writing
+at `_PyUnicodeWriter_UTF8Data(writer)` and committing complete code points with
+`_PyUnicodeWriter_AdvanceUTF8(writer, bytes_written, codepoints_written)`.
+The pointer is valid only until the next reserve or append. Integer decimal and
+base-2/8/16 conversion use it directly, with equal byte and character counts.
+Printf-style signs and padding also write to this buffer. Finish validates and
+copies the accumulated bytes into the final compact string.
+
+Legacy direct-write clients can still request the fixed-width buffer through
+`_PyUnicodeWriter_Prepare`; `PrepareUTF8` converts it back when needed. Failed
+conversion preserves the old buffer. Translation and parts of advanced numeric
+formatting still use that compatibility path.
 
 `Tools/scripts/bench_unicode_methods.py` measures first-call CPU time and retained
-input memory; `--warm` measures calls after indexing has materialized a FSR.
+input memory; `--warm` measures calls after indexing has materialized a FSR,
+and `--fsr` measures FSR-primary subclass inputs.
 Use matching build options. Avoid interpreting debug-build ratios as release
 performance claims. The byte-oriented methods preserve existing ASCII
-specializations where applicable and fall back for FSR-primary operands.
+specializations where applicable.
 Whitespace and line splitting also reuse an already materialized FSR to avoid
 paying to decode the same text again. Impossible matches are rejected using
 length and known character-width metadata before scanning either payload.
@@ -100,6 +127,8 @@ upstream transition schedule or an acceptance threshold for performance.
 The C API storage tests inspect lazy views without materializing them. They cover
 ASCII/Latin-1/BMP/non-BMP values, embedded NUL, surrogatepass/surrogateescape,
 virtual iteration, cache allocation failure and retry, and native operations.
+Writer tests cover byte/character positions, fixed-width-to-UTF-8 transitions,
+allocation-failure retry, formatting rollback, and direct integer output.
 Existing string, codec, C API, formatting, serialization, and size tests cover
 Python behavior and writable construction APIs. Run both debug GIL and debug
 free-threaded configurations; cache publication requires concurrent testing.

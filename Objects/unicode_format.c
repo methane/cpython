@@ -818,12 +818,8 @@ unicode_format_arg_output(struct unicode_formatter_t *ctx,
                           PyObject *str)
 {
     Py_ssize_t len;
-    int kind;
-    const void *pbuf;
     Py_ssize_t pindex;
     Py_UCS4 signchar;
-    Py_ssize_t buflen;
-    Py_UCS4 maxchar;
     Py_ssize_t sublen;
     _PyUnicodeWriter *writer = &ctx->writer;
     Py_UCS4 fill;
@@ -851,15 +847,10 @@ unicode_format_arg_output(struct unicode_formatter_t *ctx,
     }
 
     /* Adjust sign and width */
-    kind = PyUnicode_KIND(str);
-    pbuf = PyUnicode_DATA(str);
-    if (pbuf == NULL) {
-        return -1;
-    }
     pindex = 0;
     signchar = '\0';
     if (arg->sign) {
-        Py_UCS4 ch = PyUnicode_READ(kind, pbuf, pindex);
+        Py_UCS4 ch = _PyUnicode_ReadCharNoAlloc(str, pindex);
         if (ch == '-' || ch == '+') {
             signchar = ch;
             len--;
@@ -875,34 +866,14 @@ unicode_format_arg_output(struct unicode_formatter_t *ctx,
     if (arg->width < len)
         arg->width = len;
 
-    /* Prepare the writer */
-    maxchar = writer->maxchar;
-    if (!(arg->flags & F_LJUST)) {
-        if (arg->sign) {
-            if ((arg->width-1) > len)
-                maxchar = Py_MAX(maxchar, fill);
-        }
-        else {
-            if (arg->width > len)
-                maxchar = Py_MAX(maxchar, fill);
-        }
-    }
-    if (PyUnicode_MAX_CHAR_VALUE(str) > maxchar) {
-        Py_UCS4 strmaxchar = _PyUnicode_FindMaxChar(str, 0, pindex+len);
-        maxchar = Py_MAX(maxchar, strmaxchar);
-    }
-
-    buflen = arg->width;
-    if (arg->sign && len == arg->width)
-        buflen++;
-    if (_PyUnicodeWriter_Prepare(writer, buflen, maxchar) == -1)
+    if (_PyUnicodeWriter_PrepareUTF8(writer, 0) < 0)
         return -1;
 
     /* Write the sign if needed */
     if (arg->sign) {
         if (fill != ' ') {
-            PyUnicode_WRITE(writer->kind, writer->data, writer->pos, signchar);
-            writer->pos += 1;
+            if (_PyUnicodeWriter_WriteChar(writer, signchar) < 0)
+                return -1;
         }
         if (arg->width > len)
             arg->width--;
@@ -912,12 +883,12 @@ unicode_format_arg_output(struct unicode_formatter_t *ctx,
        if the alternate form is used.
        For example, write "0x" for the "%#x" format. */
     if ((arg->flags & F_ALT) && (arg->ch == 'x' || arg->ch == 'X' || arg->ch == 'o')) {
-        assert(PyUnicode_READ(kind, pbuf, pindex) == '0');
-        assert(PyUnicode_READ(kind, pbuf, pindex + 1) == arg->ch);
+        assert(_PyUnicode_ReadCharNoAlloc(str, pindex) == '0');
+        assert(_PyUnicode_ReadCharNoAlloc(str, pindex + 1) == arg->ch);
         if (fill != ' ') {
-            PyUnicode_WRITE(writer->kind, writer->data, writer->pos, '0');
-            PyUnicode_WRITE(writer->kind, writer->data, writer->pos+1, arg->ch);
-            writer->pos += 2;
+            if (_PyUnicodeWriter_WriteChar(writer, '0') < 0 ||
+                _PyUnicodeWriter_WriteChar(writer, arg->ch) < 0)
+                return -1;
             pindex += 2;
         }
         arg->width -= 2;
@@ -929,8 +900,8 @@ unicode_format_arg_output(struct unicode_formatter_t *ctx,
     /* Pad left with the fill character if needed */
     if (arg->width > len && !(arg->flags & F_LJUST)) {
         sublen = arg->width - len;
-        _PyUnicode_Fill(writer->kind, writer->data, fill, writer->pos, sublen);
-        writer->pos += sublen;
+        if (_PyUnicodeWriter_WriteFill(writer, fill, sublen) < 0)
+            return -1;
         arg->width = len;
     }
 
@@ -938,31 +909,30 @@ unicode_format_arg_output(struct unicode_formatter_t *ctx,
        the alternate form is used */
     if (fill == ' ') {
         if (arg->sign) {
-            PyUnicode_WRITE(writer->kind, writer->data, writer->pos, signchar);
-            writer->pos += 1;
+            if (_PyUnicodeWriter_WriteChar(writer, signchar) < 0)
+                return -1;
         }
         if ((arg->flags & F_ALT) && (arg->ch == 'x' || arg->ch == 'X' || arg->ch == 'o')) {
-            assert(PyUnicode_READ(kind, pbuf, pindex) == '0');
-            assert(PyUnicode_READ(kind, pbuf, pindex+1) == arg->ch);
-            PyUnicode_WRITE(writer->kind, writer->data, writer->pos, '0');
-            PyUnicode_WRITE(writer->kind, writer->data, writer->pos+1, arg->ch);
-            writer->pos += 2;
+            assert(_PyUnicode_ReadCharNoAlloc(str, pindex) == '0');
+            assert(_PyUnicode_ReadCharNoAlloc(str, pindex+1) == arg->ch);
+            if (_PyUnicodeWriter_WriteChar(writer, '0') < 0 ||
+                _PyUnicodeWriter_WriteChar(writer, arg->ch) < 0)
+                return -1;
             pindex += 2;
         }
     }
 
     /* Write characters */
     if (len) {
-        _PyUnicode_FastCopyCharacters(writer->buffer, writer->pos,
-                                      str, pindex, len);
-        writer->pos += len;
+        if (_PyUnicodeWriter_WriteSubstring(writer, str, pindex, pindex + len) < 0)
+            return -1;
     }
 
     /* Pad right with the fill character if needed */
     if (arg->width > len) {
         sublen = arg->width - len;
-        _PyUnicode_Fill(writer->kind, writer->data, ' ', writer->pos, sublen);
-        writer->pos += sublen;
+        if (_PyUnicodeWriter_WriteFill(writer, ' ', sublen) < 0)
+            return -1;
     }
     return 0;
 }

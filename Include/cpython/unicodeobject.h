@@ -518,6 +518,13 @@ typedef struct {
     /* If readonly is 1, buffer is a shared string (cannot be modified)
        and size is set to 0. */
     unsigned char readonly;
+
+    /* Native append storage. pos remains a code point count. Preparing a
+       direct-write buffer switches to the legacy FSR fields. */
+    unsigned char utf8_mode;
+    char *utf8;
+    Py_ssize_t utf8_pos;
+    Py_ssize_t utf8_size;
 } _PyUnicodeWriter;
 
 // Initialize a Unicode writer.
@@ -533,12 +540,14 @@ _Py_DEPRECATED_EXTERNALLY(3.14) PyAPI_FUNC(void) _PyUnicodeWriter_Init(
 
    Return 0 on success, raise an exception and return -1 on error. */
 #define _PyUnicodeWriter_Prepare(WRITER, LENGTH, MAXCHAR)             \
-    (((MAXCHAR) <= (WRITER)->maxchar                                  \
+    ((WRITER)->utf8_mode                                             \
+     ? _PyUnicodeWriter_PrepareInternal((WRITER), (LENGTH), (MAXCHAR))  \
+     : (((MAXCHAR) <= (WRITER)->maxchar                                  \
       && (LENGTH) <= (WRITER)->size - (WRITER)->pos)                  \
      ? 0                                                              \
      : (((LENGTH) == 0)                                               \
         ? 0                                                           \
-        : _PyUnicodeWriter_PrepareInternal((WRITER), (LENGTH), (MAXCHAR))))
+        : _PyUnicodeWriter_PrepareInternal((WRITER), (LENGTH), (MAXCHAR)))))
 
 /* Don't call this function directly, use the _PyUnicodeWriter_Prepare() macro
    instead. */

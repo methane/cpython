@@ -621,8 +621,8 @@ class StrTest(string_tests.StringLikeTest,
         class LegacyStr(str):
             pass
 
-        # Retain coverage of the fixed-width widening allocation that used
-        # to crash, using a subclass with FSR-primary storage.
+        # FSR-primary input now allocates a temporary UTF-8 view. Failure
+        # must still propagate safely for the original reproducer.
         legacy = LegacyStr(s1)
         with self.assertRaises(MemoryError):
             with support.memory_error_cm():

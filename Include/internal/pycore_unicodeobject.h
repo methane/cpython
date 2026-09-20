@@ -130,12 +130,72 @@ static inline int
 _PyUnicodeWriter_WriteCharInline(_PyUnicodeWriter *writer, Py_UCS4 ch)
 {
     assert(ch <= _Py_MAX_UNICODE);
+    if (writer->utf8_mode) {
+        return _PyUnicodeWriter_WriteChar(writer, ch);
+    }
     if (_PyUnicodeWriter_Prepare(writer, 1, ch) < 0)
         return -1;
     assert(_PyUnicodeWriter_CanWrite(writer));
     PyUnicode_WRITE(writer->kind, writer->data, writer->pos, ch);
     writer->pos++;
     return 0;
+}
+
+/* Internal UTF-8/surrogatepass storage and append operations. */
+extern const char *_PyUnicode_GetPrimaryUTF8(PyObject *, Py_ssize_t *);
+extern int _PyUnicodeWriter_WriteUTF8(_PyUnicodeWriter *, const char *,
+                                      Py_ssize_t, Py_ssize_t);
+extern void _PyUnicodeWriter_Truncate(_PyUnicodeWriter *, Py_ssize_t);
+
+/* Reserve bytes for direct UTF-8 writes. The UTF8Data() write pointer remains
+   valid until the next prepare/append call. Advance commits complete code
+   points; for ASCII, size and length are equal. */
+PyAPI_FUNC(int) _PyUnicodeWriter_PrepareUTF8(_PyUnicodeWriter *, Py_ssize_t);
+extern int _PyUnicodeWriter_RepeatUTF8(_PyUnicodeWriter *, const char *,
+                                      Py_ssize_t, Py_ssize_t, Py_ssize_t);
+extern int _PyUnicodeWriter_WriteFill(_PyUnicodeWriter *, Py_UCS4, Py_ssize_t);
+
+static inline char *
+_PyUnicodeWriter_UTF8Data(_PyUnicodeWriter *writer)
+{
+    assert(writer->utf8_mode);
+    return writer->utf8 == NULL ? NULL : writer->utf8 + writer->utf8_pos;
+}
+
+static inline void
+_PyUnicodeWriter_AdvanceUTF8(_PyUnicodeWriter *writer,
+                            Py_ssize_t size, Py_ssize_t length)
+{
+    assert(writer->utf8_mode);
+    assert(size >= length && length >= 0);
+    assert(size <= writer->utf8_size - writer->utf8_pos);
+    assert(length <= PY_SSIZE_T_MAX - writer->pos);
+    writer->utf8_pos += size;
+    writer->pos += length;
+}
+
+static inline unsigned char *
+_PyUnicode_WriteUTF8Char(unsigned char *p, Py_UCS4 ch)
+{
+    if (ch < 0x80) {
+        *p++ = ch;
+    }
+    else if (ch < 0x800) {
+        *p++ = 0xc0 | (ch >> 6);
+        *p++ = 0x80 | (ch & 63);
+    }
+    else if (ch < 0x10000) {
+        *p++ = 0xe0 | (ch >> 12);
+        *p++ = 0x80 | ((ch >> 6) & 63);
+        *p++ = 0x80 | (ch & 63);
+    }
+    else {
+        *p++ = 0xf0 | (ch >> 18);
+        *p++ = 0x80 | ((ch >> 12) & 63);
+        *p++ = 0x80 | ((ch >> 6) & 63);
+        *p++ = 0x80 | (ch & 63);
+    }
+    return p;
 }
 
 /* --- Unicode API -------------------------------------------------------- */

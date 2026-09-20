@@ -621,8 +621,8 @@ unicode_utf8_next(const unsigned char **ptr)
 
 /* Borrow the primary byte representation, including surrogatepass bytes.
    A NULL result means FSR-primary storage, not an error. */
-static const char *
-unicode_primary_utf8(PyObject *op, Py_ssize_t *size)
+const char *
+_PyUnicode_GetPrimaryUTF8(PyObject *op, Py_ssize_t *size)
 {
     if (PyUnicode_IS_ASCII(op)) {
         *size = PyUnicode_GET_LENGTH(op);
@@ -636,6 +636,52 @@ unicode_primary_utf8(PyObject *op, Py_ssize_t *size)
     }
     return NULL;
 }
+
+/* An internal, surrogate-preserving view. The owner is NULL for borrowed
+   primary storage, otherwise it owns a temporary encoding of an FSR. */
+typedef struct {
+    const char *data;
+    Py_ssize_t size;
+    PyObject *owner;
+} unicode_utf8_view;
+
+static int
+unicode_utf8_view_init(unicode_utf8_view *view, PyObject *str)
+{
+    view->owner = NULL;
+    view->data = _PyUnicode_GetPrimaryUTF8(str, &view->size);
+    if (view->data == NULL) {
+        view->owner = unicode_encode_utf8(str, _Py_ERROR_SURROGATEPASS, NULL);
+        if (view->owner == NULL) {
+            return -1;
+        }
+        view->data = PyBytes_AS_STRING(view->owner);
+        view->size = PyBytes_GET_SIZE(view->owner);
+    }
+    return 0;
+}
+
+static void
+unicode_utf8_views_clear(unicode_utf8_view *views, int count)
+{
+    for (int i = 0; i < count; i++) {
+        Py_XDECREF(views[i].owner);
+    }
+}
+
+static int
+unicode_utf8_pair_init(unicode_utf8_view views[2], PyObject *a, PyObject *b)
+{
+    if (unicode_utf8_view_init(&views[0], a) < 0) {
+        return -1;
+    }
+    if (unicode_utf8_view_init(&views[1], b) < 0) {
+        Py_XDECREF(views[0].owner);
+        return -1;
+    }
+    return 0;
+}
+
 
 /* Validate before copying a UTF-8 payload. Invalid input is handled by the
    existing decoder, preserving its error-handler and consumed-byte semantics. */
@@ -735,8 +781,8 @@ _PyUnicode_EqualUTF8(PyObject *left, PyObject *right)
         return 0;
     }
     Py_ssize_t size1, size2;
-    const char *data1 = unicode_primary_utf8(left, &size1);
-    const char *data2 = unicode_primary_utf8(right, &size2);
+    const char *data1 = _PyUnicode_GetPrimaryUTF8(left, &size1);
+    const char *data2 = _PyUnicode_GetPrimaryUTF8(right, &size2);
     if (data1 != NULL && data2 != NULL) {
         return size1 == size2 && memcmp(data1, data2, size1) == 0;
     }
@@ -749,29 +795,7 @@ _PyUnicode_EqualUTF8(PyObject *left, PyObject *right)
     return 1;
 }
 
-static unsigned char *
-unicode_utf8_write(unsigned char *p, Py_UCS4 ch)
-{
-    if (ch < 0x80) {
-        *p++ = ch;
-    }
-    else if (ch < 0x800) {
-        *p++ = 0xc0 | (ch >> 6);
-        *p++ = 0x80 | (ch & 63);
-    }
-    else if (ch < 0x10000) {
-        *p++ = 0xe0 | (ch >> 12);
-        *p++ = 0x80 | ((ch >> 6) & 63);
-        *p++ = 0x80 | (ch & 63);
-    }
-    else {
-        *p++ = 0xf0 | (ch >> 18);
-        *p++ = 0x80 | ((ch >> 12) & 63);
-        *p++ = 0x80 | ((ch >> 6) & 63);
-        *p++ = 0x80 | (ch & 63);
-    }
-    return p;
-}
+#define unicode_utf8_write _PyUnicode_WriteUTF8Char
 
 void *
 _PyUnicode_GetFSR(PyObject *op)
@@ -1140,6 +1164,15 @@ unicode_scan_next(unicode_scan *reader, Py_ssize_t index)
         : unicode_utf8_next(&reader->utf8);
 }
 
+static inline Py_UCS4
+unicode_scan_prev(unicode_scan *reader, Py_ssize_t index)
+{
+    return reader->data != NULL
+        ? PyUnicode_READ(reader->kind, reader->data, index)
+        : unicode_utf8_prev(&reader->utf8);
+}
+
+
 /* Both offsets must be code point boundaries. */
 static PyObject *
 unicode_utf8_slice(PyObject *self, const char *data, Py_ssize_t size,
@@ -1178,6 +1211,47 @@ unicode_alloc_utf8(Py_ssize_t size, Py_ssize_t length, int kind, int surrogates)
     u->fsr = NULL;
     ((char *)(u + 1))[size] = 0;
     return u;
+}
+
+/* Primary UTF-8 metadata is canonical. A writable FSR may overestimate its
+   maximum character, so inspect it before allocating a compact result. */
+static Py_UCS4
+unicode_utf8_metadata(PyObject *str, int *surrogates)
+{
+    if (PyUnicode_IS_ASCII(str) ||
+        (_PyASCIIObject_CAST(str)->state.utf8_storage &&
+         !_PyASCIIObject_CAST(str)->state.fsr_primary)) {
+        *surrogates |= _PyASCIIObject_CAST(str)->state.has_surrogates;
+        return PyUnicode_MAX_CHAR_VALUE(str);
+    }
+    unicode_scan reader;
+    unicode_scan_init(&reader, str);
+    Py_UCS4 maxchar = 0;
+    for (Py_ssize_t i = 0; i < PyUnicode_GET_LENGTH(str); i++) {
+        Py_UCS4 ch = unicode_scan_next(&reader, i);
+        maxchar = Py_MAX(maxchar, ch);
+        *surrogates |= Py_UNICODE_IS_SURROGATE(ch);
+    }
+    return maxchar;
+}
+
+static PyObject *
+unicode_new_utf8(Py_ssize_t size, Py_ssize_t length, Py_UCS4 maxchar,
+                 int surrogates, char **data)
+{
+    PyObject *result;
+    if (maxchar < 128) {
+        result = PyUnicode_New(length, 127);
+        *data = result == NULL ? NULL : (char *)PyUnicode_1BYTE_DATA(result);
+    }
+    else {
+        PyCompactUnicodeObject *u = unicode_alloc_utf8(
+            size, length, maxchar < 256 ? 1 : maxchar < 65536 ? 2 : 4,
+            surrogates);
+        result = (PyObject *)u;
+        *data = u == NULL ? NULL : (char *)(u + 1);
+    }
+    return result;
 }
 
 /* Implementation of the "backslashreplace" error handler for 8-bit encodings:
@@ -1397,43 +1471,28 @@ make_bloom_mask(int kind, const void* ptr, Py_ssize_t len)
 
 #include "stringlib/asciilib.h"
 #include "stringlib/fastsearch.h"
-#include "stringlib/partition.h"
 #include "stringlib/split.h"
-#include "stringlib/count.h"
-#include "stringlib/find.h"
 #include "stringlib/find_max_char.h"
 #include "stringlib/undef.h"
 
 #include "stringlib/ucs1lib.h"
 #include "stringlib/fastsearch.h"
-#include "stringlib/partition.h"
 #include "stringlib/split.h"
 #include "stringlib/count.h"
 #include "stringlib/find.h"
 #include "stringlib/replace.h"
-#include "stringlib/repr.h"
 #include "stringlib/find_max_char.h"
 #include "stringlib/undef.h"
 
 #include "stringlib/ucs2lib.h"
 #include "stringlib/fastsearch.h"
-#include "stringlib/partition.h"
 #include "stringlib/split.h"
-#include "stringlib/count.h"
-#include "stringlib/find.h"
-#include "stringlib/replace.h"
-#include "stringlib/repr.h"
 #include "stringlib/find_max_char.h"
 #include "stringlib/undef.h"
 
 #include "stringlib/ucs4lib.h"
 #include "stringlib/fastsearch.h"
-#include "stringlib/partition.h"
 #include "stringlib/split.h"
-#include "stringlib/count.h"
-#include "stringlib/find.h"
-#include "stringlib/replace.h"
-#include "stringlib/repr.h"
 #include "stringlib/find_max_char.h"
 #include "stringlib/undef.h"
 
@@ -2486,49 +2545,19 @@ PyUnicodeWriter_WriteWideChar(PyUnicodeWriter *pub_writer,
                               const wchar_t *str,
                               Py_ssize_t size)
 {
-    _PyUnicodeWriter *writer = (_PyUnicodeWriter *)pub_writer;
-
     if (size < 0) {
         size = wcslen(str);
     }
-
     if (size == 0) {
         return 0;
     }
-
-#ifdef HAVE_NON_UNICODE_WCHAR_T_REPRESENTATION
-    /* Oracle Solaris uses non-Unicode internal wchar_t form for
-       non-Unicode locales and hence needs conversion to UCS-4 first. */
-    if (_Py_LocaleUsesNonUnicodeWchar()) {
-        wchar_t* converted = _Py_DecodeNonUnicodeWchar(str, size);
-        if (!converted) {
-            return -1;
-        }
-
-        int res = PyUnicodeWriter_WriteUCS4(pub_writer, converted, size);
-        PyMem_Free(converted);
-        return res;
-    }
-#endif
-
-    Py_UCS4 maxchar = 0;
-    Py_ssize_t num_surrogates;
-    if (find_maxchar_surrogates(str, str + size,
-                                &maxchar, &num_surrogates) == -1) {
+    PyObject *text = PyUnicode_FromWideChar(str, size);
+    if (text == NULL) {
         return -1;
     }
-
-    if (_PyUnicodeWriter_Prepare(writer, size - num_surrogates, maxchar) < 0) {
-        return -1;
-    }
-    assert(_PyUnicodeWriter_CanWrite(writer));
-
-    int kind = writer->kind;
-    void *data = (Py_UCS1*)writer->data + writer->pos * kind;
-    unicode_write_widechar(kind, data, str, size, num_surrogates);
-
-    writer->pos += size - num_surrogates;
-    return 0;
+    int res = _PyUnicodeWriter_WriteStr((_PyUnicodeWriter *)pub_writer, text);
+    Py_DECREF(text);
+    return res;
 }
 
 
@@ -2763,43 +2792,20 @@ PyUnicodeWriter_WriteUCS4(PyUnicodeWriter *pub_writer,
                           const Py_UCS4 *str,
                           Py_ssize_t size)
 {
-    _PyUnicodeWriter *writer = (_PyUnicodeWriter*)pub_writer;
-
     if (size < 0) {
-        PyErr_SetString(PyExc_ValueError,
-                        "size must be positive");
+        PyErr_SetString(PyExc_ValueError, "size must be positive");
         return -1;
     }
-
     if (size == 0) {
         return 0;
     }
-
-    Py_UCS4 max_char = ucs4lib_find_max_char(str, str + size);
-
-    if (_PyUnicodeWriter_Prepare(writer, size, max_char) < 0) {
+    PyObject *text = _PyUnicode_FromUCS4(str, size);
+    if (text == NULL) {
         return -1;
     }
-    assert(_PyUnicodeWriter_CanWrite(writer));
-
-    int kind = writer->kind;
-    void *data = (Py_UCS1*)writer->data + writer->pos * kind;
-    if (kind == PyUnicode_1BYTE_KIND) {
-        _PyUnicode_CONVERT_BYTES(Py_UCS4, Py_UCS1,
-                                 str, str + size,
-                                 data);
-    }
-    else if (kind == PyUnicode_2BYTE_KIND) {
-        _PyUnicode_CONVERT_BYTES(Py_UCS4, Py_UCS2,
-                                 str, str + size,
-                                 data);
-    }
-    else {
-        memcpy(data, str, size * sizeof(Py_UCS4));
-    }
-    writer->pos += size;
-
-    return 0;
+    int res = _PyUnicodeWriter_WriteStr((_PyUnicodeWriter *)pub_writer, text);
+    Py_DECREF(text);
+    return res;
 }
 
 
@@ -2870,52 +2876,6 @@ _PyUnicode_FindMaxChar(PyObject *unicode, Py_ssize_t start, Py_ssize_t end)
     }
 }
 
-/* Ensure that a string uses the most efficient storage, if it is not the
-   case: create a new string with of the right kind. Write NULL into *p_unicode
-   on error. */
-static void
-unicode_adjust_maxchar(PyObject **p_unicode)
-{
-    PyObject *unicode, *copy;
-    Py_UCS4 max_char;
-    Py_ssize_t len;
-    int kind;
-
-    assert(p_unicode != NULL);
-    unicode = *p_unicode;
-    if (PyUnicode_IS_ASCII(unicode))
-        return;
-
-    len = PyUnicode_GET_LENGTH(unicode);
-    kind = PyUnicode_KIND(unicode);
-    if (kind == PyUnicode_1BYTE_KIND) {
-        const Py_UCS1 *u = PyUnicode_1BYTE_DATA(unicode);
-        max_char = ucs1lib_find_max_char(u, u + len);
-        if (max_char >= 128)
-            return;
-    }
-    else if (kind == PyUnicode_2BYTE_KIND) {
-        const Py_UCS2 *u = PyUnicode_2BYTE_DATA(unicode);
-        max_char = ucs2lib_find_max_char(u, u + len);
-        if (max_char >= 256)
-            return;
-    }
-    else if (kind == PyUnicode_4BYTE_KIND) {
-        const Py_UCS4 *u = PyUnicode_4BYTE_DATA(unicode);
-        max_char = ucs4lib_find_max_char(u, u + len);
-        if (max_char >= 0x10000)
-            return;
-    }
-    else
-        Py_UNREACHABLE();
-
-    copy = PyUnicode_New(len, max_char);
-    if (copy != NULL)
-        _PyUnicode_FastCopyCharacters(copy, 0, unicode, 0, len);
-    Py_DECREF(unicode);
-    *p_unicode = copy;
-}
-
 PyObject*
 _PyUnicode_Copy(PyObject *unicode)
 {
@@ -2938,53 +2898,6 @@ _PyUnicode_Copy(PyObject *unicode)
     return unicode_result(copy);
 }
 
-
-/* Widen Unicode objects to larger buffers. Don't write terminating null
-   character. Return NULL on error. */
-
-static void*
-unicode_askind(int skind, void const *data, Py_ssize_t len, int kind)
-{
-    void *result;
-
-    assert(skind < kind);
-    switch (kind) {
-    case PyUnicode_2BYTE_KIND:
-        result = PyMem_New(Py_UCS2, len);
-        if (!result)
-            return PyErr_NoMemory();
-        assert(skind == PyUnicode_1BYTE_KIND);
-        _PyUnicode_CONVERT_BYTES(
-            Py_UCS1, Py_UCS2,
-            (const Py_UCS1 *)data,
-            ((const Py_UCS1 *)data) + len,
-            result);
-        return result;
-    case PyUnicode_4BYTE_KIND:
-        result = PyMem_New(Py_UCS4, len);
-        if (!result)
-            return PyErr_NoMemory();
-        if (skind == PyUnicode_2BYTE_KIND) {
-            _PyUnicode_CONVERT_BYTES(
-                Py_UCS2, Py_UCS4,
-                (const Py_UCS2 *)data,
-                ((const Py_UCS2 *)data) + len,
-                result);
-        }
-        else {
-            assert(skind == PyUnicode_1BYTE_KIND);
-            _PyUnicode_CONVERT_BYTES(
-                Py_UCS1, Py_UCS4,
-                (const Py_UCS1 *)data,
-                ((const Py_UCS1 *)data) + len,
-                result);
-        }
-        return result;
-    default:
-        Py_UNREACHABLE();
-        return NULL;
-    }
-}
 
 static Py_UCS4*
 as_ucs4(PyObject *string, Py_UCS4 *target, Py_ssize_t targetsize,
@@ -3065,45 +2978,22 @@ static int
 unicode_fromformat_write_str(_PyUnicodeWriter *writer, PyObject *str,
                              Py_ssize_t width, Py_ssize_t precision, int flags)
 {
-    Py_ssize_t length, fill, arglen;
-    Py_UCS4 maxchar;
-
-    length = PyUnicode_GET_LENGTH(str);
-    if ((precision == -1 || precision >= length)
-        && width <= length)
+    Py_ssize_t length = PyUnicode_GET_LENGTH(str);
+    if ((precision == -1 || precision >= length) && width <= length)
         return _PyUnicodeWriter_WriteStr(writer, str);
-
     if (precision != -1)
         length = Py_MIN(precision, length);
-
-    arglen = Py_MAX(length, width);
-    if (PyUnicode_MAX_CHAR_VALUE(str) > writer->maxchar)
-        maxchar = _PyUnicode_FindMaxChar(str, 0, length);
-    else
-        maxchar = writer->maxchar;
-
-    if (_PyUnicodeWriter_Prepare(writer, arglen, maxchar) == -1) {
+    if (_PyUnicodeWriter_PrepareUTF8(writer, 0) < 0)
         return -1;
-    }
-    assert(_PyUnicodeWriter_CanWrite(writer));
-
-    fill = Py_MAX(width - length, 0);
-    if (fill && !(flags & F_LJUST)) {
-        if (PyUnicode_Fill(writer->buffer, writer->pos, fill, ' ') == -1)
-            return -1;
-        writer->pos += fill;
-    }
-
-    _PyUnicode_FastCopyCharacters(writer->buffer, writer->pos,
-                                  str, 0, length);
-    writer->pos += length;
-
-    if (fill && (flags & F_LJUST)) {
-        if (PyUnicode_Fill(writer->buffer, writer->pos, fill, ' ') == -1)
-            return -1;
-        writer->pos += fill;
-    }
-
+    Py_ssize_t fill = Py_MAX(width - length, 0);
+    if (fill && !(flags & F_LJUST) &&
+        _PyUnicodeWriter_WriteFill(writer, ' ', fill) < 0)
+        return -1;
+    if (_PyUnicodeWriter_WriteSubstring(writer, str, 0, length) < 0)
+        return -1;
+    if (fill && (flags & F_LJUST) &&
+        _PyUnicodeWriter_WriteFill(writer, ' ', fill) < 0)
+        return -1;
     return 0;
 }
 
@@ -3375,15 +3265,12 @@ unicode_fromformat_arg(_PyUnicodeWriter *writer,
         Py_ssize_t spacepad = Py_MAX(width - precision - sign, 0);
         Py_ssize_t zeropad = Py_MAX(precision - len, 0);
 
-        if (_PyUnicodeWriter_Prepare(writer, width, 127) == -1) {
+        if (_PyUnicodeWriter_PrepareUTF8(writer, width) == -1) {
             return NULL;
         }
-        assert(_PyUnicodeWriter_CanWrite(writer));
-
         if (spacepad && !(flags & F_LJUST)) {
-            if (PyUnicode_Fill(writer->buffer, writer->pos, spacepad, ' ') == -1)
+            if (_PyUnicodeWriter_WriteFill(writer, ' ', spacepad) == -1)
                 return NULL;
-            writer->pos += spacepad;
         }
 
         if (sign) {
@@ -3392,18 +3279,16 @@ unicode_fromformat_arg(_PyUnicodeWriter *writer,
         }
 
         if (zeropad) {
-            if (PyUnicode_Fill(writer->buffer, writer->pos, zeropad, '0') == -1)
+            if (_PyUnicodeWriter_WriteFill(writer, '0', zeropad) == -1)
                 return NULL;
-            writer->pos += zeropad;
         }
 
         if (_PyUnicodeWriter_WriteASCIIString(writer, &buffer[sign], len) < 0)
             return NULL;
 
         if (spacepad && (flags & F_LJUST)) {
-            if (PyUnicode_Fill(writer->buffer, writer->pos, spacepad, ' ') == -1)
+            if (_PyUnicodeWriter_WriteFill(writer, ' ', spacepad) == -1)
                 return NULL;
-            writer->pos += spacepad;
         }
         break;
     }
@@ -3699,7 +3584,7 @@ _PyUnicodeWriter_FormatV(PyUnicodeWriter *writer, const char *format,
     int res = unicode_from_format(_writer, format, vargs);
 
     if (res < 0) {
-        _writer->pos = old_pos;
+        _PyUnicodeWriter_Truncate(_writer, old_pos);
     }
     return res;
 }
@@ -5324,7 +5209,7 @@ utf7Error:
                 _PyUnicodeWriter_Dealloc(&writer);
                 return result;
             }
-            writer.pos = shiftOutStart; /* back off output */
+            _PyUnicodeWriter_Truncate(&writer, shiftOutStart); /* back off output */
         }
         else {
             *consumed = s-starts;
@@ -6311,7 +6196,7 @@ unicode_encode_utf8(PyObject *unicode, _Py_error_handler error_handler,
     if (error_handler == _Py_ERROR_SURROGATEPASS ||
         (errors != NULL && strcmp(errors, "surrogatepass") == 0)) {
         Py_ssize_t size;
-        const char *data = unicode_primary_utf8(unicode, &size);
+        const char *data = _PyUnicode_GetPrimaryUTF8(unicode, &size);
         if (data != NULL) {
             return PyBytes_FromStringAndSize(data, size);
         }
@@ -10619,129 +10504,48 @@ any_find_slice(PyObject* s1, PyObject* s2,
                Py_ssize_t end,
                int direction)
 {
-    if (unicode_cannot_contain(s1, s2)) {
+    Py_ssize_t length = PyUnicode_GET_LENGTH(s1);
+    ADJUST_INDICES(start, end, length);
+    if (unicode_cannot_contain(s1, s2) ||
+        end - start < PyUnicode_GET_LENGTH(s2)) {
         return -1;
     }
-
-    Py_ssize_t size, subsize;
-    const char *utf8 = unicode_primary_utf8(s1, &size);
-    const char *sub = unicode_primary_utf8(s2, &subsize);
-    if (utf8 != NULL && sub != NULL) {
-        Py_ssize_t length = PyUnicode_GET_LENGTH(s1);
-        ADJUST_INDICES(start, end, length);
-        if (end - start < PyUnicode_GET_LENGTH(s2)) {
-            return -1;
+    if (PyUnicode_GET_LENGTH(s2) == 0) {
+        return direction > 0 ? start : end;
+    }
+    unicode_utf8_view views[2];
+    if (unicode_utf8_pair_init(views, s1, s2) < 0) {
+        return -2;
+    }
+    const Py_UCS1 *begin = unicode_utf8_at(
+        views[0].data, views[0].size, length, start);
+    const Py_UCS1 *stop = unicode_utf8_at(
+        views[0].data, views[0].size, length, end);
+    Py_ssize_t pos = direction > 0
+        ? ucs1lib_find(begin, stop - begin, (const Py_UCS1 *)views[1].data,
+                       views[1].size, 0)
+        : ucs1lib_rfind(begin, stop - begin, (const Py_UCS1 *)views[1].data,
+                        views[1].size, 0);
+    if (pos >= 0) {
+        /* Convert only the return value back to a character offset. */
+        if (views[0].size == length) {
+            pos += start;
         }
-        if (subsize == 0) {
-            return direction > 0 ? start : end;
-        }
-        const Py_UCS1 *begin = unicode_utf8_at(utf8, size, length, start);
-        const Py_UCS1 *stop = unicode_utf8_at(utf8, size, length, end);
-        Py_ssize_t pos = direction > 0
-            ? ucs1lib_find(begin, stop - begin, (const Py_UCS1 *)sub, subsize, 0)
-            : ucs1lib_rfind(begin, stop - begin, (const Py_UCS1 *)sub, subsize, 0);
-        if (pos < 0) {
-            return -1;
-        }
-        if (size == length) {
-            return start + pos;
-        }
-        /* Only the return value needs conversion back to a character offset. */
-        if (pos <= (stop - begin) / 2) {
+        else if (pos <= (stop - begin) / 2) {
             for (Py_ssize_t i = 0; i < pos; i++) {
                 start += (begin[i] & 0xc0) != 0x80;
             }
-            return start;
+            pos = start;
         }
-        for (const Py_UCS1 *p = begin + pos; p < stop; p++) {
-            end -= (*p & 0xc0) != 0x80;
-        }
-        return end;
-    }
-
-    if (s1 != NULL && PyUnicode_Check(s1) &&
-        PyUnicode_DATA(s1) == NULL) {
-        return -2;
-    }
-    if (s2 != NULL && PyUnicode_Check(s2) &&
-        PyUnicode_DATA(s2) == NULL) {
-        return -2;
-    }
-    int kind1, kind2;
-    const void *buf1, *buf2;
-    Py_ssize_t len1, len2, result;
-
-    kind1 = PyUnicode_KIND(s1);
-    kind2 = PyUnicode_KIND(s2);
-    if (kind1 < kind2)
-        return -1;
-
-    len1 = PyUnicode_GET_LENGTH(s1);
-    len2 = PyUnicode_GET_LENGTH(s2);
-    ADJUST_INDICES(start, end, len1);
-    if (end - start < len2)
-        return -1;
-
-    buf1 = PyUnicode_DATA(s1);
-    buf2 = PyUnicode_DATA(s2);
-    if (len2 == 1) {
-        Py_UCS4 ch = PyUnicode_READ(kind2, buf2, 0);
-        result = findchar((const char *)buf1 + kind1*start,
-                          kind1, end - start, ch, direction);
-        if (result == -1)
-            return -1;
-        else
-            return start + result;
-    }
-
-    if (kind2 != kind1) {
-        buf2 = unicode_askind(kind2, buf2, len2, kind1);
-        if (!buf2)
-            return -2;
-    }
-
-    if (direction > 0) {
-        switch (kind1) {
-        case PyUnicode_1BYTE_KIND:
-            if (PyUnicode_IS_ASCII(s1) && PyUnicode_IS_ASCII(s2))
-                result = asciilib_find_slice(buf1, len1, buf2, len2, start, end);
-            else
-                result = ucs1lib_find_slice(buf1, len1, buf2, len2, start, end);
-            break;
-        case PyUnicode_2BYTE_KIND:
-            result = ucs2lib_find_slice(buf1, len1, buf2, len2, start, end);
-            break;
-        case PyUnicode_4BYTE_KIND:
-            result = ucs4lib_find_slice(buf1, len1, buf2, len2, start, end);
-            break;
-        default:
-            Py_UNREACHABLE();
+        else {
+            for (const Py_UCS1 *p = begin + pos; p < stop; p++) {
+                end -= (*p & 0xc0) != 0x80;
+            }
+            pos = end;
         }
     }
-    else {
-        switch (kind1) {
-        case PyUnicode_1BYTE_KIND:
-            if (PyUnicode_IS_ASCII(s1) && PyUnicode_IS_ASCII(s2))
-                result = asciilib_rfind_slice(buf1, len1, buf2, len2, start, end);
-            else
-                result = ucs1lib_rfind_slice(buf1, len1, buf2, len2, start, end);
-            break;
-        case PyUnicode_2BYTE_KIND:
-            result = ucs2lib_rfind_slice(buf1, len1, buf2, len2, start, end);
-            break;
-        case PyUnicode_4BYTE_KIND:
-            result = ucs4lib_rfind_slice(buf1, len1, buf2, len2, start, end);
-            break;
-        default:
-            Py_UNREACHABLE();
-        }
-    }
-
-    assert((kind2 != kind1) == (buf2 != PyUnicode_DATA(s2)));
-    if (kind2 != kind1)
-        PyMem_Free((void *)buf2);
-
-    return result;
+    unicode_utf8_views_clear(views, 2);
+    return pos;
 }
 
 
@@ -10812,98 +10616,33 @@ tailmatch(PyObject *self,
           Py_ssize_t end,
           int direction)
 {
-    if (unicode_cannot_contain(self, substring)) {
+    Py_ssize_t length = PyUnicode_GET_LENGTH(self);
+    ADJUST_INDICES(start, end, length);
+    if (unicode_cannot_contain(self, substring) ||
+        end - start < PyUnicode_GET_LENGTH(substring)) {
         return 0;
     }
-
-    Py_ssize_t size, subsize;
-    const char *utf8 = unicode_primary_utf8(self, &size);
-    const char *sub = unicode_primary_utf8(substring, &subsize);
-    if (utf8 != NULL && sub != NULL) {
-        Py_ssize_t length = PyUnicode_GET_LENGTH(self);
-        ADJUST_INDICES(start, end, length);
-        if (end - start < PyUnicode_GET_LENGTH(substring)) {
-            return 0;
-        }
-        if (subsize == 0) {
-            return 1;
-        }
-        const unsigned char *edge = unicode_utf8_at(
-            utf8, size, length, direction > 0 ? end : start);
-        if (direction > 0) {
-            if (edge - (const unsigned char *)utf8 < subsize) {
-                return 0;
-            }
-            edge -= subsize;
-        }
-        else if ((const unsigned char *)utf8 + size - edge < subsize) {
-            return 0;
-        }
-        return memcmp(edge, sub, subsize) == 0;
-    }
-
-    if (self != NULL && PyUnicode_Check(self) &&
-        PyUnicode_DATA(self) == NULL) {
-        return -1;
-    }
-    if (substring != NULL && PyUnicode_Check(substring) &&
-        PyUnicode_DATA(substring) == NULL) {
-        return -1;
-    }
-    int kind_self;
-    int kind_sub;
-    const void *data_self;
-    const void *data_sub;
-    Py_ssize_t offset;
-    Py_ssize_t i;
-    Py_ssize_t end_sub;
-
-    ADJUST_INDICES(start, end, PyUnicode_GET_LENGTH(self));
-    end -= PyUnicode_GET_LENGTH(substring);
-    if (end < start)
-        return 0;
-
-    if (PyUnicode_GET_LENGTH(substring) == 0)
+    if (PyUnicode_GET_LENGTH(substring) == 0) {
         return 1;
-
-    kind_self = PyUnicode_KIND(self);
-    data_self = PyUnicode_DATA(self);
-    kind_sub = PyUnicode_KIND(substring);
-    data_sub = PyUnicode_DATA(substring);
-    end_sub = PyUnicode_GET_LENGTH(substring) - 1;
-
-    if (direction > 0)
-        offset = end;
-    else
-        offset = start;
-
-    if (PyUnicode_READ(kind_self, data_self, offset) ==
-        PyUnicode_READ(kind_sub, data_sub, 0) &&
-        PyUnicode_READ(kind_self, data_self, offset + end_sub) ==
-        PyUnicode_READ(kind_sub, data_sub, end_sub)) {
-        /* If both are of the same kind, memcmp is sufficient */
-        if (kind_self == kind_sub) {
-            return ! memcmp((char *)data_self +
-                                (offset * PyUnicode_KIND(substring)),
-                            data_sub,
-                            PyUnicode_GET_LENGTH(substring) *
-                                PyUnicode_KIND(substring));
-        }
-        /* otherwise we have to compare each character by first accessing it */
-        else {
-            /* We do not need to compare 0 and len(substring)-1 because
-               the if statement above ensured already that they are equal
-               when we end up here. */
-            for (i = 1; i < end_sub; ++i) {
-                if (PyUnicode_READ(kind_self, data_self, offset + i) !=
-                    PyUnicode_READ(kind_sub, data_sub, i))
-                    return 0;
-            }
-            return 1;
-        }
     }
-
-    return 0;
+    unicode_utf8_view views[2];
+    if (unicode_utf8_pair_init(views, self, substring) < 0) {
+        return -1;
+    }
+    const unsigned char *data = (const unsigned char *)views[0].data;
+    const unsigned char *edge = unicode_utf8_at(
+        views[0].data, views[0].size, length, direction > 0 ? end : start);
+    Py_ssize_t available = direction > 0
+        ? edge - data : data + views[0].size - edge;
+    int result = 0;
+    if (available >= views[1].size) {
+        if (direction > 0) {
+            edge -= views[1].size;
+        }
+        result = memcmp(edge, views[1].data, views[1].size) == 0;
+    }
+    unicode_utf8_views_clear(views, 2);
+    return result;
 }
 
 Py_ssize_t
@@ -10938,215 +10677,43 @@ ascii_upper_or_lower(PyObject *self, int lower)
     return res;
 }
 
-static Py_UCS4
-handle_capital_sigma(int kind, const void *data, Py_ssize_t length, Py_ssize_t i)
-{
-    Py_ssize_t j;
-    int final_sigma;
-    Py_UCS4 c = 0;   /* initialize to prevent gcc warning */
-    /* U+03A3 is in the Final_Sigma context when, it is found like this:
-
-     \p{cased}\p{case-ignorable}*U+03A3!(\p{case-ignorable}*\p{cased})
-
-    where ! is a negation and \p{xxx} is a character with property xxx.
-    */
-    for (j = i - 1; j >= 0; j--) {
-        c = PyUnicode_READ(kind, data, j);
-        if (!_PyUnicode_IsCaseIgnorable(c))
-            break;
-    }
-    final_sigma = j >= 0 && _PyUnicode_IsCased(c);
-    if (final_sigma) {
-        for (j = i + 1; j < length; j++) {
-            c = PyUnicode_READ(kind, data, j);
-            if (!_PyUnicode_IsCaseIgnorable(c))
-                break;
-        }
-        final_sigma = j == length || !_PyUnicode_IsCased(c);
-    }
-    return (final_sigma) ? 0x3C2 : 0x3C3;
-}
-
-static int
-lower_ucs4(int kind, const void *data, Py_ssize_t length, Py_ssize_t i,
-           Py_UCS4 c, Py_UCS4 *mapped)
-{
-    /* Obscure special case. */
-    if (c == 0x3A3) {
-        mapped[0] = handle_capital_sigma(kind, data, length, i);
-        return 1;
-    }
-    return _PyUnicode_ToLowerFull(c, mapped);
-}
-
-static Py_ssize_t
-do_capitalize(int kind, const void *data, Py_ssize_t length, Py_UCS4 *res, Py_UCS4 *maxchar)
-{
-    Py_ssize_t i, k = 0;
-    int n_res, j;
-    Py_UCS4 c, mapped[3];
-
-    c = PyUnicode_READ(kind, data, 0);
-    n_res = _PyUnicode_ToTitleFull(c, mapped);
-    for (j = 0; j < n_res; j++) {
-        *maxchar = Py_MAX(*maxchar, mapped[j]);
-        res[k++] = mapped[j];
-    }
-    for (i = 1; i < length; i++) {
-        c = PyUnicode_READ(kind, data, i);
-        n_res = lower_ucs4(kind, data, length, i, c, mapped);
-        for (j = 0; j < n_res; j++) {
-            *maxchar = Py_MAX(*maxchar, mapped[j]);
-            res[k++] = mapped[j];
-        }
-    }
-    return k;
-}
-
-static Py_ssize_t
-do_swapcase(int kind, const void *data, Py_ssize_t length, Py_UCS4 *res, Py_UCS4 *maxchar) {
-    Py_ssize_t i, k = 0;
-
-    for (i = 0; i < length; i++) {
-        Py_UCS4 c = PyUnicode_READ(kind, data, i), mapped[3];
-        int n_res, j;
-        if (Py_UNICODE_ISUPPER(c)) {
-            n_res = lower_ucs4(kind, data, length, i, c, mapped);
-        }
-        else if (Py_UNICODE_ISLOWER(c)) {
-            n_res = _PyUnicode_ToUpperFull(c, mapped);
-        }
-        else {
-            n_res = 1;
-            mapped[0] = c;
-        }
-        for (j = 0; j < n_res; j++) {
-            *maxchar = Py_MAX(*maxchar, mapped[j]);
-            res[k++] = mapped[j];
-        }
-    }
-    return k;
-}
-
-static Py_ssize_t
-do_upper_or_lower(int kind, const void *data, Py_ssize_t length, Py_UCS4 *res,
-                  Py_UCS4 *maxchar, int lower)
-{
-    Py_ssize_t i, k = 0;
-
-    for (i = 0; i < length; i++) {
-        Py_UCS4 c = PyUnicode_READ(kind, data, i), mapped[3];
-        int n_res, j;
-        if (lower)
-            n_res = lower_ucs4(kind, data, length, i, c, mapped);
-        else
-            n_res = _PyUnicode_ToUpperFull(c, mapped);
-        for (j = 0; j < n_res; j++) {
-            *maxchar = Py_MAX(*maxchar, mapped[j]);
-            res[k++] = mapped[j];
-        }
-    }
-    return k;
-}
-
-static Py_ssize_t
-do_upper(int kind, const void *data, Py_ssize_t length, Py_UCS4 *res, Py_UCS4 *maxchar)
-{
-    return do_upper_or_lower(kind, data, length, res, maxchar, 0);
-}
-
-static Py_ssize_t
-do_lower(int kind, const void *data, Py_ssize_t length, Py_UCS4 *res, Py_UCS4 *maxchar)
-{
-    return do_upper_or_lower(kind, data, length, res, maxchar, 1);
-}
-
-static Py_ssize_t
-do_casefold(int kind, const void *data, Py_ssize_t length, Py_UCS4 *res, Py_UCS4 *maxchar)
-{
-    Py_ssize_t i, k = 0;
-
-    for (i = 0; i < length; i++) {
-        Py_UCS4 c = PyUnicode_READ(kind, data, i);
-        Py_UCS4 mapped[3];
-        int j, n_res = _PyUnicode_ToFoldedFull(c, mapped);
-        for (j = 0; j < n_res; j++) {
-            *maxchar = Py_MAX(*maxchar, mapped[j]);
-            res[k++] = mapped[j];
-        }
-    }
-    return k;
-}
-
-static Py_ssize_t
-do_title(int kind, const void *data, Py_ssize_t length, Py_UCS4 *res, Py_UCS4 *maxchar)
-{
-    Py_ssize_t i, k = 0;
-    int previous_is_cased;
-
-    previous_is_cased = 0;
-    for (i = 0; i < length; i++) {
-        const Py_UCS4 c = PyUnicode_READ(kind, data, i);
-        Py_UCS4 mapped[3];
-        int n_res, j;
-
-        if (previous_is_cased)
-            n_res = lower_ucs4(kind, data, length, i, c, mapped);
-        else
-            n_res = _PyUnicode_ToTitleFull(c, mapped);
-
-        for (j = 0; j < n_res; j++) {
-            *maxchar = Py_MAX(*maxchar, mapped[j]);
-            res[k++] = mapped[j];
-        }
-
-        previous_is_cased = _PyUnicode_IsCased(c);
-    }
-    return k;
-}
-
-/* The full mapping tables are shared with the FSR implementation. */
+/* All storage representations share the full mapping tables and loop. */
 typedef enum {
     UNICODE_CASE_UPPER, UNICODE_CASE_LOWER, UNICODE_CASE_TITLE,
     UNICODE_CASE_CAPITALIZE, UNICODE_CASE_SWAP, UNICODE_CASE_FOLD
 } unicode_case_mode;
 
-static int
-unicode_lower_utf8(Py_UCS4 ch, const unsigned char *start,
-                   const unsigned char *before, const unsigned char *after,
-                   const unsigned char *end, Py_UCS4 *mapped)
+static Py_UCS4
+unicode_case_sigma(unicode_scan reader, Py_ssize_t index, Py_ssize_t length)
 {
-    if (ch != 0x3a3) {
-        return _PyUnicode_ToLowerFull(ch, mapped);
+    /* Final_Sigma ignores case-ignorable characters on either side. The
+       reader is positioned just after the current character. */
+    unicode_scan before = reader;
+    if (before.data == NULL) {
+        before.utf8 -= 2;  /* U+03A3 occupies two UTF-8 bytes. */
     }
-    /* Final_Sigma: the nearest non-ignorable predecessor is cased and the
-       nearest non-ignorable successor is not cased (or does not exist). */
-    const unsigned char *p = before;
     int final_sigma = 0;
-    while (p > start) {
-        Py_UCS4 previous = unicode_utf8_prev(&p);
-        if (!_PyUnicode_IsCaseIgnorable(previous)) {
-            final_sigma = _PyUnicode_IsCased(previous);
+    for (Py_ssize_t i = index; i > 0;) {
+        Py_UCS4 ch = unicode_scan_prev(&before, --i);
+        if (!_PyUnicode_IsCaseIgnorable(ch)) {
+            final_sigma = _PyUnicode_IsCased(ch);
             break;
         }
     }
     if (final_sigma) {
-        p = after;
-        while (p < end) {
-            Py_UCS4 next = unicode_utf8_next(&p);
-            if (!_PyUnicode_IsCaseIgnorable(next)) {
-                final_sigma = !_PyUnicode_IsCased(next);
+        for (Py_ssize_t i = index + 1; i < length; i++) {
+            Py_UCS4 ch = unicode_scan_next(&reader, i);
+            if (!_PyUnicode_IsCaseIgnorable(ch)) {
+                final_sigma = !_PyUnicode_IsCased(ch);
                 break;
             }
         }
     }
-    mapped[0] = final_sigma ? 0x3c2 : 0x3c3;
-    return 1;
+    return final_sigma ? 0x3c2 : 0x3c3;
 }
 
 static PyObject *
-unicode_case_utf8(PyObject *self, const char *data, Py_ssize_t size,
-                  unicode_case_mode mode)
+case_operation(PyObject *self, unicode_case_mode mode)
 {
     Py_ssize_t length = PyUnicode_GET_LENGTH(self);
     /* Full mappings contain at most three code points, each at most four bytes. */
@@ -11159,12 +10726,11 @@ unicode_case_utf8(PyObject *self, const char *data, Py_ssize_t size,
         return PyErr_NoMemory();
     }
     unsigned char *out = buffer;
-    const unsigned char *start = (const unsigned char *)data;
-    const unsigned char *p = start, *end = start + size;
+    unicode_scan reader;
+    unicode_scan_init(&reader, self);
     int previous_is_cased = 0;
-    while (p < end) {
-        const unsigned char *before = p;
-        Py_UCS4 ch = unicode_utf8_next(&p), mapped[3];
+    for (Py_ssize_t index = 0; index < length; index++) {
+        Py_UCS4 ch = unicode_scan_next(&reader, index), mapped[3];
         int count;
         if (mode == UNICODE_CASE_FOLD) {
             count = _PyUnicode_ToFoldedFull(ch, mapped);
@@ -11174,15 +10740,19 @@ unicode_case_utf8(PyObject *self, const char *data, Py_ssize_t size,
             count = _PyUnicode_ToUpperFull(ch, mapped);
         }
         else if ((mode == UNICODE_CASE_TITLE && !previous_is_cased) ||
-                 (mode == UNICODE_CASE_CAPITALIZE && before == start)) {
+                 (mode == UNICODE_CASE_CAPITALIZE && index == 0)) {
             count = _PyUnicode_ToTitleFull(ch, mapped);
         }
         else if (mode == UNICODE_CASE_SWAP && !Py_UNICODE_ISUPPER(ch)) {
             count = 1;
             mapped[0] = ch;
         }
+        else if (ch == 0x3a3) {
+            mapped[0] = unicode_case_sigma(reader, index, length);
+            count = 1;
+        }
         else {
-            count = unicode_lower_utf8(ch, start, before, p, end, mapped);
+            count = _PyUnicode_ToLowerFull(ch, mapped);
         }
         for (int i = 0; i < count; i++) {
             out = unicode_utf8_write(out, mapped[i]);
@@ -11195,82 +10765,6 @@ unicode_case_utf8(PyObject *self, const char *data, Py_ssize_t size,
                                            "surrogatepass");
     PyMem_Free(buffer);
     return result;
-}
-
-static PyObject *
-case_operation(PyObject *self,
-               Py_ssize_t (*perform)(int, const void *, Py_ssize_t, Py_UCS4 *, Py_UCS4 *))
-{
-    Py_ssize_t size;
-    const char *utf8 = unicode_primary_utf8(self, &size);
-    if (utf8 != NULL && !PyUnicode_IS_ASCII(self)) {
-        unicode_case_mode mode;
-        if (perform == do_upper) {
-            mode = UNICODE_CASE_UPPER;
-        }
-        else if (perform == do_lower) {
-            mode = UNICODE_CASE_LOWER;
-        }
-        else if (perform == do_title) {
-            mode = UNICODE_CASE_TITLE;
-        }
-        else if (perform == do_capitalize) {
-            mode = UNICODE_CASE_CAPITALIZE;
-        }
-        else if (perform == do_swapcase) {
-            mode = UNICODE_CASE_SWAP;
-        }
-        else {
-            assert(perform == do_casefold);
-            mode = UNICODE_CASE_FOLD;
-        }
-        return unicode_case_utf8(self, utf8, size, mode);
-    }
-
-    if (self != NULL && PyUnicode_Check(self) &&
-        PyUnicode_DATA(self) == NULL) {
-        return NULL;
-    }
-    PyObject *res = NULL;
-    Py_ssize_t length, newlength = 0;
-    int kind, outkind;
-    const void *data;
-    void *outdata;
-    Py_UCS4 maxchar = 0, *tmp, *tmpend;
-
-    kind = PyUnicode_KIND(self);
-    data = PyUnicode_DATA(self);
-    length = PyUnicode_GET_LENGTH(self);
-    if ((size_t) length > PY_SSIZE_T_MAX / (3 * sizeof(Py_UCS4))) {
-        PyErr_SetString(PyExc_OverflowError, "string is too long");
-        return NULL;
-    }
-    tmp = PyMem_Malloc(sizeof(Py_UCS4) * 3 * length);
-    if (tmp == NULL)
-        return PyErr_NoMemory();
-    newlength = perform(kind, data, length, tmp, &maxchar);
-    res = PyUnicode_New(newlength, maxchar);
-    if (res == NULL)
-        goto leave;
-    tmpend = tmp + newlength;
-    outdata = PyUnicode_DATA(res);
-    outkind = PyUnicode_KIND(res);
-    switch (outkind) {
-    case PyUnicode_1BYTE_KIND:
-        _PyUnicode_CONVERT_BYTES(Py_UCS4, Py_UCS1, tmp, tmpend, outdata);
-        break;
-    case PyUnicode_2BYTE_KIND:
-        _PyUnicode_CONVERT_BYTES(Py_UCS4, Py_UCS2, tmp, tmpend, outdata);
-        break;
-    case PyUnicode_4BYTE_KIND:
-        memcpy(outdata, tmp, sizeof(Py_UCS4) * newlength);
-        break;
-    default:
-        Py_UNREACHABLE();
-    }
-  leave:
-    PyMem_Free(tmp);
-    return res == NULL ? NULL : unicode_result(res);
 }
 
 PyObject *
@@ -11301,216 +10795,84 @@ PyUnicode_Join(PyObject *separator, PyObject *seq)
 PyObject *
 _PyUnicode_JoinArray(PyObject *separator, PyObject *const *items, Py_ssize_t seqlen)
 {
-    PyObject *res = NULL; /* the result */
-    PyObject *sep = NULL;
-    Py_ssize_t seplen;
-    PyObject *item;
-    Py_ssize_t sz, i, res_offset;
-    Py_UCS4 maxchar;
-    Py_UCS4 item_maxchar;
-    int use_memcpy;
-    unsigned char *res_data = NULL, *sep_data = NULL;
-    PyObject *last_obj;
-    int kind = 0;
-
-    /* If empty sequence, return u"". */
     if (seqlen == 0) {
         _Py_RETURN_UNICODE_EMPTY();
     }
-
-    /* If singleton sequence with an exact Unicode, return that. */
-    last_obj = NULL;
-    if (seqlen == 1) {
-        if (PyUnicode_CheckExact(items[0])) {
-            res = items[0];
-            return Py_NewRef(res);
-        }
-        seplen = 0;
-        maxchar = 0;
+    if (seqlen == 1 && PyUnicode_CheckExact(items[0])) {
+        return Py_NewRef(items[0]);
     }
-    else {
-        /* Set up sep and seplen */
+    if (seqlen > 1 && separator != NULL && !PyUnicode_Check(separator)) {
+        PyErr_Format(PyExc_TypeError, "separator: expected str instance, %.80s found",
+                     Py_TYPE(separator)->tp_name);
+        return NULL;
+    }
+    unicode_utf8_view sep = {"", 0, NULL};
+    Py_ssize_t seplen = 0, length = 0, size = 0;
+    Py_UCS4 maxchar = 0;
+    int surrogates = 0;
+    if (seqlen > 1) {
         if (separator == NULL) {
-            /* fall back to a blank space separator */
-            sep = PyUnicode_FromOrdinal(' ');
-            if (!sep)
-                goto onError;
-            seplen = 1;
-            maxchar = 32;
+            sep.data = " ";
+            sep.size = seplen = 1;
+            maxchar = ' ';
         }
         else {
-            if (!PyUnicode_Check(separator)) {
-                PyErr_Format(PyExc_TypeError,
-                             "separator: expected str instance,"
-                             " %.80s found",
-                             Py_TYPE(separator)->tp_name);
-                goto onError;
+            if (unicode_utf8_view_init(&sep, separator) < 0) {
+                return NULL;
             }
-            sep = separator;
             seplen = PyUnicode_GET_LENGTH(separator);
-            maxchar = PyUnicode_MAX_CHAR_VALUE(separator);
-            /* inc refcount to keep this code path symmetric with the
-               above case of a blank separator */
-            Py_INCREF(sep);
+            maxchar = unicode_utf8_metadata(separator, &surrogates);
         }
-        last_obj = sep;
     }
-
-    /* There are at least two things to join, or else we have a subclass
-     * of str in the sequence.
-     * Do a pre-pass to figure out the total amount of space we'll
-     * need (sz), and see whether all argument are strings.
-     */
-    Py_ssize_t utf8_size = 0, sep_size = 0;
-    const char *sep_utf8 = sep == NULL ? "" : unicode_primary_utf8(sep, &sep_size);
-    int utf8_ok = sep_utf8 != NULL;
-    int surrogates = sep == NULL ? 0 : _PyASCIIObject_CAST(sep)->state.has_surrogates;
-    sz = 0;
-#ifdef Py_DEBUG
-    use_memcpy = 0;
-#else
-    use_memcpy = 1;
-#endif
-    for (i = 0; i < seqlen; i++) {
-        size_t add_sz;
-        item = items[i];
+    for (Py_ssize_t i = 0; i < seqlen; i++) {
+        PyObject *item = items[i];
         if (!PyUnicode_Check(item)) {
             PyErr_Format(PyExc_TypeError,
-                         "sequence item %zd: expected str instance,"
-                         " %.80s found",
+                         "sequence item %zd: expected str instance, %.80s found",
                          i, Py_TYPE(item)->tp_name);
-            goto onError;
+            goto error;
         }
-        if (utf8_ok) {
-            Py_ssize_t item_size;
-            if (unicode_primary_utf8(item, &item_size) == NULL) {
-                utf8_ok = 0;
-            }
-            else {
-                Py_ssize_t extra = i == 0 ? 0 : sep_size;
-                if (item_size > PY_SSIZE_T_MAX - utf8_size ||
-                    extra > PY_SSIZE_T_MAX - utf8_size - item_size) {
-                    PyErr_SetString(PyExc_OverflowError, "join() result is too long");
-                    goto onError;
-                }
-                utf8_size += item_size + extra;
-                surrogates |= _PyASCIIObject_CAST(item)->state.has_surrogates;
-            }
+        unicode_utf8_view view;
+        if (unicode_utf8_view_init(&view, item) < 0) {
+            goto error;
         }
-        add_sz = PyUnicode_GET_LENGTH(item);
-        item_maxchar = PyUnicode_MAX_CHAR_VALUE(item);
-        maxchar = Py_MAX(maxchar, item_maxchar);
-        if (i != 0) {
-            add_sz += seplen;
-        }
-        if (add_sz > (size_t)(PY_SSIZE_T_MAX - sz)) {
+        Py_ssize_t itemsize = view.size;
+        unicode_utf8_views_clear(&view, 1);
+        Py_ssize_t extra = i == 0 ? 0 : sep.size;
+        if (itemsize > PY_SSIZE_T_MAX - size ||
+            extra > PY_SSIZE_T_MAX - size - itemsize) {
             PyErr_SetString(PyExc_OverflowError,
                             "join() result is too long for a Python string");
-            goto onError;
+            goto error;
         }
-        sz += add_sz;
-        if (use_memcpy && last_obj != NULL) {
-            if (PyUnicode_KIND(last_obj) != PyUnicode_KIND(item))
-                use_memcpy = 0;
-        }
-        last_obj = item;
+        size += itemsize + extra;
+        length += PyUnicode_GET_LENGTH(item) + (i == 0 ? 0 : seplen);
+        Py_UCS4 item_max = unicode_utf8_metadata(item, &surrogates);
+        maxchar = Py_MAX(maxchar, item_max);
     }
-
-    if (utf8_ok && maxchar > 127) {
-        PyCompactUnicodeObject *u = unicode_alloc_utf8(
-            utf8_size, sz, maxchar < 256 ? 1 : maxchar < 65536 ? 2 : 4,
-            surrogates);
-        if (u == NULL) {
-            goto onError;
-        }
-        char *out = (char *)(u + 1);
-        for (i = 0; i < seqlen; i++) {
-            if (i != 0) {
-                memcpy(out, sep_utf8, sep_size);
-                out += sep_size;
-            }
-            Py_ssize_t item_size;
-            const char *data = unicode_primary_utf8(items[i], &item_size);
-            memcpy(out, data, item_size);
-            out += item_size;
-        }
-        assert(out == (char *)(u + 1) + utf8_size);
-        Py_XDECREF(sep);
-        return (PyObject *)u;
+    char *out;
+    PyObject *result = unicode_new_utf8(size, length, maxchar, surrogates, &out);
+    if (result == NULL) {
+        goto error;
     }
-
-    if (sep != NULL && PyUnicode_DATA(sep) == NULL) {
-        goto onError;
-    }
-    res = PyUnicode_New(sz, maxchar);
-    if (res == NULL)
-        goto onError;
-
-    /* Catenate everything. */
-#ifdef Py_DEBUG
-    use_memcpy = 0;
-#else
-    if (use_memcpy) {
-        res_data = PyUnicode_1BYTE_DATA(res);
-        kind = PyUnicode_KIND(res);
-        if (seplen != 0)
-            sep_data = PyUnicode_1BYTE_DATA(sep);
-    }
-#endif
-    if (use_memcpy) {
-        for (i = 0; i < seqlen; ++i) {
-            Py_ssize_t itemlen;
-            item = items[i];
-
-            /* Copy item, and maybe the separator. */
-            if (i && seplen != 0) {
-                memcpy(res_data,
-                          sep_data,
-                          kind * seplen);
-                res_data += kind * seplen;
-            }
-
-            if (PyUnicode_DATA(item) == NULL) {
-            goto onError;
+    for (Py_ssize_t i = 0; i < seqlen; i++) {
+        unicode_utf8_view view;
+        if (unicode_utf8_view_init(&view, items[i]) < 0) {
+            Py_DECREF(result);
+            goto error;
         }
-        itemlen = PyUnicode_GET_LENGTH(item);
-            if (itemlen != 0) {
-                memcpy(res_data,
-                          PyUnicode_DATA(item),
-                          kind * itemlen);
-                res_data += kind * itemlen;
-            }
+        if (i != 0) {
+            memcpy(out, sep.data, sep.size);
+            out += sep.size;
         }
-        assert(res_data == PyUnicode_1BYTE_DATA(res)
-                           + kind * PyUnicode_GET_LENGTH(res));
+        memcpy(out, view.data, view.size);
+        out += view.size;
+        unicode_utf8_views_clear(&view, 1);
     }
-    else {
-        for (i = 0, res_offset = 0; i < seqlen; ++i) {
-            Py_ssize_t itemlen;
-            item = items[i];
-
-            /* Copy item, and maybe the separator. */
-            if (i && seplen != 0) {
-                _PyUnicode_FastCopyCharacters(res, res_offset, sep, 0, seplen);
-                res_offset += seplen;
-            }
-
-            itemlen = PyUnicode_GET_LENGTH(item);
-            if (itemlen != 0) {
-                _PyUnicode_FastCopyCharacters(res, res_offset, item, 0, itemlen);
-                res_offset += itemlen;
-            }
-        }
-        assert(res_offset == PyUnicode_GET_LENGTH(res));
-    }
-
-    Py_XDECREF(sep);
-    assert(_PyUnicode_CheckConsistency(res, 1));
-    return unicode_result(res);
-
-  onError:
-    Py_XDECREF(sep);
-    Py_XDECREF(res);
+    unicode_utf8_views_clear(&sep, 1);
+    return length < 2 ? unicode_result(result) : result;
+error:
+    unicode_utf8_views_clear(&sep, 1);
     return NULL;
 }
 
@@ -11566,66 +10928,38 @@ pad(PyObject *self,
     Py_ssize_t right,
     Py_UCS4 fill)
 {
-    PyObject *u;
-    Py_UCS4 maxchar;
-    int kind;
-    void *data;
-
-    if (left < 0)
-        left = 0;
-    if (right < 0)
-        right = 0;
-
-    if (left == 0 && right == 0)
+    left = Py_MAX(left, 0);
+    right = Py_MAX(right, 0);
+    if (left == 0 && right == 0) {
         return unicode_result_unchanged(self);
-
-    if (left > PY_SSIZE_T_MAX - _PyUnicode_LENGTH(self) ||
-        right > PY_SSIZE_T_MAX - (left + _PyUnicode_LENGTH(self))) {
+    }
+    unicode_utf8_view view;
+    if (unicode_utf8_view_init(&view, self) < 0) {
+        return NULL;
+    }
+    unsigned char encoded[4];
+    Py_ssize_t width = unicode_utf8_write(encoded, fill) - encoded;
+    if (left > (PY_SSIZE_T_MAX - view.size) / width ||
+        right > (PY_SSIZE_T_MAX - view.size - left * width) / width) {
+        unicode_utf8_views_clear(&view, 1);
         PyErr_SetString(PyExc_OverflowError, "padded string is too long");
         return NULL;
     }
-    maxchar = PyUnicode_MAX_CHAR_VALUE(self);
+    int surrogates = Py_UNICODE_IS_SURROGATE(fill);
+    Py_UCS4 maxchar = unicode_utf8_metadata(self, &surrogates);
     maxchar = Py_MAX(maxchar, fill);
-    Py_ssize_t size;
-    const char *utf8 = unicode_primary_utf8(self, &size);
-    if (utf8 != NULL && maxchar > 127) {
-        unsigned char encoded[4];
-        Py_ssize_t width = unicode_utf8_write(encoded, fill) - encoded;
-        if (left > (PY_SSIZE_T_MAX - size) / width ||
-            right > (PY_SSIZE_T_MAX - size - left * width) / width) {
-            PyErr_SetString(PyExc_OverflowError, "padded string is too long");
-            return NULL;
-        }
-        Py_ssize_t result_size = size + (left + right) * width;
-        PyCompactUnicodeObject *result = unicode_alloc_utf8(
-            result_size, left + PyUnicode_GET_LENGTH(self) + right,
-            maxchar < 256 ? 1 : maxchar < 65536 ? 2 : 4,
-            _PyASCIIObject_CAST(self)->state.has_surrogates |
-                Py_UNICODE_IS_SURROGATE(fill));
-        if (result == NULL) {
-            return NULL;
-        }
-        char *out = (char *)(result + 1);
+    char *out;
+    PyObject *result = unicode_new_utf8(view.size + (left + right) * width,
+        PyUnicode_GET_LENGTH(self) + left + right, maxchar, surrogates, &out);
+    if (result != NULL) {
         _PyBytes_RepeatBuffer(out, left * width, (const char *)encoded, width);
-        memcpy(out + left * width, utf8, size);
-        _PyBytes_RepeatBuffer(out + left * width + size, right * width,
+        memcpy(out + left * width, view.data, view.size);
+        _PyBytes_RepeatBuffer(out + left * width + view.size, right * width,
                              (const char *)encoded, width);
-        return (PyObject *)result;
     }
-    u = PyUnicode_New(left + _PyUnicode_LENGTH(self) + right, maxchar);
-    if (!u)
-        return NULL;
-
-    kind = PyUnicode_KIND(u);
-    data = PyUnicode_DATA(u);
-    if (left)
-        _PyUnicode_Fill(kind, data, fill, 0, left);
-    if (right)
-        _PyUnicode_Fill(kind, data, fill,
-                        left + _PyUnicode_LENGTH(self), right);
-    _PyUnicode_FastCopyCharacters(u, left, self, 0, _PyUnicode_LENGTH(self));
-    assert(_PyUnicode_CheckConsistency(u, 1));
-    return u == NULL ? NULL : unicode_result(u);
+    unicode_utf8_views_clear(&view, 1);
+    return result != NULL && PyUnicode_GET_LENGTH(result) < 2
+        ? unicode_result(result) : result;
 }
 
 static int
@@ -11736,7 +11070,7 @@ PyUnicode_Splitlines(PyObject *string, int keepends)
 {
     if (PyUnicode_Check(string) && !unicode_has_fsr(string)) {
         Py_ssize_t size;
-        const char *utf8 = unicode_primary_utf8(string, &size);
+        const char *utf8 = _PyUnicode_GetPrimaryUTF8(string, &size);
         if (utf8 != NULL) {
             return unicode_splitlines_utf8(string, utf8, size, keepends);
         }
@@ -11779,10 +11113,37 @@ PyUnicode_Splitlines(PyObject *string, int keepends)
 }
 
 static PyObject *
-split(PyObject *self,
-      PyObject *substring,
-      Py_ssize_t maxcount)
+unicode_split_whitespace_fsr(PyObject *self, Py_ssize_t maxcount, int reverse)
 {
+    Py_ssize_t length = PyUnicode_GET_LENGTH(self);
+    const void *data = PyUnicode_DATA(self);
+    if (maxcount < 0) {
+        maxcount = length / 2 + 1;
+    }
+#define SPLIT_WHITESPACE(LIB) \
+    (reverse ? LIB##_rsplit_whitespace(self, data, length, maxcount) \
+             : LIB##_split_whitespace(self, data, length, maxcount))
+    switch (PyUnicode_KIND(self)) {
+    case PyUnicode_1BYTE_KIND:
+        return PyUnicode_IS_ASCII(self) ? SPLIT_WHITESPACE(asciilib)
+                                       : SPLIT_WHITESPACE(ucs1lib);
+    case PyUnicode_2BYTE_KIND:
+        return SPLIT_WHITESPACE(ucs2lib);
+    case PyUnicode_4BYTE_KIND:
+        return SPLIT_WHITESPACE(ucs4lib);
+    default:
+        Py_UNREACHABLE();
+    }
+#undef SPLIT_WHITESPACE
+}
+
+static PyObject *
+unicode_split_common(PyObject *self, PyObject *substring,
+                     Py_ssize_t maxcount, int reverse)
+{
+    if (substring == NULL && unicode_has_fsr(self)) {
+        return unicode_split_whitespace_fsr(self, maxcount, reverse);
+    }
     if (substring != NULL && unicode_cannot_contain(self, substring)) {
         PyObject *list = PyList_New(1);
         if (list != NULL) {
@@ -11790,292 +11151,40 @@ split(PyObject *self,
         }
         return list;
     }
-
-    Py_ssize_t size, subsize;
-    const char *utf8 = unicode_primary_utf8(self, &size);
-    const char *sub = substring == NULL ? NULL :
-        unicode_primary_utf8(substring, &subsize);
-    if (utf8 != NULL && substring == NULL && !unicode_has_fsr(self)) {
-        return unicode_split_whitespace_utf8(self, utf8, size, maxcount, 0);
-    }
-    if (utf8 != NULL && sub != NULL) {
-        return utf8lib_split(self, (const Py_UCS1 *)utf8, size,
-                             (const Py_UCS1 *)sub, subsize,
-                             maxcount < 0 ? PY_SSIZE_T_MAX : maxcount);
-    }
-
-    if (self != NULL && PyUnicode_Check(self) &&
-        PyUnicode_DATA(self) == NULL) {
+    unicode_utf8_view views[2] = {{0}};
+    if (unicode_utf8_view_init(&views[0], self) < 0) {
         return NULL;
     }
-    if (substring != NULL && PyUnicode_Check(substring) &&
-        PyUnicode_DATA(substring) == NULL) {
-        return NULL;
-    }
-    int kind1, kind2;
-    const void *buf1, *buf2;
-    Py_ssize_t len1, len2;
-    PyObject* out;
-    len1 = PyUnicode_GET_LENGTH(self);
-    kind1 = PyUnicode_KIND(self);
-
+    PyObject *result = NULL;
     if (substring == NULL) {
-        if (maxcount < 0) {
-            maxcount = (len1 - 1) / 2 + 1;
-        }
-        switch (kind1) {
-        case PyUnicode_1BYTE_KIND:
-            if (PyUnicode_IS_ASCII(self))
-                return asciilib_split_whitespace(
-                    self,  PyUnicode_1BYTE_DATA(self),
-                    len1, maxcount
-                    );
-            else
-                return ucs1lib_split_whitespace(
-                    self,  PyUnicode_1BYTE_DATA(self),
-                    len1, maxcount
-                    );
-        case PyUnicode_2BYTE_KIND:
-            return ucs2lib_split_whitespace(
-                self,  PyUnicode_2BYTE_DATA(self),
-                len1, maxcount
-                );
-        case PyUnicode_4BYTE_KIND:
-            return ucs4lib_split_whitespace(
-                self,  PyUnicode_4BYTE_DATA(self),
-                len1, maxcount
-                );
-        default:
-            Py_UNREACHABLE();
-        }
+        result = unicode_split_whitespace_utf8(self, views[0].data,
+                                               views[0].size, maxcount, reverse);
     }
-
-    kind2 = PyUnicode_KIND(substring);
-    len2 = PyUnicode_GET_LENGTH(substring);
-    if (maxcount < 0) {
-        // if len2 == 0, it will raise ValueError.
-        maxcount = len2 == 0 ? 0 : (len1 / len2) + 1;
-        // handle expected overflow case: (Py_SSIZE_T_MAX / 1) + 1
-        maxcount = maxcount < 0 ? len1 : maxcount;
+    else if (unicode_utf8_view_init(&views[1], substring) == 0) {
+        maxcount = maxcount < 0 ? PY_SSIZE_T_MAX : maxcount;
+        result = reverse
+            ? utf8lib_rsplit(self, (const Py_UCS1 *)views[0].data, views[0].size,
+                             (const Py_UCS1 *)views[1].data, views[1].size, maxcount)
+            : utf8lib_split(self, (const Py_UCS1 *)views[0].data, views[0].size,
+                            (const Py_UCS1 *)views[1].data, views[1].size, maxcount);
     }
-    if (kind1 < kind2 || len1 < len2) {
-        out = PyList_New(1);
-        if (out == NULL)
-            return NULL;
-        PyList_SET_ITEM(out, 0, Py_NewRef(self));
-        return out;
-    }
-    buf1 = PyUnicode_DATA(self);
-    buf2 = PyUnicode_DATA(substring);
-    if (kind2 != kind1) {
-        buf2 = unicode_askind(kind2, buf2, len2, kind1);
-        if (!buf2)
-            return NULL;
-    }
-
-    switch (kind1) {
-    case PyUnicode_1BYTE_KIND:
-        if (PyUnicode_IS_ASCII(self) && PyUnicode_IS_ASCII(substring))
-            out = asciilib_split(
-                self,  buf1, len1, buf2, len2, maxcount);
-        else
-            out = ucs1lib_split(
-                self,  buf1, len1, buf2, len2, maxcount);
-        break;
-    case PyUnicode_2BYTE_KIND:
-        out = ucs2lib_split(
-            self,  buf1, len1, buf2, len2, maxcount);
-        break;
-    case PyUnicode_4BYTE_KIND:
-        out = ucs4lib_split(
-            self,  buf1, len1, buf2, len2, maxcount);
-        break;
-    default:
-        out = NULL;
-    }
-    assert((kind2 != kind1) == (buf2 != PyUnicode_DATA(substring)));
-    if (kind2 != kind1)
-        PyMem_Free((void *)buf2);
-    return out;
+    unicode_utf8_views_clear(views, 2);
+    return result;
 }
+
+static PyObject *
+split(PyObject *self, PyObject *substring, Py_ssize_t maxcount)
+{
+    return unicode_split_common(self, substring, maxcount, 0);
+}
+
 
 static PyObject *
 rsplit(PyObject *self,
        PyObject *substring,
        Py_ssize_t maxcount)
 {
-    if (substring != NULL && unicode_cannot_contain(self, substring)) {
-        PyObject *list = PyList_New(1);
-        if (list != NULL) {
-            PyList_SET_ITEM(list, 0, Py_NewRef(self));
-        }
-        return list;
-    }
-
-    Py_ssize_t size, subsize;
-    const char *utf8 = unicode_primary_utf8(self, &size);
-    const char *sub = substring == NULL ? NULL :
-        unicode_primary_utf8(substring, &subsize);
-    if (utf8 != NULL && substring == NULL && !unicode_has_fsr(self)) {
-        return unicode_split_whitespace_utf8(self, utf8, size, maxcount, 1);
-    }
-    if (utf8 != NULL && sub != NULL) {
-        return utf8lib_rsplit(self, (const Py_UCS1 *)utf8, size,
-                             (const Py_UCS1 *)sub, subsize,
-                             maxcount < 0 ? PY_SSIZE_T_MAX : maxcount);
-    }
-
-    if (self != NULL && PyUnicode_Check(self) &&
-        PyUnicode_DATA(self) == NULL) {
-        return NULL;
-    }
-    if (substring != NULL && PyUnicode_Check(substring) &&
-        PyUnicode_DATA(substring) == NULL) {
-        return NULL;
-    }
-    int kind1, kind2;
-    const void *buf1, *buf2;
-    Py_ssize_t len1, len2;
-    PyObject* out;
-
-    len1 = PyUnicode_GET_LENGTH(self);
-    kind1 = PyUnicode_KIND(self);
-
-    if (substring == NULL) {
-        if (maxcount < 0) {
-            maxcount = (len1 - 1) / 2 + 1;
-        }
-        switch (kind1) {
-        case PyUnicode_1BYTE_KIND:
-            if (PyUnicode_IS_ASCII(self))
-                return asciilib_rsplit_whitespace(
-                    self,  PyUnicode_1BYTE_DATA(self),
-                    len1, maxcount
-                    );
-            else
-                return ucs1lib_rsplit_whitespace(
-                    self,  PyUnicode_1BYTE_DATA(self),
-                    len1, maxcount
-                    );
-        case PyUnicode_2BYTE_KIND:
-            return ucs2lib_rsplit_whitespace(
-                self,  PyUnicode_2BYTE_DATA(self),
-                len1, maxcount
-                );
-        case PyUnicode_4BYTE_KIND:
-            return ucs4lib_rsplit_whitespace(
-                self,  PyUnicode_4BYTE_DATA(self),
-                len1, maxcount
-                );
-        default:
-            Py_UNREACHABLE();
-        }
-    }
-    kind2 = PyUnicode_KIND(substring);
-    len2 = PyUnicode_GET_LENGTH(substring);
-    if (maxcount < 0) {
-        // if len2 == 0, it will raise ValueError.
-        maxcount = len2 == 0 ? 0 : (len1 / len2) + 1;
-        // handle expected overflow case: (Py_SSIZE_T_MAX / 1) + 1
-        maxcount = maxcount < 0 ? len1 : maxcount;
-    }
-    if (kind1 < kind2 || len1 < len2) {
-        out = PyList_New(1);
-        if (out == NULL)
-            return NULL;
-        PyList_SET_ITEM(out, 0, Py_NewRef(self));
-        return out;
-    }
-    buf1 = PyUnicode_DATA(self);
-    buf2 = PyUnicode_DATA(substring);
-    if (kind2 != kind1) {
-        buf2 = unicode_askind(kind2, buf2, len2, kind1);
-        if (!buf2)
-            return NULL;
-    }
-
-    switch (kind1) {
-    case PyUnicode_1BYTE_KIND:
-        if (PyUnicode_IS_ASCII(self) && PyUnicode_IS_ASCII(substring))
-            out = asciilib_rsplit(
-                self,  buf1, len1, buf2, len2, maxcount);
-        else
-            out = ucs1lib_rsplit(
-                self,  buf1, len1, buf2, len2, maxcount);
-        break;
-    case PyUnicode_2BYTE_KIND:
-        out = ucs2lib_rsplit(
-            self,  buf1, len1, buf2, len2, maxcount);
-        break;
-    case PyUnicode_4BYTE_KIND:
-        out = ucs4lib_rsplit(
-            self,  buf1, len1, buf2, len2, maxcount);
-        break;
-    default:
-        out = NULL;
-    }
-    assert((kind2 != kind1) == (buf2 != PyUnicode_DATA(substring)));
-    if (kind2 != kind1)
-        PyMem_Free((void *)buf2);
-    return out;
-}
-
-static Py_ssize_t
-anylib_find(int kind, PyObject *str1, const void *buf1, Py_ssize_t len1,
-            PyObject *str2, const void *buf2, Py_ssize_t len2, Py_ssize_t offset)
-{
-    switch (kind) {
-    case PyUnicode_1BYTE_KIND:
-        if (PyUnicode_IS_ASCII(str1) && PyUnicode_IS_ASCII(str2))
-            return asciilib_find(buf1, len1, buf2, len2, offset);
-        else
-            return ucs1lib_find(buf1, len1, buf2, len2, offset);
-    case PyUnicode_2BYTE_KIND:
-        return ucs2lib_find(buf1, len1, buf2, len2, offset);
-    case PyUnicode_4BYTE_KIND:
-        return ucs4lib_find(buf1, len1, buf2, len2, offset);
-    }
-    Py_UNREACHABLE();
-}
-
-static Py_ssize_t
-anylib_count(int kind, PyObject *sstr, const void* sbuf, Py_ssize_t slen,
-             PyObject *str1, const void *buf1, Py_ssize_t len1, Py_ssize_t maxcount)
-{
-    switch (kind) {
-    case PyUnicode_1BYTE_KIND:
-        return ucs1lib_count(sbuf, slen, buf1, len1, maxcount);
-    case PyUnicode_2BYTE_KIND:
-        return ucs2lib_count(sbuf, slen, buf1, len1, maxcount);
-    case PyUnicode_4BYTE_KIND:
-        return ucs4lib_count(sbuf, slen, buf1, len1, maxcount);
-    }
-    Py_UNREACHABLE();
-}
-
-static void
-replace_1char_inplace(PyObject *u, Py_ssize_t pos,
-                      Py_UCS4 u1, Py_UCS4 u2, Py_ssize_t maxcount)
-{
-    int kind = PyUnicode_KIND(u);
-    void *data = PyUnicode_DATA(u);
-    Py_ssize_t len = PyUnicode_GET_LENGTH(u);
-    if (kind == PyUnicode_1BYTE_KIND) {
-        ucs1lib_replace_1char_inplace((Py_UCS1 *)data + pos,
-                                      (Py_UCS1 *)data + len,
-                                      u1, u2, maxcount);
-    }
-    else if (kind == PyUnicode_2BYTE_KIND) {
-        ucs2lib_replace_1char_inplace((Py_UCS2 *)data + pos,
-                                      (Py_UCS2 *)data + len,
-                                      u1, u2, maxcount);
-    }
-    else {
-        assert(kind == PyUnicode_4BYTE_KIND);
-        ucs4lib_replace_1char_inplace((Py_UCS4 *)data + pos,
-                                      (Py_UCS4 *)data + len,
-                                      u1, u2, maxcount);
-    }
+    return unicode_split_common(self, substring, maxcount, 1);
 }
 
 /* Valid UTF-8 (including our surrogatepass sequences) is self-synchronizing:
@@ -12092,6 +11201,23 @@ unicode_replace_utf8(PyObject *self, PyObject *old, PyObject *new,
     }
     if (maxcount < 0) {
         maxcount = PY_SSIZE_T_MAX;
+    }
+    /* Preserve the cheap ASCII character replacement within the byte path. */
+    if (PyUnicode_IS_ASCII(self) && old_size == 1 && new_size == 1) {
+        const char *match = memchr(src, (unsigned char)old_data[0], size);
+        if (match == NULL) {
+            return unicode_result_unchanged(self);
+        }
+        PyObject *result = PyUnicode_New(size, 127);
+        if (result == NULL) {
+            return NULL;
+        }
+        Py_UCS1 *data = PyUnicode_1BYTE_DATA(result);
+        memcpy(data, src, size);
+        ucs1lib_replace_1char_inplace(data + (match - src), data + size,
+                                     (unsigned char)old_data[0],
+                                     (unsigned char)new_data[0], maxcount);
+        return unicode_result(result);
     }
     Py_ssize_t count = old_size == 0
         ? Py_MIN(length + 1, maxcount)
@@ -12175,305 +11301,24 @@ static PyObject *
 replace(PyObject *self, PyObject *str1,
         PyObject *str2, Py_ssize_t maxcount)
 {
-    if (unicode_cannot_contain(self, str1)) {
+    if (maxcount == 0 || str1 == str2 || unicode_cannot_contain(self, str1)) {
         return unicode_result_unchanged(self);
     }
-
-    Py_ssize_t size, size1, size2;
-    const char *utf8 = unicode_primary_utf8(self, &size);
-    const char *utf8_1 = unicode_primary_utf8(str1, &size1);
-    const char *utf8_2 = unicode_primary_utf8(str2, &size2);
-    if (utf8 != NULL && utf8_1 != NULL && utf8_2 != NULL &&
-        !(PyUnicode_IS_ASCII(self) && PyUnicode_IS_ASCII(str1) &&
-          PyUnicode_IS_ASCII(str2))) {
-        return unicode_replace_utf8(self, str1, str2, maxcount,
-                                    utf8, size, utf8_1, size1, utf8_2, size2);
-    }
-    if (self != NULL && PyUnicode_Check(self) &&
-        PyUnicode_DATA(self) == NULL) {
-        return NULL;
-    }
-    if (str1 != NULL && PyUnicode_Check(str1) &&
-        PyUnicode_DATA(str1) == NULL) {
-        return NULL;
-    }
-    if (str2 != NULL && PyUnicode_Check(str2) &&
-        PyUnicode_DATA(str2) == NULL) {
-        return NULL;
-    }
-    PyObject *u;
-    const char *sbuf = PyUnicode_DATA(self);
-    const void *buf1 = PyUnicode_DATA(str1);
-    const void *buf2 = PyUnicode_DATA(str2);
-    int srelease = 0, release1 = 0, release2 = 0;
-    int skind = PyUnicode_KIND(self);
-    int kind1 = PyUnicode_KIND(str1);
-    int kind2 = PyUnicode_KIND(str2);
-    Py_ssize_t slen = PyUnicode_GET_LENGTH(self);
-    Py_ssize_t len1 = PyUnicode_GET_LENGTH(str1);
-    Py_ssize_t len2 = PyUnicode_GET_LENGTH(str2);
-    int mayshrink;
-    Py_UCS4 maxchar, maxchar_str1, maxchar_str2;
-
-    if (slen < len1)
-        goto nothing;
-
-    if (maxcount < 0)
-        maxcount = PY_SSIZE_T_MAX;
-    else if (maxcount == 0)
-        goto nothing;
-
-    if (str1 == str2)
-        goto nothing;
-
-    maxchar = PyUnicode_MAX_CHAR_VALUE(self);
-    maxchar_str1 = PyUnicode_MAX_CHAR_VALUE(str1);
-    if (maxchar < maxchar_str1)
-        /* substring too wide to be present */
-        goto nothing;
-    maxchar_str2 = PyUnicode_MAX_CHAR_VALUE(str2);
-    /* Replacing str1 with str2 may cause a maxchar reduction in the
-       result string. */
-    mayshrink = (maxchar_str2 < maxchar_str1) && (maxchar == maxchar_str1);
-    maxchar = Py_MAX(maxchar, maxchar_str2);
-
-    if (len1 == len2) {
-        /* same length */
-        if (len1 == 0)
-            goto nothing;
-        if (len1 == 1) {
-            /* replace characters */
-            Py_UCS4 u1, u2;
-            Py_ssize_t pos;
-
-            u1 = PyUnicode_READ(kind1, buf1, 0);
-            pos = findchar(sbuf, skind, slen, u1, 1);
-            if (pos < 0)
-                goto nothing;
-            u2 = PyUnicode_READ(kind2, buf2, 0);
-            u = PyUnicode_New(slen, maxchar);
-            if (!u)
-                goto error;
-
-            _PyUnicode_FastCopyCharacters(u, 0, self, 0, slen);
-            replace_1char_inplace(u, pos, u1, u2, maxcount);
-        }
-        else {
-            int rkind = skind;
-            char *res;
-            Py_ssize_t i;
-
-            if (kind1 < rkind) {
-                /* widen substring */
-                buf1 = unicode_askind(kind1, buf1, len1, rkind);
-                if (!buf1) goto error;
-                release1 = 1;
-            }
-            i = anylib_find(rkind, self, sbuf, slen, str1, buf1, len1, 0);
-            if (i < 0)
-                goto nothing;
-            if (rkind > kind2) {
-                /* widen replacement */
-                buf2 = unicode_askind(kind2, buf2, len2, rkind);
-                if (!buf2) goto error;
-                release2 = 1;
-            }
-            else if (rkind < kind2) {
-                /* widen self and buf1 */
-                rkind = kind2;
-                if (release1) {
-                    assert(buf1 != PyUnicode_DATA(str1));
-                    PyMem_Free((void *)buf1);
-                    buf1 = PyUnicode_DATA(str1);
-                    release1 = 0;
-                }
-                sbuf = unicode_askind(skind, sbuf, slen, rkind);
-                if (!sbuf) goto error;
-                srelease = 1;
-                buf1 = unicode_askind(kind1, buf1, len1, rkind);
-                if (!buf1) goto error;
-                release1 = 1;
-            }
-            u = PyUnicode_New(slen, maxchar);
-            if (!u)
-                goto error;
-            assert(PyUnicode_KIND(u) == rkind);
-            res = PyUnicode_DATA(u);
-
-            memcpy(res, sbuf, rkind * slen);
-            /* change everything in-place, starting with this one */
-            memcpy(res + rkind * i,
-                   buf2,
-                   rkind * len2);
-            i += len1;
-
-            while ( --maxcount > 0) {
-                i = anylib_find(rkind, self,
-                                sbuf+rkind*i, slen-i,
-                                str1, buf1, len1, i);
-                if (i == -1)
-                    break;
-                memcpy(res + rkind * i,
-                       buf2,
-                       rkind * len2);
-                i += len1;
-            }
-        }
-    }
-    else {
-        Py_ssize_t n, i, j, ires;
-        Py_ssize_t new_size;
-        int rkind = skind;
-        char *res;
-
-        if (kind1 < rkind) {
-            /* widen substring */
-            buf1 = unicode_askind(kind1, buf1, len1, rkind);
-            if (!buf1) goto error;
-            release1 = 1;
-        }
-        n = anylib_count(rkind, self, sbuf, slen, str1, buf1, len1, maxcount);
-        if (n == 0)
-            goto nothing;
-        if (kind2 < rkind) {
-            /* widen replacement */
-            buf2 = unicode_askind(kind2, buf2, len2, rkind);
-            if (!buf2) goto error;
-            release2 = 1;
-        }
-        else if (kind2 > rkind) {
-            /* widen self and buf1 */
-            rkind = kind2;
-            sbuf = unicode_askind(skind, sbuf, slen, rkind);
-            if (!sbuf) goto error;
-            srelease = 1;
-            if (release1) {
-                assert(buf1 != PyUnicode_DATA(str1));
-                PyMem_Free((void *)buf1);
-                buf1 = PyUnicode_DATA(str1);
-                release1 = 0;
-            }
-            buf1 = unicode_askind(kind1, buf1, len1, rkind);
-            if (!buf1) goto error;
-            release1 = 1;
-        }
-        /* new_size = PyUnicode_GET_LENGTH(self) + n * (PyUnicode_GET_LENGTH(str2) -
-           PyUnicode_GET_LENGTH(str1)); */
-        if (len1 < len2 && len2 - len1 > (PY_SSIZE_T_MAX - slen) / n) {
-                PyErr_SetString(PyExc_OverflowError,
-                                "replace string is too long");
-                goto error;
-        }
-        new_size = slen + n * (len2 - len1);
-        if (new_size == 0) {
-            u = _PyUnicode_GetEmpty();
+    unicode_utf8_view views[3] = {{0}};
+    PyObject *args[3] = {self, str1, str2};
+    PyObject *result = NULL;
+    for (int i = 0; i < 3; i++) {
+        if (unicode_utf8_view_init(&views[i], args[i]) < 0) {
             goto done;
         }
-        if (new_size > (PY_SSIZE_T_MAX / rkind)) {
-            PyErr_SetString(PyExc_OverflowError,
-                            "replace string is too long");
-            goto error;
-        }
-        u = PyUnicode_New(new_size, maxchar);
-        if (!u)
-            goto error;
-        assert(PyUnicode_KIND(u) == rkind);
-        res = PyUnicode_DATA(u);
-        ires = i = 0;
-        if (len1 > 0) {
-            while (n-- > 0) {
-                /* look for next match */
-                j = anylib_find(rkind, self,
-                                sbuf + rkind * i, slen-i,
-                                str1, buf1, len1, i);
-                if (j == -1)
-                    break;
-                else if (j > i) {
-                    /* copy unchanged part [i:j] */
-                    memcpy(res + rkind * ires,
-                           sbuf + rkind * i,
-                           rkind * (j-i));
-                    ires += j - i;
-                }
-                /* copy substitution string */
-                if (len2 > 0) {
-                    memcpy(res + rkind * ires,
-                           buf2,
-                           rkind * len2);
-                    ires += len2;
-                }
-                i = j + len1;
-            }
-            if (i < slen)
-                /* copy tail [i:] */
-                memcpy(res + rkind * ires,
-                       sbuf + rkind * i,
-                       rkind * (slen-i));
-        }
-        else {
-            /* interleave */
-            while (n > 0) {
-                memcpy(res + rkind * ires,
-                       buf2,
-                       rkind * len2);
-                ires += len2;
-                if (--n <= 0)
-                    break;
-                memcpy(res + rkind * ires,
-                       sbuf + rkind * i,
-                       rkind);
-                ires++;
-                i++;
-            }
-            memcpy(res + rkind * ires,
-                   sbuf + rkind * i,
-                   rkind * (slen-i));
-        }
     }
-
-    if (mayshrink) {
-        unicode_adjust_maxchar(&u);
-        if (u == NULL)
-            goto error;
-    }
-
-  done:
-    assert(srelease == (sbuf != NULL && sbuf != PyUnicode_DATA(self)));
-    assert(release1 == (buf1 != NULL && buf1 != PyUnicode_DATA(str1)));
-    assert(release2 == (buf2 != NULL && buf2 != PyUnicode_DATA(str2)));
-    if (srelease)
-        PyMem_Free((void *)sbuf);
-    if (release1)
-        PyMem_Free((void *)buf1);
-    if (release2)
-        PyMem_Free((void *)buf2);
-    assert(_PyUnicode_CheckConsistency(u, 1));
-    return u == NULL ? NULL : unicode_result(u);
-
-  nothing:
-    /* nothing to replace; return original string (when possible) */
-    assert(srelease == (sbuf != NULL && sbuf != PyUnicode_DATA(self)));
-    assert(release1 == (buf1 != NULL && buf1 != PyUnicode_DATA(str1)));
-    assert(release2 == (buf2 != NULL && buf2 != PyUnicode_DATA(str2)));
-    if (srelease)
-        PyMem_Free((void *)sbuf);
-    if (release1)
-        PyMem_Free((void *)buf1);
-    if (release2)
-        PyMem_Free((void *)buf2);
-    return unicode_result_unchanged(self);
-
-  error:
-    assert(srelease == (sbuf != NULL && sbuf != PyUnicode_DATA(self)));
-    assert(release1 == (buf1 != NULL && buf1 != PyUnicode_DATA(str1)));
-    assert(release2 == (buf2 != NULL && buf2 != PyUnicode_DATA(str2)));
-    if (srelease)
-        PyMem_Free((void *)sbuf);
-    if (release1)
-        PyMem_Free((void *)buf1);
-    if (release2)
-        PyMem_Free((void *)buf2);
-    return NULL;
+    result = unicode_replace_utf8(self, str1, str2, maxcount,
+                                  views[0].data, views[0].size,
+                                  views[1].data, views[1].size,
+                                  views[2].data, views[2].size);
+ done:
+    unicode_utf8_views_clear(views, 3);
+    return result;
 }
 
 /* --- Unicode Object Methods --------------------------------------------- */
@@ -12491,7 +11336,7 @@ static PyObject *
 unicode_title_impl(PyObject *self)
 /*[clinic end generated code: output=c75ae03809574902 input=2a07e2c7df94627a]*/
 {
-    return case_operation(self, do_title);
+    return case_operation(self, UNICODE_CASE_TITLE);
 }
 
 /*[clinic input]
@@ -12509,7 +11354,7 @@ unicode_capitalize_impl(PyObject *self)
 {
     if (PyUnicode_GET_LENGTH(self) == 0)
         return unicode_result_unchanged(self);
-    return case_operation(self, do_capitalize);
+    return case_operation(self, UNICODE_CASE_CAPITALIZE);
 }
 
 /*[clinic input]
@@ -12524,7 +11369,7 @@ unicode_casefold_impl(PyObject *self)
 {
     if (PyUnicode_IS_ASCII(self))
         return ascii_upper_or_lower(self, 1);
-    return case_operation(self, do_casefold);
+    return case_operation(self, UNICODE_CASE_FOLD);
 }
 
 
@@ -12584,8 +11429,8 @@ static int
 unicode_compare(PyObject *str1, PyObject *str2)
 {
     Py_ssize_t bytes1, bytes2;
-    const char *utf8_1 = unicode_primary_utf8(str1, &bytes1);
-    const char *utf8_2 = unicode_primary_utf8(str2, &bytes2);
+    const char *utf8_1 = _PyUnicode_GetPrimaryUTF8(str1, &bytes1);
+    const char *utf8_2 = _PyUnicode_GetPrimaryUTF8(str2, &bytes2);
     if (utf8_1 != NULL && utf8_2 != NULL) {
         int cmp = memcmp(utf8_1, utf8_2, Py_MIN(bytes1, bytes2));
         if (cmp != 0) {
@@ -12594,131 +11439,19 @@ unicode_compare(PyObject *str1, PyObject *str2)
         return (bytes1 > bytes2) - (bytes1 < bytes2);
     }
 
-    if (_PyASCIIObject_CAST(str1)->state.utf8_storage ||
-        _PyASCIIObject_CAST(str2)->state.utf8_storage) {
-        Py_ssize_t length1 = PyUnicode_GET_LENGTH(str1);
-        Py_ssize_t length2 = PyUnicode_GET_LENGTH(str2);
-        Py_ssize_t a = 0, b = 0;
-        for (Py_ssize_t i = 0; i < Py_MIN(length1, length2); i++) {
-            Py_UCS4 c1 = unicode_next_codepoint(str1, &a);
-            Py_UCS4 c2 = unicode_next_codepoint(str2, &b);
-            if (c1 != c2) {
-                return c1 < c2 ? -1 : 1;
-            }
+    Py_ssize_t length1 = PyUnicode_GET_LENGTH(str1);
+    Py_ssize_t length2 = PyUnicode_GET_LENGTH(str2);
+    unicode_scan left, right;
+    unicode_scan_init(&left, str1);
+    unicode_scan_init(&right, str2);
+    for (Py_ssize_t i = 0; i < Py_MIN(length1, length2); i++) {
+        Py_UCS4 a = unicode_scan_next(&left, i);
+        Py_UCS4 b = unicode_scan_next(&right, i);
+        if (a != b) {
+            return a < b ? -1 : 1;
         }
-        return (length1 > length2) - (length1 < length2);
     }
-#define COMPARE(TYPE1, TYPE2) \
-    do { \
-        TYPE1* p1 = (TYPE1 *)data1; \
-        TYPE2* p2 = (TYPE2 *)data2; \
-        TYPE1* end = p1 + len; \
-        Py_UCS4 c1, c2; \
-        for (; p1 != end; p1++, p2++) { \
-            c1 = *p1; \
-            c2 = *p2; \
-            if (c1 != c2) \
-                return (c1 < c2) ? -1 : 1; \
-        } \
-    } \
-    while (0)
-
-    int kind1, kind2;
-    const void *data1, *data2;
-    Py_ssize_t len1, len2, len;
-
-    kind1 = PyUnicode_KIND(str1);
-    kind2 = PyUnicode_KIND(str2);
-    data1 = PyUnicode_DATA(str1);
-    data2 = PyUnicode_DATA(str2);
-    len1 = PyUnicode_GET_LENGTH(str1);
-    len2 = PyUnicode_GET_LENGTH(str2);
-    len = Py_MIN(len1, len2);
-
-    switch(kind1) {
-    case PyUnicode_1BYTE_KIND:
-    {
-        switch(kind2) {
-        case PyUnicode_1BYTE_KIND:
-        {
-            int cmp = memcmp(data1, data2, len);
-            /* normalize result of memcmp() into the range [-1; 1] */
-            if (cmp < 0)
-                return -1;
-            if (cmp > 0)
-                return 1;
-            break;
-        }
-        case PyUnicode_2BYTE_KIND:
-            COMPARE(Py_UCS1, Py_UCS2);
-            break;
-        case PyUnicode_4BYTE_KIND:
-            COMPARE(Py_UCS1, Py_UCS4);
-            break;
-        default:
-            Py_UNREACHABLE();
-        }
-        break;
-    }
-    case PyUnicode_2BYTE_KIND:
-    {
-        switch(kind2) {
-        case PyUnicode_1BYTE_KIND:
-            COMPARE(Py_UCS2, Py_UCS1);
-            break;
-        case PyUnicode_2BYTE_KIND:
-        {
-            COMPARE(Py_UCS2, Py_UCS2);
-            break;
-        }
-        case PyUnicode_4BYTE_KIND:
-            COMPARE(Py_UCS2, Py_UCS4);
-            break;
-        default:
-            Py_UNREACHABLE();
-        }
-        break;
-    }
-    case PyUnicode_4BYTE_KIND:
-    {
-        switch(kind2) {
-        case PyUnicode_1BYTE_KIND:
-            COMPARE(Py_UCS4, Py_UCS1);
-            break;
-        case PyUnicode_2BYTE_KIND:
-            COMPARE(Py_UCS4, Py_UCS2);
-            break;
-        case PyUnicode_4BYTE_KIND:
-        {
-#if defined(HAVE_WMEMCMP) && SIZEOF_WCHAR_T == 4
-            int cmp = wmemcmp((wchar_t *)data1, (wchar_t *)data2, len);
-            /* normalize result of wmemcmp() into the range [-1; 1] */
-            if (cmp < 0)
-                return -1;
-            if (cmp > 0)
-                return 1;
-#else
-            COMPARE(Py_UCS4, Py_UCS4);
-#endif
-            break;
-        }
-        default:
-            Py_UNREACHABLE();
-        }
-        break;
-    }
-    default:
-        Py_UNREACHABLE();
-    }
-
-    if (len1 == len2)
-        return 0;
-    if (len1 < len2)
-        return -1;
-    else
-        return 1;
-
-#undef COMPARE
+    return (length1 > length2) - (length1 < length2);
 }
 
 
@@ -12925,81 +11658,28 @@ PyUnicode_RichCompare(PyObject *left, PyObject *right, int op)
 int
 PyUnicode_Contains(PyObject *str, PyObject *substr)
 {
-    if (PyUnicode_Check(str) && PyUnicode_Check(substr)) {
-        if (unicode_cannot_contain(str, substr)) {
-            return 0;
-        }
-
-        Py_ssize_t size, subsize;
-        const char *utf8 = unicode_primary_utf8(str, &size);
-        const char *sub = unicode_primary_utf8(substr, &subsize);
-        if (utf8 != NULL && sub != NULL) {
-            return ucs1lib_find((const Py_UCS1 *)utf8, size,
-                                (const Py_UCS1 *)sub, subsize, 0) >= 0;
-        }
-    }
-
-    if (str != NULL && PyUnicode_Check(str) &&
-        PyUnicode_DATA(str) == NULL) {
-        return -1;
-    }
-    if (substr != NULL && PyUnicode_Check(substr) &&
-        PyUnicode_DATA(substr) == NULL) {
-        return -1;
-    }
-    int kind1, kind2;
-    const void *buf1, *buf2;
-    Py_ssize_t len1, len2;
-    int result;
-
     if (!PyUnicode_Check(substr)) {
         PyErr_Format(PyExc_TypeError,
                      "'in <string>' requires string as left operand, not %.100s",
                      Py_TYPE(substr)->tp_name);
         return -1;
     }
-    if (ensure_unicode(str) < 0)
+    if (ensure_unicode(str) < 0) {
         return -1;
-
-    kind1 = PyUnicode_KIND(str);
-    kind2 = PyUnicode_KIND(substr);
-    if (kind1 < kind2)
+    }
+    if (unicode_cannot_contain(str, substr)) {
         return 0;
-    len1 = PyUnicode_GET_LENGTH(str);
-    len2 = PyUnicode_GET_LENGTH(substr);
-    if (len1 < len2)
-        return 0;
-    buf1 = PyUnicode_DATA(str);
-    buf2 = PyUnicode_DATA(substr);
-    if (len2 == 1) {
-        Py_UCS4 ch = PyUnicode_READ(kind2, buf2, 0);
-        result = findchar((const char *)buf1, kind1, len1, ch, 1) != -1;
-        return result;
     }
-    if (kind2 != kind1) {
-        buf2 = unicode_askind(kind2, buf2, len2, kind1);
-        if (!buf2)
-            return -1;
+    if (PyUnicode_GET_LENGTH(substr) == 0) {
+        return 1;
     }
-
-    switch (kind1) {
-    case PyUnicode_1BYTE_KIND:
-        result = ucs1lib_find(buf1, len1, buf2, len2, 0) != -1;
-        break;
-    case PyUnicode_2BYTE_KIND:
-        result = ucs2lib_find(buf1, len1, buf2, len2, 0) != -1;
-        break;
-    case PyUnicode_4BYTE_KIND:
-        result = ucs4lib_find(buf1, len1, buf2, len2, 0) != -1;
-        break;
-    default:
-        Py_UNREACHABLE();
+    unicode_utf8_view views[2];
+    if (unicode_utf8_pair_init(views, str, substr) < 0) {
+        return -1;
     }
-
-    assert((kind2 == kind1) == (buf2 == PyUnicode_DATA(substr)));
-    if (kind2 != kind1)
-        PyMem_Free((void *)buf2);
-
+    int result = ucs1lib_find((const Py_UCS1 *)views[0].data, views[0].size,
+                              (const Py_UCS1 *)views[1].data, views[1].size, 0) >= 0;
+    unicode_utf8_views_clear(views, 2);
     return result;
 }
 
@@ -13011,8 +11691,8 @@ unicode_concat_utf8(PyObject *left, PyObject *right)
     Py_ssize_t size = 0;
     int surrogates = 0;
     Py_ssize_t size1 = 0, size2 = 0;
-    const char *data1 = unicode_primary_utf8(left, &size1);
-    const char *data2 = unicode_primary_utf8(right, &size2);
+    const char *data1 = _PyUnicode_GetPrimaryUTF8(left, &size1);
+    const char *data2 = _PyUnicode_GetPrimaryUTF8(right, &size2);
     if (data1 != NULL && data2 != NULL) {
         Py_ssize_t limit = PY_SSIZE_T_MAX - sizeof(PyCompactUnicodeObject) - 1;
         if (size1 > limit || size2 > limit - size1) {
@@ -13237,111 +11917,28 @@ unicode_count_impl(PyObject *str, PyObject *substr, Py_ssize_t start,
                    Py_ssize_t end)
 /*[clinic end generated code: output=8fcc3aef0b18edbf input=c9209e05438cc352]*/
 {
-    if (unicode_cannot_contain(str, substr)) {
+    Py_ssize_t length = PyUnicode_GET_LENGTH(str);
+    ADJUST_INDICES(start, end, length);
+    if (unicode_cannot_contain(str, substr) ||
+        end - start < PyUnicode_GET_LENGTH(substr)) {
         return 0;
     }
-
-    Py_ssize_t size, subsize;
-    const char *utf8 = unicode_primary_utf8(str, &size);
-    const char *sub = unicode_primary_utf8(substr, &subsize);
-    if (utf8 != NULL && sub != NULL) {
-        Py_ssize_t length = PyUnicode_GET_LENGTH(str);
-        ADJUST_INDICES(start, end, length);
-        if (end - start < PyUnicode_GET_LENGTH(substr)) {
-            return 0;
-        }
-        if (subsize == 0) {
-            return end - start + 1;
-        }
-        const unsigned char *begin = (const unsigned char *)utf8;
-        const unsigned char *stop = begin + size;
-        if (PyUnicode_IS_ASCII(str)) {
-            begin += start;
-            stop = (const unsigned char *)utf8 + end;
-        }
-        else if (start != 0 || end != length) {
-            for (Py_ssize_t i = 0; i < start; i++) {
-                (void)unicode_utf8_next(&begin);
-            }
-            if (end != length) {
-                stop = begin;
-                for (Py_ssize_t i = start; i < end; i++) {
-                    (void)unicode_utf8_next(&stop);
-                }
-            }
-        }
-        return ucs1lib_count(begin, stop - begin,
-                             (const Py_UCS1 *)sub, subsize, PY_SSIZE_T_MAX);
+    if (PyUnicode_GET_LENGTH(substr) == 0) {
+        return end - start + 1;
     }
-    if (str != NULL && PyUnicode_Check(str) &&
-        PyUnicode_DATA(str) == NULL) {
+    unicode_utf8_view views[2];
+    if (unicode_utf8_pair_init(views, str, substr) < 0) {
         return -1;
     }
-    if (substr != NULL && PyUnicode_Check(substr) &&
-        PyUnicode_DATA(substr) == NULL) {
-        return -1;
-    }
-    assert(PyUnicode_Check(str));
-    assert(PyUnicode_Check(substr));
-
-    Py_ssize_t result;
-    int kind1, kind2;
-    const void *buf1 = NULL, *buf2 = NULL;
-    Py_ssize_t len1, len2;
-
-    kind1 = PyUnicode_KIND(str);
-    kind2 = PyUnicode_KIND(substr);
-    if (kind1 < kind2)
-        return 0;
-
-    len1 = PyUnicode_GET_LENGTH(str);
-    len2 = PyUnicode_GET_LENGTH(substr);
-    ADJUST_INDICES(start, end, len1);
-    if (end - start < len2)
-        return 0;
-
-    buf1 = PyUnicode_DATA(str);
-    buf2 = PyUnicode_DATA(substr);
-    if (kind2 != kind1) {
-        buf2 = unicode_askind(kind2, buf2, len2, kind1);
-        if (!buf2)
-            goto onError;
-    }
-
-    // We don't reuse `anylib_count` here because of the explicit casts.
-    switch (kind1) {
-    case PyUnicode_1BYTE_KIND:
-        result = ucs1lib_count(
-            ((const Py_UCS1*)buf1) + start, end - start,
-            buf2, len2, PY_SSIZE_T_MAX
-            );
-        break;
-    case PyUnicode_2BYTE_KIND:
-        result = ucs2lib_count(
-            ((const Py_UCS2*)buf1) + start, end - start,
-            buf2, len2, PY_SSIZE_T_MAX
-            );
-        break;
-    case PyUnicode_4BYTE_KIND:
-        result = ucs4lib_count(
-            ((const Py_UCS4*)buf1) + start, end - start,
-            buf2, len2, PY_SSIZE_T_MAX
-            );
-        break;
-    default:
-        Py_UNREACHABLE();
-    }
-
-    assert((kind2 != kind1) == (buf2 != PyUnicode_DATA(substr)));
-    if (kind2 != kind1)
-        PyMem_Free((void *)buf2);
-
+    const unsigned char *begin = unicode_utf8_at(
+        views[0].data, views[0].size, length, start);
+    const unsigned char *stop = unicode_utf8_at(
+        views[0].data, views[0].size, length, end);
+    Py_ssize_t result = ucs1lib_count(begin, stop - begin,
+                                     (const Py_UCS1 *)views[1].data,
+                                     views[1].size, PY_SSIZE_T_MAX);
+    unicode_utf8_views_clear(views, 2);
     return result;
-  onError:
-    assert((kind2 != kind1) == (buf2 != PyUnicode_DATA(substr)));
-    if (kind2 != kind1)
-        PyMem_Free((void *)buf2);
-    return -1;
 }
 
 /*[clinic input]
@@ -13378,9 +11975,13 @@ unicode_expandtabs_utf8(PyObject *self, const char *data, Py_ssize_t size,
     const unsigned char *start = (const unsigned char *)data;
     const unsigned char *end = start + size, *p = start;
     Py_ssize_t bytes = 0, length = 0, column = 0;
+    Py_UCS4 maxchar = 0;
+    int surrogates = 0;
     while (p < end) {
         const unsigned char *before = p;
         Py_UCS4 ch = unicode_utf8_next(&p);
+        maxchar = Py_MAX(maxchar, ch);
+        surrogates |= Py_UNICODE_IS_SURROGATE(ch);
         Py_ssize_t width = p - before;
         Py_ssize_t chars = 1;
         if (ch == '\t') {
@@ -13397,13 +11998,26 @@ unicode_expandtabs_utf8(PyObject *self, const char *data, Py_ssize_t size,
             column = 0;
         }
     }
-    PyCompactUnicodeObject *u = unicode_alloc_utf8(
-        bytes, length, PyUnicode_KIND(self),
-        _PyASCIIObject_CAST(self)->state.has_surrogates);
-    if (u == NULL) {
-        return NULL;
+    PyObject *result;
+    char *buffer;
+    if (maxchar < 128) {
+        result = PyUnicode_New(length, 127);
+        if (result == NULL) {
+            return NULL;
+        }
+        buffer = PyUnicode_DATA(result);
     }
-    char *out = (char *)(u + 1);
+    else {
+        PyCompactUnicodeObject *u = unicode_alloc_utf8(
+            bytes, length, maxchar < 256 ? 1 : maxchar < 65536 ? 2 : 4,
+            surrogates);
+        if (u == NULL) {
+            return NULL;
+        }
+        result = (PyObject *)u;
+        buffer = (char *)(u + 1);
+    }
+    char *out = buffer;
     p = start;
     column = 0;
     while (p < end) {
@@ -13424,8 +12038,8 @@ unicode_expandtabs_utf8(PyObject *self, const char *data, Py_ssize_t size,
             }
         }
     }
-    assert(out == (char *)(u + 1) + bytes);
-    return (PyObject *)u;
+    assert(out == buffer + bytes);
+    return length < 2 ? unicode_result(result) : result;
 }
 
 /*[clinic input]
@@ -13442,86 +12056,13 @@ static PyObject *
 unicode_expandtabs_impl(PyObject *self, int tabsize)
 /*[clinic end generated code: output=3457c5dcee26928f input=8a01914034af4c85]*/
 {
-    Py_ssize_t size;
-    const char *utf8 = unicode_primary_utf8(self, &size);
-    if (utf8 != NULL && !PyUnicode_IS_ASCII(self)) {
-        return unicode_expandtabs_utf8(self, utf8, size, tabsize);
-    }
-
-    if (self != NULL && PyUnicode_Check(self) &&
-        PyUnicode_DATA(self) == NULL) {
+    unicode_utf8_view view;
+    if (unicode_utf8_view_init(&view, self) < 0) {
         return NULL;
     }
-    Py_ssize_t i, j, line_pos, src_len, incr;
-    Py_UCS4 ch;
-    PyObject *u;
-    const void *src_data;
-    void *dest_data;
-    int kind;
-    int found;
-
-    /* First pass: determine size of output string */
-    src_len = PyUnicode_GET_LENGTH(self);
-    i = j = line_pos = 0;
-    kind = PyUnicode_KIND(self);
-    src_data = PyUnicode_DATA(self);
-    found = 0;
-    for (; i < src_len; i++) {
-        ch = PyUnicode_READ(kind, src_data, i);
-        if (ch == '\t') {
-            found = 1;
-            if (tabsize > 0) {
-                incr = tabsize - (line_pos % tabsize); /* cannot overflow */
-                if (j > PY_SSIZE_T_MAX - incr)
-                    goto overflow;
-                line_pos += incr;
-                j += incr;
-            }
-        }
-        else {
-            if (j > PY_SSIZE_T_MAX - 1)
-                goto overflow;
-            line_pos++;
-            j++;
-            if (ch == '\n' || ch == '\r')
-                line_pos = 0;
-        }
-    }
-    if (!found)
-        return unicode_result_unchanged(self);
-
-    /* Second pass: create output string and fill it */
-    u = PyUnicode_New(j, PyUnicode_MAX_CHAR_VALUE(self));
-    if (!u)
-        return NULL;
-    dest_data = PyUnicode_DATA(u);
-
-    i = j = line_pos = 0;
-
-    for (; i < src_len; i++) {
-        ch = PyUnicode_READ(kind, src_data, i);
-        if (ch == '\t') {
-            if (tabsize > 0) {
-                incr = tabsize - (line_pos % tabsize);
-                line_pos += incr;
-                _PyUnicode_Fill(kind, dest_data, ' ', j, incr);
-                j += incr;
-            }
-        }
-        else {
-            line_pos++;
-            PyUnicode_WRITE(kind, dest_data, j, ch);
-            j++;
-            if (ch == '\n' || ch == '\r')
-                line_pos = 0;
-        }
-    }
-    assert (j == PyUnicode_GET_LENGTH(u));
-    return unicode_result(u);
-
-  overflow:
-    PyErr_SetString(PyExc_OverflowError, "new string is too long");
-    return NULL;
+    PyObject *result = unicode_expandtabs_utf8(self, view.data, view.size, tabsize);
+    unicode_utf8_views_clear(&view, 1);
+    return result;
 }
 
 /*[clinic input]
@@ -14164,7 +12705,7 @@ unicode_lower_impl(PyObject *self)
 {
     if (PyUnicode_IS_ASCII(self))
         return ascii_upper_or_lower(self, 1);
-    return case_operation(self, do_lower);
+    return case_operation(self, UNICODE_CASE_LOWER);
 }
 
 #define LEFTSTRIP 0
@@ -14212,67 +12753,26 @@ unicode_strip_utf8(PyObject *self, int striptype, const char *data,
     return unicode_utf8_slice(self, data, size, left - start, right - start);
 }
 
+static PyObject *
+unicode_strip_common(PyObject *self, int striptype, PyObject *sepobj)
+{
+    unicode_utf8_view views[2] = {{0}, {0}};
+    if (unicode_utf8_view_init(&views[0], self) < 0) {
+        return NULL;
+    }
+    PyObject *result = NULL;
+    if (sepobj == NULL || unicode_utf8_view_init(&views[1], sepobj) == 0) {
+        result = unicode_strip_utf8(self, striptype, views[0].data,
+                                   views[0].size, views[1].data, views[1].size);
+    }
+    unicode_utf8_views_clear(views, 2);
+    return result;
+}
+
 PyObject *
 _PyUnicode_XStrip(PyObject *self, int striptype, PyObject *sepobj)
 {
-    Py_ssize_t size, sepsize;
-    const char *utf8 = unicode_primary_utf8(self, &size);
-    const char *sep = unicode_primary_utf8(sepobj, &sepsize);
-    if (utf8 != NULL && sep != NULL &&
-        !(PyUnicode_IS_ASCII(self) && PyUnicode_IS_ASCII(sepobj))) {
-        return unicode_strip_utf8(self, striptype, utf8, size, sep, sepsize);
-    }
-
-    if (self != NULL && PyUnicode_Check(self) &&
-        PyUnicode_DATA(self) == NULL) {
-        return NULL;
-    }
-    if (sepobj != NULL && PyUnicode_Check(sepobj) &&
-        PyUnicode_DATA(sepobj) == NULL) {
-        return NULL;
-    }
-    const void *data;
-    int kind;
-    Py_ssize_t i, j, len;
-    BLOOM_MASK sepmask;
-    Py_ssize_t seplen;
-
-    kind = PyUnicode_KIND(self);
-    data = PyUnicode_DATA(self);
-    len = PyUnicode_GET_LENGTH(self);
-    seplen = PyUnicode_GET_LENGTH(sepobj);
-    sepmask = make_bloom_mask(PyUnicode_KIND(sepobj),
-                              PyUnicode_DATA(sepobj),
-                              seplen);
-
-    i = 0;
-    if (striptype != RIGHTSTRIP) {
-        while (i < len) {
-            Py_UCS4 ch = PyUnicode_READ(kind, data, i);
-            if (!BLOOM(sepmask, ch))
-                break;
-            if (PyUnicode_FindChar(sepobj, ch, 0, seplen, 1) < 0)
-                break;
-            i++;
-        }
-    }
-
-    j = len;
-    if (striptype != LEFTSTRIP) {
-        j--;
-        while (j >= i) {
-            Py_UCS4 ch = PyUnicode_READ(kind, data, j);
-            if (!BLOOM(sepmask, ch))
-                break;
-            if (PyUnicode_FindChar(sepobj, ch, 0, seplen, 1) < 0)
-                break;
-            j--;
-        }
-
-        j++;
-    }
-
-    return PyUnicode_Substring(self, i, j);
+    return unicode_strip_common(self, striptype, sepobj);
 }
 
 PyObject*
@@ -14308,7 +12808,7 @@ PyUnicode_Substring(PyObject *self, Py_ssize_t start, Py_ssize_t end)
         _Py_RETURN_UNICODE_EMPTY();
 
     Py_ssize_t size;
-    const char *utf8 = unicode_primary_utf8(self, &size);
+    const char *utf8 = _PyUnicode_GetPrimaryUTF8(self, &size);
     if (utf8 != NULL) {
         const unsigned char *begin = unicode_utf8_at(utf8, size, length, start);
         const unsigned char *stop = unicode_utf8_at(utf8, size, length, end);
@@ -14337,73 +12837,7 @@ PyUnicode_Substring(PyObject *self, Py_ssize_t start, Py_ssize_t end)
 static PyObject *
 do_strip(PyObject *self, int striptype)
 {
-    Py_ssize_t size;
-    const char *utf8 = unicode_primary_utf8(self, &size);
-    if (utf8 != NULL && !PyUnicode_IS_ASCII(self)) {
-        return unicode_strip_utf8(self, striptype, utf8, size, NULL, 0);
-    }
-
-    if (self != NULL && PyUnicode_Check(self) &&
-        PyUnicode_DATA(self) == NULL) {
-        return NULL;
-    }
-    Py_ssize_t len, i, j;
-
-    len = PyUnicode_GET_LENGTH(self);
-
-    if (PyUnicode_IS_ASCII(self)) {
-        const Py_UCS1 *data = PyUnicode_1BYTE_DATA(self);
-
-        i = 0;
-        if (striptype != RIGHTSTRIP) {
-            while (i < len) {
-                Py_UCS1 ch = data[i];
-                if (!_Py_ascii_whitespace[ch])
-                    break;
-                i++;
-            }
-        }
-
-        j = len;
-        if (striptype != LEFTSTRIP) {
-            j--;
-            while (j >= i) {
-                Py_UCS1 ch = data[j];
-                if (!_Py_ascii_whitespace[ch])
-                    break;
-                j--;
-            }
-            j++;
-        }
-    }
-    else {
-        int kind = PyUnicode_KIND(self);
-        const void *data = PyUnicode_DATA(self);
-
-        i = 0;
-        if (striptype != RIGHTSTRIP) {
-            while (i < len) {
-                Py_UCS4 ch = PyUnicode_READ(kind, data, i);
-                if (!Py_UNICODE_ISSPACE(ch))
-                    break;
-                i++;
-            }
-        }
-
-        j = len;
-        if (striptype != LEFTSTRIP) {
-            j--;
-            while (j >= i) {
-                Py_UCS4 ch = PyUnicode_READ(kind, data, j);
-                if (!Py_UNICODE_ISSPACE(ch))
-                    break;
-                j--;
-            }
-            j++;
-        }
-    }
-
-    return PyUnicode_Substring(self, i, j);
+    return unicode_strip_common(self, striptype, NULL);
 }
 
 
@@ -14486,75 +12920,31 @@ unicode_rstrip_impl(PyObject *self, PyObject *chars)
 PyObject *
 _PyUnicode_Repeat(PyObject *str, Py_ssize_t len)
 {
-    PyObject *u;
-    Py_ssize_t nchars, n;
-
-    if (len < 1)
+    if (len < 1 || PyUnicode_GET_LENGTH(str) == 0) {
         _Py_RETURN_UNICODE_EMPTY();
-
-    /* no repeat, return original string */
-    if (len == 1)
+    }
+    if (len == 1) {
         return unicode_result_unchanged(str);
-
-    if (PyUnicode_GET_LENGTH(str) > PY_SSIZE_T_MAX / len) {
-        PyErr_SetString(PyExc_OverflowError,
-                        "repeated string is too long");
+    }
+    unicode_utf8_view view;
+    if (unicode_utf8_view_init(&view, str) < 0) {
         return NULL;
     }
-    nchars = len * PyUnicode_GET_LENGTH(str);
-
-    Py_ssize_t size;
-    const char *utf8 = unicode_primary_utf8(str, &size);
-    if (utf8 != NULL && !PyUnicode_IS_ASCII(str)) {
-        if (size > PY_SSIZE_T_MAX / len) {
-            PyErr_SetString(PyExc_OverflowError, "repeated string is too long");
-            return NULL;
-        }
-        PyCompactUnicodeObject *result = unicode_alloc_utf8(
-            size * len, nchars, PyUnicode_KIND(str),
-            _PyASCIIObject_CAST(str)->state.has_surrogates);
-        if (result == NULL) {
-            return NULL;
-        }
-        _PyBytes_RepeatBuffer((char *)(result + 1), size * len, utf8, size);
-        return (PyObject *)result;
-    }
-    if (str != NULL && PyUnicode_Check(str) &&
-        PyUnicode_DATA(str) == NULL) {
+    if (view.size > PY_SSIZE_T_MAX / len) {
+        unicode_utf8_views_clear(&view, 1);
+        PyErr_SetString(PyExc_OverflowError, "repeated string is too long");
         return NULL;
     }
-    u = PyUnicode_New(nchars, PyUnicode_MAX_CHAR_VALUE(str));
-    if (!u)
-        return NULL;
-    assert(PyUnicode_KIND(u) == PyUnicode_KIND(str));
-
-    if (PyUnicode_GET_LENGTH(str) == 1) {
-        int kind = PyUnicode_KIND(str);
-        Py_UCS4 fill_char = PyUnicode_READ(kind, PyUnicode_DATA(str), 0);
-        if (kind == PyUnicode_1BYTE_KIND) {
-            void *to = PyUnicode_DATA(u);
-            memset(to, (unsigned char)fill_char, len);
-        }
-        else if (kind == PyUnicode_2BYTE_KIND) {
-            Py_UCS2 *ucs2 = PyUnicode_2BYTE_DATA(u);
-            for (n = 0; n < len; ++n)
-                ucs2[n] = fill_char;
-        } else {
-            Py_UCS4 *ucs4 = PyUnicode_4BYTE_DATA(u);
-            assert(kind == PyUnicode_4BYTE_KIND);
-            for (n = 0; n < len; ++n)
-                ucs4[n] = fill_char;
-        }
+    int surrogates = 0;
+    Py_UCS4 maxchar = unicode_utf8_metadata(str, &surrogates);
+    char *out;
+    PyObject *result = unicode_new_utf8(view.size * len,
+        PyUnicode_GET_LENGTH(str) * len, maxchar, surrogates, &out);
+    if (result != NULL) {
+        _PyBytes_RepeatBuffer(out, view.size * len, view.data, view.size);
     }
-    else {
-        Py_ssize_t char_size = PyUnicode_KIND(str);
-        char *to = (char *) PyUnicode_DATA(u);
-        _PyBytes_RepeatBuffer(to, nchars * char_size, PyUnicode_DATA(str),
-            PyUnicode_GET_LENGTH(str) * char_size);
-    }
-
-    assert(_PyUnicode_CheckConsistency(u, 1));
-    return u == NULL ? NULL : unicode_result(u);
+    unicode_utf8_views_clear(&view, 1);
+    return result;
 }
 
 PyObject *
@@ -14652,96 +13042,92 @@ unicode_removesuffix_impl(PyObject *self, PyObject *suffix)
 static PyObject *
 unicode_repr(PyObject *unicode)
 {
-    if (unicode != NULL && PyUnicode_Check(unicode) &&
-        PyUnicode_DATA(unicode) == NULL) {
-        return NULL;
-    }
-    Py_ssize_t isize = PyUnicode_GET_LENGTH(unicode);
-    const void *idata = PyUnicode_DATA(unicode);
-
-    /* Compute length of output, quote characters, and
-       maximum character */
-    Py_ssize_t osize = 0;
-    Py_UCS4 maxch = 127;
-    Py_ssize_t squote = 0;
-    Py_ssize_t dquote = 0;
-    int ikind = PyUnicode_KIND(unicode);
-    for (Py_ssize_t i = 0; i < isize; i++) {
-        Py_UCS4 ch = PyUnicode_READ(ikind, idata, i);
-        Py_ssize_t incr = 1;
-        switch (ch) {
-        case '\'': squote++; break;
-        case '"':  dquote++; break;
-        case '\\': case '\t': case '\r': case '\n':
-            incr = 2;
-            break;
-        default:
-            /* Fast-path ASCII */
-            if (ch < ' ' || ch == 0x7f)
-                incr = 4; /* \xHH */
-            else if (ch < 0x7f)
-                ;
-            else if (Py_UNICODE_ISPRINTABLE(ch))
-                maxch = (ch > maxch) ? ch : maxch;
-            else if (ch < 0x100)
-                incr = 4; /* \xHH */
-            else if (ch < 0x10000)
-                incr = 6; /* \uHHHH */
-            else
-                incr = 10; /* \uHHHHHHHH */
-        }
-        if (osize > PY_SSIZE_T_MAX - incr) {
-            PyErr_SetString(PyExc_OverflowError,
-                            "string is too long to generate repr");
+    Py_ssize_t length = PyUnicode_GET_LENGTH(unicode);
+    unicode_scan reader;
+    unicode_scan_init(&reader, unicode);
+    Py_ssize_t squote = 0, size = 2;
+    int dquote = 0, escape = 0;
+    for (Py_ssize_t i = 0; i < length; i++) {
+        Py_UCS4 ch = unicode_scan_next(&reader, i);
+        squote += ch == '\'';
+        dquote |= ch == '"';
+        int printable = Py_UNICODE_ISPRINTABLE(ch);
+        escape |= ch == '\\' || !printable;
+        int width = ch < 0x80 ? 1 : ch < 0x800 ? 2 : ch < 0x10000 ? 3 : 4;
+        if (ch == '\\' || ch == '\t' || ch == '\n' || ch == '\r')
+            width = 2;
+        else if (!printable)
+            width = ch <= 0xff ? 4 : ch <= 0xffff ? 6 : 10;
+        if (size > PY_SSIZE_T_MAX - width) {
+            PyErr_SetString(PyExc_OverflowError, "string is too long to generate repr");
             return NULL;
         }
-        osize += incr;
+        size += width;
     }
-
-    Py_UCS4 quote = '\'';
-    int changed = (osize != isize);
-    if (squote) {
-        changed = 1;
-        if (dquote)
-            /* Both squote and dquote present. Use squote,
-               and escape them */
-            osize += squote;
-        else
-            quote = '"';
-    }
-    osize += 2;   /* quotes */
-
-    PyObject *repr = PyUnicode_New(osize, maxch);
-    if (repr == NULL)
+    Py_UCS4 quote = squote && !dquote ? '"' : '\'';
+    escape |= squote && dquote;
+    Py_ssize_t quote_escapes = squote && dquote ? squote : 0;
+    if (size > PY_SSIZE_T_MAX - quote_escapes) {
+        PyErr_SetString(PyExc_OverflowError, "string is too long to generate repr");
         return NULL;
-    int okind = PyUnicode_KIND(repr);
-    void *odata = PyUnicode_DATA(repr);
-
-    if (!changed) {
-        PyUnicode_WRITE(okind, odata, 0, quote);
-
-        _PyUnicode_FastCopyCharacters(repr, 1,
-                                      unicode, 0,
-                                      isize);
-
-        PyUnicode_WRITE(okind, odata, osize-1, quote);
     }
-    else {
-        switch (okind) {
-        case PyUnicode_1BYTE_KIND:
-            ucs1lib_repr(unicode, quote, odata);
-            break;
-        case PyUnicode_2BYTE_KIND:
-            ucs2lib_repr(unicode, quote, odata);
-            break;
-        default:
-            assert(okind == PyUnicode_4BYTE_KIND);
-            ucs4lib_repr(unicode, quote, odata);
+    _PyUnicodeWriter writer;
+    _PyUnicodeWriter_Init(&writer);
+    writer.min_length = size + quote_escapes;
+    if (_PyUnicodeWriter_WriteChar(&writer, quote) < 0) {
+        goto error;
+    }
+    if (!escape) {
+        if (_PyUnicodeWriter_WriteStr(&writer, unicode) < 0) {
+            goto error;
         }
     }
-
-    assert(_PyUnicode_CheckConsistency(repr, 1));
-    return repr == NULL ? NULL : unicode_result(repr);
+    else {
+        if (_PyUnicodeWriter_PrepareUTF8(&writer, size + quote_escapes - 2) < 0) {
+            goto error;
+        }
+        unsigned char *start = (unsigned char *)_PyUnicodeWriter_UTF8Data(&writer);
+        unsigned char *out = start;
+        Py_ssize_t written = 0;
+        unicode_scan_init(&reader, unicode);
+        for (Py_ssize_t i = 0; i < length; i++) {
+            Py_UCS4 ch = unicode_scan_next(&reader, i);
+            char escaped[10] = {'\\'};
+            int size;
+            if (ch == quote || ch == '\\') {
+                escaped[1] = ch;
+                size = 2;
+            }
+            else if (ch == '\t' || ch == '\n' || ch == '\r') {
+                escaped[1] = ch == '\t' ? 't' : ch == '\n' ? 'n' : 'r';
+                size = 2;
+            }
+            else if (!Py_UNICODE_ISPRINTABLE(ch)) {
+                int digits = ch <= 0xff ? 2 : ch <= 0xffff ? 4 : 8;
+                escaped[1] = digits == 2 ? 'x' : digits == 4 ? 'u' : 'U';
+                for (int j = 0; j < digits; j++) {
+                    escaped[2 + j] = Py_hexdigits[(ch >> (4 * (digits - j - 1))) & 15];
+                }
+                size = digits + 2;
+            }
+            else {
+                out = unicode_utf8_write(out, ch);
+                written++;
+                continue;
+            }
+            memcpy(out, escaped, size);
+            out += size;
+            written += size;
+        }
+        _PyUnicodeWriter_AdvanceUTF8(&writer, out - start, written);
+    }
+    if (_PyUnicodeWriter_WriteChar(&writer, quote) < 0) {
+        goto error;
+    }
+    return _PyUnicodeWriter_Finish(&writer);
+ error:
+    _PyUnicodeWriter_Dealloc(&writer);
+    return NULL;
 }
 
 /*[clinic input]
@@ -14862,153 +13248,43 @@ unicode_split_impl(PyObject *self, PyObject *sep, Py_ssize_t maxsplit)
     return NULL;
 }
 
+static PyObject *
+unicode_partition_common(PyObject *str_obj, PyObject *sep_obj, int reverse)
+{
+    if (ensure_unicode(str_obj) < 0 || ensure_unicode(sep_obj) < 0) {
+        return NULL;
+    }
+    if (unicode_cannot_contain(str_obj, sep_obj)) {
+        PyObject *empty = _PyUnicode_GetEmpty();
+        return reverse ? PyTuple_Pack(3, empty, empty, str_obj)
+                       : PyTuple_Pack(3, str_obj, empty, empty);
+    }
+    unicode_utf8_view views[2];
+    if (unicode_utf8_pair_init(views, str_obj, sep_obj) < 0) {
+        return NULL;
+    }
+    PyObject *result = reverse
+        ? utf8lib_rpartition(str_obj, (const Py_UCS1 *)views[0].data,
+                             views[0].size, sep_obj,
+                             (const Py_UCS1 *)views[1].data, views[1].size)
+        : utf8lib_partition(str_obj, (const Py_UCS1 *)views[0].data,
+                            views[0].size, sep_obj,
+                            (const Py_UCS1 *)views[1].data, views[1].size);
+    unicode_utf8_views_clear(views, 2);
+    return result;
+}
+
 PyObject *
 PyUnicode_Partition(PyObject *str_obj, PyObject *sep_obj)
 {
-    if (PyUnicode_Check(str_obj) && PyUnicode_Check(sep_obj)) {
-        if (unicode_cannot_contain(str_obj, sep_obj)) {
-            PyObject *empty = _PyUnicode_GetEmpty();
-            return PyTuple_Pack(3, str_obj, empty, empty);
-        }
-
-        Py_ssize_t size, sepsize;
-        const char *utf8 = unicode_primary_utf8(str_obj, &size);
-        const char *sep = unicode_primary_utf8(sep_obj, &sepsize);
-        if (utf8 != NULL && sep != NULL) {
-            return utf8lib_partition(str_obj, (const Py_UCS1 *)utf8, size,
-                                      sep_obj, (const Py_UCS1 *)sep, sepsize);
-        }
-    }
-
-    if (str_obj != NULL && PyUnicode_Check(str_obj) &&
-        PyUnicode_DATA(str_obj) == NULL) {
-        return NULL;
-    }
-    if (sep_obj != NULL && PyUnicode_Check(sep_obj) &&
-        PyUnicode_DATA(sep_obj) == NULL) {
-        return NULL;
-    }
-    PyObject* out;
-    int kind1, kind2;
-    const void *buf1, *buf2;
-    Py_ssize_t len1, len2;
-
-    if (ensure_unicode(str_obj) < 0 || ensure_unicode(sep_obj) < 0)
-        return NULL;
-
-    kind1 = PyUnicode_KIND(str_obj);
-    kind2 = PyUnicode_KIND(sep_obj);
-    len1 = PyUnicode_GET_LENGTH(str_obj);
-    len2 = PyUnicode_GET_LENGTH(sep_obj);
-    if (kind1 < kind2 || len1 < len2) {
-        PyObject *empty = _PyUnicode_GetEmpty();  // Borrowed reference
-        return PyTuple_Pack(3, str_obj, empty, empty);
-    }
-    buf1 = PyUnicode_DATA(str_obj);
-    buf2 = PyUnicode_DATA(sep_obj);
-    if (kind2 != kind1) {
-        buf2 = unicode_askind(kind2, buf2, len2, kind1);
-        if (!buf2)
-            return NULL;
-    }
-
-    switch (kind1) {
-    case PyUnicode_1BYTE_KIND:
-        if (PyUnicode_IS_ASCII(str_obj) && PyUnicode_IS_ASCII(sep_obj))
-            out = asciilib_partition(str_obj, buf1, len1, sep_obj, buf2, len2);
-        else
-            out = ucs1lib_partition(str_obj, buf1, len1, sep_obj, buf2, len2);
-        break;
-    case PyUnicode_2BYTE_KIND:
-        out = ucs2lib_partition(str_obj, buf1, len1, sep_obj, buf2, len2);
-        break;
-    case PyUnicode_4BYTE_KIND:
-        out = ucs4lib_partition(str_obj, buf1, len1, sep_obj, buf2, len2);
-        break;
-    default:
-        Py_UNREACHABLE();
-    }
-
-    assert((kind2 == kind1) == (buf2 == PyUnicode_DATA(sep_obj)));
-    if (kind2 != kind1)
-        PyMem_Free((void *)buf2);
-
-    return out;
+    return unicode_partition_common(str_obj, sep_obj, 0);
 }
 
 
 PyObject *
 PyUnicode_RPartition(PyObject *str_obj, PyObject *sep_obj)
 {
-    if (PyUnicode_Check(str_obj) && PyUnicode_Check(sep_obj)) {
-        if (unicode_cannot_contain(str_obj, sep_obj)) {
-            PyObject *empty = _PyUnicode_GetEmpty();
-            return PyTuple_Pack(3, empty, empty, str_obj);
-        }
-
-        Py_ssize_t size, sepsize;
-        const char *utf8 = unicode_primary_utf8(str_obj, &size);
-        const char *sep = unicode_primary_utf8(sep_obj, &sepsize);
-        if (utf8 != NULL && sep != NULL) {
-            return utf8lib_rpartition(str_obj, (const Py_UCS1 *)utf8, size,
-                                      sep_obj, (const Py_UCS1 *)sep, sepsize);
-        }
-    }
-
-    if (str_obj != NULL && PyUnicode_Check(str_obj) &&
-        PyUnicode_DATA(str_obj) == NULL) {
-        return NULL;
-    }
-    if (sep_obj != NULL && PyUnicode_Check(sep_obj) &&
-        PyUnicode_DATA(sep_obj) == NULL) {
-        return NULL;
-    }
-    PyObject* out;
-    int kind1, kind2;
-    const void *buf1, *buf2;
-    Py_ssize_t len1, len2;
-
-    if (ensure_unicode(str_obj) < 0 || ensure_unicode(sep_obj) < 0)
-        return NULL;
-
-    kind1 = PyUnicode_KIND(str_obj);
-    kind2 = PyUnicode_KIND(sep_obj);
-    len1 = PyUnicode_GET_LENGTH(str_obj);
-    len2 = PyUnicode_GET_LENGTH(sep_obj);
-    if (kind1 < kind2 || len1 < len2) {
-        PyObject *empty = _PyUnicode_GetEmpty();  // Borrowed reference
-        return PyTuple_Pack(3, empty, empty, str_obj);
-    }
-    buf1 = PyUnicode_DATA(str_obj);
-    buf2 = PyUnicode_DATA(sep_obj);
-    if (kind2 != kind1) {
-        buf2 = unicode_askind(kind2, buf2, len2, kind1);
-        if (!buf2)
-            return NULL;
-    }
-
-    switch (kind1) {
-    case PyUnicode_1BYTE_KIND:
-        if (PyUnicode_IS_ASCII(str_obj) && PyUnicode_IS_ASCII(sep_obj))
-            out = asciilib_rpartition(str_obj, buf1, len1, sep_obj, buf2, len2);
-        else
-            out = ucs1lib_rpartition(str_obj, buf1, len1, sep_obj, buf2, len2);
-        break;
-    case PyUnicode_2BYTE_KIND:
-        out = ucs2lib_rpartition(str_obj, buf1, len1, sep_obj, buf2, len2);
-        break;
-    case PyUnicode_4BYTE_KIND:
-        out = ucs4lib_rpartition(str_obj, buf1, len1, sep_obj, buf2, len2);
-        break;
-    default:
-        Py_UNREACHABLE();
-    }
-
-    assert((kind2 == kind1) == (buf2 == PyUnicode_DATA(sep_obj)));
-    if (kind2 != kind1)
-        PyMem_Free((void *)buf2);
-
-    return out;
+    return unicode_partition_common(str_obj, sep_obj, 1);
 }
 
 /*[clinic input]
@@ -15124,7 +13400,7 @@ static PyObject *
 unicode_swapcase_impl(PyObject *self)
 /*[clinic end generated code: output=5d28966bf6d7b2af input=85bc39a9b4e8ee91]*/
 {
-    return case_operation(self, do_swapcase);
+    return case_operation(self, UNICODE_CASE_SWAP);
 }
 
 static int
@@ -15320,7 +13596,7 @@ unicode_upper_impl(PyObject *self)
 {
     if (PyUnicode_IS_ASCII(self))
         return ascii_upper_or_lower(self, 0);
-    return case_operation(self, do_upper);
+    return case_operation(self, UNICODE_CASE_UPPER);
 }
 
 /*[clinic input]
