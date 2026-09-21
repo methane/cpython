@@ -332,6 +332,64 @@ with JIT from multithreaded execution with JIT disabled. Measure concurrent JIT
 performance after implementing it. No such new builds or measurements were
 undertaken for this report.
 
+### Preparation before external design review
+
+The prototype is suitable for exploratory review now. Two practical
+improvements would make that review more useful. These are proposed follow-up
+tasks; the portable reproduction workflow and separated patch series have not
+yet been prepared.
+
+#### 1. Make reproduction possible from a fresh checkout
+
+The current benchmark runner depends on local build directories and cached
+wheels. Saved measurements allow inspection of the results, but do not provide
+a complete setup procedure for another developer.
+
+Provide a short, executable workflow that:
+
+- Identifies the source revisions, compiler and LLVM requirements, native
+  dependencies, and Python benchmark dependencies.
+- Builds both main and the candidate in fresh directories, with explicit GIL,
+  JIT, frame-pointer, PGO, and LTO settings. Use builds without PGO/LTO for the
+  initial review cycle, and document the optimized measurement configuration
+  separately.
+- Runs the relevant correctness tests and checks the actual worker runtime,
+  including native JIT execution, the FT single-thread restriction, and the
+  C `_decimal` backend.
+- Runs a small representative comparison with fixed workloads and recorded
+  execution order, then explains how to launch the broader suite and inspect
+  failures, raw samples, and build identities.
+
+Validate those instructions without the author's existing build trees or wheel
+cache. Clearly distinguish newly reproduced measurements from the historical
+M56b results; a new build is not the original measured binary.
+
+#### 2. Separate the changes into reviewable units
+
+The checkpoint combines frontend replacement, optimization work, C runtime
+changes, tests, generated code, and measurement records. Provide a dependency
+map and a reading order so reviewers can assess each design decision without
+first understanding the entire diff.
+
+A useful decomposition is:
+
+| Review unit | Main question |
+|---|---|
+| Shared correctness and runtime fixes | Which changes are independently useful to main, regardless of frontend choice? |
+| Minimal method frontend and removal of recording | Are CFG construction, merge rules, OSR, Tier 1 fallback, and executor lifecycle understandable and correct? |
+| Call, arithmetic, attribute, and generator optimizations | What additional assumptions does each transformation require, and what measured benefit does it provide? |
+| FT execution restrictions and invalidation | What safety contract is implemented today, and what remains necessary for concurrent JIT execution? |
+| Benchmark infrastructure and evidence | Can the reported effects be reproduced, and can frontend effects be distinguished from shared runtime changes? |
+
+Keep the relevant regression tests with each implementation unit and identify
+its generated outputs separately from handwritten source. State dependencies
+and validation results for each unit; do not imply that arbitrary subsets of
+the current checkpoint are independently buildable. A review branch or patch
+series can be prepared without rewriting the saved experimental history.
+
+Neither preparation task requires eliminating every remaining performance
+regression before requesting feedback on the architecture.
+
 ## 7. Evidence and verification
 
 - Tracing design and history:
