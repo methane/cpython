@@ -8226,10 +8226,17 @@ encode_code_page_errors(UINT code_page, PyBytesWriter **writer,
         out = (char*)PyBytesWriter_GetData(*writer) + n;
     }
 
+    unicode_scan reader;
+    unicode_scan_init(&reader, unicode);
+    if (pos && reader.data == NULL) {
+        if (unicode_scan_seek(&reader, unicode, pos) < 0) {
+            goto error;
+        }
+    }
     /* Encode the string character per character */
     while (pos < endin)
     {
-        Py_UCS4 ch = _PyUnicode_ReadCharNoAlloc(unicode, pos);
+        Py_UCS4 ch = unicode_scan_next(&reader, pos);
         wchar_t chars[2];
         int charsize;
         if (ch < 0x10000) {
@@ -8304,6 +8311,11 @@ encode_code_page_errors(UINT code_page, PyBytesWriter **writer,
                 }
                 *out = (unsigned char)ch;
                 out++;
+            }
+        }
+        if (newpos != pos + 1 && reader.data == NULL) {
+            if (unicode_scan_seek(&reader, unicode, newpos) < 0) {
+                goto error;
             }
         }
         pos = newpos;
