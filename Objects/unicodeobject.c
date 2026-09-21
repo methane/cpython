@@ -14246,32 +14246,15 @@ onError:
 static _PyObjectIndexPair
 unicode_iteritem(PyObject *obj, Py_ssize_t index)
 {
-    if (_PyASCIIObject_CAST(obj)->state.utf8_storage &&
-        !_PyASCIIObject_CAST(obj)->state.fsr_primary) {
-        /* Virtual iterators carry an opaque cursor: use a byte offset. */
-        Py_ssize_t size = _PyCompactUnicodeObject_CAST(obj)->utf8_length;
-        if (index >= size) {
-            return (_PyObjectIndexPair) { .object = NULL, .index = index };
-        }
-        Py_UCS4 ch = unicode_next_codepoint(obj, &index);
-        PyObject *result = unicode_char(ch);
-        return (_PyObjectIndexPair) {
-            .object = result, .index = result == NULL ? -1 : index
-        };
-    }
-
-    if (index >= PyUnicode_GET_LENGTH(obj)) {
+    /* Both virtual iterators and _PyUnicode_Next use an opaque cursor. */
+    Py_UCS4 ch;
+    if (!_PyUnicode_Next(obj, &index, &ch)) {
         return (_PyObjectIndexPair) { .object = NULL, .index = index };
     }
-    const void *data = PyUnicode_DATA(obj);
-    if (data == NULL) {
-        return (_PyObjectIndexPair) { .object = NULL, .index = -1 };
-    }
-    int kind = PyUnicode_KIND(obj);
-    Py_UCS4 ch = PyUnicode_READ(kind, data, index);
     PyObject *result = unicode_char(ch);
-    index = (result == NULL) ? -1 : index + 1;
-    return (_PyObjectIndexPair) { .object = result, .index = index };
+    return (_PyObjectIndexPair) {
+        .object = result, .index = result == NULL ? -1 : index
+    };
 }
 
 void
@@ -14825,6 +14808,7 @@ typedef struct {
     PyObject_HEAD
     Py_ssize_t it_index;
     Py_ssize_t it_offset;
+    int it_fsr;
     PyObject *it_seq;    /* Set to NULL when iterator is exhausted */
 } unicodeiterobject;
 
@@ -14859,7 +14843,14 @@ unicodeiter_next(PyObject *op)
 
     if (it->it_index < PyUnicode_GET_LENGTH(seq)) {
         Py_ssize_t offset = it->it_offset;
-        Py_UCS4 chr = unicode_next_codepoint(seq, &offset);
+        Py_UCS4 chr;
+        if (it->it_fsr) {
+            const void *data = PyUnicode_DATA(seq);
+            chr = PyUnicode_READ(PyUnicode_KIND(seq), data, offset++);
+        }
+        else {
+            chr = unicode_next_codepoint(seq, &offset);
+        }
         PyObject *result = unicode_char(chr);
         if (result != NULL) {
             it->it_index++;
@@ -14885,9 +14876,8 @@ unicode_ascii_iter_next(PyObject *op)
     assert(_PyUnicode_CHECK(seq));
     assert(PyUnicode_IS_COMPACT_ASCII(seq));
     if (it->it_index < PyUnicode_GET_LENGTH(seq)) {
-        const void *data = ((void*)(_PyASCIIObject_CAST(seq) + 1));
-        Py_UCS1 chr = (Py_UCS1)PyUnicode_READ(PyUnicode_1BYTE_KIND,
-                                              data, it->it_index);
+        const char *data = _PyUnicode_GetPrimaryUTF8(seq, NULL);
+        Py_UCS1 chr = data[it->it_index];
         it->it_index++;
         return (PyObject*)&_Py_SINGLETON(strings).ascii[chr];
     }
@@ -14940,14 +14930,27 @@ unicodeiter_setstate(PyObject *op, PyObject *state)
     if (index == -1 && PyErr_Occurred())
         return NULL;
     if (it->it_seq != NULL) {
+        Py_ssize_t requested = index;
         if (index < 0)
             index = 0;
         else if (index > PyUnicode_GET_LENGTH(it->it_seq))
             index = PyUnicode_GET_LENGTH(it->it_seq); /* iterator truncated */
         it->it_index = index;
         it->it_offset = 0;
-        for (Py_ssize_t i = 0; i < index; i++) {
-            (void)unicode_next_codepoint(it->it_seq, &it->it_offset);
+        it->it_fsr = 0;
+        if (index != 0 && requested != -1 &&
+            _PyASCIIObject_CAST(it->it_seq)->state.utf8_storage &&
+            !_PyASCIIObject_CAST(it->it_seq)->state.fsr_primary) {
+            if (_PyUnicode_GetFSR(it->it_seq) == NULL) {
+                return NULL;
+            }
+            it->it_offset = index;
+            it->it_fsr = 1;
+        }
+        else {
+            for (Py_ssize_t i = 0; i < index; i++) {
+                (void)unicode_next_codepoint(it->it_seq, &it->it_offset);
+            }
         }
     }
     Py_RETURN_NONE;
@@ -15027,6 +15030,7 @@ unicode_iter(PyObject *seq)
         return NULL;
     it->it_index = 0;
     it->it_offset = 0;
+    it->it_fsr = 0;
     it->it_seq = Py_NewRef(seq);
     _PyObject_GC_TRACK(it);
     return (PyObject *)it;

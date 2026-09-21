@@ -35,6 +35,33 @@ class UTF8StorageTests(unittest.TestCase):
     def make_string(self, text):
         return text.encode('utf-8', 'surrogatepass').decode('utf-8', 'surrogatepass')
 
+    def test_specialized_iteration_without_fsr(self):
+        def collect(value, materialize):
+            result = []
+            for ch in value:
+                result.append(ch)
+                if materialize and len(result) == 1:
+                    _testcapi.unicode_materialize_fsr(value)
+            return result
+
+        def delegate(value):
+            yield from value
+
+        for _ in range(100):
+            collect('warmup', False)
+            list(delegate('warmup'))
+        for text in ('', 'a\0z', 'é日😀', '\ud800x\udcff'):
+            expected = [text[i] for i in range(len(text))]
+            for factory in (self.make_string, Str):
+                value = factory(text)
+                before = _testcapi.unicode_storage(value)
+                self.assertEqual(collect(value, False), expected)
+                self.assertEqual(list(delegate(value)), expected)
+                self.assertEqual(_testcapi.unicode_storage(value), before)
+                self.assertEqual(collect(value, True), expected)
+                self.assertEqual(collect(value, False), expected)
+                self.assertEqual(list(delegate(value)), expected)
+
     def test_equal_utf8_fallback(self):
         api = import_helper.import_module('_testlimitedcapi')
         equal = api.unicode_equaltoutf8andsize
