@@ -1487,6 +1487,22 @@ class CAPITest(unittest.TestCase):
             self.assertEqual(fromkindanddata(4, s.encode(enc4)), s)
         self.assertEqual(fromkindanddata(2, '\U0001f600'.encode(enc2)),
                          '\ud83d\ude00')
+        for kind, strings in (
+            (1, ('a\0éÿ', 'é' * 100)),
+            (2, ('日', '\ud800', 'a\0é日', '\ud800\udc00', '\ud800x\udcff')),
+            (4, ('😀', '\udcff', 'a\0é日😀', '\ud800\udc00', '\ud800x\udcff')),
+        ):
+            for s in strings:
+                with self.subTest(kind=kind, s=ascii(s)):
+                    data = b''.join(ord(ch).to_bytes(kind, sys.byteorder)
+                                    for ch in s)
+                    result = fromkindanddata(kind, data)
+                    self.assertEqual(result, s)
+                    self.assertEqual(_testcapi.unicode_storage(result)[3], 0)
+        for value in (0x110000, 0xffffffff):
+            data = b'\0' * 4 + value.to_bytes(4, sys.byteorder)
+            self.assertRaises(SystemError, fromkindanddata, 4, data)
+
         for kind in 1, 2, 4:
             self.assertEqual(fromkindanddata(kind, b''), '')
             self.assertEqual(fromkindanddata(kind, b'\0'*kind), '\0')

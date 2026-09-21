@@ -426,11 +426,7 @@ static PyObject* get_latin1_char(unsigned char ch);
 
 
 static PyObject *
-_PyUnicode_FromUCS1(const Py_UCS1 *s, Py_ssize_t size);
-static PyObject *
-_PyUnicode_FromUCS2(const Py_UCS2 *s, Py_ssize_t size);
-static PyObject *
-_PyUnicode_FromUCS4(const Py_UCS4 *s, Py_ssize_t size);
+unicode_from_kind_and_data(int kind, const void *buffer, Py_ssize_t size);
 
 static PyObject *
 unicode_encode_call_errorhandler(const char *errors,
@@ -2390,27 +2386,22 @@ get_latin1_char(Py_UCS1 ch)
 static PyObject*
 unicode_char(Py_UCS4 ch)
 {
-    PyObject *unicode;
-
     assert(ch <= MAX_UNICODE);
 
     if (ch < 256) {
         return get_latin1_char(ch);
     }
 
-    unicode = PyUnicode_New(1, ch);
-    if (unicode == NULL)
+    Py_ssize_t size = ch < 0x800 ? 2 : ch < 0x10000 ? 3 : 4;
+    char *data;
+    PyObject *unicode = unicode_new_utf8(size, 1, ch,
+                                        Py_UNICODE_IS_SURROGATE(ch), &data);
+    if (unicode == NULL) {
         return NULL;
-
-    assert(PyUnicode_KIND(unicode) != PyUnicode_1BYTE_KIND);
-    if (PyUnicode_KIND(unicode) == PyUnicode_2BYTE_KIND) {
-        PyUnicode_2BYTE_DATA(unicode)[0] = (Py_UCS2)ch;
-    } else {
-        assert(PyUnicode_KIND(unicode) == PyUnicode_4BYTE_KIND);
-        PyUnicode_4BYTE_DATA(unicode)[0] = ch;
     }
+    _PyUnicode_WriteUTF8Char((unsigned char *)data, ch);
     assert(_PyUnicode_CheckConsistency(unicode, 1));
-    return unicode_compact_utf8(unicode);
+    return unicode;
 }
 
 
@@ -2445,7 +2436,7 @@ PyUnicode_FromWideChar(const wchar_t *u, Py_ssize_t size)
         if (!converted) {
             return NULL;
         }
-        PyObject *unicode = _PyUnicode_FromUCS4(converted, size);
+        PyObject *unicode = unicode_from_kind_and_data(PyUnicode_4BYTE_KIND, converted, size);
         PyMem_Free(converted);
         return unicode;
     }
@@ -2615,81 +2606,52 @@ kind_maxchar_limit(int kind)
     }
 }
 
-static PyObject*
-_PyUnicode_FromUCS1(const Py_UCS1* u, Py_ssize_t size)
+static PyObject *
+unicode_from_kind_and_data(int kind, const void *buffer, Py_ssize_t size)
 {
-    PyObject *res;
-    unsigned char max_char;
-
     if (size == 0) {
         _Py_RETURN_UNICODE_EMPTY();
     }
     assert(size > 0);
     if (size == 1) {
-        return get_latin1_char(u[0]);
+        return unicode_char(PyUnicode_READ(kind, buffer, 0));
+    }
+    if (kind == PyUnicode_1BYTE_KIND &&
+        ucs1lib_find_max_char(buffer, (const Py_UCS1 *)buffer + size) < 128)
+    {
+        return _PyUnicode_FromASCII(buffer, size);
     }
 
-    max_char = ucs1lib_find_max_char(u, u + size);
-    res = PyUnicode_New(size, max_char);
-    if (!res)
-        return NULL;
-    memcpy(PyUnicode_1BYTE_DATA(res), u, size);
-    assert(_PyUnicode_CheckConsistency(res, 1));
-    return unicode_result(res);
-}
-
-static PyObject*
-_PyUnicode_FromUCS2(const Py_UCS2 *u, Py_ssize_t size)
-{
-    PyObject *res;
-    Py_UCS2 max_char;
-
-    if (size == 0)
-        _Py_RETURN_UNICODE_EMPTY();
-    assert(size > 0);
-    if (size == 1)
-        return unicode_char(u[0]);
-
-    max_char = ucs2lib_find_max_char(u, u + size);
-    res = PyUnicode_New(size, max_char);
-    if (!res)
-        return NULL;
-    if (max_char >= 256)
-        memcpy(PyUnicode_2BYTE_DATA(res), u, sizeof(Py_UCS2)*size);
-    else {
-        _PyUnicode_CONVERT_BYTES(
-            Py_UCS2, Py_UCS1, u, u + size, PyUnicode_1BYTE_DATA(res));
+    Py_ssize_t bytes = 0;
+    Py_UCS4 maxchar = 0;
+    int surrogates = 0;
+    for (Py_ssize_t i = 0; i < size; i++) {
+        Py_UCS4 ch = PyUnicode_READ(kind, buffer, i);
+        if (ch > MAX_UNICODE) {
+            PyErr_SetString(PyExc_SystemError,
+                            "invalid maximum character passed to PyUnicode_New");
+            return NULL;
+        }
+        int width = ch < 0x80 ? 1 : ch < 0x800 ? 2 : ch < 0x10000 ? 3 : 4;
+        if (bytes > PY_SSIZE_T_MAX - width) {
+            return PyErr_NoMemory();
+        }
+        bytes += width;
+        maxchar = Py_MAX(maxchar, ch);
+        surrogates |= Py_UNICODE_IS_SURROGATE(ch);
     }
-    assert(_PyUnicode_CheckConsistency(res, 1));
-    return unicode_result(res);
-}
-
-static PyObject*
-_PyUnicode_FromUCS4(const Py_UCS4 *u, Py_ssize_t size)
-{
-    PyObject *res;
-    Py_UCS4 max_char;
-
-    if (size == 0)
-        _Py_RETURN_UNICODE_EMPTY();
-    assert(size > 0);
-    if (size == 1)
-        return unicode_char(u[0]);
-
-    max_char = ucs4lib_find_max_char(u, u + size);
-    res = PyUnicode_New(size, max_char);
-    if (!res)
+    char *data;
+    PyObject *result = unicode_new_utf8(bytes, size, maxchar, surrogates, &data);
+    if (result == NULL) {
         return NULL;
-    if (max_char < 256)
-        _PyUnicode_CONVERT_BYTES(Py_UCS4, Py_UCS1, u, u + size,
-                                 PyUnicode_1BYTE_DATA(res));
-    else if (max_char < 0x10000)
-        _PyUnicode_CONVERT_BYTES(Py_UCS4, Py_UCS2, u, u + size,
-                                 PyUnicode_2BYTE_DATA(res));
-    else
-        memcpy(PyUnicode_4BYTE_DATA(res), u, sizeof(Py_UCS4)*size);
-    assert(_PyUnicode_CheckConsistency(res, 1));
-    return unicode_result(res);
+    }
+    unsigned char *out = (unsigned char *)data;
+    for (Py_ssize_t i = 0; i < size; i++) {
+        out = _PyUnicode_WriteUTF8Char(out, PyUnicode_READ(kind, buffer, i));
+    }
+    assert(out == (unsigned char *)data + bytes);
+    assert(_PyUnicode_CheckConsistency(result, 1));
+    return result;
 }
 
 
@@ -2703,11 +2665,9 @@ PyUnicode_FromKindAndData(int kind, const void *buffer, Py_ssize_t size)
     }
     switch (kind) {
     case PyUnicode_1BYTE_KIND:
-        return _PyUnicode_FromUCS1(buffer, size);
     case PyUnicode_2BYTE_KIND:
-        return _PyUnicode_FromUCS2(buffer, size);
     case PyUnicode_4BYTE_KIND:
-        return _PyUnicode_FromUCS4(buffer, size);
+        return unicode_from_kind_and_data(kind, buffer, size);
     default:
         PyErr_SetString(PyExc_SystemError, "invalid kind");
         return NULL;
@@ -7269,7 +7229,7 @@ PyUnicode_DecodeLatin1(const char *s,
                        const char *errors)
 {
     /* Latin-1 is equivalent to the first 256 ordinals in Unicode. */
-    return _PyUnicode_FromUCS1((const unsigned char*)s, size);
+    return unicode_from_kind_and_data(PyUnicode_1BYTE_KIND, s, size);
 }
 
 /* create or adjust a UnicodeEncodeError */
