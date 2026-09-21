@@ -110,6 +110,25 @@ class UTF8StorageTests(unittest.TestCase):
                         self.assertEqual(_testcapi.unicode_storage(copy)[0], 1)
                         self.assertEqual(_testcapi.unicode_storage(copy)[3], 0)
 
+    def test_charmap_default_without_fsr(self):
+        import codecs
+
+        for text in ('éÿ', 'a日😀b', 'a\udc80\udcffz'):
+            for errors in ('strict', 'replace', 'ignore', 'backslashreplace',
+                           'xmlcharrefreplace', 'surrogateescape'):
+                with self.subTest(text=ascii(text), errors=errors):
+                    value = self.make_string(text)
+                    before = _testcapi.unicode_storage(value)
+                    try:
+                        expected = text.encode('latin1', errors)
+                    except UnicodeEncodeError:
+                        with self.assertRaises(UnicodeEncodeError):
+                            codecs.charmap_encode(value, errors, None)
+                    else:
+                        self.assertEqual(codecs.charmap_encode(value, errors, None),
+                                         (expected, len(value)))
+                    self.assertEqual(_testcapi.unicode_storage(value), before)
+
     def test_ucs1_encode_without_fsr(self):
         import codecs
 

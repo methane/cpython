@@ -9394,15 +9394,14 @@ _PyUnicode_EncodeCharmap(PyObject *unicode,
                          PyObject *mapping,
                          const char *errors)
 {
-    if (unicode != NULL && PyUnicode_Check(unicode) &&
-        PyUnicode_DATA(unicode) == NULL) {
-        return NULL;
-    }
     /* Default to Latin-1 */
     if (mapping == NULL) {
         return unicode_encode_ucs1(unicode, errors, 256);
     }
 
+    if (PyUnicode_DATA(unicode) == NULL) {
+        return NULL;
+    }
     Py_ssize_t size = PyUnicode_GET_LENGTH(unicode);
     if (size == 0) {
         return Py_GetConstant(Py_CONSTANT_EMPTY_BYTES);
@@ -9768,7 +9767,8 @@ unicode_fast_translate(PyObject *input, PyObject *mapping,
 
     memset(ascii_table, 0xff, 128);
 
-    in = PyUnicode_1BYTE_DATA(input);
+    const Py_UCS1 *start = (const Py_UCS1 *)_PyUnicode_GetPrimaryUTF8(input, NULL);
+    in = start;
     end = in + len;
 
     out = (Py_UCS1 *)_PyUnicodeWriter_UTF8Data(writer);
@@ -9799,7 +9799,7 @@ unicode_fast_translate(PyObject *input, PyObject *mapping,
 
 exit:
     _PyUnicodeWriter_AdvanceUTF8(writer, out - out_start, out - out_start);
-    *input_pos = in - PyUnicode_1BYTE_DATA(input);
+    *input_pos = in - start;
     return res;
 }
 
