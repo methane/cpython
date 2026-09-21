@@ -313,7 +313,7 @@ extern int _PyCode_SafeAddr2Line(PyCodeObject *co, int addr);
 
 
 /** API for executors */
-extern void _PyCode_Clear_Executors(PyCodeObject *code);
+extern void _PyCode_Clear_Executors(PyInterpreterState *interp, PyCodeObject *code);
 
 
 #define ENABLE_SPECIALIZATION 1

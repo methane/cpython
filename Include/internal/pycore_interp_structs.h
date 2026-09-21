@@ -994,6 +994,10 @@ struct _is {
     _PyStackRef common_consts[NUM_COMMON_CONSTANTS];
     uint8_t jit;
     bool compiling;
+#ifdef Py_GIL_DISABLED
+    // Once another thread has joined, use only concurrent-safe lowering.
+    bool jit_multithreaded;
+#endif
 
     // Optimization configuration (thresholds and flags for JIT and interpreter)
     _PyOptimizationConfig opt_config;

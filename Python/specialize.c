@@ -3166,11 +3166,6 @@ _Py_Specialize_Resume(_Py_CODEUNIT *instr, PyThreadState *tstate, _PyInterpreter
 {
     if (tstate->tracing == 0 && instr->op.code == RESUME) {
         bool can_jit = FT_ATOMIC_LOAD_UINT8(tstate->interp->jit);
-#if defined(Py_GIL_DISABLED) && defined(_Py_TIER2)
-        // JIT availability changes as the interpreter moves between one and
-        // multiple threads. Keep the check in the specialized instruction.
-        can_jit = true;
-#endif
         if (can_jit) {
             PyCodeObject *co = (PyCodeObject *)PyStackRef_AsPyObjectBorrow(frame->f_executable);
             if (co != NULL &&

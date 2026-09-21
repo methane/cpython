@@ -591,6 +591,9 @@ init_interpreter(PyInterpreterState *interp,
     interp->_code_object_generation = 0;
     interp->jit = 0;
     interp->compiling = false;
+#ifdef Py_GIL_DISABLED
+    interp->jit_multithreaded = false;
+#endif
     interp->executor_blooms = NULL;
     interp->executor_ptrs = NULL;
     interp->executor_count = 0;
@@ -1620,10 +1623,12 @@ add_threadstate(PyInterpreterState *interp, PyThreadState *tstate,
     assert(interp->threads.head != tstate);
     if (next != NULL) {
 #if defined(_Py_TIER2) && defined(Py_GIL_DISABLED)
-        // Until the optimizer and its dependency watchers can run concurrently,
-        // stop JIT execution before a second thread joins the interpreter.
-        FT_ATOMIC_STORE_UINT8(interp->jit, 0);
-        _Py_Executors_InvalidateAll(interp, 1);
+        if (!interp->jit_multithreaded) {
+            // Retire assumptions made before shared execution became possible.
+            // Keep JIT enabled: each thread compiles its own conservative CFG.
+            interp->jit_multithreaded = true;
+            _Py_Executors_InvalidateAll(interp, 1);
+        }
 #endif
         assert(next->prev == NULL || next->prev == tstate);
         next->prev = tstate;
@@ -1665,11 +1670,6 @@ new_threadstate(PyInterpreterState *interp, int whence)
 #endif
 
 #if defined(_Py_TIER2) && defined(Py_GIL_DISABLED)
-    /* add_threadstate() invalidates executors before publishing a second
-     * thread.  An existing thread may still be executing one of those
-     * executors, so protect the detach and exit-table updates as well as the
-     * thread-list update with stop-the-world.  This is also safe while
-     * creating an interpreter's initial thread state. */
     _PyEval_StopTheWorld(interp);
 #endif
 
@@ -1690,7 +1690,6 @@ new_threadstate(PyInterpreterState *interp, int whence)
 #if defined(_Py_TIER2) && defined(Py_GIL_DISABLED)
     _PyEval_StartTheWorld(interp);
 #endif
-
 #ifdef Py_GIL_DISABLED
     // Must be called with lock unlocked to avoid lock ordering deadlocks.
     _Py_qsbr_register(tstate, interp, qsbr_idx);

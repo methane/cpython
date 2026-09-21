@@ -1812,7 +1812,7 @@ force_instrument_lock_held(PyCodeObject *code, PyInterpreterState *interp)
 
 #ifdef _Py_TIER2
     if (code->co_executors != NULL) {
-        _PyCode_Clear_Executors(code);
+        _PyCode_Clear_Executors(interp, code);
     }
     _Py_Executors_InvalidateDependency(interp, code, 1);
 #endif

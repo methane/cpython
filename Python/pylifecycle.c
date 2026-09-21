@@ -1366,6 +1366,9 @@ _PyInterpreter_SetJitWithEnvVar(const PyConfig *config,
         // PYTHON_JIT=0|1 overrides the default
         enabled = *env != '0';
     }
+#ifdef Py_GIL_DISABLED
+    enabled = enabled && config->tlbc_enabled;
+#endif
     if (enabled) {
 #ifdef _Py_JIT
         // perf profiler works fine with tier 2 interpreter, so

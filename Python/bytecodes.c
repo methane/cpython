@@ -4012,14 +4012,8 @@ dummy_func(
         #if ENABLE_SPECIALIZATION
             if (this_instr->op.code == JUMP_BACKWARD) {
                 uint8_t desired;
-            #if defined(Py_GIL_DISABLED) && defined(_Py_TIER2)
-                // The JIT may be re-enabled when the interpreter returns to
-                // one thread, so retain a dynamically gated JIT check.
-                desired = JUMP_BACKWARD_JIT;
-            #else
                 desired = FT_ATOMIC_LOAD_UINT8(tstate->interp->jit)
                     ? JUMP_BACKWARD_JIT : JUMP_BACKWARD_NO_JIT;
-            #endif
                 FT_ATOMIC_STORE_UINT8_RELAXED(this_instr->op.code, desired);
                 // Need to re-dispatch so the warmup counter isn't off by one:
                 next_instr = this_instr;
@@ -4100,7 +4094,14 @@ dummy_func(
             /* If the eval breaker is set, or instrumentation is needed, then stay in tier 1.
              * This avoids any potentially infinite loops involving _RESUME_CHECK */
             uintptr_t iversion = FT_ATOMIC_LOAD_UINTPTR_ACQUIRE(code->_co_instrumentation_version);
-            if (_Py_atomic_load_uintptr_relaxed(&tstate->eval_breaker) != iversion) {
+            bool wrong_thread = false;
+#ifdef Py_GIL_DISABLED
+            wrong_thread = frame->tlbc_index !=
+                ((_PyThreadStateImpl *)tstate)->tlbc_index;
+#endif
+            if (wrong_thread ||
+                _Py_atomic_load_uintptr_relaxed(&tstate->eval_breaker) != iversion)
+            {
                 opcode = executor->vm_data.opcode;
                 oparg = (oparg & ~255) | executor->vm_data.oparg;
                 next_instr = this_instr;

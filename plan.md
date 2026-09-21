@@ -1,6 +1,113 @@
 # Method-only JIT implementation and performance plan
 
-Updated: 2026-09-20
+Updated: 2026-09-21
+
+## Concurrent method JIT prototype (implemented, 2026-09-21)
+
+Implemented continued native method execution across free-threaded workers.
+The first additional thread invalidates pre-existing executors, switches to
+conservative concurrent lowering, and leaves JIT enabled. Each thread compiles
+its own TLBC; shared metadata changes and reclamation use stop-the-world.
+Single-thread startup keeps its previous optimizations. Details, limitations,
+and the next concurrency/performance work are in
+[Misc/method_jit_threads.md](Misc/method_jit_threads.md).
+
+Final source-matched builds: `jit-artifacts/regressions-20260919/mt2-ft-debug-build/python`
+(FT, debug assertions, O3, no PGO/LTO) and `mt2-gil-dev-build/python` in the same
+directory (GIL, O3, no PGO/LTO). These build directories were updated through
+mt5; the original mt2 JSON hashes are superseded by `mt5-final-identity.json`.
+Changed runtime/test files exactly match both source trees. The runtime diff
+and added test are saved as `mt5-final-runtime.patch` and `mt5-test-method-jit.py`.
+
+- Wider validation after the ownership fix: 1,065 FT tests across 13 modules
+  passed (50 skipped); 981 GIL tests across four modules passed (9 skipped).
+- Final-build checks after the lookup/diagnostic fixes: 586 FT tests passed
+  (44 skipped), including all eight new concurrency tests; 578 GIL optimizer
+  tests passed (5 skipped). Generated-cases validation: all 84 passed.
+- Repeated the eight concurrency tests in 20 fresh processes: all 160 passed,
+  with no skips, failures, or timeouts (`mt5-concurrency-repeat.log`).
+- New tests assert actual native activity with GIL disabled, four distinct
+  executors for shared code, no foreign executor lookup, invalidation/GC,
+  mutable globals/attributes/function code, live monitoring, thread reuse,
+  generator ownership transfer, and `-X tlbc=0` fallback.
+- test_sys's 11 socket/remote-exec permission errors are sandbox limitations.
+  Its tracing-timing is_active assertion also fails on frozen M56b; it is not
+  introduced by this change. That unrelated legacy assertion remains unchanged.
+- No throughput/scaling or broad performance result is claimed for this
+  prototype. The historical M56b numbers below do not apply after these changes.
+
+Useful local validation commands (set `PYTHON_JIT=1`):
+
+```sh
+PYTHON_JIT=1 jit-artifacts/regressions-20260919/mt2-ft-debug-build/python -m test test_free_threading.test_method_jit test_capi.test_opt -j2 --timeout=120
+PYTHON_JIT=1 jit-artifacts/regressions-20260919/mt2-gil-dev-build/python -m test test_capi.test_opt
+```
+
+Next work: replace long compilation stops with a validated snapshot/publication
+protocol; make watcher transactions and shared-object specialization safe;
+restore concurrent closure/keyword-call optimizations; run sanitizers and
+measure compilation pauses, per-thread code memory, throughput, and scaling.
+The user requested a local checkpoint commit and a new pyperformance run on
+2026-09-21. Commit the implementation and validation report first, then build
+release interpreters from that committed source. Reuse the verified main
+baselines and cached dependencies; retain balanced AB/BA measurements, C
+`_decimal`, and the short NetworkX timeout. Results are pending. No GitHub
+posting, push, or PR changes are authorized. The pre-existing
+`benchmarks/go.py` mode change is excluded from the checkpoint.
+
+### Implementation and validation history
+
+New request: keep method JIT running with multiple live free-threaded threads.
+The M56b results below describe the previous checkpoint, not this new work.
+
+Design: compile against each thread's TLBC and publish an executor for that
+copy. Serialize compilation, dependency invalidation, table changes, and
+reclamation with stop-the-world scopes; native execution remains concurrent.
+On first additional thread creation, retire existing executors and permanently
+switch this interpreter to conservative concurrent lowering, without disabling
+JIT. Keep existing optimizations before that transition. In concurrent mode,
+shared globals/attributes and ordinary calls use generic APIs; dependency-based
+symbolic folding and raw list-pair fusion are disabled. Closures and keyword/
+starred call transitions currently fall back to Tier 1. With TLBC disabled,
+JIT is disabled too. Compilation pause latency remains a future optimization.
+
+The audit found a watcher publication window (callback before the mutation
+finishes), generator TLBC ownership on resume, and zero-refcount executors
+waiting to acquire STW. The implementation adds conservative lowering, an
+entry ownership check, and a deallocation hazard slot respectively. Retired
+TLBC copies detach their executors before freeing bytecode.
+
+Validation so far: FT debug build (no PGO/LTO) succeeded. Six new concurrency
+tests passed: four distinct thread-local executors with native activity and
+GIL disabled; concurrent invalidation/GC; mutable globals/attributes/function
+code; thread recreation/TLBC cleanup; generator migration; TLBC-disabled mode.
+The first wider run passed monitoring, generators, and threading. It found
+250 optimizer expectation failures and four errors while the conservative mode
+was incorrectly applied to single-thread tests too. This prompted the one-way
+transition design above. test_sys also found 11 sandbox permission errors
+(socket/remote-exec access) and an is_active test that assumes trace-recording
+timing; comparison with the previous binary is being checked.
+Single-thread optimizer tests now run in
+isolated processes so thread-creation tests do not change later tests' compiler
+mode. Next: validate that transition and run wider FT/GIL regression tests.
+No new performance result is claimed.
+
+Second iteration: GIL development build passed 981 tests (9 skips) across
+optimizer, monitoring, generators, and threading. FT monitoring/generators/
+threading also passed; 22 optimizer expectations still reflected class-level
+mode contamination. Isolate the two tests that directly create threads at method granularity,
+not entire classes; the other three already launch their own subprocesses. The generator transfer test needed
+`TIER2_RESUME_THRESHOLD + 2` resumes instead of 1,000. The subinterpreter test
+found a real deadlock: code-array cleanup stopped the current interpreter while
+the owner's HEAD lock was held. Pass the registry owner explicitly to cleanup.
+The third incremental build passed 1,065 FT tests (50 skips) across 13
+modules and 981 GIL tests (9 skips) across four modules. The sys.is_active
+failure reproduces on frozen M56b; it assumes trace recording thresholds.
+
+Design/limitations: [Misc/method_jit_threads.md](Misc/method_jit_threads.md).
+
+
+## Previous single-thread performance goal
 
 Current goal: achieved for the measured cohort, with the exclusions below.
 The candidate now uses static method compilation

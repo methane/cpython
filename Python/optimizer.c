@@ -34,6 +34,50 @@
 
 #define MAX_EXECUTORS_SIZE 256
 
+/* Executor metadata is changed only while this interpreter is stopped.
+ * Native execution is thread-local and does not hold a runtime-wide lock.
+ * Invalidation also runs inside instrumentation/GC stop-the-world scopes. */
+bool
+_PyJit_StopTheWorld(PyInterpreterState *interp)
+{
+#ifdef Py_GIL_DISABLED
+    PyThreadState *tstate = _PyThreadState_GET();
+    if ((interp->stoptheworld.world_stopped &&
+         interp->stoptheworld.requester == tstate) ||
+        (interp->runtime->stoptheworld.world_stopped &&
+         interp->runtime->stoptheworld.requester == tstate))
+    {
+        return false;
+    }
+    _PyEval_StopTheWorld(interp);
+    return true;
+#else
+    return false;
+#endif
+}
+
+void
+_PyJit_StartTheWorld(PyInterpreterState *interp, bool stopped)
+{
+    if (stopped) {
+        _PyEval_StartTheWorld(interp);
+    }
+}
+
+/* Compilation and executor lookup use the calling thread's specialization.
+ * Do not allocate a TLBC here: callees without one are not yet specialized. */
+static _Py_CODEUNIT *
+method_bytecode(PyCodeObject *code)
+{
+#ifdef Py_GIL_DISABLED
+    _Py_CODEUNIT *bytecode = _PyCode_GetTLBCFast(_PyThreadState_GET(), code);
+    if (bytecode != NULL) {
+        return bytecode;
+    }
+#endif
+    return _PyCode_CODE(code);
+}
+
 static bool method_is_edge(int opcode);
 
 #define _PyExecutorObject_CAST(op)  ((_PyExecutorObject *)(op))
@@ -122,7 +166,8 @@ insert_executor(PyCodeObject *code, _Py_CODEUNIT *instr, int index, _PyExecutorO
     executor->vm_data.opcode = instr->op.code;
     executor->vm_data.oparg = instr->op.arg;
     executor->vm_data.code = code;
-    executor->vm_data.index = (int)(instr - _PyCode_CODE(code));
+    executor->vm_data.index = (int)(instr - method_bytecode(code));
+    executor->vm_data.bytecode = method_bytecode(code);
     code->co_executors->executors[index] = executor;
     assert(index < MAX_EXECUTORS_SIZE);
     instr->op.code = ENTER_EXECUTOR;
@@ -145,14 +190,22 @@ _PyJit_CallMethod(PyThreadState *tstate, _PyExecutorObject *caller_executor,
 static _PyExecutorObject *
 get_executor_lock_held(PyCodeObject *code, int offset)
 {
+#ifdef Py_GIL_DISABLED
+    if (_PyCode_GetTLBCFast(_PyThreadState_GET(), code) == NULL) {
+        PyErr_SetString(PyExc_ValueError, "no executor at given byte offset");
+        return NULL;
+    }
+#endif
     int code_len = (int)Py_SIZE(code);
     for (int i = 0 ; i < code_len;) {
-        if (_PyCode_CODE(code)[i].op.code == ENTER_EXECUTOR && i*2 == offset) {
-            int oparg = _PyCode_CODE(code)[i].op.arg;
+        if (method_bytecode(code)[i].op.code == ENTER_EXECUTOR && i*2 == offset) {
+            int oparg = method_bytecode(code)[i].op.arg;
             _PyExecutorObject *res = code->co_executors->executors[oparg];
             Py_INCREF(res);
             return res;
         }
+        // Specialization does not change instruction widths. The canonical
+        // decoder also handles instrumented instructions and executor entries.
         i += _PyInstruction_GetLength(code, i);
     }
     PyErr_SetString(PyExc_ValueError, "no executor at given byte offset");
@@ -163,9 +216,10 @@ _PyExecutorObject *
 _Py_GetExecutor(PyCodeObject *code, int offset)
 {
     _PyExecutorObject *executor;
-    Py_BEGIN_CRITICAL_SECTION(code);
+    PyInterpreterState *interp = _PyInterpreterState_GET();
+    bool stopped = _PyJit_StopTheWorld(interp);
     executor = get_executor_lock_held(code, offset);
-    Py_END_CRITICAL_SECTION();
+    _PyJit_StartTheWorld(interp, stopped);
     return executor;
 }
 
@@ -203,8 +257,8 @@ _PyExecutor_Free(_PyExecutorObject *self)
 
 static void executor_invalidate(PyObject *op);
 
-void
-_Py_ClearExecutorDeletionList(PyInterpreterState *interp)
+static void
+_Py_ClearExecutorDeletionList_stopped(PyInterpreterState *interp)
 {
     if (interp->executor_deletion_list_head == NULL) {
         return;
@@ -222,7 +276,22 @@ _Py_ClearExecutorDeletionList(PyInterpreterState *interp)
     do {
         _PyExecutorObject *exec = interp->executor_deletion_list_head;
         interp->executor_deletion_list_head = exec->vm_data.links.next;
-        if (Py_REFCNT(exec) == 0) {
+        bool deallocating = false;
+#ifdef Py_GIL_DISABLED
+        HEAD_LOCK(runtime);
+        for (PyThreadState *t = PyInterpreterState_ThreadHead(interp);
+             t != NULL; t = t->next)
+        {
+            if (((_PyThreadStateImpl *)t)->jit_deallocating_executor ==
+                (PyObject *)exec)
+            {
+                deallocating = true;
+                break;
+            }
+        }
+        HEAD_UNLOCK(runtime);
+#endif
+        if (Py_REFCNT(exec) == 0 && !deallocating) {
             _PyExecutor_Free(exec);
         } else {
             exec->vm_data.links.next = keep_list;
@@ -242,6 +311,14 @@ _Py_ClearExecutorDeletionList(PyInterpreterState *interp)
     HEAD_UNLOCK(runtime);
 }
 
+void
+_Py_ClearExecutorDeletionList(PyInterpreterState *interp)
+{
+    bool stopped = _PyJit_StopTheWorld(interp);
+    _Py_ClearExecutorDeletionList_stopped(interp);
+    _PyJit_StartTheWorld(interp, stopped);
+}
+
 static void
 add_to_pending_deletion_list(_PyExecutorObject *self)
 {
@@ -258,9 +335,19 @@ add_to_pending_deletion_list(_PyExecutorObject *self)
 static void
 uop_dealloc(PyObject *op) {
     _PyExecutorObject *self = _PyExecutorObject_CAST(op);
+#ifdef Py_GIL_DISABLED
+    _PyThreadStateImpl *tstate = (_PyThreadStateImpl *)_PyThreadState_GET();
+    PyObject *previous = tstate->jit_deallocating_executor;
+    tstate->jit_deallocating_executor = op;
+#endif
+    bool stopped = _PyJit_StopTheWorld(self->vm_data.interp);
     executor_invalidate(op);
     assert(self->vm_data.code == NULL);
     add_to_pending_deletion_list(self);
+#ifdef Py_GIL_DISABLED
+    tstate->jit_deallocating_executor = previous;
+#endif
+    _PyJit_StartTheWorld(self->vm_data.interp, stopped);
 }
 
 const char *
@@ -954,7 +1041,7 @@ method_global_value(PyFunctionObject *func, PyCodeObject *code,
         return NULL;
     }
     _PyLoadGlobalCache *cache = (_PyLoadGlobalCache *)(
-        _PyCode_CODE(code) + mi->opcode_offset + 1);
+        method_bytecode(code) + mi->opcode_offset + 1);
     PyObject *mapping = func->func_globals;
     if (!PyDict_CheckExact(mapping) ||
         ((PyDictObject *)mapping)->ma_keys->dk_version != cache->module_keys_version) {
@@ -1041,7 +1128,7 @@ method_module_attribute(PyCodeObject *code, const _PyMethodInstruction *mi,
     }
     PyDictObject *dict = (PyDictObject *)PyModule_GetDict(owner.object);
     _PyAttrCache *cache = (_PyAttrCache *)(
-        _PyCode_CODE(code) + mi->opcode_offset + 1);
+        method_bytecode(code) + mi->opcode_offset + 1);
     // Never invoke a non-string key's equality method during compilation.
     if (dict->ma_keys->dk_kind != DICT_KEYS_UNICODE ||
         dict->ma_keys->dk_version != read_u32(cache->version) ||
@@ -1075,7 +1162,7 @@ method_attribute_default(PyCodeObject *code, const _PyMethodInstruction *mi)
         return NULL;
     }
     _PyAttrCache *cache = (_PyAttrCache *)(
-        _PyCode_CODE(code) + mi->opcode_offset + 1);
+        method_bytecode(code) + mi->opcode_offset + 1);
     PyTypeObject *type = _PyType_LookupByVersion(read_u32(cache->version));
     if (type == NULL) {
         return NULL;
@@ -1120,7 +1207,7 @@ method_cached_function(PyCodeObject *code, const _PyMethodInstruction *mi)
         return NULL;
     }
     _PyLoadMethodCache *cache = (_PyLoadMethodCache *)(
-        _PyCode_CODE(code) + mi->opcode_offset + 1);
+        method_bytecode(code) + mi->opcode_offset + 1);
     PyTypeObject *type = _PyType_LookupByVersion(read_u32(cache->type_version));
     if (type == NULL) {
         return NULL;
@@ -1268,7 +1355,7 @@ method_apply_stack_effect(
         int origin = stack[*depth - 1].origin;
         if (origin > 0 && origin <= locals_count) {
             _PyAttrCache *cache = (_PyAttrCache *)(
-                _PyCode_CODE(code) + mi->opcode_offset + 1);
+                method_bytecode(code) + mi->opcode_offset + 1);
             values[origin - 1].type_version = mi->alternate_versions[0]
                 ? 0 : read_u32(cache->version);
             values[origin - 1].type_family = mi->type_family;
@@ -1751,7 +1838,7 @@ static void method_find_attribute_family(PyCodeObject *, _PyMethodInstruction *)
 static bool
 method_attribute_has_family(PyCodeObject *code, int offset)
 {
-    _Py_CODEUNIT inst = _PyCode_CODE(code)[offset];
+    _Py_CODEUNIT inst = method_bytecode(code)[offset];
     _PyMethodInstruction mi = {
         .offset = offset,
         .opcode_offset = offset,
@@ -1798,7 +1885,7 @@ method_boolean_predicate(PyThreadState *tstate, PyFunctionObject *func,
             return false;
         }
     }
-    _Py_CODEUNIT *bytecode = _PyCode_CODE(code);
+    _Py_CODEUNIT *bytecode = method_bytecode(code);
     int attributes[96];
     for (int i = 0; i < 96; i++) {
         attributes[i] = -1;
@@ -1994,7 +2081,7 @@ method_trivial_return(PyThreadState *tstate, PyFunctionObject *function,
             return 0;
         }
     }
-    _Py_CODEUNIT *instructions = _PyCode_CODE(code);
+    _Py_CODEUNIT *instructions = method_bytecode(code);
     int entry = instructions[0].op.code;
     if (entry == ENTER_EXECUTOR) {
         entry = code->co_executors->executors[instructions[0].op.arg]->vm_data.opcode;
@@ -2135,7 +2222,7 @@ _PyJit_TryTrivialCall(PyThreadState *tstate, PyCodeObject *code,
                       PyObject *const *args, Py_ssize_t nargs, PyObject *kwnames)
 {
 #if !defined(Py_GIL_DISABLED) && !defined(WITH_DTRACE)
-    _Py_CODEUNIT *entry = _PyCode_CODE(code);
+    _Py_CODEUNIT *entry = method_bytecode(code);
     assert(entry->op.code == ENTER_EXECUTOR);
     _PyExecutorObject *executor = code->co_executors->executors[entry->op.arg];
     if (!executor->trivial_call || !executor->vm_data.valid ||
@@ -2235,7 +2322,7 @@ method_simple_initializer(PyThreadState *tstate, PyFunctionObject *function,
             return 0;
         }
     }
-    _Py_CODEUNIT *instructions = _PyCode_CODE(code);
+    _Py_CODEUNIT *instructions = method_bytecode(code);
     int entry = _Py_GetBaseCodeUnit(code, 0).op.code;
     if (_PyOpcode_Deopt[entry] != RESUME) {
         return 0;
@@ -2649,6 +2736,50 @@ method_translate_instruction(
     memcpy(uop_state, state,
            (size_t)(locals_count + stack_depth) * sizeof(*state));
     int uop_stack_depth = stack_depth;
+
+#ifdef Py_GIL_DISABLED
+    /* Normalize mutable operations in the CFG as well as here: using a
+     * generic call must not retain the result-type facts of its old cache. */
+    if (tstate->interp->jit_multithreaded &&
+        (opcode == LOAD_GLOBAL || opcode == LOAD_ATTR ||
+         opcode == STORE_ATTR || opcode == CALL))
+    {
+        if (!method_emit(buffer, length, limit, _CHECK_VALIDITY, 0, 0, target) ||
+            !method_emit(buffer, length, limit, _SET_IP, 0,
+                         (uintptr_t)instr, target))
+        {
+            return 0;
+        }
+        if (opcode == LOAD_GLOBAL) {
+            return method_emit(buffer, length, limit, _LOAD_GLOBAL,
+                               (uint16_t)oparg, 0, target) &&
+                method_emit(buffer, length, limit, _PUSH_NULL_CONDITIONAL,
+                            (uint16_t)oparg, 0, target);
+        }
+        if (opcode == LOAD_ATTR || opcode == STORE_ATTR) {
+            return method_emit(buffer, length, limit,
+                               opcode == LOAD_ATTR ? _LOAD_ATTR : _STORE_ATTR,
+                               (uint16_t)oparg, 0, target);
+        }
+        /* The general vectorcall path also handles Python functions. It
+         * owns frame entry and locking; no cached function fields are read. */
+        return method_emit(buffer, length, limit, _MAYBE_EXPAND_METHOD,
+                           (uint16_t)oparg, 0, target) &&
+            method_emit(buffer, length, limit, _CALL_NON_PY_GENERAL,
+                        (uint16_t)oparg, 0, target) &&
+            method_emit(buffer, length, limit, _TIER2_RESUME_CHECK,
+                        0, 0, mi->next_offset);
+    }
+    int base_opcode = _PyOpcode_Deopt[opcode];
+    if (tstate->interp->jit_multithreaded &&
+        (base_opcode == CALL_KW || base_opcode == CALL_FUNCTION_EX ||
+         base_opcode == LOAD_DEREF || base_opcode == STORE_DEREF ||
+         base_opcode == DELETE_DEREF || base_opcode == MAKE_CELL ||
+         base_opcode == COPY_FREE_VARS))
+    {
+        return 0;
+    }
+#endif
 
     if (!method_emit(buffer, length, limit, _CHECK_VALIDITY, 0, 0, target)) {
         return 0;
@@ -3394,7 +3525,7 @@ method_find_attribute_family(PyCodeObject *code, _PyMethodInstruction *mi)
     }
     bool store = _PyOpcode_Deopt[opcode] == STORE_ATTR;
     _PyAttrCache *cache = (_PyAttrCache *)(
-        _PyCode_CODE(code) + mi->opcode_offset + 1);
+        method_bytecode(code) + mi->opcode_offset + 1);
     unsigned int version = read_u32(cache->version);
     PyTypeObject *original = _PyType_LookupByVersion(version);
     if (original == NULL || original->tp_base == NULL ||
@@ -3527,6 +3658,14 @@ method_decode_cfg(
         } while (opcode == EXTENDED_ARG);
 
         int deopt = _PyOpcode_Deopt[opcode];
+#ifdef Py_GIL_DISABLED
+        if (_PyInterpreterState_GET()->jit_multithreaded &&
+            (deopt == LOAD_GLOBAL || deopt == LOAD_ATTR ||
+             deopt == STORE_ATTR || deopt == CALL))
+        {
+            opcode = deopt;
+        }
+#endif
         int next = offset + 1 + _PyOpcode_Caches[deopt];
         if (next > code_size || count > UINT16_MAX || start > UINT16_MAX) {
             PyMem_Free(block_start);
@@ -4002,7 +4141,7 @@ method_inline_small_cfg(
         goto error;
     }
 
-    _Py_CODEUNIT *bytecode = _PyCode_CODE(code);
+    _Py_CODEUNIT *bytecode = method_bytecode(code);
     int instruction_count = 0;
     int block_count = 0;
     int decoded = method_decode_cfg(
@@ -4379,6 +4518,15 @@ method_optimize_blocks(PyFunctionObject *func, _PyUOpInstruction *input,
                        const _PyMethodValue *states, int state_width,
                        _PyBloomFilter *dependencies)
 {
+#ifdef Py_GIL_DISABLED
+    /* Watchers run inside mutations, not around their entire transaction.
+     * A concurrent compilation could otherwise install a folded value after
+     * its invalidation callback but before the mutation has completed. Keep
+     * runtime guards/loads until dependency publication has that contract. */
+    if (_PyInterpreterState_GET()->jit_multithreaded) {
+        return length;
+    }
+#endif
     JitOptContext *ctx = NULL;
     _PyUOpInstruction *scratch = NULL;
     _PyUOpInstruction *optimized = NULL;
@@ -4644,7 +4792,12 @@ method_finish_uops(
             input[pc].opcode = _NOP;
         }
     }
-    method_fuse_enum_scans(input, input_length, predecessors);
+#ifdef Py_GIL_DISABLED
+    if (!_PyInterpreterState_GET()->jit_multithreaded)
+#endif
+    {
+        method_fuse_enum_scans(input, input_length, predecessors);
+    }
     /* Region lowering must never cross an incoming CFG edge. */
     for (int start = 0; start < input_length;) {
         int end = start + 1;
@@ -4656,7 +4809,12 @@ method_finish_uops(
         lower_bounded_int_regions(input + start, end - start);
         lower_len_regions(input + start, end - start);
         lower_tuple_comparisons(input + start, end - start);
-        fuse_list_pair_comparisons(input + start, end - start);
+#ifdef Py_GIL_DISABLED
+        if (!_PyInterpreterState_GET()->jit_multithreaded)
+#endif
+        {
+            fuse_list_pair_comparisons(input + start, end - start);
+        }
         fuse_list_length_predicates(input + start, end - start);
         lower_float_attribute_products(input + start, end - start);
         lower_int_attribute_comparisons(input + start, end - start);
@@ -4841,7 +4999,7 @@ method_bytecode_fingerprint(PyCodeObject *code)
      * previously unsupported region useful. This cache only suppresses an
      * optimization attempt, so collisions cannot affect Python semantics. */
     uint64_t hash = 14695981039346656037ULL;
-    _Py_CODEUNIT *bytecode = _PyCode_CODE(code);
+    _Py_CODEUNIT *bytecode = method_bytecode(code);
     for (int offset = 0; offset < Py_SIZE(code);) {
         _Py_CODEUNIT inst = bytecode[offset];
         if (inst.op.code == ENTER_EXECUTOR) {
@@ -4985,7 +5143,7 @@ method_compile(PyThreadState *tstate, _PyInterpreterFrame *frame,
     {
         return 0;
     }
-    _Py_CODEUNIT *bytecode = _PyCode_CODE(code);
+    _Py_CODEUNIT *bytecode = method_bytecode(code);
     int entry_offset = (int)(entry - bytecode);
     if (entry_offset < 0 || entry_offset >= Py_SIZE(code) ||
         entry_depth < 0 || entry_depth > code->co_stacksize)
@@ -5452,8 +5610,8 @@ error:
     return -1;
 }
 
-int
-_PyJit_CompileMethod(PyThreadState *tstate, _PyInterpreterFrame *frame,
+static int
+_PyJit_CompileMethod_stopped(PyThreadState *tstate, _PyInterpreterFrame *frame,
                      _Py_CODEUNIT *entry, int entry_depth)
 {
     if (!FT_ATOMIC_LOAD_UINT8(tstate->interp->jit) || tstate->interp->compiling)
@@ -5464,7 +5622,7 @@ _PyJit_CompileMethod(PyThreadState *tstate, _PyInterpreterFrame *frame,
      * transition at the header must run in Tier 1. The stack effect and
      * entry are determined from bytecode, never from a recorded path. */
     PyCodeObject *code = _PyFrame_GetCode(frame);
-    _Py_CODEUNIT *bytecode = _PyCode_CODE(code);
+    _Py_CODEUNIT *bytecode = method_bytecode(code);
     _Py_CODEUNIT *end = bytecode + Py_SIZE(code);
     uint32_t oparg = 0;
     _Py_CODEUNIT *jump = entry;
@@ -5501,6 +5659,24 @@ _PyJit_CompileMethod(PyThreadState *tstate, _PyInterpreterFrame *frame,
 
 regular_entry:
     return method_compile(tstate, frame, entry, entry_depth, false);
+}
+
+int
+_PyJit_CompileMethod(PyThreadState *tstate, _PyInterpreterFrame *frame,
+                     _Py_CODEUNIT *entry, int entry_depth)
+{
+#ifdef Py_GIL_DISABLED
+    if (!tstate->interp->config.tlbc_enabled ||
+        frame->tlbc_index != ((_PyThreadStateImpl *)tstate)->tlbc_index)
+    {
+        return 0;
+    }
+#endif
+    PyInterpreterState *interp = tstate->interp;
+    bool stopped = _PyJit_StopTheWorld(interp);
+    int result = _PyJit_CompileMethod_stopped(tstate, frame, entry, entry_depth);
+    _PyJit_StartTheWorld(interp, stopped);
+    return result;
 }
 
 /*****************************************
@@ -5572,6 +5748,7 @@ _Py_ExecutorInit(_PyExecutorObject *executor, const _PyBloomFilter *dependency_s
     executor->trivial_operand = 0;
     executor->vm_data.pending_deletion = 0;
     executor->vm_data.code = NULL;
+    executor->vm_data.bytecode = NULL;
     if (link_executor(executor, dependency_set) < 0) {
         return -1;
     }
@@ -5580,22 +5757,32 @@ _Py_ExecutorInit(_PyExecutorObject *executor, const _PyBloomFilter *dependency_s
 
 /* Detaches the executor from the code object (if any) that
  * holds a reference to it */
-void
-_Py_ExecutorDetach(_PyExecutorObject *executor)
+static void
+_Py_ExecutorDetach_stopped(_PyExecutorObject *executor)
 {
     PyCodeObject *code = executor->vm_data.code;
     if (code == NULL) {
         return;
     }
-    _Py_CODEUNIT *instruction = &_PyCode_CODE(code)[executor->vm_data.index];
+    _Py_CODEUNIT *instruction = &executor->vm_data.bytecode[executor->vm_data.index];
     assert(instruction->op.code == ENTER_EXECUTOR);
     int index = instruction->op.arg;
     assert(code->co_executors->executors[index] == executor);
     instruction->op.code = _PyOpcode_Deopt[executor->vm_data.opcode];
     instruction->op.arg = executor->vm_data.oparg;
     executor->vm_data.code = NULL;
+    executor->vm_data.bytecode = NULL;
     code->co_executors->executors[index] = NULL;
     Py_DECREF(executor);
+}
+
+void
+_Py_ExecutorDetach(_PyExecutorObject *executor)
+{
+    PyInterpreterState *interp = executor->vm_data.interp;
+    bool stopped = _PyJit_StopTheWorld(interp);
+    _Py_ExecutorDetach_stopped(executor);
+    _PyJit_StartTheWorld(interp, stopped);
 }
 
 /* Executors can be invalidated at any time,
@@ -5603,7 +5790,7 @@ _Py_ExecutorDetach(_PyExecutorObject *executor)
    Consequently it must not run arbitrary code,
    including Py_DECREF with a non-executor. */
 static void
-executor_invalidate(PyObject *op)
+executor_invalidate_stopped(PyObject *op)
 {
     _PyExecutorObject *executor = _PyExecutorObject_CAST(op);
     if (!FT_ATOMIC_LOAD_UINT8(executor->vm_data.valid)) {
@@ -5615,8 +5802,17 @@ executor_invalidate(PyObject *op)
     _PyObject_GC_UNTRACK(op);
 }
 
-void
-_PyJit_InvalidateStaleBinaryOp(_PyExecutorObject *executor,
+static void
+executor_invalidate(PyObject *op)
+{
+    PyInterpreterState *interp = _PyExecutorObject_CAST(op)->vm_data.interp;
+    bool stopped = _PyJit_StopTheWorld(interp);
+    executor_invalidate_stopped(op);
+    _PyJit_StartTheWorld(interp, stopped);
+}
+
+static void
+_PyJit_InvalidateStaleBinaryOp_stopped(_PyExecutorObject *executor,
                               _Py_CODEUNIT *instruction, uint64_t descr)
 {
     /* A guard miss alone is not evidence that the specialization is stale.
@@ -5633,8 +5829,18 @@ _PyJit_InvalidateStaleBinaryOp(_PyExecutorObject *executor,
     Py_DECREF(executor);
 }
 
-int
-_PyJit_RecordMethodFallback(_PyExecutorObject *executor)
+void
+_PyJit_InvalidateStaleBinaryOp(_PyExecutorObject *executor,
+                              _Py_CODEUNIT *instruction, uint64_t descr)
+{
+    PyInterpreterState *interp = executor->vm_data.interp;
+    bool stopped = _PyJit_StopTheWorld(interp);
+    _PyJit_InvalidateStaleBinaryOp_stopped(executor, instruction, descr);
+    _PyJit_StartTheWorld(interp, stopped);
+}
+
+static int
+_PyJit_RecordMethodFallback_stopped(_PyExecutorObject *executor)
 {
     if (!executor->vm_data.partial_method ||
         !FT_ATOMIC_LOAD_UINT8(executor->vm_data.valid) ||
@@ -5659,11 +5865,12 @@ _PyJit_RecordMethodFallback(_PyExecutorObject *executor)
     int offset = executor->vm_data.index;
     method_debug_rejection(code, "frequent fallback", executor->code_size);
     method_defer_retry(code, offset);
-    while (_Py_GetBaseCodeUnit(code, offset).op.code == EXTENDED_ARG) {
-        offset++;
+    _Py_CODEUNIT *entry = executor->vm_data.bytecode + offset;
+    int opcode = executor->vm_data.opcode;
+    while (opcode == EXTENDED_ARG) {
+        opcode = (++entry)->op.code;
     }
-    _Py_CODEUNIT *entry = _PyCode_CODE(code) + offset;
-    int opcode = _PyOpcode_Deopt[_Py_GetBaseCodeUnit(code, offset).op.code];
+    opcode = _PyOpcode_Deopt[opcode];
     if (opcode == RESUME || opcode == JUMP_BACKWARD) {
         entry[1].counter = restart_backoff_counter(entry[1].counter);
     }
@@ -5673,6 +5880,16 @@ _PyJit_RecordMethodFallback(_PyExecutorObject *executor)
     return 1;
 }
 
+int
+_PyJit_RecordMethodFallback(_PyExecutorObject *executor)
+{
+    PyInterpreterState *interp = executor->vm_data.interp;
+    bool stopped = _PyJit_StopTheWorld(interp);
+    int result = _PyJit_RecordMethodFallback_stopped(executor);
+    _PyJit_StartTheWorld(interp, stopped);
+    return result;
+}
+
 static int
 executor_clear(PyObject *op)
 {
@@ -5680,16 +5897,25 @@ executor_clear(PyObject *op)
     return 0;
 }
 
-void
-_Py_Executor_DependsOn(_PyExecutorObject *executor, void *obj)
+static void
+_Py_Executor_DependsOn_stopped(_PyExecutorObject *executor, void *obj)
 {
     assert(FT_ATOMIC_LOAD_UINT8(executor->vm_data.valid));
-    PyInterpreterState *interp = _PyInterpreterState_GET();
+    PyInterpreterState *interp = executor->vm_data.interp;
     int32_t idx = executor->vm_data.bloom_array_idx;
     assert(idx >= 0 && (size_t)idx < interp->executor_count);
     memset(interp->executor_global_misses, 0,
            sizeof(interp->executor_global_misses));
     _Py_BloomFilter_Add(&interp->executor_blooms[idx], obj);
+}
+
+void
+_Py_Executor_DependsOn(_PyExecutorObject *executor, void *obj)
+{
+    PyInterpreterState *interp = executor->vm_data.interp;
+    bool stopped = _PyJit_StopTheWorld(interp);
+    _Py_Executor_DependsOn_stopped(executor, obj);
+    _PyJit_StartTheWorld(interp, stopped);
 }
 
 /* Invalidate all executors that depend on `obj`
@@ -5741,14 +5967,22 @@ error:
     return false;
 }
 
-void
-_Py_Executors_InvalidateDependency(
+static void
+_Py_Executors_InvalidateDependency_stopped(
     PyInterpreterState *interp, void *obj, int is_invalidation)
 {
     _PyBloomFilter filter;
     _Py_BloomFilter_Init(&filter);
     _Py_BloomFilter_Add(&filter, obj);
     invalidate_dependencies(interp, &filter, NULL, is_invalidation);
+}
+
+void
+_Py_Executors_InvalidateDependency(PyInterpreterState *interp, void *obj, int is_invalidation)
+{
+    bool stopped = _PyJit_StopTheWorld(interp);
+    _Py_Executors_InvalidateDependency_stopped(interp, obj, is_invalidation);
+    _PyJit_StartTheWorld(interp, stopped);
 }
 
 bool
@@ -5792,8 +6026,8 @@ record_global_invalidation(PyInterpreterState *interp, void *dict,
 #endif
 }
 
-bool
-_Py_Executors_InvalidateGlobalDependency(
+static bool
+_Py_Executors_InvalidateGlobalDependency_stopped(
     PyInterpreterState *interp,
     void *dict,
     Py_hash_t key_hash,
@@ -5844,9 +6078,19 @@ _Py_Executors_InvalidateGlobalDependency(
     return false;
 }
 
+bool
+_Py_Executors_InvalidateGlobalDependency(PyInterpreterState *interp, void *dict,
+    Py_hash_t key_hash, bool value_only)
+{
+    bool stopped = _PyJit_StopTheWorld(interp);
+    bool result = _Py_Executors_InvalidateGlobalDependency_stopped(interp, dict, key_hash, value_only);
+    _PyJit_StartTheWorld(interp, stopped);
+    return result;
+}
+
 /* Invalidate all executors */
-void
-_Py_Executors_InvalidateAll(PyInterpreterState *interp, int is_invalidation)
+static void
+_Py_Executors_InvalidateAll_stopped(PyInterpreterState *interp, int is_invalidation)
 {
     while (interp->executor_count > 0) {
         /* Invalidate from the end to avoid repeated swap-remove shifts */
@@ -5854,7 +6098,7 @@ _Py_Executors_InvalidateAll(PyInterpreterState *interp, int is_invalidation)
         assert(FT_ATOMIC_LOAD_UINT8(executor->vm_data.valid));
         if (executor->vm_data.code) {
             // Clear the entire code object so its co_executors array be freed:
-            _PyCode_Clear_Executors(executor->vm_data.code);
+            _PyCode_Clear_Executors(interp, executor->vm_data.code);
         }
         else {
             executor_invalidate((PyObject *)executor);
@@ -5866,7 +6110,15 @@ _Py_Executors_InvalidateAll(PyInterpreterState *interp, int is_invalidation)
 }
 
 void
-_Py_Executors_InvalidateCold(PyInterpreterState *interp)
+_Py_Executors_InvalidateAll(PyInterpreterState *interp, int is_invalidation)
+{
+    bool stopped = _PyJit_StopTheWorld(interp);
+    _Py_Executors_InvalidateAll_stopped(interp, is_invalidation);
+    _PyJit_StartTheWorld(interp, stopped);
+}
+
+static void
+_Py_Executors_InvalidateCold_stopped(PyInterpreterState *interp)
 {
     /* Scan contiguous executor array */
     PyObject *invalidate = PyList_New(0);
@@ -5898,6 +6150,14 @@ error:
     Py_XDECREF(invalidate);
     // If we're truly out of memory, wiping out everything is a fine fallback
     _Py_Executors_InvalidateAll(interp, 0);
+}
+
+void
+_Py_Executors_InvalidateCold(PyInterpreterState *interp)
+{
+    bool stopped = _PyJit_StopTheWorld(interp);
+    _Py_Executors_InvalidateCold_stopped(interp);
+    _PyJit_StartTheWorld(interp, stopped);
 }
 
 
@@ -5949,7 +6209,7 @@ find_line_number(PyCodeObject *code, _PyExecutorObject *executor)
 {
     int code_len = (int)Py_SIZE(code);
     for (int i = 0; i < code_len; i++) {
-        _Py_CODEUNIT *instr = &_PyCode_CODE(code)[i];
+        _Py_CODEUNIT *instr = &executor->vm_data.bytecode[i];
         int opcode = instr->op.code;
         if (opcode == ENTER_EXECUTOR) {
             _PyExecutorObject *exec = code->co_executors->executors[instr->op.arg];
@@ -6080,8 +6340,8 @@ executor_to_gv(_PyExecutorObject *executor, FILE *out)
 }
 
 /* Write the graph of all live method executors in graphviz format. */
-int
-_PyDumpExecutors(FILE *out)
+static int
+_PyDumpExecutors_stopped(FILE *out)
 {
     fprintf(out, "digraph ideal {\n\n");
     fprintf(out, "    rankdir = \"LR\"\n\n");
@@ -6092,6 +6352,16 @@ _PyDumpExecutors(FILE *out)
     }
     fprintf(out, "}\n\n");
     return 0;
+}
+
+int
+_PyDumpExecutors(FILE *out)
+{
+    PyInterpreterState *interp = _PyInterpreterState_GET();
+    bool stopped = _PyJit_StopTheWorld(interp);
+    int result = _PyDumpExecutors_stopped(out);
+    _PyJit_StartTheWorld(interp, stopped);
+    return result;
 }
 
 #else

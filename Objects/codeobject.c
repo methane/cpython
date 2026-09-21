@@ -2174,9 +2174,13 @@ _PyCode_ReturnsOnlyNone(PyCodeObject *co)
 #ifdef _Py_TIER2
 
 static void
-clear_executors(PyCodeObject *co)
+clear_executors(PyInterpreterState *interp, PyCodeObject *co)
 {
-    assert(co->co_executors);
+    bool stopped = _PyJit_StopTheWorld(interp);
+    if (co->co_executors == NULL) {
+        _PyJit_StartTheWorld(interp, stopped);
+        return;
+    }
     for (int i = 0; i < co->co_executors->size; i++) {
         if (co->co_executors->executors[i]) {
             _Py_ExecutorDetach(co->co_executors->executors[i]);
@@ -2185,12 +2189,13 @@ clear_executors(PyCodeObject *co)
     }
     PyMem_Free(co->co_executors);
     co->co_executors = NULL;
+    _PyJit_StartTheWorld(interp, stopped);
 }
 
 void
-_PyCode_Clear_Executors(PyCodeObject *code)
+_PyCode_Clear_Executors(PyInterpreterState *interp, PyCodeObject *code)
 {
-    clear_executors(code);
+    clear_executors(interp, code);
 }
 
 #endif
@@ -2424,7 +2429,7 @@ code_dealloc(PyObject *self)
     }
 #ifdef _Py_TIER2
     if (co->co_executors != NULL) {
-        clear_executors(co);
+        clear_executors(_PyInterpreterState_GET(), co);
     }
 #endif
 
@@ -3528,6 +3533,20 @@ free_unused_bytecode(PyCodeObject *co, struct flag_set *indices_in_use)
     // in the code object.
     for (Py_ssize_t i = 1; i < tlbc->size; i++) {
         if (is_bytecode_unused(tlbc, i, indices_in_use)) {
+#ifdef _Py_TIER2
+            // Executors embed pointers into their owning thread's bytecode.
+            // The world is stopped; detach before reclaiming a retired copy.
+            if (co->co_executors != NULL) {
+                for (int j = 0; j < co->co_executors->size; j++) {
+                    _PyExecutorObject *executor = co->co_executors->executors[j];
+                    if (executor != NULL &&
+                        executor->vm_data.bytecode == tlbc->entries[i])
+                    {
+                        _Py_ExecutorDetach(executor);
+                    }
+                }
+            }
+#endif
             PyMem_Free(tlbc->entries[i]);
             tlbc->entries[i] = NULL;
         }

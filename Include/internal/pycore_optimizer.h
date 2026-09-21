@@ -89,6 +89,10 @@ uop_buffer_remaining_space(_PyJitUopBuffer *trace)
     return (int)(trace->end - trace->next);
 }
 
+// Return true only if this call acquired a new stop-the-world scope.
+extern bool _PyJit_StopTheWorld(PyInterpreterState *interp);
+extern void _PyJit_StartTheWorld(PyInterpreterState *interp, bool stopped);
+
 typedef struct _PyExecutorLinkListNode {
     struct _PyExecutorObject *next;
     struct _PyExecutorObject *previous;
@@ -105,6 +109,7 @@ typedef struct {
     int32_t bloom_array_idx;        // Index in interp->executor_blooms/executor_ptrs.
     PyInterpreterState *interp;  // Owner of the registry and deletion list.
     _PyExecutorLinkListNode links;  // Used by deletion list.
+    _Py_CODEUNIT *bytecode;  // Owning thread's bytecode; NULL when detached.
     PyCodeObject *code;  // Weak (NULL if no corresponding ENTER_EXECUTOR).
 } _PyVMData;
 

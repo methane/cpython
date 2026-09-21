@@ -2367,7 +2367,8 @@ class TestMethodFrontend(unittest.TestCase):
             self.fail("OSR suppressed ZeroDivisionError")
 
     @unittest.skipUnless(Py_GIL_DISABLED, 'requires a free-threaded build')
-    def test_suspended_jit_advances_cold_counters(self):
+    @isolation.runInSubprocess(timeout=SHORT_TIMEOUT)
+    def test_jit_compiles_with_second_thread(self):
         self.addCleanup(_testinternalcapi.clear_executor_deletion_list)
         namespace = {}
         exec('def leaf(value):\n    return value + 1\n', namespace)
@@ -2381,15 +2382,11 @@ class TestMethodFrontend(unittest.TestCase):
         thread.start()
         try:
             self.assertTrue(ready.wait(SHORT_TIMEOUT))
-            self.assertFalse(sys._jit.is_enabled())
+            self.assertTrue(sys._jit.is_enabled())
             count = 2 * TIER2_RESUME_THRESHOLD
             self.assertEqual(list(map(leaf, itertools.repeat(41, count))),
                              [42] * count)
-            self.assertIsNone(get_first_executor(leaf))
-            counter, = struct.unpack_from(
-                '=H', leaf.__code__._co_code_adaptive, 2)
-            # The low three bits retain the backoff, not the countdown.
-            self.assertEqual(counter >> 3, 0)
+            self.assertIsNotNone(get_first_executor(leaf))
         finally:
             release.set()
             thread.join(SHORT_TIMEOUT)
@@ -7645,10 +7642,10 @@ class TestExecutorInvalidation(unittest.TestCase):
         self.assertEqual(list(map(leaf, itertools.repeat(1, count))), [2] * count)
         self.assertIsNotNone(get_first_executor(leaf))
 
-    def test_subinterpreter_creation_invalidates_owner_executors(self):
+    def test_subinterpreter_creation_keeps_jit_enabled(self):
         # Bootstrapping a subinterpreter temporarily attaches another thread
         # state to the main interpreter while the subinterpreter is current.
-        # In free-threaded builds this invalidates the main interpreter's JIT.
+        # This must not disable the main interpreter's JIT.
         code = """
             import _opcode
             import sys
@@ -7673,7 +7670,8 @@ class TestExecutorInvalidation(unittest.TestCase):
         script_helper.assert_python_ok("-c", textwrap.dedent(code), PYTHON_JIT="1")
 
     @unittest.skipUnless(Py_GIL_DISABLED, "requires a free-threaded build")
-    def test_jit_disabled_and_reenabled_for_second_thread(self):
+    @isolation.runInSubprocess(timeout=SHORT_TIMEOUT)
+    def test_jit_remains_enabled_for_second_thread(self):
         def loop(n):
             total = 0
             for i in range(n):
@@ -7699,10 +7697,12 @@ class TestExecutorInvalidation(unittest.TestCase):
         thread.start()
         try:
             self.assertTrue(ready.wait(SHORT_TIMEOUT))
-            self.assertFalse(sys._jit.is_enabled())
+            self.assertTrue(sys._jit.is_enabled())
             self.assertFalse(executor.is_valid())
             self.assertEqual(loop(5), expected)
-            self.assertIsNone(get_first_executor(loop))
+            self.assertEqual(list(map(loop, [5] * TIER2_RESUME_THRESHOLD)),
+                             [expected] * TIER2_RESUME_THRESHOLD)
+            self.assertIsNotNone(get_first_executor(loop))
         finally:
             release.set()
             thread.join()

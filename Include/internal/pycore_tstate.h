@@ -85,6 +85,10 @@ typedef struct _PyThreadStateImpl {
 
     // Index to use to retrieve thread-local bytecode for this thread
     int32_t tlbc_index;
+#ifdef _Py_TIER2
+    // Protect a zero-refcount executor while deallocation acquires STW.
+    PyObject *jit_deallocating_executor;
+#endif
 
     // When >1, code objects do not immortalize their non-string constants.
     int suppress_co_const_immortalization;
