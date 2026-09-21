@@ -166,6 +166,52 @@ class UTF8StorageTests(unittest.TestCase):
                                  "in position 2: reason")
                 self.assertEqual(_testcapi.unicode_storage(value), before)
 
+    def test_utf8_surrogate_encoding_without_fsr(self):
+        for text in ('é日😀', 'é\ud800\udcffz', '\udc80\udcff\ud800',
+                     '\ud800' * 100, '😀\ud800日\udcff'):
+            for errors in ('strict', 'replace', 'ignore', 'surrogatepass',
+                           'surrogateescape', 'backslashreplace', 'xmlcharrefreplace'):
+                for cached in (False, True):
+                    with self.subTest(text=ascii(text), errors=errors, cached=cached):
+                        value = self.make_string(text)
+                        if cached:
+                            _testcapi.unicode_materialize_fsr(value)
+                        before = _testcapi.unicode_storage(value)
+                        try:
+                            expected = Str(text).encode('utf-8', errors)
+                        except UnicodeEncodeError as exc:
+                            with self.assertRaises(UnicodeEncodeError) as caught:
+                                value.encode('utf-8', errors)
+                            self.assertEqual((caught.exception.start, caught.exception.end),
+                                             (exc.start, exc.end))
+                        else:
+                            self.assertEqual(value.encode('utf-8', errors), expected)
+                        self.assertEqual(_testcapi.unicode_storage(value), before)
+            if any(0xd800 <= ord(ch) <= 0xdfff for ch in text):
+                value = self.make_string(text)
+                before = _testcapi.unicode_storage(value)
+                with self.assertRaises(UnicodeEncodeError):
+                    _testcapi.unicode_asutf8(value, 0)
+                self.assertEqual(_testcapi.unicode_storage(value), before)
+
+    def test_utf8_surrogate_encoding_rewind(self):
+        import codecs
+
+        for replacement in ('x', b'x'):
+            for materialize in (False, True):
+                value = self.make_string('é\ud800\udcff😀z')
+                calls = []
+                def handler(exc):
+                    calls.append((exc.start, exc.end))
+                    if materialize:
+                        _testcapi.unicode_materialize_fsr(value)
+                    return replacement, 0 if len(calls) == 1 else exc.end
+                codecs.register_error('test_utf8_surrogate_rewind', handler)
+                self.assertEqual(value.encode('utf-8', 'test_utf8_surrogate_rewind'),
+                                 'éxéx😀z'.encode())
+                self.assertEqual(calls, [(1, 3), (1, 3)])
+                self.assertEqual(_testcapi.unicode_storage(value)[3], materialize)
+
     def test_utf16_utf32_encode_without_fsr(self):
         for encoding in ('utf-16', 'utf-16-le', 'utf-16-be',
                          'utf-32', 'utf-32-le', 'utf-32-be'):

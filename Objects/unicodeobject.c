@@ -5836,6 +5836,202 @@ _Py_EncodeUTF8Ex(const wchar_t *text, char **str, size_t *error_pos,
 }
 
 
+/* Encode through the existing representation without materializing an FSR. */
+static PyBytesWriter *
+unicode_encode_utf8_writer(PyObject *unicode,
+                        _Py_error_handler error_handler,
+                        const char *errors,
+                        char **end)
+{
+    PyObject *error_handler_obj = NULL;
+    PyObject *exc = NULL;
+    PyObject *rep = NULL;
+    unicode_scan reader;
+    unicode_scan_init(&reader, unicode);
+    Py_ssize_t size = PyUnicode_GET_LENGTH(unicode);
+    const Py_ssize_t max_char_size = reader.kind == PyUnicode_1BYTE_KIND ? 2 :
+                                    reader.kind == PyUnicode_2BYTE_KIND ? 3 : 4;
+
+    assert(size >= 0);
+    if (size > PY_SSIZE_T_MAX / max_char_size) {
+        /* integer overflow */
+        PyErr_NoMemory();
+        *end = NULL;
+        return NULL;
+    }
+
+    PyBytesWriter *writer = PyBytesWriter_Create(size * max_char_size);
+    if (writer == NULL) {
+        *end = NULL;
+        return NULL;
+    }
+    /* next free byte in output buffer */
+    char *p = PyBytesWriter_GetData(writer);
+
+    Py_ssize_t i;                /* index into data of next input character */
+    for (i = 0; i < size;) {
+        unicode_scan replacement = reader;
+        Py_UCS4 ch = unicode_scan_next(&reader, i++);
+        if (!Py_UNICODE_IS_SURROGATE(ch)) {
+            p = (char *)_PyUnicode_WriteUTF8Char((unsigned char *)p, ch);
+        }
+        else {
+            Py_ssize_t startpos, endpos, newpos;
+            Py_ssize_t k;
+            if (error_handler == _Py_ERROR_UNKNOWN) {
+                error_handler = _Py_GetErrorHandler(errors);
+            }
+
+            startpos = i-1;
+            endpos = startpos+1;
+
+            while (endpos < size) {
+                unicode_scan next = reader;
+                if (!Py_UNICODE_IS_SURROGATE(unicode_scan_next(&next, endpos))) {
+                    break;
+                }
+                reader = next;
+                endpos++;
+            }
+
+            /* Only overallocate the buffer if it's not the last write */
+            writer->overallocate = (endpos < size);
+
+            switch (error_handler)
+            {
+            case _Py_ERROR_REPLACE:
+                memset(p, '?', endpos - startpos);
+                p += (endpos - startpos);
+                _Py_FALLTHROUGH;
+            case _Py_ERROR_IGNORE:
+                i += (endpos - startpos - 1);
+                break;
+
+            case _Py_ERROR_SURROGATEPASS:
+                for (k=startpos; k<endpos; k++) {
+                    ch = unicode_scan_next(&replacement, k);
+                    *p++ = (char)(0xe0 | (ch >> 12));
+                    *p++ = (char)(0x80 | ((ch >> 6) & 0x3f));
+                    *p++ = (char)(0x80 | (ch & 0x3f));
+                }
+                i += (endpos - startpos - 1);
+                break;
+
+            case _Py_ERROR_BACKSLASHREPLACE:
+                p = backslashreplace(writer, p,
+                                     replacement, startpos, endpos);
+                if (p == NULL)
+                    goto error;
+                i += (endpos - startpos - 1);
+                break;
+
+            case _Py_ERROR_XMLCHARREFREPLACE:
+                p = xmlcharrefreplace(writer, p,
+                                      replacement, startpos, endpos);
+                if (p == NULL)
+                    goto error;
+                i += (endpos - startpos - 1);
+                break;
+
+            case _Py_ERROR_SURROGATEESCAPE:
+                for (k=startpos; k<endpos; k++) {
+                    ch = unicode_scan_next(&replacement, k);
+                    if (!(0xDC80 <= ch && ch <= 0xDCFF))
+                        break;
+                    *p++ = (char)(ch & 0xff);
+                }
+                if (k >= endpos) {
+                    i += (endpos - startpos - 1);
+                    break;
+                }
+                startpos = k;
+                assert(startpos < endpos);
+                _Py_FALLTHROUGH;
+            default:
+                rep = unicode_encode_call_errorhandler(
+                      errors, &error_handler_obj, "utf-8", "surrogates not allowed",
+                      unicode, &exc, startpos, endpos, &newpos);
+                if (!rep)
+                    goto error;
+
+                if (newpos < startpos) {
+                    writer->overallocate = 1;
+                    p = PyBytesWriter_GrowAndUpdatePointer(writer,
+                                               max_char_size * (startpos - newpos),
+                                               p);
+                    if (p == NULL) {
+                        goto error;
+                    }
+                }
+                else {
+                    /* Only overallocate the buffer if it's not the last write */
+                    writer->overallocate = (newpos < size);
+
+                    /* subtract preallocated bytes */
+                    Py_ssize_t prealloc = max_char_size * (newpos - startpos);
+                    p = PyBytesWriter_GrowAndUpdatePointer(writer, -prealloc, p);
+                    if (p == NULL) {
+                        goto error;
+                    }
+                }
+
+                const char *rep_str;
+                Py_ssize_t rep_len;
+                if (PyBytes_Check(rep)) {
+                    rep_str = PyBytes_AS_STRING(rep);
+                    rep_len = PyBytes_GET_SIZE(rep);
+                }
+                else {
+                    /* rep is unicode */
+                    if (!PyUnicode_IS_ASCII(rep)) {
+                        raise_encode_exception(&exc, "utf-8", unicode,
+                                               startpos, endpos,
+                                               "surrogates not allowed");
+                        goto error;
+                    }
+
+                    rep_str = _PyUnicode_GetPrimaryUTF8(rep, NULL);
+                    rep_len = PyUnicode_GET_LENGTH(rep);
+                }
+
+                p = PyBytesWriter_GrowAndUpdatePointer(writer, rep_len, p);
+                if (p == NULL) {
+                    goto error;
+                }
+                memcpy(p, rep_str, rep_len);
+                p += rep_len;
+                Py_CLEAR(rep);
+
+                i = newpos;
+            }
+
+            if (i != endpos && reader.data == NULL) {
+                if (unicode_scan_seek(&reader, unicode, i) < 0) {
+                    goto error;
+                }
+            }
+
+            /* If overallocation was disabled, ensure that it was the last
+               write. Otherwise, we missed an optimization */
+            assert(writer->overallocate || i == size);
+        }
+    }
+
+    Py_XDECREF(error_handler_obj);
+    Py_XDECREF(exc);
+    *end = p;
+    return writer;
+
+ error:
+    PyBytesWriter_Discard(writer);
+    Py_XDECREF(rep);
+    Py_XDECREF(error_handler_obj);
+    Py_XDECREF(exc);
+    *end = NULL;
+    return NULL;
+}
+
+
 /* Primary internal function which creates utf8 encoded bytes objects.
 
    Allocation strategy:  if the string is short, convert into a stack buffer
@@ -5865,34 +6061,9 @@ unicode_encode_utf8(PyObject *unicode, _Py_error_handler error_handler,
         return PyBytes_FromStringAndSize(PyUnicode_UTF8(unicode),
                                          PyUnicode_UTF8_LENGTH(unicode));
 
-    int kind = PyUnicode_KIND(unicode);
-    const void *data = PyUnicode_DATA(unicode);
-    if (data == NULL) {
-        return NULL;
-    }
-    Py_ssize_t size = PyUnicode_GET_LENGTH(unicode);
-
-    PyBytesWriter *writer;
     char *end;
-
-    switch (kind) {
-    default:
-        Py_UNREACHABLE();
-    case PyUnicode_1BYTE_KIND:
-        /* the string cannot be ASCII, or PyUnicode_UTF8() would be set */
-        assert(!PyUnicode_IS_ASCII(unicode));
-        writer = ucs1lib_utf8_encoder(unicode, data, size,
-                                      error_handler, errors, &end);
-        break;
-    case PyUnicode_2BYTE_KIND:
-        writer = ucs2lib_utf8_encoder(unicode, data, size,
-                                      error_handler, errors, &end);
-        break;
-    case PyUnicode_4BYTE_KIND:
-        writer = ucs4lib_utf8_encoder(unicode, data, size,
-                                      error_handler, errors, &end);
-        break;
-    }
+    PyBytesWriter *writer = unicode_encode_utf8_writer(unicode, error_handler,
+                                                      errors, &end);
 
     if (writer == NULL) {
         PyBytesWriter_Discard(writer);
@@ -5904,37 +6075,13 @@ unicode_encode_utf8(PyObject *unicode, _Py_error_handler error_handler,
 static int
 unicode_fill_utf8(PyObject *unicode)
 {
-    if (unicode != NULL && PyUnicode_Check(unicode) &&
-        PyUnicode_DATA(unicode) == NULL) {
-        return -1;
-    }
     _Py_CRITICAL_SECTION_ASSERT_OBJECT_LOCKED(unicode);
-    /* the string cannot be ASCII, or PyUnicode_UTF8() would be set */
+    /* ASCII strings always have a UTF-8 representation. */
     assert(!PyUnicode_IS_ASCII(unicode));
 
-    int kind = PyUnicode_KIND(unicode);
-    const void *data = PyUnicode_DATA(unicode);
-    Py_ssize_t size = PyUnicode_GET_LENGTH(unicode);
-
-    PyBytesWriter *writer;
     char *end;
-
-    switch (kind) {
-    default:
-        Py_UNREACHABLE();
-    case PyUnicode_1BYTE_KIND:
-        writer = ucs1lib_utf8_encoder(unicode, data, size,
-                                      _Py_ERROR_STRICT, NULL, &end);
-        break;
-    case PyUnicode_2BYTE_KIND:
-        writer = ucs2lib_utf8_encoder(unicode, data, size,
-                                      _Py_ERROR_STRICT, NULL, &end);
-        break;
-    case PyUnicode_4BYTE_KIND:
-        writer = ucs4lib_utf8_encoder(unicode, data, size,
-                                      _Py_ERROR_STRICT, NULL, &end);
-        break;
-    }
+    PyBytesWriter *writer = unicode_encode_utf8_writer(unicode, _Py_ERROR_STRICT,
+                                                      NULL, &end);
     if (writer == NULL) {
         return -1;
     }
