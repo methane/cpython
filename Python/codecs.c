@@ -934,7 +934,7 @@ PyObject *PyCodec_XMLCharRefReplaceErrors(PyObject *exc)
         return NULL;
     }
     cursor = saved;
-    Py_UCS1 *outp = PyUnicode_1BYTE_DATA(res);
+    Py_UCS1 *outp = (Py_UCS1 *)_PyUnicode_GetPrimaryUTF8(res, NULL);
     /* generate replacement */
     for (Py_ssize_t i = start; i < end; ++i) {
         (void)_PyUnicode_Next(obj, &cursor, &ch);
@@ -1005,7 +1005,7 @@ _PyCodec_BackslashReplaceUnicodeEncodeError(PyObject *exc)
         return NULL;
     }
     cursor = saved;
-    Py_UCS1 *outp = PyUnicode_1BYTE_DATA(res);
+    Py_UCS1 *outp = (Py_UCS1 *)_PyUnicode_GetPrimaryUTF8(res, NULL);
     for (Py_ssize_t i = start; i < end; ++i) {
         (void)_PyUnicode_Next(obj, &cursor, &ch);
         Py_UCS4 c = ch;
@@ -1035,7 +1035,7 @@ _PyCodec_BackslashReplaceUnicodeDecodeError(PyObject *exc)
         return NULL;
     }
 
-    Py_UCS1 *outp = PyUnicode_1BYTE_DATA(res);
+    Py_UCS1 *outp = (Py_UCS1 *)_PyUnicode_GetPrimaryUTF8(res, NULL);
     const unsigned char *p = (const unsigned char *)PyBytes_AS_STRING(obj);
     for (Py_ssize_t i = start; i < end; i++, outp += 4) {
         const unsigned char ch = p[i];
@@ -1132,7 +1132,7 @@ PyObject *PyCodec_NameReplaceErrors(PyObject *exc)
     }
 
     cursor = saved;
-    Py_UCS1 *outp = PyUnicode_1BYTE_DATA(res);
+    Py_UCS1 *outp = (Py_UCS1 *)_PyUnicode_GetPrimaryUTF8(res, NULL);
     for (Py_ssize_t i = start; i < imax; ++i) {
         (void)_PyUnicode_Next(obj, &cursor, &c);
         if (ucnhash_capi->getname(c, buffer, sizeof(buffer), 1)) {
@@ -1148,7 +1148,7 @@ PyObject *PyCodec_NameReplaceErrors(PyObject *exc)
         }
     }
 
-    assert(outp == PyUnicode_1BYTE_DATA(res) + ressize);
+    assert(outp == (Py_UCS1 *)_PyUnicode_GetPrimaryUTF8(res, NULL) + ressize);
     assert(_PyUnicode_CheckConsistency(res, 1));
     PyObject *restuple = Py_BuildValue("(Nn)", res, imax);
     Py_DECREF(obj);

@@ -242,7 +242,7 @@ _PyUnicode_FormatLong(PyObject *val, int alt, int prec, int type)
         PyErr_BadInternalCall();
         return NULL;
     }
-    buf = PyUnicode_DATA(result);
+    buf = (char *)_PyUnicode_GetPrimaryUTF8(result, NULL);
     llen = PyUnicode_GET_LENGTH(result);
     if (llen > INT_MAX) {
         Py_DECREF(result);
@@ -302,7 +302,7 @@ _PyUnicode_FormatLong(PyObject *val, int alt, int prec, int type)
                 buf[i] -= 'a'-'A';
     }
     if (!PyUnicode_Check(result)
-        || buf != PyUnicode_DATA(result)) {
+        || buf != _PyUnicode_GetPrimaryUTF8(result, NULL)) {
         PyObject *unicode;
         unicode = _PyUnicode_FromASCII(buf, len);
         Py_SETREF(result, unicode);

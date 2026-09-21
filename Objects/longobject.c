@@ -2261,7 +2261,7 @@ long_to_decimal_string_internal(PyObject *aa,
 
     char *start = bytes_writer ? *bytes_str
         : writer ? _PyUnicodeWriter_UTF8Data(writer)
-        : (char *)PyUnicode_1BYTE_DATA(str);
+        : (char *)_PyUnicode_GetPrimaryUTF8(str, NULL);
     char *p = start + strlen;
     WRITE_DIGITS(p);
     assert(p == start);
@@ -2412,7 +2412,7 @@ long_format_binary(PyObject *aa, int base, int alternate,
 
     char *start = bytes_writer ? *bytes_str
         : writer ? _PyUnicodeWriter_UTF8Data(writer)
-        : (char *)PyUnicode_1BYTE_DATA(v);
+        : (char *)_PyUnicode_GetPrimaryUTF8(v, NULL);
     char *p = start + sz;
     WRITE_DIGITS(p);
     assert(p == start);

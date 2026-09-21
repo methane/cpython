@@ -1481,7 +1481,7 @@ _Py_bytes_repr(const char *data, Py_ssize_t length, int smartquotes,
     if (v == NULL) {
         return NULL;
     }
-    p = PyUnicode_1BYTE_DATA(v);
+    p = (Py_UCS1 *)_PyUnicode_GetPrimaryUTF8(v, NULL);
 
     *p++ = 'b', *p++ = quote;
     for (i = 0; i < length; i++) {

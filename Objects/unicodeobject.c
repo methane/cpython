@@ -1288,7 +1288,7 @@ unicode_new_utf8(Py_ssize_t size, Py_ssize_t length, Py_UCS4 maxchar,
     PyObject *result;
     if (maxchar < 128) {
         result = PyUnicode_New(length, 127);
-        *data = result == NULL ? NULL : (char *)PyUnicode_1BYTE_DATA(result);
+        *data = result == NULL ? NULL : (char *)_PyUnicode_GetPrimaryUTF8(result, NULL);
     }
     else {
         PyCompactUnicodeObject *u = unicode_alloc_utf8(
@@ -2695,7 +2695,7 @@ _PyUnicode_FromASCII(const char *buffer, Py_ssize_t size)
     unicode = PyUnicode_New(size, 127);
     if (!unicode)
         return NULL;
-    memcpy(PyUnicode_1BYTE_DATA(unicode), s, size);
+    memcpy((char *)_PyUnicode_GetPrimaryUTF8(unicode, NULL), s, size);
     assert(_PyUnicode_CheckConsistency(unicode, 1));
     return unicode;
 }
@@ -5663,7 +5663,7 @@ unicode_decode_utf8(const char *s, Py_ssize_t size,
         if (u == NULL) {
             return NULL;
         }
-        memcpy(PyUnicode_1BYTE_DATA(u), s, size);
+        memcpy((char *)_PyUnicode_GetPrimaryUTF8(u, NULL), s, size);
         if (consumed) {
             *consumed = size;
         }
@@ -7765,7 +7765,7 @@ PyUnicode_DecodeASCII(const char *s,
     if (u == NULL) {
         return NULL;
     }
-    Py_ssize_t outpos = ascii_decode(s, e, PyUnicode_1BYTE_DATA(u));
+    Py_ssize_t outpos = ascii_decode(s, e, (Py_UCS1 *)_PyUnicode_GetPrimaryUTF8(u, NULL));
     if (outpos == size) {
         return u;
     }
@@ -7775,7 +7775,7 @@ PyUnicode_DecodeASCII(const char *s,
     writer.min_length = size;
     writer.overallocate = 1;
     int append_result = _PyUnicodeWriter_WriteASCIIString(&writer,
-        (const char *)PyUnicode_1BYTE_DATA(u), outpos);
+        _PyUnicode_GetPrimaryUTF8(u, NULL), outpos);
     Py_DECREF(u);
     if (append_result < 0)
         goto onError;
@@ -10165,7 +10165,7 @@ _PyUnicode_TransformDecimalAndSpaceToASCII(PyObject *unicode)
         return NULL;
     }
 
-    Py_UCS1 *out = PyUnicode_1BYTE_DATA(result);
+    Py_UCS1 *out = (Py_UCS1 *)_PyUnicode_GetPrimaryUTF8(result, NULL);
     unicode_scan reader;
     unicode_scan_init(&reader, unicode);
     Py_ssize_t i;
@@ -10543,7 +10543,7 @@ ascii_upper_or_lower(PyObject *self, int lower)
     res = PyUnicode_New(len, 127);
     if (res == NULL)
         return NULL;
-    resdata = PyUnicode_DATA(res);
+    resdata = (char *)_PyUnicode_GetPrimaryUTF8(res, NULL);
     if (lower)
         _Py_bytes_lower(resdata, data, len);
     else
@@ -11027,7 +11027,7 @@ unicode_replace_utf8(PyObject *self, PyObject *old, PyObject *new,
         if (result == NULL) {
             return NULL;
         }
-        Py_UCS1 *data = PyUnicode_1BYTE_DATA(result);
+        Py_UCS1 *data = (Py_UCS1 *)_PyUnicode_GetPrimaryUTF8(result, NULL);
         memcpy(data, src, size);
         ucs1lib_replace_1char_inplace(data + (match - src), data + size,
                                      (unsigned char)old_data[0],
@@ -11803,7 +11803,7 @@ unicode_expandtabs_utf8(PyObject *self, const char *data, Py_ssize_t size,
         if (result == NULL) {
             return NULL;
         }
-        buffer = PyUnicode_DATA(result);
+        buffer = (char *)_PyUnicode_GetPrimaryUTF8(result, NULL);
     }
     else {
         PyCompactUnicodeObject *u = unicode_alloc_utf8(

@@ -184,7 +184,7 @@ _Py_strhex_impl(const char* argbuf, Py_ssize_t arglen,
         if (!retval) {
             return NULL;
         }
-        retbuf = PyUnicode_1BYTE_DATA(retval);
+        retbuf = (Py_UCS1 *)_PyUnicode_GetPrimaryUTF8(retval, NULL);
     }
 
     /* Hexlify */
