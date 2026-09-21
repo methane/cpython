@@ -431,7 +431,7 @@ STRINGLIB(utf8_encoder)(PyObject *unicode,
                         goto error;
                     }
 
-                    rep_str = PyUnicode_DATA(rep);
+                    rep_str = _PyUnicode_GetPrimaryUTF8(rep, NULL);
                     rep_len = PyUnicode_GET_LENGTH(rep);
                 }
 

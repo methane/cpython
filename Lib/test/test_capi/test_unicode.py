@@ -35,6 +35,24 @@ class UTF8StorageTests(unittest.TestCase):
     def make_string(self, text):
         return text.encode('utf-8', 'surrogatepass').decode('utf-8', 'surrogatepass')
 
+    def test_charmap_replacement_without_fsr(self):
+        import codecs
+
+        mapping = {ord('é'): 1, ord('😀'): 2, ord('\udcff'): 3}
+        for factory in (self.make_string, Str):
+            replacement = factory('é😀\udcff')
+            before = _testcapi.unicode_storage(replacement)
+            def handler(exc):
+                return replacement, exc.end
+            codecs.register_error('test_utf8_charmap_replacement', handler)
+            self.assertEqual(codecs.charmap_encode(
+                '日', 'test_utf8_charmap_replacement', mapping),
+                (b'\x01\x02\x03', 1))
+            self.assertEqual(_testcapi.unicode_storage(replacement), before)
+            with self.assertRaises(UnicodeEncodeError):
+                codecs.charmap_encode('日', 'test_utf8_charmap_replacement', {})
+            self.assertEqual(_testcapi.unicode_storage(replacement), before)
+
     def test_copy_utf8_storage(self):
         for text in ('é日😀', 'a\0b', 'x\ud800\udcff'):
             for factory in (self.make_string, Str):

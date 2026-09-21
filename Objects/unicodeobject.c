@@ -6415,11 +6415,9 @@ _PyUnicode_EncodeUTF32(PyObject *str,
         }
         else {
             /* rep is unicode */
-            assert(PyUnicode_KIND(rep) == PyUnicode_1BYTE_KIND);
-            const Py_UCS1 *rep_data = PyUnicode_1BYTE_DATA(rep);
-            if (rep_data == NULL) {
-                goto error;
-            }
+            assert(PyUnicode_IS_ASCII(rep));
+            const Py_UCS1 *rep_data =
+                (const Py_UCS1 *)_PyUnicode_GetPrimaryUTF8(rep, NULL);
             ucs1lib_utf32_encode(rep_data, repsize,
                                  &out, native_ordering);
         }
@@ -6765,11 +6763,9 @@ _PyUnicode_EncodeUTF16(PyObject *str,
             out += repsize / 2;
         } else {
             /* rep is unicode */
-            assert(PyUnicode_KIND(rep) == PyUnicode_1BYTE_KIND);
-            const Py_UCS1 *rep_data = PyUnicode_1BYTE_DATA(rep);
-            if (rep_data == NULL) {
-                goto error;
-            }
+            assert(PyUnicode_IS_ASCII(rep));
+            const Py_UCS1 *rep_data =
+                (const Py_UCS1 *)_PyUnicode_GetPrimaryUTF8(rep, NULL);
             ucs1lib_utf16_encode(rep_data, repsize,
                                  &out, native_ordering);
         }
@@ -8419,10 +8415,6 @@ encode_code_page_errors(UINT code_page, PyBytesWriter **writer,
             out += outsize;
         }
         else {
-            Py_ssize_t i;
-            int kind;
-            const void *data;
-
             outsize = PyUnicode_GET_LENGTH(rep);
             morebytes += outsize;
             if (morebytes > 0) {
@@ -8432,14 +8424,9 @@ encode_code_page_errors(UINT code_page, PyBytesWriter **writer,
                     goto error;
                 }
             }
-            kind = PyUnicode_KIND(rep);
-            data = PyUnicode_DATA(rep);
-            if (data == NULL) {
-                Py_DECREF(rep);
-                goto error;
-            }
-            for (i=0; i < outsize; i++) {
-                Py_UCS4 ch = PyUnicode_READ(kind, data, i);
+            Py_ssize_t cursor = 0;
+            Py_UCS4 ch;
+            while (_PyUnicode_Next(rep, &cursor, &ch)) {
                 if (ch > 127) {
                     raise_encode_exception(&exc,
                         encoding, unicode,
@@ -9468,9 +9455,6 @@ charmap_encoding_error(
     PyObject *repunicode = NULL; /* initialize to prevent gcc warning */
     Py_ssize_t size, repsize;
     Py_ssize_t newpos;
-    int kind;
-    const void *data;
-    Py_ssize_t index;
     /* startpos for collecting unencodable chars */
     Py_ssize_t collstartpos = *inpos;
     Py_ssize_t collendpos = *inpos+1;
@@ -9577,15 +9561,9 @@ charmap_encoding_error(
             break;
         }
         /* generate replacement  */
-        repsize = PyUnicode_GET_LENGTH(repunicode);
-        data = PyUnicode_DATA(repunicode);
-        if (data == NULL) {
-            Py_DECREF(repunicode);
-            return -1;
-        }
-        kind = PyUnicode_KIND(repunicode);
-        for (index = 0; index < repsize; index++) {
-            Py_UCS4 repch = PyUnicode_READ(kind, data, index);
+        Py_ssize_t cursor = 0;
+        Py_UCS4 repch;
+        while (_PyUnicode_Next(repunicode, &cursor, &repch)) {
             x = charmapencode_output(repch, mapping, writer, respos);
             if (x==enc_EXCEPTION) {
                 Py_DECREF(repunicode);
