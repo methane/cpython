@@ -3810,6 +3810,18 @@ class TestDateTime(TestDate):
             self.theclass.fromisoformat("2009-04-32T24:00:00")
         self.assertIn(f"day 32 must be in range 1..30 for month 4 in year 2009", str(msg.exception))
 
+    def test_fromisoformat_surrogate_separators(self):
+        expected = self.theclass(2025, 1, 6, 12, 34, 56)
+        for date in ('20250106', '2025-01-06', '2025W02', '2025-W02',
+                     '2025W021', '2025-W02-1'):
+            for sep in ('\ud800', '\udbff', '\udc00', '\udcff', '\udfff'):
+                source = date + sep + '12:34:56'
+                with self.subTest(source=source):
+                    self.assertEqual(self.theclass.fromisoformat(source), expected)
+                    invalid = source + '\ud800'
+                    with self.assertRaisesRegex(ValueError, re.escape(repr(invalid))):
+                        self.theclass.fromisoformat(invalid)
+
     def test_fromisoformat_fails_surrogate(self):
         # Test that when fromisoformat() fails with a surrogate character as
         # the separator, the error message contains the original string

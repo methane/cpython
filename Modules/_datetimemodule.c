@@ -14,7 +14,7 @@
 #include "pycore_object.h"        // _PyObject_Init()
 #include "pycore_time.h"          // _PyTime_ObjectToTime_t()
 #include "pycore_tuple.h"         // _PyTuple_FromPair
-#include "pycore_unicodeobject.h" // _PyUnicode_Copy()
+#include "pycore_unicodeobject.h" // _PyUnicodeWriter
 #include "pycore_initconfig.h"    // _PyStatus_OK()
 #include "pycore_pyatomic_ft_wrappers.h"
 
@@ -5952,17 +5952,16 @@ _sanitize_isoformat_str(PyObject *dtstr)
         return Py_NewRef(dtstr);
     }
 
-    PyObject *str_out = _PyUnicode_Copy(dtstr);
-    if (str_out == NULL) {
+    _PyUnicodeWriter writer;
+    _PyUnicodeWriter_Init(&writer);
+    if (_PyUnicodeWriter_WriteSubstring(&writer, dtstr, 0, surrogate_separator) < 0 ||
+        _PyUnicodeWriter_WriteChar(&writer, 'T') < 0 ||
+        _PyUnicodeWriter_WriteSubstring(&writer, dtstr, surrogate_separator + 1, len) < 0)
+    {
+        _PyUnicodeWriter_Dealloc(&writer);
         return NULL;
     }
-
-    if (PyUnicode_WriteChar(str_out, surrogate_separator, (Py_UCS4)'T')) {
-        Py_DECREF(str_out);
-        return NULL;
-    }
-
-    return str_out;
+    return _PyUnicodeWriter_Finish(&writer);
 }
 
 
