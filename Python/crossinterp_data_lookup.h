@@ -475,8 +475,7 @@ _PyBytes_GetXIDataWrapped(PyThreadState *tstate,
 // str
 
 struct _shared_str_data {
-    int kind;
-    const void *buffer;
+    const char *buffer;
     Py_ssize_t len;
 };
 
@@ -484,26 +483,32 @@ static PyObject *
 _new_str_object(_PyXIData_t *xidata)
 {
     struct _shared_str_data *shared = (struct _shared_str_data *)(xidata->data);
-    return PyUnicode_FromKindAndData(shared->kind, shared->buffer, shared->len);
+    return PyUnicode_DecodeUTF8(shared->buffer, shared->len, "surrogatepass");
 }
 
 static int
 _str_shared(PyThreadState *tstate, PyObject *obj, _PyXIData_t *xidata)
 {
-    if (PyUnicode_DATA(obj) == NULL) {
+    _PyUnicodeUTF8View view;
+    if (_PyUnicodeUTF8View_Init(&view, obj) < 0) {
         return -1;
     }
+    // Keep either the borrowed string or the temporary encoding alive.
+    PyObject *owner = view.owner != NULL ? view.owner : obj;
     if (_PyXIData_InitWithSize(
-            xidata, tstate->interp, sizeof(struct _shared_str_data), obj,
+            xidata, tstate->interp, sizeof(struct _shared_str_data), owner,
             _new_str_object
             ) < 0)
     {
+        _PyUnicodeUTF8View_Clear(&view);
+        _PyXIData_Clear(tstate->interp, xidata);
+        PyErr_NoMemory();
         return -1;
     }
     struct _shared_str_data *shared = (struct _shared_str_data *)xidata->data;
-    shared->kind = PyUnicode_KIND(obj);
-    shared->buffer = PyUnicode_DATA(obj);
-    shared->len = PyUnicode_GET_LENGTH(obj);
+    shared->buffer = view.data;
+    shared->len = view.size;
+    _PyUnicodeUTF8View_Clear(&view);
     return 0;
 }
 
