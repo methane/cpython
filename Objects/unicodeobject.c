@@ -6089,21 +6089,50 @@ PyUnicode_DecodeUTF32Stateful(const char *s,
     return NULL;
 }
 
+/* Return the index of the first surrogate, or len. The UTF-8 reader
+   consumes the surrogate before returning to the error handler. */
+static Py_ssize_t
+unicode_encode_utf32(unicode_scan *reader, Py_ssize_t pos, Py_ssize_t len,
+                     uint32_t **out, int native_ordering)
+{
+    if (reader->data != NULL) {
+        switch (reader->kind) {
+        case PyUnicode_1BYTE_KIND:
+            return pos + ucs1lib_utf32_encode(
+                (const Py_UCS1 *)reader->data + pos, len - pos, out, native_ordering);
+        case PyUnicode_2BYTE_KIND:
+            return pos + ucs2lib_utf32_encode(
+                (const Py_UCS2 *)reader->data + pos, len - pos, out, native_ordering);
+        case PyUnicode_4BYTE_KIND:
+            return pos + ucs4lib_utf32_encode(
+                (const Py_UCS4 *)reader->data + pos, len - pos, out, native_ordering);
+        default:
+            Py_UNREACHABLE();
+        }
+    }
+    while (pos < len) {
+        Py_UCS4 ch = unicode_scan_next(reader, pos);
+        if (Py_UNICODE_IS_SURROGATE(ch)) {
+            break;
+        }
+        *(*out)++ = native_ordering ? ch : _Py_bswap32(ch);
+        pos++;
+    }
+    return pos;
+}
+
 PyObject *
 _PyUnicode_EncodeUTF32(PyObject *str,
                        const char *errors,
                        int byteorder)
 {
-    if (str != NULL && PyUnicode_Check(str) &&
-        PyUnicode_DATA(str) == NULL) {
-        return NULL;
-    }
     if (!PyUnicode_Check(str)) {
         PyErr_BadArgument();
         return NULL;
     }
     int kind = PyUnicode_KIND(str);
-    const void *data = PyUnicode_DATA(str);
+    unicode_scan reader;
+    unicode_scan_init(&reader, str);
     Py_ssize_t len = PyUnicode_GET_LENGTH(str);
 
     if (len > PY_SSIZE_T_MAX / 4 - (byteorder == 0))
@@ -6131,8 +6160,7 @@ _PyUnicode_EncodeUTF32(PyObject *str,
             *out++ = 0xFEFF;
         }
         if (len > 0) {
-            ucs1lib_utf32_encode((const Py_UCS1 *)data, len,
-                                 &out, native_ordering);
+            (void)unicode_encode_utf32(&reader, 0, len, &out, native_ordering);
         }
         return v;
     }
@@ -6165,15 +6193,7 @@ _PyUnicode_EncodeUTF32(PyObject *str,
     PyObject *rep = NULL;
 
     for (Py_ssize_t pos = 0; pos < len; ) {
-        if (kind == PyUnicode_2BYTE_KIND) {
-            pos += ucs2lib_utf32_encode((const Py_UCS2 *)data + pos, len - pos,
-                                        &out, native_ordering);
-        }
-        else {
-            assert(kind == PyUnicode_4BYTE_KIND);
-            pos += ucs4lib_utf32_encode((const Py_UCS4 *)data + pos, len - pos,
-                                        &out, native_ordering);
-        }
+        pos = unicode_encode_utf32(&reader, pos, len, &out, native_ordering);
         if (pos == len)
             break;
 
@@ -6207,6 +6227,11 @@ _PyUnicode_EncodeUTF32(PyObject *str,
             }
         }
         moreunits += pos - newpos;
+        if (newpos != pos + 1 && reader.data == NULL) {
+            if (unicode_scan_seek(&reader, str, newpos) < 0) {
+                goto error;
+            }
+        }
         pos = newpos;
 
         /* four bytes are reserved for each surrogate */

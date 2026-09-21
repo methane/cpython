@@ -150,6 +150,48 @@ class UTF8StorageTests(unittest.TestCase):
             self.assertEqual(calls, [(1, 3), (1, 3)])
             self.assertEqual(_testcapi.unicode_storage(value)[3], materialize)
 
+    def test_utf32_encode_without_fsr(self):
+        for encoding in ('utf-32', 'utf-32-le', 'utf-32-be'):
+            for text in ('éÿ', 'a日😀b', '\ud800日\udcff', '😀\0日'):
+                for errors in ('strict', 'ignore', 'replace', 'backslashreplace',
+                               'surrogatepass'):
+                    for cached in (False, True):
+                        with self.subTest(encoding=encoding, text=ascii(text),
+                                          errors=errors, cached=cached):
+                            value = self.make_string(text)
+                            if cached:
+                                _testcapi.unicode_materialize_fsr(value)
+                            before = _testcapi.unicode_storage(value)
+                            try:
+                                expected = Str(text).encode(encoding, errors)
+                            except UnicodeEncodeError:
+                                with self.assertRaises(UnicodeEncodeError):
+                                    value.encode(encoding, errors)
+                            else:
+                                self.assertEqual(value.encode(encoding, errors), expected)
+                            self.assertEqual(_testcapi.unicode_storage(value), before)
+
+    def test_utf32_encode_utf8_rewind(self):
+        import codecs
+
+        for encoding in ('utf-32', 'utf-32-le', 'utf-32-be'):
+            raw_encoding = encoding if encoding != 'utf-32' else (
+                'utf-32-le' if sys.byteorder == 'little' else 'utf-32-be')
+            for replacement in ('x', 'x'.encode(raw_encoding)):
+                for materialize in (False, True):
+                    value = self.make_string('日\ud800😀\udcff')
+                    calls = []
+                    def handler(exc):
+                        calls.append((exc.start, exc.end))
+                        if materialize:
+                            _testcapi.unicode_materialize_fsr(value)
+                        return replacement, 0 if len(calls) == 1 else exc.end
+                    codecs.register_error('test_utf8_utf32_rewind', handler)
+                    self.assertEqual(value.encode(encoding, 'test_utf8_utf32_rewind'),
+                                     '日x日x😀x'.encode(encoding))
+                    self.assertEqual(calls, [(1, 2), (1, 2), (3, 4)])
+                    self.assertEqual(_testcapi.unicode_storage(value)[3], materialize)
+
     def test_charmap_encode_without_fsr(self):
         import codecs
 
