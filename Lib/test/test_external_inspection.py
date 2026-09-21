@@ -637,6 +637,11 @@ class TestGetStackTrace(RemoteInspectionTestBase):
                 sock.sendall(b"ready")
                 time.sleep(10_000)
 
+            # Keep the function name compact and the filename noncompact.
+            class Str(str): pass
+            {func_name}.__code__ = {func_name}.__code__.replace(
+                co_filename=Str(__file__))
+            assert isinstance({func_name}.__code__.co_filename, Str)
             {func_name}()
             """
         )

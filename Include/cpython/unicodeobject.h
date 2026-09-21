@@ -97,7 +97,7 @@ struct _PyUnicodeObject_state {
     unsigned int ascii:1;
     /* The object is statically allocated. */
     unsigned int statically_allocated:1;
-    /* The compact payload is UTF-8 (with surrogatepass), not a FSR. */
+    /* The primary payload is UTF-8 (with surrogatepass), not a FSR. */
     unsigned int utf8_storage:1;
     unsigned int has_surrogates:1;
     /* A private compact UTF-8 allocation promoted for C API writes. */
@@ -119,8 +119,11 @@ typedef struct {
          by UTF-8 and FSR readers;
        - compact UTF-8: PyCompactUnicodeObject followed by utf8_length + 1
          bytes, with an optional separately allocated FSR;
+       - noncompact UTF-8: PyUnicodeObject with a separate UTF-8 buffer,
+         used by Unicode subclasses, with an optional FSR cache (ASCII
+         shares its one-byte buffer with FSR readers);
        - writable FSR: PyUnicodeObject with a separate data buffer, used by
-         PyUnicode_New() for non-ASCII strings and by Unicode subclasses.
+         PyUnicode_New() for non-ASCII strings.
 
        UTF-8 payloads encode surrogates individually as three bytes. They
        must not be exposed as strict UTF-8 when has_surrogates is set.
@@ -133,13 +136,14 @@ typedef struct {
    _Py_ALIGNED_DEF(4, struct _PyUnicodeObject_state) state;
 } PyASCIIObject;
 
-/* Completed non-ASCII strings store their UTF-8 payload immediately after
-   this structure. fsr is published only after conversion is complete. */
+/* Compact non-ASCII strings store their UTF-8 payload immediately after
+   this structure. Noncompact strings use data.any instead.
+   fsr is published only after conversion is complete. */
 typedef struct {
     PyASCIIObject _base;
     Py_ssize_t utf8_length;     /* Number of bytes in utf8, excluding the
                                  * terminating \0. */
-    char *utf8;                 /* Strict UTF-8 cache for FSR storage. */
+    char *utf8;                 /* UTF-8 cache, possibly with surrogatepass. */
     void *fsr;                 /* Lazily allocated FSR for UTF-8 storage. */
     Py_ssize_t inline_length;  /* Original compact payload allocation size. */
 } PyCompactUnicodeObject;
@@ -152,7 +156,7 @@ typedef struct {
         Py_UCS1 *latin1;
         Py_UCS2 *ucs2;
         Py_UCS4 *ucs4;
-    } data;                     /* Canonical, smallest-form Unicode buffer */
+    } data;                     /* Primary UTF-8 or writable FSR buffer */
 } PyUnicodeObject;
 
 

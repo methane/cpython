@@ -160,6 +160,22 @@ class PrettyPrintTests(DebuggerTests):
         # UTF-16: 0xD834 0xDD21
         check_repr(chr(0x1D121))
 
+    def test_unicode_subclass(self):
+        for text in ('ascii', 'a\0\u2028\U00100000\udcff'):
+            for cached in (False, True):
+                source = ("import _testcapi\nclass Str(str): pass\n"
+                          f"value = Str({ascii(text)})\n")
+                if cached:
+                    source += "_testcapi.unicode_materialize_fsr(value)\n"
+                source += "id(value)"
+                output = self.get_stack_trace(
+                    source, breakpoint=BREAKPOINT_FN,
+                    cmds_after_breakpoint=[
+                        'python print("unicode:", repr(PyUnicodeObjectPtr('
+                        'gdb.parse_and_eval("(PyUnicodeObject *)v")).proxyval(set())))'
+                    ])
+                self.assertIn("unicode: " + repr(text), output)
+
     def test_tuples(self):
         'Verify the pretty-printing of tuples'
         self.assertGdbRepr(tuple(), '()')

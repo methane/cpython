@@ -92,7 +92,9 @@ read_py_str(
         }
         res = _Py_RemoteDebug_PagedReadRemoteMemory(
             &unwinder->handle,
-            address + unwinder->debug_offsets.unicode_object.compactunicodeobject_size,
+            state.compact
+                ? address + unwinder->debug_offsets.unicode_object.compactunicodeobject_size
+                : GET_MEMBER(uintptr_t, unicode_obj, offsetof(PyUnicodeObject, data.any)),
             nbytes, buffer);
         PyObject *result = NULL;
         if (res >= 0) {

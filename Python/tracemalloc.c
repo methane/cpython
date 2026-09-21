@@ -195,7 +195,7 @@ tracemalloc_encode_filename(PyObject *obj)
         size_t size = (size_t)u->utf8_length + 1;
         char *buffer = raw_malloc(size);
         if (buffer != NULL) {
-            memcpy(buffer, u + 1, size);
+            memcpy(buffer, _PyUnicode_GetPrimaryUTF8(obj, NULL), size);
         }
         return buffer;
     }

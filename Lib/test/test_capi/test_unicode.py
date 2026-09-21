@@ -35,6 +35,61 @@ class UTF8StorageTests(unittest.TestCase):
     def make_string(self, text):
         return text.encode('utf-8', 'surrogatepass').decode('utf-8', 'surrogatepass')
 
+    def test_subclass_primary_utf8(self):
+        for text in ('', 'ascii\0text', 'éÿ', '日é', '😀日',
+                     'x\ud800\udcff\0'):
+            for cached in (False, True):
+                source = self.make_string(text)
+                if cached:
+                    _testcapi.unicode_materialize_fsr(source)
+                before = _testcapi.unicode_storage(source)
+                value = Str(source)
+                self.assertEqual(_testcapi.unicode_storage(source), before)
+                encoded = text.encode('utf-8', 'surrogatepass')
+                surrogate = any(0xd800 <= ord(c) <= 0xdfff for c in text)
+                state = (int(not text.isascii()), 0, int(surrogate),
+                         int(text.isascii()), len(encoded))
+                self.assertEqual(_testcapi.unicode_storage(value), state)
+                self.assertEqual(value, text)
+                self.assertEqual(hash(value), hash(text))
+                self.assertEqual(list(value), list(text))
+                self.assertEqual(value.encode('utf-8', 'surrogatepass'), encoded)
+                if surrogate:
+                    with self.assertRaises(UnicodeEncodeError):
+                        _testcapi.unicode_asutf8(value, 0)
+                else:
+                    self.assertEqual(_testcapi.unicode_asutf8(value, len(encoded) + 1),
+                                     encoded + b'\0')
+                self.assertEqual(_testcapi.unicode_storage(value), state)
+                size = value.__sizeof__()
+                _testcapi.unicode_materialize_fsr(value)
+                self.assertEqual(_testcapi.unicode_storage(value)[3], 1)
+                kind = 1 if max(map(ord, text), default=0) < 256 else (
+                    2 if max(map(ord, text)) < 65536 else 4)
+                extra = 0 if text.isascii() else (len(text) + 1) * kind
+                self.assertEqual(value.__sizeof__(), size + extra)
+                self.assertEqual(value, text)
+                self.assertEqual(value.encode('utf-8', 'surrogatepass'), encoded)
+
+    def test_subclass_from_writable_fsr(self):
+        for ch in (ord('a'), ord('é'), ord('日'), ord('😀'), 0xd800):
+            source = _testcapi.unicode_new(3, ch)
+            value = Str(source)
+            self.assertEqual(value, chr(ch) * 3)
+            self.assertEqual(_testcapi.unicode_storage(value)[0], ch >= 128)
+            self.assertEqual(_testcapi.unicode_storage(value)[3], ch < 128)
+
+    @unittest.skipIf(_testlimitedcapi is None, 'need _testlimitedcapi')
+    def test_subclass_from_overestimated_fsr(self):
+        for text in ('a', 'é', '日', '\udcff'):
+            source, _ = _testlimitedcapi.unicode_writechar('😀', 0, ord(text))
+            value = Str(source)
+            self.assertEqual(value, text)
+            self.assertEqual(value.isascii(), text.isascii())
+            self.assertIn(value, text)
+            self.assertEqual(hash(value), hash(text))
+            self.assertEqual(_testcapi.unicode_storage(value)[2], text == '\udcff')
+
     def test_widechar_cursor_conversion(self):
         api = import_helper.import_module('_testlimitedcapi')
         width = _testcapi.SIZEOF_WCHAR_T
@@ -783,10 +838,20 @@ class UTF8StorageTests(unittest.TestCase):
                 before = _testcapi.unicode_storage(value)
                 data, borrowed = _testinternalcapi.unicode_utf8_view(value)
                 self.assertEqual(data, text.encode('utf-8', 'surrogatepass'))
-                self.assertEqual(borrowed, text.isascii() or factory != Str)
+                self.assertTrue(borrowed)
                 self.assertEqual(_testcapi.unicode_storage(value), before)
                 self.assertEqual(_testinternalcapi.unicode_utf8_view(value, True),
                                  (data, borrowed))
+
+    @unittest.skipIf(_testinternalcapi is None, 'need _testinternalcapi')
+    def test_utf8_view_writable_fsr(self):
+        for ch in (ord('é'), ord('日'), ord('😀'), 0xd800):
+            value = _testcapi.unicode_new(3, ch)
+            before = _testcapi.unicode_storage(value)
+            data, borrowed = _testinternalcapi.unicode_utf8_view(value)
+            self.assertEqual(data, (chr(ch) * 3).encode('utf-8', 'surrogatepass'))
+            self.assertFalse(borrowed)
+            self.assertEqual(_testcapi.unicode_storage(value), before)
 
     def test_codec_handlers_without_fsr(self):
         import codecs
@@ -1051,7 +1116,7 @@ class UTF8StorageTests(unittest.TestCase):
                     value, sub, replacement = map(self.make_string, (text, old, new))
                     operands = (value, sub, replacement)
                     before = [_testcapi.unicode_storage(s) for s in operands]
-                    # A str subclass exercises FSR-primary input conversion.
+                    # Also exercise noncompact UTF-8 input.
                     reference = Str(text).replace(old, new, limit)
                     result = value.replace(sub, replacement, limit)
                     self.assertEqual(result, reference)
@@ -1421,6 +1486,82 @@ class UTF8StorageTests(unittest.TestCase):
 
         threading_helper.run_concurrently(read, nthreads=8)
         self.assertEqual(value.__sizeof__() - before, 4 * (len(value) + 1))
+
+    @unittest.skipIf(_testinternalcapi is None, 'need _testinternalcapi')
+    def test_hash_caches_fsr_utf8(self):
+        for ch in (0xa1, 0x100, 0xd800, 0xdcff, 0x10000):
+            for pre_cached in (False, True):
+                if pre_cached and 0xd800 <= ch <= 0xdfff:
+                    continue
+                with self.subTest(ch=ch, pre_cached=pre_cached):
+                    value = _testcapi.unicode_new(3, ch)
+                    expected = chr(ch) * 3
+                    encoded = expected.encode('utf-8', 'surrogatepass')
+                    if pre_cached:
+                        _testcapi.unicode_asutf8(value, 0)
+                    before = value.__sizeof__()
+                    self.assertEqual(hash(value), hash(expected))
+                    size = value.__sizeof__()
+                    self.assertEqual(size - before,
+                                     0 if pre_cached else len(encoded) + 1)
+                    self.assertEqual(_testinternalcapi.unicode_utf8_view(value),
+                                     (encoded, True))
+                    self.assertEqual(hash(value), hash(expected))
+                    if 0xd800 <= ch <= 0xdfff:
+                        for _ in range(2):
+                            with self.assertRaises(UnicodeEncodeError):
+                                _testcapi.unicode_asutf8(value, 0)
+                            with self.assertRaises(UnicodeEncodeError):
+                                value.encode('utf-8')
+                        self.assertEqual(value.encode('utf-8', 'surrogatepass'),
+                                         encoded)
+                        self.assertEqual(value.encode('utf-8', 'ignore'), b'')
+                    else:
+                        self.assertEqual(_testcapi.unicode_asutf8(value, len(encoded) + 1),
+                                         encoded + b'\0')
+                    self.assertEqual(value.__sizeof__(), size)
+                    self.assertEqual(value, expected)
+
+    @unittest.skipIf(_testlimitedcapi is None or _testinternalcapi is None,
+                     'need C API test modules')
+    def test_hash_caches_promoted_fsr_utf8(self):
+        for ch in (ord('a'), ord('é'), 0xd800):
+            value, _ = _testlimitedcapi.unicode_writechar('😀', 0, ch)
+            expected = chr(ch)
+            encoded = expected.encode('utf-8', 'surrogatepass')
+            self.assertEqual(hash(value), hash(expected))
+            self.assertEqual(_testinternalcapi.unicode_utf8_view(value),
+                             (encoded, True))
+            if ch == 0xd800:
+                with self.assertRaises(UnicodeEncodeError):
+                    _testcapi.unicode_asutf8(value, 0)
+            else:
+                self.assertEqual(_testcapi.unicode_asutf8(value, len(encoded) + 1),
+                                 encoded + b'\0')
+
+    def test_hash_utf8_cache_allocation_failure(self):
+        from test.support.script_helper import assert_python_ok
+        assert_python_ok('-c', textwrap.dedent(r"""
+            import _testcapi
+            import _testinternalcapi
+            remove_hooks = _testcapi.remove_mem_hooks
+            for fail_at in (0, 1):
+                value = _testcapi.unicode_new(3, 0xd800)
+                before = value.__sizeof__()
+                failed = False
+                try:
+                    _testcapi.set_nomemory(fail_at, fail_at + 1)
+                    hash(value)
+                except MemoryError:
+                    failed = True
+                finally:
+                    remove_hooks()
+                assert failed
+                assert value.__sizeof__() == before
+                assert hash(value) == hash('\ud800' * 3)
+                assert _testinternalcapi.unicode_utf8_view(value) == (
+                    b'\xed\xa0\x80' * 3, True)
+        """))
 
     def test_legacy_fsr_equality(self):
         for ch in (0xa1, 0x100, 0xd800, 0x10000):
