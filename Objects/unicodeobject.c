@@ -10979,47 +10979,16 @@ error:
 PyObject *
 PyUnicode_Splitlines(PyObject *string, int keepends)
 {
-    if (PyUnicode_Check(string) && !unicode_has_fsr(string)) {
-        Py_ssize_t size;
-        const char *utf8 = _PyUnicode_GetPrimaryUTF8(string, &size);
-        if (utf8 != NULL) {
-            return unicode_splitlines_utf8(string, utf8, size, keepends);
-        }
-    }
-
-    if (string != NULL && PyUnicode_Check(string) &&
-        PyUnicode_DATA(string) == NULL) {
+    if (ensure_unicode(string) < 0) {
         return NULL;
     }
-    PyObject *list;
-
-    if (ensure_unicode(string) < 0)
+    _PyUnicodeUTF8View view;
+    if (_PyUnicodeUTF8View_Init(&view, string) < 0) {
         return NULL;
-
-    switch (PyUnicode_KIND(string)) {
-    case PyUnicode_1BYTE_KIND:
-        if (PyUnicode_IS_ASCII(string))
-            list = asciilib_splitlines(
-                string, PyUnicode_1BYTE_DATA(string),
-                PyUnicode_GET_LENGTH(string), keepends);
-        else
-            list = ucs1lib_splitlines(
-                string, PyUnicode_1BYTE_DATA(string),
-                PyUnicode_GET_LENGTH(string), keepends);
-        break;
-    case PyUnicode_2BYTE_KIND:
-        list = ucs2lib_splitlines(
-            string, PyUnicode_2BYTE_DATA(string),
-            PyUnicode_GET_LENGTH(string), keepends);
-        break;
-    case PyUnicode_4BYTE_KIND:
-        list = ucs4lib_splitlines(
-            string, PyUnicode_4BYTE_DATA(string),
-            PyUnicode_GET_LENGTH(string), keepends);
-        break;
-    default:
-        Py_UNREACHABLE();
     }
+    PyObject *list = unicode_splitlines_utf8(string, view.data, view.size,
+                                            keepends);
+    _PyUnicodeUTF8View_Clear(&view);
     return list;
 }
 

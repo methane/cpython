@@ -35,6 +35,26 @@ class UTF8StorageTests(unittest.TestCase):
     def make_string(self, text):
         return text.encode('utf-8', 'surrogatepass').decode('utf-8', 'surrogatepass')
 
+    def test_splitlines_utf8_views(self):
+        endings = ('\n', '\r', '\r\n', '\v', '\f', '\x1c', '\x1d',
+                   '\x1e', '\x85', '\u2028', '\u2029')
+        line = 'é日😀\udcff\0'
+        text = ''.join(line + ending for ending in endings) + line
+        for factory in (self.make_string, Str):
+            for materialize in (False, True):
+                value = factory(text)
+                if materialize:
+                    _testcapi.unicode_materialize_fsr(value)
+                before = _testcapi.unicode_storage(value)
+                self.assertEqual(value.splitlines(), [line] * (len(endings) + 1))
+                self.assertEqual(value.splitlines(True),
+                                 [line + end for end in endings] + [line])
+                self.assertEqual(_testcapi.unicode_storage(value), before)
+                for short_text, expected in (('', []), ('\r\n', ['']),
+                                             ('\r\r\n', ['', '']),
+                                             ('日', ['日'])):
+                    self.assertEqual(factory(short_text).splitlines(), expected)
+
     def test_zfill_utf8(self):
         cases = [('', 1, '0'), ('+', 3, '+00'), ('-', 1, '-'),
                  ('-12', 5, '-0012'), ('+é日😀', 7, '+000é日😀'),
