@@ -108,6 +108,14 @@ class TestLiterals(unittest.TestCase):
             with self.subTest(s=s):
                 self.assertEqual(eval(f"{s!r}"), s)
 
+    def test_eval_str_unicode_with_escapes(self):
+        for text in ('é日😀', 'éa日b😀', '\u0080\u07ff\u0800\uffff\U0010ffff'):
+            source = "'" + text + r"\n\ud800\x00" + text + "'"
+            expected = text + '\n\ud800\0' + text
+            with self.subTest(text=text):
+                self.assertEqual(eval(source), expected)
+                self.assertEqual(eval(source.encode('utf-8')), expected)
+
     def test_eval_str_incomplete(self):
         self.assertRaises(SyntaxError, eval, r""" '\x' """)
         self.assertRaises(SyntaxError, eval, r""" '\x0' """)
