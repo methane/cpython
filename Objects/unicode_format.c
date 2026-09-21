@@ -57,14 +57,31 @@ struct unicode_formatter_t {
     Py_ssize_t arglen, argidx;
     PyObject *dict;
 
-    int fmtkind;
+    _PyUnicodeUTF8View format;
+    Py_ssize_t bytepos;
+    /* Code point counts for diagnostics and writer length estimates. */
     Py_ssize_t fmtcnt, fmtpos;
-    const void *fmtdata;
-    PyObject *fmtstr;
 
     _PyUnicodeWriter writer;
 };
 
+
+/* Read one code point from the validated UTF-8/surrogatepass view. */
+static Py_UCS4
+unicode_format_read(struct unicode_formatter_t *ctx)
+{
+    const unsigned char *data = (const unsigned char *)ctx->format.data;
+    Py_UCS4 ch = data[ctx->bytepos++];
+    if (ch < 0x80) {
+        return ch;
+    }
+    int remaining = ch < 0xe0 ? 1 : ch < 0xf0 ? 2 : 3;
+    ch &= (1 << (6 - remaining)) - 1;
+    while (remaining--) {
+        ch = (ch << 6) | (data[ctx->bytepos++] & 0x3f);
+    }
+    return ch;
+}
 
 struct unicode_format_arg_t {
     Py_UCS4 ch;
@@ -464,9 +481,6 @@ static int
 unicode_format_arg_parse(struct unicode_formatter_t *ctx,
                          struct unicode_format_arg_t *arg)
 {
-#define FORMAT_READ(ctx) \
-        PyUnicode_READ((ctx)->fmtkind, (ctx)->fmtdata, (ctx)->fmtpos)
-
     PyObject *v;
 
     if (arg->ch == '(') {
@@ -482,26 +496,27 @@ unicode_format_arg_parse(struct unicode_formatter_t *ctx,
             return -1;
         }
         ++ctx->fmtpos;
+        ++ctx->bytepos;
         --ctx->fmtcnt;
-        keystart = ctx->fmtpos;
+        keystart = ctx->bytepos;
         /* Skip over balanced parentheses */
         while (pcount > 0 && --ctx->fmtcnt >= 0) {
-            arg->ch = FORMAT_READ(ctx);
+            arg->ch = unicode_format_read(ctx);
             if (arg->ch == ')')
                 --pcount;
             else if (arg->ch == '(')
                 ++pcount;
             ctx->fmtpos++;
         }
-        keylen = ctx->fmtpos - keystart - 1;
+        keylen = ctx->bytepos - keystart - 1;
         if (ctx->fmtcnt < 0 || pcount > 0) {
             PyErr_Format(PyExc_ValueError,
                          "stray %% or incomplete format key at position %zd",
                          arg->fmtstart);
             return -1;
         }
-        arg->key = PyUnicode_Substring(ctx->fmtstr,
-                                       keystart, keystart + keylen);
+        arg->key = PyUnicode_DecodeUTF8(ctx->format.data + keystart,
+                                        keylen, "surrogatepass");
         if (arg->key == NULL)
             return -1;
         if (ctx->args_owned) {
@@ -527,7 +542,7 @@ unicode_format_arg_parse(struct unicode_formatter_t *ctx,
 
     /* Parse flags. Example: "%+i" => flags=F_SIGN. */
     while (--ctx->fmtcnt >= 0) {
-        arg->ch = FORMAT_READ(ctx);
+        arg->ch = unicode_format_read(ctx);
         ctx->fmtpos++;
         switch (arg->ch) {
         case '-': arg->flags |= F_LJUST; continue;
@@ -568,14 +583,14 @@ unicode_format_arg_parse(struct unicode_formatter_t *ctx,
             arg->width = -arg->width;
         }
         if (--ctx->fmtcnt >= 0) {
-            arg->ch = FORMAT_READ(ctx);
+            arg->ch = unicode_format_read(ctx);
             ctx->fmtpos++;
         }
     }
     else if (arg->ch >= '0' && arg->ch <= '9') {
         arg->width = arg->ch - '0';
         while (--ctx->fmtcnt >= 0) {
-            arg->ch = FORMAT_READ(ctx);
+            arg->ch = unicode_format_read(ctx);
             ctx->fmtpos++;
             if (arg->ch < '0' || arg->ch > '9')
                 break;
@@ -596,7 +611,7 @@ unicode_format_arg_parse(struct unicode_formatter_t *ctx,
     if (arg->ch == '.') {
         arg->prec = 0;
         if (--ctx->fmtcnt >= 0) {
-            arg->ch = FORMAT_READ(ctx);
+            arg->ch = unicode_format_read(ctx);
             ctx->fmtpos++;
         }
         if (arg->ch == '*') {
@@ -625,14 +640,14 @@ unicode_format_arg_parse(struct unicode_formatter_t *ctx,
             if (arg->prec < 0)
                 arg->prec = 0;
             if (--ctx->fmtcnt >= 0) {
-                arg->ch = FORMAT_READ(ctx);
+                arg->ch = unicode_format_read(ctx);
                 ctx->fmtpos++;
             }
         }
         else if (arg->ch >= '0' && arg->ch <= '9') {
             arg->prec = arg->ch - '0';
             while (--ctx->fmtcnt >= 0) {
-                arg->ch = FORMAT_READ(ctx);
+                arg->ch = unicode_format_read(ctx);
                 ctx->fmtpos++;
                 if (arg->ch < '0' || arg->ch > '9')
                     break;
@@ -651,7 +666,7 @@ unicode_format_arg_parse(struct unicode_formatter_t *ctx,
     if (ctx->fmtcnt >= 0) {
         if (arg->ch == 'h' || arg->ch == 'l' || arg->ch == 'L') {
             if (--ctx->fmtcnt >= 0) {
-                arg->ch = FORMAT_READ(ctx);
+                arg->ch = unicode_format_read(ctx);
                 ctx->fmtpos++;
             }
         }
@@ -662,8 +677,6 @@ unicode_format_arg_parse(struct unicode_formatter_t *ctx,
         return -1;
     }
     return 0;
-
-#undef FORMAT_READ
 }
 
 
@@ -947,8 +960,9 @@ unicode_format_arg(struct unicode_formatter_t *ctx)
     PyObject *str;
     int ret;
 
-    arg.ch = PyUnicode_READ(ctx->fmtkind, ctx->fmtdata, ctx->fmtpos);
+    arg.ch = (unsigned char)ctx->format.data[ctx->bytepos];
     if (arg.ch == '%') {
+        ctx->bytepos++;
         ctx->fmtpos++;
         ctx->fmtcnt--;
         if (_PyUnicodeWriter_WriteCharInline(&ctx->writer, '%') < 0)
@@ -1009,13 +1023,11 @@ PyUnicode_Format(PyObject *format, PyObject *args)
     if (ensure_unicode(format) < 0)
         return NULL;
 
-    ctx.fmtstr = format;
-    ctx.fmtdata = PyUnicode_DATA(ctx.fmtstr);
-    if (ctx.fmtdata == NULL) {
+    if (_PyUnicodeUTF8View_Init(&ctx.format, format) < 0) {
         return NULL;
     }
-    ctx.fmtkind = PyUnicode_KIND(ctx.fmtstr);
-    ctx.fmtcnt = PyUnicode_GET_LENGTH(ctx.fmtstr);
+    ctx.bytepos = 0;
+    ctx.fmtcnt = PyUnicode_GET_LENGTH(format);
     ctx.fmtpos = 0;
 
     _PyUnicodeWriter_Init(&ctx.writer);
@@ -1038,25 +1050,31 @@ PyUnicode_Format(PyObject *format, PyObject *args)
     ctx.args = args;
 
     while (--ctx.fmtcnt >= 0) {
-        if (PyUnicode_READ(ctx.fmtkind, ctx.fmtdata, ctx.fmtpos) != '%') {
-            Py_ssize_t nonfmtpos;
-
-            nonfmtpos = ctx.fmtpos++;
-            while (ctx.fmtcnt >= 0 &&
-                   PyUnicode_READ(ctx.fmtkind, ctx.fmtdata, ctx.fmtpos) != '%') {
-                ctx.fmtpos++;
-                ctx.fmtcnt--;
-            }
-            if (ctx.fmtcnt < 0) {
-                ctx.fmtpos--;
+        if (ctx.format.data[ctx.bytepos] != '%') {
+            const char *start = ctx.format.data + ctx.bytepos;
+            const char *end = memchr(start, '%', ctx.format.size - ctx.bytepos);
+            if (end == NULL) {
+                end = ctx.format.data + ctx.format.size;
                 ctx.writer.overallocate = 0;
+                if (ctx.bytepos == 0) {
+                    if (_PyUnicodeWriter_WriteStr(&ctx.writer, format) < 0)
+                        goto onError;
+                    break;
+                }
             }
-
-            if (_PyUnicodeWriter_WriteSubstring(&ctx.writer, ctx.fmtstr,
-                                                nonfmtpos, ctx.fmtpos) < 0)
+            Py_ssize_t length = 0;
+            for (const char *p = start; p < end; p++) {
+                length += ((unsigned char)*p & 0xc0) != 0x80;
+            }
+            ctx.bytepos += end - start;
+            ctx.fmtpos += length;
+            ctx.fmtcnt -= length - 1;
+            if (_PyUnicodeWriter_WriteUTF8(&ctx.writer, start,
+                                           end - start, length) < 0)
                 goto onError;
         }
         else {
+            ctx.bytepos++;
             ctx.fmtpos++;
             if (unicode_format_arg(&ctx) == -1)
                 goto onError;
@@ -1075,9 +1093,11 @@ PyUnicode_Format(PyObject *format, PyObject *args)
     if (ctx.args_owned) {
         Py_DECREF(ctx.args);
     }
+    _PyUnicodeUTF8View_Clear(&ctx.format);
     return _PyUnicodeWriter_Finish(&ctx.writer);
 
   onError:
+    _PyUnicodeUTF8View_Clear(&ctx.format);
     _PyUnicodeWriter_Dealloc(&ctx.writer);
     if (ctx.args_owned) {
         Py_DECREF(ctx.args);

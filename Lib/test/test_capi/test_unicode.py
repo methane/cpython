@@ -540,6 +540,62 @@ class UTF8StorageTests(unittest.TestCase):
                     self.assertEqual(equal(value, changed), 0)
                 self.assertEqual(_testcapi.unicode_storage(value), before)
 
+    def test_percent_format_utf8(self):
+        def fsr(text):
+            return _testcapi.unicode_copycharacters(text, 0, text, 0, len(text))[0]
+
+        cases = (
+            ('日😀\udcff\0', (), '日😀\udcff\0'),
+            ('日%%😀%s\udcff', ('é日',), '日%😀é日\udcff'),
+            ('日%*.*s😀', (5, 2, 'é😀語'), '日   é😀😀'),
+            ('日%#08x/%+.2f/%c', (42, 1.5, 0xd800), '日0x00002a/+1.50/\ud800'),
+            ('日%(é(😀)\udcff\0)s末', {'é(😀)\udcff\0': '値'}, '日値末'),
+            ('%(日)s/%(😀)d', {'日': '語', '😀': 42}, '語/42'),
+        )
+        for factory in (self.make_string, Str, fsr):
+            for text, args, expected in cases:
+                for cached in (False, True):
+                    with self.subTest(factory=factory, text=ascii(text), cached=cached):
+                        value = factory(text)
+                        if cached:
+                            _testcapi.unicode_materialize_fsr(value)
+                        before = _testcapi.unicode_storage(value)
+                        self.assertEqual(value % args, expected)
+                        self.assertEqual(_testcapi.unicode_storage(value), before)
+
+    def test_percent_format_utf8_error_positions(self):
+        prefix = '日😀\udcff\0'
+        cases = (
+            ('%', (1,), 'stray % at position 4'),
+            ('%10', (1,), 'stray % at position 4'),
+            ('%(日', {}, 'stray % or incomplete format key at position 4'),
+            ('%q', (1,), 'unsupported format %q at position 4'),
+            ('%😀', (1,), "stray % at position 4 or unexpected format "
+                          "character '😀' (U+1F600) at position 5"),
+            ('%\udcff', (1,), 'stray % at position 4 or unexpected format '
+                              'character U+DCFF at position 5'),
+        )
+        def fsr(text):
+            return _testcapi.unicode_copycharacters(text, 0, text, 0, len(text))[0]
+
+        for factory in (self.make_string, Str, fsr):
+            for suffix, args, message in cases:
+                value = factory(prefix + suffix)
+                before = _testcapi.unicode_storage(value)
+                with self.assertRaises(ValueError) as cm:
+                    value % args
+                self.assertEqual(str(cm.exception), message)
+                self.assertEqual(_testcapi.unicode_storage(value), before)
+
+    def test_percent_format_utf8_cache_publication(self):
+        for factory in (self.make_string, Str):
+            value = factory('日%(😀)s\udcff%(語)s末')
+            class Mapping:
+                def __getitem__(self, key):
+                    _testcapi.unicode_materialize_fsr(value)
+                    return key
+            self.assertEqual(value % Mapping(), '日😀\udcff語末')
+
     def test_ast_percent_format_without_fsr(self):
         import ast
 
