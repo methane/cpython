@@ -2,6 +2,72 @@
 
 Updated: 2026-09-21
 
+## sympy_expand regression investigation (partial fix validated)
+
+Investigate the stable GIL/PGO/full-LTO ratio 1.1448 before changing code.
+Preserve mt6 and main binaries, exact SymPy 1.8 workload, hash seed 0, GC-off
+setting, and cache clearing between expansions. First compare fixed-work
+JIT-on/off main/current in reversed-order blocks, then obtain separate CPU
+profiles. Diagnostic counters include imports and warmup unless explicitly
+scoped; do not confuse them with pyperformance measurements. Develop without
+PGO/LTO, then verify any promising change in the original optimized profile.
+All experiments, including unsuccessful ones, go to
+`jit-artifacts/sympy-expand-20260922/`. The user subsequently requested a local
+checkpoint commit; no push or PR action is authorized.
+
+Initial diagnosis: fixed-work JIT-off current/main ratio 0.9956, JIT-on
+1.0827 (this driver differs in warmup from pyperformance, whose 1.1448 remains
+the primary regression). Perf found method_merge_block at 3.75% of candidate
+cycles, and debug logs show repeated Mul.flatten compilation/retirement.
+The retry fingerprint includes cache versions, so polymorphic cache churn can
+cancel its backoff. First focused experiment ignores inline-cache payloads
+while retaining opcode/operand changes and periodic retry. The reproducer
+recompiles immediately before the change and stays deferred afterward, while
+still observing replacement-method results immediately. Existing changed-code
+and periodic-retry checks pass. Balanced no-PGO/LTO pyperformance expand screen:
+after/before 0.9629 (six workers per side); this is a partial improvement, not
+proof the main regression is fixed. GIL debug validation passed 982 tests
+(9 skips); FT debug validation passed 990 tests (50 skips), including the
+concurrent method-JIT tests. On both builds, 12 expansions matched all 1,771
+integer coefficients from the multinomial formula. The new regression test
+fails on the original optimizer and passes after the change.
+
+Mapped native profiles confirm reduced compiler work; debug runs with identical
+five warmups/five expansions reduce Mul.flatten compilation/retirement counts
+from 35/32 to 12/9. Counts include startup. A second experiment allowed shared
+slot descriptors across different immediate bases: after/before 0.9994 in the
+development build. Reverted that neutral experiment; preserve its raw data.
+
+Final validation completed: fresh GIL/PGO/full-LTO build of the fingerprint
+change only completed, SHA-256
+`1e3b63eaa19d68d7c832dd59550399c284037a9680ecc94ff79640a51fac38ae`.
+Its 579 optimizer tests (5 skips) and exact expansion coefficient check passed;
+PGO training completed all 43 modules (10,632 tests, 265 skips).
+Compare frozen main, original mt6, and the candidate in three
+rotated blocks on all four SymPy results (three workers per block, five warmups
+and five values). Screen go, richards_super, genshi, sqlalchemy_declarative,
+deepcopy, and regex_compile in two reversed-order before/after blocks. Preserve
+all samples and failures, verify binary/source/dependency identities, and report
+worker-level uncertainty. This selected screen is not a full-suite rerun.
+
+All 33 final runs succeeded and post-run source/build/dependency/workload checks
+passed. sympy_expand after/before is 0.9592 [95% CI 0.9562, 0.9622], a 4.08%
+time reduction. Simultaneously measured before/main is 1.1327, after/main
+1.0865 [1.0697, 1.0994]; this is a partial fix, not complete elimination.
+All workers, including a slower main worker, are retained. Related results:
+genshi_xml improves 2.35%; go regresses 1.37%, deepcopy_reduce 0.81%.
+deepcopy_memo remains variable (1.0133 [0.9936, 1.0482]); no across-the-board
+regression bound is claimed. Small changes can include PGO/layout effects;
+there was no same-source PGO rebuild control in this investigation.
+
+Full diagnosis, source/build identity, tests, complete selected results, rejected
+experiment, and limitations: [benchmarks/sympy_expand_regression.md](benchmarks/sympy_expand_regression.md).
+Next work, if continuing optimization: polymorphic attribute access and exits
+from large partial methods; use an independent same-source PGO build and
+compile/exit counts to attribute the small Go slowdown before changing its
+optimization policy. Runtime/test changes and measurement reports are included
+in the user-requested checkpoint. Existing unrelated changes are preserved.
+
 ## Concurrent method JIT prototype (implemented, 2026-09-21)
 
 Implemented continued native method execution across free-threaded workers.
@@ -33,8 +99,9 @@ and added test are saved as `mt5-final-runtime.patch` and `mt5-test-method-jit.p
 - test_sys's 11 socket/remote-exec permission errors are sandbox limitations.
   Its tracing-timing is_active assertion also fails on frozen M56b; it is not
   introduced by this change. That unrelated legacy assertion remains unchanged.
-- No throughput/scaling or broad performance result is claimed for this
-  prototype. The historical M56b numbers below do not apply after these changes.
+- No free-threaded throughput/scaling result is claimed for this prototype.
+  The post-commit GIL comparison is recorded below; historical M56b numbers
+  describe the earlier implementation.
 
 Useful local validation commands (set `PYTHON_JIT=1`):
 
@@ -51,9 +118,64 @@ The user requested a local checkpoint commit and a new pyperformance run on
 2026-09-21. Commit the implementation and validation report first, then build
 release interpreters from that committed source. Reuse the verified main
 baselines and cached dependencies; retain balanced AB/BA measurements, C
-`_decimal`, and the short NetworkX timeout. Results are pending. No GitHub
+`_decimal`, and the short NetworkX timeout. The completed GIL-only results follow below. No GitHub
 posting, push, or PR changes are authorized. The pre-existing
 `benchmarks/go.py` mode change is excluded from the checkpoint.
+
+### Post-commit pyperformance rerun (completed, GIL only)
+
+Checkpoint: `e3fb6e8edee` (`Keep method JIT active across free-threaded workers`).
+Fresh candidate builds: `mt6-ft` (release O3, no PGO/LTO) and
+`mt6-gil-pgo-lto` (release O3, PGO/full LTO), under
+`jit-artifacts/regressions-20260919`. Both use committed sources and C `_decimal`.
+Verified frozen main `d95f29589e0` source and binary manifests for both profiles;
+reuse those baselines and cached, pinned dependency wheels. The local controller
+`mt6_four_way.py` selects the new candidates without changing the historical
+M56b runner. Eight harness tests passed. Planned output:
+`jit-artifacts/method-jit-mt6-gil`, 3 workers, 5 warmups/5 values, 2 reversed-order
+blocks; ordinary worker timeout 60 s, NetworkX worker/spec timeouts 15/60 s.
+Builds and correctness checks must finish before timed measurements begin.
+User clarification: measure only GIL/PGO/full-LTO main and current. FT release
+build and 586 correctness tests completed, but FT performance is excluded.
+GIL PGO training initially hit a sandbox socket PermissionError in
+`test_re.test_regression_gh94675`. Preserve its log and all generated profiles
+under `mt6-gil-pgo-lto-sandbox-training-profiles`; repeat the complete unchanged
+training outside the sandbox before the final build. These failed profiles
+are excluded from final PGO input. The unsandboxed complete training passed
+10,632 tests (265 skips, all 43 modules). Final GIL binary SHA-256:
+`806cb588e29a8ce1288b1b4df01964cfa806d2ac18f803031ddf07b46e78fb83`.
+Final GIL optimizer checks passed 578 tests (5 skips). Preparation uses only
+GIL main/current; FastAPI retains its cached dependency failure. The controller
+runs outside the sandbox and saves all raw measurements before analysis.
+Completed both balanced blocks outside the sandbox: 384 attempted runs,
+380 successes and four NetworkX k-core 15-second worker timeouts. FastAPI
+remains unavailable because pinned pydantic-core/PyO3 rejects Python 3.16.
+95 of 97 specifications completed on both sides in both blocks, producing
+122 comparable results. Source/build/dependency/workload identity verification
+passed after measurement. No samples were discarded or selectively retried.
+
+GIL PGO/full-LTO candidate/main geometric mean: **0.9772** (95% worker-bootstrap
+CI **0.9753–0.9791**), or 2.28% lower elapsed time. Block means: 0.9779 and
+0.9764. Sixty point estimates favor current; twenty exceed 1.03. The sole
+point estimate above 1.10 is sympy_expand, **1.1448**, consistent in both
+blocks. deepcopy_memo's interval still extends above 1.10. Large improvements
+include unpack_sequence (0.5497), spectral_norm (0.5823), scimark_lu (0.7531),
+hexiom (0.7720), Go (0.8600), and SQLAlchemy declarative (0.9328).
+
+Historical M56b was 0.9705. Pool-excluded sensitivity is 0.9795 previously
+versus 0.9800 now; process/thread pool variation explains much of the aggregate
+change. Different run dates and candidate builds do not isolate the causal
+effect of concurrent-JIT support. shortest_path's previous slow band did not
+recur (now 1.0017); this is not proof of a fix. FT performance was explicitly
+excluded by the user. Full Japanese report:
+[benchmarks/method_jit_mt6_results.md](benchmarks/method_jit_mt6_results.md).
+Raw data and 4,000-resample worker analysis remain under
+`jit-artifacts/method-jit-mt6-gil/gil-pgo-lto/`.
+
+Next work: investigate stable sympy_expand regression if requested; for the
+concurrent implementation, separately measure FT throughput/scaling and
+compilation pauses before restoring shared-object optimizations. The requested
+commit and GIL-only rerun are complete; no GitHub/push/PR actions performed.
 
 ### Implementation and validation history
 

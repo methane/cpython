@@ -6739,6 +6739,51 @@ def find(rows, key):
                     large(None)
 
     @disable_gc()
+    def test_partial_method_backoff_ignores_cache_versions(self):
+        self.addCleanup(_testinternalcapi.clear_executor_deletion_list)
+
+        class Receiver:
+            def read(self):
+                return 1
+
+        namespace = {}
+        source = ("def large(obj, value):\n"
+                  "    result = obj.read()\n"
+                  "    if value < 0:\n"
+                  "        return result\n"
+                  "    total = value\n")
+        source += "    total += value + 1\n" * 200
+        source += "    return total\n"
+        exec(source, namespace)
+        large = namespace["large"]
+        obj = Receiver()
+        count = TIER2_RESUME_THRESHOLD
+        for _ in range(count):
+            self.assertEqual(large(obj, 1), 401)
+        method = _opcode.get_executor(large.__code__, 0)
+        self.assertIn("_METHOD_DEOPT", get_opnames(method))
+        for _ in range(64):
+            self.assertEqual(large(obj, 1), 401)
+        self.assertFalse(method.is_valid())
+
+        def replacement(self):
+            return 2
+
+        Receiver.read = replacement
+        # Replacing the method changes cached type/function versions, but
+        # leaves the specialized opcodes unchanged. It must not cancel the
+        # retry delay. Tier 1 must still observe the new method immediately.
+        for _ in range(count * 2):
+            self.assertEqual(large(obj, -1), 2)
+        self.assertEqual(get_all_executors(large), [])
+        # Periodic retries can discover a useful path with the new callee.
+        for _ in range(count * 16):
+            self.assertEqual(large(obj, -1), 2)
+        replacement_method = _opcode.get_executor(large.__code__, 0)
+        self.assertTrue(replacement_method.is_valid())
+        self.assertEqual(large(obj, 1), 401)
+
+    @disable_gc()
     def test_partial_method_repeated_guard_exits_preserve_method(self):
         self.addCleanup(_testinternalcapi.clear_executor_deletion_list)
         namespace = {}

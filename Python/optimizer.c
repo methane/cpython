@@ -4994,10 +4994,13 @@ method_finish_uops(
 static uint64_t
 method_bytecode_fingerprint(PyCodeObject *code)
 {
-    /* Ignore execution counters and branch histories. Cache versions and
-     * specialized opcodes matter: a newly specialized operation may make a
-     * previously unsupported region useful. This cache only suppresses an
-     * optimization attempt, so collisions cannot affect Python semantics. */
+    /* Retry promptly when specialized opcodes change, but not when their
+     * inline-cache contents change. Polymorphic code can replace cached
+     * versions on every call without making an unsupported region useful.
+     * Letting those changes cancel backoff repeatedly recompiles methods
+     * which immediately fall back. Periodic retries still reconsider new
+     * callees or types with the same opcode. This fingerprint only defers
+     * optimization; it never validates executable code. */
     uint64_t hash = 14695981039346656037ULL;
     _Py_CODEUNIT *bytecode = method_bytecode(code);
     for (int offset = 0; offset < Py_SIZE(code);) {
@@ -5013,13 +5016,6 @@ method_bytecode_fingerprint(PyCodeObject *code)
         int opcode = _PyOpcode_Deopt[inst.op.code];
         int caches = _PyOpcode_Caches[opcode];
         hash = (hash ^ inst.cache) * 1099511628211ULL;
-        bool branch = opcode == POP_JUMP_IF_TRUE || opcode == POP_JUMP_IF_FALSE ||
-                      opcode == POP_JUMP_IF_NONE || opcode == POP_JUMP_IF_NOT_NONE;
-        if (!branch) {
-            for (int i = 2; i <= caches; i++) {
-                hash = (hash ^ bytecode[offset + i].cache) * 1099511628211ULL;
-            }
-        }
         offset += 1 + caches;
     }
     return hash;

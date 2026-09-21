@@ -91,3 +91,14 @@ steady-state throughput, and scaling with matched builds and workloads. A
 TSAN/ASAN campaign and broader architectures remain necessary; the current
 checks do not establish absence of races. The historical M56b performance
 numbers do not measure this implementation.
+
+## Post-commit GIL performance check
+
+Commit `e3fb6e8edee` was rebuilt with GIL, PGO, and full LTO and compared with
+frozen main `d95f29589e0`. Across 122 completed pyperformance results, the
+candidate/main elapsed-time geometric mean is 0.9772 (95% worker-bootstrap
+interval 0.9753–0.9791). The largest regression is sympy_expand at 1.1448;
+FastAPI dependencies and NetworkX k-core timeouts remain incomplete. All
+samples and failures are retained in the [measurement report](../benchmarks/method_jit_mt6_results.md).
+This compares the entire branches on fixed binaries. It does not measure
+free-threaded throughput, scaling, or the causal cost of concurrent JIT support.
