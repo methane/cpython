@@ -13505,9 +13505,6 @@ unicode_zfill_impl(PyObject *self, Py_ssize_t width)
 {
     Py_ssize_t fill;
     PyObject *u;
-    int kind;
-    const void *data;
-    Py_UCS4 chr;
 
     if (PyUnicode_GET_LENGTH(self) >= width)
         return unicode_result_unchanged(self);
@@ -13519,27 +13516,16 @@ unicode_zfill_impl(PyObject *self, Py_ssize_t width)
     if (u == NULL)
         return NULL;
 
-    if (_PyASCIIObject_CAST(u)->state.utf8_storage) {
-        char *utf8 = (char *)(_PyCompactUnicodeObject_CAST(u) + 1);
-        if (utf8[fill] == '+' || utf8[fill] == '-') {
-            utf8[0] = utf8[fill];
-            utf8[fill] = '0';
-        }
-        return u;
+    /* pad() returns ASCII or primary UTF-8 storage. Leading zeros and
+       a sign are single-byte characters, so fill is also a byte offset. */
+    char *utf8 = (char *)_PyUnicode_GetPrimaryUTF8(u, NULL);
+    assert(utf8 != NULL);
+    if (utf8[fill] == '+' || utf8[fill] == '-') {
+        utf8[0] = utf8[fill];
+        utf8[fill] = '0';
     }
-
-    kind = PyUnicode_KIND(u);
-    data = PyUnicode_DATA(u);
-    chr = PyUnicode_READ(kind, data, fill);
-
-    if (chr == '+' || chr == '-') {
-        /* move sign to beginning of string */
-        PyUnicode_WRITE(kind, data, 0, chr);
-        PyUnicode_WRITE(kind, data, fill, '0');
-    }
-
     assert(_PyUnicode_CheckConsistency(u, 1));
-    return u == NULL ? NULL : unicode_result(u);
+    return u;
 }
 
 /*[clinic input]

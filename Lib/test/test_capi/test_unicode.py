@@ -35,6 +35,25 @@ class UTF8StorageTests(unittest.TestCase):
     def make_string(self, text):
         return text.encode('utf-8', 'surrogatepass').decode('utf-8', 'surrogatepass')
 
+    def test_zfill_utf8(self):
+        cases = [('', 1, '0'), ('+', 3, '+00'), ('-', 1, '-'),
+                 ('-12', 5, '-0012'), ('+é日😀', 7, '+000é日😀'),
+                 ('-\udcff', 4, '-00\udcff'), ('\ud800', 3, '00\ud800'),
+                 ('\0+', 4, '00\0+'), ('−12', 5, '00−12')]
+        for text, width, expected in cases:
+            for factory in (self.make_string, Str):
+                for materialize in (False, True):
+                    with self.subTest(text=text, factory=factory,
+                                      materialize=materialize):
+                        value = factory(text)
+                        if materialize:
+                            _testcapi.unicode_materialize_fsr(value)
+                        before = _testcapi.unicode_storage(value)
+                        result = value.zfill(width)
+                        self.assertEqual(result, expected)
+                        self.assertIs(type(result), str)
+                        self.assertEqual(_testcapi.unicode_storage(value), before)
+
     def test_specialized_iteration_without_fsr(self):
         def collect(value, materialize):
             result = []
