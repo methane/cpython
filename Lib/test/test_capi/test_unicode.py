@@ -35,6 +35,37 @@ class UTF8StorageTests(unittest.TestCase):
     def make_string(self, text):
         return text.encode('utf-8', 'surrogatepass').decode('utf-8', 'surrogatepass')
 
+    def test_ucs1_encode_without_fsr(self):
+        import codecs
+
+        for encoding in ('ascii', 'latin1'):
+            for errors in ('replace', 'ignore', 'backslashreplace',
+                           'xmlcharrefreplace', 'surrogateescape'):
+                for text in ('éÿ', 'a日😀b日', 'a\udc80\udcffz', '\0日'):
+                    value = self.make_string(text)
+                    before = _testcapi.unicode_storage(value)
+                    try:
+                        expected = text.encode(encoding, errors)
+                    except UnicodeEncodeError:
+                        with self.assertRaises(UnicodeEncodeError):
+                            value.encode(encoding, errors)
+                    else:
+                        self.assertEqual(value.encode(encoding, errors), expected)
+                    self.assertEqual(_testcapi.unicode_storage(value), before)
+
+        calls = []
+        replacement = self.make_string('éÿ')
+        def handler(exc):
+            calls.append((exc.start, exc.end))
+            return replacement, 0 if len(calls) == 1 else exc.end
+        codecs.register_error('test_utf8_ucs1_rewind', handler)
+        value = self.make_string('a日b')
+        self.assertEqual(value.encode('latin1', 'test_utf8_ucs1_rewind'),
+                         b'a\xe9\xffa\xe9\xffb')
+        self.assertEqual(calls, [(1, 2), (1, 2)])
+        self.assertEqual(_testcapi.unicode_storage(value)[3], 0)
+        self.assertEqual(_testcapi.unicode_storage(replacement)[3], 0)
+
     def test_codec_replacement_utf8_output(self):
         import codecs
 

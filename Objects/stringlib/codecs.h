@@ -333,6 +333,11 @@ STRINGLIB(utf8_encoder)(PyObject *unicode,
             /* Only overallocate the buffer if it's not the last write */
             writer->overallocate = (endpos < size);
 
+            unicode_scan reader = {
+                .kind = STRINGLIB_SIZEOF_CHAR,
+                .data = data,
+                .utf8 = NULL,
+            };
             switch (error_handler)
             {
             case _Py_ERROR_REPLACE:
@@ -355,7 +360,7 @@ STRINGLIB(utf8_encoder)(PyObject *unicode,
 
             case _Py_ERROR_BACKSLASHREPLACE:
                 p = backslashreplace(writer, p,
-                                     unicode, startpos, endpos);
+                                     reader, startpos, endpos);
                 if (p == NULL)
                     goto error;
                 i += (endpos - startpos - 1);
@@ -363,7 +368,7 @@ STRINGLIB(utf8_encoder)(PyObject *unicode,
 
             case _Py_ERROR_XMLCHARREFREPLACE:
                 p = xmlcharrefreplace(writer, p,
-                                      unicode, startpos, endpos);
+                                      reader, startpos, endpos);
                 if (p == NULL)
                     goto error;
                 i += (endpos - startpos - 1);

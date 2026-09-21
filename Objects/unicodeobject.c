@@ -1304,26 +1304,18 @@ unicode_new_utf8(Py_ssize_t size, Py_ssize_t length, Py_UCS4 maxchar,
    ASCII, Latin1, UTF-8, etc. */
 static char*
 backslashreplace(PyBytesWriter *writer, char *str,
-                 PyObject *unicode, Py_ssize_t collstart, Py_ssize_t collend)
+                 unicode_scan reader, Py_ssize_t collstart, Py_ssize_t collend)
 {
-    if (unicode != NULL && PyUnicode_Check(unicode) &&
-        PyUnicode_DATA(unicode) == NULL) {
-        return NULL;
-    }
     Py_ssize_t size, i;
     Py_UCS4 ch;
-    int kind;
-    const void *data;
-
-    kind = PyUnicode_KIND(unicode);
-    data = PyUnicode_DATA(unicode);
+    unicode_scan saved = reader;
 
     size = 0;
     /* determine replacement size */
     for (i = collstart; i < collend; ++i) {
         Py_ssize_t incr;
 
-        ch = PyUnicode_READ(kind, data, i);
+        ch = unicode_scan_next(&reader, i);
         if (ch < 0x100)
             incr = 2+2;
         else if (ch < 0x10000)
@@ -1347,9 +1339,10 @@ backslashreplace(PyBytesWriter *writer, char *str,
         return NULL;
     }
 
+    reader = saved;
     /* generate replacement */
     for (i = collstart; i < collend; ++i) {
-        ch = PyUnicode_READ(kind, data, i);
+        ch = unicode_scan_next(&reader, i);
         *str++ = '\\';
         if (ch >= 0x00010000) {
             *str++ = 'U';
@@ -1377,26 +1370,18 @@ backslashreplace(PyBytesWriter *writer, char *str,
    ASCII, Latin1, UTF-8, etc. */
 static char*
 xmlcharrefreplace(PyBytesWriter *writer, char *str,
-                  PyObject *unicode, Py_ssize_t collstart, Py_ssize_t collend)
+                  unicode_scan reader, Py_ssize_t collstart, Py_ssize_t collend)
 {
-    if (unicode != NULL && PyUnicode_Check(unicode) &&
-        PyUnicode_DATA(unicode) == NULL) {
-        return NULL;
-    }
     Py_ssize_t size, i;
     Py_UCS4 ch;
-    int kind;
-    const void *data;
-
-    kind = PyUnicode_KIND(unicode);
-    data = PyUnicode_DATA(unicode);
+    unicode_scan saved = reader;
 
     size = 0;
     /* determine replacement size */
     for (i = collstart; i < collend; ++i) {
         Py_ssize_t incr;
 
-        ch = PyUnicode_READ(kind, data, i);
+        ch = unicode_scan_next(&reader, i);
         if (ch < 10)
             incr = 2+1+1;
         else if (ch < 100)
@@ -1428,6 +1413,7 @@ xmlcharrefreplace(PyBytesWriter *writer, char *str,
         return NULL;
     }
 
+    reader = saved;
     /* generate replacement */
     for (i = collstart; i < collend; ++i) {
         // Use snprintf() with a temporary buffer to not write the trailing
@@ -1435,7 +1421,7 @@ xmlcharrefreplace(PyBytesWriter *writer, char *str,
         Py_BUILD_ASSERT(_Py_MAX_UNICODE <= 0x10ffff);
         // len('&#1114111;\0') is 11 bytes.
         char buffer[11];
-        Py_UCS4 ch = PyUnicode_READ(kind, data, i);
+        Py_UCS4 ch = unicode_scan_next(&reader, i);
         size = snprintf(buffer, sizeof(buffer), "&#%d;", ch);
         assert(4 <= size && (size_t)size <= (sizeof(buffer) - 1));
 
@@ -7546,14 +7532,9 @@ unicode_encode_ucs1(PyObject *unicode,
                     const char *errors,
                     const Py_UCS4 limit)
 {
-    if (unicode != NULL && PyUnicode_Check(unicode) &&
-        PyUnicode_DATA(unicode) == NULL) {
-        return NULL;
-    }
     /* input state */
     Py_ssize_t pos=0, size;
-    int kind;
-    const void *data;
+    unicode_scan reader;
     const char *encoding = (limit == 256) ? "latin-1" : "ascii";
     const char *reason = (limit == 256) ? "ordinal not in range(256)" : "ordinal not in range(128)";
     PyObject *error_handler_obj = NULL;
@@ -7562,8 +7543,7 @@ unicode_encode_ucs1(PyObject *unicode,
     PyObject *rep = NULL;
 
     size = PyUnicode_GET_LENGTH(unicode);
-    kind = PyUnicode_KIND(unicode);
-    data = PyUnicode_DATA(unicode);
+    unicode_scan_init(&reader, unicode);
     /* allocate enough for a simple encoding without
        replacements, if we need more, we'll resize */
     if (size == 0)
@@ -7578,13 +7558,15 @@ unicode_encode_ucs1(PyObject *unicode,
     char *str = PyBytesWriter_GetData(writer);
 
     while (pos < size) {
-        Py_UCS4 ch = PyUnicode_READ(kind, data, pos);
+        unicode_scan next = reader;
+        Py_UCS4 ch = unicode_scan_next(&next, pos);
 
         /* can we encode this? */
         if (ch < limit) {
             /* no overflow check, because we know that the space is enough */
             *str++ = (char)ch;
             ++pos;
+            reader = next;
         }
         else {
             Py_ssize_t newpos, i;
@@ -7593,8 +7575,14 @@ unicode_encode_ucs1(PyObject *unicode,
             Py_ssize_t collend = collstart + 1;
             /* find all unecodable characters */
 
-            while ((collend < size) && (PyUnicode_READ(kind, data, collend) >= limit))
+            while (collend < size) {
+                unicode_scan peek = next;
+                if (unicode_scan_next(&peek, collend) < limit) {
+                    break;
+                }
+                next = peek;
                 ++collend;
+            }
 
             /* Only overallocate the buffer if it's not the last write */
             writer->overallocate = (collend < size);
@@ -7618,7 +7606,7 @@ unicode_encode_ucs1(PyObject *unicode,
 
             case _Py_ERROR_BACKSLASHREPLACE:
                 str = backslashreplace(writer, str,
-                                       unicode, collstart, collend);
+                                       reader, collstart, collend);
                 if (str == NULL)
                     goto onError;
                 pos = collend;
@@ -7626,15 +7614,16 @@ unicode_encode_ucs1(PyObject *unicode,
 
             case _Py_ERROR_XMLCHARREFREPLACE:
                 str = xmlcharrefreplace(writer, str,
-                                        unicode, collstart, collend);
+                                        reader, collstart, collend);
                 if (str == NULL)
                     goto onError;
                 pos = collend;
                 break;
 
-            case _Py_ERROR_SURROGATEESCAPE:
+            case _Py_ERROR_SURROGATEESCAPE: {
+                unicode_scan escape = reader;
                 for (i = collstart; i < collend; ++i) {
-                    ch = PyUnicode_READ(kind, data, i);
+                    ch = unicode_scan_next(&escape, i);
                     if (ch < 0xdc80 || 0xdcff < ch) {
                         /* Not a UTF-8b surrogate */
                         break;
@@ -7647,6 +7636,7 @@ unicode_encode_ucs1(PyObject *unicode,
                 collstart = pos;
                 assert(collstart != collend);
                 _Py_FALLTHROUGH;
+            }
 
             default:
                 rep = unicode_encode_call_errorhandler(errors, &error_handler_obj,
@@ -7674,42 +7664,41 @@ unicode_encode_ucs1(PyObject *unicode,
                     }
                 }
 
-                const char *rep_str;
-                Py_ssize_t rep_len;
-                if (PyBytes_Check(rep)) {
-                    /* Directly copy bytes result to output. */
-                    rep_str = PyBytes_AS_STRING(rep);
-                    rep_len = PyBytes_GET_SIZE(rep);
-                }
-                else {
-                    assert(PyUnicode_Check(rep));
-
-                    if (limit == 256 ?
-                        PyUnicode_KIND(rep) != PyUnicode_1BYTE_KIND :
-                        !PyUnicode_IS_ASCII(rep))
-                    {
-                        /* Not all characters are smaller than limit */
-                        raise_encode_exception(&exc, encoding, unicode,
-                                               collstart, collend, reason);
-                        goto onError;
-                    }
-                    assert(PyUnicode_KIND(rep) == PyUnicode_1BYTE_KIND);
-                    rep_str = PyUnicode_DATA(rep);
-                    if (rep_str == NULL) {
-                        goto onError;
-                    }
-                    rep_len = PyUnicode_GET_LENGTH(rep);
-                }
-
+                Py_ssize_t rep_len = PyBytes_Check(rep)
+                    ? PyBytes_GET_SIZE(rep) : PyUnicode_GET_LENGTH(rep);
                 str = PyBytesWriter_GrowAndUpdatePointer(writer, rep_len, str);
                 if (str == NULL) {
                     goto onError;
                 }
-                memcpy(str, rep_str, rep_len);
-                str += rep_len;
+                if (PyBytes_Check(rep)) {
+                    memcpy(str, PyBytes_AS_STRING(rep), rep_len);
+                    str += rep_len;
+                }
+                else {
+                    Py_ssize_t cursor = 0;
+                    Py_UCS4 value;
+                    while (_PyUnicode_Next(rep, &cursor, &value)) {
+                        if (value >= limit) {
+                            raise_encode_exception(&exc, encoding, unicode,
+                                                   collstart, collend, reason);
+                            goto onError;
+                        }
+                        *str++ = (char)value;
+                    }
+                }
 
                 pos = newpos;
                 Py_CLEAR(rep);
+            }
+
+            if (pos == collend) {
+                reader = next;
+            }
+            else if (reader.data == NULL) {
+                /* Only callbacks can jump outside the failing run. */
+                if (unicode_scan_seek(&reader, unicode, pos) < 0) {
+                    goto onError;
+                }
             }
 
             /* If overallocation was disabled, ensure that it was the last
@@ -7733,21 +7722,14 @@ unicode_encode_ucs1(PyObject *unicode,
 PyObject *
 _PyUnicode_AsLatin1String(PyObject *unicode, const char *errors)
 {
-    if (unicode != NULL && PyUnicode_Check(unicode) &&
-        PyUnicode_DATA(unicode) == NULL) {
-        return NULL;
-    }
     if (!PyUnicode_Check(unicode)) {
         PyErr_BadArgument();
         return NULL;
     }
-    /* Fast path: if it is a one-byte string, construct
-       bytes object directly. */
-    if (PyUnicode_KIND(unicode) == PyUnicode_1BYTE_KIND)
-        return PyBytes_FromStringAndSize(PyUnicode_DATA(unicode),
+    if (PyUnicode_IS_ASCII(unicode)) {
+        return PyBytes_FromStringAndSize(_PyUnicode_GetPrimaryUTF8(unicode, NULL),
                                          PyUnicode_GET_LENGTH(unicode));
-    /* Non-Latin-1 characters present. Defer to above function to
-       raise the exception. */
+    }
     return unicode_encode_ucs1(unicode, errors, 256);
 }
 
@@ -7853,10 +7835,6 @@ PyUnicode_DecodeASCII(const char *s,
 PyObject *
 _PyUnicode_AsASCIIString(PyObject *unicode, const char *errors)
 {
-    if (unicode != NULL && PyUnicode_Check(unicode) &&
-        PyUnicode_DATA(unicode) == NULL) {
-        return NULL;
-    }
     if (!PyUnicode_Check(unicode)) {
         PyErr_BadArgument();
         return NULL;
