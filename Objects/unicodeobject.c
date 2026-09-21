@@ -9808,14 +9808,8 @@ _PyUnicode_TranslateCharmap(PyObject *input,
                             PyObject *mapping,
                             const char *errors)
 {
-    if (input != NULL && PyUnicode_Check(input) &&
-        PyUnicode_DATA(input) == NULL) {
-        return NULL;
-    }
     /* input object */
-    const void *data;
     Py_ssize_t size, i;
-    int kind;
     /* output buffer */
     _PyUnicodeWriter writer;
     /* error handler */
@@ -9830,8 +9824,6 @@ _PyUnicode_TranslateCharmap(PyObject *input,
         return NULL;
     }
 
-    data = PyUnicode_DATA(input);
-    kind = PyUnicode_KIND(input);
     size = PyUnicode_GET_LENGTH(input);
 
     if (size == 0)
@@ -9858,6 +9850,8 @@ _PyUnicode_TranslateCharmap(PyObject *input,
         i = 0;
     }
 
+    unicode_scan reader;
+    unicode_scan_init(&reader, input);
     while (i<size) {
         /* try to encode it */
         int translate;
@@ -9868,7 +9862,7 @@ _PyUnicode_TranslateCharmap(PyObject *input,
         Py_ssize_t collend;
         Py_UCS4 ch;
 
-        ch = PyUnicode_READ(kind, data, i);
+        ch = unicode_scan_next(&reader, i);
         translate = charmaptranslate_output(ch, mapping, &writer);
         if (translate < 0)
             goto onError;
@@ -9887,12 +9881,14 @@ _PyUnicode_TranslateCharmap(PyObject *input,
         while (collend < size) {
             PyObject *x;
             Py_UCS4 replace;
-            ch = PyUnicode_READ(kind, data, collend);
+            unicode_scan next = reader;
+            ch = unicode_scan_next(&next, collend);
             if (charmaptranslate_lookup(ch, mapping, &x, &replace))
                 goto onError;
             Py_XDECREF(x);
             if (x != Py_None)
                 break;
+            reader = next;
             ++collend;
         }
 
@@ -9910,6 +9906,11 @@ _PyUnicode_TranslateCharmap(PyObject *input,
                 goto onError;
             }
             Py_DECREF(repunicode);
+            if (newpos != collend && reader.data == NULL) {
+                if (unicode_scan_seek(&reader, input, newpos) < 0) {
+                    goto onError;
+                }
+            }
             i = newpos;
         }
     }

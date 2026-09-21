@@ -110,6 +110,46 @@ class UTF8StorageTests(unittest.TestCase):
                         self.assertEqual(_testcapi.unicode_storage(copy)[0], 1)
                         self.assertEqual(_testcapi.unicode_storage(copy)[3], 0)
 
+    def test_translate_without_fsr(self):
+        api = import_helper.import_module('_testlimitedcapi')
+        mapping = {ord('é'): 'é日', ord('日'): None, ord('😀'): None,
+                   ord('x'): 0x1f600, ord('y'): ''}
+        for text in ('é日😀xy', 'a日z', '\ud800日\udcff', 'xy日'):
+            for errors in ('strict', 'ignore', 'replace', 'backslashreplace'):
+                for cached in (False, True):
+                    with self.subTest(text=ascii(text), errors=errors, cached=cached):
+                        value = self.make_string(text)
+                        if cached:
+                            _testcapi.unicode_materialize_fsr(value)
+                        before = _testcapi.unicode_storage(value)
+                        try:
+                            expected = api.unicode_translate(Str(text), mapping, errors)
+                        except UnicodeTranslateError:
+                            with self.assertRaises(UnicodeTranslateError):
+                                api.unicode_translate(value, mapping, errors)
+                        else:
+                            self.assertEqual(api.unicode_translate(value, mapping, errors),
+                                             expected)
+                        self.assertEqual(_testcapi.unicode_storage(value), before)
+
+    def test_translate_utf8_rewind(self):
+        import codecs
+        api = import_helper.import_module('_testlimitedcapi')
+        for materialize in (False, True):
+            value = self.make_string('é日😀z')
+            calls = []
+            def handler(exc):
+                calls.append((exc.start, exc.end))
+                if materialize:
+                    _testcapi.unicode_materialize_fsr(value)
+                return '<>', 0 if len(calls) == 1 else exc.end
+            codecs.register_error('test_utf8_translate_rewind', handler)
+            self.assertEqual(api.unicode_translate(
+                value, {ord('日'): None, ord('😀'): None},
+                'test_utf8_translate_rewind'), 'é<>é<>z')
+            self.assertEqual(calls, [(1, 3), (1, 3)])
+            self.assertEqual(_testcapi.unicode_storage(value)[3], materialize)
+
     def test_charmap_default_without_fsr(self):
         import codecs
 
