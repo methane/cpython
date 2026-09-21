@@ -1515,15 +1515,8 @@ make_bloom_mask(int kind, const void* ptr, Py_ssize_t len)
 
 #define STRINGLIB_GET_EMPTY() _PyUnicode_GetEmpty()
 
-#include "stringlib/asciilib.h"
-#include "stringlib/fastsearch.h"
-#include "stringlib/split.h"
-#include "stringlib/find_max_char.h"
-#include "stringlib/undef.h"
-
 #include "stringlib/ucs1lib.h"
 #include "stringlib/fastsearch.h"
-#include "stringlib/split.h"
 #include "stringlib/count.h"
 #include "stringlib/find.h"
 #include "stringlib/replace.h"
@@ -1532,7 +1525,6 @@ make_bloom_mask(int kind, const void* ptr, Py_ssize_t len)
 
 #include "stringlib/ucs2lib.h"
 #include "stringlib/fastsearch.h"
-#include "stringlib/split.h"
 #include "stringlib/count.h"
 #include "stringlib/find.h"
 #include "stringlib/find_max_char.h"
@@ -1540,7 +1532,6 @@ make_bloom_mask(int kind, const void* ptr, Py_ssize_t len)
 
 #include "stringlib/ucs4lib.h"
 #include "stringlib/fastsearch.h"
-#include "stringlib/split.h"
 #include "stringlib/count.h"
 #include "stringlib/find.h"
 #include "stringlib/find_max_char.h"
