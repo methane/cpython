@@ -7118,7 +7118,7 @@
                 SET_CURRENT_CACHED_VALUES(2);
                 JUMP_TO_JUMP_TARGET();
             }
-            uint8_t c = PyUnicode_1BYTE_DATA(str)[index];
+            uint8_t c = _PyUnicode_GetPrimaryUTF8(str, NULL)[index];
             assert(c < 128);
             STAT_INC(BINARY_OP, hit);
             PyObject *res_o = (PyObject*)&_Py_SINGLETON(strings).ascii[c];
