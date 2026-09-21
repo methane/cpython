@@ -755,24 +755,17 @@ n_decimal_digits_for_codepoint(Py_UCS4 ch)
 }
 
 
-/*
- * Create a Unicode string containing 'count' copies of the official
- * Unicode REPLACEMENT CHARACTER (0xFFFD).
- */
+/* Create a Unicode string containing count copies of ch. */
 static PyObject *
-codec_handler_unicode_replacement_character(Py_ssize_t count)
+codec_handler_unicode_fill(Py_ssize_t count, Py_UCS4 ch)
 {
-    PyObject *res = PyUnicode_New(count, Py_UNICODE_REPLACEMENT_CHARACTER);
-    if (res == NULL) {
+    _PyUnicodeWriter writer;
+    _PyUnicodeWriter_Init(&writer);
+    if (_PyUnicodeWriter_WriteFill(&writer, ch, count) < 0) {
+        _PyUnicodeWriter_Dealloc(&writer);
         return NULL;
     }
-    assert(count == 0 || PyUnicode_KIND(res) == PyUnicode_2BYTE_KIND);
-    Py_UCS2 *outp = PyUnicode_2BYTE_DATA(res);
-    for (Py_ssize_t i = 0; i < count; ++i) {
-        outp[i] = Py_UNICODE_REPLACEMENT_CHARACTER;
-    }
-    assert(_PyUnicode_CheckConsistency(res, 1));
-    return res;
+    return _PyUnicodeWriter_Finish(&writer);
 }
 
 
@@ -831,14 +824,10 @@ _PyCodec_ReplaceUnicodeEncodeError(PyObject *exc)
     {
         return NULL;
     }
-    PyObject *res = PyUnicode_New(slen, '?');
+    PyObject *res = codec_handler_unicode_fill(slen, '?');
     if (res == NULL) {
         return NULL;
     }
-    assert(PyUnicode_KIND(res) == PyUnicode_1BYTE_KIND);
-    Py_UCS1 *outp = PyUnicode_1BYTE_DATA(res);
-    memset(outp, '?', sizeof(Py_UCS1) * slen);
-    assert(_PyUnicode_CheckConsistency(res, 1));
     return Py_BuildValue("(Nn)", res, end);
 }
 
@@ -850,7 +839,7 @@ _PyCodec_ReplaceUnicodeDecodeError(PyObject *exc)
     if (PyUnicodeDecodeError_GetEnd(exc, &end) < 0) {
         return NULL;
     }
-    PyObject *res = codec_handler_unicode_replacement_character(1);
+    PyObject *res = codec_handler_unicode_fill(1, Py_UNICODE_REPLACEMENT_CHARACTER);
     if (res == NULL) {
         return NULL;
     }
@@ -867,7 +856,7 @@ _PyCodec_ReplaceUnicodeTranslateError(PyObject *exc)
     {
         return NULL;
     }
-    PyObject *res = codec_handler_unicode_replacement_character(slen);
+    PyObject *res = codec_handler_unicode_fill(slen, Py_UNICODE_REPLACEMENT_CHARACTER);
     if (res == NULL) {
         return NULL;
     }

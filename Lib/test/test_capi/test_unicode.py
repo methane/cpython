@@ -35,6 +35,20 @@ class UTF8StorageTests(unittest.TestCase):
     def make_string(self, text):
         return text.encode('utf-8', 'surrogatepass').decode('utf-8', 'surrogatepass')
 
+    def test_codec_replacement_utf8_output(self):
+        import codecs
+
+        for size in (0, 1, 5):
+            exc = UnicodeTranslateError('日' * size, 0, size, 'test')
+            result, end = codecs.replace_errors(exc)
+            self.assertEqual(result, '\ufffd' * size)
+            self.assertEqual(end, size)
+            if size:
+                self.assertEqual(_testcapi.unicode_storage(result)[0], 1)
+                self.assertEqual(_testcapi.unicode_storage(result)[3], 0)
+            exc = UnicodeEncodeError('ascii', '日' * size, 0, size, 'test')
+            self.assertEqual(codecs.replace_errors(exc), ('?' * size, size))
+
     def test_whitespace_split_utf8_views(self):
         text = '\u2003é\t日\x85😀\r\n\udcff\u3000'
         words = ['é', '日', '😀', '\udcff']
