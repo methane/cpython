@@ -464,84 +464,42 @@ unicodeFromTclStringAndSize(const char *s, Py_ssize_t size)
         return r;
     }
 
-    char *buf = NULL;
     PyErr_Clear();
-    /* Tcl encodes null character as \xc0\x80.
-       https://en.wikipedia.org/wiki/UTF-8#Modified_UTF-8 */
-    if (memchr(s, '\xc0', size)) {
-        char *q;
-        const char *e = s + size;
-        q = buf = (char *)PyMem_Malloc(size);
-        if (buf == NULL) {
-            PyErr_NoMemory();
-            return NULL;
-        }
-        while (s != e) {
-            if (s + 1 != e && s[0] == '\xc0' && s[1] == '\x80') {
-                *q++ = '\0';
-                s += 2;
-            }
-            else
-                *q++ = *s++;
-        }
-        s = buf;
-        size = q - s;
-    }
-    r = PyUnicode_DecodeUTF8(s, size, "surrogateescape");
-    if (buf != NULL) {
-        PyMem_Free(buf);
-    }
-    if (r == NULL || PyUnicode_KIND(r) == PyUnicode_1BYTE_KIND) {
-        return r;
+    if (memchr(s, '\xc0', size) == NULL && memchr(s, '\xed', size) == NULL) {
+        return PyUnicode_DecodeUTF8(s, size, "surrogateescape");
     }
 
-    /* In CESU-8 non-BMP characters are represented as a surrogate pair,
-       like in UTF-16, and then each surrogate code point is encoded in UTF-8.
-       https://en.wikipedia.org/wiki/CESU-8 */
-    Py_ssize_t len = PyUnicode_GET_LENGTH(r);
-    Py_ssize_t i, j;
-    /* All encoded surrogate characters start with \xED. */
-    i = PyUnicode_FindChar(r, 0xdcED, 0, len, 1);
-    if (i == -2) {
-        Py_DECREF(r);
-        return NULL;
+    /* Tcl uses modified UTF-8 for NUL and CESU-8 surrogate pairs for
+       non-BMP characters. Normalize these directly in the byte stream. */
+    unsigned char *buf = PyMem_Malloc(size);
+    if (buf == NULL) {
+        return PyErr_NoMemory();
     }
-    if (i == -1) {
-        return r;
+    unsigned char *out = buf;
+    const unsigned char *in = (const unsigned char *)s;
+    const unsigned char *end = in + size;
+    while (in < end) {
+        if (end - in >= 2 && in[0] == 0xc0 && in[1] == 0x80) {
+            *out++ = 0;
+            in += 2;
+        }
+        else if (end - in >= 6 && in[0] == 0xed &&
+                 in[1] >= 0xa0 && in[1] <= 0xaf &&
+                 in[2] >= 0x80 && in[2] <= 0xbf && in[3] == 0xed &&
+                 in[4] >= 0xb0 && in[4] <= 0xbf &&
+                 in[5] >= 0x80 && in[5] <= 0xbf)
+        {
+            Py_UCS4 high = 0xd000 | ((in[1] & 0x3f) << 6) | (in[2] & 0x3f);
+            Py_UCS4 low = 0xd000 | ((in[4] & 0x3f) << 6) | (in[5] & 0x3f);
+            out = _PyUnicode_WriteUTF8Char(out, Py_UNICODE_JOIN_SURROGATES(high, low));
+            in += 6;
+        }
+        else {
+            *out++ = *in++;
+        }
     }
-    Py_UCS4 *u = PyUnicode_AsUCS4Copy(r);
-    Py_DECREF(r);
-    if (u == NULL) {
-        return NULL;
-    }
-    Py_UCS4 ch;
-    for (j = i; i < len; i++, u[j++] = ch) {
-        Py_UCS4 ch1, ch2, ch3, high, low;
-        /* Low surrogates U+D800 - U+DBFF are encoded as
-           \xED\xA0\x80 - \xED\xAF\xBF. */
-        ch1 = ch = u[i];
-        if (ch1 != 0xdcED) continue;
-        ch2 = u[i + 1];
-        if (!(0xdcA0 <= ch2 && ch2 <= 0xdcAF)) continue;
-        ch3 = u[i + 2];
-        if (!(0xdc80 <= ch3 && ch3 <= 0xdcBF)) continue;
-        high = 0xD000 | ((ch2 & 0x3F) << 6) | (ch3 & 0x3F);
-        assert(Py_UNICODE_IS_HIGH_SURROGATE(high));
-        /* High surrogates U+DC00 - U+DFFF are encoded as
-           \xED\xB0\x80 - \xED\xBF\xBF. */
-        ch1 = u[i + 3];
-        if (ch1 != 0xdcED) continue;
-        ch2 = u[i + 4];
-        if (!(0xdcB0 <= ch2 && ch2 <= 0xdcBF)) continue;
-        ch3 = u[i + 5];
-        if (!(0xdc80 <= ch3 && ch3 <= 0xdcBF)) continue;
-        low = 0xD000 | ((ch2 & 0x3F) << 6) | (ch3 & 0x3F);
-        assert(Py_UNICODE_IS_HIGH_SURROGATE(high));
-        ch = Py_UNICODE_JOIN_SURROGATES(high, low);
-        i += 5;
-    }
-    r = PyUnicode_FromKindAndData(PyUnicode_4BYTE_KIND, u, j);
-    PyMem_Free(u);
+    r = PyUnicode_DecodeUTF8((const char *)buf, out - buf, "surrogateescape");
+    PyMem_Free(buf);
     return r;
 }
 
