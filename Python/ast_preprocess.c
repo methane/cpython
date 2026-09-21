@@ -167,23 +167,21 @@ has_starred(asdl_expr_seq *elts)
     return 0;
 }
 
+/* Positions in the format view are byte offsets. ASCII delimiters cannot
+   split a UTF-8 sequence, including surrogatepass sequences. */
 static expr_ty
-parse_literal(PyObject *fmt, Py_ssize_t *ppos, PyArena *arena)
+parse_literal(const _PyUnicodeUTF8View *fmt, Py_ssize_t *ppos, PyArena *arena)
 {
-    const void *data = PyUnicode_DATA(fmt);
-    if (data == NULL) {
-        return NULL;
-    }
-    int kind = PyUnicode_KIND(fmt);
-    Py_ssize_t size = PyUnicode_GET_LENGTH(fmt);
+    const char *data = fmt->data;
+    Py_ssize_t size = fmt->size;
     Py_ssize_t start, pos;
     int has_percents = 0;
     start = pos = *ppos;
     while (pos < size) {
-        if (PyUnicode_READ(kind, data, pos) != '%') {
+        if (data[pos] != '%') {
             pos++;
         }
-        else if (pos+1 < size && PyUnicode_READ(kind, data, pos+1) == '%') {
+        else if (pos+1 < size && data[pos+1] == '%') {
             has_percents = 1;
             pos += 2;
         }
@@ -195,7 +193,8 @@ parse_literal(PyObject *fmt, Py_ssize_t *ppos, PyArena *arena)
     if (pos == start) {
         return NULL;
     }
-    PyObject *str = PyUnicode_Substring(fmt, start, pos);
+    PyObject *str = PyUnicode_DecodeUTF8(data + start, pos - start,
+                                        "surrogatepass");
     /* str = str.replace('%%', '%') */
     if (str && has_percents) {
         _Py_DECLARE_STR(dbl_percent, "%%");
@@ -216,17 +215,17 @@ parse_literal(PyObject *fmt, Py_ssize_t *ppos, PyArena *arena)
 #define MAXDIGITS 3
 
 static int
-simple_format_arg_parse(PyObject *fmt, Py_ssize_t *ppos,
+simple_format_arg_parse(const _PyUnicodeUTF8View *fmt, Py_ssize_t *ppos,
                         int *spec, int *flags, int *width, int *prec)
 {
-    Py_ssize_t pos = *ppos, len = PyUnicode_GET_LENGTH(fmt);
-    Py_UCS4 ch;
+    Py_ssize_t pos = *ppos, len = fmt->size;
+    unsigned char ch;
 
 #define NEXTC do {                      \
     if (pos >= len) {                   \
         return 0;                       \
     }                                   \
-    ch = PyUnicode_READ_CHAR(fmt, pos); \
+    ch = (unsigned char)fmt->data[pos]; \
     pos++;                              \
 } while (0)
 
@@ -276,7 +275,8 @@ simple_format_arg_parse(PyObject *fmt, Py_ssize_t *ppos,
 }
 
 static expr_ty
-parse_format(PyObject *fmt, Py_ssize_t *ppos, expr_ty arg, PyArena *arena)
+parse_format(const _PyUnicodeUTF8View *fmt, Py_ssize_t *ppos,
+             expr_ty arg, PyArena *arena)
 {
     int spec, flags, width = -1, prec = -1;
     if (!simple_format_arg_parse(fmt, ppos, &spec, &flags, &width, &prec)) {
@@ -319,7 +319,8 @@ parse_format(PyObject *fmt, Py_ssize_t *ppos, expr_ty arg, PyArena *arena)
 }
 
 static int
-optimize_format(expr_ty node, PyObject *fmt, asdl_expr_seq *elts, PyArena *arena)
+optimize_format_utf8(expr_ty node, const _PyUnicodeUTF8View *fmt,
+                     asdl_expr_seq *elts, PyArena *arena)
 {
     Py_ssize_t pos = 0;
     Py_ssize_t cnt = 0;
@@ -338,14 +339,14 @@ optimize_format(expr_ty node, PyObject *fmt, asdl_expr_seq *elts, PyArena *arena
             return 0;
         }
 
-        if (pos >= PyUnicode_GET_LENGTH(fmt)) {
+        if (pos >= fmt->size) {
             break;
         }
         if (cnt >= asdl_seq_LEN(elts)) {
             // More format units than items.
             return 1;
         }
-        assert(PyUnicode_READ_CHAR(fmt, pos) == '%');
+        assert(fmt->data[pos] == '%');
         pos++;
         expr_ty expr = parse_format(fmt, &pos, asdl_seq_GET(elts, cnt), arena);
         cnt++;
@@ -366,8 +367,19 @@ optimize_format(expr_ty node, PyObject *fmt, asdl_expr_seq *elts, PyArena *arena
         return 0;
     }
     COPY_NODE(node, res);
-//     PySys_FormatStderr("format = %R\n", fmt);
     return 1;
+}
+
+static int
+optimize_format(expr_ty node, PyObject *fmt, asdl_expr_seq *elts, PyArena *arena)
+{
+    _PyUnicodeUTF8View view;
+    if (_PyUnicodeUTF8View_Init(&view, fmt) < 0) {
+        return 0;
+    }
+    int result = optimize_format_utf8(node, &view, elts, arena);
+    _PyUnicodeUTF8View_Clear(&view);
+    return result;
 }
 
 static int

@@ -35,6 +35,18 @@ class UTF8StorageTests(unittest.TestCase):
     def make_string(self, text):
         return text.encode('utf-8', 'surrogatepass').decode('utf-8', 'surrogatepass')
 
+    def test_ast_percent_format_without_fsr(self):
+        import ast
+
+        for text in ('日😀%s\udcff', '\ud800%% %r末'):
+            value = self.make_string(text)
+            tree = ast.parse("'template' % (x,)", mode='eval')
+            tree.body.left.value = value
+            before = _testcapi.unicode_storage(value)
+            code = compile(tree, '<test>', 'eval')
+            self.assertEqual(_testcapi.unicode_storage(value), before)
+            self.assertEqual(eval(code, {'x': 'é😀'}), text % ('é😀',))
+
     def test_format_spec_without_fsr(self):
         cases = [('日', '😀>４', '😀😀😀日'),
                  (42, '\udcff>５d', '\udcff' * 3 + '42'),
