@@ -2059,6 +2059,15 @@ class CAPITest(unittest.TestCase):
             self.assertEqual(fromwidechar(b), s)
             self.assertEqual(fromwidechar(b + b'\0'*SIZEOF_WCHAR_T, -1), s)
 
+        for s in ('a\0é日😀', '\ud800\udc00', '\ud800x\udcff'):
+            data = s.encode(encoding, 'surrogatepass')
+            self.assertEqual(fromwidechar(data),
+                             data.decode(encoding, 'surrogatepass'))
+        if SIZEOF_WCHAR_T == 4:
+            for value in (0x110000, 0xffffffff):
+                with self.assertRaises(ValueError):
+                    fromwidechar(value.to_bytes(4, sys.byteorder))
+
         self.assertEqual(fromwidechar('abc'.encode(encoding), 2), 'ab')
         if SIZEOF_WCHAR_T == 2:
             self.assertEqual(fromwidechar('a\U0001f600'.encode(encoding), 2), 'a\ud83d')
