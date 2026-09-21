@@ -6450,31 +6450,61 @@ End:
     return NULL;
 }
 
+/* Like unicode_encode_utf32(), but emit surrogate pairs for non-BMP input. */
+static Py_ssize_t
+unicode_encode_utf16(unicode_scan *reader, Py_ssize_t pos, Py_ssize_t len,
+                     unsigned short **out, int native_ordering)
+{
+    if (reader->data != NULL) {
+        switch (reader->kind) {
+        case PyUnicode_1BYTE_KIND:
+            return pos + ucs1lib_utf16_encode(
+                (const Py_UCS1 *)reader->data + pos, len - pos, out, native_ordering);
+        case PyUnicode_2BYTE_KIND:
+            return pos + ucs2lib_utf16_encode(
+                (const Py_UCS2 *)reader->data + pos, len - pos, out, native_ordering);
+        case PyUnicode_4BYTE_KIND:
+            return pos + ucs4lib_utf16_encode(
+                (const Py_UCS4 *)reader->data + pos, len - pos, out, native_ordering);
+        default:
+            Py_UNREACHABLE();
+        }
+    }
+    while (pos < len) {
+        Py_UCS4 ch = unicode_scan_next(reader, pos);
+        if (Py_UNICODE_IS_SURROGATE(ch)) {
+            break;
+        }
+        if (ch >= 0x10000) {
+            unsigned short high = Py_UNICODE_HIGH_SURROGATE(ch);
+            *(*out)++ = native_ordering ? high : _Py_bswap16(high);
+            ch = Py_UNICODE_LOW_SURROGATE(ch);
+        }
+        *(*out)++ = native_ordering ? ch : _Py_bswap16(ch);
+        pos++;
+    }
+    return pos;
+}
+
 PyObject *
 _PyUnicode_EncodeUTF16(PyObject *str,
                        const char *errors,
                        int byteorder)
 {
-    if (str != NULL && PyUnicode_Check(str) &&
-        PyUnicode_DATA(str) == NULL) {
-        return NULL;
-    }
     if (!PyUnicode_Check(str)) {
         PyErr_BadArgument();
         return NULL;
     }
     int kind = PyUnicode_KIND(str);
-    const void *data = PyUnicode_DATA(str);
+    unicode_scan reader;
+    unicode_scan_init(&reader, str);
     Py_ssize_t len = PyUnicode_GET_LENGTH(str);
 
     Py_ssize_t pairs = 0;
     if (kind == PyUnicode_4BYTE_KIND) {
-        const Py_UCS4 *in = (const Py_UCS4 *)data;
-        const Py_UCS4 *end = in + len;
-        while (in < end) {
-            if (*in++ >= 0x10000) {
-                pairs++;
-            }
+        unicode_scan count = reader;
+        for (Py_ssize_t i = 0; i < len; i++) {
+            pairs += unicode_scan_next(&count, i) >= 0x10000;
         }
     }
     if (len > PY_SSIZE_T_MAX / 2 - pairs - (byteorder == 0)) {
@@ -6503,7 +6533,7 @@ _PyUnicode_EncodeUTF16(PyObject *str,
             *out++ = 0xFEFF;
         }
         if (len > 0) {
-            ucs1lib_utf16_encode((const Py_UCS1 *)data, len, &out, native_ordering);
+            (void)unicode_encode_utf16(&reader, 0, len, &out, native_ordering);
         }
         return v;
     }
@@ -6539,15 +6569,7 @@ _PyUnicode_EncodeUTF16(PyObject *str,
     PyObject *rep = NULL;
 
     for (Py_ssize_t pos = 0; pos < len; ) {
-        if (kind == PyUnicode_2BYTE_KIND) {
-            pos += ucs2lib_utf16_encode((const Py_UCS2 *)data + pos, len - pos,
-                                        &out, native_ordering);
-        }
-        else {
-            assert(kind == PyUnicode_4BYTE_KIND);
-            pos += ucs4lib_utf16_encode((const Py_UCS4 *)data + pos, len - pos,
-                                        &out, native_ordering);
-        }
+        pos = unicode_encode_utf16(&reader, pos, len, &out, native_ordering);
         if (pos == len)
             break;
 
@@ -6581,6 +6603,18 @@ _PyUnicode_EncodeUTF16(PyObject *str,
             }
         }
         moreunits += pos - newpos;
+        if (newpos != pos + 1 && reader.data == NULL) {
+            if (unicode_scan_seek(&reader, str, newpos) < 0) {
+                goto error;
+            }
+        }
+        if (pairs && newpos < pos) {
+            /* Re-encoding non-BMP characters needs both surrogate units. */
+            unicode_scan count = reader;
+            for (Py_ssize_t i = newpos; i < pos; i++) {
+                moreunits += unicode_scan_next(&count, i) >= 0x10000;
+            }
+        }
         pos = newpos;
 
         /* two bytes are reserved for each surrogate */
