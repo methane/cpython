@@ -3810,6 +3810,14 @@ class TestDateTime(TestDate):
             self.theclass.fromisoformat("2009-04-32T24:00:00")
         self.assertIn(f"day 32 must be in range 1..30 for month 4 in year 2009", str(msg.exception))
 
+    def test_strftime_repeated_unicode_format(self):
+        value = self.theclass(2025, 1, 6, 12, 34, 56, 123456,
+                              tzinfo=timezone.utc)
+        pattern = 'é日😀|%f|%z|%:z|%Z|%%|'
+        expected = 'é日😀|123456|+0000|+00:00|UTC|%|'
+        for count in (1, 64):
+            self.assertEqual(value.strftime(pattern * count), expected * count)
+
     def test_fromisoformat_surrogate_separators(self):
         expected = self.theclass(2025, 1, 6, 12, 34, 56)
         for date in ('20250106', '2025-01-06', '2025W02', '2025-W02',

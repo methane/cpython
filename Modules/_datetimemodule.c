@@ -1874,6 +1874,21 @@ make_freplacement(PyObject *object)
     return PyUnicode_FromString(freplacement);
 }
 
+/* Append a complete span from a surrogate-preserving UTF-8 format view. */
+static int
+write_utf8_format_span(PyUnicodeWriter *writer, const char *data,
+                       Py_ssize_t size, int ascii)
+{
+    Py_ssize_t length = size;
+    if (!ascii) {
+        for (Py_ssize_t i = 0; i < size; i++) {
+            length -= ((unsigned char)data[i] & 0xc0) == 0x80;
+        }
+    }
+    return _PyUnicodeWriter_WriteUTF8((_PyUnicodeWriter *)writer,
+                                      data, size, length);
+}
+
 /* I sure don't want to reproduce the strftime code from the time module,
  * so this imports the module and calls it.  All the hair is due to
  * giving special meanings to the %z, %:z, %Z and %f format codes via a
@@ -1907,27 +1922,31 @@ wrap_strftime(PyObject *object, PyObject *format, PyObject *timetuple,
      * is expensive, don't unless they're actually used.
      */
 
+    _PyUnicodeUTF8View view = {0};
     PyUnicodeWriter *writer = PyUnicodeWriter_Create(0);
     if (writer == NULL) {
         goto Error;
     }
 
-    Py_ssize_t flen = PyUnicode_GET_LENGTH(format);
+    if (_PyUnicodeUTF8View_Init(&view, format) < 0) {
+        goto Error;
+    }
+    int ascii = PyUnicode_IS_ASCII(format);
+    Py_ssize_t flen = view.size;
     Py_ssize_t i = 0;
     Py_ssize_t start = 0;
     Py_ssize_t end = 0;
     while (i != flen) {
-        i = PyUnicode_FindChar(format, '%', i, flen, 1);
-        if (i < 0) {
-            assert(!PyErr_Occurred());
+        const char *percent = memchr(view.data + i, '%', flen - i);
+        if (percent == NULL) {
             break;
         }
-        end = i;
+        end = i = percent - view.data;
         i++;
         if (i == flen) {
             break;
         }
-        Py_UCS4 ch = _PyUnicode_ReadCharNoAlloc(format, i);
+        unsigned char ch = (unsigned char)view.data[i];
         i++;
         /* A % has been seen and ch is the character after it. */
         PyObject *replacement = NULL;
@@ -1940,7 +1959,7 @@ wrap_strftime(PyObject *object, PyObject *format, PyObject *timetuple,
             }
             replacement = zreplacement;
         }
-        else if (ch == ':' && i < flen && _PyUnicode_ReadCharNoAlloc(format, i) == 'z') {
+        else if (ch == ':' && i < flen && view.data[i] == 'z') {
             /* %:z -> +HH:MM */
             i++;
             if (colonzreplacement == NULL) {
@@ -2013,7 +2032,7 @@ wrap_strftime(PyObject *object, PyObject *format, PyObject *timetuple,
             if (ch == 'C') {
                 n -= 2;
             }
-            if (PyUnicodeWriter_WriteSubstring(writer, format, start, end) < 0) {
+            if (write_utf8_format_span(writer, view.data + start, end - start, ascii) < 0) {
                 goto Error;
             }
             start = i;
@@ -2028,7 +2047,7 @@ wrap_strftime(PyObject *object, PyObject *format, PyObject *timetuple,
         }
         assert(replacement != NULL);
         assert(PyUnicode_Check(replacement));
-        if (PyUnicodeWriter_WriteSubstring(writer, format, start, end) < 0) {
+        if (write_utf8_format_span(writer, view.data + start, end - start, ascii) < 0) {
             goto Error;
         }
         start = i;
@@ -2043,7 +2062,7 @@ wrap_strftime(PyObject *object, PyObject *format, PyObject *timetuple,
         newformat = Py_NewRef(format);
     }
     else {
-        if (PyUnicodeWriter_WriteSubstring(writer, format, start, flen) < 0) {
+        if (write_utf8_format_span(writer, view.data + start, flen - start, ascii) < 0) {
             goto Error;
         }
         newformat = PyUnicodeWriter_Finish(writer);
@@ -2056,6 +2075,7 @@ wrap_strftime(PyObject *object, PyObject *format, PyObject *timetuple,
     Py_DECREF(newformat);
 
  Done:
+    _PyUnicodeUTF8View_Clear(&view);
     Py_XDECREF(freplacement);
     Py_XDECREF(zreplacement);
     Py_XDECREF(colonzreplacement);
