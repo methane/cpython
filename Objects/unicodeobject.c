@@ -3579,21 +3579,11 @@ unicode_get_widechar_size(PyObject *unicode)
 
     res = _PyUnicode_LENGTH(unicode);
 #if SIZEOF_WCHAR_T == 2
-    if (_PyASCIIObject_CAST(unicode)->state.utf8_storage &&
-        !_PyASCIIObject_CAST(unicode)->state.fsr_primary) {
-        Py_ssize_t offset = 0;
-        for (Py_ssize_t i = 0; i < PyUnicode_GET_LENGTH(unicode); i++) {
-            res += unicode_next_codepoint(unicode, &offset) > 0xffff;
-        }
-        return res;
-    }
-    if (PyUnicode_KIND(unicode) == PyUnicode_4BYTE_KIND) {
-        const Py_UCS4 *s = PyUnicode_4BYTE_DATA(unicode);
-        const Py_UCS4 *end = s + res;
-        for (; s < end; ++s) {
-            if (*s > 0xFFFF) {
-                ++res;
-            }
+    if (PyUnicode_MAX_CHAR_VALUE(unicode) > 0xffff) {
+        Py_ssize_t cursor = 0;
+        Py_UCS4 ch;
+        while (_PyUnicode_Next(unicode, &cursor, &ch)) {
+            res += ch > 0xffff;
         }
     }
 #endif
@@ -3606,61 +3596,26 @@ unicode_copy_as_widechar(PyObject *unicode, wchar_t *w, Py_ssize_t size)
     assert(unicode != NULL);
     assert(_PyUnicode_CHECK(unicode));
 
-    if (_PyASCIIObject_CAST(unicode)->state.utf8_storage &&
-        !_PyASCIIObject_CAST(unicode)->state.fsr_primary) {
-        Py_ssize_t offset = 0;
-        for (Py_ssize_t i = 0; i < size; i++) {
-            Py_UCS4 ch = unicode_next_codepoint(unicode, &offset);
+    unicode_scan reader;
+    unicode_scan_init(&reader, unicode);
+    if (reader.data != NULL && reader.kind == sizeof(wchar_t)) {
+        memcpy(w, reader.data, size * sizeof(wchar_t));
+        return;
+    }
+
+    Py_ssize_t index = 0;
+    for (Py_ssize_t i = 0; i < size; i++) {
+        Py_UCS4 ch = unicode_scan_next(&reader, index++);
 #if SIZEOF_WCHAR_T == 2
-            if (ch > 0xffff) {
-                w[i++] = Py_UNICODE_HIGH_SURROGATE(ch);
-                if (i == size) {
-                    break;
-                }
-                ch = Py_UNICODE_LOW_SURROGATE(ch);
+        if (ch > 0xffff) {
+            w[i++] = Py_UNICODE_HIGH_SURROGATE(ch);
+            if (i == size) {
+                break;
             }
-#endif
-            w[i] = (wchar_t)ch;
-        }
-        return;
-    }
-
-    if (PyUnicode_KIND(unicode) == sizeof(wchar_t)) {
-        memcpy(w, PyUnicode_DATA(unicode), size * sizeof(wchar_t));
-        return;
-    }
-
-    if (PyUnicode_KIND(unicode) == PyUnicode_1BYTE_KIND) {
-        const Py_UCS1 *s = PyUnicode_1BYTE_DATA(unicode);
-        for (; size--; ++s, ++w) {
-            *w = *s;
-        }
-    }
-    else {
-#if SIZEOF_WCHAR_T == 4
-        assert(PyUnicode_KIND(unicode) == PyUnicode_2BYTE_KIND);
-        const Py_UCS2 *s = PyUnicode_2BYTE_DATA(unicode);
-        for (; size--; ++s, ++w) {
-            *w = *s;
-        }
-#else
-        assert(PyUnicode_KIND(unicode) == PyUnicode_4BYTE_KIND);
-        const Py_UCS4 *s = PyUnicode_4BYTE_DATA(unicode);
-        for (; size--; ++s, ++w) {
-            Py_UCS4 ch = *s;
-            if (ch > 0xFFFF) {
-                assert(ch <= MAX_UNICODE);
-                /* encode surrogate pair in this case */
-                *w++ = Py_UNICODE_HIGH_SURROGATE(ch);
-                if (!size--)
-                    break;
-                *w = Py_UNICODE_LOW_SURROGATE(ch);
-            }
-            else {
-                *w = ch;
-            }
+            ch = Py_UNICODE_LOW_SURROGATE(ch);
         }
 #endif
+        w[i] = (wchar_t)ch;
     }
 }
 

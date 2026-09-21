@@ -35,6 +35,29 @@ class UTF8StorageTests(unittest.TestCase):
     def make_string(self, text):
         return text.encode('utf-8', 'surrogatepass').decode('utf-8', 'surrogatepass')
 
+    def test_widechar_cursor_conversion(self):
+        api = import_helper.import_module('_testlimitedcapi')
+        width = _testcapi.SIZEOF_WCHAR_T
+        encoding = 'utf-16-le' if width == 2 else 'utf-32-le'
+        for text in ('é日😀', 'a\0b', '\ud800x\udcff', 'éÿ'):
+            encoded = text.encode(encoding, 'surrogatepass')
+            units = len(encoded) // width
+            for factory in (self.make_string, Str):
+                for cached in (False, True):
+                    value = factory(text)
+                    if cached:
+                        _testcapi.unicode_materialize_fsr(value)
+                    before = _testcapi.unicode_storage(value)
+                    self.assertEqual(api.unicode_aswidechar_null(value, 0), units + 1)
+                    for capacity in range(units + 2):
+                        expected = encoded[:capacity * width]
+                        if capacity > units:
+                            expected += bytes(width)
+                        self.assertEqual(api.unicode_aswidechar(value, capacity),
+                                         (expected.decode(encoding, 'surrogatepass'),
+                                          min(capacity, units)))
+                    self.assertEqual(_testcapi.unicode_storage(value), before)
+
     def test_newline_decoder_without_fsr(self):
         import _io
 
