@@ -1983,24 +1983,31 @@ _copy_characters(PyObject *to, Py_ssize_t to_start,
     if (_PyASCIIObject_CAST(from)->state.utf8_storage &&
         !_PyASCIIObject_CAST(from)->state.fsr_primary &&
         FT_ATOMIC_LOAD_PTR_ACQUIRE(_PyCompactUnicodeObject_CAST(from)->fsr) == NULL) {
-        assert(!_PyASCIIObject_CAST(to)->state.utf8_storage ||
-               _PyASCIIObject_CAST(to)->state.fsr_primary);
-        to_kind = PyUnicode_KIND(to);
-        to_data = PyUnicode_DATA(to);
-        Py_ssize_t offset = 0;
-        for (Py_ssize_t i = 0; i < from_start; i++) {
-            (void)unicode_next_codepoint(from, &offset);
-        }
-        Py_UCS4 maxchar = PyUnicode_MAX_CHAR_VALUE(to);
-        for (Py_ssize_t i = 0; i < how_many; i++) {
-            Py_UCS4 ch = unicode_next_codepoint(from, &offset);
-            if (check_maxchar && ch > maxchar) {
+        if (from_start != 0 && from_start != -1) {
+            if (_PyUnicode_GetFSR(from) == NULL) {
                 return -1;
             }
-            assert(ch <= maxchar);
-            PyUnicode_WRITE(to_kind, to_data, to_start + i, ch);
         }
-        return 0;
+        else {
+            assert(!_PyASCIIObject_CAST(to)->state.utf8_storage ||
+                   _PyASCIIObject_CAST(to)->state.fsr_primary);
+            to_kind = PyUnicode_KIND(to);
+            to_data = PyUnicode_DATA(to);
+            Py_ssize_t offset = 0;
+            for (Py_ssize_t i = 0; i < from_start; i++) {
+                (void)unicode_next_codepoint(from, &offset);
+            }
+            Py_UCS4 maxchar = PyUnicode_MAX_CHAR_VALUE(to);
+            for (Py_ssize_t i = 0; i < how_many; i++) {
+                Py_UCS4 ch = unicode_next_codepoint(from, &offset);
+                if (check_maxchar && ch > maxchar) {
+                    return -1;
+                }
+                assert(ch <= maxchar);
+                PyUnicode_WRITE(to_kind, to_data, to_start + i, ch);
+            }
+            return 0;
+        }
     }
     from_kind = PyUnicode_KIND(from);
     from_data = PyUnicode_DATA(from);
@@ -2875,23 +2882,17 @@ find_max_char:
 PyObject*
 _PyUnicode_Copy(PyObject *unicode)
 {
-    Py_ssize_t length;
-    PyObject *copy;
-
     if (!PyUnicode_Check(unicode)) {
         PyErr_BadInternalCall();
         return NULL;
     }
-
-    length = PyUnicode_GET_LENGTH(unicode);
-    copy = PyUnicode_New(length, PyUnicode_MAX_CHAR_VALUE(unicode));
-    if (!copy)
+    _PyUnicodeUTF8View view;
+    if (_PyUnicodeUTF8View_Init(&view, unicode) < 0) {
         return NULL;
-    assert(PyUnicode_KIND(copy) == PyUnicode_KIND(unicode));
-
-    _PyUnicode_FastCopyCharacters(copy, 0, unicode, 0, length);
-    assert(_PyUnicode_CheckConsistency(copy, 1));
-    return unicode_result(copy);
+    }
+    PyObject *copy = PyUnicode_DecodeUTF8(view.data, view.size, "surrogatepass");
+    _PyUnicodeUTF8View_Clear(&view);
+    return copy;
 }
 
 

@@ -35,6 +35,23 @@ class UTF8StorageTests(unittest.TestCase):
     def make_string(self, text):
         return text.encode('utf-8', 'surrogatepass').decode('utf-8', 'surrogatepass')
 
+    def test_copy_utf8_storage(self):
+        for text in ('é日😀', 'a\0b', 'x\ud800\udcff'):
+            for factory in (self.make_string, Str):
+                for cached in (False, True):
+                    value = factory(text)
+                    if cached:
+                        _testcapi.unicode_materialize_fsr(value)
+                    before = _testcapi.unicode_storage(value)
+                    copy, = value.__getnewargs__()
+                    self.assertEqual(copy, value)
+                    self.assertIs(type(copy), str)
+                    self.assertIsNot(copy, value)
+                    self.assertEqual(_testcapi.unicode_storage(value), before)
+                    if not copy.isascii():
+                        self.assertEqual(_testcapi.unicode_storage(copy)[0], 1)
+                        self.assertEqual(_testcapi.unicode_storage(copy)[3], 0)
+
     def test_ucs1_encode_without_fsr(self):
         import codecs
 
