@@ -1117,12 +1117,6 @@ unicode_cannot_contain(PyObject *self, PyObject *substring)
     return 0;
 }
 
-static inline int
-unicode_has_fsr(PyObject *self)
-{
-    return !_PyASCIIObject_CAST(self)->state.utf8_storage ||
-        FT_ATOMIC_LOAD_PTR_ACQUIRE(_PyCompactUnicodeObject_CAST(self)->fsr) != NULL;
-}
 
 /* Locate a code point boundary without constructing an index or a FSR. */
 static const unsigned char *
@@ -10993,37 +10987,9 @@ PyUnicode_Splitlines(PyObject *string, int keepends)
 }
 
 static PyObject *
-unicode_split_whitespace_fsr(PyObject *self, Py_ssize_t maxcount, int reverse)
-{
-    Py_ssize_t length = PyUnicode_GET_LENGTH(self);
-    const void *data = PyUnicode_DATA(self);
-    if (maxcount < 0) {
-        maxcount = length / 2 + 1;
-    }
-#define SPLIT_WHITESPACE(LIB) \
-    (reverse ? LIB##_rsplit_whitespace(self, data, length, maxcount) \
-             : LIB##_split_whitespace(self, data, length, maxcount))
-    switch (PyUnicode_KIND(self)) {
-    case PyUnicode_1BYTE_KIND:
-        return PyUnicode_IS_ASCII(self) ? SPLIT_WHITESPACE(asciilib)
-                                       : SPLIT_WHITESPACE(ucs1lib);
-    case PyUnicode_2BYTE_KIND:
-        return SPLIT_WHITESPACE(ucs2lib);
-    case PyUnicode_4BYTE_KIND:
-        return SPLIT_WHITESPACE(ucs4lib);
-    default:
-        Py_UNREACHABLE();
-    }
-#undef SPLIT_WHITESPACE
-}
-
-static PyObject *
 unicode_split_common(PyObject *self, PyObject *substring,
                      Py_ssize_t maxcount, int reverse)
 {
-    if (substring == NULL && unicode_has_fsr(self)) {
-        return unicode_split_whitespace_fsr(self, maxcount, reverse);
-    }
     if (substring != NULL && unicode_cannot_contain(self, substring)) {
         PyObject *list = PyList_New(1);
         if (list != NULL) {

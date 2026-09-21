@@ -35,6 +35,23 @@ class UTF8StorageTests(unittest.TestCase):
     def make_string(self, text):
         return text.encode('utf-8', 'surrogatepass').decode('utf-8', 'surrogatepass')
 
+    def test_whitespace_split_utf8_views(self):
+        text = '\u2003é\t日\x85😀\r\n\udcff\u3000'
+        words = ['é', '日', '😀', '\udcff']
+        for factory in (self.make_string, Str):
+            for cached in (False, True):
+                value = factory(text)
+                if cached:
+                    _testcapi.unicode_materialize_fsr(value)
+                before = _testcapi.unicode_storage(value)
+                self.assertEqual(value.split(), words)
+                self.assertEqual(value.rsplit(), words)
+                self.assertEqual(value.split(None, 0), [text[1:]])
+                self.assertEqual(value.rsplit(None, 0), [text[:-1]])
+                self.assertEqual(value.split(None, 1), ['é', text[3:]])
+                self.assertEqual(value.rsplit(None, 1), [text[:-4], '\udcff'])
+                self.assertEqual(_testcapi.unicode_storage(value), before)
+
     def test_splitlines_utf8_views(self):
         endings = ('\n', '\r', '\r\n', '\v', '\f', '\x1c', '\x1d',
                    '\x1e', '\x85', '\u2028', '\u2029')
