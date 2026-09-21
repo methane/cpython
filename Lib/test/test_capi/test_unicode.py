@@ -35,6 +35,22 @@ class UTF8StorageTests(unittest.TestCase):
     def make_string(self, text):
         return text.encode('utf-8', 'surrogatepass').decode('utf-8', 'surrogatepass')
 
+    def test_equal_utf8_fallback(self):
+        api = import_helper.import_module('_testlimitedcapi')
+        equal = api.unicode_equaltoutf8andsize
+        for text in ('a\0é߿ࠀ日😀\U0010ffff', '\ud800', 'é\udcff'):
+            for factory in (self.make_string, Str):
+                value = factory(text)
+                before = _testcapi.unicode_storage(value)
+                encoded = text.encode('utf-8', 'surrogatepass')
+                valid = not any(0xd800 <= ord(ch) <= 0xdfff for ch in text)
+                self.assertEqual(equal(value, encoded), valid)
+                for i in range(len(encoded)):
+                    self.assertEqual(equal(value, encoded[:i]), 0)
+                    changed = encoded[:i] + bytes([encoded[i] ^ 0x80]) + encoded[i+1:]
+                    self.assertEqual(equal(value, changed), 0)
+                self.assertEqual(_testcapi.unicode_storage(value), before)
+
     def test_ast_percent_format_without_fsr(self):
         import ast
 

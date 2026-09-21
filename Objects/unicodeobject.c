@@ -11466,49 +11466,19 @@ PyUnicode_EqualToUTF8AndSize(PyObject *unicode, const char *str, Py_ssize_t size
     }
     const unsigned char *s = (const unsigned char *)str;
     const unsigned char *ends = s + (size_t)size;
-    int kind = PyUnicode_KIND(unicode);
-    const void *data = PyUnicode_DATA(unicode);
-    /* Compare Unicode string and UTF-8 string */
-    for (Py_ssize_t i = 0; i < len; i++) {
-        Py_UCS4 ch = PyUnicode_READ(kind, data, i);
-        if (ch < 0x80) {
-            if (ends == s || s[0] != ch) {
-                return 0;
-            }
-            s += 1;
+    Py_ssize_t cursor = 0;
+    Py_UCS4 ch;
+    /* Compare against canonical UTF-8, rejecting surrogatepass sequences. */
+    while (_PyUnicode_Next(unicode, &cursor, &ch)) {
+        if (Py_UNICODE_IS_SURROGATE(ch)) {
+            return 0;
         }
-        else if (ch < 0x800) {
-            if ((ends - s) < 2 ||
-                s[0] != (0xc0 | (ch >> 6)) ||
-                s[1] != (0x80 | (ch & 0x3f)))
-            {
-                return 0;
-            }
-            s += 2;
+        unsigned char encoded[4];
+        Py_ssize_t n = _PyUnicode_WriteUTF8Char(encoded, ch) - encoded;
+        if (ends - s < n || memcmp(s, encoded, n) != 0) {
+            return 0;
         }
-        else if (ch < 0x10000) {
-            if (Py_UNICODE_IS_SURROGATE(ch) ||
-                (ends - s) < 3 ||
-                s[0] != (0xe0 | (ch >> 12)) ||
-                s[1] != (0x80 | ((ch >> 6) & 0x3f)) ||
-                s[2] != (0x80 | (ch & 0x3f)))
-            {
-                return 0;
-            }
-            s += 3;
-        }
-        else {
-            assert(ch <= MAX_UNICODE);
-            if ((ends - s) < 4 ||
-                s[0] != (0xf0 | (ch >> 18)) ||
-                s[1] != (0x80 | ((ch >> 12) & 0x3f)) ||
-                s[2] != (0x80 | ((ch >> 6) & 0x3f)) ||
-                s[3] != (0x80 | (ch & 0x3f)))
-            {
-                return 0;
-            }
-            s += 4;
-        }
+        s += n;
     }
     return s == ends;
 }

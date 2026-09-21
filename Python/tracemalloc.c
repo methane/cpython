@@ -184,7 +184,8 @@ raw_free(void *ptr)
 
 
 /* Encode a str object to a NUL terminated UTF-8 (surrogatepass) string,
-   without using the Python C API. Return NULL on allocation failure. */
+   without allocating Python objects or setting exceptions.
+   Return NULL on allocation failure. */
 static char *
 tracemalloc_encode_filename(PyObject *obj)
 {
@@ -198,8 +199,6 @@ tracemalloc_encode_filename(PyObject *obj)
         }
         return buffer;
     }
-    int kind = PyUnicode_KIND(obj);
-    const void *data = PyUnicode_DATA(obj);
     Py_ssize_t length = PyUnicode_GET_LENGTH(obj);
 
     // worst case: 4 UTF-8 bytes per code point, plus the NUL terminator
@@ -211,27 +210,11 @@ tracemalloc_encode_filename(PyObject *obj)
         return NULL;
     }
 
-    char *p = buffer;
-    for (Py_ssize_t i = 0; i < length; i++) {
-        Py_UCS4 ch = PyUnicode_READ(kind, data, i);
-        if (ch < 0x80) {
-            *p++ = (char)ch;
-        }
-        else if (ch < 0x800) {
-            *p++ = (char)(0xc0 | (ch >> 6));
-            *p++ = (char)(0x80 | (ch & 0x3f));
-        }
-        else if (ch < 0x10000) {
-            *p++ = (char)(0xe0 | (ch >> 12));
-            *p++ = (char)(0x80 | ((ch >> 6) & 0x3f));
-            *p++ = (char)(0x80 | (ch & 0x3f));
-        }
-        else {
-            *p++ = (char)(0xf0 | (ch >> 18));
-            *p++ = (char)(0x80 | ((ch >> 12) & 0x3f));
-            *p++ = (char)(0x80 | ((ch >> 6) & 0x3f));
-            *p++ = (char)(0x80 | (ch & 0x3f));
-        }
+    unsigned char *p = (unsigned char *)buffer;
+    Py_ssize_t cursor = 0;
+    Py_UCS4 ch;
+    while (_PyUnicode_Next(obj, &cursor, &ch)) {
+        p = _PyUnicode_WriteUTF8Char(p, ch);
     }
     *p = '\0';
     return buffer;
