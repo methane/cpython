@@ -35,6 +35,23 @@ class UTF8StorageTests(unittest.TestCase):
     def make_string(self, text):
         return text.encode('utf-8', 'surrogatepass').decode('utf-8', 'surrogatepass')
 
+    def test_newline_decoder_without_fsr(self):
+        import _io
+
+        text = 'é\r\n日\r😀\n\ud800\udcff\0\r'
+        for translate in (False, True):
+            expected = text.replace('\r\n', '\n').replace('\r', '\n') if translate else text
+            for factory in (self.make_string, Str):
+                for split in range(len(text) + 1):
+                    decoder = _io.IncrementalNewlineDecoder(None, translate)
+                    chunks = [factory(text[:split]), factory(text[split:])]
+                    before = [_testcapi.unicode_storage(s) for s in chunks]
+                    result = decoder.decode(chunks[0], False)
+                    result += decoder.decode(chunks[1], True)
+                    self.assertEqual(result, expected)
+                    self.assertEqual(decoder.newlines, ('\r', '\n', '\r\n'))
+                    self.assertEqual([_testcapi.unicode_storage(s) for s in chunks], before)
+
     def test_charmap_replacement_without_fsr(self):
         import codecs
 
