@@ -958,8 +958,9 @@ _Py_DumpASCII(int fd, PyObject *text)
         }
     }
 
+    Py_ssize_t cursor = 0;
     for (i=0; i < size; i++) {
-        ch = _PyUnicode_ReadCharNoAlloc(text, i);
+        (void)_PyUnicode_Next(text, &cursor, &ch);
         if (' ' <= ch && ch <= 126) {
             /* printable ASCII character */
             dump_char(fd, (char)ch);

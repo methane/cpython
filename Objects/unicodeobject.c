@@ -11556,7 +11556,6 @@ PyObject *
 PyUnicode_Concat(PyObject *left, PyObject *right)
 {
     PyObject *result;
-    Py_UCS4 maxchar, maxchar2;
     Py_ssize_t left_len, right_len, new_len;
 
     if (ensure_unicode(left) < 0)
@@ -11590,16 +11589,13 @@ PyUnicode_Concat(PyObject *left, PyObject *right)
     }
     new_len = left_len + right_len;
 
-    maxchar = PyUnicode_MAX_CHAR_VALUE(left);
-    maxchar2 = PyUnicode_MAX_CHAR_VALUE(right);
-    maxchar = Py_MAX(maxchar, maxchar2);
-
     /* Concat the two Unicode strings */
-    result = PyUnicode_New(new_len, maxchar);
+    result = PyUnicode_New(new_len, 127);
     if (result == NULL)
         return NULL;
-    _PyUnicode_FastCopyCharacters(result, 0, left, 0, left_len);
-    _PyUnicode_FastCopyCharacters(result, left_len, right, 0, right_len);
+    char *data = (char *)_PyUnicode_GetPrimaryUTF8(result, NULL);
+    memcpy(data, _PyUnicode_GetPrimaryUTF8(left, NULL), left_len);
+    memcpy(data + left_len, _PyUnicode_GetPrimaryUTF8(right, NULL), right_len);
     assert(_PyUnicode_CheckConsistency(result, 1));
     return result;
 }
@@ -11608,7 +11604,6 @@ void
 PyUnicode_Append(PyObject **p_left, PyObject *right)
 {
     PyObject *left, *res;
-    Py_UCS4 maxchar, maxchar2;
     Py_ssize_t left_len, right_len, new_len;
 
     if (p_left == NULL) {
@@ -11652,33 +11647,24 @@ PyUnicode_Append(PyObject **p_left, PyObject *right)
     }
     new_len = left_len + right_len;
 
-    if (_PyUnicode_IsModifiable(left)
-        && PyUnicode_CheckExact(right)
-        && PyUnicode_KIND(right) <= PyUnicode_KIND(left)
-        /* Don't resize for ascii += latin1. Convert ascii to latin1 requires
-           to change the structure size, but characters are stored just after
-           the structure, and so it requires to move all characters which is
-           not so different than duplicating the string. */
-        && !(PyUnicode_IS_ASCII(left) && !PyUnicode_IS_ASCII(right)))
+    if (_PyUnicode_IsModifiable(left) && PyUnicode_CheckExact(right))
     {
         /* append inplace */
         if (unicode_resize(p_left, new_len) != 0)
             goto error;
 
         /* copy 'right' into the newly allocated area of 'left' */
-        _PyUnicode_FastCopyCharacters(*p_left, left_len, right, 0, right_len);
+        char *data = (char *)_PyUnicode_GetPrimaryUTF8(*p_left, NULL);
+        memcpy(data + left_len, _PyUnicode_GetPrimaryUTF8(right, NULL), right_len);
     }
     else {
-        maxchar = PyUnicode_MAX_CHAR_VALUE(left);
-        maxchar2 = PyUnicode_MAX_CHAR_VALUE(right);
-        maxchar = Py_MAX(maxchar, maxchar2);
-
         /* Concat the two Unicode strings */
-        res = PyUnicode_New(new_len, maxchar);
+        res = PyUnicode_New(new_len, 127);
         if (res == NULL)
             goto error;
-        _PyUnicode_FastCopyCharacters(res, 0, left, 0, left_len);
-        _PyUnicode_FastCopyCharacters(res, left_len, right, 0, right_len);
+        char *data = (char *)_PyUnicode_GetPrimaryUTF8(res, NULL);
+        memcpy(data, _PyUnicode_GetPrimaryUTF8(left, NULL), left_len);
+        memcpy(data + left_len, _PyUnicode_GetPrimaryUTF8(right, NULL), right_len);
         Py_DECREF(left);
         *p_left = res;
     }

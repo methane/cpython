@@ -548,6 +548,18 @@ class FaultHandlerTests(unittest.TestCase):
         self.assertEqual(exitcode, 0)
         self.assertIn(f'  File "{escaped}", line 1 in <module>', trace)
 
+    def test_dump_traceback_unicode_filename_truncated(self):
+        filename = 'é日😀\udcff' * 126
+        code = f'''
+            import faulthandler
+            exec(compile('faulthandler.dump_traceback(all_threads=False)',
+                         {filename!r}, 'exec'))
+        '''
+        trace, exitcode = self.get_output(code)
+        escaped = filename[:500].encode('ascii', 'backslashreplace').decode('ascii')
+        self.assertEqual(exitcode, 0)
+        self.assertIn(f'  File "{escaped}...", line 1 in <module>', trace)
+
     def test_dump_traceback_file(self):
         with temporary_filename() as filename:
             self.check_dump_traceback(filename=filename)
