@@ -9255,7 +9255,7 @@ charmapencode_output(Py_UCS4 c, PyObject *mapping,
    Return 0 on success, -1 on error */
 static int
 charmap_encoding_error(
-    PyObject *unicode, Py_ssize_t *inpos, PyObject *mapping,
+    PyObject *unicode, unicode_scan *reader, Py_ssize_t *inpos, PyObject *mapping,
     PyObject **exceptionObject,
     _Py_error_handler *error_handler, PyObject **error_handler_obj, const char *errors,
     PyBytesWriter *writer, Py_ssize_t *respos)
@@ -9274,20 +9274,23 @@ charmap_encoding_error(
     int val;
 
     size = PyUnicode_GET_LENGTH(unicode);
+    unicode_scan replacement = *reader;
+    (void)unicode_scan_next(reader, collstartpos);
     /* find all unencodable characters */
     while (collendpos < size) {
         PyObject *rep;
         unsigned char replace;
+        unicode_scan next = *reader;
+        ch = unicode_scan_next(&next, collendpos);
         if (Py_IS_TYPE(mapping, &EncodingMapType)) {
-            ch = _PyUnicode_ReadCharNoAlloc(unicode, collendpos);
             val = encoding_map_lookup(ch, mapping);
             if (val != -1)
                 break;
+            *reader = next;
             ++collendpos;
             continue;
         }
 
-        ch = _PyUnicode_ReadCharNoAlloc(unicode, collendpos);
         rep = charmapencode_lookup(ch, mapping, &replace);
         if (rep==NULL)
             return -1;
@@ -9296,6 +9299,7 @@ charmap_encoding_error(
             break;
         }
         Py_DECREF(rep);
+        *reader = next;
         ++collendpos;
     }
     /* cache callback name lookup
@@ -9329,7 +9333,7 @@ charmap_encoding_error(
         for (collpos = collstartpos; collpos < collendpos; ++collpos) {
             char buffer[2+29+1+1];
             char *cp;
-            sprintf(buffer, "&#%d;", (int)_PyUnicode_ReadCharNoAlloc(unicode, collpos));
+            sprintf(buffer, "&#%d;", (int)unicode_scan_next(&replacement, collpos));
             for (cp = buffer; *cp; ++cp) {
                 x = charmapencode_output(*cp, mapping, writer, respos);
                 if (x==enc_EXCEPTION)
@@ -9386,6 +9390,11 @@ charmap_encoding_error(
         *inpos = newpos;
         Py_DECREF(repunicode);
     }
+    if (*inpos != collendpos && reader->data == NULL) {
+        if (unicode_scan_seek(reader, unicode, *inpos) < 0) {
+            return -1;
+        }
+    }
     return 0;
 }
 
@@ -9399,15 +9408,12 @@ _PyUnicode_EncodeCharmap(PyObject *unicode,
         return unicode_encode_ucs1(unicode, errors, 256);
     }
 
-    if (PyUnicode_DATA(unicode) == NULL) {
-        return NULL;
-    }
     Py_ssize_t size = PyUnicode_GET_LENGTH(unicode);
     if (size == 0) {
         return Py_GetConstant(Py_CONSTANT_EMPTY_BYTES);
     }
-    const void *data = PyUnicode_DATA(unicode);
-    int kind = PyUnicode_KIND(unicode);
+    unicode_scan reader;
+    unicode_scan_init(&reader, unicode);
 
     PyObject *error_handler_obj = NULL;
     PyObject *exc = NULL;
@@ -9432,7 +9438,8 @@ _PyUnicode_EncodeCharmap(PyObject *unicode,
         Py_ssize_t outsize = _PyBytesWriter_GetSize(writer);
 
         while (inpos<size) {
-            Py_UCS4 ch = PyUnicode_READ(kind, data, inpos);
+            unicode_scan next = reader;
+            Py_UCS4 ch = unicode_scan_next(&next, inpos);
 
             /* try to encode it */
             int res = encoding_map_lookup(ch, mapping);
@@ -9451,11 +9458,12 @@ _PyUnicode_EncodeCharmap(PyObject *unicode,
             outstart[respos++] = (char)res;
 
             /* done with this character => adjust input position */
+            reader = next;
             ++inpos;
             continue;
 
 enc_FAILED:
-            if (charmap_encoding_error(unicode, &inpos, mapping,
+            if (charmap_encoding_error(unicode, &reader, &inpos, mapping,
                                        &exc,
                                        &error_handler, &error_handler_obj, errors,
                                        writer, &respos)) {
@@ -9467,14 +9475,15 @@ enc_FAILED:
     }
     else {
         while (inpos<size) {
-            Py_UCS4 ch = PyUnicode_READ(kind, data, inpos);
+            unicode_scan next = reader;
+            Py_UCS4 ch = unicode_scan_next(&next, inpos);
             /* try to encode it */
             charmapencode_result x = charmapencode_output(ch, mapping, writer, &respos);
             if (x==enc_EXCEPTION) { /* error */
                 goto onError;
             }
             if (x==enc_FAILED) { /* unencodable character */
-                if (charmap_encoding_error(unicode, &inpos, mapping,
+                if (charmap_encoding_error(unicode, &reader, &inpos, mapping,
                                            &exc,
                                            &error_handler, &error_handler_obj, errors,
                                            writer, &respos)) {
@@ -9483,6 +9492,7 @@ enc_FAILED:
             }
             else {
                 /* done with this character => adjust input position */
+                reader = next;
                 ++inpos;
             }
         }

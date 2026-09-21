@@ -150,6 +150,54 @@ class UTF8StorageTests(unittest.TestCase):
             self.assertEqual(calls, [(1, 3), (1, 3)])
             self.assertEqual(_testcapi.unicode_storage(value)[3], materialize)
 
+    def test_charmap_encode_without_fsr(self):
+        import codecs
+
+        table = ''.join(map(chr, range(256)))
+        mappings = (codecs.charmap_build(table),
+                    dict(zip(map(ord, table), range(256))))
+        for mapping in mappings:
+            for text in ('éÿ', 'a日😀b', '\ud800日é\udcff', '日' * 100):
+                for errors in ('strict', 'ignore', 'replace', 'backslashreplace',
+                               'xmlcharrefreplace'):
+                    with self.subTest(text=ascii(text), errors=errors, mapping=type(mapping)):
+                        value = self.make_string(text)
+                        before = _testcapi.unicode_storage(value)
+                        try:
+                            expected = codecs.charmap_encode(Str(text), errors, mapping)
+                        except UnicodeEncodeError:
+                            with self.assertRaises(UnicodeEncodeError):
+                                codecs.charmap_encode(value, errors, mapping)
+                        else:
+                            self.assertEqual(codecs.charmap_encode(value, errors, mapping),
+                                             expected)
+                        self.assertEqual(_testcapi.unicode_storage(value), before)
+
+    def test_charmap_encode_utf8_rewind(self):
+        import codecs
+
+        table = ''.join(map(chr, range(256)))
+        mappings = (codecs.charmap_build(table),
+                    dict(zip(map(ord, table), range(256))))
+        for mapping in mappings:
+            for replacement in ('é', b'!'):
+                for materialize in (False, True):
+                    value = self.make_string('é日😀z')
+                    calls = []
+                    def handler(exc):
+                        calls.append((exc.start, exc.end))
+                        if materialize:
+                            _testcapi.unicode_materialize_fsr(value)
+                        return replacement, 0 if len(calls) == 1 else exc.end
+                    codecs.register_error('test_utf8_charmap_rewind', handler)
+                    encoded = (replacement.encode('latin1')
+                               if isinstance(replacement, str) else replacement)
+                    self.assertEqual(codecs.charmap_encode(
+                        value, 'test_utf8_charmap_rewind', mapping),
+                        ((b'\xe9' + encoded) * 2 + b'z', 4))
+                    self.assertEqual(calls, [(1, 3), (1, 3)])
+                    self.assertEqual(_testcapi.unicode_storage(value)[3], materialize)
+
     def test_charmap_default_without_fsr(self):
         import codecs
 
