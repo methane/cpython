@@ -150,6 +150,22 @@ class UTF8StorageTests(unittest.TestCase):
             self.assertEqual(calls, [(1, 3), (1, 3)])
             self.assertEqual(_testcapi.unicode_storage(value)[3], materialize)
 
+    def test_unicode_error_display_without_fsr(self):
+        for char, escaped in (('é', r'\xe9'), ('日', r'\u65e5'),
+                              ('😀', r'\U0001f600'), ('\udcff', r'\udcff')):
+            for factory in (self.make_string, Str):
+                value = factory('ab' + char + 'z')
+                before = _testcapi.unicode_storage(value)
+                encode = UnicodeEncodeError('ascii', value, 2, 3, 'reason')
+                translate = UnicodeTranslateError(value, 2, 3, 'reason')
+                self.assertEqual(str(encode),
+                                 f"'ascii' codec can't encode character '{escaped}' "
+                                 "in position 2: reason")
+                self.assertEqual(str(translate),
+                                 f"can't translate character '{escaped}' "
+                                 "in position 2: reason")
+                self.assertEqual(_testcapi.unicode_storage(value), before)
+
     def test_utf16_utf32_encode_without_fsr(self):
         for encoding in ('utf-16', 'utf-16-le', 'utf-16-be',
                          'utf-32', 'utf-32-le', 'utf-32-be'):

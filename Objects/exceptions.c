@@ -3819,7 +3819,7 @@ UnicodeEncodeError_str(PyObject *self)
     Py_ssize_t start = exc->start, end = exc->end;
 
     if ((start >= 0 && start < len) && (end >= 0 && end <= len) && end == start + 1) {
-        Py_UCS4 badchar = PyUnicode_ReadChar(exc->object, start);
+        Py_UCS4 badchar = _PyUnicode_ReadCharNoAlloc(exc->object, start);
         const char *fmt;
         if (badchar <= 0xff) {
             fmt = "'%U' codec can't encode character '\\x%02x' in position %zd: %U";
@@ -4041,7 +4041,7 @@ UnicodeTranslateError_str(PyObject *self)
     Py_ssize_t start = exc->start, end = exc->end;
 
     if ((start >= 0 && start < len) && (end >= 0 && end <= len) && end == start + 1) {
-        Py_UCS4 badchar = PyUnicode_ReadChar(exc->object, start);
+        Py_UCS4 badchar = _PyUnicode_ReadCharNoAlloc(exc->object, start);
         const char *fmt;
         if (badchar <= 0xff) {
             fmt = "can't translate character '\\x%02x' in position %zd: %U";

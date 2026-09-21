@@ -1516,7 +1516,7 @@ pyexpat_encoding_convert(void *data, const char *s)
         Py_DECREF(u);
         return -1;
     }
-    Py_UCS4 ch = PyUnicode_ReadChar(u, 0);
+    Py_UCS4 ch = _PyUnicode_ReadCharNoAlloc(u, 0);
     Py_DECREF(u);
     return (int)ch;
 }
