@@ -387,9 +387,6 @@ vgetargs1_impl(PyObject *compat_args, PyObject *const *stack, Py_ssize_t nargs, 
     }
 
     for (i = 0; i < nargs; i++) {
-        if (stack[i] == NULL || PyObject_CheckAccess(stack[i]) == NULL) {
-            return cleanreturn(0, &freelist);
-        }
         if (*format == '|')
             format++;
         msg = convertitem(stack[i], &format, p_va,
@@ -418,9 +415,6 @@ vgetargs1(PyObject *args, const char *format, va_list *p_va, int flags)
     PyObject **stack;
     Py_ssize_t nargs;
 
-    if (args != NULL && PyObject_CheckAccess(args) == NULL) {
-        return 0;
-    }
     if (!(flags & FLAG_COMPAT)) {
         assert(args != NULL);
 
@@ -1704,24 +1698,6 @@ vgetargskeywords_impl(PyObject *const *args, Py_ssize_t nargs,
     assert(kwlist != NULL);
     assert(p_va != NULL);
 
-    if ((kwargs != NULL && PyObject_CheckAccess(kwargs) == NULL) ||
-        (kwnames != NULL && PyObject_CheckAccess(kwnames) == NULL)) {
-        return 0;
-    }
-    for (Py_ssize_t i = 0; i < nargs; i++) {
-        if (args[i] == NULL || PyObject_CheckAccess(args[i]) == NULL) {
-            return 0;
-        }
-    }
-    if (kwnames != NULL) {
-        for (Py_ssize_t i = 0; i < PyTuple_GET_SIZE(kwnames); i++) {
-            if (args[nargs + i] == NULL ||
-                PyObject_CheckAccess(args[nargs + i]) == NULL) {
-                return 0;
-            }
-        }
-    }
-
     /* grab the function name or custom error msg first (mutually exclusive) */
     fname = strchr(format, ':');
     if (fname) {
@@ -2040,10 +2016,6 @@ vgetargskeywords(PyObject *argstuple, PyObject *kwargs,
                  const char *format, const char * const *kwlist,
                  va_list *p_va, int flags)
 {
-    if (PyObject_CheckAccess(argstuple) == NULL ||
-        (kwargs != NULL && PyObject_CheckAccess(kwargs) == NULL)) {
-        return 0;
-    }
     PyObject *const *args = _PyTuple_ITEMS(argstuple);
     Py_ssize_t nargs = PyTuple_GET_SIZE(argstuple);
     return vgetargskeywords_impl(args, nargs, kwargs, NULL,
@@ -2528,9 +2500,7 @@ vgetargskeywordsfast(PyObject *args, PyObject *keywords,
 
     if (args == NULL
         || !PyTuple_Check(args)
-        || PyObject_CheckAccess(args) == NULL
-        || (keywords != NULL && (!PyDict_Check(keywords) ||
-                                 PyObject_CheckAccess(keywords) == NULL)))
+        || (keywords != NULL && !PyDict_Check(keywords)))
     {
         PyErr_BadInternalCall();
         return 0;
