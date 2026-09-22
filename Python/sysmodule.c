@@ -80,6 +80,12 @@ module sys
 PyObject *
 PySys_GetAttr(PyObject *name)
 {
+    if (name == NULL || PyObject_CheckAccess(name) == NULL) {
+        if (name == NULL) {
+            PyErr_BadInternalCall();
+        }
+        return NULL;
+    }
     if (!PyUnicode_Check(name)) {
         PyErr_Format(PyExc_TypeError,
                      "attribute name must be string, not '%T'",
@@ -118,6 +124,13 @@ PySys_GetAttrString(const char *name)
 int
 PySys_GetOptionalAttr(PyObject *name, PyObject **value)
 {
+    if (name == NULL || PyObject_CheckAccess(name) == NULL) {
+        if (name == NULL) {
+            PyErr_BadInternalCall();
+        }
+        *value = NULL;
+        return -1;
+    }
     if (!PyUnicode_Check(name)) {
         PyErr_Format(PyExc_TypeError,
                      "attribute name must be string, not '%T'",
@@ -170,7 +183,8 @@ PySys_GetObject(const char *name)
 static int
 sys_set_object(PyInterpreterState *interp, PyObject *key, PyObject *v)
 {
-    if (key == NULL) {
+    if (key == NULL || PyObject_CheckAccess(key) == NULL ||
+        (v != NULL && PyObject_CheckAccess(v) == NULL)) {
         return -1;
     }
     PyObject *sd = interp->sysdict;
