@@ -1548,6 +1548,14 @@ PyUnicode_CopyCharacters(PyObject *to, Py_ssize_t to_start,
 {
     int err;
 
+    if (to == NULL || from == NULL) {
+        PyErr_BadInternalCall();
+        return -1;
+    }
+    if (PyObject_CheckAccess(to) == NULL ||
+        PyObject_CheckAccess(from) == NULL) {
+        return -1;
+    }
     if (!PyUnicode_Check(from) || !PyUnicode_Check(to)) {
         PyErr_BadInternalCall();
         return -1;
@@ -3269,6 +3277,9 @@ PyUnicode_AsWideChar(PyObject *unicode,
         PyErr_BadInternalCall();
         return -1;
     }
+    if (PyObject_CheckAccess(unicode) == NULL) {
+        return -1;
+    }
     if (!PyUnicode_Check(unicode)) {
         PyErr_BadArgument();
         return -1;
@@ -3309,6 +3320,9 @@ PyUnicode_AsWideCharString(PyObject *unicode,
 
     if (unicode == NULL) {
         PyErr_BadInternalCall();
+        return NULL;
+    }
+    if (PyObject_CheckAccess(unicode) == NULL) {
         return NULL;
     }
     if (!PyUnicode_Check(unicode)) {
@@ -3413,6 +3427,13 @@ PyUnicode_FromObject(PyObject *obj)
 {
     /* XXX Perhaps we should make this API an alias of
        PyObject_Str() instead ?! */
+    if (obj == NULL) {
+        PyErr_BadInternalCall();
+        return NULL;
+    }
+    if (PyObject_CheckAccess(obj) == NULL) {
+        return NULL;
+    }
     if (PyUnicode_CheckExact(obj)) {
         return Py_NewRef(obj);
     }
@@ -3437,6 +3458,9 @@ PyUnicode_FromEncodedObject(PyObject *obj,
 
     if (obj == NULL) {
         PyErr_BadInternalCall();
+        return NULL;
+    }
+    if (PyObject_CheckAccess(obj) == NULL) {
         return NULL;
     }
 
@@ -4127,6 +4151,15 @@ unicode_ensure_utf8(PyObject *unicode)
 const char *
 PyUnicode_AsUTF8AndSize(PyObject *unicode, Py_ssize_t *psize)
 {
+    if (unicode == NULL || PyObject_CheckAccess(unicode) == NULL) {
+        if (psize) {
+            *psize = -1;
+        }
+        if (unicode == NULL) {
+            PyErr_BadArgument();
+        }
+        return NULL;
+    }
     if (!PyUnicode_Check(unicode)) {
         PyErr_BadArgument();
         if (psize) {
@@ -4185,6 +4218,12 @@ PyUnicode_GetSize(PyObject *unicode)
 Py_ssize_t
 PyUnicode_GetLength(PyObject *unicode)
 {
+    if (unicode == NULL || PyObject_CheckAccess(unicode) == NULL) {
+        if (unicode == NULL) {
+            PyErr_BadArgument();
+        }
+        return -1;
+    }
     if (!PyUnicode_Check(unicode)) {
         PyErr_BadArgument();
         return -1;
@@ -4198,6 +4237,12 @@ PyUnicode_ReadChar(PyObject *unicode, Py_ssize_t index)
     const void *data;
     int kind;
 
+    if (unicode == NULL || PyObject_CheckAccess(unicode) == NULL) {
+        if (unicode == NULL) {
+            PyErr_BadArgument();
+        }
+        return (Py_UCS4)-1;
+    }
     if (!PyUnicode_Check(unicode)) {
         PyErr_BadArgument();
         return (Py_UCS4)-1;
@@ -4214,6 +4259,12 @@ PyUnicode_ReadChar(PyObject *unicode, Py_ssize_t index)
 int
 PyUnicode_WriteChar(PyObject *unicode, Py_ssize_t index, Py_UCS4 ch)
 {
+    if (unicode == NULL || PyObject_CheckAccess(unicode) == NULL) {
+        if (unicode == NULL) {
+            PyErr_BadArgument();
+        }
+        return -1;
+    }
     if (!PyUnicode_Check(unicode) || !PyUnicode_IS_COMPACT(unicode)) {
         PyErr_BadArgument();
         return -1;
@@ -5703,6 +5754,12 @@ static PyObject *
 unicode_encode_utf8(PyObject *unicode, _Py_error_handler error_handler,
                     const char *errors)
 {
+    if (unicode == NULL || PyObject_CheckAccess(unicode) == NULL) {
+        if (unicode == NULL) {
+            PyErr_BadArgument();
+        }
+        return NULL;
+    }
     if (!PyUnicode_Check(unicode)) {
         PyErr_BadArgument();
         return NULL;
@@ -10044,6 +10101,16 @@ PyUnicode_FindChar(PyObject *str, Py_UCS4 ch,
 {
     int kind;
     Py_ssize_t len, result;
+    if (str == NULL || PyObject_CheckAccess(str) == NULL) {
+        if (str == NULL) {
+            PyErr_BadArgument();
+        }
+        return -2;
+    }
+    if (!PyUnicode_Check(str)) {
+        PyErr_BadArgument();
+        return -2;
+    }
     len = PyUnicode_GET_LENGTH(str);
     ADJUST_INDICES(start, end, len);
     if (end - start < 1)
@@ -10373,6 +10440,15 @@ PyUnicode_Join(PyObject *separator, PyObject *seq)
     Py_ssize_t seqlen;
     PyObject **items;
 
+    if (separator != NULL && PyObject_CheckAccess(separator) == NULL) {
+        return NULL;
+    }
+    if (seq == NULL || PyObject_CheckAccess(seq) == NULL) {
+        if (seq == NULL) {
+            PyErr_BadInternalCall();
+        }
+        return NULL;
+    }
     fseq = PySequence_Fast(seq, "can only join an iterable");
     if (fseq == NULL) {
         return NULL;
@@ -11714,6 +11790,12 @@ PyUnicode_Concat(PyObject *left, PyObject *right)
     if (ensure_unicode(left) < 0)
         return NULL;
 
+    if (right == NULL || PyObject_CheckAccess(right) == NULL) {
+        if (right == NULL) {
+            PyErr_BadInternalCall();
+        }
+        return NULL;
+    }
     if (!PyUnicode_Check(right)) {
         PyErr_Format(PyExc_TypeError,
             "can only concatenate str (not \"%.200s\") to str",
@@ -12740,6 +12822,16 @@ PyUnicode_Substring(PyObject *self, Py_ssize_t start, Py_ssize_t end)
     int kind;
     Py_ssize_t length;
 
+    if (self == NULL || PyObject_CheckAccess(self) == NULL) {
+        if (self == NULL) {
+            PyErr_BadInternalCall();
+        }
+        return NULL;
+    }
+    if (!PyUnicode_Check(self)) {
+        PyErr_BadArgument();
+        return NULL;
+    }
     length = PyUnicode_GET_LENGTH(self);
     end = Py_MIN(end, length);
 

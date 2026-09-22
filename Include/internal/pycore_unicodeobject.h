@@ -99,6 +99,13 @@ _PyUnicode_Fill(int kind, void *data, Py_UCS4 value,
 static inline int
 _PyUnicode_EnsureUnicode(PyObject *obj)
 {
+    if (obj == NULL) {
+        PyErr_BadArgument();
+        return -1;
+    }
+    if (PyObject_CheckAccess(obj) == NULL) {
+        return -1;
+    }
     if (!PyUnicode_Check(obj)) {
         PyErr_Format(PyExc_TypeError,
                      "must be str, not %T", obj);
