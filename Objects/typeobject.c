@@ -5938,7 +5938,8 @@ PyType_GetName(PyTypeObject *type)
     if (PyObject_CheckAccess((PyObject *)type) == NULL) {
         return NULL;
     }
-    return type_name((PyObject *)type, NULL);
+    return _PyObject_CheckAccessNullable(
+        type_name((PyObject *)type, NULL));
 }
 
 PyObject *
@@ -5951,7 +5952,8 @@ PyType_GetQualName(PyTypeObject *type)
     if (PyObject_CheckAccess((PyObject *)type) == NULL) {
         return NULL;
     }
-    return type_qualname((PyObject *)type, NULL);
+    return _PyObject_CheckAccessNullable(
+        type_qualname((PyObject *)type, NULL));
 }
 
 PyObject *

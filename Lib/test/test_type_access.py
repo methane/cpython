@@ -51,6 +51,62 @@ class TypeAccessTests(unittest.TestCase):
         self.assertEqual(results.get(), len(apis))
 
     @threading_helper.requires_working_threading()
+    def test_name_results(self):
+        """Name accessors must check values stored by a synchronized type."""
+        capi = import_module('_testcapi')
+        limited = import_module('_testlimitedcapi')
+        internal = import_module('_testinternalcapi')
+        invoke = capi.call_cfunction_raw_return_in_tuple
+        internal.object_declare_synchronized(invoke)
+        apis = (limited.get_type_name, limited.get_type_qualname)
+        for api in apis:
+            internal.object_declare_synchronized(api)
+
+        class LocalType:
+            pass
+
+        LocalType.synchronize()
+        ready = threading.Event()
+        finish = threading.Event()
+
+        def producer():
+            class ForeignName(str):
+                pass
+
+            with sys.monitoring.StopTheWorld:
+                LocalType.__name__ = ForeignName('foreign_name')
+                LocalType.__qualname__ = ForeignName('foreign_qualname')
+            ready.set()
+            finish.wait()
+
+        producer_thread = threading.Thread(
+            target=producer, group=threading.ThreadGroup())
+        producer_thread.start()
+        try:
+            self.assertTrue(ready.wait(SHORT_TIMEOUT))
+            result = threading.Channel()
+
+            def consumer():
+                denied = 0
+                for api in apis:
+                    try:
+                        invoke(api, (LocalType,))
+                    except IllegalThreadAccessException:
+                        denied += 1
+                result.put(denied)
+
+            consumer_thread = threading.Thread(
+                target=consumer, group=threading.ThreadGroup())
+            consumer_thread.start()
+            consumer_thread.join(SHORT_TIMEOUT)
+            self.assertFalse(consumer_thread.is_alive())
+            self.assertEqual(result.get(), len(apis))
+        finally:
+            finish.set()
+            producer_thread.join(SHORT_TIMEOUT)
+            self.assertFalse(producer_thread.is_alive())
+
+    @threading_helper.requires_working_threading()
     def test_module_name_result(self):
         """PyType_GetModuleName must check an arbitrary __module__ value."""
         capi = import_module('_testcapi')
