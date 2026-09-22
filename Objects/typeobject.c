@@ -12903,6 +12903,17 @@ add_operators(PyTypeObject *type)
 int
 PyType_Freeze(PyTypeObject *type)
 {
+    if (type == NULL) {
+        PyErr_BadInternalCall();
+        return -1;
+    }
+    if (PyObject_CheckAccess((PyObject *)type) == NULL) {
+        return -1;
+    }
+    if (!PyType_Check(type)) {
+        PyErr_BadInternalCall();
+        return -1;
+    }
     // gh-121654: Check the __mro__ instead of __bases__
     PyObject *mro = type_get_mro((PyObject *)type, NULL);
     if (!PyTuple_Check(mro)) {
