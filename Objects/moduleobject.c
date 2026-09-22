@@ -871,11 +871,20 @@ PyModule_SetDocString(PyObject *m, const char *doc)
 PyObject *
 PyModule_GetDict(PyObject *m)
 {
-    if (!PyModule_Check(m)) {
-        PyErr_BadInternalCall();
+    if (m == NULL || PyObject_CheckAccess(m) == NULL || !PyModule_Check(m)) {
+        if (m == NULL) {
+            PyErr_BadInternalCall();
+        }
+        else if (!PyErr_Occurred()) {
+            PyErr_BadInternalCall();
+        }
         return NULL;
     }
-    return _PyModule_GetDict(m);  // borrowed reference
+    PyObject *dict = _PyModule_GetDict(m);  // borrowed reference
+    if (dict != NULL && PyObject_CheckAccess(dict) == NULL) {
+        return NULL;
+    }
+    return dict;
 }
 
 int
@@ -954,6 +963,10 @@ PyModule_GetNameObject(PyObject *mod)
         // error or not found
         goto error;
     }
+    if (PyObject_CheckAccess(name) == NULL) {
+        Py_DECREF(name);
+        return NULL;
+    }
     if (!PyUnicode_Check(name)) {
         Py_DECREF(name);
         goto error;
@@ -1005,6 +1018,10 @@ _PyModule_GetFilenameObject(PyObject *mod)
         // isn't disk-based.  It could also be that a user created
         // a module manually but without manually setting __file__.
         Py_RETURN_NONE;
+    }
+    if (PyObject_CheckAccess(fileobj) == NULL) {
+        Py_DECREF(fileobj);
+        return NULL;
     }
     if (!PyUnicode_Check(fileobj)) {
         Py_DECREF(fileobj);
