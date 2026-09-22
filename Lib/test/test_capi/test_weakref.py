@@ -73,6 +73,17 @@ class CAPIWeakrefTest(unittest.TestCase):
         self.assertRaises(TypeError, getref, 42)
         self.assertRaises(SystemError, getref, NULL)
 
+    def test_pyweakref_getobject(self):
+        # Test the stable PyWeakref_GetObject() API.
+        getobject = _testcapi.pyweakref_getobject
+        obj = Object()
+        wr = weakref.ref(obj)
+        self.assertIs(getobject(wr), obj)
+        del obj
+        self.assertIsNone(getobject(wr))
+
+        self.assertRaises(SystemError, getobject, NULL)
+
     def test_pyweakref_isdead(self):
         # Test PyWeakref_IsDead()
         isdead = _testcapi.pyweakref_isdead

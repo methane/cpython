@@ -77,8 +77,8 @@ PyGen_GetCode(PyGenObject *gen) {
         return NULL;
     }
     PyCodeObject *res = _PyGen_GetCode(gen);
-    Py_INCREF(res);
-    return res;
+    return (PyCodeObject *)_PyObject_CheckAccessNullable(
+        Py_NewRef((PyObject *)res));
 }
 
 static int
@@ -1196,6 +1196,11 @@ static PyObject *
 gen_new_with_qualname(PyTypeObject *type, PyFrameObject *f,
                       PyObject *name, PyObject *qualname)
 {
+    if (PyObject_CheckAccess((PyObject *)f) == NULL ||
+        (name != NULL && PyObject_CheckAccess(name) == NULL) ||
+        (qualname != NULL && PyObject_CheckAccess(qualname) == NULL)) {
+        return NULL;
+    }
     PyCodeObject *code = _PyFrame_GetCode(f->f_frame);
     int size = code->co_nlocalsplus + code->co_stacksize;
     PyGenObject *gen = PyObject_GC_NewVar(PyGenObject, type, size);

@@ -24,6 +24,9 @@ PySeqIter_New(PyObject *seq)
 {
     seqiterobject *it;
 
+    if (PyObject_CheckAccess(seq) == NULL) {
+        return NULL;
+    }
     if (!PySequence_Check(seq)) {
         PyErr_BadInternalCall();
         return NULL;
@@ -33,6 +36,7 @@ PySeqIter_New(PyObject *seq)
         return NULL;
     it->it_index = 0;
     it->it_seq = Py_NewRef(seq);
+    _PyObject_InheritShareable((PyObject *)it, seq);
     _PyObject_GC_TRACK(it);
     return (PyObject *)it;
 }
@@ -216,6 +220,11 @@ PyObject *
 _PyCallIter_NewEx(PyObject *callable, PyObject *sentinel, PyObject *stop_exc)
 {
     calliterobject *it;
+    if (PyObject_CheckAccess(callable) == NULL ||
+        (sentinel != NULL && PyObject_CheckAccess(sentinel) == NULL) ||
+        (stop_exc != NULL && PyObject_CheckAccess(stop_exc) == NULL)) {
+        return NULL;
+    }
     if (stop_exc == NULL) {
         stop_exc = PyExc_StopIteration;
     }
@@ -228,6 +237,7 @@ _PyCallIter_NewEx(PyObject *callable, PyObject *sentinel, PyObject *stop_exc)
     it->it_callable = Py_NewRef(callable);
     it->it_sentinel = Py_XNewRef(sentinel);
     it->it_stop_exc = Py_NewRef(stop_exc);
+    _PyObject_InheritShareable((PyObject *)it, callable);
     _PyObject_GC_TRACK(it);
     return (PyObject *)it;
 }

@@ -56,7 +56,9 @@ class ThreadSharingTests(unittest.TestCase):
         capi = import_module('_testcapi')
         internal = import_module('_testinternalcapi')
         getter = capi.pyweakref_getref
+        object_getter = capi.pyweakref_getobject
         internal.object_declare_synchronized(getter)
+        internal.object_declare_synchronized(object_getter)
         def target():
             return 42
         reference = weakref.ref(target)
@@ -66,7 +68,8 @@ class ThreadSharingTests(unittest.TestCase):
         self.assertIs(target.__shareable__, threading.Shareable.LOCAL)
         results = threading.Channel()
         def worker():
-            for read in (reference, lambda: getter(reference)):
+            for read in (reference, lambda: getter(reference),
+                         lambda: object_getter(reference)):
                 for _ in range(100):
                     try:
                         read()

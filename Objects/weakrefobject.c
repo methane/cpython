@@ -422,6 +422,16 @@ allocate_weakref(PyTypeObject *type, PyObject *obj, PyObject *callback)
 static PyWeakReference *
 get_or_create_weakref(PyTypeObject *type, PyObject *obj, PyObject *callback)
 {
+    /* Static types are weak-referenced while PyType_Ready() is publishing
+       them.  Their object header is not owned until initialization finishes. */
+    int check_obj = !(PyType_Check(obj) &&
+                      !PyType_HasFeature((PyTypeObject *)obj,
+                                         Py_TPFLAGS_READY));
+    if ((check_obj && PyObject_CheckAccess(obj) == NULL) ||
+        (callback != NULL && callback != Py_None &&
+         PyObject_CheckAccess(callback) == NULL)) {
+        return NULL;
+    }
     if (!_PyType_SUPPORTS_WEAKREFS(Py_TYPE(obj))) {
         PyErr_Format(PyExc_TypeError,
                      "cannot create weak reference to '%s' object",
@@ -963,6 +973,9 @@ PyWeakref_IsDead(PyObject *ref)
         PyErr_Format(PyExc_TypeError, "expected a weakref, got %T", ref);
         return -1;
     }
+    if (PyObject_CheckAccess(ref) == NULL) {
+        return -1;
+    }
     return _PyWeakref_IS_DEAD(ref);
 }
 
@@ -977,6 +990,10 @@ PyWeakref_GetRef(PyObject *ref, PyObject **pobj)
     if (!PyWeakref_Check(ref)) {
         *pobj = NULL;
         PyErr_SetString(PyExc_TypeError, "expected a weakref");
+        return -1;
+    }
+    if (PyObject_CheckAccess(ref) == NULL) {
+        *pobj = NULL;
         return -1;
     }
     *pobj = _PyWeakref_GET_REF(ref);
@@ -996,9 +1013,16 @@ PyWeakref_GetObject(PyObject *ref)
         PyErr_BadInternalCall();
         return NULL;
     }
+    if (PyObject_CheckAccess(ref) == NULL) {
+        return NULL;
+    }
     PyObject *obj = _PyWeakref_GET_REF(ref);
     if (obj == NULL) {
         return Py_None;
+    }
+    if (PyObject_CheckAccess(obj) == NULL) {
+        Py_DECREF(obj);
+        return NULL;
     }
     Py_DECREF(obj);
     return obj;  // borrowed reference
