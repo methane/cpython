@@ -1746,7 +1746,7 @@ lock_publish_copy(PyObject *copy, uint32_t mutex_id)
 }
 
 static PyObject *
-lock_protected_copy(PyObject *value)
+lock_protected_copy(PyObject *value, PyObject *copy_function)
 {
     if (PyObject_CheckAccess(value) == NULL) {
         return NULL;
@@ -1772,12 +1772,12 @@ lock_protected_copy(PyObject *value)
                         "protect() does not support this native object layout");
         return NULL;
     }
-    PyObject *module = PyImport_ImportModule("copy");
-    if (module == NULL) {
+    if (copy_function == NULL) {
+        PyErr_SetString(PyExc_RuntimeError,
+                        "threading has not initialized copy support");
         return NULL;
     }
-    PyObject *copy = PyObject_CallMethod(module, "copy", "(O)", value);
-    Py_DECREF(module);
+    PyObject *copy = PyObject_CallOneArg(copy_function, value);
     if (copy == NULL) {
         return NULL;
     }
@@ -1823,6 +1823,10 @@ static PyObject *
 lock_protect(PyObject *op, PyObject *value)
 {
     lockobject *self = lockobject_CAST(op);
+    thread_module_state *module_state = get_thread_state_by_cls(Py_TYPE(op));
+    if (module_state == NULL) {
+        return NULL;
+    }
     PyThreadState *tstate = _PyThreadState_GET();
     int owned;
     PyMutex_LockFlags(&self->state->metadata_mutex, 0);
@@ -1833,7 +1837,7 @@ lock_protect(PyObject *op, PyObject *value)
                         "protect() requires an owning lock context");
         return NULL;
     }
-    PyObject *copy = lock_protected_copy(value);
+    PyObject *copy = lock_protected_copy(value, module_state->copy_function);
     if (copy == NULL) {
         return NULL;
     }
@@ -2301,6 +2305,10 @@ static PyObject *
 rlock_protect(PyObject *op, PyObject *value)
 {
     rlockobject *self = rlockobject_CAST(op);
+    thread_module_state *module_state = get_thread_state_by_cls(Py_TYPE(op));
+    if (module_state == NULL) {
+        return NULL;
+    }
     PyThreadState *tstate = _PyThreadState_GET();
     int owned;
     PyMutex_LockFlags(&self->state->metadata_mutex, 0);
@@ -2311,7 +2319,7 @@ rlock_protect(PyObject *op, PyObject *value)
                         "protect() requires exclusively owning lock contexts");
         return NULL;
     }
-    PyObject *copy = lock_protected_copy(value);
+    PyObject *copy = lock_protected_copy(value, module_state->copy_function);
     if (copy == NULL) {
         return NULL;
     }
