@@ -842,6 +842,22 @@ _PyCode_New(struct _PyCodeConstructor *con)
  * the legacy "constructors"
  ******************/
 
+static int
+code_check_tuple_access(PyObject *tuple)
+{
+    for (Py_ssize_t i = 0; i < PyTuple_GET_SIZE(tuple); i++) {
+        PyObject *item = PyTuple_GET_ITEM(tuple, i);
+        if (item == NULL) {
+            PyErr_BadInternalCall();
+            return -1;
+        }
+        if (PyObject_CheckAccess(item) == NULL) {
+            return -1;
+        }
+    }
+    return 0;
+}
+
 PyCodeObject *
 PyUnstable_Code_NewWithPosOnlyArgs(
                           int argcount, int posonlyargcount, int kwonlyargcount,
@@ -857,11 +873,32 @@ PyUnstable_Code_NewWithPosOnlyArgs(
     PyObject *localsplusnames = NULL;
     PyObject *localspluskinds = NULL;
 
+    PyObject *refs[] = {
+        code, consts, names, varnames, freevars, cellvars,
+        filename, name, qualname, linetable, exceptiontable,
+    };
+    for (size_t i = 0; i < Py_ARRAY_LENGTH(refs); i++) {
+        if (refs[i] != NULL && PyObject_CheckAccess(refs[i]) == NULL) {
+            return NULL;
+        }
+    }
+
     if (varnames == NULL || !PyTuple_Check(varnames) ||
         cellvars == NULL || !PyTuple_Check(cellvars) ||
         freevars == NULL || !PyTuple_Check(freevars)
         ) {
         PyErr_BadInternalCall();
+        return NULL;
+    }
+    if (code_check_tuple_access(varnames) < 0 ||
+        code_check_tuple_access(cellvars) < 0 ||
+        code_check_tuple_access(freevars) < 0) {
+        return NULL;
+    }
+    if (PyTuple_Check(consts) && code_check_tuple_access(consts) < 0) {
+        return NULL;
+    }
+    if (PyTuple_Check(names) && code_check_tuple_access(names) < 0) {
         return NULL;
     }
 
