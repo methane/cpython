@@ -5340,6 +5340,13 @@ type_from_slots_or_spec(
 
     _PySlotIterator it;
 
+    if ((module != NULL && PyObject_CheckAccess(module) == NULL) ||
+        (bases_in != NULL && PyObject_CheckAccess(bases_in) == NULL) ||
+        (metaclass != NULL &&
+         PyObject_CheckAccess((PyObject *)metaclass) == NULL)) {
+        return NULL;
+    }
+
     if (spec) {
         assert(!slots);
         if (spec->basicsize > 0) {
@@ -5585,6 +5592,16 @@ type_from_slots_or_spec(
     }
     if (!bases) {
         goto finally;
+    }
+    for (Py_ssize_t i = 0; i < PyTuple_GET_SIZE(bases); i++) {
+        PyObject *base_obj = PyTuple_GET_ITEM(bases, i);
+        if (base_obj == NULL) {
+            PyErr_BadInternalCall();
+            goto finally;
+        }
+        if (PyObject_CheckAccess(base_obj) == NULL) {
+            goto finally;
+        }
     }
 
     /* If this is an immutable type, check if all bases are also immutable.
