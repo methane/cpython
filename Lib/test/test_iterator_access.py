@@ -830,6 +830,41 @@ class IteratorAccessTests(unittest.TestCase):
 
     @requires_specialization
     @threading_helper.requires_working_threading()
+    def test_foreign_default(self):
+        capi = import_module('_testcapi')
+        internal = import_module('_testinternalcapi')
+        invoke = capi.call_cfunction_raw_return_in_tuple
+        internal.object_declare_synchronized(invoke)
+
+        class Payload:
+            pass
+
+        value = Payload()
+        reference = weakref.ref(value)
+        results = threading.Channel()
+
+        def worker(payload):
+            with sys.monitoring.StopTheWorld:
+                args = (iter(()), payload[0])
+            try:
+                invoke(next, args)
+            except IllegalThreadAccessException:
+                results.put(True)
+            else:
+                results.put(False)
+
+        thread = threading.Thread(target=worker, args=((value,),),
+                                  group=threading.ThreadGroup())
+        with threading_helper.start_threads([thread]):
+            pass
+        self.assertTrue(results.get())
+        self.assertIs(reference(), value)
+        del value
+        gc_collect()
+        self.assertIsNone(reference())
+
+    @requires_specialization
+    @threading_helper.requires_working_threading()
     def test_for_loop_foreign_results(self):
         internal = import_module('_testinternalcapi')
         get_tlbc = getattr(internal, 'get_tlbc', None)

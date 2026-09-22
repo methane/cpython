@@ -1787,7 +1787,7 @@ builtin_next(PyObject *self, PyObject *const *args, Py_ssize_t nargs)
                 return NULL;
             PyErr_Clear();
         }
-        return Py_NewRef(def);
+        return _PyObject_CheckAccessNullable(Py_NewRef(def));
     } else if (PyErr_Occurred()) {
         return NULL;
     } else {
