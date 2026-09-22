@@ -249,6 +249,12 @@ new_module(PyTypeObject *mt, PyObject *args, PyObject *kws)
 PyObject *
 PyModule_NewObject(PyObject *name)
 {
+    if (name == NULL || PyObject_CheckAccess(name) == NULL) {
+        if (name == NULL) {
+            PyErr_BadInternalCall();
+        }
+        return NULL;
+    }
     PyModuleObject *m = new_module_notrack(&PyModule_Type);
     if (m == NULL)
         return NULL;
@@ -685,6 +691,12 @@ PyModule_FromSlotsAndSpec(const PySlot *slots, PyObject *spec)
             "PyModule_FromSlotsAndSpec called with NULL slots");
         return NULL;
     }
+    if (spec == NULL || PyObject_CheckAccess(spec) == NULL) {
+        if (spec == NULL) {
+            PyErr_BadInternalCall();
+        }
+        return NULL;
+    }
 
     return module_from_slots_and_spec(slots, spec, PYTHON_API_VERSION,
                                       NULL);
@@ -697,6 +709,9 @@ PyUnstable_Module_SetGIL(PyObject *module, void *gil)
     bool requires_gil = (gil != Py_MOD_GIL_NOT_USED);
     if (!PyModule_Check(module)) {
         PyErr_BadInternalCall();
+        return -1;
+    }
+    if (PyObject_CheckAccess(module) == NULL) {
         return -1;
     }
     ((PyModuleObject *)module)->md_requires_gil = requires_gil;
@@ -754,6 +769,12 @@ alloc_state(PyObject *module)
 int
 PyModule_Exec(PyObject *module)
 {
+    if (module == NULL || PyObject_CheckAccess(module) == NULL) {
+        if (module == NULL) {
+            PyErr_BadInternalCall();
+        }
+        return -1;
+    }
     if (alloc_state(module) < 0) {
         return -1;
     }
@@ -773,6 +794,12 @@ PyModule_Exec(PyObject *module)
 int
 PyModule_ExecDef(PyObject *module, PyModuleDef *def)
 {
+    if (module == NULL || PyObject_CheckAccess(module) == NULL) {
+        if (module == NULL) {
+            PyErr_BadInternalCall();
+        }
+        return -1;
+    }
     if (alloc_state(module) < 0) {
         return -1;
     }
@@ -804,6 +831,12 @@ PyModule_ExecDef(PyObject *module, PyModuleDef *def)
 int
 PyModule_AddFunctions(PyObject *m, PyMethodDef *functions)
 {
+    if (m == NULL || PyObject_CheckAccess(m) == NULL) {
+        if (m == NULL) {
+            PyErr_BadInternalCall();
+        }
+        return -1;
+    }
     int res;
     PyObject *name = PyModule_GetNameObject(m);
     if (name == NULL) {
@@ -820,6 +853,12 @@ PyModule_SetDocString(PyObject *m, const char *doc)
 {
     PyObject *v;
 
+    if (m == NULL || PyObject_CheckAccess(m) == NULL) {
+        if (m == NULL) {
+            PyErr_BadInternalCall();
+        }
+        return -1;
+    }
     v = PyUnicode_FromString(doc);
     if (v == NULL || PyObject_SetAttr(m, &_Py_ID(__doc__), v) != 0) {
         Py_XDECREF(v);
@@ -842,9 +881,18 @@ PyModule_GetDict(PyObject *m)
 int
 PyModule_GetStateSize(PyObject *m, Py_ssize_t *size_p)
 {
+    if (size_p == NULL) {
+        PyErr_BadInternalCall();
+        return -1;
+    }
     *size_p = -1;
-    if (!PyModule_Check(m)) {
-        PyErr_Format(PyExc_TypeError, "expected module, got %T", m);
+    if (m == NULL || PyObject_CheckAccess(m) == NULL || !PyModule_Check(m)) {
+        if (m == NULL) {
+            PyErr_BadInternalCall();
+        }
+        else if (!PyErr_Occurred()) {
+            PyErr_Format(PyExc_TypeError, "expected module, got %T", m);
+        }
         return -1;
     }
     PyModuleObject *mod = (PyModuleObject *)m;
@@ -866,9 +914,18 @@ PyModule_GetToken_DuringGC(PyObject *m, void **token_p)
 int
 PyModule_GetToken(PyObject *m, void **token_p)
 {
+    if (token_p == NULL) {
+        PyErr_BadInternalCall();
+        return -1;
+    }
     *token_p = NULL;
-    if (!PyModule_Check(m)) {
-        PyErr_Format(PyExc_TypeError, "expected module, got %T", m);
+    if (m == NULL || PyObject_CheckAccess(m) == NULL || !PyModule_Check(m)) {
+        if (m == NULL) {
+            PyErr_BadInternalCall();
+        }
+        else if (!PyErr_Occurred()) {
+            PyErr_Format(PyExc_TypeError, "expected module, got %T", m);
+        }
         return -1;
     }
     *token_p = _PyModule_GetToken(m);
@@ -878,8 +935,14 @@ PyModule_GetToken(PyObject *m, void **token_p)
 PyObject*
 PyModule_GetNameObject(PyObject *mod)
 {
-    if (!PyModule_Check(mod)) {
-        PyErr_BadArgument();
+    if (mod == NULL || PyObject_CheckAccess(mod) == NULL ||
+        !PyModule_Check(mod)) {
+        if (mod == NULL) {
+            PyErr_BadArgument();
+        }
+        else if (!PyErr_Occurred()) {
+            PyErr_BadArgument();
+        }
         return NULL;
     }
     PyObject *dict = ((PyModuleObject *)mod)->md_dict;  // borrowed reference
@@ -953,6 +1016,12 @@ _PyModule_GetFilenameObject(PyObject *mod)
 PyObject*
 PyModule_GetFilenameObject(PyObject *mod)
 {
+    if (mod == NULL || PyObject_CheckAccess(mod) == NULL) {
+        if (mod == NULL) {
+            PyErr_BadArgument();
+        }
+        return NULL;
+    }
     PyObject *fileobj = _PyModule_GetFilenameObject(mod);
     if (fileobj == NULL) {
         return NULL;
@@ -1011,8 +1080,13 @@ _PyModule_GetFilenameUTF8(PyObject *mod, char *buffer, Py_ssize_t maxlen)
 PyModuleDef*
 PyModule_GetDef(PyObject* m)
 {
-    if (!PyModule_Check(m)) {
-        PyErr_BadArgument();
+    if (m == NULL || PyObject_CheckAccess(m) == NULL || !PyModule_Check(m)) {
+        if (m == NULL) {
+            PyErr_BadArgument();
+        }
+        else if (!PyErr_Occurred()) {
+            PyErr_BadArgument();
+        }
         return NULL;
     }
     return _PyModule_GetDefOrNull(m);
@@ -1030,8 +1104,13 @@ PyModule_GetState_DuringGC(PyObject* m)
 void*
 PyModule_GetState(PyObject* m)
 {
-    if (!PyModule_Check(m)) {
-        PyErr_BadArgument();
+    if (m == NULL || PyObject_CheckAccess(m) == NULL || !PyModule_Check(m)) {
+        if (m == NULL) {
+            PyErr_BadArgument();
+        }
+        else if (!PyErr_Occurred()) {
+            PyErr_BadArgument();
+        }
         return NULL;
     }
     return _PyModule_GetState(m);
