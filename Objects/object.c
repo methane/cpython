@@ -3111,6 +3111,7 @@ is_intrinsically_immutable(PyTypeObject *type)
            type == &PyMemberDescr_Type || type == &PyGetSetDescr_Type ||
            type == &PyWrapperDescr_Type ||
            type == &PyCode_Type || type == Py_TYPE(Py_None) ||
+           type == &PySlice_Type ||
            type == Py_TYPE(Py_Ellipsis) || type == Py_TYPE(Py_NotImplemented);
 }
 

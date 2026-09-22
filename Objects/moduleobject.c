@@ -1291,6 +1291,25 @@ _PyModuleSpec_IsInitializing(PyObject *spec)
     return rc;
 }
 
+int
+_PyModuleSpec_IsInitializingUnchecked(PyObject *spec)
+{
+    if (spec == NULL) {
+        return 0;
+    }
+    /* Import bookkeeping may inspect a module spec owned by another
+       ThreadGroup.  Only the boolean result escapes this helper, so bypass
+       the public access check while reading the private flag. */
+    PyObject *value = _PyObject_GenericGetAttrWithDict(
+        spec, &_Py_ID(_initializing), NULL, 1);
+    int rc = value != NULL ? 1 : (PyErr_Occurred() ? -1 : 0);
+    if (rc > 0) {
+        rc = PyObject_IsTrue(value);
+        Py_DECREF(value);
+    }
+    return rc;
+}
+
 /* Check if the submodule name is in the "_uninitialized_submodules" attribute
    of the module spec.
  */

@@ -322,7 +322,7 @@ import_ensure_initialized(PyInterpreterState *interp, PyObject *mod, PyObject *n
         rc = PyObject_GetOptionalAttr(mod, &_Py_ID(__spec__), &spec);
     }
     if (rc > 0) {
-        rc = _PyModuleSpec_IsInitializing(spec);
+        rc = _PyModuleSpec_IsInitializingUnchecked(spec);
         Py_DECREF(spec);
     }
     if (rc == 0) {
@@ -4253,9 +4253,19 @@ PyImport_ImportModuleLevelObject(PyObject *name, PyObject *globals,
     if (name != NULL && PyObject_CheckAccess(name) == NULL) {
         return NULL;
     }
-    if ((globals != NULL && PyObject_CheckAccess(globals) == NULL) ||
-        (locals != NULL && PyObject_CheckAccess(locals) == NULL) ||
-        (fromlist != NULL && PyObject_CheckAccess(fromlist) == NULL)) {
+    /* Absolute imports do not inspect the execution namespaces.  In
+       particular, IMPORT_NAME may pass a frame's globals dictionary from a
+       different ThreadGroup; keeping that dictionary inside the interpreter
+       is safe and is required for importing shared modules.  Relative
+       imports need globals to resolve the package name, so validate it in
+       that case. */
+    if (level > 0 && globals != NULL && PyObject_CheckAccess(globals) == NULL) {
+        return NULL;
+    }
+    if (level > 0 && locals != NULL && PyObject_CheckAccess(locals) == NULL) {
+        return NULL;
+    }
+    if (fromlist != NULL && PyObject_CheckAccess(fromlist) == NULL) {
         return NULL;
     }
     PyThreadState *tstate = _PyThreadState_GET();
