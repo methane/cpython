@@ -1096,6 +1096,9 @@ failed:
 int
 PyCode_Addr2Line(PyCodeObject *co, int addrq)
 {
+    if (PyObject_CheckAccess((PyObject *)co) == NULL) {
+        return -1;
+    }
     if (addrq < 0) {
         return co->co_firstlineno;
     }
@@ -1334,6 +1337,9 @@ PyCode_Addr2Location(PyCodeObject *co, int addrq,
                      int *start_line, int *start_column,
                      int *end_line, int *end_column)
 {
+    if (PyObject_CheckAccess((PyObject *)co) == NULL) {
+        return -1;
+    }
     if (addrq < 0) {
         *start_line = *end_line = co->co_firstlineno;
         *start_column = *end_column = 0;
@@ -1771,7 +1777,10 @@ _PyCode_GetVarnames(PyCodeObject *co)
 PyObject *
 PyCode_GetVarnames(PyCodeObject *code)
 {
-    return _PyCode_GetVarnames(code);
+    if (PyObject_CheckAccess((PyObject *)code) == NULL) {
+        return NULL;
+    }
+    return _PyObject_CheckAccessNullable(_PyCode_GetVarnames(code));
 }
 
 PyObject *
@@ -1786,7 +1795,10 @@ _PyCode_GetCellvars(PyCodeObject *co)
 PyObject *
 PyCode_GetCellvars(PyCodeObject *code)
 {
-    return _PyCode_GetCellvars(code);
+    if (PyObject_CheckAccess((PyObject *)code) == NULL) {
+        return NULL;
+    }
+    return _PyObject_CheckAccessNullable(_PyCode_GetCellvars(code));
 }
 
 PyObject *
@@ -1801,7 +1813,10 @@ _PyCode_GetFreevars(PyCodeObject *co)
 PyObject *
 PyCode_GetFreevars(PyCodeObject *code)
 {
-    return _PyCode_GetFreevars(code);
+    if (PyObject_CheckAccess((PyObject *)code) == NULL) {
+        return NULL;
+    }
+    return _PyObject_CheckAccessNullable(_PyCode_GetFreevars(code));
 }
 
 
@@ -2322,7 +2337,10 @@ _PyCode_GetCode(PyCodeObject *co)
 PyObject *
 PyCode_GetCode(PyCodeObject *co)
 {
-    return _PyCode_GetCode(co);
+    if (PyObject_CheckAccess((PyObject *)co) == NULL) {
+        return NULL;
+    }
+    return _PyObject_CheckAccessNullable(_PyCode_GetCode(co));
 }
 
 /******************
