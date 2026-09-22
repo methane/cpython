@@ -98,6 +98,12 @@ range_from_array(PyTypeObject *type, PyObject *const *args, Py_ssize_t num_args)
     rangeobject *obj;
     PyObject *start = NULL, *stop = NULL, *step = NULL;
 
+    for (Py_ssize_t i = 0; i < num_args; i++) {
+        if (args[i] == NULL || PyObject_CheckAccess(args[i]) == NULL) {
+            return NULL;
+        }
+    }
+
     switch (num_args) {
         case 3:
             step = args[2];
