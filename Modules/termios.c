@@ -68,10 +68,16 @@ typedef struct {
   PyObject *TermiosError;
 } termiosmodulestate;
 
+#ifdef Py_GIL_DISABLED
+#  define TERMIOS_MODULE_GET_STATE PyModule_GetState_DuringGC
+#else
+#  define TERMIOS_MODULE_GET_STATE PyModule_GetState
+#endif
+
 static inline termiosmodulestate*
 get_termios_state(PyObject *module)
 {
-    void *state = PyModule_GetState_DuringGC(module);
+    void *state = TERMIOS_MODULE_GET_STATE(module);
     assert(state != NULL);
     return (termiosmodulestate *)state;
 }
@@ -98,7 +104,7 @@ static PyObject *
 termios_tcgetattr_impl(PyObject *module, int fd)
 /*[clinic end generated code: output=2b3da39db870e629 input=54dad9779ebe74b1]*/
 {
-    termiosmodulestate *state = PyModule_GetState_DuringGC(module);
+    termiosmodulestate *state = TERMIOS_MODULE_GET_STATE(module);
     struct termios mode;
     int r;
 
@@ -207,7 +213,7 @@ termios_tcsetattr_impl(PyObject *module, int fd, int when, PyObject *term)
     }
 
     /* Get the old mode, in case there are any hidden fields... */
-    termiosmodulestate *state = PyModule_GetState_DuringGC(module);
+    termiosmodulestate *state = TERMIOS_MODULE_GET_STATE(module);
     struct termios mode;
     int r;
 
@@ -306,7 +312,7 @@ static PyObject *
 termios_tcsendbreak_impl(PyObject *module, int fd, int duration)
 /*[clinic end generated code: output=5945f589b5d3ac66 input=dc2f32417691f8ed]*/
 {
-    termiosmodulestate *state = PyModule_GetState_DuringGC(module);
+    termiosmodulestate *state = TERMIOS_MODULE_GET_STATE(module);
     int r;
 
     Py_BEGIN_ALLOW_THREADS
@@ -334,7 +340,7 @@ static PyObject *
 termios_tcdrain_impl(PyObject *module, int fd)
 /*[clinic end generated code: output=5fd86944c6255955 input=d1557e60b5ec66c5]*/
 {
-    termiosmodulestate *state = PyModule_GetState_DuringGC(module);
+    termiosmodulestate *state = TERMIOS_MODULE_GET_STATE(module);
     int r;
 
     Py_BEGIN_ALLOW_THREADS
@@ -366,7 +372,7 @@ static PyObject *
 termios_tcflush_impl(PyObject *module, int fd, int queue)
 /*[clinic end generated code: output=2424f80312ec2f21 input=0f7d08122ddc07b5]*/
 {
-    termiosmodulestate *state = PyModule_GetState_DuringGC(module);
+    termiosmodulestate *state = TERMIOS_MODULE_GET_STATE(module);
     int r;
 
     Py_BEGIN_ALLOW_THREADS
@@ -398,7 +404,7 @@ static PyObject *
 termios_tcflow_impl(PyObject *module, int fd, int action)
 /*[clinic end generated code: output=afd10928e6ea66eb input=c6aff0640b6efd9c]*/
 {
-    termiosmodulestate *state = PyModule_GetState_DuringGC(module);
+    termiosmodulestate *state = TERMIOS_MODULE_GET_STATE(module);
     int r;
 
     Py_BEGIN_ALLOW_THREADS
@@ -428,7 +434,7 @@ termios_tcgetwinsize_impl(PyObject *module, int fd)
 /*[clinic end generated code: output=31825977d5325fb6 input=5706c379d7fd984d]*/
 {
 #if defined(TIOCGWINSZ)
-    termiosmodulestate *state = PyModule_GetState_DuringGC(module);
+    termiosmodulestate *state = TERMIOS_MODULE_GET_STATE(module);
     struct winsize w;
     int r;
 
@@ -453,7 +459,7 @@ termios_tcgetwinsize_impl(PyObject *module, int fd)
     }
     return v;
 #elif defined(TIOCGSIZE)
-    termiosmodulestate *state = PyModule_GetState_DuringGC(module);
+    termiosmodulestate *state = TERMIOS_MODULE_GET_STATE(module);
     struct ttysize s;
     int r;
 
@@ -529,7 +535,7 @@ termios_tcsetwinsize_impl(PyObject *module, int fd, PyObject *winsz)
     }
 
 
-    termiosmodulestate *state = PyModule_GetState_DuringGC(module);
+    termiosmodulestate *state = TERMIOS_MODULE_GET_STATE(module);
 
 #if defined(TIOCGWINSZ) && defined(TIOCSWINSZ)
     struct winsize w;
