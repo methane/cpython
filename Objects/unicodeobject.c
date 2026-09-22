@@ -811,6 +811,16 @@ _PyUnicode_ReadCharNoAlloc(PyObject *op, Py_ssize_t index)
     return PyUnicode_READ(PyUnicode_KIND(op), PyUnicode_DATA(op), index);
 }
 
+Py_UCS4
+_PyUnicode_ReadCharFallback(PyObject *op, Py_ssize_t index)
+{
+    if (!PyErr_ExceptionMatches(PyExc_MemoryError)) {
+        return (Py_UCS4)-1;
+    }
+    PyErr_Clear();
+    return _PyUnicode_ReadCharNoAlloc(op, index);
+}
+
 int
 _PyUnicode_EqualUTF8(PyObject *left, PyObject *right)
 {
@@ -1944,22 +1954,8 @@ PyUnicode_New(Py_ssize_t size, Py_UCS4 maxchar)
 static int
 unicode_check_modifiable(PyObject *unicode)
 {
-    if (_PyASCIIObject_CAST(unicode)->state.utf8_storage &&
-        PyUnicode_CheckExact(unicode) &&
-        _PyObject_IsUniquelyReferenced(unicode) &&
-        PyUnicode_HASH(unicode) == -1 && !PyUnicode_CHECK_INTERNED(unicode)) {
-        PyCompactUnicodeObject *u = _PyCompactUnicodeObject_CAST(unicode);
-        if (u->utf8 != NULL) {
-            /* A separately exported UTF-8 cache makes this object used. */
-            goto used;
-        }
-        if (_PyUnicode_GetFSR(unicode) == NULL) {
-            return -1;
-        }
-        u->_base.state.fsr_primary = 1;
-        u->_base.state.has_surrogates = 0;
-        u->utf8_length = 0;
-        return 0;
+    if (_PyASCIIObject_CAST(unicode)->state.utf8_storage) {
+        abort();
     }
     if (!_PyUnicode_IsModifiable(unicode)) {
         goto used;
@@ -4445,9 +4441,6 @@ PyUnicode_GetLength(PyObject *unicode)
 Py_UCS4
 PyUnicode_ReadChar(PyObject *unicode, Py_ssize_t index)
 {
-    const void *data;
-    int kind;
-
     if (!PyUnicode_Check(unicode)) {
         PyErr_BadArgument();
         return (Py_UCS4)-1;
@@ -4456,12 +4449,7 @@ PyUnicode_ReadChar(PyObject *unicode, Py_ssize_t index)
         PyErr_SetString(PyExc_IndexError, "string index out of range");
         return (Py_UCS4)-1;
     }
-    data = PyUnicode_DATA(unicode);
-    if (data == NULL) {
-        return (Py_UCS4)-1;
-    }
-    kind = PyUnicode_KIND(unicode);
-    return PyUnicode_READ(kind, data, index);
+    return PyUnicode_READ_CHAR(unicode, index);
 }
 
 int

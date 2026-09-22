@@ -1,3 +1,4 @@
+import signal
 import sys
 import textwrap
 import unittest
@@ -34,6 +35,49 @@ class Str(str):
 class UTF8StorageTests(unittest.TestCase):
     def make_string(self, text):
         return text.encode('utf-8', 'surrogatepass').decode('utf-8', 'surrogatepass')
+
+    def test_readchar_fsr_allocation_failure(self):
+        from test.support.script_helper import assert_python_ok
+        assert_python_ok('-c', textwrap.dedent(r"""
+            import _testcapi
+            try:
+                import _testlimitedcapi
+            except ImportError:
+                readers = (_testcapi.unicode_readchar_macro,)
+            else:
+                readers = (_testcapi.unicode_readchar_macro,
+                           _testlimitedcapi.unicode_readchar)
+            for reader in readers:
+                for text, index in (('日é😀', 2), ('é\udcff日', 1)):
+                    value = text.encode('utf-8', 'surrogatepass').decode(
+                        'utf-8', 'surrogatepass')
+                    assert _testcapi.unicode_storage(value)[3] == 0
+                    try:
+                        _testcapi.set_nomemory(0, 1)
+                        ch = reader(value, index)
+                    finally:
+                        _testcapi.remove_mem_hooks()
+                    assert ch == ord(text[index])
+                    assert _testcapi.unicode_storage(value)[3] == 0
+        """))
+
+    def test_write_apis_abort_without_writable_storage(self):
+        for mode, cached in ((0, False), (1, False), (1, True),
+                             (2, False), (2, True), (3, False), (3, True)):
+            with self.subTest(mode=mode, cached=cached):
+                code = textwrap.dedent(f"""
+                    import _testcapi
+                    from test.support import SuppressCrashReport
+                    SuppressCrashReport().__enter__()
+                    value = '日é'.encode().decode()
+                    if {cached}:
+                        _testcapi.unicode_materialize_fsr(value)
+                    _testcapi.unicode_write_inplace(value, {mode})
+                """)
+                proc = assert_python_failure('-c', code)
+                self.assertNotIn(b'Traceback', proc.err)
+                if sys.platform != 'win32':
+                    self.assertEqual(proc.rc, -signal.SIGABRT)
 
     def test_subclass_primary_utf8(self):
         for text in ('', 'ascii\0text', 'éÿ', '日é', '😀日',
@@ -79,10 +123,9 @@ class UTF8StorageTests(unittest.TestCase):
             self.assertEqual(_testcapi.unicode_storage(value)[0], ch >= 128)
             self.assertEqual(_testcapi.unicode_storage(value)[3], ch < 128)
 
-    @unittest.skipIf(_testlimitedcapi is None, 'need _testlimitedcapi')
     def test_subclass_from_overestimated_fsr(self):
         for text in ('a', 'é', '日', '\udcff'):
-            source, _ = _testlimitedcapi.unicode_writechar('😀', 0, ord(text))
+            source, _ = _testcapi.unicode_writechar('😀', 0, ord(text))
             value = Str(source)
             self.assertEqual(value, text)
             self.assertEqual(value.isascii(), text.isascii())
@@ -1425,10 +1468,9 @@ class UTF8StorageTests(unittest.TestCase):
         self.assertEqual(next(iterator), '日')
         self.assertEqual(_testcapi.unicode_storage(value)[3], 1)
 
-    @unittest.skipIf(_testlimitedcapi is None, 'need _testlimitedcapi')
     def test_cached_search_overestimated_width(self):
         for ch in ('a', 'é', '\udcff'):
-            needle, _ = _testlimitedcapi.unicode_writechar('😀', 0, ord(ch))
+            needle, _ = _testcapi.unicode_writechar('😀', 0, ord(ch))
             value = self.make_string(ch * 4)
             _testcapi.unicode_materialize_fsr(value)
             self.assertEqual(value.find(needle, 1), 1)
@@ -1436,7 +1478,7 @@ class UTF8StorageTests(unittest.TestCase):
             self.assertTrue(value.startswith(needle, 1))
             self.assertTrue(value.endswith(needle, 0, 3))
             # A multi-character overestimated needle exercises conversion.
-            needle, _ = _testlimitedcapi.unicode_writechar('b😀', 1, ord(ch))
+            needle, _ = _testcapi.unicode_writechar('b😀', 1, ord(ch))
             value = self.make_string(('b' + ch) * 2)
             _testcapi.unicode_materialize_fsr(value)
             self.assertEqual(value.find(needle, 1), 2)
@@ -1498,22 +1540,21 @@ class UTF8StorageTests(unittest.TestCase):
                     self.assertRaises(UnicodeEncodeError,
                                       _testcapi.unicode_asutf8, s, 0)
 
-    @unittest.skipIf(_testlimitedcapi is None, 'need _testlimitedcapi module')
     def test_unified_operations_overestimated_width(self):
         # C writes can leave FSR-primary strings with an overestimated kind.
-        needle, _ = _testlimitedcapi.unicode_writechar('😀', 0, ord('a'))
+        needle, _ = _testcapi.unicode_writechar('😀', 0, ord('a'))
         self.assertIn(needle, 'abc')
         self.assertEqual('abc'.find(needle), 0)
         self.assertEqual('abc'.count(needle), 1)
         self.assertEqual('abc'.split(needle), ['', 'bc'])
         self.assertEqual('abc'.replace(needle, 'X'), 'Xbc')
-        value, _ = _testlimitedcapi.unicode_writechar('\t😀', 1, ord('a'))
+        value, _ = _testcapi.unicode_writechar('\t😀', 1, ord('a'))
         self.assertEqual(value.expandtabs(2), '  a')
         self.assertEqual(value.upper(), '\tA')
 
     def test_copy_operations_overestimated_width(self):
         for text in ('a', 'é', '\udcff'):
-            value, _ = _testlimitedcapi.unicode_writechar('😀', 0, ord(text))
+            value, _ = _testcapi.unicode_writechar('😀', 0, ord(text))
             for operation in (lambda x: x * 3,
                               lambda x: x.join(['a', 'b']),
                               lambda x: ''.join([x, x]),
@@ -1753,11 +1794,10 @@ class UTF8StorageTests(unittest.TestCase):
                     self.assertEqual(value.__sizeof__(), size)
                     self.assertEqual(value, expected)
 
-    @unittest.skipIf(_testlimitedcapi is None or _testinternalcapi is None,
-                     'need C API test modules')
-    def test_hash_caches_promoted_fsr_utf8(self):
+    @unittest.skipIf(_testinternalcapi is None, 'need _testinternalcapi')
+    def test_hash_caches_writable_fsr_utf8(self):
         for ch in (ord('a'), ord('é'), 0xd800):
-            value, _ = _testlimitedcapi.unicode_writechar('😀', 0, ch)
+            value, _ = _testcapi.unicode_writechar('😀', 0, ch)
             expected = chr(ch)
             encoded = expected.encode('utf-8', 'surrogatepass')
             self.assertEqual(hash(value), hash(expected))
@@ -1916,10 +1956,10 @@ class CAPITest(unittest.TestCase):
         # TODO: Test PyUnicode_Fill() with non-modifiable unicode.
 
     @support.cpython_only
-    @unittest.skipIf(_testlimitedcapi is None, 'need _testlimitedcapi module')
+    @unittest.skipIf(_testcapi is None, 'need _testcapi module')
     def test_writechar(self):
         """Test PyUnicode_WriteChar()"""
-        from _testlimitedcapi import unicode_writechar as writechar
+        from _testcapi import unicode_writechar as writechar
 
         strings = [
             # one string for every kind
@@ -1943,8 +1983,10 @@ class CAPITest(unittest.TestCase):
         self.assertRaises(TypeError, writechar, b'abc', 0, 0x78)
         self.assertRaises(TypeError, writechar, [], 0, 0x78)
         # CRASHES writechar(NULL, 0, 0x78)
-        # TODO: Test PyUnicode_WriteChar() with non-modifiable and legacy
-        # unicode.
+        if _testlimitedcapi is not None:
+            # The limited API cannot allocate a PyUnicode_New() buffer.
+            self.assertEqual(_testlimitedcapi.unicode_writechar('abc', 1, 0x78),
+                             ('axc', 0))
 
     @support.cpython_only
     @unittest.skipIf(_testlimitedcapi is None, 'need _testlimitedcapi module')

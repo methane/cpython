@@ -259,6 +259,8 @@ PyAPI_FUNC(void*) _PyUnicode_GetFSR(PyObject *op);
 PyAPI_FUNC(int) _PyUnicode_EqualUTF8(PyObject *left, PyObject *right);
 /* Internal, bounds-checked-by-caller access for allocation-free consumers. */
 PyAPI_FUNC(Py_UCS4) _PyUnicode_ReadCharNoAlloc(PyObject *op, Py_ssize_t index);
+/* Called when PyUnicode_DATA() cannot allocate the fixed-width representation. */
+PyAPI_FUNC(Py_UCS4) _PyUnicode_ReadCharFallback(PyObject *op, Py_ssize_t index);
 
 static inline void* _PyUnicode_DATA(PyObject *op) {
     if (_PyASCIIObject_CAST(op)->state.utf8_storage) {
@@ -304,6 +306,9 @@ PyUnstable_Unicode_GET_CACHED_HASH(PyObject *op) {
 static inline void PyUnicode_WRITE(int kind, void *data,
                                    Py_ssize_t index, Py_UCS4 value)
 {
+    if (data == NULL) {
+        abort();
+    }
     assert(index >= 0);
     if (kind == PyUnicode_1BYTE_KIND) {
         assert(value <= 0xffU);
@@ -351,7 +356,7 @@ static inline Py_UCS4 PyUnicode_READ_CHAR(PyObject *unicode, Py_ssize_t index)
 {
     const void *data = PyUnicode_DATA(unicode);
     if (data == NULL) {
-        return (Py_UCS4)-1;
+        return _PyUnicode_ReadCharFallback(unicode, index);
     }
     return PyUnicode_READ(PyUnicode_KIND(unicode), data, index);
 }

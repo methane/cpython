@@ -38,6 +38,63 @@ unicode_materialize_fsr(PyObject *self, PyObject *obj)
     Py_RETURN_NONE;
 }
 
+static PyObject *
+unicode_readchar_macro(PyObject *self, PyObject *args)
+{
+    PyObject *obj;
+    Py_ssize_t index;
+    if (!PyArg_ParseTuple(args, "On", &obj, &index)) {
+        return NULL;
+    }
+    if (!PyUnicode_Check(obj) || index < 0 || index >= PyUnicode_GET_LENGTH(obj)) {
+        PyErr_BadArgument();
+        return NULL;
+    }
+    Py_UCS4 ch = PyUnicode_READ_CHAR(obj, index);
+    if (ch == (Py_UCS4)-1) {
+        return NULL;
+    }
+    return PyLong_FromUnsignedLong(ch);
+}
+
+/* Exercise the write APIs on a UTF-8-backed string in a subprocess. */
+static PyObject *
+unicode_write_inplace(PyObject *self, PyObject *args)
+{
+    PyObject *obj;
+    int mode;
+    if (!PyArg_ParseTuple(args, "Oi", &obj, &mode)) {
+        return NULL;
+    }
+    if (!PyUnicode_Check(obj)) {
+        PyErr_BadArgument();
+        return NULL;
+    }
+    if (mode == 0) {
+        PyUnicode_WRITE(PyUnicode_KIND(obj), NULL, 0, 'x');
+    }
+    else if (mode == 1) {
+        if (PyUnicode_WriteChar(obj, 0, 'x') < 0) {
+            return NULL;
+        }
+    }
+    else if (mode == 2) {
+        if (PyUnicode_Fill(obj, 0, 1, 'x') < 0) {
+            return NULL;
+        }
+    }
+    else if (mode == 3) {
+        if (PyUnicode_CopyCharacters(obj, 0, obj, 0, 1) < 0) {
+            return NULL;
+        }
+    }
+    else {
+        PyErr_BadArgument();
+        return NULL;
+    }
+    Py_RETURN_NONE;
+}
+
 /* Test PyUnicode_New() */
 static PyObject *
 unicode_new(PyObject *self, PyObject *args)
@@ -89,6 +146,30 @@ unicode_copy(PyObject *unicode)
         return NULL;
     }
     return copy;
+}
+
+/* Test PyUnicode_WriteChar() on a PyUnicode_New() construction buffer. */
+static PyObject *
+unicode_writechar(PyObject *self, PyObject *args)
+{
+    PyObject *to, *to_copy;
+    Py_ssize_t index;
+    unsigned int character;
+
+    if (!PyArg_ParseTuple(args, "OnI", &to, &index, &character)) {
+        return NULL;
+    }
+    NULLABLE(to);
+    to_copy = unicode_copy(to);
+    if (to_copy == NULL && to != NULL) {
+        return NULL;
+    }
+    int result = PyUnicode_WriteChar(to_copy, index, (Py_UCS4)character);
+    if (result < 0) {
+        Py_XDECREF(to_copy);
+        return NULL;
+    }
+    return Py_BuildValue("(Ni)", to_copy, result);
 }
 
 
@@ -695,7 +776,10 @@ static PyType_Spec Writer_spec = {
 static PyMethodDef TestMethods[] = {
     {"unicode_storage", unicode_storage, METH_O},
     {"unicode_materialize_fsr", unicode_materialize_fsr, METH_O},
+    {"unicode_readchar_macro", unicode_readchar_macro, METH_VARARGS},
+    {"unicode_write_inplace", unicode_write_inplace, METH_VARARGS},
     {"unicode_new",              unicode_new,                    METH_VARARGS},
+    {"unicode_writechar",        unicode_writechar,              METH_VARARGS},
     {"unicode_fill",             unicode_fill,                   METH_VARARGS},
     {"unicode_fromkindanddata",  unicode_fromkindanddata,        METH_VARARGS},
     {"unicode_asucs4",           unicode_asucs4,                 METH_VARARGS},

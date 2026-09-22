@@ -182,8 +182,8 @@ access to internal read-only data of Unicode objects:
    calling :c:func:`!PyUnicode_WRITE`. All requirements of
    :c:func:`PyUnicode_WriteChar` also apply.
 
-   The function performs no checks for any of its requirements,
-   and is intended for usage in loops.
+   The function aborts if *data* is ``NULL``. Other requirements are not
+   checked, and it is intended for usage in loops.
 
    .. versionadded:: 3.3
 
@@ -199,14 +199,16 @@ access to internal read-only data of Unicode objects:
 
 .. c:function:: Py_UCS4 PyUnicode_READ_CHAR(PyObject *unicode, Py_ssize_t index)
 
-   Read a code point, generating the fixed-width representation if necessary.
-   The caller must provide a Unicode object and a valid index. On allocation
-   failure, return ``(Py_UCS4)-1`` with an exception set.
+   Read a code point, generating the fixed-width representation if possible.
+   The caller must provide a Unicode object and a valid index. If generating
+   the representation runs out of memory, read the character by scanning the
+   UTF-8 representation instead.
    For consecutive reads, obtain and check :c:func:`PyUnicode_DATA` once and use
    :c:func:`PyUnicode_READ` with the cached pointer and kind.
 
    .. versionchanged:: 3.16
-      May fail when generating the fixed-width representation.
+      May generate the fixed-width representation or scan UTF-8 if its
+      allocation fails.
 
    .. versionadded:: 3.3
 
@@ -761,6 +763,8 @@ APIs:
 
    The string must not have been “used” yet.
    See :c:func:`PyUnicode_New` for details.
+   Passing a UTF-8-backed string aborts, even if its fixed-width representation
+   has already been generated.
 
    .. versionadded:: 3.3
 
@@ -791,6 +795,8 @@ APIs:
 
    The string must not have been “used” yet.
    See :c:func:`PyUnicode_New` for details.
+   Passing a UTF-8-backed string aborts, even if its fixed-width representation
+   has already been generated.
 
    Return the number of written characters, or return ``-1`` and raise an
    exception on error.
@@ -811,8 +817,8 @@ APIs:
 
    The string must not have been “used” yet.
    See :c:func:`PyUnicode_New` for details.
-   A private, unused UTF-8 string is converted to writable fixed-width storage
-   before the write. This conversion can fail with :exc:`MemoryError`.
+   Passing a UTF-8-backed string aborts, even if its fixed-width representation
+   has already been generated.
 
    .. versionadded:: 3.3
 
@@ -822,6 +828,8 @@ APIs:
    Read a character from a string.  This function checks that *unicode* is a
    Unicode object and the index is not out of bounds, in contrast to
    :c:func:`PyUnicode_READ_CHAR`, which does not validate its object or index.
+   If generating the fixed-width representation runs out of memory, the
+   character is read by scanning UTF-8 instead.
 
    Return character on success, ``-1`` on error with an exception set.
 
