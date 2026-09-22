@@ -522,6 +522,9 @@ ins1(PyListObject *self, Py_ssize_t where, PyObject *v)
         PyErr_BadInternalCall();
         return -1;
     }
+    if (PyObject_CheckAccess(v) == NULL) {
+        return -1;
+    }
 
     assert((size_t)n + 1 < PY_SSIZE_T_MAX);
     if (list_resize(self, n+1) < 0)
@@ -588,6 +591,9 @@ PyList_Append(PyObject *op, PyObject *newitem)
         return -1;
     }
     if (PyList_Check(op) && (newitem != NULL)) {
+        if (PyObject_CheckAccess(newitem) == NULL) {
+            return -1;
+        }
         int ret;
         Py_BEGIN_CRITICAL_SECTION(op);
         ret = _PyList_AppendTakeRef((PyListObject *)op, Py_NewRef(newitem));
