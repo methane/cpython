@@ -1186,7 +1186,7 @@ static PyObject *setiter_iternext(PyObject *self)
         PyErr_SetString(PyExc_RuntimeError,
                         "Set changed size during iteration");
     }
-    return key;
+    return _PyObject_CheckAccessNullable(key);
 }
 
 PyTypeObject PySetIter_Type = {

@@ -51,6 +51,29 @@ class SetAccessTests(unittest.TestCase):
             pass
         self.assertEqual(results.get(), len(apis))
 
+    @threading_helper.requires_working_threading()
+    def test_iterator_result_access(self):
+        shared = {object()}.synchronize()
+        results = threading.Channel()
+
+        def worker(mapping):
+            with sys.monitoring.StopTheWorld:
+                foreign = next(iter(mapping))
+                local = {foreign}
+            denied = 0
+            for value in (mapping, local):
+                try:
+                    next(iter(value))
+                except IllegalThreadAccessException:
+                    denied += 1
+            results.put(denied)
+
+        thread = threading.Thread(target=worker, args=(shared,),
+                                  group=threading.ThreadGroup())
+        with threading_helper.start_threads([thread]):
+            pass
+        self.assertEqual(results.get(), 2)
+
 
 if __name__ == '__main__':
     unittest.main()
