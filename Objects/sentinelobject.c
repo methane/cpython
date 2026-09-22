@@ -162,12 +162,18 @@ sentinel_repr(PyObject *op)
 static PyObject *
 sentinel_copy(PyObject *self, PyObject *Py_UNUSED(ignored))
 {
+    if (PyObject_CheckAccess(self) == NULL) {
+        return NULL;
+    }
     return Py_NewRef(self);
 }
 
 static PyObject *
 sentinel_deepcopy(PyObject *self, PyObject *Py_UNUSED(memo))
 {
+    if (PyObject_CheckAccess(self) == NULL) {
+        return NULL;
+    }
     return Py_NewRef(self);
 }
 
