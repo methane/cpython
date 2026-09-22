@@ -7415,7 +7415,12 @@ type_clear(PyObject *self)
             clear_tp_dict(type);
         }
         else {
-            PyDict_Clear(dict);
+            /* GC may clear a type whose namespace belongs to another
+               ThreadGroup.  This is internal cycle breaking, not an access
+               to the namespace by user code. */
+            Py_BEGIN_CRITICAL_SECTION(dict);
+            _PyDict_Clear_LockHeld(dict);
+            Py_END_CRITICAL_SECTION();
         }
     }
     Py_CLEAR(type->tp_cache);
