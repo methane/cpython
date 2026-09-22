@@ -39,6 +39,9 @@ class DictAccessTests(unittest.TestCase):
             (capi.dict_setdefaultref, (value, 'new', 'value')),
             (capi.dict_pop, (value, 'key')),
             (capi.dict_pop_null, (value, 'key')),
+            (limited.dict_merge, (value, {}, 1)),
+            (limited.dict_update, (value, {})),
+            (limited.dict_mergefromseq2, (value, (), 1)),
         )
         for api, unused in apis:
             internal.object_declare_synchronized(api)

@@ -4502,8 +4502,14 @@ dict_merge_from_seq2(PyObject *d, PyObject *seq2, int override)
 int
 PyDict_MergeFromSeq2(PyObject *d, PyObject *seq2, int override)
 {
-    assert(d != NULL);
-    assert(seq2 != NULL);
+    if (d == NULL || seq2 == NULL) {
+        PyErr_BadInternalCall();
+        return -1;
+    }
+    if (PyObject_CheckAccess(d) == NULL ||
+        PyObject_CheckAccess(seq2) == NULL) {
+        return -1;
+    }
     if (!PyDict_Check(d)) {
         if (PyFrozenDict_Check(d)) {
             frozendict_does_not_support("assignment");
@@ -4738,7 +4744,15 @@ dict_merge_api(PyObject *a, PyObject *b, int override, PyObject **dupkey)
      * things quite efficiently.  For the latter, we only require that
      * PyMapping_Keys() and PyObject_GetItem() be supported.
      */
-    if (a == NULL || !PyDict_Check(a) || b == NULL) {
+    if (a == NULL || b == NULL) {
+        PyErr_BadInternalCall();
+        return -1;
+    }
+    if (PyObject_CheckAccess(a) == NULL ||
+        PyObject_CheckAccess(b) == NULL) {
+        return -1;
+    }
+    if (!PyDict_Check(a)) {
         if (a != NULL && PyFrozenDict_Check(a)) {
             frozendict_does_not_support("assignment");
         }
