@@ -515,6 +515,9 @@ w_object(PyObject *v, WFILE *p)
     else if (v == Py_True) {
         w_byte(TYPE_TRUE, p);
     }
+    else if (PyObject_CheckAccess(v) == NULL) {
+        p->error = true;
+    }
     else if (!w_ref(v, &flag, p))
         w_complex_object(v, flag, p);
 
