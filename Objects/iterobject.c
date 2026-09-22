@@ -417,7 +417,15 @@ static PyObject *
 awaitable_getiter(PyObject *owner, PyObject *wrapped)
 {
     assert(wrapped != NULL);
+    if (PyObject_CheckAccess(owner) == NULL ||
+        PyObject_CheckAccess(wrapped) == NULL) {
+        return NULL;
+    }
     PyObject *awaitable = _PyCoro_GetAwaitableIter(wrapped);
+    if (awaitable == NULL) {
+        return NULL;
+    }
+    awaitable = _PyObject_CheckAccessNullable(awaitable);
     if (awaitable == NULL) {
         return NULL;
     }
@@ -428,6 +436,7 @@ awaitable_getiter(PyObject *owner, PyObject *wrapped)
         assert(PyCoro_CheckExact(awaitable));
         unaryfunc getter = Py_TYPE(awaitable)->tp_as_async->am_await;
         PyObject *new_awaitable = getter(awaitable);
+        new_awaitable = _PyObject_CheckAccessNullable(new_awaitable);
         if (new_awaitable == NULL) {
             Py_DECREF(awaitable);
             return NULL;
@@ -688,7 +697,8 @@ acallawaitable_iternext(PyObject *op)
     if (awaitable == NULL) {
         return NULL;
     }
-    PyObject *result = (*Py_TYPE(awaitable)->tp_iternext)(awaitable);
+    PyObject *result = _PyObject_CheckAccessNullable(
+        (*Py_TYPE(awaitable)->tp_iternext)(awaitable));
     Py_DECREF(awaitable);
     if (result != NULL) {
         return result;
