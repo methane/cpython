@@ -800,6 +800,12 @@ _PyPickle_LoadFromXIData(_PyXIData_t *xidata)
 int
 _PyPickle_GetXIData(PyThreadState *tstate, PyObject *obj, _PyXIData_t *xidata)
 {
+    if (obj == NULL || PyObject_CheckAccess(obj) == NULL) {
+        if (obj == NULL) {
+            PyErr_BadInternalCall();
+        }
+        return -1;
+    }
     // Pickle the object.
     struct _pickle_context ctx = {
         .tstate = tstate,
@@ -859,6 +865,12 @@ _PyMarshal_ReadObjectFromXIData(_PyXIData_t *xidata)
 int
 _PyMarshal_GetXIData(PyThreadState *tstate, PyObject *obj, _PyXIData_t *xidata)
 {
+    if (obj == NULL || PyObject_CheckAccess(obj) == NULL) {
+        if (obj == NULL) {
+            PyErr_BadInternalCall();
+        }
+        return -1;
+    }
     PyObject *bytes = PyMarshal_WriteObjectToString(obj, Py_MARSHAL_VERSION);
     if (bytes == NULL) {
         PyObject *cause = _PyErr_GetRaisedException(tstate);
@@ -1016,7 +1028,7 @@ _PyCode_GetPureScriptXIData(PyThreadState *tstate,
 PyObject *
 _PyXIData_NewObject(_PyXIData_t *xidata)
 {
-    return xidata->new_object(xidata);
+    return _PyObject_CheckAccessNullable(xidata->new_object(xidata));
 }
 
 static int
