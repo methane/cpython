@@ -135,7 +135,7 @@ _PyObject_VectorcallDictTstate(PyThreadState *tstate, PyObject *callable,
     if (kwargs != NULL) {
         Py_ssize_t pos = 0;
         PyObject *key, *value;
-        while (PyDict_Next(kwargs, &pos, &key, &value)) {
+        while (_PyDict_Next(kwargs, &pos, &key, &value, NULL)) {
             if (PyObject_CheckAccess(key) == NULL ||
                 PyObject_CheckAccess(value) == NULL) {
                 return NULL;

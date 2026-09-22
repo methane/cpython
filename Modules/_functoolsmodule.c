@@ -195,7 +195,7 @@ partial_new(PyTypeObject *type, PyObject *args, PyObject *kw)
     if (kw != NULL) {
         PyObject *key, *val;
         Py_ssize_t pos = 0;
-        while (PyDict_Next(kw, &pos, &key, &val)) {
+        while (_PyDict_Next(kw, &pos, &key, &val, NULL)) {
             if (val == phold) {
                 PyErr_SetString(PyExc_TypeError,
                                 "Placeholder cannot be passed as a keyword argument");
@@ -377,7 +377,7 @@ partial_check_keywords(PyObject *keywords)
     }
     Py_ssize_t pos = 0;
     PyObject *key, *value;
-    while (PyDict_Next(keywords, &pos, &key, &value)) {
+    while (_PyDict_Next(keywords, &pos, &key, &value, NULL)) {
         // Merging can invoke a string subclass's hash or equality method.
         if (PyObject_CheckAccess(key) == NULL) {
             return -1;
@@ -571,7 +571,7 @@ partial_vectorcall(PyObject *self, PyObject *const *args,
         Py_ssize_t pos = 0, i = 0;
         PyObject *keyword_dict = n_merges ? pto_kw_merged : partial_keywords;
         Py_BEGIN_CRITICAL_SECTION(keyword_dict);
-        while (PyDict_Next(keyword_dict, &pos, &key, &val)) {
+        while (_PyDict_Next(keyword_dict, &pos, &key, &val, NULL)) {
             assert(i < pto_nkwds);
             PyTuple_SET_ITEM(tot_kwnames, i, Py_NewRef(key));
             stack[tot_nargs + i] = val;
