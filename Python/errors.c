@@ -6,6 +6,7 @@
 #include "pycore_call.h"          // _PyObject_CallNoArgs()
 #include "pycore_fileutils.h"     // _PyFile_Flush
 #include "pycore_initconfig.h"    // _PyStatus_ERR()
+#include "pycore_object.h"        // _PyObject_CheckAccessNullable()
 #include "pycore_pyerrors.h"      // _PyErr_Format()
 #include "pycore_pystate.h"       // _PyThreadState_GET()
 #include "pycore_runtime.h"       // _Py_ID()
@@ -109,6 +110,10 @@ PyErr_Restore(PyObject *type, PyObject *value, PyObject *traceback)
 void
 PyErr_SetRaisedException(PyObject *exc)
 {
+    if (exc != NULL && PyObject_CheckAccess(exc) == NULL) {
+        Py_DECREF(exc);
+        return;
+    }
     PyThreadState *tstate = _PyThreadState_GET();
     _PyErr_SetRaisedException(tstate, exc);
 }
@@ -336,6 +341,10 @@ PyErr_GivenExceptionMatches(PyObject *err, PyObject *exc)
         /* maybe caused by "import exceptions" that failed early on */
         return 0;
     }
+    if (PyObject_CheckAccess(err) == NULL ||
+        PyObject_CheckAccess(exc) == NULL) {
+        return 0;
+    }
     if (PyTuple_Check(exc)) {
         Py_ssize_t i, n;
         n = PyTuple_Size(exc);
@@ -371,6 +380,9 @@ _PyErr_ExceptionMatches(PyThreadState *tstate, PyObject *exc)
 int
 PyErr_ExceptionMatches(PyObject *exc)
 {
+    if (exc != NULL && PyObject_CheckAccess(exc) == NULL) {
+        return 0;
+    }
     PyThreadState *tstate = _PyThreadState_GET();
     return _PyErr_ExceptionMatches(tstate, exc);
 }
@@ -508,7 +520,7 @@ PyObject *
 PyErr_GetRaisedException(void)
 {
     PyThreadState *tstate = _PyThreadState_GET();
-    return _PyErr_GetRaisedException(tstate);
+    return _PyObject_CheckAccessNullable(_PyErr_GetRaisedException(tstate));
 }
 
 void
@@ -603,7 +615,7 @@ PyObject*
 PyErr_GetHandledException(void)
 {
     PyThreadState *tstate = _PyThreadState_GET();
-    return _PyErr_GetHandledException(tstate);
+    return _PyObject_CheckAccessNullable(_PyErr_GetHandledException(tstate));
 }
 
 void
@@ -615,6 +627,9 @@ _PyErr_SetHandledException(PyThreadState *tstate, PyObject *exc)
 void
 PyErr_SetHandledException(PyObject *exc)
 {
+    if (exc != NULL && PyObject_CheckAccess(exc) == NULL) {
+        return;
+    }
     PyThreadState *tstate = _PyThreadState_GET();
     _PyErr_SetHandledException(tstate, exc);
 }
@@ -629,6 +644,14 @@ PyErr_GetExcInfo(PyObject **p_type, PyObject **p_value, PyObject **p_traceback)
 void
 PyErr_SetExcInfo(PyObject *type, PyObject *value, PyObject *traceback)
 {
+    if ((type != NULL && PyObject_CheckAccess(type) == NULL) ||
+        (value != NULL && PyObject_CheckAccess(value) == NULL) ||
+        (traceback != NULL && PyObject_CheckAccess(traceback) == NULL)) {
+        Py_XDECREF(type);
+        Py_XDECREF(value);
+        Py_XDECREF(traceback);
+        return;
+    }
     PyErr_SetHandledException(value);
     Py_XDECREF(value);
     /* These args are no longer used, but we still need to steal a ref */
