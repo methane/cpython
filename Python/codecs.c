@@ -13,6 +13,7 @@ Copyright (c) Corporation for National Research Initiatives.
 #include "pycore_codecs.h"        // export _PyCodec_LookupTextEncoding()
 #include "pycore_initconfig.h"    // _Py_DumpPathConfig()
 #include "pycore_interp.h"        // PyInterpreterState.codec_search_path
+#include "pycore_object.h"       // _PyObject_CheckAccessNullable()
 #include "pycore_pyerrors.h"      // _PyErr_FormatNote()
 #include "pycore_pystate.h"       // _PyInterpreterState_GET()
 #include "pycore_runtime.h"       // _Py_ID()
@@ -38,6 +39,9 @@ int PyCodec_Register(PyObject *search_function)
         PyErr_BadArgument();
         goto onError;
     }
+    if (PyObject_CheckAccess(search_function) == NULL) {
+        goto onError;
+    }
     if (!PyCallable_Check(search_function)) {
         PyErr_SetString(PyExc_TypeError, "argument must be callable");
         goto onError;
@@ -55,6 +59,12 @@ int PyCodec_Register(PyObject *search_function)
 int
 PyCodec_Unregister(PyObject *search_function)
 {
+    if (search_function == NULL || PyObject_CheckAccess(search_function) == NULL) {
+        if (search_function == NULL) {
+            PyErr_BadArgument();
+        }
+        return -1;
+    }
     PyInterpreterState *interp = _PyInterpreterState_GET();
     if (interp->codecs.initialized != 1) {
         /* Do nothing if codecs state was cleared (only possible during
@@ -244,6 +254,13 @@ PyObject *args_tuple(PyObject *object,
 {
     PyObject *args;
 
+    if (object == NULL || PyObject_CheckAccess(object) == NULL) {
+        if (object == NULL) {
+            PyErr_BadArgument();
+        }
+        return NULL;
+    }
+
     args = PyTuple_New(1 + (errors != NULL));
     if (args == NULL)
         return NULL;
@@ -274,7 +291,7 @@ PyObject *codec_getitem(const char *encoding, int index)
         return NULL;
     v = PyTuple_GET_ITEM(codecs, index);
     Py_DECREF(codecs);
-    return Py_NewRef(v);
+    return _PyObject_CheckAccessNullable(Py_NewRef(v));
 }
 
 /* Helper functions to create an incremental codec. */
@@ -284,6 +301,10 @@ PyObject *codec_makeincrementalcodec(PyObject *codec_info,
                                      const char *attrname)
 {
     PyObject *ret, *inccodec;
+
+    if (PyObject_CheckAccess(codec_info) == NULL) {
+        return NULL;
+    }
 
     inccodec = PyObject_GetAttrString(codec_info, attrname);
     if (inccodec == NULL)
@@ -321,11 +342,19 @@ PyObject *codec_getstreamcodec(const char *encoding,
 {
     PyObject *codecs, *streamcodec, *codeccls;
 
+    if (PyObject_CheckAccess(stream) == NULL) {
+        return NULL;
+    }
+
     codecs = _PyCodec_Lookup(encoding);
     if (codecs == NULL)
         return NULL;
 
     codeccls = PyTuple_GET_ITEM(codecs, index);
+    if (PyObject_CheckAccess(codeccls) == NULL) {
+        Py_DECREF(codecs);
+        return NULL;
+    }
     if (errors != NULL)
         streamcodec = PyObject_CallFunction(codeccls, "Os", stream, errors);
     else
@@ -424,7 +453,10 @@ _PyCodec_EncodeInternal(PyObject *object,
                         "encoder must return a tuple (object, integer)");
         goto onError;
     }
-    v = Py_NewRef(PyTuple_GET_ITEM(result,0));
+    v = _PyObject_CheckAccessNullable(Py_NewRef(PyTuple_GET_ITEM(result,0)));
+    if (v == NULL) {
+        goto onError;
+    }
     /* We don't check or use the second (integer) entry. */
 
     Py_DECREF(args);
@@ -468,7 +500,10 @@ _PyCodec_DecodeInternal(PyObject *object,
                         "decoder must return a tuple (object,integer)");
         goto onError;
     }
-    v = Py_NewRef(PyTuple_GET_ITEM(result,0));
+    v = _PyObject_CheckAccessNullable(Py_NewRef(PyTuple_GET_ITEM(result,0)));
+    if (v == NULL) {
+        goto onError;
+    }
     /* We don't check or use the second (integer) entry. */
 
     Py_DECREF(args);
@@ -622,6 +657,12 @@ int PyCodec_RegisterError(const char *name, PyObject *error)
 {
     PyInterpreterState *interp = _PyInterpreterState_GET();
     assert(interp->codecs.initialized);
+    if (error == NULL || PyObject_CheckAccess(error) == NULL) {
+        if (error == NULL) {
+            PyErr_BadArgument();
+        }
+        return -1;
+    }
     if (!PyCallable_Check(error)) {
         PyErr_SetString(PyExc_TypeError, "handler must be callable");
         return -1;
