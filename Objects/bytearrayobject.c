@@ -1183,7 +1183,7 @@ slowpath:
         int rc, value;
 
         /* Get the next item */
-        item = iternext(it);
+        item = _PyObject_CheckAccessNullable(iternext(it));
         if (item == NULL) {
             if (PyErr_Occurred()) {
                 if (!PyErr_ExceptionMatches(PyExc_StopIteration))

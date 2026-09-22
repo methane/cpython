@@ -1379,7 +1379,7 @@ list_extend_iter_lock_held(PyListObject *self, PyObject *iterable)
 
     /* Run iterator to exhaustion. */
     for (;;) {
-        PyObject *item = iternext(it);
+        PyObject *item = _PyObject_CheckAccessNullable(iternext(it));
         if (item == NULL) {
             if (PyErr_Occurred()) {
                 if (PyErr_ExceptionMatches(PyExc_StopIteration))
