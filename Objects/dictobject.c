@@ -6369,6 +6369,37 @@ typedef enum {
     DICT_ITER_ITEMS,
 } dictiter_kind;
 
+/* Validate references acquired from a dictionary before exposing them from
+   an iterator slot.  The references are owned by the caller on entry. */
+static int
+dictiter_check_refs(PyObject **key, PyObject **value)
+{
+    if (key != NULL && *key != NULL) {
+        *key = _PyObject_CheckAccessNullable(*key);
+        if (*key == NULL) {
+            goto error;
+        }
+    }
+    if (value != NULL && *value != NULL) {
+        *value = _PyObject_CheckAccessNullable(*value);
+        if (*value == NULL) {
+            goto error;
+        }
+    }
+    return 0;
+
+error:
+    Py_XDECREF(key != NULL ? *key : NULL);
+    Py_XDECREF(value != NULL ? *value : NULL);
+    if (key != NULL) {
+        *key = NULL;
+    }
+    if (value != NULL) {
+        *value = NULL;
+    }
+    return -1;
+}
+
 static PyObject *
 dictiter_next_shared(PyObject *self, dictiter_kind kind, int reverse)
 {
@@ -6423,6 +6454,9 @@ dictiter_next_shared(PyObject *self, dictiter_kind kind, int reverse)
         PyErr_SetString(PyExc_RuntimeError, error == 1
                         ? "dictionary changed size during iteration"
                         : "dictionary keys changed during iteration");
+        return NULL;
+    }
+    if (dictiter_check_refs(&key, &value) < 0) {
         return NULL;
     }
     if (kind == DICT_ITER_KEYS) {
@@ -6501,7 +6535,7 @@ dictiter_iternextkey_lock_held(PyDictObject *d, PyObject *self)
     }
     di->di_pos = i+1;
     di->len--;
-    return Py_NewRef(key);
+    return _PyObject_CheckAccessNullable(Py_NewRef(key));
 
 fail:
     di->di_dict = NULL;
@@ -6532,7 +6566,7 @@ dictiter_iternextkey(PyObject *self)
     value = dictiter_iternextkey_lock_held(d, self);
 #endif
 
-    return value;
+    return _PyObject_CheckAccessNullable(value);
 }
 
 PyTypeObject PyDictIterKey_Type = {
@@ -6627,7 +6661,7 @@ dictiter_iternextvalue_lock_held(PyDictObject *d, PyObject *self)
     }
     di->di_pos = i+1;
     di->len--;
-    return Py_NewRef(value);
+    return _PyObject_CheckAccessNullable(Py_NewRef(value));
 
 fail:
     di->di_dict = NULL;
@@ -6658,7 +6692,7 @@ dictiter_iternextvalue(PyObject *self)
     value = dictiter_iternextvalue_lock_held(d, self);
 #endif
 
-    return value;
+    return _PyObject_CheckAccessNullable(value);
 }
 
 PyTypeObject PyDictIterValue_Type = {
@@ -6937,6 +6971,9 @@ dictiter_iternextitem(PyObject *self)
     if (dictiter_iternextitem_lock_held(d, self, &key, &value) == 0) {
 
 #endif
+        if (dictiter_check_refs(&key, &value) < 0) {
+            return NULL;
+        }
         PyObject *result = di->di_result;
         if (acquire_iter_result(result)) {
             PyObject *oldkey = PyTuple_GET_ITEM(result, 0);
@@ -7047,6 +7084,12 @@ dictreviter_iter_lock_held(PyDictObject *d, PyObject *self)
             key = entry_ptr->me_key;
             value = entry_ptr->me_value;
         }
+    }
+    bool check_key = !Py_IS_TYPE(di, &PyDictRevIterValue_Type);
+    bool check_value = !Py_IS_TYPE(di, &PyDictRevIterKey_Type);
+    if ((check_key && PyObject_CheckAccess(key) == NULL) ||
+        (check_value && PyObject_CheckAccess(value) == NULL)) {
+        goto fail;
     }
     di->di_pos = i-1;
     di->len--;

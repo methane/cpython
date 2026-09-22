@@ -93,6 +93,50 @@ class DictAccessTests(unittest.TestCase):
             pass
         self.assertTrue(result.get())
 
+    @threading_helper.requires_working_threading()
+    def test_iterator_borrowed_values(self):
+        shared = {}.synchronize()
+        shared['value'] = object()
+        result = threading.Channel()
+
+        def worker(mapping):
+            checks = (
+                iter(mapping),
+                iter(mapping.keys()),
+                iter(mapping.values()),
+                iter(mapping.items()),
+                reversed(mapping),
+                reversed(mapping.keys()),
+                reversed(mapping.values()),
+                reversed(mapping.items()),
+            )
+            with sys.monitoring.StopTheWorld:
+                foreign = mapping['value']
+                local = {'value': foreign}
+                checks += (
+                    iter(local),
+                    iter(local.keys()),
+                    iter(local.values()),
+                    iter(local.items()),
+                    reversed(local),
+                    reversed(local.keys()),
+                    reversed(local.values()),
+                    reversed(local.items()),
+            )
+            denied = 0
+            for iterator in checks:
+                try:
+                    next(iterator)
+                except IllegalThreadAccessException:
+                    denied += 1
+            result.put(denied)
+
+        thread = threading.Thread(target=worker, args=(shared,),
+                                  group=threading.ThreadGroup())
+        with threading_helper.start_threads([thread]):
+            pass
+        self.assertEqual(result.get(), 8)
+
 
 if __name__ == '__main__':
     unittest.main()
