@@ -917,11 +917,11 @@ int
 PyLong_IsPositive(PyObject *obj)
 {
     assert(obj != NULL);
-    if (!PyLong_Check(obj)) {
-        PyErr_Format(PyExc_TypeError, "expected int, got %T", obj);
+    if (PyObject_CheckAccess(obj) == NULL) {
         return -1;
     }
-    if (PyObject_CheckAccess(obj) == NULL) {
+    if (!PyLong_Check(obj)) {
+        PyErr_Format(PyExc_TypeError, "expected int, got %T", obj);
         return -1;
     }
     return _PyLong_IsPositive((PyLongObject *)obj);
@@ -931,11 +931,11 @@ int
 PyLong_IsNegative(PyObject *obj)
 {
     assert(obj != NULL);
-    if (!PyLong_Check(obj)) {
-        PyErr_Format(PyExc_TypeError, "expected int, got %T", obj);
+    if (PyObject_CheckAccess(obj) == NULL) {
         return -1;
     }
-    if (PyObject_CheckAccess(obj) == NULL) {
+    if (!PyLong_Check(obj)) {
+        PyErr_Format(PyExc_TypeError, "expected int, got %T", obj);
         return -1;
     }
     return _PyLong_IsNegative((PyLongObject *)obj);
@@ -945,11 +945,11 @@ int
 PyLong_IsZero(PyObject *obj)
 {
     assert(obj != NULL);
-    if (!PyLong_Check(obj)) {
-        PyErr_Format(PyExc_TypeError, "expected int, got %T", obj);
+    if (PyObject_CheckAccess(obj) == NULL) {
         return -1;
     }
-    if (PyObject_CheckAccess(obj) == NULL) {
+    if (!PyLong_Check(obj)) {
+        PyErr_Format(PyExc_TypeError, "expected int, got %T", obj);
         return -1;
     }
     return _PyLong_IsZero((PyLongObject *)obj);
@@ -977,11 +977,15 @@ _PyLong_Sign(PyObject *vv)
 int
 PyLong_GetSign(PyObject *vv, int *sign)
 {
-    if (!PyLong_Check(vv)) {
-        PyErr_Format(PyExc_TypeError, "expect int, got %T", vv);
+    if (vv == NULL || sign == NULL) {
+        PyErr_BadInternalCall();
         return -1;
     }
     if (PyObject_CheckAccess(vv) == NULL) {
+        return -1;
+    }
+    if (!PyLong_Check(vv)) {
+        PyErr_Format(PyExc_TypeError, "expect int, got %T", vv);
         return -1;
     }
 
