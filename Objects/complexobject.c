@@ -475,6 +475,13 @@ PyComplex_RealAsDouble(PyObject *op)
 {
     double real = -1.0;
 
+    if (op == NULL) {
+        PyErr_BadArgument();
+        return -1.0;
+    }
+    if (PyObject_CheckAccess(op) == NULL) {
+        return -1.0;
+    }
     if (PyComplex_Check(op)) {
         real = ((PyComplexObject *)op)->cval.real;
     }
@@ -496,6 +503,13 @@ PyComplex_ImagAsDouble(PyObject *op)
 {
     double imag = -1.0;
 
+    if (op == NULL) {
+        PyErr_BadArgument();
+        return -1.0;
+    }
+    if (PyObject_CheckAccess(op) == NULL) {
+        return -1.0;
+    }
     if (PyComplex_Check(op)) {
         imag = ((PyComplexObject *)op)->cval.imag;
     }
@@ -551,10 +565,13 @@ try_complex_special_method(PyObject *op)
 Py_complex
 PyComplex_AsCComplex(PyObject *op)
 {
-    Py_complex cv;
+    Py_complex cv = {-1., 0.};
     PyObject *newop = NULL;
 
     assert(op);
+    if (PyObject_CheckAccess(op) == NULL) {
+        return cv;
+    }
     /* If op is already of type PyComplex_Type, return its value */
     if (PyComplex_Check(op)) {
         return ((PyComplexObject *)op)->cval;
@@ -562,9 +579,6 @@ PyComplex_AsCComplex(PyObject *op)
     /* If not, use op's __complex__  method, if it exists */
 
     /* return -1 on failure */
-    cv.real = -1.;
-    cv.imag = 0.;
-
     newop = try_complex_special_method(op);
 
     if (newop) {
