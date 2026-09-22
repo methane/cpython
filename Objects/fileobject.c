@@ -45,6 +45,10 @@ PyFile_FromFd(int fd, const char *name, const char *mode, int buffering, const c
     Py_DECREF(open);
     if (stream == NULL)
         return NULL;
+    if (PyObject_CheckAccess(stream) == NULL) {
+        Py_DECREF(stream);
+        return NULL;
+    }
     /* ignore name attribute because the name attribute of _BufferedIOMixin
        and TextIOWrapper is read only */
     return stream;
@@ -59,6 +63,9 @@ PyFile_GetLine(PyObject *f, int n)
         PyErr_BadInternalCall();
         return NULL;
     }
+    if (PyObject_CheckAccess(f) == NULL) {
+        return NULL;
+    }
 
     if (n <= 0) {
         result = PyObject_CallMethodNoArgs(f, &_Py_ID(readline));
@@ -71,6 +78,10 @@ PyFile_GetLine(PyObject *f, int n)
         PyErr_Format(PyExc_TypeError,
                      "%T.readline() must return a str, not %T", f, result);
         Py_SETREF(result, NULL);
+    }
+    if (result != NULL && PyObject_CheckAccess(result) == NULL) {
+        Py_SETREF(result, NULL);
+        return NULL;
     }
 
     if (n < 0 && result != NULL && PyBytes_Check(result)) {
@@ -112,6 +123,10 @@ PyFile_WriteObject(PyObject *v, PyObject *f, int flags)
         PyErr_SetString(PyExc_TypeError, "writeobject with NULL file");
         return -1;
     }
+    if (PyObject_CheckAccess(f) == NULL ||
+        (v != NULL && PyObject_CheckAccess(v) == NULL)) {
+        return -1;
+    }
     writer = PyObject_GetAttr(f, &_Py_ID(write));
     if (writer == NULL)
         return -1;
@@ -129,6 +144,10 @@ PyFile_WriteObject(PyObject *v, PyObject *f, int flags)
     Py_DECREF(writer);
     if (result == NULL)
         return -1;
+    if (PyObject_CheckAccess(result) == NULL) {
+        Py_DECREF(result);
+        return -1;
+    }
     Py_DECREF(result);
     return 0;
 }
@@ -141,6 +160,9 @@ PyFile_WriteString(const char *s, PyObject *f)
         if (!PyErr_Occurred())
             PyErr_SetString(PyExc_SystemError,
                             "null file for PyFile_WriteString");
+        return -1;
+    }
+    if (PyObject_CheckAccess(f) == NULL) {
         return -1;
     }
     else if (!PyErr_Occurred()) {
@@ -169,6 +191,13 @@ PyObject_AsFileDescriptor(PyObject *o)
     int fd;
     PyObject *meth;
 
+    if (o == NULL) {
+        PyErr_BadInternalCall();
+        return -1;
+    }
+    if (PyObject_CheckAccess(o) == NULL) {
+        return -1;
+    }
     if (PyLong_Check(o)) {
         if (PyBool_Check(o)) {
             if (PyErr_WarnEx(PyExc_RuntimeWarning,
@@ -187,6 +216,10 @@ PyObject_AsFileDescriptor(PyObject *o)
         Py_DECREF(meth);
         if (fno == NULL)
             return -1;
+        if (PyObject_CheckAccess(fno) == NULL) {
+            Py_DECREF(fno);
+            return -1;
+        }
 
         if (PyLong_Check(fno)) {
             fd = PyLong_AsInt(fno);
@@ -513,6 +546,13 @@ PyFile_OpenCodeObject(PyObject *path)
 {
     PyObject *f = NULL;
 
+    if (path == NULL) {
+        PyErr_BadInternalCall();
+        return NULL;
+    }
+    if (PyObject_CheckAccess(path) == NULL) {
+        return NULL;
+    }
     if (!PyUnicode_Check(path)) {
         PyErr_Format(PyExc_TypeError, "'path' must be 'str', not '%.200s'",
                      Py_TYPE(path)->tp_name);
@@ -530,6 +570,10 @@ PyFile_OpenCodeObject(PyObject *path)
         }
     }
 
+    if (f != NULL && PyObject_CheckAccess(f) == NULL) {
+        Py_DECREF(f);
+        return NULL;
+    }
     return f;
 }
 
