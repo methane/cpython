@@ -1824,8 +1824,14 @@ PyUnicode_Resize(PyObject **p_unicode, Py_ssize_t length)
         return -1;
     }
     unicode = *p_unicode;
-    if (unicode == NULL || !PyUnicode_Check(unicode) || length < 0)
-    {
+    if (unicode == NULL) {
+        PyErr_BadInternalCall();
+        return -1;
+    }
+    if (PyObject_CheckAccess(unicode) == NULL) {
+        return -1;
+    }
+    if (!PyUnicode_Check(unicode) || length < 0) {
         PyErr_BadInternalCall();
         return -1;
     }
@@ -2530,12 +2536,32 @@ PyUnicode_AsUCS4(PyObject *string, Py_UCS4 *target, Py_ssize_t targetsize,
         PyErr_BadInternalCall();
         return NULL;
     }
+    if (string == NULL || PyObject_CheckAccess(string) == NULL) {
+        if (string == NULL) {
+            PyErr_BadInternalCall();
+        }
+        return NULL;
+    }
+    if (!PyUnicode_Check(string)) {
+        PyErr_BadArgument();
+        return NULL;
+    }
     return as_ucs4(string, target, targetsize, copy_null);
 }
 
 Py_UCS4*
 PyUnicode_AsUCS4Copy(PyObject *string)
 {
+    if (string == NULL || PyObject_CheckAccess(string) == NULL) {
+        if (string == NULL) {
+            PyErr_BadInternalCall();
+        }
+        return NULL;
+    }
+    if (!PyUnicode_Check(string)) {
+        PyErr_BadArgument();
+        return NULL;
+    }
     return as_ucs4(string, NULL, 0, 1);
 }
 
@@ -3649,6 +3675,13 @@ PyUnicode_AsDecodedObject(PyObject *unicode,
                           const char *encoding,
                           const char *errors)
 {
+    if (unicode == NULL) {
+        PyErr_BadInternalCall();
+        return NULL;
+    }
+    if (PyObject_CheckAccess(unicode) == NULL) {
+        return NULL;
+    }
     if (!PyUnicode_Check(unicode)) {
         PyErr_BadArgument();
         return NULL;
@@ -3658,7 +3691,8 @@ PyUnicode_AsDecodedObject(PyObject *unicode,
         encoding = PyUnicode_GetDefaultEncoding();
 
     /* Decode via the codec registry */
-    return PyCodec_Decode(unicode, encoding, errors);
+    return _PyObject_CheckAccessNullable(
+        PyCodec_Decode(unicode, encoding, errors));
 }
 
 PyAPI_FUNC(PyObject *)
@@ -3668,6 +3702,13 @@ PyUnicode_AsDecodedUnicode(PyObject *unicode,
 {
     PyObject *v;
 
+    if (unicode == NULL) {
+        PyErr_BadInternalCall();
+        goto onError;
+    }
+    if (PyObject_CheckAccess(unicode) == NULL) {
+        goto onError;
+    }
     if (!PyUnicode_Check(unicode)) {
         PyErr_BadArgument();
         goto onError;
@@ -3678,6 +3719,9 @@ PyUnicode_AsDecodedUnicode(PyObject *unicode,
 
     /* Decode via the codec registry */
     v = PyCodec_Decode(unicode, encoding, errors);
+    if (v == NULL)
+        goto onError;
+    v = _PyObject_CheckAccessNullable(v);
     if (v == NULL)
         goto onError;
     if (!PyUnicode_Check(v)) {
@@ -3702,6 +3746,13 @@ PyUnicode_AsEncodedObject(PyObject *unicode,
 {
     PyObject *v;
 
+    if (unicode == NULL) {
+        PyErr_BadInternalCall();
+        goto onError;
+    }
+    if (PyObject_CheckAccess(unicode) == NULL) {
+        goto onError;
+    }
     if (!PyUnicode_Check(unicode)) {
         PyErr_BadArgument();
         goto onError;
@@ -3712,6 +3763,9 @@ PyUnicode_AsEncodedObject(PyObject *unicode,
 
     /* Encode via the codec registry */
     v = PyCodec_Encode(unicode, encoding, errors);
+    if (v == NULL)
+        goto onError;
+    v = _PyObject_CheckAccessNullable(v);
     if (v == NULL)
         goto onError;
     return v;
@@ -11513,6 +11567,14 @@ _PyUnicode_Equal(PyObject *str1, PyObject *str2)
 int
 PyUnicode_Equal(PyObject *str1, PyObject *str2)
 {
+    if (str1 == NULL || str2 == NULL) {
+        PyErr_BadInternalCall();
+        return -1;
+    }
+    if (PyObject_CheckAccess(str1) == NULL ||
+        PyObject_CheckAccess(str2) == NULL) {
+        return -1;
+    }
     if (!PyUnicode_Check(str1)) {
         PyErr_Format(PyExc_TypeError,
                      "first argument must be str, not %T", str1);
@@ -11531,6 +11593,14 @@ PyUnicode_Equal(PyObject *str1, PyObject *str2)
 int
 PyUnicode_Compare(PyObject *left, PyObject *right)
 {
+    if (left == NULL || right == NULL) {
+        PyErr_BadInternalCall();
+        return -1;
+    }
+    if (PyObject_CheckAccess(left) == NULL ||
+        PyObject_CheckAccess(right) == NULL) {
+        return -1;
+    }
     if (PyUnicode_Check(left) && PyUnicode_Check(right)) {
         /* a string is equal to itself */
         if (left == right)
@@ -11552,7 +11622,16 @@ PyUnicode_CompareWithASCIIString(PyObject* uni, const char* str)
     int kind;
     Py_UCS4 chr;
 
-    assert(_PyUnicode_CHECK(uni));
+    if (uni == NULL || PyObject_CheckAccess(uni) == NULL) {
+        if (uni == NULL) {
+            PyErr_BadInternalCall();
+        }
+        return -1;
+    }
+    if (!PyUnicode_Check(uni)) {
+        PyErr_BadArgument();
+        return -1;
+    }
     kind = PyUnicode_KIND(uni);
     if (kind == PyUnicode_1BYTE_KIND) {
         const void *data = PyUnicode_1BYTE_DATA(uni);
@@ -11599,8 +11678,19 @@ PyUnicode_EqualToUTF8(PyObject *unicode, const char *str)
 int
 PyUnicode_EqualToUTF8AndSize(PyObject *unicode, const char *str, Py_ssize_t size)
 {
-    assert(_PyUnicode_CHECK(unicode));
-    assert(str);
+    if (unicode == NULL || PyObject_CheckAccess(unicode) == NULL) {
+        if (unicode == NULL) {
+            PyErr_BadInternalCall();
+        }
+        return -1;
+    }
+    if (!PyUnicode_Check(unicode) || str == NULL) {
+        PyErr_BadInternalCall();
+        return -1;
+    }
+    if (size < 0) {
+        return 0;
+    }
 
     if (PyUnicode_IS_ASCII(unicode)) {
         Py_ssize_t len = PyUnicode_GET_LENGTH(unicode);
@@ -11689,6 +11779,14 @@ PyUnicode_RichCompare(PyObject *left, PyObject *right, int op)
 {
     int result;
 
+    if (left == NULL || right == NULL) {
+        PyErr_BadInternalCall();
+        return NULL;
+    }
+    if (PyObject_CheckAccess(left) == NULL ||
+        PyObject_CheckAccess(right) == NULL) {
+        return NULL;
+    }
     if (!PyUnicode_Check(left) || !PyUnicode_Check(right))
         Py_RETURN_NOTIMPLEMENTED;
 
@@ -11727,6 +11825,14 @@ PyUnicode_Contains(PyObject *str, PyObject *substr)
     Py_ssize_t len1, len2;
     int result;
 
+    if (str == NULL || substr == NULL) {
+        PyErr_BadInternalCall();
+        return -1;
+    }
+    if (PyObject_CheckAccess(str) == NULL ||
+        PyObject_CheckAccess(substr) == NULL) {
+        return -1;
+    }
     if (!PyUnicode_Check(substr)) {
         PyErr_Format(PyExc_TypeError,
                      "'in <string>' requires string as left operand, not %.100s",
@@ -11848,8 +11954,16 @@ PyUnicode_Append(PyObject **p_left, PyObject *right)
         return;
     }
     left = *p_left;
-    if (right == NULL || left == NULL
-        || !PyUnicode_Check(left) || !PyUnicode_Check(right)) {
+    if (right == NULL || left == NULL) {
+        if (!PyErr_Occurred())
+            PyErr_BadInternalCall();
+        goto error;
+    }
+    if (PyObject_CheckAccess(left) == NULL ||
+        PyObject_CheckAccess(right) == NULL) {
+        goto error;
+    }
+    if (!PyUnicode_Check(left) || !PyUnicode_Check(right)) {
         if (!PyErr_Occurred())
             PyErr_BadInternalCall();
         goto error;
@@ -12624,6 +12738,16 @@ _PyUnicode_ScanIdentifier(PyObject *self)
 int
 PyUnicode_IsIdentifier(PyObject *self)
 {
+    if (self == NULL || PyObject_CheckAccess(self) == NULL) {
+        if (self == NULL) {
+            PyErr_BadInternalCall();
+        }
+        return -1;
+    }
+    if (!PyUnicode_Check(self)) {
+        PyErr_BadArgument();
+        return -1;
+    }
     Py_ssize_t i = _PyUnicode_ScanIdentifier(self);
     Py_ssize_t len = PyUnicode_GET_LENGTH(self);
     /* an empty string is not a valid identifier */
