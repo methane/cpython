@@ -61,6 +61,9 @@ iter_traverse(PyObject *op, visitproc visit, void *arg)
 static PyObject *
 iter_iternext(PyObject *iterator)
 {
+    if (PyObject_CheckAccess(iterator) == NULL) {
+        return NULL;
+    }
     seqiterobject *it;
     PyObject *seq;
     PyObject *result;
@@ -109,11 +112,17 @@ iter_iternext(PyObject *iterator)
 static PyObject *
 iter_len(PyObject *op, PyObject *Py_UNUSED(ignored))
 {
+    if (PyObject_CheckAccess(op) == NULL) {
+        return NULL;
+    }
     seqiterobject *it = (seqiterobject*)op;
     Py_ssize_t seqsize, len;
 
     Py_ssize_t index = FT_ATOMIC_LOAD_SSIZE_RELAXED(it->it_index);
     if (index >= 0 && it->it_seq != NULL) {
+        if (PyObject_CheckAccess(it->it_seq) == NULL) {
+            return NULL;
+        }
         if (_PyObject_HasLen(it->it_seq)) {
             seqsize = PySequence_Size(it->it_seq);
             if (seqsize == -1)
@@ -134,6 +143,9 @@ PyDoc_STRVAR(length_hint_doc, "Private method returning an estimate of len(list(
 static PyObject *
 iter_reduce(PyObject *op, PyObject *Py_UNUSED(ignored))
 {
+    if (PyObject_CheckAccess(op) == NULL) {
+        return NULL;
+    }
     seqiterobject *it = (seqiterobject*)op;
     PyObject *iter = _PyEval_GetBuiltin(&_Py_ID(iter));
 
@@ -142,8 +154,12 @@ iter_reduce(PyObject *op, PyObject *Py_UNUSED(ignored))
      * see issue #101765 */
 
     Py_ssize_t index = FT_ATOMIC_LOAD_SSIZE_RELAXED(it->it_index);
-    if (index >= 0 && it->it_seq != NULL)
+    if (index >= 0 && it->it_seq != NULL) {
+        if (PyObject_CheckAccess(it->it_seq) == NULL) {
+            return NULL;
+        }
         return Py_BuildValue("N(O)n", iter, it->it_seq, index);
+    }
     else
         return Py_BuildValue("N(())", iter);
 }
@@ -153,6 +169,10 @@ PyDoc_STRVAR(reduce_doc, "Return state information for pickling.");
 static PyObject *
 iter_setstate(PyObject *op, PyObject *state)
 {
+    if (PyObject_CheckAccess(op) == NULL ||
+        PyObject_CheckAccess(state) == NULL) {
+        return NULL;
+    }
     seqiterobject *it = (seqiterobject*)op;
     Py_ssize_t index = PyLong_AsSsize_t(state);
     if (index == -1 && PyErr_Occurred())
@@ -279,6 +299,9 @@ calliter_traverse(PyObject *op, visitproc visit, void *arg)
 static PyObject *
 calliter_iternext(PyObject *op)
 {
+    if (PyObject_CheckAccess(op) == NULL) {
+        return NULL;
+    }
     calliterobject *it = (calliterobject*)op;
     PyObject *result;
 
@@ -286,7 +309,8 @@ calliter_iternext(PyObject *op)
         return NULL;
     }
 
-    result = _PyObject_CallNoArgs(it->it_callable);
+    result = _PyObject_CheckAccessNullable(
+        _PyObject_CallNoArgs(it->it_callable));
     /* The call can exhaust the iterator re-entrantly. */
     if (result != NULL && it->it_callable != NULL) {
         if (it->it_sentinel == NULL) {
@@ -317,6 +341,9 @@ calliter_iternext(PyObject *op)
 static PyObject *
 calliter_reduce(PyObject *op, PyObject *Py_UNUSED(ignored))
 {
+    if (PyObject_CheckAccess(op) == NULL) {
+        return NULL;
+    }
     calliterobject *it = (calliterobject*)op;
     PyObject *iter = _PyEval_GetBuiltin(&_Py_ID(iter));
 
@@ -326,6 +353,12 @@ calliter_reduce(PyObject *op, PyObject *Py_UNUSED(ignored))
 
     if (it->it_callable == NULL) {
         return Py_BuildValue("N(())", iter);
+    }
+    if (PyObject_CheckAccess(it->it_callable) == NULL ||
+        (it->it_sentinel != NULL &&
+         PyObject_CheckAccess(it->it_sentinel) == NULL) ||
+        PyObject_CheckAccess(it->it_stop_exc) == NULL) {
+        return NULL;
     }
     /* Only the sentinel can be passed as an argument of iter(), so other
        attributes are restored from the state (see calliter_setstate()). */
@@ -345,6 +378,10 @@ calliter_reduce(PyObject *op, PyObject *Py_UNUSED(ignored))
 static PyObject *
 calliter_setstate(PyObject *op, PyObject *state)
 {
+    if (PyObject_CheckAccess(op) == NULL ||
+        PyObject_CheckAccess(state) == NULL) {
+        return NULL;
+    }
     calliterobject *it = (calliterobject*)op;
     PyObject *sentinel, *stop_exc;
 
@@ -353,6 +390,10 @@ calliter_setstate(PyObject *op, PyObject *state)
     }
     sentinel = PyTuple_GET_ITEM(state, 0);
     stop_exc = PyTuple_GET_ITEM(state, 1);
+    if (PyObject_CheckAccess(sentinel) == NULL ||
+        PyObject_CheckAccess(stop_exc) == NULL) {
+        return NULL;
+    }
     if (!PyTuple_Check(sentinel) || PyTuple_GET_SIZE(sentinel) > 1) {
         goto error;
     }
@@ -501,6 +542,11 @@ typedef struct {
 PyObject *
 _PyACallIter_New(PyObject *callable, PyObject *sentinel, PyObject *stop_exc)
 {
+    if (PyObject_CheckAccess(callable) == NULL ||
+        (sentinel != NULL && PyObject_CheckAccess(sentinel) == NULL) ||
+        (stop_exc != NULL && PyObject_CheckAccess(stop_exc) == NULL)) {
+        return NULL;
+    }
     if (stop_exc == NULL) {
         stop_exc = PyExc_StopAsyncIteration;
     }
@@ -551,6 +597,9 @@ static PyObject *acallawaitable_new(PyObject *iterator);
 static PyObject *
 acalliter_anext(PyObject *op)
 {
+    if (PyObject_CheckAccess(op) == NULL) {
+        return NULL;
+    }
     return acallawaitable_new(op);
 }
 
@@ -577,6 +626,9 @@ PyTypeObject _PyACallIter_Type = {
 static PyObject *
 acallawaitable_new(PyObject *iterator)
 {
+    if (PyObject_CheckAccess(iterator) == NULL) {
+        return NULL;
+    }
     acallawaitableobject *aw = PyObject_GC_New(
             acallawaitableobject, &_PyACallIterAwaitable_Type);
     if (aw == NULL) {
@@ -612,6 +664,9 @@ acallawaitable_traverse(PyObject *op, visitproc visit, void *arg)
 static int
 acallawaitable_start(acallawaitableobject *aw)
 {
+    if (PyObject_CheckAccess((PyObject *)aw) == NULL) {
+        return -1;
+    }
     acalliterobject *it = acalliterobject_CAST(aw->aw_iterator);
 
     if (aw->aw_closed) {
@@ -623,7 +678,8 @@ acallawaitable_start(acallawaitableobject *aw)
         PyErr_SetNone(PyExc_StopAsyncIteration);
         return -1;
     }
-    PyObject *awaitable = _PyObject_CallNoArgs(it->it_callable);
+    PyObject *awaitable = _PyObject_CheckAccessNullable(
+        _PyObject_CallNoArgs(it->it_callable));
     if (awaitable == NULL) {
         if (PyErr_ExceptionMatches(it->it_stop_exc)) {
             PyErr_Clear();
@@ -651,11 +707,18 @@ acallawaitable_start(acallawaitableobject *aw)
 static PyObject *
 acallawaitable_handle_error(acallawaitableobject *aw)
 {
+    if (PyObject_CheckAccess((PyObject *)aw) == NULL) {
+        return NULL;
+    }
     acalliterobject *it = acalliterobject_CAST(aw->aw_iterator);
 
     if (PyErr_ExceptionMatches(PyExc_StopIteration)) {
         PyObject *value;
         if (_PyGen_FetchStopIterationValue(&value) < 0) {
+            return NULL;
+        }
+        value = _PyObject_CheckAccessNullable(value);
+        if (value == NULL) {
             return NULL;
         }
         int ok = 0;
@@ -688,6 +751,9 @@ acallawaitable_handle_error(acallawaitableobject *aw)
 static PyObject *
 acallawaitable_iternext(PyObject *op)
 {
+    if (PyObject_CheckAccess(op) == NULL) {
+        return NULL;
+    }
     acallawaitableobject *aw = acallawaitableobject_CAST(op);
 
     if (aw->aw_wrapped == NULL && acallawaitable_start(aw) < 0) {
@@ -709,6 +775,10 @@ acallawaitable_iternext(PyObject *op)
 static PyObject *
 acallawaitable_proxy(acallawaitableobject *aw, char *meth, PyObject *arg)
 {
+    if (PyObject_CheckAccess((PyObject *)aw) == NULL ||
+        (arg != NULL && PyObject_CheckAccess(arg) == NULL)) {
+        return NULL;
+    }
     PyObject *awaitable = awaitable_getiter((PyObject *)aw, aw->aw_wrapped);
     if (awaitable == NULL) {
         return NULL;
@@ -720,7 +790,7 @@ acallawaitable_proxy(acallawaitableobject *aw, char *meth, PyObject *arg)
         : PyObject_CallMethod(awaitable, meth, "O", arg);
     Py_DECREF(awaitable);
     if (ret != NULL) {
-        return ret;
+        return _PyObject_CheckAccessNullable(ret);
     }
     return acallawaitable_handle_error(aw);
 }
@@ -728,6 +798,10 @@ acallawaitable_proxy(acallawaitableobject *aw, char *meth, PyObject *arg)
 static PyObject *
 acallawaitable_send(PyObject *op, PyObject *arg)
 {
+    if (PyObject_CheckAccess(op) == NULL ||
+        PyObject_CheckAccess(arg) == NULL) {
+        return NULL;
+    }
     acallawaitableobject *aw = acallawaitableobject_CAST(op);
 
     if (aw->aw_wrapped == NULL && acallawaitable_start(aw) < 0) {
@@ -739,6 +813,10 @@ acallawaitable_send(PyObject *op, PyObject *arg)
 static PyObject *
 acallawaitable_throw(PyObject *op, PyObject *args)
 {
+    if (PyObject_CheckAccess(op) == NULL ||
+        PyObject_CheckAccess(args) == NULL) {
+        return NULL;
+    }
     acallawaitableobject *aw = acallawaitableobject_CAST(op);
 
     if (aw->aw_wrapped == NULL) {
@@ -758,6 +836,9 @@ acallawaitable_throw(PyObject *op, PyObject *args)
 static PyObject *
 acallawaitable_close(PyObject *op, PyObject *Py_UNUSED(dummy))
 {
+    if (PyObject_CheckAccess(op) == NULL) {
+        return NULL;
+    }
     acallawaitableobject *aw = acallawaitableobject_CAST(op);
 
     if (aw->aw_wrapped == NULL) {
