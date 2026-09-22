@@ -3,6 +3,7 @@
 #include "pycore_dict.h"          // _PyDict_GetItem_KnownHash()
 #include "pycore_long.h"          // _PyLong_GetZero()
 #include "pycore_moduleobject.h"  // _PyModule_GetState()
+#include "pycore_object.h"        // _PyObject_CheckAccessNullable()
 #include "pycore_pyatomic_ft_wrappers.h"
 #include "pycore_typeobject.h"    // _PyType_GetModuleState()
 #include "pycore_weakref.h"       // FT_CLEAR_WEAKREFS()
@@ -41,6 +42,12 @@ find_module_state_by_def(PyTypeObject *type)
     PyObject *mod = PyType_GetModuleByDef(type, &_collectionsmodule);
     assert(mod != NULL);
     return get_module_state(mod);
+}
+
+static inline PyObject *
+collections_iternext_func(PyObject *(*iternext)(PyObject *), PyObject *it)
+{
+    return _PyObject_CheckAccessNullable(iternext(it));
 }
 
 /*[clinic input]
@@ -458,7 +465,7 @@ consume_iterator(PyObject *it)
     PyObject *item;
 
     iternext = *Py_TYPE(it)->tp_iternext;
-    while ((item = iternext(it)) != NULL) {
+    while ((item = collections_iternext_func(iternext, it)) != NULL) {
         Py_DECREF(item);
     }
     return finalize_iterator(it);
@@ -510,7 +517,7 @@ deque_extend_impl(dequeobject *deque, PyObject *iterable)
     }
 
     iternext = *Py_TYPE(it)->tp_iternext;
-    while ((item = iternext(it)) != NULL) {
+    while ((item = collections_iternext_func(iternext, it)) != NULL) {
         if (deque_append_lock_held(deque, item, maxlen) == -1) {
             Py_DECREF(it);
             return NULL;
@@ -565,7 +572,7 @@ deque_extendleft_impl(dequeobject *deque, PyObject *iterable)
     }
 
     iternext = *Py_TYPE(it)->tp_iternext;
-    while ((item = iternext(it)) != NULL) {
+    while ((item = collections_iternext_func(iternext, it)) != NULL) {
         if (deque_appendleft_lock_held(deque, item, maxlen) == -1) {
             Py_DECREF(it);
             return NULL;
