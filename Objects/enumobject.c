@@ -51,6 +51,11 @@ enum_new_impl(PyTypeObject *type, PyObject *iterable, PyObject *start)
 {
     enumobject *en;
 
+    if (PyObject_CheckAccess(iterable) == NULL ||
+        (start != NULL && PyObject_CheckAccess(start) == NULL)) {
+        return NULL;
+    }
+
     en = (enumobject *)type->tp_alloc(type, 0);
     if (en == NULL)
         return NULL;
@@ -177,6 +182,7 @@ enum_next(PyObject *op)
     PyObject *old_item;
 
     next_item = (*Py_TYPE(it)->tp_iternext)(it);
+    next_item = _PyObject_CheckAccessNullable(next_item);
     if (next_item == NULL)
         return NULL;
 
@@ -307,7 +313,12 @@ reversed_new_impl(PyTypeObject *type, PyObject *seq)
     PyObject *reversed_meth;
     reversedobject *ro;
 
+    if (PyObject_CheckAccess(seq) == NULL) {
+        return NULL;
+    }
+
     reversed_meth = _PyObject_LookupSpecial(seq, &_Py_ID(__reversed__));
+    reversed_meth = _PyObject_CheckAccessNullable(reversed_meth);
     if (reversed_meth == Py_None) {
         Py_DECREF(reversed_meth);
         PyErr_Format(PyExc_TypeError,
