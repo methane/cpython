@@ -4537,8 +4537,15 @@ type_new_set_module(PyObject *dict)
     }
 
     PyObject *module;
-    r = PyDict_GetItemRef(globals, &_Py_ID(__name__), &module);
-    if (module) {
+    r = _PyDict_GetItemRefUnchecked(globals, &_Py_ID(__name__), &module);
+    if (r < 0) {
+        return -1;
+    }
+    if (module != NULL) {
+        module = _PyObject_CheckAccessNullable(module);
+        if (module == NULL) {
+            return -1;
+        }
         r = PyDict_SetItem(dict, &_Py_ID(__module__), module);
         Py_DECREF(module);
     }
@@ -5854,6 +5861,17 @@ type_from_slots_or_spec(
                     it.name))
                 goto finally;
         }
+    }
+
+    /* Immutable extension types are visible across ThreadGroups. Their
+       namespace must therefore be accessible there as well. */
+    if ((type->tp_flags & Py_TPFLAGS_IMMUTABLETYPE) &&
+        _PyDict_SynchronizeNamespace(dict) < 0) {
+        goto finally;
+    }
+    if ((type->tp_flags & Py_TPFLAGS_IMMUTABLETYPE) &&
+        PyObject_DeclareImmutable((PyObject *)type) < 0) {
+        goto finally;
     }
 
     assert(_PyType_CheckConsistency(type));
@@ -10097,9 +10115,9 @@ add_subclass(PyTypeObject *base, PyTypeObject *type)
     }
     assert(PyDict_CheckExact(subclasses));
 
-    int result = PyDict_SetItem(subclasses, key, ref);
-    Py_DECREF(ref);
-    Py_DECREF(key);
+    /* The type lock protects this internal registry. Its dictionary can be
+       owned by the main ThreadGroup even when a worker creates a subclass. */
+    int result = _PyDict_SetItem_Take2((PyDictObject *)subclasses, key, ref);
     return result;
 }
 

@@ -4,6 +4,7 @@ import os as _os
 import sys as _sys
 import _thread
 import _contextvars
+import copy as _copy
 from enum import IntEnum as _IntEnum, property as _enum_property
 
 
@@ -70,6 +71,8 @@ ThreadGroup = _thread.ThreadGroup
 TransferBox = _thread.TransferBox
 _ChannelQueue = _thread._ChannelQueue
 _current_thread_group = _thread._current_thread_group
+_declare_synchronized = _thread._declare_synchronized
+_set_copy_function = _thread._set_copy_function
 _main_thread_group = _sys.main_thread_group
 __all__.extend(('ThreadGroup', 'Shareable', 'TransferBox', 'Channel'))
 get_ident = _thread.get_ident
@@ -92,6 +95,7 @@ except AttributeError:
     _CRLock = None
 TIMEOUT_MAX = _thread.TIMEOUT_MAX
 del _thread
+_set_copy_function(_copy.copy)
 
 # get thread-local implementation, either from the thread
 # module, or from the python fallback
@@ -1926,5 +1930,14 @@ for _class in (_RLock, Condition, Semaphore, BoundedSemaphore, Event, Barrier,
                _DeleteDummyThreadOnDel, _ThreadRegistry):
     type.synchronize(_class)
 del _class
+
+# These descriptors are shared through the synchronized Thread instances.
+# Synchronizing the class namespace itself is shallow, so declare the
+# descriptors explicitly after their classes have been initialized.
+for _name in ('group', 'name', 'ident', 'native_id', 'daemon'):
+    _descriptor = Thread.__dict__.get(_name)
+    if _descriptor is not None:
+        _declare_synchronized(_descriptor)
+del _descriptor, _name
 
 __module__.synchronize()

@@ -625,10 +625,17 @@ calculate_qualname(PyDescrObject *descr)
         return NULL;
     }
 
-    type_qualname = PyObject_GetAttr(
-            (PyObject *)descr->d_type, &_Py_ID(__qualname__));
-    if (type_qualname == NULL)
-        return NULL;
+    /* The descriptor is immutable and its qualified name is metadata. Read
+       the defining type's stored name so a descriptor can expose this
+       metadata even when the defining Python class is local to another
+       ThreadGroup. */
+    if (descr->d_type->tp_flags & Py_TPFLAGS_HEAPTYPE) {
+        PyHeapTypeObject *heap_type = (PyHeapTypeObject *)descr->d_type;
+        type_qualname = Py_NewRef(heap_type->ht_qualname);
+    }
+    else {
+        type_qualname = PyType_GetName(descr->d_type);
+    }
 
     if (!PyUnicode_Check(type_qualname)) {
         PyErr_SetString(PyExc_TypeError, "<descriptor>.__objclass__."

@@ -41,6 +41,7 @@ typedef struct {
     PyTypeObject *threadgroup_type;
     PyTypeObject *transferbox_type;
     PyTypeObject *channel_queue_type;
+    PyObject *copy_function;
 
     // Linked list of handles to all non-daemon threads created by the
     // threading module. We wait for these to finish at shutdown.
@@ -337,12 +338,16 @@ transferbox_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
     }
     PyObject *value;
     if (_Py_atomic_load_uint8(&obj->ob_shareable) == _Py_SHAREABLE_LOCAL) {
-        PyObject *copy = PyImport_ImportModule("copy");
-        if (copy == NULL) {
+        thread_module_state *state = get_thread_state_by_cls(type);
+        if (state == NULL) {
             return NULL;
         }
-        value = PyObject_CallMethod(copy, "copy", "(O)", obj);
-        Py_DECREF(copy);
+        if (state->copy_function == NULL) {
+            PyErr_SetString(PyExc_RuntimeError,
+                            "threading has not initialized copy support");
+            return NULL;
+        }
+        value = PyObject_CallOneArg(state->copy_function, obj);
         if (value == NULL) {
             return NULL;
         }
@@ -3526,6 +3531,28 @@ thread_current_threadgroup(PyObject *module, PyObject *Py_UNUSED(ignored))
 }
 
 static PyObject *
+thread_declare_synchronized(PyObject *module, PyObject *obj)
+{
+    if (PyObject_DeclareSynchronized(obj) < 0) {
+        return NULL;
+    }
+    Py_RETURN_NONE;
+}
+
+static PyObject *
+thread_set_copy_function(PyObject *module, PyObject *obj)
+{
+    if (!PyCallable_Check(obj)) {
+        PyErr_SetString(PyExc_TypeError, "copy function must be callable");
+        return NULL;
+    }
+    thread_module_state *state = get_thread_state(module);
+    Py_INCREF(obj);
+    Py_XSETREF(state->copy_function, obj);
+    Py_RETURN_NONE;
+}
+
+static PyObject *
 thread_daemon_threads_allowed(PyObject *module, PyObject *Py_UNUSED(ignored))
 {
     PyInterpreterState *interp = _PyInterpreterState_GET();
@@ -4470,6 +4497,8 @@ static PyMethodDef thread_methods[] = {
     {"_get_stderr", thread_get_stderr, METH_NOARGS,
      "Return accessible stderr or a local raw printer for thread diagnostics."},
     {"_current_thread_group", thread_current_threadgroup, METH_NOARGS, NULL},
+    {"_declare_synchronized", thread_declare_synchronized, METH_O, NULL},
+    {"_set_copy_function", thread_set_copy_function, METH_O, NULL},
     {"start_new_thread",        thread_PyThread_start_new_thread,
      METH_VARARGS, start_new_thread_doc},
     {"start_new",               thread_PyThread_start_new_thread,
@@ -4660,6 +4689,11 @@ thread_module_exec(PyObject *module)
     if (PyType_Freeze(state->excepthook_type) < 0) {
         return -1;
     }
+    if (_PyDict_SynchronizeNamespace(
+            _PyType_GetDict(state->excepthook_type)) < 0 ||
+        PyObject_DeclareImmutable((PyObject *)state->excepthook_type) < 0) {
+        return -1;
+    }
     if (PyModule_AddType(module, state->excepthook_type) < 0) {
         return -1;
     }
@@ -4753,6 +4787,7 @@ thread_module_traverse(PyObject *module, visitproc visit, void *arg)
     Py_VISIT(state->threadgroup_type);
     Py_VISIT(state->transferbox_type);
     Py_VISIT(state->channel_queue_type);
+    Py_VISIT(state->copy_function);
     return 0;
 }
 
@@ -4771,6 +4806,7 @@ thread_module_clear(PyObject *module)
     Py_CLEAR(state->threadgroup_type);
     Py_CLEAR(state->transferbox_type);
     Py_CLEAR(state->channel_queue_type);
+    Py_CLEAR(state->copy_function);
     // Remove any remaining handles (e.g. if shutdown exited early due to
     // interrupt) so that attempts to unlink the handle after our module state
     // is destroyed do not crash.

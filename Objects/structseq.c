@@ -8,6 +8,7 @@
 */
 
 #include "Python.h"
+#include "pycore_dict.h"         // _PyDict_SynchronizeNamespace()
 #include "pycore_initconfig.h"    // _PyStatus_OK()
 #include "pycore_modsupport.h"    // _PyArg_NoPositional()
 #include "pycore_object.h"        // _PyObject_GC_TRACK()
@@ -675,6 +676,13 @@ _PyStructSequence_InitBuiltinWithFlags(PyInterpreterState *interp,
 
     if (initialize_structseq_dict(
             desc, _PyType_GetDict(type), n_members, n_unnamed_members) < 0)
+    {
+        goto error;
+    }
+
+    /* Builtin struct sequence types are visible across ThreadGroups. */
+    if (_PyDict_SynchronizeNamespace(_PyType_GetDict(type)) < 0 ||
+        PyObject_DeclareImmutable((PyObject *)type) < 0)
     {
         goto error;
     }

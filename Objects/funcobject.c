@@ -546,9 +546,18 @@ PyFunction_NewWithQualName(PyObject *code, PyObject *globals, PyObject *qualname
         return NULL;
     }
     if (PyObject_CheckAccess(code) == NULL ||
-        PyObject_CheckAccess(globals) == NULL ||
         (qualname != NULL && PyObject_CheckAccess(qualname) == NULL)) {
         return NULL;
+    }
+    /* A function may be invoked by a different ThreadGroup while retaining
+       its defining module globals.  Global values are checked when loaded;
+       retaining the dictionary is required for function and class-body
+       creation. */
+    if (PyObject_CheckAccess(globals) == NULL) {
+        if (!PyErr_ExceptionMatches(PyExc_IllegalThreadAccessException)) {
+            return NULL;
+        }
+        PyErr_Clear();
     }
     if (!PyCode_Check(code) || !PyAnyDict_Check(globals)) {
         PyErr_BadInternalCall();
@@ -591,8 +600,14 @@ PyFunction_NewWithQualName(PyObject *code, PyObject *globals, PyObject *qualname
     Py_INCREF(doc);
 
     // __module__: Use globals['__name__'] if it exists, or NULL.
-    if (PyDict_GetItemRef(globals, &_Py_ID(__name__), &module) < 0) {
+    if (_PyDict_GetItemRefUnchecked(globals, &_Py_ID(__name__), &module) < 0) {
         goto error;
+    }
+    if (module != NULL) {
+        module = _PyObject_CheckAccessNullable(module);
+        if (module == NULL) {
+            goto error;
+        }
     }
 
     builtins = _PyDict_LoadBuiltinsFromGlobals(globals);

@@ -94,6 +94,26 @@ class DictAccessTests(unittest.TestCase):
         self.assertTrue(result.get())
 
     @threading_helper.requires_working_threading()
+    def test_subscript_value(self):
+        shared = {}.synchronize()
+        shared['value'] = object()
+        result = threading.Channel()
+
+        def worker(mapping):
+            try:
+                mapping['value']
+            except IllegalThreadAccessException:
+                result.put(True)
+            else:
+                result.put(False)
+
+        thread = threading.Thread(target=worker, args=(shared,),
+                                  group=threading.ThreadGroup())
+        with threading_helper.start_threads([thread]):
+            pass
+        self.assertTrue(result.get())
+
+    @threading_helper.requires_working_threading()
     def test_iterator_borrowed_values(self):
         shared = {}.synchronize()
         shared['value'] = object()

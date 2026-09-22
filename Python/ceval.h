@@ -288,7 +288,14 @@ maybe_lltrace_resume_frame(_PyInterpreterFrame *frame, PyObject *globals)
     if (frame->owner >= FRAME_OWNED_BY_INTERPRETER) {
         return 0;
     }
-    int r = PyDict_Contains(globals, &_Py_ID(__lltrace__));
+    PyObject *name = &_Py_ID(__lltrace__);
+#if defined(Py_BUILD_CORE) && !defined(Py_BUILD_CORE_MODULE)
+    Py_hash_t hash = _PyObject_HashDictKey(name);
+    int r = hash == -1 ? -1 :
+        _PyDict_Contains_KnownHash(globals, name, hash);
+#else
+    int r = PyDict_Contains(globals, name);
+#endif
     if (r < 0) {
         PyErr_Clear();
         return 0;

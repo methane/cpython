@@ -4116,7 +4116,7 @@ _PyDict_SubscriptKnownHash(PyObject *self, PyObject *key, Py_hash_t hash)
             if (missing != NULL) {
                 res = PyObject_CallOneArg(missing, key);
                 Py_DECREF(missing);
-                return res;
+                return _PyObject_CheckAccessNullable(res);
             }
             else if (PyErr_Occurred())
                 return NULL;
@@ -4124,7 +4124,7 @@ _PyDict_SubscriptKnownHash(PyObject *self, PyObject *key, Py_hash_t hash)
         _PyErr_SetKeyError(key);
         return NULL;
     }
-    return value;
+    return _PyObject_CheckAccessNullable(value);
 }
 
 PyObject *

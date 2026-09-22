@@ -15,6 +15,7 @@
 #include "pycore_genobject.h"     // _PyAsyncGenAThrow_Type
 #include "pycore_hamt.h"          // _PyHamtItems_Type
 #include "pycore_initconfig.h"    // _PyStatus_OK()
+#include "pycore_import.h"        // _PyImport_GetModules()
 #include "pycore_instruction_sequence.h" // _PyInstructionSequence_Type
 #include "pycore_interpframe.h"   // _PyFrame_Stackbase()
 #include "pycore_interpolation.h" // _PyInterpolation_Type
@@ -3027,6 +3028,19 @@ _PyTypes_InitTypes(PyInterpreterState *interp)
         }
     }
 
+    /* Builtin type namespaces are shared by all ThreadGroups.  Synchronize
+       them after the complete static type graph is ready, so the
+       SynchronizedDict subtype is initialized before any namespace changes
+       its runtime type. */
+    for (size_t i=0; i < Py_ARRAY_LENGTH(static_types); i++) {
+        PyTypeObject *type = static_types[i];
+        if (type != NULL &&
+            (type->tp_flags & Py_TPFLAGS_IMMUTABLETYPE) &&
+            _PyDict_SynchronizeNamespace(_PyType_GetDict(type)) < 0) {
+            return _PyStatus_ERR("Can't synchronize builtin type namespace");
+        }
+    }
+
     // Cache __reduce__ from PyBaseObject_Type object
     PyObject *baseobj_dict = _PyType_GetDict(&PyBaseObject_Type);
     PyObject *baseobj_reduce = PyDict_GetItemWithError(baseobj_dict, &_Py_ID(__reduce__));
@@ -3256,8 +3270,14 @@ PyObject_DeclareSynchronized(PyObject *op)
 PyObject *
 _PyObject_GetShareable(PyObject *op, void *closure)
 {
-    PyObject *threading = PyImport_ImportModule("threading");
+    PyObject *modules = _PyImport_GetModules(_PyInterpreterState_GET());
+    PyObject *threading;
+    if (modules == NULL ||
+        PyMapping_GetOptionalItem(modules, &_Py_ID(threading), &threading) < 0) {
+        return NULL;
+    }
     if (threading == NULL) {
+        PyErr_SetString(PyExc_RuntimeError, "threading module is not initialized");
         return NULL;
     }
     PyObject *enum_type = PyObject_GetAttrString(threading, "Shareable");

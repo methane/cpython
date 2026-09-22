@@ -1,6 +1,7 @@
 /* Execute compiled code */
 
 #include "ceval.h"
+#include "pycore_dict.h" // _PyDict_GetItemRefUnchecked()
 #include "pycore_long.h"
 
 int
@@ -3831,10 +3832,15 @@ _PyEval_LoadName(PyThreadState *tstate, _PyInterpreterFrame *frame, PyObject *na
     if (value != NULL) {
         return value;
     }
-    if (PyDict_GetItemRef(frame->f_globals, name, &value) < 0) {
+    int found = _PyDict_GetItemRefUnchecked(frame->f_globals, name, &value);
+    if (found < 0) {
         return NULL;
     }
     if (value != NULL) {
+        value = _PyObject_CheckAccessNullable(value);
+        if (value == NULL) {
+            return NULL;
+        }
         return value;
     }
     if (PyMapping_GetOptionalItem(frame->f_builtins, name, &value) < 0) {
