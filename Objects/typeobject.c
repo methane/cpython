@@ -919,7 +919,16 @@ _PyType_CheckConsistency(PyTypeObject *type)
 
     if (type->tp_flags & Py_TPFLAGS_DISALLOW_INSTANTIATION) {
         CHECK(type->tp_new == NULL);
-        CHECK(PyDict_Contains(lookup_tp_dict(type), &_Py_ID(__new__)) == 0);
+        /* This consistency check runs while a freshly initialized
+           interpreter is rebuilding static type state.  The namespace can
+           still belong to the previous interpreter's thread group, so use
+           the internal lookup that does not apply public access checks. */
+        PyObject *name = &_Py_ID(__new__);
+        Py_hash_t hash = PyUnstable_Unicode_GET_CACHED_HASH(name);
+        if (hash != -1) {
+            CHECK(_PyDict_Contains_KnownHash(
+                lookup_tp_dict(type), name, hash) == 0);
+        }
     }
 
     return 1;

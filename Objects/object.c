@@ -3143,6 +3143,19 @@ static uint8_t
 get_shareable_state(PyObject *op, PyThreadState *tstate)
 {
     uint8_t state = _Py_atomic_load_uint8(&op->ob_shareable);
+    if (state == _Py_SHAREABLE_LOCAL && PyType_Check(op)) {
+        /* Static immutable type objects survive interpreter finalization.  A
+           repeated initialization can observe their old local header before
+           the per-interpreter type state is ready; their immutable type
+           contract still makes the objects safe to share. */
+        PyTypeObject *type = (PyTypeObject *)op;
+        if (!PyType_HasFeature(type, Py_TPFLAGS_HEAPTYPE) &&
+            PyType_HasFeature(type, Py_TPFLAGS_IMMUTABLETYPE)) {
+            state = _Py_SHAREABLE_IMMUTABLE;
+            _Py_atomic_store_uint32_relaxed(&op->ob_owner_id, 0);
+            _Py_atomic_store_uint8(&op->ob_shareable, state);
+        }
+    }
     if (state == _Py_SHAREABLE_LOCAL &&
         _Py_atomic_load_uint32_relaxed(&op->ob_owner_id) == 0 &&
         _Py_IsStaticImmortal(op))
