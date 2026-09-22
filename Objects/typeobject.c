@@ -6202,12 +6202,27 @@ PyObject_GetTypeData_DuringGC(PyObject *obj, PyTypeObject *cls)
 void *
 PyObject_GetTypeData(PyObject *obj, PyTypeObject *cls)
 {
+    if (obj == NULL || cls == NULL) {
+        PyErr_BadInternalCall();
+        return NULL;
+    }
+    if (PyObject_CheckAccess(obj) == NULL ||
+        PyObject_CheckAccess((PyObject *)cls) == NULL) {
+        return NULL;
+    }
     return PyObject_GetTypeData_DuringGC(obj, cls);
 }
 
 Py_ssize_t
 PyType_GetTypeDataSize(PyTypeObject *cls)
 {
+    if (cls == NULL) {
+        PyErr_BadInternalCall();
+        return 0;
+    }
+    if (PyObject_CheckAccess((PyObject *)cls) == NULL) {
+        return 0;
+    }
     ptrdiff_t result = cls->tp_basicsize - _align_up(cls->tp_base->tp_basicsize);
     if (result < 0) {
         return 0;
@@ -6238,6 +6253,13 @@ PyObject_GetItemData_DuringGC(PyObject *obj)
 void *
 PyObject_GetItemData(PyObject *obj)
 {
+    if (obj == NULL) {
+        PyErr_BadInternalCall();
+        return NULL;
+    }
+    if (PyObject_CheckAccess(obj) == NULL) {
+        return NULL;
+    }
     return getitemdata(obj, true);
 }
 
