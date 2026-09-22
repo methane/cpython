@@ -1565,6 +1565,13 @@ PyObject *
 _Py_CompileString(const char *str, PyObject *filename, int start,
                   PyCompilerFlags *flags, int optimize, PyObject *module)
 {
+    if (filename == NULL || PyObject_CheckAccess(filename) == NULL ||
+        (module != NULL && PyObject_CheckAccess(module) == NULL)) {
+        if (filename == NULL) {
+            PyErr_BadInternalCall();
+        }
+        return NULL;
+    }
     if (check_start(start) < 0) {
         return NULL;
     }
