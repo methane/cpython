@@ -2560,6 +2560,10 @@ PyTypeObject _PyHamtItems_Type = {
 static PyObject *
 hamt_iter_yield_items(PyObject *key, PyObject *val)
 {
+    if (PyObject_CheckAccess(key) == NULL ||
+        PyObject_CheckAccess(val) == NULL) {
+        return NULL;
+    }
     return _PyTuple_FromPair(key, val);
 }
 
@@ -2583,7 +2587,7 @@ PyTypeObject _PyHamtKeys_Type = {
 static PyObject *
 hamt_iter_yield_keys(PyObject *key, PyObject *val)
 {
-    return Py_NewRef(key);
+    return _PyObject_CheckAccessNullable(Py_NewRef(key));
 }
 
 PyObject *
@@ -2606,7 +2610,7 @@ PyTypeObject _PyHamtValues_Type = {
 static PyObject *
 hamt_iter_yield_values(PyObject *key, PyObject *val)
 {
-    return Py_NewRef(val);
+    return _PyObject_CheckAccessNullable(Py_NewRef(val));
 }
 
 PyObject *
