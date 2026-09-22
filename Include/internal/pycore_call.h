@@ -106,6 +106,45 @@ _PyVectorcall_FunctionInline(PyObject *callable)
     return ptr;
 }
 
+/* Check the borrowed references carried by the raw vectorcall protocol before
+   a callee can inspect them.  Unlike tuple/dict calls, vectorcall receives
+   positional and keyword values in one C array, so there is no container
+   operation that can provide the access check for us. */
+static inline int
+_PyObject_CheckVectorcallArgs(PyObject *const *args, Py_ssize_t nargs,
+                              PyObject *kwnames)
+{
+    assert(nargs >= 0);
+    assert(args != NULL || nargs == 0);
+    assert(kwnames == NULL || PyTuple_Check(kwnames));
+
+    if (kwnames != NULL) {
+        if (PyObject_CheckAccess(kwnames) == NULL) {
+            return -1;
+        }
+        Py_ssize_t nkw = PyTuple_GET_SIZE(kwnames);
+        for (Py_ssize_t i = 0; i < nkw; i++) {
+            if (PyObject_CheckAccess(PyTuple_GET_ITEM(kwnames, i)) == NULL) {
+                return -1;
+            }
+        }
+    }
+    for (Py_ssize_t i = 0; i < nargs; i++) {
+        if (PyObject_CheckAccess(args[i]) == NULL) {
+            return -1;
+        }
+    }
+    if (kwnames != NULL) {
+        Py_ssize_t nkw = PyTuple_GET_SIZE(kwnames);
+        for (Py_ssize_t i = 0; i < nkw; i++) {
+            if (PyObject_CheckAccess(args[nargs + i]) == NULL) {
+                return -1;
+            }
+        }
+    }
+    return 0;
+}
+
 
 /* Call the callable object 'callable' with the "vectorcall" calling
    convention.
@@ -137,6 +176,10 @@ _PyObject_VectorcallTstate(PyThreadState *tstate, PyObject *callable,
     assert(args != NULL || PyVectorcall_NARGS(nargsf) == 0);
 
     if (PyObject_CheckAccess(callable) == NULL) {
+        return NULL;
+    }
+    if (_PyObject_CheckVectorcallArgs(args, PyVectorcall_NARGS(nargsf),
+                                      kwnames) < 0) {
         return NULL;
     }
     func = _PyVectorcall_FunctionInline(callable);

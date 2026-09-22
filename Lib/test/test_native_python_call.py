@@ -244,6 +244,34 @@ class NativePythonCallTests(unittest.TestCase):
                         _testcapi.pyobject_vectorcall(consume, holder, kwnames), 42)
                 entered.clear()
 
+    def test_foreign_argument_before_custom_vectorcall(self):
+        vectorcall_type = _testcapi.make_vectorcall_class()
+        callable = vectorcall_type()
+        callable.set_vectorcall(vectorcall_type)
+        lock = threading.Lock()
+        with lock:
+            protected = lock.protect([])
+
+        invocations = (
+            lambda: _testcapi.pyobject_vectorcall(
+                callable, (protected,), None),
+            lambda: _testcapi.pyobject_vectorcall(
+                callable, (protected,), ('value',)),
+            lambda: _testcapi.pyobject_fastcalldict(
+                callable, (), {'value': protected}),
+            lambda: _testcapi.pyvectorcall_call(
+                callable, (), {'value': protected}),
+        )
+        for invoke in invocations:
+            with self.subTest(invoke=invoke):
+                with self.assertRaises(UnprotectedAccessException):
+                    invoke()
+
+        with lock:
+            self.assertEqual(
+                _testcapi.pyobject_vectorcall(callable, (protected,), None),
+                'vectorcall')
+
 
 if __name__ == '__main__':
     unittest.main()

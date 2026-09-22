@@ -126,6 +126,22 @@ _PyObject_VectorcallDictTstate(PyThreadState *tstate, PyObject *callable,
     assert(nargs >= 0);
     assert(nargs == 0 || args != NULL);
     assert(kwargs == NULL || PyDict_Check(kwargs));
+    if (_PyObject_CheckVectorcallArgs(args, nargs, NULL) < 0) {
+        return NULL;
+    }
+    if (kwargs != NULL && PyObject_CheckAccess(kwargs) == NULL) {
+        return NULL;
+    }
+    if (kwargs != NULL) {
+        Py_ssize_t pos = 0;
+        PyObject *key, *value;
+        while (PyDict_Next(kwargs, &pos, &key, &value)) {
+            if (PyObject_CheckAccess(key) == NULL ||
+                PyObject_CheckAccess(value) == NULL) {
+                return NULL;
+            }
+        }
+    }
 
     vectorcallfunc func = PyVectorcall_Function(callable);
     if (func == NULL) {
@@ -302,6 +318,9 @@ PyVectorcall_Call(PyObject *callable, PyObject *tuple, PyObject *kwargs)
 {
     PyThreadState *tstate = _PyThreadState_GET();
     if (PyObject_CheckAccess(callable) == NULL) {
+        return NULL;
+    }
+    if (_PyEval_CheckCallArgs(callable, tuple, kwargs) < 0) {
         return NULL;
     }
 
