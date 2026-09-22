@@ -120,6 +120,20 @@ class TestTracemallocEnabled(unittest.TestCase):
     def tearDown(self):
         tracemalloc.stop()
 
+    def test_unicode_filename(self):
+        class Str(str):
+            pass
+
+        for factory in (str, Str):
+            filename = factory('trace-é߿ࠀ日😀\udcff.py')
+            code = compile('bytearray(12345)', '<test>', 'eval')
+            code = code.replace(co_filename=filename)
+            self.assertIs(code.co_filename, filename)
+            obj = eval(code)
+            trace = tracemalloc.get_object_traceback(obj)
+            self.assertIsNotNone(trace)
+            self.assertEqual(trace[0].filename, filename)
+
     def test_get_tracemalloc_memory(self):
         data = [allocate_bytes(123) for count in range(1000)]
         size = tracemalloc.get_tracemalloc_memory()

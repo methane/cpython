@@ -2943,25 +2943,15 @@ SyntaxError_traverse(PyObject *op, visitproc visit, void *arg)
 static PyObject*
 my_basename(PyObject *name)
 {
-    Py_ssize_t i, size, offset;
-    int kind;
-    const void *data;
-
-    kind = PyUnicode_KIND(name);
-    data = PyUnicode_DATA(name);
-    size = PyUnicode_GET_LENGTH(name);
-    offset = 0;
-    for(i=0; i < size; i++) {
-        if (PyUnicode_READ(kind, data, i) == SEP) {
-            offset = i + 1;
-        }
+    Py_ssize_t size = PyUnicode_GET_LENGTH(name);
+    Py_ssize_t offset = PyUnicode_FindChar(name, SEP, 0, size, -1);
+    if (offset == -2) {
+        return NULL;
     }
-    if (offset != 0) {
-        return PyUnicode_Substring(name, offset, size);
+    if (offset >= 0) {
+        return PyUnicode_Substring(name, offset + 1, size);
     }
-    else {
-        return Py_NewRef(name);
-    }
+    return Py_NewRef(name);
 }
 
 
@@ -3829,7 +3819,7 @@ UnicodeEncodeError_str(PyObject *self)
     Py_ssize_t start = exc->start, end = exc->end;
 
     if ((start >= 0 && start < len) && (end >= 0 && end <= len) && end == start + 1) {
-        Py_UCS4 badchar = PyUnicode_ReadChar(exc->object, start);
+        Py_UCS4 badchar = _PyUnicode_ReadCharNoAlloc(exc->object, start);
         const char *fmt;
         if (badchar <= 0xff) {
             fmt = "'%U' codec can't encode character '\\x%02x' in position %zd: %U";
@@ -4051,7 +4041,7 @@ UnicodeTranslateError_str(PyObject *self)
     Py_ssize_t start = exc->start, end = exc->end;
 
     if ((start >= 0 && start < len) && (end >= 0 && end <= len) && end == start + 1) {
-        Py_UCS4 badchar = PyUnicode_ReadChar(exc->object, start);
+        Py_UCS4 badchar = _PyUnicode_ReadCharNoAlloc(exc->object, start);
         const char *fmt;
         if (badchar <= 0xff) {
             fmt = "can't translate character '\\x%02x' in position %zd: %U";

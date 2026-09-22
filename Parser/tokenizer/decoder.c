@@ -59,8 +59,7 @@ chunk_set_unicode(struct tok_state *tok, _PyTok_Chunk *chunk,
             ? E_NOMEM : E_DECODE;
         return -1;
     }
-    if (strip_bom && PyUnicode_GET_LENGTH(unicode) > 0 &&
-            PyUnicode_ReadChar(unicode, 0) == 0xFEFF) {
+    if (strip_bom && utf8_len >= 3 && memcmp(utf8, "\xef\xbb\xbf", 3) == 0) {
         utf8 += 3;
         utf8_len -= 3;
     }

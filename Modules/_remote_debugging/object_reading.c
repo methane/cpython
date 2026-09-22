@@ -79,12 +79,29 @@ read_py_str(
         unicode_obj,
         unwinder->debug_offsets.unicode_object.state);
 
-    if (!state.compact) {
-        PyErr_Format(PyExc_RuntimeError,
-                     "Cannot read non-compact Unicode object at 0x%lx", address);
-        set_exception_cause(unwinder, PyExc_RuntimeError,
-                            "Legacy (non-compact) Unicode objects are not supported");
-        return NULL;
+    if (state.utf8_storage && !state.fsr_primary) {
+        Py_ssize_t nbytes = GET_MEMBER(Py_ssize_t, unicode_obj,
+                                      offsetof(PyCompactUnicodeObject, utf8_length));
+        if (nbytes < len || (size_t)nbytes > (size_t)len * 4) {
+            PyErr_SetString(PyExc_RuntimeError, "Invalid remote UTF-8 length");
+            return NULL;
+        }
+        char *buffer = PyMem_Malloc((size_t)nbytes + 1);
+        if (buffer == NULL) {
+            return PyErr_NoMemory();
+        }
+        res = _Py_RemoteDebug_PagedReadRemoteMemory(
+            &unwinder->handle,
+            state.compact
+                ? address + unwinder->debug_offsets.unicode_object.compactunicodeobject_size
+                : GET_MEMBER(uintptr_t, unicode_obj, offsetof(PyUnicodeObject, data.any)),
+            nbytes, buffer);
+        PyObject *result = NULL;
+        if (res >= 0) {
+            result = PyUnicode_DecodeUTF8(buffer, nbytes, "surrogatepass");
+        }
+        PyMem_Free(buffer);
+        return result;
     }
 
     int kind = (int)state.kind;
@@ -134,6 +151,20 @@ read_py_str(
     }
 
     void *data = PyUnicode_DATA(result);
+
+    if (!state.compact || state.fsr_primary) {
+        size_t offset = state.fsr_primary
+            ? offsetof(PyCompactUnicodeObject, fsr)
+            : offsetof(PyUnicodeObject, data.any);
+        uintptr_t remote_data = GET_MEMBER(uintptr_t, unicode_obj, offset);
+        res = _Py_RemoteDebug_PagedReadRemoteMemory(
+            &unwinder->handle, remote_data, nbytes, data);
+        if (res < 0) {
+            Py_DECREF(result);
+            return NULL;
+        }
+        return result;
+    }
 
     // Reuse data already present in the header read; only round-trip for
     // whatever spills past it.

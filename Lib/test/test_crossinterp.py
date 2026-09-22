@@ -1304,6 +1304,34 @@ class ShareableTypeTests(_GetXIDataTests):
             '',
         ])
 
+    def test_str_utf8_storage(self):
+        _testcapi = import_helper.import_module('_testcapi')
+        for text in ('a\0é日😀', '\ud800\udc00', '\udcffx'):
+            for cached in (False, True):
+                with self.subTest(text=ascii(text), cached=cached):
+                    obj = text.encode('utf-8', 'surrogatepass').decode(
+                        'utf-8', 'surrogatepass')
+                    if cached:
+                        _testcapi.unicode_materialize_fsr(obj)
+                    before = _testcapi.unicode_storage(obj)
+                    xid = self.get_xidata(obj)
+                    self.assertEqual(_testcapi.unicode_storage(obj), before)
+                    del obj
+                    for _ in range(2):
+                        self.assertEqual(
+                            _testinternalcapi.restore_crossinterp_data(xid), text)
+
+    def test_str_fsr_storage(self):
+        _testcapi = import_helper.import_module('_testcapi')
+        for ch in (0xe9, 0x65e5, 0x1f600, 0xd800, 0xdcff):
+            with self.subTest(ch=ch):
+                obj = _testcapi.unicode_new(3, ch)
+                xid = self.get_xidata(obj)
+                del obj
+                for _ in range(2):
+                    self.assertEqual(
+                        _testinternalcapi.restore_crossinterp_data(xid), chr(ch) * 3)
+
     def test_int(self):
         bounds = [sys.maxsize, -sys.maxsize - 1]
         values = itertools.chain(range(-1, 258), bounds)

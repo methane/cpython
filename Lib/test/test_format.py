@@ -593,6 +593,27 @@ class FormatTest(unittest.TestCase):
         finally:
             locale.setlocale(locale.LC_ALL, oldloc)
 
+    @support.run_with_locale('LC_NUMERIC', 'fr_FR.UTF-8', 'fr_FR.utf8')
+    def test_multibyte_locale_grouping(self):
+        info = locale.localeconv()
+        sep = info['thousands_sep']
+        point = info['decimal_point']
+        if not sep or sep.isascii():
+            self.skipTest('requires a multibyte thousands separator')
+        for value, expected in (
+            (1234567, sep.join(('1', '234', '567'))),
+            (1234.5, '1' + sep + '234' + point + '5'),
+            (complex(1234.5, -2345.6),
+             '1' + sep + '234' + point + '5-2' + sep + '345' + point + '6j'),
+        ):
+            for fill in (' ', '日', '😀', '\udcff'):
+                for align, method in (('<', str.ljust), ('>', str.rjust),
+                                      ('^', str.center)):
+                    with self.subTest(value=value, fill=fill, align=align):
+                        # Include an existing multibyte prefix in the writer.
+                        text = ('日{:' + fill + align + '40n}').format(value)
+                        self.assertEqual(text, '日' + method(expected, 40, fill))
+
     @support.cpython_only
     def test_optimisations(self):
         text = "abcde" # 5 characters

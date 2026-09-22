@@ -100,7 +100,7 @@ import_all_from(PyThreadState *tstate, PyObject *locals, PyObject *v)
             break;
         }
         if (skip_leading_underscores) {
-            if (PyUnicode_READ_CHAR(name, 0) == '_') {
+            if (_PyUnicode_ReadCharNoAlloc(name, 0) == '_') {
                 Py_DECREF(name);
                 continue;
             }

@@ -319,7 +319,7 @@ w_setitem(arrayobject *ap, Py_ssize_t i, PyObject *v)
     }
 
     if (i >= 0) {
-        ((Py_UCS4 *)ap->ob_item)[i] = PyUnicode_READ_CHAR(v, 0);
+        ((Py_UCS4 *)ap->ob_item)[i] = _PyUnicode_ReadCharNoAlloc(v, 0);
     }
     return 0;
 }

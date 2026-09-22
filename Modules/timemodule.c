@@ -1,6 +1,7 @@
 /* Time module */
 
 #include "Python.h"
+#include "pycore_unicodeobject.h" // _PyUnicodeUTF8View
 #include "pycore_fileutils.h"     // _Py_BEGIN_SUPPRESS_IPH
 #include "pycore_moduleobject.h"  // _PyModule_GetState()
 #include "pycore_namespace.h"     // _PyNamespace_New()
@@ -925,15 +926,20 @@ time_strftime(PyObject *module, PyObject *args)
         PyErr_NoMemory();
         return NULL;
     }
+    _PyUnicodeUTF8View view;
+    if (_PyUnicodeUTF8View_Init(&view, format_arg) < 0) {
+        PyMem_Free(format);
+        return NULL;
+    }
     PyUnicodeWriter *writer = PyUnicodeWriter_Create(0);
     if (writer == NULL) {
         goto error;
     }
     Py_ssize_t i = 0;
-    while (i < format_size) {
+    while (i < view.size) {
         fmtlen = 0;
-        for (; i < format_size; i++) {
-            Py_UCS4 c = PyUnicode_READ_CHAR(format_arg, i);
+        for (; i < view.size; i++) {
+            unsigned char c = (unsigned char)view.data[i];
             if (!c || c > 127) {
                 break;
             }
@@ -954,21 +960,28 @@ time_strftime(PyObject *module, PyObject *args)
         }
 
         Py_ssize_t start = i;
-        for (; i < format_size; i++) {
-            Py_UCS4 c = PyUnicode_READ_CHAR(format_arg, i);
+        for (; i < view.size; i++) {
+            unsigned char c = (unsigned char)view.data[i];
             if (c == '%') {
                 break;
             }
         }
-        if (PyUnicodeWriter_WriteSubstring(writer, format_arg, start, i) < 0) {
+        Py_ssize_t chars = 0;
+        for (Py_ssize_t j = start; j < i; j++) {
+            chars += ((unsigned char)view.data[j] & 0xc0) != 0x80;
+        }
+        if (_PyUnicodeWriter_WriteUTF8((_PyUnicodeWriter *)writer,
+                                      view.data + start, i - start, chars) < 0) {
             goto error;
         }
     }
 
+    _PyUnicodeUTF8View_Clear(&view);
     PyMem_Free(outbuf);
     PyMem_Free(format);
     return PyUnicodeWriter_Finish(writer);
 error:
+    _PyUnicodeUTF8View_Clear(&view);
     PyMem_Free(outbuf);
     PyMem_Free(format);
     PyUnicodeWriter_Discard(writer);

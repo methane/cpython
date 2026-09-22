@@ -613,9 +613,20 @@ class StrTest(string_tests.StringLikeTest,
         s1 = "轘" * 4
         s2 = "&"
         s3 = "&amp;"
+        # The UTF-8 path can reject an absent substring without allocating.
+        with support.memory_error_cm():
+            result = s1.replace(s2, s3)
+        self.assertIs(result, s1)
+
+        class LegacyStr(str):
+            pass
+
+        # FSR-primary input now allocates a temporary UTF-8 view. Failure
+        # must still propagate safely for the original reproducer.
+        legacy = LegacyStr(s1)
         with self.assertRaises(MemoryError):
             with support.memory_error_cm():
-                s1.replace(s2, s3)  # this line used to crash before
+                legacy.replace(s2, s3)
 
     def test_repeat_id_preserving(self):
         a = '123abc1@'
@@ -2506,7 +2517,7 @@ class StrTest(string_tests.StringLikeTest,
 
     def test_raiseMemError(self):
         asciifields = "nnb"
-        compactfields = asciifields + "nP"
+        compactfields = asciifields + "nPPn"
         ascii_struct_size = support.calcobjsize(asciifields)
         compact_struct_size = support.calcobjsize(compactfields)
 
@@ -2516,10 +2527,10 @@ class StrTest(string_tests.StringLikeTest,
                 char_size = 1  # sizeof(Py_UCS1)
                 struct_size = ascii_struct_size
             elif code < 0x100:
-                char_size = 1  # sizeof(Py_UCS1)
+                char_size = 2  # UTF-8 Latin-1
                 struct_size = compact_struct_size
             elif code < 0x10000:
-                char_size = 2  # sizeof(Py_UCS2)
+                char_size = 3  # UTF-8 U+20AC
                 struct_size = compact_struct_size
             else:
                 char_size = 4  # sizeof(Py_UCS4)
@@ -2537,7 +2548,7 @@ class StrTest(string_tests.StringLikeTest,
                 # self-check
                 self.assertEqual(
                     sys.getsizeof(char * 42),
-                    struct_size + (char_size * (42 + 1))
+                    struct_size + char_size * 42 + 1
                 )
                 self.assertRaises(MemoryError, alloc)
                 self.assertRaises(MemoryError, alloc)

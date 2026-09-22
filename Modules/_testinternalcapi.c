@@ -3219,9 +3219,7 @@ unicodewriter_overflow(PyObject *self, PyObject *unused)
     }
 
     _PyUnicodeWriter *impl = (_PyUnicodeWriter*)writer;
-    PyObject *buffer = impl->buffer;
-    Py_ssize_t index = PyUnicode_GET_LENGTH(buffer);
-    PyUnicode_WRITE(impl->kind, impl->data, index, '#');  // overflow!
+    impl->utf8[impl->utf8_size] = '#';  // overflow!
 
     // Spoiler: the function doesn't return if an overflow is detected
     // in debug mode
@@ -3288,7 +3286,57 @@ static PyTypeObject SelfInterruptingContextManager_Type = {
 };
 
 
+static PyObject *
+unicode_next(PyObject *self, PyObject *args)
+{
+    PyObject *str;
+    Py_ssize_t pos;
+    int materialize = 0;
+    if (!PyArg_ParseTuple(args, "Un|p", &str, &pos, &materialize)) {
+        return NULL;
+    }
+    if (materialize && PyUnicode_DATA(str) == NULL) {
+        return NULL;
+    }
+    Py_UCS4 ch = 0xdead;
+    Py_ssize_t before = pos;
+    if (!_PyUnicode_Next(str, &pos, &ch)) {
+        assert(pos == before && ch == 0xdead);
+        return Py_BuildValue("On", Py_None, pos);
+    }
+    return Py_BuildValue("In", ch, pos);
+}
+
+static PyObject *
+unicode_utf8_view(PyObject *self, PyObject *args)
+{
+    PyObject *str;
+    int materialize = 0;
+    if (!PyArg_ParseTuple(args, "U|p", &str, &materialize)) {
+        return NULL;
+    }
+    _PyUnicodeUTF8View view;
+    if (_PyUnicodeUTF8View_Init(&view, str) < 0) {
+        _PyUnicodeUTF8View_Clear(&view);
+        return NULL;
+    }
+    if (materialize && PyUnicode_DATA(str) == NULL) {
+        _PyUnicodeUTF8View_Clear(&view);
+        return NULL;
+    }
+    PyObject *bytes = PyBytes_FromStringAndSize(view.data, view.size);
+    int borrowed = view.owner == NULL;
+    _PyUnicodeUTF8View_Clear(&view);
+    _PyUnicodeUTF8View_Clear(&view);
+    if (bytes == NULL) {
+        return NULL;
+    }
+    return Py_BuildValue("Ni", bytes, borrowed);
+}
+
 static PyMethodDef module_functions[] = {
+    {"unicode_next", unicode_next, METH_VARARGS},
+    {"unicode_utf8_view", unicode_utf8_view, METH_VARARGS},
     {"get_configs", get_configs, METH_NOARGS},
     {"get_eval_frame_stats", get_eval_frame_stats, METH_NOARGS, NULL},
     {"get_recursion_depth", get_recursion_depth, METH_NOARGS},

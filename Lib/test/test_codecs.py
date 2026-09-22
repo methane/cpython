@@ -3375,6 +3375,18 @@ class ExceptionNotesTest(unittest.TestCase):
 class CodePageTest(unittest.TestCase):
     CP_UTF8 = 65001
 
+    def test_encode_utf8_cursor_rewind(self):
+        for replacement in ('!', b'!'):
+            calls = []
+            def handler(exc):
+                calls.append((exc.start, exc.end))
+                return replacement, 0 if len(calls) == 1 else exc.end
+            codecs.register_error('test_code_page_utf8_rewind', handler)
+            self.assertEqual(codecs.code_page_encode(
+                1252, 'é日😀z', 'test_code_page_utf8_rewind'),
+                (b'\xe9!\xe9!!z', 4))
+            self.assertEqual(calls, [(1, 2), (1, 2), (2, 3)])
+
     def test_invalid_code_page(self):
         self.assertRaises(ValueError, codecs.code_page_encode, -1, 'a')
         self.assertRaises(ValueError, codecs.code_page_decode, -1, b'a')

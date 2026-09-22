@@ -2046,7 +2046,7 @@ pylong_int_to_decimal_string(PyObject *aa,
     }
     if (writer) {
         Py_ssize_t size = PyUnicode_GET_LENGTH(s);
-        if (_PyUnicodeWriter_Prepare(writer, size, '9') == -1) {
+        if (_PyUnicodeWriter_PrepareUTF8(writer, size) == -1) {
             goto error;
         }
         if (_PyUnicodeWriter_WriteStr(writer, s) < 0) {
@@ -2056,17 +2056,16 @@ pylong_int_to_decimal_string(PyObject *aa,
     }
     else if (bytes_writer) {
         Py_ssize_t size = PyUnicode_GET_LENGTH(s);
-        const void *data = PyUnicode_DATA(s);
-        int kind = PyUnicode_KIND(s);
         *bytes_str = PyBytesWriter_GrowAndUpdatePointer(bytes_writer, size,
                                                         *bytes_str);
         if (*bytes_str == NULL) {
             goto error;
         }
         char *p = *bytes_str;
-        for (Py_ssize_t i=0; i < size; i++) {
-            Py_UCS4 ch = PyUnicode_READ(kind, data, i);
-            *p++ = (char) ch;
+        Py_ssize_t cursor = 0;
+        Py_UCS4 ch;
+        while (_PyUnicode_Next(s, &cursor, &ch)) {
+            *p++ = (char)ch;
         }
         (*bytes_str) = p;
         goto success;
@@ -2216,11 +2215,10 @@ long_to_decimal_string_internal(PyObject *aa,
         }
     }
     if (writer) {
-        if (_PyUnicodeWriter_Prepare(writer, strlen, '9') == -1) {
+        if (_PyUnicodeWriter_PrepareUTF8(writer, strlen) == -1) {
             Py_DECREF(scratch);
             return -1;
         }
-        assert(_PyUnicodeWriter_CanWrite(writer));
     }
     else if (bytes_writer) {
         *bytes_str = PyBytesWriter_GrowAndUpdatePointer(bytes_writer, strlen,
@@ -2261,51 +2259,18 @@ long_to_decimal_string_internal(PyObject *aa,
             *--p = '-';                                               \
     } while (0)
 
-#define WRITE_UNICODE_DIGITS(TYPE)                                    \
-    do {                                                              \
-        if (writer)                                                   \
-            p = (TYPE*)PyUnicode_DATA(writer->buffer) + writer->pos + strlen; \
-        else                                                          \
-            p = (TYPE*)PyUnicode_DATA(str) + strlen;                  \
-                                                                      \
-        WRITE_DIGITS(p);                                              \
-                                                                      \
-        /* check we've counted correctly */                           \
-        if (writer)                                                   \
-            assert(p == ((TYPE*)PyUnicode_DATA(writer->buffer) + writer->pos)); \
-        else                                                          \
-            assert(p == (TYPE*)PyUnicode_DATA(str));                  \
-    } while (0)
-
-    /* fill the string right-to-left */
-    if (bytes_writer) {
-        char *p = *bytes_str + strlen;
-        WRITE_DIGITS(p);
-        assert(p == *bytes_str);
-    }
-    else {
-        int kind = writer ? writer->kind : PyUnicode_KIND(str);
-        if (kind == PyUnicode_1BYTE_KIND) {
-            Py_UCS1 *p;
-            WRITE_UNICODE_DIGITS(Py_UCS1);
-        }
-        else if (kind == PyUnicode_2BYTE_KIND) {
-            Py_UCS2 *p;
-            WRITE_UNICODE_DIGITS(Py_UCS2);
-        }
-        else {
-            assert (kind == PyUnicode_4BYTE_KIND);
-            Py_UCS4 *p;
-            WRITE_UNICODE_DIGITS(Py_UCS4);
-        }
-    }
+    char *start = bytes_writer ? *bytes_str
+        : writer ? _PyUnicodeWriter_UTF8Data(writer)
+        : (char *)_PyUnicode_GetPrimaryUTF8(str, NULL);
+    char *p = start + strlen;
+    WRITE_DIGITS(p);
+    assert(p == start);
 
 #undef WRITE_DIGITS
-#undef WRITE_UNICODE_DIGITS
 
     _Py_DECREF_INT(scratch);
     if (writer) {
-        writer->pos += strlen;
+        _PyUnicodeWriter_AdvanceUTF8(writer, strlen, strlen);
     }
     else if (bytes_writer) {
         (*bytes_str) += strlen;
@@ -2391,10 +2356,9 @@ long_format_binary(PyObject *aa, int base, int alternate,
     }
 
     if (writer) {
-        if (_PyUnicodeWriter_Prepare(writer, sz, 'x') == -1) {
+        if (_PyUnicodeWriter_PrepareUTF8(writer, sz) == -1) {
             return -1;
         }
-        assert(_PyUnicodeWriter_CanWrite(writer));
     }
     else if (bytes_writer) {
         *bytes_str = PyBytesWriter_GrowAndUpdatePointer(bytes_writer, sz,
@@ -2446,48 +2410,17 @@ long_format_binary(PyObject *aa, int base, int alternate,
             *--p = '-';                                                 \
     } while (0)
 
-#define WRITE_UNICODE_DIGITS(TYPE)                                      \
-    do {                                                                \
-        if (writer)                                                     \
-            p = (TYPE*)PyUnicode_DATA(writer->buffer) + writer->pos + sz; \
-        else                                                            \
-            p = (TYPE*)PyUnicode_DATA(v) + sz;                          \
-                                                                        \
-        WRITE_DIGITS(p);                                                \
-                                                                        \
-        if (writer)                                                     \
-            assert(p == ((TYPE*)PyUnicode_DATA(writer->buffer) + writer->pos)); \
-        else                                                            \
-            assert(p == (TYPE*)PyUnicode_DATA(v));                      \
-    } while (0)
-
-    if (bytes_writer) {
-        char *p = *bytes_str + sz;
-        WRITE_DIGITS(p);
-        assert(p == *bytes_str);
-    }
-    else {
-        int kind = writer ? writer->kind : PyUnicode_KIND(v);
-        if (kind == PyUnicode_1BYTE_KIND) {
-            Py_UCS1 *p;
-            WRITE_UNICODE_DIGITS(Py_UCS1);
-        }
-        else if (kind == PyUnicode_2BYTE_KIND) {
-            Py_UCS2 *p;
-            WRITE_UNICODE_DIGITS(Py_UCS2);
-        }
-        else {
-            assert (kind == PyUnicode_4BYTE_KIND);
-            Py_UCS4 *p;
-            WRITE_UNICODE_DIGITS(Py_UCS4);
-        }
-    }
+    char *start = bytes_writer ? *bytes_str
+        : writer ? _PyUnicodeWriter_UTF8Data(writer)
+        : (char *)_PyUnicode_GetPrimaryUTF8(v, NULL);
+    char *p = start + sz;
+    WRITE_DIGITS(p);
+    assert(p == start);
 
 #undef WRITE_DIGITS
-#undef WRITE_UNICODE_DIGITS
 
     if (writer) {
-        writer->pos += sz;
+        _PyUnicodeWriter_AdvanceUTF8(writer, sz, sz);
     }
     else if (bytes_writer) {
         (*bytes_str) += sz;

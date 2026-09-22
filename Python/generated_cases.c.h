@@ -1047,7 +1047,7 @@
                     assert(_PyOpcode_Deopt[opcode] == (BINARY_OP));
                     JUMP_TO_PREDICTED(BINARY_OP);
                 }
-                uint8_t c = PyUnicode_1BYTE_DATA(str)[index];
+                uint8_t c = _PyUnicode_GetPrimaryUTF8(str, NULL)[index];
                 assert(c < 128);
                 STAT_INC(BINARY_OP, hit);
                 PyObject *res_o = (PyObject*)&_Py_SINGLETON(strings).ascii[c];
@@ -1225,6 +1225,9 @@
                     JUMP_TO_PREDICTED(BINARY_OP);
                 }
                 Py_UCS4 c = PyUnicode_READ_CHAR(str, index);
+                if (c == (Py_UCS4)-1) {
+                    JUMP_TO_LABEL(error);
+                }
                 if (Py_ARRAY_LENGTH(_Py_SINGLETON(strings).ascii) <= c) {
                     UPDATE_MISS_STATS(BINARY_OP);
                     assert(_PyOpcode_Deopt[opcode] == (BINARY_OP));

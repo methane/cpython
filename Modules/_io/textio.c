@@ -329,6 +329,7 @@ _PyIncrementalNewlineDecoder_decode(PyObject *myself,
                                     PyObject *input, int final)
 {
     PyObject *output;
+    _PyUnicodeUTF8View view = {0};
     Py_ssize_t output_len;
     nldecoder_object *self = nldecoder_object_CAST(myself);
 
@@ -345,175 +346,103 @@ _PyIncrementalNewlineDecoder_decode(PyObject *myself,
 
     if (check_decoded(output) < 0)
         return NULL;
-
     output_len = PyUnicode_GET_LENGTH(output);
     if (self->pendingcr && (final || output_len > 0)) {
-        /* Prefix output with CR */
-        int kind;
-        PyObject *modified;
-        char *out;
-
-        modified = PyUnicode_New(output_len + 1,
-                                 PyUnicode_MAX_CHAR_VALUE(output));
-        if (modified == NULL)
+        PyObject *modified = PyUnicode_Concat(_Py_LATIN1_CHR('\r'), output);
+        if (modified == NULL) {
             goto error;
-        kind = PyUnicode_KIND(modified);
-        out = PyUnicode_DATA(modified);
-        PyUnicode_WRITE(kind, out, 0, '\r');
-        memcpy(out + kind, PyUnicode_DATA(output), kind * output_len);
+        }
         Py_SETREF(output, modified);
         self->pendingcr = 0;
         output_len++;
     }
 
-    /* retain last \r even when not translating data:
-     * then readline() is sure to get \r\n in one pass
-     */
-    if (!final) {
-        if (output_len > 0
-            && PyUnicode_READ_CHAR(output, output_len - 1) == '\r')
-        {
-            PyObject *modified = PyUnicode_Substring(output, 0, output_len -1);
-            if (modified == NULL)
+    /* Retain the last CR so readline() receives CRLF in one pass. */
+    if (!final && output_len > 0) {
+        Py_ssize_t size;
+        const char *utf8 = _PyUnicode_GetPrimaryUTF8(output, &size);
+        int trailing_cr = utf8 != NULL ? utf8[size - 1] == '\r'
+            : _PyUnicode_ReadCharNoAlloc(output, output_len - 1) == '\r';
+        if (trailing_cr) {
+            PyObject *modified = PyUnicode_Substring(output, 0, output_len - 1);
+            if (modified == NULL) {
                 goto error;
+            }
             Py_SETREF(output, modified);
             self->pendingcr = 1;
         }
     }
 
-    /* Record which newlines are read and do newline translation if desired,
-       all in one pass. */
-    {
-        const void *in_str;
-        Py_ssize_t len;
-        int seennl = self->seennl;
-        int only_lf = 0;
-        int kind;
-
-        in_str = PyUnicode_DATA(output);
-        len = PyUnicode_GET_LENGTH(output);
-        kind = PyUnicode_KIND(output);
-
-        if (len == 0)
-            return output;
-
-        /* If, up to now, newlines are consistently \n, do a quick check
-           for the \r *byte* with the libc's optimized memchr.
-           */
-        if (seennl == SEEN_LF || seennl == 0) {
-            only_lf = (memchr(in_str, '\r', kind * len) == NULL);
-        }
-
-        if (only_lf) {
-            /* If not already seen, quick scan for a possible "\n" character.
-               (there's nothing else to be done, even when in translation mode)
-            */
-            if (seennl == 0 &&
-                memchr(in_str, '\n', kind * len) != NULL) {
-                if (kind == PyUnicode_1BYTE_KIND)
-                    seennl |= SEEN_LF;
-                else {
-                    Py_ssize_t i = 0;
-                    for (;;) {
-                        Py_UCS4 c;
-                        /* Fast loop for non-control characters */
-                        while (PyUnicode_READ(kind, in_str, i) > '\n')
-                            i++;
-                        c = PyUnicode_READ(kind, in_str, i++);
-                        if (c == '\n') {
-                            seennl |= SEEN_LF;
-                            break;
-                        }
-                        if (i >= len)
-                            break;
-                    }
-                }
-            }
-            /* Finished: we have scanned for newlines, and none of them
-               need translating */
-        }
-        else if (!self->translate) {
-            Py_ssize_t i = 0;
-            /* We have already seen all newline types, no need to scan again */
-            if (seennl == SEEN_ALL)
-                goto endscan;
-            for (;;) {
-                Py_UCS4 c;
-                /* Fast loop for non-control characters */
-                while (PyUnicode_READ(kind, in_str, i) > '\r')
-                    i++;
-                c = PyUnicode_READ(kind, in_str, i++);
-                if (c == '\n')
-                    seennl |= SEEN_LF;
-                else if (c == '\r') {
-                    if (PyUnicode_READ(kind, in_str, i) == '\n') {
-                        seennl |= SEEN_CRLF;
-                        i++;
-                    }
-                    else
-                        seennl |= SEEN_CR;
-                }
-                if (i >= len)
-                    break;
-                if (seennl == SEEN_ALL)
-                    break;
-            }
-        endscan:
-            ;
-        }
-        else {
-            void *translated;
-            int kind = PyUnicode_KIND(output);
-            const void *in_str = PyUnicode_DATA(output);
-            Py_ssize_t in, out;
-            /* XXX: Previous in-place translation here is disabled as
-               resizing is not possible anymore */
-            /* We could try to optimize this so that we only do a copy
-               when there is something to translate. On the other hand,
-               we already know there is a \r byte, so chances are high
-               that something needs to be done. */
-            translated = PyMem_Malloc(kind * len);
-            if (translated == NULL) {
-                PyErr_NoMemory();
-                goto error;
-            }
-            in = out = 0;
-            for (;;) {
-                Py_UCS4 c;
-                /* Fast loop for non-control characters */
-                while ((c = PyUnicode_READ(kind, in_str, in++)) > '\r')
-                    PyUnicode_WRITE(kind, translated, out++, c);
-                if (c == '\n') {
-                    PyUnicode_WRITE(kind, translated, out++, c);
-                    seennl |= SEEN_LF;
-                    continue;
-                }
-                if (c == '\r') {
-                    if (PyUnicode_READ(kind, in_str, in) == '\n') {
-                        in++;
-                        seennl |= SEEN_CRLF;
-                    }
-                    else
-                        seennl |= SEEN_CR;
-                    PyUnicode_WRITE(kind, translated, out++, '\n');
-                    continue;
-                }
-                if (in > len)
-                    break;
-                PyUnicode_WRITE(kind, translated, out++, c);
-            }
-            Py_DECREF(output);
-            output = PyUnicode_FromKindAndData(kind, translated, out);
-            PyMem_Free(translated);
-            if (!output)
-                return NULL;
-        }
-        self->seennl |= seennl;
+    if (!self->translate && self->seennl == SEEN_ALL) {
+        return output;
     }
 
+    if (_PyUnicodeUTF8View_Init(&view, output) < 0) {
+        goto error;
+    }
+    const char *data = view.data;
+    Py_ssize_t len = view.size;
+    int seennl = self->seennl;
+    /* CR and LF cannot occur inside a multibyte UTF-8 sequence. */
+    if (memchr(data, '\r', len) == NULL) {
+        if (memchr(data, '\n', len) != NULL) {
+            seennl |= SEEN_LF;
+        }
+    }
+    else if (!self->translate) {
+        for (Py_ssize_t i = 0; i < len && seennl != SEEN_ALL; i++) {
+            if (data[i] == '\n') {
+                seennl |= SEEN_LF;
+            }
+            else if (data[i] == '\r') {
+                if (i + 1 < len && data[i + 1] == '\n') {
+                    seennl |= SEEN_CRLF;
+                    i++;
+                }
+                else {
+                    seennl |= SEEN_CR;
+                }
+            }
+        }
+    }
+    else {
+        char *translated = PyMem_Malloc(len);
+        if (translated == NULL) {
+            PyErr_NoMemory();
+            goto error;
+        }
+        Py_ssize_t out = 0;
+        for (Py_ssize_t i = 0; i < len; i++) {
+            char ch = data[i];
+            if (ch == '\n') {
+                seennl |= SEEN_LF;
+            }
+            else if (ch == '\r') {
+                if (i + 1 < len && data[i + 1] == '\n') {
+                    seennl |= SEEN_CRLF;
+                    i++;
+                }
+                else {
+                    seennl |= SEEN_CR;
+                }
+                ch = '\n';
+            }
+            translated[out++] = ch;
+        }
+        PyObject *modified = PyUnicode_DecodeUTF8(translated, out, "surrogatepass");
+        PyMem_Free(translated);
+        if (modified == NULL) {
+            goto error;
+        }
+        _PyUnicodeUTF8View_Clear(&view);
+        Py_SETREF(output, modified);
+    }
+    self->seennl |= seennl;
+    _PyUnicodeUTF8View_Clear(&view);
     return output;
 
   error:
+    _PyUnicodeUTF8View_Clear(&view);
     Py_DECREF(output);
     return NULL;
 }
@@ -937,8 +866,8 @@ set_newline(textio *self, const char *newline)
     self->writetranslate = (newline == NULL || newline[0] != '\0');
     if (!self->readuniversal && self->readnl != NULL) {
         // validate_newline() accepts only ASCII newlines.
-        assert(PyUnicode_KIND(self->readnl) == PyUnicode_1BYTE_KIND);
-        self->writenl = (const char *)PyUnicode_1BYTE_DATA(self->readnl);
+        assert(PyUnicode_IS_ASCII(self->readnl));
+        self->writenl = _PyUnicode_GetPrimaryUTF8(self->readnl, NULL);
         if (strcmp(self->writenl, "\n") == 0) {
             self->writenl = NULL;
         }
@@ -1664,7 +1593,7 @@ _textiowrapper_writeflush(textio *self)
         assert(PyUnicode_IS_ASCII(pending));
         assert(PyUnicode_GET_LENGTH(pending) == self->pending_bytes_count);
         b = PyBytes_FromStringAndSize(
-                PyUnicode_DATA(pending), PyUnicode_GET_LENGTH(pending));
+                _PyUnicode_GetPrimaryUTF8(pending, NULL), PyUnicode_GET_LENGTH(pending));
         if (b == NULL) {
             return -1;
         }
@@ -1685,7 +1614,7 @@ _textiowrapper_writeflush(textio *self)
             Py_ssize_t len;
             if (PyUnicode_Check(obj)) {
                 assert(PyUnicode_IS_ASCII(obj));
-                src = PyUnicode_DATA(obj);
+                src = _PyUnicode_GetPrimaryUTF8(obj, NULL);
                 len = PyUnicode_GET_LENGTH(obj);
             }
             else {
@@ -2241,9 +2170,9 @@ _PyIO_find_line_ending(
     else {
         /* Non-universal mode. */
         Py_ssize_t readnl_len = PyUnicode_GET_LENGTH(readnl);
-        const Py_UCS1 *nl = PyUnicode_1BYTE_DATA(readnl);
+        const Py_UCS1 *nl = (const Py_UCS1 *)_PyUnicode_GetPrimaryUTF8(readnl, NULL);
         /* Assume that readnl is an ASCII character. */
-        assert(PyUnicode_KIND(readnl) == PyUnicode_1BYTE_KIND);
+        assert(PyUnicode_IS_ASCII(readnl));
         if (readnl_len == 1) {
             const char *pos = find_control_char(kind, start, end, nl[0]);
             if (pos != NULL)
@@ -2340,6 +2269,9 @@ _textiowrapper_readline(textio *self, Py_ssize_t limit)
         }
 
         ptr = PyUnicode_DATA(line);
+        if (ptr == NULL) {
+            goto error;
+        }
         line_len = PyUnicode_GET_LENGTH(line);
         kind = PyUnicode_KIND(line);
 

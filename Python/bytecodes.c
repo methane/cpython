@@ -1201,7 +1201,7 @@ dummy_func(
             EXIT_IF(!_PyLong_IsNonNegativeCompact((PyLongObject*)sub));
             Py_ssize_t index = ((PyLongObject*)sub)->long_value.ob_digit[0];
             EXIT_IF(PyUnicode_GET_LENGTH(str) <= index);
-            uint8_t c = PyUnicode_1BYTE_DATA(str)[index];
+            uint8_t c = _PyUnicode_GetPrimaryUTF8(str, NULL)[index];
             assert(c < 128);
             STAT_INC(BINARY_OP, hit);
             PyObject *res_o = (PyObject*)&_Py_SINGLETON(strings).ascii[c];
@@ -1225,6 +1225,9 @@ dummy_func(
             EXIT_IF(PyUnicode_GET_LENGTH(str) <= index);
             // Specialize for reading an ASCII character from any string:
             Py_UCS4 c = PyUnicode_READ_CHAR(str, index);
+            if (c == (Py_UCS4)-1) {
+                ERROR_NO_POP();
+            }
             EXIT_IF(Py_ARRAY_LENGTH(_Py_SINGLETON(strings).ascii) <= c);
             STAT_INC(BINARY_OP, hit);
             PyObject *res_o = (PyObject*)&_Py_SINGLETON(strings).ascii[c];

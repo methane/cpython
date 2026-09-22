@@ -207,30 +207,20 @@ class StringlikeHashRandomizationTests(HashRandomizationTests):
             [-678966196, 573763426263223372, -820489388, -4282905804826039665],
             ],
         'siphash13': [
-            # NOTE: PyUCS2 layout depends on endianness
             # seed 0, 'abc'
             [69611762, -4594863902769663758, 69611762, -4594863902769663758],
             # seed 42, 'abc'
             [-975800855, 3869580338025362921, -975800855, 3869580338025362921],
             # seed 42, 'abcdefghijk'
             [-595844228, 7764564197781545852, -595844228, 7764564197781545852],
-            # seed 0, 'äú∑ℇ'
-            [-1093288643, -2810468059467891395, -1041341092, 4925090034378237276],
-            # seed 42, 'äú∑ℇ'
-            [-585999602, -2845126246016066802, -817336969, -2219421378907968137],
         ],
         'siphash24': [
-            # NOTE: PyUCS2 layout depends on endianness
             # seed 0, 'abc'
             [1198583518, 4596069200710135518, 1198583518, 4596069200710135518],
             # seed 42, 'abc'
             [273876886, -4501618152524544106, 273876886, -4501618152524544106],
             # seed 42, 'abcdefghijk'
             [-1745215313, 4436719588892876975, -1745215313, 4436719588892876975],
-            # seed 0, 'äú∑ℇ'
-            [493570806, 5749986484189612790, -1006381564, -5915111450199468540],
-            # seed 42, 'äú∑ℇ'
-            [-1677110816, -2947981342227738144, -1860207793, -4296699217652516017],
         ],
         'fnv': [
             # seed 0, 'abc'
@@ -292,18 +282,20 @@ class StrHashRandomizationTests(StringlikeHashRandomizationTests,
                                 unittest.TestCase):
     repr_ = repr('abc')
     repr_long = repr('abcdefghijk')
-    repr_ucs2 = repr('äú∑ℇ')
+    repr_nonascii = repr('äú∑ℇ')
 
     @skip_unless_internalhash
     def test_empty_string(self):
         self.assertEqual(hash(""), 0)
 
     @skip_unless_internalhash
-    def test_ucs2_string(self):
-        h = self.get_expected_hash(3, 6)
-        self.assertEqual(self.get_hash(self.repr_ucs2, seed=0), h)
-        h = self.get_expected_hash(4, 6)
-        self.assertEqual(self.get_hash(self.repr_ucs2, seed=42), h)
+    def test_utf8_string(self):
+        # Strings hash their UTF-8 payload regardless of machine byte order.
+        encoded = repr('äú∑ℇ'.encode('utf-8'))
+        for seed in (0, 42):
+            with self.subTest(seed=seed):
+                self.assertEqual(self.get_hash(self.repr_nonascii, seed=seed),
+                                 self.get_hash(encoded, seed=seed))
 
 class BytesHashRandomizationTests(StringlikeHashRandomizationTests,
                                   unittest.TestCase):

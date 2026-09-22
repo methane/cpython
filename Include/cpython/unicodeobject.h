@@ -97,10 +97,15 @@ struct _PyUnicodeObject_state {
     unsigned int ascii:1;
     /* The object is statically allocated. */
     unsigned int statically_allocated:1;
+    /* The primary payload is UTF-8 (with surrogatepass), not a FSR. */
+    unsigned int utf8_storage:1;
+    unsigned int has_surrogates:1;
+    /* A private compact UTF-8 allocation promoted for C API writes. */
+    unsigned int fsr_primary:1;
 #ifndef Py_GIL_DISABLED
     /* Historical: padding to ensure that PyUnicode_DATA() is always aligned to
        4 bytes (see issue gh-63736 on m68k) */
-    unsigned int :24;
+    unsigned int :21;
 #endif
 };
 
@@ -109,48 +114,19 @@ struct _PyUnicodeObject_state {
    immediately follow the structure. utf8_length can be found
    in the length field; the utf8 pointer is equal to the data pointer. */
 typedef struct {
-    /* There are 3 forms of Unicode strings:
+    /* Storage forms:
+       - compact ASCII: PyASCIIObject followed by length + 1 bytes, shared
+         by UTF-8 and FSR readers;
+       - compact UTF-8: PyCompactUnicodeObject followed by utf8_length + 1
+         bytes, with an optional separately allocated FSR;
+       - noncompact UTF-8: PyUnicodeObject with a separate UTF-8 buffer,
+         used by Unicode subclasses, with an optional FSR cache (ASCII
+         shares its one-byte buffer with FSR readers);
+       - writable FSR: PyUnicodeObject with a separate data buffer, used by
+         PyUnicode_New() for non-ASCII strings.
 
-       - compact ascii:
-
-         * structure = PyASCIIObject
-         * test: PyUnicode_IS_COMPACT_ASCII(op)
-         * kind = PyUnicode_1BYTE_KIND
-         * compact = 1
-         * ascii = 1
-         * (length is the length of the utf8)
-         * (data starts just after the structure)
-         * (since ASCII is decoded from UTF-8, the utf8 string are the data)
-
-       - compact:
-
-         * structure = PyCompactUnicodeObject
-         * test: PyUnicode_IS_COMPACT(op) && !PyUnicode_IS_ASCII(op)
-         * kind = PyUnicode_1BYTE_KIND, PyUnicode_2BYTE_KIND or
-           PyUnicode_4BYTE_KIND
-         * compact = 1
-         * ascii = 0
-         * utf8 is not shared with data
-         * utf8_length = 0 if utf8 is NULL
-         * (data starts just after the structure)
-
-       - legacy string:
-
-         * structure = PyUnicodeObject structure
-         * test: !PyUnicode_IS_COMPACT(op)
-         * kind = PyUnicode_1BYTE_KIND, PyUnicode_2BYTE_KIND or
-           PyUnicode_4BYTE_KIND
-         * compact = 0
-         * data.any is not NULL
-         * utf8 is shared and utf8_length = length with data.any if ascii = 1
-         * utf8_length = 0 if utf8 is NULL
-
-       Compact strings use only one memory block (structure + characters),
-       whereas legacy strings use one block for the structure and one block
-       for characters.
-
-       Legacy strings are created by subclasses of Unicode.
-
+       UTF-8 payloads encode surrogates individually as three bytes. They
+       must not be exposed as strict UTF-8 when has_surrogates is set.
        See also _PyUnicode_CheckConsistency().
     */
     PyObject_HEAD
@@ -160,17 +136,19 @@ typedef struct {
    _Py_ALIGNED_DEF(4, struct _PyUnicodeObject_state) state;
 } PyASCIIObject;
 
-/* Non-ASCII strings allocated through PyUnicode_New use the
-   PyCompactUnicodeObject structure. state.compact is set, and the data
-   immediately follow the structure. */
+/* Compact non-ASCII strings store their UTF-8 payload immediately after
+   this structure. Noncompact strings use data.any instead.
+   fsr is published only after conversion is complete. */
 typedef struct {
     PyASCIIObject _base;
     Py_ssize_t utf8_length;     /* Number of bytes in utf8, excluding the
                                  * terminating \0. */
-    char *utf8;                 /* UTF-8 representation (null-terminated) */
+    char *utf8;                 /* UTF-8 cache, possibly with surrogatepass. */
+    void *fsr;                 /* Lazily allocated FSR for UTF-8 storage. */
+    Py_ssize_t inline_length;  /* Original compact payload allocation size. */
 } PyCompactUnicodeObject;
 
-/* Object format for Unicode subclasses. */
+/* Object format for writable FSR strings and Unicode subclasses. */
 typedef struct {
     PyCompactUnicodeObject _base;
     union {
@@ -178,7 +156,7 @@ typedef struct {
         Py_UCS1 *latin1;
         Py_UCS2 *ucs2;
         Py_UCS4 *ucs4;
-    } data;                     /* Canonical, smallest-form Unicode buffer */
+    } data;                     /* Primary UTF-8 or writable FSR buffer */
 } PyUnicodeObject;
 
 
@@ -257,7 +235,7 @@ PyAPI_FUNC(int) PyUnicode_KIND(PyObject *op);
 // "unsigned int kind = PyUnicode_KIND(str)" (cast signed to unsigned).
 #define PyUnicode_KIND(op) _Py_RVALUE(_PyASCIIObject_CAST(op)->state.kind)
 
-/* Return a void pointer to the raw unicode buffer. */
+/* Return a pointer to the compact allocation payload. */
 static inline void* _PyUnicode_COMPACT_DATA(PyObject *op) {
     if (PyUnicode_IS_ASCII(op)) {
         return _Py_STATIC_CAST(void*, (_PyASCIIObject_CAST(op) + 1));
@@ -273,9 +251,19 @@ static inline void* _PyUnicode_NONCOMPACT_DATA(PyObject *op) {
     return data;
 }
 
+/* Return the FSR, materializing it if necessary. On allocation failure,
+   return NULL with an exception set. The pointer lives as long as op. */
 PyAPI_FUNC(void*) PyUnicode_DATA(PyObject *op);
 
+PyAPI_FUNC(void*) _PyUnicode_GetFSR(PyObject *op);
+PyAPI_FUNC(int) _PyUnicode_EqualUTF8(PyObject *left, PyObject *right);
+/* Internal, bounds-checked-by-caller access for allocation-free consumers. */
+PyAPI_FUNC(Py_UCS4) _PyUnicode_ReadCharNoAlloc(PyObject *op, Py_ssize_t index);
+
 static inline void* _PyUnicode_DATA(PyObject *op) {
+    if (_PyASCIIObject_CAST(op)->state.utf8_storage) {
+        return _PyUnicode_GetFSR(op);
+    }
     if (PyUnicode_IS_COMPACT(op)) {
         return _PyUnicode_COMPACT_DATA(op);
     }
@@ -361,21 +349,11 @@ static inline Py_UCS4 PyUnicode_READ(int kind,
    cache kind and use PyUnicode_READ instead. */
 static inline Py_UCS4 PyUnicode_READ_CHAR(PyObject *unicode, Py_ssize_t index)
 {
-    int kind;
-
-    assert(index >= 0);
-    // Tolerate reading the NUL character at str[len(str)]
-    assert(index <= PyUnicode_GET_LENGTH(unicode));
-
-    kind = PyUnicode_KIND(unicode);
-    if (kind == PyUnicode_1BYTE_KIND) {
-        return PyUnicode_1BYTE_DATA(unicode)[index];
+    const void *data = PyUnicode_DATA(unicode);
+    if (data == NULL) {
+        return (Py_UCS4)-1;
     }
-    if (kind == PyUnicode_2BYTE_KIND) {
-        return PyUnicode_2BYTE_DATA(unicode)[index];
-    }
-    assert(kind == PyUnicode_4BYTE_KIND);
-    return PyUnicode_4BYTE_DATA(unicode)[index];
+    return PyUnicode_READ(PyUnicode_KIND(unicode), data, index);
 }
 #define PyUnicode_READ_CHAR(unicode, index) \
     PyUnicode_READ_CHAR(_PyObject_CAST(unicode), (index))
@@ -525,69 +503,23 @@ PyAPI_FUNC(int) PyUnicodeWriter_DecodeUTF8Stateful(
 /* --- Private _PyUnicodeWriter API --------------------------------------- */
 
 typedef struct {
-    PyObject *buffer;
-    void *data;
-    int kind;
-    Py_UCS4 maxchar;
-    Py_ssize_t size;
-    Py_ssize_t pos;
-
-    /* minimum number of allocated characters (default: 0) */
-    Py_ssize_t min_length;
-
-    /* minimum character (default: 127, ASCII) */
-    Py_UCS4 min_char;
-
-    /* If non-zero, overallocate the buffer (default: 0). */
+    /* A sole immutable primary UTF-8 string, retained for result identity. */
+    PyObject *readonly;
+    char *utf8;
+    Py_ssize_t utf8_pos;
+    Py_ssize_t utf8_size;
+    Py_ssize_t pos;  /* code point count */
+    Py_ssize_t min_length;  /* minimum byte capacity (default: 0) */
     unsigned char overallocate;
-
-    /* If readonly is 1, buffer is a shared string (cannot be modified)
-       and size is set to 0. */
-    unsigned char readonly;
 } _PyUnicodeWriter;
 
 // Initialize a Unicode writer.
 //
-// By default, the minimum buffer size is 0 character and overallocation is
-// disabled. Set min_length, min_char and overallocate attributes to control
+// By default, the minimum buffer size is 0 bytes and overallocation is
+// disabled. Set min_length and overallocate attributes to control
 // the allocation of the buffer.
 _Py_DEPRECATED_EXTERNALLY(3.14) PyAPI_FUNC(void) _PyUnicodeWriter_Init(
     _PyUnicodeWriter *writer);
-
-/* Prepare the buffer to write 'length' characters
-   with the specified maximum character.
-
-   Return 0 on success, raise an exception and return -1 on error. */
-#define _PyUnicodeWriter_Prepare(WRITER, LENGTH, MAXCHAR)             \
-    (((MAXCHAR) <= (WRITER)->maxchar                                  \
-      && (LENGTH) <= (WRITER)->size - (WRITER)->pos)                  \
-     ? 0                                                              \
-     : (((LENGTH) == 0)                                               \
-        ? 0                                                           \
-        : _PyUnicodeWriter_PrepareInternal((WRITER), (LENGTH), (MAXCHAR))))
-
-/* Don't call this function directly, use the _PyUnicodeWriter_Prepare() macro
-   instead. */
-_Py_DEPRECATED_EXTERNALLY(3.14) PyAPI_FUNC(int) _PyUnicodeWriter_PrepareInternal(
-    _PyUnicodeWriter *writer,
-    Py_ssize_t length,
-    Py_UCS4 maxchar);
-
-/* Prepare the buffer to have at least the kind KIND.
-   For example, kind=PyUnicode_2BYTE_KIND ensures that the writer will
-   support characters in range U+000-U+FFFF.
-
-   Return 0 on success, raise an exception and return -1 on error. */
-#define _PyUnicodeWriter_PrepareKind(WRITER, KIND)                    \
-    ((KIND) <= (WRITER)->kind                                         \
-     ? 0                                                              \
-     : _PyUnicodeWriter_PrepareKindInternal((WRITER), (KIND)))
-
-/* Don't call this function directly, use the _PyUnicodeWriter_PrepareKind()
-   macro instead. */
-_Py_DEPRECATED_EXTERNALLY(3.14) PyAPI_FUNC(int) _PyUnicodeWriter_PrepareKindInternal(
-    _PyUnicodeWriter *writer,
-    int kind);
 
 /* Append a Unicode character.
    Return 0 on success, raise an exception and return -1 on error. */

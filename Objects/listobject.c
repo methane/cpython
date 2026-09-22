@@ -2823,6 +2823,10 @@ unsafe_latin_compare(PyObject *v, PyObject *w, MergeState *ms)
     assert(PyUnicode_KIND(v) == PyUnicode_KIND(w));
     assert(PyUnicode_KIND(v) == PyUnicode_1BYTE_KIND);
 
+    if (_PyASCIIObject_CAST(v)->state.utf8_storage ||
+        _PyASCIIObject_CAST(w)->state.utf8_storage) {
+        return PyUnicode_Compare(v, w) < 0;
+    }
     len = Py_MIN(PyUnicode_GET_LENGTH(v), PyUnicode_GET_LENGTH(w));
     res = memcmp(PyUnicode_DATA(v), PyUnicode_DATA(w), len);
 

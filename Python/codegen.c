@@ -3018,7 +3018,7 @@ codegen_from_import(compiler *c, stmt_ty s)
     }
     if (s->v.ImportFrom.is_lazy) {
         alias_ty alias = (alias_ty)asdl_seq_GET(s->v.ImportFrom.names, 0);
-        if (PyUnicode_READ_CHAR(alias->name, 0) == '*') {
+        if (_PyUnicode_ReadCharNoAlloc(alias->name, 0) == '*') {
             return _PyCompile_Error(c, LOC(s), "cannot lazy import *");
         }
         RETURN_IF_ERROR(codegen_validate_lazy_import(c, LOC(s)));
@@ -3027,7 +3027,7 @@ codegen_from_import(compiler *c, stmt_ty s)
         alias_ty alias = (alias_ty)asdl_seq_GET(s->v.ImportFrom.names, 0);
         if (_PyCompile_InExceptionHandler(c) ||
             _PyCompile_ScopeType(c) != COMPILE_SCOPE_MODULE ||
-            PyUnicode_READ_CHAR(alias->name, 0) == '*') {
+            _PyUnicode_ReadCharNoAlloc(alias->name, 0) == '*') {
             // forced non-lazy import due to try/except or import *
             ADDOP_NAME_CUSTOM(c, LOC(s), IMPORT_NAME, from, names, 2, 2);
         } else {
@@ -3039,7 +3039,7 @@ codegen_from_import(compiler *c, stmt_ty s)
         alias_ty alias = (alias_ty)asdl_seq_GET(s->v.ImportFrom.names, i);
         identifier store_name;
 
-        if (i == 0 && PyUnicode_READ_CHAR(alias->name, 0) == '*') {
+        if (i == 0 && _PyUnicode_ReadCharNoAlloc(alias->name, 0) == '*') {
             assert(n == 1);
             ADDOP_I(c, LOC(s), CALL_INTRINSIC_1, INTRINSIC_IMPORT_STAR);
             ADDOP(c, NO_LOCATION, POP_TOP);
@@ -3339,7 +3339,7 @@ codegen_nameop(compiler *c, location loc,
     }
 
     /* XXX Leave assert here, but handle __doc__ and the like better */
-    assert(scope || PyUnicode_READ_CHAR(name, 0) == '_');
+    assert(scope || _PyUnicode_ReadCharNoAlloc(name, 0) == '_');
 
     int op = 0;
     switch (optype) {

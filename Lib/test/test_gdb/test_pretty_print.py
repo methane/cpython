@@ -150,12 +150,31 @@ class PrettyPrintTests(DebuggerTests):
         # Unified Ideographs area, followed by U+3051 HIRAGANA LETTER KE)
         check_repr('\u6587\u5b57\u5316\u3051')
 
+        # The UTF-8 payload exceeds the debugger's code point read limit.
+        check_repr('\u65e5' * 400)
+
         # Test a character outside the BMP:
         #    U+1D121 MUSICAL SYMBOL C CLEF
         # This is:
         # UTF-8: 0xF0 0x9D 0x84 0xA1
         # UTF-16: 0xD834 0xDD21
         check_repr(chr(0x1D121))
+
+    def test_unicode_subclass(self):
+        for text in ('ascii', 'a\0\u2028\U00100000\udcff'):
+            for cached in (False, True):
+                source = ("import _testcapi\nclass Str(str): pass\n"
+                          f"value = Str({ascii(text)})\n")
+                if cached:
+                    source += "_testcapi.unicode_materialize_fsr(value)\n"
+                source += "id(value)"
+                output = self.get_stack_trace(
+                    source, breakpoint=BREAKPOINT_FN,
+                    cmds_after_breakpoint=[
+                        'python print("unicode:", repr(PyUnicodeObjectPtr('
+                        'gdb.parse_and_eval("(PyUnicodeObject *)v")).proxyval(set())))'
+                    ])
+                self.assertIn("unicode: " + repr(text), output)
 
     def test_tuples(self):
         'Verify the pretty-printing of tuples'

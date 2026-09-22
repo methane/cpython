@@ -34,6 +34,7 @@
 #include "pycore_pystate.h"       // _PyThreadState_GET()
 #include "pycore_tuple.h"         // _PyTuple_FromPair
 #include "pycore_typeobject.h"
+#include "pycore_unicodeobject.h" // _PyUnicode_Next()
 
 #include <mpdecimal.h>
 
@@ -2299,13 +2300,6 @@ dec_dealloc(PyObject *dec)
 /*                           Conversions to Decimal                           */
 /******************************************************************************/
 
-Py_LOCAL_INLINE(int)
-is_space(int kind, const void *data, Py_ssize_t pos)
-{
-    Py_UCS4 ch = PyUnicode_READ(kind, data, pos);
-    return Py_UNICODE_ISSPACE(ch);
-}
-
 /* Return the ASCII representation of a numeric Unicode string. The numeric
    string may contain ascii characters in the range [1, 127], any Unicode
    space and any unicode digit. If strip_ws is true, leading and trailing
@@ -2317,15 +2311,11 @@ is_space(int kind, const void *data, Py_ssize_t pos)
 static char *
 numeric_as_ascii(PyObject *u, int strip_ws, int ignore_underscores)
 {
-    int kind;
-    const void *data;
     Py_UCS4 ch;
     char *res, *cp;
-    Py_ssize_t j, len;
+    Py_ssize_t len;
     int d;
 
-    kind = PyUnicode_KIND(u);
-    data = PyUnicode_DATA(u);
     len =  PyUnicode_GET_LENGTH(u);
 
     cp = res = PyMem_Malloc(len+1);
@@ -2334,26 +2324,29 @@ numeric_as_ascii(PyObject *u, int strip_ws, int ignore_underscores)
         return NULL;
     }
 
-    j = 0;
-    if (strip_ws) {
-        while (len > 0 && is_space(kind, data, len-1)) {
-            len--;
+    Py_ssize_t cursor = 0;
+    char *last_nonspace = res;
+    int leading = strip_ws;
+    while (_PyUnicode_Next(u, &cursor, &ch)) {
+        int space = Py_UNICODE_ISSPACE(ch);
+        if (leading && space) {
+            continue;
         }
-        while (j < len && is_space(kind, data, j)) {
-            j++;
-        }
-    }
-
-    for (; j < len; j++) {
-        ch = PyUnicode_READ(kind, data, j);
+        leading = 0;
         if (ignore_underscores && ch == '_') {
+            /* Strip whitespace before discarding underscores: spaces before
+               a trailing underscore must remain in the numeric string. */
+            last_nonspace = cp;
             continue;
         }
         if (0 < ch && ch <= 127) {
             *cp++ = ch;
+            if (!space) {
+                last_nonspace = cp;
+            }
             continue;
         }
-        if (Py_UNICODE_ISSPACE(ch)) {
+        if (space) {
             *cp++ = ' ';
             continue;
         }
@@ -2364,6 +2357,10 @@ numeric_as_ascii(PyObject *u, int strip_ws, int ignore_underscores)
             return res;
         }
         *cp++ = '0' + d;
+        last_nonspace = cp;
+    }
+    if (strip_ws) {
+        cp = last_nonspace;
     }
     *cp = '\0';
     return res;
@@ -3618,20 +3615,6 @@ convert_op_cmp(PyObject **vcmp, PyObject **wcmp, PyObject *v, PyObject *w,
 /*                          Conversions from decimal                          */
 /******************************************************************************/
 
-static PyObject *
-unicode_fromascii(const char *s, Py_ssize_t size)
-{
-    PyObject *res;
-
-    res = PyUnicode_New(size, 127);
-    if (res == NULL) {
-        return NULL;
-    }
-
-    memcpy(PyUnicode_1BYTE_DATA(res), s, size);
-    return res;
-}
-
 /* PyDecObject as a string. The default module context is only used for
    the value of 'capitals'. */
 static PyObject *
@@ -3649,7 +3632,7 @@ dec_str(PyObject *dec)
         return NULL;
     }
 
-    res = unicode_fromascii(cp, size);
+    res = PyUnicode_FromStringAndSize(cp, size);
     mpd_free(cp);
     return res;
 }
@@ -5400,7 +5383,7 @@ _decimal_Decimal_to_eng_string_impl(PyObject *self, PyTypeObject *cls,
         return NULL;
     }
 
-    result = unicode_fromascii(s, size);
+    result = PyUnicode_FromStringAndSize(s, size);
     mpd_free(s);
 
     return result;
@@ -7245,7 +7228,7 @@ _decimal_Context_to_sci_string_impl(PyObject *context, PyTypeObject *cls,
         return NULL;
     }
 
-    result = unicode_fromascii(s, size);
+    result = PyUnicode_FromStringAndSize(s, size);
     mpd_free(s);
 
     return result;
@@ -7276,7 +7259,7 @@ _decimal_Context_to_eng_string_impl(PyObject *context, PyTypeObject *cls,
         return NULL;
     }
 
-    result = unicode_fromascii(s, size);
+    result = PyUnicode_FromStringAndSize(s, size);
     mpd_free(s);
 
     return result;

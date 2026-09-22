@@ -906,7 +906,7 @@ _PyBytes_FormatEx(const char *format, Py_ssize_t format_len,
                 if (temp == NULL)
                     goto error;
                 assert(PyUnicode_IS_ASCII(temp));
-                pbuf = (const char *)PyUnicode_1BYTE_DATA(temp);
+                pbuf = _PyUnicode_GetPrimaryUTF8(temp, NULL);
                 len = PyUnicode_GET_LENGTH(temp);
                 if (prec >= 0 && len > prec)
                     len = prec;
@@ -967,7 +967,7 @@ _PyBytes_FormatEx(const char *format, Py_ssize_t format_len,
                 if (!temp)
                     goto error;
                 assert(PyUnicode_IS_ASCII(temp));
-                pbuf = (const char *)PyUnicode_1BYTE_DATA(temp);
+                pbuf = _PyUnicode_GetPrimaryUTF8(temp, NULL);
                 len = PyUnicode_GET_LENGTH(temp);
                 sign = 1;
                 if (flags & F_ZERO)
@@ -1481,7 +1481,7 @@ _Py_bytes_repr(const char *data, Py_ssize_t length, int smartquotes,
     if (v == NULL) {
         return NULL;
     }
-    p = PyUnicode_1BYTE_DATA(v);
+    p = (Py_UCS1 *)_PyUnicode_GetPrimaryUTF8(v, NULL);
 
     *p++ = 'b', *p++ = quote;
     for (i = 0; i < length; i++) {
@@ -2646,21 +2646,23 @@ _PyBytes_FromHex(PyObject *string, int use_bytearray)
         hexlen = PyUnicode_GET_LENGTH(string);
 
         if (!PyUnicode_IS_ASCII(string)) {
-            const void *data = PyUnicode_DATA(string);
-            int kind = PyUnicode_KIND(string);
-            Py_ssize_t i;
-
-            /* search for the first non-ASCII character */
-            for (i = 0; i < hexlen; i++) {
-                if (PyUnicode_READ(kind, data, i) >= 128)
-                    break;
+            _PyUnicodeUTF8View view;
+            if (_PyUnicodeUTF8View_Init(&view, string) < 0) {
+                return NULL;
             }
+            /* Before the first non-ASCII character, byte and character
+               offsets coincide. */
+            Py_ssize_t i = 0;
+            while (i < view.size && (unsigned char)view.data[i] < 128) {
+                i++;
+            }
+            _PyUnicodeUTF8View_Clear(&view);
             invalid_char = i;
             goto error;
         }
 
-        assert(PyUnicode_KIND(string) == PyUnicode_1BYTE_KIND);
-        str = PyUnicode_1BYTE_DATA(string);
+        assert(PyUnicode_IS_ASCII(string));
+        str = (const unsigned char *)_PyUnicode_GetPrimaryUTF8(string, NULL);
     }
     else if (PyObject_CheckBuffer(string)) {
         if (PyObject_GetBuffer(string, &view, PyBUF_SIMPLE) != 0) {

@@ -1210,17 +1210,15 @@ checkpath(PyObject* tag)
 
     if (PyUnicode_Check(tag)) {
         const Py_ssize_t len = PyUnicode_GET_LENGTH(tag);
-        const void *data = PyUnicode_DATA(tag);
-        int kind = PyUnicode_KIND(tag);
-        if (len >= 3 && PyUnicode_READ(kind, data, 0) == '{' && (
-                PyUnicode_READ(kind, data, 1) == '}' || (
-                PyUnicode_READ(kind, data, 1) == '*' &&
-                PyUnicode_READ(kind, data, 2) == '}'))) {
+        if (len >= 3 && _PyUnicode_ReadCharNoAlloc(tag, 0) == '{' && (
+                _PyUnicode_ReadCharNoAlloc(tag, 1) == '}' || (
+                _PyUnicode_ReadCharNoAlloc(tag, 1) == '*' &&
+                _PyUnicode_ReadCharNoAlloc(tag, 2) == '}'))) {
             /* wildcard: '{}tag' or '{*}tag' */
             return 1;
         }
         for (i = 0; i < len; i++) {
-            Py_UCS4 ch = PyUnicode_READ(kind, data, i);
+            Py_UCS4 ch = _PyUnicode_ReadCharNoAlloc(tag, i);
             if (ch == '{')
                 check = 0;
             else if (ch == '}')
@@ -1531,7 +1529,7 @@ _elementtree_Element_iter_impl(ElementObject *self, PyTypeObject *cls,
 /*[clinic end generated code: output=bff29dc5d4566c68 input=e4c542a12e6f9199]*/
 {
     if (PyUnicode_Check(tag)) {
-        if (PyUnicode_GET_LENGTH(tag) == 1 && PyUnicode_READ_CHAR(tag, 0) == '*')
+        if (PyUnicode_GET_LENGTH(tag) == 1 && _PyUnicode_ReadCharNoAlloc(tag, 0) == '*')
             tag = Py_None;
     }
 

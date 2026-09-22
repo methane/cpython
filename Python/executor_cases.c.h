@@ -7118,7 +7118,7 @@
                 SET_CURRENT_CACHED_VALUES(2);
                 JUMP_TO_JUMP_TARGET();
             }
-            uint8_t c = PyUnicode_1BYTE_DATA(str)[index];
+            uint8_t c = _PyUnicode_GetPrimaryUTF8(str, NULL)[index];
             assert(c < 128);
             STAT_INC(BINARY_OP, hit);
             PyObject *res_o = (PyObject*)&_Py_SINGLETON(strings).ascii[c];
@@ -7165,6 +7165,14 @@
                 JUMP_TO_JUMP_TARGET();
             }
             Py_UCS4 c = PyUnicode_READ_CHAR(str, index);
+            if (c == (Py_UCS4)-1) {
+                stack_pointer[0] = str_st;
+                stack_pointer[1] = sub_st;
+                stack_pointer += 2;
+                ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                SET_CURRENT_CACHED_VALUES(0);
+                JUMP_TO_ERROR();
+            }
             if (Py_ARRAY_LENGTH(_Py_SINGLETON(strings).ascii) <= c) {
                 UOP_STAT_INC(uopcode, miss);
                 _tos_cache1 = sub_st;

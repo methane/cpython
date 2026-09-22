@@ -3651,7 +3651,7 @@ _Py_DumpExtensionModules(int fd, PyInterpreterState *interp)
 
                     // Ignore sub-modules of stdlib packages. For example,
                     // ignore "math.integer" if key starts with "math.".
-                    Py_UCS4 ch = PyUnicode_ReadChar(key, len);
+                    Py_UCS4 ch = _PyUnicode_ReadCharNoAlloc(key, len);
                     if (ch == '.') {
                         is_stdlib_ext = 1;
                         break;

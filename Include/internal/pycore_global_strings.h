@@ -920,7 +920,7 @@ struct _Py_global_strings {
     } ascii[128];
     struct {
         PyCompactUnicodeObject _latin1;
-        uint8_t _data[2];
+        uint8_t _data[3];
     } latin1[128];
 };
 /* End auto-generated code */

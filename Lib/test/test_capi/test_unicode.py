@@ -2,7 +2,7 @@ import sys
 import textwrap
 import unittest
 from test import support
-from test.support import threading_helper
+from test.support import import_helper, threading_helper
 from test.support.script_helper import assert_python_failure
 
 try:
@@ -28,6 +28,1828 @@ NULL = None
 
 class Str(str):
     pass
+
+
+@unittest.skipIf(_testcapi is None, 'need _testcapi module')
+class UTF8StorageTests(unittest.TestCase):
+    def make_string(self, text):
+        return text.encode('utf-8', 'surrogatepass').decode('utf-8', 'surrogatepass')
+
+    def test_subclass_primary_utf8(self):
+        for text in ('', 'ascii\0text', 'éÿ', '日é', '😀日',
+                     'x\ud800\udcff\0'):
+            for cached in (False, True):
+                source = self.make_string(text)
+                if cached:
+                    _testcapi.unicode_materialize_fsr(source)
+                before = _testcapi.unicode_storage(source)
+                value = Str(source)
+                self.assertEqual(_testcapi.unicode_storage(source), before)
+                encoded = text.encode('utf-8', 'surrogatepass')
+                surrogate = any(0xd800 <= ord(c) <= 0xdfff for c in text)
+                state = (int(not text.isascii()), 0, int(surrogate),
+                         int(text.isascii()), len(encoded))
+                self.assertEqual(_testcapi.unicode_storage(value), state)
+                self.assertEqual(value, text)
+                self.assertEqual(hash(value), hash(text))
+                self.assertEqual(list(value), list(text))
+                self.assertEqual(value.encode('utf-8', 'surrogatepass'), encoded)
+                if surrogate:
+                    with self.assertRaises(UnicodeEncodeError):
+                        _testcapi.unicode_asutf8(value, 0)
+                else:
+                    self.assertEqual(_testcapi.unicode_asutf8(value, len(encoded) + 1),
+                                     encoded + b'\0')
+                self.assertEqual(_testcapi.unicode_storage(value), state)
+                size = value.__sizeof__()
+                _testcapi.unicode_materialize_fsr(value)
+                self.assertEqual(_testcapi.unicode_storage(value)[3], 1)
+                kind = 1 if max(map(ord, text), default=0) < 256 else (
+                    2 if max(map(ord, text)) < 65536 else 4)
+                extra = 0 if text.isascii() else (len(text) + 1) * kind
+                self.assertEqual(value.__sizeof__(), size + extra)
+                self.assertEqual(value, text)
+                self.assertEqual(value.encode('utf-8', 'surrogatepass'), encoded)
+
+    def test_subclass_from_writable_fsr(self):
+        for ch in (ord('a'), ord('é'), ord('日'), ord('😀'), 0xd800):
+            source = _testcapi.unicode_new(3, ch)
+            value = Str(source)
+            self.assertEqual(value, chr(ch) * 3)
+            self.assertEqual(_testcapi.unicode_storage(value)[0], ch >= 128)
+            self.assertEqual(_testcapi.unicode_storage(value)[3], ch < 128)
+
+    @unittest.skipIf(_testlimitedcapi is None, 'need _testlimitedcapi')
+    def test_subclass_from_overestimated_fsr(self):
+        for text in ('a', 'é', '日', '\udcff'):
+            source, _ = _testlimitedcapi.unicode_writechar('😀', 0, ord(text))
+            value = Str(source)
+            self.assertEqual(value, text)
+            self.assertEqual(value.isascii(), text.isascii())
+            self.assertIn(value, text)
+            self.assertEqual(hash(value), hash(text))
+            self.assertEqual(_testcapi.unicode_storage(value)[2], text == '\udcff')
+
+    def test_widechar_cursor_conversion(self):
+        api = import_helper.import_module('_testlimitedcapi')
+        width = _testcapi.SIZEOF_WCHAR_T
+        encoding = 'utf-16-le' if width == 2 else 'utf-32-le'
+        for text in ('é日😀', 'a\0b', '\ud800x\udcff', 'éÿ'):
+            encoded = text.encode(encoding, 'surrogatepass')
+            units = len(encoded) // width
+            for factory in (self.make_string, Str):
+                for cached in (False, True):
+                    value = factory(text)
+                    if cached:
+                        _testcapi.unicode_materialize_fsr(value)
+                    before = _testcapi.unicode_storage(value)
+                    self.assertEqual(api.unicode_aswidechar_null(value, 0), units + 1)
+                    for capacity in range(units + 2):
+                        expected = encoded[:capacity * width]
+                        if capacity > units:
+                            expected += bytes(width)
+                        self.assertEqual(api.unicode_aswidechar(value, capacity),
+                                         (expected.decode(encoding, 'surrogatepass'),
+                                          min(capacity, units)))
+                    self.assertEqual(_testcapi.unicode_storage(value), before)
+
+    def test_newline_decoder_without_fsr(self):
+        import _io
+
+        text = 'é\r\n日\r😀\n\ud800\udcff\0\r'
+        for translate in (False, True):
+            expected = text.replace('\r\n', '\n').replace('\r', '\n') if translate else text
+            for factory in (self.make_string, Str):
+                for split in range(len(text) + 1):
+                    decoder = _io.IncrementalNewlineDecoder(None, translate)
+                    chunks = [factory(text[:split]), factory(text[split:])]
+                    before = [_testcapi.unicode_storage(s) for s in chunks]
+                    result = decoder.decode(chunks[0], False)
+                    result += decoder.decode(chunks[1], True)
+                    self.assertEqual(result, expected)
+                    self.assertEqual(decoder.newlines, ('\r', '\n', '\r\n'))
+                    after = [_testcapi.unicode_storage(s) for s in chunks]
+                    self.assertEqual(after[0][:3], before[0][:3])
+                    self.assertEqual(after[1][:3], before[1][:3])
+
+    def test_charmap_replacement_without_fsr(self):
+        import codecs
+
+        mapping = {ord('é'): 1, ord('😀'): 2, ord('\udcff'): 3}
+        for factory in (self.make_string, Str):
+            replacement = factory('é😀\udcff')
+            before = _testcapi.unicode_storage(replacement)
+            def handler(exc):
+                return replacement, exc.end
+            codecs.register_error('test_utf8_charmap_replacement', handler)
+            self.assertEqual(codecs.charmap_encode(
+                '日', 'test_utf8_charmap_replacement', mapping),
+                (b'\x01\x02\x03', 1))
+            self.assertEqual(_testcapi.unicode_storage(replacement), before)
+            with self.assertRaises(UnicodeEncodeError):
+                codecs.charmap_encode('日', 'test_utf8_charmap_replacement', {})
+            self.assertEqual(_testcapi.unicode_storage(replacement), before)
+
+    def test_copy_utf8_storage(self):
+        for text in ('é日😀', 'a\0b', 'x\ud800\udcff'):
+            for factory in (self.make_string, Str):
+                for cached in (False, True):
+                    value = factory(text)
+                    if cached:
+                        _testcapi.unicode_materialize_fsr(value)
+                    before = _testcapi.unicode_storage(value)
+                    copy, = value.__getnewargs__()
+                    self.assertEqual(copy, value)
+                    self.assertIs(type(copy), str)
+                    self.assertIsNot(copy, value)
+                    self.assertEqual(_testcapi.unicode_storage(value), before)
+                    if not copy.isascii():
+                        self.assertEqual(_testcapi.unicode_storage(copy)[0], 1)
+                        self.assertEqual(_testcapi.unicode_storage(copy)[3], 0)
+
+    def test_translate_without_fsr(self):
+        api = import_helper.import_module('_testlimitedcapi')
+        mapping = {ord('é'): 'é日', ord('日'): None, ord('😀'): None,
+                   ord('x'): 0x1f600, ord('y'): ''}
+        for text in ('é日😀xy', 'a日z', '\ud800日\udcff', 'xy日'):
+            for errors in ('strict', 'ignore', 'replace', 'backslashreplace'):
+                for cached in (False, True):
+                    with self.subTest(text=ascii(text), errors=errors, cached=cached):
+                        value = self.make_string(text)
+                        if cached:
+                            _testcapi.unicode_materialize_fsr(value)
+                        before = _testcapi.unicode_storage(value)
+                        try:
+                            expected = api.unicode_translate(Str(text), mapping, errors)
+                        except UnicodeTranslateError:
+                            with self.assertRaises(UnicodeTranslateError):
+                                api.unicode_translate(value, mapping, errors)
+                        else:
+                            self.assertEqual(api.unicode_translate(value, mapping, errors),
+                                             expected)
+                        self.assertEqual(_testcapi.unicode_storage(value), before)
+
+    def test_translate_utf8_rewind(self):
+        import codecs
+        api = import_helper.import_module('_testlimitedcapi')
+        for materialize in (False, True):
+            value = self.make_string('é日😀z')
+            calls = []
+            def handler(exc):
+                calls.append((exc.start, exc.end))
+                if materialize:
+                    _testcapi.unicode_materialize_fsr(value)
+                return '<>', 0 if len(calls) == 1 else exc.end
+            codecs.register_error('test_utf8_translate_rewind', handler)
+            self.assertEqual(api.unicode_translate(
+                value, {ord('日'): None, ord('😀'): None},
+                'test_utf8_translate_rewind'), 'é<>é<>z')
+            self.assertEqual(calls, [(1, 3), (1, 3)])
+            self.assertEqual(_testcapi.unicode_storage(value)[3], materialize)
+
+    def test_unicode_error_display_without_fsr(self):
+        for char, escaped in (('é', r'\xe9'), ('日', r'\u65e5'),
+                              ('😀', r'\U0001f600'), ('\udcff', r'\udcff')):
+            for factory in (self.make_string, Str):
+                value = factory('ab' + char + 'z')
+                before = _testcapi.unicode_storage(value)
+                encode = UnicodeEncodeError('ascii', value, 2, 3, 'reason')
+                translate = UnicodeTranslateError(value, 2, 3, 'reason')
+                self.assertEqual(str(encode),
+                                 f"'ascii' codec can't encode character '{escaped}' "
+                                 "in position 2: reason")
+                self.assertEqual(str(translate),
+                                 f"can't translate character '{escaped}' "
+                                 "in position 2: reason")
+                self.assertEqual(_testcapi.unicode_storage(value), before)
+
+    def test_utf8_surrogate_encoding_without_fsr(self):
+        for text in ('é日😀', 'é\ud800\udcffz', '\udc80\udcff\ud800',
+                     '\ud800' * 100, '😀\ud800日\udcff'):
+            for errors in ('strict', 'replace', 'ignore', 'surrogatepass',
+                           'surrogateescape', 'backslashreplace', 'xmlcharrefreplace'):
+                for cached in (False, True):
+                    with self.subTest(text=ascii(text), errors=errors, cached=cached):
+                        value = self.make_string(text)
+                        if cached:
+                            _testcapi.unicode_materialize_fsr(value)
+                        before = _testcapi.unicode_storage(value)
+                        try:
+                            expected = Str(text).encode('utf-8', errors)
+                        except UnicodeEncodeError as exc:
+                            with self.assertRaises(UnicodeEncodeError) as caught:
+                                value.encode('utf-8', errors)
+                            self.assertEqual((caught.exception.start, caught.exception.end),
+                                             (exc.start, exc.end))
+                        else:
+                            self.assertEqual(value.encode('utf-8', errors), expected)
+                        self.assertEqual(_testcapi.unicode_storage(value), before)
+            if any(0xd800 <= ord(ch) <= 0xdfff for ch in text):
+                value = self.make_string(text)
+                before = _testcapi.unicode_storage(value)
+                with self.assertRaises(UnicodeEncodeError):
+                    _testcapi.unicode_asutf8(value, 0)
+                self.assertEqual(_testcapi.unicode_storage(value), before)
+
+    def test_utf8_surrogate_encoding_rewind(self):
+        import codecs
+
+        for replacement in ('x', b'x'):
+            for materialize in (False, True):
+                value = self.make_string('é\ud800\udcff😀z')
+                calls = []
+                def handler(exc):
+                    calls.append((exc.start, exc.end))
+                    if materialize:
+                        _testcapi.unicode_materialize_fsr(value)
+                    return replacement, 0 if len(calls) == 1 else exc.end
+                codecs.register_error('test_utf8_surrogate_rewind', handler)
+                self.assertEqual(value.encode('utf-8', 'test_utf8_surrogate_rewind'),
+                                 'éxéx😀z'.encode())
+                self.assertEqual(calls, [(1, 3), (1, 3)])
+                self.assertEqual(_testcapi.unicode_storage(value)[3], materialize)
+
+    def test_utf16_utf32_encode_without_fsr(self):
+        for encoding in ('utf-16', 'utf-16-le', 'utf-16-be',
+                         'utf-32', 'utf-32-le', 'utf-32-be'):
+            for text in ('éÿ', 'a日😀b', '\ud800日\udcff', '😀\0日'):
+                for errors in ('strict', 'ignore', 'replace', 'backslashreplace',
+                               'surrogatepass'):
+                    for cached in (False, True):
+                        with self.subTest(encoding=encoding, text=ascii(text),
+                                          errors=errors, cached=cached):
+                            value = self.make_string(text)
+                            if cached:
+                                _testcapi.unicode_materialize_fsr(value)
+                            before = _testcapi.unicode_storage(value)
+                            try:
+                                expected = Str(text).encode(encoding, errors)
+                            except UnicodeEncodeError:
+                                with self.assertRaises(UnicodeEncodeError):
+                                    value.encode(encoding, errors)
+                            else:
+                                self.assertEqual(value.encode(encoding, errors), expected)
+                            self.assertEqual(_testcapi.unicode_storage(value), before)
+
+    def test_utf16_utf32_encode_utf8_rewind(self):
+        import codecs
+
+        for encoding in ('utf-16', 'utf-16-le', 'utf-16-be',
+                         'utf-32', 'utf-32-le', 'utf-32-be'):
+            raw_encoding = encoding
+            if encoding in ('utf-16', 'utf-32'):
+                raw_encoding += '-le' if sys.byteorder == 'little' else '-be'
+            for replacement in ('x', 'x'.encode(raw_encoding)):
+                for materialize in (False, True):
+                    value = self.make_string('日\ud800😀\udcff')
+                    calls = []
+                    def handler(exc):
+                        calls.append((exc.start, exc.end))
+                        if materialize:
+                            _testcapi.unicode_materialize_fsr(value)
+                        return replacement, 0 if len(calls) == 1 else exc.end
+                    codecs.register_error('test_utf8_utf16_utf32_rewind', handler)
+                    self.assertEqual(value.encode(encoding, 'test_utf8_utf16_utf32_rewind'),
+                                     '日x日x😀x'.encode(encoding))
+                    self.assertEqual(calls, [(1, 2), (1, 2), (3, 4)])
+                    self.assertEqual(_testcapi.unicode_storage(value)[3], materialize)
+
+    def test_utf16_rewind_nonbmp_capacity(self):
+        import codecs
+
+        for encoding in ('utf-16', 'utf-16-le', 'utf-16-be'):
+            for cached in (False, True):
+                value = self.make_string('😀' * 1000 + '\ud800')
+                if cached:
+                    _testcapi.unicode_materialize_fsr(value)
+                calls = []
+                def handler(exc):
+                    calls.append((exc.start, exc.end))
+                    return 'x', 0 if len(calls) == 1 else exc.end
+                codecs.register_error('test_utf16_nonbmp_capacity', handler)
+                self.assertEqual(value.encode(encoding, 'test_utf16_nonbmp_capacity'),
+                                 (('😀' * 1000 + 'x') * 2).encode(encoding))
+                self.assertEqual(calls, [(1000, 1001), (1000, 1001)])
+
+    def test_charmap_encode_without_fsr(self):
+        import codecs
+
+        table = ''.join(map(chr, range(256)))
+        mappings = (codecs.charmap_build(table),
+                    dict(zip(map(ord, table), range(256))))
+        for mapping in mappings:
+            for text in ('éÿ', 'a日😀b', '\ud800日é\udcff', '日' * 100):
+                for errors in ('strict', 'ignore', 'replace', 'backslashreplace',
+                               'xmlcharrefreplace'):
+                    with self.subTest(text=ascii(text), errors=errors, mapping=type(mapping)):
+                        value = self.make_string(text)
+                        before = _testcapi.unicode_storage(value)
+                        try:
+                            expected = codecs.charmap_encode(Str(text), errors, mapping)
+                        except UnicodeEncodeError:
+                            with self.assertRaises(UnicodeEncodeError):
+                                codecs.charmap_encode(value, errors, mapping)
+                        else:
+                            self.assertEqual(codecs.charmap_encode(value, errors, mapping),
+                                             expected)
+                        self.assertEqual(_testcapi.unicode_storage(value), before)
+
+    def test_charmap_encode_utf8_rewind(self):
+        import codecs
+
+        table = ''.join(map(chr, range(256)))
+        mappings = (codecs.charmap_build(table),
+                    dict(zip(map(ord, table), range(256))))
+        for mapping in mappings:
+            for replacement in ('é', b'!'):
+                for materialize in (False, True):
+                    value = self.make_string('é日😀z')
+                    calls = []
+                    def handler(exc):
+                        calls.append((exc.start, exc.end))
+                        if materialize:
+                            _testcapi.unicode_materialize_fsr(value)
+                        return replacement, 0 if len(calls) == 1 else exc.end
+                    codecs.register_error('test_utf8_charmap_rewind', handler)
+                    encoded = (replacement.encode('latin1')
+                               if isinstance(replacement, str) else replacement)
+                    self.assertEqual(codecs.charmap_encode(
+                        value, 'test_utf8_charmap_rewind', mapping),
+                        ((b'\xe9' + encoded) * 2 + b'z', 4))
+                    self.assertEqual(calls, [(1, 3), (1, 3)])
+                    self.assertEqual(_testcapi.unicode_storage(value)[3], materialize)
+
+    def test_charmap_default_without_fsr(self):
+        import codecs
+
+        for text in ('éÿ', 'a日😀b', 'a\udc80\udcffz'):
+            for errors in ('strict', 'replace', 'ignore', 'backslashreplace',
+                           'xmlcharrefreplace', 'surrogateescape'):
+                with self.subTest(text=ascii(text), errors=errors):
+                    value = self.make_string(text)
+                    before = _testcapi.unicode_storage(value)
+                    try:
+                        expected = text.encode('latin1', errors)
+                    except UnicodeEncodeError:
+                        with self.assertRaises(UnicodeEncodeError):
+                            codecs.charmap_encode(value, errors, None)
+                    else:
+                        self.assertEqual(codecs.charmap_encode(value, errors, None),
+                                         (expected, len(value)))
+                    self.assertEqual(_testcapi.unicode_storage(value), before)
+
+    def test_ucs1_encode_without_fsr(self):
+        import codecs
+
+        for encoding in ('ascii', 'latin1'):
+            for errors in ('replace', 'ignore', 'backslashreplace',
+                           'xmlcharrefreplace', 'surrogateescape'):
+                for text in ('éÿ', 'a日😀b日', 'a\udc80\udcffz', '\0日'):
+                    value = self.make_string(text)
+                    before = _testcapi.unicode_storage(value)
+                    try:
+                        expected = text.encode(encoding, errors)
+                    except UnicodeEncodeError:
+                        with self.assertRaises(UnicodeEncodeError):
+                            value.encode(encoding, errors)
+                    else:
+                        self.assertEqual(value.encode(encoding, errors), expected)
+                    self.assertEqual(_testcapi.unicode_storage(value), before)
+
+        calls = []
+        replacement = self.make_string('éÿ')
+        def handler(exc):
+            calls.append((exc.start, exc.end))
+            return replacement, 0 if len(calls) == 1 else exc.end
+        codecs.register_error('test_utf8_ucs1_rewind', handler)
+        value = self.make_string('a日b')
+        self.assertEqual(value.encode('latin1', 'test_utf8_ucs1_rewind'),
+                         b'a\xe9\xffa\xe9\xffb')
+        self.assertEqual(calls, [(1, 2), (1, 2)])
+        self.assertEqual(_testcapi.unicode_storage(value)[3], 0)
+        self.assertEqual(_testcapi.unicode_storage(replacement)[3], 0)
+
+    def test_codec_replacement_utf8_output(self):
+        import codecs
+
+        for size in (0, 1, 5):
+            exc = UnicodeTranslateError('日' * size, 0, size, 'test')
+            result, end = codecs.replace_errors(exc)
+            self.assertEqual(result, '\ufffd' * size)
+            self.assertEqual(end, size)
+            if size:
+                self.assertEqual(_testcapi.unicode_storage(result)[0], 1)
+                self.assertEqual(_testcapi.unicode_storage(result)[3], 0)
+            exc = UnicodeEncodeError('ascii', '日' * size, 0, size, 'test')
+            self.assertEqual(codecs.replace_errors(exc), ('?' * size, size))
+
+    def test_whitespace_split_utf8_views(self):
+        text = '\u2003é\t日\x85😀\r\n\udcff\u3000'
+        words = ['é', '日', '😀', '\udcff']
+        for factory in (self.make_string, Str):
+            for cached in (False, True):
+                value = factory(text)
+                if cached:
+                    _testcapi.unicode_materialize_fsr(value)
+                before = _testcapi.unicode_storage(value)
+                self.assertEqual(value.split(), words)
+                self.assertEqual(value.rsplit(), words)
+                self.assertEqual(value.split(None, 0), [text[1:]])
+                self.assertEqual(value.rsplit(None, 0), [text[:-1]])
+                self.assertEqual(value.split(None, 1), ['é', text[3:]])
+                self.assertEqual(value.rsplit(None, 1), [text[:-4], '\udcff'])
+                self.assertEqual(_testcapi.unicode_storage(value), before)
+
+    def test_splitlines_utf8_views(self):
+        endings = ('\n', '\r', '\r\n', '\v', '\f', '\x1c', '\x1d',
+                   '\x1e', '\x85', '\u2028', '\u2029')
+        line = 'é日😀\udcff\0'
+        text = ''.join(line + ending for ending in endings) + line
+        for factory in (self.make_string, Str):
+            for materialize in (False, True):
+                value = factory(text)
+                if materialize:
+                    _testcapi.unicode_materialize_fsr(value)
+                before = _testcapi.unicode_storage(value)
+                self.assertEqual(value.splitlines(), [line] * (len(endings) + 1))
+                self.assertEqual(value.splitlines(True),
+                                 [line + end for end in endings] + [line])
+                self.assertEqual(_testcapi.unicode_storage(value), before)
+                for short_text, expected in (('', []), ('\r\n', ['']),
+                                             ('\r\r\n', ['', '']),
+                                             ('日', ['日'])):
+                    self.assertEqual(factory(short_text).splitlines(), expected)
+
+    def test_zfill_utf8(self):
+        cases = [('', 1, '0'), ('+', 3, '+00'), ('-', 1, '-'),
+                 ('-12', 5, '-0012'), ('+é日😀', 7, '+000é日😀'),
+                 ('-\udcff', 4, '-00\udcff'), ('\ud800', 3, '00\ud800'),
+                 ('\0+', 4, '00\0+'), ('−12', 5, '00−12')]
+        for text, width, expected in cases:
+            for factory in (self.make_string, Str):
+                for materialize in (False, True):
+                    with self.subTest(text=text, factory=factory,
+                                      materialize=materialize):
+                        value = factory(text)
+                        if materialize:
+                            _testcapi.unicode_materialize_fsr(value)
+                        before = _testcapi.unicode_storage(value)
+                        result = value.zfill(width)
+                        self.assertEqual(result, expected)
+                        self.assertIs(type(result), str)
+                        self.assertEqual(_testcapi.unicode_storage(value), before)
+
+    def test_specialized_iteration_without_fsr(self):
+        def collect(value, materialize):
+            result = []
+            for ch in value:
+                result.append(ch)
+                if materialize and len(result) == 1:
+                    _testcapi.unicode_materialize_fsr(value)
+            return result
+
+        def delegate(value):
+            yield from value
+
+        for _ in range(100):
+            collect('warmup', False)
+            list(delegate('warmup'))
+        for text in ('', 'a\0z', 'é日😀', '\ud800x\udcff'):
+            expected = [text[i] for i in range(len(text))]
+            for factory in (self.make_string, Str):
+                value = factory(text)
+                before = _testcapi.unicode_storage(value)
+                self.assertEqual(collect(value, False), expected)
+                self.assertEqual(list(delegate(value)), expected)
+                self.assertEqual(_testcapi.unicode_storage(value), before)
+                self.assertEqual(collect(value, True), expected)
+                self.assertEqual(collect(value, False), expected)
+                self.assertEqual(list(delegate(value)), expected)
+
+    def test_equal_utf8_fallback(self):
+        api = import_helper.import_module('_testlimitedcapi')
+        equal = api.unicode_equaltoutf8andsize
+        for text in ('a\0é߿ࠀ日😀\U0010ffff', '\ud800', 'é\udcff'):
+            for factory in (self.make_string, Str):
+                value = factory(text)
+                before = _testcapi.unicode_storage(value)
+                encoded = text.encode('utf-8', 'surrogatepass')
+                valid = not any(0xd800 <= ord(ch) <= 0xdfff for ch in text)
+                self.assertEqual(equal(value, encoded), valid)
+                for i in range(len(encoded)):
+                    self.assertEqual(equal(value, encoded[:i]), 0)
+                    changed = encoded[:i] + bytes([encoded[i] ^ 0x80]) + encoded[i+1:]
+                    self.assertEqual(equal(value, changed), 0)
+                self.assertEqual(_testcapi.unicode_storage(value), before)
+
+    def test_percent_format_utf8(self):
+        def fsr(text):
+            return _testcapi.unicode_copycharacters(text, 0, text, 0, len(text))[0]
+
+        cases = (
+            ('日😀\udcff\0', (), '日😀\udcff\0'),
+            ('日%%😀%s\udcff', ('é日',), '日%😀é日\udcff'),
+            ('日%*.*s😀', (5, 2, 'é😀語'), '日   é😀😀'),
+            ('日%#08x/%+.2f/%c', (42, 1.5, 0xd800), '日0x00002a/+1.50/\ud800'),
+            ('日%(é(😀)\udcff\0)s末', {'é(😀)\udcff\0': '値'}, '日値末'),
+            ('%(日)s/%(😀)d', {'日': '語', '😀': 42}, '語/42'),
+        )
+        for factory in (self.make_string, Str, fsr):
+            for text, args, expected in cases:
+                for cached in (False, True):
+                    with self.subTest(factory=factory, text=ascii(text), cached=cached):
+                        value = factory(text)
+                        if cached:
+                            _testcapi.unicode_materialize_fsr(value)
+                        before = _testcapi.unicode_storage(value)
+                        self.assertEqual(value % args, expected)
+                        self.assertEqual(_testcapi.unicode_storage(value), before)
+
+    def test_percent_format_utf8_error_positions(self):
+        prefix = '日😀\udcff\0'
+        cases = (
+            ('%', (1,), 'stray % at position 4'),
+            ('%10', (1,), 'stray % at position 4'),
+            ('%(日', {}, 'stray % or incomplete format key at position 4'),
+            ('%q', (1,), 'unsupported format %q at position 4'),
+            ('%😀', (1,), "stray % at position 4 or unexpected format "
+                          "character '😀' (U+1F600) at position 5"),
+            ('%\udcff', (1,), 'stray % at position 4 or unexpected format '
+                              'character U+DCFF at position 5'),
+        )
+        def fsr(text):
+            return _testcapi.unicode_copycharacters(text, 0, text, 0, len(text))[0]
+
+        for factory in (self.make_string, Str, fsr):
+            for suffix, args, message in cases:
+                value = factory(prefix + suffix)
+                before = _testcapi.unicode_storage(value)
+                with self.assertRaises(ValueError) as cm:
+                    value % args
+                self.assertEqual(str(cm.exception), message)
+                self.assertEqual(_testcapi.unicode_storage(value), before)
+
+    def test_percent_format_utf8_cache_publication(self):
+        for factory in (self.make_string, Str):
+            value = factory('日%(😀)s\udcff%(語)s末')
+            class Mapping:
+                def __getitem__(self, key):
+                    _testcapi.unicode_materialize_fsr(value)
+                    return key
+            self.assertEqual(value % Mapping(), '日😀\udcff語末')
+
+    def test_ast_percent_format_without_fsr(self):
+        import ast
+
+        for text in ('日😀%s\udcff', '\ud800%% %r末'):
+            value = self.make_string(text)
+            tree = ast.parse("'template' % (x,)", mode='eval')
+            tree.body.left.value = value
+            before = _testcapi.unicode_storage(value)
+            code = compile(tree, '<test>', 'eval')
+            self.assertEqual(_testcapi.unicode_storage(value), before)
+            self.assertEqual(eval(code, {'x': 'é😀'}), text % ('é😀',))
+
+    def test_brace_format_utf8(self):
+        def fsr(text):
+            return _testcapi.unicode_copycharacters(text, 0, text, 0, len(text))[0]
+
+        cases = (
+            ('日😀\udcff\0', (), {}, '日😀\udcff\0'),
+            ('日{{語}}{0}😀', ('é\ud800',), {}, '日{語}é\ud800😀'),
+            ('{１}/{٠}', ('零', '一'), {}, '一/零'),
+            ('{0[é]}/{0[١]}', ({'é': '値', 1: '一'},), {}, '値/一'),
+            ('{0:\udcff>3}', ('日',), {}, '\udcff\udcff日'),
+            ('日{日:{埋}^{幅}}末', (), {'日': '語', '埋': '😀', '幅': 5},
+             '日😀😀語😀😀末'),
+            ('日{0:08x}/{1:.2f}', (42, 1.25), {}, '日0000002a/1.25'),
+        )
+        for factory in (self.make_string, Str, fsr):
+            for text, args, kwargs, expected in cases:
+                for cached in (False, True):
+                    with self.subTest(factory=factory, text=ascii(text), cached=cached):
+                        value = factory(text)
+                        if cached:
+                            _testcapi.unicode_materialize_fsr(value)
+                        before = _testcapi.unicode_storage(value)
+                        self.assertEqual(value.format(*args, **kwargs), expected)
+                        if not args:
+                            self.assertEqual(value.format_map(kwargs), expected)
+                        self.assertEqual(_testcapi.unicode_storage(value), before)
+
+    def test_brace_format_utf8_callbacks(self):
+        for factory in (self.make_string, Str):
+            value = factory('日{名前.属性[é]:😀\udcff}末')
+            class Field:
+                def __format__(self, spec):
+                    self_test.assertEqual(spec, '😀\udcff')
+                    return spec
+            class Item:
+                属性 = {'é': Field()}
+            class Mapping:
+                def __getitem__(self, key):
+                    self_test.assertEqual(key, '名前')
+                    _testcapi.unicode_materialize_fsr(value)
+                    return Item()
+            self_test = self
+            self.assertEqual(value.format_map(Mapping()), '日😀\udcff末')
+
+    def test_brace_format_utf8_iterator_lifetime(self):
+        import _string
+        import gc
+
+        def fsr(text):
+            return _testcapi.unicode_copycharacters(text, 0, text, 0, len(text))[0]
+
+        for factory in (self.make_string, Str, fsr):
+            value = factory('日{名前!r:😀>5}\udcff{０}末')
+            before = _testcapi.unicode_storage(value)
+            iterator = _string.formatter_parser(value)
+            self.assertEqual(next(iterator), ('日', '名前', '😀>5', 'r'))
+            self.assertEqual(_testcapi.unicode_storage(value), before)
+            _testcapi.unicode_materialize_fsr(value)
+            del value
+            gc.collect()
+            self.assertEqual(list(iterator),
+                             [('\udcff', '０', '', None), ('末', None, None, None)])
+
+            value = factory('１.属性[é\udcff][٠].末')
+            before = _testcapi.unicode_storage(value)
+            first, iterator = _string.formatter_field_name_split(value)
+            self.assertEqual(first, 1)
+            self.assertEqual(next(iterator), (True, '属性'))
+            self.assertEqual(_testcapi.unicode_storage(value), before)
+            _testcapi.unicode_materialize_fsr(value)
+            del value
+            gc.collect()
+            self.assertEqual(list(iterator),
+                             [(False, 'é\udcff'), (False, 0), (True, '末')])
+
+    def test_brace_format_utf8_iterator_after_error(self):
+        import _string
+
+        for ch in ('é', '日', '😀', '\udcff'):
+            iterator = _string.formatter_parser('{0!r' + ch + '}末')
+            with self.assertRaisesRegex(ValueError, "expected ':'"):
+                next(iterator)
+            with self.assertRaisesRegex(ValueError, "Single '}'"):
+                next(iterator)
+            self.assertEqual(list(iterator), [('末', None, None, None)])
+
+            first, iterator = _string.formatter_field_name_split('根[é]' + ch + '.末')
+            self.assertEqual(first, '根')
+            self.assertEqual(next(iterator), (False, 'é'))
+            with self.assertRaisesRegex(ValueError, 'may follow'):
+                next(iterator)
+            self.assertEqual(list(iterator), [(True, '末')])
+
+    def test_brace_format_utf8_allocation_failures(self):
+        from test.support.script_helper import assert_python_ok
+        assert_python_ok('-c', textwrap.dedent(r"""
+            import _string
+            import _testcapi
+            text = '日{名前!s:😀>5}\udcff'
+            field = '名前.属性[é\udcff][٠]'
+            def fsr(s):
+                return _testcapi.unicode_copycharacters(s, 0, s, 0, len(s))[0]
+            remove_hooks = _testcapi.remove_mem_hooks
+            for factory in (str, fsr):
+                value, name = factory(text), factory(field)
+                def split():
+                    first, rest = _string.formatter_field_name_split(name)
+                    return first, list(rest)
+                operations = (
+                    lambda: value.format_map({'名前': '語'}),
+                    lambda: list(_string.formatter_parser(value)),
+                    split,
+                )
+                for operation in operations:
+                    expected = operation()
+                    for fail_at in range(30):
+                        try:
+                            _testcapi.set_nomemory(fail_at, fail_at + 1)
+                            operation()
+                        except MemoryError:
+                            pass
+                        finally:
+                            remove_hooks()
+                        assert operation() == expected
+        """))
+
+    def test_format_spec_without_fsr(self):
+        cases = [('日', '😀>４', '😀😀😀日'),
+                 (42, '\udcff>５d', '\udcff' * 3 + '42'),
+                 (1.25, '>８.１f', '     1.2'),
+                 (42, '０' * 10000 + '５d', '   42')]
+        for value, text, expected in cases:
+            for factory in (self.make_string, Str):
+                spec = factory(text)
+                before = _testcapi.unicode_storage(spec)
+                self.assertEqual(format(value, spec), expected)
+                self.assertEqual(_testcapi.unicode_storage(spec), before)
+        for text in ('😀>４xx', '>１２.日f', '９' * 100):
+            spec = self.make_string(text)
+            before = _testcapi.unicode_storage(spec)
+            with self.assertRaises(ValueError):
+                format(42, spec)
+            self.assertEqual(_testcapi.unicode_storage(spec), before)
+
+    def test_marshal_without_fsr(self):
+        import marshal
+
+        for text in ('ascii', 'a' * 300, 'é日😀', 'a\0b', '\ud800\udcff'):
+            for version in range(marshal.version + 1):
+                with self.subTest(text=text, version=version):
+                    value = self.make_string(text)
+                    before = _testcapi.unicode_storage(value)
+                    encoded = marshal.dumps(value, version)
+                    self.assertEqual(marshal.loads(encoded), value)
+                    self.assertEqual(_testcapi.unicode_storage(value), before)
+                    if version == 0:
+                        payload = text.encode('utf-8', 'surrogatepass')
+                        self.assertEqual(encoded, b'u' +
+                                         len(payload).to_bytes(4, 'little') + payload)
+
+    def test_maketrans_without_fsr(self):
+        for factory in (self.make_string, Str):
+            with self.subTest(factory=factory):
+                x = factory('é日😀\ud800é')
+                y = factory('a語\udcff😀b')
+                z = factory('日\ud800')
+                before = [_testcapi.unicode_storage(v) for v in (x, y, z)]
+                self.assertEqual(str.maketrans(x, y, z), {
+                    ord('é'): ord('b'), ord('日'): None,
+                    ord('😀'): ord('\udcff'), ord('\ud800'): None,
+                })
+                self.assertEqual([_testcapi.unicode_storage(v)
+                                  for v in (x, y, z)], before)
+        for text in ('日', '😀', '\ud800', '\udcff'):
+            key = self.make_string(text)
+            self.assertEqual(str.maketrans({key: 'value'}),
+                             {ord(text): 'value'})
+            self.assertEqual(_testcapi.unicode_storage(key)[3], 0)
+
+    def test_numeric_input_without_fsr(self):
+        for convert, text, expected in (
+            (int, '\u2003-１２٣\u2002', -123),
+            (float, '\u2003１２.٥\u2002', 12.5),
+            (complex, '１２+٣j', 12+3j),
+        ):
+            for factory in (self.make_string, Str):
+                with self.subTest(convert=convert, factory=factory):
+                    value = factory(text)
+                    before = _testcapi.unicode_storage(value)
+                    self.assertEqual(convert(value), expected)
+                    self.assertEqual(_testcapi.unicode_storage(value), before)
+        for text in ('１２\ud800', '１２日', '１２\x7f'):
+            value = self.make_string(text)
+            with self.assertRaises(ValueError):
+                int(value)
+            self.assertEqual(_testcapi.unicode_storage(value)[3], 0)
+
+    def test_syntaxerror_basename_without_fsr(self):
+        import os
+        for tail in ('file.py', '日😀\udcff.py', ''):
+            for factory in (self.make_string, Str):
+                with self.subTest(tail=ascii(tail), factory=factory):
+                    filename = factory(os.sep.join(('日', '😀', tail)))
+                    before = _testcapi.unicode_storage(filename)
+                    error = SyntaxError('bad', (filename, 3, 1, 'x'))
+                    self.assertEqual(str(error), f'bad ({tail}, line 3)')
+                    self.assertEqual(_testcapi.unicode_storage(filename)[:3], before[:3])
+
+    def test_encode_and_ucs4_without_fsr(self):
+        for text in ('café', '日😀', 'a\0b', 'a\ud800\udcffb'):
+            for factory in (self.make_string, Str):
+                for encoding in ('utf-7', 'unicode_escape', 'raw_unicode_escape'):
+                    with self.subTest(text=ascii(text), factory=factory,
+                                      encoding=encoding):
+                        value = factory(text)
+                        before = _testcapi.unicode_storage(value)
+                        self.assertEqual(value.encode(encoding), text.encode(encoding))
+                        self.assertEqual(_testcapi.unicode_storage(value), before)
+                value = factory(text)
+                before = _testcapi.unicode_storage(value)
+                self.assertEqual(_testcapi.unicode_asucs4copy(value), text + '\0')
+                self.assertEqual(_testcapi.unicode_asucs4(value, len(text), 1),
+                                 text + '\0')
+                self.assertEqual(_testcapi.unicode_storage(value), before)
+
+    def test_fromhex_without_fsr(self):
+        for cls in (bytes, bytearray):
+            for factory in (self.make_string, Str):
+                for char in ('é', '日', '😀', '\udcff'):
+                    value = factory('00 12' + char + '34')
+                    before = _testcapi.unicode_storage(value)
+                    with self.assertRaisesRegex(ValueError, 'position 5'):
+                        cls.fromhex(value)
+                    self.assertEqual(_testcapi.unicode_storage(value), before)
+
+    def test_single_character_consumers_without_fsr(self):
+        for text in ('日', '😀', '\ud800', '\udcff'):
+            for factory in (self.make_string, Str):
+                with self.subTest(text=ascii(text), factory=factory):
+                    value = factory(text)
+                    before = _testcapi.unicode_storage(value)
+                    self.assertEqual(_testcapi.getargs_C(value), ord(text))
+                    self.assertEqual('%c' % value, text)
+                    self.assertEqual(_testcapi.unicode_storage(value), before)
+
+    def test_module_consumers_without_fsr(self):
+        import datetime
+        import operator
+        import types
+
+        for factory in (self.make_string, Str):
+            for text in ('日.😀', '.日', '日.', '日..😀', '日.\udcff'):
+                with self.subTest(text=ascii(text), factory=factory):
+                    root = types.SimpleNamespace()
+                    obj = root
+                    parts = text.split('.')
+                    for name in parts[:-1]:
+                        child = types.SimpleNamespace()
+                        setattr(obj, name, child)
+                        obj = child
+                    setattr(obj, parts[-1], 42)
+                    value = factory(text)
+                    before = _testcapi.unicode_storage(value)
+                    self.assertEqual(operator.attrgetter(value)(root), 42)
+                    self.assertEqual(_testcapi.unicode_storage(value)[:3], before[:3])
+            for separator in ('日', '😀', '\ud800', '\udcff'):
+                value = factory('2026-01-02' + separator + '03:04:05')
+                before = _testcapi.unicode_storage(value)
+                self.assertEqual(datetime.datetime.fromisoformat(value),
+                                 datetime.datetime(2026, 1, 2, 3, 4, 5))
+                self.assertEqual(_testcapi.unicode_storage(value)[:3], before[:3])
+
+    def test_json_without_fsr(self):
+        import json
+        _json = import_helper.import_module('_json')
+        scanner = _json.make_scanner(json.JSONDecoder())
+        for factory in (self.make_string, Str):
+            for text in ('café', '日😀', 'a\0\nb', '\ud800\udcff', '"\\日'):
+                with self.subTest(factory=factory, text=ascii(text)):
+                    value = factory(text)
+                    before = _testcapi.unicode_storage(value)
+                    for ascii_only, encode in (
+                        (False, _json.encode_basestring),
+                        (True, _json.encode_basestring_ascii),
+                    ):
+                        encoded = encode(value)
+                        encode_python = (json.encoder.py_encode_basestring_ascii
+                                         if ascii_only else
+                                         json.encoder.py_encode_basestring)
+                        expected = encode_python(text)
+                        self.assertEqual(encoded, expected)
+                        self.assertEqual(json.dumps(value, ensure_ascii=ascii_only),
+                                         expected)
+                        document = factory('日😀[' + encoded + ',12.5,true]')
+                        doc_before = _testcapi.unicode_storage(document)
+                        decoded = json.decoder.py_scanstring(expected, 1)[0]
+                        self.assertEqual(scanner(document, 2),
+                                         ([decoded, 12.5, True], len(document)))
+                        self.assertEqual(_testcapi.unicode_storage(document),
+                                         doc_before)
+                    self.assertEqual(_testcapi.unicode_storage(value), before)
+
+    def test_json_escape_boundaries(self):
+        import json
+        _json = import_helper.import_module('_json')
+        text = (''.join(map(chr, range(32))) + '"\\' +
+                '\x7f\x80\u07ff\u0800\ud7ff\ud800\udfff\ue000\uffff'
+                '\U00010000\U0010ffff')
+        for repeat in (1, 31):
+            value = self.make_string(text * repeat)
+            for ascii_only, encode, reference in (
+                (False, _json.encode_basestring,
+                 json.encoder.py_encode_basestring),
+                (True, _json.encode_basestring_ascii,
+                 json.encoder.py_encode_basestring_ascii),
+            ):
+                with self.subTest(repeat=repeat, ascii_only=ascii_only):
+                    expected = reference(text * repeat)
+                    self.assertEqual(encode(value), expected)
+                    self.assertEqual(
+                        json.dumps([value, value], ensure_ascii=ascii_only),
+                        '[' + expected + ', ' + expected + ']')
+                    self.assertEqual(_testcapi.unicode_storage(value)[3], 0)
+
+    def test_json_hooks_without_fsr(self):
+        import json
+        _json = import_helper.import_module('_json')
+        for factory in (self.make_string, Str):
+            value = factory('{"日":[12,1.5,NaN],"😀":"\udcff"}')
+            before = _testcapi.unicode_storage(value)
+            decoder = json.JSONDecoder(parse_int=str, parse_float=str,
+                                       parse_constant=str,
+                                       object_pairs_hook=tuple,
+                                       array_hook=tuple)
+            self.assertEqual(_json.make_scanner(decoder)(value, 0),
+                             ((("日", ("12", "1.5", "NaN")),
+                               ("😀", "\udcff")), len(value)))
+            self.assertEqual(_testcapi.unicode_storage(value), before)
+
+    def test_json_character_offsets(self):
+        import json
+        _json = import_helper.import_module('_json')
+        scanner = _json.make_scanner(json.JSONDecoder())
+        for document, position in (
+            ('["日😀",]', 5),
+            ('{"日😀":0,}', 7),
+            ('["日😀",?]', 6),
+        ):
+            value = self.make_string(document)
+            before = _testcapi.unicode_storage(value)
+            try:
+                scanner(value, 0)
+            except json.JSONDecodeError as exc:
+                self.assertEqual(exc.pos, position)
+                self.assertIs(exc.doc, value)
+            except StopIteration as exc:
+                self.assertEqual(exc.value, position)
+            else:
+                self.fail('invalid JSON accepted')
+            self.assertEqual(_testcapi.unicode_storage(value)[:3], before[:3])
+        value = self.make_string('日😀"a\\n語"tail')
+        before = _testcapi.unicode_storage(value)
+        self.assertEqual(_json.scanstring(value, 3), ('a\n語', 8))
+        self.assertEqual(_testcapi.unicode_storage(value)[:3], before[:3])
+
+    def test_json_invalid_escape_offsets(self):
+        import json
+        _json = import_helper.import_module('_json')
+        for document, message, position in (
+            ('"日\\u12語4"', 'Invalid \\uXXXX escape', 3),
+            ('"日\\ud800\\u日"', 'Invalid \\uXXXX escape', 9),
+            ('"日\n"', 'Invalid control character at', 2),
+            ('"日\\q"', 'Invalid \\escape', 2),
+            ('日😀', 'Unterminated string starting at', 0),
+        ):
+            with self.subTest(document=ascii(document)):
+                value = self.make_string(document)
+                before = _testcapi.unicode_storage(value)
+                with self.assertRaises(json.JSONDecodeError) as caught:
+                    _json.scanstring(value, 1)
+                self.assertEqual(caught.exception.msg, message)
+                self.assertEqual(caught.exception.pos, position)
+                self.assertEqual(_testcapi.unicode_storage(value)[:3], before[:3])
+
+    @unittest.skipIf(_testinternalcapi is None, 'need _testinternalcapi')
+    def test_next_cursor(self):
+        for text in ('', 'ascii', 'a\0é日😀\ud800\udcffz'):
+            for factory in (self.make_string, Str):
+                value = factory(text)
+                before = _testcapi.unicode_storage(value)
+                pos = 0
+                for ch in text:
+                    saved = pos
+                    result, pos = _testinternalcapi.unicode_next(value, pos)
+                    self.assertEqual(result, ord(ch))
+                    self.assertEqual(_testinternalcapi.unicode_next(value, saved),
+                                     (result, pos))
+                self.assertEqual(_testinternalcapi.unicode_next(value, pos),
+                                 (None, pos))
+                self.assertEqual(_testcapi.unicode_storage(value), before)
+        value = self.make_string('日😀\udcff')
+        self.assertEqual(_testinternalcapi.unicode_next(value, 0), (ord('日'), 3))
+        self.assertEqual(_testinternalcapi.unicode_next(value, 3, True),
+                         (ord('😀'), 7))
+        self.assertEqual(_testinternalcapi.unicode_next(value, 7), (0xdcff, 10))
+        self.assertEqual(_testinternalcapi.unicode_next(value, 10), (None, 10))
+
+    @unittest.skipIf(_testinternalcapi is None, 'need _testinternalcapi')
+    def test_utf8_view(self):
+        for text in ('', 'ascii', 'é日😀\0\ud800\udcff'):
+            for factory in (self.make_string, Str):
+                value = factory(text)
+                before = _testcapi.unicode_storage(value)
+                data, borrowed = _testinternalcapi.unicode_utf8_view(value)
+                self.assertEqual(data, text.encode('utf-8', 'surrogatepass'))
+                self.assertTrue(borrowed)
+                self.assertEqual(_testcapi.unicode_storage(value), before)
+                self.assertEqual(_testinternalcapi.unicode_utf8_view(value, True),
+                                 (data, borrowed))
+
+    @unittest.skipIf(_testinternalcapi is None, 'need _testinternalcapi')
+    def test_utf8_view_writable_fsr(self):
+        for ch in (ord('é'), ord('日'), ord('😀'), 0xd800):
+            value = _testcapi.unicode_new(3, ch)
+            before = _testcapi.unicode_storage(value)
+            data, borrowed = _testinternalcapi.unicode_utf8_view(value)
+            self.assertEqual(data, (chr(ch) * 3).encode('utf-8', 'surrogatepass'))
+            self.assertFalse(borrowed)
+            self.assertEqual(_testcapi.unicode_storage(value), before)
+
+    def test_codec_handlers_without_fsr(self):
+        import codecs
+        for handler in (codecs.namereplace_errors,
+                        codecs.xmlcharrefreplace_errors,
+                        codecs.backslashreplace_errors,
+                        codecs.lookup_error('surrogatepass'),
+                        codecs.lookup_error('surrogateescape')):
+            for factory in (self.make_string, Str):
+                value = factory('日😀\udc80\udcffz')
+                before = _testcapi.unicode_storage(value)
+                error = UnicodeEncodeError('utf-8', value, 2, 4, 'test')
+                expected = handler(UnicodeEncodeError(
+                    'utf-8', Str('日😀\udc80\udcffz'), 2, 4, 'test'))
+                self.assertEqual(handler(error), expected)
+                self.assertEqual(_testcapi.unicode_storage(value), before)
+
+    def test_csv_without_fsr(self):
+        import csv
+        import io
+        for factory in (self.make_string, Str):
+            for text in ('日😀', '日,"😀', '日\n😀', '日\0\udcff'):
+                value = factory(text)
+                ending = factory('終\r\n')
+                before = [_testcapi.unicode_storage(v) for v in (value, ending)]
+                output = io.StringIO()
+                csv.writer(output, lineterminator=ending).writerow([value])
+                expected = ('"' + text.replace('"', '""') + '"'
+                            if any(c in text for c in ',"\n') else text)
+                self.assertEqual(output.getvalue(), expected + ending)
+                line = factory(expected + '\r\n')
+                line_before = _testcapi.unicode_storage(line)
+                self.assertEqual(list(csv.reader([line])), [[text]])
+                self.assertEqual(_testcapi.unicode_storage(line), line_before)
+                after = [_testcapi.unicode_storage(v) for v in (value, ending)]
+                self.assertEqual(after[0][:3], before[0][:3])
+                self.assertEqual(after[1][:3], before[1][:3])
+
+    def test_pickle_and_strftime_without_fsr(self):
+        import pickle
+        import time
+        value = self.make_string('日😀\0\n\r\\\x1a\ud800\udcff')
+        self.assertEqual(pickle.loads(pickle.dumps(value, protocol=0)), value)
+        self.assertEqual(_testcapi.unicode_storage(value)[3], 0)
+        for factory in (self.make_string, Str):
+            value = factory('日%Y😀\0%m\udcff%%')
+            before = _testcapi.unicode_storage(value)
+            self.assertEqual(time.strftime(value, (2026, 9, 20, 1, 2, 3, 6, 263, 0)),
+                             '日2026😀\0' '09\udcff%')
+            self.assertEqual(_testcapi.unicode_storage(value), before)
+
+    def test_encoding_map_without_fsr(self):
+        import codecs
+        for first, last in (('\0', '日'), ('X', '日'), ('\0', '😀')):
+            for factory in (self.make_string, Str):
+                table = factory(first + ''.join(map(chr, range(1, 255))) + last)
+                before = _testcapi.unicode_storage(table)
+                mapping = codecs.charmap_build(table)
+                self.assertEqual(codecs.charmap_encode(last, 'strict', mapping),
+                                 (b'\xff', 1))
+                self.assertEqual(_testcapi.unicode_storage(table), before)
+
+    def test_expat_encoding_table_without_fsr(self):
+        import codecs
+        expat = import_helper.import_module('pyexpat')
+        table = self.make_string(''.join(map(chr, range(128))) + '日' +
+                                 ''.join(map(chr, range(129, 256))))
+        def decode(data, errors='strict'):
+            self.assertEqual(bytes(data), bytes(range(256)))
+            return table, 256
+        def search(name):
+            if name == 'test_utf8_cursor_expat':
+                return codecs.CodecInfo(name=name, encode=codecs.latin_1_encode,
+                                        decode=decode)
+        codecs.register(search)
+        try:
+            parser = expat.ParserCreate('test_utf8_cursor_expat')
+            output = []
+            parser.CharacterDataHandler = output.append
+            parser.Parse(b'<x>\x80</x>', True)
+            self.assertEqual(output, ['日'])
+            self.assertEqual(_testcapi.unicode_storage(table)[3], 0)
+        finally:
+            codecs.unregister(search)
+
+    def test_normalization_without_fsr(self):
+        ud = import_helper.import_module('unicodedata')
+        for database in (ud, ud.ucd_3_2_0):
+            for text in ('日😀', 'a\u0315\u0300', '\uac01', '\ufdfa',
+                         'x\ud800\udcff'):
+                for form in ('NFC', 'NFD', 'NFKC', 'NFKD'):
+                    expected = database.normalize(form, text)
+                    for factory in (self.make_string, Str):
+                        value = factory(text)
+                        before = _testcapi.unicode_storage(value)
+                        self.assertEqual(database.normalize(form, value), expected)
+                        self.assertEqual(database.is_normalized(form, value),
+                                         expected == text)
+                        self.assertEqual(_testcapi.unicode_storage(value), before)
+        for text, category in (('日', 'Lo'), ('😀', 'So'), ('\udcff', 'Cs')):
+            value = self.make_string(text)
+            self.assertEqual(ud.category(value), category)
+            self.assertEqual(_testcapi.unicode_storage(value)[3], 0)
+
+    def test_graphemes_without_fsr(self):
+        ud = import_helper.import_module('unicodedata')
+        pieces = ['a\u0301', '🇯🇵', '👩\u200d💻', '\r\n', '\udcff']
+        for factory in (self.make_string, Str):
+            value = factory(''.join(pieces))
+            before = _testcapi.unicode_storage(value)
+            self.assertEqual(list(map(str, ud.iter_graphemes(value))), pieces)
+            self.assertEqual(list(map(str, ud.iter_graphemes(value, 2, -1))),
+                             pieces[1:-1])
+            self.assertEqual(list(ud.iter_graphemes(value, PY_SSIZE_T_MAX)), [])
+            self.assertEqual(_testcapi.unicode_storage(value)[:3], before[:3])
+        value = self.make_string(''.join(pieces))
+        iterator = ud.iter_graphemes(value)
+        self.assertEqual(str(next(iterator)), pieces[0])
+        _testcapi.unicode_materialize_fsr(value)
+        self.assertEqual(list(map(str, iterator)), pieces[1:])
+
+    def test_decimal_input_without_fsr(self):
+        decimal = import_helper.import_module('_decimal')
+        for factory in (self.make_string, Str):
+            for text, expected in (('\u2003１２_٣.٥\u2002', '123.5'),
+                                   ('１２_ ', '12'), ('_１２_', '12')):
+                value = factory(text)
+                before = _testcapi.unicode_storage(value)
+                self.assertEqual(decimal.Decimal(value), decimal.Decimal(expected))
+                self.assertEqual(_testcapi.unicode_storage(value), before)
+            for text in ('１２ _ ', '１２\u2003_', '１２\0', '１２\udcff'):
+                value = factory(text)
+                before = _testcapi.unicode_storage(value)
+                with self.assertRaises(decimal.InvalidOperation):
+                    decimal.Decimal(value)
+                self.assertEqual(_testcapi.unicode_storage(value), before)
+            value = factory('１２.٥')
+            before = _testcapi.unicode_storage(value)
+            self.assertEqual(decimal.Context().create_decimal(value),
+                             decimal.Decimal('12.5'))
+            self.assertEqual(_testcapi.unicode_storage(value), before)
+
+    def test_lazy_fsr(self):
+        for text in ('café', '日本語', 'a😀b', 'x\0é', 'a\ud800\udcffb',
+                     '\ud800\udc00'):
+            with self.subTest(text=ascii(text)):
+                value = self.make_string(text)
+                before = _testcapi.unicode_storage(value)
+                self.assertEqual(before[:4], (1, 1, int(any(
+                    0xd800 <= ord(c) <= 0xdfff for c in text)), 0))
+                self.assertEqual(before[4], len(text.encode('utf-8', 'surrogatepass')))
+                size = value.__sizeof__()
+                self.assertEqual(value[1], text[1])
+                self.assertEqual(_testcapi.unicode_storage(value)[3], 1)
+                self.assertGreater(value.__sizeof__(), size)
+                size = value.__sizeof__()
+                self.assertEqual(value[-1], text[-1])
+                self.assertEqual(value.__sizeof__(), size)
+
+    def test_native_operations(self):
+        for text in ('café', '日本語', 'a😀b', 'x\0é', '\ud800\udc00'):
+            with self.subTest(text=ascii(text)):
+                value = self.make_string(text)
+                other = self.make_string(text)
+                self.assertEqual(len(value), len(text))
+                self.assertEqual(hash(value), hash(other))
+                self.assertEqual(value, other)
+                self.assertFalse(value < other)
+                self.assertEqual(list(value), list(text))
+                self.assertEqual([c for c in value], list(text))
+                self.assertEqual(value + other, text + text)
+                self.assertEqual({value: 42}[other], 42)
+                self.assertEqual(_testcapi.unicode_storage(value)[3], 0)
+                self.assertEqual(_testcapi.unicode_storage(other)[3], 0)
+
+    def test_surrogate_boundaries(self):
+        high = self.make_string('a\ud800')
+        low = self.make_string('\udc00b')
+        combined = high + low
+        self.assertEqual(len(combined), 4)
+        self.assertEqual(combined.encode('utf-8', 'surrogatepass'),
+                         b'a\xed\xa0\x80\xed\xb0\x80b')
+        self.assertRaises(UnicodeEncodeError, combined.encode, 'utf-8')
+        self.assertRaises(UnicodeEncodeError, _testcapi.unicode_asutf8, combined, 0)
+        raw = b'a\x80\xffb'
+        value = raw.decode('utf-8', 'surrogateescape')
+        self.assertEqual(_testcapi.unicode_storage(value)[2], 1)
+        self.assertEqual(value.encode('utf-8', 'surrogateescape'), raw)
+
+    def test_decoder_native_outputs(self):
+        text = '日😀\udcff'
+        cases = [(encoding, text.encode(encoding, 'surrogatepass'),
+                  'surrogatepass', text)
+                 for encoding in ('utf-8', 'utf-7', 'utf-16-le', 'utf-16-be',
+                                  'utf-32-le', 'utf-32-be', 'unicode_escape',
+                                  'raw_unicode_escape')]
+        cases.extend((
+            ('ascii', b'x\xff', 'surrogateescape', 'x\udcff'),
+            ('utf-8', b'\xe6\x97\xa5\xff', 'replace', '日\ufffd'),
+            ('euc_jis_2004', b'\xa4\xf7', 'strict', 'か\u309a'),
+        ))
+        for encoding, raw, errors, expected in cases:
+            with self.subTest(encoding=encoding, errors=errors):
+                result = raw.decode(encoding, errors)
+                self.assertEqual(result, expected)
+                state = _testcapi.unicode_storage(result)
+                self.assertEqual((state[0], state[3]), (1, 0))
+                self.assertEqual(state[2], int(any(
+                    0xd800 <= ord(ch) <= 0xdfff for ch in expected)))
+
+    def test_count_utf8(self):
+        for text in ('', 'aaaa', 'ééaé', '日本日本語', '😀a😀',
+                     'a\0日本\0', '\ud800\udc00\ud800', 'a\udcffb'):
+            chars = list(text)
+            for needle in ('', 'a', 'é', '日本', '😀', '\0', '\ud800',
+                           '\ud800\udc00', '\udcff'):
+                for start, end in ((0, sys.maxsize), (-4, -1), (1, 3),
+                                   (0, 0), (50, 60), (3, 1), (-50, 50)):
+                    with self.subTest(text=ascii(text), needle=ascii(needle),
+                                      start=start, end=end):
+                        value = self.make_string(text)
+                        sub = self.make_string(needle)
+                        before = [_testcapi.unicode_storage(s) for s in (value, sub)]
+                        part = chars[start:end]
+                        pattern = list(needle)
+                        expected = 0
+                        if not pattern:
+                            expected = (len(part) + 1 if start <= len(chars)
+                                        and max(start, 0) <= end else 0)
+                            if start < 0 or end < 0:
+                                lo, hi, _ = slice(start, end).indices(len(chars))
+                                expected = max(hi - lo + 1, 0)
+                        else:
+                            pos = 0
+                            while pos <= len(part) - len(pattern):
+                                if part[pos:pos + len(pattern)] == pattern:
+                                    expected += 1
+                                    pos += len(pattern)
+                                else:
+                                    pos += 1
+                        self.assertEqual(value.count(sub, start, end), expected)
+                        after = [_testcapi.unicode_storage(s) for s in (value, sub)]
+                        # Bounded operations may materialize the source FSR.
+                        self.assertEqual(after[0][:3], before[0][:3])
+                        self.assertEqual(after[1], before[1])
+
+    def test_replace_utf8(self):
+        cases = (
+            ('日本日本語', '日本', '😀', '😀😀語'),
+            ('ééé', 'éé', '日本', '日本é'),
+            ('a😀b', '', '日', '日a日😀日b日'),
+            ('a\0日\0', '\0', '😀', 'a😀日😀'),
+            ('\ud800\udc00', '\ud800', '', '\udc00'),
+            ('\ud800x', 'x', '\udc00', '\ud800\udc00'),
+            ('a\udcffb', '\udcff', 'x', 'axb'),
+            ('a😀a', '😀', '', 'aa'),
+            ('日本', '日本', 'é', 'é'),
+            ('😀', '😀', '', ''),
+            ('日本', 'missing', '😀', '日本'),
+            ('', '', '日本', '日本'),
+        )
+        for text, old, new, expected in cases:
+            for limit in (-1, 0, 1, 2, sys.maxsize):
+                with self.subTest(text=ascii(text), old=ascii(old), limit=limit):
+                    value, sub, replacement = map(self.make_string, (text, old, new))
+                    operands = (value, sub, replacement)
+                    before = [_testcapi.unicode_storage(s) for s in operands]
+                    # Also exercise noncompact UTF-8 input.
+                    reference = Str(text).replace(old, new, limit)
+                    result = value.replace(sub, replacement, limit)
+                    self.assertEqual(result, reference)
+                    if limit < 0:
+                        self.assertEqual(result, expected)
+                    self.assertEqual([_testcapi.unicode_storage(s) for s in operands], before)
+                    state = _testcapi.unicode_storage(result)
+                    if state[0]:
+                        self.assertEqual(state[2], any(
+                            0xd800 <= ord(ch) <= 0xdfff for ch in result))
+                        if len(result) > 1:
+                            self.assertEqual(state[3], 0)
+                    self.assertEqual(result.encode('utf-8', 'surrogatepass'),
+                                     reference.encode('utf-8', 'surrogatepass'))
+
+    def test_count_replace_mixed_storage(self):
+        for ch in (0xe9, 0x65e5, 0xd800, 0x1f600):
+            legacy = _testcapi.unicode_new(4, ch)
+            compact = self.make_string(chr(ch) * 4)
+            for value in (legacy, compact):
+                for old in (legacy, compact):
+                    self.assertEqual(value.count(old), 1)
+                    self.assertEqual(value.replace(old, '日本'), '日本')
+                    self.assertEqual(value.replace(old, legacy), compact)
+
+    def test_utf8_search_bounds(self):
+        for text in ('', 'abcabc', 'é日本😀日\0\ud800\udc00日', '\udcff日'):
+            for needle in ('', '日', '日本', '😀', '\0', '\ud800',
+                           '\ud800\udc00', '\udcff', 'absent'):
+                for start, end in ((0, sys.maxsize), (-5, -1), (1, 4),
+                                   (0, 0), (50, 60), (3, 1), (-50, 50)):
+                    value, sub = map(self.make_string, (text, needle))
+                    before = [_testcapi.unicode_storage(x) for x in (value, sub)]
+                    for method in ('find', 'rfind', 'startswith', 'endswith'):
+                        with self.subTest(method=method, text=ascii(text),
+                                          needle=ascii(needle), start=start, end=end):
+                            self.assertEqual(getattr(value, method)(sub, start, end),
+                                             getattr(Str(text), method)(Str(needle), start, end))
+                    self.assertEqual(sub in value, Str(needle) in Str(text))
+                    after = [_testcapi.unicode_storage(x) for x in (value, sub)]
+                    # A non-default range may materialize the UTF-8 source.
+                    self.assertEqual(after[0][:3], before[0][:3])
+                    self.assertEqual(after[1], before[1])
+
+    def test_cached_bounded_operations(self):
+        bounds = (-20, -3, -1, 0, 1, 3, 20, sys.maxsize)
+        for text in ('aééz', 'a日本z', 'a😀😀z', 'a\0\ud800\udcffz'):
+            chars = list(text)
+            for factory in (self.make_string, Str):
+                value = factory(text)
+                _testcapi.unicode_materialize_fsr(value)
+                before = _testcapi.unicode_storage(value)
+                for start in bounds:
+                    for end in bounds:
+                        with self.subTest(text=ascii(text), factory=factory,
+                                          start=start, end=end):
+                            self.assertEqual(value[start:end],
+                                             ''.join(chars[start:end]))
+                            lo = max(len(chars) + start, 0) if start < 0 else start
+                            hi = (max(len(chars) + end, 0) if end < 0
+                                  else min(end, len(chars)))
+                            for text_sub in ('', 'a', text[1:3], 'z', '\0',
+                                             '\ud800', '😀', 'missing'):
+                                sub = self.make_string(text_sub)
+                                sub_before = _testcapi.unicode_storage(sub)
+                                pattern = list(text_sub)
+                                fits = lo <= hi and len(pattern) <= hi - lo
+                                self.assertEqual(value.startswith(sub, start, end),
+                                    fits and chars[lo:lo + len(pattern)] == pattern)
+                                self.assertEqual(value.endswith(sub, start, end),
+                                    fits and chars[hi - len(pattern):hi] == pattern)
+                                matches = [i for i in range(lo, hi - len(pattern) + 1)
+                                           if chars[i:i + len(pattern)] == pattern]
+                                self.assertEqual(value.find(sub, start, end),
+                                                 matches[0] if matches else -1)
+                                self.assertEqual(value.rfind(sub, start, end),
+                                                 matches[-1] if matches else -1)
+                                self.assertEqual(_testcapi.unicode_storage(sub),
+                                                 sub_before)
+                self.assertEqual(_testcapi.unicode_storage(value), before)
+
+    def test_uncached_bounded_operations_materialize_fsr(self):
+        value = self.make_string('a日本z')
+        self.assertEqual(_testcapi.unicode_storage(value)[3], 0)
+        self.assertEqual(value.find('日本', 1), 1)
+        self.assertEqual(_testcapi.unicode_storage(value)[3], 1)
+
+        if _testlimitedcapi is not None:
+            from _testlimitedcapi import unicode_findchar
+            value = self.make_string('a日本z')
+            self.assertEqual(
+                unicode_findchar(value, ord('日'), 1, 3, 1), 1)
+            self.assertEqual(_testcapi.unicode_storage(value)[3], 1)
+
+        value = self.make_string('a日本z')
+        copied, count = _testcapi.unicode_copycharacters(
+            '日xxx', 0, value, 1, 2)
+        self.assertEqual((copied, count), ('日本\0\0', 2))
+        self.assertEqual(_testcapi.unicode_storage(value)[3], 1)
+
+        value = self.make_string('a日本z')
+        self.assertEqual(value.count('日本', 1, 3), 1)
+        self.assertEqual(_testcapi.unicode_storage(value)[3], 1)
+
+        value = self.make_string('a日本z')
+        self.assertTrue(value.startswith('a', 0, len(value)))
+        self.assertEqual(_testcapi.unicode_storage(value)[3], 1)
+
+        value = self.make_string('a日本z')
+        self.assertEqual(value[1:3], '日本')
+        self.assertEqual(_testcapi.unicode_storage(value)[3], 1)
+
+        value = self.make_string('a日本z')
+        iterator = iter(value)
+        iterator.__setstate__(1)
+        self.assertEqual(next(iterator), '日')
+        self.assertEqual(_testcapi.unicode_storage(value)[3], 1)
+
+    @unittest.skipIf(_testlimitedcapi is None, 'need _testlimitedcapi')
+    def test_cached_search_overestimated_width(self):
+        for ch in ('a', 'é', '\udcff'):
+            needle, _ = _testlimitedcapi.unicode_writechar('😀', 0, ord(ch))
+            value = self.make_string(ch * 4)
+            _testcapi.unicode_materialize_fsr(value)
+            self.assertEqual(value.find(needle, 1), 1)
+            self.assertEqual(value.rfind(needle, 0, 3), 2)
+            self.assertTrue(value.startswith(needle, 1))
+            self.assertTrue(value.endswith(needle, 0, 3))
+            # A multi-character overestimated needle exercises conversion.
+            needle, _ = _testlimitedcapi.unicode_writechar('b😀', 1, ord(ch))
+            value = self.make_string(('b' + ch) * 2)
+            _testcapi.unicode_materialize_fsr(value)
+            self.assertEqual(value.find(needle, 1), 2)
+            self.assertEqual(value.rfind(needle, 0, 3), 0)
+
+    def test_cached_search_allocation_failure(self):
+        from test.support.script_helper import assert_python_ok
+        assert_python_ok('-c', textwrap.dedent(r"""
+            import _testcapi
+            value = b'a\xf0\x9f\x98\x80bcabc'.decode()
+            _testcapi.unicode_materialize_fsr(value)
+            remove_hooks = _testcapi.remove_mem_hooks
+            for operation in (value.find, value.rfind):
+                for fail_at in range(5):
+                    try:
+                        _testcapi.set_nomemory(fail_at, fail_at + 1)
+                        operation('bc', 1)
+                    except MemoryError:
+                        pass
+                    finally:
+                        remove_hooks()
+                    assert operation('bc', 1) == (2 if operation == value.find else 5)
+        """))
+
+    def test_unified_operations_mixed_storage(self):
+        # Check each operand independently: views may borrow primary storage
+        # or own a temporary encoding, including surrogatepass sequences.
+        for source_type in (self.make_string, Str):
+            for needle_type in (self.make_string, Str):
+                for replacement_type in (self.make_string, Str):
+                    s = source_type('a日\udcff日\tZ')
+                    needle = needle_type('日')
+                    replacement = replacement_type('😀')
+                    before = [_testcapi.unicode_storage(x)
+                              for x in (s, needle, replacement)]
+                    self.assertIn(needle, s)
+                    self.assertEqual(s.find(needle), 1)
+                    self.assertEqual(s.rfind(needle), 3)
+                    self.assertEqual(s.count(needle), 2)
+                    self.assertTrue(s.startswith(needle, 1))
+                    self.assertTrue(s.endswith(needle, 0, 4))
+                    self.assertEqual(s.replace(needle, replacement),
+                                     'a😀\udcff😀\tZ')
+                    self.assertEqual(s.split(needle), ['a', '\udcff', '\tZ'])
+                    self.assertEqual(s.rsplit(needle, 1), ['a日\udcff', '\tZ'])
+                    self.assertEqual(s.partition(needle), ('a', '日', '\udcff日\tZ'))
+                    self.assertEqual(s.rpartition(needle), ('a日\udcff', '日', '\tZ'))
+                    self.assertEqual(s.expandtabs(4), 'a日\udcff日    Z')
+                    self.assertEqual(s.upper(), 'A日\udcff日\tZ')
+                    self.assertEqual(s.lower(), 'a日\udcff日\tz')
+                    self.assertEqual(s.title(), 'A日\udcff日\tZ')
+                    self.assertEqual(s.capitalize(), 'A日\udcff日\tz')
+                    self.assertEqual(s.swapcase(), 'A日\udcff日\tz')
+                    self.assertEqual(s.casefold(), 'a日\udcff日\tz')
+                    after = [_testcapi.unicode_storage(x)
+                             for x in (s, needle, replacement)]
+                    self.assertEqual(after[0][:3], before[0][:3])
+                    self.assertEqual(after[1:], before[1:])
+                    self.assertRaises(UnicodeEncodeError,
+                                      _testcapi.unicode_asutf8, s, 0)
+
+    @unittest.skipIf(_testlimitedcapi is None, 'need _testlimitedcapi module')
+    def test_unified_operations_overestimated_width(self):
+        # C writes can leave FSR-primary strings with an overestimated kind.
+        needle, _ = _testlimitedcapi.unicode_writechar('😀', 0, ord('a'))
+        self.assertIn(needle, 'abc')
+        self.assertEqual('abc'.find(needle), 0)
+        self.assertEqual('abc'.count(needle), 1)
+        self.assertEqual('abc'.split(needle), ['', 'bc'])
+        self.assertEqual('abc'.replace(needle, 'X'), 'Xbc')
+        value, _ = _testlimitedcapi.unicode_writechar('\t😀', 1, ord('a'))
+        self.assertEqual(value.expandtabs(2), '  a')
+        self.assertEqual(value.upper(), '\tA')
+
+    def test_copy_operations_overestimated_width(self):
+        for text in ('a', 'é', '\udcff'):
+            value, _ = _testlimitedcapi.unicode_writechar('😀', 0, ord(text))
+            for operation in (lambda x: x * 3,
+                              lambda x: x.join(['a', 'b']),
+                              lambda x: ''.join([x, x]),
+                              lambda x: x.center(5, ' '),
+                              lambda x: x.strip('a'), repr):
+                with self.subTest(text=ascii(text), operation=operation):
+                    actual = operation(value)
+                    expected = operation(text)
+                    self.assertEqual(actual, expected)
+                    self.assertEqual(actual.encode('utf-8', 'surrogatepass'),
+                                     expected.encode('utf-8', 'surrogatepass'))
+                    self.assertEqual(actual.isascii(), expected.isascii())
+                    if '\udcff' in actual:
+                        self.assertRaises(UnicodeEncodeError, actual.encode)
+
+    def test_compare_storage_combinations(self):
+        values = ('', 'a', 'é', '日', '\ud7ff', '\ud800', '\udcff',
+                  '\ue000', '😀', '日\0', '日日')
+        for a in values:
+            for b in values:
+                expected = (list(map(ord, a)) > list(map(ord, b))) - (
+                    list(map(ord, a)) < list(map(ord, b)))
+                for left in (self.make_string(a), Str(a)):
+                    for right in (self.make_string(b), Str(b)):
+                        self.assertEqual((left > right) - (left < right), expected)
+
+    def test_utf8_view_allocation_failures(self):
+        from test.support.script_helper import assert_python_ok
+        assert_python_ok('-c', textwrap.dedent(r"""
+            import _testcapi
+            class Str(str): pass
+            source, needle, replacement = map(Str, ('AΣ日\udcff\t日', '日', '😀'))
+            operations = (
+                lambda: needle in source,
+                lambda: source.find(needle), lambda: source.rfind(needle),
+                lambda: source.count(needle), lambda: source.startswith(needle),
+                lambda: source.endswith(needle),
+                lambda: source.replace(needle, replacement),
+                lambda: source.split(needle), lambda: source.rsplit(needle),
+                lambda: source.partition(needle), lambda: source.rpartition(needle),
+                lambda: source.expandtabs(4), source.lower, source.upper,
+                source.title, source.capitalize, source.swapcase, source.casefold,
+                lambda: repr(source), lambda: source.strip(needle),
+                lambda: source.join([source, replacement]),
+                lambda: source * 3, lambda: source.center(25, '😀'),
+            )
+            raw = source.encode('utf-8', 'surrogatepass')
+            remove_hooks = _testcapi.remove_mem_hooks
+            for operation in operations:
+                expected = operation()
+                for fail_at in range(12):
+                    try:
+                        _testcapi.set_nomemory(fail_at, fail_at + 1)
+                        operation()
+                    except MemoryError:
+                        pass
+                    finally:
+                        remove_hooks()
+                    assert source.encode('utf-8', 'surrogatepass') == raw
+                    assert operation() == expected
+        """))
+
+    def test_utf8_copy_and_scan_methods(self):
+        operations = {
+            'repr': repr,
+            'split': lambda s: s.split('日', 2),
+            'rsplit': lambda s: s.rsplit('日', 2),
+            'split_ws': lambda s: s.split(None, 2),
+            'rsplit_ws': lambda s: s.rsplit(None, 2),
+            'split_zero': lambda s: s.split(None, 0),
+            'rsplit_zero': lambda s: s.rsplit(None, 0),
+            'splitlines': lambda s: s.splitlines(),
+            'splitlines_keep': lambda s: s.splitlines(True),
+            'partition': lambda s: s.partition('日'),
+            'rpartition': lambda s: s.rpartition('日'),
+            'strip': lambda s: s.strip(),
+            'lstrip': lambda s: s.lstrip(),
+            'rstrip': lambda s: s.rstrip(),
+            'strip_chars': lambda s: s.strip('日😀\udcff'),
+            'removeprefix': lambda s: s.removeprefix('日'),
+            'removesuffix': lambda s: s.removesuffix('日'),
+            'slice': lambda s: s[1:-1],
+            'join': lambda s: s.join([s, '😀', s]),
+            'repeat': lambda s: s * 3,
+            'ljust': lambda s: s.ljust(30, '😀'),
+            'rjust': lambda s: s.rjust(30, '\udcff'),
+            'center': lambda s: s.center(30, '日'),
+            'zfill': lambda s: s.zfill(30),
+            'expandtabs': lambda s: s.expandtabs(4),
+        }
+        for name in ('islower', 'isupper', 'istitle', 'isspace', 'isalpha',
+                     'isalnum', 'isdecimal', 'isdigit', 'isnumeric',
+                     'isidentifier', 'isprintable', 'upper', 'lower', 'title',
+                     'capitalize', 'swapcase', 'casefold'):
+            operations[name] = getattr(str, name)
+        for text in ('日日本😀\udcff日', '\u3000é\t日\r\n😀\x85日\u2028\u3000',
+                     '\ud800x\udc00', '-日本😀', '+\udcff', 'Éabc\0日', 'éé'):
+            for name, operation in operations.items():
+                with self.subTest(method=name, text=ascii(text)):
+                    value = self.make_string(text)
+                    self.assertEqual(operation(value), operation(Str(text)))
+
+    def test_utf8_case_context(self):
+        for text in ('AΣ', 'AΣA', 'A\u0345Σ\u0301', 'AΣ\u0345A',
+                     'Σ\u0301', 'ßİﬃǅ', '\U00010400\U00010428',
+                     'AΣ\udcffΣ\ud800', 'AΣ\0ΣA'):
+            for name in ('upper', 'lower', 'title', 'capitalize', 'swapcase',
+                         'casefold'):
+                with self.subTest(text=ascii(text), method=name):
+                    value = self.make_string(text)
+                    self.assertEqual(getattr(value, name)(),
+                                     getattr(Str(text), name)())
+                    self.assertEqual(_testcapi.unicode_storage(value)[3], 0)
+
+    def test_utf8_native_allocation_failures(self):
+        from test.support.script_helper import assert_python_ok
+        assert_python_ok('-c', textwrap.dedent(r"""
+            import _testcapi
+            raw = ' 日\t本😀日\n '.encode()
+            remove_hooks = _testcapi.remove_mem_hooks
+            operations = (
+                lambda s: s.split('日'), lambda s: s.rsplit(None, 1),
+                lambda s: s.partition('日'), lambda s: s.rpartition('日'),
+                lambda s: s.splitlines(), lambda s: s.strip(),
+                lambda s: s[1:-1], lambda s: s.join([s, s]),
+                lambda s: s * 3, lambda s: s.center(20, '😀'),
+                lambda s: s.expandtabs(4), lambda s: s.zfill(20),
+                str.upper, str.lower, str.title, str.capitalize,
+                str.swapcase, str.casefold,
+            )
+            for operation in operations:
+                for fail_at in range(10):
+                    s = raw.decode()
+                    before = _testcapi.unicode_storage(s)
+                    try:
+                        _testcapi.set_nomemory(fail_at, fail_at + 1)
+                        operation(s)
+                    except MemoryError:
+                        pass
+                    finally:
+                        remove_hooks()
+                    assert s.encode() == raw
+                    assert _testcapi.unicode_storage(s)[:3] == before[:3]
+                    operation(s)
+        """))
+
+    def test_utf8_replace_allocation_failure(self):
+        from test.support.script_helper import assert_python_ok
+        assert_python_ok('-c', textwrap.dedent(r"""
+            import _testcapi
+            s = '日本日本'.encode().decode()
+            old = '日本'.encode().decode()
+            new = '😀😀'.encode().decode()
+            replace = s.replace
+            count = s.count
+            remove_hooks = _testcapi.remove_mem_hooks
+            try:
+                _testcapi.set_nomemory(0, 1)
+                n = count(old)
+            finally:
+                remove_hooks()
+            assert n == 2
+            failed = False
+            try:
+                _testcapi.set_nomemory(0, 1)
+                replace(old, new)
+            except MemoryError:
+                failed = True
+            finally:
+                remove_hooks()
+            assert failed
+            for value in (s, old, new):
+                assert _testcapi.unicode_storage(value)[3] == 0
+            assert replace(old, new) == '😀😀😀😀'
+        """))
+
+    def test_readonly_writer_preserves_lazy_fsr(self):
+        value = self.make_string('日本😀')
+        result = '{}'.format(value)
+        self.assertEqual(result, value)
+        self.assertEqual(_testcapi.unicode_storage(value)[3], 0)
+        self.assertEqual(_testcapi.unicode_storage(result)[3], 0)
+
+    @threading_helper.requires_working_threading()
+    def test_concurrent_fsr_publication(self):
+        value = self.make_string('a日本語😀' * 100)
+        self.assertEqual(_testcapi.unicode_storage(value)[3], 0)
+        before = value.__sizeof__()
+
+        def read():
+            for _ in range(50):
+                self.assertTrue(value.isprintable())
+                self.assertEqual(value.find('日'), 1)
+                self.assertEqual(value.find('日本', 5), 6)
+                self.assertTrue(value.startswith('日本', 6))
+                self.assertTrue(value.endswith('日本', 0, 8))
+                self.assertEqual(value[6:8], '日本')
+                _testcapi.unicode_materialize_fsr(value)
+                self.assertEqual(value[1], '日')
+                self.assertEqual(value[-1], '😀')
+
+        threading_helper.run_concurrently(read, nthreads=8)
+        self.assertEqual(value.__sizeof__() - before, 4 * (len(value) + 1))
+
+    @unittest.skipIf(_testinternalcapi is None, 'need _testinternalcapi')
+    def test_hash_caches_fsr_utf8(self):
+        for ch in (0xa1, 0x100, 0xd800, 0xdcff, 0x10000):
+            for pre_cached in (False, True):
+                if pre_cached and 0xd800 <= ch <= 0xdfff:
+                    continue
+                with self.subTest(ch=ch, pre_cached=pre_cached):
+                    value = _testcapi.unicode_new(3, ch)
+                    expected = chr(ch) * 3
+                    encoded = expected.encode('utf-8', 'surrogatepass')
+                    if pre_cached:
+                        _testcapi.unicode_asutf8(value, 0)
+                    before = value.__sizeof__()
+                    self.assertEqual(hash(value), hash(expected))
+                    size = value.__sizeof__()
+                    self.assertEqual(size - before,
+                                     0 if pre_cached else len(encoded) + 1)
+                    self.assertEqual(_testinternalcapi.unicode_utf8_view(value),
+                                     (encoded, True))
+                    self.assertEqual(hash(value), hash(expected))
+                    if 0xd800 <= ch <= 0xdfff:
+                        for _ in range(2):
+                            with self.assertRaises(UnicodeEncodeError):
+                                _testcapi.unicode_asutf8(value, 0)
+                            with self.assertRaises(UnicodeEncodeError):
+                                value.encode('utf-8')
+                        self.assertEqual(value.encode('utf-8', 'surrogatepass'),
+                                         encoded)
+                        self.assertEqual(value.encode('utf-8', 'ignore'), b'')
+                    else:
+                        self.assertEqual(_testcapi.unicode_asutf8(value, len(encoded) + 1),
+                                         encoded + b'\0')
+                    self.assertEqual(value.__sizeof__(), size)
+                    self.assertEqual(value, expected)
+
+    @unittest.skipIf(_testlimitedcapi is None or _testinternalcapi is None,
+                     'need C API test modules')
+    def test_hash_caches_promoted_fsr_utf8(self):
+        for ch in (ord('a'), ord('é'), 0xd800):
+            value, _ = _testlimitedcapi.unicode_writechar('😀', 0, ch)
+            expected = chr(ch)
+            encoded = expected.encode('utf-8', 'surrogatepass')
+            self.assertEqual(hash(value), hash(expected))
+            self.assertEqual(_testinternalcapi.unicode_utf8_view(value),
+                             (encoded, True))
+            if ch == 0xd800:
+                with self.assertRaises(UnicodeEncodeError):
+                    _testcapi.unicode_asutf8(value, 0)
+            else:
+                self.assertEqual(_testcapi.unicode_asutf8(value, len(encoded) + 1),
+                                 encoded + b'\0')
+
+    def test_hash_utf8_cache_allocation_failure(self):
+        from test.support.script_helper import assert_python_ok
+        assert_python_ok('-c', textwrap.dedent(r"""
+            import _testcapi
+            import _testinternalcapi
+            remove_hooks = _testcapi.remove_mem_hooks
+            for fail_at in (0, 1):
+                value = _testcapi.unicode_new(3, 0xd800)
+                before = value.__sizeof__()
+                failed = False
+                try:
+                    _testcapi.set_nomemory(fail_at, fail_at + 1)
+                    hash(value)
+                except MemoryError:
+                    failed = True
+                finally:
+                    remove_hooks()
+                assert failed
+                assert value.__sizeof__() == before
+                assert hash(value) == hash('\ud800' * 3)
+                assert _testinternalcapi.unicode_utf8_view(value) == (
+                    b'\xed\xa0\x80' * 3, True)
+        """))
+
+    def test_legacy_fsr_equality(self):
+        for ch in (0xa1, 0x100, 0xd800, 0x10000):
+            with self.subTest(ch=ch):
+                legacy = _testcapi.unicode_new(3, ch)
+                compact = self.make_string(chr(ch) * 3)
+                self.assertEqual(_testcapi.unicode_storage(legacy)[0], 0)
+                self.assertEqual(legacy, compact)
+                self.assertEqual(hash(legacy), hash(compact))
+                self.assertEqual({legacy: 42}[compact], 42)
+                self.assertEqual(legacy + compact, compact + legacy)
+
+    def test_operation_allocation_failures(self):
+        from test.support.script_helper import assert_python_ok
+        assert_python_ok('-c', textwrap.dedent(r"""
+            import _testcapi
+            operations = (str.upper, str.lower, str.strip, str.__repr__)
+            raw = ' a日本😀z '.encode()
+            remove_hooks = _testcapi.remove_mem_hooks
+            for operation in operations:
+                s = raw.decode()
+                failed = False
+                try:
+                    _testcapi.set_nomemory(0, 1)
+                    operation(s)
+                except MemoryError:
+                    failed = True
+                finally:
+                    remove_hooks()
+                assert failed
+                assert _testcapi.unicode_storage(s)[3] == 0
+                assert s.encode() == raw
+                operation(s)
+                assert _testcapi.unicode_storage(s)[3] == 0
+        """))
+
+    def test_fsr_failure_retry(self):
+        from test.support.script_helper import assert_python_ok
+        assert_python_ok('-c', textwrap.dedent(r"""
+            import _testcapi
+            s = b'caf\xc3\xa9'.decode()
+            failed = False
+            materialize = _testcapi.unicode_materialize_fsr
+            remove_hooks = _testcapi.remove_mem_hooks
+            try:
+                _testcapi.set_nomemory(0, 1)
+                materialize(s)
+            except MemoryError:
+                failed = True
+            finally:
+                remove_hooks()
+            assert failed
+            assert _testcapi.unicode_storage(s)[3] == 0
+            materialize(s)
+            assert _testcapi.unicode_storage(s)[3] == 1
+            assert s[3] == 'é'
+        """))
 
 
 class CAPITest(unittest.TestCase):
@@ -268,6 +2090,22 @@ class CAPITest(unittest.TestCase):
             self.assertEqual(fromkindanddata(4, s.encode(enc4)), s)
         self.assertEqual(fromkindanddata(2, '\U0001f600'.encode(enc2)),
                          '\ud83d\ude00')
+        for kind, strings in (
+            (1, ('a\0éÿ', 'é' * 100)),
+            (2, ('日', '\ud800', 'a\0é日', '\ud800\udc00', '\ud800x\udcff')),
+            (4, ('😀', '\udcff', 'a\0é日😀', '\ud800\udc00', '\ud800x\udcff')),
+        ):
+            for s in strings:
+                with self.subTest(kind=kind, s=ascii(s)):
+                    data = b''.join(ord(ch).to_bytes(kind, sys.byteorder)
+                                    for ch in s)
+                    result = fromkindanddata(kind, data)
+                    self.assertEqual(result, s)
+                    self.assertEqual(_testcapi.unicode_storage(result)[3], 0)
+        for value in (0x110000, 0xffffffff):
+            data = b'\0' * 4 + value.to_bytes(4, sys.byteorder)
+            self.assertRaises(SystemError, fromkindanddata, 4, data)
+
         for kind in 1, 2, 4:
             self.assertEqual(fromkindanddata(kind, b''), '')
             self.assertEqual(fromkindanddata(kind, b'\0'*kind), '\0')
@@ -839,6 +2677,15 @@ class CAPITest(unittest.TestCase):
             b = s.encode(encoding, 'surrogatepass')
             self.assertEqual(fromwidechar(b), s)
             self.assertEqual(fromwidechar(b + b'\0'*SIZEOF_WCHAR_T, -1), s)
+
+        for s in ('a\0é日😀', '\ud800\udc00', '\ud800x\udcff'):
+            data = s.encode(encoding, 'surrogatepass')
+            self.assertEqual(fromwidechar(data),
+                             data.decode(encoding, 'surrogatepass'))
+        if SIZEOF_WCHAR_T == 4:
+            for value in (0x110000, 0xffffffff):
+                with self.assertRaises(ValueError):
+                    fromwidechar(value.to_bytes(4, sys.byteorder))
 
         self.assertEqual(fromwidechar('abc'.encode(encoding), 2), 'ab')
         if SIZEOF_WCHAR_T == 2:
@@ -1759,6 +3606,52 @@ class CAPITest(unittest.TestCase):
 
 
 class PyUnicodeWriterTest(unittest.TestCase):
+    def test_utf8_storage(self):
+        writer = self.create_writer(0)
+        text = '日😀\udcff\0'
+        writer.write_str(text)
+        self.assertEqual(writer.storage(), (4, 11))
+        writer.write_ascii(b'abc', 3)
+        writer.write_char(ord('é'))
+        writer.write_substring('x日本y', 1, 3)
+        expected = text + 'abcé日本'
+        self.assertEqual(writer.storage(),
+                         (len(expected), len(expected.encode('utf-8', 'surrogatepass'))))
+        self.assertEqual(writer.finish(), expected)
+
+    def test_utf8_integer_writes(self):
+        for number in (0, -12345, 2**2048, -(10**200)):
+            writer = self.create_writer(0)
+            writer.write_str('日\udcff:')
+            writer.write_str(number)
+            writer.write_ascii(b'/', 1)
+            writer.write_repr(number)
+            self.assertEqual(writer.storage(),
+                             (len(f'日\udcff:{number}/{number}'),
+                              len(f'日\udcff:{number}/{number}'.encode('utf-8', 'surrogatepass'))))
+            self.assertEqual(writer.finish(), f'日\udcff:{number}/{number}')
+
+    def test_utf8_writer_allocation_failures(self):
+        from test.support.script_helper import assert_python_ok
+        assert_python_ok('-c', textwrap.dedent(r"""
+            import _testcapi
+            remove_hooks = _testcapi.remove_mem_hooks
+            value = '日😀\udcff' * 20
+            for fail_at in range(10):
+                writer = _testcapi.PyUnicodeWriter(0)
+                writer.write_str('é')
+                failed = False
+                try:
+                    _testcapi.set_nomemory(fail_at, fail_at + 1)
+                    writer.write_str(value)
+                except MemoryError:
+                    failed = True
+                finally:
+                    remove_hooks()
+                writer.write_char(ord('!'))
+                assert writer.finish() == 'é' + ('' if failed else value) + '!'
+        """))
+
     def create_writer(self, size):
         return _testcapi.PyUnicodeWriter(size)
 
@@ -1965,7 +3858,8 @@ class PyUnicodeWriterTest(unittest.TestCase):
         writer.write_ucs4("null[\0]".encode(encoding), 7)
         invalid = (b'\x00\x00\x11\x00' if sys.byteorder == 'little' else
                    b'\x00\x11\x00\x00')
-        # CRASHES writer.write_ucs4("invalid".encode(encoding) + invalid)
+        with self.assertRaises(ValueError):
+            writer.write_ucs4("invalid".encode(encoding) + invalid)
         writer.write_ucs4(NULL, 0)
         # CRASHES writer.write_ucs4(NULL, 1)
         self.assertEqual(writer.finish(),
@@ -2013,6 +3907,65 @@ class PyUnicodeWriterTest(unittest.TestCase):
 
 @unittest.skipIf(ctypes is None, 'need ctypes')
 class PyUnicodeWriterFormatTest(unittest.TestCase):
+    def test_readonly_utf8_append(self):
+        text = '日\udcff😀'.encode('utf-8', 'surrogatepass').decode('utf-8', 'surrogatepass')
+        writer = self.create_writer(0)
+        writer.set_overallocate(False)
+        writer.write_str(text)
+        self.assertIs(writer.finish(), text)
+        writer = self.create_writer(0)
+        writer.set_overallocate(False)
+        writer.write_str(text)
+        writer.write_str(123)
+        writer.write_str('abc')
+        self.assertEqual(writer.storage(), (9, 16))
+        self.assertEqual(writer.finish(), text + '123abc')
+
+    def test_utf8_reserve_allocation_failure(self):
+        from test.support.script_helper import assert_python_ok
+        assert_python_ok('-c', textwrap.dedent(r"""
+            import ctypes
+            import _testcapi
+            prepare_utf8 = ctypes.pythonapi._PyUnicodeWriter_PrepareUTF8
+            prepare_utf8.argtypes = (ctypes.c_void_p, ctypes.c_ssize_t)
+            prepare_utf8.restype = ctypes.c_int
+            remove_hooks = _testcapi.remove_mem_hooks
+            for fail_at in range(16):
+                writer = _testcapi.PyUnicodeWriter(0)
+                writer.set_overallocate(False)
+                writer.write_str('日\udcff😀')
+                pointer = writer.get_pointer()
+                try:
+                    _testcapi.set_nomemory(fail_at, fail_at + 1)
+                    prepare_utf8(pointer, 100)
+                except (MemoryError, ctypes.ArgumentError):
+                    # ctypes can wrap allocation failure in argument conversion.
+                    pass
+                finally:
+                    remove_hooks()
+                prepare_utf8(pointer, 100)
+                assert writer.storage() == (3, 10)
+                writer.write_str(123)
+                assert writer.finish() == '日\udcff😀123'
+        """))
+
+    def test_utf8_numeric_format(self):
+        from ctypes import c_int, c_uint
+        writer = self.create_writer(0)
+        writer.write_str('日\udcff:')
+        self.writer_format(writer, b'%08d/%08x/%-6d',
+                           c_int(-123), c_uint(42), c_int(7))
+        self.assertEqual(writer.storage()[1] - writer.storage()[0], 4)
+        self.assertEqual(writer.finish(), '日\udcff:-0000123/0000002a/7     ')
+
+    def test_utf8_format_rollback(self):
+        writer = self.create_writer(0)
+        writer.write_str('日\udcff')
+        with self.assertRaises(ValueError):
+            self.writer_format(writer, b'%s\xff', '😀'.encode())
+        writer.write_str('é')
+        self.assertEqual(writer.finish(), '日\udcffé')
+
     def create_writer(self, size):
         return _testcapi.PyUnicodeWriter(size)
 

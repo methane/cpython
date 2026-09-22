@@ -863,8 +863,8 @@ _operator__compare_digest_impl(PyObject *module, PyObject *a, PyObject *b)
             return NULL;
         }
 
-        rc = _tscmp(PyUnicode_DATA(a),
-                    PyUnicode_DATA(b),
+        rc = _tscmp((const unsigned char *)_PyUnicode_GetPrimaryUTF8(a, NULL),
+                    (const unsigned char *)_PyUnicode_GetPrimaryUTF8(b, NULL),
                     PyUnicode_GET_LENGTH(a),
                     PyUnicode_GET_LENGTH(b));
     }
@@ -1263,7 +1263,7 @@ attrgetter_new(PyTypeObject *type, PyObject *args, PyObject *kwds)
 {
     attrgetterobject *ag;
     PyObject *attr;
-    Py_ssize_t nattrs, idx, char_idx;
+    Py_ssize_t nattrs, idx;
 
     if (!_PyArg_NoKeywords("attrgetter", kwds))
         return NULL;
@@ -1282,7 +1282,6 @@ attrgetter_new(PyTypeObject *type, PyObject *args, PyObject *kwds)
     PyInterpreterState *interp = _PyInterpreterState_GET();
     for (idx = 0; idx < nattrs; ++idx) {
         PyObject *item = PyTuple_GET_ITEM(args, idx);
-        int dot_count;
 
         if (!PyUnicode_Check(item)) {
             PyErr_SetString(PyExc_TypeError,
@@ -1290,63 +1289,41 @@ attrgetter_new(PyTypeObject *type, PyObject *args, PyObject *kwds)
             Py_DECREF(attr);
             return NULL;
         }
-        Py_ssize_t item_len = PyUnicode_GET_LENGTH(item);
-        int kind = PyUnicode_KIND(item);
-        const void *data = PyUnicode_DATA(item);
-
-        /* check whether the string is dotted */
-        dot_count = 0;
-        for (char_idx = 0; char_idx < item_len; ++char_idx) {
-            if (PyUnicode_READ(kind, data, char_idx) == '.')
-                ++dot_count;
+        Py_ssize_t dot = PyUnicode_FindChar(
+            item, '.', 0, PyUnicode_GET_LENGTH(item), 1);
+        if (dot == -2) {
+            Py_DECREF(attr);
+            return NULL;
         }
-
-        if (dot_count == 0) {
+        if (dot == -1) {
             Py_INCREF(item);
             _PyUnicode_InternMortal(interp, &item);
             PyTuple_SET_ITEM(attr, idx, item);
-        } else { /* make it a tuple of non-dotted attrnames */
-            PyObject *attr_chain = PyTuple_New(dot_count + 1);
-            PyObject *attr_chain_item;
-            Py_ssize_t unibuff_from = 0;
-            Py_ssize_t unibuff_till = 0;
-            Py_ssize_t attr_chain_idx = 0;
-
-            if (attr_chain == NULL) {
+        }
+        else {
+            PyObject *separator = PyUnicode_FromString(".");
+            if (separator == NULL) {
                 Py_DECREF(attr);
                 return NULL;
             }
-
-            for (; dot_count > 0; --dot_count) {
-                while (PyUnicode_READ(kind, data, unibuff_till) != '.') {
-                    ++unibuff_till;
-                }
-                attr_chain_item = PyUnicode_Substring(item,
-                                      unibuff_from,
-                                      unibuff_till);
-                if (attr_chain_item == NULL) {
-                    Py_DECREF(attr_chain);
-                    Py_DECREF(attr);
-                    return NULL;
-                }
-                _PyUnicode_InternMortal(interp, &attr_chain_item);
-                PyTuple_SET_ITEM(attr_chain, attr_chain_idx, attr_chain_item);
-                ++attr_chain_idx;
-                unibuff_till = unibuff_from = unibuff_till + 1;
-            }
-
-            /* now add the last dotless name */
-            attr_chain_item = PyUnicode_Substring(item,
-                                                  unibuff_from, item_len);
-            if (attr_chain_item == NULL) {
-                Py_DECREF(attr_chain);
+            PyObject *parts = PyUnicode_Split(item, separator, -1);
+            Py_DECREF(separator);
+            if (parts == NULL) {
                 Py_DECREF(attr);
                 return NULL;
             }
-            _PyUnicode_InternMortal(interp, &attr_chain_item);
-            PyTuple_SET_ITEM(attr_chain, attr_chain_idx, attr_chain_item);
-
-            PyTuple_SET_ITEM(attr, idx, attr_chain);
+            PyObject *chain = PyList_AsTuple(parts);
+            Py_DECREF(parts);
+            if (chain == NULL) {
+                Py_DECREF(attr);
+                return NULL;
+            }
+            for (Py_ssize_t i = 0; i < PyTuple_GET_SIZE(chain); i++) {
+                PyObject *name = PyTuple_GET_ITEM(chain, i);
+                _PyUnicode_InternMortal(interp, &name);
+                PyTuple_SET_ITEM(chain, i, name);
+            }
+            PyTuple_SET_ITEM(attr, idx, chain);
         }
     }
 

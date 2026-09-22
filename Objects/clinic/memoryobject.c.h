@@ -235,7 +235,10 @@ skip_optional_pos:
             PyUnicode_GET_LENGTH(args[2]));
         goto exit;
     }
-    order = PyUnicode_READ_CHAR(args[2], 0);
+    order = _PyUnicode_ReadCharNoAlloc(args[2], 0);
+    if ((Py_UCS4)order == (Py_UCS4)-1) {
+        goto exit;
+    }
 skip_optional_kwonly:
     return_value = memoryview_cast_impl((PyMemoryViewObject *)self, format, shape, order);
 
@@ -532,4 +535,4 @@ skip_optional:
 exit:
     return return_value;
 }
-/*[clinic end generated code: output=17a403895f4f778c input=a9049054013a1b77]*/
+/*[clinic end generated code: output=908a9e5eeac79602 input=a9049054013a1b77]*/

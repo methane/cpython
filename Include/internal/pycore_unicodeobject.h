@@ -16,12 +16,7 @@ extern "C" {
 #define _Py_MAX_UNICODE 0x10ffff
 
 
-// Export for '_multibytecodec' shared extension. _PyUnicodeWriter_CanWrite()
-// calls this function when assertions are enabled.
 PyAPI_FUNC(int) _PyUnicode_IsModifiable(PyObject *unicode);
-extern void _PyUnicodeWriter_InitWithBuffer(
-    _PyUnicodeWriter *writer,
-    PyObject *buffer);
 extern PyObject* _PyUnicode_Result(PyObject *unicode);
 extern int _PyUnicode_DecodeUTF8Writer(
     _PyUnicodeWriter *writer,
@@ -107,35 +102,87 @@ _PyUnicode_EnsureUnicode(PyObject *obj)
     return 0;
 }
 
-#ifndef NDEBUG
-static inline int
-_PyUnicodeWriter_CanWrite(_PyUnicodeWriter *writer)
-{
-    // Code adapted from _PyUnicode_IsModifiable()
-    assert(!writer->readonly);
-    PyObject *buffer = writer->buffer;
-    assert(buffer != NULL);
-    // Do not use _PyObject_IsUniquelyReferenced(): the caller can have its own
-    // lock to prevent a writer from being used by two threads at the same
-    // time.
-    assert(Py_REFCNT(buffer) == 1);
-    assert(PyUnstable_Unicode_GET_CACHED_HASH(buffer) == -1);
-    assert(!PyUnicode_CHECK_INTERNED(buffer));
-    assert(!_Py_IsImmortal(buffer));
-    return 1;
-}
-#endif
-
 static inline int
 _PyUnicodeWriter_WriteCharInline(_PyUnicodeWriter *writer, Py_UCS4 ch)
 {
     assert(ch <= _Py_MAX_UNICODE);
-    if (_PyUnicodeWriter_Prepare(writer, 1, ch) < 0)
-        return -1;
-    assert(_PyUnicodeWriter_CanWrite(writer));
-    PyUnicode_WRITE(writer->kind, writer->data, writer->pos, ch);
-    writer->pos++;
-    return 0;
+    return _PyUnicodeWriter_WriteChar(writer, ch);
+}
+
+/* Allocation-free iteration over immutable Unicode objects. Start at zero;
+   position is an opaque cursor (UTF-8 bytes or FSR code points). Only reuse
+   positions produced for the same object. Next returns 1 on success, or 0
+   at end without changing position or ch. The caller keeps str alive. */
+PyAPI_FUNC(int) _PyUnicode_Next(PyObject *str, Py_ssize_t *position, Py_UCS4 *ch);
+
+/* A surrogate-preserving UTF-8 view. Init borrows primary storage or owns a
+   temporary encoding for FSR-primary strings. Keep str alive until Clear.
+   Clear is also valid after failed initialization and may be repeated. */
+typedef struct {
+    const char *data;
+    Py_ssize_t size;
+    PyObject *owner;
+} _PyUnicodeUTF8View;
+
+PyAPI_FUNC(int) _PyUnicodeUTF8View_Init(_PyUnicodeUTF8View *, PyObject *str);
+PyAPI_FUNC(void) _PyUnicodeUTF8View_Clear(_PyUnicodeUTF8View *);
+
+/* Internal UTF-8/surrogatepass storage and append operations.
+   GetPrimaryUTF8 accepts a NULL size pointer when the length is not needed. */
+PyAPI_FUNC(const char *) _PyUnicode_GetPrimaryUTF8(PyObject *, Py_ssize_t *);
+PyAPI_FUNC(int) _PyUnicodeWriter_WriteUTF8(_PyUnicodeWriter *, const char *,
+                                      Py_ssize_t, Py_ssize_t);
+extern void _PyUnicodeWriter_Truncate(_PyUnicodeWriter *, Py_ssize_t);
+
+/* Reserve bytes for direct UTF-8 writes. The UTF8Data() write pointer remains
+   valid until the next prepare/append call. Advance commits complete code
+   points; for ASCII, size and length are equal. */
+PyAPI_FUNC(int) _PyUnicodeWriter_PrepareUTF8(_PyUnicodeWriter *, Py_ssize_t);
+extern int _PyUnicodeWriter_RepeatUTF8(_PyUnicodeWriter *, const char *,
+                                      Py_ssize_t, Py_ssize_t, Py_ssize_t);
+extern int _PyUnicodeWriter_WriteFill(_PyUnicodeWriter *, Py_UCS4, Py_ssize_t);
+
+static inline char *
+_PyUnicodeWriter_UTF8Data(_PyUnicodeWriter *writer)
+{
+    assert(writer->readonly == NULL);
+    return writer->utf8 == NULL ? NULL : writer->utf8 + writer->utf8_pos;
+}
+
+static inline void
+_PyUnicodeWriter_AdvanceUTF8(_PyUnicodeWriter *writer,
+                            Py_ssize_t size, Py_ssize_t length)
+{
+    assert(writer->readonly == NULL);
+    assert(size >= length && length >= 0);
+    assert(size <= writer->utf8_size - writer->utf8_pos);
+    assert(length <= PY_SSIZE_T_MAX - writer->pos);
+    writer->utf8_pos += size;
+    writer->pos += length;
+}
+
+static inline unsigned char *
+_PyUnicode_WriteUTF8Char(unsigned char *p, Py_UCS4 ch)
+{
+    if (ch < 0x80) {
+        *p++ = ch;
+    }
+    else if (ch < 0x800) {
+        *p++ = 0xc0 | (ch >> 6);
+        *p++ = 0x80 | (ch & 63);
+    }
+    else if (ch < 0x10000) {
+        *p++ = 0xe0 | (ch >> 12);
+        *p++ = 0x80 | ((ch >> 6) & 63);
+        *p++ = 0x80 | (ch & 63);
+    }
+    else {
+        *p++ = 0xf0 | (ch >> 18);
+        *p++ = 0x80 | ((ch >> 12) & 63);
+        *p++ = 0x80 | ((ch >> 6) & 63);
+        *p++ = 0x80 | (ch & 63);
+    }
+    return p;
 }
 
 /* --- Unicode API -------------------------------------------------------- */

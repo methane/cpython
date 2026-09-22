@@ -126,7 +126,7 @@ should_intern_string(PyObject *o)
     if (!PyUnicode_IS_ASCII(o))
         return 0;
 
-    s = PyUnicode_1BYTE_DATA(o);
+    s = (const unsigned char *)_PyUnicode_GetPrimaryUTF8(o, NULL);
     e = s + PyUnicode_GET_LENGTH(o);
     for (; s != e; s++) {
         if (!Py_ISALNUM(*s) && *s != '_')
