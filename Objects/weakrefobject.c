@@ -422,6 +422,10 @@ allocate_weakref(PyTypeObject *type, PyObject *obj, PyObject *callback)
 static PyWeakReference *
 get_or_create_weakref(PyTypeObject *type, PyObject *obj, PyObject *callback)
 {
+    if (obj == NULL) {
+        PyErr_BadInternalCall();
+        return NULL;
+    }
     /* Static types are weak-referenced while PyType_Ready() is publishing
        them.  Their object header is not owned until initialization finishes. */
     int check_obj = !(PyType_Check(obj) &&
@@ -955,6 +959,10 @@ PyWeakref_NewRef(PyObject *ob, PyObject *callback)
 PyObject *
 PyWeakref_NewProxy(PyObject *ob, PyObject *callback)
 {
+    if (ob == NULL) {
+        PyErr_BadInternalCall();
+        return NULL;
+    }
     PyTypeObject *type = &_PyWeakref_ProxyType;
     if (PyCallable_Check(ob)) {
         type = &_PyWeakref_CallableProxyType;
