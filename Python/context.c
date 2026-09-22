@@ -21,6 +21,13 @@ module _contextvars
 
 
 #define ENSURE_Context(o, err_ret)                                  \
+    if ((o) == NULL) {                                               \
+        PyErr_BadInternalCall();                                    \
+        return err_ret;                                              \
+    }                                                               \
+    if (PyObject_CheckAccess((PyObject *)(o)) == NULL) {             \
+        return err_ret;                                              \
+    }                                                               \
     if (!PyContext_CheckExact(o)) {                                 \
         PyErr_SetString(PyExc_TypeError,                            \
                         "an instance of Context was expected");     \
@@ -28,6 +35,13 @@ module _contextvars
     }
 
 #define ENSURE_ContextVar(o, err_ret)                               \
+    if ((o) == NULL) {                                               \
+        PyErr_BadInternalCall();                                    \
+        return err_ret;                                              \
+    }                                                               \
+    if (PyObject_CheckAccess((PyObject *)(o)) == NULL) {             \
+        return err_ret;                                              \
+    }                                                               \
     if (!PyContextVar_CheckExact(o)) {                              \
         PyErr_SetString(PyExc_TypeError,                            \
                        "an instance of ContextVar was expected");   \
@@ -35,6 +49,13 @@ module _contextvars
     }
 
 #define ENSURE_ContextToken(o, err_ret)                             \
+    if ((o) == NULL) {                                               \
+        PyErr_BadInternalCall();                                    \
+        return err_ret;                                              \
+    }                                                               \
+    if (PyObject_CheckAccess((PyObject *)(o)) == NULL) {             \
+        return err_ret;                                              \
+    }                                                               \
     if (!PyContextToken_CheckExact(o)) {                            \
         PyErr_SetString(PyExc_TypeError,                            \
                         "an instance of Token was expected");       \
@@ -305,6 +326,9 @@ PyContext_Exit(PyObject *octx)
 PyObject *
 PyContextVar_New(const char *name, PyObject *def)
 {
+    if (def != NULL && PyObject_CheckAccess(def) == NULL) {
+        return NULL;
+    }
     PyObject *pyname = PyUnicode_FromString(name);
     if (pyname == NULL) {
         return NULL;
@@ -319,6 +343,13 @@ int
 PyContextVar_Get(PyObject *ovar, PyObject *def, PyObject **val)
 {
     ENSURE_ContextVar(ovar, -1)
+    if (val == NULL) {
+        PyErr_BadInternalCall();
+        return -1;
+    }
+    if (def != NULL && PyObject_CheckAccess(def) == NULL) {
+        return -1;
+    }
     PyContextVar *var = (PyContextVar *)ovar;
 
     PyThreadState *ts = _PyThreadState_GET();
@@ -389,6 +420,13 @@ PyObject *
 PyContextVar_Set(PyObject *ovar, PyObject *val)
 {
     ENSURE_ContextVar(ovar, NULL)
+    if (val == NULL) {
+        PyErr_BadInternalCall();
+        return NULL;
+    }
+    if (PyObject_CheckAccess(val) == NULL) {
+        return NULL;
+    }
     PyContextVar *var = (PyContextVar *)ovar;
 
     PyContext *ctx = context_get();
