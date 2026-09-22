@@ -466,6 +466,14 @@ alloc_interpreter(void)
 static void
 free_interpreter(PyInterpreterState *interp)
 {
+#ifdef Py_GIL_DISABLED
+    mi_subproc_t *subproc = interp->mimalloc.subproc;
+    // Segments may outlive their interpreter. Keep their metadata alive too.
+    if (subproc != NULL && mi_atomic_load_relaxed(&subproc->abandoned_count) == 0) {
+        mi_subproc_delete(subproc);
+    }
+    interp->mimalloc.subproc = NULL;
+#endif
 #ifdef Py_STATS
     if (interp->pystats_struct) {
         PyMem_RawFree(interp->pystats_struct);
@@ -673,6 +681,12 @@ init_interpreter(PyInterpreterState *interp,
     _Py_stackref_associate(interp, Py_True, PyStackRef_True);
 #endif
 
+#ifdef Py_GIL_DISABLED
+    interp->mimalloc.subproc = mi_subproc_new();
+    if (interp->mimalloc.subproc == NULL) {
+        return _PyStatus_NO_MEMORY();
+    }
+#endif
     interp->_initialized = 1;
     return _PyStatus_OK();
 }
@@ -3264,7 +3278,7 @@ tstate_mimalloc_bind(PyThreadState *tstate)
     // Exiting threads push any remaining in-use segments to the abandoned
     // pool to be re-claimed later by other threads. We use per-interpreter
     // pools to keep Python objects from different interpreters separate.
-    tld->segments.abandoned = &tstate->interp->mimalloc.abandoned_pool;
+    tld->segments.subproc = tstate->interp->mimalloc.subproc;
 
     // Don't fill in the first N bytes up to ob_type in debug builds. We may
     // access ob_tid and the refcount fields in the dict and list lock-less
@@ -3282,7 +3296,7 @@ tstate_mimalloc_bind(PyThreadState *tstate)
 
     // Initialize each heap
     for (uint8_t i = 0; i < _Py_MIMALLOC_HEAP_COUNT; i++) {
-        _mi_heap_init_ex(&mts->heaps[i], tld, _mi_arena_id_none(), false, i);
+        _mi_heap_init(&mts->heaps[i], tld, _mi_arena_id_none(), false, i);
         mts->heaps[i].debug_offset = (uint8_t)debug_offsets[i];
     }
 
