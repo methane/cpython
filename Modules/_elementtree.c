@@ -18,6 +18,7 @@
 #include "Python.h"
 #include "pycore_ceval.h"         // _Py_EnterRecursiveCall()
 #include "pycore_dict.h"          // _PyDict_CopyAsDict()
+#include "pycore_object.h"        // _PyObject_CheckAccessNullable()
 #include "pycore_pyhash.h"        // _Py_HashSecret
 #include "pycore_tuple.h"         // _PyTuple_FromPair
 #include "pycore_weakref.h"       // FT_CLEAR_WEAKREFS()
@@ -2329,6 +2330,9 @@ elementiter_next(PyObject *op)
                 return NULL;
             }
 
+            if (PyObject_CheckAccess((PyObject *)it->root_element) == NULL) {
+                return NULL;
+            }
             elem = it->root_element;  /* steals a reference */
             it->root_element = NULL;
         }
@@ -2340,6 +2344,9 @@ elementiter_next(PyObject *op)
             Py_ssize_t child_index = item->child_index;
             ElementObjectExtra *extra;
             elem = item->parent;
+            if (PyObject_CheckAccess((PyObject *)elem) == NULL) {
+                return NULL;
+            }
             extra = elem->extra;
             if (!extra || child_index >= extra->length) {
                 it->parent_stack_used--;
@@ -2360,6 +2367,10 @@ elementiter_next(PyObject *op)
             elementtreestate *st = get_elementtree_state_by_type(tp);
             assert(Element_Check(st, extra->children[child_index]));
 #endif
+            if (PyObject_CheckAccess(
+                    (PyObject *)extra->children[child_index]) == NULL) {
+                return NULL;
+            }
             elem = (ElementObject *)Py_NewRef(extra->children[child_index]);
             item->child_index++;
         }
@@ -2367,6 +2378,10 @@ elementiter_next(PyObject *op)
         if (parent_stack_push_new(it, elem) < 0) {
             Py_DECREF(elem);
             PyErr_NoMemory();
+            return NULL;
+        }
+        if (PyObject_CheckAccess(elem->tag) == NULL) {
+            Py_DECREF(elem);
             return NULL;
         }
         if (it->gettext) {
@@ -2379,11 +2394,15 @@ elementiter_next(PyObject *op)
         }
 
         if (it->sought_tag == Py_None)
-            return (PyObject *)elem;
+            return _PyObject_CheckAccessNullable((PyObject *)elem);
 
+        if (PyObject_CheckAccess(it->sought_tag) == NULL) {
+            Py_DECREF(elem);
+            return NULL;
+        }
         rc = PyObject_RichCompareBool(elem->tag, it->sought_tag, Py_EQ);
         if (rc > 0)
-            return (PyObject *)elem;
+            return _PyObject_CheckAccessNullable((PyObject *)elem);
 
         Py_DECREF(elem);
         if (rc < 0)
@@ -2393,6 +2412,10 @@ elementiter_next(PyObject *op)
 gettext:
         Py_DECREF(elem);
         if (!text) {
+            return NULL;
+        }
+        text = _PyObject_CheckAccessNullable(text);
+        if (text == NULL) {
             return NULL;
         }
         if (text == Py_None) {
