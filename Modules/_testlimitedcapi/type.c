@@ -139,7 +139,9 @@ type_getflags(PyObject *module, PyObject *arg)
     PyTypeObject *type = (PyTypeObject*)arg;
 
     unsigned long flags = PyType_GetFlags(type);
-    assert(!PyErr_Occurred());
+    if (PyErr_Occurred()) {
+        return NULL;
+    }
     return PyLong_FromUnsignedLong(flags);
 }
 

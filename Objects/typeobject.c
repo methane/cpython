@@ -4163,6 +4163,13 @@ type_init(PyObject *cls, PyObject *args, PyObject *kwds)
 unsigned long
 PyType_GetFlags(PyTypeObject *type)
 {
+    if (type == NULL) {
+        PyErr_BadInternalCall();
+        return 0;
+    }
+    if (PyObject_CheckAccess((PyObject *)type) == NULL) {
+        return 0;
+    }
     return type->tp_flags;
 }
 
@@ -5852,24 +5859,51 @@ PyType_FromSpec(PyType_Spec *spec)
 PyObject *
 PyType_GetName(PyTypeObject *type)
 {
+    if (type == NULL) {
+        PyErr_BadInternalCall();
+        return NULL;
+    }
+    if (PyObject_CheckAccess((PyObject *)type) == NULL) {
+        return NULL;
+    }
     return type_name((PyObject *)type, NULL);
 }
 
 PyObject *
 PyType_GetQualName(PyTypeObject *type)
 {
+    if (type == NULL) {
+        PyErr_BadInternalCall();
+        return NULL;
+    }
+    if (PyObject_CheckAccess((PyObject *)type) == NULL) {
+        return NULL;
+    }
     return type_qualname((PyObject *)type, NULL);
 }
 
 PyObject *
 PyType_GetModuleName(PyTypeObject *type)
 {
+    if (type == NULL) {
+        PyErr_BadInternalCall();
+        return NULL;
+    }
+    if (PyObject_CheckAccess((PyObject *)type) == NULL) {
+        return NULL;
+    }
     return type_module(type);
 }
 
 void *
 PyType_GetSlot(PyTypeObject *type, int slot_in)
 {
+    if (type == NULL || PyObject_CheckAccess((PyObject *)type) == NULL) {
+        if (type == NULL) {
+            PyErr_BadInternalCall();
+        }
+        return NULL;
+    }
     uint16_t slot = _PySlot_resolve_type_slot(slot_in);
     return _PySlot_type_getslot(type, slot);
 }
