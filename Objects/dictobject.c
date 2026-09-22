@@ -6548,6 +6548,9 @@ fail:
 static PyObject*
 dictiter_iternextkey(PyObject *self)
 {
+    if (PyObject_CheckAccess(self) == NULL) {
+        return NULL;
+    }
     if (FT_ATOMIC_LOAD_UINT8(self->ob_shareable) == _Py_SHAREABLE_SYNCHRONIZED) {
         return dictiter_next_shared(self, DICT_ITER_KEYS, 0);
     }
@@ -6674,6 +6677,9 @@ fail:
 static PyObject *
 dictiter_iternextvalue(PyObject *self)
 {
+    if (PyObject_CheckAccess(self) == NULL) {
+        return NULL;
+    }
     if (FT_ATOMIC_LOAD_UINT8(self->ob_shareable) == _Py_SHAREABLE_SYNCHRONIZED) {
         return dictiter_next_shared(self, DICT_ITER_VALUES, 0);
     }
@@ -6955,6 +6961,9 @@ acquire_iter_result(PyObject *result)
 static PyObject *
 dictiter_iternextitem(PyObject *self)
 {
+    if (PyObject_CheckAccess(self) == NULL) {
+        return NULL;
+    }
     if (FT_ATOMIC_LOAD_UINT8(self->ob_shareable) == _Py_SHAREABLE_SYNCHRONIZED) {
         return dictiter_next_shared(self, DICT_ITER_ITEMS, 0);
     }
@@ -7132,6 +7141,9 @@ fail:
 static PyObject *
 dictreviter_iternext(PyObject *self)
 {
+    if (PyObject_CheckAccess(self) == NULL) {
+        return NULL;
+    }
     if (FT_ATOMIC_LOAD_UINT8(self->ob_shareable) == _Py_SHAREABLE_SYNCHRONIZED) {
         dictiter_kind kind = Py_IS_TYPE(self, &PyDictRevIterKey_Type)
             ? DICT_ITER_KEYS : Py_IS_TYPE(self, &PyDictRevIterValue_Type)

@@ -47,6 +47,9 @@ find_module_state_by_def(PyTypeObject *type)
 static inline PyObject *
 collections_iternext_func(PyObject *(*iternext)(PyObject *), PyObject *it)
 {
+    if (PyObject_CheckAccess(it) == NULL) {
+        return NULL;
+    }
     return _PyObject_CheckAccessNullable(iternext(it));
 }
 

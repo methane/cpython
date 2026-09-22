@@ -4526,6 +4526,9 @@ listreviter_traverse(PyObject *it, visitproc visit, void *arg)
 static PyObject *
 listreviter_next(PyObject *self)
 {
+    if (PyObject_CheckAccess(self) == NULL) {
+        return NULL;
+    }
     listreviterobject *it = (listreviterobject *)self;
 #ifdef Py_GIL_DISABLED
     if (FT_ATOMIC_LOAD_UINT8(self->ob_shareable) == _Py_SHAREABLE_SYNCHRONIZED) {

@@ -68,6 +68,9 @@ find_state_by_type(PyTypeObject *tp)
 static inline PyObject *
 itertools_iternext(PyObject *it)
 {
+    if (PyObject_CheckAccess(it) == NULL) {
+        return NULL;
+    }
     PyObject *item = (*Py_TYPE(it)->tp_iternext)(it);
     return _PyObject_CheckAccessNullable(item);
 }
@@ -75,6 +78,9 @@ itertools_iternext(PyObject *it)
 static inline PyObject *
 itertools_iternext_func(iternextfunc iternext, PyObject *it)
 {
+    if (PyObject_CheckAccess(it) == NULL) {
+        return NULL;
+    }
     return _PyObject_CheckAccessNullable(iternext(it));
 }
 
