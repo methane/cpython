@@ -66,6 +66,33 @@ class DictAccessTests(unittest.TestCase):
         self.assertEqual(results.get(), len(apis))
         self.assertEqual(value, {'key': 'value'})
 
+    @threading_helper.requires_working_threading()
+    def test_borrowed_value(self):
+        limited = import_module('_testlimitedcapi')
+        capi = import_module('_testcapi')
+        internal = import_module('_testinternalcapi')
+        invoke = capi.call_cfunction_raw_return_in_tuple
+        internal.object_declare_synchronized(invoke)
+        internal.object_declare_synchronized(limited.dict_next)
+
+        shared = {}.synchronize()
+        shared['value'] = object()
+        result = threading.Channel()
+
+        def worker(mapping):
+            try:
+                invoke(limited.dict_next, (mapping, 0))
+            except IllegalThreadAccessException:
+                result.put(True)
+            else:
+                result.put(False)
+
+        thread = threading.Thread(target=worker, args=(shared,),
+                                  group=threading.ThreadGroup())
+        with threading_helper.start_threads([thread]):
+            pass
+        self.assertTrue(result.get())
+
 
 if __name__ == '__main__':
     unittest.main()

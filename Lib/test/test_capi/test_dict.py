@@ -457,7 +457,7 @@ class CAPITest(unittest.TestCase):
             pos = 0
             self.assertEqual(dict_next(dct, pos), None)
 
-        # CRASHES dict_next(NULL, 0)
+        self.assertIsNone(dict_next(NULL, 0))
 
     def test_dict_update(self):
         # Test PyDict_Update()

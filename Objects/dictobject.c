@@ -3498,7 +3498,23 @@ PyDict_Next(PyObject *op, Py_ssize_t *ppos, PyObject **pkey, PyObject **pvalue)
     if (op == NULL || PyObject_CheckAccess(op) == NULL) {
         return 0;
     }
-    return _PyDict_Next(op, ppos, pkey, pvalue, NULL);
+    int result = _PyDict_Next(op, ppos, pkey, pvalue, NULL);
+    if (!result) {
+        return 0;
+    }
+    if ((pkey != NULL && *pkey != NULL &&
+         PyObject_CheckAccess(*pkey) == NULL) ||
+        (pvalue != NULL && *pvalue != NULL &&
+         PyObject_CheckAccess(*pvalue) == NULL)) {
+        if (pkey != NULL) {
+            *pkey = NULL;
+        }
+        if (pvalue != NULL) {
+            *pvalue = NULL;
+        }
+        return 0;
+    }
+    return 1;
 }
 
 

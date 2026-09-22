@@ -211,11 +211,11 @@ dict_next(PyObject *self, PyObject *args)
     if (rc != 0) {
         return Py_BuildValue("inOO", rc, pos, key, value);
     }
-    assert(key == UNINITIALIZED_PTR);
-    assert(value == UNINITIALIZED_PTR);
     if (PyErr_Occurred()) {
         return NULL;
     }
+    assert(key == UNINITIALIZED_PTR);
+    assert(value == UNINITIALIZED_PTR);
     Py_RETURN_NONE;
 }
 
