@@ -5124,6 +5124,11 @@ type_new(PyTypeObject *metatype, PyObject *args, PyObject *kwds)
     {
         return NULL;
     }
+    if (PyObject_CheckAccess(name) == NULL ||
+        PyObject_CheckAccess(bases) == NULL ||
+        PyObject_CheckAccess(orig_dict) == NULL) {
+        return NULL;
+    }
     if (!PyAnyDict_Check(orig_dict)) {
         PyErr_Format(PyExc_TypeError,
                      "type.__new__() argument 3 must be dict or frozendict, not %T",
@@ -5171,6 +5176,12 @@ type_vectorcall(PyObject *metatype, PyObject *const *args,
     Py_ssize_t nargs = PyVectorcall_NARGS(nargsf);
     if (nargs == 1 && metatype == (PyObject *)&PyType_Type){
         if (!_PyArg_NoKwnames("type", kwnames)) {
+            return NULL;
+        }
+        if (args[0] == NULL || PyObject_CheckAccess(args[0]) == NULL) {
+            if (args[0] == NULL) {
+                PyErr_BadInternalCall();
+            }
             return NULL;
         }
         return Py_NewRef(Py_TYPE(args[0]));
