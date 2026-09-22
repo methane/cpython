@@ -2354,7 +2354,7 @@ math_sumprod_impl(PyObject *module, PyObject *p, PyObject *q)
         assert (q_it != NULL);
         assert (total != NULL);
 
-        p_i = p_next(p_it);
+        p_i = _PyObject_CheckAccessNullable(p_next(p_it));
         if (p_i == NULL) {
             if (PyErr_Occurred()) {
                 if (!PyErr_ExceptionMatches(PyExc_StopIteration)) {
@@ -2364,7 +2364,7 @@ math_sumprod_impl(PyObject *module, PyObject *p, PyObject *q)
             }
             p_stopped = true;
         }
-        q_i = q_next(q_it);
+        q_i = _PyObject_CheckAccessNullable(q_next(q_it));
         if (q_i == NULL) {
             if (PyErr_Occurred()) {
                 if (!PyErr_ExceptionMatches(PyExc_StopIteration)) {
