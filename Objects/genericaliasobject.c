@@ -904,6 +904,14 @@ static PyGetSetDef ga_properties[] = {
  */
 static inline int
 setup_ga(gaobject *alias, PyObject *origin, PyObject *args) {
+    if (origin == NULL || args == NULL) {
+        PyErr_BadInternalCall();
+        return 0;
+    }
+    if (PyObject_CheckAccess(origin) == NULL ||
+        PyObject_CheckAccess(args) == NULL) {
+        return 0;
+    }
     if (!PyTuple_Check(args)) {
         args = PyTuple_Pack(1, args);
         if (args == NULL) {
