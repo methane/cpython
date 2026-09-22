@@ -966,6 +966,9 @@ static PyNumberMethods ga_as_number = {
 static PyObject *
 ga_iternext(PyObject *op)
 {
+    if (PyObject_CheckAccess(op) == NULL) {
+        return NULL;
+    }
     gaiterobject *gi = (gaiterobject*)op;
     PyObject *obj;
     Py_BEGIN_CRITICAL_SECTION(gi);
@@ -974,6 +977,10 @@ ga_iternext(PyObject *op)
     Py_END_CRITICAL_SECTION();
     if (obj == NULL) {
         PyErr_SetNone(PyExc_StopIteration);
+        return NULL;
+    }
+    obj = _PyObject_CheckAccessNullable(obj);
+    if (obj == NULL) {
         return NULL;
     }
     gaobject *alias = (gaobject *)obj;
@@ -1014,6 +1021,9 @@ ga_iter_clear(PyObject *self)
 static PyObject *
 ga_iter_reduce(PyObject *self, PyObject *Py_UNUSED(ignored))
 {
+    if (PyObject_CheckAccess(self) == NULL) {
+        return NULL;
+    }
     PyObject *iter = _PyEval_GetBuiltin(&_Py_ID(iter));
     gaiterobject *gi = (gaiterobject *)self;
 
@@ -1027,6 +1037,10 @@ ga_iter_reduce(PyObject *self, PyObject *Py_UNUSED(ignored))
     Py_END_CRITICAL_SECTION();
 
     if (obj) {
+        obj = _PyObject_CheckAccessNullable(obj);
+        if (obj == NULL) {
+            return NULL;
+        }
         PyObject *result = Py_BuildValue("N(O)", iter, obj);
         Py_DECREF(obj);
         return result;
@@ -1058,6 +1072,9 @@ PyTypeObject _Py_GenericAliasIterType = {
 
 static PyObject *
 ga_iter(PyObject *self) {
+    if (PyObject_CheckAccess(self) == NULL) {
+        return NULL;
+    }
     gaiterobject *gi = PyObject_GC_New(gaiterobject, &_Py_GenericAliasIterType);
     if (gi == NULL) {
         return NULL;
