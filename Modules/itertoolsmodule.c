@@ -65,6 +65,19 @@ find_state_by_type(PyTypeObject *tp)
     return get_module_state(mod);
 }
 
+static inline PyObject *
+itertools_iternext(PyObject *it)
+{
+    PyObject *item = (*Py_TYPE(it)->tp_iternext)(it);
+    return _PyObject_CheckAccessNullable(item);
+}
+
+static inline PyObject *
+itertools_iternext_func(iternextfunc iternext, PyObject *it)
+{
+    return _PyObject_CheckAccessNullable(iternext(it));
+}
+
 /*[clinic input]
 module itertools
 class itertools.groupby "groupbyobject *" "clinic_state()->groupby_type"
@@ -207,7 +220,7 @@ batched_next(PyObject *op)
     iternextfunc iternext = *Py_TYPE(it)->tp_iternext;
     PyObject **items = _PyTuple_ITEMS(result);
     for (i=0 ; i < n ; i++) {
-        item = iternext(it);
+        item = itertools_iternext_func(iternext, it);
         if (item == NULL) {
             goto null_item;
         }
@@ -355,7 +368,7 @@ pairwise_next(PyObject *op)
         return NULL;
     }
     if (old == NULL) {
-        old = (*Py_TYPE(it)->tp_iternext)(it);
+        old = itertools_iternext(it);
         Py_XSETREF(po->old, old);
         if (old == NULL) {
             Py_CLEAR(po->it);
@@ -368,7 +381,7 @@ pairwise_next(PyObject *op)
         }
     }
     Py_INCREF(old);
-    new = (*Py_TYPE(it)->tp_iternext)(it);
+    new = itertools_iternext(it);
     if (new == NULL) {
         Py_CLEAR(po->it);
         Py_CLEAR(po->old);
@@ -1410,7 +1423,7 @@ dropwhile_next(PyObject *op)
 
     iternext = *Py_TYPE(it)->tp_iternext;
     for (;;) {
-        item = iternext(it);
+        item = itertools_iternext_func(iternext, it);
         if (item == NULL)
             return NULL;
         if (lz->start == 1)
@@ -1533,7 +1546,7 @@ takewhile_next(PyObject *op)
     if (lz->stop == 1)
         return NULL;
 
-    item = (*Py_TYPE(it)->tp_iternext)(it);
+    item = itertools_iternext(it);
     if (item == NULL)
         return NULL;
 
@@ -1708,7 +1721,7 @@ islice_next(PyObject *op)
 
     iternext = *Py_TYPE(it)->tp_iternext;
     while (lz->cnt < lz->next) {
-        item = iternext(it);
+        item = itertools_iternext_func(iternext, it);
         if (item == NULL)
             goto empty;
         Py_DECREF(item);
@@ -1716,7 +1729,7 @@ islice_next(PyObject *op)
     }
     if (stop != -1 && lz->cnt >= stop)
         goto empty;
-    item = iternext(it);
+    item = itertools_iternext_func(iternext, it);
     if (item == NULL)
         goto empty;
     lz->cnt++;
@@ -1839,7 +1852,7 @@ starmap_next(PyObject *op)
     PyObject *result;
     PyObject *it = lz->it;
 
-    args = (*Py_TYPE(it)->tp_iternext)(it);
+    args = itertools_iternext(it);
     if (args == NULL)
         return NULL;
     if (!PyTuple_CheckExact(args)) {
@@ -1986,7 +1999,7 @@ chain_next_lock_held(PyObject *op)
                 return NULL;            /* input not iterable */
             }
         }
-        item = (*Py_TYPE(lz->active)->tp_iternext)(lz->active);
+        item = itertools_iternext(lz->active);
         if (item != NULL)
             return item;
         if (PyErr_Occurred()) {
@@ -3160,7 +3173,7 @@ accumulate_next_lock_held(PyObject *op)
         lz->initial = Py_NewRef(Py_None);
         return Py_NewRef(lz->total);
     }
-    val = (*Py_TYPE(lz->it)->tp_iternext)(lz->it);
+    val = itertools_iternext(lz->it);
     if (val == NULL)
         return NULL;
 
@@ -3308,11 +3321,11 @@ compress_next(PyObject *op)
            exception first).
         */
 
-        datum = datanext(data);
+        datum = itertools_iternext_func(datanext, data);
         if (datum == NULL)
             return NULL;
 
-        selector = selectornext(selectors);
+        selector = itertools_iternext_func(selectornext, selectors);
         if (selector == NULL) {
             Py_DECREF(datum);
             return NULL;
@@ -3427,7 +3440,7 @@ filterfalse_next(PyObject *op)
 
     iternext = *Py_TYPE(it)->tp_iternext;
     for (;;) {
-        item = iternext(it);
+        item = itertools_iternext_func(iternext, it);
         if (item == NULL)
             return NULL;
 
