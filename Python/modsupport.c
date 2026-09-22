@@ -453,12 +453,19 @@ do_mkvalue(const char **p_format, va_list *p_va)
             converter func = va_arg(*p_va, converter);
             void *arg = va_arg(*p_va, void *);
             ++*p_format;
-            return (*func)(arg);
+            return _PyObject_CheckAccessNullable((*func)(arg));
         }
         else {
             PyObject *v;
             v = va_arg(*p_va, PyObject *);
             if (v != NULL) {
+                int steal = (*(*p_format - 1) == 'N');
+                if (PyObject_CheckAccess(v) == NULL) {
+                    if (steal) {
+                        Py_DECREF(v);
+                    }
+                    return NULL;
+                }
                 if (*(*p_format - 1) != 'N')
                     Py_INCREF(v);
             }
