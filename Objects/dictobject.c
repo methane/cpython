@@ -2578,7 +2578,13 @@ _PyDict_FromItems(PyObject *const *keys, Py_ssize_t keys_offset,
 static PyObject *
 dict_getitem(PyObject *op, PyObject *key, const char *warnmsg)
 {
+    if (op == NULL || PyObject_CheckAccess(op) == NULL) {
+        return NULL;
+    }
     if (!PyAnyDict_Check(op)) {
+        return NULL;
+    }
+    if (key == NULL || PyObject_CheckAccess(key) == NULL) {
         return NULL;
     }
     PyDictObject *mp = (PyDictObject *)op;
@@ -2772,6 +2778,18 @@ _PyDict_GetItemRefUnchecked(PyObject *op, PyObject *key, PyObject **result)
 int
 PyDict_GetItemRef(PyObject *op, PyObject *key, PyObject **result)
 {
+    if (op == NULL || PyObject_CheckAccess(op) == NULL) {
+        if (result != NULL) {
+            *result = NULL;
+        }
+        return -1;
+    }
+    if (key == NULL || PyObject_CheckAccess(key) == NULL) {
+        if (result != NULL) {
+            *result = NULL;
+        }
+        return -1;
+    }
     int found = _PyDict_GetItemRefUnchecked(op, key, result);
     if (found > 0) {
         *result = _PyObject_CheckAccessNullable(*result);
@@ -3016,8 +3034,15 @@ _PyDict_SetItem_Take2_KnownHash(PyDictObject *mp, PyObject *key, PyObject *value
 int
 PyDict_SetItem(PyObject *op, PyObject *key, PyObject *value)
 {
-    assert(key);
-    assert(value);
+    if (op == NULL || key == NULL || value == NULL) {
+        PyErr_BadInternalCall();
+        return -1;
+    }
+    if (PyObject_CheckAccess(op) == NULL ||
+        PyObject_CheckAccess(key) == NULL ||
+        PyObject_CheckAccess(value) == NULL) {
+        return -1;
+    }
 
     if (!PyDict_Check(op)) {
         if (PyFrozenDict_Check(op)) {
@@ -3153,7 +3178,14 @@ delitem_common(PyDictObject *mp, Py_hash_t hash, Py_ssize_t ix,
 int
 PyDict_DelItem(PyObject *op, PyObject *key)
 {
-    assert(key);
+    if (op == NULL || key == NULL) {
+        PyErr_BadInternalCall();
+        return -1;
+    }
+    if (PyObject_CheckAccess(op) == NULL ||
+        PyObject_CheckAccess(key) == NULL) {
+        return -1;
+    }
     Py_hash_t hash = _PyObject_HashDictKey(key);
     if (hash == -1) {
         dict_unhashable_type(op, key);
@@ -3366,6 +3398,9 @@ _PyDict_Clear_LockHeld(PyObject *op) {
 void
 PyDict_Clear(PyObject *op)
 {
+    if (op != NULL && PyObject_CheckAccess(op) == NULL) {
+        return;
+    }
     Py_BEGIN_CRITICAL_SECTION(op);
     clear_lock_held(op);
     Py_END_CRITICAL_SECTION();
@@ -3460,6 +3495,9 @@ _PyDict_Next(PyObject *op, Py_ssize_t *ppos, PyObject **pkey,
 int
 PyDict_Next(PyObject *op, Py_ssize_t *ppos, PyObject **pkey, PyObject **pvalue)
 {
+    if (op == NULL || PyObject_CheckAccess(op) == NULL) {
+        return 0;
+    }
     return _PyDict_Next(op, ppos, pkey, pvalue, NULL);
 }
 
@@ -4114,6 +4152,9 @@ keys_lock_held(PyObject *dict)
 PyObject *
 PyDict_Keys(PyObject *dict)
 {
+    if (dict == NULL || PyObject_CheckAccess(dict) == NULL) {
+        return NULL;
+    }
     PyObject *res;
     Py_BEGIN_CRITICAL_SECTION(dict);
     res = keys_lock_held(dict);
@@ -4163,6 +4204,9 @@ values_lock_held(PyObject *dict)
 PyObject *
 PyDict_Values(PyObject *dict)
 {
+    if (dict == NULL || PyObject_CheckAccess(dict) == NULL) {
+        return NULL;
+    }
     PyObject *res;
     Py_BEGIN_CRITICAL_SECTION(dict);
     res = values_lock_held(dict);
@@ -4226,6 +4270,9 @@ items_lock_held(PyObject *dict)
 PyObject *
 PyDict_Items(PyObject *dict)
 {
+    if (dict == NULL || PyObject_CheckAccess(dict) == NULL) {
+        return NULL;
+    }
     PyObject *res;
     Py_BEGIN_CRITICAL_SECTION(dict);
     res = items_lock_held(dict);
@@ -4852,7 +4899,14 @@ copy_lock_held_untracked(PyObject *o, int as_frozendict)
 PyObject *
 PyDict_Copy(PyObject *o)
 {
-    if (o == NULL || !PyDict_Check(o)) {
+    if (o == NULL) {
+        PyErr_BadInternalCall();
+        return NULL;
+    }
+    if (PyObject_CheckAccess(o) == NULL) {
+        return NULL;
+    }
+    if (!PyDict_Check(o)) {
         PyErr_BadInternalCall();
         return NULL;
     }
@@ -4932,7 +4986,14 @@ _PyDict_CopyAsDict(PyObject *o)
 Py_ssize_t
 PyDict_Size(PyObject *mp)
 {
-    if (mp == NULL || !PyAnyDict_Check(mp)) {
+    if (mp == NULL) {
+        PyErr_BadInternalCall();
+        return -1;
+    }
+    if (PyObject_CheckAccess(mp) == NULL) {
+        return -1;
+    }
+    if (!PyAnyDict_Check(mp)) {
         PyErr_BadInternalCall();
         return -1;
     }
@@ -5691,6 +5752,14 @@ dict_contains(PyObject *op, PyObject *key)
 int
 PyDict_Contains(PyObject *op, PyObject *key)
 {
+    if (op == NULL || key == NULL) {
+        PyErr_BadInternalCall();
+        return -1;
+    }
+    if (PyObject_CheckAccess(op) == NULL ||
+        PyObject_CheckAccess(key) == NULL) {
+        return -1;
+    }
     if (!PyAnyDict_Check(op)) {
         PyErr_BadInternalCall();
         return -1;

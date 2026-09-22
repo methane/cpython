@@ -34,6 +34,9 @@ dict_clear(PyObject *self, PyObject *obj)
 {
     NULLABLE(obj);
     PyDict_Clear(obj);
+    if (PyErr_Occurred()) {
+        return NULL;
+    }
     Py_RETURN_NONE;
 }
 
