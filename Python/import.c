@@ -234,7 +234,7 @@ PyObject *
 PyImport_GetModuleDict(void)
 {
     PyThreadState *tstate = _PyThreadState_GET();
-    return get_modules_dict(tstate, true);
+    return PyObject_CheckAccess(get_modules_dict(tstate, true));
 }
 
 int
@@ -363,6 +363,12 @@ static void remove_importlib_frames(PyThreadState *tstate);
 PyObject *
 PyImport_GetModule(PyObject *name)
 {
+    if (name == NULL || PyObject_CheckAccess(name) == NULL) {
+        if (name == NULL) {
+            PyErr_BadInternalCall();
+        }
+        return NULL;
+    }
     PyThreadState *tstate = _PyThreadState_GET();
     PyObject *mod;
 
@@ -455,6 +461,12 @@ PyImport_AddModuleRef(const char *name)
 PyObject *
 PyImport_AddModuleObject(PyObject *name)
 {
+    if (name == NULL || PyObject_CheckAccess(name) == NULL) {
+        if (name == NULL) {
+            PyErr_BadInternalCall();
+        }
+        return NULL;
+    }
     PyThreadState *tstate = _PyThreadState_GET();
     PyObject *mod = import_add_module(tstate, name);
     if (!mod) {
@@ -2917,6 +2929,16 @@ PyObject*
 PyImport_ExecCodeModuleObject(PyObject *name, PyObject *co, PyObject *pathname,
                               PyObject *cpathname)
 {
+    if (name == NULL || co == NULL ||
+        (pathname != NULL && PyObject_CheckAccess(pathname) == NULL) ||
+        (cpathname != NULL && PyObject_CheckAccess(cpathname) == NULL) ||
+        PyObject_CheckAccess(name) == NULL ||
+        PyObject_CheckAccess(co) == NULL) {
+        if (name == NULL || co == NULL) {
+            PyErr_BadInternalCall();
+        }
+        return NULL;
+    }
     PyThreadState *tstate = _PyThreadState_GET();
     PyObject *d, *external, *res;
 
@@ -3605,6 +3627,12 @@ get_path_importer(PyThreadState *tstate, PyObject *path_importer_cache,
 PyObject *
 PyImport_GetImporter(PyObject *path)
 {
+    if (path == NULL || PyObject_CheckAccess(path) == NULL) {
+        if (path == NULL) {
+            PyErr_BadInternalCall();
+        }
+        return NULL;
+    }
     PyThreadState *tstate = _PyThreadState_GET();
     PyObject *path_importer_cache = PySys_GetAttrString("path_importer_cache");
     if (path_importer_cache == NULL) {
@@ -4222,6 +4250,14 @@ PyImport_ImportModuleLevelObject(PyObject *name, PyObject *globals,
                                  PyObject *locals, PyObject *fromlist,
                                  int level)
 {
+    if (name != NULL && PyObject_CheckAccess(name) == NULL) {
+        return NULL;
+    }
+    if ((globals != NULL && PyObject_CheckAccess(globals) == NULL) ||
+        (locals != NULL && PyObject_CheckAccess(locals) == NULL) ||
+        (fromlist != NULL && PyObject_CheckAccess(fromlist) == NULL)) {
+        return NULL;
+    }
     PyThreadState *tstate = _PyThreadState_GET();
     PyObject *abs_name = NULL;
     PyObject *final_mod = NULL;
@@ -4692,6 +4728,12 @@ PyImport_ImportModuleLevel(const char *name, PyObject *globals, PyObject *locals
 PyObject *
 PyImport_ReloadModule(PyObject *m)
 {
+    if (m == NULL || PyObject_CheckAccess(m) == NULL) {
+        if (m == NULL) {
+            PyErr_BadInternalCall();
+        }
+        return NULL;
+    }
     PyObject *reloaded_module = NULL;
     PyObject *importlib = PyImport_GetModule(&_Py_ID(importlib));
     if (importlib == NULL) {
@@ -4723,8 +4765,10 @@ PyImport_ReloadModule(PyObject *m)
 PyObject *
 PyImport_Import(PyObject *module_name)
 {
-    if (module_name == NULL) {
-        PyErr_BadInternalCall();
+    if (module_name == NULL || PyObject_CheckAccess(module_name) == NULL) {
+        if (module_name == NULL) {
+            PyErr_BadInternalCall();
+        }
         return NULL;
     }
     PyThreadState *tstate = _PyThreadState_GET();
@@ -5035,6 +5079,9 @@ PyImport_ImportModuleAttrString(const char *modname, const char *attrname)
 int
 PyImport_SetLazyImportsFilter(PyObject *filter)
 {
+    if (filter != NULL && PyObject_CheckAccess(filter) == NULL) {
+        return -1;
+    }
     if (filter == Py_None) {
         filter = NULL;
     }
@@ -5065,7 +5112,7 @@ PyImport_GetLazyImportsFilter(void)
     LAZY_IMPORTS_LOCK(interp);
     PyObject *res = Py_XNewRef(LAZY_IMPORTS_FILTER(interp));
     LAZY_IMPORTS_UNLOCK(interp);
-    return res;
+    return _PyObject_CheckAccessNullable(res);
 }
 
 int
