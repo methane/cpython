@@ -1338,6 +1338,13 @@ PyObject_RichCompareBool(PyObject *v, PyObject *w, int op)
 Py_hash_t
 PyObject_HashNotImplemented(PyObject *v)
 {
+    if (v == NULL) {
+        PyErr_BadInternalCall();
+        return -1;
+    }
+    if (PyObject_CheckAccess(v) == NULL) {
+        return -1;
+    }
     PyErr_Format(PyExc_TypeError, "unhashable type: '%.200s'",
                  Py_TYPE(v)->tp_name);
     return -1;
@@ -1346,6 +1353,13 @@ PyObject_HashNotImplemented(PyObject *v)
 Py_hash_t
 PyObject_Hash(PyObject *v)
 {
+    if (v == NULL) {
+        PyErr_BadInternalCall();
+        return -1;
+    }
+    if (PyObject_CheckAccess(v) == NULL) {
+        return -1;
+    }
     PyTypeObject *tp = Py_TYPE(v);
     if (tp->tp_hash != NULL)
         return (*tp->tp_hash)(v);
@@ -2351,6 +2365,13 @@ int
 PyObject_IsTrue(PyObject *v)
 {
     Py_ssize_t res;
+    if (v == NULL) {
+        PyErr_BadInternalCall();
+        return -1;
+    }
+    if (PyObject_CheckAccess(v) == NULL) {
+        return -1;
+    }
     if (v == Py_True)
         return 1;
     if (v == Py_False)

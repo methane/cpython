@@ -456,6 +456,26 @@ memoryview_getcontiguous(PyObject *self, PyObject *arg)
     return PyMemoryView_GetContiguous(arg, PyBUF_READ, 'C');
 }
 
+static PyObject *
+object_hash(PyObject *self, PyObject *arg)
+{
+    Py_hash_t result = PyObject_Hash(arg);
+    if (result == -1 && PyErr_Occurred()) {
+        return NULL;
+    }
+    return PyLong_FromSsize_t(result);
+}
+
+static PyObject *
+object_is_true(PyObject *self, PyObject *arg)
+{
+    int result = PyObject_IsTrue(arg);
+    if (result < 0) {
+        return NULL;
+    }
+    return PyLong_FromLong(result);
+}
+
 
 static PyMethodDef test_methods[] = {
     {"return_tuple_item_unchecked", return_tuple_item_unchecked, METH_O},
@@ -479,6 +499,8 @@ static PyMethodDef test_methods[] = {
     {"PySlice_GetIndices", slice_getindices, METH_VARARGS},
     {"memoryview_fromobject", memoryview_fromobject, METH_O},
     {"memoryview_getcontiguous", memoryview_getcontiguous, METH_O},
+    {"object_hash", object_hash, METH_O},
+    {"object_is_true", object_is_true, METH_O},
 
     {"sequence_fast_get_size", sequence_fast_get_size, METH_O},
     {"sequence_fast_get_item", sequence_fast_get_item, METH_VARARGS},
