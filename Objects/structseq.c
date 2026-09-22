@@ -65,6 +65,12 @@ PyObject *
 PyStructSequence_New(PyTypeObject *type)
 {
     PyStructSequence *obj;
+    if (type == NULL || PyObject_CheckAccess((PyObject *)type) == NULL) {
+        if (type == NULL) {
+            PyErr_BadInternalCall();
+        }
+        return NULL;
+    }
     Py_ssize_t size = REAL_SIZE_TP(type), i;
     if (size < 0) {
         return NULL;
@@ -90,6 +96,13 @@ PyStructSequence_New(PyTypeObject *type)
 void
 PyStructSequence_SetItem(PyObject *op, Py_ssize_t index, PyObject *value)
 {
+    if (op == NULL || PyObject_CheckAccess(op) == NULL ||
+        (value != NULL && PyObject_CheckAccess(value) == NULL)) {
+        if (op == NULL) {
+            PyErr_BadInternalCall();
+        }
+        return;
+    }
     PyTupleObject *tuple = _PyTuple_CAST(op);
     assert(0 <= index);
 #ifndef NDEBUG
@@ -103,13 +116,19 @@ PyStructSequence_SetItem(PyObject *op, Py_ssize_t index, PyObject *value)
 PyObject*
 PyStructSequence_GetItem(PyObject *op, Py_ssize_t index)
 {
+    if (op == NULL || PyObject_CheckAccess(op) == NULL) {
+        if (op == NULL) {
+            PyErr_BadInternalCall();
+        }
+        return NULL;
+    }
     assert(0 <= index);
 #ifndef NDEBUG
     Py_ssize_t n_fields = REAL_SIZE(op);
     assert(n_fields >= 0);
     assert(index < n_fields);
 #endif
-    return PyTuple_GET_ITEM(op, index);
+    return PyObject_CheckAccess(PyTuple_GET_ITEM(op, index));
 }
 
 

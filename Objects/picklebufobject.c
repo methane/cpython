@@ -19,6 +19,13 @@ PyPickleBuffer_FromObject(PyObject *base)
     PyTypeObject *type = &PyPickleBuffer_Type;
     PyPickleBufferObject *self;
 
+    if (base == NULL || PyObject_CheckAccess(base) == NULL) {
+        if (base == NULL) {
+            PyErr_BadInternalCall();
+        }
+        return NULL;
+    }
+
     self = (PyPickleBufferObject *) type->tp_alloc(type, 0);
     if (self == NULL) {
         return NULL;
@@ -35,6 +42,12 @@ PyPickleBuffer_FromObject(PyObject *base)
 const Py_buffer *
 PyPickleBuffer_GetBuffer(PyObject *obj)
 {
+    if (obj == NULL || PyObject_CheckAccess(obj) == NULL) {
+        if (obj == NULL) {
+            PyErr_BadInternalCall();
+        }
+        return NULL;
+    }
     PyPickleBufferObject *self = (PyPickleBufferObject *) obj;
 
     if (!PyPickleBuffer_Check(obj)) {
@@ -48,12 +61,21 @@ PyPickleBuffer_GetBuffer(PyObject *obj)
                         "operation forbidden on released PickleBuffer object");
         return NULL;
     }
+    if (PyObject_CheckAccess(self->view.obj) == NULL) {
+        return NULL;
+    }
     return &self->view;
 }
 
 int
 PyPickleBuffer_Release(PyObject *obj)
 {
+    if (obj == NULL || PyObject_CheckAccess(obj) == NULL) {
+        if (obj == NULL) {
+            PyErr_BadInternalCall();
+        }
+        return -1;
+    }
     PyPickleBufferObject *self = (PyPickleBufferObject *) obj;
 
     if (!PyPickleBuffer_Check(obj)) {
