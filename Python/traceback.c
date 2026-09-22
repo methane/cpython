@@ -84,6 +84,10 @@ tb_create_raw(PyTracebackObject *next, PyFrameObject *frame, int lasti,
         PyErr_BadInternalCall();
         return NULL;
     }
+    if ((next != NULL && PyObject_CheckAccess((PyObject *)next) == NULL) ||
+        PyObject_CheckAccess((PyObject *)frame) == NULL) {
+        return NULL;
+    }
     tb = PyObject_GC_New(PyTracebackObject, &PyTraceBack_Type);
     if (tb != NULL) {
         tb->tb_next = (PyTracebackObject*)Py_XNewRef(next);
@@ -145,7 +149,7 @@ traceback_tb_next_get_impl(PyTracebackObject *self)
     if (!ret) {
         ret = Py_None;
     }
-    return Py_NewRef(ret);
+    return _PyObject_CheckAccessNullable(Py_NewRef(ret));
 }
 
 static int
@@ -182,6 +186,10 @@ static int
 traceback_tb_next_set_impl(PyTracebackObject *self, PyObject *value)
 /*[clinic end generated code: output=d4868cbc48f2adac input=936201ff689c5700]*/
 {
+    if (PyObject_CheckAccess((PyObject *)self) == NULL ||
+        (value != NULL && PyObject_CheckAccess(value) == NULL)) {
+        return -1;
+    }
     if (!value) {
         PyErr_Format(PyExc_TypeError, "can't delete tb_next attribute");
         return -1;
@@ -319,6 +327,9 @@ _PyTraceBack_FromFrame(PyObject *tb_next, PyFrameObject *frame)
 int
 PyTraceBack_Here(PyFrameObject *frame)
 {
+    if (frame == NULL || PyObject_CheckAccess((PyObject *)frame) == NULL) {
+        return -1;
+    }
     PyObject *exc = PyErr_GetRaisedException();
     assert(PyExceptionInstance_Check(exc));
     PyObject *tb = PyException_GetTraceback(exc);
@@ -783,6 +794,10 @@ _PyTraceBack_Print(PyObject *v, const char *header, PyObject *f)
 
     if (v == NULL) {
         return 0;
+    }
+    if (PyObject_CheckAccess(v) == NULL ||
+        (f != NULL && PyObject_CheckAccess(f) == NULL)) {
+        return -1;
     }
     if (!PyTraceBack_Check(v)) {
         PyErr_BadInternalCall();
