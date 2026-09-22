@@ -2911,6 +2911,14 @@ object_isinstance(PyObject *inst, PyObject *cls)
 static int
 object_recursive_isinstance(PyThreadState *tstate, PyObject *inst, PyObject *cls)
 {
+    if (inst == NULL || cls == NULL) {
+        PyErr_BadInternalCall();
+        return -1;
+    }
+    if (PyObject_CheckAccess(inst) == NULL ||
+        PyObject_CheckAccess(cls) == NULL) {
+        return -1;
+    }
     /* Quick test for an exact match */
     if (Py_IS_TYPE(inst, (PyTypeObject *)cls)) {
         return 1;
@@ -2959,6 +2967,10 @@ object_recursive_isinstance(PyThreadState *tstate, PyObject *inst, PyObject *cls
         if (res == NULL) {
             return -1;
         }
+        res = _PyObject_CheckAccessNullable(res);
+        if (res == NULL) {
+            return -1;
+        }
         int ok = PyObject_IsTrue(res);
         Py_DECREF(res);
 
@@ -3004,6 +3016,14 @@ recursive_issubclass(PyObject *derived, PyObject *cls)
 static int
 object_issubclass(PyThreadState *tstate, PyObject *derived, PyObject *cls)
 {
+    if (derived == NULL || cls == NULL) {
+        PyErr_BadInternalCall();
+        return -1;
+    }
+    if (PyObject_CheckAccess(derived) == NULL ||
+        PyObject_CheckAccess(cls) == NULL) {
+        return -1;
+    }
     PyObject *checker;
 
     /* We know what type's __subclasscheck__ does. */
@@ -3047,6 +3067,10 @@ object_issubclass(PyThreadState *tstate, PyObject *derived, PyObject *cls)
         _Py_LeaveRecursiveCallTstate(tstate);
         Py_DECREF(checker);
         if (res != NULL) {
+            res = _PyObject_CheckAccessNullable(res);
+            if (res == NULL) {
+                return -1;
+            }
             ok = PyObject_IsTrue(res);
             Py_DECREF(res);
         }
