@@ -984,6 +984,7 @@ PyObject_Format(PyObject *obj, PyObject *format_spec)
     /* And call it. */
     result = PyObject_CallOneArg(meth, format_spec);
     Py_DECREF(meth);
+    result = _PyObject_CheckAccessNullable(result);
 
     if (result && !PyUnicode_Check(result)) {
         PyErr_Format(PyExc_TypeError,
