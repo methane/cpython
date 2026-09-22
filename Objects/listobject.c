@@ -4354,7 +4354,7 @@ listiter_next_shared(PyObject *self, PyListObject *seq,
         FT_ATOMIC_STORE_SSIZE_RELAXED(*position, -1);
     }
     Py_END_CRITICAL_SECTION2();
-    return item;
+    return _PyObject_CheckAccessNullable(item);
 }
 #endif
 
@@ -4384,7 +4384,7 @@ listiter_next(PyObject *self)
         return NULL;
     }
     FT_ATOMIC_STORE_SSIZE_RELAXED(it->it_index, index + 1);
-    return item;
+    return _PyObject_CheckAccessNullable(item);
 }
 
 static PyObject *
@@ -4540,7 +4540,7 @@ listreviter_next(PyObject *self)
     PyObject *item = list_get_item_ref(seq, index);
     if (item != NULL) {
         FT_ATOMIC_STORE_SSIZE_RELAXED(it->it_index, index - 1);
-        return item;
+        return _PyObject_CheckAccessNullable(item);
     }
     FT_ATOMIC_STORE_SSIZE_RELAXED(it->it_index, -1);
 #ifndef Py_GIL_DISABLED

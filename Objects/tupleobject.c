@@ -1201,7 +1201,7 @@ tupleiter_next(PyObject *self)
     if (index < PyTuple_GET_SIZE(seq)) {
         FT_ATOMIC_STORE_SSIZE_RELAXED(it->it_index, index + 1);
         item = PyTuple_GET_ITEM(seq, index);
-        return Py_NewRef(item);
+        return _PyObject_CheckAccessNullable(Py_NewRef(item));
     }
 
 #ifndef Py_GIL_DISABLED

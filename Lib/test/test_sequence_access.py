@@ -66,6 +66,29 @@ class SequenceAccessTests(unittest.TestCase):
         self.assertEqual([results.get() for _ in range(9)], [True] * 9)
         self.assertEqual(results.get(), 1)
 
+    @threading_helper.requires_working_threading()
+    def test_iterator_result_access(self):
+        value = object()
+        results = threading.Channel()
+
+        def worker(payload):
+            with sys.monitoring.StopTheWorld:
+                sequences = ([payload[0]], (payload[0],))
+            denied = 0
+            for sequence in sequences:
+                for iterator in (iter(sequence), reversed(sequence)):
+                    try:
+                        next(iterator)
+                    except IllegalThreadAccessException:
+                        denied += 1
+            results.put(denied)
+
+        thread = threading.Thread(target=worker, args=((value,),),
+                                  group=threading.ThreadGroup())
+        with threading_helper.start_threads([thread]):
+            pass
+        self.assertEqual(results.get(), 4)
+
     def test_native_comparison_result_access(self):
         native = import_module('_testcapi')
         for factory in (threading.Lock, threading.RLock):
