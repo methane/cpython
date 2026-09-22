@@ -4083,6 +4083,10 @@ module_exec(PyObject *module)
     if (PyType_Ready(&SelfInterruptingContextManager_Type) < 0) {
         return 1;
     }
+    if (PyObject_DeclareImmutable(
+            (PyObject *)&SelfInterruptingContextManager_Type) < 0) {
+        return 1;
+    }
     PyModule_AddObject(module, "SelfInterruptingContextManager", (PyObject *)&SelfInterruptingContextManager_Type);
 
     return 0;
