@@ -173,6 +173,9 @@ enum_next_long(enumobject *en, PyObject* next_item)
 static PyObject *
 enum_next(PyObject *op)
 {
+    if (PyObject_CheckAccess(op) == NULL) {
+        return NULL;
+    }
     enumobject *en = _enumobject_CAST(op);
     PyObject *next_index;
     PyObject *next_item;
@@ -216,6 +219,9 @@ enum_next(PyObject *op)
 static PyObject *
 enum_reduce(PyObject *op, PyObject *Py_UNUSED(ignored))
 {
+    if (PyObject_CheckAccess(op) == NULL) {
+        return NULL;
+    }
     enumobject *en = _enumobject_CAST(op);
     PyObject *result;
     Py_BEGIN_CRITICAL_SECTION(en);
@@ -329,7 +335,7 @@ reversed_new_impl(PyTypeObject *type, PyObject *seq)
     if (reversed_meth != NULL) {
         PyObject *res = _PyObject_CallNoArgs(reversed_meth);
         Py_DECREF(reversed_meth);
-        return res;
+        return _PyObject_CheckAccessNullable(res);
     }
     else if (PyErr_Occurred())
         return NULL;
@@ -374,6 +380,9 @@ reversed_traverse(PyObject *op, visitproc visit, void *arg)
 static PyObject *
 reversed_next(PyObject *op)
 {
+    if (PyObject_CheckAccess(op) == NULL) {
+        return NULL;
+    }
     reversedobject *ro = _reversedobject_CAST(op);
     PyObject *item;
     Py_ssize_t index = FT_ATOMIC_LOAD_SSIZE_RELAXED(ro->index);
@@ -398,6 +407,9 @@ reversed_next(PyObject *op)
 static PyObject *
 reversed_len(PyObject *op, PyObject *Py_UNUSED(ignored))
 {
+    if (PyObject_CheckAccess(op) == NULL) {
+        return NULL;
+    }
     reversedobject *ro = _reversedobject_CAST(op);
     Py_ssize_t position, seqsize;
     Py_ssize_t index = FT_ATOMIC_LOAD_SSIZE_RELAXED(ro->index);
@@ -417,6 +429,9 @@ PyDoc_STRVAR(length_hint_doc, "Private method returning an estimate of len(list(
 static PyObject *
 reversed_reduce(PyObject *op, PyObject *Py_UNUSED(ignored))
 {
+    if (PyObject_CheckAccess(op) == NULL) {
+        return NULL;
+    }
     reversedobject *ro = _reversedobject_CAST(op);
     Py_ssize_t index = FT_ATOMIC_LOAD_SSIZE_RELAXED(ro->index);
     if (index != -1) {
@@ -430,6 +445,10 @@ reversed_reduce(PyObject *op, PyObject *Py_UNUSED(ignored))
 static PyObject *
 reversed_setstate(PyObject *op, PyObject *state)
 {
+    if (PyObject_CheckAccess(op) == NULL ||
+        PyObject_CheckAccess(state) == NULL) {
+        return NULL;
+    }
     reversedobject *ro = _reversedobject_CAST(op);
     Py_ssize_t index = PyLong_AsSsize_t(state);
     if (index == -1 && PyErr_Occurred())
