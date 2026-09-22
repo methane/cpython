@@ -112,6 +112,9 @@ unions_equal(unionobject *a, unionobject *b)
 static PyObject *
 union_richcompare(PyObject *a, PyObject *b, int op)
 {
+    if (PyObject_CheckAccess(a) == NULL || PyObject_CheckAccess(b) == NULL) {
+        return NULL;
+    }
     if (!_PyUnion_Check(b) || (op != Py_EQ && op != Py_NE)) {
         Py_RETURN_NOTIMPLEMENTED;
     }
@@ -207,6 +210,9 @@ unionbuilder_add_single_unchecked(unionbuilder *ub, PyObject *arg)
 static bool
 unionbuilder_add_single(unionbuilder *ub, PyObject *arg)
 {
+    if (arg == NULL || PyObject_CheckAccess(arg) == NULL) {
+        return false;
+    }
     if (Py_IsNone(arg)) {
         arg = (PyObject *)&_PyNone_Type;  // immortal, so no refcounting needed
     }
@@ -231,6 +237,9 @@ unionbuilder_add_single(unionbuilder *ub, PyObject *arg)
 static bool
 unionbuilder_add_tuple(unionbuilder *ub, PyObject *tuple)
 {
+    if (tuple == NULL || PyObject_CheckAccess(tuple) == NULL) {
+        return false;
+    }
     Py_ssize_t n = PyTuple_GET_SIZE(tuple);
     for (Py_ssize_t i = 0; i < n; i++) {
         if (!unionbuilder_add_single(ub, PyTuple_GET_ITEM(tuple, i))) {
@@ -257,6 +266,10 @@ is_unionable(PyObject *obj)
 PyObject *
 _Py_union_type_or(PyObject* self, PyObject* other)
 {
+    if (PyObject_CheckAccess(self) == NULL ||
+        PyObject_CheckAccess(other) == NULL) {
+        return NULL;
+    }
     if (!is_unionable(self) || !is_unionable(other)) {
         Py_RETURN_NOTIMPLEMENTED;
     }
@@ -342,6 +355,10 @@ static PyObject *
 union_getitem(PyObject *self, PyObject *item)
 {
     unionobject *alias = (unionobject *)self;
+    if (PyObject_CheckAccess(self) == NULL ||
+        PyObject_CheckAccess(item) == NULL) {
+        return NULL;
+    }
     if (union_init_parameters(alias) < 0) {
         return NULL;
     }
@@ -364,6 +381,9 @@ static PyObject *
 union_parameters(PyObject *self, void *Py_UNUSED(unused))
 {
     unionobject *alias = (unionobject *)self;
+    if (PyObject_CheckAccess(self) == NULL) {
+        return NULL;
+    }
     if (union_init_parameters(alias) < 0) {
         return NULL;
     }
@@ -422,6 +442,10 @@ static PyObject *
 union_getattro(PyObject *self, PyObject *name)
 {
     unionobject *alias = (unionobject *)self;
+    if (PyObject_CheckAccess(self) == NULL ||
+        PyObject_CheckAccess(name) == NULL) {
+        return NULL;
+    }
     if (PyUnicode_Check(name)) {
         for (const char * const *p = cls_attrs; ; p++) {
             if (*p == NULL) {
@@ -484,6 +508,9 @@ type_check(PyObject *arg, const char *msg)
 PyObject *
 _Py_union_from_tuple(PyObject *args)
 {
+    if (args == NULL || PyObject_CheckAccess(args) == NULL) {
+        return NULL;
+    }
     unionbuilder ub;
     if (!unionbuilder_init(&ub, true)) {
         return NULL;
