@@ -937,6 +937,8 @@ PyObject_Repr(PyObject *v)
         return NULL;
     if (v == NULL)
         return PyUnicode_FromString("<NULL>");
+    if (PyObject_CheckAccess(v) == NULL)
+        return NULL;
     if (Py_TYPE(v)->tp_repr == NULL)
         return PyUnicode_FromFormat("<%s object at %p>",
                                     Py_TYPE(v)->tp_name, v);
@@ -978,6 +980,8 @@ PyObject_Str(PyObject *v)
         return NULL;
     if (v == NULL)
         return PyUnicode_FromString("<NULL>");
+    if (PyObject_CheckAccess(v) == NULL)
+        return NULL;
     if (PyUnicode_CheckExact(v)) {
         return Py_NewRef(v);
     }
@@ -1018,6 +1022,8 @@ PyObject_ASCII(PyObject *v)
 {
     PyObject *repr, *ascii, *res;
 
+    if (v != NULL && PyObject_CheckAccess(v) == NULL)
+        return NULL;
     repr = PyObject_Repr(v);
     if (repr == NULL)
         return NULL;
@@ -1047,6 +1053,8 @@ PyObject_Bytes(PyObject *v)
 
     if (v == NULL)
         return PyBytes_FromString("<NULL>");
+    if (PyObject_CheckAccess(v) == NULL)
+        return NULL;
 
     if (PyBytes_CheckExact(v)) {
         return Py_NewRef(v);
