@@ -51,6 +51,10 @@ namespace_init(PyObject *op, PyObject *args, PyObject *kwds)
     if (!PyArg_UnpackTuple(args, _PyType_Name(Py_TYPE(ns)), 0, 1, &arg)) {
         return -1;
     }
+    if ((arg != NULL && PyObject_CheckAccess(arg) == NULL) ||
+        (kwds != NULL && PyObject_CheckAccess(kwds) == NULL)) {
+        return -1;
+    }
     if (arg != NULL) {
         PyObject *dict;
         if (PyDict_CheckExact(arg)) {
@@ -321,6 +325,9 @@ PyTypeObject _PyNamespace_Type = {
 PyObject *
 _PyNamespace_New(PyObject *kwds)
 {
+    if (kwds != NULL && PyObject_CheckAccess(kwds) == NULL) {
+        return NULL;
+    }
     PyObject *ns = namespace_new(&_PyNamespace_Type, NULL, NULL);
     if (ns == NULL)
         return NULL;
