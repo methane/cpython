@@ -538,6 +538,10 @@ try_complex_special_method(PyObject *op)
     if (f) {
         PyObject *res = _PyObject_CallNoArgs(f);
         Py_DECREF(f);
+        if (res != NULL && PyObject_CheckAccess(res) == NULL) {
+            Py_DECREF(res);
+            return NULL;
+        }
         if (!res || PyComplex_CheckExact(res)) {
             return res;
         }
