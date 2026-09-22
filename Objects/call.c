@@ -1092,7 +1092,12 @@ _PyStack_UnpackDict(PyThreadState *tstate,
     Py_ssize_t pos = 0, i = 0;
     PyObject *key, *value;
     unsigned long keys_are_strings = Py_TPFLAGS_UNICODE_SUBCLASS;
-    while (PyDict_Next(kwargs, &pos, &key, &value)) {
+    while (_PyDict_Next(kwargs, &pos, &key, &value, NULL)) {
+        if (PyObject_CheckAccess(key) == NULL ||
+            PyObject_CheckAccess(value) == NULL) {
+            _PyStack_UnpackDict_Free(stack, nargs, kwnames);
+            return NULL;
+        }
         keys_are_strings &= Py_TYPE(key)->tp_flags;
         PyTuple_SET_ITEM(kwnames, i, Py_NewRef(key));
         kwstack[i] = Py_NewRef(value);

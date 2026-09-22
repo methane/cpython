@@ -790,7 +790,7 @@ _PyEval_CheckCallArgs(PyObject *callable, PyObject *args, PyObject *kwargs)
     if (kwargs != NULL) {
         Py_ssize_t pos = 0;
         PyObject *key, *value;
-        while (PyDict_Next(kwargs, &pos, &key, &value)) {
+        while (_PyDict_Next(kwargs, &pos, &key, &value, NULL)) {
             if (PyObject_CheckAccess(key) == NULL ||
                 PyObject_CheckAccess(value) == NULL) {
                 return -1;
