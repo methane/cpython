@@ -12,17 +12,20 @@ class ObjectAccessTests(unittest.TestCase):
     @threading_helper.requires_working_threading()
     def test_foreign_object(self):
         capi = import_module('_testcapi')
+        limited = import_module('_testlimitedcapi')
         internal = import_module('_testinternalcapi')
         invoke = capi.call_cfunction_raw_return_in_tuple
         internal.object_declare_synchronized(invoke)
 
         class LocalObject:
-            pass
+            def __getitem__(self, key):
+                return key
 
         value = LocalObject()
         apis = (
             (capi.object_hash, (value,)),
             (capi.object_is_true, (value,)),
+            (limited.object_getitem, (value, 0)),
         )
         for api, unused in apis:
             internal.object_declare_synchronized(api)
