@@ -1391,6 +1391,13 @@ PyObject_GetAttrString(PyObject *v, const char *name)
 {
     PyObject *w, *res;
 
+    if (v == NULL || name == NULL) {
+        PyErr_BadInternalCall();
+        return NULL;
+    }
+    if (PyObject_CheckAccess(v) == NULL) {
+        return NULL;
+    }
     if (Py_TYPE(v)->tp_getattr != NULL) {
         return _PyObject_CheckAccessNullable(
             (*Py_TYPE(v)->tp_getattr)(v, (char*)name));
@@ -1525,6 +1532,14 @@ restore:
 PyObject *
 PyObject_GetAttr(PyObject *v, PyObject *name)
 {
+    if (v == NULL || name == NULL) {
+        PyErr_BadInternalCall();
+        return NULL;
+    }
+    if (PyObject_CheckAccess(v) == NULL ||
+        PyObject_CheckAccess(name) == NULL) {
+        return NULL;
+    }
     PyTypeObject *tp = Py_TYPE(v);
     if (!PyUnicode_Check(name)) {
         PyErr_Format(PyExc_TypeError,
@@ -1615,6 +1630,20 @@ _PyObject_GetAttrStackRef(PyObject *v, PyObject *name)
 int
 PyObject_GetOptionalAttr(PyObject *v, PyObject *name, PyObject **result)
 {
+    if (result == NULL) {
+        PyErr_BadInternalCall();
+        return -1;
+    }
+    if (v == NULL || name == NULL) {
+        PyErr_BadInternalCall();
+        *result = NULL;
+        return -1;
+    }
+    if (PyObject_CheckAccess(v) == NULL ||
+        PyObject_CheckAccess(name) == NULL) {
+        *result = NULL;
+        return -1;
+    }
     PyTypeObject *tp = Py_TYPE(v);
 
     if (!PyUnicode_Check(name)) {
@@ -1686,6 +1715,19 @@ PyObject_GetOptionalAttr(PyObject *v, PyObject *name, PyObject **result)
 int
 PyObject_GetOptionalAttrString(PyObject *obj, const char *name, PyObject **result)
 {
+    if (result == NULL) {
+        PyErr_BadInternalCall();
+        return -1;
+    }
+    if (obj == NULL || name == NULL) {
+        PyErr_BadInternalCall();
+        *result = NULL;
+        return -1;
+    }
+    if (PyObject_CheckAccess(obj) == NULL) {
+        *result = NULL;
+        return -1;
+    }
     if (Py_TYPE(obj)->tp_getattr == NULL) {
         PyObject *oname = PyUnicode_FromString(name);
         if (oname == NULL) {
@@ -2240,6 +2282,14 @@ _PyObject_GenericGetAttrWithDict(PyObject *obj, PyObject *name,
 PyObject *
 PyObject_GenericGetAttr(PyObject *obj, PyObject *name)
 {
+    if (obj == NULL || name == NULL) {
+        PyErr_BadInternalCall();
+        return NULL;
+    }
+    if (PyObject_CheckAccess(obj) == NULL ||
+        PyObject_CheckAccess(name) == NULL) {
+        return NULL;
+    }
     return _PyObject_CheckAccessNullable(
         _PyObject_GenericGetAttrWithDict(obj, name, NULL, 0));
 }

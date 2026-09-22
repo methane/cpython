@@ -143,8 +143,8 @@ class CAPITest(unittest.TestCase):
 
         self.assertRaises(RuntimeError, xgetattr, obj, 'evil')
         self.assertRaises(TypeError, xgetattr, obj, 1)
-        # CRASHES xgetattr(obj, NULL)
-        # CRASHES xgetattr(NULL, 'a')
+        self.assertRaises(SystemError, xgetattr, obj, NULL)
+        self.assertRaises(SystemError, xgetattr, NULL, 'a')
 
     def test_object_getattrstring(self):
         getattrstring = _testlimitedcapi.object_getattrstring
@@ -157,8 +157,8 @@ class CAPITest(unittest.TestCase):
 
         self.assertRaises(RuntimeError, getattrstring, obj, b'evil')
         self.assertRaises(UnicodeDecodeError, getattrstring, obj, b'\xff')
-        # CRASHES getattrstring(obj, NULL)
-        # CRASHES getattrstring(NULL, b'a')
+        self.assertRaises(SystemError, getattrstring, obj, NULL)
+        self.assertRaises(SystemError, getattrstring, NULL, b'a')
 
     def test_object_getoptionalattr(self):
         getoptionalattr = _testcapi.object_getoptionalattr
@@ -171,8 +171,8 @@ class CAPITest(unittest.TestCase):
 
         self.assertRaises(RuntimeError, getoptionalattr, obj, 'evil')
         self.assertRaises(TypeError, getoptionalattr, obj, 1)
-        # CRASHES getoptionalattr(obj, NULL)
-        # CRASHES getoptionalattr(NULL, 'a')
+        self.assertRaises(SystemError, getoptionalattr, obj, NULL)
+        self.assertRaises(SystemError, getoptionalattr, NULL, 'a')
 
     def test_object_getoptionalattrstring(self):
         getoptionalattrstring = _testcapi.object_getoptionalattrstring
@@ -185,8 +185,8 @@ class CAPITest(unittest.TestCase):
 
         self.assertRaises(RuntimeError, getoptionalattrstring, obj, b'evil')
         self.assertRaises(UnicodeDecodeError, getoptionalattrstring, obj, b'\xff')
-        # CRASHES getoptionalattrstring(obj, NULL)
-        # CRASHES getoptionalattrstring(NULL, b'a')
+        self.assertRaises(SystemError, getoptionalattrstring, obj, NULL)
+        self.assertRaises(SystemError, getoptionalattrstring, NULL, b'a')
 
     def test_object_hasattr(self):
         xhasattr = _testlimitedcapi.object_hasattr
