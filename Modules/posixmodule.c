@@ -1423,6 +1423,10 @@ path_converter(PyObject *o, void *p)
         return 1;
     }
 
+    if (PyObject_CheckAccess(o) == NULL) {
+        return 0;
+    }
+
     /* Ensure it's always safe to call path_cleanup(). */
     path->object = path->cleanup = NULL;
     /* path->object owns a reference to the original object */
@@ -1452,6 +1456,10 @@ path_converter(PyObject *o, void *p)
         res = _PyObject_CallNoArgs(func);
         Py_DECREF(func);
         if (NULL == res) {
+            goto error_exit;
+        }
+        if (PyObject_CheckAccess(res) == NULL) {
+            Py_DECREF(res);
             goto error_exit;
         }
         else if (PyUnicode_Check(res)) {
@@ -17516,6 +17524,14 @@ PyOS_FSPath(PyObject *path)
     PyObject *func = NULL;
     PyObject *path_repr = NULL;
 
+    if (path == NULL) {
+        PyErr_BadArgument();
+        return NULL;
+    }
+    if (PyObject_CheckAccess(path) == NULL) {
+        return NULL;
+    }
+
     if (PyUnicode_Check(path) || PyBytes_Check(path)) {
         return Py_NewRef(path);
     }
@@ -17531,6 +17547,11 @@ PyOS_FSPath(PyObject *path)
     path_repr = _PyObject_CallNoArgs(func);
     Py_DECREF(func);
     if (NULL == path_repr) {
+        return NULL;
+    }
+
+    if (PyObject_CheckAccess(path_repr) == NULL) {
+        Py_DECREF(path_repr);
         return NULL;
     }
 
