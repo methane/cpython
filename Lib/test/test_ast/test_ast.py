@@ -1166,6 +1166,75 @@ class AST_Tests(unittest.TestCase):
         for node, attr, source in tests:
             self.assert_none_check(node, attr, source)
 
+    def test_sequence_conversion_mutation(self):
+        for change in ('shrink', 'grow'):
+            with self.subTest(change=change):
+                class MutatingConstant(ast.Constant):
+                    def __getattribute__(self, name):
+                        if name == 'value':
+                            if change == 'shrink':
+                                items.clear()
+                            else:
+                                items.append(ast.Constant(value=2))
+                        return super().__getattribute__(name)
+
+                node = MutatingConstant(value=1, lineno=1, col_offset=0)
+                reference = weakref.ref(node)
+                items = [node]
+                tree = ast.Expression(ast.List(
+                    elts=items, ctx=ast.Load(), lineno=1, col_offset=0))
+                del node
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    '^List field "elts" changed size during iteration$',
+                ):
+                    compile(tree, '<test>', 'eval')
+                items.clear()
+                support.gc_collect()
+                self.assertIsNone(reference())
+
+    def test_sequence_conversion_item_error(self):
+        class BadConstant(ast.Constant):
+            def __getattribute__(self, name):
+                if name == 'value':
+                    raise ValueError('cannot read item')
+                return super().__getattribute__(name)
+
+        item = BadConstant(value=1, lineno=1, col_offset=0)
+        reference = weakref.ref(item)
+        tree = ast.Expression(ast.List(
+            elts=[item], ctx=ast.Load(), lineno=1, col_offset=0))
+        del item
+        with self.assertRaisesRegex(ValueError, '^cannot read item$'):
+            compile(tree, '<test>', 'eval')
+        # A failed conversion must release the item and allow another compile.
+        tree.body.elts[:] = [ast.Constant(value=1, lineno=1, col_offset=0)]
+        support.gc_collect()
+        self.assertIsNone(reference())
+        self.assertEqual(eval(compile(tree, '<test>', 'eval')), [1])
+
+    def test_sequence_conversion_field_errors(self):
+        sources = [
+            'def f(a, *, b=1):\n global x, y\n return [a, b]',
+            'try:\n f(x=1)\nexcept Exception:\n pass',
+            'import a, b\nx = [i for i in range(3)]\nx < y < z',
+            'match x:\n case [a, b]:\n  pass',
+            'type A[T] = list[T]',
+        ]
+        for source in sources:
+            tree = ast.parse(source)
+            for node in ast.walk(tree):
+                for field, value in ast.iter_fields(node):
+                    if not isinstance(value, list):
+                        continue
+                    with self.subTest(node=type(node).__name__, field=field):
+                        setattr(node, field, ())
+                        message = (f'{type(node).__name__} field "{field}" '
+                                   'must be a list, not a tuple')
+                        with self.assertRaisesRegex(TypeError, re.escape(message)):
+                            compile(tree, '<test>', 'exec')
+                        setattr(node, field, value)
+
     def test_required_field_messages(self):
         binop = ast.BinOp(
             left=ast.Constant(value=2),
