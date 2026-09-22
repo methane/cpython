@@ -549,8 +549,15 @@ _PyType_GetDict(PyTypeObject *self)
 PyObject *
 PyType_GetDict(PyTypeObject *self)
 {
+    if (self == NULL) {
+        PyErr_BadInternalCall();
+        return NULL;
+    }
+    if (PyObject_CheckAccess((PyObject *)self) == NULL) {
+        return NULL;
+    }
     PyObject *dict = lookup_tp_dict(self);
-    return _Py_XNewRef(dict);
+    return _PyObject_CheckAccessNullable(_Py_XNewRef(dict));
 }
 
 static inline void
@@ -1658,7 +1665,15 @@ _PyType_GetFullyQualifiedName(PyTypeObject *type, char sep)
 PyObject *
 PyType_GetFullyQualifiedName(PyTypeObject *type)
 {
-    return _PyType_GetFullyQualifiedName(type, '.');
+    if (type == NULL) {
+        PyErr_BadInternalCall();
+        return NULL;
+    }
+    if (PyObject_CheckAccess((PyObject *)type) == NULL) {
+        return NULL;
+    }
+    return _PyObject_CheckAccessNullable(
+        _PyType_GetFullyQualifiedName(type, '.'));
 }
 
 static PyObject *
@@ -5922,6 +5937,12 @@ PyType_GetModule_DuringGC(PyTypeObject *type)
 PyObject *
 PyType_GetModule(PyTypeObject *type)
 {
+    if (type == NULL || PyObject_CheckAccess((PyObject *)type) == NULL) {
+        if (type == NULL) {
+            PyErr_BadInternalCall();
+        }
+        return NULL;
+    }
     assert(PyType_Check(type));
     if (!_PyType_HasFeature(type, Py_TPFLAGS_HEAPTYPE)) {
         PyErr_Format(
@@ -5939,7 +5960,7 @@ PyType_GetModule(PyTypeObject *type)
             type->tp_name);
         return NULL;
     }
-    return et->ht_module;
+    return PyObject_CheckAccess(et->ht_module);
 }
 
 void *
@@ -6019,12 +6040,19 @@ PyType_GetModuleByToken_DuringGC(PyTypeObject *type, const void *token)
 PyObject *
 PyType_GetModuleByToken(PyTypeObject *type, const void *token)
 {
-    return Py_XNewRef(PyType_GetModuleByDef(type, (PyModuleDef *)token));
+    return _PyObject_CheckAccessNullable(
+        Py_XNewRef(PyType_GetModuleByDef(type, (PyModuleDef *)token)));
 }
 
 PyObject *
 PyType_GetModuleByDef(PyTypeObject *type, PyModuleDef *def)
 {
+    if (type == NULL || PyObject_CheckAccess((PyObject *)type) == NULL) {
+        if (type == NULL) {
+            PyErr_BadInternalCall();
+        }
+        return NULL;
+    }
     PyObject *mod = PyType_GetModuleByToken_DuringGC(type, def);
     if (!mod) {
         PyErr_Format(
@@ -6033,7 +6061,7 @@ PyType_GetModuleByDef(PyTypeObject *type, PyModuleDef *def)
             type->tp_name);
         return NULL;
     }
-    return mod;
+    return PyObject_CheckAccess(mod);
 }
 
 
@@ -6127,6 +6155,12 @@ PyType_GetBaseByToken(PyTypeObject *type, void *token, PyTypeObject **result)
                      "PyType_GetBaseByToken called with token=NULL");
         return -1;
     }
+    if (type == NULL || PyObject_CheckAccess((PyObject *)type) == NULL) {
+        if (type == NULL) {
+            PyErr_BadInternalCall();
+        }
+        return -1;
+    }
     if (!PyType_Check(type)) {
         PyErr_Format(PyExc_TypeError,
                      "expected a type, got a '%T' object", type);
@@ -6135,6 +6169,10 @@ PyType_GetBaseByToken(PyTypeObject *type, void *token, PyTypeObject **result)
 
     int res = PyType_GetBaseByToken_DuringGC(type, token, result);
     if (res > 0 && result) {
+        if (PyObject_CheckAccess((PyObject *)*result) == NULL) {
+            *result = NULL;
+            return -1;
+        }
         Py_INCREF(*result);
     }
     return res;

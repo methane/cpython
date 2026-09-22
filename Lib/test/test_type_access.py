@@ -21,10 +21,12 @@ class TypeAccessTests(unittest.TestCase):
             pass
 
         apis = (
+            (limited.get_type_fullyqualname, (LocalType,)),
             (limited.get_type_name, (LocalType,)),
             (limited.get_type_qualname, (LocalType,)),
             (limited.get_type_module_name, (LocalType,)),
             (limited.type_getflags, (LocalType,)),
+            (internal.type_get_dict, (LocalType,)),
         )
         for api, unused in apis:
             internal.object_declare_synchronized(api)
