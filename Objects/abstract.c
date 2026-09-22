@@ -399,6 +399,13 @@ PyObject_CheckReadBuffer(PyObject *obj)
         PyErr_Clear();
         return 0;
     }
+    if (view.obj != NULL && PyObject_CheckAccess(view.obj) == NULL) {
+        PyObject *view_obj = view.obj;
+        view.obj = NULL;
+        Py_DECREF(view_obj);
+        PyErr_Clear();
+        return 0;
+    }
     PyBuffer_Release(&view);
     return 1;
 }
@@ -476,6 +483,12 @@ PyObject_AsWriteBuffer(PyObject *obj,
         ((*pb->bf_getbuffer)(obj, &view, PyBUF_WRITABLE) != 0)) {
         PyErr_SetString(PyExc_TypeError,
                         "expected a writable bytes-like object");
+        return -1;
+    }
+    if (view.obj != NULL && PyObject_CheckAccess(view.obj) == NULL) {
+        PyObject *view_obj = view.obj;
+        view.obj = NULL;
+        Py_DECREF(view_obj);
         return -1;
     }
 
