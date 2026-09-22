@@ -2477,7 +2477,7 @@ PyFrame_GetCode(PyFrameObject *frame)
     assert(!_PyFrame_IsIncomplete(frame->f_frame));
     code = Py_NewRef(_PyFrame_GetCode(frame->f_frame));
     Py_END_CRITICAL_SECTION();
-    return (PyCodeObject *)code;
+    return (PyCodeObject *)_PyObject_CheckAccessNullable(code);
 }
 
 
