@@ -87,7 +87,7 @@ class CAPIFloatTest(unittest.TestCase):
 
         self.assertRaises(TypeError, fromstring, 4.25)
 
-        # CRASHES fromstring(NULL)
+        self.assertRaises(SystemError, fromstring, None)
 
     def test_fromdouble(self):
         # Test PyFloat_FromDouble()

@@ -185,6 +185,14 @@ PyFloat_FromString(PyObject *v)
     Py_buffer view = {NULL, NULL};
     PyObject *result = NULL;
 
+    if (v == NULL) {
+        PyErr_BadInternalCall();
+        return NULL;
+    }
+    if (PyObject_CheckAccess(v) == NULL) {
+        return NULL;
+    }
+
     if (PyUnicode_Check(v)) {
         s_buffer = _PyUnicode_TransformDecimalAndSpaceToASCII(v);
         if (s_buffer == NULL)

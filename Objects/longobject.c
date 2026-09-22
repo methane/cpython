@@ -3239,6 +3239,14 @@ PyLong_FromUnicodeObject(PyObject *u, int base)
     char *end = NULL;
     Py_ssize_t buflen;
 
+    if (u == NULL) {
+        PyErr_BadInternalCall();
+        return NULL;
+    }
+    if (PyObject_CheckAccess(u) == NULL) {
+        return NULL;
+    }
+
     asciidig = _PyUnicode_TransformDecimalAndSpaceToASCII(u);
     if (asciidig == NULL)
         return NULL;
@@ -6933,6 +6941,15 @@ PyLong_GetNativeLayout(void)
 int
 PyLong_Export(PyObject *obj, PyLongExport *export_long)
 {
+    if (obj == NULL) {
+        memset(export_long, 0, sizeof(*export_long));
+        PyErr_BadInternalCall();
+        return -1;
+    }
+    if (PyObject_CheckAccess(obj) == NULL) {
+        memset(export_long, 0, sizeof(*export_long));
+        return -1;
+    }
     if (!PyLong_Check(obj)) {
         memset(export_long, 0, sizeof(*export_long));
         PyErr_Format(PyExc_TypeError, "expect int, got %T", obj);

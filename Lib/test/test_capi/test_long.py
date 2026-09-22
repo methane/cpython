@@ -160,8 +160,8 @@ class LongTests(unittest.TestCase):
         self.assertRaises(ValueError, fromunicodeobject, '123\x00', 16)
         self.assertRaises(ValueError, fromunicodeobject, '123\x00456', 16)
 
-        # CRASHES fromunicodeobject(NULL, 0)
-        # CRASHES fromunicodeobject(NULL, 16)
+        self.assertRaises(SystemError, fromunicodeobject, None, 0)
+        self.assertRaises(SystemError, fromunicodeobject, None, 16)
 
     def check_long_asint(self, func, min_val, max_val, *,
                          use_index=True,
