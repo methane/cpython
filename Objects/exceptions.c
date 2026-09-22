@@ -516,17 +516,24 @@ static PyGetSetDef BaseException_getset[] = {
 PyObject *
 PyException_GetTraceback(PyObject *self)
 {
+    if (self == NULL || PyObject_CheckAccess(self) == NULL) {
+        return NULL;
+    }
     PyObject *traceback;
     Py_BEGIN_CRITICAL_SECTION(self);
     traceback = Py_XNewRef(PyBaseExceptionObject_CAST(self)->traceback);
     Py_END_CRITICAL_SECTION();
-    return traceback;
+    return _PyObject_CheckAccessNullable(traceback);
 }
 
 
 int
 PyException_SetTraceback(PyObject *self, PyObject *tb)
 {
+    if (self == NULL || PyObject_CheckAccess(self) == NULL ||
+        (tb != NULL && PyObject_CheckAccess(tb) == NULL)) {
+        return -1;
+    }
     int res;
     Py_BEGIN_CRITICAL_SECTION(self);
     res = BaseException___traceback___set_impl(PyBaseExceptionObject_CAST(self), tb);
@@ -537,17 +544,25 @@ PyException_SetTraceback(PyObject *self, PyObject *tb)
 PyObject *
 PyException_GetCause(PyObject *self)
 {
+    if (self == NULL || PyObject_CheckAccess(self) == NULL) {
+        return NULL;
+    }
     PyObject *cause;
     Py_BEGIN_CRITICAL_SECTION(self);
     cause = Py_XNewRef(PyBaseExceptionObject_CAST(self)->cause);
     Py_END_CRITICAL_SECTION();
-    return cause;
+    return _PyObject_CheckAccessNullable(cause);
 }
 
 /* Steals a reference to cause */
 void
 PyException_SetCause(PyObject *self, PyObject *cause)
 {
+    if (self == NULL || PyObject_CheckAccess(self) == NULL ||
+        (cause != NULL && PyObject_CheckAccess(cause) == NULL)) {
+        Py_XDECREF(cause);
+        return;
+    }
     Py_BEGIN_CRITICAL_SECTION(self);
     PyBaseExceptionObject *base_self = PyBaseExceptionObject_CAST(self);
     base_self->suppress_context = 1;
@@ -558,17 +573,25 @@ PyException_SetCause(PyObject *self, PyObject *cause)
 PyObject *
 PyException_GetContext(PyObject *self)
 {
+    if (self == NULL || PyObject_CheckAccess(self) == NULL) {
+        return NULL;
+    }
     PyObject *context;
     Py_BEGIN_CRITICAL_SECTION(self);
     context = Py_XNewRef(PyBaseExceptionObject_CAST(self)->context);
     Py_END_CRITICAL_SECTION();
-    return context;
+    return _PyObject_CheckAccessNullable(context);
 }
 
 /* Steals a reference to context */
 void
 PyException_SetContext(PyObject *self, PyObject *context)
 {
+    if (self == NULL || PyObject_CheckAccess(self) == NULL ||
+        (context != NULL && PyObject_CheckAccess(context) == NULL)) {
+        Py_XDECREF(context);
+        return;
+    }
     Py_BEGIN_CRITICAL_SECTION(self);
     Py_XSETREF(PyBaseExceptionObject_CAST(self)->context, context);
     Py_END_CRITICAL_SECTION();
@@ -577,16 +600,23 @@ PyException_SetContext(PyObject *self, PyObject *context)
 PyObject *
 PyException_GetArgs(PyObject *self)
 {
+    if (self == NULL || PyObject_CheckAccess(self) == NULL) {
+        return NULL;
+    }
     PyObject *args;
     Py_BEGIN_CRITICAL_SECTION(self);
     args = Py_NewRef(PyBaseExceptionObject_CAST(self)->args);
     Py_END_CRITICAL_SECTION();
-    return args;
+    return _PyObject_CheckAccessNullable(args);
 }
 
 void
 PyException_SetArgs(PyObject *self, PyObject *args)
 {
+    if (self == NULL || PyObject_CheckAccess(self) == NULL ||
+        args == NULL || PyObject_CheckAccess(args) == NULL) {
+        return;
+    }
     Py_BEGIN_CRITICAL_SECTION(self);
     Py_INCREF(args);
     Py_XSETREF(PyBaseExceptionObject_CAST(self)->args, args);
@@ -596,6 +626,9 @@ PyException_SetArgs(PyObject *self, PyObject *args)
 const char *
 PyExceptionClass_Name(PyObject *ob)
 {
+    if (ob == NULL || PyObject_CheckAccess(ob) == NULL) {
+        return NULL;
+    }
     assert(PyExceptionClass_Check(ob));
     return ((PyTypeObject*)ob)->tp_name;
 }
@@ -3137,6 +3170,9 @@ check_unicode_error_attribute(PyObject *attr, const char *name, int as_bytes)
                      name);
         return -1;
     }
+    if (PyObject_CheckAccess(attr) == NULL) {
+        return -1;
+    }
     if (!(as_bytes ? PyBytes_Check(attr) : PyUnicode_Check(attr))) {
         PyErr_Format(PyExc_TypeError,
                      "UnicodeError '%s' attribute must be a %s",
@@ -3160,7 +3196,7 @@ static PyObject *
 as_unicode_error_attribute(PyObject *attr, const char *name, int as_bytes)
 {
     int rc = check_unicode_error_attribute(attr, name, as_bytes);
-    return rc < 0 ? NULL : Py_NewRef(attr);
+    return rc < 0 ? NULL : _PyObject_CheckAccessNullable(Py_NewRef(attr));
 }
 
 
@@ -3193,7 +3229,9 @@ as_unicode_error_attribute(PyObject *attr, const char *name, int as_bytes)
 static inline int
 check_unicode_error_type(PyObject *self, const char *expect_type)
 {
-    assert(self != NULL);
+    if (self == NULL || PyObject_CheckAccess(self) == NULL) {
+        return -1;
+    }
     if (!PyUnicodeError_Check(self)) {
         PyErr_Format(PyExc_TypeError,
                      "expecting a %s object, got %T", expect_type, self);
@@ -3451,7 +3489,9 @@ _PyUnicodeError_GetParams(PyObject *self,
                           Py_ssize_t *start, Py_ssize_t *end, Py_ssize_t *slen,
                           int as_bytes)
 {
-    assert(self != NULL);
+    if (self == NULL || PyObject_CheckAccess(self) == NULL) {
+        return -1;
+    }
     assert(as_bytes == 0 || as_bytes == 1);
     PyUnicodeErrorObject *exc = PyUnicodeError_CAST(self);
     PyObject *r = as_unicode_error_attribute(exc->object, "object", as_bytes);
