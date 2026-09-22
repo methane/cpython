@@ -2173,6 +2173,14 @@ PyFrameObject*
 PyFrame_New(PyThreadState *tstate, PyCodeObject *code,
             PyObject *globals, PyObject *locals)
 {
+    if (code == NULL || PyObject_CheckAccess((PyObject *)code) == NULL ||
+        globals == NULL || PyObject_CheckAccess(globals) == NULL ||
+        (locals != NULL && PyObject_CheckAccess(locals) == NULL)) {
+        if (code == NULL || globals == NULL) {
+            PyErr_BadInternalCall();
+        }
+        return NULL;
+    }
     PyObject *builtins = _PyDict_LoadBuiltinsFromGlobals(globals);
     if (builtins == NULL) {
         return NULL;
@@ -2409,6 +2417,12 @@ PyFrame_GetVarString(PyFrameObject *frame, const char *name)
 int
 PyFrame_FastToLocalsWithError(PyFrameObject *f)
 {
+    if (f == NULL || PyObject_CheckAccess((PyObject *)f) == NULL) {
+        if (f == NULL) {
+            PyErr_BadInternalCall();
+        }
+        return -1;
+    }
     // Nothing to do here, as f_locals is now a write-through proxy in
     // optimized frames. Soft-deprecated, since there's no maintenance hassle.
     return 0;
@@ -2417,6 +2431,12 @@ PyFrame_FastToLocalsWithError(PyFrameObject *f)
 void
 PyFrame_FastToLocals(PyFrameObject *f)
 {
+    if (f == NULL || PyObject_CheckAccess((PyObject *)f) == NULL) {
+        if (f == NULL) {
+            PyErr_BadInternalCall();
+        }
+        return;
+    }
     // Nothing to do here, as f_locals is now a write-through proxy in
     // optimized frames. Soft-deprecated, since there's no maintenance hassle.
     return;
@@ -2425,6 +2445,12 @@ PyFrame_FastToLocals(PyFrameObject *f)
 void
 PyFrame_LocalsToFast(PyFrameObject *f, int clear)
 {
+    if (f == NULL || PyObject_CheckAccess((PyObject *)f) == NULL) {
+        if (f == NULL) {
+            PyErr_BadInternalCall();
+        }
+        return;
+    }
     // Nothing to do here, as f_locals is now a write-through proxy in
     // optimized frames. Soft-deprecated, since there's no maintenance hassle.
     return;
