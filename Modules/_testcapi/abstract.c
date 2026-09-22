@@ -161,8 +161,14 @@ call_cfunction_raw_return_in_tuple(PyObject *self, PyObject *args)
     if (result == NULL) {
         return NULL;
     }
-    PyObject *holder = PyTuple_Pack(1, result);
-    Py_DECREF(result);
+    /* Build the wrapper with the stealing macro so this raw helper can
+       preserve an inaccessible native result for the caller to inspect. */
+    PyObject *holder = PyTuple_New(1);
+    if (holder == NULL) {
+        Py_DECREF(result);
+        return NULL;
+    }
+    PyTuple_SET_ITEM(holder, 0, result);
     return holder;
 }
 
