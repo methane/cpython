@@ -959,6 +959,14 @@ descr_new(PyTypeObject *descrtype, PyTypeObject *type, const char *name)
 PyObject *
 PyDescr_NewMethod(PyTypeObject *type, PyMethodDef *method)
 {
+    if (type == NULL || method == NULL) {
+        PyErr_BadInternalCall();
+        return NULL;
+    }
+    if ((type->tp_flags & Py_TPFLAGS_READY) &&
+        PyObject_CheckAccess((PyObject *)type) == NULL) {
+        return NULL;
+    }
     /* Figure out correct vectorcall function to use */
     vectorcallfunc vectorcall;
     switch (method->ml_flags & (METH_VARARGS | METH_FASTCALL | METH_NOARGS |
@@ -1007,6 +1015,14 @@ PyDescr_NewClassMethod(PyTypeObject *type, PyMethodDef *method)
 {
     PyMethodDescrObject *descr;
 
+    if (type == NULL || method == NULL) {
+        PyErr_BadInternalCall();
+        return NULL;
+    }
+    if ((type->tp_flags & Py_TPFLAGS_READY) &&
+        PyObject_CheckAccess((PyObject *)type) == NULL) {
+        return NULL;
+    }
     descr = (PyMethodDescrObject *)descr_new(&PyClassMethodDescr_Type,
                                              type, method->ml_name);
     if (descr != NULL)
@@ -1019,6 +1035,14 @@ PyDescr_NewMember(PyTypeObject *type, PyMemberDef *member)
 {
     PyMemberDescrObject *descr;
 
+    if (type == NULL || member == NULL) {
+        PyErr_BadInternalCall();
+        return NULL;
+    }
+    if ((type->tp_flags & Py_TPFLAGS_READY) &&
+        PyObject_CheckAccess((PyObject *)type) == NULL) {
+        return NULL;
+    }
     if (member->flags & Py_RELATIVE_OFFSET) {
         PyErr_SetString(
             PyExc_SystemError,
@@ -1037,6 +1061,14 @@ PyDescr_NewGetSet(PyTypeObject *type, PyGetSetDef *getset)
 {
     PyGetSetDescrObject *descr;
 
+    if (type == NULL || getset == NULL) {
+        PyErr_BadInternalCall();
+        return NULL;
+    }
+    if ((type->tp_flags & Py_TPFLAGS_READY) &&
+        PyObject_CheckAccess((PyObject *)type) == NULL) {
+        return NULL;
+    }
     descr = (PyGetSetDescrObject *)descr_new(&PyGetSetDescr_Type,
                                              type, getset->name);
     if (descr != NULL)
@@ -1049,6 +1081,14 @@ PyDescr_NewWrapper(PyTypeObject *type, struct wrapperbase *base, void *wrapped)
 {
     PyWrapperDescrObject *descr;
 
+    if (type == NULL || base == NULL) {
+        PyErr_BadInternalCall();
+        return NULL;
+    }
+    if ((type->tp_flags & Py_TPFLAGS_READY) &&
+        PyObject_CheckAccess((PyObject *)type) == NULL) {
+        return NULL;
+    }
     descr = (PyWrapperDescrObject *)descr_new(&PyWrapperDescr_Type,
                                              type, base->name);
     if (descr != NULL) {
@@ -1061,6 +1101,13 @@ PyDescr_NewWrapper(PyTypeObject *type, struct wrapperbase *base, void *wrapped)
 int
 PyDescr_IsData(PyObject *ob)
 {
+    if (ob == NULL) {
+        PyErr_BadInternalCall();
+        return -1;
+    }
+    if (PyObject_CheckAccess(ob) == NULL) {
+        return -1;
+    }
     return Py_TYPE(ob)->tp_descr_set != NULL;
 }
 
@@ -1296,6 +1343,13 @@ mappingproxy_richcompare(PyObject *self, PyObject *w, int op)
 static int
 mappingproxy_check_mapping(PyObject *mapping)
 {
+    if (mapping == NULL) {
+        PyErr_BadInternalCall();
+        return -1;
+    }
+    if (PyObject_CheckAccess(mapping) == NULL) {
+        return -1;
+    }
     if (!PyMapping_Check(mapping)
         || PyList_Check(mapping)
         || PyTuple_Check(mapping)) {
@@ -1538,6 +1592,14 @@ PyWrapper_New(PyObject *d, PyObject *self)
     wrapperobject *wp;
     PyWrapperDescrObject *descr;
 
+    if (d == NULL || self == NULL) {
+        PyErr_BadInternalCall();
+        return NULL;
+    }
+    if (PyObject_CheckAccess(d) == NULL ||
+        PyObject_CheckAccess(self) == NULL) {
+        return NULL;
+    }
     assert(PyObject_TypeCheck(d, &PyWrapperDescr_Type));
     descr = (PyWrapperDescrObject *)d;
     assert(_PyObject_RealIsSubclass((PyObject *)Py_TYPE(self),

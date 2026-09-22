@@ -25,21 +25,35 @@ class method "PyMethodObject *" "&PyMethod_Type"
 PyObject *
 PyMethod_Function(PyObject *im)
 {
+    if (im == NULL) {
+        PyErr_BadInternalCall();
+        return NULL;
+    }
+    if (PyObject_CheckAccess(im) == NULL) {
+        return NULL;
+    }
     if (!PyMethod_Check(im)) {
         PyErr_BadInternalCall();
         return NULL;
     }
-    return ((PyMethodObject *)im)->im_func;
+    return PyObject_CheckAccess(((PyMethodObject *)im)->im_func);
 }
 
 PyObject *
 PyMethod_Self(PyObject *im)
 {
+    if (im == NULL) {
+        PyErr_BadInternalCall();
+        return NULL;
+    }
+    if (PyObject_CheckAccess(im) == NULL) {
+        return NULL;
+    }
     if (!PyMethod_Check(im)) {
         PyErr_BadInternalCall();
         return NULL;
     }
-    return ((PyMethodObject *)im)->im_self;
+    return PyObject_CheckAccess(((PyMethodObject *)im)->im_self);
 }
 
 
@@ -64,8 +78,12 @@ method_vectorcall(PyObject *method, PyObject *const *args,
 PyObject *
 PyMethod_New(PyObject *func, PyObject *self)
 {
-    if (self == NULL) {
+    if (func == NULL || self == NULL) {
         PyErr_BadInternalCall();
+        return NULL;
+    }
+    if (PyObject_CheckAccess(func) == NULL ||
+        PyObject_CheckAccess(self) == NULL) {
         return NULL;
     }
     PyMethodObject *im = _Py_FREELIST_POP(PyMethodObject, pymethodobjects);
@@ -352,6 +370,13 @@ class instancemethod "PyInstanceMethodObject *" "&PyInstanceMethod_Type"
 
 PyObject *
 PyInstanceMethod_New(PyObject *func) {
+    if (func == NULL) {
+        PyErr_BadInternalCall();
+        return NULL;
+    }
+    if (PyObject_CheckAccess(func) == NULL) {
+        return NULL;
+    }
     PyInstanceMethodObject *method;
     method = PyObject_GC_New(PyInstanceMethodObject,
                              &PyInstanceMethod_Type);
@@ -364,11 +389,18 @@ PyInstanceMethod_New(PyObject *func) {
 PyObject *
 PyInstanceMethod_Function(PyObject *im)
 {
+    if (im == NULL) {
+        PyErr_BadInternalCall();
+        return NULL;
+    }
+    if (PyObject_CheckAccess(im) == NULL) {
+        return NULL;
+    }
     if (!PyInstanceMethod_Check(im)) {
         PyErr_BadInternalCall();
         return NULL;
     }
-    return PyInstanceMethod_GET_FUNCTION(im);
+    return PyObject_CheckAccess(PyInstanceMethod_GET_FUNCTION(im));
 }
 
 #define IMO_OFF(x) offsetof(PyInstanceMethodObject, x)
