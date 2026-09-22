@@ -774,6 +774,9 @@ PyFunction_GetCode(PyObject *op)
         PyErr_BadInternalCall();
         return NULL;
     }
+    if (PyObject_CheckAccess(op) == NULL) {
+        return NULL;
+    }
     // This is a borrowed reference: rejection must not decref the value.
     return PyObject_CheckAccess(((PyFunctionObject *)op)->func_code);
 }
@@ -783,6 +786,9 @@ PyFunction_GetGlobals(PyObject *op)
 {
     if (!PyFunction_Check(op)) {
         PyErr_BadInternalCall();
+        return NULL;
+    }
+    if (PyObject_CheckAccess(op) == NULL) {
         return NULL;
     }
     return PyObject_CheckAccess(((PyFunctionObject *)op)->func_globals);
@@ -795,6 +801,9 @@ PyFunction_GetModule(PyObject *op)
         PyErr_BadInternalCall();
         return NULL;
     }
+    if (PyObject_CheckAccess(op) == NULL) {
+        return NULL;
+    }
     return PyObject_CheckAccess(((PyFunctionObject *)op)->func_module);
 }
 
@@ -805,6 +814,9 @@ PyFunction_GetDefaults(PyObject *op)
         PyErr_BadInternalCall();
         return NULL;
     }
+    if (PyObject_CheckAccess(op) == NULL) {
+        return NULL;
+    }
     return PyObject_CheckAccess(((PyFunctionObject *)op)->func_defaults);
 }
 
@@ -813,6 +825,9 @@ PyFunction_SetDefaults(PyObject *op, PyObject *defaults)
 {
     if (!PyFunction_Check(op)) {
         PyErr_BadInternalCall();
+        return -1;
+    }
+    if (PyObject_CheckAccess(op) == NULL) {
         return -1;
     }
     if (func_check_mutation(op) < 0) {
@@ -864,6 +879,9 @@ PyFunction_GetKwDefaults(PyObject *op)
         PyErr_BadInternalCall();
         return NULL;
     }
+    if (PyObject_CheckAccess(op) == NULL) {
+        return NULL;
+    }
     return PyObject_CheckAccess(((PyFunctionObject *)op)->func_kwdefaults);
 }
 
@@ -872,6 +890,9 @@ PyFunction_SetKwDefaults(PyObject *op, PyObject *defaults)
 {
     if (!PyFunction_Check(op)) {
         PyErr_BadInternalCall();
+        return -1;
+    }
+    if (PyObject_CheckAccess(op) == NULL) {
         return -1;
     }
     if (func_check_mutation(op) < 0) {
@@ -916,6 +937,9 @@ PyFunction_GetClosure(PyObject *op)
         PyErr_BadInternalCall();
         return NULL;
     }
+    if (PyObject_CheckAccess(op) == NULL) {
+        return NULL;
+    }
     return PyObject_CheckAccess(((PyFunctionObject *)op)->func_closure);
 }
 
@@ -924,6 +948,9 @@ PyFunction_SetClosure(PyObject *op, PyObject *closure)
 {
     if (!PyFunction_Check(op)) {
         PyErr_BadInternalCall();
+        return -1;
+    }
+    if (PyObject_CheckAccess(op) == NULL) {
         return -1;
     }
     if (func_check_mutation(op) < 0) {
@@ -1016,6 +1043,9 @@ PyFunction_GetAnnotations(PyObject *op)
         PyErr_BadInternalCall();
         return NULL;
     }
+    if (PyObject_CheckAccess(op) == NULL) {
+        return NULL;
+    }
     return PyObject_CheckAccess(func_get_annotation_dict((PyFunctionObject *)op));
 }
 
@@ -1024,6 +1054,9 @@ PyFunction_SetAnnotations(PyObject *op, PyObject *annotations)
 {
     if (!PyFunction_Check(op)) {
         PyErr_BadInternalCall();
+        return -1;
+    }
+    if (PyObject_CheckAccess(op) == NULL) {
         return -1;
     }
     if (func_check_mutation(op) < 0) {
