@@ -116,6 +116,7 @@ sys_profile_call_or_return(
         }
         PyObject *meth = Py_TYPE(callable)->tp_descr_get(
             callable, self_arg, (PyObject*)Py_TYPE(self_arg));
+        meth = _PyObject_CheckAccessNullable(meth);
         if (meth == NULL) {
             return NULL;
         }
