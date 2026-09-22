@@ -862,6 +862,15 @@ _PyMemoryView_FromBufferProc(PyObject *v, int flags, getbufferproc bufferproc)
         return NULL;
     }
 
+    if (mbuf->master.obj != NULL &&
+        PyObject_CheckAccess(mbuf->master.obj) == NULL) {
+        PyObject *exporter = mbuf->master.obj;
+        mbuf->master.obj = NULL;
+        Py_DECREF(exporter);
+        Py_DECREF(mbuf);
+        return NULL;
+    }
+
     PyObject *ret = mbuf_add_view(mbuf, NULL);
     Py_DECREF(mbuf);
     return ret;
