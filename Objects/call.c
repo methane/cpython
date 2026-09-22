@@ -352,7 +352,7 @@ _PyObject_Call(PyThreadState *tstate, PyObject *callable,
     assert(!_PyErr_Occurred(tstate));
     assert(PyTuple_Check(args));
     assert(kwargs == NULL || PyDict_Check(kwargs));
-    if (PyObject_CheckAccess(callable) == NULL) {
+    if (_PyEval_CheckCallArgs(callable, args, kwargs) < 0) {
         return NULL;
     }
     EVAL_CALL_STAT_INC_IF_FUNCTION(EVAL_CALL_API, callable);
