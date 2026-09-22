@@ -9997,6 +9997,23 @@ int
 PyType_Ready(PyTypeObject *type)
 {
     if (type->tp_flags & Py_TPFLAGS_READY) {
+        /* Static extension types keep their C storage across interpreter
+           finalization.  When the main interpreter is initialized again,
+           rebind a still-local type to the new main group.  Subinterpreters
+           leave the original owner unchanged, so foreign access remains
+           rejected while the main interpreter is alive. */
+        if (!(type->tp_flags & Py_TPFLAGS_HEAPTYPE) &&
+            _Py_IsMainInterpreter(_PyInterpreterState_GET())) {
+            PyObject *op = (PyObject *)type;
+            if (_Py_atomic_load_uint8(&op->ob_shareable) ==
+                    _Py_SHAREABLE_LOCAL) {
+                PyInterpreterState *interp = _PyInterpreterState_GET();
+                if (interp->main_threadgroup != NULL) {
+                    _Py_atomic_store_uint32_relaxed(
+                        &op->ob_owner_id, interp->main_threadgroup->id);
+                }
+            }
+        }
         assert(_PyType_CheckConsistency(type));
         return 0;
     }

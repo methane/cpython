@@ -3144,12 +3144,14 @@ get_shareable_state(PyObject *op, PyThreadState *tstate)
 {
     uint8_t state = _Py_atomic_load_uint8(&op->ob_shareable);
     if (state == _Py_SHAREABLE_LOCAL && PyType_Check(op)) {
-        /* Static immutable type objects survive interpreter finalization.  A
-           repeated initialization can observe their old local header before
-           the per-interpreter type state is ready; their immutable type
-           contract still makes the objects safe to share. */
+        /* Properly initialized static extension types are retained across
+           interpreter finalization.  Their immutable type contract makes
+           the type object safe to share even while its header still carries
+           the previous interpreter's local owner.  Zero-initialized static
+           types deliberately remain local. */
         PyTypeObject *type = (PyTypeObject *)op;
-        if (!PyType_HasFeature(type, Py_TPFLAGS_HEAPTYPE) &&
+        if (_Py_IsStaticImmortal(op) &&
+            !PyType_HasFeature(type, Py_TPFLAGS_HEAPTYPE) &&
             PyType_HasFeature(type, Py_TPFLAGS_IMMUTABLETYPE)) {
             state = _Py_SHAREABLE_IMMUTABLE;
             _Py_atomic_store_uint32_relaxed(&op->ob_owner_id, 0);
