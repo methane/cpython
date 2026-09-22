@@ -14,6 +14,7 @@
 #
 
 import contextlib
+import threading
 import unittest
 from test import support
 from test.support import os_helper
@@ -4727,6 +4728,16 @@ class TestPythonBufferProtocol(unittest.TestCase):
             self.assertFalse(m.readonly)
         self.assertRaises(BufferError, _testcapi.buffer_fill_info,
                           source, 1, PyBUF_WRITABLE)
+
+    @unittest.skipIf(_testcapi is None, "requires _testcapi")
+    def test_c_fill_buffer_object_access(self):
+        lock = threading.Lock()
+        with lock:
+            obj = lock.protect([])
+        with self.assertRaises(UnprotectedAccessException):
+            _testcapi.buffer_fill_info_obj(obj)
+        with lock:
+            _testcapi.buffer_fill_info_obj(obj)
 
     def test_inheritance(self):
         class A(bytearray):

@@ -509,6 +509,17 @@ PyObject_GetBuffer(PyObject *obj, Py_buffer *view, int flags)
     }
     int res = (*pb->bf_getbuffer)(obj, view, flags);
     assert(_Py_CheckSlotResult(obj, "getbuffer", res >= 0));
+    if (res == 0 && view->obj != NULL &&
+        PyObject_CheckAccess(view->obj) == NULL) {
+        /* A successful exporter owns a new reference in view->obj.  Drop it
+           before exposing the view when the exporter returned an object that
+           this thread cannot access.  Do not call its release slot: doing so
+           would execute foreign-object code after access has been denied. */
+        PyObject *view_obj = view->obj;
+        view->obj = NULL;
+        Py_DECREF(view_obj);
+        return -1;
+    }
     return res;
 }
 
@@ -832,6 +843,9 @@ PyBuffer_FillInfo(Py_buffer *view, PyObject *obj, void *buf, Py_ssize_t len,
     if (view == NULL) {
         PyErr_SetString(PyExc_BufferError,
                         "PyBuffer_FillInfo: view==NULL argument is obsolete");
+        return -1;
+    }
+    if (obj != NULL && PyObject_CheckAccess(obj) == NULL) {
         return -1;
     }
 

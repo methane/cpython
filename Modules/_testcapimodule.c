@@ -1037,6 +1037,23 @@ buffer_fill_info(PyObject *self, PyObject *args)
 }
 
 static PyObject *
+buffer_fill_info_obj(PyObject *self, PyObject *args)
+{
+    PyObject *obj;
+    Py_buffer info;
+    char data = 0;
+
+    if (!PyArg_ParseTuple(args, "O:buffer_fill_info_obj", &obj)) {
+        return NULL;
+    }
+    if (PyBuffer_FillInfo(&info, obj, &data, 1, 1, PyBUF_SIMPLE) < 0) {
+        return NULL;
+    }
+    PyBuffer_Release(&info);
+    Py_RETURN_NONE;
+}
+
+static PyObject *
 test_from_contiguous(PyObject* self, PyObject *Py_UNUSED(ignored))
 {
     int data[9] = {-1,-1,-1,-1,-1,-1,-1,-1,-1};
@@ -2974,6 +2991,7 @@ static PyMethodDef TestMethods[] = {
     {"make_memoryview_from_NULL_pointer", make_memoryview_from_NULL_pointer,
      METH_NOARGS},
     {"buffer_fill_info",        buffer_fill_info,                METH_VARARGS},
+    {"buffer_fill_info_obj",    buffer_fill_info_obj,            METH_VARARGS},
     {"crash_no_current_thread", crash_no_current_thread,         METH_NOARGS},
     {"test_current_tstate_matches", test_current_tstate_matches, METH_NOARGS},
     {"run_in_subinterp",        run_in_subinterp,                METH_VARARGS},
