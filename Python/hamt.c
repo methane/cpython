@@ -2358,6 +2358,12 @@ _PyHamt_Eq(PyHamtObject *v, PyHamtObject *w)
                     goto done;
 
                 case F_FOUND: {
+                    if (PyObject_CheckAccess(v_val) == NULL ||
+                        PyObject_CheckAccess(w_val) == NULL)
+                    {
+                        res = -1;
+                        goto done;
+                    }
                     Py_INCREF(v_key);
                     Py_INCREF(v_val);
                     Py_INCREF(w_val);

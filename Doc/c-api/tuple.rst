@@ -77,8 +77,13 @@ Tuple Objects
    The returned reference is borrowed from the tuple *p*
    (that is: it is only valid as long as you hold a reference to *p*).
    To get a :term:`strong reference`, use
-   :c:func:`Py_NewRef(PyTuple_GetItem(...)) <Py_NewRef>`
+   :c:func:`Py_XNewRef(PyTuple_GetItem(...)) <Py_XNewRef>`
    or :c:func:`PySequence_GetItem`.
+
+   .. versionchanged:: 3.16
+      Validates access to the returned element. If it is local to another
+      ThreadGroup, returns ``NULL`` with :exc:`IllegalThreadAccessException`.
+      The tuple retains its reference to the element.
 
 
 .. c:function:: PyObject* PyTuple_GET_ITEM(PyObject *p, Py_ssize_t pos)

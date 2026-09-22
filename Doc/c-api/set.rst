@@ -9,8 +9,9 @@ Set Objects
    pair: object; set
    pair: object; frozenset
 
-This section details the public API for :class:`set` and :class:`frozenset`
-objects.  Any functionality not listed below is best accessed using either
+This section details the public API for :class:`set`, :class:`frozenset`, and
+:class:`SynchronizedSet` objects. Any functionality not listed below is best
+accessed using either
 the abstract object protocol (including :c:func:`PyObject_CallMethod`,
 :c:func:`PyObject_RichCompareBool`, :c:func:`PyObject_Hash`,
 :c:func:`PyObject_Repr`, :c:func:`PyObject_IsTrue`, :c:func:`PyObject_Print`, and
@@ -23,14 +24,40 @@ the abstract object protocol (including :c:func:`PyObject_CallMethod`,
 
 .. c:type:: PySetObject
 
-   This subtype of :c:type:`PyObject` is used to hold the internal data for both
-   :class:`set` and :class:`frozenset` objects.  It is like a :c:type:`PyDictObject`
+   This subtype of :c:type:`PyObject` holds the internal data for :class:`set`,
+   :class:`frozenset`, and :class:`SynchronizedSet` objects. It is like a
+   :c:type:`PyDictObject`
    in that it is a fixed size for small sets (much like tuple storage) and will
    point to a separate, variable sized block of memory for medium and large sized
    sets (much like list storage). None of the fields of this structure should be
    considered public and all are subject to change.  All access should be done through
    the documented API rather than by manipulating the values in the structure.
 
+
+.. c:var:: PyTypeObject PySynchronizedSet_Type
+
+   The type of :class:`SynchronizedSet`. It is a subtype of
+   :c:data:`PySet_Type` and shares the :c:type:`PySetObject` layout.
+   The set C API accepts its instances. :c:func:`PySet_Check` returns true
+   for these instances; :c:func:`PySet_CheckExact` returns false.
+
+   .. versionadded:: 3.16
+
+.. c:function:: int PySynchronizedSet_Check(PyObject *p)
+               int PySynchronizedSet_CheckExact(PyObject *p)
+
+   Return true if *p* is a synchronized set. The exact variant checks that
+   its type is :c:data:`PySynchronizedSet_Type`.
+
+   .. versionadded:: 3.16
+
+.. c:function:: PyObject *PySynchronizedSet_New(PyObject *iterable)
+
+   Return a new synchronized set populated from *iterable*, or ``NULL`` on
+   failure. If *iterable* is ``NULL``, return an empty synchronized set.
+   Elements retain their own ownership and shareable states.
+
+   .. versionadded:: 3.16
 
 .. c:var:: PyTypeObject PySet_Type
 
@@ -143,7 +170,9 @@ or :class:`frozenset` or instances of their subtypes.
 
    Add *key* to a :class:`set` instance.  Also works with :class:`frozenset`
    instances (like :c:func:`PyTuple_SetItem` it can be used to fill in the values
-   of brand new frozensets before they are exposed to other code).  Return ``0`` on
+   of brand new frozensets before they are exposed to other code).
+   A set converted in place by ``freeze()`` cannot be modified through this
+   function, even when the caller owns its only reference. Return ``0`` on
    success or ``-1`` on failure. Raise a :exc:`TypeError` if the *key* is
    unhashable. Raise a :exc:`MemoryError` if there is no room to grow.  Raise a
    :exc:`SystemError` if *set* is not an instance of :class:`set` or its

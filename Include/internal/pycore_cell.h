@@ -19,6 +19,10 @@ static inline PyObject *
 PyCell_SwapTakeRef(PyCellObject *cell, PyObject *value)
 {
     PyObject *old_value;
+    if (_Py_atomic_load_uint8(&cell->ob_readonly_binding) &&
+        FT_ATOMIC_LOAD_PTR_ACQUIRE(cell->ob_ref) != NULL) {
+        _PyCell_NotifyMutation((PyObject *)cell);
+    }
     Py_BEGIN_CRITICAL_SECTION(cell);
     old_value = cell->ob_ref;
     FT_ATOMIC_STORE_PTR_RELEASE(cell->ob_ref, value);
@@ -46,6 +50,29 @@ PyCell_GetRef(PyCellObject *cell)
 #endif
     Py_END_CRITICAL_SECTION();
     return res;
+}
+
+/* Frame reads can share a binding while it remains read-only. Recheck after
+   acquiring its value: acquisition may suspend while taking the cell lock. */
+static inline int
+_PyCell_CheckReadAccess(PyCellObject *cell)
+{
+    if (!_Py_atomic_load_uint8(&cell->ob_readonly_binding) &&
+        PyObject_CheckAccess((PyObject *)cell) == NULL) {
+        return -1;
+    }
+    return 0;
+}
+
+static inline PyObject *
+_PyCell_GetRefForFrame(PyCellObject *cell)
+{
+    PyObject *value = PyCell_GetRef(cell);
+    if (_PyCell_CheckReadAccess(cell) < 0) {
+        Py_XDECREF(value);
+        return NULL;
+    }
+    return value;
 }
 
 static inline _PyStackRef

@@ -2,11 +2,14 @@
 /* Interface to Sjoerd's portable C thread library */
 
 #include "Python.h"
+#include "pycore_dict.h"          // _PyDict_SynchronizeNamespace()
 #include "pycore_fileutils.h"     // _PyFile_Flush
 #include "pycore_interp.h"        // _PyInterpreterState.threads.count
 #include "pycore_lock.h"
 #include "pycore_modsupport.h"    // _PyArg_NoKeywords()
 #include "pycore_moduleobject.h"  // _PyModule_GetState()
+#include "pycore_object.h"        // _PyObject_CheckMutable()
+#include "pycore_parking_lot.h"
 #include "pycore_object_deferred.h" // _PyObject_SetDeferredRefcount()
 #include "pycore_pylifecycle.h"
 #include "pycore_pystate.h"       // _PyThreadState_SetCurrent()
@@ -30,9 +33,14 @@ typedef struct {
     PyTypeObject *excepthook_type;
     PyTypeObject *lock_type;
     PyTypeObject *rlock_type;
+    PyTypeObject *compound_lock_type;
     PyTypeObject *local_type;
     PyTypeObject *local_dummy_type;
     PyTypeObject *thread_handle_type;
+    PyTypeObject *thread_base_type;
+    PyTypeObject *threadgroup_type;
+    PyTypeObject *transferbox_type;
+    PyTypeObject *channel_queue_type;
 
     // Linked list of handles to all non-daemon threads created by the
     // threading module. We wait for these to finish at shutdown.
@@ -41,17 +49,225 @@ typedef struct {
 
 typedef struct {
     PyObject_HEAD
-    PyMutex lock;
+    _PyThreadGroupState *state;
+    PyObject *name;
+    int64_t interpreter_id;
+} threadgroupobject;
+
+static PyObject *
+threadgroup_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
+{
+    static char *keywords[] = {"name", NULL};
+    PyObject *name = Py_None;
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "|O:ThreadGroup", keywords,
+                                    &name)) {
+        return NULL;
+    }
+    if (name != Py_None && !PyUnicode_Check(name)) {
+        PyErr_SetString(PyExc_TypeError, "name must be a str or None");
+        return NULL;
+    }
+    threadgroupobject *self = (threadgroupobject *)type->tp_alloc(type, 0);
+    if (self == NULL) {
+        return NULL;
+    }
+    self->state = _PyThreadGroup_New(_PyInterpreterState_GET());
+    if (self->state == NULL) {
+        Py_DECREF(self);
+        return PyErr_NoMemory();
+    }
+    self->name = name == Py_None ? Py_NewRef(name) : PyUnicode_FromObject(name);
+    if (self->name == NULL) {
+        Py_DECREF(self);
+        return NULL;
+    }
+    if (self->name != Py_None) {
+        Py_ssize_t length = PyUnicode_GET_LENGTH(self->name);
+        if ((size_t)length > SIZE_MAX / sizeof(Py_UCS4) - 1) {
+            Py_DECREF(self);
+            return PyErr_NoMemory();
+        }
+        self->state->name = PyMem_RawMalloc((length + 1) * sizeof(Py_UCS4));
+        if (self->state->name == NULL) {
+            Py_DECREF(self);
+            return PyErr_NoMemory();
+        }
+        if (PyUnicode_AsUCS4(self->name, self->state->name, length + 1, 1) == NULL) {
+            Py_DECREF(self);
+            return NULL;
+        }
+        self->state->name_length = length;
+    }
+    self->interpreter_id = PyInterpreterState_GetID(_PyInterpreterState_GET());
+    if (PyObject_DeclareImmutable((PyObject *)self) < 0) {
+        Py_DECREF(self);
+        return NULL;
+    }
+#ifdef Py_GIL_DISABLED
+    _PyObject_SetMaybeWeakref((PyObject *)self);
+#endif
+    PyMutex_LockFlags(&self->state->holder_mutex, 0);
+    self->state->wrapper = (PyObject *)self;
+    PyMutex_Unlock(&self->state->holder_mutex);
+    return (PyObject *)self;
+}
+
+static void
+threadgroup_dealloc(PyObject *op)
+{
+    threadgroupobject *self = (threadgroupobject *)op;
+    PyTypeObject *type = Py_TYPE(op);
+    PyObject_GC_UnTrack(op);
+    if (self->state != NULL) {
+        PyMutex_LockFlags(&self->state->holder_mutex, 0);
+        if (self->state->wrapper == op) {
+            self->state->wrapper = NULL;
+        }
+        PyMutex_Unlock(&self->state->holder_mutex);
+        _PyThreadGroup_Decref(self->state);
+    }
+    Py_XDECREF(self->name);
+    type->tp_free(op);
+    Py_DECREF(type);
+}
+
+PyObject *
+_PyThreadGroup_GetObject(PyInterpreterState *interp, uint32_t id)
+{
+    assert(interp == _PyInterpreterState_GET());
+    _PyThreadGroupState *group = _PyThreadGroup_Find(interp, id);
+    if (group == NULL) {
+        PyErr_SetString(PyExc_ValueError, "unknown ThreadGroup owner ID");
+        return NULL;
+    }
+    PyMutex_LockFlags(&group->holder_mutex, 0);
+    PyObject *existing = group->wrapper;
+    if (existing != NULL && !_Py_TryIncref(existing)) {
+        existing = NULL;
+    }
+    PyMutex_Unlock(&group->holder_mutex);
+    if (existing != NULL) {
+        _PyThreadGroup_Decref(group);
+        return existing;
+    }
+    if (interp->main_threadgroup_object == NULL) {
+        _PyThreadGroup_Decref(group);
+        PyErr_SetString(PyExc_RuntimeError, "ThreadGroup type is unavailable");
+        return NULL;
+    }
+    PyTypeObject *type = Py_TYPE(interp->main_threadgroup_object);
+    threadgroupobject *wrapper = (threadgroupobject *)type->tp_alloc(type, 0);
+    if (wrapper == NULL) {
+        _PyThreadGroup_Decref(group);
+        return NULL;
+    }
+    wrapper->state = group;  /* Transfer the lookup reference. */
+    wrapper->interpreter_id = PyInterpreterState_GetID(interp);
+    wrapper->name = group->name_length < 0 ? Py_NewRef(Py_None) :
+        PyUnicode_FromKindAndData(PyUnicode_4BYTE_KIND, group->name,
+                                 group->name_length);
+    if (wrapper->name == NULL ||
+        PyObject_DeclareImmutable((PyObject *)wrapper) < 0) {
+        Py_DECREF(wrapper);
+        return NULL;
+    }
+
+    /* Allocation can run Python and another thread can publish a wrapper.
+       Only one live wrapper is published for a scheduler. */
+#ifdef Py_GIL_DISABLED
+    _PyObject_SetMaybeWeakref((PyObject *)wrapper);
+#endif
+    PyMutex_LockFlags(&group->holder_mutex, 0);
+    existing = group->wrapper;
+    if (existing != NULL && !_Py_TryIncref(existing)) {
+        existing = NULL;
+    }
+    if (existing == NULL) {
+        group->wrapper = (PyObject *)wrapper;
+    }
+    PyMutex_Unlock(&group->holder_mutex);
+    if (existing != NULL) {
+        Py_DECREF(wrapper);
+        return existing;
+    }
+    return (PyObject *)wrapper;
+}
+
+static int
+threadgroup_traverse(PyObject *op, visitproc visit, void *arg)
+{
+    threadgroupobject *self = (threadgroupobject *)op;
+    Py_VISIT(Py_TYPE(op));
+    Py_VISIT(self->name);
+    return 0;
+}
+
+static PyObject *
+threadgroup_repr(PyObject *op)
+{
+    threadgroupobject *self = (threadgroupobject *)op;
+    if (self->name == Py_None) {
+        return PyUnicode_FromString("<ThreadGroup>");
+    }
+    return PyUnicode_FromFormat("<ThreadGroup %R>", self->name);
+}
+
+static PyMemberDef threadgroup_members[] = {
+    {"name", Py_T_OBJECT_EX, offsetof(threadgroupobject, name), Py_READONLY},
+    {NULL},
+};
+
+static PyType_Slot threadgroup_slots[] = {
+    {Py_tp_new, threadgroup_new},
+    {Py_tp_dealloc, threadgroup_dealloc},
+    {Py_tp_traverse, threadgroup_traverse},
+    {Py_tp_repr, threadgroup_repr},
+    {Py_tp_members, threadgroup_members},
+    {Py_tp_doc, "ThreadGroup(name=None)\n--\n\n"
+                "A group of threads whose Python execution is serialized."},
+    {0, NULL},
+};
+
+static PyType_Spec threadgroup_spec = {
+    .name = "threading.ThreadGroup",
+    .basicsize = sizeof(threadgroupobject),
+    .flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_IMMUTABLETYPE | Py_TPFLAGS_HAVE_GC,
+    .slots = threadgroup_slots,
+};
+
+typedef struct {
+    PyObject_HEAD
+    _PyProtectiveMutexState *state;
 } lockobject;
 
 #define lockobject_CAST(op) ((lockobject *)(op))
 
 typedef struct {
     PyObject_HEAD
-    _PyRecursiveMutex lock;
+    _PyProtectiveMutexState *state;
 } rlockobject;
 
-#define rlockobject_CAST(op)    ((rlockobject *)(op))
+#define rlockobject_CAST(op) ((rlockobject *)(op))
+
+typedef struct compound_context {
+    struct compound_context *next;
+    uint32_t group;
+    uint64_t thread;
+} compound_context;
+
+typedef struct {
+    PyObject_HEAD
+    PyObject *locks;
+    compound_context *contexts;
+} compoundlockobject;
+
+enum {
+    LOCK_MANUAL,
+    LOCK_CONTEXT,
+    LOCK_COMPOUND_CONTEXT,
+};
+
+static PyObject *lock_add(PyObject *, PyObject *);
 
 static inline thread_module_state*
 get_thread_state(PyObject *module)
@@ -71,6 +287,378 @@ get_thread_state_by_cls(PyTypeObject *cls)
     }
     return get_thread_state(module);
 }
+
+typedef struct {
+    PyObject_HEAD
+    PyObject *value;
+    PyObject *sink;
+} transferboxobject;
+
+static int
+transferbox_check_sink(PyTypeObject *type, PyObject *sink)
+{
+    thread_module_state *state = get_thread_state_by_cls(type);
+    if (state == NULL) {
+        return -1;
+    }
+    if (sink == NULL) {
+        PyErr_SetString(PyExc_TypeError, "cannot delete sink");
+        return -1;
+    }
+    if (sink == Py_None) {
+        return 0;
+    }
+    if (!Py_IS_TYPE(sink, state->threadgroup_type)) {
+        PyErr_SetString(PyExc_TypeError, "sink must be a ThreadGroup or None");
+        return -1;
+    }
+    if (((threadgroupobject *)sink)->interpreter_id !=
+        PyInterpreterState_GetID(_PyInterpreterState_GET())) {
+        PyErr_SetString(PyExc_ValueError, "sink belongs to another interpreter");
+        return -1;
+    }
+    return 0;
+}
+
+static PyObject *
+transferbox_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
+{
+    static char *keywords[] = {"obj", "sink", NULL};
+    PyObject *obj, *sink = Py_None;
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "O|O:TransferBox", keywords,
+                                    &obj, &sink)) {
+        return NULL;
+    }
+    if (transferbox_check_sink(type, sink) < 0) {
+        return NULL;
+    }
+    if (PyObject_CheckAccess(obj) == NULL) {
+        return NULL;
+    }
+    PyObject *value;
+    if (_Py_atomic_load_uint8(&obj->ob_shareable) == _Py_SHAREABLE_LOCAL) {
+        PyObject *copy = PyImport_ImportModule("copy");
+        if (copy == NULL) {
+            return NULL;
+        }
+        value = PyObject_CallMethod(copy, "copy", "(O)", obj);
+        Py_DECREF(copy);
+        if (value == NULL) {
+            return NULL;
+        }
+        if (PyObject_CheckAccess(value) == NULL) {
+            Py_DECREF(value);
+            return NULL;
+        }
+        if (_Py_atomic_load_uint8(&value->ob_shareable) == _Py_SHAREABLE_LOCAL &&
+            (value == obj || !_PyObject_IsUniquelyReferenced(value))) {
+            Py_DECREF(value);
+            PyErr_SetString(PyExc_TypeError,
+                            "copy must return an unaliased local object");
+            return NULL;
+        }
+    }
+    else {
+        value = Py_NewRef(obj);
+    }
+    transferboxobject *self = (transferboxobject *)type->tp_alloc(type, 0);
+    if (self == NULL) {
+        Py_DECREF(value);
+        return NULL;
+    }
+    self->sink = Py_NewRef(sink);
+    self->value = value;
+    if (PyObject_DeclareSynchronized((PyObject *)self) < 0) {
+        Py_DECREF(self);
+        return NULL;
+    }
+    if (_Py_atomic_load_uint8(&value->ob_shareable) == _Py_SHAREABLE_LOCAL) {
+        _Py_atomic_store_uint32_relaxed(&value->ob_owner_id, 0);
+    }
+    return (PyObject *)self;
+}
+
+static PyObject *
+transferbox_claim(PyObject *op, PyObject *Py_UNUSED(ignored))
+{
+    transferboxobject *self = (transferboxobject *)op;
+    PyObject *value = NULL;
+    int wrong_sink = 0;
+    int access_error = 0;
+    _PyThreadGroupState *group = _PyThreadState_GET()->threadgroup;
+    Py_BEGIN_CRITICAL_SECTION(op);
+    if (self->value != NULL) {
+        if (self->sink != Py_None &&
+            ((threadgroupobject *)self->sink)->state != group) {
+            wrong_sink = 1;
+        }
+        else {
+            PyObject *candidate = self->value;
+            int local = (_Py_atomic_load_uint8(&candidate->ob_shareable) ==
+                         _Py_SHAREABLE_LOCAL);
+            if (!local && PyObject_CheckAccess(candidate) == NULL) {
+                access_error = 1;
+            }
+            else {
+                value = candidate;
+                self->value = NULL;
+                if (local) {
+                    _Py_atomic_store_uint32_relaxed(&value->ob_owner_id, group->id);
+                }
+            }
+        }
+    }
+    Py_END_CRITICAL_SECTION();
+    if (value == NULL && !access_error) {
+        PyErr_SetString(PyExc_ValueError, wrong_sink ?
+                        "TransferBox is addressed to another ThreadGroup" :
+                        "TransferBox has already been claimed");
+    }
+    return value;
+}
+
+static int
+transferbox_traverse(PyObject *op, visitproc visit, void *arg)
+{
+    transferboxobject *self = (transferboxobject *)op;
+    Py_VISIT(Py_TYPE(op));
+    Py_VISIT(self->value);
+    Py_VISIT(self->sink);
+    return 0;
+}
+
+static int
+transferbox_clear(PyObject *op)
+{
+    transferboxobject *self = (transferboxobject *)op;
+    PyObject *value = self->value;
+    self->value = NULL;
+    if (value != NULL &&
+        _Py_atomic_load_uint8(&value->ob_shareable) == _Py_SHAREABLE_LOCAL &&
+        _Py_atomic_load_uint32_relaxed(&value->ob_owner_id) == 0) {
+        // An abandoned value is adopted before releasing its last reference.
+        _Py_atomic_store_uint32_relaxed(&value->ob_owner_id,
+                                        _PyThreadState_GET()->threadgroup->id);
+    }
+    Py_XDECREF(value);
+    Py_CLEAR(self->sink);
+    return 0;
+}
+
+static void
+transferbox_dealloc(PyObject *op)
+{
+    PyTypeObject *type = Py_TYPE(op);
+    PyObject_GC_UnTrack(op);
+    transferbox_clear(op);
+    type->tp_free(op);
+    Py_DECREF(type);
+}
+
+static PyMethodDef transferbox_methods[] = {
+    {"claim", transferbox_claim, METH_NOARGS,
+     PyDoc_STR("Claim the boxed value for the current ThreadGroup, once.")},
+    {"__class_getitem__", Py_GenericAlias, METH_O | METH_CLASS,
+     PyDoc_STR("See PEP 585")},
+    {NULL},
+};
+
+static PyObject *
+transferbox_get_sink(PyObject *op, void *closure)
+{
+    PyObject *sink;
+    Py_BEGIN_CRITICAL_SECTION(op);
+    sink = Py_XNewRef(((transferboxobject *)op)->sink);
+    Py_END_CRITICAL_SECTION();
+    if (sink == NULL) {
+        PyErr_SetString(PyExc_AttributeError, "sink");
+    }
+    return sink;
+}
+
+static int
+transferbox_set_sink(PyObject *op, PyObject *sink, void *closure)
+{
+    if (transferbox_check_sink(Py_TYPE(op), sink) < 0) {
+        return -1;
+    }
+    Py_INCREF(sink);
+    PyObject *old_sink;
+    Py_BEGIN_CRITICAL_SECTION(op);
+    transferboxobject *self = (transferboxobject *)op;
+    old_sink = self->sink;
+    self->sink = sink;
+    Py_END_CRITICAL_SECTION();
+    Py_XDECREF(old_sink);
+    return 0;
+}
+
+static PyGetSetDef transferbox_getsets[] = {
+    {"sink", transferbox_get_sink, transferbox_set_sink,
+     PyDoc_STR("The destination ThreadGroup, or None for any group."), NULL},
+    {NULL},
+};
+
+static PyType_Slot transferbox_slots[] = {
+    {Py_tp_new, transferbox_new},
+    {Py_tp_dealloc, transferbox_dealloc},
+    {Py_tp_traverse, transferbox_traverse},
+    {Py_tp_clear, transferbox_clear},
+    {Py_tp_methods, transferbox_methods},
+    {Py_tp_getset, transferbox_getsets},
+    {Py_tp_doc, "TransferBox(obj, sink=None)\n--\n\n"
+                "A synchronized container for transferring a value once."},
+    {0, NULL},
+};
+
+static PyType_Spec transferbox_spec = {
+    .name = "threading.TransferBox",
+    .basicsize = sizeof(transferboxobject),
+    .flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_IMMUTABLETYPE | Py_TPFLAGS_HAVE_GC,
+    .slots = transferbox_slots,
+};
+
+typedef struct channel_node {
+    struct channel_node *next;
+    PyObject *box;
+} channel_node;
+
+typedef struct {
+    PyObject_HEAD
+    channel_node *head;
+    channel_node *tail;
+} channelqueueobject;
+
+static PyObject *
+channelqueue_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
+{
+    if (!_PyArg_NoPositional("_ChannelQueue", args) ||
+        !_PyArg_NoKeywords("_ChannelQueue", kwargs)) {
+        return NULL;
+    }
+    PyObject *self = type->tp_alloc(type, 0);
+    if (self != NULL && PyObject_DeclareSynchronized(self) < 0) {
+        Py_CLEAR(self);
+    }
+    return self;
+}
+
+static PyObject *
+channelqueue_put(PyObject *op, PyObject *value)
+{
+    thread_module_state *state = get_thread_state_by_cls(Py_TYPE(op));
+    if (state == NULL) {
+        return NULL;
+    }
+    // Copying can run arbitrary Python code, including reentrant puts/gets.
+    PyObject *box = PyObject_CallOneArg((PyObject *)state->transferbox_type,
+                                      value);
+    if (box == NULL) {
+        return NULL;
+    }
+    channel_node *node = PyMem_Malloc(sizeof(*node));
+    if (node == NULL) {
+        Py_DECREF(box);
+        return PyErr_NoMemory();
+    }
+    node->box = box;
+    node->next = NULL;
+    channelqueueobject *self = (channelqueueobject *)op;
+    Py_BEGIN_CRITICAL_SECTION(op);
+    if (self->tail == NULL) {
+        self->head = node;
+    }
+    else {
+        self->tail->next = node;
+    }
+    self->tail = node;
+    Py_END_CRITICAL_SECTION();
+    Py_RETURN_NONE;
+}
+
+static PyObject *
+channelqueue_get(PyObject *op, PyObject *Py_UNUSED(ignored))
+{
+    channelqueueobject *self = (channelqueueobject *)op;
+    channel_node *node;
+    Py_BEGIN_CRITICAL_SECTION(op);
+    node = self->head;
+    if (node != NULL) {
+        self->head = node->next;
+        if (self->head == NULL) {
+            self->tail = NULL;
+        }
+    }
+    Py_END_CRITICAL_SECTION();
+    if (node == NULL) {
+        PyErr_SetString(PyExc_IndexError, "get from an empty Channel");
+        return NULL;
+    }
+    PyObject *box = node->box;
+    PyMem_Free(node);
+    PyObject *value = transferbox_claim(box, NULL);
+    Py_DECREF(box);
+    return value;
+}
+
+static int
+channelqueue_traverse(PyObject *op, visitproc visit, void *arg)
+{
+    channelqueueobject *self = (channelqueueobject *)op;
+    Py_VISIT(Py_TYPE(op));
+    for (channel_node *node = self->head; node != NULL; node = node->next) {
+        Py_VISIT(node->box);
+    }
+    return 0;
+}
+
+static int
+channelqueue_clear(PyObject *op)
+{
+    channelqueueobject *self = (channelqueueobject *)op;
+    channel_node *node = self->head;
+    self->head = self->tail = NULL;
+    // Detach the whole queue before releasing references that may run code.
+    while (node != NULL) {
+        channel_node *next = node->next;
+        Py_DECREF(node->box);
+        PyMem_Free(node);
+        node = next;
+    }
+    return 0;
+}
+
+static void
+channelqueue_dealloc(PyObject *op)
+{
+    PyTypeObject *type = Py_TYPE(op);
+    PyObject_GC_UnTrack(op);
+    channelqueue_clear(op);
+    type->tp_free(op);
+    Py_DECREF(type);
+}
+
+static PyMethodDef channelqueue_methods[] = {
+    {"put", channelqueue_put, METH_O, NULL},
+    {"get", channelqueue_get, METH_NOARGS, NULL},
+    {NULL},
+};
+
+static PyType_Slot channelqueue_slots[] = {
+    {Py_tp_new, channelqueue_new},
+    {Py_tp_dealloc, channelqueue_dealloc},
+    {Py_tp_traverse, channelqueue_traverse},
+    {Py_tp_clear, channelqueue_clear},
+    {Py_tp_methods, channelqueue_methods},
+    {0, NULL},
+};
+
+static PyType_Spec channelqueue_spec = {
+    .name = "_thread._ChannelQueue",
+    .basicsize = sizeof(channelqueueobject),
+    .flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_IMMUTABLETYPE | Py_TPFLAGS_HAVE_GC,
+    .slots = channelqueue_slots,
+};
 
 
 #ifdef MS_WINDOWS
@@ -430,7 +1018,7 @@ force_done(void *arg)
 
 static int
 ThreadHandle_start(ThreadHandle *self, PyObject *func, PyObject *args,
-                   PyObject *kwargs, int daemon)
+                   PyObject *kwargs, int daemon, PyObject *group)
 {
     // Mark the handle as starting to prevent any other threads from doing so
     PyMutex_Lock(&self->mutex);
@@ -462,6 +1050,13 @@ ThreadHandle_start(ThreadHandle *self, PyObject *func, PyObject *args,
             PyErr_NoMemory();
         }
         goto start_failed;
+    }
+    if (group != NULL) {
+        threadgroupobject *owner = (threadgroupobject *)group;
+        _PyThreadGroup_Decref(boot->tstate->threadgroup);
+        boot->tstate->threadgroup = owner->state;
+        _PyThreadGroup_Incref(owner->state);
+        boot->tstate->threadgroup_object = Py_NewRef(group);
     }
     boot->func = Py_NewRef(func);
     boot->args = Py_NewRef(args);
@@ -531,7 +1126,8 @@ check_started(ThreadHandle *self)
 }
 
 static int
-ThreadHandle_join(ThreadHandle *self, PyTime_t timeout_ns)
+ThreadHandle_join_impl(ThreadHandle *self, PyTime_t timeout_ns,
+                       PyObject **interrupted)
 {
     if (check_started(self) < 0) {
         return -1;
@@ -567,7 +1163,17 @@ ThreadHandle_join(ThreadHandle *self, PyTime_t timeout_ns)
     // Wait until the deadline for the thread to exit.
     PyTime_t deadline = timeout_ns != -1 ? _PyDeadline_Init(timeout_ns) : 0;
     int detach = 1;
-    while (!PyEvent_WaitTimed(&self->thread_is_exiting, timeout_ns, detach)) {
+    for (;;) {
+        PyTime_t wait_ns = timeout_ns;
+        if (interrupted != NULL && (wait_ns < 0 || wait_ns > 50000000)) {
+            // A signal can arrive while handling the previous interrupt,
+            // before we park again. Bound cleanup waits to service pending
+            // calls even when no native wait was interrupted (50 ms).
+            wait_ns = 50000000;
+        }
+        if (PyEvent_WaitTimed(&self->thread_is_exiting, wait_ns, detach)) {
+            break;
+        }
         if (deadline) {
             // _PyDeadline_Get will return a negative value if the deadline has
             // been exceeded.
@@ -578,7 +1184,17 @@ ThreadHandle_join(ThreadHandle *self, PyTime_t timeout_ns)
         if (timeout_ns) {
             // Interrupted
             if (Py_MakePendingCalls() < 0) {
-                return -1;
+                if (interrupted == NULL) {
+                    return -1;
+                }
+                // Cleanup callbacks must finish before their caller resumes.
+                // Preserve the first interrupt while still servicing signals.
+                if (*interrupted == NULL) {
+                    *interrupted = PyErr_GetRaisedException();
+                }
+                else {
+                    PyErr_Clear();
+                }
             }
         }
         else {
@@ -592,6 +1208,12 @@ ThreadHandle_join(ThreadHandle *self, PyTime_t timeout_ns)
     }
     assert(get_thread_handle_state(self) == THREAD_HANDLE_DONE);
     return 0;
+}
+
+static int
+ThreadHandle_join(ThreadHandle *self, PyTime_t timeout_ns)
+{
+    return ThreadHandle_join_impl(self, timeout_ns, NULL);
 }
 
 static int
@@ -648,6 +1270,11 @@ PyThreadHandleObject_new(PyTypeObject *type)
     }
 
     self->handle = handle;
+    // The native handle serializes its mutable fields, completion and joins.
+    if (PyObject_DeclareSynchronized((PyObject *)self) < 0) {
+        Py_DECREF(self);
+        return NULL;
+    }
 
     return self;
 }
@@ -764,6 +1391,155 @@ static PyType_Spec ThreadHandle_Type_spec = {
     ThreadHandle_Type_slots,
 };
 
+/* Synchronized namespaces for Thread and audited threading primitives. */
+typedef struct {
+    PyObject_HEAD
+    PyObject *dict;
+    PyObject *weakrefs;
+} threadbaseobject;
+
+static int
+threadbase_traverse(PyObject *op, visitproc visit, void *arg)
+{
+    Py_VISIT(Py_TYPE(op));
+    Py_VISIT(((threadbaseobject *)op)->dict);
+    return 0;
+}
+
+static int
+threadbase_clear(PyObject *op)
+{
+    Py_CLEAR(((threadbaseobject *)op)->dict);
+    return 0;
+}
+
+static void
+threadbase_dealloc(PyObject *op)
+{
+    PyObject_GC_UnTrack(op);
+    if (((threadbaseobject *)op)->weakrefs != NULL) {
+        PyObject_ClearWeakRefs(op);
+    }
+    threadbase_clear(op);
+    PyTypeObject *type = Py_TYPE(op);
+    type->tp_free(op);
+    Py_DECREF(type);
+}
+
+static int
+threadbase_has_python_storage(PyTypeObject *type)
+{
+    PyObject *module = PyType_GetModuleByDef(type, &thread_module);
+    assert(module != NULL);
+    PyTypeObject *base = get_thread_state(module)->thread_base_type;
+    while (type != base) {
+        if (!(type->tp_flags & Py_TPFLAGS_HEAPTYPE)) {
+            return 0;
+        }
+        PyObject *slots = ((PyHeapTypeObject *)type)->ht_slots;
+        Py_ssize_t count = slots == NULL ? 0 : PyTuple_GET_SIZE(slots);
+        if (type->tp_itemsize != 0 ||
+            type->tp_basicsize != type->tp_base->tp_basicsize +
+                                 count * (Py_ssize_t)sizeof(PyObject *))
+        {
+            // Additional opaque C storage needs its own synchronization.
+            return 0;
+        }
+        type = type->tp_base;
+    }
+    return 1;
+}
+
+static PyObject *
+threadbase_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
+{
+    threadbaseobject *self = (threadbaseobject *)type->tp_alloc(type, 0);
+    if (self == NULL) {
+        return NULL;
+    }
+    self->dict = PySynchronizedDict_New();
+    if (self->dict == NULL ||
+        (threadbase_has_python_storage(type) &&
+         PyObject_DeclareSynchronized((PyObject *)self) < 0))
+    {
+        Py_DECREF(self);
+        return NULL;
+    }
+    return (PyObject *)self;
+}
+
+static PyObject *
+threadbase_getweakref(PyObject *op, void *Py_UNUSED(context))
+{
+    PyObject *result = NULL;
+    LOCK_WEAKREFS(op);
+    PyWeakReference *ref = (PyWeakReference *)((threadbaseobject *)op)->weakrefs;
+    while (ref != NULL) {
+        if (_Py_TryIncref((PyObject *)ref)) {
+            result = (PyObject *)ref;
+            break;
+        }
+        ref = ref->wr_next;
+    }
+    UNLOCK_WEAKREFS(op);
+    return result != NULL ? result : Py_NewRef(Py_None);
+}
+
+static PyGetSetDef threadbase_getset[] = {
+    {"__dict__", PyObject_GenericGetDict, PyObject_GenericSetDict, NULL, NULL},
+    {"__weakref__", threadbase_getweakref, NULL, NULL, NULL},
+    {NULL}
+};
+
+static PyMemberDef threadbase_members[] = {
+    {"__dictoffset__", Py_T_PYSSIZET, offsetof(threadbaseobject, dict), Py_READONLY},
+    {"__weaklistoffset__", Py_T_PYSSIZET, offsetof(threadbaseobject, weakrefs), Py_READONLY},
+    {NULL}
+};
+
+static PyType_Slot threadbase_slots[] = {
+    {Py_tp_new, threadbase_new},
+    {Py_tp_dealloc, threadbase_dealloc},
+    {Py_tp_traverse, threadbase_traverse},
+    {Py_tp_clear, threadbase_clear},
+    {Py_tp_getset, threadbase_getset},
+    {Py_tp_members, threadbase_members},
+    {0, NULL}
+};
+
+static PyType_Spec threadbase_spec = {
+    .name = "_thread._ThreadBase",
+    .basicsize = sizeof(threadbaseobject),
+    .flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_GC |
+             Py_TPFLAGS_IMMUTABLETYPE | Py_TPFLAGS_BASETYPE,
+    .slots = threadbase_slots,
+};
+
+static int
+finalizer_can_wait(PyThreadState *tstate)
+{
+    PyInterpreterState *interp = tstate->interp;
+    _PyRuntimeState *runtime = interp->runtime;
+    HEAD_LOCK(runtime);
+    int paused =
+        (interp->stoptheworld.requested &&
+         interp->stoptheworld.requester == tstate) ||
+        (runtime->stoptheworld.requested &&
+         runtime->stoptheworld.requester == tstate);
+    HEAD_UNLOCK(runtime);
+    if (paused) {
+        PyErr_SetString(PyExc_RuntimeError,
+                        "cannot dispatch a finalizer while stopping the world");
+        return -1;
+    }
+    if (Py_IsFinalizing() || _PyInterpreterState_GetFinalizing(interp) != NULL) {
+        PyErr_SetString(PyExc_PythonFinalizationError,
+                        "cannot dispatch a finalizer at interpreter shutdown");
+        return -1;
+    }
+    return 0;
+}
+
 /* Lock objects */
 
 static void
@@ -771,6 +1547,7 @@ lock_dealloc(PyObject *self)
 {
     PyObject_GC_UnTrack(self);
     PyObject_ClearWeakRefs(self);
+    _PyProtectiveMutex_Decref(((lockobject *)self)->state);
     PyTypeObject *tp = Py_TYPE(self);
     tp->tp_free(self);
     Py_DECREF(tp);
@@ -814,6 +1591,275 @@ lock_acquire_parse_timeout(PyObject *timeout_obj, int blocking, PyTime_t *timeou
     }
     return 0;
 }
+/* All primitive-lock state changes share the object's critical section.
+   Waiters use compare-and-park, not PyMutex's ownership-handoff protocol:
+   context ownership must be recorded atomically with physical acquisition. */
+static int
+lock_context_owned(_PyProtectiveMutexState *state, PyThreadState *tstate)
+{
+    return state->context_group == tstate->threadgroup->id &&
+           state->context_thread == tstate->id;
+}
+
+static PyObject *
+lock_acquire(_PyProtectiveMutexState *state, PyTime_t timeout, int context)
+{
+    PyThreadState *tstate = _PyThreadState_GET();
+    PyTime_t deadline = timeout > 0 ? _PyDeadline_Init(timeout) : 0;
+    for (;;) {
+        /* Pending calls during a wait can change the registry's size. */
+        if (context && _PyThreadState_ReserveHeldMutex(tstate) < 0) {
+            return NULL;
+        }
+        int acquired = 0;
+        int forbidden = 0;
+        PyMutex_LockFlags(&state->metadata_mutex, 0);
+        if (state->protective && !context) {
+            forbidden = 1;
+        }
+        else if (PyMutex_LockFast(&state->lock.plain)) {
+            state->context_epoch++;
+            state->context_group = context ? tstate->threadgroup->id : 0;
+            state->context_thread = context ? tstate->id : 0;
+            if (state->protective) {
+                _PyThreadState_PushHeldMutex(tstate, state->mutex_id);
+            }
+            acquired = 1;
+        }
+        PyMutex_Unlock(&state->metadata_mutex);
+        if (forbidden) {
+            PyErr_SetString(PyExc_RuntimeError,
+                            "protective locks can only be acquired with a context manager");
+            return NULL;
+        }
+        if (acquired) {
+            Py_RETURN_TRUE;
+        }
+        if (timeout == 0) {
+            Py_RETURN_FALSE;
+        }
+        if (Py_IsFinalizing()) {
+            PyErr_SetString(PyExc_PythonFinalizationError,
+                            "cannot acquire lock at interpreter finalization");
+            return NULL;
+        }
+        uint8_t locked = _Py_LOCKED;
+        int result = _PyParkingLot_Park(&state->lock.plain._bits, &locked,
+                                       sizeof(locked), timeout, NULL, 1);
+        if (result == Py_PARK_INTR && Py_MakePendingCalls() < 0) {
+            return NULL;
+        }
+        if (result == Py_PARK_TIMEOUT) {
+            Py_RETURN_FALSE;
+        }
+        if (deadline) {
+            timeout = Py_MAX(_PyDeadline_Get(deadline), 0);
+        }
+    }
+}
+
+static PyObject *
+lock_release(_PyProtectiveMutexState *state, int context)
+{
+    PyThreadState *tstate = _PyThreadState_GET();
+    int error = 0;
+    PyMutex_LockFlags(&state->metadata_mutex, 0);
+    if ((state->protective && !context) ||
+        ((state->protective || context == LOCK_COMPOUND_CONTEXT) && !lock_context_owned(state, tstate))) {
+        error = 1;
+    }
+    else if (!PyMutex_IsLocked(&state->lock.plain)) {
+        error = 2;
+    }
+    else {
+        if (state->protective) {
+            int removed = _PyThreadState_RemoveHeldMutex(tstate, state->mutex_id);
+            assert(removed);
+            (void)removed;
+        }
+        state->context_group = 0;
+        state->context_thread = 0;
+        int unlocked = _PyMutex_TryUnlock(&state->lock.plain);
+        assert(unlocked == 0);
+        (void)unlocked;
+    }
+    PyMutex_Unlock(&state->metadata_mutex);
+    if (error) {
+        PyErr_SetString(PyExc_RuntimeError, error == 1 ?
+                        "protective locks can only be released by their owning context" :
+                        "release unlocked lock");
+        return NULL;
+    }
+    _PyParkingLot_UnparkAll(&state->lock.plain._bits);
+    Py_RETURN_NONE;
+}
+
+static int
+lock_python_instance(PyObject *value)
+{
+    PyObject *mro = Py_TYPE(value)->tp_mro;
+    for (Py_ssize_t i = 0; i < PyTuple_GET_SIZE(mro); i++) {
+        PyTypeObject *base = (PyTypeObject *)PyTuple_GET_ITEM(mro, i);
+        if (base != &PyBaseObject_Type &&
+            (!(base->tp_flags & Py_TPFLAGS_HEAPTYPE) ||
+             !((PyHeapTypeObject *)base)->ht_is_python)) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static PyObject *
+lock_copy_namespace(PyObject *copy)
+{
+    if (Py_TYPE(copy)->tp_dictoffset == 0) {
+        return NULL;
+    }
+    if (Py_TYPE(copy)->tp_flags & Py_TPFLAGS_MANAGED_DICT) {
+        return (PyObject *)_PyObject_GetManagedDict(copy);
+    }
+    return *_PyObject_ComputedDictPointer(copy);
+}
+
+/* No allocation or callbacks: called under the owning lock's metadata guard. */
+static int
+lock_publish_copy(PyObject *copy, uint32_t mutex_id)
+{
+    PyObject *dict = lock_copy_namespace(copy);
+    if (copy->ob_shareable != _Py_SHAREABLE_LOCAL || copy->ob_frozen ||
+        (Py_TYPE(copy)->tp_dictoffset != 0 && dict == NULL) ||
+        !_PyObject_IsUniquelyReferenced(copy) ||
+        (dict != NULL && !_PyObject_IsUniquelyReferenced(dict))) {
+        return -1;
+    }
+    copy->ob_owner_id = mutex_id;
+    copy->ob_shareable = _Py_SHAREABLE_PROTECTED;
+    if (dict != NULL) {
+        _PyObject_InheritShareable(dict, copy);
+    }
+    return 0;
+}
+
+static PyObject *
+lock_protected_copy(PyObject *value)
+{
+    if (PyObject_CheckAccess(value) == NULL) {
+        return NULL;
+    }
+    /* A borrowed argument can have refcount one while a local still owns it. */
+    if (value->ob_shareable != _Py_SHAREABLE_LOCAL ||
+        !PyUnstable_Object_IsUniqueReferencedTemporary(value)) {
+        PyErr_SetString(PyExc_TypeError,
+                        "protect() requires the sole reference to a local object");
+        return NULL;
+    }
+    if (PyList_CheckExact(value)) {
+        return PyList_GetSlice(value, 0, PyList_GET_SIZE(value));
+    }
+    else if (PyDict_CheckExact(value)) {
+        return PyDict_Copy(value);
+    }
+    else if (PySet_CheckExact(value)) {
+        return PySet_New(value);
+    }
+    if (!lock_python_instance(value)) {
+        PyErr_SetString(PyExc_TypeError,
+                        "protect() does not support this native object layout");
+        return NULL;
+    }
+    PyObject *module = PyImport_ImportModule("copy");
+    if (module == NULL) {
+        return NULL;
+    }
+    PyObject *copy = PyObject_CallMethod(module, "copy", "(O)", value);
+    Py_DECREF(module);
+    if (copy == NULL) {
+        return NULL;
+    }
+    if (PyObject_CheckAccess(copy) == NULL) {
+        Py_DECREF(copy);
+        return NULL;
+    }
+    if (copy == value || Py_TYPE(copy) != Py_TYPE(value) ||
+        !lock_python_instance(copy) ||
+        copy->ob_shareable != _Py_SHAREABLE_LOCAL ||
+        !_PyObject_IsUniquelyReferenced(copy)) {
+        Py_DECREF(copy);
+        PyErr_SetString(PyExc_TypeError,
+                        "protect() copy must be an unaliased local instance of the same type");
+        return NULL;
+    }
+    if (Py_TYPE(copy)->tp_dictoffset != 0) {
+        PyObject *dict = PyObject_GenericGetDict(copy, NULL);
+        if (dict == NULL) {
+            Py_DECREF(copy);
+            return NULL;
+        }
+        PyObject *fresh = NULL;
+        if (PyObject_CheckAccess(dict) != NULL) {
+            fresh = _PyDict_CopyStorage(dict);
+        }
+        Py_DECREF(dict);
+        if (fresh == NULL) {
+            Py_DECREF(copy);
+            return NULL;
+        }
+        int err = _PyObject_SetDict(copy, fresh);
+        Py_DECREF(fresh);
+        if (err < 0) {
+            Py_DECREF(copy);
+            return NULL;
+        }
+    }
+    return copy;
+}
+
+static PyObject *
+lock_protect(PyObject *op, PyObject *value)
+{
+    lockobject *self = lockobject_CAST(op);
+    PyThreadState *tstate = _PyThreadState_GET();
+    int owned;
+    PyMutex_LockFlags(&self->state->metadata_mutex, 0);
+    owned = PyMutex_IsLocked(&self->state->lock.plain) && lock_context_owned(self->state, tstate);
+    PyMutex_Unlock(&self->state->metadata_mutex);
+    if (!owned) {
+        PyErr_SetString(PyExc_UnprotectedAccessException,
+                        "protect() requires an owning lock context");
+        return NULL;
+    }
+    PyObject *copy = lock_protected_copy(value);
+    if (copy == NULL) {
+        return NULL;
+    }
+    if (_PyThreadState_ReserveHeldMutex(tstate) < 0) {
+        Py_DECREF(copy);
+        return NULL;
+    }
+    int private_copy = 1;
+    PyMutex_LockFlags(&self->state->metadata_mutex, 0);
+    owned = PyMutex_IsLocked(&self->state->lock.plain) && lock_context_owned(self->state, tstate);
+    if (owned) {
+        private_copy = lock_publish_copy(copy, self->state->mutex_id) == 0;
+    }
+    if (owned && private_copy) {
+        if (!self->state->protective) {
+            _PyThreadState_PushHeldMutex(tstate, self->state->mutex_id);
+            _PyProtectiveMutex_Register(tstate->interp, self->state);
+            self->state->protective = 1;
+        }
+    }
+    PyMutex_Unlock(&self->state->metadata_mutex);
+    if (!owned || !private_copy) {
+        Py_DECREF(copy);
+        PyErr_SetString(owned ? PyExc_TypeError : PyExc_UnprotectedAccessException,
+                        owned ? "protect() copy escaped before publication" :
+                        "lock context ended during protect()");
+        return NULL;
+    }
+    return copy;
+}
+
 /*[clinic input]
 _thread.lock.acquire
     blocking: bool = True
@@ -840,18 +1886,7 @@ _thread_lock_acquire_impl(lockobject *self, int blocking,
         return NULL;
     }
 
-    PyLockStatus r = _PyMutex_LockTimed(
-        &self->lock, timeout,
-        _PY_LOCK_PYTHONLOCK | _PY_LOCK_HANDLE_SIGNALS | _PY_LOCK_DETACH);
-    if (r == PY_LOCK_INTR) {
-        assert(PyErr_Occurred());
-        return NULL;
-    }
-    if (r == PY_LOCK_FAILURE && PyErr_Occurred()) {
-        return NULL;
-    }
-
-    return PyBool_FromLong(r == PY_LOCK_ACQUIRED);
+    return lock_acquire(self->state, timeout, LOCK_MANUAL);
 }
 
 /*[clinic input]
@@ -882,13 +1917,7 @@ static PyObject *
 _thread_lock_release_impl(lockobject *self)
 /*[clinic end generated code: output=a4ab0d75d6e9fb73 input=dfe48f962dfe99b4]*/
 {
-    /* Sanity check: the lock must be locked */
-    if (_PyMutex_TryUnlock(&self->lock) < 0) {
-        PyErr_SetString(ThreadError, "release unlocked lock");
-        return NULL;
-    }
-
-    Py_RETURN_NONE;
+    return lock_release(self->state, LOCK_MANUAL);
 }
 
 /*[clinic input]
@@ -914,7 +1943,7 @@ static PyObject *
 _thread_lock___enter___impl(lockobject *self)
 /*[clinic end generated code: output=f27725de751ae064 input=8f982991608d38e7]*/
 {
-    return _thread_lock_acquire_impl(self, 1, NULL);
+    return lock_acquire(self->state, -1, LOCK_CONTEXT);
 }
 
 /*[clinic input]
@@ -932,7 +1961,7 @@ _thread_lock___exit___impl(lockobject *self, PyObject *exc_type,
                            PyObject *exc_value, PyObject *exc_tb)
 /*[clinic end generated code: output=c9e8eefa69beed07 input=c74d4abe15a6c037]*/
 {
-    return _thread_lock_release_impl(self);
+    return lock_release(self->state, LOCK_CONTEXT);
 }
 
 
@@ -946,7 +1975,7 @@ static PyObject *
 _thread_lock_locked_impl(lockobject *self)
 /*[clinic end generated code: output=63bb94e5a9efa382 input=d8e3d64861bbce73]*/
 {
-    return PyBool_FromLong(PyMutex_IsLocked(&self->lock));
+    return PyBool_FromLong(PyMutex_IsLocked(&self->state->lock.plain));
 }
 
 /*[clinic input]
@@ -967,7 +1996,7 @@ lock_repr(PyObject *op)
 {
     lockobject *self = lockobject_CAST(op);
     return PyUnicode_FromFormat("<%s %s object at %p>",
-        PyMutex_IsLocked(&self->lock) ? "locked" : "unlocked", Py_TYPE(self)->tp_name, self);
+        PyMutex_IsLocked(&self->state->lock.plain) ? "locked" : "unlocked", Py_TYPE(self)->tp_name, self);
 }
 
 #ifdef HAVE_FORK
@@ -979,7 +2008,19 @@ static PyObject *
 _thread_lock__at_fork_reinit_impl(lockobject *self)
 /*[clinic end generated code: output=d8609f2d3bfa1fd5 input=a970cb76e2a0a131]*/
 {
-    _PyMutex_at_fork_reinit(&self->lock);
+    int protective;
+    PyMutex_LockFlags(&self->state->metadata_mutex, 0);
+    protective = self->state->protective;
+    if (!protective) {
+        _PyMutex_at_fork_reinit(&self->state->lock.plain);
+        self->state->context_group = 0;
+        self->state->context_thread = 0;
+    }
+    PyMutex_Unlock(&self->state->metadata_mutex);
+    if (protective) {
+        PyErr_SetString(PyExc_RuntimeError, "cannot reset a protective lock");
+        return NULL;
+    }
     Py_RETURN_NONE;
 }
 #endif  /* HAVE_FORK */
@@ -997,12 +2038,22 @@ lock_new_impl(PyTypeObject *type)
     if (self == NULL) {
         return NULL;
     }
-    self->lock = (PyMutex){0};
+    self->state = _PyProtectiveMutex_New(0);
+    if (self->state == NULL) {
+        Py_DECREF(self);
+        return NULL;
+    }
+    if (PyObject_DeclareSynchronized((PyObject *)self) < 0) {
+        Py_DECREF(self);
+        return NULL;
+    }
     return (PyObject *)self;
 }
 
 
 static PyMethodDef lock_methods[] = {
+    {"protect", lock_protect, METH_O,
+     PyDoc_STR("Create a protected shallow copy while holding this lock's context.")},
     _THREAD_LOCK_ACQUIRE_LOCK_METHODDEF
     _THREAD_LOCK_ACQUIRE_METHODDEF
     _THREAD_LOCK_RELEASE_LOCK_METHODDEF
@@ -1033,6 +2084,7 @@ unlock it.  A thread attempting to lock a lock that it has already locked\n\
 will block until another thread unlocks it.  Deadlocks may ensue.");
 
 static PyType_Slot lock_type_slots[] = {
+    {Py_nb_add, lock_add},
     {Py_tp_dealloc, lock_dealloc},
     {Py_tp_repr, lock_repr},
     {Py_tp_doc, (void *)lock_doc},
@@ -1053,9 +2105,245 @@ static PyType_Spec lock_type_spec = {
 /* Recursive lock objects */
 
 static int
+rlock_context_owned(_PyProtectiveMutexState *state, PyThreadState *tstate)
+{
+    return state->context_only &&
+           state->context_group == tstate->threadgroup->id &&
+           state->context_thread == tstate->id &&
+           _PyRecursiveMutex_IsLockedByCurrentThread(&state->lock.recursive);
+}
+
+static PyObject *
+rlock_acquire(_PyProtectiveMutexState *state, PyTime_t timeout, int context)
+{
+    PyThreadState *tstate = _PyThreadState_GET();
+    PyTime_t deadline = timeout > 0 ? _PyDeadline_Init(timeout) : 0;
+    for (;;) {
+        if (context && _PyThreadState_ReserveHeldMutex(tstate) < 0) {
+            return NULL;
+        }
+        int acquired = 0;
+        int forbidden = 0;
+        int overflow = 0;
+        PyMutex_LockFlags(&state->metadata_mutex, 0);
+        int recursive = _PyRecursiveMutex_IsLockedByCurrentThread(&state->lock.recursive);
+        if (state->protective &&
+            (!context || (recursive && !rlock_context_owned(state, tstate)))) {
+            forbidden = 1;
+        }
+        else if (recursive &&
+                 _Py_atomic_load_uintptr_relaxed(&state->lock.recursive.level) == UINTPTR_MAX) {
+            overflow = 1;
+        }
+        else if (_PyRecursiveMutex_LockTimed(&state->lock.recursive, 0, 0) == PY_LOCK_ACQUIRED) {
+            if (!recursive) {
+                state->context_epoch++;
+                state->context_group = tstate->threadgroup->id;
+                state->context_thread = tstate->id;
+                state->context_only = context;
+                if (state->protective) {
+                    _PyThreadState_PushHeldMutex(tstate, state->mutex_id);
+                }
+            }
+            else if (!context || state->context_group != tstate->threadgroup->id ||
+                     state->context_thread != tstate->id) {
+                state->context_only = 0;
+            }
+            acquired = 1;
+        }
+        PyMutex_Unlock(&state->metadata_mutex);
+        if (forbidden) {
+            PyErr_SetString(PyExc_RuntimeError,
+                            "protective locks can only be acquired with an owning context");
+            return NULL;
+        }
+        if (overflow) {
+            PyErr_SetString(PyExc_OverflowError, "RLock recursion count overflow");
+            return NULL;
+        }
+        if (acquired) {
+            Py_RETURN_TRUE;
+        }
+        if (timeout == 0) {
+            Py_RETURN_FALSE;
+        }
+        if (Py_IsFinalizing()) {
+            PyErr_SetString(PyExc_PythonFinalizationError,
+                            "cannot acquire lock at interpreter finalization");
+            return NULL;
+        }
+        uint8_t locked = _Py_LOCKED;
+        int result = _PyParkingLot_Park(&state->lock.recursive.mutex._bits, &locked,
+                                       sizeof(locked), timeout, NULL, 1);
+        if (result == Py_PARK_INTR && Py_MakePendingCalls() < 0) {
+            return NULL;
+        }
+        if (result == Py_PARK_TIMEOUT) {
+            Py_RETURN_FALSE;
+        }
+        if (deadline) {
+            timeout = Py_MAX(_PyDeadline_Get(deadline), 0);
+        }
+    }
+}
+
+static PyObject *
+rlock_release(_PyProtectiveMutexState *state, int context)
+{
+    PyThreadState *tstate = _PyThreadState_GET();
+    int error = 0;
+    int wake = 0;
+    PyMutex_LockFlags(&state->metadata_mutex, 0);
+    if (state->protective && (!context || !rlock_context_owned(state, tstate))) {
+        error = 1;
+    }
+    else if (context == LOCK_COMPOUND_CONTEXT &&
+             (state->context_group != tstate->threadgroup->id ||
+              state->context_thread != tstate->id)) {
+        error = 1;
+    }
+    else if (!_PyRecursiveMutex_IsLockedByCurrentThread(&state->lock.recursive)) {
+        error = 2;
+    }
+    else {
+        if (_Py_atomic_load_uintptr_relaxed(&state->lock.recursive.level) == 0) {
+            if (state->protective) {
+                int removed = _PyThreadState_RemoveHeldMutex(tstate, state->mutex_id);
+                assert(removed);
+                (void)removed;
+            }
+            state->context_group = 0;
+            state->context_thread = 0;
+            state->context_only = 0;
+            wake = 1;
+        }
+        else if (!context) {
+            state->context_only = 0;
+        }
+        int unlocked = _PyRecursiveMutex_TryUnlock(&state->lock.recursive);
+        assert(unlocked == 0);
+        (void)unlocked;
+    }
+    PyMutex_Unlock(&state->metadata_mutex);
+    if (error) {
+        PyErr_SetString(PyExc_RuntimeError, error == 1 ?
+                        "protective locks can only be released by their owning context" :
+                        "cannot release un-acquired lock");
+        return NULL;
+    }
+    if (wake) {
+        _PyParkingLot_UnparkAll(&state->lock.recursive.mutex._bits);
+    }
+    Py_RETURN_NONE;
+}
+
+/* Run with the real protecting mutex, including when its wrapper has died. */
+int
+_PyProtectiveMutex_CallFinalizer(PyObject *op)
+{
+    PyThreadState *tstate = _PyThreadState_GET();
+    _PyProtectiveMutexState *state = _PyProtectiveMutex_Find(
+        tstate->interp, _Py_atomic_load_uint32_relaxed(&op->ob_owner_id));
+    if (state == NULL) {
+        PyErr_SetString(PyExc_RuntimeError, "protecting mutex is unavailable");
+        return -1;
+    }
+    PyObject *acquired = state->recursive ?
+        rlock_acquire(state, 0, LOCK_CONTEXT) :
+        lock_acquire(state, 0, LOCK_CONTEXT);
+    if (acquired == Py_False) {
+        Py_CLEAR(acquired);
+        if (finalizer_can_wait(tstate) == 0) {
+            acquired = state->recursive ?
+                rlock_acquire(state, -1, LOCK_CONTEXT) :
+                lock_acquire(state, -1, LOCK_CONTEXT);
+        }
+    }
+    if (acquired == NULL) {
+        _PyProtectiveMutex_Decref(state);
+        return -1;
+    }
+    assert(acquired == Py_True);
+    Py_DECREF(acquired);
+    PyMutex_LockFlags(&state->metadata_mutex, 0);
+    uint64_t epoch = state->context_epoch;
+    PyMutex_Unlock(&state->metadata_mutex);
+    if (Py_TYPE(op)->tp_finalize != NULL) {
+        Py_TYPE(op)->tp_finalize(op);
+    }
+    /* A callback may explicitly exit this context and acquire a new one.
+       Never release that new context, or another thread's acquisition. */
+    PyMutex_LockFlags(&state->metadata_mutex, 0);
+    int release = state->context_epoch == epoch &&
+                  state->context_group == tstate->threadgroup->id &&
+                  state->context_thread == tstate->id;
+    PyMutex_Unlock(&state->metadata_mutex);
+    PyObject *result = NULL;
+    if (release) {
+        result = state->recursive ?
+            rlock_release(state, LOCK_CONTEXT) :
+            lock_release(state, LOCK_CONTEXT);
+    }
+    _PyProtectiveMutex_Decref(state);
+    if (release && result == NULL) {
+        return -1;
+    }
+    Py_XDECREF(result);
+    return 0;
+}
+
+static PyObject *
+rlock_protect(PyObject *op, PyObject *value)
+{
+    rlockobject *self = rlockobject_CAST(op);
+    PyThreadState *tstate = _PyThreadState_GET();
+    int owned;
+    PyMutex_LockFlags(&self->state->metadata_mutex, 0);
+    owned = rlock_context_owned(self->state, tstate);
+    PyMutex_Unlock(&self->state->metadata_mutex);
+    if (!owned) {
+        PyErr_SetString(PyExc_UnprotectedAccessException,
+                        "protect() requires exclusively owning lock contexts");
+        return NULL;
+    }
+    PyObject *copy = lock_protected_copy(value);
+    if (copy == NULL) {
+        return NULL;
+    }
+    if (_PyThreadState_ReserveHeldMutex(tstate) < 0) {
+        Py_DECREF(copy);
+        return NULL;
+    }
+    int private_copy = 1;
+    PyMutex_LockFlags(&self->state->metadata_mutex, 0);
+    owned = rlock_context_owned(self->state, tstate);
+    if (owned) {
+        private_copy = lock_publish_copy(copy, self->state->mutex_id) == 0;
+    }
+    if (owned && private_copy) {
+        if (!self->state->protective) {
+            /* One held-mutex entry lasts until the outermost release, including
+               when protect() is first called inside nested contexts. */
+            _PyThreadState_PushHeldMutex(tstate, self->state->mutex_id);
+            _PyProtectiveMutex_Register(tstate->interp, self->state);
+            self->state->protective = 1;
+        }
+    }
+    PyMutex_Unlock(&self->state->metadata_mutex);
+    if (!owned || !private_copy) {
+        Py_DECREF(copy);
+        PyErr_SetString(owned ? PyExc_TypeError : PyExc_UnprotectedAccessException,
+                        owned ? "protect() copy escaped before publication" :
+                        "lock context ended during protect()");
+        return NULL;
+    }
+    return copy;
+}
+
+static int
 rlock_locked_impl(rlockobject *self)
 {
-    return PyMutex_IsLocked(&self->lock.mutex);
+    return PyMutex_IsLocked(&self->state->lock.recursive.mutex);
 }
 
 static void
@@ -1063,6 +2351,7 @@ rlock_dealloc(PyObject *self)
 {
     PyObject_GC_UnTrack(self);
     PyObject_ClearWeakRefs(self);
+    _PyProtectiveMutex_Decref(((rlockobject *)self)->state);
     PyTypeObject *tp = Py_TYPE(self);
     tp->tp_free(self);
     Py_DECREF(tp);
@@ -1100,18 +2389,7 @@ _thread_RLock_acquire_impl(rlockobject *self, int blocking,
         return NULL;
     }
 
-    PyLockStatus r = _PyRecursiveMutex_LockTimed(
-        &self->lock, timeout,
-        _PY_LOCK_PYTHONLOCK | _PY_LOCK_HANDLE_SIGNALS | _PY_LOCK_DETACH);
-    if (r == PY_LOCK_INTR) {
-        assert(PyErr_Occurred());
-        return NULL;
-    }
-    if (r == PY_LOCK_FAILURE && PyErr_Occurred()) {
-        return NULL;
-    }
-
-    return PyBool_FromLong(r == PY_LOCK_ACQUIRED);
+    return rlock_acquire(self->state, timeout, LOCK_MANUAL);
 }
 
 /*[clinic input]
@@ -1124,7 +2402,7 @@ static PyObject *
 _thread_RLock___enter___impl(rlockobject *self)
 /*[clinic end generated code: output=63135898476bf89f input=33be37f459dca390]*/
 {
-    return _thread_RLock_acquire_impl(self, 1, NULL);
+    return rlock_acquire(self->state, -1, LOCK_CONTEXT);
 }
 
 /*[clinic input]
@@ -1146,12 +2424,7 @@ static PyObject *
 _thread_RLock_release_impl(rlockobject *self)
 /*[clinic end generated code: output=51f4a013c5fae2c5 input=7c188f60189be13a]*/
 {
-    if (_PyRecursiveMutex_TryUnlock(&self->lock) < 0) {
-        PyErr_SetString(PyExc_RuntimeError,
-                        "cannot release un-acquired lock");
-        return NULL;
-    }
-    Py_RETURN_NONE;
+    return rlock_release(self->state, LOCK_MANUAL);
 }
 
 /*[clinic input]
@@ -1170,7 +2443,7 @@ _thread_RLock___exit___impl(rlockobject *self, PyObject *exc_type,
                             PyObject *exc_value, PyObject *exc_tb)
 /*[clinic end generated code: output=79bb44d551aedeb5 input=79accf0778d91002]*/
 {
-    return _thread_RLock_release_impl(self);
+    return rlock_release(self->state, LOCK_CONTEXT);
 }
 
 /*[clinic input]
@@ -1206,9 +2479,28 @@ _thread_RLock__acquire_restore_impl(rlockobject *self, PyObject *state)
             &count, &owner))
         return NULL;
 
-    _PyRecursiveMutex_Lock(&self->lock);
-    _Py_atomic_store_ullong_relaxed(&self->lock.thread, owner);
-    self->lock.level = (size_t)count - 1;
+    PyObject *acquired = rlock_acquire(self->state, -1, LOCK_MANUAL);
+    if (acquired == NULL) {
+        return NULL;
+    }
+    Py_DECREF(acquired);
+    int error = 0;
+    PyMutex_LockFlags(&self->state->metadata_mutex, 0);
+    /* A concurrent ordinary _at_fork_reinit can invalidate the acquisition. */
+    if (self->state->protective ||
+        !_PyRecursiveMutex_IsLockedByCurrentThread(&self->state->lock.recursive)) {
+        error = 1;
+    }
+    else {
+        _Py_atomic_store_ullong_relaxed(&self->state->lock.recursive.thread, owner);
+        _Py_atomic_store_uintptr_relaxed(&self->state->lock.recursive.level, (uintptr_t)count - 1);
+        self->state->context_only = 0;
+    }
+    PyMutex_Unlock(&self->state->metadata_mutex);
+    if (error) {
+        PyErr_SetString(PyExc_RuntimeError, "cannot restore RLock ownership");
+        return NULL;
+    }
     Py_RETURN_NONE;
 }
 
@@ -1223,16 +2515,34 @@ static PyObject *
 _thread_RLock__release_save_impl(rlockobject *self)
 /*[clinic end generated code: output=d2916487315bea93 input=809d227cfc4a112c]*/
 {
-    if (!_PyRecursiveMutex_IsLockedByCurrentThread(&self->lock)) {
-        PyErr_SetString(PyExc_RuntimeError,
+    int error = 0;
+    PyThread_ident_t owner = 0;
+    Py_ssize_t count = 0;
+    PyMutex_LockFlags(&self->state->metadata_mutex, 0);
+    if (self->state->protective) {
+        error = 1;
+    }
+    else if (!_PyRecursiveMutex_IsLockedByCurrentThread(&self->state->lock.recursive)) {
+        error = 2;
+    }
+    else {
+        owner = _Py_atomic_load_ullong_relaxed(&self->state->lock.recursive.thread);
+        count = _Py_atomic_load_uintptr_relaxed(&self->state->lock.recursive.level) + 1;
+        // Ensure the unlock releases the lock.
+        _Py_atomic_store_uintptr_relaxed(&self->state->lock.recursive.level, 0);
+        self->state->context_group = 0;
+        self->state->context_thread = 0;
+        self->state->context_only = 0;
+        _PyRecursiveMutex_Unlock(&self->state->lock.recursive);
+    }
+    PyMutex_Unlock(&self->state->metadata_mutex);
+    if (error) {
+        PyErr_SetString(PyExc_RuntimeError, error == 1 ?
+                        "cannot suspend a protective lock context" :
                         "cannot release un-acquired lock");
         return NULL;
     }
-
-    PyThread_ident_t owner = self->lock.thread;
-    Py_ssize_t count = self->lock.level + 1;
-    self->lock.level = 0;  // ensure the unlock releases the lock
-    _PyRecursiveMutex_Unlock(&self->lock);
+    _PyParkingLot_UnparkAll(&self->state->lock.recursive.mutex._bits);
     return Py_BuildValue("n" Py_PARSE_THREAD_IDENT_T, count, owner);
 }
 
@@ -1247,8 +2557,9 @@ static PyObject *
 _thread_RLock__recursion_count_impl(rlockobject *self)
 /*[clinic end generated code: output=7993fb9695ef2c4d input=7fd1834cd7a4b044]*/
 {
-    if (_PyRecursiveMutex_IsLockedByCurrentThread(&self->lock)) {
-        return PyLong_FromSize_t(self->lock.level + 1);
+    if (_PyRecursiveMutex_IsLockedByCurrentThread(&self->state->lock.recursive)) {
+        return PyLong_FromSize_t(
+            _Py_atomic_load_uintptr_relaxed(&self->state->lock.recursive.level) + 1);
     }
     return PyLong_FromLong(0);
 }
@@ -1264,7 +2575,7 @@ static PyObject *
 _thread_RLock__is_owned_impl(rlockobject *self)
 /*[clinic end generated code: output=bf14268a3cabbe07 input=fba6535538deb858]*/
 {
-    long owned = _PyRecursiveMutex_IsLockedByCurrentThread(&self->lock);
+    long owned = _PyRecursiveMutex_IsLockedByCurrentThread(&self->state->lock.recursive);
     return PyBool_FromLong(owned);
 }
 
@@ -1281,7 +2592,23 @@ rlock_new_impl(PyTypeObject *type)
     if (self == NULL) {
         return NULL;
     }
-    self->lock = (_PyRecursiveMutex){0};
+    self->state = _PyProtectiveMutex_New(1);
+    if (self->state == NULL) {
+        Py_DECREF(self);
+        return NULL;
+    }
+    thread_module_state *state = get_thread_state_by_cls(type);
+    if (state == NULL) {
+        Py_DECREF(self);
+        return NULL;
+    }
+    // A Python subclass may add mutable state that has no internal locking.
+    if (type == state->rlock_type &&
+        PyObject_DeclareSynchronized((PyObject *)self) < 0) {
+        Py_DECREF(self);
+        return NULL;
+    }
+
     return (PyObject *) self;
 }
 
@@ -1289,11 +2616,11 @@ static PyObject *
 rlock_repr(PyObject *op)
 {
     rlockobject *self = rlockobject_CAST(op);
-    PyThread_ident_t owner = FT_ATOMIC_LOAD_ULLONG_RELAXED(self->lock.thread);
+    PyThread_ident_t owner = FT_ATOMIC_LOAD_ULLONG_RELAXED(self->state->lock.recursive.thread);
     int locked = rlock_locked_impl(self);
     size_t count;
     if (locked) {
-        count = self->lock.level + 1;
+        count = _Py_atomic_load_uintptr_relaxed(&self->state->lock.recursive.level) + 1;
     }
     else {
         count = 0;
@@ -1315,13 +2642,28 @@ static PyObject *
 _thread_RLock__at_fork_reinit_impl(rlockobject *self)
 /*[clinic end generated code: output=d77a4ce40351817c input=a3b625b026a8df4f]*/
 {
-    self->lock = (_PyRecursiveMutex){0};
+    int protective;
+    PyMutex_LockFlags(&self->state->metadata_mutex, 0);
+    protective = self->state->protective;
+    if (!protective) {
+        self->state->lock.recursive = (_PyRecursiveMutex){0};
+        self->state->context_group = 0;
+        self->state->context_thread = 0;
+        self->state->context_only = 0;
+    }
+    PyMutex_Unlock(&self->state->metadata_mutex);
+    if (protective) {
+        PyErr_SetString(PyExc_RuntimeError, "cannot reset a protective lock");
+        return NULL;
+    }
     Py_RETURN_NONE;
 }
 #endif  /* HAVE_FORK */
 
 
 static PyMethodDef rlock_methods[] = {
+    {"protect", rlock_protect, METH_O,
+     PyDoc_STR("Create a protected shallow copy while holding this lock's contexts.")},
     _THREAD_RLOCK_ACQUIRE_METHODDEF
     _THREAD_RLOCK_RELEASE_METHODDEF
     _THREAD_RLOCK_LOCKED_METHODDEF
@@ -1339,6 +2681,7 @@ static PyMethodDef rlock_methods[] = {
 
 
 static PyType_Slot rlock_type_slots[] = {
+    {Py_nb_add, lock_add},
     {Py_tp_dealloc, rlock_dealloc},
     {Py_tp_repr, rlock_repr},
     {Py_tp_methods, rlock_methods},
@@ -1354,6 +2697,263 @@ static PyType_Spec rlock_type_spec = {
     .flags = (Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE |
               Py_TPFLAGS_HAVE_GC | Py_TPFLAGS_IMMUTABLETYPE | Py_TPFLAGS_MANAGED_WEAKREF),
     .slots = rlock_type_slots,
+};
+
+/* Compound locks contain a sorted, deduplicated tuple of native locks.
+   Context records belong to Python threads, not to ThreadGroups. */
+
+static uint32_t
+compound_member_id(PyObject *member, thread_module_state *state)
+{
+    if (Py_IS_TYPE(member, state->lock_type)) {
+        return lockobject_CAST(member)->state->mutex_id;
+    }
+    assert(Py_IS_TYPE(member, state->rlock_type));
+    return rlockobject_CAST(member)->state->mutex_id;
+}
+
+static Py_ssize_t
+compound_operand_size(PyObject *op, thread_module_state *state)
+{
+    if (Py_IS_TYPE(op, state->lock_type) || Py_IS_TYPE(op, state->rlock_type)) {
+        return 1;
+    }
+    if (Py_IS_TYPE(op, state->compound_lock_type)) {
+        return PyTuple_GET_SIZE(((compoundlockobject *)op)->locks);
+    }
+    return -1;
+}
+
+static PyObject *
+compound_operand_item(PyObject *op, Py_ssize_t index, thread_module_state *state)
+{
+    if (Py_IS_TYPE(op, state->compound_lock_type)) {
+        return PyTuple_GET_ITEM(((compoundlockobject *)op)->locks, index);
+    }
+    assert(index == 0);
+    return op;
+}
+
+static PyObject *
+lock_add(PyObject *left, PyObject *right)
+{
+    /* nb_add can be invoked with the native lock on either side. */
+    PyTypeObject *type = Py_TYPE(left);
+    if (type->tp_as_number == NULL || type->tp_as_number->nb_add != lock_add) {
+        type = Py_TYPE(right);
+    }
+    thread_module_state *state = get_thread_state_by_cls(type);
+    if (state == NULL) {
+        return NULL;
+    }
+    Py_ssize_t left_size = compound_operand_size(left, state);
+    Py_ssize_t right_size = compound_operand_size(right, state);
+    if (left_size < 0 || right_size < 0) {
+        Py_RETURN_NOTIMPLEMENTED;
+    }
+    if (left_size > PY_SSIZE_T_MAX - right_size) {
+        return PyErr_NoMemory();
+    }
+    PyObject *members = PyTuple_New(left_size + right_size);
+    if (members == NULL) {
+        return NULL;
+    }
+    Py_ssize_t i = 0, j = 0, count = 0;
+    while (i < left_size || j < right_size) {
+        PyObject *a = i < left_size ? compound_operand_item(left, i, state) : NULL;
+        PyObject *b = j < right_size ? compound_operand_item(right, j, state) : NULL;
+        PyObject *member;
+        if (b == NULL || (a != NULL &&
+                         compound_member_id(a, state) < compound_member_id(b, state))) {
+            member = a;
+            i++;
+        }
+        else if (a == NULL || compound_member_id(b, state) < compound_member_id(a, state)) {
+            member = b;
+            j++;
+        }
+        else {
+            assert(a == b);
+            member = a;
+            i++;
+            j++;
+        }
+        PyTuple_SET_ITEM(members, count++, Py_NewRef(member));
+    }
+    if (_PyTuple_Resize(&members, count) < 0) {
+        return NULL;
+    }
+    compoundlockobject *self = (compoundlockobject *)
+        state->compound_lock_type->tp_alloc(state->compound_lock_type, 0);
+    if (self == NULL) {
+        Py_DECREF(members);
+        return NULL;
+    }
+    self->locks = members;
+    if (PyObject_DeclareSynchronized((PyObject *)self) < 0) {
+        Py_DECREF(self);
+        return NULL;
+    }
+    return (PyObject *)self;
+}
+
+static int
+compound_release_members(compoundlockobject *self, Py_ssize_t count,
+                         thread_module_state *state)
+{
+    /* Preserve the original acquisition error during rollback. On exit,
+       attempt every release and propagate the first failure. */
+    PyObject *error = PyErr_GetRaisedException();
+    while (count > 0) {
+        PyObject *member = PyTuple_GET_ITEM(self->locks, --count);
+        PyObject *result;
+        if (Py_IS_TYPE(member, state->lock_type)) {
+            result = lock_release(lockobject_CAST(member)->state, LOCK_COMPOUND_CONTEXT);
+        }
+        else {
+            result = rlock_release(rlockobject_CAST(member)->state, LOCK_COMPOUND_CONTEXT);
+        }
+        if (result == NULL) {
+            if (error == NULL) {
+                error = PyErr_GetRaisedException();
+            }
+            else {
+                PyErr_Clear();
+            }
+        }
+        else {
+            Py_DECREF(result);
+        }
+    }
+    if (error != NULL) {
+        PyErr_SetRaisedException(error);
+        return -1;
+    }
+    return 0;
+}
+
+static PyObject *
+compound_enter(PyObject *op, PyObject *unused)
+{
+    compoundlockobject *self = (compoundlockobject *)op;
+    thread_module_state *state = get_thread_state_by_cls(Py_TYPE(op));
+    if (state == NULL) {
+        return NULL;
+    }
+    compound_context *context = PyMem_Malloc(sizeof(*context));
+    if (context == NULL) {
+        return PyErr_NoMemory();
+    }
+    PyThreadState *tstate = _PyThreadState_GET();
+    context->group = tstate->threadgroup->id;
+    context->thread = tstate->id;
+    Py_ssize_t count = PyTuple_GET_SIZE(self->locks);
+    for (Py_ssize_t i = 0; i < count; i++) {
+        PyObject *member = PyTuple_GET_ITEM(self->locks, i);
+        PyObject *result;
+        if (Py_IS_TYPE(member, state->lock_type)) {
+            result = lock_acquire(lockobject_CAST(member)->state, -1, LOCK_COMPOUND_CONTEXT);
+        }
+        else {
+            result = rlock_acquire(rlockobject_CAST(member)->state, -1, LOCK_COMPOUND_CONTEXT);
+        }
+        if (result == NULL) {
+            compound_release_members(self, i, state);
+            PyMem_Free(context);
+            return NULL;
+        }
+        assert(result == Py_True);
+        Py_DECREF(result);
+    }
+    Py_BEGIN_CRITICAL_SECTION(self);
+    context->next = self->contexts;
+    self->contexts = context;
+    Py_END_CRITICAL_SECTION();
+    return Py_NewRef(op);
+}
+
+static PyObject *
+compound_exit(PyObject *op, PyObject *args)
+{
+    PyObject *exc_type, *exc_value, *exc_tb;
+    if (!PyArg_UnpackTuple(args, "__exit__", 3, 3, &exc_type, &exc_value, &exc_tb)) {
+        return NULL;
+    }
+    compoundlockobject *self = (compoundlockobject *)op;
+    thread_module_state *state = get_thread_state_by_cls(Py_TYPE(op));
+    if (state == NULL) {
+        return NULL;
+    }
+    PyThreadState *tstate = _PyThreadState_GET();
+    compound_context *context = NULL;
+    Py_BEGIN_CRITICAL_SECTION(self);
+    compound_context **link = &self->contexts;
+    while (*link != NULL) {
+        if ((*link)->group == tstate->threadgroup->id && (*link)->thread == tstate->id) {
+            context = *link;
+            *link = context->next;
+            break;
+        }
+        link = &(*link)->next;
+    }
+    Py_END_CRITICAL_SECTION();
+    if (context == NULL) {
+        PyErr_SetString(PyExc_RuntimeError, "no compound lock context owned by this thread");
+        return NULL;
+    }
+    PyMem_Free(context);
+    if (compound_release_members(self, PyTuple_GET_SIZE(self->locks), state) < 0) {
+        return NULL;
+    }
+    Py_RETURN_NONE;
+}
+
+static int
+compound_traverse(PyObject *op, visitproc visit, void *arg)
+{
+    compoundlockobject *self = (compoundlockobject *)op;
+    Py_VISIT(Py_TYPE(op));
+    Py_VISIT(self->locks);
+    return 0;
+}
+
+static void
+compound_dealloc(PyObject *op)
+{
+    compoundlockobject *self = (compoundlockobject *)op;
+    PyObject_GC_UnTrack(op);
+    Py_XDECREF(self->locks);
+    compound_context *context = self->contexts;
+    while (context != NULL) {
+        compound_context *next = context->next;
+        PyMem_Free(context);
+        context = next;
+    }
+    PyTypeObject *type = Py_TYPE(op);
+    type->tp_free(op);
+    Py_DECREF(type);
+}
+
+static PyMethodDef compound_methods[] = {
+    {"__enter__", compound_enter, METH_NOARGS, NULL},
+    {"__exit__", compound_exit, METH_VARARGS, NULL},
+    {NULL, NULL}
+};
+
+static PyType_Slot compound_type_slots[] = {
+    {Py_nb_add, lock_add},
+    {Py_tp_dealloc, compound_dealloc},
+    {Py_tp_traverse, compound_traverse},
+    {Py_tp_methods, compound_methods},
+    {0, NULL}
+};
+
+static PyType_Spec compound_type_spec = {
+    .name = "_thread._CompoundLock",
+    .basicsize = sizeof(compoundlockobject),
+    .flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_GC |
+             Py_TPFLAGS_IMMUTABLETYPE | Py_TPFLAGS_DISALLOW_INSTANTIATION,
+    .slots = compound_type_slots,
 };
 
 /* Thread-local objects */
@@ -1482,6 +3082,15 @@ create_sentinel_wr(localobject *self)
         return NULL;
     }
 
+    // Callback-free weakrefs can be cached and reused by other threads.
+    // A shared local object's control weakref must be accessible there too.
+    if (_Py_atomic_load_uint8(&self->ob_base.ob_shareable) == _Py_SHAREABLE_SYNCHRONIZED &&
+        PyObject_DeclareSynchronized(self_wr) < 0)
+    {
+        Py_DECREF(self_wr);
+        return NULL;
+    }
+
     PyObject *args = _PyTuple_FromPairSteal(self_wr,
                                             Py_NewRef(tstate->threading_local_key));
     if (args == NULL) {
@@ -1494,9 +3103,15 @@ create_sentinel_wr(localobject *self)
         return NULL;
     }
 
+    if (PyObject_DeclareSynchronized(cb) < 0) {
+        Py_DECREF(cb);
+        return NULL;
+    }
     PyObject *wr = PyWeakref_NewRef(tstate->threading_local_sentinel, cb);
     Py_DECREF(cb);
-
+    if (wr != NULL && PyObject_DeclareSynchronized(wr) < 0) {
+        Py_CLEAR(wr);
+    }
     return wr;
 }
 
@@ -1534,13 +3149,19 @@ local_new(PyTypeObject *type, PyObject *args, PyObject *kw)
     self->args = Py_XNewRef(args);
     self->kw = Py_XNewRef(kw);
 
-    self->localdicts = PyDict_New();
+    self->localdicts = PySynchronizedDict_New();
     if (self->localdicts == NULL) {
         goto err;
     }
 
-    self->thread_watchdogs = PySet_New(NULL);
+    self->thread_watchdogs = PySynchronizedSet_New(NULL);
     if (self->thread_watchdogs == NULL) {
+        goto err;
+    }
+
+    if (type == state->local_type &&
+        PyObject_DeclareSynchronized((PyObject *)self) < 0)
+    {
         goto err;
     }
 
@@ -1620,6 +3241,14 @@ create_localdummies(thread_module_state *state)
         return -1;
     }
 
+    // These private tokens have identity but no mutable Python-visible state.
+    if (PyObject_DeclareImmutable(tstate->threading_local_key) < 0 ||
+        PyObject_DeclareImmutable(tstate->threading_local_sentinel) < 0)
+    {
+        Py_CLEAR(tstate->threading_local_key);
+        Py_CLEAR(tstate->threading_local_sentinel);
+        return -1;
+    }
     return 0;
 }
 
@@ -1848,6 +3477,9 @@ static PyObject *
 clear_locals(PyObject *locals_and_key, PyObject *dummyweakref)
 {
     PyObject *localweakref = PyTuple_GetItem(locals_and_key, 0);
+    if (localweakref == NULL) {
+        return NULL;
+    }
     localobject *self = localobject_CAST(_PyWeakref_GET_REF(localweakref));
     if (self == NULL) {
         Py_RETURN_NONE;
@@ -1857,6 +3489,10 @@ clear_locals(PyObject *locals_and_key, PyObject *dummyweakref)
        remove the corresponding local dict */
     if (self->localdicts != NULL) {
         PyObject *key = PyTuple_GetItem(locals_and_key, 1);
+        if (key == NULL) {
+            Py_DECREF(self);
+            return NULL;
+        }
         if (PyDict_Pop(self->localdicts, key, NULL) < 0) {
             PyErr_FormatUnraisable("Exception ignored while clearing "
                                    "thread local %R", (PyObject *)self);
@@ -1874,6 +3510,20 @@ clear_locals(PyObject *locals_and_key, PyObject *dummyweakref)
 }
 
 /* Module functions */
+
+static PyObject *
+thread_current_threadgroup(PyObject *module, PyObject *Py_UNUSED(ignored))
+{
+    PyThreadState *tstate = _PyThreadState_GET();
+    PyObject *group = tstate->threadgroup_object;
+    if (group == NULL && tstate->threadgroup == tstate->interp->main_threadgroup) {
+        group = tstate->interp->main_threadgroup_object;
+    }
+    if (group == NULL) {
+        return _PyThreadGroup_GetObject(tstate->interp, tstate->threadgroup->id);
+    }
+    return Py_NewRef(group);
+}
 
 static PyObject *
 thread_daemon_threads_allowed(PyObject *module, PyObject *Py_UNUSED(ignored))
@@ -1896,7 +3546,8 @@ and False otherwise.\n");
 
 static int
 do_start_new_thread(thread_module_state *state, PyObject *func, PyObject *args,
-                    PyObject *kwargs, ThreadHandle *handle, int daemon)
+                    PyObject *kwargs, ThreadHandle *handle, int daemon,
+                    PyObject *group)
 {
     PyInterpreterState *interp = _PyInterpreterState_GET();
     if (!_PyInterpreterState_HasFeature(interp, Py_RTFLAGS_THREADS)) {
@@ -1917,7 +3568,7 @@ do_start_new_thread(thread_module_state *state, PyObject *func, PyObject *args,
         add_to_shutdown_handles(state, handle);
     }
 
-    if (ThreadHandle_start(handle, func, args, kwargs, daemon) < 0) {
+    if (ThreadHandle_start(handle, func, args, kwargs, daemon, group) < 0) {
         if (!daemon) {
             remove_from_shutdown_handles(handle);
         }
@@ -1925,6 +3576,129 @@ do_start_new_thread(thread_module_state *state, PyObject *func, PyObject *args,
     }
 
     return 0;
+}
+
+static PyObject *
+run_group_finalizer(PyObject *self, PyObject *Py_UNUSED(ignored))
+{
+    if (PyObject_CheckAccess(self) == NULL) {
+        return NULL;
+    }
+    /* GC may have marked the object finalized before dispatching it. */
+    _PyObject_RunFinalizer(self);
+    Py_RETURN_NONE;
+}
+
+static PyMethodDef group_finalizer_method = {
+    "_finalize", run_group_finalizer, METH_NOARGS, NULL
+};
+
+static int
+call_in_threadgroup(uint32_t group_id, PyMethodDef *method, PyObject *self)
+{
+    PyThreadState *tstate = _PyThreadState_GET();
+    PyInterpreterState *interp = tstate->interp;
+    if (finalizer_can_wait(tstate) < 0) {
+        return -1;
+    }
+    PyObject *name = PyUnicode_FromString("_thread");
+    if (name == NULL) {
+        return -1;
+    }
+    PyObject *module = PyImport_GetModule(name);
+    Py_DECREF(name);
+    if (module == NULL) {
+        if (!PyErr_Occurred()) {
+            PyErr_SetString(PyExc_RuntimeError, "_thread module is unavailable");
+        }
+        return -1;
+    }
+    if (!PyModule_Check(module) || PyModule_GetDef(module) != &thread_module) {
+        Py_DECREF(module);
+        PyErr_SetString(PyExc_RuntimeError, "_thread module was replaced");
+        return -1;
+    }
+    thread_module_state *state = get_thread_state(module);
+    PyObject *group = _PyThreadGroup_GetObject(interp, group_id);
+    PyObject *callable = NULL;
+    PyObject *args = NULL;
+    ThreadHandle *handle = NULL;
+    int result = -1;
+    if (group == NULL) {
+        goto done;
+    }
+    callable = PyCFunction_NewEx(method, self, NULL);
+    if (callable == NULL || PyObject_DeclareSynchronized(callable) < 0) {
+        goto done;
+    }
+    args = PyTuple_New(0);
+    if (args == NULL) {
+        goto done;
+    }
+    handle = ThreadHandle_new();
+    if (handle == NULL) {
+        goto done;
+    }
+    if (do_start_new_thread(state, callable, args, NULL, handle, 0, group) < 0) {
+        goto done;
+    }
+    /* Joining releases the caller's group/GIL. Even when a signal handler
+       raises, wait for cleanup to finish before reporting the exception:
+       deallocation and subsequent weakref callbacks must not run ahead. */
+    PyObject *interrupted = NULL;
+    result = ThreadHandle_join_impl(handle, -1, &interrupted);
+    if (interrupted != NULL) {
+        if (result < 0) {
+            _PyErr_ChainExceptions1(interrupted);
+        }
+        else {
+            PyErr_SetRaisedException(interrupted);
+            result = -1;
+        }
+    }
+done:
+    if (handle != NULL) {
+        ThreadHandle_decref(handle);
+    }
+    Py_XDECREF(args);
+    Py_XDECREF(callable);
+    Py_XDECREF(group);
+    Py_DECREF(module);
+    return result;
+}
+
+int
+_PyThreadGroup_CallFinalizer(PyObject *op)
+{
+    return call_in_threadgroup(
+        _Py_atomic_load_uint32_relaxed(&op->ob_owner_id),
+        &group_finalizer_method, op);
+}
+
+static PyObject *
+run_group_weakref_callback(PyObject *self, PyObject *Py_UNUSED(ignored))
+{
+    PyWeakReference *ref = (PyWeakReference *)PyTuple_GET_ITEM(self, 0);
+    PyObject *callback = PyTuple_GET_ITEM(self, 1);
+    _PyWeakref_CallCallback(ref, callback);
+    Py_RETURN_NONE;
+}
+
+static PyMethodDef group_weakref_callback_method = {
+    "_weakref_callback", run_group_weakref_callback, METH_NOARGS, NULL
+};
+
+int
+_PyThreadGroup_CallWeakrefCallback(PyWeakReference *ref, PyObject *callback)
+{
+    PyObject *context = PyTuple_Pack(2, (PyObject *)ref, callback);
+    if (context == NULL) {
+        return -1;
+    }
+    int result = call_in_threadgroup(ref->wr_callback_group,
+                                    &group_weakref_callback_method, context);
+    Py_DECREF(context);
+    return result;
 }
 
 static PyObject *
@@ -1963,7 +3737,7 @@ thread_PyThread_start_new_thread(PyObject *module, PyObject *fargs)
     }
 
     int st =
-        do_start_new_thread(state, func, args, kwargs, handle, /*daemon=*/1);
+        do_start_new_thread(state, func, args, kwargs, handle, /*daemon=*/1, NULL);
     if (st < 0) {
         ThreadHandle_decref(handle);
         return NULL;
@@ -1996,20 +3770,34 @@ static PyObject *
 thread_PyThread_start_joinable_thread(PyObject *module, PyObject *fargs,
                                       PyObject *fkwargs)
 {
-    static char *keywords[] = {"function", "handle", "daemon", NULL};
+    static char *keywords[] = {"function", "handle", "daemon", "group", NULL};
     PyObject *func = NULL;
     int daemon = 1;
     thread_module_state *state = get_thread_state(module);
     PyObject *hobj = NULL;
+    PyObject *group = Py_None;
     if (!PyArg_ParseTupleAndKeywords(fargs, fkwargs,
-                                     "O|Op:start_joinable_thread", keywords,
-                                     &func, &hobj, &daemon)) {
+                                     "O|OpO:start_joinable_thread", keywords,
+                                     &func, &hobj, &daemon, &group)) {
         return NULL;
     }
 
     if (!PyCallable_Check(func)) {
         PyErr_SetString(PyExc_TypeError,
                         "thread function must be callable");
+        return NULL;
+    }
+
+    if (group == Py_None) {
+        group = NULL;
+    }
+    else if (!Py_IS_TYPE(group, state->threadgroup_type)) {
+        PyErr_SetString(PyExc_TypeError, "group must be a ThreadGroup or None");
+        return NULL;
+    }
+    else if (((threadgroupobject *)group)->interpreter_id !=
+             PyInterpreterState_GetID(_PyInterpreterState_GET())) {
+        PyErr_SetString(PyExc_ValueError, "ThreadGroup belongs to another interpreter");
         return NULL;
     }
 
@@ -2041,7 +3829,7 @@ thread_PyThread_start_joinable_thread(PyObject *module, PyObject *fargs,
         return NULL;
     }
     int st = do_start_new_thread(state, func, args,
-                                 /*kwargs=*/ NULL, ((PyThreadHandleObject*)hobj)->handle, daemon);
+                                 /*kwargs=*/ NULL, ((PyThreadHandleObject*)hobj)->handle, daemon, group);
     Py_DECREF(args);
     if (st < 0) {
         Py_DECREF(hobj);
@@ -2051,7 +3839,7 @@ thread_PyThread_start_joinable_thread(PyObject *module, PyObject *fargs,
 }
 
 PyDoc_STRVAR(start_joinable_doc,
-"start_joinable_thread($module, /, function, handle=None, daemon=True)\n\
+"start_joinable_thread($module, /, function, handle=None, daemon=True, group=None)\n\
 --\n\
 \n\
 *For internal use only*: start a new thread.\n\
@@ -2325,6 +4113,30 @@ static PyStructSequence_Desc ExceptHookArgs_desc = {
 
 
 static PyObject *
+thread_excepthook_access_fallback(void)
+{
+    if (!PyErr_ExceptionMatches(PyExc_IllegalThreadAccessException) &&
+        !PyErr_ExceptionMatches(PyExc_UnprotectedAccessException)) {
+        return NULL;
+    }
+    // Error reporting must not acquire a stream owned by another group or
+    // protected by an unheld mutex. Use a fresh, locally owned raw printer;
+    // its writes go to the process stderr without touching that stream.
+    PyErr_Clear();
+    return PyFile_NewStdPrinter(fileno(stderr));
+}
+
+static PyObject *
+thread_get_stderr(PyObject *module, PyObject *Py_UNUSED(ignored))
+{
+    PyObject *file = PySys_GetAttr(&_Py_ID(stderr));
+    if (file == NULL) {
+        return thread_excepthook_access_fallback();
+    }
+    return file;
+}
+
+static PyObject *
 thread_excepthook(PyObject *module, PyObject *args)
 {
     thread_module_state *state = get_thread_state(module);
@@ -2349,8 +4161,11 @@ thread_excepthook(PyObject *module, PyObject *args)
     PyObject *thread = PyStructSequence_GET_ITEM(args, 3);
 
     PyObject *file;
-    if (PySys_GetOptionalAttr( &_Py_ID(stderr), &file) < 0) {
-        return NULL;
+    if (PySys_GetOptionalAttr(&_Py_ID(stderr), &file) < 0) {
+        file = thread_excepthook_access_fallback();
+        if (file == NULL) {
+            return NULL;
+        }
     }
     if (file == NULL || file == Py_None) {
         Py_XDECREF(file);
@@ -2361,7 +4176,10 @@ thread_excepthook(PyObject *module, PyObject *args)
 
         file = PyObject_GetAttrString(thread, "_stderr");
         if (file == NULL) {
-            return NULL;
+            file = thread_excepthook_access_fallback();
+            if (file == NULL) {
+                return NULL;
+            }
         }
         if (file == Py_None) {
             Py_DECREF(file);
@@ -2649,6 +4467,9 @@ _thread_set_name_impl(PyObject *module, PyObject *name_obj)
 
 
 static PyMethodDef thread_methods[] = {
+    {"_get_stderr", thread_get_stderr, METH_NOARGS,
+     "Return accessible stderr or a local raw printer for thread diagnostics."},
+    {"_current_thread_group", thread_current_threadgroup, METH_NOARGS, NULL},
     {"start_new_thread",        thread_PyThread_start_new_thread,
      METH_VARARGS, start_new_thread_doc},
     {"start_new",               thread_PyThread_start_new_thread,
@@ -2704,6 +4525,74 @@ thread_module_exec(PyObject *module)
     // Initialize the C thread library
     PyThread_init_thread();
 
+    PyInterpreterState *interp = _PyInterpreterState_GET();
+    if (interp->main_threadgroup_object == NULL) {
+        state->threadgroup_type = (PyTypeObject *)PyType_FromSpec(&threadgroup_spec);
+    }
+    else {
+        state->threadgroup_type = (PyTypeObject *)Py_NewRef(
+            Py_TYPE(interp->main_threadgroup_object));
+    }
+    if (state->threadgroup_type == NULL ||
+        PyModule_AddType(module, state->threadgroup_type) < 0) {
+        return -1;
+    }
+    if (interp->main_threadgroup_object == NULL) {
+        threadgroupobject *main = (threadgroupobject *)PyObject_CallFunction(
+            (PyObject *)state->threadgroup_type, "s", "Main");
+        if (main == NULL) {
+            return -1;
+        }
+        _PyThreadGroupState *temporary = main->state;
+        size_t name_size = (temporary->name_length + 1) * sizeof(Py_UCS4);
+        Py_UCS4 *name = PyMem_RawMalloc(name_size);
+        if (name == NULL) {
+            Py_DECREF(main);
+            PyErr_NoMemory();
+            return -1;
+        }
+        memcpy(name, temporary->name, name_size);
+        PyMutex_LockFlags(&temporary->holder_mutex, 0);
+        temporary->wrapper = NULL;
+        PyMutex_Unlock(&temporary->holder_mutex);
+        main->state = interp->main_threadgroup;
+        _PyThreadGroup_Incref(main->state);
+        PyMutex_LockFlags(&main->state->holder_mutex, 0);
+        assert(main->state->name == NULL);
+        main->state->name = name;
+        main->state->name_length = temporary->name_length;
+        main->state->wrapper = (PyObject *)main;
+        PyMutex_Unlock(&main->state->holder_mutex);
+        _PyThreadGroup_Decref(temporary);
+        interp->main_threadgroup_object = (PyObject *)main;
+    }
+    if (PySys_SetObject("main_thread_group", interp->main_threadgroup_object) < 0) {
+        return -1;
+    }
+
+    state->transferbox_type = (PyTypeObject *)PyType_FromModuleAndSpec(
+        module, &transferbox_spec, NULL);
+    if (state->transferbox_type == NULL ||
+        PyObject_DeclareImmutable((PyObject *)state->transferbox_type) < 0 ||
+        PyModule_AddType(module, state->transferbox_type) < 0) {
+        return -1;
+    }
+
+    state->channel_queue_type = (PyTypeObject *)PyType_FromModuleAndSpec(
+        module, &channelqueue_spec, NULL);
+    if (state->channel_queue_type == NULL ||
+        PyObject_DeclareImmutable((PyObject *)state->channel_queue_type) < 0 ||
+        PyModule_AddType(module, state->channel_queue_type) < 0) {
+        return -1;
+    }
+
+    state->thread_base_type = (PyTypeObject *)PyType_FromModuleAndSpec(
+        module, &threadbase_spec, NULL);
+    if (state->thread_base_type == NULL ||
+        PyModule_AddType(module, state->thread_base_type) < 0) {
+        return -1;
+    }
+
     // _ThreadHandle
     state->thread_handle_type = (PyTypeObject *)PyType_FromSpec(&ThreadHandle_Type_spec);
     if (state->thread_handle_type == NULL) {
@@ -2735,6 +4624,13 @@ thread_module_exec(PyObject *module)
         return -1;
     }
 
+    state->compound_lock_type = (PyTypeObject *)PyType_FromModuleAndSpec(
+        module, &compound_type_spec, NULL);
+    if (state->compound_lock_type == NULL ||
+        PyModule_AddType(module, state->compound_lock_type) < 0) {
+        return -1;
+    }
+
     // Local dummy
     state->local_dummy_type = (PyTypeObject *)PyType_FromSpec(&local_dummy_type_spec);
     if (state->local_dummy_type == NULL) {
@@ -2758,6 +4654,10 @@ thread_module_exec(PyObject *module)
     // _ExceptHookArgs type
     state->excepthook_type = PyStructSequence_NewType(&ExceptHookArgs_desc);
     if (state->excepthook_type == NULL) {
+        return -1;
+    }
+    /* Every group constructs these records when reporting an exception. */
+    if (PyType_Freeze(state->excepthook_type) < 0) {
         return -1;
     }
     if (PyModule_AddType(module, state->excepthook_type) < 0) {
@@ -2810,6 +4710,30 @@ thread_module_exec(PyObject *module)
     }
 #endif
 
+    /* These entry points implement cross-thread operations. Their native
+       state is synchronized independently of the caller's ThreadGroup. */
+    Py_ssize_t pos = 0;
+    PyObject *value;
+    while (PyDict_Next(d, &pos, NULL, &value)) {
+        if (PyCFunction_Check(value)) {
+            if (PyObject_DeclareSynchronized(value) < 0) {
+                return -1;
+            }
+        }
+        else if (PyType_Check(value) &&
+                 PyType_HasFeature((PyTypeObject *)value, Py_TPFLAGS_IMMUTABLETYPE))
+        {
+            if (PyObject_DeclareImmutable(value) < 0) {
+                return -1;
+            }
+        }
+    }
+    if (_PyDict_SynchronizeNamespace(d) < 0 ||
+        PyObject_DeclareSynchronized(module) < 0)
+    {
+        return -1;
+    }
+
     return 0;
 }
 
@@ -2821,9 +4745,14 @@ thread_module_traverse(PyObject *module, visitproc visit, void *arg)
     Py_VISIT(state->excepthook_type);
     Py_VISIT(state->lock_type);
     Py_VISIT(state->rlock_type);
+    Py_VISIT(state->compound_lock_type);
     Py_VISIT(state->local_type);
     Py_VISIT(state->local_dummy_type);
     Py_VISIT(state->thread_handle_type);
+    Py_VISIT(state->thread_base_type);
+    Py_VISIT(state->threadgroup_type);
+    Py_VISIT(state->transferbox_type);
+    Py_VISIT(state->channel_queue_type);
     return 0;
 }
 
@@ -2834,9 +4763,14 @@ thread_module_clear(PyObject *module)
     Py_CLEAR(state->excepthook_type);
     Py_CLEAR(state->lock_type);
     Py_CLEAR(state->rlock_type);
+    Py_CLEAR(state->compound_lock_type);
     Py_CLEAR(state->local_type);
     Py_CLEAR(state->local_dummy_type);
     Py_CLEAR(state->thread_handle_type);
+    Py_CLEAR(state->thread_base_type);
+    Py_CLEAR(state->threadgroup_type);
+    Py_CLEAR(state->transferbox_type);
+    Py_CLEAR(state->channel_queue_type);
     // Remove any remaining handles (e.g. if shutdown exited early due to
     // interrupt) so that attempts to unlink the handle after our module state
     // is destroyed do not crash.

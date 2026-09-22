@@ -1841,6 +1841,12 @@ class FrozenDictSlots(frozendict):
 
 
 class FrozenDictTests(unittest.TestCase):
+    def test_shared_layout(self):
+        # PEP 805 requires in-place transitions to preserve aliases.
+        self.assertEqual(dict.__basicsize__, frozendict.__basicsize__)
+        self.assertEqual(dict.__itemsize__, frozendict.__itemsize__)
+        self.assertEqual({}.__sizeof__(), frozendict().__sizeof__())
+
     def test_constructor(self):
         # frozendict.__init__() has no effect
         d = frozendict(a=1, b=2, c=3)

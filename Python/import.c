@@ -177,7 +177,7 @@ PyObject *
 _PyImport_InitModules(PyInterpreterState *interp)
 {
     assert(MODULES(interp) == NULL);
-    MODULES(interp) = PyDict_New();
+    MODULES(interp) = PySynchronizedDict_New();
     if (MODULES(interp) == NULL) {
         return NULL;
     }
@@ -309,7 +309,18 @@ import_ensure_initialized(PyInterpreterState *interp, PyObject *mod, PyObject *n
        NOTE: because of this, initializing must be set *before*
        stuffing the new module in sys.modules.
     */
-    int rc = PyObject_GetOptionalAttr(mod, &_Py_ID(__spec__), &spec);
+    int rc;
+    if (PyModule_CheckExact(mod)) {
+        // Import bookkeeping may inspect another group's module spec. This
+        // reference stays internal; the _initializing attribute is checked
+        // separately below before its value is used.
+        spec = _Py_module_getattro_impl((PyModuleObject *)mod,
+                                       &_Py_ID(__spec__), 1);
+        rc = spec != NULL ? 1 : (PyErr_Occurred() ? -1 : 0);
+    }
+    else {
+        rc = PyObject_GetOptionalAttr(mod, &_Py_ID(__spec__), &spec);
+    }
     if (rc > 0) {
         rc = _PyModuleSpec_IsInitializing(spec);
         Py_DECREF(spec);
@@ -502,7 +513,7 @@ remove_module(PyThreadState *tstate, PyObject *name)
     PyObject *exc = _PyErr_GetRaisedException(tstate);
 
     PyObject *modules = get_modules_dict(tstate, true);
-    if (PyDict_CheckExact(modules)) {
+    if (PyDict_CheckExact(modules) || PySynchronizedDict_CheckExact(modules)) {
         // Error is reported to the caller
         (void)PyDict_Pop(modules, name, NULL);
     }
@@ -1235,6 +1246,24 @@ init_cached_m_dict(struct extensions_cache_value *value, PyObject *m_dict)
     if (copied == NULL) {
         /* We expect this can only be "out of memory". */
         return -1;
+    }
+    // A cached namespace can initialize a different module object. Preserve
+    // that new module's own __module__ binding instead of copying this one.
+    PyObject *module;
+    if (PyDict_GetItemRef(copied, &_Py_ID(__module__), &module) < 0) {
+        Py_DECREF(copied);
+        return -1;
+    }
+    if (module != NULL) {
+        int rc = 0;
+        if (PyModule_Check(module) && PyModule_GetDict(module) == m_dict) {
+            rc = PyDict_Pop(copied, &_Py_ID(__module__), NULL);
+        }
+        Py_DECREF(module);
+        if (rc < 0) {
+            Py_DECREF(copied);
+            return -1;
+        }
     }
     // XXX We may want to make the copy immortal.
 
@@ -3706,6 +3735,12 @@ remove_importlib_frames(PyThreadState *tstate)
         PyObject *next = (PyObject *) traceback->tb_next;
         PyFrameObject *frame = traceback->tb_frame;
         PyCodeObject *code = PyFrame_GetCode(frame);
+        if (code == NULL) {
+            /* Trimming is optional; preserve the original import exception
+               when a frame's metadata is inaccessible. */
+            PyErr_Clear();
+            break;
+        }
         int now_in_importlib;
 
         now_in_importlib = _PyUnicode_EqualToASCIIString(code->co_filename, importlib_filename) ||
@@ -4688,6 +4723,10 @@ PyImport_ReloadModule(PyObject *m)
 PyObject *
 PyImport_Import(PyObject *module_name)
 {
+    if (module_name == NULL) {
+        PyErr_BadInternalCall();
+        return NULL;
+    }
     PyThreadState *tstate = _PyThreadState_GET();
     PyObject *globals = NULL;
     PyObject *import = NULL;
@@ -4727,7 +4766,7 @@ PyImport_Import(PyObject *module_name)
     /* Get the __import__ function from the builtins */
     if (PyDict_Check(builtins)) {
         import = PyObject_GetItem(builtins, &_Py_ID(__import__));
-        if (import == NULL) {
+        if (import == NULL && PyErr_ExceptionMatches(PyExc_KeyError)) {
             _PyErr_SetObject(tstate, PyExc_KeyError, &_Py_ID(__import__));
         }
     }
@@ -4739,8 +4778,19 @@ PyImport_Import(PyObject *module_name)
     /* Call the __import__ function with the proper argument list
        Always use absolute import here.
        Calling for side-effect of import. */
-    r = PyObject_CallFunction(import, "OOOOi", module_name, globals,
-                              globals, from_list, 0, NULL);
+    if (_PyImport_IsDefaultImportFunc(tstate->interp, import)) {
+        /* As in IMPORT_NAME, keep frame globals inside the interpreter rather
+           than exposing them as arguments to a native callable. */
+        if (PyObject_CheckAccess(module_name) == NULL) {
+            goto err;
+        }
+        r = PyImport_ImportModuleLevelObject(module_name, globals, globals,
+                                           from_list, 0);
+    }
+    else {
+        r = PyObject_CallFunction(import, "OOOOi", module_name, globals,
+                                 globals, from_list, 0, NULL);
+    }
     if (r == NULL)
         goto err;
     Py_DECREF(r);

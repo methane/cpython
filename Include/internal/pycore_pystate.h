@@ -171,6 +171,52 @@ extern void _PyEval_StartTheWorldAll(_PyRuntimeState *runtime);
 extern PyAPI_FUNC(void) _PyEval_StopTheWorld(PyInterpreterState *interp);
 extern PyAPI_FUNC(void) _PyEval_StartTheWorld(PyInterpreterState *interp);
 
+/* Reserve before attempting a protective acquisition. Commit only after the
+   mutex is held; registering ownership must not fail or execute Python. */
+PyAPI_FUNC(int) _PyThreadState_ReserveHeldMutex(PyThreadState *tstate);
+
+static inline void
+_PyThreadState_PushHeldMutex(PyThreadState *tstate, uint32_t id)
+{
+    assert(id != 0);
+    assert(tstate->held_mutex_count < tstate->held_mutex_capacity);
+    tstate->held_mutex_ids[tstate->held_mutex_count++] = id;
+}
+
+static inline int
+_PyThreadState_HoldsMutex(PyThreadState *tstate, uint32_t id)
+{
+    if (id == 0) {
+        return 0;
+    }
+    for (Py_ssize_t i = tstate->held_mutex_count; i > 0; i--) {
+        if (tstate->held_mutex_ids[i - 1] == id) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static inline int
+_PyThreadState_RemoveHeldMutex(PyThreadState *tstate, uint32_t id)
+{
+    for (Py_ssize_t i = tstate->held_mutex_count; i > 0; i--) {
+        if (tstate->held_mutex_ids[i - 1] == id) {
+            /* Remove one acquisition, preserving recursive entries and the
+               order of other held mutexes. */
+            for (Py_ssize_t j = i; j < tstate->held_mutex_count; j++) {
+                tstate->held_mutex_ids[j - 1] = tstate->held_mutex_ids[j];
+            }
+            tstate->held_mutex_count--;
+            return 1;
+        }
+    }
+    return 0;
+}
+
+extern int _PyEval_DebuggerStopTheWorld(PyThreadState *tstate);
+extern int _PyEval_DebuggerStartTheWorld(PyThreadState *tstate);
+
 
 static inline void
 _Py_EnsureFuncTstateNotNULL(const char *func, PyThreadState *tstate)

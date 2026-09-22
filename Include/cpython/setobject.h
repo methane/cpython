@@ -58,6 +58,11 @@ typedef struct {
     PyObject *weakreflist;      /* List of weak references */
 } PySetObject;
 
+PyAPI_DATA(PyTypeObject) PySynchronizedSet_Type;
+PyAPI_FUNC(PyObject *) PySynchronizedSet_New(PyObject *iterable);
+#define PySynchronizedSet_Check(op) PyObject_TypeCheck((op), &PySynchronizedSet_Type)
+#define PySynchronizedSet_CheckExact(op) Py_IS_TYPE((op), &PySynchronizedSet_Type)
+
 #define _PySet_CAST(so) \
     (assert(PyAnySet_Check(so)), _Py_CAST(PySetObject*, so))
 

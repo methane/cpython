@@ -146,6 +146,13 @@ This module defines the following functions:
    If *exc_type* is :exc:`SystemExit`, the exception is silently ignored.
    Otherwise, the exception is printed out on :data:`sys.stderr`.
 
+   If the stream belongs to another thread group, or is protected by a mutex
+   that the current thread does not hold, the default hook writes directly to
+   the process's standard error file descriptor. It does not change the
+   stream's shareability or acquire its mutex. This fallback also applies to
+   the saved stream used when :data:`sys.stderr` is ``None``. If both streams
+   are ``None``, no output is produced.
+
    If  this function raises an exception, :func:`sys.excepthook` is called to
    handle it.
 
@@ -453,6 +460,40 @@ affects what we see::
 
    A class that represents thread-local data.
 
+   Exact instances have the ``SYNCHRONIZED`` shareable state. Their attribute
+   dictionaries remain separate for each thread and local to that thread's
+   group. Subclasses currently retain the ``LOCAL`` state.
+
+
+.. class:: ThreadGroup(name=None)
+
+   A group of threads whose execution is serialized. Threads in different
+   groups can execute in parallel. The optional *name* must be a string or
+   :const:`None` and is available through the read-only :attr:`name` attribute.
+   Thread groups are immutable.
+
+   The main thread belongs to :data:`sys.main_thread_group`. A new thread
+   uses this group by default, unless :envvar:`PYTHON_PARALLEL` is nonzero,
+   in which case a new group is created. The environment setting is ignored
+   when Python is started with :option:`-E` or :option:`-I`.
+
+   .. versionadded:: 3.16
+
+   .. attribute:: name
+
+      The read-only display name, or :const:`None`.
+
+
+.. class:: Shareable
+
+   An :class:`enum.IntEnum` describing an object's read-only ``__shareable__``
+   state: ``LOCAL``, ``PROTECTED``, ``SYNCHRONIZED``, or ``IMMUTABLE``.
+
+   The enumeration class and its members are immutable and can be shared between
+   ThreadGroups.
+
+   .. versionadded:: 3.16
+
 
 .. _thread-objects:
 
@@ -515,8 +556,15 @@ since it is impossible to detect the termination of alien threads.
    This constructor should always be called with keyword arguments.  Arguments
    are:
 
-   *group* must be ``None`` as it is reserved for future extension when a
-   :class:`!ThreadGroup` class is implemented.
+   *group* is a :class:`ThreadGroup` or :const:`None`. The default selection
+   follows the rules described for :class:`ThreadGroup`. The selected group
+   is available through the thread's read-only ``group`` property.
+
+   Thread instances and Python subclasses have the ``SYNCHRONIZED`` shareable
+   state and use a :class:`SynchronizedDict` for their attribute namespace.
+   Attribute values retain their own ownership and shareable states. A native
+   extension subclass with additional C storage must provide its own
+   synchronization; such instances are initially ``LOCAL``.
 
    *target* is the callable object to be invoked by the :meth:`run` method.
    Defaults to ``None``, meaning nothing is called.
@@ -530,6 +578,16 @@ since it is impossible to detect the termination of alien threads.
 
    *kwargs* is a dictionary of keyword arguments for the target invocation.
    Defaults to ``{}``.
+
+   When :meth:`start` is called from a different :class:`ThreadGroup` than the
+   selected worker group, it takes shallow snapshots of the argument containers:
+   *args* becomes a tuple and *kwargs* becomes a :class:`frozendict`. Changes to
+   the original containers after :meth:`start` do not change the invocation.
+   The original containers and their values retain their own ownership and
+   shareable states. The target and argument values must be accessible from the
+   worker's group; making the invocation containers shareable does not transfer
+   or freeze their contents. Starting within the selected group retains the
+   usual reference behavior for supplied containers.
 
    If not ``None``, *daemon* explicitly sets whether the thread is daemonic.
    If ``None`` (the default), the daemonic property is inherited from the
@@ -715,6 +773,59 @@ since it is impossible to detect the termination of alien threads.
 
 .. _lock-objects:
 
+Transferring objects between thread groups
+-----------------------------------------
+
+.. class:: TransferBox(obj, sink=None)
+
+   A synchronized container for transferring a value once. If *obj* is local,
+   make a shallow copy with :func:`copy.copy`. The copy temporarily has no
+   owning thread group. Immutable, synchronized, and accessible protected
+   values retain their identity.
+
+   .. attribute:: sink
+
+      The destination ``ThreadGroup``, or :const:`None` to allow any group to
+      claim the value. This attribute can be reassigned. Assigning a different
+      kind of object raises :exc:`TypeError`.
+
+   .. method:: claim()
+
+      Return the contained value, assigning ownership of a local value to the
+      calling thread's group. Raise :exc:`ValueError` if the box has already
+      been claimed, or if the calling group does not match :attr:`sink`.
+      A rejected destination does not consume the value. Concurrent calls can
+      claim the value only once.
+
+   A custom ``__copy__`` that returns the original local object or an aliased
+   local object is rejected with :exc:`TypeError`.
+
+   .. versionadded:: 3.16
+
+.. class:: Channel()
+
+   An unbounded FIFO for transferring values between thread groups. The channel
+   itself is immutable and its internal queue is synchronized. Multiple
+   producers and consumers may use the same channel concurrently.
+
+   .. method:: put(obj)
+
+      Add *obj* using the same shallow-copy and ownership rules as
+      :class:`TransferBox`. Return :const:`None`. An exception during copying
+      does not add an entry to the channel. User-defined copying code may
+      itself perform other operations on the channel.
+
+   .. method:: get()
+
+      Remove and claim the oldest value. Raise :exc:`IndexError` immediately
+      if the channel is empty; this operation does not wait for a producer.
+
+   Transfer is shallow: children of a transferred local container retain their
+   original ownership and sharing state.
+
+   .. versionadded:: 3.16
+
+
 Lock objects
 ^^^^^^^^^^^^
 
@@ -749,6 +860,61 @@ All methods are executed atomically.
    The class implementing primitive lock objects.  Once a thread has acquired a
    lock, subsequent attempts to acquire it block, until it is released; any
    thread may release it.
+
+   Native primitive locks have ``__shareable__`` state
+   ``Shareable.SYNCHRONIZED`` and can be shared between ThreadGroups.
+
+   .. method:: protect(value)
+
+      In this experimental implementation, return a shallow protected copy of
+      an exact :class:`list`, :class:`dict`, :class:`set`, or a Python instance
+      whose native base is :class:`object`. Call this method
+      while holding the lock through its context manager, for example::
+
+         lock = Lock()
+         with lock:
+             values = lock.protect([])
+             values.append(1)
+
+      The argument must be a local object known to be uniquely referenced.
+      A temporary such as ``[]`` satisfies this requirement; an object retained
+      in a local variable does not. The uniqueness check is conservative and
+      may reject arguments whose uniqueness cannot be established.
+
+      After the first successful call, the lock is protective: explicit
+      :meth:`acquire` and :meth:`release` calls raise :exc:`RuntimeError`, and
+      context exit must run in the owning thread. Access to the protected copy
+      requires that thread to hold the protecting lock. Sharing a ThreadGroup
+      with the owner does not grant access. Contained objects retain their own
+      sharing states.
+
+      Python instances use :func:`copy.copy`, including custom ``__copy__``
+      methods. The result must be an unaliased local instance of the same type.
+      Its instance dictionary is copied separately and receives the same
+      protection. Replacing a protected instance's ``__dict__`` requires a
+      dictionary protected by the same lock; deleting the dictionary is rejected.
+      Slots and dictionary values retain their own sharing states.
+
+      During ordinary finalization, the runtime acquires the protecting lock
+      before calling a protected instance's :meth:`~object.__del__`, reusing
+      ownership if the current thread already holds it. It releases its own
+      acquisition after the callback. The native lock state remains available
+      even if the Python lock object has been collected. A finalizer therefore
+      runs with access to its protected instance, but must not attempt to
+      re-enter a non-recursive Lock. Contained objects still have their own
+      access requirements.
+
+      Finalization may wait for another thread to release the lock. During
+      an internal stop-the-world operation, finalization of these GC-enabled
+      instances is deferred until Python execution may safely resume. The
+      runtime retains the object until a pending-call checkpoint runs its
+      finalizer. Finalization late in interpreter shutdown remains incomplete:
+      residual callbacks may be cancelled, and failed lock acquisitions are
+      reported as unraisable exceptions.
+
+      Other native layouts are not yet supported. Complete validation of
+      escaped references is still under development, including call results
+      when argument finalizers release a lock.
 
    .. versionchanged:: 3.13
       ``Lock`` is now a class. In earlier Pythons, ``Lock`` was a factory
@@ -852,6 +1018,32 @@ call release as many times the lock has been acquired can lead to deadlock.
    of the most efficient version of the concrete RLock class that is supported
    by the platform.
 
+   Exact native RLock instances have ``__shareable__`` state
+   ``Shareable.SYNCHRONIZED`` and can be shared between ThreadGroups.
+   Subclass instances remain local because their additional state is not
+   automatically synchronized.
+
+   .. method:: protect(value)
+
+      Return a shallow protected copy, with the same argument requirements
+      and finalization behavior as :meth:`Lock.protect`. In this experimental native implementation,
+      all acquisitions since the lock was last unlocked must have used its
+      context manager. Mixing explicit acquisition or release with context
+      management prevents conversion until the lock has been fully released.
+
+      Protection remains active through recursive context entries and exits,
+      ending at the outermost exit. This also applies when protection is first
+      enabled inside nested contexts. Each new outermost entry grants access
+      again to that thread.
+
+      Once protective, explicit :meth:`acquire` and :meth:`release`, the private
+      methods for saving and restoring ownership, and fork reset raise
+      :exc:`RuntimeError`. Consequently, :meth:`Condition.wait` cannot suspend
+      a protective RLock. Ordinary RLocks retain their Condition behavior.
+
+      The private Python fallback implementation does not yet provide this
+      experimental method.
+
 
    .. method:: acquire(blocking=True, timeout=-1)
 
@@ -926,6 +1118,13 @@ call release as many times the lock has been acquired can lead to deadlock.
 
 Condition objects
 ^^^^^^^^^^^^^^^^^
+
+.. versionchanged:: 3.16
+   Condition, Event, Semaphore, BoundedSemaphore and Barrier instances have
+   ``Shareable.SYNCHRONIZED`` state and synchronized attribute dictionaries.
+   They can be shared between ThreadGroups. Synchronization is shallow:
+   user-provided locks, callbacks and additional attribute values retain their
+   own access requirements.
 
 A condition variable is always associated with some kind of lock; this can be
 passed in or one will be created by default.  Passing one in is useful when
@@ -1418,9 +1617,9 @@ Using locks, conditions, and semaphores in the :keyword:`!with` statement
 
 All of the objects provided by this module that have ``acquire`` and
 ``release`` methods can be used as context managers for a :keyword:`with`
-statement.  The ``acquire`` method will be called when the block is
-entered, and ``release`` will be called when the block is exited.  Hence,
-the following snippet::
+statement. Entering acquires the object and exiting releases it. For ordinary,
+non-protective locks and the other synchronization objects, the following
+snippet::
 
    with some_lock:
        # do something...
@@ -1436,6 +1635,37 @@ is equivalent to::
 Currently, :class:`Lock`, :class:`RLock`, :class:`Condition`,
 :class:`Semaphore`, and :class:`BoundedSemaphore` objects may be used as
 :keyword:`with` statement context managers.
+
+Protective :class:`Lock` and :class:`RLock` objects require context management;
+their explicit ``acquire`` and ``release`` methods raise an exception, so the
+expansion above does not apply to them.
+
+Compound lock contexts
+~~~~~~~~~~~~~~~~~~~~~
+
+In the experimental PEP 805 implementation, addition combines exact native
+:class:`Lock` and :class:`RLock` objects into a shared context manager::
+
+   with lock_a + lock_b:
+       # Access values protected by either lock.
+       ...
+
+Compound locks can be added to other native locks or compound locks. Each
+distinct member is acquired once per entry, in a consistent order independent
+of the expression's operand order. Thus ``lock_a + lock_b`` and
+``lock_b + lock_a`` acquire in the same order. Already acquired members are
+released in reverse order if a later acquisition raises. Context exit releases
+all members in reverse order and does not suppress exceptions.
+
+A compound lock can be shared by threads, but each successful entry must be
+exited by the same thread. Reentry is supported when every member is an RLock;
+reentering a compound containing a nonrecursive Lock blocks on that member.
+Ordering applies within each compound entry; holding other locks before entry
+can still introduce deadlocks. Protect objects through the individual member's
+``protect`` method while inside the compound context.
+
+Lock subclasses and the private Python RLock fallback are not yet supported
+as compound members.
 
 
 Iterator synchronization

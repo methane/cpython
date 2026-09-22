@@ -165,7 +165,9 @@ module_init_dict(PyModuleObject *mod, PyObject *md_dict,
         Py_XSETREF(mod->md_name, Py_NewRef(name));
     }
 
-    return 0;
+    // Install the self reference last: newly allocated modules are not yet
+    // GC-tracked, so an earlier initialization error must not leave a cycle.
+    return PyDict_SetItem(md_dict, &_Py_ID(__module__), (PyObject *)mod);
 }
 
 static PyModuleObject *
@@ -178,6 +180,7 @@ new_module_notrack(PyTypeObject *mt)
     m->md_state = NULL;
     m->md_weaklist = NULL;
     m->md_name = NULL;
+    m->md_annotations = NULL;
     m->md_token_is_def = false;
 #ifdef Py_GIL_DISABLED
     m->md_requires_gil = true;
@@ -204,7 +207,7 @@ static int
 module_dict_watcher(PyDict_WatchEvent event, PyObject *dict,
                     PyObject *key, PyObject *new_value)
 {
-    assert(PyDict_Check(dict));
+    assert(PyAnyDict_Check(dict));
     // Only if a new lazy object shows up do we need to clear the dictionary. If
     // this is adding a new key then the version will be reset anyway.
     if (event == PyDict_EVENT_MODIFIED &&
@@ -880,7 +883,7 @@ PyModule_GetNameObject(PyObject *mod)
         return NULL;
     }
     PyObject *dict = ((PyModuleObject *)mod)->md_dict;  // borrowed reference
-    if (dict == NULL || !PyDict_Check(dict)) {
+    if (dict == NULL || !PyAnyDict_Check(dict)) {
         goto error;
     }
     PyObject *name;
@@ -1129,7 +1132,13 @@ static int
 module___init___impl(PyModuleObject *self, PyObject *name, PyObject *doc)
 /*[clinic end generated code: output=e7e721c26ce7aad7 input=57f9e177401e5e1e]*/
 {
-    return module_init_dict(self, self->md_dict, name, doc);
+    int res = -1;
+    Py_BEGIN_CRITICAL_SECTION(self);
+    if (_PyObject_CheckMutable((PyObject *)self) == 0) {
+        res = module_init_dict(self, self->md_dict, name, doc);
+    }
+    Py_END_CRITICAL_SECTION();
+    return res;
 }
 
 static void
@@ -1154,6 +1163,7 @@ module_dealloc(PyObject *self)
 
     Py_XDECREF(m->md_dict);
     Py_XDECREF(m->md_name);
+    Py_XDECREF(m->md_annotations);
     if (m->md_state != NULL) {
         PyMem_Free(m->md_state);
     }
@@ -1327,9 +1337,23 @@ try_load_lazy_submodule(PyModuleObject *m, PyObject *name)
     return result;
 }
 
+int
+_PyModule_IsMainThreadGroupAttribute(PyObject *module, PyObject *name)
+{
+    return _PyModule_CAST(module)->md_dict == _PyInterpreterState_GET()->sysdict &&
+           PyUnicode_Check(name) &&
+           _PyUnicode_EqualToASCIIString(name, "main_thread_group");
+}
+
 PyObject*
 _Py_module_getattro_impl(PyModuleObject *m, PyObject *name, int suppress)
 {
+    if (_PyModule_IsMainThreadGroupAttribute((PyObject *)m, name)) {
+        PyObject *group = _PyInterpreterState_GET()->main_threadgroup_object;
+        if (group != NULL) {
+            return Py_NewRef(group);
+        }
+    }
     // When suppress=1, this function suppresses AttributeError.
     PyObject *attr, *mod_name, *getattr;
     attr = _PyObject_GenericGetAttrWithDict((PyObject *)m, name, NULL, suppress);
@@ -1550,7 +1574,18 @@ module_traverse(PyObject *self, visitproc visit, void *arg)
     }
 
     Py_VISIT(m->md_dict);
+    Py_VISIT(m->md_annotations);
     return 0;
+}
+
+static int
+module_setattro(PyObject *self, PyObject *name, PyObject *value)
+{
+    if (_PyModule_IsMainThreadGroupAttribute(self, name)) {
+        PyErr_SetString(PyExc_AttributeError, "main_thread_group is read-only");
+        return -1;
+    }
+    return PyObject_GenericSetAttr(self, name, value);
 }
 
 static int
@@ -1573,6 +1608,7 @@ module_clear(PyObject *self)
         }
     }
     Py_CLEAR(m->md_dict);
+    Py_CLEAR(m->md_annotations);
     return 0;
 }
 
@@ -1588,7 +1624,7 @@ module_dir(PyObject *self, PyObject *args)
     }
 
     if (dict != NULL) {
-        if (PyDict_Check(dict)) {
+        if (PyAnyDict_Check(dict)) {
             PyObject *dirfunc = PyDict_GetItemWithError(dict, &_Py_ID(__dir__));
             if (dirfunc) {
                 result = _PyObject_CallNoArgs(dirfunc);
@@ -1606,7 +1642,102 @@ module_dir(PyObject *self, PyObject *args)
     return result;
 }
 
+static PyObject *
+module_freeze(PyObject *self, PyObject *Py_UNUSED(ignored))
+{
+    if (PyObject_CheckAccess(self) == NULL) {
+        return NULL;
+    }
+    if (FT_ATOMIC_LOAD_UINT8(self->ob_shareable) == _Py_SHAREABLE_IMMUTABLE) {
+        return Py_NewRef(self);
+    }
+    if (!PyModule_CheckExact(self)) {
+        PyErr_SetString(PyExc_TypeError,
+                        "cannot freeze module subclasses without their own __freeze__");
+        return NULL;
+    }
+    PyModuleObject *m = (PyModuleObject *)self;
+    PyObject *result = NULL;
+    Py_BEGIN_CRITICAL_SECTION(self);
+    if (FT_ATOMIC_LOAD_UINT8(self->ob_frozen)) {
+        if (FT_ATOMIC_LOAD_UINT8(self->ob_shareable) == _Py_SHAREABLE_IMMUTABLE) {
+            result = Py_NewRef(self);
+        }
+        else {
+            PyErr_SetString(PyExc_RuntimeError, "module freezing is already in progress");
+        }
+    }
+    else if (m->md_token_is_def || m->md_state != NULL
+             || m->md_state_traverse != NULL || m->md_state_clear != NULL
+             || m->md_state_free != NULL || m->md_exec != NULL) {
+        PyErr_SetString(PyExc_TypeError,
+                        "cannot freeze extension modules without explicit support");
+    }
+    else if (m->md_dict == NULL) {
+        PyErr_SetString(PyExc_TypeError, "cannot freeze a cleared module");
+    }
+    else {
+        // Prevent attribute/class changes while dictionary watchers run.
+        _Py_atomic_store_uint8(&self->ob_frozen, 1);
+        if (_PyDict_Freeze(m->md_dict) < 0) {
+            _Py_atomic_store_uint8(&self->ob_frozen, 0);
+        }
+        else {
+            _Py_atomic_store_uint32_relaxed(&self->ob_owner_id, 0);
+            _Py_atomic_store_uint8(&self->ob_shareable, _Py_SHAREABLE_IMMUTABLE);
+            result = Py_NewRef(self);
+        }
+    }
+    Py_END_CRITICAL_SECTION();
+    return result;
+}
+
+static PyObject *
+module_synchronize(PyObject *self, PyObject *Py_UNUSED(ignored))
+{
+    if (PyObject_CheckAccess(self) == NULL) {
+        return NULL;
+    }
+    PyObject *result = NULL;
+    Py_BEGIN_CRITICAL_SECTION(self);
+    PyModuleObject *m = (PyModuleObject *)self;
+    if (!PyModule_CheckExact(self) ||
+        FT_ATOMIC_LOAD_UINT8(self->ob_shareable) != _Py_SHAREABLE_LOCAL ||
+        FT_ATOMIC_LOAD_UINT8(self->ob_frozen))
+    {
+        PyErr_SetString(PyExc_TypeError,
+                        "synchronize requires an exact local module");
+    }
+    else if (m->md_token_is_def || m->md_state != NULL
+             || m->md_state_traverse != NULL || m->md_state_clear != NULL
+             || m->md_state_free != NULL || m->md_exec != NULL) {
+        PyErr_SetString(PyExc_TypeError,
+                        "cannot synchronize extension modules without explicit support");
+    }
+    else if (m->md_dict == NULL) {
+        PyErr_SetString(PyExc_TypeError, "cannot synchronize a cleared module");
+    }
+    else {
+        // A blocking critical section can let another thread run. Prevent
+        // class changes and reinitialization during namespace conversion.
+        _Py_atomic_store_uint8(&self->ob_frozen, 1);
+        int res = _PyDict_SynchronizeNamespace(m->md_dict);
+        _Py_atomic_store_uint8(&self->ob_frozen, 0);
+        if (res == 0) {
+            _Py_atomic_store_uint32_relaxed(&self->ob_owner_id, 0);
+            _Py_atomic_store_uint8(&self->ob_shareable, _Py_SHAREABLE_SYNCHRONIZED);
+            result = Py_NewRef(self);
+        }
+    }
+    Py_END_CRITICAL_SECTION();
+    return result;
+}
+
 static PyMethodDef module_methods[] = {
+    {"synchronize", module_synchronize, METH_NOARGS,
+     PyDoc_STR("synchronize($self, /)\n--\n\nSynchronize this module and its namespace in place.")},
+    {"__freeze__", module_freeze, METH_NOARGS,
+     PyDoc_STR("__freeze__($self, /)\n--\n\nFreeze this module and its namespace in place.")},
     {"__dir__", module_dir, METH_NOARGS,
      PyDoc_STR("__dir__() -> list\nspecialized dir() implementation")},
     {0}
@@ -1619,7 +1750,7 @@ module_load_dict(PyModuleObject *m)
     if (dict == NULL) {
         return NULL;
     }
-    if (!PyDict_Check(dict)) {
+    if (!PyAnyDict_Check(dict)) {
         PyErr_Format(PyExc_TypeError, "<module>.__dict__ is not a dictionary");
         Py_DECREF(dict);
         return NULL;
@@ -1639,8 +1770,9 @@ module_get_annotate(PyObject *self, void *Py_UNUSED(ignored))
 
     PyObject *annotate;
     if (PyDict_GetItemRef(dict, &_Py_ID(__annotate__), &annotate) == 0) {
-        annotate = Py_None;
-        if (PyDict_SetItem(dict, &_Py_ID(__annotate__), annotate) == -1) {
+        annotate = Py_NewRef(Py_None);
+        if (!PyFrozenDict_Check(dict)
+            && PyDict_SetItem(dict, &_Py_ID(__annotate__), annotate) == -1) {
             Py_CLEAR(annotate);
         }
     }
@@ -1692,7 +1824,16 @@ module_get_annotations(PyObject *self, void *Py_UNUSED(ignored))
         return NULL;
     }
 
-    PyObject *annotations;
+    PyObject *annotations = NULL;
+    if (PyFrozenDict_Check(dict)) {
+        Py_BEGIN_CRITICAL_SECTION(self);
+        annotations = Py_XNewRef(m->md_annotations);
+        Py_END_CRITICAL_SECTION();
+        if (annotations != NULL) {
+            Py_DECREF(dict);
+            return annotations;
+        }
+    }
     if (PyDict_GetItemRef(dict, &_Py_ID(__annotations__), &annotations) == 0) {
         PyObject *spec;
         if (PyDict_GetItemRef(m->md_dict, &_Py_ID(__spec__), &spec) < 0) {
@@ -1743,9 +1884,17 @@ module_get_annotations(PyObject *self, void *Py_UNUSED(ignored))
         Py_XDECREF(annotate);
         // Do not cache annotations if the module is still initializing
         if (annotations && !is_initializing) {
-            int result = PyDict_SetItem(
-                    dict, &_Py_ID(__annotations__), annotations);
-            if (result) {
+            if (PyFrozenDict_Check(dict)) {
+                Py_BEGIN_CRITICAL_SECTION(self);
+                if (m->md_annotations == NULL) {
+                    m->md_annotations = Py_NewRef(annotations);
+                }
+                else {
+                    Py_SETREF(annotations, Py_NewRef(m->md_annotations));
+                }
+                Py_END_CRITICAL_SECTION();
+            }
+            else if (PyDict_SetItem(dict, &_Py_ID(__annotations__), annotations) < 0) {
                 Py_CLEAR(annotations);
             }
         }
@@ -1812,7 +1961,7 @@ PyTypeObject PyModule_Type = {
     0,                                          /* tp_call */
     0,                                          /* tp_str */
     _Py_module_getattro,                        /* tp_getattro */
-    PyObject_GenericSetAttr,                    /* tp_setattro */
+    module_setattro,                            /* tp_setattro */
     0,                                          /* tp_as_buffer */
     Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_GC |
         Py_TPFLAGS_BASETYPE,                    /* tp_flags */

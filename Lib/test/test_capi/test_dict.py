@@ -1,5 +1,7 @@
 import contextlib
+import gc
 import unittest
+import weakref
 from collections import OrderedDict, UserDict
 from types import MappingProxyType
 from test import support
@@ -42,6 +44,25 @@ OTHER_TYPES = (lambda: [1], lambda: 42, object)  # (list, int, object)
 
 
 class CAPITest(unittest.TestCase):
+
+    def test_frozendict_gc_cycle(self):
+        class Payload:
+            pass
+
+        for key in ('cycle', 42):
+            with self.subTest(key=key):
+                payload = Payload()
+                ref = weakref.ref(payload)
+                frozen = _testcapi.frozendict_tuple_cycle(key, payload)
+                self.assertIs(frozen[key][0], frozen)
+                self.assertIs(frozen[key][1], payload)
+                frozen_id = id(frozen)
+                del payload, frozen
+                support.gc_collect()
+                self.assertIsNone(ref())
+                # GC clears weakrefs even if tp_clear fails to break the cycle.
+                self.assertFalse(any(id(obj) == frozen_id
+                                     for obj in gc.get_objects()))
 
     def test_dict_check(self):
         # Test PyDict_Check()

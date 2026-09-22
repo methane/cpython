@@ -117,6 +117,10 @@ PyCMethod_New(PyMethodDef *ml, PyObject *self, PyObject *module, PyTypeObject *c
     op->m_self = Py_XNewRef(self);
     op->m_module = Py_XNewRef(module);
     op->vectorcall = vectorcall;
+    if (self != NULL &&
+        _Py_atomic_load_uint8(&self->ob_shareable) == _Py_SHAREABLE_PROTECTED) {
+        _PyObject_InheritShareable((PyObject *)op, self);
+    }
     _PyObject_GC_TRACK(op);
     return (PyObject *)op;
 }
@@ -126,6 +130,9 @@ PyCFunction_GetFunction(PyObject *op)
 {
     if (!PyCFunction_Check(op)) {
         PyErr_BadInternalCall();
+        return NULL;
+    }
+    if (PyObject_CheckAccess(op) == NULL) {
         return NULL;
     }
     return PyCFunction_GET_FUNCTION(op);
@@ -138,7 +145,10 @@ PyCFunction_GetSelf(PyObject *op)
         PyErr_BadInternalCall();
         return NULL;
     }
-    return PyCFunction_GET_SELF(op);
+    if (PyObject_CheckAccess(op) == NULL) {
+        return NULL;
+    }
+    return PyObject_CheckAccess(PyCFunction_GET_SELF(op));
 }
 
 int
@@ -146,6 +156,9 @@ PyCFunction_GetFlags(PyObject *op)
 {
     if (!PyCFunction_Check(op)) {
         PyErr_BadInternalCall();
+        return -1;
+    }
+    if (PyObject_CheckAccess(op) == NULL) {
         return -1;
     }
     return PyCFunction_GET_FLAGS(op);
@@ -408,6 +421,9 @@ cfunction_check_kwargs(PyThreadState *tstate, PyObject *func, PyObject *kwnames)
 {
     assert(!_PyErr_Occurred(tstate));
     assert(PyCFunction_Check(func));
+    if (kwnames != NULL && PyObject_CheckAccess(kwnames) == NULL) {
+        return -1;
+    }
     if (kwnames && PyTuple_GET_SIZE(kwnames)) {
         PyObject *funcstr = _PyObject_FunctionStr(func);
         if (funcstr != NULL) {
@@ -422,9 +438,46 @@ cfunction_check_kwargs(PyThreadState *tstate, PyObject *func, PyObject *kwnames)
 
 typedef void (*funcptr)(void);
 
-static inline funcptr
-cfunction_enter_call(PyThreadState *tstate, PyObject *func)
+static inline int
+cfunction_check_self(PyObject *func)
 {
+    if (PyObject_CheckAccess(func) == NULL) {
+        return -1;
+    }
+    PyObject *self = PyCFunction_GET_SELF(func);
+    /* A module is the function's native state context, not a bound receiver.
+       Access to a module function is governed by the callable's own state. */
+    if (self != NULL && !PyModule_Check(self) &&
+        PyObject_CheckAccess(self) == NULL) {
+        return -1;
+    }
+    return 0;
+}
+
+static inline funcptr
+cfunction_enter_call(PyThreadState *tstate, PyObject *func,
+                     PyObject *const *args, Py_ssize_t nargs, PyObject *kwnames)
+{
+    if (cfunction_check_self(func) < 0) {
+        return NULL;
+    }
+    Py_ssize_t nkwargs = 0;
+    if (kwnames != NULL) {
+        if (PyObject_CheckAccess(kwnames) == NULL) {
+            return NULL;
+        }
+        nkwargs = PyTuple_GET_SIZE(kwnames);
+        for (Py_ssize_t i = 0; i < nkwargs; i++) {
+            if (PyObject_CheckAccess(PyTuple_GET_ITEM(kwnames, i)) == NULL) {
+                return NULL;
+            }
+        }
+    }
+    for (Py_ssize_t i = 0; i < nargs + nkwargs; i++) {
+        if (PyObject_CheckAccess(args[i]) == NULL) {
+            return NULL;
+        }
+    }
     if (_Py_EnterRecursiveCallTstate(tstate, " while calling a Python object")) {
         return NULL;
     }
@@ -442,7 +495,7 @@ cfunction_vectorcall_FASTCALL(
     }
     Py_ssize_t nargs = PyVectorcall_NARGS(nargsf);
     PyCFunctionFast meth = (PyCFunctionFast)
-                            cfunction_enter_call(tstate, func);
+                            cfunction_enter_call(tstate, func, args, nargs, kwnames);
     if (meth == NULL) {
         return NULL;
     }
@@ -458,7 +511,7 @@ cfunction_vectorcall_FASTCALL_KEYWORDS(
     PyThreadState *tstate = _PyThreadState_GET();
     Py_ssize_t nargs = PyVectorcall_NARGS(nargsf);
     PyCFunctionFastWithKeywords meth = (PyCFunctionFastWithKeywords)
-                                        cfunction_enter_call(tstate, func);
+                                        cfunction_enter_call(tstate, func, args, nargs, kwnames);
     if (meth == NULL) {
         return NULL;
     }
@@ -474,7 +527,7 @@ cfunction_vectorcall_FASTCALL_KEYWORDS_METHOD(
     PyThreadState *tstate = _PyThreadState_GET();
     PyTypeObject *cls = PyCFunction_GET_CLASS(func);
     Py_ssize_t nargs = PyVectorcall_NARGS(nargsf);
-    PyCMethod meth = (PyCMethod)cfunction_enter_call(tstate, func);
+    PyCMethod meth = (PyCMethod)cfunction_enter_call(tstate, func, args, nargs, kwnames);
     if (meth == NULL) {
         return NULL;
     }
@@ -501,7 +554,7 @@ cfunction_vectorcall_NOARGS(
         }
         return NULL;
     }
-    PyCFunction meth = (PyCFunction)cfunction_enter_call(tstate, func);
+    PyCFunction meth = (PyCFunction)cfunction_enter_call(tstate, func, args, nargs, kwnames);
     if (meth == NULL) {
         return NULL;
     }
@@ -529,7 +582,7 @@ cfunction_vectorcall_O(
         }
         return NULL;
     }
-    PyCFunction meth = (PyCFunction)cfunction_enter_call(tstate, func);
+    PyCFunction meth = (PyCFunction)cfunction_enter_call(tstate, func, args, nargs, kwnames);
     if (meth == NULL) {
         return NULL;
     }
@@ -547,6 +600,11 @@ cfunction_call(PyObject *func, PyObject *args, PyObject *kwargs)
 
     PyThreadState *tstate = _PyThreadState_GET();
     assert(!_PyErr_Occurred(tstate));
+
+    if (cfunction_check_self(func) < 0 ||
+        _PyEval_CheckCallArgs(func, args, kwargs) < 0) {
+        return NULL;
+    }
 
     int flags = PyCFunction_GET_FLAGS(func);
     if (!(flags & METH_VARARGS)) {

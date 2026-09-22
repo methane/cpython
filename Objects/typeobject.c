@@ -19,6 +19,7 @@
 #include "pycore_pystate.h"       // _PyThreadState_GET()
 #include "pycore_slots.h"         // _PySlotIterator_Init
 #include "pycore_symtable.h"      // _Py_Mangle()
+#include "pycore_threadgroup.h"  // _PyThreadGroupState
 #include "pycore_tuple.h"         // _PyTuple_FromPair
 #include "pycore_typecache.h"     // _PyTypeCache_Lookup()
 #include "pycore_typeobject.h"    // _PyTypes_InitTypes()
@@ -1466,7 +1467,8 @@ check_set_special_type_attr(PyTypeObject *type, PyObject *value, const char *nam
         return 0;
     }
 
-    return 1;
+    // An audit hook may freeze the class while the setter is running.
+    return _PyObject_CheckMutable((PyObject *)type) == 0;
 }
 
 const char *
@@ -2013,6 +2015,9 @@ type_dict(PyObject *tp, void *Py_UNUSED(closure))
     if (dict == NULL) {
         Py_RETURN_NONE;
     }
+    if (PyFrozenDict_CheckExact(dict)) {
+        return Py_NewRef(dict);
+    }
     return PyDictProxy_New(dict);
 }
 
@@ -2085,7 +2090,8 @@ type_get_annotate(PyObject *tp, void *Py_UNUSED(closure))
     }
     else {
         annotate = Py_None;
-        int result = PyDict_SetItem(dict, &_Py_ID(__annotate_func__), annotate);
+        int result = PyFrozenDict_Check(dict) ? 0 :
+            PyDict_SetItem(dict, &_Py_ID(__annotate_func__), annotate);
         if (result < 0) {
             Py_DECREF(dict);
             return NULL;
@@ -2156,6 +2162,13 @@ type_get_annotations(PyObject *tp, void *Py_UNUSED(closure))
             return NULL;
         }
     }
+    if (!annotations && type->tp_cache != NULL && PyFrozenDict_Check(dict)) {
+        if (PyDict_GetItemRef(type->tp_cache, &_Py_ID(__annotations_cache__),
+                             &annotations) < 0) {
+            Py_DECREF(dict);
+            return NULL;
+        }
+    }
 
     if (annotations) {
         descrgetfunc get = Py_TYPE(annotations)->tp_descr_get;
@@ -2192,8 +2205,9 @@ type_get_annotations(PyObject *tp, void *Py_UNUSED(closure))
         }
         Py_DECREF(annotate);
         if (annotations) {
+            PyObject *cache = PyFrozenDict_Check(dict) ? type->tp_cache : dict;
             int result = PyDict_SetItem(
-                    dict, &_Py_ID(__annotations_cache__), annotations);
+                    cache, &_Py_ID(__annotations_cache__), annotations);
             if (result) {
                 Py_CLEAR(annotations);
             } else {
@@ -3989,10 +4003,25 @@ subtype_dict(PyObject *obj, void *context)
 int
 _PyObject_SetDict(PyObject *obj, PyObject *value)
 {
+    if (PyFunction_Check(obj)) {
+        return _PyFunction_SetDict(obj, value);
+    }
+    if (_PyObject_CheckMutable(obj) < 0) {
+        return -1;
+    }
     if (value != NULL && !PyDict_Check(value)) {
         PyErr_Format(PyExc_TypeError,
                      "__dict__ must be set to a dictionary, "
                      "not a '%.200s'", Py_TYPE(value)->tp_name);
+        return -1;
+    }
+    if (FT_ATOMIC_LOAD_UINT8(obj->ob_shareable) == _Py_SHAREABLE_PROTECTED &&
+        (value == NULL ||
+         FT_ATOMIC_LOAD_UINT8(value->ob_shareable) != _Py_SHAREABLE_PROTECTED ||
+         FT_ATOMIC_LOAD_UINT32_RELAXED(value->ob_owner_id) !=
+         FT_ATOMIC_LOAD_UINT32_RELAXED(obj->ob_owner_id))) {
+        PyErr_SetString(PyExc_TypeError,
+                        "a protected object's namespace must use the same protecting lock");
         return -1;
     }
     if (Py_TYPE(obj)->tp_flags & Py_TPFLAGS_MANAGED_DICT) {
@@ -4004,12 +4033,31 @@ _PyObject_SetDict(PyObject *obj, PyObject *value)
                         "This object has no __dict__");
         return -1;
     }
+    int res = 0;
     Py_BEGIN_CRITICAL_SECTION(obj);
-    // gh-133980: To prevent use-after-free from other threads that reference
-    // the __dict__
-    _PyObject_XSetRefDelayed(dictptr, Py_NewRef(value));
+    if (FT_ATOMIC_LOAD_UINT8(obj->ob_shareable) == _Py_SHAREABLE_IMMUTABLE) {
+        PyErr_SetString(PyExc_TypeError, "cannot replace an immutable object's namespace");
+        res = -1;
+    }
+    else if (FT_ATOMIC_LOAD_UINT8(obj->ob_shareable) == _Py_SHAREABLE_SYNCHRONIZED) {
+        res = _PyDict_SynchronizeNamespace(value);
+    }
+    if (res == 0) {
+        // Namespace conversion can suspend this critical section.
+        res = _PyObject_CheckMutable(obj);
+        if (res == 0 &&
+            FT_ATOMIC_LOAD_UINT8(obj->ob_shareable) == _Py_SHAREABLE_IMMUTABLE)
+        {
+            PyErr_SetString(PyExc_TypeError, "cannot replace an immutable object's namespace");
+            res = -1;
+        }
+    }
+    if (res == 0) {
+        // gh-133980: Readers may still reference the previous dictionary.
+        _PyObject_XSetRefDelayed(dictptr, Py_NewRef(value));
+    }
     Py_END_CRITICAL_SECTION();
-    return 0;
+    return res;
 }
 
 static int
@@ -4422,6 +4470,7 @@ type_new_alloc(type_new_ctx *ctx)
     et->ht_module = NULL;
     et->_ht_tpname = NULL;
     et->ht_token = NULL;
+    et->ht_is_python = 1;
 
 #ifdef Py_GIL_DISABLED
     et->unique_id = _PyObject_AssignUniqueId((PyObject *)et);
@@ -4743,7 +4792,9 @@ type_new_set_classcell(PyTypeObject *type, PyObject *dict)
         return -1;
     }
 
-    (void)PyCell_Set(cell, (PyObject *) type);
+    if (PyCell_Set(cell, (PyObject *)type) < 0) {
+        return -1;
+    }
     if (PyDict_DelItem(dict, &_Py_ID(__classcell__)) < 0) {
         return -1;
     }
@@ -4769,7 +4820,9 @@ type_new_set_classdictcell(PyObject *dict)
         return -1;
     }
 
-    (void)PyCell_Set(cell, (PyObject *)dict);
+    if (PyCell_Set(cell, (PyObject *)dict) < 0) {
+        return -1;
+    }
     if (PyDict_DelItem(dict, &_Py_ID(__classdictcell__)) < 0) {
         return -1;
     }
@@ -6142,7 +6195,7 @@ find_name_in_mro(PyTypeObject *type, PyObject *name, _PyStackRef *out)
     for (Py_ssize_t i = 0; i < n; i++) {
         PyObject *base = PyTuple_GET_ITEM(mro, i);
         PyObject *dict = lookup_tp_dict(_PyType_CAST(base));
-        assert(dict && PyDict_Check(dict));
+        assert(dict && PyAnyDict_Check(dict));
         Py_ssize_t ix = _Py_dict_lookup_threadsafe_stackref(
             (PyDictObject *)dict, name, hash, out);
         if (ix == DKIX_ERROR) {
@@ -6629,6 +6682,9 @@ update_slot_after_setattr(PyTypeObject *type, PyObject *name)
 static int
 type_setattro(PyObject *self, PyObject *name, PyObject *value)
 {
+    if (_PyObject_CheckMutable(self) < 0) {
+        return -1;
+    }
     PyTypeObject *type = PyTypeObject_CAST(self);
     int res;
     if (type->tp_flags & Py_TPFLAGS_IMMUTABLETYPE) {
@@ -7061,7 +7117,69 @@ type___sizeof___impl(PyTypeObject *self)
     return PyLong_FromSize_t(size);
 }
 
+static int
+check_python_type_storage(PyTypeObject *type, const char *operation)
+{
+    if (!(type->tp_flags & Py_TPFLAGS_HEAPTYPE) ||
+        !((PyHeapTypeObject *)type)->ht_is_python)
+    {
+        PyErr_Format(PyExc_TypeError, "native types must implement %s", operation);
+        return -1;
+    }
+    PyObject *mro = Py_TYPE(type)->tp_mro;
+    for (Py_ssize_t i = 0; i < PyTuple_GET_SIZE(mro); i++) {
+        PyTypeObject *base = (PyTypeObject *)PyTuple_GET_ITEM(mro, i);
+        if (base != &PyType_Type && base != &PyBaseObject_Type &&
+            (!(base->tp_flags & Py_TPFLAGS_HEAPTYPE) ||
+             !((PyHeapTypeObject *)base)->ht_is_python))
+        {
+            PyErr_Format(PyExc_TypeError,
+                         "native metaclasses must implement %s", operation);
+            return -1;
+        }
+    }
+    return 0;
+}
+
+static PyObject *
+type_synchronize(PyObject *self, PyObject *Py_UNUSED(ignored))
+{
+    if (PyObject_CheckAccess(self) == NULL) {
+        return NULL;
+    }
+    PyObject *result = NULL;
+    Py_BEGIN_CRITICAL_SECTION(self);
+    PyTypeObject *type = PyTypeObject_CAST(self);
+    if (FT_ATOMIC_LOAD_UINT8(self->ob_shareable) != _Py_SHAREABLE_LOCAL ||
+        FT_ATOMIC_LOAD_UINT8(self->ob_frozen))
+    {
+        PyErr_SetString(PyExc_TypeError, "synchronize requires a local class");
+    }
+    else if (check_python_type_storage(type, "synchronization") == 0) {
+        // Namespace conversion can suspend this critical section. Prevent
+        // mutations and another state transition until publication completes.
+        _Py_atomic_store_uint8(&self->ob_frozen, 1);
+        int err = _PyDict_SynchronizeNamespace(lookup_tp_dict(type));
+        if (err == 0) {
+            BEGIN_TYPE_LOCK();
+            _PyType_Modified_Unlocked(type);
+            _Py_atomic_store_uint32_relaxed(&self->ob_owner_id, 0);
+            _Py_atomic_store_uint8(&self->ob_frozen, 0);
+            _Py_atomic_store_uint8(&self->ob_shareable, _Py_SHAREABLE_SYNCHRONIZED);
+            END_TYPE_LOCK();
+            result = Py_NewRef(self);
+        }
+        else {
+            _Py_atomic_store_uint8(&self->ob_frozen, 0);
+        }
+    }
+    Py_END_CRITICAL_SECTION();
+    return result;
+}
+
 static PyMethodDef type_methods[] = {
+    {"synchronize", type_synchronize, METH_NOARGS,
+     PyDoc_STR("synchronize($self, /)\n--\n\nSynchronize this class and its namespace in place.")},
     TYPE_MRO_METHODDEF
     TYPE___SUBCLASSES___METHODDEF
     {"__prepare__", _PyCFunction_CAST(type_prepare),
@@ -7129,13 +7247,11 @@ type_clear(PyObject *self)
        part of a hard cycle (its first element is the class itself) that
        won't be broken otherwise (it's a tuple and tuples don't have a
        tp_clear handler).
-       We also need to clear ht_module, if present: the module usually holds a
-       reference to its class. None of the other fields need to be
+       We also clear the lazy annotation cache, which can refer to the class,
+       and ht_module, if present: the module usually holds a reference to its
+       class. None of the other fields need to be
 
        cleared, and here's why:
-
-       tp_cache:
-           Not used; if it were, it would be a dict.
 
        tp_bases, tp_base:
            If these are involved in a cycle, there must be at least
@@ -7153,8 +7269,14 @@ type_clear(PyObject *self)
     PyType_Modified(type);
     PyObject *dict = lookup_tp_dict(type);
     if (dict) {
-        PyDict_Clear(dict);
+        if (PyFrozenDict_Check(dict)) {
+            clear_tp_dict(type);
+        }
+        else {
+            PyDict_Clear(dict);
+        }
     }
+    Py_CLEAR(type->tp_cache);
     Py_CLEAR(((PyHeapTypeObject *)type)->ht_module);
 
     Py_CLEAR(type->tp_mro);
@@ -7686,6 +7808,9 @@ object_set_class_world_stopped(PyObject *self, PyTypeObject *newto)
 static int
 object_set_class(PyObject *self, PyObject *value, void *closure)
 {
+    if (_PyObject_CheckMutable(self) < 0) {
+        return -1;
+    }
 
     if (value == NULL) {
         PyErr_SetString(PyExc_TypeError,
@@ -7726,6 +7851,8 @@ object_set_class(PyObject *self, PyObject *value, void *closure)
 }
 
 static PyGetSetDef object_getsets[] = {
+    {"__shareable__", _PyObject_GetShareable, _PyObject_SetShareable,
+     PyDoc_STR("the object's sharing state")},
     {"__class__", object_get_class, object_set_class,
      PyDoc_STR("the object's class")},
     {0}
@@ -8391,13 +8518,13 @@ object___dir___impl(PyObject *self)
     if (dict == NULL) {
         dict = PyDict_New();
     }
-    else if (!PyDict_Check(dict)) {
+    else if (!PyAnyDict_Check(dict)) {
         Py_DECREF(dict);
         dict = PyDict_New();
     }
     else {
         /* Copy __dict__ to avoid mutating it. */
-        PyObject *temp = PyDict_Copy(dict);
+        PyObject *temp = _PyDict_CopyAsDict(dict);
         Py_SETREF(dict, temp);
     }
 
@@ -8421,7 +8548,164 @@ error:
     return result;
 }
 
+static PyObject *
+freeze_python_type_locked(PyTypeObject *type)
+{
+    PyObject *self = (PyObject *)type;
+    if (check_python_type_storage(type, "freezing") < 0) {
+        return NULL;
+    }
+    _Py_atomic_store_uint8(&self->ob_frozen, 1);
+    // Install the lazy annotation cache before freezing: dictionary watchers
+    // may read annotations as soon as the namespace becomes immutable.
+    PyObject *cache = PyDict_New();
+    if (cache == NULL) {
+        _Py_atomic_store_uint8(&self->ob_frozen, 0);
+        return NULL;
+    }
+
+    PyObject *old_cache;
+    BEGIN_TYPE_LOCK();
+    types_stop_world();
+    old_cache = type->tp_cache;
+    type->tp_cache = cache;
+    types_start_world();
+    END_TYPE_LOCK();
+
+    // This primitive stops the world and invokes dictionary watchers after
+    // resuming it. Do not hold the type lock across those callbacks.
+    if (_PyDict_Freeze(lookup_tp_dict(type)) < 0) {
+        BEGIN_TYPE_LOCK();
+        types_stop_world();
+        type->tp_cache = old_cache;
+        types_start_world();
+        END_TYPE_LOCK();
+        Py_DECREF(cache);
+        _Py_atomic_store_uint8(&self->ob_frozen, 0);
+        return NULL;
+    }
+
+    BEGIN_TYPE_LOCK();
+    _Py_atomic_store_uint32_relaxed(&self->ob_owner_id, 0);
+    _Py_atomic_store_uint8(&self->ob_shareable, _Py_SHAREABLE_IMMUTABLE);
+    _PyType_Modified_Unlocked(type);
+    END_TYPE_LOCK();
+    Py_XDECREF(old_cache);
+    return Py_NewRef(self);
+}
+
+static PyObject *
+freeze_python_type(PyTypeObject *type)
+{
+    PyObject *self = (PyObject *)type;
+    PyObject *result = NULL;
+    Py_BEGIN_CRITICAL_SECTION(self);
+    // Synchronized classes may be frozen by another group while we wait.
+    if (FT_ATOMIC_LOAD_UINT8(self->ob_shareable) == _Py_SHAREABLE_IMMUTABLE) {
+        result = Py_NewRef(self);
+    }
+    else if (_PyObject_CheckMutable(self) == 0) {
+        result = freeze_python_type_locked(type);
+    }
+    Py_END_CRITICAL_SECTION();
+    return result;
+}
+
+static int
+has_immutable_native_storage(PyTypeObject *type)
+{
+    return type == &PyBaseObject_Type || type == &PyLong_Type ||
+           type == &PyFloat_Type || type == &PyComplex_Type ||
+           type == &PyUnicode_Type || type == &PyBytes_Type ||
+           type == &PyTuple_Type || type == &PyFrozenSet_Type ||
+           type == &PyFrozenDict_Type;
+}
+
+static PyObject *
+object_freeze(PyObject *self, PyObject *Py_UNUSED(ignored))
+{
+    if (PyObject_CheckAccess(self) == NULL) {
+        return NULL;
+    }
+    if (_Py_atomic_load_uint8(&self->ob_shareable) == _Py_SHAREABLE_IMMUTABLE) {
+        return Py_NewRef(self);
+    }
+    if (PyType_Check(self)) {
+        return freeze_python_type((PyTypeObject *)self);
+    }
+    if (_PyObject_CheckMutable(self) < 0) {
+        return NULL;
+    }
+    /* Mutable native bases must implement their own freezing. Immutable
+       native storage can be retained while freezing Python-defined fields. */
+    PyObject *mro = Py_TYPE(self)->tp_mro;
+    for (Py_ssize_t i = 0; i < PyTuple_GET_SIZE(mro); i++) {
+        PyTypeObject *base = (PyTypeObject *)PyTuple_GET_ITEM(mro, i);
+        if (!has_immutable_native_storage(base) &&
+            (!(base->tp_flags & Py_TPFLAGS_HEAPTYPE) ||
+             !((PyHeapTypeObject *)base)->ht_is_python))
+        {
+            PyErr_Format(PyExc_TypeError, "cannot freeze '%.100s' object",
+                         Py_TYPE(self)->tp_name);
+            return NULL;
+        }
+    }
+
+    /* Block reentrant writes while materializing and freezing the dictionary.
+       Keep the object local until its namespace is immutable. */
+    _Py_atomic_store_uint8(&self->ob_frozen, 1);
+    PyTypeObject *type = Py_TYPE(self);
+    if (type->tp_dictoffset != 0) {
+        PyObject *dict = PyObject_GenericGetDict(self, NULL);
+        if (dict == NULL) {
+            goto error;
+        }
+        if (PyAnyDict_CheckExact(dict)) {
+            int err = _PyDict_Freeze(dict);
+            Py_DECREF(dict);
+            if (err < 0) {
+                goto error;
+            }
+        }
+        else {
+            // Dictionary subclasses still need a separate freezing implementation.
+            // Copy the actual dict storage, bypassing dict-subclass overrides.
+            PyObject *copy = _PyDict_CopyStorage(dict);
+            Py_DECREF(dict);
+            if (copy == NULL) {
+                goto error;
+            }
+            PyObject *frozen = PyFrozenDict_New(copy);
+            Py_DECREF(copy);
+            if (frozen == NULL) {
+                goto error;
+            }
+            int err = 0;
+            if (type->tp_flags & Py_TPFLAGS_MANAGED_DICT) {
+                err = _PyObject_SetManagedDict(self, frozen);
+            }
+            else {
+                PyObject **dictptr = _PyObject_ComputedDictPointer(self);
+                Py_XSETREF(*dictptr, Py_NewRef(frozen));
+            }
+            Py_DECREF(frozen);
+            if (err < 0) {
+                goto error;
+            }
+        }
+    }
+    _Py_atomic_store_uint32_relaxed(&self->ob_owner_id, 0);
+    _Py_atomic_store_uint8(&self->ob_shareable, _Py_SHAREABLE_IMMUTABLE);
+    return Py_NewRef(self);
+
+error:
+    _Py_atomic_store_uint8(&self->ob_frozen, 0);
+    return NULL;
+}
+
 static PyMethodDef object_methods[] = {
+    {"__freeze__", object_freeze, METH_NOARGS,
+     PyDoc_STR("Freeze this object if supported, returning the same object.")},
     OBJECT___REDUCE_EX___METHODDEF
     OBJECT___REDUCE___METHODDEF
     OBJECT___GETSTATE___METHODDEF
@@ -9559,6 +9843,21 @@ PyType_Ready(PyTypeObject *type)
     int res;
     BEGIN_TYPE_LOCK();
     if (!(type->tp_flags & Py_TPFLAGS_READY)) {
+        /* Extensions may leave a static type's object header zero-initialized.
+           Making it immortal does not make it a static immortal, so the lazy
+           static-object ownership check cannot initialize its owner. Like
+           other undeclared static objects, it belongs to the main group. */
+        PyObject *op = (PyObject *)type;
+        if (!(type->tp_flags & Py_TPFLAGS_HEAPTYPE) &&
+            _Py_atomic_load_uint8(&op->ob_shareable) == _Py_SHAREABLE_LOCAL)
+        {
+            PyInterpreterState *interp = _PyInterpreterState_GET();
+            if (interp->main_threadgroup != NULL) {
+                uint32_t unowned = 0;
+                _Py_atomic_compare_exchange_uint32(
+                    &op->ob_owner_id, &unowned, interp->main_threadgroup->id);
+            }
+        }
         res = type_ready(type, 1, 1);
     } else {
         res = 0;
@@ -9618,7 +9917,17 @@ _PyStaticType_InitForExtension(PyInterpreterState *interp, PyTypeObject *self)
 int
 _PyStaticType_InitBuiltin(PyInterpreterState *interp, PyTypeObject *self)
 {
-    return init_static_type(interp, self, 1, _Py_IsMainInterpreter(interp));
+    if (init_static_type(interp, self, 1, _Py_IsMainInterpreter(interp)) < 0) {
+        return -1;
+    }
+    /* Core static types reject Python-level mutation and are shared between
+       interpreters. This also initializes zero-initialized structseq types;
+       the public declaration API cannot be used before bootstrap completes.
+       Extension types must make their own declaration. */
+    _Py_atomic_store_uint32_relaxed(&self->ob_base.ob_base.ob_owner_id, 0);
+    _Py_atomic_store_uint8(&self->ob_base.ob_base.ob_shareable,
+                          _Py_SHAREABLE_IMMUTABLE);
+    return 0;
 }
 
 
@@ -10443,6 +10752,15 @@ add_tp_new_wrapper(PyTypeObject *type)
 
     PyObject *func = PyCFunction_NewEx(tp_new_methoddef, (PyObject *)type, NULL);
     if (func == NULL) {
+        return -1;
+    }
+    /* Builtin constructors are shared entry points, like functions in
+       builtins. In particular, namedtuple constructors retain tuple.__new__
+       in their globals. This does not opt extension types into sharing. */
+    if ((type->tp_flags & _Py_TPFLAGS_STATIC_BUILTIN) &&
+        PyObject_DeclareSynchronized(func) < 0)
+    {
+        Py_DECREF(func);
         return -1;
     }
     _PyObject_SetDeferredRefcount(func);
@@ -12321,7 +12639,7 @@ recurse_down_subclasses(PyTypeObject *type, PyObject *attr_name,
 
         /* Avoid recursing down into unaffected classes */
         PyObject *dict = lookup_tp_dict(subclass);
-        if (dict != NULL && PyDict_Check(dict)) {
+        if (dict != NULL && PyAnyDict_Check(dict)) {
             int r = PyDict_Contains(dict, attr_name);
             if (r < 0) {
                 Py_DECREF(subclass);
@@ -12556,7 +12874,7 @@ _PySuper_LookupDescr(PyTypeObject *su_type, PyTypeObject *su_obj_type, PyObject 
     do {
         PyObject *obj = PyTuple_GET_ITEM(mro, i);
         PyObject *dict = lookup_tp_dict(_PyType_CAST(obj));
-        assert(dict != NULL && PyDict_Check(dict));
+        assert(dict != NULL && PyAnyDict_Check(dict));
 
         if (PyDict_GetItemRef(dict, name, &res) != 0) {
             // found or error
@@ -12583,7 +12901,8 @@ do_super_lookup(superobject *su, PyTypeObject *su_type, PyObject *su_obj,
         goto skip;
     }
 
-    res = _PySuper_LookupDescr(su_type, su_obj_type, name);
+    res = _PyObject_CheckAccessNullable(
+        _PySuper_LookupDescr(su_type, su_obj_type, name));
     if (res != NULL) {
         if (method && _PyType_HasFeature(Py_TYPE(res), Py_TPFLAGS_METHOD_DESCRIPTOR)) {
             *method = 1;
@@ -12635,7 +12954,8 @@ super_getattro(PyObject *self, PyObject *name)
         _PyUnicode_Equal(name, &_Py_ID(__class__)))
         return PyObject_GenericGetAttr(self, name);
 
-    return do_super_lookup(su, su->type, su->obj, su->obj_type, name, NULL);
+    return _PyObject_CheckAccessNullable(
+        do_super_lookup(su, su->type, su->obj, su->obj_type, name, NULL));
 }
 
 static PyTypeObject *

@@ -30,7 +30,17 @@ typedef struct {
        If ma_values is not NULL, the table is split:
        keys are stored in ma_keys and values are stored in ma_values */
     PyDictValues *ma_values;
+
+    /* Hash cache used by frozendict. Keeping it in the shared layout permits
+       an in-place transition without invalidating existing references. */
+    Py_hash_t ma_hash;
 } PyDictObject;
+
+// Synchronized dictionaries share the dict layout and C API.
+PyAPI_DATA(PyTypeObject) PySynchronizedDict_Type;
+PyAPI_FUNC(PyObject *) PySynchronizedDict_New(void);
+#define PySynchronizedDict_Check(op) PyObject_TypeCheck((op), &PySynchronizedDict_Type)
+#define PySynchronizedDict_CheckExact(op) Py_IS_TYPE((op), &PySynchronizedDict_Type)
 
 // frozendict
 PyAPI_DATA(PyTypeObject) PyFrozenDict_Type;
@@ -83,7 +93,8 @@ Py_DEPRECATED(3.14) PyAPI_FUNC(PyObject *) _PyDict_Pop(
     V(DELETED)                   \
     V(CLONED)                    \
     V(CLEARED)                   \
-    V(DEALLOCATED)
+    V(DEALLOCATED)               \
+    V(FROZEN)
 
 typedef enum {
     #define PY_DEF_EVENT(EVENT) PyDict_EVENT_##EVENT,

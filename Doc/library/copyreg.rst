@@ -25,6 +25,14 @@ Such constructors may be factory functions or class instances.
    hence not valid as a constructor), raises :exc:`TypeError`.
 
 
+In the experimental PEP 805 implementation, this module has a synchronized
+namespace, and its default ``dispatch_table`` is a :class:`SynchronizedDict`.
+Registered functions retain their own sharing states. This change enables
+reduction lookup during copies made in other ThreadGroups; it does not convert
+the separate extension-code registries or make every reduction function
+available to every group.
+
+
 .. function:: pickle(type, function, constructor_ob=None)
 
    Declares that *function* should be used as a "reduction" function for objects

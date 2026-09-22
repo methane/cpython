@@ -744,6 +744,61 @@ cleanup:
     return res;
 }
 
+static int
+check_call_stackref(_PyStackRef value)
+{
+    if (PyStackRef_IsNull(value) || PyStackRef_IsTaggedInt(value)) {
+        return 0;
+    }
+    return PyObject_CheckAccess(PyStackRef_AsPyObjectBorrow(value)) == NULL ? -1 : 0;
+}
+
+int
+_PyEval_CheckCallStack(_PyStackRef callable, _PyStackRef self_or_null,
+                       const _PyStackRef *args, int nargs)
+{
+    // Later argument evaluation or a monitoring callback may release a mutex
+    // that protected references acquired earlier in the call expression.
+    if (check_call_stackref(callable) < 0 ||
+        check_call_stackref(self_or_null) < 0) {
+        return -1;
+    }
+    for (int i = 0; i < nargs; i++) {
+        if (check_call_stackref(args[i]) < 0) {
+            return -1;
+        }
+    }
+    return 0;
+}
+
+int
+_PyEval_CheckCallArgs(PyObject *callable, PyObject *args, PyObject *kwargs)
+{
+    assert(PyTuple_Check(args));
+    assert(kwargs == NULL || PyDict_Check(kwargs));
+    if (PyObject_CheckAccess(callable) == NULL ||
+        PyObject_CheckAccess(args) == NULL ||
+        (kwargs != NULL && PyObject_CheckAccess(kwargs) == NULL)) {
+        return -1;
+    }
+    for (Py_ssize_t i = 0; i < PyTuple_GET_SIZE(args); i++) {
+        if (PyObject_CheckAccess(PyTuple_GET_ITEM(args, i)) == NULL) {
+            return -1;
+        }
+    }
+    if (kwargs != NULL) {
+        Py_ssize_t pos = 0;
+        PyObject *key, *value;
+        while (PyDict_Next(kwargs, &pos, &key, &value)) {
+            if (PyObject_CheckAccess(key) == NULL ||
+                PyObject_CheckAccess(value) == NULL) {
+                return -1;
+            }
+        }
+    }
+    return 0;
+}
+
 PyObject*
 _Py_VectorCallInstrumentation_StackRefSteal(
     _PyStackRef callable,
@@ -1279,6 +1334,7 @@ _PyEval_EvalFrameDefault(PyThreadState *tstate, _PyInterpreterFrame *frame, int 
     entry.frame.instr_ptr = (_Py_CODEUNIT *)_Py_INTERPRETER_TRAMPOLINE_INSTRUCTIONS + 1;
     entry.frame.stackpointer = entry.stack;
     entry.frame.owner = FRAME_OWNED_BY_INTERPRETER;
+    entry.frame.threadgroup_id = 0;
     entry.frame.visited = 0;
     entry.frame.return_offset = 0;
 #ifdef Py_DEBUG
@@ -2136,9 +2192,27 @@ _PyEval_Vector(PyThreadState *tstate, PyFunctionObject *func,
                PyObject* const* args, size_t argcount,
                PyObject *kwnames)
 {
+    if (PyObject_CheckAccess((PyObject *)func) == NULL) {
+        return NULL;
+    }
     size_t total_args = argcount;
     if (kwnames) {
+        if (PyObject_CheckAccess(kwnames) == NULL) {
+            return NULL;
+        }
         total_args += PyTuple_GET_SIZE(kwnames);
+        for (Py_ssize_t i = 0; i < PyTuple_GET_SIZE(kwnames); i++) {
+            if (PyObject_CheckAccess(PyTuple_GET_ITEM(kwnames, i)) == NULL) {
+                return NULL;
+            }
+        }
+    }
+    // Native callers do not pass through the bytecode call-input checks.
+    // Validate before copying their references into a Python frame.
+    for (size_t i = 0; i < total_args; i++) {
+        if (PyObject_CheckAccess(args[i]) == NULL) {
+            return NULL;
+        }
     }
     _PyStackRef stack_array[8] = {0};
     _PyStackRef *arguments;
@@ -2433,6 +2507,14 @@ _PyEval_UnpackIterableStackRef(PyThreadState *tstate, PyObject *v,
             "not enough values to unpack (expected at least %d, got %zd)",
             argcnt + argcntafter, argcnt + ll);
         goto Error;
+    }
+
+    /* Validate all tail values before moving any out of the temporary list.
+       On failure its stack reference still owns every element. */
+    for (j = argcntafter; j > 0; j--) {
+        if (PyObject_CheckAccess(PyList_GET_ITEM(l, ll - j)) == NULL) {
+            goto Error;
+        }
     }
 
     /* Pop the "after-variable" args off the list. */
@@ -3613,14 +3695,14 @@ _PyEval_GetANext(PyObject *aiter)
     PyObject *next_iter = NULL;
     PyTypeObject *type = Py_TYPE(aiter);
     if (PyAsyncGen_CheckExact(aiter)) {
-        return type->tp_as_async->am_anext(aiter);
+        return _PyObject_CheckAccessNullable(type->tp_as_async->am_anext(aiter));
     }
     if (type->tp_as_async != NULL){
         getter = type->tp_as_async->am_anext;
     }
 
     if (getter != NULL) {
-        next_iter = (*getter)(aiter);
+        next_iter = _PyObject_CheckAccessNullable((*getter)(aiter));
         if (next_iter == NULL) {
             return NULL;
         }
@@ -3634,7 +3716,9 @@ _PyEval_GetANext(PyObject *aiter)
     }
 
     PyObject *awaitable = _PyCoro_GetAwaitableIter(next_iter);
-    if (awaitable == NULL) {
+    if (awaitable == NULL &&
+        !PyErr_ExceptionMatches(PyExc_IllegalThreadAccessException) &&
+        !PyErr_ExceptionMatches(PyExc_UnprotectedAccessException)) {
         _PyErr_FormatFromCause(
             PyExc_TypeError,
             "'async for' received an invalid object "
@@ -3648,7 +3732,8 @@ _PyEval_GetANext(PyObject *aiter)
 void
 _PyEval_LoadGlobalStackRef(PyObject *globals, PyObject *builtins, PyObject *name, _PyStackRef *writeto)
 {
-    if (PyAnyDict_CheckExact(globals) && PyAnyDict_CheckExact(builtins)) {
+    if ((PyAnyDict_CheckExact(globals) || PySynchronizedDict_CheckExact(globals)) &&
+        (PyAnyDict_CheckExact(builtins) || PySynchronizedDict_CheckExact(builtins))) {
         _PyDict_LoadGlobalStackRef((PyDictObject *)globals,
                                     (PyDictObject *)builtins,
                                     name, writeto);
@@ -3709,8 +3794,11 @@ _PyEval_GetAwaitable(PyObject *iterable, int oparg)
     PyObject *iter = _PyCoro_GetAwaitableIter(iterable);
 
     if (iter == NULL) {
-        _PyEval_FormatAwaitableError(PyThreadState_GET(),
-            Py_TYPE(iterable), oparg);
+        if (!PyErr_ExceptionMatches(PyExc_IllegalThreadAccessException) &&
+            !PyErr_ExceptionMatches(PyExc_UnprotectedAccessException)) {
+            _PyEval_FormatAwaitableError(PyThreadState_GET(),
+                Py_TYPE(iterable), oparg);
+        }
     }
     else if (PyCoro_CheckExact(iter)) {
         PyCoroObject *coro = (PyCoroObject *)iter;
@@ -3774,6 +3862,10 @@ _PyStackRef _PyForIter_VirtualIteratorNext(PyThreadState* tstate, _PyInterpreter
             return i < 0 ? PyStackRef_ERROR : PyStackRef_NULL;
         }
         *index_ptr = PyStackRef_TagInt(i);
+        next = _PyObject_CheckAccessNullable(next);
+        if (next == NULL) {
+            return PyStackRef_ERROR;
+        }
         return PyStackRef_FromPyObjectSteal(next);
     }
     PyObject *next = (*Py_TYPE(iter_o)->tp_iternext)(iter_o);
@@ -3788,6 +3880,10 @@ _PyStackRef _PyForIter_VirtualIteratorNext(PyThreadState* tstate, _PyInterpreter
             }
         }
         return PyStackRef_NULL;
+    }
+    next = _PyObject_CheckAccessNullable(next);
+    if (next == NULL) {
+        return PyStackRef_ERROR;
     }
     return PyStackRef_FromPyObjectSteal(next);
 }

@@ -294,8 +294,44 @@ frozendict_new(PyObject *self, PyObject *obj)
     return PyFrozenDict_New(obj);
 }
 
+static PyObject *
+frozendict_tuple_cycle(PyObject *self, PyObject *args)
+{
+    PyObject *key, *payload;
+    if (!PyArg_ParseTuple(args, "OO", &key, &payload)) {
+        return NULL;
+    }
+    /* Neither tuple nor the payload needs a tp_clear that can break this
+       cycle.  The frozendict's tp_clear must release its values. */
+    PyObject *tuple = PyTuple_New(2);
+    if (tuple == NULL) {
+        return NULL;
+    }
+    PyTuple_SET_ITEM(tuple, 1, Py_NewRef(payload));
+    PyObject *dict = Py_BuildValue("{O:O}", key, tuple);
+    if (dict == NULL) {
+        Py_DECREF(tuple);
+        return NULL;
+    }
+    PyObject *frozen = PyFrozenDict_New(dict);
+    Py_DECREF(dict);
+    if (frozen != NULL) {
+        /* Finish constructing the tuple before publishing the cycle. */
+        PyTuple_SET_ITEM(tuple, 0, Py_NewRef(frozen));
+    }
+    Py_DECREF(tuple);
+    return frozen;
+}
+
+
+static PyObject *
+synchronizeddict_new(PyObject *self, PyObject *Py_UNUSED(ignored))
+{
+    return PySynchronizedDict_New();
+}
 
 static PyMethodDef test_methods[] = {
+    {"synchronizeddict_new", synchronizeddict_new, METH_NOARGS},
     {"dict_containsstring", dict_containsstring, METH_VARARGS},
     {"dict_getitemref", dict_getitemref, METH_VARARGS},
     {"dict_getitemstringref", dict_getitemstringref, METH_VARARGS},
@@ -311,6 +347,7 @@ static PyMethodDef test_methods[] = {
     {"anydict_check", anydict_check, METH_O},
     {"anydict_checkexact", anydict_checkexact, METH_O},
     {"frozendict_new", frozendict_new, METH_O},
+    {"frozendict_tuple_cycle", frozendict_tuple_cycle, METH_VARARGS},
     {NULL},
 };
 

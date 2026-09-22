@@ -7,7 +7,7 @@ C, not for instances of user-defined classes.
 __all__ = ["pickle", "constructor",
            "add_extension", "remove_extension", "clear_extension_cache"]
 
-dispatch_table = {}
+dispatch_table = SynchronizedDict()
 
 def pickle(ob_type, pickle_function, constructor_ob=None):
     if not callable(pickle_function):
@@ -220,3 +220,5 @@ def clear_extension_cache():
 #   256   Inf   Inf  Reserved for future assignment
 
 # Extension codes are assigned by the Python Software Foundation.
+
+__module__.synchronize()

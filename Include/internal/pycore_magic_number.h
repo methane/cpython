@@ -304,6 +304,9 @@ Known values:
     Python 3.16a1 3704 (Replace DELETE_ATTR with PUSH_NULL; STORE_ATTR)
     Python 3.16a1 3705 (Add INTRINSIC_ADD_CONDITIONAL_ANNOTATION)
 
+    Python 3.16a1 3706 (PEP 805 checked with-scope local loads)
+    Python 3.16a1 3707 (PEP 805 checked borrowed local loads)
+
     Python 3.17 will start with 3750
 
     Please don't copy-paste the same pre-release tag for new entries above!!!
@@ -312,7 +315,7 @@ Known values:
 
 */
 
-#define PYC_MAGIC_NUMBER 3705
+#define PYC_MAGIC_NUMBER 3707
 /* This is equivalent to converting PYC_MAGIC_NUMBER to 2 bytes
    (little-endian) and then appending b'\r\n'. */
 #define PYC_MAGIC_NUMBER_TOKEN \

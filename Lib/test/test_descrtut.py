@@ -178,6 +178,7 @@ You can get the information from the list type:
      '__doc__',
      '__eq__',
      '__format__',
+     '__freeze__',
      '__ge__',
      '__getattribute__',
      '__getitem__',
@@ -202,6 +203,7 @@ You can get the information from the list type:
      '__rmul__',
      '__setattr__',
      '__setitem__',
+     '__shareable__',
      '__sizeof__',
      '__str__',
      '__subclasshook__',
@@ -215,7 +217,8 @@ You can get the information from the list type:
      'pop',
      'remove',
      'reverse',
-     'sort']
+     'sort',
+     'synchronize']
 
 The new introspection API gives more information than the old one:  in
 addition to the regular methods, it also shows the methods that are

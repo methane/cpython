@@ -2668,6 +2668,15 @@ _PyXI_Enter(_PyXI_session *session,
             PyInterpreterState *interp, PyObject *nsupdates,
             _PyXI_session_result *result)
 {
+    if (_PyThreadState_GET()->debugger_stop_depth != 0 &&
+        _PyThreadState_GET()->interp != interp) {
+        PyErr_SetString(PyExc_RuntimeError,
+                        "cannot switch interpreters during a debugger world pause");
+        if (result != NULL) {
+            result->errcode = _PyXI_ERR_UNCAUGHT_EXCEPTION;
+        }
+        return -1;
+    }
 #ifndef NDEBUG
     PyThreadState *tstate = _PyThreadState_GET();  // Only used for asserts
 #endif
@@ -3264,6 +3273,11 @@ PyInterpreterState *
 _PyXI_NewInterpreter(PyInterpreterConfig *config, long *maybe_whence,
                      PyThreadState **p_tstate, PyThreadState **p_save_tstate)
 {
+    if (_PyThreadState_GET()->debugger_stop_depth != 0) {
+        PyErr_SetString(PyExc_RuntimeError,
+                        "cannot create an interpreter during a debugger world pause");
+        return NULL;
+    }
     PyThreadState *save_tstate = PyThreadState_Swap(NULL);
     assert(save_tstate != NULL);
 

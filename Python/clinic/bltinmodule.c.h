@@ -1501,4 +1501,15 @@ builtin_issubclass(PyObject *module, PyObject *const *args, Py_ssize_t nargs)
 exit:
     return return_value;
 }
-/*[clinic end generated code: output=b56739f2e13f616a input=a9049054013a1b77]*/
+
+PyDoc_STRVAR(builtin_freeze__doc__,
+"freeze($module, obj, /)\n"
+"--\n"
+"\n"
+"Make an object immutable by calling its __freeze__ method.\n"
+"\n"
+"Freezing is shallow: objects referenced by obj are not frozen.");
+
+#define BUILTIN_FREEZE_METHODDEF    \
+    {"freeze", (PyCFunction)builtin_freeze, METH_O, builtin_freeze__doc__},
+/*[clinic end generated code: output=5e0ba8071bf9ca6b input=a9049054013a1b77]*/

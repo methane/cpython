@@ -172,6 +172,11 @@ Context variable functions:
 
    Except for ``NULL``, the function returns a new reference.
 
+   The selected value is checked for access by the calling thread group.
+   If access is prohibited, this function sets
+   :exc:`IllegalThreadAccessException`, sets ``*value`` to ``NULL``, and
+   returns ``-1``. This also applies to default values.
+
 .. c:function:: PyObject *PyContextVar_Set(PyObject *var, PyObject *value)
 
    Set the value of *var* to *value* in the current context.  Returns

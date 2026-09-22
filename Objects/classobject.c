@@ -79,6 +79,13 @@ PyMethod_New(PyObject *func, PyObject *self)
     im->im_func = Py_NewRef(func);
     im->im_self = Py_NewRef(self);
     im->vectorcall = method_vectorcall;
+    uint8_t state = _Py_atomic_load_uint8(&self->ob_shareable);
+    if (state == _Py_SHAREABLE_PROTECTED ||
+        (state == _Py_SHAREABLE_SYNCHRONIZED &&
+         _Py_atomic_load_uint8(&func->ob_shareable) >= _Py_SHAREABLE_SYNCHRONIZED))
+    {
+        _PyObject_InheritShareable((PyObject *)im, self);
+    }
     _PyObject_GC_TRACK(im);
     return (PyObject *)im;
 }

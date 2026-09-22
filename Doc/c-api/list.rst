@@ -24,6 +24,32 @@ List Objects
    Return true if *p* is a list object or an instance of a subtype of the list
    type.  This function always succeeds.
 
+.. c:var:: PyTypeObject PySynchronizedList_Type
+
+   The type of :class:`SynchronizedList`. It is a subtype of
+   :c:data:`PyList_Type` and uses the :c:type:`PyListObject` layout.
+   The list C API accepts its instances. :c:func:`PyList_Check` returns true
+   for these instances; :c:func:`PyList_CheckExact` returns false.
+
+   .. versionadded:: 3.16
+
+.. c:function:: int PySynchronizedList_Check(PyObject *p)
+               int PySynchronizedList_CheckExact(PyObject *p)
+
+   Return true if *p* is a synchronized list. The exact variant checks that
+   its type is :c:data:`PySynchronizedList_Type`.
+
+   .. versionadded:: 3.16
+
+.. c:function:: PyObject *PySynchronizedList_New(Py_ssize_t size)
+
+   Return a new synchronized list of length *size*, or ``NULL`` on failure.
+   As with :c:func:`PyList_New`, its items are initially ``NULL`` and must all
+   be initialized before exposing the list to Python code. The new list's
+   shareable state is ``SYNCHRONIZED``.
+
+   .. versionadded:: 3.16
+
 
 .. c:function:: int PyList_CheckExact(PyObject *p)
 
@@ -67,6 +93,11 @@ List Objects
    return ``NULL`` and set an :exc:`IndexError` exception.
 
    .. versionadded:: 3.13
+
+   .. versionchanged:: 3.16
+      Validates access to the returned element. If it is local to another
+      ThreadGroup, returns ``NULL`` with :exc:`IllegalThreadAccessException`.
+      The list retains its reference to the element.
 
 
 .. c:function:: PyObject* PyList_GetItem(PyObject *list, Py_ssize_t index)

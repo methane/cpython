@@ -133,6 +133,29 @@ class ImportTests(unittest.TestCase):
         self.assertRaises(UnicodeDecodeError, importmodule, b'\xff')
         # CRASHES importmodule(NULL)
 
+    def test_import_custom_hook(self):
+        calls = []
+        def hook(*args):
+            calls.append(args)
+            return sys
+        namespace = {'__builtins__': {'__import__': hook},
+                     'import_': _testlimitedcapi.PyImport_Import}
+        exec("result = import_('sys')", namespace)
+        self.assertIs(namespace['result'], sys)
+        self.assertEqual(len(calls), 1)
+        name, globals_, locals_, fromlist, level = calls[0]
+        self.assertEqual(name, 'sys')
+        self.assertIs(globals_, namespace)
+        self.assertIs(locals_, namespace)
+        self.assertEqual(fromlist, [])
+        self.assertEqual(level, 0)
+
+        def failing_hook(*args):
+            raise LookupError('custom import error')
+        namespace['__builtins__']['__import__'] = failing_hook
+        with self.assertRaisesRegex(LookupError, 'custom import error'):
+            exec("import_('sys')", namespace)
+
     def test_importmodulenoblock(self):
         # Test deprecated (stable ABI only) PyImport_ImportModuleNoBlock()
         importmodulenoblock = _testlimitedcapi.PyImport_ImportModuleNoBlock

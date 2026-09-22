@@ -53,7 +53,9 @@ class TestRlcompleter(unittest.TestCase):
         # test with builtins namespace
         self.assertEqual(self.stdcompleter.attr_matches('str.s'),
                          ['str.{}('.format(x) for x in dir(str)
-                          if x.startswith('s')])
+                          if x.startswith('s')] +
+                         ['str.synchronize(' if MISSING_C_DOCSTRINGS
+                          else 'str.synchronize()'])
         self.assertEqual(self.stdcompleter.attr_matches('tuple.foospamegg'), [])
 
         def create_expected_for_none():
@@ -68,7 +70,7 @@ class TestRlcompleter(unittest.TestCase):
             for x in dir(None):
                 if x in parentheses:
                     items.add(f'None.{x}()')
-                elif x == '__doc__':
+                elif x in ('__doc__', '__shareable__'):
                     items.add(f'None.{x}')
                 else:
                     items.add(f'None.{x}(')
@@ -84,7 +86,9 @@ class TestRlcompleter(unittest.TestCase):
                          ['CompleteMe.spam'])
         self.assertEqual(self.completer.attr_matches('Completeme.egg'), [])
         self.assertEqual(self.completer.attr_matches('CompleteMe.'),
-                         ['CompleteMe.mro()', 'CompleteMe.spam'])
+                         ['CompleteMe.mro()', 'CompleteMe.spam',
+                          'CompleteMe.synchronize(' if MISSING_C_DOCSTRINGS
+                          else 'CompleteMe.synchronize()'])
         self.assertEqual(self.completer.attr_matches('CompleteMe._'),
                          ['CompleteMe._ham'])
         matches = self.completer.attr_matches('CompleteMe.__')
@@ -98,7 +102,9 @@ class TestRlcompleter(unittest.TestCase):
                              ['CompleteMe.me.me.spam'])
             self.assertEqual(self.completer.attr_matches('egg.s'),
                              ['egg.{}('.format(x) for x in dir(str)
-                              if x.startswith('s')])
+                              if x.startswith('s')] +
+                             ['egg.synchronize(' if MISSING_C_DOCSTRINGS
+                              else 'egg.synchronize()'])
 
     def test_excessive_getattr(self):
         """Ensure getattr() is invoked no more than once per attribute"""

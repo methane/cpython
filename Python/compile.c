@@ -817,6 +817,18 @@ _PyCompile_TopFBlock(compiler *c)
 }
 
 bool
+_PyCompile_InWith(compiler *c)
+{
+    for (int i = 0; i < c->u->u_nfblocks; i++) {
+        enum _PyCompile_FBlockType type = c->u->u_fblock[i].fb_type;
+        if (type == COMPILE_FBLOCK_WITH || type == COMPILE_FBLOCK_ASYNC_WITH) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool
 _PyCompile_InExceptionHandler(compiler *c)
 {
     for (Py_ssize_t i = 0; i < c->u->u_nfblocks; i++) {

@@ -586,7 +586,79 @@ pysentinel_checkexact(PyObject *self, PyObject *obj)
 }
 
 
+/* Deliberately unchecked slot for testing the public comparison boundary. */
+static PyObject *
+native_comparison_result(PyObject *self, PyObject *other, int op)
+{
+    if (PyTuple_GET_SIZE(self) != 1) {
+        PyErr_SetString(PyExc_ValueError, "expected one comparison result");
+        return NULL;
+    }
+    return Py_NewRef(PyTuple_GET_ITEM(self, 0));
+}
+
+static PyType_Slot native_comparison_slots[] = {
+    {Py_tp_richcompare, native_comparison_result},
+    {0, NULL}
+};
+
+static PyType_Spec native_comparison_spec = {
+    .name = "_testcapi.NativeRichCompareResult",
+    .flags = Py_TPFLAGS_DEFAULT,
+    .slots = native_comparison_slots,
+};
+
+static PyObject *
+object_richcompare(PyObject *self, PyObject *args)
+{
+    PyObject *left, *right;
+    int op;
+    if (!PyArg_ParseTuple(args, "OOi", &left, &right, &op)) {
+        return NULL;
+    }
+    if (op < Py_LT || op > Py_GE) {
+        PyErr_SetString(PyExc_ValueError, "invalid comparison operator");
+        return NULL;
+    }
+    return PyObject_RichCompare(left, right, op);
+}
+
+static PyObject *
+object_richcompare_in_tuple(PyObject *self, PyObject *args)
+{
+    // Wrap before returning through the generic native-call result check.
+    PyObject *result = object_richcompare(self, args);
+    if (result == NULL) {
+        return NULL;
+    }
+    PyObject *holder = PyTuple_Pack(1, result);
+    Py_DECREF(result);
+    return holder;
+}
+
+static PyObject *
+object_richcomparebool(PyObject *self, PyObject *args)
+{
+    PyObject *left, *right;
+    int op;
+    if (!PyArg_ParseTuple(args, "OOi", &left, &right, &op)) {
+        return NULL;
+    }
+    if (op < Py_LT || op > Py_GE) {
+        PyErr_SetString(PyExc_ValueError, "invalid comparison operator");
+        return NULL;
+    }
+    int result = PyObject_RichCompareBool(left, right, op);
+    if (result < 0) {
+        return NULL;
+    }
+    return PyLong_FromLong(result);
+}
+
 static PyMethodDef test_methods[] = {
+    {"object_richcompare", object_richcompare, METH_VARARGS},
+    {"object_richcompare_in_tuple", object_richcompare_in_tuple, METH_VARARGS},
+    {"object_richcomparebool", object_richcomparebool, METH_VARARGS},
     {"call_pyobject_print", call_pyobject_print, METH_VARARGS},
     {"pyobject_print_null", pyobject_print_null, METH_O},
     {"pyobject_print_noref_object", pyobject_print_noref_object, METH_O},
@@ -624,5 +696,19 @@ static PyMethodDef test_methods[] = {
 int
 _PyTestCapi_Init_Object(PyObject *m)
 {
-    return PyModule_AddFunctions(m, test_methods);
+    if (PyModule_AddFunctions(m, test_methods) < 0) {
+        return -1;
+    }
+    PyObject *bases = PyTuple_Pack(1, &PyTuple_Type);
+    if (bases == NULL) {
+        return -1;
+    }
+    PyObject *type = PyType_FromSpecWithBases(&native_comparison_spec, bases);
+    Py_DECREF(bases);
+    if (type == NULL) {
+        return -1;
+    }
+    int result = PyModule_AddObjectRef(m, "NativeRichCompareResult", type);
+    Py_DECREF(type);
+    return result;
 }

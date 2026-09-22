@@ -7,7 +7,7 @@ copied into the ``builtins`` module.
 
 __all__ = ['anext']
 
-_NOT_GIVEN = sentinel("_NOT_GIVEN")
+_NOT_GIVEN = freeze(sentinel("_NOT_GIVEN"))
 
 
 def anext(async_iterator, default=_NOT_GIVEN, /):
@@ -16,7 +16,7 @@ def anext(async_iterator, default=_NOT_GIVEN, /):
     If default is given and the async iterator is exhausted,
     it is returned instead of raising StopAsyncIteration.
     """
-    cls = type(async_iterator)
+    cls = type(_check_access(async_iterator))
     try:
         # Looked up on the type, like the C slot am_anext.
         anext_method = cls.__anext__
@@ -24,7 +24,7 @@ def anext(async_iterator, default=_NOT_GIVEN, /):
         raise TypeError(
             f"{cls.__name__!r} object is not an async iterator"
         ) from None
-    awaitable = anext_method(async_iterator)
+    awaitable = _check_access(anext_method(async_iterator))
     if default is _NOT_GIVEN:
         return awaitable
     return _anext_with_default(awaitable, default)

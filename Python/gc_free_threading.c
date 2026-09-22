@@ -1592,6 +1592,14 @@ find_weakref_callbacks(struct collection_state *state)
             worklist_push(&state->wrcb_to_call, (PyObject *)wr);
         }
     }
+    // The weakref list is newest first, but pushing onto the worklist reverses
+    // it. Restore registration order before resuming the world so callbacks
+    // for each referent run from most recently registered to oldest.
+    struct worklist callbacks = state->wrcb_to_call;
+    state->wrcb_to_call.head = 0;
+    while ((op = worklist_pop(&callbacks)) != NULL) {
+        worklist_push(&state->wrcb_to_call, op);
+    }
 }
 
 // Clear weakrefs to objects in the unreachable set.  See comments
@@ -1639,15 +1647,7 @@ call_weakref_callbacks(struct collection_state *state)
         PyObject *callback = wr->wr_callback;
         _PyObject_ASSERT(op, callback != NULL);
 
-        /* copy-paste of weakrefobject.c's handle_callback() */
-        PyObject *temp = PyObject_CallOneArg(callback, (PyObject *)wr);
-        if (temp == NULL) {
-            PyErr_FormatUnraisable("Exception ignored while "
-                                   "calling weakref callback %R", callback);
-        }
-        else {
-            Py_DECREF(temp);
-        }
+        _PyWeakref_CallCallback(wr, callback);
 
         Py_DECREF(op);  // drop worklist reference
     }
@@ -1715,7 +1715,7 @@ finalize_garbage(struct collection_state *state)
             destructor finalize = Py_TYPE(op)->tp_finalize;
             if (finalize != NULL) {
                 _PyGC_SET_FINALIZED(op);
-                finalize(op);
+                _PyObject_RunFinalizer(op);
                 assert(!_PyErr_Occurred(_PyThreadState_GET()));
             }
         }

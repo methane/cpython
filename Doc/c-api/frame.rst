@@ -49,8 +49,8 @@ See also :ref:`Reflection <reflection>`.
    Get the *frame* next outer frame.
 
    Return a :term:`strong reference`, or ``NULL`` if *frame* has no outer
-   frame.
-   This raises no exceptions.
+   frame. Return ``NULL`` with an exception set if the frame or its outer
+   frame cannot be accessed by the current thread.
 
    .. versionadded:: 3.9
 
@@ -59,7 +59,8 @@ See also :ref:`Reflection <reflection>`.
 
    Get the *frame*'s :attr:`~frame.f_builtins` attribute.
 
-   Return a :term:`strong reference`. The result cannot be ``NULL``.
+   Return a :term:`strong reference`, or ``NULL`` with an exception set if
+   the frame or its builtins cannot be accessed by the current thread.
 
    .. versionadded:: 3.11
 
@@ -70,7 +71,8 @@ See also :ref:`Reflection <reflection>`.
 
    Return a :term:`strong reference`.
 
-   The result (frame code) cannot be ``NULL``.
+   Return ``NULL`` with an exception set if *frame* cannot be accessed by the
+   current thread.
 
    .. versionadded:: 3.9
 
@@ -79,7 +81,8 @@ See also :ref:`Reflection <reflection>`.
 
    Get the generator, coroutine, or async generator that owns this frame,
    or ``NULL`` if this frame is not owned by a generator.
-   Does not raise an exception, even if the return value is ``NULL``.
+   Return ``NULL`` with an exception set if the frame or its generator cannot
+   be accessed by the current thread.
 
    Return a :term:`strong reference`, or ``NULL``.
 
@@ -90,7 +93,8 @@ See also :ref:`Reflection <reflection>`.
 
    Get the *frame*'s :attr:`~frame.f_globals` attribute.
 
-   Return a :term:`strong reference`. The result cannot be ``NULL``.
+   Return a :term:`strong reference`, or ``NULL`` with an exception set if
+   the frame or its globals cannot be accessed by the current thread.
 
    .. versionadded:: 3.11
 
@@ -99,7 +103,8 @@ See also :ref:`Reflection <reflection>`.
 
    Get the *frame*'s :attr:`~frame.f_lasti` attribute.
 
-   Returns -1 if ``frame.f_lasti`` is ``None``.
+   Return -1 if no instruction position is available. Return -1 with an
+   exception set if the frame cannot be accessed by the current thread.
 
    .. versionadded:: 3.11
 
@@ -113,6 +118,8 @@ See also :ref:`Reflection <reflection>`.
    * Raise an exception and return ``NULL`` on error.
 
    *name* type must be a :class:`str`.
+   The frame, name, and retrieved value must be accessible by the current
+   thread. An access violation returns ``NULL`` with an exception set.
 
    .. versionadded:: 3.12
 
@@ -134,7 +141,9 @@ See also :ref:`Reflection <reflection>`.
    the mapping representing the frame locals directly (as described for
    :func:`locals`).
 
-   Return a :term:`strong reference`.
+   Return a :term:`strong reference`, or ``NULL`` with an exception set on
+   failure, including when the frame or its locals cannot be accessed by the
+   current thread.
 
    .. versionadded:: 3.11
 
@@ -145,6 +154,8 @@ See also :ref:`Reflection <reflection>`.
 .. c:function:: int PyFrame_GetLineNumber(PyFrameObject *frame)
 
    Return the line number that *frame* is currently executing.
+   Return a negative value if no line number is available. Return -1 with an
+   exception set if the frame cannot be accessed by the current thread.
 
 
 Frame locals proxies

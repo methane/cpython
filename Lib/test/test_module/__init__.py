@@ -1,8 +1,9 @@
 # Test the module type
 import importlib.machinery
+import importlib.util
 import unittest
 import weakref
-from test.support import gc_collect
+from test.support import Py_GIL_DISABLED, gc_collect
 from test.support import import_helper
 from test.support.script_helper import assert_python_ok
 
@@ -19,6 +20,40 @@ class BareLoader:
 
 
 class ModuleTests(unittest.TestCase):
+    def test_module_self_reference(self):
+        module = ModuleType('self_reference')
+        self.assertIs(module.__module__, module)
+        exec('captured = __module__', module.__dict__)
+        self.assertIs(module.captured, module)
+        self.assertIs(sys.__module__, sys)
+        self.assertIs(importlib.machinery.__module__, importlib.machinery)
+
+    def test_module_self_reference_reinit(self):
+        module = ModuleType('self_reference')
+        namespace = module.__dict__
+        module.__module__ = None
+        module.__init__('renamed')
+        self.assertIs(module.__module__, module)
+        self.assertIs(module.__dict__, namespace)
+
+    def test_cached_extension_self_reference(self):
+        if importlib.util.find_spec('_testsinglephase') is None:
+            self.skipTest('requires _testsinglephase')
+        # This extension requires the GIL. Exercise the extension-cache path
+        # in the main interpreter of a fresh process in either build.
+        args = ('-X', 'gil=1') if Py_GIL_DISABLED else ()
+        assert_python_ok(*args, '-c', '''if True:
+            import importlib
+            import sys
+            first = importlib.import_module('_testsinglephase')
+            assert first.__module__ is first
+            del sys.modules['_testsinglephase']
+            second = importlib.import_module('_testsinglephase')
+            assert second is not first
+            assert second.__module__ is second
+            assert first.__module__ is first
+        ''')
+
     def test_uninitialized(self):
         # An uninitialized module has no __dict__ or __name__,
         # and __doc__ is None
@@ -58,7 +93,7 @@ class ModuleTests(unittest.TestCase):
         self.assertIs(foo.__spec__, None)
         self.assertEqual(foo.__dict__, {"__name__": "foo", "__doc__": None,
                                         "__loader__": None, "__package__": None,
-                                        "__spec__": None})
+                                        "__spec__": None, "__module__": foo})
 
     def test_ascii_docstring(self):
         # ASCII docstring
@@ -68,7 +103,7 @@ class ModuleTests(unittest.TestCase):
         self.assertEqual(foo.__dict__,
                          {"__name__": "foo", "__doc__": "foodoc",
                           "__loader__": None, "__package__": None,
-                          "__spec__": None})
+                          "__spec__": None, "__module__": foo})
 
     def test_unicode_docstring(self):
         # Unicode docstring
@@ -78,7 +113,7 @@ class ModuleTests(unittest.TestCase):
         self.assertEqual(foo.__dict__,
                          {"__name__": "foo", "__doc__": "foodoc\u1234",
                           "__loader__": None, "__package__": None,
-                          "__spec__": None})
+                          "__spec__": None, "__module__": foo})
 
     def test_reinit(self):
         # Reinitialization should not replace the __dict__
@@ -91,7 +126,8 @@ class ModuleTests(unittest.TestCase):
         self.assertEqual(foo.bar, 42)
         self.assertEqual(foo.__dict__,
               {"__name__": "foo", "__doc__": "foodoc", "bar": 42,
-               "__loader__": None, "__package__": None, "__spec__": None})
+               "__loader__": None, "__package__": None, "__spec__": None,
+               "__module__": foo})
         self.assertTrue(foo.__dict__ is d)
 
     def test_dont_clear_dict(self):

@@ -585,7 +585,6 @@ NON_ESCAPING_FUNCTIONS = (
     "PyCFunction_GET_SELF",
     "PyCell_GetRef",
     "PyCell_New",
-    "PyCell_SwapTakeRef",
     "PyExceptionInstance_Class",
     "PyException_GetCause",
     "PyException_GetContext",

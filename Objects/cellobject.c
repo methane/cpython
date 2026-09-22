@@ -2,6 +2,7 @@
 
 #include "Python.h"
 #include "pycore_cell.h"          // PyCell_GetRef()
+#include "pycore_function.h"      // _PyFunction_CellBecameWritable()
 #include "pycore_modsupport.h"    // _PyArg_NoKeywords()
 #include "pycore_object.h"
 
@@ -16,6 +17,7 @@ PyCell_New(PyObject *obj)
     if (op == NULL)
         return NULL;
     op->ob_ref = Py_XNewRef(obj);
+    op->ob_readonly_binding = 0;
 
     _PyObject_GC_TRACK(op);
     return (PyObject *)op;
@@ -52,6 +54,16 @@ exit:
     return return_value;
 }
 
+void
+_PyCell_NotifyMutation(PyObject *op)
+{
+    PyCellObject *cell = (PyCellObject *)op;
+    if (_Py_atomic_load_uint8(&cell->ob_readonly_binding) &&
+        FT_ATOMIC_LOAD_PTR_ACQUIRE(cell->ob_ref) != NULL) {
+        _PyFunction_CellBecameWritable(cell);
+    }
+}
+
 PyObject *
 PyCell_Get(PyObject *op)
 {
@@ -59,7 +71,10 @@ PyCell_Get(PyObject *op)
         PyErr_BadInternalCall();
         return NULL;
     }
-    return PyCell_GetRef((PyCellObject *)op);
+    if (PyObject_CheckAccess(op) == NULL) {
+        return NULL;
+    }
+    return _PyObject_CheckAccessNullable(PyCell_GetRef((PyCellObject *)op));
 }
 
 int
@@ -67,6 +82,9 @@ PyCell_Set(PyObject *op, PyObject *value)
 {
     if (!PyCell_Check(op)) {
         PyErr_BadInternalCall();
+        return -1;
+    }
+    if (PyObject_CheckAccess(op) == NULL || _PyObject_CheckMutable(op) < 0) {
         return -1;
     }
     PyCell_SetTakeRef((PyCellObject *)op, Py_XNewRef(value));
@@ -103,8 +121,15 @@ cell_richcompare(PyObject *a, PyObject *b, int op)
     if (!PyCell_Check(a) || !PyCell_Check(b)) {
         Py_RETURN_NOTIMPLEMENTED;
     }
-    PyObject *a_ref = PyCell_GetRef((PyCellObject *)a);
-    PyObject *b_ref = PyCell_GetRef((PyCellObject *)b);
+    PyObject *a_ref = PyCell_Get(a);
+    if (a_ref == NULL && PyErr_Occurred()) {
+        return NULL;
+    }
+    PyObject *b_ref = PyCell_Get(b);
+    if (b_ref == NULL && PyErr_Occurred()) {
+        Py_XDECREF(a_ref);
+        return NULL;
+    }
 
     /* compare cells by contents; empty cells come before anything else */
     PyObject *res = cell_compare_impl(a_ref, b_ref, op);
@@ -152,16 +177,13 @@ cell_get_contents(PyObject *self, void *closure)
         PyErr_SetString(PyExc_ValueError, "Cell is empty");
         return NULL;
     }
-    return res;
+    return _PyObject_CheckAccessNullable(res);
 }
 
 static int
 cell_set_contents(PyObject *self, PyObject *obj, void *Py_UNUSED(ignored))
 {
-    PyCellObject *cell = _PyCell_CAST(self);
-    Py_XINCREF(obj);
-    PyCell_SetTakeRef((PyCellObject *)cell, obj);
-    return 0;
+    return PyCell_Set(self, obj);
 }
 
 static PyGetSetDef cell_getsetlist[] = {

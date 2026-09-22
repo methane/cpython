@@ -386,6 +386,20 @@ make_immutable_type_with_base(PyObject *self, PyObject *base)
 }
 
 static PyObject *
+make_type_with_extra(PyObject *self, PyObject *base)
+{
+    assert(PyType_Check(base));
+    PyType_Spec spec = {
+        .name = "_testcapi.SubclassWithExtra",
+        .basicsize = (int)((PyTypeObject *)base)->tp_basicsize + sizeof(void *),
+        .slots = empty_type_slots,
+        .flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE,
+    };
+    return PyType_FromSpecWithBases(&spec, base);
+}
+
+
+static PyObject *
 make_type_with_base(PyObject *self, PyObject *base)
 {
     assert(PyType_Check(base));
@@ -590,6 +604,7 @@ static PyMethodDef TestMethods[] = {
      METH_NOARGS},
     {"make_immutable_type_with_base", make_immutable_type_with_base, METH_O},
     {"make_type_with_base", make_type_with_base, METH_O},
+    {"make_type_with_extra", make_type_with_extra, METH_O},
     {"pyobject_getitemdata", pyobject_getitemdata, METH_O},
     {"create_type_with_token", create_type_with_token, METH_VARARGS},
     {"get_tp_token", get_tp_token, METH_O},

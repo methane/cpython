@@ -6,6 +6,7 @@
 #include "pycore_cell.h"          // PyCell_GetRef()
 #include "pycore_ceval.h"         // _PyEval_Vector()
 #include "pycore_compile.h"       // _PyAST_Compile()
+#include "pycore_dict.h"          // _PyDict_SynchronizeNamespace()
 #include "pycore_fileutils.h"     // _PyFile_Flush
 #include "pycore_floatobject.h"   // _PyFloat_ExactDealloc()
 #include "pycore_interp.h"        // _PyInterpreterState_GetConfig()
@@ -1776,7 +1777,7 @@ builtin_next(PyObject *self, PyObject *const *args, Py_ssize_t nargs)
 
     res = (*Py_TYPE(it)->tp_iternext)(it);
     if (res != NULL) {
-        return res;
+        return _PyObject_CheckAccessNullable(res);
     } else if (nargs > 1) {
         PyObject *def = args[1];
         if (PyErr_Occurred()) {
@@ -3418,6 +3419,42 @@ PyTypeObject PyZip_Type = {
 };
 
 
+/*[clinic input]
+freeze as builtin_freeze
+
+    obj: object
+    /
+
+Make an object immutable by calling its __freeze__ method.
+
+Freezing is shallow: objects referenced by obj are not frozen.
+[clinic start generated code]*/
+
+static PyObject *
+builtin_freeze(PyObject *module, PyObject *obj)
+/*[clinic end generated code: output=c02caad61e252698 input=fc3c43ccf4a6ae15]*/
+{
+    if (PyObject_CheckAccess(obj) == NULL) {
+        return NULL;
+    }
+    PyObject *name = PyUnicode_InternFromString("__freeze__");
+    if (name == NULL) {
+        return NULL;
+    }
+    PyObject *method = _PyObject_LookupSpecial(obj, name);
+    Py_DECREF(name);
+    if (method == NULL) {
+        if (!PyErr_Occurred()) {
+            PyErr_Format(PyExc_TypeError, "cannot freeze '%.100s' object",
+                         Py_TYPE(obj)->tp_name);
+        }
+        return NULL;
+    }
+    PyObject *result = PyObject_CallNoArgs(method);
+    Py_DECREF(method);
+    return result;
+}
+
 static PyMethodDef builtin_methods[] = {
     {"__build_class__", _PyCFunction_CAST(builtin___build_class__),
      METH_FASTCALL | METH_KEYWORDS, build_class_doc},
@@ -3438,6 +3475,7 @@ static PyMethodDef builtin_methods[] = {
     BUILTIN_EVAL_METHODDEF
     BUILTIN_EXEC_METHODDEF
     BUILTIN_FORMAT_METHODDEF
+    BUILTIN_FREEZE_METHODDEF
     {"getattr", _PyCFunction_CAST(builtin_getattr), METH_FASTCALL, getattr_doc},
     BUILTIN_GLOBALS_METHODDEF
     BUILTIN_HASATTR_METHODDEF
@@ -3499,6 +3537,19 @@ static struct PyModuleDef builtinsmodule = {
    the import system exists.  The names in its __all__ are copied into the
    builtins dict. */
 
+static PyObject *
+pybuiltin_check_access(PyObject *module, PyObject *obj)
+{
+    if (PyObject_CheckAccess(obj) == NULL) {
+        return NULL;
+    }
+    return Py_NewRef(obj);
+}
+
+static PyMethodDef pybuiltin_check_access_def = {
+    "_check_access", pybuiltin_check_access, METH_O, NULL
+};
+
 int
 _PyBuiltin_InitPythonFunctions(PyObject *dict)
 {
@@ -3511,6 +3562,23 @@ _PyBuiltin_InitPythonFunctions(PyObject *dict)
     }
     PyObject *mod = PyImport_AddModuleRef("_pybuiltins");
     if (mod == NULL) {
+        return -1;
+    }
+
+    // Keep this native boundary helper private to the bootstrap module.
+    // Python builtins can use it without importing an extension at startup.
+    PyObject *check_access = PyCFunction_New(&pybuiltin_check_access_def, mod);
+    if (check_access == NULL) {
+        Py_DECREF(mod);
+        return -1;
+    }
+    int err = PyObject_DeclareSynchronized(check_access);
+    if (err == 0) {
+        err = PyObject_SetAttrString(mod, "_check_access", check_access);
+    }
+    Py_DECREF(check_access);
+    if (err < 0) {
+        Py_DECREF(mod);
         return -1;
     }
 
@@ -3591,6 +3659,9 @@ _PyBuiltin_Init(PyInterpreterState *interp)
     SETBUILTIN("filter",                &PyFilter_Type);
     SETBUILTIN("float",                 &PyFloat_Type);
     SETBUILTIN("frozendict",            &PyFrozenDict_Type);
+    SETBUILTIN("SynchronizedDict",      &PySynchronizedDict_Type);
+    SETBUILTIN("SynchronizedList",      &PySynchronizedList_Type);
+    SETBUILTIN("SynchronizedSet",       &PySynchronizedSet_Type);
     SETBUILTIN("frozenset",             &PyFrozenSet_Type);
     SETBUILTIN("property",              &PyProperty_Type);
     SETBUILTIN("int",                   &PyLong_Type);
@@ -3615,6 +3686,24 @@ _PyBuiltin_Init(PyInterpreterState *interp)
     }
     Py_DECREF(debug);
 
+    // The interpreter's shared builtin namespace and native entry points are
+    // used by every ThreadGroup, including imports initiated through the C API.
+    Py_ssize_t pos = 0;
+    PyObject *value;
+    while (PyDict_Next(dict, &pos, NULL, &value)) {
+        if (PyCFunction_Check(value) &&
+            PyObject_DeclareSynchronized(value) < 0)
+        {
+            Py_DECREF(mod);
+            return NULL;
+        }
+    }
+    if (_PyDict_SynchronizeNamespace(dict) < 0 ||
+        PyObject_DeclareSynchronized(mod) < 0)
+    {
+        Py_DECREF(mod);
+        return NULL;
+    }
     return mod;
 #undef ADD_TO_ALL
 #undef SETBUILTIN

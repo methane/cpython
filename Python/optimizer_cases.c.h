@@ -39,6 +39,46 @@
             break;
         }
 
+        case _LOAD_FAST_MAYBE_UNPROTECTED: {
+            JitOptRef value;
+            value = GETLOCAL(oparg);
+            if (sym_is_null(value)) {
+                ctx->done = true;
+            }
+            assert(!PyJitRef_IsUnique(value));
+            CHECK_STACK_BOUNDS(1);
+            stack_pointer[0] = value;
+            stack_pointer += 1;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            break;
+        }
+
+        case _LOAD_FAST_BORROW_MAYBE_UNPROTECTED: {
+            JitOptRef value;
+            value = PyJitRef_Borrow(GETLOCAL(oparg));
+            if (sym_is_null(value)) {
+                ctx->done = true;
+            }
+            assert(!PyJitRef_IsUnique(value));
+            CHECK_STACK_BOUNDS(1);
+            stack_pointer[0] = value;
+            stack_pointer += 1;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            break;
+        }
+
+        case _LOAD_FAST_AND_CLEAR_CHECK: {
+            JitOptRef value;
+            value = GETLOCAL(oparg);
+            GETLOCAL(oparg) = sym_new_null(ctx);
+            assert(!PyJitRef_IsUnique(value));
+            CHECK_STACK_BOUNDS(1);
+            stack_pointer[0] = value;
+            stack_pointer += 1;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            break;
+        }
+
         case _LOAD_FAST: {
             JitOptRef value;
             value = GETLOCAL(oparg);
@@ -1605,7 +1645,7 @@
             ss = sub_st;
             PyObject *sub = sym_get_const(ctx, sub_st);
             if (sym_is_not_container(sub_st) &&
-                sym_matches_type(dict_st, &PyFrozenDict_Type)) {
+                frozendict_has_immutable_values(sym_get_const(ctx, dict_st))) {
                 if (
                     sym_is_safe_const(ctx, dict_st) &&
                     sym_is_safe_const(ctx, sub_st)
@@ -1623,6 +1663,7 @@
                     assert(Py_TYPE(dict)->tp_as_mapping->mp_subscript == _PyDict_Subscript);
                     STAT_INC(BINARY_OP, hit);
                     PyObject *res_o = _PyDict_Subscript(dict, sub);
+                    res_o = _PyObject_CheckAccessNullable(res_o);
                     if (res_o == NULL) {
                         JUMP_TO_LABEL(error);
                     }
@@ -1963,6 +2004,12 @@
             break;
         }
 
+        /* _CHECK_YIELD_ACCESS is not a viable micro-op for tier 2 */
+
+        case _GUARD_YIELD_ACCESS: {
+            break;
+        }
+
         case _YIELD_VALUE: {
             JitOptRef retval;
             JitOptRef value;
@@ -2042,6 +2089,10 @@
             CHECK_STACK_BOUNDS(-1 + oparg);
             stack_pointer += -1 + oparg;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            break;
+        }
+
+        case _CHECK_UNPACK_ACCESS: {
             break;
         }
 
@@ -2211,6 +2262,10 @@
             CHECK_STACK_BOUNDS((oparg & 1));
             stack_pointer += (oparg & 1);
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            break;
+        }
+
+        case _CHECK_GLOBAL_ACCESS: {
             break;
         }
 
@@ -2588,6 +2643,10 @@
             stack_pointer[-1] = attr;
             stack_pointer += (oparg&1);
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            break;
+        }
+
+        case _CHECK_ATTR_ACCESS: {
             break;
         }
 
@@ -3792,6 +3851,10 @@
             break;
         }
 
+        case _CHECK_ITER_ACCESS: {
+            break;
+        }
+
         case _ITER_CHECK_TUPLE: {
             JitOptRef iter;
             iter = stack_pointer[-2];
@@ -4021,6 +4084,29 @@
             stack_pointer[0] = self;
             stack_pointer += 1;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            break;
+        }
+
+        case _CHECK_CALL_INPUTS: {
+            break;
+        }
+
+        case _CHECK_CALL_KW_INPUTS: {
+            break;
+        }
+
+        case _CHECK_CALL_EX_INPUTS: {
+            break;
+        }
+
+        case _CHECK_CALL_ACCESS: {
+            JitOptRef value;
+            value = stack_pointer[-1];
+            PyObject *constant = sym_get_const(ctx, value);
+            if (constant != NULL &&
+                _Py_atomic_load_uint8(&constant->ob_shareable) == _Py_SHAREABLE_IMMUTABLE) {
+                REPLACE_OP(this_instr, _NOP, 0, 0);
+            }
             break;
         }
 

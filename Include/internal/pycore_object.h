@@ -18,6 +18,19 @@ extern "C" {
 
 #include <stdbool.h>              // bool
 
+extern uint32_t _PyObject_NewOwnerID(void);
+extern void _PyObject_RunFinalizer(PyObject *op);
+extern int _PyObject_HasDeferredCleanup(PyInterpreterState *interp);
+extern int _PyObject_RunDeferredCleanup(PyThreadState *tstate);
+extern void _PyObject_ClearDeferredCleanup(PyInterpreterState *interp);
+extern int _PyObject_CheckAccessThread(PyObject *op, PyThreadState *tstate);
+PyAPI_FUNC(int) _PyObject_CheckMutable(PyObject *op);
+extern void _PyObject_InheritShareable(PyObject *op, PyObject *container);
+/* Consume a new reference, returning it on success or decrefing it on error. */
+PyAPI_FUNC(PyObject *) _PyObject_CheckAccessNullable(PyObject *op);
+extern PyObject *_PyObject_GetShareable(PyObject *op, void *closure);
+extern int _PyObject_SetShareable(PyObject *op, PyObject *value, void *closure);
+
 
 // This value is added to `ob_ref_shared` for objects that use deferred
 // reference counting so that they are not immediately deallocated when the
@@ -77,7 +90,8 @@ PyAPI_FUNC(int) _PyObject_IsFreed(PyObject *);
         .ob_ref_local = _Py_IMMORTAL_REFCNT_LOCAL,  \
         .ob_flags = _Py_STATICALLY_ALLOCATED_FLAG,  \
         .ob_gc_bits = _PyGC_BITS_DEFERRED,          \
-        .ob_type = (type)                           \
+        .ob_type = (type),                          \
+        .ob_shareable = _Py_SHAREABLE_LOCAL,     \
     }
 #else
 #if SIZEOF_VOID_P > 4
@@ -85,13 +99,15 @@ PyAPI_FUNC(int) _PyObject_IsFreed(PyObject *);
     {                                     \
         .ob_refcnt = _Py_IMMORTAL_INITIAL_REFCNT,  \
         .ob_flags = _Py_STATIC_FLAG_BITS, \
-        .ob_type = (type)                 \
+        .ob_type = (type),                \
+        .ob_shareable = _Py_SHAREABLE_LOCAL, \
     }
 #else
 #define _PyObject_HEAD_INIT(type)         \
     {                                     \
         .ob_refcnt = _Py_STATIC_IMMORTAL_INITIAL_REFCNT, \
-        .ob_type = (type)                 \
+        .ob_type = (type),                \
+        .ob_shareable = _Py_SHAREABLE_LOCAL, \
     }
 #endif
 #endif

@@ -1124,6 +1124,11 @@ def get_call_func_closure(value):
 
 def call_func_exec_wrapper(script, ns):
     res = exec(script, ns, ns)
+    import builtins
+    # Check exec's injected namespace before returning serializable state.
+    # The real builtins dictionary contains its __module__ self-reference.
+    injected = ns.pop('__builtins__')
+    assert injected is builtins.__dict__
     return res, ns, id(ns)
 
 
@@ -1399,7 +1404,6 @@ class TestInterpreterCall(TestBase):
         expected = {'a': 7, 'b': 2, 'c': 49}
         res = interp.call(call_func_exec_wrapper, script, ns)
         obj, resns, resid = res
-        del resns['__builtins__']
         self.assertIsNone(obj)
         self.assertEqual(ns, {})
         self.assertEqual(resns, expected)
@@ -1790,13 +1794,15 @@ class TestInterpreterCall(TestBase):
             '__builtins__',
             '__doc__',
             '__loader__',
+            '__module__',
             '__name__',
             '__package__',
             '__spec__',
         ])
 
         values = {name: interp.call(eval, name)
-                  for name in names if name != '__builtins__'}
+                  for name in names if name not in ('__builtins__', '__module__')}
+        self.assertTrue(interp.call(eval, '__module__.__dict__ is globals()'))
         self.assertEqual(values, {
             '__name__': '__main__',
             '__doc__': None,

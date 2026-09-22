@@ -31,6 +31,20 @@ object_bytes(PyObject *self, PyObject *arg)
 }
 
 static PyObject *
+object_type(PyObject *self, PyObject *arg)
+{
+    NULLABLE(arg);
+    return PyObject_Type(arg);
+}
+
+static PyObject *
+object_size(PyObject *self, PyObject *arg)
+{
+    NULLABLE(arg);
+    RETURN_SIZE(PyObject_Size(arg));
+}
+
+static PyObject *
 object_getattr(PyObject *self, PyObject *args)
 {
     PyObject *obj, *attr_name;
@@ -408,6 +422,18 @@ sequence_getitem(PyObject *self, PyObject *args)
 }
 
 static PyObject *
+sequence_getslice(PyObject *self, PyObject *args)
+{
+    PyObject *seq;
+    Py_ssize_t start, stop;
+    if (!PyArg_ParseTuple(args, "Onn", &seq, &start, &stop)) {
+        return NULL;
+    }
+    NULLABLE(seq);
+    return PySequence_GetSlice(seq, start, stop);
+}
+
+static PyObject *
 sequence_setitem(PyObject *self, PyObject *args)
 {
     Py_ssize_t i;
@@ -534,6 +560,8 @@ static PyMethodDef test_methods[] = {
     {"object_ascii", object_ascii, METH_O},
     {"object_str", object_str, METH_O},
     {"object_bytes", object_bytes, METH_O},
+    {"object_type", object_type, METH_O},
+    {"object_size", object_size, METH_O},
 
     {"object_getattr", object_getattr, METH_VARARGS},
     {"object_getattrstring", object_getattrstring, METH_VARARGS},
@@ -571,6 +599,7 @@ static PyMethodDef test_methods[] = {
     {"sequence_inplaceconcat", sequence_inplaceconcat, METH_VARARGS},
     {"sequence_inplacerepeat", sequence_inplacerepeat, METH_VARARGS},
     {"sequence_getitem", sequence_getitem, METH_VARARGS},
+    {"sequence_getslice", sequence_getslice, METH_VARARGS},
     {"sequence_setitem", sequence_setitem, METH_VARARGS},
     {"sequence_delitem", sequence_delitem, METH_VARARGS},
     {"sequence_setslice", sequence_setslice, METH_VARARGS},

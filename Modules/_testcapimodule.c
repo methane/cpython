@@ -1759,6 +1759,34 @@ test_tstate_capi(PyObject *self, PyObject *Py_UNUSED(args))
     assert(PyFrame_Check(frame));
     Py_DECREF(frame);
 
+    // A fresh thread state has no executing frame. Its lifetime is owned by
+    // this test, including while GetFrame temporarily stops other threads.
+    PyThreadState *empty = PyThreadState_New(interp);
+    if (empty == NULL) {
+        return PyErr_NoMemory();
+    }
+    frame = PyThreadState_GetFrame(empty);
+    assert(frame == NULL);
+    assert(!PyErr_Occurred());
+
+    // The no-frame result must not consume the caller's existing exception.
+    PyErr_SetString(PyExc_ValueError, "existing frame inspection error");
+    PyObject *error = PyErr_GetRaisedException();
+    PyErr_SetRaisedException(Py_NewRef(error));
+    frame = PyThreadState_GetFrame(empty);
+    assert(frame == NULL);
+    PyObject *preserved = PyErr_GetRaisedException();
+    assert(preserved == error);
+    Py_XDECREF(preserved);
+    Py_DECREF(error);
+    // Heap reclamation during Clear must use the target's allocator state.
+    PyThreadState *previous = PyThreadState_Swap(empty);
+    assert(previous == tstate);
+    PyThreadState_Clear(empty);
+    previous = PyThreadState_Swap(tstate);
+    assert(previous == empty);
+    PyThreadState_Delete(empty);
+
     // PyThreadState_GetID()
     uint64_t id = PyThreadState_GetID(tstate);
     assert(id >= 1);
@@ -1774,6 +1802,17 @@ gen_get_code(PyObject *self, PyObject *gen)
         return NULL;
     }
     return (PyObject *)PyGen_GetCode((PyGenObject *)gen);
+}
+
+static PyObject *
+gen_get_code_from_tuple(PyObject *self, PyObject *holder)
+{
+    if (!PyTuple_Check(holder) || PyTuple_GET_SIZE(holder) != 1) {
+        PyErr_SetString(PyExc_TypeError, "expected a one-generator tuple");
+        return NULL;
+    }
+    /* Exercise native receiver acquisition without Python's tuple lookup. */
+    return gen_get_code(self, PyTuple_GET_ITEM(holder, 0));
 }
 
 static PyObject *
@@ -1974,6 +2013,9 @@ record_func(PyObject *obj, PyFrameObject *f, int what, PyObject *arg)
         goto error;
     }
     int line = PyFrame_GetLineNumber(f);
+    if (line < 0 && PyErr_Occurred()) {
+        goto error;
+    }
     line_obj = PyLong_FromLong(line);
     if (line_obj == NULL) {
         goto error;
@@ -2962,6 +3004,7 @@ static PyMethodDef TestMethods[] = {
     {"get_basic_static_type", get_basic_static_type, METH_VARARGS, NULL},
     {"test_tstate_capi", test_tstate_capi, METH_NOARGS, NULL},
     {"gen_get_code", gen_get_code, METH_O, NULL},
+    {"gen_get_code_from_tuple", gen_get_code_from_tuple, METH_O, NULL},
     {"get_feature_macros", get_feature_macros, METH_NOARGS, NULL},
     {"test_code_api", test_code_api, METH_NOARGS, NULL},
     {"settrace_to_error", settrace_to_error, METH_O, NULL},

@@ -292,6 +292,7 @@ struct _gc_runtime_state {
 #endif
 
 #include "pycore_gil.h"           // struct _gil_runtime_state
+#include "pycore_threadgroup.h"   // _PyThreadGroupState
 
 /**** Import ********/
 
@@ -538,7 +539,7 @@ struct _py_func_state {
    If you add a new static type to the standard library, you may have to
    update one of these numbers.
    */
-#define _Py_NUM_MANAGED_PREINITIALIZED_TYPES 122
+#define _Py_NUM_MANAGED_PREINITIALIZED_TYPES 127
 #define _Py_MAX_MANAGED_STATIC_BUILTIN_TYPES \
     (_Py_NUM_MANAGED_PREINITIALIZED_TYPES + 83)
 #define _Py_MAX_MANAGED_STATIC_EXT_TYPES 10
@@ -907,6 +908,16 @@ struct _is {
 
     /* The per-interpreter GIL, which might not be used. */
     struct _gil_runtime_state _gil;
+
+    _PyThreadGroupState *main_threadgroup;
+    PyObject *main_threadgroup_object;
+    PyMutex threadgroups_mutex;
+    _PyThreadGroupState *threadgroups;
+    PyMutex protective_mutexes_mutex;
+    struct _PyProtectiveMutexState *protective_mutexes;
+    PyMutex deferred_cleanups_mutex;
+    PyObject *deferred_cleanups;
+    Py_ssize_t deferred_cleanup_count;
 
     uint64_t _code_object_generation;
 

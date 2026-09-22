@@ -2243,6 +2243,14 @@ PyStructSequence_SetItem:PyObject*:p:0:
 PyStructSequence_SetItem:Py_ssize_t:pos::
 PyStructSequence_SetItem:PyObject*:o:0:
 
+PySynchronizedDict_New:PyObject*::+1:
+
+PySynchronizedList_New:PyObject*::+1:
+PySynchronizedList_New:Py_ssize_t:size::
+
+PySynchronizedSet_New:PyObject*::+1:
+PySynchronizedSet_New:PyObject*:iterable:0:
+
 PySys_AddWarnOption:void:::
 PySys_AddWarnOption:const wchar_t*:s::
 

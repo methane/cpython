@@ -1681,6 +1681,10 @@ format_unraisable_v(const char *format, va_list va, PyObject *obj)
 
     if (exc_tb == NULL) {
         PyFrameObject *frame = PyThreadState_GetFrame(tstate);
+        if (frame == NULL) {
+            // Adding a traceback is best effort; preserve the original error.
+            _PyErr_Clear(tstate);
+        }
         if (frame != NULL) {
             exc_tb = _PyTraceBack_FromFrame(NULL, frame);
             if (exc_tb == NULL) {

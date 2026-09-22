@@ -61,7 +61,8 @@ than explicitly calling :c:func:`PyGen_New` or :c:func:`PyGen_NewWithQualName`.
 .. c:function:: PyCodeObject* PyGen_GetCode(PyGenObject *gen)
 
    Return a new :term:`strong reference` to the code object wrapped by *gen*.
-   This function always succeeds.
+   Return ``NULL`` with an exception set if *gen* cannot be accessed by the
+   current thread.
 
 
 Asynchronous Generator Objects

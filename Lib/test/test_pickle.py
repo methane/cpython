@@ -778,6 +778,8 @@ class CompatPickleTests(unittest.TestCase):
                            EncodingWarning,
                            BaseExceptionGroup,
                            ExceptionGroup,
+                           IllegalThreadAccessException,
+                           UnprotectedAccessException,
                            _IncompleteInputError):
                     continue
                 if exc is not OSError and issubclass(exc, OSError):
@@ -793,6 +795,20 @@ class CompatPickleTests(unittest.TestCase):
                                      ('exceptions', name))
                     self.assertEqual(mapping('exceptions', name),
                                      ('builtins', name))
+
+    def test_pep805_exceptions(self):
+        # These new exceptions have no Python 2 "exceptions" module aliases.
+        for exc in (IllegalThreadAccessException, UnprotectedAccessException):
+            with self.subTest(exception=exc):
+                name = exc.__name__
+                self.assertEqual(reverse_mapping('builtins', name),
+                                 ('__builtin__', name))
+                self.assertEqual(mapping('builtins', name), ('builtins', name))
+                for protocol in range(pickle.HIGHEST_PROTOCOL + 1):
+                    value = exc('access denied')
+                    restored = pickle.loads(pickle.dumps(value, protocol))
+                    self.assertIs(type(restored), exc)
+                    self.assertEqual(restored.args, value.args)
 
     def test_multiprocessing_exceptions(self):
         module = import_helper.import_module('multiprocessing.context')

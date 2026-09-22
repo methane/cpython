@@ -266,6 +266,44 @@ test_set_contains_does_not_convert_unhashable_key(PyObject *self, PyObject *Py_U
     return NULL;
 }
 
+static PyObject *
+test_frozen_set_add_in_capi(PyObject *self, PyObject *Py_UNUSED(ignored))
+{
+    PyObject *value = PySet_New(NULL);
+    if (value == NULL) {
+        return NULL;
+    }
+    PyObject *frozen = PyObject_CallMethod(value, "__freeze__", NULL);
+    if (frozen == NULL) {
+        Py_DECREF(value);
+        return NULL;
+    }
+    if (frozen != value) {
+        Py_DECREF(frozen);
+        Py_DECREF(value);
+        return PyErr_Format(PyExc_AssertionError, "freeze changed identity");
+    }
+    Py_DECREF(frozen);
+    // Only this C variable owns the set. Unlike a newly allocated frozenset,
+    // an explicitly frozen set must reject filling through PySet_Add.
+    int result = PySet_Add(value, Py_None);
+    if (result >= 0) {
+        Py_DECREF(value);
+        return PyErr_Format(PyExc_AssertionError, "frozen set accepted mutation");
+    }
+    if (!PyErr_ExceptionMatches(PyExc_TypeError)) {
+        Py_DECREF(value);
+        return NULL;
+    }
+    PyErr_Clear();
+    Py_ssize_t size = PySet_Size(value);
+    Py_DECREF(value);
+    if (size != 0) {
+        return PyErr_Format(PyExc_AssertionError, "frozen set changed size");
+    }
+    Py_RETURN_NONE;
+}
+
 static PyMethodDef test_methods[] = {
     {"set_check", set_check, METH_O},
     {"set_checkexact", set_checkexact, METH_O},
@@ -285,6 +323,7 @@ static PyMethodDef test_methods[] = {
     {"set_clear", set_clear, METH_O},
 
     {"test_frozenset_add_in_capi", test_frozenset_add_in_capi, METH_NOARGS},
+    {"test_frozen_set_add_in_capi", test_frozen_set_add_in_capi, METH_NOARGS},
     {"test_frozenset_add_in_capi_tracking", test_frozenset_add_in_capi_tracking, METH_NOARGS},
     {"test_frozenset_add_in_capi_tracking_immutable", test_frozenset_add_in_capi_tracking_immutable, METH_NOARGS},
     {"test_set_contains_does_not_convert_unhashable_key",

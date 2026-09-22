@@ -88,6 +88,8 @@ struct _PyCfgBuilder {
     struct _PyCfgBasicblock *g_curblock;
     /* label for the next instruction to be placed */
     _PyJumpTargetLabel g_current_label;
+    /* Locals that may outlive the protection under which they were assigned. */
+    unsigned char *g_with_locals;
 };
 
 typedef struct _PyCfgBuilder cfg_builder;
@@ -465,6 +467,7 @@ _PyCfgBuilder_Free(cfg_builder *g)
         PyMem_Free((void *)b);
         b = next;
     }
+    PyMem_Free(g->g_with_locals);
     PyMem_Free(g);
 }
 
@@ -2950,12 +2953,14 @@ optimize_load_fast(cfg_builder *g)
                     break;
                 }
 
-                case LOAD_FAST: {
+                case LOAD_FAST:
+                case LOAD_FAST_MAYBE_UNPROTECTED: {
                     PUSH_REF(i, oparg);
                     break;
                 }
 
-                case LOAD_FAST_AND_CLEAR: {
+                case LOAD_FAST_AND_CLEAR:
+                case LOAD_FAST_AND_CLEAR_CHECK: {
                     kill_local(instr_flags, &refs, oparg);
                     PUSH_REF(i, oparg);
                     break;
@@ -3157,6 +3162,9 @@ optimize_load_fast(cfg_builder *g)
                 switch (instr->i_opcode) {
                     case LOAD_FAST:
                         instr->i_opcode = LOAD_FAST_BORROW;
+                        break;
+                    case LOAD_FAST_MAYBE_UNPROTECTED:
+                        instr->i_opcode = LOAD_FAST_BORROW_MAYBE_UNPROTECTED;
                         break;
                     case LOAD_FAST_LOAD_FAST:
                         instr->i_opcode = LOAD_FAST_BORROW_LOAD_FAST_BORROW;
@@ -3785,6 +3793,57 @@ resolve_line_numbers(cfg_builder *g, int firstlineno)
     return SUCCESS;
 }
 
+static int
+record_with_locals(cfg_builder *g, int nlocals)
+{
+    for (basicblock *b = g->g_entryblock; b != NULL; b = b->b_next) {
+        for (int i = 0; i < b->b_iused; i++) {
+            cfg_instr *instr = &b->b_instr[i];
+            if (instr->i_opcode != STORE_FAST_WITH &&
+                instr->i_opcode != STORE_FAST_MAYBE_NULL_WITH) {
+                continue;
+            }
+            assert(instr->i_oparg >= 0 && instr->i_oparg < nlocals);
+            if (g->g_with_locals == NULL) {
+                g->g_with_locals = PyMem_Calloc(nlocals, 1);
+                if (g->g_with_locals == NULL) {
+                    PyErr_NoMemory();
+                    return ERROR;
+                }
+            }
+            g->g_with_locals[instr->i_oparg] = 1;
+            instr->i_opcode = instr->i_opcode == STORE_FAST_WITH ?
+                STORE_FAST : STORE_FAST_MAYBE_NULL;
+        }
+    }
+    return SUCCESS;
+}
+
+static void
+check_with_locals(cfg_builder *g)
+{
+    if (g->g_with_locals == NULL) {
+        return;
+    }
+    /* Conservatively check every read of these locals, including reads inside
+       the with. A successful read there must not suppress checks after exit.
+       Insert before superinstructions and borrowed-load optimization. */
+    for (basicblock *b = g->g_entryblock; b != NULL; b = b->b_next) {
+        for (int i = 0; i < b->b_iused; i++) {
+            cfg_instr *instr = &b->b_instr[i];
+            if (instr->i_opcode == LOAD_FAST || instr->i_opcode == LOAD_FAST_CHECK) {
+                if (g->g_with_locals[instr->i_oparg]) {
+                    instr->i_opcode = LOAD_FAST_MAYBE_UNPROTECTED;
+                }
+            }
+            else if (instr->i_opcode == LOAD_FAST_AND_CLEAR &&
+                     g->g_with_locals[instr->i_oparg]) {
+                instr->i_opcode = LOAD_FAST_AND_CLEAR_CHECK;
+            }
+        }
+    }
+}
+
 int
 _PyCfg_OptimizeCodeUnit(cfg_builder *g, PyObject *consts, PyObject *const_cache,
                         int nlocals, int nparams, int firstlineno)
@@ -3792,6 +3851,7 @@ _PyCfg_OptimizeCodeUnit(cfg_builder *g, PyObject *consts, PyObject *const_cache,
     assert(cfg_builder_check(g));
     assert(g->g_entryblock->b_iused > 0);
     /** Preprocessing **/
+    RETURN_IF_ERROR(record_with_locals(g, nlocals));
     /* Map labels to targets and mark exception handlers */
     RETURN_IF_ERROR(translate_jump_labels_to_targets(g->g_entryblock));
     RETURN_IF_ERROR(mark_except_handlers(g->g_entryblock));
@@ -3829,6 +3889,7 @@ _PyCfg_OptimizeCodeUnit(cfg_builder *g, PyObject *consts, PyObject *const_cache,
     RETURN_IF_ERROR(
         add_checks_for_loads_of_uninitialized_variables(
             g->g_entryblock, nlocals, nparams));
+    check_with_locals(g);
     RETURN_IF_ERROR(insert_superinstructions(g));
 
     RETURN_IF_ERROR(push_cold_blocks_to_end(g));

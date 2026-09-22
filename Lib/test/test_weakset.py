@@ -46,6 +46,10 @@ class TestWeakSet(unittest.TestCase):
         for method in dir(set):
             if method.startswith('_'):
                 continue
+            if method == 'synchronize':
+                # PEP 805's conversion to SynchronizedSet is specific to
+                # builtin sets; it does not preserve weak-reference semantics.
+                continue
             self.assertIn(method, weaksetmethods,
                          "WeakSet missing method " + method)
 

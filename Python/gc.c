@@ -907,7 +907,6 @@ handle_weakref_callbacks(PyGC_Head *unreachable, PyGC_Head *old)
      * because they can't reference unreachable objects.
      */
     while (! gc_list_is_empty(&wrcb_to_call)) {
-        PyObject *temp;
         PyObject *callback;
 
         gc = (PyGC_Head*)wrcb_to_call._gc_next;
@@ -917,15 +916,7 @@ handle_weakref_callbacks(PyGC_Head *unreachable, PyGC_Head *old)
         callback = wr->wr_callback;
         _PyObject_ASSERT(op, callback != NULL);
 
-        /* copy-paste of weakrefobject.c's handle_callback() */
-        temp = PyObject_CallOneArg(callback, (PyObject *)wr);
-        if (temp == NULL) {
-            PyErr_FormatUnraisable("Exception ignored on "
-                                   "calling weakref callback %R", callback);
-        }
-        else {
-            Py_DECREF(temp);
-        }
+        _PyWeakref_CallCallback(wr, callback);
 
         /* Give up the reference we created in the first pass.  When
          * op's refcount hits 0 (which it may or may not do right now),
@@ -1067,7 +1058,7 @@ finalize_garbage(PyThreadState *tstate, PyGC_Head *collectable)
         {
             _PyGC_SET_FINALIZED(op);
             Py_INCREF(op);
-            finalize(op);
+            _PyObject_RunFinalizer(op);
             assert(!_PyErr_Occurred(tstate));
             Py_DECREF(op);
         }

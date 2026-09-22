@@ -55,7 +55,7 @@ framelocalsproxy_getval(_PyInterpreterFrame *frame, PyCodeObject *co, int i)
         return NULL;
     }
 
-    if (kind == CO_FAST_FREE || kind & CO_FAST_CELL) {
+    if (kind & (CO_FAST_FREE | CO_FAST_CELL)) {
         // The cell was set when the frame was created from
         // the function's closure.
         // GH-128396: With PEP 709, it's possible to have a fast variable in
@@ -70,7 +70,7 @@ framelocalsproxy_getval(_PyInterpreterFrame *frame, PyCodeObject *co, int i)
     }
 
     if (cell != NULL) {
-        value = PyCell_GetRef((PyCellObject *)cell);
+        value = _PyCell_GetRefForFrame((PyCellObject *)cell);
     }
     else {
         Py_XINCREF(value);
@@ -83,15 +83,15 @@ framelocalsproxy_getval(_PyInterpreterFrame *frame, PyCodeObject *co, int i)
     return value;
 }
 
-static bool
+static int
 framelocalsproxy_hasval(_PyInterpreterFrame *frame, PyCodeObject *co, int i)
 {
     PyObject *value = framelocalsproxy_getval(frame, co, i);
     if (value == NULL) {
-        return false;
+        return PyErr_Occurred() ? -1 : 0;
     }
     Py_DECREF(value);
-    return true;
+    return 1;
 }
 
 static int
@@ -128,6 +128,9 @@ framelocalsproxy_getkeyindex(PyFrameObject *frame, PyObject *key, bool read, PyO
         if (name == key) {
             if (read) {
                 PyObject *value = framelocalsproxy_getval(frame->f_frame, co, i);
+                if (value == NULL && PyErr_Occurred()) {
+                    return -2;
+                }
                 if (value != NULL) {
                     if (value_ptr != NULL) {
                         *value_ptr = value;
@@ -166,6 +169,9 @@ framelocalsproxy_getkeyindex(PyFrameObject *frame, PyObject *key, bool read, PyO
         if (same) {
             if (read) {
                 PyObject *value = framelocalsproxy_getval(frame->f_frame, co, i);
+                if (value == NULL && PyErr_Occurred()) {
+                    return -2;
+                }
                 if (value != NULL) {
                     if (value_ptr != NULL) {
                         *value_ptr = value;
@@ -270,7 +276,7 @@ framelocalsproxy_setitem(PyObject *self, PyObject *key, PyObject *value)
         _PyLocals_Kind kind = _PyLocals_GetKind(co->co_localspluskinds, i);
         _PyStackRef oldvalue = fast[i];
         PyObject *cell = NULL;
-        if (kind == CO_FAST_FREE) {
+        if (kind & CO_FAST_FREE) {
             // The cell was set when the frame was created from
             // the function's closure.
             assert(!PyStackRef_IsNull(oldvalue) && PyCell_Check(PyStackRef_AsPyObjectBorrow(oldvalue)));
@@ -282,8 +288,9 @@ framelocalsproxy_setitem(PyObject *self, PyObject *key, PyObject *value)
             }
         }
         if (cell != NULL) {
-            Py_XINCREF(value);
-            PyCell_SetTakeRef((PyCellObject *)cell, value);
+            if (PyCell_Set(cell, value) < 0) {
+                return -1;
+            }
         } else if (value != PyStackRef_AsPyObjectBorrow(oldvalue)) {
             PyObject *old_obj = PyStackRef_AsPyObjectBorrow(fast[i]);
             if (old_obj != NULL && !_Py_IsImmortal(old_obj)) {
@@ -382,7 +389,12 @@ framelocalsproxy_keys(PyObject *self, PyObject *Py_UNUSED(ignored))
     }
 
     for (int i = 0; i < co->co_nlocalsplus; i++) {
-        if (framelocalsproxy_hasval(frame->f_frame, co, i)) {
+        int present = framelocalsproxy_hasval(frame->f_frame, co, i);
+        if (present < 0) {
+            Py_DECREF(names);
+            return NULL;
+        }
+        if (present) {
             PyObject *name = PyTuple_GET_ITEM(co->co_localsplusnames, i);
             if (PyList_Append(names, name) < 0) {
                 Py_DECREF(names);
@@ -592,6 +604,10 @@ framelocalsproxy_values(PyObject *self, PyObject *Py_UNUSED(ignored))
 
     for (int i = 0; i < co->co_nlocalsplus; i++) {
         PyObject *value = framelocalsproxy_getval(frame->f_frame, co, i);
+        if (value == NULL && PyErr_Occurred()) {
+            Py_DECREF(values);
+            return NULL;
+        }
         if (value) {
             if (PyList_Append(values, value) < 0) {
                 Py_DECREF(values);
@@ -632,6 +648,9 @@ framelocalsproxy_items(PyObject *self, PyObject *Py_UNUSED(ignored))
         PyObject *name = PyTuple_GET_ITEM(co->co_localsplusnames, i);
         PyObject *value = framelocalsproxy_getval(frame->f_frame, co, i);
 
+        if (value == NULL && PyErr_Occurred()) {
+            goto error;
+        }
         if (value) {
             PyObject *pair = _PyTuple_FromPairSteal(Py_NewRef(name), value);
             if (pair == NULL) {
@@ -681,7 +700,11 @@ framelocalsproxy_length(PyObject *self)
     }
 
     for (int i = 0; i < co->co_nlocalsplus; i++) {
-        if (framelocalsproxy_hasval(frame->f_frame, co, i)) {
+        int present = framelocalsproxy_hasval(frame->f_frame, co, i);
+        if (present < 0) {
+            return -1;
+        }
+        if (present) {
             size++;
         }
     }
@@ -975,7 +998,12 @@ frame_locals_get_impl(PyFrameObject *self)
 
     PyCodeObject *co = _PyFrame_GetCode(self->f_frame);
 
-    if (!(co->co_flags & CO_OPTIMIZED) && !_PyFrame_HasHiddenLocals(self->f_frame)) {
+    int use_proxy = (co->co_flags & CO_OPTIMIZED) ? 1 :
+                    _PyFrame_HasHiddenLocals(self->f_frame);
+    if (use_proxy < 0) {
+        return NULL;
+    }
+    if (!use_proxy) {
         if (self->f_frame->f_locals == NULL) {
             // We found cases when f_locals is NULL for non-optimized code.
             // We fill the f_locals with an empty dict to avoid crash until
@@ -995,6 +1023,9 @@ int
 PyFrame_GetLineNumber(PyFrameObject *f)
 {
     assert(f != NULL);
+    if (PyObject_CheckAccess((PyObject *)f) == NULL) {
+        return -1;
+    }
     if (f->f_lineno == -1) {
         // We should calculate it once. If we can't get the line number,
         // set f->f_lineno to 0.
@@ -1025,6 +1056,9 @@ frame_lineno_get_impl(PyFrameObject *self)
 {
     int lineno = PyFrame_GetLineNumber(self);
     if (lineno < 0) {
+        if (PyErr_Occurred()) {
+            return NULL;
+        }
         Py_RETURN_NONE;
     }
     return PyLong_FromLong(lineno);
@@ -2049,10 +2083,15 @@ frame_repr(PyObject *op)
     PyObject *result;
     Py_BEGIN_CRITICAL_SECTION(f);
     int lineno = PyFrame_GetLineNumber(f);
-    PyCodeObject *code = _PyFrame_GetCode(f->f_frame);
-    result = PyUnicode_FromFormat(
-        "<frame at %p, file %R, line %d, code %S>",
-        f, code->co_filename, lineno, code->co_name);
+    if (lineno < 0 && PyErr_Occurred()) {
+        result = NULL;
+    }
+    else {
+        PyCodeObject *code = _PyFrame_GetCode(f->f_frame);
+        result = PyUnicode_FromFormat(
+            "<frame at %p, file %R, line %d, code %S>",
+            f, code->co_filename, lineno, code->co_name);
+    }
     Py_END_CRITICAL_SECTION();
     return result;
 }
@@ -2161,6 +2200,8 @@ PyFrame_New(PyThreadState *tstate, PyCodeObject *code,
     init_frame(tstate, (_PyInterpreterFrame *)f->_f_frame_data, func, locals);
     f->f_frame = (_PyInterpreterFrame *)f->_f_frame_data;
     f->f_frame->owner = FRAME_OWNED_BY_FRAME_OBJECT;
+    _Py_atomic_store_uint32_relaxed(&f->ob_base.ob_owner_id,
+                                  f->f_frame->threadgroup_id);
     // This frame needs to be "complete", so pretend that the first RESUME ran:
     f->f_frame->instr_ptr = _PyCode_CODE(code) + code->_co_firsttraceable + 1;
     assert(!_PyFrame_IsIncomplete(f->f_frame));
@@ -2222,13 +2263,13 @@ frame_get_var(_PyInterpreterFrame *frame, PyCodeObject *co, int i,
         if (kind & CO_FAST_FREE) {
             // The cell was set by COPY_FREE_VARS.
             assert(value != NULL && PyCell_Check(value));
-            value = PyCell_GetRef((PyCellObject *)value);
+            value = _PyCell_GetRefForFrame((PyCellObject *)value);
         }
         else if (kind & CO_FAST_CELL) {
             if (value != NULL) {
                 if (PyCell_Check(value)) {
                     assert(!_PyFrame_IsIncomplete(frame));
-                    value = PyCell_GetRef((PyCellObject *)value);
+                    value = _PyCell_GetRefForFrame((PyCellObject *)value);
                 }
                 else {
                     // (likely) Otherwise it is an arg (kind & CO_FAST_LOCAL),
@@ -2247,7 +2288,7 @@ frame_get_var(_PyInterpreterFrame *frame, PyCodeObject *co, int i,
 }
 
 
-bool
+int
 _PyFrame_HasHiddenLocals(_PyInterpreterFrame *frame)
 {
     /*
@@ -2260,8 +2301,9 @@ _PyFrame_HasHiddenLocals(_PyInterpreterFrame *frame)
         _PyLocals_Kind kind = _PyLocals_GetKind(co->co_localspluskinds, i);
 
         if (kind & CO_FAST_HIDDEN) {
-            if (framelocalsproxy_hasval(frame, co, i)) {
-                return true;
+            int present = framelocalsproxy_hasval(frame, co, i);
+            if (present != 0) {
+                return present;
             }
         }
     }
@@ -2277,7 +2319,12 @@ _PyFrame_GetLocals(_PyInterpreterFrame *frame)
     // So we check if the frame is a module or class level scope
     PyCodeObject *co = _PyFrame_GetCode(frame);
 
-    if (!(co->co_flags & CO_OPTIMIZED) && !_PyFrame_HasHiddenLocals(frame)) {
+    int use_proxy = (co->co_flags & CO_OPTIMIZED) ? 1 :
+                    _PyFrame_HasHiddenLocals(frame);
+    if (use_proxy < 0) {
+        return NULL;
+    }
+    if (!use_proxy) {
         if (frame->f_locals == NULL) {
             // We found cases when f_locals is NULL for non-optimized code.
             // We fill the f_locals with an empty dict to avoid crash until
@@ -2302,6 +2349,10 @@ _PyFrame_GetLocals(_PyInterpreterFrame *frame)
 PyObject *
 PyFrame_GetVar(PyFrameObject *frame_obj, PyObject *name)
 {
+    if (PyObject_CheckAccess((PyObject *)frame_obj) == NULL ||
+        PyObject_CheckAccess(name) == NULL) {
+        return NULL;
+    }
     if (!PyUnicode_Check(name)) {
         PyErr_Format(PyExc_TypeError, "name must be str, not %s",
                      Py_TYPE(name)->tp_name);
@@ -2314,6 +2365,9 @@ PyFrame_GetVar(PyFrameObject *frame_obj, PyObject *name)
     PyCodeObject *co = _PyFrame_GetCode(frame);
     for (int i = 0; i < co->co_nlocalsplus; i++) {
         PyObject *var_name = PyTuple_GET_ITEM(co->co_localsplusnames, i);
+        if (PyObject_CheckAccess(var_name) == NULL) {
+            return NULL;
+        }
         if (!_PyUnicode_Equal(var_name, name)) {
             continue;
         }
@@ -2323,9 +2377,12 @@ PyFrame_GetVar(PyFrameObject *frame_obj, PyObject *name)
             break;
         }
         if (value == NULL) {
+            if (PyErr_Occurred()) {
+                return NULL;
+            }
             break;
         }
-        return value;
+        return _PyObject_CheckAccessNullable(value);
     }
 
     PyErr_Format(PyExc_NameError, "variable %R does not exist", name);
@@ -2336,6 +2393,9 @@ PyFrame_GetVar(PyFrameObject *frame_obj, PyObject *name)
 PyObject *
 PyFrame_GetVarString(PyFrameObject *frame, const char *name)
 {
+    if (PyObject_CheckAccess((PyObject *)frame) == NULL) {
+        return NULL;
+    }
     PyObject *name_obj = PyUnicode_FromString(name);
     if (name_obj == NULL) {
         return NULL;
@@ -2383,6 +2443,9 @@ PyCodeObject *
 PyFrame_GetCode(PyFrameObject *frame)
 {
     assert(frame != NULL);
+    if (PyObject_CheckAccess((PyObject *)frame) == NULL) {
+        return NULL;
+    }
     PyObject *code;
     Py_BEGIN_CRITICAL_SECTION(frame);
     assert(!_PyFrame_IsIncomplete(frame->f_frame));
@@ -2396,6 +2459,9 @@ PyFrameObject*
 PyFrame_GetBack(PyFrameObject *frame)
 {
     assert(frame != NULL);
+    if (PyObject_CheckAccess((PyObject *)frame) == NULL) {
+        return NULL;
+    }
     assert(!_PyFrame_IsIncomplete(frame->f_frame));
     PyFrameObject *back = frame->f_back;
     if (back == NULL) {
@@ -2408,33 +2474,48 @@ PyFrame_GetBack(PyFrameObject *frame)
             }
         }
     }
-    return (PyFrameObject*)Py_XNewRef(back);
+    return (PyFrameObject*)_PyObject_CheckAccessNullable(Py_XNewRef(back));
 }
 
 PyObject*
 PyFrame_GetLocals(PyFrameObject *frame)
 {
+    if (PyObject_CheckAccess((PyObject *)frame) == NULL) {
+        return NULL;
+    }
     assert(!_PyFrame_IsIncomplete(frame->f_frame));
-    return frame_locals_get((PyObject *)frame, NULL);
+    return _PyObject_CheckAccessNullable(
+        frame_locals_get((PyObject *)frame, NULL));
 }
 
 PyObject*
 PyFrame_GetGlobals(PyFrameObject *frame)
 {
+    if (PyObject_CheckAccess((PyObject *)frame) == NULL) {
+        return NULL;
+    }
     assert(!_PyFrame_IsIncomplete(frame->f_frame));
-    return frame_globals_get((PyObject *)frame, NULL);
+    return _PyObject_CheckAccessNullable(
+        frame_globals_get((PyObject *)frame, NULL));
 }
 
 PyObject*
 PyFrame_GetBuiltins(PyFrameObject *frame)
 {
+    if (PyObject_CheckAccess((PyObject *)frame) == NULL) {
+        return NULL;
+    }
     assert(!_PyFrame_IsIncomplete(frame->f_frame));
-    return frame_builtins_get((PyObject *)frame, NULL);
+    return _PyObject_CheckAccessNullable(
+        frame_builtins_get((PyObject *)frame, NULL));
 }
 
 int
 PyFrame_GetLasti(PyFrameObject *frame)
 {
+    if (PyObject_CheckAccess((PyObject *)frame) == NULL) {
+        return -1;
+    }
     int ret;
     Py_BEGIN_CRITICAL_SECTION(frame);
     assert(!_PyFrame_IsIncomplete(frame->f_frame));
@@ -2447,6 +2528,10 @@ PyFrame_GetLasti(PyFrameObject *frame)
 PyObject *
 PyFrame_GetGenerator(PyFrameObject *frame)
 {
+    if (PyObject_CheckAccess((PyObject *)frame) == NULL) {
+        return NULL;
+    }
     assert(!_PyFrame_IsIncomplete(frame->f_frame));
-    return frame_generator_get((PyObject *)frame, NULL);
+    return _PyObject_CheckAccessNullable(
+        frame_generator_get((PyObject *)frame, NULL));
 }

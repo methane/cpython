@@ -513,6 +513,9 @@ list_as_flags(decimal_state *state, PyObject *list)
     flags = 0;
     for (j = 0; j < n; j++) {
         item = PyList_GetItem(list, j);
+        if (item == NULL) {
+            return DEC_ERR_OCCURRED;
+        }
         x = exception_as_flag(state, item);
         if (x & DEC_ERRORS) {
             return x;

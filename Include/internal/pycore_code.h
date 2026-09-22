@@ -189,6 +189,7 @@ typedef struct {
  */
 
 // Note that these all fit within a byte, as do combinations.
+#define CO_FAST_NONLOCAL_WRITE (0x01)  // free binding written here or in nested code
 #define CO_FAST_ARG_POS (0x02)  // pos-only, pos-or-kw, varargs
 #define CO_FAST_ARG_KW  (0x04)  // kw-only, pos-or-kw, varkwargs
 #define CO_FAST_ARG_VAR (0x08)  // varargs, varkwargs

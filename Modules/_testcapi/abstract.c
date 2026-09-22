@@ -1,6 +1,170 @@
 #include "parts.h"
 #include "util.h"
 
+typedef struct {
+    PyObject_HEAD
+    PyObject *value;
+} LegacyGetAttr;
+
+static int
+legacy_getattr_traverse(PyObject *op, visitproc visit, void *arg)
+{
+    Py_VISIT(((LegacyGetAttr *)op)->value);
+    return 0;
+}
+
+static int
+legacy_getattr_clear(PyObject *op)
+{
+    Py_CLEAR(((LegacyGetAttr *)op)->value);
+    return 0;
+}
+
+static void
+legacy_getattr_dealloc(PyObject *op)
+{
+    PyObject_GC_UnTrack(op);
+    legacy_getattr_clear(op);
+    Py_TYPE(op)->tp_free(op);
+}
+
+static PyObject *
+legacy_getattr(PyObject *op, char *name)
+{
+    PyObject *value = ((LegacyGetAttr *)op)->value;
+    if (strcmp(name, "value") == 0 && value != NULL) {
+        return Py_NewRef(value);
+    }
+    PyErr_SetString(PyExc_AttributeError, name);
+    return NULL;
+}
+
+static PyTypeObject LegacyGetAttr_Type = {
+    PyVarObject_HEAD_INIT(NULL, 0)
+    .tp_name = "_testcapi.LegacyGetAttr",
+    .tp_basicsize = sizeof(LegacyGetAttr),
+    .tp_flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_GC,
+    .tp_getattr = legacy_getattr,
+    .tp_traverse = legacy_getattr_traverse,
+    .tp_clear = legacy_getattr_clear,
+    .tp_dealloc = legacy_getattr_dealloc,
+    .tp_free = PyObject_GC_Del,
+};
+
+static PyObject *
+make_legacy_getattr(PyObject *self, PyObject *value)
+{
+    LegacyGetAttr *obj = PyObject_GC_New(LegacyGetAttr, &LegacyGetAttr_Type);
+    if (obj == NULL) {
+        return NULL;
+    }
+    obj->value = Py_NewRef(value);
+    PyObject_GC_Track(obj);
+    return (PyObject *)obj;
+}
+
+
+static PyObject *
+return_tuple_item_unchecked(PyObject *self, PyObject *holder)
+{
+    if (!PyTuple_Check(holder) || PyTuple_GET_SIZE(holder) == 0) {
+        PyErr_SetString(PyExc_TypeError, "expected a nonempty tuple");
+        return NULL;
+    }
+    /* Deliberately rely on the call protocol to validate the native result. */
+    return Py_NewRef(PyTuple_GET_ITEM(holder, 0));
+}
+
+/* Preserve a native result without a VM check on the result itself. */
+static PyObject *
+call_cfunction_return_in_tuple(PyObject *self, PyObject *args)
+{
+    PyObject *callable, *call_args;
+    if (!PyArg_ParseTuple(args, "OO!:call_cfunction_return_in_tuple",
+                          &callable, &PyTuple_Type, &call_args)) {
+        return NULL;
+    }
+    if (!PyCFunction_Check(callable)) {
+        PyErr_SetString(PyExc_TypeError, "expected a native callable");
+        return NULL;
+    }
+    PyObject *result = PyObject_Call(callable, call_args, NULL);
+    if (result == NULL) {
+        return NULL;
+    }
+    PyObject *holder = PyTuple_Pack(1, result);
+    Py_DECREF(result);
+    return holder;
+}
+
+/* Test an API wrapper without generic call argument/result validation. */
+static PyObject *
+call_cfunction_raw_return_in_tuple(PyObject *self, PyObject *args)
+{
+    PyObject *callable, *call_args;
+    if (!PyArg_ParseTuple(args, "OO!:call_cfunction_raw_return_in_tuple",
+                          &callable, &PyTuple_Type, &call_args)) {
+        return NULL;
+    }
+    if (!PyCFunction_Check(callable)) {
+        PyErr_SetString(PyExc_TypeError, "expected a native callable");
+        return NULL;
+    }
+    if (PyObject_CheckAccess(callable) == NULL ||
+        PyObject_CheckAccess(call_args) == NULL) {
+        return NULL;
+    }
+    PyCFunction function = PyCFunction_GET_FUNCTION(callable);
+    PyObject *receiver = PyCFunction_GET_SELF(callable);
+    Py_ssize_t nargs = PyTuple_GET_SIZE(call_args);
+    PyObject *const *argv = ((PyTupleObject *)call_args)->ob_item;
+    int flags = PyCFunction_GET_FLAGS(callable) &
+        (METH_VARARGS | METH_FASTCALL | METH_NOARGS | METH_O |
+         METH_KEYWORDS | METH_METHOD);
+    if ((flags == METH_NOARGS && nargs != 0) ||
+        (flags == METH_O && nargs != 1)) {
+        PyErr_SetString(PyExc_TypeError, "incorrect native argument count");
+        return NULL;
+    }
+    if (Py_EnterRecursiveCall(" in raw native test call")) {
+        return NULL;
+    }
+    PyObject *result;
+    switch (flags) {
+        case METH_NOARGS:
+            result = function(receiver, NULL);
+            break;
+        case METH_O:
+            result = function(receiver, argv[0]);
+            break;
+        case METH_VARARGS:
+            result = function(receiver, call_args);
+            break;
+        case METH_VARARGS | METH_KEYWORDS:
+            result = _PyCFunctionWithKeywords_CAST(function)(receiver, call_args, NULL);
+            break;
+        case METH_FASTCALL:
+            result = _PyCFunctionFast_CAST(function)(receiver, argv, nargs);
+            break;
+        case METH_FASTCALL | METH_KEYWORDS:
+            result = _PyCFunctionFastWithKeywords_CAST(function)(receiver, argv, nargs, NULL);
+            break;
+        case METH_METHOD | METH_FASTCALL | METH_KEYWORDS:
+            result = _Py_FUNC_CAST(PyCMethod, function)(
+                receiver, PyCFunction_GET_CLASS(callable), argv, nargs, NULL);
+            break;
+        default:
+            PyErr_SetString(PyExc_ValueError, "unsupported native calling convention");
+            result = NULL;
+    }
+    Py_LeaveRecursiveCall();
+    if (result == NULL) {
+        return NULL;
+    }
+    PyObject *holder = PyTuple_Pack(1, result);
+    Py_DECREF(result);
+    return holder;
+}
 
 static PyObject *
 object_getoptionalattr(PyObject *self, PyObject *args)
@@ -130,6 +294,18 @@ mapping_getoptionalitem(PyObject *self, PyObject *args)
 }
 
 static PyObject *
+object_getiter(PyObject *self, PyObject *obj)
+{
+    return PyObject_GetIter(obj);
+}
+
+static PyObject *
+object_getaiter(PyObject *self, PyObject *obj)
+{
+    return PyObject_GetAIter(obj);
+}
+
+static PyObject *
 pyiter_next(PyObject *self, PyObject *iter)
 {
     PyObject *item = PyIter_Next(iter);
@@ -137,6 +313,24 @@ pyiter_next(PyObject *self, PyObject *iter)
         Py_RETURN_NONE;
     }
     return item;
+}
+
+static PyObject *
+pyiter_send(PyObject *self, PyObject *args)
+{
+    PyObject *iter, *arg, *result;
+    if (!PyArg_ParseTuple(args, "OO", &iter, &arg)) {
+        return NULL;
+    }
+    PySendResult status = PyIter_Send(iter, arg, &result);
+    if (status == PYGEN_ERROR) {
+        assert(result == NULL);
+        assert(PyErr_Occurred());
+        return NULL;
+    }
+    assert(result != NULL);
+    assert(!PyErr_Occurred());
+    return Py_BuildValue("iN", (int)status, result);
 }
 
 static PyObject *
@@ -213,8 +407,25 @@ object_setattrstring_null_exc(PyObject *self, PyObject *args)
     return NULL;
 }
 
+static PyObject *
+object_length_hint(PyObject *self, PyObject *arg)
+{
+    if (arg == Py_None) {
+        arg = NULL;
+    }
+    Py_ssize_t result = PyObject_LengthHint(arg, 0);
+    if (result < 0) {
+        return NULL;
+    }
+    return PyLong_FromSsize_t(result);
+}
+
 
 static PyMethodDef test_methods[] = {
+    {"return_tuple_item_unchecked", return_tuple_item_unchecked, METH_O},
+    {"call_cfunction_return_in_tuple", call_cfunction_return_in_tuple, METH_VARARGS},
+    {"call_cfunction_raw_return_in_tuple", call_cfunction_raw_return_in_tuple, METH_VARARGS},
+    {"make_legacy_getattr", make_legacy_getattr, METH_O},
     {"object_getoptionalattr", object_getoptionalattr, METH_VARARGS},
     {"object_getoptionalattrstring", object_getoptionalattrstring, METH_VARARGS},
     {"object_hasattrwitherror", object_hasattrwitherror, METH_VARARGS},
@@ -222,8 +433,12 @@ static PyMethodDef test_methods[] = {
     {"mapping_getoptionalitem", mapping_getoptionalitem, METH_VARARGS},
     {"mapping_getoptionalitemstring", mapping_getoptionalitemstring, METH_VARARGS},
 
+    {"PyObject_GetIter", object_getiter, METH_O},
+    {"PyObject_GetAIter", object_getaiter, METH_O},
     {"PyIter_Next", pyiter_next, METH_O},
+    {"PyIter_Send", pyiter_send, METH_VARARGS},
     {"PyIter_NextItem", pyiter_nextitem, METH_O},
+    {"PyObject_LengthHint", object_length_hint, METH_O},
 
     {"sequence_fast_get_size", sequence_fast_get_size, METH_O},
     {"sequence_fast_get_item", sequence_fast_get_item, METH_VARARGS},
@@ -235,6 +450,9 @@ static PyMethodDef test_methods[] = {
 int
 _PyTestCapi_Init_Abstract(PyObject *m)
 {
+    if (PyModule_AddType(m, &LegacyGetAttr_Type) < 0) {
+        return -1;
+    }
     if (PyModule_AddFunctions(m, test_methods) < 0) {
         return -1;
     }

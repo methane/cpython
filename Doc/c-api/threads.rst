@@ -708,9 +708,20 @@ Low-level APIs
 
    See also :c:func:`PyEval_GetFrame`.
 
-   *tstate* must not be ``NULL``, and must be :term:`attached <attached thread state>`.
+   *tstate* must not be ``NULL``. The calling thread must have an
+   :term:`attached thread state`.
+
+   Access to a thread in another :class:`threading.ThreadGroup` raises
+   :exc:`IllegalThreadAccessException`, unless the caller holds
+   :data:`sys.monitoring.StopTheWorld`. The caller must ensure that *tstate*
+   remains alive throughout this call. The returned frame is also checked for
+   access from the calling thread.
 
    .. versionadded:: 3.9
+
+   .. versionchanged:: 3.16
+      Enforces ThreadGroup access checks and stabilizes another thread's stack
+      during frame acquisition.
 
 
 .. c:function:: uint64_t PyThreadState_GetID(PyThreadState *tstate)

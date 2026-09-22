@@ -502,6 +502,7 @@ _PyUOp_Replacements[MAX_UOP_ID + 1] = {
     [_LOAD_BYTECODE] = _NOP,
     [_SEND_VIRTUAL] = _SEND_VIRTUAL_TIER_TWO,
     [_SEND_ASYNC_GEN] = _SEND_ASYNC_GEN_TIER_TWO,
+    [_CHECK_YIELD_ACCESS] = _GUARD_YIELD_ACCESS,
 };
 
 static const uint8_t
@@ -857,6 +858,10 @@ _PyJit_translate_single_bytecode_to_trace(
 
     // _GUARD_IP leads to an exit.
     trace->end -= needs_guard_ip;
+    // YIELD_VALUE's Tier 2 access guard can exit before switching frames.
+    if (opcode == YIELD_VALUE) {
+        trace->end--;
+    }
 
 #if Py_DEBUG
     const struct opcode_macro_expansion *expansion = &_PyOpcode_macro_expansion[opcode];
@@ -965,6 +970,10 @@ _PyJit_translate_single_bytecode_to_trace(
                             else {
                                 target = next_inst;
                             }
+                        }
+                        else if (uop == _GUARD_YIELD_ACCESS) {
+                            // Retry YIELD_VALUE in Tier 1 before switching frames.
+                            target = orig_target;
                         }
                         else {
                             int extended_arg = orig_oparg > 255;

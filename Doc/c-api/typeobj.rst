@@ -2288,7 +2288,8 @@ and :c:data:`PyType_Type` effectively act as defaults.)
 
 .. c:member:: PyObject* PyTypeObject.tp_cache
 
-   Unused.  Internal use only.
+   Private cache for lazily evaluated annotations of frozen Python classes.
+   Internal use only.
 
    **Inheritance:**
 

@@ -67,6 +67,12 @@ whose size is determined when the object is allocated.
 // Kept for backward compatibility. It was needed by Py_TRACE_REFS build.
 #define _PyObject_EXTRA_INIT
 
+/* PEP 805 object states, ordered so the two shareable states compare >= 2. */
+#define _Py_SHAREABLE_LOCAL 0
+#define _Py_SHAREABLE_PROTECTED 1
+#define _Py_SHAREABLE_SYNCHRONIZED 2
+#define _Py_SHAREABLE_IMMUTABLE 3
+
 /* Make all uses of PyObject_HEAD_INIT immortal.
  *
  * Statically allocated objects might be shared between
@@ -84,12 +90,16 @@ whose size is determined when the object is allocated.
         _Py_IMMORTAL_REFCNT_LOCAL,  \
         0,                          \
         (type),                     \
+        0,                          \
+        _Py_SHAREABLE_LOCAL,         \
     },
 #else
 #define PyObject_HEAD_INIT(type)    \
     {                               \
         { _Py_STATIC_IMMORTAL_INITIAL_REFCNT },    \
-        (type)                      \
+        (type),                     \
+        0,                          \
+        _Py_SHAREABLE_LOCAL,         \
     },
 #endif
 
@@ -146,6 +156,12 @@ struct _object {
     };
 
     PyTypeObject *ob_type;  // part of stable ABI; do not change
+    uint32_t ob_owner_id;
+    uint8_t ob_shareable;
+    uint8_t ob_frozen;          // VM-enforced freezing, including preparation
+    uint8_t ob_deferred_flags; // guarded by the interpreter cleanup mutex
+    PyObject *ob_deferred_next; // internal cleanup queue
+    size_t ob_deferred_finalizers; // pending calls, guarded by the same mutex
 };
 #else
 // Objects that are not owned by any thread use a thread id (tid) of zero.
@@ -164,6 +180,12 @@ struct _object {
     uint32_t ob_ref_local;      // local reference count
     Py_ssize_t ob_ref_shared;   // shared (atomic) reference count
     PyTypeObject *ob_type;
+    uint32_t ob_owner_id;
+    uint8_t ob_shareable;
+    uint8_t ob_frozen;
+    uint8_t ob_deferred_flags; // guarded by the interpreter cleanup mutex
+    PyObject *ob_deferred_next; // internal cleanup queue
+    size_t ob_deferred_finalizers; // pending calls, guarded by the same mutex
 };
 #endif // !defined(_Py_OPAQUE_PYOBJECT)
 

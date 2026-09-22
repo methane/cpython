@@ -2165,6 +2165,21 @@ time_exec(PyObject *module)
     }
 #endif
 
+    /* These operations use the native clock or suspend the current thread;
+       they do not access mutable Python state in this module. */
+    const char *shared_names[] = {"monotonic", "monotonic_ns", "sleep", NULL};
+    for (const char **name = shared_names; *name != NULL; name++) {
+        PyObject *clock = PyObject_GetAttrString(module, *name);
+        if (clock == NULL) {
+            return -1;
+        }
+        int err = PyObject_DeclareSynchronized(clock);
+        Py_DECREF(clock);
+        if (err < 0) {
+            return -1;
+        }
+    }
+
     return 0;
 }
 

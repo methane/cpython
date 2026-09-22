@@ -144,7 +144,7 @@ _PyWarnings_InitState(PyInterpreterState *interp)
     }
 
     if (st->once_registry == NULL) {
-        st->once_registry = PyDict_New();
+        st->once_registry = PySynchronizedDict_New();
         if (st->once_registry == NULL) {
             return -1;
         }
@@ -177,6 +177,10 @@ check_matched(PyInterpreterState *interp, PyObject *obj, PyObject *arg, PyObject
     PyObject *result;
     int rc;
 
+    if (PyObject_CheckAccess(obj) == NULL) {
+        return -1;
+    }
+
     /* A 'None' filter always matches */
     if (obj == Py_None)
         return 1;
@@ -207,7 +211,7 @@ check_matched(PyInterpreterState *interp, PyObject *obj, PyObject *arg, PyObject
     }
     if (result == NULL)
         return -1;
-    rc = PyObject_IsTrue(result);
+    rc = PyObject_CheckAccess(result) == NULL ? -1 : PyObject_IsTrue(result);
     Py_DECREF(result);
     return rc;
 }
@@ -375,6 +379,7 @@ warnings_release_lock_impl(PyObject *module)
     Py_RETURN_NONE;
 }
 
+/* Return a new reference: callbacks can replace the cached registry. */
 static PyObject *
 get_once_registry(PyInterpreterState *interp)
 {
@@ -388,7 +393,7 @@ get_once_registry(PyInterpreterState *interp)
         if (PyErr_Occurred())
             return NULL;
         assert(st->once_registry);
-        return st->once_registry;
+        return Py_NewRef(st->once_registry);
     }
     if (!PyDict_Check(registry)) {
         PyErr_Format(PyExc_TypeError,
@@ -398,11 +403,12 @@ get_once_registry(PyInterpreterState *interp)
         Py_DECREF(registry);
         return NULL;
     }
-    Py_SETREF(st->once_registry, registry);
+    Py_SETREF(st->once_registry, Py_NewRef(registry));
     return registry;
 }
 
 
+/* Return a new reference, including across destruction of the old cache. */
 static PyObject *
 get_default_action(PyInterpreterState *interp)
 {
@@ -417,7 +423,7 @@ get_default_action(PyInterpreterState *interp)
             return NULL;
         }
         assert(st->default_action);
-        return st->default_action;
+        return Py_NewRef(st->default_action);
     }
     if (!PyUnicode_Check(default_action)) {
         PyErr_Format(PyExc_TypeError,
@@ -427,12 +433,12 @@ get_default_action(PyInterpreterState *interp)
         Py_DECREF(default_action);
         return NULL;
     }
-    Py_SETREF(st->default_action, default_action);
+    Py_SETREF(st->default_action, Py_NewRef(default_action));
     return default_action;
 }
 
 /* Search filters list of match, returns false on error.  If no match
- * then 'matched_action' is NULL.  */
+ * then 'matched_action' is NULL.  Both outputs are new references. */
 static bool
 filter_search(PyInterpreterState *interp, PyObject *category,
               PyObject *text, Py_ssize_t lineno,
@@ -440,29 +446,48 @@ filter_search(PyInterpreterState *interp, PyObject *category,
               PyObject **item, PyObject **matched_action) {
     bool result = true;
     *matched_action = NULL;
-    /* Avoid the filters list changing while we iterate over it. */
+    /* A reentrant matcher can replace the interpreter's filters reference. */
+    Py_INCREF(filters);
     Py_BEGIN_CRITICAL_SECTION(filters);
-    for (Py_ssize_t i = 0; i < PyList_GET_SIZE(filters); i++) {
+    for (Py_ssize_t i = 0; ; i++) {
         PyObject *tmp_item, *action, *msg, *cat, *mod, *ln_obj;
         Py_ssize_t ln;
         int is_subclass, good_msg, good_mod;
 
-        tmp_item = PyList_GET_ITEM(filters, i);
+        /* A callback may have released the list's protective lock. */
+        if (PyObject_CheckAccess(filters) == NULL) {
+            result = false;
+            break;
+        }
+        if (i >= PyList_GET_SIZE(filters)) {
+            break;
+        }
+        tmp_item = Py_NewRef(PyList_GET_ITEM(filters, i));
+        if (PyObject_CheckAccess(tmp_item) == NULL) {
+            Py_DECREF(tmp_item);
+            result = false;
+            break;
+        }
         if (!PyTuple_Check(tmp_item) || PyTuple_GET_SIZE(tmp_item) != 5) {
             PyErr_Format(PyExc_ValueError,
                          "warnings.%s item %zd isn't a 5-tuple", list_name, i);
+            Py_DECREF(tmp_item);
             result = false;
             break;
         }
 
         /* Python code: action, msg, cat, mod, ln = item */
-        Py_INCREF(tmp_item);
         action = PyTuple_GET_ITEM(tmp_item, 0);
         msg = PyTuple_GET_ITEM(tmp_item, 1);
         cat = PyTuple_GET_ITEM(tmp_item, 2);
         mod = PyTuple_GET_ITEM(tmp_item, 3);
         ln_obj = PyTuple_GET_ITEM(tmp_item, 4);
 
+        if (PyObject_CheckAccess(action) == NULL) {
+            Py_DECREF(tmp_item);
+            result = false;
+            break;
+        }
         if (!PyUnicode_Check(action)) {
             PyErr_Format(PyExc_TypeError,
                          "action must be a string, not '%.200s'",
@@ -486,6 +511,12 @@ filter_search(PyInterpreterState *interp, PyObject *category,
             break;
         }
 
+        if (PyObject_CheckAccess(category) == NULL ||
+            PyObject_CheckAccess(cat) == NULL) {
+            Py_DECREF(tmp_item);
+            result = false;
+            break;
+        }
         is_subclass = PyObject_IsSubclass(category, cat);
         if (is_subclass == -1) {
             Py_DECREF(tmp_item);
@@ -493,6 +524,11 @@ filter_search(PyInterpreterState *interp, PyObject *category,
             break;
         }
 
+        if (PyObject_CheckAccess(ln_obj) == NULL) {
+            Py_DECREF(tmp_item);
+            result = false;
+            break;
+        }
         ln = PyLong_AsSsize_t(ln_obj);
         if (ln == -1 && PyErr_Occurred()) {
             Py_DECREF(tmp_item);
@@ -501,8 +537,13 @@ filter_search(PyInterpreterState *interp, PyObject *category,
         }
 
         if (good_msg && is_subclass && good_mod && (ln == 0 || lineno == ln)) {
+            if (PyObject_CheckAccess(action) == NULL) {
+                Py_DECREF(tmp_item);
+                result = false;
+                break;
+            }
             *item = tmp_item;
-            *matched_action = action;
+            *matched_action = Py_NewRef(action);
             result = true;
             break;
         }
@@ -510,10 +551,11 @@ filter_search(PyInterpreterState *interp, PyObject *category,
         Py_DECREF(tmp_item);
     }
     Py_END_CRITICAL_SECTION();
+    Py_DECREF(filters);
     return result;
 }
 
-/* The item is a new reference. */
+/* Both the returned action and item are new references. */
 static PyObject*
 get_filter(PyInterpreterState *interp, PyObject *category,
            PyObject *text, Py_ssize_t lineno,
@@ -778,7 +820,7 @@ warn_explicit(PyThreadState *tstate, PyObject *category, PyObject *message,
 {
     PyObject *key = NULL, *text = NULL, *result = NULL, *lineno_obj = NULL;
     PyObject *item = NULL;
-    PyObject *action;
+    PyObject *action = NULL, *once_registry = NULL;
     int rc;
     PyInterpreterState *interp = tstate->interp;
 
@@ -832,7 +874,7 @@ warn_explicit(PyThreadState *tstate, PyObject *category, PyObject *message,
     }
 
     action = get_filter(interp, category, text, lineno, module, filename, &item);
-    if (action == NULL)
+    if (action == NULL || PyObject_CheckAccess(action) == NULL)
         goto cleanup;
 
     if (_PyUnicode_EqualToASCIIString(action, "error")) {
@@ -856,7 +898,8 @@ warn_explicit(PyThreadState *tstate, PyObject *category, PyObject *message,
 
         if (_PyUnicode_EqualToASCIIString(action, "once")) {
             if (registry == NULL || registry == Py_None) {
-                registry = get_once_registry(interp);
+                once_registry = get_once_registry(interp);
+                registry = once_registry;
                 if (registry == NULL)
                     goto cleanup;
             }
@@ -890,6 +933,8 @@ warn_explicit(PyThreadState *tstate, PyObject *category, PyObject *message,
     result = Py_NewRef(Py_None);
 
  cleanup:
+    Py_XDECREF(once_registry);
+    Py_XDECREF(action);
     Py_XDECREF(item);
     Py_XDECREF(key);
     Py_XDECREF(text);
@@ -902,12 +947,16 @@ static PyObject *
 get_frame_filename(PyFrameObject *frame)
 {
     PyCodeObject *code = PyFrame_GetCode(frame);
+    if (code == NULL) {
+        return NULL;
+    }
     PyObject *filename = code->co_filename;
     Py_DECREF(code);
-    return filename;
+    return PyObject_CheckAccess(filename);
 }
 
-static bool
+/* Return -1 on error, 0 for an ordinary filename, or 1 for an internal one. */
+static int
 is_internal_filename(PyObject *filename)
 {
     if (!PyUnicode_Check(filename)) {
@@ -916,12 +965,12 @@ is_internal_filename(PyObject *filename)
 
     int contains = PyUnicode_Contains(filename, &_Py_ID(importlib));
     if (contains < 0) {
-        return false;
+        return -1;
     }
     else if (contains > 0) {
         contains = PyUnicode_Contains(filename, &_Py_ID(_bootstrap));
         if (contains < 0) {
-            return false;
+            return -1;
         }
         else if (contains > 0) {
             return true;
@@ -931,10 +980,13 @@ is_internal_filename(PyObject *filename)
     return false;
 }
 
-static bool
+static int
 is_filename_to_skip(PyObject *filename, PyTupleObject *skip_file_prefixes)
 {
     if (skip_file_prefixes) {
+        if (PyObject_CheckAccess((PyObject *)skip_file_prefixes) == NULL) {
+            return -1;
+        }
         if (!PyUnicode_Check(filename)) {
             return false;
         }
@@ -943,20 +995,23 @@ is_filename_to_skip(PyObject *filename, PyTupleObject *skip_file_prefixes)
         for (Py_ssize_t idx = 0; idx < prefixes; ++idx)
         {
             PyObject *prefix = PyTuple_GET_ITEM(skip_file_prefixes, idx);
+            if (PyObject_CheckAccess(prefix) == NULL) {
+                return -1;
+            }
             Py_ssize_t found = PyUnicode_Tailmatch(filename, prefix,
                                                    0, PY_SSIZE_T_MAX, -1);
             if (found == 1) {
                 return true;
             }
             if (found < 0) {
-                return false;
+                return -1;
             }
         }
     }
     return false;
 }
 
-static bool
+static int
 is_internal_frame(PyFrameObject *frame)
 {
     if (frame == NULL) {
@@ -965,7 +1020,7 @@ is_internal_frame(PyFrameObject *frame)
 
     PyObject *filename = get_frame_filename(frame);
     if (filename == NULL) {
-        return false;
+        return -1;
     }
 
     return is_internal_filename(filename);
@@ -974,15 +1029,29 @@ is_internal_frame(PyFrameObject *frame)
 static PyFrameObject *
 next_external_frame(PyFrameObject *frame, PyTupleObject *skip_file_prefixes)
 {
-    PyObject *frame_filename;
-    do {
+    for (;;) {
         PyFrameObject *back = PyFrame_GetBack(frame);
         Py_SETREF(frame, back);
-    } while (frame != NULL && (frame_filename = get_frame_filename(frame)) &&
-             (is_internal_filename(frame_filename) ||
-              is_filename_to_skip(frame_filename, skip_file_prefixes)));
-
-    return frame;
+        if (frame == NULL) {
+            return NULL;
+        }
+        PyObject *filename = get_frame_filename(frame);
+        if (filename == NULL) {
+            Py_DECREF(frame);
+            return NULL;
+        }
+        int skip = is_internal_filename(filename);
+        if (skip == 0) {
+            skip = is_filename_to_skip(filename, skip_file_prefixes);
+        }
+        if (skip < 0) {
+            Py_DECREF(frame);
+            return NULL;
+        }
+        if (!skip) {
+            return frame;
+        }
+    }
 }
 
 /* filename, module, and registry are new refs, globals is borrowed */
@@ -1002,12 +1071,17 @@ setup_context(Py_ssize_t stack_level,
         return 0;
     }
     if (skip_file_prefixes) {
-        /* Type check our data structure up front. Later code that uses it
-         * isn't structured to report errors. */
+        /* Validate all prefixes even if the frame walk does not use them. */
+        if (PyObject_CheckAccess((PyObject *)skip_file_prefixes) == NULL) {
+            return 0;
+        }
         Py_ssize_t prefixes = PyTuple_GET_SIZE(skip_file_prefixes);
         for (Py_ssize_t idx = 0; idx < prefixes; ++idx)
         {
             PyObject *prefix = PyTuple_GET_ITEM(skip_file_prefixes, idx);
+            if (PyObject_CheckAccess(prefix) == NULL) {
+                return 0;
+            }
             if (!PyUnicode_Check(prefix)) {
                 PyErr_Format(PyExc_TypeError,
                              "Found non-str '%s' in skip_file_prefixes.",
@@ -1018,9 +1092,17 @@ setup_context(Py_ssize_t stack_level,
     }
     PyInterpreterState *interp = tstate->interp;
     PyFrameObject *f = PyThreadState_GetFrame(tstate);
+    if (f == NULL && PyErr_Occurred()) {
+        return 0;
+    }
+    int internal = stack_level > 0 ? is_internal_frame(f) : 0;
+    if (internal < 0) {
+        Py_XDECREF(f);
+        return 0;
+    }
     // Stack level comparisons to Python code is off by one as there is no
     // warnings-related stack level to avoid.
-    if (stack_level <= 0 || is_internal_frame(f)) {
+    if (stack_level <= 0 || internal) {
         while (--stack_level > 0 && f != NULL) {
             PyFrameObject *back = PyFrame_GetBack(f);
             Py_SETREF(f, back);
@@ -1032,6 +1114,9 @@ setup_context(Py_ssize_t stack_level,
         }
     }
 
+    if (f == NULL && PyErr_Occurred()) {
+        return 0;
+    }
     if (f == NULL) {
         globals = interp->sysdict;
         *filename = PyUnicode_FromString("<sys>");
@@ -1039,9 +1124,21 @@ setup_context(Py_ssize_t stack_level,
     }
     else {
         globals = f->f_frame->f_globals;
-        *filename = Py_NewRef(_PyFrame_GetCode(f->f_frame)->co_filename);
+        PyObject *frame_filename = get_frame_filename(f);
+        if (frame_filename == NULL) {
+            Py_DECREF(f);
+            return 0;
+        }
+        *filename = Py_NewRef(frame_filename);
         *lineno = PyFrame_GetLineNumber(f);
         Py_DECREF(f);
+        if (*lineno < 0 && PyErr_Occurred()) {
+            Py_DECREF(*filename);
+            return 0;
+        }
+    }
+    if (*filename == NULL) {
+        return 0;
     }
 
     *module = NULL;
@@ -1055,7 +1152,7 @@ setup_context(Py_ssize_t stack_level,
         goto handle_error;
     }
     if (*registry == NULL) {
-        *registry = PyDict_New();
+        *registry = PySynchronizedDict_New();
         if (*registry == NULL)
             goto handle_error;
 
@@ -1173,12 +1270,14 @@ warnings_warn_impl(PyObject *module, PyObject *message, PyObject *category,
     if (category == NULL)
         return NULL;
     if (skip_file_prefixes) {
+        if (PyObject_CheckAccess((PyObject *)skip_file_prefixes) == NULL) {
+            return NULL;
+        }
         if (PyTuple_GET_SIZE(skip_file_prefixes) > 0) {
             if (stacklevel < 2) {
                 stacklevel = 2;
             }
         } else {
-            Py_DECREF((PyObject *)skip_file_prefixes);
             skip_file_prefixes = NULL;
         }
     }

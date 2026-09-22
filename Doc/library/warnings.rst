@@ -505,6 +505,12 @@ Available Functions
    that is, filter actions ``"default"``, ``"module"`` and ``"once"`` are
    handled as ``"always"``.
 
+   Warning registries automatically created by the interpreter are
+   :class:`SynchronizedDict` objects, so their bookkeeping does not become
+   local to the first thread group that emits a warning. Supplying a registry
+   or assigning ``__warningregistry__`` does not change that object's sharing
+   state; its existing access restrictions still apply.
+
    *module_globals*, if supplied, should be the global namespace in use by the code
    for which the warning is issued.  (This argument is used to support displaying
    source for modules found in zipfiles or other non-filesystem import

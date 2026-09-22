@@ -41,6 +41,7 @@ struct _PyInterpreterFrame {
     int32_t tlbc_index;
 #endif
     uint16_t return_offset;  /* Only relevant during a function call */
+    uint8_t check_return_access;  /* Result of an inlined protocol call */
     char owner;
 #ifdef Py_DEBUG
     uint8_t visited:1;
@@ -49,6 +50,8 @@ struct _PyInterpreterFrame {
 #else
     uint8_t visited;
 #endif
+    /* Preserve execution ownership when another thread materializes a frame. */
+    uint32_t threadgroup_id;
     /* Locals and stack */
     _PyStackRef localsplus[1];
 };

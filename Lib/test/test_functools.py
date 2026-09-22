@@ -2291,6 +2291,29 @@ class TestLRUPy(TestLRU, unittest.TestCase):
 
 @unittest.skipUnless(c_functools, 'requires the C _functools module')
 class TestLRUC(TestLRU, unittest.TestCase):
+    @threading_helper.requires_working_threading()
+    def test_create_cache_in_threadgroup(self):
+        import threading
+
+        decorate = self.module.lru_cache
+        results = threading.Channel()
+        def worker():
+            @decorate(maxsize=2)
+            def square(value):
+                return value * value
+            assert square.__shareable__ is threading.Shareable.LOCAL
+            assert square(3) == 9
+            assert square(3) == 9
+            info = square.cache_info()
+            results.put((info.hits, info.misses, info.maxsize, info.currsize))
+            square.cache_clear()
+            results.put(square.cache_info().currsize)
+        thread = threading.Thread(target=worker, group=threading.ThreadGroup())
+        with threading_helper.start_threads([thread]):
+            pass
+        self.assertEqual(results.get(), (1, 1, 2, 1))
+        self.assertEqual(results.get(), 0)
+
     if c_functools:
         module = c_functools
         cached_func = c_cached_func,

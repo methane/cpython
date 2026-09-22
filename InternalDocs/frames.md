@@ -13,6 +13,13 @@ of three conceptual sections:
 The definition of the `_PyInterpreterFrame` struct is in
 [Include/internal/pycore_interpframe_structs.h](../Include/internal/pycore_interpframe_structs.h).
 
+Each real interpreter frame records the ThreadGroup ID supplied when the frame
+is initialized. Frame copies preserve this ID, including copies into generator
+storage and into an escaped frame object's storage. A lazily created
+`PyFrameObject` inherits that recorded owner before it is published. Inspection
+by another thread must not make the inspecting group the frame's owner.
+Synthetic interpreter entry frames use zero and are never materialized.
+
 # Allocation
 
 Python semantics allows frames to outlive the activation, so they need to

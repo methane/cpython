@@ -31,7 +31,7 @@ def threading_cleanup(*original_values):
     timeout = 1.0
     for _ in support.sleeping_retry(timeout, error=False):
         # Copy the thread list to get a consistent output. threading._dangling
-        # is a WeakSet, its value changes when it's read.
+        # is a weak registry, its value changes when it's read.
         dangling_threads = list(threading._dangling)
         count = _thread._count()
 

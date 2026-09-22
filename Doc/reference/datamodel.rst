@@ -611,6 +611,13 @@ Special read-only attributes
        A cell object has the attribute ``cell_contents``.
        This can be used to get the value of the cell, as well as set the value.
 
+       A function whose captured bindings are read-only can be synchronized.
+       This does not make the captured values shareable: reading a value still
+       checks whether the current thread group may access it. A known
+       ``nonlocal`` writer keeps all functions capturing that binding local.
+       Replacing an initialized binding, or attaching writer code to its cell,
+       also makes existing synchronized readers of that cell local.
+
 Special writable attributes
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -656,12 +663,32 @@ Most of these attributes check the type of the assigned value:
        for those parameters that have defaults,
        or ``None`` if no parameters have a default value.
 
+       .. deprecated:: 3.16
+          Reassigning or deleting this attribute emits
+          :exc:`DeprecationWarning`. Supply defaults when creating a function.
+
    * - .. attribute:: function.__code__
      - The :ref:`code object <code-objects>` representing
        the compiled function body.
 
+       .. deprecated:: 3.16
+          Reassigning this attribute emits :exc:`DeprecationWarning`.
+          Create a new function to use a different code object.
+
    * - .. attribute:: function.__dict__
      - The namespace supporting arbitrary function attributes.
+       When first created for a synchronized function, this namespace is a
+       :class:`SynchronizedDict`. Attribute values retain their own ownership
+       and shareable states.
+       Assigning an ordinary dictionary to a synchronized function converts
+       that dictionary in place to :class:`SynchronizedDict`, preserving
+       references to it. An existing :class:`SynchronizedDict` is reused.
+       Dictionary subclasses are not supported for this conversion.
+       If replacing the function's code or closure makes it synchronized,
+       an existing ordinary attribute dictionary is converted before the new
+       function state is published. If conversion fails, the execution
+       attribute is not replaced. A synchronized namespace is retained if
+       the function later becomes local.
        See also: :attr:`__dict__ attributes <object.__dict__>`.
 
    * - .. attribute:: function.__annotations__
@@ -682,8 +709,19 @@ Most of these attributes check the type of the assigned value:
        .. versionadded:: 3.14
 
    * - .. attribute:: function.__kwdefaults__
-     - A :class:`dictionary <dict>` containing defaults for keyword-only
-       :term:`parameters <parameter>`.
+     - A :class:`frozendict` containing defaults for keyword-only
+       :term:`parameters <parameter>`, or ``None`` if there are no defaults.
+       Assigning a dictionary creates a shallow immutable snapshot. Defaults
+       can be replaced by assigning the whole attribute; its entries cannot
+       be modified in place.
+
+       .. versionchanged:: 3.16
+          Keyword-only defaults are stored in a :class:`frozendict`.
+
+       .. deprecated:: 3.16
+          Reassigning or deleting this attribute emits
+          :exc:`DeprecationWarning`. Supply keyword-only defaults when
+          creating a function.
 
    * - .. attribute:: function.__type_params__
      - A :class:`tuple` containing the :ref:`type parameters <type-params>` of
@@ -1114,6 +1152,15 @@ the following writable attributes:
    The module's documentation string, or ``None`` if unavailable.
    See also: :attr:`__doc__ attributes <definition.__doc__>`.
 
+.. attribute:: module.__module__
+
+   Initialized to the module object itself. Module code can use this global
+   variable to refer to its own module without looking it up in
+   :data:`sys.modules`. It is also initialized by the
+   :class:`types.ModuleType` constructor and by the C module creation APIs.
+
+   .. versionadded:: 3.16
+
 .. attribute:: module.__annotations__
 
    A dictionary containing :term:`variable annotations <variable annotation>`
@@ -1145,6 +1192,24 @@ the following writable attributes:
 
    .. versionadded:: 3.15
 
+.. method:: module.__freeze__()
+
+   Freeze a Python module and its namespace in place, returning the module
+   itself. This method implements ``freeze(module)``; module code can use
+   ``freeze(__module__)`` after initializing its globals.
+
+   The namespace becomes a :class:`frozendict`. Existing references to the
+   namespace, including functions' :attr:`~function.__globals__`, retain their
+   identity. Attribute assignment, deletion, and module reinitialization are
+   prohibited. Freezing is shallow: objects stored in the namespace are not
+   implicitly frozen. Repeated freezing returns the same module.
+
+   Annotations remain lazily evaluated, with their results cached separately
+   from the frozen namespace. Extension modules and module subclasses require
+   explicit support for freezing.
+
+   .. versionadded:: 3.16
+
 Module dictionaries
 ^^^^^^^^^^^^^^^^^^^
 
@@ -1159,10 +1224,11 @@ Module objects also have the following special read-only attribute:
 
    .. impl-detail::
 
-      Because of the way CPython clears module dictionaries, the module
-      dictionary will be cleared when the module falls out of scope even if the
-      dictionary still has live references.  To avoid this, copy the dictionary
-      or keep the module around while using its dictionary directly.
+      The namespace normally retains the module through its
+      :attr:`~module.__module__` entry. If that entry is removed or replaced,
+      CPython can clear the module dictionary when the module is destroyed,
+      even if the dictionary still has live references. Keep a reference to
+      the module when using its dictionary independently of that entry.
 
 
 .. _class-attrs-and-methods:
@@ -1245,6 +1311,9 @@ Special attributes
    * - .. attribute:: type.__dict__
      - A :class:`mapping proxy <types.MappingProxyType>`
        providing a read-only view of the class's namespace.
+       For a frozen Python class, this is the namespace itself as a
+       :class:`frozendict`. Freezing preserves the underlying dictionary:
+       previously obtained mapping proxies continue to view that namespace.
        See also: :attr:`__dict__ attributes <object.__dict__>`.
 
    * - .. attribute:: type.__bases__
@@ -1326,7 +1395,7 @@ Special methods
 ^^^^^^^^^^^^^^^
 
 In addition to the special attributes described above, all Python classes also
-have the following two methods available:
+have the following methods available:
 
 .. method:: type.mro
 
@@ -1346,6 +1415,22 @@ have the following two methods available:
       >>> class B(A): pass
       >>> A.__subclasses__()
       [<class 'B'>]
+
+.. method:: type.synchronize()
+
+   Synchronize a local Python-defined class in place and return that class.
+   Its attribute namespace becomes a :class:`SynchronizedDict`, retaining
+   existing namespace aliases. The :attr:`~type.__dict__` attribute remains
+   a read-only view; use normal attribute assignment to update the class.
+
+   Synchronization is shallow: instances, bases, and attribute values retain
+   their own sharing states. The class can subsequently be frozen with
+   :func:`freeze`. An already synchronized or frozen class cannot be
+   synchronized again. Native classes and classes with native metaclass
+   storage require explicit native support.
+
+   .. versionadded:: 3.16
+
 
 Class instances
 ---------------
@@ -1401,6 +1486,12 @@ Special attributes
    A dictionary or other mapping object used to store an object's (writable)
    attributes. Not all instances have a :attr:`!__dict__` attribute; see the
    section on :ref:`slots` for more details.
+
+   When the default freezing implementation freezes a Python instance with
+   an exact :class:`dict` namespace, it converts that dictionary to a
+   :class:`frozendict` in place. References obtained before freezing continue
+   to refer to the same namespace and can no longer modify it. Objects stored
+   in the namespace are not implicitly frozen.
 
 
 I/O objects (also known as file objects)
@@ -3833,9 +3924,17 @@ are awaitable.
    The :class:`object` class itself is not awaitable and does not provide
    this method.
 
+   .. versionchanged:: 3.16
+      Await processing checks access to the awaitable before invoking this
+      method and to its returned iterator. Access failures raise
+      :exc:`IllegalThreadAccessException` or :exc:`UnprotectedAccessException`;
+      these exceptions also propagate unchanged through :keyword:`async for`
+      and :keyword:`async with`.
+
    .. note::
 
-      The language doesn't place any restriction on the type or value of the
+      Subject to ThreadGroup access rules, the language doesn't place any
+      restriction on the type or value of the
       objects yielded by the iterator returned by ``__await__``, as this is
       specific to the implementation of the asynchronous execution framework
       (e.g. :mod:`asyncio`) that will be managing the :term:`awaitable` object.

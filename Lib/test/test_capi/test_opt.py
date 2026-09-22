@@ -23,6 +23,7 @@ GLOBAL_136154 = 42
 
 # For frozendict JIT tests
 FROZEN_DICT_CONST = frozendict(x=1, y=2)
+FROZEN_DICT_MUTABLE = frozendict(x=[])
 
 # For frozenset JIT tests
 FROZEN_SET_CONST = frozenset({1, 2, 3})
@@ -144,6 +145,9 @@ class TestExecutorInvalidation(unittest.TestCase):
         def f():
             for _ in range(TIER2_THRESHOLD):
                 pass
+        # Previous leak-test repetitions have invalidated this code's traces
+        # and changed its warmup counters. Start with fresh code each time.
+        f = types.FunctionType(f.__code__.replace(), globals())
         f()
         exe = get_first_executor(f)
         self.assertIsNotNone(exe)
@@ -2465,6 +2469,88 @@ class TestUopsOptimization(unittest.TestCase):
         uops = get_opnames(ex)
         self.assertEqual(uops.count("_BINARY_OP_SUBSCR_INIT_CALL"), 1)
 
+    def test_inlined_subscr_return_access(self):
+        import threading
+        from test.support import threading_helper
+
+        class Indexable:
+            def __init__(self, value):
+                self.value = value
+            def __getitem__(self, key):
+                return self.value
+
+        def f(args):
+            n, obj = args
+            result = None
+            for index in range(n):
+                if index:
+                    result = obj[0]
+            return result
+
+        f = types.FunctionType(f.__code__.replace(), globals())
+        self.addCleanup(_testinternalcapi.clear_executor_deletion_list)
+        self.addCleanup(_testinternalcapi.invalidate_executors, f.__code__)
+        res, ex = self._run_with_optimizer(f, (2 * TIER2_THRESHOLD, Indexable(42)))
+        self.assertEqual(res, 42)
+        self.assertIsNotNone(ex)
+        self.assertIn('_BINARY_OP_SUBSCR_INIT_CALL', get_opnames(ex))
+        foreign = []
+        results = threading.Channel()
+        def worker(f=f):
+            with sys.monitoring.StopTheWorld:
+                obj = Indexable(foreign)
+            try:
+                f((2 * TIER2_THRESHOLD, obj))
+            except IllegalThreadAccessException:
+                results.put(True)
+            else:
+                results.put(False)
+        thread = threading.Thread(target=worker, group=threading.ThreadGroup())
+        with threading_helper.start_threads([thread]):
+            pass
+        self.assertTrue(results.get())
+
+    def test_for_iter_result_access(self):
+        import threading
+        from test.support import threading_helper
+
+        def template(items):
+            result = None
+            for value in items:
+                result = value
+            return result
+
+        for factory in (list, tuple):
+            with self.subTest(factory=factory):
+                f = types.FunctionType(template.__code__.replace(), globals())
+                self.addCleanup(_testinternalcapi.clear_executor_deletion_list)
+                self.addCleanup(_testinternalcapi.invalidate_executors, f.__code__)
+                res, ex = self._run_with_optimizer(
+                    f, factory([42] * (2 * TIER2_THRESHOLD)))
+                self.assertEqual(res, 42)
+                self.assertIsNotNone(ex)
+                self.assertIn('_CHECK_ITER_ACCESS', get_opnames(ex))
+                foreign = []
+                results = threading.Channel()
+
+                def worker(holder, f=f, factory=factory, results=results):
+                    # Construct the local container without consuming its
+                    # foreign element until the executor runs outside the pause.
+                    with sys.monitoring.StopTheWorld:
+                        items = factory([42, holder[0]] + [42] * TIER2_THRESHOLD)
+                    try:
+                        f(items)
+                    except IllegalThreadAccessException:
+                        results.put(True)
+                    else:
+                        results.put(False)
+
+                thread = threading.Thread(target=worker, args=((foreign,),),
+                                          group=threading.ThreadGroup())
+                with threading_helper.start_threads([thread]):
+                    pass
+                self.assertTrue(results.get())
+
     def test_remove_guard_for_known_type_list(self):
         def f(n):
             x = 0
@@ -2498,6 +2584,10 @@ class TestUopsOptimization(unittest.TestCase):
                 hits += w + x + y + z
             return hits
 
+        # Repeated leak-test runs must start with fresh optimizer counters.
+        f = types.FunctionType(f.__code__.replace(), globals())
+        self.addCleanup(_testinternalcapi.clear_executor_deletion_list)
+        self.addCleanup(_testinternalcapi.invalidate_executors, f.__code__)
         res, ex = self._run_with_optimizer(f, TIER2_THRESHOLD)
         self.assertEqual(res, TIER2_THRESHOLD * 4)
         self.assertIsNotNone(ex)
@@ -2506,6 +2596,90 @@ class TestUopsOptimization(unittest.TestCase):
         self.assertIn("_BUILD_TUPLE", uops)
         self.assertIn("_UNPACK_SEQUENCE_UNIQUE_TUPLE", uops)
         self.assertNotIn("_UNPACK_SEQUENCE_TUPLE", uops)
+
+    def test_unique_tuple_unpack_access(self):
+        from test import test_stop_the_world
+
+        def read(n, shared):
+            def pair(shared):
+                # Cross the call boundary with an accessible container. Build
+                # the shallow tuple while access to its children is permitted;
+                # only unpacking after the pause must be rejected.
+                with sys.monitoring.StopTheWorld:
+                    value = shared['value']
+                    return value, value
+            for i in range(n):
+                if i == 0:
+                    continue
+                first, second = pair(shared)
+            return 42
+
+        code = read.__code__.replace()
+        function = types.FunctionType(code, globals())
+        self.addCleanup(_testinternalcapi.clear_executor_deletion_list)
+        self.addCleanup(_testinternalcapi.invalidate_executors, code)
+        count = 4 * TIER2_THRESHOLD
+        foreign = []
+        shared = SynchronizedDict(value=foreign)
+        self.assertEqual(function(count, shared), 42)
+        traces = [get_opnames(ex) for ex in get_all_executors(function)]
+        self.assertTrue(any('_UNPACK_SEQUENCE_UNIQUE_TWO_TUPLE' in ops
+                            and '_CHECK_UNPACK_ACCESS' in ops for ops in traces))
+        def work(function, count, shared):
+            denied = 0
+            for _ in range(100):
+                try:
+                    function(count, shared)
+                except IllegalThreadAccessException as exc:
+                    tb = exc.__traceback__
+                    while tb.tb_next is not None:
+                        tb = tb.tb_next
+                    if tb.tb_frame.f_code is not function.__code__:
+                        return -1
+                    denied += 1
+            return denied
+        self.assertEqual(test_stop_the_world.StopTheWorldTests.run_native(
+            self, work, function, count, shared), 100)
+        self.assertEqual(foreign, [])
+
+    def test_unique_tuple_unpack_lifetime(self):
+        # Fresh code in every repetition keeps the optimized stealing path
+        # active in refleak runs instead of reaching its invalidation backoff.
+        self.addCleanup(_testinternalcapi.clear_executor_deletion_list)
+        for size, opname in (
+            (2, '_UNPACK_SEQUENCE_UNIQUE_TWO_TUPLE'),
+            (3, '_UNPACK_SEQUENCE_UNIQUE_THREE_TUPLE'),
+            (4, '_UNPACK_SEQUENCE_UNIQUE_TUPLE'),
+        ):
+            with self.subTest(size=size):
+                names = ', '.join(f'x{i}' for i in range(size))
+                items = ', '.join(['item'] * size)
+                namespace = {}
+                exec(f"""
+def produce(n):
+    for i in range(n):
+        item = []
+        yield ({items})
+def consume(n):
+    count = 0
+    for {names} in produce(n):
+        x0.append(42)
+        count += len(x{size - 1})
+    return count
+""", namespace)
+                consume = namespace['consume']
+                produce = namespace['produce']
+                self.addCleanup(_testinternalcapi.invalidate_executors,
+                                consume.__code__)
+                self.addCleanup(_testinternalcapi.invalidate_executors,
+                                produce.__code__)
+                count = 4 * TIER2_THRESHOLD
+                self.assertEqual(consume(count), count)
+                self.assertTrue(any(opname in get_opnames(ex)
+                                    for ex in get_all_executors(consume)))
+                # Elements must survive stealing, and freeing the tuple must
+                # consume its own reference without decrefing those elements.
+                self.assertEqual(consume(count), count)
 
     def test_non_unique_tuple_unpack(self):
         def f(n):
@@ -2518,6 +2692,10 @@ class TestUopsOptimization(unittest.TestCase):
                 hits += w + x + y + z
             return hits
 
+        # Repeated leak-test runs must start with fresh optimizer counters.
+        f = types.FunctionType(f.__code__.replace(), globals())
+        self.addCleanup(_testinternalcapi.clear_executor_deletion_list)
+        self.addCleanup(_testinternalcapi.invalidate_executors, f.__code__)
         res, ex = self._run_with_optimizer(f, TIER2_THRESHOLD)
         self.assertEqual(res, TIER2_THRESHOLD * 4)
         self.assertIsNotNone(ex)
@@ -2537,6 +2715,10 @@ class TestUopsOptimization(unittest.TestCase):
                 hits += x + y + z
             return hits
 
+        # Repeated leak-test runs must start with fresh optimizer counters.
+        f = types.FunctionType(f.__code__.replace(), globals())
+        self.addCleanup(_testinternalcapi.clear_executor_deletion_list)
+        self.addCleanup(_testinternalcapi.invalidate_executors, f.__code__)
         res, ex = self._run_with_optimizer(f, TIER2_THRESHOLD)
         self.assertEqual(res, TIER2_THRESHOLD * 3)
         self.assertIsNotNone(ex)
@@ -2557,6 +2739,10 @@ class TestUopsOptimization(unittest.TestCase):
                 hits += x + y + z
             return hits
 
+        # Repeated leak-test runs must start with fresh optimizer counters.
+        f = types.FunctionType(f.__code__.replace(), globals())
+        self.addCleanup(_testinternalcapi.clear_executor_deletion_list)
+        self.addCleanup(_testinternalcapi.invalidate_executors, f.__code__)
         res, ex = self._run_with_optimizer(f, TIER2_THRESHOLD)
         self.assertEqual(res, TIER2_THRESHOLD * 3)
         self.assertIsNotNone(ex)
@@ -2576,6 +2762,10 @@ class TestUopsOptimization(unittest.TestCase):
                 hits += x + y
             return hits
 
+        # Repeated leak-test runs must start with fresh optimizer counters.
+        f = types.FunctionType(f.__code__.replace(), globals())
+        self.addCleanup(_testinternalcapi.clear_executor_deletion_list)
+        self.addCleanup(_testinternalcapi.invalidate_executors, f.__code__)
         res, ex = self._run_with_optimizer(f, TIER2_THRESHOLD)
         self.assertEqual(res, TIER2_THRESHOLD * 2)
         self.assertIsNotNone(ex)
@@ -2597,6 +2787,10 @@ class TestUopsOptimization(unittest.TestCase):
                 hits += x + y
             return hits
 
+        # Repeated leak-test runs must start with fresh optimizer counters.
+        f = types.FunctionType(f.__code__.replace(), globals())
+        self.addCleanup(_testinternalcapi.clear_executor_deletion_list)
+        self.addCleanup(_testinternalcapi.invalidate_executors, f.__code__)
         res, ex = self._run_with_optimizer(f, TIER2_THRESHOLD)
         self.assertEqual(res, TIER2_THRESHOLD * 2)
         self.assertIsNotNone(ex)
@@ -2818,6 +3012,42 @@ class TestUopsOptimization(unittest.TestCase):
         uops = get_opnames(ex)
         self.assertNotIn("_BINARY_OP_SUBSCR_DICT_KNOWN_HASH", uops)
         self.assertNotIn("_BINARY_OP_SUBSCR_DICT", uops)
+
+    def test_binary_subscr_frozendict_mutable_value_keeps_access_check(self):
+        import threading
+        from test.support import threading_helper
+
+        def testfunc(n):
+            result = None
+            for index in range(n):
+                # Reach the loop backedge before the first lookup, so a new
+                # group can enter the already compiled executor first.
+                if index:
+                    result = FROZEN_DICT_MUTABLE['x']
+            return result
+
+        # Error exits change executor state. Start each leak-test repetition
+        # with a fresh code object, and drain deferred executor destruction.
+        testfunc = types.FunctionType(testfunc.__code__.replace(), globals())
+        self.addCleanup(_testinternalcapi.clear_executor_deletion_list)
+        self.addCleanup(_testinternalcapi.invalidate_executors, testfunc.__code__)
+        res, ex = self._run_with_optimizer(testfunc, 2 * TIER2_THRESHOLD)
+        self.assertIs(res, FROZEN_DICT_MUTABLE['x'])
+        self.assertIsNotNone(ex)
+        self.assertIn('_BINARY_OP_SUBSCR_DICT_KNOWN_HASH', get_opnames(ex))
+
+        results = threading.Channel()
+        def worker(testfunc=testfunc):
+            try:
+                testfunc(2 * TIER2_THRESHOLD)
+            except IllegalThreadAccessException:
+                results.put(True)
+            else:
+                results.put(False)
+        thread = threading.Thread(target=worker, group=threading.ThreadGroup())
+        with threading_helper.start_threads([thread]):
+            pass
+        self.assertTrue(results.get())
 
     def test_store_subscr_dict_known_hash(self):
         # str, int, bytes, float, complex, tuple and any python object which has generic hash
@@ -5598,6 +5828,810 @@ class TestUopsOptimization(unittest.TestCase):
 
         self.assertIn("_FOR_ITER_GEN_FRAME", uops)
         self.assertIn("_SEND_VIRTUAL_TIER_TWO", uops)
+
+    def test_inlined_coroutine_return_access(self):
+        import threading
+        from test.support import threading_helper
+
+        async def producer_template(value):
+            return value
+
+        async def template(items):
+            result = None
+            for coro in items:
+                try:
+                    result = await coro
+                except IllegalThreadAccessException:
+                    return -1
+            return result
+
+        producer = types.FunctionType(producer_template.__code__.replace(), globals())
+        f = types.FunctionType(template.__code__.replace(), globals())
+        self.addCleanup(_testinternalcapi.clear_executor_deletion_list)
+        self.addCleanup(_testinternalcapi.invalidate_executors, f.__code__)
+        self.addCleanup(_testinternalcapi.invalidate_executors, producer.__code__)
+        with self.assertRaises(StopIteration) as caught:
+            f([producer(42) for _ in range(2 * TIER2_THRESHOLD)]).send(None)
+        self.assertEqual(caught.exception.value, 42)
+        executors = get_all_executors(f)
+        self.assertTrue(executors)
+        self.assertTrue(any('_END_SEND' in get_opnames(ex) for ex in executors))
+        foreign = []
+        results = threading.Channel()
+
+        def worker(holder):
+            with sys.monitoring.StopTheWorld:
+                items = [producer(42), producer(holder[0])]
+            try:
+                f(items).send(None)
+            except StopIteration as exc:
+                results.put(exc.value)
+
+        thread = threading.Thread(target=worker, args=((foreign,),),
+                                  group=threading.ThreadGroup())
+        with threading_helper.start_threads([thread]):
+            pass
+        self.assertEqual(results.get(), -1)
+
+    def test_cell_access(self):
+        import threading
+        from test.support import threading_helper
+
+        value = 42
+        def template(n):
+            result = None
+            for _ in range(n):
+                result = value
+            return result
+
+        code = template.__code__.replace()
+        function_type = types.FunctionType
+        cell_type = types.CellType
+        get_executor = _opcode.get_executor
+        _testinternalcapi.object_declare_synchronized(get_executor)
+        self.addCleanup(_testinternalcapi.clear_executor_deletion_list)
+        self.addCleanup(_testinternalcapi.invalidate_executors, code)
+        count = 2 * TIER2_THRESHOLD
+        foreign = []
+        results = threading.Channel()
+        def worker(holder):
+            cell = cell_type(42)
+            reader = function_type(code, {}, closure=(cell,))
+            assert reader(count) == 42
+            opnames = []
+            for offset in range(0, len(code.co_code), 2):
+                try:
+                    executor = get_executor(code, offset)
+                except ValueError:
+                    continue
+                opnames.extend(op[0] for op in executor)
+            results.put(tuple(opnames))
+            with sys.monitoring.StopTheWorld:
+                cell.cell_contents = holder[0]
+            try:
+                reader(count)
+            except IllegalThreadAccessException:
+                results.put(True)
+            else:
+                results.put(False)
+        thread = threading.Thread(target=worker, args=((foreign,),),
+                                  group=threading.ThreadGroup())
+        with threading_helper.start_threads([thread]):
+            pass
+        self.assertIn('_LOAD_DEREF', results.get())
+        self.assertTrue(results.get())
+
+    def test_attribute_constant_access(self):
+        import _thread
+        import threading
+
+        foreign = []
+        class C:
+            value = foreign
+        freeze(C)
+        def template(n):
+            result = None
+            for _ in range(n):
+                result = shared_type.value
+            return result
+        f = types.FunctionType(template.__code__.replace(),
+                               SynchronizedDict(shared_type=C))
+        self.addCleanup(_testinternalcapi.clear_executor_deletion_list)
+        self.addCleanup(_testinternalcapi.invalidate_executors, f.__code__)
+        self.addCleanup(_testinternalcapi.invalidate_executors, C)
+        count = 2 * TIER2_THRESHOLD
+        self.assertIs(f(count), foreign)
+        executors = get_all_executors(f)
+        self.assertTrue(any('_CHECK_ATTR_ACCESS' in get_opnames(ex)
+                            for ex in executors))
+        self.assertTrue(any(op[0] in ('_LOAD_CONST_INLINE', '_LOAD_CONST_INLINE_BORROW')
+                            and op[3] == id(foreign)
+                            for ex in executors for op in ex))
+        results = threading.Channel()
+        def worker(f=f, count=count, results=results):
+            try:
+                f(count)
+            except IllegalThreadAccessException:
+                results.put(True)
+            else:
+                results.put(False)
+        handle = _thread.start_joinable_thread(worker,
+                                               group=threading.ThreadGroup())
+        handle.join()
+        self.assertTrue(results.get())
+        self.assertIs(f(count), foreign)
+
+    def test_call_input_access_after_argument_evaluation(self):
+        import threading
+
+        def native(n, value, unlock, consume):
+            for _ in range(n):
+                value.append(unlock())
+
+        def python(n, value, unlock, consume):
+            for _ in range(n):
+                consume(value, unlock())
+
+        for template in (native, python):
+            with self.subTest(path=template.__name__):
+                lock = threading.Lock()
+                release = [False]
+                entered = []
+
+                def unlock():
+                    if release[0]:
+                        lock.__exit__(None, None, None)
+                    return 42
+
+                def consume(value, ignored):
+                    entered.append(True)
+
+                function = types.FunctionType(template.__code__.replace(), globals())
+                self.addCleanup(_testinternalcapi.clear_executor_deletion_list)
+                self.addCleanup(_testinternalcapi.invalidate_executors, function.__code__)
+                with lock:
+                    value = lock.protect([])
+                    for _ in range(3):
+                        function(2 * TIER2_THRESHOLD, value, unlock, consume)
+                    self.assertTrue(any('_CHECK_CALL_INPUTS' in get_opnames(ex)
+                                        for ex in get_all_executors(function)))
+                    value.clear()
+                entered.clear()
+                release[0] = True
+                for _ in range(100):
+                    with self.assertRaisesRegex(RuntimeError, 'owning context'):
+                        with lock:
+                            with self.assertRaises(UnprotectedAccessException):
+                                function(1, value, unlock, consume)
+                    with lock:
+                        self.assertEqual(value, [])
+                    self.assertEqual(entered, [])
+
+    def test_call_result_access_after_cleanup(self):
+        import threading
+
+        def native(n, mapping, release, produce):
+            result = None
+            for _ in range(n):
+                result = mapping.get('value', release()).__class__
+            return result
+
+        def python(n, mapping, release, produce):
+            result = None
+            for _ in range(n):
+                result = produce(mapping['value'], release()).__class__
+            return result
+
+        def produce(value, unused):
+            return value
+
+        for template, required in (
+            (native, '_CHECK_CALL_ACCESS'),
+            (python, '_RETURN_VALUE'),
+        ):
+            with self.subTest(path=template.__name__):
+                lock = threading.Lock()
+                state = [False]
+
+                class Release:
+                    def __del__(self):
+                        if state[0]:
+                            lock.__exit__(None, None, None)
+
+                function = types.FunctionType(template.__code__.replace(), globals())
+                self.addCleanup(_testinternalcapi.clear_executor_deletion_list)
+                self.addCleanup(_testinternalcapi.invalidate_executors, function.__code__)
+                with lock:
+                    mapping = {'value': lock.protect([])}
+                    for _ in range(3):
+                        self.assertIs(function(2 * TIER2_THRESHOLD, mapping,
+                                               Release, produce), list)
+                    self.assertTrue(any(required in get_opnames(ex)
+                                        for ex in get_all_executors(function)))
+                state[0] = True
+                for _ in range(100):
+                    denied = False
+                    with self.assertRaisesRegex(RuntimeError, 'owning context'):
+                        with lock:
+                            try:
+                                function(1, mapping, Release, produce)
+                            except UnprotectedAccessException:
+                                denied = True
+                    self.assertTrue(denied)
+
+    def test_with_local_access(self):
+        import _thread
+        import threading
+
+        def read(n, shared):
+            with sys.monitoring.StopTheWorld:
+                value = shared['value']
+            for i in range(n):
+                if i == 0:
+                    continue
+                result = value
+            return 42
+
+        def save(n, shared):
+            with sys.monitoring.StopTheWorld:
+                value = shared['value']
+            for i in range(n):
+                if i == 0:
+                    continue
+                result = [value for value in ()]
+            return 42
+
+        for template, opname in (
+            (read, '_LOAD_FAST_MAYBE_UNPROTECTED'),
+            (save, '_LOAD_FAST_AND_CLEAR_CHECK'),
+        ):
+            with self.subTest(opname=opname):
+                code = template.__code__.replace()
+                function = types.FunctionType(code, globals())
+                self.addCleanup(_testinternalcapi.clear_executor_deletion_list)
+                self.addCleanup(_testinternalcapi.invalidate_executors, code)
+                shared = SynchronizedDict(value=[])
+                count = 2 * TIER2_THRESHOLD
+                self.assertEqual(function(count, shared), 42)
+                self.assertTrue(any(opname in get_opnames(ex)
+                                    for ex in get_all_executors(function)))
+                results = threading.Channel()
+                def worker(function=function, shared=shared, count=count, results=results):
+                    denied = 0
+                    for _ in range(100):
+                        try:
+                            function(count, shared)
+                        except IllegalThreadAccessException:
+                            denied += 1
+                    results.put(denied)
+                handle = _thread.start_joinable_thread(worker,
+                                                       group=threading.ThreadGroup())
+                handle.join(SHORT_TIMEOUT)
+                self.assertEqual(results.get(), 100)
+                self.assertEqual(shared['value'], [])
+
+    def test_cell_mutation_access(self):
+        import _thread
+        import threading
+
+        def factory(value):
+            def write(n):
+                nonlocal value
+                for i in range(n):
+                    if i == 0:
+                        continue
+                    value = 43
+            def delete(n):
+                nonlocal value
+                for i in range(n):
+                    if i == 0:
+                        continue
+                    del value
+                    value = 42
+            return write, delete
+
+        self.addCleanup(_testinternalcapi.clear_executor_deletion_list)
+        for template, opname in zip(factory(42), ('_STORE_DEREF', '_DELETE_DEREF')):
+            with self.subTest(opname=opname):
+                code = template.__code__.replace()
+                cell = types.CellType(42)
+                f = types.FunctionType(code, globals(), closure=(cell,))
+                self.addCleanup(_testinternalcapi.invalidate_executors, code)
+                count = 2 * TIER2_THRESHOLD
+                f(count)
+                self.assertTrue(any(opname in get_opnames(ex)
+                                    for ex in get_all_executors(f)))
+                cell.cell_contents = 42
+                results = threading.Channel()
+                function_type = types.FunctionType
+                def worker(code=code, holder=(cell,), count=count, results=results,
+                           function_type=function_type):
+                    with sys.monitoring.StopTheWorld:
+                        foreign_writer = function_type(code, globals(), closure=holder)
+                    denied = 0
+                    for _ in range(100):
+                        try:
+                            foreign_writer(count)
+                        except IllegalThreadAccessException:
+                            denied += 1
+                    results.put(denied)
+                handle = _thread.start_joinable_thread(
+                    worker, group=threading.ThreadGroup())
+                handle.join(SHORT_TIMEOUT)
+                self.assertEqual(results.get(), 100)
+                self.assertEqual(cell.cell_contents, 42)
+
+    def test_super_method_constant_access(self):
+        import _thread
+        import threading
+
+        calls = SynchronizedList()
+        def factory(calls):
+            generation = 0
+            def method(self):
+                nonlocal generation
+                generation += 1
+                calls.append(True)
+                return 42
+            return method
+        foreign = factory(calls)
+        self.assertIs(foreign.__shareable__, threading.Shareable.LOCAL)
+        class Base:
+            value = foreign
+        freeze(Base)
+        @freeze
+        class Child(Base):
+            marker = 42
+        namespace = SynchronizedDict(shared_type=Child)
+        exec(textwrap.dedent('''
+            def f(n, obj):
+                result = None
+                for _ in range(n):
+                    # Establish the receiver type before optimizing super.
+                    obj.marker
+                    result = super(shared_type, obj).value()
+                return result
+        '''), namespace)
+        f = namespace['f']
+        self.addCleanup(_testinternalcapi.clear_executor_deletion_list)
+        for dependency in (f.__code__, Base, Child):
+            self.addCleanup(_testinternalcapi.invalidate_executors, dependency)
+        count = 2 * TIER2_THRESHOLD
+        self.assertEqual(f(count, Child()), 42)
+        executors = get_all_executors(f)
+        self.assertTrue(any('_CHECK_ATTR_ACCESS' in get_opnames(ex)
+                            for ex in executors))
+        self.assertTrue(any(op[0] in ('_LOAD_CONST_INLINE', '_LOAD_CONST_INLINE_BORROW')
+                            and op[3] == id(foreign)
+                            for ex in executors for op in ex))
+        before = len(calls)
+        results = threading.Channel()
+        def worker(f=f, cls=Child, count=count, results=results):
+            obj = cls()
+            denied = 0
+            for _ in range(100):
+                try:
+                    f(count, obj)
+                except IllegalThreadAccessException:
+                    denied += 1
+            results.put(denied)
+        handle = _thread.start_joinable_thread(
+            worker, group=threading.ThreadGroup())
+        handle.join(SHORT_TIMEOUT)
+        self.assertEqual(results.get(), 100)
+        self.assertEqual(len(calls), before)
+
+    def test_inlined_attribute_return_access(self):
+        import _thread
+        import threading
+
+        @freeze
+        class Property:
+            @property
+            def value(self):
+                return self
+        @freeze
+        class Getattribute:
+            def __getattribute__(self, name):
+                return self
+        def template(n, good, foreign):
+            result = None
+            for i in range(n):
+                obj = good if i == 0 else foreign
+                result = obj.value
+            return result
+        self.addCleanup(_testinternalcapi.clear_executor_deletion_list)
+        for cls, opcode in ((Property, '_LOAD_ATTR_PROPERTY_FRAME'),
+                            (Getattribute, '_LOAD_ATTR_GETATTRIBUTE_OVERRIDDEN_FRAME')):
+            with self.subTest(cls=cls):
+                f = types.FunctionType(template.__code__.replace(), globals())
+                self.addCleanup(_testinternalcapi.invalidate_executors, f.__code__)
+                self.addCleanup(_testinternalcapi.invalidate_executors, cls)
+                foreign = cls()
+                count = 2 * TIER2_THRESHOLD
+                self.assertIs(f(count, foreign, foreign), foreign)
+                executors = get_all_executors(f)
+                self.assertTrue(any(opcode in get_opnames(ex) for ex in executors))
+                self.assertTrue(any('_RETURN_VALUE' in get_opnames(ex)
+                                    for ex in executors))
+                results = threading.Channel()
+                def worker(f=f, cls=cls, foreign=foreign, count=count, results=results):
+                    try:
+                        f(count, cls(), foreign)
+                    except IllegalThreadAccessException:
+                        results.put(True)
+                    else:
+                        results.put(False)
+                handle = _thread.start_joinable_thread(
+                    worker, group=threading.ThreadGroup())
+                handle.join()
+                self.assertTrue(results.get())
+
+    def test_synchronized_class_mutation(self):
+        import threading
+        from test.support import threading_helper
+
+        class C:
+            value = 100_000
+
+        def template(n):
+            result = None
+            for _ in range(n):
+                result = shared_type.value
+            return result
+
+        f = types.FunctionType(template.__code__.replace(),
+                               SynchronizedDict(shared_type=C))
+        self.addCleanup(_testinternalcapi.clear_executor_deletion_list)
+        self.addCleanup(_testinternalcapi.invalidate_executors, f.__code__)
+        self.addCleanup(_testinternalcapi.invalidate_executors, C)
+        count = 2 * TIER2_THRESHOLD
+        self.assertEqual(f(count), 100_000)
+        executors = get_all_executors(f)
+        self.assertTrue(any(op[0] in ('_LOAD_CONST_INLINE', '_LOAD_CONST_INLINE_BORROW')
+                            and op[3] == id(C.value)
+                            for ex in executors for op in ex))
+        C.synchronize()
+        self.assertEqual(f(count), 100_000)
+        results = threading.Channel()
+        def worker():
+            C.value = 200_000
+            results.put(f(count))
+        thread = threading.Thread(target=worker, group=threading.ThreadGroup())
+        with threading_helper.start_threads([thread]):
+            pass
+        self.assertEqual(results.get(), 200_000)
+        self.assertEqual(f(count), 200_000)
+
+    def test_global_access(self):
+        import threading
+        from test.support import threading_helper
+
+        def template(n):
+            result = None
+            for _ in range(n):
+                result = shared_value
+            return result
+
+        foreign = []
+        namespace = SynchronizedDict(shared_value=foreign)
+        f = types.FunctionType(template.__code__.replace(), namespace)
+        self.addCleanup(_testinternalcapi.clear_executor_deletion_list)
+        self.addCleanup(_testinternalcapi.invalidate_executors, f.__code__)
+        count = 2 * TIER2_THRESHOLD
+        self.assertIs(f(count), foreign)
+        executors = get_all_executors(f)
+        self.assertTrue(any('_CHECK_GLOBAL_ACCESS' in get_opnames(ex)
+                            for ex in executors))
+        self.assertTrue(any(op[0] == '_LOAD_CONST_INLINE' and op[3] == id(foreign)
+                            for ex in executors for op in ex))
+        results = threading.Channel()
+        def worker():
+            try:
+                f(count)
+            except IllegalThreadAccessException:
+                results.put(True)
+            else:
+                results.put(False)
+        thread = threading.Thread(target=worker, group=threading.ThreadGroup())
+        with threading_helper.start_threads([thread]):
+            pass
+        self.assertTrue(results.get())
+        self.assertIs(f(count), foreign)
+
+    def test_synchronized_globals_mutation(self):
+        def template(n):
+            result = 0
+            for _ in range(n):
+                result += shared_value
+            return result
+        namespace = SynchronizedDict(shared_value=1)
+        f = types.FunctionType(template.__code__.replace(), namespace)
+        self.addCleanup(_testinternalcapi.clear_executor_deletion_list)
+        self.addCleanup(_testinternalcapi.invalidate_executors, f.__code__)
+        count = 2 * TIER2_THRESHOLD
+        self.assertEqual(f(count), count)
+        self.assertTrue(get_all_executors(f))
+        namespace['shared_value'] = 2
+        self.assertEqual(f(count), 2 * count)
+        namespace['shared_value'] = 3
+        self.assertEqual(f(count), 3 * count)
+
+    def test_get_awaitable_result_access(self):
+        self.check_awaitable_result_access('await')
+
+    def test_get_anext_result_access(self):
+        self.check_awaitable_result_access('anext')
+
+    def check_awaitable_result_access(self, mode):
+        import threading
+        from test.support import threading_helper
+
+        class Awaitable:
+            def __init__(self, iterator):
+                self.iterator = iterator
+            def __await__(self):
+                return self.iterator
+        class AsyncIterator:
+            def __init__(self, awaitable):
+                self.awaitable = awaitable
+            def __aiter__(self):
+                return self
+            def __anext__(self):
+                return self.awaitable
+        for cls in (Awaitable, AsyncIterator):
+            for name in ('__init__', '__await__', '__aiter__', '__anext__'):
+                if name in cls.__dict__:
+                    func = getattr(cls, name)
+                    setattr(cls, name, types.FunctionType(func.__code__.replace(), globals()))
+        self.addCleanup(_testinternalcapi.clear_executor_deletion_list)
+        for cls in (Awaitable, AsyncIterator):
+            self.addCleanup(_testinternalcapi.invalidate_executors, cls)
+            for name in ('__init__', '__await__', '__aiter__', '__anext__'):
+                if name in cls.__dict__:
+                    self.addCleanup(_testinternalcapi.invalidate_executors,
+                                    getattr(cls, name).__code__)
+
+        async def await_template(items):
+            for awaitable in items:
+                try:
+                    await awaitable
+                except IllegalThreadAccessException:
+                    return -1
+            return 42
+        async def anext_template(items):
+            for iterator in items:
+                try:
+                    async for value in iterator:
+                        break
+                except IllegalThreadAccessException:
+                    return -1
+            return 42
+
+        template = await_template if mode == 'await' else anext_template
+        f = types.FunctionType(template.__code__.replace(), globals())
+        self.addCleanup(_testinternalcapi.invalidate_executors, f.__code__)
+        for cls in (Awaitable, AsyncIterator):
+            freeze(cls)
+
+        def wrap(iterator, mode=mode, Awaitable=Awaitable,
+                 AsyncIterator=AsyncIterator):
+            result = Awaitable(iterator)
+            return result if mode == 'await' else AsyncIterator(result)
+        with self.assertRaises(StopIteration) as caught:
+            f([wrap(iter(()))] * (2 * TIER2_THRESHOLD)).send(None)
+        self.assertEqual(caught.exception.value, 42)
+        opcode = '_GET_AWAITABLE' if mode == 'await' else '_GET_ANEXT'
+        executors = get_all_executors(f)
+        self.assertTrue(any(opcode in get_opnames(ex) for ex in executors))
+        foreign = iter((42,))
+        results = threading.Channel()
+        def worker(holder):
+            with sys.monitoring.StopTheWorld:
+                items = [wrap(iter(())), wrap(holder[0])]
+            coro = f(items)
+            try:
+                coro.send(None)
+            except StopIteration as exc:
+                results.put(exc.value)
+        thread = threading.Thread(target=worker, args=((foreign,),),
+                                  group=threading.ThreadGroup())
+        with threading_helper.start_threads([thread]):
+            pass
+        self.assertEqual(results.get(), -1)
+        self.assertEqual(next(foreign), 42)
+
+    def test_get_aiter_result_access(self):
+        import threading
+        from test.support import threading_helper
+
+        class Iterator:
+            async def __anext__(self):
+                return 42
+
+        class Factory:
+            def __init__(self, iterator):
+                self.iterator = iterator
+            def __aiter__(self):
+                return self.iterator
+
+        Factory.__init__ = types.FunctionType(Factory.__init__.__code__.replace(), globals())
+        Factory.__aiter__ = types.FunctionType(Factory.__aiter__.__code__.replace(), globals())
+        Iterator.__anext__ = types.FunctionType(Iterator.__anext__.__code__.replace(), globals())
+
+        freeze(Factory)
+        freeze(Iterator)
+
+        async def template(items):
+            for factory in items:
+                try:
+                    async for value in factory:
+                        break
+                except IllegalThreadAccessException:
+                    return -1
+            return 42
+
+        f = types.FunctionType(template.__code__.replace(), globals())
+        self.addCleanup(_testinternalcapi.clear_executor_deletion_list)
+        self.addCleanup(_testinternalcapi.invalidate_executors, f.__code__)
+        self.addCleanup(_testinternalcapi.invalidate_executors, Iterator.__anext__.__code__)
+        self.addCleanup(_testinternalcapi.invalidate_executors, Factory.__init__.__code__)
+        self.addCleanup(_testinternalcapi.invalidate_executors, Factory.__aiter__.__code__)
+        with self.assertRaises(StopIteration) as caught:
+            f([Factory(Iterator())] * (2 * TIER2_THRESHOLD)).send(None)
+        self.assertEqual(caught.exception.value, 42)
+        executors = get_all_executors(f)
+        self.assertTrue(any('_GET_AITER' in get_opnames(ex) for ex in executors))
+        foreign = Iterator()
+        results = threading.Channel()
+        def worker(holder):
+            with sys.monitoring.StopTheWorld:
+                items = [Factory(Iterator()), Factory(holder[0])]
+            coro = f(items)
+            try:
+                coro.send(None)
+            except StopIteration as exc:
+                results.put(exc.value)
+        thread = threading.Thread(target=worker, args=((foreign,),),
+                                  group=threading.ThreadGroup())
+        with threading_helper.start_threads([thread]):
+            pass
+        self.assertEqual(results.get(), -1)
+
+    def test_inlined_generator_yield_access(self):
+        import threading
+        from test.support import threading_helper
+
+        def producer_template(value, count):
+            yield 42
+            for _ in range(count):
+                try:
+                    yield value
+                except IllegalThreadAccessException:
+                    raise AssertionError('access error entered the producer')
+                yield 42
+
+        def template(gen):
+            result = None
+            try:
+                for result in gen:
+                    pass
+            except IllegalThreadAccessException:
+                return -1
+            return result
+
+        producer = types.FunctionType(producer_template.__code__.replace(), globals())
+        f = types.FunctionType(template.__code__.replace(), globals())
+        self.addCleanup(_testinternalcapi.clear_executor_deletion_list)
+        self.addCleanup(_testinternalcapi.invalidate_executors, f.__code__)
+        self.addCleanup(_testinternalcapi.invalidate_executors, producer.__code__)
+        self.assertEqual(f(producer(42, 2 * TIER2_THRESHOLD)), 42)
+        executors = get_all_executors(f)
+        self.assertTrue(any('_GUARD_YIELD_ACCESS' in get_opnames(ex) for ex in executors))
+        foreign = []
+        results = threading.Channel()
+
+        def worker(holder):
+            with sys.monitoring.StopTheWorld:
+                gen = producer(holder[0], 2)
+            results.put(f(gen))
+            results.put(next(gen))
+            gen.close()
+
+        thread = threading.Thread(target=worker, args=((foreign,),),
+                                  group=threading.ThreadGroup())
+        with threading_helper.start_threads([thread]):
+            pass
+        self.assertEqual(results.get(), -1)
+        self.assertEqual(results.get(), 42)
+
+    def test_inlined_for_return_access(self):
+        import threading
+        from test.support import threading_helper
+
+        def producer_template(value):
+            if False:
+                yield
+            return value
+
+        def template(items):
+            result = None
+            for gen in items:
+                try:
+                    for result in gen:
+                        pass
+                except IllegalThreadAccessException:
+                    return -1
+            return result
+
+        producer = types.FunctionType(producer_template.__code__.replace(), globals())
+        f = types.FunctionType(template.__code__.replace(), globals())
+        self.addCleanup(_testinternalcapi.clear_executor_deletion_list)
+        self.addCleanup(_testinternalcapi.invalidate_executors, f.__code__)
+        self.addCleanup(_testinternalcapi.invalidate_executors, producer.__code__)
+        self.assertIsNone(f([producer(42) for _ in range(2 * TIER2_THRESHOLD)]))
+        executors = get_all_executors(f)
+        self.assertTrue(executors)
+        self.assertTrue(any('_END_FOR' in get_opnames(ex) for ex in executors))
+        foreign = []
+        results = threading.Channel()
+
+        def worker(holder):
+            with sys.monitoring.StopTheWorld:
+                items = [producer(42), producer(holder[0])]
+            results.put(f(items))
+
+        thread = threading.Thread(target=worker, args=((foreign,),),
+                                  group=threading.ThreadGroup())
+        with threading_helper.start_threads([thread]):
+            pass
+        self.assertEqual(results.get(), -1)
+
+    def test_send_virtual_result_access(self):
+        import threading
+        from test.support import threading_helper
+
+        def delegate_template(items):
+            try:
+                yield from items
+            except IllegalThreadAccessException:
+                yield -1
+
+        def template(args):
+            delegate, items = args
+            result = None
+            for value in delegate(items):
+                result = value
+            return result
+
+        for factory in (list, tuple):
+            with self.subTest(factory=factory):
+                delegate = types.FunctionType(delegate_template.__code__.replace(), globals())
+                f = types.FunctionType(template.__code__.replace(), globals())
+                self.addCleanup(_testinternalcapi.clear_executor_deletion_list)
+                self.addCleanup(_testinternalcapi.invalidate_executors, f.__code__)
+                self.addCleanup(_testinternalcapi.invalidate_executors, delegate.__code__)
+                res, ex = self._run_with_optimizer(
+                    f, (delegate, factory([42] * (2 * TIER2_THRESHOLD))))
+                self.assertEqual(res, 42)
+                self.assertIsNotNone(ex)
+                self.assertIn('_SEND_VIRTUAL_TIER_TWO', get_opnames(ex))
+                foreign = []
+                results = threading.Channel()
+
+                def worker(holder, f=f, factory=factory, results=results,
+                           delegate=delegate):
+                    # Construct the local container without consuming its
+                    # foreign element until the executor runs outside the pause.
+                    with sys.monitoring.StopTheWorld:
+                        items = factory([42, holder[0]] + [42] * TIER2_THRESHOLD)
+                    results.put(f((delegate, items)))
+
+                thread = threading.Thread(target=worker, args=((foreign,),),
+                                          group=threading.ThreadGroup())
+                with threading_helper.start_threads([thread]):
+                    pass
+                self.assertEqual(results.get(), -1)
 
     def test_binary_op_subscr_init_frame(self):
         class B:

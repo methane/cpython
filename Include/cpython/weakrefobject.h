@@ -31,6 +31,9 @@ struct _PyWeakReference {
     PyWeakReference *wr_next;
     vectorcallfunc vectorcall;
 
+    /* Registration context, retained even after wr_callback is cleared. */
+    uint32_t wr_callback_group;
+
 #ifdef Py_GIL_DISABLED
     /* Pointer to the lock used when clearing in free-threaded builds.
      * Normally this can be derived from wr_object, but in some cases we need

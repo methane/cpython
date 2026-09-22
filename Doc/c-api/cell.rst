@@ -36,11 +36,20 @@ Cell objects are not likely to be useful elsewhere.
    Create and return a new cell object containing the value *ob*. The parameter may
    be ``NULL``.
 
+   Cells created by this API have mutable bindings. The interpreter separately
+   records read-only bindings for cells created by Python code.
+
 
 .. c:function:: PyObject* PyCell_Get(PyObject *cell)
 
    Return the contents of the cell *cell*, which can be ``NULL``.
    If *cell* is not a cell object, returns ``NULL`` with an exception set.
+
+   .. versionchanged:: 3.16
+      The cell and its returned contents are checked against the ThreadGroup
+      access rules. An inaccessible cell or value returns ``NULL`` with an
+      access exception set. An accessible empty cell still returns ``NULL``
+      without setting an exception.
 
 
 .. c:function:: PyObject* PyCell_GET(PyObject *cell)
@@ -58,9 +67,19 @@ Cell objects are not likely to be useful elsewhere.
    On success, return ``0``.
    If *cell* is not a cell object, set an exception and return ``-1``.
 
+   .. versionchanged:: 3.16
+      The cell must be accessible to the current ThreadGroup and mutable.
+      Rejected assignments and deletions leave its contents unchanged.
+      Replacing an initialized read-only binding also makes synchronized
+      functions capturing that cell local to the cell's owning thread group.
+
 
 .. c:function:: void PyCell_SET(PyObject *cell, PyObject *value)
 
    Sets the value of the cell object *cell* to *value*.  No reference counts are
    adjusted, and no checks are made for safety; *cell* must be non-``NULL`` and must
    be a cell object.
+
+   The update notifies the interpreter that an initialized binding is mutable,
+   just as :c:func:`PyCell_Set` does. This notification may temporarily stop
+   other threads to update the sharing state of functions capturing the cell.

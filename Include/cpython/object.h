@@ -7,6 +7,13 @@ PyAPI_FUNC(void) _Py_NewReferenceNoTotal(PyObject *op);
 PyAPI_FUNC(void) _Py_ResurrectReference(PyObject *op);
 PyAPI_FUNC(void) _Py_ForgetReference(PyObject *op);
 
+/* These declarations are a contract made by an extension about its objects.
+   They do not add synchronization to the extension's implementation. */
+PyAPI_FUNC(int) PyObject_DeclareImmutable(PyObject *op);
+PyAPI_FUNC(int) PyObject_DeclareSynchronized(PyObject *op);
+/* Return the same borrowed reference, or NULL with an access exception set. */
+PyAPI_FUNC(PyObject *) PyObject_CheckAccess(PyObject *op);
+
 #ifdef Py_REF_DEBUG
 /* These are useful as debugging aids when chasing down refleaks. */
 PyAPI_FUNC(Py_ssize_t) _Py_GetGlobalRefTotal(void);
@@ -217,7 +224,7 @@ struct _typeobject {
     inquiry tp_is_gc; /* For PyObject_IS_GC */
     PyObject *tp_bases;
     PyObject *tp_mro; /* method resolution order */
-    PyObject *tp_cache; /* no longer used */
+    PyObject *tp_cache; /* lazy annotation cache for frozen Python classes */
     void *tp_subclasses;  /* for static builtin types this is an index */
     PyObject *tp_weaklist; /* not used for static builtin types */
     destructor tp_del;
@@ -290,6 +297,7 @@ typedef struct _heaptypeobject {
     PyObject *ht_module;
     char *_ht_tpname;  // Storage for "tp_name"; see PyType_FromModuleAndSpec
     void *ht_token;  // Storage for the "Py_tp_token" slot
+    uint8_t ht_is_python;  // Created by type.__new__, not a native type spec
     struct _specialization_cache _spec_cache; // For use by the specializer.
 #ifdef Py_GIL_DISABLED
     Py_ssize_t unique_id;  // ID used for per-thread refcounting

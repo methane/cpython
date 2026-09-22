@@ -7,6 +7,7 @@ import unittest
 from test import support
 from test.support import import_helper
 from test.support import os_helper
+from test.support import threading_helper
 
 
 if not hasattr(sys, "addaudithook") or not hasattr(sys, "audit"):
@@ -17,6 +18,10 @@ AUDIT_TESTS_PY = support.findfile("audit-tests.py")
 
 class AuditTest(unittest.TestCase):
     maxDiff = None
+
+    @threading_helper.requires_working_threading()
+    def test_threadgroup_hooks(self):
+        self.do_test('test_threadgroup_hooks')
 
     @support.requires_subprocess()
     def run_test_in_subprocess(self, *args):

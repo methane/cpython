@@ -30,6 +30,7 @@ typedef struct {
     PyObject *md_weaklist;
     // for logging purposes after md_dict is cleared
     PyObject *md_name;
+    PyObject *md_annotations;  /* lazy cache when md_dict is frozen */
     bool md_token_is_def;  /* if true, `md_token` is the PyModuleDef */
 #ifdef Py_GIL_DISABLED
     bool md_requires_gil;
@@ -79,6 +80,7 @@ extern Py_ssize_t _PyModule_GetFilenameUTF8(
 
 PyObject* _Py_module_getattro_impl(PyModuleObject *m, PyObject *name, int suppress);
 PyObject* _Py_module_getattro(PyObject *m, PyObject *name);
+extern int _PyModule_IsMainThreadGroupAttribute(PyObject *module, PyObject *name);
 
 #ifdef __cplusplus
 }

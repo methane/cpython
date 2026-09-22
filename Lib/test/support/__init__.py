@@ -1049,6 +1049,8 @@ if Py_GIL_DISABLED:
     _header = 'PHBBInP'
 else:
     _header = 'nP'
+# PEP 805 adds owner/state metadata, a cleanup link and a finalizer count.
+_header += 'IBBBxPN'
 _align = '0n'
 _vheader = _header + 'n'
 

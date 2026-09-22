@@ -4,14 +4,38 @@ import os as _os
 import sys as _sys
 import _thread
 import _contextvars
+from enum import IntEnum as _IntEnum, property as _enum_property
+
+
+class Shareable(_IntEnum):
+    """The VM's access-control state for an object."""
+
+    LOCAL = 0
+    PROTECTED = 1
+    SYNCHRONIZED = 2
+    IMMUTABLE = 3
+
+    # Give this shared enum its own descriptors, frozen below, without
+    # changing the descriptors used by other Enum classes.
+    @_enum_property
+    def name(self):
+        """The name of the Enum member."""
+        return self._name_
+
+    @_enum_property
+    def value(self):
+        """The value of the Enum member."""
+        return self._value_
+
+freeze(Shareable.__dict__['name'])
+freeze(Shareable.__dict__['value'])
+for _state in Shareable:
+    freeze(_state)
+del _state
+freeze(Shareable)
 
 from time import monotonic as _time
-from _weakrefset import WeakSet
-from itertools import count as _count
-try:
-    from _collections import deque as _deque
-except ImportError:
-    from collections import deque as _deque
+from _weakref import ref as _weakref_ref
 
 # Note regarding PEP 8 compliant names
 #  This threading model was originally inspired by Java, and inherited
@@ -40,6 +64,14 @@ _LockType = _thread.LockType
 _thread_shutdown = _thread._shutdown
 _make_thread_handle = _thread._make_thread_handle
 _ThreadHandle = _thread._ThreadHandle
+_ThreadBase = _thread._ThreadBase
+_get_stderr = _thread._get_stderr
+ThreadGroup = _thread.ThreadGroup
+TransferBox = _thread.TransferBox
+_ChannelQueue = _thread._ChannelQueue
+_current_thread_group = _thread._current_thread_group
+_main_thread_group = _sys.main_thread_group
+__all__.extend(('ThreadGroup', 'Shareable', 'TransferBox', 'Channel'))
 get_ident = _thread.get_ident
 _get_main_thread_ident = _thread._get_main_thread_ident
 _is_main_interpreter = _thread._is_main_interpreter
@@ -69,10 +101,34 @@ try:
 except ImportError:
     from _threading_local import local
 
+@freeze
+class Channel:
+    """An unbounded FIFO for transferring objects between ThreadGroups.
+
+    Local values are shallow-copied when put and acquired by the group
+    calling get. Getting from an empty channel raises IndexError.
+    """
+
+    __slots__ = ('_queue',)
+
+    def __init__(self):
+        self._queue = _ChannelQueue()
+        freeze(self)
+
+    def put(self, obj):
+        """Transfer a shallow copy of a local value, or a shareable value."""
+        self._queue.put(obj)
+
+    def get(self):
+        """Claim the oldest value, raising IndexError if the channel is empty."""
+        return self._queue.get()
+
+
 # Support for profile and trace hooks
 
 _profile_hook = None
 _trace_hook = None
+
 
 def setprofile(func):
     """Set a profile function for all threads started from the threading module.
@@ -137,7 +193,7 @@ def RLock():
         return _PyRLock()
     return _CRLock()
 
-class _RLock:
+class _RLock(_ThreadBase):
     """This class implements reentrant lock objects.
 
     A reentrant lock must be released by the thread that acquired it. Once a
@@ -269,7 +325,7 @@ class _RLock:
 _PyRLock = _RLock
 
 
-class Condition:
+class Condition(_ThreadBase):
     """Class that implements a condition variable.
 
     A condition variable allows one or more threads to wait until they are
@@ -285,20 +341,18 @@ class Condition:
         if lock is None:
             lock = RLock()
         self._lock = lock
-        # Export the lock's acquire(), release(), and locked() methods
-        self.acquire = lock.acquire
-        self.release = lock.release
-        self.locked = lock.locked
-        # If the lock defines _release_save() and/or _acquire_restore(),
-        # these override the default implementations (which just call
-        # release() and acquire() on the lock).  Ditto for _is_owned().
-        if hasattr(lock, '_release_save'):
-            self._release_save = lock._release_save
-        if hasattr(lock, '_acquire_restore'):
-            self._acquire_restore = lock._acquire_restore
-        if hasattr(lock, '_is_owned'):
-            self._is_owned = lock._is_owned
-        self._waiters = _deque()
+        self._waiters = SynchronizedList()
+
+    # Resolve bound methods in the calling group instead of retaining methods
+    # owned by the group which constructed the condition.
+    def acquire(self, *args, **kwargs):
+        return self._lock.acquire(*args, **kwargs)
+
+    def release(self, *args, **kwargs):
+        return self._lock.release(*args, **kwargs)
+
+    def locked(self):
+        return self._lock.locked()
 
     def _at_fork_reinit(self):
         self._lock._at_fork_reinit()
@@ -314,12 +368,21 @@ class Condition:
         return "<Condition(%s, %d)>" % (self._lock, len(self._waiters))
 
     def _release_save(self):
+        method = getattr(self._lock, '_release_save', None)
+        if method is not None:
+            return method()
         self._lock.release()           # No state to save
 
     def _acquire_restore(self, x):
+        method = getattr(self._lock, '_acquire_restore', None)
+        if method is not None:
+            return method(x)
         self._lock.acquire()           # Ignore saved state
 
     def _is_owned(self):
+        method = getattr(self._lock, '_is_owned', None)
+        if method is not None:
+            return method()
         # Return True if lock is owned by current_thread.
         # This method is called only if _lock doesn't have _is_owned().
         if self._lock.acquire(False):
@@ -450,7 +513,7 @@ class Condition:
         self.notify_all()
 
 
-class Semaphore:
+class Semaphore(_ThreadBase):
     """This class implements semaphore objects.
 
     Semaphores manage a counter representing the number of release() calls minus
@@ -582,7 +645,7 @@ class BoundedSemaphore(Semaphore):
             self._cond.notify(n)
 
 
-class Event:
+class Event(_ThreadBase):
     """Class implementing event objects.
 
     Events manage a flag that can be set to true with the set() method and reset
@@ -676,7 +739,7 @@ class Event:
 # since the previous cycle.  In addition, a 'resetting' state exists which is
 # similar to 'draining' except that threads leave with a BrokenBarrierError,
 # and a 'broken' state in which all threads get the exception.
-class Barrier:
+class Barrier(_ThreadBase):
     """Implements a Barrier.
 
     Useful for synchronizing a fixed number of threads at known synchronization
@@ -986,7 +1049,13 @@ class _concurrent_tee:
 
 
 # Helper to generate new thread names
-_counter = _count(1).__next__
+_next_thread_number = 0
+def _counter():
+    global _next_thread_number
+    with _active_limbo_lock:
+        _next_thread_number += 1
+        return _next_thread_number
+
 def _newname(name_template):
     return name_template % _counter()
 
@@ -995,14 +1064,55 @@ def _newname(name_template):
 # bpo-44422: Use a reentrant lock to allow reentrant calls to functions like
 # threading.enumerate().
 _active_limbo_lock = RLock()
-_active = {}    # maps thread id to Thread object
-_limbo = {}
-_dangling = WeakSet()
+_active = SynchronizedDict()    # maps thread id to Thread object
+_limbo = SynchronizedDict()
+class _ThreadRegistry(_ThreadBase):
+    """Weak thread registry with synchronized storage and callback removal."""
+
+    def __init__(self, values=()):
+        self._data = SynchronizedSet()
+
+        def remove(reference, data=self._data):
+            data.discard(reference)
+
+        self._remove = remove
+        self.update(values)
+
+    def add(self, thread):
+        self._data.add(_weakref_ref(thread, self._remove))
+
+    def __iter__(self):
+        # A snapshot permits callbacks and registrations during iteration.
+        for reference in self._data.copy():
+            thread = reference()
+            if thread is not None:
+                yield thread
+
+    def __len__(self):
+        return len(self._data)
+
+    def clear(self):
+        self._data.clear()
+
+    def update(self, values):
+        for value in values:
+            self.add(value)
+
+    def copy(self):
+        return type(self)(self)
+
+    def __eq__(self, other):
+        if not isinstance(other, _ThreadRegistry):
+            return NotImplemented
+        return self._data == other._data
+
+
+_dangling = _ThreadRegistry()
 
 
 # Main class for threads
 
-class Thread:
+class Thread(_ThreadBase):
     """A class that represents a thread of control.
 
     This class can be safely subclassed in a limited fashion. There are two ways
@@ -1017,8 +1127,8 @@ class Thread:
                  args=(), kwargs=None, *, daemon=None, context=None):
         """This constructor should always be called with keyword arguments. Arguments are:
 
-        *group* should be None; reserved for future extension when a ThreadGroup
-        class is implemented.
+        *group* is the ThreadGroup that serializes this thread's execution.
+        None selects the main group, unless PYTHON_PARALLEL is nonzero.
 
         *target* is the callable object to be invoked by the run()
         method. Defaults to None, meaning nothing is called.
@@ -1044,9 +1154,17 @@ class Thread:
         else to the thread.
 
         """
-        assert group is None, "group argument must be None for now"
+        if group is None:
+            parallel = _os.environ.get('PYTHON_PARALLEL', '0')
+            if not _sys.flags.ignore_environment and parallel not in ('', '0'):
+                group = ThreadGroup()
+            else:
+                group = _main_thread_group
+        elif not isinstance(group, ThreadGroup):
+            raise TypeError('group must be a ThreadGroup or None')
+        self._group = group
         if kwargs is None:
-            kwargs = {}
+            kwargs = frozendict()
         if name:
             name = str(name)
         else:
@@ -1075,8 +1193,9 @@ class Thread:
         self._os_thread_handle = _ThreadHandle()
         self._started = Event()
         self._initialized = True
-        # Copy of sys.stderr used by self._invoke_excepthook()
-        self._stderr = _sys.stderr
+        # Preserve an accessible diagnostic stream for shutdown. A foreign
+        # or unprotected stderr uses a locally owned native printer.
+        self._stderr = _get_stderr()
         self._invoke_excepthook = _make_invoke_excepthook()
         # For debugging and _after_fork()
         _dangling.add(self)
@@ -1124,6 +1243,15 @@ class Thread:
         if self._started.is_set():
             raise RuntimeError("threads can only be started once")
 
+        if self._group is not _current_thread_group():
+            # The invocation containers cross groups, not ownership of their
+            # contents. Snapshot them before publishing the worker; argument
+            # access checks still reject local values owned by the caller.
+            args = tuple(self._args)
+            kwargs = frozendict(self._kwargs)
+            self._args = args
+            self._kwargs = kwargs
+
         with _active_limbo_lock:
             _limbo[self] = self
 
@@ -1139,12 +1267,17 @@ class Thread:
         try:
             # Start joinable thread
             _start_joinable_thread(self._bootstrap, handle=self._os_thread_handle,
-                                   daemon=self.daemon)
+                                   daemon=self.daemon, group=self._group)
         except Exception:
             with _active_limbo_lock:
                 del _limbo[self]
             raise
         self._started.wait()  # Will set ident and native_id
+
+    @property
+    def group(self):
+        """The ThreadGroup to which this thread belongs (read-only)."""
+        return self._group
 
     def run(self):
         """Method representing the thread's activity.
@@ -1457,14 +1590,20 @@ def _make_invoke_excepthook():
     local_print = print
     local_sys = _sys
 
-    def invoke_excepthook(thread):
+    saved = (old_excepthook, old_sys_excepthook, sys_exc_info,
+             local_print, local_sys)
+
+    def invoke_excepthook(thread, *, _saved=saved):
+        # Retain snapshots without local closure cells. Fetch each saved object
+        # only when needed; capturing a hook does not make it shareable.
         global excepthook
+        local_sys = _saved[4]
         try:
             hook = excepthook
             if hook is None:
-                hook = old_excepthook
+                hook = _saved[0]
 
-            args = ExceptHookArgs([*sys_exc_info(), thread])
+            args = ExceptHookArgs([*_saved[2](), thread])
 
             hook(args)
         except Exception as exc:
@@ -1476,15 +1615,15 @@ def _make_invoke_excepthook():
             else:
                 stderr = thread._stderr
 
-            local_print("Exception in threading.excepthook:",
-                        file=stderr, flush=True)
+            _saved[3]("Exception in threading.excepthook:",
+                      file=stderr, flush=True)
 
             if local_sys is not None and local_sys.excepthook is not None:
                 sys_excepthook = local_sys.excepthook
             else:
-                sys_excepthook = old_sys_excepthook
+                sys_excepthook = _saved[1]
 
-            sys_excepthook(*sys_exc_info())
+            sys_excepthook(*_saved[2]())
         finally:
             # Break reference cycle (exception stored in a variable)
             args = None
@@ -1527,7 +1666,8 @@ class Timer(Thread):
 class _MainThread(Thread):
 
     def __init__(self):
-        Thread.__init__(self, name="MainThread", daemon=False)
+        Thread.__init__(self, group=_current_thread_group(),
+                        name="MainThread", daemon=False)
         self._started.set()
         self._ident = _get_main_thread_ident()
         self._os_thread_handle = _make_thread_handle(self._ident)
@@ -1575,7 +1715,8 @@ class _DummyThread(Thread):
 
     def __init__(self):
         Thread.__init__(self, name=_newname("Dummy-%d"),
-                        daemon=_daemon_threads_allowed())
+                        daemon=_daemon_threads_allowed(),
+                        group=_current_thread_group())
         self._started.set()
         self._set_ident()
         self._os_thread_handle = _make_thread_handle(self._ident)
@@ -1740,7 +1881,7 @@ def _after_fork():
     _active_limbo_lock = RLock()
 
     # fork() only copied the current thread; clear references to others.
-    new_active = {}
+    new_active = SynchronizedDict()
 
     try:
         current = _active[get_ident()]
@@ -1777,3 +1918,13 @@ def _after_fork():
 
 if hasattr(_os, "register_at_fork"):
     _os.register_at_fork(after_in_child=_after_fork)
+
+# Classes used to create threading primitives are shared too. Their instances
+# retain their own sharing policies; synchronizing a class is shallow.
+for _class in (_RLock, Condition, Semaphore, BoundedSemaphore, Event, Barrier,
+               BrokenBarrierError, Thread, Timer, _MainThread, _DummyThread,
+               _DeleteDummyThreadOnDel, _ThreadRegistry):
+    type.synchronize(_class)
+del _class
+
+__module__.synchronize()

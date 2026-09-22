@@ -11,6 +11,8 @@ typedef struct {
     PyObject_HEAD
     /* Content of the cell or NULL when empty */
     PyObject *ob_ref;
+    /* Set only for VM-created bindings without a known nonlocal writer. */
+    uint8_t ob_readonly_binding;
 } PyCellObject;
 
 PyAPI_DATA(PyTypeObject) PyCell_Type;
@@ -20,6 +22,7 @@ PyAPI_DATA(PyTypeObject) PyCell_Type;
 PyAPI_FUNC(PyObject *) PyCell_New(PyObject *);
 PyAPI_FUNC(PyObject *) PyCell_Get(PyObject *);
 PyAPI_FUNC(int) PyCell_Set(PyObject *, PyObject *);
+PyAPI_FUNC(void) _PyCell_NotifyMutation(PyObject *);
 
 static inline PyObject* PyCell_GET(PyObject *op) {
     PyObject *res;
@@ -37,6 +40,7 @@ static inline void PyCell_SET(PyObject *op, PyObject *value) {
     PyCellObject *cell;
     assert(PyCell_Check(op));
     cell = _Py_CAST(PyCellObject*, op);
+    _PyCell_NotifyMutation(op);
     Py_BEGIN_CRITICAL_SECTION(cell);
     cell->ob_ref = value;
     Py_END_CRITICAL_SECTION();

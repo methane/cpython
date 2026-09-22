@@ -1,6 +1,171 @@
 #include "parts.h"
 #include "util.h"
 
+static PyObject *
+native_unary_result(PyObject *self)
+{
+    if (PyTuple_GET_SIZE(self) != 1) {
+        PyErr_SetString(PyExc_TypeError, "expected one stored result");
+        return NULL;
+    }
+    /* Deliberately leave validation to the public numeric API. */
+    return Py_NewRef(PyTuple_GET_ITEM(self, 0));
+}
+
+static PyType_Slot native_unary_slots[] = {
+    {Py_nb_negative, native_unary_result},
+    {Py_nb_positive, native_unary_result},
+    {Py_nb_absolute, native_unary_result},
+    {Py_nb_invert, native_unary_result},
+    {0, NULL},
+};
+
+static PyType_Spec native_unary_spec = {
+    .name = "_testcapi.NativeUnaryResult",
+    .flags = Py_TPFLAGS_DEFAULT,
+    .slots = native_unary_slots,
+};
+
+static PyObject *
+native_binary_result(PyObject *left, PyObject *right)
+{
+    return native_unary_result(PyTuple_Check(left) ? left : right);
+}
+
+static PyType_Slot native_binary_slots[] = {
+    {Py_nb_add, native_binary_result},
+    {Py_nb_subtract, native_binary_result},
+    {Py_nb_multiply, native_binary_result},
+    {Py_nb_matrix_multiply, native_binary_result},
+    {Py_nb_floor_divide, native_binary_result},
+    {Py_nb_true_divide, native_binary_result},
+    {Py_nb_remainder, native_binary_result},
+    {Py_nb_divmod, native_binary_result},
+    {Py_nb_lshift, native_binary_result},
+    {Py_nb_rshift, native_binary_result},
+    {Py_nb_and, native_binary_result},
+    {Py_nb_xor, native_binary_result},
+    {Py_nb_or, native_binary_result},
+    {Py_nb_inplace_add, native_binary_result},
+    {Py_nb_inplace_subtract, native_binary_result},
+    {Py_nb_inplace_multiply, native_binary_result},
+    {Py_nb_inplace_matrix_multiply, native_binary_result},
+    {Py_nb_inplace_floor_divide, native_binary_result},
+    {Py_nb_inplace_true_divide, native_binary_result},
+    {Py_nb_inplace_remainder, native_binary_result},
+    {Py_nb_inplace_lshift, native_binary_result},
+    {Py_nb_inplace_rshift, native_binary_result},
+    {Py_nb_inplace_and, native_binary_result},
+    {Py_nb_inplace_xor, native_binary_result},
+    {Py_nb_inplace_or, native_binary_result},
+    {0, NULL},
+};
+
+static PyType_Spec native_binary_spec = {
+    .name = "_testcapi.NativeBinaryResult",
+    .flags = Py_TPFLAGS_DEFAULT,
+    .slots = native_binary_slots,
+};
+
+static PyObject *
+native_repeat_result(PyObject *self, Py_ssize_t count)
+{
+    return native_unary_result(self);
+}
+
+static PyType_Slot native_sequence_slots[] = {
+    {Py_sq_concat, native_binary_result},
+    {Py_sq_inplace_concat, native_binary_result},
+    {Py_sq_repeat, native_repeat_result},
+    {Py_sq_inplace_repeat, native_repeat_result},
+    {0, NULL},
+};
+
+static PyType_Spec native_sequence_spec = {
+    .name = "_testcapi.NativeSequenceResult",
+    .flags = Py_TPFLAGS_DEFAULT,
+    .slots = native_sequence_slots,
+};
+
+static PyObject *
+native_power_result(PyObject *base, PyObject *exponent, PyObject *modulus)
+{
+    PyObject *holder = PyTuple_Check(base) ? base :
+                       PyTuple_Check(exponent) ? exponent : modulus;
+    if (!PyTuple_Check(holder)) {
+        Py_RETURN_NOTIMPLEMENTED;
+    }
+    return native_unary_result(holder);
+}
+
+static PyType_Slot native_power_slots[] = {
+    {Py_nb_power, native_power_result},
+    {Py_nb_inplace_power, native_power_result},
+    {0, NULL},
+};
+
+static PyType_Spec native_power_spec = {
+    .name = "_testcapi.NativePowerResult",
+    .flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE,
+    .slots = native_power_slots,
+};
+
+static PyObject *
+native_power_callback(PyObject *base, PyObject *exponent, PyObject *modulus)
+{
+    PyObject *callback = native_power_result(base, exponent, modulus);
+    if (callback == NULL || callback == Py_NotImplemented) {
+        return callback;
+    }
+    PyObject *result = PyObject_CallNoArgs(callback);
+    Py_DECREF(callback);
+    return result;
+}
+
+static PyType_Slot native_power_callback_slots[] = {
+    {Py_nb_power, native_power_callback},
+    {0, NULL},
+};
+
+static PyType_Spec native_power_callback_spec = {
+    .name = "_testcapi.NativePowerCallback",
+    .flags = Py_TPFLAGS_DEFAULT,
+    .slots = native_power_callback_slots,
+};
+
+static PyType_Slot native_index_slots[] = {
+    {Py_nb_index, native_unary_result},
+    {0, NULL},
+};
+
+static PyType_Spec native_index_spec = {
+    .name = "_testcapi.NativeIndexResult",
+    .flags = Py_TPFLAGS_DEFAULT,
+    .slots = native_index_slots,
+};
+
+static PyType_Slot native_conversion_slots[] = {
+    {Py_nb_int, native_unary_result},
+    {Py_nb_float, native_unary_result},
+    {0, NULL},
+};
+
+static PyType_Spec native_conversion_spec = {
+    .name = "_testcapi.NativeConversionResult",
+    .flags = Py_TPFLAGS_DEFAULT,
+    .slots = native_conversion_slots,
+};
+
+static PyObject *
+long_asvoidptr_value(PyObject *self, PyObject *arg)
+{
+    void *value = PyLong_AsVoidPtr(arg);
+    if (value == NULL && PyErr_Occurred()) {
+        return NULL;
+    }
+    /* Compare the pointer's bits without dereferencing arbitrary addresses. */
+    return PyLong_FromVoidPtr(value);
+}
 
 static PyObject *
 number_check(PyObject *Py_UNUSED(module), PyObject *obj)
@@ -126,6 +291,7 @@ number_asssizet(PyObject *Py_UNUSED(module), PyObject *args)
 
 
 static PyMethodDef test_methods[] = {
+    {"long_asvoidptr_value", long_asvoidptr_value, METH_O},
     {"number_check", number_check, METH_O},
     {"number_add", number_add, METH_VARARGS},
     {"number_subtract", number_subtract, METH_VARARGS},
@@ -173,5 +339,35 @@ _PyTestCapi_Init_Numbers(PyObject *mod)
         return -1;
     }
 
+    PyObject *bases = PyTuple_Pack(1, &PyTuple_Type);
+    if (bases == NULL) {
+        return -1;
+    }
+    struct {
+        const char *name;
+        PyType_Spec *spec;
+    } types[] = {
+        {"NativeUnaryResult", &native_unary_spec},
+        {"NativeBinaryResult", &native_binary_spec},
+        {"NativeSequenceResult", &native_sequence_spec},
+        {"NativePowerResult", &native_power_spec},
+        {"NativePowerCallback", &native_power_callback_spec},
+        {"NativeIndexResult", &native_index_spec},
+        {"NativeConversionResult", &native_conversion_spec},
+    };
+    for (size_t i = 0; i < (sizeof(types) / sizeof(types[0])); i++) {
+        PyObject *type = PyType_FromSpecWithBases(types[i].spec, bases);
+        if (type == NULL) {
+            Py_DECREF(bases);
+            return -1;
+        }
+        int result = PyModule_AddObjectRef(mod, types[i].name, type);
+        Py_DECREF(type);
+        if (result < 0) {
+            Py_DECREF(bases);
+            return -1;
+        }
+    }
+    Py_DECREF(bases);
     return 0;
 }

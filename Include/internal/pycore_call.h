@@ -136,6 +136,9 @@ _PyObject_VectorcallTstate(PyThreadState *tstate, PyObject *callable,
     assert(kwnames == NULL || PyTuple_Check(kwnames));
     assert(args != NULL || PyVectorcall_NARGS(nargsf) == 0);
 
+    if (PyObject_CheckAccess(callable) == NULL) {
+        return NULL;
+    }
     func = _PyVectorcall_FunctionInline(callable);
     if (func == NULL) {
         Py_ssize_t nargs = PyVectorcall_NARGS(nargsf);

@@ -246,6 +246,9 @@ getset_set(PyObject *self, PyObject *obj, PyObject *value)
     if (descr_setcheck((PyDescrObject *)descr, obj, value) < 0) {
         return -1;
     }
+    if (_PyObject_CheckMutable(obj) < 0) {
+        return -1;
+    }
     if (descr->d_getset->set != NULL) {
         return descr_set_trampoline_call(
             descr->d_getset->set, obj, value,
@@ -264,7 +267,8 @@ getset_set(PyObject *self, PyObject *obj, PyObject *value)
  * First, common helpers
  */
 static inline int
-method_check_args(PyObject *func, PyObject *const *args, Py_ssize_t nargs, PyObject *kwnames)
+method_check_args(PyObject *func, PyObject *const *args, Py_ssize_t nargs,
+                  PyObject *kwnames, int accepts_keywords)
 {
     assert(!PyErr_Occurred());
     if (nargs < 1) {
@@ -280,7 +284,10 @@ method_check_args(PyObject *func, PyObject *const *args, Py_ssize_t nargs, PyObj
     if (descr_check((PyDescrObject *)func, self) < 0) {
         return -1;
     }
-    if (kwnames && PyTuple_GET_SIZE(kwnames)) {
+    if (kwnames != NULL && PyObject_CheckAccess(kwnames) == NULL) {
+        return -1;
+    }
+    if (!accepts_keywords && kwnames && PyTuple_GET_SIZE(kwnames)) {
         PyObject *funcstr = _PyObject_FunctionStr(func);
         if (funcstr != NULL) {
             PyErr_Format(PyExc_TypeError,
@@ -288,6 +295,20 @@ method_check_args(PyObject *func, PyObject *const *args, Py_ssize_t nargs, PyObj
             Py_DECREF(funcstr);
         }
         return -1;
+    }
+    Py_ssize_t nkwargs = 0;
+    if (kwnames != NULL) {
+        nkwargs = PyTuple_GET_SIZE(kwnames);
+        for (Py_ssize_t i = 0; i < nkwargs; i++) {
+            if (PyObject_CheckAccess(PyTuple_GET_ITEM(kwnames, i)) == NULL) {
+                return -1;
+            }
+        }
+    }
+    for (Py_ssize_t i = 0; i < nargs + nkwargs; i++) {
+        if (PyObject_CheckAccess(args[i]) == NULL) {
+            return -1;
+        }
     }
     return 0;
 }
@@ -310,7 +331,7 @@ method_vectorcall_VARARGS(
 {
     PyThreadState *tstate = _PyThreadState_GET();
     Py_ssize_t nargs = PyVectorcall_NARGS(nargsf);
-    if (method_check_args(func, args, nargs, kwnames)) {
+    if (method_check_args(func, args, nargs, kwnames, 0)) {
         return NULL;
     }
     PyObject *argstuple = PyTuple_FromArray(args+1, nargs-1);
@@ -335,7 +356,7 @@ method_vectorcall_VARARGS_KEYWORDS(
 {
     PyThreadState *tstate = _PyThreadState_GET();
     Py_ssize_t nargs = PyVectorcall_NARGS(nargsf);
-    if (method_check_args(func, args, nargs, NULL)) {
+    if (method_check_args(func, args, nargs, kwnames, 1)) {
         return NULL;
     }
     PyObject *argstuple = PyTuple_FromArray(args+1, nargs-1);
@@ -371,7 +392,7 @@ method_vectorcall_FASTCALL_KEYWORDS_METHOD(
 {
     PyThreadState *tstate = _PyThreadState_GET();
     Py_ssize_t nargs = PyVectorcall_NARGS(nargsf);
-    if (method_check_args(func, args, nargs, NULL)) {
+    if (method_check_args(func, args, nargs, kwnames, 1)) {
         return NULL;
     }
     PyCMethod meth = (PyCMethod) method_enter_call(tstate, func);
@@ -391,7 +412,7 @@ method_vectorcall_FASTCALL(
 {
     PyThreadState *tstate = _PyThreadState_GET();
     Py_ssize_t nargs = PyVectorcall_NARGS(nargsf);
-    if (method_check_args(func, args, nargs, kwnames)) {
+    if (method_check_args(func, args, nargs, kwnames, 0)) {
         return NULL;
     }
     PyCFunctionFast meth = (PyCFunctionFast)
@@ -410,7 +431,7 @@ method_vectorcall_FASTCALL_KEYWORDS(
 {
     PyThreadState *tstate = _PyThreadState_GET();
     Py_ssize_t nargs = PyVectorcall_NARGS(nargsf);
-    if (method_check_args(func, args, nargs, NULL)) {
+    if (method_check_args(func, args, nargs, kwnames, 1)) {
         return NULL;
     }
     PyCFunctionFastWithKeywords meth = (PyCFunctionFastWithKeywords)
@@ -429,7 +450,7 @@ method_vectorcall_NOARGS(
 {
     PyThreadState *tstate = _PyThreadState_GET();
     Py_ssize_t nargs = PyVectorcall_NARGS(nargsf);
-    if (method_check_args(func, args, nargs, kwnames)) {
+    if (method_check_args(func, args, nargs, kwnames, 0)) {
         return NULL;
     }
     if (nargs != 1) {
@@ -456,7 +477,7 @@ method_vectorcall_O(
 {
     PyThreadState *tstate = _PyThreadState_GET();
     Py_ssize_t nargs = PyVectorcall_NARGS(nargsf);
-    if (method_check_args(func, args, nargs, kwnames)) {
+    if (method_check_args(func, args, nargs, kwnames, 0)) {
         return NULL;
     }
     if (nargs != 2) {
@@ -516,6 +537,10 @@ Py_LOCAL_INLINE(PyObject *)
 wrapperdescr_raw_call(PyWrapperDescrObject *descr, PyObject *self,
                       PyObject *args, PyObject *kwds)
 {
+    if (PyObject_CheckAccess(self) == NULL ||
+        _PyEval_CheckCallArgs((PyObject *)descr, args, kwds) < 0) {
+        return NULL;
+    }
     wrapperfunc wrapper = descr->d_base->wrapper;
 
     if (descr->d_base->flags & PyWrapperFlag_KEYWORDS) {
@@ -1293,6 +1318,7 @@ PyDictProxy_New(PyObject *mapping)
     pp = PyObject_GC_New(mappingproxyobject, &PyDictProxy_Type);
     if (pp != NULL) {
         pp->mapping = Py_NewRef(mapping);
+        _PyObject_InheritShareable((PyObject *)pp, mapping);
         _PyObject_GC_TRACK(pp);
     }
     return (PyObject *)pp;

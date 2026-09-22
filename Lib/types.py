@@ -323,7 +323,15 @@ def coroutine(func):
         if co_flags & 0x20:
             co = func.__code__
             # 0x100 == CO_ITERABLE_COROUTINE
-            func.__code__ = co.replace(co_flags=co.co_flags | 0x100)
+            # This decorator deliberately preserves function identity. Its
+            # internal flag update is not a user request to replace code.
+            import warnings
+            with warnings.catch_warnings():
+                warnings.filterwarnings(
+                    'ignore',
+                    message="Modifying a function's __code__ is deprecated",
+                    category=DeprecationWarning, module=__name__ + r'\Z')
+                func.__code__ = co.replace(co_flags=co.co_flags | 0x100)
             return func
 
     # The following code is primarily to support functions that

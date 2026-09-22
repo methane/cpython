@@ -285,7 +285,8 @@ _Pickle_InitState(PickleState *st)
     st->dispatch_table = PyObject_GetAttrString(copyreg, "dispatch_table");
     if (!st->dispatch_table)
         goto error;
-    if (!PyDict_CheckExact(st->dispatch_table)) {
+    if (!PyDict_CheckExact(st->dispatch_table) &&
+        !PySynchronizedDict_CheckExact(st->dispatch_table)) {
         PyErr_Format(PyExc_RuntimeError,
                      "copyreg.dispatch_table should be a dict, not %.200s",
                      Py_TYPE(st->dispatch_table)->tp_name);
@@ -2127,7 +2128,7 @@ whichmodule(PickleState *st, PyObject *global, PyObject *global_name, PyObject *
         if (modules == NULL) {
             return NULL;
         }
-        if (PyDict_CheckExact(modules)) {
+        if (PyDict_CheckExact(modules) || PySynchronizedDict_CheckExact(modules)) {
             PyObject *found_name = NULL;
             int error = 0;
             i = 0;

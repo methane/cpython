@@ -1,4 +1,5 @@
 #include "Python.h"
+#include "pycore_dict.h"          // _PyDict_SynchronizeNamespace()
 
 #include "clinic/_contextvars.c.h"
 
@@ -37,6 +38,27 @@ _contextvars_exec(PyObject *m)
         return -1;
     }
     if (PyModule_AddType(m, &PyContextToken_Type) < 0) {
+        return -1;
+    }
+    PyObject *dict = PyModule_GetDict(m);
+    Py_ssize_t pos = 0;
+    PyObject *value;
+    while (PyDict_Next(dict, &pos, NULL, &value)) {
+        if (PyType_Check(value)) {
+            if (PyObject_DeclareImmutable(value) < 0) {
+                return -1;
+            }
+        }
+        else if (PyCFunction_Check(value)) {
+            // copy_context operates on the calling thread's current context.
+            if (PyObject_DeclareSynchronized(value) < 0) {
+                return -1;
+            }
+        }
+    }
+    if (_PyDict_SynchronizeNamespace(dict) < 0 ||
+        PyObject_DeclareSynchronized(m) < 0)
+    {
         return -1;
     }
     return 0;

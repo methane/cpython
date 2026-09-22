@@ -7557,6 +7557,21 @@ _PyDateTime_InitTypes(PyInterpreterState *interp)
         if (_PyStaticType_InitForExtension(interp, type) < 0) {
             return _PyStatus_ERR("could not initialize static types");
         }
+        /* These immutable static types are shared by all interpreters.
+         * Initialize their state explicitly, as for core builtin types,
+         * rather than binding them to the first group that reads them. */
+        _Py_atomic_store_uint32_relaxed(&type->ob_base.ob_base.ob_owner_id, 0);
+        _Py_atomic_store_uint8(&type->ob_base.ob_base.ob_shareable,
+                              _Py_SHAREABLE_IMMUTABLE);
+    }
+
+    /* Unlike ordinary instances, these immutable singletons are also shared
+     * across interpreters. The timedelta hash cache uses atomic accesses. */
+    PyObject *singletons[] = {(PyObject *)&utc_timezone, (PyObject *)&zero_delta};
+    for (size_t i = 0; i < Py_ARRAY_LENGTH(singletons); i++) {
+        _Py_atomic_store_uint32_relaxed(&singletons[i]->ob_owner_id, 0);
+        _Py_atomic_store_uint8(&singletons[i]->ob_shareable,
+                              _Py_SHAREABLE_IMMUTABLE);
     }
 
 #define DATETIME_ADD_MACRO(dict, c, value_expr)         \

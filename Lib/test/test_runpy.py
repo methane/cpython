@@ -51,7 +51,8 @@ module_in_sys_modules = (run_name_in_sys_modules and
                          globals() is sys.modules[__name__].__dict__)
 # Check nested operation
 import runpy
-nested = runpy._run_module_code('x=1\\n', mod_name='<run>')
+nested = runpy._run_module_code(
+    'assert __module__.__dict__ is globals(); x=1\\n', mod_name='<run>')
 """
 
 implicit_namespace = {
@@ -92,12 +93,15 @@ class CodeExecutionMixin:
         """
         # Avoid side effects
         result_ns = result_ns.copy()
+        result_ns["nested"] = result_ns["nested"].copy()
         expected_ns = expected_ns.copy()
         # Impls are permitted to add extra names, so filter them out
         for k in list(result_ns):
             if k.startswith("__") and k.endswith("__"):
                 if k not in expected_ns:
                     result_ns.pop(k)
+        for k in list(result_ns["nested"]):
+            if k.startswith("__") and k.endswith("__"):
                 if k not in expected_ns["nested"]:
                     result_ns["nested"].pop(k)
         # Spec equality includes the loader, so we take the spec out of the

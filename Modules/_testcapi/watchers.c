@@ -10,6 +10,7 @@
 #include "pycore_interp_structs.h" // CODE_MAX_WATCHERS
 #include "pycore_context.h"       // CONTEXT_MAX_WATCHERS
 #include "pycore_lock.h"          // _PyOnceFlag
+#include "pycore_dict.h"          // _PyDict_Freeze
 
 /*[clinic input]
 module _testcapi
@@ -36,6 +37,11 @@ dict_watch_callback(PyDict_WatchEvent event,
 {
     PyObject *msg;
     switch (event) {
+        case PyDict_EVENT_FROZEN:
+            assert(PyFrozenDict_CheckExact(dict));
+            assert(key == NULL && new_value == NULL);
+            msg = PyUnicode_FromString("freeze");
+            break;
         case PyDict_EVENT_CLEARED:
             msg = PyUnicode_FromString("clear");
             break;
@@ -97,13 +103,28 @@ dict_watch_callback_error(PyDict_WatchEvent event,
     return -1;
 }
 
+static int
+dict_watch_callback_freeze(PyDict_WatchEvent event, PyObject *dict,
+                           PyObject *key, PyObject *new_value)
+{
+    // Exercise defensive reentrancy checks without running Python code.
+    if (event != PyDict_EVENT_DEALLOCATED && event != PyDict_EVENT_FROZEN
+        && PyDict_CheckExact(dict)) {
+        return _PyDict_Freeze(dict);
+    }
+    return 0;
+}
+
 static PyObject *
 add_dict_watcher(PyObject *self, PyObject *kind)
 {
     int watcher_id;
     assert(PyLong_Check(kind));
     long kind_l = PyLong_AsLong(kind);
-    if (kind_l == 2) {
+    if (kind_l == 3) {
+        watcher_id = PyDict_AddWatcher(dict_watch_callback_freeze);
+    }
+    else if (kind_l == 2) {
         watcher_id = PyDict_AddWatcher(dict_watch_callback_second);
     }
     else if (kind_l == 1) {

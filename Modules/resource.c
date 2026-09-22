@@ -183,7 +183,13 @@ py2rlimit(PyObject *limits, struct rlimit *rl_out)
         goto error;
     }
     curobj = PyTuple_GetItem(limits, 0);  // borrowed
+    if (curobj == NULL) {
+        goto error;
+    }
     maxobj = PyTuple_GetItem(limits, 1);  // borrowed
+    if (maxobj == NULL) {
+        goto error;
+    }
     if (py2rlim(curobj, &rl_out->rlim_cur) < 0 ||
         py2rlim(maxobj, &rl_out->rlim_max) < 0)
     {

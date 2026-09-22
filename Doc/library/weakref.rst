@@ -95,6 +95,16 @@ See :ref:`__slots__ documentation <slots>` for details.
 
 .. class:: ref(object[, callback])
 
+   .. versionchanged:: 3.16
+      Newly created exact weak references to synchronized objects are
+      synchronized too. Subclass instances retain their own sharing policy.
+      Calling a reference validates access to its current target; an
+      inaccessible live target raises an access exception instead of returning
+      ``None``. Sharing does not recursively synchronize the callback.
+      In the PEP 805 reference implementation, callbacks execute in the
+      ThreadGroup where the weak reference was created. This does not preserve
+      the registering thread's identity or its thread-local state.
+
    Return a weak reference to *object*.  The original object can be retrieved by
    calling the reference object if the referent is still alive; if the referent is
    no longer alive, calling the reference object will cause :const:`None` to be

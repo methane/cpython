@@ -103,7 +103,25 @@ test_list_api(PyObject *self, PyObject *Py_UNUSED(ignored))
 }
 
 
+static PyObject *
+synchronizedlist_new(PyObject *self, PyObject *arg)
+{
+    Py_ssize_t size = PyLong_AsSsize_t(arg);
+    if (size == -1 && PyErr_Occurred()) {
+        return NULL;
+    }
+    PyObject *result = PySynchronizedList_New(size);
+    if (result == NULL) {
+        return NULL;
+    }
+    for (Py_ssize_t i = 0; i < size; i++) {
+        PyList_SET_ITEM(result, i, Py_NewRef(Py_None));
+    }
+    return result;
+}
+
 static PyMethodDef test_methods[] = {
+    {"synchronizedlist_new", synchronizedlist_new, METH_O},
     {"list_get_size", list_get_size, METH_O},
     {"list_get_item", list_get_item, METH_VARARGS},
     {"list_set_item", list_set_item, METH_VARARGS},

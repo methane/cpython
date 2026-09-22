@@ -118,7 +118,7 @@ dump_uops(JitOptContext *ctx, const char *label,
 
 static int
 get_mutations(PyObject* dict) {
-    assert(PyDict_CheckExact(dict));
+    assert(PyAnyDict_CheckExact(dict) || PySynchronizedDict_CheckExact(dict));
     PyDictObject *d = (PyDictObject *)dict;
     uint64_t tag = FT_ATOMIC_LOAD_UINT64_RELAXED(d->_ma_watcher_tag);
     return (tag >> DICT_MAX_WATCHERS) & ((1 << DICT_WATCHED_MUTATION_BITS) - 1);
@@ -126,7 +126,7 @@ get_mutations(PyObject* dict) {
 
 static void
 increment_mutations(PyObject* dict) {
-    assert(PyDict_CheckExact(dict));
+    assert(PyAnyDict_CheckExact(dict) || PySynchronizedDict_CheckExact(dict));
     PyDictObject *d = (PyDictObject *)dict;
     FT_ATOMIC_ADD_UINT64(d->_ma_watcher_tag, 1ULL << DICT_MAX_WATCHERS);
 }
@@ -182,7 +182,7 @@ static PyObject *
 convert_global_to_const(_PyUOpInstruction *inst, PyObject *obj)
 {
     assert(inst->opcode == _LOAD_GLOBAL_MODULE || inst->opcode == _LOAD_GLOBAL_BUILTINS || inst->opcode == _LOAD_ATTR_MODULE);
-    assert(PyDict_CheckExact(obj));
+    assert(PyDict_CheckExact(obj) || PySynchronizedDict_CheckExact(obj));
     PyDictObject *dict = (PyDictObject *)obj;
     assert(dict->ma_keys->dk_kind == DICT_KEYS_UNICODE);
     PyDictUnicodeEntry *entries = DK_UNICODE_ENTRIES(dict->ma_keys);
@@ -211,11 +211,29 @@ convert_global_to_const(_PyUOpInstruction *inst, PyObject *obj)
 static bool
 incorrect_keys(PyObject *obj, uint32_t version)
 {
-    if (!PyDict_CheckExact(obj)) {
+    if (!PyDict_CheckExact(obj) && !PySynchronizedDict_CheckExact(obj)) {
         return true;
     }
     PyDictObject *dict = (PyDictObject *)obj;
     return dict->ma_keys->dk_version != version;
+}
+
+static bool
+frozendict_has_immutable_values(PyObject *obj)
+{
+    if (obj == NULL || !PyFrozenDict_CheckExact(obj)) {
+        return false;
+    }
+    Py_ssize_t pos = 0;
+    PyObject *value;
+    while (PyDict_Next(obj, &pos, NULL, &value)) {
+        if (_Py_atomic_load_uint8(&value->ob_shareable) !=
+            _Py_SHAREABLE_IMMUTABLE)
+        {
+            return false;
+        }
+    }
+    return true;
 }
 
 

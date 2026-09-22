@@ -410,6 +410,14 @@ PyAPI_DATA(const _Py_CODEUNIT *) _Py_INTERPRETER_TRAMPOLINE_INSTRUCTIONS_PTR;
 
 /* Helper functions for large uops */
 
+PyAPI_FUNC(int)
+_PyEval_CheckCallStack(_PyStackRef callable, _PyStackRef self_or_null,
+                       const _PyStackRef *args, int nargs);
+
+PyAPI_FUNC(int)
+_PyEval_CheckCallArgs(PyObject *callable, PyObject *args, PyObject *kwargs);
+
+
 PyAPI_FUNC(PyObject *)
 _Py_VectorCall_StackRefSteal(
     _PyStackRef callable,

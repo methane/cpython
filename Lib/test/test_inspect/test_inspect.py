@@ -2463,6 +2463,23 @@ class TestGetcallargsUnboundMethods(TestGetcallargsMethods):
 
 
 class TestGetattrStatic(unittest.TestCase):
+    def test_frozen_instance(self):
+        class C:
+            @property
+            def dynamic(self):
+                raise AssertionError('descriptor must not be invoked')
+
+        obj = C()
+        obj.value = sentinel = object()
+        freeze(obj)
+        freeze(C)
+        self.assertIs(inspect.getattr_static(obj, 'value'), sentinel)
+        self.assertIs(inspect.getattr_static(obj, 'dynamic'), C.dynamic)
+        self.assertIs(inspect.getattr_static(C, 'dynamic'), C.dynamic)
+        self.assertEqual(inspect.getattr_static(obj, 'missing', 42), 42)
+        with self.assertRaises(AttributeError):
+            inspect.getattr_static(obj, 'missing')
+
 
     def test_basic(self):
         class Thing(object):

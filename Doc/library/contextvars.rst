@@ -179,6 +179,14 @@ Manual Context Management
 
    A mapping of :class:`ContextVars <ContextVar>` to their values.
 
+   Context objects are synchronized and may be shared between
+   :class:`threading.ThreadGroup` objects. Context variables are immutable;
+   their values and defaults retain their own sharing states. Reading a value
+   owned by another group raises :exc:`IllegalThreadAccessException`, including
+   through :meth:`ContextVar.get`, :meth:`Context.get`, subscription, or
+   :attr:`Token.old_value`. Copying a context does not transfer ownership of
+   its values. Tokens remain local to their creating group.
+
    ``Context()`` creates an empty context with no values in it.
    To get a copy of the current context use the
    :func:`~contextvars.copy_context` function.

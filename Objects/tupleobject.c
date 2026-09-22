@@ -111,7 +111,7 @@ PyTuple_GetItem(PyObject *op, Py_ssize_t i)
         PyErr_SetString(PyExc_IndexError, "tuple index out of range");
         return NULL;
     }
-    return ((PyTupleObject *)op) -> ob_item[i];
+    return PyObject_CheckAccess(((PyTupleObject *)op)->ob_item[i]);
 }
 
 int
@@ -245,6 +245,18 @@ _PyStolenTuple_Free(PyObject *obj)
     PyTupleObject *op = _PyTuple_CAST(obj);
     assert(Py_SIZE(op) != 0);
     assert(!_PyObject_GC_IS_TRACKED(obj));
+    assert(Py_REFCNT(obj) == 1);
+    /* The items have been moved out, so normal tuple_dealloc cannot run.
+       Still consume the tuple's own reference and its debugging records. */
+    _Py_DECREF_STAT_INC();
+    Py_SET_REFCNT(obj, 0);
+#ifdef Py_REF_DEBUG
+    _Py_DecRefTotal(_PyThreadState_GET());
+#endif
+#ifdef Py_TRACE_REFS
+    _Py_ForgetReference(obj);
+#endif
+    _PyReftracerTrack(obj, PyRefTracer_DESTROY);
     // This will abort on the empty singleton (if there is one).
     if (!maybe_freelist_push(op)) {
         PyTuple_Type.tp_free((PyObject *)op);

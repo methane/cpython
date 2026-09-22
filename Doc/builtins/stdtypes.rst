@@ -1026,6 +1026,17 @@ Generator iterators implement the
 :ref:`iterator protocol <stdtypes-iterators>`.
 Iterating them drives execution of the underlying generator function.
 
+.. versionchanged:: 3.16
+   The methods below validate access to yielded and returned values, including
+   values carried by :exc:`StopIteration`. An inaccessible value raises
+   :exc:`IllegalThreadAccessException` in the caller. This exception is not
+   thrown into the generator; it remains suspended after a yield or closed
+   after a return. Inlined iteration performs the same checks on yielded
+   values. Completion values are also checked when a generator is
+   consumed by :keyword:`yield from` or :keyword:`for`, even when the loop
+   discards the value, and before reporting it to a
+   :monitoring-event:`STOP_ITERATION` monitoring callback.
+
 .. index:: pair: exception; StopIteration
 
 .. method:: generator.__next__()
@@ -1727,10 +1738,45 @@ application).
          list appear empty for the duration, and raises :exc:`ValueError` if it can
          detect that the list has been mutated during a sort.
 
+   .. method:: synchronize()
+
+      Move the contents into a new :class:`SynchronizedList` and empty the
+      original list. Elements retain their identities, ownership, and shareable
+      states. Existing references to the original list observe an empty list.
+
+      This operation currently requires an exact :class:`list` local to the
+      current thread group. Subclasses, already synchronized lists, and lists
+      being sorted are rejected.
+
+      .. versionadded:: 3.16
+
 .. seealso::
 
    For detailed information on thread-safety guarantees for :class:`list`
    objects, see :ref:`thread-safety-list`.
+
+
+Synchronized lists
+------------------
+
+.. class:: SynchronizedList(iterable=(), /)
+
+   Construct a list with internally synchronized operations. Instances are
+   :class:`list` subtypes with the ``SYNCHRONIZED`` shareable state. Individual
+   list operations use the same internal locking implementation as :class:`list`;
+   a sequence of operations is not atomic.
+
+   Construction is shallow: elements retain their original identities,
+   ownership, and shareable states. Sharing the list does not make local
+   elements accessible from another thread group. This type currently cannot
+   be subclassed.
+
+   Forward and reverse iterators created from a synchronized list are also
+   synchronized. Concurrent calls to :func:`next` on the same iterator serialize
+   its position updates. Concurrent mutation of the underlying list still has
+   the usual mutable-sequence iteration semantics.
+
+   .. versionadded:: 3.16
 
 
 .. _typesseq-tuple:
@@ -5564,6 +5610,30 @@ Binary operations that mix :class:`set` instances with :class:`frozenset`
 return the type of the first operand.  For example: ``frozenset('ab') |
 set('bc')`` returns an instance of :class:`frozenset`.
 
+.. method:: set.synchronize()
+
+   Move the elements into a new :class:`SynchronizedSet` and empty the original
+   set. Elements retain their identities, ownership, and shareable states.
+   Existing references to the original set continue to refer to that empty set.
+   The operation currently supports exact :class:`set` objects local to the
+   current thread group. Subclasses and already synchronized sets are rejected.
+
+   .. versionadded:: 3.16
+
+.. method:: set.__freeze__()
+
+   Convert this set in place to a :class:`frozenset` and return the same object.
+   All existing references observe the frozen object. Mutation methods saved
+   before freezing also reject changes. Freezing is shallow: the elements
+   retain their original state. The object becomes hashable as a frozenset.
+
+   If an element's comparison or hash method freezes the set during a mutation,
+   any attempt to perform further writes raises :exc:`TypeError`. Exceptions
+   raised by the callback itself are propagated.
+   Set subclasses must currently provide their own freezing implementation.
+
+   .. versionadded:: 3.16
+
 The following table lists operations available for :class:`set` that do not
 apply to immutable instances of :class:`frozenset`:
 
@@ -5628,6 +5698,29 @@ Sets and frozensets are :ref:`generic <generics>` over the type of their element
    objects, see :ref:`thread-safety-set`.
 
 
+Synchronized sets
+-----------------
+
+.. class:: SynchronizedSet(iterable=(), /)
+
+   Construct a set with internally synchronized operations. Instances are
+   :class:`set` subtypes with the ``SYNCHRONIZED`` shareable state and use the
+   same storage and internal locks as :class:`set`. Sequences of operations
+   are not atomic. Elements retain their own ownership and shareable states.
+
+   Newly created iterators inherit the set's shareable state. Concurrent
+   consumers advance the iterator under internal locks. Changing the set's
+   size during iteration still raises :exc:`RuntimeError`. Copying or pickling
+   an iterator retains the usual set-iterator behavior: the result iterates
+   over a list of the remaining elements.
+
+   :func:`freeze` converts the set into a :class:`frozenset` in place, retaining
+   existing references and weak references. This type currently cannot be
+   subclassed.
+
+   .. versionadded:: 3.16
+
+
 .. _typesmapping:
 
 Mapping types --- :class:`!dict`, :class:`!frozendict`
@@ -5642,8 +5735,8 @@ Mapping types --- :class:`!dict`, :class:`!frozendict`
    pair: built-in function; len
 
 A :term:`mapping` object maps :term:`hashable` values to arbitrary objects.
-There are currently two standard mapping types, the :dfn:`dictionary` and
-:class:`frozendict`.
+The built-in mapping types are the :dfn:`dictionary`, :class:`frozendict`,
+and :class:`SynchronizedDict`.
 (For other containers see the built-in
 :class:`list`, :class:`set`, and :class:`tuple` classes, and the
 :mod:`collections` module.)
@@ -5794,6 +5887,21 @@ can be used interchangeably to index the same dictionary entry.
       Return an iterator over the keys of the dictionary.  This is a shortcut
       for ``iter(d.keys())``.
 
+   .. method:: __freeze__()
+
+      Convert this dictionary in place to a :class:`frozendict` and return the
+      same object. Existing references observe the frozen dictionary, and
+      mutation methods saved before freezing reject further changes.
+      Freezing is shallow: keys and values retain their original state.
+      The result is hashable if all keys and values are hashable.
+
+      If a callback freezes the dictionary during an update, further writes
+      raise :exc:`TypeError`. Exceptions raised by the callback itself are
+      propagated. Dictionary subclasses must currently provide their own
+      freezing implementation.
+
+      .. versionadded:: 3.16
+
    .. method:: clear()
 
       Remove all items from the dictionary.
@@ -5873,6 +5981,20 @@ can be used interchangeably to index the same dictionary entry.
       the method) or an iterable of key/value pairs (as tuples or other iterables
       of length two). If keyword arguments are specified, the dictionary is then
       updated with those key/value pairs: ``d.update(red=1, blue=2)``.
+
+   .. method:: synchronize()
+
+      Move the dictionary's contents into a new :class:`SynchronizedDict`
+      and empty the original dictionary. This is shallow: the keys and values
+      retain their identities, ownership, and shareable states. Existing
+      references and views of the original dictionary continue to refer to
+      that now-empty dictionary.
+
+      The dictionary must be local to the current thread group. This operation
+      currently supports exact :class:`dict` instances; dictionary subclasses
+      and dictionaries already in the synchronized state are rejected.
+
+      .. versionadded:: 3.16
 
    .. method:: values()
 
@@ -6035,6 +6157,38 @@ An example of dictionary view usage::
    500
 
 
+Synchronized dictionaries
+-------------------------
+
+.. class:: SynchronizedDict(**kwargs)
+           SynchronizedDict(mapping, /, **kwargs)
+           SynchronizedDict(iterable, /, **kwargs)
+
+   Construct a dictionary with internally synchronized operations. Instances
+   are :class:`dict` subtypes and have the ``SYNCHRONIZED`` shareable state.
+   Their storage layout and individual dictionary operations use the same
+   implementation as :class:`dict`. Sequences of operations, such as checking
+   for a key and then assigning a value, are not atomic.
+
+   Construction is shallow: keys and values retain their original ownership
+   and shareable states. Sharing this dictionary does not make its contents
+   accessible to another thread group.
+
+   :func:`freeze` converts a synchronized dictionary into a :class:`frozendict`
+   in place, retaining existing references to the dictionary.
+
+   Newly created key, value, and item views, their read-only mapping proxies,
+   and forward and reverse iterators inherit the dictionary's synchronized
+   state. Concurrent consumers advance a shared iterator under internal locks.
+   Changing the dictionary's size during iteration still raises
+   :exc:`RuntimeError`. Copying or pickling an iterator retains the usual
+   dictionary-iterator behavior: the result iterates over a list of the
+   remaining elements. Views, proxies, and iterators created from a frozen
+   dictionary instead start local to the creating thread group.
+
+   .. versionadded:: 3.16
+
+
 Frozen dictionaries
 -------------------
 
@@ -6056,6 +6210,7 @@ Frozen dictionaries
       * :meth:`~dict.pop`
       * :meth:`~dict.popitem`
       * :meth:`~dict.setdefault`
+      * :meth:`~dict.synchronize`
       * :meth:`~dict.update`
 
    * A :class:`!frozendict` can be hashed with ``hash(frozendict)`` if all keys and

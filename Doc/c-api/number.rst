@@ -5,6 +5,21 @@
 Number Protocol
 ===============
 
+.. versionchanged:: 3.16
+   The binary arithmetic APIs (addition, subtraction, multiplication, matrix
+   multiplication, division, remainder, divmod, shifts and bitwise operations)
+   validate operand access before numeric dispatch and again after a slot
+   returns :data:`NotImplemented`. They also validate returned references,
+   including sequence concatenation and repetition fallbacks. Sequence
+   repetition revalidates the sequence after converting the repetition count;
+   this also applies to the fallback in :c:func:`PyNumber_InPlaceMultiply`.
+   The corresponding inplace APIs validate operands before calling inplace
+   numeric slots and validate their returned references. Fallback to ordinary
+   numeric dispatch revalidates the operands, and inplace sequence concatenation
+   validates its result. The power and inplace power APIs validate all three
+   operands, revalidate them after :data:`NotImplemented`, and validate returned
+   references, including results from the modulus operand's numeric slot.
+
 
 .. c:function:: int PyNumber_Check(PyObject *o)
 
@@ -85,11 +100,19 @@ Number Protocol
    Returns the negation of *o* on success, or ``NULL`` on failure. This is the
    equivalent of the Python expression ``-o``.
 
+   .. versionchanged:: 3.16
+      Validates access to the operand before dispatch and to the returned
+      object before exposing it to the caller.
+
 
 .. c:function:: PyObject* PyNumber_Positive(PyObject *o)
 
    Returns *o* on success, or ``NULL`` on failure.  This is the equivalent of the
    Python expression ``+o``.
+
+   .. versionchanged:: 3.16
+      Validates access to the operand before dispatch and to the returned
+      object before exposing it to the caller.
 
 
 .. c:function:: PyObject* PyNumber_Absolute(PyObject *o)
@@ -99,11 +122,19 @@ Number Protocol
    Returns the absolute value of *o*, or ``NULL`` on failure.  This is the equivalent
    of the Python expression ``abs(o)``.
 
+   .. versionchanged:: 3.16
+      Validates access to the operand before dispatch and to the returned
+      object before exposing it to the caller.
+
 
 .. c:function:: PyObject* PyNumber_Invert(PyObject *o)
 
    Returns the bitwise negation of *o* on success, or ``NULL`` on failure.  This is
    the equivalent of the Python expression ``~o``.
+
+   .. versionchanged:: 3.16
+      Validates access to the operand before dispatch and to the returned
+      object before exposing it to the caller.
 
 
 .. c:function:: PyObject* PyNumber_Lshift(PyObject *o1, PyObject *o2)
@@ -243,6 +274,11 @@ Number Protocol
    Returns the *o* converted to an integer object on success, or ``NULL`` on
    failure.  This is the equivalent of the Python expression ``int(o)``.
 
+   .. versionchanged:: 3.16
+      Validates access to the operand before conversion and to a native
+      ``__int__`` result before using it. Access to a subclass result is
+      revalidated after its deprecation warning, before copying its value.
+
 
 .. c:function:: PyObject* PyNumber_Float(PyObject *o)
 
@@ -251,15 +287,28 @@ Number Protocol
    Returns the *o* converted to a float object on success, or ``NULL`` on failure.
    This is the equivalent of the Python expression ``float(o)``.
 
+   .. versionchanged:: 3.16
+      Validates access to the operand before conversion and to a native
+      ``__float__`` result before using it. Access to a subclass result is
+      revalidated after its deprecation warning, before reading its value.
+
 
 .. c:function:: PyObject* PyNumber_Index(PyObject *o)
 
-   Returns the *o* converted to a Python int on success or ``NULL`` with a
-   :exc:`TypeError` exception raised on failure.
+   Returns the *o* converted to a Python int on success or ``NULL`` with an
+   exception raised on failure.
 
    .. versionchanged:: 3.10
       The result always has exact type :class:`int`.  Previously, the result
       could have been an instance of a subclass of ``int``.
+
+   .. versionchanged:: 3.16
+      Validates access to the operand and the native ``__index__`` result
+      before reading or copying the integer. If a subclass result triggers a
+      deprecation warning, access is checked again after warning handlers run.
+      These checks also apply to index conversion used by
+      :c:func:`PyNumber_AsSsize_t`, :c:func:`PyNumber_ToBase`, and the index
+      fallbacks of :c:func:`PyNumber_Long` and :c:func:`PyNumber_Float`.
 
 
 .. c:function:: PyObject* PyNumber_ToBase(PyObject *n, int base)

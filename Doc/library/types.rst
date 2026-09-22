@@ -161,6 +161,10 @@ Standard names are defined for the following types:
    The audit event only occurs for direct instantiation of function objects,
    and is not raised for normal compilation.
 
+   .. versionchanged:: 3.16
+      The ``globals`` argument to direct construction also accepts a
+      :class:`frozendict`, retaining it as the function's global namespace.
+
 
 .. class:: GeneratorType
 
@@ -259,6 +263,21 @@ Standard names are defined for the following types:
 
    The type of :term:`modules <module>`. The constructor takes the name of the
    module to be created and optionally its :term:`docstring`.
+
+   .. method:: synchronize()
+
+      Put a local Python module into the synchronized state and return the
+      module. Its namespace becomes a :class:`SynchronizedDict` in place:
+      existing references to ``module.__dict__`` remain valid and observe
+      subsequent attribute changes. The module's attributes retain their
+      individual ownership and shareable states.
+
+      For example, a module can finish its initialization with
+      ``__module__.synchronize()``. The operation currently supports exact
+      :class:`ModuleType` instances without native extension state. Calling
+      it on an already synchronized or frozen module raises :exc:`TypeError`.
+
+      .. versionadded:: 3.16
 
    .. seealso::
 

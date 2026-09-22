@@ -40,9 +40,11 @@ BaseException
       │    └── TimeoutError
       ├── ReferenceError
       ├── RuntimeError
+      │    ├── IllegalThreadAccessException
       │    ├── NotImplementedError
       │    ├── PythonFinalizationError
-      │    └── RecursionError
+      │    ├── RecursionError
+      │    └── UnprotectedAccessException
       ├── StopAsyncIteration
       ├── StopIteration
       ├── SyntaxError

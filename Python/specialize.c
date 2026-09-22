@@ -449,6 +449,10 @@ static int
 specialize_module_load_attr(
     PyObject *owner, _Py_CODEUNIT *instr, PyObject *name)
 {
+    if (_PyModule_IsMainThreadGroupAttribute(owner, name)) {
+        SPECIALIZATION_FAIL(LOAD_ATTR, SPEC_FAIL_OTHER);
+        return -1;
+    }
     PyModuleObject *m = (PyModuleObject *)owner;
     assert((Py_TYPE(owner)->tp_flags & Py_TPFLAGS_MANAGED_DICT) == 0);
     PyDictObject *dict = (PyDictObject *)m->md_dict;
@@ -1355,7 +1359,7 @@ specialize_load_global_lock_held(
     /* Use inline cache */
     _PyLoadGlobalCache *cache = (_PyLoadGlobalCache *)(instr + 1);
     assert(PyUnicode_CheckExact(name));
-    if (!PyDict_CheckExact(globals)) {
+    if (!PyDict_CheckExact(globals) && !PySynchronizedDict_CheckExact(globals)) {
         SPECIALIZATION_FAIL(LOAD_GLOBAL, SPEC_FAIL_LOAD_GLOBAL_NON_DICT);
         goto fail;
     }
@@ -1399,7 +1403,7 @@ specialize_load_global_lock_held(
         specialize(instr, LOAD_GLOBAL_MODULE);
         return;
     }
-    if (!PyDict_CheckExact(builtins)) {
+    if (!PyDict_CheckExact(builtins) && !PySynchronizedDict_CheckExact(builtins)) {
         SPECIALIZATION_FAIL(LOAD_GLOBAL, SPEC_FAIL_LOAD_GLOBAL_NON_DICT);
         goto fail;
     }

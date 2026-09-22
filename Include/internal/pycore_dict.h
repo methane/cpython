@@ -165,6 +165,9 @@ PyAPI_FUNC(int) _PyDict_SetItem_KnownHash_LockHeld(PyDictObject *mp, PyObject *k
 PyAPI_FUNC(int) _PyDict_GetItemRef_KnownHash_LockHeld(PyDictObject *op, PyObject *key, Py_hash_t hash, PyObject **result);
 PyAPI_FUNC(int) _PyDict_GetItemRef_KnownHash(PyDictObject *op, PyObject *key, Py_hash_t hash, PyObject **result);
 extern int _PyDict_GetItemRef_Unicode_LockHeld(PyDictObject *op, PyObject *key, PyObject **result);
+// Internal lookup without a heap-to-thread access check. Attribute lookup
+// needs a common result check covering descriptors and specialized paths too.
+extern int _PyDict_GetItemRefUnchecked(PyObject *op, PyObject *key, PyObject **result);
 PyAPI_FUNC(int) _PyObjectDict_SetItem(PyTypeObject *tp, PyObject *obj, PyObject **dictptr, PyObject *name, PyObject *value);
 
 extern int _PyDict_Pop_KnownHash(
@@ -178,6 +181,8 @@ extern void _PyDict_Clear_LockHeld(PyObject *op);
 #ifdef Py_GIL_DISABLED
 PyAPI_FUNC(void) _PyDict_EnsureSharedOnRead(PyDictObject *mp);
 #endif
+
+extern PyObject *_PyDict_CopyStorage(PyObject *op);
 
 // Export for '_elementtree' shared extension
 PyAPI_FUNC(PyObject*) _PyDict_CopyAsDict(PyObject *op);
@@ -354,8 +359,11 @@ _PyDictValues_AddToInsertionOrder(PyDictValues *values, Py_ssize_t ix)
 }
 
 // Exported for external JIT support
-PyAPI_FUNC(void)
+PyAPI_FUNC(int)
 _PyDict_InsertSplitValue(PyDictObject *mp, PyObject *key, PyObject *value, Py_ssize_t ix);
+
+PyAPI_FUNC(int) _PyDict_Freeze(PyObject *op);
+extern int _PyDict_SynchronizeNamespace(PyObject *op);
 
 static inline size_t
 shared_keys_usable_size(PyDictKeysObject *keys)
@@ -425,7 +433,7 @@ _Py_DECREF_DICT(PyObject *op)
 static inline void
 _Py_INCREF_BUILTINS(PyObject *op)
 {
-    if (PyDict_CheckExact(op)) {
+    if (PyAnyDict_CheckExact(op)) {
         _Py_INCREF_DICT(op);
     }
     else {
@@ -436,7 +444,7 @@ _Py_INCREF_BUILTINS(PyObject *op)
 static inline void
 _Py_DECREF_BUILTINS(PyObject *op)
 {
-    if (PyDict_CheckExact(op)) {
+    if (PyAnyDict_CheckExact(op)) {
         _Py_DECREF_DICT(op);
     }
     else {
@@ -446,10 +454,7 @@ _Py_DECREF_BUILTINS(PyObject *op)
 #endif
 
 /* frozendict */
-typedef struct {
-    PyDictObject ob_base;
-    Py_hash_t ma_hash;
-} PyFrozenDictObject;
+typedef PyDictObject PyFrozenDictObject;
 
 #define _PyFrozenDictObject_CAST(op) \
     (assert(PyFrozenDict_Check(op)), _Py_CAST(PyFrozenDictObject*, (op)))

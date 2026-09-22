@@ -4,6 +4,13 @@
 extern "C" {
 #endif
 
+extern int _PyFunction_SetDict(PyObject *func, PyObject *dict);
+PyAPI_FUNC(int) _PyFunction_SetClosureForCreation(PyFunctionObject *, PyObject *);
+extern void _PyFunction_CellBecameWritable(PyCellObject *);
+
+// Snapshot keyword-only defaults without invoking dictionary subclass hooks.
+PyAPI_FUNC(PyObject *) _PyFunction_CopyKwDefaults(PyObject *defaults);
+
 #ifndef Py_BUILD_CORE
 #  error "this header requires Py_BUILD_CORE define"
 #endif

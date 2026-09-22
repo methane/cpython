@@ -727,6 +727,9 @@ tb_printinternal(PyTracebackObject *tb, PyObject *f, long limit)
     }
     while (tb != NULL) {
         code = PyFrame_GetCode(tb->tb_frame);
+        if (code == NULL) {
+            goto error;
+        }
         int tb_lineno = tb->tb_lineno;
         if (tb_lineno == -1) {
             tb_lineno = tb_get_lineno((PyObject *)tb);

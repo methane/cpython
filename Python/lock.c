@@ -3,6 +3,8 @@
 #include "Python.h"
 
 #include "pycore_lock.h"
+#include "pycore_interp.h"
+#include "pycore_object.h"
 #include "pycore_parking_lot.h"
 #include "pycore_semaphore.h"
 #include "pycore_time.h"          // _PyTime_Add()
@@ -418,12 +420,13 @@ _PyRecursiveMutex_Lock(_PyRecursiveMutex *m)
 {
     PyThread_ident_t thread = PyThread_get_thread_ident_ex();
     if (recursive_mutex_is_owned_by(m, thread)) {
-        m->level++;
+        uintptr_t level = _Py_atomic_load_uintptr_relaxed(&m->level);
+        _Py_atomic_store_uintptr_relaxed(&m->level, level + 1);
         return;
     }
     PyMutex_Lock(&m->mutex);
     _Py_atomic_store_ullong_relaxed(&m->thread, thread);
-    assert(m->level == 0);
+    assert(_Py_atomic_load_uintptr_relaxed(&m->level) == 0);
 }
 
 PyLockStatus
@@ -431,13 +434,14 @@ _PyRecursiveMutex_LockTimed(_PyRecursiveMutex *m, PyTime_t timeout, _PyLockFlags
 {
     PyThread_ident_t thread = PyThread_get_thread_ident_ex();
     if (recursive_mutex_is_owned_by(m, thread)) {
-        m->level++;
+        uintptr_t level = _Py_atomic_load_uintptr_relaxed(&m->level);
+        _Py_atomic_store_uintptr_relaxed(&m->level, level + 1);
         return PY_LOCK_ACQUIRED;
     }
     PyLockStatus s = _PyMutex_LockTimed(&m->mutex, timeout, flags);
     if (s == PY_LOCK_ACQUIRED) {
         _Py_atomic_store_ullong_relaxed(&m->thread, thread);
-        assert(m->level == 0);
+        assert(_Py_atomic_load_uintptr_relaxed(&m->level) == 0);
     }
     return s;
 }
@@ -458,11 +462,12 @@ _PyRecursiveMutex_TryUnlock(_PyRecursiveMutex *m)
     if (!recursive_mutex_is_owned_by(m, thread)) {
         return -1;
     }
-    if (m->level > 0) {
-        m->level--;
+    uintptr_t level = _Py_atomic_load_uintptr_relaxed(&m->level);
+    if (level > 0) {
+        _Py_atomic_store_uintptr_relaxed(&m->level, level - 1);
         return 0;
     }
-    assert(m->level == 0);
+    assert(_Py_atomic_load_uintptr_relaxed(&m->level) == 0);
     _Py_atomic_store_ullong_relaxed(&m->thread, 0);
     PyMutex_Unlock(&m->mutex);
     return 0;
@@ -596,4 +601,75 @@ int
 PyMutex_IsLocked(PyMutex *m)
 {
     return _PyMutex_IsLocked(m);
+}
+
+_PyProtectiveMutexState *
+_PyProtectiveMutex_New(int recursive)
+{
+    _PyProtectiveMutexState *state = PyMem_RawCalloc(1, sizeof(*state));
+    if (state == NULL) {
+        PyErr_NoMemory();
+        return NULL;
+    }
+    state->mutex_id = _PyObject_NewOwnerID();
+    if (state->mutex_id == 0) {
+        PyMem_RawFree(state);
+        PyErr_SetString(PyExc_OverflowError, "mutex ID space exhausted");
+        return NULL;
+    }
+    state->recursive = recursive;
+    state->refcount = 1;
+    return state;
+}
+
+/* Called once, before publishing the first protected object, with the
+   wrapper's metadata guard held. Does not allocate or detach. */
+void
+_PyProtectiveMutex_Register(PyInterpreterState *interp,
+                            _PyProtectiveMutexState *state)
+{
+    assert(!state->protective);
+    PyMutex_LockFlags(&interp->protective_mutexes_mutex, 0);
+    _Py_atomic_add_ssize(&state->refcount, 1);
+    state->next = interp->protective_mutexes;
+    interp->protective_mutexes = state;
+    PyMutex_Unlock(&interp->protective_mutexes_mutex);
+}
+
+_PyProtectiveMutexState *
+_PyProtectiveMutex_Find(PyInterpreterState *interp, uint32_t id)
+{
+    PyMutex_LockFlags(&interp->protective_mutexes_mutex, 0);
+    _PyProtectiveMutexState *state = interp->protective_mutexes;
+    while (state != NULL && state->mutex_id != id) {
+        state = state->next;
+    }
+    if (state != NULL) {
+        _Py_atomic_add_ssize(&state->refcount, 1);
+    }
+    PyMutex_Unlock(&interp->protective_mutexes_mutex);
+    return state;
+}
+
+void
+_PyProtectiveMutex_Decref(_PyProtectiveMutexState *state)
+{
+    if (state != NULL && _Py_atomic_add_ssize(&state->refcount, -1) == 1) {
+        PyMem_RawFree(state);
+    }
+}
+
+void
+_PyProtectiveMutex_Fini(PyInterpreterState *interp)
+{
+    PyMutex_LockFlags(&interp->protective_mutexes_mutex, 0);
+    _PyProtectiveMutexState *state = interp->protective_mutexes;
+    interp->protective_mutexes = NULL;
+    PyMutex_Unlock(&interp->protective_mutexes_mutex);
+    while (state != NULL) {
+        _PyProtectiveMutexState *next = state->next;
+        state->next = NULL;
+        _PyProtectiveMutex_Decref(state);
+        state = next;
+    }
 }

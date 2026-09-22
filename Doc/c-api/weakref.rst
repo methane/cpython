@@ -86,6 +86,11 @@ as much as it can.
 
    .. versionadded:: 3.13
 
+   .. versionchanged:: 3.16
+      The referenced object is checked against the ThreadGroup access rules.
+      An inaccessible live object raises an access exception, sets *\*pobj*
+      to ``NULL``, and returns -1; it is not reported as a dead reference.
+
 
 .. c:function:: int PyWeakref_IsDead(PyObject *ref)
 

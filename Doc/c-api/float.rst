@@ -54,6 +54,12 @@ Floating-Point Objects
    .. versionchanged:: 3.8
       Use :meth:`~object.__index__` if available.
 
+   .. versionchanged:: 3.16
+      Validates access to the operand and native conversion result before
+      reading the numeric value. Access to a subclass result is revalidated
+      after its deprecation warning, since warning handlers may change access
+      permissions. Access errors use the existing ``-1.0`` error convention.
+
 
 .. c:function:: double PyFloat_AS_DOUBLE(PyObject *pyfloat)
 

@@ -96,9 +96,10 @@ pylong_fromnativebytes(PyObject *module, PyObject *args)
 static PyObject *
 pylong_getsign(PyObject *module, PyObject *arg)
 {
-    int sign;
+    int sign = UNINITIALIZED_INT;
     NULLABLE(arg);
     if (PyLong_GetSign(arg, &sign) == -1) {
+        assert(sign == UNINITIALIZED_INT);
         return NULL;
     }
     return PyLong_FromLong(sign);
@@ -155,8 +156,19 @@ layout_to_dict(const PyLongLayout *layout)
 static PyObject *
 pylong_export(PyObject *module, PyObject *obj)
 {
-    PyLongExport export_long;
+    PyLongExport export_long = {
+        .value = 42,
+        .negative = 1,
+        .ndigits = 1,
+        .digits = &export_long,
+        ._reserved = 1,
+    };
     if (PyLong_Export(obj, &export_long) < 0) {
+        assert(export_long.value == 0);
+        assert(export_long.negative == 0);
+        assert(export_long.ndigits == 0);
+        assert(export_long.digits == NULL);
+        assert(export_long._reserved == 0);
         return NULL;
     }
 

@@ -8,6 +8,38 @@ Call Protocol
 CPython supports two different calling protocols:
 *tp_call* and vectorcall.
 
+The object call APIs validate access to the callable before reading its
+vectorcall function or invoking its call slot. This includes native callables
+owned by another thread group.
+
+Calls entering a Python function validate access to the function and its
+positional and keyword arguments before executing the function body.
+Inaccessible local objects raise :exc:`IllegalThreadAccessException`;
+protected objects require the calling thread to hold their protecting context,
+or :exc:`UnprotectedAccessException` is raised. This also applies when the
+call originates in a C extension rather than Python bytecode.
+
+Calls through slot wrapper descriptors (such as ``float.__lt__``) and their
+bound method wrappers also validate the receiver and positional and keyword
+arguments before entering the native slot. A wrapper retaining a protected
+receiver requires its protecting context at the time of the call.
+
+Unbound native method descriptors (such as ``int.bit_length``) validate their
+receiver and all positional arguments, keyword names and keyword values before
+entering the native method. This includes methods using :c:macro:`METH_METHOD`.
+
+Native C functions and bound C methods validate their retained non-module
+receiver (when present) and all positional and keyword arguments before entering
+the C implementation. Keyword names are also checked. These checks apply to both
+vectorcall and tuple/dictionary calling conventions and do not recursively
+inspect objects contained in an argument.
+For module functions, the callable's own state governs access; the retained
+module is a native state context, rather than a bound receiver.
+
+The common call protocol also validates access to returned objects before
+passing an owned reference to the caller. This validation does not recursively
+inspect objects contained in the result.
+
 The *tp_call* Protocol
 ----------------------
 

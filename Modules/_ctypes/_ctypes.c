@@ -4644,8 +4644,10 @@ PyCFuncPtr_call(PyObject *op, PyObject *inargs, PyObject *kwds)
         CDataObject *this;
         this = (CDataObject *)PyTuple_GetItem(inargs, 0); /* borrowed ref! */
         if (!this) {
-            PyErr_SetString(PyExc_ValueError,
-                            "native com method call without 'this' parameter");
+            if (PyErr_ExceptionMatches(PyExc_IndexError)) {
+                PyErr_SetString(PyExc_ValueError,
+                                "native com method call without 'this' parameter");
+            }
             goto finally;
         }
         if (!CDataObject_Check(st, this)) {

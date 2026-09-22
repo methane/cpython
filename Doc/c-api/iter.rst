@@ -29,6 +29,11 @@ There are two functions specifically for working with iterators.
 
    .. versionadded:: 3.14
 
+   .. versionchanged:: 3.16
+      Validate access to each returned value. An inaccessible value produces
+      :exc:`IllegalThreadAccessException`, returns ``-1``, and leaves *item*
+      set to ``NULL``. The iterator has already consumed that value.
+
 .. c:function:: PyObject* PyIter_Next(PyObject *o)
 
    This is an older version of :c:func:`!PyIter_NextItem`,
@@ -40,6 +45,9 @@ There are two functions specifically for working with iterators.
    If there are no remaining values, returns ``NULL`` with no exception set.
    If an error occurs while retrieving the item, returns ``NULL`` and passes
    along the exception.
+
+   .. versionchanged:: 3.16
+      Validate access to returned values as in :c:func:`PyIter_NextItem`.
 
 .. c:type:: PySendResult
 
@@ -57,3 +65,8 @@ There are two functions specifically for working with iterators.
    - ``PYGEN_ERROR`` if iterator has raised an exception. *presult* is set to ``NULL``.
 
    .. versionadded:: 3.10
+
+   .. versionchanged:: 3.16
+      Validate access to yielded and returned values. An inaccessible value
+      raises :exc:`IllegalThreadAccessException`, returns ``PYGEN_ERROR``, and
+      sets *presult* to ``NULL``. The iterator has already advanced or completed.

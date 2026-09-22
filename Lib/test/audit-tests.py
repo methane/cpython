@@ -81,6 +81,31 @@ def assertRaises(ex_type):
         assert type(ex) is ex_type, f"{ex} should be {ex_type}"
 
 
+def test_threadgroup_hooks():
+    import threading
+    from test.support import threading_helper
+
+    results = threading.Channel()
+    def hook(event, args, results=results):
+        if event == 'test.threadgroup_hooks':
+            results.put(args[0])
+    sys.addaudithook(hook)
+
+    def register():
+        sys.addaudithook(hook)
+    threads = [threading.Thread(target=register, group=threading.ThreadGroup())
+               for _ in range(4)]
+    with threading_helper.start_threads(threads):
+        pass
+
+    def emit():
+        sys.audit('test.threadgroup_hooks', 42)
+    thread = threading.Thread(target=emit, group=threading.ThreadGroup())
+    with threading_helper.start_threads([thread]):
+        pass
+    assert [results.get() for _ in range(5)] == [42] * 5
+
+
 def test_basic():
     with TestHook() as hook:
         sys.audit("test_event", 1, 2, 3)

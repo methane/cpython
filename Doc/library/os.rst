@@ -180,6 +180,14 @@ process and user.
 
 .. data:: environ
 
+   .. versionchanged:: 3.16
+      The default environment mapping and its backing dictionary are
+      synchronized objects, allowing reads from different ThreadGroups.
+      The :mod:`os` module also has a synchronized namespace. This is shallow:
+      native functions and user-supplied callbacks retain their own access
+      requirements. Environment mutation and reloading retain their existing
+      thread-safety restrictions.
+
    A :term:`mapping` object where keys and values are strings that represent
    the process environment.  For example, ``environ['HOME']`` is the pathname
    of your home directory (on some platforms), and is equivalent to

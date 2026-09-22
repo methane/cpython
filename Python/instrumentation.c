@@ -4,6 +4,7 @@
 #include "pycore_ceval.h"         // _PY_EVAL_EVENTS_BITS
 #include "pycore_code.h"          // _PyCode_Clear_Executors()
 #include "pycore_critical_section.h" // _Py_CRITICAL_SECTION_ASSERT_OBJECT_LOCKED()
+#include "pycore_dict.h"          // _PyDict_SynchronizeNamespace()
 #include "pycore_frame.h"         // PyFrameObject
 #include "pycore_interpframe.h"   // _PyFrame_GetBytecode()
 #include "pycore_long.h"          // _PyLong_GetZero()
@@ -2558,6 +2559,71 @@ static PyMethodDef methods[] = {
     {NULL, NULL}  // sentinel
 };
 
+static PyObject *
+stop_world_enter(PyObject *self, PyObject *unused)
+{
+    if (_PyEval_DebuggerStopTheWorld(_PyThreadState_GET()) < 0) {
+        return NULL;
+    }
+    return Py_NewRef(self);
+}
+
+static PyObject *
+stop_world_exit(PyObject *self, PyObject *args)
+{
+    PyObject *type, *value, *traceback;
+    if (!PyArg_UnpackTuple(args, "__exit__", 3, 3, &type, &value, &traceback)) {
+        return NULL;
+    }
+    if (_PyEval_DebuggerStartTheWorld(_PyThreadState_GET()) < 0) {
+        return NULL;
+    }
+    Py_RETURN_FALSE;
+}
+
+static PyMethodDef stop_world_methods[] = {
+    {"__enter__", stop_world_enter, METH_NOARGS, NULL},
+    {"__exit__", stop_world_exit, METH_VARARGS, NULL},
+    {NULL}
+};
+
+static PyType_Slot stop_world_slots[] = {
+    {Py_tp_methods, stop_world_methods},
+    {0, NULL}
+};
+
+static PyType_Spec stop_world_spec = {
+    .name = "sys.monitoring._StopTheWorld",
+    .basicsize = sizeof(PyObject),
+    .flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_IMMUTABLETYPE |
+             Py_TPFLAGS_DISALLOW_INSTANTIATION,
+    .slots = stop_world_slots,
+};
+
+static int
+add_stop_world_context(PyObject *module)
+{
+    PyObject *type = PyType_FromSpec(&stop_world_spec);
+    if (type == NULL) {
+        return -1;
+    }
+    if (PyObject_DeclareImmutable(type) < 0) {
+        Py_DECREF(type);
+        return -1;
+    }
+    PyObject *context = PyType_GenericAlloc((PyTypeObject *)type, 0);
+    Py_DECREF(type);
+    if (context == NULL) {
+        return -1;
+    }
+    int result = PyObject_DeclareImmutable(context);
+    if (result == 0) {
+        result = PyModule_AddObjectRef(module, "StopTheWorld", context);
+    }
+    Py_DECREF(context);
+    return result;
+}
+
 static struct PyModuleDef monitoring_module = {
     PyModuleDef_HEAD_INIT,
     .m_name = "sys.monitoring",
@@ -2613,6 +2679,11 @@ PyObject *_Py_CreateMonitoringObject(void)
     err = PyObject_SetAttrString(mod, "OPTIMIZER_ID", val);
     Py_DECREF(val);
     if (err) goto error;
+    if (add_stop_world_context(mod) < 0 ||
+        _PyDict_SynchronizeNamespace(PyModule_GetDict(mod)) < 0 ||
+        PyObject_DeclareSynchronized(mod) < 0) {
+        goto error;
+    }
     return mod;
 error:
     Py_DECREF(mod);

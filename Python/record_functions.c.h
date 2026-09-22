@@ -110,7 +110,6 @@ void _PyOpcode_RecordFunction_CODE(_PyInterpreterFrame *frame, _PyStackRef *stac
 const _PyOpcodeRecordEntry _PyOpcode_RecordEntries[256] = {
         [TO_BOOL_BOOL] = {1, {_RECORD_TOS_TYPE_INDEX}},
         [TO_BOOL_NONE] = {1, {_RECORD_TOS_TYPE_INDEX}},
-        [LOAD_SUPER_ATTR_ATTR] = {1, {_RECORD_NOS_INDEX}},
         [TO_BOOL] = {1, {_RECORD_TOS_TYPE_INDEX}},
         [TO_BOOL_INT] = {1, {_RECORD_TOS_TYPE_INDEX}},
         [TO_BOOL_LIST] = {1, {_RECORD_TOS_TYPE_INDEX}},
@@ -142,6 +141,7 @@ const _PyOpcodeRecordEntry _PyOpcode_RecordEntries[256] = {
         [SEND_ASYNC_GEN] = {1, {_RECORD_3OS_GEN_FUNC_INDEX}},
         [STORE_ATTR] = {1, {_RECORD_TOS_TYPE_INDEX}},
         [LOAD_SUPER_ATTR] = {1, {_RECORD_NOS_INDEX}},
+        [LOAD_SUPER_ATTR_ATTR] = {1, {_RECORD_NOS_INDEX}},
         [LOAD_SUPER_ATTR_METHOD] = {1, {_RECORD_NOS_INDEX}},
         [LOAD_ATTR] = {1, {_RECORD_TOS_INDEX}},
         [LOAD_ATTR_INSTANCE_VALUE] = {1, {_RECORD_TOS_INDEX}},

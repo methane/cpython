@@ -105,6 +105,17 @@ def collect_in_thread(period=0.005):
 
 class ReferencesTestCase(TestBase):
 
+    def test_callback_order_after_cyclic_collection(self):
+        value = RefCycle()
+        calls = []
+        refs = [weakref.ref(value, lambda ref, i=i: calls.append(i))
+                for i in range(4)]
+        del value
+        gc_collect()
+        self.assertEqual(calls, [3, 2, 1, 0])
+        self.assertTrue(all(ref() is None for ref in refs))
+
+
     def test_basic_ref(self):
         self.check_basic_ref(C)
         self.check_basic_ref(create_function)

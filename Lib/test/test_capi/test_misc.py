@@ -2683,6 +2683,17 @@ class Test_PyLock(unittest.TestCase):
                     for name in dir(_testinternalcapi)
                     if name.startswith('test_lock_'))
 
+    def test_lock_held_mutex_threads(self):
+        completed = []
+        def worker():
+            _testinternalcapi.test_lock_held_mutexes()
+            completed.append(True)
+        threads = [threading.Thread(target=worker, group=sys.main_thread_group)
+                   for _ in range(4)]
+        with threading_helper.start_threads(threads):
+            pass
+        self.assertEqual(len(completed), len(threads))
+
 
 @unittest.skipIf(_testmultiphase is None, "test requires _testmultiphase module")
 class Test_ModuleStateAccess(unittest.TestCase):

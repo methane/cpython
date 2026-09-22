@@ -1,3 +1,4 @@
+import builtins
 import copy
 import ntpath
 import pathlib
@@ -1263,7 +1264,9 @@ def dump_dict(before, after, prefix="global"):
 
 
 def getpath(ns, keys):
-    before = copy.deepcopy(ns)
+    # exec() inserts the real builtins namespace. Keep that shared namespace
+    # intact: its __module__ binding refers to the builtins module itself.
+    before = copy.deepcopy(ns, {id(builtins.__dict__): builtins.__dict__})
     failed = True
     try:
         exec(SOURCE, ns)

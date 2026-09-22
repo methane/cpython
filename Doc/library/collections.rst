@@ -1369,6 +1369,14 @@ attribute.
         :meth:`dict.popitem`, this order is :abbr:`LIFO (last-in, first-out)`.) If the
         dictionary is empty, raises a :exc:`KeyError`.
 
+    .. method:: synchronize()
+
+        Move the contents of :attr:`data` into a new :class:`SynchronizedDict`,
+        leaving the wrapped dictionary empty. Values retain their own sharing
+        states. The wrapper itself is not made synchronized.
+
+        .. versionadded:: 3.16
+
 :class:`UserList` objects
 -------------------------
 
@@ -1396,6 +1404,14 @@ to work with because the underlying list is accessible as an attribute.
 
         A real :class:`list` object used to store the contents of the
         :class:`UserList` class.
+
+    .. method:: synchronize()
+
+        Move the contents of :attr:`data` into a new :class:`SynchronizedList`,
+        leaving the wrapped list empty. Elements retain their own sharing
+        states. The wrapper itself is not made synchronized.
+
+        .. versionadded:: 3.16
 
 **Subclassing requirements:** Subclasses of :class:`UserList` are expected to
 offer a constructor which can be called with either no arguments or one

@@ -699,6 +699,7 @@ class RunStringTests(TestBase):
 
             ns = dict(vars())
             del ns['__builtins__']
+            assert ns.pop('__module__').__dict__ is globals()
             import pickle
             with open({w}, 'wb') as chan:
                 pickle.dump(ns, chan)
@@ -718,12 +719,14 @@ class RunStringTests(TestBase):
             spam = 'eggs'
             ns1 = dict(vars())
             del ns1['__builtins__']
+            assert ns1.pop('__module__').__dict__ is globals()
             """))
 
         shared = {'spam': b'ham'}
         script = dedent("""
             ns2 = dict(vars())
             del ns2['__builtins__']
+            assert ns2.pop('__module__').__dict__ is globals()
         """)
         _interpreters.set___main___attrs(self.id, shared)
         _interpreters.run_string(self.id, script)
@@ -732,6 +735,7 @@ class RunStringTests(TestBase):
         script = dedent(f"""
             ns = dict(vars())
             del ns['__builtins__']
+            assert ns.pop('__module__').__dict__ is globals()
             import pickle
             with open({w}, 'wb') as chan:
                 pickle.dump(ns, chan)
@@ -753,6 +757,7 @@ class RunStringTests(TestBase):
 
             ns = dict(vars())
             del ns['__builtins__']
+            assert ns.pop('__module__').__dict__ is globals()
             import pickle
             with open({w}, 'wb') as chan:
                 pickle.dump(ns, chan)
@@ -771,6 +776,7 @@ class RunStringTests(TestBase):
 
             ns = dict(vars())
             del ns['__builtins__']
+            assert ns.pop('__module__').__dict__ is globals()
             import pickle
             with open({w}, 'wb') as chan:
                 pickle.dump(ns, chan)
@@ -785,6 +791,7 @@ class RunStringTests(TestBase):
 
             ns = dict(vars())
             del ns['__builtins__']
+            assert ns.pop('__module__').__dict__ is globals()
             import pickle
             with open({w}, 'wb') as chan:
                 pickle.dump(ns, chan)
@@ -805,6 +812,7 @@ class RunStringTests(TestBase):
 
             ns = dict(vars())
             ns['__builtins__'] = str(ns['__builtins__'])
+            assert ns.pop('__module__').__dict__ is globals()
             import pickle
             with open({w}, 'wb') as chan:
                 pickle.dump(ns, chan)

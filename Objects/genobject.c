@@ -73,6 +73,9 @@ _PyGen_GetCode(PyGenObject *gen) {
 PyCodeObject *
 PyGen_GetCode(PyGenObject *gen) {
     assert(PyGen_Check(gen));
+    if (PyObject_CheckAccess((PyObject *)gen) == NULL) {
+        return NULL;
+    }
     PyCodeObject *res = _PyGen_GetCode(gen);
     Py_INCREF(res);
     return res;
@@ -295,10 +298,18 @@ gen_send_ex2(PyGenObject *gen, PyObject *arg, PyObject **presult, int exc)
     int return_kind = ((_PyThreadStateImpl *)tstate)->generator_return_kind;
 
     if (return_kind == GENERATOR_YIELD) {
-        assert(result != NULL && !_PyErr_Occurred(tstate));
 #ifndef Py_GIL_DISABLED
         assert(FRAME_STATE_SUSPENDED(gen->gi_frame_state));
 #endif
+        /* The interpreter's C return boundary can reject a yielded value
+         * after suspending the generator. Propagate that error to the caller
+         * without closing the generator or injecting it into its frame. */
+        if (result == NULL) {
+            assert(_PyErr_Occurred(tstate));
+            *presult = NULL;
+            return PYGEN_ERROR;
+        }
+        assert(!_PyErr_Occurred(tstate));
         *presult = result;
         return PYGEN_NEXT;
     }
@@ -386,6 +397,10 @@ PyGen_am_send(PyObject *self, PyObject *arg, PyObject **result)
 static PyObject *
 gen_set_stop_iteration(PyGenObject *gen, PyObject *result)
 {
+    result = _PyObject_CheckAccessNullable(result);
+    if (result == NULL) {
+        return NULL;
+    }
     if (PyAsyncGen_CheckExact(gen)) {
         assert(result == Py_None);
         PyErr_SetNone(PyExc_StopAsyncIteration);
@@ -412,7 +427,7 @@ gen_send(PyObject *op, PyObject *arg)
     if (gen_send_ex(gen, arg, &result) == PYGEN_RETURN) {
         return gen_set_stop_iteration(gen, result);
     }
-    return result;
+    return _PyObject_CheckAccessNullable(result);
 }
 
 PyDoc_STRVAR(close_doc,
@@ -520,7 +535,7 @@ gen_close(PyObject *self, PyObject *args)
     if (gen_send_ex2(gen, Py_None, &retval, 1) == PYGEN_RETURN) {
         // the generator returned a value while closing, return the value here
         assert(!PyErr_Occurred());
-        return retval;
+        return _PyObject_CheckAccessNullable(retval);
     }
     else if (retval) {
         const char *msg = "generator ignored GeneratorExit";
@@ -755,7 +770,8 @@ gen_throw(PyObject *op, PyObject *const *args, Py_ssize_t nargs)
     else if (nargs == 2) {
         val = args[1];
     }
-    return _gen_throw(gen, 1, typ, val, tb);
+    PyObject *result = _gen_throw(gen, 1, typ, val, tb);
+    return _PyObject_CheckAccessNullable(result);
 }
 
 
@@ -767,12 +783,16 @@ gen_iternext(PyObject *self)
 
     PyObject *result;
     if (gen_send_ex(gen, NULL, &result) == PYGEN_RETURN) {
+        result = _PyObject_CheckAccessNullable(result);
+        if (result == NULL) {
+            return NULL;
+        }
         if (result != Py_None) {
             _PyGen_SetStopIterationValue(result);
         }
         Py_CLEAR(result);
     }
-    return result;
+    return _PyObject_CheckAccessNullable(result);
 }
 
 /*
@@ -1192,6 +1212,7 @@ gen_new_with_qualname(PyTypeObject *type, PyFrameObject *f,
     assert(frame->frame_obj == f);
     f->f_frame = frame;
     frame->owner = FRAME_OWNED_BY_GENERATOR;
+    frame->check_return_access = 0;
     assert(PyObject_GC_IsTracked((PyObject *)f));
     Py_DECREF(f);
     gen->gi_weakreflist = NULL;
@@ -1252,6 +1273,8 @@ gen_is_coroutine(PyObject *o)
  *
  *   Raises a TypeError if it's not possible to return
  *   an awaitable and returns NULL.
+ *   Validates access to o before invoking its slot, and to any
+ *   iterator returned by the slot. Access failures return NULL.
  */
 PyObject *
 _PyCoro_GetAwaitableIter(PyObject *o)
@@ -1259,6 +1282,9 @@ _PyCoro_GetAwaitableIter(PyObject *o)
     unaryfunc getter = NULL;
     PyTypeObject *ot;
 
+    if (PyObject_CheckAccess(o) == NULL) {
+        return NULL;
+    }
     if (PyCoro_CheckExact(o) || gen_is_coroutine(o)) {
         /* 'o' is a coroutine. */
         return Py_NewRef(o);
@@ -1285,7 +1311,7 @@ _PyCoro_GetAwaitableIter(PyObject *o)
                 Py_CLEAR(res);
             }
         }
-        return res;
+        return _PyObject_CheckAccessNullable(res);
     }
 
     PyErr_Format(PyExc_TypeError,
@@ -1982,7 +2008,11 @@ async_gen_unwrap_value(PyAsyncGenObject *gen, PyObject *result)
 
     if (_PyAsyncGenWrappedValue_CheckExact(result)) {
         /* async yield */
-        _PyGen_SetStopIterationValue(((_PyAsyncGenWrappedValue*)result)->agw_val);
+        PyObject *value = PyObject_CheckAccess(
+            ((_PyAsyncGenWrappedValue*)result)->agw_val);
+        if (value != NULL) {
+            _PyGen_SetStopIterationValue(value);
+        }
         Py_DECREF(result);
         return NULL;
     }

@@ -1792,7 +1792,7 @@ finalize_remove_modules(PyObject *modules, int verbose)
             } \
         }
 
-    if (PyDict_CheckExact(modules)) {
+    if (PyDict_CheckExact(modules) || PySynchronizedDict_CheckExact(modules)) {
         Py_ssize_t pos = 0;
         PyObject *key, *value;
         while (PyDict_Next(modules, &pos, &key, &value)) {
@@ -1833,7 +1833,7 @@ finalize_remove_modules(PyObject *modules, int verbose)
 static void
 finalize_clear_modules_dict(PyObject *modules)
 {
-    if (PyDict_CheckExact(modules)) {
+    if (PyDict_CheckExact(modules) || PySynchronizedDict_CheckExact(modules)) {
         PyDict_Clear(modules);
     }
     else {
@@ -2265,7 +2265,8 @@ interp_has_pending_calls(PyInterpreterState *interp)
 {
     assert(interp != NULL);
     ASSERT_WORLD_STOPPED(interp);
-    return interp->ceval.pending.npending != 0;
+    return interp->ceval.pending.npending != 0 ||
+           _PyObject_HasDeferredCleanup(interp);
 }
 
 static int
@@ -2660,12 +2661,16 @@ new_interpreter(PyThreadState **tstate_p,
         return _PyStatus_ERR("Py_Initialize must be called first");
     }
 
+    PyThreadState *save_tstate = _PyThreadState_GET();
+    if (save_tstate != NULL && save_tstate->debugger_stop_depth != 0) {
+        return _PyStatus_ERR("cannot create an interpreter during a debugger world pause");
+    }
+
     /* Issue #10915, #15751: The GIL API doesn't work with multiple
        interpreters: disable PyGILState_Check(). */
     _Py_atomic_store_int_relaxed(&runtime->gilstate.check_enabled, 0);
 
     // XXX Might new_interpreter() have been called without the GIL held?
-    PyThreadState *save_tstate = _PyThreadState_GET();
     PyThreadState *tstate = NULL;
     PyInterpreterState *interp;
     status = _PyInterpreterState_New(save_tstate, &interp);

@@ -20,6 +20,7 @@
 #include "pycore_interpolation.h" // _PyInterpolation_Type
 #include "pycore_lazyimportobject.h" // PyLazyImport_Type
 #include "pycore_list.h"          // _PyList_DebugMallocStats()
+#include "pycore_lock.h"
 #include "pycore_long.h"          // _PyLong_GetZero()
 #include "pycore_memoryobject.h"  // _PyManagedBuffer_Type
 #include "pycore_namespace.h"     // _PyNamespace_Type
@@ -504,6 +505,11 @@ _PyObject_ResurrectEndSlow(PyObject *op)
         // If the object is owned by the current thread, give up ownership and
         // merge the refcount. This isn't necessary in all cases, but it
         // simplifies the implementation.
+#ifdef Py_REF_DEBUG
+        // ResurrectEnd already subtracted the temporary reference. The
+        // explicit merge below accounts for the same decrement again.
+        _Py_IncRefTotal(_PyThreadState_GET());
+#endif
         Py_ssize_t refcount = _Py_ExplicitMergeRefcount(op, -1);
         if (refcount == 0) {
 #ifdef Py_TRACE_REFS
@@ -575,6 +581,173 @@ _PyObject_NewVar(PyTypeObject *tp, Py_ssize_t nitems)
     return op;
 }
 
+/* These flags and the intrusive link are guarded by deferred_cleanups_mutex.
+   Keeping one strong queue reference prevents deallocation while a record is
+   pending, including after the consumer has detached a batch. */
+#define DEFERRED_QUEUED 1
+
+static int
+finalizer_world_stopped(PyThreadState *tstate)
+{
+    return tstate != NULL && tstate->internal_stop_depth != 0;
+}
+
+int
+_PyObject_HasDeferredCleanup(PyInterpreterState *interp)
+{
+    return _Py_atomic_load_ssize(&interp->deferred_cleanup_count) != 0;
+}
+
+static void
+defer_object_cleanup(PyThreadState *tstate, PyObject *op, int deallocate)
+{
+    PyInterpreterState *interp = tstate->interp;
+    if (deallocate) {
+        assert(Py_REFCNT(op) == 0);
+#ifdef Py_TRACE_REFS
+        /* _Py_Dealloc has not removed this object from the refchain yet.
+           Retain its entry: resurrection then needs no tracing allocation. */
+        assert(_PyRefchain_IsTraced(interp, op));
+#endif
+        _PyObject_ResurrectStart(op);
+#ifdef Py_GIL_DISABLED
+        /* Any thread may drain this queue; do not bias its reference to the
+           thread that happened to stop the world. */
+        (void)_Py_ExplicitMergeRefcount(op, 0);
+#endif
+    }
+    PyMutex_LockFlags(&interp->deferred_cleanups_mutex, 0);
+    if (op->ob_deferred_flags & DEFERRED_QUEUED) {
+        /* A weak reference may have revived an object awaiting deallocation.
+           An explicit finalization request must run even if that new owner
+           keeps the object alive past this checkpoint. */
+        assert(!deallocate);
+        /* Keep the existing queue reference and link. */
+    }
+    else {
+        if (!deallocate) {
+            Py_INCREF(op);
+        }
+        assert(op->ob_deferred_finalizers == 0);
+        op->ob_deferred_flags = DEFERRED_QUEUED;
+        op->ob_deferred_next = interp->deferred_cleanups;
+        interp->deferred_cleanups = op;
+        _Py_atomic_add_ssize(&interp->deferred_cleanup_count, 1);
+    }
+    if (!deallocate) {
+        /* GC callers already deduplicate requests using the finalized bit.
+           Non-GC types must retain every explicit call, including repeated
+           requests made during the same internal stop. */
+        if (op->ob_deferred_finalizers == SIZE_MAX) {
+            Py_FatalError("deferred finalizer count overflow");
+        }
+        op->ob_deferred_finalizers++;
+    }
+    PyMutex_Unlock(&interp->deferred_cleanups_mutex);
+    /* HEAD_LOCK may already be held here. The world-start wrapper signals
+       all threads after releasing internal locks. */
+    _Py_set_eval_breaker_bit(tstate, _PY_CALLS_TO_DO_BIT);
+}
+
+static PyObject *
+take_deferred_cleanups(PyInterpreterState *interp)
+{
+    PyMutex_LockFlags(&interp->deferred_cleanups_mutex, 0);
+    PyObject *objects = interp->deferred_cleanups;
+    interp->deferred_cleanups = NULL;
+    _Py_atomic_store_ssize(&interp->deferred_cleanup_count, 0);
+    PyMutex_Unlock(&interp->deferred_cleanups_mutex);
+    return objects;
+}
+
+static void
+release_deferred_cleanups(PyInterpreterState *interp, PyObject *objects,
+                          int run_finalizers)
+{
+    while (objects != NULL) {
+        PyObject *op = objects;
+        PyMutex_LockFlags(&interp->deferred_cleanups_mutex, 0);
+        objects = op->ob_deferred_next;
+        size_t finalizers = op->ob_deferred_finalizers;
+        assert(op->ob_deferred_flags & DEFERRED_QUEUED);
+        op->ob_deferred_next = NULL;
+        op->ob_deferred_flags = 0;
+        op->ob_deferred_finalizers = 0;
+        PyMutex_Unlock(&interp->deferred_cleanups_mutex);
+        if (run_finalizers) {
+            /* For GC types the original caller already set the finalized bit.
+               Non-GC types do not have that bit and may have multiple calls. */
+            for (size_t i = 0; i < finalizers; i++) {
+                _PyObject_RunFinalizer(op);
+            }
+        }
+        Py_DECREF(op);
+    }
+}
+
+int
+_PyObject_RunDeferredCleanup(PyThreadState *tstate)
+{
+    if (!_PyObject_HasDeferredCleanup(tstate->interp) ||
+        finalizer_world_stopped(tstate)) {
+        return 0;
+    }
+    PyObject *objects = take_deferred_cleanups(tstate->interp);
+    int ran = objects != NULL;
+    release_deferred_cleanups(tstate->interp, objects, 1);
+    return ran;
+}
+
+void
+_PyObject_ClearDeferredCleanup(PyInterpreterState *interp)
+{
+    /* Pre-finalization drains queued work before teardown. Explicit clearing
+       cancels residual finalizer-only callbacks; deallocation records still
+       have to release their retained objects through the normal deallocator. */
+    for (;;) {
+        PyObject *objects = take_deferred_cleanups(interp);
+        if (objects == NULL) {
+            break;
+        }
+        release_deferred_cleanups(interp, objects, 0);
+        /* Releasing the retained objects can enqueue more cleanup work. */
+    }
+}
+
+void
+_PyObject_RunFinalizer(PyObject *self)
+{
+    PyThreadState *tstate = _PyThreadState_GET();
+    if (finalizer_world_stopped(tstate)) {
+        defer_object_cleanup(tstate, self, 0);
+        return;
+    }
+    if (tstate->debugger_stop_depth == 0 &&
+        _Py_atomic_load_uint8(&self->ob_shareable) == _Py_SHAREABLE_PROTECTED &&
+        !_PyThreadState_HoldsMutex(tstate,
+            _Py_atomic_load_uint32_relaxed(&self->ob_owner_id)))
+    {
+        PyObject *exc = _PyErr_GetRaisedException(tstate);
+        if (_PyProtectiveMutex_CallFinalizer(self) < 0) {
+            PyErr_FormatUnraisable("while acquiring an object's protecting mutex");
+        }
+        _PyErr_SetRaisedException(tstate, exc);
+    }
+    else if (tstate->debugger_stop_depth == 0 &&
+        _Py_atomic_load_uint8(&self->ob_shareable) == _Py_SHAREABLE_LOCAL &&
+        _Py_atomic_load_uint32_relaxed(&self->ob_owner_id) != tstate->threadgroup->id)
+    {
+        PyObject *exc = _PyErr_GetRaisedException(tstate);
+        if (_PyThreadGroup_CallFinalizer(self) < 0) {
+            PyErr_FormatUnraisable("while dispatching an object's finalizer");
+        }
+        _PyErr_SetRaisedException(tstate, exc);
+    }
+    else if (Py_TYPE(self)->tp_finalize != NULL) {
+        Py_TYPE(self)->tp_finalize(self);
+    }
+}
+
 void
 PyObject_CallFinalizer(PyObject *self)
 {
@@ -586,7 +759,7 @@ PyObject_CallFinalizer(PyObject *self)
     if (_PyType_IS_GC(tp) && _PyGC_FINALIZED(self))
         return;
 
-    tp->tp_finalize(self);
+    _PyObject_RunFinalizer(self);
     if (_PyType_IS_GC(tp)) {
         _PyGC_SET_FINALIZED(self);
     }
@@ -1060,18 +1233,30 @@ do_richcompare(PyThreadState *tstate, PyObject *v, PyObject *w, int op)
         if (res != Py_NotImplemented)
             return res;
         Py_DECREF(res);
+        // A NotImplemented callback can invalidate either operand.
+        if (PyObject_CheckAccess(v) == NULL || PyObject_CheckAccess(w) == NULL) {
+            return NULL;
+        }
     }
     if ((f = Py_TYPE(v)->tp_richcompare) != NULL) {
         res = (*f)(v, w, op);
         if (res != Py_NotImplemented)
             return res;
         Py_DECREF(res);
+        // A NotImplemented callback can invalidate either operand.
+        if (PyObject_CheckAccess(v) == NULL || PyObject_CheckAccess(w) == NULL) {
+            return NULL;
+        }
     }
     if (!checked_reverse_op && (f = Py_TYPE(w)->tp_richcompare) != NULL) {
         res = (*f)(w, v, _Py_SwappedOp[op]);
         if (res != Py_NotImplemented)
             return res;
         Py_DECREF(res);
+        // A NotImplemented callback can invalidate either operand.
+        if (PyObject_CheckAccess(v) == NULL || PyObject_CheckAccess(w) == NULL) {
+            return NULL;
+        }
     }
     /* If neither object implements it, provide a sensible default
        for == and !=, but raise an exception for ordering. */
@@ -1108,12 +1293,15 @@ PyObject_RichCompare(PyObject *v, PyObject *w, int op)
         }
         return NULL;
     }
+    if (PyObject_CheckAccess(v) == NULL || PyObject_CheckAccess(w) == NULL) {
+        return NULL;
+    }
     if (_Py_EnterRecursiveCallTstate(tstate, " in comparison")) {
         return NULL;
     }
     PyObject *res = do_richcompare(tstate, v, w, op);
     _Py_LeaveRecursiveCallTstate(tstate);
-    return res;
+    return _PyObject_CheckAccessNullable(res);
 }
 
 /* Perform a rich comparison with integer result.  This wraps
@@ -1181,8 +1369,10 @@ PyObject_GetAttrString(PyObject *v, const char *name)
 {
     PyObject *w, *res;
 
-    if (Py_TYPE(v)->tp_getattr != NULL)
-        return (*Py_TYPE(v)->tp_getattr)(v, (char*)name);
+    if (Py_TYPE(v)->tp_getattr != NULL) {
+        return _PyObject_CheckAccessNullable(
+            (*Py_TYPE(v)->tp_getattr)(v, (char*)name));
+    }
     w = PyUnicode_FromString(name);
     if (w == NULL)
         return NULL;
@@ -1218,6 +1408,9 @@ PyObject_HasAttrString(PyObject *obj, const char *name)
 int
 PyObject_SetAttrString(PyObject *v, const char *name, PyObject *w)
 {
+    if (_PyObject_CheckMutable(v) < 0) {
+        return -1;
+    }
     PyThreadState *tstate = _PyThreadState_GET();
     if (w == NULL && _PyErr_Occurred(tstate)) {
         PyObject *exc = _PyErr_GetRaisedException(tstate);
@@ -1338,7 +1531,7 @@ PyObject_GetAttr(PyObject *v, PyObject *name)
     if (result == NULL) {
         _PyObject_SetAttributeErrorContext(v, name);
     }
-    return result;
+    return _PyObject_CheckAccessNullable(result);
 }
 
 /* Like PyObject_GetAttr but returns a _PyStackRef.
@@ -1357,11 +1550,18 @@ _PyObject_GetAttrStackRef(PyObject *v, PyObject *name)
 
     /* Fast path for types - can return deferred references */
     if (tp->tp_getattro == _Py_type_getattro) {
-        _PyStackRef result = _Py_type_getattro_stackref((PyTypeObject *)v, name, NULL);
-        if (PyStackRef_IsNull(result)) {
+        PyThreadState *tstate = _PyThreadState_GET();
+        _PyCStackRef result;
+        _PyThreadState_PushCStackRef(tstate, &result);
+        result.ref = _Py_type_getattro_stackref((PyTypeObject *)v, name, NULL);
+        if (PyStackRef_IsNull(result.ref)) {
             _PyObject_SetAttributeErrorContext(v, name);
         }
-        return result;
+        else if (PyObject_CheckAccess(PyStackRef_AsPyObjectBorrow(result.ref)) == NULL)
+        {
+            PyStackRef_CLEAR(result.ref);
+        }
+        return _PyThreadState_PopCStackRefSteal(tstate, &result);
     }
 
     /* Fall back to regular PyObject_GetAttr and convert to stackref */
@@ -1386,7 +1586,8 @@ _PyObject_GetAttrStackRef(PyObject *v, PyObject *name)
         _PyObject_SetAttributeErrorContext(v, name);
         return PyStackRef_NULL;
     }
-    return PyStackRef_FromPyObjectSteal(result);
+    result = _PyObject_CheckAccessNullable(result);
+    return result == NULL ? PyStackRef_NULL : PyStackRef_FromPyObjectSteal(result);
 }
 
 int
@@ -1405,7 +1606,8 @@ PyObject_GetOptionalAttr(PyObject *v, PyObject *name, PyObject **result)
     if (tp->tp_getattro == PyObject_GenericGetAttr) {
         *result = _PyObject_GenericGetAttrWithDict(v, name, NULL, 1);
         if (*result != NULL) {
-            return 1;
+            *result = _PyObject_CheckAccessNullable(*result);
+            return *result == NULL ? -1 : 1;
         }
         if (PyErr_Occurred()) {
             return -1;
@@ -1424,7 +1626,8 @@ PyObject_GetOptionalAttr(PyObject *v, PyObject *name, PyObject **result)
         // optimization: suppress attribute error from module getattro method
         *result = _Py_module_getattro_impl((PyModuleObject*)v, name, 1);
         if (*result != NULL) {
-            return 1;
+            *result = _PyObject_CheckAccessNullable(*result);
+            return *result == NULL ? -1 : 1;
         }
         if (PyErr_Occurred()) {
             return -1;
@@ -1448,7 +1651,8 @@ PyObject_GetOptionalAttr(PyObject *v, PyObject *name, PyObject **result)
     }
 
     if (*result != NULL) {
-        return 1;
+        *result = _PyObject_CheckAccessNullable(*result);
+        return *result == NULL ? -1 : 1;
     }
     if (!PyErr_ExceptionMatches(PyExc_AttributeError)) {
         return -1;
@@ -1473,7 +1677,8 @@ PyObject_GetOptionalAttrString(PyObject *obj, const char *name, PyObject **resul
 
     *result = (*Py_TYPE(obj)->tp_getattr)(obj, (char*)name);
     if (*result != NULL) {
-        return 1;
+        *result = _PyObject_CheckAccessNullable(*result);
+        return *result == NULL ? -1 : 1;
     }
     if (!PyErr_ExceptionMatches(PyExc_AttributeError)) {
         return -1;
@@ -1508,6 +1713,9 @@ PyObject_HasAttr(PyObject *obj, PyObject *name)
 int
 PyObject_SetAttr(PyObject *v, PyObject *name, PyObject *value)
 {
+    if (_PyObject_CheckMutable(v) < 0) {
+        return -1;
+    }
     PyThreadState *tstate = _PyThreadState_GET();
     if (value == NULL && _PyErr_Occurred(tstate)) {
         PyObject *exc = _PyErr_GetRaisedException(tstate);
@@ -1711,7 +1919,7 @@ _PyObject_GetMethod(PyObject *obj, PyObject *name, PyObject **method)
     }
     if (dict != NULL) {
         Py_INCREF(dict);
-        if (PyDict_GetItemRef(dict, name, method) != 0) {
+        if (_PyDict_GetItemRefUnchecked(dict, name, method) != 0) {
             // found or error
             Py_DECREF(dict);
             Py_XDECREF(descr);
@@ -1964,7 +2172,7 @@ _PyObject_GenericGetAttrWithDict(PyObject *obj, PyObject *name,
     }
     if (dict != NULL) {
         Py_INCREF(dict);
-        int rc = PyDict_GetItemRef(dict, name, &res);
+        int rc = _PyDict_GetItemRefUnchecked(dict, name, &res);
         Py_DECREF(dict);
         if (res != NULL) {
             goto done;
@@ -2010,13 +2218,17 @@ _PyObject_GenericGetAttrWithDict(PyObject *obj, PyObject *name,
 PyObject *
 PyObject_GenericGetAttr(PyObject *obj, PyObject *name)
 {
-    return _PyObject_GenericGetAttrWithDict(obj, name, NULL, 0);
+    return _PyObject_CheckAccessNullable(
+        _PyObject_GenericGetAttrWithDict(obj, name, NULL, 0));
 }
 
 int
 _PyObject_GenericSetAttrWithDict(PyObject *obj, PyObject *name,
                                  PyObject *value, PyObject *dict)
 {
+    if (_PyObject_CheckMutable(obj) < 0) {
+        return -1;
+    }
     PyTypeObject *tp = Py_TYPE(obj);
     PyObject *descr;
     descrsetfunc f;
@@ -2567,6 +2779,7 @@ static PyTypeObject* static_types[_Py_NUM_MANAGED_PREINITIALIZED_TYPES] = {
     &PyDictRevIterValue_Type,
     &PyDictValues_Type,
     &PyDict_Type,
+    &PySynchronizedDict_Type,
     &PyEllipsis_Type,
     &PyEnum_Type,
     &PyFilter_Type,
@@ -2583,6 +2796,7 @@ static PyTypeObject* static_types[_Py_NUM_MANAGED_PREINITIALIZED_TYPES] = {
     &PyListIter_Type,
     &PyListRevIter_Type,
     &PyList_Type,
+    &PySynchronizedList_Type,
     &PyLongRangeIter_Type,
     &PyLong_Type,
     &PyMap_Type,
@@ -2603,6 +2817,7 @@ static PyTypeObject* static_types[_Py_NUM_MANAGED_PREINITIALIZED_TYPES] = {
     &PySeqIter_Type,
     &PySetIter_Type,
     &PySet_Type,
+    &PySynchronizedSet_Type,
     &PySlice_Type,
     &PyStdPrinter_Type,
     &PySuper_Type,
@@ -2725,9 +2940,237 @@ _PyTypes_FiniTypes(PyInterpreterState *interp)
 }
 
 
+/* Group and protective-mutex IDs share a process-wide namespace. Never reset
+   or recycle it, including across interpreter finalization/reinitialization. */
+static uint32_t next_owner_id;
+
+uint32_t
+_PyObject_NewOwnerID(void)
+{
+    uint32_t previous = _Py_atomic_load_uint32_relaxed(&next_owner_id);
+    for (;;) {
+        if (previous == UINT32_MAX) {
+            return 0;
+        }
+        if (_Py_atomic_compare_exchange_uint32(&next_owner_id, &previous,
+                                               previous + 1)) {
+            return previous + 1;
+        }
+    }
+}
+
+static int
+is_intrinsically_immutable(PyTypeObject *type)
+{
+    /* Exact types only: subclasses can have mutable instance attributes. */
+    return type == &PyLong_Type || type == &PyBool_Type ||
+           type == &PyFloat_Type || type == &PyComplex_Type ||
+           type == &PyUnicode_Type || type == &PyBytes_Type ||
+           type == &PyTuple_Type || type == &PyFrozenSet_Type ||
+           type == &PyFrozenDict_Type || type == &PyRange_Type ||
+           type == &PyMethodDescr_Type || type == &PyClassMethodDescr_Type ||
+           type == &PyMemberDescr_Type || type == &PyGetSetDescr_Type ||
+           type == &PyWrapperDescr_Type ||
+           type == &PyCode_Type || type == Py_TYPE(Py_None) ||
+           type == Py_TYPE(Py_Ellipsis) || type == Py_TYPE(Py_NotImplemented);
+}
+
+static void
+init_shareable(PyObject *op)
+{
+    uint8_t state = _Py_SHAREABLE_LOCAL;
+    uint32_t owner = _PyThreadState_GET()->threadgroup->id;
+    if (is_intrinsically_immutable(Py_TYPE(op))) {
+        state = _Py_SHAREABLE_IMMUTABLE;
+        owner = 0;
+    }
+    _Py_atomic_store_uint32_relaxed(&op->ob_owner_id, owner);
+    _Py_atomic_store_uint8_relaxed(&op->ob_shareable, state);
+    _Py_atomic_store_uint8_relaxed(&op->ob_frozen, 0);
+}
+
+int
+_PyObject_CheckMutable(PyObject *op)
+{
+    if (_Py_atomic_load_uint8(&op->ob_frozen)) {
+        PyErr_Format(PyExc_TypeError, "cannot modify frozen '%.100s' object",
+                     Py_TYPE(op)->tp_name);
+        return -1;
+    }
+    return 0;
+}
+
+static uint8_t
+get_shareable_state(PyObject *op, PyThreadState *tstate)
+{
+    uint8_t state = _Py_atomic_load_uint8(&op->ob_shareable);
+    if (state == _Py_SHAREABLE_LOCAL &&
+        _Py_atomic_load_uint32_relaxed(&op->ob_owner_id) == 0 &&
+        _Py_IsStaticImmortal(op))
+    {
+        /* Static allocation is not an immutability declaration: an extension
+           may statically allocate a mutable object. Bind such objects to the
+           first interpreter's main group, never to an arbitrary worker. */
+        if (is_intrinsically_immutable(Py_TYPE(op))) {
+            state = _Py_SHAREABLE_IMMUTABLE;
+            _Py_atomic_store_uint8(&op->ob_shareable, state);
+        }
+        else {
+            uint32_t unowned = 0;
+            _Py_atomic_compare_exchange_uint32(&op->ob_owner_id, &unowned,
+                                              tstate->interp->main_threadgroup->id);
+        }
+    }
+    return state;
+}
+
+// Initialize an unpublished view/iterator from its container. Views of an
+// immutable container start local, rather than inheriting immutability.
+void
+_PyObject_InheritShareable(PyObject *op, PyObject *container)
+{
+    PyThreadState *tstate = _PyThreadState_GET();
+    Py_BEGIN_CRITICAL_SECTION(container);
+    uint8_t state = get_shareable_state(container, tstate);
+    uint32_t owner;
+    if (state == _Py_SHAREABLE_IMMUTABLE) {
+        state = _Py_SHAREABLE_LOCAL;
+        owner = tstate->threadgroup->id;
+    }
+    else {
+        owner = _Py_atomic_load_uint32_relaxed(&container->ob_owner_id);
+    }
+    _Py_atomic_store_uint32_relaxed(&op->ob_owner_id, owner);
+    _Py_atomic_store_uint8(&op->ob_shareable, state);
+    Py_END_CRITICAL_SECTION();
+}
+
+int
+_PyObject_CheckAccessThread(PyObject *op, PyThreadState *tstate)
+{
+    if (tstate->debugger_stop_depth != 0) {
+        return 0;
+    }
+    uint8_t state = get_shareable_state(op, tstate);
+    if (state >= _Py_SHAREABLE_SYNCHRONIZED) {
+        return 0;
+    }
+    uint32_t owner = _Py_atomic_load_uint32_relaxed(&op->ob_owner_id);
+    if (state == _Py_SHAREABLE_LOCAL && owner == tstate->threadgroup->id) {
+        return 0;
+    }
+    if (state == _Py_SHAREABLE_PROTECTED) {
+        if (_PyThreadState_HoldsMutex(tstate, owner)) {
+            return 0;
+        }
+        PyErr_SetString(PyExc_UnprotectedAccessException,
+                        "the object's protecting mutex is not held");
+    }
+    else {
+        /* Do not call repr(), or any other user code, on an inaccessible
+           object while constructing the error. */
+        PyErr_Format(PyExc_IllegalThreadAccessException,
+                     "object owned by ThreadGroup %u cannot be accessed "
+                     "by ThreadGroup %u", owner, tstate->threadgroup->id);
+    }
+    return -1;
+}
+
+PyObject *
+PyObject_CheckAccess(PyObject *op)
+{
+    if (op == NULL) {
+        return NULL;
+    }
+    return _PyObject_CheckAccessThread(op, _PyThreadState_GET()) < 0 ? NULL : op;
+}
+
+PyObject *
+_PyObject_CheckAccessNullable(PyObject *op)
+{
+    if (op != NULL && PyObject_CheckAccess(op) == NULL) {
+        Py_DECREF(op);
+        return NULL;
+    }
+    return op;
+}
+
+static int
+declare_shareable(PyObject *op, uint8_t state)
+{
+    if (PyObject_CheckAccess(op) == NULL) {
+        return -1;
+    }
+    uint8_t old_state = _Py_atomic_load_uint8(&op->ob_shareable);
+    if (old_state == state) {
+        return 0;
+    }
+    if (old_state == _Py_SHAREABLE_IMMUTABLE ||
+        old_state == _Py_SHAREABLE_PROTECTED)
+    {
+        PyErr_SetString(PyExc_TypeError, "cannot change this object's sharing state");
+        return -1;
+    }
+    _Py_atomic_store_uint32_relaxed(&op->ob_owner_id, 0);
+    _Py_atomic_store_uint8(&op->ob_shareable, state);
+    return 0;
+}
+
+int
+PyObject_DeclareImmutable(PyObject *op)
+{
+    return declare_shareable(op, _Py_SHAREABLE_IMMUTABLE);
+}
+
+int
+PyObject_DeclareSynchronized(PyObject *op)
+{
+    return declare_shareable(op, _Py_SHAREABLE_SYNCHRONIZED);
+}
+
+PyObject *
+_PyObject_GetShareable(PyObject *op, void *closure)
+{
+    PyObject *threading = PyImport_ImportModule("threading");
+    if (threading == NULL) {
+        return NULL;
+    }
+    PyObject *enum_type = PyObject_GetAttrString(threading, "Shareable");
+    Py_DECREF(threading);
+    if (enum_type == NULL) {
+        return NULL;
+    }
+    unsigned int state = get_shareable_state(op, _PyThreadState_GET());
+    static const char *names[] = {
+        [_Py_SHAREABLE_LOCAL] = "LOCAL",
+        [_Py_SHAREABLE_PROTECTED] = "PROTECTED",
+        [_Py_SHAREABLE_SYNCHRONIZED] = "SYNCHRONIZED",
+        [_Py_SHAREABLE_IMMUTABLE] = "IMMUTABLE",
+    };
+    assert(state < Py_ARRAY_LENGTH(names));
+    /* The enum members are frozen singletons. Do not construct them via
+       Enum.__call__, which accesses the enum module's local implementation
+       objects in the caller's ThreadGroup. */
+    PyObject *result = _PyObject_CheckAccessNullable(
+        PyObject_GetAttrString(enum_type, names[state]));
+    Py_DECREF(enum_type);
+    return result;
+}
+
+int
+_PyObject_SetShareable(PyObject *op, PyObject *value, void *closure)
+{
+    PyErr_SetString(PyExc_TypeError, "cannot assign to __shareable__");
+    return -1;
+}
+
 static inline void
 new_reference(PyObject *op)
 {
+    op->ob_deferred_flags = 0;
+    op->ob_deferred_next = NULL;
+    op->ob_deferred_finalizers = 0;
+    init_shareable(op);
     // Skip the immortal object check in Py_SET_REFCNT; always set refcnt to 1
 #if !defined(Py_GIL_DISABLED)
 #if SIZEOF_VOID_P > 4
@@ -3296,10 +3739,16 @@ stack is shallower */
 void
 _Py_Dealloc(PyObject *op)
 {
+    PyThreadState *tstate = _PyThreadState_GET();
+    if (finalizer_world_stopped(tstate)) {
+        /* A deallocator can invoke Python through weakrefs, capsule callbacks,
+           or native code even when its type has no tp_finalize slot. */
+        defer_object_cleanup(tstate, op, 1);
+        return;
+    }
     PyTypeObject *type = Py_TYPE(op);
     unsigned long gc_flag = type->tp_flags & Py_TPFLAGS_HAVE_GC;
     destructor dealloc = type->tp_dealloc;
-    PyThreadState *tstate = NULL;
     intptr_t margin = 0;
     if (gc_flag) {
         tstate = _PyThreadState_GET();

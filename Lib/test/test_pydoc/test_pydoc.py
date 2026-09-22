@@ -421,6 +421,7 @@ class PydocDocTest(unittest.TestCase):
                      'trace function introduces __locals__ unexpectedly')
     @requires_docstrings
     def test_html_doc(self):
+        self.assertIs(pydoc_mod.__module__, pydoc_mod)
         result, doc_loc = get_pydoc_html(pydoc_mod)
         text_result = html2text(result)
         text_lines = [line.strip() for line in text_result.splitlines()]
@@ -1087,6 +1088,7 @@ class PydocDocTest(unittest.TestCase):
         # ...but not the non-methods on object.
         del expected['__doc__']
         del expected['__class__']
+        del expected['__shareable__']
         # inspect resolves descriptors on type into methods, but vars doesn't,
         # so we need to update __subclasshook__ and __init_subclass__.
         expected['__subclasshook__'] = TestClass.__subclasshook__

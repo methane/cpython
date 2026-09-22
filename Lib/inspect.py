@@ -281,7 +281,7 @@ def isfunction(object):
         __defaults__    tuple of any default values for arguments
         __globals__     global namespace in which this function was defined
         __annotations__ dict of parameter annotations
-        __kwdefaults__  dict of keyword only parameters with defaults
+        __kwdefaults__  frozendict of keyword only parameters with defaults
         __dict__        namespace which is supporting arbitrary function attributes
         __closure__     a tuple of cells or None
         __type_params__ tuple of type parameters"""
@@ -1715,6 +1715,8 @@ def _check_instance(obj, attr):
         instance_dict = object.__getattribute__(obj, "__dict__")
     except AttributeError:
         pass
+    if type(instance_dict) is frozendict:
+        return frozendict.get(instance_dict, attr, _sentinel)
     return dict.get(instance_dict, attr, _sentinel)
 
 
@@ -2113,7 +2115,7 @@ def _signature_is_functionlike(obj):
     return (isinstance(code, types.CodeType) and
             isinstance(name, str) and
             (defaults is None or isinstance(defaults, tuple)) and
-            (kwdefaults is None or isinstance(kwdefaults, dict)))
+            (kwdefaults is None or isinstance(kwdefaults, (dict, frozendict))))
 
 
 def _signature_strip_non_python_syntax(signature):

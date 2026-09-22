@@ -63,6 +63,21 @@ class TestUserObjects(unittest.TestCase):
     def test_dict_protocol(self):
         self._superset_test(UserDict, dict)
 
+    def test_synchronize(self):
+        value = []
+        for obj, expected_type, key in (
+            (UserList([value]), SynchronizedList, 0),
+            (UserDict(value=value), SynchronizedDict, 'value'),
+        ):
+            with self.subTest(type=type(obj)):
+                data = obj.data
+                result = obj.synchronize()
+                self.assertIs(type(result), expected_type)
+                self.assertIs(result[key], value)
+                self.assertIs(obj.data, data)
+                self.assertEqual(len(obj), 0)
+                self.assertEqual(len(data), 0)
+
     def test_list_copy(self):
         obj = UserList()
         obj.append(123)

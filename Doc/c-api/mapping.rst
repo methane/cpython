@@ -47,6 +47,12 @@ See also :c:func:`PyObject_GetItem`, :c:func:`PyObject_SetItem` and
 
    .. versionadded:: 3.13
 
+   .. versionchanged:: 3.16
+      Results from exact dictionaries, including :class:`frozendict`, are
+      checked for access from the current ThreadGroup, just like results from
+      other mappings. Access violations return ``-1`` with *\*result* set to
+      ``NULL``; they are not treated as missing keys.
+
 
 .. c:function:: int PyMapping_GetOptionalItemString(PyObject *obj, const char *key, PyObject **result)
 

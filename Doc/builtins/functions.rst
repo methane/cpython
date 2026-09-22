@@ -113,6 +113,11 @@ are always available.  They are listed here in alphabetical order.
    .. versionchanged:: next
       Added the *stop_value* and *stop_exception* parameters.
 
+   .. versionchanged:: 3.16
+      Access to the iterator returned by :meth:`~object.__aiter__` is checked
+      for the current ThreadGroup. An inaccessible iterator raises
+      :exc:`IllegalThreadAccessException` or :exc:`UnprotectedAccessException`.
+
 .. function:: all(iterable, /)
 
    Return ``True`` if all elements of the *iterable* are true (or if the iterable
@@ -138,6 +143,11 @@ are always available.  They are listed here in alphabetical order.
    returning an :term:`awaitable`. Awaiting this returns the next value of the
    iterator. If *default* is given, it is returned if the iterator is exhausted,
    otherwise :exc:`StopAsyncIteration` is raised.
+
+   Access to *async_iterator* and the object returned by its
+   :meth:`~object.__anext__` method is checked for the calling ThreadGroup.
+   An inaccessible object raises :exc:`IllegalThreadAccessException` or
+   :exc:`UnprotectedAccessException` before it can be advanced or returned.
 
    .. versionadded:: 3.10
 
@@ -1235,6 +1245,11 @@ are always available.  They are listed here in alphabetical order.
       Added the *stop_exception* parameter
       and allowed passing *stop_value* by keyword.
 
+   .. versionchanged:: 3.16
+      Access to the iterator returned by :meth:`~object.__iter__` is checked
+      for the current ThreadGroup. An inaccessible iterator raises
+      :exc:`IllegalThreadAccessException` or :exc:`UnprotectedAccessException`.
+
 
 .. function:: len(object, /)
 
@@ -1398,6 +1413,10 @@ are always available.  They are listed here in alphabetical order.
    Retrieve the next item from the :term:`iterator` by calling its
    :meth:`~iterator.__next__` method.  If *default* is given, it is returned
    if the iterator is :term:`exhausted`, otherwise :exc:`StopIteration` is raised.
+
+   .. versionchanged:: 3.16
+      An inaccessible item raises :exc:`IllegalThreadAccessException`, even
+      when *default* is supplied. The iterator has already consumed the item.
 
 
 .. class:: object()
@@ -1941,6 +1960,11 @@ are always available.  They are listed here in alphabetical order.
    ``sentinel`` does not support subclassing.
 
    Shallow and deep copies of a sentinel object return the object itself.
+
+   A sentinel is initially local to its creating ThreadGroup. Calling
+   :func:`freeze` makes it immutable and shareable, including preventing
+   assignment or deletion of its ``__module__`` attribute. Freezing is shallow:
+   names and custom representations retain their own sharing states.
 
    Sentinels are conventionally assigned to a variable with a matching name.
    Sentinels defined in this way can be used in :term:`type hints <type hint>`::

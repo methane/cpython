@@ -1690,7 +1690,7 @@ _PyExc_PrepReraiseStar(PyObject *orig, PyObject *excs)
             result = _PyExc_CreateExceptionGroup("", raised_list);
         }
         else {
-            result = Py_NewRef(PyList_GetItem(raised_list, 0));
+            result = Py_XNewRef(PyList_GetItem(raised_list, 0));
         }
         if (result == NULL) {
             goto done;
@@ -2551,6 +2551,11 @@ SimpleExtendsException(PyExc_Exception, EOFError,
  */
 SimpleExtendsException(PyExc_Exception, RuntimeError,
                        "Unspecified run-time error.");
+
+SimpleExtendsException(PyExc_RuntimeError, IllegalThreadAccessException,
+                       "An object belongs to another ThreadGroup.");
+SimpleExtendsException(PyExc_RuntimeError, UnprotectedAccessException,
+                       "The mutex protecting an object is not held.");
 
 /*
  *    RecursionError extends RuntimeError
@@ -4530,6 +4535,8 @@ static struct static_exception static_exceptions[] = {
     ITEM(ImportCycleError), // base: ImportError(Exception)
     ITEM(ModuleNotFoundError), // base: ImportError(Exception)
     ITEM(NotImplementedError),  // base: RuntimeError(Exception)
+    ITEM(IllegalThreadAccessException),  // base: RuntimeError(Exception)
+    ITEM(UnprotectedAccessException),  // base: RuntimeError(Exception)
     ITEM(PythonFinalizationError),  // base: RuntimeError(Exception)
     ITEM(RecursionError),  // base: RuntimeError(Exception)
     ITEM(UnboundLocalError), // base: NameError(Exception)

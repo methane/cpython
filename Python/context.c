@@ -373,6 +373,9 @@ not_found:
    }
 
 found:
+    if (*val != NULL && PyObject_CheckAccess(*val) == NULL) {
+        goto error;
+    }
     Py_XINCREF(*val);
     return 0;
 
@@ -480,6 +483,11 @@ _context_alloc(void)
     ctx->ctx_prev = NULL;
     ctx->ctx_entered = 0;
     ctx->ctx_weakreflist = NULL;
+
+    if (PyObject_DeclareSynchronized((PyObject *)ctx) < 0) {
+        Py_DECREF(ctx);
+        return NULL;
+    }
 
     return ctx;
 }
@@ -658,7 +666,7 @@ context_tp_subscript(PyObject *op, PyObject *key)
         PyErr_SetObject(PyExc_KeyError, key);
         return NULL;
     }
-    return val;
+    return _PyObject_CheckAccessNullable(val);
 }
 
 static int
@@ -707,9 +715,9 @@ _contextvars_Context_get_impl(PyContext *self, PyObject *key,
         return NULL;
     }
     if (found == 0) {
-        return Py_NewRef(default_value);
+        return _PyObject_CheckAccessNullable(Py_NewRef(default_value));
     }
-    return val;
+    return _PyObject_CheckAccessNullable(val);
 }
 
 
@@ -966,6 +974,10 @@ contextvar_new(PyObject *name, PyObject *def)
         Py_DECREF(var);
         return NULL;
     }
+    if (PyObject_DeclareImmutable((PyObject *)var) < 0) {
+        Py_DECREF(var);
+        return NULL;
+    }
 
     if (_PyObject_GC_MAY_BE_TRACKED(name) ||
             (def != NULL && _PyObject_GC_MAY_BE_TRACKED(def)))
@@ -1056,11 +1068,15 @@ contextvar_tp_repr(PyObject *op)
     if (PyUnicodeWriter_WriteASCII(writer, "<ContextVar name=", 17) < 0) {
         goto error;
     }
-    if (PyUnicodeWriter_WriteRepr(writer, self->var_name) < 0) {
+    if (PyObject_CheckAccess(self->var_name) == NULL ||
+        PyUnicodeWriter_WriteRepr(writer, self->var_name) < 0) {
         goto error;
     }
 
     if (self->var_default != NULL) {
+        if (PyObject_CheckAccess(self->var_default) == NULL) {
+            goto error;
+        }
         if (PyUnicodeWriter_WriteASCII(writer, " default=", 9) < 0) {
             goto error;
         }
@@ -1294,7 +1310,7 @@ token_get_old_value(PyObject *op, void *Py_UNUSED(ignored))
         return get_token_missing();
     }
 
-    return Py_NewRef(self->tok_oldval);
+    return _PyObject_CheckAccessNullable(Py_NewRef(self->tok_oldval));
 }
 
 static PyGetSetDef PyContextTokenType_getsetlist[] = {
@@ -1433,6 +1449,9 @@ _PyContext_Init(PyInterpreterState *interp)
 {
     PyObject *missing = get_token_missing();
     assert(PyUnstable_IsImmortal(missing));
+    if (PyObject_DeclareImmutable(missing) < 0) {
+        return _PyStatus_ERR("can't initialize Token.MISSING");
+    }
     if (PyDict_SetItemString(
         _PyType_GetDict(&PyContextToken_Type), "MISSING", missing))
     {

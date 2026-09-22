@@ -6,3 +6,6 @@ __all__ = ('Context', 'ContextVar', 'Token', 'copy_context')
 
 
 _collections_abc.Mapping.register(Context)
+
+if type(globals()) is not SynchronizedDict:
+    __module__.synchronize()

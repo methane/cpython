@@ -31,7 +31,15 @@ test_set_type_size(PyObject *self, PyObject *Py_UNUSED(ignored))
 }
 
 
+static PyObject *
+synchronizedset_new(PyObject *self, PyObject *arg)
+{
+    NULLABLE(arg);
+    return PySynchronizedSet_New(arg);
+}
+
 static PyMethodDef test_methods[] = {
+    {"synchronizedset_new", synchronizedset_new, METH_O},
     {"set_get_size", set_get_size, METH_O},
     {"test_set_type_size", test_set_type_size, METH_NOARGS},
     {NULL},

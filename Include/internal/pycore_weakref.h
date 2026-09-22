@@ -119,6 +119,7 @@ static inline int _PyWeakref_IS_DEAD(PyObject *ref_obj)
     return ret;
 }
 
+extern void _PyWeakref_CallCallback(PyWeakReference *ref, PyObject *callback);
 extern Py_ssize_t _PyWeakref_GetWeakrefCount(PyObject *obj);
 
 // Clear all the weak references to obj but leave their callbacks uncalled and

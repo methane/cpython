@@ -155,6 +155,9 @@ PyMember_GetOne(const char *obj_addr, PyMemberDef *l)
 int
 PyMember_SetOne(char *addr, PyMemberDef *l, PyObject *v)
 {
+    if (_PyObject_CheckMutable((PyObject *)addr) < 0) {
+        return -1;
+    }
     PyObject *oldv;
     if (l->flags & Py_RELATIVE_OFFSET) {
         PyErr_SetString(

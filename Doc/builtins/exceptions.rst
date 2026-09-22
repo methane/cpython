@@ -240,6 +240,15 @@ The following exceptions are the exceptions that are usually raised.
    it is technically not an error.
 
 
+.. exception:: IllegalThreadAccessException
+
+   Raised when a thread acquires a local object owned by another
+   :class:`threading.ThreadGroup`. This exception is derived from
+   :exc:`RuntimeError`. See :pep:`805` for the object sharing rules.
+
+   .. versionadded:: 3.16
+
+
 .. exception:: ImportError
 
    Raised when the :keyword:`import` statement has troubles trying to
@@ -704,6 +713,15 @@ The following exceptions are the exceptions that are usually raised.
 
    Raised when a Unicode-related error occurs during translating.  It is a subclass
    of :exc:`UnicodeError`.
+
+
+.. exception:: UnprotectedAccessException
+
+   Raised when a thread acquires a protected object without holding its
+   protecting lock through the lock's context manager. This exception is
+   derived from :exc:`RuntimeError`. See :pep:`805` for protection rules.
+
+   .. versionadded:: 3.16
 
 
 .. exception:: ValueError

@@ -885,9 +885,11 @@ _Py_Uid_Converter(PyObject *obj, uid_t *p)
 
     index = _PyNumber_Index(obj);
     if (index == NULL) {
-        PyErr_Format(PyExc_TypeError,
-                     "uid should be integer, not %.200s",
-                     _PyType_Name(Py_TYPE(obj)));
+        if (PyErr_ExceptionMatches(PyExc_TypeError)) {
+            PyErr_Format(PyExc_TypeError,
+                         "uid should be integer, not %.200s",
+                         _PyType_Name(Py_TYPE(obj)));
+        }
         return 0;
     }
 
@@ -991,9 +993,11 @@ _Py_Gid_Converter(PyObject *obj, gid_t *p)
 
     index = _PyNumber_Index(obj);
     if (index == NULL) {
-        PyErr_Format(PyExc_TypeError,
-                     "gid should be integer, not %.200s",
-                     _PyType_Name(Py_TYPE(obj)));
+        if (PyErr_ExceptionMatches(PyExc_TypeError)) {
+            PyErr_Format(PyExc_TypeError,
+                         "gid should be integer, not %.200s",
+                         _PyType_Name(Py_TYPE(obj)));
+        }
         return 0;
     }
 
@@ -1798,7 +1802,7 @@ convertenviron(void)
     char **e;
 #endif
 
-    d = PyDict_New();
+    d = PySynchronizedDict_New();
     if (d == NULL)
         return NULL;
 #ifdef MS_WINDOWS
@@ -8617,6 +8621,10 @@ os_fork1_impl(PyObject *module)
 {
     pid_t pid;
 
+    if (_PyThreadState_GET()->debugger_stop_depth != 0) {
+        PyErr_SetString(PyExc_RuntimeError, "cannot fork during a debugger world pause");
+        return NULL;
+    }
     PyInterpreterState *interp = _PyInterpreterState_GET();
     if (_PyInterpreterState_GetFinalizing(interp) != NULL) {
         PyErr_SetString(PyExc_PythonFinalizationError,
@@ -8666,6 +8674,10 @@ os_fork_impl(PyObject *module)
 /*[clinic end generated code: output=3626c81f98985d49 input=13c956413110eeaa]*/
 {
     pid_t pid;
+    if (_PyThreadState_GET()->debugger_stop_depth != 0) {
+        PyErr_SetString(PyExc_RuntimeError, "cannot fork during a debugger world pause");
+        return NULL;
+    }
     PyInterpreterState *interp = _PyInterpreterState_GET();
     if (_PyInterpreterState_GetFinalizing(interp) != NULL) {
         PyErr_SetString(PyExc_PythonFinalizationError,
@@ -9553,6 +9565,10 @@ os_forkpty_impl(PyObject *module)
     int master_fd = -1;
     pid_t pid;
 
+    if (_PyThreadState_GET()->debugger_stop_depth != 0) {
+        PyErr_SetString(PyExc_RuntimeError, "cannot fork during a debugger world pause");
+        return NULL;
+    }
     PyInterpreterState *interp = _PyInterpreterState_GET();
     if (_PyInterpreterState_GetFinalizing(interp) != NULL) {
         PyErr_SetString(PyExc_PythonFinalizationError,

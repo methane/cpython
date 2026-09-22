@@ -55,11 +55,21 @@ Sequence Protocol
    Return the *i*\ th element of *o*, or ``NULL`` on failure. This is the equivalent of
    the Python expression ``o[i]``.
 
+   .. versionchanged:: 3.16
+      Checks access to the returned object, including results of user-defined
+      ``__getitem__`` methods. An inaccessible local result raises
+      :exc:`IllegalThreadAccessException` and returns ``NULL``.
+
 
 .. c:function:: PyObject* PySequence_GetSlice(PyObject *o, Py_ssize_t i1, Py_ssize_t i2)
 
    Return the slice of sequence object *o* between *i1* and *i2*, or ``NULL`` on
    failure. This is the equivalent of the Python expression ``o[i1:i2]``.
+
+   .. versionchanged:: 3.16
+      Checks access to the returned object. An inaccessible local result raises
+      :exc:`IllegalThreadAccessException` and returns ``NULL``. This check is
+      shallow: it does not inspect the elements of a returned container.
 
 
 .. c:function:: int PySequence_SetItem(PyObject *o, Py_ssize_t i, PyObject *v)
@@ -149,6 +159,12 @@ Sequence Protocol
 
    As a CPython implementation detail, if *o* is already a sequence or list, it
    will be returned.
+
+   .. versionchanged:: 3.16
+      Access to an existing object is validated before returning it. An
+      inaccessible object raises the corresponding access exception. Callers
+      must retain any required protecting context while using the direct-access
+      ``PySequence_Fast*`` macros.
 
 
 .. c:function:: Py_ssize_t PySequence_Fast_GET_SIZE(PyObject *o)

@@ -13,6 +13,17 @@ All integers are implemented as "long" integer objects of arbitrary size.
 On error, most ``PyLong_As*`` APIs return ``(return type)-1`` which cannot be
 distinguished from a number.  Use :c:func:`PyErr_Occurred` to disambiguate.
 
+.. versionchanged:: 3.16
+   :c:func:`PyLong_AsInt`, :c:func:`PyLong_AsLong`,
+   :c:func:`PyLong_AsLongAndOverflow`, :c:func:`PyLong_AsLongLong`,
+   :c:func:`PyLong_AsLongLongAndOverflow`, :c:func:`PyLong_AsUnsignedLong`,
+   :c:func:`PyLong_AsUnsignedLongLong`, :c:func:`PyLong_AsUnsignedLongMask`,
+   :c:func:`PyLong_AsUnsignedLongLongMask`, :c:func:`PyLong_AsSsize_t`,
+   :c:func:`PyLong_AsSize_t`, :c:func:`PyLong_AsDouble` and
+   :c:func:`PyLong_AsVoidPtr` validate operand access before reading its
+   numeric payload. Access errors use each function's usual error return;
+   the ``AndOverflow`` functions leave the overflow indicator set to zero.
+
 .. c:type:: PyLongObject
 
    This subtype of :c:type:`PyObject` represents a Python integer object.
@@ -445,6 +456,14 @@ distinguished from a number.  Use :c:func:`PyErr_Occurred` to disambiguate.
    *n_bytes*. The *flags* can be set to ``-1`` to behave similarly to a C cast,
    or to values documented below to control the behavior.
 
+   .. versionchanged:: 3.16
+      Validates operand access before reading the integer or writing converted
+      bytes. Results obtained through ``__index__`` are also validated before
+      conversion. These checks apply to :c:func:`PyLong_AsInt32`,
+      :c:func:`PyLong_AsUInt32`, :c:func:`PyLong_AsInt64` and
+      :c:func:`PyLong_AsUInt64`, which use this conversion path. Access errors
+      use the existing error return conventions.
+
    Returns ``-1`` with an exception raised on error.  This may happen if
    *pylong* cannot be interpreted as an integer, or if *pylong* was negative
    and the ``Py_ASNATIVEBYTES_REJECT_NEGATIVE`` flag was set.
@@ -602,44 +621,59 @@ distinguished from a number.  Use :c:func:`PyErr_Occurred` to disambiguate.
    On success, set *\*sign* to the integer sign  (0, -1 or +1 for zero, negative or
    positive integer, respectively) and return 0.
 
-   On failure, return -1 with an exception set.  This function always succeeds
-   if *obj* is a :c:type:`PyLongObject` or its subtype.
+   On failure, return -1 with an exception set and leave *\*sign* unchanged.
 
    .. versionadded:: 3.14
 
+
+   .. versionchanged:: 3.16
+      Validates access before reading the integer sign. Access errors set an
+      exception and return ``-1``.
 
 .. c:function:: int PyLong_IsPositive(PyObject *obj)
 
    Check if the integer object *obj* is positive (``obj > 0``).
 
-   If *obj* is an instance of :c:type:`PyLongObject` or its subtype,
+   If *obj* is an accessible instance of :c:type:`PyLongObject` or its subtype,
    return ``1`` when it's positive and ``0`` otherwise.  Else set an
    exception and return ``-1``.
 
    .. versionadded:: 3.14
 
 
+   .. versionchanged:: 3.16
+      Validates access before reading the integer sign. Access errors set an
+      exception and return ``-1``.
+
 .. c:function:: int PyLong_IsNegative(PyObject *obj)
 
    Check if the integer object *obj* is negative (``obj < 0``).
 
-   If *obj* is an instance of :c:type:`PyLongObject` or its subtype,
+   If *obj* is an accessible instance of :c:type:`PyLongObject` or its subtype,
    return ``1`` when it's negative and ``0`` otherwise.  Else set an
    exception and return ``-1``.
 
    .. versionadded:: 3.14
 
 
+   .. versionchanged:: 3.16
+      Validates access before reading the integer sign. Access errors set an
+      exception and return ``-1``.
+
 .. c:function:: int PyLong_IsZero(PyObject *obj)
 
    Check if the integer object *obj* is zero.
 
-   If *obj* is an instance of :c:type:`PyLongObject` or its subtype,
+   If *obj* is an accessible instance of :c:type:`PyLongObject` or its subtype,
    return ``1`` when it's zero and ``0`` otherwise.  Else set an
    exception and return ``-1``.
 
    .. versionadded:: 3.14
 
+
+   .. versionchanged:: 3.16
+      Validates access before reading the integer sign. Access errors set an
+      exception and return ``-1``.
 
 .. c:function:: PyObject* PyLong_GetInfo(void)
 
@@ -776,9 +810,10 @@ Export API
    :c:func:`PyLong_FreeExport` must be called when the export is no longer
    needed.
 
-    .. impl-detail::
-        This function always succeeds if *obj* is a Python :class:`int` object
-        or a subclass.
+   .. versionchanged:: 3.16
+      Validates access before exporting the numeric value or digit array.
+      Access errors set an exception, clear the output structure, and return
+      ``-1``.
 
 
 .. c:function:: void PyLong_FreeExport(PyLongExport *export_long)

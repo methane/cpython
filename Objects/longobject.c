@@ -604,6 +604,9 @@ PyLong_AsLongAndOverflow(PyObject *vv, int *overflow)
         PyErr_BadInternalCall();
         return -1;
     }
+    if (PyObject_CheckAccess(vv) == NULL) {
+        return -1;
+    }
 
     if (PyLong_Check(vv)) {
         v = (PyLongObject *)vv;
@@ -714,6 +717,9 @@ PyLong_AsSsize_t(PyObject *vv) {
         PyErr_BadInternalCall();
         return -1;
     }
+    if (PyObject_CheckAccess(vv) == NULL) {
+        return -1;
+    }
     if (!PyLong_Check(vv)) {
         PyErr_SetString(PyExc_TypeError, "an integer is required");
         return -1;
@@ -761,6 +767,9 @@ PyLong_AsUnsignedLong(PyObject *vv)
 
     if (vv == NULL) {
         PyErr_BadInternalCall();
+        return (unsigned long)-1;
+    }
+    if (PyObject_CheckAccess(vv) == NULL) {
         return (unsigned long)-1;
     }
     if (!PyLong_Check(vv)) {
@@ -814,6 +823,9 @@ PyLong_AsSize_t(PyObject *vv)
 
     if (vv == NULL) {
         PyErr_BadInternalCall();
+        return (size_t) -1;
+    }
+    if (PyObject_CheckAccess(vv) == NULL) {
         return (size_t) -1;
     }
     if (!PyLong_Check(vv)) {
@@ -884,6 +896,9 @@ PyLong_AsUnsignedLongMask(PyObject *op)
         PyErr_BadInternalCall();
         return (unsigned long)-1;
     }
+    if (PyObject_CheckAccess(op) == NULL) {
+        return (unsigned long)-1;
+    }
 
     if (PyLong_Check(op)) {
         return _PyLong_AsUnsignedLongMask(op);
@@ -906,6 +921,9 @@ PyLong_IsPositive(PyObject *obj)
         PyErr_Format(PyExc_TypeError, "expected int, got %T", obj);
         return -1;
     }
+    if (PyObject_CheckAccess(obj) == NULL) {
+        return -1;
+    }
     return _PyLong_IsPositive((PyLongObject *)obj);
 }
 
@@ -917,6 +935,9 @@ PyLong_IsNegative(PyObject *obj)
         PyErr_Format(PyExc_TypeError, "expected int, got %T", obj);
         return -1;
     }
+    if (PyObject_CheckAccess(obj) == NULL) {
+        return -1;
+    }
     return _PyLong_IsNegative((PyLongObject *)obj);
 }
 
@@ -926,6 +947,9 @@ PyLong_IsZero(PyObject *obj)
     assert(obj != NULL);
     if (!PyLong_Check(obj)) {
         PyErr_Format(PyExc_TypeError, "expected int, got %T", obj);
+        return -1;
+    }
+    if (PyObject_CheckAccess(obj) == NULL) {
         return -1;
     }
     return _PyLong_IsZero((PyLongObject *)obj);
@@ -955,6 +979,9 @@ PyLong_GetSign(PyObject *vv, int *sign)
 {
     if (!PyLong_Check(vv)) {
         PyErr_Format(PyExc_TypeError, "expect int, got %T", vv);
+        return -1;
+    }
+    if (PyObject_CheckAccess(vv) == NULL) {
         return -1;
     }
 
@@ -1298,6 +1325,9 @@ PyLong_AsNativeBytes(PyObject* vv, void* buffer, Py_ssize_t n, int flags)
     if (_resolve_endianness(&little_endian) < 0) {
         return -1;
     }
+    if (PyObject_CheckAccess(vv) == NULL) {
+        return -1;
+    }
 
     if (PyLong_Check(vv)) {
         v = (PyLongObject *)vv;
@@ -1524,6 +1554,13 @@ PyLong_FromVoidPtr(void *p)
 void *
 PyLong_AsVoidPtr(PyObject *vv)
 {
+    if (vv == NULL) {
+        PyErr_BadInternalCall();
+        return NULL;
+    }
+    if (PyObject_CheckAccess(vv) == NULL) {
+        return NULL;
+    }
 #if SIZEOF_VOID_P <= SIZEOF_LONG
     long x;
 
@@ -1591,6 +1628,9 @@ PyLong_AsLongLong(PyObject *vv)
         PyErr_BadInternalCall();
         return -1;
     }
+    if (PyObject_CheckAccess(vv) == NULL) {
+        return -1;
+    }
 
     if (PyLong_Check(vv)) {
         v = (PyLongObject *)vv;
@@ -1633,6 +1673,9 @@ PyLong_AsUnsignedLongLong(PyObject *vv)
 
     if (vv == NULL) {
         PyErr_BadInternalCall();
+        return (unsigned long long)-1;
+    }
+    if (PyObject_CheckAccess(vv) == NULL) {
         return (unsigned long long)-1;
     }
     if (!PyLong_Check(vv)) {
@@ -1709,6 +1752,9 @@ PyLong_AsUnsignedLongLongMask(PyObject *op)
         PyErr_BadInternalCall();
         return (unsigned long long)-1;
     }
+    if (PyObject_CheckAccess(op) == NULL) {
+        return (unsigned long long)-1;
+    }
 
     if (PyLong_Check(op)) {
         return _PyLong_AsUnsignedLongLongMask(op);
@@ -1746,6 +1792,9 @@ PyLong_AsLongLongAndOverflow(PyObject *vv, int *overflow)
     *overflow = 0;
     if (vv == NULL) {
         PyErr_BadInternalCall();
+        return -1;
+    }
+    if (PyObject_CheckAccess(vv) == NULL) {
         return -1;
     }
 
@@ -3571,6 +3620,9 @@ PyLong_AsDouble(PyObject *v)
 
     if (v == NULL) {
         PyErr_BadInternalCall();
+        return -1.0;
+    }
+    if (PyObject_CheckAccess(v) == NULL) {
         return -1.0;
     }
     if (!PyLong_Check(v)) {
@@ -6896,8 +6948,10 @@ PyLong_Export(PyObject *obj, PyLongExport *export_long)
     long long value = PyLong_AsLongLongAndOverflow(obj, &overflow);
 #endif
     Py_BUILD_ASSERT(sizeof(value) == sizeof(int64_t));
-    // the function cannot fail since obj is a PyLongObject
-    assert(!(value == -1 && PyErr_Occurred()));
+    if (value == -1 && PyErr_Occurred()) {
+        memset(export_long, 0, sizeof(*export_long));
+        return -1;
+    }
 
     if (!overflow) {
         export_long->value = value;

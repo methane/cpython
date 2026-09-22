@@ -63,7 +63,8 @@ class FancyCompleterTests(unittest.TestCase):
             _attr = 2
             __attr__attr = 3
         compl = Completer({'a': C}, use_colors=False)
-        self.assertEqual(compl.attr_matches('a.'), ['a.attr', 'a.mro'])
+        self.assertEqual(compl.attr_matches('a.'),
+                         ['a.attr', 'a.mro', 'a.synchronize'])
         self.assertEqual(
             compl.attr_matches('a._'),
             ['a._C__attr__attr', 'a._attr'],

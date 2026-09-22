@@ -918,6 +918,11 @@ static PyObject *
 _interpreters_destroy_impl(PyObject *module, PyObject *id, int restricted)
 /*[clinic end generated code: output=0bc20da8700ab4dd input=561bdd6537639d40]*/
 {
+    if (_PyThreadState_GET()->debugger_stop_depth != 0) {
+        PyErr_SetString(PyExc_RuntimeError,
+                        "cannot destroy an interpreter during a debugger world pause");
+        return NULL;
+    }
     // Look up the interpreter.
     int reqready = 0;
     PyInterpreterState *interp = \
@@ -1479,6 +1484,11 @@ static PyObject *
 _interpreters_decref_impl(PyObject *module, PyObject *id, int restricted)
 /*[clinic end generated code: output=5c54db4b22086171 input=c4aa34f09c44e62a]*/
 {
+    if (_PyThreadState_GET()->debugger_stop_depth != 0) {
+        PyErr_SetString(PyExc_RuntimeError,
+                        "cannot destroy an interpreter during a debugger world pause");
+        return NULL;
+    }
     int reqready = 1;
     PyInterpreterState *interp = \
             resolve_interp(id, restricted, reqready, "decref");

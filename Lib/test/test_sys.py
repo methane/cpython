@@ -207,6 +207,85 @@ class ExceptHookTest(unittest.TestCase):
 
 class SysModuleTest(unittest.TestCase):
 
+    def test_path_synchronized(self):
+        import threading
+        internal = import_helper.import_module('_testinternalcapi')
+        self.assertIs(type(sys.path), SynchronizedList)
+        self.assertIs(sys.path.__shareable__, threading.Shareable.SYNCHRONIZED)
+        self.assertEqual(internal.object_owner_id(sys.path), 0)
+        self.assertIs(internal.object_check_access(sys.path), sys.path)
+        self.assertIs(threading.TransferBox(sys.path).claim(), sys.path)
+        for flags in ((), ('-S',)):
+            with self.subTest(flags=flags):
+                assert_python_ok(*flags, '-c',
+                                 'import sys; assert type(sys.path) is SynchronizedList')
+
+    def test_modules_synchronized(self):
+        import threading
+        internal = import_helper.import_module('_testinternalcapi')
+        self.assertIs(type(sys.modules), SynchronizedDict)
+        self.assertIs(sys.modules.__shareable__, threading.Shareable.SYNCHRONIZED)
+        self.assertEqual(internal.object_owner_id(sys.modules), 0)
+        self.assertIs(internal.object_check_access(sys.modules), sys.modules)
+        self.assertIs(threading.TransferBox(sys.modules).claim(), sys.modules)
+
+    @requires_subinterpreters
+    def test_modules_synchronized_in_subinterpreter(self):
+        name = '_pep805_subinterpreter_module'
+        self.assertNotIn(name, sys.modules)
+        interp = interpreters.create()
+        try:
+            interp.exec('''if True:
+                import sys
+                import types
+                import threading
+                assert type(sys.modules) is SynchronizedDict
+                assert sys.modules.__shareable__ is threading.Shareable.SYNCHRONIZED
+                assert type(sys.path) is SynchronizedList
+                assert sys.path.__shareable__ is threading.Shareable.SYNCHRONIZED
+                sys.path.append('_pep805_subinterpreter_path')
+                sys.modules['_pep805_subinterpreter_module'] = types.ModuleType('local')
+            ''')
+            self.assertNotIn(name, sys.modules)
+            self.assertNotIn('_pep805_subinterpreter_path', sys.path)
+        finally:
+            interp.close()
+
+    @threading_helper.requires_working_threading()
+    def test_modules_parallel_updates(self):
+        import threading
+        import types
+        module_type = types.ModuleType
+        results = threading.Channel()
+        barrier = threading.Barrier(4)
+        prefix = f'_pep805_modules_{id(results)}_'
+        names = [f'{prefix}{number}_{index}'
+                 for number in range(4) for index in range(50)]
+
+        def worker(number):
+            modules = sys.modules
+            barrier.wait(timeout=SHORT_TIMEOUT)
+            for index in range(50):
+                name = f'{prefix}{number}_{index}'
+                module = freeze(module_type(name))
+                modules[name] = module
+                assert modules.pop(name) is module
+                modules[name] = module
+            results.put(number)
+
+        threads = [threading.Thread(target=worker, args=(number,),
+                                    group=threading.ThreadGroup())
+                   for number in range(4)]
+        try:
+            with threading_helper.start_threads(threads):
+                pass
+            self.assertEqual(sorted(results.get() for _ in threads), list(range(4)))
+            for name in names:
+                self.assertEqual(sys.modules[name].__name__, name)
+        finally:
+            for name in names:
+                sys.modules.pop(name, None)
+
     def tearDown(self):
         test.support.reap_children()
 
@@ -1651,7 +1730,7 @@ class SizeofTest(unittest.TestCase):
             def inner():
                 return x
             return inner
-        check(get_cell().__closure__[0], size('P'))
+        check(get_cell().__closure__[0], size('PB'))
         # code
         def check_code_size(a, expected_size):
             self.assertGreaterEqual(sys.getsizeof(a), expected_size)
@@ -1679,15 +1758,15 @@ class SizeofTest(unittest.TestCase):
         # method-wrapper (descriptor object)
         check({}.__iter__, size('2P'))
         # empty dict
-        check({}, size('nQ2P'))
+        check({}, size('nQ2Pn0Q'))
         # dict (string key)
-        check({"a": 1}, size('nQ2P') + calcsize(DICT_KEY_STRUCT_FORMAT) + 8 + (8*2//3)*calcsize('2P'))
+        check({"a": 1}, size('nQ2Pn0Q') + calcsize(DICT_KEY_STRUCT_FORMAT) + 8 + (8*2//3)*calcsize('2P'))
         longdict = {str(i): i for i in range(8)}
-        check(longdict, size('nQ2P') + calcsize(DICT_KEY_STRUCT_FORMAT) + 16 + (16*2//3)*calcsize('2P'))
+        check(longdict, size('nQ2Pn0Q') + calcsize(DICT_KEY_STRUCT_FORMAT) + 16 + (16*2//3)*calcsize('2P'))
         # dict (non-string key)
-        check({1: 1}, size('nQ2P') + calcsize(DICT_KEY_STRUCT_FORMAT) + 8 + (8*2//3)*calcsize('n2P'))
+        check({1: 1}, size('nQ2Pn0Q') + calcsize(DICT_KEY_STRUCT_FORMAT) + 8 + (8*2//3)*calcsize('n2P'))
         longdict = {1:1, 2:2, 3:3, 4:4, 5:5, 6:6, 7:7, 8:8}
-        check(longdict, size('nQ2P') + calcsize(DICT_KEY_STRUCT_FORMAT) + 16 + (16*2//3)*calcsize('n2P'))
+        check(longdict, size('nQ2Pn0Q') + calcsize(DICT_KEY_STRUCT_FORMAT) + 16 + (16*2//3)*calcsize('n2P'))
         # dictionary-keyview
         check({}.keys(), size('P'))
         # dictionary-valueview
@@ -1732,9 +1811,9 @@ class SizeofTest(unittest.TestCase):
             return sys._getframe()
         x = func()
         if support.Py_GIL_DISABLED:
-            INTERPRETER_FRAME = '9PihcP'
+            INTERPRETER_FRAME = '9PihcccIP'
         else:
-            INTERPRETER_FRAME = '9PhcP'
+            INTERPRETER_FRAME = '9PhcccIP'
         check(x, size('3PiccPPPP' + INTERPRETER_FRAME + 'P'))
         # function
         def func(): pass
@@ -1784,7 +1863,7 @@ class SizeofTest(unittest.TestCase):
             md_gil = '?'
         else:
             md_gil = ''
-        check(unittest, size('PPPP?' + md_gil + 'NPPPPP'))
+        check(unittest, size('PPPPP?' + md_gil + 'NPPPPP'))
         # None
         check(None, size(''))
         # NotImplementedType
@@ -1856,6 +1935,7 @@ class SizeofTest(unittest.TestCase):
                   '10P'                 # PySequenceMethods
                   '2P'                  # PyBufferProcs
                   '7P'
+                  'B'                   # Python type marker
                   '1PIP'                # Specializer cache
                   + typeid              # heap type id (free-threaded only)
                   )
@@ -1864,13 +1944,13 @@ class SizeofTest(unittest.TestCase):
         check(newstyleclass, s + calcsize(DICT_KEY_STRUCT_FORMAT) + 64 + 42*calcsize("2P"))
         # dict with shared keys
         [newstyleclass() for _ in range(100)]
-        check(newstyleclass().__dict__, size('nQ2P') + self.P)
+        check(newstyleclass().__dict__, size('nQ2Pn0Q') + self.P)
         o = newstyleclass()
         o.a = o.b = o.c = o.d = o.e = o.f = o.g = o.h = 1
         # Separate block for PyDictKeysObject with 16 keys and 10 entries
         check(newstyleclass, s + calcsize(DICT_KEY_STRUCT_FORMAT) + 64 + 42*calcsize("2P"))
         # dict with shared keys
-        check(newstyleclass().__dict__, size('nQ2P') + self.P)
+        check(newstyleclass().__dict__, size('nQ2Pn0Q') + self.P)
         # unicode
         # each tuple contains a string and its expected character size
         # don't put any static strings here, as they may contain
@@ -1905,9 +1985,9 @@ class SizeofTest(unittest.TestCase):
         # weakref
         import weakref
         if support.Py_GIL_DISABLED:
-            expected = size('2Pn4P')
+            expected = size('2Pn3PIP')
         else:
-            expected = size('2Pn3P')
+            expected = size('2Pn3PI0P')
         check(weakref.ref(int), expected)
         # weakproxy
         # XXX

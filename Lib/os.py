@@ -719,8 +719,9 @@ def get_exec_path(env=None):
 
 # Change environ to automatically call putenv() and unsetenv()
 from _collections_abc import MutableMapping, Mapping
+from _thread import _ThreadBase as _EnvironBase
 
-class _Environ(MutableMapping):
+class _Environ(_EnvironBase, MutableMapping):
     def __init__(self, data, encodekey, decodekey, encodevalue, decodevalue):
         self.encodekey = encodekey
         self.decodekey = decodekey
@@ -799,29 +800,42 @@ class _Environ(MutableMapping):
             self._data.clear()
 
 
+_environ_encoding = sys.getfilesystemencoding()
+
+
+def _environ_check_str(value):
+    if not isinstance(value, str):
+        raise TypeError("str expected, not %s" % type(value).__name__)
+    return value
+
+
+def _environ_encode_key(value):
+    return _environ_check_str(value).upper()
+
+
+def _environ_encode(value):
+    if not isinstance(value, str):
+        raise TypeError("str expected, not %s" % type(value).__name__)
+    return value.encode(_environ_encoding, 'surrogateescape')
+
+
+def _environ_decode(value):
+    return value.decode(_environ_encoding, 'surrogateescape')
+
+
 def _create_environ_mapping():
     if name == 'nt':
         # Where Env Var Names Must Be UPPERCASE
-        def check_str(value):
-            if not isinstance(value, str):
-                raise TypeError("str expected, not %s" % type(value).__name__)
-            return value
-        encode = check_str
+        encode = _environ_check_str
         decode = str
-        def encodekey(key):
-            return encode(key).upper()
-        data = {}
+        encodekey = _environ_encode_key
+        data = SynchronizedDict()
         for key, value in environ.items():
             data[encodekey(key)] = value
     else:
         # Where Env Var Names Can Be Mixed Case
-        encoding = sys.getfilesystemencoding()
-        def encode(value):
-            if not isinstance(value, str):
-                raise TypeError("str expected, not %s" % type(value).__name__)
-            return value.encode(encoding, 'surrogateescape')
-        def decode(value):
-            return value.decode(encoding, 'surrogateescape')
+        encode = _environ_encode
+        decode = _environ_decode
         encodekey = encode
         data = environ
     return _Environ(data,
@@ -1222,3 +1236,8 @@ if _exists('sched_getaffinity') and sys._get_cpu_count_config() < 0:
 else:
     # Just an alias to cpu_count() (same docstring)
     process_cpu_count = cpu_count
+
+
+type.synchronize(_Environ)
+if type(globals()) is not SynchronizedDict:
+    __module__.synchronize()

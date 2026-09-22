@@ -298,3 +298,6 @@ def replace(obj, /, **changes):
     if func is None:
         raise TypeError(f"replace() does not support {cls.__name__} objects")
     return func(obj, **changes)
+
+
+__module__.synchronize()

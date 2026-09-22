@@ -86,6 +86,7 @@ Test_EvalFrame(PyThreadState *tstate, _PyInterpreterFrame *frame, int throwflag)
     entry.frame.instr_ptr = (_Py_CODEUNIT *)_Py_INTERPRETER_TRAMPOLINE_INSTRUCTIONS_PTR + 1;
     entry.frame.stackpointer = entry.stack;
     entry.frame.owner = FRAME_OWNED_BY_INTERPRETER;
+    entry.frame.threadgroup_id = 0;
     entry.frame.visited = 0;
     entry.frame.return_offset = 0;
 #ifdef Py_DEBUG

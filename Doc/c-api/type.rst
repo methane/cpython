@@ -228,6 +228,12 @@ Type Objects
    from a type's base class.  Return ``0`` on success, or return ``-1`` and sets an
    exception on error.
 
+   A static extension type without an assigned owner remains local and is
+   assigned to the initializing interpreter's main thread group. This also
+   applies when its object header was initially zero-initialized. Readying
+   a type does not declare it immutable or synchronized for sharing between
+   thread groups.
+
    .. note::
        If some of the base classes implements the GC protocol and the provided
        type does not include the :c:macro:`Py_TPFLAGS_HAVE_GC` in its flags, then

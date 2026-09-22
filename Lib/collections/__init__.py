@@ -445,10 +445,10 @@ def namedtuple(typename, field_names, *, rename=False, defaults=None, module=Non
     }
     code = f'lambda _cls, {arg_list}: _tuple_new(_cls, ({arg_list}))'
     __new__ = eval(code, namespace)
+    if defaults is not None:
+        __new__ = type(__new__)(__new__.__code__, namespace, argdefs=defaults)
     __new__.__name__ = '__new__'
     __new__.__doc__ = f'Create new instance of {typename}({arg_list})'
-    if defaults is not None:
-        __new__.__defaults__ = defaults
 
     @classmethod
     def _make(cls, iterable):
@@ -1244,6 +1244,10 @@ class UserDict(_collections_abc.MutableMapping):
         inst.__dict__["data"] = self.__dict__["data"].copy()
         return inst
 
+    def synchronize(self):
+        """Move the contents into a synchronized builtin container."""
+        return self.data.synchronize()
+
     def copy(self):
         if self.__class__ is UserDict:
             return UserDict(self.data.copy())
@@ -1388,6 +1392,10 @@ class UserList(_collections_abc.MutableSequence):
 
     def clear(self):
         self.data.clear()
+
+    def synchronize(self):
+        """Move the contents into a synchronized builtin container."""
+        return self.data.synchronize()
 
     def copy(self):
         return self.__class__(self)

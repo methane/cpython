@@ -239,6 +239,7 @@ class ReloadTests:
                     os_helper.create_empty_file(path)
                     module = self.init.import_module(name)
                     ns = vars(module).copy()
+                    self.assertIs(ns.pop('__module__'), module)
                     loader = ns.pop('__loader__')
                     spec = ns.pop('__spec__')
                     ns.pop('__builtins__', None)  # An implementation detail.
@@ -260,6 +261,7 @@ class ReloadTests:
                     os.rename(path, init_path)
                     reloaded = self.init.reload(module)
                     ns = vars(reloaded).copy()
+                    self.assertIs(ns.pop('__module__'), reloaded)
                     loader = ns.pop('__loader__')
                     spec = ns.pop('__spec__')
                     ns.pop('__builtins__', None)  # An implementation detail.
@@ -289,6 +291,7 @@ class ReloadTests:
                         init_file.write('eggs = None')
                     module = self.init.import_module(name)
                     ns = vars(module).copy()
+                    self.assertIs(ns.pop('__module__'), module)
                     loader = ns.pop('__loader__')
                     path = ns.pop('__path__')
                     spec = ns.pop('__spec__')
@@ -317,6 +320,7 @@ class ReloadTests:
                     os.rename(bad_path, init_path)
                     reloaded = self.init.reload(module)
                     ns = vars(reloaded).copy()
+                    self.assertIs(ns.pop('__module__'), reloaded)
                     loader = ns.pop('__loader__')
                     spec = ns.pop('__spec__')
                     ns.pop('__builtins__', None)  # An implementation detail.

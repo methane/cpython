@@ -2,6 +2,8 @@
 
 #include "parts.h"
 #include "pycore_lock.h"
+#include "pycore_object.h"
+#include "pycore_pystate.h"
 #include "pycore_pythread.h"      // PyThread_get_thread_ident_ex()
 
 #include "clinic/test_lock.c.h"
@@ -549,7 +551,99 @@ test_lock_recursive(PyObject *self, PyObject *obj)
     Py_RETURN_NONE;
 }
 
+static PyObject *
+test_lock_held_mutexes(PyObject *self, PyObject *unused)
+{
+    PyThreadState *tstate = PyThreadState_Get();
+    Py_ssize_t original_count = tstate->held_mutex_count;
+    PyThreadState *other = PyMem_RawCalloc(1, sizeof(*other));
+    if (other == NULL) {
+        return PyErr_NoMemory();
+    }
+    other->threadgroup = tstate->threadgroup;
+    PyObject *value = PyList_New(0);
+    if (value == NULL) {
+        PyMem_RawFree(other);
+        return NULL;
+    }
+    int removed;
+    PyObject *checked;
+    uint32_t original_owner = value->ob_owner_id;
+    uint32_t id = UINT32_MAX;
+    while (_PyThreadState_HoldsMutex(tstate, id)) {
+        id--;
+    }
+    assert(id > 64);
+    value->ob_owner_id = id;
+    value->ob_shareable = _Py_SHAREABLE_PROTECTED;
+    assert(!tstate->debugger_stop_depth);
+    checked = PyObject_CheckAccess(value);
+    assert(checked == NULL);
+    assert(PyErr_ExceptionMatches(PyExc_UnprotectedAccessException));
+    PyErr_Clear();
+
+    if (_PyThreadState_ReserveHeldMutex(tstate) < 0) {
+        goto error;
+    }
+    _PyThreadState_PushHeldMutex(tstate, id);
+    checked = PyObject_CheckAccess(value);
+    assert(checked == value);
+    assert(!_PyThreadState_HoldsMutex(other, id));
+    assert(!_PyThreadState_HoldsMutex(tstate, 0));
+    removed = _PyThreadState_RemoveHeldMutex(tstate, 0);
+    assert(!removed);
+
+    /* Nested acquisition of the same mutex needs two matching releases. */
+    if (_PyThreadState_ReserveHeldMutex(tstate) < 0) {
+        goto error;
+    }
+    _PyThreadState_PushHeldMutex(tstate, id);
+    removed = _PyThreadState_RemoveHeldMutex(tstate, id);
+    assert(removed);
+    checked = PyObject_CheckAccess(value);
+    assert(checked == value);
+
+    /* Exercise growth and removal below more recently acquired mutexes. */
+    for (uint32_t i = 1; i <= 64; i++) {
+        if (_PyThreadState_ReserveHeldMutex(tstate) < 0) {
+            goto error;
+        }
+        _PyThreadState_PushHeldMutex(tstate, id - i);
+    }
+    removed = _PyThreadState_RemoveHeldMutex(tstate, id);
+    assert(removed);
+    checked = PyObject_CheckAccess(value);
+    assert(checked == NULL);
+    assert(PyErr_ExceptionMatches(PyExc_UnprotectedAccessException));
+    PyErr_Clear();
+    for (uint32_t i = 1; i <= 64; i++) {
+        assert(tstate->held_mutex_ids[original_count + i - 1] == id - i);
+    }
+    for (uint32_t i = 64; i > 0; i--) {
+        removed = _PyThreadState_RemoveHeldMutex(tstate, id - i);
+        assert(removed);
+    }
+    assert(tstate->held_mutex_count == original_count);
+    removed = _PyThreadState_RemoveHeldMutex(tstate, id);
+    assert(!removed);
+
+    value->ob_owner_id = original_owner;
+    value->ob_shareable = _Py_SHAREABLE_LOCAL;
+    Py_DECREF(value);
+    PyMem_RawFree(other);
+    Py_RETURN_NONE;
+
+error:
+    tstate->held_mutex_count = original_count;
+    value->ob_owner_id = original_owner;
+    value->ob_shareable = _Py_SHAREABLE_LOCAL;
+    Py_DECREF(value);
+    PyMem_RawFree(other);
+    return NULL;
+}
+
 static PyMethodDef test_methods[] = {
+    {"test_lock_held_mutexes", test_lock_held_mutexes, METH_NOARGS},
     {"test_lock_basic", test_lock_basic, METH_NOARGS},
     {"test_lock_two_threads", test_lock_two_threads, METH_NOARGS},
     {"test_lock_counter", test_lock_counter, METH_NOARGS},

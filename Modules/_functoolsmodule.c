@@ -1,4 +1,5 @@
 #include "Python.h"
+#include "pycore_ceval.h"         // _PyEval_CheckCallArgs()
 #include "pycore_call.h"          // _PyObject_CallNoArgs()
 #include "pycore_dict.h"          // _PyDict_Pop_KnownHash()
 #include "pycore_long.h"          // _PyLong_GetZero()
@@ -365,11 +366,76 @@ partial_descr_get(PyObject *self, PyObject *obj, PyObject *type)
     return PyMethod_New(self, obj);
 }
 
+static int
+partial_check_keywords(PyObject *keywords)
+{
+    if (keywords == NULL) {
+        return 0;
+    }
+    if (PyObject_CheckAccess(keywords) == NULL) {
+        return -1;
+    }
+    Py_ssize_t pos = 0;
+    PyObject *key, *value;
+    while (PyDict_Next(keywords, &pos, &key, &value)) {
+        // Merging can invoke a string subclass's hash or equality method.
+        if (PyObject_CheckAccess(key) == NULL) {
+            return -1;
+        }
+    }
+    return 0;
+}
+
+static PyObject *
+partial_invoke(PyThreadState *tstate, PyObject *function,
+               PyObject *const *args, size_t nargsf, PyObject *kwnames)
+{
+    // Captured references and later arguments can lose their protection while
+    // arguments are being evaluated or keywords are merged.
+    if (PyObject_CheckAccess(function) == NULL) {
+        return NULL;
+    }
+    Py_ssize_t nargs = PyVectorcall_NARGS(nargsf);
+    if (kwnames != NULL) {
+        if (PyObject_CheckAccess(kwnames) == NULL) {
+            return NULL;
+        }
+        for (Py_ssize_t i = 0; i < PyTuple_GET_SIZE(kwnames); i++) {
+            if (PyObject_CheckAccess(PyTuple_GET_ITEM(kwnames, i)) == NULL) {
+                return NULL;
+            }
+        }
+        nargs += PyTuple_GET_SIZE(kwnames);
+    }
+    for (Py_ssize_t i = 0; i < nargs; i++) {
+        if (PyObject_CheckAccess(args[i]) == NULL) {
+            return NULL;
+        }
+    }
+    return _PyObject_VectorcallTstate(tstate, function, args, nargsf, kwnames);
+}
+
 static PyObject *
 partial_vectorcall(PyObject *self, PyObject *const *args,
                    size_t nargsf, PyObject *kwnames)
 {
-    partialobject *pto = partialobject_CAST(self);;
+    if (PyObject_CheckAccess(self) == NULL) {
+        return NULL;
+    }
+    partialobject *pto = partialobject_CAST(self);
+    if (PyObject_CheckAccess(pto->fn) == NULL ||
+        PyObject_CheckAccess(pto->args) == NULL ||
+        partial_check_keywords(pto->kw) < 0 ||
+        (kwnames != NULL && PyObject_CheckAccess(kwnames) == NULL)) {
+        return NULL;
+    }
+    if (kwnames != NULL) {
+        for (Py_ssize_t i = 0; i < PyTuple_GET_SIZE(kwnames); i++) {
+            if (PyObject_CheckAccess(PyTuple_GET_ITEM(kwnames, i)) == NULL) {
+                return NULL;
+            }
+        }
+    }
     PyThreadState *tstate = _PyThreadState_GET();
     Py_ssize_t nargs = PyVectorcall_NARGS(nargsf);
 
@@ -397,7 +463,7 @@ partial_vectorcall(PyObject *self, PyObject *const *args,
     if (!pto_nkwds) {
         /* Fast path if we're called without arguments */
         if (nargskw == 0) {
-            result = _PyObject_VectorcallTstate(tstate, partial_function, pto_args,
+            result = partial_invoke(tstate, partial_function, pto_args,
                                                 pto_nargs, NULL);
             goto done;
         }
@@ -408,7 +474,7 @@ partial_vectorcall(PyObject *self, PyObject *const *args,
             PyObject **newargs = (PyObject **)args - 1;
             PyObject *tmp = newargs[0];
             newargs[0] = pto_args[0];
-            result = _PyObject_VectorcallTstate(tstate, partial_function, newargs,
+            result = partial_invoke(tstate, partial_function, newargs,
                                                 nargs + 1, kwnames);
             newargs[0] = tmp;
             goto done;
@@ -552,7 +618,7 @@ partial_vectorcall(PyObject *self, PyObject *const *args,
         memcpy(stack + pto_nargs, args, nargs * sizeof(PyObject*));
     }
 
-    result = _PyObject_VectorcallTstate(tstate, partial_function, stack,
+    result = partial_invoke(tstate, partial_function, stack,
                                         tot_nargs, tot_kwnames);
     if (pto_nkwds) {
         Py_DECREF(tot_kwnames);
@@ -567,7 +633,7 @@ partial_vectorcall(PyObject *self, PyObject *const *args,
     Py_DECREF(partial_function);
     Py_DECREF(partial_args);
     Py_DECREF(partial_keywords);
-    return result;
+    return _PyObject_CheckAccessNullable(result);
 }
 
 /* Set pto->vectorcall depending on the parameters of the partial object */
@@ -591,7 +657,17 @@ partial_setvectorcall(partialobject *pto)
 static PyObject *
 partial_call(PyObject *self, PyObject *args, PyObject *kwargs)
 {
+    if (PyObject_CheckAccess(self) == NULL ||
+        PyObject_CheckAccess(args) == NULL ||
+        partial_check_keywords(kwargs) < 0) {
+        return NULL;
+    }
     partialobject *pto = partialobject_CAST(self);
+    if (PyObject_CheckAccess(pto->fn) == NULL ||
+        PyObject_CheckAccess(pto->args) == NULL ||
+        partial_check_keywords(pto->kw) < 0) {
+        return NULL;
+    }
     assert(PyCallable_Check(pto->fn));
     assert(PyTuple_Check(pto->args));
     assert(PyDict_Check(pto->kw));
@@ -668,10 +744,13 @@ partial_call(PyObject *self, PyObject *args, PyObject *kwargs)
         }
     }
 
-    PyObject *res = PyObject_Call(pto->fn, tot_args, tot_kw);
+    PyObject *res = NULL;
+    if (_PyEval_CheckCallArgs(pto->fn, tot_args, tot_kw) == 0) {
+        res = PyObject_Call(pto->fn, tot_args, tot_kw);
+    }
     Py_DECREF(tot_args);
     Py_XDECREF(tot_kw);
-    return res;
+    return _PyObject_CheckAccessNullable(res);
 }
 
 PyDoc_STRVAR(partial_doc,
@@ -1966,7 +2045,8 @@ _functools_exec(PyObject *module)
     if (lru_cache_type == NULL) {
         return -1;
     }
-    if (PyModule_AddType(module, (PyTypeObject *)lru_cache_type) < 0) {
+    if (PyObject_DeclareImmutable(lru_cache_type) < 0 ||
+        PyModule_AddType(module, (PyTypeObject *)lru_cache_type) < 0) {
         Py_DECREF(lru_cache_type);
         return -1;
     }

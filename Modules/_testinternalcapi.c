@@ -10,6 +10,7 @@
 #undef NDEBUG
 
 #include "Python.h"
+#include "pycore_lock.h"
 #include <string.h>
 #include "pycore_backoff.h"       // JUMP_BACKWARD_INITIAL_VALUE
 #include "pycore_bitutils.h"      // _Py_bswap32()
@@ -37,6 +38,7 @@
 #include "pycore_pylifecycle.h"   // _PyInterpreterConfig_InitFromDict()
 #include "pycore_pystate.h"       // _PyThreadState_GET()
 #include "pycore_runtime_structs.h" // _PY_NSMALLPOSINTS
+#include "pycore_threadgroup.h"   // _PyThreadGroup_Find()
 #include "pycore_unicodeobject.h" // _PyUnicode_TransformDecimalAndSpaceToASCII()
 
 #include "clinic/_testinternalcapi.c.h"
@@ -3288,7 +3290,568 @@ static PyTypeObject SelfInterruptingContextManager_Type = {
 };
 
 
+/* Meet another attached thread without releasing execution rights or
+   evaluating Python bytecode. Used to distinguish parallel execution from
+   ordinary interleaving at interpreter scheduling points. */
+static PyObject *
+wait_at_c_barrier(PyObject *self, PyObject *args)
+{
+    PyObject *buffer;
+    int index;
+    double timeout;
+    if (!PyArg_ParseTuple(args, "O!id", &PyByteArray_Type, &buffer,
+                          &index, &timeout)) {
+        return NULL;
+    }
+    if (PyByteArray_GET_SIZE(buffer) != 2 || (index != 0 && index != 1) ||
+        !(timeout > 0.0 && timeout <= 300.0)) {
+        PyErr_SetString(PyExc_ValueError, "invalid barrier arguments");
+        return NULL;
+    }
+    Py_buffer view;
+    if (PyObject_GetBuffer(buffer, &view, PyBUF_WRITABLE) < 0) {
+        return NULL;
+    }
+    uint8_t *flags = view.buf;
+    PyTime_t now;
+    if (PyTime_Monotonic(&now) < 0) {
+        PyBuffer_Release(&view);
+        return NULL;
+    }
+    PyTime_t deadline = now + (PyTime_t)(timeout * 1000000000.0);
+    _Py_atomic_store_uint8(&flags[index], 1);
+    while (!_Py_atomic_load_uint8(&flags[1 - index])) {
+        if (PyTime_Monotonic(&now) < 0) {
+            PyBuffer_Release(&view);
+            return NULL;
+        }
+        if (now >= deadline) {
+            PyBuffer_Release(&view);
+            Py_RETURN_FALSE;
+        }
+    }
+    PyBuffer_Release(&view);
+    Py_RETURN_TRUE;
+}
+
+static PyObject *
+type_get_dict(PyObject *self, PyObject *obj)
+{
+    if (!PyType_Check(obj)) {
+        PyErr_SetString(PyExc_TypeError, "expected a type");
+        return NULL;
+    }
+    return PyType_GetDict((PyTypeObject *)obj);
+}
+
+static PyObject *
+object_check_access(PyObject *self, PyObject *obj)
+{
+    if (PyObject_CheckAccess(obj) == NULL) {
+        return NULL;
+    }
+    return Py_NewRef(obj);
+}
+
+/* Drop a factory's result under the runtime's internal world stop, without
+   granting the debugger's access override. The factory can return an immutable
+   container carrying objects from another group. */
+static PyObject *
+drop_while_world_stopped(PyObject *self, PyObject *factory)
+{
+    PyObject *value = PyObject_CallNoArgs(factory);
+    if (value == NULL) {
+        return NULL;
+    }
+    PyThreadState *tstate = _PyThreadState_GET();
+    _PyEval_StopTheWorld(tstate->interp);
+    /* Real callers can hold the thread-list lock when dropping references. */
+    HEAD_LOCK(tstate->interp->runtime);
+    Py_DECREF(value);
+    HEAD_UNLOCK(tstate->interp->runtime);
+    _PyEval_StartTheWorld(tstate->interp);
+    if (_PyEval_MakePendingCalls(tstate) < 0) {
+        return NULL;
+    }
+    Py_RETURN_NONE;
+}
+
+/* Retain each item separately so every last reference is dropped inside
+   the stop, rather than postponing just the outer container's destruction. */
+static PyObject *
+drop_many_while_world_stopped(PyObject *self, PyObject *factory)
+{
+    PyObject *values = PyObject_CallNoArgs(factory);
+    if (values == NULL) {
+        return NULL;
+    }
+    if (!PyTuple_CheckExact(values)) {
+        Py_DECREF(values);
+        PyErr_SetString(PyExc_TypeError, "factory must return an exact tuple");
+        return NULL;
+    }
+    Py_ssize_t count = PyTuple_GET_SIZE(values);
+    PyObject **items = PyMem_New(PyObject *, count ? count : 1);
+    if (items == NULL) {
+        Py_DECREF(values);
+        return PyErr_NoMemory();
+    }
+    for (Py_ssize_t i = 0; i < count; i++) {
+        items[i] = Py_NewRef(PyTuple_GET_ITEM(values, i));
+    }
+    Py_DECREF(values);
+    PyThreadState *tstate = _PyThreadState_GET();
+    _PyEval_StopTheWorld(tstate->interp);
+    for (Py_ssize_t i = 0; i < count; i++) {
+        Py_DECREF(items[i]);
+    }
+    _PyEval_StartTheWorld(tstate->interp);
+    PyMem_Free(items);
+    if (_PyEval_MakePendingCalls(tstate) < 0) {
+        return NULL;
+    }
+    Py_RETURN_NONE;
+}
+
+static PyObject *
+finalize_while_world_stopped(PyObject *self, PyObject *value)
+{
+    PyThreadState *tstate = _PyThreadState_GET();
+    _PyEval_StopTheWorld(tstate->interp);
+    PyObject_CallFinalizer(value);
+    _PyEval_StartTheWorld(tstate->interp);
+    if (_PyEval_MakePendingCalls(tstate) < 0) {
+        return NULL;
+    }
+    Py_RETURN_NONE;
+}
+
+static PyObject *
+finalize_deferred_deallocation(PyObject *self, PyObject *factory)
+{
+    PyObject *value = PyObject_CallNoArgs(factory);
+    if (value == NULL) {
+        return NULL;
+    }
+    PyObject *ref = PyWeakref_NewRef(value, NULL);
+    if (ref == NULL) {
+        Py_DECREF(value);
+        return NULL;
+    }
+    PyThreadState *tstate = _PyThreadState_GET();
+    _PyEval_StopTheWorld(tstate->interp);
+    Py_DECREF(value);
+    int alive = PyWeakref_GetRef(ref, &value);
+    if (alive > 0) {
+        PyObject_CallFinalizer(value);
+        PyObject_CallFinalizer(value);
+    }
+    _PyEval_StartTheWorld(tstate->interp);
+    Py_DECREF(ref);
+    if (alive <= 0) {
+        if (alive == 0) {
+            PyErr_SetString(PyExc_AssertionError, "deallocation was not deferred");
+        }
+        return NULL;
+    }
+    if (_PyEval_MakePendingCalls(tstate) < 0) {
+        Py_DECREF(value);
+        return NULL;
+    }
+    return value;
+}
+
+static void *
+cleanup_fail_malloc(void *ctx, size_t size)
+{
+    return NULL;
+}
+
+static void *
+cleanup_fail_calloc(void *ctx, size_t count, size_t size)
+{
+    return NULL;
+}
+
+static void *
+cleanup_fail_realloc(void *ctx, void *ptr, size_t size)
+{
+    return NULL;
+}
+
+static void
+cleanup_allocator_free(void *ctx, void *ptr)
+{
+    PyMemAllocatorEx *original = ctx;
+    original->free(original->ctx, ptr);
+}
+
+/* Used only in an isolated process. Restore the allocator before callbacks
+   can execute, so failure injection covers queue publication alone. */
+static PyObject *
+finalize_while_world_stopped_nomemory(PyObject *self, PyObject *value)
+{
+    PyThreadState *tstate = _PyThreadState_GET();
+    PyMemAllocatorEx original;
+    PyMem_GetAllocator(PYMEM_DOMAIN_RAW, &original);
+    PyMemAllocatorEx failing = {
+        .ctx = &original,
+        .malloc = cleanup_fail_malloc,
+        .calloc = cleanup_fail_calloc,
+        .realloc = cleanup_fail_realloc,
+        .free = cleanup_allocator_free,
+    };
+    _PyEval_StopTheWorld(tstate->interp);
+    PyMem_SetAllocator(PYMEM_DOMAIN_RAW, &failing);
+    PyObject_CallFinalizer(value);
+    PyMem_SetAllocator(PYMEM_DOMAIN_RAW, &original);
+    _PyEval_StartTheWorld(tstate->interp);
+    if (_PyEval_MakePendingCalls(tstate) < 0) {
+        return NULL;
+    }
+    Py_RETURN_NONE;
+}
+
+static PyObject *
+finalize_many_while_world_stopped(PyObject *self, PyObject *args)
+{
+    PyObject *value;
+    Py_ssize_t count;
+    int no_memory = 0;
+    if (!PyArg_ParseTuple(args, "On|p", &value, &count, &no_memory)) {
+        return NULL;
+    }
+    if (count < 0) {
+        PyErr_SetString(PyExc_ValueError, "count must be nonnegative");
+        return NULL;
+    }
+    PyThreadState *tstate = _PyThreadState_GET();
+    PyMemAllocatorEx original;
+    PyMem_GetAllocator(PYMEM_DOMAIN_RAW, &original);
+    PyMemAllocatorEx failing = {
+        .ctx = &original,
+        .malloc = cleanup_fail_malloc,
+        .calloc = cleanup_fail_calloc,
+        .realloc = cleanup_fail_realloc,
+        .free = cleanup_allocator_free,
+    };
+    _PyEval_StopTheWorld(tstate->interp);
+    if (no_memory) {
+        PyMem_SetAllocator(PYMEM_DOMAIN_RAW, &failing);
+    }
+    for (Py_ssize_t i = 0; i < count; i++) {
+        PyObject_CallFinalizer(value);
+    }
+    if (no_memory) {
+        PyMem_SetAllocator(PYMEM_DOMAIN_RAW, &original);
+    }
+    _PyEval_StartTheWorld(tstate->interp);
+    if (_PyEval_MakePendingCalls(tstate) < 0) {
+        return NULL;
+    }
+    Py_RETURN_NONE;
+}
+
+typedef struct {
+    PyObject_HEAD
+    PyObject *callback;
+} NonGCFinalizer;
+
+static void
+nongc_finalizer_finalize(PyObject *op)
+{
+    NonGCFinalizer *self = (NonGCFinalizer *)op;
+    if (self->callback == NULL) {
+        return;
+    }
+    PyObject *exc = PyErr_GetRaisedException();
+    PyObject *result = PyObject_CallOneArg(self->callback, op);
+    if (result == NULL) {
+        PyErr_WriteUnraisable(self->callback);
+    }
+    Py_XDECREF(result);
+    PyErr_SetRaisedException(exc);
+}
+
+static void
+nongc_finalizer_dealloc(PyObject *op)
+{
+    if (PyObject_CallFinalizerFromDealloc(op) < 0) {
+        return;
+    }
+    NonGCFinalizer *self = (NonGCFinalizer *)op;
+    PyTypeObject *type = Py_TYPE(op);
+    Py_XDECREF(self->callback);
+    type->tp_free(op);
+    Py_DECREF(type);
+}
+
+static PyObject *
+make_nongc_finalizer(PyObject *self, PyObject *callback)
+{
+    static PyType_Slot slots[] = {
+        {Py_tp_finalize, nongc_finalizer_finalize},
+        {Py_tp_dealloc, nongc_finalizer_dealloc},
+        {0, NULL},
+    };
+    static PyType_Spec spec = {
+        .name = "_testinternalcapi.NonGCFinalizer",
+        .basicsize = sizeof(NonGCFinalizer),
+        .flags = Py_TPFLAGS_DEFAULT,
+        .slots = slots,
+    };
+    PyTypeObject *type = (PyTypeObject *)PyType_FromSpec(&spec);
+    if (type == NULL) {
+        return NULL;
+    }
+    NonGCFinalizer *op = (NonGCFinalizer *)type->tp_alloc(type, 0);
+    Py_DECREF(type);
+    if (op == NULL) {
+        return NULL;
+    }
+    op->callback = Py_NewRef(callback);
+    return (PyObject *)op;
+}
+
+static void
+callback_capsule_destructor(PyObject *capsule)
+{
+    PyObject *callback = PyCapsule_GetPointer(capsule, "test.cleanup");
+    if (callback == NULL) {
+        PyErr_WriteUnraisable(capsule);
+        return;
+    }
+    PyObject *result = PyObject_CallNoArgs(callback);
+    if (result == NULL) {
+        PyErr_WriteUnraisable(callback);
+    }
+    Py_XDECREF(result);
+    Py_DECREF(callback);
+}
+
+static PyObject *
+make_callback_capsule(PyObject *self, PyObject *callback)
+{
+    Py_INCREF(callback);
+    PyObject *capsule = PyCapsule_New(callback, "test.cleanup",
+                                     callback_capsule_destructor);
+    if (capsule == NULL) {
+        Py_DECREF(callback);
+    }
+    return capsule;
+}
+
+static PyObject *
+world_is_stopped(PyObject *self, PyObject *unused)
+{
+    PyThreadState *tstate = _PyThreadState_GET();
+    _PyRuntimeState *runtime = tstate->interp->runtime;
+    HEAD_LOCK(runtime);
+    int stopped = runtime->stoptheworld.world_stopped ||
+                  tstate->interp->stoptheworld.world_stopped;
+    HEAD_UNLOCK(runtime);
+    return PyBool_FromLong(stopped);
+}
+
+static PyObject *
+protective_mutex_exists(PyObject *self, PyObject *arg)
+{
+    unsigned long id = PyLong_AsUnsignedLong(arg);
+    if (id == (unsigned long)-1 && PyErr_Occurred()) {
+        return NULL;
+    }
+    if (id > UINT32_MAX) {
+        PyErr_SetString(PyExc_OverflowError, "owner ID exceeds uint32_t");
+        return NULL;
+    }
+    _PyProtectiveMutexState *group = _PyProtectiveMutex_Find(
+        _PyInterpreterState_GET(), (uint32_t)id);
+    if (group == NULL) {
+        Py_RETURN_FALSE;
+    }
+    assert(group->mutex_id == id);
+    _PyProtectiveMutex_Decref(group);
+    Py_RETURN_TRUE;
+}
+
+static PyObject *
+threadgroup_owner_exists(PyObject *self, PyObject *arg)
+{
+    unsigned long id = PyLong_AsUnsignedLong(arg);
+    if (id == (unsigned long)-1 && PyErr_Occurred()) {
+        return NULL;
+    }
+    if (id > UINT32_MAX) {
+        PyErr_SetString(PyExc_OverflowError, "owner ID exceeds uint32_t");
+        return NULL;
+    }
+    _PyThreadGroupState *group = _PyThreadGroup_Find(
+        _PyInterpreterState_GET(), (uint32_t)id);
+    if (group == NULL) {
+        Py_RETURN_FALSE;
+    }
+    assert(group->id == id);
+    _PyThreadGroup_Decref(group);
+    Py_RETURN_TRUE;
+}
+
+static PyObject *
+threadgroup_from_owner_id(PyObject *self, PyObject *arg)
+{
+    unsigned long id = PyLong_AsUnsignedLong(arg);
+    if (id == (unsigned long)-1 && PyErr_Occurred()) {
+        return NULL;
+    }
+    if (id > UINT32_MAX) {
+        PyErr_SetString(PyExc_OverflowError, "owner ID exceeds uint32_t");
+        return NULL;
+    }
+    return _PyThreadGroup_GetObject(_PyInterpreterState_GET(), (uint32_t)id);
+}
+
+static PyObject *
+object_operation_from_tuple(PyObject *self, PyObject *args)
+{
+    PyObject *holder;
+    const char *operation;
+    if (!PyArg_ParseTuple(args, "Os:object_operation_from_tuple",
+                          &holder, &operation)) {
+        return NULL;
+    }
+    if (!PyTuple_Check(holder) || PyTuple_GET_SIZE(holder) != 1) {
+        PyErr_SetString(PyExc_TypeError, "expected a one-item tuple");
+        return NULL;
+    }
+    PyObject *obj = PyTuple_GET_ITEM(holder, 0);
+    int result;
+    if (strcmp(operation, "check") == 0) {
+        result = PyObject_CheckAccess(obj) == NULL ? -1 : 0;
+    }
+    else if (strcmp(operation, "immutable") == 0) {
+        result = PyObject_DeclareImmutable(obj);
+    }
+    else if (strcmp(operation, "synchronized") == 0) {
+        result = PyObject_DeclareSynchronized(obj);
+    }
+    else if (strcmp(operation, "freeze") == 0) {
+        PyObject *freeze = PyMapping_GetItemString(PyEval_GetBuiltins(), "freeze");
+        if (freeze == NULL) {
+            return NULL;
+        }
+        PyObject *frozen = PyObject_CallOneArg(freeze, obj);
+        Py_DECREF(freeze);
+        if (frozen == NULL) {
+            return NULL;
+        }
+        Py_DECREF(frozen);
+        result = 0;
+    }
+    else {
+        PyErr_SetString(PyExc_ValueError, "unknown object operation");
+        return NULL;
+    }
+    if (result < 0) {
+        return NULL;
+    }
+    /* Do not let a VM return-value check mask a missing native check. */
+    Py_RETURN_TRUE;
+}
+
+static struct {
+    PyObject_HEAD
+} static_local_object = {
+    PyObject_HEAD_INIT(&PyBaseObject_Type)
+};
+
+static PyObject *
+get_static_local_object(PyObject *self, PyObject *ignored)
+{
+    return Py_NewRef((PyObject *)&static_local_object);
+}
+
+static PyObject *
+object_owner_id(PyObject *self, PyObject *obj)
+{
+    return PyLong_FromUnsignedLong(_Py_atomic_load_uint32(&obj->ob_owner_id));
+}
+
+static PyObject *
+object_declare_immutable(PyObject *self, PyObject *obj)
+{
+    if (PyObject_DeclareImmutable(obj) < 0) {
+        return NULL;
+    }
+    Py_RETURN_NONE;
+}
+
+static PyObject *
+object_declare_synchronized(PyObject *self, PyObject *obj)
+{
+    if (PyObject_DeclareSynchronized(obj) < 0) {
+        return NULL;
+    }
+    Py_RETURN_NONE;
+}
+
+static PyObject *
+dict_freeze(PyObject *self, PyObject *obj)
+{
+    if (_PyDict_Freeze(obj) < 0) {
+        return NULL;
+    }
+    return Py_NewRef(obj);
+}
+
+static int
+dict_delete_predicate(PyObject *value, void *arg)
+{
+    PyObject *result = PyObject_CallOneArg((PyObject *)arg, value);
+    if (result == NULL) {
+        return -1;
+    }
+    int truth = PyObject_IsTrue(result);
+    Py_DECREF(result);
+    return truth;
+}
+
+static PyObject *
+dict_delitemif(PyObject *self, PyObject *args)
+{
+    PyObject *dict, *key, *predicate;
+    if (!PyArg_ParseTuple(args, "O!OO", &PyDict_Type,
+                          &dict, &key, &predicate)) {
+        return NULL;
+    }
+    int result = _PyDict_DelItemIf(dict, key, dict_delete_predicate, predicate);
+    if (result < 0) {
+        return NULL;
+    }
+    return PyLong_FromLong(result);
+}
+
 static PyMethodDef module_functions[] = {
+    {"drop_while_world_stopped", drop_while_world_stopped, METH_O, NULL},
+    {"drop_many_while_world_stopped", drop_many_while_world_stopped, METH_O, NULL},
+    {"finalize_while_world_stopped", finalize_while_world_stopped, METH_O, NULL},
+    {"finalize_many_while_world_stopped", finalize_many_while_world_stopped, METH_VARARGS, NULL},
+    {"make_nongc_finalizer", make_nongc_finalizer, METH_O, NULL},
+    {"finalize_deferred_deallocation", finalize_deferred_deallocation, METH_O, NULL},
+    {"finalize_while_world_stopped_nomemory", finalize_while_world_stopped_nomemory, METH_O, NULL},
+    {"make_callback_capsule", make_callback_capsule, METH_O, NULL},
+    {"world_is_stopped", world_is_stopped, METH_NOARGS, NULL},
+    {"protective_mutex_exists", protective_mutex_exists, METH_O, NULL},
+    {"threadgroup_owner_exists", threadgroup_owner_exists, METH_O, NULL},
+    {"threadgroup_from_owner_id", threadgroup_from_owner_id, METH_O, NULL},
+    {"object_operation_from_tuple", object_operation_from_tuple, METH_VARARGS, NULL},
+    {"dict_freeze", dict_freeze, METH_O, NULL},
+    {"dict_delitemif", dict_delitemif, METH_VARARGS, NULL},
+    {"object_check_access", object_check_access, METH_O, NULL},
+    {"type_get_dict", type_get_dict, METH_O, NULL},
+    {"get_static_local_object", get_static_local_object, METH_NOARGS, NULL},
+    {"object_owner_id", object_owner_id, METH_O, NULL},
+    {"object_declare_immutable", object_declare_immutable, METH_O, NULL},
+    {"object_declare_synchronized", object_declare_synchronized, METH_O, NULL},
+    {"wait_at_c_barrier", wait_at_c_barrier, METH_VARARGS, NULL},
     {"get_configs", get_configs, METH_NOARGS},
     {"get_eval_frame_stats", get_eval_frame_stats, METH_NOARGS, NULL},
     {"get_recursion_depth", get_recursion_depth, METH_NOARGS},

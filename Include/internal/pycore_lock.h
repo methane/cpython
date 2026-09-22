@@ -165,7 +165,9 @@ _PyOnceFlag_CallOnce(_PyOnceFlag *flag, _Py_once_fn_t *fn, void *arg)
 typedef struct {
     PyMutex mutex;
     unsigned long long thread;  // i.e., PyThread_get_thread_ident_ex()
-    size_t level;
+    // Written by the owner, observed by RLock repr from other threads.
+    // Access atomically while the mutex is visible to other threads.
+    uintptr_t level;
 } _PyRecursiveMutex;
 
 PyAPI_FUNC(int) _PyRecursiveMutex_IsLockedByCurrentThread(_PyRecursiveMutex *m);
@@ -173,6 +175,34 @@ PyAPI_FUNC(void) _PyRecursiveMutex_Lock(_PyRecursiveMutex *m);
 extern PyLockStatus _PyRecursiveMutex_LockTimed(_PyRecursiveMutex *m, PyTime_t timeout, _PyLockFlags flags);
 PyAPI_FUNC(void) _PyRecursiveMutex_Unlock(_PyRecursiveMutex *m);
 extern int _PyRecursiveMutex_TryUnlock(_PyRecursiveMutex *m);
+
+/* A protective mutex can outlive its Python Lock/RLock wrapper.  Only states
+   actually used for protection are retained by the interpreter registry. */
+typedef struct _PyProtectiveMutexState {
+    union {
+        PyMutex plain;
+        _PyRecursiveMutex recursive;
+    } lock;
+    PyMutex metadata_mutex;
+    Py_ssize_t refcount;
+    uint64_t context_epoch;
+    uint32_t mutex_id;
+    uint32_t context_group;
+    uint64_t context_thread;
+    int context_only;
+    int protective;
+    int recursive;
+    struct _PyProtectiveMutexState *next;
+} _PyProtectiveMutexState;
+
+extern _PyProtectiveMutexState *_PyProtectiveMutex_New(int recursive);
+extern void _PyProtectiveMutex_Register(PyInterpreterState *interp,
+                                       _PyProtectiveMutexState *state);
+PyAPI_FUNC(_PyProtectiveMutexState *) _PyProtectiveMutex_Find(
+    PyInterpreterState *interp, uint32_t id);
+PyAPI_FUNC(void) _PyProtectiveMutex_Decref(_PyProtectiveMutexState *state);
+extern void _PyProtectiveMutex_Fini(PyInterpreterState *interp);
+extern int _PyProtectiveMutex_CallFinalizer(PyObject *op);
 
 // A readers-writer (RW) lock. The lock supports multiple concurrent readers or
 // a single writer. The lock is write-preferring: if a writer is waiting while

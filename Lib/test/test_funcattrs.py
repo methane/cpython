@@ -277,7 +277,7 @@ class FunctionPropertiesTest(FuncAttrsTest):
         self.assertIsNone(func.__kwdefaults__)
         self.assertRaises(TypeError, func)
         with self.assertRaisesRegex(TypeError,
-                                    '__kwdefaults__ must be set to a dict object'):
+                                    '__kwdefaults__ must be set to a dict or frozendict object'):
             func.__kwdefaults__ = [('b', 4)]
         del func.__kwdefaults__
         self.assertIsNone(func.__kwdefaults__)

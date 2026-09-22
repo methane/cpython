@@ -176,9 +176,20 @@ class TestDictWatchers(unittest.TestCase):
 
     def test_unwatch_non_dict(self):
         with self.watcher() as wid:
-            for wrong_type in (frozendict(), 5, [123], object()):
+            for wrong_type in ('not a dictionary', 5, [123], object()):
                 with self.assertRaisesRegex(ValueError, r"Cannot watch non-dictionary"):
                     self.unwatch(wid, wrong_type)
+
+    def test_watch_frozendict(self):
+        with self.watcher() as wid:
+            value = frozendict(a=1)
+            self.watch(wid, value)
+            self.unwatch(wid, value)
+            self.assert_events([])
+            self.watch(wid, value)
+            del value
+            gc_collect()
+            self.assert_events(['dealloc'])
 
     def test_unwatch_out_of_range_watcher_id(self):
         d = {}

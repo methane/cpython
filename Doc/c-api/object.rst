@@ -168,6 +168,10 @@ Object Protocol
    value on success, or ``NULL`` on failure.  This is the equivalent of the Python
    expression ``o.attr_name``.
 
+   The returned attribute is checked for access by the calling ThreadGroup.
+   An inaccessible value raises :exc:`IllegalThreadAccessException` or
+   :exc:`UnprotectedAccessException` and returns ``NULL``.
+
    If the missing attribute should not be treated as a failure, you can use
    :c:func:`PyObject_GetOptionalAttr` instead.
 
@@ -194,6 +198,10 @@ Object Protocol
    If an error other than :exc:`AttributeError` is raised, return ``-1`` and
    set *\*result* to ``NULL``.
 
+   Access errors for a found attribute are not suppressed: an inaccessible
+   value sets an access exception, returns ``-1``, and leaves *\*result* as
+   ``NULL``.
+
    .. versionadded:: 3.13
 
 
@@ -213,6 +221,9 @@ Object Protocol
    :attr:`~object.__dict__` (if present).  As outlined in :ref:`descriptors`,
    data descriptors take preference over instance attributes, while non-data
    descriptors don't.  Otherwise, an :exc:`AttributeError` is raised.
+
+   As with :c:func:`PyObject_GetAttr`, an inaccessible attribute value raises
+   an access exception and returns ``NULL``.
 
 
 .. c:function:: int PyObject_SetAttr(PyObject *o, PyObject *attr_name, PyObject *v)
@@ -334,6 +345,11 @@ Object Protocol
    ``<=``, ``==``, ``!=``, ``>``, or ``>=`` respectively. This is the equivalent of
    the Python expression ``o1 op o2``, where ``op`` is the operator corresponding
    to *opid*. Returns the value of the comparison on success, or ``NULL`` on failure.
+
+   .. versionchanged:: 3.16
+      Comparison dispatch validates access to both operands, including after a
+      callback returns :const:`NotImplemented`. The returned object is also
+      checked for accessibility before it is passed to the caller.
 
 
 .. c:function:: int PyObject_RichCompareBool(PyObject *o1, PyObject *o2, int opid)
@@ -530,6 +546,11 @@ Object Protocol
    Return element of *o* corresponding to the object *key* or ``NULL`` on failure.
    This is the equivalent of the Python expression ``o[key]``.
 
+   .. versionchanged:: 3.16
+      The result is checked for access from the current ThreadGroup. An
+      inaccessible result raises :exc:`IllegalThreadAccessException` (or
+      :exc:`UnprotectedAccessException` for an unprotected reference).
+
 
 .. c:function:: int PyObject_SetItem(PyObject *o, PyObject *key, PyObject *v)
 
@@ -568,6 +589,11 @@ Object Protocol
    an iterator.  Raises :exc:`TypeError` and returns ``NULL`` if the object cannot be
    iterated.
 
+   .. versionchanged:: 3.16
+      The returned iterator is checked for access by the current ThreadGroup.
+      An inaccessible result is released and ``NULL`` is returned with
+      :exc:`IllegalThreadAccessException` or :exc:`UnprotectedAccessException` set.
+
 
 .. c:function:: PyObject* PyObject_SelfIter(PyObject *obj)
 
@@ -584,6 +610,12 @@ Object Protocol
    returns ``NULL`` if the object cannot be iterated.
 
    .. versionadded:: 3.10
+
+   .. versionchanged:: 3.16
+      The returned async iterator is checked for access by the current
+      ThreadGroup. An inaccessible result is released and ``NULL`` is returned
+      with :exc:`IllegalThreadAccessException` or
+      :exc:`UnprotectedAccessException` set.
 
 .. c:function:: void *PyObject_GetTypeData(PyObject *o, PyTypeObject *cls)
 

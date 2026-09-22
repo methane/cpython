@@ -67,7 +67,7 @@ _Py_CheckFunctionResult(PyThreadState *tstate, PyObject *callable,
             return NULL;
         }
     }
-    return result;
+    return _PyObject_CheckAccessNullable(result);
 }
 
 
@@ -113,6 +113,9 @@ _PyObject_VectorcallDictTstate(PyThreadState *tstate, PyObject *callable,
                                PyObject *kwargs)
 {
     assert(callable != NULL);
+    if (PyObject_CheckAccess(callable) == NULL) {
+        return NULL;
+    }
 
     /* PyObject_VectorcallDict() must not be called with an exception set,
        because it can clear it (directly or indirectly) and so the
@@ -201,6 +204,9 @@ _PyObject_MakeTpCall(PyThreadState *tstate, PyObject *callable,
                      PyObject *const *args, Py_ssize_t nargs,
                      PyObject *keywords)
 {
+    if (PyObject_CheckAccess(callable) == NULL) {
+        return NULL;
+    }
     assert(nargs >= 0);
     assert(nargs == 0 || args != NULL);
     assert(keywords == NULL || PyTuple_Check(keywords) || PyDict_Check(keywords));
@@ -270,7 +276,8 @@ _PyVectorcall_Call(PyThreadState *tstate, vectorcallfunc func,
 
     /* Fast path for no keywords */
     if (kwargs == NULL || PyDict_GET_SIZE(kwargs) == 0) {
-        return func(callable, _PyTuple_ITEMS(tuple), nargs, NULL);
+        PyObject *result = func(callable, _PyTuple_ITEMS(tuple), nargs, NULL);
+        return _Py_CheckFunctionResult(tstate, callable, result, NULL);
     }
 
     /* Convert arguments & call */
@@ -294,6 +301,9 @@ PyObject *
 PyVectorcall_Call(PyObject *callable, PyObject *tuple, PyObject *kwargs)
 {
     PyThreadState *tstate = _PyThreadState_GET();
+    if (PyObject_CheckAccess(callable) == NULL) {
+        return NULL;
+    }
 
     /* get vectorcallfunc as in _PyVectorcall_Function, but without
      * the Py_TPFLAGS_HAVE_VECTORCALL check */
@@ -342,6 +352,9 @@ _PyObject_Call(PyThreadState *tstate, PyObject *callable,
     assert(!_PyErr_Occurred(tstate));
     assert(PyTuple_Check(args));
     assert(kwargs == NULL || PyDict_Check(kwargs));
+    if (PyObject_CheckAccess(callable) == NULL) {
+        return NULL;
+    }
     EVAL_CALL_STAT_INC_IF_FUNCTION(EVAL_CALL_API, callable);
     vectorcallfunc vector_func = PyVectorcall_Function(callable);
     if (vector_func != NULL) {
@@ -403,6 +416,9 @@ _PyFunction_Vectorcall(PyObject *func, PyObject* const* stack,
                        size_t nargsf, PyObject *kwnames)
 {
     assert(PyFunction_Check(func));
+    if (PyObject_CheckAccess(func) == NULL) {
+        return NULL;
+    }
     PyFunctionObject *f = (PyFunctionObject *)func;
     Py_ssize_t nargs = PyVectorcall_NARGS(nargsf);
     assert(nargs >= 0);

@@ -12,6 +12,11 @@ Dictionary objects
 
    This subtype of :c:type:`PyObject` represents a Python dictionary object.
 
+   .. versionchanged:: 3.16
+      The layout includes a hash cache shared with :class:`frozendict`, so
+      mutable and immutable dictionaries have the same C storage layout.
+      This changes the size of ``PyDictObject``.
+
 
 .. c:var:: PyTypeObject PyDict_Type
 
@@ -36,6 +41,33 @@ Dictionary objects
    Return a new empty dictionary, or ``NULL`` on failure.
 
 
+.. c:var:: PyTypeObject PySynchronizedDict_Type
+
+   The type of :class:`SynchronizedDict`. It is a subtype of
+   :c:data:`PyDict_Type` and uses the :c:type:`PyDictObject` layout.
+   The dictionary C API accepts its instances. :c:func:`PyDict_Check`
+   returns true for these instances; :c:func:`PyDict_CheckExact` returns false.
+
+   .. versionadded:: 3.16
+
+
+.. c:function:: int PySynchronizedDict_Check(PyObject *p)
+               int PySynchronizedDict_CheckExact(PyObject *p)
+
+   Return true if *p* is a synchronized dictionary. The exact variant
+   checks that its type is :c:data:`PySynchronizedDict_Type`.
+
+   .. versionadded:: 3.16
+
+
+.. c:function:: PyObject *PySynchronizedDict_New(void)
+
+   Return a new empty synchronized dictionary, or ``NULL`` on failure.
+   This returns a new reference. Its shareable state is ``SYNCHRONIZED``.
+
+   .. versionadded:: 3.16
+
+
 .. c:function:: PyObject* PyDictProxy_New(PyObject *mapping)
 
    Return a :class:`types.MappingProxyType` object for a mapping which
@@ -44,6 +76,10 @@ Dictionary objects
 
    The first argument can be a :class:`dict`, a :class:`frozendict`, or a
    mapping.
+
+   The proxy inherits the mapping's shareable state and owner at construction,
+   except that a proxy of an immutable mapping starts local to the creating
+   thread group.
 
    .. versionchanged:: 3.15
       Also accept :class:`frozendict`.
@@ -165,6 +201,12 @@ Dictionary objects
    .. versionchanged:: 3.15
       Also accept :class:`frozendict`.
 
+   .. versionchanged:: 3.16
+      The returned value must be accessible from the current ThreadGroup.
+      An inaccessible value raises :exc:`IllegalThreadAccessException` (or
+      :exc:`UnprotectedAccessException`), returns ``-1``, and sets *\*result* to
+      ``NULL``. The dictionary retains its reference to the value.
+
    See also the :c:func:`PyObject_GetItem` function.
 
 
@@ -175,6 +217,11 @@ Dictionary objects
    setting an exception.
 
    The first argument can be a :class:`dict` or a :class:`frozendict`.
+
+   .. versionchanged:: 3.16
+      Inaccessible values are rejected. The access exception is reported
+      through :func:`sys.unraisablehook` and suppressed, and ``NULL`` is
+      returned. Use :c:func:`PyDict_GetItemRef` to propagate the exception.
 
    .. note::
 
@@ -203,6 +250,11 @@ Dictionary objects
    exceptions. Return ``NULL`` **with** an exception set if an exception
    occurred.  Return ``NULL`` **without** an exception set if the key
    wasn't present.
+
+   .. versionchanged:: 3.16
+      An inaccessible value causes this function to return ``NULL`` with
+      :exc:`IllegalThreadAccessException` set. The dictionary retains its
+      reference to the value.
 
    .. note::
 
@@ -546,6 +598,9 @@ Dictionary objects
 
    .. versionadded:: 3.12
 
+   .. versionchanged:: 3.16
+      Accept :class:`frozendict` instances as well as :class:`dict` instances.
+
 .. c:function:: int PyDict_Unwatch(int watcher_id, PyObject *dict)
 
    Mark dictionary *dict* as no longer watched. The callback granted
@@ -555,13 +610,22 @@ Dictionary objects
 
    .. versionadded:: 3.12
 
+   .. versionchanged:: 3.16
+      Accept :class:`frozendict` instances, including dictionaries frozen
+      after registration.
+
 .. c:type:: PyDict_WatchEvent
 
    Enumeration of possible dictionary watcher events: ``PyDict_EVENT_ADDED``,
    ``PyDict_EVENT_MODIFIED``, ``PyDict_EVENT_DELETED``, ``PyDict_EVENT_CLONED``,
-   ``PyDict_EVENT_CLEARED``, or ``PyDict_EVENT_DEALLOCATED``.
+   ``PyDict_EVENT_CLEARED``, ``PyDict_EVENT_DEALLOCATED``, or
+   ``PyDict_EVENT_FROZEN``.
 
    .. versionadded:: 3.12
+
+   .. versionchanged:: 3.16
+      Added ``PyDict_EVENT_FROZEN`` for in-place conversion to a
+      :class:`frozendict`.
 
 .. c:type:: int (*PyDict_WatchCallback)(PyDict_WatchEvent event, PyObject *dict, PyObject *key, PyObject *new_value)
 
@@ -579,6 +643,12 @@ Dictionary objects
    single ``PyDict_EVENT_CLONED`` is issued, and *key* will be the source
    dictionary.
 
+   ``PyDict_EVENT_FROZEN`` occurs after in-place freezing has completed.
+   Both *key* and *new_value* are ``NULL``, and *dict* is a :class:`frozendict`.
+   Existing watchers remain registered for subsequent GC clearing and
+   deallocation. :c:func:`PyDict_Watch` and :c:func:`PyDict_Unwatch` accept
+   frozendicts as well as mutable dictionaries.
+
    The callback may inspect but must not modify *dict*; doing so could have
    unpredictable effects, including infinite recursion. Do not trigger Python
    code execution in the callback, as it could modify the dict as a side effect.
@@ -589,8 +659,8 @@ Dictionary objects
    destroyed later, any watcher callbacks active at that time will be called
    again.
 
-   Callbacks occur before the notified modification to *dict* takes place, so
-   the prior state of *dict* can be inspected.
+   Except for ``PyDict_EVENT_FROZEN``, callbacks occur before the notified
+   modification to *dict* takes place, so the prior state can be inspected.
 
    If the callback sets an exception, it must return ``-1``; this exception will
    be printed as an unraisable exception using :c:func:`PyErr_WriteUnraisable`.

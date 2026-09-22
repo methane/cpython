@@ -221,6 +221,9 @@ termios_tcsetattr_impl(PyObject *module, int fd, int when, PyObject *term)
     speed_t ispeed, ospeed;
 #define SET_FROM_LIST(TYPE, VAR, LIST, N) do {  \
     PyObject *item = PyList_GetItem(LIST, N);  \
+    if (item == NULL) {                        \
+        return NULL;                          \
+    }                                         \
     long num = PyLong_AsLong(item);             \
     if (num == -1 && PyErr_Occurred()) {        \
         return NULL;                            \
@@ -237,6 +240,9 @@ termios_tcsetattr_impl(PyObject *module, int fd, int when, PyObject *term)
 #undef SET_FROM_LIST
 
     PyObject *cc = PyList_GetItem(term, 6);
+    if (cc == NULL) {
+        return NULL;
+    }
     if (!PyList_Check(cc) || PyList_Size(cc) != NCCS) {
         PyErr_Format(PyExc_TypeError,
             "tcsetattr: attributes[6] must be %d element list",
@@ -248,6 +254,9 @@ termios_tcsetattr_impl(PyObject *module, int fd, int when, PyObject *term)
     PyObject *v;
     for (i = 0; i < NCCS; i++) {
         v = PyList_GetItem(cc, i);
+        if (v == NULL) {
+            return NULL;
+        }
 
         if (PyBytes_Check(v) && PyBytes_Size(v) == 1)
             mode.c_cc[i] = (cc_t) * PyBytes_AsString(v);

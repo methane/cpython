@@ -10,6 +10,7 @@
 #include "pycore_pyatomic_ft_wrappers.h" // FT_ATOMIC_LOAD_PTR_ACQUIRE()
 #include "pycore_stackref.h"      // PyStackRef_AsPyObjectBorrow()
 #include "pycore_stats.h"         // CALL_STAT_INC()
+#include "pycore_threadgroup.h"   // _PyThreadGroupState
 
 #ifdef __cplusplus
 extern "C" {
@@ -143,6 +144,8 @@ static inline void _PyFrame_Copy(_PyInterpreterFrame *src, _PyInterpreterFrame *
     dest->f_locals = src->f_locals;
     dest->frame_obj = src->frame_obj;
     dest->instr_ptr = src->instr_ptr;
+    dest->check_return_access = src->check_return_access;
+    dest->threadgroup_id = src->threadgroup_id;
 #ifdef Py_GIL_DISABLED
     dest->tlbc_index = src->tlbc_index;
 #endif
@@ -206,7 +209,9 @@ _PyFrame_Initialize(
     frame->instr_ptr = _PyCode_CODE(code);
 #endif
     frame->return_offset = 0;
+    frame->check_return_access = 0;
     frame->owner = FRAME_OWNED_BY_THREAD;
+    frame->threadgroup_id = tstate->threadgroup->id;
     frame->visited = 0;
 #ifdef Py_DEBUG
     frame->stackpointer_valid = 1;
@@ -373,7 +378,8 @@ _PyFrame_ClearExceptCode(_PyInterpreterFrame * frame);
 int
 _PyFrame_Traverse(_PyInterpreterFrame *frame, visitproc visit, void *arg);
 
-bool
+/* Return -1 on an access error. */
+int
 _PyFrame_HasHiddenLocals(_PyInterpreterFrame *frame);
 
 PyObject *
@@ -440,12 +446,14 @@ _PyFrame_PushTrampolineUnchecked(PyThreadState *tstate, PyCodeObject *code, int 
     frame->instr_ptr = _PyCode_CODE(code);
 #endif
     frame->owner = FRAME_OWNED_BY_THREAD;
+    frame->threadgroup_id = tstate->threadgroup->id;
     frame->visited = 0;
 #ifdef Py_DEBUG
     frame->stackpointer_valid = 1;
     frame->lltrace = 0;
 #endif
     frame->return_offset = 0;
+    frame->check_return_access = 0;
     return frame;
 }
 

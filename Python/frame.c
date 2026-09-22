@@ -38,6 +38,9 @@ _PyFrame_MakeAndSetFrameObject(_PyInterpreterFrame *frame)
     // here.
     assert(frame->owner != FRAME_OWNED_BY_FRAME_OBJECT);
     f->f_frame = frame;
+    assert(frame->threadgroup_id != 0);
+    _Py_atomic_store_uint32_relaxed(&f->ob_base.ob_owner_id,
+                                  frame->threadgroup_id);
 #ifdef Py_GIL_DISABLED
     PyFrameObject *expected = NULL;
     if (!_Py_atomic_compare_exchange_ptr(&frame->frame_obj, &expected, f)) {

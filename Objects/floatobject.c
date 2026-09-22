@@ -254,6 +254,9 @@ PyFloat_AsDouble(PyObject *op)
         PyErr_BadArgument();
         return -1;
     }
+    if (PyObject_CheckAccess(op) == NULL) {
+        return -1;
+    }
 
     if (PyFloat_Check(op)) {
         return PyFloat_AS_DOUBLE(op);
@@ -276,6 +279,7 @@ PyFloat_AsDouble(PyObject *op)
     }
 
     res = (*nb->nb_float) (op);
+    res = _PyObject_CheckAccessNullable(res);
     if (res == NULL) {
         return -1;
     }
@@ -293,6 +297,10 @@ PyFloat_AsDouble(PyObject *op)
                 "is deprecated, and may be removed in a future version of Python.",
                 op, res)) {
             Py_DECREF(res);
+            return -1;
+        }
+        res = _PyObject_CheckAccessNullable(res);
+        if (res == NULL) {
             return -1;
         }
     }

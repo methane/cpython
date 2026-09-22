@@ -132,7 +132,7 @@ clear_unique_id(PyObject *obj)
         id = co->_co_unique_id;
         co->_co_unique_id = _Py_INVALID_UNIQUE_ID;
     }
-    else if (PyDict_Check(obj)) {
+    else if (PyAnyDict_Check(obj)) {
         PyDictObject *mp = (PyDictObject *)obj;
         id = _PyDict_UniqueId(mp);
         mp->_ma_watcher_tag &= ~(UINT64_MAX << DICT_UNIQUE_ID_SHIFT);

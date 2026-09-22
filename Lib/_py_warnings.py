@@ -38,7 +38,7 @@ filters = []
 
 
 defaultaction = "default"
-onceregistry = {}
+onceregistry = SynchronizedDict()
 _lock = _thread.RLock()
 _filters_version = 1
 
@@ -507,7 +507,7 @@ def warn(message, category=None, stacklevel=1, source=None,
         module = globals['__name__']
     else:
         module = "<string>"
-    registry = globals.setdefault("__warningregistry__", {})
+    registry = globals.setdefault("__warningregistry__", SynchronizedDict())
     _wm.warn_explicit(
         message,
         category,

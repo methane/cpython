@@ -523,6 +523,7 @@ def _unwrap_partialmethod(func):
 ################################################################################
 
 _CacheInfo = namedtuple("CacheInfo", ("hits", "misses", "maxsize", "currsize"))
+freeze(_CacheInfo)
 
 def _make_key(args, kwds, typed,
              kwd_mark = (object(),),

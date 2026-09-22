@@ -143,6 +143,20 @@ builtins namespace is searched next. If the names are also not found in the
 builtins namespace, new variables are created in the global namespace.
 The global statement must precede all uses of the listed names.
 
+.. versionchanged:: 3.16
+   Function global-name loads validate access to the resolved value under
+   the ThreadGroup rules, including values obtained from the builtins
+   namespace. This also applies to global and builtin fallbacks when resolving
+   names in class annotation scopes. An inaccessible value raises
+   :exc:`IllegalThreadAccessException` or :exc:`UnprotectedAccessException`;
+   it is not treated as a missing name. Specialization and optimization do
+   not bypass this validation.
+
+   Reading a closure cell also validates its contents, including cell fallbacks
+   in class annotation scopes. An inaccessible value raises an access exception
+   rather than being treated as an unbound name. Accessing ``cell_contents``
+   performs the same validation.
+
 The :keyword:`global` statement has the same scope as a name binding operation
 in the same block.  If the nearest enclosing scope for a free variable contains
 a global statement, the free variable is treated as a global.

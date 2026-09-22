@@ -267,6 +267,12 @@ always available. Unless explicitly noted otherwise, all variables are read-only
    may bear no relationship to that thread's current activity by the time calling
    code examines the frame.
 
+   Frames retain the ownership of their executing :class:`threading.ThreadGroup`,
+   even when this function creates their Python objects in another group.
+   Accessing a frame from a different group requires the debugger context
+   :data:`sys.monitoring.StopTheWorld`; obtaining the dictionary does not
+   transfer ownership of its frames.
+
    This function should be used for internal and specialized purposes only.
 
    .. audit-event:: sys._current_frames "" sys._current_frames
@@ -586,6 +592,10 @@ always available. Unless explicitly noted otherwise, all variables are read-only
    The :term:`named tuple` *flags* exposes the status of command line
    flags.  Flags should only be accessed only by name and not by index.  The
    attributes are read only.
+
+   The flags object is an immutable snapshot shared across thread groups.
+   Runtime configuration changes replace ``sys.flags`` with a new snapshot;
+   previously obtained snapshots retain their values.
 
    .. list-table::
 
@@ -1566,8 +1576,9 @@ always available. Unless explicitly noted otherwise, all variables are read-only
 
 .. data:: modules
 
-   This is a dictionary that maps module names to modules which have already been
-   loaded.  This can be manipulated to force reloading of modules and other tricks.
+   This is a :class:`SynchronizedDict` that maps module names to modules which
+   have already been loaded. This can be manipulated to force reloading of
+   modules and other tricks.
    However, replacing the dictionary will not necessarily work as expected and
    deleting essential items from the dictionary may cause Python to fail.  If
    you want to iterate over this global dictionary always use
@@ -1575,6 +1586,11 @@ always available. Unless explicitly noted otherwise, all variables are read-only
    size may change during iteration as a side effect of code or activity in
    other threads.
 
+   Synchronization protects the dictionary's storage; each module retains its
+   own ownership and shareable state. Each interpreter has its own dictionary.
+
+   .. versionchanged:: 3.16
+      The initial module dictionary is a :class:`SynchronizedDict`.
 
 .. data:: orig_argv
 
@@ -1593,9 +1609,14 @@ always available. Unless explicitly noted otherwise, all variables are read-only
 
    .. index:: triple: module; search; path
 
-   A list of strings that specifies the search path for modules. Initialized from
+   A :class:`SynchronizedList` of strings that specifies the search path for
+   modules. Initialized from
    the environment variable :envvar:`PYTHONPATH`, plus an installation-dependent
    default.
+
+   .. versionchanged:: 3.16
+      The list created from the interpreter's path configuration is a
+      :class:`SynchronizedList`.
 
    By default, as initialized upon program startup, a potentially unsafe path
    is prepended to :data:`sys.path` (*before* the entries inserted as a result

@@ -211,6 +211,47 @@ remove_mem_hooks(PyObject *self, PyObject *Py_UNUSED(ignored))
 }
 
 static PyObject *
+frame_get_nomemory(PyObject *self, PyObject *holder)
+{
+    /* Call from a fresh Python frame in an isolated process: these allocator
+       hooks are global, and an already materialized frame would not allocate. */
+    PyThreadState *tstate = PyThreadState_Get();
+    if (holder != Py_None) {
+        if (!PyTuple_Check(holder) || PyTuple_GET_SIZE(holder) != 1) {
+            PyErr_SetString(PyExc_TypeError, "expected a one-capsule tuple");
+            return NULL;
+        }
+        tstate = PyCapsule_GetPointer(PyTuple_GET_ITEM(holder, 0),
+                                     "_testcapi.threadstate");
+        if (tstate == NULL) {
+            return NULL;
+        }
+    }
+    fm_set_nomemory(0, 0);
+    PyFrameObject *frame = PyThreadState_GetFrame(tstate);
+    fm_remove_hooks();
+    assert(FmData.count > 0);
+    assert(frame == NULL);
+    assert(!PyErr_Occurred());
+
+    // Failed materialization must leave the executing frame usable.
+    frame = PyThreadState_GetFrame(tstate);
+    if (frame == NULL) {
+        PyErr_SetString(PyExc_AssertionError, "frame acquisition did not recover");
+        return NULL;
+    }
+    // An existing frame needs no allocation, even with access validation.
+    fm_set_nomemory(0, 0);
+    PyFrameObject *cached = PyThreadState_GetFrame(tstate);
+    fm_remove_hooks();
+    assert(cached == frame);
+    assert(!PyErr_Occurred());
+    Py_DECREF(cached);
+    Py_DECREF(frame);
+    Py_RETURN_NONE;
+}
+
+static PyObject *
 test_setallocators(PyMemAllocatorDomain domain)
 {
     PyObject *res = NULL;
@@ -962,6 +1003,7 @@ static PyMethodDef test_methods[] = {
     {"pymem_buffer_overflow",         pymem_buffer_overflow,         METH_NOARGS},
     {"pymem_malloc_without_gil",      pymem_malloc_without_gil,      METH_NOARGS},
     {"pyobject_malloc_without_gil",   pyobject_malloc_without_gil,   METH_NOARGS},
+    {"frame_get_nomemory",            frame_get_nomemory,            METH_O, NULL},
     {"remove_mem_hooks",              remove_mem_hooks,              METH_NOARGS,
         PyDoc_STR("Remove memory hooks.")},
     {"set_nomemory",                  set_nomemory,                  METH_VARARGS,

@@ -122,6 +122,28 @@ dummy_func(void) {
         assert(!PyJitRef_IsUnique(value));
     }
 
+    op(_LOAD_FAST_MAYBE_UNPROTECTED, (-- value)) {
+        value = GETLOCAL(oparg);
+        if (sym_is_null(value)) {
+            ctx->done = true;
+        }
+        assert(!PyJitRef_IsUnique(value));
+    }
+
+    op(_LOAD_FAST_BORROW_MAYBE_UNPROTECTED, (-- value)) {
+        value = PyJitRef_Borrow(GETLOCAL(oparg));
+        if (sym_is_null(value)) {
+            ctx->done = true;
+        }
+        assert(!PyJitRef_IsUnique(value));
+    }
+
+    op(_LOAD_FAST_AND_CLEAR_CHECK, (-- value)) {
+        value = GETLOCAL(oparg);
+        GETLOCAL(oparg) = sym_new_null(ctx);
+        assert(!PyJitRef_IsUnique(value));
+    }
+
     op(_LOAD_FAST, (-- value)) {
         value = GETLOCAL(oparg);
         assert(!PyJitRef_IsUnique(value));
@@ -641,8 +663,9 @@ dummy_func(void) {
         ds = dict_st;
         ss = sub_st;
         PyObject *sub = sym_get_const(ctx, sub_st);
+        // Folding must not remove an access check on a mutable value.
         if (sym_is_not_container(sub_st) &&
-            sym_matches_type(dict_st, &PyFrozenDict_Type)) {
+            frozendict_has_immutable_values(sym_get_const(ctx, dict_st))) {
             REPLACE_OPCODE_IF_EVALUATES_PURE(dict_st, sub_st, res);
         }
         else if (sub != NULL) {
@@ -1349,6 +1372,15 @@ dummy_func(void) {
         ctx->curr_frame_depth++;
         assert((this_instr + 1)->opcode == _PUSH_FRAME);
         init_frame = PyJitRef_WrapInvalid(frame_new_from_symbol(ctx, init, args-1, oparg+1));
+    }
+
+    op(_CHECK_CALL_ACCESS, (value -- value)) {
+        PyObject *constant = sym_get_const(ctx, value);
+        if (constant != NULL &&
+            _Py_atomic_load_uint8(&constant->ob_shareable) == _Py_SHAREABLE_IMMUTABLE) {
+            // Immutability cannot be revoked by argument cleanup or callbacks.
+            REPLACE_OP(this_instr, _NOP, 0, 0);
+        }
     }
 
     op(_RETURN_VALUE, (retval -- res)) {

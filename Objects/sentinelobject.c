@@ -154,9 +154,9 @@ sentinel_repr(PyObject *op)
 {
     sentinelobject *self = sentinelobject_CAST(op);
     if (self->repr != NULL) {
-        return Py_NewRef(self->repr);
+        return _PyObject_CheckAccessNullable(Py_NewRef(self->repr));
     }
-    return Py_NewRef(self->name);
+    return _PyObject_CheckAccessNullable(Py_NewRef(self->name));
 }
 
 static PyObject *
@@ -175,10 +175,30 @@ static PyObject *
 sentinel_reduce(PyObject *op, PyObject *Py_UNUSED(ignored))
 {
     sentinelobject *self = sentinelobject_CAST(op);
-    return Py_NewRef(self->name);
+    return _PyObject_CheckAccessNullable(Py_NewRef(self->name));
+}
+
+static PyObject *
+sentinel_freeze(PyObject *self, PyObject *Py_UNUSED(ignored))
+{
+    if (PyObject_CheckAccess(self) == NULL) {
+        return NULL;
+    }
+    int err;
+    Py_BEGIN_CRITICAL_SECTION(self);
+    uint8_t was_frozen = _Py_atomic_load_uint8(&self->ob_frozen);
+    _Py_atomic_store_uint8(&self->ob_frozen, 1);
+    err = PyObject_DeclareImmutable(self);
+    if (err < 0) {
+        _Py_atomic_store_uint8(&self->ob_frozen, was_frozen);
+    }
+    Py_END_CRITICAL_SECTION();
+    return err < 0 ? NULL : Py_NewRef(self);
 }
 
 static PyMethodDef sentinel_methods[] = {
+    {"__freeze__", sentinel_freeze, METH_NOARGS,
+     "Make the sentinel immutable without freezing its referenced values."},
     {"__copy__", sentinel_copy, METH_NOARGS, NULL},
     {"__deepcopy__", sentinel_deepcopy, METH_O, NULL},
     {"__reduce__", sentinel_reduce, METH_NOARGS, NULL},

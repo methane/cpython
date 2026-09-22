@@ -565,11 +565,14 @@ definition with the same method name.
    This function returns the function's flags on success, and ``-1`` with an
    exception set on failure.
 
+   .. versionchanged:: 3.16
+      Validates access to *func* before reading its flags.
+
 
 .. c:function:: int PyCFunction_GET_FLAGS(PyObject *func)
 
    This is the same as :c:func:`PyCFunction_GetFlags`, but without error
-   or type checking.
+   or type checking, and without access validation.
 
 
 .. c:function:: PyCFunction PyCFunction_GetFunction(PyObject *func)
@@ -583,11 +586,14 @@ definition with the same method name.
    This function returns the function pointer on success, and ``NULL`` with an
    exception set on failure.
 
+   .. versionchanged:: 3.16
+      Validates access to *func* before reading its function pointer.
+
 
 .. c:function:: int PyCFunction_GET_FUNCTION(PyObject *func)
 
    This is the same as :c:func:`PyCFunction_GetFunction`, but without error
-   or type checking.
+   or type checking, and without access validation.
 
 
 .. c:function:: PyObject *PyCFunction_GetSelf(PyObject *func)
@@ -602,12 +608,19 @@ definition with the same method name.
 
    This function returns a :term:`borrowed reference` to the "self" object
    on success, and ``NULL`` with an exception set on failure.
+   If the function has no "self" object, it returns ``NULL`` without setting
+   an exception.
+
+   .. versionchanged:: 3.16
+      Validates access to *func* and to the returned "self" object, including
+      module objects. Access failure returns ``NULL`` with an exception set;
+      the borrowed reference is not decremented.
 
 
 .. c:function:: PyObject *PyCFunction_GET_SELF(PyObject *func)
 
    This is the same as :c:func:`PyCFunction_GetSelf`, but without error or
-   type checking.
+   type checking or access validation.
 
 
 Accessing attributes of extension types

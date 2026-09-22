@@ -9,6 +9,15 @@ Function Objects
 
 There are a few functions specific to Python functions.
 
+.. versionchanged:: 3.16
+   :c:func:`PyFunction_GetCode`, :c:func:`PyFunction_GetGlobals`,
+   :c:func:`PyFunction_GetModule`, :c:func:`PyFunction_GetDefaults`,
+   :c:func:`PyFunction_GetKwDefaults`, :c:func:`PyFunction_GetClosure`, and
+   :c:func:`PyFunction_GetAnnotations` check whether the current ThreadGroup
+   may access the returned object. An inaccessible local result raises
+   :exc:`IllegalThreadAccessException` and returns ``NULL``. The references
+   remain borrowed; rejection does not release the function's reference.
+
 
 .. c:type:: PyFunctionObject
 
@@ -39,6 +48,13 @@ There are a few functions specific to Python functions.
    is retrieved from *globals*. The argument defaults, annotations and closure are
    set to ``NULL``. :attr:`~function.__qualname__` is set to the same value as
    the code object's :attr:`~codeobject.co_qualname` field.
+
+   .. versionchanged:: 3.16
+      Functions without free variables, attached closure storage, or cell
+      variables rebound by nested code start in the synchronized state.
+      Other cell variables created separately for each call do not prevent
+      sharing the function object. Captured closure storage
+      remains subject to its own sharing rules.
 
 
 .. c:function:: PyObject* PyFunction_NewWithQualName(PyObject *code, PyObject *globals, PyObject *qualname)
@@ -83,8 +99,18 @@ There are a few functions specific to Python functions.
    Set the argument default values for the function object *op*. *defaults* must be
    ``Py_None`` or a tuple.
 
-   Raises :exc:`SystemError` and returns ``-1`` on failure.
+   Returns ``-1`` with an exception set on failure.
 
+   .. deprecated:: 3.16
+      Emits :exc:`DeprecationWarning`. If the warning is raised as an error,
+      returns ``-1`` without changing the function.
+
+
+   .. versionchanged:: 3.16
+      Rejects a local function owned by another ThreadGroup with
+      :exc:`IllegalThreadAccessException`, and an immutable function with
+      :exc:`TypeError`. The sharing state is checked again after callbacks
+      and before changing the function.
 
 .. c:function:: void PyFunction_SetVectorcall(PyFunctionObject *func, vectorcallfunc vectorcall)
 
@@ -99,17 +125,32 @@ There are a few functions specific to Python functions.
 .. c:function:: PyObject* PyFunction_GetKwDefaults(PyObject *op)
 
    Return the keyword-only argument default values of the function object *op*. This can be a
-   dictionary of arguments or ``NULL``.
+   :class:`frozendict` of arguments or ``NULL``.
+
+   .. versionchanged:: 3.16
+      Keyword-only defaults are immutable.
 
 
 .. c:function:: int PyFunction_SetKwDefaults(PyObject *op, PyObject *defaults)
 
    Set the keyword-only argument default values of the function object *op*.
-   *defaults* must be a dictionary of keyword-only arguments or ``Py_None``.
+   *defaults* must be a :class:`dict`, :class:`frozendict`, or ``Py_None``.
+   Dictionary inputs are stored as shallow immutable snapshots, so later
+   changes to the input dictionary do not affect the function.
 
    This function returns ``0`` on success, and returns ``-1`` with an exception
    set on failure.
 
+   .. deprecated:: 3.16
+      Emits :exc:`DeprecationWarning`. If the warning is raised as an error,
+      returns ``-1`` without changing the function.
+
+
+   .. versionchanged:: 3.16
+      Rejects a local function owned by another ThreadGroup with
+      :exc:`IllegalThreadAccessException`, and an immutable function with
+      :exc:`TypeError`. The sharing state is checked again after callbacks
+      and before changing the function.
 
 .. c:function:: PyObject* PyFunction_GetClosure(PyObject *op)
 
@@ -122,8 +163,25 @@ There are a few functions specific to Python functions.
    Set the closure associated with the function object *op*. *closure* must be
    ``Py_None`` or a tuple of cell objects.
 
-   Raises :exc:`SystemError` and returns ``-1`` on failure.
+   Installing interpreter-created read-only bindings can make the function
+   synchronized. Cells created by :c:func:`PyCell_New` have mutable bindings.
+   Attaching writer code to a read-only cell also reclassifies other functions
+   that capture the cell. Functions with mutable local captures belong to
+   those cells' owning thread group; captures with conflicting owners cannot
+   be accessed from either group.
 
+   Returns ``-1`` with an exception set on failure.
+
+   .. deprecated:: 3.16
+      Emits :exc:`DeprecationWarning`. If the warning is raised as an error,
+      returns ``-1`` without changing the function.
+
+
+   .. versionchanged:: 3.16
+      Rejects a local function owned by another ThreadGroup with
+      :exc:`IllegalThreadAccessException`, and an immutable function with
+      :exc:`TypeError`. The sharing state is checked again after callbacks
+      and before changing the function.
 
 .. c:function:: PyObject *PyFunction_GetAnnotations(PyObject *op)
 
@@ -136,7 +194,10 @@ There are a few functions specific to Python functions.
    Set the annotations for the function object *op*. *annotations*
    must be a dictionary or ``Py_None``.
 
-   Raises :exc:`SystemError` and returns ``-1`` on failure.
+   Return ``0`` on success and ``-1`` with an exception set on failure.
+   Invalid argument types raise :exc:`SystemError`. A function declared
+   immutable raises :exc:`TypeError`; a local function owned by another
+   thread group raises :exc:`IllegalThreadAccessException`.
 
 
 .. c:function:: PyObject *PyFunction_GET_CODE(PyObject *op)

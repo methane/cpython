@@ -261,7 +261,7 @@ static int codegen_make_closure(compiler *c, location loc,
 
 /* Add an opcode with an integer argument */
 static int
-codegen_addop_i(instr_sequence *seq, int opcode, Py_ssize_t oparg, location loc)
+codegen_addop_i(compiler *c, int opcode, Py_ssize_t oparg, location loc)
 {
     /* oparg value is unsigned, but a signed C int is usually used to store
        it in the C code (like Python/ceval.c).
@@ -273,14 +273,18 @@ codegen_addop_i(instr_sequence *seq, int opcode, Py_ssize_t oparg, location loc)
 
     int oparg_ = Py_SAFE_DOWNCAST(oparg, Py_ssize_t, int);
     assert(!IS_ASSEMBLER_OPCODE(opcode));
-    return _PyInstructionSequence_Addop(seq, opcode, oparg_, loc);
+    if ((opcode == STORE_FAST || opcode == STORE_FAST_MAYBE_NULL) &&
+        _PyCompile_InWith(c)) {
+        opcode = opcode == STORE_FAST ? STORE_FAST_WITH : STORE_FAST_MAYBE_NULL_WITH;
+    }
+    return _PyInstructionSequence_Addop(INSTR_SEQUENCE(c), opcode, oparg_, loc);
 }
 
 #define ADDOP_I(C, LOC, OP, O) \
-    RETURN_IF_ERROR(codegen_addop_i(INSTR_SEQUENCE(C), (OP), (O), (LOC)))
+    RETURN_IF_ERROR(codegen_addop_i((C), (OP), (O), (LOC)))
 
 #define ADDOP_I_IN_SCOPE(C, LOC, OP, O) \
-    RETURN_IF_ERROR_IN_SCOPE(C, codegen_addop_i(INSTR_SEQUENCE(C), (OP), (O), (LOC)))
+    RETURN_IF_ERROR_IN_SCOPE(C, codegen_addop_i((C), (OP), (O), (LOC)))
 
 static int
 codegen_addop_noarg(instr_sequence *seq, int opcode, location loc)
@@ -6470,7 +6474,7 @@ codegen_pattern_or(compiler *c, pattern_ty p, pattern_context *pc)
         pc->fail_pop = NULL;
         pc->fail_pop_size = 0;
         pc->on_top = 0;
-        if (codegen_addop_i(INSTR_SEQUENCE(c), COPY, 1, LOC(alt)) < 0 ||
+        if (codegen_addop_i(c, COPY, 1, LOC(alt)) < 0 ||
             codegen_pattern(c, alt, pc) < 0) {
             goto error;
         }

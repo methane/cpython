@@ -816,7 +816,11 @@ class HTMLDoc(Doc):
             docloc = ''
         result = self.heading(head, '<a href=".">index</a><br>' + filelink + docloc)
 
-        modules = inspect.getmembers(object, inspect.ismodule)
+        # The implicit __module__ binding refers to the documented module
+        # itself, rather than an imported module.
+        modules = [(key, value)
+                   for key, value in inspect.getmembers(object, inspect.ismodule)
+                   if key != '__module__' or value is not object]
 
         classes, cdict = [], {}
         for key, value in inspect.getmembers(object, inspect.isclass):

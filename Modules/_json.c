@@ -1346,6 +1346,10 @@ encoder_new(PyTypeObject *type, PyObject *args, PyObject *kwds)
 
     if (PyCFunction_Check(s->encoder)) {
         PyCFunction f = PyCFunction_GetFunction(s->encoder);
+        if (f == NULL && PyErr_Occurred()) {
+            Py_DECREF(s);
+            return NULL;
+        }
         if (f == py_encode_basestring_ascii) {
             s->fast_encode = write_escaped_ascii;
         }

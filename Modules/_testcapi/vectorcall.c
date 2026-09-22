@@ -259,7 +259,43 @@ _testcapi_has_vectorcall_flag_impl(PyObject *module, PyTypeObject *type)
     return PyType_HasFeature(type, Py_TPFLAGS_HAVE_VECTORCALL);
 }
 
+static PyObject *
+pycfunction_getself(PyObject *module, PyObject *arg)
+{
+    PyObject *self = PyCFunction_GetSelf(arg);
+    if (self == NULL) {
+        if (PyErr_Occurred()) {
+            return NULL;
+        }
+        Py_RETURN_NONE;
+    }
+    return Py_NewRef(self);
+}
+
+static PyObject *
+pycfunction_getfunction(PyObject *module, PyObject *arg)
+{
+    PyCFunction func = PyCFunction_GetFunction(arg);
+    if (func == NULL && PyErr_Occurred()) {
+        return NULL;
+    }
+    return PyBool_FromLong(func != NULL);
+}
+
+static PyObject *
+pycfunction_getflags(PyObject *module, PyObject *arg)
+{
+    int flags = PyCFunction_GetFlags(arg);
+    if (flags == -1 && PyErr_Occurred()) {
+        return NULL;
+    }
+    return PyLong_FromLong(flags);
+}
+
 static PyMethodDef TestMethods[] = {
+    {"pycfunction_getself", pycfunction_getself, METH_O},
+    {"pycfunction_getfunction", pycfunction_getfunction, METH_O},
+    {"pycfunction_getflags", pycfunction_getflags, METH_O},
     _TESTCAPI_PYOBJECT_FASTCALLDICT_METHODDEF
     _TESTCAPI_PYOBJECT_VECTORCALL_METHODDEF
     {"function_setvectorcall", function_setvectorcall, METH_O},

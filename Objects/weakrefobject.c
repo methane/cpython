@@ -67,6 +67,7 @@ init_weakref(PyWeakReference *self, PyObject *ob, PyObject *callback)
     self->wr_next = NULL;
     self->wr_callback = Py_XNewRef(callback);
     self->vectorcall = weakref_vectorcall;
+    self->wr_callback_group = _PyThreadState_GET()->threadgroup->id;
 #ifdef Py_GIL_DISABLED
     self->weakrefs_lock = &WEAKREF_LIST_LOCK(ob);
     _PyObject_SetMaybeWeakref(ob);
@@ -183,7 +184,7 @@ weakref_vectorcall(PyObject *self, PyObject *const *args,
     if (obj == NULL) {
         Py_RETURN_NONE;
     }
-    return obj;
+    return _PyObject_CheckAccessNullable(obj);
 }
 
 static Py_hash_t
@@ -404,6 +405,17 @@ allocate_weakref(PyTypeObject *type, PyObject *obj, PyObject *callback)
         return NULL;
     }
     init_weakref(newref, obj, callback);
+    if (type == &_PyWeakref_RefType &&
+        FT_ATOMIC_LOAD_UINT8(obj->ob_shareable) == _Py_SHAREABLE_SYNCHRONIZED)
+    {
+        // The weakref-list lock is held here. Publish sharing metadata before
+        // linking the reference, without taking another object's critical
+        // section. Exact weakrefs synchronize their native storage; subclass
+        // fields require a separate policy.
+        _Py_atomic_store_uint32_relaxed(&newref->ob_base.ob_owner_id, 0);
+        _Py_atomic_store_uint8(&newref->ob_base.ob_shareable,
+                               _Py_SHAREABLE_SYNCHRONIZED);
+    }
     return newref;
 }
 
@@ -968,7 +980,11 @@ PyWeakref_GetRef(PyObject *ref, PyObject **pobj)
         return -1;
     }
     *pobj = _PyWeakref_GET_REF(ref);
-    return (*pobj != NULL);
+    if (*pobj == NULL) {
+        return 0;
+    }
+    *pobj = _PyObject_CheckAccessNullable(*pobj);
+    return *pobj != NULL ? 1 : -1;
 }
 
 
@@ -988,12 +1004,18 @@ PyWeakref_GetObject(PyObject *ref)
     return obj;  // borrowed reference
 }
 
-/* Note that there's an inlined copy-paste of handle_callback() in gcmodule.c's
- * handle_weakrefs().
- */
-static void
-handle_callback(PyWeakReference *ref, PyObject *callback)
+void
+_PyWeakref_CallCallback(PyWeakReference *ref, PyObject *callback)
 {
+    PyThreadState *tstate = _PyThreadState_GET();
+    if (tstate->debugger_stop_depth == 0 &&
+        ref->wr_callback_group != tstate->threadgroup->id)
+    {
+        if (_PyThreadGroup_CallWeakrefCallback(ref, callback) < 0) {
+            PyErr_FormatUnraisable("while dispatching a weakref callback");
+        }
+        return;
+    }
     PyObject *cbresult = PyObject_CallOneArg(callback, (PyObject *)ref);
 
     if (cbresult == NULL) {
@@ -1085,7 +1107,7 @@ PyObject_ClearWeakRefs(PyObject *object)
         PyObject *callback = PyTuple_GET_ITEM(tuple, i + 1);
         if (callback != NULL) {
             PyObject *weakref = PyTuple_GET_ITEM(tuple, i);
-            handle_callback((PyWeakReference *)weakref, callback);
+            _PyWeakref_CallCallback((PyWeakReference *)weakref, callback);
         }
     }
 

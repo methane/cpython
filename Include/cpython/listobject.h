@@ -21,6 +21,11 @@ typedef struct {
     Py_ssize_t allocated;
 } PyListObject;
 
+PyAPI_DATA(PyTypeObject) PySynchronizedList_Type;
+PyAPI_FUNC(PyObject *) PySynchronizedList_New(Py_ssize_t size);
+#define PySynchronizedList_Check(op) PyObject_TypeCheck((op), &PySynchronizedList_Type)
+#define PySynchronizedList_CheckExact(op) Py_IS_TYPE((op), &PySynchronizedList_Type)
+
 /* Cast argument to PyListObject* type. */
 #define _PyList_CAST(op) \
     (assert(PyList_Check(op)), _Py_CAST(PyListObject*, (op)))

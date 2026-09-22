@@ -1,6 +1,7 @@
 /* Function object implementation */
 
 #include "Python.h"
+#include "pycore_gc.h"
 #include "pycore_code.h"          // _PyCode_VerifyStateless()
 #include "pycore_dict.h"          // _Py_INCREF_DICT()
 #include "pycore_function.h"      // _PyFunction_Vectorcall
@@ -12,6 +13,7 @@
 #include "pycore_pyerrors.h"      // _PyErr_Occurred()
 #include "pycore_setobject.h"     // _PySet_NextEntry()
 #include "pycore_stats.h"
+#include "pycore_threadgroup.h"   // _PyThreadGroupState
 #include "pycore_weakref.h"       // FT_CLEAR_WEAKREFS()
 
 static const char *
@@ -24,6 +26,352 @@ func_event_name(PyFunction_WatchEvent event) {
         #undef CASE
     }
     Py_UNREACHABLE();
+}
+
+static int
+warn_function_mutation(const char *attribute)
+{
+    return PyErr_WarnFormat(PyExc_DeprecationWarning, 1,
+                           "Modifying a function's %s is deprecated", attribute);
+}
+
+/* The binding byte is zero for mutable cells. Otherwise it is one plus a
+   saturating count of attached functions. A cell with no surviving readers
+   can become mutable without scanning the interpreter heap. */
+static void
+func_register_closure(PyObject *closure, int add)
+{
+    if (closure == NULL) {
+        return;
+    }
+    for (Py_ssize_t i = 0; i < PyTuple_GET_SIZE(closure); i++) {
+        PyObject *item = PyTuple_GET_ITEM(closure, i);
+        if (!PyCell_Check(item)) {
+            continue;
+        }
+        PyCellObject *cell = (PyCellObject *)item;
+        uint8_t readers = _Py_atomic_load_uint8(&cell->ob_readonly_binding);
+        while (readers != 0 && readers != UINT8_MAX) {
+            assert(add || readers > 1);
+            uint8_t next = add ? readers + 1 : readers - 1;
+            if (_Py_atomic_compare_exchange_uint8(&cell->ob_readonly_binding,
+                                                  &readers, next)) {
+                break;
+            }
+        }
+    }
+}
+
+static int
+func_can_share(PyCodeObject *code, PyObject *closure)
+{
+    Py_ssize_t size = closure == NULL ? 0 : PyTuple_GET_SIZE(closure);
+    if (size != code->co_nfreevars) {
+        return 0;
+    }
+    for (Py_ssize_t i = 0; i < size; i++) {
+        PyObject *cell = PyTuple_GET_ITEM(closure, i);
+        if (!PyCell_Check(cell) ||
+            !_Py_atomic_load_uint8(&((PyCellObject *)cell)->ob_readonly_binding)) {
+            return 0;
+        }
+    }
+    // Per-call cells are safe unless nested code can rebind them.
+    for (int i = 0; i < code->co_nlocalsplus; i++) {
+        if (_PyLocals_GetKind(code->co_localspluskinds, i) &
+            CO_FAST_NONLOCAL_WRITE) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+/* A local function with mutable captures must belong to their owner, not
+   merely to the group constructing a new wrapper around foreign cells.
+   Conflicting local owners cannot be represented by a single valid owner. */
+static uint32_t
+func_closure_owner(PyObject *closure, uint32_t fallback)
+{
+    uint32_t owner = 0;
+    if (closure == NULL) {
+        return fallback;
+    }
+    for (Py_ssize_t i = 0; i < PyTuple_GET_SIZE(closure); i++) {
+        PyObject *cell = PyTuple_GET_ITEM(closure, i);
+        if (!PyCell_Check(cell) ||
+            _Py_atomic_load_uint8(&((PyCellObject *)cell)->ob_readonly_binding) ||
+            _Py_atomic_load_uint8(&cell->ob_shareable) >= _Py_SHAREABLE_SYNCHRONIZED) {
+            continue;
+        }
+        uint32_t cell_owner = _Py_atomic_load_uint32_relaxed(&cell->ob_owner_id);
+        if (cell_owner == 0 || (owner != 0 && owner != cell_owner)) {
+            return 0;
+        }
+        owner = cell_owner;
+    }
+    return owner == 0 ? fallback : owner;
+}
+
+/* Called before publication, or with the world stopped when execution
+   attributes change. Cells retain their own ownership; sharing a reader does
+   not grant access to its captured values. */
+static void
+func_update_shareable(PyFunctionObject *func)
+{
+    PyObject *op = (PyObject *)func;
+    PyCodeObject *code = (PyCodeObject *)func->func_code;
+    uint8_t state = FT_ATOMIC_LOAD_UINT8(op->ob_shareable);
+    if (state != _Py_SHAREABLE_LOCAL && state != _Py_SHAREABLE_SYNCHRONIZED) {
+        return;
+    }
+    if (func_can_share(code, func->func_closure)) {
+        _Py_atomic_store_uint32_relaxed(&op->ob_owner_id, 0);
+        _Py_atomic_store_uint8(&op->ob_shareable, _Py_SHAREABLE_SYNCHRONIZED);
+    }
+    else {
+        uint32_t owner = state == _Py_SHAREABLE_LOCAL ?
+            _Py_atomic_load_uint32_relaxed(&op->ob_owner_id) :
+            _PyThreadState_GET()->threadgroup->id;
+        owner = func_closure_owner(func->func_closure, owner);
+        _Py_atomic_store_uint32_relaxed(&op->ob_owner_id, owner);
+        _Py_atomic_store_uint8(&op->ob_shareable, _Py_SHAREABLE_LOCAL);
+    }
+}
+
+static void func_clear_version(PyInterpreterState *, PyFunctionObject *);
+
+/* The world is stopped and this callback must not allocate or invoke Python.
+   A binding, not a code object, is the unit of dependency: separate calls of
+   the same factory create independent cells. */
+static int
+localize_cell_reader(PyObject *op, void *arg)
+{
+    if (!PyFunction_Check(op)) {
+        return 1;
+    }
+    uint8_t state = _Py_atomic_load_uint8(&op->ob_shareable);
+    if (state != _Py_SHAREABLE_LOCAL && state != _Py_SHAREABLE_SYNCHRONIZED) {
+        return 1;
+    }
+    PyFunctionObject *func = (PyFunctionObject *)op;
+    PyObject *closure = func->func_closure;
+    if (closure == NULL || func->func_code == NULL) {
+        return 1;
+    }
+    PyCellObject *cell = arg;
+    for (Py_ssize_t i = 0; i < PyTuple_GET_SIZE(closure); i++) {
+        if (PyTuple_GET_ITEM(closure, i) == (PyObject *)cell) {
+            func_clear_version(_PyInterpreterState_GET(), func);
+            func_update_shareable(func);
+            break;
+        }
+    }
+    return 1;
+}
+
+static void
+cell_became_writable_stopped(PyCellObject *cell)
+{
+    uint8_t readers = _Py_atomic_load_uint8(&cell->ob_readonly_binding);
+    if (readers == 0) {
+        return;
+    }
+    _Py_atomic_store_uint8(&cell->ob_readonly_binding, 0);
+    if (readers == 1) {
+        return;
+    }
+#ifdef Py_GIL_DISABLED
+    _PyGC_VisitObjectsWorldStopped(_PyInterpreterState_GET(),
+                                 localize_cell_reader, cell);
+#else
+    PyUnstable_GC_VisitObjects(localize_cell_reader, cell);
+#endif
+}
+
+void
+_PyFunction_CellBecameWritable(PyCellObject *cell)
+{
+    uint8_t readers = _Py_atomic_load_uint8(&cell->ob_readonly_binding);
+    if (readers == 0) {
+        return;
+    }
+    // Registration uses the same byte, so a concurrent new reader either
+    // prevents this transition or observes the already mutable binding.
+    if (readers == 1 && _Py_atomic_compare_exchange_uint8(
+            &cell->ob_readonly_binding, &readers, 0)) {
+        return;
+    }
+    PyInterpreterState *interp = _PyInterpreterState_GET();
+    _PyEval_StopTheWorld(interp);
+    cell_became_writable_stopped(cell);
+    _PyEval_StartTheWorld(interp);
+}
+
+/* Connecting writer code to a previously read-only cell also affects readers
+   that have already been published. Called with the world stopped. */
+static void
+func_mark_closure_writers(PyCodeObject *code, PyObject *closure)
+{
+    if (closure == NULL) {
+        return;
+    }
+    int offset = code->co_nlocalsplus - code->co_nfreevars;
+    Py_ssize_t size = PyTuple_GET_SIZE(closure);
+    if (size > code->co_nfreevars) {
+        size = code->co_nfreevars;
+    }
+    for (Py_ssize_t i = 0; i < size; i++) {
+        if (_PyLocals_GetKind(code->co_localspluskinds, offset + i) &
+            CO_FAST_NONLOCAL_WRITE) {
+            PyObject *cell = PyTuple_GET_ITEM(closure, i);
+            if (PyCell_Check(cell)) {
+                cell_became_writable_stopped((PyCellObject *)cell);
+            }
+        }
+    }
+}
+
+/* Check without allocating: callers may have stopped the world. Report the
+   error only after resuming it, since creating an exception can trigger GC. */
+static PyObject *
+func_mutation_error(PyObject *op)
+{
+    uint8_t state = FT_ATOMIC_LOAD_UINT8(op->ob_shareable);
+    if (state == _Py_SHAREABLE_IMMUTABLE || FT_ATOMIC_LOAD_UINT8(op->ob_frozen)) {
+        return PyExc_TypeError;
+    }
+    if (_PyThreadState_GET()->debugger_stop_depth != 0) {
+        return NULL;
+    }
+    if (state == _Py_SHAREABLE_PROTECTED) {
+        return PyExc_UnprotectedAccessException;
+    }
+    if (state == _Py_SHAREABLE_LOCAL &&
+        FT_ATOMIC_LOAD_UINT32_RELAXED(op->ob_owner_id) !=
+            _PyThreadState_GET()->threadgroup->id) {
+        return PyExc_IllegalThreadAccessException;
+    }
+    return NULL;
+}
+
+static int
+func_check_mutation(PyObject *op)
+{
+    PyObject *error = func_mutation_error(op);
+    if (error != NULL) {
+        PyErr_SetString(error, "cannot modify function in its current sharing state");
+        return -1;
+    }
+    return 0;
+}
+
+static int
+func_begin_mutation(PyInterpreterState *interp, PyObject *op)
+{
+    _PyEval_StopTheWorld(interp);
+    PyObject *error = func_mutation_error(op);
+    if (error != NULL) {
+        _PyEval_StartTheWorld(interp);
+        PyErr_SetString(error, "cannot modify function in its current sharing state");
+        return -1;
+    }
+    return 0;
+}
+
+/* On success leave the world stopped, ready to commit code or closure.
+   Namespace conversion can allocate and wait, so perform it outside this
+   interval and retry against the current function fields afterwards. */
+static int
+func_begin_execution_mutation(PyInterpreterState *interp, PyFunctionObject *func,
+                              PyObject *code, PyObject *closure)
+{
+    for (;;) {
+        if (func_begin_mutation(interp, (PyObject *)func) < 0) {
+            return -1;
+        }
+        PyCodeObject *new_code = (PyCodeObject *)(code ? code : func->func_code);
+        PyObject *new_closure = code ? func->func_closure : closure;
+        if (code != NULL) {
+            Py_ssize_t nclosure = new_closure ? PyTuple_GET_SIZE(new_closure) : 0;
+            if (nclosure != new_code->co_nfreevars) {
+                PyObject *name = Py_NewRef(func->func_name);
+                int nfree = new_code->co_nfreevars;
+                _PyEval_StartTheWorld(interp);
+                PyErr_Format(PyExc_ValueError,
+                             "%U() requires a code object with %zd free vars,"
+                             " not %d", name, nclosure, nfree);
+                Py_DECREF(name);
+                return -1;
+            }
+        }
+        if (!func_can_share(new_code, new_closure) || func->func_dict == NULL ||
+            PySynchronizedDict_CheckExact(func->func_dict))
+        {
+            return 0;
+        }
+        PyObject *dict = Py_NewRef(func->func_dict);
+        _PyEval_StartTheWorld(interp);
+        int res = _PyDict_SynchronizeNamespace(dict);
+        Py_DECREF(dict);
+        if (res < 0) {
+            return -1;
+        }
+    }
+}
+
+int
+_PyFunction_SetClosureForCreation(PyFunctionObject *func, PyObject *closure)
+{
+    PyInterpreterState *interp = _PyInterpreterState_GET();
+    if (func_begin_execution_mutation(interp, func, NULL, closure) < 0) {
+        return -1;
+    }
+    PyObject *old_closure = func->func_closure;
+    func_register_closure(closure, 1);
+    func->func_closure = Py_NewRef(closure);
+    func_register_closure(old_closure, 0);
+    func_mark_closure_writers((PyCodeObject *)func->func_code, closure);
+    func_update_shareable(func);
+    _PyEval_StartTheWorld(interp);
+    Py_XDECREF(old_closure);
+    return 0;
+}
+
+int
+_PyFunction_SetDict(PyObject *func, PyObject *dict)
+{
+    assert(PyFunction_Check(func));
+    if (func_check_mutation(func) < 0) {
+        return -1;
+    }
+    if (dict == NULL || !PyDict_Check(dict)) {
+        PyErr_SetString(PyExc_TypeError, "__dict__ must be set to a dictionary");
+        return -1;
+    }
+    if (PyObject_CheckAccess(dict) == NULL) {
+        return -1;
+    }
+    int res;
+    Py_BEGIN_CRITICAL_SECTION(func);
+    res = func_check_mutation(func);
+    if (res == 0 &&
+        FT_ATOMIC_LOAD_UINT8(func->ob_shareable) == _Py_SHAREABLE_SYNCHRONIZED)
+    {
+        // Preserve all aliases to the supplied namespace, including split
+        // instance dictionaries. This may suspend the function's lock.
+        res = _PyDict_SynchronizeNamespace(dict);
+    }
+    if (res == 0) {
+        res = func_check_mutation(func);
+    }
+    if (res == 0) {
+        // Preserve the delayed release used by generic dictionary replacement:
+        // attribute readers may still hold borrowed references to the old dict.
+        _PyObject_XSetRefDelayed(&((PyFunctionObject *)func)->func_dict,
+                                Py_NewRef(dict));
+    }
+    Py_END_CRITICAL_SECTION();
+    return res;
 }
 
 static void
@@ -112,17 +460,48 @@ PyFunction_ClearWatcher(int watcher_id)
     interp->active_func_watchers &= ~(1 << watcher_id);
     return 0;
 }
+PyObject *
+_PyFunction_CopyKwDefaults(PyObject *defaults)
+{
+    if (!PyAnyDict_Check(defaults)) {
+        PyErr_BadInternalCall();
+        return NULL;
+    }
+    if (PyObject_CheckAccess(defaults) == NULL) {
+        return NULL;
+    }
+    if (PyAnyDict_CheckExact(defaults)) {
+        return PyFrozenDict_New(defaults);
+    }
+    PyObject *copy = _PyDict_CopyStorage(defaults);
+    if (copy == NULL) {
+        return NULL;
+    }
+    PyObject *frozen = PyFrozenDict_New(copy);
+    Py_DECREF(copy);
+    return frozen;
+}
+
 PyFunctionObject *
 _PyFunction_FromConstructor(PyFrameConstructor *constr)
 {
+    PyObject *kwdefaults = NULL;
+    if (constr->fc_kwdefaults != NULL) {
+        kwdefaults = _PyFunction_CopyKwDefaults(constr->fc_kwdefaults);
+        if (kwdefaults == NULL) {
+            return NULL;
+        }
+    }
     PyObject *module;
     if (PyDict_GetItemRef(constr->fc_globals, &_Py_ID(__name__), &module) < 0) {
+        Py_XDECREF(kwdefaults);
         return NULL;
     }
 
     PyFunctionObject *op = PyObject_GC_New(PyFunctionObject, &PyFunction_Type);
     if (op == NULL) {
         Py_XDECREF(module);
+        Py_XDECREF(kwdefaults);
         return NULL;
     }
     _Py_INCREF_DICT(constr->fc_globals);
@@ -134,7 +513,7 @@ _PyFunction_FromConstructor(PyFrameConstructor *constr)
     _Py_INCREF_CODE((PyCodeObject *)constr->fc_code);
     op->func_code = constr->fc_code;
     op->func_defaults = Py_XNewRef(constr->fc_defaults);
-    op->func_kwdefaults = Py_XNewRef(constr->fc_kwdefaults);
+    op->func_kwdefaults = kwdefaults;
     op->func_closure = Py_XNewRef(constr->fc_closure);
     op->func_doc = Py_NewRef(Py_None);
     op->func_dict = NULL;
@@ -145,10 +524,16 @@ _PyFunction_FromConstructor(PyFrameConstructor *constr)
     op->func_typeparams = NULL;
     op->vectorcall = _PyFunction_Vectorcall;
     op->func_version = FUNC_VERSION_UNSET;
+    PyInterpreterState *interp = _PyInterpreterState_GET();
+    _PyEval_StopTheWorld(interp);
+    func_register_closure(op->func_closure, 1);
+    func_mark_closure_writers((PyCodeObject *)op->func_code, op->func_closure);
+    func_update_shareable(op);
     // NOTE: functions created via FrameConstructor do not use deferred
     // reference counting because they are typically not part of cycles
     // nor accessed by multiple threads.
     _PyObject_GC_TRACK(op);
+    _PyEval_StartTheWorld(interp);
     handle_func_event(PyFunction_EVENT_CREATE, op, NULL);
     return op;
 }
@@ -175,9 +560,14 @@ PyFunction_NewWithQualName(PyObject *code, PyObject *globals, PyObject *qualname
     PyObject *consts = code_obj->co_consts;
     assert(PyTuple_Check(consts));
     PyObject *doc;
+    PyObject *module = NULL;
+    PyObject *builtins = NULL;
     if (code_obj->co_flags & CO_HAS_DOCSTRING) {
         assert(PyTuple_Size(consts) >= 1);
         doc = PyTuple_GetItem(consts, 0);
+        if (doc == NULL) {
+            goto error;
+        }
         if (!PyUnicode_Check(doc)) {
             doc = Py_None;
         }
@@ -188,8 +578,6 @@ PyFunction_NewWithQualName(PyObject *code, PyObject *globals, PyObject *qualname
     Py_INCREF(doc);
 
     // __module__: Use globals['__name__'] if it exists, or NULL.
-    PyObject *module;
-    PyObject *builtins = NULL;
     if (PyDict_GetItemRef(globals, &_Py_ID(__name__), &module) < 0) {
         goto error;
     }
@@ -223,6 +611,7 @@ PyFunction_NewWithQualName(PyObject *code, PyObject *globals, PyObject *qualname
     op->func_typeparams = NULL;
     op->vectorcall = _PyFunction_Vectorcall;
     op->func_version = FUNC_VERSION_UNSET;
+    func_update_shareable(op);
     if (((code_obj->co_flags & CO_NESTED) == 0) ||
         (code_obj->co_flags & CO_METHOD)) {
         // Use deferred reference counting for top-level functions, but not
@@ -242,7 +631,7 @@ error:
     Py_DECREF(code_obj);
     Py_DECREF(name);
     Py_DECREF(qualname);
-    Py_DECREF(doc);
+    Py_XDECREF(doc);
     Py_XDECREF(module);
     Py_XDECREF(builtins);
     return NULL;
@@ -385,7 +774,8 @@ PyFunction_GetCode(PyObject *op)
         PyErr_BadInternalCall();
         return NULL;
     }
-    return ((PyFunctionObject *) op) -> func_code;
+    // This is a borrowed reference: rejection must not decref the value.
+    return PyObject_CheckAccess(((PyFunctionObject *)op)->func_code);
 }
 
 PyObject *
@@ -395,7 +785,7 @@ PyFunction_GetGlobals(PyObject *op)
         PyErr_BadInternalCall();
         return NULL;
     }
-    return ((PyFunctionObject *) op) -> func_globals;
+    return PyObject_CheckAccess(((PyFunctionObject *)op)->func_globals);
 }
 
 PyObject *
@@ -405,7 +795,7 @@ PyFunction_GetModule(PyObject *op)
         PyErr_BadInternalCall();
         return NULL;
     }
-    return ((PyFunctionObject *) op) -> func_module;
+    return PyObject_CheckAccess(((PyFunctionObject *)op)->func_module);
 }
 
 PyObject *
@@ -415,7 +805,7 @@ PyFunction_GetDefaults(PyObject *op)
         PyErr_BadInternalCall();
         return NULL;
     }
-    return ((PyFunctionObject *) op) -> func_defaults;
+    return PyObject_CheckAccess(((PyFunctionObject *)op)->func_defaults);
 }
 
 int
@@ -423,6 +813,9 @@ PyFunction_SetDefaults(PyObject *op, PyObject *defaults)
 {
     if (!PyFunction_Check(op)) {
         PyErr_BadInternalCall();
+        return -1;
+    }
+    if (func_check_mutation(op) < 0) {
         return -1;
     }
     if (defaults == Py_None)
@@ -435,9 +828,16 @@ PyFunction_SetDefaults(PyObject *op, PyObject *defaults)
         return -1;
     }
     PyFunctionObject *func = (PyFunctionObject *)op;
+    if (warn_function_mutation("__defaults__") < 0) {
+        Py_XDECREF(defaults);
+        return -1;
+    }
     handle_func_event(PyFunction_EVENT_MODIFY_DEFAULTS, func, defaults);
     PyInterpreterState *interp = _PyInterpreterState_GET();
-    _PyEval_StopTheWorld(interp);
+    if (func_begin_mutation(interp, op) < 0) {
+        Py_XDECREF(defaults);
+        return -1;
+    }
     func_clear_version(interp, func);
     PyObject *old_defaults = func->func_defaults;
     func->func_defaults = defaults;
@@ -464,7 +864,7 @@ PyFunction_GetKwDefaults(PyObject *op)
         PyErr_BadInternalCall();
         return NULL;
     }
-    return ((PyFunctionObject *) op) -> func_kwdefaults;
+    return PyObject_CheckAccess(((PyFunctionObject *)op)->func_kwdefaults);
 }
 
 int
@@ -474,10 +874,16 @@ PyFunction_SetKwDefaults(PyObject *op, PyObject *defaults)
         PyErr_BadInternalCall();
         return -1;
     }
+    if (func_check_mutation(op) < 0) {
+        return -1;
+    }
     if (defaults == Py_None)
         defaults = NULL;
-    else if (defaults && PyDict_Check(defaults)) {
-        Py_INCREF(defaults);
+    else if (defaults && PyAnyDict_Check(defaults)) {
+        defaults = _PyFunction_CopyKwDefaults(defaults);
+        if (defaults == NULL) {
+            return -1;
+        }
     }
     else {
         PyErr_SetString(PyExc_SystemError,
@@ -485,9 +891,16 @@ PyFunction_SetKwDefaults(PyObject *op, PyObject *defaults)
         return -1;
     }
     PyFunctionObject *func = (PyFunctionObject *)op;
+    if (warn_function_mutation("__kwdefaults__") < 0) {
+        Py_XDECREF(defaults);
+        return -1;
+    }
     handle_func_event(PyFunction_EVENT_MODIFY_KWDEFAULTS, func, defaults);
     PyInterpreterState *interp = _PyInterpreterState_GET();
-    _PyEval_StopTheWorld(interp);
+    if (func_begin_mutation(interp, op) < 0) {
+        Py_XDECREF(defaults);
+        return -1;
+    }
     func_clear_version(interp, func);
     PyObject *old_kwdefaults = func->func_kwdefaults;
     func->func_kwdefaults = defaults;
@@ -503,7 +916,7 @@ PyFunction_GetClosure(PyObject *op)
         PyErr_BadInternalCall();
         return NULL;
     }
-    return ((PyFunctionObject *) op) -> func_closure;
+    return PyObject_CheckAccess(((PyFunctionObject *)op)->func_closure);
 }
 
 int
@@ -511,6 +924,9 @@ PyFunction_SetClosure(PyObject *op, PyObject *closure)
 {
     if (!PyFunction_Check(op)) {
         PyErr_BadInternalCall();
+        return -1;
+    }
+    if (func_check_mutation(op) < 0) {
         return -1;
     }
     if (closure == Py_None)
@@ -525,11 +941,22 @@ PyFunction_SetClosure(PyObject *op, PyObject *closure)
         return -1;
     }
     PyFunctionObject *func = (PyFunctionObject *)op;
+    if (warn_function_mutation("__closure__") < 0) {
+        Py_XDECREF(closure);
+        return -1;
+    }
     PyInterpreterState *interp = _PyInterpreterState_GET();
-    _PyEval_StopTheWorld(interp);
+    if (func_begin_execution_mutation(interp, func, NULL, closure) < 0) {
+        Py_XDECREF(closure);
+        return -1;
+    }
     func_clear_version(interp, func);
     PyObject *old_closure = func->func_closure;
+    func_register_closure(closure, 1);
     func->func_closure = closure;
+    func_register_closure(old_closure, 0);
+    func_mark_closure_writers((PyCodeObject *)func->func_code, closure);
+    func_update_shareable(func);
     _PyEval_StartTheWorld(interp);
     Py_XDECREF(old_closure);
     return 0;
@@ -589,7 +1016,7 @@ PyFunction_GetAnnotations(PyObject *op)
         PyErr_BadInternalCall();
         return NULL;
     }
-    return func_get_annotation_dict((PyFunctionObject *)op);
+    return PyObject_CheckAccess(func_get_annotation_dict((PyFunctionObject *)op));
 }
 
 int
@@ -597,6 +1024,9 @@ PyFunction_SetAnnotations(PyObject *op, PyObject *annotations)
 {
     if (!PyFunction_Check(op)) {
         PyErr_BadInternalCall();
+        return -1;
+    }
+    if (func_check_mutation(op) < 0) {
         return -1;
     }
     if (annotations == Py_None)
@@ -611,7 +1041,10 @@ PyFunction_SetAnnotations(PyObject *op, PyObject *annotations)
     }
     PyFunctionObject *func = (PyFunctionObject *)op;
     PyInterpreterState *interp = _PyInterpreterState_GET();
-    _PyEval_StopTheWorld(interp);
+    if (func_begin_mutation(interp, op) < 0) {
+        Py_XDECREF(annotations);
+        return -1;
+    }
     PyObject *old_annotations = func->func_annotations;
     func->func_annotations = annotations;
     PyObject *old_annotate = func->func_annotate;
@@ -655,6 +1088,9 @@ static int
 func_set_code(PyObject *self, PyObject *value, void *Py_UNUSED(ignored))
 {
     PyFunctionObject *op = _PyFunction_CAST(self);
+    if (func_check_mutation(self) < 0) {
+        return -1;
+    }
 
     /* Not legal to del f.func_code or to set it to anything
      * other than a code object. */
@@ -693,13 +1129,20 @@ func_set_code(PyObject *self, PyObject *value, void *Py_UNUSED(ignored))
             return -1;
         }
     }
+    else if (warn_function_mutation("__code__") < 0) {
+        return -1;
+    }
 
     handle_func_event(PyFunction_EVENT_MODIFY_CODE, op, value);
     PyInterpreterState *interp = _PyInterpreterState_GET();
-    _PyEval_StopTheWorld(interp);
+    if (func_begin_execution_mutation(interp, op, value, NULL) < 0) {
+        return -1;
+    }
     func_clear_version(interp, op);
     PyObject *old_code = op->func_code;
     op->func_code = Py_NewRef(value);
+    func_mark_closure_writers((PyCodeObject *)value, op->func_closure);
+    func_update_shareable(op);
     _PyEval_StartTheWorld(interp);
     Py_XDECREF(old_code);
     return 0;
@@ -715,6 +1158,9 @@ func_get_name(PyObject *self, void *Py_UNUSED(ignored))
 static int
 func_set_name(PyObject *self, PyObject *value, void *Py_UNUSED(ignored))
 {
+    if (func_check_mutation(self) < 0) {
+        return -1;
+    }
     PyFunctionObject *op = _PyFunction_CAST(self);
     /* Not legal to del f.func_name or to set it to anything
      * other than a string object. */
@@ -724,7 +1170,9 @@ func_set_name(PyObject *self, PyObject *value, void *Py_UNUSED(ignored))
         return -1;
     }
     PyInterpreterState *interp = _PyInterpreterState_GET();
-    _PyEval_StopTheWorld(interp);
+    if (func_begin_mutation(interp, self) < 0) {
+        return -1;
+    }
     PyObject *old_name = op->func_name;
     op->func_name = Py_NewRef(value);
     _PyEval_StartTheWorld(interp);
@@ -742,6 +1190,9 @@ func_get_qualname(PyObject *self, void *Py_UNUSED(ignored))
 static int
 func_set_qualname(PyObject *self, PyObject *value, void *Py_UNUSED(ignored))
 {
+    if (func_check_mutation(self) < 0) {
+        return -1;
+    }
     PyFunctionObject *op = _PyFunction_CAST(self);
     /* Not legal to del f.__qualname__ or to set it to anything
      * other than a string object. */
@@ -752,7 +1203,9 @@ func_set_qualname(PyObject *self, PyObject *value, void *Py_UNUSED(ignored))
     }
     handle_func_event(PyFunction_EVENT_MODIFY_QUALNAME, (PyFunctionObject *) op, value);
     PyInterpreterState *interp = _PyInterpreterState_GET();
-    _PyEval_StopTheWorld(interp);
+    if (func_begin_mutation(interp, self) < 0) {
+        return -1;
+    }
     PyObject *old_qualname = op->func_qualname;
     op->func_qualname = Py_NewRef(value);
     _PyEval_StartTheWorld(interp);
@@ -774,10 +1227,15 @@ func_get_doc(PyObject *self, void *Py_UNUSED(ignored))
 static int
 func_set_doc(PyObject *self, PyObject *value, void *Py_UNUSED(ignored))
 {
+    if (func_check_mutation(self) < 0) {
+        return -1;
+    }
     /* Legal to del f.__doc__ or to set it to any object. */
     PyFunctionObject *op = _PyFunction_CAST(self);
     PyInterpreterState *interp = _PyInterpreterState_GET();
-    _PyEval_StopTheWorld(interp);
+    if (func_begin_mutation(interp, self) < 0) {
+        return -1;
+    }
     PyObject *old_doc = op->func_doc;
     op->func_doc = Py_XNewRef(value);
     _PyEval_StartTheWorld(interp);
@@ -799,10 +1257,15 @@ func_get_module(PyObject *self, void *Py_UNUSED(ignored))
 static int
 func_set_module(PyObject *self, PyObject *value, void *Py_UNUSED(ignored))
 {
+    if (func_check_mutation(self) < 0) {
+        return -1;
+    }
     /* Legal to del f.__module__ or to set it to any object. */
     PyFunctionObject *op = _PyFunction_CAST(self);
     PyInterpreterState *interp = _PyInterpreterState_GET();
-    _PyEval_StopTheWorld(interp);
+    if (func_begin_mutation(interp, self) < 0) {
+        return -1;
+    }
     PyObject *old_module = op->func_module;
     op->func_module = Py_XNewRef(value);
     _PyEval_StartTheWorld(interp);
@@ -829,6 +1292,9 @@ func_set_defaults(PyObject *self, PyObject *value, void *Py_UNUSED(ignored))
     /* Legal to del f.func_defaults.
      * Can only set func_defaults to NULL or a tuple. */
     PyFunctionObject *op = _PyFunction_CAST(self);
+    if (func_check_mutation(self) < 0) {
+        return -1;
+    }
     if (value == Py_None)
         value = NULL;
     if (value != NULL && !PyTuple_Check(value)) {
@@ -846,9 +1312,14 @@ func_set_defaults(PyObject *self, PyObject *value, void *Py_UNUSED(ignored))
         return -1;
     }
 
+    if (warn_function_mutation("__defaults__") < 0) {
+        return -1;
+    }
     handle_func_event(PyFunction_EVENT_MODIFY_DEFAULTS, op, value);
     PyInterpreterState *interp = _PyInterpreterState_GET();
-    _PyEval_StopTheWorld(interp);
+    if (func_begin_mutation(interp, self) < 0) {
+        return -1;
+    }
     func_clear_version(interp, op);
     PyObject *old_defaults = op->func_defaults;
     op->func_defaults = Py_XNewRef(value);
@@ -875,13 +1346,16 @@ static int
 func_set_kwdefaults(PyObject *self, PyObject *value, void *Py_UNUSED(ignored))
 {
     PyFunctionObject *op = _PyFunction_CAST(self);
+    if (func_check_mutation(self) < 0) {
+        return -1;
+    }
     if (value == Py_None)
         value = NULL;
     /* Legal to del f.func_kwdefaults.
-     * Can only set func_kwdefaults to NULL or a dict. */
-    if (value != NULL && !PyDict_Check(value)) {
+     * Dictionary inputs are copied into a frozendict. */
+    if (value != NULL && !PyAnyDict_Check(value)) {
         PyErr_SetString(PyExc_TypeError,
-            "__kwdefaults__ must be set to a dict object");
+            "__kwdefaults__ must be set to a dict or frozendict object");
         return -1;
     }
     if (value) {
@@ -894,12 +1368,25 @@ func_set_kwdefaults(PyObject *self, PyObject *value, void *Py_UNUSED(ignored))
         return -1;
     }
 
-    handle_func_event(PyFunction_EVENT_MODIFY_KWDEFAULTS, op, value);
+    if (warn_function_mutation("__kwdefaults__") < 0) {
+        return -1;
+    }
+    PyObject *defaults = NULL;
+    if (value != NULL) {
+        defaults = _PyFunction_CopyKwDefaults(value);
+        if (defaults == NULL) {
+            return -1;
+        }
+    }
+    handle_func_event(PyFunction_EVENT_MODIFY_KWDEFAULTS, op, defaults);
     PyInterpreterState *interp = _PyInterpreterState_GET();
-    _PyEval_StopTheWorld(interp);
+    if (func_begin_mutation(interp, self) < 0) {
+        Py_XDECREF(defaults);
+        return -1;
+    }
     func_clear_version(interp, op);
     PyObject *old_kwdefaults = op->func_kwdefaults;
-    op->func_kwdefaults = Py_XNewRef(value);
+    op->func_kwdefaults = defaults;
     _PyEval_StartTheWorld(interp);
     Py_XDECREF(old_kwdefaults);
     return 0;
@@ -934,6 +1421,9 @@ static int
 function___annotate___set_impl(PyFunctionObject *self, PyObject *value)
 /*[clinic end generated code: output=05b7dfc07ada66cd input=4bcfad0bdcfec768]*/
 {
+    if (func_check_mutation((PyObject *)self) < 0) {
+        return -1;
+    }
     if (value == NULL) {
         PyErr_SetString(PyExc_TypeError,
             "__annotate__ cannot be deleted");
@@ -944,8 +1434,12 @@ function___annotate___set_impl(PyFunctionObject *self, PyObject *value)
         return 0;
     }
     else if (PyCallable_Check(value)) {
-        Py_XSETREF(self->func_annotate, Py_NewRef(value));
-        Py_CLEAR(self->func_annotations);
+        PyObject *old_annotate = self->func_annotate;
+        PyObject *old_annotations = self->func_annotations;
+        self->func_annotate = Py_NewRef(value);
+        self->func_annotations = NULL;
+        Py_XDECREF(old_annotate);
+        Py_XDECREF(old_annotations);
         return 0;
     }
     else {
@@ -989,6 +1483,9 @@ static int
 function___annotations___set_impl(PyFunctionObject *self, PyObject *value)
 /*[clinic end generated code: output=a61795d4a95eede4 input=71f6a58c00ac6745]*/
 {
+    if (func_check_mutation((PyObject *)self) < 0) {
+        return -1;
+    }
     if (value == Py_None)
         value = NULL;
     /* Legal to del f.func_annotations.
@@ -999,8 +1496,12 @@ function___annotations___set_impl(PyFunctionObject *self, PyObject *value)
             "__annotations__ must be set to a dict object");
         return -1;
     }
-    Py_XSETREF(self->func_annotations, Py_XNewRef(value));
-    Py_CLEAR(self->func_annotate);
+    PyObject *old_annotations = self->func_annotations;
+    PyObject *old_annotate = self->func_annotate;
+    self->func_annotations = Py_XNewRef(value);
+    self->func_annotate = NULL;
+    Py_XDECREF(old_annotations);
+    Py_XDECREF(old_annotate);
     return 0;
 }
 
@@ -1035,6 +1536,9 @@ static int
 function___type_params___set_impl(PyFunctionObject *self, PyObject *value)
 /*[clinic end generated code: output=038b4cda220e56fb input=c0e33abc5901a2f5]*/
 {
+    if (func_check_mutation((PyObject *)self) < 0) {
+        return -1;
+    }
     /* Not legal to del f.__type_params__ or to set it to anything
      * other than a tuple object. */
     if (value == NULL || !PyTuple_Check(value)) {
@@ -1087,7 +1591,7 @@ static PyGetSetDef func_getsetlist[] = {
 function.__new__ as func_new
     code: object(type="PyCodeObject *", subclass_of="&PyCode_Type")
         a code object
-    globals: object(subclass_of="&PyDict_Type")
+    globals: object
         the globals dictionary
     name: object = None
         a string that overrides the name from the code object
@@ -1105,11 +1609,16 @@ static PyObject *
 func_new_impl(PyTypeObject *type, PyCodeObject *code, PyObject *globals,
               PyObject *name, PyObject *defaults, PyObject *closure,
               PyObject *kwdefaults)
-/*[clinic end generated code: output=de72f4c22ac57144 input=20c9c9f04ad2d3f2]*/
+/*[clinic end generated code: output=de72f4c22ac57144 input=fa23f0af20c9ac47]*/
 {
     PyFunctionObject *newfunc;
     Py_ssize_t nclosure;
 
+    if (!PyAnyDict_Check(globals)) {
+        _PyArg_BadArgument("function", "argument 'globals'",
+                           "dict or frozendict", globals);
+        return NULL;
+    }
     if (name != Py_None && !PyUnicode_Check(name)) {
         PyErr_SetString(PyExc_TypeError,
                         "arg 3 (name) must be None or string");
@@ -1132,9 +1641,9 @@ func_new_impl(PyTypeObject *type, PyCodeObject *code, PyObject *globals,
             return NULL;
         }
     }
-    if (kwdefaults != Py_None && !PyDict_Check(kwdefaults)) {
+    if (kwdefaults != Py_None && !PyAnyDict_Check(kwdefaults)) {
         PyErr_SetString(PyExc_TypeError,
-                        "arg 6 (kwdefaults) must be None or dict");
+                        "arg 6 (kwdefaults) must be None, dict or frozendict");
         return NULL;
     }
 
@@ -1159,9 +1668,17 @@ func_new_impl(PyTypeObject *type, PyCodeObject *code, PyObject *globals,
         return NULL;
     }
 
+    PyObject *frozen_kwdefaults = NULL;
+    if (kwdefaults != Py_None) {
+        frozen_kwdefaults = _PyFunction_CopyKwDefaults(kwdefaults);
+        if (frozen_kwdefaults == NULL) {
+            return NULL;
+        }
+    }
     newfunc = (PyFunctionObject *)PyFunction_New((PyObject *)code,
                                                  globals);
     if (newfunc == NULL) {
+        Py_XDECREF(frozen_kwdefaults);
         return NULL;
     }
     if (name != Py_None) {
@@ -1170,12 +1687,13 @@ func_new_impl(PyTypeObject *type, PyCodeObject *code, PyObject *globals,
     if (defaults != Py_None) {
         newfunc->func_defaults = Py_NewRef(defaults);
     }
-    if (closure != Py_None) {
-        newfunc->func_closure = Py_NewRef(closure);
+    if (closure != Py_None &&
+        _PyFunction_SetClosureForCreation(newfunc, closure) < 0) {
+        Py_DECREF(newfunc);
+        Py_XDECREF(frozen_kwdefaults);
+        return NULL;
     }
-    if (kwdefaults != Py_None) {
-        newfunc->func_kwdefaults = Py_NewRef(kwdefaults);
-    }
+    newfunc->func_kwdefaults = frozen_kwdefaults;
 
     return (PyObject *)newfunc;
 }
@@ -1200,7 +1718,10 @@ func_clear(PyObject *self)
     Py_CLEAR(op->func_kwdefaults);
     Py_CLEAR(op->func_doc);
     Py_CLEAR(op->func_dict);
-    Py_CLEAR(op->func_closure);
+    PyObject *old_closure = op->func_closure;
+    op->func_closure = NULL;
+    func_register_closure(old_closure, 0);
+    Py_XDECREF(old_closure);
     Py_CLEAR(op->func_annotations);
     Py_CLEAR(op->func_annotate);
     Py_CLEAR(op->func_typeparams);
@@ -1349,7 +1870,7 @@ _PyFunction_VerifyStateless(PyThreadState *tstate, PyObject *func)
     // Disallow __kwdefaults__.
     PyObject *kwdefaults = PyFunction_GET_KW_DEFAULTS(func);
     if (kwdefaults != NULL) {
-        assert(PyDict_Check(kwdefaults));  // per PyFunction_New()
+        assert(PyFrozenDict_CheckExact(kwdefaults));
         if (PyDict_Size(kwdefaults) > 0) {
             _PyErr_SetString(tstate, PyExc_ValueError,
                              "keyword defaults not supported");

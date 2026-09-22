@@ -421,3 +421,33 @@ Different events will provide the callback function with different arguments, as
 * :monitoring-event:`INSTRUCTION`::
 
     func(code: CodeType, instruction_offset: int) -> object
+
+
+Debugger world pauses
+---------------------
+
+.. data:: StopTheWorld
+
+   A reusable, nestable context manager for pausing other Python threads::
+
+      with sys.monitoring.StopTheWorld:
+          # Inspect objects belonging to other ThreadGroups.
+          ...
+
+   Other threads remain paused until the outermost context exits, including
+   when it exits because of an exception. The entering thread can access local
+   objects belonging to other ThreadGroups and objects with protected state.
+   Ordinary immutability restrictions remain in effect.
+
+   Do not wait for another Python thread to finish while holding the pause.
+   Forking and creating, switching to, or destroying another interpreter during
+   a pause are currently rejected.
+
+   Reads of local variables assigned inside a :keyword:`with` or
+   :keyword:`async with` statement recheck access, so a foreign local object
+   saved during the pause cannot be read from such a variable after it exits.
+   This implementation is still experimental: other reference lifetimes,
+   including values retained on the evaluation stack across context exit,
+   are not yet fully checked.
+
+   .. versionadded:: 3.16

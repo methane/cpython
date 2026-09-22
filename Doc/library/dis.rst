@@ -1065,6 +1065,11 @@ iterations of the loop.
       STACK.extend(STACK.pop()[:-count-1:-1])
 
 
+   In the experimental PEP 805 implementation, each extracted value must be
+   accessible to the current thread. This check also applies to specialized
+   tuple and list unpacking.
+
+
 .. opcode:: UNPACK_EX (counts)
 
    Implements assignment with a starred target: Unpacks an iterable in ``STACK[-1]``
@@ -1082,6 +1087,11 @@ iterations of the loop.
 
    The extracted values are put onto the stack right-to-left, i.e. ``a, *b, c = d``
    will be stored after execution as ``STACK.extend((a, b, c))``.
+
+
+   The individual values before and after the starred target are checked for
+   access by the current thread. The new list for the starred target is shallow;
+   its elements are checked when they are subsequently acquired individually.
 
 
 .. opcode:: STORE_ATTR (namei)
@@ -1478,6 +1488,36 @@ iterations of the loop.
    initialized.
 
    .. versionadded:: 3.12
+
+.. opcode:: LOAD_FAST_MAYBE_UNPROTECTED (var_num)
+
+   Push the local variable at index *var_num* after checking whether the current
+   thread can access it. Raise :exc:`UnboundLocalError` if it is uninitialized,
+   or :exc:`IllegalThreadAccessException` if access is prohibited.
+
+   This experimental PEP 805 instruction is emitted for locals assigned within
+   a :keyword:`with` or :keyword:`async with` statement, since their values can
+   outlive the protection provided by the context manager.
+
+   .. versionadded:: 3.16
+
+.. opcode:: LOAD_FAST_BORROW_MAYBE_UNPROTECTED (var_num)
+
+   Like :opcode:`LOAD_FAST_MAYBE_UNPROTECTED`, but push a borrowed reference
+   after checking access. The compiler uses this form only while the local
+   variable remains available to keep the value alive.
+
+   .. versionadded:: 3.16
+
+.. opcode:: LOAD_FAST_AND_CLEAR_CHECK (var_num)
+
+   Like :opcode:`LOAD_FAST_AND_CLEAR`, but check access to a non-NULL value
+   before pushing it and clearing the local. A failed check leaves the local
+   unchanged. Used when an inlined comprehension saves a local which may have
+   been assigned under a context manager's protection.
+
+   .. versionadded:: 3.16
+
 
 .. opcode:: LOAD_FAST_AND_CLEAR (var_num)
 

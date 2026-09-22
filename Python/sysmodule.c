@@ -18,6 +18,7 @@ Data members:
 #include "pycore_audit.h"         // _Py_AuditHookEntry
 #include "pycore_call.h"          // _PyObject_CallNoArgs()
 #include "pycore_ceval.h"         // _PyEval_SetAsyncGenFinalizer()
+#include "pycore_dict.h"          // _PyDict_SynchronizeNamespace()
 #include "pycore_frame.h"         // _PyInterpreterFrame
 #include "pycore_import.h"        // _PyImport_SetDLOpenFlags()
 #include "pycore_initconfig.h"    // _PyStatus_EXCEPTION()
@@ -236,7 +237,7 @@ should_audit(PyInterpreterState *interp)
         return 0;
     }
     return (interp->runtime->audit_hooks.head
-            || interp->audit_hooks
+            || FT_ATOMIC_LOAD_PTR_ACQUIRE(interp->audit_hooks)
             || PyDTrace_AUDIT_ENABLED());
 }
 
@@ -306,13 +307,14 @@ sys_audit_tstate(PyThreadState *ts, const char *event,
     }
 
     /* Call interpreter hooks */
-    if (is->audit_hooks) {
+    PyObject *interpreter_hooks = FT_ATOMIC_LOAD_PTR_ACQUIRE(is->audit_hooks);
+    if (interpreter_hooks) {
         eventName = PyUnicode_FromString(event);
         if (!eventName) {
             goto exit;
         }
 
-        hooks = PyObject_GetIter(is->audit_hooks);
+        hooks = PyObject_GetIter(interpreter_hooks);
         if (!hooks) {
             goto exit;
         }
@@ -536,16 +538,26 @@ sys_addaudithook_impl(PyObject *module, PyObject *hook)
     }
 
     PyInterpreterState *interp = tstate->interp;
-    if (interp->audit_hooks == NULL) {
-        interp->audit_hooks = PyList_New(0);
-        if (interp->audit_hooks == NULL) {
+    PyObject *hooks = FT_ATOMIC_LOAD_PTR_ACQUIRE(interp->audit_hooks);
+    if (hooks == NULL) {
+        PyObject *new_hooks = PySynchronizedList_New(0);
+        if (new_hooks == NULL) {
             return NULL;
         }
         /* Avoid having our list of hooks show up in the GC module */
-        PyObject_GC_UnTrack(interp->audit_hooks);
+        PyObject_GC_UnTrack(new_hooks);
+        PyMutex_Lock(&interp->runtime->audit_hooks.mutex);
+        hooks = FT_ATOMIC_LOAD_PTR_ACQUIRE(interp->audit_hooks);
+        if (hooks == NULL) {
+            hooks = new_hooks;
+            FT_ATOMIC_STORE_PTR_RELEASE(interp->audit_hooks, hooks);
+            new_hooks = NULL;
+        }
+        PyMutex_Unlock(&interp->runtime->audit_hooks.mutex);
+        Py_XDECREF(new_hooks);
     }
 
-    if (PyList_Append(interp->audit_hooks, hook) < 0) {
+    if (PyList_Append(hooks, hook) < 0) {
         return NULL;
     }
 
@@ -2226,6 +2238,7 @@ sys__clear_internal_caches_impl(PyObject *module)
 #ifdef _Py_TIER2
     PyInterpreterState *interp = _PyInterpreterState_GET();
     _Py_Executors_InvalidateAll(interp, 0);
+    _Py_ClearExecutorDeletionList(interp);
 #endif
 #ifdef Py_GIL_DISABLED
     if (_Py_ClearUnusedTLBC(_PyInterpreterState_GET()) < 0) {
@@ -3525,6 +3538,9 @@ _PySys_SetFlagObj(Py_ssize_t pos, PyObject *value)
         }
     }
 
+    if (PyObject_DeclareImmutable(new_flags) < 0) {
+        goto error;
+    }
     int res = _PySys_SetAttr(flags_str, new_flags);
     Py_DECREF(old_flags);
     Py_DECREF(new_flags);
@@ -3603,7 +3619,8 @@ set_flags_from_config(PyInterpreterState *interp, PyObject *flags)
     SetFlag(config->lazy_imports);
 #undef SetFlagObj
 #undef SetFlag
-    return 0;
+    /* Published flags are immutable snapshots, including across groups. */
+    return PyObject_DeclareImmutable(flags);
 }
 
 
@@ -4128,6 +4145,24 @@ err_occurred:
 }
 
 
+static PyObject *
+sys_path_from_config(const PyWideStringList *paths)
+{
+    PyObject *list = PySynchronizedList_New(paths->length);
+    if (list == NULL) {
+        return NULL;
+    }
+    for (Py_ssize_t i = 0; i < paths->length; i++) {
+        PyObject *path = PyUnicode_FromWideChar(paths->items[i], -1);
+        if (path == NULL) {
+            Py_DECREF(list);
+            return NULL;
+        }
+        PyList_SET_ITEM(list, i, path);
+    }
+    return list;
+}
+
 // Update sys attributes for a new PyConfig configuration.
 // This function also adds attributes that _PySys_InitCore() didn't add.
 int
@@ -4150,7 +4185,7 @@ _PySys_UpdateConfig(PyThreadState *tstate)
     }
 
     if (config->module_search_paths_set) {
-        COPY_LIST("path", config->module_search_paths);
+        SET_SYS("path", sys_path_from_config(&config->module_search_paths));
     }
 
     COPY_WSTR("executable", config->executable);
@@ -4397,6 +4432,23 @@ _PySys_Create(PyThreadState *tstate, PyObject **sysmod_p)
     }
 
     assert(!_PyErr_Occurred(tstate));
+
+    /* sys and its native entry points serve every ThreadGroup. Values in
+       the shared namespace retain their individual access policies. */
+    Py_ssize_t pos = 0;
+    PyObject *value;
+    while (PyDict_Next(sysdict, &pos, NULL, &value)) {
+        if (PyCFunction_Check(value) &&
+            PyObject_DeclareSynchronized(value) < 0)
+        {
+            goto error;
+        }
+    }
+    if (_PyDict_SynchronizeNamespace(sysdict) < 0 ||
+        PyObject_DeclareSynchronized(sysmod) < 0)
+    {
+        goto error;
+    }
 
     *sysmod_p = sysmod;
     return _PyStatus_OK();

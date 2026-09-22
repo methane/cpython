@@ -708,8 +708,8 @@ error:
 
 /* The caller is responsible for ensuring that the given data is valid. */
 
-PyCodeObject *
-_PyCode_New(struct _PyCodeConstructor *con)
+static PyCodeObject *
+code_new_from_constructor(struct _PyCodeConstructor *con)
 {
     if (intern_code_constants(con) < 0) {
         return NULL;
@@ -755,6 +755,86 @@ _PyCode_New(struct _PyCodeConstructor *con)
 #endif
     Py_XDECREF(replacement_locations);
     return co;
+}
+
+
+/* Record rebinding by a function or one of its descendants. This is
+   derived from the original bytecode, never from adaptive/executor storage.
+   Propagate only child free bindings: a child's own cells may shadow ours. */
+static PyObject *
+code_closure_write_kinds(struct _PyCodeConstructor *con)
+{
+    Py_ssize_t count = PyBytes_GET_SIZE(con->localspluskinds);
+    PyObject *result = PyBytes_FromStringAndSize(NULL, count);
+    if (result == NULL) {
+        return NULL;
+    }
+    unsigned char *kinds = (unsigned char *)PyBytes_AS_STRING(result);
+    memcpy(kinds, PyBytes_AS_STRING(con->localspluskinds), count);
+    for (Py_ssize_t i = 0; i < count; i++) {
+        kinds[i] &= ~CO_FAST_NONLOCAL_WRITE;
+    }
+    const _Py_CODEUNIT *code = (const _Py_CODEUNIT *)PyBytes_AS_STRING(con->code);
+    Py_ssize_t size = PyBytes_GET_SIZE(con->code) / sizeof(_Py_CODEUNIT);
+    unsigned int extended = 0;
+    for (Py_ssize_t i = 0; i < size; i++) {
+        int opcode = code[i].op.code;
+        unsigned int arg = extended | code[i].op.arg;
+        if (opcode == EXTENDED_ARG) {
+            extended = arg << 8;
+            continue;
+        }
+        extended = 0;
+        if ((opcode == STORE_DEREF || opcode == DELETE_DEREF) &&
+            arg < (unsigned int)count && (kinds[arg] & CO_FAST_FREE)) {
+            kinds[arg] |= CO_FAST_NONLOCAL_WRITE;
+        }
+        i += _PyOpcode_Caches[opcode];
+    }
+    for (Py_ssize_t c = 0; c < PyTuple_GET_SIZE(con->consts); c++) {
+        PyObject *constant = PyTuple_GET_ITEM(con->consts, c);
+        if (!PyCode_Check(constant)) {
+            continue;
+        }
+        PyCodeObject *child = (PyCodeObject *)constant;
+        for (int j = 0; j < child->co_nlocalsplus; j++) {
+            _PyLocals_Kind kind = _PyLocals_GetKind(child->co_localspluskinds, j);
+            if ((kind & (CO_FAST_FREE | CO_FAST_NONLOCAL_WRITE)) !=
+                (CO_FAST_FREE | CO_FAST_NONLOCAL_WRITE)) {
+                continue;
+            }
+            PyObject *name = PyTuple_GET_ITEM(child->co_localsplusnames, j);
+            for (Py_ssize_t i = 0; i < count; i++) {
+                if (!(kinds[i] & (CO_FAST_CELL | CO_FAST_FREE))) {
+                    continue;
+                }
+                PyObject *parent_name = PyTuple_GET_ITEM(con->localsplusnames, i);
+                if (!PyUnicode_Check(parent_name)) {
+                    // The constructor's name validation reports this later.
+                    continue;
+                }
+                if (PyUnicode_Compare(name, parent_name) == 0) {
+                    kinds[i] |= CO_FAST_NONLOCAL_WRITE;
+                    break;
+                }
+            }
+        }
+    }
+    return result;
+}
+
+PyCodeObject *
+_PyCode_New(struct _PyCodeConstructor *con)
+{
+    PyObject *kinds = code_closure_write_kinds(con);
+    if (kinds == NULL) {
+        return NULL;
+    }
+    struct _PyCodeConstructor analyzed = *con;
+    analyzed.localspluskinds = kinds;
+    PyCodeObject *code = code_new_from_constructor(&analyzed);
+    Py_DECREF(kinds);
+    return code;
 }
 
 
