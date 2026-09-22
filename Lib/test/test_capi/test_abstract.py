@@ -1,4 +1,5 @@
 import unittest
+import threading
 from collections import OrderedDict
 from test import support
 from test.support import import_helper
@@ -390,6 +391,14 @@ class CAPITest(unittest.TestCase):
         self.assertRaises(IndexError, getitem, [], 1)
         self.assertRaises(TypeError, getitem, [], 'a')
         self.assertRaises(SystemError, getitem, NULL, 'a')
+
+        lock = threading.Lock()
+        with lock:
+            protected = lock.protect({'a': 1})
+        with self.assertRaises(UnprotectedAccessException):
+            getitem(protected, 'a')
+        with lock:
+            self.assertEqual(getitem(protected, 'a'), 1)
 
     def test_mapping_getitemstring(self):
         getitemstring = _testlimitedcapi.mapping_getitemstring
