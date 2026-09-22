@@ -540,6 +540,7 @@ _PyWeakref_RefType = {
     .tp_repr = weakref_repr,
     .tp_hash = weakref_hash,
     .tp_flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_GC |
+                Py_TPFLAGS_IMMUTABLETYPE |
                 Py_TPFLAGS_HAVE_VECTORCALL | Py_TPFLAGS_BASETYPE,
     .tp_traverse = gc_traverse,
     .tp_clear = gc_clear,
@@ -908,7 +909,8 @@ _PyWeakref_ProxyType = {
     proxy_getattr,                      /* tp_getattro */
     proxy_setattr,                      /* tp_setattro */
     0,                                  /* tp_as_buffer */
-    Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_GC, /* tp_flags */
+    Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_GC |
+    Py_TPFLAGS_IMMUTABLETYPE,              /* tp_flags */
     0,                                  /* tp_doc */
     gc_traverse,                        /* tp_traverse */
     gc_clear,                           /* tp_clear */
@@ -942,7 +944,8 @@ _PyWeakref_CallableProxyType = {
     proxy_getattr,                      /* tp_getattro */
     proxy_setattr,                      /* tp_setattro */
     0,                                  /* tp_as_buffer */
-    Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_GC, /* tp_flags */
+    Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_GC |
+    Py_TPFLAGS_IMMUTABLETYPE,              /* tp_flags */
     0,                                  /* tp_doc */
     gc_traverse,                        /* tp_traverse */
     gc_clear,                           /* tp_clear */

@@ -3718,7 +3718,10 @@ static PyMethodDef group_weakref_callback_method = {
 int
 _PyThreadGroup_CallWeakrefCallback(PyWeakReference *ref, PyObject *callback)
 {
-    PyObject *context = PyTuple_Pack(2, (PyObject *)ref, callback);
+    /* The callback and weakref belong to the destination group.  Build the
+       dispatch context with the internal tuple constructor so transferring
+       those references does not apply the caller's access check. */
+    PyObject *context = _PyTuple_FromPair((PyObject *)ref, callback);
     if (context == NULL) {
         return -1;
     }
