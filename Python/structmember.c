@@ -36,6 +36,12 @@ PyObject *
 PyMember_GetOne(const char *obj_addr, PyMemberDef *l)
 {
     PyObject *v;
+    if (obj_addr == NULL || PyObject_CheckAccess((PyObject *)obj_addr) == NULL) {
+        if (obj_addr == NULL) {
+            PyErr_BadInternalCall();
+        }
+        return NULL;
+    }
     if (l->flags & Py_RELATIVE_OFFSET) {
         PyErr_SetString(
             PyExc_SystemError,
@@ -143,7 +149,7 @@ PyMember_GetOne(const char *obj_addr, PyMemberDef *l)
         PyErr_SetString(PyExc_SystemError, "bad memberdescr type");
         v = NULL;
     }
-    return v;
+    return _PyObject_CheckAccessNullable(v);
 }
 
 #define WARN(msg)                                               \
@@ -155,6 +161,13 @@ PyMember_GetOne(const char *obj_addr, PyMemberDef *l)
 int
 PyMember_SetOne(char *addr, PyMemberDef *l, PyObject *v)
 {
+    if (addr == NULL || PyObject_CheckAccess((PyObject *)addr) == NULL ||
+        (v != NULL && PyObject_CheckAccess(v) == NULL)) {
+        if (addr == NULL) {
+            PyErr_BadInternalCall();
+        }
+        return -1;
+    }
     if (_PyObject_CheckMutable((PyObject *)addr) < 0) {
         return -1;
     }
