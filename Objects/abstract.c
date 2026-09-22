@@ -220,11 +220,18 @@ PyObject_GetItem(PyObject *o, PyObject *key)
 int
 PyMapping_GetOptionalItem(PyObject *obj, PyObject *key, PyObject **result)
 {
+    if (result == NULL) {
+        PyErr_BadInternalCall();
+        return -1;
+    }
+    *result = NULL;
     if (obj == NULL || key == NULL) {
         null_error();
         return -1;
     }
-    if (PyObject_CheckAccess(obj) == NULL) {
+    if (PyObject_CheckAccess(obj) == NULL ||
+        PyObject_CheckAccess(key) == NULL) {
+        *result = NULL;
         return -1;
     }
     if (PyAnyDict_CheckExact(obj)) {
@@ -258,7 +265,9 @@ PyObject_SetItem(PyObject *o, PyObject *key, PyObject *value)
         null_error();
         return -1;
     }
-    if (PyObject_CheckAccess(o) == NULL) {
+    if (PyObject_CheckAccess(o) == NULL ||
+        PyObject_CheckAccess(key) == NULL ||
+        PyObject_CheckAccess(value) == NULL) {
         return -1;
     }
 
@@ -295,7 +304,8 @@ PyObject_DelItem(PyObject *o, PyObject *key)
         null_error();
         return -1;
     }
-    if (PyObject_CheckAccess(o) == NULL) {
+    if (PyObject_CheckAccess(o) == NULL ||
+        PyObject_CheckAccess(key) == NULL) {
         return -1;
     }
 
@@ -2518,8 +2528,11 @@ PyMapping_GetItemString(PyObject *o, const char *key)
 {
     PyObject *okey, *r;
 
-    if (key == NULL) {
+    if (o == NULL || key == NULL) {
         return null_error();
+    }
+    if (PyObject_CheckAccess(o) == NULL) {
+        return NULL;
     }
 
     okey = PyUnicode_FromString(key);
@@ -2533,14 +2546,20 @@ PyMapping_GetItemString(PyObject *o, const char *key)
 int
 PyMapping_GetOptionalItemString(PyObject *obj, const char *key, PyObject **result)
 {
-    if (key == NULL) {
-        *result = NULL;
+    if (result == NULL) {
+        PyErr_BadInternalCall();
+        return -1;
+    }
+    *result = NULL;
+    if (obj == NULL || key == NULL) {
         null_error();
+        return -1;
+    }
+    if (PyObject_CheckAccess(obj) == NULL) {
         return -1;
     }
     PyObject *okey = PyUnicode_FromString(key);
     if (okey == NULL) {
-        *result = NULL;
         return -1;
     }
     int rc = PyMapping_GetOptionalItem(obj, okey, result);
@@ -2554,8 +2573,12 @@ PyMapping_SetItemString(PyObject *o, const char *key, PyObject *value)
     PyObject *okey;
     int r;
 
-    if (key == NULL) {
+    if (o == NULL || key == NULL || value == NULL) {
         null_error();
+        return -1;
+    }
+    if (PyObject_CheckAccess(o) == NULL ||
+        PyObject_CheckAccess(value) == NULL) {
         return -1;
     }
 

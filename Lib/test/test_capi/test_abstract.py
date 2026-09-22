@@ -430,8 +430,8 @@ class CAPITest(unittest.TestCase):
         self.assertRaises(TypeError, getitem, {}, [])  # unhashable
         self.assertRaises(IndexError, getitem, [], 1)
         self.assertRaises(TypeError, getitem, [], 'a')
-        # CRASHES getitem({}, NULL)
-        # CRASHES getitem(NULL, 'a')
+        self.assertRaises(SystemError, getitem, {}, NULL)
+        self.assertRaises(SystemError, getitem, NULL, 'a')
 
     def test_mapping_getoptionalitemstring(self):
         getitemstring = _testcapi.mapping_getoptionalitemstring
@@ -453,7 +453,7 @@ class CAPITest(unittest.TestCase):
         self.assertRaises(UnicodeDecodeError, getitemstring, {}, b'\xff')
         self.assertRaises(SystemError, getitemstring, {}, NULL)
         self.assertRaises(TypeError, getitemstring, [], b'a')
-        # CRASHES getitemstring(NULL, b'a')
+        self.assertRaises(SystemError, getitemstring, NULL, b'a')
 
     def test_mapping_haskey(self):
         haskey = _testlimitedcapi.mapping_haskey
@@ -564,8 +564,8 @@ class CAPITest(unittest.TestCase):
         self.assertRaises(IndexError, haskey, [], 1)
         self.assertRaises(TypeError, haskey, [], 'a')
 
-        # CRASHES haskey({}, NULL))
-        # CRASHES haskey(NULL, 'a'))
+        self.assertRaises(SystemError, haskey, {}, NULL)
+        self.assertRaises(SystemError, haskey, NULL, 'a')
 
     def test_mapping_haskeystringwitherror(self):
         haskeystring = _testlimitedcapi.mapping_haskeystringwitherror
@@ -582,7 +582,7 @@ class CAPITest(unittest.TestCase):
         self.assertRaises(UnicodeDecodeError, haskeystring, {}, b'\xff')
         self.assertRaises(SystemError, haskeystring, {}, NULL)
         self.assertRaises(TypeError, haskeystring, [], b'a')
-        # CRASHES haskeystring(NULL, b'a')
+        self.assertRaises(SystemError, haskeystring, NULL, b'a')
 
     def test_object_setitem(self):
         setitem = _testlimitedcapi.object_setitem
