@@ -850,22 +850,36 @@ _PyGen_FetchStopIterationValue(PyObject **pvalue)
 static PyObject *
 gen_repr(PyObject *self)
 {
+    if (PyObject_CheckAccess(self) == NULL) {
+        return NULL;
+    }
     PyGenObject *gen = _PyGen_CAST(self);
+    PyObject *qualname = FT_ATOMIC_LOAD_PTR_ACQUIRE(gen->gi_qualname);
+    if (PyObject_CheckAccess(qualname) == NULL) {
+        return NULL;
+    }
     return PyUnicode_FromFormat("<generator object %S at %p>",
-                                gen->gi_qualname, gen);
+                                qualname, gen);
 }
 
 static PyObject *
 gen_get_name(PyObject *self, void *Py_UNUSED(ignored))
 {
+    if (PyObject_CheckAccess(self) == NULL) {
+        return NULL;
+    }
     PyGenObject *op = _PyGen_CAST(self);
     PyObject *name = FT_ATOMIC_LOAD_PTR_ACQUIRE(op->gi_name);
-    return Py_NewRef(name);
+    return _PyObject_CheckAccessNullable(Py_NewRef(name));
 }
 
 static int
 gen_set_name(PyObject *self, PyObject *value, void *Py_UNUSED(ignored))
 {
+    if (PyObject_CheckAccess(self) == NULL ||
+        (value != NULL && PyObject_CheckAccess(value) == NULL)) {
+        return -1;
+    }
     PyGenObject *op = _PyGen_CAST(self);
     /* Not legal to del gen.gi_name or to set it to anything
      * other than a string object. */
@@ -885,14 +899,21 @@ gen_set_name(PyObject *self, PyObject *value, void *Py_UNUSED(ignored))
 static PyObject *
 gen_get_qualname(PyObject *self, void *Py_UNUSED(ignored))
 {
+    if (PyObject_CheckAccess(self) == NULL) {
+        return NULL;
+    }
     PyGenObject *op = _PyGen_CAST(self);
     PyObject *qualname = FT_ATOMIC_LOAD_PTR_ACQUIRE(op->gi_qualname);
-    return Py_NewRef(qualname);
+    return _PyObject_CheckAccessNullable(Py_NewRef(qualname));
 }
 
 static int
 gen_set_qualname(PyObject *self, PyObject *value, void *Py_UNUSED(ignored))
 {
+    if (PyObject_CheckAccess(self) == NULL ||
+        (value != NULL && PyObject_CheckAccess(value) == NULL)) {
+        return -1;
+    }
     PyGenObject *op = _PyGen_CAST(self);
     /* Not legal to del gen.__qualname__ or to set it to anything
      * other than a string object. */
@@ -912,6 +933,9 @@ gen_set_qualname(PyObject *self, PyObject *value, void *Py_UNUSED(ignored))
 static PyObject *
 gen_getyieldfrom(PyObject *self, void *Py_UNUSED(ignored))
 {
+    if (PyObject_CheckAccess(self) == NULL) {
+        return NULL;
+    }
     PyGenObject *gen = _PyGen_CAST(self);
 #ifdef Py_GIL_DISABLED
     int8_t frame_state = _Py_atomic_load_int8_relaxed(&gen->gi_frame_state);
@@ -925,13 +949,14 @@ gen_getyieldfrom(PyObject *self, void *Py_UNUSED(ignored))
 
     PyObject *result = PyStackRef_AsPyObjectNew(_PyFrame_StackPeek(&gen->gi_iframe, 2));
     _Py_atomic_store_int8_release(&gen->gi_frame_state, FRAME_SUSPENDED_YIELD_FROM);
-    return result;
+    return _PyObject_CheckAccessNullable(result);
 #else
     int8_t frame_state = gen->gi_frame_state;
     if (frame_state != FRAME_SUSPENDED_YIELD_FROM) {
         Py_RETURN_NONE;
     }
-    return PyStackRef_AsPyObjectNew(_PyFrame_StackPeek(&gen->gi_iframe, 2));
+    return _PyObject_CheckAccessNullable(
+        PyStackRef_AsPyObjectNew(_PyFrame_StackPeek(&gen->gi_iframe, 2)));
 #endif
 }
 
@@ -939,6 +964,9 @@ gen_getyieldfrom(PyObject *self, void *Py_UNUSED(ignored))
 static PyObject *
 gen_getrunning(PyObject *self, void *Py_UNUSED(ignored))
 {
+    if (PyObject_CheckAccess(self) == NULL) {
+        return NULL;
+    }
     PyGenObject *gen = _PyGen_CAST(self);
     int8_t frame_state = FT_ATOMIC_LOAD_INT8_RELAXED(gen->gi_frame_state);
     return frame_state == FRAME_EXECUTING ? Py_True : Py_False;
@@ -947,6 +975,9 @@ gen_getrunning(PyObject *self, void *Py_UNUSED(ignored))
 static PyObject *
 gen_getsuspended(PyObject *self, void *Py_UNUSED(ignored))
 {
+    if (PyObject_CheckAccess(self) == NULL) {
+        return NULL;
+    }
     PyGenObject *gen = _PyGen_CAST(self);
     int8_t frame_state = FT_ATOMIC_LOAD_INT8_RELAXED(gen->gi_frame_state);
     return FRAME_STATE_SUSPENDED(frame_state) ? Py_True : Py_False;
@@ -955,6 +986,9 @@ gen_getsuspended(PyObject *self, void *Py_UNUSED(ignored))
 static PyObject *
 gen_getstate(PyObject *self, void *Py_UNUSED(ignored))
 {
+    if (PyObject_CheckAccess(self) == NULL) {
+        return NULL;
+    }
     PyGenObject *gen = _PyGen_CAST(self);
     int8_t frame_state = FT_ATOMIC_LOAD_INT8_RELAXED(gen->gi_frame_state);
 
@@ -975,6 +1009,9 @@ gen_getstate(PyObject *self, void *Py_UNUSED(ignored))
 static PyObject *
 _gen_getframe(PyGenObject *gen, const char *const name)
 {
+    if (PyObject_CheckAccess((PyObject *)gen) == NULL) {
+        return NULL;
+    }
     if (PySys_Audit("object.__getattr__", "Os", gen, name) < 0) {
         return NULL;
     }
@@ -992,7 +1029,7 @@ _gen_getframe(PyGenObject *gen, const char *const name)
         frame = _Py_XNewRef((PyObject *)_PyFrame_GetFrameObject(&gen->gi_iframe));
     }
     Py_END_CRITICAL_SECTION();
-    return frame;
+    return _PyObject_CheckAccessNullable(frame);
 }
 
 static PyObject *
@@ -1005,10 +1042,13 @@ gen_getframe(PyObject *self, void *Py_UNUSED(ignored))
 static PyObject *
 _gen_getcode(PyGenObject *gen, const char *const name)
 {
+    if (PyObject_CheckAccess((PyObject *)gen) == NULL) {
+        return NULL;
+    }
     if (PySys_Audit("object.__getattr__", "Os", gen, name) < 0) {
         return NULL;
     }
-    return Py_NewRef(_PyGen_GetCode(gen));
+    return _PyObject_CheckAccessNullable(Py_NewRef(_PyGen_GetCode(gen)));
 }
 
 static PyObject *
