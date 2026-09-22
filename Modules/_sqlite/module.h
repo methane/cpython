@@ -86,9 +86,12 @@ extern struct PyModuleDef _sqlite3module;
 static inline pysqlite_state *
 pysqlite_get_state_by_type(PyTypeObject *tp)
 {
-    PyObject *module = PyType_GetModuleByDef(tp, &_sqlite3module);
+    /* Extension methods may need their defining module state while the
+       module itself is owned by another ThreadGroup.  This is internal state
+       lookup; no module reference is exposed to Python. */
+    PyObject *module = PyType_GetModuleByToken_DuringGC(tp, &_sqlite3module);
     assert(module != NULL);
-    return pysqlite_get_state(module);
+    return (pysqlite_state *)PyModule_GetState_DuringGC(module);
 }
 
 extern const char *pysqlite_error_name(int rc);
