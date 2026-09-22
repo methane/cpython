@@ -1331,6 +1331,13 @@ PyObject *PyBytes_DecodeEscape(const char *s,
 Py_ssize_t
 PyBytes_Size(PyObject *op)
 {
+    if (op == NULL) {
+        PyErr_BadInternalCall();
+        return -1;
+    }
+    if (PyObject_CheckAccess(op) == NULL) {
+        return -1;
+    }
     if (!PyBytes_Check(op)) {
         PyErr_Format(PyExc_TypeError,
              "expected bytes, %.200s found", Py_TYPE(op)->tp_name);
@@ -1342,6 +1349,13 @@ PyBytes_Size(PyObject *op)
 char *
 PyBytes_AsString(PyObject *op)
 {
+    if (op == NULL) {
+        PyErr_BadInternalCall();
+        return NULL;
+    }
+    if (PyObject_CheckAccess(op) == NULL) {
+        return NULL;
+    }
     if (!PyBytes_Check(op)) {
         PyErr_Format(PyExc_TypeError,
              "expected bytes, %.200s found", Py_TYPE(op)->tp_name);
@@ -1357,6 +1371,13 @@ PyBytes_AsStringAndSize(PyObject *obj,
 {
     if (s == NULL) {
         PyErr_BadInternalCall();
+        return -1;
+    }
+    if (obj == NULL) {
+        PyErr_BadInternalCall();
+        return -1;
+    }
+    if (PyObject_CheckAccess(obj) == NULL) {
         return -1;
     }
 
@@ -1435,6 +1456,17 @@ _PyBytes_ReverseFind(const char *haystack, Py_ssize_t len_haystack,
 PyObject *
 PyBytes_Repr(PyObject *obj, int smartquotes)
 {
+    if (obj == NULL) {
+        PyErr_BadInternalCall();
+        return NULL;
+    }
+    if (PyObject_CheckAccess(obj) == NULL) {
+        return NULL;
+    }
+    if (!PyBytes_Check(obj)) {
+        PyErr_BadInternalCall();
+        return NULL;
+    }
     return _Py_bytes_repr(PyBytes_AS_STRING(obj), PyBytes_GET_SIZE(obj),
                           smartquotes, "bytes");
 }
@@ -2001,8 +2033,12 @@ bytes_join_impl(PyBytesObject *self, PyObject *iterable_of_bytes)
 PyObject *
 PyBytes_Join(PyObject *sep, PyObject *iterable)
 {
-    if (sep == NULL) {
+    if (sep == NULL || iterable == NULL) {
         PyErr_BadInternalCall();
+        return NULL;
+    }
+    if (PyObject_CheckAccess(sep) == NULL ||
+        PyObject_CheckAccess(iterable) == NULL) {
         return NULL;
     }
     if (!PyBytes_Check(sep)) {
@@ -3092,6 +3128,9 @@ PyBytes_FromObject(PyObject *x)
         PyErr_BadInternalCall();
         return NULL;
     }
+    if (PyObject_CheckAccess(x) == NULL) {
+        return NULL;
+    }
 
     if (PyBytes_CheckExact(x)) {
         return Py_NewRef(x);
@@ -3273,7 +3312,15 @@ PyBytes_Concat(PyObject **pv, PyObject *w)
     assert(pv != NULL);
     if (*pv == NULL)
         return;
+    if (PyObject_CheckAccess(*pv) == NULL) {
+        Py_CLEAR(*pv);
+        return;
+    }
     if (w == NULL) {
+        Py_CLEAR(*pv);
+        return;
+    }
+    if (PyObject_CheckAccess(w) == NULL) {
         Py_CLEAR(*pv);
         return;
     }

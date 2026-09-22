@@ -142,6 +142,13 @@ _canresize(PyByteArrayObject *self)
 PyObject *
 PyByteArray_FromObject(PyObject *input)
 {
+    if (input == NULL) {
+        PyErr_BadInternalCall();
+        return NULL;
+    }
+    if (PyObject_CheckAccess(input) == NULL) {
+        return NULL;
+    }
     return PyObject_CallOneArg((PyObject *)&PyByteArray_Type, input);
 }
 
@@ -208,8 +215,17 @@ PyByteArray_FromStringAndSize(const char *bytes, Py_ssize_t size)
 Py_ssize_t
 PyByteArray_Size(PyObject *self)
 {
-    assert(self != NULL);
-    assert(PyByteArray_Check(self));
+    if (self == NULL) {
+        PyErr_BadInternalCall();
+        return -1;
+    }
+    if (PyObject_CheckAccess(self) == NULL) {
+        return -1;
+    }
+    if (!PyByteArray_Check(self)) {
+        PyErr_BadInternalCall();
+        return -1;
+    }
 
     return PyByteArray_GET_SIZE(self);
 }
@@ -217,8 +233,17 @@ PyByteArray_Size(PyObject *self)
 char  *
 PyByteArray_AsString(PyObject *self)
 {
-    assert(self != NULL);
-    assert(PyByteArray_Check(self));
+    if (self == NULL) {
+        PyErr_BadInternalCall();
+        return NULL;
+    }
+    if (PyObject_CheckAccess(self) == NULL) {
+        return NULL;
+    }
+    if (!PyByteArray_Check(self)) {
+        PyErr_BadInternalCall();
+        return NULL;
+    }
 
     return PyByteArray_AS_STRING(self);
 }
@@ -346,6 +371,17 @@ bytearray_resize_lock_held(PyObject *self, Py_ssize_t requested_size)
 int
 PyByteArray_Resize(PyObject *self, Py_ssize_t requested_size)
 {
+    if (self == NULL) {
+        PyErr_BadInternalCall();
+        return -1;
+    }
+    if (PyObject_CheckAccess(self) == NULL) {
+        return -1;
+    }
+    if (!PyByteArray_Check(self)) {
+        PyErr_BadInternalCall();
+        return -1;
+    }
     int ret;
     Py_BEGIN_CRITICAL_SECTION(self);
     ret = bytearray_resize_lock_held(self, requested_size);
@@ -361,6 +397,14 @@ PyByteArray_Concat(PyObject *a, PyObject *b)
 
     va.len = -1;
     vb.len = -1;
+    if (a == NULL || b == NULL) {
+        PyErr_BadInternalCall();
+        goto done;
+    }
+    if (PyObject_CheckAccess(a) == NULL ||
+        PyObject_CheckAccess(b) == NULL) {
+        goto done;
+    }
     if (PyObject_GetBuffer(a, &va, PyBUF_SIMPLE) != 0 ||
         PyObject_GetBuffer(b, &vb, PyBUF_SIMPLE) != 0) {
             PyErr_Format(PyExc_TypeError, "can't concat %.100s to %.100s",

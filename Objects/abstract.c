@@ -472,7 +472,7 @@ PyObject_AsWriteBuffer(PyObject *obj,
 int
 PyObject_GetBuffer(PyObject *obj, Py_buffer *view, int flags)
 {
-    if (obj == NULL || view == NULL) {
+    if (obj == NULL) {
         null_error();
         return -1;
     }
