@@ -2303,6 +2303,9 @@ parent_stack_push_new(ElementIterObject *it, ElementObject *parent)
 static PyObject *
 elementiter_next(PyObject *op)
 {
+    if (PyObject_CheckAccess(op) == NULL) {
+        return NULL;
+    }
     ElementIterObject *it = _ElementIter_CAST(op);
     /* Sub-element iterator.
      *
