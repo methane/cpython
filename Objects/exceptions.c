@@ -1739,11 +1739,26 @@ done:
 PyObject *
 PyUnstable_Exc_PrepReraiseStar(PyObject *orig, PyObject *excs)
 {
-    if (orig == NULL || !PyExceptionInstance_Check(orig)) {
+    if (orig == NULL) {
         PyErr_SetString(PyExc_TypeError, "orig must be an exception instance");
         return NULL;
     }
-    if (excs == NULL || !PyList_Check(excs)) {
+    if (PyObject_CheckAccess(orig) == NULL) {
+        return NULL;
+    }
+    if (!PyExceptionInstance_Check(orig)) {
+        PyErr_SetString(PyExc_TypeError, "orig must be an exception instance");
+        return NULL;
+    }
+    if (excs == NULL) {
+        PyErr_SetString(PyExc_TypeError,
+                        "excs must be a list of exception instances");
+        return NULL;
+    }
+    if (PyObject_CheckAccess(excs) == NULL) {
+        return NULL;
+    }
+    if (!PyList_Check(excs)) {
         PyErr_SetString(PyExc_TypeError,
                         "excs must be a list of exception instances");
         return NULL;
@@ -1751,7 +1766,15 @@ PyUnstable_Exc_PrepReraiseStar(PyObject *orig, PyObject *excs)
     Py_ssize_t numexcs = PyList_GET_SIZE(excs);
     for (Py_ssize_t i = 0; i < numexcs; i++) {
         PyObject *exc = PyList_GET_ITEM(excs, i);
-        if (exc == NULL || !(PyExceptionInstance_Check(exc) || Py_IsNone(exc))) {
+        if (exc == NULL) {
+            PyErr_Format(PyExc_TypeError,
+                         "item %zd of excs is not an exception", i);
+            return NULL;
+        }
+        if (PyObject_CheckAccess(exc) == NULL) {
+            return NULL;
+        }
+        if (!(PyExceptionInstance_Check(exc) || Py_IsNone(exc))) {
             PyErr_Format(PyExc_TypeError,
                          "item %zd of excs is not an exception", i);
             return NULL;
