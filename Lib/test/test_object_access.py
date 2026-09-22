@@ -25,6 +25,8 @@ class ObjectAccessTests(unittest.TestCase):
         apis = (
             (capi.object_hash, (value,)),
             (capi.object_is_true, (value,)),
+            (capi.object_richcomparebool, (value, value, 2)),
+            (limited.object_repr, (value,)),
             (limited.object_getitem, (value, 0)),
         )
         for api, unused in apis:

@@ -820,6 +820,9 @@ PyObject_Print(PyObject *op, FILE *fp, int flags)
         Py_END_ALLOW_THREADS
     }
     else {
+        if (PyObject_CheckAccess(op) == NULL) {
+            return -1;
+        }
         if (Py_REFCNT(op) <= 0) {
             Py_BEGIN_ALLOW_THREADS
             fprintf(fp, "<refcnt %zd at %p>", Py_REFCNT(op), (void *)op);
@@ -960,6 +963,7 @@ PyObject_Repr(PyObject *v)
     res = (*Py_TYPE(v)->tp_repr)(v);
     _Py_LeaveRecursiveCallTstate(tstate);
 
+    res = _PyObject_CheckAccessNullable(res);
     if (res == NULL) {
         return NULL;
     }
@@ -1004,6 +1008,7 @@ PyObject_Str(PyObject *v)
     res = (*Py_TYPE(v)->tp_str)(v);
     _Py_LeaveRecursiveCallTstate(tstate);
 
+    res = _PyObject_CheckAccessNullable(res);
     if (res == NULL) {
         return NULL;
     }
@@ -1064,6 +1069,9 @@ PyObject_Bytes(PyObject *v)
     if (func != NULL) {
         result = _PyObject_CallNoArgs(func);
         Py_DECREF(func);
+        if (result == NULL)
+            return NULL;
+        result = _PyObject_CheckAccessNullable(result);
         if (result == NULL)
             return NULL;
         if (!PyBytes_Check(result)) {
@@ -1319,6 +1327,14 @@ PyObject_RichCompareBool(PyObject *v, PyObject *w, int op)
 {
     PyObject *res;
     int ok;
+
+    if (v == NULL || w == NULL) {
+        PyErr_BadInternalCall();
+        return -1;
+    }
+    if (PyObject_CheckAccess(v) == NULL || PyObject_CheckAccess(w) == NULL) {
+        return -1;
+    }
 
     /* Quick result when objects are the same.
        Guarantees that identity implies equality. */
@@ -1914,7 +1930,7 @@ _PyObject_GetDictPtr(PyObject *obj)
 PyObject *
 PyObject_SelfIter(PyObject *obj)
 {
-    return Py_NewRef(obj);
+    return _PyObject_CheckAccessNullable(Py_XNewRef(obj));
 }
 
 /* Helper used when the __next__ method is removed from a type:
@@ -2585,6 +2601,9 @@ _dir_object(PyObject *obj)
 PyObject *
 PyObject_Dir(PyObject *obj)
 {
+    if (obj != NULL && PyObject_CheckAccess(obj) == NULL) {
+        return NULL;
+    }
     return (obj == NULL) ? _dir_locals() : _dir_object(obj);
 }
 
