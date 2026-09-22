@@ -1327,7 +1327,8 @@ mappingproxy_richcompare(PyObject *self, PyObject *w, int op)
         // or immutable types like `frozendict`
         // for memory optimization. See gh-152405 for the details.
         if (
-            PyDict_CheckExact(v->mapping) &&
+            (PyDict_CheckExact(v->mapping) ||
+             PySynchronizedDict_CheckExact(v->mapping)) &&
             !(PyAnyDict_CheckExact(w) ||
                 Py_TYPE(w) == &PyDictProxy_Type ||
                 PyODict_CheckExact(w))
