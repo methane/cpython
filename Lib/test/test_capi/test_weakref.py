@@ -117,7 +117,7 @@ class CAPIWeakrefTest(unittest.TestCase):
         self.assertEqual(log, [wr])
 
         self.assertRaises(TypeError, newref, [])
-        # CRASHES newref(NULL)
+        self.assertRaises(SystemError, newref, NULL)
 
     def test_pyweakref_newproxy(self):
         # Test PyWeakref_NewProxy()
@@ -142,7 +142,7 @@ class CAPIWeakrefTest(unittest.TestCase):
         self.assertIs(type(wp), weakref.CallableProxyType)
 
         self.assertRaises(TypeError, newproxy, [])
-        # CRASHES newproxy(NULL)
+        self.assertRaises(SystemError, newproxy, NULL)
 
 
 if __name__ == "__main__":
