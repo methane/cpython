@@ -46,6 +46,18 @@ PyCFunction_NewEx(PyMethodDef *ml, PyObject *self, PyObject *module)
 PyObject *
 PyCMethod_New(PyMethodDef *ml, PyObject *self, PyObject *module, PyTypeObject *cls)
 {
+    /* The method retains all three object references.  Reject an object that
+       the current ThreadGroup cannot acquire before storing any of them in
+       the new callable. */
+    /* Static builtin types create their wrapper methods while the runtime is
+       still initializing, before the access exceptions themselves exist. */
+    if (Py_IsInitialized() &&
+        ((self != NULL && PyObject_CheckAccess(self) == NULL) ||
+         (module != NULL && PyObject_CheckAccess(module) == NULL) ||
+         (cls != NULL && PyObject_CheckAccess((PyObject *)cls) == NULL))) {
+        return NULL;
+    }
+
     /* Figure out correct vectorcall function to use */
     vectorcallfunc vectorcall;
     switch (ml->ml_flags & (METH_VARARGS | METH_FASTCALL | METH_NOARGS |

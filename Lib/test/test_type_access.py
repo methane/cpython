@@ -4,7 +4,7 @@ import sys
 import threading
 import unittest
 
-from test.support import threading_helper
+from test.support import SHORT_TIMEOUT, threading_helper
 from test.support.import_helper import import_module
 
 
@@ -49,6 +49,60 @@ class TypeAccessTests(unittest.TestCase):
         with threading_helper.start_threads([thread]):
             pass
         self.assertEqual(results.get(), len(apis))
+
+    @threading_helper.requires_working_threading()
+    def test_module_name_result(self):
+        """PyType_GetModuleName must check an arbitrary __module__ value."""
+        capi = import_module('_testcapi')
+        limited = import_module('_testlimitedcapi')
+        internal = import_module('_testinternalcapi')
+        invoke = capi.call_cfunction_raw_return_in_tuple
+        internal.object_declare_synchronized(invoke)
+        internal.object_declare_synchronized(limited.get_type_module_name)
+
+        class LocalType:
+            pass
+
+        # Make the type and its namespace available to the other group.  The
+        # value stored in __module__ remains owned by the producer group.
+        LocalType.synchronize()
+        holder = SynchronizedDict()
+        ready = threading.Event()
+        finish = threading.Event()
+
+        def producer():
+            holder['value'] = object()
+            ready.set()
+            finish.wait()
+
+        producer_thread = threading.Thread(
+            target=producer, group=threading.ThreadGroup())
+        producer_thread.start()
+        try:
+            self.assertTrue(ready.wait(SHORT_TIMEOUT))
+            with sys.monitoring.StopTheWorld:
+                LocalType.__module__ = holder['value']
+
+            result = threading.Channel()
+
+            def consumer():
+                try:
+                    invoke(limited.get_type_module_name, (LocalType,))
+                except IllegalThreadAccessException:
+                    result.put(True)
+                else:
+                    result.put(False)
+
+            consumer_thread = threading.Thread(
+                target=consumer, group=threading.ThreadGroup())
+            consumer_thread.start()
+            consumer_thread.join(SHORT_TIMEOUT)
+            self.assertFalse(consumer_thread.is_alive())
+            self.assertTrue(result.get())
+        finally:
+            finish.set()
+            producer_thread.join(SHORT_TIMEOUT)
+            self.assertFalse(producer_thread.is_alive())
 
 
 if __name__ == '__main__':

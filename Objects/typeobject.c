@@ -5964,7 +5964,11 @@ PyType_GetModuleName(PyTypeObject *type)
     if (PyObject_CheckAccess((PyObject *)type) == NULL) {
         return NULL;
     }
-    return type_module(type);
+    /* A heap type may carry an arbitrary object in __module__.  The type
+       itself can be accessible while that value is still local to another
+       ThreadGroup, so apply the public return-value access contract here
+       rather than exposing it through the C API. */
+    return _PyObject_CheckAccessNullable(type_module(type));
 }
 
 void *
