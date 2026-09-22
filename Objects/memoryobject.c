@@ -772,6 +772,13 @@ PyMemoryView_FromBuffer(const Py_buffer *info)
     _PyManagedBufferObject *mbuf;
     PyObject *mv;
 
+    if (info == NULL) {
+        PyErr_BadArgument();
+        return NULL;
+    }
+    if (info->obj != NULL && PyObject_CheckAccess(info->obj) == NULL) {
+        return NULL;
+    }
     if (info->buf == NULL) {
         PyErr_SetString(PyExc_ValueError,
             "PyMemoryView_FromBuffer(): info->buf must not be NULL");
@@ -802,6 +809,13 @@ PyMemoryView_FromObjectAndFlags(PyObject *v, int flags)
 {
     _PyManagedBufferObject *mbuf;
 
+    if (v == NULL) {
+        PyErr_BadArgument();
+        return NULL;
+    }
+    if (PyObject_CheckAccess(v) == NULL) {
+        return NULL;
+    }
     if (PyMemoryView_Check(v)) {
         PyMemoryViewObject *mv = (PyMemoryViewObject *)v;
         CHECK_RELEASED(mv);
@@ -831,6 +845,12 @@ PyMemoryView_FromObjectAndFlags(PyObject *v, int flags)
 PyObject *
 _PyMemoryView_FromBufferProc(PyObject *v, int flags, getbufferproc bufferproc)
 {
+    if (v == NULL || PyObject_CheckAccess(v) == NULL) {
+        if (v == NULL) {
+            PyErr_BadArgument();
+        }
+        return NULL;
+    }
     _PyManagedBufferObject *mbuf = mbuf_alloc();
     if (mbuf == NULL)
         return NULL;

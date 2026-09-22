@@ -444,6 +444,18 @@ slice_getindices(PyObject *self, PyObject *args)
     return Py_BuildValue("(nnn)", start, stop, step);
 }
 
+static PyObject *
+memoryview_fromobject(PyObject *self, PyObject *arg)
+{
+    return PyMemoryView_FromObject(arg);
+}
+
+static PyObject *
+memoryview_getcontiguous(PyObject *self, PyObject *arg)
+{
+    return PyMemoryView_GetContiguous(arg, PyBUF_READ, 'C');
+}
+
 
 static PyMethodDef test_methods[] = {
     {"return_tuple_item_unchecked", return_tuple_item_unchecked, METH_O},
@@ -465,6 +477,8 @@ static PyMethodDef test_methods[] = {
     {"PyObject_LengthHint", object_length_hint, METH_O},
     {"PySlice_Unpack", slice_unpack, METH_O},
     {"PySlice_GetIndices", slice_getindices, METH_VARARGS},
+    {"memoryview_fromobject", memoryview_fromobject, METH_O},
+    {"memoryview_getcontiguous", memoryview_getcontiguous, METH_O},
 
     {"sequence_fast_get_size", sequence_fast_get_size, METH_O},
     {"sequence_fast_get_item", sequence_fast_get_item, METH_VARARGS},
