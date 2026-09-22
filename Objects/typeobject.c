@@ -5085,7 +5085,9 @@ type_new_get_bases(type_new_ctx *ctx, PyObject **type)
                 return -1;
             }
             /* Pass it to the winner */
-            *type = winner->tp_new(winner, ctx->args, ctx->kwds);
+            PyObject *result = winner->tp_new(winner, ctx->args, ctx->kwds);
+            *type = _Py_CheckFunctionResult(
+                _PyThreadState_GET(), (PyObject *)winner, result, NULL);
             if (*type == NULL) {
                 return -1;
             }
@@ -10812,6 +10814,8 @@ tp_new_wrapper(PyObject *self, PyObject *const *args, Py_ssize_t nargs, PyObject
         }
     }
     res = type->tp_new(subtype, args_tuple, kwds);
+    res = _Py_CheckFunctionResult(
+        _PyThreadState_GET(), (PyObject *)type, res, NULL);
     Py_DECREF(args_tuple);
     Py_XDECREF(kwds);
     return res;
