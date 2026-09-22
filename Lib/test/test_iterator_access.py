@@ -828,7 +828,6 @@ class IteratorAccessTests(unittest.TestCase):
                 gc_collect()
                 self.assertIsNone(reference())
 
-    @requires_specialization
     @threading_helper.requires_working_threading()
     def test_foreign_default(self):
         capi = import_module('_testcapi')
