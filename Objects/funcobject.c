@@ -541,6 +541,19 @@ _PyFunction_FromConstructor(PyFrameConstructor *constr)
 PyObject *
 PyFunction_NewWithQualName(PyObject *code, PyObject *globals, PyObject *qualname)
 {
+    if (code == NULL || globals == NULL) {
+        PyErr_BadInternalCall();
+        return NULL;
+    }
+    if (PyObject_CheckAccess(code) == NULL ||
+        PyObject_CheckAccess(globals) == NULL ||
+        (qualname != NULL && PyObject_CheckAccess(qualname) == NULL)) {
+        return NULL;
+    }
+    if (!PyCode_Check(code) || !PyAnyDict_Check(globals)) {
+        PyErr_BadInternalCall();
+        return NULL;
+    }
     assert(globals != NULL);
     assert(PyAnyDict_Check(globals));
     _Py_INCREF_DICT(globals);
@@ -833,6 +846,10 @@ PyFunction_SetDefaults(PyObject *op, PyObject *defaults)
     if (func_check_mutation(op) < 0) {
         return -1;
     }
+    if (defaults != NULL && defaults != Py_None &&
+        PyObject_CheckAccess(defaults) == NULL) {
+        return -1;
+    }
     if (defaults == Py_None)
         defaults = NULL;
     else if (defaults && PyTuple_Check(defaults)) {
@@ -898,6 +915,10 @@ PyFunction_SetKwDefaults(PyObject *op, PyObject *defaults)
     if (func_check_mutation(op) < 0) {
         return -1;
     }
+    if (defaults != NULL && defaults != Py_None &&
+        PyObject_CheckAccess(defaults) == NULL) {
+        return -1;
+    }
     if (defaults == Py_None)
         defaults = NULL;
     else if (defaults && PyAnyDict_Check(defaults)) {
@@ -954,6 +975,10 @@ PyFunction_SetClosure(PyObject *op, PyObject *closure)
         return -1;
     }
     if (func_check_mutation(op) < 0) {
+        return -1;
+    }
+    if (closure != NULL && closure != Py_None &&
+        PyObject_CheckAccess(closure) == NULL) {
         return -1;
     }
     if (closure == Py_None)
@@ -1060,6 +1085,10 @@ PyFunction_SetAnnotations(PyObject *op, PyObject *annotations)
         return -1;
     }
     if (func_check_mutation(op) < 0) {
+        return -1;
+    }
+    if (annotations != NULL && annotations != Py_None &&
+        PyObject_CheckAccess(annotations) == NULL) {
         return -1;
     }
     if (annotations == Py_None)
@@ -2097,6 +2126,10 @@ static int
 cm_set_callable(classmethod *cm, PyObject *callable)
 {
     assert(callable != NULL);
+    if (PyObject_CheckAccess((PyObject *)cm) == NULL ||
+        PyObject_CheckAccess(callable) == NULL) {
+        return -1;
+    }
     if (cm->cm_callable == callable) {
         // cm_init() sets the same callable than cm_new()
         return 0;
@@ -2359,6 +2392,10 @@ static int
 sm_set_callable(staticmethod *sm, PyObject *callable)
 {
     assert(callable != NULL);
+    if (PyObject_CheckAccess((PyObject *)sm) == NULL ||
+        PyObject_CheckAccess(callable) == NULL) {
+        return -1;
+    }
     if (sm->sm_callable == callable) {
         // sm_init() sets the same callable than sm_new()
         return 0;
