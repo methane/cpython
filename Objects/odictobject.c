@@ -1666,6 +1666,15 @@ PyODict_SetItem_LockHeld(PyObject *od, PyObject *key, PyObject *value)
 int
 PyODict_SetItem(PyObject *od, PyObject *key, PyObject *value)
 {
+    if (od == NULL || key == NULL || value == NULL ||
+        PyObject_CheckAccess(od) == NULL ||
+        PyObject_CheckAccess(key) == NULL ||
+        PyObject_CheckAccess(value) == NULL) {
+        if (od == NULL || key == NULL || value == NULL) {
+            PyErr_BadInternalCall();
+        }
+        return -1;
+    }
     int res;
     Py_BEGIN_CRITICAL_SECTION(od);
     res = PyODict_SetItem_LockHeld(od, key, value);
@@ -1690,6 +1699,14 @@ PyODict_DelItem_LockHeld(PyObject *od, PyObject *key)
 int
 PyODict_DelItem(PyObject *od, PyObject *key)
 {
+    if (od == NULL || key == NULL ||
+        PyObject_CheckAccess(od) == NULL ||
+        PyObject_CheckAccess(key) == NULL) {
+        if (od == NULL || key == NULL) {
+            PyErr_BadInternalCall();
+        }
+        return -1;
+    }
     int res;
     Py_BEGIN_CRITICAL_SECTION(od);
     res = PyODict_DelItem_LockHeld(od, key);
