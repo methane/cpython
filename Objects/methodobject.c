@@ -171,7 +171,14 @@ PyCMethod_GetClass(PyObject *op)
         PyErr_BadInternalCall();
         return NULL;
     }
-    return PyCFunction_GET_CLASS(op);
+    if (PyObject_CheckAccess(op) == NULL) {
+        return NULL;
+    }
+    PyTypeObject *cls = PyCFunction_GET_CLASS(op);
+    if (cls != NULL && PyObject_CheckAccess((PyObject *)cls) == NULL) {
+        return NULL;
+    }
+    return cls;
 }
 
 /* Methods (the standard built-in methods, that is) */

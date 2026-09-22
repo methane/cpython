@@ -2633,6 +2633,10 @@ static struct PyModuleDef monitoring_module = {
 
 PyObject *_Py_CreateMonitoringObject(void)
 {
+    if (PyObject_DeclareImmutable(&_PyInstrumentation_DISABLE) < 0 ||
+        PyObject_DeclareImmutable(&_PyInstrumentation_MISSING) < 0) {
+        return NULL;
+    }
     PyObject *mod = _PyModule_CreateInitialized(&monitoring_module, PYTHON_API_VERSION);
     if (mod == NULL) {
         return NULL;

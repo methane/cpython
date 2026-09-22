@@ -174,10 +174,6 @@ PyObject_GetItem(PyObject *o, PyObject *key)
     if (o == NULL || key == NULL) {
         return null_error();
     }
-    if (PyObject_CheckAccess(o) == NULL ||
-        PyObject_CheckAccess(key) == NULL) {
-        return NULL;
-    }
     PyMappingMethods *m = Py_TYPE(o)->tp_as_mapping;
     if (m && m->mp_subscript) {
         PyObject *item = m->mp_subscript(o, key);
