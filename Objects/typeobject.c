@@ -8732,6 +8732,19 @@ freeze_python_type_locked(PyTypeObject *type)
         return NULL;
     }
 
+    /* A property stored in a frozen class is part of the class's immutable
+       attribute protocol.  Make the descriptor itself shareable so generic
+       and specialized instance lookup can inspect it from another group. */
+    PyObject *key, *value;
+    Py_ssize_t pos = 0;
+    PyObject *dict = lookup_tp_dict(type);
+    while (PyDict_Next(dict, &pos, &key, &value)) {
+        if (Py_IS_TYPE(value, &PyProperty_Type) &&
+            PyObject_DeclareImmutable(value) < 0) {
+            return NULL;
+        }
+    }
+
     BEGIN_TYPE_LOCK();
     _Py_atomic_store_uint32_relaxed(&self->ob_owner_id, 0);
     _Py_atomic_store_uint8(&self->ob_shareable, _Py_SHAREABLE_IMMUTABLE);
@@ -10171,15 +10184,24 @@ remove_subclass(PyTypeObject *base, PyTypeObject *type)
     assert(PyDict_CheckExact(subclasses));
 
     PyObject *key = get_subclasses_key(type, base);
-    if (key != NULL && PyDict_DelItem(subclasses, key)) {
-        /* This can happen if the type initialization errored out before
-           the base subclasses were updated (e.g. a non-str __qualname__
-           was passed in the type dict). */
-        PyErr_Clear();
+    if (key != NULL) {
+        Py_hash_t hash = PyObject_Hash(key);
+        int deleted = -1;
+        if (hash != -1) {
+            Py_BEGIN_CRITICAL_SECTION(subclasses);
+            deleted = _PyDict_DelItem_KnownHash_LockHeld(subclasses, key, hash);
+            Py_END_CRITICAL_SECTION();
+        }
+        if (deleted != 0) {
+            /* This can happen if the type initialization errored out before
+               the base subclasses were updated (e.g. a non-str __qualname__
+               was passed in the type dict). */
+            PyErr_Clear();
+        }
     }
     Py_XDECREF(key);
 
-    if (PyDict_Size(subclasses) == 0) {
+    if (PyDict_GET_SIZE(subclasses) == 0) {
         clear_tp_subclasses(base);
     }
 }
