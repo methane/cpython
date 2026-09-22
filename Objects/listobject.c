@@ -499,6 +499,11 @@ PyList_SetItem(PyObject *op, Py_ssize_t i,
         ret = -1;
         goto end;
     }
+    if (newitem != NULL && PyObject_CheckAccess(newitem) == NULL) {
+        Py_DECREF(newitem);
+        ret = -1;
+        goto end;
+    }
     PyObject *tmp = self->ob_item[i];
     FT_ATOMIC_STORE_PTR_RELEASE(self->ob_item[i], newitem);
     Py_XDECREF(tmp);

@@ -152,6 +152,10 @@ PyTuple_SetItem(PyObject *op, Py_ssize_t i, PyObject *newitem)
                         "tuple assignment index out of range");
         return -1;
     }
+    if (newitem != NULL && PyObject_CheckAccess(newitem) == NULL) {
+        Py_DECREF(newitem);
+        return -1;
+    }
     p = ((PyTupleObject *)op) -> ob_item + i;
     Py_XSETREF(*p, newitem);
     return 0;
@@ -212,7 +216,21 @@ PyTuple_Pack(Py_ssize_t n, ...)
     }
     items = result->ob_item;
     for (i = 0; i < n; i++) {
+        items[i] = NULL;
+    }
+    for (i = 0; i < n; i++) {
         o = va_arg(vargs, PyObject *);
+        if (o == NULL) {
+            PyErr_BadInternalCall();
+            Py_DECREF(result);
+            va_end(vargs);
+            return NULL;
+        }
+        if (PyObject_CheckAccess(o) == NULL) {
+            Py_DECREF(result);
+            va_end(vargs);
+            return NULL;
+        }
         if (!track && maybe_tracked(o)) {
             track = true;
         }
@@ -470,6 +488,10 @@ tuple_item(PyObject *op, Py_ssize_t i)
 PyObject *
 PyTuple_FromArray(PyObject *const *src, Py_ssize_t n)
 {
+    if (n < 0) {
+        PyErr_BadInternalCall();
+        return NULL;
+    }
     if (n == 0) {
         return tuple_get_empty();
     }
@@ -479,6 +501,23 @@ PyTuple_FromArray(PyObject *const *src, Py_ssize_t n)
         return NULL;
     }
     PyObject **dst = tuple->ob_item;
+    for (Py_ssize_t i = 0; i < n; i++) {
+        dst[i] = NULL;
+    }
+    if (src == NULL) {
+        Py_DECREF(tuple);
+        PyErr_BadInternalCall();
+        return NULL;
+    }
+    for (Py_ssize_t i = 0; i < n; i++) {
+        if (src[i] == NULL || PyObject_CheckAccess(src[i]) == NULL) {
+            if (src[i] == NULL) {
+                PyErr_BadInternalCall();
+            }
+            Py_DECREF(tuple);
+            return NULL;
+        }
+    }
     bool track = false;
     for (Py_ssize_t i = 0; i < n; i++) {
         PyObject *item = src[i];
