@@ -140,7 +140,11 @@ PyObject_LengthHint(PyObject *o, Py_ssize_t defaultvalue)
         }
         return -1;
     }
-    else if (result == Py_NotImplemented) {
+    result = _PyObject_CheckAccessNullable(result);
+    if (result == NULL) {
+        return -1;
+    }
+    if (result == Py_NotImplemented) {
         Py_DECREF(result);
         return defaultvalue;
     }
@@ -2668,6 +2672,7 @@ method_output_as_list(PyObject *o, PyObject *meth)
 
     assert(o != NULL);
     meth_output = PyObject_CallMethodNoArgs(o, meth);
+    meth_output = _PyObject_CheckAccessNullable(meth_output);
     if (meth_output == NULL || PyList_CheckExact(meth_output)) {
         return meth_output;
     }
