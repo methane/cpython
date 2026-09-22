@@ -25,7 +25,13 @@ typedef struct {
 static int
 _is_legal_capsule(PyObject *op, const char *invalid_capsule)
 {
-    if (!op || !PyCapsule_CheckExact(op)) {
+    if (!op) {
+        goto error;
+    }
+    if (PyObject_CheckAccess(op) == NULL) {
+        return 0;
+    }
+    if (!PyCapsule_CheckExact(op)) {
         goto error;
     }
     PyCapsule *capsule = (PyCapsule *)op;
@@ -87,6 +93,9 @@ PyCapsule_New(void *pointer, const char *name, PyCapsule_Destructor destructor)
 int
 PyCapsule_IsValid(PyObject *op, const char *name)
 {
+    if (op == NULL || PyObject_CheckAccess(op) == NULL) {
+        return 0;
+    }
     PyCapsule *capsule = (PyCapsule *)op;
 
     return (capsule != NULL &&
@@ -363,5 +372,4 @@ PyTypeObject PyCapsule_Type = {
     .tp_traverse = capsule_traverse,
     .tp_clear = capsule_clear,
 };
-
 

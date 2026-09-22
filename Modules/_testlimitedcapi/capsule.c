@@ -53,8 +53,38 @@ pycapsule_import(PyObject *self, PyObject *args)
     return PyUnicode_FromString((const char *)pointer);
 }
 
+static PyObject *
+capsule_getname(PyObject *self, PyObject *arg)
+{
+    const char *name = PyCapsule_GetName(arg);
+    if (name == NULL && PyErr_Occurred()) {
+        return NULL;
+    }
+    if (name == NULL) {
+        Py_RETURN_NONE;
+    }
+    return PyUnicode_FromString(name);
+}
+
+static PyObject *
+capsule_isvalid(PyObject *self, PyObject *args)
+{
+    PyObject *capsule;
+    const char *name;
+    if (!PyArg_ParseTuple(args, "Oz", &capsule, &name)) {
+        return NULL;
+    }
+    int valid = PyCapsule_IsValid(capsule, name);
+    if (PyErr_Occurred()) {
+        return NULL;
+    }
+    return PyBool_FromLong(valid);
+}
+
 static PyMethodDef test_methods[] = {
     {"capsule_new", capsule_new, METH_O},
+    {"capsule_getname", capsule_getname, METH_O},
+    {"capsule_isvalid", capsule_isvalid, METH_VARARGS},
     {"PyCapsule_Import", pycapsule_import, METH_VARARGS},
     {NULL},
 };
