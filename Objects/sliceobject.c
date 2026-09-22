@@ -145,6 +145,11 @@ error:
 PyObject *
 PySlice_New(PyObject *start, PyObject *stop, PyObject *step)
 {
+    if ((start != NULL && PyObject_CheckAccess(start) == NULL) ||
+        (stop != NULL && PyObject_CheckAccess(stop) == NULL) ||
+        (step != NULL && PyObject_CheckAccess(step) == NULL)) {
+        return NULL;
+    }
     if (step == NULL) {
         step = Py_None;
     }
@@ -191,6 +196,11 @@ PySlice_GetIndices(PyObject *_r, Py_ssize_t length,
         return -1;
     }
     PySliceObject *r = (PySliceObject*)_r;
+    if (PyObject_CheckAccess(r->start) == NULL ||
+        PyObject_CheckAccess(r->stop) == NULL ||
+        PyObject_CheckAccess(r->step) == NULL) {
+        return -1;
+    }
     /* XXX support long ints */
     if (r->step == Py_None) {
         *step = 1;
@@ -234,6 +244,11 @@ PySlice_Unpack(PyObject *_r,
         return -1;
     }
     PySliceObject *r = (PySliceObject*)_r;
+    if (PyObject_CheckAccess(r->start) == NULL ||
+        PyObject_CheckAccess(r->stop) == NULL ||
+        PyObject_CheckAccess(r->step) == NULL) {
+        return -1;
+    }
     /* this is harder to get right than you might think */
 
     static_assert(PY_SSIZE_T_MIN + 1 <= -PY_SSIZE_T_MAX,
