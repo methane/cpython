@@ -1437,6 +1437,14 @@ PyObject_HasAttrString(PyObject *obj, const char *name)
 int
 PyObject_SetAttrString(PyObject *v, const char *name, PyObject *w)
 {
+    if (v == NULL || name == NULL) {
+        PyErr_BadInternalCall();
+        return -1;
+    }
+    if (PyObject_CheckAccess(v) == NULL ||
+        (w != NULL && PyObject_CheckAccess(w) == NULL)) {
+        return -1;
+    }
     if (_PyObject_CheckMutable(v) < 0) {
         return -1;
     }
@@ -1777,6 +1785,15 @@ PyObject_HasAttr(PyObject *obj, PyObject *name)
 int
 PyObject_SetAttr(PyObject *v, PyObject *name, PyObject *value)
 {
+    if (v == NULL || name == NULL) {
+        PyErr_BadInternalCall();
+        return -1;
+    }
+    if (PyObject_CheckAccess(v) == NULL ||
+        PyObject_CheckAccess(name) == NULL ||
+        (value != NULL && PyObject_CheckAccess(value) == NULL)) {
+        return -1;
+    }
     if (_PyObject_CheckMutable(v) < 0) {
         return -1;
     }
@@ -2298,6 +2315,16 @@ int
 _PyObject_GenericSetAttrWithDict(PyObject *obj, PyObject *name,
                                  PyObject *value, PyObject *dict)
 {
+    if (obj == NULL || name == NULL) {
+        PyErr_BadInternalCall();
+        return -1;
+    }
+    if (PyObject_CheckAccess(obj) == NULL ||
+        PyObject_CheckAccess(name) == NULL ||
+        (value != NULL && PyObject_CheckAccess(value) == NULL) ||
+        (dict != NULL && PyObject_CheckAccess(dict) == NULL)) {
+        return -1;
+    }
     if (_PyObject_CheckMutable(obj) < 0) {
         return -1;
     }

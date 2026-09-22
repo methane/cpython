@@ -209,8 +209,12 @@ class CAPITest(unittest.TestCase):
             self.assertEqual(str(cm.unraisable.exc_value),
                              "attribute name must be string, not 'int'")
 
-        # CRASHES xhasattr(obj, NULL)
-        # CRASHES xhasattr(NULL, 'a')
+        with support.catch_unraisable_exception() as cm:
+            self.assertFalse(xhasattr(obj, NULL))
+            self.assertIs(cm.unraisable.exc_type, SystemError)
+        with support.catch_unraisable_exception() as cm:
+            self.assertFalse(xhasattr(NULL, 'a'))
+            self.assertIs(cm.unraisable.exc_type, SystemError)
 
     def test_object_hasattrstring(self):
         hasattrstring = _testlimitedcapi.object_hasattrstring
@@ -233,8 +237,12 @@ class CAPITest(unittest.TestCase):
             self.assertRegex(str(cm.unraisable.exc_value),
                              "'utf-8' codec can't decode")
 
-        # CRASHES hasattrstring(obj, NULL)
-        # CRASHES hasattrstring(NULL, b'a')
+        with support.catch_unraisable_exception() as cm:
+            self.assertFalse(hasattrstring(obj, NULL))
+            self.assertIs(cm.unraisable.exc_type, SystemError)
+        with support.catch_unraisable_exception() as cm:
+            self.assertFalse(hasattrstring(NULL, b'a'))
+            self.assertIs(cm.unraisable.exc_type, SystemError)
 
     def test_object_hasattrwitherror(self):
         xhasattr = _testcapi.object_hasattrwitherror
@@ -247,8 +255,8 @@ class CAPITest(unittest.TestCase):
 
         self.assertRaises(RuntimeError, xhasattr, obj, 'evil')
         self.assertRaises(TypeError, xhasattr, obj, 1)
-        # CRASHES xhasattr(obj, NULL)
-        # CRASHES xhasattr(NULL, 'a')
+        self.assertRaises(SystemError, xhasattr, obj, NULL)
+        self.assertRaises(SystemError, xhasattr, NULL, 'a')
 
     def test_object_hasattrstringwitherror(self):
         hasattrstring = _testcapi.object_hasattrstringwitherror
@@ -261,8 +269,8 @@ class CAPITest(unittest.TestCase):
 
         self.assertRaises(RuntimeError, hasattrstring, obj, b'evil')
         self.assertRaises(UnicodeDecodeError, hasattrstring, obj, b'\xff')
-        # CRASHES hasattrstring(obj, NULL)
-        # CRASHES hasattrstring(NULL, b'a')
+        self.assertRaises(SystemError, hasattrstring, obj, NULL)
+        self.assertRaises(SystemError, hasattrstring, NULL, b'a')
 
     def test_object_setattr(self):
         xsetattr = _testlimitedcapi.object_setattr
@@ -281,8 +289,8 @@ class CAPITest(unittest.TestCase):
         self.assertRaises(RuntimeError, xsetattr, obj, 'evil', 'good')
         self.assertRaises(AttributeError, xsetattr, 42, 'a', 5)
         self.assertRaises(TypeError, xsetattr, obj, 1, 5)
-        # CRASHES xsetattr(obj, NULL, 5)
-        # CRASHES xsetattr(NULL, 'a', 5)
+        self.assertRaises(SystemError, xsetattr, obj, NULL, 5)
+        self.assertRaises(SystemError, xsetattr, NULL, 'a', 5)
 
     def test_object_setattrstring(self):
         setattrstring = _testlimitedcapi.object_setattrstring
@@ -302,8 +310,8 @@ class CAPITest(unittest.TestCase):
         self.assertRaises(AttributeError, setattrstring, 42, b'a', 5)
         self.assertRaises(TypeError, setattrstring, obj, 1, 5)
         self.assertRaises(UnicodeDecodeError, setattrstring, obj, b'\xff', 5)
-        # CRASHES setattrstring(obj, NULL, 5)
-        # CRASHES setattrstring(NULL, b'a', 5)
+        self.assertRaises(SystemError, setattrstring, obj, NULL, 5)
+        self.assertRaises(SystemError, setattrstring, NULL, b'a', 5)
 
     def test_object_delattr(self):
         xdelattr = _testlimitedcapi.object_delattr
@@ -319,8 +327,8 @@ class CAPITest(unittest.TestCase):
         self.assertRaises(AttributeError, xdelattr, 42, 'numerator')
         self.assertRaises(RuntimeError, xdelattr, obj, 'evil')
         self.assertRaises(TypeError, xdelattr, obj, 1)
-        # CRASHES xdelattr(obj, NULL)
-        # CRASHES xdelattr(NULL, 'a')
+        self.assertRaises(SystemError, xdelattr, obj, NULL)
+        self.assertRaises(SystemError, xdelattr, NULL, 'a')
 
     def test_object_delattrstring(self):
         delattrstring = _testlimitedcapi.object_delattrstring
@@ -336,8 +344,8 @@ class CAPITest(unittest.TestCase):
         self.assertRaises(AttributeError, delattrstring, 42, b'numerator')
         self.assertRaises(RuntimeError, delattrstring, obj, b'evil')
         self.assertRaises(UnicodeDecodeError, delattrstring, obj, b'\xff')
-        # CRASHES delattrstring(obj, NULL)
-        # CRASHES delattrstring(NULL, b'a')
+        self.assertRaises(SystemError, delattrstring, obj, NULL)
+        self.assertRaises(SystemError, delattrstring, NULL, b'a')
 
 
     def test_mapping_check(self):
