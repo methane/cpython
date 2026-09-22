@@ -300,6 +300,13 @@ intern_constants(PyObject *tuple, int *modified)
             }
         }
 #endif
+        /* Slice constants are immutable values embedded in code objects.
+           Mark them explicitly: unlike primitive constants, slices are not
+           intrinsically immutable because their bounds may be arbitrary
+           objects. */
+        if (PySlice_Check(v) && PyObject_DeclareImmutable(v) < 0) {
+            return -1;
+        }
     }
     return 0;
 }
