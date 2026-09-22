@@ -92,6 +92,13 @@ PyTuple_New(Py_ssize_t size)
 Py_ssize_t
 PyTuple_Size(PyObject *op)
 {
+    if (op == NULL) {
+        PyErr_BadInternalCall();
+        return -1;
+    }
+    if (PyObject_CheckAccess(op) == NULL) {
+        return -1;
+    }
     if (!PyTuple_Check(op)) {
         PyErr_BadInternalCall();
         return -1;
@@ -103,6 +110,13 @@ PyTuple_Size(PyObject *op)
 PyObject *
 PyTuple_GetItem(PyObject *op, Py_ssize_t i)
 {
+    if (op == NULL) {
+        PyErr_BadInternalCall();
+        return NULL;
+    }
+    if (PyObject_CheckAccess(op) == NULL) {
+        return NULL;
+    }
     if (!PyTuple_Check(op)) {
         PyErr_BadInternalCall();
         return NULL;
@@ -118,6 +132,15 @@ int
 PyTuple_SetItem(PyObject *op, Py_ssize_t i, PyObject *newitem)
 {
     PyObject **p;
+    if (op == NULL) {
+        Py_XDECREF(newitem);
+        PyErr_BadInternalCall();
+        return -1;
+    }
+    if (PyObject_CheckAccess(op) == NULL) {
+        Py_XDECREF(newitem);
+        return -1;
+    }
     if (!PyTuple_Check(op) || !_PyObject_IsUniquelyReferenced(op)) {
         Py_XDECREF(newitem);
         PyErr_BadInternalCall();
@@ -555,7 +578,14 @@ _PyTuple_BinarySlice(PyObject *container, PyObject *start, PyObject *stop)
 PyObject *
 PyTuple_GetSlice(PyObject *op, Py_ssize_t i, Py_ssize_t j)
 {
-    if (op == NULL || !PyTuple_Check(op)) {
+    if (op == NULL) {
+        PyErr_BadInternalCall();
+        return NULL;
+    }
+    if (PyObject_CheckAccess(op) == NULL) {
+        return NULL;
+    }
+    if (!PyTuple_Check(op)) {
         PyErr_BadInternalCall();
         return NULL;
     }

@@ -751,6 +751,69 @@ class SequenceAccessTests(unittest.TestCase):
                 self.assertIsNone(ref())
 
     @threading_helper.requires_working_threading()
+    def test_foreign_list_and_tuple_containers(self):
+        """Container APIs reject a foreign list or tuple before reading it."""
+        invoke = self.native_invoker()
+        internal = import_module('_testinternalcapi')
+        list_apis = (
+            (capi.list_size, ()),
+            (capi.list_getitem, (0,)),
+            (capi.list_get_item_ref, (0,)),
+            (capi.list_getslice, (0, 1)),
+            (capi.list_astuple, ()),
+            (capi.list_sort, ()),
+            (capi.list_reverse, ()),
+        )
+        tuple_apis = (
+            (capi.tuple_size, ()),
+            (capi.tuple_getitem, (0,)),
+            (capi.tuple_getslice, (0, 1)),
+        )
+        for api, unused in list_apis + tuple_apis:
+            internal.object_declare_synchronized(api)
+
+        foreign_list = [1]
+        class LocalTuple(tuple):
+            pass
+        foreign_tuple = LocalTuple((1,))
+        results = threading.Channel()
+
+        def worker(payload):
+            # Build argument tuples while stopped so the foreign container can
+            # be passed through the raw C-call test hook unchanged.
+            with sys.monitoring.StopTheWorld:
+                list_args = tuple((payload[0],) + extra
+                                  for _, extra in list_apis)
+                tuple_args = tuple((payload[1],) + extra
+                                   for _, extra in tuple_apis)
+            denied = 0
+            missing = []
+            for (api, _), args in zip(list_apis, list_args):
+                try:
+                    invoke(api, args)
+                except IllegalThreadAccessException:
+                    denied += 1
+                else:
+                    missing.append(api.__name__)
+            for (api, _), args in zip(tuple_apis, tuple_args):
+                try:
+                    invoke(api, args)
+                except IllegalThreadAccessException:
+                    denied += 1
+                else:
+                    missing.append(api.__name__)
+            results.put((denied, tuple(missing)))
+
+        thread = threading.Thread(target=worker,
+                                  args=((foreign_list, foreign_tuple),),
+                                  group=threading.ThreadGroup())
+        with threading_helper.start_threads([thread]):
+            pass
+        denied, missing = results.get()
+        self.assertEqual((denied, missing),
+                         (len(list_apis) + len(tuple_apis), ()))
+
+    @threading_helper.requires_working_threading()
     def test_shared_elements(self):
         list_getitem = self.shared_getter('list_getitem')
         list_get_item_ref = self.shared_getter('list_get_item_ref')

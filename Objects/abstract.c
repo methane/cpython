@@ -2427,12 +2427,22 @@ PySequence_Count(PyObject *s, PyObject *o)
 int
 PySequence_Contains(PyObject *seq, PyObject *ob)
 {
-    if (seq == NULL || ob == NULL) {
+    if (seq == NULL) {
         null_error();
         return -1;
     }
-    if (PyObject_CheckAccess(seq) == NULL ||
-        PyObject_CheckAccess(ob) == NULL) {
+    if (PyObject_CheckAccess(seq) == NULL) {
+        return -1;
+    }
+    /* Preserve the historical empty-list behavior for a NULL item. */
+    if (ob == NULL) {
+        if (PyList_CheckExact(seq) && PyList_GET_SIZE(seq) == 0) {
+            return 0;
+        }
+        null_error();
+        return -1;
+    }
+    if (PyObject_CheckAccess(ob) == NULL) {
         return -1;
     }
     PySequenceMethods *sqm = Py_TYPE(seq)->tp_as_sequence;

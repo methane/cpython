@@ -308,6 +308,13 @@ list_new_prealloc(Py_ssize_t size)
 Py_ssize_t
 PyList_Size(PyObject *op)
 {
+    if (op == NULL) {
+        PyErr_BadInternalCall();
+        return -1;
+    }
+    if (PyObject_CheckAccess(op) == NULL) {
+        return -1;
+    }
     if (!PyList_Check(op)) {
         PyErr_BadInternalCall();
         return -1;
@@ -390,6 +397,13 @@ list_get_item_ref(PyListObject *op, Py_ssize_t i)
 PyObject *
 PyList_GetItem(PyObject *op, Py_ssize_t i)
 {
+    if (op == NULL) {
+        PyErr_BadInternalCall();
+        return NULL;
+    }
+    if (PyObject_CheckAccess(op) == NULL) {
+        return NULL;
+    }
     if (!PyList_Check(op)) {
         PyErr_BadInternalCall();
         return NULL;
@@ -405,6 +419,13 @@ PyList_GetItem(PyObject *op, Py_ssize_t i)
 PyObject *
 PyList_GetItemRef(PyObject *op, Py_ssize_t i)
 {
+    if (op == NULL) {
+        PyErr_BadInternalCall();
+        return NULL;
+    }
+    if (PyObject_CheckAccess(op) == NULL) {
+        return NULL;
+    }
     if (!PyList_Check(op)) {
         PyErr_SetString(PyExc_TypeError, "expected a list");
         return NULL;
@@ -454,6 +475,15 @@ int
 PyList_SetItem(PyObject *op, Py_ssize_t i,
                PyObject *newitem)
 {
+    if (op == NULL) {
+        Py_XDECREF(newitem);
+        PyErr_BadInternalCall();
+        return -1;
+    }
+    if (PyObject_CheckAccess(op) == NULL) {
+        Py_XDECREF(newitem);
+        return -1;
+    }
     if (!PyList_Check(op)) {
         Py_XDECREF(newitem);
         PyErr_BadInternalCall();
@@ -509,6 +539,13 @@ ins1(PyListObject *self, Py_ssize_t where, PyObject *v)
 int
 PyList_Insert(PyObject *op, Py_ssize_t where, PyObject *newitem)
 {
+    if (op == NULL) {
+        PyErr_BadInternalCall();
+        return -1;
+    }
+    if (PyObject_CheckAccess(op) == NULL) {
+        return -1;
+    }
     if (!PyList_Check(op)) {
         PyErr_BadInternalCall();
         return -1;
@@ -538,6 +575,13 @@ _PyList_AppendTakeRefListResize(PyListObject *self, PyObject *newitem)
 int
 PyList_Append(PyObject *op, PyObject *newitem)
 {
+    if (op == NULL) {
+        PyErr_BadInternalCall();
+        return -1;
+    }
+    if (PyObject_CheckAccess(op) == NULL) {
+        return -1;
+    }
     if (PyList_Check(op) && (newitem != NULL)) {
         int ret;
         Py_BEGIN_CRITICAL_SECTION(op);
@@ -749,6 +793,13 @@ _PyList_BinarySlice(PyObject *container, PyObject *start, PyObject *stop)
 PyObject *
 PyList_GetSlice(PyObject *a, Py_ssize_t ilow, Py_ssize_t ihigh)
 {
+    if (a == NULL) {
+        PyErr_BadInternalCall();
+        return NULL;
+    }
+    if (PyObject_CheckAccess(a) == NULL) {
+        return NULL;
+    }
     if (!PyList_Check(a)) {
         PyErr_BadInternalCall();
         return NULL;
@@ -1076,6 +1127,13 @@ list_ass_slice(PyListObject *a, Py_ssize_t ilow, Py_ssize_t ihigh, PyObject *v)
 int
 PyList_SetSlice(PyObject *a, Py_ssize_t ilow, Py_ssize_t ihigh, PyObject *v)
 {
+    if (a == NULL) {
+        PyErr_BadInternalCall();
+        return -1;
+    }
+    if (PyObject_CheckAccess(a) == NULL) {
+        return -1;
+    }
     if (!PyList_Check(a)) {
         PyErr_BadInternalCall();
         return -1;
@@ -3216,7 +3274,14 @@ keyfunc_fail:
 int
 PyList_Sort(PyObject *v)
 {
-    if (v == NULL || !PyList_Check(v)) {
+    if (v == NULL) {
+        PyErr_BadInternalCall();
+        return -1;
+    }
+    if (PyObject_CheckAccess(v) == NULL) {
+        return -1;
+    }
+    if (!PyList_Check(v)) {
         PyErr_BadInternalCall();
         return -1;
     }
@@ -3250,7 +3315,14 @@ PyList_Reverse(PyObject *v)
 {
     PyListObject *self = (PyListObject *)v;
 
-    if (v == NULL || !PyList_Check(v)) {
+    if (v == NULL) {
+        PyErr_BadInternalCall();
+        return -1;
+    }
+    if (PyObject_CheckAccess(v) == NULL) {
+        return -1;
+    }
+    if (!PyList_Check(v)) {
         PyErr_BadInternalCall();
         return -1;
     }
@@ -3265,7 +3337,14 @@ PyList_Reverse(PyObject *v)
 PyObject *
 PyList_AsTuple(PyObject *v)
 {
-    if (v == NULL || !PyList_Check(v)) {
+    if (v == NULL) {
+        PyErr_BadInternalCall();
+        return NULL;
+    }
+    if (PyObject_CheckAccess(v) == NULL) {
+        return NULL;
+    }
+    if (!PyList_Check(v)) {
         PyErr_BadInternalCall();
         return NULL;
     }
