@@ -420,6 +420,30 @@ object_length_hint(PyObject *self, PyObject *arg)
     return PyLong_FromSsize_t(result);
 }
 
+static PyObject *
+slice_unpack(PyObject *self, PyObject *arg)
+{
+    Py_ssize_t start, stop, step;
+    if (PySlice_Unpack(arg, &start, &stop, &step) < 0) {
+        return NULL;
+    }
+    return Py_BuildValue("(nnn)", start, stop, step);
+}
+
+static PyObject *
+slice_getindices(PyObject *self, PyObject *args)
+{
+    PyObject *slice;
+    Py_ssize_t length, start, stop, step;
+    if (!PyArg_ParseTuple(args, "On", &slice, &length)) {
+        return NULL;
+    }
+    if (PySlice_GetIndices(slice, length, &start, &stop, &step) < 0) {
+        return NULL;
+    }
+    return Py_BuildValue("(nnn)", start, stop, step);
+}
+
 
 static PyMethodDef test_methods[] = {
     {"return_tuple_item_unchecked", return_tuple_item_unchecked, METH_O},
@@ -439,6 +463,8 @@ static PyMethodDef test_methods[] = {
     {"PyIter_Send", pyiter_send, METH_VARARGS},
     {"PyIter_NextItem", pyiter_nextitem, METH_O},
     {"PyObject_LengthHint", object_length_hint, METH_O},
+    {"PySlice_Unpack", slice_unpack, METH_O},
+    {"PySlice_GetIndices", slice_getindices, METH_VARARGS},
 
     {"sequence_fast_get_size", sequence_fast_get_size, METH_O},
     {"sequence_fast_get_item", sequence_fast_get_item, METH_VARARGS},

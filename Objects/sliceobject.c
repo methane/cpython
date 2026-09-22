@@ -179,6 +179,17 @@ int
 PySlice_GetIndices(PyObject *_r, Py_ssize_t length,
                    Py_ssize_t *start, Py_ssize_t *stop, Py_ssize_t *step)
 {
+    if (_r == NULL) {
+        PyErr_BadInternalCall();
+        return -1;
+    }
+    if (PyObject_CheckAccess(_r) == NULL) {
+        return -1;
+    }
+    if (!PySlice_Check(_r)) {
+        PyErr_BadInternalCall();
+        return -1;
+    }
     PySliceObject *r = (PySliceObject*)_r;
     /* XXX support long ints */
     if (r->step == Py_None) {
@@ -211,6 +222,17 @@ int
 PySlice_Unpack(PyObject *_r,
                Py_ssize_t *start, Py_ssize_t *stop, Py_ssize_t *step)
 {
+    if (_r == NULL) {
+        PyErr_BadInternalCall();
+        return -1;
+    }
+    if (PyObject_CheckAccess(_r) == NULL) {
+        return -1;
+    }
+    if (!PySlice_Check(_r)) {
+        PyErr_BadInternalCall();
+        return -1;
+    }
     PySliceObject *r = (PySliceObject*)_r;
     /* this is harder to get right than you might think */
 
