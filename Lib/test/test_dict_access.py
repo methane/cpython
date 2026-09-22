@@ -137,6 +137,32 @@ class DictAccessTests(unittest.TestCase):
             pass
         self.assertEqual(result.get(), 8)
 
+    @threading_helper.requires_working_threading()
+    def test_ordered_dict_iterator_result_access(self):
+        from collections import OrderedDict
+
+        shared = {'key': object(), 'value': object()}.synchronize()
+        result = threading.Channel()
+
+        def worker(mapping):
+            with sys.monitoring.StopTheWorld:
+                ordered = OrderedDict()
+                ordered[mapping['key']] = mapping['value']
+            denied = 0
+            for iterator in (iter(ordered), iter(ordered.values()),
+                             iter(ordered.items())):
+                try:
+                    next(iterator)
+                except IllegalThreadAccessException:
+                    denied += 1
+            result.put(denied)
+
+        thread = threading.Thread(target=worker, args=(shared,),
+                                  group=threading.ThreadGroup())
+        with threading_helper.start_threads([thread]):
+            pass
+        self.assertEqual(result.get(), 3)
+
 
 if __name__ == '__main__':
     unittest.main()

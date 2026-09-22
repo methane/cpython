@@ -1818,7 +1818,7 @@ odictiter_nextkey(odictiterobject *di)
     Py_BEGIN_CRITICAL_SECTION(di->di_odict);
     res = odictiter_nextkey_lock_held(di);
     Py_END_CRITICAL_SECTION();
-    return res;
+    return _PyObject_CheckAccessNullable(res);
 }
 
 static PyObject *
