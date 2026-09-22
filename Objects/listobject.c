@@ -4361,6 +4361,9 @@ listiter_next_shared(PyObject *self, PyListObject *seq,
 static PyObject *
 listiter_next(PyObject *self)
 {
+    if (PyObject_CheckAccess(self) == NULL) {
+        return NULL;
+    }
     _PyListIterObject *it = (_PyListIterObject *)self;
 #ifdef Py_GIL_DISABLED
     if (FT_ATOMIC_LOAD_UINT8(self->ob_shareable) == _Py_SHAREABLE_SYNCHRONIZED) {

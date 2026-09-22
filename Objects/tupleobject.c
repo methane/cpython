@@ -1185,6 +1185,9 @@ tupleiter_traverse(PyObject *self, visitproc visit, void *arg)
 static PyObject *
 tupleiter_next(PyObject *self)
 {
+    if (PyObject_CheckAccess(self) == NULL) {
+        return NULL;
+    }
     _PyTupleIterObject *it = _PyTupleIterObject_CAST(self);
     PyTupleObject *seq;
     PyObject *item;

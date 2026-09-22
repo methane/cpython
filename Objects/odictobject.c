@@ -1882,6 +1882,9 @@ error:
 static PyObject *
 odictiter_iternext(PyObject *op)
 {
+    if (PyObject_CheckAccess(op) == NULL) {
+        return NULL;
+    }
     PyObject *res;
     Py_BEGIN_CRITICAL_SECTION(op);
     res = odictiter_iternext_lock_held(op);

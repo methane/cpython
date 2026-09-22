@@ -2483,6 +2483,9 @@ hamt_baseiter_tp_traverse(PyObject *op, visitproc visit, void *arg)
 static PyObject *
 hamt_baseiter_tp_iternext(PyObject *op)
 {
+    if (PyObject_CheckAccess(op) == NULL) {
+        return NULL;
+    }
     PyHamtIterator *it = (PyHamtIterator*)op;
     PyObject *key;
     PyObject *val;

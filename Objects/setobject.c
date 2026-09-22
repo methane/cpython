@@ -1139,6 +1139,9 @@ static PyMethodDef setiter_methods[] = {
 
 static PyObject *setiter_iternext(PyObject *self)
 {
+    if (PyObject_CheckAccess(self) == NULL) {
+        return NULL;
+    }
     setiterobject *si = (setiterobject*)self;
     PyObject *key = NULL;
     PySetObject *so;

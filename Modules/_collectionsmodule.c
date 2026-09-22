@@ -2002,6 +2002,9 @@ dequeiter_next_lock_held(dequeiterobject *it, dequeobject *deque)
 static PyObject *
 dequeiter_next(PyObject *op)
 {
+    if (PyObject_CheckAccess(op) == NULL) {
+        return NULL;
+    }
     PyObject *result;
     dequeiterobject *it = dequeiterobject_CAST(op);
     // It's safe to access it->deque without holding the per-object lock for it
@@ -2011,7 +2014,7 @@ dequeiter_next(PyObject *op)
     result = dequeiter_next_lock_held(it, deque);
     Py_END_CRITICAL_SECTION2();
 
-    return result;
+    return _PyObject_CheckAccessNullable(result);
 }
 
 static PyObject *
@@ -2153,6 +2156,9 @@ dequereviter_next_lock_held(dequeiterobject *it, dequeobject *deque)
 static PyObject *
 dequereviter_next(PyObject *self)
 {
+    if (PyObject_CheckAccess(self) == NULL) {
+        return NULL;
+    }
     PyObject *item;
     dequeiterobject *it = dequeiterobject_CAST(self);
     // It's safe to access it->deque without holding the per-object lock for it
@@ -2161,7 +2167,7 @@ dequereviter_next(PyObject *self)
     Py_BEGIN_CRITICAL_SECTION2(it, deque);
     item = dequereviter_next_lock_held(it, deque);
     Py_END_CRITICAL_SECTION2();
-    return item;
+    return _PyObject_CheckAccessNullable(item);
 }
 
 static PyObject *

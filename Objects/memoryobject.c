@@ -3664,6 +3664,9 @@ memoryiter_traverse(PyObject *self, visitproc visit, void *arg)
 static PyObject *
 memoryiter_next(PyObject *self)
 {
+    if (PyObject_CheckAccess(self) == NULL) {
+        return NULL;
+    }
     memoryiterobject *it = (memoryiterobject *)self;
     PyMemoryViewObject *seq;
     seq = it->it_seq;

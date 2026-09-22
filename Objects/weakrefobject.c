@@ -797,6 +797,9 @@ proxy_iter(PyObject *proxy)
 static PyObject *
 proxy_iternext(PyObject *proxy)
 {
+    if (PyObject_CheckAccess(proxy) == NULL) {
+        return NULL;
+    }
     PyObject *obj = _PyWeakref_GET_REF(proxy);
     if (!proxy_check_ref(obj)) {
         return NULL;
