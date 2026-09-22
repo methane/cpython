@@ -3590,6 +3590,19 @@ pop_lock_held(PyObject *op, PyObject *key, PyObject **result)
         return 0;
     }
 
+    if (key == NULL) {
+        if (result) {
+            *result = NULL;
+        }
+        PyErr_BadInternalCall();
+        return -1;
+    }
+    if (PyObject_CheckAccess(key) == NULL) {
+        if (result) {
+            *result = NULL;
+        }
+        return -1;
+    }
     Py_hash_t hash = _PyObject_HashDictKey(key);
     if (hash == -1) {
         dict_unhashable_type(op, key);
@@ -3604,6 +3617,19 @@ pop_lock_held(PyObject *op, PyObject *key, PyObject **result)
 int
 PyDict_Pop(PyObject *op, PyObject *key, PyObject **result)
 {
+    if (op == NULL) {
+        if (result) {
+            *result = NULL;
+        }
+        PyErr_BadInternalCall();
+        return -1;
+    }
+    if (PyObject_CheckAccess(op) == NULL) {
+        if (result) {
+            *result = NULL;
+        }
+        return -1;
+    }
     int err;
     Py_BEGIN_CRITICAL_SECTION(op);
     err = pop_lock_held(op, key, result);
@@ -5279,6 +5305,21 @@ int
 PyDict_SetDefaultRef(PyObject *d, PyObject *key, PyObject *default_value,
                      PyObject **result)
 {
+    if (d == NULL || key == NULL || default_value == NULL) {
+        if (result) {
+            *result = NULL;
+        }
+        PyErr_BadInternalCall();
+        return -1;
+    }
+    if (PyObject_CheckAccess(d) == NULL ||
+        PyObject_CheckAccess(key) == NULL ||
+        PyObject_CheckAccess(default_value) == NULL) {
+        if (result) {
+            *result = NULL;
+        }
+        return -1;
+    }
     int res;
     Py_BEGIN_CRITICAL_SECTION(d);
     res = dict_setdefault_ref_lock_held(d, key, default_value, result, 1);
@@ -5289,6 +5330,15 @@ PyDict_SetDefaultRef(PyObject *d, PyObject *key, PyObject *default_value,
 PyObject *
 PyDict_SetDefault(PyObject *d, PyObject *key, PyObject *defaultobj)
 {
+    if (d == NULL || key == NULL || defaultobj == NULL) {
+        PyErr_BadInternalCall();
+        return NULL;
+    }
+    if (PyObject_CheckAccess(d) == NULL ||
+        PyObject_CheckAccess(key) == NULL ||
+        PyObject_CheckAccess(defaultobj) == NULL) {
+        return NULL;
+    }
     PyObject *result;
     Py_BEGIN_CRITICAL_SECTION(d);
     dict_setdefault_ref_lock_held(d, key, defaultobj, &result, 0);

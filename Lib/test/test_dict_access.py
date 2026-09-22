@@ -35,6 +35,10 @@ class DictAccessTests(unittest.TestCase):
             (limited.dict_next, (value, 0)),
             (limited.dict_copy, (value,)),
             (capi.dict_getitemref, (value, 'key')),
+            (capi.dict_setdefault, (value, 'new', 'value')),
+            (capi.dict_setdefaultref, (value, 'new', 'value')),
+            (capi.dict_pop, (value, 'key')),
+            (capi.dict_pop_null, (value, 'key')),
         )
         for api, unused in apis:
             internal.object_declare_synchronized(api)
