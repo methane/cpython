@@ -3285,6 +3285,13 @@ PyFrozenSet_New(PyObject *iterable)
 Py_ssize_t
 PySet_Size(PyObject *anyset)
 {
+    if (anyset == NULL) {
+        PyErr_BadInternalCall();
+        return -1;
+    }
+    if (PyObject_CheckAccess(anyset) == NULL) {
+        return -1;
+    }
     if (!PyAnySet_Check(anyset)) {
         PyErr_BadInternalCall();
         return -1;
@@ -3295,6 +3302,13 @@ PySet_Size(PyObject *anyset)
 int
 PySet_Clear(PyObject *set)
 {
+    if (set == NULL) {
+        PyErr_BadInternalCall();
+        return -1;
+    }
+    if (PyObject_CheckAccess(set) == NULL) {
+        return -1;
+    }
     if (!PySet_Check(set)) {
         PyErr_BadInternalCall();
         return -1;
@@ -3316,6 +3330,14 @@ _PySet_ClearInternal(PySetObject *so)
 int
 PySet_Contains(PyObject *anyset, PyObject *key)
 {
+    if (anyset == NULL || key == NULL) {
+        PyErr_BadInternalCall();
+        return -1;
+    }
+    if (PyObject_CheckAccess(anyset) == NULL ||
+        PyObject_CheckAccess(key) == NULL) {
+        return -1;
+    }
     if (!PyAnySet_Check(anyset)) {
         PyErr_BadInternalCall();
         return -1;
@@ -3333,6 +3355,14 @@ PySet_Contains(PyObject *anyset, PyObject *key)
 int
 PySet_Discard(PyObject *set, PyObject *key)
 {
+    if (set == NULL || key == NULL) {
+        PyErr_BadInternalCall();
+        return -1;
+    }
+    if (PyObject_CheckAccess(set) == NULL ||
+        PyObject_CheckAccess(key) == NULL) {
+        return -1;
+    }
     if (!PySet_Check(set)) {
         PyErr_BadInternalCall();
         return -1;
@@ -3348,6 +3378,14 @@ PySet_Discard(PyObject *set, PyObject *key)
 int
 PySet_Add(PyObject *anyset, PyObject *key)
 {
+    if (anyset == NULL || key == NULL) {
+        PyErr_BadInternalCall();
+        return -1;
+    }
+    if (PyObject_CheckAccess(anyset) == NULL ||
+        PyObject_CheckAccess(key) == NULL) {
+        return -1;
+    }
     if (PySet_Check(anyset)) {
         int rv;
         Py_BEGIN_CRITICAL_SECTION(anyset);
@@ -3409,6 +3447,13 @@ _PySet_NextEntryRef(PyObject *set, Py_ssize_t *pos, PyObject **key, Py_hash_t *h
 PyObject *
 PySet_Pop(PyObject *set)
 {
+    if (set == NULL) {
+        PyErr_BadInternalCall();
+        return NULL;
+    }
+    if (PyObject_CheckAccess(set) == NULL) {
+        return NULL;
+    }
     if (!PySet_Check(set)) {
         PyErr_BadInternalCall();
         return NULL;
