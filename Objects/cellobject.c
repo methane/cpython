@@ -13,6 +13,10 @@ PyCell_New(PyObject *obj)
 {
     PyCellObject *op;
 
+    if (obj != NULL && PyObject_CheckAccess(obj) == NULL) {
+        return NULL;
+    }
+
     op = (PyCellObject *)PyObject_GC_New(PyCellObject, &PyCell_Type);
     if (op == NULL)
         return NULL;
@@ -67,11 +71,15 @@ _PyCell_NotifyMutation(PyObject *op)
 PyObject *
 PyCell_Get(PyObject *op)
 {
-    if (!PyCell_Check(op)) {
+    if (op == NULL) {
         PyErr_BadInternalCall();
         return NULL;
     }
     if (PyObject_CheckAccess(op) == NULL) {
+        return NULL;
+    }
+    if (!PyCell_Check(op)) {
+        PyErr_BadInternalCall();
         return NULL;
     }
     return _PyObject_CheckAccessNullable(PyCell_GetRef((PyCellObject *)op));
@@ -80,11 +88,19 @@ PyCell_Get(PyObject *op)
 int
 PyCell_Set(PyObject *op, PyObject *value)
 {
+    if (op == NULL) {
+        PyErr_BadInternalCall();
+        return -1;
+    }
+    if (PyObject_CheckAccess(op) == NULL ||
+        (value != NULL && PyObject_CheckAccess(value) == NULL)) {
+        return -1;
+    }
     if (!PyCell_Check(op)) {
         PyErr_BadInternalCall();
         return -1;
     }
-    if (PyObject_CheckAccess(op) == NULL || _PyObject_CheckMutable(op) < 0) {
+    if (_PyObject_CheckMutable(op) < 0) {
         return -1;
     }
     PyCell_SetTakeRef((PyCellObject *)op, Py_XNewRef(value));
