@@ -2429,10 +2429,55 @@ _PyEval_UnpackIterableStackRef(PyThreadState *tstate, PyObject *v,
 {
     int i = 0, j = 0;
     Py_ssize_t ll = 0;
-    PyObject *it;  /* iter(v) */
+    PyObject *it = NULL;  /* iter(v) */
     PyObject *w;
     PyObject *l = NULL; /* variable list */
+    PyObject *(*iternext)(PyObject *);
     assert(v != NULL);
+
+    /* Tuple iterators validate every value they yield.  UNPACK_EX has a
+       deliberately shallow starred result, so copy exact tuple elements
+       directly and validate only the values published on the stack. */
+    if (argcntafter >= 0 && PyTuple_CheckExact(v)) {
+        if (PyObject_CheckAccess(v) == NULL) {
+            return 0;
+        }
+        Py_ssize_t size = PyTuple_GET_SIZE(v);
+        if (size < argcnt + argcntafter) {
+            _PyErr_Format(tstate, PyExc_ValueError,
+                          "not enough values to unpack (expected at least %d, got %zd)",
+                          argcnt + argcntafter, size);
+            return 0;
+        }
+        PyObject **items = _PyTuple_ITEMS(v);
+        for (; i < argcnt; i++) {
+            w = Py_NewRef(items[i]);
+            if (PyObject_CheckAccess(w) == NULL) {
+                Py_DECREF(w);
+                goto Error;
+            }
+            *--sp = PyStackRef_FromPyObjectSteal(w);
+        }
+        Py_ssize_t middle_size = size - argcnt - argcntafter;
+        l = PyList_New(middle_size);
+        if (l == NULL) {
+            goto Error;
+        }
+        for (Py_ssize_t k = 0; k < middle_size; k++) {
+            PyList_SET_ITEM(l, k, Py_NewRef(items[argcnt + k]));
+        }
+        *--sp = PyStackRef_FromPyObjectSteal(l);
+        i++;
+        for (Py_ssize_t k = 0; k < argcntafter; k++, i++) {
+            w = Py_NewRef(items[size - argcntafter + k]);
+            if (PyObject_CheckAccess(w) == NULL) {
+                Py_DECREF(w);
+                goto Error;
+            }
+            *--sp = PyStackRef_FromPyObjectSteal(w);
+        }
+        return 1;
+    }
 
     it = PyObject_GetIter(v);
     if (it == NULL) {
@@ -2445,6 +2490,7 @@ _PyEval_UnpackIterableStackRef(PyThreadState *tstate, PyObject *v,
         }
         return 0;
     }
+    iternext = *Py_TYPE(it)->tp_iternext;
 
     for (; i < argcnt; i++) {
         w = PyIter_Next(it);
@@ -2464,6 +2510,14 @@ _PyEval_UnpackIterableStackRef(PyThreadState *tstate, PyObject *v,
                                   argcnt + argcntafter, i);
                 }
             }
+            goto Error;
+        }
+        /* Values assigned directly to the unpacked prefix are published on
+           the evaluation stack.  Check them before storing the reference.
+           Values retained by the starred list remain shallow and are checked
+           when that list is indexed instead. */
+        if (PyObject_CheckAccess(w) == NULL) {
+            Py_DECREF(w);
             goto Error;
         }
         *--sp = PyStackRef_FromPyObjectSteal(w);
@@ -2496,9 +2550,30 @@ _PyEval_UnpackIterableStackRef(PyThreadState *tstate, PyObject *v,
         goto Error;
     }
 
-    l = PySequence_List(it);
-    if (l == NULL)
+    /* Build the starred list without the public list-extension path.  The
+       list is a new local container, and UNPACK_EX intentionally preserves
+       the references it contains without acquiring them on the evaluation
+       stack. */
+    l = PyList_New(0);
+    if (l == NULL) {
         goto Error;
+    }
+    for (;;) {
+        /* Call the iterator slot directly so inaccessible values can remain
+           inside the shallow starred list. */
+        w = iternext(it);
+        if (w == NULL) {
+            if (_PyErr_Occurred(tstate) &&
+                !_PyErr_ExceptionMatches(tstate, PyExc_StopIteration)) {
+                goto Error;
+            }
+            _PyErr_Clear(tstate);
+            break;
+        }
+        if (_PyList_AppendTakeRef((PyListObject *)l, w) < 0) {
+            goto Error;
+        }
+    }
     *--sp = PyStackRef_FromPyObjectSteal(l);
     i++;
 
@@ -2510,8 +2585,9 @@ _PyEval_UnpackIterableStackRef(PyThreadState *tstate, PyObject *v,
         goto Error;
     }
 
-    /* Validate all tail values before moving any out of the temporary list.
-       On failure its stack reference still owns every element. */
+    /* Validate only tail values that are published directly on the stack.
+       The starred list remains a shallow container, so its elements are
+       checked when the list is subsequently accessed. */
     for (j = argcntafter; j > 0; j--) {
         if (PyObject_CheckAccess(PyList_GET_ITEM(l, ll - j)) == NULL) {
             goto Error;

@@ -250,9 +250,21 @@ cell_set_from_tuple(PyObject *self, PyObject *args)
         PyErr_SetString(PyExc_TypeError, "expected a one-item tuple");
         return NULL;
     }
-    if (PyCell_Set(cell, PyTuple_GET_ITEM(holder, 0)) < 0) {
+    /* This helper deliberately installs a foreign value so the tests can
+       exercise reads from a cell.  PyCell_Set() quite correctly rejects the
+       value at its public API boundary; use the legacy raw macro here after
+       checking the cell receiver instead. */
+    if (PyObject_CheckAccess(cell) == NULL || !PyCell_Check(cell)) {
+        if (!PyErr_Occurred()) {
+            PyErr_BadInternalCall();
+        }
         return NULL;
     }
+    PyObject *value = PyTuple_GET_ITEM(holder, 0);
+    Py_INCREF(value);
+    PyObject *old_value = PyCell_GET(cell);
+    PyCell_SET(cell, value);
+    Py_XDECREF(old_value);
     Py_RETURN_NONE;
 }
 

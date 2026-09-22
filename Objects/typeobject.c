@@ -10006,12 +10006,6 @@ PyType_Ready(PyTypeObject *type)
         assert(_PyType_CheckConsistency(type));
     }
     END_TYPE_LOCK();
-    if (res == 0 && !(type->tp_flags & Py_TPFLAGS_HEAPTYPE)) {
-        /* Static extension types are shared by all interpreters. */
-        _Py_atomic_store_uint32_relaxed(&type->ob_base.ob_base.ob_owner_id, 0);
-        _Py_atomic_store_uint8(&type->ob_base.ob_base.ob_shareable,
-                              _Py_SHAREABLE_IMMUTABLE);
-    }
     return res;
 }
 
@@ -10059,16 +10053,10 @@ init_static_type(PyInterpreterState *interp, PyTypeObject *self,
 int
 _PyStaticType_InitForExtension(PyInterpreterState *interp, PyTypeObject *self)
 {
-    int res = init_static_type(interp, self, 0,
-                               ((self->tp_flags & Py_TPFLAGS_READY) == 0));
-    if (res == 0) {
-        /* Static extension types are shared by all interpreters.  Mark them
-           immutable so cross-interpreter C API access checks accept them. */
-        _Py_atomic_store_uint32_relaxed(&self->ob_base.ob_base.ob_owner_id, 0);
-        _Py_atomic_store_uint8(&self->ob_base.ob_base.ob_shareable,
-                              _Py_SHAREABLE_IMMUTABLE);
-    }
-    return res;
+    /* Static extension types retain their local owner unless the extension
+       explicitly declares a sharing policy. */
+    return init_static_type(interp, self, 0,
+                            ((self->tp_flags & Py_TPFLAGS_READY) == 0));
 }
 
 int
