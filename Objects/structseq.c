@@ -252,6 +252,11 @@ structseq_new_impl(PyTypeObject *type, PyObject *arg, PyObject *dict)
     }
     for (i = 0; i < len; ++i) {
         PyObject *v = PySequence_Fast_GET_ITEM(arg, i);
+        if (PyObject_CheckAccess(v) == NULL) {
+            Py_DECREF(res);
+            Py_DECREF(arg);
+            return NULL;
+        }
         res->ob_item[i] = Py_NewRef(v);
     }
     Py_DECREF(arg);
