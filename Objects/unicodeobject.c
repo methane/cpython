@@ -304,6 +304,13 @@ init_interned_dict(PyInterpreterState *interp)
         if (interned == NULL) {
             return -1;
         }
+        /* Some sub-interpreters share the main interpreter's interned-string
+           dictionary.  Its mutex protects concurrent access, so make that
+           sharing explicit to the PEP 805 access checks. */
+        if (PyObject_DeclareSynchronized(interned) < 0) {
+            Py_DECREF(interned);
+            return -1;
+        }
     }
     _Py_INTERP_CACHED_OBJECT(interp, interned_strings) = interned;
     return 0;
