@@ -6,6 +6,9 @@ date; see the resolved findings and validation below.
 Re-read of the complete PEP and both appendices on 2026-09-23 against
 `37899fe75b` (implementation unchanged since `2fc691bbbe`). The new findings
 below supersede the earlier assessment of remaining work.
+Current re-review: 2026-09-23 against `afa12c7930`, after the sorting and
+list/cell/function/tuple/bytes C API repairs. The current assessment below
+supersedes the historical probe results at the end of this document.
 
 Sources: [PEP 805](https://peps.python.org/pep-0805/),
 [implementation appendix](https://peps.python.org/pep-0805/appendix-implementation/),
@@ -20,13 +23,59 @@ complete the reference-counting and parallelism architecture.
 
 ## Re-review summary
 
-**The implementation is not yet conformant.** New subprocess probes in both
-debug builds demonstrate unchecked element access in `list.sort()`, continued
-sorting after its protecting context is closed by a callback, and a crash
-when a foreign group collects a legacy extension module. Runtime checks on
-ordinary C API inputs also remain in several APIs despite the earlier repair
-to `PyObject_GetItem`. These are implementation defects or unfinished work,
-not questions about whether unsafe access or crashes are acceptable.
+**The implementation is not yet conformant.** At `afa12c7930`, foreign sort
+elements are correctly rejected, but sorting still continues after a callback
+closes its protecting context. A foreign group collecting a legacy extension
+still crashes. New probes also expose an unchecked `LOAD_CONST`: a function
+with a foreign LOCAL list in `co_consts` aborts in both debug builds, or reads
+the list successfully after specialization in the GIL build. The default-build
+parallelism and LOCAL reclamation gaps also remain. These are implementation
+defects or unfinished work, not questions about whether unsafe access or
+crashes are acceptable.
+
+The current audit executed 15 distinct subprocess probes in each Linux/aarch64
+debug build, with timeouts and core dumps disabled. The table separates
+observations from source-inspection findings. This was not a new full-suite
+run: the 69-file results below belong to the preceding implementation work.
+Both demos were rerun and compute 61,620, rejecting foreign LOCAL and
+unprotected PROTECTED access. A successful demo does not demonstrate parallel
+execution in the GIL build or close the failures below.
+
+| Current check | Free-threading debug | GIL debug | Assessment |
+| --- | --- | --- | --- |
+| Subscript a foreign LOCAL list loaded from `co_consts`, cold function | SIGABRT at `PyObject_GetItem` input assertion | Same | Newly confirmed VM acquisition defect |
+| Same function after 100 calls in Main | SIGABRT | Returns the foreign list's element, 42 | Access bypass in the specialized GIL path |
+| Foreign LOCAL elements in `list.sort()` | IllegalThreadAccessException | Same | Repaired |
+| Close protecting generator from sort key | Sort completes after unlock | Same | Remaining reference-lifetime defect |
+| Foreign GC with `xxlimited_3_13` | SIGSEGV in `xx_traverse`, line 457 | Same | Remaining compatibility defect |
+| Last LOCAL reference deleted by another thread in the same group | `after del` before finalizer | Finalizer before `after del` | Free-threading reclamation gap |
+| Object header size | 56 bytes | 40 bytes | Compact representation unfinished; 24 bytes is illustrative |
+| Buffer exporter tries to return a foreign memoryview | Buffer acquisition and join raise IllegalThreadAccessException; `bytearray` `+` and `+=` raise TypeError | Same | Newly confirmed exception-propagation defect |
+| Transfer an ordinary instance | Primitive attribute readable; `__dict__` denied | Same | Question 4 |
+| Rebind a read-only closure cell | Function changes SYNCHRONIZED to LOCAL | Same | Question 7 |
+| `__str__` returns a `str` subclass | LOCAL subclass preserved | Same | Question 8 |
+
+The other probes confirm rejection of an aliased `protect()` argument,
+working tuple-iterator protection, rejection of a local load after its
+protecting generator closes, and a dictionary view remaining LOCAL when its
+dictionary is frozen. The last observation alone is not an access violation.
+
+Source inspection confirms that `_PyEval_AcquireLock()` still takes the
+interpreter GIL as well as the group lock (`Python/ceval_gil.c:592`), that
+the default build still uses ordinary reference counts (`Include/refcount.h`),
+and that the three cleanup fields remain in both headers
+(`Include/object.h:163`, `:188`). They implement a queue for deferred cleanup,
+not biased reference counting. Free-threading does reuse PEP 703 BRC, but
+that OS-thread bias does not meet the observed same-group LOCAL lifetime
+requirement. Mark's two comments therefore remain only partially addressed.
+
+The source audit also confirms remaining input checks in, for example,
+`PyByteArray_Size` (`Objects/bytearrayobject.c:216`) and
+`PyLong_AsLongAndOverflow` (`Objects/longobject.c:593`), as well as vectorcall
+argument scans. `PyObject_GetItem` does now assert its inputs and validate
+its returned reference (`Objects/abstract.c:166`).
+
+## Earlier re-review and implementation follow-ups
 
 One earlier question was incorrect: footnote 3 of the
 [allowed-operations table](https://peps.python.org/pep-0805/#allowed-operations)
@@ -141,10 +190,11 @@ validation record at the end of this document.
 ## Remaining implementation work
 
 The following are known gaps, not questions about whether the PEP requires
-parallel groups or immediate reclamation of ordinary LOCAL objects. The
-representation and cleanup contract in questions 5 and 6 should be settled
-before the refcounting/header port; these gaps have not been fixed by the
-follow-up.
+parallel groups or immediate reclamation of ordinary LOCAL objects.
+Question 5 is an implementation-design consultation: the observable
+requirement is already clear. Question 6 asks about unspecified cleanup
+semantics that affect the header design. Neither makes the defects below
+acceptable or establishes that Mark's approval is needed for routine fixes.
 
 1. **The default build still serializes different ThreadGroups.**
    `_PyEval_AcquireLock()` acquires both the group lock and the interpreter
@@ -193,19 +243,11 @@ follow-up.
    fields does not justify their permanent cost or resolve Mark's concern.
 
 4. **Sorting: element acquisition repaired; receiver lifetime still open.**
-   The re-review found that, in both builds, claiming a
-   `TransferBox([Number(2), Number(1)])`, where `Number` is a Python `float`
-   subclass, allows `values.sort()` in the receiving group. Reading
-   `values[0]` correctly raises `IllegalThreadAccessException`. Sorting reads
-   the foreign objects anyway: `list_sort_impl()` loads stored elements
-   without validating them, and `unsafe_object_compare()` calls their native
-   comparison slot directly (`Objects/listobject.c:3023` and `:2857`).
-   The required rejection is settled by the PEP's access model; there is no
-   exception for comparison during sorting.
-   The implementation follow-up above repairs these acquisitions and the
-   optimized comparison result boundary.
+   At the current HEAD, sorting the foreign elements from a shallow
+   `TransferBox` correctly raises `IllegalThreadAccessException`. The
+   historical failure and the repair are recorded separately above and below.
 
-   A second probe starts sorting a protected list with valid input, then
+   Another probe starts sorting a protected list with valid input, then
    closes its protecting generator from the key callback. Sorting completes
    and restores the reordered list while the external lock is no longer
    held. Rechecking Python locals and call results does not protect this
@@ -247,7 +289,52 @@ follow-up.
    expectations. The intended invariant must be settled before claiming that
    these checks can be removed safely.
 
+8. **Bytearray concatenation masks access exceptions from buffer exporters.**
+   Both `PyByteArray_Concat()` and `bytearray_iconcat_lock_held()` replace
+   every `PyObject_GetBuffer()` failure with TypeError
+   (`Objects/bytearrayobject.c:411`, `:451`). An accessible exporter attempting
+   to return a foreign LOCAL memoryview therefore produces TypeError through
+   `bytearray() + exporter` and `target += exporter`, while direct buffer
+   acquisition and the repaired join path preserve
+   IllegalThreadAccessException. The new reproduction below confirms this
+   in both builds. Access is denied, so this probe does not demonstrate a
+   successful unsafe read; the defect is losing the access exception.
+
+9. **Uniform debug validation of stack publication is unfinished.**
+   The appendix's [validation section](https://peps.python.org/pep-0805/appendix-implementation/#validation)
+   calls for validating references whenever they are pushed to the interpreter
+   stack. The common stack-reference constructors
+   (`Include/internal/pycore_stackref.h`) and generated stack stores
+   (`Tools/cases_generator/stack.py:301`) do not provide such an accessibility
+   assertion. Checks currently depend on individual opcode and call paths.
+   This source-inspection finding is distinct from native JIT work and from
+   the access failures demonstrated by the probes. Passing selected tests
+   does not establish this invariant at every publication point.
+
+10. **`LOAD_CONST` publishes unchecked heap references.**
+    `code.replace(co_consts=...)` accepts arbitrary objects, including LOCAL
+    lists (see also the explicit comment in `Objects/codeobject.c:145`). A
+    function constructed with that code can be SYNCHRONIZED, so another group
+    may call it. `LOAD_CONST` borrows the list from `co_consts` without checking
+    accessibility (`Python/bytecodes.c:369`). Subscribing it then reaches the
+    `PyObject_GetItem` input assertion and aborts in both debug builds.
+
+    After 100 valid calls in Main, the GIL build's specialized list-subscript
+    instruction instead reads the foreign list and returns 42. It checks the
+    element, but relies on the incoming container reference being valid
+    (`Python/bytecodes.c:1231`). Free-threading still aborts in this warm-up
+    variant. No native JIT is needed for either result. This is an acquisition
+    bug, not evidence that Mark's valid-input contract should be abandoned.
+    Both ordinary constant loads and any optimizer-generated inline constant
+    paths need to establish that contract. The reproduction constructs a new
+    function and does not depend on deprecated `__code__` assignment.
+
 ## Questions to discuss with Mark
+
+Questions 1–4 and 6–8 concern unspecified contracts or clarifications to the
+PEP/appendix. Question 5 asks for design guidance, not clarification of whether
+LOCAL objects must be reclaimed promptly. The complete question wording and
+the concrete behavior motivating each question follow.
 
 ### 1. How is reference validity maintained when protection ends in another frame?
 
@@ -410,6 +497,10 @@ the appendix's [C API discussion](https://peps.python.org/pep-0805/appendix-impl
 - `65d89f831d`: conservative local and surviving call-operand validation.
 - `ef68bf8a82`: consistent termios module-state error propagation.
 - `2fc691bbbe`: GC metadata access for foreign groups.
+- `a1a1e19daa`: sort-element acquisition and comparison-result checks.
+- `08cf7ba093`: list, cell and function C API input assertions.
+- `afa12c7930`: tuple and bytes input assertions, stored-buffer acquisition,
+  and tuple test-helper error propagation.
 
 ## Earlier implementation validation
 
@@ -578,4 +669,87 @@ t.start()
 t.join()
 print(list(output))
 # SIGSEGV; xx_traverse dereferences state at Modules/xxlimited_3_13.c:457.
+```
+
+## Additional reproduction at `afa12c7930`
+
+### A foreign LOCAL object in code constants
+
+Run only in a subprocess with core dumps disabled: the cold case aborts at
+`Objects/abstract.c:171` in both debug builds. To reproduce the specialized
+variant, add `for _ in range(100): read(0)` immediately after constructing
+`read`. The GIL build then prints `[('returned', 42)]`; the free-threading
+build still aborts. The expected outcome in the worker is an
+IllegalThreadAccessException at constant acquisition.
+
+```python
+import threading
+
+def read(index):
+    return 'replace this'[index]
+
+foreign = [42]
+code = read.__code__.replace(
+    co_consts=tuple(foreign if value == 'replace this' else value
+                    for value in read.__code__.co_consts))
+read = type(read)(code, read.__globals__)
+print('function state:', read.__shareable__.name, flush=True)
+print('constant state:', foreign.__shareable__.name, flush=True)
+output = SynchronizedList()
+
+def worker(function, output):
+    try:
+        output.append(('returned', function(0)))
+    except BaseException as exc:
+        output.append(('raised', type(exc).__name__))
+
+t = threading.Thread(target=worker, args=(read, output),
+                     group=threading.ThreadGroup())
+t.start()
+t.join()
+print(list(output))
+```
+
+### Access exceptions from bytearray buffer exporters
+
+The exporter belongs to the receiving group; only the memoryview retained
+inside the shallow tuple belongs to Main. Thus the exception originates from
+a new heap-reference acquisition in `__buffer__`, not an invalid C API input.
+
+```python
+import threading
+
+payload = (memoryview(b'x'),)
+output = SynchronizedList()
+
+def worker(payload, output):
+    class Exporter:
+        def __buffer__(self, flags):
+            return payload[0]
+
+    exporter = Exporter()
+    for operation in ('buffer', 'join', 'concat', 'inplace_concat'):
+        try:
+            if operation == 'buffer':
+                memoryview(exporter)
+            elif operation == 'join':
+                bytearray().join([exporter])
+            elif operation == 'concat':
+                bytearray() + exporter
+            else:
+                target = bytearray()
+                target += exporter
+        except BaseException as exc:
+            output.append((operation, type(exc).__name__))
+        else:
+            output.append((operation, 'allowed'))
+
+t = threading.Thread(target=worker, args=(payload, output),
+                     group=threading.ThreadGroup())
+t.start()
+t.join()
+print(list(output))
+# [('buffer', 'IllegalThreadAccessException'),
+#  ('join', 'IllegalThreadAccessException'),
+#  ('concat', 'TypeError'), ('inplace_concat', 'TypeError')]
 ```
