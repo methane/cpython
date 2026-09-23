@@ -945,6 +945,29 @@ def requireSocket(*args):
 
 class GeneralModuleTests(unittest.TestCase):
 
+    def test_nonblocking_small_stream_send_recv(self):
+        with socket.create_server((socket_helper.HOSTv4, 0)) as listener:
+            with socket.create_connection(listener.getsockname()) as sender:
+                receiver, _ = listener.accept()
+                with receiver:
+                    sender.setblocking(False)
+                    receiver.setblocking(False)
+                    with self.assertRaises(BlockingIOError):
+                        receiver.recv(1)
+
+                    for size in (1, 1024 * 1024, 1024 * 1024 + 1):
+                        data = b'x' * size
+                        sent = sender.send(data)
+                        self.assertGreater(sent, 0)
+
+                        received = bytearray()
+                        while len(received) < sent:
+                            readable, _, _ = select.select(
+                                [receiver], [], [], support.SHORT_TIMEOUT)
+                            self.assertTrue(readable)
+                            received.extend(receiver.recv(size))
+                        self.assertEqual(received, data[:sent])
+
     @unittest.skipUnless(_socket is not None, 'need _socket module')
     def test_socket_type(self):
         self.assertTrue(gc.is_tracked(_socket.socket))

@@ -980,7 +980,7 @@ internal_select(PySocketSockObject *s, int writing, PyTime_t interval,
    When the function is retried, recompute the timeout using a monotonic clock.
 
    sock_call_ex() must be called with the GIL held. The socket function is
-   called with the GIL released. */
+   called with the GIL released if release_gil is true. */
 static int
 sock_call_ex(PySocketSockObject *s,
              int writing,
@@ -988,7 +988,8 @@ sock_call_ex(PySocketSockObject *s,
              void *data,
              int connect,
              int *err,
-             PyTime_t timeout)
+             PyTime_t timeout,
+             int release_gil)
 {
     int has_timeout = (timeout > 0);
     PyTime_t deadline = 0;
@@ -1063,9 +1064,14 @@ sock_call_ex(PySocketSockObject *s,
         /* inner loop to retry sock_func() when sock_func() is interrupted
            by a signal */
         while (1) {
-            Py_BEGIN_ALLOW_THREADS
-            res = sock_func(s, data);
-            Py_END_ALLOW_THREADS
+            if (release_gil) {
+                Py_BEGIN_ALLOW_THREADS
+                res = sock_func(s, data);
+                Py_END_ALLOW_THREADS
+            }
+            else {
+                res = sock_func(s, data);
+            }
 
             if (res) {
                 /* sock_func() succeeded */
@@ -1116,7 +1122,28 @@ sock_call(PySocketSockObject *s,
           int (*func) (PySocketSockObject *s, void *data),
           void *data)
 {
-    return sock_call_ex(s, writing, func, data, 0, NULL, s->sock_timeout);
+    return sock_call_ex(s, writing, func, data, 0, NULL, s->sock_timeout, 1);
+}
+
+#define SOCK_SMALL_IO_LIMIT (1024 * 1024)
+
+static int
+sock_can_keep_gil_for_small_io(PySocketSockObject *s, Py_ssize_t len, int flags)
+{
+    if (s->sock_timeout != 0 || s->sock_type != SOCK_STREAM ||
+        flags != 0 || len < 0 || len > SOCK_SMALL_IO_LIMIT) {
+        return 0;
+    }
+
+    /* Other families, including AF_ALG, can wait even in nonblocking mode. */
+    return (s->sock_family == AF_INET
+#ifdef AF_INET6
+            || s->sock_family == AF_INET6
+#endif
+#ifdef AF_UNIX
+            || s->sock_family == AF_UNIX
+#endif
+           );
 }
 
 
@@ -3779,13 +3806,13 @@ internal_connect(PySocketSockObject *s, struct sockaddr *addr, int addrlen,
     if (raise) {
         /* socket.connect() raises an exception on error */
         if (sock_call_ex(s, 1, sock_connect_impl, NULL,
-                         1, NULL, s->sock_timeout) < 0)
+                         1, NULL, s->sock_timeout, 1) < 0)
             return -1;
     }
     else {
         /* socket.connect_ex() returns the error code on error */
         if (sock_call_ex(s, 1, sock_connect_impl, NULL,
-                         1, &err, s->sock_timeout) < 0)
+                         1, &err, s->sock_timeout, 1) < 0)
             return err;
     }
     return 0;
@@ -4049,7 +4076,8 @@ sock_recv_guts(PySocketSockObject *s, char* cbuf, Py_ssize_t len, int flags)
     ctx.cbuf = cbuf;
     ctx.len = len;
     ctx.flags = flags;
-    if (sock_call(s, 0, sock_recv_impl, &ctx) < 0)
+    if (sock_call_ex(s, 0, sock_recv_impl, &ctx, 0, NULL, s->sock_timeout,
+                     !sock_can_keep_gil_for_small_io(s, len, flags)) < 0)
         return -1;
 
     return ctx.result;
@@ -4731,7 +4759,8 @@ _socket_socket_send_impl(PySocketSockObject *s, Py_buffer *pbuf, int flags)
     ctx.buf = pbuf->buf;
     ctx.len = pbuf->len;
     ctx.flags = flags;
-    if (sock_call(s, 1, sock_send_impl, &ctx) < 0) {
+    if (sock_call_ex(s, 1, sock_send_impl, &ctx, 0, NULL, s->sock_timeout,
+                     !sock_can_keep_gil_for_small_io(s, pbuf->len, flags)) < 0) {
         return NULL;
     }
 
@@ -4796,7 +4825,7 @@ _socket_socket_sendall_impl(PySocketSockObject *s, Py_buffer *pbuf,
         ctx.buf = buf;
         ctx.len = len;
         ctx.flags = flags;
-        if (sock_call_ex(s, 1, sock_send_impl, &ctx, 0, NULL, timeout) < 0)
+        if (sock_call_ex(s, 1, sock_send_impl, &ctx, 0, NULL, timeout, 1) < 0)
             goto done;
         n = ctx.result;
         assert(n >= 0);
