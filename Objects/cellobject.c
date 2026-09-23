@@ -13,9 +13,7 @@ PyCell_New(PyObject *obj)
 {
     PyCellObject *op;
 
-    if (obj != NULL && PyObject_CheckAccess(obj) == NULL) {
-        return NULL;
-    }
+    assert(obj == NULL || _PyObject_IsAccessible(obj));
 
     op = (PyCellObject *)PyObject_GC_New(PyCellObject, &PyCell_Type);
     if (op == NULL)
@@ -75,9 +73,7 @@ PyCell_Get(PyObject *op)
         PyErr_BadInternalCall();
         return NULL;
     }
-    if (PyObject_CheckAccess(op) == NULL) {
-        return NULL;
-    }
+    assert(_PyObject_IsAccessible(op));
     if (!PyCell_Check(op)) {
         PyErr_BadInternalCall();
         return NULL;
@@ -92,10 +88,8 @@ PyCell_Set(PyObject *op, PyObject *value)
         PyErr_BadInternalCall();
         return -1;
     }
-    if (PyObject_CheckAccess(op) == NULL ||
-        (value != NULL && PyObject_CheckAccess(value) == NULL)) {
-        return -1;
-    }
+    assert(_PyObject_IsAccessible(op));
+    assert(value == NULL || _PyObject_IsAccessible(value));
     if (!PyCell_Check(op)) {
         PyErr_BadInternalCall();
         return -1;

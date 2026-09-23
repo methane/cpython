@@ -802,9 +802,7 @@ PyFunction_GetCode(PyObject *op)
         PyErr_BadInternalCall();
         return NULL;
     }
-    if (PyObject_CheckAccess(op) == NULL) {
-        return NULL;
-    }
+    assert(_PyObject_IsAccessible(op));
     // This is a borrowed reference: rejection must not decref the value.
     return PyObject_CheckAccess(((PyFunctionObject *)op)->func_code);
 }
@@ -816,9 +814,7 @@ PyFunction_GetGlobals(PyObject *op)
         PyErr_BadInternalCall();
         return NULL;
     }
-    if (PyObject_CheckAccess(op) == NULL) {
-        return NULL;
-    }
+    assert(_PyObject_IsAccessible(op));
     return PyObject_CheckAccess(((PyFunctionObject *)op)->func_globals);
 }
 
@@ -829,9 +825,7 @@ PyFunction_GetModule(PyObject *op)
         PyErr_BadInternalCall();
         return NULL;
     }
-    if (PyObject_CheckAccess(op) == NULL) {
-        return NULL;
-    }
+    assert(_PyObject_IsAccessible(op));
     return PyObject_CheckAccess(((PyFunctionObject *)op)->func_module);
 }
 
@@ -842,9 +836,7 @@ PyFunction_GetDefaults(PyObject *op)
         PyErr_BadInternalCall();
         return NULL;
     }
-    if (PyObject_CheckAccess(op) == NULL) {
-        return NULL;
-    }
+    assert(_PyObject_IsAccessible(op));
     return PyObject_CheckAccess(((PyFunctionObject *)op)->func_defaults);
 }
 
@@ -855,16 +847,11 @@ PyFunction_SetDefaults(PyObject *op, PyObject *defaults)
         PyErr_BadInternalCall();
         return -1;
     }
-    if (PyObject_CheckAccess(op) == NULL) {
-        return -1;
-    }
+    assert(_PyObject_IsAccessible(op));
     if (func_check_mutation(op) < 0) {
         return -1;
     }
-    if (defaults != NULL && defaults != Py_None &&
-        PyObject_CheckAccess(defaults) == NULL) {
-        return -1;
-    }
+    assert(defaults == NULL || _PyObject_IsAccessible(defaults));
     if (defaults == Py_None)
         defaults = NULL;
     else if (defaults && PyTuple_Check(defaults)) {
@@ -911,9 +898,7 @@ PyFunction_GetKwDefaults(PyObject *op)
         PyErr_BadInternalCall();
         return NULL;
     }
-    if (PyObject_CheckAccess(op) == NULL) {
-        return NULL;
-    }
+    assert(_PyObject_IsAccessible(op));
     return PyObject_CheckAccess(((PyFunctionObject *)op)->func_kwdefaults);
 }
 
@@ -924,16 +909,11 @@ PyFunction_SetKwDefaults(PyObject *op, PyObject *defaults)
         PyErr_BadInternalCall();
         return -1;
     }
-    if (PyObject_CheckAccess(op) == NULL) {
-        return -1;
-    }
+    assert(_PyObject_IsAccessible(op));
     if (func_check_mutation(op) < 0) {
         return -1;
     }
-    if (defaults != NULL && defaults != Py_None &&
-        PyObject_CheckAccess(defaults) == NULL) {
-        return -1;
-    }
+    assert(defaults == NULL || _PyObject_IsAccessible(defaults));
     if (defaults == Py_None)
         defaults = NULL;
     else if (defaults && PyAnyDict_Check(defaults)) {
@@ -973,9 +953,7 @@ PyFunction_GetClosure(PyObject *op)
         PyErr_BadInternalCall();
         return NULL;
     }
-    if (PyObject_CheckAccess(op) == NULL) {
-        return NULL;
-    }
+    assert(_PyObject_IsAccessible(op));
     return PyObject_CheckAccess(((PyFunctionObject *)op)->func_closure);
 }
 
@@ -986,16 +964,11 @@ PyFunction_SetClosure(PyObject *op, PyObject *closure)
         PyErr_BadInternalCall();
         return -1;
     }
-    if (PyObject_CheckAccess(op) == NULL) {
-        return -1;
-    }
+    assert(_PyObject_IsAccessible(op));
     if (func_check_mutation(op) < 0) {
         return -1;
     }
-    if (closure != NULL && closure != Py_None &&
-        PyObject_CheckAccess(closure) == NULL) {
-        return -1;
-    }
+    assert(closure == NULL || _PyObject_IsAccessible(closure));
     if (closure == Py_None)
         closure = NULL;
     else if (PyTuple_Check(closure)) {
@@ -1083,9 +1056,7 @@ PyFunction_GetAnnotations(PyObject *op)
         PyErr_BadInternalCall();
         return NULL;
     }
-    if (PyObject_CheckAccess(op) == NULL) {
-        return NULL;
-    }
+    assert(_PyObject_IsAccessible(op));
     return PyObject_CheckAccess(func_get_annotation_dict((PyFunctionObject *)op));
 }
 
@@ -1096,16 +1067,11 @@ PyFunction_SetAnnotations(PyObject *op, PyObject *annotations)
         PyErr_BadInternalCall();
         return -1;
     }
-    if (PyObject_CheckAccess(op) == NULL) {
-        return -1;
-    }
+    assert(_PyObject_IsAccessible(op));
     if (func_check_mutation(op) < 0) {
         return -1;
     }
-    if (annotations != NULL && annotations != Py_None &&
-        PyObject_CheckAccess(annotations) == NULL) {
-        return -1;
-    }
+    assert(annotations == NULL || _PyObject_IsAccessible(annotations));
     if (annotations == Py_None)
         annotations = NULL;
     else if (annotations && PyDict_Check(annotations)) {

@@ -1,6 +1,7 @@
 """Access checks when cell contents become Python references."""
 
 import threading
+import types
 import unittest
 import weakref
 
@@ -44,6 +45,26 @@ class CellReceiverTests(unittest.TestCase):
 
 
 class CellAccessTests(unittest.TestCase):
+    def test_protected_contents(self):
+        capi = import_module('_testcapi')
+        for factory in (threading.Lock, threading.RLock):
+            for construct in (False, True):
+                with self.subTest(lock=factory, construct=construct):
+                    lock = factory()
+                    with lock:
+                        value = lock.protect([])
+                        if construct:
+                            cell = types.CellType(value)
+                        else:
+                            cell = types.CellType()
+                            capi.cell_set(cell, value)
+                    with self.assertRaises(UnprotectedAccessException):
+                        capi.cell_get(cell)
+                    with lock:
+                        self.assertIs(capi.cell_get(cell), value)
+                    capi.cell_set(cell)
+                    self.assertIsNone(capi.cell_get(cell))
+
     @threading_helper.requires_working_threading()
     def test_cell_reads(self):
         capi = import_module('_testcapi')

@@ -46,6 +46,21 @@ suites `test_sort_access`, `test_sort`, `test_list`, `test_capi.test_list`,
 finding, but not the separate problem of the list's own protection ending
 during a callback, nor the GC compatibility finding.
 
+The subsequent C API cleanup converts input checks to assertions in six list
+APIs (`Size`, `GetItem`, `GetItemRef`, `SetItem`, `Insert`, `Append`), the three
+cell APIs, and seven function getters plus four function setters. Return-value
+checks remain. The cell test helper now validates its tuple element before
+passing that reference to `PyCell_Get`. New tests exercise protected values
+stored through these APIs and denied retrieval outside the locking context.
+Input checks in other APIs and checks around callbacks still need auditing;
+this is not a blanket claim that Mark's second comment is fully addressed.
+After this cleanup, the earlier 61-file suite plus `test_sort_access`,
+`test_sort`, `test_list`, `test_capi.test_list`, and `test_capi.test_function`
+passes in both builds: 66 files, 1,490 reported tests, with 13 free-threading
+and 16 GIL skips. The demo still computes 61,620 and rejects foreign LOCAL
+and unprotected accesses in both builds. These results do not cover or close
+the remaining reference-lifetime, GC, or refcounting design issues.
+
 The questions below distinguish unspecified contracts from optional choices
 of implementation strategy. None is a reason to postpone fixing a known
 unsafe access. Reproduction programs and current results follow the earlier
@@ -194,11 +209,10 @@ follow-up.
    doing so without requiring existing extension callbacks to change.
 
 6. **Mark's input-check comment has only been addressed partially.**
-   `PyObject_GetItem` uses assertions as requested. However,
-   `PyList_Size`, `PyList_GetItem`, `PyList_GetItemRef`, and `PyList_Append`
-   still perform unconditional runtime checks on incoming objects
-   (`Objects/listobject.c:309`, `:398`, `:420`, `:584`). Several function APIs
-   do likewise, and `_PyObject_CheckVectorcallArgs()` scans raw C argument
+   `PyObject_GetItem` already used assertions at re-review. The follow-up
+   now also replaces input checks in the 20 list, cell and function APIs
+   listed above. Other APIs remain to be audited, including tuple and bytes
+   accessors. `_PyObject_CheckVectorcallArgs()` still scans raw C argument
    arrays (`Include/internal/pycore_call.h:114`). Those array entries are
    incoming references, unlike acquiring values from an argument tuple or
    keyword dictionary. This is unfinished implementation cleanup under the

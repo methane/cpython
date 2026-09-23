@@ -739,6 +739,27 @@ class SequenceAccessTests(unittest.TestCase):
                     with self.assertRaises(IndexError):
                         getter(container, index)
 
+    def test_list_c_api_protected_elements(self):
+        for factory in (threading.Lock, threading.RLock):
+            for replace in (False, True):
+                with self.subTest(lock=factory, replace=replace):
+                    lock = factory()
+                    items = [None] if replace else []
+                    with lock:
+                        value = lock.protect([])
+                        if replace:
+                            capi.list_setitem(items, 0, value)
+                        else:
+                            capi.list_append(items, value)
+                    # The local container remains accessible; acquiring its
+                    # stored reference requires the protecting context.
+                    self.assertEqual(capi.list_size(items), 1)
+                    for getter in (capi.list_getitem, capi.list_get_item_ref):
+                        with self.assertRaises(UnprotectedAccessException):
+                            getter(items, 0)
+                        with lock:
+                            self.assertIs(getter(items, 0), value)
+
     @threading_helper.requires_working_threading()
     def test_foreign_elements_and_reference_lifetime(self):
         class Payload:

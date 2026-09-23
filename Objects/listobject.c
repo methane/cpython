@@ -312,9 +312,7 @@ PyList_Size(PyObject *op)
         PyErr_BadInternalCall();
         return -1;
     }
-    if (PyObject_CheckAccess(op) == NULL) {
-        return -1;
-    }
+    assert(_PyObject_IsAccessible(op));
     if (!PyList_Check(op)) {
         PyErr_BadInternalCall();
         return -1;
@@ -401,9 +399,7 @@ PyList_GetItem(PyObject *op, Py_ssize_t i)
         PyErr_BadInternalCall();
         return NULL;
     }
-    if (PyObject_CheckAccess(op) == NULL) {
-        return NULL;
-    }
+    assert(_PyObject_IsAccessible(op));
     if (!PyList_Check(op)) {
         PyErr_BadInternalCall();
         return NULL;
@@ -423,9 +419,7 @@ PyList_GetItemRef(PyObject *op, Py_ssize_t i)
         PyErr_BadInternalCall();
         return NULL;
     }
-    if (PyObject_CheckAccess(op) == NULL) {
-        return NULL;
-    }
+    assert(_PyObject_IsAccessible(op));
     if (!PyList_Check(op)) {
         PyErr_SetString(PyExc_TypeError, "expected a list");
         return NULL;
@@ -480,10 +474,8 @@ PyList_SetItem(PyObject *op, Py_ssize_t i,
         PyErr_BadInternalCall();
         return -1;
     }
-    if (PyObject_CheckAccess(op) == NULL) {
-        Py_XDECREF(newitem);
-        return -1;
-    }
+    assert(_PyObject_IsAccessible(op));
+    assert(newitem == NULL || _PyObject_IsAccessible(newitem));
     if (!PyList_Check(op)) {
         Py_XDECREF(newitem);
         PyErr_BadInternalCall();
@@ -496,11 +488,6 @@ PyList_SetItem(PyObject *op, Py_ssize_t i,
         Py_XDECREF(newitem);
         PyErr_SetString(PyExc_IndexError,
                         "list assignment index out of range");
-        ret = -1;
-        goto end;
-    }
-    if (newitem != NULL && PyObject_CheckAccess(newitem) == NULL) {
-        Py_DECREF(newitem);
         ret = -1;
         goto end;
     }
@@ -551,9 +538,7 @@ PyList_Insert(PyObject *op, Py_ssize_t where, PyObject *newitem)
         PyErr_BadInternalCall();
         return -1;
     }
-    if (PyObject_CheckAccess(op) == NULL) {
-        return -1;
-    }
+    assert(_PyObject_IsAccessible(op));
     if (!PyList_Check(op)) {
         PyErr_BadInternalCall();
         return -1;
@@ -587,13 +572,9 @@ PyList_Append(PyObject *op, PyObject *newitem)
         PyErr_BadInternalCall();
         return -1;
     }
-    if (PyObject_CheckAccess(op) == NULL) {
-        return -1;
-    }
+    assert(_PyObject_IsAccessible(op));
     if (PyList_Check(op) && (newitem != NULL)) {
-        if (PyObject_CheckAccess(newitem) == NULL) {
-            return -1;
-        }
+        assert(_PyObject_IsAccessible(newitem));
         int ret;
         Py_BEGIN_CRITICAL_SECTION(op);
         ret = _PyList_AppendTakeRef((PyListObject *)op, Py_NewRef(newitem));

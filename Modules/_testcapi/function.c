@@ -228,8 +228,12 @@ cell_get_from_tuple(PyObject *self, PyObject *holder)
         PyErr_SetString(PyExc_TypeError, "expected a one-item tuple");
         return NULL;
     }
-    /* Acquire the receiver without a Python subscription access check. */
-    return cell_get(self, PyTuple_GET_ITEM(holder, 0));
+    /* The C caller must validate references acquired from tuple storage. */
+    PyObject *cell = PyTuple_GetItem(holder, 0);
+    if (cell == NULL) {
+        return NULL;
+    }
+    return cell_get(self, cell);
 }
 
 static PyObject *
@@ -257,9 +261,8 @@ cell_set_from_tuple(PyObject *self, PyObject *args)
         return NULL;
     }
     /* This helper deliberately installs a foreign value so the tests can
-       exercise reads from a cell.  PyCell_Set() quite correctly rejects the
-       value at its public API boundary; use the legacy raw macro here after
-       checking the cell receiver instead. */
+       exercise reads from a cell.  PyCell_Set() requires accessible inputs;
+       use the legacy raw macro here after checking the cell receiver instead. */
     if (PyObject_CheckAccess(cell) == NULL || !PyCell_Check(cell)) {
         if (!PyErr_Occurred()) {
             PyErr_BadInternalCall();
