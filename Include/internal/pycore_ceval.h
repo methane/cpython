@@ -411,6 +411,12 @@ PyAPI_DATA(const _Py_CODEUNIT *) _Py_INTERPRETER_TRAMPOLINE_INSTRUCTIONS_PTR;
 /* Helper functions for large uops */
 
 PyAPI_FUNC(int)
+_PyEval_CheckLocalAccess(struct _PyInterpreterFrame *frame, int index);
+
+PyAPI_FUNC(int)
+_PyEval_CheckStackAccess(struct _PyInterpreterFrame *frame);
+
+PyAPI_FUNC(int)
 _PyEval_CheckCallStack(_PyStackRef callable, _PyStackRef self_or_null,
                        const _PyStackRef *args, int nargs);
 

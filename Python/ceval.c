@@ -745,6 +745,26 @@ cleanup:
     return res;
 }
 
+int
+_PyEval_CheckLocalAccess(_PyInterpreterFrame *frame, int index)
+{
+    _PyStackRef value = frame->localsplus[index];
+    if (PyStackRef_IsNull(value) || PyStackRef_IsTaggedInt(value)) {
+        return 0;
+    }
+    PyObject *obj = PyStackRef_AsPyObjectBorrow(value);
+    _PyLocals_Kind kind = _PyLocals_GetKind(
+        _PyFrame_GetCode(frame)->co_localspluskinds, index);
+    if ((kind & (CO_FAST_CELL | CO_FAST_FREE)) && PyCell_Check(obj)) {
+        // LOAD_CLOSURE transports internal cells. LOAD_DEREF checks their
+        // contents; a shared function may retain a foreign read-only cell.
+        return 0;
+    }
+    // A generator or callback can end protection in another frame. Lexical
+    // with-statement analysis alone cannot prove a local remains accessible.
+    return PyObject_CheckAccess(obj) == NULL ? -1 : 0;
+}
+
 static int
 check_call_stackref(_PyStackRef value)
 {
@@ -752,6 +772,20 @@ check_call_stackref(_PyStackRef value)
         return 0;
     }
     return PyObject_CheckAccess(PyStackRef_AsPyObjectBorrow(value)) == NULL ? -1 : 0;
+}
+
+int
+_PyEval_CheckStackAccess(_PyInterpreterFrame *frame)
+{
+    // A call can revoke access to operands evaluated before that call, not
+    // just to the returned value. Only inspect the published, live stack.
+    for (_PyStackRef *p = _PyFrame_Stackbase(frame);
+         p < _PyFrame_GetStackPointer(frame); p++) {
+        if (check_call_stackref(*p) < 0) {
+            return -1;
+        }
+    }
+    return 0;
 }
 
 int

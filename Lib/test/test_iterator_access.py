@@ -387,10 +387,9 @@ class IteratorAccessTests(unittest.TestCase):
         reference = weakref.ref(foreign)
 
         def producer(value):
-            try:
-                yield value
-            except IllegalThreadAccessException:
-                raise AssertionError('access error entered the producer')
+            # A debugger-created foreign local is rejected when loaded,
+            # before the generator can suspend at the yield instruction.
+            yield value
             yield 42
 
         def loop(gen):
@@ -424,8 +423,7 @@ class IteratorAccessTests(unittest.TestCase):
                 with sys.monitoring.StopTheWorld:
                     gen = producer(payload[0])
                 assert run(gen) == 'denied'
-                assert gen.gi_frame is not None
-                assert next(gen) == 42
+                assert gen.gi_frame is None
                 assert next(gen, None) is None
             results.put(run(producer(42)) == 42)
 
@@ -672,8 +670,6 @@ class IteratorAccessTests(unittest.TestCase):
                 yield foreign
             except GeneratorExit:
                 return foreign
-            except IllegalThreadAccessException:
-                raise AssertionError('access error was injected into generator')
             yield 42
 
         def worker(payload):
@@ -700,12 +696,10 @@ class IteratorAccessTests(unittest.TestCase):
                     results.put(False)
                 else:
                     results.put(False)
-                if mode in ('yield', 'throw-yield'):
-                    results.put(next(gen) == 42)
-                    # Exhaust normally so the close handler is not invoked.
-                    assert next(gen, None) is None
-                else:
-                    results.put(gen.gi_frame is None)
+                # The foreign local load fails inside the producer in every
+                # mode, so it must unwind rather than suspend at yield.
+                results.put(gen.gi_frame is None)
+                assert next(gen, None) is None
 
         thread = threading.Thread(target=worker, args=((foreign,),),
                                   group=threading.ThreadGroup())
@@ -722,10 +716,7 @@ class IteratorAccessTests(unittest.TestCase):
         foreign = []
         results = threading.Channel()
         async def producer(foreign):
-            try:
-                yield foreign
-            except IllegalThreadAccessException:
-                raise AssertionError('access error was injected into async generator')
+            yield foreign
             yield 42
 
         def worker(payload):
@@ -741,8 +732,10 @@ class IteratorAccessTests(unittest.TestCase):
                 results.put(False)
             try:
                 gen.__anext__().send(None)
-            except StopIteration as exc:
-                results.put(exc.value == 42)
+            except StopAsyncIteration:
+                results.put(gen.ag_frame is None)
+            else:
+                results.put(False)
             try:
                 gen.aclose().send(None)
             except StopIteration:
@@ -1129,7 +1122,11 @@ class IteratorAccessTests(unittest.TestCase):
                     with threading_helper.start_threads([thread]):
                         pass
                     self.assertTrue(results.get())
-                    self.assertEqual(results.get(), 42)
+                    # A generator executes a checked local load and unwinds
+                    # on failure. Native iterators reject the acquired element
+                    # after advancing and can continue to their next element.
+                    expected = None if factory is generator else 42
+                    self.assertEqual(results.get(), expected)
                     self.assertTrue(results.get())
                     self.assertIs(reference(), value)
                     del value

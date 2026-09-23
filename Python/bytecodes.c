@@ -278,6 +278,8 @@ dummy_func(
                 );
                 ERROR_IF(true);
             }
+            int err = _PyEval_CheckLocalAccess(frame, oparg);
+            ERROR_IF(err < 0);
             value = PyStackRef_DUP(value_s);
         }
 
@@ -290,7 +292,8 @@ dummy_func(
                 );
                 ERROR_NO_POP();
             }
-            if (PyObject_CheckAccess(PyStackRef_AsPyObjectBorrow(value_s)) == NULL) {
+            int err = _PyEval_CheckLocalAccess(frame, oparg);
+            if (err < 0) {
                 ERROR_NO_POP();
             }
             value = PyStackRef_DUP(value_s);
@@ -305,7 +308,8 @@ dummy_func(
                 );
                 ERROR_NO_POP();
             }
-            if (PyObject_CheckAccess(PyStackRef_AsPyObjectBorrow(value_s)) == NULL) {
+            int err = _PyEval_CheckLocalAccess(frame, oparg);
+            if (err < 0) {
                 ERROR_NO_POP();
             }
             value = PyStackRef_Borrow(value_s);
@@ -313,26 +317,29 @@ dummy_func(
 
         inst(LOAD_FAST_AND_CLEAR_CHECK, (-- value)) {
             _PyStackRef value_s = GETLOCAL(oparg);
-            if (!PyStackRef_IsNull(value_s)) {
-                if (PyObject_CheckAccess(PyStackRef_AsPyObjectBorrow(value_s)) == NULL) {
-                    ERROR_NO_POP();
-                }
-            }
+            int err = _PyEval_CheckLocalAccess(frame, oparg);
+            ERROR_IF(err < 0);
             value = value_s;
             GETLOCAL(oparg) = PyStackRef_NULL;
         }
 
-        replicate(8) pure inst(LOAD_FAST, (-- value)) {
+        replicate(8) inst(LOAD_FAST, (-- value)) {
             assert(!PyStackRef_IsNull(GETLOCAL(oparg)));
+            int err = _PyEval_CheckLocalAccess(frame, oparg);
+            ERROR_IF(err < 0);
             value = PyStackRef_DUP(GETLOCAL(oparg));
         }
 
-        replicate(8) pure inst (LOAD_FAST_BORROW, (-- value)) {
+        replicate(8) inst (LOAD_FAST_BORROW, (-- value)) {
             assert(!PyStackRef_IsNull(GETLOCAL(oparg)));
+            int err = _PyEval_CheckLocalAccess(frame, oparg);
+            ERROR_IF(err < 0);
             value = PyStackRef_Borrow(GETLOCAL(oparg));
         }
 
         inst(LOAD_FAST_AND_CLEAR, (-- value)) {
+            int err = _PyEval_CheckLocalAccess(frame, oparg);
+            ERROR_IF(err < 0);
             value = GETLOCAL(oparg);
             GETLOCAL(oparg) = PyStackRef_NULL;
         }
@@ -340,6 +347,10 @@ dummy_func(
         inst(LOAD_FAST_LOAD_FAST, ( -- value1, value2)) {
             uint32_t oparg1 = oparg >> 4;
             uint32_t oparg2 = oparg & 15;
+            int err = _PyEval_CheckLocalAccess(frame, oparg1);
+            ERROR_IF(err < 0);
+            err = _PyEval_CheckLocalAccess(frame, oparg2);
+            ERROR_IF(err < 0);
             value1 = PyStackRef_DUP(GETLOCAL(oparg1));
             value2 = PyStackRef_DUP(GETLOCAL(oparg2));
         }
@@ -347,6 +358,10 @@ dummy_func(
         inst(LOAD_FAST_BORROW_LOAD_FAST_BORROW, ( -- value1, value2)) {
             uint32_t oparg1 = oparg >> 4;
             uint32_t oparg2 = oparg & 15;
+            int err = _PyEval_CheckLocalAccess(frame, oparg1);
+            ERROR_IF(err < 0);
+            err = _PyEval_CheckLocalAccess(frame, oparg2);
+            ERROR_IF(err < 0);
             value1 = PyStackRef_Borrow(GETLOCAL(oparg1));
             value2 = PyStackRef_Borrow(GETLOCAL(oparg2));
         }
@@ -390,8 +405,10 @@ dummy_func(
             _PyStackRef tmp = GETLOCAL(oparg1);
             GETLOCAL(oparg1) = value1;
             DEAD(value1);
-            value2 = PyStackRef_DUP(GETLOCAL(oparg2));
             PyStackRef_XCLOSE(tmp);
+            int err = _PyEval_CheckLocalAccess(frame, oparg2);
+            ERROR_IF(err < 0);
+            value2 = PyStackRef_DUP(GETLOCAL(oparg2));
         }
 
         inst(STORE_FAST_STORE_FAST, (value2, value1 --)) {
@@ -1683,9 +1700,14 @@ dummy_func(
             // Clearing locals can invoke a finalizer that releases a mutex.
             // Interpreter-owned entry frames return through INTERPRETER_EXIT,
             // whose C return path performs this check without Python unwinding.
+            int stack_access = 0;
+            if (frame->owner != FRAME_OWNED_BY_INTERPRETER) {
+                stack_access = _PyEval_CheckStackAccess(frame);
+            }
             if (frame->owner != FRAME_OWNED_BY_INTERPRETER &&
-                !PyStackRef_IsTaggedInt(temp) &&
-                PyObject_CheckAccess(PyStackRef_AsPyObjectBorrow(temp)) == NULL) {
+                (stack_access < 0 ||
+                 (!PyStackRef_IsTaggedInt(temp) &&
+                  PyObject_CheckAccess(PyStackRef_AsPyObjectBorrow(temp)) == NULL))) {
                 PyStackRef_CLOSE(temp);
 #if TIER_ONE
                 ERROR_NO_POP();
@@ -4629,14 +4651,12 @@ dummy_func(
         }
 
         // Arguments, callable and periodic callbacks must be cleaned up before
-        // checking the result: any of them can release the protecting mutex.
+        // checking the live stack: any can release a protecting mutex.
         op(_CHECK_CALL_ACCESS, (value -- value)) {
-            if (!PyStackRef_IsTaggedInt(value) &&
-                PyObject_CheckAccess(PyStackRef_AsPyObjectBorrow(value)) == NULL) {
-                // Publish the live result before unwinding. The preceding call
-                // may have stolen arguments still on the physical stack.
-                SAVE_STACK();
-                RELOAD_STACK();
+            (void)value;
+            // Publish the result and discard stolen arguments before scanning.
+            int err = _PyEval_CheckStackAccess(frame);
+            if (err < 0) {
                 ERROR_NO_POP();
             }
         }

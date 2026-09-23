@@ -3,6 +3,7 @@
 import dis
 import sys
 import textwrap
+import threading
 import unittest
 
 from test import test_stop_the_world
@@ -222,6 +223,117 @@ class WithLocalAccessTests(unittest.TestCase):
                              i.opname in ('LOAD_FAST_MAYBE_UNPROTECTED',
                                           'LOAD_FAST_BORROW_MAYBE_UNPROTECTED')
                              for i in dis.get_instructions(function)))
+
+    def test_generator_closes_protection_in_another_frame(self):
+        # None of these loads is lexically inside a with statement. Each
+        # generator.close() invalidates an earlier, valid local acquisition.
+        bodies = (
+            'return value',
+            'return value[0]',
+            'index = 0\nreturn value[index]',
+            'index = 0; return value',
+            '[value for value in ()]',
+        )
+        for lock_type in (threading.Lock, threading.RLock):
+            lock = lock_type()
+
+            def source():
+                with lock:
+                    yield lock.protect([42])
+
+            for body in bodies:
+                namespace = {}
+                exec('def work(source):\n'
+                     '    generator = source()\n'
+                     '    value = next(generator)\n'
+                     '    assert value[0] == 42\n'
+                     '    generator.close()\n'
+                     + textwrap.indent(body, '    '), namespace)
+                work = namespace['work']
+                with self.subTest(lock=lock_type, body=body):
+                    # Exercise cold and specialized instructions.
+                    for _ in range(100):
+                        with self.assertRaises(UnprotectedAccessException):
+                            work(source)
+
+            def maybe_bound(source, initialized):
+                generator = source()
+                if initialized:
+                    value = next(generator)
+                generator.close()
+                return value
+
+            with self.assertRaises(UnprotectedAccessException):
+                maybe_bound(source, True)
+            with self.assertRaises(UnboundLocalError):
+                maybe_bound(source, False)
+
+    def test_generator_closes_debugger_access_in_another_frame(self):
+        def work(shared):
+            def source():
+                with sys.monitoring.StopTheWorld:
+                    yield shared['value']
+
+            generator = source()
+            value = next(generator)
+            value.append(42)
+            generator.close()
+            try:
+                return value[0]
+            except IllegalThreadAccessException:
+                return 'denied'
+
+        value = []
+        self.assertEqual(self.run_native(work, SynchronizedDict(value=value)),
+                         'denied')
+        self.assertEqual(value, [42])
+
+    def test_call_revokes_earlier_expression_operand(self):
+        bodies = (
+            'return value[generator.close() or 0]',
+            'value[generator.close() or 0] = 99',
+            'del value[generator.close() or 0]',
+            'return value[close() or 0]',
+            'value[close() or 0] = 99',
+        )
+        for lock_type in (threading.Lock, threading.RLock):
+            lock = lock_type()
+
+            def source():
+                with lock:
+                    yield lock.protect([42])
+
+            for body in bodies:
+                namespace = {}
+                exec('def work(source):\n'
+                     '    generator = source()\n'
+                     '    value = next(generator)\n'
+                     '    def close():\n'
+                     '        generator.close()\n'
+                     + textwrap.indent(body, '    '), namespace)
+                with self.subTest(lock=lock_type, body=body):
+                    for _ in range(100):
+                        with self.assertRaises(UnprotectedAccessException):
+                            namespace['work'](source)
+
+    def test_generator_can_catch_invalid_local_load(self):
+        lock = threading.Lock()
+
+        def source():
+            with lock:
+                yield lock.protect([42])
+
+        def consume(value):
+            try:
+                yield value
+            except UnprotectedAccessException:
+                yield 'denied'
+
+        generator = source()
+        consumer = consume(next(generator))
+        generator.close()
+        self.assertEqual(next(consumer), 'denied')
+        consumer.close()
 
 
 if __name__ == '__main__':

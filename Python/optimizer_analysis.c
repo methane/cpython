@@ -716,8 +716,6 @@ const uint16_t op_without_push[MAX_UOP_ID + 1] = {
     [_COPY] = _NOP,
     [_LOAD_CONST_INLINE] = _NOP,
     [_LOAD_CONST_INLINE_BORROW] = _NOP,
-    [_LOAD_FAST] = _NOP,
-    [_LOAD_FAST_BORROW] = _NOP,
     [_LOAD_SMALL_INT] = _NOP,
     [_PUSH_NULL] = _NOP,
 };

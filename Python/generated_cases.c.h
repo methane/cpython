@@ -1955,12 +1955,12 @@
             // _CHECK_CALL_ACCESS
             {
                 value = res;
-                if (!PyStackRef_IsTaggedInt(value) &&
-                    PyObject_CheckAccess(PyStackRef_AsPyObjectBorrow(value)) == NULL) {
-                    assert(stack_pointer == _PyFrame_GetStackPointer(frame));
-                    _PyFrame_StackPointerValidate(frame);
-                    stack_pointer = _PyFrame_GetStackPointer(frame);
-                    _PyFrame_StackPointerInvalidate(frame);
+                (void)value;
+                assert(stack_pointer == _PyFrame_GetStackPointer(frame));
+                _PyFrame_StackPointerValidate(frame);
+                int err = _PyEval_CheckStackAccess(frame);
+                _PyFrame_StackPointerInvalidate(frame);
+                if (err < 0) {
                     JUMP_TO_LABEL(error);
                 }
             }
@@ -2534,12 +2534,12 @@
             // _CHECK_CALL_ACCESS
             {
                 value = callable;
-                if (!PyStackRef_IsTaggedInt(value) &&
-                    PyObject_CheckAccess(PyStackRef_AsPyObjectBorrow(value)) == NULL) {
-                    assert(stack_pointer == _PyFrame_GetStackPointer(frame));
-                    _PyFrame_StackPointerValidate(frame);
-                    stack_pointer = _PyFrame_GetStackPointer(frame);
-                    _PyFrame_StackPointerInvalidate(frame);
+                (void)value;
+                assert(stack_pointer == _PyFrame_GetStackPointer(frame));
+                _PyFrame_StackPointerValidate(frame);
+                int err = _PyEval_CheckStackAccess(frame);
+                _PyFrame_StackPointerInvalidate(frame);
+                if (err < 0) {
                     JUMP_TO_LABEL(error);
                 }
             }
@@ -2648,12 +2648,12 @@
             // _CHECK_CALL_ACCESS
             {
                 value = callable;
-                if (!PyStackRef_IsTaggedInt(value) &&
-                    PyObject_CheckAccess(PyStackRef_AsPyObjectBorrow(value)) == NULL) {
-                    assert(stack_pointer == _PyFrame_GetStackPointer(frame));
-                    _PyFrame_StackPointerValidate(frame);
-                    stack_pointer = _PyFrame_GetStackPointer(frame);
-                    _PyFrame_StackPointerInvalidate(frame);
+                (void)value;
+                assert(stack_pointer == _PyFrame_GetStackPointer(frame));
+                _PyFrame_StackPointerValidate(frame);
+                int err = _PyEval_CheckStackAccess(frame);
+                _PyFrame_StackPointerInvalidate(frame);
+                if (err < 0) {
                     JUMP_TO_LABEL(error);
                 }
             }
@@ -2758,12 +2758,12 @@
             // _CHECK_CALL_ACCESS
             {
                 value = callable;
-                if (!PyStackRef_IsTaggedInt(value) &&
-                    PyObject_CheckAccess(PyStackRef_AsPyObjectBorrow(value)) == NULL) {
-                    assert(stack_pointer == _PyFrame_GetStackPointer(frame));
-                    _PyFrame_StackPointerValidate(frame);
-                    stack_pointer = _PyFrame_GetStackPointer(frame);
-                    _PyFrame_StackPointerInvalidate(frame);
+                (void)value;
+                assert(stack_pointer == _PyFrame_GetStackPointer(frame));
+                _PyFrame_StackPointerValidate(frame);
+                int err = _PyEval_CheckStackAccess(frame);
+                _PyFrame_StackPointerInvalidate(frame);
+                if (err < 0) {
                     JUMP_TO_LABEL(error);
                 }
             }
@@ -2891,12 +2891,12 @@
             // _CHECK_CALL_ACCESS
             {
                 value = res;
-                if (!PyStackRef_IsTaggedInt(value) &&
-                    PyObject_CheckAccess(PyStackRef_AsPyObjectBorrow(value)) == NULL) {
-                    assert(stack_pointer == _PyFrame_GetStackPointer(frame));
-                    _PyFrame_StackPointerValidate(frame);
-                    stack_pointer = _PyFrame_GetStackPointer(frame);
-                    _PyFrame_StackPointerInvalidate(frame);
+                (void)value;
+                assert(stack_pointer == _PyFrame_GetStackPointer(frame));
+                _PyFrame_StackPointerValidate(frame);
+                int err = _PyEval_CheckStackAccess(frame);
+                _PyFrame_StackPointerInvalidate(frame);
+                if (err < 0) {
                     JUMP_TO_LABEL(error);
                 }
             }
@@ -3042,12 +3042,12 @@
             // _CHECK_CALL_ACCESS
             {
                 value = result;
-                if (!PyStackRef_IsTaggedInt(value) &&
-                    PyObject_CheckAccess(PyStackRef_AsPyObjectBorrow(value)) == NULL) {
-                    assert(stack_pointer == _PyFrame_GetStackPointer(frame));
-                    _PyFrame_StackPointerValidate(frame);
-                    stack_pointer = _PyFrame_GetStackPointer(frame);
-                    _PyFrame_StackPointerInvalidate(frame);
+                (void)value;
+                assert(stack_pointer == _PyFrame_GetStackPointer(frame));
+                _PyFrame_StackPointerValidate(frame);
+                int err = _PyEval_CheckStackAccess(frame);
+                _PyFrame_StackPointerInvalidate(frame);
+                if (err < 0) {
                     JUMP_TO_LABEL(error);
                 }
             }
@@ -3441,12 +3441,12 @@
             // _CHECK_CALL_ACCESS
             {
                 value = result;
-                if (!PyStackRef_IsTaggedInt(value) &&
-                    PyObject_CheckAccess(PyStackRef_AsPyObjectBorrow(value)) == NULL) {
-                    assert(stack_pointer == _PyFrame_GetStackPointer(frame));
-                    _PyFrame_StackPointerValidate(frame);
-                    stack_pointer = _PyFrame_GetStackPointer(frame);
-                    _PyFrame_StackPointerInvalidate(frame);
+                (void)value;
+                assert(stack_pointer == _PyFrame_GetStackPointer(frame));
+                _PyFrame_StackPointerValidate(frame);
+                int err = _PyEval_CheckStackAccess(frame);
+                _PyFrame_StackPointerInvalidate(frame);
+                if (err < 0) {
                     JUMP_TO_LABEL(error);
                 }
             }
@@ -3499,12 +3499,12 @@
             // _CHECK_CALL_ACCESS
             {
                 value = res;
-                if (!PyStackRef_IsTaggedInt(value) &&
-                    PyObject_CheckAccess(PyStackRef_AsPyObjectBorrow(value)) == NULL) {
-                    assert(stack_pointer == _PyFrame_GetStackPointer(frame));
-                    _PyFrame_StackPointerValidate(frame);
-                    stack_pointer = _PyFrame_GetStackPointer(frame);
-                    _PyFrame_StackPointerInvalidate(frame);
+                (void)value;
+                assert(stack_pointer == _PyFrame_GetStackPointer(frame));
+                _PyFrame_StackPointerValidate(frame);
+                int err = _PyEval_CheckStackAccess(frame);
+                _PyFrame_StackPointerInvalidate(frame);
+                if (err < 0) {
                     JUMP_TO_LABEL(error);
                 }
             }
@@ -3573,12 +3573,12 @@
             // _CHECK_CALL_ACCESS
             {
                 value = res;
-                if (!PyStackRef_IsTaggedInt(value) &&
-                    PyObject_CheckAccess(PyStackRef_AsPyObjectBorrow(value)) == NULL) {
-                    assert(stack_pointer == _PyFrame_GetStackPointer(frame));
-                    _PyFrame_StackPointerValidate(frame);
-                    stack_pointer = _PyFrame_GetStackPointer(frame);
-                    _PyFrame_StackPointerInvalidate(frame);
+                (void)value;
+                assert(stack_pointer == _PyFrame_GetStackPointer(frame));
+                _PyFrame_StackPointerValidate(frame);
+                int err = _PyEval_CheckStackAccess(frame);
+                _PyFrame_StackPointerInvalidate(frame);
+                if (err < 0) {
                     JUMP_TO_LABEL(error);
                 }
             }
@@ -3678,21 +3678,18 @@
             // _CHECK_CALL_ACCESS
             {
                 value = res;
-                if (!PyStackRef_IsTaggedInt(value) &&
-                    PyObject_CheckAccess(PyStackRef_AsPyObjectBorrow(value)) == NULL) {
-                    stack_pointer[0] = value;
-                    stack_pointer += 1;
-                    ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
-                    _PyFrame_SetStackPointer(frame, stack_pointer);
-                    _PyFrame_StackPointerValidate(frame);
-                    stack_pointer = _PyFrame_GetStackPointer(frame);
-                    _PyFrame_StackPointerInvalidate(frame);
+                (void)value;
+                stack_pointer[0] = value;
+                stack_pointer += 1;
+                ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                _PyFrame_SetStackPointer(frame, stack_pointer);
+                _PyFrame_StackPointerValidate(frame);
+                int err = _PyEval_CheckStackAccess(frame);
+                _PyFrame_StackPointerInvalidate(frame);
+                if (err < 0) {
                     JUMP_TO_LABEL(error);
                 }
             }
-            stack_pointer[0] = value;
-            stack_pointer += 1;
-            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
             DISPATCH();
         }
 
@@ -3826,21 +3823,18 @@
             // _CHECK_CALL_ACCESS
             {
                 value = res;
-                if (!PyStackRef_IsTaggedInt(value) &&
-                    PyObject_CheckAccess(PyStackRef_AsPyObjectBorrow(value)) == NULL) {
-                    stack_pointer[-3 - oparg] = value;
-                    stack_pointer += -2 - oparg;
-                    ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
-                    _PyFrame_SetStackPointer(frame, stack_pointer);
-                    _PyFrame_StackPointerValidate(frame);
-                    stack_pointer = _PyFrame_GetStackPointer(frame);
-                    _PyFrame_StackPointerInvalidate(frame);
+                (void)value;
+                stack_pointer[-3 - oparg] = value;
+                stack_pointer += -2 - oparg;
+                ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                _PyFrame_SetStackPointer(frame, stack_pointer);
+                _PyFrame_StackPointerValidate(frame);
+                int err = _PyEval_CheckStackAccess(frame);
+                _PyFrame_StackPointerInvalidate(frame);
+                if (err < 0) {
                     JUMP_TO_LABEL(error);
                 }
             }
-            stack_pointer[-3 - oparg] = value;
-            stack_pointer += -2 - oparg;
-            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
             DISPATCH();
         }
 
@@ -4084,12 +4078,12 @@
             // _CHECK_CALL_ACCESS
             {
                 value = res;
-                if (!PyStackRef_IsTaggedInt(value) &&
-                    PyObject_CheckAccess(PyStackRef_AsPyObjectBorrow(value)) == NULL) {
-                    assert(stack_pointer == _PyFrame_GetStackPointer(frame));
-                    _PyFrame_StackPointerValidate(frame);
-                    stack_pointer = _PyFrame_GetStackPointer(frame);
-                    _PyFrame_StackPointerInvalidate(frame);
+                (void)value;
+                assert(stack_pointer == _PyFrame_GetStackPointer(frame));
+                _PyFrame_StackPointerValidate(frame);
+                int err = _PyEval_CheckStackAccess(frame);
+                _PyFrame_StackPointerInvalidate(frame);
+                if (err < 0) {
                     JUMP_TO_LABEL(error);
                 }
             }
@@ -4325,12 +4319,12 @@
             // _CHECK_CALL_ACCESS
             {
                 value = res;
-                if (!PyStackRef_IsTaggedInt(value) &&
-                    PyObject_CheckAccess(PyStackRef_AsPyObjectBorrow(value)) == NULL) {
-                    assert(stack_pointer == _PyFrame_GetStackPointer(frame));
-                    _PyFrame_StackPointerValidate(frame);
-                    stack_pointer = _PyFrame_GetStackPointer(frame);
-                    _PyFrame_StackPointerInvalidate(frame);
+                (void)value;
+                assert(stack_pointer == _PyFrame_GetStackPointer(frame));
+                _PyFrame_StackPointerValidate(frame);
+                int err = _PyEval_CheckStackAccess(frame);
+                _PyFrame_StackPointerInvalidate(frame);
+                if (err < 0) {
                     JUMP_TO_LABEL(error);
                 }
             }
@@ -4448,12 +4442,12 @@
             // _CHECK_CALL_ACCESS
             {
                 value = none;
-                if (!PyStackRef_IsTaggedInt(value) &&
-                    PyObject_CheckAccess(PyStackRef_AsPyObjectBorrow(value)) == NULL) {
-                    assert(stack_pointer == _PyFrame_GetStackPointer(frame));
-                    _PyFrame_StackPointerValidate(frame);
-                    stack_pointer = _PyFrame_GetStackPointer(frame);
-                    _PyFrame_StackPointerInvalidate(frame);
+                (void)value;
+                assert(stack_pointer == _PyFrame_GetStackPointer(frame));
+                _PyFrame_StackPointerValidate(frame);
+                int err = _PyEval_CheckStackAccess(frame);
+                _PyFrame_StackPointerInvalidate(frame);
+                if (err < 0) {
                     JUMP_TO_LABEL(error);
                 }
             }
@@ -4589,12 +4583,12 @@
             // _CHECK_CALL_ACCESS
             {
                 value = callable;
-                if (!PyStackRef_IsTaggedInt(value) &&
-                    PyObject_CheckAccess(PyStackRef_AsPyObjectBorrow(value)) == NULL) {
-                    assert(stack_pointer == _PyFrame_GetStackPointer(frame));
-                    _PyFrame_StackPointerValidate(frame);
-                    stack_pointer = _PyFrame_GetStackPointer(frame);
-                    _PyFrame_StackPointerInvalidate(frame);
+                (void)value;
+                assert(stack_pointer == _PyFrame_GetStackPointer(frame));
+                _PyFrame_StackPointerValidate(frame);
+                int err = _PyEval_CheckStackAccess(frame);
+                _PyFrame_StackPointerInvalidate(frame);
+                if (err < 0) {
                     JUMP_TO_LABEL(error);
                 }
             }
@@ -4731,12 +4725,12 @@
             // _CHECK_CALL_ACCESS
             {
                 value = callable;
-                if (!PyStackRef_IsTaggedInt(value) &&
-                    PyObject_CheckAccess(PyStackRef_AsPyObjectBorrow(value)) == NULL) {
-                    assert(stack_pointer == _PyFrame_GetStackPointer(frame));
-                    _PyFrame_StackPointerValidate(frame);
-                    stack_pointer = _PyFrame_GetStackPointer(frame);
-                    _PyFrame_StackPointerInvalidate(frame);
+                (void)value;
+                assert(stack_pointer == _PyFrame_GetStackPointer(frame));
+                _PyFrame_StackPointerValidate(frame);
+                int err = _PyEval_CheckStackAccess(frame);
+                _PyFrame_StackPointerInvalidate(frame);
+                if (err < 0) {
                     JUMP_TO_LABEL(error);
                 }
             }
@@ -4875,12 +4869,12 @@
             // _CHECK_CALL_ACCESS
             {
                 value = res;
-                if (!PyStackRef_IsTaggedInt(value) &&
-                    PyObject_CheckAccess(PyStackRef_AsPyObjectBorrow(value)) == NULL) {
-                    assert(stack_pointer == _PyFrame_GetStackPointer(frame));
-                    _PyFrame_StackPointerValidate(frame);
-                    stack_pointer = _PyFrame_GetStackPointer(frame);
-                    _PyFrame_StackPointerInvalidate(frame);
+                (void)value;
+                assert(stack_pointer == _PyFrame_GetStackPointer(frame));
+                _PyFrame_StackPointerValidate(frame);
+                int err = _PyEval_CheckStackAccess(frame);
+                _PyFrame_StackPointerInvalidate(frame);
+                if (err < 0) {
                     JUMP_TO_LABEL(error);
                 }
             }
@@ -5032,12 +5026,12 @@
             // _CHECK_CALL_ACCESS
             {
                 value = res;
-                if (!PyStackRef_IsTaggedInt(value) &&
-                    PyObject_CheckAccess(PyStackRef_AsPyObjectBorrow(value)) == NULL) {
-                    assert(stack_pointer == _PyFrame_GetStackPointer(frame));
-                    _PyFrame_StackPointerValidate(frame);
-                    stack_pointer = _PyFrame_GetStackPointer(frame);
-                    _PyFrame_StackPointerInvalidate(frame);
+                (void)value;
+                assert(stack_pointer == _PyFrame_GetStackPointer(frame));
+                _PyFrame_StackPointerValidate(frame);
+                int err = _PyEval_CheckStackAccess(frame);
+                _PyFrame_StackPointerInvalidate(frame);
+                if (err < 0) {
                     JUMP_TO_LABEL(error);
                 }
             }
@@ -5132,12 +5126,12 @@
             // _CHECK_CALL_ACCESS
             {
                 value = res;
-                if (!PyStackRef_IsTaggedInt(value) &&
-                    PyObject_CheckAccess(PyStackRef_AsPyObjectBorrow(value)) == NULL) {
-                    assert(stack_pointer == _PyFrame_GetStackPointer(frame));
-                    _PyFrame_StackPointerValidate(frame);
-                    stack_pointer = _PyFrame_GetStackPointer(frame);
-                    _PyFrame_StackPointerInvalidate(frame);
+                (void)value;
+                assert(stack_pointer == _PyFrame_GetStackPointer(frame));
+                _PyFrame_StackPointerValidate(frame);
+                int err = _PyEval_CheckStackAccess(frame);
+                _PyFrame_StackPointerInvalidate(frame);
+                if (err < 0) {
                     JUMP_TO_LABEL(error);
                 }
             }
@@ -5483,12 +5477,12 @@
             // _CHECK_CALL_ACCESS
             {
                 value = res;
-                if (!PyStackRef_IsTaggedInt(value) &&
-                    PyObject_CheckAccess(PyStackRef_AsPyObjectBorrow(value)) == NULL) {
-                    assert(stack_pointer == _PyFrame_GetStackPointer(frame));
-                    _PyFrame_StackPointerValidate(frame);
-                    stack_pointer = _PyFrame_GetStackPointer(frame);
-                    _PyFrame_StackPointerInvalidate(frame);
+                (void)value;
+                assert(stack_pointer == _PyFrame_GetStackPointer(frame));
+                _PyFrame_StackPointerValidate(frame);
+                int err = _PyEval_CheckStackAccess(frame);
+                _PyFrame_StackPointerInvalidate(frame);
+                if (err < 0) {
                     JUMP_TO_LABEL(error);
                 }
             }
@@ -5588,12 +5582,12 @@
             // _CHECK_CALL_ACCESS
             {
                 value = res;
-                if (!PyStackRef_IsTaggedInt(value) &&
-                    PyObject_CheckAccess(PyStackRef_AsPyObjectBorrow(value)) == NULL) {
-                    assert(stack_pointer == _PyFrame_GetStackPointer(frame));
-                    _PyFrame_StackPointerValidate(frame);
-                    stack_pointer = _PyFrame_GetStackPointer(frame);
-                    _PyFrame_StackPointerInvalidate(frame);
+                (void)value;
+                assert(stack_pointer == _PyFrame_GetStackPointer(frame));
+                _PyFrame_StackPointerValidate(frame);
+                int err = _PyEval_CheckStackAccess(frame);
+                _PyFrame_StackPointerInvalidate(frame);
+                if (err < 0) {
                     JUMP_TO_LABEL(error);
                 }
             }
@@ -5676,12 +5670,12 @@
             // _CHECK_CALL_ACCESS
             {
                 value = res;
-                if (!PyStackRef_IsTaggedInt(value) &&
-                    PyObject_CheckAccess(PyStackRef_AsPyObjectBorrow(value)) == NULL) {
-                    assert(stack_pointer == _PyFrame_GetStackPointer(frame));
-                    _PyFrame_StackPointerValidate(frame);
-                    stack_pointer = _PyFrame_GetStackPointer(frame);
-                    _PyFrame_StackPointerInvalidate(frame);
+                (void)value;
+                assert(stack_pointer == _PyFrame_GetStackPointer(frame));
+                _PyFrame_StackPointerValidate(frame);
+                int err = _PyEval_CheckStackAccess(frame);
+                _PyFrame_StackPointerInvalidate(frame);
+                if (err < 0) {
                     JUMP_TO_LABEL(error);
                 }
             }
@@ -7942,12 +7936,12 @@
             // _CHECK_CALL_ACCESS
             {
                 value = res;
-                if (!PyStackRef_IsTaggedInt(value) &&
-                    PyObject_CheckAccess(PyStackRef_AsPyObjectBorrow(value)) == NULL) {
-                    assert(stack_pointer == _PyFrame_GetStackPointer(frame));
-                    _PyFrame_StackPointerValidate(frame);
-                    stack_pointer = _PyFrame_GetStackPointer(frame);
-                    _PyFrame_StackPointerInvalidate(frame);
+                (void)value;
+                assert(stack_pointer == _PyFrame_GetStackPointer(frame));
+                _PyFrame_StackPointerValidate(frame);
+                int err = _PyEval_CheckStackAccess(frame);
+                _PyFrame_StackPointerInvalidate(frame);
+                if (err < 0) {
                     JUMP_TO_LABEL(error);
                 }
             }
@@ -8167,12 +8161,12 @@
             // _CHECK_CALL_ACCESS
             {
                 value = result;
-                if (!PyStackRef_IsTaggedInt(value) &&
-                    PyObject_CheckAccess(PyStackRef_AsPyObjectBorrow(value)) == NULL) {
-                    assert(stack_pointer == _PyFrame_GetStackPointer(frame));
-                    _PyFrame_StackPointerValidate(frame);
-                    stack_pointer = _PyFrame_GetStackPointer(frame);
-                    _PyFrame_StackPointerInvalidate(frame);
+                (void)value;
+                assert(stack_pointer == _PyFrame_GetStackPointer(frame));
+                _PyFrame_StackPointerValidate(frame);
+                int err = _PyEval_CheckStackAccess(frame);
+                _PyFrame_StackPointerInvalidate(frame);
+                if (err < 0) {
                     JUMP_TO_LABEL(error);
                 }
             }
@@ -8324,21 +8318,18 @@
             // _CHECK_CALL_ACCESS
             {
                 value = res;
-                if (!PyStackRef_IsTaggedInt(value) &&
-                    PyObject_CheckAccess(PyStackRef_AsPyObjectBorrow(value)) == NULL) {
-                    stack_pointer[-3 - oparg] = value;
-                    stack_pointer += -2 - oparg;
-                    ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
-                    _PyFrame_SetStackPointer(frame, stack_pointer);
-                    _PyFrame_StackPointerValidate(frame);
-                    stack_pointer = _PyFrame_GetStackPointer(frame);
-                    _PyFrame_StackPointerInvalidate(frame);
+                (void)value;
+                stack_pointer[-3 - oparg] = value;
+                stack_pointer += -2 - oparg;
+                ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                _PyFrame_SetStackPointer(frame, stack_pointer);
+                _PyFrame_StackPointerValidate(frame);
+                int err = _PyEval_CheckStackAccess(frame);
+                _PyFrame_StackPointerInvalidate(frame);
+                if (err < 0) {
                     JUMP_TO_LABEL(error);
                 }
             }
-            stack_pointer[-3 - oparg] = value;
-            stack_pointer += -2 - oparg;
-            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
             DISPATCH();
         }
 
@@ -9110,9 +9101,17 @@
                 stack_pointer = _PyFrame_GetStackPointer(frame);
                 _PyFrame_StackPointerInvalidate(frame);
                 LOAD_IP(frame->return_offset);
+                int stack_access = 0;
+                if (frame->owner != FRAME_OWNED_BY_INTERPRETER) {
+                    assert(stack_pointer == _PyFrame_GetStackPointer(frame));
+                    _PyFrame_StackPointerValidate(frame);
+                    stack_access = _PyEval_CheckStackAccess(frame);
+                    _PyFrame_StackPointerInvalidate(frame);
+                }
                 if (frame->owner != FRAME_OWNED_BY_INTERPRETER &&
-                    !PyStackRef_IsTaggedInt(temp) &&
-                    PyObject_CheckAccess(PyStackRef_AsPyObjectBorrow(temp)) == NULL) {
+                    (stack_access < 0 ||
+                        (!PyStackRef_IsTaggedInt(temp) &&
+                            PyObject_CheckAccess(PyStackRef_AsPyObjectBorrow(temp)) == NULL))) {
                     assert(stack_pointer == _PyFrame_GetStackPointer(frame));
                     _PyFrame_StackPointerValidate(frame);
                     PyStackRef_CLOSE(temp);
@@ -10770,6 +10769,13 @@
             INSTRUCTION_STATS(LOAD_FAST);
             _PyStackRef value;
             assert(!PyStackRef_IsNull(GETLOCAL(oparg)));
+            _PyFrame_SetStackPointer(frame, stack_pointer);
+            _PyFrame_StackPointerValidate(frame);
+            int err = _PyEval_CheckLocalAccess(frame, oparg);
+            _PyFrame_StackPointerInvalidate(frame);
+            if (err < 0) {
+                JUMP_TO_LABEL(error);
+            }
             value = PyStackRef_DUP(GETLOCAL(oparg));
             stack_pointer[0] = value;
             stack_pointer += 1;
@@ -10786,6 +10792,13 @@
             next_instr += 1;
             INSTRUCTION_STATS(LOAD_FAST_AND_CLEAR);
             _PyStackRef value;
+            _PyFrame_SetStackPointer(frame, stack_pointer);
+            _PyFrame_StackPointerValidate(frame);
+            int err = _PyEval_CheckLocalAccess(frame, oparg);
+            _PyFrame_StackPointerInvalidate(frame);
+            if (err < 0) {
+                JUMP_TO_LABEL(error);
+            }
             value = GETLOCAL(oparg);
             GETLOCAL(oparg) = PyStackRef_NULL;
             stack_pointer[0] = value;
@@ -10804,10 +10817,12 @@
             INSTRUCTION_STATS(LOAD_FAST_AND_CLEAR_CHECK);
             _PyStackRef value;
             _PyStackRef value_s = GETLOCAL(oparg);
-            if (!PyStackRef_IsNull(value_s)) {
-                if (PyObject_CheckAccess(PyStackRef_AsPyObjectBorrow(value_s)) == NULL) {
-                    JUMP_TO_LABEL(error);
-                }
+            _PyFrame_SetStackPointer(frame, stack_pointer);
+            _PyFrame_StackPointerValidate(frame);
+            int err = _PyEval_CheckLocalAccess(frame, oparg);
+            _PyFrame_StackPointerInvalidate(frame);
+            if (err < 0) {
+                JUMP_TO_LABEL(error);
             }
             value = value_s;
             GETLOCAL(oparg) = PyStackRef_NULL;
@@ -10827,6 +10842,13 @@
             INSTRUCTION_STATS(LOAD_FAST_BORROW);
             _PyStackRef value;
             assert(!PyStackRef_IsNull(GETLOCAL(oparg)));
+            _PyFrame_SetStackPointer(frame, stack_pointer);
+            _PyFrame_StackPointerValidate(frame);
+            int err = _PyEval_CheckLocalAccess(frame, oparg);
+            _PyFrame_StackPointerInvalidate(frame);
+            if (err < 0) {
+                JUMP_TO_LABEL(error);
+            }
             value = PyStackRef_Borrow(GETLOCAL(oparg));
             stack_pointer[0] = value;
             stack_pointer += 1;
@@ -10846,6 +10868,20 @@
             _PyStackRef value2;
             uint32_t oparg1 = oparg >> 4;
             uint32_t oparg2 = oparg & 15;
+            _PyFrame_SetStackPointer(frame, stack_pointer);
+            _PyFrame_StackPointerValidate(frame);
+            int err = _PyEval_CheckLocalAccess(frame, oparg1);
+            _PyFrame_StackPointerInvalidate(frame);
+            if (err < 0) {
+                JUMP_TO_LABEL(error);
+            }
+            assert(stack_pointer == _PyFrame_GetStackPointer(frame));
+            _PyFrame_StackPointerValidate(frame);
+            err = _PyEval_CheckLocalAccess(frame, oparg2);
+            _PyFrame_StackPointerInvalidate(frame);
+            if (err < 0) {
+                JUMP_TO_LABEL(error);
+            }
             value1 = PyStackRef_Borrow(GETLOCAL(oparg1));
             value2 = PyStackRef_Borrow(GETLOCAL(oparg2));
             stack_pointer[0] = value1;
@@ -10875,7 +10911,11 @@
                 _PyFrame_StackPointerInvalidate(frame);
                 JUMP_TO_LABEL(error);
             }
-            if (PyObject_CheckAccess(PyStackRef_AsPyObjectBorrow(value_s)) == NULL) {
+            _PyFrame_SetStackPointer(frame, stack_pointer);
+            _PyFrame_StackPointerValidate(frame);
+            int err = _PyEval_CheckLocalAccess(frame, oparg);
+            _PyFrame_StackPointerInvalidate(frame);
+            if (err < 0) {
                 JUMP_TO_LABEL(error);
             }
             value = PyStackRef_Borrow(value_s);
@@ -10905,6 +10945,13 @@
                 _PyFrame_StackPointerInvalidate(frame);
                 JUMP_TO_LABEL(error);
             }
+            _PyFrame_SetStackPointer(frame, stack_pointer);
+            _PyFrame_StackPointerValidate(frame);
+            int err = _PyEval_CheckLocalAccess(frame, oparg);
+            _PyFrame_StackPointerInvalidate(frame);
+            if (err < 0) {
+                JUMP_TO_LABEL(error);
+            }
             value = PyStackRef_DUP(value_s);
             stack_pointer[0] = value;
             stack_pointer += 1;
@@ -10924,6 +10971,20 @@
             _PyStackRef value2;
             uint32_t oparg1 = oparg >> 4;
             uint32_t oparg2 = oparg & 15;
+            _PyFrame_SetStackPointer(frame, stack_pointer);
+            _PyFrame_StackPointerValidate(frame);
+            int err = _PyEval_CheckLocalAccess(frame, oparg1);
+            _PyFrame_StackPointerInvalidate(frame);
+            if (err < 0) {
+                JUMP_TO_LABEL(error);
+            }
+            assert(stack_pointer == _PyFrame_GetStackPointer(frame));
+            _PyFrame_StackPointerValidate(frame);
+            err = _PyEval_CheckLocalAccess(frame, oparg2);
+            _PyFrame_StackPointerInvalidate(frame);
+            if (err < 0) {
+                JUMP_TO_LABEL(error);
+            }
             value1 = PyStackRef_DUP(GETLOCAL(oparg1));
             value2 = PyStackRef_DUP(GETLOCAL(oparg2));
             stack_pointer[0] = value1;
@@ -10953,7 +11014,11 @@
                 _PyFrame_StackPointerInvalidate(frame);
                 JUMP_TO_LABEL(error);
             }
-            if (PyObject_CheckAccess(PyStackRef_AsPyObjectBorrow(value_s)) == NULL) {
+            _PyFrame_SetStackPointer(frame, stack_pointer);
+            _PyFrame_StackPointerValidate(frame);
+            int err = _PyEval_CheckLocalAccess(frame, oparg);
+            _PyFrame_StackPointerInvalidate(frame);
+            if (err < 0) {
                 JUMP_TO_LABEL(error);
             }
             value = PyStackRef_DUP(value_s);
@@ -12755,9 +12820,17 @@
                 stack_pointer = _PyFrame_GetStackPointer(frame);
                 _PyFrame_StackPointerInvalidate(frame);
                 LOAD_IP(frame->return_offset);
+                int stack_access = 0;
+                if (frame->owner != FRAME_OWNED_BY_INTERPRETER) {
+                    assert(stack_pointer == _PyFrame_GetStackPointer(frame));
+                    _PyFrame_StackPointerValidate(frame);
+                    stack_access = _PyEval_CheckStackAccess(frame);
+                    _PyFrame_StackPointerInvalidate(frame);
+                }
                 if (frame->owner != FRAME_OWNED_BY_INTERPRETER &&
-                    !PyStackRef_IsTaggedInt(temp) &&
-                    PyObject_CheckAccess(PyStackRef_AsPyObjectBorrow(temp)) == NULL) {
+                    (stack_access < 0 ||
+                        (!PyStackRef_IsTaggedInt(temp) &&
+                            PyObject_CheckAccess(PyStackRef_AsPyObjectBorrow(temp)) == NULL))) {
                     assert(stack_pointer == _PyFrame_GetStackPointer(frame));
                     _PyFrame_StackPointerValidate(frame);
                     PyStackRef_CLOSE(temp);
@@ -13724,12 +13797,23 @@
             uint32_t oparg2 = oparg & 15;
             _PyStackRef tmp = GETLOCAL(oparg1);
             GETLOCAL(oparg1) = value1;
-            value2 = PyStackRef_DUP(GETLOCAL(oparg2));
-            stack_pointer[-1] = value2;
+            stack_pointer += -1;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
             _PyFrame_SetStackPointer(frame, stack_pointer);
             _PyFrame_StackPointerValidate(frame);
             PyStackRef_XCLOSE(tmp);
             _PyFrame_StackPointerInvalidate(frame);
+            assert(stack_pointer == _PyFrame_GetStackPointer(frame));
+            _PyFrame_StackPointerValidate(frame);
+            int err = _PyEval_CheckLocalAccess(frame, oparg2);
+            _PyFrame_StackPointerInvalidate(frame);
+            if (err < 0) {
+                JUMP_TO_LABEL(error);
+            }
+            value2 = PyStackRef_DUP(GETLOCAL(oparg2));
+            stack_pointer[0] = value2;
+            stack_pointer += 1;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
             DISPATCH();
         }
 
