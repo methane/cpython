@@ -48,9 +48,7 @@ PyObject_Type(PyObject *o)
     if (o == NULL) {
         return null_error();
     }
-    if (PyObject_CheckAccess(o) == NULL) {
-        return NULL;
-    }
+    assert(_PyObject_IsAccessible(o));
 
     v = (PyObject *)Py_TYPE(o);
     return Py_NewRef(v);
@@ -63,9 +61,7 @@ PyObject_Size(PyObject *o)
         null_error();
         return -1;
     }
-    if (PyObject_CheckAccess(o) == NULL) {
-        return -1;
-    }
+    assert(_PyObject_IsAccessible(o));
 
     PySequenceMethods *m = Py_TYPE(o)->tp_as_sequence;
     if (m && m->sq_length) {
@@ -106,9 +102,7 @@ PyObject_LengthHint(PyObject *o, Py_ssize_t defaultvalue)
         null_error();
         return -1;
     }
-    if (PyObject_CheckAccess(o) == NULL) {
-        return -1;
-    }
+    assert(_PyObject_IsAccessible(o));
     if (_PyObject_HasLen(o)) {
         res = PyObject_Length(o);
         if (res < 0) {
@@ -174,10 +168,7 @@ PyObject_GetItem(PyObject *o, PyObject *key)
     if (o == NULL || key == NULL) {
         return null_error();
     }
-    if (PyObject_CheckAccess(o) == NULL ||
-        PyObject_CheckAccess(key) == NULL) {
-        return NULL;
-    }
+    assert(_PyObject_IsAccessible(o) && _PyObject_IsAccessible(key));
     PyMappingMethods *m = Py_TYPE(o)->tp_as_mapping;
     if (m && m->mp_subscript) {
         PyObject *item = m->mp_subscript(o, key);
@@ -237,11 +228,7 @@ PyMapping_GetOptionalItem(PyObject *obj, PyObject *key, PyObject **result)
         null_error();
         return -1;
     }
-    if (PyObject_CheckAccess(obj) == NULL ||
-        PyObject_CheckAccess(key) == NULL) {
-        *result = NULL;
-        return -1;
-    }
+    assert(_PyObject_IsAccessible(obj) && _PyObject_IsAccessible(key));
     if (PyAnyDict_CheckExact(obj)) {
         return PyDict_GetItemRef(obj, key, result);
     }
@@ -273,11 +260,8 @@ PyObject_SetItem(PyObject *o, PyObject *key, PyObject *value)
         null_error();
         return -1;
     }
-    if (PyObject_CheckAccess(o) == NULL ||
-        PyObject_CheckAccess(key) == NULL ||
-        PyObject_CheckAccess(value) == NULL) {
-        return -1;
-    }
+    assert(_PyObject_IsAccessible(o) && _PyObject_IsAccessible(key) &&
+           _PyObject_IsAccessible(value));
 
     PyMappingMethods *m = Py_TYPE(o)->tp_as_mapping;
     if (m && m->mp_ass_subscript) {
@@ -312,10 +296,7 @@ PyObject_DelItem(PyObject *o, PyObject *key)
         null_error();
         return -1;
     }
-    if (PyObject_CheckAccess(o) == NULL ||
-        PyObject_CheckAccess(key) == NULL) {
-        return -1;
-    }
+    assert(_PyObject_IsAccessible(o) && _PyObject_IsAccessible(key));
 
     PyMappingMethods *m = Py_TYPE(o)->tp_as_mapping;
     if (m && m->mp_ass_subscript) {
@@ -366,9 +347,10 @@ PyObject_DelItemString(PyObject *o, const char *key)
 int
 PyObject_CheckBuffer(PyObject *obj)
 {
-    if (obj == NULL || PyObject_CheckAccess(obj) == NULL) {
+    if (obj == NULL) {
         return 0;
     }
+    assert(_PyObject_IsAccessible(obj));
     PyBufferProcs *tp_as_buffer = Py_TYPE(obj)->tp_as_buffer;
     return (tp_as_buffer != NULL && tp_as_buffer->bf_getbuffer != NULL);
 }
@@ -386,9 +368,10 @@ PyObject_CheckBuffer(PyObject *obj)
 PyAPI_FUNC(int) /* abi_only */
 PyObject_CheckReadBuffer(PyObject *obj)
 {
-    if (obj == NULL || PyObject_CheckAccess(obj) == NULL) {
+    if (obj == NULL) {
         return 0;
     }
+    assert(_PyObject_IsAccessible(obj));
     PyBufferProcs *pb = Py_TYPE(obj)->tp_as_buffer;
     Py_buffer view;
 
@@ -474,9 +457,7 @@ PyObject_AsWriteBuffer(PyObject *obj,
         null_error();
         return -1;
     }
-    if (PyObject_CheckAccess(obj) == NULL) {
-        return -1;
-    }
+    assert(_PyObject_IsAccessible(obj));
     pb = Py_TYPE(obj)->tp_as_buffer;
     if (pb == NULL ||
         pb->bf_getbuffer == NULL ||
@@ -507,9 +488,7 @@ PyObject_GetBuffer(PyObject *obj, Py_buffer *view, int flags)
         null_error();
         return -1;
     }
-    if (PyObject_CheckAccess(obj) == NULL) {
-        return -1;
-    }
+    assert(_PyObject_IsAccessible(obj));
     if (flags != PyBUF_SIMPLE) {  /* fast path */
         if (flags == PyBUF_READ || flags == PyBUF_WRITE) {
             PyErr_BadInternalCall();
@@ -862,9 +841,7 @@ PyBuffer_FillInfo(Py_buffer *view, PyObject *obj, void *buf, Py_ssize_t len,
                         "PyBuffer_FillInfo: view==NULL argument is obsolete");
         return -1;
     }
-    if (obj != NULL && PyObject_CheckAccess(obj) == NULL) {
-        return -1;
-    }
+    assert(obj == NULL || _PyObject_IsAccessible(obj));
 
     if (flags != PyBUF_SIMPLE) {  /* fast path */
         if (flags == PyBUF_READ || flags == PyBUF_WRITE) {
@@ -945,10 +922,8 @@ PyObject_Format(PyObject *obj, PyObject *format_spec)
     if (obj == NULL) {
         return null_error();
     }
-    if (PyObject_CheckAccess(obj) == NULL ||
-        (format_spec != NULL && PyObject_CheckAccess(format_spec) == NULL)) {
-        return NULL;
-    }
+    assert(_PyObject_IsAccessible(obj) &&
+           (format_spec == NULL || _PyObject_IsAccessible(format_spec)));
 
     if (format_spec != NULL && !PyUnicode_Check(format_spec)) {
         PyErr_Format(PyExc_SystemError,
@@ -1041,9 +1016,8 @@ binary_op1(PyObject *v, PyObject *w, const int op_slot
     if (v == NULL || w == NULL) {
         return null_error();
     }
-    if (PyObject_CheckAccess(v) == NULL || PyObject_CheckAccess(w) == NULL) {
-        return NULL;
-    }
+    assert(_PyObject_IsAccessible(v) &&
+           _PyObject_IsAccessible(w));
     binaryfunc slotv;
     if (Py_TYPE(v)->tp_as_number != NULL) {
         slotv = NB_BINOP(Py_TYPE(v)->tp_as_number, op_slot);
@@ -1147,11 +1121,9 @@ ternary_op(PyObject *v,
     if (v == NULL || w == NULL || z == NULL) {
         return null_error();
     }
-    if (PyObject_CheckAccess(v) == NULL ||
-        PyObject_CheckAccess(w) == NULL ||
-        PyObject_CheckAccess(z) == NULL) {
-        return NULL;
-    }
+    assert(_PyObject_IsAccessible(v) &&
+           _PyObject_IsAccessible(w) &&
+           _PyObject_IsAccessible(z));
     PyNumberMethods *mv = Py_TYPE(v)->tp_as_number;
     PyNumberMethods *mw = Py_TYPE(w)->tp_as_number;
 
@@ -1294,9 +1266,8 @@ PyNumber_Add(PyObject *v, PyObject *w)
 static PyObject *
 sequence_repeat(ssizeargfunc repeatfunc, PyObject *seq, PyObject *n)
 {
-    if (PyObject_CheckAccess(seq) == NULL || PyObject_CheckAccess(n) == NULL) {
-        return NULL;
-    }
+    assert(_PyObject_IsAccessible(seq) &&
+           _PyObject_IsAccessible(n));
     Py_ssize_t count;
     if (_PyIndex_Check(n)) {
         count = PyNumber_AsSsize_t(n, PyExc_OverflowError);
@@ -1379,9 +1350,8 @@ binary_iop1(PyObject *v, PyObject *w, const int iop_slot, const int op_slot
     if (v == NULL || w == NULL) {
         return null_error();
     }
-    if (PyObject_CheckAccess(v) == NULL || PyObject_CheckAccess(w) == NULL) {
-        return NULL;
-    }
+    assert(_PyObject_IsAccessible(v) &&
+           _PyObject_IsAccessible(w));
     PyNumberMethods *mv = Py_TYPE(v)->tp_as_number;
     if (mv != NULL) {
         binaryfunc slot = NB_BINOP(mv, iop_slot);
@@ -1393,6 +1363,10 @@ binary_iop1(PyObject *v, PyObject *w, const int iop_slot, const int op_slot
             }
             Py_DECREF(x);
         }
+    }
+    /* The in-place slot may have released an operand's protecting lock. */
+    if (PyObject_CheckAccess(v) == NULL || PyObject_CheckAccess(w) == NULL) {
+        return NULL;
     }
 #ifdef NDEBUG
     return binary_op1(v, w, op_slot);
@@ -1426,11 +1400,9 @@ ternary_iop(PyObject *v, PyObject *w, PyObject *z, const int iop_slot, const int
     if (v == NULL || w == NULL || z == NULL) {
         return null_error();
     }
-    if (PyObject_CheckAccess(v) == NULL ||
-        PyObject_CheckAccess(w) == NULL ||
-        PyObject_CheckAccess(z) == NULL) {
-        return NULL;
-    }
+    assert(_PyObject_IsAccessible(v) &&
+           _PyObject_IsAccessible(w) &&
+           _PyObject_IsAccessible(z));
     PyNumberMethods *mv = Py_TYPE(v)->tp_as_number;
     if (mv != NULL) {
         ternaryfunc slot = NB_TERNOP(mv, iop_slot);
@@ -1441,6 +1413,11 @@ ternary_iop(PyObject *v, PyObject *w, PyObject *z, const int iop_slot, const int
             }
             Py_DECREF(x);
         }
+    }
+    if (PyObject_CheckAccess(v) == NULL ||
+        PyObject_CheckAccess(w) == NULL ||
+        PyObject_CheckAccess(z) == NULL) {
+        return NULL;
     }
     return ternary_op(v, w, z, op_slot, op_name);
 }
@@ -1536,9 +1513,7 @@ _PyNumber_InPlacePowerNoMod(PyObject *lhs, PyObject *rhs)
         if (o == NULL) {                                                 \
             return null_error();                                         \
         }                                                                \
-        if (PyObject_CheckAccess(o) == NULL) {                           \
-            return NULL;                                                \
-        }                                                               \
+        assert(_PyObject_IsAccessible(o));                              \
                                                                          \
         PyNumberMethods *m = Py_TYPE(o)->tp_as_number;                   \
         if (m && m->op) {                                                \
@@ -1575,9 +1550,7 @@ _PyNumber_Index(PyObject *item)
         return null_error();
     }
 
-    if (PyObject_CheckAccess(item) == NULL) {
-        return NULL;
-    }
+    assert(_PyObject_IsAccessible(item));
 
     if (PyLong_Check(item)) {
         return Py_NewRef(item);
@@ -1693,9 +1666,7 @@ PyNumber_Long(PyObject *o)
     if (o == NULL) {
         return null_error();
     }
-    if (PyObject_CheckAccess(o) == NULL) {
-        return NULL;
-    }
+    assert(_PyObject_IsAccessible(o));
 
     if (PyLong_CheckExact(o)) {
         return Py_NewRef(o);
@@ -1780,9 +1751,7 @@ PyNumber_Float(PyObject *o)
     if (o == NULL) {
         return null_error();
     }
-    if (PyObject_CheckAccess(o) == NULL) {
-        return NULL;
-    }
+    assert(_PyObject_IsAccessible(o));
 
     if (PyFloat_CheckExact(o)) {
         return Py_NewRef(o);
@@ -1877,9 +1846,7 @@ PySequence_Size(PyObject *s)
         null_error();
         return -1;
     }
-    if (PyObject_CheckAccess(s) == NULL) {
-        return -1;
-    }
+    assert(_PyObject_IsAccessible(s));
 
     PySequenceMethods *m = Py_TYPE(s)->tp_as_sequence;
     if (m && m->sq_length) {
@@ -1910,10 +1877,8 @@ PySequence_Concat(PyObject *s, PyObject *o)
     if (s == NULL || o == NULL) {
         return null_error();
     }
-    if (PyObject_CheckAccess(s) == NULL ||
-        PyObject_CheckAccess(o) == NULL) {
-        return NULL;
-    }
+    assert(_PyObject_IsAccessible(s) &&
+           _PyObject_IsAccessible(o));
 
     PySequenceMethods *m = Py_TYPE(s)->tp_as_sequence;
     if (m && m->sq_concat) {
@@ -1940,9 +1905,7 @@ PySequence_Repeat(PyObject *o, Py_ssize_t count)
     if (o == NULL) {
         return null_error();
     }
-    if (PyObject_CheckAccess(o) == NULL) {
-        return NULL;
-    }
+    assert(_PyObject_IsAccessible(o));
 
     PySequenceMethods *m = Py_TYPE(o)->tp_as_sequence;
     if (m && m->sq_repeat) {
@@ -1974,10 +1937,8 @@ PySequence_InPlaceConcat(PyObject *s, PyObject *o)
     if (s == NULL || o == NULL) {
         return null_error();
     }
-    if (PyObject_CheckAccess(s) == NULL ||
-        PyObject_CheckAccess(o) == NULL) {
-        return NULL;
-    }
+    assert(_PyObject_IsAccessible(s) &&
+           _PyObject_IsAccessible(o));
 
     PySequenceMethods *m = Py_TYPE(s)->tp_as_sequence;
     if (m && m->sq_inplace_concat) {
@@ -2007,9 +1968,7 @@ PySequence_InPlaceRepeat(PyObject *o, Py_ssize_t count)
     if (o == NULL) {
         return null_error();
     }
-    if (PyObject_CheckAccess(o) == NULL) {
-        return NULL;
-    }
+    assert(_PyObject_IsAccessible(o));
 
     PySequenceMethods *m = Py_TYPE(o)->tp_as_sequence;
     if (m && m->sq_inplace_repeat) {
@@ -2044,9 +2003,7 @@ PySequence_GetItem(PyObject *s, Py_ssize_t i)
     if (s == NULL) {
         return null_error();
     }
-    if (PyObject_CheckAccess(s) == NULL) {
-        return NULL;
-    }
+    assert(_PyObject_IsAccessible(s));
 
     PySequenceMethods *m = Py_TYPE(s)->tp_as_sequence;
     if (m && m->sq_item) {
@@ -2077,9 +2034,7 @@ PySequence_GetSlice(PyObject *s, Py_ssize_t i1, Py_ssize_t i2)
     if (!s) {
         return null_error();
     }
-    if (PyObject_CheckAccess(s) == NULL) {
-        return NULL;
-    }
+    assert(_PyObject_IsAccessible(s));
 
     PyMappingMethods *mp = Py_TYPE(s)->tp_as_mapping;
     if (mp && mp->mp_subscript) {
@@ -2103,10 +2058,8 @@ PySequence_SetItem(PyObject *s, Py_ssize_t i, PyObject *o)
         null_error();
         return -1;
     }
-    if (PyObject_CheckAccess(s) == NULL ||
-        (o != NULL && PyObject_CheckAccess(o) == NULL)) {
-        return -1;
-    }
+    assert(_PyObject_IsAccessible(s) &&
+           (o == NULL || _PyObject_IsAccessible(o)));
 
     PySequenceMethods *m = Py_TYPE(s)->tp_as_sequence;
     if (m && m->sq_ass_item) {
@@ -2140,9 +2093,7 @@ PySequence_DelItem(PyObject *s, Py_ssize_t i)
         null_error();
         return -1;
     }
-    if (PyObject_CheckAccess(s) == NULL) {
-        return -1;
-    }
+    assert(_PyObject_IsAccessible(s));
 
     PySequenceMethods *m = Py_TYPE(s)->tp_as_sequence;
     if (m && m->sq_ass_item) {
@@ -2176,10 +2127,8 @@ PySequence_SetSlice(PyObject *s, Py_ssize_t i1, Py_ssize_t i2, PyObject *o)
         null_error();
         return -1;
     }
-    if (PyObject_CheckAccess(s) == NULL ||
-        (o != NULL && PyObject_CheckAccess(o) == NULL)) {
-        return -1;
-    }
+    assert(_PyObject_IsAccessible(s) &&
+           (o == NULL || _PyObject_IsAccessible(o)));
 
     PyMappingMethods *mp = Py_TYPE(s)->tp_as_mapping;
     if (mp && mp->mp_ass_subscript) {
@@ -2203,9 +2152,7 @@ PySequence_DelSlice(PyObject *s, Py_ssize_t i1, Py_ssize_t i2)
         null_error();
         return -1;
     }
-    if (PyObject_CheckAccess(s) == NULL) {
-        return -1;
-    }
+    assert(_PyObject_IsAccessible(s));
 
     PyMappingMethods *mp = Py_TYPE(s)->tp_as_mapping;
     if (mp && mp->mp_ass_subscript) {
@@ -2230,9 +2177,7 @@ PySequence_Tuple(PyObject *v)
     if (v == NULL) {
         return null_error();
     }
-    if (PyObject_CheckAccess(v) == NULL) {
-        return NULL;
-    }
+    assert(_PyObject_IsAccessible(v));
 
     /* Special-case the common tuple and list cases, for efficiency. */
     if (PyTuple_CheckExact(v)) {
@@ -2310,9 +2255,7 @@ PySequence_List(PyObject *v)
     if (v == NULL) {
         return null_error();
     }
-    if (PyObject_CheckAccess(v) == NULL) {
-        return NULL;
-    }
+    assert(_PyObject_IsAccessible(v));
 
     result = PyList_New(0);
     if (result == NULL)
@@ -2335,9 +2278,7 @@ PySequence_Fast(PyObject *v, const char *m)
     if (v == NULL) {
         return null_error();
     }
-    if (PyObject_CheckAccess(v) == NULL) {
-        return NULL;
-    }
+    assert(_PyObject_IsAccessible(v));
 
     if (PyList_CheckExact(v) || PyTuple_CheckExact(v)) {
         return _PyObject_CheckAccessNullable(Py_NewRef(v));
@@ -2375,10 +2316,8 @@ _PySequence_IterSearch(PyObject *seq, PyObject *obj, int operation)
         null_error();
         return -1;
     }
-    if (PyObject_CheckAccess(seq) == NULL ||
-        PyObject_CheckAccess(obj) == NULL) {
-        return -1;
-    }
+    assert(_PyObject_IsAccessible(seq) &&
+           _PyObject_IsAccessible(obj));
 
     it = PyObject_GetIter(seq);
     if (it == NULL) {
@@ -2477,9 +2416,7 @@ PySequence_Contains(PyObject *seq, PyObject *ob)
         null_error();
         return -1;
     }
-    if (PyObject_CheckAccess(seq) == NULL) {
-        return -1;
-    }
+    assert(_PyObject_IsAccessible(seq));
     /* Preserve the historical empty-list behavior for a NULL item. */
     if (ob == NULL) {
         if (PyList_CheckExact(seq) && PyList_GET_SIZE(seq) == 0) {
@@ -2488,9 +2425,7 @@ PySequence_Contains(PyObject *seq, PyObject *ob)
         null_error();
         return -1;
     }
-    if (PyObject_CheckAccess(ob) == NULL) {
-        return -1;
-    }
+    assert(_PyObject_IsAccessible(ob));
     PySequenceMethods *sqm = Py_TYPE(seq)->tp_as_sequence;
     if (sqm != NULL && sqm->sq_contains != NULL) {
         int res = (*sqm->sq_contains)(seq, ob);
@@ -2531,9 +2466,7 @@ PyMapping_Size(PyObject *o)
         null_error();
         return -1;
     }
-    if (PyObject_CheckAccess(o) == NULL) {
-        return -1;
-    }
+    assert(_PyObject_IsAccessible(o));
 
     PyMappingMethods *m = Py_TYPE(o)->tp_as_mapping;
     if (m && m->mp_length) {
@@ -2567,9 +2500,7 @@ PyMapping_GetItemString(PyObject *o, const char *key)
     if (o == NULL || key == NULL) {
         return null_error();
     }
-    if (PyObject_CheckAccess(o) == NULL) {
-        return NULL;
-    }
+    assert(_PyObject_IsAccessible(o));
 
     okey = PyUnicode_FromString(key);
     if (okey == NULL)
@@ -2591,9 +2522,7 @@ PyMapping_GetOptionalItemString(PyObject *obj, const char *key, PyObject **resul
         null_error();
         return -1;
     }
-    if (PyObject_CheckAccess(obj) == NULL) {
-        return -1;
-    }
+    assert(_PyObject_IsAccessible(obj));
     PyObject *okey = PyUnicode_FromString(key);
     if (okey == NULL) {
         return -1;
@@ -2613,10 +2542,8 @@ PyMapping_SetItemString(PyObject *o, const char *key, PyObject *value)
         null_error();
         return -1;
     }
-    if (PyObject_CheckAccess(o) == NULL ||
-        PyObject_CheckAccess(value) == NULL) {
-        return -1;
-    }
+    assert(_PyObject_IsAccessible(o) &&
+           _PyObject_IsAccessible(value));
 
     okey = PyUnicode_FromString(key);
     if (okey == NULL)
@@ -2731,9 +2658,7 @@ PyMapping_Keys(PyObject *o)
     if (o == NULL) {
         return null_error();
     }
-    if (PyObject_CheckAccess(o) == NULL) {
-        return NULL;
-    }
+    assert(_PyObject_IsAccessible(o));
     if (PyAnyDict_CheckExact(o)) {
         return PyDict_Keys(o);
     }
@@ -2746,9 +2671,7 @@ PyMapping_Items(PyObject *o)
     if (o == NULL) {
         return null_error();
     }
-    if (PyObject_CheckAccess(o) == NULL) {
-        return NULL;
-    }
+    assert(_PyObject_IsAccessible(o));
     if (PyAnyDict_CheckExact(o)) {
         return PyDict_Items(o);
     }
@@ -2761,9 +2684,7 @@ PyMapping_Values(PyObject *o)
     if (o == NULL) {
         return null_error();
     }
-    if (PyObject_CheckAccess(o) == NULL) {
-        return NULL;
-    }
+    assert(_PyObject_IsAccessible(o));
     if (PyAnyDict_CheckExact(o)) {
         return PyDict_Values(o);
     }
@@ -2920,10 +2841,8 @@ object_recursive_isinstance(PyThreadState *tstate, PyObject *inst, PyObject *cls
         PyErr_BadInternalCall();
         return -1;
     }
-    if (PyObject_CheckAccess(inst) == NULL ||
-        PyObject_CheckAccess(cls) == NULL) {
-        return -1;
-    }
+    assert(_PyObject_IsAccessible(inst) &&
+           _PyObject_IsAccessible(cls));
     /* Quick test for an exact match */
     if (Py_IS_TYPE(inst, (PyTypeObject *)cls)) {
         return 1;
@@ -3025,10 +2944,8 @@ object_issubclass(PyThreadState *tstate, PyObject *derived, PyObject *cls)
         PyErr_BadInternalCall();
         return -1;
     }
-    if (PyObject_CheckAccess(derived) == NULL ||
-        PyObject_CheckAccess(cls) == NULL) {
-        return -1;
-    }
+    assert(_PyObject_IsAccessible(derived) &&
+           _PyObject_IsAccessible(cls));
     PyObject *checker;
 
     /* We know what type's __subclasscheck__ does. */
@@ -3117,9 +3034,7 @@ PyObject_GetIter(PyObject *o)
     if (o == NULL) {
         return null_error();
     }
-    if (PyObject_CheckAccess(o) == NULL) {
-        return NULL;
-    }
+    assert(_PyObject_IsAccessible(o));
     PyTypeObject *t = Py_TYPE(o);
     getiterfunc f;
 
@@ -3146,9 +3061,7 @@ PyObject_GetAIter(PyObject *o) {
     if (o == NULL) {
         return null_error();
     }
-    if (PyObject_CheckAccess(o) == NULL) {
-        return NULL;
-    }
+    assert(_PyObject_IsAccessible(o));
     PyTypeObject *t = Py_TYPE(o);
     unaryfunc f;
 
@@ -3217,10 +3130,7 @@ PyIter_NextItem(PyObject *iter, PyObject **item)
     assert(iter != NULL);
     assert(item != NULL);
 
-    if (PyObject_CheckAccess(iter) == NULL) {
-        *item = NULL;
-        return -1;
-    }
+    assert(_PyObject_IsAccessible(iter));
 
     if (Py_TYPE(iter)->tp_iternext == NULL) {
         *item = NULL;
@@ -3243,9 +3153,10 @@ PyObject *
 PyIter_Next(PyObject *iter)
 {
     PyObject *item;
-    if (iter == NULL || PyObject_CheckAccess(iter) == NULL) {
+    if (iter == NULL) {
         return NULL;
     }
+    assert(_PyObject_IsAccessible(iter));
     (void)iternext(iter, &item);
     return item;
 }
@@ -3255,11 +3166,11 @@ PyIter_Send(PyObject *iter, PyObject *arg, PyObject **result)
 {
     assert(arg != NULL);
     assert(result != NULL);
-    if (iter == NULL || PyObject_CheckAccess(iter) == NULL ||
-        PyObject_CheckAccess(arg) == NULL) {
+    if (iter == NULL) {
         *result = NULL;
         return PYGEN_ERROR;
     }
+    assert(_PyObject_IsAccessible(iter) && _PyObject_IsAccessible(arg));
     PySendResult status;
     if (Py_TYPE(iter)->tp_as_async && Py_TYPE(iter)->tp_as_async->am_send) {
         status = Py_TYPE(iter)->tp_as_async->am_send(iter, arg, result);

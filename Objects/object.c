@@ -582,9 +582,12 @@ _PyObject_NewVar(PyTypeObject *tp, Py_ssize_t nitems)
     return op;
 }
 
-/* These flags and the intrusive link are guarded by deferred_cleanups_mutex.
-   Keeping one strong queue reference prevents deallocation while a record is
-   pending, including after the consumer has detached a batch. */
+/* Internal world stops may drop the last reference or request finalization
+   while callbacks cannot run.  This intrusive queue needs no allocation even
+   if the raw allocator is failing.  A queue reference keeps the object alive;
+   flags distinguish a queued tail from an unqueued object, and the count
+   preserves repeated explicit finalizer calls for non-GC types.  All three
+   fields are guarded by deferred_cleanups_mutex. */
 #define DEFERRED_QUEUED 1
 
 static int
@@ -821,9 +824,7 @@ PyObject_Print(PyObject *op, FILE *fp, int flags)
         Py_END_ALLOW_THREADS
     }
     else {
-        if (PyObject_CheckAccess(op) == NULL) {
-            return -1;
-        }
+        assert(_PyObject_IsAccessible(op));
         if (Py_REFCNT(op) <= 0) {
             Py_BEGIN_ALLOW_THREADS
             fprintf(fp, "<refcnt %zd at %p>", Py_REFCNT(op), (void *)op);
@@ -941,6 +942,7 @@ PyObject_Repr(PyObject *v)
         return NULL;
     if (v == NULL)
         return PyUnicode_FromString("<NULL>");
+    /* Native container repr slots can pass stored elements directly here. */
     if (PyObject_CheckAccess(v) == NULL)
         return NULL;
     if (Py_TYPE(v)->tp_repr == NULL)
@@ -1028,8 +1030,7 @@ PyObject_ASCII(PyObject *v)
 {
     PyObject *repr, *ascii, *res;
 
-    if (v != NULL && PyObject_CheckAccess(v) == NULL)
-        return NULL;
+    assert(v == NULL || _PyObject_IsAccessible(v));
     repr = PyObject_Repr(v);
     if (repr == NULL)
         return NULL;
@@ -1333,6 +1334,9 @@ PyObject_RichCompareBool(PyObject *v, PyObject *w, int op)
         PyErr_BadInternalCall();
         return -1;
     }
+    /* Some container slots still pass elements loaded from their storage
+       directly to this API.  Until those loads validate the new references,
+       this is their access boundary. */
     if (PyObject_CheckAccess(v) == NULL || PyObject_CheckAccess(w) == NULL) {
         return -1;
     }
@@ -1367,9 +1371,7 @@ PyObject_HashNotImplemented(PyObject *v)
         PyErr_BadInternalCall();
         return -1;
     }
-    if (PyObject_CheckAccess(v) == NULL) {
-        return -1;
-    }
+    assert(_PyObject_IsAccessible(v));
     PyErr_Format(PyExc_TypeError, "unhashable type: '%.200s'",
                  Py_TYPE(v)->tp_name);
     return -1;
@@ -1382,6 +1384,8 @@ PyObject_Hash(PyObject *v)
         PyErr_BadInternalCall();
         return -1;
     }
+    /* Native dictionary operations can reach a stored key before their
+       caller has acquired an accessible reference to it. */
     if (PyObject_CheckAccess(v) == NULL) {
         return -1;
     }
@@ -1412,9 +1416,7 @@ PyObject_GetAttrString(PyObject *v, const char *name)
         PyErr_BadInternalCall();
         return NULL;
     }
-    if (PyObject_CheckAccess(v) == NULL) {
-        return NULL;
-    }
+    assert(_PyObject_IsAccessible(v));
     if (Py_TYPE(v)->tp_getattr != NULL) {
         return _PyObject_CheckAccessNullable(
             (*Py_TYPE(v)->tp_getattr)(v, (char*)name));
@@ -1458,10 +1460,8 @@ PyObject_SetAttrString(PyObject *v, const char *name, PyObject *w)
         PyErr_BadInternalCall();
         return -1;
     }
-    if (PyObject_CheckAccess(v) == NULL ||
-        (w != NULL && PyObject_CheckAccess(w) == NULL)) {
-        return -1;
-    }
+    assert(_PyObject_IsAccessible(v) &&
+           (w == NULL || _PyObject_IsAccessible(w)));
     if (_PyObject_CheckMutable(v) < 0) {
         return -1;
     }
@@ -1561,10 +1561,8 @@ PyObject_GetAttr(PyObject *v, PyObject *name)
         PyErr_BadInternalCall();
         return NULL;
     }
-    if (PyObject_CheckAccess(v) == NULL ||
-        PyObject_CheckAccess(name) == NULL) {
-        return NULL;
-    }
+    assert(_PyObject_IsAccessible(v) &&
+           _PyObject_IsAccessible(name));
     PyTypeObject *tp = Py_TYPE(v);
     if (!PyUnicode_Check(name)) {
         PyErr_Format(PyExc_TypeError,
@@ -1664,11 +1662,8 @@ PyObject_GetOptionalAttr(PyObject *v, PyObject *name, PyObject **result)
         *result = NULL;
         return -1;
     }
-    if (PyObject_CheckAccess(v) == NULL ||
-        PyObject_CheckAccess(name) == NULL) {
-        *result = NULL;
-        return -1;
-    }
+    assert(_PyObject_IsAccessible(v) &&
+           _PyObject_IsAccessible(name));
     PyTypeObject *tp = Py_TYPE(v);
 
     if (!PyUnicode_Check(name)) {
@@ -1749,10 +1744,7 @@ PyObject_GetOptionalAttrString(PyObject *obj, const char *name, PyObject **resul
         *result = NULL;
         return -1;
     }
-    if (PyObject_CheckAccess(obj) == NULL) {
-        *result = NULL;
-        return -1;
-    }
+    assert(_PyObject_IsAccessible(obj));
     if (Py_TYPE(obj)->tp_getattr == NULL) {
         PyObject *oname = PyUnicode_FromString(name);
         if (oname == NULL) {
@@ -1806,11 +1798,9 @@ PyObject_SetAttr(PyObject *v, PyObject *name, PyObject *value)
         PyErr_BadInternalCall();
         return -1;
     }
-    if (PyObject_CheckAccess(v) == NULL ||
-        PyObject_CheckAccess(name) == NULL ||
-        (value != NULL && PyObject_CheckAccess(value) == NULL)) {
-        return -1;
-    }
+    assert(_PyObject_IsAccessible(v) &&
+           _PyObject_IsAccessible(name) &&
+           (value == NULL || _PyObject_IsAccessible(value)));
     if (_PyObject_CheckMutable(v) < 0) {
         return -1;
     }
@@ -2320,10 +2310,8 @@ PyObject_GenericGetAttr(PyObject *obj, PyObject *name)
         PyErr_BadInternalCall();
         return NULL;
     }
-    if (PyObject_CheckAccess(obj) == NULL ||
-        PyObject_CheckAccess(name) == NULL) {
-        return NULL;
-    }
+    assert(_PyObject_IsAccessible(obj) &&
+           _PyObject_IsAccessible(name));
     return _PyObject_CheckAccessNullable(
         _PyObject_GenericGetAttrWithDict(obj, name, NULL, 0));
 }
@@ -2336,12 +2324,10 @@ _PyObject_GenericSetAttrWithDict(PyObject *obj, PyObject *name,
         PyErr_BadInternalCall();
         return -1;
     }
-    if (PyObject_CheckAccess(obj) == NULL ||
-        PyObject_CheckAccess(name) == NULL ||
-        (value != NULL && PyObject_CheckAccess(value) == NULL) ||
-        (dict != NULL && PyObject_CheckAccess(dict) == NULL)) {
-        return -1;
-    }
+    assert(_PyObject_IsAccessible(obj) &&
+           _PyObject_IsAccessible(name) &&
+           (value == NULL || _PyObject_IsAccessible(value)) &&
+           (dict == NULL || _PyObject_IsAccessible(dict)));
     if (_PyObject_CheckMutable(obj) < 0) {
         return -1;
     }
@@ -2602,9 +2588,7 @@ _dir_object(PyObject *obj)
 PyObject *
 PyObject_Dir(PyObject *obj)
 {
-    if (obj != NULL && PyObject_CheckAccess(obj) == NULL) {
-        return NULL;
-    }
+    assert(obj == NULL || _PyObject_IsAccessible(obj));
     return (obj == NULL) ? _dir_locals() : _dir_object(obj);
 }
 
@@ -3228,6 +3212,28 @@ _PyObject_CheckAccessThread(PyObject *op, PyThreadState *tstate)
                      "by ThreadGroup %u", owner, tstate->threadgroup->id);
     }
     return -1;
+}
+
+int
+_PyObject_IsAccessible(PyObject *op)
+{
+    if (op == NULL) {
+        return 0;
+    }
+    PyThreadState *tstate = _PyThreadState_GET();
+    if (tstate->debugger_stop_depth != 0) {
+        return 1;
+    }
+    uint8_t state = get_shareable_state(op, tstate);
+    if (state >= _Py_SHAREABLE_SYNCHRONIZED) {
+        return 1;
+    }
+    uint32_t owner = _Py_atomic_load_uint32_relaxed(&op->ob_owner_id);
+    if (state == _Py_SHAREABLE_LOCAL) {
+        return owner == tstate->threadgroup->id;
+    }
+    return state == _Py_SHAREABLE_PROTECTED &&
+        _PyThreadState_HoldsMutex(tstate, owner);
 }
 
 PyObject *

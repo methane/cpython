@@ -1038,6 +1038,10 @@ list_ass_slice_lock_held(PyListObject *a, Py_ssize_t ilow, Py_ssize_t ihigh, PyO
     if (v == NULL)
         n = 0;
     else {
+        /* Slice index callbacks can have released v's protecting lock. */
+        if (PyObject_CheckAccess(v) == NULL) {
+            goto Error;
+        }
         v_as_SF = PySequence_Fast(v, "can only assign an iterable");
         if(v_as_SF == NULL)
             goto Error;
@@ -4020,6 +4024,9 @@ list_ass_subscript_lock_held(PyObject *_self, PyObject *item, PyObject *value)
             Py_ssize_t i;
             size_t cur;
 
+            if (PyObject_CheckAccess(value) == NULL) {
+                return -1;
+            }
             /* protect against a[::-1] = a */
             if (self == (PyListObject*)value) {
                 seq = list_slice_lock_held((PyListObject *)value, 0,

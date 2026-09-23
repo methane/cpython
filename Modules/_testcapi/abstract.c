@@ -97,7 +97,8 @@ call_cfunction_return_in_tuple(PyObject *self, PyObject *args)
     return holder;
 }
 
-/* Test an API wrapper without generic call argument/result validation. */
+/* Bypass generic result validation. Check positional references loaded from
+   call_args before passing them to a C API wrapper directly. */
 static PyObject *
 call_cfunction_raw_return_in_tuple(PyObject *self, PyObject *args)
 {
@@ -118,6 +119,11 @@ call_cfunction_raw_return_in_tuple(PyObject *self, PyObject *args)
     PyObject *receiver = PyCFunction_GET_SELF(callable);
     Py_ssize_t nargs = PyTuple_GET_SIZE(call_args);
     PyObject *const *argv = ((PyTupleObject *)call_args)->ob_item;
+    for (Py_ssize_t i = 0; i < nargs; i++) {
+        if (PyObject_CheckAccess(argv[i]) == NULL) {
+            return NULL;
+        }
+    }
     int flags = PyCFunction_GET_FLAGS(callable) &
         (METH_VARARGS | METH_FASTCALL | METH_NOARGS | METH_O |
          METH_KEYWORDS | METH_METHOD);

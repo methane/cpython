@@ -159,9 +159,10 @@ struct _object {
     uint32_t ob_owner_id;
     uint8_t ob_shareable;
     uint8_t ob_frozen;          // VM-enforced freezing, including preparation
-    uint8_t ob_deferred_flags; // guarded by the interpreter cleanup mutex
-    PyObject *ob_deferred_next; // internal cleanup queue
-    size_t ob_deferred_finalizers; // pending calls, guarded by the same mutex
+    /* Allocation-free cleanup queue for internal stop-the-world pauses. */
+    uint8_t ob_deferred_flags;
+    PyObject *ob_deferred_next;
+    size_t ob_deferred_finalizers;
 };
 #else
 // Objects that are not owned by any thread use a thread id (tid) of zero.
@@ -183,9 +184,10 @@ struct _object {
     uint32_t ob_owner_id;
     uint8_t ob_shareable;
     uint8_t ob_frozen;
-    uint8_t ob_deferred_flags; // guarded by the interpreter cleanup mutex
-    PyObject *ob_deferred_next; // internal cleanup queue
-    size_t ob_deferred_finalizers; // pending calls, guarded by the same mutex
+    /* Allocation-free cleanup queue for internal stop-the-world pauses. */
+    uint8_t ob_deferred_flags;
+    PyObject *ob_deferred_next;
+    size_t ob_deferred_finalizers;
 };
 #endif // !defined(_Py_OPAQUE_PYOBJECT)
 

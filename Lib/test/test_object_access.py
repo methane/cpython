@@ -10,6 +10,31 @@ from test.support.import_helper import import_module
 
 class ObjectAccessTests(unittest.TestCase):
     @threading_helper.requires_working_threading()
+    def test_container_representation_checks_stored_element(self):
+        class LocalObject:
+            def __repr__(self):
+                return "unsafe repr"
+
+        value = LocalObject()
+        results = threading.Channel()
+
+        def worker(payload):
+            with sys.monitoring.StopTheWorld:
+                items = [payload[0]]
+            try:
+                repr(items)
+            except IllegalThreadAccessException:
+                results.put(True)
+            else:
+                results.put(False)
+
+        thread = threading.Thread(target=worker, args=((value,),),
+                                  group=threading.ThreadGroup())
+        with threading_helper.start_threads([thread]):
+            pass
+        self.assertTrue(results.get())
+
+    @threading_helper.requires_working_threading()
     def test_foreign_object(self):
         capi = import_module('_testcapi')
         limited = import_module('_testlimitedcapi')

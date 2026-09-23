@@ -24,6 +24,7 @@ extern int _PyObject_HasDeferredCleanup(PyInterpreterState *interp);
 extern int _PyObject_RunDeferredCleanup(PyThreadState *tstate);
 extern void _PyObject_ClearDeferredCleanup(PyInterpreterState *interp);
 extern int _PyObject_CheckAccessThread(PyObject *op, PyThreadState *tstate);
+extern int _PyObject_IsAccessible(PyObject *op);
 PyAPI_FUNC(int) _PyObject_CheckMutable(PyObject *op);
 extern void _PyObject_InheritShareable(PyObject *op, PyObject *container);
 /* Consume a new reference, returning it on success or decrefing it on error. */
