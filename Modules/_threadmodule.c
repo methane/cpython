@@ -1767,7 +1767,8 @@ lock_protected_copy(PyObject *value, PyObject *copy_function)
     else if (PySet_CheckExact(value)) {
         return PySet_New(value);
     }
-    if (!lock_python_instance(value)) {
+    int tuple_iterator = Py_IS_TYPE(value, &PyTupleIter_Type);
+    if (!tuple_iterator && !lock_python_instance(value)) {
         PyErr_SetString(PyExc_TypeError,
                         "protect() does not support this native object layout");
         return NULL;
@@ -1786,7 +1787,7 @@ lock_protected_copy(PyObject *value, PyObject *copy_function)
         return NULL;
     }
     if (copy == value || Py_TYPE(copy) != Py_TYPE(value) ||
-        !lock_python_instance(copy) ||
+        (!tuple_iterator && !lock_python_instance(copy)) ||
         copy->ob_shareable != _Py_SHAREABLE_LOCAL ||
         !_PyObject_IsUniquelyReferenced(copy)) {
         Py_DECREF(copy);

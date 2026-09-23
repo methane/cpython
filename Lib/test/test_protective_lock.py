@@ -114,6 +114,73 @@ for factory in (threading.Lock, threading.RLock):
             self.assertEqual(members, {1, 2, 3})
         self.assertEqual(original, [])
 
+    def test_tuple_iterator_copy(self):
+        def iterator_after(values, count):
+            iterator = iter(values)
+            for _ in range(count):
+                next(iterator, None)
+            return iterator
+
+        lock = self.lock_type()
+        for values, count, expected in (
+            ((1, 2, 3), 1, [2, 3]),
+            ((1,), 2, []),
+            ((), 0, []),
+        ):
+            with self.subTest(values=values, count=count):
+                with lock:
+                    iterator = lock.protect(iterator_after(values, count))
+                    self.assertIs(iterator.__shareable__, Shareable.PROTECTED)
+                    self.assertEqual(list(iterator), expected)
+
+    def test_pep_tuple_iterator_example(self):
+        @freeze
+        class SynchronizedTupleIter:
+            def __init__(self, iterable, mutex):
+                self.mutex = mutex
+                with self.mutex:
+                    self._iterator = self.mutex.protect(iter(iterable))
+                freeze(self)
+
+            def __iter__(self):
+                return self
+
+            def __next__(self):
+                with self.mutex:
+                    return next(self._iterator)
+
+        iterator = SynchronizedTupleIter(tuple(range(100)), self.lock_type())
+        results = SynchronizedList()
+
+        def worker(iterator, results):
+            for value in iterator:
+                results.append(value)
+
+        threads = [threading.Thread(target=worker, args=(iterator, results),
+                                    group=threading.ThreadGroup())
+                   for _ in range(2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(SHORT_TIMEOUT)
+            self.assertFalse(thread.is_alive())
+        self.assertEqual(sorted(results), list(range(100)))
+
+        iterator = SynchronizedTupleIter((object(),), self.lock_type())
+
+        def read_foreign(iterator, results):
+            try:
+                next(iterator)
+            except IllegalThreadAccessException:
+                results.append('denied')
+
+        thread = threading.Thread(target=read_foreign, args=(iterator, results),
+                                  group=threading.ThreadGroup())
+        thread.start()
+        thread.join(SHORT_TIMEOUT)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(results[-1], 'denied')
+
     def test_borrowed_alias_rejected(self):
         lock = self.lock_type()
         original = []
@@ -278,6 +345,8 @@ class ProtectiveRLockTests(unittest.TestCase):
     test_native_state_is_interpreter_local = ProtectiveLockTests.test_native_state_is_interpreter_local
     test_scope_and_methods = ProtectiveLockTests.test_scope_and_methods
     test_input_and_context = ProtectiveLockTests.test_input_and_context
+    test_tuple_iterator_copy = ProtectiveLockTests.test_tuple_iterator_copy
+    test_pep_tuple_iterator_example = ProtectiveLockTests.test_pep_tuple_iterator_example
     test_borrowed_alias_rejected = ProtectiveLockTests.test_borrowed_alias_rejected
     test_call_paths = ProtectiveLockTests.test_call_paths
     test_worker_and_same_group_denial = ProtectiveLockTests.test_worker_and_same_group_denial
