@@ -2,6 +2,7 @@
 
 import os
 import sys
+import textwrap
 import threading
 import types
 import unittest
@@ -9,6 +10,7 @@ import weakref
 
 from test.support import gc_collect, threading_helper
 from test.support.import_helper import import_module
+from test.support.script_helper import assert_python_ok
 
 
 capi = import_module('_testlimitedcapi')
@@ -992,11 +994,57 @@ class SequenceAccessTests(unittest.TestCase):
 
     @unittest.skipUnless(hasattr(os, 'openpty'), 'requires os.openpty')
     @threading_helper.requires_working_threading()
+    def test_termios_foreign_module_state(self):
+        import_module('termios')
+        assert_python_ok('-c', textwrap.dedent('''
+            import os
+            import termios
+            import threading
+            import _testinternalcapi
+            from test.support import SHORT_TIMEOUT
+
+            getattrs, setattrs = termios.tcgetattr, termios.tcsetattr
+            when = termios.TCSANOW
+            for function in (getattrs, setattrs):
+                _testinternalcapi.object_declare_synchronized(function)
+            master, slave = os.openpty()
+            try:
+                original = getattrs(slave)
+                results = threading.Channel()
+                def worker():
+                    # Even valid arguments must not cause a successful return
+                    # with PyModule_GetState's access error still pending.
+                    for function in (getattrs, setattrs):
+                        try:
+                            if function is getattrs:
+                                function(slave)
+                            else:
+                                function(slave, when, [0] * 7)
+                        except IllegalThreadAccessException:
+                            results.put(True)
+                        else:
+                            results.put(False)
+                thread = threading.Thread(target=worker,
+                                          group=threading.ThreadGroup())
+                thread.start()
+                thread.join(SHORT_TIMEOUT)
+                assert not thread.is_alive()
+                assert [results.get(), results.get()] == [True, True]
+                assert getattrs(slave) == original
+            finally:
+                os.close(master)
+                os.close(slave)
+        '''))
+
+    @unittest.skipUnless(hasattr(os, 'openpty'), 'requires os.openpty')
+    @threading_helper.requires_working_threading()
     def test_termios_preserves_access_errors(self):
         termios = import_module('termios')
         getattrs, setattrs = termios.tcgetattr, termios.tcsetattr
         when = termios.TCSANOW
         internal = import_module('_testinternalcapi')
+        # Sharing entry points does not publish their module state.
+        internal.object_declare_synchronized(termios)
         internal.object_declare_synchronized(getattrs)
         internal.object_declare_synchronized(setattrs)
         master, slave = os.openpty()
