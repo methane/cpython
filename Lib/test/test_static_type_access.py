@@ -12,6 +12,42 @@ _testinternalcapi = import_module('_testinternalcapi')
 
 
 class StaticTypeAccessTests(unittest.TestCase):
+    def test_immutable_extension_types_start_local(self):
+        with self.assertWarns(DeprecationWarning):
+            heap_type = _testcapi.make_immutable_type_with_base(object)
+        for cls in (_testcapi.matmulType, _testcapi.Generic, heap_type):
+            with self.subTest(cls=cls):
+                self.assertIs(cls.__shareable__, threading.Shareable.LOCAL)
+                self.assertEqual(_testinternalcapi.object_owner_id(cls),
+                                 _testinternalcapi.object_owner_id(object()))
+
+    @threading_helper.requires_working_threading()
+    def test_extension_type_requires_explicit_declaration(self):
+        with self.assertWarns(DeprecationWarning):
+            cls = _testcapi.make_immutable_type_with_base(object)
+        holder = SynchronizedDict(cls=cls)
+        results = threading.Channel()
+
+        def worker(holder, results):
+            try:
+                cls = holder['cls']
+            except IllegalThreadAccessException:
+                results.put('denied')
+            else:
+                assert cls.__dict__['__doc__'] is None
+                assert cls().__shareable__ is threading.Shareable.LOCAL
+                results.put('shared')
+
+        for expected in ('denied', 'shared'):
+            if expected == 'shared':
+                _testinternalcapi.object_declare_immutable(cls)
+            thread = threading.Thread(target=worker, args=(holder, results),
+                                      group=threading.ThreadGroup())
+            thread.start()
+            thread.join(SHORT_TIMEOUT)
+            self.assertFalse(thread.is_alive())
+            self.assertEqual(results.get(), expected)
+
     def test_main_group_owns_zero_initialized_type(self):
         cls = _testcapi.RecursingInfinitelyError
         self.assertIs(cls.__shareable__, threading.Shareable.LOCAL)

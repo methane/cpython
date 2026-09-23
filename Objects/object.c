@@ -3128,14 +3128,11 @@ get_shareable_state(PyObject *op, PyThreadState *tstate)
 {
     uint8_t state = _Py_atomic_load_uint8(&op->ob_shareable);
     if (state == _Py_SHAREABLE_LOCAL && PyType_Check(op)) {
-        /* Properly initialized static extension types are retained across
-           interpreter finalization.  Their immutable type contract makes
-           the type object safe to share even while its header still carries
-           the previous interpreter's local owner.  Zero-initialized static
-           types deliberately remain local. */
+        /* Core builtin types have an explicit sharing contract. An extension
+           type's IMMUTABLETYPE flag alone is not a sharing declaration. */
         PyTypeObject *type = (PyTypeObject *)op;
         if (_Py_IsStaticImmortal(op) &&
-            !PyType_HasFeature(type, Py_TPFLAGS_HEAPTYPE) &&
+            PyType_HasFeature(type, _Py_TPFLAGS_STATIC_BUILTIN) &&
             PyType_HasFeature(type, Py_TPFLAGS_IMMUTABLETYPE)) {
             state = _Py_SHAREABLE_IMMUTABLE;
             _Py_atomic_store_uint32_relaxed(&op->ob_owner_id, 0);
@@ -3270,6 +3267,12 @@ declare_shareable(PyObject *op, uint8_t state)
     {
         PyErr_SetString(PyExc_TypeError, "cannot change this object's sharing state");
         return -1;
+    }
+    if (PyType_Check(op)) {
+        PyObject *dict = _PyType_GetDict((PyTypeObject *)op);
+        if (dict != NULL && _PyDict_SynchronizeNamespace(dict) < 0) {
+            return -1;
+        }
     }
     _Py_atomic_store_uint32_relaxed(&op->ob_owner_id, 0);
     _Py_atomic_store_uint8(&op->ob_shareable, state);

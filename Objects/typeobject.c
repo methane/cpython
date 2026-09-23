@@ -5872,17 +5872,6 @@ type_from_slots_or_spec(
         }
     }
 
-    /* Immutable extension types are visible across ThreadGroups. Their
-       namespace must therefore be accessible there as well. */
-    if ((type->tp_flags & Py_TPFLAGS_IMMUTABLETYPE) &&
-        _PyDict_SynchronizeNamespace(dict) < 0) {
-        goto finally;
-    }
-    if ((type->tp_flags & Py_TPFLAGS_IMMUTABLETYPE) &&
-        PyObject_DeclareImmutable((PyObject *)type) < 0) {
-        goto finally;
-    }
-
     assert(_PyType_CheckConsistency(type));
 
 finally:
