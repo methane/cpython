@@ -36,6 +36,16 @@ PEP, even though the implementation copies the object. The open discussion
 about a `del` expression does not remove that requirement. This is no longer
 a question for Mark. Copy elision is a separate optimization.
 
+Implementation follow-up after this re-review: sorting now validates stored
+elements before inspecting or comparing them, including tuple keys and direct
+native comparison results. `test_sort_access` covers foreign/protected elements,
+key callbacks, the C API, and preservation of elements on failure. The six
+suites `test_sort_access`, `test_sort`, `test_list`, `test_capi.test_list`,
+`test_sequence_access`, and `test_synchronized_list` pass in both debug builds
+(163 reported tests, one skip each). This closes the unchecked sort-element
+finding, but not the separate problem of the list's own protection ending
+during a callback, nor the GC compatibility finding.
+
 The questions below distinguish unspecified contracts from optional choices
 of implementation strategy. None is a reason to postpone fixing a known
 unsafe access. Reproduction programs and current results follow the earlier
@@ -151,7 +161,8 @@ follow-up.
    suggestion, not a mandatory ABI. Explaining the current three cleanup
    fields does not justify their permanent cost or resolve Mark's concern.
 
-4. **Sorting still bypasses access control.** In both builds, claiming a
+4. **Sorting: element acquisition repaired; receiver lifetime still open.**
+   The re-review found that, in both builds, claiming a
    `TransferBox([Number(2), Number(1)])`, where `Number` is a Python `float`
    subclass, allows `values.sort()` in the receiving group. Reading
    `values[0]` correctly raises `IllegalThreadAccessException`. Sorting reads
@@ -160,6 +171,8 @@ follow-up.
    comparison slot directly (`Objects/listobject.c:3023` and `:2857`).
    The required rejection is settled by the PEP's access model; there is no
    exception for comparison during sorting.
+   The implementation follow-up above repairs these acquisitions and the
+   optimized comparison result boundary.
 
    A second probe starts sorting a protected list with valid input, then
    closes its protecting generator from the key callback. Sorting completes
@@ -403,6 +416,10 @@ complete native reference-acquisition coverage or PEP 805 conformance, and
 no performance claim is made for the conservative VM checks.
 
 ## Re-review validation and reproductions
+
+This section preserves the results at review commit `897dd73703`, before the
+subsequent sorting repair. See the follow-up status near the top for current
+results; the foreign-element reproduction now raises the expected exception.
 
 The re-review used the same two Linux/aarch64 debug executables and reran
 the eight original audit probes, then added the sorting, legacy GC, and

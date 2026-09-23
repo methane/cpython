@@ -2845,7 +2845,12 @@ minrun_next(MergeState *ms)
 static int
 safe_object_compare(PyObject *v, PyObject *w, MergeState *ms)
 {
-    /* No assumptions necessary! */
+    /* Acquire keys from the sort's detached storage. A previous comparison
+     * may have ended the protection of a key retained in that storage.
+     */
+    if (PyObject_CheckAccess(v) == NULL || PyObject_CheckAccess(w) == NULL) {
+        return -1;
+    }
     return PyObject_RichCompareBool(v, w, Py_LT);
 }
 
@@ -2858,15 +2863,23 @@ unsafe_object_compare(PyObject *v, PyObject *w, MergeState *ms)
 {
     PyObject *res_obj; int res;
 
+    if (PyObject_CheckAccess(v) == NULL || PyObject_CheckAccess(w) == NULL) {
+        return -1;
+    }
     /* No assumptions, because we check first: */
     if (Py_TYPE(v)->tp_richcompare != ms->key_richcompare)
         return PyObject_RichCompareBool(v, w, Py_LT);
 
     assert(ms->key_richcompare != NULL);
     res_obj = (*(ms->key_richcompare))(v, w, Py_LT);
+    res_obj = _PyObject_CheckAccessNullable(res_obj);
 
     if (res_obj == Py_NotImplemented) {
         Py_DECREF(res_obj);
+        /* The slot can release the protection of either operand. */
+        if (PyObject_CheckAccess(v) == NULL || PyObject_CheckAccess(w) == NULL) {
+            return -1;
+        }
         return PyObject_RichCompareBool(v, w, Py_LT);
     }
     if (res_obj == NULL)
@@ -2979,7 +2992,15 @@ unsafe_tuple_compare(PyObject *v, PyObject *w, MergeState *ms)
     wlen = Py_SIZE(wt);
 
     for (i = 0; i < vlen && i < wlen; i++) {
-        k = PyObject_RichCompareBool(vt->ob_item[i], wt->ob_item[i], Py_EQ);
+        PyObject *left = PyTuple_GetItem(v, i);
+        if (left == NULL) {
+            return -1;
+        }
+        PyObject *right = PyTuple_GetItem(w, i);
+        if (right == NULL) {
+            return -1;
+        }
+        k = PyObject_RichCompareBool(left, right, Py_EQ);
         if (k < 0)
             return -1;
         if (!k)
@@ -2989,10 +3010,19 @@ unsafe_tuple_compare(PyObject *v, PyObject *w, MergeState *ms)
     if (i >= vlen || i >= wlen)
         return vlen < wlen;
 
+    /* Equality testing can invalidate the element references. */
+    PyObject *left = PyTuple_GetItem(v, i);
+    if (left == NULL) {
+        return -1;
+    }
+    PyObject *right = PyTuple_GetItem(w, i);
+    if (right == NULL) {
+        return -1;
+    }
     if (i == 0)
-        return ms->tuple_elem_compare(vt->ob_item[i], wt->ob_item[i], ms);
+        return ms->tuple_elem_compare(left, right, ms);
     else
-        return PyObject_RichCompareBool(vt->ob_item[i], wt->ob_item[i], Py_LT);
+        return PyObject_RichCompareBool(left, right, Py_LT);
 }
 
 /* An adaptive, stable, natural mergesort.  See listsort.txt.
@@ -3033,6 +3063,7 @@ list_sort_impl(PyListObject *self, PyObject *keyfunc, int reverse)
     PyObject *result = NULL;            /* guilty until proved innocent */
     Py_ssize_t i;
     PyObject **keys;
+    int reversed = 0;
 
     assert(self != NULL);
     assert(PyList_Check(self));
@@ -3069,7 +3100,8 @@ list_sort_impl(PyListObject *self, PyObject *keyfunc, int reverse)
         }
 
         for (i = 0; i < saved_ob_size ; i++) {
-            keys[i] = PyObject_CallOneArg(keyfunc, saved_ob_item[i]);
+            PyObject *item = PyObject_CheckAccess(saved_ob_item[i]);
+            keys[i] = item == NULL ? NULL : PyObject_CallOneArg(keyfunc, item);
             if (keys[i] == NULL) {
                 for (i=i-1 ; i>=0 ; i--)
                     Py_DECREF(keys[i]);
@@ -3083,6 +3115,7 @@ list_sort_impl(PyListObject *self, PyObject *keyfunc, int reverse)
         lo.values = saved_ob_item;
     }
 
+    merge_init(&ms, saved_ob_size, keys != NULL, &lo);
 
     /* The pre-sort check: here's where we decide which compare function to use.
      * How much optimization is safe? We test for homogeneity with respect to
@@ -3090,12 +3123,20 @@ list_sort_impl(PyListObject *self, PyObject *keyfunc, int reverse)
      * set ms appropriately. */
     if (saved_ob_size > 1) {
         /* Assume the first element is representative of the whole list. */
-        int keys_are_in_tuples = (Py_IS_TYPE(lo.keys[0], &PyTuple_Type) &&
-                                  Py_SIZE(lo.keys[0]) > 0);
+        PyObject *first_key = PyObject_CheckAccess(lo.keys[0]);
+        if (first_key == NULL) {
+            goto fail;
+        }
+        int keys_are_in_tuples = (Py_IS_TYPE(first_key, &PyTuple_Type) &&
+                                  Py_SIZE(first_key) > 0);
 
-        PyTypeObject* key_type = (keys_are_in_tuples ?
-                                  Py_TYPE(PyTuple_GET_ITEM(lo.keys[0], 0)) :
-                                  Py_TYPE(lo.keys[0]));
+        if (keys_are_in_tuples) {
+            first_key = PyTuple_GetItem(first_key, 0);
+            if (first_key == NULL) {
+                goto fail;
+            }
+        }
+        PyTypeObject* key_type = Py_TYPE(first_key);
 
         int keys_are_all_same_type = 1;
         int strings_are_latin = 1;
@@ -3103,9 +3144,13 @@ list_sort_impl(PyListObject *self, PyObject *keyfunc, int reverse)
 
         /* Prove that assumption by checking every key. */
         for (i=0; i < saved_ob_size; i++) {
+            PyObject *key = PyObject_CheckAccess(lo.keys[i]);
+            if (key == NULL) {
+                goto fail;
+            }
 
             if (keys_are_in_tuples &&
-                !(Py_IS_TYPE(lo.keys[i], &PyTuple_Type) && Py_SIZE(lo.keys[i]) != 0)) {
+                !(Py_IS_TYPE(key, &PyTuple_Type) && Py_SIZE(key) != 0)) {
                 keys_are_in_tuples = 0;
                 keys_are_all_same_type = 0;
                 break;
@@ -3114,9 +3159,12 @@ list_sort_impl(PyListObject *self, PyObject *keyfunc, int reverse)
             /* Note: for lists of tuples, key is the first element of the tuple
              * lo.keys[i], not lo.keys[i] itself! We verify type-homogeneity
              * for lists of tuples in the if-statement directly above. */
-            PyObject *key = (keys_are_in_tuples ?
-                             PyTuple_GET_ITEM(lo.keys[i], 0) :
-                             lo.keys[i]);
+            if (keys_are_in_tuples) {
+                key = PyTuple_GetItem(key, 0);
+                if (key == NULL) {
+                    goto fail;
+                }
+            }
 
             if (!Py_IS_TYPE(key, key_type)) {
                 keys_are_all_same_type = 0;
@@ -3181,8 +3229,6 @@ list_sort_impl(PyListObject *self, PyObject *keyfunc, int reverse)
     }
     /* End of pre-sort check: ms is now set properly! */
 
-    merge_init(&ms, saved_ob_size, keys != NULL, &lo);
-
     nremaining = saved_ob_size;
     if (nremaining < 2)
         goto succeed;
@@ -3193,6 +3239,7 @@ list_sort_impl(PyListObject *self, PyObject *keyfunc, int reverse)
         if (keys != NULL)
             reverse_slice(&keys[0], &keys[saved_ob_size]);
         reverse_slice(&saved_ob_item[0], &saved_ob_item[saved_ob_size]);
+        reversed = 1;
     }
 
     /* March over the array once, left to right, finding natural runs,
@@ -3256,7 +3303,7 @@ fail:
         result = NULL;
     }
 
-    if (reverse && saved_ob_size > 1)
+    if (reversed)
         reverse_slice(saved_ob_item, saved_ob_item + saved_ob_size);
 
     merge_freemem(&ms);
