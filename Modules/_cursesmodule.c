@@ -9284,7 +9284,7 @@ curses_capi_capsule_new(void *capi)
 static int
 cursesmodule_traverse(PyObject *mod, visitproc visit, void *arg)
 {
-    cursesmodule_state *state = get_cursesmodule_state(mod);
+    cursesmodule_state *state = PyModule_GetState_DuringGC(mod);
     Py_VISIT(state->error);
     Py_VISIT(state->window_type);
     Py_VISIT(state->screen_type);
@@ -9298,7 +9298,7 @@ cursesmodule_traverse(PyObject *mod, visitproc visit, void *arg)
 static int
 cursesmodule_clear(PyObject *mod)
 {
-    cursesmodule_state *state = get_cursesmodule_state(mod);
+    cursesmodule_state *state = PyModule_GetState_DuringGC(mod);
     Py_CLEAR(state->error);
     Py_CLEAR(state->window_type);
     Py_CLEAR(state->screen_type);

@@ -138,7 +138,7 @@ get_elementtree_state_by_type(PyTypeObject *tp)
 static int
 elementtree_clear(PyObject *m)
 {
-    elementtreestate *st = get_elementtree_state(m);
+    elementtreestate *st = PyModule_GetState_DuringGC(m);
     Py_CLEAR(st->parseerror_obj);
     Py_CLEAR(st->deepcopy_obj);
     Py_CLEAR(st->elementpath_obj);
@@ -169,7 +169,7 @@ elementtree_clear(PyObject *m)
 static int
 elementtree_traverse(PyObject *m, visitproc visit, void *arg)
 {
-    elementtreestate *st = get_elementtree_state(m);
+    elementtreestate *st = PyModule_GetState_DuringGC(m);
     Py_VISIT(st->parseerror_obj);
     Py_VISIT(st->deepcopy_obj);
     Py_VISIT(st->elementpath_obj);

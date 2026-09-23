@@ -559,13 +559,15 @@ static struct PyModuleDef_Slot resource_slots[] = {
 
 static int
 resourcemodule_traverse(PyObject *m, visitproc visit, void *arg) {
-    Py_VISIT(get_resource_state(m)->StructRUsageType);
+    resourcemodulestate *state = PyModule_GetState_DuringGC(m);
+    Py_VISIT(state->StructRUsageType);
     return 0;
 }
 
 static int
 resourcemodule_clear(PyObject *m) {
-    Py_CLEAR(get_resource_state(m)->StructRUsageType);
+    resourcemodulestate *state = PyModule_GetState_DuringGC(m);
+    Py_CLEAR(state->StructRUsageType);
     return 0;
 }
 

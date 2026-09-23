@@ -2884,7 +2884,7 @@ The variable struct.error is an exception raised on errors.\n");
 static int
 _structmodule_traverse(PyObject *module, visitproc visit, void *arg)
 {
-    _structmodulestate *state = get_struct_state(module);
+    _structmodulestate *state = PyModule_GetState_DuringGC(module);
     if (state) {
         Py_VISIT(state->cache);
         Py_VISIT(state->PyStructType);
@@ -2897,7 +2897,7 @@ _structmodule_traverse(PyObject *module, visitproc visit, void *arg)
 static int
 _structmodule_clear(PyObject *module)
 {
-    _structmodulestate *state = get_struct_state(module);
+    _structmodulestate *state = PyModule_GetState_DuringGC(module);
     if (state) {
         Py_CLEAR(state->cache);
         Py_CLEAR(state->PyStructType);

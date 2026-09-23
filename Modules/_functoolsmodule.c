@@ -2074,7 +2074,7 @@ _functools_exec(PyObject *module)
 static int
 _functools_traverse(PyObject *module, visitproc visit, void *arg)
 {
-    _functools_state *state = get_functools_state(module);
+    _functools_state *state = PyModule_GetState_DuringGC(module);
     Py_VISIT(state->kwd_mark);
     Py_VISIT(state->placeholder_type);
     Py_VISIT(state->placeholder);
@@ -2087,7 +2087,7 @@ _functools_traverse(PyObject *module, visitproc visit, void *arg)
 static int
 _functools_clear(PyObject *module)
 {
-    _functools_state *state = get_functools_state(module);
+    _functools_state *state = PyModule_GetState_DuringGC(module);
     Py_CLEAR(state->kwd_mark);
     Py_CLEAR(state->placeholder_type);
     Py_CLEAR(state->placeholder);

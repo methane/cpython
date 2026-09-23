@@ -429,7 +429,7 @@ common approach.\n");
 static int
 bisect_clear(PyObject *module)
 {
-    bisect_state *state = get_bisect_state(module);
+    bisect_state *state = PyModule_GetState_DuringGC(module);
     Py_CLEAR(state->str_insert);
     return 0;
 }

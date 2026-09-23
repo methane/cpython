@@ -7742,7 +7742,7 @@ static PyModuleDef_Slot module_slots[] = {
 static int
 module_traverse(PyObject *mod, visitproc visit, void *arg)
 {
-    datetime_state *st = get_module_state(mod);
+    datetime_state *st = PyModule_GetState_DuringGC(mod);
     traverse_state(st, visit, arg);
     return 0;
 }
@@ -7750,7 +7750,7 @@ module_traverse(PyObject *mod, visitproc visit, void *arg)
 static int
 module_clear(PyObject *mod)
 {
-    datetime_state *st = get_module_state(mod);
+    datetime_state *st = PyModule_GetState_DuringGC(mod);
     clear_state(st);
 
     PyInterpreterState *interp = PyInterpreterState_Get();

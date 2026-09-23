@@ -621,7 +621,7 @@ SHA3_TYPE_SPEC(SHAKE256_spec, "shake_256", SHAKE256slots);
 static int
 _sha3_traverse(PyObject *module, visitproc visit, void *arg)
 {
-    SHA3State *state = sha3_get_state(module);
+    SHA3State *state = PyModule_GetState_DuringGC(module);
     Py_VISIT(state->sha3_224_type);
     Py_VISIT(state->sha3_256_type);
     Py_VISIT(state->sha3_384_type);
@@ -634,7 +634,7 @@ _sha3_traverse(PyObject *module, visitproc visit, void *arg)
 static int
 _sha3_clear(PyObject *module)
 {
-    SHA3State *state = sha3_get_state(module);
+    SHA3State *state = PyModule_GetState_DuringGC(module);
     Py_CLEAR(state->sha3_224_type);
     Py_CLEAR(state->sha3_256_type);
     Py_CLEAR(state->sha3_384_type);

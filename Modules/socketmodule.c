@@ -9412,7 +9412,7 @@ static struct PyModuleDef_Slot socket_slots[] = {
 static int
 socket_traverse(PyObject *mod, visitproc visit, void *arg)
 {
-    socket_state *state = get_module_state(mod);
+    socket_state *state = PyModule_GetState_DuringGC(mod);
     Py_VISIT(state->sock_type);
     Py_VISIT(state->socket_herror);
     Py_VISIT(state->socket_gaierror);
@@ -9422,7 +9422,7 @@ socket_traverse(PyObject *mod, visitproc visit, void *arg)
 static int
 socket_clear(PyObject *mod)
 {
-    socket_state *state = get_module_state(mod);
+    socket_state *state = PyModule_GetState_DuringGC(mod);
     Py_CLEAR(state->sock_type);
     Py_CLEAR(state->socket_herror);
     Py_CLEAR(state->socket_gaierror);

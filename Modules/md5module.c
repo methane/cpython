@@ -326,7 +326,7 @@ static struct PyMethodDef MD5_functions[] = {
 static int
 _md5_traverse(PyObject *module, visitproc visit, void *arg)
 {
-    MD5State *state = md5_get_state(module);
+    MD5State *state = PyModule_GetState_DuringGC(module);
     Py_VISIT(state->md5_type);
     return 0;
 }
@@ -334,7 +334,7 @@ _md5_traverse(PyObject *module, visitproc visit, void *arg)
 static int
 _md5_clear(PyObject *module)
 {
-    MD5State *state = md5_get_state(module);
+    MD5State *state = PyModule_GetState_DuringGC(module);
     Py_CLEAR(state->md5_type);
     return 0;
 }

@@ -3360,7 +3360,7 @@ static PyType_Spec arrayiter_spec = {
 static int
 array_traverse(PyObject *module, visitproc visit, void *arg)
 {
-    array_state *state = get_array_state(module);
+    array_state *state = PyModule_GetState_DuringGC(module);
     Py_VISIT(state->ArrayType);
     Py_VISIT(state->ArrayIterType);
     Py_VISIT(state->array_reconstructor);
@@ -3371,7 +3371,7 @@ array_traverse(PyObject *module, visitproc visit, void *arg)
 static int
 array_clear(PyObject *module)
 {
-    array_state *state = get_array_state(module);
+    array_state *state = PyModule_GetState_DuringGC(module);
     Py_CLEAR(state->ArrayType);
     Py_CLEAR(state->ArrayIterType);
     Py_CLEAR(state->array_reconstructor);

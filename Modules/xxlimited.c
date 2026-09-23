@@ -612,7 +612,7 @@ xx_traverse(PyObject *module, visitproc visit, void *arg)
 static int
 xx_clear(PyObject *module)
 {
-    xx_state *state = PyModule_GetState(module);
+    xx_state *state = PyModule_GetState_DuringGC(module);
     if (state == NULL) {
         return 0;
     }
@@ -627,7 +627,7 @@ xx_free(void *module)
     // allow xx_modexec to omit calling xx_clear on error
     (void)xx_clear((PyObject *)module);
 
-    xx_state *state = PyModule_GetState(module);
+    xx_state *state = PyModule_GetState_DuringGC(module);
     if (state == NULL) {
         return;
     }

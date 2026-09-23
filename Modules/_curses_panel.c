@@ -65,7 +65,7 @@ get_curses_panel_state_by_panel(PyCursesPanelObject *panel)
 static int
 _curses_panel_clear(PyObject *mod)
 {
-    _curses_panel_state *state = get_curses_panel_state(mod);
+    _curses_panel_state *state = PyModule_GetState_DuringGC(mod);
     Py_CLEAR(state->error);
     Py_CLEAR(state->PyCursesPanel_Type);
     return 0;
@@ -75,7 +75,7 @@ static int
 _curses_panel_traverse(PyObject *mod, visitproc visit, void *arg)
 {
     Py_VISIT(Py_TYPE(mod));
-    _curses_panel_state *state = get_curses_panel_state(mod);
+    _curses_panel_state *state = PyModule_GetState_DuringGC(mod);
     Py_VISIT(state->error);
     Py_VISIT(state->PyCursesPanel_Type);
     return 0;

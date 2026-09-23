@@ -4796,7 +4796,7 @@ thread_module_exec(PyObject *module)
 static int
 thread_module_traverse(PyObject *module, visitproc visit, void *arg)
 {
-    thread_module_state *state = get_thread_state(module);
+    thread_module_state *state = PyModule_GetState_DuringGC(module);
     Py_VISIT(state->excepthook_type);
     Py_VISIT(state->lock_type);
     Py_VISIT(state->rlock_type);
@@ -4815,7 +4815,7 @@ thread_module_traverse(PyObject *module, visitproc visit, void *arg)
 static int
 thread_module_clear(PyObject *module)
 {
-    thread_module_state *state = get_thread_state(module);
+    thread_module_state *state = PyModule_GetState_DuringGC(module);
     Py_CLEAR(state->excepthook_type);
     Py_CLEAR(state->lock_type);
     Py_CLEAR(state->rlock_type);

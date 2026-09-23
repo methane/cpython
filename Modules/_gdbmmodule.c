@@ -890,7 +890,7 @@ _gdbm_exec(PyObject *module)
 static int
 _gdbm_module_traverse(PyObject *module, visitproc visit, void *arg)
 {
-    _gdbm_state *state = get_gdbm_state(module);
+    _gdbm_state *state = PyModule_GetState_DuringGC(module);
     Py_VISIT(state->gdbm_error);
     Py_VISIT(state->gdbm_type);
     return 0;
@@ -899,7 +899,7 @@ _gdbm_module_traverse(PyObject *module, visitproc visit, void *arg)
 static int
 _gdbm_module_clear(PyObject *module)
 {
-    _gdbm_state *state = get_gdbm_state(module);
+    _gdbm_state *state = PyModule_GetState_DuringGC(module);
     Py_CLEAR(state->gdbm_error);
     Py_CLEAR(state->gdbm_type);
     return 0;

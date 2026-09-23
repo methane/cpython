@@ -15,6 +15,30 @@ threading_helper.requires_working_threading(module=True)
 
 
 class ThreadGroupTests(unittest.TestCase):
+    def test_collect_foreign_extension_state(self):
+        # GC visitors need the module state even when the collecting group
+        # cannot acquire the module itself.
+        internal = import_module('_testinternalcapi')
+        self.assertIs(internal.__shareable__, threading.Shareable.LOCAL)
+        import_module('_locale')
+        class Payload:
+            __slots__ = ('value',)
+        payload = Payload()
+        payload.value = 42
+        collect = gc.collect
+        internal.object_declare_synchronized(collect)
+        results = threading.Channel()
+
+        def worker():
+            collect()
+            results.put(True)
+
+        thread = threading.Thread(target=worker, group=threading.ThreadGroup())
+        with threading_helper.start_threads([thread]):
+            pass
+        self.assertTrue(results.get())
+        self.assertEqual(payload.value, 42)
+
     def test_owner_wrapper_identity(self):
         internal = import_module('_testinternalcapi')
         owner_id = internal.object_owner_id

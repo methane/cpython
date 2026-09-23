@@ -646,15 +646,17 @@ static PyModuleDef_Slot _random_slots[] = {
 static int
 _random_traverse(PyObject *module, visitproc visit, void *arg)
 {
-    Py_VISIT(get_random_state(module)->Random_Type);
+    _randomstate *state = PyModule_GetState_DuringGC(module);
+    Py_VISIT(state->Random_Type);
     return 0;
 }
 
 static int
 _random_clear(PyObject *module)
 {
-    Py_CLEAR(get_random_state(module)->Random_Type);
-    Py_CLEAR(get_random_state(module)->Long___abs__);
+    _randomstate *state = PyModule_GetState_DuringGC(module);
+    Py_CLEAR(state->Random_Type);
+    Py_CLEAR(state->Long___abs__);
     return 0;
 }
 

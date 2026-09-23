@@ -960,7 +960,7 @@ _abcmodule_exec(PyObject *module)
 static int
 _abcmodule_traverse(PyObject *module, visitproc visit, void *arg)
 {
-    _abcmodule_state *state = get_abc_state(module);
+    _abcmodule_state *state = PyModule_GetState_DuringGC(module);
     Py_VISIT(state->_abc_data_type);
     return 0;
 }
@@ -968,7 +968,7 @@ _abcmodule_traverse(PyObject *module, visitproc visit, void *arg)
 static int
 _abcmodule_clear(PyObject *module)
 {
-    _abcmodule_state *state = get_abc_state(module);
+    _abcmodule_state *state = PyModule_GetState_DuringGC(module);
     Py_CLEAR(state->_abc_data_type);
     return 0;
 }

@@ -2187,7 +2187,7 @@ time_exec(PyObject *module)
 static int
 time_module_traverse(PyObject *module, visitproc visit, void *arg)
 {
-    time_module_state *state = get_time_state(module);
+    time_module_state *state = PyModule_GetState_DuringGC(module);
     Py_VISIT(state->struct_time_type);
     return 0;
 }
@@ -2196,7 +2196,7 @@ time_module_traverse(PyObject *module, visitproc visit, void *arg)
 static int
 time_module_clear(PyObject *module)
 {
-    time_module_state *state = get_time_state(module);
+    time_module_state *state = PyModule_GetState_DuringGC(module);
     Py_CLEAR(state->struct_time_type);
     return 0;
 }

@@ -1684,7 +1684,7 @@ signal_module_exec(PyObject *m)
 static int
 _signal_module_traverse(PyObject *module, visitproc visit, void *arg)
 {
-    _signal_module_state *state = get_signal_state(module);
+    _signal_module_state *state = PyModule_GetState_DuringGC(module);
     Py_VISIT(state->itimer_error);
     Py_VISIT(state->siginfo_type);
     return 0;
@@ -1693,7 +1693,7 @@ _signal_module_traverse(PyObject *module, visitproc visit, void *arg)
 static int
 _signal_module_clear(PyObject *module)
 {
-    _signal_module_state *state = get_signal_state(module);
+    _signal_module_state *state = PyModule_GetState_DuringGC(module);
     Py_CLEAR(state->itimer_error);
     Py_CLEAR(state->siginfo_type);
     return 0;

@@ -423,7 +423,7 @@ static PyModuleDef_Slot tokenizemodule_slots[] = {
 static int
 tokenizemodule_traverse(PyObject *m, visitproc visit, void *arg)
 {
-    tokenize_state *state = get_tokenize_state(m);
+    tokenize_state *state = PyModule_GetState_DuringGC(m);
     Py_VISIT(state->TokenizerIter);
     return 0;
 }
@@ -431,7 +431,7 @@ tokenizemodule_traverse(PyObject *m, visitproc visit, void *arg)
 static int
 tokenizemodule_clear(PyObject *m)
 {
-    tokenize_state *state = get_tokenize_state(m);
+    tokenize_state *state = PyModule_GetState_DuringGC(m);
     Py_CLEAR(state->TokenizerIter);
     return 0;
 }

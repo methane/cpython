@@ -517,7 +517,7 @@ _queue_SimpleQueue___sizeof___impl(simplequeueobject *self)
 static int
 queue_traverse(PyObject *m, visitproc visit, void *arg)
 {
-    simplequeue_state *state = simplequeue_get_state(m);
+    simplequeue_state *state = PyModule_GetState_DuringGC(m);
     Py_VISIT(state->SimpleQueueType);
     Py_VISIT(state->EmptyError);
     return 0;
@@ -526,7 +526,7 @@ queue_traverse(PyObject *m, visitproc visit, void *arg)
 static int
 queue_clear(PyObject *m)
 {
-    simplequeue_state *state = simplequeue_get_state(m);
+    simplequeue_state *state = PyModule_GetState_DuringGC(m);
     Py_CLEAR(state->SimpleQueueType);
     Py_CLEAR(state->EmptyError);
     return 0;

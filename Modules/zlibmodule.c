@@ -2248,7 +2248,7 @@ PyDoc_STRVAR(zlib_module_documentation,
 static int
 zlib_clear(PyObject *mod)
 {
-    zlibstate *state = get_zlib_state(mod);
+    zlibstate *state = PyModule_GetState_DuringGC(mod);
     Py_CLEAR(state->Comptype);
     Py_CLEAR(state->Decomptype);
     Py_CLEAR(state->ZlibDecompressorType);
@@ -2259,7 +2259,7 @@ zlib_clear(PyObject *mod)
 static int
 zlib_traverse(PyObject *mod, visitproc visit, void *arg)
 {
-    zlibstate *state = get_zlib_state(mod);
+    zlibstate *state = PyModule_GetState_DuringGC(mod);
     Py_VISIT(state->Comptype);
     Py_VISIT(state->Decomptype);
     Py_VISIT(state->ZlibDecompressorType);

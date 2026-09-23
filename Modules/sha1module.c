@@ -323,7 +323,7 @@ static struct PyMethodDef SHA1_functions[] = {
 static int
 _sha1_traverse(PyObject *module, visitproc visit, void *arg)
 {
-    SHA1State *state = sha1_get_state(module);
+    SHA1State *state = PyModule_GetState_DuringGC(module);
     Py_VISIT(state->sha1_type);
     return 0;
 }
@@ -331,7 +331,7 @@ _sha1_traverse(PyObject *module, visitproc visit, void *arg)
 static int
 _sha1_clear(PyObject *module)
 {
-    SHA1State *state = sha1_get_state(module);
+    SHA1State *state = PyModule_GetState_DuringGC(module);
     Py_CLEAR(state->sha1_type);
     return 0;
 }

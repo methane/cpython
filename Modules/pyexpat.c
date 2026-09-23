@@ -2599,7 +2599,7 @@ pyexpat_exec(PyObject *mod)
 static int
 pyexpat_traverse(PyObject *module, visitproc visit, void *arg)
 {
-    pyexpat_state *state = pyexpat_get_state(module);
+    pyexpat_state *state = PyModule_GetState_DuringGC(module);
     Py_VISIT(state->xml_parse_type);
     Py_VISIT(state->error);
     Py_VISIT(state->str_read);
@@ -2609,7 +2609,7 @@ pyexpat_traverse(PyObject *module, visitproc visit, void *arg)
 static int
 pyexpat_clear(PyObject *module)
 {
-    pyexpat_state *state = pyexpat_get_state(module);
+    pyexpat_state *state = PyModule_GetState_DuringGC(module);
     Py_CLEAR(state->xml_parse_type);
     Py_CLEAR(state->error);
     Py_CLEAR(state->str_read);

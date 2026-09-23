@@ -2828,7 +2828,7 @@ static PyType_Spec tuplegetter_spec = {
 static int
 collections_traverse(PyObject *mod, visitproc visit, void *arg)
 {
-    collections_state *state = get_module_state(mod);
+    collections_state *state = PyModule_GetState_DuringGC(mod);
     Py_VISIT(state->deque_type);
     Py_VISIT(state->defdict_type);
     Py_VISIT(state->dequeiter_type);
@@ -2840,7 +2840,7 @@ collections_traverse(PyObject *mod, visitproc visit, void *arg)
 static int
 collections_clear(PyObject *mod)
 {
-    collections_state *state = get_module_state(mod);
+    collections_state *state = PyModule_GetState_DuringGC(mod);
     Py_CLEAR(state->deque_type);
     Py_CLEAR(state->defdict_type);
     Py_CLEAR(state->dequeiter_type);

@@ -128,7 +128,7 @@ module readline
 static int
 readline_clear(PyObject *m)
 {
-   readlinestate *state = get_readline_state(m);
+   readlinestate *state = PyModule_GetState_DuringGC(m);
    Py_CLEAR(state->completion_display_matches_hook);
    Py_CLEAR(state->startup_hook);
    Py_CLEAR(state->pre_input_hook);
@@ -141,7 +141,7 @@ readline_clear(PyObject *m)
 static int
 readline_traverse(PyObject *m, visitproc visit, void *arg)
 {
-    readlinestate *state = get_readline_state(m);
+    readlinestate *state = PyModule_GetState_DuringGC(m);
     Py_VISIT(state->completion_display_matches_hook);
     Py_VISIT(state->startup_hook);
     Py_VISIT(state->pre_input_hook);

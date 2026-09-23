@@ -1067,7 +1067,7 @@ static PyMethodDef moduleMethods[] = {
 static int
 _lsprof_traverse(PyObject *module, visitproc visit, void *arg)
 {
-    _lsprof_state *state = _lsprof_get_state(module);
+    _lsprof_state *state = PyModule_GetState_DuringGC(module);
     Py_VISIT(state->profiler_type);
     Py_VISIT(state->stats_entry_type);
     Py_VISIT(state->stats_subentry_type);
@@ -1077,7 +1077,7 @@ _lsprof_traverse(PyObject *module, visitproc visit, void *arg)
 static int
 _lsprof_clear(PyObject *module)
 {
-    _lsprof_state *state = _lsprof_get_state(module);
+    _lsprof_state *state = PyModule_GetState_DuringGC(module);
     Py_CLEAR(state->profiler_type);
     Py_CLEAR(state->stats_entry_type);
     Py_CLEAR(state->stats_subentry_type);

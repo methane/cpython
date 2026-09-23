@@ -2631,7 +2631,7 @@ On Windows, only sockets are supported; on Unix, all file descriptors.");
 static int
 _select_traverse(PyObject *module, visitproc visit, void *arg)
 {
-    _selectstate *state = get_select_state(module);
+    _selectstate *state = PyModule_GetState_DuringGC(module);
 
     Py_VISIT(state->close);
     Py_VISIT(state->poll_Type);
@@ -2648,7 +2648,7 @@ _select_traverse(PyObject *module, visitproc visit, void *arg)
 static int
 _select_clear(PyObject *module)
 {
-    _selectstate *state = get_select_state(module);
+    _selectstate *state = PyModule_GetState_DuringGC(module);
 
     Py_CLEAR(state->close);
     Py_CLEAR(state->poll_Type);

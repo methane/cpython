@@ -850,7 +850,7 @@ _bz2_exec(PyObject *module)
 static int
 _bz2_traverse(PyObject *module, visitproc visit, void *arg)
 {
-    _bz2_state *state = get_module_state(module);
+    _bz2_state *state = PyModule_GetState_DuringGC(module);
     Py_VISIT(state->bz2_compressor_type);
     Py_VISIT(state->bz2_decompressor_type);
     return 0;
@@ -859,7 +859,7 @@ _bz2_traverse(PyObject *module, visitproc visit, void *arg)
 static int
 _bz2_clear(PyObject *module)
 {
-    _bz2_state *state = get_module_state(module);
+    _bz2_state *state = PyModule_GetState_DuringGC(module);
     Py_CLEAR(state->bz2_compressor_type);
     Py_CLEAR(state->bz2_decompressor_type);
     return 0;

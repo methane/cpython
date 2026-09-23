@@ -2698,7 +2698,7 @@ static PyMethodDef module_methods[] = {{NULL, NULL}};
 static int
 module_traverse(PyObject *mod, visitproc visit, void *arg)
 {
-    zoneinfo_state *state = zoneinfo_get_state(mod);
+    zoneinfo_state *state = PyModule_GetState_DuringGC(mod);
 
     Py_VISIT(state->ZoneInfoType);
     Py_VISIT(state->io_open);
@@ -2725,7 +2725,7 @@ module_traverse(PyObject *mod, visitproc visit, void *arg)
 static int
 module_clear(PyObject *mod)
 {
-    zoneinfo_state *state = zoneinfo_get_state(mod);
+    zoneinfo_state *state = PyModule_GetState_DuringGC(mod);
 
     Py_CLEAR(state->ZoneInfoType);
     Py_CLEAR(state->io_open);

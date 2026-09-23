@@ -653,7 +653,7 @@ _dbm_exec(PyObject *module)
 static int
 _dbm_module_traverse(PyObject *module, visitproc visit, void *arg)
 {
-    _dbm_state *state = get_dbm_state(module);
+    _dbm_state *state = PyModule_GetState_DuringGC(module);
     Py_VISIT(state->dbm_error);
     Py_VISIT(state->dbm_type);
     return 0;
@@ -662,7 +662,7 @@ _dbm_module_traverse(PyObject *module, visitproc visit, void *arg)
 static int
 _dbm_module_clear(PyObject *module)
 {
-    _dbm_state *state = get_dbm_state(module);
+    _dbm_state *state = PyModule_GetState_DuringGC(module);
     Py_CLEAR(state->dbm_error);
     Py_CLEAR(state->dbm_type);
     return 0;

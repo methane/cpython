@@ -2036,7 +2036,7 @@ _multibytecodec___create_codec(PyObject *module, PyObject *arg)
 static int
 _multibytecodec_traverse(PyObject *mod, visitproc visit, void *arg)
 {
-    module_state *state = get_module_state(mod);
+    module_state *state = PyModule_GetState_DuringGC(mod);
     Py_VISIT(state->multibytecodec_type);
     Py_VISIT(state->encoder_type);
     Py_VISIT(state->decoder_type);
@@ -2048,7 +2048,7 @@ _multibytecodec_traverse(PyObject *mod, visitproc visit, void *arg)
 static int
 _multibytecodec_clear(PyObject *mod)
 {
-    module_state *state = get_module_state(mod);
+    module_state *state = PyModule_GetState_DuringGC(mod);
     Py_CLEAR(state->multibytecodec_type);
     Py_CLEAR(state->encoder_type);
     Py_CLEAR(state->decoder_type);

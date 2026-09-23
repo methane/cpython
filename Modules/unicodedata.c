@@ -2301,7 +2301,7 @@ UnicodeData File Format " UNIDATA_VERSION ".");
 static int
 unicodedata_traverse(PyObject *module, visitproc visit, void *arg)
 {
-    unicodedatastate *state = get_unicodedata_state(module);
+    unicodedatastate *state = PyModule_GetState_DuringGC(module);
     Py_VISIT(state->SegmentType);
     Py_VISIT(state->GraphemeBreakIteratorType);
     return 0;
@@ -2310,7 +2310,7 @@ unicodedata_traverse(PyObject *module, visitproc visit, void *arg)
 static int
 unicodedata_clear(PyObject *module)
 {
-    unicodedatastate *state = get_unicodedata_state(module);
+    unicodedatastate *state = PyModule_GetState_DuringGC(module);
     Py_CLEAR(state->SegmentType);
     Py_CLEAR(state->GraphemeBreakIteratorType);
     return 0;

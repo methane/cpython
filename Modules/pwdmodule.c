@@ -380,11 +380,13 @@ static PyModuleDef_Slot pwdmodule_slots[] = {
 };
 
 static int pwdmodule_traverse(PyObject *m, visitproc visit, void *arg) {
-    Py_VISIT(get_pwd_state(m)->StructPwdType);
+    pwdmodulestate *state = PyModule_GetState_DuringGC(m);
+    Py_VISIT(state->StructPwdType);
     return 0;
 }
 static int pwdmodule_clear(PyObject *m) {
-    Py_CLEAR(get_pwd_state(m)->StructPwdType);
+    pwdmodulestate *state = PyModule_GetState_DuringGC(m);
+    Py_CLEAR(state->StructPwdType);
     return 0;
 }
 static void pwdmodule_free(void *m) {

@@ -3567,7 +3567,7 @@ static PyMethodDef _functions[] = {
 static int
 sre_traverse(PyObject *module, visitproc visit, void *arg)
 {
-    _sremodulestate *state = get_sre_module_state(module);
+    _sremodulestate *state = PyModule_GetState_DuringGC(module);
 
     Py_VISIT(state->Pattern_Type);
     Py_VISIT(state->Match_Type);
@@ -3581,7 +3581,7 @@ sre_traverse(PyObject *module, visitproc visit, void *arg)
 static int
 sre_clear(PyObject *module)
 {
-    _sremodulestate *state = get_sre_module_state(module);
+    _sremodulestate *state = PyModule_GetState_DuringGC(module);
 
     Py_CLEAR(state->Pattern_Type);
     Py_CLEAR(state->Match_Type);

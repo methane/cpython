@@ -1707,7 +1707,7 @@ static PyModuleDef_Slot lzma_slots[] = {
 static int
 lzma_traverse(PyObject *module, visitproc visit, void *arg)
 {
-    _lzma_state *state = get_lzma_state(module);
+    _lzma_state *state = PyModule_GetState_DuringGC(module);
     Py_VISIT(state->lzma_compressor_type);
     Py_VISIT(state->lzma_decompressor_type);
     Py_VISIT(state->error);
@@ -1718,7 +1718,7 @@ lzma_traverse(PyObject *module, visitproc visit, void *arg)
 static int
 lzma_clear(PyObject *module)
 {
-    _lzma_state *state = get_lzma_state(module);
+    _lzma_state *state = PyModule_GetState_DuringGC(module);
     Py_CLEAR(state->lzma_compressor_type);
     Py_CLEAR(state->lzma_decompressor_type);
     Py_CLEAR(state->error);

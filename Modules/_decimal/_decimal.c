@@ -8013,7 +8013,7 @@ error:
 static int
 decimal_traverse(PyObject *module, visitproc visit, void *arg)
 {
-    decimal_state *state = get_module_state(module);
+    decimal_state *state = PyModule_GetState_DuringGC(module);
     Py_VISIT(state->PyDecContextManager_Type);
     Py_VISIT(state->PyDecContext_Type);
     Py_VISIT(state->PyDecSignalDictMixin_Type);
@@ -8051,7 +8051,7 @@ decimal_traverse(PyObject *module, visitproc visit, void *arg)
 static int
 decimal_clear(PyObject *module)
 {
-    decimal_state *state = get_module_state(module);
+    decimal_state *state = PyModule_GetState_DuringGC(module);
     Py_CLEAR(state->PyDecContextManager_Type);
     Py_CLEAR(state->PyDecContext_Type);
     Py_CLEAR(state->PyDecSignalDictMixin_Type);

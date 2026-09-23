@@ -4126,7 +4126,7 @@ combinations_with_replacement(p, r)\n\
 static int
 itertoolsmodule_traverse(PyObject *mod, visitproc visit, void *arg)
 {
-    itertools_state *state = get_module_state(mod);
+    itertools_state *state = PyModule_GetState_DuringGC(mod);
     Py_VISIT(state->accumulate_type);
     Py_VISIT(state->batched_type);
     Py_VISIT(state->chain_type);
@@ -4155,7 +4155,7 @@ itertoolsmodule_traverse(PyObject *mod, visitproc visit, void *arg)
 static int
 itertoolsmodule_clear(PyObject *mod)
 {
-    itertools_state *state = get_module_state(mod);
+    itertools_state *state = PyModule_GetState_DuringGC(mod);
     Py_CLEAR(state->accumulate_type);
     Py_CLEAR(state->batched_type);
     Py_CLEAR(state->chain_type);

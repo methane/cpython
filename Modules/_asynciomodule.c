@@ -4173,7 +4173,7 @@ _asyncio_future_discard_from_awaited_by_impl(PyObject *module, PyObject *fut,
 static int
 module_traverse(PyObject *mod, visitproc visit, void *arg)
 {
-    asyncio_state *state = get_asyncio_state(mod);
+    asyncio_state *state = PyModule_GetState_DuringGC(mod);
 
     Py_VISIT(state->FutureIterType);
     Py_VISIT(state->TaskStepMethWrapper_Type);
@@ -4203,7 +4203,7 @@ module_traverse(PyObject *mod, visitproc visit, void *arg)
 static int
 module_clear(PyObject *mod)
 {
-    asyncio_state *state = get_asyncio_state(mod);
+    asyncio_state *state = PyModule_GetState_DuringGC(mod);
 
     Py_CLEAR(state->FutureIterType);
     Py_CLEAR(state->TaskStepMethWrapper_Type);

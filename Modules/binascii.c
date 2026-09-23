@@ -2783,7 +2783,7 @@ static PyModuleDef_Slot binascii_slots[] = {
 static int
 binascii_traverse(PyObject *module, visitproc visit, void *arg)
 {
-    binascii_state *state = get_binascii_state(module);
+    binascii_state *state = PyModule_GetState_DuringGC(module);
     Py_VISIT(state->Error);
     Py_VISIT(state->Incomplete);
     Py_VISIT(state->reverse_table_cache);
@@ -2793,7 +2793,7 @@ binascii_traverse(PyObject *module, visitproc visit, void *arg)
 static int
 binascii_clear(PyObject *module)
 {
-    binascii_state *state = get_binascii_state(module);
+    binascii_state *state = PyModule_GetState_DuringGC(module);
     Py_CLEAR(state->Error);
     Py_CLEAR(state->Incomplete);
     Py_CLEAR(state->reverse_table_cache);

@@ -1992,7 +1992,7 @@ static struct PyModuleDef_Slot operator_slots[] = {
 static int
 operator_traverse(PyObject *module, visitproc visit, void *arg)
 {
-    _operator_state *state = get_operator_state(module);
+    _operator_state *state = PyModule_GetState_DuringGC(module);
     Py_VISIT(state->attrgetter_type);
     Py_VISIT(state->itemgetter_type);
     Py_VISIT(state->methodcaller_type);
@@ -2002,7 +2002,7 @@ operator_traverse(PyObject *module, visitproc visit, void *arg)
 static int
 operator_clear(PyObject *module)
 {
-    _operator_state *state = get_operator_state(module);
+    _operator_state *state = PyModule_GetState_DuringGC(module);
     Py_CLEAR(state->attrgetter_type);
     Py_CLEAR(state->itemgetter_type);
     Py_CLEAR(state->methodcaller_type);

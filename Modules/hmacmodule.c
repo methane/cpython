@@ -1666,7 +1666,7 @@ static int
 hmacmodule_traverse(PyObject *mod, visitproc visit, void *arg)
 {
     Py_VISIT(Py_TYPE(mod));
-    hmacmodule_state *state = get_hmacmodule_state(mod);
+    hmacmodule_state *state = PyModule_GetState_DuringGC(mod);
     Py_VISIT(state->unknown_hash_error);
     Py_VISIT(state->hmac_type);
     Py_VISIT(state->str_lower);
@@ -1676,7 +1676,7 @@ hmacmodule_traverse(PyObject *mod, visitproc visit, void *arg)
 static int
 hmacmodule_clear(PyObject *mod)
 {
-    hmacmodule_state *state = get_hmacmodule_state(mod);
+    hmacmodule_state *state = PyModule_GetState_DuringGC(mod);
     if (state->hinfo_table != NULL) {
         _Py_hashtable_destroy(state->hinfo_table);
         state->hinfo_table = NULL;

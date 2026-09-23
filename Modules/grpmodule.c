@@ -378,12 +378,14 @@ static PyModuleDef_Slot grpmodule_slots[] = {
 };
 
 static int grpmodule_traverse(PyObject *m, visitproc visit, void *arg) {
-    Py_VISIT(get_grp_state(m)->StructGrpType);
+    grpmodulestate *state = PyModule_GetState_DuringGC(m);
+    Py_VISIT(state->StructGrpType);
     return 0;
 }
 
 static int grpmodule_clear(PyObject *m) {
-    Py_CLEAR(get_grp_state(m)->StructGrpType);
+    grpmodulestate *state = PyModule_GetState_DuringGC(m);
+    Py_CLEAR(state->StructGrpType);
     return 0;
 }
 

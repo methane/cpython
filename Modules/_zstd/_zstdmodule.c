@@ -767,7 +767,7 @@ do {                                                                         \
 static int
 _zstd_traverse(PyObject *module, visitproc visit, void *arg)
 {
-    _zstd_state* mod_state = get_zstd_state(module);
+    _zstd_state* mod_state = PyModule_GetState_DuringGC(module);
 
     Py_VISIT(mod_state->ZstdDict_type);
     Py_VISIT(mod_state->ZstdCompressor_type);
@@ -784,7 +784,7 @@ _zstd_traverse(PyObject *module, visitproc visit, void *arg)
 static int
 _zstd_clear(PyObject *module)
 {
-    _zstd_state* mod_state = get_zstd_state(module);
+    _zstd_state* mod_state = PyModule_GetState_DuringGC(module);
 
     Py_CLEAR(mod_state->ZstdDict_type);
     Py_CLEAR(mod_state->ZstdCompressor_type);

@@ -1217,8 +1217,7 @@ static void
 modexport_smoke_free(void *op)
 {
     PyObject *mod = (PyObject *)op;
-    int *state = PyModule_GetState(mod);
-    assert(state == PyModule_GetState_DuringGC(mod));
+    int *state = PyModule_GetState_DuringGC(mod);
     if (!state) {
         PyErr_FormatUnraisable("Exception ignored in module %R free", mod);
     }

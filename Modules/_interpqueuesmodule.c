@@ -1911,14 +1911,14 @@ static struct PyModuleDef_Slot module_slots[] = {
 static int
 module_traverse(PyObject *mod, visitproc visit, void *arg)
 {
-    module_state *state = get_module_state(mod);
+    module_state *state = PyModule_GetState_DuringGC(mod);
     return traverse_module_state(state, visit, arg);
 }
 
 static int
 module_clear(PyObject *mod)
 {
-    module_state *state = get_module_state(mod);
+    module_state *state = PyModule_GetState_DuringGC(mod);
 
     // Now we clear the module state.
     return clear_module_state(state);
@@ -1927,7 +1927,7 @@ module_clear(PyObject *mod)
 static void
 module_free(void *mod)
 {
-    module_state *state = get_module_state((PyObject *)mod);
+    module_state *state = PyModule_GetState_DuringGC((PyObject *)mod);
 
     // Now we clear the module state.
     (void)clear_module_state(state);

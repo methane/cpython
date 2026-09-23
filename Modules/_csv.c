@@ -52,7 +52,7 @@ get_csv_state(PyObject *module)
 static int
 _csv_clear(PyObject *module)
 {
-    _csvstate *module_state = PyModule_GetState(module);
+    _csvstate *module_state = PyModule_GetState_DuringGC(module);
     Py_CLEAR(module_state->error_obj);
     Py_CLEAR(module_state->dialects);
     Py_CLEAR(module_state->dialect_type);
@@ -65,7 +65,7 @@ _csv_clear(PyObject *module)
 static int
 _csv_traverse(PyObject *module, visitproc visit, void *arg)
 {
-    _csvstate *module_state = PyModule_GetState(module);
+    _csvstate *module_state = PyModule_GetState_DuringGC(module);
     Py_VISIT(module_state->error_obj);
     Py_VISIT(module_state->dialects);
     Py_VISIT(module_state->dialect_type);

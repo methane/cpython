@@ -106,7 +106,7 @@ static struct PyMethodDef blake2mod_functions[] = {
 static int
 _blake2_traverse(PyObject *module, visitproc visit, void *arg)
 {
-    Blake2State *state = blake2_get_state(module);
+    Blake2State *state = PyModule_GetState_DuringGC(module);
     Py_VISIT(state->blake2b_type);
     Py_VISIT(state->blake2s_type);
     return 0;
@@ -115,7 +115,7 @@ _blake2_traverse(PyObject *module, visitproc visit, void *arg)
 static int
 _blake2_clear(PyObject *module)
 {
-    Blake2State *state = blake2_get_state(module);
+    Blake2State *state = PyModule_GetState_DuringGC(module);
     Py_CLEAR(state->blake2b_type);
     Py_CLEAR(state->blake2s_type);
     return 0;

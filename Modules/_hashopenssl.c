@@ -2712,7 +2712,7 @@ static struct PyMethodDef EVP_functions[] = {
 static int
 hashlib_traverse(PyObject *m, visitproc visit, void *arg)
 {
-    _hashlibstate *state = get_hashlib_state(m);
+    _hashlibstate *state = PyModule_GetState_DuringGC(m);
     Py_VISIT(state->HASH_type);
     Py_VISIT(state->HMAC_type);
 #ifdef PY_OPENSSL_HAS_SHAKE
@@ -2726,7 +2726,7 @@ hashlib_traverse(PyObject *m, visitproc visit, void *arg)
 static int
 hashlib_clear(PyObject *m)
 {
-    _hashlibstate *state = get_hashlib_state(m);
+    _hashlibstate *state = PyModule_GetState_DuringGC(m);
     Py_CLEAR(state->HASH_type);
     Py_CLEAR(state->HMAC_type);
 #ifdef PY_OPENSSL_HAS_SHAKE

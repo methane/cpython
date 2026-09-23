@@ -2586,7 +2586,8 @@ PyType_GenericNew(PyTypeObject *type, PyObject *args, PyObject *kwds)
 static inline PyMemberDef *
 _PyHeapType_GET_MEMBERS(PyHeapTypeObject* type)
 {
-    return PyObject_GetItemData((PyObject *)type);
+    // Internal layout metadata is also needed by traversal in another group.
+    return PyObject_GetItemData_DuringGC((PyObject *)type);
 }
 
 static int

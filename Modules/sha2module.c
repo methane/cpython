@@ -808,7 +808,7 @@ static struct PyMethodDef SHA2_functions[] = {
 static int
 _sha2_traverse(PyObject *module, visitproc visit, void *arg)
 {
-    sha2_state *state = sha2_get_state(module);
+    sha2_state *state = PyModule_GetState_DuringGC(module);
     Py_VISIT(state->sha224_type);
     Py_VISIT(state->sha256_type);
     Py_VISIT(state->sha384_type);
@@ -819,7 +819,7 @@ _sha2_traverse(PyObject *module, visitproc visit, void *arg)
 static int
 _sha2_clear(PyObject *module)
 {
-    sha2_state *state = sha2_get_state(module);
+    sha2_state *state = PyModule_GetState_DuringGC(module);
     Py_CLEAR(state->sha224_type);
     Py_CLEAR(state->sha256_type);
     Py_CLEAR(state->sha384_type);
