@@ -3,6 +3,9 @@
 Initial review on 2026-09-23 against commit `29709794bc`.
 Follow-up implementation validated through commit `2fc691bbbe` on the same
 date; see the resolved findings and validation below.
+Re-read of the complete PEP and both appendices on 2026-09-23 against
+`37899fe75b` (implementation unchanged since `2fc691bbbe`). The new findings
+below supersede the earlier assessment of remaining work.
 
 Sources: [PEP 805](https://peps.python.org/pep-0805/),
 [implementation appendix](https://peps.python.org/pep-0805/appendix-implementation/),
@@ -15,6 +18,29 @@ inspection and targeted execution cannot establish coverage of every native
 reference acquisition. The follow-up repairs concrete defects; it does not
 complete the reference-counting and parallelism architecture.
 
+## Re-review summary
+
+**The implementation is not yet conformant.** New subprocess probes in both
+debug builds demonstrate unchecked element access in `list.sort()`, continued
+sorting after its protecting context is closed by a callback, and a crash
+when a foreign group collects a legacy extension module. Runtime checks on
+ordinary C API inputs also remain in several APIs despite the earlier repair
+to `PyObject_GetItem`. These are implementation defects or unfinished work,
+not questions about whether unsafe access or crashes are acceptable.
+
+One earlier question was incorrect: footnote 3 of the
+[allowed-operations table](https://peps.python.org/pep-0805/#allowed-operations)
+explicitly requires the argument to `protect()` to be the sole reference.
+Rejecting `value = []; lock.protect(value)` is therefore consistent with the
+PEP, even though the implementation copies the object. The open discussion
+about a `del` expression does not remove that requirement. This is no longer
+a question for Mark. Copy elision is a separate optimization.
+
+The questions below distinguish unspecified contracts from optional choices
+of implementation strategy. None is a reason to postpone fixing a known
+unsafe access. Reproduction programs and current results follow the earlier
+validation record at the end of this document.
+
 ## Resolved findings from the initial audit
 
 - **Finalizer dispatch:** an owner-group finalizer is now transported in an
@@ -22,9 +48,10 @@ complete the reference-counting and parallelism architecture.
   entering its owner group. Previously, constructing the dispatcher checked
   its foreign `self` in the sending group. The full finalizer suite now runs,
   including finalization after the original owner thread exits.
-- **Native test helpers:** function setters and cell mutation helpers acquire
-  references with checked tuple APIs before calling C APIs whose argument
-  accessibility is asserted. The public setter argument checks stay asserts.
+- **Native test helpers:** function-setter and cell-mutation helpers acquire
+  references with checked tuple APIs before invoking native or attribute
+  setters. This repairs their unchecked acquisition from tuple storage; it
+  does not mean all public setter input checks have been converted to asserts.
 - **State inspection:** `__shareable__` lazily initializes its enum instead of
   raising merely because `threading` has not yet been imported. A clean-process
   test covers both a local object and an immutable primitive.
@@ -124,6 +151,58 @@ follow-up.
    suggestion, not a mandatory ABI. Explaining the current three cleanup
    fields does not justify their permanent cost or resolve Mark's concern.
 
+4. **Sorting still bypasses access control.** In both builds, claiming a
+   `TransferBox([Number(2), Number(1)])`, where `Number` is a Python `float`
+   subclass, allows `values.sort()` in the receiving group. Reading
+   `values[0]` correctly raises `IllegalThreadAccessException`. Sorting reads
+   the foreign objects anyway: `list_sort_impl()` loads stored elements
+   without validating them, and `unsafe_object_compare()` calls their native
+   comparison slot directly (`Objects/listobject.c:3023` and `:2857`).
+   The required rejection is settled by the PEP's access model; there is no
+   exception for comparison during sorting.
+
+   A second probe starts sorting a protected list with valid input, then
+   closes its protecting generator from the key callback. Sorting completes
+   and restores the reordered list while the external lock is no longer
+   held. Rechecking Python locals and call results does not protect this
+   surviving C reference. Question 1 concerns the general lifetime mechanism,
+   not whether this unchecked continuation is correct.
+
+5. **Legacy extension GC compatibility remains broken.** With
+   `xxlimited_3_13` imported in Main, collecting from another group crashes
+   both builds with SIGSEGV. Symbolizing each fault address resolves to
+   `xx_traverse()` at `Modules/xxlimited_3_13.c:457`. Its
+   `PyModule_GetState(module)` returns NULL because the module is foreign,
+   then the visitor dereferences that pointer. Publishing only the
+   `gc.collect` callable suffices to reproduce the failure; the extension
+   module itself remains LOCAL. Updating the stdlib's other visitors to
+   `*_DuringGC` did not resolve this compatibility problem. The runtime must
+   support safe GC of LOCAL extensions; question 3 concerns the contract for
+   doing so without requiring existing extension callbacks to change.
+
+6. **Mark's input-check comment has only been addressed partially.**
+   `PyObject_GetItem` uses assertions as requested. However,
+   `PyList_Size`, `PyList_GetItem`, `PyList_GetItemRef`, and `PyList_Append`
+   still perform unconditional runtime checks on incoming objects
+   (`Objects/listobject.c:309`, `:398`, `:420`, `:584`). Several function APIs
+   do likewise, and `_PyObject_CheckVectorcallArgs()` scans raw C argument
+   arrays (`Include/internal/pycore_call.h:114`). Those array entries are
+   incoming references, unlike acquiring values from an argument tuple or
+   keyword dictionary. This is unfinished implementation cleanup under the
+   intended valid-input invariant. Checks after potentially invalidating
+   callbacks, and checks when acquiring stored elements, must be considered
+   separately; simply deleting all checks would not establish that invariant.
+
+7. **Local-load checking remains substantially more conservative than the
+   appendix's design.** `_PyEval_CheckLocalAccess()` runs on ordinary fast
+   local loads, not only the compiler-selected maybe-unprotected loads.
+   Calls also scan the live evaluation stack (`Python/ceval.c:749`, `:778`).
+   This departs from the appendix's performance strategy, not necessarily
+   its observable semantics, and still misses the C callback case above.
+   No performance measurements establish that this approach meets the PEP's
+   expectations. The intended invariant must be settled before claiming that
+   these checks can be removed safely.
+
 ## Questions to discuss with Mark
 
 ### 1. How is reference validity maintained when protection ends in another frame?
@@ -133,6 +212,8 @@ protection when the caller later closes that generator. The follow-up now
 rejects subsequent local loads and checks surviving call-stack operands.
 Similar issues arise with suspended coroutines, callbacks, debugger contexts
 and C locals retained across calls.
+The protected `list.sort(key=...)` reproduction below now demonstrates a
+remaining C-reference failure, rather than just a theoretical concern.
 
 Is yielding/awaiting while holding a protective context supported? If so,
 what is the intended invalidation rule for existing frame locals and
@@ -155,30 +236,31 @@ Must these macros gain checked semantics, become explicitly unsafe APIs
 requiring caller changes, or be replaced by distinct checked/unchecked
 interfaces? If a formerly infallible macro can return NULL, how should
 existing extensions handle the new failure? What is the corresponding rule
-for borrowed references and output-parameter APIs? This boundary needs an
+for borrowed references and output-parameter APIs? For example,
+`PyDict_Next` now returns 0 with an exception set when an output is foreign
+(`Objects/dictobject.c:3496`), whereas an unchanged caller can interpret 0 as
+normal exhaustion. This boundary needs an
 explicit decision to satisfy the
 [C API and extension contracts](https://peps.python.org/pep-0805/#c-extensions-and-the-c-api),
 without reinstating checks on every operation.
 
-The same contract matters for legacy extension GC visitors. Modern CPython
-provides `*_DuringGC` metadata APIs, now used by the repaired stdlib visitors,
-but unchanged older extensions may call ordinary module/type-data accessors.
-How should those visitors remain compatible when collection runs in a group
-that cannot normally access the object? Converting stdlib callers alone does
-not settle compatibility for third-party extensions.
+### 3. What access contract applies while the VM invokes legacy GC callbacks?
 
-### 3. Is a unique source reference a requirement for `protect()`, or only a copy-elision condition?
+The PEP promises that extension callbacks do not need modification. Existing
+visitors use ordinary `PyModule_GetState` and type-data accessors to inspect
+their own objects, even when the collecting thread belongs to another group.
+The `xxlimited_3_13` reproduction below confirms that simply checking the
+ordinary accessor and converting selected stdlib visitors to `*_DuringGC`
+does not implement that promise.
 
-The current implementation rejects even `value = []; lock.protect(value)`
-inside the owning context and accepts a temporary such as `lock.protect([])`.
-It nevertheless creates a shallow copy.
-
-The [operation table](https://peps.python.org/pep-0805/#allowed-operations)
-and the [copying / del-expression discussion](https://peps.python.org/pep-0805/#make-del-an-expression)
-leave the relationship between copying and uniqueness unclear. Is an aliased
-source safe because the protected result is a distinct copy, or is the
-source required to be unique regardless? If uniqueness is mandatory, what
-is the supported ownership-consuming idiom before a `del` expression exists?
+Should the VM provide a restricted GC-metadata access context for the old
+APIs, or should such metadata accessors be exempt from ownership checks
+because they expose native state rather than Python object references?
+What separates this permission from executing arbitrary Python callbacks,
+especially during clear, deallocation and finalization? The required safety
+and compatibility are clear; the boundary and mechanism are not specified.
+This should be resolved together with the valid-input invariant, rather than
+by requiring extensions to ignore NULL results or bypass access control.
 
 ### 4. Does shallow transfer include an instance's own attribute storage?
 
@@ -214,7 +296,7 @@ See [reference counting](https://peps.python.org/pep-0805/appendix-implementatio
 The implementation dispatches foreign LOCAL finalizers to a newly created
 thread in the owner group, acquires a PROTECTED object's mutex for its
 finalizer, and dispatches weakref callbacks to their registration group
-(`Modules/_threadmodule.c`, `Modules/_threadmodule.c`). An abandoned
+(`Modules/_threadmodule.c`, `Objects/weakrefobject.c`). An abandoned
 unclaimed transfer is instead adopted by the group clearing its box.
 These are substantial implementation choices, not specified callback rules.
 
@@ -223,9 +305,9 @@ exited or the interpreter is shutting down? May finalization create a thread
 or block on a protecting mutex? What should happen to unclaimed transfers
 and objects whose lock wrapper has died?
 
-Separately, is it necessary to retain arbitrarily many explicit non-GC
-`PyObject_CallFinalizer` requests during an internal world stop, even under
-allocator failure? That is the current queue's self-imposed/tested guarantee
+Separately, must repeated explicit non-GC `PyObject_CallFinalizer` requests
+during an internal world stop each be replayed, even under allocator failure?
+That is the current queue's self-imposed/tested guarantee
 (`Objects/object.c`), and it drove the three `ob_deferred_*` fields.
 The PEP does not establish that guarantee. We should agree on the cleanup
 contract before treating these fields as necessary or choosing an
@@ -262,10 +344,16 @@ The implementation treats exact `str` as intrinsically immutable and Python
 subclasses as LOCAL. A custom `__str__` returning a `str` subclass causes
 `str(obj)` to return that LOCAL subclass in the current build. Consequently
 the appendix's suggested exemption for `PyObject_Str` needs qualification.
+`PyObject_Str` currently checks the returned value, which is the conservative
+choice; this observation is not a reason to remove that check.
 
-Should exact types alone receive the primitive guarantees, while subclass
-results continue to be checked? Or should some APIs normalize results to
-exact primitive types? This affects both access-check elision and the
+Can the appendix explicitly limit the exemption to paths proven to return
+an exact builtin, retaining the existing possibility of subclass results?
+Alternatively, is normalizing these results to exact primitives an intended
+semantic change? The former preserves current Python behavior. This is a
+request to clarify the appendix's optimization claim, not a proposal to
+grant arbitrary mutable subclasses the primitive guarantees. It affects
+both access-check elision and the
 no-context-switch guarantee. See
 [primitive types](https://peps.python.org/pep-0805/#primitive-types) and
 the appendix's [C API discussion](https://peps.python.org/pep-0805/appendix-implementation/#c-api).
@@ -279,7 +367,11 @@ the appendix's [C API discussion](https://peps.python.org/pep-0805/appendix-impl
 - `ef68bf8a82`: consistent termios module-state error propagation.
 - `2fc691bbbe`: GC metadata access for foreign groups.
 
-## Validation performed
+## Earlier implementation validation
+
+The following full-suite and demo results are from the preceding implementation
+follow-up. They were not rerun for this documentation-only re-review and do
+not cover the newly demonstrated failures.
 
 Both Linux/aarch64 debug variants were rebuilt, and the opcode/uop generated
 files were regenerated. The GIL checkout's changed source/test/generated
@@ -309,3 +401,133 @@ The optional `_decimal` extension is unavailable in this environment.
 Windows and native JIT execution remain deferred. These checks do not prove
 complete native reference-acquisition coverage or PEP 805 conformance, and
 no performance claim is made for the conservative VM checks.
+
+## Re-review validation and reproductions
+
+The re-review used the same two Linux/aarch64 debug executables and reran
+the eight original audit probes, then added the sorting, legacy GC, and
+string-subclass probes. Each probe ran in a separate subprocess with a
+15-second timeout and core dumps disabled. This was targeted validation,
+not a full test-suite run or a release-build/performance measurement.
+
+| Probe | Free-threading debug | GIL debug | Assessment |
+| --- | --- | --- | --- |
+| Sort foreign LOCAL elements | Succeeds; direct element access is denied | Same | Access-control defect |
+| Close protecting generator from sort key | Sort succeeds after unlock | Same | Reference-lifetime defect |
+| Foreign GC with `xxlimited_3_13` | SIGSEGV in `xx_traverse`, line 457 | Same | GC compatibility defect |
+| Same-group LOCAL last-reference deletion | Finalizer runs after the following statement | Finalizer runs before it | Free-threading reclamation gap |
+| Header size | 56 bytes | 40 bytes | Compact representation unfinished |
+| Protect an aliased source | TypeError | TypeError | Matches table footnote 3 |
+| Protect a temporary tuple iterator | First value is 1 | Same | Repaired behavior retained |
+| Read a local after closing its protecting generator | UnprotectedAccessException | Same | Repaired Python-local case retained |
+| Transfer an ordinary instance | Primitive attribute readable; `__dict__` denied | Same | Question 4 |
+| Rebind a read-only closure cell | Function changes SYNCHRONIZED to LOCAL | Same | Question 7 |
+| `__str__` returns a `str` subclass | Result preserves the LOCAL subclass | Same | Question 8 |
+
+An existing dictionary view also remains LOCAL after freezing its dictionary;
+that observation alone does not demonstrate an access-control violation.
+
+### Foreign element sorting
+
+Run this in either debug build. The expected access denial occurs only for
+the final explicit element read, after sorting has already used the elements.
+
+```python
+import threading
+
+@freeze
+class Number(float):
+    pass
+
+box = threading.TransferBox([Number(2), Number(1)])
+output = SynchronizedList()
+
+def worker(box, output):
+    values = box.claim()
+    try:
+        values.sort()
+    except BaseException as exc:
+        output.append(('sort raised', type(exc).__name__))
+    else:
+        output.append(('sort returned', len(values)))
+    try:
+        values[0]
+    except BaseException as exc:
+        output.append(('element raised', type(exc).__name__))
+
+t = threading.Thread(target=worker, args=(box, output),
+                     group=threading.ThreadGroup())
+t.start()
+t.join()
+print(list(output))
+# [('sort returned', 2), ('element raised', 'IllegalThreadAccessException')]
+```
+
+### Protection ending during a native operation
+
+This uses ordinary generator closure, without calling a lock's `__exit__`
+manually. The source generator holds the context when sorting starts.
+
+```python
+import threading
+
+lock = threading.Lock()
+
+def source():
+    with lock:
+        yield lock.protect([3, 1, 2])
+
+generator = source()
+values = next(generator)
+
+def key(value):
+    generator.close()
+    return value
+
+try:
+    values.sort(key=key)
+    print('sort returned normally; lock held:', lock.locked())
+except BaseException as exc:
+    print('sort raised:', type(exc).__name__, str(exc))
+with lock:
+    print('list after reacquiring lock:', values)
+# sort returned normally; lock held: False
+# list after reacquiring lock: [1, 2, 3]
+```
+
+### Legacy GC visitor
+
+Run only as a subprocess: this reproduces a process crash. The internal
+declaration publishes the collection function, not the extension module.
+The worker performs no printing or imports, to isolate the GC failure from
+unrelated foreign access in I/O or exception reporting. This reproducer uses
+the repository's existing test extension; no third-party package is needed.
+
+```python
+import gc
+import threading
+import _testinternalcapi
+import xxlimited_3_13
+
+gc.disable()
+collect = gc.collect
+_testinternalcapi.object_declare_synchronized(collect)
+output = SynchronizedList()
+
+def error_hook(args):
+    output.append(('error', type(args.exc_value).__name__, str(args.exc_value)))
+
+threading.excepthook = error_hook
+
+def worker(collect, output):
+    output.append('before collect')
+    collect()
+    output.append('after collect')
+
+t = threading.Thread(target=worker, args=(collect, output),
+                     group=threading.ThreadGroup())
+t.start()
+t.join()
+print(list(output))
+# SIGSEGV; xx_traverse dereferences state at Modules/xxlimited_3_13.c:457.
+```
