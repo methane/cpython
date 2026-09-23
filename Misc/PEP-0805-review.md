@@ -61,6 +61,22 @@ and 16 GIL skips. The demo still computes 61,620 and rejects foreign LOCAL
 and unprotected accesses in both builds. These results do not cover or close
 the remaining reference-lifetime, GC, or refcounting design issues.
 
+The next cleanup applies the same input contract to five tuple APIs (`Size`,
+`GetItem`, `SetItem`, `Pack`, `GetSlice`) and seven bytes APIs (`Size`,
+`AsString`, `AsStringAndSize`, `Repr`, `Join`, `FromObject`, `Concat`). Heap
+acquisitions inside bytes construction and bytes/bytearray joining are checked
+before invoking the element's C APIs. Joining also preserves access exceptions
+raised by buffer exporters. A subprocess regression reproduces the former
+assertion failure on foreign stored buffers, including a LOCAL bytes subclass,
+bytearray and memoryview. The tuple setter test helper now propagates a failed
+element acquisition instead of returning a result with an exception pending;
+the new protected-element test reproduced that former fatal error.
+After these changes, the 66-file suite plus `test_capi.test_tuple`,
+`test_capi.test_bytes`, and `test_bytes` passes in both debug builds: 69 files,
+1,891 reported tests, with 18 free-threading and 24 GIL skips. Compilation
+produced no compiler warnings; the optional `_decimal` extension remains
+unavailable. Source and test changes match between the two build trees.
+
 The questions below distinguish unspecified contracts from optional choices
 of implementation strategy. None is a reason to postpone fixing a known
 unsafe access. Reproduction programs and current results follow the earlier
@@ -210,9 +226,10 @@ follow-up.
 
 6. **Mark's input-check comment has only been addressed partially.**
    `PyObject_GetItem` already used assertions at re-review. The follow-up
-   now also replaces input checks in the 20 list, cell and function APIs
-   listed above. Other APIs remain to be audited, including tuple and bytes
-   accessors. `_PyObject_CheckVectorcallArgs()` still scans raw C argument
+   now also replaces input checks in the 32 list, cell, function, tuple and
+   bytes APIs listed above. Other APIs remain to be audited, including
+   bytearray and numeric accessors. `_PyObject_CheckVectorcallArgs()` still
+   scans raw C argument
    arrays (`Include/internal/pycore_call.h:114`). Those array entries are
    incoming references, unlike acquiring values from an argument tuple or
    keyword dictionary. This is unfinished implementation cleanup under the

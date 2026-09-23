@@ -760,6 +760,27 @@ class SequenceAccessTests(unittest.TestCase):
                         with lock:
                             self.assertIs(getter(items, 0), value)
 
+    def test_tuple_c_api_protected_elements(self):
+        for factory in (threading.Lock, threading.RLock):
+            for replace in (False, True):
+                with self.subTest(lock=factory, replace=replace):
+                    lock = factory()
+                    with lock:
+                        value = lock.protect([])
+                        if replace:
+                            items = capi.tuple_setitem((42,), 0, value)
+                        else:
+                            items = capi.tuple_pack(1, value)
+                    self.assertEqual(capi.tuple_size(items), 1)
+                    with self.assertRaises(UnprotectedAccessException):
+                        capi.tuple_getitem(items, 0)
+                    # The helper copies the input through PyTuple_GetItem;
+                    # that acquisition error must survive its cleanup.
+                    with self.assertRaises(UnprotectedAccessException):
+                        capi.tuple_setitem(items, 0, 42)
+                    with lock:
+                        self.assertIs(capi.tuple_getitem(items, 0), value)
+
     @threading_helper.requires_working_threading()
     def test_foreign_elements_and_reference_lifetime(self):
         class Payload:

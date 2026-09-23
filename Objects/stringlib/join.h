@@ -35,6 +35,10 @@ STRINGLIB(bytes_join)(PyObject *sep, PyObject *iterable)
 #if !STRINGLIB_MUTABLE
     if (seqlen == 1) {
         item = PySequence_Fast_GET_ITEM(seq, 0);
+        if (PyObject_CheckAccess(item) == NULL) {
+            Py_DECREF(seq);
+            return NULL;
+        }
         if (STRINGLIB_CHECK_EXACT(item)) {
             Py_INCREF(item);
             Py_DECREF(seq);
@@ -61,6 +65,9 @@ STRINGLIB(bytes_join)(PyObject *sep, PyObject *iterable)
     for (i = 0, nbufs = 0; i < seqlen; i++) {
         Py_ssize_t itemlen;
         item = PySequence_Fast_GET_ITEM(seq, i);
+        if (PyObject_CheckAccess(item) == NULL) {
+            goto error;
+        }
         if (PyBytes_CheckExact(item)) {
             /* Fast path. */
             buffers[i].obj = Py_NewRef(item);
@@ -72,10 +79,13 @@ STRINGLIB(bytes_join)(PyObject *sep, PyObject *iterable)
                drops the sequence's last reference to it. */
             Py_INCREF(item);
             if (PyObject_GetBuffer(item, &buffers[i], PyBUF_SIMPLE) != 0) {
-                PyErr_Format(PyExc_TypeError,
-                             "sequence item %zd: expected a bytes-like object, "
-                             "%.80s found",
-                             i, Py_TYPE(item)->tp_name);
+                if (!PyErr_ExceptionMatches(PyExc_IllegalThreadAccessException) &&
+                    !PyErr_ExceptionMatches(PyExc_UnprotectedAccessException)) {
+                    PyErr_Format(PyExc_TypeError,
+                                 "sequence item %zd: expected a bytes-like object, "
+                                 "%.80s found",
+                                 i, Py_TYPE(item)->tp_name);
+                }
                 Py_DECREF(item);
                 goto error;
             }

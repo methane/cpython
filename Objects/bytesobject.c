@@ -1335,9 +1335,7 @@ PyBytes_Size(PyObject *op)
         PyErr_BadInternalCall();
         return -1;
     }
-    if (PyObject_CheckAccess(op) == NULL) {
-        return -1;
-    }
+    assert(_PyObject_IsAccessible(op));
     if (!PyBytes_Check(op)) {
         PyErr_Format(PyExc_TypeError,
              "expected bytes, %.200s found", Py_TYPE(op)->tp_name);
@@ -1353,9 +1351,7 @@ PyBytes_AsString(PyObject *op)
         PyErr_BadInternalCall();
         return NULL;
     }
-    if (PyObject_CheckAccess(op) == NULL) {
-        return NULL;
-    }
+    assert(_PyObject_IsAccessible(op));
     if (!PyBytes_Check(op)) {
         PyErr_Format(PyExc_TypeError,
              "expected bytes, %.200s found", Py_TYPE(op)->tp_name);
@@ -1377,9 +1373,7 @@ PyBytes_AsStringAndSize(PyObject *obj,
         PyErr_BadInternalCall();
         return -1;
     }
-    if (PyObject_CheckAccess(obj) == NULL) {
-        return -1;
-    }
+    assert(_PyObject_IsAccessible(obj));
 
     if (!PyBytes_Check(obj)) {
         PyErr_Format(PyExc_TypeError,
@@ -1460,9 +1454,7 @@ PyBytes_Repr(PyObject *obj, int smartquotes)
         PyErr_BadInternalCall();
         return NULL;
     }
-    if (PyObject_CheckAccess(obj) == NULL) {
-        return NULL;
-    }
+    assert(_PyObject_IsAccessible(obj));
     if (!PyBytes_Check(obj)) {
         PyErr_BadInternalCall();
         return NULL;
@@ -2037,10 +2029,7 @@ PyBytes_Join(PyObject *sep, PyObject *iterable)
         PyErr_BadInternalCall();
         return NULL;
     }
-    if (PyObject_CheckAccess(sep) == NULL ||
-        PyObject_CheckAccess(iterable) == NULL) {
-        return NULL;
-    }
+    assert(_PyObject_IsAccessible(sep) && _PyObject_IsAccessible(iterable));
     if (!PyBytes_Check(sep)) {
         PyErr_Format(PyExc_TypeError,
                      "sep: expected bytes, got %T", sep);
@@ -3038,7 +3027,12 @@ _PyBytes_FromSequence_lock_held(PyObject *x, PyObject **result)
 
     PyObject *const *items = PySequence_Fast_ITEMS(x);
     for (Py_ssize_t i = 0; i < size; i++) {
-        Py_ssize_t value = PyLong_AsSsize_t(items[i]);
+        PyObject *item = PyObject_CheckAccess(items[i]);
+        if (item == NULL) {
+            PyBytesWriter_Discard(writer);
+            return -1;
+        }
+        Py_ssize_t value = PyLong_AsSsize_t(item);
         if (value == -1 && PyErr_Occurred()) {
             PyBytesWriter_Discard(writer);
             PyErr_Clear();
@@ -3128,9 +3122,7 @@ PyBytes_FromObject(PyObject *x)
         PyErr_BadInternalCall();
         return NULL;
     }
-    if (PyObject_CheckAccess(x) == NULL) {
-        return NULL;
-    }
+    assert(_PyObject_IsAccessible(x));
 
     if (PyBytes_CheckExact(x)) {
         return Py_NewRef(x);
@@ -3312,18 +3304,12 @@ PyBytes_Concat(PyObject **pv, PyObject *w)
     assert(pv != NULL);
     if (*pv == NULL)
         return;
-    if (PyObject_CheckAccess(*pv) == NULL) {
-        Py_CLEAR(*pv);
-        return;
-    }
+    assert(_PyObject_IsAccessible(*pv));
     if (w == NULL) {
         Py_CLEAR(*pv);
         return;
     }
-    if (PyObject_CheckAccess(w) == NULL) {
-        Py_CLEAR(*pv);
-        return;
-    }
+    assert(_PyObject_IsAccessible(w));
 
     if (_PyObject_IsUniquelyReferenced(*pv) && PyBytes_CheckExact(*pv)) {
         /* Only one reference, so we can resize in place */

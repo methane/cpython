@@ -96,9 +96,7 @@ PyTuple_Size(PyObject *op)
         PyErr_BadInternalCall();
         return -1;
     }
-    if (PyObject_CheckAccess(op) == NULL) {
-        return -1;
-    }
+    assert(_PyObject_IsAccessible(op));
     if (!PyTuple_Check(op)) {
         PyErr_BadInternalCall();
         return -1;
@@ -114,9 +112,7 @@ PyTuple_GetItem(PyObject *op, Py_ssize_t i)
         PyErr_BadInternalCall();
         return NULL;
     }
-    if (PyObject_CheckAccess(op) == NULL) {
-        return NULL;
-    }
+    assert(_PyObject_IsAccessible(op));
     if (!PyTuple_Check(op)) {
         PyErr_BadInternalCall();
         return NULL;
@@ -137,10 +133,8 @@ PyTuple_SetItem(PyObject *op, Py_ssize_t i, PyObject *newitem)
         PyErr_BadInternalCall();
         return -1;
     }
-    if (PyObject_CheckAccess(op) == NULL) {
-        Py_XDECREF(newitem);
-        return -1;
-    }
+    assert(_PyObject_IsAccessible(op));
+    assert(newitem == NULL || _PyObject_IsAccessible(newitem));
     if (!PyTuple_Check(op) || !_PyObject_IsUniquelyReferenced(op)) {
         Py_XDECREF(newitem);
         PyErr_BadInternalCall();
@@ -150,10 +144,6 @@ PyTuple_SetItem(PyObject *op, Py_ssize_t i, PyObject *newitem)
         Py_XDECREF(newitem);
         PyErr_SetString(PyExc_IndexError,
                         "tuple assignment index out of range");
-        return -1;
-    }
-    if (newitem != NULL && PyObject_CheckAccess(newitem) == NULL) {
-        Py_DECREF(newitem);
         return -1;
     }
     p = ((PyTupleObject *)op) -> ob_item + i;
@@ -226,11 +216,7 @@ PyTuple_Pack(Py_ssize_t n, ...)
             va_end(vargs);
             return NULL;
         }
-        if (PyObject_CheckAccess(o) == NULL) {
-            Py_DECREF(result);
-            va_end(vargs);
-            return NULL;
-        }
+        assert(_PyObject_IsAccessible(o));
         if (!track && maybe_tracked(o)) {
             track = true;
         }
@@ -621,9 +607,7 @@ PyTuple_GetSlice(PyObject *op, Py_ssize_t i, Py_ssize_t j)
         PyErr_BadInternalCall();
         return NULL;
     }
-    if (PyObject_CheckAccess(op) == NULL) {
-        return NULL;
-    }
+    assert(_PyObject_IsAccessible(op));
     if (!PyTuple_Check(op)) {
         PyErr_BadInternalCall();
         return NULL;

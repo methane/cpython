@@ -1,14 +1,51 @@
 """Access checks at the public bytes and bytearray C API boundaries."""
 
 import sys
+import textwrap
 import threading
 import unittest
 
 from test.support import threading_helper
 from test.support.import_helper import import_module
+from test.support.script_helper import assert_python_ok
 
 
 class BytesAccessTests(unittest.TestCase):
+    @threading_helper.requires_working_threading()
+    def test_join_checks_stored_buffers(self):
+        assert_python_ok('-c', textwrap.dedent('''
+            import threading
+            from test.support import SHORT_TIMEOUT
+
+            class LocalBytes(bytes):
+                pass
+
+            def worker(payload, results):
+                class Exporter:
+                    def __buffer__(self, flags):
+                        return payload[-1]
+                for separator in (b'|', bytearray(b'|')):
+                    for items in (payload, [Exporter()]):
+                        try:
+                            separator.join(items)
+                        except BaseException as exc:
+                            results.put(type(exc).__name__)
+                        else:
+                            results.put('allowed')
+
+            for value in (LocalBytes(b'x'), bytearray(b'x'), memoryview(b'x')):
+                for prefix in ((), (b'first',)):
+                    results = threading.Channel()
+                    thread = threading.Thread(
+                        target=worker, args=(prefix + (value,), results),
+                        group=threading.ThreadGroup())
+                    thread.start()
+                    thread.join(SHORT_TIMEOUT)
+                    assert not thread.is_alive()
+                    observed = [results.get() for _ in range(4)]
+                    assert observed == ['IllegalThreadAccessException'] * 4, observed
+        '''))
+
     @threading_helper.requires_working_threading()
     def test_foreign_bytes_and_bytearray_operands(self):
         capi = import_module('_testlimitedcapi')
