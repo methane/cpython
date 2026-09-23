@@ -3298,8 +3298,10 @@ _PyObject_GetShareable(PyObject *op, void *closure)
         return NULL;
     }
     if (threading == NULL) {
-        PyErr_SetString(PyExc_RuntimeError, "threading module is not initialized");
-        return NULL;
+        threading = PyImport_ImportModule("threading");
+        if (threading == NULL) {
+            return NULL;
+        }
     }
     PyObject *enum_type = PyObject_GetAttrString(threading, "Shareable");
     Py_DECREF(threading);

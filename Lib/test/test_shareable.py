@@ -28,6 +28,18 @@ Shareable = threading.Shareable
 
 
 class ShareableTests(unittest.TestCase):
+    def test_state_before_importing_threading(self):
+        from test.support import script_helper
+        script_helper.assert_python_ok('-S', '-c', '''
+import sys
+assert 'threading' not in sys.modules
+local = object().__shareable__
+immutable = (42).__shareable__
+import threading
+assert local is threading.Shareable.LOCAL
+assert immutable is threading.Shareable.IMMUTABLE
+''')
+
     @threading_helper.requires_working_threading()
     def test_builtin_constructor_entry_points(self):
         constructors = (tuple.__new__, list.__new__, dict.__new__)

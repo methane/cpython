@@ -3614,9 +3614,10 @@ do_start_new_thread(thread_module_state *state, PyObject *func, PyObject *args,
 }
 
 static PyObject *
-run_group_finalizer(PyObject *self, PyObject *Py_UNUSED(ignored))
+run_group_finalizer(PyObject *context, PyObject *Py_UNUSED(ignored))
 {
-    if (PyObject_CheckAccess(self) == NULL) {
+    PyObject *self = PyTuple_GetItem(context, 0);
+    if (self == NULL) {
         return NULL;
     }
     /* GC may have marked the object finalized before dispatching it. */
@@ -3705,9 +3706,17 @@ done:
 int
 _PyThreadGroup_CallFinalizer(PyObject *op)
 {
-    return call_in_threadgroup(
+    /* Retain the foreign object without acquiring it in this group. The
+       destination checks the reference when it unwraps the immutable tuple. */
+    PyObject *context = _PyTuple_FromPair(op, Py_None);
+    if (context == NULL) {
+        return -1;
+    }
+    int result = call_in_threadgroup(
         _Py_atomic_load_uint32_relaxed(&op->ob_owner_id),
-        &group_finalizer_method, op);
+        &group_finalizer_method, context);
+    Py_DECREF(context);
+    return result;
 }
 
 static PyObject *

@@ -173,9 +173,15 @@ function_set_from_tuples(PyObject *self, PyObject *args)
         PyErr_SetString(PyExc_TypeError, "expected two one-item tuples");
         return NULL;
     }
-    /* Deliberately bypass Python receiver/value acquisition checks. */
-    PyObject *func = PyTuple_GET_ITEM(receiver, 0);
-    PyObject *value = PyTuple_GET_ITEM(value_holder, 0);
+    /* Check references acquired from the heap before entering the setter. */
+    PyObject *func = PyTuple_GetItem(receiver, 0);
+    if (func == NULL) {
+        return NULL;
+    }
+    PyObject *value = PyTuple_GetItem(value_holder, 0);
+    if (value == NULL) {
+        return NULL;
+    }
     int result;
     if (!native) {
         result = PyObject_SetAttrString(func, name, value);
@@ -281,7 +287,10 @@ cell_mutate_from_tuple(PyObject *self, PyObject *args)
         PyErr_SetString(PyExc_TypeError, "expected a one-item tuple");
         return NULL;
     }
-    PyObject *cell = PyTuple_GET_ITEM(holder, 0);
+    PyObject *cell = PyTuple_GetItem(holder, 0);
+    if (cell == NULL) {
+        return NULL;
+    }
     int result;
     if (strcmp(operation, "attribute") == 0) {
         result = PyObject_SetAttrString(cell, "cell_contents", value);
