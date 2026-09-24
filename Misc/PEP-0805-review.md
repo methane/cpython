@@ -1126,6 +1126,55 @@ default, GIL and Tier 2 builds, each with 963 tests and no skips. The incrementa
 builds report no compiler warnings or failed module imports. Sources and tests
 match across the three builds.
 
+### Composed iterator acquisitions and callable-iterator state
+
+Sequence iterators and generic reversed iterators now check their stored
+sequence before indexing, querying its length or using it to restore a cursor.
+Access denial leaves the reverse cursor intact, allowing iteration to resume
+after reacquiring protection. Before the repair, transferring either iterator
+could reach PySequence_GetItem's input assertion; reversed length hints and
+state restoration similarly reached PySequence_Size's assertion.
+
+Enumerate, filter, map and zip now check stored iterators before calling their
+native next slots. A tuple iterator's own check had concealed this omission:
+with itertools.count instead, all four wrappers advanced a foreign LOCAL
+counter after shallow transfer. Map and zip also check iterators in their
+strict-exhaustion paths, and zip checks its cached and freshly allocated result
+paths. Map and zip constructors acquire their tuple arguments through the
+checked API. Map/filter check stored callables before invocation; their previous
+raw calls could abort in the vectorcall input assertion.
+
+Callable iterators now retain their callable under the iterator's critical
+section before checking and invoking it. After the call, they take a coherent
+snapshot of the sentinel and stopping exception, respecting reentrant
+exhaustion. Reduction snapshots the same fields. Exhaustion and state restoration
+publish all changed fields under the lock, then release old references outside
+it. The previous state setter could invoke an old sentinel's destructor between
+publishing the new sentinel and its stopping exception. A deterministic
+regression observes that mixed state before the repair. Parallel consumers and
+state updates, and simultaneous exhaustion, are covered separately. Sequence
+and callable iterator reductions now release their acquired builtin reference
+when access is denied; both previously leaked one reference per denied call.
+
+The first eight regression methods report 22 failures including subtests on the
+previous runtime. They cover transferred sequences, native iterator wrappers,
+strict exhaustion, the fresh zip result path, foreign callables, protected
+reverse cursors, reduction cleanup, reentrant state observation and parallel
+state changes. A ninth method covers simultaneous callable-iterator exhaustion.
+Logs and subprocess reproductions are in `/tmp/pep805-composed-iterators/`.
+
+The default six-suite iterator/builtin selection passes with 378 reported
+tests and eight skips; the final nine-method regression suite also passes
+after adding the simultaneous-exhaustion case. GIL and Tier 2 each pass the
+six-suite selection with 379 tests and eight skips. The incremental builds
+have no compiler warnings or failed module imports. Changed native sources
+and tests match across the three builds.
+
+This repair does not complete iterator state propagation: enumerate and generic
+reversed iterators still need to inherit a mutable source's sharing state, with
+the necessary internal synchronization. The broader itertools/native caller
+audit and question 1's callback-lifetime decision also remain open.
+
 ## Earlier re-review and implementation follow-ups
 
 One earlier question was incorrect: footnote 3 of the

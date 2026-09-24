@@ -180,7 +180,10 @@ enum_next(PyObject *op)
     PyObject *next_index;
     PyObject *next_item;
     PyObject *result = en->en_result;
-    PyObject *it = en->en_sit;
+    PyObject *it = PyObject_CheckAccess(en->en_sit);
+    if (it == NULL) {
+        return NULL;
+    }
     PyObject *old_index;
     PyObject *old_item;
 
@@ -388,6 +391,9 @@ reversed_next(PyObject *op)
     Py_ssize_t index = FT_ATOMIC_LOAD_SSIZE_RELAXED(ro->index);
 
     if (index >= 0) {
+        if (PyObject_CheckAccess(ro->seq) == NULL) {
+            return NULL;
+        }
         item = PySequence_GetItem(ro->seq, index);
         if (item != NULL) {
             FT_ATOMIC_STORE_SSIZE_RELAXED(ro->index, index - 1);
@@ -417,6 +423,9 @@ reversed_len(PyObject *op, PyObject *Py_UNUSED(ignored))
     if (index == -1)
         return PyLong_FromLong(0);
     assert(ro->seq != NULL);
+    if (PyObject_CheckAccess(ro->seq) == NULL) {
+        return NULL;
+    }
     seqsize = PySequence_Size(ro->seq);
     if (seqsize == -1)
         return NULL;
@@ -458,6 +467,9 @@ reversed_setstate(PyObject *op, PyObject *state)
     // this is for backwards compatibility reasons. in practice this situation
     // will not occur, see gh-120971
     if (ro_index != -1) {
+        if (PyObject_CheckAccess(ro->seq) == NULL) {
+            return NULL;
+        }
         Py_ssize_t n = PySequence_Size(ro->seq);
         if (n < 0)
             return NULL;

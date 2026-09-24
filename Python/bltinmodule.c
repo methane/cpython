@@ -655,7 +655,10 @@ filter_next(PyObject *self)
 {
     filterobject *lz = _filterobject_CAST(self);
     PyObject *item;
-    PyObject *it = lz->it;
+    PyObject *it = PyObject_CheckAccess(lz->it);
+    if (it == NULL) {
+        return NULL;
+    }
     long ok;
     PyObject *(*iternext)(PyObject *);
     int checktrue = lz->func == Py_None || lz->func == (PyObject *)&PyBool_Type;
@@ -670,6 +673,10 @@ filter_next(PyObject *self)
             ok = PyObject_IsTrue(item);
         } else {
             PyObject *good;
+            if (PyObject_CheckAccess(lz->func) == NULL) {
+                Py_DECREF(item);
+                return NULL;
+            }
             good = PyObject_CallOneArg(lz->func, item);
             if (good == NULL) {
                 Py_DECREF(item);
@@ -1483,12 +1490,19 @@ map_new(PyTypeObject *type, PyObject *args, PyObject *kwds)
 
     for (i=1 ; i<numargs ; i++) {
         /* Get iterator. */
-        it = PyObject_GetIter(PyTuple_GET_ITEM(args, i));
+        PyObject *iterable = PyTuple_GetItem(args, i);
+        it = iterable == NULL ? NULL : PyObject_GetIter(iterable);
         if (it == NULL) {
             Py_DECREF(iters);
             return NULL;
         }
         PyTuple_SET_ITEM(iters, i-1, it);
+    }
+
+    func = PyTuple_GetItem(args, 0);
+    if (func == NULL) {
+        Py_DECREF(iters);
+        return NULL;
     }
 
     /* create mapobject structure */
@@ -1498,7 +1512,6 @@ map_new(PyTypeObject *type, PyObject *args, PyObject *kwds)
         return NULL;
     }
     lz->iters = iters;
-    func = PyTuple_GET_ITEM(args, 0);
     lz->func = Py_NewRef(func);
     lz->strict = strict;
 
@@ -1593,7 +1606,10 @@ map_next(PyObject *self)
 
     Py_ssize_t nargs = 0;
     for (i = 0; i < niters; i++) {
-        PyObject *it = PyTuple_GET_ITEM(lz->iters, i);
+        PyObject *it = PyTuple_GetItem(lz->iters, i);
+        if (it == NULL) {
+            goto exit_no_result;
+        }
         PyObject *val = _PyObject_CheckAccessNullable(
             Py_TYPE(it)->tp_iternext(it));
         if (val == NULL) {
@@ -1606,7 +1622,9 @@ map_next(PyObject *self)
         nargs++;
     }
 
-    result = _PyObject_VectorcallTstate(tstate, lz->func, stack, nargs, NULL);
+    if (PyObject_CheckAccess(lz->func) != NULL) {
+        result = _PyObject_VectorcallTstate(tstate, lz->func, stack, nargs, NULL);
+    }
     goto exit;
 
 check:
@@ -1627,7 +1645,10 @@ check:
         goto exit_no_result;
     }
     for (i = 1; i < niters; i++) {
-        PyObject *it = PyTuple_GET_ITEM(lz->iters, i);
+        PyObject *it = PyTuple_GetItem(lz->iters, i);
+        if (it == NULL) {
+            goto exit_no_result;
+        }
         PyObject *val = _PyObject_CheckAccessNullable(
             (*Py_TYPE(it)->tp_iternext)(it));
         if (val) {
@@ -3188,8 +3209,8 @@ zip_new(PyTypeObject *type, PyObject *args, PyObject *kwds)
     if (ittuple == NULL)
         return NULL;
     for (i=0; i < tuplesize; ++i) {
-        PyObject *item = PyTuple_GET_ITEM(args, i);
-        PyObject *it = PyObject_GetIter(item);
+        PyObject *item = PyTuple_GetItem(args, i);
+        PyObject *it = item == NULL ? NULL : PyObject_GetIter(item);
         if (it == NULL) {
             Py_DECREF(ittuple);
             return NULL;
@@ -3259,7 +3280,11 @@ zip_next(PyObject *self)
     if (_PyObject_IsUniquelyReferenced(result)) {
         Py_INCREF(result);
         for (i=0 ; i < tuplesize ; i++) {
-            it = PyTuple_GET_ITEM(lz->ittuple, i);
+            it = PyTuple_GetItem(lz->ittuple, i);
+            if (it == NULL) {
+                Py_DECREF(result);
+                return NULL;
+            }
             item = _PyObject_CheckAccessNullable(
                 (*Py_TYPE(it)->tp_iternext)(it));
             if (item == NULL) {
@@ -3281,7 +3306,11 @@ zip_next(PyObject *self)
         if (result == NULL)
             return NULL;
         for (i=0 ; i < tuplesize ; i++) {
-            it = PyTuple_GET_ITEM(lz->ittuple, i);
+            it = PyTuple_GetItem(lz->ittuple, i);
+            if (it == NULL) {
+                Py_DECREF(result);
+                return NULL;
+            }
             item = _PyObject_CheckAccessNullable(
                 (*Py_TYPE(it)->tp_iternext)(it));
             if (item == NULL) {
@@ -3312,7 +3341,10 @@ check:
                             i + 1, plural, i);
     }
     for (i = 1; i < tuplesize; i++) {
-        it = PyTuple_GET_ITEM(lz->ittuple, i);
+        it = PyTuple_GetItem(lz->ittuple, i);
+        if (it == NULL) {
+            return NULL;
+        }
         item = _PyObject_CheckAccessNullable(
             (*Py_TYPE(it)->tp_iternext)(it));
         if (item) {
