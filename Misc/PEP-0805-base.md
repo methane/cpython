@@ -14,7 +14,7 @@ The five-stage implementation is **not complete**.
 | ThreadGroups | Group selection, serialization, detach/reattach, native identity, fork and Main lifetime | Parallel execution in the normal build |
 | One-time ABI change | Compact owner/state and group-biased RC header; no cleanup queue fields | Complete the allocation/GC port and audit native layouts |
 | Biased and deferred reference counting | Group bias, per-thread code counts, deferred stack roots and normal GC integration | Queue collection and reclamation with concurrent groups |
-| LOCAL and IMMUTABLE ownership | Builtin/static metadata, common C API returns, VM heap loads and common attribute/descriptor acquisitions | Complete remaining API and callable acquisitions; resolve shared static extension types |
+| LOCAL and IMMUTABLE ownership | Builtin/static metadata, common C API returns, VM heap loads, attributes and call expansion | Public `__shareable__` state, remaining API/VM acquisitions and shared static extension ownership |
 | Parallel allocation and cyclic GC | Normal generational collector understands biased, deferred and per-thread counts | Concurrent allocation, internal world stops, owner-correct finalization and teardown |
 
 Freezing, protective/compound locks, synchronized objects and functions,
@@ -142,6 +142,10 @@ Parallel scheduling tests remain skipped while the interpreter GIL is enabled.
 - The non-debug normal build at `00a29b07b1` also passes 838 tests covering the
   thread entry and attribute acquisition changes (20 skips). This predates
   the call expansion/defaults changes.
+- The non-debug normal build at `0ae5c9dfbc` passes the 884-test call expansion
+  and defaults selection (13 skips), including the `__new__` shadowing
+  regression. It still uses `Py_GIL_DISABLED=0` and has the interpreter GIL
+  enabled. No concurrent allocation/collection is claimed by these results.
 - A separate non-debug build (`./configure`, `Py_GIL_DISABLED=0`, `Py_DEBUG=0`,
   empty ABI flags, interpreter GIL enabled) passes 782 tests across
   `test_threadgroup`, `test_local_reclamation`, `test_deferred_reclamation`,
