@@ -63,6 +63,26 @@ failed:
 }
 
 static PyObject *
+gc_retrack(PyObject *Py_UNUSED(self), PyObject *obj)
+{
+    if (!PyObject_GC_IsTracked(obj)) {
+        return PyErr_Format(PyExc_ValueError, "expected a tracked object");
+    }
+    int finalized = PyObject_GC_IsFinalized(obj);
+    PyObject_GC_UnTrack(obj);
+    int untracked = !PyObject_GC_IsTracked(obj);
+    int preserved = PyObject_GC_IsFinalized(obj) == finalized;
+    PyObject_GC_Track(obj);
+    if (!untracked || !preserved || !PyObject_GC_IsTracked(obj) ||
+        PyObject_GC_IsFinalized(obj) != finalized)
+    {
+        return PyErr_Format(PyExc_AssertionError,
+                            "retracking changed finalization state");
+    }
+    Py_RETURN_NONE;
+}
+
+static PyObject *
 without_gc(PyObject *Py_UNUSED(self), PyObject *obj)
 {
     PyTypeObject *tp = (PyTypeObject*)obj;
@@ -366,6 +386,7 @@ static PyType_Spec ObjExtraData_TypeSpec = {
 
 static PyMethodDef test_methods[] = {
     {"test_gc_control", test_gc_control, METH_NOARGS},
+    {"gc_retrack", gc_retrack, METH_O},
     {"test_gc_visit_objects_basic", test_gc_visit_objects_basic, METH_NOARGS, NULL},
     {"test_gc_visit_objects_frozen", test_gc_visit_objects_frozen, METH_NOARGS, NULL},
     {"test_gc_visit_objects_exit_early", test_gc_visit_objects_exit_early, METH_NOARGS, NULL},

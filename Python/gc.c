@@ -86,8 +86,7 @@ gc_set_refs(PyGC_Head *g, Py_ssize_t refs)
 static inline void
 gc_reset_refs(PyGC_Head *g, Py_ssize_t refs)
 {
-    g->_gc_prev = (g->_gc_prev & _PyGC_PREV_MASK_FINALIZED)
-        | PREV_MASK_COLLECTING
+    g->_gc_prev = PREV_MASK_COLLECTING
         | ((uintptr_t)(refs) << _PyGC_PREV_SHIFT);
 }
 
@@ -239,22 +238,8 @@ gc_list_append(PyGC_Head *node, PyGC_Head *list)
     list->_gc_prev = (uintptr_t)node;
 }
 
-/* Remove `node` from the gc list it's currently in. */
-static inline void
-gc_list_remove(PyGC_Head *node)
-{
-    PyGC_Head *prev = GC_PREV(node);
-    PyGC_Head *next = GC_NEXT(node);
-
-    _PyGCHead_SET_NEXT(prev, next);
-    _PyGCHead_SET_PREV(next, prev);
-
-    node->_gc_next = 0; /* object is not currently tracked */
-}
-
 /* Move `node` from the gc list it's currently in (which is not explicitly
- * named here) to the end of `list`.  This is semantically the same as
- * gc_list_remove(node) followed by gc_list_append(node, list).
+ * named here) to the end of `list`, without changing its tracking state.
  */
 static void
 gc_list_move(PyGC_Head *node, PyGC_Head *list)
@@ -2335,11 +2320,8 @@ void
 PyObject_GC_Del(void *op)
 {
     size_t presize = _PyType_PreHeaderSize(Py_TYPE(op));
-    PyGC_Head *g = AS_GC(op);
     if (_PyObject_GC_IS_TRACKED(op)) {
-        gc_list_remove(g);
-        GCState *gcstate = get_gc_state();
-        gcstate->heap_size--;
+        _PyObject_GC_UNTRACK(op);
 #ifdef Py_DEBUG
         PyObject *exc = PyErr_GetRaisedException();
         if (PyErr_WarnExplicitFormat(PyExc_ResourceWarning, "gc", 0,

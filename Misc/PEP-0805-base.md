@@ -38,6 +38,9 @@ The shared count retains PEP 703's two flag bits. Local overflow merges the
 count into the shared field instead of making the object immortal.
 There is no object mutex, OS-thread ID or deferred-cleanup linkage in the header.
 GC-tracked objects currently retain the normal collector's separate GC prefix.
+Tracking and finalization status use the existing `ob_gc_bits` byte, with
+atomic read-modify-write updates that preserve other flags. The GC prefix holds
+list links and temporary reachability counts, not finalization state.
 
 Object freelists are per-thread in the normal build too. Full GC clears all
 thread caches, and thread-state clearing disables the target state's caches,
@@ -137,6 +140,13 @@ Tests run on Linux/aarch64. Logs are under `/tmp/pep805-base/`. The optional
 `_decimal` module is unavailable. The native scheduling probes exchange raw
 flags/events rather than foreign LOCAL Python functions or mutable results.
 Parallel scheduling tests remain skipped while the interpreter GIL is enabled.
+
+- GC bitmap migration: 545 tests passed across ten files covering GC,
+  ThreadGroups, ownership, weakrefs, reclamation, tuples, generators,
+  async-generators and embedding (13 skips). GC and reclamation also pass
+  `-R 3:3` with `mimalloc_debug` (76 tests, one skip). The new regression verifies
+  that both refcount and cyclic resurrection finalize only once, even after
+  untracking and retracking the surviving object.
 
 - Group bias: 844 tests passed across ThreadGroups, local reclamation, object
   and miscellaneous C APIs, GC, threading, embedding and sys. Native probes cover

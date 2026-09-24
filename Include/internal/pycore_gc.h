@@ -28,12 +28,9 @@ static inline PyObject* _Py_FROM_GC(PyGC_Head *gc) {
 
 /* Bit flags for ob_gc_bits
  *
- * Setting the bits requires a relaxed store. The per-object lock must also be
- * held, except when the object is only visible to a single thread (e.g. during
- * object initialization or destruction).
- *
- * Reading the bits requires using a relaxed load, but does not require holding
- * the per-object lock.
+ * Updates are atomic read-modify-write operations so independent flags do not
+ * overwrite each other. Reads need only a relaxed load. Synchronizing an
+ * object's contents and GC list membership is the caller's responsibility.
  */
 #  define _PyGC_BITS_TRACKED        (1<<0)     // Tracked by the GC
 #  define _PyGC_BITS_FINALIZED      (1<<1)     // tp_finalize was called
@@ -47,8 +44,7 @@ static inline PyObject* _Py_FROM_GC(PyGC_Head *gc) {
 static inline void
 _PyObject_SET_GC_BITS(PyObject *op, uint8_t new_bits)
 {
-    uint8_t bits = _Py_atomic_load_uint8_relaxed(&op->ob_gc_bits);
-    _Py_atomic_store_uint8_relaxed(&op->ob_gc_bits, bits | new_bits);
+    _Py_atomic_or_uint8(&op->ob_gc_bits, new_bits);
 }
 
 static inline int
@@ -60,19 +56,13 @@ _PyObject_HAS_GC_BITS(PyObject *op, uint8_t bits)
 static inline void
 _PyObject_CLEAR_GC_BITS(PyObject *op, uint8_t bits_to_clear)
 {
-    uint8_t bits = _Py_atomic_load_uint8_relaxed(&op->ob_gc_bits);
-    _Py_atomic_store_uint8_relaxed(&op->ob_gc_bits, bits & ~bits_to_clear);
+    _Py_atomic_and_uint8(&op->ob_gc_bits, (uint8_t)~bits_to_clear);
 }
 
 
 /* True if the object is currently tracked by the GC. */
 static inline int _PyObject_GC_IS_TRACKED(PyObject *op) {
-#ifdef Py_GIL_DISABLED
     return _PyObject_HAS_GC_BITS(op, _PyGC_BITS_TRACKED);
-#else
-    PyGC_Head *gc = _Py_AS_GC(op);
-    return (gc->_gc_next != 0);
-#endif
 }
 #define _PyObject_GC_IS_TRACKED(op) _PyObject_GC_IS_TRACKED(_Py_CAST(PyObject*, op))
 
@@ -109,8 +99,7 @@ static inline void _PyObject_GC_SET_SHARED(PyObject *op) {
 #endif
 
 /* Bit flags for _gc_prev */
-/* Bit 0 is set when tp_finalize is called */
-#define _PyGC_PREV_MASK_FINALIZED  ((uintptr_t)1)
+/* Bit 0 is reserved. Finalization state lives in ob_gc_bits. */
 /* Bit 1 is set when the object is in generation which is GCed currently. */
 #define _PyGC_PREV_MASK_COLLECTING ((uintptr_t)2)
 
@@ -160,28 +149,13 @@ static inline void _PyGCHead_SET_PREV(PyGC_Head *gc, PyGC_Head *prev) {
 }
 
 static inline int _PyGC_FINALIZED(PyObject *op) {
-#ifdef Py_GIL_DISABLED
     return _PyObject_HAS_GC_BITS(op, _PyGC_BITS_FINALIZED);
-#else
-    PyGC_Head *gc = _Py_AS_GC(op);
-    return ((gc->_gc_prev & _PyGC_PREV_MASK_FINALIZED) != 0);
-#endif
 }
 static inline void _PyGC_SET_FINALIZED(PyObject *op) {
-#ifdef Py_GIL_DISABLED
     _PyObject_SET_GC_BITS(op, _PyGC_BITS_FINALIZED);
-#else
-    PyGC_Head *gc = _Py_AS_GC(op);
-    gc->_gc_prev |= _PyGC_PREV_MASK_FINALIZED;
-#endif
 }
 static inline void _PyGC_CLEAR_FINALIZED(PyObject *op) {
-#ifdef Py_GIL_DISABLED
     _PyObject_CLEAR_GC_BITS(op, _PyGC_BITS_FINALIZED);
-#else
-    PyGC_Head *gc = _Py_AS_GC(op);
-    gc->_gc_prev &= ~_PyGC_PREV_MASK_FINALIZED;
-#endif
 }
 
 extern void _Py_ScheduleGC(PyThreadState *tstate);
@@ -210,9 +184,7 @@ static inline void _PyObject_GC_TRACK(
     _PyObject_ASSERT_FROM(op, !_PyObject_GC_IS_TRACKED(op),
                           "object already tracked by the garbage collector",
                           filename, lineno, __func__);
-#ifdef Py_GIL_DISABLED
-    _PyObject_SET_GC_BITS(op, _PyGC_BITS_TRACKED);
-#else
+#ifndef Py_GIL_DISABLED
     PyGC_Head *gc = _Py_AS_GC(op);
     _PyObject_ASSERT_FROM(op,
                           (gc->_gc_prev & _PyGC_PREV_MASK_COLLECTING) == 0,
@@ -228,12 +200,13 @@ static inline void _PyObject_GC_TRACK(
     generation0->_gc_prev = (uintptr_t)gc;
     gcstate->heap_size++;
 #endif
+    _PyObject_SET_GC_BITS(op, _PyGC_BITS_TRACKED);
 }
 
 /* Tell the GC to stop tracking this object.
  *
  * Internal note: This may be called while GC. So _PyGC_PREV_MASK_COLLECTING
- * must be cleared. But _PyGC_PREV_MASK_FINALIZED bit is kept.
+ * must be cleared. The finalized bit in ob_gc_bits is kept.
  *
  * The object must be tracked by the GC.
  *
@@ -251,19 +224,18 @@ static inline void _PyObject_GC_UNTRACK(
                           "object not tracked by the garbage collector",
                           filename, lineno, __func__);
 
-#ifdef Py_GIL_DISABLED
-    _PyObject_CLEAR_GC_BITS(op, _PyGC_BITS_TRACKED);
-#else
+#ifndef Py_GIL_DISABLED
     PyGC_Head *gc = _Py_AS_GC(op);
     PyGC_Head *prev = _PyGCHead_PREV(gc);
     PyGC_Head *next = _PyGCHead_NEXT(gc);
     _PyGCHead_SET_NEXT(prev, next);
     _PyGCHead_SET_PREV(next, prev);
     gc->_gc_next = 0;
-    gc->_gc_prev &= _PyGC_PREV_MASK_FINALIZED;
+    gc->_gc_prev = 0;
     struct _gc_runtime_state *gcstate = &_PyInterpreterState_GET()->gc;
     gcstate->heap_size--;
 #endif
+    _PyObject_CLEAR_GC_BITS(op, _PyGC_BITS_TRACKED);
 }
 
 

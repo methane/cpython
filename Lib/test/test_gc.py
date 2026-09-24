@@ -658,6 +658,37 @@ class GCTests(unittest.TestCase):
         lazarus = storage.pop()
         self.assertTrue(gc.is_finalized(lazarus))
 
+    @unittest.skipIf(_testcapi is None, "requires _testcapi")
+    def test_finalized_after_retracking(self):
+        for cyclic in (False, True):
+            with self.subTest(cyclic=cyclic):
+                storage = []
+                calls = []
+
+                class Lazarus:
+                    def __del__(self):
+                        calls.append(None)
+                        storage.append(self)
+
+                obj = Lazarus()
+                if cyclic:
+                    obj.loop = obj
+                _testcapi.gc_retrack(obj)
+                self.assertFalse(gc.is_finalized(obj))
+                del obj
+                gc.collect()
+                self.assertEqual(len(calls), 1)
+
+                obj = storage.pop()
+                ref = weakref.ref(obj)
+                _testcapi.gc_retrack(obj)
+                self.assertTrue(gc.is_finalized(obj))
+                del obj
+                gc.collect()
+                self.assertIsNone(ref())
+                self.assertEqual(len(calls), 1)
+                self.assertEqual(storage, [])
+
     def test_bug1055820b(self):
         # Corresponds to temp2b.py in the bug report.
 
