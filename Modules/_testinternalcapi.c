@@ -3553,6 +3553,57 @@ finalize_many_while_world_stopped(PyObject *self, PyObject *args)
     Py_RETURN_NONE;
 }
 
+/* Exercise distinct records, hash collisions and reserve reuse, rather than
+   only repeated finalizer requests for one object. */
+static PyObject *
+finalize_batch_while_world_stopped(PyObject *self, PyObject *args)
+{
+    PyObject *values;
+    Py_ssize_t repetitions;
+    int no_memory;
+    if (!PyArg_ParseTuple(args, "O!np", &PyTuple_Type, &values,
+                          &repetitions, &no_memory)) {
+        return NULL;
+    }
+    if (repetitions < 0) {
+        PyErr_SetString(PyExc_ValueError, "repetitions must be nonnegative");
+        return NULL;
+    }
+    Py_ssize_t count = PyTuple_GET_SIZE(values);
+    for (Py_ssize_t i = 0; i < count; i++) {
+        if (PyTuple_GetItem(values, i) == NULL) {
+            return NULL;
+        }
+    }
+    PyThreadState *tstate = _PyThreadState_GET();
+    PyMemAllocatorEx original;
+    PyMem_GetAllocator(PYMEM_DOMAIN_RAW, &original);
+    PyMemAllocatorEx failing = {
+        .ctx = &original,
+        .malloc = cleanup_fail_malloc,
+        .calloc = cleanup_fail_calloc,
+        .realloc = cleanup_fail_realloc,
+        .free = cleanup_allocator_free,
+    };
+    _PyEval_StopTheWorld(tstate->interp);
+    if (no_memory) {
+        PyMem_SetAllocator(PYMEM_DOMAIN_RAW, &failing);
+    }
+    for (Py_ssize_t j = 0; j < repetitions; j++) {
+        for (Py_ssize_t i = 0; i < count; i++) {
+            PyObject_CallFinalizer(PyTuple_GET_ITEM(values, i));
+        }
+    }
+    if (no_memory) {
+        PyMem_SetAllocator(PYMEM_DOMAIN_RAW, &original);
+    }
+    _PyEval_StartTheWorld(tstate->interp);
+    if (_PyEval_MakePendingCalls(tstate) < 0) {
+        return NULL;
+    }
+    Py_RETURN_NONE;
+}
+
 typedef struct {
     PyObject_HEAD
     PyObject *callback;
@@ -3865,6 +3916,7 @@ static PyMethodDef module_functions[] = {
     {"drop_many_while_world_stopped", drop_many_while_world_stopped, METH_O, NULL},
     {"finalize_while_world_stopped", finalize_while_world_stopped, METH_O, NULL},
     {"finalize_many_while_world_stopped", finalize_many_while_world_stopped, METH_VARARGS, NULL},
+    {"finalize_batch_while_world_stopped", finalize_batch_while_world_stopped, METH_VARARGS, NULL},
     {"make_nongc_finalizer", make_nongc_finalizer, METH_O, NULL},
     {"finalize_deferred_deallocation", finalize_deferred_deallocation, METH_O, NULL},
     {"finalize_while_world_stopped_nomemory", finalize_while_world_stopped_nomemory, METH_O, NULL},

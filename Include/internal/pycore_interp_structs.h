@@ -30,6 +30,29 @@ extern "C" {
 
 typedef int (*_Py_pending_call_func)(void *);
 
+/* Only objects awaiting cleanup during an internal world stop need a record.
+   The index includes records in batches already detached by a consumer. */
+#define _Py_DEFERRED_CLEANUP_BUCKETS 64
+#define _Py_DEFERRED_CLEANUP_RESERVE 64
+
+struct _PyDeferredCleanup {
+    PyObject *object;
+    struct _PyDeferredCleanup *next;
+    struct _PyDeferredCleanup *hash_next;
+    size_t finalizers;
+    int allocated;
+};
+
+struct _PyDeferredCleanupState {
+    PyMutex mutex;
+    struct _PyDeferredCleanup *pending;
+    Py_ssize_t count;
+    struct _PyDeferredCleanup *index[_Py_DEFERRED_CLEANUP_BUCKETS];
+    struct _PyDeferredCleanup *free;
+    int reserve_initialized;
+    struct _PyDeferredCleanup reserve[_Py_DEFERRED_CLEANUP_RESERVE];
+};
+
 struct _pending_call {
     _Py_pending_call_func func;
     void *arg;
@@ -915,9 +938,7 @@ struct _is {
     _PyThreadGroupState *threadgroups;
     PyMutex protective_mutexes_mutex;
     struct _PyProtectiveMutexState *protective_mutexes;
-    PyMutex deferred_cleanups_mutex;
-    PyObject *deferred_cleanups;
-    Py_ssize_t deferred_cleanup_count;
+    struct _PyDeferredCleanupState deferred_cleanups;
 
     uint64_t _code_object_generation;
 

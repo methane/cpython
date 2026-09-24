@@ -390,6 +390,44 @@ assert type_ref() is None
 """)
                     self.assertEqual(err, b'')
 
+    def test_deferred_finalizer_batches(self):
+        for nongc in (False, True):
+            for count, no_memory in ((1024, False), (64, True)):
+                with self.subTest(nongc=nongc, count=count, no_memory=no_memory):
+                    _, _, err = script_helper.assert_python_ok('-c', f"""
+import gc
+import sys
+import weakref
+import _testinternalcapi as internal
+observed = []
+def callback(value):
+    observed.append(id(value))
+class Payload:
+    __del__ = callback
+for _ in range(3):
+    if {nongc!r}:
+        values = tuple(internal.make_nongc_finalizer(callback)
+                       for _ in range({count}))
+        refs = [weakref.ref(type(value)) for value in values]
+    else:
+        values = tuple(Payload() for _ in range({count}))
+        refs = [weakref.ref(value) for value in values]
+    identities = [id(value) for value in values]
+    observed.clear()
+    with sys.monitoring.StopTheWorld:
+        internal.finalize_batch_while_world_stopped(values, 3, {no_memory!r})
+    repetitions = 3 if {nongc!r} else 1
+    assert sorted(observed) == sorted(identities * repetitions), len(observed)
+    del values
+    gc.collect()
+    assert all(ref() is None for ref in refs)
+    if {nongc!r}:
+        assert sorted(observed) == sorted(identities * 4), len(observed)
+    else:
+        assert sorted(observed) == sorted(identities), len(observed)
+""")
+                    self.assertEqual(err, b'')
+
     def test_deferred_gc_explicit_finalizer_many(self):
         _, _, err = script_helper.assert_python_ok('-c', """
 import gc

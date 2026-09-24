@@ -70,7 +70,7 @@ the GIL configuration is explicitly selected with `--enable-gil`.
 | Last LOCAL reference deleted by another thread in the same group | Finalizer before `after del` | Same | Repaired, including weakrefs and resurrection |
 | Last reference to a claimed LOCAL transfer | Finalizer before `after del` | Same | Creator's refcount bias retired before publication |
 | Acyclic LOCAL functions and descriptors, including removal from a class | Reclaimed without GC | Same | Automatic deferred counts and delayed class-attribute decrefs repaired |
-| Object header size | 56 bytes | 40 bytes | Compact representation unfinished; 24 bytes is illustrative |
+| Object header size | 40 bytes | 24 bytes | Cleanup fields removed; compact parallel refcount representation unfinished |
 | Buffer exporter tries to return a foreign memoryview | Buffer acquisition, join, concatenation and in-place concatenation raise IllegalThreadAccessException | Same | Exception propagation repaired |
 | Transfer an ordinary instance | Primitive attribute readable; `__dict__` denied | Same | Question 4 |
 | Rebind a read-only closure cell | Function changes SYNCHRONIZED to LOCAL | Same | Question 7 |
@@ -86,10 +86,10 @@ synchronous merging when the allocating thread belongs to the current locked
 group. The fast path remains OS-thread-biased. Global GIL acquisition is
 disabled by default and extension imports no longer enable it. The explicit
 `--enable-gil` comparison build retains ordinary reference counts and global
-serialization. The three cleanup fields remain in both headers
-(`Include/object.h`); they implement deferred cleanup, not biased reference
-counting. Mark's header-size and redundant-input-check comments remain only
-partially addressed.
+serialization. The three cleanup fields have been removed from both headers
+(`Include/object.h`) and replaced by interpreter-owned external records. They
+implement deferred cleanup, not biased reference counting. Compact refcount
+representation and the remaining redundant-input-check audit are unfinished.
 
 The input-check cleanup now covers bytearray, integer/float/complex and
 Unicode accessors as well as the earlier container and function APIs. Raw
@@ -1601,6 +1601,58 @@ lists, decoded text/state acquisition, initialization/reconfiguration coherence
 and callback/concurrent lifecycle transitions still need work before publishing
 shared standard streams. The general reference-lifetime question remains open.
 
+### External deferred-cleanup records
+
+The `ob_deferred_flags`, `ob_deferred_next` and `ob_deferred_finalizers` fields
+are removed from both object headers, along with their per-allocation
+initialization. Interpreter-owned records retain the queued reference, link
+and explicit finalizer count. A pointer index covers pending and detached
+batches: a callback can request finalization of an object whose record remains
+in another consumer's batch without losing or duplicating its reference.
+Records leave the index and release their storage before callbacks run.
+
+Records normally use the raw allocator, which is usable during mimalloc heap
+traversal. Each interpreter has 64 embedded reserve records for allocation
+failure. Requests already represented in the index only increment a count.
+If allocation fails and all reserve records are in use, the runtime reports a
+fatal error; neither running callbacks under world-stop locks nor silently
+dropping a requested cleanup is safe. This bounded fallback replaces the
+earlier self-imposed unbounded allocation-free guarantee. It is not claimed
+to settle the PEP's unspecified cleanup contract.
+
+The added batch test covers 1,024 distinct objects with ordinary allocation,
+64 distinct objects with raw allocation forced to fail, GC and non-GC
+finalizers, repeated explicit calls and three rounds of storage reuse. Existing
+tests still cover resurrection, weakref callbacks, detached-batch requests,
+native destructors, callback affinity and shutdown. No existing test is removed
+or relaxed. Size-test expectations now describe only the remaining owner/state
+metadata, preserving checks against actual native sizes.
+
+All three Linux/aarch64 debug builds were rebuilt, including their embedding
+executables and extension modules. Header size is 40 bytes in the default
+parallel build (previously 56) and 24 in both GIL comparison builds (previously
+40). Changed native and Python sources match across the three trees.
+Validation logs are under `/tmp/pep805-cleanup-side-table/`:
+
+* Default: 565 tests across eleven valid files, 45 skips, combining
+  `default-tests.log`, `default-extra.log` and `default-capi-gc.log`.
+  The first command additionally named two nonexistent modules
+  (`test_thread_sharing` and `test_capi.test_gc`); those collection errors are
+  not implementation failures. Its seven real files pass. The subsequent
+  commands cover `test_thread_shareable`, embedding, C API objects and the
+  free-threading GC suite.
+* GIL and Tier 2 interpreter: 559 tests each across ten files, 33 skips each,
+  in `gil-tests.log` and `tier2-tests.log`. The selection includes finalizer
+  access, GC, weakrefs, finalization, ThreadGroup, thread sharing, sys sizes,
+  C API memory/objects and embedding.
+* The seventeen deferred-finalizer tests pass `-R 3:3` in the default and GIL
+  builds, with one and nine skips respectively and no reported leaks.
+
+The default and GIL builds have no compiler warnings. The Tier 2 rebuild
+reports three unused-variable warnings in unchanged `executor_cases.c.h`.
+All builds report zero failed module imports; _decimal remains unavailable.
+Windows, native JIT and a new TraceRefs build were not validated in this change.
+
 ## Earlier re-review and implementation follow-ups
 
 One earlier question was incorrect: footnote 3 of the
@@ -1769,13 +1821,14 @@ acceptable or establishes that Mark's approval is needed for routine fixes.
    print(events)
    ```
 
-3. **Header size does not follow the appendix's compact-layout direction.**
-   Measured `object.__basicsize__` is 40 bytes in the GIL build and 56 bytes
-   in the free-threading build on this 64-bit host. The illustrative
+3. **Cleanup fields removed; compact parallel refcount layout remains.**
+   Moving deferred cleanup to interpreter-owned records reduces measured
+   `object.__basicsize__` from 40 to 24 bytes in the GIL build and from 56 to
+   40 bytes in the free-threading build on this 64-bit host. The illustrative
    [header](https://peps.python.org/pep-0805/appendix-implementation/#object-state)
    occupies 24 bytes with this ABI's usual layout. That exact layout is a
-   suggestion, not a mandatory ABI. Explaining the current three cleanup
-   fields does not justify their permanent cost or resolve Mark's concern.
+   suggestion, not a mandatory ABI. The specific cleanup-field overhead is
+   removed; the parallel build still retains PEP 703's refcount layout.
 
 4. **Sorting: element acquisition repaired; receiver lifetime still open.**
    At the current HEAD, sorting the foreign elements from a shallow
@@ -1983,8 +2036,9 @@ and objects whose lock wrapper has died?
 
 Separately, must repeated explicit non-GC `PyObject_CallFinalizer` requests
 during an internal world stop each be replayed, even under allocator failure?
-That is the current queue's self-imposed/tested guarantee
-(`Objects/object.c`), and it drove the three `ob_deferred_*` fields.
+That was the intrusive queue's self-imposed/tested guarantee
+(`Objects/object.c`), and it drove the three `ob_deferred_*` fields. The fields
+have since moved to external records with a bounded allocation-failure reserve.
 The PEP does not establish that guarantee. Please clarify whether it is part
 of the intended cleanup contract before we treat it as a requirement of the
 PEP. This does not block work on a smaller header: representations that

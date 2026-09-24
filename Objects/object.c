@@ -583,12 +583,47 @@ _PyObject_NewVar(PyTypeObject *tp, Py_ssize_t nitems)
 }
 
 /* Internal world stops may drop the last reference or request finalization
-   while callbacks cannot run.  This intrusive queue needs no allocation even
-   if the raw allocator is failing.  A queue reference keeps the object alive;
-   flags distinguish a queued tail from an unqueued object, and the count
-   preserves repeated explicit finalizer calls for non-GC types.  All three
-   fields are guarded by deferred_cleanups_mutex. */
-#define DEFERRED_QUEUED 1
+   while callbacks cannot run. Keep the records outside the object header:
+   ordinary objects pay no cleanup storage or initialization cost. A record
+   owns one reference, and counts explicit finalizer calls for non-GC types.
+   All record and index accesses are guarded by the cleanup mutex. */
+
+static struct _PyDeferredCleanup **
+deferred_cleanup_bucket(struct _PyDeferredCleanupState *state, PyObject *op)
+{
+    /* Discard alignment bits before selecting a bucket. */
+    size_t hash = (uintptr_t)op >> 4;
+    return &state->index[hash % _Py_DEFERRED_CLEANUP_BUCKETS];
+}
+
+static struct _PyDeferredCleanup *
+new_deferred_cleanup(struct _PyDeferredCleanupState *state)
+{
+    /* Raw allocation is required while GC can be traversing mimalloc heaps.
+       The embedded reserve also permits cleanup when the raw allocator fails.
+       Repeated requests for an indexed object need no new record. */
+    struct _PyDeferredCleanup *entry = PyMem_RawMalloc(sizeof(*entry));
+    if (entry != NULL) {
+        entry->allocated = 1;
+        return entry;
+    }
+    if (!state->reserve_initialized) {
+        for (size_t i = 0; i < Py_ARRAY_LENGTH(state->reserve); i++) {
+            state->reserve[i].next = state->free;
+            state->free = &state->reserve[i];
+        }
+        state->reserve_initialized = 1;
+    }
+    entry = state->free;
+    if (entry == NULL) {
+        /* A void deallocator cannot report MemoryError, and callbacks cannot
+           run under the internal locks held by the world-stop caller. */
+        Py_FatalError("out of memory queuing deferred object cleanup");
+    }
+    state->free = entry->next;
+    entry->allocated = 0;
+    return entry;
+}
 
 static int
 finalizer_world_stopped(PyThreadState *tstate)
@@ -599,13 +634,14 @@ finalizer_world_stopped(PyThreadState *tstate)
 int
 _PyObject_HasDeferredCleanup(PyInterpreterState *interp)
 {
-    return _Py_atomic_load_ssize(&interp->deferred_cleanup_count) != 0;
+    return _Py_atomic_load_ssize(&interp->deferred_cleanups.count) != 0;
 }
 
 static void
 defer_object_cleanup(PyThreadState *tstate, PyObject *op, int deallocate)
 {
     PyInterpreterState *interp = tstate->interp;
+    struct _PyDeferredCleanupState *state = &interp->deferred_cleanups;
     if (deallocate) {
         assert(Py_REFCNT(op) == 0);
 #ifdef Py_TRACE_REFS
@@ -620,8 +656,13 @@ defer_object_cleanup(PyThreadState *tstate, PyObject *op, int deallocate)
         (void)_Py_ExplicitMergeRefcount(op, 0);
 #endif
     }
-    PyMutex_LockFlags(&interp->deferred_cleanups_mutex, 0);
-    if (op->ob_deferred_flags & DEFERRED_QUEUED) {
+    PyMutex_LockFlags(&state->mutex, 0);
+    struct _PyDeferredCleanup **bucket = deferred_cleanup_bucket(state, op);
+    struct _PyDeferredCleanup *entry = *bucket;
+    while (entry != NULL && entry->object != op) {
+        entry = entry->hash_next;
+    }
+    if (entry != NULL) {
         /* A weak reference may have revived an object awaiting deallocation.
            An explicit finalization request must run even if that new owner
            keeps the object alive past this checkpoint. */
@@ -629,55 +670,73 @@ defer_object_cleanup(PyThreadState *tstate, PyObject *op, int deallocate)
         /* Keep the existing queue reference and link. */
     }
     else {
+        entry = new_deferred_cleanup(state);
         if (!deallocate) {
             Py_INCREF(op);
         }
-        assert(op->ob_deferred_finalizers == 0);
-        op->ob_deferred_flags = DEFERRED_QUEUED;
-        op->ob_deferred_next = interp->deferred_cleanups;
-        interp->deferred_cleanups = op;
-        _Py_atomic_add_ssize(&interp->deferred_cleanup_count, 1);
+        entry->object = op;
+        entry->finalizers = 0;
+        entry->next = state->pending;
+        state->pending = entry;
+        entry->hash_next = *bucket;
+        *bucket = entry;
+        _Py_atomic_add_ssize(&state->count, 1);
     }
     if (!deallocate) {
         /* GC callers already deduplicate requests using the finalized bit.
            Non-GC types must retain every explicit call, including repeated
            requests made during the same internal stop. */
-        if (op->ob_deferred_finalizers == SIZE_MAX) {
+        if (entry->finalizers == SIZE_MAX) {
             Py_FatalError("deferred finalizer count overflow");
         }
-        op->ob_deferred_finalizers++;
+        entry->finalizers++;
     }
-    PyMutex_Unlock(&interp->deferred_cleanups_mutex);
+    PyMutex_Unlock(&state->mutex);
     /* HEAD_LOCK may already be held here. The world-start wrapper signals
        all threads after releasing internal locks. */
     _Py_set_eval_breaker_bit(tstate, _PY_CALLS_TO_DO_BIT);
 }
 
-static PyObject *
+static struct _PyDeferredCleanup *
 take_deferred_cleanups(PyInterpreterState *interp)
 {
-    PyMutex_LockFlags(&interp->deferred_cleanups_mutex, 0);
-    PyObject *objects = interp->deferred_cleanups;
-    interp->deferred_cleanups = NULL;
-    _Py_atomic_store_ssize(&interp->deferred_cleanup_count, 0);
-    PyMutex_Unlock(&interp->deferred_cleanups_mutex);
-    return objects;
+    struct _PyDeferredCleanupState *state = &interp->deferred_cleanups;
+    PyMutex_LockFlags(&state->mutex, 0);
+    struct _PyDeferredCleanup *entries = state->pending;
+    state->pending = NULL;
+    _Py_atomic_store_ssize(&state->count, 0);
+    PyMutex_Unlock(&state->mutex);
+    return entries;
 }
 
 static void
-release_deferred_cleanups(PyInterpreterState *interp, PyObject *objects,
+release_deferred_cleanups(PyInterpreterState *interp,
+                          struct _PyDeferredCleanup *entries,
                           int run_finalizers)
 {
-    while (objects != NULL) {
-        PyObject *op = objects;
-        PyMutex_LockFlags(&interp->deferred_cleanups_mutex, 0);
-        objects = op->ob_deferred_next;
-        size_t finalizers = op->ob_deferred_finalizers;
-        assert(op->ob_deferred_flags & DEFERRED_QUEUED);
-        op->ob_deferred_next = NULL;
-        op->ob_deferred_flags = 0;
-        op->ob_deferred_finalizers = 0;
-        PyMutex_Unlock(&interp->deferred_cleanups_mutex);
+    struct _PyDeferredCleanupState *state = &interp->deferred_cleanups;
+    while (entries != NULL) {
+        struct _PyDeferredCleanup *entry = entries;
+        PyMutex_LockFlags(&state->mutex, 0);
+        entries = entry->next;
+        PyObject *op = entry->object;
+        size_t finalizers = entry->finalizers;
+        struct _PyDeferredCleanup **bucket = deferred_cleanup_bucket(state, op);
+        while (*bucket != entry) {
+            assert(*bucket != NULL);
+            bucket = &(*bucket)->hash_next;
+        }
+        *bucket = entry->hash_next;
+        int allocated = entry->allocated;
+        if (!allocated) {
+            entry->object = NULL;
+            entry->next = state->free;
+            state->free = entry;
+        }
+        PyMutex_Unlock(&state->mutex);
+        if (allocated) {
+            PyMem_RawFree(entry);
+        }
         if (run_finalizers) {
             /* For GC types the original caller already set the finalized bit.
                Non-GC types do not have that bit and may have multiple calls. */
@@ -696,9 +755,9 @@ _PyObject_RunDeferredCleanup(PyThreadState *tstate)
         finalizer_world_stopped(tstate)) {
         return 0;
     }
-    PyObject *objects = take_deferred_cleanups(tstate->interp);
-    int ran = objects != NULL;
-    release_deferred_cleanups(tstate->interp, objects, 1);
+    struct _PyDeferredCleanup *entries = take_deferred_cleanups(tstate->interp);
+    int ran = entries != NULL;
+    release_deferred_cleanups(tstate->interp, entries, 1);
     return ran;
 }
 
@@ -709,11 +768,11 @@ _PyObject_ClearDeferredCleanup(PyInterpreterState *interp)
        cancels residual finalizer-only callbacks; deallocation records still
        have to release their retained objects through the normal deallocator. */
     for (;;) {
-        PyObject *objects = take_deferred_cleanups(interp);
-        if (objects == NULL) {
+        struct _PyDeferredCleanup *entries = take_deferred_cleanups(interp);
+        if (entries == NULL) {
             break;
         }
-        release_deferred_cleanups(interp, objects, 0);
+        release_deferred_cleanups(interp, entries, 0);
         /* Releasing the retained objects can enqueue more cleanup work. */
     }
 }
@@ -3340,9 +3399,6 @@ _PyObject_SetShareable(PyObject *op, PyObject *value, void *closure)
 static inline void
 new_reference(PyObject *op)
 {
-    op->ob_deferred_flags = 0;
-    op->ob_deferred_next = NULL;
-    op->ob_deferred_finalizers = 0;
     init_shareable(op);
     // Skip the immortal object check in Py_SET_REFCNT; always set refcnt to 1
 #if !defined(Py_GIL_DISABLED)
