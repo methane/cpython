@@ -59,7 +59,7 @@ PyCell_Get(PyObject *op)
         PyErr_BadInternalCall();
         return NULL;
     }
-    return PyCell_GetRef((PyCellObject *)op);
+    return _PyObject_CheckAccessNullable(PyCell_GetRef((PyCellObject *)op));
 }
 
 int

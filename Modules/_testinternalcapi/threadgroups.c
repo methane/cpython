@@ -663,7 +663,7 @@ static const char *return_apis[] = {
     "PyMapping_GetOptionalItem", "PyIter_Next", "PyIter_NextItem", "PyIter_Send",
     "PyObject_CallNoArgs", "PyObject_GetAttr", "PyObject_GetAttrString",
     "PyObject_GetOptionalAttr", "PyObject_GetOptionalAttrString",
-    "PyObject_GenericGetAttr", NULL,
+    "PyObject_GenericGetAttr", "PyCell_Get", NULL,
 };
 
 struct return_probe {
@@ -777,6 +777,13 @@ return_probe_worker(void *arg)
             }
             result = PyObject_CallNoArgs(func);
             break;
+        case 20:
+            box = PyCell_New(value);
+            if (box == NULL) {
+                goto done;
+            }
+            result = PyCell_Get(box);
+            break;
         default:
             box = make_return_box(value);
             if (box == NULL) {
@@ -862,7 +869,150 @@ threadgroup_return_probe(PyObject *self, PyObject *args)
     return PyBool_FromLong(probe.base.accessible);
 }
 
+/* Execute shared immutable code using functions and namespaces created by the
+   worker. No LOCAL Python callable is transferred between ThreadGroups. */
+struct vm_probe {
+    struct access_probe base;
+    PyObject *code;
+    int warmups;
+};
+
+static int
+set_vm_probe_values(PyObject *globals, PyObject *builtins, PyObject *cell,
+                    PyObject *source)
+{
+    PyObject *value = PyTuple_GET_ITEM(source, 0);  // Raw heap reference.
+    PyObject *items = PySequence_List(source);
+    PyObject *mapping = PyDict_New();
+    int ok = items != NULL && mapping != NULL &&
+        PyDict_SetItemString(mapping, "value", value) == 0 &&
+        PyDict_SetItemString(globals, "value", value) == 0 &&
+        PyDict_SetItemString(globals, "source", source) == 0 &&
+        PyDict_SetItemString(globals, "items", items) == 0 &&
+        PyDict_SetItemString(globals, "mapping", mapping) == 0 &&
+        PyDict_SetItemString(builtins, "builtin_value", value) == 0 &&
+        PyCell_Set(cell, value) == 0;
+    Py_XDECREF(mapping);
+    Py_XDECREF(items);
+    return ok ? 0 : -1;
+}
+
+static void
+vm_probe_worker(void *arg)
+{
+    struct vm_probe *probe = arg;
+    PyThreadState *tstate = PyThreadState_New(probe->base.interp);
+    if (tstate == NULL) {
+        return;
+    }
+    _PyThreadGroup_Decref(tstate->threadgroup);
+    tstate->threadgroup = probe->base.group;
+    _PyThreadGroup_Incref(tstate->threadgroup);
+    PyEval_AcquireThread(tstate);
+
+    PyObject *source = probe->base.value;
+    probe->base.accessible = PyObject_IsAccessible(PyTuple_GET_ITEM(source, 0));
+    PyObject *globals = PyDict_New();
+    PyObject *builtins = PyDict_New();
+    PyObject *cell = PyCell_New(NULL);
+    PyObject *func = NULL, *closure = NULL, *warm = NULL, *result = NULL;
+    if (globals == NULL || builtins == NULL || cell == NULL ||
+        PyDict_SetItemString(globals, "__builtins__", builtins) < 0) {
+        goto done;
+    }
+    int is_function = ((PyCodeObject *)probe->code)->co_flags & CO_NEWLOCALS;
+    if (is_function) {
+        func = PyFunction_New(probe->code, globals);
+        if (func == NULL) {
+            goto done;
+        }
+        if (((PyCodeObject *)probe->code)->co_nfreevars) {
+            closure = PyTuple_Pack(1, cell);
+            if (closure == NULL || PyFunction_SetClosure(func, closure) < 0) {
+                goto done;
+            }
+        }
+    }
+    warm = PyTuple_Pack(3, Py_None, Py_None, Py_None);
+    if (warm == NULL || set_vm_probe_values(globals, builtins, cell, warm) < 0) {
+        goto done;
+    }
+    for (int i = 0; i < probe->warmups; i++) {
+        result = is_function ? PyObject_CallNoArgs(func) :
+            PyEval_EvalCode(probe->code, globals, globals);
+        if (result == NULL) {
+            goto done;
+        }
+        Py_CLEAR(result);
+    }
+    if (set_vm_probe_values(globals, builtins, cell, source) < 0) {
+        goto done;
+    }
+    result = is_function ? PyObject_CallNoArgs(func) :
+        PyEval_EvalCode(probe->code, globals, globals);
+    if (probe->base.accessible) {
+        // Test code consumes acquired values and returns only a primitive.
+        probe->base.ok = result != NULL &&
+            (result == Py_None || PyBool_Check(result)) && !PyErr_Occurred();
+    }
+    else {
+        probe->base.ok = result == NULL &&
+            PyErr_ExceptionMatches(PyExc_IllegalThreadAccessException);
+    }
+done:
+    PyErr_Clear();
+    Py_XDECREF(result);
+    Py_XDECREF(warm);
+    Py_XDECREF(closure);
+    Py_XDECREF(func);
+    Py_XDECREF(cell);
+    Py_XDECREF(builtins);
+    Py_XDECREF(globals);
+    PyThreadState_Clear(tstate);
+    PyThreadState_DeleteCurrent();
+}
+
+static PyObject *
+threadgroup_vm_probe(PyObject *self, PyObject *args)
+{
+    PyObject *group, *source, *code;
+    int warmups;
+    if (!PyArg_ParseTuple(args, "O!OO!i:threadgroup_vm_probe", &PyCode_Type,
+                          &code, &group, &PyTuple_Type, &source, &warmups)) {
+        return NULL;
+    }
+    if (PyTuple_GET_SIZE(source) != 3 || warmups < 0 || warmups > 1000 ||
+        ((PyCodeObject *)code)->co_argcount != 0 ||
+        ((PyCodeObject *)code)->co_nfreevars > 1) {
+        return PyErr_Format(PyExc_ValueError, "invalid VM probe arguments");
+    }
+    _PyThreadGroupState *state = _PyThreadGroup_GetState(group);
+    if (state == NULL) {
+        return NULL;
+    }
+    struct vm_probe probe = {
+        .base = {.interp = PyInterpreterState_Get(), .group = state, .value = source},
+        .code = code,
+        .warmups = warmups,
+    };
+    PyThread_ident_t ident;
+    PyThread_handle_t handle;
+    if (PyThread_start_joinable_thread(vm_probe_worker, &probe, &ident, &handle) != 0) {
+        _PyThreadGroup_Decref(state);
+        return PyErr_Format(PyExc_RuntimeError, "failed to start VM probe");
+    }
+    Py_BEGIN_ALLOW_THREADS
+    PyThread_join_thread(handle);
+    Py_END_ALLOW_THREADS
+    _PyThreadGroup_Decref(state);
+    if (!probe.base.ok) {
+        return PyErr_Format(PyExc_AssertionError, "VM reference acquisition probe failed");
+    }
+    return PyBool_FromLong(probe.base.accessible);
+}
+
 static PyMethodDef methods[] = {
+    {"threadgroup_vm_probe", threadgroup_vm_probe, METH_VARARGS, NULL},
     {"threadgroup_return_probe", threadgroup_return_probe, METH_VARARGS, NULL},
     {"test_static_immutable_access", test_static_immutable_access, METH_NOARGS, NULL},
     {"threadgroup_access_probe", threadgroup_access_probe, METH_VARARGS, NULL},

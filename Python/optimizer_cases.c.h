@@ -87,6 +87,10 @@
             break;
         }
 
+        case _CHECK_ACCESS: {
+            break;
+        }
+
         case _LOAD_SMALL_INT: {
             JitOptRef value;
             PyObject *val = PyLong_FromLong(oparg);
@@ -2045,6 +2049,10 @@
             break;
         }
 
+        case _CHECK_UNPACK_ACCESS: {
+            break;
+        }
+
         case _UNPACK_SEQUENCE_TWO_TUPLE: {
             JitOptRef seq;
             JitOptRef val1;
@@ -2340,12 +2348,7 @@
             break;
         }
 
-        case _LOAD_FROM_DICT_OR_DEREF: {
-            JitOptRef value;
-            value = sym_new_not_null(ctx);
-            stack_pointer[-1] = value;
-            break;
-        }
+        /* _LOAD_FROM_DICT_OR_DEREF is not a viable micro-op for tier 2 */
 
         case _LOAD_DEREF: {
             JitOptRef value;

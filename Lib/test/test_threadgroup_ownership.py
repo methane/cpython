@@ -1,11 +1,13 @@
 """LOCAL/IMMUTABLE reference acquisition from native ThreadGroup workers."""
 
 import datetime
+import dis
 import sys
+import textwrap
 import threading
 import unittest
 
-from test.support import import_helper, threading_helper
+from test.support import import_helper, requires_specialization, threading_helper
 
 internal = import_helper.import_module('_testinternalcapi')
 threading_helper.requires_working_threading(module=True)
@@ -35,6 +37,7 @@ class OwnershipTests(unittest.TestCase):
         for value in (None, True, False, Ellipsis, NotImplemented, 42,
                       12345678901234567890, 1.5, 2j, 'immutable', b'immutable',
                       (), ([],), frozenset(), frozendict({0: []}), range(3),
+                      slice(2), slice([], None),
                       compile('pass', 'immutable-code', 'exec'),
                       int, object, type, list, ValueError,
                       threading.ThreadGroup(), sys.main_thread_group):
@@ -65,6 +68,7 @@ class OwnershipTests(unittest.TestCase):
             'PyIter_Send', 'PyObject_CallNoArgs', 'PyObject_GetAttr',
             'PyObject_GetAttrString', 'PyObject_GetOptionalAttr',
             'PyObject_GetOptionalAttrString', 'PyObject_GenericGetAttr',
+            'PyCell_Get',
         )
 
         class Value:
@@ -80,6 +84,92 @@ class OwnershipTests(unittest.TestCase):
                             source, group, api)
                         self.assertIs(accessible,
                                       immutable or group is sys.main_thread_group)
+
+    def check_vm_code(self, code, warmups, specialized=None):
+        for value, immutable in ((object(), False), (42, True)):
+            for group in (sys.main_thread_group, self.foreign):
+                with self.subTest(immutable=immutable, group=group):
+                    probe_code = code.replace()
+                    self.assertIs(internal.threadgroup_vm_probe(
+                        probe_code, group, (value, None, None), warmups),
+                        immutable or group is sys.main_thread_group)
+                    if specialized is not None:
+                        self.assertIn(specialized, {
+                            i.opname for i in dis.get_instructions(
+                                probe_code, adaptive=True)})
+
+    def test_vm_heap_loads(self):
+        cases = {
+            'global': 'return value is None',
+            'builtin': 'return builtin_value is None',
+            'tuple_item': 'return source[0] is None',
+            'tuple_negative_item': 'return source[-3] is None',
+            'list_item': 'return items[0] is None',
+            'dict_item': "return mapping['value'] is None",
+            'unpack_two': 'a, b = source[:2]\nreturn a is None',
+            'unpack_tuple': 'a, b, c = source\nreturn a is None',
+            'unpack_list': 'a, b, c = items\nreturn a is None',
+            'unpack_last': 'a, b, c = source[::-1]\nreturn c is None',
+            'unpack_ex_first': 'a, *rest = source\nreturn a is None',
+            'unpack_ex_last': '*rest, z = source[::-1]\nreturn z is None',
+            'for_tuple': 'for item in source:\n    pass',
+            'for_list': 'for item in items:\n    pass',
+            'for_iterator': 'for item in source.__iter__():\n    pass',
+            'for_generator': 'for item in (x for x in source):\n    pass',
+        }
+        for name, body in cases.items():
+            for warmups in (0, 64):
+                with self.subTest(case=name, warmups=warmups):
+                    namespace = {}
+                    exec('def probe():\n' + textwrap.indent(body, '    '), namespace)
+                    self.check_vm_code(namespace['probe'].__code__, warmups)
+
+    @requires_specialization
+    def test_vm_specialized_heap_loads(self):
+        cases = (
+            ('return source[0] is None', 'BINARY_OP_SUBSCR_TUPLE_INT'),
+            ('return items[0] is None', 'BINARY_OP_SUBSCR_LIST_INT'),
+            ("return mapping['value'] is None", 'BINARY_OP_SUBSCR_DICT'),
+            ('a, b = source[:2]\nreturn a is None', 'UNPACK_SEQUENCE_TWO_TUPLE'),
+            ('a, b, c = source\nreturn a is None', 'UNPACK_SEQUENCE_TUPLE'),
+            ('a, b, c = items\nreturn a is None', 'UNPACK_SEQUENCE_LIST'),
+            ('for item in source:\n    pass', 'FOR_ITER_TUPLE'),
+            ('for item in items:\n    pass', 'FOR_ITER_LIST'),
+        )
+        for body, opcode in cases:
+            with self.subTest(opcode=opcode):
+                namespace = {}
+                exec('def probe():\n' + textwrap.indent(body, '    '), namespace)
+                self.check_vm_code(namespace['probe'].__code__, 64, opcode)
+
+    def test_vm_name_load(self):
+        self.check_vm_code(compile('value is None', '<probe>', 'exec'), 0)
+
+    def test_vm_cell_load(self):
+        value = None
+
+        def probe():
+            return value is None
+
+        for warmups in (0, 64):
+            with self.subTest(warmups=warmups):
+                self.check_vm_code(probe.__code__, warmups)
+
+    def test_vm_constant_load(self):
+        def probe():
+            constant = 'constant'
+            return constant is None
+
+        self.assertIn('LOAD_CONST', {i.opname for i in dis.get_instructions(probe)})
+        for value, immutable in ((object(), False), (42, True)):
+            code = probe.__code__.replace(co_consts=tuple(
+                value if item == 'constant' else item
+                for item in probe.__code__.co_consts))
+            for group in (sys.main_thread_group, self.foreign):
+                with self.subTest(immutable=immutable, group=group):
+                    self.assertIs(internal.threadgroup_vm_probe(
+                        code, group, (value, None, None), 0),
+                        immutable or group is sys.main_thread_group)
 
 
 if __name__ == '__main__':

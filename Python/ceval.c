@@ -2435,6 +2435,12 @@ _PyEval_UnpackIterableStackRef(PyThreadState *tstate, PyObject *v,
         goto Error;
     }
 
+    for (j = argcntafter; j > 0; j--) {
+        if (PyObject_CheckAccess(PyList_GET_ITEM(l, ll - j)) == NULL) {
+            goto Error;
+        }
+    }
+
     /* Pop the "after-variable" args off the list. */
     for (j = argcntafter; j > 0; j--, i++) {
         *--sp = PyStackRef_FromPyObjectSteal(PyList_GET_ITEM(l, ll - j));
@@ -3685,8 +3691,14 @@ _PyEval_LoadGlobalStackRef(PyObject *globals, PyObject *builtins, PyObject *name
     }
 
     PyObject *res_o = PyStackRef_AsPyObjectBorrow(*writeto);
+    if (res_o != NULL && PyObject_CheckAccess(res_o) == NULL) {
+        PyStackRef_CLOSE(*writeto);
+        *writeto = PyStackRef_NULL;
+        return;
+    }
     if (res_o != NULL && PyLazyImport_CheckExact(res_o)) {
-        PyObject *l_v = _PyImport_LoadLazyImportTstate(PyThreadState_GET(), res_o);
+        PyObject *l_v = _PyObject_CheckAccessNullable(
+            _PyImport_LoadLazyImportTstate(PyThreadState_GET(), res_o));
         PyStackRef_CLOSE(writeto[0]);
         if (l_v == NULL) {
             assert(PyErr_Occurred());
@@ -3773,10 +3785,15 @@ _PyStackRef _PyForIter_VirtualIteratorNext(PyThreadState* tstate, _PyInterpreter
         if (next == NULL) {
             return i < 0 ? PyStackRef_ERROR : PyStackRef_NULL;
         }
+        next = _PyObject_CheckAccessNullable(next);
+        if (next == NULL) {
+            return PyStackRef_ERROR;
+        }
         *index_ptr = PyStackRef_TagInt(i);
         return PyStackRef_FromPyObjectSteal(next);
     }
-    PyObject *next = (*Py_TYPE(iter_o)->tp_iternext)(iter_o);
+    PyObject *next = _PyObject_CheckAccessNullable(
+        (*Py_TYPE(iter_o)->tp_iternext)(iter_o));
     if (next == NULL) {
         if (_PyErr_Occurred(tstate)) {
             if (_PyErr_ExceptionMatches(tstate, PyExc_StopIteration)) {

@@ -14,7 +14,7 @@ The five-stage implementation is **not complete**.
 | ThreadGroups | Group selection, serialization, detach/reattach, native identity, fork and Main lifetime | Parallel execution in the normal build |
 | One-time ABI change | Compact owner/state and group-biased RC header; no cleanup queue fields | Complete the allocation/GC port and audit native layouts |
 | Biased and deferred reference counting | Group bias, per-thread code counts, deferred stack roots and normal GC integration | Queue collection and reclamation with concurrent groups |
-| LOCAL and IMMUTABLE ownership | Builtin/static metadata, access APIs and common C API return checks; ordinary LOCAL objects retain immediate reclamation | Complete C API/VM acquisitions and resolve shared static extension types |
+| LOCAL and IMMUTABLE ownership | Builtin/static metadata, common C API returns and VM constant/global/cell/container/iterator loads | Complete remaining API, attribute and callable acquisitions; resolve shared static extension types |
 | Parallel allocation and cyclic GC | Normal generational collector understands biased, deferred and per-thread counts | Concurrent allocation, internal world stops, owner-correct finalization and teardown |
 
 Freezing, protective/compound locks, synchronized objects and functions,
@@ -105,7 +105,16 @@ Parallel scheduling tests remain skipped while the interpreter GIL is enabled.
   probes, abstract/object/dict/list/tuple APIs, calls, embedding and interpreters
   (12 skips). The probes cover 20 APIs with both LOCAL and IMMUTABLE results,
   within and across groups. Ownership/object/dict tests also pass `-R 3:3`
-  (55 tests, 3 skips). These checks do not yet cover all VM heap loads.
+  (55 tests, 3 skips).
+- VM heap loads: 506 tests passed across ownership, specialization, unpacking,
+  iteration, generators, coroutines, GC, ThreadGroups, embedding and evaluation
+  APIs (9 skips). Native workers construct their own LOCAL functions and
+  namespaces from shared code. Tests consume acquired values before returning
+  primitives and verify eight specialized instructions as well as cold paths.
+  The ownership suite, now also covering `PyCell_Get`, passes `-R 3:3` (11 tests).
+  All acquisition guards publish stack roots before raising, so rejected values
+  are released by normal exception cleanup. Attribute and callable acquisition
+  paths still need further work.
 - A separate non-debug build (`./configure`, `Py_GIL_DISABLED=0`, `Py_DEBUG=0`,
   empty ABI flags, interpreter GIL enabled) passes 782 tests across
   `test_threadgroup`, `test_local_reclamation`, `test_deferred_reclamation`,

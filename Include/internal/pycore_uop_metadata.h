@@ -60,6 +60,7 @@ const uint32_t _PyUop_Flags[MAX_UOP_ID+1] = {
     [_LOAD_FAST_BORROW] = HAS_ARG_FLAG | HAS_LOCAL_FLAG | HAS_PURE_FLAG,
     [_LOAD_FAST_AND_CLEAR] = HAS_ARG_FLAG | HAS_LOCAL_FLAG,
     [_LOAD_CONST] = HAS_ARG_FLAG | HAS_CONST_FLAG,
+    [_CHECK_ACCESS] = HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG,
     [_LOAD_SMALL_INT_0] = 0,
     [_LOAD_SMALL_INT_1] = 0,
     [_LOAD_SMALL_INT_2] = 0,
@@ -171,7 +172,7 @@ const uint32_t _PyUop_Flags[MAX_UOP_ID+1] = {
     [_SEND_GEN_FRAME] = HAS_ARG_FLAG | HAS_EXIT_FLAG,
     [_GUARD_TOS_IS_NONE] = HAS_EXIT_FLAG,
     [_GUARD_NOS_NOT_NULL] = HAS_EXIT_FLAG,
-    [_SEND_VIRTUAL_TIER_TWO] = HAS_EXIT_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG,
+    [_SEND_VIRTUAL_TIER_TWO] = HAS_EXIT_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG,
     [_GUARD_3OS_ASYNC_GEN_ASEND] = HAS_EXIT_FLAG,
     [_SEND_ASYNC_GEN_TIER_TWO] = HAS_EXIT_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG,
     [_YIELD_VALUE] = HAS_ARG_FLAG | HAS_ESCAPES_FLAG | HAS_SYNC_SP_FLAG | HAS_NEEDS_GUARD_IP_FLAG,
@@ -180,6 +181,7 @@ const uint32_t _PyUop_Flags[MAX_UOP_ID+1] = {
     [_LOAD_BUILD_CLASS] = HAS_ERROR_FLAG | HAS_ESCAPES_FLAG,
     [_STORE_NAME] = HAS_ARG_FLAG | HAS_NAME_FLAG | HAS_ERROR_FLAG | HAS_ESCAPES_FLAG,
     [_UNPACK_SEQUENCE] = HAS_ARG_FLAG | HAS_ERROR_FLAG | HAS_ESCAPES_FLAG,
+    [_CHECK_UNPACK_ACCESS] = HAS_ARG_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG,
     [_UNPACK_SEQUENCE_TWO_TUPLE] = HAS_ARG_FLAG | HAS_EXIT_FLAG | HAS_ESCAPES_FLAG,
     [_UNPACK_SEQUENCE_UNIQUE_TWO_TUPLE] = 0,
     [_UNPACK_SEQUENCE_UNIQUE_THREE_TUPLE] = 0,
@@ -199,7 +201,6 @@ const uint32_t _PyUop_Flags[MAX_UOP_ID+1] = {
     [_DELETE_FAST] = HAS_ARG_FLAG | HAS_LOCAL_FLAG | HAS_ERROR_FLAG | HAS_ESCAPES_FLAG,
     [_MAKE_CELL] = HAS_ARG_FLAG | HAS_FREE_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG,
     [_DELETE_DEREF] = HAS_ARG_FLAG | HAS_FREE_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG,
-    [_LOAD_FROM_DICT_OR_DEREF] = HAS_ARG_FLAG | HAS_FREE_FLAG | HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG,
     [_LOAD_DEREF] = HAS_ARG_FLAG | HAS_FREE_FLAG | HAS_ERROR_FLAG | HAS_ESCAPES_FLAG,
     [_STORE_DEREF] = HAS_ARG_FLAG | HAS_FREE_FLAG | HAS_ESCAPES_FLAG,
     [_COPY_FREE_VARS] = HAS_ARG_FLAG,
@@ -667,6 +668,15 @@ const _PyUopCachingInfo _PyUop_Caching[MAX_UOP_ID+1] = {
             { 1, 0, _LOAD_CONST_r01 },
             { 2, 1, _LOAD_CONST_r12 },
             { 3, 2, _LOAD_CONST_r23 },
+            { -1, -1, -1 },
+        },
+    },
+    [_CHECK_ACCESS] = {
+        .best = { 1, 1, 1, 1 },
+        .entries = {
+            { -1, -1, -1 },
+            { 1, 1, _CHECK_ACCESS_r11 },
+            { -1, -1, -1 },
             { -1, -1, -1 },
         },
     },
@@ -1670,11 +1680,11 @@ const _PyUopCachingInfo _PyUop_Caching[MAX_UOP_ID+1] = {
         },
     },
     [_SEND_VIRTUAL_TIER_TWO] = {
-        .best = { 0, 1, 2, 3 },
+        .best = { 3, 3, 3, 3 },
         .entries = {
-            { 3, 0, _SEND_VIRTUAL_TIER_TWO_r03 },
-            { 3, 1, _SEND_VIRTUAL_TIER_TWO_r13 },
-            { 3, 2, _SEND_VIRTUAL_TIER_TWO_r23 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
             { 3, 3, _SEND_VIRTUAL_TIER_TWO_r33 },
         },
     },
@@ -1746,6 +1756,15 @@ const _PyUopCachingInfo _PyUop_Caching[MAX_UOP_ID+1] = {
         .entries = {
             { -1, -1, -1 },
             { 0, 1, _UNPACK_SEQUENCE_r10 },
+            { -1, -1, -1 },
+            { -1, -1, -1 },
+        },
+    },
+    [_CHECK_UNPACK_ACCESS] = {
+        .best = { 0, 0, 0, 0 },
+        .entries = {
+            { 0, 0, _CHECK_UNPACK_ACCESS_r00 },
+            { -1, -1, -1 },
             { -1, -1, -1 },
             { -1, -1, -1 },
         },
@@ -1917,15 +1936,6 @@ const _PyUopCachingInfo _PyUop_Caching[MAX_UOP_ID+1] = {
         .entries = {
             { 0, 0, _DELETE_DEREF_r00 },
             { -1, -1, -1 },
-            { -1, -1, -1 },
-            { -1, -1, -1 },
-        },
-    },
-    [_LOAD_FROM_DICT_OR_DEREF] = {
-        .best = { 1, 1, 1, 1 },
-        .entries = {
-            { -1, -1, -1 },
-            { 1, 1, _LOAD_FROM_DICT_OR_DEREF_r11 },
             { -1, -1, -1 },
             { -1, -1, -1 },
         },
@@ -3968,6 +3978,7 @@ const uint16_t _PyUop_Uncached[MAX_UOP_REGS_ID+1] = {
     [_LOAD_CONST_r01] = _LOAD_CONST,
     [_LOAD_CONST_r12] = _LOAD_CONST,
     [_LOAD_CONST_r23] = _LOAD_CONST,
+    [_CHECK_ACCESS_r11] = _CHECK_ACCESS,
     [_LOAD_SMALL_INT_0_r01] = _LOAD_SMALL_INT_0,
     [_LOAD_SMALL_INT_0_r12] = _LOAD_SMALL_INT_0,
     [_LOAD_SMALL_INT_0_r23] = _LOAD_SMALL_INT_0,
@@ -4274,9 +4285,6 @@ const uint16_t _PyUop_Uncached[MAX_UOP_REGS_ID+1] = {
     [_GUARD_NOS_NOT_NULL_r12] = _GUARD_NOS_NOT_NULL,
     [_GUARD_NOS_NOT_NULL_r22] = _GUARD_NOS_NOT_NULL,
     [_GUARD_NOS_NOT_NULL_r33] = _GUARD_NOS_NOT_NULL,
-    [_SEND_VIRTUAL_TIER_TWO_r03] = _SEND_VIRTUAL_TIER_TWO,
-    [_SEND_VIRTUAL_TIER_TWO_r13] = _SEND_VIRTUAL_TIER_TWO,
-    [_SEND_VIRTUAL_TIER_TWO_r23] = _SEND_VIRTUAL_TIER_TWO,
     [_SEND_VIRTUAL_TIER_TWO_r33] = _SEND_VIRTUAL_TIER_TWO,
     [_GUARD_3OS_ASYNC_GEN_ASEND_r03] = _GUARD_3OS_ASYNC_GEN_ASEND,
     [_GUARD_3OS_ASYNC_GEN_ASEND_r13] = _GUARD_3OS_ASYNC_GEN_ASEND,
@@ -4291,6 +4299,7 @@ const uint16_t _PyUop_Uncached[MAX_UOP_REGS_ID+1] = {
     [_LOAD_BUILD_CLASS_r01] = _LOAD_BUILD_CLASS,
     [_STORE_NAME_r10] = _STORE_NAME,
     [_UNPACK_SEQUENCE_r10] = _UNPACK_SEQUENCE,
+    [_CHECK_UNPACK_ACCESS_r00] = _CHECK_UNPACK_ACCESS,
     [_UNPACK_SEQUENCE_TWO_TUPLE_r12] = _UNPACK_SEQUENCE_TWO_TUPLE,
     [_UNPACK_SEQUENCE_UNIQUE_TWO_TUPLE_r02] = _UNPACK_SEQUENCE_UNIQUE_TWO_TUPLE,
     [_UNPACK_SEQUENCE_UNIQUE_TWO_TUPLE_r12] = _UNPACK_SEQUENCE_UNIQUE_TWO_TUPLE,
@@ -4318,7 +4327,6 @@ const uint16_t _PyUop_Uncached[MAX_UOP_REGS_ID+1] = {
     [_DELETE_FAST_r00] = _DELETE_FAST,
     [_MAKE_CELL_r00] = _MAKE_CELL,
     [_DELETE_DEREF_r00] = _DELETE_DEREF,
-    [_LOAD_FROM_DICT_OR_DEREF_r11] = _LOAD_FROM_DICT_OR_DEREF,
     [_LOAD_DEREF_r01] = _LOAD_DEREF,
     [_STORE_DEREF_r10] = _STORE_DEREF,
     [_COPY_FREE_VARS_r00] = _COPY_FREE_VARS,
@@ -5027,6 +5035,8 @@ const char *const _PyOpcode_uop_name[MAX_UOP_REGS_ID+1] = {
     [_CALL_TYPE_1_r12] = "_CALL_TYPE_1_r12",
     [_CALL_TYPE_1_r22] = "_CALL_TYPE_1_r22",
     [_CALL_TYPE_1_r32] = "_CALL_TYPE_1_r32",
+    [_CHECK_ACCESS] = "_CHECK_ACCESS",
+    [_CHECK_ACCESS_r11] = "_CHECK_ACCESS_r11",
     [_CHECK_ATTR_CLASS] = "_CHECK_ATTR_CLASS",
     [_CHECK_ATTR_CLASS_r01] = "_CHECK_ATTR_CLASS_r01",
     [_CHECK_ATTR_CLASS_r11] = "_CHECK_ATTR_CLASS_r11",
@@ -5105,6 +5115,8 @@ const char *const _PyOpcode_uop_name[MAX_UOP_REGS_ID+1] = {
     [_CHECK_STACK_SPACE_OPERAND_r11] = "_CHECK_STACK_SPACE_OPERAND_r11",
     [_CHECK_STACK_SPACE_OPERAND_r22] = "_CHECK_STACK_SPACE_OPERAND_r22",
     [_CHECK_STACK_SPACE_OPERAND_r33] = "_CHECK_STACK_SPACE_OPERAND_r33",
+    [_CHECK_UNPACK_ACCESS] = "_CHECK_UNPACK_ACCESS",
+    [_CHECK_UNPACK_ACCESS_r00] = "_CHECK_UNPACK_ACCESS_r00",
     [_CHECK_VALIDITY] = "_CHECK_VALIDITY",
     [_CHECK_VALIDITY_r00] = "_CHECK_VALIDITY_r00",
     [_CHECK_VALIDITY_r11] = "_CHECK_VALIDITY_r11",
@@ -5808,8 +5820,6 @@ const char *const _PyOpcode_uop_name[MAX_UOP_REGS_ID+1] = {
     [_LOAD_FAST_CHECK_r01] = "_LOAD_FAST_CHECK_r01",
     [_LOAD_FAST_CHECK_r12] = "_LOAD_FAST_CHECK_r12",
     [_LOAD_FAST_CHECK_r23] = "_LOAD_FAST_CHECK_r23",
-    [_LOAD_FROM_DICT_OR_DEREF] = "_LOAD_FROM_DICT_OR_DEREF",
-    [_LOAD_FROM_DICT_OR_DEREF_r11] = "_LOAD_FROM_DICT_OR_DEREF_r11",
     [_LOAD_GLOBAL] = "_LOAD_GLOBAL",
     [_LOAD_GLOBAL_r00] = "_LOAD_GLOBAL_r00",
     [_LOAD_GLOBAL_BUILTINS] = "_LOAD_GLOBAL_BUILTINS",
@@ -5981,9 +5991,6 @@ const char *const _PyOpcode_uop_name[MAX_UOP_REGS_ID+1] = {
     [_SEND_GEN_FRAME] = "_SEND_GEN_FRAME",
     [_SEND_GEN_FRAME_r33] = "_SEND_GEN_FRAME_r33",
     [_SEND_VIRTUAL_TIER_TWO] = "_SEND_VIRTUAL_TIER_TWO",
-    [_SEND_VIRTUAL_TIER_TWO_r03] = "_SEND_VIRTUAL_TIER_TWO_r03",
-    [_SEND_VIRTUAL_TIER_TWO_r13] = "_SEND_VIRTUAL_TIER_TWO_r13",
-    [_SEND_VIRTUAL_TIER_TWO_r23] = "_SEND_VIRTUAL_TIER_TWO_r23",
     [_SEND_VIRTUAL_TIER_TWO_r33] = "_SEND_VIRTUAL_TIER_TWO_r33",
     [_SETUP_ANNOTATIONS] = "_SETUP_ANNOTATIONS",
     [_SETUP_ANNOTATIONS_r00] = "_SETUP_ANNOTATIONS_r00",
@@ -6215,6 +6222,8 @@ int _PyUop_num_popped(int opcode, int oparg)
         case _LOAD_FAST_AND_CLEAR:
             return 0;
         case _LOAD_CONST:
+            return 0;
+        case _CHECK_ACCESS:
             return 0;
         case _LOAD_SMALL_INT_0:
             return 0;
@@ -6456,6 +6465,8 @@ int _PyUop_num_popped(int opcode, int oparg)
             return 1;
         case _UNPACK_SEQUENCE:
             return 1;
+        case _CHECK_UNPACK_ACCESS:
+            return 0;
         case _UNPACK_SEQUENCE_TWO_TUPLE:
             return 1;
         case _UNPACK_SEQUENCE_UNIQUE_TWO_TUPLE:
@@ -6494,8 +6505,6 @@ int _PyUop_num_popped(int opcode, int oparg)
             return 0;
         case _DELETE_DEREF:
             return 0;
-        case _LOAD_FROM_DICT_OR_DEREF:
-            return 1;
         case _LOAD_DEREF:
             return 0;
         case _STORE_DEREF:

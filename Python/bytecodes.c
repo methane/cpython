@@ -310,10 +310,22 @@ dummy_func(
             value2 = PyStackRef_Borrow(GETLOCAL(oparg2));
         }
 
-        inst(LOAD_CONST, (-- value)) {
+        op(_LOAD_CONST, (-- value)) {
             PyObject *obj = GETITEM(FRAME_CO_CONSTS, oparg);
             value = PyStackRef_FromPyObjectBorrow(obj);
         }
+
+        // Retain this check when a heap load is specialized or folded into
+        // an inline constant. This is an acquisition, not an argument check.
+        op(_CHECK_ACCESS, (value -- value)) {
+            PyObject *checked = PyObject_CheckAccess(
+                PyStackRef_AsPyObjectBorrow(value));
+            if (checked == NULL) {
+                ERROR_NO_POP();
+            }
+        }
+
+        macro(LOAD_CONST) = _LOAD_CONST + _CHECK_ACCESS;
 
         replicate(4) inst(LOAD_SMALL_INT, (-- value)) {
             assert(oparg < _PY_NSMALLPOSINTS);
@@ -1139,7 +1151,7 @@ dummy_func(
         macro(STORE_SLICE) = _SPECIALIZE_STORE_SLICE + _STORE_SLICE;
 
         macro(BINARY_OP_SUBSCR_LIST_INT) =
-            _GUARD_TOS_INT + _GUARD_NOS_LIST + unused/5 + _BINARY_OP_SUBSCR_LIST_INT + _POP_TOP_INT + POP_TOP;
+            _GUARD_TOS_INT + _GUARD_NOS_LIST + unused/5 + _BINARY_OP_SUBSCR_LIST_INT + _POP_TOP_INT + POP_TOP + _CHECK_ACCESS;
 
         op(_BINARY_OP_SUBSCR_LIST_INT, (list_st, sub_st -- res, ls, ss)) {
             PyObject *sub = PyStackRef_AsPyObjectBorrow(sub_st);
@@ -1251,7 +1263,7 @@ dummy_func(
             unused/5 +
             _BINARY_OP_SUBSCR_TUPLE_INT +
             _POP_TOP_INT +
-            POP_TOP;
+            POP_TOP + _CHECK_ACCESS;
 
         // A guard that checks that the tuple subscript is within bounds
         op(_GUARD_BINARY_OP_SUBSCR_TUPLE_INT_BOUNDS, (tuple_st, sub_st -- tuple_st, sub_st)) {
@@ -1313,7 +1325,7 @@ dummy_func(
 
         macro(BINARY_OP_SUBSCR_DICT) =
             _RECORD_NOS_TYPE +
-            _GUARD_NOS_DICT_SUBSCRIPT + unused/5 + _BINARY_OP_SUBSCR_DICT + POP_TOP + POP_TOP;
+            _GUARD_NOS_DICT_SUBSCRIPT + unused/5 + _BINARY_OP_SUBSCR_DICT + POP_TOP + POP_TOP + _CHECK_ACCESS;
 
         tier2 op(_BINARY_OP_SUBSCR_DICT_KNOWN_HASH, (dict_st, sub_st, hash/4 -- res, ds, ss)) {
             PyObject *sub = PyStackRef_AsPyObjectBorrow(sub_st);
@@ -1769,6 +1781,10 @@ dummy_func(
                 JUMPBY(oparg);
                 DISPATCH();
             }
+            next_o = _PyObject_CheckAccessNullable(next_o);
+            if (next_o == NULL) {
+                ERROR_NO_POP();
+            }
             DEAD(none);
             next = PyStackRef_FromPyObjectSteal(next_o);
             null_or_index = PyStackRef_TagInt(index);
@@ -1788,6 +1804,10 @@ dummy_func(
                 next = none;
                 DEAD(none);
                 EXIT_IF(true);
+            }
+            next_o = _PyObject_CheckAccessNullable(next_o);
+            if (next_o == NULL) {
+                ERROR_NO_POP();
             }
             DEAD(none);
             next = PyStackRef_FromPyObjectSteal(next_o);
@@ -2041,8 +2061,18 @@ dummy_func(
 
         macro(UNPACK_SEQUENCE) = _SPECIALIZE_UNPACK_SEQUENCE + _UNPACK_SEQUENCE;
 
+        op(_CHECK_UNPACK_ACCESS, (values[oparg] -- values[oparg])) {
+            for (int i = 0; i < oparg; i++) {
+                PyObject *checked = PyObject_CheckAccess(
+                    PyStackRef_AsPyObjectBorrow(values[i]));
+                if (checked == NULL) {
+                    ERROR_NO_POP();
+                }
+            }
+        }
+
         macro(UNPACK_SEQUENCE_TWO_TUPLE) =
-            _GUARD_TOS_TUPLE + unused/1 + _UNPACK_SEQUENCE_TWO_TUPLE;
+            _GUARD_TOS_TUPLE + unused/1 + _UNPACK_SEQUENCE_TWO_TUPLE + _CHECK_UNPACK_ACCESS;
 
         op(_UNPACK_SEQUENCE_TWO_TUPLE, (seq -- val1, val0)) {
             assert(oparg == 2);
@@ -2075,7 +2105,7 @@ dummy_func(
         }
 
         macro(UNPACK_SEQUENCE_TUPLE) =
-            _GUARD_TOS_TUPLE + unused/1 + _UNPACK_SEQUENCE_TUPLE;
+            _GUARD_TOS_TUPLE + unused/1 + _UNPACK_SEQUENCE_TUPLE + _CHECK_UNPACK_ACCESS;
 
         op(_UNPACK_SEQUENCE_TUPLE, (seq -- values[oparg])) {
             PyObject *seq_o = PyStackRef_AsPyObjectBorrow(seq);
@@ -2104,7 +2134,7 @@ dummy_func(
         }
 
         macro(UNPACK_SEQUENCE_LIST) =
-            _GUARD_TOS_LIST + unused/1 + _UNPACK_SEQUENCE_LIST;
+            _GUARD_TOS_LIST + unused/1 + _UNPACK_SEQUENCE_LIST + _CHECK_UNPACK_ACCESS;
 
         op(_UNPACK_SEQUENCE_LIST, (seq -- values[oparg])) {
             PyObject *seq_o = PyStackRef_AsPyObjectBorrow(seq);
@@ -2205,6 +2235,7 @@ dummy_func(
                     v_o = _PyDict_LoadGlobal((PyDictObject *)GLOBALS(),
                                              (PyDictObject *)BUILTINS(),
                                              name);
+                    v_o = _PyObject_CheckAccessNullable(v_o);
                     if (v_o == NULL) {
                         if (!_PyErr_Occurred(tstate)) {
                             /* _PyDict_LoadGlobal() returns NULL without raising
@@ -2216,7 +2247,7 @@ dummy_func(
                     }
 
                     if (PyLazyImport_CheckExact(v_o)) {
-                        PyObject *l_v = _PyImport_LoadLazyImportTstate(tstate, v_o);
+                        PyObject *l_v = _PyObject_CheckAccessNullable(_PyImport_LoadLazyImportTstate(tstate, v_o));
                         Py_SETREF(v_o, l_v);
                         ERROR_IF(v_o == NULL);
                     }
@@ -2238,7 +2269,7 @@ dummy_func(
                         }
                     }
                     if (PyLazyImport_CheckExact(v_o)) {
-                        PyObject *l_v = _PyImport_LoadLazyImportTstate(tstate, v_o);
+                        PyObject *l_v = _PyObject_CheckAccessNullable(_PyImport_LoadLazyImportTstate(tstate, v_o));
                         Py_SETREF(v_o, l_v);
                         ERROR_IF(v_o == NULL);
                     }
@@ -2252,7 +2283,7 @@ dummy_func(
             PyObject *v_o = _PyEval_LoadName(tstate, frame, name);
             ERROR_IF(v_o == NULL);
             if (PyLazyImport_CheckExact(v_o)) {
-                PyObject *l_v = _PyImport_LoadLazyImportTstate(tstate, v_o);
+                PyObject *l_v = _PyObject_CheckAccessNullable(_PyImport_LoadLazyImportTstate(tstate, v_o));
                 // cannot early-decref v_o as it may cause a side-effect on l_v
                 if (l_v == NULL) {
                     Py_DECREF(v_o);
@@ -2361,12 +2392,14 @@ dummy_func(
             unused/1 + // Skip over the counter
             NOP + // For guard insertion in the JIT optimizer
             _LOAD_GLOBAL_MODULE +
+            _CHECK_ACCESS +
             _PUSH_NULL_CONDITIONAL;
 
         macro(LOAD_GLOBAL_BUILTIN) =
             unused/1 + // Skip over the counter
             _GUARD_GLOBALS_VERSION +
             _LOAD_GLOBAL_BUILTINS +
+            _CHECK_ACCESS +
             _PUSH_NULL_CONDITIONAL;
 
         inst(DELETE_FAST, (--)) {
@@ -2428,11 +2461,13 @@ dummy_func(
                     ERROR_NO_POP();
                 }
             }
+            value_o = _PyObject_CheckAccessNullable(value_o);
             PyStackRef_CLOSE(class_dict_st);
+            ERROR_IF(value_o == NULL);
             value = PyStackRef_FromPyObjectSteal(value_o);
         }
 
-        inst(LOAD_DEREF, ( -- value)) {
+        op(_LOAD_DEREF, ( -- value)) {
             PyCellObject *cell = (PyCellObject *)PyStackRef_AsPyObjectBorrow(GETLOCAL(oparg));
             value = _PyCell_GetStackRef(cell);
             if (PyStackRef_IsNull(value)) {
@@ -2440,6 +2475,8 @@ dummy_func(
                 ERROR_IF(true);
             }
         }
+
+        macro(LOAD_DEREF) = _LOAD_DEREF + _CHECK_ACCESS;
 
         inst(STORE_DEREF, (v --)) {
             PyCellObject *cell = (PyCellObject *)PyStackRef_AsPyObjectBorrow(GETLOCAL(oparg));
@@ -3854,7 +3891,8 @@ dummy_func(
         tier2 op(_ITER_NEXT_INLINE, (iternext_fn/4, iter, null_or_index -- iter, null_or_index, next)) {
             assert(sizeof(iternextfunc) == sizeof(uintptr_t));
             volatile iternextfunc iternext_v = (iternextfunc)iternext_fn;
-            PyObject *item = iternext_v(PyStackRef_AsPyObjectBorrow(iter));
+            PyObject *item = _PyObject_CheckAccessNullable(
+                iternext_v(PyStackRef_AsPyObjectBorrow(iter)));
             if (item == NULL) {
                 if (_PyErr_Occurred(tstate)) {
                     if (_PyErr_ExceptionMatches(tstate, PyExc_StopIteration)) {
@@ -3894,6 +3932,10 @@ dummy_func(
                 JUMPBY(oparg + 1);
                 DISPATCH();
             }
+            next_o = _PyObject_CheckAccessNullable(next_o);
+            if (next_o == NULL) {
+                ERROR_NO_POP();
+            }
             null_or_index = PyStackRef_TagInt(index);
             next = PyStackRef_FromPyObjectSteal(next_o);
         }
@@ -3916,6 +3958,10 @@ dummy_func(
                 /* iterator ended normally */
                 /* The translator sets the deopt target just past the matching END_FOR */
                 EXIT_IF(true);
+            }
+            next_o = _PyObject_CheckAccessNullable(next_o);
+            if (next_o == NULL) {
+                ERROR_NO_POP();
             }
             next = PyStackRef_FromPyObjectSteal(next_o);
             null_or_index = PyStackRef_TagInt(index);
@@ -4018,7 +4064,7 @@ dummy_func(
             unused/1 +  // Skip over the counter
             _ITER_CHECK_LIST +
             _ITER_JUMP_LIST +
-            _ITER_NEXT_LIST;
+            _ITER_NEXT_LIST + _CHECK_ACCESS;
 
         op(_ITER_CHECK_TUPLE, (iter, null_or_index -- iter, null_or_index)) {
             PyObject *iter_o = PyStackRef_AsPyObjectBorrow(iter);
@@ -4059,7 +4105,7 @@ dummy_func(
             unused/1 +  // Skip over the counter
             _ITER_CHECK_TUPLE +
             _ITER_JUMP_TUPLE +
-            _ITER_NEXT_TUPLE;
+            _ITER_NEXT_TUPLE + _CHECK_ACCESS;
 
         op(_ITER_CHECK_RANGE, (iter, null_or_index -- iter, null_or_index)) {
             _PyRangeIterObject *r = (_PyRangeIterObject *)PyStackRef_AsPyObjectBorrow(iter);

@@ -712,6 +712,18 @@
                 PyStackRef_XCLOSE(value);
                 _PyFrame_StackPointerInvalidate(frame);
             }
+            // _CHECK_ACCESS
+            {
+                value = res;
+                assert(stack_pointer == _PyFrame_GetStackPointer(frame));
+                _PyFrame_StackPointerValidate(frame);
+                PyObject *checked = PyObject_CheckAccess(
+                    PyStackRef_AsPyObjectBorrow(value));
+                _PyFrame_StackPointerInvalidate(frame);
+                if (checked == NULL) {
+                    JUMP_TO_LABEL(error);
+                }
+            }
             DISPATCH();
         }
 
@@ -897,6 +909,18 @@
                 _PyFrame_StackPointerValidate(frame);
                 PyStackRef_XCLOSE(value);
                 _PyFrame_StackPointerInvalidate(frame);
+            }
+            // _CHECK_ACCESS
+            {
+                value = res;
+                assert(stack_pointer == _PyFrame_GetStackPointer(frame));
+                _PyFrame_StackPointerValidate(frame);
+                PyObject *checked = PyObject_CheckAccess(
+                    PyStackRef_AsPyObjectBorrow(value));
+                _PyFrame_StackPointerInvalidate(frame);
+                if (checked == NULL) {
+                    JUMP_TO_LABEL(error);
+                }
             }
             DISPATCH();
         }
@@ -1162,6 +1186,18 @@
                 _PyFrame_StackPointerValidate(frame);
                 PyStackRef_XCLOSE(value);
                 _PyFrame_StackPointerInvalidate(frame);
+            }
+            // _CHECK_ACCESS
+            {
+                value = res;
+                assert(stack_pointer == _PyFrame_GetStackPointer(frame));
+                _PyFrame_StackPointerValidate(frame);
+                PyObject *checked = PyObject_CheckAccess(
+                    PyStackRef_AsPyObjectBorrow(value));
+                _PyFrame_StackPointerInvalidate(frame);
+                if (checked == NULL) {
+                    JUMP_TO_LABEL(error);
+                }
             }
             DISPATCH();
         }
@@ -6451,6 +6487,7 @@
             _PyStackRef iter;
             _PyStackRef null_or_index;
             _PyStackRef next;
+            _PyStackRef value;
             /* Skip 1 cache entry */
             // _ITER_CHECK_LIST
             {
@@ -6515,10 +6552,22 @@
                 #endif
                 null_or_index = PyStackRef_IncrementTaggedIntNoOverflow(null_or_index);
             }
-            stack_pointer[-1] = null_or_index;
-            stack_pointer[0] = next;
-            stack_pointer += 1;
-            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            // _CHECK_ACCESS
+            {
+                value = next;
+                stack_pointer[-1] = null_or_index;
+                stack_pointer[0] = value;
+                stack_pointer += 1;
+                ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                _PyFrame_SetStackPointer(frame, stack_pointer);
+                _PyFrame_StackPointerValidate(frame);
+                PyObject *checked = PyObject_CheckAccess(
+                    PyStackRef_AsPyObjectBorrow(value));
+                _PyFrame_StackPointerInvalidate(frame);
+                if (checked == NULL) {
+                    JUMP_TO_LABEL(error);
+                }
+            }
             DISPATCH();
         }
 
@@ -6603,6 +6652,7 @@
             _PyStackRef iter;
             _PyStackRef null_or_index;
             _PyStackRef next;
+            _PyStackRef value;
             /* Skip 1 cache entry */
             // _ITER_CHECK_TUPLE
             {
@@ -6638,10 +6688,22 @@
                 next = PyStackRef_FromPyObjectNew(PyTuple_GET_ITEM(tuple_o, i));
                 null_or_index = PyStackRef_IncrementTaggedIntNoOverflow(null_or_index);
             }
-            stack_pointer[-1] = null_or_index;
-            stack_pointer[0] = next;
-            stack_pointer += 1;
-            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            // _CHECK_ACCESS
+            {
+                value = next;
+                stack_pointer[-1] = null_or_index;
+                stack_pointer[0] = value;
+                stack_pointer += 1;
+                ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                _PyFrame_SetStackPointer(frame, stack_pointer);
+                _PyFrame_StackPointerValidate(frame);
+                PyObject *checked = PyObject_CheckAccess(
+                    PyStackRef_AsPyObjectBorrow(value));
+                _PyFrame_StackPointerInvalidate(frame);
+                if (checked == NULL) {
+                    JUMP_TO_LABEL(error);
+                }
+            }
             DISPATCH();
         }
 
@@ -6686,6 +6748,13 @@
                     }
                     JUMPBY(oparg + 1);
                     DISPATCH();
+                }
+                assert(stack_pointer == _PyFrame_GetStackPointer(frame));
+                _PyFrame_StackPointerValidate(frame);
+                next_o = _PyObject_CheckAccessNullable(next_o);
+                _PyFrame_StackPointerInvalidate(frame);
+                if (next_o == NULL) {
+                    JUMP_TO_LABEL(error);
                 }
                 null_or_index = PyStackRef_TagInt(index);
                 next = PyStackRef_FromPyObjectSteal(next_o);
@@ -9712,11 +9781,25 @@
             next_instr += 1;
             INSTRUCTION_STATS(LOAD_CONST);
             _PyStackRef value;
-            PyObject *obj = GETITEM(FRAME_CO_CONSTS, oparg);
-            value = PyStackRef_FromPyObjectBorrow(obj);
-            stack_pointer[0] = value;
-            stack_pointer += 1;
-            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            // _LOAD_CONST
+            {
+                PyObject *obj = GETITEM(FRAME_CO_CONSTS, oparg);
+                value = PyStackRef_FromPyObjectBorrow(obj);
+            }
+            // _CHECK_ACCESS
+            {
+                stack_pointer[0] = value;
+                stack_pointer += 1;
+                ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                _PyFrame_SetStackPointer(frame, stack_pointer);
+                _PyFrame_StackPointerValidate(frame);
+                PyObject *checked = PyObject_CheckAccess(
+                    PyStackRef_AsPyObjectBorrow(value));
+                _PyFrame_StackPointerInvalidate(frame);
+                if (checked == NULL) {
+                    JUMP_TO_LABEL(error);
+                }
+            }
             DISPATCH();
         }
 
@@ -9729,24 +9812,38 @@
             next_instr += 1;
             INSTRUCTION_STATS(LOAD_DEREF);
             _PyStackRef value;
-            PyCellObject *cell = (PyCellObject *)PyStackRef_AsPyObjectBorrow(GETLOCAL(oparg));
-            _PyFrame_SetStackPointer(frame, stack_pointer);
-            _PyFrame_StackPointerValidate(frame);
-            value = _PyCell_GetStackRef(cell);
-            _PyFrame_StackPointerInvalidate(frame);
-            if (PyStackRef_IsNull(value)) {
+            // _LOAD_DEREF
+            {
+                PyCellObject *cell = (PyCellObject *)PyStackRef_AsPyObjectBorrow(GETLOCAL(oparg));
+                _PyFrame_SetStackPointer(frame, stack_pointer);
+                _PyFrame_StackPointerValidate(frame);
+                value = _PyCell_GetStackRef(cell);
+                _PyFrame_StackPointerInvalidate(frame);
+                if (PyStackRef_IsNull(value)) {
+                    stack_pointer[0] = value;
+                    stack_pointer += 1;
+                    ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                    _PyFrame_SetStackPointer(frame, stack_pointer);
+                    _PyFrame_StackPointerValidate(frame);
+                    _PyEval_FormatExcUnbound(tstate, _PyFrame_GetCode(frame), oparg);
+                    _PyFrame_StackPointerInvalidate(frame);
+                    JUMP_TO_LABEL(error);
+                }
+            }
+            // _CHECK_ACCESS
+            {
                 stack_pointer[0] = value;
                 stack_pointer += 1;
                 ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
                 _PyFrame_SetStackPointer(frame, stack_pointer);
                 _PyFrame_StackPointerValidate(frame);
-                _PyEval_FormatExcUnbound(tstate, _PyFrame_GetCode(frame), oparg);
+                PyObject *checked = PyObject_CheckAccess(
+                    PyStackRef_AsPyObjectBorrow(value));
                 _PyFrame_StackPointerInvalidate(frame);
-                JUMP_TO_LABEL(error);
+                if (checked == NULL) {
+                    JUMP_TO_LABEL(error);
+                }
             }
-            stack_pointer[0] = value;
-            stack_pointer += 1;
-            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
             DISPATCH();
         }
 
@@ -9905,12 +10002,19 @@
                     JUMP_TO_LABEL(error);
                 }
             }
+            assert(stack_pointer == _PyFrame_GetStackPointer(frame));
+            _PyFrame_StackPointerValidate(frame);
+            value_o = _PyObject_CheckAccessNullable(value_o);
+            _PyFrame_StackPointerInvalidate(frame);
             stack_pointer += -1;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
             _PyFrame_SetStackPointer(frame, stack_pointer);
             _PyFrame_StackPointerValidate(frame);
             PyStackRef_CLOSE(class_dict_st);
             _PyFrame_StackPointerInvalidate(frame);
+            if (value_o == NULL) {
+                JUMP_TO_LABEL(error);
+            }
             value = PyStackRef_FromPyObjectSteal(value_o);
             stack_pointer[0] = value;
             stack_pointer += 1;
@@ -9954,6 +10058,10 @@
                         (PyDictObject *)BUILTINS(),
                         name);
                     _PyFrame_StackPointerInvalidate(frame);
+                    assert(stack_pointer == _PyFrame_GetStackPointer(frame));
+                    _PyFrame_StackPointerValidate(frame);
+                    v_o = _PyObject_CheckAccessNullable(v_o);
+                    _PyFrame_StackPointerInvalidate(frame);
                     if (v_o == NULL) {
                         if (!_PyErr_Occurred(tstate)) {
                             assert(stack_pointer == _PyFrame_GetStackPointer(frame));
@@ -9967,7 +10075,7 @@
                     if (PyLazyImport_CheckExact(v_o)) {
                         assert(stack_pointer == _PyFrame_GetStackPointer(frame));
                         _PyFrame_StackPointerValidate(frame);
-                        PyObject *l_v = _PyImport_LoadLazyImportTstate(tstate, v_o);
+                        PyObject *l_v = _PyObject_CheckAccessNullable(_PyImport_LoadLazyImportTstate(tstate, v_o));
                         _PyFrame_StackPointerInvalidate(frame);
                         assert(stack_pointer == _PyFrame_GetStackPointer(frame));
                         _PyFrame_StackPointerValidate(frame);
@@ -10007,7 +10115,7 @@
                     if (PyLazyImport_CheckExact(v_o)) {
                         assert(stack_pointer == _PyFrame_GetStackPointer(frame));
                         _PyFrame_StackPointerValidate(frame);
-                        PyObject *l_v = _PyImport_LoadLazyImportTstate(tstate, v_o);
+                        PyObject *l_v = _PyObject_CheckAccessNullable(_PyImport_LoadLazyImportTstate(tstate, v_o));
                         _PyFrame_StackPointerInvalidate(frame);
                         assert(stack_pointer == _PyFrame_GetStackPointer(frame));
                         _PyFrame_StackPointerValidate(frame);
@@ -10096,6 +10204,7 @@
             INSTRUCTION_STATS(LOAD_GLOBAL_BUILTIN);
             static_assert(INLINE_CACHE_ENTRIES_LOAD_GLOBAL == 4, "incorrect cache size");
             _PyStackRef res;
+            _PyStackRef value;
             _PyStackRef *null;
             /* Skip 1 cache entry */
             // _GUARD_GLOBALS_VERSION
@@ -10151,15 +10260,29 @@
                 #endif
                 STAT_INC(LOAD_GLOBAL, hit);
             }
+            // _CHECK_ACCESS
+            {
+                value = res;
+                stack_pointer[0] = value;
+                stack_pointer += 1;
+                ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                _PyFrame_SetStackPointer(frame, stack_pointer);
+                _PyFrame_StackPointerValidate(frame);
+                PyObject *checked = PyObject_CheckAccess(
+                    PyStackRef_AsPyObjectBorrow(value));
+                _PyFrame_StackPointerInvalidate(frame);
+                if (checked == NULL) {
+                    JUMP_TO_LABEL(error);
+                }
+            }
             // _PUSH_NULL_CONDITIONAL
             {
-                null = &stack_pointer[1];
+                null = &stack_pointer[0];
                 if (oparg & 1) {
                     null[0] = PyStackRef_NULL;
                 }
             }
-            stack_pointer[0] = res;
-            stack_pointer += 1 + (oparg & 1);
+            stack_pointer += (oparg & 1);
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
             DISPATCH();
         }
@@ -10176,6 +10299,7 @@
             INSTRUCTION_STATS(LOAD_GLOBAL_MODULE);
             static_assert(INLINE_CACHE_ENTRIES_LOAD_GLOBAL == 4, "incorrect cache size");
             _PyStackRef res;
+            _PyStackRef value;
             _PyStackRef *null;
             /* Skip 1 cache entry */
             // _NOP
@@ -10218,15 +10342,29 @@
                 #endif
                 STAT_INC(LOAD_GLOBAL, hit);
             }
+            // _CHECK_ACCESS
+            {
+                value = res;
+                stack_pointer[0] = value;
+                stack_pointer += 1;
+                ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                _PyFrame_SetStackPointer(frame, stack_pointer);
+                _PyFrame_StackPointerValidate(frame);
+                PyObject *checked = PyObject_CheckAccess(
+                    PyStackRef_AsPyObjectBorrow(value));
+                _PyFrame_StackPointerInvalidate(frame);
+                if (checked == NULL) {
+                    JUMP_TO_LABEL(error);
+                }
+            }
             // _PUSH_NULL_CONDITIONAL
             {
-                null = &stack_pointer[1];
+                null = &stack_pointer[0];
                 if (oparg & 1) {
                     null[0] = PyStackRef_NULL;
                 }
             }
-            stack_pointer[0] = res;
-            stack_pointer += 1 + (oparg & 1);
+            stack_pointer += (oparg & 1);
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
             DISPATCH();
         }
@@ -10276,7 +10414,7 @@
             if (PyLazyImport_CheckExact(v_o)) {
                 assert(stack_pointer == _PyFrame_GetStackPointer(frame));
                 _PyFrame_StackPointerValidate(frame);
-                PyObject *l_v = _PyImport_LoadLazyImportTstate(tstate, v_o);
+                PyObject *l_v = _PyObject_CheckAccessNullable(_PyImport_LoadLazyImportTstate(tstate, v_o));
                 _PyFrame_StackPointerInvalidate(frame);
                 if (l_v == NULL) {
                     assert(stack_pointer == _PyFrame_GetStackPointer(frame));
@@ -11858,6 +11996,13 @@
                     next = none;
                     JUMPBY(oparg);
                     DISPATCH();
+                }
+                assert(stack_pointer == _PyFrame_GetStackPointer(frame));
+                _PyFrame_StackPointerValidate(frame);
+                next_o = _PyObject_CheckAccessNullable(next_o);
+                _PyFrame_StackPointerInvalidate(frame);
+                if (next_o == NULL) {
+                    JUMP_TO_LABEL(error);
                 }
                 next = PyStackRef_FromPyObjectSteal(next_o);
                 null_or_index = PyStackRef_TagInt(index);
@@ -13454,6 +13599,20 @@
                 PyStackRef_CLOSE(seq);
                 _PyFrame_StackPointerInvalidate(frame);
             }
+            // _CHECK_UNPACK_ACCESS
+            {
+                values = &stack_pointer[-oparg];
+                for (int i = 0; i < oparg; i++) {
+                    assert(stack_pointer == _PyFrame_GetStackPointer(frame));
+                    _PyFrame_StackPointerValidate(frame);
+                    PyObject *checked = PyObject_CheckAccess(
+                        PyStackRef_AsPyObjectBorrow(values[i]));
+                    _PyFrame_StackPointerInvalidate(frame);
+                    if (checked == NULL) {
+                        JUMP_TO_LABEL(error);
+                    }
+                }
+            }
             DISPATCH();
         }
 
@@ -13505,6 +13664,20 @@
                 PyStackRef_CLOSE(seq);
                 _PyFrame_StackPointerInvalidate(frame);
             }
+            // _CHECK_UNPACK_ACCESS
+            {
+                values = &stack_pointer[-oparg];
+                for (int i = 0; i < oparg; i++) {
+                    assert(stack_pointer == _PyFrame_GetStackPointer(frame));
+                    _PyFrame_StackPointerValidate(frame);
+                    PyObject *checked = PyObject_CheckAccess(
+                        PyStackRef_AsPyObjectBorrow(values[i]));
+                    _PyFrame_StackPointerInvalidate(frame);
+                    if (checked == NULL) {
+                        JUMP_TO_LABEL(error);
+                    }
+                }
+            }
             DISPATCH();
         }
 
@@ -13523,6 +13696,7 @@
             _PyStackRef seq;
             _PyStackRef val1;
             _PyStackRef val0;
+            _PyStackRef *values;
             // _GUARD_TOS_TUPLE
             {
                 tos = stack_pointer[-1];
@@ -13556,6 +13730,20 @@
                 _PyFrame_StackPointerValidate(frame);
                 PyStackRef_CLOSE(seq);
                 _PyFrame_StackPointerInvalidate(frame);
+            }
+            // _CHECK_UNPACK_ACCESS
+            {
+                values = &stack_pointer[-oparg];
+                for (int i = 0; i < oparg; i++) {
+                    assert(stack_pointer == _PyFrame_GetStackPointer(frame));
+                    _PyFrame_StackPointerValidate(frame);
+                    PyObject *checked = PyObject_CheckAccess(
+                        PyStackRef_AsPyObjectBorrow(values[i]));
+                    _PyFrame_StackPointerInvalidate(frame);
+                    if (checked == NULL) {
+                        JUMP_TO_LABEL(error);
+                    }
+                }
             }
             DISPATCH();
         }
