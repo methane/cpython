@@ -11,6 +11,7 @@
 #include "pycore_lock.h"          // PyEvent
 #include "pycore_pythread.h"      // PyThread_start_joinable_thread()
 #include "pycore_pystate.h"       // _PyInterpreterState_GuardCountdown
+#include "pycore_pymem.h"         // _PyMem_DefaultRawMalloc()
 #include "pycore_import.h"        // _PyImport_FrozenBootstrap
 #include <inttypes.h>
 #include <stdio.h>
@@ -101,6 +102,14 @@ static wchar_t* get_cmdline_arg(const char *arg_name)
         return NULL;
     }
     const char *arg = main_argv[2];
+
+    // Py_DecodeLocale() requires preinitialization, including allocator setup.
+    PyPreConfig preconfig;
+    PyPreConfig_InitPythonConfig(&preconfig);
+    PyStatus status = Py_PreInitialize(&preconfig);
+    if (PyStatus_Exception(status)) {
+        Py_ExitStatusException(status);
+    }
 
     wchar_t *result = Py_DecodeLocale(arg, NULL);
     if (result == NULL) {
@@ -2843,6 +2852,30 @@ test_thread_state_ensure(void)
 }
 
 static int
+test_default_raw_allocator(void)
+{
+    char *data = _PyMem_DefaultRawMalloc(32);
+    char *zeros = _PyMem_DefaultRawCalloc(64, 1);
+    assert(data != NULL && zeros != NULL);
+    memset(data, 'a', 32);
+
+    _testembed_initialize();
+    data = _PyMem_DefaultRawRealloc(data, 128);
+    assert(data != NULL);
+    for (int i = 0; i < 32; i++) {
+        assert(data[i] == 'a');
+    }
+    for (int i = 0; i < 64; i++) {
+        assert(zeros[i] == 0);
+    }
+    Py_Finalize();
+
+    _PyMem_DefaultRawFree(data);
+    _PyMem_DefaultRawFree(zeros);
+    return 0;
+}
+
+static int
 test_main_interpreter_view(void)
 {
     PyInterpreterView *view = PyInterpreterView_FromMain();
@@ -2859,6 +2892,8 @@ test_main_interpreter_view(void)
     assert(guard != NULL);
     PyInterpreterGuard_Close(guard);
 
+    PyInterpreterView *current = PyInterpreterView_FromCurrent();
+    assert(current != NULL);
     Py_Finalize();
 
     // We shouldn't be able to get locks for the interpreter now
@@ -2866,6 +2901,7 @@ test_main_interpreter_view(void)
     assert(guard == NULL);
 
     PyInterpreterView_Close(view);
+    PyInterpreterView_Close(current);
 
     return 0;
 }
@@ -3082,6 +3118,7 @@ static struct TestCase TestCases[] = {
     {"test_inittab_submodule_multiphase", test_inittab_submodule_multiphase},
     {"test_inittab_submodule_singlephase", test_inittab_submodule_singlephase},
     {"test_thread_state_ensure", test_thread_state_ensure},
+    {"test_default_raw_allocator", test_default_raw_allocator},
     {"test_main_interpreter_view", test_main_interpreter_view},
     {"test_thread_state_ensure_from_view", test_thread_state_ensure_from_view},
     {"test_concurrent_finalization_stress", test_concurrent_finalization_stress},

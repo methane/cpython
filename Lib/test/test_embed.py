@@ -2050,6 +2050,28 @@ class AuditingTests(EmbeddingTestsMixin, unittest.TestCase):
     def test_audit(self):
         self.run_embedded_interpreter("test_audit")
 
+    def test_preinit_allocator_lifetimes(self):
+        allocators = []
+        if not support.Py_GIL_DISABLED:
+            allocators.extend(('malloc', 'malloc_debug'))
+        if not support.Py_GIL_DISABLED and support.with_pymalloc():
+            allocators.extend(('pymalloc', 'pymalloc_debug'))
+        if support.with_mimalloc():
+            allocators.extend(('mimalloc', 'mimalloc_debug'))
+        for allocator in allocators:
+            env = remove_python_envvars()
+            env['PYTHONMALLOC'] = allocator
+            for test in ('test_audit', 'test_main_interpreter_view',
+                         'test_default_raw_allocator'):
+                with self.subTest(allocator=allocator, test=test):
+                    self.run_embedded_interpreter(test, env=env)
+            with self.subTest(allocator=allocator, test='exitcode'):
+                out, err = self.run_embedded_interpreter(
+                    'test_init_run_main_code_exitcode', CODE_EXITCODE_123,
+                    env=env)
+                self.assertEqual(out.rstrip(), 'ok! Py_RunMain() returned 123')
+                self.assertEqual(err, '')
+
     def test_audit_tuple(self):
         self.run_embedded_interpreter("test_audit_tuple")
 

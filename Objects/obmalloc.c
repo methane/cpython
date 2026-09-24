@@ -467,11 +467,17 @@ void _PyMem_DebugFree(void *ctx, void *p);
 
 /* default raw allocator (not swappable) */
 
+#ifdef Py_DEBUG
+// Keep the underlying allocator independent of the swappable debug hooks too.
+// These allocations can survive preinitialization and runtime finalization.
+static debug_alloc_api_t default_raw_debug = {'r', MALLOC_ALLOC};
+#endif
+
 void *
 _PyMem_DefaultRawMalloc(size_t size)
 {
 #ifdef Py_DEBUG
-    return _PyMem_DebugRawMalloc(&_PyRuntime.allocators.debug.raw, size);
+    return _PyMem_DebugRawMalloc(&default_raw_debug, size);
 #else
     return _PyMem_RawMalloc(NULL, size);
 #endif
@@ -481,7 +487,7 @@ void *
 _PyMem_DefaultRawCalloc(size_t nelem, size_t elsize)
 {
 #ifdef Py_DEBUG
-    return _PyMem_DebugRawCalloc(&_PyRuntime.allocators.debug.raw, nelem, elsize);
+    return _PyMem_DebugRawCalloc(&default_raw_debug, nelem, elsize);
 #else
     return _PyMem_RawCalloc(NULL, nelem, elsize);
 #endif
@@ -491,7 +497,7 @@ void *
 _PyMem_DefaultRawRealloc(void *ptr, size_t size)
 {
 #ifdef Py_DEBUG
-    return _PyMem_DebugRawRealloc(&_PyRuntime.allocators.debug.raw, ptr, size);
+    return _PyMem_DebugRawRealloc(&default_raw_debug, ptr, size);
 #else
     return _PyMem_RawRealloc(NULL, ptr, size);
 #endif
@@ -501,7 +507,7 @@ void
 _PyMem_DefaultRawFree(void *ptr)
 {
 #ifdef Py_DEBUG
-    _PyMem_DebugRawFree(&_PyRuntime.allocators.debug.raw, ptr);
+    _PyMem_DebugRawFree(&default_raw_debug, ptr);
 #else
     _PyMem_RawFree(NULL, ptr);
 #endif

@@ -36,6 +36,7 @@ number of these functions are advertised as safe to call when the GIL isn't
 held, and in a debug build Python redirects (e.g.) PyMem_NEW (etc) to Python's
 debugging obmalloc functions.  Those aren't thread-safe (they rely on the GIL
 to avoid the expense of doing their own locking).
+Views that can outlive the runtime use the non-swappable default raw allocator.
 -------------------------------------------------------------------------- */
 
 #ifdef HAVE_DLOPEN
@@ -3462,9 +3463,8 @@ PyInterpreterView_FromCurrent(void)
     PyInterpreterState *interp = _PyInterpreterState_GET();
     assert(interp != NULL);
 
-    // PyInterpreterView_Close() can be called without an attached thread
-    // state, so we have to use the raw allocator.
-    PyInterpreterView *view = PyMem_RawMalloc(sizeof(PyInterpreterView));
+    // Views can outlive the runtime and allocator configuration changes.
+    PyInterpreterView *view = _PyMem_DefaultRawMalloc(sizeof(PyInterpreterView));
     if (view == NULL) {
         PyErr_NoMemory();
         return NULL;
@@ -3478,7 +3478,7 @@ void
 PyInterpreterView_Close(PyInterpreterView *view)
 {
     assert(view != NULL);
-    PyMem_RawFree(view);
+    _PyMem_DefaultRawFree(view);
 }
 
 PyInterpreterGuard *
@@ -3521,7 +3521,7 @@ PyInterpreterGuard_FromView(PyInterpreterView *view)
 PyInterpreterView *
 PyInterpreterView_FromMain(void)
 {
-    PyInterpreterView *view = PyMem_RawMalloc(sizeof(PyInterpreterView));
+    PyInterpreterView *view = _PyMem_DefaultRawMalloc(sizeof(PyInterpreterView));
     if (view == NULL) {
         return NULL;
     }
