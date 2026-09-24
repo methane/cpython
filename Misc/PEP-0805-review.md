@@ -6,9 +6,11 @@ date; see the resolved findings and validation below.
 Re-read of the complete PEP and both appendices on 2026-09-23 against
 `37899fe75b` (implementation unchanged since `2fc691bbbe`). The new findings
 below supersede the earlier assessment of remaining work.
-Current re-review: 2026-09-23 against `afa12c7930`, after the sorting and
-list/cell/function/tuple/bytes C API repairs. The current assessment below
-supersedes the historical probe results at the end of this document.
+Previous re-review: 2026-09-23 against `afa12c7930`, after the sorting and
+list/cell/function/tuple/bytes C API repairs. Implementation follow-up on
+2026-09-24 repairs constant acquisition, bytearray exception propagation and
+foreign executor invalidation, and extends the C API input cleanup. The
+current assessment supersedes the historical probe results at the end.
 
 Sources: [PEP 805](https://peps.python.org/pep-0805/),
 [implementation appendix](https://peps.python.org/pep-0805/appendix-implementation/),
@@ -23,34 +25,32 @@ complete the reference-counting and parallelism architecture.
 
 ## Re-review summary
 
-**The implementation is not yet conformant.** At `afa12c7930`, foreign sort
-elements are correctly rejected, but sorting still continues after a callback
-closes its protecting context. A foreign group collecting a legacy extension
-still crashes. New probes also expose an unchecked `LOAD_CONST`: a function
-with a foreign LOCAL list in `co_consts` aborts in both debug builds, or reads
-the list successfully after specialization in the GIL build. The default-build
-parallelism and LOCAL reclamation gaps also remain. These are implementation
-defects or unfinished work, not questions about whether unsafe access or
-crashes are acceptable.
+**The implementation is not yet conformant.** Constant acquisition and
+bytearray exception propagation are now repaired. Foreign sort elements are
+also rejected, but sorting still continues after a callback closes its
+protecting context. A foreign group collecting a legacy extension still
+crashes. The default-build parallelism and LOCAL reclamation gaps remain.
+These are implementation defects or unfinished work, not questions about
+whether unsafe access or crashes are acceptable.
 
-The current audit executed 15 distinct subprocess probes in each Linux/aarch64
-debug build, with timeouts and core dumps disabled. The table separates
-observations from source-inspection findings. This was not a new full-suite
-run: the 69-file results below belong to the preceding implementation work.
-Both demos were rerun and compute 61,620, rejecting foreign LOCAL and
-unprotected PROTECTED access. A successful demo does not demonstrate parallel
-execution in the GIL build or close the failures below.
+The preceding audit executed 15 distinct subprocess probes in each
+Linux/aarch64 debug build, with timeouts and core dumps disabled. The constant
+and buffer-exporter probes were repeated after their repairs. The table
+combines those new results with the unchanged findings from the prior audit.
+New suite results are recorded in the implementation follow-up below.
+A successful demo or selected suite does not demonstrate parallel execution
+in the GIL build or close the remaining failures.
 
 | Current check | Free-threading debug | GIL debug | Assessment |
 | --- | --- | --- | --- |
-| Subscript a foreign LOCAL list loaded from `co_consts`, cold function | SIGABRT at `PyObject_GetItem` input assertion | Same | Newly confirmed VM acquisition defect |
-| Same function after 100 calls in Main | SIGABRT | Returns the foreign list's element, 42 | Access bypass in the specialized GIL path |
+| Subscript a foreign LOCAL list loaded from `co_consts`, cold function | IllegalThreadAccessException | Same | Repaired at constant acquisition |
+| Same function after 100 calls in Main | IllegalThreadAccessException | Same | Repaired; also tested with a Tier 2 executor |
 | Foreign LOCAL elements in `list.sort()` | IllegalThreadAccessException | Same | Repaired |
 | Close protecting generator from sort key | Sort completes after unlock | Same | Remaining reference-lifetime defect |
 | Foreign GC with `xxlimited_3_13` | SIGSEGV in `xx_traverse`, line 457 | Same | Remaining compatibility defect |
 | Last LOCAL reference deleted by another thread in the same group | `after del` before finalizer | Finalizer before `after del` | Free-threading reclamation gap |
 | Object header size | 56 bytes | 40 bytes | Compact representation unfinished; 24 bytes is illustrative |
-| Buffer exporter tries to return a foreign memoryview | Buffer acquisition and join raise IllegalThreadAccessException; `bytearray` `+` and `+=` raise TypeError | Same | Newly confirmed exception-propagation defect |
+| Buffer exporter tries to return a foreign memoryview | Buffer acquisition, join, concatenation and in-place concatenation raise IllegalThreadAccessException | Same | Exception propagation repaired |
 | Transfer an ordinary instance | Primitive attribute readable; `__dict__` denied | Same | Question 4 |
 | Rebind a read-only closure cell | Function changes SYNCHRONIZED to LOCAL | Same | Question 7 |
 | `__str__` returns a `str` subclass | LOCAL subclass preserved | Same | Question 8 |
@@ -69,11 +69,74 @@ not biased reference counting. Free-threading does reuse PEP 703 BRC, but
 that OS-thread bias does not meet the observed same-group LOCAL lifetime
 requirement. Mark's two comments therefore remain only partially addressed.
 
-The source audit also confirms remaining input checks in, for example,
-`PyByteArray_Size` (`Objects/bytearrayobject.c:216`) and
-`PyLong_AsLongAndOverflow` (`Objects/longobject.c:593`), as well as vectorcall
-argument scans. `PyObject_GetItem` does now assert its inputs and validate
-its returned reference (`Objects/abstract.c:166`).
+The input-check cleanup now covers bytearray and integer/float/complex
+accessors as well as the earlier container and function APIs. Vectorcall
+argument scans and other C API families remain to be audited.
+`PyObject_GetItem` asserts its inputs and validates its returned reference.
+
+## Implementation follow-up on 2026-09-24
+
+- **Code constants:** `LOAD_CONST` now includes `_CHECK_CONST_ACCESS`. Keeping
+  that check separate from the load preserves it when the optimizer replaces
+  the load with an inline constant. Regressions cover cold and specialized
+  execution, identity operations, protected constants and shallow immutable
+  constants. A Tier 2 test requires an actual executor containing the inline
+  foreign constant and its access check, then verifies rejection in another
+  group. Both original cold/warm crash or bypass probes now raise the expected
+  access exception in both default interpreter builds.
+- **Bytearray buffers:** concatenation and in-place concatenation preserve
+  IllegalThreadAccessException and UnprotectedAccessException from exporters.
+  Regressions check both operands, the public C API, unchanged destination
+  contents and release of an already acquired buffer when the next fails.
+  Other buffer failures retain their existing TypeError behavior.
+- **Executor invalidation:** a private VM work list retains executors through
+  `_PyList_AppendTakeRef`, not the public `PyList_Append` API, because an
+  executor may belong to a different group. Both dependency and cold-executor
+  invalidation use this internal path. A regression first reproduced the
+  public input assertion failure and now verifies that invalidation succeeds
+  while Python acquisition of the foreign executor remains denied.
+- **Tier 2 expectations:** an old generator fixture expected an access error
+  only after yielding a foreign local. Checked local loads now reject that
+  read inside the producer. The regression verifies the failing LOAD_FAST
+  instruction and generator closure. Two optimizer tests now separately
+  verify the original call/pop validity checks and the additional check after
+  checked local loads. Their exception-construction path remains classified
+  as escaping; it has not been made artificially non-escaping to remove a
+  guard. Reducing this conservative overhead is still outstanding work.
+- **Numeric C APIs:** another 23 input checks become debug assertions
+  (18 integer, two float, three complex APIs). Together with five bytearray
+  APIs and the previous 32 APIs, this follow-up series covers 60 APIs.
+  Index/float/complex conversion-result checks remain. Complex conversion now
+  also revalidates a subclass result after its deprecation-warning callback:
+  a callback ending StopTheWorld previously allowed all three complex
+  accessors to read the foreign result. The regression covers that rejection,
+  allowed access and preservation of exceptions raised by the callback.
+
+Validation before the numeric follow-up: the 74-file PEP/access/compiler/C API
+selection passed in both Linux/aarch64 debug builds, reporting 2,378 tests
+(351 free-threading skips, 357 GIL skips). After adding the executor regression,
+four affected suites passed in both builds (349 tests, 333 skips). The skips
+include Tier 2 tests because those two builds do not enable the optimizer.
+
+A separate GIL debug build configured with
+`--enable-experimental-jit=interpreter` executes the Tier 2 uop interpreter
+without the native machine-code JIT. Its eight-file run of `test_const_access`,
+`test_capi.test_opt`, `test_dis`, `test_peepholer`, `test_code`,
+`test_generated_cases`, `test_bytes_access` and `test_capi.test_bytearray`
+passed: 780 tests, five skips. This exercises the optimizer rather than
+counting skipped tests as validation. Its initial build reported four unused
+variable/function warnings; the optional `_decimal` extension is unavailable.
+
+After the numeric changes, the 14-file selection covering numeric access,
+warning filters, integer/float/complex C APIs and argument parsing, plus
+`test_long`, `test_float`, `test_complex`, `test_math`, `test_cmath` and
+`test_struct`, passed in all three builds: 529 tests, four skips per build.
+Before the fix, the new complex warning regression failed for all three
+accessors when the warning handler ended StopTheWorld without raising.
+The two further numeric/abstract C API suites passed in each build (64 tests).
+The sample application also passed in all three builds, calculating 61,620
+and rejecting foreign LOCAL and unprotected PROTECTED access. These runs do
+not measure parallel speedup.
 
 ## Earlier re-review and implementation follow-ups
 
@@ -268,9 +331,9 @@ acceptable or establishes that Mark's approval is needed for routine fixes.
 
 6. **Mark's input-check comment has only been addressed partially.**
    `PyObject_GetItem` already used assertions at re-review. The follow-up
-   now also replaces input checks in the 32 list, cell, function, tuple and
-   bytes APIs listed above. Other APIs remain to be audited, including
-   bytearray and numeric accessors. `_PyObject_CheckVectorcallArgs()` still
+   now also replaces input checks in the 60 list, cell, function, tuple,
+   bytes, bytearray and numeric APIs listed above. Other APIs remain to be
+   audited. `_PyObject_CheckVectorcallArgs()` still
    scans raw C argument
    arrays (`Include/internal/pycore_call.h:114`). Those array entries are
    incoming references, unlike acquiring values from an argument tuple or
@@ -289,18 +352,7 @@ acceptable or establishes that Mark's approval is needed for routine fixes.
    expectations. The intended invariant must be settled before claiming that
    these checks can be removed safely.
 
-8. **Bytearray concatenation masks access exceptions from buffer exporters.**
-   Both `PyByteArray_Concat()` and `bytearray_iconcat_lock_held()` replace
-   every `PyObject_GetBuffer()` failure with TypeError
-   (`Objects/bytearrayobject.c:411`, `:451`). An accessible exporter attempting
-   to return a foreign LOCAL memoryview therefore produces TypeError through
-   `bytearray() + exporter` and `target += exporter`, while direct buffer
-   acquisition and the repaired join path preserve
-   IllegalThreadAccessException. The new reproduction below confirms this
-   in both builds. Access is denied, so this probe does not demonstrate a
-   successful unsafe read; the defect is losing the access exception.
-
-9. **Uniform debug validation of stack publication is unfinished.**
+8. **Uniform debug validation of stack publication is unfinished.**
    The appendix's [validation section](https://peps.python.org/pep-0805/appendix-implementation/#validation)
    calls for validating references whenever they are pushed to the interpreter
    stack. The common stack-reference constructors
@@ -310,24 +362,6 @@ acceptable or establishes that Mark's approval is needed for routine fixes.
    This source-inspection finding is distinct from native JIT work and from
    the access failures demonstrated by the probes. Passing selected tests
    does not establish this invariant at every publication point.
-
-10. **`LOAD_CONST` publishes unchecked heap references.**
-    `code.replace(co_consts=...)` accepts arbitrary objects, including LOCAL
-    lists (see also the explicit comment in `Objects/codeobject.c:145`). A
-    function constructed with that code can be SYNCHRONIZED, so another group
-    may call it. `LOAD_CONST` borrows the list from `co_consts` without checking
-    accessibility (`Python/bytecodes.c:369`). Subscribing it then reaches the
-    `PyObject_GetItem` input assertion and aborts in both debug builds.
-
-    After 100 valid calls in Main, the GIL build's specialized list-subscript
-    instruction instead reads the foreign list and returns 42. It checks the
-    element, but relies on the incoming container reference being valid
-    (`Python/bytecodes.c:1231`). Free-threading still aborts in this warm-up
-    variant. No native JIT is needed for either result. This is an acquisition
-    bug, not evidence that Mark's valid-input contract should be abandoned.
-    Both ordinary constant loads and any optimizer-generated inline constant
-    paths need to establish that contract. The reproduction constructs a new
-    function and does not depend on deprecated `__code__` assignment.
 
 ## Questions to discuss with Mark
 
@@ -501,12 +535,16 @@ the appendix's [C API discussion](https://peps.python.org/pep-0805/appendix-impl
 - `08cf7ba093`: list, cell and function C API input assertions.
 - `afa12c7930`: tuple and bytes input assertions, stored-buffer acquisition,
   and tuple test-helper error propagation.
+- `b9e28c41d8`: checked code constants in both interpreter tiers.
+- `76155a60fb`: bytearray input assertions and exporter exception propagation.
+- `9dc37a0f0d`: internal retention of foreign executors during invalidation.
+- `cbfc681dcc`: Tier 2 regressions for checked local acquisition.
+- `0a0fb73ca8`: numeric input assertions and complex conversion-result lifetime.
 
 ## Earlier implementation validation
 
-The following full-suite and demo results are from the preceding implementation
-follow-up. They were not rerun for this documentation-only re-review and do
-not cover the newly demonstrated failures.
+The following suite and demo results are historical. The newer implementation
+and validation record above supersedes their scope.
 
 Both Linux/aarch64 debug variants were rebuilt, and the opcode/uop generated
 files were regenerated. The GIL checkout's changed source/test/generated
@@ -672,6 +710,12 @@ print(list(output))
 ```
 
 ## Additional reproduction at `afa12c7930`
+
+These two failures are historical and have been repaired by the 2026-09-24
+follow-up. The programs remain here to make the original findings reproducible
+against that earlier commit. Current execution raises
+IllegalThreadAccessException for the constant probes and all four buffer
+operations.
 
 ### A foreign LOCAL object in code constants
 
