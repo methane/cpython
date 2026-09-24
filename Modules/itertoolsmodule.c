@@ -84,6 +84,25 @@ itertools_iternext_func(iternextfunc iternext, PyObject *it)
     return _PyObject_CheckAccessNullable(iternext(it));
 }
 
+// Unlike the direct-slot helpers, this also clears StopIteration.
+static inline PyObject *
+itertools_next(PyObject *it)
+{
+    if (PyObject_CheckAccess(it) == NULL) {
+        return NULL;
+    }
+    return PyIter_Next(it);
+}
+
+static inline PyObject *
+itertools_callonearg(PyObject *func, PyObject *arg)
+{
+    if (PyObject_CheckAccess(func) == NULL) {
+        return NULL;
+    }
+    return PyObject_CallOneArg(func, arg);
+}
+
 /*[clinic input]
 module itertools
 class itertools.groupby "groupbyobject *" "clinic_state()->groupby_type"
@@ -526,14 +545,14 @@ groupby_step(groupbyobject *gbo)
 {
     PyObject *newvalue, *newkey, *oldvalue;
 
-    newvalue = PyIter_Next(gbo->it);
+    newvalue = itertools_next(gbo->it);
     if (newvalue == NULL)
         return -1;
 
     if (gbo->keyfunc == Py_None) {
         newkey = Py_NewRef(newvalue);
     } else {
-        newkey = PyObject_CallOneArg(gbo->keyfunc, newvalue);
+        newkey = itertools_callonearg(gbo->keyfunc, newvalue);
         if (newkey == NULL) {
             Py_DECREF(newvalue);
             return -1;
@@ -565,11 +584,15 @@ groupby_next(PyObject *op)
                mutating gbo->tgtkey / gbo->currkey while we are comparing them.
                Take local snapshots and hold strong references so INCREF/DECREF
                apply to the same objects even under re-entrancy. */
-            PyObject *tgtkey = gbo->tgtkey;
-            PyObject *currkey = gbo->currkey;
-
-            Py_INCREF(tgtkey);
-            Py_INCREF(currkey);
+            PyObject *tgtkey = _PyObject_CheckAccessNullable(Py_NewRef(gbo->tgtkey));
+            if (tgtkey == NULL) {
+                return NULL;
+            }
+            PyObject *currkey = _PyObject_CheckAccessNullable(Py_NewRef(gbo->currkey));
+            if (currkey == NULL) {
+                Py_DECREF(tgtkey);
+                return NULL;
+            }
             int rcmp = PyObject_RichCompareBool(tgtkey, currkey, Py_EQ);
             Py_DECREF(tgtkey);
             Py_DECREF(currkey);
@@ -681,7 +704,11 @@ static PyObject *
 _grouper_next(PyObject *op)
 {
     _grouperobject *igo = _grouperobject_CAST(op);
-    groupbyobject *gbo = groupbyobject_CAST(igo->parent);
+    PyObject *parent = PyObject_CheckAccess(igo->parent);
+    if (parent == NULL) {
+        return NULL;
+    }
+    groupbyobject *gbo = groupbyobject_CAST(parent);
     PyObject *r;
     int rcmp;
 
@@ -697,8 +724,15 @@ _grouper_next(PyObject *op)
        mutating gbo->currkey while we are comparing them.
        Take local snapshots and hold strong references so INCREF/DECREF
        apply to the same objects even under re-entrancy. */
-    PyObject *tgtkey = Py_NewRef(igo->tgtkey);
-    PyObject *currkey = Py_NewRef(gbo->currkey);
+    PyObject *tgtkey = _PyObject_CheckAccessNullable(Py_NewRef(igo->tgtkey));
+    if (tgtkey == NULL) {
+        return NULL;
+    }
+    PyObject *currkey = _PyObject_CheckAccessNullable(Py_NewRef(gbo->currkey));
+    if (currkey == NULL) {
+        Py_DECREF(tgtkey);
+        return NULL;
+    }
     rcmp = PyObject_RichCompareBool(tgtkey, currkey, Py_EQ);
     Py_DECREF(tgtkey);
     Py_DECREF(currkey);
@@ -813,7 +847,7 @@ teedataobject_getitem_lock_held(teedataobject *tdo, int i)
             return NULL;
         }
         tdo->running = 1;
-        value = PyIter_Next(tdo->it);
+        value = itertools_next(tdo->it);
         tdo->running = 0;
         if (value == NULL)
             return NULL;
@@ -970,24 +1004,6 @@ tee_next(PyObject *op)
     teeobject *to = teeobject_CAST(op);
     PyObject *value;
 
-#ifndef Py_GIL_DISABLED
-    /* The GIL already serializes access, so keep the simple path without the
-       snapshot and revalidation that the free-threaded build needs. */
-    if (to->index >= LINKCELLS) {
-        PyObject *link = teedataobject_jumplink(to->state, to->dataobj);
-        if (link == NULL) {
-            return NULL;
-        }
-        Py_SETREF(to->dataobj, (teedataobject *)link);
-        to->index = 0;
-    }
-    value = teedataobject_getitem(to->dataobj, to->index);
-    if (value == NULL) {
-        return NULL;
-    }
-    to->index++;
-    return value;
-#else
     for (;;) {
         teedataobject *dataobj;
         int index;
@@ -999,6 +1015,10 @@ tee_next(PyObject *op)
         dataobj = (teedataobject *)Py_NewRef((PyObject *)to->dataobj);
         index = to->index;
         Py_END_CRITICAL_SECTION();
+        dataobj = (teedataobject *)_PyObject_CheckAccessNullable((PyObject *)dataobj);
+        if (dataobj == NULL) {
+            return NULL;
+        }
 
         if (index < LINKCELLS) {
             value = teedataobject_getitem(dataobj, index);
@@ -1014,6 +1034,7 @@ tee_next(PyObject *op)
         }
 
         PyObject *link = teedataobject_jumplink(to->state, dataobj);
+        link = _PyObject_CheckAccessNullable(link);
         if (link == NULL) {
             Py_DECREF(dataobj);
             return NULL;
@@ -1028,7 +1049,6 @@ tee_next(PyObject *op)
         Py_XDECREF(link);
         Py_DECREF(dataobj);
     }
-#endif
 }
 
 static int
@@ -1299,7 +1319,7 @@ cycle_next(PyObject *op)
     Py_ssize_t index = FT_ATOMIC_LOAD_SSIZE_RELAXED(lz->index);
 
     if (index < 0) {
-        item = PyIter_Next(lz->it);
+        item = itertools_next(lz->it);
         if (item != NULL) {
             if (PyList_Append(lz->saved, item)) {
                 Py_DECREF(item);
@@ -1319,7 +1339,9 @@ cycle_next(PyObject *op)
     if (PyList_GET_SIZE(lz->saved) == 0)
         return NULL;
     item = PyList_GetItemRef(lz->saved, index);
-    assert(item);
+    if (item == NULL) {
+        return NULL;
+    }
     index++;
     if (index >= PyList_GET_SIZE(lz->saved)) {
         index = 0;
@@ -1435,7 +1457,7 @@ dropwhile_next(PyObject *op)
         if (lz->start == 1)
             return item;
 
-        good = PyObject_CallOneArg(lz->func, item);
+        good = itertools_callonearg(lz->func, item);
         if (good == NULL) {
             Py_DECREF(item);
             return NULL;
@@ -1556,7 +1578,7 @@ takewhile_next(PyObject *op)
     if (item == NULL)
         return NULL;
 
-    good = PyObject_CallOneArg(lz->func, item);
+    good = itertools_callonearg(lz->func, item);
     if (good == NULL) {
         Py_DECREF(item);
         return NULL;
@@ -1868,7 +1890,8 @@ starmap_next(PyObject *op)
             return NULL;
         args = newargs;
     }
-    result = PyObject_Call(lz->func, args, NULL);
+    PyObject *func = PyObject_CheckAccess(lz->func);
+    result = func == NULL ? NULL : PyObject_Call(func, args, NULL);
     Py_DECREF(args);
     return result;
 }
@@ -1993,7 +2016,7 @@ chain_next_lock_held(PyObject *op)
      * we should grab a new one from lz->source. */
     while (lz->source != NULL) {
         if (lz->active == NULL) {
-            PyObject *iterable = PyIter_Next(lz->source);
+            PyObject *iterable = itertools_next(lz->source);
             if (iterable == NULL) {
                 Py_CLEAR(lz->source);
                 return NULL;            /* no more input sources */
@@ -3188,10 +3211,21 @@ accumulate_next_lock_held(PyObject *op)
         return lz->total;
     }
 
-    if (lz->binop == NULL)
-        newtotal = PyNumber_Add(lz->total, val);
-    else
-        newtotal = PyObject_CallFunctionObjArgs(lz->binop, lz->total, val, NULL);
+    // A recursive call can replace total while the operation is running.
+    PyObject *total = _PyObject_CheckAccessNullable(Py_NewRef(lz->total));
+    if (total == NULL) {
+        Py_DECREF(val);
+        return NULL;
+    }
+    if (lz->binop == NULL) {
+        newtotal = PyNumber_Add(total, val);
+    }
+    else {
+        PyObject *binop = PyObject_CheckAccess(lz->binop);
+        newtotal = binop == NULL ? NULL :
+            PyObject_CallFunctionObjArgs(binop, total, val, NULL);
+    }
+    Py_DECREF(total);
     Py_DECREF(val);
     if (newtotal == NULL)
         return NULL;
@@ -3454,7 +3488,7 @@ filterfalse_next(PyObject *op)
             ok = PyObject_IsTrue(item);
         } else {
             PyObject *good;
-            good = PyObject_CallOneArg(lz->func, item);
+            good = itertools_callonearg(lz->func, item);
             if (good == NULL) {
                 Py_DECREF(item);
                 return NULL;
@@ -3647,16 +3681,18 @@ count_nextlong(countobject *lz)
     }
     assert(lz->cnt == PY_SSIZE_T_MAX && lz->long_cnt != NULL);
 
-    // We hold one reference to "result" (a.k.a. the old value of
-    // lz->long_cnt); we'll either return it or keep it in lz->long_cnt.
-    PyObject *result = lz->long_cnt;
-
-    PyObject *stepped_up = PyNumber_Add(result, lz->long_step);
-    if (stepped_up == NULL) {
+    // Keep an owned snapshot: __add__ may recursively advance the counter.
+    PyObject *result = _PyObject_CheckAccessNullable(Py_NewRef(lz->long_cnt));
+    if (result == NULL) {
         return NULL;
     }
-    lz->long_cnt = stepped_up;
-
+    PyObject *step = PyObject_CheckAccess(lz->long_step);
+    PyObject *stepped_up = step == NULL ? NULL : PyNumber_Add(result, step);
+    if (stepped_up == NULL) {
+        Py_DECREF(result);
+        return NULL;
+    }
+    Py_SETREF(lz->long_cnt, stepped_up);
     return result;
 }
 
@@ -3694,27 +3730,40 @@ static PyObject *
 count_repr(PyObject *op)
 {
     countobject *lz = countobject_CAST(op);
-    if (lz->long_cnt == NULL) {
-        Py_ssize_t cnt = FT_ATOMIC_LOAD_SSIZE_RELAXED(lz->cnt);
+    PyObject *long_cnt, *long_step;
+    Py_ssize_t cnt;
+    Py_BEGIN_CRITICAL_SECTION(lz);
+    cnt = FT_ATOMIC_LOAD_SSIZE_RELAXED(lz->cnt);
+    long_cnt = Py_XNewRef(lz->long_cnt);
+    long_step = long_cnt == NULL ? NULL : Py_NewRef(lz->long_step);
+    Py_END_CRITICAL_SECTION();
+    if (long_cnt == NULL) {
         return PyUnicode_FromFormat("%s(%zd)",
                                     _PyType_Name(Py_TYPE(lz)), cnt);
     }
-
-    if (PyLong_Check(lz->long_step)) {
-        long step = PyLong_AsLong(lz->long_step);
+    PyObject *result = NULL;
+    if (PyObject_CheckAccess(long_cnt) == NULL ||
+        PyObject_CheckAccess(long_step) == NULL) {
+        goto done;
+    }
+    if (PyLong_Check(long_step)) {
+        long step = PyLong_AsLong(long_step);
         if (step == -1 && PyErr_Occurred()) {
             PyErr_Clear();
         }
         if (step == 1) {
             /* Don't display step when it is an integer equal to 1 */
-            return PyUnicode_FromFormat("%s(%R)",
-                                        _PyType_Name(Py_TYPE(lz)),
-                                        lz->long_cnt);
+            result = PyUnicode_FromFormat("%s(%R)",
+                                          _PyType_Name(Py_TYPE(lz)), long_cnt);
+            goto done;
         }
     }
-    return PyUnicode_FromFormat("%s(%R, %R)",
-                                _PyType_Name(Py_TYPE(lz)),
-                                lz->long_cnt, lz->long_step);
+    result = PyUnicode_FromFormat("%s(%R, %R)",
+                                  _PyType_Name(Py_TYPE(lz)), long_cnt, long_step);
+done:
+    Py_DECREF(long_cnt);
+    Py_DECREF(long_step);
+    return result;
 }
 
 static PyType_Slot count_slots[] = {
@@ -3996,7 +4045,7 @@ zip_longest_next_lock_held(PyObject *op)
             if (it == NULL) {
                 item = Py_NewRef(lz->fillvalue);
             } else {
-                item = PyIter_Next(it);
+                item = itertools_next(it);
                 if (item == NULL) {
                     lz->numactive -= 1;
                     if (lz->numactive == 0 || PyErr_Occurred()) {
@@ -4026,7 +4075,7 @@ zip_longest_next_lock_held(PyObject *op)
             if (it == NULL) {
                 item = Py_NewRef(lz->fillvalue);
             } else {
-                item = PyIter_Next(it);
+                item = itertools_next(it);
                 if (item == NULL) {
                     lz->numactive -= 1;
                     if (lz->numactive == 0 || PyErr_Occurred()) {

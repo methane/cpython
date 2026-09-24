@@ -1245,6 +1245,51 @@ interpreter builds. The new six-method suite also passes -R 3:3 on the default
 build. Incremental builds report no warnings or failed module imports, and
 changed sources and tests match across all three builds.
 
+### Itertools stored references and reentrant count lifetime
+
+The retained-iterator callers of PyIter_Next now validate their acquisitions,
+matching the existing direct-slot helpers. This covers groupby, cycle, chain,
+tee and both zip_longest result-allocation paths. Dropwhile, takewhile,
+filterfalse, starmap, groupby and accumulate validate stored callables before
+calling C APIs whose arguments must already be accessible. Accumulate checks
+its stored total before arithmetic or passing it as a callback argument.
+Count checks both retained operands before addition and snapshots operands for
+representation. Groupby and grouper key comparisons now check their owned
+snapshots at acquisition, rather than relying on PyObject_RichCompareBool's
+remaining input checks.
+
+Grouper validates its mutable parent before inspecting or changing its state.
+A debugger-created local grouper could previously consume another group's
+cached groupby value after leaving StopTheWorld. Tee now uses an owned,
+checked data-buffer snapshot in both configurations and validates acquired
+links. A shallow transferred branch previously consumed a foreign group's
+cached buffer, or aborted in PyIter_Next when fetching from the foreign input.
+Cycle also handles a rejected cached-list acquisition: the previous assert
+aborted instead of propagating UnprotectedAccessException. Its position stays
+unchanged on that failure, so iteration resumes under the protecting lock.
+
+Count and accumulate retain their arithmetic operand across a potentially
+reentrant callback. Count previously treated its stored reference as a returned
+reference even if recursive __add__ had replaced that storage. The standalone
+GIL probe returns a freed object, fails its weakref identity assertion and
+crashes during GC/shutdown before the repair. The repaired counter replaces
+its current stored value normally and returns its independently owned snapshot.
+
+The initial seven valid regression methods report 18 failures including
+subtests; their log is `before-valid.log` in `/tmp/pep805-itertools-access/`.
+The count lifetime and grouper-parent probes separately fail against the
+previous GIL executable. The final eleven-method suite adds those cases, the
+fresh zip_longest result path and 150 denied arithmetic acquisitions with a
+reference-count stability check. The directory also contains build and suite
+logs. Itertools sharing-state propagation and the broader native constructor
+and acquisition audit remain unfinished; question 1's callback-lifetime
+mechanism is not established by these repairs.
+
+The final six-suite iterator/sequence selection passes on the default, GIL and
+Tier 2 interpreter builds, each with 211 reported tests and six skips.
+Incremental builds report no compiler warnings or failed module imports.
+Changed native source and tests match across all three builds.
+
 ## Earlier re-review and implementation follow-ups
 
 One earlier question was incorrect: footnote 3 of the
