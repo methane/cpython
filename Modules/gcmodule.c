@@ -116,7 +116,7 @@ gc_set_debug_impl(PyObject *module, int flags)
 /*[clinic end generated code: output=7c8366575486b228 input=5e5ce15e84fbed15]*/
 {
     GCState *gcstate = get_gc_state();
-    gcstate->debug = flags;
+    _Py_atomic_store_int_relaxed(&gcstate->debug, flags);
     Py_RETURN_NONE;
 }
 
@@ -131,7 +131,7 @@ gc_get_debug_impl(PyObject *module)
 /*[clinic end generated code: output=91242f3506cd1e50 input=91a101e1c3b98366]*/
 {
     GCState *gcstate = get_gc_state();
-    return gcstate->debug;
+    return _Py_atomic_load_int_relaxed(&gcstate->debug);
 }
 
 /*[clinic input]
@@ -159,6 +159,7 @@ gc_set_threshold_impl(PyObject *module, int threshold0, int group_right_1,
     GCState *gcstate = get_gc_state();
 
 #ifndef Py_GIL_DISABLED
+    PyMutex_LockFlags(&gcstate->mutex, _Py_LOCK_DONT_DETACH);
     gcstate->generations[0].threshold = threshold0;
     if (group_right_1) {
         gcstate->generations[1].threshold = threshold1;
@@ -166,6 +167,7 @@ gc_set_threshold_impl(PyObject *module, int threshold0, int group_right_1,
     if (group_right_2) {
         gcstate->generations[2].threshold = threshold2;
     }
+    PyMutex_Unlock(&gcstate->mutex);
 #else
     PyInterpreterState *interp = _PyInterpreterState_GET();
     _PyEval_StopTheWorld(interp);
@@ -193,10 +195,12 @@ gc_get_threshold_impl(PyObject *module)
 {
     GCState *gcstate = get_gc_state();
 #ifndef Py_GIL_DISABLED
-    return Py_BuildValue("(iii)",
-                         gcstate->generations[0].threshold,
-                         gcstate->generations[1].threshold,
-                         gcstate->generations[2].threshold);
+    PyMutex_LockFlags(&gcstate->mutex, _Py_LOCK_DONT_DETACH);
+    int threshold0 = gcstate->generations[0].threshold;
+    int threshold1 = gcstate->generations[1].threshold;
+    int threshold2 = gcstate->generations[2].threshold;
+    PyMutex_Unlock(&gcstate->mutex);
+    return Py_BuildValue("(iii)", threshold0, threshold1, threshold2);
 #else
     return Py_BuildValue("(iii)",
                          gcstate->young.threshold,
@@ -230,10 +234,12 @@ gc_get_count_impl(PyObject *module)
 #endif
 
 #ifndef Py_GIL_DISABLED
-    return Py_BuildValue("(iii)",
-                         gcstate->generations[0].count,
-                         gcstate->generations[1].count,
-                         gcstate->generations[2].count);
+    PyMutex_LockFlags(&gcstate->mutex, _Py_LOCK_DONT_DETACH);
+    int count0 = gcstate->generations[0].count;
+    int count1 = gcstate->generations[1].count;
+    int count2 = gcstate->generations[2].count;
+    PyMutex_Unlock(&gcstate->mutex);
+    return Py_BuildValue("(iii)", count0, count1, count2);
 #else
     return Py_BuildValue("(iii)",
                          young,
@@ -378,12 +384,16 @@ gc_get_stats_impl(PyObject *module)
     GCState *gcstate = get_gc_state();
 #ifdef Py_GIL_DISABLED
     PyMutex_Lock(&gcstate->stats_mutex);
+#else
+    PyMutex_LockFlags(&gcstate->mutex, _Py_LOCK_DONT_DETACH);
 #endif
     stats[0] = gcstate->generation_stats->young.items[gcstate->generation_stats->young.index];
     stats[1] = gcstate->generation_stats->old[0].items[gcstate->generation_stats->old[0].index];
     stats[2] = gcstate->generation_stats->old[1].items[gcstate->generation_stats->old[1].index];
 #ifdef Py_GIL_DISABLED
     PyMutex_Unlock(&gcstate->stats_mutex);
+#else
+    PyMutex_Unlock(&gcstate->mutex);
 #endif
 
     PyObject *result = PyList_New(0);

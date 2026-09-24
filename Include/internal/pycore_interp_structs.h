@@ -230,6 +230,9 @@ struct _gc_runtime_state {
     int debug;
     /* linked lists of container objects */
 #ifndef Py_GIL_DISABLED
+    // Guards list updates, allocation counters and configuration while
+    // threads are running. Never detach or execute Python while holding it.
+    PyMutex mutex;
     struct gc_generation generations[NUM_GENERATIONS];
 #else
     struct gc_generation young;

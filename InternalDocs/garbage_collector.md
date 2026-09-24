@@ -755,17 +755,23 @@ data structure.
   instead relies on the embedded mimalloc memory allocator to scan the heap
   for tracked objects.
 - The default build implementation uses `PyGC_Head` for the unreachable
-  object list.  The free-threaded build implementation repurposes the
-  `ob_tid` field to store a unreachable objects linked list.
+  partition during paused reachability passes. It holds strong references in
+  separate worklists while running callbacks, finalizers and destruction.
+  Worklist references are excluded from the resurrection calculation. The
+  original free-threaded build repurposes `ob_tid` for its unreachable worklist;
+  the compact header's ThreadGroup owner ID is never used as scratch space.
 - Both implementations use `ob_gc_bits` for tracking and finalization state.
   The default build keeps temporary collection flags in the `PyGC_Head` links,
   while the original free-threaded collector stores collection flags in
   `ob_gc_bits` too.
 
 
-The normal-build port still relies on the
+The normal-build port still retains the
 [global interpreter lock](https://docs.python.org/3/glossary.html#term-global-interpreter-lock)
-for GC list mutation. It now also pauses other threads while examining reference
+while concurrent execution and ownership of finalization are being completed.
+Within an interpreter, tracking and counters now use a GC mutex while threads
+are running. Python callbacks and destructors run without that mutex. The
+collector also pauses other threads while examining reference
 counts, stack roots and heap edges, and during heap introspection. Weakref
 callbacks, finalizers, debug output and destruction run after threads resume.
 Debug output uses a separate snapshot of strong references so a reentrant

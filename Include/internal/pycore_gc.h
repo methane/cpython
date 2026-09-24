@@ -9,6 +9,7 @@ extern "C" {
 #endif
 
 #include "pycore_interp_structs.h" // PyGC_Head
+#include "pycore_lock.h"          // PyMutex_LockFlags()
 #include "pycore_pystate.h"       // _PyInterpreterState_GET()
 #include "pycore_typedefs.h"      // _PyInterpreterFrame
 
@@ -192,15 +193,19 @@ static inline void _PyObject_GC_TRACK(
                           filename, lineno, __func__);
 
     struct _gc_runtime_state *gcstate = &_PyInterpreterState_GET()->gc;
+    PyMutex_LockFlags(&gcstate->mutex, _Py_LOCK_DONT_DETACH);
     PyGC_Head *generation0 = gcstate->generation0;
     PyGC_Head *last = (PyGC_Head*)(generation0->_gc_prev);
     _PyGCHead_SET_NEXT(last, gc);
     _PyGCHead_SET_PREV(gc, last);
     _PyGCHead_SET_NEXT(gc, generation0);
     generation0->_gc_prev = (uintptr_t)gc;
-    gcstate->heap_size++;
+    _Py_atomic_add_ssize(&gcstate->heap_size, 1);
 #endif
     _PyObject_SET_GC_BITS(op, _PyGC_BITS_TRACKED);
+#ifndef Py_GIL_DISABLED
+    PyMutex_Unlock(&gcstate->mutex);
+#endif
 }
 
 /* Tell the GC to stop tracking this object.
@@ -225,6 +230,8 @@ static inline void _PyObject_GC_UNTRACK(
                           filename, lineno, __func__);
 
 #ifndef Py_GIL_DISABLED
+    struct _gc_runtime_state *gcstate = &_PyInterpreterState_GET()->gc;
+    PyMutex_LockFlags(&gcstate->mutex, _Py_LOCK_DONT_DETACH);
     PyGC_Head *gc = _Py_AS_GC(op);
     PyGC_Head *prev = _PyGCHead_PREV(gc);
     PyGC_Head *next = _PyGCHead_NEXT(gc);
@@ -232,10 +239,12 @@ static inline void _PyObject_GC_UNTRACK(
     _PyGCHead_SET_PREV(next, prev);
     gc->_gc_next = 0;
     gc->_gc_prev = 0;
-    struct _gc_runtime_state *gcstate = &_PyInterpreterState_GET()->gc;
-    gcstate->heap_size--;
+    _Py_atomic_add_ssize(&gcstate->heap_size, -1);
 #endif
     _PyObject_CLEAR_GC_BITS(op, _PyGC_BITS_TRACKED);
+#ifndef Py_GIL_DISABLED
+    PyMutex_Unlock(&gcstate->mutex);
+#endif
 }
 
 

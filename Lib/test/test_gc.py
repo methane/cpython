@@ -698,54 +698,131 @@ class GCTests(unittest.TestCase):
 
     @support.nomemtest
     @unittest.skipIf(_testcapi is None, "requires _testcapi")
+    @unittest.skipIf(_testinternalcapi is None, "requires _testinternalcapi")
     def test_debug_snapshot_memory_error(self):
-        for fail_at in (0, 1):
-            with self.subTest(fail_at=fail_at):
-                assert_python_ok('-c', textwrap.dedent(f'''
-                    import gc
-                    import sys
-                    import weakref
-                    import _testcapi
+        assert_python_ok('-c', textwrap.dedent("""
+            import gc
+            import sys
+            import weakref
+            import _testcapi
+            import _testinternalcapi
 
+            gc.disable()
+            events = []
+            errors = []
+            output = []
+
+            class Target:
+                def __del__(self):
+                    events.append('finalizer')
+
+            def weak_callback(ref):
+                events.append('weakref')
+
+            def callback(phase, info):
+                if phase == 'start':
+                    _testcapi.set_nomemory(fail_at, fail_at + 1)
+
+            class Output:
+                def write(self, text):
+                    output.append(text)
+
+                def flush(self):
+                    pass
+
+            def unraisable(info):
+                errors.append(info.exc_type)
+
+            debug_failures = set()
+            aborted = False
+            # Sweep allocation positions: candidate and callback worklists
+            # precede the debug snapshot. Require both empty and partial
+            # debug-snapshot failures, independently of their position.
+            for fail_at in range(16):
+                gc.collect()
+                events.clear()
+                errors.clear()
+                output.clear()
+                objects = [Target() for _ in range(512)]
+                refs = [weakref.ref(obj, weak_callback) for obj in objects]
+                for obj in objects:
+                    obj.cycle = obj
+                del obj, objects
+
+                stderr = sys.stderr
+                hook = sys.unraisablehook
+                sys.stderr = Output()
+                sys.unraisablehook = unraisable
+                gc.callbacks.append(callback)
+                gc.set_debug(gc.DEBUG_COLLECTABLE)
+                try:
                     gc.collect()
-                    gc.disable()
+                finally:
+                    _testcapi.remove_mem_hooks()
+                    gc.set_debug(0)
+                    gc.callbacks.remove(callback)
+                    sys.stderr = stderr
+                    sys.unraisablehook = hook
+                assert not _testinternalcapi.threadgroup_world_is_stopped()
 
-                    class Target:
-                        pass
-
-                    objects = [Target() for _ in range(512)]
-                    refs = [weakref.ref(obj) for obj in objects]
-                    for obj in objects:
-                        obj.cycle = obj
-                    del obj, objects
-
-                    def callback(phase, info):
-                        if phase == 'start':
-                            _testcapi.set_nomemory({fail_at}, {fail_at + 1})
-
-                    output = []
-                    class Output:
-                        def write(self, text):
-                            output.append(text)
-
-                        def flush(self):
-                            pass
-
-                    stderr = sys.stderr
-                    sys.stderr = Output()
-                    gc.callbacks.append(callback)
-                    gc.set_debug(gc.DEBUG_COLLECTABLE)
-                    try:
-                        gc.collect()
-                    finally:
-                        _testcapi.remove_mem_hooks()
-                        gc.set_debug(0)
-                        gc.callbacks.remove(callback)
-                        sys.stderr = stderr
-                    assert any('could not allocate complete debugging snapshot'
-                               in text for text in output), output[:3]
+                if any('could not allocate complete debugging snapshot'
+                       in text for text in output):
+                    assert not errors, errors
                     assert all(ref() is None for ref in refs)
-                '''))
+                    debug_failures.add(any('gc: collectable' in text
+                                           for text in output))
+                elif errors:
+                    assert errors == [MemoryError], errors
+                    # Failed preparation must preserve both weakrefs and
+                    # callbacks for a later collection, without finalizing.
+                    assert not events, events
+                    assert all(ref() is not None for ref in refs)
+                    aborted = True
+
+                # No pin or queued callback may be lost on either failure.
+                gc.collect()
+                assert all(ref() is None for ref in refs)
+                assert events.count('weakref') == 512, events
+                assert events.count('finalizer') == 512, events
+            assert aborted
+            assert debug_failures == {False, True}, debug_failures
+        """))
+
+    @unittest.skipIf(_testcapi is None, "requires _testcapi")
+    def test_finalizer_changes_gc_membership(self):
+        for retrack in (False, True):
+            for resurrect in (False, True):
+                with self.subTest(retrack=retrack, resurrect=resurrect):
+                    with support.disable_gc():
+                        events = []
+                        survivors = []
+
+                        class Target:
+                            def __del__(self):
+                                events.append(gc.is_finalized(self))
+                                if retrack:
+                                    _testcapi.gc_retrack(self)
+                                if resurrect:
+                                    survivors.append(self)
+                                else:
+                                    self.cycle = None
+
+                        obj = Target()
+                        obj.cycle = obj
+                        ref = weakref.ref(obj)
+                        del obj
+                        gc.collect()
+                        self.assertEqual(events, [True])
+                        if resurrect:
+                            obj = survivors.pop()
+                            self.assertIs(obj.cycle, obj)
+                            self.assertTrue(gc.is_tracked(obj))
+                            self.assertTrue(gc.is_finalized(obj))
+                            ref = weakref.ref(obj)
+                            del obj
+                            gc.collect()
+                        self.assertIsNone(ref())
+                        self.assertEqual(events, [True])
 
     def test_is_finalized(self):
         # Objects not tracked by the always gc return false

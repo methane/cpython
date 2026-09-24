@@ -80,6 +80,12 @@ for group in (sys.main_thread_group, threading.ThreadGroup('allocation heap')):
 
         def record(phase):
             observed.append((phase, internal.threadgroup_world_is_stopped()))
+            # These APIs acquire the GC state lock and allocate their results.
+            # Callbacks, finalizers and debug output must run without that lock.
+            gc.set_threshold(*gc.get_threshold())
+            gc.get_count()
+            gc.get_stats()
+            gc.isenabled()
 
         class Cycle:
             def __del__(self):

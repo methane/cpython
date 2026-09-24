@@ -2924,7 +2924,8 @@ has_deferred_refcount(PyObject *self, PyObject *op)
 static PyObject *
 get_tracked_heap_size(PyObject *self, PyObject *Py_UNUSED(ignored))
 {
-    return PyLong_FromInt64(PyInterpreterState_Get()->gc.heap_size);
+    return PyLong_FromInt64(_Py_atomic_load_ssize_relaxed(
+        &PyInterpreterState_Get()->gc.heap_size));
 }
 
 static PyObject *

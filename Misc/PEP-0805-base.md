@@ -15,7 +15,7 @@ The five-stage implementation is **not complete**.
 | One-time ABI change | Compact owner/state and group-biased RC header; no cleanup queue fields | Complete the allocation/GC port and audit native layouts |
 | Biased and deferred reference counting | Group bias, per-thread code counts, deferred stack roots and normal GC integration | Queue collection and reclamation with concurrent groups |
 | LOCAL and IMMUTABLE ownership | Builtin/static metadata, public `__shareable__` state, common C API returns, VM heap loads, attributes and call expansion | Remaining API/VM acquisitions and shared static extension ownership |
-| Parallel allocation and cyclic GC | Per-thread freelists and mimalloc heaps, internal world stops and paused GC reachability snapshots | Concurrent allocation/heap tracking, owner-correct finalization and teardown |
+| Parallel allocation and cyclic GC | Per-thread heaps/freelists, paused reachability snapshots, owned worklists and synchronized tracking | Concurrent execution, owner-correct finalization, cross-interpreter legacy objects and teardown |
 
 Freezing, protective/compound locks, synchronized objects and functions,
 TransferBox, Channel, the debugger StopTheWorld API, and performance work are
@@ -79,8 +79,24 @@ GC debug output holds a separate snapshot of strong references taken during a
 pause. A reentrant `sys.stderr.write()` can reclaim cycle members without
 invalidating the output walk. Snapshot references are released before checking
 resurrection; no debug queue fields are added to object headers.
+Finalization and destruction now use separate worklists holding strong references
+to candidates. Those references are subtracted when computing resurrection, using
+the existing unreachable bit to identify the collector's reference. Weakref
+callback entries are all allocated before any weakref is cleared. Allocation
+failure restores the generation lists and releases partial worklists with threads
+running, preserving callbacks for a later collection. Legacy finalizer handling
+also runs from an owned snapshot; list reconciliation happens during pauses.
+
+Within an interpreter, tracking/untracking, allocation counters, configuration
+and statistics use a GC mutex when threads are running. Nothing may detach,
+stop the world or execute Python while holding it. Result construction and
+destructors run after unlocking; heap-size observations use atomic counts.
+This is not yet proof of concurrent collection: execution still uses the
+interpreter GIL, and legacy extension objects shared across interpreters need
+further ownership and list-lifetime work.
 Shutdown merges/disables per-thread counts under a pause before releasing deferred
-references. Generation lists and allocation still depend on the interpreter GIL.
+references. Shutdown list moves use the GC mutex, releasing it before dropping
+sentinels that can execute destructors.
 The free-threading collector reuses `ob_tid` as scratch space; its replacement
 must preserve the compact header's group owner ID throughout collection.
 
@@ -148,6 +164,17 @@ Tests run on Linux/aarch64. Logs are under `/tmp/pep805-base/`. The optional
 `_decimal` module is unavailable. The native scheduling probes exchange raw
 flags/events rather than foreign LOCAL Python functions or mutable results.
 Parallel scheduling tests remain skipped while the interpreter GIL is enabled.
+
+- Owned GC worklists and tracking synchronization: 958 tests passed across
+  GC, finalization, ThreadGroups, reclamation, weakrefs, embedding, threading,
+  fork and C APIs (20 skips). GC, ThreadGroups and deferred reclamation pass
+  `-R 3:3` with `mimalloc_debug` (97 tests, three skips). Tests cover retracking
+  inside a finalizer, resurrection with and without retracking, GC API calls
+  from callbacks, and failures in candidate/callback/debug worklist allocation.
+  Failed preparation leaves callbacks pending; retry invokes every weakref
+  callback and finalizer exactly once. The worklist-only build also passed
+  a 699-test VM/frame/fork/C API selection (12 skips) and a 254-test leak
+  selection including finalization and weakrefs (seven skips).
 
 - GC bitmap migration: 545 tests passed across ten files covering GC,
   ThreadGroups, ownership, weakrefs, reclamation, tuples, generators,
