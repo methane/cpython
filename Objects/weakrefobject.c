@@ -268,10 +268,8 @@ weakref_richcompare(PyObject* self, PyObject* other, int op)
     return res;
 }
 
-/* Given the head of an object's list of weak references, extract the
- * two callback-less refs (ref and proxy).  Used to determine if the
- * shared references exist and to determine the back link for newly
- * inserted references.
+/* Find the leading callback-less ref/proxy pair to choose an insertion point.
+ * Other ThreadGroups may have additional basic refs further down the list.
  */
 static void
 get_basic_refs(PyWeakReference *head,
@@ -334,20 +332,19 @@ try_reuse_basic_ref(PyWeakReference *list, PyTypeObject *type,
         return NULL;
     }
 
-    PyWeakReference *ref, *proxy;
-    get_basic_refs(list, &ref, &proxy);
-
-    PyWeakReference *cand = NULL;
-    if (type == &_PyWeakref_RefType) {
-        cand = ref;
-    }
-    if ((type == &_PyWeakref_ProxyType) ||
-        (type == &_PyWeakref_CallableProxyType)) {
-        cand = proxy;
-    }
-
-    if (cand != NULL && _Py_TryIncref((PyObject *) cand)) {
-        return cand;
+    // Immutable referents can have LOCAL weakrefs in multiple ThreadGroups.
+    // Search past other groups' cached refs without acquiring them. Keep
+    // canonical ref/proxy identity within each group, even after another
+    // group has inserted its own refs at the head of the list.
+    for (PyWeakReference *cand = list; cand != NULL; cand = cand->wr_next) {
+        int matches = (type == &_PyWeakref_RefType)
+            ? PyWeakref_CheckRefExact(cand) : PyWeakref_CheckProxy(cand);
+        if (matches && cand->wr_callback == NULL &&
+            PyObject_IsAccessible((PyObject *)cand) &&
+            _Py_TryIncref((PyObject *)cand))
+        {
+            return cand;
+        }
     }
     return NULL;
 }
@@ -968,7 +965,11 @@ PyWeakref_GetRef(PyObject *ref, PyObject **pobj)
         return -1;
     }
     *pobj = _PyWeakref_GET_REF(ref);
-    return (*pobj != NULL);
+    if (*pobj == NULL) {
+        return 0;
+    }
+    *pobj = _PyObject_CheckAccessNullable(*pobj);
+    return *pobj != NULL ? 1 : -1;
 }
 
 
@@ -984,8 +985,9 @@ PyWeakref_GetObject(PyObject *ref)
     if (obj == NULL) {
         return Py_None;
     }
+    PyObject *result = PyObject_CheckAccess(obj);
     Py_DECREF(obj);
-    return obj;  // borrowed reference
+    return result;  // borrowed reference
 }
 
 /* Note that there's an inlined copy-paste of handle_callback() in gcmodule.c's

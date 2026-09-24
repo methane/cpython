@@ -1813,7 +1813,113 @@ done:
     return result;
 }
 
+struct weakref_probe {
+    PyInterpreterState *interp;
+    _PyThreadGroupState *group;
+    PyObject *target;
+    PyEvent ready;
+    PyEvent exit;
+    int ok;
+};
+
+static void
+weakref_probe_worker(void *arg)
+{
+    struct weakref_probe *probe = arg;
+    PyThreadState *tstate = PyThreadState_New(probe->interp);
+    if (tstate == NULL) {
+        _PyEvent_Notify(&probe->ready);
+        return;
+    }
+    _PyThreadGroup_Decref(tstate->threadgroup);
+    tstate->threadgroup = probe->group;
+    _PyThreadGroup_Incref(probe->group);
+    PyEval_AcquireThread(tstate);
+    assert(PyObject_IsAccessible(probe->target));
+
+    PyObject *ref = PyWeakref_NewRef(probe->target, NULL);
+    PyObject *proxy = PyWeakref_NewProxy(probe->target, NULL);
+    PyObject *again = PyWeakref_NewRef(probe->target, NULL);
+    PyObject *proxy_again = PyWeakref_NewProxy(probe->target, NULL);
+    PyObject *target = NULL;
+    probe->ok = ref != NULL && proxy != NULL && ref == again &&
+        proxy == proxy_again && PyObject_IsAccessible(ref) &&
+        PyObject_IsAccessible(proxy) &&
+        ref->ob_owner_id == probe->group->id &&
+        proxy->ob_owner_id == probe->group->id &&
+        PyWeakref_GetRef(ref, &target) == 1 && target == probe->target;
+    Py_XDECREF(target);
+    Py_XDECREF(again);
+    Py_XDECREF(proxy_again);
+    probe->ok &= !PyErr_Occurred();
+    PyErr_Clear();
+    _PyEvent_Notify(&probe->ready);
+    PyEvent_Wait(&probe->exit);
+    Py_XDECREF(ref);
+    Py_XDECREF(proxy);
+    PyThreadState_Clear(tstate);
+    PyThreadState_DeleteCurrent();
+}
+
+static PyObject *
+threadgroup_weakref_probe(PyObject *self, PyObject *args)
+{
+    PyObject *group, *target;
+    if (!PyArg_ParseTuple(args, "OO!:threadgroup_weakref_probe",
+                         &group, &PyCode_Type, &target)) {
+        return NULL;
+    }
+    _PyThreadGroupState *state = _PyThreadGroup_GetState(group);
+    if (state == NULL) {
+        return NULL;
+    }
+    // The target is immutable, but the cached weakrefs themselves are LOCAL.
+    PyObject *ref = PyWeakref_NewRef(target, NULL);
+    PyObject *proxy = PyWeakref_NewProxy(target, NULL);
+    if (ref == NULL || proxy == NULL) {
+        Py_XDECREF(ref);
+        Py_XDECREF(proxy);
+        _PyThreadGroup_Decref(state);
+        return NULL;
+    }
+    struct weakref_probe probe = {
+        .interp = PyInterpreterState_Get(), .group = state, .target = target,
+    };
+    PyThread_ident_t ident;
+    PyThread_handle_t handle;
+    if (PyThread_start_joinable_thread(weakref_probe_worker, &probe,
+                                       &ident, &handle) != 0) {
+        Py_DECREF(ref);
+        Py_DECREF(proxy);
+        _PyThreadGroup_Decref(state);
+        return PyErr_Format(PyExc_RuntimeError, "failed to start weakref probe");
+    }
+    PyEvent_Wait(&probe.ready);
+    // The foreign refs are still alive and ahead of this group's cache.
+    PyObject *again = PyWeakref_NewRef(target, NULL);
+    PyObject *proxy_again = PyWeakref_NewProxy(target, NULL);
+    int ok = probe.ok && again == ref && proxy_again == proxy;
+    Py_XDECREF(again);
+    Py_XDECREF(proxy_again);
+    _PyEvent_Notify(&probe.exit);
+    Py_BEGIN_ALLOW_THREADS
+    PyThread_join_thread(handle);
+    Py_END_ALLOW_THREADS
+    Py_DECREF(ref);
+    Py_DECREF(proxy);
+    _PyThreadGroup_Decref(state);
+    if (PyErr_Occurred()) {
+        return NULL;
+    }
+    if (!ok) {
+        return PyErr_Format(PyExc_AssertionError,
+                            "weakref cache returned another group's LOCAL ref");
+    }
+    Py_RETURN_NONE;
+}
+
 static PyMethodDef methods[] = {
+    {"threadgroup_weakref_probe", threadgroup_weakref_probe, METH_VARARGS, NULL},
 #ifdef WITH_MIMALLOC
     {"test_reentrant_allocation_heap", test_reentrant_allocation_heap, METH_NOARGS, NULL},
 #endif

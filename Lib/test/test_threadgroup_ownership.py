@@ -131,6 +131,12 @@ assert 'threading' not in sys.modules
     def test_static_immutable_access(self):
         internal.test_static_immutable_access()
 
+    def test_weakref_cache_is_local_to_group(self):
+        target = compile('pass', 'weakref-target', 'exec')
+        for group in (sys.main_thread_group, self.foreign):
+            with self.subTest(group=group):
+                internal.threadgroup_weakref_probe(group, target)
+
     def test_thread_start_rejects_foreign_local_callable(self):
         calls = []
 

@@ -106,6 +106,11 @@ been destroyed. Simultaneous use of managed static extension types by multiple
 interpreters needs a design decision; see the
 [Japanese questions](PEP-0805-open-questions-ja.md).
 
+Weakref and proxy caches only reuse accessible objects. An immutable referent
+can have separate LOCAL basic refs in multiple groups, and each group retains
+its canonical ref/proxy while those references are alive. Public weakref getters
+also check their acquired referents.
+
 ## Extraction provenance
 
 `7201b6539e` was applied with `git cherry-pick --no-commit`. Since it mixes all
@@ -206,6 +211,13 @@ Parallel scheduling tests remain skipped while the interpreter GIL is enabled.
   accounting, survival after thread exit, content integrity and recursive
   allocator hooks; a subprocess matrix checks preinitialization lifetimes
   across malloc, pymalloc and mimalloc with and without their debug hooks.
+  A non-debug normal build at `dde92fa9aa` passes a 1,030-test mimalloc selection
+  across ten files (39 skips).
+- Weakref ownership: 395 tests passed across ownership, ThreadGroups, weakrefs,
+  weakref C APIs, GC, reclamation, code and embedding (14 skips). The native
+  cache probe keeps both groups' refs alive and verifies each group's repeated
+  requests return its own ref/proxy. Ownership and weakref suites pass `-R 3:3`
+  with `mimalloc_debug` (167 tests, 4 skips).
 - The non-debug normal build at `9a07ddfce7` passes 1,378 tests across 16 files
   covering sharing states, per-thread freelists, allocation, threading, GC and
   embedding (34 skips). This predates the internal world-stop activation.
