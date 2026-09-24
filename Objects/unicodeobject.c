@@ -1559,10 +1559,7 @@ PyUnicode_CopyCharacters(PyObject *to, Py_ssize_t to_start,
         PyErr_BadInternalCall();
         return -1;
     }
-    if (PyObject_CheckAccess(to) == NULL ||
-        PyObject_CheckAccess(from) == NULL) {
-        return -1;
-    }
+    assert(_PyObject_IsAccessible(to) && _PyObject_IsAccessible(from));
     if (!PyUnicode_Check(from) || !PyUnicode_Check(to)) {
         PyErr_BadInternalCall();
         return -1;
@@ -1835,9 +1832,7 @@ PyUnicode_Resize(PyObject **p_unicode, Py_ssize_t length)
         PyErr_BadInternalCall();
         return -1;
     }
-    if (PyObject_CheckAccess(unicode) == NULL) {
-        return -1;
-    }
+    assert(_PyObject_IsAccessible(unicode));
     if (!PyUnicode_Check(unicode) || length < 0) {
         PyErr_BadInternalCall();
         return -1;
@@ -2543,12 +2538,11 @@ PyUnicode_AsUCS4(PyObject *string, Py_UCS4 *target, Py_ssize_t targetsize,
         PyErr_BadInternalCall();
         return NULL;
     }
-    if (string == NULL || PyObject_CheckAccess(string) == NULL) {
-        if (string == NULL) {
-            PyErr_BadInternalCall();
-        }
+    if (string == NULL) {
+        PyErr_BadInternalCall();
         return NULL;
     }
+    assert(_PyObject_IsAccessible(string));
     if (!PyUnicode_Check(string)) {
         PyErr_BadArgument();
         return NULL;
@@ -2559,12 +2553,11 @@ PyUnicode_AsUCS4(PyObject *string, Py_UCS4 *target, Py_ssize_t targetsize,
 Py_UCS4*
 PyUnicode_AsUCS4Copy(PyObject *string)
 {
-    if (string == NULL || PyObject_CheckAccess(string) == NULL) {
-        if (string == NULL) {
-            PyErr_BadInternalCall();
-        }
+    if (string == NULL) {
+        PyErr_BadInternalCall();
         return NULL;
     }
+    assert(_PyObject_IsAccessible(string));
     if (!PyUnicode_Check(string)) {
         PyErr_BadArgument();
         return NULL;
@@ -3310,9 +3303,7 @@ PyUnicode_AsWideChar(PyObject *unicode,
         PyErr_BadInternalCall();
         return -1;
     }
-    if (PyObject_CheckAccess(unicode) == NULL) {
-        return -1;
-    }
+    assert(_PyObject_IsAccessible(unicode));
     if (!PyUnicode_Check(unicode)) {
         PyErr_BadArgument();
         return -1;
@@ -3355,9 +3346,7 @@ PyUnicode_AsWideCharString(PyObject *unicode,
         PyErr_BadInternalCall();
         return NULL;
     }
-    if (PyObject_CheckAccess(unicode) == NULL) {
-        return NULL;
-    }
+    assert(_PyObject_IsAccessible(unicode));
     if (!PyUnicode_Check(unicode)) {
         PyErr_BadArgument();
         return NULL;
@@ -3464,9 +3453,7 @@ PyUnicode_FromObject(PyObject *obj)
         PyErr_BadInternalCall();
         return NULL;
     }
-    if (PyObject_CheckAccess(obj) == NULL) {
-        return NULL;
-    }
+    assert(_PyObject_IsAccessible(obj));
     if (PyUnicode_CheckExact(obj)) {
         return Py_NewRef(obj);
     }
@@ -3493,9 +3480,7 @@ PyUnicode_FromEncodedObject(PyObject *obj,
         PyErr_BadInternalCall();
         return NULL;
     }
-    if (PyObject_CheckAccess(obj) == NULL) {
-        return NULL;
-    }
+    assert(_PyObject_IsAccessible(obj));
 
     /* Decoding bytes objects is the most common case and should be fast */
     if (PyBytes_Check(obj)) {
@@ -3686,9 +3671,7 @@ PyUnicode_AsDecodedObject(PyObject *unicode,
         PyErr_BadInternalCall();
         return NULL;
     }
-    if (PyObject_CheckAccess(unicode) == NULL) {
-        return NULL;
-    }
+    assert(_PyObject_IsAccessible(unicode));
     if (!PyUnicode_Check(unicode)) {
         PyErr_BadArgument();
         return NULL;
@@ -3713,9 +3696,7 @@ PyUnicode_AsDecodedUnicode(PyObject *unicode,
         PyErr_BadInternalCall();
         goto onError;
     }
-    if (PyObject_CheckAccess(unicode) == NULL) {
-        goto onError;
-    }
+    assert(_PyObject_IsAccessible(unicode));
     if (!PyUnicode_Check(unicode)) {
         PyErr_BadArgument();
         goto onError;
@@ -3757,9 +3738,7 @@ PyUnicode_AsEncodedObject(PyObject *unicode,
         PyErr_BadInternalCall();
         goto onError;
     }
-    if (PyObject_CheckAccess(unicode) == NULL) {
-        goto onError;
-    }
+    assert(_PyObject_IsAccessible(unicode));
     if (!PyUnicode_Check(unicode)) {
         PyErr_BadArgument();
         goto onError;
@@ -4212,15 +4191,14 @@ unicode_ensure_utf8(PyObject *unicode)
 const char *
 PyUnicode_AsUTF8AndSize(PyObject *unicode, Py_ssize_t *psize)
 {
-    if (unicode == NULL || PyObject_CheckAccess(unicode) == NULL) {
+    if (unicode == NULL) {
         if (psize) {
             *psize = -1;
         }
-        if (unicode == NULL) {
-            PyErr_BadArgument();
-        }
+        PyErr_BadArgument();
         return NULL;
     }
+    assert(_PyObject_IsAccessible(unicode));
     if (!PyUnicode_Check(unicode)) {
         PyErr_BadArgument();
         if (psize) {
@@ -4279,12 +4257,11 @@ PyUnicode_GetSize(PyObject *unicode)
 Py_ssize_t
 PyUnicode_GetLength(PyObject *unicode)
 {
-    if (unicode == NULL || PyObject_CheckAccess(unicode) == NULL) {
-        if (unicode == NULL) {
-            PyErr_BadArgument();
-        }
+    if (unicode == NULL) {
+        PyErr_BadArgument();
         return -1;
     }
+    assert(_PyObject_IsAccessible(unicode));
     if (!PyUnicode_Check(unicode)) {
         PyErr_BadArgument();
         return -1;
@@ -4298,12 +4275,11 @@ PyUnicode_ReadChar(PyObject *unicode, Py_ssize_t index)
     const void *data;
     int kind;
 
-    if (unicode == NULL || PyObject_CheckAccess(unicode) == NULL) {
-        if (unicode == NULL) {
-            PyErr_BadArgument();
-        }
+    if (unicode == NULL) {
+        PyErr_BadArgument();
         return (Py_UCS4)-1;
     }
+    assert(_PyObject_IsAccessible(unicode));
     if (!PyUnicode_Check(unicode)) {
         PyErr_BadArgument();
         return (Py_UCS4)-1;
@@ -4320,12 +4296,11 @@ PyUnicode_ReadChar(PyObject *unicode, Py_ssize_t index)
 int
 PyUnicode_WriteChar(PyObject *unicode, Py_ssize_t index, Py_UCS4 ch)
 {
-    if (unicode == NULL || PyObject_CheckAccess(unicode) == NULL) {
-        if (unicode == NULL) {
-            PyErr_BadArgument();
-        }
+    if (unicode == NULL) {
+        PyErr_BadArgument();
         return -1;
     }
+    assert(_PyObject_IsAccessible(unicode));
     if (!PyUnicode_Check(unicode) || !PyUnicode_IS_COMPACT(unicode)) {
         PyErr_BadArgument();
         return -1;
@@ -5815,12 +5790,11 @@ static PyObject *
 unicode_encode_utf8(PyObject *unicode, _Py_error_handler error_handler,
                     const char *errors)
 {
-    if (unicode == NULL || PyObject_CheckAccess(unicode) == NULL) {
-        if (unicode == NULL) {
-            PyErr_BadArgument();
-        }
+    if (unicode == NULL) {
+        PyErr_BadArgument();
         return NULL;
     }
+    assert(_PyObject_IsAccessible(unicode));
     if (!PyUnicode_Check(unicode)) {
         PyErr_BadArgument();
         return NULL;
@@ -10162,12 +10136,11 @@ PyUnicode_FindChar(PyObject *str, Py_UCS4 ch,
 {
     int kind;
     Py_ssize_t len, result;
-    if (str == NULL || PyObject_CheckAccess(str) == NULL) {
-        if (str == NULL) {
-            PyErr_BadArgument();
-        }
+    if (str == NULL) {
+        PyErr_BadArgument();
         return -2;
     }
+    assert(_PyObject_IsAccessible(str));
     if (!PyUnicode_Check(str)) {
         PyErr_BadArgument();
         return -2;
@@ -10496,22 +10469,25 @@ case_operation(PyObject *self,
 PyObject *
 PyUnicode_Join(PyObject *separator, PyObject *seq)
 {
-    PyObject *res;
+    PyObject *res = NULL;
     PyObject *fseq;
     Py_ssize_t seqlen;
     PyObject **items;
 
-    if (separator != NULL && PyObject_CheckAccess(separator) == NULL) {
+    if (seq == NULL) {
+        PyErr_BadInternalCall();
         return NULL;
     }
-    if (seq == NULL || PyObject_CheckAccess(seq) == NULL) {
-        if (seq == NULL) {
-            PyErr_BadInternalCall();
-        }
-        return NULL;
-    }
+    assert(separator == NULL || _PyObject_IsAccessible(separator));
+    assert(_PyObject_IsAccessible(seq));
     fseq = PySequence_Fast(seq, "can only join an iterable");
     if (fseq == NULL) {
+        return NULL;
+    }
+    // Iteration may have ended a protecting or StopTheWorld context.
+    if (fseq != seq && separator != NULL &&
+        PyObject_CheckAccess(separator) == NULL) {
+        Py_DECREF(fseq);
         return NULL;
     }
 
@@ -10519,8 +10495,16 @@ PyUnicode_Join(PyObject *separator, PyObject *seq)
 
     items = PySequence_Fast_ITEMS(fseq);
     seqlen = PySequence_Fast_GET_SIZE(fseq);
+    // Fast sequence conversion can retain stored references without acquiring
+    // them. Validate those references before passing them to the array API.
+    for (Py_ssize_t i = 0; i < seqlen; i++) {
+        if (PyObject_CheckAccess(items[i]) == NULL) {
+            goto done;
+        }
+    }
     res = _PyUnicode_JoinArray(separator, items, seqlen);
 
+done:
     Py_END_CRITICAL_SECTION_SEQUENCE_FAST();
 
     Py_DECREF(fseq);
@@ -11578,10 +11562,7 @@ PyUnicode_Equal(PyObject *str1, PyObject *str2)
         PyErr_BadInternalCall();
         return -1;
     }
-    if (PyObject_CheckAccess(str1) == NULL ||
-        PyObject_CheckAccess(str2) == NULL) {
-        return -1;
-    }
+    assert(_PyObject_IsAccessible(str1) && _PyObject_IsAccessible(str2));
     if (!PyUnicode_Check(str1)) {
         PyErr_Format(PyExc_TypeError,
                      "first argument must be str, not %T", str1);
@@ -11604,10 +11585,7 @@ PyUnicode_Compare(PyObject *left, PyObject *right)
         PyErr_BadInternalCall();
         return -1;
     }
-    if (PyObject_CheckAccess(left) == NULL ||
-        PyObject_CheckAccess(right) == NULL) {
-        return -1;
-    }
+    assert(_PyObject_IsAccessible(left) && _PyObject_IsAccessible(right));
     if (PyUnicode_Check(left) && PyUnicode_Check(right)) {
         /* a string is equal to itself */
         if (left == right)
@@ -11629,12 +11607,11 @@ PyUnicode_CompareWithASCIIString(PyObject* uni, const char* str)
     int kind;
     Py_UCS4 chr;
 
-    if (uni == NULL || PyObject_CheckAccess(uni) == NULL) {
-        if (uni == NULL) {
-            PyErr_BadInternalCall();
-        }
+    if (uni == NULL) {
+        PyErr_BadInternalCall();
         return -1;
     }
+    assert(_PyObject_IsAccessible(uni));
     if (!PyUnicode_Check(uni)) {
         PyErr_BadArgument();
         return -1;
@@ -11685,12 +11662,11 @@ PyUnicode_EqualToUTF8(PyObject *unicode, const char *str)
 int
 PyUnicode_EqualToUTF8AndSize(PyObject *unicode, const char *str, Py_ssize_t size)
 {
-    if (unicode == NULL || PyObject_CheckAccess(unicode) == NULL) {
-        if (unicode == NULL) {
-            PyErr_BadInternalCall();
-        }
+    if (unicode == NULL) {
+        PyErr_BadInternalCall();
         return -1;
     }
+    assert(_PyObject_IsAccessible(unicode));
     if (!PyUnicode_Check(unicode) || str == NULL) {
         PyErr_BadInternalCall();
         return -1;
@@ -11790,10 +11766,7 @@ PyUnicode_RichCompare(PyObject *left, PyObject *right, int op)
         PyErr_BadInternalCall();
         return NULL;
     }
-    if (PyObject_CheckAccess(left) == NULL ||
-        PyObject_CheckAccess(right) == NULL) {
-        return NULL;
-    }
+    assert(_PyObject_IsAccessible(left) && _PyObject_IsAccessible(right));
     if (!PyUnicode_Check(left) || !PyUnicode_Check(right))
         Py_RETURN_NOTIMPLEMENTED;
 
@@ -11836,10 +11809,7 @@ PyUnicode_Contains(PyObject *str, PyObject *substr)
         PyErr_BadInternalCall();
         return -1;
     }
-    if (PyObject_CheckAccess(str) == NULL ||
-        PyObject_CheckAccess(substr) == NULL) {
-        return -1;
-    }
+    assert(_PyObject_IsAccessible(str) && _PyObject_IsAccessible(substr));
     if (!PyUnicode_Check(substr)) {
         PyErr_Format(PyExc_TypeError,
                      "'in <string>' requires string as left operand, not %.100s",
@@ -11903,12 +11873,11 @@ PyUnicode_Concat(PyObject *left, PyObject *right)
     if (ensure_unicode(left) < 0)
         return NULL;
 
-    if (right == NULL || PyObject_CheckAccess(right) == NULL) {
-        if (right == NULL) {
-            PyErr_BadInternalCall();
-        }
+    if (right == NULL) {
+        PyErr_BadInternalCall();
         return NULL;
     }
+    assert(_PyObject_IsAccessible(right));
     if (!PyUnicode_Check(right)) {
         PyErr_Format(PyExc_TypeError,
             "can only concatenate str (not \"%.200s\") to str",
@@ -11966,10 +11935,7 @@ PyUnicode_Append(PyObject **p_left, PyObject *right)
             PyErr_BadInternalCall();
         goto error;
     }
-    if (PyObject_CheckAccess(left) == NULL ||
-        PyObject_CheckAccess(right) == NULL) {
-        goto error;
-    }
+    assert(_PyObject_IsAccessible(left) && _PyObject_IsAccessible(right));
     if (!PyUnicode_Check(left) || !PyUnicode_Check(right)) {
         if (!PyErr_Occurred())
             PyErr_BadInternalCall();
@@ -12745,12 +12711,11 @@ _PyUnicode_ScanIdentifier(PyObject *self)
 int
 PyUnicode_IsIdentifier(PyObject *self)
 {
-    if (self == NULL || PyObject_CheckAccess(self) == NULL) {
-        if (self == NULL) {
-            PyErr_BadInternalCall();
-        }
+    if (self == NULL) {
+        PyErr_BadInternalCall();
         return -1;
     }
+    assert(_PyObject_IsAccessible(self));
     if (!PyUnicode_Check(self)) {
         PyErr_BadArgument();
         return -1;
@@ -12953,12 +12918,11 @@ PyUnicode_Substring(PyObject *self, Py_ssize_t start, Py_ssize_t end)
     int kind;
     Py_ssize_t length;
 
-    if (self == NULL || PyObject_CheckAccess(self) == NULL) {
-        if (self == NULL) {
-            PyErr_BadInternalCall();
-        }
+    if (self == NULL) {
+        PyErr_BadInternalCall();
         return NULL;
     }
+    assert(_PyObject_IsAccessible(self));
     if (!PyUnicode_Check(self)) {
         PyErr_BadArgument();
         return NULL;

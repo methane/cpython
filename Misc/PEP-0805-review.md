@@ -69,9 +69,9 @@ not biased reference counting. Free-threading does reuse PEP 703 BRC, but
 that OS-thread bias does not meet the observed same-group LOCAL lifetime
 requirement. Mark's two comments therefore remain only partially addressed.
 
-The input-check cleanup now covers bytearray and integer/float/complex
-accessors as well as the earlier container and function APIs. Vectorcall
-argument scans and other C API families remain to be audited.
+The input-check cleanup now covers bytearray, integer/float/complex and
+Unicode accessors as well as the earlier container and function APIs.
+Vectorcall argument scans and other C API families remain to be audited.
 `PyObject_GetItem` asserts its inputs and validates its returned reference.
 
 ## Implementation follow-up on 2026-09-24
@@ -137,6 +137,32 @@ The two further numeric/abstract C API suites passed in each build (64 tests).
 The sample application also passed in all three builds, calculating 61,620
 and rejecting foreign LOCAL and unprotected PROTECTED access. These runs do
 not measure parallel speedup.
+
+The subsequent Unicode audit reproduced two more access violations without
+depending on any of the open design questions. `str.join()` and
+`PyUnicode_Join()` read foreign LOCAL string subclasses stored in an exact
+tuple or list; the SynchronizedList iterator already rejected those reads.
+Joining also retained a separator after an iterable ended StopTheWorld.
+The fix validates references acquired from fast-sequence storage before
+calling the internal array-join helper and revalidates the separator after
+conversion that may invoke iteration. The regression checks singleton and
+multi-element joins, both public entry paths, allowed debugger access and
+preservation of the iterator's own exception.
+
+Direct input checks in 27 public Unicode APIs and the internal UTF-8 encoder
+become assertions, preserving null/type/error-output handling. Codec result
+checks remain. The series now covers 87 public APIs, but this is not a claim
+that every input check in those APIs' callees has been removed: for example,
+the shared `_PyUnicode_EnsureUnicode` helper still performs a runtime check.
+
+The Unicode follow-up passes the same 11-file selection in all three debug
+builds: 908 reported tests with 23 skips per build. The selection is
+`test_unicode_access`, `test_capi.test_unicode`, `test_capi.test_codecs`,
+`test_codecs`, `test_str`, `test_string`, `test_format`, `test_fstring`,
+`test_re`, `test_type_access` and `test_warning_filter_access`. Compilation
+produced no warnings. Before the repair, the two new tests reported 17 failing
+subtests. An initial suite invocation also named the nonexistent
+`test_unicode` module; the corrected selection above was rerun successfully.
 
 ## Earlier re-review and implementation follow-ups
 
@@ -331,11 +357,11 @@ acceptable or establishes that Mark's approval is needed for routine fixes.
 
 6. **Mark's input-check comment has only been addressed partially.**
    `PyObject_GetItem` already used assertions at re-review. The follow-up
-   now also replaces input checks in the 60 list, cell, function, tuple,
-   bytes, bytearray and numeric APIs listed above. Other APIs remain to be
-   audited. `_PyObject_CheckVectorcallArgs()` still
-   scans raw C argument
-   arrays (`Include/internal/pycore_call.h:114`). Those array entries are
+   now also replaces direct input checks in the 87 list, cell, function,
+   tuple, bytes, bytearray, numeric and Unicode APIs listed above. Other
+   APIs and common helpers remain to be audited.
+   `_PyObject_CheckVectorcallArgs()` still scans raw C argument arrays
+   (`Include/internal/pycore_call.h:114`). Those array entries are
    incoming references, unlike acquiring values from an argument tuple or
    keyword dictionary. This is unfinished implementation cleanup under the
    intended valid-input invariant. Checks after potentially invalidating
@@ -369,6 +395,13 @@ Questions 1–4 and 6–8 concern unspecified contracts or clarifications to the
 PEP/appendix. Question 5 asks for design guidance, not clarification of whether
 LOCAL objects must be reclaimed promptly. The complete question wording and
 the concrete behavior motivating each question follow.
+
+These questions are not a blanket dependency on Mark's approval. Native
+reference-acquisition repairs, redundant-input-check cleanup, debug
+validation and work on specified behavior can continue independently.
+Reference-counting representation is a design consultation, not an external
+authorization requirement. Only changes that choose an unresolved observable
+contract need to remain separate from the conformance work.
 
 ### 1. How is reference validity maintained when protection ends in another frame?
 
