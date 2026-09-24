@@ -121,6 +121,24 @@ threadgroup_dealloc(PyObject *op)
     Py_DECREF(type);
 }
 
+_PyThreadGroupState *
+_PyThreadGroup_GetState(PyObject *group)
+{
+    PyInterpreterState *interp = _PyInterpreterState_GET();
+    if (interp->main_threadgroup_object == NULL ||
+        !Py_IS_TYPE(group, Py_TYPE(interp->main_threadgroup_object))) {
+        PyErr_SetString(PyExc_TypeError, "expected a ThreadGroup");
+        return NULL;
+    }
+    threadgroupobject *owner = (threadgroupobject *)group;
+    if (owner->interpreter_id != PyInterpreterState_GetID(interp)) {
+        PyErr_SetString(PyExc_ValueError, "ThreadGroup belongs to another interpreter");
+        return NULL;
+    }
+    _PyThreadGroup_Incref(owner->state);
+    return owner->state;
+}
+
 PyObject *
 _PyThreadGroup_GetObject(PyInterpreterState *interp, uint32_t id)
 {

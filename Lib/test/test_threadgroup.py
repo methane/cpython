@@ -86,16 +86,11 @@ if name == '_testsinglephase_no_gil_slot':
             thread.group = sys.main_thread_group
 
     def test_group_identity_in_worker(self):
+        internal = import_helper.import_module('_testinternalcapi')
         group = threading.ThreadGroup('worker')
-        observed = []
-        def worker():
-            import _thread
-            observed.append(threading.current_thread().group)
-            observed.append(_thread._current_thread_group())
-        thread = threading.Thread(group=group, target=worker)
-        with threading_helper.start_threads([thread]):
-            pass
-        self.assertEqual(observed, [group, group])
+        self.assertEqual(internal.threadgroup_probe(
+            (group, sys.main_thread_group), 0, support.SHORT_TIMEOUT),
+            (True, True))
 
     def test_main_group_serializes(self):
         counter = [0]
@@ -109,51 +104,39 @@ if name == '_testsinglephase_no_gil_slot':
             pass
         self.assertEqual(counter, [40000])
 
-    @unittest.skipUnless(support.Py_GIL_DISABLED, 'requires parallel runtime')
     def test_different_groups_execute_in_parallel(self):
         if sys._is_gil_enabled():
-            self.skipTest('requires a disabled global GIL')
+            self.skipTest('parallel substrate not enabled')
         internal = import_helper.import_module('_testinternalcapi')
-        flags = bytearray(2)
-        results = [None, None]
-        def worker(index):
-            # This native barrier retains execution rights, so interleaving
-            # Python bytecode in one group cannot satisfy it.
-            results[index] = internal.wait_at_c_barrier(
-                flags, index, support.SHORT_TIMEOUT)
-        threads = [threading.Thread(group=threading.ThreadGroup(),
-                                    target=worker, args=(i,)) for i in range(2)]
-        with threading_helper.start_threads(threads):
-            pass
-        self.assertEqual(results, [True, True])
+        groups = (threading.ThreadGroup(), threading.ThreadGroup())
+        self.assertEqual(internal.threadgroup_probe(
+            groups, 1, support.SHORT_TIMEOUT), (True, True))
+
+    def test_same_group_cannot_execute_in_parallel(self):
+        internal = import_helper.import_module('_testinternalcapi')
+        group = threading.ThreadGroup()
+        result = internal.threadgroup_probe((group, group), 1, 0.01)
+        self.assertEqual(sorted(result), [False, True])
 
     def test_wait_releases_group(self):
+        internal = import_helper.import_module('_testinternalcapi')
         group = threading.ThreadGroup()
-        ready = threading.Event()
-        done = threading.Event()
-        observed = []
-        def first():
-            ready.set()
-            observed.append(done.wait(support.SHORT_TIMEOUT))
-        def second():
-            observed.append(ready.wait(support.SHORT_TIMEOUT))
-            done.set()
-        threads = [threading.Thread(group=group, target=target)
-                   for target in (first, second)]
-        with threading_helper.start_threads(threads):
-            pass
-        self.assertEqual(observed, [True, True])
+        self.assertEqual(internal.threadgroup_probe(
+            (group, group), 2, support.SHORT_TIMEOUT), (True, True))
 
     def test_group_reuse(self):
+        internal = import_helper.import_module('_testinternalcapi')
         group = threading.ThreadGroup()
-        observed = []
         for _ in range(4):
-            thread = threading.Thread(group=group, target=lambda: observed.append(1))
-            with threading_helper.start_threads([thread]):
-                pass
-            del thread
+            self.assertEqual(internal.threadgroup_probe(
+                (group, group), 0, support.SHORT_TIMEOUT), (True, True))
             gc.collect()
-        self.assertEqual(observed, [1] * 4)
+
+    def test_native_probe_rejects_invalid_group(self):
+        internal = import_helper.import_module('_testinternalcapi')
+        with self.assertRaises(TypeError):
+            internal.threadgroup_probe(
+                (sys.main_thread_group, None), 0, support.SHORT_TIMEOUT)
 
     def test_parallel_environment(self):
         for value in ('0', '1', '-1'):
@@ -178,15 +161,13 @@ if name == '_testsinglephase_no_gil_slot':
 import os
 import threading
 from test import support
-from test.support import threading_helper
+import _testinternalcapi as internal
 group = threading.ThreadGroup('child')
 pid = os.fork()
 if pid == 0:
-    observed = []
-    thread = threading.Thread(group=group, target=lambda: observed.append(1))
-    thread.start()
-    thread.join(support.SHORT_TIMEOUT)
-    os._exit(0 if observed == [1] and not thread.is_alive() else 1)
+    result = internal.threadgroup_probe(
+        (group, group), 0, support.SHORT_TIMEOUT)
+    os._exit(0 if result == (True, True) else 1)
 support.wait_process(pid, exitcode=0)
 ''')
 

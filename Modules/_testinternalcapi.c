@@ -3288,50 +3288,7 @@ static PyTypeObject SelfInterruptingContextManager_Type = {
 };
 
 
-static PyObject *
-wait_at_c_barrier(PyObject *self, PyObject *args)
-{
-    PyObject *buffer;
-    int index;
-    double timeout;
-    if (!PyArg_ParseTuple(args, "O!id", &PyByteArray_Type, &buffer,
-                          &index, &timeout)) {
-        return NULL;
-    }
-    if (PyByteArray_GET_SIZE(buffer) != 2 || (index != 0 && index != 1) ||
-        !(timeout > 0.0 && timeout <= 300.0)) {
-        PyErr_SetString(PyExc_ValueError, "invalid barrier arguments");
-        return NULL;
-    }
-    Py_buffer view;
-    if (PyObject_GetBuffer(buffer, &view, PyBUF_WRITABLE) < 0) {
-        return NULL;
-    }
-    uint8_t *flags = view.buf;
-    PyTime_t now;
-    if (PyTime_Monotonic(&now) < 0) {
-        PyBuffer_Release(&view);
-        return NULL;
-    }
-    PyTime_t deadline = now + (PyTime_t)(timeout * 1000000000.0);
-    _Py_atomic_store_uint8(&flags[index], 1);
-    while (!_Py_atomic_load_uint8(&flags[1 - index])) {
-        if (PyTime_Monotonic(&now) < 0) {
-            PyBuffer_Release(&view);
-            return NULL;
-        }
-        if (now >= deadline) {
-            PyBuffer_Release(&view);
-            Py_RETURN_FALSE;
-        }
-    }
-    PyBuffer_Release(&view);
-    Py_RETURN_TRUE;
-}
-
-
 static PyMethodDef module_functions[] = {
-    {"wait_at_c_barrier", wait_at_c_barrier, METH_VARARGS, NULL},
     {"get_configs", get_configs, METH_NOARGS},
     {"get_eval_frame_stats", get_eval_frame_stats, METH_NOARGS, NULL},
     {"get_recursion_depth", get_recursion_depth, METH_NOARGS},
@@ -3492,6 +3449,9 @@ module_exec(PyObject *module)
         return 1;
     }
     if (_PyTestInternalCapi_Init_TypeCache(module) < 0) {
+        return 1;
+    }
+    if (_PyTestInternalCapi_Init_ThreadGroups(module) < 0) {
         return 1;
     }
 

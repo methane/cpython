@@ -30,6 +30,8 @@ PyAPI_FUNC(_PyThreadGroupState *) _PyThreadGroup_Find(
     PyInterpreterState *interp, uint32_t id);
 PyAPI_FUNC(PyObject *) _PyThreadGroup_GetObject(
     PyInterpreterState *interp, uint32_t id);
+/* Validate a Python wrapper and return a strong native reference. */
+PyAPI_FUNC(_PyThreadGroupState *) _PyThreadGroup_GetState(PyObject *group);
 extern void _PyThreadGroup_Fini(PyInterpreterState *interp);
 extern void _PyThreadGroup_Acquire(PyThreadState *tstate);
 extern void _PyThreadGroup_Release(PyThreadState *tstate);

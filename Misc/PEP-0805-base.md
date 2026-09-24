@@ -36,8 +36,9 @@ all stages, so only the ThreadGroup scheduler, native wrapper, thread-state
 integration and Python group-selection changes are retained in the first split.
 The higher-stage module, collection, lock and debugger changes are excluded.
 Subsequent fixes will identify their original commits when carried over.
-The native barrier helper comes from `d92bde8de7` and validates simultaneous
-execution while both threads retain their groups' execution rights.
+The native scheduler probes use raw atomic flags and events. They test
+execution rights without transporting Python functions, Events or mutable
+Python result containers into another group.
 
 The new scheduler tests initially validate the isolated first stage before
 ownership is enabled. They do not establish completion of stages two through
@@ -60,3 +61,14 @@ ownership and synchronized-container changes are excluded. After rebuilding,
 `test_import`, `test_importlib` and `test_embed` pass: 1,480 tests, 40 skips.
 That validation used the explicit `--disable-gil` configuration and does not
 establish completion of the normal-build port.
+
+The scheduler probes have also been checked in a clean normal build:
+`./configure --with-pydebug`, `Py_GIL_DISABLED=0`, `sys.abiflags == "d"`.
+`test_threadgroup`, `test_local_reclamation`, `test_capi.test_object`, `test_gc`,
+`test_threading` and `test_embed` pass: 429 tests, 13 skips. Parallel execution
+is still skipped in that build until the runtime port is complete. The local
+reclamation checks at this point do not establish biased-RC correctness.
+
+The reference-counting bias is to be a ThreadGroup, not an OS thread. Group
+ownership must survive exit of the allocating thread. The object header will
+not retain an OS thread ID or per-object deferred-cleanup queue fields.
