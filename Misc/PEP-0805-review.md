@@ -834,6 +834,30 @@ including skipping the new regression for their different collector.
 The rebuilt sources match across configurations and compilation emits no
 warnings. Logs are under `/tmp/pep805-source-import/gc-*`.
 
+### Super lookup of builtin type metadata
+
+Creating an Exception subclass in another ThreadGroup failed because
+`_PySuper_LookupDescr` tried to acquire the builtin base's private type
+dictionary through the public dictionary API. This also prevented extension
+modules from creating their own exception classes during initialization.
+The lookup now reads the dictionary internally and checks the returned
+descriptor after releasing its retained MRO reference. Descriptor invocation
+and final attribute-result checks remain in place, including the optimizer's
+lookup path.
+
+The new regression fails before the repair and passes afterward. It creates
+Exception, list and int subclasses in a worker and exercises repeated super
+method calls while verifying that the exception class and instance stay LOCAL.
+The five suites `test_attribute_vm_access`, `test_super`, `test_type_access`,
+`test_descr` and `test_types` pass in default, GIL and Tier 2 debug builds:
+354 tests and one skip per build. Existing foreign-attribute, callable and
+descriptor rejection tests still pass. Logs are in `/tmp/pep805-dynamic-import/`.
+
+This repair lets a diagnostic probe proceed through multi-phase extension
+initialization. Sharing the dynamic-loader helpers still requires the rest of
+their audit: single-phase initialization currently trips the public list
+input assertion on the interpreter's private modules-by-index registry.
+
 ## Earlier re-review and implementation follow-ups
 
 One earlier question was incorrect: footnote 3 of the

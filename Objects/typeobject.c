@@ -13086,7 +13086,7 @@ _PySuper_LookupDescr(PyTypeObject *su_type, PyTypeObject *su_obj_type, PyObject 
         return NULL;
 
     /* Keep a strong reference to mro because su_obj_type->tp_mro can be
-       replaced during PyDict_GetItemRef(dict, name, &res). */
+       replaced during dictionary lookup. */
     PyThreadState *tstate = _PyThreadState_GET();
     _PyCStackRef mro_ref;
     _PyThreadState_PushCStackRefNew(tstate, &mro_ref, mro);
@@ -13110,10 +13110,13 @@ _PySuper_LookupDescr(PyTypeObject *su_type, PyTypeObject *su_obj_type, PyObject 
         PyObject *dict = lookup_tp_dict(_PyType_CAST(obj));
         assert(dict != NULL && PyAnyDict_Check(dict));
 
-        if (PyDict_GetItemRef(dict, name, &res) != 0) {
+        // Type dictionaries are private lookup metadata, including the
+        // dictionaries of shared static builtins. Check the acquired value,
+        // without requiring public access to the dictionary itself.
+        if (_PyDict_GetItemRefUnchecked(dict, name, &res) != 0) {
             // found or error
             _PyThreadState_PopCStackRef(tstate, &mro_ref);
-            return res;
+            return _PyObject_CheckAccessNullable(res);
         }
 
         i++;

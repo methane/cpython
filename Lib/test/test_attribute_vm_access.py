@@ -26,6 +26,33 @@ def _read_super_slot(cls, obj):
 
 
 class AttributeVMAccessTests(unittest.TestCase):
+    def test_builtin_subclass_in_worker(self):
+        def work():
+            class Error(Exception):
+                def __str__(self):
+                    return super().__str__()
+
+            class List(list):
+                def __len__(self):
+                    return super().__len__()
+
+            class Int(int):
+                def bit_length(self):
+                    return super().bit_length()
+
+            error = Error('worker error')
+            sequence = List((1, 2, 3))
+            number = Int(42)
+            for _ in range(100):
+                assert str(error) == 'worker error'
+                assert len(sequence) == 3
+                assert number.bit_length() == 6
+            assert Error.__shareable__ is threading.Shareable.LOCAL
+            assert error.__shareable__ is threading.Shareable.LOCAL
+            return 'ok'
+
+        self.assertEqual(self.run_native(work), 'ok')
+
     @requires_specialization
     def test_super_attribute(self):
         calls = SynchronizedList()
