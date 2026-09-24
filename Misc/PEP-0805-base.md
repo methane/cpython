@@ -127,9 +127,21 @@ Parallel scheduling tests remain skipped while the interpreter GIL is enabled.
   descriptors are never invoked, and repeated rejected lookups remain rejected
   after cache invalidation and respecialization. Slot, instance and module loads
   are checked in specialized code too. Ownership passes `-R 3:3` (14 tests).
+- Call expansion and defaults: 884 tests passed across ownership, calls,
+  function/argument APIs, function attributes, scopes, specialization, GC,
+  embedding, descriptors, classes, inheritance and properties (8 skips).
+  The native probes cover positional/keyword expansion, partial keyword cleanup,
+  legacy format-string calls, the `__new__` adapter and 26 result-returning paths.
+  Foreign defaults are rejected when bound, while existing argument vectors need
+  no new checks. Ownership passes `-R 3:3` (15 tests). A shadowed non-descriptor
+  builtin function on the metatype is not acquired merely to inspect the class's
+  own attribute; selected results remain checked.
 - The non-debug normal build at `19030fdd7f` passes 645 tests covering the first
   C API/VM acquisition changes (17 skips). This validation predates the thread
   entry and attribute acquisition changes.
+- The non-debug normal build at `00a29b07b1` also passes 838 tests covering the
+  thread entry and attribute acquisition changes (20 skips). This predates
+  the call expansion/defaults changes.
 - A separate non-debug build (`./configure`, `Py_GIL_DISABLED=0`, `Py_DEBUG=0`,
   empty ABI flags, interpreter GIL enabled) passes 782 tests across
   `test_threadgroup`, `test_local_reclamation`, `test_deferred_reclamation`,

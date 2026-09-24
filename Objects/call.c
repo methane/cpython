@@ -260,17 +260,33 @@ PyVectorcall_Function(PyObject *callable)
 }
 
 
+static int
+check_tuple_arguments(PyThreadState *tstate, PyObject *tuple)
+{
+    /* The tuple is accessible, but its items are heap references that are
+       about to become the callee's argument vector. */
+    for (Py_ssize_t i = 0; i < PyTuple_GET_SIZE(tuple); i++) {
+        if (_PyObject_CheckAccessThread(PyTuple_GET_ITEM(tuple, i), tstate) < 0) {
+            return -1;
+        }
+    }
+    return 0;
+}
+
 static PyObject *
 _PyVectorcall_Call(PyThreadState *tstate, vectorcallfunc func,
                    PyObject *callable, PyObject *tuple, PyObject *kwargs)
 {
     assert(func != NULL);
-
+    if (check_tuple_arguments(tstate, tuple) < 0) {
+        return NULL;
+    }
     Py_ssize_t nargs = PyTuple_GET_SIZE(tuple);
 
     /* Fast path for no keywords */
     if (kwargs == NULL || PyDict_GET_SIZE(kwargs) == 0) {
-        return func(callable, _PyTuple_ITEMS(tuple), nargs, NULL);
+        PyObject *result = func(callable, _PyTuple_ITEMS(tuple), nargs, NULL);
+        return _Py_CheckFunctionResult(tstate, callable, result, NULL);
     }
 
     /* Convert arguments & call */
@@ -479,6 +495,9 @@ _PyObject_Call_Prepend(PyThreadState *tstate, PyObject *callable,
                        PyObject *obj, PyObject *args, PyObject *kwargs)
 {
     assert(PyTuple_Check(args));
+    if (check_tuple_arguments(tstate, args) < 0) {
+        return NULL;
+    }
 
     PyObject *small_stack[_PY_FASTCALL_SMALL_STACK];
     PyObject **stack;
@@ -543,10 +562,15 @@ _PyObject_CallFunctionVa(PyThreadState *tstate, PyObject *callable,
            - PyObject_CallFunction(func, "(OOO)", arg1, arg2, arg3) calls
              func(*(arg1, arg2, arg3)): func(arg1, arg2, arg3) */
         PyObject *args = stack[0];
-        result = _PyObject_VectorcallTstate(tstate, callable,
-                                            _PyTuple_ITEMS(args),
-                                            PyTuple_GET_SIZE(args),
-                                            NULL);
+        if (check_tuple_arguments(tstate, args) < 0) {
+            result = NULL;
+        }
+        else {
+            result = _PyObject_VectorcallTstate(tstate, callable,
+                                                _PyTuple_ITEMS(args),
+                                                PyTuple_GET_SIZE(args),
+                                                NULL);
+        }
     }
     else {
         result = _PyObject_VectorcallTstate(tstate, callable,
@@ -1058,6 +1082,14 @@ _PyStack_UnpackDict(PyThreadState *tstate,
     PyObject *key, *value;
     unsigned long keys_are_strings = Py_TPFLAGS_UNICODE_SUBCLASS;
     while (PyDict_Next(kwargs, &pos, &key, &value)) {
+        if (_PyObject_CheckAccessThread(key, tstate) < 0 ||
+            _PyObject_CheckAccessThread(value, tstate) < 0) {
+            for (Py_ssize_t j = 0; j < i; j++) {
+                Py_DECREF(kwstack[j]);
+            }
+            _PyStack_UnpackDict_FreeNoDecRef(stack, kwnames);
+            return NULL;
+        }
         keys_are_strings &= Py_TYPE(key)->tp_flags;
         PyTuple_SET_ITEM(kwnames, i, Py_NewRef(key));
         kwstack[i] = Py_NewRef(value);

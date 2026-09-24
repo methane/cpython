@@ -88,6 +88,8 @@ class OwnershipTests(unittest.TestCase):
             'PyObject_GetAttrString', 'PyObject_GetOptionalAttr',
             'PyObject_GetOptionalAttrString', 'PyObject_GenericGetAttr',
             'PyCell_Get',
+            'PyVectorcall_Call', 'PyObject_Call', 'PyObject_Vectorcall',
+            'PyObject_VectorcallDict', 'PyVectorcall_Call_keywords',
         )
 
         class Value:
@@ -133,6 +135,16 @@ class OwnershipTests(unittest.TestCase):
             'instance_method': 'try:\n    instance.value()\nexcept TypeError:\n    return True',
             'class_method': 'try:\n    cls.value()\nexcept TypeError:\n    return True',
             'module_method': 'try:\n    module.value()\nexcept TypeError:\n    return True',
+            'native_star_args': 'return consumer(*source)',
+            'native_star_kwargs': 'return consumer(**mapping)',
+            'native_star_kwargs_partial': 'return consumer(**{"safe": None, **mapping})',
+            'native_star_both': 'return consumer(*source, extra=None)',
+            'native_legacy_expansion': 'return legacy_call(source)',
+            'native_prepend_expansion': 'return prepend_call(source)',
+            'python_star_args': 'def consume(*args):\n    return True\nreturn consume(*source)',
+            'python_star_kwargs': 'def consume(**kwargs):\n    return True\nreturn consume(**mapping)',
+            'python_star_kwargs_partial': 'def consume(**kwargs):\n    return True\nreturn consume(**{"safe": None, **mapping})',
+            'python_star_both': 'def consume(*args, **kw):\n    return True\nreturn consume(*source, extra=None)',
             'unpack_two': 'a, b = source[:2]\nreturn a is None',
             'unpack_tuple': 'a, b, c = source\nreturn a is None',
             'unpack_list': 'a, b, c = items\nreturn a is None',
@@ -209,6 +221,18 @@ class OwnershipTests(unittest.TestCase):
         for warmups in (0, 64):
             with self.subTest(warmups=warmups):
                 self.check_vm_code(probe.__code__, warmups)
+
+    def test_vm_default_arguments(self):
+        def positional(value=None, b=None, c=None):
+            return value is None
+
+        def keyword(*, value=None):
+            return value is None
+
+        for probe in (positional, keyword):
+            for warmups in (0, 64):
+                with self.subTest(probe=probe.__name__, warmups=warmups):
+                    self.check_vm_code(probe.__code__, warmups)
 
     def test_vm_constant_load(self):
         def probe():

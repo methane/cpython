@@ -582,6 +582,7 @@ typedef struct {
     PyObject_HEAD
     PyObject *value;
     int descriptor_calls;
+    vectorcallfunc vectorcall;
 } return_box;
 
 static int
@@ -656,6 +657,34 @@ static PyType_Spec member_box_spec = {
 };
 
 static PyObject *
+return_box_vectorcall(PyObject *self, PyObject *const *args,
+                      size_t nargsf, PyObject *kwnames)
+{
+    return Py_NewRef(((return_box *)self)->value);
+}
+
+static PyMemberDef vector_box_members[] = {
+    {"__vectorcalloffset__", Py_T_PYSSIZET,
+     offsetof(return_box, vectorcall), Py_READONLY},
+    {NULL},
+};
+
+static PyType_Slot vector_box_slots[] = {
+    {Py_tp_dealloc, return_box_dealloc},
+    {Py_tp_traverse, return_box_traverse},
+    {Py_tp_call, PyVectorcall_Call},
+    {Py_tp_members, vector_box_members},
+    {0, NULL},
+};
+
+static PyType_Spec vector_box_spec = {
+    .name = "_testinternalcapi.VectorBox",
+    .basicsize = sizeof(return_box),
+    .flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_GC | Py_TPFLAGS_HAVE_VECTORCALL,
+    .slots = vector_box_slots,
+};
+
+static PyObject *
 make_return_box(PyType_Spec *spec, PyObject *value)
 {
     PyTypeObject *type = (PyTypeObject *)PyType_FromSpec(spec);
@@ -666,6 +695,7 @@ make_return_box(PyType_Spec *spec, PyObject *value)
     Py_DECREF(type);
     if (box != NULL) {
         box->value = Py_NewRef(value);  // Blind heap-to-heap copy.
+        box->vectorcall = return_box_vectorcall;
     }
     return (PyObject *)box;
 }
@@ -715,7 +745,9 @@ static const char *return_apis[] = {
     "PyMapping_GetOptionalItem", "PyIter_Next", "PyIter_NextItem", "PyIter_Send",
     "PyObject_CallNoArgs", "PyObject_GetAttr", "PyObject_GetAttrString",
     "PyObject_GetOptionalAttr", "PyObject_GetOptionalAttrString",
-    "PyObject_GenericGetAttr", "PyCell_Get", NULL,
+    "PyObject_GenericGetAttr", "PyCell_Get", "PyVectorcall_Call",
+    "PyObject_Call", "PyObject_Vectorcall", "PyObject_VectorcallDict",
+    "PyVectorcall_Call_keywords", NULL,
 };
 
 struct return_probe {
@@ -744,6 +776,7 @@ return_probe_worker(void *arg)
     probe->base.accessible = PyObject_IsAccessible(value);
     PyObject *key = PyUnicode_FromString("value");
     PyObject *list = NULL, *iter = NULL, *func = NULL, *box = NULL;
+    PyObject *callargs = NULL, *kwargs = NULL;
     PyObject *result = NULL;
     int status = -2;  // Pointer-returning API, with no separate status code.
     int owned = 1;
@@ -836,6 +869,26 @@ return_probe_worker(void *arg)
             }
             result = PyCell_Get(box);
             break;
+        case 21:
+        case 22:
+        case 23:
+        case 24:
+        case 25:
+            box = make_return_box(&vector_box_spec, value);
+            callargs = PyTuple_New(0);
+            kwargs = PyDict_New();
+            if (box == NULL || callargs == NULL || kwargs == NULL ||
+                PyDict_SetItemString(kwargs, "x", Py_None) < 0) {
+                goto done;
+            }
+            switch (probe->api) {
+                case 21: result = PyVectorcall_Call(box, callargs, NULL); break;
+                case 22: result = PyObject_Call(box, callargs, NULL); break;
+                case 23: result = PyObject_Vectorcall(box, NULL, 0, NULL); break;
+                case 24: result = PyObject_VectorcallDict(box, NULL, 0, kwargs); break;
+                case 25: result = PyVectorcall_Call(box, callargs, kwargs); break;
+            }
+            break;
         default:
             box = make_return_box(&return_box_spec, value);
             if (box == NULL) {
@@ -870,6 +923,8 @@ done:
     Py_XDECREF(iter);
     Py_XDECREF(func);
     Py_XDECREF(box);
+    Py_XDECREF(callargs);
+    Py_XDECREF(kwargs);
     PyThreadState_Clear(tstate);
     PyThreadState_DeleteCurrent();
 }
@@ -987,6 +1042,69 @@ set_vm_probe_values(PyObject *globals, PyObject *builtins, PyObject *cell,
     return ok ? 0 : -1;
 }
 
+static PyObject *
+consume_probe_args(PyObject *self, PyObject *const *args,
+                   Py_ssize_t nargs, PyObject *kwnames)
+{
+    Py_RETURN_TRUE;
+}
+
+static PyMethodDef consume_probe_args_def = {
+    "consume", _PyCFunction_CAST(consume_probe_args),
+    METH_FASTCALL | METH_KEYWORDS, NULL,
+};
+
+static PyObject *
+legacy_probe_call(PyObject *consumer, PyObject *args)
+{
+    return PyObject_CallFunction(consumer, "O", args);
+}
+
+static PyObject *
+prepend_probe_call(PyObject *consumer, PyObject *args)
+{
+    PyObject *cls = make_vm_probe_class();
+    PyObject *method = PyStaticMethod_New(consumer);
+    PyObject *result = NULL;
+    if (cls != NULL && method != NULL &&
+        PyObject_SetAttrString(cls, "__new__", method) == 0) {
+        // Invoke the extension slot directly: its Python __new__ adapter
+        // prepends the class while expanding the args tuple.
+        PyTypeObject *type = (PyTypeObject *)cls;
+        result = type->tp_new(type, args, NULL);
+    }
+    Py_XDECREF(method);
+    Py_XDECREF(cls);
+    return result;
+}
+
+static PyMethodDef legacy_probe_call_def = {
+    "legacy_call", legacy_probe_call, METH_O, NULL,
+};
+
+static PyMethodDef prepend_probe_call_def = {
+    "prepend_call", prepend_probe_call, METH_O, NULL,
+};
+
+static int
+set_vm_probe_defaults(PyObject *func, PyObject *globals, PyObject *source)
+{
+    if (func == NULL) {
+        return 0;
+    }
+    PyCodeObject *code = (PyCodeObject *)PyFunction_GET_CODE(func);
+    if (code->co_argcount == 3 && PyFunction_SetDefaults(func, source) < 0) {
+        return -1;
+    }
+    if (code->co_kwonlyargcount) {
+        PyObject *mapping = PyDict_GetItemString(globals, "mapping");
+        if (mapping == NULL || PyFunction_SetKwDefaults(func, mapping) < 0) {
+            return -1;
+        }
+    }
+    return 0;
+}
+
 static void
 vm_probe_worker(void *arg)
 {
@@ -1009,15 +1127,24 @@ vm_probe_worker(void *arg)
     PyObject *cls = make_vm_probe_class();
     PyObject *instance = make_vm_probe_instance();
     PyObject *module = PyModule_New("_testinternalcapi.vm_probe");
+    PyObject *consumer = PyCFunction_NewEx(&consume_probe_args_def, NULL, NULL);
+    PyObject *legacy = consumer == NULL ? NULL :
+        PyCFunction_NewEx(&legacy_probe_call_def, consumer, NULL);
+    PyObject *prepend = consumer == NULL ? NULL :
+        PyCFunction_NewEx(&prepend_probe_call_def, consumer, NULL);
     PyObject *func = NULL, *closure = NULL, *warm = NULL, *result = NULL;
     if (globals == NULL || builtins == NULL || cell == NULL || box == NULL ||
-        cls == NULL || instance == NULL || module == NULL ||
+        cls == NULL || instance == NULL || module == NULL || consumer == NULL ||
+        legacy == NULL || prepend == NULL ||
         PyDict_SetItemString(globals, "__builtins__", builtins) < 0 ||
         PyDict_SetItemString(builtins, "TypeError", PyExc_TypeError) < 0 ||
         PyDict_SetItemString(globals, "box", box) < 0 ||
         PyDict_SetItemString(globals, "instance", instance) < 0 ||
         PyDict_SetItemString(globals, "cls", cls) < 0 ||
-        PyDict_SetItemString(globals, "module", module) < 0) {
+        PyDict_SetItemString(globals, "module", module) < 0 ||
+        PyDict_SetItemString(globals, "legacy_call", legacy) < 0 ||
+        PyDict_SetItemString(globals, "prepend_call", prepend) < 0 ||
+        PyDict_SetItemString(globals, "consumer", consumer) < 0) {
         goto done;
     }
     int is_function = ((PyCodeObject *)probe->code)->co_flags & CO_NEWLOCALS;
@@ -1035,7 +1162,8 @@ vm_probe_worker(void *arg)
     }
     warm = PyTuple_Pack(3, Py_None, Py_None, Py_None);
     if (warm == NULL || set_vm_probe_values(globals, builtins, cell, warm,
-                                            box, instance, cls, module) < 0) {
+                                            box, instance, cls, module) < 0 ||
+        set_vm_probe_defaults(func, globals, warm) < 0) {
         goto done;
     }
     for (int i = 0; i < probe->warmups; i++) {
@@ -1047,7 +1175,8 @@ vm_probe_worker(void *arg)
         Py_CLEAR(result);
     }
     if (set_vm_probe_values(globals, builtins, cell, source,
-                            box, instance, cls, module) < 0) {
+                            box, instance, cls, module) < 0 ||
+        set_vm_probe_defaults(func, globals, source) < 0) {
         goto done;
     }
     for (int i = 0; i < probe->trials; i++) {
@@ -1079,6 +1208,9 @@ done:
     Py_XDECREF(instance);
     Py_XDECREF(cls);
     Py_XDECREF(module);
+    Py_XDECREF(consumer);
+    Py_XDECREF(legacy);
+    Py_XDECREF(prepend);
     Py_XDECREF(builtins);
     Py_XDECREF(globals);
     PyThreadState_Clear(tstate);
@@ -1096,7 +1228,8 @@ threadgroup_vm_probe(PyObject *self, PyObject *args)
     }
     if (PyTuple_GET_SIZE(source) != 3 || warmups < 0 || warmups > 1000 ||
         trials < 1 || trials > 1000 ||
-        ((PyCodeObject *)code)->co_argcount != 0 ||
+        (((PyCodeObject *)code)->co_argcount != 0 &&
+         ((PyCodeObject *)code)->co_argcount != 3) ||
         ((PyCodeObject *)code)->co_nfreevars > 1) {
         return PyErr_Format(PyExc_ValueError, "invalid VM probe arguments");
     }

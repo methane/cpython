@@ -1925,6 +1925,9 @@ initialize_locals(PyThreadState *tstate, PyFunctionObject *func,
             for (; i < defcount; i++) {
                 if (PyStackRef_AsPyObjectBorrow(localsplus[m+i]) == NULL) {
                     PyObject *def = defs[i];
+                    if (_PyObject_CheckAccessThread(def, tstate) < 0) {
+                        goto fail_post_args;
+                    }
                     localsplus[m+i] = PyStackRef_FromPyObjectNew(def);
                 }
             }
@@ -2073,6 +2076,14 @@ _PyEvalFramePushAndInit_Ex(PyThreadState *tstate, _PyStackRef func,
     _PyStackRef *newargs;
     PyObject *const *object_array = NULL;
     _PyStackRef stack_array[8] = {0};
+    // Expanding callargs acquires its items from the heap. Ordinary vectorcall
+    // arguments already belong to the caller and do not need this check.
+    for (Py_ssize_t i = 0; i < nargs; i++) {
+        if (_PyObject_CheckAccessThread(PyTuple_GET_ITEM(callargs, i), tstate) < 0) {
+            PyStackRef_CLOSE(func);
+            goto error;
+        }
+    }
     if (has_dict) {
         object_array = _PyStack_UnpackDict(tstate, _PyTuple_ITEMS(callargs), nargs, kwargs, &kwnames);
         if (object_array == NULL) {

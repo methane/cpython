@@ -6474,10 +6474,16 @@ _Py_type_getattro_stackref(PyTypeObject *type, PyObject *name,
 
     if (!PyStackRef_IsNull(meta_attribute_ref.ref)) {
         PyObject *meta_attr_obj = PyStackRef_AsPyObjectBorrow(meta_attribute_ref.ref);
-        if (PyObject_CheckAccess(meta_attr_obj) == NULL) {
-            goto done;
+        if (_Py_atomic_load_ptr(&meta_attr_obj->ob_type) != &PyCFunction_Type) {
+            if (PyObject_CheckAccess(meta_attr_obj) == NULL) {
+                goto done;
+            }
+            meta_get = Py_TYPE(meta_attr_obj)->tp_descr_get;
         }
-        meta_get = Py_TYPE(meta_attr_obj)->tp_descr_get;
+        // Exact builtin functions are never descriptors. Leave them as heap
+        // references while looking for a shadowing attribute on the class.
+        // In particular, type.__new__ is not acquired when a local class
+        // supplies its own __new__. The final result is still checked below.
 
         if (meta_get != NULL && PyDescr_IsData(meta_attr_obj)) {
             /* Data descriptors implement tp_descr_set to intercept
