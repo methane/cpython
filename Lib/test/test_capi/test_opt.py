@@ -5921,6 +5921,48 @@ def consume(n):
         self.assertIn('_LOAD_DEREF', results.get())
         self.assertTrue(results.get())
 
+    def test_code_constant_access(self):
+        import threading
+        from test.support import threading_helper
+
+        def template(n, other):
+            result = None
+            for _ in range(n):
+                result = ... is other
+            return result
+
+        foreign = []
+        constants = tuple(
+            foreign if item is Ellipsis else item
+            for item in template.__code__.co_consts)
+        code = template.__code__.replace(co_consts=constants)
+        function = types.FunctionType(code, globals())
+        self.addCleanup(_testinternalcapi.clear_executor_deletion_list)
+        self.addCleanup(_testinternalcapi.invalidate_executors, code)
+        count = 2 * TIER2_THRESHOLD
+        self.assertIs(function(count, None), False)
+        executors = get_all_executors(function)
+        self.assertTrue(any('_CHECK_CONST_ACCESS' in get_opnames(ex)
+                            for ex in executors))
+        self.assertTrue(any(op[0] == '_LOAD_CONST_INLINE_BORROW'
+                            and op[3] == id(foreign)
+                            for ex in executors for op in ex))
+        results = threading.Channel()
+
+        def worker():
+            try:
+                function(count, None)
+            except BaseException as exc:
+                results.put(type(exc).__name__)
+            else:
+                results.put('foreign constant acquired')
+
+        thread = threading.Thread(target=worker, group=threading.ThreadGroup())
+        with threading_helper.start_threads([thread]):
+            pass
+        self.assertEqual(results.get(), 'IllegalThreadAccessException')
+        self.assertIs(function(count, None), False)
+
     def test_attribute_constant_access(self):
         import _thread
         import threading

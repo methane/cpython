@@ -127,6 +127,10 @@
             break;
         }
 
+        case _CHECK_CONST_ACCESS: {
+            break;
+        }
+
         case _LOAD_SMALL_INT: {
             JitOptRef value;
             PyObject *val = PyLong_FromLong(oparg);

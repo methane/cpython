@@ -63,6 +63,7 @@ const uint32_t _PyUop_Flags[MAX_UOP_ID+1] = {
     [_LOAD_FAST_BORROW] = HAS_ARG_FLAG | HAS_LOCAL_FLAG | HAS_ERROR_FLAG | HAS_ESCAPES_FLAG,
     [_LOAD_FAST_AND_CLEAR] = HAS_ARG_FLAG | HAS_LOCAL_FLAG | HAS_ERROR_FLAG | HAS_ESCAPES_FLAG,
     [_LOAD_CONST] = HAS_ARG_FLAG | HAS_CONST_FLAG,
+    [_CHECK_CONST_ACCESS] = HAS_ERROR_FLAG | HAS_ERROR_NO_POP_FLAG | HAS_ESCAPES_FLAG,
     [_LOAD_SMALL_INT_0] = 0,
     [_LOAD_SMALL_INT_1] = 0,
     [_LOAD_SMALL_INT_2] = 0,
@@ -706,6 +707,15 @@ const _PyUopCachingInfo _PyUop_Caching[MAX_UOP_ID+1] = {
             { 1, 0, _LOAD_CONST_r01 },
             { 2, 1, _LOAD_CONST_r12 },
             { 3, 2, _LOAD_CONST_r23 },
+            { -1, -1, -1 },
+        },
+    },
+    [_CHECK_CONST_ACCESS] = {
+        .best = { 1, 1, 1, 1 },
+        .entries = {
+            { -1, -1, -1 },
+            { 1, 1, _CHECK_CONST_ACCESS_r11 },
+            { -1, -1, -1 },
             { -1, -1, -1 },
         },
     },
@@ -4051,6 +4061,7 @@ const uint16_t _PyUop_Uncached[MAX_UOP_REGS_ID+1] = {
     [_LOAD_CONST_r01] = _LOAD_CONST,
     [_LOAD_CONST_r12] = _LOAD_CONST,
     [_LOAD_CONST_r23] = _LOAD_CONST,
+    [_CHECK_CONST_ACCESS_r11] = _CHECK_CONST_ACCESS,
     [_LOAD_SMALL_INT_0_r01] = _LOAD_SMALL_INT_0,
     [_LOAD_SMALL_INT_0_r12] = _LOAD_SMALL_INT_0,
     [_LOAD_SMALL_INT_0_r23] = _LOAD_SMALL_INT_0,
@@ -5131,6 +5142,8 @@ const char *const _PyOpcode_uop_name[MAX_UOP_REGS_ID+1] = {
     [_CHECK_CALL_INPUTS_r00] = "_CHECK_CALL_INPUTS_r00",
     [_CHECK_CALL_KW_INPUTS] = "_CHECK_CALL_KW_INPUTS",
     [_CHECK_CALL_KW_INPUTS_r11] = "_CHECK_CALL_KW_INPUTS_r11",
+    [_CHECK_CONST_ACCESS] = "_CHECK_CONST_ACCESS",
+    [_CHECK_CONST_ACCESS_r11] = "_CHECK_CONST_ACCESS_r11",
     [_CHECK_EG_MATCH] = "_CHECK_EG_MATCH",
     [_CHECK_EG_MATCH_r22] = "_CHECK_EG_MATCH_r22",
     [_CHECK_EXC_MATCH] = "_CHECK_EXC_MATCH",
@@ -6281,6 +6294,8 @@ int _PyUop_num_popped(int opcode, int oparg)
         case _LOAD_FAST_AND_CLEAR:
             return 0;
         case _LOAD_CONST:
+            return 0;
+        case _CHECK_CONST_ACCESS:
             return 0;
         case _LOAD_SMALL_INT_0:
             return 0;

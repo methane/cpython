@@ -366,10 +366,22 @@ dummy_func(
             value2 = PyStackRef_Borrow(GETLOCAL(oparg2));
         }
 
-        inst(LOAD_CONST, (-- value)) {
+        op(_LOAD_CONST, (-- value)) {
             PyObject *obj = GETITEM(FRAME_CO_CONSTS, oparg);
             value = PyStackRef_FromPyObjectBorrow(obj);
         }
+
+        op(_CHECK_CONST_ACCESS, (value -- value)) {
+            // Code constructors allow arbitrary objects in co_consts. Keep
+            // this check when Tier 2 replaces the load with an inline constant.
+            PyObject *checked = PyObject_CheckAccess(
+                PyStackRef_AsPyObjectBorrow(value));
+            if (checked == NULL) {
+                ERROR_NO_POP();
+            }
+        }
+
+        macro(LOAD_CONST) = _LOAD_CONST + _CHECK_CONST_ACCESS;
 
         replicate(4) inst(LOAD_SMALL_INT, (-- value)) {
             assert(oparg < _PY_NSMALLPOSINTS);

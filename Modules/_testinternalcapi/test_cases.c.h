@@ -10715,12 +10715,25 @@
             next_instr += 1;
             INSTRUCTION_STATS(LOAD_CONST);
             _PyStackRef value;
-            Test_EvalFrame_Loads++;
-            PyObject *obj = GETITEM(FRAME_CO_CONSTS, oparg);
-            value = PyStackRef_FromPyObjectBorrow(obj);
-            stack_pointer[0] = value;
-            stack_pointer += 1;
-            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            // _LOAD_CONST
+            {
+                PyObject *obj = GETITEM(FRAME_CO_CONSTS, oparg);
+                value = PyStackRef_FromPyObjectBorrow(obj);
+            }
+            // _CHECK_CONST_ACCESS
+            {
+                stack_pointer[0] = value;
+                stack_pointer += 1;
+                ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                _PyFrame_SetStackPointer(frame, stack_pointer);
+                _PyFrame_StackPointerValidate(frame);
+                PyObject *checked = PyObject_CheckAccess(
+                    PyStackRef_AsPyObjectBorrow(value));
+                _PyFrame_StackPointerInvalidate(frame);
+                if (checked == NULL) {
+                    JUMP_TO_LABEL(error);
+                }
+            }
             DISPATCH();
         }
 
