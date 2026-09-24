@@ -348,12 +348,13 @@ validate_and_copy_tuple(PyObject *tup)
 static int
 init_co_cached(PyCodeObject *self)
 {
-    _PyCoCached *cached = FT_ATOMIC_LOAD_PTR(self->_co_cached);
+    _PyCoCached *cached = _Py_atomic_load_ptr_acquire(&self->_co_cached);
     if (cached != NULL) {
         return 0;
     }
 
-    Py_BEGIN_CRITICAL_SECTION(self);
+    PyCriticalSection cs;
+    _PyCode_Lock(self, &cs);
     cached = self->_co_cached;
     if (cached == NULL) {
         cached = PyMem_New(_PyCoCached, 1);
@@ -365,10 +366,10 @@ init_co_cached(PyCodeObject *self)
             cached->_co_cellvars = NULL;
             cached->_co_freevars = NULL;
             cached->_co_varnames = NULL;
-            FT_ATOMIC_STORE_PTR(self->_co_cached, cached);
+            _Py_atomic_store_ptr_release(&self->_co_cached, cached);
         }
     }
-    Py_END_CRITICAL_SECTION();
+    _PyCode_Unlock(&cs);
     return cached != NULL ? 0 : -1;
 }
 
@@ -510,6 +511,7 @@ static _PyCodeArray * _PyCodeArray_New(Py_ssize_t size);
 static int
 init_code(PyCodeObject *co, struct _PyCodeConstructor *con)
 {
+    co->_co_mutex = (PyMutex){0};
     int nlocalsplus = (int)PyTuple_GET_SIZE(con->localsplusnames);
     int nlocals, ncellvars, nfreevars;
     get_localsplus_counts(con->localsplusnames, con->localspluskinds,
@@ -1503,13 +1505,14 @@ code_extra_size(Py_ssize_t n)
     return sizeof(_PyCodeObjectExtra) + (n - 1) * sizeof(void *);
 }
 
-#ifdef Py_GIL_DISABLED
 static int
-code_extra_grow_ft(PyCodeObject *co, _PyCodeObjectExtra *old_co_extra,
-                   Py_ssize_t old_ce_size, Py_ssize_t new_ce_size,
-                   Py_ssize_t index, void *extra)
+code_extra_grow(PyCodeObject *co, _PyCodeObjectExtra *old_co_extra,
+                Py_ssize_t old_ce_size, Py_ssize_t new_ce_size,
+                Py_ssize_t index, void *extra)
 {
-    _Py_CRITICAL_SECTION_ASSERT_OBJECT_LOCKED(co);
+    if (!_PyInterpreterState_GET()->stoptheworld.world_stopped) {
+        _PyCriticalSection_AssertHeld(_PyCode_GetMutex(co));
+    }
     _PyCodeObjectExtra *new_co_extra = PyMem_Malloc(
         code_extra_size(new_ce_size));
     if (new_co_extra == NULL) {
@@ -1528,35 +1531,13 @@ code_extra_grow_ft(PyCodeObject *co, _PyCodeObjectExtra *old_co_extra,
     new_co_extra->ce_extras[index] = extra;
 
     // Publish new buffer and its contents to lock-free readers.
-    FT_ATOMIC_STORE_PTR_RELEASE(co->co_extra, new_co_extra);
+    _Py_atomic_store_ptr_release(&co->co_extra, new_co_extra);
     if (old_co_extra != NULL) {
         // QSBR: defer old-buffer free until lock-free readers quiesce.
         _PyMem_FreeDelayed(old_co_extra, code_extra_size(old_ce_size));
     }
     return 0;
 }
-#else
-static int
-code_extra_grow_gil(PyCodeObject *co, _PyCodeObjectExtra *old_co_extra,
-                    Py_ssize_t old_ce_size, Py_ssize_t new_ce_size,
-                    Py_ssize_t index, void *extra)
-{
-    _PyCodeObjectExtra *new_co_extra = PyMem_Realloc(
-        old_co_extra, code_extra_size(new_ce_size));
-    if (new_co_extra == NULL) {
-        PyErr_NoMemory();
-        return -1;
-    }
-
-    for (Py_ssize_t i = old_ce_size; i < new_ce_size; i++) {
-        new_co_extra->ce_extras[i] = NULL;
-    }
-    new_co_extra->ce_size = new_ce_size;
-    new_co_extra->ce_extras[index] = extra;
-    co->co_extra = new_co_extra;
-    return 0;
-}
-#endif
 
 int
 PyUnstable_Code_GetExtra(PyObject *code, Py_ssize_t index, void **extra)
@@ -1574,9 +1555,9 @@ PyUnstable_Code_GetExtra(PyObject *code, Py_ssize_t index, void **extra)
     }
 
     // Lock-free read; pairs with release stores in SetExtra.
-    _PyCodeObjectExtra *co_extra = FT_ATOMIC_LOAD_PTR_ACQUIRE(co->co_extra);
+    _PyCodeObjectExtra *co_extra = _Py_atomic_load_ptr_acquire(&co->co_extra);
     if (co_extra != NULL && index < co_extra->ce_size) {
-        *extra = FT_ATOMIC_LOAD_PTR_ACQUIRE(co_extra->ce_extras[index]);
+        *extra = _Py_atomic_load_ptr_acquire(&co_extra->ce_extras[index]);
     }
 
     return 0;
@@ -1591,8 +1572,8 @@ PyUnstable_Code_SetExtra(PyObject *code, Py_ssize_t index, void *extra)
     // co_extra_user_count is monotonically increasing and published with
     // release store in RequestCodeExtraIndex, so once an index is valid
     // it stays valid.
-    Py_ssize_t user_count = FT_ATOMIC_LOAD_SSIZE_ACQUIRE(
-        interp->co_extra_user_count);
+    Py_ssize_t user_count = _Py_atomic_load_ssize_acquire(
+        &interp->co_extra_user_count);
 
     if (!PyCode_Check(code) || index < 0 || index >= user_count) {
         PyErr_BadInternalCall();
@@ -1603,7 +1584,8 @@ PyUnstable_Code_SetExtra(PyObject *code, Py_ssize_t index, void *extra)
     int result = 0;
     void *old_slot_value = NULL;
 
-    Py_BEGIN_CRITICAL_SECTION(co);
+    PyCriticalSection cs;
+    _PyCode_Lock(co, &cs);
 
     _PyCodeObjectExtra *old_co_extra = (_PyCodeObjectExtra *)co->co_extra;
     Py_ssize_t old_ce_size = (old_co_extra == NULL)
@@ -1612,24 +1594,18 @@ PyUnstable_Code_SetExtra(PyObject *code, Py_ssize_t index, void *extra)
     // Fast path: slot already exists, update in place.
     if (index < old_ce_size) {
         old_slot_value = old_co_extra->ce_extras[index];
-        FT_ATOMIC_STORE_PTR_RELEASE(old_co_extra->ce_extras[index], extra);
+        _Py_atomic_store_ptr_release(&old_co_extra->ce_extras[index], extra);
         goto done;
     }
 
     // Slow path: buffer needs to grow.
     Py_ssize_t new_ce_size = user_count;
-#ifdef Py_GIL_DISABLED
-    // FT build: allocate new buffer and swap; QSBR reclaims the old one.
-    result = code_extra_grow_ft(
+    // Allocate a new buffer and swap; QSBR reclaims the old one.
+    result = code_extra_grow(
         co, old_co_extra, old_ce_size, new_ce_size, index, extra);
-#else
-    // GIL build: grow with realloc.
-    result = code_extra_grow_gil(
-        co, old_co_extra, old_ce_size, new_ce_size, index, extra);
-#endif
 
 done:;
-    Py_END_CRITICAL_SECTION();
+    _PyCode_Unlock(&cs);
     if (old_slot_value != NULL) {
         // Free the old slot value if a free function was registered.
         // The caller must ensure no other thread can still access the old
@@ -1654,20 +1630,21 @@ get_cached_locals(PyCodeObject *co, PyObject **cached_field,
 {
     assert(cached_field != NULL);
     assert(co->_co_cached != NULL);
-    PyObject *varnames = FT_ATOMIC_LOAD_PTR(*cached_field);
+    PyObject *varnames = _Py_atomic_load_ptr_acquire(cached_field);
     if (varnames != NULL) {
         return Py_NewRef(varnames);
     }
 
-    Py_BEGIN_CRITICAL_SECTION(co);
+    PyCriticalSection cs;
+    _PyCode_Lock(co, &cs);
     varnames = *cached_field;
     if (varnames == NULL) {
         varnames = get_localsplus_names(co, kind, num);
         if (varnames != NULL) {
-            FT_ATOMIC_STORE_PTR(*cached_field, varnames);
+            _Py_atomic_store_ptr_release(cached_field, varnames);
         }
     }
-    Py_END_CRITICAL_SECTION();
+    _PyCode_Unlock(&cs);
     return Py_XNewRef(varnames);
 }
 
@@ -2008,7 +1985,7 @@ _PyCode_CheckNoInternalState(PyCodeObject *co, const char **p_errmsg)
     const char *errmsg = NULL;
     // We don't worry about co_executors, co_instrumentation,
     // or co_monitoring.  They are essentially ephemeral.
-    if (co->co_extra != NULL) {
+    if (_Py_atomic_load_ptr_acquire(&co->co_extra) != NULL) {
         errmsg = "only basic code objects are supported";
     }
 
@@ -2211,12 +2188,13 @@ _PyCode_GetCode(PyCodeObject *co)
     }
 
     _PyCoCached *cached = co->_co_cached;
-    PyObject *code = FT_ATOMIC_LOAD_PTR(cached->_co_code);
+    PyObject *code = _Py_atomic_load_ptr_acquire(&cached->_co_code);
     if (code != NULL) {
         return Py_NewRef(code);
     }
 
-    Py_BEGIN_CRITICAL_SECTION(co);
+    PyCriticalSection cs;
+    _PyCode_Lock(co, &cs);
     code = cached->_co_code;
     if (code == NULL) {
         code = PyBytes_FromStringAndSize((const char *)_PyCode_CODE(co),
@@ -2224,10 +2202,10 @@ _PyCode_GetCode(PyCodeObject *co)
         if (code != NULL) {
             deopt_code(co, (_Py_CODEUNIT *)PyBytes_AS_STRING(code));
             assert(cached->_co_code == NULL);
-            FT_ATOMIC_STORE_PTR(cached->_co_code, code);
+            _Py_atomic_store_ptr_release(&cached->_co_code, code);
         }
     }
-    Py_END_CRITICAL_SECTION();
+    _PyCode_Unlock(&cs);
     return Py_XNewRef(code);
 }
 
@@ -2693,7 +2671,7 @@ code_sizeof(PyObject *self, PyObject *Py_UNUSED(args))
 {
     PyCodeObject *co = _PyCodeObject_CAST(self);
     size_t res = _PyObject_VAR_SIZE(Py_TYPE(co), Py_SIZE(co));
-    _PyCodeObjectExtra *co_extra = (_PyCodeObjectExtra*) co->co_extra;
+    _PyCodeObjectExtra *co_extra = _Py_atomic_load_ptr_acquire(&co->co_extra);
     if (co_extra != NULL) {
         res += sizeof(_PyCodeObjectExtra);
         res += ((size_t)co_extra->ce_size - 1) * sizeof(co_extra->ce_extras[0]);

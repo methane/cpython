@@ -65,7 +65,8 @@ retired allocations. The read sequence belongs to an OS thread's thread state;
 it is independent of the ThreadGroup that owns an object's biased refcount.
 
 `_PyMem_FreeDelayed()` retires internal storage that an attached reader might
-still be using without a counted reference. The normal build does not use this
+still be using without a counted reference, including replaced `co_extra`
+arrays used by lock-free code-metadata getters. The normal build does not use this
 queue to defer LOCAL object decrefs. If allocating a retirement record fails,
 a world stop ends outstanding reads before freeing the storage. GC also drains
 retired storage during its pause, including queues left by detached or exited

@@ -1901,17 +1901,40 @@ qsbr_probe_worker(void *arg)
     // A large retirement advances the write sequence and requests processing
     // by the eval breaker. Smaller ones target the next, unadvanced sequence.
     size_t size = probe->mode == 2 ? 1024 * 1024 + 1 : 32;
-    char *ptr = PyMem_Malloc(size);
+    char *ptr;
+    if (probe->mode == 7) {
+        Py_ssize_t index = PyUnstable_Eval_RequestCodeExtraIndex(NULL);
+        if (index < 0 ||
+            PyUnstable_Code_SetExtra(probe->code, index, (void *)1) < 0) {
+            goto done;
+        }
+        ptr = ((PyCodeObject *)probe->code)->co_extra;
+    }
+    else {
+        ptr = PyMem_Malloc(size);
+    }
     if (ptr == NULL) {
         goto done;
     }
-    ptr[0] = 'Q';
+    if (probe->mode != 7) {
+        ptr[0] = 'Q';
+    }
     _Py_atomic_store_ptr(&probe->target, ptr);
     if (probe->mode == 6) {
         // This fresh thread has no work buffer. Fail only its allocation.
         _Py_atomic_store_int(&probe->fail_calloc, 1);
     }
-    _PyMem_FreeDelayed(ptr, size);
+    if (probe->mode == 7) {
+        // Grow shared code metadata while this reader still has the old array.
+        Py_ssize_t index = PyUnstable_Eval_RequestCodeExtraIndex(NULL);
+        if (index < 0 ||
+            PyUnstable_Code_SetExtra(probe->code, index, (void *)2) < 0) {
+            goto done;
+        }
+    }
+    else {
+        _PyMem_FreeDelayed(ptr, size);
+    }
     probe->ok = !_Py_atomic_load_int(&probe->freed);
     if (probe->mode == 6) {
         probe->ok = _Py_atomic_load_int(&probe->freed) &&
@@ -1919,14 +1942,16 @@ qsbr_probe_worker(void *arg)
             !_Py_atomic_load_int(&probe->fail_calloc) &&
             !tstate->interp->stoptheworld.world_stopped;
     }
-    else if (probe->ok && probe->mode <= 1) {
+    else if (probe->ok && (probe->mode <= 1 || probe->mode == 7)) {
         _Py_qsbr_advance(&tstate->interp->qsbr);
         _PyMem_ProcessDelayed(tstate);
         probe->ok = !_Py_atomic_load_int(&probe->freed);
         if (probe->ok) {
             // Still a valid uncounted pointer until this reader quiesces.
-            probe->ok = ptr[0] == 'Q';
-            if (probe->mode == 0) {
+            if (probe->mode != 7) {
+                probe->ok = ptr[0] == 'Q';
+            }
+            if (probe->mode != 1) {
                 _Py_qsbr_quiescent_state(ts->qsbr);
             }
             else {
@@ -1979,7 +2004,7 @@ threadgroup_qsbr_probe(PyObject *self, PyObject *args)
                           &PyCode_Type, &code)) {
         return NULL;
     }
-    if (mode < 0 || mode > 6) {
+    if (mode < 0 || mode > 7) {
         return PyErr_Format(PyExc_ValueError, "invalid QSBR probe mode");
     }
     _PyThreadGroupState *state = _PyThreadGroup_GetState(group);

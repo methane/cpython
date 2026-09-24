@@ -9,12 +9,37 @@ extern "C" {
 #endif
 
 #include "pycore_backoff.h"     // _Py_BackoffCounter
+#include "pycore_critical_section.h" // _PyCriticalSection_BeginMutex()
 #include "pycore_structs.h"     // _Py_CODEUNIT
 #include "pycore_tstate.h"      // _PyThreadStateImpl
 
 
 #define _PyCode_CODE(CO) _Py_RVALUE((_Py_CODEUNIT *)(CO)->co_code_adaptive)
 #define _PyCode_NBYTES(CO) (Py_SIZE(CO) * (Py_ssize_t)sizeof(_Py_CODEUNIT))
+
+// Code is immutable to Python, but its lazy caches and metadata are mutable.
+// The normal build keeps their lock on the code object, not in PyObject.
+static inline PyMutex *
+_PyCode_GetMutex(PyCodeObject *co)
+{
+#ifdef Py_GIL_DISABLED
+    return &_PyObject_CAST(co)->ob_mutex;
+#else
+    return &co->_co_mutex;
+#endif
+}
+
+static inline void
+_PyCode_Lock(PyCodeObject *co, PyCriticalSection *cs)
+{
+    _PyCriticalSection_BeginMutex(_PyThreadState_GET(), cs, _PyCode_GetMutex(co));
+}
+
+static inline void
+_PyCode_Unlock(PyCriticalSection *cs)
+{
+    _PyCriticalSection_End(_PyThreadState_GET(), cs);
+}
 
 
 /* These macros only remain defined for compatibility. */

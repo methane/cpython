@@ -15,7 +15,7 @@ The five-stage implementation is **not complete**.
 | One-time ABI change | Compact owner/state and group-biased RC header; no cleanup queue fields | Complete the allocation/GC port and audit native layouts |
 | Biased and deferred reference counting | Group bias, per-thread code counts, deferred stack roots and normal GC integration | Queue collection and reclamation with concurrent groups |
 | LOCAL and IMMUTABLE ownership | Builtin/static metadata, public `__shareable__` state, common C API returns, VM heap loads, attributes and call expansion | Remaining API/VM acquisitions and shared static extension ownership |
-| Parallel allocation and cyclic GC | Per-thread heaps/freelists, paused reachability snapshots, owned worklists and synchronized tracking | Concurrent execution, owner-correct finalization, cross-interpreter legacy objects and teardown |
+| Parallel allocation and cyclic GC | Per-thread heaps/freelists, QSBR, paused reachability snapshots, owned worklists and synchronized tracking | Concurrent execution, owner-correct finalization, cross-interpreter legacy objects and teardown |
 
 Freezing, protective/compound locks, synchronized objects and functions,
 TransferBox, Channel, the debugger StopTheWorld API, and performance work are
@@ -82,6 +82,15 @@ as code metadata to use dedicated locks without adding a mutex to every object.
 The public object-based critical sections retain their normal-build behavior;
 LOCAL objects rely on group serialization. A skipped two-mutex acquisition
 during a world stop releases any first mutex acquired by its fast path.
+
+Code objects use a dedicated mutex and acquire/release publication for their
+lazy variable-name and bytecode caches. `co_extra` growth publishes a copied
+array and retires the old array through QSBR; extra-slot registration uses the
+interpreter's code-state mutex. Replaced extra values are still released after
+unlocking, so extension free callbacks can re-enter. This ports metadata storage;
+thread-local specialization and monitoring synchronization remain to be ported.
+On Linux/aarch64 the mutex occupies existing code-object padding: its basic size
+remains 216 bytes, and the generic object header remains 24 bytes.
 
 The normal collector pauses threads while merging per-thread counts, scanning
 stack roots, determining reachability and clearing callback-bearing weakrefs.
@@ -198,6 +207,13 @@ Tests run on Linux/aarch64. Logs are under `/tmp/pep805-base/`. The optional
 flags/events rather than foreign LOCAL Python functions or mutable results.
 Parallel scheduling tests remain skipped while the interpreter GIL is enabled.
 
+- Shared code metadata: 981 tests pass across ten files covering code objects,
+  ownership, ThreadGroups, GC, C APIs, sys, monitoring, embedding, disassembly
+  and frames (30 skips). Code, ownership and ThreadGroups also pass `-R 3:3`
+  with `mimalloc_debug` (92 tests, three skips). The `co_extra` growth probe
+  failed for both Main and foreign groups before the fix; it now verifies the
+  retired array survives until quiescence and is then freed. A separate probe
+  creates code caches in a foreign group before reading them from Main.
 - Internal explicit-mutex critical sections: 743 tests pass across C API misc,
   ThreadGroups, GC, threading and embedding (16 skips). Native tests exercise
   recursive and nested blocking acquisition, suspension, innermost resumption,

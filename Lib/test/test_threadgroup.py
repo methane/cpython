@@ -43,7 +43,7 @@ _testinternalcapi.check_main_group_lifetime()
             return None
 
         modes = ('quiescent', 'detach', 'eval breaker', 'gc', 'thread exit',
-                 'detached producer', 'allocation failure')
+                 'detached producer', 'allocation failure', 'code extra growth')
         for group in (sys.main_thread_group, threading.ThreadGroup('QSBR')):
             for mode, name in enumerate(modes):
                 with self.subTest(group=group, mode=name):

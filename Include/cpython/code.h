@@ -106,6 +106,7 @@ typedef struct {
     struct _PyCoMonitoringData *_co_monitoring; /* Monitoring data */          \
     _PyCode_DEF_UNIQUE_ID()                                                    \
     int _co_firsttraceable;       /* index of first traceable instruction */   \
+    PyMutex _co_mutex;            /* internal state in the normal build */     \
     /* Scratch space for extra data relating to the code object.               \
        Type is a void* to keep the format private in codeobject.c to force     \
        people to go through the proper APIs. */                                \

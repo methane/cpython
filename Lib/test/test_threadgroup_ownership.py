@@ -132,6 +132,30 @@ assert 'threading' not in sys.modules
     def test_static_immutable_access(self):
         internal.test_static_immutable_access()
 
+    def test_code_caches_across_groups(self):
+        def outer(cell):
+            def inner(arg):
+                return cell + arg
+            return inner
+
+        def probe():
+            assert (value.co_varnames, value.co_cellvars, value.co_freevars,
+                    value.co_code) == source[1]
+            assert value.co_varnames is value.co_varnames
+            assert value.co_cellvars is value.co_cellvars
+            assert value.co_freevars is value.co_freevars
+            assert value.co_code is value.co_code
+            return True
+
+        for code in (outer.__code__, outer(1).__code__):
+            expected = (code.co_varnames, code.co_cellvars, code.co_freevars,
+                        code.co_code)
+            fresh = code.replace()
+            for group in (self.foreign, sys.main_thread_group):
+                with self.subTest(group=group, code=code.co_name):
+                    self.assertTrue(internal.threadgroup_vm_probe(
+                        probe.__code__, group, (fresh, expected, None), 0, 50))
+
     def test_weakref_cache_is_local_to_group(self):
         target = compile('pass', 'weakref-target', 'exec')
         for group in (sys.main_thread_group, self.foreign):
