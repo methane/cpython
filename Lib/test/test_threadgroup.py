@@ -4,6 +4,7 @@ import gc
 import sys
 import threading
 import unittest
+import weakref
 
 from test import support
 from test.support import import_helper, os_helper, script_helper, threading_helper
@@ -42,6 +43,45 @@ _testinternalcapi.check_main_group_lifetime()
             for create_during_stop in (False, True):
                 with self.subTest(group=group, create_during_stop=create_during_stop):
                     internal.threadgroup_world_stop_probe(group, create_during_stop)
+
+    def test_gc_world_stop_phases(self):
+        internal = import_helper.import_module('_testinternalcapi')
+        internal.test_gc_world_stop()
+        observed = []
+
+        def record(phase):
+            observed.append((phase, internal.threadgroup_world_is_stopped()))
+
+        class Cycle:
+            def __del__(self):
+                record('finalizer')
+
+        def callback(phase, info):
+            record(phase)
+
+        class DebugOutput:
+            def write(self, text):
+                record('debug')
+
+        value = Cycle()
+        value.cycle = value
+        ref = weakref.ref(value, lambda ref: record('weakref'))
+        debug = gc.get_debug()
+        stderr = sys.stderr
+        gc.callbacks.append(callback)
+        try:
+            sys.stderr = DebugOutput()
+            gc.set_debug(gc.DEBUG_COLLECTABLE)
+            del value
+            gc.collect()
+        finally:
+            gc.set_debug(debug)
+            sys.stderr = stderr
+            gc.callbacks.remove(callback)
+        self.assertIsNone(ref())
+        self.assertEqual({phase for phase, stopped in observed},
+                         {'start', 'stop', 'weakref', 'finalizer', 'debug'})
+        self.assertFalse(any(stopped for phase, stopped in observed), observed)
 
     def test_default_context_compatibility(self):
         script_helper.assert_python_ok('-c', '''

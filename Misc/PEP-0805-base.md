@@ -15,7 +15,7 @@ The five-stage implementation is **not complete**.
 | One-time ABI change | Compact owner/state and group-biased RC header; no cleanup queue fields | Complete the allocation/GC port and audit native layouts |
 | Biased and deferred reference counting | Group bias, per-thread code counts, deferred stack roots and normal GC integration | Queue collection and reclamation with concurrent groups |
 | LOCAL and IMMUTABLE ownership | Builtin/static metadata, public `__shareable__` state, common C API returns, VM heap loads, attributes and call expansion | Remaining API/VM acquisitions and shared static extension ownership |
-| Parallel allocation and cyclic GC | Per-thread freelists and internal world stops; normal collector understands biased, deferred and per-thread counts | Concurrent allocation, collector world-stop integration, owner-correct finalization and teardown |
+| Parallel allocation and cyclic GC | Per-thread freelists, internal world stops and paused GC reachability snapshots | Concurrent allocation/heap tracking, owner-correct finalization and teardown |
 
 Freezing, protective/compound locks, synchronized objects and functions,
 TransferBox, Channel, the debugger StopTheWorld API, and performance work are
@@ -50,6 +50,14 @@ in the normal build. Detached states, including states created during a pause,
 cannot attach until it ends. Attachment drops group/GIL execution rights before
 waiting on a suspended state. Fork, shutdown and existing introspection callers
 use this mechanism; the later-stage public debugger API is not exposed.
+
+The normal collector pauses threads while merging per-thread counts, scanning
+stack roots and determining reachability. It restarts them for weakref callbacks,
+finalizers, debug output and destruction, and pauses again to detect resurrection.
+Shutdown merges/disables per-thread counts under a pause before releasing deferred
+references. Generation lists and allocation still depend on the interpreter GIL.
+The free-threading collector reuses `ob_tid` as scratch space; its replacement
+must preserve the compact header's group owner ID throughout collection.
 
 Deferred counting is restricted to immutable GC-tracked objects. Per-thread
 counts currently supplement the group bias for code objects; LOCAL heap types
@@ -172,6 +180,12 @@ Parallel scheduling tests remain skipped while the interpreter GIL is enabled.
   APIs (14 skips). Native probes release the interpreter GIL and group while
   the world is stopped and verify existing/new states cannot attach until
   restart. ThreadGroups and ownership pass `-R 3:3` (37 tests, 2 skips).
+- Paused GC snapshots: 807 tests passed across ThreadGroups, ownership, GC,
+  weakrefs, local/deferred reclamation, embedding, threading, generators,
+  async-generators, contexts and fork (18 skips). A native cyclic object verifies
+  traversal is paused and clearing/destruction are not; Python callbacks also
+  verify the world is running. ThreadGroups, reclamation and GC pass `-R 3:3`
+  (94 tests, 3 skips).
 - The non-debug normal build at `9a07ddfce7` passes 1,378 tests across 16 files
   covering sharing states, per-thread freelists, allocation, threading, GC and
   embedding (34 skips). This predates the internal world-stop activation.

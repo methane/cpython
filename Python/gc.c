@@ -1187,8 +1187,7 @@ finalize_garbage(PyThreadState *tstate, PyGC_Head *collectable)
 static void
 merge_perthread_refcounts(PyInterpreterState *interp)
 {
-    // Other threads cannot mutate their counters while the interpreter GIL
-    // is held. The parallel collector must perform this under a world stop.
+    assert(interp->stoptheworld.world_stopped);
     _Py_FOR_EACH_TSTATE_BEGIN(interp, thread) {
         _PyObject_MergePerThreadRefcounts((_PyThreadStateImpl *)thread);
     }
@@ -1683,6 +1682,10 @@ gc_collect_main(PyThreadState *tstate, int generation, _PyGC_Reason reason)
         PyDTrace_GC_START(generation);
     }
 
+    // Reference counts, uncounted stack roots and heap edges must describe
+    // one paused state. User callbacks run only after restarting the world.
+    _PyEval_StopTheWorld(tstate->interp);
+
     /* update collection and allocation counters */
     if (generation+1 < NUM_GENERATIONS) {
         gcstate->generations[generation+1].count += 1;
@@ -1744,17 +1747,18 @@ gc_collect_main(PyThreadState *tstate, int generation, _PyGC_Reason reason)
     validate_list(&finalizers, collecting_clear_unreachable_clear);
     validate_list(&unreachable, collecting_set_unreachable_clear);
 
+    // Disable per-thread counts before running callbacks. A resurrecting
+    // finalizer then creates ordinary counted references, even if another
+    // finalizer has already caused a released unique ID to be reused.
+    disable_perthread_list(&unreachable);
+    _PyEval_StartTheWorld(tstate->interp);
+
     /* Print debugging information. */
     if (gcstate->debug & _PyGC_DEBUG_COLLECTABLE) {
         for (gc = GC_NEXT(&unreachable); gc != &unreachable; gc = GC_NEXT(gc)) {
             debug_cycle("collectable", FROM_GC(gc));
         }
     }
-
-    // Disable per-thread counts before running callbacks. A resurrecting
-    // finalizer then creates ordinary counted references, even if another
-    // finalizer has already caused a released unique ID to be reused.
-    disable_perthread_list(&unreachable);
 
     /* Clear weakrefs and invoke callbacks as necessary. */
     stats.collected += handle_weakref_callbacks(&unreachable, old);
@@ -1768,6 +1772,7 @@ gc_collect_main(PyThreadState *tstate, int generation, _PyGC_Reason reason)
      * to 'finalize_garbage' and continue the collection with the
      * objects that are still unreachable */
     PyGC_Head final_unreachable;
+    _PyEval_StopTheWorld(tstate->interp);
     handle_resurrected_objects(&unreachable, &final_unreachable, old);
 
     /* Clear weakrefs to objects in the unreachable set.  No Python-level
@@ -1777,6 +1782,7 @@ gc_collect_main(PyThreadState *tstate, int generation, _PyGC_Reason reason)
      * could reveal unreachable objects.  Callbacks are not executed.
      */
     clear_weakrefs(&final_unreachable);
+    _PyEval_StartTheWorld(tstate->interp);
 
     /* Call tp_clear on objects in the final_unreachable set.  This will cause
     * the reference cycles to be broken.  It may also cause some objects
@@ -1849,6 +1855,7 @@ gc_collect_main(PyThreadState *tstate, int generation, _PyGC_Reason reason)
     }
 
     if (reason == _Py_GC_REASON_SHUTDOWN) {
+        _PyEval_StopTheWorld(tstate->interp);
         merge_perthread_refcounts(tstate->interp);
         // First stop all table updates; dropping sentinels below can invoke
         // callbacks using code from anywhere in the surviving object graph.
@@ -1856,6 +1863,7 @@ gc_collect_main(PyThreadState *tstate, int generation, _PyGC_Reason reason)
             disable_perthread_list(GEN_HEAD(gcstate, gen));
         }
         disable_perthread_list(&gcstate->permanent_generation.head);
+        _PyEval_StartTheWorld(tstate->interp);
         for (int gen = 0; gen < NUM_GENERATIONS; gen++) {
             disable_deferred_list(GEN_HEAD(gcstate, gen));
         }

@@ -1489,7 +1489,117 @@ threadgroup_world_stop_probe(PyObject *self, PyObject *args)
     Py_RETURN_NONE;
 }
 
+static PyObject *
+threadgroup_world_is_stopped(PyObject *self, PyObject *Py_UNUSED(args))
+{
+    PyInterpreterState *interp = PyInterpreterState_Get();
+    return PyBool_FromLong(interp->stoptheworld.world_stopped ||
+                           interp->runtime->stoptheworld.world_stopped);
+}
+
+typedef struct {
+    PyObject_HEAD
+    PyObject *cycle;
+    unsigned *observed;
+} gc_world_stop_probe;
+
+enum {
+    GC_PROBE_TRAVERSED = 1,
+    GC_PROBE_CLEARED = 2,
+    GC_PROBE_FREED = 4,
+    GC_PROBE_BAD_PHASE = 8,
+};
+
+static int
+gc_world_stop_traverse(PyObject *op, visitproc visit, void *arg)
+{
+    gc_world_stop_probe *probe = (gc_world_stop_probe *)op;
+    if (probe->observed != NULL) {
+        *probe->observed |= GC_PROBE_TRAVERSED;
+        if (!_PyInterpreterState_GET()->stoptheworld.world_stopped) {
+            *probe->observed |= GC_PROBE_BAD_PHASE;
+        }
+    }
+    Py_VISIT(Py_TYPE(op));
+    Py_VISIT(probe->cycle);
+    return 0;
+}
+
+static int
+gc_world_stop_clear(PyObject *op)
+{
+    gc_world_stop_probe *probe = (gc_world_stop_probe *)op;
+    *probe->observed |= GC_PROBE_CLEARED;
+    if (_PyInterpreterState_GET()->stoptheworld.world_stopped) {
+        *probe->observed |= GC_PROBE_BAD_PHASE;
+    }
+    Py_CLEAR(probe->cycle);
+    return 0;
+}
+
+static void
+gc_world_stop_dealloc(PyObject *op)
+{
+    PyObject_GC_UnTrack(op);
+    gc_world_stop_probe *probe = (gc_world_stop_probe *)op;
+    *probe->observed |= GC_PROBE_FREED;
+    gc_world_stop_clear(op);
+    PyTypeObject *type = Py_TYPE(op);
+    type->tp_free(op);
+    Py_DECREF(type);
+}
+
+static PyObject *
+test_gc_world_stop(PyObject *self, PyObject *Py_UNUSED(args))
+{
+    PyType_Slot slots[] = {
+        {Py_tp_traverse, gc_world_stop_traverse},
+        {Py_tp_clear, gc_world_stop_clear},
+        {Py_tp_dealloc, gc_world_stop_dealloc},
+        {0, NULL},
+    };
+    PyType_Spec spec = {
+        .name = "_testinternalcapi.GCWorldStopProbe",
+        .basicsize = sizeof(gc_world_stop_probe),
+        .flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_GC,
+        .slots = slots,
+    };
+    PyObject *type = PyType_FromSpec(&spec);
+    if (type == NULL) {
+        return NULL;
+    }
+    gc_world_stop_probe *probe = (gc_world_stop_probe *)
+        PyType_GenericAlloc((PyTypeObject *)type, 0);
+    if (probe == NULL) {
+        Py_DECREF(type);
+        return NULL;
+    }
+    unsigned observed = 0;
+    probe->observed = &observed;
+    probe->cycle = Py_NewRef((PyObject *)probe);
+    Py_DECREF(probe);
+    PyGC_Collect();
+    if (!(observed & GC_PROBE_FREED)) {
+        // Keep the native observation storage alive until the cycle is gone,
+        // even when the collector failed to reclaim it.
+        Py_INCREF(probe);
+        Py_CLEAR(probe->cycle);
+        Py_DECREF(probe);
+        observed |= GC_PROBE_BAD_PHASE;
+    }
+    Py_DECREF(type);
+    if (PyErr_Occurred()) {
+        return NULL;
+    }
+    if (observed != (GC_PROBE_TRAVERSED | GC_PROBE_CLEARED | GC_PROBE_FREED)) {
+        return PyErr_Format(PyExc_AssertionError, "incorrect GC world-stop phases");
+    }
+    Py_RETURN_NONE;
+}
+
 static PyMethodDef methods[] = {
+    {"threadgroup_world_is_stopped", threadgroup_world_is_stopped, METH_NOARGS, NULL},
+    {"test_gc_world_stop", test_gc_world_stop, METH_NOARGS, NULL},
     {"threadgroup_world_stop_probe", threadgroup_world_stop_probe, METH_VARARGS, NULL},
     {"threadgroup_freelist_probe", threadgroup_freelist_probe, METH_VARARGS, NULL},
     {"make_access_descriptor", make_access_descriptor, METH_NOARGS, NULL},
