@@ -90,6 +90,61 @@ def count_ops(ex, name):
 @requires_jit_enabled
 class TestExecutorInvalidation(unittest.TestCase):
 
+    def test_invalidate_foreign_group_executor(self):
+        script_helper.assert_python_ok('-c', textwrap.dedent('''
+            import _opcode
+            import _testinternalcapi
+            import sys
+            import threading
+            from test.support import SHORT_TIMEOUT
+
+            def function(n):
+                result = 0
+                for _ in range(n):
+                    result += 1
+                return result
+
+            get_executor = _opcode.get_executor
+            _testinternalcapi.object_declare_synchronized(get_executor)
+            count = 2 * _testinternalcapi.TIER2_THRESHOLD
+            results = threading.Channel()
+
+            def worker():
+                try:
+                    assert function(count) == count
+                    code = function.__code__
+                    for offset in range(0, len(code.co_code), 2):
+                        try:
+                            executor = get_executor(code, offset)
+                        except ValueError:
+                            continue
+                        results.put((executor,))
+                        return
+                    results.put('no executor')
+                except BaseException as exc:
+                    results.put(type(exc).__name__)
+
+            thread = threading.Thread(target=worker,
+                                      group=threading.ThreadGroup())
+            thread.start()
+            thread.join(SHORT_TIMEOUT)
+            assert not thread.is_alive()
+            holder = results.get()
+            assert isinstance(holder, tuple), holder
+            try:
+                holder[0]
+            except IllegalThreadAccessException:
+                pass
+            else:
+                raise AssertionError('executor unexpectedly accessible in Main')
+            with sys.monitoring.StopTheWorld:
+                assert holder[0].is_valid()
+            _testinternalcapi.invalidate_executors(function.__code__)
+            with sys.monitoring.StopTheWorld:
+                assert not holder[0].is_valid()
+            _testinternalcapi.clear_executor_deletion_list()
+        '''))
+
     def test_invalidate_object(self):
         # Generate a new set of functions at each call
         ns = {}
