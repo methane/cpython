@@ -2237,7 +2237,7 @@ product_next_lock_held(PyObject *op)
         /* Copy the previous result tuple or re-use it if available */
         if (!_PyObject_IsUniquelyReferenced(result)) {
             PyObject *old_result = result;
-            result = PyTuple_FromArray(_PyTuple_ITEMS(old_result), npools);
+            result = _PyTuple_FromArrayChecked(_PyTuple_ITEMS(old_result), npools);
             if (result == NULL)
                 goto empty;
             lz->result = result;
@@ -2472,7 +2472,7 @@ combinations_next_lock_held(PyObject *op)
         /* Copy the previous result tuple or re-use it if available */
         if (!_PyObject_IsUniquelyReferenced(result)) {
             PyObject *old_result = result;
-            result = PyTuple_FromArray(_PyTuple_ITEMS(old_result), r);
+            result = _PyTuple_FromArrayChecked(_PyTuple_ITEMS(old_result), r);
             if (result == NULL)
                 goto empty;
             co->result = result;
@@ -2726,7 +2726,7 @@ cwr_next_lock_held(PyObject *op)
         /* Copy the previous result tuple or re-use it if available */
         if (!_PyObject_IsUniquelyReferenced(result)) {
             PyObject *old_result = result;
-            result = PyTuple_FromArray(_PyTuple_ITEMS(old_result), r);
+            result = _PyTuple_FromArrayChecked(_PyTuple_ITEMS(old_result), r);
             if (result == NULL)
                 goto empty;
             co->result = result;
@@ -2997,7 +2997,7 @@ permutations_next_lock_held(PyObject *op)
         /* Copy the previous result tuple or re-use it if available */
         if (!_PyObject_IsUniquelyReferenced(result)) {
             PyObject *old_result = result;
-            result = PyTuple_FromArray(_PyTuple_ITEMS(old_result), r);
+            result = _PyTuple_FromArrayChecked(_PyTuple_ITEMS(old_result), r);
             if (result == NULL)
                 goto empty;
             po->result = result;

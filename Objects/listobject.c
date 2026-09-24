@@ -3394,7 +3394,7 @@ PyList_AsTuple(PyObject *v)
     PyObject *ret;
     PyListObject *self = (PyListObject *)v;
     Py_BEGIN_CRITICAL_SECTION(self);
-    ret = PyTuple_FromArray(self->ob_item, Py_SIZE(v));
+    ret = _PyTuple_FromArrayChecked(self->ob_item, Py_SIZE(v));
     Py_END_CRITICAL_SECTION();
     return ret;
 }

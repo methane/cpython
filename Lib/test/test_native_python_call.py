@@ -30,6 +30,40 @@ def make_foreign_inputs(results):
 
 
 class NativePythonCallTests(unittest.TestCase):
+    def test_legacy_eval_container_acquisitions(self):
+        for source in ('positional', 'keywords', 'defaults'):
+            with self.subTest(source=source):
+                assert_python_ok('-c', textwrap.dedent(f'''
+                    import threading
+                    from _testcapi import eval_code_ex
+
+                    def target(value=None):
+                        entered.append(True)
+                        return 42
+
+                    entered = []
+                    namespace = dict(entered=entered)
+                    lock = threading.Lock()
+                    with lock:
+                        blocked = lock.protect([])
+                        positional = (blocked,) if {source!r} == 'positional' else ()
+                        keywords = {{'value': blocked}} if {source!r} == 'keywords' else {{}}
+                        defaults = (blocked,) if {source!r} == 'defaults' else ()
+                    for _ in range(5):
+                        try:
+                            eval_code_ex(target.__code__, namespace, namespace,
+                                         positional, keywords, defaults)
+                        except UnprotectedAccessException:
+                            pass
+                        else:
+                            raise AssertionError('accepted protected argument')
+                    assert entered == []
+                    with lock:
+                        assert eval_code_ex(target.__code__, namespace, namespace,
+                                            positional, keywords, defaults) == 42
+                    assert entered == [True]
+                '''))
+
     def test_native_lookup_callback_ends_access(self):
         holder = self.foreign_inputs()
         entered = []

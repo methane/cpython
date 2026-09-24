@@ -29,6 +29,89 @@ class PythonSequence:
 
 
 class SequenceAccessTests(unittest.TestCase):
+    def test_tuple_array_heap_acquisitions(self):
+        # PyTuple_FromArray's C inputs are already valid references. Callers
+        # reading container storage must check before passing those inputs.
+        for expression in (
+            'capi.tuple_fromarray(values)',
+            'limited.list_astuple(items)',
+            'tuple(items)',
+            'limited.tuple_getslice(values, 0, 3)',
+            'record.__reduce__()',
+        ):
+            with self.subTest(expression=expression):
+                assert_python_ok('-c', textwrap.dedent(f'''
+                    import os
+                    import threading
+                    import weakref
+                    import _testcapi as capi
+                    import _testlimitedcapi as limited
+
+                    class Value:
+                        pass
+
+                    lock = threading.Lock()
+                    for position in range(3):
+                        with lock:
+                            blocked = lock.protect([])
+                            value = Value()
+                            reference = weakref.ref(value)
+                            items = [value, value, value, None]
+                            items[position] = blocked
+                            values = tuple(items)
+                            record = os.stat_result(values + (0,) * 6)
+                            del value
+                        for _ in range(5):
+                            try:
+                                {expression}
+                            except UnprotectedAccessException:
+                                pass
+                            else:
+                                raise AssertionError('accepted protected item')
+                        with lock:
+                            result = {expression}
+                            if isinstance(result[0], type):
+                                result = result[1][0]
+                            assert result[position] is blocked
+                            del result
+                        del record, values, items
+                        assert reference() is None
+                '''))
+
+    def test_itertools_cached_tuple_acquisitions(self):
+        for factory in (
+            'itertools.product(values)',
+            'itertools.combinations(values, 1)',
+            'itertools.combinations_with_replacement(values, 1)',
+            'itertools.permutations(values, 1)',
+        ):
+            with self.subTest(factory=factory):
+                assert_python_ok('-c', textwrap.dedent(f'''
+                    import itertools
+                    import threading
+
+                    lock = threading.Lock()
+                    with lock:
+                        blocked = lock.protect([])
+                        values = (blocked, 1, 2)
+                        iterator = {factory}
+                        first = next(iterator)
+                        assert first[0] is blocked
+                    # Retaining the first result forces a copy of cached heap
+                    # references, rather than reusing the unique tuple.
+                    try:
+                        next(iterator)
+                    except UnprotectedAccessException:
+                        pass
+                    else:
+                        raise AssertionError('accepted protected cached item')
+                    with lock:
+                        iterator = {factory}
+                        first = next(iterator)
+                        assert first[0] is blocked
+                        assert next(iterator) == (1,)
+                '''))
+
     @threading_helper.requires_working_threading()
     def test_container_foreign_comparison_operand(self):
         class ForeignFloat(float):

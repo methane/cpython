@@ -382,7 +382,7 @@ structseq_reduce(PyObject *op, PyObject *Py_UNUSED(ignored))
     if (n_unnamed_fields < 0) {
         return NULL;
     }
-    tup = PyTuple_FromArray(self->ob_item, n_visible_fields);
+    tup = _PyTuple_FromArrayChecked(self->ob_item, n_visible_fields);
     if (!tup)
         goto error;
 

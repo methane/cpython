@@ -496,13 +496,12 @@ PyTuple_FromArray(PyObject *const *src, Py_ssize_t n)
         return NULL;
     }
     for (Py_ssize_t i = 0; i < n; i++) {
-        if (src[i] == NULL || PyObject_CheckAccess(src[i]) == NULL) {
-            if (src[i] == NULL) {
-                PyErr_BadInternalCall();
-            }
+        if (src[i] == NULL) {
+            PyErr_BadInternalCall();
             Py_DECREF(tuple);
             return NULL;
         }
+        assert(_PyObject_IsAccessible(src[i]));
     }
     bool track = false;
     for (Py_ssize_t i = 0; i < n; i++) {
@@ -516,6 +515,19 @@ PyTuple_FromArray(PyObject *const *src, Py_ssize_t n)
         _PyObject_GC_TRACK(tuple);
     }
     return (PyObject *)tuple;
+}
+
+PyObject *
+_PyTuple_FromArrayChecked(PyObject *const *src, Py_ssize_t n)
+{
+    assert(n >= 0);
+    assert(src != NULL || n == 0);
+    for (Py_ssize_t i = 0; i < n; i++) {
+        if (PyObject_CheckAccess(src[i]) == NULL) {
+            return NULL;
+        }
+    }
+    return PyTuple_FromArray(src, n);
 }
 
 PyObject *
@@ -578,7 +590,7 @@ tuple_slice(PyTupleObject *a, Py_ssize_t ilow,
     if (ilow == 0 && ihigh == Py_SIZE(a) && PyTuple_CheckExact(a)) {
         return Py_NewRef(a);
     }
-    return PyTuple_FromArray(a->ob_item + ilow, ihigh - ilow);
+    return _PyTuple_FromArrayChecked(a->ob_item + ilow, ihigh - ilow);
 }
 
 PyObject *
@@ -596,8 +608,8 @@ _PyTuple_BinarySlice(PyObject *container, PyObject *start, PyObject *stop)
     if (istop < istart) {
         istop = istart;
     }
-    return PyTuple_FromArray(((PyTupleObject *)container)->ob_item + istart,
-                             istop - istart);
+    return _PyTuple_FromArrayChecked(_PyTuple_ITEMS(container) + istart,
+                                    istop - istart);
 }
 
 PyObject *

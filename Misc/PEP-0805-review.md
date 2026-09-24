@@ -363,6 +363,59 @@ slot/abstract suites. An initial invocation named the nonexistent
 The results overlap and must not be added together. They do not close the
 known subinterpreter import failure or establish full-suite conformance.
 
+### Tuple-array acquisition follow-up
+
+`PyTuple_FromArray()` now asserts accessibility of its C-array inputs rather
+than checking it at runtime. Its native-call, exception-construction and
+Argument Clinic callers already have valid argument references. Container
+storage callers use `_PyTuple_FromArrayChecked()` to retain their existing
+acquisition checks before crossing that boundary: list-to-tuple conversion,
+C API and specialized tuple slicing, struct-sequence reduction and four
+itertools cached-result copies. Null/size handling and tuple GC tracking are
+unchanged.
+
+The `_testcapi` array adapter now uses checked tuple acquisition. Its legacy
+`PyEval_EvalCodeEx` adapter also checks positional/default tuple elements and
+propagates errors from `PyDict_Next` instead of continuing with a partially
+filled keyword array and an exception pending. Regressions cover each input
+source, denial before the target executes, allowed calls under protection,
+and reference release on tuple-construction failure.
+
+The broader sequence suite exposed another missed heap acquisition following
+the prior call-input assertion change: SQLite invoked its stored default
+cursor type without validating that reference. It now validates that field
+before calling it; explicit factory arguments retain the normal valid-input
+contract. The existing SQLite access regression reproduced the assertion.
+
+During development, changing only the public array check to an assertion
+caused nine new subprocess cases to abort. Fixing their callers restores the
+expected access exceptions. A tenth exploratory expectation was incorrect:
+ordinary Python tuple slicing copies storage directly, whereas the C API
+slice path calls the array constructor. That expectation was removed from
+the new test; the public C API slice regression remains. This change preserves
+existing acquisition checks and does not establish uniform acceptance of
+inaccessible elements across all shallow-copy implementations.
+
+Validation for the tuple-array follow-up:
+
+- Free-threading: 21 files passed in the initial 22-file selection (1,421
+  reported tests, 20 skips); the sequence worker aborted at SQLite's cursor
+  factory acquisition. After that repair, `test_sequence_access` and the
+  complete `test_sqlite3` package passed (564 tests, five skips).
+- GIL: the 23-file selection, including SQLite, passed (1,985 tests, 20 skips).
+- Tier 2 interpreter: the same selection plus `test_optimizer` and
+  `test_capi.test_opt` passed (2,324 tests, 23 skips in 25 files).
+- The demo passed in all three builds, returning 61,620 and rejecting both
+  foreign LOCAL and unprotected PROTECTED access. All ten changed source/test
+  files match between the three build trees. Compilation succeeds, with only
+  the four previously recorded Tier 2 unused-code warnings; `_decimal` remains
+  unavailable. `git diff --check` passes.
+
+The selection covers tuple/list/struct-sequence/itertools behavior, native
+calls and call expansion, Argument Clinic, relevant C APIs, protection,
+constants, exceptions, strings, monitoring, GC and LOCAL reclamation. It does
+not close the remaining parallelism, header, lifetime or compatibility gaps.
+
 ## Earlier re-review and implementation follow-ups
 
 One earlier question was incorrect: footnote 3 of the
@@ -574,9 +627,11 @@ acceptable or establishes that Mark's approval is needed for routine fixes.
    checks after argument evaluation and monitoring are also retained. These
    distinctions implement the valid-input invariant without assuming the
    unresolved lifetime mechanism in question 1 is already in place.
-   Some transitive helpers, including `PyTuple_FromArray()` on tuple-building
-   fallback paths, still check raw inputs and need their own caller audit;
-   this is not a claim that every downstream check has been removed.
+   The tuple-array follow-up also removes the raw-input access scan from
+   `PyTuple_FromArray()` on tuple-building fallback paths and retains checks
+   at its container-storage callers. Other C API families still require their
+   own caller audit; this is not a claim that every downstream check has been
+   removed.
 
 7. **Local-load checking remains substantially more conservative than the
    appendix's design.** `_PyEval_CheckLocalAccess()` runs on ordinary fast
@@ -741,9 +796,11 @@ Separately, must repeated explicit non-GC `PyObject_CallFinalizer` requests
 during an internal world stop each be replayed, even under allocator failure?
 That is the current queue's self-imposed/tested guarantee
 (`Objects/object.c`), and it drove the three `ob_deferred_*` fields.
-The PEP does not establish that guarantee. We should agree on the cleanup
-contract before treating these fields as necessary or choosing an
-out-of-header representation.
+The PEP does not establish that guarantee. Please clarify whether it is part
+of the intended cleanup contract before we treat it as a requirement of the
+PEP. This does not block work on a smaller header: representations that
+preserve required lifetime and callback behavior can be developed and tested
+independently.
 
 ### 7. Can a published synchronized function become LOCAL after mutation?
 

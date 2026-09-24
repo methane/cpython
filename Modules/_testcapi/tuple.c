@@ -123,6 +123,11 @@ tuple_fromarray(PyObject* Py_UNUSED(module), PyObject *args)
         if (size == UNINITIALIZED_SIZE) {
             size = PyTuple_GET_SIZE(src);
         }
+        for (Py_ssize_t i = 0; i < size; i++) {
+            if (PyTuple_GetItem(src, i) == NULL) {
+                return NULL;
+            }
+        }
     }
     else {
         items = NULL;

@@ -540,7 +540,10 @@ pysqlite_connection_cursor_impl(pysqlite_Connection *self, PyObject *factory)
     }
 
     if (factory == NULL) {
-        factory = (PyObject *)self->state->CursorType;
+        factory = PyObject_CheckAccess((PyObject *)self->state->CursorType);
+        if (factory == NULL) {
+            return NULL;
+        }
     }
 
     cursor = PyObject_CallOneArg(factory, (PyObject *)self);

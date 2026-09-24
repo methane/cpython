@@ -1872,6 +1872,11 @@ eval_eval_code_ex(PyObject *mod, PyObject *pos_args)
     if (args) {
         c_args = &PyTuple_GET_ITEM(args, 0);
         c_args_len = PyTuple_Size(args);
+        for (Py_ssize_t i = 0; i < c_args_len; i++) {
+            if (PyTuple_GetItem(args, i) == NULL) {
+                goto exit;
+            }
+        }
     }
 
     Py_ssize_t c_kwargs_len = 0;
@@ -1889,6 +1894,9 @@ eval_eval_code_ex(PyObject *mod, PyObject *pos_args)
             while (PyDict_Next(kwargs, &pos, &c_kwargs[i], &c_kwargs[i + 1])) {
                 i += 2;
             }
+            if (PyErr_Occurred()) {
+                goto exit;
+            }
             c_kwargs_len = i / 2;
             /* XXX This is broken if the caller deletes dict items! */
         }
@@ -1899,6 +1907,11 @@ eval_eval_code_ex(PyObject *mod, PyObject *pos_args)
     if (defaults) {
         c_defaults = &PyTuple_GET_ITEM(defaults, 0);
         c_defaults_len = PyTuple_Size(defaults);
+        for (Py_ssize_t i = 0; i < c_defaults_len; i++) {
+            if (PyTuple_GetItem(defaults, i) == NULL) {
+                goto exit;
+            }
+        }
     }
 
     result = PyEval_EvalCodeEx(
