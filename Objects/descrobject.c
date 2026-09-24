@@ -1097,9 +1097,7 @@ PyDescr_IsData(PyObject *ob)
         PyErr_BadInternalCall();
         return -1;
     }
-    if (PyObject_CheckAccess(ob) == NULL) {
-        return -1;
-    }
+    assert(_PyObject_IsAccessible(ob));
     return Py_TYPE(ob)->tp_descr_set != NULL;
 }
 

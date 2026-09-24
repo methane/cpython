@@ -2292,6 +2292,37 @@ class TestLRUPy(TestLRU, unittest.TestCase):
 @unittest.skipUnless(c_functools, 'requires the C _functools module')
 class TestLRUC(TestLRU, unittest.TestCase):
     @threading_helper.requires_working_threading()
+    def test_keyword_cache_in_threadgroup(self):
+        decorate = self.module.lru_cache
+        results = threading.Channel()
+
+        def worker(maxsize, typed):
+            try:
+                @decorate(maxsize=maxsize, typed=typed)
+                def square(value):
+                    return value * value
+                assert square(value=3) == 9
+                assert square(value=3) == 9
+                info = square.cache_info()
+                result = (info.hits, info.misses, info.currsize)
+                square.cache_clear()
+                assert square.cache_info().currsize == 0
+            except BaseException as exc:
+                result = (type(exc).__name__, str(exc))
+            results.put(result)
+
+        for maxsize in (0, None, 2):
+            for typed in (False, True):
+                with self.subTest(maxsize=maxsize, typed=typed):
+                    thread = threading.Thread(
+                        target=worker, args=(maxsize, typed),
+                        group=threading.ThreadGroup())
+                    with threading_helper.start_threads([thread]):
+                        pass
+                    expected = (0, 2, 0) if maxsize == 0 else (1, 1, 1)
+                    self.assertEqual(results.get(), expected)
+
+    @threading_helper.requires_working_threading()
     def test_create_cache_in_threadgroup(self):
         import threading
 

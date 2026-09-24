@@ -8,6 +8,7 @@
 #include "pycore_pyatomic_ft_wrappers.h"
 #include "pycore_pystate.h"       // _PyThreadState_GET()
 #include "pycore_tuple.h"         // _PyTuple_ITEMS()
+#include "pycore_typeobject.h"    // _PyType_GetModuleByDef()
 #include "pycore_weakref.h"       // FT_CLEAR_WEAKREFS()
 
 
@@ -150,7 +151,9 @@ partial_call(PyObject *pto, PyObject *args, PyObject *kwargs);
 static inline _functools_state *
 get_functools_state_by_type(PyTypeObject *type)
 {
-    PyObject *module = PyType_GetModuleByDef(type, &_functools_module);
+    // Shared cache types need the module's immutable native-state pointers.
+    // This does not publish the defining LOCAL module to the calling group.
+    PyObject *module = _PyType_GetModuleByDef(type, &_functools_module);
     if (module == NULL) {
         return NULL;
     }
@@ -2009,6 +2012,11 @@ _functools_exec(PyObject *module)
     _functools_state *state = get_functools_state(module);
     state->kwd_mark = _PyObject_CallNoArgs((PyObject *)&PyBaseObject_Type);
     if (state->kwd_mark == NULL) {
+        return -1;
+    }
+    // This private identity marker is shared by otherwise LOCAL caches.
+    // Tuple hashing must be able to acquire it in the cache's own group.
+    if (PyObject_DeclareImmutable(state->kwd_mark) < 0) {
         return -1;
     }
 

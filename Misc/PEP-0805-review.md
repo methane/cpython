@@ -78,8 +78,11 @@ corresponding shared-reference machinery. Mark's two comments therefore
 remain only partially addressed.
 
 The input-check cleanup now covers bytearray, integer/float/complex and
-Unicode accessors as well as the earlier container and function APIs.
-Vectorcall argument scans and other C API families remain to be audited.
+Unicode accessors as well as the earlier container and function APIs. Raw
+vectorcall arrays now use assertions in the common call, native-method,
+descriptor and Python-frame entry paths. Heap acquisitions and revalidation
+after potentially invalidating callbacks retain runtime checks. Other C API
+families and their internal callers still need auditing.
 `PyObject_GetItem` asserts its inputs and validates its returned reference.
 
 ## Implementation follow-up on 2026-09-24
@@ -286,6 +289,80 @@ These selections overlap. The subprocess lifetime tests demonstrate ordering
 and prompt reclamation, not absence of every native leak. Broader refcount
 coverage, the compact header and default-build parallelism remain open.
 
+### Native call acquisitions and callback boundaries
+
+Raw vectorcall arguments are now treated as already-acquired thread
+references. The common call adapter, Python-frame setup, native function and
+method-descriptor adapters assert that invariant in debug builds instead of
+raising access errors on those inputs in release builds. Method constructors
+and accessors follow the same input contract; accessors still check returned
+references. `_Py_CheckFunctionResult()` retains return-value validation.
+
+The checks needed at actual heap acquisitions remain explicit:
+
+- Tuple-based calls, tuple expansion in `PyObject_CallFunction("O", tuple)`,
+  keyword names and values, and bound-method fields are checked when unpacked.
+  The `_testcapi` raw-vector adapter now checks its own tuple reads.
+- Attribute lookup and format converters may invoke callbacks that end
+  protection. Surviving arguments are revalidated at those sites, and the
+  interpreter retains its checks after argument evaluation and monitoring.
+  Regressions end StopTheWorld inside a property lookup or an `O&` converter
+  and verify rejection before entering the intended callee. This preserves
+  existing behavior without claiming to solve question 1's general lifetime
+  problem.
+- `_PyStack_UnpackDict()` previously decrefed the full argument allocation
+  when rejecting a partially unpacked dictionary, including uninitialized
+  slots. A direct internal-helper regression reproduced SIGSEGV at all three
+  rejection positions. Cleanup now releases only initialized keyword values.
+  Weakrefs verify that earlier values are released, and valid, empty and
+  non-string-key dictionaries retain their expected behavior.
+
+Broader validation also exposed two related compatibility paths:
+
+- A closure-bearing method initially classified LOCAL can become SYNCHRONIZED
+  when its cells are attached. That creation path now enables deferred
+  counting under the same conditions as other shareable methods. The existing
+  `LOAD_ATTR_PROPERTY` specialization regression passes again, while the LOCAL
+  immediate-reclamation regressions remain intact.
+- Creating an `lru_cache` in another group was rejected while obtaining its
+  defining module's native state. `_functools` now uses an internal metadata
+  lookup; the public module-returning API still checks access. The cache's
+  private keyword marker is explicitly immutable. Without that declaration,
+  four cached keyword-call variants still rejected the Main-owned marker.
+  Tests cover disabled, unbounded and bounded caches, both `typed` modes,
+  hit/miss accounting and clearing.
+
+Reading cache-info fields also exposed `PyDescr_IsData()` setting an access
+exception while the VM was only inspecting a descriptor's native slot flags.
+Its callers treated the error as a true predicate, eventually aborting with
+an exception pending. The public predicate now asserts its input contract;
+VM lookup inspects native slot metadata directly. A regression reads a field
+of an instance of a frozen namedtuple class in another group while still
+requiring acquisition of the LOCAL descriptor itself to raise. This does not
+declare arbitrary descriptors or extension modules shareable, nor resolve
+legacy extension GC compatibility.
+
+Final validation for the call/metadata follow-up:
+
+- Free-threading: all 38 selected files passed, 1,878 reported tests, 4 skips.
+- GIL: all 36 selected files passed, 1,873 reported tests, 12 skips.
+- Tier 2 interpreter: the GIL selection plus `test_optimizer` and
+  `test_capi.test_opt` passed in 38 files, 2,212 reported tests, 15 skips.
+- The demo passed in all three builds with result 61,620 and both expected
+  access denials. This is functional validation, not a speedup measurement.
+- All modified source/test files match the two build mirrors. Compilation
+  succeeds; the Tier 2 header rebuild repeats its four recorded unused-code
+  warnings, and the final incremental rebuild has no warnings. `_decimal`
+  remains unavailable. `git diff --check` passes.
+
+The selection includes native calls, attributes, cells, frames, generators,
+coroutines, finalizers, monitoring/profiling/tracing, method/descriptor and
+functools behavior, LOCAL reclamation, and the C API evaluation/function/type/
+slot/abstract suites. An initial invocation named the nonexistent
+`test_sys_monitoring`; the final selections above use `test_monitoring`.
+The results overlap and must not be added together. They do not close the
+known subinterpreter import failure or establish full-suite conformance.
+
 ## Earlier re-review and implementation follow-ups
 
 One earlier question was incorrect: footnote 3 of the
@@ -486,14 +563,20 @@ acceptable or establishes that Mark's approval is needed for routine fixes.
    `PyObject_GetItem` already used assertions at re-review. The follow-up
    now also replaces direct input checks in the 87 list, cell, function,
    tuple, bytes, bytearray, numeric and Unicode APIs listed above. Other
-   APIs and common helpers remain to be audited.
-   `_PyObject_CheckVectorcallArgs()` still scans raw C argument arrays
-   (`Include/internal/pycore_call.h:114`). Those array entries are
-   incoming references, unlike acquiring values from an argument tuple or
-   keyword dictionary. This is unfinished implementation cleanup under the
-   intended valid-input invariant. Checks after potentially invalidating
-   callbacks, and checks when acquiring stored elements, must be considered
-   separately; simply deleting all checks would not establish that invariant.
+   APIs and common helpers remain to be audited. The subsequent call audit
+   replaces runtime scans of raw vectorcall arrays with debug assertions,
+   including native functions, descriptors and Python-frame setup. Tuple
+   expansion, keyword-name/value acquisition, and bound-method fields still
+   receive runtime checks. `_testcapi`'s vectorcall adapter now checks its own
+   tuple acquisitions instead of relying on an invalid-input check downstream.
+   Attribute lookup and format conversion may invoke callbacks, so their
+   surviving C references are revalidated after those callbacks. Interpreter
+   checks after argument evaluation and monitoring are also retained. These
+   distinctions implement the valid-input invariant without assuming the
+   unresolved lifetime mechanism in question 1 is already in place.
+   Some transitive helpers, including `PyTuple_FromArray()` on tuple-building
+   fallback paths, still check raw inputs and need their own caller audit;
+   this is not a claim that every downstream check has been removed.
 
 7. **Local-load checking remains substantially more conservative than the
    appendix's design.** `_PyEval_CheckLocalAccess()` runs on ordinary fast

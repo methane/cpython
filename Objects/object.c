@@ -1976,7 +1976,7 @@ _PyObject_GetMethod(PyObject *obj, PyObject *name, PyObject **method)
         }
         else {
             f = Py_TYPE(descr)->tp_descr_get;
-            if (f != NULL && PyDescr_IsData(descr)) {
+            if (f != NULL && Py_TYPE(descr)->tp_descr_set != NULL) {
                 *method = f(descr, obj, (PyObject *)Py_TYPE(obj));
                 Py_DECREF(descr);
                 return 0;
@@ -2085,7 +2085,7 @@ _PyObject_GetMethodStackRef(PyThreadState *ts, _PyStackRef *self,
         }
         else {
             f = Py_TYPE(descr)->tp_descr_get;
-            if (f != NULL && PyDescr_IsData(descr)) {
+            if (f != NULL && Py_TYPE(descr)->tp_descr_set != NULL) {
                 PyObject *value = f(descr, obj, (PyObject *)Py_TYPE(obj));
                 PyStackRef_CLEAR(*method);
                 PyStackRef_CLEAR(*self);
@@ -2219,7 +2219,9 @@ _PyObject_GenericGetAttrWithDict(PyObject *obj, PyObject *name,
     f = NULL;
     if (descr != NULL) {
         f = Py_TYPE(descr)->tp_descr_get;
-        if (f != NULL && PyDescr_IsData(descr)) {
+        // Inspect native slot metadata without acquiring the descriptor as a
+        // Python-visible value. The getter's result is checked by the caller.
+        if (f != NULL && Py_TYPE(descr)->tp_descr_set != NULL) {
             res = f(descr, obj, (PyObject *)Py_TYPE(obj));
             if (res == NULL && suppress &&
                     PyErr_ExceptionMatches(PyExc_AttributeError)) {

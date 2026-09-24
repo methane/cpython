@@ -3988,7 +3988,7 @@ get_dict_descriptor(PyTypeObject *type)
     PyObject *descr;
 
     descr = _PyType_Lookup(type, &_Py_ID(__dict__));
-    if (descr == NULL || !PyDescr_IsData(descr))
+    if (descr == NULL || Py_TYPE(descr)->tp_descr_set == NULL)
         return NULL;
 
     return descr;
@@ -6101,14 +6101,8 @@ PyType_GetModuleByToken(PyTypeObject *type, const void *token)
 }
 
 PyObject *
-PyType_GetModuleByDef(PyTypeObject *type, PyModuleDef *def)
+_PyType_GetModuleByDef(PyTypeObject *type, PyModuleDef *def)
 {
-    if (type == NULL || PyObject_CheckAccess((PyObject *)type) == NULL) {
-        if (type == NULL) {
-            PyErr_BadInternalCall();
-        }
-        return NULL;
-    }
     PyObject *mod = PyType_GetModuleByToken_DuringGC(type, def);
     if (!mod) {
         PyErr_Format(
@@ -6117,7 +6111,18 @@ PyType_GetModuleByDef(PyTypeObject *type, PyModuleDef *def)
             type->tp_name);
         return NULL;
     }
-    return PyObject_CheckAccess(mod);
+    return mod;
+}
+
+PyObject *
+PyType_GetModuleByDef(PyTypeObject *type, PyModuleDef *def)
+{
+    if (type == NULL) {
+        PyErr_BadInternalCall();
+        return NULL;
+    }
+    assert(_PyObject_IsAccessible((PyObject *)type));
+    return PyObject_CheckAccess(_PyType_GetModuleByDef(type, def));
 }
 
 
@@ -6679,7 +6684,7 @@ _Py_type_getattro_stackref(PyTypeObject *type, PyObject *name,
         PyObject *meta_attr_obj = PyStackRef_AsPyObjectBorrow(meta_attribute_ref.ref);
         meta_get = Py_TYPE(meta_attr_obj)->tp_descr_get;
 
-        if (meta_get != NULL && PyDescr_IsData(meta_attr_obj)) {
+        if (meta_get != NULL && Py_TYPE(meta_attr_obj)->tp_descr_set != NULL) {
             /* Data descriptors implement tp_descr_set to intercept
              * writes. Assume the attribute is not overridden in
              * type's tp_dict (and bases): call the descriptor now.

@@ -49,6 +49,30 @@ def make_foreign_carriers(holder):
 
 @threading_helper.requires_working_threading()
 class AttributeAccessTests(unittest.TestCase):
+    def test_foreign_namedtuple_descriptor_metadata(self):
+        from collections import namedtuple
+
+        Record = freeze(namedtuple('Record', 'value'))
+        results = threading.Channel()
+
+        def worker():
+            record = Record(42)
+            value = record.value
+            # Invoking the fixed native getter may inspect its slot metadata;
+            # acquiring the LOCAL descriptor itself must still be denied.
+            try:
+                Record.value
+            except IllegalThreadAccessException:
+                denied = True
+            else:
+                denied = False
+            results.put((value, denied))
+
+        thread = threading.Thread(target=worker, group=threading.ThreadGroup())
+        with threading_helper.start_threads([thread]):
+            pass
+        self.assertEqual(results.get(), (42, True))
+
     def test_legacy_getattr(self):
         (invoke,) = self.helpers('call_cfunction_raw_return_in_tuple')
         (make,) = self.helpers('make_legacy_getattr')
