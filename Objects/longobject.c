@@ -604,9 +604,7 @@ PyLong_AsLongAndOverflow(PyObject *vv, int *overflow)
         PyErr_BadInternalCall();
         return -1;
     }
-    if (PyObject_CheckAccess(vv) == NULL) {
-        return -1;
-    }
+    assert(_PyObject_IsAccessible(vv));
 
     if (PyLong_Check(vv)) {
         v = (PyLongObject *)vv;
@@ -717,9 +715,7 @@ PyLong_AsSsize_t(PyObject *vv) {
         PyErr_BadInternalCall();
         return -1;
     }
-    if (PyObject_CheckAccess(vv) == NULL) {
-        return -1;
-    }
+    assert(_PyObject_IsAccessible(vv));
     if (!PyLong_Check(vv)) {
         PyErr_SetString(PyExc_TypeError, "an integer is required");
         return -1;
@@ -769,9 +765,7 @@ PyLong_AsUnsignedLong(PyObject *vv)
         PyErr_BadInternalCall();
         return (unsigned long)-1;
     }
-    if (PyObject_CheckAccess(vv) == NULL) {
-        return (unsigned long)-1;
-    }
+    assert(_PyObject_IsAccessible(vv));
     if (!PyLong_Check(vv)) {
         PyErr_SetString(PyExc_TypeError, "an integer is required");
         return (unsigned long)-1;
@@ -825,9 +819,7 @@ PyLong_AsSize_t(PyObject *vv)
         PyErr_BadInternalCall();
         return (size_t) -1;
     }
-    if (PyObject_CheckAccess(vv) == NULL) {
-        return (size_t) -1;
-    }
+    assert(_PyObject_IsAccessible(vv));
     if (!PyLong_Check(vv)) {
         PyErr_SetString(PyExc_TypeError, "an integer is required");
         return (size_t)-1;
@@ -896,9 +888,7 @@ PyLong_AsUnsignedLongMask(PyObject *op)
         PyErr_BadInternalCall();
         return (unsigned long)-1;
     }
-    if (PyObject_CheckAccess(op) == NULL) {
-        return (unsigned long)-1;
-    }
+    assert(_PyObject_IsAccessible(op));
 
     if (PyLong_Check(op)) {
         return _PyLong_AsUnsignedLongMask(op);
@@ -917,9 +907,7 @@ int
 PyLong_IsPositive(PyObject *obj)
 {
     assert(obj != NULL);
-    if (PyObject_CheckAccess(obj) == NULL) {
-        return -1;
-    }
+    assert(_PyObject_IsAccessible(obj));
     if (!PyLong_Check(obj)) {
         PyErr_Format(PyExc_TypeError, "expected int, got %T", obj);
         return -1;
@@ -931,9 +919,7 @@ int
 PyLong_IsNegative(PyObject *obj)
 {
     assert(obj != NULL);
-    if (PyObject_CheckAccess(obj) == NULL) {
-        return -1;
-    }
+    assert(_PyObject_IsAccessible(obj));
     if (!PyLong_Check(obj)) {
         PyErr_Format(PyExc_TypeError, "expected int, got %T", obj);
         return -1;
@@ -945,9 +931,7 @@ int
 PyLong_IsZero(PyObject *obj)
 {
     assert(obj != NULL);
-    if (PyObject_CheckAccess(obj) == NULL) {
-        return -1;
-    }
+    assert(_PyObject_IsAccessible(obj));
     if (!PyLong_Check(obj)) {
         PyErr_Format(PyExc_TypeError, "expected int, got %T", obj);
         return -1;
@@ -981,9 +965,7 @@ PyLong_GetSign(PyObject *vv, int *sign)
         PyErr_BadInternalCall();
         return -1;
     }
-    if (PyObject_CheckAccess(vv) == NULL) {
-        return -1;
-    }
+    assert(_PyObject_IsAccessible(vv));
     if (!PyLong_Check(vv)) {
         PyErr_Format(PyExc_TypeError, "expect int, got %T", vv);
         return -1;
@@ -1329,9 +1311,7 @@ PyLong_AsNativeBytes(PyObject* vv, void* buffer, Py_ssize_t n, int flags)
     if (_resolve_endianness(&little_endian) < 0) {
         return -1;
     }
-    if (PyObject_CheckAccess(vv) == NULL) {
-        return -1;
-    }
+    assert(_PyObject_IsAccessible(vv));
 
     if (PyLong_Check(vv)) {
         v = (PyLongObject *)vv;
@@ -1562,9 +1542,7 @@ PyLong_AsVoidPtr(PyObject *vv)
         PyErr_BadInternalCall();
         return NULL;
     }
-    if (PyObject_CheckAccess(vv) == NULL) {
-        return NULL;
-    }
+    assert(_PyObject_IsAccessible(vv));
 #if SIZEOF_VOID_P <= SIZEOF_LONG
     long x;
 
@@ -1632,9 +1610,7 @@ PyLong_AsLongLong(PyObject *vv)
         PyErr_BadInternalCall();
         return -1;
     }
-    if (PyObject_CheckAccess(vv) == NULL) {
-        return -1;
-    }
+    assert(_PyObject_IsAccessible(vv));
 
     if (PyLong_Check(vv)) {
         v = (PyLongObject *)vv;
@@ -1679,9 +1655,7 @@ PyLong_AsUnsignedLongLong(PyObject *vv)
         PyErr_BadInternalCall();
         return (unsigned long long)-1;
     }
-    if (PyObject_CheckAccess(vv) == NULL) {
-        return (unsigned long long)-1;
-    }
+    assert(_PyObject_IsAccessible(vv));
     if (!PyLong_Check(vv)) {
         PyErr_SetString(PyExc_TypeError, "an integer is required");
         return (unsigned long long)-1;
@@ -1756,9 +1730,7 @@ PyLong_AsUnsignedLongLongMask(PyObject *op)
         PyErr_BadInternalCall();
         return (unsigned long long)-1;
     }
-    if (PyObject_CheckAccess(op) == NULL) {
-        return (unsigned long long)-1;
-    }
+    assert(_PyObject_IsAccessible(op));
 
     if (PyLong_Check(op)) {
         return _PyLong_AsUnsignedLongLongMask(op);
@@ -1798,9 +1770,7 @@ PyLong_AsLongLongAndOverflow(PyObject *vv, int *overflow)
         PyErr_BadInternalCall();
         return -1;
     }
-    if (PyObject_CheckAccess(vv) == NULL) {
-        return -1;
-    }
+    assert(_PyObject_IsAccessible(vv));
 
     if (PyLong_Check(vv)) {
         v = (PyLongObject *)vv;
@@ -3247,9 +3217,7 @@ PyLong_FromUnicodeObject(PyObject *u, int base)
         PyErr_BadInternalCall();
         return NULL;
     }
-    if (PyObject_CheckAccess(u) == NULL) {
-        return NULL;
-    }
+    assert(_PyObject_IsAccessible(u));
 
     asciidig = _PyUnicode_TransformDecimalAndSpaceToASCII(u);
     if (asciidig == NULL)
@@ -3634,9 +3602,7 @@ PyLong_AsDouble(PyObject *v)
         PyErr_BadInternalCall();
         return -1.0;
     }
-    if (PyObject_CheckAccess(v) == NULL) {
-        return -1.0;
-    }
+    assert(_PyObject_IsAccessible(v));
     if (!PyLong_Check(v)) {
         PyErr_SetString(PyExc_TypeError, "an integer is required");
         return -1.0;
@@ -6950,10 +6916,7 @@ PyLong_Export(PyObject *obj, PyLongExport *export_long)
         PyErr_BadInternalCall();
         return -1;
     }
-    if (PyObject_CheckAccess(obj) == NULL) {
-        memset(export_long, 0, sizeof(*export_long));
-        return -1;
-    }
+    assert(_PyObject_IsAccessible(obj));
     if (!PyLong_Check(obj)) {
         memset(export_long, 0, sizeof(*export_long));
         PyErr_Format(PyExc_TypeError, "expect int, got %T", obj);

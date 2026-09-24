@@ -479,9 +479,7 @@ PyComplex_RealAsDouble(PyObject *op)
         PyErr_BadArgument();
         return -1.0;
     }
-    if (PyObject_CheckAccess(op) == NULL) {
-        return -1.0;
-    }
+    assert(_PyObject_IsAccessible(op));
     if (PyComplex_Check(op)) {
         real = ((PyComplexObject *)op)->cval.real;
     }
@@ -507,9 +505,7 @@ PyComplex_ImagAsDouble(PyObject *op)
         PyErr_BadArgument();
         return -1.0;
     }
-    if (PyObject_CheckAccess(op) == NULL) {
-        return -1.0;
-    }
+    assert(_PyObject_IsAccessible(op));
     if (PyComplex_Check(op)) {
         imag = ((PyComplexObject *)op)->cval.imag;
     }
@@ -561,7 +557,8 @@ try_complex_special_method(PyObject *op)
             Py_DECREF(res);
             return NULL;
         }
-        return res;
+        // A warning callback can end a protecting or StopTheWorld context.
+        return _PyObject_CheckAccessNullable(res);
     }
     return NULL;
 }
@@ -573,9 +570,7 @@ PyComplex_AsCComplex(PyObject *op)
     PyObject *newop = NULL;
 
     assert(op);
-    if (PyObject_CheckAccess(op) == NULL) {
-        return cv;
-    }
+    assert(_PyObject_IsAccessible(op));
     /* If op is already of type PyComplex_Type, return its value */
     if (PyComplex_Check(op)) {
         return ((PyComplexObject *)op)->cval;

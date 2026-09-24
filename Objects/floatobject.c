@@ -189,9 +189,7 @@ PyFloat_FromString(PyObject *v)
         PyErr_BadInternalCall();
         return NULL;
     }
-    if (PyObject_CheckAccess(v) == NULL) {
-        return NULL;
-    }
+    assert(_PyObject_IsAccessible(v));
 
     if (PyUnicode_Check(v)) {
         s_buffer = _PyUnicode_TransformDecimalAndSpaceToASCII(v);
@@ -262,9 +260,7 @@ PyFloat_AsDouble(PyObject *op)
         PyErr_BadArgument();
         return -1;
     }
-    if (PyObject_CheckAccess(op) == NULL) {
-        return -1;
-    }
+    assert(_PyObject_IsAccessible(op));
 
     if (PyFloat_Check(op)) {
         return PyFloat_AS_DOUBLE(op);
