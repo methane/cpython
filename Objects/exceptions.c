@@ -8,6 +8,7 @@
 #include <stdbool.h>
 #include "pycore_abstract.h"      // _PyObject_RealIsSubclass()
 #include "pycore_ceval.h"         // _Py_EnterRecursiveCall
+#include "pycore_dict.h"          // _PyDict_GetItemRefUnchecked()
 #include "pycore_exceptions.h"    // struct _Py_exc_state
 #include "pycore_initconfig.h"
 #include "pycore_modsupport.h"    // _PyArg_NoKeywords()
@@ -2286,12 +2287,21 @@ OSError_new(PyTypeObject *type, PyObject *args, PyObject *kwds)
         if (myerrno && PyLong_Check(myerrno) &&
             state->errnomap && (PyObject *) type == PyExc_OSError) {
             PyObject *newtype;
-            newtype = PyDict_GetItemWithError(state->errnomap, myerrno);
-            if (newtype) {
-                type = _PyType_CAST(newtype);
-            }
-            else if (PyErr_Occurred())
+            /* This fixed map is private interpreter metadata. The selected
+               exception type is an acquired reference and remains checked. */
+            if (_PyDict_GetItemRefUnchecked(state->errnomap, myerrno,
+                                           &newtype) < 0) {
                 goto error;
+            }
+            if (newtype) {
+                if (PyObject_CheckAccess(newtype) == NULL) {
+                    Py_DECREF(newtype);
+                    goto error;
+                }
+                type = _PyType_CAST(newtype);
+                /* errnomap retains the static exception type. */
+                Py_DECREF(newtype);
+            }
         }
     }
 

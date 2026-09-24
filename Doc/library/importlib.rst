@@ -818,6 +818,13 @@ find and load modules.
    prevent this from happening, when you create a module dynamically, make sure
    to call :func:`importlib.invalidate_caches`.
 
+   In this PEP 805 experiment, exact :class:`FileFinder` instances are
+   synchronized and may be reused across :class:`threading.ThreadGroup`\ s.
+   Directory cache refresh and invalidation are serialized; loader callbacks
+   run after releasing the cache lock. Subclass instances remain local unless
+   explicitly shared. Loaders and other values stored in a finder retain
+   their individual access states, as do the modules they load.
+
    .. versionadded:: 3.3
 
    .. attribute:: path

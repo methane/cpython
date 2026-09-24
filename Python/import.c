@@ -2973,14 +2973,19 @@ PyImport_ExecCodeModuleObject(PyObject *name, PyObject *co, PyObject *pathname,
 }
 
 
-static void
+static int
 update_code_filenames(PyCodeObject *co, PyObject *oldname, PyObject *newname)
 {
     PyObject *constants, *tmp;
     Py_ssize_t i, n;
 
-    if (PyUnicode_Compare(co->co_filename, oldname))
-        return;
+    if (PyObject_CheckAccess(co->co_filename) == NULL) {
+        return -1;
+    }
+    int comparison = PyUnicode_Compare(co->co_filename, oldname);
+    if (comparison != 0) {
+        return PyErr_Occurred() ? -1 : 0;
+    }
 
     Py_XSETREF(co->co_filename, Py_NewRef(newname));
 
@@ -2988,24 +2993,35 @@ update_code_filenames(PyCodeObject *co, PyObject *oldname, PyObject *newname)
     n = PyTuple_GET_SIZE(constants);
     for (i = 0; i < n; i++) {
         tmp = PyTuple_GET_ITEM(constants, i);
-        if (PyCode_Check(tmp))
-            update_code_filenames((PyCodeObject *)tmp,
-                                  oldname, newname);
+        if (PyCode_Check(tmp) &&
+            update_code_filenames((PyCodeObject *)tmp, oldname, newname) < 0)
+        {
+            return -1;
+        }
     }
+    return 0;
 }
 
-static void
+static int
 update_compiled_module(PyCodeObject *co, PyObject *newname)
 {
-    PyObject *oldname;
-
-    if (PyUnicode_Compare(co->co_filename, newname) == 0)
-        return;
-
-    oldname = co->co_filename;
-    Py_INCREF(oldname);
-    update_code_filenames(co, oldname, newname);
-    Py_DECREF(oldname);
+    /* Code objects can already be shared. Updating their diagnostic
+       filenames must not race with execution, introspection or GC. */
+    PyInterpreterState *interp = _PyInterpreterState_GET();
+    _PyEval_StopTheWorld(interp);
+    int err = -1;
+    PyObject *oldname = PyObject_CheckAccess(co->co_filename);
+    if (oldname != NULL && PyObject_CheckAccess(newname) != NULL) {
+        Py_INCREF(oldname);
+        int comparison = PyUnicode_Compare(oldname, newname);
+        if (!PyErr_Occurred()) {
+            err = comparison == 0 ? 0 :
+                update_code_filenames(co, oldname, newname);
+        }
+        Py_DECREF(oldname);
+    }
+    _PyEval_StartTheWorld(interp);
+    return err;
 }
 
 
@@ -4843,12 +4859,11 @@ PyImport_ReloadModule(PyObject *m)
 PyObject *
 PyImport_Import(PyObject *module_name)
 {
-    if (module_name == NULL || PyObject_CheckAccess(module_name) == NULL) {
-        if (module_name == NULL) {
-            PyErr_BadInternalCall();
-        }
+    if (module_name == NULL) {
+        PyErr_BadInternalCall();
         return NULL;
     }
+    assert(_PyObject_IsAccessible(module_name));
     PyThreadState *tstate = _PyThreadState_GET();
     PyObject *globals = NULL;
     PyObject *import = NULL;
@@ -4861,11 +4876,21 @@ PyImport_Import(PyObject *module_name)
     }
 
     /* Get the builtins from current globals */
-    globals = PyEval_GetGlobals();  // borrowed
+    _PyInterpreterFrame *frame = _PyEval_GetFrame();
+    globals = frame == NULL ? NULL : frame->f_globals;  // private metadata
     if (globals != NULL) {
         Py_INCREF(globals);
         // XXX Use _PyEval_EnsureBuiltins()?
-        builtins = PyObject_GetItem(globals, &_Py_ID(__builtins__));
+        if (PyAnyDict_Check(globals)) {
+            int found = _PyDict_GetItemRefUnchecked(
+                globals, &_Py_ID(__builtins__), &builtins);
+            if (found == 0) {
+                _PyErr_SetObject(tstate, PyExc_KeyError, &_Py_ID(__builtins__));
+            }
+        }
+        else if (PyObject_CheckAccess(globals) != NULL) {
+            builtins = PyObject_GetItem(globals, &_Py_ID(__builtins__));
+        }
         if (builtins == NULL) {
             // XXX Fall back to interp->builtins or sys.modules['builtins']?
             goto err;
@@ -4886,14 +4911,17 @@ PyImport_Import(PyObject *module_name)
     }
 
     /* Get the __import__ function from the builtins */
-    if (PyDict_Check(builtins)) {
-        import = PyObject_GetItem(builtins, &_Py_ID(__import__));
-        if (import == NULL && PyErr_ExceptionMatches(PyExc_KeyError)) {
+    if (PyAnyDict_Check(builtins)) {
+        int found = _PyDict_GetItemRefUnchecked(
+            builtins, &_Py_ID(__import__), &import);
+        if (found == 0) {
             _PyErr_SetObject(tstate, PyExc_KeyError, &_Py_ID(__import__));
         }
+        import = _PyObject_CheckAccessNullable(import);
     }
-    else
+    else if (PyObject_CheckAccess(builtins) != NULL) {
         import = PyObject_GetAttr(builtins, &_Py_ID(__import__));
+    }
     if (import == NULL)
         goto err;
 
@@ -4910,6 +4938,11 @@ PyImport_Import(PyObject *module_name)
                                            from_list, 0);
     }
     else {
+        if (PyObject_CheckAccess(module_name) == NULL ||
+            PyObject_CheckAccess(globals) == NULL)
+        {
+            goto err;
+        }
         r = PyObject_CallFunction(import, "OOOOi", module_name, globals,
                                  globals, from_list, 0, NULL);
     }
@@ -4928,7 +4961,7 @@ PyImport_Import(PyObject *module_name)
     Py_XDECREF(import);
     Py_XDECREF(from_list);
 
-    return r;
+    return _PyObject_CheckAccessNullable(r);
 }
 
 
@@ -5291,7 +5324,9 @@ _imp__fix_co_filename_impl(PyObject *module, PyCodeObject *code,
 /*[clinic end generated code: output=1d002f100235587d input=895ba50e78b82f05]*/
 
 {
-    update_compiled_module(code, path);
+    if (update_compiled_module(code, path) < 0) {
+        return NULL;
+    }
 
     Py_RETURN_NONE;
 }
@@ -5865,6 +5900,8 @@ imp_module_exec(PyObject *module)
         "lock_held", "acquire_lock", "release_lock", "is_builtin",
         "create_builtin", "exec_builtin", "_set_lazy_attributes",
         "find_frozen", "get_frozen_object", "is_frozen", "is_frozen_package",
+        "extension_suffixes", "source_hash",
+        "_fix_co_filename",
     };
     for (size_t i = 0; i < Py_ARRAY_LENGTH(shared_functions); i++) {
         PyObject *function = PyObject_GetAttrString(module, shared_functions[i]);

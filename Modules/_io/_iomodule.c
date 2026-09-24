@@ -9,6 +9,7 @@
 
 #include "Python.h"
 #include "pycore_abstract.h"      // _PyNumber_Index()
+#include "pycore_dict.h"          // _PyDict_SynchronizeNamespace()
 #include "pycore_interp.h"        // _PyInterpreterState_GetConfig()
 #include "pycore_long.h"          // _PyLong_IsNegative()
 #include "pycore_pyerrors.h"      // _PyErr_ChainExceptions1()
@@ -645,6 +646,9 @@ do {                                                                     \
     if (PyModule_AddType(module, type) < 0) {                            \
         return -1;                                                       \
     }                                                                    \
+    if (PyObject_DeclareSynchronized((PyObject *)type) < 0) {               \
+        return -1;                                                       \
+    }                                                                    \
 } while (0)
 
 static int
@@ -717,6 +721,27 @@ iomodule_exec(PyObject *m)
              state->PyTextIOBase_Type);
 
 #undef ADD_TYPE
+    /* Only constructors and native helpers are shared. Streams and other
+       instances retain the ownership of the group that creates them. */
+    if (PyObject_DeclareSynchronized(state->unsupported_operation) < 0) {
+        return -1;
+    }
+    for (PyMethodDef *def = module_methods; def->ml_name != NULL; def++) {
+        PyObject *function = PyObject_GetAttrString(m, def->ml_name);
+        if (function == NULL) {
+            return -1;
+        }
+        int err = PyObject_DeclareSynchronized(function);
+        Py_DECREF(function);
+        if (err < 0) {
+            return -1;
+        }
+    }
+    if (_PyDict_SynchronizeNamespace(PyModule_GetDict(m)) < 0 ||
+        PyObject_DeclareSynchronized(m) < 0)
+    {
+        return -1;
+    }
     return 0;
 }
 

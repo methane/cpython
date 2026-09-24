@@ -23,7 +23,8 @@ loader entry points, and repairs private compiler and shutdown metadata paths.
 A further fix restores static-type registration after Main reinitialization.
 The frozen-import follow-up shares the four native lookup/loader helpers and
 the `sys.implementation` namespace, with worker imports and parallel code
-loading verified. FileFinder and file-loader dependencies remain unfinished.
+loading verified. The file-import follow-up below ports exact FileFinder
+instances and the dependencies needed for source, bytecode and package imports.
 
 Sources: [PEP 805](https://peps.python.org/pep-0805/),
 [implementation appendix](https://peps.python.org/pep-0805/appendix-implementation/),
@@ -748,6 +749,56 @@ its mutable suffix lists. Those probes manually expose selected objects to
 locate subsequent acquisitions; they are not thread-safety tests or an
 implementation. FileFinder cache synchronization and an audit of these
 dependencies remain independent work, without requiring Mark's feedback.
+
+### File imports across ThreadGroups
+
+Exact FileFinder instances now have synchronized namespaces, immutable loader
+tables and directory-cache snapshots, and an RLock around cache refresh and
+invalidation. Loader constructors run after releasing that lock. Subclasses
+stay LOCAL. The standard loader classes and suffix registries are explicitly
+shared, but loader instances, module specs and imported modules retain their
+own states. Both bootstrap module namespaces are explicitly synchronized;
+their values are still checked individually. Repeated bootstrap setup accepts
+an already synchronized namespace without attempting an invalid state change.
+
+The native allowlists now include the filesystem operations used by source
+loading, `_io` constructors/helpers, bytes-based marshal entry points, and
+`_imp` suffix, source-hash and code-filename helpers. Only the zipimporter and
+ZipImportError classes are shared so the default hook can reject ordinary
+directories; ZIP caches, importer instances and decompression remain unported.
+Dynamic extension loading and standard stream sharing remain separate work.
+
+Two private-metadata paths also needed repairs. OSError's fixed errno map is
+read internally, checking the selected exception type. PyImport_Import reads
+inherited frame globals and builtins internally, checks the selected import
+hook, and checks globals before exposing them to a custom hook. Its incoming
+name uses an assertion and its result remains checked after cleanup. Updating
+shared code filenames now stops parallel execution and checks acquired
+filename references before comparison, propagating failures recursively.
+
+Ten new tests cover new and cached finders, generated pyc reuse, concurrent
+cache invalidation, ordinary and namespace packages, LOCAL subclass/loader
+rejection, shared code metadata, filesystem exception types, and native import
+with inherited globals or inaccessible hooks. Existing import-access tests now
+expect the explicit bootstrap declaration and preserve the denial test using
+an ordinary LOCAL module containing a callback. No access check is disabled.
+
+The six-file import selection passes in all three Linux/aarch64 debug builds:
+1,286 reported tests, 20 default-build skips and 19 GIL/Tier 2 skips. It covers
+`test_import_file_access`, `test_import_access`, `test_import_lock_access`,
+`test_import_finder_access`, `test_importlib` and `test_capi.test_import`.
+The broad import/sys/I/O/OS/marshal/exceptions/embed/ThreadGroup selection
+previously ran 3,453 tests per build. It exposed the repeated-setup failure
+repaired above and, in the default build, a MemoryError shutdown GC assertion.
+That GC failure also reproduces in an exact `6deee568de` baseline: it remains
+an independent defect, not a reason to wait for Mark. GIL/Tier 2 additionally
+retain the six previously recorded subinterpreter import failures. Erroneous
+top-level `test_fileio`/`test_posix` selections were command errors; their real
+`test_io.test_fileio`/`test_os.test_posix` suites passed. Logs and the baseline
+comparison are in `/tmp/pep805-source-import/`.
+
+The sample application still calculates 61,620 and rejects foreign LOCAL and
+unprotected PROTECTED access. These results do not establish full conformance.
 
 ## Earlier re-review and implementation follow-ups
 

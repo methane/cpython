@@ -10,6 +10,7 @@
 // --- Python includes ------------------------------------------------------
 
 #include "Python.h"
+#include "pycore_dict.h"          // _PyDict_SynchronizeNamespace()
 
 #ifdef __VXWORKS__
 #  include "pycore_bitutils.h"    // _Py_popcount32()
@@ -19269,7 +19270,37 @@ posixmodule_exec(PyObject *m)
     assert(state->ticks_per_second >= 1);
 #endif
 
-    return PyModule_Add(m, "_have_functions", list);
+    if (PyModule_Add(m, "_have_functions", list) < 0) {
+        return -1;
+    }
+
+    /* These filesystem operations use call-local storage and publish newly
+       allocated results. Keep other functions and module values under their
+       existing access policies. */
+    static const char *shared_functions[] = {
+        "stat", "getcwd", "listdir", "fspath", "scandir",
+        "open", "mkdir", "replace", "unlink",
+    };
+    for (size_t i = 0; i < Py_ARRAY_LENGTH(shared_functions); i++) {
+        PyObject *function = PyObject_GetAttrString(m, shared_functions[i]);
+        if (function == NULL) {
+            return -1;
+        }
+        int err = PyObject_DeclareSynchronized(function);
+        Py_DECREF(function);
+        if (err < 0) {
+            return -1;
+        }
+    }
+    if (PyObject_DeclareSynchronized(state->StatResultType) < 0 ||
+        PyObject_DeclareSynchronized(state->ScandirIteratorType) < 0 ||
+        PyObject_DeclareSynchronized(state->DirEntryType) < 0 ||
+        _PyDict_SynchronizeNamespace(PyModule_GetDict(m)) < 0 ||
+        PyObject_DeclareSynchronized(m) < 0)
+    {
+        return -1;
+    }
+    return 0;
 }
 
 

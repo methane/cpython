@@ -25,6 +25,7 @@ path_sep = _bootstrap_external.path_sep
 alt_path_sep = _bootstrap_external.path_separators[1:]
 
 
+@type.synchronize
 class ZipImportError(ImportError):
     pass
 
@@ -41,6 +42,7 @@ MAX_COMMENT_LEN = (1 << 16) - 1
 MAX_UINT32 = 0xffffffff
 ZIP64_EXTRA_TAG = 0x1
 
+@type.synchronize
 class zipimporter(_bootstrap_external._LoaderBasics):
     """zipimporter(archivepath) -> zipimporter object
 

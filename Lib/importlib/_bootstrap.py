@@ -1559,6 +1559,10 @@ def _setup(sys_module, _imp_module):
                 BuiltinImporter, FrozenImporter):
         type.synchronize(cls)
     _blocking_on = _WeakValueDictionary()
+    # External finders call these Python helpers through the module. Values
+    # stored in the shared namespace retain their individual access policies.
+    if type(self_module.__dict__) is not SynchronizedDict:
+        self_module.synchronize()
 
 
 def _install(sys_module, _imp_module):

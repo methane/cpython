@@ -21,7 +21,7 @@ from test.support import threading_helper
 
 results = threading.Channel()
 modules = sys.modules
-assert bootstrap.__shareable__ is threading.Shareable.LOCAL
+assert bootstrap.__shareable__ is threading.Shareable.SYNCHRONIZED
 
 def run(worker):
     thread = threading.Thread(target=worker, group=threading.ThreadGroup())
@@ -61,20 +61,23 @@ def run(worker):
             immutable = freeze(ModuleType('immutable'))
             synchronized = ModuleType('synchronized')
             synchronized.synchronize()
+            local_module = ModuleType('local')
+            local_module.callback = bootstrap._module_repr
             def worker():
                 results.put(repr(immutable))
                 results.put(repr(synchronized))
                 try:
-                    bootstrap._module_repr
+                    local_module.callback
                 except IllegalThreadAccessException:
-                    results.put('bootstrap denied')
+                    results.put('local module denied')
                 else:
-                    raise AssertionError('bootstrap module became accessible')
+                    raise AssertionError('local module became accessible')
             run(worker)
             assert results.get() == "<module 'immutable'>"
             assert results.get() == "<module 'synchronized'>"
-            assert results.get() == 'bootstrap denied'
-            assert bootstrap.__shareable__ is threading.Shareable.LOCAL
+            assert results.get() == 'local module denied'
+            assert local_module.__shareable__ is threading.Shareable.LOCAL
+            assert bootstrap.__shareable__ is threading.Shareable.SYNCHRONIZED
         ''')
 
     def test_repr_local_callback_rejected(self):

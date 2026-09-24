@@ -7,6 +7,7 @@
    and sharing. */
 
 #include "Python.h"
+#include "pycore_dict.h"          // _PyDict_SynchronizeNamespace()
 #include "pycore_call.h"             // _PyObject_CallNoArgs()
 #include "pycore_code.h"             // _PyCode_New()
 #include "pycore_hashtable.h"        // _Py_hashtable_t
@@ -2219,6 +2220,25 @@ static int
 marshal_module_exec(PyObject *mod)
 {
     if (PyModule_AddIntConstant(mod, "version", Py_MARSHAL_VERSION) < 0) {
+        return -1;
+    }
+    /* The bytes-based entry points use per-call readers/writers and check
+       values as they traverse them. File callbacks need a separate audit. */
+    static const char *shared_functions[] = {"dumps", "loads"};
+    for (size_t i = 0; i < Py_ARRAY_LENGTH(shared_functions); i++) {
+        PyObject *function = PyObject_GetAttrString(mod, shared_functions[i]);
+        if (function == NULL) {
+            return -1;
+        }
+        int err = PyObject_DeclareSynchronized(function);
+        Py_DECREF(function);
+        if (err < 0) {
+            return -1;
+        }
+    }
+    if (_PyDict_SynchronizeNamespace(PyModule_GetDict(mod)) < 0 ||
+        PyObject_DeclareSynchronized(mod) < 0)
+    {
         return -1;
     }
     return 0;
