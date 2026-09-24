@@ -319,6 +319,14 @@ func_begin_execution_mutation(PyInterpreterState *interp, PyFunctionObject *func
     }
 }
 
+static int
+func_should_defer_refcount(PyFunctionObject *func)
+{
+    PyCodeObject *code = (PyCodeObject *)func->func_code;
+    return FT_ATOMIC_LOAD_UINT8(func->ob_base.ob_shareable) >= _Py_SHAREABLE_SYNCHRONIZED &&
+        (((code->co_flags & CO_NESTED) == 0) || (code->co_flags & CO_METHOD));
+}
+
 int
 _PyFunction_SetClosureForCreation(PyFunctionObject *func, PyObject *closure)
 {
@@ -332,6 +340,12 @@ _PyFunction_SetClosureForCreation(PyFunctionObject *func, PyObject *closure)
     func_register_closure(old_closure, 0);
     func_mark_closure_writers((PyCodeObject *)func->func_code, closure);
     func_update_shareable(func);
+    // Closure-bearing functions start LOCAL until their cells are attached.
+    // A method that now qualifies for sharing can use the usual deferred
+    // count, allowing its getter to be cached by LOAD_ATTR_PROPERTY.
+    if (func_should_defer_refcount(func)) {
+        PyUnstable_Object_EnableDeferredRefcount((PyObject *)func);
+    }
     _PyEval_StartTheWorld(interp);
     Py_XDECREF(old_closure);
     return 0;
@@ -640,9 +654,7 @@ PyFunction_NewWithQualName(PyObject *code, PyObject *globals, PyObject *qualname
     op->vectorcall = _PyFunction_Vectorcall;
     op->func_version = FUNC_VERSION_UNSET;
     func_update_shareable(op);
-    if (FT_ATOMIC_LOAD_UINT8(op->ob_base.ob_shareable) >= _Py_SHAREABLE_SYNCHRONIZED &&
-        (((code_obj->co_flags & CO_NESTED) == 0) ||
-         (code_obj->co_flags & CO_METHOD))) {
+    if (func_should_defer_refcount(op)) {
         // Use deferred reference counting for top-level functions, but not
         // nested functions because they are more likely to capture variables,
         // which makes prompt deallocation more important.
