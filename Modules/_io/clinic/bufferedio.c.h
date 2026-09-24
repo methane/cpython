@@ -315,7 +315,9 @@ _io__Buffered__dealloc_warn(PyObject *self, PyObject *source)
 {
     PyObject *return_value = NULL;
 
+    Py_BEGIN_CRITICAL_SECTION(self);
     return_value = _io__Buffered__dealloc_warn_impl((buffered *)self, source);
+    Py_END_CRITICAL_SECTION();
 
     return return_value;
 }
@@ -1008,7 +1010,9 @@ _io_BufferedReader___init__(PyObject *self, PyObject *args, PyObject *kwargs)
         buffer_size = ival;
     }
 skip_optional_pos:
+    Py_BEGIN_CRITICAL_SECTION(self);
     return_value = _io_BufferedReader___init___impl((buffered *)self, raw, buffer_size);
+    Py_END_CRITICAL_SECTION();
 
 exit:
     return return_value;
@@ -1088,7 +1092,9 @@ _io_BufferedWriter___init__(PyObject *self, PyObject *args, PyObject *kwargs)
         buffer_size = ival;
     }
 skip_optional_pos:
+    Py_BEGIN_CRITICAL_SECTION(self);
     return_value = _io_BufferedWriter___init___impl((buffered *)self, raw, buffer_size);
+    Py_END_CRITICAL_SECTION();
 
 exit:
     return return_value;
@@ -1180,7 +1186,9 @@ _io_BufferedRWPair___init__(PyObject *self, PyObject *args, PyObject *kwargs)
         buffer_size = ival;
     }
 skip_optional:
+    Py_BEGIN_CRITICAL_SECTION(self);
     return_value = _io_BufferedRWPair___init___impl((rwpair *)self, reader, writer, buffer_size);
+    Py_END_CRITICAL_SECTION();
 
 exit:
     return return_value;
@@ -1260,9 +1268,11 @@ _io_BufferedRandom___init__(PyObject *self, PyObject *args, PyObject *kwargs)
         buffer_size = ival;
     }
 skip_optional_pos:
+    Py_BEGIN_CRITICAL_SECTION(self);
     return_value = _io_BufferedRandom___init___impl((buffered *)self, raw, buffer_size);
+    Py_END_CRITICAL_SECTION();
 
 exit:
     return return_value;
 }
-/*[clinic end generated code: output=3ee17211d2010462 input=a9049054013a1b77]*/
+/*[clinic end generated code: output=96c107dffe9383ad input=a9049054013a1b77]*/

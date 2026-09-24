@@ -236,6 +236,7 @@ class FileIOStateTests(unittest.TestCase):
         import_module('_testinternalcapi').object_declare_synchronized(file)
         barrier = threading.Barrier(3)
         results = SynchronizedList()
+        bad_fd = errno.EBADF
 
         def initialize():
             try:
@@ -262,7 +263,7 @@ class FileIOStateTests(unittest.TestCase):
                     except ValueError:
                         pass  # The initializer has closed the FileIO object.
                     except OSError as exc:
-                        if exc.errno != errno.EBADF:
+                        if exc.errno != bad_fd:
                             raise
                 results.append('read')
             except BaseException as exc:

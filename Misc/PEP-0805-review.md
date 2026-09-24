@@ -1386,6 +1386,69 @@ or failed module imports; the optional _decimal module remains unavailable.
 Native source, generated Clinic wrappers and tests match across the builds.
 Baseline, build and suite logs are in `/tmp/pep805-fileio-state/`.
 
+### Buffered/text I/O stored streams and access-error propagation
+
+BufferedReader, BufferedWriter and BufferedRandom now acquire checked, owned
+references to their stored raw stream before attribute lookup or calls. This
+covers closed/name/mode inquiries, flush/close/detach, capability checks, seek,
+tell, truncate, raw read/readall/readinto and raw write. Fast FileIO closed
+checks validate the stored reference too; a write that fit in the buffer
+previously succeeded in a foreign group without checking its LOCAL raw stream.
+The _dealloc_warn path still suppresses warning failures, but no longer calls
+an inaccessible raw object. Constructor and warning entry points take the
+object critical section used by the reference snapshots.
+
+TextIOWrapper's buffer helper returns an owned, checked reference rather than
+assuming a borrowed reference stays valid across child locks or callbacks.
+Every helper caller balances that ownership, including detach, buffer access,
+line-buffer flushing and end-relative seeks. The cached raw FileIO check also
+validates access. These are heap-acquisition checks, not repeated checks of
+ordinary caller arguments.
+
+BufferedRWPair snapshots each child under its object lock, validates the owned
+reference, and retains it through the delegated operation. Attribute-lookup
+errors retain their original exception. Position estimation during buffered
+construction and after truncate preserves both access exception types, as do
+raw read/write count conversions that otherwise translate failures to OSError.
+
+The initial three regression methods report 29 failing subtests against the
+previous default executable (`before-focused.log`). The raw/buffer getters
+that were already checked continue to be covered. The earlier `before.log`
+also ran protected-wrapper finalization after releasing protection; the focused
+version destroys those wrappers while holding their lock so each failure
+identifies the operation under test. Separate runs against the previous GIL
+executable report 12 failed RWPair cases and 12 swallowed/wrapped access-error
+cases. The final six-method suite adds reference-count stability through
+successful calls, rejected acquisitions and detach. Evidence is under
+`/tmp/pep805-io-access/`.
+
+The broader run also exposed a test-fixture issue in the previous FileIO
+stress test: only when a concurrent close produced EBADF, its worker tried to
+load errno.EBADF from Main's LOCAL errno module. A separate worker probe
+confirms that access rejection. The test now captures the immutable integer
+before starting workers; it still permits only EBADF among OS errors and
+rejects all other worker exceptions.
+
+No stream is newly declared synchronized by these changes. Buffered lifecycle
+work remains: readinto can reinitialize its parent, replacing the still-used
+buffer and freeing/replacing the held native lock. The isolated probe
+`reinitialize-during-read.py` currently aborts with `PyMutex_Unlock: unlocking
+mutex that is not locked`. Adding constructor critical sections does not solve
+that issue because critical sections can be suspended. Reinitialization and
+detach/close lifetime rules must be repaired before publishing shared buffered
+streams. Text codec references, incremental-decoder locking and private pending
+buffers also remain unfinished. These are implementation tasks independent of
+the questions for Mark.
+
+After correcting the FileIO fixture, the five-suite selection of
+`test_io_access`, `test_fileio_shareable`, `test_io`, `test_import_file_access`
+and `test_finalizer_access` passes in all three builds: 1,114 reported tests,
+with 29 skips in the default build and 37 in GIL and Tier 2 interpreter builds.
+The final logs are named `*-fixed-fixture.log`. Incremental builds have no
+compiler warnings or failed module imports. Changed native source, generated
+Clinic wrappers and tests match across the three builds. These selected passes
+do not close the independently reproduced reinitialization failure.
+
 ## Earlier re-review and implementation follow-ups
 
 One earlier question was incorrect: footnote 3 of the
