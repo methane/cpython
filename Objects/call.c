@@ -67,7 +67,7 @@ _Py_CheckFunctionResult(PyThreadState *tstate, PyObject *callable,
             return NULL;
         }
     }
-    return result;
+    return _PyObject_CheckAccessNullable(result);
 }
 
 

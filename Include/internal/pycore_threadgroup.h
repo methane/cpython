@@ -35,6 +35,8 @@ extern _PyThreadGroupState *_PyThreadGroup_New(PyInterpreterState *interp);
 /* Return a strong reference, or NULL if the ID belongs to no group in interp. */
 PyAPI_FUNC(_PyThreadGroupState *) _PyThreadGroup_Find(
     PyInterpreterState *interp, uint32_t id);
+// Whether any live interpreter still owns this process-wide group ID.
+extern int _PyThreadGroup_OwnerIsAlive(uint32_t id);
 PyAPI_FUNC(PyObject *) _PyThreadGroup_GetObject(
     PyInterpreterState *interp, uint32_t id);
 /* Validate a Python wrapper and return a strong native reference. */

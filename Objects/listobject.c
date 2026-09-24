@@ -399,7 +399,7 @@ PyList_GetItem(PyObject *op, Py_ssize_t i)
         PyErr_SetObject(PyExc_IndexError, &_Py_STR(list_err));
         return NULL;
     }
-    return ((PyListObject *)op) -> ob_item[i];
+    return PyObject_CheckAccess(((PyListObject *)op)->ob_item[i]);
 }
 
 PyObject *
@@ -415,7 +415,7 @@ PyList_GetItemRef(PyObject *op, Py_ssize_t i)
         PyErr_SetObject(PyExc_IndexError, &_Py_STR(list_err));
         return NULL;
     }
-    return item;
+    return _PyObject_CheckAccessNullable(item);
 }
 
 PyObject *

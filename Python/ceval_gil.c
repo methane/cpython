@@ -652,6 +652,28 @@ _PyThreadGroup_Find(PyInterpreterState *interp, uint32_t id)
     return group;
 }
 
+int
+_PyThreadGroup_OwnerIsAlive(uint32_t id)
+{
+    int found = 0;
+    _PyRuntimeState *runtime = &_PyRuntime;
+    HEAD_LOCK(runtime);
+    for (PyInterpreterState *interp = runtime->interpreters.head;
+         interp != NULL && !found; interp = interp->next) {
+        PyMutex_LockFlags(&interp->threadgroups_mutex, 0);
+        for (_PyThreadGroupState *group = interp->threadgroups;
+             group != NULL; group = group->next) {
+            if (group->id == id) {
+                found = 1;
+                break;
+            }
+        }
+        PyMutex_Unlock(&interp->threadgroups_mutex);
+    }
+    HEAD_UNLOCK(runtime);
+    return found;
+}
+
 void
 _PyThreadGroup_Fini(PyInterpreterState *interp)
 {

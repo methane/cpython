@@ -111,7 +111,7 @@ PyTuple_GetItem(PyObject *op, Py_ssize_t i)
         PyErr_SetString(PyExc_IndexError, "tuple index out of range");
         return NULL;
     }
-    return ((PyTupleObject *)op) -> ob_item[i];
+    return PyObject_CheckAccess(((PyTupleObject *)op)->ob_item[i]);
 }
 
 int

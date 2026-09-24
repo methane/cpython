@@ -2469,9 +2469,9 @@ dict_getitem(PyObject *op, PyObject *key, const char *warnmsg)
 PyObject *
 PyDict_GetItem(PyObject *op, PyObject *key)
 {
-    return dict_getitem(op, key,
+    return PyObject_CheckAccess(dict_getitem(op, key,
             "Exception ignored in PyDict_GetItem(); consider using "
-            "PyDict_GetItemRef() or PyDict_GetItemWithError()");
+            "PyDict_GetItemRef() or PyDict_GetItemWithError()"));
 }
 
 static void
@@ -2613,7 +2613,14 @@ PyDict_GetItemRef(PyObject *op, PyObject *key, PyObject **result)
         return -1;
     }
 
-    return _PyDict_GetItemRef_KnownHash((PyDictObject *)op, key, hash, result);
+    int found = _PyDict_GetItemRef_KnownHash((PyDictObject *)op, key, hash, result);
+    if (found > 0) {
+        *result = _PyObject_CheckAccessNullable(*result);
+        if (*result == NULL) {
+            return -1;
+        }
+    }
+    return found;
 }
 
 int
@@ -2673,7 +2680,7 @@ PyDict_GetItemWithError(PyObject *op, PyObject *key)
     ix = _Py_dict_lookup(mp, key, hash, &value);
 #endif
     assert(ix >= 0 || value == NULL);
-    return value;  // borrowed reference
+    return PyObject_CheckAccess(value);  // borrowed reference
 }
 
 PyObject *
@@ -5556,7 +5563,7 @@ PyDict_GetItemString(PyObject *v, const char *key)
             "Exception ignored in PyDict_GetItemString(); consider using "
             "PyDict_GetItemStringRef()");
     Py_DECREF(kv);
-    return rv;  // borrowed reference
+    return PyObject_CheckAccess(rv);  // borrowed reference
 }
 
 int

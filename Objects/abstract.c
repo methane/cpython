@@ -158,11 +158,12 @@ PyObject_GetItem(PyObject *o, PyObject *key)
         return null_error();
     }
 
+    assert(PyObject_IsAccessible(o) && PyObject_IsAccessible(key));
     PyMappingMethods *m = Py_TYPE(o)->tp_as_mapping;
     if (m && m->mp_subscript) {
         PyObject *item = m->mp_subscript(o, key);
         assert(_Py_CheckSlotResult(o, "__getitem__", item != NULL));
-        return item;
+        return _PyObject_CheckAccessNullable(item);
     }
 
     PySequenceMethods *ms = Py_TYPE(o)->tp_as_sequence;
@@ -1858,7 +1859,7 @@ PySequence_GetItem(PyObject *s, Py_ssize_t i)
         }
         PyObject *res = m->sq_item(s, i);
         assert(_Py_CheckSlotResult(s, "__getitem__", res != NULL));
-        return res;
+        return _PyObject_CheckAccessNullable(res);
     }
 
     if (Py_TYPE(s)->tp_as_mapping && Py_TYPE(s)->tp_as_mapping->mp_subscript) {
@@ -1883,7 +1884,7 @@ PySequence_GetSlice(PyObject *s, Py_ssize_t i1, Py_ssize_t i2)
         PyObject *res = mp->mp_subscript(s, slice);
         assert(_Py_CheckSlotResult(s, "__getitem__", res != NULL));
         Py_DECREF(slice);
-        return res;
+        return _PyObject_CheckAccessNullable(res);
     }
 
     return type_error("'%.200s' object is unsliceable", s);
@@ -2822,7 +2823,7 @@ PyObject_GetIter(PyObject *o)
         return type_error("'%.200s' object is not iterable", o);
     }
     else {
-        PyObject *res = (*f)(o);
+        PyObject *res = _PyObject_CheckAccessNullable((*f)(o));
         if (res != NULL && !PyIter_Check(res)) {
             PyErr_Format(PyExc_TypeError,
                          "%T.__iter__() must return an iterator, not %T",
@@ -2842,7 +2843,7 @@ PyObject_GetAIter(PyObject *o) {
         return type_error("'%.200s' object is not an async iterable", o);
     }
     f = t->tp_as_async->am_aiter;
-    PyObject *it = (*f)(o);
+    PyObject *it = _PyObject_CheckAccessNullable((*f)(o));
     if (it != NULL && !PyAIter_Check(it)) {
         PyErr_Format(PyExc_TypeError,
                      "%T.__aiter__() must return an async iterator, not %T",
@@ -2873,7 +2874,7 @@ static int
 iternext(PyObject *iter, PyObject **item)
 {
     iternextfunc tp_iternext = Py_TYPE(iter)->tp_iternext;
-    if ((*item = tp_iternext(iter))) {
+    if ((*item = _PyObject_CheckAccessNullable(tp_iternext(iter)))) {
         return 1;
     }
 
@@ -2927,8 +2928,8 @@ PyIter_Next(PyObject *iter)
     return item;
 }
 
-PySendResult
-PyIter_Send(PyObject *iter, PyObject *arg, PyObject **result)
+static PySendResult
+iter_send(PyObject *iter, PyObject *arg, PyObject **result)
 {
     assert(arg != NULL);
     assert(result != NULL);
@@ -2950,6 +2951,19 @@ PyIter_Send(PyObject *iter, PyObject *arg, PyObject **result)
         return PYGEN_RETURN;
     }
     return PYGEN_ERROR;
+}
+
+PySendResult
+PyIter_Send(PyObject *iter, PyObject *arg, PyObject **result)
+{
+    PySendResult status = iter_send(iter, arg, result);
+    if (status != PYGEN_ERROR) {
+        *result = _PyObject_CheckAccessNullable(*result);
+        if (*result == NULL) {
+            return PYGEN_ERROR;
+        }
+    }
+    return status;
 }
 
 PySendResultPair

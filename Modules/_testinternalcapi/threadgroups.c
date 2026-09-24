@@ -566,7 +566,304 @@ test_static_immutable_access(PyObject *self, PyObject *unused)
     Py_RETURN_NONE;
 }
 
+// Native callbacks deliberately return a heap reference without exposing its
+// contents. The public API must validate that reference before its caller uses it.
+static PyObject *
+return_heap_value(PyObject *self, PyObject *unused)
+{
+    return Py_NewRef(PyTuple_GET_ITEM(self, 0));
+}
+
+static PyMethodDef return_heap_value_def = {
+    "return_heap_value", return_heap_value, METH_NOARGS, NULL,
+};
+
+typedef struct {
+    PyObject_HEAD
+    PyObject *value;
+} return_box;
+
+static int
+return_box_traverse(PyObject *op, visitproc visit, void *arg)
+{
+    Py_VISIT(Py_TYPE(op));
+    Py_VISIT(((return_box *)op)->value);
+    return 0;
+}
+
+static void
+return_box_dealloc(PyObject *op)
+{
+    PyTypeObject *type = Py_TYPE(op);
+    PyObject_GC_UnTrack(op);
+    Py_XDECREF(((return_box *)op)->value);
+    type->tp_free(op);
+    Py_DECREF(type);
+}
+
+static PyObject *
+return_box_getattr(PyObject *op, char *name)
+{
+    if (strcmp(name, "value") == 0) {
+        return Py_NewRef(((return_box *)op)->value);
+    }
+    return PyErr_Format(PyExc_AttributeError, "unknown attribute %s", name);
+}
+
+static PyObject *
+return_box_getattro(PyObject *op, PyObject *name)
+{
+    if (PyUnicode_CompareWithASCIIString(name, "value") == 0) {
+        return Py_NewRef(((return_box *)op)->value);
+    }
+    return PyObject_GenericGetAttr(op, name);
+}
+
+static PyMemberDef return_box_members[] = {
+    {"value", Py_T_OBJECT_EX, offsetof(return_box, value), Py_READONLY},
+    {NULL},
+};
+
+static PyType_Slot return_box_slots[] = {
+    {Py_tp_dealloc, return_box_dealloc},
+    {Py_tp_traverse, return_box_traverse},
+    {Py_tp_getattr, return_box_getattr},
+    {Py_tp_getattro, return_box_getattro},
+    {Py_tp_members, return_box_members},
+    {0, NULL},
+};
+
+static PyType_Spec return_box_spec = {
+    .name = "_testinternalcapi.ReturnBox",
+    .basicsize = sizeof(return_box),
+    .flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_GC,
+    .slots = return_box_slots,
+};
+
+static PyObject *
+make_return_box(PyObject *value)
+{
+    PyTypeObject *type = (PyTypeObject *)PyType_FromSpec(&return_box_spec);
+    if (type == NULL) {
+        return NULL;
+    }
+    return_box *box = (return_box *)type->tp_alloc(type, 0);
+    Py_DECREF(type);
+    if (box != NULL) {
+        box->value = Py_NewRef(value);  // Blind heap-to-heap copy.
+    }
+    return (PyObject *)box;
+}
+
+static const char *return_apis[] = {
+    "PyTuple_GetItem", "PySequence_GetItem", "PyObject_GetItem",
+    "PyList_GetItem", "PyList_GetItemRef",
+    "PyDict_GetItem", "PyDict_GetItemWithError", "PyDict_GetItemRef",
+    "PyDict_GetItemString", "PyDict_GetItemStringRef",
+    "PyMapping_GetOptionalItem", "PyIter_Next", "PyIter_NextItem", "PyIter_Send",
+    "PyObject_CallNoArgs", "PyObject_GetAttr", "PyObject_GetAttrString",
+    "PyObject_GetOptionalAttr", "PyObject_GetOptionalAttrString",
+    "PyObject_GenericGetAttr", NULL,
+};
+
+struct return_probe {
+    struct access_probe base;
+    int api;
+};
+
+static void
+return_probe_worker(void *arg)
+{
+    struct return_probe *probe = arg;
+    PyThreadState *tstate = PyThreadState_New(probe->base.interp);
+    if (tstate == NULL) {
+        return;
+    }
+    _PyThreadGroup_Decref(tstate->threadgroup);
+    tstate->threadgroup = probe->base.group;
+    _PyThreadGroup_Incref(tstate->threadgroup);
+    PyEval_AcquireThread(tstate);
+
+    PyObject *source = probe->base.value;
+    assert(PyObject_IsAccessible(source));
+    PyObject *value = PyTuple_GET_ITEM(source, 0);  // Raw heap reference.
+    PyObject *mapping = PyTuple_GET_ITEM(source, 1);
+    assert(PyObject_IsAccessible(mapping));
+    probe->base.accessible = PyObject_IsAccessible(value);
+    PyObject *key = PyUnicode_FromString("value");
+    PyObject *list = NULL, *iter = NULL, *func = NULL, *box = NULL;
+    PyObject *result = NULL;
+    int status = -2;  // Pointer-returning API, with no separate status code.
+    int owned = 1;
+    if (key == NULL) {
+        goto done;
+    }
+    switch (probe->api) {
+        case 0:
+            result = PyTuple_GetItem(source, 0);
+            owned = 0;
+            break;
+        case 1:
+            result = PySequence_GetItem(source, 0);
+            break;
+        case 2: {
+            PyObject *index = PyLong_FromLong(0);
+            if (index == NULL) {
+                goto done;
+            }
+            result = PyObject_GetItem(source, index);
+            Py_DECREF(index);
+            break;
+        }
+        case 3:
+        case 4:
+            // Copying a tuple's heap references into a local list is allowed.
+            // Retrieving the copied value still needs a thread access check.
+            list = PySequence_List(source);
+            if (list == NULL) {
+                goto done;
+            }
+            if (probe->api == 3) {
+                result = PyList_GetItem(list, 0);
+                owned = 0;
+            }
+            else {
+                result = PyList_GetItemRef(list, 0);
+            }
+            break;
+        case 5:
+            result = PyDict_GetItem(mapping, key);
+            owned = 0;
+            break;
+        case 6:
+            result = PyDict_GetItemWithError(mapping, key);
+            owned = 0;
+            break;
+        case 7:
+            status = PyDict_GetItemRef(mapping, key, &result);
+            break;
+        case 8:
+            result = PyDict_GetItemString(mapping, "value");
+            owned = 0;
+            break;
+        case 9:
+            status = PyDict_GetItemStringRef(mapping, "value", &result);
+            break;
+        case 10:
+            status = PyMapping_GetOptionalItem(mapping, key, &result);
+            break;
+        case 11:
+        case 12:
+        case 13:
+            iter = PyObject_GetIter(source);
+            if (iter == NULL) {
+                goto done;
+            }
+            if (probe->api == 11) {
+                result = PyIter_Next(iter);
+            }
+            else if (probe->api == 12) {
+                status = PyIter_NextItem(iter, &result);
+            }
+            else {
+                PySendResult sent = PyIter_Send(iter, Py_None, &result);
+                status = sent == PYGEN_NEXT ? 1 : sent == PYGEN_ERROR ? -1 : 0;
+            }
+            break;
+        case 14:
+            func = PyCFunction_NewEx(&return_heap_value_def, source, NULL);
+            if (func == NULL) {
+                goto done;
+            }
+            result = PyObject_CallNoArgs(func);
+            break;
+        default:
+            box = make_return_box(value);
+            if (box == NULL) {
+                goto done;
+            }
+            switch (probe->api) {
+                case 15: result = PyObject_GetAttr(box, key); break;
+                case 16: result = PyObject_GetAttrString(box, "value"); break;
+                case 17: status = PyObject_GetOptionalAttr(box, key, &result); break;
+                case 18: status = PyObject_GetOptionalAttrString(box, "value", &result); break;
+                case 19: result = PyObject_GenericGetAttr(box, key); break;
+                default: Py_UNREACHABLE();
+            }
+    }
+    if (status == -2) {
+        status = result == NULL ? -1 : 1;
+    }
+    if (probe->base.accessible) {
+        probe->base.ok = status == 1 && result == value && !PyErr_Occurred();
+    }
+    else {
+        probe->base.ok = status == -1 && result == NULL &&
+            PyErr_ExceptionMatches(PyExc_IllegalThreadAccessException);
+    }
+    if (owned) {
+        Py_XDECREF(result);
+    }
+done:
+    PyErr_Clear();
+    Py_XDECREF(key);
+    Py_XDECREF(list);
+    Py_XDECREF(iter);
+    Py_XDECREF(func);
+    Py_XDECREF(box);
+    PyThreadState_Clear(tstate);
+    PyThreadState_DeleteCurrent();
+}
+
+static PyObject *
+threadgroup_return_probe(PyObject *self, PyObject *args)
+{
+    PyObject *group, *source;
+    const char *api;
+    if (!PyArg_ParseTuple(args, "O!Os:threadgroup_return_probe", &PyTuple_Type,
+                          &source, &group, &api)) {
+        return NULL;
+    }
+    if (PyTuple_GET_SIZE(source) != 2 ||
+        !PyAnyDict_Check(PyTuple_GET_ITEM(source, 1))) {
+        return PyErr_Format(PyExc_ValueError, "invalid return probe source");
+    }
+    int index;
+    for (index = 0; return_apis[index] != NULL; index++) {
+        if (strcmp(api, return_apis[index]) == 0) {
+            break;
+        }
+    }
+    if (return_apis[index] == NULL) {
+        return PyErr_Format(PyExc_ValueError, "unknown API %s", api);
+    }
+    _PyThreadGroupState *state = _PyThreadGroup_GetState(group);
+    if (state == NULL) {
+        return NULL;
+    }
+    struct return_probe probe = {
+        .base = {.interp = PyInterpreterState_Get(), .group = state, .value = source},
+        .api = index,
+    };
+    PyThread_ident_t ident;
+    PyThread_handle_t handle;
+    if (PyThread_start_joinable_thread(return_probe_worker, &probe,
+                                      &ident, &handle) != 0) {
+        _PyThreadGroup_Decref(state);
+        return PyErr_Format(PyExc_RuntimeError, "failed to start return probe");
+    }
+    Py_BEGIN_ALLOW_THREADS
+    PyThread_join_thread(handle);
+    Py_END_ALLOW_THREADS
+    _PyThreadGroup_Decref(state);
+    if (!probe.base.ok) {
+        return PyErr_Format(PyExc_AssertionError, "return access probe failed for %s", api);
+    }
+    return PyBool_FromLong(probe.base.accessible);
+}
+
 static PyMethodDef methods[] = {
+    {"threadgroup_return_probe", threadgroup_return_probe, METH_VARARGS, NULL},
     {"test_static_immutable_access", test_static_immutable_access, METH_NOARGS, NULL},
     {"threadgroup_access_probe", threadgroup_access_probe, METH_VARARGS, NULL},
     {"make_immutable_capsule", make_immutable_capsule, METH_NOARGS, NULL},

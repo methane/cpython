@@ -55,6 +55,32 @@ class OwnershipTests(unittest.TestCase):
     def test_static_immutable_access(self):
         internal.test_static_immutable_access()
 
+    def test_api_return_values(self):
+        apis = (
+            'PyTuple_GetItem', 'PySequence_GetItem', 'PyObject_GetItem',
+            'PyList_GetItem', 'PyList_GetItemRef',
+            'PyDict_GetItem', 'PyDict_GetItemWithError', 'PyDict_GetItemRef',
+            'PyDict_GetItemString', 'PyDict_GetItemStringRef',
+            'PyMapping_GetOptionalItem', 'PyIter_Next', 'PyIter_NextItem',
+            'PyIter_Send', 'PyObject_CallNoArgs', 'PyObject_GetAttr',
+            'PyObject_GetAttrString', 'PyObject_GetOptionalAttr',
+            'PyObject_GetOptionalAttrString', 'PyObject_GenericGetAttr',
+        )
+
+        class Value:
+            def __repr__(self):
+                raise AssertionError('access errors must not call repr')
+
+        for value, immutable in ((Value(), False), (42, True)):
+            source = (value, frozendict(value=value))
+            for group in (sys.main_thread_group, self.foreign):
+                for api in apis:
+                    with self.subTest(immutable=immutable, group=group, api=api):
+                        accessible = internal.threadgroup_return_probe(
+                            source, group, api)
+                        self.assertIs(accessible,
+                                      immutable or group is sys.main_thread_group)
+
 
 if __name__ == '__main__':
     unittest.main()

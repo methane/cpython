@@ -1196,7 +1196,8 @@ PyObject_GetAttrString(PyObject *v, const char *name)
     PyObject *w, *res;
 
     if (Py_TYPE(v)->tp_getattr != NULL)
-        return (*Py_TYPE(v)->tp_getattr)(v, (char*)name);
+        return _PyObject_CheckAccessNullable(
+            (*Py_TYPE(v)->tp_getattr)(v, (char*)name));
     w = PyUnicode_FromString(name);
     if (w == NULL)
         return NULL;
@@ -1352,7 +1353,7 @@ PyObject_GetAttr(PyObject *v, PyObject *name)
     if (result == NULL) {
         _PyObject_SetAttributeErrorContext(v, name);
     }
-    return result;
+    return _PyObject_CheckAccessNullable(result);
 }
 
 /* Like PyObject_GetAttr but returns a _PyStackRef.
@@ -1375,6 +1376,10 @@ _PyObject_GetAttrStackRef(PyObject *v, PyObject *name)
         if (PyStackRef_IsNull(result)) {
             _PyObject_SetAttributeErrorContext(v, name);
         }
+        else if (PyObject_CheckAccess(PyStackRef_AsPyObjectBorrow(result)) == NULL) {
+            PyStackRef_CLOSE(result);
+            return PyStackRef_NULL;
+        }
         return result;
     }
 
@@ -1396,6 +1401,7 @@ _PyObject_GetAttrStackRef(PyObject *v, PyObject *name)
                     tp->tp_name, name);
     }
 
+    result = _PyObject_CheckAccessNullable(result);
     if (result == NULL) {
         _PyObject_SetAttributeErrorContext(v, name);
         return PyStackRef_NULL;
@@ -1403,8 +1409,8 @@ _PyObject_GetAttrStackRef(PyObject *v, PyObject *name)
     return PyStackRef_FromPyObjectSteal(result);
 }
 
-int
-PyObject_GetOptionalAttr(PyObject *v, PyObject *name, PyObject **result)
+static int
+object_get_optional_attr(PyObject *v, PyObject *name, PyObject **result)
 {
     PyTypeObject *tp = Py_TYPE(v);
 
@@ -1472,6 +1478,19 @@ PyObject_GetOptionalAttr(PyObject *v, PyObject *name, PyObject **result)
 }
 
 int
+PyObject_GetOptionalAttr(PyObject *v, PyObject *name, PyObject **result)
+{
+    int found = object_get_optional_attr(v, name, result);
+    if (found > 0) {
+        *result = _PyObject_CheckAccessNullable(*result);
+        if (*result == NULL) {
+            return -1;
+        }
+    }
+    return found;
+}
+
+int
 PyObject_GetOptionalAttrString(PyObject *obj, const char *name, PyObject **result)
 {
     if (Py_TYPE(obj)->tp_getattr == NULL) {
@@ -1485,7 +1504,8 @@ PyObject_GetOptionalAttrString(PyObject *obj, const char *name, PyObject **resul
         return rc;
     }
 
-    *result = (*Py_TYPE(obj)->tp_getattr)(obj, (char*)name);
+    *result = _PyObject_CheckAccessNullable(
+        (*Py_TYPE(obj)->tp_getattr)(obj, (char*)name));
     if (*result != NULL) {
         return 1;
     }
@@ -2024,7 +2044,8 @@ _PyObject_GenericGetAttrWithDict(PyObject *obj, PyObject *name,
 PyObject *
 PyObject_GenericGetAttr(PyObject *obj, PyObject *name)
 {
-    return _PyObject_GenericGetAttrWithDict(obj, name, NULL, 0);
+    return _PyObject_CheckAccessNullable(
+        _PyObject_GenericGetAttrWithDict(obj, name, NULL, 0));
 }
 
 int
@@ -2792,21 +2813,22 @@ static uint8_t
 get_shareable_state(PyObject *op, PyThreadState *tstate)
 {
     uint8_t state = _Py_atomic_load_uint8(&op->ob_shareable);
-    if (state == _Py_SHAREABLE_LOCAL &&
-        _Py_atomic_load_uint32_relaxed(&op->ob_owner_id) == 0 &&
-        _Py_IsStaticImmortal(op))
-    {
+    if (state == _Py_SHAREABLE_LOCAL && _Py_IsStaticImmortal(op)) {
+        uint32_t owner = _Py_atomic_load_uint32_relaxed(&op->ob_owner_id);
+        uint32_t main = tstate->interp->main_threadgroup->id;
         // Static allocation alone is not an immutability declaration.
         // Primitive singletons have immutable representations; extension
         // objects without an explicit declaration belong to Main.
-        if (is_intrinsically_immutable(Py_TYPE(op))) {
+        if (owner == 0 && is_intrinsically_immutable(Py_TYPE(op))) {
             // Some internal immutable singletons live in read-only storage.
             state = _Py_SHAREABLE_IMMUTABLE;
         }
-        else {
-            uint32_t unowned = 0;
+        else if (owner == 0 ||
+                 (owner != main && !_PyThreadGroup_OwnerIsAlive(owner))) {
+            // Immortal extension objects can survive Py_Finalize(). Rebind
+            // only after the previous interpreter and its groups are gone.
             _Py_atomic_compare_exchange_uint32(
-                &op->ob_owner_id, &unowned, tstate->interp->main_threadgroup->id);
+                &op->ob_owner_id, &owner, main);
         }
     }
     return state;

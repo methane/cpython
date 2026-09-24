@@ -14,7 +14,7 @@ The five-stage implementation is **not complete**.
 | ThreadGroups | Group selection, serialization, detach/reattach, native identity, fork and Main lifetime | Parallel execution in the normal build |
 | One-time ABI change | Compact owner/state and group-biased RC header; no cleanup queue fields | Complete the allocation/GC port and audit native layouts |
 | Biased and deferred reference counting | Group bias, per-thread code counts, deferred stack roots and normal GC integration | Queue collection and reclamation with concurrent groups |
-| LOCAL and IMMUTABLE ownership | Initial state metadata; ordinary LOCAL objects retain immediate reclamation | Builtin/static metadata and checked C API/VM reference acquisition |
+| LOCAL and IMMUTABLE ownership | Builtin/static metadata, access APIs and common C API return checks; ordinary LOCAL objects retain immediate reclamation | Complete C API/VM acquisitions and resolve shared static extension types |
 | Parallel allocation and cyclic GC | Normal generational collector understands biased, deferred and per-thread counts | Concurrent allocation, internal world stops, owner-correct finalization and teardown |
 
 Freezing, protective/compound locks, synchronized objects and functions,
@@ -57,6 +57,16 @@ string or None. Main survives interpreter dictionaries, finalizers and type
 teardown. The public `PyInterpreterState_Clear()` path releases Main after
 clearing the other interpreter state.
 
+Reference acquisition accepts IMMUTABLE objects and LOCAL objects owned by the
+current ThreadGroup. Rejected acquisitions raise `IllegalThreadAccessException`
+without inspecting the foreign object's representation. C API checks apply to
+acquired results; already-acquired arguments need no additional runtime check.
+Extension objects remain LOCAL unless explicitly declared immutable. Static
+extension objects can rebind to a new Main after their former interpreter has
+been destroyed. Simultaneous use of managed static extension types by multiple
+interpreters needs a design decision; see the
+[Japanese questions](PEP-0805-open-questions-ja.md).
+
 ## Extraction provenance
 
 `7201b6539e` was applied with `git cherry-pick --no-commit`. Since it mixes all
@@ -91,6 +101,11 @@ Parallel scheduling tests remain skipped while the interpreter GIL is enabled.
 - Main lifetime: 524 tests passed across ThreadGroups, threading, fork, module
   C APIs, sys, embedding and deferred reclamation. A native late-cleanup probe
   retains no Python reference to Main. `test_threadgroup` also passes `-R 3:3`.
+- Ownership and common C API returns: 493 tests passed across native ownership
+  probes, abstract/object/dict/list/tuple APIs, calls, embedding and interpreters
+  (12 skips). The probes cover 20 APIs with both LOCAL and IMMUTABLE results,
+  within and across groups. Ownership/object/dict tests also pass `-R 3:3`
+  (55 tests, 3 skips). These checks do not yet cover all VM heap loads.
 - A separate non-debug build (`./configure`, `Py_GIL_DISABLED=0`, `Py_DEBUG=0`,
   empty ABI flags, interpreter GIL enabled) passes 782 tests across
   `test_threadgroup`, `test_local_reclamation`, `test_deferred_reclamation`,
