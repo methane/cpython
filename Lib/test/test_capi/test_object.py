@@ -186,7 +186,7 @@ class EnableDeferredRefcountingTest(unittest.TestCase):
         # A shallow immutable container can use deferred counting even though
         # its contents remain LOCAL.
         foo = (local,)
-        self.assertEqual(_testcapi.pyobject_enable_deferred_refcount(foo), int(support.Py_GIL_DISABLED))
+        self.assertEqual(_testcapi.pyobject_enable_deferred_refcount(foo), 1)
 
         # The object must be tracked by the GC
         not_gc_tracked = tuple([1, 2])
@@ -195,8 +195,7 @@ class EnableDeferredRefcountingTest(unittest.TestCase):
 
         # Make sure reference counting works on foo now
         self.assertEqual(foo, ([],))
-        if support.Py_GIL_DISABLED:
-            self.assertTrue(_testinternalcapi.has_deferred_refcount(foo))
+        self.assertTrue(_testinternalcapi.has_deferred_refcount(foo))
 
         # Make sure that PyUnstable_Object_EnableDeferredRefcount is thread safe
         def silly_func(obj):
@@ -214,9 +213,8 @@ class EnableDeferredRefcountingTest(unittest.TestCase):
             for i in range(10):
                 silly_list.append(i)
 
-        if support.Py_GIL_DISABLED:
-            self.assertFalse(_testinternalcapi.has_deferred_refcount(silly_list))
-            self.assertTrue(_testinternalcapi.has_deferred_refcount(foo))
+        self.assertFalse(_testinternalcapi.has_deferred_refcount(silly_list))
+        self.assertTrue(_testinternalcapi.has_deferred_refcount(foo))
 
 
 class IsUniquelyReferencedTest(unittest.TestCase):

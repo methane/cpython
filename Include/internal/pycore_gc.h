@@ -26,7 +26,7 @@ static inline PyObject* _Py_FROM_GC(PyGC_Head *gc) {
 }
 
 
-/* Bit flags for ob_gc_bits (in Py_GIL_DISABLED builds)
+/* Bit flags for ob_gc_bits
  *
  * Setting the bits requires a relaxed store. The per-object lock must also be
  * held, except when the object is only visible to a single thread (e.g. during
@@ -35,7 +35,6 @@ static inline PyObject* _Py_FROM_GC(PyGC_Head *gc) {
  * Reading the bits requires using a relaxed load, but does not require holding
  * the per-object lock.
  */
-#ifdef Py_GIL_DISABLED
 #  define _PyGC_BITS_TRACKED        (1<<0)     // Tracked by the GC
 #  define _PyGC_BITS_FINALIZED      (1<<1)     // tp_finalize was called
 #  define _PyGC_BITS_UNREACHABLE    (1<<2)
@@ -43,9 +42,7 @@ static inline PyObject* _Py_FROM_GC(PyGC_Head *gc) {
 #  define _PyGC_BITS_SHARED         (1<<4)
 #  define _PyGC_BITS_ALIVE          (1<<5)    // Reachable from a known root.
 #  define _PyGC_BITS_DEFERRED       (1<<6)    // Use deferred reference counting
-#endif
 
-#ifdef Py_GIL_DISABLED
 
 static inline void
 _PyObject_SET_GC_BITS(PyObject *op, uint8_t new_bits)
@@ -67,7 +64,6 @@ _PyObject_CLEAR_GC_BITS(PyObject *op, uint8_t bits_to_clear)
     _Py_atomic_store_uint8_relaxed(&op->ob_gc_bits, bits & ~bits_to_clear);
 }
 
-#endif
 
 /* True if the object is currently tracked by the GC. */
 static inline int _PyObject_GC_IS_TRACKED(PyObject *op) {

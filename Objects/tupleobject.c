@@ -140,7 +140,8 @@ _PyTuple_MaybeUntrack(PyObject *op)
     PyTupleObject *t;
     Py_ssize_t i, n;
 
-    if (!PyTuple_CheckExact(op) || !_PyObject_GC_IS_TRACKED(op))
+    if (!PyTuple_CheckExact(op) || !_PyObject_GC_IS_TRACKED(op) ||
+        _PyObject_HAS_GC_BITS(op, _PyGC_BITS_DEFERRED))
         return;
     t = (PyTupleObject *) op;
     n = Py_SIZE(t);

@@ -10,6 +10,7 @@
 #include "pycore_interp.h"        // PyInterpreterState.gc
 #include "pycore_interpframe.h"   // _PyFrame_GetLocalsArray()
 #include "pycore_object.h"
+#include "pycore_object_deferred.h"
 #include "pycore_object_alloc.h"  // _PyObject_MallocWithType()
 #include "pycore_pyerrors.h"
 #include "pycore_pystate.h"       // _PyThreadState_GET()
@@ -409,7 +410,13 @@ update_refs(PyGC_Head *containers)
             gc = next;
             continue;
         }
-        gc_reset_refs(gc, Py_REFCNT(op));
+        Py_ssize_t refs = Py_REFCNT(op);
+        if (_PyObject_HasDeferredRefcount(op)) {
+            // The deferred sentinel keeps acyclic objects alive until GC.
+            // It is not an incoming reference from a live root.
+            refs -= _Py_REF_DEFERRED;
+        }
+        gc_reset_refs(gc, refs);
         /* Python's cyclic gc should never see an incoming refcount
          * of 0:  if something decref'ed to 0, it should have been
          * deallocated immediately at that time.
@@ -428,7 +435,8 @@ update_refs(PyGC_Head *containers)
          * so serious that maybe this should be a release-build
          * check instead of an assert?
          */
-        _PyObject_ASSERT(op, gc_get_refs(gc) != 0);
+        _PyObject_ASSERT(op, gc_get_refs(gc) > 0 ||
+                         _PyObject_HasDeferredRefcount(op));
         gc = next;
         candidates++;
     }
@@ -1075,6 +1083,29 @@ finalize_garbage(PyThreadState *tstate, PyGC_Head *collectable)
     gc_list_merge(&seen, collectable);
 }
 
+// Convert survivors to ordinary reference counting before the last collection
+// ends. Later interpreter teardown must not leave deferred-only objects behind.
+static void
+disable_deferred_list(PyGC_Head *objects)
+{
+    PyGC_Head seen;
+    gc_list_init(&seen);
+    while (!gc_list_is_empty(objects)) {
+        PyGC_Head *gc = GC_NEXT(objects);
+        PyObject *op = FROM_GC(gc);
+        gc_list_move(gc, &seen);
+        if (_PyObject_HasDeferredRefcount(op)) {
+            Py_INCREF(op);
+            _PyObject_CLEAR_GC_BITS(op, _PyGC_BITS_DEFERRED);
+            _Py_atomic_add_ssize(&op->ob_ref_shared,
+                                -_Py_REF_SHARED(_Py_REF_DEFERRED, 0));
+            _Py_ExplicitMergeRefcount(op, 0);
+            Py_DECREF(op);
+        }
+    }
+    gc_list_merge(&seen, objects);
+}
+
 /* Break reference cycles by clearing the containers involved.  This is
  * tricky business as the lists can be changing and we don't know which
  * objects may be freed.  It is possible I screwed something up here.
@@ -1099,16 +1130,25 @@ delete_garbage(PyThreadState *tstate, GCState *gcstate,
             }
         }
         else {
-            inquiry clear;
-            if ((clear = Py_TYPE(op)->tp_clear) != NULL) {
-                Py_INCREF(op);
+            // Hold a real reference before dropping the deferred sentinel.
+            // Immutable objects can have no tp_clear (e.g. tuples), and may
+            // already have zero real references, so do this for every object.
+            Py_INCREF(op);
+            if (_PyObject_HasDeferredRefcount(op)) {
+                _PyObject_CLEAR_GC_BITS(op, _PyGC_BITS_DEFERRED);
+                _Py_atomic_add_ssize(&op->ob_ref_shared,
+                                    -_Py_REF_SHARED(_Py_REF_DEFERRED, 0));
+                _Py_ExplicitMergeRefcount(op, 0);
+            }
+            inquiry clear = Py_TYPE(op)->tp_clear;
+            if (clear != NULL) {
                 (void) clear(op);
                 if (_PyErr_Occurred(tstate)) {
                     PyErr_FormatUnraisable("Exception ignored in tp_clear of %s",
                                            Py_TYPE(op)->tp_name);
                 }
-                Py_DECREF(op);
             }
+            Py_DECREF(op);
         }
         if (GC_NEXT(collectable) == gc) {
             /* object is still alive, move it, it may die later */
@@ -1643,6 +1683,12 @@ gc_collect_main(PyThreadState *tstate, int generation, _PyGC_Reason reason)
         invoke_gc_callback(tstate, "stop", generation, &stats);
     }
 
+    if (reason == _Py_GC_REASON_SHUTDOWN) {
+        for (int gen = 0; gen < NUM_GENERATIONS; gen++) {
+            disable_deferred_list(GEN_HEAD(gcstate, gen));
+        }
+        disable_deferred_list(&gcstate->permanent_generation.head);
+    }
     assert(!_PyErr_Occurred(tstate));
     gcstate->frame = NULL;
     _Py_atomic_store_int(&gcstate->collecting, 0);
@@ -1817,6 +1863,7 @@ _PyGC_CollectNoFail(PyThreadState *tstate)
        during interpreter shutdown (and then never finish it).
        See http://bugs.python.org/issue8713#msg195178 for an example.
        */
+    tstate->interp->gc.deferred_disabled = 1;
     gc_collect_main(tstate, NUM_GENERATIONS - 1, _Py_GC_REASON_SHUTDOWN);
 }
 

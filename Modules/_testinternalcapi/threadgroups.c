@@ -3,6 +3,7 @@
 #include "parts.h"
 #include "pycore_lock.h"
 #include "pycore_object.h"
+#include "pycore_object_deferred.h"
 #include "pycore_pystate.h"
 #include "pycore_pythread.h"
 #include "pycore_threadgroup.h"
@@ -307,7 +308,76 @@ test_threadgroup_refcount_overflow(PyObject *self, PyObject *unused)
     Py_RETURN_NONE;
 }
 
+struct deferred_shutdown_probe {
+    PyObject *container;
+    int child_destroyed;
+};
+
+static void
+deferred_shutdown_child(PyObject *capsule)
+{
+    struct deferred_shutdown_probe *probe = PyCapsule_GetPointer(
+        capsule, "deferred shutdown child");
+    assert(probe != NULL);
+    probe->child_destroyed = 1;
+}
+
+static void
+deferred_shutdown_parent(PyObject *capsule)
+{
+    struct deferred_shutdown_probe *probe = PyCapsule_GetPointer(
+        capsule, "deferred shutdown parent");
+    assert(probe != NULL);
+    // interp->dict is cleared after the shutdown collections in
+    // finalize_modules(). Its remaining objects must reclaim normally.
+    assert(!_PyObject_HasDeferredRefcount(probe->container));
+    Py_CLEAR(probe->container);
+    assert(probe->child_destroyed);
+    PyMem_RawFree(probe);
+}
+
+static PyObject *
+check_deferred_shutdown(PyObject *self, PyObject *unused)
+{
+    struct deferred_shutdown_probe *probe = PyMem_RawCalloc(1, sizeof(*probe));
+    if (probe == NULL) {
+        return PyErr_NoMemory();
+    }
+    PyObject *child = PyCapsule_New(probe, "deferred shutdown child",
+                                    deferred_shutdown_child);
+    if (child == NULL) {
+        PyMem_RawFree(probe);
+        return NULL;
+    }
+    probe->container = PyTuple_New(1);
+    if (probe->container == NULL) {
+        Py_DECREF(child);
+        PyMem_RawFree(probe);
+        return NULL;
+    }
+    PyTuple_SET_ITEM(probe->container, 0, child);
+    PyObject *parent = PyCapsule_New(probe, "deferred shutdown parent",
+                                     deferred_shutdown_parent);
+    if (parent == NULL) {
+        Py_DECREF(probe->container);
+        PyMem_RawFree(probe);
+        return NULL;
+    }
+    PyObject *dict = PyInterpreterState_GetDict(PyInterpreterState_Get());
+    if (dict == NULL ||
+        PyDict_SetItemString(dict, "deferred_shutdown_probe", parent) < 0) {
+        Py_DECREF(parent);
+        return NULL;
+    }
+    // No allocation follows enabling deferral, so tuple untracking cannot
+    // run before the flag is set. The test invokes this once per interpreter.
+    assert(PyUnstable_Object_EnableDeferredRefcount(probe->container) == 1);
+    Py_DECREF(parent);
+    Py_RETURN_NONE;
+}
+
 static PyMethodDef methods[] = {
+    {"check_deferred_shutdown", check_deferred_shutdown, METH_NOARGS, NULL},
     {"threadgroup_refcount_probe", threadgroup_refcount_probe, METH_VARARGS, NULL},
     {"test_threadgroup_refcount_overflow", test_threadgroup_refcount_overflow,
      METH_NOARGS, NULL},

@@ -223,6 +223,8 @@ struct gc_stats {
 };
 
 struct _gc_runtime_state {
+    // Shutdown collections restore ordinary RC for surviving objects.
+    int deferred_disabled;
     /* Is automatic collection enabled? */
     int enabled;
     int debug;

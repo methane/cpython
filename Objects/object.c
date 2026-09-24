@@ -2842,8 +2842,8 @@ _Py_SetImmortal(PyObject *op)
 void
 _PyObject_SetDeferredRefcount(PyObject *op)
 {
-#ifdef Py_GIL_DISABLED
-    if (_Py_atomic_load_uint8(&op->ob_shareable) == _Py_SHAREABLE_LOCAL) {
+    if (_PyThreadState_GET()->interp->gc.deferred_disabled ||
+        _Py_atomic_load_uint8(&op->ob_shareable) != _Py_SHAREABLE_IMMUTABLE) {
         return;
     }
     assert(PyType_IS_GC(Py_TYPE(op)));
@@ -2851,14 +2851,13 @@ _PyObject_SetDeferredRefcount(PyObject *op)
     assert(op->ob_ref_shared == 0);
     _PyObject_SET_GC_BITS(op, _PyGC_BITS_DEFERRED);
     op->ob_ref_shared = _Py_REF_SHARED(_Py_REF_DEFERRED, 0);
-#endif
 }
 
 int
 PyUnstable_Object_EnableDeferredRefcount(PyObject *op)
 {
-#ifdef Py_GIL_DISABLED
-    if (_Py_atomic_load_uint8(&op->ob_shareable) == _Py_SHAREABLE_LOCAL) {
+    if (_PyThreadState_GET()->interp->gc.deferred_disabled ||
+        _Py_atomic_load_uint8(&op->ob_shareable) != _Py_SHAREABLE_IMMUTABLE) {
         return 0;
     }
     if (!PyType_IS_GC(Py_TYPE(op))) {
@@ -2888,9 +2887,6 @@ PyUnstable_Object_EnableDeferredRefcount(PyObject *op)
     }
     _Py_atomic_add_ssize(&op->ob_ref_shared, _Py_REF_SHARED(_Py_REF_DEFERRED, 0));
     return 1;
-#else
-    return 0;
-#endif
 }
 
 int

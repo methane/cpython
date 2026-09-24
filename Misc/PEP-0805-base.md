@@ -95,6 +95,20 @@ The local-reclamation guards and tests were selected from `a26d4fff4c` using
 
 This is an intermediate normal-build port, not completion of the five stages.
 In particular, the old free-threading collector still assumes OS-thread IDs
-and a larger local counter; it must not be selected with this header. The
-normal collector currently handles biased counts but not deferred counts.
+and a larger local counter; it must not be selected with this header. The normal collector now handles biased and deferred counts.
 Ownership access checks and parallel execution are not enabled yet.
+
+Deferred reclamation is now also enabled in the normal build for immutable,
+GC-tracked objects. The normal generational collector excludes the deferred
+sentinel when finding roots and removes it while holding a real reference
+before reclaiming garbage. Tuples with deferred counts remain tracked. Shutdown
+collections disable further deferral and restore ordinary RC for survivors,
+including objects retained until interpreter-dict cleanup.
+
+`test_deferred_reclamation`, `test_local_reclamation`, `test_threadgroup`,
+`test_capi.test_object`, `test_gc` and `test_embed` pass: 192 tests, 9 skips.
+`test_deferred_reclamation`, `test_gc` and `test_capi.test_object` also pass
+`-R 3:3` without reference leaks. These tests include cyclic and acyclic
+immutable containers, resurrection, weakref callbacks and late shutdown.
+This does not yet port deferred VM stack references or per-thread counts;
+those remain necessary before declaring the reference-counting stage complete.
