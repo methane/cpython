@@ -162,6 +162,54 @@ lock = threading.Lock()
             assert alias.__shareable__ is object.__getattribute__(alias, '__shareable__')
         ''')
 
+    def test_invalid_unpacked_substitution_in_list(self):
+        self.run_script('''
+            class Unpacked:
+                __typing_is_unpacked_typevartuple__ = True
+                def __typing_subst__(self, argument):
+                    return int
+            # Use a tuple snapshot too large for the small-tuple freelist.
+            arguments = [Unpacked()] + [int] * 100
+            alias = GenericAlias(list, (arguments,))
+            with SuppressCrashReport():
+                try:
+                    alias[str]
+                except TypeError as exc:
+                    assert str(exc) == (
+                        'expected __typing_subst__ of Unpacked objects '
+                        'to return a tuple, not type'
+                    ), str(exc)
+                else:
+                    raise AssertionError('invalid unpacked substitution accepted')
+        ''')
+
+    @threading_helper.requires_working_threading()
+    def test_transferred_iterator_reduce_does_not_leak(self):
+        self.run_script('''
+            import sys
+            boxes = tuple(threading.TransferBox(iter(GenericAlias(list, (int,))))
+                          for _ in range(50))
+            results = SynchronizedList()
+            def worker():
+                for box in boxes:
+                    iterator = box.claim()
+                    try:
+                        iterator.__reduce__()
+                    except IllegalThreadAccessException:
+                        results.append('denied')
+                    except BaseException as exc:
+                        results.append((type(exc).__name__, str(exc)))
+                    else:
+                        results.append('foreign alias acquired')
+            thread = threading.Thread(target=worker, group=threading.ThreadGroup())
+            before = sys.getrefcount(iter)
+            thread.start()
+            thread.join()
+            after = sys.getrefcount(iter)
+            assert list(results) == ['denied'] * 50, list(results)
+            assert after == before, (before, after)
+        ''')
+
     @threading_helper.requires_working_threading()
     def test_foreign_argument_in_worker_created_alias(self):
         self.run_script('''

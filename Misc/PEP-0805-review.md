@@ -1088,8 +1088,8 @@ through TransferBox now check their origin before representation or comparison,
 and their representation checks the name fetched from that origin. The origin
 itself retains its original ownership during shallow transfer.
 
-The nine-method regression suite reports seventeen failures including subtests on the
-previous runtime. Separate probes confirm SIGABRT for unprotected union
+The nine-method regression suite reports seventeen failures including subtests
+on the previous runtime. Separate probes confirm SIGABRT for unprotected union
 representation and constant string evaluation, and a normal return when union
 construction suppresses an access exception. The protected-default regression
 also reproduces an input assertion in PyTuple_Pack. Logs and reproductions are
@@ -1104,6 +1104,27 @@ the builds.
 These repairs do not depend on a decision about protection ending inside a
 callback. The remaining native typing paths and wider acquisition audit still
 need review; the nine questions for Mark remain separate from this work.
+
+### GenericAlias error cleanup
+
+The invalid-unpacked-substitution error path now formats its TypeError before
+releasing the tuple snapshot of list arguments. Previously it fetched the
+original parameter from that snapshot after decrefing it. A 101-element
+argument list avoids the small-tuple freelist and reproduces SIGSEGV on the
+previous runtime; the repair retains the expected TypeError and message.
+
+Reducing a transferred GenericAlias iterator correctly rejects its retained
+foreign alias, but previously leaked the builtin iter reference acquired before
+that check. Fifty rejected reductions increase iter's reference count by fifty
+on the previous runtime. The error path now releases that reference, and a
+failed builtin lookup returns immediately. Both regressions fail before the
+repair. Logs and standalone reproductions are in
+`/tmp/pep805-generic-alias-cleanup/`.
+
+The seven-suite generic-alias, typing and iterator selection passes on the
+default, GIL and Tier 2 builds, each with 963 tests and no skips. The incremental
+builds report no compiler warnings or failed module imports. Sources and tests
+match across the three builds.
 
 ## Earlier re-review and implementation follow-ups
 
