@@ -93,6 +93,7 @@
                 PyStackRef_XCLOSE(value);
                 _PyFrame_StackPointerInvalidate(frame);
             }
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -168,6 +169,7 @@
             stack_pointer[-2] = res;
             stack_pointer += -1;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -242,6 +244,7 @@
             stack_pointer[-2] = res;
             stack_pointer += -1;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -316,6 +319,7 @@
             stack_pointer[-2] = res;
             stack_pointer += -1;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -402,6 +406,7 @@
                 PyStackRef_XCLOSE(value);
                 _PyFrame_StackPointerInvalidate(frame);
             }
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -487,6 +492,7 @@
             stack_pointer[0] = res;
             stack_pointer += 1;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -562,6 +568,7 @@
             stack_pointer[-2] = res;
             stack_pointer += -1;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -636,6 +643,7 @@
             stack_pointer[-2] = res;
             stack_pointer += -1;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -716,6 +724,7 @@
                 PyStackRef_XCLOSE(value);
                 _PyFrame_StackPointerInvalidate(frame);
             }
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -899,6 +908,7 @@
                 PyStackRef_XCLOSE(value);
                 _PyFrame_StackPointerInvalidate(frame);
             }
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -982,6 +992,7 @@
                 PyStackRef_XCLOSE(value);
                 _PyFrame_StackPointerInvalidate(frame);
             }
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -1071,6 +1082,7 @@
             stack_pointer[-2] = res;
             stack_pointer += -1;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -1171,6 +1183,7 @@
                 PyStackRef_XCLOSE(value);
                 _PyFrame_StackPointerInvalidate(frame);
             }
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -1259,6 +1272,7 @@
             stack_pointer[-2] = res;
             stack_pointer += -1;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -1334,6 +1348,7 @@
             stack_pointer[-2] = res;
             stack_pointer += -1;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -1408,6 +1423,7 @@
             stack_pointer[-2] = res;
             stack_pointer += -1;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -1503,6 +1519,7 @@
             stack_pointer[0] = res;
             stack_pointer += 1;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -1565,6 +1582,7 @@
             stack_pointer[0] = interpolation;
             stack_pointer += 1;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -1590,6 +1608,7 @@
             stack_pointer[-oparg] = list;
             stack_pointer += 1 - oparg;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -1617,6 +1636,7 @@
             stack_pointer[-oparg*2] = map;
             stack_pointer += 1 - oparg*2;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -1679,6 +1699,7 @@
             stack_pointer[-oparg] = set;
             stack_pointer += 1 - oparg;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -1715,6 +1736,7 @@
             stack_pointer[0] = slice;
             stack_pointer += 1;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -1742,6 +1764,7 @@
             stack_pointer[-oparg] = str;
             stack_pointer += 1 - oparg;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -1783,6 +1806,7 @@
             stack_pointer[0] = template;
             stack_pointer += 1;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -1805,6 +1829,7 @@
             stack_pointer[-oparg] = tup;
             stack_pointer += 1 - oparg;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -1964,6 +1989,7 @@
                     JUMP_TO_LABEL(error);
                 }
             }
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -2543,6 +2569,7 @@
                     JUMP_TO_LABEL(error);
                 }
             }
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -2657,6 +2684,7 @@
                     JUMP_TO_LABEL(error);
                 }
             }
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -2767,6 +2795,7 @@
                     JUMP_TO_LABEL(error);
                 }
             }
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -2900,6 +2929,7 @@
                     JUMP_TO_LABEL(error);
                 }
             }
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -3051,6 +3081,7 @@
                     JUMP_TO_LABEL(error);
                 }
             }
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -3450,6 +3481,7 @@
                     JUMP_TO_LABEL(error);
                 }
             }
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -3508,6 +3540,7 @@
                     JUMP_TO_LABEL(error);
                 }
             }
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -3582,6 +3615,7 @@
                     JUMP_TO_LABEL(error);
                 }
             }
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -3690,6 +3724,7 @@
                     JUMP_TO_LABEL(error);
                 }
             }
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -3835,6 +3870,7 @@
                     JUMP_TO_LABEL(error);
                 }
             }
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -4087,6 +4123,7 @@
                     JUMP_TO_LABEL(error);
                 }
             }
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -4328,6 +4365,7 @@
                     JUMP_TO_LABEL(error);
                 }
             }
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -4451,6 +4489,7 @@
                     JUMP_TO_LABEL(error);
                 }
             }
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -4592,6 +4631,7 @@
                     JUMP_TO_LABEL(error);
                 }
             }
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -4734,6 +4774,7 @@
                     JUMP_TO_LABEL(error);
                 }
             }
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -4878,6 +4919,7 @@
                     JUMP_TO_LABEL(error);
                 }
             }
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -5035,6 +5077,7 @@
                     JUMP_TO_LABEL(error);
                 }
             }
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -5135,6 +5178,7 @@
                     JUMP_TO_LABEL(error);
                 }
             }
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -5486,6 +5530,7 @@
                     JUMP_TO_LABEL(error);
                 }
             }
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -5591,6 +5636,7 @@
                     JUMP_TO_LABEL(error);
                 }
             }
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -5679,6 +5725,7 @@
                     JUMP_TO_LABEL(error);
                 }
             }
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -5763,6 +5810,7 @@
             stack_pointer[1] = match;
             stack_pointer += 2;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(2, 0);
             DISPATCH();
         }
 
@@ -5803,6 +5851,7 @@
             stack_pointer[0] = b;
             stack_pointer += 1;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(2, 0);
             DISPATCH();
         }
 
@@ -5889,6 +5938,7 @@
             stack_pointer[2] = value;
             stack_pointer += 3;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(3, 0);
             DISPATCH();
         }
 
@@ -5974,6 +6024,7 @@
             stack_pointer[0] = res;
             stack_pointer += 1;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -6043,6 +6094,7 @@
             stack_pointer[-2] = res;
             stack_pointer += -1;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -6116,6 +6168,7 @@
             stack_pointer[-2] = res;
             stack_pointer += -1;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -6189,6 +6242,7 @@
             stack_pointer[-2] = res;
             stack_pointer += -1;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -6263,6 +6317,7 @@
                 PyStackRef_XCLOSE(value);
                 _PyFrame_StackPointerInvalidate(frame);
             }
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -6334,6 +6389,7 @@
                 PyStackRef_XCLOSE(value);
                 _PyFrame_StackPointerInvalidate(frame);
             }
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -6405,6 +6461,7 @@
                 PyStackRef_XCLOSE(value);
                 _PyFrame_StackPointerInvalidate(frame);
             }
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -6439,6 +6496,7 @@
             stack_pointer[0] = result;
             stack_pointer += 1;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -6457,6 +6515,7 @@
             stack_pointer[0] = top;
             stack_pointer += 1;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(2 + (oparg-1), 0);
             DISPATCH();
         }
 
@@ -6627,6 +6686,7 @@
                 PyStackRef_XCLOSE(value);
                 _PyFrame_StackPointerInvalidate(frame);
             }
+            ASSERT_STACK_ACCESS(4 + (oparg - 1), 0);
             DISPATCH();
         }
 
@@ -6696,6 +6756,7 @@
                 PyStackRef_XCLOSE(value);
                 _PyFrame_StackPointerInvalidate(frame);
             }
+            ASSERT_STACK_ACCESS(1 + (oparg - 1), 0);
             DISPATCH();
         }
 
@@ -6814,6 +6875,7 @@
             _PyFrame_StackPointerValidate(frame);
             PyStackRef_CLOSE(receiver);
             _PyFrame_StackPointerInvalidate(frame);
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -6942,6 +7004,7 @@
             stack_pointer[0] = res;
             stack_pointer += 1;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -6985,6 +7048,7 @@
             stack_pointer[0] = res;
             stack_pointer += 1;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -7033,6 +7097,7 @@
                     }
                     JUMPBY(oparg + 1);
                     stack_pointer[-1] = null_or_index;
+                    ASSERT_STACK_ACCESS(2, 0);
                     DISPATCH();
                 }
                 next = item;
@@ -7041,6 +7106,7 @@
             stack_pointer[0] = next;
             stack_pointer += 1;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(3, 0);
             DISPATCH();
         }
 
@@ -7159,6 +7225,7 @@
                     null_or_index = PyStackRef_TagInt(-1);
                     JUMPBY(oparg + 1);
                     stack_pointer[-1] = null_or_index;
+                    ASSERT_STACK_ACCESS(2, 0);
                     DISPATCH();
                 }
                 #endif
@@ -7184,6 +7251,7 @@
                     null_or_index = PyStackRef_TagInt(-1);
                     JUMPBY(oparg + 1);
                     stack_pointer[-1] = null_or_index;
+                    ASSERT_STACK_ACCESS(2, 0);
                     DISPATCH();
                 }
                 #else
@@ -7206,6 +7274,7 @@
                     JUMP_TO_LABEL(error);
                 }
             }
+            ASSERT_STACK_ACCESS(3, 0);
             DISPATCH();
         }
 
@@ -7250,6 +7319,7 @@
                 STAT_INC(FOR_ITER, hit);
                 if (r->len <= 0) {
                     JUMPBY(oparg + 1);
+                    ASSERT_STACK_ACCESS(2, 0);
                     DISPATCH();
                 }
             }
@@ -7273,6 +7343,7 @@
             stack_pointer[0] = next;
             stack_pointer += 1;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(3, 0);
             DISPATCH();
         }
 
@@ -7313,6 +7384,7 @@
                     null_or_index = PyStackRef_TagInt(-1);
                     JUMPBY(oparg + 1);
                     stack_pointer[-1] = null_or_index;
+                    ASSERT_STACK_ACCESS(2, 0);
                     DISPATCH();
                 }
             }
@@ -7340,6 +7412,7 @@
                     JUMP_TO_LABEL(error);
                 }
             }
+            ASSERT_STACK_ACCESS(3, 0);
             DISPATCH();
         }
 
@@ -7383,6 +7456,7 @@
                         JUMP_TO_LABEL(error);
                     }
                     JUMPBY(oparg + 1);
+                    ASSERT_STACK_ACCESS(2, 0);
                     DISPATCH();
                 }
                 null_or_index = PyStackRef_TagInt(index);
@@ -7399,6 +7473,7 @@
             stack_pointer[0] = next;
             stack_pointer += 1;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(3, 0);
             DISPATCH();
         }
 
@@ -7475,6 +7550,7 @@
             stack_pointer[0] = iter;
             stack_pointer += 1;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -7500,6 +7576,7 @@
             stack_pointer[0] = awaitable;
             stack_pointer += 1;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(2, 0);
             DISPATCH();
         }
 
@@ -7531,6 +7608,7 @@
             stack_pointer[0] = iter;
             stack_pointer += 1;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -7581,6 +7659,7 @@
             stack_pointer[0] = index_or_null;
             stack_pointer += 1;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(2, 0);
             DISPATCH();
         }
 
@@ -7616,6 +7695,7 @@
             stack_pointer[0] = res;
             stack_pointer += 1;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(2, 0);
             DISPATCH();
         }
 
@@ -7651,6 +7731,7 @@
             stack_pointer[0] = zero;
             stack_pointer += 1;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(2, 0);
             DISPATCH();
         }
 
@@ -7680,6 +7761,7 @@
             stack_pointer[0] = len;
             stack_pointer += 1;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(2, 0);
             DISPATCH();
         }
 
@@ -7717,6 +7799,7 @@
             stack_pointer[0] = res;
             stack_pointer += 1;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(2, 0);
             DISPATCH();
         }
 
@@ -7777,6 +7860,7 @@
             stack_pointer[0] = res;
             stack_pointer += 1;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -7945,6 +8029,7 @@
                     JUMP_TO_LABEL(error);
                 }
             }
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -8170,6 +8255,7 @@
                     JUMP_TO_LABEL(error);
                 }
             }
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -8330,6 +8416,7 @@
                     JUMP_TO_LABEL(error);
                 }
             }
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -8434,6 +8521,7 @@
             _PyFrame_StackPointerValidate(frame);
             PyStackRef_CLOSE(value);
             _PyFrame_StackPointerInvalidate(frame);
+            ASSERT_STACK_ACCESS(2, 0);
             DISPATCH();
         }
 
@@ -8481,6 +8569,7 @@
             _PyFrame_StackPointerValidate(frame);
             PyStackRef_CLOSE(receiver);
             _PyFrame_StackPointerInvalidate(frame);
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -8510,6 +8599,7 @@
                 }
                 JUMPBY(oparg + 1);
                 stack_pointer[-1] = null_or_index;
+                ASSERT_STACK_ACCESS(2, 0);
                 DISPATCH();
             }
             next = item;
@@ -8518,6 +8608,7 @@
             stack_pointer[0] = next;
             stack_pointer += 1;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(3, 0);
             DISPATCH();
         }
 
@@ -8779,6 +8870,7 @@
             stack_pointer[0] = attr;
             stack_pointer += 1 + (oparg & 1);
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(1 + (oparg & 1), 0);
             DISPATCH();
         }
 
@@ -9130,6 +9222,7 @@
             stack_pointer[0] = res;
             stack_pointer += 1;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -9236,6 +9329,7 @@
             stack_pointer[0] = value;
             stack_pointer += 1;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -9324,6 +9418,7 @@
                 PyStackRef_XCLOSE(value);
                 _PyFrame_StackPointerInvalidate(frame);
             }
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -9497,6 +9592,7 @@
             }
             stack_pointer += -1;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(1 + (oparg-1), 0);
             DISPATCH();
         }
 
@@ -9553,6 +9649,7 @@
                 PyStackRef_XCLOSE(value);
                 _PyFrame_StackPointerInvalidate(frame);
             }
+            ASSERT_STACK_ACCESS(1 + (oparg-1), 0);
             DISPATCH();
         }
 
@@ -9630,6 +9727,7 @@
             stack_pointer[-1] = attr;
             stack_pointer += (oparg&1);
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(1 + (oparg&1), 0);
             DISPATCH();
         }
 
@@ -9696,6 +9794,7 @@
                     JUMP_TO_LABEL(error);
                 }
             }
+            ASSERT_STACK_ACCESS(1 + (oparg&1), 0);
             DISPATCH();
         }
 
@@ -9772,6 +9871,7 @@
                     JUMP_TO_LABEL(error);
                 }
             }
+            ASSERT_STACK_ACCESS(1 + (oparg&1), 0);
             DISPATCH();
         }
 
@@ -9963,6 +10063,7 @@
                     JUMP_TO_LABEL(error);
                 }
             }
+            ASSERT_STACK_ACCESS(1 + (oparg&1), 0);
             DISPATCH();
         }
 
@@ -10026,6 +10127,7 @@
                     JUMP_TO_LABEL(error);
                 }
             }
+            ASSERT_STACK_ACCESS(1 + (oparg&1), 0);
             DISPATCH();
         }
 
@@ -10079,6 +10181,7 @@
                     JUMP_TO_LABEL(error);
                 }
             }
+            ASSERT_STACK_ACCESS(1 + (oparg&1), 0);
             DISPATCH();
         }
 
@@ -10142,6 +10245,7 @@
                     JUMP_TO_LABEL(error);
                 }
             }
+            ASSERT_STACK_ACCESS(1 + (oparg&1), 0);
             DISPATCH();
         }
 
@@ -10231,6 +10335,7 @@
                     JUMP_TO_LABEL(error);
                 }
             }
+            ASSERT_STACK_ACCESS(1 + (oparg&1), 0);
             DISPATCH();
         }
 
@@ -10286,6 +10391,7 @@
                     JUMP_TO_LABEL(error);
                 }
             }
+            ASSERT_STACK_ACCESS(1 + (oparg&1), 0);
             DISPATCH();
         }
 
@@ -10351,6 +10457,7 @@
                     JUMP_TO_LABEL(error);
                 }
             }
+            ASSERT_STACK_ACCESS(1 + (oparg&1), 0);
             DISPATCH();
         }
 
@@ -10524,6 +10631,7 @@
                     JUMP_TO_LABEL(error);
                 }
             }
+            ASSERT_STACK_ACCESS(1 + (oparg&1), 0);
             DISPATCH();
         }
 
@@ -10654,6 +10762,7 @@
                     JUMP_TO_LABEL(error);
                 }
             }
+            ASSERT_STACK_ACCESS(1 + (oparg&1), 0);
             DISPATCH();
         }
 
@@ -10686,6 +10795,7 @@
             stack_pointer[0] = bc;
             stack_pointer += 1;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -10703,6 +10813,7 @@
             stack_pointer[0] = value;
             stack_pointer += 1;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -10717,6 +10828,7 @@
             _PyStackRef value;
             // _LOAD_CONST
             {
+                Test_EvalFrame_Loads++;
                 PyObject *obj = GETITEM(FRAME_CO_CONSTS, oparg);
                 value = PyStackRef_FromPyObjectBorrow(obj);
             }
@@ -10734,6 +10846,7 @@
                     JUMP_TO_LABEL(error);
                 }
             }
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -10771,6 +10884,7 @@
             stack_pointer[0] = value;
             stack_pointer += 1;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -10795,6 +10909,7 @@
             stack_pointer[0] = value;
             stack_pointer += 1;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(1, 1);
             DISPATCH();
         }
 
@@ -10819,6 +10934,7 @@
             stack_pointer[0] = value;
             stack_pointer += 1;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(1, 1);
             DISPATCH();
         }
 
@@ -10844,6 +10960,7 @@
             stack_pointer[0] = value;
             stack_pointer += 1;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(1, 1);
             DISPATCH();
         }
 
@@ -10868,6 +10985,7 @@
             stack_pointer[0] = value;
             stack_pointer += 1;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(1, 1);
             DISPATCH();
         }
 
@@ -10903,6 +11021,7 @@
             stack_pointer[1] = value2;
             stack_pointer += 2;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(2, 1);
             DISPATCH();
         }
 
@@ -10937,6 +11056,7 @@
             stack_pointer[0] = value;
             stack_pointer += 1;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(1, 1);
             DISPATCH();
         }
 
@@ -10971,6 +11091,7 @@
             stack_pointer[0] = value;
             stack_pointer += 1;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(1, 1);
             DISPATCH();
         }
 
@@ -11006,6 +11127,7 @@
             stack_pointer[1] = value2;
             stack_pointer += 2;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(2, 1);
             DISPATCH();
         }
 
@@ -11040,6 +11162,7 @@
             stack_pointer[0] = value;
             stack_pointer += 1;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(1, 1);
             DISPATCH();
         }
 
@@ -11100,6 +11223,7 @@
             stack_pointer[0] = value;
             stack_pointer += 1;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -11215,6 +11339,7 @@
             stack_pointer[0] = v;
             stack_pointer += 1;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -11288,6 +11413,7 @@
             }
             stack_pointer += (oparg & 1);
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(1 + (oparg & 1), 0);
             DISPATCH();
         }
 
@@ -11383,6 +11509,7 @@
             }
             stack_pointer += (oparg & 1);
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(1 + (oparg & 1), 0);
             DISPATCH();
         }
 
@@ -11465,6 +11592,7 @@
             }
             stack_pointer += (oparg & 1);
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(1 + (oparg & 1), 0);
             DISPATCH();
         }
 
@@ -11490,6 +11618,7 @@
             stack_pointer[0] = locals;
             stack_pointer += 1;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -11546,6 +11675,7 @@
             stack_pointer[0] = v;
             stack_pointer += 1;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -11564,6 +11694,7 @@
             stack_pointer[0] = value;
             stack_pointer += 1;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -11613,6 +11744,7 @@
                     JUMP_TO_LABEL(error);
                 }
             }
+            ASSERT_STACK_ACCESS(2, 0);
             DISPATCH();
         }
 
@@ -11777,6 +11909,7 @@
             stack_pointer[0] = attr;
             stack_pointer += 1 + (oparg & 1);
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(1 + (oparg & 1), 0);
             DISPATCH();
         }
 
@@ -11860,6 +11993,7 @@
                     JUMP_TO_LABEL(error);
                 }
             }
+            ASSERT_STACK_ACCESS(1 + (oparg&1), 0);
             DISPATCH();
         }
 
@@ -11962,6 +12096,7 @@
                     JUMP_TO_LABEL(error);
                 }
             }
+            ASSERT_STACK_ACCESS(1 + (oparg&1), 0);
             DISPATCH();
         }
 
@@ -12032,6 +12167,7 @@
                 PyStackRef_XCLOSE(value);
                 _PyFrame_StackPointerInvalidate(frame);
             }
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -12064,6 +12200,7 @@
             }
             stack_pointer += -2;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(1 + (oparg - 1), 0);
             DISPATCH();
         }
 
@@ -12141,6 +12278,7 @@
                 PyStackRef_XCLOSE(value);
                 _PyFrame_StackPointerInvalidate(frame);
             }
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -12169,6 +12307,7 @@
             stack_pointer[0] = values_or_none;
             stack_pointer += 1;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(3, 0);
             DISPATCH();
         }
 
@@ -12188,6 +12327,7 @@
             stack_pointer[0] = res;
             stack_pointer += 1;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(2, 0);
             DISPATCH();
         }
 
@@ -12207,6 +12347,7 @@
             stack_pointer[0] = res;
             stack_pointer += 1;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(2, 0);
             DISPATCH();
         }
 
@@ -12453,6 +12594,7 @@
             stack_pointer[0] = new_exc;
             stack_pointer += 1;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(2, 0);
             DISPATCH();
         }
 
@@ -12469,6 +12611,7 @@
             stack_pointer[0] = res;
             stack_pointer += 1;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -12784,6 +12927,7 @@
             stack_pointer[0] = res;
             stack_pointer += 1;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -12864,6 +13008,7 @@
             stack_pointer[0] = res;
             stack_pointer += 1;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -12934,6 +13079,7 @@
                         }
                         JUMPBY(oparg);
                         stack_pointer[-2] = null_or_index;
+                        ASSERT_STACK_ACCESS(3, 0);
                         DISPATCH();
                     }
                     retval = item;
@@ -12962,6 +13108,7 @@
             }
             stack_pointer[-2] = null_or_index;
             stack_pointer[-1] = retval;
+            ASSERT_STACK_ACCESS(3, 0);
             DISPATCH();
         }
 
@@ -13026,6 +13173,7 @@
             stack_pointer[0] = retval;
             stack_pointer += 1;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(3, 0);
             DISPATCH();
         }
 
@@ -13158,6 +13306,7 @@
                     }
                     next = none;
                     JUMPBY(oparg);
+                    ASSERT_STACK_ACCESS(3, 0);
                     DISPATCH();
                 }
                 assert(stack_pointer == _PyFrame_GetStackPointer(frame));
@@ -13172,6 +13321,7 @@
             }
             stack_pointer[-2] = null_or_index;
             stack_pointer[-1] = next;
+            ASSERT_STACK_ACCESS(3, 0);
             DISPATCH();
         }
 
@@ -13251,6 +13401,7 @@
             }
             stack_pointer += -1;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(1 + (oparg-1), 0);
             DISPATCH();
         }
 
@@ -13344,6 +13495,7 @@
             stack_pointer[-2] = func_out;
             stack_pointer += -1;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -13383,6 +13535,7 @@
                 PyStackRef_XCLOSE(value);
                 _PyFrame_StackPointerInvalidate(frame);
             }
+            ASSERT_STACK_ACCESS(1 + (oparg-1), 0);
             DISPATCH();
         }
 
@@ -13830,6 +13983,7 @@
             stack_pointer[0] = value2;
             stack_pointer += 1;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(1, 1);
             DISPATCH();
         }
 
@@ -14275,6 +14429,7 @@
             top = temp;
             stack_pointer[-2 - (oparg-2)] = bottom;
             stack_pointer[-1] = top;
+            ASSERT_STACK_ACCESS(2 + (oparg-2), 0);
             DISPATCH();
         }
 
@@ -14330,6 +14485,7 @@
             stack_pointer[0] = res;
             stack_pointer += 1;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -14376,6 +14532,7 @@
                 PyStackRef_XCLOSE(value);
                 _PyFrame_StackPointerInvalidate(frame);
             }
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -14400,6 +14557,7 @@
                 JUMP_TO_PREDICTED(TO_BOOL);
             }
             STAT_INC(TO_BOOL, hit);
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -14443,6 +14601,7 @@
                 PyStackRef_CLOSE_SPECIALIZED(value, _PyLong_ExactDealloc);
             }
             stack_pointer[-1] = res;
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -14491,6 +14650,7 @@
                 PyStackRef_XCLOSE(value);
                 _PyFrame_StackPointerInvalidate(frame);
             }
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -14518,6 +14678,7 @@
             STAT_INC(TO_BOOL, hit);
             res = PyStackRef_False;
             stack_pointer[-1] = res;
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -14561,6 +14722,7 @@
                 PyStackRef_CLOSE_SPECIALIZED(value, _PyUnicode_ExactDealloc);
             }
             stack_pointer[-1] = res;
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -14677,6 +14839,7 @@
                 PyStackRef_XCLOSE(value);
                 _PyFrame_StackPointerInvalidate(frame);
             }
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -14713,6 +14876,7 @@
                 PyStackRef_XCLOSE(value);
                 _PyFrame_StackPointerInvalidate(frame);
             }
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -14731,6 +14895,7 @@
             res = PyStackRef_IsFalse(value)
             ? PyStackRef_True : PyStackRef_False;
             stack_pointer[-1] = res;
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -14762,6 +14927,7 @@
             }
             stack_pointer += 1 + (oparg & 0xFF) + (oparg >> 8);
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(1 + (oparg & 0xFF) + (oparg >> 8), 0);
             DISPATCH();
         }
 
@@ -14818,6 +14984,7 @@
             }
             stack_pointer += oparg;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(oparg, 0);
             DISPATCH();
         }
 
@@ -14887,6 +15054,7 @@
                     }
                 }
             }
+            ASSERT_STACK_ACCESS(oparg, 0);
             DISPATCH();
         }
 
@@ -14947,6 +15115,7 @@
                     }
                 }
             }
+            ASSERT_STACK_ACCESS(oparg, 0);
             DISPATCH();
         }
 
@@ -15009,6 +15178,7 @@
                     }
                 }
             }
+            ASSERT_STACK_ACCESS(oparg, 0);
             DISPATCH();
         }
 
@@ -15061,6 +15231,7 @@
             stack_pointer[0] = res;
             stack_pointer += 1;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(6, 0);
             DISPATCH();
         }
 
@@ -15141,6 +15312,7 @@
             stack_pointer[0] = value;
             stack_pointer += 1;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 

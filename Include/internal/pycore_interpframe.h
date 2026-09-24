@@ -117,6 +117,9 @@ static inline _PyStackRef _PyFrame_StackPop(_PyInterpreterFrame *f) {
 }
 
 static inline void _PyFrame_StackPush(_PyInterpreterFrame *f, _PyStackRef value) {
+    assert(f->owner == FRAME_OWNED_BY_INTERPRETER ||
+           PyStackRef_IsNull(value) || PyStackRef_IsTaggedInt(value) ||
+           _PyObject_IsAccessible(PyStackRef_AsPyObjectBorrow(value)));
     *f->stackpointer = value;
     f->stackpointer++;
 }

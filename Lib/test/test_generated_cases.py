@@ -125,6 +125,59 @@ class TestGeneratedCases(unittest.TestCase):
 
         self.assertEqual(actual.strip(), expected.strip())
 
+    def test_access_validation_after_macro_check(self):
+        input = """
+        op(_LOAD, (-- value)) {
+            value = PyStackRef_FromPyObjectBorrow(GET_ITEM());
+        }
+        op(_CHECK, (value -- value)) {
+            int err = check_access(value);
+            ERROR_IF(err);
+            if (oparg) {
+                DISPATCH();
+            }
+        }
+        macro(LOAD) = _LOAD + _CHECK;
+        """
+        # The unchecked reference must be spilled for GC before the access
+        # check. Validate only after the complete instruction has succeeded.
+        output = """
+        TARGET(LOAD) {
+            #if _Py_TAIL_CALL_INTERP
+            int opcode = LOAD;
+            (void)(opcode);
+            #endif
+            frame->instr_ptr = next_instr;
+            next_instr += 1;
+            INSTRUCTION_STATS(LOAD);
+            _PyStackRef value;
+            // _LOAD
+            {
+                value = PyStackRef_FromPyObjectBorrow(GET_ITEM());
+            }
+            // _CHECK
+            {
+                stack_pointer[0] = value;
+                stack_pointer += 1;
+                ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                _PyFrame_SetStackPointer(frame, stack_pointer);
+                _PyFrame_StackPointerValidate(frame);
+                int err = check_access(value);
+                _PyFrame_StackPointerInvalidate(frame);
+                if (err) {
+                    JUMP_TO_LABEL(error);
+                }
+                if (oparg) {
+                    ASSERT_STACK_ACCESS(1, 0);
+                    DISPATCH();
+                }
+            }
+            ASSERT_STACK_ACCESS(1, 0);
+            DISPATCH();
+        }
+        """
+        self.run_cases_test(input, output)
+
     def test_inst_no_args(self):
         input = """
         inst(OP, (--)) {
@@ -192,6 +245,7 @@ class TestGeneratedCases(unittest.TestCase):
             stack_pointer[0] = res;
             stack_pointer += 1;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
     """
@@ -218,6 +272,7 @@ class TestGeneratedCases(unittest.TestCase):
             value = stack_pointer[-1];
             res = SPAM(value);
             stack_pointer[-1] = res;
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
     """
@@ -249,6 +304,7 @@ class TestGeneratedCases(unittest.TestCase):
             stack_pointer[-2] = res;
             stack_pointer += -1;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
     """
@@ -277,6 +333,7 @@ class TestGeneratedCases(unittest.TestCase):
             left = stack_pointer[-2];
             result = SPAM(left, right);
             stack_pointer[-1] = result;
+            ASSERT_STACK_ACCESS(2, 0);
             DISPATCH();
         }
     """
@@ -310,6 +367,7 @@ class TestGeneratedCases(unittest.TestCase):
             arg = stack_pointer[-1];
             res = Py_None;
             stack_pointer[-1] = res;
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -334,6 +392,7 @@ class TestGeneratedCases(unittest.TestCase):
             }
             res = Py_None;
             stack_pointer[-1] = res;
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
     """
@@ -376,6 +435,7 @@ class TestGeneratedCases(unittest.TestCase):
             stack_pointer[0] = res;
             stack_pointer += 1;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -493,6 +553,7 @@ class TestGeneratedCases(unittest.TestCase):
             stack_pointer[-2] = res;
             stack_pointer += -1;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
     """
@@ -527,6 +588,7 @@ class TestGeneratedCases(unittest.TestCase):
             stack_pointer[-2] = res;
             stack_pointer += -1;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
     """
@@ -646,6 +708,7 @@ class TestGeneratedCases(unittest.TestCase):
             stack_pointer[-3] = res;
             stack_pointer += -2;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -669,6 +732,7 @@ class TestGeneratedCases(unittest.TestCase):
             _PyFrame_StackPointerValidate(frame);
             op1(left, right);
             _PyFrame_StackPointerInvalidate(frame);
+            ASSERT_STACK_ACCESS(2, 0);
             DISPATCH();
         }
 
@@ -696,6 +760,7 @@ class TestGeneratedCases(unittest.TestCase):
             stack_pointer[-3] = res;
             stack_pointer += -2;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
     """
@@ -868,6 +933,7 @@ class TestGeneratedCases(unittest.TestCase):
             stack_pointer[-1 + oparg*3] = above;
             stack_pointer += oparg*3;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(2 + oparg*3, 0);
             DISPATCH();
         }
     """
@@ -897,6 +963,7 @@ class TestGeneratedCases(unittest.TestCase):
             stack_pointer[0] = above;
             stack_pointer += 1;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(1 + oparg, 0);
             DISPATCH();
         }
     """
@@ -968,6 +1035,7 @@ class TestGeneratedCases(unittest.TestCase):
             stack_pointer[1] = val2;
             stack_pointer += 2;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(2, 0);
             DISPATCH();
         }
         """
@@ -1105,6 +1173,7 @@ class TestGeneratedCases(unittest.TestCase):
             arg = &stack_pointer[-1];
             out = &stack_pointer[-1];
             out[0] = arg[0];
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
         """
@@ -1142,6 +1211,7 @@ class TestGeneratedCases(unittest.TestCase):
             frame->instr_ptr = next_instr;
             next_instr += 1;
             INSTRUCTION_STATS(INST);
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
 
@@ -1187,6 +1257,7 @@ class TestGeneratedCases(unittest.TestCase):
                 y = w;
                 USE(y);
             }
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
         """
@@ -1231,6 +1302,7 @@ class TestGeneratedCases(unittest.TestCase):
                 y = x;
                 USE(y);
             }
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
         """
@@ -1383,6 +1455,7 @@ class TestGeneratedCases(unittest.TestCase):
             stack_pointer[1] = b;
             stack_pointer += 2;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(2, 0);
             DISPATCH();
         }
         """
@@ -1678,6 +1751,7 @@ class TestGeneratedCases(unittest.TestCase):
             stack_pointer[1] = out2;
             stack_pointer += 2;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(2, 0);
             DISPATCH();
         }
         """
@@ -1872,6 +1946,7 @@ class TestGeneratedCases(unittest.TestCase):
             in = stack_pointer[-1];
             in = 0;
             stack_pointer[-1] = in;
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
         """
@@ -2005,6 +2080,7 @@ class TestGeneratedCases(unittest.TestCase):
             stack_pointer[-2] = res;
             stack_pointer += -1;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
         """
@@ -2056,6 +2132,7 @@ class TestGeneratedCases(unittest.TestCase):
             stack_pointer[-2] = res;
             stack_pointer += -1;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
         """
@@ -2112,6 +2189,7 @@ class TestGeneratedCases(unittest.TestCase):
             _PyFrame_StackPointerValidate(frame);
             escaping_after_loop(a);
             _PyFrame_StackPointerInvalidate(frame);
+            ASSERT_STACK_ACCESS(1, 0);
             DISPATCH();
         }
         """

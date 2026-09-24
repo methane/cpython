@@ -410,6 +410,14 @@ PyAPI_DATA(const _Py_CODEUNIT *) _Py_INTERPRETER_TRAMPOLINE_INSTRUCTIONS_PTR;
 
 /* Helper functions for large uops */
 
+#ifdef Py_DEBUG
+// Exported for the duplicated interpreter in _testinternalcapi.
+PyAPI_FUNC(int)
+_PyEval_StackRefsAreAccessible(struct _PyInterpreterFrame *frame,
+                             const _PyStackRef *start,
+                             const _PyStackRef *end, int allow_cells);
+#endif
+
 PyAPI_FUNC(int)
 _PyEval_CheckLocalAccess(struct _PyInterpreterFrame *frame, int index);
 

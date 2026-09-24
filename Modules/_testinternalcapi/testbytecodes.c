@@ -152,8 +152,8 @@ dummy_func(
             }
         }
 
-        // Override an inst
-        override inst(LOAD_CONST, (-- value)) {
+        // Override the load while retaining LOAD_CONST's access check.
+        override op(_LOAD_CONST, (-- value)) {
             Test_EvalFrame_Loads++;
             PyObject *obj = GETITEM(FRAME_CO_CONSTS, oparg);
             value = PyStackRef_FromPyObjectBorrow(obj);

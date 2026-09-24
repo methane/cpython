@@ -3,7 +3,7 @@
 import textwrap
 import unittest
 
-from test.support import threading_helper
+from test.support import import_helper, threading_helper
 from test.support.script_helper import assert_python_ok
 
 
@@ -135,6 +135,47 @@ class ConstantAccessTests(unittest.TestCase):
             assert not thread.is_alive()
             observed = results.get()
             assert observed == 'ok', observed
+        '''))
+
+    def test_custom_eval_frame_constants(self):
+        import_helper.import_module('_testinternalcapi')
+        assert_python_ok('-c', textwrap.dedent('''
+            import _testinternalcapi
+            import threading
+
+            def template(other):
+                return ... is other
+
+            lock = threading.Lock()
+            with lock:
+                value = lock.protect([42])
+                constants = tuple(
+                    value if item is Ellipsis else item
+                    for item in template.__code__.co_consts)
+                code = template.__code__.replace(co_consts=constants)
+                function = type(template)(code, template.__globals__)
+
+            try:
+                # Exercise the duplicated interpreter, whose LOAD_CONST
+                # instrumentation must preserve the normal access check.
+                _testinternalcapi.get_eval_frame_stats()
+                _testinternalcapi.set_eval_frame_interp()
+                for warmup in (0, 100):
+                    with lock:
+                        for _ in range(warmup):
+                            assert function(None) is False
+                    try:
+                        function(None)
+                    except UnprotectedAccessException:
+                        pass
+                    else:
+                        raise AssertionError('unprotected constant acquired')
+                    with lock:
+                        assert function(None) is False
+            finally:
+                _testinternalcapi.set_eval_frame_default()
+            stats = _testinternalcapi.get_eval_frame_stats()
+            assert stats['loads'] > 0, stats
         '''))
 
 

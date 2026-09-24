@@ -15,6 +15,7 @@ from analyzer import (
     Flush,
     analysis_error,
     StackItem,
+    CodeSection,
 )
 from generators_common import (
     DEFAULT_INPUT,
@@ -22,8 +23,10 @@ from generators_common import (
     write_header,
     type_and_null,
     Emitter,
+    TokenIterator,
 )
 from cwriter import CWriter
+from lexer import Token
 from typing import TextIO
 from stack import Local, Stack, StackError, get_stack_effect, Storage
 
@@ -35,6 +38,35 @@ INSTRUCTION_START_MARKER = "/* BEGIN INSTRUCTIONS */"
 INSTRUCTION_END_MARKER = "/* END INSTRUCTIONS */"
 LABEL_START_MARKER = "/* BEGIN LABELS */"
 LABEL_END_MARKER = "/* END LABELS */"
+
+
+class Tier1Emitter(Emitter):
+    def assert_stack_access(self, stack: Stack, inst: Instruction | None) -> None:
+        if inst is None:
+            return
+        count = stack.logical_sp - stack.base_offset
+        if count.as_int() == 0:
+            return
+        # LOAD_CLOSURE is lowered to a fast-local load. Such loads can carry
+        # internal closure cells; other instructions must not expose them.
+        allow_cells = int(inst.name.startswith("LOAD_FAST") or
+                          inst.name == "STORE_FAST_LOAD_FAST")
+        self.emit(f"ASSERT_STACK_ACCESS({count.to_c()}, {allow_cells});\n")
+
+    def dispatch(
+        self,
+        tkn: Token,
+        tkn_iter: TokenIterator,
+        uop: CodeSection,
+        storage: Storage,
+        inst: Instruction | None,
+    ) -> bool:
+        if storage.spilled:
+            raise analysis_error("stack_pointer needs reloading before dispatch", tkn)
+        storage.stack.flush(self.out)
+        self.assert_stack_access(storage.stack, inst)
+        self.emit(tkn)
+        return False
 
 
 def declare_variable(var: StackItem, out: CWriter) -> None:
@@ -184,7 +216,7 @@ def generate_tier1(
         {LABEL_START_MARKER}
 """)
     out = CWriter(outfile, 2, lines)
-    emitter = Emitter(out, analysis.labels)
+    emitter = Tier1Emitter(out, analysis.labels)
     generate_tier1_labels(analysis, emitter)
     outfile.write(f"{LABEL_END_MARKER}\n")
     outfile.write(FOOTER)
@@ -217,7 +249,7 @@ def generate_tier1_cases(
     analysis: Analysis, outfile: TextIO, lines: bool
 ) -> None:
     out = CWriter(outfile, 2, lines)
-    emitter = Emitter(out, analysis.labels)
+    emitter = Tier1Emitter(out, analysis.labels)
     out.emit("\n")
     for name, inst in sorted(analysis.instructions.items()):
         out.emit("\n")
@@ -266,6 +298,7 @@ def generate_tier1_cases(
         out.start_line()
         if reachable: # type: ignore[possibly-undefined]
             stack.flush(out)
+            emitter.assert_stack_access(stack, inst)
             out.emit("DISPATCH();\n")
         out.start_line()
         out.emit("}")

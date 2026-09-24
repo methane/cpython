@@ -745,6 +745,52 @@ cleanup:
     return res;
 }
 
+#ifdef Py_DEBUG
+int
+_PyEval_StackRefsAreAccessible(_PyInterpreterFrame *frame,
+                             const _PyStackRef *start,
+                             const _PyStackRef *end, int allow_cells)
+{
+    // Entry frames carry VM metadata and pending native return values. Their
+    // INTERPRETER_EXIT path checks the result before returning it to C.
+    if (frame->owner == FRAME_OWNED_BY_INTERPRETER) {
+        return 1;
+    }
+    assert(start >= _PyFrame_Stackbase(frame));
+    assert(end >= start);
+    for (const _PyStackRef *p = start; p < end; p++) {
+        if (PyStackRef_IsNull(*p) || PyStackRef_IsTaggedInt(*p)) {
+            continue;
+        }
+        PyObject *obj = PyStackRef_AsPyObjectBorrow(*p);
+        if (_PyObject_IsAccessible(obj)) {
+            continue;
+        }
+        // LOAD_CLOSURE transports a frame's internal cell to a new function.
+        // LOAD_DEREF checks its contents; ordinary heap loads and results
+        // never receive this exception, even if their value is the same cell.
+        int internal_cell = 0;
+        if (allow_cells && PyCell_Check(obj)) {
+            PyCodeObject *code = _PyFrame_GetCode(frame);
+            for (int i = 0; i < code->co_nlocalsplus; i++) {
+                _PyLocals_Kind kind = _PyLocals_GetKind(code->co_localspluskinds, i);
+                if ((kind & (CO_FAST_CELL | CO_FAST_FREE)) &&
+                    !PyStackRef_IsNull(frame->localsplus[i]) &&
+                    !PyStackRef_IsTaggedInt(frame->localsplus[i]) &&
+                    PyStackRef_AsPyObjectBorrow(frame->localsplus[i]) == obj) {
+                    internal_cell = 1;
+                    break;
+                }
+            }
+        }
+        if (!internal_cell) {
+            return 0;
+        }
+    }
+    return 1;
+}
+#endif
+
 int
 _PyEval_CheckLocalAccess(_PyInterpreterFrame *frame, int index)
 {

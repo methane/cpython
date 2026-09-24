@@ -196,6 +196,14 @@ do { \
 
 
 /* Do interpreter dispatch accounting for tracing and instrumentation */
+#ifdef Py_DEBUG
+#define ASSERT_STACK_ACCESS(count, allow_cells) \
+    assert(_PyEval_StackRefsAreAccessible( \
+        frame, stack_pointer - (count), stack_pointer, (allow_cells)))
+#else
+#define ASSERT_STACK_ACCESS(count, allow_cells) ((void)0)
+#endif
+
 #define DISPATCH() \
     { \
         _PyFrame_StackAssertInvalid(frame); \

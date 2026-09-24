@@ -164,6 +164,62 @@ produced no warnings. Before the repair, the two new tests reported 17 failing
 subtests. An initial suite invocation also named the nonexistent
 `test_unicode` module; the corrected selection above was rerun successfully.
 
+### Debug stack validation follow-up
+
+Tier 1 generation now inserts `ASSERT_STACK_ACCESS` at successful instruction
+dispatch for the outputs represented by its stack model. Direct frame pushes
+also assert accessibility. These assertions do not run in release builds and
+do not set or replace Python exceptions. The generator regression explicitly
+checks that validation follows the access-check micro-op, including an early
+dispatch, rather than the temporary GC spill before that check. Existing
+generated-code fixtures retain their previous output with the new assertion
+lines inserted.
+
+The custom `_testinternalcapi` evaluator still declared a whole-instruction
+`LOAD_CONST` override after the earlier repair converted it into a macro.
+The generated macro retained its access check, but silently lost the test
+evaluator's constant-load counter. Overriding `_LOAD_CONST` restores that
+instrumentation while retaining `_CHECK_CONST_ACCESS`. A subprocess regression
+checks protected constants before and after warmup and verifies that the load
+counter is positive. Before the repair, it failed with `loads == 0`; the
+access-denial assertions themselves already passed.
+
+The remaining coverage limits are recorded in finding 8 below. In particular,
+testing a Tier 2 build also exercises Tier 1 but does not establish equivalent
+validation inside every Tier 2 micro-op.
+
+Validation for this follow-up:
+
+- Free-threading: the 43-file PEP/access selection reported 519 tests, with
+  only the new load-counter regression failing before its repair. The final
+  constant-access and `test_capi.test_misc` run passed 318 tests with 3 skips.
+  The eight-file evaluator/generator/coroutine/monitoring selection passed
+  674 tests with 3 skips, and `test_generated_cases` passed all 100 tests.
+  These selections overlap and their counts must not be added together.
+- GIL: 50 completed PEP/access/generator/evaluator files passed, reporting
+  975 tests with 11 skips. All 12 tests selected by `Test_Pep523*` also passed.
+- Tier 2 interpreter: the same selection plus `test_optimizer` passed in
+  51 completed files, reporting 981 tests with 11 skips. The separate
+  `test_capi.test_opt` file passed 333 tests with 3 skips, and all 12
+  `Test_Pep523*` tests passed.
+- The initial file-list invocation accidentally expanded dotted C API names
+  to the whole `test_capi` package. Those unintended package workers were
+  stopped; the completed files above remain valid, and the requested C API
+  files were then invoked by their explicit dotted names.
+- The complete `test_capi.test_misc` file **does not pass** in either GIL
+  build: subinterpreter extension-import tests fail, and importing
+  `_testcapi` from a subinterpreter aborts in `type_call()` with an exception
+  already set. The single test
+  `SubinterpreterTest.test_py_config_isoloated_per_interpreter` reproduces
+  the same abort in a separately rebuilt, unchanged `3657b0d87c` GIL tree.
+  It is an existing compatibility defect, not a failure of the new stack
+  assertion. The free-threading build skips this particular test by its
+  existing `requires_gil_enabled` decorator.
+- Compilation succeeds in all three builds. The GIL and free-threading
+  builds have no warnings; Tier 2 repeats its four previously recorded unused
+  variable/function warnings. The final custom-evaluator rebuild repeats
+  only the existing `dump_cache_item` warning.
+
 ## Earlier re-review and implementation follow-ups
 
 One earlier question was incorrect: footnote 3 of the
@@ -378,16 +434,30 @@ acceptable or establishes that Mark's approval is needed for routine fixes.
    expectations. The intended invariant must be settled before claiming that
    these checks can be removed safely.
 
-8. **Uniform debug validation of stack publication is unfinished.**
+8. **Uniform debug validation of stack publication remains incomplete.**
    The appendix's [validation section](https://peps.python.org/pep-0805/appendix-implementation/#validation)
    calls for validating references whenever they are pushed to the interpreter
-   stack. The common stack-reference constructors
-   (`Include/internal/pycore_stackref.h`) and generated stack stores
-   (`Tools/cases_generator/stack.py:301`) do not provide such an accessibility
-   assertion. Checks currently depend on individual opcode and call paths.
-   This source-inspection finding is distinct from native JIT work and from
-   the access failures demonstrated by the probes. Passing selected tests
-   does not establish this invariant at every publication point.
+   stack. The follow-up adds debug assertions for completed Tier 1 instruction
+   outputs, including explicit dispatch paths, and `_PyFrame_StackPush()`.
+   Validation follows the instruction's access checks: temporary stack spills
+   needed for GC may contain a reference that the next micro-op will reject.
+   Interpreter-owned entry frames are excluded because they carry VM metadata
+   and pending native returns; `INTERPRETER_EXIT` checks the returned object.
+   Fast-local loads retain the existing narrow exception for a frame's own
+   closure cells, whose contents are checked by `LOAD_DEREF`. Heap and call
+   results do not get this exception.
+   Tier 2 internal publication still needs equivalent validation, and a
+   complete audit of frame-changing and manually managed stack paths remains.
+   Passing selected tests does not establish this invariant at every point.
+
+9. **Subinterpreter extension imports have an additional compatibility
+   failure.** The GIL build aborts while importing `_testcapi` in
+   `test_capi.test_misc.SubinterpreterTest.test_py_config_isoloated_per_interpreter`.
+   `type_call()` finds a pending exception during module initialization.
+   This also reproduces before the stack-validation changes at `3657b0d87c`.
+   Other tests in that file report foreign-ThreadGroup access exceptions when
+   importing shared extension modules. These failures need diagnosis and
+   repair; they are not an acceptable outcome of the intended access model.
 
 ## Questions to discuss with Mark
 
