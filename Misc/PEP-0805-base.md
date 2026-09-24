@@ -174,6 +174,12 @@ Parallel scheduling tests remain skipped while the interpreter GIL is enabled.
 - The non-debug normal build at `0bab8b44df` passes 643 tests across GC,
   ThreadGroups, C APIs, reclamation, weakrefs and embedding (23 skips). This
   validates the bitmap and introspection changes before the debug-output fix.
+- The non-debug normal build at `806db9bcb5` passes 663 tests across eight
+  files, including finalization and the debug-output/failure-injection
+  regressions (23 skips). Its `mimalloc_debug` selection passes 96 tests across
+  GC, ThreadGroups and deferred reclamation (four skips). This build retains
+  `Py_GIL_DISABLED=0`, `Py_DEBUG=0`, an enabled interpreter GIL and a 24-byte
+  object header.
 
 - Group bias: 844 tests passed across ThreadGroups, local reclamation, object
   and miscellaneous C APIs, GC, threading, embedding and sys. Native probes cover

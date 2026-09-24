@@ -71,11 +71,16 @@ free-threaded builds.
 GC for the default build
 ------------------------
 
-Normally the C structure supporting a regular Python object looks as follows:
+The PEP 805 reference implementation uses the following compact object header.
+On a 64-bit platform the first row is eight bytes: a four-byte ThreadGroup
+owner/bias ID followed by the one-byte local count, sharing state, flags and GC
+bits. The shared reference count and type pointer are each eight bytes.
 
 ```
     object -----> +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+ \
-                  |                    ob_refcnt                  | |
+                  |   owner_id / local / state / flags / GC bits  | |
+                  +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+ |
+                  |                  ob_ref_shared                | |
                   +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+ | PyObject_HEAD
                   |                    *ob_type                   | |
                   +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+ /
@@ -91,8 +96,10 @@ to accommodate extra information **before** the normal layout:
                   +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+ | PyGC_Head
                   |                    *_gc_prev                  | |
     object -----> +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+ /
-                  |                    ob_refcnt                  | \
-                  +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+ | PyObject_HEAD
+                  |   owner_id / local / state / flags / GC bits  | \
+                  +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+ |
+                  |                  ob_ref_shared                | | PyObject_HEAD
+                  +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+ |
                   |                    *ob_type                   | |
                   +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+ /
                   |                      ...                      |
@@ -124,6 +131,11 @@ removed from - it, which is frequently required while GC is running.
 
 GC for the free-threaded build
 ------------------------------
+
+This section describes the original free-threading collector being ported.
+Its header below is not the reference implementation's compact header;
+the old backend still depends on fields such as `ob_tid`. See the
+[port status](../Misc/PEP-0805-base.md).
 
 In the free-threaded build, Python objects contain a 1-byte field
 `ob_gc_bits` that is used to track garbage collection related state. The
@@ -659,13 +671,12 @@ of `PyGC_Head` discussed in the `Memory layout and object structure`_ section:
 
 
 - The `_gc_prev` field is normally used as the "previous" pointer to maintain the
-  doubly linked list but its lowest two bits are used to keep the flags
-  `PREV_MASK_COLLECTING` and `_PyGC_PREV_MASK_FINALIZED`. Between collections,
-  the only flag that can be present is `_PyGC_PREV_MASK_FINALIZED` that indicates
-  if an object has been already finalized. During collections `_gc_prev` is
+  doubly linked list. Bit 1 holds `PREV_MASK_COLLECTING`; bit 0 is reserved.
+  Tracking and finalization status are stored in `ob_gc_bits` and updated with
+  atomic read-modify-write operations. During collections `_gc_prev` is
   temporarily used for storing a copy of the reference count (`gc_ref`), in
-  addition to two flags, and the GC linked list becomes a singly linked list until
-  `_gc_prev` is restored.
+  addition to the collecting flag, and the GC linked list becomes a singly linked
+  list until `_gc_prev` is restored.
 
 - The `_gc_next` field is used as the "next" pointer to maintain the doubly linked
   list but during collection its lowest bit is used to keep the
@@ -746,16 +757,21 @@ data structure.
 - The default build implementation uses `PyGC_Head` for the unreachable
   object list.  The free-threaded build implementation repurposes the
   `ob_tid` field to store a unreachable objects linked list.
-- The default build implementation stores flags in the `_gc_prev` field of
-  `PyGC_Head`.  The free-threaded build implementation stores these flags
-  in `ob_gc_bits`.
+- Both implementations use `ob_gc_bits` for tracking and finalization state.
+  The default build keeps temporary collection flags in the `PyGC_Head` links,
+  while the original free-threaded collector stores collection flags in
+  `ob_gc_bits` too.
 
 
-The default build implementation relies on the
+The normal-build port still relies on the
 [global interpreter lock](https://docs.python.org/3/glossary.html#term-global-interpreter-lock)
-for thread safety.  The free-threaded build implementation has two "stop the
-world" pauses, in which all other executing threads are temporarily paused so
-that the GC can safely access reference counts and object attributes.
+for GC list mutation. It now also pauses other threads while examining reference
+counts, stack roots and heap edges, and during heap introspection. Weakref
+callbacks, finalizers, debug output and destruction run after threads resume.
+Debug output uses a separate snapshot of strong references so a reentrant
+output callback can reclaim objects without invalidating a list walk. The
+original free-threaded collector uses paused reachability passes and separate
+worklists for finalization and destruction.
 
 The default build implementation is a generational collector.  The
 free-threaded build is non-generational; each collection scans the entire
