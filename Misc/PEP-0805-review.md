@@ -1021,6 +1021,42 @@ The incremental builds have no compiler warnings or failed module imports.
 Logs and the isolated tuple probe are in `/tmp/pep805-zstd/`.
 No Mark decision was needed for this repair.
 
+### GenericAlias stored-reference acquisition
+
+GenericAlias operations now validate their stored origins before calling,
+representing, comparing, hashing or forwarding attributes to them. Reduction,
+MRO entries and starred-alias construction also check references acquired from
+alias storage before passing them to C APIs. The constructor checks its tuple
+elements; its setup helper asserts the valid-input contract instead of
+rechecking incoming references.
+
+Argument representation, parameter discovery and substitution now validate
+acquired non-type arguments and cached parameter elements before operating on
+them. Substitution also checks replacements obtained from a prepare hook's
+tuple. The shared parameter helpers retain their private pointer-comparison
+and copy-only paths: returning an accessible outer tuple does not require
+access to all of its elements. The __shareable__ attribute is now handled by
+the alias itself. Previously list[int] reported its origin's IMMUTABLE state
+even though the alias was LOCAL.
+
+Isolated probes against the previous runtime abort on an unprotected origin
+in calls, representation, attribute forwarding and MRO-entry construction.
+The first seven regression methods produce eleven subtest failures before
+the repair. The final eight-method regression suite covers protected origins,
+direct/nested/protected-list arguments, cold and cached parameters, prepare-hook
+results, shallow tuple retention, state inspection and foreign arguments in a
+worker-created alias. Its protected contexts end before the tested operation
+begins; these failures do not depend on question 1's callback-lifetime decision.
+
+The default, GIL and Tier 2 ten-suite typing/iterator/access selections each
+pass with 1,178 reported tests and one skip. The default build's additional
+AST and abstract C API selection passes with 277 reported tests and two skips.
+The incremental builds have no compiler warnings or failed module imports.
+Logs and the isolated crash probes are in
+`/tmp/pep805-generic-alias/`. The broader union/type-variable and native
+reference-acquisition audit remains unfinished. No Mark decision was needed
+for this repair.
+
 ## Earlier re-review and implementation follow-ups
 
 One earlier question was incorrect: footnote 3 of the
