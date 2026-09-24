@@ -62,7 +62,7 @@ typedef struct _PyThreadStateImpl {
        or subclasses of it used in `asyncio.all_tasks`.
     */
     struct llist_node asyncio_tasks_head;
-    struct _qsbr_thread_state *qsbr;  // only used by free-threaded build
+    struct _qsbr_thread_state *qsbr;
     struct llist_node mem_free_queue; // delayed free queue
 
     struct {

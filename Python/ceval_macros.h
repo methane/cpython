@@ -188,11 +188,7 @@ do { \
 #define LLTRACE_RESUME_FRAME() ((void)0)
 #endif
 
-#ifdef Py_GIL_DISABLED
 #define QSBR_QUIESCENT_STATE(tstate) _Py_qsbr_quiescent_state(((_PyThreadStateImpl *)tstate)->qsbr)
-#else
-#define QSBR_QUIESCENT_STATE(tstate)
-#endif
 
 
 /* Do interpreter dispatch accounting for tracing and instrumentation */

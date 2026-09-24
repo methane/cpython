@@ -110,14 +110,15 @@ extern wchar_t *_PyMem_DefaultRawWcsdup(const wchar_t *str);
 /* Is the debug allocator enabled? */
 extern int _PyMem_DebugEnabled(void);
 
-// Enqueue a pointer to be freed possibly after some delay.
-extern void _PyMem_FreeDelayed(void *ptr, size_t size);
+// Retire internal storage after all readers have passed a quiescent state.
+// Export for _testinternalcapi.
+PyAPI_FUNC(void) _PyMem_FreeDelayed(void *ptr, size_t size);
 
 // Periodically process delayed free requests.
-extern void _PyMem_ProcessDelayed(PyThreadState *tstate);
+PyAPI_FUNC(void) _PyMem_ProcessDelayed(PyThreadState *tstate);
 
-// Periodically process delayed free requests when the world is stopped.
-// Notify of any objects whic should be freeed.
+// Process all threads' delayed free requests while the world is stopped.
+// Notify of objects that should be deallocated after restarting the world.
 typedef void (*delayed_dealloc_cb)(PyObject *, void *);
 extern void _PyMem_ProcessDelayedNoDealloc(PyThreadState *tstate,
                                            delayed_dealloc_cb cb, void *state);

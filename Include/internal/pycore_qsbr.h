@@ -1,6 +1,5 @@
-// The QSBR APIs (quiescent state-based reclamation) provide a mechanism for
-// the free-threaded build to safely reclaim memory when there may be
-// concurrent accesses.
+// The QSBR APIs (quiescent state-based reclamation) provide a mechanism to
+// safely reclaim memory when there may be concurrent accesses.
 //
 // Many operations in the free-threaded build are protected by locks. However,
 // in some cases, we want to allow reads to happen concurrently with updates.
@@ -120,7 +119,7 @@ _Py_qbsr_goal_reached(struct _qsbr_thread_state *qsbr, uint64_t goal)
 // Advance the write sequence and return the new goal. This should be called
 // after data is removed. The returned goal is used with `_Py_qsbr_poll()` to
 // determine when it is safe to reclaim (free) the memory.
-extern uint64_t
+PyAPI_FUNC(uint64_t)
 _Py_qsbr_advance(struct _qsbr_shared *shared);
 
 // Return the next value for the write sequence (current plus the increment).

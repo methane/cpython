@@ -160,8 +160,9 @@ extern void _PyThreadState_SetShuttingDown(PyThreadState *tstate);
 // Threads in the "attached" state are paused and transitioned to "suspended".
 // Threads in the "detached" state switch to "suspended", preventing
 // them from reattaching until the stop-the-world pause is complete.
-extern void _PyEval_StopTheWorldAll(_PyRuntimeState *runtime);
-extern void _PyEval_StartTheWorldAll(_PyRuntimeState *runtime);
+// Export for native tests that temporarily wrap process-wide allocators.
+PyAPI_FUNC(void) _PyEval_StopTheWorldAll(_PyRuntimeState *runtime);
+PyAPI_FUNC(void) _PyEval_StartTheWorldAll(_PyRuntimeState *runtime);
 
 // Perform a stop-the-world pause for threads in the specified interpreter.
 extern PyAPI_FUNC(void) _PyEval_StopTheWorld(PyInterpreterState *interp);

@@ -11,7 +11,8 @@ consumption.
 Safe memory reclamation (SMR) schemes address this by delaying the free
 operation until all concurrent read accesses are guaranteed to have completed.
 Quiescent-State Based Reclamation (QSBR) is a SMR scheme used in Python's
-free-threaded build to manage the lifecycle of shared memory.
+free-threaded build and the normal PEP 805 build to manage the lifecycle of
+shared internal memory.
 
 QSBR requires threads to periodically report that they are in a quiescent
 state. A thread is in a quiescent state if it holds no references to shared
@@ -54,6 +55,26 @@ page or return its memory to the OS.
 
 
 ## Implementation Details
+
+### Normal-build ThreadGroups
+
+The normal build registers each thread state with QSBR before attachment.
+Attachment publishes a read sequence, and detachment marks the reader offline.
+Interpreter safepoints report quiescence, while pending-event handling processes
+retired allocations. The read sequence belongs to an OS thread's thread state;
+it is independent of the ThreadGroup that owns an object's biased refcount.
+
+`_PyMem_FreeDelayed()` retires internal storage that an attached reader might
+still be using without a counted reference. The normal build does not use this
+queue to defer LOCAL object decrefs. If allocating a retirement record fails,
+a world stop ends outstanding reads before freeing the storage. GC also drains
+retired storage during its pause, including queues left by detached or exited
+threads. Fork reinitializes the reader registry, and interpreter teardown frees
+the remaining abandoned allocations before destroying the registry.
+
+This lifecycle port is needed before activating thread-local bytecode arrays in
+the normal build. It does not by itself enable parallel Python execution; the
+interpreter GIL remains enabled while the other shared runtime state is ported.
 
 
 ### Core Implementation

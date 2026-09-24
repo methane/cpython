@@ -1,13 +1,16 @@
 /* Exercise group scheduling without sharing Python functions or mutable
    Python containers between groups. */
 #include "parts.h"
+#include "pycore_ceval.h"
 #include "pycore_code.h"
 #include "pycore_freelist.h"
 #include "pycore_lock.h"
 #include "pycore_object.h"
 #include "pycore_object_deferred.h"
 #include "pycore_pystate.h"
+#include "pycore_pymem.h"
 #include "pycore_pythread.h"
+#include "pycore_qsbr.h"
 #include "pycore_stackref.h"
 #include "pycore_threadgroup.h"
 
@@ -1802,6 +1805,282 @@ test_gc_visit_world_stop(PyObject *self, PyObject *Py_UNUSED(args))
     Py_RETURN_NONE;
 }
 
+struct qsbr_probe {
+    PyMemAllocatorEx original;
+    PyInterpreterState *interp;
+    _PyThreadGroupState *group;
+    PyObject *code;
+    PyObject *error;
+    PyEvent ready;
+    PyEvent resume;
+    void *target;
+    int freed;
+    int freed_while_stopped;
+    int fail_calloc;
+    int mode;
+    int ok;
+};
+
+static void
+qsbr_probe_collect(void)
+{
+    // Unlike Python's gc.collect(), PyGC_Collect() honors gc.disable().
+    int enabled = PyGC_Enable();
+    PyGC_Collect();
+    if (!enabled) {
+        PyGC_Disable();
+    }
+}
+
+static void *
+qsbr_probe_malloc(void *ctx, size_t size)
+{
+    struct qsbr_probe *probe = ctx;
+    return probe->original.malloc(probe->original.ctx, size);
+}
+
+static void *
+qsbr_probe_calloc(void *ctx, size_t nelem, size_t size)
+{
+    struct qsbr_probe *probe = ctx;
+    if (_Py_atomic_exchange_int(&probe->fail_calloc, 0)) {
+        return NULL;
+    }
+    return probe->original.calloc(probe->original.ctx, nelem, size);
+}
+
+static void *
+qsbr_probe_realloc(void *ctx, void *ptr, size_t size)
+{
+    struct qsbr_probe *probe = ctx;
+    return probe->original.realloc(probe->original.ctx, ptr, size);
+}
+
+static void
+qsbr_probe_free(void *ctx, void *ptr)
+{
+    struct qsbr_probe *probe = ctx;
+    if (ptr != NULL && ptr == _Py_atomic_load_ptr(&probe->target)) {
+        _Py_atomic_store_ptr(&probe->target, NULL);
+        _Py_atomic_store_int(&probe->freed, 1);
+        PyThreadState *tstate = PyThreadState_Get();
+        _Py_atomic_store_int(&probe->freed_while_stopped,
+                            tstate->interp->stoptheworld.world_stopped);
+    }
+    probe->original.free(probe->original.ctx, ptr);
+}
+
+static void
+qsbr_probe_worker(void *arg)
+{
+    struct qsbr_probe *probe = arg;
+    PyThreadState *tstate = PyThreadState_New(probe->interp);
+    if (tstate == NULL) {
+        _PyEvent_Notify(&probe->ready);
+        return;
+    }
+    _PyThreadGroup_Decref(tstate->threadgroup);
+    tstate->threadgroup = probe->group;
+    _PyThreadGroup_Incref(probe->group);
+    PyEval_AcquireThread(tstate);
+    _PyThreadStateImpl *ts = (_PyThreadStateImpl *)tstate;
+    PyObject *func = NULL, *globals = NULL;
+    if (probe->mode == 2) {
+        globals = PyDict_New();
+        if (globals == NULL ||
+            PyDict_SetItemString(globals, "__builtins__", Py_None) < 0) {
+            goto done;
+        }
+        // Compile in the caller: Python audit hooks belong to its group.
+        // The code is immutable; the function and globals belong to this one.
+        func = PyFunction_New(probe->code, globals);
+        if (func == NULL) {
+            goto done;
+        }
+    }
+    // A large retirement advances the write sequence and requests processing
+    // by the eval breaker. Smaller ones target the next, unadvanced sequence.
+    size_t size = probe->mode == 2 ? 1024 * 1024 + 1 : 32;
+    char *ptr = PyMem_Malloc(size);
+    if (ptr == NULL) {
+        goto done;
+    }
+    ptr[0] = 'Q';
+    _Py_atomic_store_ptr(&probe->target, ptr);
+    if (probe->mode == 6) {
+        // This fresh thread has no work buffer. Fail only its allocation.
+        _Py_atomic_store_int(&probe->fail_calloc, 1);
+    }
+    _PyMem_FreeDelayed(ptr, size);
+    probe->ok = !_Py_atomic_load_int(&probe->freed);
+    if (probe->mode == 6) {
+        probe->ok = _Py_atomic_load_int(&probe->freed) &&
+            _Py_atomic_load_int(&probe->freed_while_stopped) &&
+            !_Py_atomic_load_int(&probe->fail_calloc) &&
+            !tstate->interp->stoptheworld.world_stopped;
+    }
+    else if (probe->ok && probe->mode <= 1) {
+        _Py_qsbr_advance(&tstate->interp->qsbr);
+        _PyMem_ProcessDelayed(tstate);
+        probe->ok = !_Py_atomic_load_int(&probe->freed);
+        if (probe->ok) {
+            // Still a valid uncounted pointer until this reader quiesces.
+            probe->ok = ptr[0] == 'Q';
+            if (probe->mode == 0) {
+                _Py_qsbr_quiescent_state(ts->qsbr);
+            }
+            else {
+                Py_BEGIN_ALLOW_THREADS
+                Py_END_ALLOW_THREADS
+            }
+            _PyMem_ProcessDelayed(tstate);
+            probe->ok &= _Py_atomic_load_int(&probe->freed);
+        }
+    }
+    else if (probe->ok && probe->mode == 2) {
+        _Py_set_eval_breaker_bit(tstate, _PY_EVAL_EXPLICIT_MERGE_BIT);
+        PyObject *result = PyObject_CallNoArgs(func);
+        probe->ok = result != NULL && _Py_atomic_load_int(&probe->freed);
+        Py_XDECREF(result);
+    }
+    else if (probe->ok && probe->mode == 3) {
+        qsbr_probe_collect();
+        probe->ok = _Py_atomic_load_int(&probe->freed) &&
+            _Py_atomic_load_int(&probe->freed_while_stopped) &&
+            !tstate->interp->stoptheworld.world_stopped;
+    }
+    else if (probe->ok && probe->mode == 5) {
+        _PyEvent_Notify(&probe->ready);
+        probe->ok = PyEvent_WaitTimed(&probe->resume, 10000000000LL, 1) &&
+            _Py_atomic_load_int(&probe->freed);
+    }
+    // Mode 4 leaves the request in this thread's queue at thread exit.
+done:
+    _PyEvent_Notify(&probe->ready);
+    probe->ok &= !PyErr_Occurred();
+    if (PyErr_Occurred()) {
+        PyObject *exc = PyErr_GetRaisedException();
+        probe->error = PyObject_Str(exc);
+        Py_DECREF(exc);
+        PyErr_Clear();
+    }
+    Py_XDECREF(func);
+    Py_XDECREF(globals);
+    PyThreadState_Clear(tstate);
+    PyThreadState_DeleteCurrent();
+}
+
+static PyObject *
+threadgroup_qsbr_probe(PyObject *self, PyObject *args)
+{
+    PyObject *group, *code;
+    int mode;
+    if (!PyArg_ParseTuple(args, "OiO!:threadgroup_qsbr_probe", &group, &mode,
+                          &PyCode_Type, &code)) {
+        return NULL;
+    }
+    if (mode < 0 || mode > 6) {
+        return PyErr_Format(PyExc_ValueError, "invalid QSBR probe mode");
+    }
+    _PyThreadGroupState *state = _PyThreadGroup_GetState(group);
+    if (state == NULL) {
+        return NULL;
+    }
+    PyThreadState *tstate = PyThreadState_Get();
+    struct qsbr_probe probe = {
+        .interp = tstate->interp, .group = state, .mode = mode, .code = code,
+    };
+    qsbr_probe_collect();
+    int enabled = PyGC_Disable();
+    PyMemAllocatorEx watch = {
+        .ctx = &probe,
+        .malloc = qsbr_probe_malloc,
+        .calloc = qsbr_probe_calloc,
+        .realloc = qsbr_probe_realloc,
+        .free = qsbr_probe_free,
+    };
+    _PyEval_StopTheWorldAll(&_PyRuntime);
+    PyMem_GetAllocator(PYMEM_DOMAIN_MEM, &probe.original);
+    PyMem_SetAllocator(PYMEM_DOMAIN_MEM, &watch);
+    _PyEval_StartTheWorldAll(&_PyRuntime);
+
+    PyThread_ident_t ident;
+    PyThread_handle_t handle;
+    if (PyThread_start_joinable_thread(qsbr_probe_worker, &probe,
+                                      &ident, &handle) != 0) {
+        PyErr_SetString(PyExc_RuntimeError, "failed to start QSBR probe");
+    }
+    else {
+        if (mode == 5) {
+            PyEvent_WaitTimed(&probe.ready, 10000000000LL, 1);
+            qsbr_probe_collect();
+            _PyEvent_Notify(&probe.resume);
+        }
+        Py_BEGIN_ALLOW_THREADS
+        PyThread_join_thread(handle);
+        Py_END_ALLOW_THREADS
+        // Also collects the exited producer's abandoned queue in mode 4.
+        qsbr_probe_collect();
+    }
+    _PyEval_StopTheWorldAll(&_PyRuntime);
+    PyMem_SetAllocator(PYMEM_DOMAIN_MEM, &probe.original);
+    _PyEval_StartTheWorldAll(&_PyRuntime);
+    if (enabled) {
+        PyGC_Enable();
+    }
+    _PyThreadGroup_Decref(state);
+    if (PyErr_Occurred()) {
+        Py_XDECREF(probe.error);
+        return NULL;
+    }
+    if (!probe.ok || !probe.freed) {
+        PyErr_Format(PyExc_AssertionError,
+                     "QSBR grace period failed in mode %d (worker error: %S)",
+                     mode, probe.error != NULL ? probe.error : Py_None);
+        Py_XDECREF(probe.error);
+        return NULL;
+    }
+    assert(probe.error == NULL);
+    Py_RETURN_NONE;
+}
+
+static PyObject *
+test_qsbr_thread_states(PyObject *self, PyObject *unused)
+{
+    // Keep enough states live to grow the QSBR array, then reuse their slots.
+    PyThreadState *current = PyThreadState_Get();
+    PyThreadState *states[32] = {0};
+    int ok = 1;
+    for (int round = 0; round < 2 && ok; round++) {
+        for (int i = 0; i < 32; i++) {
+            states[i] = PyThreadState_New(current->interp);
+            if (states[i] == NULL) {
+                ok = 0;
+                break;
+            }
+            struct _qsbr_thread_state *qsbr =
+                ((_PyThreadStateImpl *)states[i])->qsbr;
+            ok &= qsbr != NULL && qsbr->allocated &&
+                qsbr->tstate == states[i] && qsbr->seq == QSBR_OFFLINE;
+        }
+        struct _qsbr_thread_state *qsbr =
+            ((_PyThreadStateImpl *)current)->qsbr;
+        ok &= qsbr != NULL && qsbr->allocated && qsbr->tstate == current &&
+            qsbr->seq != QSBR_OFFLINE;
+        for (int i = 0; i < 32; i++) {
+            if (states[i] != NULL) {
+                PyThreadState_Clear(states[i]);
+                PyThreadState_Delete(states[i]);
+                states[i] = NULL;
+            }
+        }
+    }
+    if (!ok) {
+        return PyErr_Format(PyExc_AssertionError, "QSBR state registration failed");
+    }
+    Py_RETURN_NONE;
+}
+
 #define ALLOCATION_PROBE_COUNT 4096
 #define ALLOCATION_PROBE_SIZE 32
 
@@ -2124,6 +2403,8 @@ threadgroup_weakref_probe(PyObject *self, PyObject *args)
 }
 
 static PyMethodDef methods[] = {
+    {"threadgroup_qsbr_probe", threadgroup_qsbr_probe, METH_VARARGS, NULL},
+    {"test_qsbr_thread_states", test_qsbr_thread_states, METH_NOARGS, NULL},
     {"make_container_element", make_container_element, METH_O, NULL},
     {"container_element_calls", container_element_calls, METH_O, NULL},
     {"threadgroup_weakref_probe", threadgroup_weakref_probe, METH_VARARGS, NULL},

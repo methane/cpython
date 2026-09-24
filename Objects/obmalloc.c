@@ -1321,7 +1321,7 @@ _PyMem_Strdup(const char *str)
 }
 
 /***********************************************/
-/* Delayed freeing support for Py_GIL_DISABLED */
+/* Delayed freeing for shared internal storage */
 /***********************************************/
 
 // So that sizeof(struct _mem_work_chunk) is 4096 bytes on 64-bit platforms.
@@ -1354,7 +1354,6 @@ free_work_item(uintptr_t ptr, delayed_dealloc_cb cb, void *state)
 {
     if (work_item_should_decref(ptr)) {
         PyObject *obj = (PyObject *)(ptr - 1);
-#ifdef Py_GIL_DISABLED
         if (cb == NULL) {
             assert(!_PyInterpreterState_GET()->stoptheworld.world_stopped);
             Py_DECREF(obj);
@@ -1365,17 +1364,12 @@ free_work_item(uintptr_t ptr, delayed_dealloc_cb cb, void *state)
         if (refcount == 0) {
             cb(obj, state);
         }
-#else
-        Py_DECREF(obj);
-#endif
     }
     else {
         PyMem_Free((void *)ptr);
     }
 }
 
-
-#ifdef Py_GIL_DISABLED
 
 // For deferred advance on free: the number of deferred items before advancing
 // the write sequence.  This is based on WORK_ITEMS_PER_CHUNK.  We ideally
@@ -1408,14 +1402,10 @@ should_advance_qsbr_for_free(struct _qsbr_thread_state *qsbr, size_t size)
     }
     return false;
 }
-#endif
 
 static void
 free_delayed(uintptr_t ptr, size_t size)
 {
-#ifndef Py_GIL_DISABLED
-    free_work_item(ptr, NULL, NULL);
-#else
     PyInterpreterState *interp = _PyInterpreterState_GET();
     if (_PyInterpreterState_GetFinalizing(interp) != NULL ||
         interp->stoptheworld.world_stopped)
@@ -1486,7 +1476,6 @@ free_delayed(uintptr_t ptr, size_t size)
         // work does not accumulate.
         _PyMem_ProcessDelayed((PyThreadState *)tstate);
     }
-#endif
 }
 
 void
@@ -1622,6 +1611,19 @@ _PyMem_ProcessDelayedNoDealloc(PyThreadState *tstate, delayed_dealloc_cb cb, voi
 {
     PyInterpreterState *interp = tstate->interp;
     _PyThreadStateImpl *tstate_impl = (_PyThreadStateImpl *)tstate;
+    assert(interp->stoptheworld.world_stopped);
+
+    // Every other reader is detached. Include requests made against the next
+    // write sequence, even if their producer exited before advancing it.
+    _Py_qsbr_advance(&interp->qsbr);
+    _Py_qsbr_quiescent_state(tstate_impl->qsbr);
+    _Py_FOR_EACH_TSTATE_BEGIN(interp, p) {
+        _PyThreadStateImpl *other = (_PyThreadStateImpl *)p;
+        if (other != tstate_impl) {
+            llist_concat(&tstate_impl->mem_free_queue, &other->mem_free_queue);
+        }
+    }
+    _Py_FOR_EACH_TSTATE_END(interp);
 
     // Process thread-local work
     process_queue(&tstate_impl->mem_free_queue, tstate_impl, true, cb, state);

@@ -931,23 +931,7 @@ queue_freed_object(PyObject *obj, void *arg)
 static void
 process_delayed_frees(PyInterpreterState *interp, struct collection_state *state)
 {
-    // While we are in a "stop the world" pause, we can observe the latest
-    // write sequence by advancing the write sequence immediately.
-    _Py_qsbr_advance(&interp->qsbr);
-    _PyThreadStateImpl *current_tstate = (_PyThreadStateImpl *)_PyThreadState_GET();
-    _Py_qsbr_quiescent_state(current_tstate->qsbr);
-
-    // Merge the queues from other threads into our own queue so that we can
-    // process all of the pending delayed free requests at once.
-    _Py_FOR_EACH_TSTATE_BEGIN(interp, p) {
-        _PyThreadStateImpl *other = (_PyThreadStateImpl *)p;
-        if (other != current_tstate) {
-            llist_concat(&current_tstate->mem_free_queue, &other->mem_free_queue);
-        }
-    }
-    _Py_FOR_EACH_TSTATE_END(interp);
-
-    _PyMem_ProcessDelayedNoDealloc((PyThreadState *)current_tstate, queue_freed_object, state);
+    _PyMem_ProcessDelayedNoDealloc(_PyThreadState_GET(), queue_freed_object, state);
 }
 
 // Subtract an incoming reference from the computed "gc_refs" refcount.

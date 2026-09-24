@@ -768,8 +768,8 @@ PyOS_AfterFork_Child(void)
 
 #ifdef Py_GIL_DISABLED
     _Py_brc_after_fork(tstate->interp);
-    _Py_qsbr_after_fork((_PyThreadStateImpl *)tstate);
 #endif
+    _Py_qsbr_after_fork((_PyThreadStateImpl *)tstate);
 
     // Ideally we could guarantee tstate is running main.
     _PyInterpreterState_ReinitRunningMain(tstate);

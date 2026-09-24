@@ -1702,13 +1702,15 @@ new_threadstate(PyInterpreterState *interp, int whence)
         free_threadstate(tstate);
         return NULL;
     }
+#endif
     Py_ssize_t qsbr_idx = _Py_qsbr_reserve(interp);
     if (qsbr_idx < 0) {
+#ifdef Py_GIL_DISABLED
         _Py_UnreserveTLBCIndex(interp, tlbc_idx);
+#endif
         free_threadstate(tstate);
         return NULL;
     }
-#endif
 
     /* We serialize concurrent creation to protect global state. */
     HEAD_LOCK(interp->runtime);
@@ -1724,9 +1726,9 @@ new_threadstate(PyInterpreterState *interp, int whence)
 
     HEAD_UNLOCK(interp->runtime);
 
-#ifdef Py_GIL_DISABLED
     // Must be called with lock unlocked to avoid lock ordering deadlocks.
     _Py_qsbr_register(tstate, interp, qsbr_idx);
+#ifdef Py_GIL_DISABLED
     tstate->tlbc_index = tlbc_idx;
 #endif
 
@@ -1998,9 +2000,7 @@ tstate_delete_common(PyThreadState *tstate, int release_gil)
         _PyEval_ReleaseLock(tstate->interp, tstate, 1);
     }
 
-#ifdef Py_GIL_DISABLED
     _Py_qsbr_unregister(tstate);
-#endif
 
     tstate->_status.finalized = 1;
 }
@@ -2037,9 +2037,7 @@ void
 _PyThreadState_DeleteCurrent(PyThreadState *tstate)
 {
     _Py_EnsureTstateNotNULL(tstate);
-#ifdef Py_GIL_DISABLED
     _Py_qsbr_detach(((_PyThreadStateImpl *)tstate)->qsbr);
-#endif
 #ifdef Py_STATS
     _PyStats_Detach((_PyThreadStateImpl *)tstate);
 #endif
@@ -2306,8 +2304,8 @@ _PyThreadState_Attach(PyThreadState *tstate)
             _PyThreadGroup_Release(tstate);
             continue;
         }
-        _Py_qsbr_attach(((_PyThreadStateImpl *)tstate)->qsbr);
 #endif
+        _Py_qsbr_attach(((_PyThreadStateImpl *)tstate)->qsbr);
         break;
     }
 
@@ -2335,9 +2333,7 @@ detach_thread(PyThreadState *tstate, int detached_state)
     if (tstate->critical_section != 0) {
         _PyCriticalSection_SuspendAll(tstate);
     }
-#ifdef Py_GIL_DISABLED
     _Py_qsbr_detach(((_PyThreadStateImpl *)tstate)->qsbr);
-#endif
     tstate_deactivate(tstate);
     tstate_set_detached(tstate, detached_state);
     current_fast_clear(&_PyRuntime);

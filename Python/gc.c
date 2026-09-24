@@ -1780,6 +1780,10 @@ gc_collect_main(PyThreadState *tstate, int generation, _PyGC_Reason reason)
     // one paused state. User callbacks run only after restarting the world.
     _PyEval_StopTheWorld(tstate->interp);
 
+    // The normal build delays freeing shared internal storage, not object
+    // decrefs. Reclaim retired storage after every reader has stopped.
+    _PyMem_ProcessDelayedNoDealloc(tstate, NULL, NULL);
+
     /* update collection and allocation counters */
     if (generation+1 < NUM_GENERATIONS) {
         gcstate->generations[generation+1].count += 1;

@@ -66,6 +66,15 @@ cannot attach until it ends. Attachment drops group/GIL execution rights before
 waiting on a suspended state. Fork, shutdown and existing introspection callers
 use this mechanism; the later-stage public debugger API is not exposed.
 
+QSBR registration and quiescence are active in the normal build. Retired internal
+buffers remain allocated until attached readers have passed a safepoint or
+detached. GC drains all threads' queues while paused, including abandoned queues;
+allocation failure falls back to a world stop. Fork and thread/interpreter
+teardown maintain the reader registry. This is a prerequisite for porting
+thread-local bytecode arrays, not proof of parallel execution. QSBR read epochs
+belong to thread states; object reference-count bias still belongs to ThreadGroups.
+The normal build does not defer LOCAL object decrefs through these queues.
+
 The normal collector pauses threads while merging per-thread counts, scanning
 stack roots, determining reachability and clearing callback-bearing weakrefs.
 It restarts them for weakref callbacks, finalizers, debug output and destruction,
@@ -181,6 +190,15 @@ Tests run on Linux/aarch64. Logs are under `/tmp/pep805-base/`. The optional
 flags/events rather than foreign LOCAL Python functions or mutable results.
 Parallel scheduling tests remain skipped while the interpreter GIL is enabled.
 
+- Normal-build QSBR: 804 tests pass across nine files covering ThreadGroups,
+  GC, threading, fork, embedding, memory/thread-state APIs and reclamation
+  (16 skips). ThreadGroups, ownership, GC and reclamation also pass `-R 3:3`
+  with `mimalloc_debug` (128 tests, three skips). Native tests cover explicit
+  quiescence, detach/reattach, eval-breaker processing, paused GC, exited and
+  detached producers, allocation failure, registry growth and slot reuse.
+  The eval-breaker probe shares immutable code and creates its function and
+  globals in the worker's group; compiling there would invoke Main's LOCAL
+  Python audit hooks, outside the first-five-stage scope.
 - Sequence element acquisition and comparison results: 1,716 tests pass across
   15 files covering tuples, lists, sorting, ownership, ThreadGroups, GC,
   weakrefs, comparison, descriptors, dictionaries, sets and C APIs (14 skips).

@@ -37,6 +37,22 @@ _testinternalcapi.check_main_group_lifetime()
                 with self.subTest(group=group, clear_elsewhere=clear_elsewhere):
                     internal.threadgroup_freelist_probe(group, clear_elsewhere)
 
+    def test_qsbr_reclamation(self):
+        internal = import_helper.import_module('_testinternalcapi')
+        def probe():
+            return None
+
+        modes = ('quiescent', 'detach', 'eval breaker', 'gc', 'thread exit',
+                 'detached producer', 'allocation failure')
+        for group in (sys.main_thread_group, threading.ThreadGroup('QSBR')):
+            for mode, name in enumerate(modes):
+                with self.subTest(group=group, mode=name):
+                    internal.threadgroup_qsbr_probe(group, mode, probe.__code__)
+
+    def test_qsbr_thread_state_lifetime(self):
+        internal = import_helper.import_module('_testinternalcapi')
+        internal.test_qsbr_thread_states()
+
     @unittest.skipUnless(support.with_mimalloc(), 'requires mimalloc')
     def test_thread_local_allocation_heaps(self):
         for allocator in ('mimalloc', 'mimalloc_debug'):
