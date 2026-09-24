@@ -12,7 +12,8 @@
 void
 _PyGC_ClearAllFreeLists(PyInterpreterState *interp)
 {
-    // The interpreter GIL currently excludes allocation during collection.
+    // No thread may allocate from its caches while the collector clears them.
+    assert(interp->stoptheworld.world_stopped);
     // Hold the thread-list lock as detached native threads can add states.
     _Py_FOR_EACH_TSTATE_BEGIN(interp, p) {
         _PyObject_ClearFreeLists(&((_PyThreadStateImpl *)p)->freelists, 0);

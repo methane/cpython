@@ -76,6 +76,7 @@ for group in (sys.main_thread_group, threading.ThreadGroup('allocation heap')):
         internal = import_helper.import_module('_testinternalcapi')
         internal.test_gc_world_stop()
         observed = []
+        debug_refs = []
 
         def record(phase):
             observed.append((phase, internal.threadgroup_world_is_stopped()))
@@ -90,6 +91,8 @@ for group in (sys.main_thread_group, threading.ThreadGroup('allocation heap')):
         class DebugOutput:
             def write(self, text):
                 record('debug')
+                debug_refs.append((ref() is None,
+                                   any(phase == 'weakref' for phase, _ in observed)))
 
         value = Cycle()
         value.cycle = value
@@ -110,6 +113,10 @@ for group in (sys.main_thread_group, threading.ThreadGroup('allocation heap')):
         self.assertEqual({phase for phase, stopped in observed},
                          {'start', 'stop', 'weakref', 'finalizer', 'debug'})
         self.assertFalse(any(stopped for phase, stopped in observed), observed)
+        # Debug output can execute Python too. By then the callback-bearing
+        # weakref must be dead, but its callback must still be pending.
+        self.assertTrue(debug_refs)
+        self.assertEqual(set(debug_refs), {(True, False)})
 
     def test_default_context_compatibility(self):
         script_helper.assert_python_ok('-c', '''

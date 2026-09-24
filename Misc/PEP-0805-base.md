@@ -64,8 +64,10 @@ waiting on a suspended state. Fork, shutdown and existing introspection callers
 use this mechanism; the later-stage public debugger API is not exposed.
 
 The normal collector pauses threads while merging per-thread counts, scanning
-stack roots and determining reachability. It restarts them for weakref callbacks,
-finalizers, debug output and destruction, and pauses again to detect resurrection.
+stack roots, determining reachability and clearing callback-bearing weakrefs.
+It restarts them for weakref callbacks, finalizers, debug output and destruction,
+and pauses again to detect resurrection. Full collections also pause while
+clearing all threads' freelists.
 Shutdown merges/disables per-thread counts under a pause before releasing deferred
 references. Generation lists and allocation still depend on the interpreter GIL.
 The free-threading collector reuses `ob_tid` as scratch space; its replacement
@@ -228,6 +230,12 @@ Parallel scheduling tests remain skipped while the interpreter GIL is enabled.
   code and GC (16 skips). The native probe covers borrowed and strong builtin
   getters, the module dictionary and the already-guarded xoptions getter from
   frameless threads. Ownership passes `-R 3:3` (21 tests).
+- Paused weakref preparation and freelist clearing: 570 tests passed across
+  ThreadGroups, GC, weakrefs, reclamation, embedding and threading (17 skips).
+  ThreadGroups and GC pass `-R 3:3` with `mimalloc_debug` (81 tests, 3 skips).
+  Debug output verifies callback-bearing weakrefs are already dead before
+  Python code resumes, while their callbacks are still pending. The preceding
+  weakref-phase run also passes type-cache and subclass-initialization tests.
 - The non-debug normal build at `9a07ddfce7` passes 1,378 tests across 16 files
   covering sharing states, per-thread freelists, allocation, threading, GC and
   embedding (34 skips). This predates the internal world-stop activation.

@@ -913,15 +913,14 @@ move_legacy_finalizer_reachable(PyGC_Head *finalizers)
  * for weakref can be executed and that could reveal unreachable objects to
  * Python-level code.  See bpo-38006 as an example bug.
  */
-static int
-handle_weakref_callbacks(PyGC_Head *unreachable, PyGC_Head *old)
+static void
+find_weakref_callbacks(PyGC_Head *unreachable, PyGC_Head *wrcb_to_call)
 {
+    assert(_PyInterpreterState_GET()->stoptheworld.world_stopped);
     PyGC_Head *gc;
-    PyGC_Head wrcb_to_call;     /* weakrefs with callbacks to call */
     PyGC_Head *next;
-    int num_freed = 0;
 
-    gc_list_init(&wrcb_to_call);
+    gc_list_init(wrcb_to_call);
 
     /* Find all weakrefs with callbacks and move into `wrcb_to_call` if the
      * callback needs to be invoked. We make another pass over wrcb_to_call,
@@ -1008,18 +1007,24 @@ handle_weakref_callbacks(PyGC_Head *unreachable, PyGC_Head *old)
             PyGC_Head *wrasgc = AS_GC((PyObject *)wr);
             // wrasgc is reachable, but next isn't, so they can't be the same
             _PyObject_ASSERT((PyObject *)wr, wrasgc != next);
-            gc_list_move(wrasgc, &wrcb_to_call);
+            gc_list_move(wrasgc, wrcb_to_call);
         }
     }
+}
 
+static int
+call_weakref_callbacks(PyGC_Head *wrcb_to_call, PyGC_Head *old)
+{
+    assert(!_PyInterpreterState_GET()->stoptheworld.world_stopped);
+    int num_freed = 0;
     /* Invoke the callbacks we decided to honor.  It's safe to invoke them
      * because they can't reference unreachable objects.
      */
-    while (! gc_list_is_empty(&wrcb_to_call)) {
+    while (! gc_list_is_empty(wrcb_to_call)) {
         PyObject *temp;
         PyObject *callback;
 
-        gc = (PyGC_Head*)wrcb_to_call._gc_next;
+        PyGC_Head *gc = GC_NEXT(wrcb_to_call);
         PyObject *op = FROM_GC(gc);
         _PyObject_ASSERT(op, PyWeakref_Check(op));
         PyWeakReference *wr = (PyWeakReference *)op;
@@ -1048,7 +1053,7 @@ handle_weakref_callbacks(PyGC_Head *unreachable, PyGC_Head *old)
          * ours).
          */
         Py_DECREF(op);
-        if (wrcb_to_call._gc_next == (uintptr_t)gc) {
+        if (wrcb_to_call->_gc_next == (uintptr_t)gc) {
             /* object is still alive -- move it */
             gc_list_move(gc, old);
         }
@@ -1062,7 +1067,7 @@ handle_weakref_callbacks(PyGC_Head *unreachable, PyGC_Head *old)
 
 /* Clear all weakrefs to unreachable objects.  When this returns, no object in
  * `unreachable` is weakly referenced anymore.  See the comments above
- * handle_weakref_callbacks() for why these weakrefs need to be cleared.
+ * find_weakref_callbacks() for why these weakrefs need to be cleared.
  */
 static void
 clear_weakrefs(PyGC_Head *unreachable)
@@ -1626,6 +1631,7 @@ gc_collect_main(PyThreadState *tstate, int generation, _PyGC_Reason reason)
     PyGC_Head *old; /* next older generation */
     PyGC_Head unreachable; /* non-problematic unreachable trash */
     PyGC_Head finalizers;  /* objects with, & reachable from, __del__ */
+    PyGC_Head wrcb_to_call; /* cleared weakrefs whose callbacks must run */
     PyGC_Head *gc;
     GCState *gcstate = &tstate->interp->gc;
 
@@ -1751,6 +1757,9 @@ gc_collect_main(PyThreadState *tstate, int generation, _PyGC_Reason reason)
     // finalizer then creates ordinary counted references, even if another
     // finalizer has already caused a released unique ID to be reused.
     disable_perthread_list(&unreachable);
+    // Clearing callback-bearing weakrefs belongs to the paused snapshot.
+    // User code, including debug output, must not run during that pass.
+    find_weakref_callbacks(&unreachable, &wrcb_to_call);
     _PyEval_StartTheWorld(tstate->interp);
 
     /* Print debugging information. */
@@ -1760,8 +1769,8 @@ gc_collect_main(PyThreadState *tstate, int generation, _PyGC_Reason reason)
         }
     }
 
-    /* Clear weakrefs and invoke callbacks as necessary. */
-    stats.collected += handle_weakref_callbacks(&unreachable, old);
+    /* Invoke callbacks for the weakrefs cleared during the pause. */
+    stats.collected += call_weakref_callbacks(&wrcb_to_call, old);
     validate_list(old, collecting_clear_unreachable_clear);
     validate_list(&unreachable, collecting_set_unreachable_clear);
 
@@ -1819,7 +1828,9 @@ gc_collect_main(PyThreadState *tstate, int generation, _PyGC_Reason reason)
     /* Clear free list only during the collection of the highest
      * generation */
     if (generation == NUM_GENERATIONS-1) {
+        _PyEval_StopTheWorld(tstate->interp);
         _PyGC_ClearAllFreeLists(tstate->interp);
+        _PyEval_StartTheWorld(tstate->interp);
     }
 
     if (_PyErr_Occurred(tstate)) {
