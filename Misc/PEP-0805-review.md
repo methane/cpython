@@ -15,6 +15,8 @@ The latest follow-up makes the parallel runtime the default configure build
 and removes global-GIL enabling during extension imports. Earlier follow-ups
 repair immediate LOCAL reclamation and identify the first denied reference
 in the existing subinterpreter import failure.
+The subsequent import audit checks bootstrap callbacks directly and shares
+the lazy-import registries; the default Python bootstrap still needs work.
 
 Sources: [PEP 805](https://peps.python.org/pep-0805/),
 [implementation appendix](https://peps.python.org/pep-0805/appendix-implementation/),
@@ -503,6 +505,65 @@ Incremental repair builds emit no compiler warnings; the initial Tier 2
 build retains the four previously recorded unused-code warnings. The optional
 `_decimal` module remains unavailable. `git diff --check` passes. Logs and
 the exact suite selection are in `/tmp/pep805-default-build/`.
+
+### Import callback acquisition and lazy-import metadata
+
+The preceding import checks prevented a worker from representing even its
+own module, because the interpreter's bootstrap module belongs to Main.
+Native import paths now fetch a bootstrap attribute through the private
+namespace and check the acquired value. As with a function's globals, this
+does not publish the metadata container itself. LOCAL callbacks remain
+inaccessible, and PROTECTED callbacks require their lock. Lazy bindings,
+missing attributes and module subclasses retain ordinary attribute lookup
+with its receiver check. Surviving call arguments are revalidated after a
+lookup that can invoke user code; a regression ends StopTheWorld inside
+`__getattr__` and verifies rejection before calling with the foreign module.
+The bootstrap reference can also be absent during teardown. An embedding
+regression reproduced a NULL dereference in that case; the helper now reports
+ImportError and works normally again after the bootstrap reference is restored.
+
+There was a second obstruction to module representation: every missing
+attribute consults the interpreter's lazy-import registries, whose LOCAL
+dictionary caused an access exception even for a worker-owned module.
+The registry dictionary, its per-parent sets, and `sys.lazy_modules` now use
+synchronized containers. Allocation failure during registry initialization
+is propagated before trying to initialize the next container. The new tests
+check ordinary AttributeError behavior, resolution of a submodule registered
+in another group, and concurrent registration of 64 names from four groups.
+
+The remaining import restriction is concrete implementation work, not a
+request for Mark's approval. With the original bootstrap callbacks, a fresh
+worker import of `_ast` still fails in `_find_and_load` while acquiring the
+LOCAL `_NEEDS_LOADING` sentinel. The lock-management classes and graph,
+`_module_locks`, `_imp`/other native dependencies, and the external finders and
+path caches also need an explicit sharing policy and concurrency review.
+No blanket declaration that bootstrap modules or their contents are safe
+has been added. The successful custom-hook tests do not establish that the
+default finder/loader pipeline works across groups.
+
+Validation for this follow-up:
+
+- Before the final NULL guard, the nine-file selection of `test_import_access`,
+  `test_importlib`, `test_lazy_import`, `test_import`, `test_module`, `test_sys`,
+  `test_threadgroup`, `test_thread_error_output` and `test_freeze_module`
+  passed in the default parallel debug build: 1,700 tests, 41 skips.
+  The legacy GIL and Tier 2 builds each passed eight files and reproduced
+  the six existing `test_import` failures (1,700 tests, 31 skips each).
+  Targeted verbose reruns confirm that all six failure identities match the
+  saved `3657b0d87c` baseline recorded above.
+- After the NULL guard, all 14 import-access regressions and the new embedding
+  test pass in each of the three configurations: 15 tests per build, no skips.
+  Five of the first eight regressions failed before the callback repair.
+  The two lazy-metadata regressions failed before synchronizing the registries.
+  A further regression caught a lazy callback being called before resolution;
+  lazy bindings now fall back to ordinary attribute resolution. The embedding
+  test reproduced SIGSEGV before the NULL guard. An initial debugger-context
+  fixture mistakenly called the StopTheWorld singleton; that fixture was
+  corrected before the final runs.
+- The default sample application still produces 61,620 and rejects the two
+  forbidden access cases. Changed runtime/test sources match across the build
+  trees; final builds emit no compiler warnings. `git diff --check` passes.
+  Logs and the remaining ordinary-import probe are in `/tmp/pep805-bootstrap/`.
 
 ## Earlier re-review and implementation follow-ups
 

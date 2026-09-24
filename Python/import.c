@@ -230,6 +230,54 @@ get_modules_dict(PyThreadState *tstate, bool fatal)
     return modules;
 }
 
+/* The bootstrap module is interpreter metadata. Fetching one of its exported
+   functions need not expose the module or its namespace to the caller's
+   ThreadGroup, just as calling a function need not expose its globals.
+   The acquired value must still be checked before it can be called/returned.
+   Preserve ordinary attribute lookup for missing attributes and module
+   subclasses, which may execute user code with the module as receiver. */
+static PyObject *
+get_importlib_attr(PyInterpreterState *interp, PyObject *name)
+{
+    PyObject *importlib = IMPORTLIB(interp);
+    if (importlib == NULL) {
+        PyErr_SetString(PyExc_ImportError, "importlib is not available");
+        return NULL;
+    }
+    if (PyModule_CheckExact(importlib)) {
+        PyObject *value;
+        int found = _PyDict_GetItemRefUnchecked(
+            _PyModule_GetDict(importlib), name, &value);
+        if (found < 0) {
+            return NULL;
+        }
+        if (found) {
+            if (!PyLazyImport_CheckExact(value)) {
+                return _PyObject_CheckAccessNullable(value);
+            }
+            /* Module attribute lookup must resolve a lazy binding and offer
+               __getattr__ its usual opportunity to provide the value. */
+            Py_DECREF(value);
+        }
+    }
+    if (PyObject_CheckAccess(importlib) == NULL) {
+        return NULL;
+    }
+    return PyObject_GetAttr(importlib, name);
+}
+
+static PyObject *
+get_importlib_attr_string(PyInterpreterState *interp, const char *name)
+{
+    PyObject *nameobj = PyUnicode_FromString(name);
+    if (nameobj == NULL) {
+        return NULL;
+    }
+    PyObject *value = get_importlib_attr(interp, nameobj);
+    Py_DECREF(nameobj);
+    return value;
+}
+
 PyObject *
 PyImport_GetModuleDict(void)
 {
@@ -274,8 +322,16 @@ _PyImport_InitLazyModules(PyInterpreterState *interp)
     assert(LAZY_MODULES(interp) == NULL &&
            LAZY_PENDING_SUBMODULES(interp) == NULL);
 
-    LAZY_PENDING_SUBMODULES(interp) = PyDict_New();
-    LAZY_MODULES(interp) = PySet_New(0);
+    /* Every module's attribute lookup consults this interpreter-wide state,
+       including modules created in another ThreadGroup. */
+    LAZY_PENDING_SUBMODULES(interp) = PySynchronizedDict_New();
+    if (LAZY_PENDING_SUBMODULES(interp) == NULL) {
+        return NULL;
+    }
+    LAZY_MODULES(interp) = PySynchronizedSet_New(NULL);
+    if (LAZY_MODULES(interp) == NULL) {
+        Py_CLEAR(LAZY_PENDING_SUBMODULES(interp));
+    }
     return LAZY_MODULES(interp);
 }
 
@@ -333,12 +389,16 @@ import_ensure_initialized(PyInterpreterState *interp, PyObject *mod, PyObject *n
     }
 
     /* Wait until module is done importing. */
-    PyObject *importlib = PyObject_CheckAccess(IMPORTLIB(interp));
-    if (importlib == NULL) {
+    PyObject *lock_unlock = get_importlib_attr(
+        interp, &_Py_ID(_lock_unlock_module));
+    if (lock_unlock == NULL) {
         return -1;
     }
-    PyObject *value = PyObject_CallMethodOneArg(
-        importlib, &_Py_ID(_lock_unlock_module), name);
+    PyObject *value = NULL;
+    if (PyObject_CheckAccess(name) != NULL) {
+        value = PyObject_CallOneArg(lock_unlock, name);
+    }
+    Py_DECREF(lock_unlock);
     if (value == NULL) {
         return -1;
     }
@@ -3467,11 +3527,7 @@ PyObject *
 _PyImport_GetImportlibLoader(PyInterpreterState *interp,
                              const char *loader_name)
 {
-    PyObject *importlib = PyObject_CheckAccess(IMPORTLIB(interp));
-    if (importlib == NULL) {
-        return NULL;
-    }
-    return PyObject_GetAttrString(importlib, loader_name);
+    return get_importlib_attr_string(interp, loader_name);
 }
 
 PyObject *
@@ -3515,11 +3571,17 @@ _PyImport_BlessMyLoader(PyInterpreterState *interp, PyObject *module_globals)
 PyObject *
 _PyImport_ImportlibModuleRepr(PyInterpreterState *interp, PyObject *m)
 {
-    PyObject *importlib = PyObject_CheckAccess(IMPORTLIB(interp));
-    if (importlib == NULL) {
+    PyObject *repr = get_importlib_attr_string(interp, "_module_repr");
+    if (repr == NULL) {
         return NULL;
     }
-    return PyObject_CallMethod(importlib, "_module_repr", "O", m);
+    /* A fallback attribute hook can end the module's protective context. */
+    PyObject *result = NULL;
+    if (PyObject_CheckAccess(m) != NULL) {
+        result = PyObject_CallOneArg(repr, m);
+    }
+    Py_DECREF(repr);
+    return result;
 }
 
 
@@ -4123,12 +4185,18 @@ import_find_and_load_with_name(PyThreadState *tstate, PyObject *abs_name,
 {
     PyObject *mod = NULL;
     PyInterpreterState *interp = tstate->interp;
-    PyObject *importlib = PyObject_CheckAccess(IMPORTLIB(interp));
-    if (importlib == NULL) {
+    PyObject *find_and_load_func = get_importlib_attr(interp, find_and_load);
+    if (find_and_load_func == NULL) {
+        return NULL;
+    }
+    /* A fallback attribute hook may invalidate a surviving C reference. */
+    if (PyObject_CheckAccess(abs_name) == NULL) {
+        Py_DECREF(find_and_load_func);
         return NULL;
     }
     PyObject *import_func = PyObject_CheckAccess(IMPORT_FUNC(interp));
     if (import_func == NULL) {
+        Py_DECREF(find_and_load_func);
         return NULL;
     }
     int import_time = _PyInterpreterState_GetConfig(interp)->import_time;
@@ -4154,8 +4222,9 @@ import_find_and_load_with_name(PyThreadState *tstate, PyObject *abs_name,
     if (PyDTrace_IMPORT_FIND_LOAD_START_ENABLED())
         PyDTrace_IMPORT_FIND_LOAD_START(PyUnicode_AsUTF8(abs_name));
 
-    mod = PyObject_CallMethodObjArgs(importlib, find_and_load,
-                                     abs_name, import_func, NULL);
+    mod = PyObject_CallFunctionObjArgs(find_and_load_func,
+                                       abs_name, import_func, NULL);
+    Py_DECREF(find_and_load_func);
 
     if (PyDTrace_IMPORT_FIND_LOAD_DONE_ENABLED()) {
         int found = mod != NULL && mod != not_found;
@@ -4373,17 +4442,23 @@ PyImport_ImportModuleLevelObject(PyObject *name, PyObject *globals,
             goto error;
         }
         if (has_path) {
-            PyObject *importlib = PyObject_CheckAccess(IMPORTLIB(interp));
-            if (importlib == NULL) {
+            PyObject *handle_fromlist = get_importlib_attr(
+                interp, &_Py_ID(_handle_fromlist));
+            if (handle_fromlist == NULL) {
                 goto error;
             }
             PyObject *import_func = PyObject_CheckAccess(IMPORT_FUNC(interp));
             if (import_func == NULL) {
+                Py_DECREF(handle_fromlist);
                 goto error;
             }
-            final_mod = PyObject_CallMethodObjArgs(
-                        importlib, &_Py_ID(_handle_fromlist),
-                        mod, fromlist, import_func, NULL);
+            if (PyObject_CheckAccess(mod) != NULL &&
+                PyObject_CheckAccess(fromlist) != NULL)
+            {
+                final_mod = PyObject_CallFunctionObjArgs(
+                    handle_fromlist, mod, fromlist, import_func, NULL);
+            }
+            Py_DECREF(handle_fromlist);
         }
         else {
             final_mod = Py_NewRef(mod);
@@ -4410,7 +4485,7 @@ ensure_lazy_pending_submodules(PyDictObject *lazy_modules, PyObject *parent)
                                                   &lazy_submodules);
     if (err == 0) {
         // value isn't present
-        lazy_submodules = PySet_New(NULL);
+        lazy_submodules = PySynchronizedSet_New(NULL);
         if (lazy_submodules != NULL &&
             _PyDict_SetItem_LockHeld(lazy_modules, parent,
                                      lazy_submodules) < 0) {

@@ -146,6 +146,31 @@ static void _testembed_initialize(void)
     init_from_config_clear(&config);
 }
 
+static int test_module_repr_without_importlib(void)
+{
+    _testembed_initialize();
+    PyObject *module = PyModule_New("without_importlib");
+    assert(module != NULL);
+
+    /* Simulate clearing the bootstrap reference during teardown. This
+       executable has no other threads that could observe the temporary state. */
+    PyInterpreterState *interp = PyInterpreterState_Get();
+    PyObject *importlib = interp->imports.importlib;
+    interp->imports.importlib = NULL;
+    PyObject *representation = PyObject_Repr(module);
+    interp->imports.importlib = importlib;
+    assert(representation == NULL);
+    assert(PyErr_ExceptionMatches(PyExc_ImportError));
+    PyErr_Clear();
+
+    representation = PyObject_Repr(module);
+    assert(representation != NULL);
+    Py_DECREF(representation);
+    Py_DECREF(module);
+    Py_Finalize();
+    return 0;
+}
+
 
 static int test_import_in_subinterpreters(void)
 {
@@ -3007,6 +3032,7 @@ static struct TestCase TestCases[] = {
     {"test_repeated_simple_init", test_repeated_simple_init},
     {"test_forced_io_encoding", test_forced_io_encoding},
     {"test_import_in_subinterpreters", test_import_in_subinterpreters},
+    {"test_module_repr_without_importlib", test_module_repr_without_importlib},
     {"test_repeated_init_and_subinterpreters", test_repeated_init_and_subinterpreters},
     {"test_repeated_init_and_inittab", test_repeated_init_and_inittab},
     {"test_pre_initialization_api", test_pre_initialization_api},

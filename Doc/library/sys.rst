@@ -1502,6 +1502,9 @@ always available. Unless explicitly noted otherwise, all variables are read-only
    When a lazily imported module is accessed for the first time, its name is
    typically removed from this set.
 
+   In this PEP 805 implementation, this is a ``SynchronizedSet`` so that
+   registration and inspection can occur in different ThreadGroups.
+
    The set may contain some additional strings.
    It is intended for debugging and introspection, and consumers are expected
    to verify each entry's status.

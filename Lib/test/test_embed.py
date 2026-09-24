@@ -224,6 +224,12 @@ class EmbeddingTestsMixin:
 
 
 class EmbeddingTests(EmbeddingTestsMixin, unittest.TestCase):
+    def test_module_repr_without_importlib(self):
+        out, err = self.run_embedded_interpreter(
+            "test_module_repr_without_importlib")
+        self.assertEqual(out, '')
+        self.assertEqual(err, '')
+
     maxDiff = 100 * 50
 
     def test_subinterps_main(self):
