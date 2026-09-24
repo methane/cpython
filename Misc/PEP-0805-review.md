@@ -1555,6 +1555,52 @@ compiler warnings or failed module imports, with _decimal still unavailable.
 Changed native source, generated wrappers and regression tests match across
 the builds.
 
+### Text codec calls, position reconstruction and encoding settings
+
+TextIOWrapper now takes checked, owned encoder/decoder references for its
+remaining operational codec calls: encoding, resetting, position restoration,
+state queries and newline lookup. Seven method-lookup callbacks previously
+reinitialized the wrapper and released its codec before the returned method
+ran. Seek and tell retain one decoder across position reconstruction; tell's
+success and error cleanup restore the saved state on that same decoder.
+Decoder state tuples are checked before their buffer/flag items are inspected
+or converted. Tell also owns its snapshot while parsing the flag, and seek
+retains its input bytes across decoder lookup: a separate probe observed those
+bytes being finalized while lookup reinitialized the wrapper.
+
+The specialized ASCII, Latin-1 and UTF encoders now receive an errors pointer
+backed by an owned, checked setting. All nine specialized encoding probes
+previously aborted when that setting was a foreign str subclass. A separate
+error-handler callback released the setting by reinitializing the wrapper;
+it now remains alive until encoding returns. Inherited reconfiguration settings,
+the errors getter and representation metadata also validate stored references.
+Representation takes the wrapper's object critical section and retains its
+encoding through the formatting callback. These are checks at heap acquisitions,
+not additional checks of ordinary caller arguments.
+
+`test_textio_codec_access` has eight methods covering codec access denial,
+state-tuple access, nine fast encoders, inherited settings, method lookup,
+error-handler and seek-input lifetimes, and reference balance on successful and
+failing tell paths. Baseline evidence is under `/tmp/pep805-text-codecs/`.
+The first three methods in `before-corrected.log` reproduce 18 failures;
+`state-before.log` reproduces three state failures, `settings-before.log` two
+inherited-setting failures, and the two dedicated lifetime logs one each.
+Earlier fixture logs also contain unsupported protect() calls for native
+subclasses and an indentation error; those are not implementation findings.
+
+The final eight-suite selection covers the new codec tests, newline decoders,
+buffered state, I/O access, shareable FileIO, ordinary I/O, file imports and
+finalizer access. All three debug builds pass: 1,143 tests per build, with 29
+skips in the default build and 37 in each comparison build (GIL and Tier 2
+interpreter). Logs are `default-final.log`, `gil-final.log` and
+`tier2-final.log` under the same evidence directory. Changed native source and
+regression tests match across the builds; _decimal remains unavailable.
+
+This follow-up does not declare stream instances synchronized. Private pending
+lists, decoded text/state acquisition, initialization/reconfiguration coherence
+and callback/concurrent lifecycle transitions still need work before publishing
+shared standard streams. The general reference-lifetime question remains open.
+
 ## Earlier re-review and implementation follow-ups
 
 One earlier question was incorrect: footnote 3 of the
