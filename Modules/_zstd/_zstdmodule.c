@@ -5,6 +5,7 @@
 #endif
 
 #include "Python.h"
+#include "pycore_dict.h"          // _PyDict_SynchronizeNamespace()
 
 #include "_zstdmodule.h"
 
@@ -32,20 +33,29 @@ _Py_parse_zstd_dict(const _zstd_state *state, PyObject *dict, int *ptype)
     }
 
     /* Check (ZstdDict, type) */
-    if (PyTuple_CheckExact(dict) && PyTuple_GET_SIZE(dict) == 2
-        && PyObject_TypeCheck(PyTuple_GET_ITEM(dict, 0), state->ZstdDict_type)
-        && PyLong_Check(PyTuple_GET_ITEM(dict, 1)))
+    if (PyTuple_CheckExact(dict) && PyTuple_GET_SIZE(dict) == 2)
     {
-        int type = PyLong_AsInt(PyTuple_GET_ITEM(dict, 1));
-        if (type == -1 && PyErr_Occurred()) {
+        PyObject *value = PyTuple_GetItem(dict, 0);
+        if (value == NULL) {
             return NULL;
         }
-        if (type == DICT_TYPE_DIGESTED
-            || type == DICT_TYPE_UNDIGESTED
-            || type == DICT_TYPE_PREFIX)
+        PyObject *kind = PyTuple_GetItem(dict, 1);
+        if (kind == NULL) {
+            return NULL;
+        }
+        if (PyObject_TypeCheck(value, state->ZstdDict_type) && PyLong_Check(kind))
         {
-            *ptype = type;
-            return (ZstdDict*)PyTuple_GET_ITEM(dict, 0);
+            int type = PyLong_AsInt(kind);
+            if (type == -1 && PyErr_Occurred()) {
+                return NULL;
+            }
+            if (type == DICT_TYPE_DIGESTED
+                || type == DICT_TYPE_UNDIGESTED
+                || type == DICT_TYPE_PREFIX)
+            {
+                *ptype = type;
+                return (ZstdDict*)value;
+            }
         }
     }
 
@@ -549,9 +559,16 @@ _zstd_set_parameter_types_impl(PyObject *module, PyObject *c_parameter_type,
     _zstd_state* mod_state = get_zstd_state(module);
 
     Py_INCREF(c_parameter_type);
-    Py_XSETREF(mod_state->CParameter_type, (PyTypeObject*)c_parameter_type);
     Py_INCREF(d_parameter_type);
-    Py_XSETREF(mod_state->DParameter_type, (PyTypeObject*)d_parameter_type);
+    PyTypeObject *old_c, *old_d;
+    Py_BEGIN_CRITICAL_SECTION(module);
+    old_c = mod_state->CParameter_type;
+    old_d = mod_state->DParameter_type;
+    mod_state->CParameter_type = (PyTypeObject *)c_parameter_type;
+    mod_state->DParameter_type = (PyTypeObject *)d_parameter_type;
+    Py_END_CRITICAL_SECTION();
+    Py_XDECREF(old_c);
+    Py_XDECREF(old_d);
 
     Py_RETURN_NONE;
 }
@@ -761,6 +778,17 @@ do {                                                                         \
 #undef ADD_INT_MACRO
 #undef ADD_ZSTD_COMPRESSOR_INT_CONST
 
+    /* Each constructor creates a LOCAL instance with its own buffers and
+       native context. Sharing the classes lets ZIP imports and callers in
+       other groups create their own decompressors and dictionaries. */
+    if (PyObject_DeclareSynchronized((PyObject *)mod_state->ZstdDecompressor_type) < 0 ||
+        PyObject_DeclareSynchronized((PyObject *)mod_state->ZstdDict_type) < 0 ||
+        PyObject_DeclareSynchronized(mod_state->ZstdError) < 0 ||
+        _PyDict_SynchronizeNamespace(PyModule_GetDict(m)) < 0 ||
+        PyObject_DeclareSynchronized(m) < 0)
+    {
+        return -1;
+    }
     return 0;
 }
 

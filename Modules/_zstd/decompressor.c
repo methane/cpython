@@ -83,10 +83,12 @@ _get_DDict(ZstdDict *self)
 static int
 _zstd_set_d_parameters(ZstdDecompressor *self, PyObject *options)
 {
-    _zstd_state* mod_state = PyType_GetModuleState(Py_TYPE(self));
-    if (mod_state == NULL) {
+    PyObject *module = PyType_GetModule(Py_TYPE(self));
+    if (module == NULL) {
         return -1;
     }
+    _zstd_state *mod_state = PyModule_GetState(module);
+    assert(mod_state != NULL);
 
     if (!PyDict_Check(options)) {
         PyErr_Format(PyExc_TypeError,
@@ -95,15 +97,26 @@ _zstd_set_d_parameters(ZstdDecompressor *self, PyObject *options)
         return -1;
     }
 
+    // Keep a private snapshot while conversions can run Python callbacks or
+    // another group can change a synchronized options dictionary.
+    options = PyDict_Copy(options);
+    if (options == NULL) {
+        return -1;
+    }
+    int result = -1;
     Py_ssize_t pos = 0;
     PyObject *key, *value;
     while (PyDict_Next(options, &pos, &key, &value)) {
         /* Check key type */
-        if (Py_TYPE(key) == mod_state->CParameter_type) {
+        int compression_parameter;
+        Py_BEGIN_CRITICAL_SECTION(module);
+        compression_parameter = Py_TYPE(key) == mod_state->CParameter_type;
+        Py_END_CRITICAL_SECTION();
+        if (compression_parameter) {
             PyErr_SetString(PyExc_TypeError,
                 "decompression options dictionary key must not be a "
                 "CompressionParameter attribute");
-            return -1;
+            goto exit;
         }
 
         Py_INCREF(key);
@@ -112,13 +125,13 @@ _zstd_set_d_parameters(ZstdDecompressor *self, PyObject *options)
         Py_DECREF(key);
         if (key_v == -1 && PyErr_Occurred()) {
             Py_DECREF(value);
-            return -1;
+            goto exit;
         }
 
         int value_v = PyLong_AsInt(value);
         Py_DECREF(value);
         if (value_v == -1 && PyErr_Occurred()) {
-            return -1;
+            goto exit;
         }
 
         /* Set parameter to compression context */
@@ -127,10 +140,14 @@ _zstd_set_d_parameters(ZstdDecompressor *self, PyObject *options)
         /* Check error */
         if (ZSTD_isError(zstd_ret)) {
             set_parameter_error(0, key_v, value_v);
-            return -1;
+            goto exit;
         }
     }
-    return 0;
+    // PyDict_Next can fail while acquiring an inaccessible key or value.
+    result = PyErr_Occurred() ? -1 : 0;
+exit:
+    Py_DECREF(options);
+    return result;
 }
 
 static int

@@ -936,8 +936,8 @@ run). Existing ZIP suites also pass after the final reload guard. Changed
 sources and tests match across the three builds. Logs and the baseline probe
 are in `/tmp/pep805-zip-import/`.
 
-This follow-up enables uncompressed archives across groups. The next follow-up
-handles zlib; the native _zstd helpers remain unfinished. The existing
+This follow-up enables uncompressed archives across groups. The next follow-ups
+handle zlib and the native _zstd helpers. The existing
 Main-group compressed ZIP tests remain enabled and passing.
 
 ### DEFLATE archives and shared zlib initialization
@@ -963,7 +963,7 @@ parallel compressed module imports, native error handling and cache injection,
 and a deliberately suspended first initializer. The three import cases failed
 on the previous GIL runtime. The suspended-initializer test also failed there:
 the second group raised ZipImportError before the first import was released.
-No Mark decision is needed for this repair or the remaining Zstandard port.
+No Mark decision is needed for this repair or the following Zstandard port.
 
 The final seven-suite ZIP/zlib/importlib selection passes in the default debug
 build (2,062 tests, 34 skips). GIL and Tier 2 each pass 2,060 tests with 33 skips;
@@ -975,6 +975,51 @@ failures before the final suites. Sources and tests match across builds.
 The full Tier 2 rebuild still reports the three known unused-variable warnings
 in generated executor cases; the final zlib rebuilds have no warnings. Logs
 are the `deflate-*` files in `/tmp/pep805-zip-import/`.
+
+### Zstandard archives and native constructor inputs
+
+The Zstandard importer now guards its initialization flag and class cache with
+the existing _zstd module lock, retaining a local reference to the selected
+class. The _zstd module namespace, ZstdDecompressor and ZstdDict classes and
+ZstdError explicitly support sharing. Instances remain LOCAL: a worker creates
+its own native context, buffers and dictionary caches. Other native exports
+retain their individual sharing states. Dictionary instances are not implicitly
+shared merely because their class is synchronized.
+
+The shared dictionary-argument parser now obtains both tuple elements through
+the checked tuple API before using either dictionary state or the integer tag.
+A probe against the previous GIL runtime explicitly shares only the module,
+decompressor class and error class to isolate this parser. That runtime accepts
+a foreign dictionary hidden in the tuple; the repaired runtime rejects it and
+also rejects a foreign integer tag. The test's second case explicitly shares
+its native dictionary solely to reach the tag check.
+
+Both compressor and decompressor option parsers retain a private dictionary
+snapshot while integer conversion can call Python. Concurrent changes to a
+synchronized source dictionary cannot remove the snapshot's entries while the
+parser holds borrowed references to them. PyDict_Next acquisition errors now
+propagate instead of returning a
+native instance with an exception pending. The old runtime reports SystemError
+for a protected option value and can skip validating a second invalid option
+when the first value's __index__ clears the original dictionary. The regressions
+preserve UnprotectedAccessException and validate every snapshotted option.
+Parameter-type cache readers and the setter use the module's critical section;
+the setter publishes both replacements before releasing old references outside
+the lock. This does not settle the general borrowed-reference API contract.
+
+Five additional ZIP cases cover cold/cached Zstandard imports, parallel imports,
+a suspended initializer, concatenated and truncated frames, and a foreign cache
+class. All five fail on the previous runtime and pass after the repair. Six
+native tests cover local dictionaries in workers, foreign dictionary/tag and
+option references, protected-value errors, conversion callbacks, and concurrent
+option/metadata changes. Existing fake-compression-module recursion tests remain
+enabled. The default seven-suite Zstandard/ZIP/importlib selection passes with
+2,101 reported tests and 32 skips. GIL and Tier 2 also pass the same 2,101 tests,
+with 31 skips each. Changed sources/tests match across the builds, and actual
+native sharing states were checked before running the comparison suites.
+The incremental builds have no compiler warnings or failed module imports.
+Logs and the isolated tuple probe are in `/tmp/pep805-zstd/`.
+No Mark decision was needed for this repair.
 
 ## Earlier re-review and implementation follow-ups
 

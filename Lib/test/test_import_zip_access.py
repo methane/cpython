@@ -220,52 +220,64 @@ def run(*actions):
         ''')
 
     def test_deflated_with_new_decompressor(self):
-        self.check_deflated(warm_cache=False)
+        self.check_compressed('zlib', 'ZIP_DEFLATED', '_zlib_decompress', False)
 
     def test_deflated_with_cached_decompressor(self):
-        self.check_deflated(warm_cache=True)
+        self.check_compressed('zlib', 'ZIP_DEFLATED', '_zlib_decompress', True)
 
-    def check_deflated(self, *, warm_cache):
-        import_helper.import_module('zlib')
+    def test_zstandard_with_new_decompressor(self):
+        self.check_compressed('_zstd', 'ZIP_ZSTANDARD', '_zstd_decompressor_class', False)
+
+    def test_zstandard_with_cached_decompressor(self):
+        self.check_compressed('_zstd', 'ZIP_ZSTANDARD', '_zstd_decompressor_class', True)
+
+    def check_compressed(self, module, compression, cache, warm_cache):
+        import_helper.import_module(module)
         self.run_script(f'''
-            from zipfile import ZIP_DEFLATED
+            from zipfile import {compression}
             warm_cache = {warm_cache!r}
             with tempfile.TemporaryDirectory() as directory:
-                path = os.path.join(directory, 'deflated.zip')
-                with ZipFile(path, 'w', compression=ZIP_DEFLATED) as archive:
-                    archive.writestr('pep805_deflated.py', 'answer = 42\\n')
+                path = os.path.join(directory, 'compressed.zip')
+                with ZipFile(path, 'w', compression={compression}) as archive:
+                    archive.writestr('pep805_compressed.py', 'answer = 42\\n')
                 finder = zipimport.zipimporter(path)
                 if warm_cache:
-                    finder.get_code('pep805_deflated')
+                    finder.get_code('pep805_compressed')
                 else:
-                    sys.modules.pop('zlib', None)
-                    zipimport._zlib_decompress = None
+                    sys.modules.pop({module!r}, None)
+                    setattr(zipimport, {cache!r}, None)
                 sys.path.insert(0, path)
                 def action():
-                    import pep805_deflated
-                    assert pep805_deflated.answer == 42
-                    assert pep805_deflated.__shareable__ is threading.Shareable.LOCAL
+                    import pep805_compressed
+                    assert pep805_compressed.answer == 42
+                    assert pep805_compressed.__shareable__ is threading.Shareable.LOCAL
                 run(action)
-                del sys.modules['pep805_deflated']
+                del sys.modules['pep805_compressed']
                 run(action)
         ''')
 
     def test_parallel_deflated_imports(self):
-        import_helper.import_module('zlib')
-        self.run_script('''
-            from zipfile import ZIP_DEFLATED
+        self.check_parallel_compressed('zlib', 'ZIP_DEFLATED', '_zlib_decompress')
+
+    def test_parallel_zstandard_imports(self):
+        self.check_parallel_compressed('_zstd', 'ZIP_ZSTANDARD', '_zstd_decompressor_class')
+
+    def check_parallel_compressed(self, module, compression, cache):
+        import_helper.import_module(module)
+        self.run_script(f'''
+            from zipfile import {compression}
             with tempfile.TemporaryDirectory() as directory:
                 path = os.path.join(directory, 'parallel.zip')
-                with ZipFile(path, 'w', compression=ZIP_DEFLATED) as archive:
+                with ZipFile(path, 'w', compression={compression}) as archive:
                     for number in range(4):
-                        archive.writestr(f'pep805_deflated_{number}.py',
-                                         f'answer = {number}\\n')
+                        archive.writestr(f'pep805_compressed_{{number}}.py',
+                                         f'answer = {{number}}\\n')
                 sys.path.insert(0, path)
-                zipimport._zlib_decompress = None
+                setattr(zipimport, {cache!r}, None)
                 ready = threading.Barrier(4, timeout=10)
                 def worker(number):
                     ready.wait()
-                    module = __import__(f'pep805_deflated_{number}')
+                    module = __import__(f'pep805_compressed_{{number}}')
                     assert module.answer == number
                     assert module.__shareable__ is threading.Shareable.LOCAL
                 run(*(lambda number=number: worker(number)
@@ -309,8 +321,17 @@ def run(*actions):
         ''')
 
     def test_decompressor_initialization_waits_for_other_group(self):
-        import_helper.import_module('zlib')
-        self.run_script('''
+        self.check_decompressor_initialization('zlib', '_zlib_decompress',
+                                              '_get_zlib_decompress_func', 'decompress')
+
+    def test_zstandard_initialization_waits_for_other_group(self):
+        self.check_decompressor_initialization('_zstd', '_zstd_decompressor_class',
+                                              '_get_zstd_decompressor_class',
+                                              'ZstdDecompressor')
+
+    def check_decompressor_initialization(self, module, cache, getter, export):
+        import_helper.import_module(module)
+        self.run_script(f'''
             import builtins
             from test.support import SHORT_TIMEOUT
 
@@ -320,12 +341,12 @@ def run(*actions):
             completed = threading.Event()
             original_import = builtins.__import__
             def import_hook(name, globals=None, locals=None, fromlist=(), level=0):
-                if name == 'zlib' and fromlist == ('decompress',):
+                if name == {module!r} and fromlist == ({export!r},):
                     entered.set()
                     assert release.wait(SHORT_TIMEOUT)
                 return original_import(name, globals, locals, fromlist, level)
             def first():
-                results.put(zipimport._get_zlib_decompress_func().__name__)
+                results.put(getattr(zipimport, {getter!r})().__name__)
             def second():
                 assert entered.wait(SHORT_TIMEOUT)
                 attempted.set()
@@ -334,7 +355,7 @@ def run(*actions):
                 finally:
                     completed.set()
 
-            zipimport._zlib_decompress = None
+            setattr(zipimport, {cache!r}, None)
             builtins.__import__ = import_hook
             # A Main-group controller runs the two independent worker groups.
             controller = threading.Thread(target=run, args=(first, second))
@@ -350,7 +371,38 @@ def run(*actions):
                 builtins.__import__ = original_import
             assert not controller.is_alive()
             assert not errors, list(errors)
-            assert [results.get() for _ in range(2)] == ['decompress'] * 2
+            assert [results.get() for _ in range(2)] == [{export!r}] * 2
+        ''')
+
+    def test_zstandard_frames_and_foreign_cache_value(self):
+        import_helper.import_module('_zstd')
+        self.run_script('''
+            from compression.zstd import compress
+            frames = compress(b'first') + compress(b'second')
+            truncated = compress(b'truncated')[:-1]
+            def action():
+                assert zipimport._zstd_decompress(frames) == b'firstsecond'
+                try:
+                    zipimport._zstd_decompress(truncated)
+                except zipimport.ZipImportError:
+                    pass
+                else:
+                    raise AssertionError('truncated frame accepted')
+            run(action)
+            calls = []
+            class LocalDecompressor:
+                def __init__(self):
+                    calls.append('called')
+            zipimport._zstd_decompressor_class = LocalDecompressor
+            def action():
+                try:
+                    zipimport._get_zstd_decompressor_class()
+                except IllegalThreadAccessException:
+                    pass
+                else:
+                    raise AssertionError('foreign decompressor class acquired')
+            run(action)
+            assert calls == []
         ''')
 
 

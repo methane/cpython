@@ -603,28 +603,32 @@ _zstd_decompressor_class = None
 # Return the _zstd.ZstdDecompressor function object, or NULL if _zstd couldn't
 # be imported. The result is cached when found.
 def _get_zstd_decompressor_class():
-    global _zstd_decompressor_class
-    if _zstd_decompressor_class:
-        return _zstd_decompressor_class
+    global _zstd_decompressor_class, _importing_zstd
+    decompressor_class = _zstd_decompressor_class
+    if decompressor_class:
+        return decompressor_class
 
-    global _importing_zstd
-    if _importing_zstd:
-        # Someone has a _zstd.py[co] in their Zip file
-        # let's avoid a stack overflow.
-        _bootstrap._verbose_message("zipimport: zstd UNAVAILABLE")
-        raise ZipImportError("can't decompress data; zstd not available")
+    with _bootstrap._ModuleLockManager('_zstd'):
+        decompressor_class = _zstd_decompressor_class
+        if decompressor_class:
+            return decompressor_class
+        if _importing_zstd:
+            # Someone has a _zstd.py[co] in their Zip file.
+            _bootstrap._verbose_message("zipimport: zstd UNAVAILABLE")
+            raise ZipImportError("can't decompress data; zstd not available")
 
-    _importing_zstd = True
-    try:
-        from _zstd import ZstdDecompressor as _zstd_decompressor_class
-    except Exception:
-        _bootstrap._verbose_message("zipimport: zstd UNAVAILABLE")
-        raise ZipImportError("can't decompress data; zstd not available")
-    finally:
-        _importing_zstd = False
+        _importing_zstd = True
+        try:
+            from _zstd import ZstdDecompressor as decompressor_class
+            _zstd_decompressor_class = decompressor_class
+        except Exception:
+            _bootstrap._verbose_message("zipimport: zstd UNAVAILABLE")
+            raise ZipImportError("can't decompress data; zstd not available")
+        finally:
+            _importing_zstd = False
 
     _bootstrap._verbose_message("zipimport: zstd available")
-    return _zstd_decompressor_class
+    return decompressor_class
 
 
 def _zstd_decompress(data):
