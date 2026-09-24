@@ -3735,6 +3735,12 @@ object_operation_from_tuple(PyObject *self, PyObject *args)
         result = PyObject_DeclareSynchronized(obj);
     }
     else if (strcmp(operation, "freeze") == 0) {
+        /* The callable accepts valid thread references. Acquire the tuple
+           element before passing it to the public call API. */
+        obj = PyTuple_GetItem(holder, 0);
+        if (obj == NULL) {
+            return NULL;
+        }
         PyObject *freeze = PyMapping_GetItemString(PyEval_GetBuiltins(), "freeze");
         if (freeze == NULL) {
             return NULL;

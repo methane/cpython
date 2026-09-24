@@ -2,7 +2,6 @@
 
 #include "Python.h"
 #include "pycore_call.h"          // _PyObject_CallNoArgs()
-#include "pycore_ceval.h"         // _PyEval_EnableGILTransient()
 #include "pycore_dict.h"          // _PyDict_EnablePerThreadRefcounting()
 #include "pycore_fileutils.h"     // _Py_wgetcwd
 #include "pycore_import.h"        // _PyImport_GetNextModuleIndex()
@@ -538,22 +537,6 @@ module_from_slots_and_spec(
             name);
         goto error;
     }
-
-#ifdef Py_GIL_DISABLED
-    // For modules created directly from slots (not from a def), we enable
-    // the GIL here (pairing `_PyEval_EnableGILTransient` with
-    // an immediate `_PyImport_EnableGILAndWarn`).
-    // For modules created from a def, the caller is responsible for this.
-    if (!original_def && requires_gil) {
-        PyThreadState *tstate = _PyThreadState_GET();
-        if (_PyEval_EnableGILTransient(tstate) < 0) {
-            goto error;
-        }
-        if (_PyImport_EnableGILAndWarn(tstate, nameobj) < 0) {
-            goto error;
-        }
-    }
-#endif
 
     if (def_like->m_size < 0) {
         PyErr_Format(

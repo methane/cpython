@@ -4,6 +4,14 @@
 Python support for free threading
 *********************************
 
+.. note::
+
+   This guide describes the PEP 703 runtime underlying this experimental
+   PEP 805 branch. Here that runtime is the default build, threads serialize
+   within each :class:`~threading.ThreadGroup`, and sharing between groups is
+   checked. The memory and performance comparisons below describe PEP 703
+   rather than measurements of this branch.
+
 Starting with the 3.13 release, CPython has support for a build of
 Python called :term:`free threading` where the :term:`global interpreter lock`
 (GIL) is disabled.  Free-threaded execution allows for full utilization of the
@@ -11,9 +19,9 @@ available processing power by running threads in parallel on available CPU cores
 While not all software will benefit from this automatically, programs
 designed with threading in mind will run faster on multi-core hardware.
 
-Some third-party packages, in particular ones
-with an :term:`extension module`, may not be ready for use in a
-free-threaded build, and will re-enable the :term:`GIL`.
+Some third-party packages may not support parallel access to their objects.
+In this branch, extension objects remain LOCAL unless explicitly declared
+shareable; importing an extension does not enable the :term:`GIL`.
 
 This document describes the implications of free threading
 for Python code.  See :ref:`freethreading-extensions-howto` for information on
@@ -36,8 +44,8 @@ For information on other platforms, see the `Installing a Free-Threaded Python
 <https://py-free-threading.github.io/installing-cpython/>`_, a
 community-maintained installation guide for installing free-threaded Python.
 
-When building CPython from source, the :option:`--disable-gil` configure option
-should be used to build a free-threaded Python interpreter.
+When building this branch from source, the free-threaded runtime is selected
+by default. The :option:`--disable-gil` option remains accepted explicitly.
 
 
 Identifying free-threaded Python
@@ -61,9 +69,8 @@ Free-threaded builds of CPython support optionally running with the GIL enabled
 at runtime using the environment variable :envvar:`PYTHON_GIL` or
 the command-line option :option:`-X gil`.
 
-The GIL may also automatically be enabled when importing a C-API extension
-module that is not explicitly marked as supporting free threading.  A warning
-will be printed in this case.
+Extension imports do not change this setting. The :c:data:`Py_mod_gil` slot
+is accepted for compatibility and does not declare objects shareable.
 
 In addition to individual package documentation, the following websites track
 the status of popular packages support for free threading:
@@ -147,21 +154,19 @@ build.
 Context variables
 -----------------
 
-In the free-threaded build, the flag :data:`~sys.flags.thread_inherit_context`
-is set to true by default which causes threads created with
+The flag :data:`~sys.flags.thread_inherit_context` defaults to false in this
+branch, so threads start with an empty :class:`~contextvars.Context()`.
+Setting it to true causes threads created with
 :class:`threading.Thread` to start with a copy of the
 :class:`~contextvars.Context()` of the caller of
-:meth:`~threading.Thread.start`.  In the default GIL-enabled build, the flag
-defaults to false so threads start with an
-empty :class:`~contextvars.Context()`.
+:meth:`~threading.Thread.start`.
 
 
 Warning filters
 ---------------
 
-In the free-threaded build, the flag :data:`~sys.flags.context_aware_warnings`
-is set to true by default.  In the default GIL-enabled build, the flag defaults
-to false.  If the flag is true then the :class:`warnings.catch_warnings`
+The flag :data:`~sys.flags.context_aware_warnings` defaults to false in this
+branch. If the flag is true then the :class:`warnings.catch_warnings`
 context manager uses a context variable for warning filters.  If the flag is
 false then :class:`~warnings.catch_warnings` modifies the global filters list,
 which is not thread-safe.  See the :mod:`warnings` module for more details.

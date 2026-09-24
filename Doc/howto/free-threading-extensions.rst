@@ -34,9 +34,11 @@ You can use it to enable code that only runs under the free-threaded build::
 Module Initialization
 =====================
 
-Extension modules need to explicitly indicate that they support running with
-the GIL disabled; otherwise importing the extension will raise a warning and
-enable the GIL at runtime.
+In this experimental PEP 805 branch, extension imports do not enable a global
+GIL. Extension modules, classes and instances remain LOCAL unless explicitly
+declared shareable using ``PyObject_DeclareImmutable()`` or
+``PyObject_DeclareSynchronized()``. The declarations below remain accepted for
+compatibility with PEP 703 builds, but do not declare objects shareable here.
 
 There are two ways to indicate that an extension module supports running with
 the GIL disabled depending on whether the extension uses multi-phase or

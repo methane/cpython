@@ -3405,8 +3405,8 @@ class ModexportTests(unittest.TestCase):
 
     @requires_subinterpreters
     def test_from_modexport_gil_used(self):
-        # Test that a module with Py_MOD_GIL_USED (re-)enables the GIL.
-        # Do this in a new interpreter to avoid interfering with global state.
+        # LOCAL extension modules must not change interpreter scheduling.
+        # Exercise a separate interpreter's initialization configuration.
         modname = '_test_from_modexport_gil_used'
         filename = _testmultiphase.__file__
         interp = concurrent.interpreters.create()
@@ -3420,18 +3420,19 @@ class ModexportTests(unittest.TestCase):
         enabled_before = sys._is_gil_enabled()
         interp.exec(f"""if True:
             import sys
-            from test.support.warnings_helper import check_warnings
+            import warnings
             from {__name__} import import_extension_from_file
-            with check_warnings((".*GIL..has been enabled.*", RuntimeWarning),
-                                quiet=True):
+            queue.put(sys._is_gil_enabled())
+            with warnings.catch_warnings(action='error'):
                 module = import_extension_from_file(modname, filename,
                                                     put_in_sys_modules=False)
             queue.put(module.__name__)
             queue.put(sys._is_gil_enabled())
         """)
 
+        enabled_in_subinterp = queue.get()
         self.assertEqual(queue.get(), modname)
-        self.assertEqual(queue.get(), True)
+        self.assertEqual(queue.get(), enabled_in_subinterp)
         self.assertTrue(queue.empty())
 
         self.assertEqual(enabled_before, sys._is_gil_enabled())
@@ -3459,8 +3460,8 @@ class ModexportTests(unittest.TestCase):
 
     @requires_subinterpreters
     def test_from_modexport_create_nonmodule_gil_used(self):
-        # Test that a module with Py_MOD_GIL_USED (re-)enables the GIL.
-        # Do this in a new interpreter to avoid interfering with global state.
+        # LOCAL extension modules must not change interpreter scheduling.
+        # Exercise a separate interpreter's initialization configuration.
         modname = '_test_from_modexport_create_nonmodule_gil_used'
         filename = _testmultiphase.__file__
         interp = concurrent.interpreters.create()
@@ -3474,18 +3475,19 @@ class ModexportTests(unittest.TestCase):
         enabled_before = sys._is_gil_enabled()
         interp.exec(f"""if True:
             import sys
-            from test.support.warnings_helper import check_warnings
+            import warnings
             from {__name__} import import_extension_from_file
-            with check_warnings((".*GIL..has been enabled.*", RuntimeWarning),
-                                quiet=True):
+            queue.put(sys._is_gil_enabled())
+            with warnings.catch_warnings(action='error'):
                 module = import_extension_from_file(modname, filename,
                                                     put_in_sys_modules=False)
             queue.put(module)
             queue.put(sys._is_gil_enabled())
         """)
 
+        enabled_in_subinterp = queue.get()
         self.assertIsInstance(queue.get(), str)
-        self.assertEqual(queue.get(), True)
+        self.assertEqual(queue.get(), enabled_in_subinterp)
         self.assertTrue(queue.empty())
 
         self.assertEqual(enabled_before, sys._is_gil_enabled())
@@ -3526,7 +3528,6 @@ class ModexportTests(unittest.TestCase):
             import_extension_from_file(
                 modname, filename, put_in_sys_modules=False)
 
-    @requires_gil_enabled("this module re-enables GIL")
     def test_from_modexport_minimal_slots(self):
         # Module to test that:
         # - no slots except Py_mod_abi is mandatory for PyModExport

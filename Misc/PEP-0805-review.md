@@ -11,9 +11,10 @@ list/cell/function/tuple/bytes C API repairs. Implementation follow-up on
 2026-09-24 repairs constant acquisition, bytearray exception propagation and
 foreign executor invalidation, and extends the C API input cleanup. The
 current assessment supersedes the historical probe results at the end.
-The latest follow-up repairs immediate reclamation across same-group threads,
-transfers and LOCAL function/descriptor publication. It also identifies the
-first denied reference in the existing subinterpreter import failure.
+The latest follow-up makes the parallel runtime the default configure build
+and removes global-GIL enabling during extension imports. Earlier follow-ups
+repair immediate LOCAL reclamation and identify the first denied reference
+in the existing subinterpreter import failure.
 
 Sources: [PEP 805](https://peps.python.org/pep-0805/),
 [implementation appendix](https://peps.python.org/pep-0805/appendix-implementation/),
@@ -32,20 +33,24 @@ complete the reference-counting and parallelism architecture.
 bytearray exception propagation are now repaired. Foreign sort elements are
 also rejected, but sorting still continues after a callback closes its
 protecting context. A foreign group collecting a legacy extension still
-crashes. The default-build parallelism and reference-counting architecture
-remain unfinished; the reproduced LOCAL reclamation delays are now repaired.
+crashes. Default-build parallelism and the reproduced LOCAL reclamation delays
+are now repaired. Compact headers, reference-count optimization and a complete
+native acquisition audit remain unfinished.
 These are implementation defects or unfinished work, not questions about
 whether unsafe access or crashes are acceptable.
 
 The preceding audit executed 15 distinct subprocess probes in each
 Linux/aarch64 debug build, with timeouts and core dumps disabled. The constant
 and buffer-exporter probes were repeated after their repairs. The table
-combines those new results with the unchanged findings from the prior audit.
+combines those results with the unchanged findings from the prior audit.
 New suite results are recorded in the implementation follow-up below.
 A successful demo or selected suite does not demonstrate parallel execution
 in the GIL build or close the remaining failures.
 
-| Current check | Free-threading debug | GIL debug | Assessment |
+The free-threading configuration in this historical table is now the default;
+the GIL configuration is explicitly selected with `--enable-gil`.
+
+| Audited check | Free-threading debug | GIL debug | Assessment |
 | --- | --- | --- | --- |
 | Subscript a foreign LOCAL list loaded from `co_consts`, cold function | IllegalThreadAccessException | Same | Repaired at constant acquisition |
 | Same function after 100 calls in Main | IllegalThreadAccessException | Same | Repaired; also tested with a Tier 2 executor |
@@ -66,16 +71,15 @@ working tuple-iterator protection, rejection of a local load after its
 protecting generator closes, and a dictionary view remaining LOCAL when its
 dictionary is frozen. The last observation alone is not an access violation.
 
-Source inspection confirms that `_PyEval_AcquireLock()` still takes the
-interpreter GIL as well as the group lock (`Python/ceval_gil.c:592`), that
-the default build still uses ordinary reference counts (`Include/refcount.h`),
-and that the three cleanup fields remain in both headers
-(`Include/object.h:163`, `:188`). They implement a queue for deferred cleanup,
-not biased reference counting. Free-threading reuses PEP 703 BRC, now with
+The default build now reuses PEP 703 biased reference counting, with
 synchronous merging when the allocating thread belongs to the current locked
-group. The fast path remains OS-thread-biased, and the default build has no
-corresponding shared-reference machinery. Mark's two comments therefore
-remain only partially addressed.
+group. The fast path remains OS-thread-biased. Global GIL acquisition is
+disabled by default and extension imports no longer enable it. The explicit
+`--enable-gil` comparison build retains ordinary reference counts and global
+serialization. The three cleanup fields remain in both headers
+(`Include/object.h`); they implement deferred cleanup, not biased reference
+counting. Mark's header-size and redundant-input-check comments remain only
+partially addressed.
 
 The input-check cleanup now covers bytearray, integer/float/complex and
 Unicode accessors as well as the earlier container and function APIs. Raw
@@ -416,6 +420,90 @@ calls and call expansion, Argument Clinic, relevant C APIs, protection,
 constants, exceptions, strings, monitoring, GC and LOCAL reclamation. It does
 not close the remaining parallelism, header, lifetime or compatibility gaps.
 
+### Default parallel runtime and extension imports
+
+The canonical configure build now selects the existing free-threading
+substrate without requiring `--disable-gil`. This provides biased reference
+counting, parallel allocation and GC while the ThreadGroup scheduler retains
+serialization within Main and each other group. The reference-count fast
+path and object headers are unchanged by this configuration change.
+`--enable-gil` explicitly selects the legacy serialized comparison build;
+`-X gil=1` remains an explicit runtime diagnostic option in the parallel build.
+
+Extension import no longer enables the global GIL, either transiently during
+initialization or permanently afterward. This includes single-phase imports,
+multi-phase modules with no GIL slot, and the module-export/slots API. The
+`Py_mod_gil` slot remains accepted for compatibility but does not make a
+module or its objects shareable. The new test checks five import variants,
+LOCAL module ownership, and two distinct groups meeting at a native barrier
+while both retain their execution rights. A single-phase fixture also checks
+that the GIL is disabled inside its initializer. Existing same-group
+serialization tests remain in place.
+
+Making the free-threading substrate the default must not silently change the
+classic defaults for context inheritance and warning contexts. Both flags
+therefore default to zero in compatibility, Python and isolated configuration
+initializers. Explicit options remain supported. Configuration, embedding
+and thread behavior tests exercise these defaults. Old extension-import
+expectations that the GIL becomes enabled now instead require the scheduling
+state to remain unchanged, with import warnings treated as errors.
+
+The expanded regression run also exposed two earlier acquisition defects.
+Import paths acquired the interpreter's stored LOCAL importlib module without
+checking it before calling public attribute/call APIs. Those acquisitions
+and the stored import callable are now checked; the cached module reference
+is revalidated after testing the from-list's truth value, which can invoke a
+callback. When the traceback formatter or
+import machinery is inaccessible, the native exception printer handles the
+original worker exception without reporting that expected denial as another
+unraisable exception. The existing seven failing subprocess cases in
+`test_thread_error_output` now pass unchanged. The `test_freeze` native helper
+also checks its tuple element before supplying it as a call argument;
+foreign ownership is rejected before executing `__freeze__`.
+
+These repairs do not make importlib or traceback modules shareable. Foreign
+groups can still be unable to initialize modules through LOCAL bootstrap
+state; the bootstrap's sharing and acquisition audit remains unfinished.
+The compact-header, C-reference lifetime and legacy GC/subinterpreter
+compatibility findings below also remain open.
+
+Validation on Linux/aarch64:
+
+| Configuration | Selected files | Reported tests | Skips | Result |
+| --- | ---: | ---: | ---: | --- |
+| Default, configured with only `--with-pydebug` | 52 | 3,597 | 65 | Passed |
+| Legacy `--enable-gil --with-pydebug` | 52 | 3,597 | 61 | 51 files passed; six existing failures in `test_import` |
+| Legacy GIL plus Tier 2 interpreter | 54 | 3,936 | 64 | 53 files passed; the same six failures in `test_import` |
+
+The selection includes the previous 23 tuple/call/access suites, threading,
+context and warning behavior, extension import/configuration, command-line
+and sysconfig checks, finalization, protection, transfer, synchronized
+collections, freezing, and the full `test_import` and `test_traceback` files.
+Tier 2 additionally executes `test_optimizer` and `test_capi.test_opt`.
+
+The six import failures occur in four methods: the two
+`SinglephaseInitTests.test_basic_multiple_interpreters_*` methods,
+`SubinterpImportTests.test_single_init_extension_compat`, and three subtests
+of `SubinterpImportTests.test_singlephase_check_with_setting_and_override`.
+They report owner group 1 versus the subinterpreter's distinct Main group.
+The saved GIL baseline at `3657b0d87c` reproduces all six failures in the same
+tests, before this follow-up. These are additional reproductions for question
+9, not successful compatibility validation. The default parallel build does
+not exercise all of these legacy-GIL cases.
+
+The 11 selected embedding-configuration tests pass in each configuration,
+with one existing skip. An explicit `-X gil=1` scheduler selection also passes
+(three reported tests, one parallel-only skip). All three sample-app runs
+produce 61,620 and reject both forbidden access cases. The canonical runtime
+reports `Py_GIL_DISABLED=1`, `sys._is_gil_enabled() == False`, both context
+flags zero, and a 56-byte object header. No header-size improvement is claimed.
+
+The changed runtime/test sources match across the three build trees.
+Incremental repair builds emit no compiler warnings; the initial Tier 2
+build retains the four previously recorded unused-code warnings. The optional
+`_decimal` module remains unavailable. `git diff --check` passes. Logs and
+the exact suite selection are in `/tmp/pep805-default-build/`.
+
 ## Earlier re-review and implementation follow-ups
 
 One earlier question was incorrect: footnote 3 of the
@@ -537,11 +625,15 @@ requirement is already clear. Question 6 asks about unspecified cleanup
 semantics that affect the header design. Neither makes the defects below
 acceptable or establishes that Mark's approval is needed for routine fixes.
 
-1. **The default build still serializes different ThreadGroups.**
-   `_PyEval_AcquireLock()` acquires both the group lock and the interpreter
-   GIL (`Python/ceval_gil.c`). `Include/refcount.h` still selects ordinary
-   reference counting for that build. This is unfinished work, not an
-   ambiguity about whether parallel ThreadGroups are required.
+1. **Default-build parallelism is repaired; architecture optimization remains.**
+   Configure now defaults to the existing free-threading substrate, including
+   biased reference counting and parallel allocation/GC. Native barrier tests
+   verify concurrent execution by distinct groups, including after extension
+   imports; same-group serialization remains tested. Importing an extension
+   no longer transiently or permanently enables a global GIL. An explicitly
+   selected `--enable-gil` build remains available for comparison and cannot
+   execute groups in parallel. This does not finish compact headers,
+   group-biased refcount optimization or performance validation.
    See [parallelism](https://peps.python.org/pep-0805/#parallelism-and-context-switching)
    and the appendix's
    [implementation strategy](https://peps.python.org/pep-0805/appendix-implementation/#implementation-strategy).
@@ -767,7 +859,7 @@ and [object dictionaries](https://peps.python.org/pep-0805/#object-dictionaries)
 
 ### 5. Should local reference-count ownership be biased to a ThreadGroup?
 
-The current branch uses PEP 703's OS-thread bias in the free-threading build.
+The current default build uses PEP 703's OS-thread bias.
 It now merges synchronously on the same-group slow path and retires the bias
 before publishing a transferred copy. These repairs satisfy the reproduced
 ordering requirements without choosing a new header representation.
@@ -775,7 +867,7 @@ ordering requirements without choosing a new header representation.
 Is the intended design a group-biased local count, rebiasing/merging on group
 handoff, or a different mechanism? The required observable behavior is not
 the question; the representation and handoff strategy are. The proposed
-compact header and the default-build port should be designed together.
+compact header and the refcount fast path should be designed together.
 See [reference counting](https://peps.python.org/pep-0805/appendix-implementation/#reference-counting).
 
 ### 6. Where must finalizers and weakref callbacks run, and what cleanup guarantees are required during world stops?

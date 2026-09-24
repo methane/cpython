@@ -693,7 +693,7 @@ context manager behaves in a concurrent-safe fashion and otherwise not.
 Concurrent-safe means that it is both thread-safe and safe to use within
 :ref:`asyncio coroutines <coroutine>` and tasks.  Being thread-safe means
 that behavior is predictable in a multi-threaded program.  The flag defaults
-to true for free-threaded builds and false otherwise.
+to false in this PEP 805 implementation.
 
 If the :data:`~sys.flags.context_aware_warnings` flag is false, then
 :class:`catch_warnings` will modify the global attributes of the

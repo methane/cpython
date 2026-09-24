@@ -333,8 +333,12 @@ import_ensure_initialized(PyInterpreterState *interp, PyObject *mod, PyObject *n
     }
 
     /* Wait until module is done importing. */
+    PyObject *importlib = PyObject_CheckAccess(IMPORTLIB(interp));
+    if (importlib == NULL) {
+        return -1;
+    }
     PyObject *value = PyObject_CallMethodOneArg(
-        IMPORTLIB(interp), &_Py_ID(_lock_unlock_module), name);
+        importlib, &_Py_ID(_lock_unlock_module), name);
     if (value == NULL) {
         return -1;
     }
@@ -1669,55 +1673,6 @@ _PyImport_CheckSubinterpIncompatibleExtensionAllowed(const char *name)
     return 0;
 }
 
-#ifdef Py_GIL_DISABLED
-int
-_PyImport_CheckGILForModule(PyObject* module, PyObject *module_name)
-{
-    PyThreadState *tstate = _PyThreadState_GET();
-    if (module == NULL) {
-        _PyEval_DisableGIL(tstate);
-        return 0;
-    }
-
-    if (!PyModule_Check(module) ||
-        ((PyModuleObject *)module)->md_requires_gil)
-    {
-        if (PyModule_Check(module)) {
-            assert(((PyModuleObject *)module)->md_token_is_def);
-        }
-        if (_PyImport_EnableGILAndWarn(tstate, module_name) < 0) {
-            return -1;
-        }
-    }
-    else {
-        _PyEval_DisableGIL(tstate);
-    }
-
-    return 0;
-}
-
-int
-_PyImport_EnableGILAndWarn(PyThreadState *tstate, PyObject *module_name)
-{
-    if (_PyEval_EnableGILPermanent(tstate)) {
-        return PyErr_WarnFormat(
-            PyExc_RuntimeWarning,
-            1,
-            "The global interpreter lock (GIL) has been enabled to load "
-            "module '%U', which has not declared that it can run safely "
-            "without the GIL. To override this behavior and keep the GIL "
-            "disabled (at your own risk), run with PYTHON_GIL=0 or -Xgil=0.",
-            module_name
-        );
-    }
-    const PyConfig *config = _PyInterpreterState_GetConfig(tstate->interp);
-    if (config->enable_gil == _PyConfig_GIL_DEFAULT && config->verbose) {
-        PySys_FormatStderr("# loading module '%U', which requires the GIL\n",
-                            module_name);
-    }
-    return 0;
-}
-#endif
 
 static PyThreadState *
 switch_to_main_interpreter(PyThreadState *tstate)
@@ -2596,23 +2551,9 @@ create_builtin(
     }
 
 
-#ifdef Py_GIL_DISABLED
-    // This call (and the corresponding call to _PyImport_CheckGILForModule())
-    // would ideally be inside import_run_extension(). They are kept in the
-    // callers for now because that would complicate the control flow inside
-    // import_run_extension(). It should be possible to restructure
-    // import_run_extension() to address this.
-    _PyEval_EnableGILTransient(tstate);
-#endif
     /* Now load it. */
     mod = import_run_extension(
                     tstate, p0, &info, spec, get_modules_dict(tstate, true));
-#ifdef Py_GIL_DISABLED
-    if (_PyImport_CheckGILForModule(mod, info.name) < 0) {
-        Py_CLEAR(mod);
-        goto finally;
-    }
-#endif
 
 finally:
     _Py_ext_module_loader_info_clear(&info);
@@ -2855,7 +2796,11 @@ PyImport_ExecCodeModuleWithPathnames(const char *name, PyObject *co,
             Py_FatalError("no current interpreter");
         }
 
-        external= PyObject_GetAttrString(IMPORTLIB(interp),
+        PyObject *importlib = PyObject_CheckAccess(IMPORTLIB(interp));
+        if (importlib == NULL) {
+            goto error;
+        }
+        external= PyObject_GetAttrString(importlib,
                                          "_bootstrap_external");
         if (external != NULL) {
             pathobj = PyObject_CallMethodOneArg(
@@ -3522,14 +3467,22 @@ PyObject *
 _PyImport_GetImportlibLoader(PyInterpreterState *interp,
                              const char *loader_name)
 {
-    return PyObject_GetAttrString(IMPORTLIB(interp), loader_name);
+    PyObject *importlib = PyObject_CheckAccess(IMPORTLIB(interp));
+    if (importlib == NULL) {
+        return NULL;
+    }
+    return PyObject_GetAttrString(importlib, loader_name);
 }
 
 PyObject *
 _PyImport_GetImportlibExternalLoader(PyInterpreterState *interp,
                                      const char *loader_name)
 {
-    PyObject *bootstrap = PyObject_GetAttrString(IMPORTLIB(interp),
+    PyObject *importlib = PyObject_CheckAccess(IMPORTLIB(interp));
+    if (importlib == NULL) {
+        return NULL;
+    }
+    PyObject *bootstrap = PyObject_GetAttrString(importlib,
                                                  "_bootstrap_external");
     if (bootstrap == NULL) {
         return NULL;
@@ -3543,7 +3496,11 @@ _PyImport_GetImportlibExternalLoader(PyInterpreterState *interp,
 PyObject *
 _PyImport_BlessMyLoader(PyInterpreterState *interp, PyObject *module_globals)
 {
-    PyObject *external = PyObject_GetAttrString(IMPORTLIB(interp),
+    PyObject *importlib = PyObject_CheckAccess(IMPORTLIB(interp));
+    if (importlib == NULL) {
+        return NULL;
+    }
+    PyObject *external = PyObject_GetAttrString(importlib,
                                                 "_bootstrap_external");
     if (external == NULL) {
         return NULL;
@@ -3558,7 +3515,11 @@ _PyImport_BlessMyLoader(PyInterpreterState *interp, PyObject *module_globals)
 PyObject *
 _PyImport_ImportlibModuleRepr(PyInterpreterState *interp, PyObject *m)
 {
-    return PyObject_CallMethod(IMPORTLIB(interp), "_module_repr", "O", m);
+    PyObject *importlib = PyObject_CheckAccess(IMPORTLIB(interp));
+    if (importlib == NULL) {
+        return NULL;
+    }
+    return PyObject_CallMethod(importlib, "_module_repr", "O", m);
 }
 
 
@@ -4162,6 +4123,14 @@ import_find_and_load_with_name(PyThreadState *tstate, PyObject *abs_name,
 {
     PyObject *mod = NULL;
     PyInterpreterState *interp = tstate->interp;
+    PyObject *importlib = PyObject_CheckAccess(IMPORTLIB(interp));
+    if (importlib == NULL) {
+        return NULL;
+    }
+    PyObject *import_func = PyObject_CheckAccess(IMPORT_FUNC(interp));
+    if (import_func == NULL) {
+        return NULL;
+    }
     int import_time = _PyInterpreterState_GetConfig(interp)->import_time;
 #define import_level FIND_AND_LOAD(interp).import_level
 #define accumulated FIND_AND_LOAD(interp).accumulated
@@ -4185,8 +4154,8 @@ import_find_and_load_with_name(PyThreadState *tstate, PyObject *abs_name,
     if (PyDTrace_IMPORT_FIND_LOAD_START_ENABLED())
         PyDTrace_IMPORT_FIND_LOAD_START(PyUnicode_AsUTF8(abs_name));
 
-    mod = PyObject_CallMethodObjArgs(IMPORTLIB(interp), find_and_load,
-                                     abs_name, IMPORT_FUNC(interp), NULL);
+    mod = PyObject_CallMethodObjArgs(importlib, find_and_load,
+                                     abs_name, import_func, NULL);
 
     if (PyDTrace_IMPORT_FIND_LOAD_DONE_ENABLED()) {
         int found = mod != NULL && mod != not_found;
@@ -4396,14 +4365,25 @@ PyImport_ImportModuleLevelObject(PyObject *name, PyObject *globals,
         }
     }
     else {
+        if (PyObject_CheckAccess(mod) == NULL) {
+            goto error;
+        }
         int has_path = PyObject_HasAttrWithError(mod, &_Py_ID(__path__));
         if (has_path < 0) {
             goto error;
         }
         if (has_path) {
+            PyObject *importlib = PyObject_CheckAccess(IMPORTLIB(interp));
+            if (importlib == NULL) {
+                goto error;
+            }
+            PyObject *import_func = PyObject_CheckAccess(IMPORT_FUNC(interp));
+            if (import_func == NULL) {
+                goto error;
+            }
             final_mod = PyObject_CallMethodObjArgs(
-                        IMPORTLIB(interp), &_Py_ID(_handle_fromlist),
-                        mod, fromlist, IMPORT_FUNC(interp), NULL);
+                        importlib, &_Py_ID(_handle_fromlist),
+                        mod, fromlist, import_func, NULL);
         }
         else {
             final_mod = Py_NewRef(mod);
@@ -5646,30 +5626,14 @@ _imp_create_dynamic_impl(PyObject *module, PyObject *spec, PyObject *file)
     _PyImport_GetModuleExportHooks(&info, fp, &p0, &ex0);
     if (ex0) {
         mod = import_run_modexport(tstate, ex0, &info, spec);
-        // Modules created from slots handle GIL enablement (Py_mod_gil slot)
-        // when they're created.
         goto finally;
     }
     if (p0 == NULL) {
         goto finally;
     }
 
-#ifdef Py_GIL_DISABLED
-    // This call (and the corresponding call to _PyImport_CheckGILForModule())
-    // would ideally be inside import_run_extension(). They are kept in the
-    // callers for now because that would complicate the control flow inside
-    // import_run_extension(). It should be possible to restructure
-    // import_run_extension() to address this.
-    _PyEval_EnableGILTransient(tstate);
-#endif
     mod = import_run_extension(
                     tstate, p0, &info, spec, get_modules_dict(tstate, true));
-#ifdef Py_GIL_DISABLED
-    if (_PyImport_CheckGILForModule(mod, info.name) < 0) {
-        Py_CLEAR(mod);
-        goto finally;
-    }
-#endif
 
 finally:
     if (fp != NULL) {

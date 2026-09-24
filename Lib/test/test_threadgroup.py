@@ -15,6 +15,27 @@ threading_helper.requires_working_threading(module=True)
 
 
 class ThreadGroupTests(unittest.TestCase):
+    def test_default_context_compatibility(self):
+        assert_python_ok('-c', '''
+import contextvars
+import sys
+import threading
+from test.support import threading_helper
+
+assert sys.flags.thread_inherit_context == 0
+assert sys.flags.context_aware_warnings == 0
+value = contextvars.ContextVar('value', default=None)
+value.set('parent')
+results = []
+def worker():
+    results.append(value.get())
+thread = threading.Thread(target=worker)
+with threading_helper.start_threads([thread]):
+    pass
+assert results == [None], results
+assert value.get() == 'parent'
+''')
+
     def test_collect_foreign_extension_state(self):
         # GC visitors need the module state even when the collecting group
         # cannot acquire the module itself.
@@ -542,6 +563,63 @@ finally:
         with threading_helper.start_threads(threads):
             pass
         self.assertEqual(counter[0], 40000)
+
+    @unittest.skipIf(support.Py_GIL_DISABLED is False, 'requires free threading')
+    def test_extension_import_preserves_parallel_groups(self):
+        import_module('_testmultiphase')
+        import_module('_testinternalcapi')
+        for name in (
+            '_testsinglephase_no_gil_slot',
+            '_testmultiphase_null_slots',
+            '_test_from_modexport_gil_used',
+            '_test_from_modexport_minimal_slots',
+            '_test_from_modexport_create_nonmodule_gil_used',
+        ):
+            with self.subTest(name=name):
+                assert_python_ok('-c', f'''
+import importlib.machinery
+import importlib.util
+import sys
+import threading
+import types
+import _testinternalcapi as internal
+import _testmultiphase
+from test.support import SHORT_TIMEOUT, threading_helper
+
+assert not sys._is_gil_enabled()
+name = {name!r}
+loader = importlib.machinery.ExtensionFileLoader(name, _testmultiphase.__file__)
+spec = importlib.util.spec_from_loader(name, loader)
+module = importlib.util.module_from_spec(spec)
+loader.exec_module(module)
+assert not sys._is_gil_enabled(), name
+if name == '_testsinglephase_no_gil_slot':
+    assert not module.gil_enabled_on_init
+is_module = isinstance(module, types.ModuleType)
+if is_module:
+    assert module.__shareable__ is threading.Shareable.LOCAL
+
+flags = bytearray(2)
+wait_at_c_barrier = internal.wait_at_c_barrier
+internal.object_declare_synchronized(flags)
+internal.object_declare_synchronized(wait_at_c_barrier)
+results = SynchronizedList([None, None])
+def worker(index):
+    if is_module:
+        try:
+            module.__name__
+        except IllegalThreadAccessException:
+            pass
+        else:
+            raise AssertionError('extension module became shareable')
+    results[index] = wait_at_c_barrier(flags, index, SHORT_TIMEOUT)
+threads = [threading.Thread(group=threading.ThreadGroup(),
+                            target=worker, args=(index,))
+           for index in range(2)]
+with threading_helper.start_threads(threads):
+    pass
+assert results == [True, True], results
+''')
 
     @unittest.skipIf(support.Py_GIL_DISABLED is False, 'requires free threading')
     def test_different_groups_execute_in_parallel(self):

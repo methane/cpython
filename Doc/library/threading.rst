@@ -81,32 +81,24 @@ creating and starting threads using :class:`~threading.Thread`::
 
 .. impl-detail::
 
-   In CPython, due to the :term:`Global Interpreter Lock
-   <global interpreter lock>`, only one thread
-   can execute Python code at once (even though certain performance-oriented
-   libraries might overcome this limitation).
-   If you want your application to make better use of the computational
-   resources of multi-core machines, you are advised to use
-   :mod:`multiprocessing` or :class:`concurrent.futures.ProcessPoolExecutor`.
-   However, threading is still an appropriate model if you want to run
-   multiple I/O-bound tasks simultaneously.
+   This PEP 805 implementation serializes threads belonging to the same
+   :class:`ThreadGroup`. Threads belong to Main by default, preserving the
+   execution model of the :term:`Global Interpreter Lock
+   <global interpreter lock>`. Threads in distinct groups can execute Python
+   code in parallel. Objects shared between groups must be immutable,
+   synchronized, or accessed under their protective locks.
 
 GIL and performance considerations
 ----------------------------------
 
-Unlike the :mod:`multiprocessing` module, which uses separate processes to
-bypass the :term:`global interpreter lock` (GIL), the threading module operates
-within a single process, meaning that all threads share the same memory space.
-However, the GIL limits the performance gains of threading when it comes to
-CPU-bound tasks, as only one thread can execute Python bytecode at a time.
-Despite this, threads remain a useful tool for achieving concurrency in many
-scenarios.
+Unlike :mod:`multiprocessing`, threads share one process and memory space.
+Use distinct :class:`ThreadGroup` objects to allow CPU-bound tasks to execute
+in parallel. Threads in the same group can still overlap blocking I/O.
 
-As of Python 3.13, :term:`free-threaded <free threading>` builds
-can disable the GIL, enabling true parallel execution of threads, but this
-feature is not available by default (see :pep:`703`).
-
-.. TODO: At some point this feature will become available by default.
+The default build uses the :term:`free-threaded <free threading>` runtime
+with ThreadGroup scheduling. Importing an extension module does not enable
+a global GIL. The experimental :option:`--enable-gil` comparison build and
+the explicit :option:`-X gil=1 <-X>` runtime option serialize all groups.
 
 Reference
 ---------
@@ -601,7 +593,7 @@ since it is impossible to detect the termination of alien threads.
    context.  To explicitly start with an empty context, pass a new instance of
    :class:`~contextvars.Context()`.  To explicitly start with a copy of the
    current context, pass the value from :func:`~contextvars.copy_context`. The
-   flag defaults true on free-threaded builds and false otherwise.
+   flag defaults to false in this PEP 805 implementation.
 
    If the subclass overrides the constructor, it must make sure to invoke the
    base class constructor (``Thread.__init__()``) before doing anything else to

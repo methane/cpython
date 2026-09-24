@@ -58,8 +58,8 @@ else:
     PLATSTDLIB_LANDMARK = (f'{sys.platlibdir}/python{VERSION_MAJOR}.'
                            f'{VERSION_MINOR}{ABI_THREAD}/lib-dynload')
 
-DEFAULT_THREAD_INHERIT_CONTEXT = 1 if support.Py_GIL_DISABLED else 0
-DEFAULT_CONTEXT_AWARE_WARNINGS = 1 if support.Py_GIL_DISABLED else 0
+DEFAULT_THREAD_INHERIT_CONTEXT = 0
+DEFAULT_CONTEXT_AWARE_WARNINGS = 0
 
 # If we are running from a build dir, but the stdlib has been installed,
 # some tests need to expect different results.

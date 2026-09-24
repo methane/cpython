@@ -1174,6 +1174,13 @@ _PyErr_Display(PyObject *file, PyObject *unused, PyObject *value, PyObject *tb)
         return;
     }
 fallback:
+    /* A parallel group may be unable to acquire the LOCAL import machinery
+       or traceback formatter. Use the native printer without reporting that
+       expected access denial as another unraisable exception. */
+    if (PyErr_ExceptionMatches(PyExc_IllegalThreadAccessException) ||
+        PyErr_ExceptionMatches(PyExc_UnprotectedAccessException)) {
+        PyErr_Clear();
+    }
 #ifdef Py_DEBUG
      if (PyErr_Occurred()) {
          PyErr_FormatUnraisable(

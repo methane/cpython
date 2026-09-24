@@ -273,10 +273,12 @@ Feature slots
 
       The module is safe to run without an active GIL.
 
-   This slot is ignored by Python builds not configured with
-   :option:`--disable-gil`.  Otherwise, it determines whether or not importing
-   this module will cause the GIL to be automatically enabled. See
-   :ref:`whatsnew313-free-threaded-cpython` for more detail.
+   In this PEP 805 implementation, the slot is accepted for compatibility,
+   but importing an extension does not enable a global GIL. Extension modules,
+   classes and instances are LOCAL by default and use their owning
+   ThreadGroup's lock. This slot does not declare objects shareable; extensions
+   must explicitly use ``PyObject_DeclareSynchronized()`` or
+   ``PyObject_DeclareImmutable()`` where appropriate.
 
    If ``Py_mod_gil`` is not specified, the import machinery defaults to
    ``Py_MOD_GIL_USED``.

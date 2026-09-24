@@ -267,9 +267,7 @@ class MultiPhaseExtensionModuleTests(abc.LoaderTests):
 
 class NonModuleExtensionTests(unittest.TestCase):
     def test_nonmodule_cases(self):
-        # The test cases in this file cause the GIL to be enabled permanently
-        # in free-threaded builds, so they are run in a subprocess to isolate
-        # this effect.
+        # Isolate the extension modules and their native initialization state.
         script = support.findfile("test_importlib/extension/_test_nonmodule_cases.py")
         script_helper.run_test_script(script)
 
