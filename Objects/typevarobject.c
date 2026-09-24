@@ -170,6 +170,9 @@ static PyObject *
 constevaluator_repr(PyObject *self)
 {
     constevaluatorobject *ce = constevaluatorobject_CAST(self);
+    if (PyObject_CheckAccess(ce->value) == NULL) {
+        return NULL;
+    }
     return PyUnicode_FromFormat("<constevaluator %R>", ce->value);
 }
 
@@ -184,7 +187,10 @@ constevaluator_call(PyObject *self, PyObject *args, PyObject *kwargs)
     if (!PyArg_ParseTuple(args, "i:constevaluator.__call__", &format)) {
         return NULL;
     }
-    PyObject *value = ce->value;
+    PyObject *value = PyObject_CheckAccess(ce->value);
+    if (value == NULL) {
+        return NULL;
+    }
     if (format == _Py_ANNOTATE_FORMAT_STRING) {
         PyUnicodeWriter *writer = PyUnicodeWriter_Create(5);  // cannot be <5
         if (writer == NULL) {
@@ -196,7 +202,11 @@ constevaluator_call(PyObject *self, PyObject *args, PyObject *kwargs)
                 return NULL;
             }
             for (Py_ssize_t i = 0; i < PyTuple_GET_SIZE(value); i++) {
-                PyObject *item = PyTuple_GET_ITEM(value, i);
+                PyObject *item = PyTuple_GetItem(value, i);
+                if (item == NULL) {
+                    PyUnicodeWriter_Discard(writer);
+                    return NULL;
+                }
                 if (i > 0) {
                     if (PyUnicodeWriter_WriteASCII(writer, ", ", 2) < 0) {
                         PyUnicodeWriter_Discard(writer);
@@ -563,10 +573,13 @@ typevar_default(PyObject *op, void *Py_UNUSED(closure))
 {
     typevarobject *self = typevarobject_CAST(op);
     if (self->default_value != NULL) {
-        return Py_NewRef(self->default_value);
+        return _PyObject_CheckAccessNullable(Py_NewRef(self->default_value));
     }
     if (self->evaluate_default == NULL) {
         return &_Py_NoDefaultStruct;
+    }
+    if (PyObject_CheckAccess(self->evaluate_default) == NULL) {
+        return NULL;
     }
     PyObject *default_value = PyObject_CallNoArgs(self->evaluate_default);
     self->default_value = Py_XNewRef(default_value);
@@ -991,6 +1004,11 @@ paramspecattr_richcompare(PyObject *a, PyObject *b, int op)
     }
     paramspecattrobject *lhs = paramspecattrobject_CAST(a); // may be unsafe
     paramspecattrobject *rhs = (paramspecattrobject *)b;    // safe fast cast
+    if (PyObject_CheckAccess(lhs->__origin__) == NULL ||
+        PyObject_CheckAccess(rhs->__origin__) == NULL)
+    {
+        return NULL;
+    }
     return PyObject_RichCompare(lhs->__origin__, rhs->__origin__, op);
 }
 
@@ -1015,10 +1033,17 @@ static PyObject *
 paramspecargs_repr(PyObject *self)
 {
     paramspecattrobject *psa = paramspecattrobject_CAST(self);
+    if (PyObject_CheckAccess(psa->__origin__) == NULL) {
+        return NULL;
+    }
     PyTypeObject *tp = _PyInterpreterState_GET()->cached_objects.paramspec_type;
     if (Py_IS_TYPE(psa->__origin__, tp)) {
-        return PyUnicode_FromFormat("%U.args",
+        PyObject *name = PyObject_CheckAccess(
             ((paramspecobject *)psa->__origin__)->name);
+        if (name == NULL) {
+            return NULL;
+        }
+        return PyUnicode_FromFormat("%U.args", name);
     }
     return PyUnicode_FromFormat("%R.args", psa->__origin__);
 }
@@ -1095,11 +1120,17 @@ static PyObject *
 paramspeckwargs_repr(PyObject *self)
 {
     paramspecattrobject *psk = paramspecattrobject_CAST(self);
-
+    if (PyObject_CheckAccess(psk->__origin__) == NULL) {
+        return NULL;
+    }
     PyTypeObject *tp = _PyInterpreterState_GET()->cached_objects.paramspec_type;
     if (Py_IS_TYPE(psk->__origin__, tp)) {
-        return PyUnicode_FromFormat("%U.kwargs",
+        PyObject *name = PyObject_CheckAccess(
             ((paramspecobject *)psk->__origin__)->name);
+        if (name == NULL) {
+            return NULL;
+        }
+        return PyUnicode_FromFormat("%U.kwargs", name);
     }
     return PyUnicode_FromFormat("%R.kwargs", psk->__origin__);
 }
@@ -1255,10 +1286,13 @@ paramspec_default(PyObject *op, void *Py_UNUSED(closure))
 {
     paramspecobject *self = paramspecobject_CAST(op);
     if (self->default_value != NULL) {
-        return Py_NewRef(self->default_value);
+        return _PyObject_CheckAccessNullable(Py_NewRef(self->default_value));
     }
     if (self->evaluate_default == NULL) {
         return &_Py_NoDefaultStruct;
+    }
+    if (PyObject_CheckAccess(self->evaluate_default) == NULL) {
+        return NULL;
     }
     PyObject *default_value = PyObject_CallNoArgs(self->evaluate_default);
     self->default_value = Py_XNewRef(default_value);
@@ -1739,10 +1773,13 @@ typevartuple_default(PyObject *op, void *Py_UNUSED(closure))
 {
     typevartupleobject *self = typevartupleobject_CAST(op);
     if (self->default_value != NULL) {
-        return Py_NewRef(self->default_value);
+        return _PyObject_CheckAccessNullable(Py_NewRef(self->default_value));
     }
     if (self->evaluate_default == NULL) {
         return &_Py_NoDefaultStruct;
+    }
+    if (PyObject_CheckAccess(self->evaluate_default) == NULL) {
+        return NULL;
     }
     PyObject *default_value = PyObject_CallNoArgs(self->evaluate_default);
     self->default_value = Py_XNewRef(default_value);
@@ -2026,7 +2063,11 @@ typealias_check_type_params(PyObject *type_params, int *err) {
     PyThreadState *ts = _PyThreadState_GET();
     int default_seen = 0;
     for (Py_ssize_t index = 0; index < length; index++) {
-        PyObject *type_param = PyTuple_GET_ITEM(type_params, index);
+        PyObject *type_param = PyTuple_GetItem(type_params, index);
+        if (type_param == NULL) {
+            *err = 1;
+            return NULL;
+        }
         PyObject *dflt = get_type_param_default(ts, type_param);
         if (dflt == NULL) {
             *err = 1;

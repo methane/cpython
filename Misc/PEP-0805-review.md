@@ -1057,6 +1057,54 @@ Logs and the isolated crash probes are in
 reference-acquisition audit remains unfinished. No Mark decision was needed
 for this repair.
 
+### Union and native typing references
+
+Union representation and the hash/comparison paths for unhashable arguments
+now acquire tuple elements through the checked API. Flattening nested unions
+checks their argument elements at acquisition; the tuple container is created
+internally and is always an exact immutable tuple. Redundant input checks in
+the union slots and builders are now assertions. The single-element builder
+also checks the reference returned from its internal list.
+
+Union construction previously cleared an access exception raised by hashing
+an accessible GenericAlias containing an inaccessible value, recording the
+alias as merely unhashable and returning successfully. Both access exception
+types now propagate. Other hash failures retain their prior behavior,
+including a user-defined __hash__ that raises ValueError. No eager traversal
+of the elements of cached hashable-argument sets was added.
+
+Constant evaluators now check their stored values before formatting or
+returning them, and check each tuple element used for string-format output.
+Value-format output can still return an accessible tuple containing protected
+elements. The TypeVar default getter is also called directly by generic-alias
+substitution, bypassing ordinary descriptor-result checks; it now validates
+the returned stored default. The corresponding ParamSpec and TypeVarTuple
+getters and their stored evaluator calls follow the same rule.
+
+TypeAliasType construction now rejects a foreign type parameter obtained from
+an otherwise accessible tuple. Previously it could inspect that parameter's
+default directly and accept it. ParamSpec args/kwargs wrappers transferred
+through TransferBox now check their origin before representation or comparison,
+and their representation checks the name fetched from that origin. The origin
+itself retains its original ownership during shallow transfer.
+
+The nine-method regression suite reports seventeen failures including subtests on the
+previous runtime. Separate probes confirm SIGABRT for unprotected union
+representation and constant string evaluation, and a normal return when union
+construction suppresses an access exception. The protected-default regression
+also reproduces an input assertion in PyTuple_Pack. Logs and reproductions are
+in `/tmp/pep805-typing-acquisition/`.
+
+The eleven-suite typing, AST and abstract C API selection passes on the
+default, GIL and Tier 2 debug builds: each reports 1,403 tests and two skips.
+All three incremental builds complete without compiler warnings or failed
+module imports. The changed native sources and regression tests match across
+the builds.
+
+These repairs do not depend on a decision about protection ending inside a
+callback. The remaining native typing paths and wider acquisition audit still
+need review; the nine questions for Mark remain separate from this work.
+
 ## Earlier re-review and implementation follow-ups
 
 One earlier question was incorrect: footnote 3 of the

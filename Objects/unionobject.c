@@ -53,7 +53,10 @@ union_hash(PyObject *self)
         assert(PyTuple_CheckExact(alias->unhashable_args));
         Py_ssize_t n = PyTuple_GET_SIZE(alias->unhashable_args);
         for (Py_ssize_t i = 0; i < n; i++) {
-            PyObject *arg = PyTuple_GET_ITEM(alias->unhashable_args, i);
+            PyObject *arg = PyTuple_GetItem(alias->unhashable_args, i);
+            if (arg == NULL) {
+                return -1;
+            }
             Py_hash_t hash = PyObject_Hash(arg);
             if (hash == -1) {
                 return -1;
@@ -83,7 +86,10 @@ unions_equal(unionobject *a, unionobject *b)
             return 0;
         }
         for (Py_ssize_t i = 0; i < n; i++) {
-            PyObject *arg_a = PyTuple_GET_ITEM(a->unhashable_args, i);
+            PyObject *arg_a = PyTuple_GetItem(a->unhashable_args, i);
+            if (arg_a == NULL) {
+                return -1;
+            }
             int result = PySequence_Contains(b->unhashable_args, arg_a);
             if (result == -1) {
                 return -1;
@@ -93,7 +99,10 @@ unions_equal(unionobject *a, unionobject *b)
             }
         }
         for (Py_ssize_t i = 0; i < n; i++) {
-            PyObject *arg_b = PyTuple_GET_ITEM(b->unhashable_args, i);
+            PyObject *arg_b = PyTuple_GetItem(b->unhashable_args, i);
+            if (arg_b == NULL) {
+                return -1;
+            }
             int result = PySequence_Contains(a->unhashable_args, arg_b);
             if (result == -1) {
                 return -1;
@@ -112,9 +121,7 @@ unions_equal(unionobject *a, unionobject *b)
 static PyObject *
 union_richcompare(PyObject *a, PyObject *b, int op)
 {
-    if (PyObject_CheckAccess(a) == NULL || PyObject_CheckAccess(b) == NULL) {
-        return NULL;
-    }
+    assert(_PyObject_IsAccessible(a) && _PyObject_IsAccessible(b));
     if (!_PyUnion_Check(b) || (op != Py_EQ && op != Py_NE)) {
         Py_RETURN_NOTIMPLEMENTED;
     }
@@ -172,6 +179,11 @@ unionbuilder_add_single_unchecked(unionbuilder *ub, PyObject *arg)
 {
     Py_hash_t hash = PyObject_Hash(arg);
     if (hash == -1) {
+        if (PyErr_ExceptionMatches(PyExc_IllegalThreadAccessException) ||
+            PyErr_ExceptionMatches(PyExc_UnprotectedAccessException))
+        {
+            return false;
+        }
         PyErr_Clear();
         if (ub->unhashable_args == NULL) {
             ub->unhashable_args = PyList_New(0);
@@ -210,9 +222,10 @@ unionbuilder_add_single_unchecked(unionbuilder *ub, PyObject *arg)
 static bool
 unionbuilder_add_single(unionbuilder *ub, PyObject *arg)
 {
-    if (arg == NULL || PyObject_CheckAccess(arg) == NULL) {
+    if (arg == NULL) {
         return false;
     }
+    assert(_PyObject_IsAccessible(arg));
     if (Py_IsNone(arg)) {
         arg = (PyObject *)&_PyNone_Type;  // immortal, so no refcounting needed
     }
@@ -237,12 +250,14 @@ unionbuilder_add_single(unionbuilder *ub, PyObject *arg)
 static bool
 unionbuilder_add_tuple(unionbuilder *ub, PyObject *tuple)
 {
-    if (tuple == NULL || PyObject_CheckAccess(tuple) == NULL) {
+    if (tuple == NULL) {
         return false;
     }
+    assert(_PyObject_IsAccessible(tuple));
     Py_ssize_t n = PyTuple_GET_SIZE(tuple);
     for (Py_ssize_t i = 0; i < n; i++) {
-        if (!unionbuilder_add_single(ub, PyTuple_GET_ITEM(tuple, i))) {
+        PyObject *arg = PyTuple_GetItem(tuple, i);
+        if (arg == NULL || !unionbuilder_add_single(ub, arg)) {
             return false;
         }
     }
@@ -266,10 +281,7 @@ is_unionable(PyObject *obj)
 PyObject *
 _Py_union_type_or(PyObject* self, PyObject* other)
 {
-    if (PyObject_CheckAccess(self) == NULL ||
-        PyObject_CheckAccess(other) == NULL) {
-        return NULL;
-    }
+    assert(_PyObject_IsAccessible(self) && _PyObject_IsAccessible(other));
     if (!is_unionable(self) || !is_unionable(other)) {
         Py_RETURN_NOTIMPLEMENTED;
     }
@@ -306,7 +318,10 @@ union_repr(PyObject *self)
         if (i > 0 && PyUnicodeWriter_WriteASCII(writer, " | ", 3) < 0) {
             goto error;
         }
-        PyObject *p = PyTuple_GET_ITEM(alias->args, i);
+        PyObject *p = PyTuple_GetItem(alias->args, i);
+        if (p == NULL) {
+            goto error;
+        }
         if (_Py_typing_type_repr(writer, p) < 0) {
             goto error;
         }
@@ -355,10 +370,7 @@ static PyObject *
 union_getitem(PyObject *self, PyObject *item)
 {
     unionobject *alias = (unionobject *)self;
-    if (PyObject_CheckAccess(self) == NULL ||
-        PyObject_CheckAccess(item) == NULL) {
-        return NULL;
-    }
+    assert(_PyObject_IsAccessible(self) && _PyObject_IsAccessible(item));
     if (union_init_parameters(alias) < 0) {
         return NULL;
     }
@@ -381,9 +393,7 @@ static PyObject *
 union_parameters(PyObject *self, void *Py_UNUSED(unused))
 {
     unionobject *alias = (unionobject *)self;
-    if (PyObject_CheckAccess(self) == NULL) {
-        return NULL;
-    }
+    assert(_PyObject_IsAccessible(self));
     if (union_init_parameters(alias) < 0) {
         return NULL;
     }
@@ -442,10 +452,7 @@ static PyObject *
 union_getattro(PyObject *self, PyObject *name)
 {
     unionobject *alias = (unionobject *)self;
-    if (PyObject_CheckAccess(self) == NULL ||
-        PyObject_CheckAccess(name) == NULL) {
-        return NULL;
-    }
+    assert(_PyObject_IsAccessible(self) && _PyObject_IsAccessible(name));
     if (PyUnicode_Check(name)) {
         for (const char * const *p = cls_attrs; ; p++) {
             if (*p == NULL) {
@@ -508,9 +515,10 @@ type_check(PyObject *arg, const char *msg)
 PyObject *
 _Py_union_from_tuple(PyObject *args)
 {
-    if (args == NULL || PyObject_CheckAccess(args) == NULL) {
+    if (args == NULL) {
         return NULL;
     }
+    assert(_PyObject_IsAccessible(args));
     unionbuilder ub;
     if (!unionbuilder_init(&ub, true)) {
         return NULL;
@@ -584,8 +592,7 @@ make_union(unionbuilder *ub)
         return NULL;
     }
     if (n == 1) {
-        PyObject *result = PyList_GET_ITEM(ub->args, 0);
-        Py_INCREF(result);
+        PyObject *result = PyList_GetItemRef(ub->args, 0);
         unionbuilder_finalize(ub);
         return result;
     }
