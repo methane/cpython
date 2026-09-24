@@ -1847,7 +1847,7 @@ class SizeofTest(unittest.TestCase):
         fmt = 'P2nPI13Pl4Pn9Pn12PI2PcP'
         s = vsize(fmt)
         check(int, s)
-        typeid = 'n' if support.Py_GIL_DISABLED else ''
+        typeid = 'n'
         # class
         s = vsize(fmt +                 # PyTypeObject
                   '4P'                  # PyAsyncMethods

@@ -65,13 +65,6 @@ typedef struct _PyThreadStateImpl {
     struct _qsbr_thread_state *qsbr;  // only used by free-threaded build
     struct llist_node mem_free_queue; // delayed free queue
 
-#ifdef Py_GIL_DISABLED
-    // Stack references for the current thread that exist on the C stack
-    struct _PyCStackRef *c_stack_refs;
-    struct _gc_thread_state gc;
-    struct _mimalloc_thread_state mimalloc;
-    struct _Py_freelists freelists;
-    struct _brc_thread_state brc;
     struct {
         // The per-thread refcounts
         Py_ssize_t *values;
@@ -82,6 +75,14 @@ typedef struct _PyThreadStateImpl {
         // If set, don't use per-thread refcounts
         int is_finalized;
     } refcounts;
+
+#ifdef Py_GIL_DISABLED
+    // Stack references for the current thread that exist on the C stack
+    struct _PyCStackRef *c_stack_refs;
+    struct _gc_thread_state gc;
+    struct _mimalloc_thread_state mimalloc;
+    struct _Py_freelists freelists;
+    struct _brc_thread_state brc;
 
     // Index to use to retrieve thread-local bytecode for this thread
     int32_t tlbc_index;

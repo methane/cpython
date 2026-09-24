@@ -1891,6 +1891,9 @@ PyThreadState_Clear(PyThreadState *tstate)
 
     Py_CLEAR(tstate->context);
 
+    // Flush this thread's deferred immutable counts before abandoning it.
+    _PyObject_FinalizePerThreadRefcounts((_PyThreadStateImpl *)tstate);
+
 #ifdef Py_GIL_DISABLED
     // Each thread should clear own freelists in free-threading builds.
     struct _Py_freelists *freelists = _Py_freelists_GET();
@@ -1902,10 +1905,6 @@ PyThreadState_Clear(PyThreadState *tstate)
     _Py_atomic_add_int(&tstate->interp->gc.young.count,
                        (int)tstate_impl->gc.alloc_count);
     tstate_impl->gc.alloc_count = 0;
-
-    // Merge our thread-local refcounts into the type's own refcount and
-    // free our local refcount array.
-    _PyObject_FinalizePerThreadRefcounts(tstate_impl);
 
     // Remove ourself from the biased reference counting table of threads.
     _Py_brc_remove_thread(tstate);

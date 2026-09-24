@@ -22,6 +22,9 @@ typedef struct {
 } _PyExecutorArray;
 
 
+#define _PyCode_DEF_UNIQUE_ID() \
+    Py_ssize_t _co_unique_id;     /* ID used for per-thread refcounting */
+
 #ifdef Py_GIL_DISABLED
 
 /* Each thread specializes a thread-local copy of the bytecode in free-threaded
@@ -34,13 +37,9 @@ typedef struct {
     char *entries[1];
 } _PyCodeArray;
 
-#define _PyCode_DEF_UNIQUE_ID() \
-    Py_ssize_t _co_unique_id;     /* ID used for per-thread refcounting */
-
 #define _PyCode_DEF_THREAD_LOCAL_BYTECODE() \
     _PyCodeArray *co_tlbc;
 #else
-#define _PyCode_DEF_UNIQUE_ID()
 #define _PyCode_DEF_THREAD_LOCAL_BYTECODE()
 #endif
 

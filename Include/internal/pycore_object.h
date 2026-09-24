@@ -224,8 +224,8 @@ extern PyStatus _PyObject_InitState(PyInterpreterState *interp);
 extern void _PyObject_FiniState(PyInterpreterState *interp);
 extern bool _PyRefchain_IsTraced(PyInterpreterState *interp, PyObject *obj);
 
-// Macros used for per-thread reference counting in the free threading build.
-// They resolve to normal Py_INCREF/DECREF calls in the default build.
+// Per-thread counters supplement group-biased RC for deferred immutable
+// objects. LOCAL objects never receive a unique ID and use ordinary BRC.
 //
 // The macros are used for only a few references that would otherwise cause
 // scaling bottlenecks in the free threading build:
@@ -238,12 +238,6 @@ extern bool _PyRefchain_IsTraced(PyInterpreterState *interp, PyObject *obj);
 // usage with normal Py_INCREF/DECREF calls.
 //
 // See also Include/internal/pycore_dict.h for _Py_INCREF_DICT/_Py_DECREF_DICT.
-#ifndef Py_GIL_DISABLED
-#  define _Py_INCREF_TYPE Py_INCREF
-#  define _Py_DECREF_TYPE Py_DECREF
-#  define _Py_INCREF_CODE Py_INCREF
-#  define _Py_DECREF_CODE Py_DECREF
-#else
 static inline void
 _Py_THREAD_INCREF_OBJECT(PyObject *obj, Py_ssize_t unique_id)
 {
@@ -333,7 +327,6 @@ _Py_DECREF_CODE(PyCodeObject *co)
 {
     _Py_THREAD_DECREF_OBJECT((PyObject *)co, co->_co_unique_id);
 }
-#endif
 
 # define Py_DECREF_MORTAL(op) Py_DECREF(op)
 # define Py_DECREF_MORTAL_SPECIALIZED(op, destruct) Py_DECREF(op)

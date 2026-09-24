@@ -392,12 +392,6 @@ extern void _PyDict_EnablePerThreadRefcounting(PyObject *op);
 PyDictObject *_PyObject_MaterializeManagedDict_LockHeld(PyObject *);
 
 // See `_Py_INCREF_TYPE()` in pycore_object.h
-#ifndef Py_GIL_DISABLED
-#  define _Py_INCREF_DICT Py_INCREF
-#  define _Py_DECREF_DICT Py_DECREF
-#  define _Py_INCREF_BUILTINS Py_INCREF
-#  define _Py_DECREF_BUILTINS Py_DECREF
-#else
 static inline Py_ssize_t
 _PyDict_UniqueId(PyDictObject *mp)
 {
@@ -443,7 +437,7 @@ _Py_DECREF_BUILTINS(PyObject *op)
         Py_DECREF(op);
     }
 }
-#endif
+
 
 /* frozendict */
 typedef struct {

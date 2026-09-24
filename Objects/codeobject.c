@@ -728,20 +728,14 @@ _PyCode_New(struct _PyCodeConstructor *con)
 
     Py_ssize_t size = PyBytes_GET_SIZE(con->code) / sizeof(_Py_CODEUNIT);
     PyCodeObject *co;
-#ifdef Py_GIL_DISABLED
     co = PyObject_GC_NewVar(PyCodeObject, &PyCode_Type, size);
-#else
-    co = PyObject_NewVar(PyCodeObject, &PyCode_Type, size);
-#endif
     if (co == NULL) {
         Py_XDECREF(replacement_locations);
         PyErr_NoMemory();
         return NULL;
     }
 
-#ifdef Py_GIL_DISABLED
     co->_co_unique_id = _Py_INVALID_UNIQUE_ID;
-#endif
 
     if (init_code(co, con) < 0) {
         Py_XDECREF(replacement_locations);
@@ -749,10 +743,8 @@ _PyCode_New(struct _PyCodeConstructor *con)
         return NULL;
     }
 
-#ifdef Py_GIL_DISABLED
     co->_co_unique_id = _PyObject_AssignUniqueId((PyObject *)co);
     _PyObject_GC_TRACK(co);
-#endif
     Py_XDECREF(replacement_locations);
     return co;
 }
@@ -2403,9 +2395,7 @@ code_dealloc(PyObject *self)
         return;
     }
 
-#ifdef Py_GIL_DISABLED
     PyObject_GC_UnTrack(co);
-#endif
 
     _PyFunction_ClearCodeByVersion(co->co_version);
     if (co->co_extra != NULL) {
@@ -2437,9 +2427,7 @@ code_dealloc(PyObject *self)
     Py_XDECREF(co->co_qualname);
     Py_XDECREF(co->co_linetable);
     Py_XDECREF(co->co_exceptiontable);
-#ifdef Py_GIL_DISABLED
     assert(co->_co_unique_id == _Py_INVALID_UNIQUE_ID);
-#endif
     if (co->_co_cached != NULL) {
         Py_XDECREF(co->_co_cached->_co_code);
         Py_XDECREF(co->_co_cached->_co_cellvars);
@@ -2462,18 +2450,24 @@ code_dealloc(PyObject *self)
         PyMem_Free(co->co_tlbc);
     }
 #endif
-    PyObject_Free(co);
+    PyObject_GC_Del(co);
 }
 
-#ifdef Py_GIL_DISABLED
 static int
 code_traverse(PyObject *self, visitproc visit, void *arg)
 {
     PyCodeObject *co = _PyCodeObject_CAST(self);
     Py_VISIT(co->co_consts);
+    Py_VISIT(co->co_names);
+    Py_VISIT(co->co_localsplusnames);
+    if (co->_co_cached != NULL) {
+        Py_VISIT(co->_co_cached->_co_varnames);
+        Py_VISIT(co->_co_cached->_co_freevars);
+        Py_VISIT(co->_co_cached->_co_cellvars);
+    }
     return 0;
 }
-#endif
+
 
 static PyObject *
 code_repr(PyObject *self)
@@ -2893,17 +2887,9 @@ PyTypeObject PyCode_Type = {
     PyObject_GenericGetAttr,            /* tp_getattro */
     0,                                  /* tp_setattro */
     0,                                  /* tp_as_buffer */
-#ifdef Py_GIL_DISABLED
     Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_GC, /* tp_flags */
-#else
-    Py_TPFLAGS_DEFAULT,                 /* tp_flags */
-#endif
     code_new__doc__,                    /* tp_doc */
-#ifdef Py_GIL_DISABLED
     code_traverse,                      /* tp_traverse */
-#else
-    0,                                  /* tp_traverse */
-#endif
     0,                                  /* tp_clear */
     code_richcompare,                   /* tp_richcompare */
     offsetof(PyCodeObject, co_weakreflist),     /* tp_weaklistoffset */

@@ -8,7 +8,6 @@ extern "C" {
 #  error "this header requires Py_BUILD_CORE define"
 #endif
 
-#ifdef Py_GIL_DISABLED
 
 // This contains code for allocating unique ids to objects for per-thread
 // reference counting.
@@ -49,7 +48,6 @@ extern void _PyObject_FinalizeUniqueIdPool(PyInterpreterState *interp);
 // Increfs the object, resizing the thread-local refcount array if necessary.
 PyAPI_FUNC(void) _PyObject_ThreadIncrefSlow(PyObject *obj, size_t idx);
 
-#endif   /* Py_GIL_DISABLED */
 
 #ifdef __cplusplus
 }

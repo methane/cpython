@@ -1083,6 +1083,25 @@ finalize_garbage(PyThreadState *tstate, PyGC_Head *collectable)
     gc_list_merge(&seen, collectable);
 }
 
+static void
+merge_perthread_refcounts(PyInterpreterState *interp)
+{
+    // Other threads cannot mutate their counters while the interpreter GIL
+    // is held. The parallel collector must perform this under a world stop.
+    _Py_FOR_EACH_TSTATE_BEGIN(interp, thread) {
+        _PyObject_MergePerThreadRefcounts((_PyThreadStateImpl *)thread);
+    }
+    _Py_FOR_EACH_TSTATE_END(interp);
+}
+
+static void
+disable_perthread_list(PyGC_Head *objects)
+{
+    for (PyGC_Head *gc = GC_NEXT(objects); gc != objects; gc = GC_NEXT(gc)) {
+        _PyObject_DisablePerThreadRefcounting(FROM_GC(gc));
+    }
+}
+
 // Convert survivors to ordinary reference counting before the last collection
 // ends. Later interpreter teardown must not leave deferred-only objects behind.
 static void
@@ -1213,6 +1232,7 @@ deduce_unreachable(PyGC_Head *base, PyGC_Head *unreachable) {
      * refcount greater than 0 when all the references within the
      * set are taken into account).
      */
+    merge_perthread_refcounts(_PyInterpreterState_GET());
     Py_ssize_t candidates = update_refs(base);  // gc_prev is used for gc_refs
     subtract_refs(base);
 
@@ -1591,6 +1611,11 @@ gc_collect_main(PyThreadState *tstate, int generation, _PyGC_Reason reason)
         }
     }
 
+    // Disable per-thread counts before running callbacks. A resurrecting
+    // finalizer then creates ordinary counted references, even if another
+    // finalizer has already caused a released unique ID to be reused.
+    disable_perthread_list(&unreachable);
+
     /* Clear weakrefs and invoke callbacks as necessary. */
     stats.collected += handle_weakref_callbacks(&unreachable, old);
     validate_list(old, collecting_clear_unreachable_clear);
@@ -1684,6 +1709,13 @@ gc_collect_main(PyThreadState *tstate, int generation, _PyGC_Reason reason)
     }
 
     if (reason == _Py_GC_REASON_SHUTDOWN) {
+        merge_perthread_refcounts(tstate->interp);
+        // First stop all table updates; dropping sentinels below can invoke
+        // callbacks using code from anywhere in the surviving object graph.
+        for (int gen = 0; gen < NUM_GENERATIONS; gen++) {
+            disable_perthread_list(GEN_HEAD(gcstate, gen));
+        }
+        disable_perthread_list(&gcstate->permanent_generation.head);
         for (int gen = 0; gen < NUM_GENERATIONS; gen++) {
             disable_deferred_list(GEN_HEAD(gcstate, gen));
         }

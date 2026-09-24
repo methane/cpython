@@ -112,3 +112,15 @@ including objects retained until interpreter-dict cleanup.
 immutable containers, resurrection, weakref callbacks and late shutdown.
 This does not yet port deferred VM stack references or per-thread counts;
 those remain necessary before declaring the reference-counting stage complete.
+
+Per-thread counting for deferred immutable code objects now supplements the
+ThreadGroup bias. Code objects are GC-tracked in the normal build, and the
+collector merges thread tables before computing reachability. It disables
+unique IDs before finalizers can resurrect garbage. Thread exit flushes its
+counters; LOCAL types and dictionaries continue to use ordinary biased RC.
+`test_deferred_reclamation`, `test_local_reclamation`, `test_threadgroup`,
+`test_capi.test_object`, `test_code`, `test_gc`, `test_funcattrs`, `test_sys`
+and `test_embed` pass (375 tests, 17 skips). After adding code-specific
+thread-exit and resurrection tests, `test_deferred_reclamation`, `test_code`
+and `test_capi.test_object` also pass `-R 3:3` (66 tests, one skip).
+Deferred VM stack references are still being ported.

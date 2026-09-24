@@ -798,6 +798,7 @@ typedef struct _PyIndexPool {
     // Used for TLBC cache invalidation in remote debugging
     uint32_t tlbc_generation;
 } _PyIndexPool;
+#endif
 
 typedef union _Py_unique_id_entry {
     // Points to the next free type id, when part of the freelist
@@ -819,8 +820,6 @@ struct _Py_unique_id_pool {
     // size of 'table'
     Py_ssize_t size;
 };
-
-#endif
 
 typedef _Py_CODEUNIT *(*_PyJitEntryFuncPtr)(struct _PyExecutorObject *exec, _PyInterpreterFrame *frame, _PyStackRef *stack_pointer, PyThreadState *tstate);
 
@@ -956,11 +955,11 @@ struct _is {
     struct atexit_state atexit;
     struct _stoptheworld_state stoptheworld;
     struct _qsbr_shared qsbr;
+    struct _Py_unique_id_pool unique_ids;  // object ids for per-thread refcounts
 
 #if defined(Py_GIL_DISABLED)
     struct _mimalloc_interp_state mimalloc;
     struct _brc_state brc;  // biased reference counting state
-    struct _Py_unique_id_pool unique_ids;  // object ids for per-thread refcounts
     PyMutex weakref_locks[NUM_WEAKREF_LIST_LOCKS];
     _PyIndexPool tlbc_indices;
 #endif

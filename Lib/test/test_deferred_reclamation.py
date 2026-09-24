@@ -1,11 +1,14 @@
 """Deferred counting is restricted to IMMUTABLE objects in the PEP 805 base."""
 
 import gc
+import sys
+import threading
+import types
 import unittest
 import weakref
 
 from test import support
-from test.support import import_helper
+from test.support import import_helper, threading_helper
 from test.support.script_helper import assert_python_ok
 
 _testcapi = import_helper.import_module('_testcapi')
@@ -92,6 +95,60 @@ class DeferredReclamationTests(unittest.TestCase):
             self.assertIs(reference(), value)
             del value
             self.assertIsNone(reference())
+
+    @threading_helper.requires_working_threading()
+    def test_code_counts_survive_thread_exit(self):
+        with support.disable_gc():
+            functions = []
+            references = []
+
+            def publish():
+                for index in range(40):
+                    outer = compile('def f(): return 42', f'rc-{index}', 'exec')
+                    code, = (c for c in outer.co_consts if isinstance(c, types.CodeType))
+                    functions.append(types.FunctionType(code, {}))
+                    references.append(weakref.ref(code))
+
+            thread = threading.Thread(target=publish, group=sys.main_thread_group)
+            thread.start()
+            thread.join()
+            gc.collect()
+            self.assertEqual(len(functions), 40)
+            self.assertTrue(all(ref() is not None for ref in references))
+            self.assertTrue(all(function() == 42 for function in functions))
+            functions.clear()
+            gc.collect()
+            self.assertTrue(all(ref() is None for ref in references))
+
+    def test_code_cycle_resurrection(self):
+        with support.disable_gc():
+            events = []
+            survivors = []
+
+            class Value:
+                def __del__(self):
+                    events.append('finalized')
+                    survivors.append(self.code)
+
+            value = Value()
+            code = compile('pass', 'code-cycle', 'exec').replace(co_consts=(value,))
+            value.code = code
+            self.assertTrue(gc.is_tracked(code))
+            self.assertTrue(internal.has_deferred_refcount(code))
+            reference = weakref.ref(code)
+            del value, code
+            gc.collect()
+            code, = survivors
+            self.assertIs(reference(), code)
+            function = types.FunctionType(code, {})
+            survivors.clear()
+            del code
+            gc.collect()
+            self.assertIs(reference(), function.__code__)
+            del function
+            gc.collect()
+            self.assertIsNone(reference())
+            self.assertEqual(events, ['finalized'])
 
     def test_shutdown_restores_ordinary_counting(self):
         assert_python_ok('-c', 'import gc\nimport _testinternalcapi\ngc.disable()\n_testinternalcapi.check_deferred_shutdown()\n')

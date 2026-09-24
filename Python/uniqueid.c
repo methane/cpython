@@ -13,7 +13,6 @@
 //
 // See Include/internal/pycore_uniqueid.h for more details.
 
-#ifdef Py_GIL_DISABLED
 
 #define POOL_MIN_SIZE 8
 
@@ -81,7 +80,9 @@ _PyObject_AssignUniqueId(PyObject *obj)
 {
     /* A per-thread count also defers reclamation. LOCAL objects must use
        ordinary biased counts, including heap types and module dictionaries. */
-    if (_Py_atomic_load_uint8(&obj->ob_shareable) == _Py_SHAREABLE_LOCAL) {
+    if (_PyThreadState_GET()->interp->gc.deferred_disabled ||
+        _Py_IsImmortal(obj) ||
+        _Py_atomic_load_uint8(&obj->ob_shareable) != _Py_SHAREABLE_IMMUTABLE) {
         return _Py_INVALID_UNIQUE_ID;
     }
     PyInterpreterState *interp = _PyInterpreterState_GET();
@@ -233,5 +234,3 @@ _PyObject_FinalizeUniqueIdPool(PyInterpreterState *interp)
     pool->freelist = NULL;
     pool->size = 0;
 }
-
-#endif   /* Py_GIL_DISABLED */
