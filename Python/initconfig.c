@@ -460,8 +460,8 @@ static const char usage_xoptions[] =
 "#h{The following implementation-specific options are available:}\n"
 "#s{-X} #L{context_aware_warnings}#b{=[0|1]}: if true (#B{1}) then the warnings module will\n"
 "         use a context variables; if false (#B{0}) then the warnings module will\n"
-"         use module globals, which is not concurrent-safe; set to true for\n"
-"         free-threaded builds and false otherwise; also\n"
+"         use module globals, which is not concurrent-safe; disabled by default;\n"
+"         also\n"
 "         #e{PYTHON_CONTEXT_AWARE_WARNINGS}\n"
 "#s{-X} #L{cpu_count}#b{=N}: override the return value of os.cpu_count();\n"
 "         #S{-X} #e{cpu_count}#B{=default} cancels overriding; also #e{PYTHON_CPU_COUNT}\n"
@@ -501,8 +501,8 @@ static const char usage_xoptions[] =
 "         memory blocks when the program finishes or after each statement in\n"
 "         the interactive interpreter; only works on debug builds\n"
 "#s{-X} #L{thread_inherit_context}#b{=[0|1]}: enable (#B{1}) or disable (#B{0}) threads inheriting\n"
-"         context vars by default; enabled by default in the free-threaded\n"
-"         build and disabled otherwise; also #e{PYTHON_THREAD_INHERIT_CONTEXT}\n"
+"         context vars by default; disabled by default; also\n"
+"         #e{PYTHON_THREAD_INHERIT_CONTEXT}\n"
 #ifdef Py_GIL_DISABLED
 "#s{-X} #L{tlbc}#b{=[0|1]}: enable (#B{1}) or disable (#B{0}) thread-local bytecode. Also\n"
 "         #e{PYTHON_TLBC}\n"
@@ -1207,13 +1207,8 @@ _PyConfig_InitCompatConfig(PyConfig *config)
     config->code_debug_ranges = 1;
     config->cpu_count = -1;
     config->lazy_imports = -1;
-#ifdef Py_GIL_DISABLED
-    config->thread_inherit_context = 1;
-    config->context_aware_warnings = 1;
-#else
     config->thread_inherit_context = 0;
     config->context_aware_warnings = 0;
-#endif
 #ifdef __APPLE__
     config->use_system_logger = USE_SYSTEM_LOGGER_DEFAULT;
 #endif
@@ -1246,13 +1241,8 @@ config_init_defaults(PyConfig *config)
 #ifdef MS_WINDOWS
     config->legacy_windows_stdio = 0;
 #endif
-#ifdef Py_GIL_DISABLED
-    config->thread_inherit_context = 1;
-    config->context_aware_warnings = 1;
-#else
     config->thread_inherit_context = 0;
     config->context_aware_warnings = 0;
-#endif
 #ifdef __APPLE__
     config->use_system_logger = USE_SYSTEM_LOGGER_DEFAULT;
 #endif
@@ -1287,11 +1277,7 @@ PyConfig_InitIsolatedConfig(PyConfig *config)
     config->int_max_str_digits = _PY_LONG_DEFAULT_MAX_STR_DIGITS;
     config->safe_path = 1;
     config->pathconfig_warnings = 0;
-#ifdef Py_GIL_DISABLED
-    config->thread_inherit_context = 1;
-#else
     config->thread_inherit_context = 0;
-#endif
 #ifdef MS_WINDOWS
     config->legacy_windows_stdio = 0;
 #endif

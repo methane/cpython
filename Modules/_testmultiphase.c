@@ -944,6 +944,37 @@ static PyModuleDef def_module_state_shared = {
     .m_size = -1,
 };
 
+static PyModuleDef def_no_gil_slot = {
+    PyModuleDef_HEAD_INIT,
+    .m_name = "_testsinglephase_no_gil_slot",
+    .m_size = -1,
+};
+
+PyMODINIT_FUNC
+PyInit__testsinglephase_no_gil_slot(void)
+{
+    PyObject *module = PyModule_Create(&def_no_gil_slot);
+    if (module == NULL) {
+        return NULL;
+    }
+    PyObject *sys = PyImport_ImportModule("sys");
+    if (sys == NULL) {
+        Py_DECREF(module);
+        return NULL;
+    }
+    PyObject *enabled = PyObject_CallMethod(sys, "_is_gil_enabled", NULL);
+    Py_DECREF(sys);
+    if (enabled == NULL ||
+        PyModule_AddObjectRef(module, "gil_enabled_on_init", enabled) < 0)
+    {
+        Py_XDECREF(enabled);
+        Py_DECREF(module);
+        return NULL;
+    }
+    Py_DECREF(enabled);
+    return module;
+}
+
 PyMODINIT_FUNC
 PyInit__test_module_state_shared(void)
 {

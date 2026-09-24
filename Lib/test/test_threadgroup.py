@@ -13,6 +13,51 @@ threading_helper.requires_working_threading(module=True)
 
 
 class ThreadGroupTests(unittest.TestCase):
+    def test_default_context_compatibility(self):
+        script_helper.assert_python_ok('-c', '''
+import contextvars
+import sys
+import threading
+from test.support import threading_helper
+assert sys.flags.thread_inherit_context == 0
+assert sys.flags.context_aware_warnings == 0
+value = contextvars.ContextVar('value', default=None)
+value.set('parent')
+results = []
+with threading_helper.start_threads([
+        threading.Thread(target=lambda: results.append(value.get()))]):
+    pass
+assert results == [None], results
+assert value.get() == 'parent'
+''')
+
+    @unittest.skipUnless(support.Py_GIL_DISABLED, 'requires parallel runtime')
+    def test_extension_import_preserves_scheduling(self):
+        import_helper.import_module('_testmultiphase')
+        for name in (
+            '_testsinglephase_no_gil_slot',
+            '_testmultiphase_null_slots',
+            '_test_from_modexport_gil_used',
+            '_test_from_modexport_minimal_slots',
+            '_test_from_modexport_create_nonmodule_gil_used',
+        ):
+            with self.subTest(name=name):
+                script_helper.assert_python_ok('-c', f'''
+import importlib.machinery
+import importlib.util
+import sys
+import _testmultiphase
+assert not sys._is_gil_enabled()
+name = {name!r}
+loader = importlib.machinery.ExtensionFileLoader(name, _testmultiphase.__file__)
+spec = importlib.util.spec_from_loader(name, loader)
+module = importlib.util.module_from_spec(spec)
+loader.exec_module(module)
+assert not sys._is_gil_enabled(), name
+if name == '_testsinglephase_no_gil_slot':
+    assert not module.gil_enabled_on_init
+''')
+
     def test_main_group(self):
         main = sys.main_thread_group
         self.assertIsInstance(main, threading.ThreadGroup)

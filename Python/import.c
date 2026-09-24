@@ -1628,55 +1628,6 @@ _PyImport_CheckSubinterpIncompatibleExtensionAllowed(const char *name)
     return 0;
 }
 
-#ifdef Py_GIL_DISABLED
-int
-_PyImport_CheckGILForModule(PyObject* module, PyObject *module_name)
-{
-    PyThreadState *tstate = _PyThreadState_GET();
-    if (module == NULL) {
-        _PyEval_DisableGIL(tstate);
-        return 0;
-    }
-
-    if (!PyModule_Check(module) ||
-        ((PyModuleObject *)module)->md_requires_gil)
-    {
-        if (PyModule_Check(module)) {
-            assert(((PyModuleObject *)module)->md_token_is_def);
-        }
-        if (_PyImport_EnableGILAndWarn(tstate, module_name) < 0) {
-            return -1;
-        }
-    }
-    else {
-        _PyEval_DisableGIL(tstate);
-    }
-
-    return 0;
-}
-
-int
-_PyImport_EnableGILAndWarn(PyThreadState *tstate, PyObject *module_name)
-{
-    if (_PyEval_EnableGILPermanent(tstate)) {
-        return PyErr_WarnFormat(
-            PyExc_RuntimeWarning,
-            1,
-            "The global interpreter lock (GIL) has been enabled to load "
-            "module '%U', which has not declared that it can run safely "
-            "without the GIL. To override this behavior and keep the GIL "
-            "disabled (at your own risk), run with PYTHON_GIL=0 or -Xgil=0.",
-            module_name
-        );
-    }
-    const PyConfig *config = _PyInterpreterState_GetConfig(tstate->interp);
-    if (config->enable_gil == _PyConfig_GIL_DEFAULT && config->verbose) {
-        PySys_FormatStderr("# loading module '%U', which requires the GIL\n",
-                            module_name);
-    }
-    return 0;
-}
-#endif
 
 static PyThreadState *
 switch_to_main_interpreter(PyThreadState *tstate)
@@ -2555,23 +2506,9 @@ create_builtin(
     }
 
 
-#ifdef Py_GIL_DISABLED
-    // This call (and the corresponding call to _PyImport_CheckGILForModule())
-    // would ideally be inside import_run_extension(). They are kept in the
-    // callers for now because that would complicate the control flow inside
-    // import_run_extension(). It should be possible to restructure
-    // import_run_extension() to address this.
-    _PyEval_EnableGILTransient(tstate);
-#endif
     /* Now load it. */
     mod = import_run_extension(
                     tstate, p0, &info, spec, get_modules_dict(tstate, true));
-#ifdef Py_GIL_DISABLED
-    if (_PyImport_CheckGILForModule(mod, info.name) < 0) {
-        Py_CLEAR(mod);
-        goto finally;
-    }
-#endif
 
 finally:
     _Py_ext_module_loader_info_clear(&info);
@@ -5539,30 +5476,14 @@ _imp_create_dynamic_impl(PyObject *module, PyObject *spec, PyObject *file)
     _PyImport_GetModuleExportHooks(&info, fp, &p0, &ex0);
     if (ex0) {
         mod = import_run_modexport(tstate, ex0, &info, spec);
-        // Modules created from slots handle GIL enablement (Py_mod_gil slot)
-        // when they're created.
         goto finally;
     }
     if (p0 == NULL) {
         goto finally;
     }
 
-#ifdef Py_GIL_DISABLED
-    // This call (and the corresponding call to _PyImport_CheckGILForModule())
-    // would ideally be inside import_run_extension(). They are kept in the
-    // callers for now because that would complicate the control flow inside
-    // import_run_extension(). It should be possible to restructure
-    // import_run_extension() to address this.
-    _PyEval_EnableGILTransient(tstate);
-#endif
     mod = import_run_extension(
                     tstate, p0, &info, spec, get_modules_dict(tstate, true));
-#ifdef Py_GIL_DISABLED
-    if (_PyImport_CheckGILForModule(mod, info.name) < 0) {
-        Py_CLEAR(mod);
-        goto finally;
-    }
-#endif
 
 finally:
     if (fp != NULL) {

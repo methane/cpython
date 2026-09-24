@@ -696,7 +696,7 @@ Miscellaneous options
      to, by default, use a copy of context of the caller of
      ``Thread.start()`` when starting.  Otherwise, threads will start
      with an empty context.  If unset, the value of this option defaults
-     to ``1`` on free-threaded builds and to ``0`` otherwise.  See also
+     to ``0`` in this PEP 805 implementation.  See also
      :envvar:`PYTHON_THREAD_INHERIT_CONTEXT`.
 
      .. versionadded:: 3.14
@@ -704,8 +704,8 @@ Miscellaneous options
    * :samp:`-X context_aware_warnings={0,1}` causes the
      :class:`warnings.catch_warnings` context manager to use a
      :class:`~contextvars.ContextVar` to store warnings filter state.  If
-     unset, the value of this option defaults to ``1`` on free-threaded builds
-     and to ``0`` otherwise.  See also :envvar:`PYTHON_CONTEXT_AWARE_WARNINGS`.
+     unset, the value of this option defaults to ``0`` in this PEP 805
+     implementation.  See also :envvar:`PYTHON_CONTEXT_AWARE_WARNINGS`.
 
      .. versionadded:: 3.14
 
@@ -1387,8 +1387,8 @@ conflict.
    If this variable is set to ``1`` then :class:`~threading.Thread` will,
    by default, use a copy of context of the caller of ``Thread.start()``
    when starting.  Otherwise, new threads will start with an empty context.
-   If unset, this variable defaults to ``1`` on free-threaded builds and to
-   ``0`` otherwise.  See also :option:`-X thread_inherit_context<-X>`.
+   If unset, this variable defaults to ``0`` in this PEP 805 implementation.
+   See also :option:`-X thread_inherit_context<-X>`.
 
    .. versionadded:: 3.14
 
@@ -1396,8 +1396,8 @@ conflict.
 
    If set to ``1`` then the :class:`warnings.catch_warnings` context
    manager will use a :class:`~contextvars.ContextVar` to store warnings
-   filter state.  If unset, this variable defaults to ``1`` on
-   free-threaded builds and to ``0`` otherwise.  See :option:`-X
+   filter state.  If unset, this variable defaults to ``0`` in this
+   PEP 805 implementation.  See :option:`-X
    context_aware_warnings<-X>`.
 
    .. versionadded:: 3.14

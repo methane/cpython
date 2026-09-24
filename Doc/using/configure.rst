@@ -433,9 +433,19 @@ General Options
    Defines the ``Py_GIL_DISABLED`` macro and adds ``"t"`` to
    :data:`sys.abiflags`.
 
+   This PEP 805 reference implementation uses this configuration by default
+   for ThreadGroup scheduling, biased reference counting and parallel garbage
+   collection. Threads in Main still serialize on their group lock.
+
    See :ref:`whatsnew313-free-threaded-cpython` for more detail.
 
    .. versionadded:: 3.13
+
+.. option:: --enable-gil
+
+   Build the legacy interpreter-wide GIL configuration for comparison with
+   the PEP 805 implementation. Distinct ThreadGroups cannot execute Python
+   in parallel in this configuration.
 
 .. option:: --enable-experimental-jit=[no|yes|yes-off|interpreter]
 

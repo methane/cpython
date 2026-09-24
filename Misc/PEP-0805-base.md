@@ -44,3 +44,10 @@ First split validation: Linux/aarch64 debug build configured with
 445 tests, 17 skips. Build and test logs are under `/tmp/pep805-base/`.
 The optional _decimal module is unavailable. These checks precede the default
 runtime switch and the addition of ownership enforcement.
+
+`d92bde8de7` was applied with `git cherry-pick --no-commit` for the default
+parallel substrate, fixed GIL configuration during extension imports, and
+classic defaults for context inheritance and warnings. Its later-stage
+ownership and synchronized-container changes are excluded. After rebuilding,
+`test_threadgroup`, `test_capi.test_config`, `test_capi.test_module`,
+`test_import`, `test_importlib` and `test_embed` pass: 1,480 tests, 40 skips.

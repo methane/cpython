@@ -192,11 +192,8 @@ class CAPITests(unittest.TestCase):
             expected = (value if value != -1 else None)
             self.assertEqual(sys.flags.gil, expected)
 
-        expected_inherit_context = 1 if support.Py_GIL_DISABLED else 0
-        self.assertEqual(sys.flags.thread_inherit_context, expected_inherit_context)
-
-        expected_safe_warnings = 1 if support.Py_GIL_DISABLED else 0
-        self.assertEqual(sys.flags.context_aware_warnings, expected_safe_warnings)
+        self.assertEqual(sys.flags.thread_inherit_context, 0)
+        self.assertEqual(sys.flags.context_aware_warnings, 0)
 
     def test_config_get_non_existent(self):
         # Test PyConfig_Get() on non-existent option name

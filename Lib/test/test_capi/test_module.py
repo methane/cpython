@@ -3,7 +3,7 @@
 
 import unittest
 import types
-from test.support import import_helper, subTests, requires_gil_enabled
+from test.support import import_helper, subTests
 
 # Skip this test if the _testcapi module isn't available.
 _testcapi = import_helper.import_module('_testcapi')
@@ -29,7 +29,6 @@ class TestModFromSlotsAndSpec(unittest.TestCase):
         with self.assertRaises(SystemError):
             _testcapi.module_from_slots_empty(FakeSpec())
 
-    @requires_gil_enabled("minimal slots re-enable GIL")
     def test_minimal(self):
         mod = _testcapi.module_from_slots_minimal(FakeSpec())
         self.assertIsInstance(mod, types.ModuleType)
