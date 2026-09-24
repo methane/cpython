@@ -1215,6 +1215,36 @@ Incremental builds report no warnings or failed module imports. Changed native
 sources and tests match across all three builds. This is targeted validation,
 not completion of the overall PEP audit.
 
+### Generic forward sequence iterator synchronization
+
+Generic sequence iterators already inherited SYNCHRONIZED state, but their
+load/callback/store sequence could visit the same position in several groups.
+The new parallel regression performs 40 calls through four overlapping callbacks:
+before the repair, positions 0 through 9 are repeated instead of visiting 0
+through 39. Wrapping the sequence iterator in enumerate reproduces the same
+source-item duplication. A reentrant next() also reads position 0 twice.
+These account for three failures including subtests in the initial four methods.
+
+Synchronized sequence iterators now reserve the cursor under their internal
+mutex before invoking the sequence. They retain the sequence after exhaustion
+in both comparison configurations. IndexError and StopIteration mark exhaustion
+before clearing the exception, so exception cleanup cannot revive the iterator.
+Other errors restore the reserved position when the cursor still immediately
+follows it. This preserves sequential retry without overwriting intervening
+progress or exhaustion; overlapping callbacks do not constitute a transaction.
+LOCAL and PROTECTED iterators keep their existing callback ordering.
+
+Reduction retains the source and cursor together under the mutex before access
+validation and tuple construction. State restoration checks and updates the
+cursor under the same mutex. The final six regression methods cover parallel
+consumers, composition with enumerate, reentrant next/exhaustion, error retry,
+a delayed failure after another consumer succeeds, copying and index overflow.
+Logs are in `/tmp/pep805-seqiter-sharing/`. The seven-suite iterator selection
+passes with 238 tests and no skips in each of the default, GIL and Tier 2
+interpreter builds. The new six-method suite also passes -R 3:3 on the default
+build. Incremental builds report no warnings or failed module imports, and
+changed sources and tests match across all three builds.
+
 ## Earlier re-review and implementation follow-ups
 
 One earlier question was incorrect: footnote 3 of the

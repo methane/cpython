@@ -15,8 +15,7 @@
 typedef struct {
     PyObject_HEAD
     Py_ssize_t it_index;  /* -1 when iterator is exhausted */
-    PyObject *it_seq; /* Set to NULL when iterator is exhausted
-                         (in the default build) */
+    PyObject *it_seq; /* Shared iterators retain the sequence after exhaustion. */
 } seqiterobject;
 
 PyObject *
@@ -59,6 +58,53 @@ iter_traverse(PyObject *op, visitproc visit, void *arg)
 }
 
 static PyObject *
+iter_iternext_shared(seqiterobject *it)
+{
+    if (FT_ATOMIC_LOAD_SSIZE_RELAXED(it->it_index) < 0) {
+        return NULL;
+    }
+    PyObject *seq = PyObject_CheckAccess(it->it_seq);
+    if (seq == NULL) {
+        return NULL;
+    }
+    Py_ssize_t index;
+    Py_BEGIN_CRITICAL_SECTION(it);
+    index = FT_ATOMIC_LOAD_SSIZE_RELAXED(it->it_index);
+    if (index >= 0 && index < PY_SSIZE_T_MAX) {
+        // Reserve the position before __getitem__ can suspend or re-enter us.
+        FT_ATOMIC_STORE_SSIZE_RELAXED(it->it_index, index + 1);
+    }
+    Py_END_CRITICAL_SECTION();
+    if (index < 0) {
+        return NULL;
+    }
+    if (index == PY_SSIZE_T_MAX) {
+        PyErr_SetString(PyExc_OverflowError, "iter index too large");
+        return NULL;
+    }
+    PyObject *result = PySequence_GetItem(seq, index);
+    if (result != NULL) {
+        return result;
+    }
+    int exhausted = PyErr_ExceptionMatches(PyExc_IndexError) ||
+                    PyErr_ExceptionMatches(PyExc_StopIteration);
+    Py_BEGIN_CRITICAL_SECTION(it);
+    if (exhausted) {
+        FT_ATOMIC_STORE_SSIZE_RELAXED(it->it_index, -1);
+    }
+    else if (FT_ATOMIC_LOAD_SSIZE_RELAXED(it->it_index) == index + 1) {
+        // Preserve retry after other errors if the cursor still immediately
+        // follows our reservation. Do not overwrite later cursor changes.
+        FT_ATOMIC_STORE_SSIZE_RELAXED(it->it_index, index);
+    }
+    Py_END_CRITICAL_SECTION();
+    if (exhausted) {
+        PyErr_Clear();
+    }
+    return NULL;
+}
+
+static PyObject *
 iter_iternext(PyObject *iterator)
 {
     if (PyObject_CheckAccess(iterator) == NULL) {
@@ -70,6 +116,9 @@ iter_iternext(PyObject *iterator)
 
     assert(PySeqIter_Check(iterator));
     it = (seqiterobject *)iterator;
+    if (FT_ATOMIC_LOAD_UINT8(iterator->ob_shareable) == _Py_SHAREABLE_SYNCHRONIZED) {
+        return iter_iternext_shared(it);
+    }
     Py_ssize_t index = FT_ATOMIC_LOAD_SSIZE_RELAXED(it->it_index);
     if (index < 0)
         return NULL;
@@ -90,9 +139,7 @@ iter_iternext(PyObject *iterator)
     result = PySequence_GetItem(seq, index);
     if (result != NULL) {
         /* PySequence_GetItem() can exhaust the iterator re-entrantly.
-         * Preserve the exhaustion sentinel if it is observed.  Concurrent
-         * exhaustion can still race with the store, but remains memory-safe
-         * because the sequence stays alive. */
+         * Preserve the exhaustion sentinel if it is observed. */
         if (FT_ATOMIC_LOAD_SSIZE_RELAXED(it->it_index) >= 0) {
             FT_ATOMIC_STORE_SSIZE_RELAXED(it->it_index, index + 1);
         }
@@ -159,16 +206,21 @@ iter_reduce(PyObject *op, PyObject *Py_UNUSED(ignored))
      * call must be before access of iterator pointers.
      * see issue #101765 */
 
-    Py_ssize_t index = FT_ATOMIC_LOAD_SSIZE_RELAXED(it->it_index);
-    if (index >= 0 && it->it_seq != NULL) {
-        if (PyObject_CheckAccess(it->it_seq) == NULL) {
+    Py_ssize_t index;
+    PyObject *seq;
+    Py_BEGIN_CRITICAL_SECTION(it);
+    index = FT_ATOMIC_LOAD_SSIZE_RELAXED(it->it_index);
+    seq = index >= 0 ? Py_XNewRef(it->it_seq) : NULL;
+    Py_END_CRITICAL_SECTION();
+    if (seq != NULL) {
+        if (PyObject_CheckAccess(seq) == NULL) {
+            Py_DECREF(seq);
             Py_DECREF(iter);
             return NULL;
         }
-        return Py_BuildValue("N(O)n", iter, it->it_seq, index);
+        return Py_BuildValue("N(N)n", iter, seq, index);
     }
-    else
-        return Py_BuildValue("N(())", iter);
+    return Py_BuildValue("N(())", iter);
 }
 
 PyDoc_STRVAR(reduce_doc, "Return state information for pickling.");
@@ -186,9 +238,11 @@ iter_setstate(PyObject *op, PyObject *state)
         return NULL;
     if (index < 0)
         index = 0;
+    Py_BEGIN_CRITICAL_SECTION(it);
     if (it->it_seq && FT_ATOMIC_LOAD_SSIZE_RELAXED(it->it_index) >= 0) {
         FT_ATOMIC_STORE_SSIZE_RELAXED(it->it_index, index);
     }
+    Py_END_CRITICAL_SECTION();
     Py_RETURN_NONE;
 }
 
