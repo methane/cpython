@@ -21,6 +21,9 @@ and freezes its sentinels; the default finder/loader pipeline still needs work.
 The finder follow-up shares the default registries and selected builtin
 loader entry points, and repairs private compiler and shutdown metadata paths.
 A further fix restores static-type registration after Main reinitialization.
+The frozen-import follow-up shares the four native lookup/loader helpers and
+the `sys.implementation` namespace, with worker imports and parallel code
+loading verified. FileFinder and file-loader dependencies remain unfinished.
 
 Sources: [PEP 805](https://peps.python.org/pep-0805/),
 [implementation appendix](https://peps.python.org/pep-0805/appendix-implementation/),
@@ -707,6 +710,44 @@ seven-file selection (`test_embed`, `test_static_type_access`, `test_module`,
 match the saved baseline exactly. Builds emit no compiler warnings, changed
 sources match across trees, and `git diff --check` passes. Logs:
 `/tmp/pep805-finders/reinit-*.log`.
+
+### Frozen import across ThreadGroups
+
+The `_imp` allowlist now includes `find_frozen`, `get_frozen_object`,
+`is_frozen` and `is_frozen_package`. They read native frozen tables and
+construct results for the calling group; they do not use mutable native
+per-module state. The test override of the frozen-module setting now uses
+atomic reads and writes because lookups can execute concurrently.
+
+FrozenImporter also creates loader state using `type(sys.implementation)`.
+The implementation namespace now has a synchronized dictionary and an
+explicit SYNCHRONIZED declaration. Its existing mutable-attribute behavior
+is preserved; values retain their own access states, and ordinary
+SimpleNamespace instances remain LOCAL.
+
+Four new tests cover first frozen-module/package imports in a worker,
+source and frozen importer methods, implementation-namespace updates and
+rejection of foreign values, and repeated code loading/execution in four
+groups. Imported modules remain LOCAL, and other groups cannot acquire them
+from `sys.modules`. The original three new cases fail before the repair;
+all 14 finder/access cases pass after it.
+
+The eight-file selection (`test_import_finder_access`, `test_import_access`,
+`test_import_lock_access`, `test_importlib`, `test_import`, `test_sys`,
+`test_types`, and `test_embed`) passes in the default build: 1,715 reported
+tests, 47 skips. GIL/Tier 2 pass seven files and report only the six existing
+`test_import` failures (1,715 tests, 35 skips). Verbose failure identities
+match the saved baseline. Changed sources match across builds, compilation
+emits no warnings, and `git diff --check` passes. Logs are in
+`/tmp/pep805-file-import/`.
+
+An ordinary `colorsys` import now reaches PathFinder and rejects a cached
+LOCAL FileFinder. Isolated dependency probes additionally identify the
+native filesystem helpers, the external loader's bootstrap reference and
+its mutable suffix lists. Those probes manually expose selected objects to
+locate subsequent acquisitions; they are not thread-safety tests or an
+implementation. FileFinder cache synchronization and an audit of these
+dependencies remain independent work, without requiring Mark's feedback.
 
 ## Earlier re-review and implementation follow-ups
 

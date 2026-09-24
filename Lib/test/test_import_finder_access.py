@@ -108,6 +108,112 @@ _testinternalcapi.object_declare_synchronized(get_importer)
             assert ast_type.__shareable__ is threading.Shareable.LOCAL
         ''')
 
+    def test_frozen_import_in_worker(self):
+        self.run_script('''
+            import _imp
+            _imp._override_frozen_modules_for_tests(1)
+            assert '__hello__' not in sys.modules
+            def action():
+                info = _imp.find_frozen('__hello__', withdata=True)
+                data, is_package, original = info
+                assert not is_package
+                assert data.readonly
+                assert _imp.get_frozen_object('__hello__', data).co_name == '<module>'
+                assert _imp.find_frozen('pep805_no_frozen_module') is None
+                import __hello__
+                assert __hello__.initialized
+                assert __hello__.__shareable__ is threading.Shareable.LOCAL
+                assert __import__('__hello__') is __hello__
+                import __phello__.spam
+                assert __phello__.spam.initialized
+                results.put(__hello__.__spec__.origin)
+            run(action)
+            assert results.get() == 'frozen'
+            for name in ('__hello__', '__phello__', '__phello__.spam'):
+                try:
+                    sys.modules[name]
+                except IllegalThreadAccessException:
+                    pass
+                else:
+                    raise AssertionError('frozen module implicitly shared')
+        ''')
+
+    def test_frozen_importer_methods_in_worker(self):
+        self.run_script('''
+            import _imp
+            from test.test_importlib.util import import_importlib
+            variants = import_importlib('importlib.machinery')
+            importers = tuple(value.FrozenImporter for value in variants.values())
+            _imp._override_frozen_modules_for_tests(1)
+            def action():
+                for importer in importers:
+                    assert importer.get_code('__hello__').co_name == '<module>'
+                    assert importer.get_source('__hello__') is None
+                    assert not importer.is_package('__hello__')
+                    assert importer.is_package('__phello__')
+                    try:
+                        importer.get_code('pep805_no_frozen_module')
+                    except ImportError:
+                        pass
+                    else:
+                        raise AssertionError('missing frozen module accepted')
+            run(action)
+        ''')
+
+    def test_parallel_frozen_code_loading(self):
+        self.run_script('''
+            import _imp
+            _imp._override_frozen_modules_for_tests(1)
+            def worker():
+                try:
+                    for _ in range(25):
+                        data, is_package, original = _imp.find_frozen(
+                            '__hello__', withdata=True)
+                        code = _imp.get_frozen_object('__hello__', data)
+                        namespace = {}
+                        exec(code, namespace)
+                        assert namespace['initialized']
+                        assert namespace['TestFrozenUtf8_1'].__doc__ == '\\u00b6'
+                    results.put('loaded')
+                except BaseException as exc:
+                    errors.append((type(exc).__name__, str(exc)))
+            threads = [threading.Thread(target=worker,
+                                        group=threading.ThreadGroup())
+                       for _ in range(4)]
+            with threading_helper.start_threads(threads):
+                pass
+            assert not errors, list(errors)
+            assert [results.get() for _ in threads] == ['loaded'] * 4
+        ''')
+
+    def test_implementation_namespace_in_worker(self):
+        self.run_script('''
+            implementation = sys.implementation
+            assert implementation.__shareable__ is threading.Shareable.SYNCHRONIZED
+            implementation._pep805_foreign = []
+            def action():
+                assert implementation.name == 'cpython'
+                assert type(implementation.__dict__) is SynchronizedDict
+                assert implementation.cache_tag.startswith('cpython-')
+                implementation._pep805_answer = 42
+                for read in (lambda: implementation._pep805_foreign,
+                             lambda: implementation.__dict__['_pep805_foreign']):
+                    try:
+                        read()
+                    except IllegalThreadAccessException:
+                        pass
+                    else:
+                        raise AssertionError('foreign namespace value exposed')
+                assert type(implementation)().__shareable__ is threading.Shareable.LOCAL
+            try:
+                run(action)
+                assert implementation._pep805_answer == 42
+            finally:
+                del implementation._pep805_foreign
+                if hasattr(implementation, '_pep805_answer'):
+                    del implementation._pep805_answer
+        ''')
+
     def test_fresh_ast_module_shutdown(self):
         # Keep this process free of test.support imports, which initialize
         # AST metadata in Main before the worker can import it.

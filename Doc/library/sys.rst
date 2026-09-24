@@ -1250,8 +1250,11 @@ always available. Unless explicitly noted otherwise, all variables are read-only
 .. data:: implementation
 
    An object containing information about the implementation of the
-   currently running Python interpreter.  The following attributes are
-   required to exist in all Python implementations.
+   currently running Python interpreter. The namespace uses a
+   :class:`SynchronizedDict` for its attributes and can be accessed from any
+   ThreadGroup. Attribute values retain their individual sharing states.
+
+   The following attributes are required to exist in all Python implementations.
 
    *name* is the implementation's identifier, e.g. ``'cpython'``.  The actual
    string is defined by the Python implementation, but it is guaranteed to be

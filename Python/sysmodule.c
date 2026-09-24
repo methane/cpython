@@ -3810,6 +3810,23 @@ make_impl_info(PyObject *version_info)
 
     ns = _PyNamespace_New(impl_info);
     Py_DECREF(impl_info);
+    if (ns == NULL) {
+        return NULL;
+    }
+    /* Importers in every ThreadGroup read this namespace. Preserve its
+       mutable attributes, with the same per-value checks as other shared
+       dictionaries. Ordinary SimpleNamespace instances remain LOCAL. */
+    PyObject *dict = PyObject_GenericGetDict(ns, NULL);
+    if (dict == NULL) {
+        Py_DECREF(ns);
+        return NULL;
+    }
+    res = _PyDict_SynchronizeNamespace(dict);
+    Py_DECREF(dict);
+    if (res < 0 || PyObject_DeclareSynchronized(ns) < 0) {
+        Py_DECREF(ns);
+        return NULL;
+    }
     return ns;
 
 error:

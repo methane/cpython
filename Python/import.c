@@ -3039,7 +3039,7 @@ static bool
 use_frozen(void)
 {
     PyInterpreterState *interp = _PyInterpreterState_GET();
-    int override = OVERRIDE_FROZEN_MODULES(interp);
+    int override = FT_ATOMIC_LOAD_INT_RELAXED(OVERRIDE_FROZEN_MODULES(interp));
     if (override > 0) {
         return true;
     }
@@ -5603,7 +5603,7 @@ _imp__override_frozen_modules_for_tests_impl(PyObject *module, int override)
 /*[clinic end generated code: output=36d5cb1594160811 input=8f1f95a3ef21aec3]*/
 {
     PyInterpreterState *interp = _PyInterpreterState_GET();
-    OVERRIDE_FROZEN_MODULES(interp) = override;
+    FT_ATOMIC_STORE_INT_RELAXED(OVERRIDE_FROZEN_MODULES(interp), override);
     Py_RETURN_NONE;
 }
 
@@ -5858,12 +5858,13 @@ imp_module_exec(PyObject *module)
     }
 
     /* The module has no native per-module state. These entry points use the
-       import mutex, read the fixed builtin table, or operate on accessible
-       module arguments and the synchronized lazy-import registry. Other
+       import mutex, read the fixed builtin/frozen tables, or operate on
+       accessible arguments and the synchronized lazy-import registry. Other
        native entry points keep their individual access policies. */
     static const char *shared_functions[] = {
         "lock_held", "acquire_lock", "release_lock", "is_builtin",
         "create_builtin", "exec_builtin", "_set_lazy_attributes",
+        "find_frozen", "get_frozen_object", "is_frozen", "is_frozen_package",
     };
     for (size_t i = 0; i < Py_ARRAY_LENGTH(shared_functions); i++) {
         PyObject *function = PyObject_GetAttrString(module, shared_functions[i]);
