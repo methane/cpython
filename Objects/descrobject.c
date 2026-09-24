@@ -271,6 +271,8 @@ method_check_args(PyObject *func, PyObject *const *args, Py_ssize_t nargs,
                   PyObject *kwnames, int accepts_keywords)
 {
     assert(!PyErr_Occurred());
+    assert(_PyObject_IsAccessible(func));
+    assert(_PyObject_VectorcallArgsAreAccessible(args, nargs, kwnames));
     if (nargs < 1) {
         PyObject *funcstr = _PyObject_FunctionStr(func);
         if (funcstr != NULL) {
@@ -284,9 +286,6 @@ method_check_args(PyObject *func, PyObject *const *args, Py_ssize_t nargs,
     if (descr_check((PyDescrObject *)func, self) < 0) {
         return -1;
     }
-    if (kwnames != NULL && PyObject_CheckAccess(kwnames) == NULL) {
-        return -1;
-    }
     if (!accepts_keywords && kwnames && PyTuple_GET_SIZE(kwnames)) {
         PyObject *funcstr = _PyObject_FunctionStr(func);
         if (funcstr != NULL) {
@@ -296,21 +295,7 @@ method_check_args(PyObject *func, PyObject *const *args, Py_ssize_t nargs,
         }
         return -1;
     }
-    Py_ssize_t nkwargs = 0;
-    if (kwnames != NULL) {
-        nkwargs = PyTuple_GET_SIZE(kwnames);
-        for (Py_ssize_t i = 0; i < nkwargs; i++) {
-            if (PyObject_CheckAccess(PyTuple_GET_ITEM(kwnames, i)) == NULL) {
-                return -1;
-            }
-        }
-    }
-    for (Py_ssize_t i = 0; i < nargs + nkwargs; i++) {
-        if (PyObject_CheckAccess(args[i]) == NULL) {
-            return -1;
-        }
-    }
-    return 0;
+    return _PyObject_CheckKeywordNames(kwnames);
 }
 
 typedef void (*funcptr)(void);

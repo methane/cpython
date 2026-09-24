@@ -22,6 +22,13 @@ fastcall_args(PyObject *args, PyObject ***stack, Py_ssize_t *nargs)
         *nargs = 0;
     }
     else if (PyTuple_Check(args)) {
+        // The public vectorcall API accepts already-acquired C references.
+        // This adapter acquires them from a Python tuple and must check here.
+        for (Py_ssize_t i = 0; i < PyTuple_GET_SIZE(args); i++) {
+            if (PyTuple_GetItem(args, i) == NULL) {
+                return -1;
+            }
+        }
         *stack = ((PyTupleObject *)args)->ob_item;
         *nargs = PyTuple_GET_SIZE(args);
     }
@@ -273,6 +280,49 @@ pycfunction_getself(PyObject *module, PyObject *arg)
 }
 
 static PyObject *
+pyobject_callfunction(PyObject *module, PyObject *args)
+{
+    PyObject *func, *arg;
+    if (!PyArg_ParseTuple(args, "OO:pyobject_callfunction", &func, &arg)) {
+        return NULL;
+    }
+    return PyObject_CallFunction(func, "O", arg);
+}
+
+static PyObject *
+pyobject_callmethod_args(PyObject *module, PyObject *args)
+{
+    PyObject *obj, *name, *arg;
+    int vectorcall;
+    if (!PyArg_ParseTuple(args, "OOOp:pyobject_callmethod_args",
+                          &obj, &name, &arg, &vectorcall)) {
+        return NULL;
+    }
+    if (vectorcall) {
+        PyObject *stack[] = {obj, arg};
+        return PyObject_VectorcallMethod(name, stack, 2, NULL);
+    }
+    return PyObject_CallMethodObjArgs(obj, name, arg, NULL);
+}
+
+static PyObject *
+call_converter(void *callback)
+{
+    return PyObject_CallNoArgs((PyObject *)callback);
+}
+
+static PyObject *
+pyobject_callfunction_converter(PyObject *module, PyObject *args)
+{
+    PyObject *func, *arg, *callback;
+    if (!PyArg_ParseTuple(args, "OOO:pyobject_callfunction_converter",
+                          &func, &arg, &callback)) {
+        return NULL;
+    }
+    return PyObject_CallFunction(func, "OO&", arg, call_converter, callback);
+}
+
+static PyObject *
 pycfunction_getfunction(PyObject *module, PyObject *arg)
 {
     PyCFunction func = PyCFunction_GetFunction(arg);
@@ -293,6 +343,9 @@ pycfunction_getflags(PyObject *module, PyObject *arg)
 }
 
 static PyMethodDef TestMethods[] = {
+    {"pyobject_callfunction", pyobject_callfunction, METH_VARARGS},
+    {"pyobject_callmethod_args", pyobject_callmethod_args, METH_VARARGS},
+    {"pyobject_callfunction_converter", pyobject_callfunction_converter, METH_VARARGS},
     {"pycfunction_getself", pycfunction_getself, METH_O},
     {"pycfunction_getfunction", pycfunction_getfunction, METH_O},
     {"pycfunction_getflags", pycfunction_getflags, METH_O},

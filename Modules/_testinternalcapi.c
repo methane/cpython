@@ -15,6 +15,7 @@
 #include "pycore_backoff.h"       // JUMP_BACKWARD_INITIAL_VALUE
 #include "pycore_bitutils.h"      // _Py_bswap32()
 #include "pycore_bytesobject.h"   // _PyBytes_Find()
+#include "pycore_call.h"          // _PyStack_UnpackDict()
 #include "pycore_ceval.h"         // _PyEval_AddPendingCall()
 #include "pycore_code.h"          // _PyCode_GetTLBCFast()
 #include "pycore_compile.h"       // _PyCompile_CodeGen()
@@ -3829,7 +3830,31 @@ dict_delitemif(PyObject *self, PyObject *args)
     return PyLong_FromLong(result);
 }
 
+static PyObject *
+stack_unpack_dict(PyObject *module, PyObject *kwargs)
+{
+    if (!PyDict_Check(kwargs)) {
+        PyErr_SetString(PyExc_TypeError, "expected a dict");
+        return NULL;
+    }
+    PyObject *kwnames;
+    PyObject *const *stack = _PyStack_UnpackDict(
+        _PyThreadState_GET(), NULL, 0, kwargs, &kwnames);
+    if (stack == NULL) {
+        return NULL;
+    }
+    PyObject *values = PyTuple_FromArray(stack, PyTuple_GET_SIZE(kwnames));
+    PyObject *result = NULL;
+    if (values != NULL) {
+        result = PyTuple_Pack(2, kwnames, values);
+        Py_DECREF(values);
+    }
+    _PyStack_UnpackDict_Free(stack, 0, kwnames);
+    return result;
+}
+
 static PyMethodDef module_functions[] = {
+    {"stack_unpack_dict", stack_unpack_dict, METH_O},
     {"drop_while_world_stopped", drop_while_world_stopped, METH_O, NULL},
     {"drop_many_while_world_stopped", drop_many_while_world_stopped, METH_O, NULL},
     {"finalize_while_world_stopped", finalize_while_world_stopped, METH_O, NULL},

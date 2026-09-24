@@ -9,6 +9,7 @@ extern "C" {
 #endif
 
 #include "pycore_code.h"          // EVAL_CALL_STAT_INC_IF_FUNCTION()
+#include "pycore_object.h"        // _PyObject_IsAccessible()
 #include "pycore_pystate.h"       // _PyThreadState_GET()
 #include "pycore_stats.h"
 
@@ -106,22 +107,37 @@ _PyVectorcall_FunctionInline(PyObject *callable)
     return ptr;
 }
 
-/* Check the borrowed references carried by the raw vectorcall protocol before
-   a callee can inspect them.  Unlike tuple/dict calls, vectorcall receives
-   positional and keyword values in one C array, so there is no container
-   operation that can provide the access check for us. */
+/* Raw vectorcall arguments are already thread references. Their accessibility
+   is an input invariant, not a new heap acquisition. Only use this helper in
+   assertions so release builds do not rescan the argument array. */
 static inline int
-_PyObject_CheckVectorcallArgs(PyObject *const *args, Py_ssize_t nargs,
-                              PyObject *kwnames)
+_PyObject_VectorcallArgsAreAccessible(PyObject *const *args, Py_ssize_t nargs,
+                                     PyObject *kwnames)
 {
     assert(nargs >= 0);
     assert(args != NULL || nargs == 0);
     assert(kwnames == NULL || PyTuple_Check(kwnames));
 
     if (kwnames != NULL) {
-        if (PyObject_CheckAccess(kwnames) == NULL) {
-            return -1;
+        if (!_PyObject_IsAccessible(kwnames)) {
+            return 0;
         }
+        nargs += PyTuple_GET_SIZE(kwnames);
+    }
+    for (Py_ssize_t i = 0; i < nargs; i++) {
+        if (!_PyObject_IsAccessible(args[i])) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+/* Keyword names are acquired from tuple storage even in the raw protocol. */
+static inline int
+_PyObject_CheckKeywordNames(PyObject *kwnames)
+{
+    if (kwnames != NULL) {
+        assert(_PyObject_IsAccessible(kwnames));
         Py_ssize_t nkw = PyTuple_GET_SIZE(kwnames);
         for (Py_ssize_t i = 0; i < nkw; i++) {
             if (PyObject_CheckAccess(PyTuple_GET_ITEM(kwnames, i)) == NULL) {
@@ -129,22 +145,12 @@ _PyObject_CheckVectorcallArgs(PyObject *const *args, Py_ssize_t nargs,
             }
         }
     }
-    for (Py_ssize_t i = 0; i < nargs; i++) {
-        if (PyObject_CheckAccess(args[i]) == NULL) {
-            return -1;
-        }
-    }
-    if (kwnames != NULL) {
-        Py_ssize_t nkw = PyTuple_GET_SIZE(kwnames);
-        for (Py_ssize_t i = 0; i < nkw; i++) {
-            if (PyObject_CheckAccess(args[nargs + i]) == NULL) {
-                return -1;
-            }
-        }
-    }
     return 0;
 }
 
+// Validate acquisitions from a positional tuple and/or keyword dictionary.
+// Either container may be NULL; incoming container references must be valid.
+PyAPI_FUNC(int) _PyObject_CheckCallArgs(PyObject *args, PyObject *kwargs);
 
 /* Call the callable object 'callable' with the "vectorcall" calling
    convention.
@@ -175,11 +181,10 @@ _PyObject_VectorcallTstate(PyThreadState *tstate, PyObject *callable,
     assert(kwnames == NULL || PyTuple_Check(kwnames));
     assert(args != NULL || PyVectorcall_NARGS(nargsf) == 0);
 
-    if (PyObject_CheckAccess(callable) == NULL) {
-        return NULL;
-    }
-    if (_PyObject_CheckVectorcallArgs(args, PyVectorcall_NARGS(nargsf),
-                                      kwnames) < 0) {
+    assert(_PyObject_IsAccessible(callable));
+    assert(_PyObject_VectorcallArgsAreAccessible(
+        args, PyVectorcall_NARGS(nargsf), kwnames));
+    if (_PyObject_CheckKeywordNames(kwnames) < 0) {
         return NULL;
     }
     func = _PyVectorcall_FunctionInline(callable);

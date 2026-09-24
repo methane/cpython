@@ -3,11 +3,14 @@
 import importlib.machinery
 import importlib.util
 import sys
+import textwrap
 import threading
+import types
 import unittest
 
 from test.support import (SHORT_TIMEOUT, import_helper, is_apple_mobile,
                           threading_helper)
+from test.support.script_helper import assert_python_ok
 
 
 _testcapi = import_helper.import_module('_testcapi')
@@ -27,6 +30,178 @@ def make_foreign_inputs(results):
 
 
 class NativePythonCallTests(unittest.TestCase):
+    def test_native_lookup_callback_ends_access(self):
+        holder = self.foreign_inputs()
+        entered = []
+        pause = sys.monitoring.StopTheWorld
+
+        def target(value):
+            entered.append(True)
+
+        class Receiver:
+            @property
+            def method(self):
+                pause.__exit__(None, None, None)
+                return target
+
+        for vectorcall in (False, True):
+            with self.subTest(vectorcall=vectorcall):
+                pause.__enter__()
+                # Lookup ends this context inside the native method API.
+                with self.assertRaises(IllegalThreadAccessException):
+                    _testcapi.pyobject_callmethod_args(
+                        Receiver(), 'method', holder[0], vectorcall)
+                self.assertEqual(entered, [])
+
+    def test_native_converter_callback_ends_access(self):
+        holder = self.foreign_inputs()
+        entered = []
+        pause = sys.monitoring.StopTheWorld
+
+        def target(*values):
+            entered.append(True)
+
+        def converter():
+            pause.__exit__(None, None, None)
+            return 42
+
+        pause.__enter__()
+        with self.assertRaises(IllegalThreadAccessException):
+            _testcapi.pyobject_callfunction_converter(
+                target, holder[0], converter)
+        self.assertEqual(entered, [])
+
+    def test_native_tuple_and_dict_acquisitions(self):
+        entered = []
+
+        def function(*args, **kwargs):
+            entered.append(True)
+            return 42
+
+        class Callable:
+            def __call__(self, *args, **kwargs):
+                entered.append(True)
+                return 42
+
+        lock = threading.Lock()
+        with lock:
+            protected = lock.protect([])
+            positional = (protected,)
+            keywords = {'first': 1, 'value': protected, 'last': 3}
+        calls = (
+            (_testcapi.pyobject_callfunction, (function, positional)),
+            (_testcapi.pyobject_callfunction, (Callable(), positional)),
+            (_testcapi.pyvectorcall_call, (function, positional)),
+            (_testcapi.pyvectorcall_call, (function, (), keywords)),
+            (_testcapi.pyobject_fastcalldict, (function, (), keywords)),
+            (_testcapi.pyobject_fastcalldict, (Callable(), (), keywords)),
+        )
+        for invoke, arguments in calls:
+            with self.subTest(invoke=invoke.__name__, arguments=arguments):
+                with self.assertRaises(UnprotectedAccessException):
+                    invoke(*arguments)
+                self.assertEqual(entered, [])
+                with lock:
+                    self.assertEqual(invoke(*arguments), 42)
+                self.assertEqual(entered, [True])
+                entered.clear()
+
+    def test_native_keyword_name_acquisition(self):
+        results = threading.Channel()
+
+        def create_names():
+            class Name(str):
+                pass
+            results.put((Name('value'),))
+
+        worker = threading.Thread(target=create_names,
+                                  group=threading.ThreadGroup())
+        with threading_helper.start_threads([worker]):
+            pass
+        names = results.get()
+        vectorcall_type = _testcapi.make_vectorcall_class()
+        custom = vectorcall_type()
+        custom.set_vectorcall(vectorcall_type)
+        entered = []
+
+        def function(**kwargs):
+            entered.append(True)
+            return 42
+
+        for target, expected in ((custom, 'vectorcall'), (function, 42)):
+            with self.subTest(target=target):
+                with self.assertRaises(IllegalThreadAccessException):
+                    _testcapi.pyobject_vectorcall(target, (1,), names)
+                self.assertEqual(entered, [])
+                with sys.monitoring.StopTheWorld:
+                    self.assertEqual(
+                        _testcapi.pyobject_vectorcall(target, (1,), names),
+                        expected)
+                entered.clear()
+
+    def test_native_bound_method_acquisitions(self):
+        holder = self.foreign_inputs()
+
+        def ignore_receiver(self):
+            return 42
+
+        with sys.monitoring.StopTheWorld:
+            foreign_receiver = types.MethodType(ignore_receiver, holder[0])
+            foreign_function = types.MethodType(holder[1], object())
+        for method in (foreign_receiver, foreign_function):
+            with self.subTest(method=method):
+                with self.assertRaises(IllegalThreadAccessException):
+                    _testcapi.pyobject_vectorcall(method, (), None)
+                with sys.monitoring.StopTheWorld:
+                    self.assertEqual(
+                        _testcapi.pyobject_vectorcall(method, (), None), 42)
+
+    def test_partial_keyword_unpack_failure(self):
+        # Invoke the unpacker without another call adapter's pre-validation.
+        # Rejection must release only the entries it has initialized.
+        for position in range(3):
+            with self.subTest(position=position):
+                assert_python_ok('-c', textwrap.dedent(f'''
+                    import gc
+                    import threading
+                    import weakref
+                    from _testinternalcapi import stack_unpack_dict
+
+                    gc.disable()
+                    lock = threading.Lock()
+                    with lock:
+                        blocked = lock.protect([])
+                        class Value:
+                            pass
+                        values = [Value(), Value(), Value()]
+                        values[{position}] = blocked
+                        kwargs = dict(zip(('a', 'b', 'c'), values))
+                        references = [weakref.ref(v) for i, v in enumerate(values)
+                                      if i != {position}]
+                        del values
+                    for _ in range(10):
+                        try:
+                            stack_unpack_dict(kwargs)
+                        except UnprotectedAccessException:
+                            pass
+                        else:
+                            raise AssertionError('accepted unprotected value')
+                    kwargs.clear()
+                    assert all(ref() is None for ref in references)
+                    assert stack_unpack_dict({{}}) == ((), ())
+                    assert stack_unpack_dict({{'a': 1, 'b': 2}}) == (
+                        ('a', 'b'), (1, 2))
+                    with lock:
+                        result = stack_unpack_dict({{'a': blocked}})
+                        assert result[1][0] is blocked
+                    try:
+                        stack_unpack_dict({{1: 2}})
+                    except TypeError:
+                        pass
+                    else:
+                        raise AssertionError('accepted non-string keyword')
+                '''))
+
     def test_synchronized_bound_method(self):
         class Worker(threading.Thread):
             def answer(self):

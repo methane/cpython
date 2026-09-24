@@ -46,17 +46,12 @@ PyCFunction_NewEx(PyMethodDef *ml, PyObject *self, PyObject *module)
 PyObject *
 PyCMethod_New(PyMethodDef *ml, PyObject *self, PyObject *module, PyTypeObject *cls)
 {
-    /* The method retains all three object references.  Reject an object that
-       the current ThreadGroup cannot acquire before storing any of them in
-       the new callable. */
     /* Static builtin types create their wrapper methods while the runtime is
        still initializing, before the access exceptions themselves exist. */
-    if (Py_IsInitialized() &&
-        ((self != NULL && PyObject_CheckAccess(self) == NULL) ||
-         (module != NULL && PyObject_CheckAccess(module) == NULL) ||
-         (cls != NULL && PyObject_CheckAccess((PyObject *)cls) == NULL))) {
-        return NULL;
-    }
+    assert(!Py_IsInitialized() ||
+           ((self == NULL || _PyObject_IsAccessible(self)) &&
+            (module == NULL || _PyObject_IsAccessible(module)) &&
+            (cls == NULL || _PyObject_IsAccessible((PyObject *)cls))));
 
     /* Figure out correct vectorcall function to use */
     vectorcallfunc vectorcall;
@@ -144,9 +139,7 @@ PyCFunction_GetFunction(PyObject *op)
         PyErr_BadInternalCall();
         return NULL;
     }
-    if (PyObject_CheckAccess(op) == NULL) {
-        return NULL;
-    }
+    assert(_PyObject_IsAccessible(op));
     return PyCFunction_GET_FUNCTION(op);
 }
 
@@ -157,9 +150,7 @@ PyCFunction_GetSelf(PyObject *op)
         PyErr_BadInternalCall();
         return NULL;
     }
-    if (PyObject_CheckAccess(op) == NULL) {
-        return NULL;
-    }
+    assert(_PyObject_IsAccessible(op));
     return PyObject_CheckAccess(PyCFunction_GET_SELF(op));
 }
 
@@ -170,9 +161,7 @@ PyCFunction_GetFlags(PyObject *op)
         PyErr_BadInternalCall();
         return -1;
     }
-    if (PyObject_CheckAccess(op) == NULL) {
-        return -1;
-    }
+    assert(_PyObject_IsAccessible(op));
     return PyCFunction_GET_FLAGS(op);
 }
 
@@ -183,9 +172,7 @@ PyCMethod_GetClass(PyObject *op)
         PyErr_BadInternalCall();
         return NULL;
     }
-    if (PyObject_CheckAccess(op) == NULL) {
-        return NULL;
-    }
+    assert(_PyObject_IsAccessible(op));
     PyTypeObject *cls = PyCFunction_GET_CLASS(op);
     if (cls != NULL && PyObject_CheckAccess((PyObject *)cls) == NULL) {
         return NULL;
@@ -440,9 +427,7 @@ cfunction_check_kwargs(PyThreadState *tstate, PyObject *func, PyObject *kwnames)
 {
     assert(!_PyErr_Occurred(tstate));
     assert(PyCFunction_Check(func));
-    if (kwnames != NULL && PyObject_CheckAccess(kwnames) == NULL) {
-        return -1;
-    }
+    assert(kwnames == NULL || _PyObject_IsAccessible(kwnames));
     if (kwnames && PyTuple_GET_SIZE(kwnames)) {
         PyObject *funcstr = _PyObject_FunctionStr(func);
         if (funcstr != NULL) {
@@ -460,9 +445,7 @@ typedef void (*funcptr)(void);
 static inline int
 cfunction_check_self(PyObject *func)
 {
-    if (PyObject_CheckAccess(func) == NULL) {
-        return -1;
-    }
+    assert(_PyObject_IsAccessible(func));
     PyObject *self = PyCFunction_GET_SELF(func);
     /* A module is the function's native state context, not a bound receiver.
        Access to a module function is governed by the callable's own state. */
@@ -480,22 +463,9 @@ cfunction_enter_call(PyThreadState *tstate, PyObject *func,
     if (cfunction_check_self(func) < 0) {
         return NULL;
     }
-    Py_ssize_t nkwargs = 0;
-    if (kwnames != NULL) {
-        if (PyObject_CheckAccess(kwnames) == NULL) {
-            return NULL;
-        }
-        nkwargs = PyTuple_GET_SIZE(kwnames);
-        for (Py_ssize_t i = 0; i < nkwargs; i++) {
-            if (PyObject_CheckAccess(PyTuple_GET_ITEM(kwnames, i)) == NULL) {
-                return NULL;
-            }
-        }
-    }
-    for (Py_ssize_t i = 0; i < nargs + nkwargs; i++) {
-        if (PyObject_CheckAccess(args[i]) == NULL) {
-            return NULL;
-        }
+    assert(_PyObject_VectorcallArgsAreAccessible(args, nargs, kwnames));
+    if (_PyObject_CheckKeywordNames(kwnames) < 0) {
+        return NULL;
     }
     if (_Py_EnterRecursiveCallTstate(tstate, " while calling a Python object")) {
         return NULL;
@@ -621,7 +591,7 @@ cfunction_call(PyObject *func, PyObject *args, PyObject *kwargs)
     assert(!_PyErr_Occurred(tstate));
 
     if (cfunction_check_self(func) < 0 ||
-        _PyEval_CheckCallArgs(func, args, kwargs) < 0) {
+        _PyObject_CheckCallArgs(args, kwargs) < 0) {
         return NULL;
     }
 

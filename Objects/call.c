@@ -97,6 +97,33 @@ _Py_CheckSlotResult(PyObject *obj, const char *slot_name, int success)
 
 /* --- Core PyObject call functions ------------------------------- */
 
+int
+_PyObject_CheckCallArgs(PyObject *args, PyObject *kwargs)
+{
+    assert(args == NULL || PyTuple_Check(args));
+    assert(kwargs == NULL || PyDict_Check(kwargs));
+    assert(args == NULL || _PyObject_IsAccessible(args));
+    assert(kwargs == NULL || _PyObject_IsAccessible(kwargs));
+    if (args != NULL) {
+        for (Py_ssize_t i = 0; i < PyTuple_GET_SIZE(args); i++) {
+            if (PyObject_CheckAccess(PyTuple_GET_ITEM(args, i)) == NULL) {
+                return -1;
+            }
+        }
+    }
+    if (kwargs != NULL) {
+        Py_ssize_t pos = 0;
+        PyObject *key, *value;
+        while (_PyDict_Next(kwargs, &pos, &key, &value, NULL)) {
+            if (PyObject_CheckAccess(key) == NULL ||
+                PyObject_CheckAccess(value) == NULL) {
+                return -1;
+            }
+        }
+    }
+    return 0;
+}
+
 /* Call a callable Python object without any arguments */
 PyObject *
 PyObject_CallNoArgs(PyObject *func)
@@ -113,9 +140,7 @@ _PyObject_VectorcallDictTstate(PyThreadState *tstate, PyObject *callable,
                                PyObject *kwargs)
 {
     assert(callable != NULL);
-    if (PyObject_CheckAccess(callable) == NULL) {
-        return NULL;
-    }
+    assert(_PyObject_IsAccessible(callable));
 
     /* PyObject_VectorcallDict() must not be called with an exception set,
        because it can clear it (directly or indirectly) and so the
@@ -126,22 +151,8 @@ _PyObject_VectorcallDictTstate(PyThreadState *tstate, PyObject *callable,
     assert(nargs >= 0);
     assert(nargs == 0 || args != NULL);
     assert(kwargs == NULL || PyDict_Check(kwargs));
-    if (_PyObject_CheckVectorcallArgs(args, nargs, NULL) < 0) {
-        return NULL;
-    }
-    if (kwargs != NULL && PyObject_CheckAccess(kwargs) == NULL) {
-        return NULL;
-    }
-    if (kwargs != NULL) {
-        Py_ssize_t pos = 0;
-        PyObject *key, *value;
-        while (_PyDict_Next(kwargs, &pos, &key, &value, NULL)) {
-            if (PyObject_CheckAccess(key) == NULL ||
-                PyObject_CheckAccess(value) == NULL) {
-                return NULL;
-            }
-        }
-    }
+    assert(_PyObject_VectorcallArgsAreAccessible(args, nargs, NULL));
+    assert(kwargs == NULL || _PyObject_IsAccessible(kwargs));
 
     vectorcallfunc func = PyVectorcall_Function(callable);
     if (func == NULL) {
@@ -220,12 +231,21 @@ _PyObject_MakeTpCall(PyThreadState *tstate, PyObject *callable,
                      PyObject *const *args, Py_ssize_t nargs,
                      PyObject *keywords)
 {
-    if (PyObject_CheckAccess(callable) == NULL) {
-        return NULL;
-    }
+    assert(_PyObject_IsAccessible(callable));
     assert(nargs >= 0);
     assert(nargs == 0 || args != NULL);
     assert(keywords == NULL || PyTuple_Check(keywords) || PyDict_Check(keywords));
+    assert(keywords == NULL || _PyObject_IsAccessible(keywords));
+    assert(_PyObject_VectorcallArgsAreAccessible(
+        args, nargs, keywords != NULL && PyTuple_Check(keywords) ? keywords : NULL));
+    if (keywords != NULL && PyDict_Check(keywords)) {
+        if (_PyObject_CheckCallArgs(NULL, keywords) < 0) {
+            return NULL;
+        }
+    }
+    else if (_PyObject_CheckKeywordNames(keywords) < 0) {
+        return NULL;
+    }
 
     /* Slow path: build a temporary tuple for positional arguments and a
      * temporary dictionary for keyword arguments (if any) */
@@ -287,6 +307,9 @@ _PyVectorcall_Call(PyThreadState *tstate, vectorcallfunc func,
                    PyObject *callable, PyObject *tuple, PyObject *kwargs)
 {
     assert(func != NULL);
+    if (_PyObject_CheckCallArgs(tuple, NULL) < 0) {
+        return NULL;
+    }
 
     Py_ssize_t nargs = PyTuple_GET_SIZE(tuple);
 
@@ -317,12 +340,9 @@ PyObject *
 PyVectorcall_Call(PyObject *callable, PyObject *tuple, PyObject *kwargs)
 {
     PyThreadState *tstate = _PyThreadState_GET();
-    if (PyObject_CheckAccess(callable) == NULL) {
-        return NULL;
-    }
-    if (_PyEval_CheckCallArgs(callable, tuple, kwargs) < 0) {
-        return NULL;
-    }
+    assert(_PyObject_IsAccessible(callable));
+    assert(_PyObject_IsAccessible(tuple));
+    assert(kwargs == NULL || _PyObject_IsAccessible(kwargs));
 
     /* get vectorcallfunc as in _PyVectorcall_Function, but without
      * the Py_TPFLAGS_HAVE_VECTORCALL check */
@@ -371,15 +391,18 @@ _PyObject_Call(PyThreadState *tstate, PyObject *callable,
     assert(!_PyErr_Occurred(tstate));
     assert(PyTuple_Check(args));
     assert(kwargs == NULL || PyDict_Check(kwargs));
-    if (_PyEval_CheckCallArgs(callable, args, kwargs) < 0) {
-        return NULL;
-    }
+    assert(_PyObject_IsAccessible(callable));
+    assert(_PyObject_IsAccessible(args));
+    assert(kwargs == NULL || _PyObject_IsAccessible(kwargs));
     EVAL_CALL_STAT_INC_IF_FUNCTION(EVAL_CALL_API, callable);
     vectorcallfunc vector_func = PyVectorcall_Function(callable);
     if (vector_func != NULL) {
         return _PyVectorcall_Call(tstate, vector_func, callable, args, kwargs);
     }
     else {
+        if (_PyObject_CheckCallArgs(args, kwargs) < 0) {
+            return NULL;
+        }
         call = Py_TYPE(callable)->tp_call;
         if (call == NULL) {
             object_is_not_callable(tstate, callable);
@@ -435,9 +458,7 @@ _PyFunction_Vectorcall(PyObject *func, PyObject* const* stack,
                        size_t nargsf, PyObject *kwnames)
 {
     assert(PyFunction_Check(func));
-    if (PyObject_CheckAccess(func) == NULL) {
-        return NULL;
-    }
+    assert(_PyObject_IsAccessible(func));
     PyFunctionObject *f = (PyFunctionObject *)func;
     Py_ssize_t nargs = PyVectorcall_NARGS(nargsf);
     assert(nargs >= 0);
@@ -514,6 +535,9 @@ _PyObject_Call_Prepend(PyThreadState *tstate, PyObject *callable,
                        PyObject *obj, PyObject *args, PyObject *kwargs)
 {
     assert(PyTuple_Check(args));
+    if (_PyObject_CheckCallArgs(args, NULL) < 0) {
+        return NULL;
+    }
 
     PyObject *small_stack[_PY_FASTCALL_SMALL_STACK];
     PyObject **stack;
@@ -548,6 +572,30 @@ _PyObject_Call_Prepend(PyThreadState *tstate, PyObject *callable,
 
 /* --- Call with a format string ---------------------------------- */
 
+// Attribute lookup or argument conversion may have called Python code that
+// ended protection. Revalidate surviving references at those callback sites;
+// ordinary vectorcall inputs are already valid and only need assertions.
+static int
+check_call_after_callback(PyObject *callable, PyObject *const *args,
+                          Py_ssize_t nargs, PyObject *kwnames)
+{
+    if (PyObject_CheckAccess(callable) == NULL) {
+        return -1;
+    }
+    if (kwnames != NULL) {
+        if (PyObject_CheckAccess(kwnames) == NULL) {
+            return -1;
+        }
+        nargs += PyTuple_GET_SIZE(kwnames);
+    }
+    for (Py_ssize_t i = 0; i < nargs; i++) {
+        if (PyObject_CheckAccess(args[i]) == NULL) {
+            return -1;
+        }
+    }
+    return 0;
+}
+
 static PyObject *
 _PyObject_CallFunctionVa(PyThreadState *tstate, PyObject *callable,
                          const char *format, va_list va)
@@ -571,6 +619,10 @@ _PyObject_CallFunctionVa(PyThreadState *tstate, PyObject *callable,
     if (stack == NULL) {
         return NULL;
     }
+    if (check_call_after_callback(callable, stack, nargs, NULL) < 0) {
+        result = NULL;
+        goto done;
+    }
     EVAL_CALL_STAT_INC_IF_FUNCTION(EVAL_CALL_API, callable);
     if (nargs == 1 && PyTuple_Check(stack[0])) {
         /* Special cases for backward compatibility:
@@ -578,16 +630,22 @@ _PyObject_CallFunctionVa(PyThreadState *tstate, PyObject *callable,
            - PyObject_CallFunction(func, "(OOO)", arg1, arg2, arg3) calls
              func(*(arg1, arg2, arg3)): func(arg1, arg2, arg3) */
         PyObject *args = stack[0];
-        result = _PyObject_VectorcallTstate(tstate, callable,
-                                            _PyTuple_ITEMS(args),
-                                            PyTuple_GET_SIZE(args),
-                                            NULL);
+        if (_PyObject_CheckCallArgs(args, NULL) < 0) {
+            result = NULL;
+        }
+        else {
+            result = _PyObject_VectorcallTstate(tstate, callable,
+                                                _PyTuple_ITEMS(args),
+                                                PyTuple_GET_SIZE(args),
+                                                NULL);
+        }
     }
     else {
         result = _PyObject_VectorcallTstate(tstate, callable,
                                             stack, nargs, NULL);
     }
 
+done:
     for (i = 0; i < nargs; ++i) {
         Py_DECREF(stack[i]);
     }
@@ -803,7 +861,7 @@ _PyObject_CallMethod_SizeT(PyObject *obj, const char *name,
 
 static PyObject *
 object_vacall(PyThreadState *tstate, PyObject *base,
-              PyObject *callable, va_list vargs)
+              PyObject *callable, va_list vargs, int after_lookup)
 {
     PyObject *small_stack[_PY_FASTCALL_SMALL_STACK];
     PyObject **stack;
@@ -855,7 +913,13 @@ object_vacall(PyThreadState *tstate, PyObject *base,
     }
 #endif
     /* Call the function */
-    result = _PyObject_VectorcallTstate(tstate, callable, stack, nargs, NULL);
+    if (after_lookup &&
+        check_call_after_callback(callable, stack, nargs, NULL) < 0) {
+        result = NULL;
+    }
+    else {
+        result = _PyObject_VectorcallTstate(tstate, callable, stack, nargs, NULL);
+    }
 
     if (stack != small_stack) {
         PyMem_Free(stack);
@@ -944,6 +1008,14 @@ PyObject_VectorcallMethod(PyObject *name, PyObject *const *args,
     PyObject *result;
 
     EVAL_CALL_STAT_INC_IF_FUNCTION(EVAL_CALL_METHOD, callable);
+    int skip_self = self_obj == NULL;
+    if (check_call_after_callback(callable, args + skip_self,
+                                 PyVectorcall_NARGS(nargsf) - skip_self,
+                                 kwnames) < 0 ||
+        (self_obj != NULL && PyObject_CheckAccess(self_obj) == NULL)) {
+        result = NULL;
+        goto done;
+    }
     if (self_obj == NULL) {
         /* Skip "self". We can keep PY_VECTORCALL_ARGUMENTS_OFFSET since
          * args[-1] in the onward call is args[0] here. */
@@ -963,6 +1035,7 @@ PyObject_VectorcallMethod(PyObject *name, PyObject *const *args,
         result = _PyObject_VectorcallPrepend(tstate, callable, self_obj,
                                              args + 1, nargsf - 1, kwnames);
     }
+done:
     _PyThreadState_PopCStackRef(tstate, &method);
     _PyThreadState_PopCStackRef(tstate, &self);
     return result;
@@ -992,7 +1065,7 @@ PyObject_CallMethodObjArgs(PyObject *obj, PyObject *name, ...)
 
     va_list vargs;
     va_start(vargs, name);
-    PyObject *result = object_vacall(tstate, self_obj, callable, vargs);
+    PyObject *result = object_vacall(tstate, self_obj, callable, vargs, 1);
     va_end(vargs);
 
     _PyThreadState_PopCStackRef(tstate, &method);
@@ -1009,7 +1082,7 @@ PyObject_CallFunctionObjArgs(PyObject *callable, ...)
     PyObject *result;
 
     va_start(vargs, callable);
-    result = object_vacall(tstate, NULL, callable, vargs);
+    result = object_vacall(tstate, NULL, callable, vargs, 0);
     va_end(vargs);
 
     return result;
@@ -1054,6 +1127,8 @@ _PyStack_UnpackDict(PyThreadState *tstate,
     assert(nargs >= 0);
     assert(kwargs != NULL);
     assert(PyDict_Check(kwargs));
+    assert(_PyObject_IsAccessible(kwargs));
+    assert(_PyObject_VectorcallArgsAreAccessible(args, nargs, NULL));
 
     Py_ssize_t nkwargs = PyDict_GET_SIZE(kwargs);
     /* Check for overflow in the PyMem_Malloc() call below. The subtraction
@@ -1095,7 +1170,12 @@ _PyStack_UnpackDict(PyThreadState *tstate,
     while (_PyDict_Next(kwargs, &pos, &key, &value, NULL)) {
         if (PyObject_CheckAccess(key) == NULL ||
             PyObject_CheckAccess(value) == NULL) {
-            _PyStack_UnpackDict_Free(stack, nargs, kwnames);
+            // Only the first i keyword entries own references. Later stack
+            // slots are uninitialized, and later tuple slots are still NULL.
+            for (Py_ssize_t j = 0; j < i; j++) {
+                Py_DECREF(kwstack[j]);
+            }
+            _PyStack_UnpackDict_FreeNoDecRef(stack, kwnames);
             return NULL;
         }
         keys_are_strings &= Py_TYPE(key)->tp_flags;

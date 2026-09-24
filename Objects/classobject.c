@@ -29,9 +29,7 @@ PyMethod_Function(PyObject *im)
         PyErr_BadInternalCall();
         return NULL;
     }
-    if (PyObject_CheckAccess(im) == NULL) {
-        return NULL;
-    }
+    assert(_PyObject_IsAccessible(im));
     if (!PyMethod_Check(im)) {
         PyErr_BadInternalCall();
         return NULL;
@@ -46,9 +44,7 @@ PyMethod_Self(PyObject *im)
         PyErr_BadInternalCall();
         return NULL;
     }
-    if (PyObject_CheckAccess(im) == NULL) {
-        return NULL;
-    }
+    assert(_PyObject_IsAccessible(im));
     if (!PyMethod_Check(im)) {
         PyErr_BadInternalCall();
         return NULL;
@@ -66,6 +62,10 @@ method_vectorcall(PyObject *method, PyObject *const *args,
     PyThreadState *tstate = _PyThreadState_GET();
     PyObject *self = PyMethod_GET_SELF(method);
     PyObject *func = PyMethod_GET_FUNCTION(method);
+    if (PyObject_CheckAccess(self) == NULL ||
+        PyObject_CheckAccess(func) == NULL) {
+        return NULL;
+    }
     return _PyObject_VectorcallPrepend(tstate, func, self, args, nargsf, kwnames);
 }
 
@@ -82,10 +82,7 @@ PyMethod_New(PyObject *func, PyObject *self)
         PyErr_BadInternalCall();
         return NULL;
     }
-    if (PyObject_CheckAccess(func) == NULL ||
-        PyObject_CheckAccess(self) == NULL) {
-        return NULL;
-    }
+    assert(_PyObject_IsAccessible(func) && _PyObject_IsAccessible(self));
     PyMethodObject *im = _Py_FREELIST_POP(PyMethodObject, pymethodobjects);
     if (im == NULL) {
         im = PyObject_GC_New(PyMethodObject, &PyMethod_Type);
@@ -374,9 +371,7 @@ PyInstanceMethod_New(PyObject *func) {
         PyErr_BadInternalCall();
         return NULL;
     }
-    if (PyObject_CheckAccess(func) == NULL) {
-        return NULL;
-    }
+    assert(_PyObject_IsAccessible(func));
     PyInstanceMethodObject *method;
     method = PyObject_GC_New(PyInstanceMethodObject,
                              &PyInstanceMethod_Type);
@@ -393,9 +388,7 @@ PyInstanceMethod_Function(PyObject *im)
         PyErr_BadInternalCall();
         return NULL;
     }
-    if (PyObject_CheckAccess(im) == NULL) {
-        return NULL;
-    }
+    assert(_PyObject_IsAccessible(im));
     if (!PyInstanceMethod_Check(im)) {
         PyErr_BadInternalCall();
         return NULL;
@@ -466,12 +459,19 @@ instancemethod_traverse(PyObject *self, visitproc visit, void *arg) {
 static PyObject *
 instancemethod_call(PyObject *self, PyObject *arg, PyObject *kw)
 {
-    return PyObject_Call(PyInstanceMethod_GET_FUNCTION(self), arg, kw);
+    PyObject *func = PyInstanceMethod_Function(self);
+    if (func == NULL) {
+        return NULL;
+    }
+    return PyObject_Call(func, arg, kw);
 }
 
 static PyObject *
 instancemethod_descr_get(PyObject *descr, PyObject *obj, PyObject *type) {
-    PyObject *func = PyInstanceMethod_GET_FUNCTION(descr);
+    PyObject *func = PyInstanceMethod_Function(descr);
+    if (func == NULL) {
+        return NULL;
+    }
     if (obj == NULL) {
         return Py_NewRef(func);
     }

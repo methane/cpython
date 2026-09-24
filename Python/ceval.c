@@ -862,22 +862,7 @@ _PyEval_CheckCallArgs(PyObject *callable, PyObject *args, PyObject *kwargs)
         (kwargs != NULL && PyObject_CheckAccess(kwargs) == NULL)) {
         return -1;
     }
-    for (Py_ssize_t i = 0; i < PyTuple_GET_SIZE(args); i++) {
-        if (PyObject_CheckAccess(PyTuple_GET_ITEM(args, i)) == NULL) {
-            return -1;
-        }
-    }
-    if (kwargs != NULL) {
-        Py_ssize_t pos = 0;
-        PyObject *key, *value;
-        while (_PyDict_Next(kwargs, &pos, &key, &value, NULL)) {
-            if (PyObject_CheckAccess(key) == NULL ||
-                PyObject_CheckAccess(value) == NULL) {
-                return -1;
-            }
-        }
-    }
-    return 0;
+    return _PyObject_CheckCallArgs(args, kwargs);
 }
 
 PyObject*
@@ -2273,27 +2258,14 @@ _PyEval_Vector(PyThreadState *tstate, PyFunctionObject *func,
                PyObject* const* args, size_t argcount,
                PyObject *kwnames)
 {
-    if (PyObject_CheckAccess((PyObject *)func) == NULL) {
+    assert(_PyObject_IsAccessible((PyObject *)func));
+    assert(_PyObject_VectorcallArgsAreAccessible(args, argcount, kwnames));
+    if (_PyObject_CheckKeywordNames(kwnames) < 0) {
         return NULL;
     }
     size_t total_args = argcount;
     if (kwnames) {
-        if (PyObject_CheckAccess(kwnames) == NULL) {
-            return NULL;
-        }
         total_args += PyTuple_GET_SIZE(kwnames);
-        for (Py_ssize_t i = 0; i < PyTuple_GET_SIZE(kwnames); i++) {
-            if (PyObject_CheckAccess(PyTuple_GET_ITEM(kwnames, i)) == NULL) {
-                return NULL;
-            }
-        }
-    }
-    // Native callers do not pass through the bytecode call-input checks.
-    // Validate before copying their references into a Python frame.
-    for (size_t i = 0; i < total_args; i++) {
-        if (PyObject_CheckAccess(args[i]) == NULL) {
-            return NULL;
-        }
     }
     _PyStackRef stack_array[8] = {0};
     _PyStackRef *arguments;
