@@ -312,7 +312,6 @@ gc_get_referents_impl(PyObject *module, PyObject *objs)
         return NULL;
     }
 
-    // NOTE: stop the world is a no-op in default build
     _PyEval_StopTheWorld(interp);
     int err = append_referrents(result, objs);
     _PyEval_StartTheWorld(interp);

@@ -1914,11 +1914,17 @@ _PyGC_GetReferrers(PyInterpreterState *interp, PyObject *objs)
     }
 
     GCState *gcstate = &interp->gc;
+    int ok = 1;
+    _PyEval_StopTheWorld(interp);
     for (int i = 0; i < NUM_GENERATIONS; i++) {
         if (!(gc_referrers_for(objs, GEN_HEAD(gcstate, i), result))) {
-            Py_DECREF(result);
-            return NULL;
+            ok = 0;
+            break;
         }
+    }
+    _PyEval_StartTheWorld(interp);
+    if (!ok) {
+        Py_CLEAR(result);
     }
     return result;
 }
@@ -1934,6 +1940,7 @@ _PyGC_GetObjects(PyInterpreterState *interp, int generation)
         return NULL;
     }
 
+    _PyEval_StopTheWorld(interp);
     if (generation == -1) {
         /* If generation is -1, get all objects from all generations */
         for (int i = 0; i < NUM_GENERATIONS; i++) {
@@ -1948,8 +1955,10 @@ _PyGC_GetObjects(PyInterpreterState *interp, int generation)
         }
     }
 
+    _PyEval_StartTheWorld(interp);
     return result;
 error:
+    _PyEval_StartTheWorld(interp);
     Py_DECREF(result);
     return NULL;
 }
@@ -1958,25 +1967,32 @@ void
 _PyGC_Freeze(PyInterpreterState *interp)
 {
     GCState *gcstate = &interp->gc;
+    _PyEval_StopTheWorld(interp);
     for (int i = 0; i < NUM_GENERATIONS; ++i) {
         gc_list_merge(GEN_HEAD(gcstate, i), &gcstate->permanent_generation.head);
         gcstate->generations[i].count = 0;
     }
+    _PyEval_StartTheWorld(interp);
 }
 
 void
 _PyGC_Unfreeze(PyInterpreterState *interp)
 {
     GCState *gcstate = &interp->gc;
+    _PyEval_StopTheWorld(interp);
     gc_list_merge(&gcstate->permanent_generation.head,
                   GEN_HEAD(gcstate, NUM_GENERATIONS-1));
+    _PyEval_StartTheWorld(interp);
 }
 
 Py_ssize_t
 _PyGC_GetFreezeCount(PyInterpreterState *interp)
 {
     GCState *gcstate = &interp->gc;
-    return gc_list_size(&gcstate->permanent_generation.head);
+    _PyEval_StopTheWorld(interp);
+    Py_ssize_t result = gc_list_size(&gcstate->permanent_generation.head);
+    _PyEval_StartTheWorld(interp);
+    return result;
 }
 
 /* C API for controlling the state of the garbage collector */
@@ -2380,7 +2396,9 @@ visit_generation(gcvisitobjects_t callback, void *arg, struct gc_generation *gen
 void
 PyUnstable_GC_VisitObjects(gcvisitobjects_t callback, void *arg)
 {
-    GCState *gcstate = get_gc_state();
+    PyInterpreterState *interp = _PyInterpreterState_GET();
+    GCState *gcstate = &interp->gc;
+    _PyEval_StopTheWorld(interp);
     int original_state = gcstate->enabled;
     gcstate->enabled = 0;
     for (size_t i = 0; i < NUM_GENERATIONS; i++) {
@@ -2391,6 +2409,7 @@ PyUnstable_GC_VisitObjects(gcvisitobjects_t callback, void *arg)
     visit_generation(callback, arg, &gcstate->permanent_generation);
 done:
     gcstate->enabled = original_state;
+    _PyEval_StartTheWorld(interp);
 }
 
 #endif  // !Py_GIL_DISABLED

@@ -118,6 +118,42 @@ for group in (sys.main_thread_group, threading.ThreadGroup('allocation heap')):
         self.assertTrue(debug_refs)
         self.assertEqual(set(debug_refs), {(True, False)})
 
+    def test_gc_introspection_world_stop(self):
+        internal = import_helper.import_module('_testinternalcapi')
+        for callback in (gc.get_referrers, gc.get_referents):
+            with self.subTest(callback=callback):
+                internal.gc_traversal_world_stop_probe(callback)
+        internal.test_gc_visit_world_stop()
+        with support.disable_gc():
+            internal.test_gc_visit_world_stop()
+
+    @support.nomemtest
+    def test_gc_introspection_memory_error(self):
+        script_helper.assert_python_ok('-c', '''
+import gc
+import _testcapi
+import _testinternalcapi as internal
+
+gc.disable()
+target = []
+referrers = [[target] for _ in range(256)]
+for query, args in ((gc.get_objects, ()), (gc.get_referrers, (target,))):
+    failures = 0
+    for start in range(32):
+        result = None
+        _testcapi.set_nomemory(start, start + 1)
+        try:
+            result = query(*args)
+        except MemoryError:
+            failures += 1
+        finally:
+            _testcapi.remove_mem_hooks()
+        assert not internal.threadgroup_world_is_stopped()
+        del result
+    # Exercise failure both in creating the result and in growing it.
+    assert failures >= 2, (query, failures)
+''')
+
     def test_default_context_compatibility(self):
         script_helper.assert_python_ok('-c', '''
 import contextvars

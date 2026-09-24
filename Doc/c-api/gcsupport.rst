@@ -506,6 +506,7 @@ the garbage collector.
 
    Run supplied *callback* on all live GC-capable objects. *arg* is passed through to
    all invocations of *callback*.
+   Other threads in the interpreter are paused during the visit.
 
    .. warning::
       If new objects are (de)allocated by the callback it is undefined if they

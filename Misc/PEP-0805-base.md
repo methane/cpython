@@ -71,6 +71,10 @@ stack roots, determining reachability and clearing callback-bearing weakrefs.
 It restarts them for weakref callbacks, finalizers, debug output and destruction,
 and pauses again to detect resurrection. Full collections also pause while
 clearing all threads' freelists.
+Heap introspection (`gc.get_objects()`, `gc.get_referrers()`,
+`gc.get_referents()` and the native GC visitor) also pauses threads during its
+walk. Existing GC freeze/unfreeze operations pause while moving generation
+lists. Failed result allocation resumes threads before releasing partial results.
 Shutdown merges/disables per-thread counts under a pause before releasing deferred
 references. Generation lists and allocation still depend on the interpreter GIL.
 The free-threading collector reuses `ob_tid` as scratch space; its replacement
@@ -147,6 +151,14 @@ Parallel scheduling tests remain skipped while the interpreter GIL is enabled.
   `-R 3:3` with `mimalloc_debug` (76 tests, one skip). The new regression verifies
   that both refcount and cyclic resurrection finalize only once, even after
   untracking and retracking the surviving object.
+- Paused heap introspection: the corrected GC, ThreadGroup and C API selection
+  passes 399 tests (six skips). The preceding broader run also passes embedding,
+  memory APIs, code, sys and fork; its sole failure was an argument-taking test
+  helper incorrectly using the automatic `test_` naming convention, fixed before
+  the successful rerun. Native probes verify paused traversal and both complete
+  and early visitor returns. Memory-error injection covers result construction
+  and growth. GC and ThreadGroups pass `-R 3:3` with `mimalloc_debug` (84 tests,
+  three skips).
 
 - Group bias: 844 tests passed across ThreadGroups, local reclamation, object
   and miscellaneous C APIs, GC, threading, embedding and sys. Native probes cover
