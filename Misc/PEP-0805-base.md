@@ -13,7 +13,7 @@ LOCAL objects are requirements, not optional optimizations.
 
 | Stage | Completion criteria | Current status |
 | --- | --- | --- |
-| ThreadGroups | Main identity and lifetime, explicit/default group selection, serialization, parallel execution, detach/reattach, fork and shutdown | Extracted; initial regressions pass, lifetime audit remains |
+| ThreadGroups | Main identity and lifetime, explicit/default group selection, serialization, parallel execution, detach/reattach, fork and shutdown | Scheduling and Main lifetime regressions pass; parallel execution remains disabled in the normal build |
 | One-time ABI change | Owner/state metadata with room for later states; no per-object cleanup queue fields; consistent native layouts | Compact header implemented and checked in the normal build; remaining runtime port in progress |
 | Biased and deferred reference counting | Port the necessary PEP 703 mechanisms into the normal build; same-group LOCAL reclamation remains immediate | Group-biased, per-thread and deferred stack RC work in the normal build; parallel queue collection remains |
 | LOCAL and IMMUTABLE ownership | Correct initialization and checked C API/VM reference acquisition; shallow immutable containers do not expose foreign LOCAL values | Pending |
@@ -137,3 +137,15 @@ The existing normal interpreter's borrowed-reference optimizations are retained.
 `test_capi.test_eval`, `test_threadgroup` and `test_embed` pass:
 557 tests, 18 skips. New regressions exercise a sole registered C stack root,
 older and frozen suspended generators, and resurrection.
+`test_deferred_reclamation`, `test_generators`, `test_frame` and `test_gc`
+also pass `-R 3:3` (198 tests, nine skips).
+
+ThreadGroup now has a managed static builtin type. Its wrapper only holds an
+exact string or None, so it does not need GC traversal or a heap-type lifetime
+cycle. Main remains alive through interpreter dictionaries, finalizers and
+type teardown. The public `PyInterpreterState_Clear()` path releases Main
+after clearing the other interpreter state. A native shutdown probe retains
+no Python reference to Main and verifies its identity during late cleanup.
+`test_threadgroup`, `test_threading`, `test_thread`, `test_fork1`, `test_embed`,
+`test_capi.test_module`, `test_sys` and `test_deferred_reclamation` pass:
+524 tests, 19 skips.

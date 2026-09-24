@@ -2152,6 +2152,10 @@ finalize_interp_clear(PyThreadState *tstate)
     /* Free any delayed free requests immediately */
     _PyMem_FiniDelayed(tstate->interp);
 
+    // Main must remain available to finalizers throughout interpreter and
+    // type teardown. Its static type has no heap-type reference cycle.
+    Py_CLEAR(tstate->interp->main_threadgroup_object);
+
     /* finalize_interp_types may allocate Python objects so we may need to
        abandon mimalloc segments again */
     _PyThreadState_ClearMimallocHeaps(tstate);

@@ -899,7 +899,6 @@ interpreter_clear(PyInterpreterState *interp, PyThreadState *tstate)
     assert(interp->imports.importlib == NULL);
     assert(interp->imports.import_func == NULL);
 
-    Py_CLEAR(interp->main_threadgroup_object);
     Py_CLEAR(interp->sysdict_copy);
     Py_CLEAR(interp->builtins_copy);
     Py_CLEAR(interp->dict);
@@ -1007,6 +1006,8 @@ PyInterpreterState_Clear(PyInterpreterState *interp)
     PyThreadState *current_tstate = current_fast_get();
     _PyImport_ClearCore(interp);
     interpreter_clear(interp, current_tstate);
+    // The public API has no later finalize_interp_clear() phase.
+    Py_CLEAR(interp->main_threadgroup_object);
 }
 
 

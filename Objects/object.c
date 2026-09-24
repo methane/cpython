@@ -30,6 +30,7 @@
 #include "pycore_pystate.h"       // _PyThreadState_GET()
 #include "pycore_symtable.h"      // PySTEntry_Type
 #include "pycore_template.h"      // _PyTemplate_Type _PyTemplateIter_Type
+#include "pycore_threadgroup.h"
 #include "pycore_tuple.h"         // _PyTuple_DebugMallocStats()
 #include "pycore_typeobject.h"    // _PyBufferWrapper_Type
 #include "pycore_typevarobject.h" // _PyTypeAlias_Type
@@ -2656,6 +2657,7 @@ static PyTypeObject* static_types[_Py_NUM_MANAGED_PREINITIALIZED_TYPES] = {
     &_PyPositionsIterator,
     &_PyTemplate_Type,
     &_PyTemplateIter_Type,
+    &_PyThreadGroup_Type,
     &_PyUnicodeASCIIIter_Type,
     &_PyUnion_Type,
 #ifdef _Py_TIER2
@@ -2769,6 +2771,7 @@ is_intrinsically_immutable(PyTypeObject *type)
            type == &PyMethodDescr_Type || type == &PyClassMethodDescr_Type ||
            type == &PyMemberDescr_Type || type == &PyGetSetDescr_Type ||
            type == &PyWrapperDescr_Type ||
+           type == &_PyThreadGroup_Type ||
            type == &PyCode_Type || type == Py_TYPE(Py_None) ||
            type == Py_TYPE(Py_Ellipsis) || type == Py_TYPE(Py_NotImplemented);
 }

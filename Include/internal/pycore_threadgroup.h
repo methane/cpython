@@ -29,6 +29,8 @@ typedef struct _PyThreadGroupState {
     Py_ssize_t name_length;
 } _PyThreadGroupState;
 
+extern PyTypeObject _PyThreadGroup_Type;
+
 extern _PyThreadGroupState *_PyThreadGroup_New(PyInterpreterState *interp);
 /* Return a strong reference, or NULL if the ID belongs to no group in interp. */
 PyAPI_FUNC(_PyThreadGroupState *) _PyThreadGroup_Find(

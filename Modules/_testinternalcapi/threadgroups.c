@@ -408,7 +408,43 @@ test_deferred_c_stack_ref(PyObject *self, PyObject *unused)
     Py_RETURN_NONE;
 }
 
+static void
+check_main_group_at_shutdown(PyObject *capsule)
+{
+    PyInterpreterState *interp = PyCapsule_GetPointer(capsule, "main group lifetime");
+    assert(interp != NULL && interp == PyInterpreterState_Get());
+    assert(interp->main_threadgroup_object != NULL);
+    PyObject *main = _PyThreadGroup_GetObject(interp, interp->main_threadgroup->id);
+    assert(main == interp->main_threadgroup_object);
+    PyObject *name = PyObject_GetAttrString(main, "name");
+    assert(name != NULL && PyUnicode_CompareWithASCIIString(name, "Main") == 0);
+    Py_DECREF(name);
+    Py_DECREF(main);
+}
+
+static PyObject *
+check_main_group_lifetime(PyObject *self, PyObject *unused)
+{
+    PyInterpreterState *interp = PyInterpreterState_Get();
+    // Retain no Python reference to Main: only the interpreter's own lifetime
+    // guarantee can keep it available after modules and thread states clear.
+    PyObject *capsule = PyCapsule_New(interp, "main group lifetime",
+                                    check_main_group_at_shutdown);
+    if (capsule == NULL) {
+        return NULL;
+    }
+    PyObject *dict = PyInterpreterState_GetDict(interp);
+    int result = dict == NULL ? -1 :
+        PyDict_SetItemString(dict, "main_group_lifetime", capsule);
+    Py_DECREF(capsule);
+    if (result < 0) {
+        return NULL;
+    }
+    Py_RETURN_NONE;
+}
+
 static PyMethodDef methods[] = {
+    {"check_main_group_lifetime", check_main_group_lifetime, METH_NOARGS, NULL},
     {"test_deferred_c_stack_ref", test_deferred_c_stack_ref, METH_NOARGS, NULL},
     {"check_deferred_shutdown", check_deferred_shutdown, METH_NOARGS, NULL},
     {"threadgroup_refcount_probe", threadgroup_refcount_probe, METH_VARARGS, NULL},

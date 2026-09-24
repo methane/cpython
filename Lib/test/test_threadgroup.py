@@ -13,6 +13,12 @@ threading_helper.requires_working_threading(module=True)
 
 
 class ThreadGroupTests(unittest.TestCase):
+    def test_main_group_lifetime(self):
+        script_helper.assert_python_ok('-c', '''
+import _testinternalcapi
+_testinternalcapi.check_main_group_lifetime()
+''')
+
     def test_group_biased_refcount(self):
         owner = threading.ThreadGroup("bias owner")
         foreign = threading.ThreadGroup("foreign bias")

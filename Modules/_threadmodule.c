@@ -34,7 +34,6 @@ typedef struct {
     PyTypeObject *local_type;
     PyTypeObject *local_dummy_type;
     PyTypeObject *thread_handle_type;
-    PyTypeObject *threadgroup_type;
 
     // Linked list of handles to all non-daemon threads created by the
     // threading module. We wait for these to finish at shutdown.
@@ -104,8 +103,6 @@ static void
 threadgroup_dealloc(PyObject *op)
 {
     threadgroupobject *self = (threadgroupobject *)op;
-    PyTypeObject *type = Py_TYPE(op);
-    PyObject_GC_UnTrack(op);
     if (self->state != NULL) {
         PyMutex_LockFlags(&self->state->holder_mutex, 0);
         if (self->state->wrapper == op) {
@@ -115,16 +112,14 @@ threadgroup_dealloc(PyObject *op)
         _PyThreadGroup_Decref(self->state);
     }
     Py_XDECREF(self->name);
-    type->tp_free(op);
-    Py_DECREF(type);
+    PyObject_Free(op);
 }
 
 _PyThreadGroupState *
 _PyThreadGroup_GetState(PyObject *group)
 {
     PyInterpreterState *interp = _PyInterpreterState_GET();
-    if (interp->main_threadgroup_object == NULL ||
-        !Py_IS_TYPE(group, Py_TYPE(interp->main_threadgroup_object))) {
+    if (!Py_IS_TYPE(group, &_PyThreadGroup_Type)) {
         PyErr_SetString(PyExc_TypeError, "expected a ThreadGroup");
         return NULL;
     }
@@ -156,12 +151,7 @@ _PyThreadGroup_GetObject(PyInterpreterState *interp, uint32_t id)
         _PyThreadGroup_Decref(group);
         return existing;
     }
-    if (interp->main_threadgroup_object == NULL) {
-        _PyThreadGroup_Decref(group);
-        PyErr_SetString(PyExc_RuntimeError, "ThreadGroup type is unavailable");
-        return NULL;
-    }
-    PyTypeObject *type = Py_TYPE(interp->main_threadgroup_object);
+    PyTypeObject *type = &_PyThreadGroup_Type;
     threadgroupobject *wrapper = (threadgroupobject *)type->tp_alloc(type, 0);
     if (wrapper == NULL) {
         _PyThreadGroup_Decref(group);
@@ -196,15 +186,6 @@ _PyThreadGroup_GetObject(PyInterpreterState *interp, uint32_t id)
     return (PyObject *)wrapper;
 }
 
-static int
-threadgroup_traverse(PyObject *op, visitproc visit, void *arg)
-{
-    threadgroupobject *self = (threadgroupobject *)op;
-    Py_VISIT(Py_TYPE(op));
-    Py_VISIT(self->name);
-    return 0;
-}
-
 static PyObject *
 threadgroup_repr(PyObject *op)
 {
@@ -220,22 +201,17 @@ static PyMemberDef threadgroup_members[] = {
     {NULL},
 };
 
-static PyType_Slot threadgroup_slots[] = {
-    {Py_tp_new, threadgroup_new},
-    {Py_tp_dealloc, threadgroup_dealloc},
-    {Py_tp_traverse, threadgroup_traverse},
-    {Py_tp_repr, threadgroup_repr},
-    {Py_tp_members, threadgroup_members},
-    {Py_tp_doc, "ThreadGroup(name=None)\n--\n\n"
-                "A group of threads whose Python execution is serialized."},
-    {0, NULL},
-};
-
-static PyType_Spec threadgroup_spec = {
-    .name = "threading.ThreadGroup",
-    .basicsize = sizeof(threadgroupobject),
-    .flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_IMMUTABLETYPE | Py_TPFLAGS_HAVE_GC,
-    .slots = threadgroup_slots,
+PyTypeObject _PyThreadGroup_Type = {
+    PyVarObject_HEAD_INIT(&PyType_Type, 0)
+    .tp_name = "threading.ThreadGroup",
+    .tp_basicsize = sizeof(threadgroupobject),
+    .tp_dealloc = threadgroup_dealloc,
+    .tp_repr = threadgroup_repr,
+    .tp_flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_IMMUTABLETYPE,
+    .tp_doc = "ThreadGroup(name=None)\n--\n\n"
+              "A group of threads whose Python execution is serialized.",
+    .tp_members = threadgroup_members,
+    .tp_new = threadgroup_new,
 };
 
 
@@ -2225,7 +2201,7 @@ thread_PyThread_start_joinable_thread(PyObject *module, PyObject *fargs,
     if (group == Py_None) {
         group = NULL;
     }
-    else if (!Py_IS_TYPE(group, state->threadgroup_type)) {
+    else if (!Py_IS_TYPE(group, &_PyThreadGroup_Type)) {
         PyErr_SetString(PyExc_TypeError, "group must be a ThreadGroup or None");
         return NULL;
     }
@@ -2943,20 +2919,12 @@ thread_module_exec(PyObject *module)
     PyThread_init_thread();
 
     PyInterpreterState *interp = _PyInterpreterState_GET();
-    if (interp->main_threadgroup_object == NULL) {
-        state->threadgroup_type = (PyTypeObject *)PyType_FromSpec(&threadgroup_spec);
-    }
-    else {
-        state->threadgroup_type = (PyTypeObject *)Py_NewRef(
-            Py_TYPE(interp->main_threadgroup_object));
-    }
-    if (state->threadgroup_type == NULL ||
-        PyModule_AddType(module, state->threadgroup_type) < 0) {
+    if (PyModule_AddType(module, &_PyThreadGroup_Type) < 0) {
         return -1;
     }
     if (interp->main_threadgroup_object == NULL) {
         threadgroupobject *main = (threadgroupobject *)PyObject_CallFunction(
-            (PyObject *)state->threadgroup_type, "s", "Main");
+            (PyObject *)&_PyThreadGroup_Type, "s", "Main");
         if (main == NULL) {
             return -1;
         }
@@ -3106,7 +3074,6 @@ thread_module_traverse(PyObject *module, visitproc visit, void *arg)
     Py_VISIT(state->rlock_type);
     Py_VISIT(state->local_type);
     Py_VISIT(state->local_dummy_type);
-    Py_VISIT(state->threadgroup_type);
     Py_VISIT(state->thread_handle_type);
     return 0;
 }
@@ -3120,7 +3087,6 @@ thread_module_clear(PyObject *module)
     Py_CLEAR(state->rlock_type);
     Py_CLEAR(state->local_type);
     Py_CLEAR(state->local_dummy_type);
-    Py_CLEAR(state->threadgroup_type);
     Py_CLEAR(state->thread_handle_type);
     // Remove any remaining handles (e.g. if shutdown exited early due to
     // interrupt) so that attempts to unlink the handle after our module state
