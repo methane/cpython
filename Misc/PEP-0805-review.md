@@ -936,10 +936,45 @@ run). Existing ZIP suites also pass after the final reload guard. Changed
 sources and tests match across the three builds. Logs and the baseline probe
 are in `/tmp/pep805-zip-import/`.
 
-This enables uncompressed archives across groups. Decompressor initialization
-and the native zlib/_zstd helpers are separate unfinished work; the existing
-Main-group compressed ZIP tests remain enabled and passing. No Mark decision
-is needed to continue those ports.
+This follow-up enables uncompressed archives across groups. The next follow-up
+handles zlib; the native _zstd helpers remain unfinished. The existing
+Main-group compressed ZIP tests remain enabled and passing.
+
+### DEFLATE archives and shared zlib initialization
+
+The zlib namespace, decompress function, error class and missing-attribute hook
+now explicitly support sharing. Each decompression call owns its native stream
+and output buffer. The attribute hook is also needed because a from-import
+probes the absent __path__ attribute before acquiring decompress. Other native
+functions, stream constructors and instances keep their individual states.
+The existing namespace synchronization helper is exported internally so a
+dynamically linked standard library extension can opt in; this does not add
+an API to the limited ABI or automatically share other extensions.
+
+zipimport protects the decompressor cache's initialization flag with zlib's
+existing recursive module lock. An initializer in another group waits for
+publication instead of reporting recursive import, while the existing fake
+zlib-in-a-compressed-archive case still fails without infinite recursion.
+The cached callable is retained in a local variable before testing/returning
+it. Inaccessible callables inserted into the cache are rejected on acquisition.
+
+Five regressions cover cold native import, Main-cached decompression, four
+parallel compressed module imports, native error handling and cache injection,
+and a deliberately suspended first initializer. The three import cases failed
+on the previous GIL runtime. The suspended-initializer test also failed there:
+the second group raised ZipImportError before the first import was released.
+No Mark decision is needed for this repair or the remaining Zstandard port.
+
+The final seven-suite ZIP/zlib/importlib selection passes in the default debug
+build (2,062 tests, 34 skips). GIL and Tier 2 each pass 2,060 tests with 33 skips;
+their free-threading-only zlib suite is skipped. All 13 cross-group ZIP cases
+pass in each configuration. The comparison builds initially retained an old
+zlib object file after a timestamp-preserving source copy; forcing its rebuild
+and checking the two native functions' actual sharing states resolved those
+failures before the final suites. Sources and tests match across builds.
+The full Tier 2 rebuild still reports the three known unused-variable warnings
+in generated executor cases; the final zlib rebuilds have no warnings. Logs
+are the `deflate-*` files in `/tmp/pep805-zip-import/`.
 
 ## Earlier re-review and implementation follow-ups
 

@@ -3,7 +3,7 @@
 import textwrap
 import unittest
 
-from test.support import threading_helper
+from test.support import import_helper, threading_helper
 from test.support.script_helper import assert_python_ok
 
 
@@ -217,6 +217,140 @@ def run(*actions):
                     reloaded = zipimport.zipimporter(path)
                     assert reloaded.get_data('data.txt') == b'root'
                 run(action)
+        ''')
+
+    def test_deflated_with_new_decompressor(self):
+        self.check_deflated(warm_cache=False)
+
+    def test_deflated_with_cached_decompressor(self):
+        self.check_deflated(warm_cache=True)
+
+    def check_deflated(self, *, warm_cache):
+        import_helper.import_module('zlib')
+        self.run_script(f'''
+            from zipfile import ZIP_DEFLATED
+            warm_cache = {warm_cache!r}
+            with tempfile.TemporaryDirectory() as directory:
+                path = os.path.join(directory, 'deflated.zip')
+                with ZipFile(path, 'w', compression=ZIP_DEFLATED) as archive:
+                    archive.writestr('pep805_deflated.py', 'answer = 42\\n')
+                finder = zipimport.zipimporter(path)
+                if warm_cache:
+                    finder.get_code('pep805_deflated')
+                else:
+                    sys.modules.pop('zlib', None)
+                    zipimport._zlib_decompress = None
+                sys.path.insert(0, path)
+                def action():
+                    import pep805_deflated
+                    assert pep805_deflated.answer == 42
+                    assert pep805_deflated.__shareable__ is threading.Shareable.LOCAL
+                run(action)
+                del sys.modules['pep805_deflated']
+                run(action)
+        ''')
+
+    def test_parallel_deflated_imports(self):
+        import_helper.import_module('zlib')
+        self.run_script('''
+            from zipfile import ZIP_DEFLATED
+            with tempfile.TemporaryDirectory() as directory:
+                path = os.path.join(directory, 'parallel.zip')
+                with ZipFile(path, 'w', compression=ZIP_DEFLATED) as archive:
+                    for number in range(4):
+                        archive.writestr(f'pep805_deflated_{number}.py',
+                                         f'answer = {number}\\n')
+                sys.path.insert(0, path)
+                zipimport._zlib_decompress = None
+                ready = threading.Barrier(4, timeout=10)
+                def worker(number):
+                    ready.wait()
+                    module = __import__(f'pep805_deflated_{number}')
+                    assert module.answer == number
+                    assert module.__shareable__ is threading.Shareable.LOCAL
+                run(*(lambda number=number: worker(number)
+                      for number in range(4)))
+        ''')
+
+    def test_zlib_errors_and_foreign_cache_value(self):
+        import_helper.import_module('zlib')
+        self.run_script('''
+            import zlib
+            compressed = zlib.compress(b'worker data')
+            def action():
+                assert zlib.decompress(compressed) == b'worker data'
+                try:
+                    zlib.decompress(b'invalid compressed data')
+                except zlib.error as exc:
+                    assert exc.__shareable__ is threading.Shareable.LOCAL
+                else:
+                    raise AssertionError('invalid stream accepted')
+                try:
+                    zlib.compressobj
+                except IllegalThreadAccessException:
+                    pass
+                else:
+                    raise AssertionError('unaudited constructor implicitly shared')
+            run(action)
+            calls = []
+            class LocalDecompressor:
+                def __call__(self, *args):
+                    calls.append(args)
+            zipimport._zlib_decompress = LocalDecompressor()
+            def action():
+                try:
+                    zipimport._get_zlib_decompress_func()
+                except IllegalThreadAccessException:
+                    pass
+                else:
+                    raise AssertionError('foreign decompressor acquired')
+            run(action)
+            assert calls == []
+        ''')
+
+    def test_decompressor_initialization_waits_for_other_group(self):
+        import_helper.import_module('zlib')
+        self.run_script('''
+            import builtins
+            from test.support import SHORT_TIMEOUT
+
+            entered = threading.Event()
+            attempted = threading.Event()
+            release = threading.Event()
+            completed = threading.Event()
+            original_import = builtins.__import__
+            def import_hook(name, globals=None, locals=None, fromlist=(), level=0):
+                if name == 'zlib' and fromlist == ('decompress',):
+                    entered.set()
+                    assert release.wait(SHORT_TIMEOUT)
+                return original_import(name, globals, locals, fromlist, level)
+            def first():
+                results.put(zipimport._get_zlib_decompress_func().__name__)
+            def second():
+                assert entered.wait(SHORT_TIMEOUT)
+                attempted.set()
+                try:
+                    first()
+                finally:
+                    completed.set()
+
+            zipimport._zlib_decompress = None
+            builtins.__import__ = import_hook
+            # A Main-group controller runs the two independent worker groups.
+            controller = threading.Thread(target=run, args=(first, second))
+            try:
+                controller.start()
+                assert attempted.wait(SHORT_TIMEOUT)
+                # The second initializer must wait, not report recursion while
+                # the first group's import is deliberately suspended.
+                assert not completed.wait(0.1), list(errors)
+            finally:
+                release.set()
+                controller.join(SHORT_TIMEOUT)
+                builtins.__import__ = original_import
+            assert not controller.is_alive()
+            assert not errors, list(errors)
+            assert [results.get() for _ in range(2)] == ['decompress'] * 2
         ''')
 
 

@@ -567,28 +567,34 @@ _zlib_decompress = None
 # be imported. The function is cached when found, so subsequent calls
 # don't import zlib again.
 def _get_zlib_decompress_func():
-    global _zlib_decompress
-    if _zlib_decompress:
-        return _zlib_decompress
+    global _zlib_decompress, _importing_zlib
+    decompress = _zlib_decompress
+    if decompress:
+        return decompress
 
-    global _importing_zlib
-    if _importing_zlib:
-        # Someone has a zlib.py[co] in their Zip file
-        # let's avoid a stack overflow.
-        _bootstrap._verbose_message('zipimport: zlib UNAVAILABLE')
-        raise ZipImportError("can't decompress data; zlib not available")
+    # Use the import lock for this module, so recursive imports are detected
+    # without mistaking another group's initialization for recursion.
+    with _bootstrap._ModuleLockManager('zlib'):
+        decompress = _zlib_decompress
+        if decompress:
+            return decompress
+        if _importing_zlib:
+            # Someone has a zlib.py[co] in their Zip file.
+            _bootstrap._verbose_message('zipimport: zlib UNAVAILABLE')
+            raise ZipImportError("can't decompress data; zlib not available")
 
-    _importing_zlib = True
-    try:
-        from zlib import decompress as _zlib_decompress
-    except Exception:
-        _bootstrap._verbose_message('zipimport: zlib UNAVAILABLE')
-        raise ZipImportError("can't decompress data; zlib not available")
-    finally:
-        _importing_zlib = False
+        _importing_zlib = True
+        try:
+            from zlib import decompress
+            _zlib_decompress = decompress
+        except Exception:
+            _bootstrap._verbose_message('zipimport: zlib UNAVAILABLE')
+            raise ZipImportError("can't decompress data; zlib not available")
+        finally:
+            _importing_zlib = False
 
     _bootstrap._verbose_message('zipimport: zlib available')
-    return _zlib_decompress
+    return decompress
 
 
 _importing_zstd = False

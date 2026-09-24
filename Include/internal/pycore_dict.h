@@ -363,7 +363,8 @@ PyAPI_FUNC(int)
 _PyDict_InsertSplitValue(PyDictObject *mp, PyObject *key, PyObject *value, Py_ssize_t ix);
 
 PyAPI_FUNC(int) _PyDict_Freeze(PyObject *op);
-extern int _PyDict_SynchronizeNamespace(PyObject *op);
+// Used by standard library extension modules that opt in to sharing.
+PyAPI_FUNC(int) _PyDict_SynchronizeNamespace(PyObject *op);
 
 static inline size_t
 shared_keys_usable_size(PyDictKeysObject *keys)

@@ -8,6 +8,7 @@
 #endif
 
 #include "Python.h"
+#include "pycore_dict.h"          // _PyDict_SynchronizeNamespace()
 #include "pycore_pyatomic_ft_wrappers.h" // FT_ATOMIC_STORE_CHAR_RELAXED
 
 #include "zlib.h"
@@ -2394,6 +2395,29 @@ zlib_exec(PyObject *mod)
     }
     Py_DECREF(version_type);
 #endif
+    /* ZIP imports share this stateless entry point. Each call owns its z_stream
+       and output buffer; the only acquired state object is the error class.
+       Stream constructors, instances and the other functions retain their
+       individual sharing states. */
+    const char *shared_functions[] = {"decompress", "__getattr__"};
+    for (size_t i = 0; i < Py_ARRAY_LENGTH(shared_functions); i++) {
+        // from-import probes __path__, which calls the stateless __getattr__.
+        PyObject *function = PyObject_GetAttrString(mod, shared_functions[i]);
+        if (function == NULL) {
+            return -1;
+        }
+        int err = PyObject_DeclareSynchronized(function);
+        Py_DECREF(function);
+        if (err < 0) {
+            return -1;
+        }
+    }
+    if (PyObject_DeclareSynchronized(state->ZlibError) < 0 ||
+        _PyDict_SynchronizeNamespace(PyModule_GetDict(mod)) < 0 ||
+        PyObject_DeclareSynchronized(mod) < 0)
+    {
+        return -1;
+    }
     return 0;
 }
 
