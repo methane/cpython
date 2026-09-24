@@ -1780,12 +1780,12 @@ AC_SUBST([ABI_THREAD])
 ABIFLAGS=""
 ABI_THREAD=""
 
-# ThreadGroups require biased reference counting, parallel allocation and GC.
-# Reuse the free-threading substrate by default in this reference implementation.
+# Check for --disable-gil
+# --disable-gil
 AC_MSG_CHECKING([for --disable-gil])
 AC_ARG_ENABLE([gil],
-  [AS_HELP_STRING([--enable-gil], [build the legacy globally serialized implementation (default is no)])],
-  [AS_VAR_IF([enable_gil], [yes], [disable_gil=no], [disable_gil=yes])], [disable_gil=yes]
+  [AS_HELP_STRING([--disable-gil], [enable support for running without the GIL (default is no)])],
+  [AS_VAR_IF([enable_gil], [yes], [disable_gil=no], [disable_gil=yes])], [disable_gil=no]
 )
 AC_MSG_RESULT([$disable_gil])
 

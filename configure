@@ -1858,8 +1858,8 @@ Optional Features:
                           library)
   --enable-profiling      enable C-level code profiling with gprof (default is
                           no)
-  --enable-gil            build the legacy globally serialized implementation
-                          (default is no)
+  --disable-gil           enable support for running without the GIL (default
+                          is no)
   --enable-pystats        enable internal statistics gathering (default is no)
   --enable-optimizations  enable expensive, stable optimizations (PGO, etc.)
                           (default is no)
@@ -8505,8 +8505,8 @@ fi
 ABIFLAGS=""
 ABI_THREAD=""
 
-# ThreadGroups require biased reference counting, parallel allocation and GC.
-# Reuse the free-threading substrate by default in this reference implementation.
+# Check for --disable-gil
+# --disable-gil
 { printf "%s\n" "$as_me:${as_lineno-$LINENO}: checking for --disable-gil" >&5
 printf %s "checking for --disable-gil... " >&6; }
 # Check whether --enable-gil was given.
@@ -8520,7 +8520,7 @@ else case e in #(
 esac
 fi
 else case e in #(
-  e) disable_gil=yes
+  e) disable_gil=no
  ;;
 esac
 fi

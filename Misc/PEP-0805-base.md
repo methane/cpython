@@ -15,7 +15,7 @@ LOCAL objects are requirements, not optional optimizations.
 | --- | --- | --- |
 | ThreadGroups | Main identity and lifetime, explicit/default group selection, serialization, parallel execution, detach/reattach, fork and shutdown | Extracted; initial regressions pass, lifetime audit remains |
 | One-time ABI change | Owner/state metadata with room for later states; no per-object cleanup queue fields; consistent native layouts | Pending |
-| Biased and deferred reference counting | PEP 703 machinery in the default runtime; same-group LOCAL reclamation remains immediate | Pending |
+| Biased and deferred reference counting | Port the necessary PEP 703 mechanisms into the normal build; same-group LOCAL reclamation remains immediate | Pending |
 | LOCAL and IMMUTABLE ownership | Correct initialization and checked C API/VM reference acquisition; shallow immutable containers do not expose foreign LOCAL values | Pending |
 | Parallel allocation and cyclic GC | Concurrent allocation/collection, safe foreign traversal, finalization and interpreter teardown | Pending |
 
@@ -23,6 +23,11 @@ Freezing, protective/compound locks, synchronized collections, TransferBox,
 Channel, the debugger StopTheWorld API, and performance optimization are later
 stages and are excluded. Internal GC world stops remain part of the runtime.
 Windows and native machine-code JIT validation remain outside the current scope.
+Enabling `--disable-gil` is not the implementation of stages three and five.
+The normal build must acquire the required reference-counting, allocation and
+GC mechanisms without selecting the free-threading build. The final header
+layout must also be assessed against the appendix, not obtained by appending
+all ownership and cleanup fields to the PEP 703 layout.
 
 ## Extraction provenance
 
@@ -43,11 +48,15 @@ First split validation: Linux/aarch64 debug build configured with
 `test_thread`, `test_fork1`, `test_gc` and `test_embed` pass with `-X gil=0 -j2`:
 445 tests, 17 skips. Build and test logs are under `/tmp/pep805-base/`.
 The optional _decimal module is unavailable. These checks precede the default
-runtime switch and the addition of ownership enforcement.
+port of the reference-counting runtime and ownership enforcement.
 
-`d92bde8de7` was applied with `git cherry-pick --no-commit` for the default
-parallel substrate, fixed GIL configuration during extension imports, and
-classic defaults for context inheritance and warnings. Its later-stage
+`d92bde8de7` was applied with `git cherry-pick --no-commit` for fixed GIL
+configuration during extension imports and classic defaults for context
+inheritance and warnings. Its change of the configure default has been
+reverted: selecting the free-threading build is not the port described by
+the implementation strategy. Its later-stage
 ownership and synchronized-container changes are excluded. After rebuilding,
 `test_threadgroup`, `test_capi.test_config`, `test_capi.test_module`,
 `test_import`, `test_importlib` and `test_embed` pass: 1,480 tests, 40 skips.
+That validation used the explicit `--disable-gil` configuration and does not
+establish completion of the normal-build port.
