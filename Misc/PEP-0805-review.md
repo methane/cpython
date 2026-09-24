@@ -1170,10 +1170,50 @@ six-suite selection with 379 tests and eight skips. The incremental builds
 have no compiler warnings or failed module imports. Changed native sources
 and tests match across the three builds.
 
-This repair does not complete iterator state propagation: enumerate and generic
-reversed iterators still need to inherit a mutable source's sharing state, with
-the necessary internal synchronization. The broader itertools/native caller
-audit and question 1's callback-lifetime decision also remain open.
+The following follow-up repairs enumerate and generic reversed state
+propagation. The broader itertools/native caller audit and question 1's
+callback-lifetime decision remain open.
+
+### Enumerate and generic reversed sharing state
+
+Both iterators now inherit the mutable source's sharing state. Enumerate uses
+its retained iterator as the source; generic reversed uses its sequence. An
+immutable source still produces a LOCAL iterator. The initial seven regression
+methods reported 13 failures including subtests on the previous runtime.
+
+Enumerate updates both small and large indices and reuses its cached result
+tuple under its internal mutex. It calls the underlying iterator and releases
+old result elements outside that critical section. Concurrent consumers obtain
+distinct indices and source items; this does not promise index/value ordering
+between overlapping calls. Reduction retains a long-index snapshot under the
+same mutex before allocating its result.
+
+A synchronized generic reversed iterator reserves a position before calling
+__getitem__, since a Python callback can suspend a critical section. It retains
+its source after exhaustion, snapshots reduction state, and rechecks exhaustion
+after the length callback in __setstate__. Regression coverage forces four
+sequence callbacks to overlap and checks that every position is visited once.
+Additional tests cover exceptions and exhaustion inside the length callback.
+
+Subclass namespaces now inherit the same protective lock or become
+SynchronizedDict objects before the iterator is published. Managed namespace
+replacement also synchronizes the supplied dictionary without breaking aliases,
+matching the existing nonmanaged path. A worker-group regression exercises
+namespace creation, attribute updates and dictionary replacement.
+
+The parallel enumerate fixture passes its per-run inputs as defaults: rebinding
+captured loop variables makes its function LOCAL under the existing function
+classification rules. A separate small probe confirmed that fixture issue;
+it was not an enumerate synchronization failure.
+
+Validation logs and the pre-repair failures are in
+`/tmp/pep805-iterator-sharing/`. The final regression suite contains ten methods.
+The eight-suite iterator/descriptor/function selection passes on the default,
+GIL and Tier 2 interpreter builds, each with 422 reported tests and one skip.
+The new suite also passes the default build's -R 3:3 reference-leak check.
+Incremental builds report no warnings or failed module imports. Changed native
+sources and tests match across all three builds. This is targeted validation,
+not completion of the overall PEP audit.
 
 ## Earlier re-review and implementation follow-ups
 

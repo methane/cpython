@@ -2,6 +2,7 @@
 
 #include "Python.h"
 #include "pycore_call.h"          // _PyObject_CallNoArgs()
+#include "pycore_dict.h"          // _PyDict_SynchronizeNamespace()
 #include "pycore_long.h"          // _PyLong_GetOne()
 #include "pycore_modsupport.h"    // _PyArg_NoKwnames()
 #include "pycore_object.h"        // _PyObject_GC_TRACK()
@@ -26,6 +27,33 @@ typedef struct {
 } enumobject;
 
 #define _enumobject_CAST(op)    ((enumobject *)(op))
+
+// Initialize a subclass's namespace before publishing a shared iterator.
+// The base types have no dictionary; subclasses may use managed inline values.
+static int
+inherit_iterator_state(PyObject *iterator, PyObject *source)
+{
+    _PyObject_InheritShareable(iterator, source);
+    uint8_t state = FT_ATOMIC_LOAD_UINT8(iterator->ob_shareable);
+    if (state == _Py_SHAREABLE_LOCAL ||
+        Py_TYPE(iterator)->tp_dictoffset == 0) {
+        return 0;
+    }
+    PyObject *dict = PyObject_GenericGetDict(iterator, NULL);
+    if (dict == NULL) {
+        return -1;
+    }
+    int res = 0;
+    if (state == _Py_SHAREABLE_SYNCHRONIZED) {
+        res = _PyDict_SynchronizeNamespace(dict);
+    }
+    else {
+        assert(state == _Py_SHAREABLE_PROTECTED);
+        _PyObject_InheritShareable(dict, iterator);
+    }
+    Py_DECREF(dict);
+    return res;
+}
 
 /*[clinic input]
 @vectorcall
@@ -90,6 +118,10 @@ enum_new_impl(PyTypeObject *type, PyObject *iterable, PyObject *start)
         return NULL;
     }
     en->one = _PyLong_GetOne();    /* borrowed reference */
+    if (inherit_iterator_state((PyObject *)en, en->en_sit) < 0) {
+        Py_DECREF(en);
+        return NULL;
+    }
     return (PyObject *)en;
 }
 
@@ -138,82 +170,58 @@ increment_longindex_lock_held(enumobject *en)
 }
 
 static PyObject *
-enum_next_long(enumobject *en, PyObject* next_item)
-{
-    PyObject *result = en->en_result;
-    PyObject *next_index;
-    PyObject *old_index;
-    PyObject *old_item;
-
-
-    Py_BEGIN_CRITICAL_SECTION(en);
-    next_index = increment_longindex_lock_held(en);
-    Py_END_CRITICAL_SECTION();
-    if (next_index == NULL) {
-        Py_DECREF(next_item);
-        return NULL;
-    }
-
-    if (_PyObject_IsUniquelyReferenced(result)) {
-        Py_INCREF(result);
-        old_index = PyTuple_GET_ITEM(result, 0);
-        old_item = PyTuple_GET_ITEM(result, 1);
-        PyTuple_SET_ITEM(result, 0, next_index);
-        PyTuple_SET_ITEM(result, 1, next_item);
-        Py_DECREF(old_index);
-        Py_DECREF(old_item);
-        // bpo-42536: The GC may have untracked this result tuple. Since we're
-        // recycling it, make sure it's tracked again:
-        _PyTuple_Recycle(result);
-        return result;
-    }
-    return _PyTuple_FromPairSteal(next_index, next_item);
-}
-
-static PyObject *
 enum_next(PyObject *op)
 {
     if (PyObject_CheckAccess(op) == NULL) {
         return NULL;
     }
     enumobject *en = _enumobject_CAST(op);
-    PyObject *next_index;
-    PyObject *next_item;
-    PyObject *result = en->en_result;
     PyObject *it = PyObject_CheckAccess(en->en_sit);
     if (it == NULL) {
         return NULL;
     }
-    PyObject *old_index;
-    PyObject *old_item;
-
-    next_item = (*Py_TYPE(it)->tp_iternext)(it);
+    PyObject *next_item = (*Py_TYPE(it)->tp_iternext)(it);
     next_item = _PyObject_CheckAccessNullable(next_item);
-    if (next_item == NULL)
-        return NULL;
-
-    Py_ssize_t en_index = FT_ATOMIC_LOAD_SSIZE_RELAXED(en->en_index);
-    if (en_index == PY_SSIZE_T_MAX)
-        return enum_next_long(en, next_item);
-
-    next_index = PyLong_FromSsize_t(en_index);
-    if (next_index == NULL) {
-        Py_DECREF(next_item);
+    if (next_item == NULL) {
         return NULL;
     }
-    FT_ATOMIC_STORE_SSIZE_RELAXED(en->en_index, en_index + 1);
 
-    if (_PyObject_IsUniquelyReferenced(result)) {
+    PyObject *next_index;
+    PyObject *result = en->en_result;
+    PyObject *old_index = NULL;
+    PyObject *old_item = NULL;
+    // The source iterator can run arbitrary code. Only the index update and
+    // reuse of the cached tuple belong in this critical section.
+    Py_BEGIN_CRITICAL_SECTION(en);
+    if (en->en_index == PY_SSIZE_T_MAX) {
+        next_index = increment_longindex_lock_held(en);
+    }
+    else {
+        next_index = PyLong_FromSsize_t(en->en_index);
+        if (next_index != NULL) {
+            en->en_index++;
+        }
+    }
+    if (next_index != NULL && _PyObject_IsUniquelyReferenced(result)) {
         Py_INCREF(result);
         old_index = PyTuple_GET_ITEM(result, 0);
         old_item = PyTuple_GET_ITEM(result, 1);
         PyTuple_SET_ITEM(result, 0, next_index);
         PyTuple_SET_ITEM(result, 1, next_item);
-        Py_DECREF(old_index);
-        Py_DECREF(old_item);
         // bpo-42536: The GC may have untracked this result tuple. Since we're
         // recycling it, make sure it's tracked again:
         _PyTuple_Recycle(result);
+    }
+    Py_END_CRITICAL_SECTION();
+
+    if (next_index == NULL) {
+        Py_DECREF(next_item);
+        return NULL;
+    }
+    if (old_index != NULL) {
+        // Releasing the old item may run a finalizer that re-enters enumerate.
+        Py_DECREF(old_index);
+        Py_DECREF(old_item);
         return result;
     }
     return _PyTuple_FromPairSteal(next_index, next_item);
@@ -226,17 +234,20 @@ enum_reduce(PyObject *op, PyObject *Py_UNUSED(ignored))
         return NULL;
     }
     enumobject *en = _enumobject_CAST(op);
-    PyObject *result;
+    PyObject *longindex;
+    Py_ssize_t index;
     Py_BEGIN_CRITICAL_SECTION(en);
-    if (en->en_longindex != NULL) {
-        result = Py_BuildValue("O(OO)", Py_TYPE(en), en->en_sit, en->en_longindex);
-    }
-    else {
-        Py_ssize_t en_index = FT_ATOMIC_LOAD_SSIZE_RELAXED(en->en_index);
-        result = Py_BuildValue("O(On)", Py_TYPE(en), en->en_sit, en_index);
-    }
+    longindex = Py_XNewRef(en->en_longindex);
+    index = en->en_index;
     Py_END_CRITICAL_SECTION();
-    return result;
+
+    if (longindex != NULL) {
+        PyObject *result = Py_BuildValue("O(OO)", Py_TYPE(en), en->en_sit,
+                                         longindex);
+        Py_DECREF(longindex);
+        return result;
+    }
+    return Py_BuildValue("O(On)", Py_TYPE(en), en->en_sit, index);
 }
 
 PyDoc_STRVAR(reduce_doc, "Return state information for pickling.");
@@ -360,6 +371,10 @@ reversed_new_impl(PyTypeObject *type, PyObject *seq)
 
     ro->index = n-1;
     ro->seq = Py_NewRef(seq);
+    if (inherit_iterator_state((PyObject *)ro, seq) < 0) {
+        Py_DECREF(ro);
+        return NULL;
+    }
     return (PyObject *)ro;
 }
 
@@ -381,12 +396,52 @@ reversed_traverse(PyObject *op, visitproc visit, void *arg)
 }
 
 static PyObject *
+reversed_next_shared(reversedobject *ro)
+{
+    if (FT_ATOMIC_LOAD_SSIZE_RELAXED(ro->index) < 0) {
+        return NULL;
+    }
+    // Shared iterators retain their sequence even after exhaustion.
+    PyObject *seq = PyObject_CheckAccess(ro->seq);
+    if (seq == NULL) {
+        return NULL;
+    }
+    Py_ssize_t index;
+    Py_BEGIN_CRITICAL_SECTION(ro);
+    index = FT_ATOMIC_LOAD_SSIZE_RELAXED(ro->index);
+    if (index >= 0) {
+        // Reserve the index before calling the sequence: __getitem__ can
+        // suspend a critical section or recursively advance this iterator.
+        FT_ATOMIC_STORE_SSIZE_RELAXED(ro->index, index - 1);
+    }
+    Py_END_CRITICAL_SECTION();
+    if (index < 0) {
+        return NULL;
+    }
+    PyObject *item = PySequence_GetItem(seq, index);
+    if (item != NULL) {
+        return item;
+    }
+    Py_BEGIN_CRITICAL_SECTION(ro);
+    FT_ATOMIC_STORE_SSIZE_RELAXED(ro->index, -1);
+    Py_END_CRITICAL_SECTION();
+    if (PyErr_ExceptionMatches(PyExc_IndexError) ||
+        PyErr_ExceptionMatches(PyExc_StopIteration)) {
+        PyErr_Clear();
+    }
+    return NULL;
+}
+
+static PyObject *
 reversed_next(PyObject *op)
 {
     if (PyObject_CheckAccess(op) == NULL) {
         return NULL;
     }
     reversedobject *ro = _reversedobject_CAST(op);
+    if (FT_ATOMIC_LOAD_UINT8(op->ob_shareable) == _Py_SHAREABLE_SYNCHRONIZED) {
+        return reversed_next_shared(ro);
+    }
     PyObject *item;
     Py_ssize_t index = FT_ATOMIC_LOAD_SSIZE_RELAXED(ro->index);
 
@@ -442,13 +497,18 @@ reversed_reduce(PyObject *op, PyObject *Py_UNUSED(ignored))
         return NULL;
     }
     reversedobject *ro = _reversedobject_CAST(op);
-    Py_ssize_t index = FT_ATOMIC_LOAD_SSIZE_RELAXED(ro->index);
-    if (index != -1) {
-        return Py_BuildValue("O(O)n", Py_TYPE(ro), ro->seq, ro->index);
+    Py_ssize_t index;
+    PyObject *seq;
+    Py_BEGIN_CRITICAL_SECTION(ro);
+    index = FT_ATOMIC_LOAD_SSIZE_RELAXED(ro->index);
+    seq = index >= 0 ? Py_NewRef(ro->seq) : NULL;
+    Py_END_CRITICAL_SECTION();
+    if (seq != NULL) {
+        PyObject *result = Py_BuildValue("O(O)n", Py_TYPE(ro), seq, index);
+        Py_DECREF(seq);
+        return result;
     }
-    else {
-        return Py_BuildValue("O(())", Py_TYPE(ro));
-    }
+    return Py_BuildValue("O(())", Py_TYPE(ro));
 }
 
 static PyObject *
@@ -477,7 +537,12 @@ reversed_setstate(PyObject *op, PyObject *state)
             index = -1;
         else if (index > n-1)
             index = n-1;
-        FT_ATOMIC_STORE_SSIZE_RELAXED(ro->index, index);
+        Py_BEGIN_CRITICAL_SECTION(ro);
+        // The size callback may have exhausted the iterator in the meantime.
+        if (FT_ATOMIC_LOAD_SSIZE_RELAXED(ro->index) != -1) {
+            FT_ATOMIC_STORE_SSIZE_RELAXED(ro->index, index);
+        }
+        Py_END_CRITICAL_SECTION();
     }
     Py_RETURN_NONE;
 }

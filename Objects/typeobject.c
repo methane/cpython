@@ -4050,6 +4050,17 @@ _PyObject_SetDict(PyObject *obj, PyObject *value)
         return -1;
     }
     if (Py_TYPE(obj)->tp_flags & Py_TPFLAGS_MANAGED_DICT) {
+        if (FT_ATOMIC_LOAD_UINT8(obj->ob_shareable) == _Py_SHAREABLE_SYNCHRONIZED) {
+            if (value == NULL) {
+                PyErr_SetString(PyExc_TypeError,
+                                "cannot delete a synchronized object's namespace");
+                return -1;
+            }
+            if (_PyDict_SynchronizeNamespace(value) < 0 ||
+                _PyObject_CheckMutable(obj) < 0) {
+                return -1;
+            }
+        }
         return _PyObject_SetManagedDict(obj, value);
     }
     PyObject **dictptr = _PyObject_ComputedDictPointer(obj);
