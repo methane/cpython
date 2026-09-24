@@ -545,7 +545,7 @@ def decode_source(source_bytes):
 
 # Module specifications #######################################################
 
-_POPULATE = object()
+_POPULATE = freeze(object())
 
 
 def spec_from_file_location(name, location=None, *, loader=None,

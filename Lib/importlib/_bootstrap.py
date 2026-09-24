@@ -45,9 +45,24 @@ def _new_module(name):
 
 # Module-level locking ########################################################
 
-# For a list that can have a weakref to it.
-class _List(list):
-    __slots__ = ("__weakref__",)
+# A weak-referenceable wrapper around the synchronized wait-list storage.
+# SynchronizedList itself cannot be subclassed or weakly referenced.
+class _List:
+    def __init__(self):
+        self.data = SynchronizedList()
+        freeze(self)
+
+    def append(self, item):
+        self.data.append(item)
+
+    def remove(self, item):
+        self.data.remove(item)
+
+    def __iter__(self):
+        return iter(self.data)
+
+    def __len__(self):
+        return len(self.data)
 
 
 # Copied from weakref.py with some simplifications and modifications unique to
@@ -56,41 +71,33 @@ class _List(list):
 class _WeakValueDictionary:
 
     def __init__(self):
-        self_weakref = _weakref.ref(self)
+        self.clear()
+        self.__dict__ = self.__dict__.synchronize()
+        if type(self) is _WeakValueDictionary:
+            _thread._declare_synchronized(self)
+        self_weakref = _weakref_ref(self)
 
-        # Inlined to avoid issues with inheriting from _weakref.ref before _weakref is
-        # set by _setup(). Since there's only one instance of this class, this is
-        # not expensive.
-        class KeyedRef(_weakref.ref):
-
-            __slots__ = "key",
-
-            def __new__(type, ob, key):
-                self = super().__new__(type, ob, type.remove)
-                self.key = key
-                return self
-
-            def __init__(self, ob, key):
-                super().__init__(ob, self.remove)
-
-            @staticmethod
+        # Keep the key in the callback rather than adding mutable fields to a
+        # weakref subclass. Exact weakrefs synchronize their native storage.
+        def KeyedRef(ob, key):
             def remove(wr):
-                nonlocal self_weakref
-
                 self = self_weakref()
                 if self is not None:
                     if self._iterating:
-                        self._pending_removals.append(wr.key)
+                        self._pending_removals.append(key)
                     else:
-                        _weakref._remove_dead_weakref(self.data, wr.key)
+                        _remove_dead_weakref(self.data, key)
+
+            ref = _weakref_ref(ob, remove)
+            _thread._declare_synchronized(ref)
+            return ref
 
         self._KeyedRef = KeyedRef
-        self.clear()
 
     def clear(self):
-        self._pending_removals = []
-        self._iterating = set()
-        self.data = {}
+        self._pending_removals = SynchronizedList()
+        self._iterating = SynchronizedSet()
+        self.data = SynchronizedDict()
 
     def _commit_removals(self):
         pop = self._pending_removals.pop
@@ -100,7 +107,7 @@ class _WeakValueDictionary:
                 key = pop()
             except IndexError:
                 return
-            _weakref._remove_dead_weakref(d, key)
+            _remove_dead_weakref(d, key)
 
     def get(self, key, default=None):
         if self._pending_removals:
@@ -131,7 +138,7 @@ class _WeakValueDictionary:
 
 # A dict mapping module names to weakrefs of _ModuleLock instances.
 # Dictionary protected by the global import lock.
-_module_locks = {}
+_module_locks = SynchronizedDict()
 
 # A dict mapping thread IDs to weakref'ed lists of _ModuleLock instances.
 # This maps a thread to the module locks it is blocking on acquiring.  The
@@ -263,7 +270,7 @@ class _ModuleLock:
         # Counts are represented as a list of True because list.append(True)
         # and list.pop() are both atomic and thread-safe in CPython and it's hard
         # to find another primitive with the same properties.
-        self.count = []
+        self.count = SynchronizedList()
 
         # This is a count of the number of threads that are blocking on
         # self.wakeup.acquire() awaiting to get their turn holding this module
@@ -277,7 +284,13 @@ class _ModuleLock:
         # going to have to wait for another thread to finish.
         #
         # See the comment above count for explanation of the representation.
-        self.waiters = []
+        self.waiters = SynchronizedList()
+
+        # The import lock serializes compound changes. Deadlock detection in
+        # another group also reads owner, so the namespace itself is shared.
+        self.__dict__ = self.__dict__.synchronize()
+        if type(self) is _ModuleLock:
+            _thread._declare_synchronized(self)
 
     def has_deadlock(self):
         # To avoid deadlocks for concurrent or re-entrant circular imports,
@@ -484,7 +497,7 @@ def _get_module_lock(name):
     Acquire/release internally the global import lock to protect
     _module_locks."""
 
-    _imp.acquire_lock()
+    _acquire_import_lock()
     try:
         try:
             lock = _module_locks[name]()
@@ -498,7 +511,7 @@ def _get_module_lock(name):
                 lock = _ModuleLock(name)
 
             def cb(ref, name=name):
-                _imp.acquire_lock()
+                _acquire_import_lock()
                 try:
                     # bpo-31070: Check if another thread created a new lock
                     # after the previous lock was destroyed
@@ -506,11 +519,11 @@ def _get_module_lock(name):
                     if _module_locks.get(name) is ref:
                         del _module_locks[name]
                 finally:
-                    _imp.release_lock()
+                    _release_import_lock()
 
-            _module_locks[name] = _weakref.ref(lock, cb)
+            _module_locks[name] = _weakref_ref(lock, cb)
     finally:
-        _imp.release_lock()
+        _release_import_lock()
 
     return lock
 
@@ -1173,11 +1186,11 @@ class _ImportLockContext:
 
     def __enter__(self):
         """Acquire the import lock."""
-        _imp.acquire_lock()
+        _acquire_import_lock()
 
     def __exit__(self, exc_type, exc_value, exc_traceback):
         """Release the import lock regardless of any raised exceptions."""
-        _imp.release_lock()
+        _release_import_lock()
 
 
 def _resolve_name(name, package, level):
@@ -1321,7 +1334,7 @@ def _find_and_load_unlocked(name, import_, *, lazy_submodule=False):
     return module
 
 
-_NEEDS_LOADING = object()
+_NEEDS_LOADING = freeze(object())
 
 
 def _find_and_load(name, import_, *, lazy_submodule=False):
@@ -1529,6 +1542,21 @@ def _setup(sys_module, _imp_module):
         setattr(self_module, builtin_name, builtin_module)
 
     # Instantiation requires _weakref to have been set.
+    global _weakref_ref, _remove_dead_weakref
+    global _acquire_import_lock, _release_import_lock
+    _weakref_ref = _weakref.ref
+    _remove_dead_weakref = _weakref._remove_dead_weakref
+    _acquire_import_lock = _imp.acquire_lock
+    _release_import_lock = _imp.release_lock
+    # These native functions operate on the import mutex or a dictionary's
+    # internal lock. Sharing them does not expose either module's namespace.
+    for function in (_remove_dead_weakref, _acquire_import_lock,
+                     _release_import_lock):
+        _thread._declare_synchronized(function)
+    for cls in (_List, _WeakValueDictionary, _BlockingOnManager, _DeadlockError,
+                _ModuleLock, _DummyModuleLock, _ModuleLockManager,
+                _HierarchicalLockManager, _ImportLockContext):
+        type.synchronize(cls)
     _blocking_on = _WeakValueDictionary()
 
 

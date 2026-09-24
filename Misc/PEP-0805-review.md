@@ -16,7 +16,8 @@ and removes global-GIL enabling during extension imports. Earlier follow-ups
 repair immediate LOCAL reclamation and identify the first denied reference
 in the existing subinterpreter import failure.
 The subsequent import audit checks bootstrap callbacks directly and shares
-the lazy-import registries; the default Python bootstrap still needs work.
+the lazy-import registries. The next follow-up ports bootstrap lock state
+and freezes its sentinels; the default finder/loader pipeline still needs work.
 
 Sources: [PEP 805](https://peps.python.org/pep-0805/),
 [implementation appendix](https://peps.python.org/pep-0805/appendix-implementation/),
@@ -564,6 +565,65 @@ Validation for this follow-up:
   forbidden access cases. Changed runtime/test sources match across the build
   trees; final builds emit no compiler warnings. `git diff --check` passes.
   Logs and the remaining ordinary-import probe are in `/tmp/pep805-bootstrap/`.
+
+### Bootstrap locks across ThreadGroups
+
+The two identity-only sentinels, `_NEEDS_LOADING` and `_POPULATE`, are now
+frozen. The module-lock registry uses SynchronizedDict, and the exact
+`_ModuleLock` instances publish a synchronized namespace with synchronized
+recursion and waiter lists. The existing native RLock still serializes
+compound lock-state changes. Subclasses remain LOCAL, since their additional
+state has not been audited.
+
+Deadlock detection also reads other threads' wait lists. These lists now use
+SynchronizedList storage behind a frozen, weak-referenceable wrapper. The
+weak-value mapping retains weak ownership, pending-removal bookkeeping and
+the atomic dead-reference check; it does not keep lists alive after their
+last user exits. Its weakrefs are exact native references with the key held
+in a callback closure, replacing the mutable `KeyedRef` subclass. The mapping's
+namespace and containers are synchronized. This preserves cleanup when a
+worker-created module lock is last released in a different group.
+
+Bootstrap setup explicitly shares the lock-management classes and three
+native helpers: import-lock acquire/release and atomic dead-weakref removal.
+Those functions use the native import mutex or dictionary locking and do not
+read their bound module's state. Bootstrap retains checked references to
+these helpers without exposing the LOCAL `_imp` or `_weakref` module.
+Foreign LOCAL values inserted into the shared lock registry are still
+rejected before they can be called.
+
+`test_import_lock_access` runs six cases against both source and frozen
+importlib: recursive use of another group's lock, four-group contention on
+one registered lock, worker-created lock lifetime, a cross-group deadlock,
+LOCAL subclass storage, and denial of an inaccessible registry callback.
+Before the repair, eight subtests of the original five cases failed.
+The existing 34 import-lock tests also passed in the first focused run.
+
+This completes the lock-graph portion of the preceding import finding,
+not the full import port. A fresh worker import of `_ast` now passes the
+sentinel and module-lock paths and fails when the audit arguments acquire
+`sys.meta_path`, which is still LOCAL. The finder registries, native loader
+dependencies and external path caches remain independent implementation
+work. The successful direct lock tests do not prove that this default
+finder/loader pipeline works across groups.
+
+Validation logs and the ordinary-import probe are in
+`/tmp/pep805-import-locks/`. Frozen importlib was regenerated before building
+each configuration. The sample still computes 61,620 and rejects foreign
+LOCAL and unprotected access.
+
+The final nine-file selection (`test_import_lock_access`, `test_import_access`,
+`test_importlib`, `test_lazy_import`, `test_import`, `test_module`, `test_sys`,
+`test_threadgroup`, and `test_weakref`) passes in the default parallel debug
+build: 1,820 reported tests, 45 skips. The legacy GIL and Tier 2 comparison
+builds pass eight files and report the same six existing `test_import`
+failures (1,820 tests, 35 skips each). Targeted verbose reruns confirm all six
+failure identities match the saved `3657b0d87c` baseline. The source and frozen
+lock cases pass in all three builds. An earlier selection mistakenly named
+`test_threaded_import` as a top-level test; its load error was a command error,
+and the actual suite is included under `test_importlib` in the final selection.
+Changed runtime/test sources match across the three trees, the builds emit
+no compiler warnings, and `git diff --check` passes.
 
 ## Earlier re-review and implementation follow-ups
 
