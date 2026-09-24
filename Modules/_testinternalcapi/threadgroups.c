@@ -643,10 +643,17 @@ static PyType_Spec return_box_spec = {
     .slots = return_box_slots,
 };
 
+static PyObject *
+return_box_compare(PyObject *self, PyObject *other, int comparison)
+{
+    return Py_NewRef(((return_box *)self)->value);
+}
+
 static PyType_Slot member_box_slots[] = {
     {Py_tp_dealloc, return_box_dealloc},
     {Py_tp_traverse, return_box_traverse},
     {Py_tp_members, return_box_members},
+    {Py_tp_richcompare, return_box_compare},
     {0, NULL},
 };
 
@@ -738,6 +745,92 @@ access_descriptor_calls(PyObject *self, PyObject *descriptor)
         &((return_box *)descriptor)->descriptor_calls));
 }
 
+// Native slots avoid a later Python method lookup masking an unchecked
+// container acquisition. Count calls so rejection cannot hide a side effect.
+typedef struct {
+    PyObject_HEAD
+    int calls;
+} container_element;
+
+static void
+container_element_dealloc(PyObject *op)
+{
+    PyTypeObject *type = Py_TYPE(op);
+    type->tp_free(op);
+    Py_DECREF(type);
+}
+
+static PyObject *
+container_element_repr(PyObject *op)
+{
+    _Py_atomic_add_int(&((container_element *)op)->calls, 1);
+    return PyUnicode_FromString("container element");
+}
+
+static Py_hash_t
+container_element_hash(PyObject *op)
+{
+    _Py_atomic_add_int(&((container_element *)op)->calls, 1);
+    return 0;
+}
+
+static int
+container_element_bool(PyObject *op)
+{
+    _Py_atomic_add_int(&((container_element *)op)->calls, 1);
+    return 1;
+}
+
+static PyObject *
+container_element_compare(PyObject *op, PyObject *other, int comparison)
+{
+    _Py_atomic_add_int(&((container_element *)op)->calls, 1);
+    return PyBool_FromLong(comparison == Py_NE);
+}
+
+static PyObject *
+make_container_element(PyObject *self, PyObject *immutable)
+{
+    int shareable = PyObject_IsTrue(immutable);
+    if (shareable < 0) {
+        return NULL;
+    }
+    PyType_Slot slots[] = {
+        {Py_tp_dealloc, container_element_dealloc},
+        {Py_tp_repr, container_element_repr},
+        {Py_tp_hash, container_element_hash},
+        {Py_nb_bool, container_element_bool},
+        {Py_tp_richcompare, container_element_compare},
+        {0, NULL},
+    };
+    PyType_Spec spec = {
+        .name = "_testinternalcapi.ContainerElement",
+        .basicsize = sizeof(container_element),
+        .flags = Py_TPFLAGS_DEFAULT,
+        .slots = slots,
+    };
+    PyTypeObject *type = (PyTypeObject *)PyType_FromSpec(&spec);
+    if (type == NULL) {
+        return NULL;
+    }
+    PyObject *element = type->tp_alloc(type, 0);
+    Py_DECREF(type);
+    if (element != NULL && shareable && PyObject_DeclareImmutable(element) < 0) {
+        Py_CLEAR(element);
+    }
+    return element;
+}
+
+static PyObject *
+container_element_calls(PyObject *self, PyObject *element)
+{
+    if (Py_TYPE(element)->tp_hash != container_element_hash) {
+        return PyErr_Format(PyExc_TypeError, "expected a container element");
+    }
+    return PyLong_FromLong(_Py_atomic_load_int(
+        &((container_element *)element)->calls));
+}
+
 static const char *return_apis[] = {
     "PyTuple_GetItem", "PySequence_GetItem", "PyObject_GetItem",
     "PyList_GetItem", "PyList_GetItemRef",
@@ -749,7 +842,8 @@ static const char *return_apis[] = {
     "PyObject_GenericGetAttr", "PyCell_Get", "PyVectorcall_Call",
     "PyObject_Call", "PyObject_Vectorcall", "PyObject_VectorcallDict",
     "PyVectorcall_Call_keywords", "PyEval_GetBuiltins", "PyImport_GetModuleDict",
-    "PySys_GetXOptions", "PyEval_GetFrameBuiltins", NULL,
+    "PySys_GetXOptions", "PyEval_GetFrameBuiltins",
+    "PyObject_RichCompare", "PyObject_RichCompareBool", NULL,
 };
 
 struct return_probe {
@@ -905,6 +999,20 @@ return_probe_worker(void *arg)
             break;
         case 29:
             result = PyEval_GetFrameBuiltins();
+            break;
+        case 30:
+        case 31:
+            box = make_return_box(&member_box_spec, value);
+            if (box == NULL) {
+                goto done;
+            }
+            if (probe->api == 30) {
+                result = PyObject_RichCompare(box, Py_None, Py_LT);
+            }
+            else if (PyObject_RichCompareBool(box, Py_None, Py_LT) >= 0) {
+                // Normalize a successful scalar result for the probe below.
+                result = Py_NewRef(value);
+            }
             break;
         default:
             box = make_return_box(&return_box_spec, value);
@@ -2016,6 +2124,8 @@ threadgroup_weakref_probe(PyObject *self, PyObject *args)
 }
 
 static PyMethodDef methods[] = {
+    {"make_container_element", make_container_element, METH_O, NULL},
+    {"container_element_calls", container_element_calls, METH_O, NULL},
     {"threadgroup_weakref_probe", threadgroup_weakref_probe, METH_VARARGS, NULL},
 #ifdef WITH_MIMALLOC
     {"test_reentrant_allocation_heap", test_reentrant_allocation_heap, METH_NOARGS, NULL},

@@ -602,6 +602,9 @@ list_repr_impl(PyListObject *v)
     for (Py_ssize_t i = 0; i < Py_SIZE(v); ++i) {
         /* Hold a strong reference since repr(item) can mutate the list */
         item = Py_XNewRef(v->ob_item[i]);
+        if (item != NULL && PyObject_CheckAccess(item) == NULL) {
+            goto error;
+        }
 
         if (i > 0) {
             if (PyUnicodeWriter_WriteChar(writer, ',') < 0) {
@@ -661,6 +664,10 @@ list_contains(PyObject *aa, PyObject *el)
         if (item == NULL) {
             // out-of-bounds
             return 0;
+        }
+        item = _PyObject_CheckAccessNullable(item);
+        if (item == NULL) {
+            return -1;
         }
         int cmp = PyObject_RichCompareBool(item, el, Py_EQ);
         Py_DECREF(item);
@@ -2784,7 +2791,8 @@ unsafe_object_compare(PyObject *v, PyObject *w, MergeState *ms)
         return PyObject_RichCompareBool(v, w, Py_LT);
 
     assert(ms->key_richcompare != NULL);
-    res_obj = (*(ms->key_richcompare))(v, w, Py_LT);
+    res_obj = _PyObject_CheckAccessNullable(
+        (*(ms->key_richcompare))(v, w, Py_LT));
 
     if (res_obj == Py_NotImplemented) {
         Py_DECREF(res_obj);
@@ -2900,6 +2908,10 @@ unsafe_tuple_compare(PyObject *v, PyObject *w, MergeState *ms)
     wlen = Py_SIZE(wt);
 
     for (i = 0; i < vlen && i < wlen; i++) {
+        if (PyObject_CheckAccess(vt->ob_item[i]) == NULL ||
+            PyObject_CheckAccess(wt->ob_item[i]) == NULL) {
+            return -1;
+        }
         k = PyObject_RichCompareBool(vt->ob_item[i], wt->ob_item[i], Py_EQ);
         if (k < 0)
             return -1;
@@ -2954,11 +2966,20 @@ list_sort_impl(PyListObject *self, PyObject *keyfunc, int reverse)
     PyObject *result = NULL;            /* guilty until proved innocent */
     Py_ssize_t i;
     PyObject **keys;
+    int reversed = 0;
 
     assert(self != NULL);
     assert(PyList_Check(self));
     if (keyfunc == Py_None)
         keyfunc = NULL;
+
+    // A local list can contain foreign LOCAL references copied from a shared
+    // tuple. Acquire its elements before passing them to keys or comparators.
+    for (i = 0; i < Py_SIZE(self); i++) {
+        if (PyObject_CheckAccess(self->ob_item[i]) == NULL) {
+            return NULL;
+        }
+    }
 
     /* The list is temporarily made empty, so that mutations performed
      * by comparison functions can't affect the slice of memory we're
@@ -3005,6 +3026,8 @@ list_sort_impl(PyListObject *self, PyObject *keyfunc, int reverse)
     }
 
 
+    merge_init(&ms, saved_ob_size, keys != NULL, &lo);
+
     /* The pre-sort check: here's where we decide which compare function to use.
      * How much optimization is safe? We test for homogeneity with respect to
      * several properties that are expensive to check at compare-time, and
@@ -3014,9 +3037,14 @@ list_sort_impl(PyListObject *self, PyObject *keyfunc, int reverse)
         int keys_are_in_tuples = (Py_IS_TYPE(lo.keys[0], &PyTuple_Type) &&
                                   Py_SIZE(lo.keys[0]) > 0);
 
-        PyTypeObject* key_type = (keys_are_in_tuples ?
-                                  Py_TYPE(PyTuple_GET_ITEM(lo.keys[0], 0)) :
-                                  Py_TYPE(lo.keys[0]));
+        PyObject *first_key = lo.keys[0];
+        if (keys_are_in_tuples) {
+            first_key = PyObject_CheckAccess(PyTuple_GET_ITEM(first_key, 0));
+            if (first_key == NULL) {
+                goto fail;
+            }
+        }
+        PyTypeObject *key_type = Py_TYPE(first_key);
 
         int keys_are_all_same_type = 1;
         int strings_are_latin = 1;
@@ -3038,6 +3066,9 @@ list_sort_impl(PyListObject *self, PyObject *keyfunc, int reverse)
             PyObject *key = (keys_are_in_tuples ?
                              PyTuple_GET_ITEM(lo.keys[i], 0) :
                              lo.keys[i]);
+            if (keys_are_in_tuples && PyObject_CheckAccess(key) == NULL) {
+                goto fail;
+            }
 
             if (!Py_IS_TYPE(key, key_type)) {
                 keys_are_all_same_type = 0;
@@ -3102,8 +3133,6 @@ list_sort_impl(PyListObject *self, PyObject *keyfunc, int reverse)
     }
     /* End of pre-sort check: ms is now set properly! */
 
-    merge_init(&ms, saved_ob_size, keys != NULL, &lo);
-
     nremaining = saved_ob_size;
     if (nremaining < 2)
         goto succeed;
@@ -3114,6 +3143,7 @@ list_sort_impl(PyListObject *self, PyObject *keyfunc, int reverse)
         if (keys != NULL)
             reverse_slice(&keys[0], &keys[saved_ob_size]);
         reverse_slice(&saved_ob_item[0], &saved_ob_item[saved_ob_size]);
+        reversed = 1;
     }
 
     /* March over the array once, left to right, finding natural runs,
@@ -3177,7 +3207,7 @@ fail:
         result = NULL;
     }
 
-    if (reverse && saved_ob_size > 1)
+    if (reversed)
         reverse_slice(saved_ob_item, saved_ob_item + saved_ob_size);
 
     merge_freemem(&ms);
@@ -3342,6 +3372,10 @@ list_index_impl(PyListObject *self, PyObject *value, Py_ssize_t start,
             // out-of-bounds
             break;
         }
+        obj = _PyObject_CheckAccessNullable(obj);
+        if (obj == NULL) {
+            return NULL;
+        }
         int cmp = PyObject_RichCompareBool(obj, value, Py_EQ);
         Py_DECREF(obj);
         if (cmp > 0)
@@ -3372,6 +3406,10 @@ list_count_impl(PyListObject *self, PyObject *value)
         if (obj == NULL) {
             // out-of-bounds
             break;
+        }
+        obj = _PyObject_CheckAccessNullable(obj);
+        if (obj == NULL) {
+            return NULL;
         }
         if (obj == value) {
            count++;
@@ -3407,7 +3445,10 @@ list_remove_impl(PyListObject *self, PyObject *value)
     Py_ssize_t i;
 
     for (i = 0; i < Py_SIZE(self); i++) {
-        PyObject *obj = self->ob_item[i];
+        PyObject *obj = PyObject_CheckAccess(self->ob_item[i]);
+        if (obj == NULL) {
+            return NULL;
+        }
         Py_INCREF(obj);
         int cmp = PyObject_RichCompareBool(obj, value, Py_EQ);
         Py_DECREF(obj);
@@ -3461,6 +3502,10 @@ list_richcompare_impl(PyObject *v, PyObject *w, int op)
     for (i = 0; i < Py_SIZE(vl) && i < Py_SIZE(wl); i++) {
         PyObject *vitem = vl->ob_item[i];
         PyObject *witem = wl->ob_item[i];
+        if (PyObject_CheckAccess(vitem) == NULL ||
+            PyObject_CheckAccess(witem) == NULL) {
+            return NULL;
+        }
         if (vitem == witem) {
             continue;
         }

@@ -327,7 +327,11 @@ tuple_repr(PyObject *self)
             }
         }
 
-        if (PyUnicodeWriter_WriteRepr(writer, v->ob_item[i]) < 0) {
+        PyObject *item = v->ob_item[i];
+        if (item != NULL && PyObject_CheckAccess(item) == NULL) {
+            goto error;
+        }
+        if (PyUnicodeWriter_WriteRepr(writer, item) < 0) {
             goto error;
         }
     }
@@ -371,7 +375,7 @@ tuple_hash(PyObject *op)
 {
     PyTupleObject *v = _PyTuple_CAST(op);
 
-    Py_uhash_t acc = FT_ATOMIC_LOAD_SSIZE_RELAXED(v->ob_hash);
+    Py_uhash_t acc = _Py_atomic_load_ssize_relaxed(&v->ob_hash);
     if (acc != (Py_uhash_t)-1) {
         return acc;
     }
@@ -380,7 +384,11 @@ tuple_hash(PyObject *op)
     PyObject **item = v->ob_item;
     acc = _PyTuple_HASH_XXPRIME_5;
     for (Py_ssize_t i = 0; i < len; i++) {
-        Py_uhash_t lane = PyObject_Hash(item[i]);
+        PyObject *value = PyObject_CheckAccess(item[i]);
+        if (value == NULL) {
+            return -1;
+        }
+        Py_uhash_t lane = PyObject_Hash(value);
         if (lane == (Py_uhash_t)-1) {
             return -1;
         }
@@ -396,7 +404,7 @@ tuple_hash(PyObject *op)
         acc = 1546275796;
     }
 
-    FT_ATOMIC_STORE_SSIZE_RELAXED(v->ob_hash, acc);
+    _Py_atomic_store_ssize_relaxed(&v->ob_hash, acc);
 
     return acc;
 }
@@ -414,7 +422,11 @@ tuple_contains(PyObject *self, PyObject *el)
     PyTupleObject *a = _PyTuple_CAST(self);
     int cmp = 0;
     for (Py_ssize_t i = 0; cmp == 0 && i < Py_SIZE(a); ++i) {
-        cmp = PyObject_RichCompareBool(PyTuple_GET_ITEM(a, i), el, Py_EQ);
+        PyObject *item = PyObject_CheckAccess(PyTuple_GET_ITEM(a, i));
+        if (item == NULL) {
+            return -1;
+        }
+        cmp = PyObject_RichCompareBool(item, el, Py_EQ);
     }
     return cmp;
 }
@@ -676,7 +688,11 @@ tuple_index_impl(PyTupleObject *self, PyObject *value, Py_ssize_t start,
         stop = Py_SIZE(self);
     }
     for (i = start; i < stop; i++) {
-        int cmp = PyObject_RichCompareBool(self->ob_item[i], value, Py_EQ);
+        PyObject *item = PyObject_CheckAccess(self->ob_item[i]);
+        if (item == NULL) {
+            return NULL;
+        }
+        int cmp = PyObject_RichCompareBool(item, value, Py_EQ);
         if (cmp > 0)
             return PyLong_FromSsize_t(i);
         else if (cmp < 0)
@@ -703,7 +719,11 @@ tuple_count_impl(PyTupleObject *self, PyObject *value)
     Py_ssize_t i;
 
     for (i = 0; i < Py_SIZE(self); i++) {
-        int cmp = PyObject_RichCompareBool(self->ob_item[i], value, Py_EQ);
+        PyObject *item = PyObject_CheckAccess(self->ob_item[i]);
+        if (item == NULL) {
+            return NULL;
+        }
+        int cmp = PyObject_RichCompareBool(item, value, Py_EQ);
         if (cmp > 0)
             count++;
         else if (cmp < 0)
@@ -750,6 +770,10 @@ tuple_richcompare(PyObject *v, PyObject *w, int op)
      * vlen and wlen across the comparison calls.
      */
     for (i = 0; i < vlen && i < wlen; i++) {
+        if (PyObject_CheckAccess(vt->ob_item[i]) == NULL ||
+            PyObject_CheckAccess(wt->ob_item[i]) == NULL) {
+            return NULL;
+        }
         int k = PyObject_RichCompareBool(vt->ob_item[i],
                                          wt->ob_item[i], Py_EQ);
         if (k < 0)

@@ -145,6 +145,22 @@ dictionary they return. A frameless native thread in another group cannot obtain
 Main's LOCAL interpreter dictionaries. VM namespace storage still uses internal
 references; individual values obtained from those namespaces are checked.
 
+Tuple and list element operations check references before invoking repr, hash,
+comparison or sorting callbacks. A local list copied from a shared tuple can
+still contain foreign LOCAL elements. Sorting checks those elements and the
+contents of tuple keys, including its specialized comparison path. Failed
+acquisition preserves the list and releases temporary keys. Both the public
+rich-comparison API and sorting's direct slot calls validate returned objects
+before using their truth value. Container length, cached tuple hashes and
+comparison paths that do not inspect an element need no element acquisition.
+The tuple hash cache uses atomic reads and writes in the normal build too.
+
+Cross-group LOCAL reclamation still needs a choice of execution context,
+especially after every thread in the owning group has exited. The immediate
+GIL-serialized BRC merge is not an owner-correct finalization mechanism. The
+Japanese questions record this separately from static extension ownership and
+unchecked C macros.
+
 ## Extraction provenance
 
 `7201b6539e` was applied with `git cherry-pick --no-commit`. Since it mixes all
@@ -165,6 +181,17 @@ Tests run on Linux/aarch64. Logs are under `/tmp/pep805-base/`. The optional
 flags/events rather than foreign LOCAL Python functions or mutable results.
 Parallel scheduling tests remain skipped while the interpreter GIL is enabled.
 
+- Sequence element acquisition and comparison results: 1,716 tests pass across
+  15 files covering tuples, lists, sorting, ownership, ThreadGroups, GC,
+  weakrefs, comparison, descriptors, dictionaries, sets and C APIs (14 skips).
+  Ownership and sorting also pass `-R 3:3` with `mimalloc_debug` (46 tests).
+  Before the fix, all 20 initial foreign-element operations failed the new
+  regressions. Native slot counters now verify rejected operations have no
+  repr/hash/comparison/truth side effects. Tests also cover short circuits,
+  cached hashes and restoration after sorting errors with stack/heap keys
+  and reverse sorting. The initial broader run exposed a regression in
+  uninitialized tuple repr; the existing C API test passes after preserving
+  its NULL-element display behavior.
 - Owned GC worklists and tracking synchronization: 958 tests passed across
   GC, finalization, ThreadGroups, reclamation, weakrefs, embedding, threading,
   fork and C APIs (20 skips). GC, ThreadGroups and deferred reclamation pass
@@ -175,6 +202,13 @@ Parallel scheduling tests remain skipped while the interpreter GIL is enabled.
   callback and finalizer exactly once. The worklist-only build also passed
   a 699-test VM/frame/fork/C API selection (12 skips) and a 254-test leak
   selection including finalization and weakrefs (seven skips).
+- The non-debug normal build at `1be617ada4` passes the same 958-test selection
+  (36 skips). Its `mimalloc_debug` GC, ThreadGroup and deferred-reclamation
+  selection passes 97 tests (four skips). A separate diagnostic found that
+  forking while another thread is waiting inside a GC finalizer leaves the
+  child unable to collect; the same diagnostic reproduces on unmodified
+  Python 3.12.3. This is recorded as an existing multithreaded-fork limitation,
+  not evidence of a regression introduced by the worklists.
 
 - GC bitmap migration: 545 tests passed across ten files covering GC,
   ThreadGroups, ownership, weakrefs, reclamation, tuples, generators,

@@ -1127,7 +1127,7 @@ PyObject_RichCompare(PyObject *v, PyObject *w, int op)
     }
     PyObject *res = do_richcompare(tstate, v, w, op);
     _Py_LeaveRecursiveCallTstate(tstate);
-    return res;
+    return _PyObject_CheckAccessNullable(res);
 }
 
 /* Perform a rich comparison with integer result.  This wraps

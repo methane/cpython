@@ -169,6 +169,7 @@ assert 'threading' not in sys.modules
             'PyCell_Get',
             'PyVectorcall_Call', 'PyObject_Call', 'PyObject_Vectorcall',
             'PyObject_VectorcallDict', 'PyVectorcall_Call_keywords',
+            'PyObject_RichCompare', 'PyObject_RichCompareBool',
         )
 
         class Value:
@@ -210,6 +211,123 @@ assert 'threading' not in sys.modules
                         self.assertIn(specialized, {
                             i.opname for i in dis.get_instructions(
                                 probe_code, adaptive=True)})
+
+    def test_sequence_element_operations(self):
+        cases = {
+            'tuple repr': 'source.__repr__()',
+            'tuple hash': 'source.__hash__()',
+            'tuple contains': 'None in source',
+            'tuple count': 'source.count(None)',
+            'tuple index': 'source.index(None)',
+            'tuple equality': 'source == (None, None, None)',
+            'tuple ordering': 'source < (None, None, None)',
+            'tuple identity shortcut': 'source == source',
+            'list repr': 'items.__repr__()',
+            'list contains': 'None in items',
+            'list count': 'items.count(None)',
+            'list index': 'items.index(None)',
+            'list remove': 'items.remove(None)',
+            'list equality': 'items == [None, None, None]',
+            'list ordering': 'items < [None, None, None]',
+            'list identity shortcut': 'items == items',
+            'list sort': 'items[:] = source[:1] * 2\nitems.sort()',
+            'list sort key': (
+                'def key(item):\n    return 0\nitems.sort(key=key)'),
+            'list sort tuple first': (
+                'items[:] = [source[:1], (None,)]\nitems.sort()'),
+            'list sort tuple later': (
+                'items[:] = [(0,) + source[:1], (0, None)]\nitems.sort()'),
+            'comparison return': 'box < None',
+            'comparison truth': 'if box < None:\n    pass',
+            'sort comparison return': 'items[:] = [box, box]\nitems.sort()',
+            'tuple sort comparison return': (
+                'items[:] = [(box,), (None,)]\nitems.sort()'),
+        }
+        for name, body in cases.items():
+            namespace = {}
+            exec('def probe():\n' + textwrap.indent(body, '    ') +
+                 '\n    return True', namespace)
+            code = namespace['probe'].__code__
+            for immutable in (False, True):
+                for group in (sys.main_thread_group, self.foreign):
+                    with self.subTest(operation=name, immutable=immutable,
+                                      group=group):
+                        value = internal.make_container_element(immutable)
+                        accessible = immutable or group is sys.main_thread_group
+                        self.assertIs(internal.threadgroup_vm_probe(
+                            code.replace(), group, (value, None, None), 0),
+                            accessible)
+                        if not accessible:
+                            self.assertEqual(
+                                internal.container_element_calls(value), 0)
+
+    def test_sequence_operations_without_element_access(self):
+        cases = (
+            'assert source[1].__len__() == 1',
+            'assert source[1] != ()',
+            'assert None in (None,) + source[1]',
+            'assert ((None,) + source[1]).index(None) == 0',
+            'assert (source[1] + (None,)).index(None, 1) == 1',
+            'items[:] = source[1]\nassert items != []',
+            'items[:] = (None,) + source[1]\nassert None in items',
+            'items[:] = [(0,) + source[1], (1,) + source[1]]\nitems.sort()',
+        )
+        for body in cases:
+            with self.subTest(body=body):
+                value = internal.make_container_element(False)
+                namespace = {}
+                exec('def probe():\n' + textwrap.indent(body, '    ') +
+                     '\n    return True', namespace)
+                self.assertTrue(internal.threadgroup_vm_probe(
+                    namespace['probe'].__code__, self.foreign,
+                    (True, (value,), None), 0))
+                self.assertEqual(internal.container_element_calls(value), 0)
+
+    def test_tuple_cached_hash_does_not_acquire_elements(self):
+        value = internal.make_container_element(False)
+        container = (value,)
+        expected = hash(container)
+        calls = internal.container_element_calls(value)
+
+        def probe():
+            assert source[1].__hash__() == source[2]
+            return True
+
+        self.assertTrue(internal.threadgroup_vm_probe(
+            probe.__code__, self.foreign, (True, container, expected), 0))
+        self.assertEqual(internal.container_element_calls(value), calls)
+
+    def test_sort_access_failure_restores_list(self):
+        for reverse in (False, True):
+            for key in ('None', 'key'):
+                for size in (2, 260):
+                    with self.subTest(reverse=reverse, key=key, size=size):
+                        value = internal.make_container_element(False)
+                        namespace = {}
+                        exec(textwrap.dedent(f'''
+                            def probe():
+                                def key(item):
+                                    return item
+                                first = source[1]
+                                second = (None,)
+                                items[:] = [first, second] * {size // 2}
+                                original = items.copy()
+                                try:
+                                    items.sort(key={key}, reverse={reverse})
+                                except source[2]:
+                                    assert items.__len__() == {size}
+                                    i = 0
+                                    while i < {size}:
+                                        assert items[i] is original[i]
+                                        i += 1
+                                else:
+                                    assert False, 'sort must reject LOCAL elements'
+                                return True
+                        '''), namespace)
+                        self.assertTrue(internal.threadgroup_vm_probe(
+                            namespace['probe'].__code__, self.foreign,
+                            (True, (value,), IllegalThreadAccessException), 0))
+                        self.assertEqual(internal.container_element_calls(value), 0)
 
     def test_vm_heap_loads(self):
         cases = {
