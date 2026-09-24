@@ -640,6 +640,9 @@ gettmarg(time_module_state *state, PyObject *args,
     if (Py_IS_TYPE(args, state->struct_time_type)) {
         PyObject *item;
         item = PyStructSequence_GET_ITEM(args, 9);
+        if (PyObject_CheckAccess(item) == NULL) {
+            return 0;
+        }
         if (item != Py_None) {
             p->tm_zone = (char *)PyUnicode_AsUTF8(item);
             if (p->tm_zone == NULL) {
@@ -661,6 +664,9 @@ gettmarg(time_module_state *state, PyObject *args,
 #endif
         }
         item = PyStructSequence_GET_ITEM(args, 10);
+        if (PyObject_CheckAccess(item) == NULL) {
+            return 0;
+        }
         if (item != Py_None) {
             p->tm_gmtoff = PyLong_AsLong(item);
             if (PyErr_Occurred())
@@ -2165,9 +2171,15 @@ time_exec(PyObject *module)
     }
 #endif
 
-    /* These operations use the native clock or suspend the current thread;
-       they do not access mutable Python state in this module. */
-    const char *shared_names[] = {"monotonic", "monotonic_ns", "sleep", NULL};
+    /* These operations use native clocks, convert a caller's time tuple, or
+       suspend the current thread. Module state supplies only private metadata. */
+    const char *shared_names[] = {
+        "monotonic", "monotonic_ns", "sleep",
+#ifdef HAVE_MKTIME
+        "mktime",
+#endif
+        NULL
+    };
     for (const char **name = shared_names; *name != NULL; name++) {
         PyObject *clock = PyObject_GetAttrString(module, *name);
         if (clock == NULL) {

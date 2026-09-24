@@ -900,6 +900,47 @@ generated executor cases; the subsequent module-definition changes compile
 without warnings in all three builds. The demo still produces 61,620 and the
 expected access denials. Logs are in `/tmp/pep805-dynamic-import/`.
 
+### ZIP importer caches and uncompressed archives
+
+Uncompressed ZIP imports failed in a worker both with a cold cache (the
+Main-owned directory registry) and with a Main-cached importer (the importer
+instance itself). Exact zipimporter instances now synchronize their namespace,
+and both the registry and its per-archive directory mappings use synchronized
+dictionaries. Directory mappings retain their existing mutable interface;
+foreign values inserted by user code still fail when acquired. Reading the
+archive occurs before publication, without holding a Python cache lock across
+file or import callbacks. Cache invalidation can overlap a directory read and
+does not provide a transaction with external filesystem changes.
+
+The zipimport module namespace is explicitly synchronized. Importer subclasses
+remain LOCAL, as do newly imported modules. Reinitializing an exact importer
+and reloading zipimport preserve their supported single-thread behavior.
+The timestamp-bytecode path captures an explicitly synchronized time.mktime
+entry point. Its private module state supplies only type metadata; the two
+stored timezone fields outside the parsed nine-item tuple now get access
+checks before conversion. A native test helper explicitly shares shallow
+struct_time records so the regression reaches those fields. With only the
+native function explicitly shared in the earlier runtime, a valid record
+works but a foreign timezone string loses its access exception to TypeError;
+the repaired path raises IllegalThreadAccessException for both stored fields.
+
+Eight new ZIP tests cover cold and cached source imports, regular and namespace
+packages, timestamp/hash/sourceless bytecode, concurrent invalidation and reads
+in four groups, LOCAL subclasses, foreign directory entries, and repeated
+initialization/reload. Five of the initial seven cases failed before the fix;
+all eight now pass. The eight-suite import/ZIP/time/sequence selection passes
+in the default debug build (1,493 reported tests, 33 skips). GIL and Tier 2
+passed the other suites during the initial run; the corrected timezone test
+and final eight ZIP cases pass in both (74 tests, three skips in each focused
+run). Existing ZIP suites also pass after the final reload guard. Changed
+sources and tests match across the three builds. Logs and the baseline probe
+are in `/tmp/pep805-zip-import/`.
+
+This enables uncompressed archives across groups. Decompressor initialization
+and the native zlib/_zstd helpers are separate unfinished work; the existing
+Main-group compressed ZIP tests remain enabled and passing. No Mark decision
+is needed to continue those ports.
+
 ## Earlier re-review and implementation follow-ups
 
 One earlier question was incorrect: footnote 3 of the

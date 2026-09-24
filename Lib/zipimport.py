@@ -15,8 +15,9 @@ from _frozen_importlib_external import _unpack_uint16, _unpack_uint32, _unpack_u
 import _frozen_importlib as _bootstrap  # for _verbose_message
 import _imp  # for check_hash_based_pycs
 import _io  # for open
+import _thread
 import marshal  # for loads
-import time  # for mktime
+from time import mktime as _mktime
 
 __all__ = ['ZipImportError', 'zipimporter']
 
@@ -30,7 +31,7 @@ class ZipImportError(ImportError):
     pass
 
 # _read_directory() cache
-_zip_directory_cache = {}
+_zip_directory_cache = SynchronizedDict()
 
 END_CENTRAL_DIR_SIZE = 22
 END_CENTRAL_DIR_SIZE_64 = 56
@@ -95,6 +96,10 @@ class zipimporter(_bootstrap_external._LoaderBasics):
         self.prefix = _bootstrap_external._path_join(*prefix[::-1])
         if self.prefix:
             self.prefix += path_sep
+        if type(self) is zipimporter:
+            if type(self.__dict__) is not SynchronizedDict:
+                self.__dict__ = self.__dict__.synchronize()
+            _thread._declare_synchronized(self)
 
 
     def find_spec(self, fullname, target=None):
@@ -516,7 +521,9 @@ def _read_directory(archive):
     if count:
         _bootstrap._verbose_message('zipimport: added {} implicit directories in {!r}',
                                     count, archive)
-    return files
+    # Readers may belong to different ThreadGroups. Keep the existing mutable
+    # directory mapping interface, checking values when they are acquired.
+    return files.synchronize()
 
 # During bootstrap, we may need to load the encodings
 # package from a ZIP file. But the cp437 encoding is implemented
@@ -751,7 +758,7 @@ def _compile_source(pathname, source, module):
 # Convert the date/time values found in the Zip archive to a value
 # that's compatible with the time stamp stored in .pyc files.
 def _parse_dostime(d, t):
-    return time.mktime((
+    return _mktime((
         (d >> 9) + 1980,    # bits 9..15: year
         (d >> 5) & 0xF,     # bits 5..8: month
         d & 0x1F,           # bits 0..4: day
@@ -830,3 +837,7 @@ def _get_module_code(self, fullname):
             raise ZipImportError(msg, name=fullname) from import_error
         else:
             raise ZipImportError(f"can't find module {fullname!r}", name=fullname)
+
+
+if type(_bootstrap.sys.modules[__name__].__dict__) is not SynchronizedDict:
+    _bootstrap.sys.modules[__name__].synchronize()

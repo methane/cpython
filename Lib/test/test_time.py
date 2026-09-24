@@ -1,5 +1,6 @@
 from test import support
-from test.support import warnings_helper
+from test.support import threading_helper, warnings_helper
+from test.support.script_helper import assert_python_ok
 import decimal
 import enum
 import fractions
@@ -7,6 +8,7 @@ import math
 import platform
 import sys
 import sysconfig
+import textwrap
 import time
 import threading
 import unittest
@@ -543,6 +545,56 @@ class TimeTestCase(unittest.TestCase):
                 pass
             else:
                 self.assertEqual(t1, t)
+
+    @unittest.skipUnless(sysconfig.get_config_var('HAVE_STRUCT_TM_TM_ZONE'),
+                         'requires struct tm timezone fields')
+    @unittest.skipUnless(_testinternalcapi, 'requires _testinternalcapi')
+    @threading_helper.requires_working_threading()
+    def test_mktime_foreign_timezone_fields(self):
+        # The timezone fields are outside the nine-item tuple parsed by
+        # PyArg_ParseTuple. Check these heap references before consuming them.
+        assert_python_ok('-c', textwrap.dedent('''
+            import threading
+            import time
+            from _testinternalcapi import object_declare_synchronized
+
+            class Zone(str):
+                pass
+            class Offset(int):
+                pass
+
+            fields = (2026, 1, 2, 3, 4, 6, 0, 0, -1)
+            mktime = time.mktime
+            expected = mktime(fields)
+            stamps = (
+                time.struct_time(fields, {'tm_zone': Zone('UTC')}),
+                time.struct_time(fields, {'tm_gmtoff': Offset(0)}),
+            )
+            valid = time.struct_time(fields, {'tm_zone': 'UTC', 'tm_gmtoff': 0})
+            # Explicitly share these shallow, read-only native records so the
+            # test reaches the stored fields, beyond the argument boundary.
+            for stamp in (*stamps, valid):
+                object_declare_synchronized(stamp)
+            for stamp in stamps:
+                assert mktime(stamp) == expected
+            results = SynchronizedList()
+            def worker():
+                try:
+                    assert mktime(valid) == expected
+                    for stamp in stamps:
+                        try:
+                            mktime(stamp)
+                        except IllegalThreadAccessException:
+                            results.append('denied')
+                        else:
+                            results.append('foreign timezone field acquired')
+                except BaseException as exc:
+                    results.append((type(exc).__name__, str(exc)))
+            thread = threading.Thread(target=worker, group=threading.ThreadGroup())
+            thread.start()
+            thread.join()
+            assert list(results) == ['denied', 'denied'], list(results)
+        '''))
 
     # Issue #13309: passing extreme values to mktime() or localtime()
     # borks the glibc's internal timezone data.
