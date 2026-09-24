@@ -236,6 +236,11 @@ Parallel scheduling tests remain skipped while the interpreter GIL is enabled.
   Debug output verifies callback-bearing weakrefs are already dead before
   Python code resumes, while their callbacks are still pending. The preceding
   weakref-phase run also passes type-cache and subclass-initialization tests.
+- The non-debug normal build at `d78376927b` passes 638 tests across 13 files
+  covering the weakref cache, namespace acquisitions and paused GC cleanup
+  (24 skips). Its `mimalloc_debug` selection passes 110 tests across four files
+  (4 skips). Both debug and non-debug builds retain `Py_GIL_DISABLED=0`, an
+  enabled interpreter GIL, and a 24-byte `PyObject` header on Linux/aarch64.
 - The non-debug normal build at `9a07ddfce7` passes 1,378 tests across 16 files
   covering sharing states, per-thread freelists, allocation, threading, GC and
   embedding (34 skips). This predates the internal world-stop activation.
