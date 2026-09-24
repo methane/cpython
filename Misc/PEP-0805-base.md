@@ -15,7 +15,7 @@ LOCAL objects are requirements, not optional optimizations.
 | --- | --- | --- |
 | ThreadGroups | Main identity and lifetime, explicit/default group selection, serialization, parallel execution, detach/reattach, fork and shutdown | Extracted; initial regressions pass, lifetime audit remains |
 | One-time ABI change | Owner/state metadata with room for later states; no per-object cleanup queue fields; consistent native layouts | Compact header implemented and checked in the normal build; remaining runtime port in progress |
-| Biased and deferred reference counting | Port the necessary PEP 703 mechanisms into the normal build; same-group LOCAL reclamation remains immediate | Group-biased RC works in the normal build; deferred/per-thread RC and parallel queue collection remain |
+| Biased and deferred reference counting | Port the necessary PEP 703 mechanisms into the normal build; same-group LOCAL reclamation remains immediate | Group-biased, per-thread and deferred stack RC work in the normal build; parallel queue collection remains |
 | LOCAL and IMMUTABLE ownership | Correct initialization and checked C API/VM reference acquisition; shallow immutable containers do not expose foreign LOCAL values | Pending |
 | Parallel allocation and cyclic GC | Concurrent allocation/collection, safe foreign traversal, finalization and interpreter teardown | Pending |
 
@@ -124,3 +124,16 @@ and `test_embed` pass (375 tests, 17 skips). After adding code-specific
 thread-exit and resurrection tests, `test_deferred_reclamation`, `test_code`
 and `test_capi.test_object` also pass `-R 3:3` (66 tests, one skip).
 Deferred VM stack references are still being ported.
+
+Deferred VM and C stack references are now GC roots in the normal build.
+Generational collections also scan older and frozen heap frames for deferred
+references into younger generations. Unreachable heap frames acquire counted
+references before finalization, so resurrection cannot leave dangling deferred
+references. Static immortal code objects are excluded from GC-prefix access.
+The existing normal interpreter's borrowed-reference optimizations are retained.
+
+`test_deferred_reclamation`, `test_gc`, `test_generators`, `test_genexps`,
+`test_coroutines`, `test_asyncgen`, `test_frame`, `test_code`,
+`test_capi.test_eval`, `test_threadgroup` and `test_embed` pass:
+557 tests, 18 skips. New regressions exercise a sole registered C stack root,
+older and frozen suspended generators, and resurrection.

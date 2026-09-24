@@ -6,6 +6,7 @@
 #include "pycore_object_deferred.h"
 #include "pycore_pystate.h"
 #include "pycore_pythread.h"
+#include "pycore_stackref.h"
 #include "pycore_threadgroup.h"
 
 struct group_probe {
@@ -376,7 +377,39 @@ check_deferred_shutdown(PyObject *self, PyObject *unused)
     Py_RETURN_NONE;
 }
 
+static PyObject *
+test_deferred_c_stack_ref(PyObject *self, PyObject *unused)
+{
+    struct deferred_shutdown_probe probe = {0};
+    PyObject *child = PyCapsule_New(&probe, "deferred shutdown child",
+                                    deferred_shutdown_child);
+    if (child == NULL) {
+        return NULL;
+    }
+    PyObject *container = PyTuple_New(1);
+    if (container == NULL) {
+        Py_DECREF(child);
+        return NULL;
+    }
+    PyTuple_SET_ITEM(container, 0, child);
+    assert(PyUnstable_Object_EnableDeferredRefcount(container) == 1);
+
+    PyThreadState *tstate = PyThreadState_Get();
+    _PyCStackRef ref;
+    _PyThreadState_PushCStackRefNew(tstate, &ref, container);
+    assert(!PyStackRef_RefcountOnObject(ref.ref));
+    Py_DECREF(container);
+    PyGC_Collect();
+    assert(!probe.child_destroyed);
+    assert(PyTuple_GetItem(PyStackRef_AsPyObjectBorrow(ref.ref), 0) == child);
+    _PyThreadState_PopCStackRef(tstate, &ref);
+    PyGC_Collect();
+    assert(probe.child_destroyed);
+    Py_RETURN_NONE;
+}
+
 static PyMethodDef methods[] = {
+    {"test_deferred_c_stack_ref", test_deferred_c_stack_ref, METH_NOARGS, NULL},
     {"check_deferred_shutdown", check_deferred_shutdown, METH_NOARGS, NULL},
     {"threadgroup_refcount_probe", threadgroup_refcount_probe, METH_VARARGS, NULL},
     {"test_threadgroup_refcount_overflow", test_threadgroup_refcount_overflow,

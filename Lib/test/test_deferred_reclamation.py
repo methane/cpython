@@ -153,6 +153,78 @@ class DeferredReclamationTests(unittest.TestCase):
     def test_shutdown_restores_ordinary_counting(self):
         assert_python_ok('-c', 'import gc\nimport _testinternalcapi\ngc.disable()\n_testinternalcapi.check_deferred_shutdown()\n')
 
+    def test_c_stack_reference(self):
+        internal.test_deferred_c_stack_ref()
+
+    def test_generator_holds_deferred_reference(self):
+        for frozen in (False, True):
+            with self.subTest(frozen=frozen), support.disable_gc():
+                class Value:
+                    pass
+
+                namespace = {}
+                exec('def gen():\n'
+                     '    yield\n'
+                     '    value = container\n'
+                     '    yield\n'
+                     '    yield value\n', namespace)
+                gen = namespace['gen']()
+                next(gen)
+                gc.collect()  # Promote the generator before creating its value.
+                if frozen:
+                    gc.freeze()
+                try:
+                    value = Value()
+                    reference = weakref.ref(value)
+                    container = (value,)
+                    self.assertEqual(
+                        _testcapi.pyobject_enable_deferred_refcount(container), 1)
+                    namespace['container'] = container
+                    next(gen)
+                    del namespace['container'], container, value
+                    gc.collect(0)
+                    self.assertIsNotNone(reference())
+                    gc.collect()
+                    self.assertIsNotNone(reference())
+                    self.assertIs(next(gen)[0], reference())
+                finally:
+                    if frozen:
+                        gc.unfreeze()
+                    gen.close()
+                gc.collect()
+                self.assertIsNone(reference())
+
+    def test_generator_resurrection(self):
+        with support.disable_gc():
+            survivors = []
+
+            class Value:
+                def __del__(self):
+                    survivors.append(self.gen)
+
+            namespace = {}
+            exec('def gen():\n'
+                 '    value = container\n'
+                 '    yield\n'
+                 '    yield value\n', namespace)
+            gen = namespace['gen']()
+            value = Value()
+            value.gen = gen
+            container = (value,)
+            self.assertEqual(
+                _testcapi.pyobject_enable_deferred_refcount(container), 1)
+            namespace['container'] = container
+            next(gen)
+            del namespace['container'], container, value, gen
+            gc.collect()
+            gen, = survivors
+            # Generator finalization may close the frame before resurrection.
+            self.assertIsNotNone(gen.gi_code)
+            gen.close()
+            survivors.clear()
+            del gen
+            gc.collect()
+
     def test_local_objects_are_not_deferred(self):
         class Value:
             pass

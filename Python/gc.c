@@ -4,6 +4,8 @@
 
 #include "Python.h"
 #include "pycore_ceval.h"         // _Py_set_eval_breaker_bit()
+#include "pycore_genobject.h"
+#include "pycore_frame.h"
 #include "pycore_dict.h"          // _PyInlineValuesSize()
 #include "pycore_initconfig.h"    // _PyStatus_OK()
 #include "pycore_context.h"
@@ -441,6 +443,105 @@ update_refs(PyGC_Head *containers)
         candidates++;
     }
     return candidates;
+}
+
+// Account for references which are protected by the VM rather than by an
+// incremented object count. Only objects in the candidate generation have
+// gc_refs in their GC prefix at this point.
+static void
+gc_visit_stackref(_PyStackRef ref)
+{
+    if (PyStackRef_IsNullOrInt(ref) || PyStackRef_RefcountOnObject(ref)) {
+        return;
+    }
+    PyObject *op = PyStackRef_AsPyObjectBorrow(ref);
+    if (!_Py_IsImmortal(op) &&
+        _PyObject_IS_GC(op) && _PyObject_GC_IS_TRACKED(op)) {
+        PyGC_Head *gc = AS_GC(op);
+        if (gc_is_collecting(gc)) {
+            gc_set_refs(gc, gc_get_refs(gc) + 1);
+        }
+    }
+}
+
+static void
+gc_visit_frame(_PyInterpreterFrame *frame)
+{
+    gc_visit_stackref(frame->f_executable);
+    if (frame->owner == FRAME_OWNED_BY_GENERATOR &&
+        _PyGen_GetGeneratorFromFrame(frame)->gi_frame_state == FRAME_CLEARED) {
+        return;
+    }
+    gc_visit_stackref(frame->f_funcobj);
+    for (_PyStackRef *ref = frame->localsplus; ref < frame->stackpointer; ref++) {
+        gc_visit_stackref(*ref);
+    }
+}
+
+static void
+gc_visit_older_frames(PyGC_Head *objects)
+{
+    // An older heap frame's deferred references are roots for a younger
+    // collection, just as its counted references are. Include frozen frames.
+    for (PyGC_Head *gc = GC_NEXT(objects); gc != objects; gc = GC_NEXT(gc)) {
+        if (gc_is_collecting(gc)) {
+            continue;
+        }
+        PyObject *op = FROM_GC(gc);
+        if (PyGen_CheckExact(op) || PyCoro_CheckExact(op) || PyAsyncGen_CheckExact(op)) {
+            _PyInterpreterFrame *frame = &((PyGenObject *)op)->gi_iframe;
+            if (frame->stackpointer != NULL) {
+                gc_visit_frame(frame);
+            }
+        }
+        else if (PyFrame_Check(op)) {
+            _PyInterpreterFrame *frame = ((PyFrameObject *)op)->f_frame;
+            if (frame->owner == FRAME_OWNED_BY_FRAME_OBJECT) {
+                gc_visit_frame(frame);
+            }
+        }
+    }
+}
+
+static void
+gc_visit_thread_stacks(PyGC_Head *candidates)
+{
+    PyInterpreterState *interp = _PyInterpreterState_GET();
+    int incomplete_stack = 0;
+    _Py_FOR_EACH_TSTATE_BEGIN(interp, thread) {
+        _PyCStackRef *c_ref = ((_PyThreadStateImpl *)thread)->c_stack_refs;
+        while (c_ref != NULL) {
+            gc_visit_stackref(c_ref->ref);
+            c_ref = c_ref->next;
+        }
+        for (_PyInterpreterFrame *frame = thread->current_frame;
+             frame != NULL; frame = frame->previous) {
+            if (frame->owner >= FRAME_OWNED_BY_INTERPRETER) {
+                continue;
+            }
+            _PyStackRef *top = frame->stackpointer;
+            if (top == NULL) {
+                // Collection can be re-entered from PyStackRef_CLOSE while
+                // the stack pointer is held only in an interpreter register.
+                incomplete_stack = 1;
+                continue;
+            }
+            gc_visit_frame(frame);
+        }
+    }
+    _Py_FOR_EACH_TSTATE_END(interp);
+    for (int gen = 0; gen < NUM_GENERATIONS; gen++) {
+        gc_visit_older_frames(GEN_HEAD(&interp->gc, gen));
+    }
+    gc_visit_older_frames(&interp->gc.permanent_generation.head);
+    if (incomplete_stack) {
+        // Match PEP 703's conservative fallback when some roots are hidden.
+        for (PyGC_Head *gc = GC_NEXT(candidates); gc != candidates; gc = GC_NEXT(gc)) {
+            if (_PyObject_HasDeferredRefcount(FROM_GC(gc))) {
+                gc_set_refs(gc, gc_get_refs(gc) + 1);
+            }
+        }
+    }
 }
 
 /* A traversal callback for subtract_refs. */
@@ -1094,11 +1195,49 @@ merge_perthread_refcounts(PyInterpreterState *interp)
     _Py_FOR_EACH_TSTATE_END(interp);
 }
 
+// Heap frames must own real references before their deferred referents can
+// be reclaimed. Convert all frames before dropping any deferred sentinel.
+static void
+frame_make_references_strong(_PyInterpreterFrame *frame)
+{
+    frame->f_executable = PyStackRef_FromPyObjectSteal(
+        PyStackRef_AsPyObjectSteal(frame->f_executable));
+    if (frame->owner == FRAME_OWNED_BY_GENERATOR) {
+        PyGenObject *gen = _PyGen_GetGeneratorFromFrame(frame);
+        if (gen->gi_frame_state == FRAME_CLEARED) {
+            return;
+        }
+    }
+    assert(frame->stackpointer != NULL);
+    frame->f_funcobj = PyStackRef_FromPyObjectSteal(
+        PyStackRef_AsPyObjectSteal(frame->f_funcobj));
+    for (_PyStackRef *ref = frame->localsplus; ref < frame->stackpointer; ref++) {
+        if (!PyStackRef_IsNullOrInt(*ref) && !PyStackRef_RefcountOnObject(*ref)) {
+            *ref = PyStackRef_FromPyObjectSteal(PyStackRef_AsPyObjectSteal(*ref));
+        }
+    }
+}
+
+static void
+heap_frame_make_references_strong(PyObject *op)
+{
+    if (PyGen_CheckExact(op) || PyCoro_CheckExact(op) || PyAsyncGen_CheckExact(op)) {
+        frame_make_references_strong(&((PyGenObject *)op)->gi_iframe);
+    }
+    else if (PyFrame_Check(op)) {
+        _PyInterpreterFrame *frame = ((PyFrameObject *)op)->f_frame;
+        if (frame->owner == FRAME_OWNED_BY_FRAME_OBJECT) {
+            frame_make_references_strong(frame);
+        }
+    }
+}
+
 static void
 disable_perthread_list(PyGC_Head *objects)
 {
     for (PyGC_Head *gc = GC_NEXT(objects); gc != objects; gc = GC_NEXT(gc)) {
         _PyObject_DisablePerThreadRefcounting(FROM_GC(gc));
+        heap_frame_make_references_strong(FROM_GC(gc));
     }
 }
 
@@ -1234,6 +1373,7 @@ deduce_unreachable(PyGC_Head *base, PyGC_Head *unreachable) {
      */
     merge_perthread_refcounts(_PyInterpreterState_GET());
     Py_ssize_t candidates = update_refs(base);  // gc_prev is used for gc_refs
+    gc_visit_thread_stacks(base);
     subtract_refs(base);
 
     /* Leave everything reachable from outside base in base, and move

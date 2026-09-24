@@ -76,9 +76,9 @@ typedef struct _PyThreadStateImpl {
         int is_finalized;
     } refcounts;
 
-#ifdef Py_GIL_DISABLED
     // Stack references for the current thread that exist on the C stack
     struct _PyCStackRef *c_stack_refs;
+#ifdef Py_GIL_DISABLED
     struct _gc_thread_state gc;
     struct _mimalloc_thread_state mimalloc;
     struct _Py_freelists freelists;

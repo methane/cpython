@@ -184,7 +184,7 @@ _PyStackRef_FromPyObjectNew(PyObject *obj, const char *filename, int linenumber)
 {
     assert(obj != NULL);
     uint16_t flags = 0;
-    if (!_Py_IsImmortal(obj)) {
+    if (!_Py_IsImmortal(obj) && !_PyObject_HasDeferredRefcount(obj)) {
         _Py_INCREF_MORTAL(obj);
     } else {
         flags = Py_TAG_REFCNT;
@@ -255,7 +255,8 @@ _PyStackRef_DUP(_PyStackRef ref, const char *filename, int linenumber)
         flags = Py_TAG_REFCNT;
     }
     _PyStackRef new_ref = _Py_stackref_create(obj, flags, filename, linenumber);
-    if (flags == Py_TAG_REFCNT && !_Py_IsImmortal(obj)) {
+    if (flags == Py_TAG_REFCNT && !_Py_IsImmortal(obj) &&
+        !_PyObject_HasDeferredRefcount(obj)) {
         _PyStackRef borrowed_from = _Py_stackref_get_borrowed_from(ref, filename, linenumber);
         _Py_stackref_set_borrowed_from(new_ref, borrowed_from, filename, linenumber);
     }
@@ -299,7 +300,7 @@ _PyStackRef_Borrow(_PyStackRef ref, const char *filename, int linenumber)
     }
     PyObject *obj = _Py_stackref_get_object(ref);
     _PyStackRef new_ref = _Py_stackref_create(obj, Py_TAG_REFCNT, filename, linenumber);
-    if (!_Py_IsImmortal(obj)) {
+    if (!_Py_IsImmortal(obj) && !_PyObject_HasDeferredRefcount(obj)) {
         _Py_stackref_set_borrowed_from(new_ref, ref, filename, linenumber);
     }
     return new_ref;
@@ -332,7 +333,7 @@ PyStackRef_IsHeapSafe(_PyStackRef ref)
     }
 
     PyObject *obj = _Py_stackref_get_object(ref);
-    return _Py_IsImmortal(obj);
+    return _Py_IsImmortal(obj) || _PyObject_HasDeferredRefcount(obj);
 }
 
 static inline _PyStackRef
@@ -594,15 +595,9 @@ static inline _PyStackRef
 _PyStackRef_FromPyObjectNew(PyObject *obj)
 {
     assert(obj != NULL);
-#ifdef Py_GIL_DISABLED
-    if (_PyObject_HasDeferredRefcount(obj)) {
+    if (_Py_IsImmortal(obj) || _PyObject_HasDeferredRefcount(obj)) {
         return (_PyStackRef){ .bits = (uintptr_t)obj | Py_TAG_REFCNT };
     }
-#else
-    if (_Py_IsImmortal(obj)) {
-        return (_PyStackRef){ .bits = (uintptr_t)obj | Py_TAG_REFCNT };
-    }
-#endif
     _Py_INCREF_MORTAL(obj);
     _PyStackRef ref = (_PyStackRef){ .bits = (uintptr_t)obj };
     PyStackRef_CheckValid(ref);
@@ -657,15 +652,11 @@ PyStackRef_DupImmortal(_PyStackRef ref)
 static inline bool
 PyStackRef_IsHeapSafe(_PyStackRef ref)
 {
-#ifdef Py_GIL_DISABLED
     if ((ref.bits & Py_TAG_BITS) != Py_TAG_REFCNT) {
         return true;
     }
     PyObject *obj = BITS_TO_PTR_MASKED(ref);
-    return obj == NULL || _PyObject_HasDeferredRefcount(obj);
-#else
-    return (ref.bits & Py_TAG_BITS) != Py_TAG_REFCNT || ref.bits == PyStackRef_NULL_BITS || _Py_IsImmortal(BITS_TO_PTR_MASKED(ref));
-#endif
+    return obj == NULL || _Py_IsImmortal(obj) || _PyObject_HasDeferredRefcount(obj);
 }
 
 static inline _PyStackRef
@@ -785,11 +776,9 @@ PyStackRef_LongCheck(_PyStackRef stackref)
 static inline void
 _PyThreadState_PushCStackRef(PyThreadState *tstate, _PyCStackRef *ref)
 {
-#ifdef Py_GIL_DISABLED
     _PyThreadStateImpl *tstate_impl = (_PyThreadStateImpl *)tstate;
     ref->next = tstate_impl->c_stack_refs;
     tstate_impl->c_stack_refs = ref;
-#endif
     ref->ref = PyStackRef_NULL;
 }
 
@@ -803,22 +792,18 @@ _PyThreadState_PushCStackRefNew(PyThreadState *tstate, _PyCStackRef *ref, PyObje
 static inline void
 _PyThreadState_PopCStackRef(PyThreadState *tstate, _PyCStackRef *ref)
 {
-#ifdef Py_GIL_DISABLED
     _PyThreadStateImpl *tstate_impl = (_PyThreadStateImpl *)tstate;
     assert(tstate_impl->c_stack_refs == ref);
     tstate_impl->c_stack_refs = ref->next;
-#endif
     PyStackRef_XCLOSE(ref->ref);
 }
 
 static inline _PyStackRef
 _PyThreadState_PopCStackRefSteal(PyThreadState *tstate, _PyCStackRef *ref)
 {
-#ifdef Py_GIL_DISABLED
     _PyThreadStateImpl *tstate_impl = (_PyThreadStateImpl *)tstate;
     assert(tstate_impl->c_stack_refs == ref);
     tstate_impl->c_stack_refs = ref->next;
-#endif
     return ref->ref;
 }
 

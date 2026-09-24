@@ -2852,7 +2852,12 @@ code__varname_from_oparg_impl(PyCodeObject *self, int oparg)
     return Py_NewRef(name);
 }
 
-/* XXX code objects need to participate in GC? */
+static int
+code_is_gc(PyObject *op)
+{
+    // Statically allocated code objects do not have a GC prefix.
+    return !_Py_IsStaticImmortal(op);
+}
 
 static struct PyMethodDef code_methods[] = {
     {"__sizeof__", code_sizeof, METH_NOARGS},
@@ -2906,6 +2911,8 @@ PyTypeObject PyCode_Type = {
     0,                                  /* tp_init */
     0,                                  /* tp_alloc */
     code_new,                           /* tp_new */
+    PyObject_GC_Del,                     /* tp_free */
+    code_is_gc,                         /* tp_is_gc */
 };
 
 
