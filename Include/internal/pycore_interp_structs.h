@@ -957,8 +957,10 @@ struct _is {
     struct _qsbr_shared qsbr;
     struct _Py_unique_id_pool unique_ids;  // object ids for per-thread refcounts
 
-#if defined(Py_GIL_DISABLED)
+#ifdef WITH_MIMALLOC
     struct _mimalloc_interp_state mimalloc;
+#endif
+#if defined(Py_GIL_DISABLED)
     struct _brc_state brc;  // biased reference counting state
     PyMutex weakref_locks[NUM_WEAKREF_LIST_LOCKS];
     _PyIndexPool tlbc_indices;

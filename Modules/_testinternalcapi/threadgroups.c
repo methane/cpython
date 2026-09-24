@@ -1597,7 +1597,227 @@ test_gc_world_stop(PyObject *self, PyObject *Py_UNUSED(args))
     Py_RETURN_NONE;
 }
 
+#define ALLOCATION_PROBE_COUNT 4096
+#define ALLOCATION_PROBE_SIZE 32
+
+#ifdef WITH_MIMALLOC
+struct reentrant_allocation_probe {
+    PyMemAllocatorEx original;
+    int active;
+    int calls;
+    int changed_heap;
+    mi_heap_t *expected_heap;
+};
+
+static void
+allocation_probe_reenter(struct reentrant_allocation_probe *probe)
+{
+    _PyThreadStateImpl *tstate = (_PyThreadStateImpl *)_PyThreadState_GET();
+    if (probe->active) {
+        probe->changed_heap |= (probe->expected_heap != NULL &&
+            tstate->mimalloc.current_object_heap != probe->expected_heap);
+        return;
+    }
+    probe->active = 1;
+    probe->calls++;
+    mi_heap_t *heap = tstate->mimalloc.current_object_heap;
+    // Too large for a freelist: this must re-enter the object allocator.
+    PyObject *nested = PyTuple_New(100);
+    Py_XDECREF(nested);
+    // Raw object-domain allocations in the hook have no GC prefix.
+    probe->expected_heap = &tstate->mimalloc.heaps[_Py_MIMALLOC_HEAP_OBJECT];
+    void *raw = PyObject_Malloc(32);
+    if (raw != NULL) {
+        void *resized = PyObject_Realloc(raw, 64);
+        PyObject_Free(resized != NULL ? resized : raw);
+    }
+    raw = PyObject_Calloc(1, 32);
+    PyObject_Free(raw);
+    probe->expected_heap = NULL;
+    probe->changed_heap |= tstate->mimalloc.current_object_heap != heap;
+    probe->active = 0;
+}
+
+static void *
+allocation_probe_malloc(void *ctx, size_t size)
+{
+    struct reentrant_allocation_probe *probe = ctx;
+    allocation_probe_reenter(probe);
+    return probe->original.malloc(probe->original.ctx, size);
+}
+
+static void *
+allocation_probe_calloc(void *ctx, size_t nelem, size_t size)
+{
+    struct reentrant_allocation_probe *probe = ctx;
+    allocation_probe_reenter(probe);
+    return probe->original.calloc(probe->original.ctx, nelem, size);
+}
+
+static void *
+allocation_probe_realloc(void *ctx, void *ptr, size_t size)
+{
+    struct reentrant_allocation_probe *probe = ctx;
+    allocation_probe_reenter(probe);
+    return probe->original.realloc(probe->original.ctx, ptr, size);
+}
+
+static void
+allocation_probe_free(void *ctx, void *ptr)
+{
+    struct reentrant_allocation_probe *probe = ctx;
+    probe->original.free(probe->original.ctx, ptr);
+}
+
+static PyObject *
+test_reentrant_allocation_heap(PyObject *self, PyObject *Py_UNUSED(args))
+{
+    struct reentrant_allocation_probe probe = {0};
+    PyMem_GetAllocator(PYMEM_DOMAIN_OBJ, &probe.original);
+    PyMemAllocatorEx wrapper = {
+        .ctx = &probe,
+        .malloc = allocation_probe_malloc,
+        .calloc = allocation_probe_calloc,
+        .realloc = allocation_probe_realloc,
+        .free = allocation_probe_free,
+    };
+    PyMem_SetAllocator(PYMEM_DOMAIN_OBJ, &wrapper);
+    PyObject *value = PyTuple_New(100);
+    if (value != NULL) {
+        _PyTuple_Resize(&value, 200);
+    }
+    PyMem_SetAllocator(PYMEM_DOMAIN_OBJ, &probe.original);
+    Py_XDECREF(value);
+    if (PyErr_Occurred()) {
+        return NULL;
+    }
+    if (probe.calls < 2 || probe.changed_heap) {
+        return PyErr_Format(PyExc_AssertionError,
+                            "nested allocation changed its caller's GC heap");
+    }
+    Py_RETURN_NONE;
+}
+#endif
+
+struct allocation_probe {
+    PyInterpreterState *interp;
+    _PyThreadGroupState *group;
+    PyObject *values;
+    PyEvent ready;
+    PyEvent exit;
+};
+
+static void
+allocation_probe_worker(void *arg)
+{
+    struct allocation_probe *probe = arg;
+    PyThreadState *tstate = PyThreadState_New(probe->interp);
+    if (tstate == NULL) {
+        _PyEvent_Notify(&probe->ready);
+        return;
+    }
+    _PyThreadGroup_Decref(tstate->threadgroup);
+    tstate->threadgroup = probe->group;
+    _PyThreadGroup_Incref(probe->group);
+    PyEval_AcquireThread(tstate);
+    PyObject *values = PyTuple_New(ALLOCATION_PROBE_COUNT);
+    if (values != NULL) {
+        for (int i = 0; i < ALLOCATION_PROBE_COUNT; i++) {
+            PyObject *value = PyBytes_FromStringAndSize(NULL, ALLOCATION_PROBE_SIZE);
+            if (value == NULL) {
+                Py_CLEAR(values);
+                break;
+            }
+            memset(PyBytes_AS_STRING(value), (unsigned char)i, ALLOCATION_PROBE_SIZE);
+            PyTuple_SET_ITEM(values, i, value);
+        }
+    }
+    probe->values = values;
+    PyErr_Clear();
+    _PyEvent_Notify(&probe->ready);
+    PyEvent_Wait(&probe->exit);
+    PyThreadState_Clear(tstate);
+    PyThreadState_DeleteCurrent();
+}
+
+static PyObject *
+threadgroup_allocation_probe(PyObject *self, PyObject *args)
+{
+    PyObject *group, *measure;
+    if (!PyArg_ParseTuple(args, "OO:threadgroup_allocation_probe", &group, &measure)) {
+        return NULL;
+    }
+    _PyThreadGroupState *state = _PyThreadGroup_GetState(group);
+    if (state == NULL) {
+        return NULL;
+    }
+    PyObject *before = PyObject_CallNoArgs(measure);
+    if (before == NULL) {
+        _PyThreadGroup_Decref(state);
+        return NULL;
+    }
+    struct allocation_probe probe = {
+        .interp = PyInterpreterState_Get(), .group = state,
+    };
+    PyThread_ident_t ident;
+    PyThread_handle_t handle;
+    if (PyThread_start_joinable_thread(allocation_probe_worker, &probe,
+                                       &ident, &handle) != 0) {
+        _PyThreadGroup_Decref(state);
+        Py_DECREF(before);
+        return PyErr_Format(PyExc_RuntimeError, "failed to start allocation probe");
+    }
+    PyEvent_Wait(&probe.ready);
+    PyObject *live = PyObject_CallNoArgs(measure);
+    _PyEvent_Notify(&probe.exit);
+    Py_BEGIN_ALLOW_THREADS
+    PyThread_join_thread(handle);
+    Py_END_ALLOW_THREADS
+    _PyThreadGroup_Decref(state);
+    PyObject *abandoned = NULL, *freed = NULL, *result = NULL;
+    if (live == NULL) {
+        goto done;
+    }
+    abandoned = PyObject_CallNoArgs(measure);
+    if (abandoned == NULL) {
+        goto done;
+    }
+    if (probe.values == NULL) {
+        PyErr_SetString(PyExc_AssertionError, "worker allocation failed");
+        goto done;
+    }
+    for (int i = 0; i < ALLOCATION_PROBE_COUNT; i++) {
+        PyObject *value = PyTuple_GetItem(probe.values, i);
+        if (value == NULL) {
+            goto done;
+        }
+        unsigned char *data = (unsigned char *)PyBytes_AS_STRING(value);
+        for (int j = 0; j < ALLOCATION_PROBE_SIZE; j++) {
+            if (data[j] != (unsigned char)i) {
+                PyErr_SetString(PyExc_AssertionError, "abandoned allocation corrupted");
+                goto done;
+            }
+        }
+    }
+    Py_CLEAR(probe.values);
+    freed = PyObject_CallNoArgs(measure);
+    if (freed != NULL) {
+        result = PyTuple_Pack(4, before, live, abandoned, freed);
+    }
+done:
+    Py_XDECREF(probe.values);
+    Py_DECREF(before);
+    Py_XDECREF(live);
+    Py_XDECREF(abandoned);
+    Py_XDECREF(freed);
+    return result;
+}
+
 static PyMethodDef methods[] = {
+#ifdef WITH_MIMALLOC
+    {"test_reentrant_allocation_heap", test_reentrant_allocation_heap, METH_NOARGS, NULL},
+#endif
+    {"threadgroup_allocation_probe", threadgroup_allocation_probe, METH_VARARGS, NULL},
     {"threadgroup_world_is_stopped", threadgroup_world_is_stopped, METH_NOARGS, NULL},
     {"test_gc_world_stop", test_gc_world_stop, METH_NOARGS, NULL},
     {"threadgroup_world_stop_probe", threadgroup_world_stop_probe, METH_VARARGS, NULL},

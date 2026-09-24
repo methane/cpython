@@ -79,9 +79,11 @@ typedef struct _PyThreadStateImpl {
     // Stack references for the current thread that exist on the C stack
     struct _PyCStackRef *c_stack_refs;
     struct _Py_freelists freelists;
+#ifdef WITH_MIMALLOC
+    struct _mimalloc_thread_state mimalloc;
+#endif
 #ifdef Py_GIL_DISABLED
     struct _gc_thread_state gc;
-    struct _mimalloc_thread_state mimalloc;
     struct _brc_thread_state brc;
 
     // Index to use to retrieve thread-local bytecode for this thread

@@ -50,7 +50,7 @@ extern "C++" {
 
 #endif
 
-#ifdef Py_GIL_DISABLED
+#ifdef WITH_MIMALLOC
 struct _mimalloc_interp_state {
     // When exiting, threads place any segments with live blocks in this
     // shared pool for other threads to claim and reuse.

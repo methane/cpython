@@ -37,6 +37,34 @@ _testinternalcapi.check_main_group_lifetime()
                 with self.subTest(group=group, clear_elsewhere=clear_elsewhere):
                     internal.threadgroup_freelist_probe(group, clear_elsewhere)
 
+    @unittest.skipUnless(support.with_mimalloc(), 'requires mimalloc')
+    def test_thread_local_allocation_heaps(self):
+        for allocator in ('mimalloc', 'mimalloc_debug'):
+            with self.subTest(allocator=allocator):
+                script_helper.assert_python_ok('-c', '''
+import gc
+import sys
+import threading
+import _testinternalcapi as internal
+from test import support
+
+gc.disable()
+internal.test_reentrant_allocation_heap()
+for group in (sys.main_thread_group, threading.ThreadGroup('allocation heap')):
+    before, live, abandoned, freed = internal.threadgroup_allocation_probe(
+        group, sys.getallocatedblocks)
+    # Include allocations in another native thread, and keep counting them
+    # after that thread exits while their owning tuple is still alive.
+    if support.with_pymalloc():
+        assert live - before >= 4096, (before, live)
+        assert abandoned - before >= 4096, (before, abandoned)
+        assert freed - before < 128, (before, freed)
+    else:
+        # Allocation accounting is unavailable in --without-pymalloc builds.
+        # The native probe still validates contents and cross-thread freeing.
+        assert (before, live, abandoned, freed) == (0, 0, 0, 0)
+''', PYTHONMALLOC=allocator)
+
     def test_internal_world_stop(self):
         internal = import_helper.import_module('_testinternalcapi')
         for group in (sys.main_thread_group, threading.ThreadGroup('world stop')):

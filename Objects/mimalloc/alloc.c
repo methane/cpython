@@ -609,9 +609,14 @@ bool _mi_free_delayed_block(mi_block_t* block) {
   // get segment and page
   const mi_segment_t* const segment = _mi_ptr_segment(block);
   mi_assert_internal(_mi_ptr_cookie(segment) == segment->cookie);
-#ifndef Py_GIL_DISABLED
-  // The GC traverses heaps of other threads, which can trigger this assert.
-  mi_assert_internal(_mi_thread_id() == segment->thread_id);
+#if MI_DEBUG >= 2 && !defined(Py_GIL_DISABLED)
+  // Python also drains another inactive thread state's heaps during cleanup.
+  // In the normal build the interpreter GIL excludes that heap's allocator.
+  // Process-wide heap inspection is protected by a stop-the-world pause.
+  PyThreadState* tstate = _PyThreadState_GET();
+  mi_assert_internal(_mi_thread_id() == segment->thread_id ||
+                     (tstate != NULL && (tstate->holds_gil ||
+                      tstate->interp->runtime->stoptheworld.world_stopped)));
 #endif
   mi_page_t* const page = _mi_segment_page_of(segment, block);
 

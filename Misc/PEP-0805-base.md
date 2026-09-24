@@ -15,7 +15,7 @@ The five-stage implementation is **not complete**.
 | One-time ABI change | Compact owner/state and group-biased RC header; no cleanup queue fields | Complete the allocation/GC port and audit native layouts |
 | Biased and deferred reference counting | Group bias, per-thread code counts, deferred stack roots and normal GC integration | Queue collection and reclamation with concurrent groups |
 | LOCAL and IMMUTABLE ownership | Builtin/static metadata, public `__shareable__` state, common C API returns, VM heap loads, attributes and call expansion | Remaining API/VM acquisitions and shared static extension ownership |
-| Parallel allocation and cyclic GC | Per-thread freelists, internal world stops and paused GC reachability snapshots | Concurrent allocation/heap tracking, owner-correct finalization and teardown |
+| Parallel allocation and cyclic GC | Per-thread freelists and mimalloc heaps, internal world stops and paused GC reachability snapshots | Concurrent allocation/heap tracking, owner-correct finalization and teardown |
 
 Freezing, protective/compound locks, synchronized objects and functions,
 TransferBox, Channel, the debugger StopTheWorld API, and performance work are
@@ -44,6 +44,18 @@ thread caches, and thread-state clearing disables the target state's caches,
 including when another thread performs the cleanup. The underlying allocator
 and collector still require the interpreter GIL; this is preparation for their
 parallel implementation.
+
+With `PYTHONMALLOC=mimalloc` or `mimalloc_debug`, the normal build uses the
+ported per-thread heaps, separated by object/GC/preheader layout. Exiting threads
+abandon their live allocations to an interpreter pool; allocation accounting
+includes other threads and abandoned blocks. Heap selection is scoped to each
+allocator call, including recursive embedding/tracing hooks. Allocator ownership
+is independent of the object's ThreadGroup owner and reference-count bias.
+The default remains pymalloc while parallel heap tracking is being implemented.
+
+Audit hooks and interpreter views that span initialization use the non-swappable
+raw allocator. Its debug backend is also independent of runtime allocator
+configuration, so `PYTHONMALLOC` changes cannot mismatch allocation and freeing.
 
 Internal per-interpreter and process-wide stop-the-world operations are active
 in the normal build. Detached states, including states created during a pause,
@@ -186,9 +198,19 @@ Parallel scheduling tests remain skipped while the interpreter GIL is enabled.
   traversal is paused and clearing/destruction are not; Python callbacks also
   verify the world is running. ThreadGroups, reclamation and GC pass `-R 3:3`
   (94 tests, 3 skips).
+- Per-thread mimalloc port: the `mimalloc` selection passes 1,354 tests across
+  15 files (29 skips), including allocation, ownership, GC, embedding, tracing,
+  threading and fork. The `mimalloc_debug` selection passes 513 tests across
+  six files (14 skips). The default allocator passes the 217-test lifecycle,
+  GC and memory API selection (9 skips). Native probes cover foreign-thread
+  accounting, survival after thread exit, content integrity and recursive
+  allocator hooks; a subprocess matrix checks preinitialization lifetimes
+  across malloc, pymalloc and mimalloc with and without their debug hooks.
 - The non-debug normal build at `9a07ddfce7` passes 1,378 tests across 16 files
   covering sharing states, per-thread freelists, allocation, threading, GC and
   embedding (34 skips). This predates the internal world-stop activation.
+- The non-debug normal build at `e3b47b1253` passes 1,393 tests across 16 files
+  including the internal world stops and paused GC snapshots (22 skips).
 - The non-debug normal build at `19030fdd7f` passes 645 tests covering the first
   C API/VM acquisition changes (17 skips). This validation predates the thread
   entry and attribute acquisition changes.

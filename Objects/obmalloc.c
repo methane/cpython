@@ -4,6 +4,7 @@
 #include "pycore_interp.h"        // _PyInterpreterState_HasFeature
 #include "pycore_mmap.h"          // _PyAnnotateMemoryMap()
 #include "pycore_object.h"        // _PyDebugAllocatorStats() definition
+#include "pycore_object_alloc.h"  // _PyObject_MallocWithType()
 #include "pycore_obmalloc.h"
 #include "pycore_obmalloc_init.h"
 #include "pycore_pyerrors.h"      // _Py_FatalErrorFormat()
@@ -259,37 +260,25 @@ _PyMem_mi_heap_collect_qsbr(mi_heap_t *heap)
 void *
 _PyMem_MiMalloc(void *ctx, size_t size)
 {
-#ifdef Py_GIL_DISABLED
     _PyThreadStateImpl *tstate = (_PyThreadStateImpl *)_PyThreadState_GET();
     mi_heap_t *heap = &tstate->mimalloc.heaps[_Py_MIMALLOC_HEAP_MEM];
     return mi_heap_malloc(heap, size);
-#else
-    return mi_malloc(size);
-#endif
 }
 
 void *
 _PyMem_MiCalloc(void *ctx, size_t nelem, size_t elsize)
 {
-#ifdef Py_GIL_DISABLED
     _PyThreadStateImpl *tstate = (_PyThreadStateImpl *)_PyThreadState_GET();
     mi_heap_t *heap = &tstate->mimalloc.heaps[_Py_MIMALLOC_HEAP_MEM];
     return mi_heap_calloc(heap, nelem, elsize);
-#else
-    return mi_calloc(nelem, elsize);
-#endif
 }
 
 void *
 _PyMem_MiRealloc(void *ctx, void *ptr, size_t size)
 {
-#ifdef Py_GIL_DISABLED
     _PyThreadStateImpl *tstate = (_PyThreadStateImpl *)_PyThreadState_GET();
     mi_heap_t *heap = &tstate->mimalloc.heaps[_Py_MIMALLOC_HEAP_MEM];
     return mi_heap_realloc(heap, ptr, size);
-#else
-    return mi_realloc(ptr, size);
-#endif
 }
 
 void
@@ -301,32 +290,23 @@ _PyMem_MiFree(void *ctx, void *ptr)
 void *
 _PyObject_MiMalloc(void *ctx, size_t nbytes)
 {
-#ifdef Py_GIL_DISABLED
     _PyThreadStateImpl *tstate = (_PyThreadStateImpl *)_PyThreadState_GET();
     mi_heap_t *heap = tstate->mimalloc.current_object_heap;
     return mi_heap_malloc(heap, nbytes);
-#else
-    return mi_malloc(nbytes);
-#endif
 }
 
 void *
 _PyObject_MiCalloc(void *ctx, size_t nelem, size_t elsize)
 {
-#ifdef Py_GIL_DISABLED
     _PyThreadStateImpl *tstate = (_PyThreadStateImpl *)_PyThreadState_GET();
     mi_heap_t *heap = tstate->mimalloc.current_object_heap;
     return mi_heap_calloc(heap, nelem, elsize);
-#else
-    return mi_calloc(nelem, elsize);
-#endif
 }
 
 
 void *
 _PyObject_MiRealloc(void *ctx, void *ptr, size_t nbytes)
 {
-#ifdef Py_GIL_DISABLED
     _PyThreadStateImpl *tstate = (_PyThreadStateImpl *)_PyThreadState_GET();
     // Implement our own realloc logic so that we can copy PyObject header
     // in a thread-safe way.
@@ -370,9 +350,6 @@ _PyObject_MiRealloc(void *ctx, void *ptr, size_t nbytes)
     }
     mi_free(ptr);
     return newp;
-#else
-    return mi_realloc(ptr, nbytes);
-#endif
 }
 
 void
@@ -1712,8 +1689,42 @@ _PyMem_FiniDelayed(PyInterpreterState *interp)
 /* the "object" allocator */
 /**************************/
 
+#ifdef WITH_MIMALLOC
+static mi_heap_t *
+select_object_heap(PyTypeObject *tp)
+{
+    _PyThreadStateImpl *tstate = (_PyThreadStateImpl *)_PyThreadState_GET();
+    if (tstate == NULL) {
+        // Let the debug allocator report calls without an attached state.
+        return NULL;
+    }
+    struct _mimalloc_thread_state *m = &tstate->mimalloc;
+    mi_heap_t *previous = m->current_object_heap;
+    int heap = _Py_MIMALLOC_HEAP_OBJECT;
+    if (tp != NULL) {
+        if (_PyType_HasFeature(tp, Py_TPFLAGS_PREHEADER)) {
+            heap = _Py_MIMALLOC_HEAP_GC_PRE;
+        }
+        else if (_PyType_IS_GC(tp)) {
+            heap = _Py_MIMALLOC_HEAP_GC;
+        }
+    }
+    m->current_object_heap = &m->heaps[heap];
+    return previous;
+}
+
+static void
+restore_object_heap(mi_heap_t *previous)
+{
+    if (previous != NULL) {
+        _PyThreadStateImpl *tstate = (_PyThreadStateImpl *)_PyThreadState_GET();
+        tstate->mimalloc.current_object_heap = previous;
+    }
+}
+#endif
+
 void *
-PyObject_Malloc(size_t size)
+_PyObject_MallocWithType(PyTypeObject *tp, size_t size)
 {
     /* see PyMem_RawMalloc() */
     if (size > (size_t)PY_SSIZE_T_MAX)
@@ -1722,7 +1733,22 @@ PyObject_Malloc(size_t size)
     OBJECT_STAT_INC_COND(allocations4k, size >= 512 && size < 4094);
     OBJECT_STAT_INC_COND(allocations_big, size >= 4094);
     OBJECT_STAT_INC(allocations);
-    return _PyObject.malloc(_PyObject.ctx, size);
+#ifdef WITH_MIMALLOC
+    mi_heap_t *previous = select_object_heap(tp);
+#endif
+    void *result = _PyObject.malloc(_PyObject.ctx, size);
+#ifdef WITH_MIMALLOC
+    restore_object_heap(previous);
+#endif
+    return result;
+}
+
+void *
+PyObject_Malloc(size_t size)
+{
+    // Select a fresh heap even in a reentrant allocator hook. A raw allocation
+    // must not inherit the GC layout of the hook's caller.
+    return _PyObject_MallocWithType(NULL, size);
 }
 
 void *
@@ -1735,16 +1761,36 @@ PyObject_Calloc(size_t nelem, size_t elsize)
     OBJECT_STAT_INC_COND(allocations4k, elsize >= 512 && elsize < 4094);
     OBJECT_STAT_INC_COND(allocations_big, elsize >= 4094);
     OBJECT_STAT_INC(allocations);
-    return _PyObject.calloc(_PyObject.ctx, nelem, elsize);
+#ifdef WITH_MIMALLOC
+    mi_heap_t *previous = select_object_heap(NULL);
+#endif
+    void *result = _PyObject.calloc(_PyObject.ctx, nelem, elsize);
+#ifdef WITH_MIMALLOC
+    restore_object_heap(previous);
+#endif
+    return result;
+}
+
+void *
+_PyObject_ReallocWithType(PyTypeObject *tp, void *ptr, size_t new_size)
+{
+    /* see PyMem_RawMalloc() */
+    if (new_size > (size_t)PY_SSIZE_T_MAX)
+        return NULL;
+#ifdef WITH_MIMALLOC
+    mi_heap_t *previous = select_object_heap(tp);
+#endif
+    void *result = _PyObject.realloc(_PyObject.ctx, ptr, new_size);
+#ifdef WITH_MIMALLOC
+    restore_object_heap(previous);
+#endif
+    return result;
 }
 
 void *
 PyObject_Realloc(void *ptr, size_t new_size)
 {
-    /* see PyMem_RawMalloc() */
-    if (new_size > (size_t)PY_SSIZE_T_MAX)
-        return NULL;
-    return _PyObject.realloc(_PyObject.ctx, ptr, new_size);
+    return _PyObject_ReallocWithType(NULL, ptr, new_size);
 }
 
 void
@@ -1824,9 +1870,11 @@ static Py_ssize_t
 get_mimalloc_allocated_blocks(PyInterpreterState *interp)
 {
     size_t allocated_blocks = 0;
-#ifdef Py_GIL_DISABLED
     _Py_FOR_EACH_TSTATE_UNLOCKED(interp, t) {
         _PyThreadStateImpl *tstate = (_PyThreadStateImpl *)t;
+        if (!_Py_atomic_load_int(&tstate->mimalloc.initialized)) {
+            continue;
+        }
         for (int i = 0; i < _Py_MIMALLOC_HEAP_COUNT; i++) {
             mi_heap_t *heap = &tstate->mimalloc.heaps[i];
             mi_heap_visit_blocks(heap, false, &count_blocks, &allocated_blocks);
@@ -1838,11 +1886,7 @@ get_mimalloc_allocated_blocks(PyInterpreterState *interp)
         _mi_abandoned_pool_visit_blocks(pool, tag, false, &count_blocks,
                                         &allocated_blocks);
     }
-#else
-    // TODO(sgross): this only counts the current thread's blocks.
-    mi_heap_t *heap = mi_heap_get_default();
-    mi_heap_visit_blocks(heap, false, &count_blocks, &allocated_blocks);
-#endif
+
     return allocated_blocks;
 }
 #endif
