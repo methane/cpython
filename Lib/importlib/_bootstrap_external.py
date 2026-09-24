@@ -1348,19 +1348,25 @@ class FileFinder:
         loaders = []
         for loader, suffixes in loader_details:
             loaders.extend((suffix, loader) for suffix in suffixes)
-        self._loaders = tuple(loaders)
+        loaders = tuple(loaders)
         # Base (directory) path
         if not path or path == '.':
-            self.path = _os.getcwd()
+            path = _os.getcwd()
         else:
-            self.path = _path_abspath(path)
-        self._path_mtime = -1
-        self._path_cache = frozenset()
-        self._relaxed_path_cache = frozenset()
-        self._cache_lock = _thread.RLock()
-        if type(self) is FileFinder:
-            self.__dict__ = self.__dict__.synchronize()
-            _thread._declare_synchronized(self)
+            path = _path_abspath(path)
+        # Reinitialization must use the lock already held by active searches.
+        cache_lock = self.__dict__.setdefault('_cache_lock', _thread.RLock())
+        with cache_lock:
+            self._cache_generation = self.__dict__.get('_cache_generation', 0) + 1
+            self._loaders = loaders
+            self.path = path
+            self._path_mtime = -1
+            self._path_cache = frozenset()
+            self._relaxed_path_cache = frozenset()
+            if type(self) is FileFinder:
+                if type(self.__dict__) is not SynchronizedDict:
+                    self.__dict__ = self.__dict__.synchronize()
+                _thread._declare_synchronized(self)
 
     def invalidate_caches(self):
         """Invalidate the directory mtime."""
@@ -1380,26 +1386,36 @@ class FileFinder:
         is_namespace = False
         tail_module = fullname.rpartition('.')[2]
         with self._cache_lock:
-            try:
-                mtime = _path_stat(self.path or _os.getcwd()).st_mtime
-            except OSError:
-                mtime = -1
-            if mtime != self._path_mtime:
-                self._fill_cache()
-                self._path_mtime = mtime
-            # Retain an immutable snapshot and release the cache lock before
-            # invoking loader constructors or other import callbacks.
-            if _relax_case():
-                cache = self._relaxed_path_cache
-                cache_module = tail_module.lower()
-            else:
-                cache = self._path_cache
-                cache_module = tail_module
+            while True:
+                generation = self._cache_generation
+                try:
+                    mtime = _path_stat(self.path or _os.getcwd()).st_mtime
+                except OSError:
+                    mtime = -1
+                if generation != self._cache_generation:
+                    continue
+                if mtime != self._path_mtime:
+                    self._fill_cache()
+                    # An audit hook can reinitialize us while the RLock is held.
+                    if generation != self._cache_generation:
+                        continue
+                    self._path_mtime = mtime
+                # Retain one configuration and cache, then release the lock
+                # before invoking loaders or other import callbacks.
+                if _relax_case():
+                    cache = self._relaxed_path_cache
+                    cache_module = tail_module.lower()
+                else:
+                    cache = self._path_cache
+                    cache_module = tail_module
+                path = self.path
+                loaders = self._loaders
+                break
         # tail_module keeps the original casing, for __file__ and friends
         # Check if the module is the name of a directory (and thus a package).
         if cache_module in cache:
-            base_path = _path_join(self.path, tail_module)
-            for suffix, loader_class in self._loaders:
+            base_path = _path_join(path, tail_module)
+            for suffix, loader_class in loaders:
                 init_filename = '__init__' + suffix
                 full_path = _path_join(base_path, init_filename)
                 if _path_isfile(full_path):
@@ -1409,9 +1425,9 @@ class FileFinder:
                 #  find a module in the next section.
                 is_namespace = _path_isdir(base_path)
         # Check for a file w/ a proper suffix exists.
-        for suffix, loader_class in self._loaders:
+        for suffix, loader_class in loaders:
             try:
-                full_path = _path_join(self.path, tail_module + suffix)
+                full_path = _path_join(path, tail_module + suffix)
             except ValueError:
                 return None
             _bootstrap._verbose_message('trying {}', full_path, verbosity=2)
@@ -1432,6 +1448,7 @@ class FileFinder:
             self._fill_cache_unlocked()
 
     def _fill_cache_unlocked(self):
+        generation = self._cache_generation
         path = self.path
         try:
             contents = _os.listdir(path or _os.getcwd())
@@ -1442,7 +1459,7 @@ class FileFinder:
         # We store two cached versions, to handle runtime changes of the
         # PYTHONCASEOK environment variable.
         if not sys.platform.startswith('win'):
-            self._path_cache = frozenset(contents)
+            path_cache = frozenset(contents)
         else:
             # Windows users can import modules with case-insensitive file
             # suffixes (for legacy reasons). Make the suffix lowercase here
@@ -1457,9 +1474,15 @@ class FileFinder:
                 else:
                     new_name = name
                 lower_suffix_contents.add(new_name)
-            self._path_cache = frozenset(lower_suffix_contents)
+            path_cache = frozenset(lower_suffix_contents)
+        relaxed_path_cache = frozenset()
         if sys.platform.startswith(_CASE_INSENSITIVE_PLATFORMS):
-            self._relaxed_path_cache = frozenset(fn.lower() for fn in contents)
+            relaxed_path_cache = frozenset(fn.lower() for fn in contents)
+        # Do not publish directory contents for a configuration replaced by
+        # a reentrant audit hook. find_spec() will retry with the new settings.
+        if generation == self._cache_generation:
+            self._path_cache = path_cache
+            self._relaxed_path_cache = relaxed_path_cache
 
     @classmethod
     def path_hook(cls, *loader_details):
@@ -1480,7 +1503,10 @@ class FileFinder:
         return path_hook_for_FileFinder
 
     def _find_children(self):
-        with _os.scandir(self.path) as scan_iterator:
+        with self._cache_lock:
+            path = self.path
+            loaders = self._loaders
+        with _os.scandir(path) as scan_iterator:
             while True:
                 try:
                     entry = next(scan_iterator)
@@ -1493,7 +1519,7 @@ class FileFinder:
                     if entry.is_file():
                         yield from {
                             entry.name.removesuffix(suffix)
-                            for suffix, _ in self._loaders
+                            for suffix, _ in loaders
                             if entry.name.endswith(suffix)
                         }
                 except OSError:

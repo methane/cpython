@@ -1290,6 +1290,49 @@ Tier 2 interpreter builds, each with 211 reported tests and six skips.
 Incremental builds report no compiler warnings or failed module imports.
 Changed native source and tests match across all three builds.
 
+### FileFinder reinitialization and coherent cache settings
+
+An exact FileFinder's second __init__ previously called synchronize() on its
+already synchronized namespace and raised TypeError. It also replaced the cache
+mutex while searches could still hold the old one. Reinitialization now computes
+its inputs first, preserves the mutex and namespace identity, and updates the
+path, loader table and empty caches while holding the existing mutex. The
+namespace conversion is skipped for an already synchronized dictionary.
+
+Find_spec retains the path and loader table with its directory-cache snapshot.
+It uses those references after releasing the cache mutex, including for every
+candidate suffix and for package lookup. Directory discovery similarly retains
+its path and suffix table before opening scandir. Loader constructors still
+run outside the mutex. Deterministic reinitialization callbacks previously
+returned a different directory's module, turned a regular package into a
+namespace package, or filtered one directory with another configuration's
+suffixes. Concurrent reinitializers and searches also lost expected results.
+
+The mutex is reentrant, so a filesystem audit hook can still reinitialize a
+finder while listdir is running. A generation counter now identifies that
+change. Cache filling builds local immutable sets and publishes them only if
+the generation is unchanged; find_spec retries when its stat/cache generation
+changes. With equal directory mtimes, the previous implementation could retain
+the old directory's entries indefinitely under the new path. A standalone
+os.listdir audit-hook probe reproduces that stale-cache failure.
+
+Five added methods exercise both frozen and source importlib implementations:
+namespace/mutex preservation and reinitialization in a worker; module/package
+lookup snapshots; discovery snapshots; the audit-hook case with equal mtimes;
+and concurrent reinitialization versus two searches. The initial three methods
+reported eight failures including subtests before the constructor repair. The
+snapshot, discovery and audit probes separately establish the configuration
+mixing defects. Logs and the standalone audit probe are in
+`/tmp/pep805-finder-reinit/`.
+
+The final six-file import selection passes in all three builds with 1,291
+reported tests: 20 skips in the default build and 19 in GIL and Tier 2.
+Incremental builds have no compiler warnings or failed module imports. Source
+and tests match across the builds, and make regenerated frozen importlib in
+each. Its marshal reference encoding differs between the free-threading and
+GIL configurations; unmarshalling and recursively comparing all 128 code
+objects confirms identical bytecode, constants, flags and source locations.
+
 ## Earlier re-review and implementation follow-ups
 
 One earlier question was incorrect: footnote 3 of the

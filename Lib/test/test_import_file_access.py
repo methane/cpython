@@ -106,6 +106,161 @@ def write(directory, name, source):
                 assert finder.__shareable__ is threading.Shareable.SYNCHRONIZED
         ''')
 
+    def run_finder_script(self, script):
+        for kind in ('Frozen', 'Source'):
+            with self.subTest(kind=kind):
+                setup = f"""
+from test.test_importlib.util import import_importlib
+machinery = import_importlib('importlib.machinery')[{kind!r}]
+FileFinder = machinery.FileFinder
+SourceFileLoader = machinery.SourceFileLoader
+"""
+                self.run_script(setup + textwrap.dedent(script))
+
+    def test_file_finder_reinitialize(self):
+        self.run_finder_script('''
+            with tempfile.TemporaryDirectory() as first, tempfile.TemporaryDirectory() as second:
+                old_path = write(first, 'old.py', 'answer = 1\\n')
+                new_path = write(second, 'new.custom', 'answer = 2\\n')
+                finder = FileFinder(first, (SourceFileLoader, ('.py',)))
+                namespace = finder.__dict__
+                cache_lock = finder._cache_lock
+                assert finder.find_spec('old').origin == old_path
+                finder.__init__(second, (SourceFileLoader, ('.custom',)))
+                assert finder.__dict__ is namespace
+                assert finder._cache_lock is cache_lock
+                assert type(namespace) is SynchronizedDict
+                assert finder._path_mtime == -1
+                assert finder._path_cache == frozenset()
+                assert finder.find_spec('old') is None
+                assert finder.find_spec('new').origin == new_path
+                def action():
+                    finder.__init__(first, (SourceFileLoader, ('.py',)))
+                    assert finder.__dict__ is namespace
+                    assert finder._cache_lock is cache_lock
+                    assert finder.find_spec('new') is None
+                    assert finder.find_spec('old').origin == old_path
+                    results.put('found')
+                run(action)
+                assert results.get() == 'found'
+                assert finder.__shareable__ is threading.Shareable.SYNCHRONIZED
+        ''')
+
+    def test_file_finder_lookup_snapshot(self):
+        for package in (False, True):
+            with self.subTest(package=package):
+                self.run_finder_script(f'PACKAGE = {package!r}\n' + textwrap.dedent('''
+                    with tempfile.TemporaryDirectory() as first, tempfile.TemporaryDirectory() as second:
+                        if PACKAGE:
+                            os.mkdir(os.path.join(first, 'entry'))
+                            expected = write(first, 'entry/__init__.py', 'answer = 1\\n')
+                            trigger = 'entry'
+                        else:
+                            expected = write(first, 'entry.py', 'answer = 1\\n')
+                            trigger = 'entry.missing'
+                        write(second, 'entry.py', 'answer = 2\\n')
+                        finder = FileFinder(first, (SourceFileLoader, ('.missing', '.py')))
+                        namespace = finder.find_spec.__func__.__globals__
+                        original_join = namespace['_path_join']
+                        armed = True
+                        def reinitialize(path, *parts):
+                            global armed
+                            if armed and path == first and parts == (trigger,):
+                                armed = False
+                                finder.__init__(second, (SourceFileLoader, ('.other',)))
+                            return original_join(path, *parts)
+                        namespace['_path_join'] = reinitialize
+                        try:
+                            spec = finder.find_spec('entry')
+                        finally:
+                            namespace['_path_join'] = original_join
+                        assert not armed
+                        assert spec is not None
+                        assert spec.origin == expected, spec.origin
+                        assert finder.path == second
+                        assert finder.find_spec('entry') is None
+                '''))
+
+    def test_file_finder_discovery_snapshot(self):
+        self.run_finder_script('''
+            with tempfile.TemporaryDirectory() as first, tempfile.TemporaryDirectory() as second:
+                write(first, 'first.py', 'answer = 1\\n')
+                write(first, 'wrong.custom', 'answer = 0\\n')
+                write(second, 'second.custom', 'answer = 2\\n')
+                finder = FileFinder(first, (SourceFileLoader, ('.py',)))
+                os_module = finder._find_children.__func__.__globals__['_os']
+                original_scandir = os_module.scandir
+                armed = True
+                def reinitialize(path):
+                    global armed
+                    if armed and path == first:
+                        armed = False
+                        finder.__init__(second, (SourceFileLoader, ('.custom',)))
+                    return original_scandir(path)
+                os_module.scandir = reinitialize
+                try:
+                    names = set(finder._find_children())
+                finally:
+                    os_module.scandir = original_scandir
+                assert not armed
+                assert names == {'first'}, names
+                assert set(finder._find_children()) == {'second'}
+        ''')
+
+    def test_file_finder_audit_reinitialize(self):
+        self.run_finder_script('''
+            with tempfile.TemporaryDirectory() as first, tempfile.TemporaryDirectory() as second:
+                write(first, 'old.py', 'answer = 1\\n')
+                expected = write(second, 'new.py', 'answer = 2\\n')
+                # Equal mtimes expose incorrectly publishing the old directory
+                # cache as current for the new directory.
+                os.utime(first, (1000, 1000))
+                os.utime(second, (1000, 1000))
+                finder = FileFinder(first, (SourceFileLoader, ('.py',)))
+                armed = True
+                def audit(event, args):
+                    global armed
+                    if armed and event == 'os.listdir' and args == (first,):
+                        armed = False
+                        finder.__init__(second, (SourceFileLoader, ('.py',)))
+                sys.addaudithook(audit)
+                finder.find_spec('old')
+                assert not armed
+                assert finder.path == second
+                assert finder._path_cache == frozenset({'new.py'})
+                assert finder.find_spec('new').origin == expected
+        ''')
+
+    def test_file_finder_reinitialize_during_search(self):
+        self.run_finder_script('''
+            from test.support import SHORT_TIMEOUT
+            with tempfile.TemporaryDirectory() as first, tempfile.TemporaryDirectory() as second:
+                first_path = write(first, 'shared.py', 'answer = 1\\n')
+                second_path = write(second, 'shared.custom', 'answer = 2\\n')
+                write(first, 'ghost.custom', 'answer = 0\\n')
+                write(second, 'ghost.py', 'answer = 0\\n')
+                finder = FileFinder(first, (SourceFileLoader, ('.py',)))
+                cache_lock = finder._cache_lock
+                barrier = threading.Barrier(3)
+                def update():
+                    barrier.wait(timeout=SHORT_TIMEOUT)
+                    for _ in range(50):
+                        finder.__init__(second, (SourceFileLoader, ('.custom',)))
+                        finder.__init__(first, (SourceFileLoader, ('.py',)))
+                    results.put('updated')
+                def search():
+                    barrier.wait(timeout=SHORT_TIMEOUT)
+                    for _ in range(50):
+                        spec = finder.find_spec('shared')
+                        assert spec is not None
+                        assert spec.origin in (first_path, second_path)
+                        assert finder.find_spec('ghost') is None
+                    results.put('found')
+                run(update, search, search)
+                assert sorted(results.get() for _ in range(3)) == ['found', 'found', 'updated']
+                assert finder._cache_lock is cache_lock
+        ''')
+
     def test_package_and_namespace_package_in_worker(self):
         self.run_script('''
             for regular in (True, False):
