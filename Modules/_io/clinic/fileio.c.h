@@ -7,6 +7,7 @@ preserve
 #  include "pycore_runtime.h"     // _Py_ID()
 #endif
 #include "pycore_abstract.h"      // _Py_convert_optional_to_ssize_t()
+#include "pycore_critical_section.h"// Py_BEGIN_CRITICAL_SECTION()
 #include "pycore_modsupport.h"    // _PyArg_UnpackKeywords()
 
 PyDoc_STRVAR(_io_FileIO_close__doc__,
@@ -27,11 +28,18 @@ _io_FileIO_close_impl(fileio *self, PyTypeObject *cls);
 static PyObject *
 _io_FileIO_close(PyObject *self, PyTypeObject *cls, PyObject *const *args, Py_ssize_t nargs, PyObject *kwnames)
 {
+    PyObject *return_value = NULL;
+
     if (nargs || (kwnames && PyTuple_GET_SIZE(kwnames))) {
         PyErr_SetString(PyExc_TypeError, "close() takes no arguments");
-        return NULL;
+        goto exit;
     }
-    return _io_FileIO_close_impl((fileio *)self, cls);
+    Py_BEGIN_CRITICAL_SECTION(self);
+    return_value = _io_FileIO_close_impl((fileio *)self, cls);
+    Py_END_CRITICAL_SECTION();
+
+exit:
+    return return_value;
 }
 
 PyDoc_STRVAR(_io_FileIO___init____doc__,
@@ -137,7 +145,9 @@ _io_FileIO___init__(PyObject *self, PyObject *args, PyObject *kwargs)
     }
     opener = fastargs[3];
 skip_optional_pos:
+    Py_BEGIN_CRITICAL_SECTION(self);
     return_value = _io_FileIO___init___impl((fileio *)self, nameobj, mode, closefd, opener);
+    Py_END_CRITICAL_SECTION();
 
 exit:
     return return_value;
@@ -158,7 +168,13 @@ _io_FileIO_fileno_impl(fileio *self);
 static PyObject *
 _io_FileIO_fileno(PyObject *self, PyObject *Py_UNUSED(ignored))
 {
-    return _io_FileIO_fileno_impl((fileio *)self);
+    PyObject *return_value = NULL;
+
+    Py_BEGIN_CRITICAL_SECTION(self);
+    return_value = _io_FileIO_fileno_impl((fileio *)self);
+    Py_END_CRITICAL_SECTION();
+
+    return return_value;
 }
 
 PyDoc_STRVAR(_io_FileIO_readable__doc__,
@@ -176,7 +192,13 @@ _io_FileIO_readable_impl(fileio *self);
 static PyObject *
 _io_FileIO_readable(PyObject *self, PyObject *Py_UNUSED(ignored))
 {
-    return _io_FileIO_readable_impl((fileio *)self);
+    PyObject *return_value = NULL;
+
+    Py_BEGIN_CRITICAL_SECTION(self);
+    return_value = _io_FileIO_readable_impl((fileio *)self);
+    Py_END_CRITICAL_SECTION();
+
+    return return_value;
 }
 
 PyDoc_STRVAR(_io_FileIO_writable__doc__,
@@ -194,7 +216,13 @@ _io_FileIO_writable_impl(fileio *self);
 static PyObject *
 _io_FileIO_writable(PyObject *self, PyObject *Py_UNUSED(ignored))
 {
-    return _io_FileIO_writable_impl((fileio *)self);
+    PyObject *return_value = NULL;
+
+    Py_BEGIN_CRITICAL_SECTION(self);
+    return_value = _io_FileIO_writable_impl((fileio *)self);
+    Py_END_CRITICAL_SECTION();
+
+    return return_value;
 }
 
 PyDoc_STRVAR(_io_FileIO_seekable__doc__,
@@ -212,7 +240,13 @@ _io_FileIO_seekable_impl(fileio *self);
 static PyObject *
 _io_FileIO_seekable(PyObject *self, PyObject *Py_UNUSED(ignored))
 {
-    return _io_FileIO_seekable_impl((fileio *)self);
+    PyObject *return_value = NULL;
+
+    Py_BEGIN_CRITICAL_SECTION(self);
+    return_value = _io_FileIO_seekable_impl((fileio *)self);
+    Py_END_CRITICAL_SECTION();
+
+    return return_value;
 }
 
 PyDoc_STRVAR(_io_FileIO_readinto__doc__,
@@ -256,7 +290,9 @@ _io_FileIO_readinto(PyObject *self, PyTypeObject *cls, PyObject *const *args, Py
         _PyArg_BadArgument("readinto", "argument 1", "read-write bytes-like object", args[0]);
         goto exit;
     }
+    Py_BEGIN_CRITICAL_SECTION(self);
     return_value = _io_FileIO_readinto_impl((fileio *)self, cls, &buffer);
+    Py_END_CRITICAL_SECTION();
 
 exit:
     /* Cleanup for buffer */
@@ -290,11 +326,18 @@ _io_FileIO_readall_impl(fileio *self, PyTypeObject *cls);
 static PyObject *
 _io_FileIO_readall(PyObject *self, PyTypeObject *cls, PyObject *const *args, Py_ssize_t nargs, PyObject *kwnames)
 {
+    PyObject *return_value = NULL;
+
     if (nargs || (kwnames && PyTuple_GET_SIZE(kwnames))) {
         PyErr_SetString(PyExc_TypeError, "readall() takes no arguments");
-        return NULL;
+        goto exit;
     }
-    return _io_FileIO_readall_impl((fileio *)self, cls);
+    Py_BEGIN_CRITICAL_SECTION(self);
+    return_value = _io_FileIO_readall_impl((fileio *)self, cls);
+    Py_END_CRITICAL_SECTION();
+
+exit:
+    return return_value;
 }
 
 PyDoc_STRVAR(_io_FileIO_read__doc__,
@@ -350,7 +393,9 @@ _io_FileIO_read(PyObject *self, PyTypeObject *cls, PyObject *const *args, Py_ssi
         goto exit;
     }
 skip_optional_posonly:
+    Py_BEGIN_CRITICAL_SECTION(self);
     return_value = _io_FileIO_read_impl((fileio *)self, cls, size);
+    Py_END_CRITICAL_SECTION();
 
 exit:
     return return_value;
@@ -400,7 +445,9 @@ _io_FileIO_write(PyObject *self, PyTypeObject *cls, PyObject *const *args, Py_ss
     if (PyObject_GetBuffer(args[0], &b, PyBUF_SIMPLE) != 0) {
         goto exit;
     }
+    Py_BEGIN_CRITICAL_SECTION(self);
     return_value = _io_FileIO_write_impl((fileio *)self, cls, &b);
+    Py_END_CRITICAL_SECTION();
 
 exit:
     /* Cleanup for b */
@@ -451,7 +498,9 @@ _io_FileIO_seek(PyObject *self, PyObject *const *args, Py_ssize_t nargs)
         goto exit;
     }
 skip_optional:
+    Py_BEGIN_CRITICAL_SECTION(self);
     return_value = _io_FileIO_seek_impl((fileio *)self, pos, whence);
+    Py_END_CRITICAL_SECTION();
 
 exit:
     return return_value;
@@ -474,7 +523,13 @@ _io_FileIO_tell_impl(fileio *self);
 static PyObject *
 _io_FileIO_tell(PyObject *self, PyObject *Py_UNUSED(ignored))
 {
-    return _io_FileIO_tell_impl((fileio *)self);
+    PyObject *return_value = NULL;
+
+    Py_BEGIN_CRITICAL_SECTION(self);
+    return_value = _io_FileIO_tell_impl((fileio *)self);
+    Py_END_CRITICAL_SECTION();
+
+    return return_value;
 }
 
 #if defined(HAVE_FTRUNCATE)
@@ -524,7 +579,9 @@ _io_FileIO_truncate(PyObject *self, PyTypeObject *cls, PyObject *const *args, Py
     }
     posobj = args[0];
 skip_optional_posonly:
+    Py_BEGIN_CRITICAL_SECTION(self);
     return_value = _io_FileIO_truncate_impl((fileio *)self, cls, posobj);
+    Py_END_CRITICAL_SECTION();
 
 exit:
     return return_value;
@@ -547,10 +604,16 @@ _io_FileIO_isatty_impl(fileio *self);
 static PyObject *
 _io_FileIO_isatty(PyObject *self, PyObject *Py_UNUSED(ignored))
 {
-    return _io_FileIO_isatty_impl((fileio *)self);
+    PyObject *return_value = NULL;
+
+    Py_BEGIN_CRITICAL_SECTION(self);
+    return_value = _io_FileIO_isatty_impl((fileio *)self);
+    Py_END_CRITICAL_SECTION();
+
+    return return_value;
 }
 
 #ifndef _IO_FILEIO_TRUNCATE_METHODDEF
     #define _IO_FILEIO_TRUNCATE_METHODDEF
 #endif /* !defined(_IO_FILEIO_TRUNCATE_METHODDEF) */
-/*[clinic end generated code: output=453d584e2e72f986 input=a9049054013a1b77]*/
+/*[clinic end generated code: output=a2d0e1b0d2c1c352 input=a9049054013a1b77]*/

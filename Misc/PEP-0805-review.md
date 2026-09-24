@@ -1333,6 +1333,59 @@ each. Its marshal reference encoding differs between the free-threading and
 GIL configurations; unmarshalling and recursively comparing all 128 code
 objects confirms identical bytecode, constants, flags and source locations.
 
+### FileIO state synchronization before standard-stream sharing
+
+The PEP's function example prints from a new ThreadGroup. A direct probe of
+the current runtime raises IllegalThreadAccessException: stdin, stdout and
+stderr, including their buffered and raw layers, are still LOCAL. Making
+that example work requires native I/O ports; this is independent work and
+does not need a decision on the nine questions below.
+
+FileIO previously had no critical sections around its mutable descriptor,
+mode bits and allocated stat cache. Initialization even passed the shared
+stat pointer to fstat while detached, allowing a concurrent close or init to
+free that memory. It also mutated mode bits before calling an opener. An
+ordinary second init retained old flags; reentrant or overlapping initializers
+mixed settings, leaked the replaced descriptor, or discarded an inner
+initializer's valid state when the outer opener failed.
+
+Native methods and metadata getters now lock the object. Initialization keeps
+its descriptor, mode flags and stat result private until all setup callbacks
+succeed, then publishes the complete native state together. It closes any
+replaced owned descriptor after publication. Failure cleans up only resources
+opened by that invocation, including failure in a reentrant name setter.
+Close removes the descriptor and stat storage before detaching. Detached I/O
+uses a copied descriptor, and the fast closed check is atomic without taking
+a child lock from buffered/text I/O.
+
+A FileIO-specific generation counter prevents a completed seek or truncate
+from overwriting the metadata of a later initialization, including descriptor
+number reuse. In the deterministic seek regression, __index__ replaces a
+borrowed pipe with a regular file: the old pipe's ESPIPE must not mark the
+new file unseekable. In the truncate regression, __index__ installs another
+file whose stat cache must survive truncation of the borrowed old descriptor.
+This counter is native FileIO metadata, not an addition to PyObject's header.
+The changes do not promise atomicity across independent OS descriptor calls.
+
+The first four regressions all fail before the fix in the default build.
+The expanded seven-method suite reports six failures against the previous
+GIL executable, including both stale-cache cases. The final nine-method suite
+also exercises name-setter failure, four groups writing to one explicitly
+declared native FileIO, and two metadata readers racing reinitialization and
+close. Only the internal test helper declares those instances synchronized;
+ordinary files and runtime standard streams remain LOCAL. Buffered/text I/O
+stored references, pending buffers and codec state still need work before
+publishing synchronized standard streams. Arbitrary custom codecs must not
+be implicitly declared safe to share.
+
+The final selection (`test_fileio_shareable`, `test_io`,
+`test_import_file_access`, `test_finalizer_access`) passes in all three debug
+builds, with 1,108 reported tests: 29 skips in the default build and 37 in GIL
+and Tier 2 interpreter builds. Incremental builds report no compiler warnings
+or failed module imports; the optional _decimal module remains unavailable.
+Native source, generated Clinic wrappers and tests match across the builds.
+Baseline, build and suite logs are in `/tmp/pep805-fileio-state/`.
+
 ## Earlier re-review and implementation follow-ups
 
 One earlier question was incorrect: footnote 3 of the
