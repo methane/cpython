@@ -488,6 +488,13 @@ The following exceptions are the exceptions that are usually raised.
    wrong.
 
 
+.. exception:: IllegalThreadAccessException
+
+   Raised when a thread attempts to acquire a reference to a LOCAL object
+   owned by another ThreadGroup.  This is a subclass of :exc:`RuntimeError`
+   in the experimental :pep:`805` implementation.
+
+
 .. exception:: StopIteration
 
    Raised by built-in function :func:`next` and an :term:`iterator`\'s

@@ -104,6 +104,7 @@ PyAPI_DATA(PyObject *) PyExc_MemoryError;
 PyAPI_DATA(PyObject *) PyExc_NameError;
 PyAPI_DATA(PyObject *) PyExc_OverflowError;
 PyAPI_DATA(PyObject *) PyExc_RuntimeError;
+PyAPI_DATA(PyObject *) PyExc_IllegalThreadAccessException;
 #if !defined(Py_LIMITED_API) || Py_LIMITED_API+0 >= 0x03050000
 PyAPI_DATA(PyObject *) PyExc_RecursionError;
 #endif

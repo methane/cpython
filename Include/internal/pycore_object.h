@@ -19,6 +19,10 @@ extern "C" {
 #include <stdbool.h>              // bool
 
 extern uint32_t _PyObject_NewOwnerID(void);
+extern int _PyObject_CheckAccessThread(PyObject *op, PyThreadState *tstate);
+// Consume a new reference, decrefing it on denied access. NULL propagates an
+// existing exception without replacing it.
+PyAPI_FUNC(PyObject *) _PyObject_CheckAccessNullable(PyObject *op);
 
 
 // This value is added to `ob_ref_shared` for objects that use deferred

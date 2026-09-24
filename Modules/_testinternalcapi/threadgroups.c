@@ -1,6 +1,7 @@
 /* Exercise group scheduling without sharing Python functions or mutable
    Python containers between groups. */
 #include "parts.h"
+#include "pycore_code.h"
 #include "pycore_lock.h"
 #include "pycore_object.h"
 #include "pycore_object_deferred.h"
@@ -443,7 +444,132 @@ check_main_group_lifetime(PyObject *self, PyObject *unused)
     Py_RETURN_NONE;
 }
 
+struct access_probe {
+    PyInterpreterState *interp;
+    _PyThreadGroupState *group;
+    PyObject *value;  // A heap reference, checked before the worker uses it.
+    int accessible;
+    int ok;
+};
+
+static void
+access_probe_worker(void *arg)
+{
+    struct access_probe *probe = arg;
+    PyThreadState *tstate = PyThreadState_New(probe->interp);
+    if (tstate == NULL) {
+        return;
+    }
+    _PyThreadGroup_Decref(tstate->threadgroup);
+    tstate->threadgroup = probe->group;
+    _PyThreadGroup_Incref(probe->group);
+    PyEval_AcquireThread(tstate);
+
+    PyObject *value = probe->value;
+    uint32_t owner = value->ob_owner_id;
+    Py_ssize_t count = Py_REFCNT(value);
+    probe->accessible = PyObject_IsAccessible(value);
+    int ok = !PyErr_Occurred();
+    PyObject *checked = PyObject_CheckAccess(value);
+    if (probe->accessible) {
+        ok &= checked == value && !PyErr_Occurred();
+    }
+    else {
+        ok &= checked == NULL &&
+            PyErr_ExceptionMatches(PyExc_IllegalThreadAccessException);
+    }
+    PyErr_Clear();
+    // Copy the heap reference without accessing its contents, then validate
+    // the new reference using the helper intended for API return values.
+    checked = _PyObject_CheckAccessNullable(Py_NewRef(value));
+    if (probe->accessible) {
+        ok &= checked == value && !PyErr_Occurred();
+        Py_XDECREF(checked);
+    }
+    else {
+        ok &= checked == NULL &&
+            PyErr_ExceptionMatches(PyExc_IllegalThreadAccessException);
+    }
+    PyErr_Clear();
+    ok &= value->ob_owner_id == owner && Py_REFCNT(value) == count;
+
+    PyErr_SetString(PyExc_ValueError, "existing exception");
+    ok &= PyObject_IsAccessible(value) == probe->accessible;
+    ok &= _PyObject_CheckAccessNullable(NULL) == NULL;
+    ok &= PyErr_ExceptionMatches(PyExc_ValueError);
+    PyErr_Clear();
+    probe->ok = ok;
+    PyThreadState_Clear(tstate);
+    PyThreadState_DeleteCurrent();
+}
+
+static PyObject *
+threadgroup_access_probe(PyObject *self, PyObject *args)
+{
+    PyObject *group, *value;
+    if (!PyArg_ParseTuple(args, "OO:threadgroup_access_probe", &group, &value)) {
+        return NULL;
+    }
+    // The caller obtained this ordinary argument in its own group.
+    assert(PyObject_IsAccessible(value));
+    _PyThreadGroupState *state = _PyThreadGroup_GetState(group);
+    if (state == NULL) {
+        return NULL;
+    }
+    struct access_probe probe = {
+        .interp = PyInterpreterState_Get(),
+        .group = state,
+        .value = value,
+    };
+    PyThread_ident_t ident;
+    PyThread_handle_t handle;
+    if (PyThread_start_joinable_thread(access_probe_worker, &probe,
+                                      &ident, &handle) != 0) {
+        _PyThreadGroup_Decref(state);
+        return PyErr_Format(PyExc_RuntimeError, "failed to start access probe");
+    }
+    Py_BEGIN_ALLOW_THREADS
+    PyThread_join_thread(handle);
+    Py_END_ALLOW_THREADS
+    _PyThreadGroup_Decref(state);
+    if (!probe.ok) {
+        return PyErr_Format(PyExc_AssertionError, "reference access probe failed");
+    }
+    return PyBool_FromLong(probe.accessible);
+}
+
+static PyObject *
+make_immutable_capsule(PyObject *self, PyObject *unused)
+{
+    static const char data[] = "immutable native data";
+    PyObject *capsule = PyCapsule_New((void *)data, "PEP 805 immutable data", NULL);
+    if (capsule == NULL) {
+        return NULL;
+    }
+    uint32_t owner = capsule->ob_owner_id;
+    assert(capsule->ob_shareable == _Py_SHAREABLE_LOCAL);
+    assert(PyObject_DeclareImmutable(capsule) == 0);
+    assert(PyObject_DeclareImmutable(capsule) == 0);
+    assert(capsule->ob_shareable == _Py_SHAREABLE_IMMUTABLE);
+    assert(capsule->ob_owner_id == owner);
+    return capsule;
+}
+
+static PyObject *
+test_static_immutable_access(PyObject *self, PyObject *unused)
+{
+    PyObject *code = (PyObject *)&_Py_InitCleanup;
+    assert(PyObject_IsAccessible(code));
+    assert(PyObject_CheckAccess(code) == code);
+    assert(PyObject_DeclareImmutable(code) == 0);
+    assert(!PyObject_IS_GC(code));
+    Py_RETURN_NONE;
+}
+
 static PyMethodDef methods[] = {
+    {"test_static_immutable_access", test_static_immutable_access, METH_NOARGS, NULL},
+    {"threadgroup_access_probe", threadgroup_access_probe, METH_VARARGS, NULL},
+    {"make_immutable_capsule", make_immutable_capsule, METH_NOARGS, NULL},
     {"check_main_group_lifetime", check_main_group_lifetime, METH_NOARGS, NULL},
     {"test_deferred_c_stack_ref", test_deferred_c_stack_ref, METH_NOARGS, NULL},
     {"check_deferred_shutdown", check_deferred_shutdown, METH_NOARGS, NULL},

@@ -6,6 +6,47 @@ Object Protocol
 ===============
 
 
+.. c:function:: int PyObject_IsAccessible(PyObject *o)
+
+   Return ``1`` if *o* is immutable or belongs to the current ThreadGroup,
+   and ``0`` otherwise.  Return ``0`` for ``NULL``.  This predicate does not
+   set or clear an exception.
+
+   This CPython API is part of the experimental :pep:`805` implementation.
+
+
+.. c:function:: PyObject* PyObject_CheckAccess(PyObject *o)
+
+   Validate a reference acquired from the heap.  Return *o* unchanged when
+   it is accessible from the current ThreadGroup.  Otherwise raise
+   :exc:`IllegalThreadAccessException` and return ``NULL``.  The reference
+   count is unchanged in both cases.  Passing ``NULL`` returns ``NULL``
+   without changing the current exception.
+
+   Ordinary arguments obtained from already validated thread references do
+   not require another check.  Object-returning API implementations validate
+   their results when acquiring a thread reference from a heap reference.
+
+   This CPython API is part of the experimental :pep:`805` implementation.
+
+
+.. c:function:: int PyObject_DeclareImmutable(PyObject *o)
+
+   Declare that native code guarantees the immutability of *o*.  The caller
+   must already have an accessible reference.  Return ``0`` on success,
+   including when *o* is already immutable, or ``-1`` with an exception set
+   on error.  The reference count and its bias are unchanged.
+
+   This is a native representation contract; it does not freeze an otherwise
+   mutable Python object.  Native code must ensure that no exposed operation
+   can mutate the object's representation after the declaration.  The
+   declaration is shallow: acquiring a referent still requires its own access
+   check.  Static allocation, immortality, and :c:macro:`Py_TPFLAGS_IMMUTABLETYPE`
+   do not by themselves declare an extension object shareable.
+
+   This CPython API is part of the experimental :pep:`805` implementation.
+
+
 .. c:function:: PyObject* Py_GetConstant(unsigned int constant_id)
 
    Get a :term:`strong reference` to a constant.

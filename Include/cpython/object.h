@@ -7,6 +7,14 @@ PyAPI_FUNC(void) _Py_NewReferenceNoTotal(PyObject *op);
 PyAPI_FUNC(void) _Py_ResurrectReference(PyObject *op);
 PyAPI_FUNC(void) _Py_ForgetReference(PyObject *op);
 
+// PEP 805 reference acquisition. CheckAccess returns its borrowed argument
+// on success, or NULL with IllegalThreadAccessException on denied access.
+PyAPI_FUNC(int) PyObject_IsAccessible(PyObject *op);
+PyAPI_FUNC(PyObject *) PyObject_CheckAccess(PyObject *op);
+// Native code must already guarantee immutability of the representation.
+// This declaration does not freeze an otherwise mutable Python object.
+PyAPI_FUNC(int) PyObject_DeclareImmutable(PyObject *op);
+
 #ifdef Py_REF_DEBUG
 /* These are useful as debugging aids when chasing down refleaks. */
 PyAPI_FUNC(Py_ssize_t) _Py_GetGlobalRefTotal(void);

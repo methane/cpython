@@ -2788,6 +2788,97 @@ init_shareable(PyObject *op)
     _Py_atomic_store_uint8_relaxed(&op->ob_shareable, state);
 }
 
+static uint8_t
+get_shareable_state(PyObject *op, PyThreadState *tstate)
+{
+    uint8_t state = _Py_atomic_load_uint8(&op->ob_shareable);
+    if (state == _Py_SHAREABLE_LOCAL &&
+        _Py_atomic_load_uint32_relaxed(&op->ob_owner_id) == 0 &&
+        _Py_IsStaticImmortal(op))
+    {
+        // Static allocation alone is not an immutability declaration.
+        // Primitive singletons have immutable representations; extension
+        // objects without an explicit declaration belong to Main.
+        if (is_intrinsically_immutable(Py_TYPE(op))) {
+            // Some internal immutable singletons live in read-only storage.
+            state = _Py_SHAREABLE_IMMUTABLE;
+        }
+        else {
+            uint32_t unowned = 0;
+            _Py_atomic_compare_exchange_uint32(
+                &op->ob_owner_id, &unowned, tstate->interp->main_threadgroup->id);
+        }
+    }
+    return state;
+}
+
+static int
+is_accessible(PyObject *op, PyThreadState *tstate)
+{
+    uint8_t state = get_shareable_state(op, tstate);
+    return state == _Py_SHAREABLE_IMMUTABLE ||
+        (state == _Py_SHAREABLE_LOCAL &&
+         _Py_atomic_load_uint32_relaxed(&op->ob_owner_id) == tstate->threadgroup->id);
+}
+
+int
+PyObject_IsAccessible(PyObject *op)
+{
+    return op != NULL && is_accessible(op, _PyThreadState_GET());
+}
+
+int
+_PyObject_CheckAccessThread(PyObject *op, PyThreadState *tstate)
+{
+    if (is_accessible(op, tstate)) {
+        return 0;
+    }
+    // Do not inspect the type, call repr(), or execute user code on an
+    // inaccessible object, even when formatting the exception.
+    PyErr_Format(PyExc_IllegalThreadAccessException,
+                 "object owned by ThreadGroup %u cannot be accessed "
+                 "by ThreadGroup %u",
+                 _Py_atomic_load_uint32_relaxed(&op->ob_owner_id),
+                 tstate->threadgroup->id);
+    return -1;
+}
+
+PyObject *
+PyObject_CheckAccess(PyObject *op)
+{
+    if (op == NULL) {
+        return NULL;
+    }
+    return _PyObject_CheckAccessThread(op, _PyThreadState_GET()) < 0 ? NULL : op;
+}
+
+PyObject *
+_PyObject_CheckAccessNullable(PyObject *op)
+{
+    if (op != NULL && PyObject_CheckAccess(op) == NULL) {
+        Py_DECREF(op);
+        return NULL;
+    }
+    return op;
+}
+
+int
+PyObject_DeclareImmutable(PyObject *op)
+{
+    if (op == NULL) {
+        PyErr_BadInternalCall();
+        return -1;
+    }
+    assert(PyObject_IsAccessible(op));
+    if (get_shareable_state(op, _PyThreadState_GET()) == _Py_SHAREABLE_IMMUTABLE) {
+        return 0;
+    }
+    // Preserve the bias: immutable objects still use the creating group's
+    // local reference count, independently of their access policy.
+    _Py_atomic_store_uint8(&op->ob_shareable, _Py_SHAREABLE_IMMUTABLE);
+    return 0;
+}
+
 static inline void
 new_reference(PyObject *op)
 {

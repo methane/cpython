@@ -9618,7 +9618,14 @@ _PyStaticType_InitForExtension(PyInterpreterState *interp, PyTypeObject *self)
 int
 _PyStaticType_InitBuiltin(PyInterpreterState *interp, PyTypeObject *self)
 {
-    return init_static_type(interp, self, 1, _Py_IsMainInterpreter(interp));
+    int res = init_static_type(interp, self, 1, _Py_IsMainInterpreter(interp));
+    if (res == 0) {
+        // The managed-static flag is also used by extension types. Only this
+        // builtin initialization path supplies an implicit sharing contract.
+        _Py_atomic_store_uint8(&((PyObject *)self)->ob_shareable,
+                               _Py_SHAREABLE_IMMUTABLE);
+    }
+    return res;
 }
 
 

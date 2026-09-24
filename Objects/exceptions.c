@@ -2550,7 +2550,10 @@ SimpleExtendsException(PyExc_Exception, EOFError,
  *    RuntimeError extends Exception
  */
 SimpleExtendsException(PyExc_Exception, RuntimeError,
-                       "Unspecified run-time error.");
+    "Unspecified run-time error.");
+
+SimpleExtendsException(PyExc_RuntimeError, IllegalThreadAccessException,
+    "A LOCAL object cannot be accessed from another ThreadGroup.");
 
 /*
  *    RecursionError extends RuntimeError
@@ -4530,6 +4533,7 @@ static struct static_exception static_exceptions[] = {
     ITEM(ImportCycleError), // base: ImportError(Exception)
     ITEM(ModuleNotFoundError), // base: ImportError(Exception)
     ITEM(NotImplementedError),  // base: RuntimeError(Exception)
+    ITEM(IllegalThreadAccessException),  // base: RuntimeError(Exception)
     ITEM(PythonFinalizationError),  // base: RuntimeError(Exception)
     ITEM(RecursionError),  // base: RuntimeError(Exception)
     ITEM(UnboundLocalError), // base: NameError(Exception)
