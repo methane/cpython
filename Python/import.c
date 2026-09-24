@@ -234,7 +234,7 @@ PyObject *
 PyImport_GetModuleDict(void)
 {
     PyThreadState *tstate = _PyThreadState_GET();
-    return get_modules_dict(tstate, true);
+    return PyObject_CheckAccess(get_modules_dict(tstate, true));
 }
 
 int
@@ -2785,7 +2785,7 @@ module_dict_for_exec(PyThreadState *tstate, PyObject *name)
     d = PyModule_GetDict(m);
     int r = PyDict_Contains(d, &_Py_ID(__builtins__));
     if (r == 0) {
-        r = PyDict_SetItem(d, &_Py_ID(__builtins__), PyEval_GetBuiltins());
+        r = PyDict_SetItem(d, &_Py_ID(__builtins__), _PyEval_GetBuiltins(tstate));
     }
     if (r < 0) {
         remove_module(tstate, name);

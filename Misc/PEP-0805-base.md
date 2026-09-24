@@ -111,6 +111,11 @@ can have separate LOCAL basic refs in multiple groups, and each group retains
 its canonical ref/proxy while those references are alive. Public weakref getters
 also check their acquired referents.
 
+Public builtin-namespace getters and `PyImport_GetModuleDict()` check the
+dictionary they return. A frameless native thread in another group cannot obtain
+Main's LOCAL interpreter dictionaries. VM namespace storage still uses internal
+references; individual values obtained from those namespaces are checked.
+
 ## Extraction provenance
 
 `7201b6539e` was applied with `git cherry-pick --no-commit`. Since it mixes all
@@ -218,6 +223,11 @@ Parallel scheduling tests remain skipped while the interpreter GIL is enabled.
   cache probe keeps both groups' refs alive and verifies each group's repeated
   requests return its own ref/proxy. Ownership and weakref suites pass `-R 3:3`
   with `mimalloc_debug` (167 tests, 4 skips).
+- Interpreter namespace getters: 504 tests passed across ownership, evaluation,
+  code evaluation, import/function C APIs, builtins, modules, embedding, scopes,
+  code and GC (16 skips). The native probe covers borrowed and strong builtin
+  getters, the module dictionary and the already-guarded xoptions getter from
+  frameless threads. Ownership passes `-R 3:3` (21 tests).
 - The non-debug normal build at `9a07ddfce7` passes 1,378 tests across 16 files
   covering sharing states, per-thread freelists, allocation, threading, GC and
   embedding (34 skips). This predates the internal world-stop activation.

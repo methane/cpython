@@ -748,7 +748,8 @@ static const char *return_apis[] = {
     "PyObject_GetOptionalAttr", "PyObject_GetOptionalAttrString",
     "PyObject_GenericGetAttr", "PyCell_Get", "PyVectorcall_Call",
     "PyObject_Call", "PyObject_Vectorcall", "PyObject_VectorcallDict",
-    "PyVectorcall_Call_keywords", NULL,
+    "PyVectorcall_Call_keywords", "PyEval_GetBuiltins", "PyImport_GetModuleDict",
+    "PySys_GetXOptions", "PyEval_GetFrameBuiltins", NULL,
 };
 
 struct return_probe {
@@ -889,6 +890,21 @@ return_probe_worker(void *arg)
                 case 24: result = PyObject_VectorcallDict(box, NULL, 0, kwargs); break;
                 case 25: result = PyVectorcall_Call(box, callargs, kwargs); break;
             }
+            break;
+        case 26:
+            result = PyEval_GetBuiltins();
+            owned = 0;
+            break;
+        case 27:
+            result = PyImport_GetModuleDict();
+            owned = 0;
+            break;
+        case 28:
+            result = PySys_GetXOptions();
+            owned = 0;
+            break;
+        case 29:
+            result = PyEval_GetFrameBuiltins();
             break;
         default:
             box = make_return_box(&return_box_spec, value);

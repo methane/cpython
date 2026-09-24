@@ -1,6 +1,7 @@
 """LOCAL/IMMUTABLE reference acquisition from native ThreadGroup workers."""
 
 import _thread
+import builtins
 import datetime
 import dis
 import sys
@@ -183,6 +184,19 @@ assert 'threading' not in sys.modules
                             source, group, api)
                         self.assertIs(accessible,
                                       immutable or group is sys.main_thread_group)
+
+    def test_interpreter_namespace_returns(self):
+        for api, value in (
+            ('PyEval_GetBuiltins', builtins.__dict__),
+            ('PyEval_GetFrameBuiltins', builtins.__dict__),
+            ('PyImport_GetModuleDict', sys.modules),
+            ('PySys_GetXOptions', sys._xoptions),
+        ):
+            for group in (sys.main_thread_group, self.foreign):
+                with self.subTest(api=api, group=group):
+                    self.assertIs(internal.threadgroup_return_probe(
+                        (value, frozendict()), group, api),
+                        group is sys.main_thread_group)
 
     def check_vm_code(self, code, warmups, specialized=None):
         for value, immutable in ((object(), False), (42, True)):

@@ -2792,7 +2792,7 @@ _PyDict_LoadBuiltinsFromGlobals(PyObject *globals)
         return NULL;
     }
     if (PyStackRef_IsNull(ref)) {
-        return Py_NewRef(PyEval_GetBuiltins());
+        return Py_NewRef(_PyEval_GetBuiltins(_PyThreadState_GET()));
     }
     PyObject *builtins = PyStackRef_AsPyObjectBorrow(ref);
     if (PyModule_Check(builtins)) {

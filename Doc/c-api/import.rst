@@ -210,6 +210,8 @@ Importing Modules
 
    Return the dictionary used for the module administration (a.k.a.
    ``sys.modules``).  Note that this is a per-interpreter variable.
+   Return ``NULL`` and raise :exc:`IllegalThreadAccessException` if the
+   dictionary is local to another ThreadGroup.
 
 .. c:function:: PyObject* PyImport_GetModule(PyObject *name)
 

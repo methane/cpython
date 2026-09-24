@@ -13,6 +13,8 @@ Reflection
 
    Return a dictionary of the builtins in the current execution frame,
    or the interpreter of the thread state if no frame is currently executing.
+   Return ``NULL`` and raise :exc:`IllegalThreadAccessException` if the
+   dictionary is local to another ThreadGroup.
 
 
 .. c:function:: PyObject* PyEval_GetLocals(void)
@@ -65,6 +67,8 @@ Reflection
 
    Return a dictionary of the builtins in the current execution frame,
    or the interpreter of the thread state if no frame is currently executing.
+   Return ``NULL`` and raise :exc:`IllegalThreadAccessException` if the
+   dictionary is local to another ThreadGroup.
 
    .. versionadded:: 3.13
 

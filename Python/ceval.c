@@ -2643,6 +2643,8 @@ PyEval_GetFrame(void)
 PyObject *
 _PyEval_GetBuiltins(PyThreadState *tstate)
 {
+    // Internal namespace reference: VM lookups check the values acquired
+    // from it. Public getters must check access to the dictionary itself.
     _PyInterpreterFrame *frame = _PyThreadState_GetFrame(tstate);
     if (frame != NULL) {
         return frame->f_builtins;
@@ -2654,15 +2656,16 @@ PyObject *
 PyEval_GetBuiltins(void)
 {
     PyThreadState *tstate = _PyThreadState_GET();
-    return _PyEval_GetBuiltins(tstate);
+    return PyObject_CheckAccess(_PyEval_GetBuiltins(tstate));
 }
 
 /* Convenience function to get a builtin from its name */
 PyObject *
 _PyEval_GetBuiltin(PyObject *name)
 {
+    PyThreadState *tstate = _PyThreadState_GET();
     PyObject *attr;
-    if (PyMapping_GetOptionalItem(PyEval_GetBuiltins(), name, &attr) == 0) {
+    if (PyMapping_GetOptionalItem(_PyEval_GetBuiltins(tstate), name, &attr) == 0) {
         PyErr_SetObject(PyExc_AttributeError, name);
     }
     return attr;
@@ -2833,7 +2836,7 @@ _PyEval_EnsureBuiltins(PyThreadState *tstate, PyObject *globals,
         if (_PyErr_Occurred(tstate)) {
             return -1;
         }
-        builtins = PyEval_GetBuiltins();  // borrowed
+        builtins = _PyEval_GetBuiltins(tstate);  // internal namespace reference
         if (builtins == NULL) {
             assert(_PyErr_Occurred(tstate));
             return -1;
@@ -2899,7 +2902,7 @@ PyObject* PyEval_GetFrameGlobals(void)
 PyObject* PyEval_GetFrameBuiltins(void)
 {
     PyThreadState *tstate = _PyThreadState_GET();
-    return Py_XNewRef(_PyEval_GetBuiltins(tstate));
+    return Py_XNewRef(PyObject_CheckAccess(_PyEval_GetBuiltins(tstate)));
 }
 
 int
