@@ -1109,8 +1109,10 @@ threadgroup_return_probe(PyObject *self, PyObject *args)
 struct vm_probe {
     struct access_probe base;
     PyObject *code;
+    PyObject *bytecode;
     int warmups;
     int trials;
+    int capture_bytecode;
 };
 
 static PyObject *
@@ -1325,6 +1327,19 @@ vm_probe_worker(void *arg)
         Py_CLEAR(result);
         PyErr_Clear();
     }
+    if (probe->capture_bytecode) {
+        PyCodeObject *code = (PyCodeObject *)probe->code;
+        _Py_CODEUNIT *bytecode = _PyCode_GetTLBCFast(tstate, code);
+        if (bytecode == NULL) {
+            // Argument acquisition can reject the call before the first RESUME.
+            probe->bytecode = Py_NewRef(Py_None);
+        }
+        else {
+            probe->bytecode = PyBytes_FromStringAndSize(
+                (const char *)bytecode, _PyCode_NBYTES(code));
+        }
+        probe->base.ok = probe->bytecode != NULL;
+    }
 done:
     PyErr_Clear();
     Py_XDECREF(result);
@@ -1349,9 +1364,10 @@ static PyObject *
 threadgroup_vm_probe(PyObject *self, PyObject *args)
 {
     PyObject *group, *source, *code;
-    int warmups, trials = 1;
-    if (!PyArg_ParseTuple(args, "O!OO!i|i:threadgroup_vm_probe", &PyCode_Type,
-                          &code, &group, &PyTuple_Type, &source, &warmups, &trials)) {
+    int warmups, trials = 1, capture_bytecode = 0;
+    if (!PyArg_ParseTuple(args, "O!OO!i|ip:threadgroup_vm_probe", &PyCode_Type,
+                          &code, &group, &PyTuple_Type, &source, &warmups,
+                          &trials, &capture_bytecode)) {
         return NULL;
     }
     if (PyTuple_GET_SIZE(source) != 3 || warmups < 0 || warmups > 1000 ||
@@ -1370,6 +1386,7 @@ threadgroup_vm_probe(PyObject *self, PyObject *args)
         .code = code,
         .warmups = warmups,
         .trials = trials,
+        .capture_bytecode = capture_bytecode,
     };
     PyThread_ident_t ident;
     PyThread_handle_t handle;
@@ -1382,7 +1399,12 @@ threadgroup_vm_probe(PyObject *self, PyObject *args)
     Py_END_ALLOW_THREADS
     _PyThreadGroup_Decref(state);
     if (!probe.base.ok) {
+        Py_XDECREF(probe.bytecode);
         return PyErr_Format(PyExc_AssertionError, "VM reference acquisition probe failed");
+    }
+    if (capture_bytecode) {
+        return Py_BuildValue("NN", PyBool_FromLong(probe.base.accessible),
+                             probe.bytecode);
     }
     return PyBool_FromLong(probe.base.accessible);
 }

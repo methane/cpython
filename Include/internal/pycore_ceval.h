@@ -164,7 +164,6 @@ _PyEval_IsGILEnabled(PyThreadState *tstate)
 #endif
 }
 
-#ifdef Py_GIL_DISABLED
 static inline _Py_CODEUNIT *
 _PyEval_GetExecutableCode(PyThreadState *tstate, PyCodeObject *co)
 {
@@ -174,8 +173,6 @@ _PyEval_GetExecutableCode(PyThreadState *tstate, PyCodeObject *co)
     }
     return _PyCode_GetTLBC(co);
 }
-
-#endif
 
 extern void _PyEval_DeactivateOpCache(void);
 

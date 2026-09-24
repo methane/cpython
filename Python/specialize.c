@@ -325,7 +325,6 @@ _PyCode_Quicken(_Py_CODEUNIT *instructions, Py_ssize_t size, int enable_counters
 static inline int
 set_opcode(_Py_CODEUNIT *instr, uint8_t opcode)
 {
-#ifdef Py_GIL_DISABLED
     uint8_t old_op = _Py_atomic_load_uint8_relaxed(&instr->op.code);
     if (old_op >= MIN_INSTRUMENTED_OPCODE) {
         /* Lost race with instrumentation */
@@ -337,16 +336,12 @@ set_opcode(_Py_CODEUNIT *instr, uint8_t opcode)
         return 0;
     }
     return 1;
-#else
-    instr->op.code = opcode;
-    return 1;
-#endif
 }
 
 static inline void
 set_counter(_Py_BackoffCounter *counter, _Py_BackoffCounter value)
 {
-    FT_ATOMIC_STORE_UINT16_RELAXED(counter->value_and_backoff,
+    _Py_atomic_store_uint16_relaxed(&counter->value_and_backoff,
                                    value.value_and_backoff);
 }
 
@@ -355,7 +350,7 @@ load_counter(_Py_BackoffCounter *counter)
 {
     _Py_BackoffCounter result = {
         .value_and_backoff =
-            FT_ATOMIC_LOAD_UINT16_RELAXED(counter->value_and_backoff)};
+            _Py_atomic_load_uint16_relaxed(&counter->value_and_backoff)};
     return result;
 }
 
@@ -377,7 +372,7 @@ static inline void
 unspecialize(_Py_CODEUNIT *instr)
 {
     assert(!PyErr_Occurred());
-    uint8_t opcode = FT_ATOMIC_LOAD_UINT8_RELAXED(instr->op.code);
+    uint8_t opcode = _Py_atomic_load_uint8_relaxed(&instr->op.code);
     uint8_t generic_opcode = _PyOpcode_Deopt[opcode];
     STAT_INC(generic_opcode, failure);
     if (!set_opcode(instr, generic_opcode)) {
@@ -795,7 +790,7 @@ do_specialize_instance_load_attr(PyObject* owner, _Py_CODEUNIT* instr, PyObject*
         SPECIALIZATION_FAIL(LOAD_ATTR, SPEC_FAIL_OUT_OF_VERSIONS);
         return -1;
     }
-    uint8_t oparg = FT_ATOMIC_LOAD_UINT8_RELAXED(instr->op.arg);
+    uint8_t oparg = _Py_atomic_load_uint8_relaxed(&instr->op.arg);
     switch(kind) {
         case OVERRIDING:
             SPECIALIZATION_FAIL(LOAD_ATTR, SPEC_FAIL_ATTR_OVERRIDING_DESCRIPTOR);
@@ -3045,12 +3040,10 @@ static const PyBytesObject no_location = {
     .ob_sval = { NO_LOC_4 }
 };
 
-#ifdef Py_GIL_DISABLED
 static _PyCodeArray init_cleanup_tlbc = {
     .size = 1,
     .entries = {(char*) &_Py_InitCleanup.co_code_adaptive},
 };
-#endif
 
 const struct _PyCode8 _Py_InitCleanup = {
     _PyVarObject_HEAD_INIT(&PyCode_Type, 3),
@@ -3067,9 +3060,7 @@ const struct _PyCode8 _Py_InitCleanup = {
     ._co_firsttraceable = 4,
     .co_stacksize = 2,
     .co_framesize = 2 + FRAME_SPECIALS_SIZE,
-#ifdef Py_GIL_DISABLED
     .co_tlbc = &init_cleanup_tlbc,
-#endif
     .co_code_adaptive = {
         EXIT_INIT_CHECK, 0,
         RETURN_VALUE, 0,

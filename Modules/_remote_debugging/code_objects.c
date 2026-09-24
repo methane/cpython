@@ -10,10 +10,8 @@
 #define MAX_LINETABLE_SIZE (64 * 1024)
 
 /* ============================================================================
- * TLBC CACHING FUNCTIONS (Py_GIL_DISABLED only)
+ * TLBC CACHING FUNCTIONS
  * ============================================================================ */
-
-#ifdef Py_GIL_DISABLED
 
 void
 tlbc_cache_entry_destroy(void *ptr)
@@ -32,8 +30,8 @@ get_tlbc_cache_entry(RemoteUnwinderObject *self, uintptr_t code_addr, uint32_t c
     TLBCCacheEntry *entry = _Py_hashtable_get(self->tlbc_cache, key);
 
     if (entry && entry->generation != current_generation) {
-        // Entry is stale, remove it by setting to NULL
-        _Py_hashtable_set(self->tlbc_cache, key, NULL);
+        _Py_hashtable_steal(self->tlbc_cache, key);
+        tlbc_cache_entry_destroy(entry);
         entry = NULL;
     }
 
@@ -108,6 +106,10 @@ cache_tlbc_array(RemoteUnwinderObject *unwinder, uintptr_t code_addr, uintptr_t 
 
     // Store in cache
     void *key = (void *)code_addr;
+    TLBCCacheEntry *previous = _Py_hashtable_steal(unwinder->tlbc_cache, key);
+    if (previous != NULL) {
+        tlbc_cache_entry_destroy(previous);
+    }
     if (_Py_hashtable_set(unwinder->tlbc_cache, key, entry) < 0) {
         tlbc_cache_entry_destroy(entry);
         PyErr_NoMemory();
@@ -117,8 +119,6 @@ cache_tlbc_array(RemoteUnwinderObject *unwinder, uintptr_t code_addr, uintptr_t 
 
     return 1; // Success
 }
-
-#endif
 
 /* ============================================================================
  * LINE TABLE PARSING FUNCTIONS
@@ -429,8 +429,7 @@ parse_code_object(RemoteUnwinderObject *unwinder,
     uintptr_t ip = ctx->instruction_pointer;
     ptrdiff_t addrq;
 
-#ifdef Py_GIL_DISABLED
-    // Handle thread-local bytecode (TLBC) in free threading builds
+    // Handle thread-local bytecode (TLBC).
     if (ctx->tlbc_index == 0 || unwinder == NULL || unwinder->debug_offsets.code_object.co_tlbc == 0) {
         // No TLBC or no unwinder - use main bytecode directly
         addrq = (uint16_t *)ip - (uint16_t *)meta->addr_code_adaptive;
@@ -440,8 +439,16 @@ parse_code_object(RemoteUnwinderObject *unwinder,
     // Try to get TLBC data from cache (we'll get generation from the caller)
     TLBCCacheEntry *tlbc_entry = get_tlbc_cache_entry(unwinder, real_address, unwinder->tlbc_generation);
 
-    if (!tlbc_entry) {
-        // Cache miss - try to read and cache TLBC array
+    uintptr_t *entries = tlbc_entry == NULL ? NULL :
+        (uintptr_t *)((char *)tlbc_entry->tlbc_array + sizeof(Py_ssize_t));
+    if (ctx->tlbc_index < 0) {
+        PyErr_Format(PyExc_RuntimeError, "Invalid tlbc_index %d", ctx->tlbc_index);
+        goto error;
+    }
+    if (tlbc_entry == NULL || ctx->tlbc_index >= tlbc_entry->tlbc_array_size ||
+        entries[ctx->tlbc_index] == 0) {
+        // Copies are created lazily. A live thread can start executing this
+        // code without changing the interpreter's TLBC generation.
         if (!cache_tlbc_array(unwinder, real_address, real_address + unwinder->debug_offsets.code_object.co_tlbc, unwinder->tlbc_generation)) {
             set_exception_cause(unwinder, PyExc_RuntimeError, "Failed to cache TLBC array");
             goto error;
@@ -472,14 +479,10 @@ parse_code_object(RemoteUnwinderObject *unwinder,
         }
     }
 
-    // Fall back to main bytecode (no tlbc_entry or tlbc_bytecode_addr was 0)
-    addrq = (uint16_t *)ip - (uint16_t *)meta->addr_code_adaptive;
+    PyErr_SetString(PyExc_RuntimeError, "Thread-local bytecode is unavailable");
+    goto error;
 
 done_tlbc:
-#else
-    // Non-free-threaded build, always use the main bytecode
-    addrq = (uint16_t *)ip - (uint16_t *)meta->addr_code_adaptive;
-#endif
     ;  // Empty statement to avoid C23 extension warning
 
     if (!unwinder->opcodes && meta->last_frame_info != NULL && meta->last_addrq == addrq) {

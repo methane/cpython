@@ -13,7 +13,6 @@ _testinternalcapi = import_helper.import_module("_testinternalcapi")
 
 @cpython_only
 @requires_working_threading()
-@unittest.skipUnless(support.Py_GIL_DISABLED, "only in free-threaded builds")
 class TLBCTests(unittest.TestCase):
     @requires_specialization
     def test_new_threads_start_with_unspecialized_code(self):
@@ -107,6 +106,151 @@ class TLBCTests(unittest.TestCase):
         assert tlbc_ids[1] == tlbc_ids[2]
         """)
         assert_python_ok("-X", "tlbc=1", "-c", code)
+
+    def test_growing_tlbc_array(self):
+        code = textwrap.dedent("""
+        import queue
+        import threading
+
+        from _testinternalcapi import get_tlbc_id
+
+        count = 32
+        barrier = threading.Barrier(count + 1)
+        results = queue.Queue()
+        errors = queue.Queue()
+
+        def add(a, b):
+            return a + b
+
+        def worker():
+            try:
+                assert add(1, 2) == 3
+                results.put(get_tlbc_id(add))
+                # Keep all indices reserved until the table has grown.
+                barrier.wait()
+                assert add('a', 'b') == 'ab'
+            except BaseException as exc:
+                errors.put(repr(exc))
+                barrier.abort()
+
+        assert add(1, 2) == 3
+        main_id = get_tlbc_id(add)
+        threads = [threading.Thread(target=worker) for _ in range(count)]
+        for thread in threads:
+            thread.start()
+        barrier.wait()
+        for thread in threads:
+            thread.join()
+        assert errors.empty(), errors.get_nowait()
+        ids = [results.get_nowait() for _ in threads]
+        assert None not in ids
+        assert len(set(ids)) == count
+        assert main_id not in ids
+        assert add(1, 2) == 3
+        """)
+        assert_python_ok("-X", "tlbc=1", "-c", code)
+
+    def test_frames_outlive_thread(self):
+        code = textwrap.dedent("""
+        import gc
+        import queue
+        import sys
+        import threading
+
+        kind, freeze, inspect = sys.argv[1:]
+        results = queue.Queue()
+
+        class Awaitable:
+            def __await__(self):
+                yield 10
+                return 20
+
+        def generator():
+            try:
+                yield 10
+            except ValueError:
+                yield 20
+
+        async def coroutine():
+            return await Awaitable()
+
+        async def async_generator():
+            yield 10
+            yield 20
+
+        def retained_frame():
+            return sys._getframe()
+
+        def worker():
+            if kind == 'generator':
+                value = generator()
+                assert next(value) == 10
+            elif kind == 'coroutine':
+                value = coroutine()
+                assert value.send(None) == 10
+            elif kind == 'async_generator':
+                value = async_generator()
+                try:
+                    value.__anext__().send(None)
+                except StopIteration as exc:
+                    assert exc.value == 10
+                else:
+                    raise AssertionError('async generator did not yield')
+            else:
+                value = retained_frame()
+            results.put(value)
+
+        thread = threading.Thread(target=worker)
+        thread.start()
+        thread.join()
+        value = results.get_nowait()
+        if inspect == '1':
+            if kind == 'generator':
+                frame = value.gi_frame
+            elif kind == 'coroutine':
+                frame = value.cr_frame
+            elif kind == 'async_generator':
+                frame = value.ag_frame
+            else:
+                frame = value
+            lasti, lineno = frame.f_lasti, frame.f_lineno
+            assert 0 <= lasti < len(frame.f_code.co_code)
+        if freeze == '1':
+            gc.freeze()
+        sys._clear_internal_caches()
+        if inspect == '1':
+            assert frame.f_lasti == lasti, (frame.f_lasti, lasti)
+            assert frame.f_lineno == lineno, (frame.f_lineno, lineno)
+
+        if kind == 'generator':
+            assert value.throw(ValueError) == 20
+            value.close()
+        elif kind == 'coroutine':
+            try:
+                value.send(None)
+            except StopIteration as exc:
+                assert exc.value == 20
+            else:
+                raise AssertionError('coroutine did not return')
+        elif kind == 'async_generator':
+            try:
+                value.__anext__().send(None)
+            except StopIteration as exc:
+                assert exc.value == 20
+            else:
+                raise AssertionError('async generator did not yield')
+            try:
+                value.aclose().send(None)
+            except StopIteration:
+                pass
+        gc.unfreeze()
+        """)
+        for kind in ('generator', 'coroutine', 'async_generator', 'frame'):
+            for freeze in ('0', '1'):
+                for inspect in (('1',) if kind == 'frame' else ('0', '1')):
+                    with self.subTest(kind=kind, freeze=freeze, inspect=inspect):
+                        assert_python_ok("-X", "tlbc=1", "-c", code,
+                                         kind, freeze, inspect)
 
     def test_no_copies_if_tlbc_disabled(self):
         code = textwrap.dedent("""

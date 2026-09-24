@@ -6209,7 +6209,7 @@
             assert(executor->vm_data.code == code);
             assert(executor->vm_data.valid);
             assert(tstate->current_executor == NULL);
-            uintptr_t iversion = FT_ATOMIC_LOAD_UINTPTR_ACQUIRE(code->_co_instrumentation_version);
+            uintptr_t iversion = _Py_atomic_load_uintptr_acquire(&code->_co_instrumentation_version);
             if (_Py_atomic_load_uintptr_relaxed(&tstate->eval_breaker) != iversion) {
                 opcode = executor->vm_data.opcode;
                 oparg = (oparg & ~255) | executor->vm_data.oparg;
@@ -8180,7 +8180,6 @@
             /* Skip 1 cache entry */
             // _LOAD_BYTECODE
             {
-                #ifdef Py_GIL_DISABLED
                 if (frame->tlbc_index !=
                     ((_PyThreadStateImpl *)tstate)->tlbc_index) {
                     _PyFrame_SetStackPointer(frame, stack_pointer);
@@ -8197,7 +8196,6 @@
                     next_instr = frame->instr_ptr;
                     DISPATCH();
                 }
-                #endif
             }
             // _MAYBE_INSTRUMENT
             {
@@ -8209,7 +8207,7 @@
                 #endif
                 if (check_instrumentation) {
                     uintptr_t global_version = _Py_atomic_load_uintptr_relaxed(&tstate->eval_breaker) & ~_PY_EVAL_EVENTS_MASK;
-                    uintptr_t code_version = FT_ATOMIC_LOAD_UINTPTR_ACQUIRE(_PyFrame_GetCode(frame)->_co_instrumentation_version);
+                    uintptr_t code_version = _Py_atomic_load_uintptr_acquire(&_PyFrame_GetCode(frame)->_co_instrumentation_version);
                     if (code_version != global_version) {
                         _PyFrame_SetStackPointer(frame, stack_pointer);
                         _PyFrame_StackPointerValidate(frame);
@@ -11579,7 +11577,6 @@
             (void)this_instr;
             // _LOAD_BYTECODE
             {
-                #ifdef Py_GIL_DISABLED
                 if (frame->tlbc_index !=
                     ((_PyThreadStateImpl *)tstate)->tlbc_index) {
                     _PyFrame_SetStackPointer(frame, stack_pointer);
@@ -11596,7 +11593,6 @@
                     next_instr = frame->instr_ptr;
                     DISPATCH();
                 }
-                #endif
             }
             // _MAYBE_INSTRUMENT
             {
@@ -11608,7 +11604,7 @@
                 #endif
                 if (check_instrumentation) {
                     uintptr_t global_version = _Py_atomic_load_uintptr_relaxed(&tstate->eval_breaker) & ~_PY_EVAL_EVENTS_MASK;
-                    uintptr_t code_version = FT_ATOMIC_LOAD_UINTPTR_ACQUIRE(_PyFrame_GetCode(frame)->_co_instrumentation_version);
+                    uintptr_t code_version = _Py_atomic_load_uintptr_acquire(&_PyFrame_GetCode(frame)->_co_instrumentation_version);
                     if (code_version != global_version) {
                         _PyFrame_SetStackPointer(frame, stack_pointer);
                         _PyFrame_StackPointerValidate(frame);
@@ -11668,21 +11664,19 @@
             _Py_emscripten_signal_clock -= Py_EMSCRIPTEN_SIGNAL_HANDLING;
             #endif
             uintptr_t eval_breaker = _Py_atomic_load_uintptr_relaxed(&tstate->eval_breaker);
-            uintptr_t version = FT_ATOMIC_LOAD_UINTPTR_ACQUIRE(_PyFrame_GetCode(frame)->_co_instrumentation_version);
+            uintptr_t version = _Py_atomic_load_uintptr_acquire(&_PyFrame_GetCode(frame)->_co_instrumentation_version);
             assert((version & _PY_EVAL_EVENTS_MASK) == 0);
             if (eval_breaker != version) {
                 UPDATE_MISS_STATS(RESUME);
                 assert(_PyOpcode_Deopt[opcode] == (RESUME));
                 JUMP_TO_PREDICTED(RESUME);
             }
-            #ifdef Py_GIL_DISABLED
             if (frame->tlbc_index !=
                 ((_PyThreadStateImpl *)tstate)->tlbc_index) {
                 UPDATE_MISS_STATS(RESUME);
                 assert(_PyOpcode_Deopt[opcode] == (RESUME));
                 JUMP_TO_PREDICTED(RESUME);
             }
-            #endif
             DISPATCH();
         }
 
@@ -11709,21 +11703,19 @@
                 _Py_emscripten_signal_clock -= Py_EMSCRIPTEN_SIGNAL_HANDLING;
                 #endif
                 uintptr_t eval_breaker = _Py_atomic_load_uintptr_relaxed(&tstate->eval_breaker);
-                uintptr_t version = FT_ATOMIC_LOAD_UINTPTR_ACQUIRE(_PyFrame_GetCode(frame)->_co_instrumentation_version);
+                uintptr_t version = _Py_atomic_load_uintptr_acquire(&_PyFrame_GetCode(frame)->_co_instrumentation_version);
                 assert((version & _PY_EVAL_EVENTS_MASK) == 0);
                 if (eval_breaker != version) {
                     UPDATE_MISS_STATS(RESUME);
                     assert(_PyOpcode_Deopt[opcode] == (RESUME));
                     JUMP_TO_PREDICTED(RESUME);
                 }
-                #ifdef Py_GIL_DISABLED
                 if (frame->tlbc_index !=
                     ((_PyThreadStateImpl *)tstate)->tlbc_index) {
                     UPDATE_MISS_STATS(RESUME);
                     assert(_PyOpcode_Deopt[opcode] == (RESUME));
                     JUMP_TO_PREDICTED(RESUME);
                 }
-                #endif
             }
             // _JIT
             {

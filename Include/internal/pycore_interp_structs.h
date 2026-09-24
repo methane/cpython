@@ -773,8 +773,6 @@ struct _Py_interp_static_objects {
 #include "pycore_instruments.h"   // PY_MONITORING_TOOL_IDS
 
 
-#ifdef Py_GIL_DISABLED
-
 // A min-heap of indices
 typedef struct _PyIndexHeap {
     int32_t *values;
@@ -801,7 +799,6 @@ typedef struct _PyIndexPool {
     // Used for TLBC cache invalidation in remote debugging
     uint32_t tlbc_generation;
 } _PyIndexPool;
-#endif
 
 typedef union _Py_unique_id_entry {
     // Points to the next free type id, when part of the freelist
@@ -966,8 +963,8 @@ struct _is {
 #if defined(Py_GIL_DISABLED)
     struct _brc_state brc;  // biased reference counting state
     PyMutex weakref_locks[NUM_WEAKREF_LIST_LOCKS];
-    _PyIndexPool tlbc_indices;
 #endif
+    _PyIndexPool tlbc_indices;
     // Per-interpreter list of tasks, any lingering tasks from thread
     // states gets added here and removed from the corresponding
     // thread state's list.

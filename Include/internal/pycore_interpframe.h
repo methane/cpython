@@ -58,14 +58,10 @@ _PyFrame_SafeGetCode(_PyInterpreterFrame *f)
 static inline _Py_CODEUNIT *
 _PyFrame_GetBytecode(_PyInterpreterFrame *f)
 {
-#ifdef Py_GIL_DISABLED
     PyCodeObject *co = _PyFrame_GetCode(f);
     _PyCodeArray *tlbc = _PyCode_GetTLBCArray(co);
     assert(f->tlbc_index >= 0 && f->tlbc_index < tlbc->size);
-    return (_Py_CODEUNIT *)tlbc->entries[f->tlbc_index];
-#else
-    return _PyCode_CODE(_PyFrame_GetCode(f));
-#endif
+    return (_Py_CODEUNIT *)_Py_atomic_load_ptr_acquire(&tlbc->entries[f->tlbc_index]);
 }
 
 // Similar to PyUnstable_InterpreterFrame_GetLasti(), but return NULL if the
@@ -82,13 +78,9 @@ _PyFrame_SafeGetLasti(struct _PyInterpreterFrame *f)
     }
 
     _Py_CODEUNIT *bytecode;
-#ifdef Py_GIL_DISABLED
     _PyCodeArray *tlbc = _PyCode_GetTLBCArray(co);
     assert(f->tlbc_index >= 0 && f->tlbc_index < tlbc->size);
-    bytecode = (_Py_CODEUNIT *)tlbc->entries[f->tlbc_index];
-#else
-    bytecode = _PyCode_CODE(co);
-#endif
+    bytecode = (_Py_CODEUNIT *)_Py_atomic_load_ptr_acquire(&tlbc->entries[f->tlbc_index]);
 
     return (int)(f->instr_ptr - bytecode) * sizeof(_Py_CODEUNIT);
 }
@@ -143,9 +135,7 @@ static inline void _PyFrame_Copy(_PyInterpreterFrame *src, _PyInterpreterFrame *
     dest->f_locals = src->f_locals;
     dest->frame_obj = src->frame_obj;
     dest->instr_ptr = src->instr_ptr;
-#ifdef Py_GIL_DISABLED
     dest->tlbc_index = src->tlbc_index;
-#endif
     assert(src->stackpointer != NULL);
     int stacktop = (int)(src->stackpointer - src->localsplus);
     assert(stacktop >= 0);
@@ -161,7 +151,6 @@ static inline void _PyFrame_Copy(_PyInterpreterFrame *src, _PyInterpreterFrame *
     }
 }
 
-#ifdef Py_GIL_DISABLED
 static inline void
 _PyFrame_InitializeTLBC(PyThreadState *tstate, _PyInterpreterFrame *frame,
                         PyCodeObject *code)
@@ -179,7 +168,6 @@ _PyFrame_InitializeTLBC(PyThreadState *tstate, _PyInterpreterFrame *frame,
         frame->tlbc_index = ((_PyThreadStateImpl *)tstate)->tlbc_index;
     }
 }
-#endif
 
 /* Consumes reference to func and locals.
    Does not initialize frame->previous, which happens
@@ -199,12 +187,7 @@ _PyFrame_Initialize(
     frame->f_locals = locals;
     frame->stackpointer = frame->localsplus + code->co_nlocalsplus;
     frame->frame_obj = NULL;
-#ifdef Py_GIL_DISABLED
     _PyFrame_InitializeTLBC(tstate, frame, code);
-#else
-    (void)tstate;
-    frame->instr_ptr = _PyCode_CODE(code);
-#endif
     frame->return_offset = 0;
     frame->owner = FRAME_OWNED_BY_THREAD;
     frame->visited = 0;
@@ -434,11 +417,7 @@ _PyFrame_PushTrampolineUnchecked(PyThreadState *tstate, PyCodeObject *code, int 
     assert(stackdepth <= code->co_stacksize);
     frame->stackpointer = frame->localsplus + code->co_nlocalsplus + stackdepth;
     frame->frame_obj = NULL;
-#ifdef Py_GIL_DISABLED
     _PyFrame_InitializeTLBC(tstate, frame, code);
-#else
-    frame->instr_ptr = _PyCode_CODE(code);
-#endif
     frame->owner = FRAME_OWNED_BY_THREAD;
     frame->visited = 0;
 #ifdef Py_DEBUG

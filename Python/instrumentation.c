@@ -12,7 +12,6 @@
 #include "pycore_opcode_metadata.h" // IS_VALID_OPCODE()
 #include "pycore_opcode_utils.h"  // IS_CONDITIONAL_JUMP_OPCODE()
 #include "pycore_optimizer.h"     // _PyExecutorObject
-#include "pycore_pyatomic_ft_wrappers.h" // FT_ATOMIC_STORE_UINTPTR_RELEASE()
 #include "pycore_pystate.h"       // _PyInterpreterState_GET()
 #include "pycore_runtime_structs.h" // _PyCoMonitoringData
 #include "pycore_tuple.h"         // _PyTuple_FromArraySteal()
@@ -23,11 +22,11 @@
 /* Uncomment this to dump debugging output when assertions fail */
 // #define INSTRUMENT_DEBUG 1
 
-#if defined(Py_DEBUG) && defined(Py_GIL_DISABLED)
+#ifdef Py_DEBUG
 
 #define ASSERT_WORLD_STOPPED_OR_LOCKED(obj)                         \
     if (!_PyInterpreterState_GET()->stoptheworld.world_stopped) {   \
-        _Py_CRITICAL_SECTION_ASSERT_OBJECT_LOCKED(obj);             \
+        _PyCriticalSection_AssertHeld(_PyCode_GetMutex(obj));       \
     }
 #define ASSERT_WORLD_STOPPED() assert(_PyInterpreterState_GET()->stoptheworld.world_stopped);
 
@@ -38,13 +37,13 @@
 
 #endif
 
-#ifdef Py_GIL_DISABLED
-
 #define LOCK_CODE(code)                                             \
+    {                                                              \
     assert(!_PyInterpreterState_GET()->stoptheworld.world_stopped); \
-    Py_BEGIN_CRITICAL_SECTION(code)
+    PyCriticalSection _code_cs;                                    \
+    _PyCode_Lock(code, &_code_cs)
 
-#define UNLOCK_CODE()   Py_END_CRITICAL_SECTION()
+#define UNLOCK_CODE()   _PyCode_Unlock(&_code_cs); }
 
 #define MODIFY_BYTECODE(code, func, ...)                       \
     do {                                                       \
@@ -57,15 +56,6 @@
             (func)(code, (_Py_CODEUNIT *)bc, __VA_ARGS__);           \
         }                                                      \
     } while (0)
-
-#else
-
-#define LOCK_CODE(code)
-#define UNLOCK_CODE()
-#define MODIFY_BYTECODE(code, func, ...) \
-    (func)(code, _PyCode_CODE(code), __VA_ARGS__)
-
-#endif
 
 PyObject _PyInstrumentation_DISABLE = _PyObject_HEAD_INIT(&PyBaseObject_Type);
 
@@ -639,7 +629,7 @@ _Py_GetBaseCodeUnit(PyCodeObject *code, int i)
 {
     _Py_CODEUNIT *src_instr = _PyCode_CODE(code) + i;
     _Py_CODEUNIT inst = {
-        .cache = FT_ATOMIC_LOAD_UINT16_RELAXED(*(uint16_t *)src_instr)};
+        .cache = _Py_atomic_load_uint16_relaxed((uint16_t *)src_instr)};
     int opcode = inst.op.code;
     if (opcode < MIN_INSTRUMENTED_OPCODE) {
         inst.op.code = _PyOpcode_Deopt[opcode];
@@ -697,9 +687,9 @@ de_instrument(PyCodeObject *code, _Py_CODEUNIT *bytecode, _PyCoMonitoringData *m
         return;
     }
     CHECK(_PyOpcode_Deopt[deinstrumented] == deinstrumented);
-    FT_ATOMIC_STORE_UINT8_RELAXED(*opcode_ptr, deinstrumented);
+    _Py_atomic_store_uint8_relaxed(opcode_ptr, deinstrumented);
     if (_PyOpcode_Caches[deinstrumented]) {
-        FT_ATOMIC_STORE_UINT16_RELAXED(instr[1].counter.value_and_backoff,
+        _Py_atomic_store_uint16_relaxed(&instr[1].counter.value_and_backoff,
                                        adaptive_counter_warmup().value_and_backoff);
     }
 }
@@ -720,9 +710,9 @@ de_instrument_line(PyCodeObject *code, _Py_CODEUNIT *bytecode, _PyCoMonitoringDa
     }
     CHECK(original_opcode != 0);
     CHECK(original_opcode == _PyOpcode_Deopt[original_opcode]);
-    FT_ATOMIC_STORE_UINT8(instr->op.code, original_opcode);
+    _Py_atomic_store_uint8(&instr->op.code, original_opcode);
     if (_PyOpcode_Caches[original_opcode]) {
-        FT_ATOMIC_STORE_UINT16_RELAXED(instr[1].counter.value_and_backoff,
+        _Py_atomic_store_uint16_relaxed(&instr[1].counter.value_and_backoff,
                                        adaptive_counter_warmup().value_and_backoff);
     }
     assert(instr->op.code != INSTRUMENTED_LINE);
@@ -745,9 +735,9 @@ de_instrument_per_instruction(PyCodeObject *code, _Py_CODEUNIT *bytecode,
     int original_opcode = monitoring->per_instruction_opcodes[i];
     CHECK(original_opcode != 0);
     CHECK(original_opcode == _PyOpcode_Deopt[original_opcode]);
-    FT_ATOMIC_STORE_UINT8_RELAXED(*opcode_ptr, original_opcode);
+    _Py_atomic_store_uint8_relaxed(opcode_ptr, original_opcode);
     if (_PyOpcode_Caches[original_opcode]) {
-        FT_ATOMIC_STORE_UINT16_RELAXED(instr[1].counter.value_and_backoff,
+        _Py_atomic_store_uint16_relaxed(&instr[1].counter.value_and_backoff,
                                        adaptive_counter_warmup().value_and_backoff);
     }
     assert(*opcode_ptr != INSTRUMENTED_INSTRUCTION);
@@ -775,9 +765,9 @@ instrument(PyCodeObject *code, _Py_CODEUNIT *bytecode, _PyCoMonitoringData *moni
         int deopt = _PyOpcode_Deopt[opcode];
         int instrumented = INSTRUMENTED_OPCODES[deopt];
         assert(instrumented);
-        FT_ATOMIC_STORE_UINT8_RELAXED(*opcode_ptr, instrumented);
+        _Py_atomic_store_uint8_relaxed(opcode_ptr, instrumented);
         if (_PyOpcode_Caches[deopt]) {
-            FT_ATOMIC_STORE_UINT16_RELAXED(instr[1].counter.value_and_backoff,
+            _Py_atomic_store_uint16_relaxed(&instr[1].counter.value_and_backoff,
                                            adaptive_counter_warmup().value_and_backoff);
         }
     }
@@ -793,7 +783,7 @@ instrument_line(PyCodeObject *code, _Py_CODEUNIT *bytecode, _PyCoMonitoringData 
     }
     set_original_opcode(monitoring->lines, i, _PyOpcode_Deopt[opcode]);
     CHECK(get_line_delta(monitoring->lines, i) > NO_LINE);
-    FT_ATOMIC_STORE_UINT8_RELAXED(*opcode_ptr, INSTRUMENTED_LINE);
+    _Py_atomic_store_uint8_relaxed(opcode_ptr, INSTRUMENTED_LINE);
 }
 
 static void
@@ -822,7 +812,7 @@ instrument_per_instruction(PyCodeObject *code, _Py_CODEUNIT *bytecode,
         monitoring->per_instruction_opcodes[i] = _PyOpcode_Deopt[opcode];
     }
     assert(monitoring->per_instruction_opcodes[i] > 0);
-    FT_ATOMIC_STORE_UINT8_RELAXED(*opcode_ptr, INSTRUMENTED_INSTRUCTION);
+    _Py_atomic_store_uint8_relaxed(opcode_ptr, INSTRUMENTED_INSTRUCTION);
 }
 
 static void
@@ -1051,17 +1041,11 @@ set_global_version(PyThreadState *tstate, uint32_t version)
     PyInterpreterState *interp = tstate->interp;
     set_version_raw(&interp->ceval.instrumentation_version, version);
 
-#ifdef Py_GIL_DISABLED
-    // Set the version on all threads in free-threaded builds.
+    // Every thread may be executing its own copy of the bytecode.
     _Py_FOR_EACH_TSTATE_BEGIN(interp, tstate) {
         set_version_raw(&tstate->eval_breaker, version);
     };
     _Py_FOR_EACH_TSTATE_END(interp);
-#else
-    // Normal builds take the current version from instrumentation_version when
-    // attaching a thread, so we only have to set the current thread's version.
-    set_version_raw(&tstate->eval_breaker, version);
-#endif
 }
 
 static bool
@@ -1927,7 +1911,7 @@ force_instrument_lock_held(PyCodeObject *code, PyInterpreterState *interp)
     }
 
 done:
-    FT_ATOMIC_STORE_UINTPTR_RELEASE(code->_co_instrumentation_version,
+    _Py_atomic_store_uintptr_release(&code->_co_instrumentation_version,
                                     global_version(interp));
 
 #ifdef INSTRUMENT_DEBUG

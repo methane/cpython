@@ -25,10 +25,8 @@ typedef struct {
 #define _PyCode_DEF_UNIQUE_ID() \
     Py_ssize_t _co_unique_id;     /* ID used for per-thread refcounting */
 
-#ifdef Py_GIL_DISABLED
-
-/* Each thread specializes a thread-local copy of the bytecode in free-threaded
- * builds. These copies are stored on the code object in a `_PyCodeArray`. The
+/* Each thread specializes a thread-local copy of the bytecode.
+ * These copies are stored on the code object in a `_PyCodeArray`. The
  * first entry in the array always points to the "main" copy of the bytecode
  * that is stored at the end of the code object.
  */
@@ -39,9 +37,6 @@ typedef struct {
 
 #define _PyCode_DEF_THREAD_LOCAL_BYTECODE() \
     _PyCodeArray *co_tlbc;
-#else
-#define _PyCode_DEF_THREAD_LOCAL_BYTECODE()
-#endif
 
 // To avoid repeating ourselves in deepfreeze.py, all PyCodeObject members are
 // defined in this macro:

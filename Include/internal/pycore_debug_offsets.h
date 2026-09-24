@@ -52,16 +52,13 @@ extern "C" {
 #ifdef Py_GIL_DISABLED
 # define _Py_Debug_gilruntimestate_enabled offsetof(struct _gil_runtime_state, enabled)
 # define _Py_Debug_Free_Threaded 1
-# define _Py_Debug_code_object_co_tlbc offsetof(PyCodeObject, co_tlbc)
-# define _Py_Debug_interpreter_frame_tlbc_index offsetof(_PyInterpreterFrame, tlbc_index)
-# define _Py_Debug_interpreter_state_tlbc_generation offsetof(PyInterpreterState, tlbc_indices.tlbc_generation)
 #else
 # define _Py_Debug_gilruntimestate_enabled 0
 # define _Py_Debug_Free_Threaded 0
-# define _Py_Debug_code_object_co_tlbc 0
-# define _Py_Debug_interpreter_frame_tlbc_index 0
-# define _Py_Debug_interpreter_state_tlbc_generation 0
 #endif
+#define _Py_Debug_code_object_co_tlbc offsetof(PyCodeObject, co_tlbc)
+#define _Py_Debug_interpreter_frame_tlbc_index offsetof(_PyInterpreterFrame, tlbc_index)
+#define _Py_Debug_interpreter_state_tlbc_generation offsetof(PyInterpreterState, tlbc_indices.tlbc_generation)
 
 
 typedef struct _Py_DebugOffsets {

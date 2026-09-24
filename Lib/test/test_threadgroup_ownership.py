@@ -162,6 +162,31 @@ assert 'threading' not in sys.modules
             with self.subTest(group=group):
                 internal.threadgroup_weakref_probe(group, target)
 
+    @requires_specialization
+    def test_code_specialization_across_groups(self):
+        def probe(a, b, expected):
+            assert a + b == expected
+            return True
+
+        def opnames():
+            return {inst.opname for inst in dis._get_instructions_bytes(
+                internal.get_tlbc(probe))}
+
+        for _ in range(100):
+            probe(1, 2, 3)
+        self.assertIn('BINARY_OP_ADD_INT', opnames())
+        for group in (self.foreign, sys.main_thread_group):
+            with self.subTest(group=group):
+                accessible, bytecode = internal.threadgroup_vm_probe(
+                    probe.__code__, group, ('a', 'b', 'ab'), 0, 100, True)
+                self.assertTrue(accessible)
+                worker_opnames = {inst.opname for inst in
+                                  dis._get_instructions_bytes(bytecode)}
+                self.assertIn('BINARY_OP_ADD_UNICODE', worker_opnames)
+                self.assertNotIn('BINARY_OP_ADD_INT', worker_opnames)
+                self.assertIn('BINARY_OP_ADD_INT', opnames())
+                self.assertNotIn('BINARY_OP_ADD_UNICODE', opnames())
+
     def test_thread_start_rejects_foreign_local_callable(self):
         calls = []
 
@@ -228,13 +253,14 @@ assert 'threading' not in sys.modules
             for group in (sys.main_thread_group, self.foreign):
                 with self.subTest(immutable=immutable, group=group):
                     probe_code = code.replace()
-                    self.assertIs(internal.threadgroup_vm_probe(
-                        probe_code, group, (value, None, None), warmups),
-                        immutable or group is sys.main_thread_group)
+                    accessible, bytecode = internal.threadgroup_vm_probe(
+                        probe_code, group, (value, None, None), warmups, 1, True)
+                    self.assertIs(accessible,
+                                  immutable or group is sys.main_thread_group)
                     if specialized is not None:
                         self.assertIn(specialized, {
-                            i.opname for i in dis.get_instructions(
-                                probe_code, adaptive=True)})
+                            i.opname for i in dis._get_instructions_bytes(
+                                bytecode)})
 
     def test_sequence_element_operations(self):
         cases = {

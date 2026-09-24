@@ -82,12 +82,12 @@ typedef struct _PyThreadStateImpl {
 #ifdef WITH_MIMALLOC
     struct _mimalloc_thread_state mimalloc;
 #endif
+    // Index to use to retrieve thread-local bytecode for this thread
+    int32_t tlbc_index;
+
 #ifdef Py_GIL_DISABLED
     struct _gc_thread_state gc;
     struct _brc_thread_state brc;
-
-    // Index to use to retrieve thread-local bytecode for this thread
-    int32_t tlbc_index;
 
     // When >1, code objects do not immortalize their non-string constants.
     int suppress_co_const_immortalization;

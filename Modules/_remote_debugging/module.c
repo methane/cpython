@@ -439,7 +439,6 @@ _remote_debugging_RemoteUnwinder___init___impl(RemoteUnwinderObject *self,
         return -1;
     }
 
-#ifdef Py_GIL_DISABLED
     // Initialize TLBC cache
     self->tlbc_generation = 0;
     self->tlbc_cache = _Py_hashtable_new_full(
@@ -455,7 +454,6 @@ _remote_debugging_RemoteUnwinder___init___impl(RemoteUnwinderObject *self,
         set_exception_cause(self, PyExc_MemoryError, "Failed to create TLBC cache");
         return -1;
     }
-#endif
 
 #if defined(__APPLE__)
     self->thread_id_offset = 0;
@@ -544,14 +542,17 @@ refresh_generation_caches_from_interp_state(
 {
     uint64_t code_object_generation = GET_MEMBER(uint64_t, interp_state_buffer,
             self->debug_offsets.interpreter_state.code_object_generation);
+    int invalidate_tlbc = 0;
 
     if (self->cached_generation_interpreter_addr == interpreter_addr) {
         if (code_object_generation != self->cached_code_object_generation) {
             self->cached_code_object_generation = code_object_generation;
             _Py_hashtable_clear(self->code_object_cache);
+            invalidate_tlbc = 1;
         }
     }
     else {
+        invalidate_tlbc = 1;
         InterpreterGenerationCacheEntry *entry =
             &self->cached_generations[interpreter_thread_cache_index(interpreter_addr)];
         // A slot rebound from another interpreter must be treated as changed:
@@ -569,14 +570,12 @@ refresh_generation_caches_from_interp_state(
         self->cached_code_object_generation = code_object_generation;
     }
 
-#ifdef Py_GIL_DISABLED
     uint32_t current_tlbc_generation = GET_MEMBER(uint32_t, interp_state_buffer,
                                                   self->debug_offsets.interpreter_state.tlbc_generation);
-    if (current_tlbc_generation != self->tlbc_generation) {
+    if (invalidate_tlbc || current_tlbc_generation != self->tlbc_generation) {
         self->tlbc_generation = current_tlbc_generation;
         _Py_hashtable_clear(self->tlbc_cache);
     }
-#endif
 }
 
 static int
@@ -1330,11 +1329,9 @@ RemoteUnwinder_dealloc(PyObject *op)
     }
 #endif
 
-#ifdef Py_GIL_DISABLED
     if (self->tlbc_cache) {
         _Py_hashtable_destroy(self->tlbc_cache);
     }
-#endif
     if (self->handle.pid != 0) {
         _Py_RemoteDebug_ClearCache(&self->handle);
         _Py_RemoteDebug_CleanupProcHandle(&self->handle);

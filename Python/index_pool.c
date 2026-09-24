@@ -5,8 +5,6 @@
 
 #include <stdbool.h>
 
-#ifdef Py_GIL_DISABLED
-
 static inline void
 swap(int32_t *values, Py_ssize_t i, Py_ssize_t j)
 {
@@ -193,5 +191,3 @@ _PyIndexPool_Fini(_PyIndexPool *pool)
 {
     heap_fini(&pool->free_indices);
 }
-
-#endif  // Py_GIL_DISABLED

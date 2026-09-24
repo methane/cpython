@@ -161,8 +161,8 @@ static const PyConfigSpec PYCONFIG_SPEC[] = {
     SPEC(dump_refs_file, WSTR_OPT, READ_ONLY, NO_SYS, NO_GLOBAL),
 #ifdef Py_GIL_DISABLED
     SPEC(enable_gil, INT, READ_ONLY, NO_SYS, NO_GLOBAL),
-    SPEC(tlbc_enabled, INT, READ_ONLY, NO_SYS, NO_GLOBAL),
 #endif
+    SPEC(tlbc_enabled, INT, READ_ONLY, NO_SYS, NO_GLOBAL),
     SPEC(faulthandler, BOOL, READ_ONLY, NO_SYS, NO_GLOBAL),
     SPEC(filesystem_encoding, WSTR, READ_ONLY, NO_SYS, NO_GLOBAL),
     SPEC(filesystem_errors, WSTR, READ_ONLY, NO_SYS, NO_GLOBAL),
@@ -503,10 +503,8 @@ static const char usage_xoptions[] =
 "#s{-X} #L{thread_inherit_context}#b{=[0|1]}: enable (#B{1}) or disable (#B{0}) threads inheriting\n"
 "         context vars by default; disabled by default; also\n"
 "         #e{PYTHON_THREAD_INHERIT_CONTEXT}\n"
-#ifdef Py_GIL_DISABLED
 "#s{-X} #L{tlbc}#b{=[0|1]}: enable (#B{1}) or disable (#B{0}) thread-local bytecode. Also\n"
 "         #e{PYTHON_TLBC}\n"
-#endif
 "#s{-X} #L{tracemalloc}#b{[=N]}: trace Python memory allocations; N sets a traceback limit\n"
 "         of #B{N} frames (default: #B{1}); also #e{PYTHONTRACEMALLOC}#B{=N}\n"
 "#s{-X} #L{utf8}#b{[=0|1]}: enable (#B{1}) or disable (#B{0}) UTF-8 mode; also #e{PYTHONUTF8}\n"
@@ -596,9 +594,7 @@ static const char usage_envvars[] =
 #endif
 "#E{PYTHON_THREAD_INHERIT_CONTEXT}: if true (#B{1}), threads inherit context vars\n"
 "                  (#S{-X} #e{thread_inherit_context})\n"
-#ifdef Py_GIL_DISABLED
 "#E{PYTHON_TLBC}     : when set to #B{0}, disables thread-local bytecode (#S{-X} #e{tlbc})\n"
-#endif
 "#E{PYTHONTRACEMALLOC}: trace Python memory allocations (#S{-X} #e{tracemalloc})\n"
 "#E{PYTHONUNBUFFERED}: disable stdout/stderr buffering (#S{-u})\n"
 "#E{PYTHONUTF8}      : control the UTF-8 mode (#S{-X} #e{utf8})\n"
@@ -1214,8 +1210,8 @@ _PyConfig_InitCompatConfig(PyConfig *config)
 #endif
 #ifdef Py_GIL_DISABLED
     config->enable_gil = _PyConfig_GIL_DEFAULT;
-    config->tlbc_enabled = 1;
 #endif
+    config->tlbc_enabled = 1;
 }
 
 
@@ -2149,7 +2145,6 @@ config_init_context_aware_warnings(PyConfig *config)
 static PyStatus
 config_init_tlbc(PyConfig *config)
 {
-#ifdef Py_GIL_DISABLED
     const char *env = config_get_env(config, "PYTHON_TLBC");
     if (env) {
         int enabled;
@@ -2171,9 +2166,6 @@ config_init_tlbc(PyConfig *config)
         config->tlbc_enabled = enabled;
     }
     return _PyStatus_OK();
-#else
-    return _PyStatus_OK();
-#endif
 }
 
 static PyStatus

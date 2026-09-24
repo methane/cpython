@@ -245,7 +245,7 @@ GETITEM(PyObject *v, Py_ssize_t i) {
 /* The integer overflow is checked by an assertion below. */
 #define INSTR_OFFSET() ((int)(next_instr - _PyFrame_GetBytecode(frame)))
 #define NEXTOPARG()  do { \
-        _Py_CODEUNIT word  = {.cache = FT_ATOMIC_LOAD_UINT16_RELAXED(*(uint16_t*)next_instr)}; \
+        _Py_CODEUNIT word  = {.cache = _Py_atomic_load_uint16_relaxed((uint16_t*)next_instr)}; \
         opcode = word.op.code; \
         oparg = word.op.arg; \
     } while (0)
@@ -350,7 +350,6 @@ static void dtrace_function_return(_PyInterpreterFrame *);
 #define ADAPTIVE_COUNTER_TRIGGERS(COUNTER) \
     backoff_counter_triggers(forge_backoff_counter((COUNTER)))
 
-#ifdef Py_GIL_DISABLED
 /* Counters are unreachable when thread-local bytecode is disabled,
  * so there is no need to update them. */
 #define ADVANCE_ADAPTIVE_COUNTER(COUNTER) \
@@ -368,17 +367,6 @@ static void dtrace_function_return(_PyInterpreterFrame *);
             (COUNTER) = pause_backoff_counter(cnt); \
         } \
     } while (0);
-#else
-#define ADVANCE_ADAPTIVE_COUNTER(COUNTER) \
-    do { \
-        (COUNTER) = advance_backoff_counter((COUNTER)); \
-    } while (0);
-
-#define PAUSE_ADAPTIVE_COUNTER(COUNTER) \
-    do { \
-        (COUNTER) = pause_backoff_counter((COUNTER)); \
-    } while (0);
-#endif
 
 #ifdef ENABLE_SPECIALIZATION
 /* Multiple threads may execute these concurrently if thread-local bytecode is
@@ -387,8 +375,8 @@ static void dtrace_function_return(_PyInterpreterFrame *);
  * free of data races.
  */
 #define RECORD_BRANCH_TAKEN(bitset, flag) \
-    FT_ATOMIC_STORE_UINT16_RELAXED(       \
-        bitset, (FT_ATOMIC_LOAD_UINT16_RELAXED(bitset) << 1) | (flag))
+    _Py_atomic_store_uint16_relaxed(       \
+        &(bitset), (_Py_atomic_load_uint16_relaxed(&(bitset)) << 1) | (flag))
 #else
 #define RECORD_BRANCH_TAKEN(bitset, flag)
 #endif

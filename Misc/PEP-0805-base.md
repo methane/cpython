@@ -15,7 +15,7 @@ The five-stage implementation is **not complete**.
 | One-time ABI change | Compact owner/state and group-biased RC header; no cleanup queue fields | Complete the allocation/GC port and audit native layouts |
 | Biased and deferred reference counting | Group bias, per-thread code counts, deferred stack roots and normal GC integration | Queue collection and reclamation with concurrent groups |
 | LOCAL and IMMUTABLE ownership | Builtin/static metadata, public `__shareable__` state, common C API returns, VM heap loads, attributes and call expansion | Remaining API/VM acquisitions and shared static extension ownership |
-| Parallel allocation and cyclic GC | Per-thread heaps/freelists, QSBR, paused reachability snapshots, owned worklists and synchronized tracking | Concurrent execution, owner-correct finalization, cross-interpreter legacy objects and teardown |
+| Parallel allocation and cyclic GC | Per-thread heaps/freelists and bytecode, QSBR, paused reachability snapshots, owned worklists and synchronized tracking | Concurrent execution, owner-correct finalization, cross-interpreter legacy objects and teardown |
 
 Freezing, protective/compound locks, synchronized objects and functions,
 TransferBox, Channel, the debugger StopTheWorld API, and performance work are
@@ -70,8 +70,8 @@ QSBR registration and quiescence are active in the normal build. Retired interna
 buffers remain allocated until attached readers have passed a safepoint or
 detached. GC drains all threads' queues while paused, including abandoned queues;
 allocation failure falls back to a world stop. Fork and thread/interpreter
-teardown maintain the reader registry. This is a prerequisite for porting
-thread-local bytecode arrays, not proof of parallel execution. QSBR read epochs
+teardown maintain the reader registry. Replaced thread-local bytecode arrays
+use this machinery. This is not proof of parallel execution. QSBR read epochs
 belong to thread states; object reference-count bias still belongs to ThreadGroups.
 The normal build does not defer LOCAL object decrefs through these queues.
 
@@ -87,10 +87,23 @@ Code objects use a dedicated mutex and acquire/release publication for their
 lazy variable-name and bytecode caches. `co_extra` growth publishes a copied
 array and retires the old array through QSBR; extra-slot registration uses the
 interpreter's code-state mutex. Replaced extra values are still released after
-unlocking, so extension free callbacks can re-enter. This ports metadata storage;
-thread-local specialization and monitoring synchronization remain to be ported.
-On Linux/aarch64 the mutex occupies existing code-object padding: its basic size
-remains 216 bytes, and the generic object header remains 24 bytes.
+unlocking, so extension free callbacks can re-enter. On Linux/aarch64 the mutex
+occupies existing code-object padding; the generic object header remains 24 bytes.
+
+Thread-local bytecode is active in the normal build, including thread lifecycle,
+frame migration, generator throws and specialization. `-X tlbc=0` and
+`PYTHON_TLBC=0` disable both copies and specialization. Monitoring updates all
+copies under the code mutex or a world stop. Publishing tables and entries uses
+acquire/release atomics; QSBR retirement happens after unlocking, since its OOM
+fallback can suspend critical sections. These copies and their interpreter-local
+indices belong to threads, independently of ThreadGroup reference-count bias.
+Code objects gain one pointer for the copy table (224-byte basic size on
+Linux/aarch64). Cache cleanup retains copies referenced by suspended generators,
+coroutines, async generators and retained frames after their thread exits,
+including frames in frozen GC generations. Remote unwinding uses the frame's
+copy to resolve line numbers and refreshes lazily populated table entries.
+This does not yet enable concurrent group execution or establish safe sharing of
+code objects across interpreters.
 
 The normal collector pauses threads while merging per-thread counts, scanning
 stack roots, determining reachability and clearing callback-bearing weakrefs.

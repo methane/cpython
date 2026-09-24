@@ -187,7 +187,7 @@ dummy_func(
             #endif
             if (check_instrumentation) {
                 uintptr_t global_version = _Py_atomic_load_uintptr_relaxed(&tstate->eval_breaker) & ~_PY_EVAL_EVENTS_MASK;
-                uintptr_t code_version = FT_ATOMIC_LOAD_UINTPTR_ACQUIRE(_PyFrame_GetCode(frame)->_co_instrumentation_version);
+                uintptr_t code_version = _Py_atomic_load_uintptr_acquire(&_PyFrame_GetCode(frame)->_co_instrumentation_version);
                 if (code_version != global_version) {
                     int err = _Py_Instrument(_PyFrame_GetCode(frame), tstate->interp);
                     if (err) {
@@ -200,7 +200,6 @@ dummy_func(
         }
 
         replaced op(_LOAD_BYTECODE, (--)) {
-            #ifdef Py_GIL_DISABLED
             if (frame->tlbc_index !=
                 ((_PyThreadStateImpl *)tstate)->tlbc_index) {
                 _Py_CODEUNIT *bytecode =
@@ -214,7 +213,6 @@ dummy_func(
                 next_instr = frame->instr_ptr;
                 DISPATCH();
             }
-            #endif
         }
 
         macro(RESUME) =
@@ -233,13 +231,11 @@ dummy_func(
             _Py_emscripten_signal_clock -= Py_EMSCRIPTEN_SIGNAL_HANDLING;
 #endif
             uintptr_t eval_breaker = _Py_atomic_load_uintptr_relaxed(&tstate->eval_breaker);
-            uintptr_t version = FT_ATOMIC_LOAD_UINTPTR_ACQUIRE(_PyFrame_GetCode(frame)->_co_instrumentation_version);
+            uintptr_t version = _Py_atomic_load_uintptr_acquire(&_PyFrame_GetCode(frame)->_co_instrumentation_version);
             assert((version & _PY_EVAL_EVENTS_MASK) == 0);
             DEOPT_IF(eval_breaker != version);
-            #ifdef Py_GIL_DISABLED
             DEOPT_IF(frame->tlbc_index !=
                      ((_PyThreadStateImpl *)tstate)->tlbc_index);
-            #endif
         }
 
         macro(RESUME_CHECK_JIT) =
@@ -3662,7 +3658,7 @@ dummy_func(
             assert(tstate->current_executor == NULL);
             /* If the eval breaker is set, or instrumentation is needed, then stay in tier 1.
              * This avoids any potentially infinite loops involving _RESUME_CHECK */
-            uintptr_t iversion = FT_ATOMIC_LOAD_UINTPTR_ACQUIRE(code->_co_instrumentation_version);
+            uintptr_t iversion = _Py_atomic_load_uintptr_acquire(&code->_co_instrumentation_version);
             if (_Py_atomic_load_uintptr_relaxed(&tstate->eval_breaker) != iversion) {
                 opcode = executor->vm_data.opcode;
                 oparg = (oparg & ~255) | executor->vm_data.oparg;
@@ -6324,7 +6320,7 @@ dummy_func(
             HANDLE_PENDING_AND_DEOPT_IF(_Py_emscripten_signal_clock == 0);
             _Py_emscripten_signal_clock -= Py_EMSCRIPTEN_SIGNAL_HANDLING;
 #endif
-            uintptr_t iversion = FT_ATOMIC_LOAD_UINTPTR_ACQUIRE(_PyFrame_GetCode(frame)->_co_instrumentation_version);
+            uintptr_t iversion = _Py_atomic_load_uintptr_acquire(&_PyFrame_GetCode(frame)->_co_instrumentation_version);
             uintptr_t eval_breaker = _Py_atomic_load_uintptr_relaxed(&tstate->eval_breaker);
             HANDLE_PENDING_AND_DEOPT_IF(eval_breaker != iversion);
         }

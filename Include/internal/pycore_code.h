@@ -575,8 +575,6 @@ struct _PyCode8 _PyCode_DEF(8);
 
 PyAPI_DATA(const struct _PyCode8) _Py_InitCleanup;
 
-#ifdef Py_GIL_DISABLED
-
 static inline _PyCodeArray *
 _PyCode_GetTLBCArray(PyCodeObject *co)
 {
@@ -591,8 +589,8 @@ _PyCode_GetTLBCFast(PyThreadState *tstate, PyCodeObject *co)
 {
     _PyCodeArray *code = _PyCode_GetTLBCArray(co);
     int32_t idx = ((_PyThreadStateImpl*) tstate)->tlbc_index;
-    if (idx < code->size && code->entries[idx] != NULL) {
-        return (_Py_CODEUNIT *) code->entries[idx];
+    if (idx < code->size) {
+        return (_Py_CODEUNIT *)_Py_atomic_load_ptr_acquire(&code->entries[idx]);
     }
     return NULL;
 }
@@ -618,7 +616,6 @@ extern void _Py_ClearTLBCIndex(_PyThreadStateImpl *tstate);
 //
 // Returns 0 on success or -1 on error.
 extern int _Py_ClearUnusedTLBC(PyInterpreterState *interp);
-#endif
 
 
 typedef struct {

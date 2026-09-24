@@ -3,6 +3,8 @@
 
 #include "pycore_code.h"          // _PyCodeConstructor
 #include "pycore_function.h"      // _PyFunction_ClearCodeByVersion()
+#include "pycore_frame.h"         // PyFrameObject
+#include "pycore_gc.h"            // _PyGC_VisitObjectsWorldStopped()
 #include "pycore_hashtable.h"     // _Py_hashtable_t
 #include "pycore_index_pool.h"    // _PyIndexPool_Fini()
 #include "pycore_initconfig.h"    // _PyStatus_OK()
@@ -504,9 +506,7 @@ _PyCode_Validate(struct _PyCodeConstructor *con)
 extern void
 _PyCode_Quicken(_Py_CODEUNIT *instructions, Py_ssize_t size, int enable_counters, int flags);
 
-#ifdef Py_GIL_DISABLED
 static _PyCodeArray * _PyCodeArray_New(Py_ssize_t size);
-#endif
 
 static int
 init_code(PyCodeObject *co, struct _PyCodeConstructor *con)
@@ -568,13 +568,11 @@ init_code(PyCodeObject *co, struct _PyCodeConstructor *con)
 
     memcpy(_PyCode_CODE(co), PyBytes_AS_STRING(con->code),
            PyBytes_GET_SIZE(con->code));
-#ifdef Py_GIL_DISABLED
     co->co_tlbc = _PyCodeArray_New(INITIAL_SPECIALIZED_CODE_SIZE);
     if (co->co_tlbc == NULL) {
         return -1;
     }
     co->co_tlbc->entries[0] = co->co_code_adaptive;
-#endif
     int entry_point = 0;
     while (entry_point < Py_SIZE(co)) {
         if (_PyCode_CODE(co)[entry_point].op.code == RESUME &&
@@ -586,12 +584,8 @@ init_code(PyCodeObject *co, struct _PyCodeConstructor *con)
     }
     co->_co_firsttraceable = entry_point;
 
-#ifdef Py_GIL_DISABLED
     int enable_counters = interp->config.tlbc_enabled && interp->opt_config.specialization_enabled;
     _PyCode_Quicken(_PyCode_CODE(co), Py_SIZE(co), enable_counters, co->co_flags);
-#else
-    _PyCode_Quicken(_PyCode_CODE(co), Py_SIZE(co), interp->opt_config.specialization_enabled, co->co_flags);
-#endif
     notify_code_watchers(PY_CODE_EVENT_CREATE, co);
     return 0;
 }
@@ -1953,11 +1947,12 @@ _PyCode_SetUnboundVarCounts(PyThreadState *tstate,
     // Fill in unbound.globals and unbound.numattrs.
     struct co_unbound_counts unbound = {0};
     int numdupes = 0;
-    Py_BEGIN_CRITICAL_SECTION(co);
+    PyCriticalSection cs;
+    _PyCode_Lock(co, &cs);
     res = identify_unbound_names(
             tstate, co, globalnames, attrnames, globalsns, builtinsns,
             &unbound, &numdupes);
-    Py_END_CRITICAL_SECTION();
+    _PyCode_Unlock(&cs);
     if (res < 0) {
         goto finally;
     }
@@ -2133,9 +2128,10 @@ int
 _PyCode_ReturnsOnlyNone(PyCodeObject *co)
 {
     int res;
-    Py_BEGIN_CRITICAL_SECTION(co);
+    PyCriticalSection cs;
+    _PyCode_Lock(co, &cs);
     res = code_returns_only_none(co);
-    Py_END_CRITICAL_SECTION();
+    _PyCode_Unlock(&cs);
     return res;
 }
 
@@ -2415,7 +2411,6 @@ code_dealloc(PyObject *self)
     }
     FT_CLEAR_WEAKREFS(self, co->co_weakreflist);
     free_monitoring_data(co->_co_monitoring);
-#ifdef Py_GIL_DISABLED
     if (co->co_tlbc != NULL) {
         // The first element always points to the mutable bytecode at the end of
         // the code object, which will be freed when the code object is freed.
@@ -2427,7 +2422,6 @@ code_dealloc(PyObject *self)
         }
         PyMem_Free(co->co_tlbc);
     }
-#endif
     PyObject_GC_Del(co);
 }
 
@@ -3244,17 +3238,15 @@ _PyCode_Fini(PyInterpreterState *interp)
         _Py_hashtable_destroy(state->constants);
         state->constants = NULL;
     }
-    _PyIndexPool_Fini(&interp->tlbc_indices);
 #endif
+    _PyIndexPool_Fini(&interp->tlbc_indices);
 }
-
-#ifdef Py_GIL_DISABLED
 
 // Thread-local bytecode (TLBC)
 //
 // Each thread specializes a thread-local copy of the bytecode, created on the
-// first RESUME, in free-threaded builds. All copies of the bytecode for a code
-// object are stored in the `co_tlbc` array. Threads reserve a globally unique
+// first RESUME. All copies of the bytecode for a code object are stored in the
+// `co_tlbc` array. Threads reserve an interpreter-local unique
 // index identifying its copy of the bytecode in all `co_tlbc` arrays at thread
 // creation and release the index at thread destruction. The first entry in
 // every `co_tlbc` array always points to the "main" copy of the bytecode that
@@ -3314,13 +3306,13 @@ deopt_code_unit(PyCodeObject *code, int i)
 {
     _Py_CODEUNIT *src_instr = _PyCode_CODE(code) + i;
     _Py_CODEUNIT inst = {
-        .cache = FT_ATOMIC_LOAD_UINT16_RELAXED(*(uint16_t *)src_instr)};
+        .cache = _Py_atomic_load_uint16_relaxed((uint16_t *)src_instr)};
     int opcode = inst.op.code;
     if (opcode < MIN_INSTRUMENTED_OPCODE) {
         inst.op.code = _PyOpcode_Deopt[opcode];
         assert(inst.op.code < MIN_SPECIALIZED_OPCODE);
     }
-    // JIT should not be enabled with free-threading
+    // Machine-code JIT support for TLBC is not part of this port.
     assert(inst.op.code != ENTER_EXECUTOR);
     return inst;
 }
@@ -3348,7 +3340,8 @@ get_pow2_greater(Py_ssize_t initial, Py_ssize_t limit)
 }
 
 static _Py_CODEUNIT *
-create_tlbc_lock_held(PyInterpreterState *interp, PyCodeObject *co, Py_ssize_t idx)
+create_tlbc_lock_held(PyInterpreterState *interp, PyCodeObject *co, Py_ssize_t idx,
+                      _PyCodeArray **retired)
 {
     _PyCodeArray *tlbc = co->co_tlbc;
     if (idx >= tlbc->size) {
@@ -3363,7 +3356,7 @@ create_tlbc_lock_held(PyInterpreterState *interp, PyCodeObject *co, Py_ssize_t i
         }
         memcpy(new_tlbc->entries, tlbc->entries, tlbc->size * sizeof(void *));
         _Py_atomic_store_ptr_release(&co->co_tlbc, new_tlbc);
-        _PyMem_FreeDelayed(tlbc, tlbc->size * sizeof(void *));
+        *retired = tlbc;
         tlbc = new_tlbc;
     }
     char *bc = PyMem_Calloc(1, _PyCode_NBYTES(co));
@@ -3373,12 +3366,12 @@ create_tlbc_lock_held(PyInterpreterState *interp, PyCodeObject *co, Py_ssize_t i
     }
     copy_code(interp, (_Py_CODEUNIT *) bc, co);
     assert(tlbc->entries[idx] == NULL);
-    tlbc->entries[idx] = bc;
+    _Py_atomic_store_ptr_release(&tlbc->entries[idx], bc);
     return (_Py_CODEUNIT *) bc;
 }
 
 static _Py_CODEUNIT *
-get_tlbc_lock_held(PyCodeObject *co)
+get_tlbc_lock_held(PyCodeObject *co, _PyCodeArray **retired)
 {
     _PyCodeArray *tlbc = co->co_tlbc;
     _PyThreadStateImpl *tstate = (_PyThreadStateImpl *)PyThreadState_GET();
@@ -3387,16 +3380,24 @@ get_tlbc_lock_held(PyCodeObject *co)
         return (_Py_CODEUNIT *)tlbc->entries[idx];
     }
     PyInterpreterState *interp = tstate->base.interp;
-    return create_tlbc_lock_held(interp, co, idx);
+    return create_tlbc_lock_held(interp, co, idx, retired);
 }
 
 _Py_CODEUNIT *
 _PyCode_GetTLBC(PyCodeObject *co)
 {
     _Py_CODEUNIT *result;
-    Py_BEGIN_CRITICAL_SECTION(co);
-    result = get_tlbc_lock_held(co);
-    Py_END_CRITICAL_SECTION();
+    _PyCodeArray *retired = NULL;
+    PyCriticalSection cs;
+    _PyCode_Lock(co, &cs);
+    result = get_tlbc_lock_held(co, &retired);
+    _PyCode_Unlock(&cs);
+    if (retired != NULL) {
+        // Queue allocation may suspend critical sections on OOM. Finish
+        // publishing the copy before another thread can grow the table again.
+        _PyMem_FreeDelayed(retired, offsetof(_PyCodeArray, entries) +
+                           retired->size * sizeof(void *));
+    }
     return result;
 }
 
@@ -3413,29 +3414,64 @@ flag_is_set(struct flag_set *flags, Py_ssize_t idx)
     return (idx < flags->size) && flags->flags[idx];
 }
 
-// Set the flag for each tlbc index in use
+// The first pass determines the size; the second marks the retained indices.
+static void
+record_tlbc_index(struct flag_set *in_use, int32_t index)
+{
+    assert(index >= 0);
+    if (in_use->flags == NULL) {
+        if (in_use->size <= index) {
+            in_use->size = (Py_ssize_t)index + 1;
+        }
+    }
+    else if (index < in_use->size) {
+        in_use->flags[index] = 1;
+    }
+    // A newly-created, suspended thread may reserve a higher index between
+    // passes. It has not executed any bytecode and needs no retained copy.
+}
+
+static int
+record_heap_frame_index(PyObject *obj, void *arg)
+{
+    _PyInterpreterFrame *frame = NULL;
+    if (PyFrame_Check(obj)) {
+        frame = ((PyFrameObject *)obj)->f_frame;
+    }
+    else if (PyGen_CheckExact(obj) || PyCoro_CheckExact(obj) ||
+             PyAsyncGen_CheckExact(obj)) {
+        PyGenObject *gen = (PyGenObject *)obj;
+        if (gen->gi_frame_state != FRAME_CLEARED) {
+            frame = &gen->gi_iframe;
+        }
+    }
+    if (frame != NULL && !PyStackRef_IsNull(frame->f_executable)) {
+        record_tlbc_index(arg, frame->tlbc_index);
+    }
+    return 1;
+}
+
+// Retain copies used by live threads or by frames that outlive their thread.
 static int
 get_indices_in_use(PyInterpreterState *interp, struct flag_set *in_use)
 {
     assert(interp->stoptheworld.world_stopped);
     assert(in_use->flags == NULL);
-    int32_t max_index = 0;
+    in_use->size = 1;
     _Py_FOR_EACH_TSTATE_BEGIN(interp, p) {
-        int32_t idx = ((_PyThreadStateImpl *) p)->tlbc_index;
-        if (idx > max_index) {
-            max_index = idx;
-        }
+        record_tlbc_index(in_use, ((_PyThreadStateImpl *)p)->tlbc_index);
     }
     _Py_FOR_EACH_TSTATE_END(interp);
-    in_use->size = (size_t) max_index + 1;
+    _PyGC_VisitObjectsWorldStopped(interp, record_heap_frame_index, in_use);
     in_use->flags = PyMem_Calloc(in_use->size, sizeof(*in_use->flags));
     if (in_use->flags == NULL) {
         return -1;
     }
     _Py_FOR_EACH_TSTATE_BEGIN(interp, p) {
-        in_use->flags[((_PyThreadStateImpl *) p)->tlbc_index] = 1;
+        record_tlbc_index(in_use, ((_PyThreadStateImpl *)p)->tlbc_index);
     }
     _Py_FOR_EACH_TSTATE_END(interp);
+    _PyGC_VisitObjectsWorldStopped(interp, record_heap_frame_index, in_use);
     return 0;
 }
 
@@ -3513,7 +3549,7 @@ _Py_ClearUnusedTLBC(PyInterpreterState *interp)
     if (get_indices_in_use(interp, &args.indices_in_use) < 0) {
         goto err;
     }
-    // Collect code objects that have bytecode not in use by any thread
+    // Collect code objects with bytecode not used by threads or retained frames.
     _PyGC_VisitObjectsWorldStopped(
         interp, get_code_with_unused_tlbc, &args);
     if (args.err < 0) {
@@ -3536,5 +3572,3 @@ err:
     PyErr_NoMemory();
     return -1;
 }
-
-#endif

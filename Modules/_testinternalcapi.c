@@ -2787,6 +2787,7 @@ get_py_thread_id(PyObject *self, PyObject *Py_UNUSED(ignored))
     Py_BUILD_ASSERT(sizeof(unsigned long long) >= sizeof(tid));
     return PyLong_FromUnsignedLongLong(tid);
 }
+#endif
 
 static PyCodeObject *
 get_code(PyObject *obj)
@@ -2829,6 +2830,7 @@ get_tlbc_id(PyObject *Py_UNUSED(module), PyObject *obj)
     return PyLong_FromVoidPtr(bc);
 }
 
+#ifdef Py_GIL_DISABLED
 static PyObject *
 get_long_lived_total(PyObject *self, PyObject *Py_UNUSED(ignored))
 {
@@ -3389,10 +3391,10 @@ static PyMethodDef module_functions[] = {
 
 #ifdef Py_GIL_DISABLED
     {"py_thread_id", get_py_thread_id, METH_NOARGS},
-    {"get_tlbc", get_tlbc, METH_O, NULL},
-    {"get_tlbc_id", get_tlbc_id, METH_O, NULL},
     {"get_long_lived_total", get_long_lived_total, METH_NOARGS},
 #endif
+    {"get_tlbc", get_tlbc, METH_O, NULL},
+    {"get_tlbc_id", get_tlbc_id, METH_O, NULL},
 #ifdef _Py_TIER2
     {"uop_symbols_test", _Py_uop_symbols_test, METH_NOARGS},
 #endif

@@ -1325,9 +1325,6 @@ class CmdLineTest(unittest.TestCase):
         out = res.out.strip().decode("utf-8")
         return tuple(int(i) for i in out.split())
 
-    @unittest.skipUnless(support.Py_GIL_DISABLED,
-                         "PYTHON_TLBC and -X tlbc"
-                         " only supported in Py_GIL_DISABLED builds")
     @threading_helper.requires_working_threading()
     def test_disable_thread_local_bytecode(self):
         code = """if 1:
@@ -1340,9 +1337,6 @@ class CmdLineTest(unittest.TestCase):
         assert_python_ok("-W", "always", "-X", "tlbc=0", "-c", code)
         assert_python_ok("-W", "always", "-c", code, PYTHON_TLBC="0")
 
-    @unittest.skipUnless(support.Py_GIL_DISABLED,
-                         "PYTHON_TLBC and -X tlbc"
-                         " only supported in Py_GIL_DISABLED builds")
     @threading_helper.requires_working_threading()
     def test_enable_thread_local_bytecode(self):
         code = """if 1:
@@ -1357,9 +1351,6 @@ class CmdLineTest(unittest.TestCase):
         assert_python_ok("-W", "always", "-X", "tlbc=1", "-c", code)
         assert_python_ok("-W", "always", "-c", code, PYTHON_TLBC="1")
 
-    @unittest.skipUnless(support.Py_GIL_DISABLED,
-                         "PYTHON_TLBC and -X tlbc"
-                         " only supported in Py_GIL_DISABLED builds")
     def test_invalid_thread_local_bytecode(self):
         rc, out, err = assert_python_failure("-X", "tlbc")
         self.assertIn(b"tlbc=n: n is missing or invalid", err)

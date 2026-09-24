@@ -2545,11 +2545,11 @@ visit_generation(gcvisitobjects_t callback, void *arg, struct gc_generation *gen
 }
 
 void
-PyUnstable_GC_VisitObjects(gcvisitobjects_t callback, void *arg)
+_PyGC_VisitObjectsWorldStopped(PyInterpreterState *interp,
+                              gcvisitobjects_t callback, void *arg)
 {
-    PyInterpreterState *interp = _PyInterpreterState_GET();
+    assert(interp->stoptheworld.world_stopped);
     GCState *gcstate = &interp->gc;
-    _PyEval_StopTheWorld(interp);
     int original_state = gcstate->enabled;
     gcstate->enabled = 0;
     for (size_t i = 0; i < NUM_GENERATIONS; i++) {
@@ -2560,6 +2560,14 @@ PyUnstable_GC_VisitObjects(gcvisitobjects_t callback, void *arg)
     visit_generation(callback, arg, &gcstate->permanent_generation);
 done:
     gcstate->enabled = original_state;
+}
+
+void
+PyUnstable_GC_VisitObjects(gcvisitobjects_t callback, void *arg)
+{
+    PyInterpreterState *interp = _PyInterpreterState_GET();
+    _PyEval_StopTheWorld(interp);
+    _PyGC_VisitObjectsWorldStopped(interp, callback, arg);
     _PyEval_StartTheWorld(interp);
 }
 

@@ -445,6 +445,73 @@ class TestSelfStackTrace(RemoteInspectionTestBase):
         sys.platform == "linux" and not PROCESS_VM_READV_SUPPORTED,
         "Test only runs on Linux with process_vm_readv support",
     )
+    def test_lazily_created_thread_local_bytecode(self):
+        script = textwrap.dedent("""\
+            import os
+            import threading
+            from _remote_debugging import RemoteUnwinder
+
+            barrier = threading.Barrier(3)
+            begin = [threading.Event(), threading.Event()]
+            ready = [threading.Event(), threading.Event()]
+            stop = threading.Event()
+
+            def paused(ready):
+                ready.set()
+                stop.wait()
+
+            def worker(index):
+                barrier.wait()
+                begin[index].wait()
+                paused(ready[index])
+
+            def locations(unwinder):
+                return [frame.location.lineno
+                        for interp in unwinder.get_stack_trace()
+                        for thread in interp.threads
+                        for frame in thread.frame_info
+                        if frame.funcname == 'paused']
+
+            threads = [threading.Thread(target=worker, args=(i,))
+                       for i in range(2)]
+            for thread in threads:
+                thread.start()
+            try:
+                # Both indices exist before the first snapshot, but only one
+                # thread has created a bytecode copy for paused().
+                barrier.wait()
+                begin[0].set()
+                ready[0].wait()
+                unwinder = RemoteUnwinder(os.getpid(), all_threads=True)
+                expected = paused.__code__.co_firstlineno + 2
+                assert locations(unwinder) == [expected]
+                begin[1].set()
+                ready[1].wait()
+                found = locations(unwinder)
+                assert found == [expected, expected], found
+            finally:
+                for event in begin:
+                    event.set()
+                stop.set()
+                for thread in threads:
+                    thread.join()
+            """)
+        result = subprocess.run(
+            [sys.executable, "-X", "tlbc=1", "-c", script],
+            capture_output=True,
+            text=True,
+            timeout=SHORT_TIMEOUT,
+        )
+        self.assertEqual(
+            result.returncode, 0,
+            f"stdout: {result.stdout}\nstderr: {result.stderr}",
+        )
+
+    @skip_if_not_supported
+    @unittest.skipIf(
+        sys.platform == "linux" and not PROCESS_VM_READV_SUPPORTED,
+        "Test only runs on Linux with process_vm_readv support",
+    )
     def test_self_trace_with_large_linetable(self):
         script = textwrap.dedent("""\
             import os

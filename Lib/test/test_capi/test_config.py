@@ -105,7 +105,7 @@ class CAPITests(unittest.TestCase):
             options.append(("run_presite", str | None, None))
         if support.Py_GIL_DISABLED:
             options.append(("enable_gil", int, None))
-            options.append(("tlbc_enabled", int, None))
+        options.append(("tlbc_enabled", int, None))
         if support.MS_WINDOWS:
             options.extend((
                 ("legacy_windows_stdio", bool, None),
