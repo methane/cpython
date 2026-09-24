@@ -2961,6 +2961,7 @@ dummy_func(
             _LOAD_ATTR_INSTANCE_VALUE +
             POP_TOP +
             unused/5 +
+            _CHECK_ACCESS +
             _PUSH_NULL_CONDITIONAL;
 
         op(_LOAD_ATTR_MODULE, (dict_version/2, index/1, owner -- attr, o)) {
@@ -2993,6 +2994,7 @@ dummy_func(
             _LOAD_ATTR_MODULE +
             POP_TOP +
             unused/5 +
+            _CHECK_ACCESS +
             _PUSH_NULL_CONDITIONAL;
 
         op(_LOAD_ATTR_WITH_HINT, (hint/1, owner -- attr, o)) {
@@ -3042,6 +3044,7 @@ dummy_func(
             _LOAD_ATTR_WITH_HINT +
             POP_TOP +
             unused/5 +
+            _CHECK_ACCESS +
             _PUSH_NULL_CONDITIONAL;
 
         op(_LOAD_ATTR_SLOT, (index/1, owner -- attr, o)) {
@@ -3068,6 +3071,7 @@ dummy_func(
             _LOAD_ATTR_SLOT +  // NOTE: This action may also deopt
             POP_TOP +
             unused/5 +
+            _CHECK_ACCESS +
             _PUSH_NULL_CONDITIONAL;
 
         op(_CHECK_ATTR_CLASS, (type_version/2, owner -- owner)) {
@@ -3091,6 +3095,7 @@ dummy_func(
             _CHECK_ATTR_CLASS +
             unused/2 +
             _LOAD_ATTR_CLASS +
+            _CHECK_ACCESS +
             _PUSH_NULL_CONDITIONAL;
 
         macro(LOAD_ATTR_CLASS_WITH_METACLASS_CHECK) =
@@ -3099,9 +3104,14 @@ dummy_func(
             _GUARD_TYPE_VERSION +
             _CHECK_ATTR_CLASS +
             _LOAD_ATTR_CLASS +
+            _CHECK_ACCESS +
             _PUSH_NULL_CONDITIONAL;
 
         op(_LOAD_ATTR_PROPERTY_FRAME, (func_version/2, fget/4, owner -- new_frame)) {
+            PyObject *checked = PyObject_CheckAccess((PyObject *)fget);
+            if (checked == NULL) {
+                ERROR_NO_POP();
+            }
             assert((oparg & 1) == 0);
             assert(Py_IS_TYPE(fget, &PyFunction_Type));
             PyFunctionObject *f = (PyFunctionObject *)fget;
@@ -3125,6 +3135,10 @@ dummy_func(
             _PUSH_FRAME;
 
         op(_LOAD_ATTR_GETATTRIBUTE_OVERRIDDEN_FRAME, (func_version/2, getattribute/4, owner -- new_frame)) {
+            PyObject *checked = PyObject_CheckAccess((PyObject *)getattribute);
+            if (checked == NULL) {
+                ERROR_NO_POP();
+            }
             assert((oparg & 1) == 0);
             assert(Py_IS_TYPE(getattribute, &PyFunction_Type));
             PyFunctionObject *f = (PyFunctionObject *)getattribute;
@@ -4283,6 +4297,10 @@ dummy_func(
         }
 
         op(_LOAD_ATTR_METHOD_WITH_VALUES, (descr/4, owner -- attr, self)) {
+            PyObject *checked = PyObject_CheckAccess((PyObject *)descr);
+            if (checked == NULL) {
+                ERROR_NO_POP();
+            }
             assert(oparg & 1);
             /* Cached method object */
             STAT_INC(LOAD_ATTR, hit);
@@ -4302,6 +4320,10 @@ dummy_func(
             _LOAD_ATTR_METHOD_WITH_VALUES;
 
         op(_LOAD_ATTR_METHOD_NO_DICT, (descr/4, owner -- attr, self)) {
+            PyObject *checked = PyObject_CheckAccess((PyObject *)descr);
+            if (checked == NULL) {
+                ERROR_NO_POP();
+            }
             assert(oparg & 1);
             assert(Py_TYPE(PyStackRef_AsPyObjectBorrow(owner))->tp_dictoffset == 0);
             STAT_INC(LOAD_ATTR, hit);
@@ -4333,7 +4355,7 @@ dummy_func(
             _GUARD_TYPE_VERSION +
             _CHECK_MANAGED_OBJECT_HAS_VALUES +
             unused/2 +
-            _LOAD_ATTR_NONDESCRIPTOR_WITH_VALUES;
+            _LOAD_ATTR_NONDESCRIPTOR_WITH_VALUES + _CHECK_ACCESS;
 
         op(_LOAD_ATTR_NONDESCRIPTOR_NO_DICT, (descr/4, owner -- attr)) {
             assert((oparg & 1) == 0);
@@ -4349,7 +4371,7 @@ dummy_func(
             _RECORD_TOS_TYPE +
             _GUARD_TYPE_VERSION +
             unused/2 +
-            _LOAD_ATTR_NONDESCRIPTOR_NO_DICT;
+            _LOAD_ATTR_NONDESCRIPTOR_NO_DICT + _CHECK_ACCESS;
 
         op(_CHECK_ATTR_METHOD_LAZY_DICT, (dictoffset/1, owner -- owner)) {
             char *ptr = ((char *)PyStackRef_AsPyObjectBorrow(owner)) + MANAGED_DICT_OFFSET + dictoffset;
@@ -4359,6 +4381,10 @@ dummy_func(
         }
 
         op(_LOAD_ATTR_METHOD_LAZY_DICT, (descr/4, owner -- attr, self)) {
+            PyObject *checked = PyObject_CheckAccess((PyObject *)descr);
+            if (checked == NULL) {
+                ERROR_NO_POP();
+            }
             assert(oparg & 1);
             STAT_INC(LOAD_ATTR, hit);
             assert(descr != NULL);

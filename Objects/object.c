@@ -1687,8 +1687,8 @@ _PyObject_NextNotImplemented(PyObject *self)
    `method` will point to the resolved attribute or NULL.  In the
    latter case, an error will be set.
 */
-int
-_PyObject_GetMethod(PyObject *obj, PyObject *name, PyObject **method)
+static int
+object_get_method(PyObject *obj, PyObject *name, PyObject **method)
 {
     int meth_found = 0;
 
@@ -1709,6 +1709,10 @@ _PyObject_GetMethod(PyObject *obj, PyObject *name, PyObject **method)
     PyObject *descr = _PyType_LookupRef(tp, name);
     descrgetfunc f = NULL;
     if (descr != NULL) {
+        if (PyObject_CheckAccess(descr) == NULL) {
+            Py_DECREF(descr);
+            return 0;
+        }
         if (_PyType_HasFeature(Py_TYPE(descr), Py_TPFLAGS_METHOD_DESCRIPTOR)) {
             meth_found = 1;
         }
@@ -1779,6 +1783,14 @@ _PyObject_GetMethod(PyObject *obj, PyObject *name, PyObject **method)
     return 0;
 }
 
+int
+_PyObject_GetMethod(PyObject *obj, PyObject *name, PyObject **method)
+{
+    int found = object_get_method(obj, name, method);
+    *method = _PyObject_CheckAccessNullable(*method);
+    return *method == NULL ? 0 : found;
+}
+
 // Look up a method on `self` by `name`.
 //
 // On success, `*method` is set and the function returns 0 or 1. If the
@@ -1787,8 +1799,8 @@ _PyObject_GetMethod(PyObject *obj, PyObject *name, PyObject **method)
 // a regular function and `*self` is cleared.
 //
 // On error, returns -1, clears `*self`, and sets an exception.
-int
-_PyObject_GetMethodStackRef(PyThreadState *ts, _PyStackRef *self,
+static int
+object_get_method_stackref(PyThreadState *ts, _PyStackRef *self,
                             PyObject *name, _PyStackRef *method)
 {
     int meth_found = 0;
@@ -1818,6 +1830,11 @@ _PyObject_GetMethodStackRef(PyThreadState *ts, _PyStackRef *self,
     PyObject *descr = PyStackRef_AsPyObjectBorrow(*method);
     descrgetfunc f = NULL;
     if (descr != NULL) {
+        if (PyObject_CheckAccess(descr) == NULL) {
+            PyStackRef_CLEAR(*method);
+            PyStackRef_CLEAR(*self);
+            return -1;
+        }
         if (_PyType_HasFeature(Py_TYPE(descr), Py_TPFLAGS_METHOD_DESCRIPTOR)) {
             meth_found = 1;
         }
@@ -1916,6 +1933,20 @@ _PyObject_GetMethodStackRef(PyThreadState *ts, _PyStackRef *self,
 }
 
 
+int
+_PyObject_GetMethodStackRef(PyThreadState *ts, _PyStackRef *self,
+                            PyObject *name, _PyStackRef *method)
+{
+    int found = object_get_method_stackref(ts, self, name, method);
+    if (found >= 0 &&
+        PyObject_CheckAccess(PyStackRef_AsPyObjectBorrow(*method)) == NULL) {
+        PyStackRef_CLEAR(*method);
+        PyStackRef_CLEAR(*self);
+        return -1;
+    }
+    return found;
+}
+
 /* Generic GetAttr functions - put these in your tp_[gs]etattro slot. */
 
 PyObject *
@@ -1956,6 +1987,9 @@ _PyObject_GenericGetAttrWithDict(PyObject *obj, PyObject *name,
 
     f = NULL;
     if (descr != NULL) {
+        if (PyObject_CheckAccess(descr) == NULL) {
+            goto done;
+        }
         f = Py_TYPE(descr)->tp_descr_get;
         if (f != NULL && PyDescr_IsData(descr)) {
             res = f(descr, obj, (PyObject *)Py_TYPE(obj));
@@ -2038,14 +2072,13 @@ _PyObject_GenericGetAttrWithDict(PyObject *obj, PyObject *name,
   done:
     _PyThreadState_PopCStackRef(tstate, &cref);
     Py_DECREF(name);
-    return res;
+    return _PyObject_CheckAccessNullable(res);
 }
 
 PyObject *
 PyObject_GenericGetAttr(PyObject *obj, PyObject *name)
 {
-    return _PyObject_CheckAccessNullable(
-        _PyObject_GenericGetAttrWithDict(obj, name, NULL, 0));
+    return _PyObject_GenericGetAttrWithDict(obj, name, NULL, 0);
 }
 
 int

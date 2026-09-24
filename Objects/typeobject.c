@@ -6474,6 +6474,9 @@ _Py_type_getattro_stackref(PyTypeObject *type, PyObject *name,
 
     if (!PyStackRef_IsNull(meta_attribute_ref.ref)) {
         PyObject *meta_attr_obj = PyStackRef_AsPyObjectBorrow(meta_attribute_ref.ref);
+        if (PyObject_CheckAccess(meta_attr_obj) == NULL) {
+            goto done;
+        }
         meta_get = Py_TYPE(meta_attr_obj)->tp_descr_get;
 
         if (meta_get != NULL && PyDescr_IsData(meta_attr_obj)) {
@@ -6496,6 +6499,9 @@ _Py_type_getattro_stackref(PyTypeObject *type, PyObject *name,
     if (!PyStackRef_IsNull(attribute_ref.ref)) {
         /* Implement descriptor functionality, if any */
         PyObject *attr_obj = PyStackRef_AsPyObjectBorrow(attribute_ref.ref);
+        if (PyObject_CheckAccess(attr_obj) == NULL) {
+            goto done;
+        }
         descrgetfunc local_get = Py_TYPE(attr_obj)->tp_descr_get;
 
         /* Release meta_attribute early since we found in local dict */
@@ -6558,6 +6564,10 @@ _Py_type_getattro_stackref(PyTypeObject *type, PyObject *name,
     }
 
 done:
+    if (!PyStackRef_IsNull(result_ref.ref) &&
+        PyObject_CheckAccess(PyStackRef_AsPyObjectBorrow(result_ref.ref)) == NULL) {
+        PyStackRef_CLEAR(result_ref.ref);
+    }
     _PyThreadState_PopCStackRef(tstate, &attribute_ref);
     _PyThreadState_PopCStackRef(tstate, &meta_attribute_ref);
     return _PyThreadState_PopCStackRefSteal(tstate, &result_ref);

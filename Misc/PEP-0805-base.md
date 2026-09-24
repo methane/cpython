@@ -14,7 +14,7 @@ The five-stage implementation is **not complete**.
 | ThreadGroups | Group selection, serialization, detach/reattach, native identity, fork and Main lifetime | Parallel execution in the normal build |
 | One-time ABI change | Compact owner/state and group-biased RC header; no cleanup queue fields | Complete the allocation/GC port and audit native layouts |
 | Biased and deferred reference counting | Group bias, per-thread code counts, deferred stack roots and normal GC integration | Queue collection and reclamation with concurrent groups |
-| LOCAL and IMMUTABLE ownership | Builtin/static metadata, common C API returns and VM constant/global/cell/container/iterator loads | Complete remaining API, attribute and callable acquisitions; resolve shared static extension types |
+| LOCAL and IMMUTABLE ownership | Builtin/static metadata, common C API returns, VM heap loads and common attribute/descriptor acquisitions | Complete remaining API and callable acquisitions; resolve shared static extension types |
 | Parallel allocation and cyclic GC | Normal generational collector understands biased, deferred and per-thread counts | Concurrent allocation, internal world stops, owner-correct finalization and teardown |
 
 Freezing, protective/compound locks, synchronized objects and functions,
@@ -121,6 +121,15 @@ Parallel scheduling tests remain skipped while the interpreter GIL is enabled.
   (6 skips); ownership also passes `-R 3:3` (12 tests). Native workers remain
   necessary for execution in foreign groups until the later synchronized
   function stage.
+- Attribute acquisition: 773 tests passed across ownership, specialization,
+  descriptors, classes, inheritance, properties, object APIs, function attributes,
+  calls, GC and embedding (11 skips). Native fixtures verify that inaccessible
+  descriptors are never invoked, and repeated rejected lookups remain rejected
+  after cache invalidation and respecialization. Slot, instance and module loads
+  are checked in specialized code too. Ownership passes `-R 3:3` (14 tests).
+- The non-debug normal build at `19030fdd7f` passes 645 tests covering the first
+  C API/VM acquisition changes (17 skips). This validation predates the thread
+  entry and attribute acquisition changes.
 - A separate non-debug build (`./configure`, `Py_GIL_DISABLED=0`, `Py_DEBUG=0`,
   empty ABI flags, interpreter GIL enabled) passes 782 tests across
   `test_threadgroup`, `test_local_reclamation`, `test_deferred_reclamation`,

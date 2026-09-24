@@ -125,6 +125,14 @@ class OwnershipTests(unittest.TestCase):
             'tuple_negative_item': 'return source[-3] is None',
             'list_item': 'return items[0] is None',
             'dict_item': "return mapping['value'] is None",
+            'slot_attribute': 'return box.value is None',
+            'instance_attribute': 'return instance.value is None',
+            'class_attribute': 'return cls.value is None',
+            'module_attribute': 'return module.value is None',
+            'slot_method': 'try:\n    box.value()\nexcept TypeError:\n    return True',
+            'instance_method': 'try:\n    instance.value()\nexcept TypeError:\n    return True',
+            'class_method': 'try:\n    cls.value()\nexcept TypeError:\n    return True',
+            'module_method': 'try:\n    module.value()\nexcept TypeError:\n    return True',
             'unpack_two': 'a, b = source[:2]\nreturn a is None',
             'unpack_tuple': 'a, b, c = source\nreturn a is None',
             'unpack_list': 'a, b, c = items\nreturn a is None',
@@ -149,6 +157,9 @@ class OwnershipTests(unittest.TestCase):
             ('return source[0] is None', 'BINARY_OP_SUBSCR_TUPLE_INT'),
             ('return items[0] is None', 'BINARY_OP_SUBSCR_LIST_INT'),
             ("return mapping['value'] is None", 'BINARY_OP_SUBSCR_DICT'),
+            ('return box.value is None', 'LOAD_ATTR_SLOT'),
+            ('return instance.value is None', 'LOAD_ATTR_INSTANCE_VALUE'),
+            ('return module.value is None', 'LOAD_ATTR_MODULE'),
             ('a, b = source[:2]\nreturn a is None', 'UNPACK_SEQUENCE_TWO_TUPLE'),
             ('a, b, c = source\nreturn a is None', 'UNPACK_SEQUENCE_TUPLE'),
             ('a, b, c = items\nreturn a is None', 'UNPACK_SEQUENCE_LIST'),
@@ -163,6 +174,31 @@ class OwnershipTests(unittest.TestCase):
 
     def test_vm_name_load(self):
         self.check_vm_code(compile('value is None', '<probe>', 'exec'), 0)
+
+    def test_vm_descriptor_checked_before_call(self):
+        for warmups in (0, 64):
+            for group in (sys.main_thread_group, self.foreign):
+                with self.subTest(warmups=warmups, group=group):
+                    descriptor = internal.make_access_descriptor()
+                    namespace = {}
+                    exec('def probe():\n    return cls.value is None', namespace)
+                    self.assertIs(internal.threadgroup_vm_probe(
+                        namespace['probe'].__code__, group,
+                        (descriptor, None, None), warmups),
+                        group is sys.main_thread_group)
+                    self.assertEqual(internal.access_descriptor_calls(descriptor),
+                                     1 if group is sys.main_thread_group else 0)
+
+    def test_vm_repeated_rejected_attribute(self):
+        # Changing a class attribute invalidates its old type cache. Keep
+        # trying after rejection so respecialization cannot bypass the check.
+        for name in ('box', 'instance', 'cls', 'module'):
+            with self.subTest(name=name):
+                namespace = {}
+                exec(f'def probe():\n    return {name}.value is None', namespace)
+                self.assertFalse(internal.threadgroup_vm_probe(
+                    namespace['probe'].__code__, self.foreign,
+                    (object(), None, None), 64, 128))
 
     def test_vm_cell_load(self):
         value = None

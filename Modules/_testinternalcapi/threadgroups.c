@@ -581,6 +581,7 @@ static PyMethodDef return_heap_value_def = {
 typedef struct {
     PyObject_HEAD
     PyObject *value;
+    int descriptor_calls;
 } return_box;
 
 static int
@@ -640,10 +641,24 @@ static PyType_Spec return_box_spec = {
     .slots = return_box_slots,
 };
 
+static PyType_Slot member_box_slots[] = {
+    {Py_tp_dealloc, return_box_dealloc},
+    {Py_tp_traverse, return_box_traverse},
+    {Py_tp_members, return_box_members},
+    {0, NULL},
+};
+
+static PyType_Spec member_box_spec = {
+    .name = "_testinternalcapi.MemberBox",
+    .basicsize = sizeof(return_box),
+    .flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_GC,
+    .slots = member_box_slots,
+};
+
 static PyObject *
-make_return_box(PyObject *value)
+make_return_box(PyType_Spec *spec, PyObject *value)
 {
-    PyTypeObject *type = (PyTypeObject *)PyType_FromSpec(&return_box_spec);
+    PyTypeObject *type = (PyTypeObject *)PyType_FromSpec(spec);
     if (type == NULL) {
         return NULL;
     }
@@ -653,6 +668,43 @@ make_return_box(PyObject *value)
         box->value = Py_NewRef(value);  // Blind heap-to-heap copy.
     }
     return (PyObject *)box;
+}
+
+static PyObject *
+access_descriptor_get(PyObject *self, PyObject *obj, PyObject *type)
+{
+    _Py_atomic_add_int(&((return_box *)self)->descriptor_calls, 1);
+    Py_RETURN_NONE;
+}
+
+static PyType_Slot access_descriptor_slots[] = {
+    {Py_tp_dealloc, return_box_dealloc},
+    {Py_tp_traverse, return_box_traverse},
+    {Py_tp_descr_get, access_descriptor_get},
+    {0, NULL},
+};
+
+static PyType_Spec access_descriptor_spec = {
+    .name = "_testinternalcapi.AccessDescriptor",
+    .basicsize = sizeof(return_box),
+    .flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_GC,
+    .slots = access_descriptor_slots,
+};
+
+static PyObject *
+make_access_descriptor(PyObject *self, PyObject *unused)
+{
+    return make_return_box(&access_descriptor_spec, Py_None);
+}
+
+static PyObject *
+access_descriptor_calls(PyObject *self, PyObject *descriptor)
+{
+    if (Py_TYPE(descriptor)->tp_descr_get != access_descriptor_get) {
+        return PyErr_Format(PyExc_TypeError, "expected an access descriptor");
+    }
+    return PyLong_FromLong(_Py_atomic_load_int(
+        &((return_box *)descriptor)->descriptor_calls));
 }
 
 static const char *return_apis[] = {
@@ -785,7 +837,7 @@ return_probe_worker(void *arg)
             result = PyCell_Get(box);
             break;
         default:
-            box = make_return_box(value);
+            box = make_return_box(&return_box_spec, value);
             if (box == NULL) {
                 goto done;
             }
@@ -875,11 +927,43 @@ struct vm_probe {
     struct access_probe base;
     PyObject *code;
     int warmups;
+    int trials;
 };
+
+static PyObject *
+make_vm_probe_class(void)
+{
+    PyObject *name = PyUnicode_FromString("VMProbe");
+    PyObject *bases = PyTuple_Pack(1, &PyBaseObject_Type);
+    PyObject *namespace = PyDict_New();
+    PyObject *cls = NULL;
+    if (name != NULL && bases != NULL && namespace != NULL) {
+        cls = PyObject_CallFunctionObjArgs((PyObject *)&PyType_Type,
+                                          name, bases, namespace, NULL);
+    }
+    Py_XDECREF(name);
+    Py_XDECREF(bases);
+    Py_XDECREF(namespace);
+    return cls;
+}
+
+static PyObject *
+make_vm_probe_instance(void)
+{
+    // Keep the instance's type stable when the separate class fixture changes.
+    PyObject *cls = make_vm_probe_class();
+    if (cls == NULL) {
+        return NULL;
+    }
+    PyObject *instance = PyObject_CallNoArgs(cls);
+    Py_DECREF(cls);
+    return instance;
+}
 
 static int
 set_vm_probe_values(PyObject *globals, PyObject *builtins, PyObject *cell,
-                    PyObject *source)
+                    PyObject *source, PyObject *box, PyObject *instance,
+                    PyObject *cls, PyObject *module)
 {
     PyObject *value = PyTuple_GET_ITEM(source, 0);  // Raw heap reference.
     PyObject *items = PySequence_List(source);
@@ -891,7 +975,13 @@ set_vm_probe_values(PyObject *globals, PyObject *builtins, PyObject *cell,
         PyDict_SetItemString(globals, "items", items) == 0 &&
         PyDict_SetItemString(globals, "mapping", mapping) == 0 &&
         PyDict_SetItemString(builtins, "builtin_value", value) == 0 &&
-        PyCell_Set(cell, value) == 0;
+        PyCell_Set(cell, value) == 0 &&
+        PyObject_SetAttrString(instance, "value", value) == 0 &&
+        PyObject_SetAttrString(cls, "value", value) == 0 &&
+        PyObject_SetAttrString(module, "value", value) == 0;
+    // The member is read-only to Python. Update the worker's own fixture in
+    // native code, preserving the type and instance through specialization.
+    Py_SETREF(((return_box *)box)->value, Py_NewRef(value));
     Py_XDECREF(mapping);
     Py_XDECREF(items);
     return ok ? 0 : -1;
@@ -915,9 +1005,19 @@ vm_probe_worker(void *arg)
     PyObject *globals = PyDict_New();
     PyObject *builtins = PyDict_New();
     PyObject *cell = PyCell_New(NULL);
+    PyObject *box = make_return_box(&member_box_spec, Py_None);
+    PyObject *cls = make_vm_probe_class();
+    PyObject *instance = make_vm_probe_instance();
+    PyObject *module = PyModule_New("_testinternalcapi.vm_probe");
     PyObject *func = NULL, *closure = NULL, *warm = NULL, *result = NULL;
-    if (globals == NULL || builtins == NULL || cell == NULL ||
-        PyDict_SetItemString(globals, "__builtins__", builtins) < 0) {
+    if (globals == NULL || builtins == NULL || cell == NULL || box == NULL ||
+        cls == NULL || instance == NULL || module == NULL ||
+        PyDict_SetItemString(globals, "__builtins__", builtins) < 0 ||
+        PyDict_SetItemString(builtins, "TypeError", PyExc_TypeError) < 0 ||
+        PyDict_SetItemString(globals, "box", box) < 0 ||
+        PyDict_SetItemString(globals, "instance", instance) < 0 ||
+        PyDict_SetItemString(globals, "cls", cls) < 0 ||
+        PyDict_SetItemString(globals, "module", module) < 0) {
         goto done;
     }
     int is_function = ((PyCodeObject *)probe->code)->co_flags & CO_NEWLOCALS;
@@ -934,7 +1034,8 @@ vm_probe_worker(void *arg)
         }
     }
     warm = PyTuple_Pack(3, Py_None, Py_None, Py_None);
-    if (warm == NULL || set_vm_probe_values(globals, builtins, cell, warm) < 0) {
+    if (warm == NULL || set_vm_probe_values(globals, builtins, cell, warm,
+                                            box, instance, cls, module) < 0) {
         goto done;
     }
     for (int i = 0; i < probe->warmups; i++) {
@@ -945,19 +1046,27 @@ vm_probe_worker(void *arg)
         }
         Py_CLEAR(result);
     }
-    if (set_vm_probe_values(globals, builtins, cell, source) < 0) {
+    if (set_vm_probe_values(globals, builtins, cell, source,
+                            box, instance, cls, module) < 0) {
         goto done;
     }
-    result = is_function ? PyObject_CallNoArgs(func) :
-        PyEval_EvalCode(probe->code, globals, globals);
-    if (probe->base.accessible) {
-        // Test code consumes acquired values and returns only a primitive.
-        probe->base.ok = result != NULL &&
-            (result == Py_None || PyBool_Check(result)) && !PyErr_Occurred();
-    }
-    else {
-        probe->base.ok = result == NULL &&
-            PyErr_ExceptionMatches(PyExc_IllegalThreadAccessException);
+    for (int i = 0; i < probe->trials; i++) {
+        result = is_function ? PyObject_CallNoArgs(func) :
+            PyEval_EvalCode(probe->code, globals, globals);
+        if (probe->base.accessible) {
+            // Test code consumes acquired values and returns only a primitive.
+            probe->base.ok = result != NULL &&
+                (result == Py_None || PyBool_Check(result)) && !PyErr_Occurred();
+        }
+        else {
+            probe->base.ok = result == NULL &&
+                PyErr_ExceptionMatches(PyExc_IllegalThreadAccessException);
+        }
+        if (!probe->base.ok) {
+            goto done;
+        }
+        Py_CLEAR(result);
+        PyErr_Clear();
     }
 done:
     PyErr_Clear();
@@ -966,6 +1075,10 @@ done:
     Py_XDECREF(closure);
     Py_XDECREF(func);
     Py_XDECREF(cell);
+    Py_XDECREF(box);
+    Py_XDECREF(instance);
+    Py_XDECREF(cls);
+    Py_XDECREF(module);
     Py_XDECREF(builtins);
     Py_XDECREF(globals);
     PyThreadState_Clear(tstate);
@@ -976,12 +1089,13 @@ static PyObject *
 threadgroup_vm_probe(PyObject *self, PyObject *args)
 {
     PyObject *group, *source, *code;
-    int warmups;
-    if (!PyArg_ParseTuple(args, "O!OO!i:threadgroup_vm_probe", &PyCode_Type,
-                          &code, &group, &PyTuple_Type, &source, &warmups)) {
+    int warmups, trials = 1;
+    if (!PyArg_ParseTuple(args, "O!OO!i|i:threadgroup_vm_probe", &PyCode_Type,
+                          &code, &group, &PyTuple_Type, &source, &warmups, &trials)) {
         return NULL;
     }
     if (PyTuple_GET_SIZE(source) != 3 || warmups < 0 || warmups > 1000 ||
+        trials < 1 || trials > 1000 ||
         ((PyCodeObject *)code)->co_argcount != 0 ||
         ((PyCodeObject *)code)->co_nfreevars > 1) {
         return PyErr_Format(PyExc_ValueError, "invalid VM probe arguments");
@@ -994,6 +1108,7 @@ threadgroup_vm_probe(PyObject *self, PyObject *args)
         .base = {.interp = PyInterpreterState_Get(), .group = state, .value = source},
         .code = code,
         .warmups = warmups,
+        .trials = trials,
     };
     PyThread_ident_t ident;
     PyThread_handle_t handle;
@@ -1012,6 +1127,8 @@ threadgroup_vm_probe(PyObject *self, PyObject *args)
 }
 
 static PyMethodDef methods[] = {
+    {"make_access_descriptor", make_access_descriptor, METH_NOARGS, NULL},
+    {"access_descriptor_calls", access_descriptor_calls, METH_O, NULL},
     {"threadgroup_vm_probe", threadgroup_vm_probe, METH_VARARGS, NULL},
     {"threadgroup_return_probe", threadgroup_return_probe, METH_VARARGS, NULL},
     {"test_static_immutable_access", test_static_immutable_access, METH_NOARGS, NULL},

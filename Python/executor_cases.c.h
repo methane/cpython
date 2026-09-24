@@ -12612,41 +12612,6 @@
             break;
         }
 
-        case _LOAD_ATTR_PROPERTY_FRAME_r01: {
-            CHECK_CURRENT_CACHED_VALUES(0);
-            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
-            _PyStackRef owner;
-            _PyStackRef new_frame;
-            oparg = CURRENT_OPARG();
-            owner = stack_pointer[-1];
-            uint32_t func_version = (uint32_t)CURRENT_OPERAND0_32();
-            PyObject *fget = (PyObject *)CURRENT_OPERAND1_64();
-            assert((oparg & 1) == 0);
-            assert(Py_IS_TYPE(fget, &PyFunction_Type));
-            PyFunctionObject *f = (PyFunctionObject *)fget;
-            if (f->func_version != func_version) {
-                UOP_STAT_INC(uopcode, miss);
-                SET_CURRENT_CACHED_VALUES(0);
-                JUMP_TO_JUMP_TARGET();
-            }
-            PyCodeObject *code = (PyCodeObject *)f->func_code;
-            if (!_PyThreadState_HasStackSpace(tstate, code->co_framesize)) {
-                UOP_STAT_INC(uopcode, miss);
-                SET_CURRENT_CACHED_VALUES(0);
-                JUMP_TO_JUMP_TARGET();
-            }
-            STAT_INC(LOAD_ATTR, hit);
-            _PyInterpreterFrame *pushed_frame = _PyFrame_PushUnchecked(tstate, PyStackRef_FromPyObjectNew(fget), 1, frame);
-            pushed_frame->localsplus[0] = owner;
-            new_frame = PyStackRef_Wrap(pushed_frame);
-            _tos_cache0 = new_frame;
-            SET_CURRENT_CACHED_VALUES(1);
-            stack_pointer += -1;
-            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
-            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
-            break;
-        }
-
         case _LOAD_ATTR_PROPERTY_FRAME_r11: {
             CHECK_CURRENT_CACHED_VALUES(1);
             ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
@@ -12657,6 +12622,17 @@
             owner = _stack_item_0;
             uint32_t func_version = (uint32_t)CURRENT_OPERAND0_32();
             PyObject *fget = (PyObject *)CURRENT_OPERAND1_64();
+            stack_pointer[0] = owner;
+            stack_pointer += 1;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            _PyFrame_SetStackPointer(frame, stack_pointer);
+            _PyFrame_StackPointerValidate(frame);
+            PyObject *checked = PyObject_CheckAccess((PyObject *)fget);
+            _PyFrame_StackPointerInvalidate(frame);
+            if (checked == NULL) {
+                SET_CURRENT_CACHED_VALUES(0);
+                JUMP_TO_ERROR();
+            }
             assert((oparg & 1) == 0);
             assert(Py_IS_TYPE(fget, &PyFunction_Type));
             PyFunctionObject *f = (PyFunctionObject *)fget;
@@ -12664,6 +12640,8 @@
                 UOP_STAT_INC(uopcode, miss);
                 _tos_cache0 = owner;
                 SET_CURRENT_CACHED_VALUES(1);
+                stack_pointer += -1;
+                ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
                 JUMP_TO_JUMP_TARGET();
             }
             PyCodeObject *code = (PyCodeObject *)f->func_code;
@@ -12671,6 +12649,8 @@
                 UOP_STAT_INC(uopcode, miss);
                 _tos_cache0 = owner;
                 SET_CURRENT_CACHED_VALUES(1);
+                stack_pointer += -1;
+                ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
                 JUMP_TO_JUMP_TARGET();
             }
             STAT_INC(LOAD_ATTR, hit);
@@ -12678,91 +12658,11 @@
             pushed_frame->localsplus[0] = owner;
             new_frame = PyStackRef_Wrap(pushed_frame);
             _tos_cache0 = new_frame;
+            _tos_cache1 = PyStackRef_ZERO_BITS;
+            _tos_cache2 = PyStackRef_ZERO_BITS;
             SET_CURRENT_CACHED_VALUES(1);
-            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
-            break;
-        }
-
-        case _LOAD_ATTR_PROPERTY_FRAME_r22: {
-            CHECK_CURRENT_CACHED_VALUES(2);
-            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
-            _PyStackRef owner;
-            _PyStackRef new_frame;
-            _PyStackRef _stack_item_0 = _tos_cache0;
-            _PyStackRef _stack_item_1 = _tos_cache1;
-            oparg = CURRENT_OPARG();
-            owner = _stack_item_1;
-            uint32_t func_version = (uint32_t)CURRENT_OPERAND0_32();
-            PyObject *fget = (PyObject *)CURRENT_OPERAND1_64();
-            assert((oparg & 1) == 0);
-            assert(Py_IS_TYPE(fget, &PyFunction_Type));
-            PyFunctionObject *f = (PyFunctionObject *)fget;
-            if (f->func_version != func_version) {
-                UOP_STAT_INC(uopcode, miss);
-                _tos_cache1 = owner;
-                _tos_cache0 = _stack_item_0;
-                SET_CURRENT_CACHED_VALUES(2);
-                JUMP_TO_JUMP_TARGET();
-            }
-            PyCodeObject *code = (PyCodeObject *)f->func_code;
-            if (!_PyThreadState_HasStackSpace(tstate, code->co_framesize)) {
-                UOP_STAT_INC(uopcode, miss);
-                _tos_cache1 = owner;
-                _tos_cache0 = _stack_item_0;
-                SET_CURRENT_CACHED_VALUES(2);
-                JUMP_TO_JUMP_TARGET();
-            }
-            STAT_INC(LOAD_ATTR, hit);
-            _PyInterpreterFrame *pushed_frame = _PyFrame_PushUnchecked(tstate, PyStackRef_FromPyObjectNew(fget), 1, frame);
-            pushed_frame->localsplus[0] = owner;
-            new_frame = PyStackRef_Wrap(pushed_frame);
-            _tos_cache1 = new_frame;
-            _tos_cache0 = _stack_item_0;
-            SET_CURRENT_CACHED_VALUES(2);
-            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
-            break;
-        }
-
-        case _LOAD_ATTR_PROPERTY_FRAME_r33: {
-            CHECK_CURRENT_CACHED_VALUES(3);
-            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
-            _PyStackRef owner;
-            _PyStackRef new_frame;
-            _PyStackRef _stack_item_0 = _tos_cache0;
-            _PyStackRef _stack_item_1 = _tos_cache1;
-            _PyStackRef _stack_item_2 = _tos_cache2;
-            oparg = CURRENT_OPARG();
-            owner = _stack_item_2;
-            uint32_t func_version = (uint32_t)CURRENT_OPERAND0_32();
-            PyObject *fget = (PyObject *)CURRENT_OPERAND1_64();
-            assert((oparg & 1) == 0);
-            assert(Py_IS_TYPE(fget, &PyFunction_Type));
-            PyFunctionObject *f = (PyFunctionObject *)fget;
-            if (f->func_version != func_version) {
-                UOP_STAT_INC(uopcode, miss);
-                _tos_cache2 = owner;
-                _tos_cache1 = _stack_item_1;
-                _tos_cache0 = _stack_item_0;
-                SET_CURRENT_CACHED_VALUES(3);
-                JUMP_TO_JUMP_TARGET();
-            }
-            PyCodeObject *code = (PyCodeObject *)f->func_code;
-            if (!_PyThreadState_HasStackSpace(tstate, code->co_framesize)) {
-                UOP_STAT_INC(uopcode, miss);
-                _tos_cache2 = owner;
-                _tos_cache1 = _stack_item_1;
-                _tos_cache0 = _stack_item_0;
-                SET_CURRENT_CACHED_VALUES(3);
-                JUMP_TO_JUMP_TARGET();
-            }
-            STAT_INC(LOAD_ATTR, hit);
-            _PyInterpreterFrame *pushed_frame = _PyFrame_PushUnchecked(tstate, PyStackRef_FromPyObjectNew(fget), 1, frame);
-            pushed_frame->localsplus[0] = owner;
-            new_frame = PyStackRef_Wrap(pushed_frame);
-            _tos_cache2 = new_frame;
-            _tos_cache1 = _stack_item_1;
-            _tos_cache0 = _stack_item_0;
-            SET_CURRENT_CACHED_VALUES(3);
+            stack_pointer += -1;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
             ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
             break;
         }
@@ -12777,6 +12677,17 @@
             owner = _stack_item_0;
             uint32_t func_version = (uint32_t)CURRENT_OPERAND0_32();
             PyObject *getattribute = (PyObject *)CURRENT_OPERAND1_64();
+            stack_pointer[0] = owner;
+            stack_pointer += 1;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            _PyFrame_SetStackPointer(frame, stack_pointer);
+            _PyFrame_StackPointerValidate(frame);
+            PyObject *checked = PyObject_CheckAccess((PyObject *)getattribute);
+            _PyFrame_StackPointerInvalidate(frame);
+            if (checked == NULL) {
+                SET_CURRENT_CACHED_VALUES(0);
+                JUMP_TO_ERROR();
+            }
             assert((oparg & 1) == 0);
             assert(Py_IS_TYPE(getattribute, &PyFunction_Type));
             PyFunctionObject *f = (PyFunctionObject *)getattribute;
@@ -12785,6 +12696,8 @@
                 UOP_STAT_INC(uopcode, miss);
                 _tos_cache0 = owner;
                 SET_CURRENT_CACHED_VALUES(1);
+                stack_pointer += -1;
+                ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
                 JUMP_TO_JUMP_TARGET();
             }
             PyCodeObject *code = (PyCodeObject *)f->func_code;
@@ -12793,6 +12706,8 @@
                 UOP_STAT_INC(uopcode, miss);
                 _tos_cache0 = owner;
                 SET_CURRENT_CACHED_VALUES(1);
+                stack_pointer += -1;
+                ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
                 JUMP_TO_JUMP_TARGET();
             }
             STAT_INC(LOAD_ATTR, hit);
@@ -12806,6 +12721,8 @@
             _tos_cache1 = PyStackRef_ZERO_BITS;
             _tos_cache2 = PyStackRef_ZERO_BITS;
             SET_CURRENT_CACHED_VALUES(1);
+            stack_pointer += -1;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
             ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
             break;
         }
@@ -16285,30 +16202,6 @@
             break;
         }
 
-        case _LOAD_ATTR_METHOD_WITH_VALUES_r02: {
-            CHECK_CURRENT_CACHED_VALUES(0);
-            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
-            _PyStackRef owner;
-            _PyStackRef attr;
-            _PyStackRef self;
-            oparg = CURRENT_OPARG();
-            owner = stack_pointer[-1];
-            PyObject *descr = (PyObject *)CURRENT_OPERAND0_64();
-            assert(oparg & 1);
-            STAT_INC(LOAD_ATTR, hit);
-            assert(descr != NULL);
-            assert(_PyType_HasFeature(Py_TYPE(descr), Py_TPFLAGS_METHOD_DESCRIPTOR));
-            attr = PyStackRef_FromPyObjectNew(descr);
-            self = owner;
-            _tos_cache1 = self;
-            _tos_cache0 = attr;
-            SET_CURRENT_CACHED_VALUES(2);
-            stack_pointer += -1;
-            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
-            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
-            break;
-        }
-
         case _LOAD_ATTR_METHOD_WITH_VALUES_r12: {
             CHECK_CURRENT_CACHED_VALUES(1);
             ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
@@ -16319,6 +16212,17 @@
             oparg = CURRENT_OPARG();
             owner = _stack_item_0;
             PyObject *descr = (PyObject *)CURRENT_OPERAND0_64();
+            stack_pointer[0] = owner;
+            stack_pointer += 1;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            _PyFrame_SetStackPointer(frame, stack_pointer);
+            _PyFrame_StackPointerValidate(frame);
+            PyObject *checked = PyObject_CheckAccess((PyObject *)descr);
+            _PyFrame_StackPointerInvalidate(frame);
+            if (checked == NULL) {
+                SET_CURRENT_CACHED_VALUES(0);
+                JUMP_TO_ERROR();
+            }
             assert(oparg & 1);
             STAT_INC(LOAD_ATTR, hit);
             assert(descr != NULL);
@@ -16327,54 +16231,7 @@
             self = owner;
             _tos_cache1 = self;
             _tos_cache0 = attr;
-            SET_CURRENT_CACHED_VALUES(2);
-            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
-            break;
-        }
-
-        case _LOAD_ATTR_METHOD_WITH_VALUES_r23: {
-            CHECK_CURRENT_CACHED_VALUES(2);
-            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
-            _PyStackRef owner;
-            _PyStackRef attr;
-            _PyStackRef self;
-            _PyStackRef _stack_item_0 = _tos_cache0;
-            _PyStackRef _stack_item_1 = _tos_cache1;
-            oparg = CURRENT_OPARG();
-            owner = _stack_item_1;
-            PyObject *descr = (PyObject *)CURRENT_OPERAND0_64();
-            assert(oparg & 1);
-            STAT_INC(LOAD_ATTR, hit);
-            assert(descr != NULL);
-            assert(_PyType_HasFeature(Py_TYPE(descr), Py_TPFLAGS_METHOD_DESCRIPTOR));
-            attr = PyStackRef_FromPyObjectNew(descr);
-            self = owner;
-            _tos_cache2 = self;
-            _tos_cache1 = attr;
-            _tos_cache0 = _stack_item_0;
-            SET_CURRENT_CACHED_VALUES(3);
-            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
-            break;
-        }
-
-        case _LOAD_ATTR_METHOD_NO_DICT_r02: {
-            CHECK_CURRENT_CACHED_VALUES(0);
-            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
-            _PyStackRef owner;
-            _PyStackRef attr;
-            _PyStackRef self;
-            oparg = CURRENT_OPARG();
-            owner = stack_pointer[-1];
-            PyObject *descr = (PyObject *)CURRENT_OPERAND0_64();
-            assert(oparg & 1);
-            assert(Py_TYPE(PyStackRef_AsPyObjectBorrow(owner))->tp_dictoffset == 0);
-            STAT_INC(LOAD_ATTR, hit);
-            assert(descr != NULL);
-            assert(_PyType_HasFeature(Py_TYPE(descr), Py_TPFLAGS_METHOD_DESCRIPTOR));
-            attr = PyStackRef_FromPyObjectNew(descr);
-            self = owner;
-            _tos_cache1 = self;
-            _tos_cache0 = attr;
+            _tos_cache2 = PyStackRef_ZERO_BITS;
             SET_CURRENT_CACHED_VALUES(2);
             stack_pointer += -1;
             ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
@@ -16392,6 +16249,17 @@
             oparg = CURRENT_OPARG();
             owner = _stack_item_0;
             PyObject *descr = (PyObject *)CURRENT_OPERAND0_64();
+            stack_pointer[0] = owner;
+            stack_pointer += 1;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            _PyFrame_SetStackPointer(frame, stack_pointer);
+            _PyFrame_StackPointerValidate(frame);
+            PyObject *checked = PyObject_CheckAccess((PyObject *)descr);
+            _PyFrame_StackPointerInvalidate(frame);
+            if (checked == NULL) {
+                SET_CURRENT_CACHED_VALUES(0);
+                JUMP_TO_ERROR();
+            }
             assert(oparg & 1);
             assert(Py_TYPE(PyStackRef_AsPyObjectBorrow(owner))->tp_dictoffset == 0);
             STAT_INC(LOAD_ATTR, hit);
@@ -16401,33 +16269,10 @@
             self = owner;
             _tos_cache1 = self;
             _tos_cache0 = attr;
+            _tos_cache2 = PyStackRef_ZERO_BITS;
             SET_CURRENT_CACHED_VALUES(2);
-            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
-            break;
-        }
-
-        case _LOAD_ATTR_METHOD_NO_DICT_r23: {
-            CHECK_CURRENT_CACHED_VALUES(2);
-            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
-            _PyStackRef owner;
-            _PyStackRef attr;
-            _PyStackRef self;
-            _PyStackRef _stack_item_0 = _tos_cache0;
-            _PyStackRef _stack_item_1 = _tos_cache1;
-            oparg = CURRENT_OPARG();
-            owner = _stack_item_1;
-            PyObject *descr = (PyObject *)CURRENT_OPERAND0_64();
-            assert(oparg & 1);
-            assert(Py_TYPE(PyStackRef_AsPyObjectBorrow(owner))->tp_dictoffset == 0);
-            STAT_INC(LOAD_ATTR, hit);
-            assert(descr != NULL);
-            assert(_PyType_HasFeature(Py_TYPE(descr), Py_TPFLAGS_METHOD_DESCRIPTOR));
-            attr = PyStackRef_FromPyObjectNew(descr);
-            self = owner;
-            _tos_cache2 = self;
-            _tos_cache1 = attr;
-            _tos_cache0 = _stack_item_0;
-            SET_CURRENT_CACHED_VALUES(3);
+            stack_pointer += -1;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
             ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
             break;
         }
@@ -16576,30 +16421,6 @@
             break;
         }
 
-        case _LOAD_ATTR_METHOD_LAZY_DICT_r02: {
-            CHECK_CURRENT_CACHED_VALUES(0);
-            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
-            _PyStackRef owner;
-            _PyStackRef attr;
-            _PyStackRef self;
-            oparg = CURRENT_OPARG();
-            owner = stack_pointer[-1];
-            PyObject *descr = (PyObject *)CURRENT_OPERAND0_64();
-            assert(oparg & 1);
-            STAT_INC(LOAD_ATTR, hit);
-            assert(descr != NULL);
-            assert(_PyType_HasFeature(Py_TYPE(descr), Py_TPFLAGS_METHOD_DESCRIPTOR));
-            attr = PyStackRef_FromPyObjectNew(descr);
-            self = owner;
-            _tos_cache1 = self;
-            _tos_cache0 = attr;
-            SET_CURRENT_CACHED_VALUES(2);
-            stack_pointer += -1;
-            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
-            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
-            break;
-        }
-
         case _LOAD_ATTR_METHOD_LAZY_DICT_r12: {
             CHECK_CURRENT_CACHED_VALUES(1);
             ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
@@ -16610,6 +16431,17 @@
             oparg = CURRENT_OPARG();
             owner = _stack_item_0;
             PyObject *descr = (PyObject *)CURRENT_OPERAND0_64();
+            stack_pointer[0] = owner;
+            stack_pointer += 1;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+            _PyFrame_SetStackPointer(frame, stack_pointer);
+            _PyFrame_StackPointerValidate(frame);
+            PyObject *checked = PyObject_CheckAccess((PyObject *)descr);
+            _PyFrame_StackPointerInvalidate(frame);
+            if (checked == NULL) {
+                SET_CURRENT_CACHED_VALUES(0);
+                JUMP_TO_ERROR();
+            }
             assert(oparg & 1);
             STAT_INC(LOAD_ATTR, hit);
             assert(descr != NULL);
@@ -16618,32 +16450,10 @@
             self = owner;
             _tos_cache1 = self;
             _tos_cache0 = attr;
+            _tos_cache2 = PyStackRef_ZERO_BITS;
             SET_CURRENT_CACHED_VALUES(2);
-            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
-            break;
-        }
-
-        case _LOAD_ATTR_METHOD_LAZY_DICT_r23: {
-            CHECK_CURRENT_CACHED_VALUES(2);
-            ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
-            _PyStackRef owner;
-            _PyStackRef attr;
-            _PyStackRef self;
-            _PyStackRef _stack_item_0 = _tos_cache0;
-            _PyStackRef _stack_item_1 = _tos_cache1;
-            oparg = CURRENT_OPARG();
-            owner = _stack_item_1;
-            PyObject *descr = (PyObject *)CURRENT_OPERAND0_64();
-            assert(oparg & 1);
-            STAT_INC(LOAD_ATTR, hit);
-            assert(descr != NULL);
-            assert(_PyType_HasFeature(Py_TYPE(descr), Py_TPFLAGS_METHOD_DESCRIPTOR));
-            attr = PyStackRef_FromPyObjectNew(descr);
-            self = owner;
-            _tos_cache2 = self;
-            _tos_cache1 = attr;
-            _tos_cache0 = _stack_item_0;
-            SET_CURRENT_CACHED_VALUES(3);
+            stack_pointer += -1;
+            ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
             ASSERT_WITHIN_STACK_BOUNDS_IGNORING_CACHE(__FILE__, __LINE__);
             break;
         }
