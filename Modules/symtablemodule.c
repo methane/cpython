@@ -80,7 +80,11 @@ _symtable_symtable_impl(PyObject *module, PyObject *source,
         return NULL;
     }
 
-    if (PyAST_Check(source)) {
+    int is_ast = PyAST_Check(source);
+    if (is_ast < 0) {
+        return NULL;
+    }
+    if (is_ast) {
         st = symtable_from_ast(source, filename, compile_mode);
     }
     else {

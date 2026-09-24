@@ -1180,6 +1180,7 @@ _NamespaceLoader = NamespaceLoader
 
 # Finders #####################################################################
 
+@type.synchronize
 class PathFinder:
 
     """Meta path finder for sys.path and package __path__ attributes."""

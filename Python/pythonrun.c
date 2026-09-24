@@ -14,6 +14,7 @@
 #include "pycore_audit.h"         // _PySys_Audit()
 #include "pycore_ceval.h"         // _Py_EnterRecursiveCall()
 #include "pycore_compile.h"       // _PyAST_Compile()
+#include "pycore_dict.h"          // _PyDict_GetItemRefUnchecked()
 #include "pycore_fileutils.h"     // _PyFile_Flush
 #include "pycore_import.h"        // _PyImport_GetImportlibExternalLoader()
 #include "pycore_interp.h"        // PyInterpreterState.importlib
@@ -1259,6 +1260,25 @@ check_start(int start)
     return -1;
 }
 
+static int
+get_module_name_from_globals(PyObject *globals, PyObject **name)
+{
+    *name = NULL;
+    if (globals == NULL) {
+        return 0;
+    }
+    /* eval/exec can inherit a defining module's private globals. The name
+       itself is an acquired value, so it retains the usual access check. */
+    int found = _PyDict_GetItemRefUnchecked(globals, &_Py_ID(__name__), name);
+    if (found > 0) {
+        *name = _PyObject_CheckAccessNullable(*name);
+        if (*name == NULL) {
+            return -1;
+        }
+    }
+    return found;
+}
+
 static PyObject *
 _PyRun_String(const char *str, PyObject* name, int start,
               PyObject *globals, PyObject *locals, PyCompilerFlags *flags,
@@ -1288,7 +1308,7 @@ _PyRun_String(const char *str, PyObject* name, int start,
         name = &_Py_STR(anon_string);
     }
     PyObject *module = NULL;
-    if (globals && PyDict_GetItemStringRef(globals, "__name__", &module) < 0) {
+    if (get_module_name_from_globals(globals, &module) < 0) {
         goto done;
     }
 
@@ -1398,11 +1418,19 @@ run_eval_code_obj(PyThreadState *tstate, PyCodeObject *co, PyObject *globals, Py
                         "globals must be a real dict or a real frozendict");
         return NULL;
     }
-    int has_builtins = PyDict_ContainsString(globals, "__builtins__");
+    PyObject *key = &_Py_ID(__builtins__);
+    Py_hash_t hash = PyObject_Hash(key);
+    if (hash == -1) {
+        return NULL;
+    }
+    int has_builtins = _PyDict_Contains_KnownHash(globals, key, hash);
     if (has_builtins < 0) {
         return NULL;
     }
     if (!has_builtins) {
+        if (PyObject_CheckAccess(globals) == NULL) {
+            return NULL;
+        }
         if (PyDict_SetItemString(globals, "__builtins__",
                                  tstate->interp->builtins) < 0)
         {
@@ -1456,7 +1484,7 @@ run_mod(mod_ty mod, PyObject *filename, PyObject *globals, PyObject *locals,
         }
     }
     PyObject *module = NULL;
-    if (globals && PyDict_GetItemStringRef(globals, "__name__", &module) < 0) {
+    if (get_module_name_from_globals(globals, &module) < 0) {
         if (interactive_src) {
             Py_DECREF(interactive_filename);
         }

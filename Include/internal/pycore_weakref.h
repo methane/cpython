@@ -13,6 +13,10 @@ extern "C" {
 #include "pycore_object.h"           // _Py_REF_IS_MERGED()
 #include "pycore_pyatomic_ft_wrappers.h"
 
+/* Callback-free weakrefs for private VM metadata. Neither the target nor the
+   returned weakref is acquired as an accessible Python reference. */
+extern PyObject *_PyWeakref_NewRefForMetadata(PyObject *obj);
+
 #ifdef Py_GIL_DISABLED
 
 #define WEAKREF_LIST_LOCK(obj) \

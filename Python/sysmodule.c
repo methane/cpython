@@ -4141,10 +4141,11 @@ _PySys_InitCore(PyThreadState *tstate, PyObject *sysdict)
     SET_SYS("_emscripten_info", make_emscripten_info());
 #endif
 
-    /* adding sys.path_hooks and sys.path_importer_cache */
-    SET_SYS("meta_path", PyList_New(0));
-    SET_SYS("path_importer_cache", PyDict_New());
-    SET_SYS("path_hooks", PyList_New(0));
+    /* Import registries are consulted by every ThreadGroup. Their entries
+       retain their own access policies. */
+    SET_SYS("meta_path", PySynchronizedList_New(0));
+    SET_SYS("path_importer_cache", PySynchronizedDict_New());
+    SET_SYS("path_hooks", PySynchronizedList_New(0));
 
     if (_PyErr_Occurred(tstate)) {
         goto err_occurred;

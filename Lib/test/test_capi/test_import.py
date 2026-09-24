@@ -397,7 +397,34 @@ class ImportTests(unittest.TestCase):
         # CRASHES importmoduleattr(NULL, "argv")
         # CRASHES importmoduleattr("sys", NULL)
 
-    # TODO: test PyImport_GetImporter()
+    def test_getimporter(self):
+        getimporter = _testlimitedcapi.PyImport_GetImporter
+        original_hooks = sys.path_hooks
+        original_cache = sys.path_importer_cache
+        calls = []
+        finder = object()
+
+        def hook(path):
+            calls.append(path)
+            if path != '<test path>':
+                raise ImportError
+            return finder
+
+        try:
+            sys.path_hooks = SynchronizedList([hook])
+            sys.path_importer_cache = SynchronizedDict()
+            self.assertIs(getimporter('<test path>'), finder)
+            self.assertIs(getimporter('<test path>'), finder)
+            self.assertEqual(calls, ['<test path>'])
+            self.assertIsNone(getimporter('<missing path>'))
+            self.assertIsNone(getimporter('<missing path>'))
+            self.assertEqual(calls, ['<test path>', '<missing path>'])
+            with self.assertRaises(SystemError):
+                getimporter(NULL)
+        finally:
+            sys.path_hooks = original_hooks
+            sys.path_importer_cache = original_cache
+
     # TODO: test PyImport_ReloadModule()
     # TODO: test PyImport_ExtendInittab()
     # PyImport_AppendInittab() is tested by test_embed

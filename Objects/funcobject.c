@@ -507,9 +507,17 @@ _PyFunction_FromConstructor(PyFrameConstructor *constr)
         }
     }
     PyObject *module;
-    if (PyDict_GetItemRef(constr->fc_globals, &_Py_ID(__name__), &module) < 0) {
+    if (_PyDict_GetItemRefUnchecked(constr->fc_globals, &_Py_ID(__name__),
+                                    &module) < 0) {
         Py_XDECREF(kwdefaults);
         return NULL;
+    }
+    if (module != NULL) {
+        module = _PyObject_CheckAccessNullable(module);
+        if (module == NULL) {
+            Py_XDECREF(kwdefaults);
+            return NULL;
+        }
     }
 
     PyFunctionObject *op = PyObject_GC_New(PyFunctionObject, &PyFunction_Type);

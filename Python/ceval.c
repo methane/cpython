@@ -2984,7 +2984,10 @@ get_globals_builtins(PyObject *globals)
 {
     PyObject *builtins = NULL;
     if (PyAnyDict_Check(globals)) {
-        if (PyDict_GetItemRef(globals, &_Py_ID(__builtins__), &builtins) < 0) {
+        /* An inherited globals namespace and its builtins are private frame
+           metadata. Individual values are checked when loaded by the VM. */
+        if (_PyDict_GetItemRefUnchecked(globals, &_Py_ID(__builtins__),
+                                        &builtins) < 0) {
             return NULL;
         }
     }
@@ -3001,6 +3004,10 @@ get_globals_builtins(PyObject *globals)
 static int
 set_globals_builtins(PyObject *globals, PyObject *builtins)
 {
+    /* Installing a missing entry is a mutation of the caller's namespace. */
+    if (PyObject_CheckAccess(globals) == NULL) {
+        return -1;
+    }
     if (PyDict_Check(globals)) {
         if (PyDict_SetItem(globals, &_Py_ID(__builtins__), builtins) < 0) {
             return -1;

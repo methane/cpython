@@ -3625,10 +3625,19 @@ get_path_importer(PyThreadState *tstate, PyObject *path_importer_cache,
         return NULL;
 
     for (j = 0; j < nhooks; j++) {
-        PyObject *hook = PyList_GetItem(path_hooks, j);
+        /* Hashing the path or calling an earlier hook may have ended a
+           protective context. Hold an owned reference while calling: a
+           shared hook list can be changed by another ThreadGroup. */
+        if (PyObject_CheckAccess(path_hooks) == NULL ||
+            PyObject_CheckAccess(p) == NULL)
+        {
+            return NULL;
+        }
+        PyObject *hook = PyList_GetItemRef(path_hooks, j);
         if (hook == NULL)
             return NULL;
         importer = PyObject_CallOneArg(hook, p);
+        Py_DECREF(hook);
         if (importer != NULL)
             break;
 
@@ -3640,7 +3649,12 @@ get_path_importer(PyThreadState *tstate, PyObject *path_importer_cache,
     if (importer == NULL) {
         Py_RETURN_NONE;
     }
-    if (PyDict_SetItem(path_importer_cache, p, importer) < 0) {
+    /* Hook destruction can run code after the call's return-value check. */
+    if (PyObject_CheckAccess(path_importer_cache) == NULL ||
+        PyObject_CheckAccess(p) == NULL ||
+        PyObject_CheckAccess(importer) == NULL ||
+        PyDict_SetItem(path_importer_cache, p, importer) < 0)
+    {
         Py_DECREF(importer);
         return NULL;
     }
@@ -3650,12 +3664,11 @@ get_path_importer(PyThreadState *tstate, PyObject *path_importer_cache,
 PyObject *
 PyImport_GetImporter(PyObject *path)
 {
-    if (path == NULL || PyObject_CheckAccess(path) == NULL) {
-        if (path == NULL) {
-            PyErr_BadInternalCall();
-        }
+    if (path == NULL) {
+        PyErr_BadInternalCall();
         return NULL;
     }
+    assert(_PyObject_IsAccessible(path));
     PyThreadState *tstate = _PyThreadState_GET();
     PyObject *path_importer_cache = PySys_GetAttrString("path_importer_cache");
     if (path_importer_cache == NULL) {
@@ -3669,7 +3682,7 @@ PyImport_GetImporter(PyObject *path)
     PyObject *importer = get_path_importer(tstate, path_importer_cache, path_hooks, path);
     Py_DECREF(path_hooks);
     Py_DECREF(path_importer_cache);
-    return importer;
+    return _PyObject_CheckAccessNullable(importer);
 }
 
 
@@ -5840,6 +5853,31 @@ imp_module_exec(PyObject *module)
 
     if (PyModule_AddIntConstant(
             module, "pyc_magic_number_token", PYC_MAGIC_NUMBER_TOKEN) < 0)
+    {
+        return -1;
+    }
+
+    /* The module has no native per-module state. These entry points use the
+       import mutex, read the fixed builtin table, or operate on accessible
+       module arguments and the synchronized lazy-import registry. Other
+       native entry points keep their individual access policies. */
+    static const char *shared_functions[] = {
+        "lock_held", "acquire_lock", "release_lock", "is_builtin",
+        "create_builtin", "exec_builtin", "_set_lazy_attributes",
+    };
+    for (size_t i = 0; i < Py_ARRAY_LENGTH(shared_functions); i++) {
+        PyObject *function = PyObject_GetAttrString(module, shared_functions[i]);
+        if (function == NULL) {
+            return -1;
+        }
+        int err = PyObject_DeclareSynchronized(function);
+        Py_DECREF(function);
+        if (err < 0) {
+            return -1;
+        }
+    }
+    if (_PyDict_SynchronizeNamespace(PyModule_GetDict(module)) < 0 ||
+        PyObject_DeclareSynchronized(module) < 0)
     {
         return -1;
     }

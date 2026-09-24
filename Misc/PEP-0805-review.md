@@ -18,6 +18,8 @@ in the existing subinterpreter import failure.
 The subsequent import audit checks bootstrap callbacks directly and shares
 the lazy-import registries. The next follow-up ports bootstrap lock state
 and freezes its sentinels; the default finder/loader pipeline still needs work.
+The finder follow-up shares the default registries and selected builtin
+loader entry points, and repairs private compiler and shutdown metadata paths.
 
 Sources: [PEP 805](https://peps.python.org/pep-0805/),
 [implementation appendix](https://peps.python.org/pep-0805/appendix-implementation/),
@@ -624,6 +626,61 @@ lock cases pass in all three builds. An earlier selection mistakenly named
 and the actual suite is included under `test_importlib` in the final selection.
 Changed runtime/test sources match across the three trees, the builds emit
 no compiler warnings, and `git diff --check` passes.
+
+### Finder registries, builtin imports and private runtime metadata
+
+`sys.meta_path` and `sys.path_hooks` now start as SynchronizedList, and
+`sys.path_importer_cache` as SynchronizedDict. Bootstrap explicitly
+synchronizes ModuleSpec, BuiltinImporter, FrozenImporter and PathFinder.
+Instances and values stored in the registries retain their individual states.
+The `_imp` namespace is now synchronized; an audited allowlist of native
+functions is shared for builtin imports and lazy-import setup. This does not
+implicitly share every `_imp` function or imported extension module.
+
+`PyImport_GetImporter` holds an owned reference to a hook while calling it,
+rechecks retained values after callbacks that can end protection, and checks
+its final returned finder. Incoming path arguments are asserted accessible.
+The C API test helper and a new direct API test cover caching, failed hooks
+and NULL input. Cross-group tests cover shared finders and hooks, rejection
+of foreign LOCAL entries, and debugger access ending inside a hook.
+
+First import of `_symtable` or `_ast` in a worker exposed additional bugs:
+
+- AST classification tried to acquire the canonical AST class through a
+  public API. It now uses the existing private native subtype helper for
+  an ordinary class, retaining checked `__class__` lookup and custom
+  metaclass access. AST deallocation also reads native type metadata
+  directly. AST classes are not implicitly made shareable.
+- The symbol-table wrapper now propagates an AST-classification exception
+  instead of treating its negative result as true.
+- Inherited globals and builtins are retained as private frame metadata for
+  eval/exec. Acquired names and individual loaded values remain checked;
+  writing an inaccessible namespace is still rejected.
+- Shutdown traverses module storage privately and builds callback-free
+  metadata weakrefs, including reuse of a weakref owned by a stopped group.
+  It no longer leaves an access exception pending before cyclic GC.
+
+The ten new `test_import_finder_access` cases pass in all three builds.
+The default 20-file regression selection reports 2,700 tests and 69 skips:
+19 files pass, with one `test_embed` repeated-initialization failure. The
+tenth new case was added afterward and passed in a rerun of the complete
+new file. GIL/Tier 2 report 2,701 tests and 62 skips: 18 files pass, with
+the six prior subinterpreter import failures and the same embedding failure.
+The embedding failure also reproduces in the saved `3657b0d87c` baseline;
+GDB identifies `LegacyGetAttr_Type` retaining its old Main owner because
+`PyModule_AddType` skips the existing reinitialization path for ready types.
+That is separate follow-up work, not a reason to wait for question 9.
+
+Runtime/test sources and generated AST/importlib files were checked across
+builds. Default/GIL builds emit no compiler warnings; Tier 2 retains the
+four previously recorded unused-variable/function warnings. The sample
+still computes 61,620 and rejects foreign LOCAL and unprotected access.
+Logs are in `/tmp/pep805-finders/`.
+
+The general file-loader pipeline remains incomplete: a fresh worker import
+of `colorsys` now fails while acquiring `_imp.find_frozen`. Frozen-loader
+native helpers, external finder/loader dependencies and cached finder state
+remain implementation work that does not require Mark's feedback.
 
 ## Earlier re-review and implementation follow-ups
 

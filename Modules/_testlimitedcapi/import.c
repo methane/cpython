@@ -50,6 +50,15 @@ pyimport_getmodule(PyObject *Py_UNUSED(module), PyObject *name)
 }
 
 
+/* Test PyImport_GetImporter() */
+static PyObject *
+pyimport_getimporter(PyObject *Py_UNUSED(module), PyObject *path)
+{
+    NULLABLE(path);
+    return PyImport_GetImporter(path);
+}
+
+
 /* Test PyImport_AddModuleObject() */
 static PyObject *
 pyimport_addmoduleobject(PyObject *Py_UNUSED(module), PyObject *name)
@@ -281,6 +290,7 @@ static PyMethodDef test_methods[] = {
     {"PyImport_GetMagicTag", pyimport_getmagictag, METH_NOARGS},
     {"PyImport_GetModuleDict", pyimport_getmoduledict, METH_NOARGS},
     {"PyImport_GetModule", pyimport_getmodule, METH_O},
+    {"PyImport_GetImporter", pyimport_getimporter, METH_O},
     {"PyImport_AddModuleObject", pyimport_addmoduleobject, METH_O},
     {"PyImport_AddModule", pyimport_addmodule, METH_VARARGS},
     {"PyImport_AddModuleRef", pyimport_addmoduleref, METH_VARARGS},

@@ -1767,7 +1767,7 @@ finalize_remove_modules(PyObject *modules, int verbose)
 
 #define STORE_MODULE_WEAKREF(name, mod) \
         if (weaklist != NULL) { \
-            PyObject *wr = PyWeakref_NewRef(mod, NULL); \
+            PyObject *wr = _PyWeakref_NewRefForMetadata(mod); \
             if (wr) { \
                 PyObject *tup = _PyTuple_FromPair(name, wr); \
                 if (!tup || PyList_Append(weaklist, tup) < 0) { \
@@ -1781,13 +1781,13 @@ finalize_remove_modules(PyObject *modules, int verbose)
             } \
         }
 
-#define CLEAR_MODULE(name, mod) \
+#define CLEAR_MODULE(name, mod, replace) \
         if (PyModule_Check(mod)) { \
             if (verbose && PyUnicode_Check(name)) { \
                 PySys_FormatStderr("# cleanup[2] removing %U\n", name); \
             } \
             STORE_MODULE_WEAKREF(name, mod); \
-            if (PyObject_SetItem(modules, name, Py_None) < 0) { \
+            if ((replace) < 0) { \
                 PyErr_FormatUnraisable("Exception ignored while removing modules"); \
             } \
         }
@@ -1795,9 +1795,16 @@ finalize_remove_modules(PyObject *modules, int verbose)
     if (PyDict_CheckExact(modules) || PySynchronizedDict_CheckExact(modules)) {
         Py_ssize_t pos = 0;
         PyObject *key, *value;
-        while (PyDict_Next(modules, &pos, &key, &value)) {
-            CLEAR_MODULE(key, value);
+        Py_hash_t hash;
+        /* Teardown retains only private weak metadata, including modules
+           owned by groups whose threads have already stopped. Do not expose
+           those entries through the public dictionary iterator. */
+        Py_BEGIN_CRITICAL_SECTION(modules);
+        while (_PyDict_Next(modules, &pos, &key, &value, &hash)) {
+            CLEAR_MODULE(key, value, _PyDict_SetItem_KnownHash_LockHeld(
+                (PyDictObject *)modules, key, Py_None, hash));
         }
+        Py_END_CRITICAL_SECTION();
     }
     else {
         PyObject *iterator = PyObject_GetIter(modules);
@@ -1813,7 +1820,8 @@ finalize_remove_modules(PyObject *modules, int verbose)
                     Py_DECREF(key);
                     continue;
                 }
-                CLEAR_MODULE(key, value);
+                CLEAR_MODULE(key, value,
+                             PyObject_SetItem(modules, key, Py_None));
                 Py_DECREF(value);
                 Py_DECREF(key);
             }

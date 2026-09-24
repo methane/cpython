@@ -1555,7 +1555,8 @@ def _setup(sys_module, _imp_module):
         _thread._declare_synchronized(function)
     for cls in (_List, _WeakValueDictionary, _BlockingOnManager, _DeadlockError,
                 _ModuleLock, _DummyModuleLock, _ModuleLockManager,
-                _HierarchicalLockManager, _ImportLockContext):
+                _HierarchicalLockManager, _ImportLockContext, ModuleSpec,
+                BuiltinImporter, FrozenImporter):
         type.synchronize(cls)
     _blocking_on = _WeakValueDictionary()
 

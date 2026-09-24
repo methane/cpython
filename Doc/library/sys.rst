@@ -1545,7 +1545,7 @@ always available. Unless explicitly noted otherwise, all variables are read-only
 
 .. data:: meta_path
 
-    A list of :term:`meta path finder` objects that have their
+    A :class:`SynchronizedList` of :term:`meta path finder` objects that have their
     :meth:`~importlib.abc.MetaPathFinder.find_spec` methods called to see if one
     of the objects can find the module to be imported. By default, it holds entries
     that implement Python's default import semantics. The
@@ -1555,6 +1555,9 @@ always available. Unless explicitly noted otherwise, all variables are read-only
     :attr:`~module.__path__`
     attribute is passed in as a second argument. The method returns a
     :term:`module spec`, or ``None`` if the module cannot be found.
+
+    The list is shared between ThreadGroups. Its entries retain their own
+    sharing states; adding a finder does not make that finder shareable.
 
     .. seealso::
 
@@ -1646,20 +1649,25 @@ always available. Unless explicitly noted otherwise, all variables are read-only
 
 .. data:: path_hooks
 
-    A list of callables that take a path argument to try to create a
-    :term:`finder` for the path. If a finder can be created, it is to be
+    A :class:`SynchronizedList` of callables that take a path argument to try
+    to create a :term:`finder` for the path. If a finder can be created, it is to be
     returned by the callable, else raise :exc:`ImportError`.
+
+    Each callable must be accessible to the ThreadGroup performing the import.
 
     Originally specified in :pep:`302`.
 
 
 .. data:: path_importer_cache
 
-    A dictionary acting as a cache for :term:`finder` objects. The keys are
-    paths that have been passed to :data:`sys.path_hooks` and the values are
+    A :class:`SynchronizedDict` acting as a cache for :term:`finder` objects.
+    The keys are paths that have been passed to :data:`sys.path_hooks` and the values are
     the finders that are found. If a path is a valid file system path but no
     finder is found on :data:`sys.path_hooks` then ``None`` is
     stored.
+
+    Cached finders retain their own sharing states. A finder that is local to
+    another ThreadGroup cannot be acquired from the shared cache.
 
     Originally specified in :pep:`302`.
 

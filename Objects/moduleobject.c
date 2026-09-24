@@ -1136,12 +1136,16 @@ _PyModule_ClearDict(PyObject *d)
 
     Py_ssize_t pos;
     PyObject *key, *value;
+    Py_hash_t hash;
 
     int verbose = _Py_GetConfig()->verbose;
 
+    /* Module teardown inspects private storage; its values are not acquired
+       by the finalizing thread. Retain the stored hash while replacing them
+       so this works for a module owned by another ThreadGroup as well. */
     /* First, clear only names starting with a single underscore */
     pos = 0;
-    while (PyDict_Next(d, &pos, &key, &value)) {
+    while (_PyDict_Next(d, &pos, &key, &value, &hash)) {
         if (value != Py_None && PyUnicode_Check(key)) {
             if (PyUnicode_READ_CHAR(key, 0) == '_' &&
                 PyUnicode_READ_CHAR(key, 1) != '_') {
@@ -1152,7 +1156,7 @@ _PyModule_ClearDict(PyObject *d)
                     else
                         PyErr_Clear();
                 }
-                if (PyDict_SetItem(d, key, Py_None) != 0) {
+                if (_PyDict_SetItem_KnownHash(d, key, Py_None, hash) != 0) {
                     PyErr_FormatUnraisable("Exception ignored while "
                                            "clearing module dict");
                 }
@@ -1162,7 +1166,7 @@ _PyModule_ClearDict(PyObject *d)
 
     /* Next, clear all names except for __builtins__ */
     pos = 0;
-    while (PyDict_Next(d, &pos, &key, &value)) {
+    while (_PyDict_Next(d, &pos, &key, &value, &hash)) {
         if (value != Py_None && PyUnicode_Check(key)) {
             if (PyUnicode_READ_CHAR(key, 0) != '_' ||
                 !_PyUnicode_EqualToASCIIString(key, "__builtins__"))
@@ -1174,7 +1178,7 @@ _PyModule_ClearDict(PyObject *d)
                     else
                         PyErr_Clear();
                 }
-                if (PyDict_SetItem(d, key, Py_None) != 0) {
+                if (_PyDict_SetItem_KnownHash(d, key, Py_None, hash) != 0) {
                     PyErr_FormatUnraisable("Exception ignored while "
                                            "clearing module dict");
                 }

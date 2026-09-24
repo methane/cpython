@@ -420,7 +420,8 @@ allocate_weakref(PyTypeObject *type, PyObject *obj, PyObject *callback)
 }
 
 static PyWeakReference *
-get_or_create_weakref(PyTypeObject *type, PyObject *obj, PyObject *callback)
+get_or_create_weakref(PyTypeObject *type, PyObject *obj, PyObject *callback,
+                     int check_access)
 {
     if (obj == NULL) {
         PyErr_BadInternalCall();
@@ -431,7 +432,7 @@ get_or_create_weakref(PyTypeObject *type, PyObject *obj, PyObject *callback)
     int check_obj = !(PyType_Check(obj) &&
                       !PyType_HasFeature((PyTypeObject *)obj,
                                          Py_TPFLAGS_READY));
-    if ((check_obj && PyObject_CheckAccess(obj) == NULL) ||
+    if ((check_access && check_obj && PyObject_CheckAccess(obj) == NULL) ||
         (callback != NULL && callback != Py_None &&
          PyObject_CheckAccess(callback) == NULL)) {
         return NULL;
@@ -497,7 +498,7 @@ weakref___new__(PyTypeObject *type, PyObject *args, PyObject *kwargs)
 {
     PyObject *ob, *callback = NULL;
     if (parse_weakref_init_args("__new__", args, kwargs, &ob, &callback)) {
-        return (PyObject *)get_or_create_weakref(type, ob, callback);
+        return (PyObject *)get_or_create_weakref(type, ob, callback, 1);
     }
     return NULL;
 }
@@ -959,7 +960,13 @@ PyObject *
 PyWeakref_NewRef(PyObject *ob, PyObject *callback)
 {
     return (PyObject *)get_or_create_weakref(&_PyWeakref_RefType, ob,
-                                             callback);
+                                             callback, 1);
+}
+
+PyObject *
+_PyWeakref_NewRefForMetadata(PyObject *obj)
+{
+    return (PyObject *)get_or_create_weakref(&_PyWeakref_RefType, obj, NULL, 0);
 }
 
 PyObject *
@@ -973,7 +980,7 @@ PyWeakref_NewProxy(PyObject *ob, PyObject *callback)
     if (PyCallable_Check(ob)) {
         type = &_PyWeakref_CallableProxyType;
     }
-    return (PyObject *)get_or_create_weakref(type, ob, callback);
+    return (PyObject *)get_or_create_weakref(type, ob, callback, 1);
 }
 
 int
