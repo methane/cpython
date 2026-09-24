@@ -646,6 +646,17 @@ ThreadHandle_start(ThreadHandle *self, PyObject *func, PyObject *args,
         _PyThreadGroup_Incref(owner->state);
         boot->tstate->threadgroup_object = Py_NewRef(group);
     }
+    // The caller can access func, but the new thread acquires it from the
+    // boot state and may belong to another group. Reject an inaccessible
+    // callable before starting the OS thread so Thread.start() cannot wait
+    // forever for a bootstrap function that is not allowed to execute.
+    if (boot->tstate->threadgroup != _PyThreadState_GET()->threadgroup &&
+        _PyObject_CheckAccessThread(func, boot->tstate) < 0) {
+        PyThreadState_Clear(boot->tstate);
+        PyThreadState_Delete(boot->tstate);
+        PyMem_RawFree(boot);
+        goto start_failed;
+    }
     boot->func = Py_NewRef(func);
     boot->args = Py_NewRef(args);
     boot->kwargs = Py_XNewRef(kwargs);

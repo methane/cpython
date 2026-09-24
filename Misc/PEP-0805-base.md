@@ -115,6 +115,12 @@ Parallel scheduling tests remain skipped while the interpreter GIL is enabled.
   All acquisition guards publish stack roots before raising, so rejected values
   are released by normal exception cleanup. Attribute and callable acquisition
   paths still need further work.
+- Thread startup refuses a LOCAL callable owned by another group before
+  creating its OS thread, avoiding a bootstrap wait that could never complete.
+  Threading, thread APIs, function/cell attributes and ownership pass 383 tests
+  (6 skips); ownership also passes `-R 3:3` (12 tests). Native workers remain
+  necessary for execution in foreign groups until the later synchronized
+  function stage.
 - A separate non-debug build (`./configure`, `Py_GIL_DISABLED=0`, `Py_DEBUG=0`,
   empty ABI flags, interpreter GIL enabled) passes 782 tests across
   `test_threadgroup`, `test_local_reclamation`, `test_deferred_reclamation`,

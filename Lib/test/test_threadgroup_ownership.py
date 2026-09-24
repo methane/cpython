@@ -1,5 +1,6 @@
 """LOCAL/IMMUTABLE reference acquisition from native ThreadGroup workers."""
 
+import _thread
 import datetime
 import dis
 import sys
@@ -57,6 +58,24 @@ class OwnershipTests(unittest.TestCase):
 
     def test_static_immutable_access(self):
         internal.test_static_immutable_access()
+
+    def test_thread_start_rejects_foreign_local_callable(self):
+        calls = []
+
+        def target():
+            calls.append(True)
+
+        thread = threading.Thread(group=self.foreign, target=target)
+        with self.assertRaises(IllegalThreadAccessException):
+            thread.start()
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(calls, [])
+
+        handle = _thread._ThreadHandle()
+        with self.assertRaises(IllegalThreadAccessException):
+            _thread.start_joinable_thread(target, handle=handle, group=self.foreign)
+        self.assertTrue(handle.is_done())
+        self.assertEqual(calls, [])
 
     def test_api_return_values(self):
         apis = (
