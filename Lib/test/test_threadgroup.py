@@ -36,6 +36,13 @@ _testinternalcapi.check_main_group_lifetime()
                 with self.subTest(group=group, clear_elsewhere=clear_elsewhere):
                     internal.threadgroup_freelist_probe(group, clear_elsewhere)
 
+    def test_internal_world_stop(self):
+        internal = import_helper.import_module('_testinternalcapi')
+        for group in (sys.main_thread_group, threading.ThreadGroup('world stop')):
+            for create_during_stop in (False, True):
+                with self.subTest(group=group, create_during_stop=create_during_stop):
+                    internal.threadgroup_world_stop_probe(group, create_during_stop)
+
     def test_default_context_compatibility(self):
         script_helper.assert_python_ok('-c', '''
 import contextvars

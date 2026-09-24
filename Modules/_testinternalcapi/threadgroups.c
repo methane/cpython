@@ -1397,7 +1397,100 @@ threadgroup_freelist_probe(PyObject *self, PyObject *args)
     Py_RETURN_NONE;
 }
 
+struct world_stop_probe {
+    PyInterpreterState *interp;
+    _PyThreadGroupState *group;
+    PyThreadState *tstate;
+    PyEvent ready;
+    PyEvent proceed;
+    PyEvent attempted;
+    PyEvent entered;
+    int ok;
+};
+
+static void
+world_stop_probe_worker(void *arg)
+{
+    struct world_stop_probe *probe = arg;
+    PyThreadState *tstate = PyThreadState_New(probe->interp);
+    if (tstate == NULL) {
+        _PyEvent_Notify(&probe->ready);
+        return;
+    }
+    _PyThreadGroup_Decref(tstate->threadgroup);
+    tstate->threadgroup = probe->group;
+    _PyThreadGroup_Incref(probe->group);
+    probe->tstate = tstate;
+    _PyEvent_Notify(&probe->ready);
+    PyEvent_Wait(&probe->proceed);
+    _PyEvent_Notify(&probe->attempted);
+    PyEval_AcquireThread(tstate);
+    probe->ok = tstate->holds_threadgroup &&
+        _Py_atomic_load_int(&tstate->state) == _Py_THREAD_ATTACHED;
+    _PyEvent_Notify(&probe->entered);
+    PyThreadState_Clear(tstate);
+    PyThreadState_DeleteCurrent();
+}
+
+static PyObject *
+threadgroup_world_stop_probe(PyObject *self, PyObject *args)
+{
+    PyObject *group;
+    int create_during_stop;
+    if (!PyArg_ParseTuple(args, "Op:threadgroup_world_stop_probe",
+                          &group, &create_during_stop)) {
+        return NULL;
+    }
+    _PyThreadGroupState *state = _PyThreadGroup_GetState(group);
+    if (state == NULL) {
+        return NULL;
+    }
+    struct world_stop_probe probe = {
+        .interp = PyInterpreterState_Get(), .group = state,
+    };
+    if (create_during_stop) {
+        _PyEval_StopTheWorld(probe.interp);
+    }
+    PyThread_ident_t ident;
+    PyThread_handle_t handle;
+    if (PyThread_start_joinable_thread(world_stop_probe_worker, &probe,
+                                       &ident, &handle) != 0) {
+        if (create_during_stop) {
+            _PyEval_StartTheWorld(probe.interp);
+        }
+        _PyThreadGroup_Decref(state);
+        return PyErr_Format(PyExc_RuntimeError, "failed to start world-stop probe");
+    }
+    // Creating a detached state does not require Python execution rights.
+    int ok = PyEvent_WaitTimed(&probe.ready, 10000000000LL, 0);
+    if (!create_during_stop) {
+        _PyEval_StopTheWorld(probe.interp);
+    }
+    ok &= probe.interp->stoptheworld.world_stopped;
+    if (ok && probe.tstate != NULL) {
+        ok &= _Py_atomic_load_int(&probe.tstate->state) == _Py_THREAD_SUSPENDED;
+        _PyEvent_Notify(&probe.proceed);
+        // Release both the interpreter GIL and our group while the world is
+        // stopped: those locks must not be what keeps the worker suspended.
+        Py_BEGIN_ALLOW_THREADS
+        ok &= PyEvent_WaitTimed(&probe.attempted, 10000000000LL, 0);
+        ok &= !PyEvent_WaitTimed(&probe.entered, 10000000LL, 0);
+        Py_END_ALLOW_THREADS
+    }
+    _PyEval_StartTheWorld(probe.interp);
+    _PyEvent_Notify(&probe.proceed);
+    Py_BEGIN_ALLOW_THREADS
+    PyThread_join_thread(handle);
+    Py_END_ALLOW_THREADS
+    _PyThreadGroup_Decref(state);
+    if (!ok || !probe.ok) {
+        return PyErr_Format(PyExc_AssertionError, "ThreadGroup world-stop probe failed");
+    }
+    Py_RETURN_NONE;
+}
+
 static PyMethodDef methods[] = {
+    {"threadgroup_world_stop_probe", threadgroup_world_stop_probe, METH_VARARGS, NULL},
     {"threadgroup_freelist_probe", threadgroup_freelist_probe, METH_VARARGS, NULL},
     {"make_access_descriptor", make_access_descriptor, METH_NOARGS, NULL},
     {"access_descriptor_calls", access_descriptor_calls, METH_O, NULL},

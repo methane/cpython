@@ -157,17 +157,13 @@ extern void _PyThreadState_SetShuttingDown(PyThreadState *tstate);
 
 // Perform a stop-the-world pause for all threads in the all interpreters.
 //
-// Threads in the "attached" state are paused and transitioned to the "GC"
-// state. Threads in the "detached" state switch to the "GC" state, preventing
+// Threads in the "attached" state are paused and transitioned to "suspended".
+// Threads in the "detached" state switch to "suspended", preventing
 // them from reattaching until the stop-the-world pause is complete.
-//
-// NOTE: This is a no-op outside of Py_GIL_DISABLED builds.
 extern void _PyEval_StopTheWorldAll(_PyRuntimeState *runtime);
 extern void _PyEval_StartTheWorldAll(_PyRuntimeState *runtime);
 
 // Perform a stop-the-world pause for threads in the specified interpreter.
-//
-// NOTE: This is a no-op outside of Py_GIL_DISABLED builds.
 extern PyAPI_FUNC(void) _PyEval_StopTheWorld(PyInterpreterState *interp);
 extern PyAPI_FUNC(void) _PyEval_StartTheWorld(PyInterpreterState *interp);
 

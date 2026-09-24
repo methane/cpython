@@ -2226,11 +2226,7 @@ resolve_final_tstate(_PyRuntimeState *runtime)
     return main_tstate;
 }
 
-#ifdef Py_GIL_DISABLED
 #define ASSERT_WORLD_STOPPED(interp) assert(interp->runtime->stoptheworld.world_stopped)
-#else
-#define ASSERT_WORLD_STOPPED(interp)
-#endif
 
 static int
 interp_has_threads(PyInterpreterState *interp)
@@ -2351,8 +2347,7 @@ make_pre_finalization_calls(PyThreadState *tstate, int subinterpreters)
         }
 
         /* Stop the world to prevent other threads from creating threads or
-         * atexit callbacks. On the default build, this is simply locked by
-         * the GIL. For pending calls, we acquire the dedicated mutex, because
+         * atexit callbacks. For pending calls, acquire the dedicated mutex because
          * Py_AddPendingCall() can be called without an attached thread state.
          */
         PyMutex_Lock(&interp->ceval.pending.mutex);

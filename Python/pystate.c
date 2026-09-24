@@ -2071,9 +2071,7 @@ _PyThreadState_RemoveExcept(PyThreadState *tstate)
     PyInterpreterState *interp = tstate->interp;
     _PyRuntimeState *runtime = interp->runtime;
 
-#ifdef Py_GIL_DISABLED
     assert(runtime->stoptheworld.world_stopped);
-#endif
 
     HEAD_LOCK(runtime);
     /* Remove all thread states, except tstate, from the linked list of
@@ -2388,9 +2386,7 @@ void
 _PyThreadState_SetShuttingDown(PyThreadState *tstate)
 {
     _Py_atomic_store_int(&tstate->state, _Py_THREAD_SHUTTING_DOWN);
-#ifdef Py_GIL_DISABLED
     _PyParkingLot_UnparkAll(&tstate->state);
-#endif
 }
 
 // Decrease stop-the-world counter of remaining number of threads that need to
@@ -2404,7 +2400,6 @@ decrement_stoptheworld_countdown(struct _stoptheworld_state *stw)
     }
 }
 
-#ifdef Py_GIL_DISABLED
 // Interpreter for _Py_FOR_EACH_STW_INTERP(). For global stop-the-world events,
 // we start with the first interpreter and then iterate over all interpreters.
 // For per-interpreter stop-the-world events, we only operate on the one
@@ -2539,38 +2534,29 @@ start_the_world(struct _stoptheworld_state *stw)
         _PyRWMutex_RUnlock(&runtime->stoptheworld_mutex);
     }
 }
-#endif  // Py_GIL_DISABLED
 
 void
 _PyEval_StopTheWorldAll(_PyRuntimeState *runtime)
 {
-#ifdef Py_GIL_DISABLED
     stop_the_world(&runtime->stoptheworld);
-#endif
 }
 
 void
 _PyEval_StartTheWorldAll(_PyRuntimeState *runtime)
 {
-#ifdef Py_GIL_DISABLED
     start_the_world(&runtime->stoptheworld);
-#endif
 }
 
 void
 _PyEval_StopTheWorld(PyInterpreterState *interp)
 {
-#ifdef Py_GIL_DISABLED
     stop_the_world(&interp->stoptheworld);
-#endif
 }
 
 void
 _PyEval_StartTheWorld(PyInterpreterState *interp)
 {
-#ifdef Py_GIL_DISABLED
     start_the_world(&interp->stoptheworld);
-#endif
 }
 
 //----------
