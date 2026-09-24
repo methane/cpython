@@ -113,6 +113,10 @@ struct _ts {
     /* Currently holds the GIL. Must be its own field to avoid data races */
     int holds_gil;
 
+    struct _PyThreadGroupState *threadgroup;
+    PyObject *threadgroup_object;
+    int holds_threadgroup;
+
     /* Currently requesting the GIL */
     int gil_requested;
 

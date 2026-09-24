@@ -12,6 +12,7 @@ extern "C" {
 #include "pycore_opcode_utils.h"  // NUM_COMMON_CONSTANTS
 #include "pycore_pymath.h"        // _PY_SHORT_FLOAT_REPR
 #include "pycore_structs.h"       // PyHamtObject
+#include "pycore_threadgroup.h" // _PyThreadGroupState
 #include "pycore_tstate.h"        // _PyThreadStateImpl
 #include "pycore_typedefs.h"      // _PyRuntimeState
 #include "pycore_uop.h"           // _PyBloomFilter
@@ -907,6 +908,11 @@ struct _is {
 
     /* The per-interpreter GIL, which might not be used. */
     struct _gil_runtime_state _gil;
+
+    _PyThreadGroupState *main_threadgroup;
+    PyObject *main_threadgroup_object;
+    PyMutex threadgroups_mutex;
+    _PyThreadGroupState *threadgroups;
 
     uint64_t _code_object_generation;
 

@@ -1,6 +1,7 @@
 #include "Python.h"
 #include "pycore_ceval.h"         // _PyEval_SignalReceived()
 #include "pycore_gc.h"            // _Py_RunGC()
+#include "pycore_lock.h"
 #include "pycore_initconfig.h"    // _PyStatus_OK()
 #include "pycore_optimizer.h"     // _Py_Executors_InvalidateCold()
 #include "pycore_pyerrors.h"      // _PyErr_GetRaisedException()
@@ -571,6 +572,7 @@ PyEval_AcquireLock(void)
     PyThreadState *tstate = _PyThreadState_GET();
     _Py_EnsureTstateNotNULL(tstate);
 
+    _PyThreadGroup_Acquire(tstate);
     take_gil(tstate);
 }
 
@@ -582,6 +584,7 @@ PyEval_ReleaseLock(void)
     /* This function must succeed when the current thread state is NULL.
        We therefore avoid PyThreadState_Get() which dumps a fatal error
        in debug mode. */
+    _PyThreadGroup_Release(tstate);
     drop_gil(tstate->interp, tstate, 0);
 }
 
@@ -589,6 +592,7 @@ void
 _PyEval_AcquireLock(PyThreadState *tstate)
 {
     _Py_EnsureTstateNotNULL(tstate);
+    _PyThreadGroup_Acquire(tstate);
     take_gil(tstate);
 }
 
@@ -599,7 +603,129 @@ _PyEval_ReleaseLock(PyInterpreterState *interp,
 {
     assert(tstate != NULL);
     assert(tstate->interp == interp);
+    _PyThreadGroup_Release(tstate);
     drop_gil(interp, tstate, final_release);
+}
+
+static uint32_t next_owner_id;
+
+static uint32_t
+threadgroup_new_id(void)
+{
+    uint32_t previous = _Py_atomic_load_uint32_relaxed(&next_owner_id);
+    for (;;) {
+        if (previous == UINT32_MAX) {
+            return 0;
+        }
+        if (_Py_atomic_compare_exchange_uint32(&next_owner_id, &previous,
+                                               previous + 1)) {
+            return previous + 1;
+        }
+    }
+}
+
+_PyThreadGroupState *
+_PyThreadGroup_New(PyInterpreterState *interp)
+{
+    _PyThreadGroupState *group = PyMem_RawCalloc(1, sizeof(*group));
+    if (group != NULL) {
+        group->id = threadgroup_new_id();
+        if (group->id == 0) {
+            PyMem_RawFree(group);
+            return NULL;
+        }
+        /* Retain the scheduler even after its last thread and Python wrapper
+           disappear: surviving local objects still carry its owner ID. */
+        group->refcount = 2;
+        group->name_length = -1;
+        PyMutex_LockFlags(&interp->threadgroups_mutex, 0);
+        group->next = interp->threadgroups;
+        interp->threadgroups = group;
+        PyMutex_Unlock(&interp->threadgroups_mutex);
+    }
+    return group;
+}
+
+_PyThreadGroupState *
+_PyThreadGroup_Find(PyInterpreterState *interp, uint32_t id)
+{
+    PyMutex_LockFlags(&interp->threadgroups_mutex, 0);
+    _PyThreadGroupState *group = interp->threadgroups;
+    while (group != NULL && group->id != id) {
+        group = group->next;
+    }
+    if (group != NULL) {
+        _PyThreadGroup_Incref(group);
+    }
+    PyMutex_Unlock(&interp->threadgroups_mutex);
+    return group;
+}
+
+void
+_PyThreadGroup_Fini(PyInterpreterState *interp)
+{
+    PyMutex_LockFlags(&interp->threadgroups_mutex, 0);
+    _PyThreadGroupState *group = interp->threadgroups;
+    interp->threadgroups = NULL;
+    PyMutex_Unlock(&interp->threadgroups_mutex);
+    while (group != NULL) {
+        _PyThreadGroupState *next = group->next;
+        group->next = NULL;
+        _PyThreadGroup_Decref(group);
+        group = next;
+    }
+}
+
+void
+_PyThreadGroup_Decref(_PyThreadGroupState *group)
+{
+    if (_Py_atomic_add_ssize(&group->refcount, -1) == 1) {
+        assert(group->holder == NULL);
+        assert(group->wrapper == NULL);
+        PyMem_RawFree(group->name);
+        PyMem_RawFree(group);
+    }
+}
+
+void
+_PyThreadGroup_Acquire(PyThreadState *tstate)
+{
+    if (_PyThreadState_MustExit(tstate)) {
+        _PyThreadState_HangThread(tstate);
+    }
+    _PyThreadGroupState *group = tstate->threadgroup;
+    assert(!tstate->holds_threadgroup);
+    /* We are detached. In particular, waiting here must not recursively
+       detach or prevent a concurrent stop-the-world collection. */
+    while (_PyMutex_LockTimed(&group->mutex, 1000000, 0) != PY_LOCK_ACQUIRED) {
+        if (_PyThreadState_MustExit(tstate)) {
+            _PyThreadState_HangThread(tstate);
+        }
+        PyMutex_LockFlags(&group->holder_mutex, 0);
+        if (group->holder != NULL) {
+            _Py_set_eval_breaker_bit(group->holder, _PY_GIL_DROP_REQUEST_BIT);
+        }
+        PyMutex_Unlock(&group->holder_mutex);
+    }
+    PyMutex_LockFlags(&group->holder_mutex, 0);
+    assert(group->holder == NULL);
+    group->holder = tstate;
+    tstate->holds_threadgroup = 1;
+    _Py_unset_eval_breaker_bit(tstate, _PY_GIL_DROP_REQUEST_BIT);
+    PyMutex_Unlock(&group->holder_mutex);
+}
+
+void
+_PyThreadGroup_Release(PyThreadState *tstate)
+{
+    _PyThreadGroupState *group = tstate->threadgroup;
+    assert(tstate->holds_threadgroup);
+    PyMutex_LockFlags(&group->holder_mutex, 0);
+    assert(group->holder == tstate);
+    group->holder = NULL;
+    tstate->holds_threadgroup = 0;
+    PyMutex_Unlock(&group->holder_mutex);
+    PyMutex_Unlock(&group->mutex);
 }
 
 void
@@ -623,6 +749,16 @@ PyStatus
 _PyEval_ReInitThreads(PyThreadState *tstate)
 {
     assert(tstate->interp == _PyInterpreterState_Main());
+
+    _Py_FOR_EACH_TSTATE_BEGIN(tstate->interp, other) {
+        _PyThreadGroupState *group = other->threadgroup;
+        _PyMutex_at_fork_reinit(&group->mutex);
+        _PyMutex_at_fork_reinit(&group->holder_mutex);
+        group->holder = NULL;
+        other->holds_threadgroup = 0;
+    }
+    _Py_FOR_EACH_TSTATE_END(tstate->interp);
+    _PyThreadGroup_Acquire(tstate);
 
     struct _gil_runtime_state *gil = tstate->interp->ceval.gil;
     if (!gil_created(gil)) {

@@ -1327,9 +1327,23 @@ try_load_lazy_submodule(PyModuleObject *m, PyObject *name)
     return result;
 }
 
+static int
+module_is_main_threadgroup_attribute(PyObject *module, PyObject *name)
+{
+    return _PyModule_CAST(module)->md_dict == _PyInterpreterState_GET()->sysdict &&
+           PyUnicode_Check(name) &&
+           _PyUnicode_EqualToASCIIString(name, "main_thread_group");
+}
+
 PyObject*
 _Py_module_getattro_impl(PyModuleObject *m, PyObject *name, int suppress)
 {
+    if (module_is_main_threadgroup_attribute((PyObject *)m, name)) {
+        PyObject *group = _PyInterpreterState_GET()->main_threadgroup_object;
+        if (group != NULL) {
+            return Py_NewRef(group);
+        }
+    }
     // When suppress=1, this function suppresses AttributeError.
     PyObject *attr, *mod_name, *getattr;
     attr = _PyObject_GenericGetAttrWithDict((PyObject *)m, name, NULL, suppress);
@@ -1552,6 +1566,17 @@ module_traverse(PyObject *self, visitproc visit, void *arg)
     Py_VISIT(m->md_dict);
     return 0;
 }
+
+static int
+module_setattro(PyObject *self, PyObject *name, PyObject *value)
+{
+    if (module_is_main_threadgroup_attribute(self, name)) {
+        PyErr_SetString(PyExc_AttributeError, "main_thread_group is read-only");
+        return -1;
+    }
+    return PyObject_GenericSetAttr(self, name, value);
+}
+
 
 static int
 module_clear(PyObject *self)
@@ -1812,7 +1837,7 @@ PyTypeObject PyModule_Type = {
     0,                                          /* tp_call */
     0,                                          /* tp_str */
     _Py_module_getattro,                        /* tp_getattro */
-    PyObject_GenericSetAttr,                    /* tp_setattro */
+    module_setattro,                            /* tp_setattro */
     0,                                          /* tp_as_buffer */
     Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_GC |
         Py_TPFLAGS_BASETYPE,                    /* tp_flags */

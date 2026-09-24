@@ -466,6 +466,11 @@ alloc_interpreter(void)
 static void
 free_interpreter(PyInterpreterState *interp)
 {
+    if (interp->main_threadgroup != NULL) {
+        _PyThreadGroup_Decref(interp->main_threadgroup);
+        interp->main_threadgroup = NULL;
+    }
+    _PyThreadGroup_Fini(interp);
 #ifdef Py_STATS
     if (interp->pystats_struct) {
         PyMem_RawFree(interp->pystats_struct);
@@ -564,6 +569,11 @@ init_interpreter(PyInterpreterState *interp,
     interp->next = next;
 
     interp->threads.preallocated = &interp->_initial_thread;
+
+    interp->main_threadgroup = _PyThreadGroup_New(interp);
+    if (interp->main_threadgroup == NULL) {
+        return _PyStatus_NO_MEMORY();
+    }
 
     // We would call _PyObject_InitState() at this point
     // if interp->feature_flags were alredy set.
@@ -889,6 +899,7 @@ interpreter_clear(PyInterpreterState *interp, PyThreadState *tstate)
     assert(interp->imports.importlib == NULL);
     assert(interp->imports.import_func == NULL);
 
+    Py_CLEAR(interp->main_threadgroup_object);
     Py_CLEAR(interp->sysdict_copy);
     Py_CLEAR(interp->builtins_copy);
     Py_CLEAR(interp->dict);
@@ -1516,6 +1527,10 @@ alloc_threadstate(PyInterpreterState *interp)
 static void
 free_threadstate(_PyThreadStateImpl *tstate)
 {
+    if (tstate->base.threadgroup != NULL) {
+        _PyThreadGroup_Decref(tstate->base.threadgroup);
+        tstate->base.threadgroup = NULL;
+    }
     PyInterpreterState *interp = tstate->base.interp;
 #ifdef Py_STATS
     _PyStats_ThreadFini(tstate);
@@ -1561,6 +1576,8 @@ init_threadstate(_PyThreadStateImpl *_tstate,
 
     assert(interp != NULL);
     tstate->interp = interp;
+    tstate->threadgroup = interp->main_threadgroup;
+    _PyThreadGroup_Incref(tstate->threadgroup);
     tstate->eval_breaker =
         _Py_atomic_load_uintptr_relaxed(&interp->ceval.instrumentation_version);
 
@@ -1829,6 +1846,7 @@ PyThreadState_Clear(PyThreadState *tstate)
 
     /* Don't clear tstate->pyframe: it is a borrowed reference */
 
+    Py_CLEAR(tstate->threadgroup_object);
     Py_CLEAR(tstate->threading_local_key);
     Py_CLEAR(tstate->threading_local_sentinel);
 
@@ -2211,33 +2229,23 @@ tstate_deactivate(PyThreadState *tstate)
 static int
 tstate_try_attach(PyThreadState *tstate)
 {
-#ifdef Py_GIL_DISABLED
     int expected = _Py_THREAD_DETACHED;
     return _Py_atomic_compare_exchange_int(&tstate->state,
                                            &expected,
                                            _Py_THREAD_ATTACHED);
-#else
-    assert(tstate->state == _Py_THREAD_DETACHED);
-    tstate->state = _Py_THREAD_ATTACHED;
-    return 1;
-#endif
 }
 
 static void
 tstate_set_detached(PyThreadState *tstate, int detached_state)
 {
     assert(_Py_atomic_load_int_relaxed(&tstate->state) == _Py_THREAD_ATTACHED);
-#ifdef Py_GIL_DISABLED
     _Py_atomic_store_int(&tstate->state, detached_state);
-#else
-    tstate->state = detached_state;
-#endif
 }
 
 static void
 tstate_wait_attach(PyThreadState *tstate)
 {
-    do {
+    for (;;) {
         int state = _Py_atomic_load_int_relaxed(&tstate->state);
         if (state == _Py_THREAD_SUSPENDED) {
             // Wait until we're switched out of SUSPENDED to DETACHED.
@@ -2250,9 +2258,9 @@ tstate_wait_attach(PyThreadState *tstate)
         }
         else {
             assert(state == _Py_THREAD_DETACHED);
+            return;
         }
-        // Once we're back in DETACHED we can re-attach
-    } while (!tstate_try_attach(tstate));
+    }
 }
 
 void
@@ -2279,7 +2287,12 @@ _PyThreadState_Attach(PyThreadState *tstate)
         // XXX assert(tstate_is_alive(tstate));
         current_fast_set(&_PyRuntime, tstate);
         if (!tstate_try_attach(tstate)) {
+            // Do not hold execution rights while waiting for a world stop
+            // to end. The stopping thread may need them to make progress.
+            current_fast_clear(&_PyRuntime);
+            _PyEval_ReleaseLock(tstate->interp, tstate, 0);
             tstate_wait_attach(tstate);
+            continue;
         }
         tstate_activate(tstate);
 
@@ -2292,6 +2305,7 @@ _PyThreadState_Attach(PyThreadState *tstate)
             tstate_set_detached(tstate, _Py_THREAD_DETACHED);
             tstate_deactivate(tstate);
             current_fast_clear(&_PyRuntime);
+            _PyThreadGroup_Release(tstate);
             continue;
         }
         _Py_qsbr_attach(((_PyThreadStateImpl *)tstate)->qsbr);
@@ -3239,6 +3253,9 @@ _PyThreadState_MustExit(PyThreadState *tstate)
 void
 _PyThreadState_HangThread(PyThreadState *tstate)
 {
+    if (tstate->holds_threadgroup) {
+        _PyThreadGroup_Release(tstate);
+    }
     _PyThreadStateImpl *tstate_impl = (_PyThreadStateImpl *)tstate;
     decref_threadstate(tstate_impl);
     PyThread_hang_thread();

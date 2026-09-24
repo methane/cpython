@@ -40,6 +40,10 @@ _LockType = _thread.LockType
 _thread_shutdown = _thread._shutdown
 _make_thread_handle = _thread._make_thread_handle
 _ThreadHandle = _thread._ThreadHandle
+ThreadGroup = _thread.ThreadGroup
+_current_thread_group = _thread._current_thread_group
+_main_thread_group = _sys.main_thread_group
+__all__.append('ThreadGroup')
 get_ident = _thread.get_ident
 _get_main_thread_ident = _thread._get_main_thread_ident
 _is_main_interpreter = _thread._is_main_interpreter
@@ -1017,8 +1021,7 @@ class Thread:
                  args=(), kwargs=None, *, daemon=None, context=None):
         """This constructor should always be called with keyword arguments. Arguments are:
 
-        *group* should be None; reserved for future extension when a ThreadGroup
-        class is implemented.
+        *group* is the ThreadGroup that serializes this thread's execution.
 
         *target* is the callable object to be invoked by the run()
         method. Defaults to None, meaning nothing is called.
@@ -1044,7 +1047,15 @@ class Thread:
         else to the thread.
 
         """
-        assert group is None, "group argument must be None for now"
+        if group is None:
+            parallel = _os.environ.get('PYTHON_PARALLEL', '0')
+            if not _sys.flags.ignore_environment and parallel not in ('', '0'):
+                group = ThreadGroup()
+            else:
+                group = _main_thread_group
+        elif not isinstance(group, ThreadGroup):
+            raise TypeError('group must be a ThreadGroup or None')
+        self._group = group
         if kwargs is None:
             kwargs = {}
         if name:
@@ -1139,12 +1150,17 @@ class Thread:
         try:
             # Start joinable thread
             _start_joinable_thread(self._bootstrap, handle=self._os_thread_handle,
-                                   daemon=self.daemon)
+                                   daemon=self.daemon, group=self._group)
         except Exception:
             with _active_limbo_lock:
                 del _limbo[self]
             raise
         self._started.wait()  # Will set ident and native_id
+
+    @property
+    def group(self):
+        """The ThreadGroup to which this thread belongs (read-only)."""
+        return self._group
 
     def run(self):
         """Method representing the thread's activity.
@@ -1527,7 +1543,8 @@ class Timer(Thread):
 class _MainThread(Thread):
 
     def __init__(self):
-        Thread.__init__(self, name="MainThread", daemon=False)
+        Thread.__init__(self, group=_current_thread_group(),
+                        name="MainThread", daemon=False)
         self._started.set()
         self._ident = _get_main_thread_ident()
         self._os_thread_handle = _make_thread_handle(self._ident)
@@ -1575,7 +1592,8 @@ class _DummyThread(Thread):
 
     def __init__(self):
         Thread.__init__(self, name=_newname("Dummy-%d"),
-                        daemon=_daemon_threads_allowed())
+                        daemon=_daemon_threads_allowed(),
+                        group=_current_thread_group())
         self._started.set()
         self._set_ident()
         self._os_thread_handle = _make_thread_handle(self._ident)
