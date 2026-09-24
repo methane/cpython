@@ -12,6 +12,7 @@
 #include "pycore_call.h"                // _PyObject_CallNoArgs()
 #include "pycore_fileutils.h"           // _PyFile_Flush
 #include "pycore_object.h"              // _PyObject_GC_UNTRACK()
+#include "pycore_pyatomic_ft_wrappers.h"
 #include "pycore_pyerrors.h"            // _Py_FatalErrorFormat()
 #include "pycore_pylifecycle.h"         // _Py_IsInterpreterFinalizing()
 #include "pycore_weakref.h"             // FT_CLEAR_WEAKREFS()
@@ -327,7 +328,7 @@ _enter_buffered_busy(buffered *self)
     return 1;
 }
 
-#define ENTER_BUFFERED(self) \
+#define ENTER_BUFFERED_LOCK(self) \
     ( (PyThread_acquire_lock(self->lock, 0) ? \
        1 : _enter_buffered_busy(self)) \
      && (self->owner = PyThread_get_thread_ident(), 1) )
@@ -338,29 +339,66 @@ _enter_buffered_busy(buffered *self)
         PyThread_release_lock(self->lock); \
     } while(0);
 
+/* Keep this lock for the lifetime of the object. A raw-stream callback may
+   try to reinitialize us while an operation is using both the lock and buffer.
+   Reject that reentrancy before changing state; other threads wait normally. */
+static int
+buffered_begin_init(buffered *self)
+{
+    _Py_CRITICAL_SECTION_ASSERT_OBJECT_LOCKED(self);
+    if (self->lock == NULL) {
+        self->lock = PyThread_allocate_lock();
+        if (self->lock == NULL) {
+            PyErr_SetString(PyExc_RuntimeError, "can't allocate read lock");
+            return 0;
+        }
+    }
+    if (!ENTER_BUFFERED_LOCK(self)) {
+        return 0;
+    }
+    self->ok = 0;
+    self->detached = 0;
+    return 1;
+}
+
+static int
+buffered_check_initialized(buffered *self)
+{
+    if (self->ok > 0) {
+        return 1;
+    }
+    PyErr_SetString(PyExc_ValueError, self->detached
+                    ? "raw stream has been detached"
+                    : "I/O operation on uninitialized object");
+    return 0;
+}
+
 #define CHECK_INITIALIZED(self) \
-    if (self->ok <= 0) { \
-        if (self->detached) { \
-            PyErr_SetString(PyExc_ValueError, \
-                 "raw stream has been detached"); \
-        } else { \
-            PyErr_SetString(PyExc_ValueError, \
-                "I/O operation on uninitialized object"); \
-        } \
+    if (!buffered_check_initialized(self)) { \
         return NULL; \
     }
 
 #define CHECK_INITIALIZED_INT(self) \
-    if (self->ok <= 0) { \
-        if (self->detached) { \
-            PyErr_SetString(PyExc_ValueError, \
-                 "raw stream has been detached"); \
-        } else { \
-            PyErr_SetString(PyExc_ValueError, \
-                "I/O operation on uninitialized object"); \
-        } \
+    if (!buffered_check_initialized(self)) { \
         return -1; \
     }
+
+static int
+_enter_buffered(buffered *self)
+{
+    if (!ENTER_BUFFERED_LOCK(self)) {
+        return 0;
+    }
+    /* Waiting for the native lock suspends the object critical section.
+       An initializer or detach may have invalidated our earlier check. */
+    if (!buffered_check_initialized(self)) {
+        LEAVE_BUFFERED(self)
+        return 0;
+    }
+    return 1;
+}
+
+#define ENTER_BUFFERED(self) _enter_buffered(self)
 
 static int buffered_is_closed(buffered *self);
 #define IS_CLOSED(self) buffered_is_closed(self)
@@ -371,6 +409,7 @@ static int buffered_is_closed(buffered *self);
         if (_closed < 0) { \
             return NULL; \
         } \
+        CHECK_INITIALIZED(self) \
         if (_closed && \
             (Py_SAFE_DOWNCAST(READAHEAD(self), Py_off_t, Py_ssize_t) == 0)) \
         { \
@@ -475,7 +514,7 @@ buffered_dealloc(PyObject *op)
 {
     buffered *self = buffered_CAST(op);
     PyTypeObject *tp = Py_TYPE(self);
-    self->finalizing = 1;
+    FT_ATOMIC_STORE_CHAR_RELAXED(self->finalizing, 1);
     if (_PyIOBase_finalize(op) < 0)
         return;
     _PyObject_GC_UNTRACK(self);
@@ -638,7 +677,7 @@ _io__Buffered_close_impl(buffered *self)
         goto end;
     }
 
-    if (self->finalizing) {
+    if (FT_ATOMIC_LOAD_CHAR_RELAXED(self->finalizing)) {
         PyObject *r = _io__Buffered__dealloc_warn_impl(self, (PyObject *)self);
         if (r)
             Py_DECREF(r);
@@ -690,13 +729,18 @@ _io__Buffered_detach_impl(buffered *self)
     if (_PyFile_Flush((PyObject *)self) < 0) {
         return NULL;
     }
+    if (!ENTER_BUFFERED(self)) {
+        return NULL;
+    }
     raw = buffered_raw_ref(self);
     if (raw == NULL) {
+        LEAVE_BUFFERED(self)
         return NULL;
     }
     Py_CLEAR(self->raw);
     self->detached = 1;
     self->ok = 0;
+    LEAVE_BUFFERED(self)
     return raw;
 }
 
@@ -911,6 +955,7 @@ static int
 _buffered_init(buffered *self)
 {
     Py_ssize_t n;
+    assert(self->owner == PyThread_get_thread_ident());
     if (self->buffer_size <= 0) {
         PyErr_SetString(PyExc_ValueError,
             "buffer size must be strictly positive");
@@ -923,14 +968,9 @@ _buffered_init(buffered *self)
         PyErr_NoMemory();
         return -1;
     }
-    if (self->lock)
-        PyThread_free_lock(self->lock);
-    self->lock = PyThread_allocate_lock();
-    if (self->lock == NULL) {
-        PyErr_SetString(PyExc_RuntimeError, "can't allocate read lock");
-        return -1;
-    }
-    self->owner = 0;
+    self->pos = 0;
+    self->raw_pos = 0;
+    self->abs_pos = -1;
     /* Find out whether buffer_size is a power of 2 */
     /* XXX is this optimization useful? */
     for (n = self->buffer_size - 1; n & 1; n >>= 1)
@@ -1288,9 +1328,11 @@ _buffered_readline(buffered *self, Py_ssize_t limit)
     PyObject *chunks = NULL;
     Py_ssize_t n;
     const char *start, *s, *end;
+    int locked = 0;
 
     CHECK_CLOSED(self, "readline of closed file")
 
+scan_buffer:
     /* First, try to find a line in the buffer. This can run unlocked because
        the calls to the C API are simple enough that they can't trigger
        any thread switch. */
@@ -1312,8 +1354,15 @@ _buffered_readline(buffered *self, Py_ssize_t limit)
         goto end_unlocked;
     }
 
-    if (!ENTER_BUFFERED(self))
-        goto end_unlocked;
+    if (!locked) {
+        if (!ENTER_BUFFERED(self)) {
+            goto end_unlocked;
+        }
+        locked = 1;
+        /* Waiting for the lock may have let another thread consume or
+           replace the buffer. Recompute both the pointer and read-ahead. */
+        goto scan_buffer;
+    }
 
     /* Now we try to get some more from the raw stream */
     chunks = PyList_New(0);
@@ -1383,8 +1432,10 @@ found:
     Py_XSETREF(res, PyBytes_Join((PyObject *)&_Py_SINGLETON(bytes_empty), chunks));
 
 end:
-    LEAVE_BUFFERED(self)
 end_unlocked:
+    if (locked) {
+        LEAVE_BUFFERED(self)
+    }
     Py_XDECREF(chunks);
     return res;
 }
@@ -1417,10 +1468,16 @@ _io__Buffered_tell_impl(buffered *self)
     Py_off_t pos;
 
     CHECK_INITIALIZED(self)
-    pos = _buffered_raw_tell(self);
-    if (pos == -1)
+    if (!ENTER_BUFFERED(self)) {
         return NULL;
+    }
+    pos = _buffered_raw_tell(self);
+    if (pos == -1) {
+        LEAVE_BUFFERED(self)
+        return NULL;
+    }
     pos -= RAW_OFFSET(self);
+    LEAVE_BUFFERED(self)
 
     // GH-95782
     if (pos < 0)
@@ -1443,6 +1500,7 @@ _io__Buffered_seek_impl(buffered *self, PyObject *targetobj, int whence)
 {
     Py_off_t target, n;
     PyObject *res = NULL;
+    int locked = 0;
 
     CHECK_INITIALIZED(self)
 
@@ -1478,6 +1536,7 @@ _io__Buffered_seek_impl(buffered *self, PyObject *targetobj, int whence)
     target = PyNumber_AsOff_t(targetobj, PyExc_ValueError);
     if (target == -1 && PyErr_Occurred())
         return NULL;
+    CHECK_INITIALIZED(self)
 
     /* SEEK_SET and SEEK_CUR are special because we could seek inside the
        buffer. Other whence values must be managed without this optimization.
@@ -1489,9 +1548,18 @@ _io__Buffered_seek_impl(buffered *self, PyObject *targetobj, int whence)
            so as to return quickly if possible. Also, we needn't take the
            lock in this fast path.
            Don't know how to do that when whence == 2, though. */
-        /* NOTE: RAW_TELL() can release the GIL but the object is in a stable
-           state at this point. */
+        if (self->abs_pos == -1) {
+            /* A raw tell callback can suspend our critical section. Keep
+               initialization and other raw I/O from replacing its state. */
+            if (!ENTER_BUFFERED(self)) {
+                return NULL;
+            }
+            locked = 1;
+        }
         current = RAW_TELL(self);
+        if (current == -1) {
+            goto end;
+        }
         avail = READAHEAD(self);
         if (avail > 0) {
             Py_off_t offset;
@@ -1503,16 +1571,23 @@ _io__Buffered_seek_impl(buffered *self, PyObject *targetobj, int whence)
                 self->pos += offset;
 
                 // GH-95782
-                if (current - avail + offset < 0)
-                    return PyLong_FromOff_t(0);
-
-                return PyLong_FromOff_t(current - avail + offset);
+                if (current - avail + offset < 0) {
+                    res = PyLong_FromOff_t(0);
+                }
+                else {
+                    res = PyLong_FromOff_t(current - avail + offset);
+                }
+                goto end;
             }
         }
     }
 
-    if (!ENTER_BUFFERED(self))
-        return NULL;
+    if (!locked) {
+        if (!ENTER_BUFFERED(self)) {
+            return NULL;
+        }
+        locked = 1;
+    }
 
     /* Fallback: invoke raw seek() method and clear buffer */
     if (self->writable) {
@@ -1534,7 +1609,9 @@ _io__Buffered_seek_impl(buffered *self, PyObject *targetobj, int whence)
         _bufferedreader_reset_buf(self);
 
 end:
-    LEAVE_BUFFERED(self)
+    if (locked) {
+        LEAVE_BUFFERED(self)
+    }
     return res;
 }
 
@@ -1588,7 +1665,7 @@ end:
 }
 
 static PyObject *
-buffered_iternext(PyObject *op)
+buffered_iternext_lock_held(PyObject *op)
 {
     buffered *self = buffered_CAST(op);
     PyObject *line;
@@ -1602,9 +1679,7 @@ buffered_iternext(PyObject *op)
         tp == state->PyBufferedRandom_Type)
     {
         /* Skip method call overhead for speed */
-        Py_BEGIN_CRITICAL_SECTION(self);
         line = _buffered_readline(self, -1);
-        Py_END_CRITICAL_SECTION();
     }
     else {
         line = PyObject_CallMethodNoArgs((PyObject *)self,
@@ -1628,6 +1703,16 @@ buffered_iternext(PyObject *op)
     }
 
     return line;
+}
+
+static PyObject *
+buffered_iternext(PyObject *op)
+{
+    PyObject *result;
+    Py_BEGIN_CRITICAL_SECTION(op);
+    result = buffered_iternext_lock_held(op);
+    Py_END_CRITICAL_SECTION();
+    return result;
 }
 
 static PyObject *
@@ -1687,12 +1772,13 @@ _io_BufferedReader___init___impl(buffered *self, PyObject *raw,
                                  Py_ssize_t buffer_size)
 /*[clinic end generated code: output=cddcfefa0ed294c4 input=741fdd78326f7f54]*/
 {
-    self->ok = 0;
-    self->detached = 0;
+    if (!buffered_begin_init(self)) {
+        return -1;
+    }
 
     _PyIO_State *state = find_io_state_by_def(Py_TYPE(self));
     if (_PyIOBase_check_readable(state, raw, Py_True) == NULL) {
-        return -1;
+        goto error;
     }
 
     Py_XSETREF(self->raw, Py_NewRef(raw));
@@ -1701,7 +1787,7 @@ _io_BufferedReader___init___impl(buffered *self, PyObject *raw,
     self->writable = 0;
 
     if (_buffered_init(self) < 0)
-        return -1;
+        goto error;
     _bufferedreader_reset_buf(self);
 
     self->fast_closed_checks = (
@@ -1710,7 +1796,12 @@ _io_BufferedReader___init___impl(buffered *self, PyObject *raw,
     );
 
     self->ok = 1;
+    LEAVE_BUFFERED(self)
     return 0;
+
+error:
+    LEAVE_BUFFERED(self)
+    return -1;
 }
 
 static Py_ssize_t
@@ -2051,12 +2142,13 @@ _io_BufferedWriter___init___impl(buffered *self, PyObject *raw,
                                  Py_ssize_t buffer_size)
 /*[clinic end generated code: output=c8942a020c0dee64 input=4ae67dc9e56d7369]*/
 {
-    self->ok = 0;
-    self->detached = 0;
+    if (!buffered_begin_init(self)) {
+        return -1;
+    }
 
     _PyIO_State *state = find_io_state_by_def(Py_TYPE(self));
     if (_PyIOBase_check_writable(state, raw, Py_True) == NULL) {
-        return -1;
+        goto error;
     }
 
     Py_INCREF(raw);
@@ -2066,7 +2158,7 @@ _io_BufferedWriter___init___impl(buffered *self, PyObject *raw,
 
     self->buffer_size = buffer_size;
     if (_buffered_init(self) < 0)
-        return -1;
+        goto error;
     _bufferedwriter_reset_buf(self);
     self->pos = 0;
 
@@ -2076,7 +2168,12 @@ _io_BufferedWriter___init___impl(buffered *self, PyObject *raw,
     );
 
     self->ok = 1;
+    LEAVE_BUFFERED(self)
     return 0;
+
+error:
+    LEAVE_BUFFERED(self)
+    return -1;
 }
 
 static Py_ssize_t
@@ -2619,18 +2716,19 @@ _io_BufferedRandom___init___impl(buffered *self, PyObject *raw,
                                  Py_ssize_t buffer_size)
 /*[clinic end generated code: output=d3d64eb0f64e64a3 input=765a52b973aab572]*/
 {
-    self->ok = 0;
-    self->detached = 0;
+    if (!buffered_begin_init(self)) {
+        return -1;
+    }
 
     _PyIO_State *state = find_io_state_by_def(Py_TYPE(self));
     if (_PyIOBase_check_seekable(state, raw, Py_True) == NULL) {
-        return -1;
+        goto error;
     }
     if (_PyIOBase_check_readable(state, raw, Py_True) == NULL) {
-        return -1;
+        goto error;
     }
     if (_PyIOBase_check_writable(state, raw, Py_True) == NULL) {
-        return -1;
+        goto error;
     }
 
     Py_INCREF(raw);
@@ -2640,7 +2738,7 @@ _io_BufferedRandom___init___impl(buffered *self, PyObject *raw,
     self->writable = 1;
 
     if (_buffered_init(self) < 0)
-        return -1;
+        goto error;
     _bufferedreader_reset_buf(self);
     _bufferedwriter_reset_buf(self);
     self->pos = 0;
@@ -2649,7 +2747,12 @@ _io_BufferedRandom___init___impl(buffered *self, PyObject *raw,
                                 Py_IS_TYPE(raw, state->PyFileIO_Type));
 
     self->ok = 1;
+    LEAVE_BUFFERED(self)
     return 0;
+
+error:
+    LEAVE_BUFFERED(self)
+    return -1;
 }
 
 #define clinic_state() (find_io_state_by_def(Py_TYPE(self)))

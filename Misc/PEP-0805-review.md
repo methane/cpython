@@ -1429,16 +1429,16 @@ confirms that access rejection. The test now captures the immutable integer
 before starting workers; it still permits only EBADF among OS errors and
 rejects all other worker exceptions.
 
-No stream is newly declared synchronized by these changes. Buffered lifecycle
-work remains: readinto can reinitialize its parent, replacing the still-used
+No stream was newly declared synchronized by these changes. That review also
+found that readinto could reinitialize its parent, replacing the still-used
 buffer and freeing/replacing the held native lock. The isolated probe
-`reinitialize-during-read.py` currently aborts with `PyMutex_Unlock: unlocking
+`reinitialize-during-read.py` then aborted with `PyMutex_Unlock: unlocking
 mutex that is not locked`. Adding constructor critical sections does not solve
-that issue because critical sections can be suspended. Reinitialization and
-detach/close lifetime rules must be repaired before publishing shared buffered
-streams. Text codec references, incremental-decoder locking and private pending
-buffers also remain unfinished. These are implementation tasks independent of
-the questions for Mark.
+that issue because critical sections can be suspended. The next follow-up
+repairs initialization and detach serialization. Text codec references,
+incremental-decoder locking, private pending buffers and the wider lifecycle
+audit remain unfinished. These are implementation tasks independent of the
+questions for Mark.
 
 After correcting the FileIO fixture, the five-suite selection of
 `test_io_access`, `test_fileio_shareable`, `test_io`, `test_import_file_access`
@@ -1447,7 +1447,56 @@ with 29 skips in the default build and 37 in GIL and Tier 2 interpreter builds.
 The final logs are named `*-fixed-fixture.log`. Incremental builds have no
 compiler warnings or failed module imports. Changed native source, generated
 Clinic wrappers and tests match across the three builds. These selected passes
-do not close the independently reproduced reinitialization failure.
+did not close the independently reproduced reinitialization failure.
+
+### Buffered initialization, native lock lifetime and waiting readers
+
+BufferedReader, BufferedWriter and BufferedRandom now retain their native lock
+until deallocation and acquire it before changing initialization state. Raw
+callbacks cannot replace a buffer that the active operation is still using;
+they receive the existing reentrant-call RuntimeError. Other threads wait for
+the operation to finish. All initialization error exits release the lock, and
+invalid buffer sizes retain the existing uninitialized-object behavior.
+Detach also acquires that lock before removing the raw stream.
+
+Waiting operations recheck initialization after acquiring the native lock.
+A previously queued invalid initializer could otherwise leave a reader using
+invalid state. Readline now repeats its buffer scan after acquiring the lock:
+the previous version copied seven bytes of the debug allocator's freed-memory
+pattern before the new line when initialization replaced its saved buffer.
+Closed/capability/index callbacks are followed by an initialization check
+where a buffered operation continues to access native state. Iterator entry
+takes the same object critical section as ordinary reads, and native accesses
+to the exposed finalizing flag use atomic operations.
+
+Initialization clears the old raw-position cache before querying the new
+stream. An unavailable initial tell previously left the old stream's position
+cached, causing a later seek to return bytes from the wrong offset. Tell and
+seek's uncached-position query hold the native lock through the raw callback
+and conversion of its result. This prevents a callback from installing new
+state while an old query publishes its position. Seek also propagates tell
+failure before using the returned offset.
+
+The new `test_bufferedio_state` suite exercises callback reentrancy, failed
+initialization recovery, invalidation during inquiry callbacks, position-cache
+replacement, parallel initialization, queued initialization failure and queued
+readline after buffer replacement. The parallel read/init case uses separate
+ThreadGroups and explicitly synchronized native streams. Baseline runs
+reproduce the fatal mutex error, freed-buffer read, incorrect cached offset,
+continued use after failed initialization, replacement during position queries
+and reentrant reader detach. Evidence is under `/tmp/pep805-bufferedio-state/`.
+
+These changes do not publish any additional synchronized stream or establish
+completion of the standard-stream port.
+
+Validation: `test_bufferedio_state`, `test_io_access`, `test_fileio_shareable`,
+`test_io`, `test_import_file_access` and `test_finalizer_access` pass in the
+default free-threaded, GIL comparison and Tier 2 interpreter debug builds.
+Each reports 1,126 tests, with 29 skips in the default build and 37 in the
+comparison builds. All three incremental builds report no compiler warnings
+or failed module imports; the optional _decimal module remains unavailable.
+Native source and the twelve-method regression suite match across the builds.
+Final suite and build logs are named `*-final.log` in the evidence directory.
 
 ## Earlier re-review and implementation follow-ups
 
