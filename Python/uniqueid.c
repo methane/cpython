@@ -79,6 +79,11 @@ resize_local_refcounts(_PyThreadStateImpl *tstate)
 Py_ssize_t
 _PyObject_AssignUniqueId(PyObject *obj)
 {
+    /* A per-thread count also defers reclamation. LOCAL objects must use
+       ordinary biased counts, including heap types and module dictionaries. */
+    if (_Py_atomic_load_uint8(&obj->ob_shareable) == _Py_SHAREABLE_LOCAL) {
+        return _Py_INVALID_UNIQUE_ID;
+    }
     PyInterpreterState *interp = _PyInterpreterState_GET();
     struct _Py_unique_id_pool *pool = &interp->unique_ids;
 

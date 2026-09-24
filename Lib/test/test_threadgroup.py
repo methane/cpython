@@ -13,6 +13,16 @@ threading_helper.requires_working_threading(module=True)
 
 
 class ThreadGroupTests(unittest.TestCase):
+    def test_group_biased_refcount(self):
+        owner = threading.ThreadGroup("bias owner")
+        foreign = threading.ThreadGroup("foreign bias")
+        internal = import_helper.import_module("_testinternalcapi")
+        self.assertTrue(internal.threadgroup_refcount_probe(owner, foreign))
+
+    def test_local_refcount_overflow(self):
+        internal = import_helper.import_module("_testinternalcapi")
+        internal.test_threadgroup_refcount_overflow()
+
     def test_default_context_compatibility(self):
         script_helper.assert_python_ok('-c', '''
 import contextvars

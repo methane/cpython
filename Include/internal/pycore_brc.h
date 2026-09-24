@@ -60,12 +60,16 @@ void _Py_brc_after_fork(PyInterpreterState *interp);
 
 // Enqueues an object to be merged by it's owning thread (tid). This
 // steals a reference to the object.
-void _Py_brc_queue_object(PyObject *ob);
+
 
 // Merge the refcounts of queued objects for the current thread.
-void _Py_brc_merge_refcounts(PyThreadState *tstate);
+
 
 #endif /* Py_GIL_DISABLED */
+
+// Steals a reference and merges it under the owning group's execution lock.
+void _Py_brc_queue_object(PyObject *ob);
+void _Py_brc_merge_refcounts(PyThreadState *tstate);
 
 #ifdef __cplusplus
 }

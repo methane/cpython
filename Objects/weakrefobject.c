@@ -69,9 +69,9 @@ init_weakref(PyWeakReference *self, PyObject *ob, PyObject *callback)
     self->vectorcall = weakref_vectorcall;
 #ifdef Py_GIL_DISABLED
     self->weakrefs_lock = &WEAKREF_LIST_LOCK(ob);
+#endif
     _PyObject_SetMaybeWeakref(ob);
     _PyObject_SetMaybeWeakref((PyObject *)self);
-#endif
 }
 
 // Clear the weakref and steal its callback into `callback`, if provided.

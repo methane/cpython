@@ -358,7 +358,6 @@ _Py_DecRef(PyObject *o)
     Py_DECREF(o);
 }
 
-#ifdef Py_GIL_DISABLED
 # ifdef Py_REF_DEBUG
 static int
 is_dead(PyObject *o)
@@ -376,6 +375,13 @@ is_dead(PyObject *o)
 static int
 _Py_DecRefSharedIsDead(PyObject *o, const char *filename, int lineno)
 {
+#ifdef Py_REF_DEBUG
+    // A poisoned shared count need not carry the MERGED flag. Check the
+    // allocator's dead-object marker before interpreting any count bits.
+    if (is_dead(o)) {
+        _Py_NegativeRefcount(filename, lineno, o);
+    }
+#endif
     // Should we queue the object for the owning thread to merge?
     int should_queue;
 
@@ -398,8 +404,7 @@ _Py_DecRefSharedIsDead(PyObject *o, const char *filename, int lineno)
         }
 
 #ifdef Py_REF_DEBUG
-        if ((new_shared < 0 && _Py_REF_IS_MERGED(new_shared)) ||
-            (should_queue && is_dead(o)))
+        if (new_shared < 0 && _Py_REF_IS_MERGED(new_shared))
         {
             _Py_NegativeRefcount(filename, lineno, o);
         }
@@ -446,11 +451,6 @@ _Py_MergeZeroLocalRefcount(PyObject *op)
         return;
     }
 
-    // gh-121794: This must be before the store to `ob_ref_shared` (gh-119999),
-    // but should outside the fast-path to maintain the invariant that
-    // a zero `ob_tid` implies a merged refcount.
-    _Py_atomic_store_uintptr_relaxed(&op->ob_tid, 0);
-
     // Slow-path: atomically set the flags (low two bits) to _Py_REF_MERGED.
     Py_ssize_t new_shared;
     do {
@@ -474,10 +474,9 @@ _Py_ExplicitMergeRefcount(PyObject *op, Py_ssize_t extra)
     _Py_AddRefTotal(_PyThreadState_GET(), extra);
 #endif
 
-    // gh-119999: Write to ob_ref_local and ob_tid before merging the refcount.
+    // Publish the zero local count before marking the shared count as merged.
     Py_ssize_t local = (Py_ssize_t)op->ob_ref_local;
-    _Py_atomic_store_uint32_relaxed(&op->ob_ref_local, 0);
-    _Py_atomic_store_uintptr_relaxed(&op->ob_tid, 0);
+    _Py_atomic_store_uint8_relaxed(&op->ob_ref_local, 0);
 
     Py_ssize_t refcnt;
     Py_ssize_t new_shared;
@@ -493,6 +492,17 @@ _Py_ExplicitMergeRefcount(PyObject *op, Py_ssize_t extra)
     return refcnt;
 }
 
+void
+_Py_IncRefLocalOverflow(PyObject *op)
+{
+    assert(_Py_IsOwnedByCurrentThread(op));
+    assert(op->ob_ref_local == _Py_IMMORTAL_REFCNT_LOCAL - 1);
+    // Do not make a mortal object immortal at the eight-bit count limit.
+    // The caller accounts for the incref in debug builds.
+    _Py_ExplicitMergeRefcount(op, 0);
+    _Py_atomic_add_ssize(&op->ob_ref_shared, 1 << _Py_REF_SHARED_SHIFT);
+}
+
 // The more complicated "slow" path for undoing the resurrection of an object.
 int
 _PyObject_ResurrectEndSlow(PyObject *op)
@@ -504,6 +514,10 @@ _PyObject_ResurrectEndSlow(PyObject *op)
         // If the object is owned by the current thread, give up ownership and
         // merge the refcount. This isn't necessary in all cases, but it
         // simplifies the implementation.
+#ifdef Py_REF_DEBUG
+        // ResurrectEnd already accounted for the decref.
+        _Py_IncRefTotal(_PyThreadState_GET());
+#endif
         Py_ssize_t refcount = _Py_ExplicitMergeRefcount(op, -1);
         if (refcount == 0) {
 #ifdef Py_TRACE_REFS
@@ -524,7 +538,6 @@ _PyObject_ResurrectEndSlow(PyObject *op)
 }
 
 
-#endif  /* Py_GIL_DISABLED */
 
 
 /**************************************/
@@ -2725,33 +2738,62 @@ _PyTypes_FiniTypes(PyInterpreterState *interp)
 }
 
 
+/* ThreadGroup IDs share a process-wide namespace. Never reset
+   or recycle it, including across interpreter finalization/reinitialization. */
+static uint32_t next_owner_id;
+
+uint32_t
+_PyObject_NewOwnerID(void)
+{
+    uint32_t previous = _Py_atomic_load_uint32_relaxed(&next_owner_id);
+    for (;;) {
+        if (previous == UINT32_MAX) {
+            return 0;
+        }
+        if (_Py_atomic_compare_exchange_uint32(&next_owner_id, &previous,
+                                               previous + 1)) {
+            return previous + 1;
+        }
+    }
+}
+
+static int
+is_intrinsically_immutable(PyTypeObject *type)
+{
+    /* Exact types only: subclasses can have mutable instance attributes. */
+    return type == &PyLong_Type || type == &PyBool_Type ||
+           type == &PyFloat_Type || type == &PyComplex_Type ||
+           type == &PyUnicode_Type || type == &PyBytes_Type ||
+           type == &PyTuple_Type || type == &PyFrozenSet_Type ||
+           type == &PyFrozenDict_Type || type == &PyRange_Type ||
+           type == &PyMethodDescr_Type || type == &PyClassMethodDescr_Type ||
+           type == &PyMemberDescr_Type || type == &PyGetSetDescr_Type ||
+           type == &PyWrapperDescr_Type ||
+           type == &PyCode_Type || type == Py_TYPE(Py_None) ||
+           type == Py_TYPE(Py_Ellipsis) || type == Py_TYPE(Py_NotImplemented);
+}
+
+static void
+init_shareable(PyObject *op)
+{
+    uint8_t state = _Py_SHAREABLE_LOCAL;
+    uint32_t owner = _PyThreadState_GET()->threadgroup->id;
+    if (is_intrinsically_immutable(Py_TYPE(op))) {
+        state = _Py_SHAREABLE_IMMUTABLE;
+    }
+    _Py_atomic_store_uint32_relaxed(&op->ob_owner_id, owner);
+    _Py_atomic_store_uint8_relaxed(&op->ob_shareable, state);
+}
+
 static inline void
 new_reference(PyObject *op)
 {
-    // Skip the immortal object check in Py_SET_REFCNT; always set refcnt to 1
-#if !defined(Py_GIL_DISABLED)
-#if SIZEOF_VOID_P > 4
-    op->ob_refcnt_full = 1;
-    assert(op->ob_refcnt == 1);
-    assert(op->ob_flags == 0);
-#else
-    op->ob_refcnt = 1;
-#endif
-#else
+    init_shareable(op);
+    // Freelist nodes may have overwritten the entire first word.
     op->ob_flags = 0;
-    op->ob_mutex = (PyMutex){ 0 };
-#ifdef _Py_THREAD_SANITIZER
-    _Py_atomic_store_uintptr_relaxed(&op->ob_tid, _Py_ThreadId());
     _Py_atomic_store_uint8_relaxed(&op->ob_gc_bits, 0);
-    _Py_atomic_store_uint32_relaxed(&op->ob_ref_local, 1);
+    _Py_atomic_store_uint8_relaxed(&op->ob_ref_local, 1);
     _Py_atomic_store_ssize_relaxed(&op->ob_ref_shared, 0);
-#else
-    op->ob_tid = _Py_ThreadId();
-    op->ob_gc_bits = 0;
-    op->ob_ref_local = 1;
-    op->ob_ref_shared = 0;
-#endif
-#endif
 #ifdef Py_TRACE_REFS
     _Py_AddToAllObjects(op);
 #endif
@@ -2780,16 +2822,11 @@ _Py_SetImmortalUntracked(PyObject *op)
     if (_Py_IsImmortal(op)) {
         return;
     }
-#ifdef Py_GIL_DISABLED
-    _Py_atomic_store_uintptr_relaxed(&op->ob_tid, _Py_UNOWNED_TID);
-    _Py_atomic_store_uint32_relaxed(&op->ob_ref_local, _Py_IMMORTAL_REFCNT_LOCAL);
+    _Py_atomic_store_uint8_relaxed(&op->ob_ref_local, _Py_IMMORTAL_REFCNT_LOCAL);
     _Py_atomic_store_ssize_relaxed(&op->ob_ref_shared, 0);
+    op->ob_flags |= _Py_IMMORTAL_FLAGS;
+#ifdef Py_GIL_DISABLED
     _Py_atomic_or_uint8(&op->ob_gc_bits, _PyGC_BITS_DEFERRED);
-#elif SIZEOF_VOID_P > 4
-    op->ob_flags = _Py_IMMORTAL_FLAGS;
-    op->ob_refcnt = _Py_IMMORTAL_INITIAL_REFCNT;
-#else
-    op->ob_refcnt = _Py_IMMORTAL_INITIAL_REFCNT;
 #endif
 }
 
@@ -2806,6 +2843,9 @@ void
 _PyObject_SetDeferredRefcount(PyObject *op)
 {
 #ifdef Py_GIL_DISABLED
+    if (_Py_atomic_load_uint8(&op->ob_shareable) == _Py_SHAREABLE_LOCAL) {
+        return;
+    }
     assert(PyType_IS_GC(Py_TYPE(op)));
     assert(_Py_IsOwnedByCurrentThread(op));
     assert(op->ob_ref_shared == 0);
@@ -2818,6 +2858,9 @@ int
 PyUnstable_Object_EnableDeferredRefcount(PyObject *op)
 {
 #ifdef Py_GIL_DISABLED
+    if (_Py_atomic_load_uint8(&op->ob_shareable) == _Py_SHAREABLE_LOCAL) {
+        return 0;
+    }
     if (!PyType_IS_GC(Py_TYPE(op))) {
         // Deferred reference counting doesn't work
         // on untracked types.
@@ -2886,9 +2929,7 @@ PyUnstable_TryIncRef(PyObject *op)
 void
 PyUnstable_EnableTryIncRef(PyObject *op)
 {
-#ifdef Py_GIL_DISABLED
     _PyObject_SetMaybeWeakref(op);
-#endif
 }
 
 int

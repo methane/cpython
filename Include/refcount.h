@@ -6,76 +6,19 @@ extern "C" {
 
 
 #if !defined(_Py_OPAQUE_PYOBJECT)
-/*
-Immortalization:
-
-The following indicates the immortalization strategy depending on the amount
-of available bits in the reference count field. All strategies are backwards
-compatible but the specific reference count value or immortalization check
-might change depending on the specializations for the underlying system.
-
-Proper deallocation of immortal instances requires distinguishing between
-statically allocated immortal instances vs those promoted by the runtime to be
-immortal. The latter should be the only instances that require
-cleanup during runtime finalization.
-*/
-
+// Py_REFCNT retains the conventional large value for immortal objects.
 #if SIZEOF_VOID_P > 4
-/*
-In 64+ bit systems, any object whose 32 bit reference count is >= 2**31
-will be treated as immortal.
-
-Using the lower 32 bits makes the value backwards compatible by allowing
-C-Extensions without the updated checks in Py_INCREF and Py_DECREF to safely
-increase and decrease the objects reference count.
-
-In order to offer sufficient resilience to C extensions using the stable ABI
-compiled against 3.11 or earlier, we set the initial value near the
-middle of the range (2**31, 2**32). That way the refcount can be
-off by ~1 billion without affecting immortality.
-
-Reference count increases will use saturated arithmetic, taking advantage of
-having all the lower 32 bits set, which will avoid the reference count to go
-beyond the refcount limit. Immortality checks for reference count decreases will
-be done by checking the bit sign flag in the lower 32 bits.
-
-To ensure that once an object becomes immortal, it remains immortal, the threshold
-for omitting increfs is much higher than for omitting decrefs. Consequently, once
-the refcount for an object exceeds _Py_IMMORTAL_MINIMUM_REFCNT it will gradually
-increase over time until it reaches _Py_IMMORTAL_INITIAL_REFCNT.
-*/
-#define _Py_IMMORTAL_INITIAL_REFCNT (3ULL << 30)
-#define _Py_IMMORTAL_MINIMUM_REFCNT (1ULL << 31)
-#define _Py_STATIC_FLAG_BITS ((Py_ssize_t)(_Py_STATICALLY_ALLOCATED_FLAG | _Py_IMMORTAL_FLAGS))
-#define _Py_STATIC_IMMORTAL_INITIAL_REFCNT (((Py_ssize_t)_Py_IMMORTAL_INITIAL_REFCNT) | (_Py_STATIC_FLAG_BITS << 48))
-
+#  define _Py_IMMORTAL_INITIAL_REFCNT (3ULL << 30)
+#  define _Py_IMMORTAL_MINIMUM_REFCNT (1ULL << 31)
 #else
-/*
-In 32 bit systems, an object will be treated as immortal if its reference
-count equals or exceeds _Py_IMMORTAL_MINIMUM_REFCNT (2**30).
-
-Using the lower 30 bits makes the value backwards compatible by allowing
-C-Extensions without the updated checks in Py_INCREF and Py_DECREF to safely
-increase and decrease the objects reference count. The object would lose its
-immortality, but the execution would still be correct.
-
-Reference count increases and decreases will first go through an immortality
-check by comparing the reference count field to the minimum immortality refcount.
-*/
-#define _Py_IMMORTAL_INITIAL_REFCNT ((Py_ssize_t)(5L << 28))
-#define _Py_IMMORTAL_MINIMUM_REFCNT ((Py_ssize_t)(1L << 30))
-#define _Py_STATIC_IMMORTAL_INITIAL_REFCNT ((Py_ssize_t)(7L << 28))
-#define _Py_STATIC_IMMORTAL_MINIMUM_REFCNT ((Py_ssize_t)(6L << 28))
+#  define _Py_IMMORTAL_INITIAL_REFCNT ((Py_ssize_t)(5L << 28))
+#  define _Py_IMMORTAL_MINIMUM_REFCNT ((Py_ssize_t)(1L << 30))
 #endif
 
-// Py_GIL_DISABLED builds indicate immortal objects using `ob_ref_local`, which is
-// always 32-bits.
-#ifdef Py_GIL_DISABLED
-#define _Py_IMMORTAL_REFCNT_LOCAL UINT32_MAX
-#endif
+// Immortal objects use a reserved value in the local reference count.
+#define _Py_IMMORTAL_REFCNT_LOCAL UINT8_MAX
 
 
-#ifdef Py_GIL_DISABLED
    // The shared reference count uses the two least-significant bits to store
    // flags. The remaining bits are used to store the reference count.
 #  define _Py_REF_SHARED_SHIFT        2
@@ -90,30 +33,39 @@ check by comparing the reference count field to the minimum immortality refcount
    // Create a shared field from a refcnt and desired flags
 #  define _Py_REF_SHARED(refcnt, flags) \
               (((refcnt) << _Py_REF_SHARED_SHIFT) + (flags))
-#endif  // Py_GIL_DISABLED
 #endif  // _Py_OPAQUE_PYOBJECT
+
+// Returns the ID of the current ThreadGroup, or zero without a thread state.
+PyAPI_FUNC(uint32_t) _Py_GetThreadGroupId(void);
+
+#if !defined(Py_LIMITED_API)
+static inline Py_ALWAYS_INLINE int
+_Py_IsOwnedByCurrentThread(PyObject *ob)
+{
+    // The name is retained for internal callers ported from PEP 703. The bias
+    // belongs to the whole group, not to the allocating OS thread.
+    return _Py_atomic_load_uint8_relaxed(&ob->ob_ref_local) != 0 &&
+           ob->ob_owner_id != 0 && ob->ob_owner_id == _Py_GetThreadGroupId();
+}
+
+// Merge an overflowing local count into the shared field and add one.
+PyAPI_FUNC(void) _Py_IncRefLocalOverflow(PyObject *op);
+#endif
 
 // Py_REFCNT() implementation for the stable ABI
 PyAPI_FUNC(Py_ssize_t) Py_REFCNT(PyObject *ob);
 
-#if defined(Py_LIMITED_API) && Py_LIMITED_API+0 >= 0x030e0000
-    // Stable ABI implements Py_REFCNT() as a function call
-    // on limited C API version 3.14 and newer, and on abi3t.
-#elif defined(_Py_OPAQUE_PYOBJECT)
-    // Py_REFCNT() is also a function call in abi3t.
+#if defined(Py_LIMITED_API)
+    // Keep the layout and atomic operations out of limited API callers.
 #else
     static inline Py_ssize_t _Py_REFCNT(PyObject *ob) {
-    #if !defined(Py_GIL_DISABLED)
-        return ob->ob_refcnt;
-    #else
-        uint32_t local = _Py_atomic_load_uint32_relaxed(&ob->ob_ref_local);
+        uint8_t local = _Py_atomic_load_uint8_relaxed(&ob->ob_ref_local);
         if (local == _Py_IMMORTAL_REFCNT_LOCAL) {
             return _Py_IMMORTAL_INITIAL_REFCNT;
         }
         Py_ssize_t shared = _Py_atomic_load_ssize_relaxed(&ob->ob_ref_shared);
         return _Py_STATIC_CAST(Py_ssize_t, local) +
                Py_ARITHMETIC_RIGHT_SHIFT(Py_ssize_t, shared, _Py_REF_SHARED_SHIFT);
-    #endif
     }
     #if !defined(Py_LIMITED_API) || Py_LIMITED_API+0 < 0x030b0000
     #  define Py_REFCNT(ob) _Py_REFCNT(_PyObject_CAST(ob))
@@ -122,28 +74,18 @@ PyAPI_FUNC(Py_ssize_t) Py_REFCNT(PyObject *ob);
     #endif
 #endif
 
-#ifndef _Py_OPAQUE_PYOBJECT
+#if !defined(Py_LIMITED_API)
 static inline Py_ALWAYS_INLINE int _Py_IsImmortal(PyObject *op)
 {
-#if defined(Py_GIL_DISABLED)
-    return (_Py_atomic_load_uint32_relaxed(&op->ob_ref_local) ==
+    return (_Py_atomic_load_uint8_relaxed(&op->ob_ref_local) ==
             _Py_IMMORTAL_REFCNT_LOCAL);
-#elif SIZEOF_VOID_P > 4
-    return _Py_CAST(int32_t, op->ob_refcnt) < 0;
-#else
-    return op->ob_refcnt >= _Py_IMMORTAL_MINIMUM_REFCNT;
-#endif
 }
 #define _Py_IsImmortal(op) _Py_IsImmortal(_PyObject_CAST(op))
 
 
 static inline Py_ALWAYS_INLINE int _Py_IsStaticImmortal(PyObject *op)
 {
-#if defined(Py_GIL_DISABLED) || SIZEOF_VOID_P > 4
     return (op->ob_flags & _Py_STATICALLY_ALLOCATED_FLAG) != 0;
-#else
-    return op->ob_refcnt >= _Py_STATIC_IMMORTAL_MINIMUM_REFCNT;
-#endif
 }
 #define _Py_IsStaticImmortal(op) _Py_IsStaticImmortal(_PyObject_CAST(op))
 #endif // !defined(_Py_OPAQUE_PYOBJECT)
@@ -153,10 +95,8 @@ PyAPI_FUNC(void) _Py_SetRefcnt(PyObject *ob, Py_ssize_t refcnt);
 
 static inline void Py_SET_REFCNT(PyObject *ob, Py_ssize_t refcnt) {
     assert(refcnt >= 0);
-#if (defined(Py_LIMITED_API) && Py_LIMITED_API+0 >= 0x030d0000) \
-    || defined(_Py_OPAQUE_PYOBJECT)
-    // Stable ABI implements Py_SET_REFCNT() as a function call
-    // on limited C API version 3.13 and newer, and abi3t.
+#if defined(Py_LIMITED_API)
+    // Limited API callers use the runtime's reference-count representation.
     _Py_SetRefcnt(ob, refcnt);
 #else
     // This immortal check is for code that is unaware of immortal objects.
@@ -166,35 +106,18 @@ static inline void Py_SET_REFCNT(PyObject *ob, Py_ssize_t refcnt) {
     if (_Py_IsImmortal(ob)) {
         return;
     }
-#ifndef Py_GIL_DISABLED
-#if SIZEOF_VOID_P > 4
-    ob->ob_refcnt = (uint32_t)refcnt;
-#else
-    ob->ob_refcnt = refcnt;
-#endif
-#else
-    if (_Py_IsOwnedByCurrentThread(ob)) {
-        if ((size_t)refcnt > (size_t)UINT32_MAX) {
-            // On overflow, make the object immortal
-            ob->ob_tid = _Py_UNOWNED_TID;
-            ob->ob_ref_local = _Py_IMMORTAL_REFCNT_LOCAL;
-            ob->ob_ref_shared = 0;
-        }
-        else {
-            // Set local refcount to desired refcount and shared refcount
-            // to zero, but preserve the shared refcount flags.
-            ob->ob_ref_local = _Py_STATIC_CAST(uint32_t, refcnt);
-            ob->ob_ref_shared &= _Py_REF_SHARED_FLAG_MASK;
+    if (_Py_IsOwnedByCurrentThread(ob) && refcnt < _Py_IMMORTAL_REFCNT_LOCAL) {
+        ob->ob_ref_local = _Py_STATIC_CAST(uint8_t, refcnt);
+        ob->ob_ref_shared &= _Py_REF_SHARED_FLAG_MASK;
+        if (refcnt == 0) {
+            ob->ob_ref_shared |= _Py_REF_MERGED;
         }
     }
     else {
-        // Set local refcount to zero and shared refcount to desired refcount.
-        // Mark the object as merged.
-        ob->ob_tid = _Py_UNOWNED_TID;
+        // Preserve the ownership ID when the reference count becomes shared.
         ob->ob_ref_local = 0;
         ob->ob_ref_shared = _Py_REF_SHARED(refcnt, _Py_REF_MERGED);
     }
-#endif  // Py_GIL_DISABLED
 #endif  // Py_LIMITED_API
 }
 #if !defined(Py_LIMITED_API) || Py_LIMITED_API+0 < 0x030b0000
@@ -254,10 +177,8 @@ PyAPI_FUNC(void) _Py_DecRef(PyObject *);
 
 static inline Py_ALWAYS_INLINE void Py_INCREF(PyObject *op)
 {
-#if (defined(Py_LIMITED_API) && (Py_LIMITED_API+0 >= 0x030c0000 || defined(Py_REF_DEBUG))) \
-    || defined(_Py_OPAQUE_PYOBJECT)
-    // Stable ABI implements Py_INCREF() as a function call on limited C API
-    // version 3.12 and newer, abi3t, and on Python built in debug mode.
+#if defined(Py_LIMITED_API)
+    // Limited API callers perform reference counting through the runtime.
     // _Py_IncRef() was added to Python 3.10.0a7, use Py_IncRef() on older versions.
     // Py_IncRef() accepts NULL whereas _Py_IncRef() doesn't.
 #  if Py_LIMITED_API+0 >= 0x030a00A7
@@ -267,36 +188,25 @@ static inline Py_ALWAYS_INLINE void Py_INCREF(PyObject *op)
 #  endif
 #else
     // Non-limited C API and limited C API for Python 3.9 and older access
-    // directly PyObject.ob_refcnt.
-#if defined(Py_GIL_DISABLED)
-    uint32_t local = _Py_atomic_load_uint32_relaxed(&op->ob_ref_local);
-    uint32_t new_local = local + 1;
+    // the object header directly.
+    uint8_t local = _Py_atomic_load_uint8_relaxed(&op->ob_ref_local);
+    uint8_t new_local = local + 1;
     if (new_local == 0) {
         _Py_INCREF_IMMORTAL_STAT_INC();
         // local is equal to _Py_IMMORTAL_REFCNT_LOCAL: do nothing
         return;
     }
     if (_Py_IsOwnedByCurrentThread(op)) {
-        _Py_atomic_store_uint32_relaxed(&op->ob_ref_local, new_local);
+        if (new_local == _Py_IMMORTAL_REFCNT_LOCAL) {
+            _Py_IncRefLocalOverflow(op);
+        }
+        else {
+            _Py_atomic_store_uint8_relaxed(&op->ob_ref_local, new_local);
+        }
     }
     else {
         _Py_atomic_add_ssize(&op->ob_ref_shared, (1 << _Py_REF_SHARED_SHIFT));
     }
-#elif SIZEOF_VOID_P > 4
-    uint32_t cur_refcnt = op->ob_refcnt;
-    if (cur_refcnt >= _Py_IMMORTAL_INITIAL_REFCNT) {
-        // the object is immortal
-        _Py_INCREF_IMMORTAL_STAT_INC();
-        return;
-    }
-    op->ob_refcnt = cur_refcnt + 1;
-#else
-    if (_Py_IsImmortal(op)) {
-        _Py_INCREF_IMMORTAL_STAT_INC();
-        return;
-    }
-    op->ob_refcnt++;
-#endif
     _Py_INCREF_STAT_INC();
 #ifdef Py_REF_DEBUG
     // Don't count the incref if the object is immortal.
@@ -311,7 +221,6 @@ static inline Py_ALWAYS_INLINE void Py_INCREF(PyObject *op)
 #endif
 
 #if !defined(Py_LIMITED_API)
-#if defined(Py_GIL_DISABLED)
 // Implements Py_DECREF on objects not owned by the current thread.
 PyAPI_FUNC(void) _Py_DecRefShared(PyObject *);
 PyAPI_FUNC(void) _Py_DecRefSharedDebug(PyObject *, const char *, int);
@@ -321,13 +230,10 @@ PyAPI_FUNC(void) _Py_DecRefSharedDebug(PyObject *, const char *, int);
 // zero. Otherwise, the thread gives up ownership and merges the reference
 // count fields.
 PyAPI_FUNC(void) _Py_MergeZeroLocalRefcount(PyObject *);
-#endif  // Py_GIL_DISABLED
 #endif  // Py_LIMITED_API
 
-#if (defined(Py_LIMITED_API) && (Py_LIMITED_API+0 >= 0x030c0000 || defined(Py_REF_DEBUG))) \
-    || defined(_Py_OPAQUE_PYOBJECT)
-// Stable ABI implements Py_DECREF() as a function call on limited C API
-// version 3.12 and newer, abi3t, and on Python built in debug mode.
+#if defined(Py_LIMITED_API)
+// Limited API callers perform reference counting through the runtime.
 // _Py_DecRef() was added to Python 3.10.0a7, use Py_DecRef() on older versions.
 // Py_DecRef() accepts NULL whereas _Py_DecRef() doesn't.
 static inline void Py_DECREF(PyObject *op) {
@@ -339,10 +245,10 @@ static inline void Py_DECREF(PyObject *op) {
 }
 #define Py_DECREF(op) Py_DECREF(_PyObject_CAST(op))
 
-#elif defined(Py_GIL_DISABLED) && defined(Py_REF_DEBUG)
+#elif defined(Py_REF_DEBUG)
 static inline void Py_DECREF(const char *filename, int lineno, PyObject *op)
 {
-    uint32_t local = _Py_atomic_load_uint32_relaxed(&op->ob_ref_local);
+    uint8_t local = _Py_atomic_load_uint8_relaxed(&op->ob_ref_local);
     if (local == _Py_IMMORTAL_REFCNT_LOCAL) {
         _Py_DECREF_IMMORTAL_STAT_INC();
         return;
@@ -354,7 +260,7 @@ static inline void Py_DECREF(const char *filename, int lineno, PyObject *op)
             _Py_NegativeRefcount(filename, lineno, op);
         }
         local--;
-        _Py_atomic_store_uint32_relaxed(&op->ob_ref_local, local);
+        _Py_atomic_store_uint8_relaxed(&op->ob_ref_local, local);
         if (local == 0) {
             _Py_MergeZeroLocalRefcount(op);
         }
@@ -365,10 +271,10 @@ static inline void Py_DECREF(const char *filename, int lineno, PyObject *op)
 }
 #define Py_DECREF(op) Py_DECREF(__FILE__, __LINE__, _PyObject_CAST(op))
 
-#elif defined(Py_GIL_DISABLED)
+#else
 static inline void Py_DECREF(PyObject *op)
 {
-    uint32_t local = _Py_atomic_load_uint32_relaxed(&op->ob_ref_local);
+    uint8_t local = _Py_atomic_load_uint8_relaxed(&op->ob_ref_local);
     if (local == _Py_IMMORTAL_REFCNT_LOCAL) {
         _Py_DECREF_IMMORTAL_STAT_INC();
         return;
@@ -376,7 +282,7 @@ static inline void Py_DECREF(PyObject *op)
     _Py_DECREF_STAT_INC();
     if (_Py_IsOwnedByCurrentThread(op)) {
         local--;
-        _Py_atomic_store_uint32_relaxed(&op->ob_ref_local, local);
+        _Py_atomic_store_uint8_relaxed(&op->ob_ref_local, local);
         if (local == 0) {
             _Py_MergeZeroLocalRefcount(op);
         }
@@ -387,47 +293,6 @@ static inline void Py_DECREF(PyObject *op)
 }
 #define Py_DECREF(op) Py_DECREF(_PyObject_CAST(op))
 
-#elif defined(Py_REF_DEBUG)
-
-static inline void Py_DECREF(const char *filename, int lineno, PyObject *op)
-{
-#if SIZEOF_VOID_P > 4
-    /* If an object has been freed, it will have a negative full refcnt
-     * If it has not it been freed, will have a very large refcnt */
-    if (op->ob_refcnt_full <= 0 || op->ob_refcnt > (((uint32_t)-1) - (1<<20))) {
-#else
-    if (op->ob_refcnt <= 0) {
-#endif
-        _Py_NegativeRefcount(filename, lineno, op);
-    }
-    if (_Py_IsImmortal(op)) {
-        _Py_DECREF_IMMORTAL_STAT_INC();
-        return;
-    }
-    _Py_DECREF_STAT_INC();
-    _Py_DECREF_DecRefTotal();
-    if (--op->ob_refcnt == 0) {
-        _Py_Dealloc(op);
-    }
-}
-#define Py_DECREF(op) Py_DECREF(__FILE__, __LINE__, _PyObject_CAST(op))
-
-#else
-
-static inline Py_ALWAYS_INLINE void Py_DECREF(PyObject *op)
-{
-    // Non-limited C API and limited C API for Python 3.9 and older access
-    // directly PyObject.ob_refcnt.
-    if (_Py_IsImmortal(op)) {
-        _Py_DECREF_IMMORTAL_STAT_INC();
-        return;
-    }
-    _Py_DECREF_STAT_INC();
-    if (--op->ob_refcnt == 0) {
-        _Py_Dealloc(op);
-    }
-}
-#define Py_DECREF(op) Py_DECREF(_PyObject_CAST(op))
 #endif
 
 

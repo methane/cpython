@@ -71,7 +71,7 @@ def _sizeof_void_p():
 def _managed_dict_offset():
     # See pycore_object.h
     pyobj = gdb.lookup_type("PyObject")
-    if any(field.name == "ob_ref_local" for field in pyobj.fields()):
+    if any(field.name == "ob_tid" for field in pyobj.fields()):
         return -1 * _sizeof_void_p()
     else:
         return -3 * _sizeof_void_p()

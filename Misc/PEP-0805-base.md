@@ -14,8 +14,8 @@ LOCAL objects are requirements, not optional optimizations.
 | Stage | Completion criteria | Current status |
 | --- | --- | --- |
 | ThreadGroups | Main identity and lifetime, explicit/default group selection, serialization, parallel execution, detach/reattach, fork and shutdown | Extracted; initial regressions pass, lifetime audit remains |
-| One-time ABI change | Owner/state metadata with room for later states; no per-object cleanup queue fields; consistent native layouts | Pending |
-| Biased and deferred reference counting | Port the necessary PEP 703 mechanisms into the normal build; same-group LOCAL reclamation remains immediate | Pending |
+| One-time ABI change | Owner/state metadata with room for later states; no per-object cleanup queue fields; consistent native layouts | Compact header implemented and checked in the normal build; remaining runtime port in progress |
+| Biased and deferred reference counting | Port the necessary PEP 703 mechanisms into the normal build; same-group LOCAL reclamation remains immediate | Group-biased RC works in the normal build; deferred/per-thread RC and parallel queue collection remain |
 | LOCAL and IMMUTABLE ownership | Correct initialization and checked C API/VM reference acquisition; shallow immutable containers do not expose foreign LOCAL values | Pending |
 | Parallel allocation and cyclic GC | Concurrent allocation/collection, safe foreign traversal, finalization and interpreter teardown | Pending |
 
@@ -72,3 +72,29 @@ reclamation checks at this point do not establish biased-RC correctness.
 The reference-counting bias is to be a ThreadGroup, not an OS thread. Group
 ownership must survive exit of the allocating thread. The object header will
 not retain an OS thread ID or per-object deferred-cleanup queue fields.
+
+The normal build now uses a 24-byte `PyObject` on 64-bit platforms: a 32-bit
+owner/bias ID, an 8-bit local count, state, flags and GC bits, a pointer-sized
+shared count and a type pointer. The shared count retains PEP 703's two flag
+bits. The local count's reserved immortal value is never reached by ordinary
+increments: overflow merges the count into the shared field. Ownership is
+preserved on merging, resurrection and thread exit. There is no object mutex,
+OS thread ID or deferred-cleanup linkage in this header.
+
+Normal debug validation (`Py_GIL_DISABLED=0`, interpreter GIL still enabled):
+`test_threadgroup`, `test_local_reclamation`, `test_capi.test_object`,
+`test_capi.test_misc`, `test_gc`, `test_threading`, `test_embed`, and `test_sys`
+pass: 844 tests, 21 skips. The first four targeted RC/GC files
+(`test_threadgroup`, `test_local_reclamation`, `test_capi.test_object`, `test_gc`)
+also pass `-R 3:3` without reference leaks. The native probes cover two live OS
+threads in one group, reuse after creator-thread exit, foreign shared counts,
+and local-count overflow. The Python reclamation tests cover finalizers,
+weakrefs and resurrection with GC disabled, plus bulk reference-count overflow.
+The local-reclamation guards and tests were selected from `a26d4fff4c` using
+`git cherry-pick --no-commit`, with later-stage functionality excluded.
+
+This is an intermediate normal-build port, not completion of the five stages.
+In particular, the old free-threading collector still assumes OS-thread IDs
+and a larger local counter; it must not be selected with this header. The
+normal collector currently handles biased counts but not deferred counts.
+Ownership access checks and parallel execution are not enabled yet.

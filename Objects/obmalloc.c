@@ -1521,6 +1521,16 @@ _PyObject_XDecRefDelayed(PyObject *ptr)
 {
     assert(!((uintptr_t)ptr & 0x01));
     if (ptr != NULL) {
+        if (_Py_atomic_load_uint8(&ptr->ob_shareable) == _Py_SHAREABLE_LOCAL) {
+            /* Invalidate outstanding lock-free readers before dropping the
+               reference. A later QSBR sweep would delay LOCAL finalization.
+               Destructors run only after the world has restarted. */
+            PyInterpreterState *interp = _PyInterpreterState_GET();
+            _PyEval_StopTheWorld(interp);
+            _PyEval_StartTheWorld(interp);
+            Py_DECREF(ptr);
+            return;
+        }
         // We use 0 as the size since we don't have an easy way to know the
         // actual size.  If we are freeing many objects, the write sequence
         // will be advanced due to QSBR_DEFERRED_LIMIT.

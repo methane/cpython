@@ -73,47 +73,12 @@
         } \
     } while (0)
 
-#ifndef Py_GIL_DISABLED
 
 #undef Py_DECREF
 #define Py_DECREF(arg) \
     do { \
         PyObject *op = _PyObject_CAST(arg); \
-        if (_Py_IsImmortal(op)) { \
-            _Py_DECREF_IMMORTAL_STAT_INC(); \
-            break; \
-        } \
-        _Py_DECREF_STAT_INC(); \
-        if (--op->ob_refcnt == 0) { \
-            _PyReftracerTrack(op, PyRefTracer_DESTROY); \
-            destructor dealloc = Py_TYPE(op)->tp_dealloc; \
-            (*dealloc)(op); \
-        } \
-    } while (0)
-
-#undef _Py_DECREF_SPECIALIZED
-#define _Py_DECREF_SPECIALIZED(arg, dealloc) \
-    do { \
-        PyObject *op = _PyObject_CAST(arg); \
-        if (_Py_IsImmortal(op)) { \
-            _Py_DECREF_IMMORTAL_STAT_INC(); \
-            break; \
-        } \
-        _Py_DECREF_STAT_INC(); \
-        if (--op->ob_refcnt == 0) { \
-            _PyReftracerTrack(op, PyRefTracer_DESTROY); \
-            destructor d = (destructor)(dealloc); \
-            d(op); \
-        } \
-    } while (0)
-
-#else // Py_GIL_DISABLED
-
-#undef Py_DECREF
-#define Py_DECREF(arg) \
-    do { \
-        PyObject *op = _PyObject_CAST(arg); \
-        uint32_t local = _Py_atomic_load_uint32_relaxed(&op->ob_ref_local); \
+        uint8_t local = _Py_atomic_load_uint8_relaxed(&op->ob_ref_local); \
         if (local == _Py_IMMORTAL_REFCNT_LOCAL) { \
             _Py_DECREF_IMMORTAL_STAT_INC(); \
             break; \
@@ -121,7 +86,7 @@
         _Py_DECREF_STAT_INC(); \
         if (_Py_IsOwnedByCurrentThread(op)) { \
             local--; \
-            _Py_atomic_store_uint32_relaxed(&op->ob_ref_local, local); \
+            _Py_atomic_store_uint8_relaxed(&op->ob_ref_local, local); \
             if (local == 0) { \
                 _Py_MergeZeroLocalRefcount(op); \
             } \
@@ -135,12 +100,11 @@
 #define _Py_DECREF_SPECIALIZED(arg, dealloc) Py_DECREF(arg)
 
 #endif
-#endif
 
 static void
 check_invalid_reentrancy(void)
 {
-#if defined(Py_DEBUG) && defined(Py_GIL_DISABLED)
+#if defined(Py_DEBUG)
     // In the free-threaded build, the interpreter must not be re-entered if
     // the world-is-stopped.  If so, that's a bug somewhere (quite likely in
     // the painfully complex typeobject code).

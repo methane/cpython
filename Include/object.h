@@ -67,6 +67,12 @@ whose size is determined when the object is allocated.
 // Kept for backward compatibility. It was needed by Py_TRACE_REFS build.
 #define _PyObject_EXTRA_INIT
 
+/* PEP 805 object states. Values 1 and 2 are reserved for later stages. */
+#define _Py_SHAREABLE_LOCAL 0
+#define _Py_SHAREABLE_PROTECTED 1
+#define _Py_SHAREABLE_SYNCHRONIZED 2
+#define _Py_SHAREABLE_IMMUTABLE 3
+
 /* Make all uses of PyObject_HEAD_INIT immortal.
  *
  * Statically allocated objects might be shared between
@@ -74,24 +80,16 @@ whose size is determined when the object is allocated.
  *
  * Before changing this, see the check in PyModuleDef_Init().
  */
-#if defined(Py_GIL_DISABLED)
 #define PyObject_HEAD_INIT(type)    \
     {                               \
         0,                          \
-        _Py_STATICALLY_ALLOCATED_FLAG, \
-        { 0 },                      \
+        _Py_IMMORTAL_REFCNT_LOCAL,   \
+        _Py_SHAREABLE_LOCAL,        \
+        (_Py_STATICALLY_ALLOCATED_FLAG | _Py_IMMORTAL_FLAGS), \
         0,                          \
-        _Py_IMMORTAL_REFCNT_LOCAL,  \
         0,                          \
         (type),                     \
     },
-#else
-#define PyObject_HEAD_INIT(type)    \
-    {                               \
-        { _Py_STATIC_IMMORTAL_INITIAL_REFCNT },    \
-        (type)                      \
-    },
-#endif
 
 #define PyVarObject_HEAD_INIT(type, size) \
     {                                     \
@@ -123,46 +121,16 @@ whose size is determined when the object is allocated.
  */
 #ifdef _Py_OPAQUE_PYOBJECT
   /* PyObject is opaque */
-#elif !defined(Py_GIL_DISABLED)
-struct _object {
-    _Py_ANONYMOUS union {
-#if SIZEOF_VOID_P > 4
-        int64_t ob_refcnt_full; /* This field is needed for efficient initialization with Clang on ARM */
-        struct {
-#  if PY_BIG_ENDIAN
-            uint16_t ob_flags;
-            uint16_t ob_overflow;
-            uint32_t ob_refcnt;
-#  else
-            uint32_t ob_refcnt;
-            uint16_t ob_overflow;
-            uint16_t ob_flags;
-#  endif
-        };
 #else
-        Py_ssize_t ob_refcnt;  // part of stable ABI; do not change
-#endif
-        _Py_ALIGNED_DEF(_PyObject_MIN_ALIGNMENT, char) _aligner;
-    };
-
-    PyTypeObject *ob_type;  // part of stable ABI; do not change
-};
-#else
-// Objects that are not owned by any thread use a thread id (tid) of zero.
-// This includes both immortal objects and objects whose reference count
-// fields have been merged.
-#define _Py_UNOWNED_TID             0
-
 struct _object {
-    // ob_tid stores the thread id (or zero). It is also used by the GC and the
-    // trashcan mechanism as a linked list pointer and by the GC to store the
-    // computed "gc_refs" refcount.
-    _Py_ALIGNED_DEF(_PyObject_MIN_ALIGNMENT, uintptr_t) ob_tid;
-    uint16_t ob_flags;
-    PyMutex ob_mutex;           // per-object lock
-    uint8_t ob_gc_bits;         // gc-related state
-    uint32_t ob_ref_local;      // local reference count
-    Py_ssize_t ob_ref_shared;   // shared (atomic) reference count
+    // The ownership ID also identifies the ThreadGroup that may update the
+    // local reference count. Merging the count does not change ownership.
+    _Py_ALIGNED_DEF(_PyObject_MIN_ALIGNMENT, uint32_t) ob_owner_id;
+    uint8_t ob_ref_local;       // UINT8_MAX denotes an immortal object
+    uint8_t ob_shareable;
+    uint8_t ob_flags;
+    uint8_t ob_gc_bits;
+    Py_ssize_t ob_ref_shared;   // atomic count and two low-bit BRC flags
     PyTypeObject *ob_type;
 };
 #endif // !defined(_Py_OPAQUE_PYOBJECT)

@@ -93,9 +93,7 @@ threadgroup_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
         self->state->name_length = length;
     }
     self->interpreter_id = PyInterpreterState_GetID(_PyInterpreterState_GET());
-#ifdef Py_GIL_DISABLED
     _PyObject_SetMaybeWeakref((PyObject *)self);
-#endif
     PyMutex_LockFlags(&self->state->holder_mutex, 0);
     self->state->wrapper = (PyObject *)self;
     PyMutex_Unlock(&self->state->holder_mutex);
@@ -181,9 +179,7 @@ _PyThreadGroup_GetObject(PyInterpreterState *interp, uint32_t id)
 
     /* Allocation can run Python and another thread can publish a wrapper.
        Only one live wrapper is published for a scheduler. */
-#ifdef Py_GIL_DISABLED
     _PyObject_SetMaybeWeakref((PyObject *)wrapper);
-#endif
     PyMutex_LockFlags(&group->holder_mutex, 0);
     existing = group->wrapper;
     if (existing != NULL && !_Py_TryIncref(existing)) {

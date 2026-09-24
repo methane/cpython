@@ -215,14 +215,8 @@ test_py_set_immortal(PyObject *self, PyObject *unused)
     // is made immortal and leak memory, for the same
     // reason we cannot call PyObject_Init() on it.
     PyObject object = {0};
-#ifdef Py_GIL_DISABLED
-    object.ob_tid = _Py_ThreadId();
-    object.ob_gc_bits = 0;
+    object.ob_owner_id = _Py_GetThreadGroupId();
     object.ob_ref_local = 1;
-    object.ob_ref_shared = 0;
-#else
-    object.ob_refcnt = 1;
-#endif
     object.ob_type = &PyBaseObject_Type;
 
     assert(!PyUnstable_IsImmortal(&object));

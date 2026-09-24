@@ -607,21 +607,12 @@ _PyEval_ReleaseLock(PyInterpreterState *interp,
     drop_gil(interp, tstate, final_release);
 }
 
-static uint32_t next_owner_id;
-
-static uint32_t
-threadgroup_new_id(void)
+uint32_t
+_Py_GetThreadGroupId(void)
 {
-    uint32_t previous = _Py_atomic_load_uint32_relaxed(&next_owner_id);
-    for (;;) {
-        if (previous == UINT32_MAX) {
-            return 0;
-        }
-        if (_Py_atomic_compare_exchange_uint32(&next_owner_id, &previous,
-                                               previous + 1)) {
-            return previous + 1;
-        }
-    }
+    PyThreadState *tstate = _PyThreadState_GET();
+    return tstate != NULL && tstate->threadgroup != NULL
+        ? tstate->threadgroup->id : 0;
 }
 
 _PyThreadGroupState *
@@ -629,7 +620,7 @@ _PyThreadGroup_New(PyInterpreterState *interp)
 {
     _PyThreadGroupState *group = PyMem_RawCalloc(1, sizeof(*group));
     if (group != NULL) {
-        group->id = threadgroup_new_id();
+        group->id = _PyObject_NewOwnerID();
         if (group->id == 0) {
             PyMem_RawFree(group);
             return NULL;
@@ -712,6 +703,8 @@ _PyThreadGroup_Acquire(PyThreadState *tstate)
     group->holder = tstate;
     tstate->holds_threadgroup = 1;
     _Py_unset_eval_breaker_bit(tstate, _PY_GIL_DROP_REQUEST_BIT);
+    // Queue draining can run destructors, so defer it until fully attached.
+    _Py_set_eval_breaker_bit(tstate, _PY_EVAL_EXPLICIT_MERGE_BIT);
     PyMutex_Unlock(&group->holder_mutex);
 }
 
@@ -1402,12 +1395,12 @@ _Py_HandlePending(PyThreadState *tstate)
         }
     }
 
-#ifdef Py_GIL_DISABLED
     /* Objects with refcounts to merge */
     if ((breaker & _PY_EVAL_EXPLICIT_MERGE_BIT) != 0) {
         _Py_unset_eval_breaker_bit(tstate, _PY_EVAL_EXPLICIT_MERGE_BIT);
         _Py_brc_merge_refcounts(tstate);
     }
+#ifdef Py_GIL_DISABLED
     /* Process deferred memory frees held by QSBR */
     if (_Py_qsbr_should_process(((_PyThreadStateImpl *)tstate)->qsbr)) {
         _PyMem_ProcessDelayed(tstate);

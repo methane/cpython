@@ -1045,10 +1045,8 @@ def expected_failure_if_gil_disabled():
         return unittest.expectedFailure
     return lambda test_case: test_case
 
-if Py_GIL_DISABLED:
-    _header = 'PHBBInP'
-else:
-    _header = 'nP'
+# PEP 805: group ID, local count, state, flags, GC bits, shared count, type.
+_header = 'IBBBB nP'
 _align = '0n'
 _vheader = _header + 'n'
 

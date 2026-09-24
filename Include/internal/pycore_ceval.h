@@ -148,7 +148,6 @@ extern void _PyEval_AcquireLock(PyThreadState *tstate);
 extern void _PyEval_ReleaseLock(PyInterpreterState *, PyThreadState *,
                                 int final_release);
 
-#ifdef Py_GIL_DISABLED
 // Returns 0 or 1 if the GIL for the given thread's interpreter is disabled or
 // enabled, respectively.
 //
@@ -157,10 +156,15 @@ extern void _PyEval_ReleaseLock(PyInterpreterState *, PyThreadState *,
 static inline int
 _PyEval_IsGILEnabled(PyThreadState *tstate)
 {
+#ifdef Py_GIL_DISABLED
     struct _gil_runtime_state *gil = tstate->interp->ceval.gil;
     return _Py_atomic_load_int_relaxed(&gil->enabled) != 0;
+#else
+    return 1;
+#endif
 }
 
+#ifdef Py_GIL_DISABLED
 static inline _Py_CODEUNIT *
 _PyEval_GetExecutableCode(PyThreadState *tstate, PyCodeObject *co)
 {

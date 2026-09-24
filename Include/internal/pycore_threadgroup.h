@@ -8,12 +8,17 @@ extern "C" {
 #  error "this header requires Py_BUILD_CORE define"
 #endif
 
+#include "pycore_object_stack.h"
+
 /* The scheduling state has a separate lifetime from its Python wrapper:
    detaching and deleting a thread state must not run Python finalizers. */
 typedef struct _PyThreadGroupState {
     PyMutex mutex;
     PyMutex holder_mutex;
     PyThreadState *holder;
+    /* Foreign decrefs wait here until the owning group can merge them. */
+    PyMutex brc_mutex;
+    _PyObjectStack objects_to_merge;
     Py_ssize_t refcount;
     uint32_t id;
     struct _PyThreadGroupState *next;
