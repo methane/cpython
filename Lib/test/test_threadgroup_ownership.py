@@ -132,6 +132,12 @@ assert 'threading' not in sys.modules
     def test_static_immutable_access(self):
         internal.test_static_immutable_access()
 
+    def test_static_type_with_zero_initialized_header(self):
+        capi = import_helper.import_module('_testcapi')
+        typ = capi.RecursingInfinitelyError
+        self.assertIs(typ.__shareable__, threading.Shareable.LOCAL)
+        self.check_access(typ, False)
+
     def test_code_caches_across_groups(self):
         def outer(cell):
             def inner(arg):

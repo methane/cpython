@@ -9574,6 +9574,11 @@ PyType_Ready(PyTypeObject *type)
         type_add_flags(type, Py_TPFLAGS_IMMUTABLETYPE);
         /* Static types must be immortal */
         _Py_SetImmortalUntracked((PyObject *)type);
+        // Some extensions leave the whole object header zero-initialized.
+        // Mark those as static too, so their LOCAL ownership binds to Main
+        // and can rebind after their original interpreter is destroyed.
+        _Py_atomic_or_uint8(&((PyObject *)type)->ob_flags,
+                            _Py_STATICALLY_ALLOCATED_FLAG);
     }
 
     int res;

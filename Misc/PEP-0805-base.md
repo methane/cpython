@@ -170,7 +170,9 @@ without inspecting the foreign object's representation. C API checks apply to
 acquired results; already-acquired arguments need no additional runtime check.
 Extension objects remain LOCAL unless explicitly declared immutable. Static
 extension objects can rebind to a new Main after their former interpreter has
-been destroyed. Simultaneous use of managed static extension types by multiple
+been destroyed. `PyType_Ready()` also marks static types whose object headers
+were zero-initialized, so they follow the same ownership rule. Simultaneous use
+of managed static extension types by multiple
 interpreters needs a design decision; see the
 [Japanese questions](PEP-0805-open-questions-ja.md).
 
@@ -220,6 +222,19 @@ Tests run on Linux/aarch64. Logs are under `/tmp/pep805-base/`. The optional
 flags/events rather than foreign LOCAL Python functions or mutable results.
 Parallel scheduling tests remain skipped while the interpreter GIL is enabled.
 
+- Thread-local bytecode: 22 related test files pass, including frames,
+  generators, monitoring, disassembly, remote inspection, configuration,
+  embedding, threading and generated interpreter cases. New tests cover table
+  growth with 32 live workers, retained/frozen heap frames, specialization in
+  foreign groups and lazy debugger-cache population. The debugger regression
+  returned line -1 before the fix. TLBC, ownership, ThreadGroups and deferred
+  reclamation pass `-R 3:3` with `mimalloc_debug` (69 tests, two skips).
+- The expanded selection exposed a pre-existing zero-header static-type
+  ownership failure in `test_exceptions`, also reproduced in the earlier
+  release build. After correcting `PyType_Ready()`, 555 tests pass across
+  exceptions, ownership, types, descriptors, C API types and embedding
+  (ten skips). The new ownership regression verifies the type belongs to Main
+  and remains inaccessible to a foreign group.
 - Shared code metadata: 981 tests pass across ten files covering code objects,
   ownership, ThreadGroups, GC, C APIs, sys, monitoring, embedding, disassembly
   and frames (30 skips). Code, ownership and ThreadGroups also pass `-R 3:3`
