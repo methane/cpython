@@ -790,8 +790,8 @@ The six-file import selection passes in all three Linux/aarch64 debug builds:
 The broad import/sys/I/O/OS/marshal/exceptions/embed/ThreadGroup selection
 previously ran 3,453 tests per build. It exposed the repeated-setup failure
 repaired above and, in the default build, a MemoryError shutdown GC assertion.
-That GC failure also reproduces in an exact `6deee568de` baseline: it remains
-an independent defect, not a reason to wait for Mark. GIL/Tier 2 additionally
+That GC failure also reproduces in an exact `6deee568de` baseline and is
+repaired in the following follow-up. GIL/Tier 2 additionally
 retain the six previously recorded subinterpreter import failures. Erroneous
 top-level `test_fileio`/`test_posix` selections were command errors; their real
 `test_io.test_fileio`/`test_os.test_posix` suites passed. Logs and the baseline
@@ -799,6 +799,40 @@ comparison are in `/tmp/pep805-source-import/`.
 
 The sample application still calculates 61,620 and rejects foreign LOCAL and
 unprotected PROTECTED access. These results do not establish full conformance.
+
+### GC allocation-failure cleanup
+
+The default build's shutdown assertion came from an earlier failed collection.
+Merging delayed decrefs can leave tracked objects with zero references for the
+collector to reclaim. If marking then ran out of memory, the collector returned
+without reclaiming those objects or releasing its worklist references. A later
+collection rejected the invalid zero-refcount objects. Frozen objects instead
+leaked through an abandoned decref worklist.
+
+The failure path now retains zero-refcount objects in the existing intrusive
+worklist while the world is stopped, restarts other threads, and releases all
+worklists before reporting MemoryError. Finding and retaining these objects
+requires no allocation, and deallocators run after the heap traversal and world
+stop have ended. This adds no object-header fields or new finalizer policy.
+
+The regression injects allocation failure with delayed decrefs pending during
+both marking phases and with a frozen object excluded from cyclic collection.
+In the `6deee568de` baseline, the first two cases abort at the next collection
+and the frozen case retains the object. All three pass after the repair, as
+does the original `test_exceptions.test_exec_set_nomemory_hang` reproducer.
+This fixes an implementation error without resolving or depending on any of
+the questions for Mark below.
+
+Validation in the default debug build passes nine suites across two runs:
+`test_gc`, `test_exceptions`, `test_finalizer_access`, `test_threadgroup`,
+`test_import_file_access`, `test_embed`, `test_weakref`,
+`test_free_threading.test_gc` and `test_gc_stats` (494 reported tests,
+23 skips in total). The first command also named the nonexistent
+`test_weakref_access`; the real `test_weakref` suite passes in the second run.
+GIL and Tier 2 both pass `test_gc` and `test_exceptions` (178 tests, five skips),
+including skipping the new regression for their different collector.
+The rebuilt sources match across configurations and compilation emits no
+warnings. Logs are under `/tmp/pep805-source-import/gc-*`.
 
 ## Earlier re-review and implementation follow-ups
 

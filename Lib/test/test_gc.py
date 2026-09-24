@@ -83,6 +83,57 @@ class Uncollectable(object):
 ###############################################################################
 
 class GCTests(unittest.TestCase):
+    @unittest.skipUnless(Py_GIL_DISABLED, 'requires free-threaded GC')
+    @unittest.skipIf(_testinternalcapi is None, 'requires _testinternalcapi')
+    @support.nomemtest
+    @requires_subprocess()
+    def test_memory_error_with_pending_decref(self):
+        # A failed collection must reclaim objects whose final reference
+        # came from a delayed-decref queue, including objects excluded from
+        # cyclic collection by gc.freeze().
+        for phase in ('mark', 'deduce', 'frozen'):
+            with self.subTest(phase=phase):
+                code = textwrap.dedent('''
+                    import gc
+                    import sys
+                    import weakref
+                    import _testcapi
+                    import _testinternalcapi
+
+                    gc.disable()
+                    gc.collect()
+                    class Tracked:
+                        pass
+
+                    phase = sys.argv[1]
+                    if phase == 'deduce':
+                        gc.freeze()
+                    obj = Tracked()
+                    if phase == 'frozen':
+                        gc.freeze()
+
+                    # Require more marking storage than the GC freelist
+                    # provides, so the injected failure is reached.
+                    roots = [Tracked() for _ in range(2000)]
+                    ref = weakref.ref(obj)
+                    _testinternalcapi.incref_decref_delayed(obj)
+                    del obj
+                    assert ref() is not None
+                    try:
+                        _testcapi.set_nomemory(0, 1)
+                        gc.collect()
+                    finally:
+                        _testcapi.remove_mem_hooks()
+
+                    assert ref() is None
+                    gc.collect()
+                    gc.unfreeze()
+                    gc.collect()
+                ''')
+                _, _, err = assert_python_ok('-c', code, phase)
+                self.assertIn(b'Exception ignored in garbage collection', err)
+                self.assertIn(b'MemoryError', err)
+
     def test_list(self):
         l = []
         l.append(l)

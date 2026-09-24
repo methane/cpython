@@ -1997,6 +1997,37 @@ cleanup_worklist(struct worklist *worklist)
 }
 
 static bool
+queue_zero_refcount(const mi_heap_t *heap, const mi_heap_area_t *area,
+                   void *block, size_t block_size, void *args)
+{
+    PyObject *op = op_from_block(block, args, false);
+    if (op != NULL && Py_REFCNT(op) == 0) {
+        struct collection_state *state = args;
+        // Merging queued references can leave tracked objects with no
+        // references. If collection fails, retain them until the world
+        // restarts so their deallocators can run outside the heap traversal.
+        merge_refcount(op, 1);
+        worklist_push(&state->objs_to_decref, op);
+    }
+    return true;
+}
+
+static void
+gc_abort_collection(PyInterpreterState *interp, struct collection_state *state)
+{
+    // The failing phase has restored the heap's reference-count metadata.
+    // Do not leave zero-refcount tracked objects for a later collection, or
+    // leak the references already retained by any of the worklists.
+    gc_visit_heaps(interp, &queue_zero_refcount, &state->base);
+    _PyEval_StartTheWorld(interp);
+    cleanup_worklist(&state->unreachable);
+    cleanup_worklist(&state->legacy_finalizers);
+    cleanup_worklist(&state->wrcb_to_call);
+    cleanup_worklist(&state->objs_to_decref);
+    PyErr_NoMemory();
+}
+
+static bool
 gc_should_collect(GCState *gcstate)
 {
     int count = _Py_atomic_load_int_relaxed(&gcstate->young.count);
@@ -2112,8 +2143,7 @@ gc_collect_internal(PyInterpreterState *interp, struct collection_state *state, 
         // be ignored for rest of the GC pass.
         int err = gc_mark_alive_from_roots(interp, state);
         if (err < 0) {
-            _PyEval_StartTheWorld(interp);
-            PyErr_NoMemory();
+            gc_abort_collection(interp, state);
             return;
         }
     }
@@ -2122,8 +2152,7 @@ gc_collect_internal(PyInterpreterState *interp, struct collection_state *state, 
     // Find unreachable objects
     int err = deduce_unreachable_heap(interp, state);
     if (err < 0) {
-        _PyEval_StartTheWorld(interp);
-        PyErr_NoMemory();
+        gc_abort_collection(interp, state);
         return;
     }
 
