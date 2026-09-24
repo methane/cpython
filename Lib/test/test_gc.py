@@ -640,6 +640,113 @@ class GCTests(unittest.TestCase):
         self.assertTrue(gc.is_tracked(UserFloatSlots()))
         self.assertTrue(gc.is_tracked(UserIntSlots()))
 
+    @requires_subprocess()
+    @unittest.skipIf(_testcapi is None, "requires _testcapi")
+    def test_debug_output_reclaims_candidates(self):
+        for legacy in (False, True):
+            with self.subTest(legacy=legacy):
+                assert_python_ok('-c', textwrap.dedent(f'''
+                    import gc
+                    import sys
+                    import weakref
+                    from _testcapi import with_tp_del
+
+                    gc.collect()
+                    gc.disable()
+
+                    class Target:
+                        def __tp_del__(self):
+                            pass
+
+                    if {legacy!r}:
+                        Target = with_tp_del(Target)
+
+                    def create():
+                        obj = Target()
+                        obj.cycle = obj
+                        return weakref.ref(obj)
+
+                    refs = [create() for _ in range(3)]
+                    observed = []
+
+                    class Output:
+                        def write(self, text):
+                            # Callbackless weakrefs still work during debug
+                            # output. Clear every cycle, including objects
+                            # that have not yet been printed.
+                            for ref in refs:
+                                value = ref()
+                                if value is not None:
+                                    observed.append(True)
+                                    value.cycle = None
+
+                        def flush(self):
+                            pass
+
+                    stderr = sys.stderr
+                    sys.stderr = Output()
+                    gc.set_debug(gc.DEBUG_UNCOLLECTABLE if {legacy!r}
+                                 else gc.DEBUG_COLLECTABLE)
+                    try:
+                        gc.collect()
+                    finally:
+                        gc.set_debug(0)
+                        sys.stderr = stderr
+                    assert observed
+                    assert all(ref() is None for ref in refs)
+                '''))
+
+    @support.nomemtest
+    @unittest.skipIf(_testcapi is None, "requires _testcapi")
+    def test_debug_snapshot_memory_error(self):
+        for fail_at in (0, 1):
+            with self.subTest(fail_at=fail_at):
+                assert_python_ok('-c', textwrap.dedent(f'''
+                    import gc
+                    import sys
+                    import weakref
+                    import _testcapi
+
+                    gc.collect()
+                    gc.disable()
+
+                    class Target:
+                        pass
+
+                    objects = [Target() for _ in range(512)]
+                    refs = [weakref.ref(obj) for obj in objects]
+                    for obj in objects:
+                        obj.cycle = obj
+                    del obj, objects
+
+                    def callback(phase, info):
+                        if phase == 'start':
+                            _testcapi.set_nomemory({fail_at}, {fail_at + 1})
+
+                    output = []
+                    class Output:
+                        def write(self, text):
+                            output.append(text)
+
+                        def flush(self):
+                            pass
+
+                    stderr = sys.stderr
+                    sys.stderr = Output()
+                    gc.callbacks.append(callback)
+                    gc.set_debug(gc.DEBUG_COLLECTABLE)
+                    try:
+                        gc.collect()
+                    finally:
+                        _testcapi.remove_mem_hooks()
+                        gc.set_debug(0)
+                        gc.callbacks.remove(callback)
+                        sys.stderr = stderr
+                    assert any('could not allocate complete debugging snapshot'
+                               in text for text in output), output[:3]
+                    assert all(ref() is None for ref in refs)
+                '''))
+
     def test_is_finalized(self):
         # Objects not tracked by the always gc return false
         self.assertFalse(gc.is_finalized(3))

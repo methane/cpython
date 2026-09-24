@@ -14,6 +14,7 @@
 #include "pycore_object.h"
 #include "pycore_object_deferred.h"
 #include "pycore_object_alloc.h"  // _PyObject_MallocWithType()
+#include "pycore_object_stack.h"  // _PyObjectStack
 #include "pycore_pyerrors.h"
 #include "pycore_pystate.h"       // _PyThreadState_GET()
 #include "pycore_tuple.h"         // _PyTuple_MaybeUntrack()
@@ -1100,11 +1101,36 @@ clear_weakrefs(PyGC_Head *unreachable)
     }
 }
 
-static void
-debug_cycle(const char *msg, PyObject *op)
+static int
+snapshot_debug_objects(PyGC_Head *list, _PyObjectStack *objects)
 {
-    PySys_FormatStderr("gc: %s <%s %p>\n",
-                       msg, Py_TYPE(op)->tp_name, op);
+    assert(_PyInterpreterState_GET()->stoptheworld.world_stopped);
+    for (PyGC_Head *gc = GC_NEXT(list); gc != list; gc = GC_NEXT(gc)) {
+        PyObject *op = FROM_GC(gc);
+        if (_PyObjectStack_Push(objects, op) < 0) {
+            return -1;
+        }
+        Py_INCREF(op);
+    }
+    return 0;
+}
+
+static void
+debug_objects(const char *msg, _PyObjectStack *objects, int snapshot_error)
+{
+    assert(!_PyInterpreterState_GET()->stoptheworld.world_stopped);
+    if (snapshot_error) {
+        PySys_WriteStderr("gc: could not allocate complete debugging snapshot\n");
+    }
+    // Output may run Python and reclaim objects, including other entries in
+    // the original GC list. Own each object until its output is complete and
+    // release all snapshot references before computing resurrection.
+    PyObject *op;
+    while ((op = _PyObjectStack_Pop(objects)) != NULL) {
+        PySys_FormatStderr("gc: %s <%s %p>\n",
+                          msg, Py_TYPE(op)->tp_name, op);
+        Py_DECREF(op);
+    }
 }
 
 /* Handle uncollectable garbage (cycles with tp_del slots, and stuff reachable
@@ -1617,7 +1643,6 @@ gc_collect_main(PyThreadState *tstate, int generation, _PyGC_Reason reason)
     PyGC_Head unreachable; /* non-problematic unreachable trash */
     PyGC_Head finalizers;  /* objects with, & reachable from, __del__ */
     PyGC_Head wrcb_to_call; /* cleared weakrefs whose callbacks must run */
-    PyGC_Head *gc;
     GCState *gcstate = &tstate->interp->gc;
 
     // gc_collect_main() must not be called before _PyGC_Init
@@ -1745,14 +1770,16 @@ gc_collect_main(PyThreadState *tstate, int generation, _PyGC_Reason reason)
     // Clearing callback-bearing weakrefs belongs to the paused snapshot.
     // User code, including debug output, must not run during that pass.
     find_weakref_callbacks(&unreachable, &wrcb_to_call);
+    _PyObjectStack debug_snapshot = {0};
+    int debug_snapshot_error = 0;
+    if (gcstate->debug & _PyGC_DEBUG_COLLECTABLE) {
+        debug_snapshot_error = snapshot_debug_objects(
+            &unreachable, &debug_snapshot);
+    }
     _PyEval_StartTheWorld(tstate->interp);
 
     /* Print debugging information. */
-    if (gcstate->debug & _PyGC_DEBUG_COLLECTABLE) {
-        for (gc = GC_NEXT(&unreachable); gc != &unreachable; gc = GC_NEXT(gc)) {
-            debug_cycle("collectable", FROM_GC(gc));
-        }
-    }
+    debug_objects("collectable", &debug_snapshot, debug_snapshot_error);
 
     /* Invoke callbacks for the weakrefs cleared during the pause. */
     stats.collected += call_weakref_callbacks(&wrcb_to_call, old);
@@ -1776,24 +1803,26 @@ gc_collect_main(PyThreadState *tstate, int generation, _PyGC_Reason reason)
      * could reveal unreachable objects.  Callbacks are not executed.
      */
     clear_weakrefs(&final_unreachable);
+    stats.collected += gc_list_size(&final_unreachable);
     _PyEval_StartTheWorld(tstate->interp);
 
     /* Call tp_clear on objects in the final_unreachable set.  This will cause
     * the reference cycles to be broken.  It may also cause some objects
     * in finalizers to be freed.
     */
-    stats.collected += gc_list_size(&final_unreachable);
     delete_garbage(tstate, gcstate, &final_unreachable, old);
 
     /* Collect statistics on uncollectable objects found and print
      * debugging information. */
-    Py_ssize_t n = 0;
-    for (gc = GC_NEXT(&finalizers); gc != &finalizers; gc = GC_NEXT(gc)) {
-        n++;
-        if (gcstate->debug & _PyGC_DEBUG_UNCOLLECTABLE)
-            debug_cycle("uncollectable", FROM_GC(gc));
+    _PyEval_StopTheWorld(tstate->interp);
+    stats.uncollectable = gc_list_size(&finalizers);
+    debug_snapshot_error = 0;
+    if (gcstate->debug & _PyGC_DEBUG_UNCOLLECTABLE) {
+        debug_snapshot_error = snapshot_debug_objects(
+            &finalizers, &debug_snapshot);
     }
-    stats.uncollectable = n;
+    _PyEval_StartTheWorld(tstate->interp);
+    debug_objects("uncollectable", &debug_snapshot, debug_snapshot_error);
     (void)PyTime_PerfCounterRaw(&stats.ts_stop);
     stats.duration = PyTime_AsSecondsDouble(stats.ts_stop - stats.ts_start);
     if (gcstate->debug & _PyGC_DEBUG_STATS) {

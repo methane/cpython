@@ -75,6 +75,10 @@ Heap introspection (`gc.get_objects()`, `gc.get_referrers()`,
 `gc.get_referents()` and the native GC visitor) also pauses threads during its
 walk. Existing GC freeze/unfreeze operations pause while moving generation
 lists. Failed result allocation resumes threads before releasing partial results.
+GC debug output holds a separate snapshot of strong references taken during a
+pause. A reentrant `sys.stderr.write()` can reclaim cycle members without
+invalidating the output walk. Snapshot references are released before checking
+resurrection; no debug queue fields are added to object headers.
 Shutdown merges/disables per-thread counts under a pause before releasing deferred
 references. Generation lists and allocation still depend on the interpreter GIL.
 The free-threading collector reuses `ob_tid` as scratch space; its replacement
@@ -159,6 +163,17 @@ Parallel scheduling tests remain skipped while the interpreter GIL is enabled.
   and early visitor returns. Memory-error injection covers result construction
   and growth. GC and ThreadGroups pass `-R 3:3` with `mimalloc_debug` (84 tests,
   three skips).
+- Reentrant GC debug output: both ordinary cycles and legacy-finalizer cycles
+  reproduce a segmentation fault before the fix and pass afterwards. The GC,
+  ThreadGroup, weakref, reclamation, C API and embedding selection passes 644
+  tests (16 skips), and GC/ThreadGroups pass `-R 3:3` with `mimalloc_debug`
+  (85 tests, three skips). A further failure-injection test verifies reclamation
+  when the debug snapshot allocation fails initially or after a partial snapshot.
+  Finalization, tuple C APIs, type caching and subclass initialization pass
+  another 74 tests.
+- The non-debug normal build at `0bab8b44df` passes 643 tests across GC,
+  ThreadGroups, C APIs, reclamation, weakrefs and embedding (23 skips). This
+  validates the bitmap and introspection changes before the debug-output fix.
 
 - Group bias: 844 tests passed across ThreadGroups, local reclamation, object
   and miscellaneous C APIs, GC, threading, embedding and sys. Native probes cover
