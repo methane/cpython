@@ -177,8 +177,16 @@ PyObject *
 _PyImport_InitModules(PyInterpreterState *interp)
 {
     assert(MODULES(interp) == NULL);
+    assert(MODULES_BY_INDEX(interp) == NULL);
+    // Initialize the native registry before any group can import an
+    // extension. Its stored modules retain their own access states.
+    MODULES_BY_INDEX(interp) = PySynchronizedList_New(0);
+    if (MODULES_BY_INDEX(interp) == NULL) {
+        return NULL;
+    }
     MODULES(interp) = PySynchronizedDict_New();
     if (MODULES(interp) == NULL) {
+        Py_CLEAR(MODULES_BY_INDEX(interp));
         return NULL;
     }
     return MODULES(interp);
@@ -669,11 +677,17 @@ _modules_by_index_check(PyInterpreterState *interp, Py_ssize_t index)
 static PyObject *
 _modules_by_index_get(PyInterpreterState *interp, Py_ssize_t index)
 {
-    if (_modules_by_index_check(interp, index) != NULL) {
+    PyObject *modules = MODULES_BY_INDEX(interp);
+    if (index <= 0 || modules == NULL) {
         return NULL;
     }
-    PyObject *res = PyList_GET_ITEM(MODULES_BY_INDEX(interp), index);
-    return res==Py_None ? NULL : res;
+    PyObject *res = NULL;
+    Py_BEGIN_CRITICAL_SECTION(modules);
+    if (index < PyList_GET_SIZE(modules)) {
+        res = PyList_GetItem(modules, index);
+    }
+    Py_END_CRITICAL_SECTION();
+    return res == Py_None ? NULL : res;
 }
 
 static int
@@ -682,12 +696,7 @@ _modules_by_index_set(PyInterpreterState *interp,
 {
     assert(index > 0);
 
-    if (MODULES_BY_INDEX(interp) == NULL) {
-        MODULES_BY_INDEX(interp) = PyList_New(0);
-        if (MODULES_BY_INDEX(interp) == NULL) {
-            return -1;
-        }
-    }
+    assert(MODULES_BY_INDEX(interp) != NULL);
 
     while (PyList_GET_SIZE(MODULES_BY_INDEX(interp)) <= index) {
         if (PyList_Append(MODULES_BY_INDEX(interp), Py_None) < 0) {
@@ -761,10 +770,15 @@ PyState_AddModule(PyObject* module, PyModuleDef* def)
 
     PyInterpreterState *interp = tstate->interp;
     Py_ssize_t index = _get_module_index_from_def(def);
-    if (MODULES_BY_INDEX(interp) &&
-        index < PyList_GET_SIZE(MODULES_BY_INDEX(interp)) &&
-        module == PyList_GET_ITEM(MODULES_BY_INDEX(interp), index))
-    {
+    PyObject *modules = MODULES_BY_INDEX(interp);
+    int already_added = 0;
+    if (modules != NULL) {
+        Py_BEGIN_CRITICAL_SECTION(modules);
+        already_added = index < PyList_GET_SIZE(modules) &&
+            module == PyList_GET_ITEM(modules, index);
+        Py_END_CRITICAL_SECTION();
+    }
+    if (already_added) {
         _Py_FatalErrorFormat(__func__, "module %p already added", module);
         return -1;
     }
@@ -801,7 +815,9 @@ _PyImport_ClearModulesByIndex(PyInterpreterState *interp)
         PyObject *m = PyList_GET_ITEM(MODULES_BY_INDEX(interp), i);
         if (PyModule_Check(m)) {
             /* cleanup the saved copy of module dicts */
-            PyModuleDef *md = PyModule_GetDef(m);
+            // Shutdown reads registry metadata without publishing a module
+            // owned by another group through a public access-checked API.
+            PyModuleDef *md = _PyModule_GetDefOrNull(m);
             if (md) {
                 // XXX Do this more carefully.  The dict might be owned
                 // by another interpreter.
@@ -5894,14 +5910,18 @@ imp_module_exec(PyObject *module)
 
     /* The module has no native per-module state. These entry points use the
        import mutex, read the fixed builtin/frozen tables, or operate on
-       accessible arguments and the synchronized lazy-import registry. Other
-       native entry points keep their individual access policies. */
+       accessible arguments and synchronized registries. Dynamic loading uses
+       thread-local package context; its returned modules are not implicitly
+       shared. Other native entry points keep their individual access policies. */
     static const char *shared_functions[] = {
         "lock_held", "acquire_lock", "release_lock", "is_builtin",
         "create_builtin", "exec_builtin", "_set_lazy_attributes",
         "find_frozen", "get_frozen_object", "is_frozen", "is_frozen_package",
         "extension_suffixes", "source_hash",
         "_fix_co_filename",
+#ifdef HAVE_DYNAMIC_LOADING
+        "create_dynamic", "exec_dynamic",
+#endif
     };
     for (size_t i = 0; i < Py_ARRAY_LENGTH(shared_functions); i++) {
         PyObject *function = PyObject_GetAttrString(module, shared_functions[i]);

@@ -337,8 +337,8 @@ struct _import_state {
        a placeholder.)  Note that multi-phase init modules always get
        an index for which there will never be a module set.
 
-       This is initialized lazily in PyState_AddModule(), which is also
-       where modules get added. */
+       This synchronized list is initialized with sys.modules, before
+       extension imports can run in different ThreadGroups. */
     PyObject *modules_by_index;
     /* importlib module._bootstrap */
     PyObject *importlib;

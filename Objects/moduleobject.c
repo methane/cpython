@@ -134,11 +134,15 @@ PyModuleDef_Init(PyModuleDef* def)
     }
 #endif
     assert(PyModuleDef_Type.tp_flags & Py_TPFLAGS_READY);
+    // Different groups can load the same native definition through distinct
+    // module specs. Publish its type and index as a single initialization.
+    Py_BEGIN_CRITICAL_SECTION(def);
     if (def->m_base.m_index == 0) {
         Py_SET_REFCNT(def, 1);
         Py_SET_TYPE(def, &PyModuleDef_Type);
         def->m_base.m_index = _PyImport_GetNextModuleIndex();
     }
+    Py_END_CRITICAL_SECTION();
     return (PyObject*)def;
 }
 

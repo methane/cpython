@@ -854,9 +854,51 @@ The five suites `test_attribute_vm_access`, `test_super`, `test_type_access`,
 descriptor rejection tests still pass. Logs are in `/tmp/pep805-dynamic-import/`.
 
 This repair lets a diagnostic probe proceed through multi-phase extension
-initialization. Sharing the dynamic-loader helpers still requires the rest of
-their audit: single-phase initialization currently trips the public list
-input assertion on the interpreter's private modules-by-index registry.
+initialization. The subsequent single-phase probe trips the public list
+input assertion on the interpreter's private modules-by-index registry;
+the following follow-up repairs that path.
+
+### Native extension imports and module registration
+
+The two dynamic-loader entry points are now explicitly synchronized. Their
+package context is thread-local, and imported modules retain their individual
+states. The modules-by-index registry is initialized as a SynchronizedList
+alongside sys.modules, before extension imports can start in other groups.
+This removes the foreign-LOCAL-list assertion during single-phase initialization
+and avoids racing lazy initialization of the registry pointer. Raw array
+lookups and duplicate-registration checks now hold the list's critical section.
+Shutdown reads module-definition metadata privately without exposing foreign
+modules through the public module API.
+
+PyState_FindModule now checks the acquired module. A native test helper consumes
+its borrowed result in C and returns only a boolean, ensuring that the VM's
+outer return check cannot mask a missing C API check. The regression rejects
+Main's registration from a worker and the worker's replacement from Main,
+while permitting each owning group to find its module. The baseline runtime
+at `6deee568de`, rebuilt with only the test helper, wrongly returns true for the
+foreign registration. Its borrowed-reference lifetime contract remains the
+existing API contract; the broader question 2 is not resolved by this fix.
+
+PyModuleDef_Init also locks the definition while assigning its type and native
+index. Different specs can refer to the same definition, so a name-specific
+Python import lock alone cannot serialize that initialization. A four-group
+regression creates 100 module instances from one native definition. Separate
+tests execute multi-phase and single-phase imports, repeat a single-phase
+cache load within its owner group, import three independent extensions in
+parallel, and verify that foreign groups cannot acquire the resulting modules.
+The two worker-import tests fail before the loader repair and pass afterward.
+This does not declare arbitrary extension globals or exported objects safe
+for sharing, nor settle the legacy-interpreter ownership question.
+
+The ten-suite import/C API/embedding/ThreadGroup selection passes in the default
+debug build: 1,557 reported tests, 40 skips. GIL and Tier 2 pass nine suites and
+retain six failures in `test_import` (1,557 tests, 30 skips); verbose reruns
+match all six saved failure identities. The five new extension-access tests
+pass in each build. Changed native sources and tests match across configurations.
+The full Tier 2 rebuild reports three unused-variable warnings in unchanged
+generated executor cases; the subsequent module-definition changes compile
+without warnings in all three builds. The demo still produces 61,620 and the
+expected access denials. Logs are in `/tmp/pep805-dynamic-import/`.
 
 ## Earlier re-review and implementation follow-ups
 

@@ -1133,6 +1133,11 @@ since multiple such modules can be created from a single definition.
    :c:func:`PyState_AddModule` beforehand. In case the corresponding module object is not
    found or has not been attached to the interpreter state yet, it returns ``NULL``.
 
+   In this PEP 805 experiment, the returned module must be accessible to the
+   current :class:`threading.ThreadGroup`. Otherwise this function returns
+   ``NULL`` with an access exception set. Registering a module does not make
+   that module shared.
+
 .. c:function:: int PyState_AddModule(PyObject *module, PyModuleDef *def)
 
    Attaches the module object passed to the function to the interpreter state. This allows

@@ -513,7 +513,51 @@ module_from_def_nonstatic_nested(PyObject* Py_UNUSED(module), PyObject *spec)
     return PyModule_FromDefAndSpec(&def, spec);
 }
 
+static PyModuleDef state_lookup_def = {
+    PyModuleDef_HEAD_INIT,
+    .m_name = "_test_state_lookup",
+    .m_size = 0,
+};
+
+static PyObject *
+module_state_register(PyObject *self, PyObject *Py_UNUSED(ignored))
+{
+    PyObject *module = PyModule_Create(&state_lookup_def);
+    if (module == NULL) {
+        return NULL;
+    }
+    if (PyState_AddModule(module, &state_lookup_def) < 0) {
+        Py_DECREF(module);
+        return NULL;
+    }
+    return module;
+}
+
+static PyObject *
+module_state_find(PyObject *self, PyObject *Py_UNUSED(ignored))
+{
+    PyObject *module = PyState_FindModule(&state_lookup_def);
+    if (module == NULL && PyErr_Occurred()) {
+        return NULL;
+    }
+    // Consume the borrowed result inside C so a VM return-value check
+    // cannot hide a missing access check in PyState_FindModule().
+    return PyBool_FromLong(module != NULL);
+}
+
+static PyObject *
+module_state_remove(PyObject *self, PyObject *Py_UNUSED(ignored))
+{
+    if (PyState_RemoveModule(&state_lookup_def) < 0) {
+        return NULL;
+    }
+    Py_RETURN_NONE;
+}
+
 static PyMethodDef test_methods[] = {
+    {"module_state_register", module_state_register, METH_NOARGS},
+    {"module_state_find", module_state_find, METH_NOARGS},
+    {"module_state_remove", module_state_remove, METH_NOARGS},
     {"module_from_slots_empty", module_from_slots_empty, METH_O},
     {"module_from_slots_minimal", module_from_slots_minimal, METH_O},
     {"module_from_slots_null", module_from_slots_null, METH_O},
