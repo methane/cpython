@@ -20,6 +20,109 @@
 #endif
 
 
+// Internal explicit-mutex sections protect shared runtime state in both
+// builds, independently of the public object-based critical section API.
+static PyObject *
+test_internal_critical_sections(PyObject *self, PyObject *Py_UNUSED(args))
+{
+    PyThreadState *tstate = PyThreadState_Get();
+    assert(tstate->critical_section == 0);
+    PyMutex locks[2] = {{0}, {0}};
+    PyCriticalSection outer, inner, recursive;
+    _PyCriticalSection_BeginMutex(tstate, &outer, &locks[0]);
+    _PyCriticalSection_BeginMutex(tstate, &recursive, &locks[0]);
+    assert(tstate->critical_section == (uintptr_t)&outer);
+    _PyCriticalSection_End(tstate, &recursive);
+    assert(PyMutex_IsLocked(&locks[0]));
+
+    _PyCriticalSection_BeginMutex(tstate, &inner, &locks[1]);
+    // Reacquiring an outer lock must suspend both active sections, even with
+    // the interpreter GIL enabled. Otherwise this thread deadlocks on itself.
+    _PyCriticalSection_BeginMutex(tstate, &recursive, &locks[0]);
+    assert(PyMutex_IsLocked(&locks[0]));
+    assert(!PyMutex_IsLocked(&locks[1]));
+    _PyCriticalSection_End(tstate, &recursive);
+    assert(!PyMutex_IsLocked(&locks[0]));
+    assert(PyMutex_IsLocked(&locks[1]));
+    Py_BEGIN_ALLOW_THREADS
+    assert(!PyMutex_IsLocked(&locks[0]));
+    assert(!PyMutex_IsLocked(&locks[1]));
+    Py_END_ALLOW_THREADS
+    // Only the innermost section resumes on attachment.
+    assert(!PyMutex_IsLocked(&locks[0]));
+    assert(PyMutex_IsLocked(&locks[1]));
+    _PyCriticalSection_End(tstate, &inner);
+    assert(PyMutex_IsLocked(&locks[0]));
+    assert(!PyMutex_IsLocked(&locks[1]));
+    _PyCriticalSection_End(tstate, &outer);
+    assert(!PyMutex_IsLocked(&locks[0]));
+
+    for (int same = 0; same <= 1; same++) {
+        PyMutex *second = &locks[same ? 0 : 1];
+        PyCriticalSection2 pair, again;
+        _PyCriticalSection2_BeginMutex(tstate, &pair, &locks[0], second);
+        uintptr_t tag = tstate->critical_section;
+        // Reversed order and duplicate mutexes must also be reentrant.
+        _PyCriticalSection2_BeginMutex(tstate, &again, second, &locks[0]);
+        assert(tstate->critical_section == tag);
+        _PyCriticalSection2_End(tstate, &again);
+        _PyCriticalSection_BeginMutex(tstate, &recursive, second);
+        assert(tstate->critical_section == tag);
+        _PyCriticalSection_End(tstate, &recursive);
+        Py_BEGIN_ALLOW_THREADS
+        assert(!PyMutex_IsLocked(&locks[0]));
+        assert(!PyMutex_IsLocked(second));
+        Py_END_ALLOW_THREADS
+        assert(PyMutex_IsLocked(&locks[0]));
+        assert(PyMutex_IsLocked(second));
+        _PyCriticalSection2_End(tstate, &pair);
+        assert(!PyMutex_IsLocked(&locks[0]));
+        assert(!PyMutex_IsLocked(second));
+    }
+    for (int locked = 0; locked <= 1; locked++) {
+        // Cover a slow pair acquisition with and without the first mutex
+        // already acquired by its fast path.
+        _PyCriticalSection_BeginMutex(tstate, &outer, &locks[locked]);
+        PyCriticalSection2 pair;
+        _PyCriticalSection2_BeginMutex(tstate, &pair, &locks[0], &locks[1]);
+        assert(PyMutex_IsLocked(&locks[0]));
+        assert(PyMutex_IsLocked(&locks[1]));
+        _PyCriticalSection2_End(tstate, &pair);
+        assert(PyMutex_IsLocked(&locks[locked]));
+        assert(!PyMutex_IsLocked(&locks[1 - locked]));
+        _PyCriticalSection_End(tstate, &outer);
+        assert(!PyMutex_IsLocked(&locks[locked]));
+    }
+    assert(tstate->critical_section == 0);
+    Py_RETURN_NONE;
+}
+
+static PyObject *
+test_internal_critical_sections_stw(PyObject *self, PyObject *Py_UNUSED(args))
+{
+    PyThreadState *tstate = PyThreadState_Get();
+    PyMutex locks[2] = {{0}, {0}};
+    assert(tstate->critical_section == 0);
+    for (int locked = 0; locked <= 1; locked++) {
+        // Model a mutex handed off to a suspended waiter. The collector must
+        // skip it without waiting, retaining a lock, or unlocking the waiter.
+        PyMutex_Lock(&locks[locked]);
+        _PyEval_StopTheWorld(tstate->interp);
+        PyCriticalSection section;
+        _PyCriticalSection_BeginMutex(tstate, &section, &locks[locked]);
+        _PyCriticalSection_End(tstate, &section);
+        PyCriticalSection2 pair;
+        _PyCriticalSection2_BeginMutex(tstate, &pair, &locks[0], &locks[1]);
+        _PyCriticalSection2_End(tstate, &pair);
+        assert(tstate->critical_section == 0);
+        assert(PyMutex_IsLocked(&locks[locked]));
+        assert(!PyMutex_IsLocked(&locks[1 - locked]));
+        _PyEval_StartTheWorld(tstate->interp);
+        PyMutex_Unlock(&locks[locked]);
+    }
+    Py_RETURN_NONE;
+}
+
 static PyObject *
 test_critical_sections(PyObject *self, PyObject *Py_UNUSED(args))
 {
@@ -465,6 +568,8 @@ test_critical_sections_stw(PyObject *self, PyObject *Py_UNUSED(args))
 #endif // Py_CAN_START_THREADS
 
 static PyMethodDef test_methods[] = {
+    {"test_internal_critical_sections", test_internal_critical_sections, METH_NOARGS},
+    {"test_internal_critical_sections_stw", test_internal_critical_sections_stw, METH_NOARGS},
     {"test_critical_sections", test_critical_sections, METH_NOARGS},
     {"test_critical_sections_nest", test_critical_sections_nest, METH_NOARGS},
     {"test_critical_sections_suspend", test_critical_sections_suspend, METH_NOARGS},

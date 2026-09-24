@@ -4,23 +4,18 @@
 #include "pycore_interp.h"
 #include "pycore_lock.h"
 
-#ifdef Py_GIL_DISABLED
 static_assert(_Alignof(PyCriticalSection) >= 4,
               "critical section must be aligned to at least 4 bytes");
-#endif
 
-#ifdef Py_GIL_DISABLED
 static PyCriticalSection *
 untag_critical_section(uintptr_t tag)
 {
     return (PyCriticalSection *)(tag & ~_Py_CRITICAL_SECTION_MASK);
 }
-#endif
 
 void
 _PyCriticalSection_BeginSlow(PyThreadState *tstate, PyCriticalSection *c, PyMutex *m)
 {
-#ifdef Py_GIL_DISABLED
     // As an optimisation for locking the same object recursively, skip
     // locking if the mutex is currently locked by the top-most critical
     // section.
@@ -58,15 +53,18 @@ _PyCriticalSection_BeginSlow(PyThreadState *tstate, PyCriticalSection *c, PyMute
 
     PyMutex_Lock(m);
     c->_cs_mutex = m;
-#endif
 }
 
 void
 _PyCriticalSection2_BeginSlow(PyThreadState *tstate, PyCriticalSection2 *c, PyMutex *m1, PyMutex *m2,
                               int is_m1_locked)
 {
-#ifdef Py_GIL_DISABLED
     if (tstate->interp->stoptheworld.world_stopped) {
+        // The fast path may have acquired the first mutex before finding the
+        // second unavailable. No section will own that mutex after this skip.
+        if (is_m1_locked) {
+            PyMutex_Unlock(m1);
+        }
         c->_cs_base._cs_mutex = NULL;
         c->_cs_mutex2 = NULL;
         c->_cs_base._cs_prev = 0;
@@ -99,7 +97,6 @@ _PyCriticalSection2_BeginSlow(PyThreadState *tstate, PyCriticalSection2 *c, PyMu
     PyMutex_Lock(m2);
     c->_cs_base._cs_mutex = m1;
     c->_cs_mutex2 = m2;
-#endif
 }
 
 
@@ -108,7 +105,6 @@ _PyCriticalSection2_BeginSlow(PyThreadState *tstate, PyCriticalSection2 *c, PyMu
 void
 _PyCriticalSection_SuspendAll(PyThreadState *tstate)
 {
-#ifdef Py_GIL_DISABLED
     uintptr_t *tagptr = &tstate->critical_section;
     while (_PyCriticalSection_IsActive(*tagptr)) {
         PyCriticalSection *c = untag_critical_section(*tagptr);
@@ -126,13 +122,11 @@ _PyCriticalSection_SuspendAll(PyThreadState *tstate)
         *tagptr |= _Py_CRITICAL_SECTION_INACTIVE;
         tagptr = &c->_cs_prev;
     }
-#endif
 }
 
 void
 _PyCriticalSection_Resume(PyThreadState *tstate)
 {
-#ifdef Py_GIL_DISABLED
     uintptr_t p = tstate->critical_section;
     PyCriticalSection *c = untag_critical_section(p);
     assert(!_PyCriticalSection_IsActive(p));
@@ -161,7 +155,6 @@ _PyCriticalSection_Resume(PyThreadState *tstate)
     }
 
     tstate->critical_section &= ~_Py_CRITICAL_SECTION_INACTIVE;
-#endif
 }
 
 #undef PyCriticalSection_Begin

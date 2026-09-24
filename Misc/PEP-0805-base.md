@@ -75,6 +75,14 @@ thread-local bytecode arrays, not proof of parallel execution. QSBR read epochs
 belong to thread states; object reference-count bias still belongs to ThreadGroups.
 The normal build does not defer LOCAL object decrefs through these queues.
 
+Internal explicit-mutex critical sections are available in the normal build.
+They suspend their locks on detach or a blocking nested acquisition, and resume
+the innermost section on attachment. This allows shared runtime structures such
+as code metadata to use dedicated locks without adding a mutex to every object.
+The public object-based critical sections retain their normal-build behavior;
+LOCAL objects rely on group serialization. A skipped two-mutex acquisition
+during a world stop releases any first mutex acquired by its fast path.
+
 The normal collector pauses threads while merging per-thread counts, scanning
 stack roots, determining reachability and clearing callback-bearing weakrefs.
 It restarts them for weakref callbacks, finalizers, debug output and destruction,
@@ -190,6 +198,12 @@ Tests run on Linux/aarch64. Logs are under `/tmp/pep805-base/`. The optional
 flags/events rather than foreign LOCAL Python functions or mutable results.
 Parallel scheduling tests remain skipped while the interpreter GIL is enabled.
 
+- Internal explicit-mutex critical sections: 743 tests pass across C API misc,
+  ThreadGroups, GC, threading and embedding (16 skips). Native tests exercise
+  recursive and nested blocking acquisition, suspension, innermost resumption,
+  two-mutex ordering and identical mutexes, and skipped acquisition while the
+  world is stopped. The latter covers an unavailable second mutex after the
+  first was acquired, which previously left the first mutex locked.
 - Normal-build QSBR: 804 tests pass across nine files covering ThreadGroups,
   GC, threading, fork, embedding, memory/thread-state APIs and reclamation
   (16 skips). ThreadGroups, ownership, GC and reclamation also pass `-R 3:3`
@@ -199,6 +213,10 @@ Parallel scheduling tests remain skipped while the interpreter GIL is enabled.
   The eval-breaker probe shares immutable code and creates its function and
   globals in the worker's group; compiling there would invoke Main's LOCAL
   Python audit hooks, outside the first-five-stage scope.
+- The non-debug normal build at `ebf2efe11b` passes 829 tests across ten files
+  covering QSBR, threading, GC, reclamation, ownership, embedding, memory APIs
+  and fork (32 skips). `Py_GIL_DISABLED=0`, `Py_DEBUG=0`, the interpreter GIL
+  is enabled and the object header remains 24 bytes.
 - Sequence element acquisition and comparison results: 1,716 tests pass across
   15 files covering tuples, lists, sorting, ownership, ThreadGroups, GC,
   weakrefs, comparison, descriptors, dictionaries, sets and C APIs (14 skips).

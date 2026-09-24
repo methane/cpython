@@ -95,8 +95,9 @@ _PyCriticalSection2_BeginSlow(PyThreadState *tstate, PyCriticalSection2 *c, PyMu
 PyAPI_FUNC(void)
 _PyCriticalSection_SuspendAll(PyThreadState *tstate);
 
-#ifdef Py_GIL_DISABLED
-
+// Explicit-mutex critical sections also protect shared internal state in the
+// normal build. Object-based sections below remain free-threaded-only: LOCAL
+// objects are serialized by their ThreadGroup and have no per-object mutex.
 static inline int
 _PyCriticalSection_IsActive(uintptr_t tag)
 {
@@ -116,11 +117,13 @@ _PyCriticalSection_BeginMutex(PyThreadState *tstate, PyCriticalSection *c, PyMut
     }
 }
 
+#ifdef Py_GIL_DISABLED
 static inline void
 _PyCriticalSection_Begin(PyThreadState *tstate, PyCriticalSection *c, PyObject *op)
 {
     _PyCriticalSection_BeginMutex(tstate, c, &op->ob_mutex);
 }
+#endif
 
 // Removes the top-most critical section from the thread's stack of critical
 // sections. If the new top-most critical section is inactive, then it is
@@ -187,11 +190,13 @@ _PyCriticalSection2_BeginMutex(PyThreadState *tstate, PyCriticalSection2 *c, PyM
     }
 }
 
+#ifdef Py_GIL_DISABLED
 static inline void
 _PyCriticalSection2_Begin(PyThreadState *tstate, PyCriticalSection2 *c, PyObject *a, PyObject *b)
 {
     _PyCriticalSection2_BeginMutex(tstate, c, &a->ob_mutex, &b->ob_mutex);
 }
+#endif
 
 static inline void
 _PyCriticalSection2_End(PyThreadState *tstate, PyCriticalSection2 *c)
@@ -228,6 +233,7 @@ _PyCriticalSection_AssertHeld(PyMutex *mutex)
 #endif
 }
 
+#ifdef Py_GIL_DISABLED
 static inline void
 _PyCriticalSection_AssertHeldObj(PyObject *op)
 {
