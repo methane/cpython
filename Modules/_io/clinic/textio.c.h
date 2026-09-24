@@ -363,7 +363,9 @@ _io_IncrementalNewlineDecoder___init__(PyObject *self, PyObject *args, PyObject 
     }
     errors = fastargs[2];
 skip_optional_pos:
+    Py_BEGIN_CRITICAL_SECTION(self);
     return_value = _io_IncrementalNewlineDecoder___init___impl((nldecoder_object *)self, decoder, translate, errors);
+    Py_END_CRITICAL_SECTION();
 
 exit:
     return return_value;
@@ -1362,4 +1364,4 @@ _io_TextIOWrapper_buffer_get(PyObject *self, void *Py_UNUSED(context))
 
     return return_value;
 }
-/*[clinic end generated code: output=e93032a0691ff0e4 input=a9049054013a1b77]*/
+/*[clinic end generated code: output=229fbc2d267e30bb input=a9049054013a1b77]*/

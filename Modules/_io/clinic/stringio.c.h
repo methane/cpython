@@ -353,7 +353,9 @@ _io_StringIO___init__(PyObject *self, PyObject *args, PyObject *kwargs)
     }
     newline_obj = fastargs[1];
 skip_optional_pos:
+    Py_BEGIN_CRITICAL_SECTION(self);
     return_value = _io_StringIO___init___impl((stringio *)self, value, newline_obj);
+    Py_END_CRITICAL_SECTION();
 
 exit:
     return return_value;
@@ -551,4 +553,4 @@ _io_StringIO_newlines_get(PyObject *self, void *Py_UNUSED(context))
 
     return return_value;
 }
-/*[clinic end generated code: output=730c34b2a6c0500b input=a9049054013a1b77]*/
+/*[clinic end generated code: output=510b56ba4b027310 input=a9049054013a1b77]*/

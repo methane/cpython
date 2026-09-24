@@ -229,6 +229,7 @@ struct nldecoder_object {
 #define nldecoder_object_CAST(op)   ((nldecoder_object *)(op))
 
 /*[clinic input]
+@critical_section
 _io.IncrementalNewlineDecoder.__init__
     decoder: object
     translate: bool
@@ -248,21 +249,21 @@ static int
 _io_IncrementalNewlineDecoder___init___impl(nldecoder_object *self,
                                             PyObject *decoder, int translate,
                                             PyObject *errors)
-/*[clinic end generated code: output=fbd04d443e764ec2 input=ed547aa257616b0e]*/
+/*[clinic end generated code: output=fbd04d443e764ec2 input=1af929c2da4f1f29]*/
 {
 
     if (errors == NULL) {
         errors = &_Py_ID(strict);
     }
-    else {
-        errors = Py_NewRef(errors);
-    }
-
-    Py_XSETREF(self->errors, errors);
-    Py_XSETREF(self->decoder, Py_NewRef(decoder));
+    PyObject *old_errors = self->errors;
+    PyObject *old_decoder = self->decoder;
+    self->errors = Py_NewRef(errors);
+    self->decoder = Py_NewRef(decoder);
     self->translate = translate ? 1 : 0;
     self->seennl = 0;
     self->pendingcr = 0;
+    Py_XDECREF(old_errors);
+    Py_XDECREF(old_decoder);
 
     return 0;
 }
@@ -324,24 +325,45 @@ check_decoded(PyObject *decoded)
 #define SEEN_CRLF 4
 #define SEEN_ALL (SEEN_CR | SEEN_LF | SEEN_CRLF)
 
-PyObject *
-_PyIncrementalNewlineDecoder_decode(PyObject *myself,
-                                    PyObject *input, int final)
+static PyObject *
+newline_decoder_ref(nldecoder_object *self)
+{
+    _Py_CRITICAL_SECTION_ASSERT_OBJECT_LOCKED(self);
+    return _PyObject_CheckAccessNullable(Py_NewRef(self->decoder));
+}
+
+/* The tuple itself is already accessible. Check its stored values before
+   the argument parser converts the flag or exposes the buffer. Leave size
+   errors to the parser to preserve its existing diagnostics. */
+static int
+newline_decoder_check_state(PyObject *state)
+{
+    return PyTuple_GET_SIZE(state) != 2 ||
+        (PyTuple_GetItem(state, 0) != NULL &&
+         PyTuple_GetItem(state, 1) != NULL);
+}
+
+static PyObject *
+incrementalnewlinedecoder_decode_lock_held(nldecoder_object *self,
+                                         PyObject *input, int final)
 {
     PyObject *output;
     Py_ssize_t output_len;
-    nldecoder_object *self = nldecoder_object_CAST(myself);
-
     CHECK_INITIALIZED_DECODER(self);
 
     /* decode input (with the eventual \r from a previous pass) */
-    if (self->decoder != Py_None) {
-        output = PyObject_CallMethodObjArgs(self->decoder,
+    PyObject *decoder = newline_decoder_ref(self);
+    if (decoder == NULL) {
+        return NULL;
+    }
+    if (decoder != Py_None) {
+        output = PyObject_CallMethodObjArgs(decoder,
             &_Py_ID(decode), input, final ? Py_True : Py_False, NULL);
     }
     else {
         output = Py_NewRef(input);
     }
+    Py_DECREF(decoder);
 
     if (check_decoded(output) < 0)
         return NULL;
@@ -518,6 +540,18 @@ _PyIncrementalNewlineDecoder_decode(PyObject *myself,
     return NULL;
 }
 
+PyObject *
+_PyIncrementalNewlineDecoder_decode(PyObject *myself,
+                                    PyObject *input, int final)
+{
+    PyObject *result;
+    Py_BEGIN_CRITICAL_SECTION(myself);
+    result = incrementalnewlinedecoder_decode_lock_held(
+        nldecoder_object_CAST(myself), input, final);
+    Py_END_CRITICAL_SECTION();
+    return result;
+}
+
 /*[clinic input]
 @critical_section
 _io.IncrementalNewlineDecoder.decode
@@ -547,9 +581,14 @@ _io_IncrementalNewlineDecoder_getstate_impl(nldecoder_object *self)
 
     CHECK_INITIALIZED_DECODER(self);
 
-    if (self->decoder != Py_None) {
-        PyObject *state = PyObject_CallMethodNoArgs(self->decoder,
+    PyObject *decoder = newline_decoder_ref(self);
+    if (decoder == NULL) {
+        return NULL;
+    }
+    if (decoder != Py_None) {
+        PyObject *state = PyObject_CallMethodNoArgs(decoder,
            &_Py_ID(getstate));
+        Py_DECREF(decoder);
         if (state == NULL)
             return NULL;
         if (!PyTuple_Check(state)) {
@@ -558,7 +597,8 @@ _io_IncrementalNewlineDecoder_getstate_impl(nldecoder_object *self)
             Py_DECREF(state);
             return NULL;
         }
-        if (!PyArg_ParseTuple(state, "OK;illegal decoder state",
+        if (!newline_decoder_check_state(state) ||
+            !PyArg_ParseTuple(state, "OK;illegal decoder state",
                               &buffer, &flag))
         {
             Py_DECREF(state);
@@ -568,6 +608,7 @@ _io_IncrementalNewlineDecoder_getstate_impl(nldecoder_object *self)
         Py_DECREF(state);
     }
     else {
+        Py_DECREF(decoder);
         buffer = Py_GetConstant(Py_CONSTANT_EMPTY_BYTES);
         flag = 0;
     }
@@ -598,22 +639,30 @@ _io_IncrementalNewlineDecoder_setstate_impl(nldecoder_object *self,
         PyErr_SetString(PyExc_TypeError, "state argument must be a tuple");
         return NULL;
     }
-    if (!PyArg_ParseTuple(state, "OK;setstate(): illegal state argument",
+    if (!newline_decoder_check_state(state) ||
+        !PyArg_ParseTuple(state, "OK;setstate(): illegal state argument",
                           &buffer, &flag))
     {
         return NULL;
     }
 
+    PyObject *decoder = newline_decoder_ref(self);
+    if (decoder == NULL) {
+        return NULL;
+    }
     self->pendingcr = (int) (flag & 1);
     flag >>= 1;
 
-    if (self->decoder != Py_None) {
-        return _PyObject_CallMethod(self->decoder, &_Py_ID(setstate),
-                                    "((OK))", buffer, flag);
+    PyObject *result;
+    if (decoder != Py_None) {
+        result = _PyObject_CallMethod(decoder, &_Py_ID(setstate),
+                                     "((OK))", buffer, flag);
     }
     else {
-        Py_RETURN_NONE;
+        result = Py_NewRef(Py_None);
     }
+    Py_DECREF(decoder);
+    return result;
 }
 
 /*[clinic input]
@@ -627,16 +676,25 @@ _io_IncrementalNewlineDecoder_reset_impl(nldecoder_object *self)
 {
     CHECK_INITIALIZED_DECODER(self);
 
+    PyObject *decoder = newline_decoder_ref(self);
+    if (decoder == NULL) {
+        return NULL;
+    }
     self->seennl = 0;
     self->pendingcr = 0;
-    if (self->decoder != Py_None)
-        return PyObject_CallMethodNoArgs(self->decoder, &_Py_ID(reset));
-    else
-        Py_RETURN_NONE;
+    PyObject *result;
+    if (decoder != Py_None) {
+        result = PyObject_CallMethodNoArgs(decoder, &_Py_ID(reset));
+    }
+    else {
+        result = Py_NewRef(Py_None);
+    }
+    Py_DECREF(decoder);
+    return result;
 }
 
 static PyObject *
-incrementalnewlinedecoder_newlines_get(PyObject *op, void *Py_UNUSED(context))
+incrementalnewlinedecoder_newlines_lock_held(PyObject *op)
 {
     nldecoder_object *self = nldecoder_object_CAST(op);
     CHECK_INITIALIZED_DECODER(self);
@@ -660,6 +718,16 @@ incrementalnewlinedecoder_newlines_get(PyObject *op, void *Py_UNUSED(context))
         Py_RETURN_NONE;
    }
 
+}
+
+static PyObject *
+incrementalnewlinedecoder_newlines_get(PyObject *op, void *Py_UNUSED(context))
+{
+    PyObject *result;
+    Py_BEGIN_CRITICAL_SECTION(op);
+    result = incrementalnewlinedecoder_newlines_lock_held(op);
+    Py_END_CRITICAL_SECTION();
+    return result;
 }
 
 /* TextIOWrapper */
@@ -998,16 +1066,23 @@ _textiowrapper_set_decoder(textio *self, PyObject *codec_info,
 }
 
 static PyObject*
-_textiowrapper_decode(_PyIO_State *state, PyObject *decoder, PyObject *bytes,
-                      int eof)
+_textiowrapper_decode(textio *self, PyObject *bytes, int eof)
 {
     PyObject *chars;
+    if (self->decoder == NULL) {
+        return _unsupported(self->state, "not readable");
+    }
+    PyObject *decoder = _PyObject_CheckAccessNullable(Py_NewRef(self->decoder));
+    if (decoder == NULL) {
+        return NULL;
+    }
 
-    if (Py_IS_TYPE(decoder, state->PyIncrementalNewlineDecoder_Type))
+    if (Py_IS_TYPE(decoder, self->state->PyIncrementalNewlineDecoder_Type))
         chars = _PyIncrementalNewlineDecoder_decode(decoder, bytes, eof);
     else
         chars = PyObject_CallMethodObjArgs(decoder, &_Py_ID(decode), bytes,
                                            eof ? Py_True : Py_False, NULL);
+    Py_DECREF(decoder);
 
     if (check_decoded(chars) < 0)
         // check_decoded already decreases refcount
@@ -2026,8 +2101,7 @@ textiowrapper_read_chunk(textio *self, Py_ssize_t size_hint)
     nbytes = input_chunk_buf.len;
     eof = (nbytes == 0);
 
-    decoded_chars = _textiowrapper_decode(self->state, self->decoder,
-                                          input_chunk, eof);
+    decoded_chars = _textiowrapper_decode(self, input_chunk, eof);
     PyBuffer_Release(&input_chunk_buf);
     if (decoded_chars == NULL)
         goto fail;
@@ -2105,15 +2179,9 @@ _io_TextIOWrapper_read_impl(textio *self, Py_ssize_t n)
             return NULL;
         }
 
-        _PyIO_State *state = self->state;
-        if (Py_IS_TYPE(self->decoder, state->PyIncrementalNewlineDecoder_Type))
-            decoded = _PyIncrementalNewlineDecoder_decode(self->decoder,
-                                                          bytes, 1);
-        else
-            decoded = PyObject_CallMethodObjArgs(
-                self->decoder, &_Py_ID(decode), bytes, Py_True, NULL);
+        decoded = _textiowrapper_decode(self, bytes, 1);
         Py_DECREF(bytes);
-        if (check_decoded(decoded) < 0)
+        if (decoded == NULL)
             goto fail;
 
         result = textiowrapper_get_decoded_chars(self, -1);

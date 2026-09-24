@@ -1498,6 +1498,63 @@ or failed module imports; the optional _decimal module remains unavailable.
 Native source and the twelve-method regression suite match across the builds.
 Final suite and build logs are named `*-final.log` in the evidence directory.
 
+### Newline decoder acquisitions and callback lifetime
+
+IncrementalNewlineDecoder now checks and retains its stored decoder before
+decode/getstate/setstate/reset. A method-lookup callback could previously
+reinitialize the wrapper and release the decoder before the returned method
+finished; four weak-reference probes reproduce that lifetime failure. Denied
+decoder acquisition now precedes changes to pending-CR/newline flags, so a
+rejected reset or setstate does not erase them. State tuples remain shallow,
+but their buffer and flag references are checked before the parser exposes or
+converts them. Inaccessible flag conversion and setstate forwarding previously
+aborted debug builds.
+
+Constructor fields are published together before releasing old errors/decoder
+references. An old errors object's finalizer previously observed a mixture of
+old decoder and new initialization. Construction and the newlines getter now
+take the decoder's object critical section. The internal decode entry point
+also takes that lock, including the direct native paths from TextIOWrapper
+and StringIO. Those callers check and retain the stored decoder before entering
+its lock or callbacks. They do not add redundant checks of caller arguments.
+
+StringIO initialization now uses its object critical section. After decoding,
+an already initialized writer rechecks whether a callback closed or invalidated
+it before touching its buffer/writer. A decoder obtained through gc.get_referents
+and configured to close the StringIO previously caused SIGSEGV on write.
+Constructor writes remain supported before initialization completes.
+
+`test_newline_decoder_access` covers protected/foreign decoders, state-tuple
+elements, state preservation on denial, decoder lifetime through method lookup,
+initializer finalization, both native text read paths, StringIO's direct decode
+path, callback-driven close and reference balance. Baselines report five
+failures in the first four methods, six in the lifetime/StringIO methods, one
+initializer-finalizer failure and one close-during-decode crash. Evidence is in
+`/tmp/pep805-newline-decoder/`.
+
+This follow-up does not make stream instances synchronized. TextIOWrapper's
+other decoder/encoder acquisitions, private pending buffers and complete
+lifecycle serialization still need work; the same object critical section can
+be suspended during a callback. It also does not settle the general question
+about protection ending inside a callback.
+
+Running the comparison suites together also exposed an ordering assumption in
+the preceding buffered waiting-reader tests: the reader can legitimately
+acquire the native lock before the queued initializer. The fixtures now verify
+both legal outcomes and retry until they observe the initializer-before-reader
+case. They still fail on freed-buffer bytes or continued reading after failed
+initialization, and fail if that invalidation order is never exercised.
+
+The final selection adds `test_newline_decoder_access` to the preceding six
+suites. All three debug builds pass 1,135 tests, with 29 skips in the default
+build and 37 in the GIL and Tier 2 interpreter builds. The default build's
+successful full run is `default-fixed-fixture.log`; the comparison builds pass
+their full `*-final.log` selections and then the updated twelve-method buffered
+fixture suite in `*-fixed-fixture.log`. All three incremental builds have no
+compiler warnings or failed module imports, with _decimal still unavailable.
+Changed native source, generated wrappers and regression tests match across
+the builds.
+
 ## Earlier re-review and implementation follow-ups
 
 One earlier question was incorrect: footnote 3 of the

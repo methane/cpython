@@ -191,16 +191,34 @@ write_str(stringio *self, PyObject *obj)
 {
     Py_ssize_t len;
     PyObject *decoded = NULL;
+    int initialized = self->ok;
 
     assert(self->buf != NULL);
     assert(self->pos >= 0);
 
     if (self->decoder != NULL) {
+        PyObject *decoder = _PyObject_CheckAccessNullable(
+            Py_NewRef(self->decoder));
+        if (decoder == NULL) {
+            return -1;
+        }
         decoded = _PyIncrementalNewlineDecoder_decode(
-            self->decoder, obj, 1 /* always final */);
+            decoder, obj, 1 /* always final */);
+        Py_DECREF(decoder);
     }
     else {
         decoded = Py_NewRef(obj);
+    }
+    if (decoded == NULL) {
+        return -1;
+    }
+    /* A decoder call or lock wait can let a callback or another thread
+       close or invalidate us. Construction also uses this helper before
+       setting ok, so only recheck objects that were already initialized. */
+    if (initialized && (!self->ok || self->closed)) {
+        PyErr_SetString(PyExc_ValueError,
+                        "I/O operation on closed or uninitialized file");
+        goto fail;
     }
     if (self->writenl) {
         PyObject *translated = PyUnicode_Replace(
@@ -682,6 +700,7 @@ stringio_new(PyTypeObject *type, PyObject *args, PyObject *kwds)
 }
 
 /*[clinic input]
+@critical_section
 _io.StringIO.__init__
     initial_value as value: object(c_default="NULL") = ''
     newline as newline_obj: object(c_default="NULL") = '\n'
@@ -695,7 +714,7 @@ argument is like the one of TextIOWrapper's constructor.
 static int
 _io_StringIO___init___impl(stringio *self, PyObject *value,
                            PyObject *newline_obj)
-/*[clinic end generated code: output=a421ea023b22ef4e input=cee2d9181b2577a3]*/
+/*[clinic end generated code: output=a421ea023b22ef4e input=c0801756fb3afd7c]*/
 {
     const char *newline = "\n";
     Py_ssize_t value_len;

@@ -359,7 +359,7 @@ class Raw:
 
     @threading_helper.requires_working_threading()
     def test_waiting_readline_reloads_buffer(self):
-        self.run_script('''
+        script = '''
             import threading
             import time
             from test.support import SHORT_TIMEOUT, threading_helper
@@ -413,13 +413,24 @@ class Raw:
                         time.sleep(0.05)
                         resume.set()
             expected = [8, 'initialized', b'Z\\n']
-            assert sorted(results, key=repr) == sorted(expected, key=repr), results
+            expected = sorted(expected, key=repr)
+            observed = sorted(results, key=repr)
+            alternate = sorted([8, 'initialized', b''], key=repr)
+            assert observed in (expected, alternate), results
             stream.close()
-        ''')
+            if observed == expected:
+                break
+        '''
+        # Starting a thread does not guarantee its place in the native lock
+        # queue. Validate either legal order, and retry until initialization
+        # precedes the waiting read so the invalidation path is exercised.
+        self.run_script('for attempt in range(20):\n' +
+                        textwrap.indent(textwrap.dedent(script), '    ') +
+                        "else:\n    raise AssertionError('invalidation order never exercised')\n")
 
     @threading_helper.requires_working_threading()
     def test_waiting_read_checks_failed_initialization(self):
-        self.run_script('''
+        script = '''
             import threading
             import time
             from test.support import SHORT_TIMEOUT, threading_helper
@@ -469,7 +480,7 @@ class Raw:
                 assert entered.wait(timeout=SHORT_TIMEOUT)
                 with threading_helper.start_threads(threads[1:2], unlock=resume.set):
                     assert initializing.wait(timeout=SHORT_TIMEOUT)
-                    # Queue the initializer before the second reader. Both
+                    # Give the initializer a chance to queue first. Both
                     # must wait for the first reader's native buffer lock.
                     time.sleep(0.05)
                     with threading_helper.start_threads(threads[2:], unlock=resume.set):
@@ -477,10 +488,21 @@ class Raw:
                         time.sleep(0.05)
                         resume.set()
             expected = [b'A', 'invalid initialization', 'uninitialized read']
-            assert sorted(results, key=repr) == sorted(expected, key=repr), results
+            expected = sorted(expected, key=repr)
+            observed = sorted(results, key=repr)
+            alternate = sorted([b'A', b'A', 'invalid initialization'], key=repr)
+            assert observed in (expected, alternate), results
             stream.__init__(Raw(), 8)
             stream.close()
-        ''')
+            if observed == expected:
+                break
+        '''
+        # Starting a thread does not guarantee its place in the native lock
+        # queue. Validate either legal order, and retry until initialization
+        # precedes the waiting read so the invalidation path is exercised.
+        self.run_script('for attempt in range(20):\n' +
+                        textwrap.indent(textwrap.dedent(script), '    ') +
+                        "else:\n    raise AssertionError('invalidation order never exercised')\n")
 
 
 if __name__ == '__main__':
