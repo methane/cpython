@@ -4919,11 +4919,14 @@ type_new_set_attrs(const type_new_ctx *ctx, PyTypeObject *type)
     }
 
 #ifdef Py_GIL_DISABLED
-    // enable deferred reference counting on functions and descriptors
+    // Shareable functions and descriptors may use deferred reference counting.
+    // LOCAL values must still be released immediately when removed from a
+    // class and no longer referenced.
     Py_ssize_t pos = 0;
     PyObject *key, *value;
     while (PyDict_Next(dict, &pos, &key, &value)) {
-        if (PyFunction_Check(value) || Py_TYPE(value)->tp_descr_get != NULL) {
+        if ((PyFunction_Check(value) || Py_TYPE(value)->tp_descr_get != NULL) &&
+            _Py_atomic_load_uint8(&value->ob_shareable) >= _Py_SHAREABLE_SYNCHRONIZED) {
             PyUnstable_Object_EnableDeferredRefcount(value);
         }
     }
@@ -6876,7 +6879,9 @@ type_setattro(PyObject *self, PyObject *name, PyObject *value)
     // assigned to type objects.  This is important for `dataclass.__init__`,
     // which is generated dynamically, and for descriptor scaling on
     // free-threaded builds.
-    if (value != NULL && (PyFunction_Check(value) || Py_TYPE(value)->tp_descr_get != NULL))
+    if (value != NULL &&
+        (PyFunction_Check(value) || Py_TYPE(value)->tp_descr_get != NULL) &&
+        _Py_atomic_load_uint8(&value->ob_shareable) >= _Py_SHAREABLE_SYNCHRONIZED)
     {
         PyUnstable_Object_EnableDeferredRefcount(value);
     }
@@ -6923,9 +6928,26 @@ type_setattro(PyObject *self, PyObject *name, PyObject *value)
 done:
     Py_DECREF(name);
     Py_XDECREF(descr);
-    // delay decref of the old value as lock-free type cache readers may access it
     if (old_value != NULL && !_Py_IsImmortal(old_value)) {
-        _PyObject_XDecRefDelayed(old_value);
+#ifdef Py_GIL_DISABLED
+        if (_Py_atomic_load_uint8(&self->ob_shareable) == _Py_SHAREABLE_LOCAL &&
+            _Py_atomic_load_uint8(&old_value->ob_shareable) == _Py_SHAREABLE_LOCAL)
+        {
+            // The cache was invalidated before releasing the type lock.
+            // Wait for outstanding lock-free readers before releasing a
+            // LOCAL value, whose lifetime must not depend on a later QSBR
+            // sweep. Run any destructor after restarting the world.
+            PyInterpreterState *interp = _PyInterpreterState_GET();
+            _PyEval_StopTheWorld(interp);
+            _PyEval_StartTheWorld(interp);
+            Py_DECREF(old_value);
+        }
+        else
+#endif
+        {
+            // Lock-free type cache readers may still access the old value.
+            _PyObject_XDecRefDelayed(old_value);
+        }
     }
     return res;
 }

@@ -378,6 +378,12 @@ transferbox_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
         return NULL;
     }
     if (_Py_atomic_load_uint8(&value->ob_shareable) == _Py_SHAREABLE_LOCAL) {
+#ifdef Py_GIL_DISABLED
+        // Retire the creator's refcount bias before publishing the copy.
+        // After claim(), its new group must be able to release the last
+        // reference without waiting for the creator to process a BRC queue.
+        (void)_Py_ExplicitMergeRefcount(value, 0);
+#endif
         _Py_atomic_store_uint32_relaxed(&value->ob_owner_id, 0);
     }
     return (PyObject *)self;

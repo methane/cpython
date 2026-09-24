@@ -11,6 +11,9 @@ list/cell/function/tuple/bytes C API repairs. Implementation follow-up on
 2026-09-24 repairs constant acquisition, bytearray exception propagation and
 foreign executor invalidation, and extends the C API input cleanup. The
 current assessment supersedes the historical probe results at the end.
+The latest follow-up repairs immediate reclamation across same-group threads,
+transfers and LOCAL function/descriptor publication. It also identifies the
+first denied reference in the existing subinterpreter import failure.
 
 Sources: [PEP 805](https://peps.python.org/pep-0805/),
 [implementation appendix](https://peps.python.org/pep-0805/appendix-implementation/),
@@ -29,7 +32,8 @@ complete the reference-counting and parallelism architecture.
 bytearray exception propagation are now repaired. Foreign sort elements are
 also rejected, but sorting still continues after a callback closes its
 protecting context. A foreign group collecting a legacy extension still
-crashes. The default-build parallelism and LOCAL reclamation gaps remain.
+crashes. The default-build parallelism and reference-counting architecture
+remain unfinished; the reproduced LOCAL reclamation delays are now repaired.
 These are implementation defects or unfinished work, not questions about
 whether unsafe access or crashes are acceptable.
 
@@ -48,7 +52,9 @@ in the GIL build or close the remaining failures.
 | Foreign LOCAL elements in `list.sort()` | IllegalThreadAccessException | Same | Repaired |
 | Close protecting generator from sort key | Sort completes after unlock | Same | Remaining reference-lifetime defect |
 | Foreign GC with `xxlimited_3_13` | SIGSEGV in `xx_traverse`, line 457 | Same | Remaining compatibility defect |
-| Last LOCAL reference deleted by another thread in the same group | `after del` before finalizer | Finalizer before `after del` | Free-threading reclamation gap |
+| Last LOCAL reference deleted by another thread in the same group | Finalizer before `after del` | Same | Repaired, including weakrefs and resurrection |
+| Last reference to a claimed LOCAL transfer | Finalizer before `after del` | Same | Creator's refcount bias retired before publication |
+| Acyclic LOCAL functions and descriptors, including removal from a class | Reclaimed without GC | Same | Automatic deferred counts and delayed class-attribute decrefs repaired |
 | Object header size | 56 bytes | 40 bytes | Compact representation unfinished; 24 bytes is illustrative |
 | Buffer exporter tries to return a foreign memoryview | Buffer acquisition, join, concatenation and in-place concatenation raise IllegalThreadAccessException | Same | Exception propagation repaired |
 | Transfer an ordinary instance | Primitive attribute readable; `__dict__` denied | Same | Question 4 |
@@ -65,9 +71,11 @@ interpreter GIL as well as the group lock (`Python/ceval_gil.c:592`), that
 the default build still uses ordinary reference counts (`Include/refcount.h`),
 and that the three cleanup fields remain in both headers
 (`Include/object.h:163`, `:188`). They implement a queue for deferred cleanup,
-not biased reference counting. Free-threading does reuse PEP 703 BRC, but
-that OS-thread bias does not meet the observed same-group LOCAL lifetime
-requirement. Mark's two comments therefore remain only partially addressed.
+not biased reference counting. Free-threading reuses PEP 703 BRC, now with
+synchronous merging when the allocating thread belongs to the current locked
+group. The fast path remains OS-thread-biased, and the default build has no
+corresponding shared-reference machinery. Mark's two comments therefore
+remain only partially addressed.
 
 The input-check cleanup now covers bytearray, integer/float/complex and
 Unicode accessors as well as the earlier container and function APIs.
@@ -220,6 +228,64 @@ Validation for this follow-up:
   variable/function warnings. The final custom-evaluator rebuild repeats
   only the existing `dump_cache_item` warning.
 
+### Immediate LOCAL reclamation follow-up
+
+The free-threading counterexample in finding 2 now finalizes before the
+statement after `del`, as the GIL build does. `_Py_brc_queue_object()` merges
+immediately if the current thread holds the allocating thread's group lock.
+That lock prevents the allocator from changing its local count; the BRC
+bucket lock protects its thread-state record. Other-group owners retain the
+existing queue path. Deallocation runs after releasing the bucket lock.
+This preserves the OS-thread-biased representation; it is not a completed
+group-biased implementation or default-build port.
+
+Two other sources of delayed reclamation were reproduced and repaired:
+
+- A `TransferBox` copy retained its creator's bias after being claimed by a
+  different group. Its counts are now merged before the unaliased copy loses
+  its group ownership, so its receiver need not wait for the creator's queue.
+- LOCAL functions and method wrappers received deferred reference counts
+  automatically. Function creation and class publication now enable those
+  counts only for shareable values; LOCAL classmethod/staticmethod wrappers
+  retain ordinary counts. Removing a LOCAL attribute from a LOCAL class also
+  retained a real reference in the delayed-decref queue. After invalidating
+  the type cache and releasing its locks, a world-stop barrier now waits for
+  outstanding cache readers, then resumes execution before releasing that
+  reference. This avoids freeing memory under lock-free readers. Its global
+  synchronization cost is an outstanding optimization concern.
+
+`test_local_reclamation` disables GC in its lifetime probes. It covers
+same-group deletion in Main and a new group, finalizers, weakrefs,
+resurrection, claimed transfers, acyclic LOCAL functions, and five descriptor
+forms both directly and through class creation/assignment. A separate test
+updates a LOCAL class while another group looks up attributes through a
+frozen instance. Before these repairs, four same-group finalizer cases,
+the transfer ordering case, and 16 function/descriptor subtests failed in
+free-threading; the corresponding GIL cases passed. Fixing deferred flags
+alone still left 13 failures, which exposed the class-attribute queue path.
+
+Validation after all repairs:
+
+- Free-threading: 16 files, 805 reported tests and 20 skips; no test assertion
+  failures. `test_free_threading.test_type` reported a changed
+  `threading._dangling` environment. Its isolated rerun with
+  `--fail-env-changed` passed all 13 tests without the warning; the cause of
+  the first warning has not been established.
+- GIL: 14 files, 786 reported tests and 23 skips, all passed.
+- Tier 2 interpreter: 10 files, 622 reported tests and 13 skips, all passed,
+  including `test_optimizer` and `test_capi.test_opt`.
+- Free-threading reference-leak checking (`-R 3:3`) passed `test_gc`,
+  `test_weakref` and `test_capi.test_object`: 218 reported tests, 13 skips,
+  with no positive reference deltas in the measured repetitions.
+- All three builds compiled successfully without warnings in this incremental
+  rebuild. An earlier test invocation named a nonexistent
+  `test_capi.test_refcount` file; the final selections use the existing
+  `test_capi.test_object` suite instead.
+
+These selections overlap. The subprocess lifetime tests demonstrate ordering
+and prompt reclamation, not absence of every native leak. Broader refcount
+coverage, the compact header and default-build parallelism remain open.
+
 ## Earlier re-review and implementation follow-ups
 
 One earlier question was incorrect: footnote 3 of the
@@ -350,14 +416,19 @@ acceptable or establishes that Mark's approval is needed for routine fixes.
    and the appendix's
    [implementation strategy](https://peps.python.org/pep-0805/appendix-implementation/#implementation-strategy).
 
-2. **Reusing free-threading BRC has not preserved immediate LOCAL reclamation.**
-   In the same-group example below, the free-threading build prints
-   `['after del', 'finalized']`; the GIL build prints
-   `['finalized', 'after del']`. The object is acyclic and is held in an
-   ordinary local list, not a synchronized collection. The reference-count
-   fast path still tests the OS-thread owner (`Include/refcount.h`).
-   This needs to be reconciled with
+2. **The reproduced LOCAL delays are repaired; the refcount audit is not complete.**
+   Both builds now print `['finalized', 'after del']` in the same-group
+   example below. Previously free-threading printed the reverse order even
+   though the object is acyclic and held in an ordinary local list. The
+   follow-up also repairs transferred copies and LOCAL function/descriptor
+   lifetime. Its regressions exercise the required
    [deferred reclamation](https://peps.python.org/pep-0805/#deferred-reclamation).
+   The reference-count fast path still tests the OS-thread owner
+   (`Include/refcount.h`); the fix merges when a same-group reference enters
+   the slow path. Other automatic deferred-count paths and shareable-to-LOCAL
+   transitions still need auditing. The latter also depend on question 7's
+   state-transition contract. No claim of general lifetime conformance is
+   made from these examples alone.
 
    ```python
    import threading
@@ -455,13 +526,22 @@ acceptable or establishes that Mark's approval is needed for routine fixes.
    `test_capi.test_misc.SubinterpreterTest.test_py_config_isoloated_per_interpreter`.
    `type_call()` finds a pending exception during module initialization.
    This also reproduces before the stack-validation changes at `3657b0d87c`.
-   Other tests in that file report foreign-ThreadGroup access exceptions when
-   importing shared extension modules. These failures need diagnosis and
-   repair; they are not an acceptable outcome of the intended access model.
+   The first denied reference is now identified: `_testcapi_exec()` publishes
+   the process-global `matmulType`, owned by group 1, in a subinterpreter
+   whose Main group is 257. `PyDict_SetItem()` rejects it through
+   `PyModule_AddObject()`. The test extension ignores that return code and
+   later aborts with the access exception still pending. Each interpreter
+   currently allocates a distinct Main group, including legacy interpreters
+   sharing a GIL. Other tests in that file also report foreign-group access
+   exceptions on extension import. Converting the setter's input check to an
+   assertion would merely move the failure earlier. Declaring all static
+   extension types shareable would contradict the PEP's LOCAL default.
+   Question 9 asks which ownership/scheduling contract should preserve this
+   legacy usage. The compatibility failure itself remains to be repaired.
 
 ## Questions to discuss with Mark
 
-Questions 1–4 and 6–8 concern unspecified contracts or clarifications to the
+Questions 1–4 and 6–9 concern unspecified contracts or clarifications to the
 PEP/appendix. Question 5 asks for design guidance, not clarification of whether
 LOCAL objects must be reclaimed promptly. The complete question wording and
 the concrete behavior motivating each question follow.
@@ -550,8 +630,9 @@ and [object dictionaries](https://peps.python.org/pep-0805/#object-dictionaries)
 ### 5. Should local reference-count ownership be biased to a ThreadGroup?
 
 The current branch uses PEP 703's OS-thread bias in the free-threading build.
-The same-group reclamation counterexample above shows that simply retaining
-that implementation is insufficient for the stated LOCAL lifetime behavior.
+It now merges synchronously on the same-group slow path and retires the bias
+before publishing a transferred copy. These repairs satisfy the reproduced
+ordering requirements without choosing a new header representation.
 
 Is the intended design a group-biased local count, rebiasing/merging on group
 handoff, or a different mechanism? The required observable behavior is not
@@ -625,6 +706,25 @@ both access-check elision and the
 no-context-switch guarantee. See
 [primitive types](https://peps.python.org/pep-0805/#primitive-types) and
 the appendix's [C API discussion](https://peps.python.org/pep-0805/appendix-implementation/#c-api).
+
+### 9. How should Main ownership work across legacy interpreters sharing a GIL?
+
+Legacy extensions can expose the same process-global static type to several
+interpreters sharing a GIL. Currently each interpreter has a distinct Main
+ThreadGroup, and such a type belongs to the first group initializing it.
+Importing `_testcapi` in the second interpreter therefore rejects
+`matmulType`, even though the two interpreters are serialized by one GIL.
+
+Should these legacy interpreters share a Main ownership/serialization domain,
+or should interpreter-local Main groups admit such static extension globals
+through another explicit rule? How should that interact with subinterpreters
+using separate GILs? The PEP defines Main at interpreter startup, defaults
+extension classes to LOCAL, and promises default-build compatibility, but
+does not describe how to reconcile these rules for existing shared globals.
+This is not a request to permit arbitrary cross-group access to LOCAL types.
+See [Main](https://peps.python.org/pep-0805/#the-main-threadgroup),
+[extension defaults](https://peps.python.org/pep-0805/#c-extensions-and-the-c-api)
+and [compatibility](https://peps.python.org/pep-0805/#backwards-compatibility).
 
 ## Follow-up commits
 

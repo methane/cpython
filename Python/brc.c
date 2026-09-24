@@ -53,7 +53,8 @@ find_thread_state(struct _brc_bucket *bucket, uintptr_t thread_id)
 void
 _Py_brc_queue_object(PyObject *ob)
 {
-    PyInterpreterState *interp = _PyInterpreterState_GET();
+    PyThreadState *current = _PyThreadState_GET();
+    PyInterpreterState *interp = current->interp;
 
     uintptr_t ob_tid = _Py_atomic_load_uintptr(&ob->ob_tid);
     if (ob_tid == 0) {
@@ -66,10 +67,14 @@ _Py_brc_queue_object(PyObject *ob)
     struct _brc_bucket *bucket = get_bucket(interp, ob_tid);
     PyMutex_Lock(&bucket->mutex);
     _PyThreadStateImpl *tstate = find_thread_state(bucket, ob_tid);
-    if (tstate == NULL) {
-        // If we didn't find the owning thread then it must have already exited.
-        // It's safe (and necessary) to merge the refcount. Subtract one when
-        // merging because we've stolen a reference.
+    if (tstate == NULL ||
+        (current->holds_threadgroup &&
+         tstate->base.threadgroup == current->threadgroup)) {
+        // An absent owner has already exited. An owner in our ThreadGroup
+        // cannot update its local count while we hold the group's lock.
+        // In either case we can merge now. In particular, an acyclic LOCAL
+        // object's destruction must not wait for another thread in its group
+        // to process a queue. Subtract the reference stolen by this call.
         Py_ssize_t refcount = _Py_ExplicitMergeRefcount(ob, -1);
         PyMutex_Unlock(&bucket->mutex);
         if (refcount == 0) {

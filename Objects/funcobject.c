@@ -640,14 +640,16 @@ PyFunction_NewWithQualName(PyObject *code, PyObject *globals, PyObject *qualname
     op->vectorcall = _PyFunction_Vectorcall;
     op->func_version = FUNC_VERSION_UNSET;
     func_update_shareable(op);
-    if (((code_obj->co_flags & CO_NESTED) == 0) ||
-        (code_obj->co_flags & CO_METHOD)) {
+    if (FT_ATOMIC_LOAD_UINT8(op->ob_base.ob_shareable) >= _Py_SHAREABLE_SYNCHRONIZED &&
+        (((code_obj->co_flags & CO_NESTED) == 0) ||
+         (code_obj->co_flags & CO_METHOD))) {
         // Use deferred reference counting for top-level functions, but not
         // nested functions because they are more likely to capture variables,
         // which makes prompt deallocation more important.
         //
         // Nested methods (functions defined in class scope) are also deferred,
-        // since they will likely be cleaned up by GC anyway.
+        // since they will likely be cleaned up by GC anyway. LOCAL functions
+        // must retain ordinary refcounts so acyclic instances die immediately.
         _PyObject_SetDeferredRefcount((PyObject *)op);
     }
     _PyObject_GC_TRACK(op);
@@ -2135,7 +2137,6 @@ cm_new(PyTypeObject *type, PyObject *args, PyObject *kwds)
     if (cm == NULL) {
         return NULL;
     }
-    _PyObject_SetDeferredRefcount((PyObject *)cm);
     if (cm_set_callable(cm, callable) < 0) {
         Py_DECREF(cm);
         return NULL;
@@ -2401,7 +2402,6 @@ sm_new(PyTypeObject *type, PyObject *args, PyObject *kwds)
     if (sm == NULL) {
         return NULL;
     }
-    _PyObject_SetDeferredRefcount((PyObject *)sm);
     if (sm_set_callable(sm, callable) < 0) {
         Py_DECREF(sm);
         return NULL;
@@ -2568,7 +2568,6 @@ PyStaticMethod_New(PyObject *callable)
     if (sm == NULL) {
         return NULL;
     }
-    _PyObject_SetDeferredRefcount((PyObject *)sm);
     if (sm_set_callable(sm, callable) < 0) {
         Py_DECREF(sm);
         return NULL;
