@@ -146,9 +146,7 @@ PyByteArray_FromObject(PyObject *input)
         PyErr_BadInternalCall();
         return NULL;
     }
-    if (PyObject_CheckAccess(input) == NULL) {
-        return NULL;
-    }
+    assert(_PyObject_IsAccessible(input));
     return PyObject_CallOneArg((PyObject *)&PyByteArray_Type, input);
 }
 
@@ -219,9 +217,7 @@ PyByteArray_Size(PyObject *self)
         PyErr_BadInternalCall();
         return -1;
     }
-    if (PyObject_CheckAccess(self) == NULL) {
-        return -1;
-    }
+    assert(_PyObject_IsAccessible(self));
     if (!PyByteArray_Check(self)) {
         PyErr_BadInternalCall();
         return -1;
@@ -237,9 +233,7 @@ PyByteArray_AsString(PyObject *self)
         PyErr_BadInternalCall();
         return NULL;
     }
-    if (PyObject_CheckAccess(self) == NULL) {
-        return NULL;
-    }
+    assert(_PyObject_IsAccessible(self));
     if (!PyByteArray_Check(self)) {
         PyErr_BadInternalCall();
         return NULL;
@@ -375,9 +369,7 @@ PyByteArray_Resize(PyObject *self, Py_ssize_t requested_size)
         PyErr_BadInternalCall();
         return -1;
     }
-    if (PyObject_CheckAccess(self) == NULL) {
-        return -1;
-    }
+    assert(_PyObject_IsAccessible(self));
     if (!PyByteArray_Check(self)) {
         PyErr_BadInternalCall();
         return -1;
@@ -401,15 +393,15 @@ PyByteArray_Concat(PyObject *a, PyObject *b)
         PyErr_BadInternalCall();
         goto done;
     }
-    if (PyObject_CheckAccess(a) == NULL ||
-        PyObject_CheckAccess(b) == NULL) {
-        goto done;
-    }
+    assert(_PyObject_IsAccessible(a) && _PyObject_IsAccessible(b));
     if (PyObject_GetBuffer(a, &va, PyBUF_SIMPLE) != 0 ||
         PyObject_GetBuffer(b, &vb, PyBUF_SIMPLE) != 0) {
+        if (!PyErr_ExceptionMatches(PyExc_IllegalThreadAccessException) &&
+            !PyErr_ExceptionMatches(PyExc_UnprotectedAccessException)) {
             PyErr_Format(PyExc_TypeError, "can't concat %.100s to %.100s",
                          Py_TYPE(b)->tp_name, Py_TYPE(a)->tp_name);
-            goto done;
+        }
+        goto done;
     }
 
     if (va.len > PyByteArray_SIZE_MAX - vb.len) {
@@ -450,8 +442,11 @@ bytearray_iconcat_lock_held(PyObject *op, PyObject *other)
 
     Py_buffer vo;
     if (PyObject_GetBuffer(other, &vo, PyBUF_SIMPLE) != 0) {
-        PyErr_Format(PyExc_TypeError, "can't concat %.100s to %.100s",
-                     Py_TYPE(other)->tp_name, Py_TYPE(self)->tp_name);
+        if (!PyErr_ExceptionMatches(PyExc_IllegalThreadAccessException) &&
+            !PyErr_ExceptionMatches(PyExc_UnprotectedAccessException)) {
+            PyErr_Format(PyExc_TypeError, "can't concat %.100s to %.100s",
+                         Py_TYPE(other)->tp_name, Py_TYPE(self)->tp_name);
+        }
         return NULL;
     }
 

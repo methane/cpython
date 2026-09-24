@@ -1,5 +1,6 @@
 """Access checks at the public bytes and bytearray C API boundaries."""
 
+import operator
 import sys
 import textwrap
 import threading
@@ -11,6 +12,49 @@ from test.support.script_helper import assert_python_ok
 
 
 class BytesAccessTests(unittest.TestCase):
+    def test_concat_preserves_buffer_access_errors(self):
+        concat = import_module('_testlimitedcapi').bytearray_concat
+
+        for error_type in (IllegalThreadAccessException,
+                           UnprotectedAccessException):
+            class Exporter:
+                def __buffer__(self, flags):
+                    raise error_type('buffer access denied')
+
+            exporter = Exporter()
+            target = bytearray(b'original')
+            for operation, args in (
+                (concat, (exporter, b'')),
+                (concat, (b'', exporter)),
+                (operator.add, (target, exporter)),
+                (operator.iadd, (target, exporter)),
+            ):
+                with self.subTest(error=error_type, operation=operation,
+                                  exporter_first=args[0] is exporter):
+                    with self.assertRaisesRegex(error_type, 'buffer access denied'):
+                        operation(*args)
+                    self.assertEqual(target, b'original')
+
+    def test_concat_releases_buffer_on_access_error(self):
+        concat = import_module('_testlimitedcapi').bytearray_concat
+        released = []
+
+        class FirstExporter:
+            def __buffer__(self, flags):
+                return memoryview(b'first')
+
+            def __release_buffer__(self, view):
+                released.append(True)
+
+        class SecondExporter:
+            def __buffer__(self, flags):
+                raise IllegalThreadAccessException('buffer access denied')
+
+        with self.assertRaisesRegex(IllegalThreadAccessException,
+                                    'buffer access denied'):
+            concat(FirstExporter(), SecondExporter())
+        self.assertEqual(released, [True])
+
     @threading_helper.requires_working_threading()
     def test_join_checks_stored_buffers(self):
         assert_python_ok('-c', textwrap.dedent('''
