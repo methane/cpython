@@ -1753,8 +1753,12 @@ class TestUopsOptimization(unittest.TestCase):
         call = opnames.index("_CALL_BUILTIN_FAST")
         load_attr_top = opnames.index("_LOAD_CONST_INLINE_BORROW", 0, call)
         load_attr_bottom = opnames.index("_LOAD_CONST_INLINE_BORROW", call)
+        load_local = opnames.index("_LOAD_FAST_BORROW_1", call)
         self.assertEqual(opnames[:load_attr_top].count("_GUARD_TYPE_VERSION"), 1)
-        self.assertEqual(opnames[call:load_attr_bottom].count("_CHECK_VALIDITY"), 2)
+        self.assertEqual(opnames[call:load_local].count("_CHECK_VALIDITY"), 2)
+        # Local loads revalidate access after the call. Constructing an access
+        # exception can escape, so these loads need their own validity check.
+        self.assertEqual(opnames[load_local:load_attr_bottom].count("_CHECK_VALIDITY"), 1)
 
     def test_guard_type_version_removed_escaping(self):
 
@@ -1776,8 +1780,11 @@ class TestUopsOptimization(unittest.TestCase):
         call = opnames.index("_CALL_BUILTIN_FAST_WITH_KEYWORDS")
         load_attr_top = opnames.index("_LOAD_CONST_INLINE_BORROW", 0, call)
         load_attr_bottom = opnames.index("_LOAD_CONST_INLINE_BORROW", call)
+        load_local = opnames.index("_LOAD_FAST_BORROW_1", call)
         self.assertEqual(opnames[:load_attr_top].count("_GUARD_TYPE_VERSION"), 1)
-        self.assertEqual(opnames[call:load_attr_bottom].count("_CHECK_VALIDITY"), 2)
+        self.assertEqual(opnames[call:load_local].count("_CHECK_VALIDITY"), 2)
+        # Keep the checks for the escaping call and for local access separate.
+        self.assertEqual(opnames[load_local:load_attr_bottom].count("_CHECK_VALIDITY"), 1)
 
     def test_guard_type_version_executor_invalidated(self):
         """
@@ -6595,17 +6602,21 @@ def consume(n):
             pass
         self.assertEqual(results.get(), -1)
 
-    def test_inlined_generator_yield_access(self):
+    def test_inlined_generator_local_access(self):
         import threading
         from test.support import threading_helper
 
-        def producer_template(value, count):
+        def producer_template(value, count, errors):
             yield 42
             for _ in range(count):
                 try:
                     yield value
-                except IllegalThreadAccessException:
-                    raise AssertionError('access error entered the producer')
+                except IllegalThreadAccessException as exc:
+                    # The foreign local is rejected before YIELD_VALUE. This
+                    # is an ordinary producer-side exception, not an error
+                    # injected at the suspension boundary.
+                    errors.append(exc.__traceback__.tb_lasti)
+                    raise
                 yield 42
 
         def template(gen):
@@ -6622,25 +6633,37 @@ def consume(n):
         self.addCleanup(_testinternalcapi.clear_executor_deletion_list)
         self.addCleanup(_testinternalcapi.invalidate_executors, f.__code__)
         self.addCleanup(_testinternalcapi.invalidate_executors, producer.__code__)
-        self.assertEqual(f(producer(42, 2 * TIER2_THRESHOLD)), 42)
+        self.assertEqual(f(producer(42, 2 * TIER2_THRESHOLD, [])), 42)
         executors = get_all_executors(f)
         self.assertTrue(any('_GUARD_YIELD_ACCESS' in get_opnames(ex) for ex in executors))
         foreign = []
         results = threading.Channel()
 
         def worker(holder):
+            errors = []
             with sys.monitoring.StopTheWorld:
-                gen = producer(holder[0], 2)
+                gen = producer(holder[0], 2, errors)
             results.put(f(gen))
-            results.put(next(gen))
-            gen.close()
+            results.put(tuple(errors))
+            try:
+                next(gen)
+            except StopIteration:
+                results.put('closed')
+            else:
+                results.put('resumed after local-load failure')
+            finally:
+                gen.close()
 
         thread = threading.Thread(target=worker, args=((foreign,),),
                                   group=threading.ThreadGroup())
         with threading_helper.start_threads([thread]):
             pass
         self.assertEqual(results.get(), -1)
-        self.assertEqual(results.get(), 42)
+        (offset,) = results.get()
+        instruction = next(inst for inst in dis.get_instructions(producer)
+                           if inst.offset == offset)
+        self.assertTrue(instruction.opname.startswith('LOAD_FAST'), instruction)
+        self.assertEqual(results.get(), 'closed')
 
     def test_inlined_for_return_access(self):
         import threading
