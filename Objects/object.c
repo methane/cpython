@@ -2596,6 +2596,53 @@ extern PyTypeObject _PyMemoryIter_Type;
 extern PyTypeObject _PyPositionsIterator;
 extern PyTypeObject _Py_GenericAliasIterType;
 
+/* Sharing states must themselves be immutable and usable from any group,
+   including before threading is imported. Keep their representation native
+   rather than relying on mutable Python enum instances or Python methods. */
+typedef struct {
+    PyObject_HEAD
+    const char *name;
+} shareablestateobject;
+
+static shareablestateobject shareable_local = {
+    PyObject_HEAD_INIT(&_PyShareable_Type)
+    .name = "LOCAL",
+};
+
+static shareablestateobject shareable_immutable = {
+    PyObject_HEAD_INIT(&_PyShareable_Type)
+    .name = "IMMUTABLE",
+};
+
+static PyObject *
+shareable_repr(PyObject *self)
+{
+    return PyUnicode_FromFormat("Shareable.%s",
+                               ((shareablestateobject *)self)->name);
+}
+
+static PyObject *
+shareable_name(PyObject *self, void *closure)
+{
+    return PyUnicode_FromString(((shareablestateobject *)self)->name);
+}
+
+static PyGetSetDef shareable_getsets[] = {
+    {"name", shareable_name, NULL, PyDoc_STR("the sharing state's name")},
+    {NULL},
+};
+
+PyTypeObject _PyShareable_Type = {
+    PyVarObject_HEAD_INIT(&PyType_Type, 0)
+    .tp_name = "threading.Shareable",
+    .tp_basicsize = sizeof(shareablestateobject),
+    .tp_repr = shareable_repr,
+    .tp_flags = (Py_TPFLAGS_DEFAULT | Py_TPFLAGS_IMMUTABLETYPE |
+                 Py_TPFLAGS_DISALLOW_INSTANTIATION),
+    .tp_doc = "Object sharing states: LOCAL and IMMUTABLE.",
+    .tp_getset = shareable_getsets,
+};
+
 static PyTypeObject* static_types[_Py_NUM_MANAGED_PREINITIALIZED_TYPES] = {
     // The two most important base types: must be initialized first and
     // deallocated last.
@@ -2709,6 +2756,7 @@ static PyTypeObject* static_types[_Py_NUM_MANAGED_PREINITIALIZED_TYPES] = {
     &_PyNone_Type,
     &_PyNotImplemented_Type,
     &_PyPositionsIterator,
+    &_PyShareable_Type,
     &_PyTemplate_Type,
     &_PyTemplateIter_Type,
     &_PyThreadGroup_Type,
@@ -2754,6 +2802,14 @@ _PyTypes_InitTypes(PyInterpreterState *interp)
             assert(PyBaseObject_Type.tp_base == NULL);
             assert(PyType_Type.tp_base == &PyBaseObject_Type);
         }
+    }
+
+    PyObject *shareable_dict = _PyType_GetDict(&_PyShareable_Type);
+    if (PyDict_SetItemString(shareable_dict, "LOCAL",
+                            (PyObject *)&shareable_local) < 0 ||
+        PyDict_SetItemString(shareable_dict, "IMMUTABLE",
+                            (PyObject *)&shareable_immutable) < 0) {
+        return _PyStatus_ERR("Can't initialize sharing states");
     }
 
     // Cache __reduce__ from PyBaseObject_Type object
@@ -2826,7 +2882,7 @@ is_intrinsically_immutable(PyTypeObject *type)
            type == &PyMethodDescr_Type || type == &PyClassMethodDescr_Type ||
            type == &PyMemberDescr_Type || type == &PyGetSetDescr_Type ||
            type == &PyWrapperDescr_Type ||
-           type == &_PyThreadGroup_Type ||
+           type == &_PyThreadGroup_Type || type == &_PyShareable_Type ||
            type == &PyCode_Type || type == Py_TYPE(Py_None) ||
            type == Py_TYPE(Py_Ellipsis) || type == Py_TYPE(Py_NotImplemented);
 }
@@ -2875,6 +2931,23 @@ is_accessible(PyObject *op, PyThreadState *tstate)
     return state == _Py_SHAREABLE_IMMUTABLE ||
         (state == _Py_SHAREABLE_LOCAL &&
          _Py_atomic_load_uint32_relaxed(&op->ob_owner_id) == tstate->threadgroup->id);
+}
+
+PyObject *
+_PyObject_GetShareable(PyObject *op, void *closure)
+{
+    uint8_t state = get_shareable_state(op, _PyThreadState_GET());
+    assert(state == _Py_SHAREABLE_LOCAL || state == _Py_SHAREABLE_IMMUTABLE);
+    return Py_NewRef(state == _Py_SHAREABLE_IMMUTABLE ?
+                     (PyObject *)&shareable_immutable :
+                     (PyObject *)&shareable_local);
+}
+
+int
+_PyObject_SetShareable(PyObject *op, PyObject *value, void *closure)
+{
+    PyErr_SetString(PyExc_TypeError, "cannot assign to __shareable__");
+    return -1;
 }
 
 int

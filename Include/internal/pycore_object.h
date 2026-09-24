@@ -20,6 +20,9 @@ extern "C" {
 
 extern uint32_t _PyObject_NewOwnerID(void);
 extern int _PyObject_CheckAccessThread(PyObject *op, PyThreadState *tstate);
+extern PyTypeObject _PyShareable_Type;
+extern PyObject *_PyObject_GetShareable(PyObject *op, void *closure);
+extern int _PyObject_SetShareable(PyObject *op, PyObject *value, void *closure);
 // Consume a new reference, decrefing it on denied access. NULL propagates an
 // existing exception without replacing it.
 PyAPI_FUNC(PyObject *) _PyObject_CheckAccessNullable(PyObject *op);

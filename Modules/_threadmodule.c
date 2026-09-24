@@ -2933,6 +2933,9 @@ thread_module_exec(PyObject *module)
     if (PyModule_AddType(module, &_PyThreadGroup_Type) < 0) {
         return -1;
     }
+    if (PyModule_AddType(module, &_PyShareable_Type) < 0) {
+        return -1;
+    }
     if (interp->main_threadgroup_object == NULL) {
         threadgroupobject *main = (threadgroupobject *)PyObject_CallFunction(
             (PyObject *)&_PyThreadGroup_Type, "s", "Main");

@@ -8,7 +8,9 @@ import textwrap
 import threading
 import unittest
 
-from test.support import import_helper, requires_specialization, threading_helper
+from test.support import (
+    import_helper, requires_specialization, script_helper, threading_helper,
+)
 
 internal = import_helper.import_module('_testinternalcapi')
 threading_helper.requires_working_threading(module=True)
@@ -55,6 +57,76 @@ class OwnershipTests(unittest.TestCase):
 
     def test_native_immutable_declaration(self):
         self.check_access(internal.make_immutable_capsule(), True)
+
+    def test_shareable_attribute(self):
+        class Value:
+            pass
+
+        for value in (object(), [], {}, set(), Value(), Value, lambda: None,
+                      sys, datetime.date.today(), datetime.date):
+            with self.subTest(value_type=type(value)):
+                self.assertIs(value.__shareable__, threading.Shareable.LOCAL)
+        for value in (None, True, 42, 1.5, 2j, 'text', b'bytes', (), ([],),
+                      frozenset(), frozendict(value=[]), range(2), slice([]),
+                      int, list, type, ValueError, sys.main_thread_group,
+                      threading.Shareable, threading.Shareable.LOCAL,
+                      threading.Shareable.IMMUTABLE,
+                      internal.make_immutable_capsule()):
+            with self.subTest(value_type=type(value)):
+                self.assertIs(value.__shareable__, threading.Shareable.IMMUTABLE)
+
+        for value in (Value(), Value, object(), [], (), sys, 42):
+            with self.subTest(value_type=type(value)):
+                with self.assertRaisesRegex(TypeError, 'cannot assign to __shareable__'):
+                    value.__shareable__ = True
+                with self.assertRaisesRegex(TypeError, 'cannot assign to __shareable__'):
+                    del value.__shareable__
+        value = Value()
+        value.__dict__['__shareable__'] = threading.Shareable.IMMUTABLE
+        self.assertIs(value.__shareable__, threading.Shareable.LOCAL)
+
+    def test_shareable_constants(self):
+        self.assertIs(threading.Shareable, _thread.Shareable)
+        for name in ('LOCAL', 'IMMUTABLE'):
+            state = getattr(threading.Shareable, name)
+            self.assertEqual(state.name, name)
+            self.assertEqual(repr(state), f'Shareable.{name}')
+            self.assertEqual(str(state), repr(state))
+            self.check_access(state, True)
+            with self.assertRaises((AttributeError, TypeError)):
+                state.name = 'changed'
+            with self.assertRaises(AttributeError):
+                state.extra = []
+            with self.assertRaises(TypeError):
+                setattr(threading.Shareable, name, None)
+        with self.assertRaises(TypeError):
+            threading.Shareable()
+        with self.assertRaises(TypeError):
+            class State(threading.Shareable):
+                pass
+
+    def test_shareable_without_threading_import(self):
+        script_helper.assert_python_ok('-S', '-c', '''
+import sys
+assert 'threading' not in sys.modules
+assert repr(object().__shareable__) == 'Shareable.LOCAL'
+assert repr((1,).__shareable__) == 'Shareable.IMMUTABLE'
+assert 'threading' not in sys.modules
+''')
+
+    def test_shareable_in_foreign_group(self):
+        def probe():
+            assert items.__shareable__ is source[1]
+            assert cls.__shareable__ is source[1]
+            assert value.__shareable__ is value
+            assert value.name == 'IMMUTABLE'
+            assert value.__class__.LOCAL is source[1]
+            assert value.__repr__() == 'Shareable.IMMUTABLE'
+            return True
+
+        self.assertTrue(internal.threadgroup_vm_probe(
+            probe.__code__, self.foreign,
+            (threading.Shareable.IMMUTABLE, threading.Shareable.LOCAL, None), 0))
 
     def test_static_immutable_access(self):
         internal.test_static_immutable_access()

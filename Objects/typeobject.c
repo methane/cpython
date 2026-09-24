@@ -2344,6 +2344,8 @@ type___subclasscheck___impl(PyTypeObject *self, PyObject *subclass)
 
 
 static PyGetSetDef type_getsets[] = {
+    {"__shareable__", _PyObject_GetShareable, _PyObject_SetShareable,
+     PyDoc_STR("the object's sharing state (read-only)")},
     {"__name__", type_name, type_set_name, NULL},
     {"__qualname__", type_qualname, type_set_qualname, NULL},
     {"__bases__", type_get_bases, type_set_bases, NULL},
@@ -7742,6 +7744,8 @@ object_set_class(PyObject *self, PyObject *value, void *closure)
 }
 
 static PyGetSetDef object_getsets[] = {
+    {"__shareable__", _PyObject_GetShareable, _PyObject_SetShareable,
+     PyDoc_STR("the object's sharing state (read-only)")},
     {"__class__", object_get_class, object_set_class,
      PyDoc_STR("the object's class")},
     {0}

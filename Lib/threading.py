@@ -41,9 +41,10 @@ _thread_shutdown = _thread._shutdown
 _make_thread_handle = _thread._make_thread_handle
 _ThreadHandle = _thread._ThreadHandle
 ThreadGroup = _thread.ThreadGroup
+Shareable = _thread.Shareable
 _current_thread_group = _thread._current_thread_group
 _main_thread_group = _sys.main_thread_group
-__all__.append('ThreadGroup')
+__all__.extend(('ThreadGroup', 'Shareable'))
 get_ident = _thread.get_ident
 _get_main_thread_ident = _thread._get_main_thread_ident
 _is_main_interpreter = _thread._is_main_interpreter

@@ -14,7 +14,7 @@ The five-stage implementation is **not complete**.
 | ThreadGroups | Group selection, serialization, detach/reattach, native identity, fork and Main lifetime | Parallel execution in the normal build |
 | One-time ABI change | Compact owner/state and group-biased RC header; no cleanup queue fields | Complete the allocation/GC port and audit native layouts |
 | Biased and deferred reference counting | Group bias, per-thread code counts, deferred stack roots and normal GC integration | Queue collection and reclamation with concurrent groups |
-| LOCAL and IMMUTABLE ownership | Builtin/static metadata, common C API returns, VM heap loads, attributes and call expansion | Public `__shareable__` state, remaining API/VM acquisitions and shared static extension ownership |
+| LOCAL and IMMUTABLE ownership | Builtin/static metadata, public `__shareable__` state, common C API returns, VM heap loads, attributes and call expansion | Remaining API/VM acquisitions and shared static extension ownership |
 | Parallel allocation and cyclic GC | Normal generational collector understands biased, deferred and per-thread counts | Concurrent allocation, internal world stops, owner-correct finalization and teardown |
 
 Freezing, protective/compound locks, synchronized objects and functions,
@@ -51,6 +51,13 @@ acquire counted references before finalization. Static immortal code objects
 are excluded from GC-prefix access. Shutdown disables further deferral and
 restores ordinary counts for survivors before late interpreter-dict cleanup.
 The normal VM's borrowed-reference optimizations are retained.
+
+Objects and types expose their state through the read-only `__shareable__`
+descriptor. `threading.Shareable.LOCAL` and `.IMMUTABLE` are native immutable
+singletons; reading the descriptor does not import `threading`. They support
+identity comparison, a read-only `name`, and the PEP's `Shareable.LOCAL` repr.
+No Python enum methods, mutable enum dictionaries, numeric enum contract or
+later-stage sharing states are needed for this interface.
 
 ThreadGroup is a managed static builtin type whose wrapper holds only an exact
 string or None. Main survives interpreter dictionaries, finalizers and type
@@ -136,6 +143,10 @@ Parallel scheduling tests remain skipped while the interpreter GIL is enabled.
   no new checks. Ownership passes `-R 3:3` (15 tests). A shadowed non-descriptor
   builtin function on the metatype is not acquired merely to inspect the class's
   own attribute; selected results remain checked.
+- Public sharing states: 641 tests passed across ownership, ThreadGroups,
+  threading, descriptors, classes, GC and embedding (14 skips). The ownership
+  suite passes `-R 3:3` (19 tests), including native foreign-group introspection,
+  immutable state constants and startup without importing `threading`.
 - The non-debug normal build at `19030fdd7f` passes 645 tests covering the first
   C API/VM acquisition changes (17 skips). This validation predates the thread
   entry and attribute acquisition changes.
