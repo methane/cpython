@@ -666,7 +666,9 @@ PyModule_AddStringConstant(PyObject *m, const char *name, const char *value)
 int
 PyModule_AddType(PyObject *module, PyTypeObject *type)
 {
-    if (!_PyType_IsReady(type) && PyType_Ready(type) < 0) {
+    /* Ready static types can outlive an interpreter. PyType_Ready also
+       refreshes their LOCAL ownership when Main is initialized again. */
+    if (PyType_Ready(type) < 0) {
         return -1;
     }
 

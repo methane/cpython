@@ -448,6 +448,25 @@ class EmbeddingTests(EmbeddingTestsMixin, unittest.TestCase):
         out, err = self.run_embedded_interpreter("test_repeated_simple_init")
         self.assertEqual(out, 'Finalized\n' * INIT_LOOPS)
 
+    @unittest.skipUnless(support.TEST_MODULES_ENABLED, "requires test modules")
+    def test_static_type_registration_after_reinit(self):
+        code = textwrap.dedent('''
+            import _testcapi
+            import _testinternalcapi
+            import threading
+
+            cls = _testcapi.LegacyGetAttr
+            assert cls.__shareable__ is threading.Shareable.LOCAL
+            owner = _testinternalcapi.object_owner_id
+            assert owner(cls) == owner(object())
+            instance = _testcapi.make_legacy_getattr(42)
+            assert type(instance) is cls
+            assert instance.value == 42
+            print('Tests passed')
+        ''')
+        out, err = self.run_embedded_interpreter("test_repeated_init_exec", code)
+        self.assertEqual(out, 'Tests passed\n' * INIT_LOOPS)
+
     @support.requires_specialization
     @unittest.skipUnless(support.TEST_MODULES_ENABLED, "requires test modules")
     def test_specialized_static_code_gets_unspecialized_at_Py_FINALIZE(self):

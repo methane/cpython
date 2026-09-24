@@ -20,6 +20,7 @@ the lazy-import registries. The next follow-up ports bootstrap lock state
 and freezes its sentinels; the default finder/loader pipeline still needs work.
 The finder follow-up shares the default registries and selected builtin
 loader entry points, and repairs private compiler and shutdown metadata paths.
+A further fix restores static-type registration after Main reinitialization.
 
 Sources: [PEP 805](https://peps.python.org/pep-0805/),
 [implementation appendix](https://peps.python.org/pep-0805/appendix-implementation/),
@@ -682,6 +683,31 @@ of `colorsys` now fails while acquiring `_imp.find_frozen`. Frozen-loader
 native helpers, external finder/loader dependencies and cached finder state
 remain implementation work that does not require Mark's feedback.
 
+### Re-registering static types after interpreter reinitialization
+
+The embedding failure above also occurs in the saved pre-finder baseline.
+`PyType_Ready` already refreshes a ready static type's LOCAL owner when
+Main is reinitialized, but `PyModule_AddType` bypassed that step for ready
+types. It now always calls `PyType_Ready`, preserving its fast ready-type
+path. A repeated-initialization regression imports `_testcapi`, verifies
+that `LegacyGetAttr` remains LOCAL with the current Main owner, and creates
+and uses an instance in every initialization cycle.
+
+This repair needs no new rule for simultaneous interpreters: the old Main
+has already been destroyed. Question 9 still concerns live interpreters
+sharing one static extension object.
+
+The new regression fails before the fix and passes afterward in all three
+builds, as does the original specialization/reinitialization test. The
+seven-file selection (`test_embed`, `test_static_type_access`, `test_module`,
+`test_capi.test_type`, `test_capi.test_import`, `test_import`, and
+`test_import_finder_access`) passes in the default build: 315 reported tests,
+20 skips. GIL/Tier 2 pass six files and report only the same six existing
+`test_import` failures (315 tests, nine skips). Verbose failure identities
+match the saved baseline exactly. Builds emit no compiler warnings, changed
+sources match across trees, and `git diff --check` passes. Logs:
+`/tmp/pep805-finders/reinit-*.log`.
+
 ## Earlier re-review and implementation follow-ups
 
 One earlier question was incorrect: footnote 3 of the
@@ -1124,6 +1150,11 @@ interpreters sharing a GIL. Currently each interpreter has a distinct Main
 ThreadGroup, and such a type belongs to the first group initializing it.
 Importing `_testcapi` in the second interpreter therefore rejects
 `matmulType`, even though the two interpreters are serialized by one GIL.
+
+Sequential destruction and recreation of Main is a separate case. The
+`PyModule_AddType` re-registration bug found by the embedding tests has
+been repaired without deciding the ownership of simultaneously live
+interpreters.
 
 Should these legacy interpreters share a Main ownership/serialization domain,
 or should interpreter-local Main groups admit such static extension globals
