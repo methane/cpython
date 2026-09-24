@@ -192,6 +192,10 @@ Parallel scheduling tests remain skipped while the interpreter GIL is enabled.
   and reverse sorting. The initial broader run exposed a regression in
   uninitialized tuple repr; the existing C API test passes after preserving
   its NULL-element display behavior.
+- The non-debug normal build at `1820814319` passes the same 1,716-test
+  selection (21 skips), plus 46 ownership/sorting tests with `mimalloc_debug`.
+  It retains `Py_GIL_DISABLED=0`, `Py_DEBUG=0`, an enabled interpreter GIL
+  and a 24-byte object header.
 - Owned GC worklists and tracking synchronization: 958 tests passed across
   GC, finalization, ThreadGroups, reclamation, weakrefs, embedding, threading,
   fork and C APIs (20 skips). GC, ThreadGroups and deferred reclamation pass
