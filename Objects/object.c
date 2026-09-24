@@ -940,8 +940,8 @@ free_object(void *obj)
 void
 _PyObject_ClearFreeLists(struct _Py_freelists *freelists, int is_finalization)
 {
-    // In the free-threaded build, freelists are per-PyThreadState and cleared in PyThreadState_Clear()
-    // In the default build, freelists are per-interpreter and cleared in finalize_interp_types()
+    // Freelist storage belongs to a thread state in every build. Thread-state
+    // finalization disables further caching; full GC only empties the caches.
     clear_freelist(&freelists->floats, is_finalization, free_object);
     clear_freelist(&freelists->complexes, is_finalization, free_object);
     for (Py_ssize_t i = 0; i < PyTuple_MAXSAVESIZE; i++) {

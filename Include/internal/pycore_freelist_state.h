@@ -35,8 +35,8 @@ extern "C" {
 // A generic freelist of either PyObjects or other data structures.
 struct _Py_freelist {
     // Entries are linked together using the first word of the object.
-    // For PyObjects, this overlaps with the `ob_refcnt` field or the `ob_tid`
-    // field.
+    // For PyObjects, this overlaps with the owner ID, local reference count,
+    // sharing state and flags. Allocation reinitializes these header fields.
     void *freelist;
 
     // The number of items in the free list or -1 if the free list is disabled

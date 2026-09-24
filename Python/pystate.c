@@ -1895,11 +1895,10 @@ PyThreadState_Clear(PyThreadState *tstate)
     // Flush this thread's deferred immutable counts before abandoning it.
     _PyObject_FinalizePerThreadRefcounts((_PyThreadStateImpl *)tstate);
 
-#ifdef Py_GIL_DISABLED
-    // Each thread should clear own freelists in free-threading builds.
-    struct _Py_freelists *freelists = _Py_freelists_GET();
-    _PyObject_ClearFreeLists(freelists, 1);
+    // The target can differ from the current thread during shutdown or fork.
+    _PyObject_ClearFreeLists(&((_PyThreadStateImpl *)tstate)->freelists, 1);
 
+#ifdef Py_GIL_DISABLED
     // Flush the thread's local GC allocation count to the global count
     // before the thread state is cleared, otherwise the count is lost.
     _PyThreadStateImpl *tstate_impl = (_PyThreadStateImpl *)tstate;

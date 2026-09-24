@@ -21,13 +21,8 @@ _Py_freelists_GET(void)
     _Py_AssertHoldsTstate();
 #endif
 
-#ifdef Py_GIL_DISABLED
     PyThreadState *tstate = _PyThreadState_GET();
     return &((_PyThreadStateImpl*)tstate)->freelists;
-#else
-    PyInterpreterState *interp = _PyInterpreterState_GET();
-    return &interp->object_state.freelists;
-#endif
 }
 
 // Pushes `op` to the freelist, calls `freefunc` if the freelist is full

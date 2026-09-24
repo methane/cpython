@@ -10,7 +10,6 @@
 #include "pycore_exceptions.h"    // _PyExc_InitTypes()
 #include "pycore_fileutils.h"     // _Py_ResetForceASCII()
 #include "pycore_floatobject.h"   // _PyFloat_InitTypes()
-#include "pycore_freelist.h"      // _PyObject_ClearFreeLists()
 #include "pycore_global_objects_fini_generated.h"  // _PyStaticObjects_CheckAll()
 #include "pycore_initconfig.h"    // _PyStatus_OK()
 #include "pycore_interpolation.h" // _PyInterpolation_InitTypes()
@@ -2103,13 +2102,6 @@ finalize_interp_types(PyInterpreterState *interp)
     _PyUnicode_ClearInterned(interp);
 
     _PyUnicode_Fini(interp);
-
-#ifndef Py_GIL_DISABLED
-    // With Py_GIL_DISABLED:
-    // the freelists for the current thread state have already been cleared.
-    struct _Py_freelists *freelists = _Py_freelists_GET();
-    _PyObject_ClearFreeLists(freelists, 1);
-#endif
 
 #ifdef Py_DEBUG
     _PyStaticObjects_CheckAll(interp);

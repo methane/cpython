@@ -15,7 +15,7 @@ The five-stage implementation is **not complete**.
 | One-time ABI change | Compact owner/state and group-biased RC header; no cleanup queue fields | Complete the allocation/GC port and audit native layouts |
 | Biased and deferred reference counting | Group bias, per-thread code counts, deferred stack roots and normal GC integration | Queue collection and reclamation with concurrent groups |
 | LOCAL and IMMUTABLE ownership | Builtin/static metadata, public `__shareable__` state, common C API returns, VM heap loads, attributes and call expansion | Remaining API/VM acquisitions and shared static extension ownership |
-| Parallel allocation and cyclic GC | Normal generational collector understands biased, deferred and per-thread counts | Concurrent allocation, internal world stops, owner-correct finalization and teardown |
+| Parallel allocation and cyclic GC | Per-thread freelists; normal generational collector understands biased, deferred and per-thread counts | Concurrent allocation, internal world stops, owner-correct finalization and teardown |
 
 Freezing, protective/compound locks, synchronized objects and functions,
 TransferBox, Channel, the debugger StopTheWorld API, and performance work are
@@ -38,6 +38,12 @@ The shared count retains PEP 703's two flag bits. Local overflow merges the
 count into the shared field instead of making the object immortal.
 There is no object mutex, OS-thread ID or deferred-cleanup linkage in the header.
 GC-tracked objects currently retain the normal collector's separate GC prefix.
+
+Object freelists are per-thread in the normal build too. Full GC clears all
+thread caches, and thread-state clearing disables the target state's caches,
+including when another thread performs the cleanup. The underlying allocator
+and collector still require the interpreter GIL; this is preparation for their
+parallel implementation.
 
 Deferred counting is restricted to immutable GC-tracked objects. Per-thread
 counts currently supplement the group bias for code objects; LOCAL heap types
@@ -147,6 +153,14 @@ Parallel scheduling tests remain skipped while the interpreter GIL is enabled.
   threading, descriptors, classes, GC and embedding (14 skips). The ownership
   suite passes `-R 3:3` (19 tests), including native foreign-group introspection,
   immutable state constants and startup without importing `threading`.
+- Per-thread freelists: 413 tests passed across ThreadGroups, GC, embedding and
+  threading (13 skips). The native probe exercises reuse within a thread,
+  isolation between threads in the same or different groups, collection of a
+  detached worker's cache, and clearing by its owner or another thread.
+  ThreadGroups, ownership and GC pass `-R 3:3` (97 tests, 3 skips). The broader
+  allocation run also passed float, complex, tuple, list, dict, range, generator,
+  async-generator, context and memory API suites; its first version exposed an
+  invalid test cleanup, fixed before the successful lifecycle/leak runs.
 - The non-debug normal build at `19030fdd7f` passes 645 tests covering the first
   C API/VM acquisition changes (17 skips). This validation predates the thread
   entry and attribute acquisition changes.

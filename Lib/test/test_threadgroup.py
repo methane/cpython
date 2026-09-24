@@ -29,6 +29,13 @@ _testinternalcapi.check_main_group_lifetime()
         internal = import_helper.import_module("_testinternalcapi")
         internal.test_threadgroup_refcount_overflow()
 
+    def test_thread_local_freelists(self):
+        internal = import_helper.import_module('_testinternalcapi')
+        for group in (sys.main_thread_group, threading.ThreadGroup('allocation')):
+            for clear_elsewhere in (False, True):
+                with self.subTest(group=group, clear_elsewhere=clear_elsewhere):
+                    internal.threadgroup_freelist_probe(group, clear_elsewhere)
+
     def test_default_context_compatibility(self):
         script_helper.assert_python_ok('-c', '''
 import contextvars

@@ -2,6 +2,7 @@
    Python containers between groups. */
 #include "parts.h"
 #include "pycore_code.h"
+#include "pycore_freelist.h"
 #include "pycore_lock.h"
 #include "pycore_object.h"
 #include "pycore_object_deferred.h"
@@ -1259,7 +1260,145 @@ threadgroup_vm_probe(PyObject *self, PyObject *args)
     return PyBool_FromLong(probe.base.accessible);
 }
 
+struct freelist_probe {
+    PyInterpreterState *interp;
+    _PyThreadGroupState *group;
+    PyEvent ready;
+    PyEvent collected;
+    PyEvent detached;
+    PyEvent cleared;
+    uintptr_t caller_cached;
+    PyThreadState *to_clear;
+    int clear_elsewhere;
+    int ok;
+};
+
+static void
+freelist_probe_worker(void *arg)
+{
+    struct freelist_probe *probe = arg;
+    PyThreadState *tstate = PyThreadState_New(probe->interp);
+    if (tstate == NULL) {
+        _PyEvent_Notify(&probe->ready);
+        _PyEvent_Notify(&probe->detached);
+        return;
+    }
+    _PyThreadGroup_Decref(tstate->threadgroup);
+    tstate->threadgroup = probe->group;
+    _PyThreadGroup_Incref(probe->group);
+    PyEval_AcquireThread(tstate);
+
+    PyObject *value = PyFloat_FromDouble(1.25);
+    struct _Py_freelists *freelists = _Py_freelists_GET();
+    if (value != NULL) {
+        uintptr_t address = (uintptr_t)value;
+        probe->ok = address != probe->caller_cached &&
+            value->ob_owner_id == tstate->threadgroup->id;
+        Py_DECREF(value);
+        // Allocation in this thread reuses its own cache and resets the header.
+        value = PyFloat_FromDouble(2.5);
+        probe->ok &= value != NULL && (uintptr_t)value == address &&
+            value->ob_owner_id == tstate->threadgroup->id &&
+            PyFloat_AS_DOUBLE(value) == 2.5;
+        Py_XDECREF(value);
+    }
+    _PyEvent_Notify(&probe->ready);
+    if (!PyEvent_WaitTimed(&probe->collected, 10000000000LL, 1)) {
+        probe->ok = 0;
+    }
+    // Full GC must clear the detached worker's cache as well as its caller's.
+    probe->ok &= freelists->floats.size == 0;
+    value = PyFloat_FromDouble(3.75);
+    probe->ok &= value != NULL;
+    Py_XDECREF(value);
+    probe->ok &= freelists->floats.size == 1;
+    PyErr_Clear();
+    if (probe->clear_elsewhere) {
+        probe->to_clear = tstate;
+        PyEval_ReleaseThread(tstate);
+        _PyEvent_Notify(&probe->detached);
+        PyEvent_Wait(&probe->cleared);
+        // Unbind on the OS thread which owns the GILState TLS slot.
+        PyThreadState_Delete(tstate);
+    }
+    else {
+        PyThreadState_Clear(tstate);
+        probe->ok &= freelists->floats.size == -1 &&
+            freelists->floats.freelist == NULL;
+        PyThreadState_DeleteCurrent();
+    }
+}
+
+static PyObject *
+threadgroup_freelist_probe(PyObject *self, PyObject *args)
+{
+    PyObject *group;
+    int clear_elsewhere;
+    if (!PyArg_ParseTuple(args, "Op:threadgroup_freelist_probe",
+                          &group, &clear_elsewhere)) {
+        return NULL;
+    }
+    _PyThreadGroupState *state = _PyThreadGroup_GetState(group);
+    if (state == NULL) {
+        return NULL;
+    }
+    PyObject *value = PyFloat_FromDouble(0.625);
+    if (value == NULL) {
+        _PyThreadGroup_Decref(state);
+        return NULL;
+    }
+    struct freelist_probe probe = {
+        .interp = PyInterpreterState_Get(),
+        .group = state,
+        .caller_cached = (uintptr_t)value,
+        .clear_elsewhere = clear_elsewhere,
+    };
+    Py_DECREF(value);
+    PyThread_ident_t ident;
+    PyThread_handle_t handle;
+    if (PyThread_start_joinable_thread(freelist_probe_worker, &probe,
+                                       &ident, &handle) != 0) {
+        _PyThreadGroup_Decref(state);
+        return PyErr_Format(PyExc_RuntimeError, "failed to start freelist probe");
+    }
+    int ok = PyEvent_WaitTimed(&probe.ready, 10000000000LL, 1);
+    PyGC_Collect();
+    struct _Py_freelists *freelists = _Py_freelists_GET();
+    ok &= freelists->floats.size == 0;
+    _PyEvent_Notify(&probe.collected);
+    if (clear_elsewhere) {
+        PyEvent_Wait(&probe.detached);
+    }
+    if (clear_elsewhere && probe.to_clear != NULL) {
+        value = PyFloat_FromDouble(4.5);
+        ok &= value != NULL;
+        Py_XDECREF(value);
+        void *cached = freelists->floats.freelist;
+        Py_ssize_t size = freelists->floats.size;
+        PyThreadState_Clear(probe.to_clear);
+        struct _Py_freelists *other =
+            &((_PyThreadStateImpl *)probe.to_clear)->freelists;
+        ok &= other->floats.size == -1 && other->floats.freelist == NULL;
+        // Clearing another state must not disable or empty our own cache.
+        ok &= size > 0 && freelists->floats.size == size &&
+            freelists->floats.freelist == cached;
+    }
+    _PyEvent_Notify(&probe.cleared);
+    Py_BEGIN_ALLOW_THREADS
+    PyThread_join_thread(handle);
+    Py_END_ALLOW_THREADS
+    _PyThreadGroup_Decref(state);
+    if (PyErr_Occurred()) {
+        return NULL;
+    }
+    if (!ok || !probe.ok) {
+        return PyErr_Format(PyExc_AssertionError, "thread-local freelist probe failed");
+    }
+    Py_RETURN_NONE;
+}
+
 static PyMethodDef methods[] = {
+    {"threadgroup_freelist_probe", threadgroup_freelist_probe, METH_VARARGS, NULL},
     {"make_access_descriptor", make_access_descriptor, METH_NOARGS, NULL},
     {"access_descriptor_calls", access_descriptor_calls, METH_O, NULL},
     {"threadgroup_vm_probe", threadgroup_vm_probe, METH_VARARGS, NULL},
