@@ -1349,6 +1349,60 @@ assert 'threading' not in sys.modules
                     (True, (value,), (list, error, path)), 0))
                 self.assertEqual(internal.container_element_calls(value), 0)
 
+    def test_generic_alias_substitution_metadata(self):
+        class LocalClass:
+            pass
+
+        def probe():
+            origin, error, rejected, path, later = source[2]
+            type_type = ().__class__.__class__
+            Parameter = type_type('Parameter', (), {'__typing_subst__': consumer})
+            parameter = Parameter()
+            if path == 'parameters':
+                def getitem(self, arguments):
+                    return 42
+
+                parameters = ((parameter,) if later else ()) + source[1]
+                Nested = type_type('Nested', (), {
+                    '__parameters__': parameters,
+                    '__getitem__': getitem,
+                })
+                alias = origin[Nested()]
+                assert alias.__parameters__.__len__() == parameters.__len__()
+                arguments = (0,) * parameters.__len__()
+            else:
+                values = [parameter]
+                args = (parameter, values) if later else (values,)
+                alias = origin[args]
+                assert alias.__parameters__ == (parameter,)
+                # Mutating a nested list does not invalidate cached parameters.
+                values[:] = source[1]
+                arguments = (0,)
+            original_args = alias.__args__
+            for attempt in (0, 1):
+                try:
+                    alias[arguments]
+                except error:
+                    assert rejected
+                else:
+                    assert not rejected
+                assert alias.__args__ is original_args
+            return True
+
+        for value in (1, LocalClass, internal.make_container_element(False),
+                      internal.make_container_element(True)):
+            immutable = value.__shareable__ is threading.Shareable.IMMUTABLE
+            for path in ('parameters', 'nested list'):
+                for later in (False, True):
+                    for group in (sys.main_thread_group, self.foreign):
+                        rejected = not immutable and group is self.foreign
+                        with self.subTest(value_type=type(value), path=path,
+                                          later=later, group=group):
+                            self.assertTrue(internal.threadgroup_vm_probe(
+                                probe.__code__, group,
+                                (True, (value,), (list, IllegalThreadAccessException,
+                                 rejected, path, later)), 0))
+
     def test_exception_argument_formatting(self):
         for exception_type in (BaseException, Exception, KeyError, AttributeError):
             for method in ('__str__', '__repr__'):

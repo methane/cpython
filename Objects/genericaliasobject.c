@@ -435,7 +435,11 @@ _Py_subs_parameters(PyObject *self, PyObject *args, PyObject *parameters, PyObje
         return NULL;
     }
     for (Py_ssize_t i = 0; i < nparams; i++) {
-        PyObject *param = PyTuple_GET_ITEM(parameters, i);
+        PyObject *param = PyObject_CheckAccess(PyTuple_GET_ITEM(parameters, i));
+        if (param == NULL) {
+            Py_DECREF(item);
+            return NULL;
+        }
         PyObject *prepare, *tmp;
         if (PyObject_GetOptionalAttr(param, &_Py_ID(__typing_prepare_subst__), &prepare) < 0) {
             Py_DECREF(item);
@@ -490,7 +494,13 @@ _Py_subs_parameters(PyObject *self, PyObject *args, PyObject *parameters, PyObje
         return NULL;
     }
     for (Py_ssize_t iarg = 0, jarg = 0; iarg < nargs; iarg++) {
-        PyObject *arg = PyTuple_GET_ITEM(args, iarg);
+        PyObject *arg = PyObject_CheckAccess(PyTuple_GET_ITEM(args, iarg));
+        if (arg == NULL) {
+            Py_DECREF(newargs);
+            Py_DECREF(item);
+            Py_XDECREF(tuple_args);
+            return NULL;
+        }
         if (PyType_Check(arg)) {
             PyTuple_SET_ITEM(newargs, jarg, Py_NewRef(arg));
             jarg++;
