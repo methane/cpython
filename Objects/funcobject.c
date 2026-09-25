@@ -31,15 +31,17 @@ static void
 notify_func_watchers(PyInterpreterState *interp, PyFunction_WatchEvent event,
                      PyFunctionObject *func, PyObject *new_value)
 {
-    uint8_t bits = interp->active_func_watchers;
+    uint8_t bits = _Py_atomic_load_uint8_relaxed(&interp->active_func_watchers);
     int i = 0;
     while (bits) {
         assert(i < FUNC_MAX_WATCHERS);
         if (bits & 1) {
+            PyMutex_LockFlags(&interp->func_state.mutex, 0);
             PyFunction_WatchCallback cb = interp->func_watchers[i];
-            // callback must be non-null if the watcher bit is set
-            assert(cb != NULL);
-            if (cb(event, func, new_value) < 0) {
+            PyMutex_Unlock(&interp->func_state.mutex);
+            // A preceding callback or another group may have cleared this
+            // watcher. Call outside the lock so callbacks can register/clear.
+            if (cb != NULL && cb(event, func, new_value) < 0) {
                 PyErr_FormatUnraisable(
                     "Exception ignored in %s watcher callback for function %U at %p",
                     func_event_name(event), func->func_qualname, func);
@@ -57,7 +59,7 @@ handle_func_event(PyFunction_WatchEvent event, PyFunctionObject *func,
     assert(Py_REFCNT(func) > 0);
     PyInterpreterState *interp = _PyInterpreterState_GET();
     assert(interp->_initialized);
-    if (interp->active_func_watchers) {
+    if (_Py_atomic_load_uint8_relaxed(&interp->active_func_watchers)) {
         notify_func_watchers(interp, event, func, new_value);
     }
     switch (event) {
@@ -84,13 +86,18 @@ PyFunction_AddWatcher(PyFunction_WatchCallback callback)
 {
     PyInterpreterState *interp = _PyInterpreterState_GET();
     assert(interp->_initialized);
+    PyMutex_LockFlags(&interp->func_state.mutex, 0);
     for (int i = 0; i < FUNC_MAX_WATCHERS; i++) {
         if (interp->func_watchers[i] == NULL) {
             interp->func_watchers[i] = callback;
-            interp->active_func_watchers |= (1 << i);
+            uint8_t bits = _Py_atomic_load_uint8_relaxed(&interp->active_func_watchers);
+            _Py_atomic_store_uint8_relaxed(&interp->active_func_watchers,
+                                           bits | (1 << i));
+            PyMutex_Unlock(&interp->func_state.mutex);
             return i;
         }
     }
+    PyMutex_Unlock(&interp->func_state.mutex);
     PyErr_SetString(PyExc_RuntimeError, "no more func watcher IDs available");
     return -1;
 }
@@ -104,13 +111,18 @@ PyFunction_ClearWatcher(int watcher_id)
                      watcher_id);
         return -1;
     }
+    PyMutex_LockFlags(&interp->func_state.mutex, 0);
     if (!interp->func_watchers[watcher_id]) {
+        PyMutex_Unlock(&interp->func_state.mutex);
         PyErr_Format(PyExc_ValueError, "no func watcher set for ID %d",
                      watcher_id);
         return -1;
     }
     interp->func_watchers[watcher_id] = NULL;
-    interp->active_func_watchers &= ~(1 << watcher_id);
+    uint8_t bits = _Py_atomic_load_uint8_relaxed(&interp->active_func_watchers);
+    _Py_atomic_store_uint8_relaxed(&interp->active_func_watchers,
+                                   bits & ~(1 << watcher_id));
+    PyMutex_Unlock(&interp->func_state.mutex);
     return 0;
 }
 PyFunctionObject *

@@ -409,6 +409,32 @@ assert internal.threadgroup_probe(
     groups, 5, support.SHORT_TIMEOUT, True) == (True, True)
 ''', PYTHONMALLOC='debug')
 
+    def test_parallel_code_function_watchers(self):
+        script_helper.assert_python_ok('-c', '''
+import faulthandler
+import threading
+from test import support
+import _testinternalcapi as internal
+
+faulthandler.dump_traceback_later(support.LONG_TIMEOUT, exit=True)
+groups = (threading.ThreadGroup('first'), threading.ThreadGroup('second'))
+assert internal.threadgroup_probe(
+    groups, 8, support.SHORT_TIMEOUT, True) == (True, True)
+''', PYTHONMALLOC='debug')
+
+    def test_watcher_cleared_during_notification(self):
+        for code_watcher in (False, True):
+            with self.subTest(code_watcher=code_watcher):
+                script_helper.assert_python_ok('-c', '''
+import faulthandler
+import sys
+from test import support
+import _testinternalcapi as internal
+
+faulthandler.dump_traceback_later(support.LONG_TIMEOUT, exit=True)
+internal.threadgroup_watcher_clear_probe(sys.argv[1] == 'True')
+''', str(code_watcher))
+
     def test_parallel_local_functions(self):
         script_helper.assert_python_ok('-c', '''
 import faulthandler

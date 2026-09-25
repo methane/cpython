@@ -975,15 +975,17 @@ interpreter_clear(PyInterpreterState *interp, PyThreadState *tstate)
         interp->type_watchers[i] = NULL;
     }
 
+    PyMutex_LockFlags(&interp->func_state.mutex, 0);
     for (int i=0; i < FUNC_MAX_WATCHERS; i++) {
         interp->func_watchers[i] = NULL;
     }
-    interp->active_func_watchers = 0;
+    _Py_atomic_store_uint8_relaxed(&interp->active_func_watchers, 0);
 
     for (int i=0; i < CODE_MAX_WATCHERS; i++) {
         interp->code_watchers[i] = NULL;
     }
-    interp->active_code_watchers = 0;
+    _Py_atomic_store_uint8_relaxed(&interp->active_code_watchers, 0);
+    PyMutex_Unlock(&interp->func_state.mutex);
 
     for (int i=0; i < CONTEXT_MAX_WATCHERS; i++) {
         interp->context_watchers[i] = NULL;

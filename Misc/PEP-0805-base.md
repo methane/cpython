@@ -168,6 +168,15 @@ workers create and retire 32,768 code/function pairs across two groups, invalida
 function versions and run GC, then check that every code version was unique.
 This does not change the LOCAL state of Python functions or permit sharing them.
 
+Code and function watcher registrations, removals and notification lookups use
+that mutex too. Their active bit masks are atomic fast filters; each callback
+pointer is read under the mutex and invoked after unlocking. Empty slots are
+skipped, including those cleared by an earlier callback in the same notification.
+Error construction and callback execution never hold the registry mutex, so
+callbacks may re-enter the registration APIs. Shutdown clears these registries
+under the same mutex. Native workers repeatedly register and remove watchers
+while creating, modifying and destroying their own functions and code objects.
+
 Interpreter-wide rare-event counters also use atomic accesses, with saturating
 compare/exchange increments. Independent groups can modify their own LOCAL
 functions concurrently; those updates must not lose counts or overwrite a
@@ -364,6 +373,16 @@ flags/events rather than foreign LOCAL Python functions or mutable results.
 The default-path parallel scheduling test remains skipped while the interpreter
 GIL is enabled. The isolated native probe additionally tests real parallelism.
 
+- Code/function watcher registries: debug and release normal builds each pass
+  395 tests across nine files (10 and 15 skips), including watcher APIs, code,
+  functions, groups, ownership, GC, embedding and fork. Before the change,
+  clearing a later watcher from an earlier callback aborts both code and
+  function notification, and TSan reports competing registrations in
+  `PyCode_AddWatcher`. After the change, both new tests pass under TSan without
+  suppressions. The native parallel fixture creates 4,096 code/function pairs
+  while registering/removing both kinds of watcher in each group.
+  Logs: `test-watcher-clear-before-verbose.log`, `tsan-watchers-before.log`,
+  `tsan-watchers-after.log` and `test-watchers-*`.
 - Concurrent runtime metadata: debug and release normal builds each pass 679
   tests across twelve files (6 and 9 skips), covering types, attribute caches,
   functions, watchers, counters, groups, ownership, GC and generated VM cases.

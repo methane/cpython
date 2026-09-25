@@ -123,6 +123,121 @@ struct group_probe {
 
 #define PARALLEL_CODE_COUNT 16384
 
+static int
+noop_code_watcher(PyCodeEvent event, PyCodeObject *code)
+{
+    return 0;
+}
+
+static int
+noop_func_watcher(PyFunction_WatchEvent event, PyFunctionObject *func,
+                  PyObject *value)
+{
+    return 0;
+}
+
+// The clearing probe runs in an isolated process with one Python thread.
+static int watcher_to_clear = -1;
+static int cleared_watcher_calls;
+
+static int
+clear_later_code_watcher(PyCodeEvent event, PyCodeObject *code)
+{
+    if (watcher_to_clear >= 0) {
+        if (PyCode_ClearWatcher(watcher_to_clear) < 0) {
+            return -1;
+        }
+        watcher_to_clear = -1;
+    }
+    return 0;
+}
+
+static int
+clear_later_func_watcher(PyFunction_WatchEvent event, PyFunctionObject *func,
+                        PyObject *value)
+{
+    if (watcher_to_clear >= 0) {
+        if (PyFunction_ClearWatcher(watcher_to_clear) < 0) {
+            return -1;
+        }
+        watcher_to_clear = -1;
+    }
+    return 0;
+}
+
+static int
+cleared_code_watcher(PyCodeEvent event, PyCodeObject *code)
+{
+    cleared_watcher_calls++;
+    return 0;
+}
+
+static int
+cleared_func_watcher(PyFunction_WatchEvent event, PyFunctionObject *func,
+                     PyObject *value)
+{
+    cleared_watcher_calls++;
+    return 0;
+}
+
+static PyObject *
+threadgroup_watcher_clear_probe(PyObject *self, PyObject *arg)
+{
+    int code_watcher = PyObject_IsTrue(arg);
+    if (code_watcher < 0) {
+        return NULL;
+    }
+    PyObject *globals = PyDict_New();
+    PyObject *code = (PyObject *)PyCode_NewEmpty("watcher-clear", "probe", 1);
+    if (globals == NULL || code == NULL) {
+        Py_XDECREF(globals);
+        Py_XDECREF(code);
+        return NULL;
+    }
+    int first = code_watcher ? PyCode_AddWatcher(clear_later_code_watcher) :
+                              PyFunction_AddWatcher(clear_later_func_watcher);
+    if (first < 0) {
+        Py_DECREF(globals);
+        Py_DECREF(code);
+        return NULL;
+    }
+    cleared_watcher_calls = 0;
+    watcher_to_clear = code_watcher ? PyCode_AddWatcher(cleared_code_watcher) :
+                                     PyFunction_AddWatcher(cleared_func_watcher);
+    PyObject *watched = NULL;
+    if (watcher_to_clear >= 0) {
+        watched = code_watcher ?
+            (PyObject *)PyCode_NewEmpty("watcher-clear", "watched", 1) :
+            PyFunction_New(code, globals);
+    }
+    int ok = watched != NULL && watcher_to_clear == -1 &&
+             cleared_watcher_calls == 0;
+    if (code_watcher) {
+        PyCode_ClearWatcher(first);
+        if (watcher_to_clear >= 0) {
+            PyCode_ClearWatcher(watcher_to_clear);
+        }
+    }
+    else {
+        PyFunction_ClearWatcher(first);
+        if (watcher_to_clear >= 0) {
+            PyFunction_ClearWatcher(watcher_to_clear);
+        }
+    }
+    watcher_to_clear = -1;
+    Py_XDECREF(watched);
+    Py_DECREF(code);
+    Py_DECREF(globals);
+    if (PyErr_Occurred()) {
+        return NULL;
+    }
+    if (!ok) {
+        return PyErr_Format(PyExc_AssertionError,
+                            "a cleared watcher received a later notification");
+    }
+    Py_RETURN_NONE;
+}
+
 static PyObject *
 parallel_lookup_types(void)
 {
@@ -284,26 +399,41 @@ parallel_code_worker(struct group_probe *probe, PyThreadState *tstate)
     }
     Py_DECREF(builtins);
     int ok = 1;
-    for (int i = 0; i < PARALLEL_CODE_COUNT; i++) {
+    int iterations = probe->mode == 8 ? 2048 : PARALLEL_CODE_COUNT;
+    for (int i = 0; i < iterations; i++) {
+        int code_watcher = -1;
+        int func_watcher = -1;
+        if (probe->mode == 8) {
+            code_watcher = PyCode_AddWatcher(noop_code_watcher);
+            func_watcher = PyFunction_AddWatcher(noop_func_watcher);
+        }
         PyCodeObject *code = PyCode_NewEmpty("parallel-code", "probe", 1);
-        if (code == NULL) {
+        PyObject *func = NULL;
+        if (code == NULL || (probe->mode == 8 &&
+                            (code_watcher < 0 || func_watcher < 0))) {
             ok = 0;
-            break;
+            goto iteration_done;
         }
         probe->versions[i] = code->co_version;
         probe->version_count++;
-        PyObject *func = PyFunction_New((PyObject *)code, globals);
+        func = PyFunction_New((PyObject *)code, globals);
         if (func == NULL) {
-            Py_DECREF(code);
             ok = 0;
-            break;
+            goto iteration_done;
         }
         _PyFunction_SetVersion((PyFunctionObject *)func, code->co_version);
         if (i % 64 == 0 && PyFunction_SetDefaults(func, Py_None) < 0) {
             ok = 0;
         }
-        Py_DECREF(func);
-        Py_DECREF(code);
+iteration_done:
+        Py_XDECREF(func);
+        Py_XDECREF(code);
+        if (code_watcher >= 0 && PyCode_ClearWatcher(code_watcher) < 0) {
+            ok = 0;
+        }
+        if (func_watcher >= 0 && PyFunction_ClearWatcher(func_watcher) < 0) {
+            ok = 0;
+        }
         if (i % 256 == 0) {
             PyGC_Collect();
         }
@@ -506,7 +636,7 @@ group_probe_worker(void *arg)
         probe->ok = parallel_intern_worker(probe, tstate);
     }
 
-    if (probe->ok && probe->mode == 5) {
+    if (probe->ok && (probe->mode == 5 || probe->mode == 8)) {
         probe->ok = parallel_code_worker(probe, tstate);
     }
 
@@ -585,7 +715,7 @@ threadgroup_probe(PyObject *self, PyObject *args)
                           &groups, &mode, &seconds, &parallel, &PyCode_Type, &code)) {
         return NULL;
     }
-    if (PyTuple_GET_SIZE(groups) != 2 || mode < 0 || mode > 7 ||
+    if (PyTuple_GET_SIZE(groups) != 2 || mode < 0 || mode > 8 ||
         !(seconds > 0.0 && seconds <= 300.0) ||
         ((mode == 6) != (code != NULL)) ||
         (code != NULL && ((PyCodeObject *)code)->co_nfreevars != 0)) {
@@ -644,7 +774,7 @@ threadgroup_probe(PyObject *self, PyObject *args)
             return NULL;
         }
     }
-    if (mode == 5 || mode == 6) {
+    if (mode == 5 || mode == 6 || mode == 8) {
         versions = PyMem_RawCalloc(2 * PARALLEL_CODE_COUNT, sizeof(*versions));
         if (versions == NULL) {
             return PyErr_NoMemory();
@@ -775,7 +905,7 @@ done:
             if (versions[i] == versions[i - 1]) {
                 PyErr_Format(PyExc_AssertionError,
                              "parallel %s creation reused version %u",
-                             mode == 5 ? "code" : "dictionary", versions[i]);
+                             mode == 6 ? "dictionary" : "code", versions[i]);
                 break;
             }
         }
@@ -3735,6 +3865,7 @@ static PyMethodDef methods[] = {
     {"test_threadgroup_refcount_overflow", test_threadgroup_refcount_overflow,
      METH_NOARGS, NULL},
     {"threadgroup_probe", threadgroup_probe, METH_VARARGS, NULL},
+    {"threadgroup_watcher_clear_probe", threadgroup_watcher_clear_probe, METH_O, NULL},
     {NULL, NULL},
 };
 

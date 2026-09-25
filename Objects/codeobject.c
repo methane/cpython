@@ -46,15 +46,17 @@ notify_code_watchers(PyCodeEvent event, PyCodeObject *co)
     assert(Py_REFCNT(co) > 0);
     PyInterpreterState *interp = _PyInterpreterState_GET();
     assert(interp->_initialized);
-    uint8_t bits = interp->active_code_watchers;
+    uint8_t bits = _Py_atomic_load_uint8_relaxed(&interp->active_code_watchers);
     int i = 0;
     while (bits) {
         assert(i < CODE_MAX_WATCHERS);
         if (bits & 1) {
+            PyMutex_LockFlags(&interp->func_state.mutex, 0);
             PyCode_WatchCallback cb = interp->code_watchers[i];
-            // callback must be non-null if the watcher bit is set
-            assert(cb != NULL);
-            if (cb(event, co) < 0) {
+            PyMutex_Unlock(&interp->func_state.mutex);
+            // A preceding callback or another group may have cleared this
+            // watcher. Call outside the lock so callbacks can register/clear.
+            if (cb != NULL && cb(event, co) < 0) {
                 PyErr_FormatUnraisable(
                     "Exception ignored in %s watcher callback for %R",
                     code_event_name(event), co);
@@ -71,30 +73,21 @@ PyCode_AddWatcher(PyCode_WatchCallback callback)
     PyInterpreterState *interp = _PyInterpreterState_GET();
     assert(interp->_initialized);
 
+    // Code and function watchers share the function-version state mutex.
+    PyMutex_LockFlags(&interp->func_state.mutex, 0);
     for (int i = 0; i < CODE_MAX_WATCHERS; i++) {
         if (!interp->code_watchers[i]) {
             interp->code_watchers[i] = callback;
-            interp->active_code_watchers |= (1 << i);
+            uint8_t bits = _Py_atomic_load_uint8_relaxed(&interp->active_code_watchers);
+            _Py_atomic_store_uint8_relaxed(&interp->active_code_watchers,
+                                           bits | (1 << i));
+            PyMutex_Unlock(&interp->func_state.mutex);
             return i;
         }
     }
-
+    PyMutex_Unlock(&interp->func_state.mutex);
     PyErr_SetString(PyExc_RuntimeError, "no more code watcher IDs available");
     return -1;
-}
-
-static inline int
-validate_watcher_id(PyInterpreterState *interp, int watcher_id)
-{
-    if (watcher_id < 0 || watcher_id >= CODE_MAX_WATCHERS) {
-        PyErr_Format(PyExc_ValueError, "Invalid code watcher ID %d", watcher_id);
-        return -1;
-    }
-    if (!interp->code_watchers[watcher_id]) {
-        PyErr_Format(PyExc_ValueError, "No code watcher set for ID %d", watcher_id);
-        return -1;
-    }
-    return 0;
 }
 
 int
@@ -102,11 +95,21 @@ PyCode_ClearWatcher(int watcher_id)
 {
     PyInterpreterState *interp = _PyInterpreterState_GET();
     assert(interp->_initialized);
-    if (validate_watcher_id(interp, watcher_id) < 0) {
+    if (watcher_id < 0 || watcher_id >= CODE_MAX_WATCHERS) {
+        PyErr_Format(PyExc_ValueError, "Invalid code watcher ID %d", watcher_id);
+        return -1;
+    }
+    PyMutex_LockFlags(&interp->func_state.mutex, 0);
+    if (!interp->code_watchers[watcher_id]) {
+        PyMutex_Unlock(&interp->func_state.mutex);
+        PyErr_Format(PyExc_ValueError, "No code watcher set for ID %d", watcher_id);
         return -1;
     }
     interp->code_watchers[watcher_id] = NULL;
-    interp->active_code_watchers &= ~(1 << watcher_id);
+    uint8_t bits = _Py_atomic_load_uint8_relaxed(&interp->active_code_watchers);
+    _Py_atomic_store_uint8_relaxed(&interp->active_code_watchers,
+                                   bits & ~(1 << watcher_id));
+    PyMutex_Unlock(&interp->func_state.mutex);
     return 0;
 }
 
