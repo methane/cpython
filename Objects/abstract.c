@@ -50,7 +50,7 @@ PyObject_Type(PyObject *o)
     }
 
     v = (PyObject *)Py_TYPE(o);
-    return Py_NewRef(v);
+    return _PyObject_CheckAccessNullable(Py_NewRef(v));
 }
 
 Py_ssize_t

@@ -4877,7 +4877,9 @@ _init_pos_args(PyObject *self, PyTypeObject *type,
     assert(info);
 
     PyObject *attrdict = PyType_GetDict(type);
-    assert(attrdict);
+    if (attrdict == NULL) {
+        return -1;
+    }
 
     fields = PyDict_GetItemWithError((PyObject *)attrdict, &_Py_ID(_fields_));
     Py_CLEAR(attrdict);

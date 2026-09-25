@@ -543,7 +543,7 @@ PyObject *
 PyType_GetDict(PyTypeObject *self)
 {
     PyObject *dict = lookup_tp_dict(self);
-    return _Py_XNewRef(dict);
+    return _PyObject_CheckAccessNullable(_Py_XNewRef(dict));
 }
 
 static inline void
@@ -2073,6 +2073,9 @@ type_get_annotate(PyObject *tp, void *Py_UNUSED(closure))
 
     PyObject *annotate;
     PyObject *dict = PyType_GetDict(type);
+    if (dict == NULL) {
+        return NULL;
+    }
     // First try __annotate__, in case that's been set explicitly
     if (PyDict_GetItemRef(dict, &_Py_ID(__annotate__), &annotate) < 0) {
         Py_DECREF(dict);
@@ -2123,6 +2126,9 @@ type_set_annotate(PyObject *tp, PyObject *value, void *Py_UNUSED(closure))
     }
 
     PyObject *dict = PyType_GetDict(type);
+    if (dict == NULL) {
+        return -1;
+    }
     assert(PyDict_Check(dict));
     int result = PyDict_SetItem(dict, &_Py_ID(__annotate_func__), value);
     if (result < 0) {
@@ -2152,6 +2158,9 @@ type_get_annotations(PyObject *tp, void *Py_UNUSED(closure))
 
     PyObject *annotations;
     PyObject *dict = PyType_GetDict(type);
+    if (dict == NULL) {
+        return NULL;
+    }
     // First try __annotations__ (e.g. for "from __future__ import annotations")
     if (PyDict_GetItemRef(dict, &_Py_ID(__annotations__), &annotations) < 0) {
         Py_DECREF(dict);
@@ -2224,6 +2233,9 @@ type_set_annotations(PyObject *tp, PyObject *value, void *Py_UNUSED(closure))
     }
 
     PyObject *dict = PyType_GetDict(type);
+    if (dict == NULL) {
+        return -1;
+    }
     int result = PyDict_ContainsString(dict, "__annotations__");
     if (result < 0) {
         Py_DECREF(dict);

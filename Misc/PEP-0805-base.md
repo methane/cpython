@@ -364,6 +364,11 @@ Reference acquisition accepts IMMUTABLE objects and LOCAL objects owned by the
 current ThreadGroup. Rejected acquisitions raise `IllegalThreadAccessException`
 without inspecting the foreign object's representation. C API checks apply to
 acquired results; already-acquired arguments need no additional runtime check.
+`PyObject_Type()` validates its newly acquired class: an immutable native
+instance can still have a LOCAL class. `PyType_GetDict()` also validates the
+returned dictionary, including Main-owned dictionaries of shared builtin types.
+Its existing annotation and ctypes callers propagate acquisition failures.
+Internal dictionary lookup and the raw `Py_TYPE` macro remain unchanged.
 Extension objects remain LOCAL unless explicitly declared immutable. Static
 extension objects can rebind to a new Main after their former interpreter has
 been destroyed. `PyType_Ready()` also marks static types whose object headers
@@ -539,6 +544,17 @@ The default-path parallel scheduling test requires group-only serialization
 from startup and does not skip. The extension-import test also runs in the normal
 build, checking that imports leave this scheduling state unchanged.
 
+- Class/dictionary C API results: debug and release each pass 532 tests across
+  ownership, types/descriptors, annotations and ctypes structures (three skips).
+  Four foreign-group cases fail before the fix: an immutable instance's LOCAL
+  class and the dictionaries of three shared builtin types. Afterward both new
+  tests pass, including Main controls and the existing `type()`/`__class__`
+  guards, and also pass TSan without suppressions. Existing Main-only type C API,
+  type annotation and ctypes structure tests pass `-R 3:3` (88 tests, two skips).
+  No new Main-only failure was found in this selection. Logs:
+  `test-type-return-before.log`, `test-type-return-debug.log`,
+  `test-type-return-release.log`, `test-type-return-main-refleak.log` and
+  `tsan-type-return.log`.
 - Arithmetic/sequence operator results: debug and release each pass 1,147 tests
   across twelve ownership, numeric, sequence, descriptor/operator and C API
   files (16 skips). Native tests cover 35 C APIs through 64 operand/fallback

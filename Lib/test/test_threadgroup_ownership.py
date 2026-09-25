@@ -436,6 +436,38 @@ assert 'threading' not in sys.modules
                         self.assertIs(accessible,
                                       immutable or group is sys.main_thread_group)
 
+    def test_type_reference_returns(self):
+        def get_class():
+            source[1].__class__
+            return True
+
+        def call_type():
+            source[2](source[1])
+            return True
+
+        for value in (internal.make_container_element(True), 42):
+            cls = type(value)
+            shared_type = cls.__shareable__ is threading.Shareable.IMMUTABLE
+            self.assertIs(value.__shareable__, threading.Shareable.IMMUTABLE)
+            for group in (sys.main_thread_group, self.foreign):
+                accessible = shared_type or group is sys.main_thread_group
+                with self.subTest(cls=cls, group=group):
+                    self.assertIs(internal.threadgroup_return_probe(
+                        (cls, frozendict(value=value)), group, 'PyObject_Type'),
+                        accessible)
+                    for code in (get_class.__code__, call_type.__code__):
+                        self.assertIs(internal.threadgroup_vm_probe(
+                            code, group, (cls, value, type), 0), accessible)
+
+    def test_type_dictionary_returns(self):
+        for cls in (int, list, type):
+            self.assertIs(cls.__shareable__, threading.Shareable.IMMUTABLE)
+            for group in (sys.main_thread_group, self.foreign):
+                with self.subTest(cls=cls, group=group):
+                    self.assertIs(internal.threadgroup_return_probe(
+                        (cls, frozendict()), group, 'PyType_GetDict'),
+                        group is sys.main_thread_group)
+
     def test_numeric_operator_slot_returns(self):
         unary = ('Negative', 'Positive', 'Invert', 'Absolute')
         binary = ('Add', 'Subtract', 'Multiply', 'MatrixMultiply', 'FloorDivide',

@@ -3089,7 +3089,7 @@ static const char *return_apis[] = {
     "PyObject_RichCompare", "PyObject_RichCompareBool",
     "PyCFunction_GetSelf", "PyMethod_Function", "PyMethod_Self",
     "PyInstanceMethod_Function", "PyNumber_Index", "PyNumber_Long",
-    "PyNumber_Float", "PyFloat_AsDouble", NULL,
+    "PyNumber_Float", "PyFloat_AsDouble", "PyObject_Type", "PyType_GetDict", NULL,
 };
 
 struct return_probe {
@@ -3316,6 +3316,24 @@ return_probe_worker(void *arg)
                 }
             }
             break;
+        case 40: {
+            PyObject *instance = PyDict_GetItemWithError(mapping, key);
+            if (instance == NULL) {
+                goto done;
+            }
+            result = PyObject_Type(instance);
+            break;
+        }
+        case 41: {
+            // The type is accessible; its dictionary may belong to Main.
+            assert(PyType_Check(value) && PyObject_IsAccessible(value));
+            PyTypeObject *type = (PyTypeObject *)value;
+            value = _PyType_GetDict(type);
+            assert(value != NULL);
+            probe->base.accessible = PyObject_IsAccessible(value);
+            result = PyType_GetDict(type);
+            break;
+        }
         default:
             box = make_return_box(&return_box_spec, value);
             if (box == NULL) {
