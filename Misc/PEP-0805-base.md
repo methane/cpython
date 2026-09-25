@@ -225,13 +225,18 @@ difference check the keys and values they acquire. A shallow copy into a local
 dictionary or set can still contain foreign LOCAL elements, so these checks
 apply to mutable containers too. Missing hashes/keys and unequal dictionary
 lengths can determine an answer without acquiring the unused elements.
-Bulk set operations and other C API/VM acquisition paths still need an audit.
+Bulk set operations, dictionary merging and `fromkeys` also check source keys
+before using them in lookups or insertions that can invoke comparisons.
+Existing clone/pointer-copy paths still copy heap references without acquiring
+elements, and copied dictionary values do not need acquisition just for copying.
+Other C API/VM acquisition paths still need an audit.
 
 Cross-group LOCAL reclamation still needs a choice of execution context,
 especially after every thread in the owning group has exited. The immediate
 GIL-serialized BRC merge is not an owner-correct finalization mechanism. The
 Japanese questions record this separately from static extension ownership and
-unchecked C macros.
+unchecked C macros. This execution-context decision is deferred until discussion
+with Mark; a dedicated cleanup thread has not been adopted.
 
 ## Extraction provenance
 
@@ -253,6 +258,15 @@ Tests run on Linux/aarch64. Logs are under `/tmp/pep805-base/`. The optional
 flags/events rather than foreign LOCAL Python functions or mutable results.
 Parallel scheduling tests remain skipped while the interpreter GIL is enabled.
 
+- Bulk hash-table acquisitions: 1,136 tests pass across ten files covering
+  ownership, sets, dictionaries, dictionary views, C APIs, comparison, repr,
+  unpacking and calls (two skips). Ownership and dictionary views pass `-R 3:3`
+  with `mimalloc_debug` (56 tests). Native callback counters exposed 36 failures
+  before the fixes, including reflected comparisons on inaccessible source keys.
+  Tests cover shared immutable containers and their local mutable copies,
+  same-group and foreign-group access, and both LOCAL and declared IMMUTABLE
+  keys. Separate cases retain pointer-only cloning and copying of LOCAL values
+  without invoking their callbacks.
 - The non-debug normal build at `8fc12d73f3` passes 1,414 tests across 15 files
   covering Unicode interning, ownership, strings, code, monitoring, tracing,
   profiling, specialization, test support and embedding (38 skips). Its

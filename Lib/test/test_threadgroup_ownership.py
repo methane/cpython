@@ -506,6 +506,87 @@ assert 'threading' not in sys.modules
                     probe.__code__, self.foreign, (True, table, None), 0))
                 self.assertEqual(internal.container_element_calls(value), calls)
 
+    def test_bulk_hash_table_operations_acquire_source_keys(self):
+        dict_from_key = lambda v: frozendict({v: None})
+        dict_with_collision = lambda v: frozendict({0: None, v: None})
+        set_from_key = lambda v: frozenset([v])
+        set_with_collision = lambda v: frozenset([0, v])
+        cases = (
+            (set_from_key, set, 'table & {0, 1}'),
+            (set_from_key, set, 'table.isdisjoint({0, 1})'),
+            (set_from_key, set, 'table.difference({0})'),
+            (set_from_key, set, 'table.difference({0: None})'),
+            (set_from_key, set, 'table.issubset({0})'),
+            (set_from_key, set, 'table < {0, 1}'),
+            (set_from_key, set, '{0} | table'),
+            (set_from_key, set, '{0} ^ table'),
+            (set_from_key, set, 'target = {0}; target.update(table)'),
+            (set_from_key, set, 'target = {0}; target.difference_update(table)'),
+            (set_from_key, set,
+             'target = {0}; target.symmetric_difference_update(table)'),
+            (set_from_key, set,
+             'target = {0, 1}; target.intersection_update(table)'),
+            (dict_from_key, dict, 'target = {0}; target.update(table)'),
+            (dict_from_key, dict,
+             'target = {0}; target.symmetric_difference_update(table)'),
+            (dict_from_key, dict, 'target = {0: None}; target.update(table)'),
+            (dict_from_key, dict, '{0: None} | table'),
+            (dict_from_key, dict, '{0: None, **table}'),
+            (dict_with_collision, dict, 'dict.fromkeys(table)'),
+            (set_with_collision, set, 'dict.fromkeys(table)'),
+        )
+        for factory, copy_type, body in cases:
+            namespace = {}
+            exec('def probe():\n'
+                 '    dict = {}.__class__\n'
+                 '    table = source[1]\n'
+                 '    if source[2] is not None:\n'
+                 '        table = source[2](table)\n' +
+                 textwrap.indent(body, '    ') + '\n    return True', namespace)
+            for copy in (None, copy_type):
+                for immutable in (False, True):
+                    for group in (sys.main_thread_group, self.foreign):
+                        value = internal.make_container_element(immutable)
+                        table = factory(value)
+                        calls = internal.container_element_calls(value)
+                        accessible = immutable or group is sys.main_thread_group
+                        with self.subTest(body=body, copy=copy,
+                                          immutable=immutable, group=group):
+                            self.assertIs(internal.threadgroup_vm_probe(
+                                namespace['probe'].__code__.replace(), group,
+                                (value, table, copy), 0), accessible)
+                            if not accessible:
+                                self.assertEqual(
+                                    internal.container_element_calls(value), calls)
+
+    def test_bulk_copy_does_not_acquire_elements(self):
+        cases = (
+            (lambda v: frozenset([v]), 'target = set(table)'),
+            (lambda v: frozenset([v]), 'target = set(); target.update(table)'),
+            (lambda v: frozenset([v]), 'target = table | table.__class__()'),
+            (lambda v: frozendict({v: None}), 'target = dict(table)'),
+            (lambda v: frozendict({v: None}), 'target = {}; target.update(table)'),
+            (lambda v: frozendict(value=v), 'target = {0: None, **table}'),
+        )
+        for factory, body in cases:
+            value = internal.make_container_element(False)
+            table = factory(value)
+            calls = internal.container_element_calls(value)
+            namespace = {}
+            exec('def probe():\n'
+                 '    set = {0}.__class__\n'
+                 '    dict = {}.__class__\n'
+                 '    table = source[1]\n' +
+                 textwrap.indent(body, '    ') +
+                 '\n    assert target.__len__() >= table.__len__()\n'
+                 '    return True',
+                 namespace)
+            with self.subTest(body=body):
+                self.assertTrue(internal.threadgroup_vm_probe(
+                    namespace['probe'].__code__, self.foreign,
+                    (True, table, None), 0))
+                self.assertEqual(internal.container_element_calls(value), calls)
+
     def test_dict_element_operations(self):
         cases = (
             (lambda v: (frozendict({v: None}), None), 'table.__repr__()'),

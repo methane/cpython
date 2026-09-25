@@ -3434,6 +3434,10 @@ dict_dict_fromkeys(PyDictObject *mp, PyObject *iterable, PyObject *value)
     }
 
     while (_PyDict_Next(iterable, &pos, &key, &oldvalue, &hash)) {
+        if (PyObject_CheckAccess(key) == NULL) {
+            Py_DECREF(mp);
+            return NULL;
+        }
         if (insertdict(mp, Py_NewRef(key), hash, Py_NewRef(value))) {
             Py_DECREF(mp);
             return NULL;
@@ -3459,6 +3463,11 @@ dict_set_fromkeys(PyDictObject *mp, PyObject *iterable, PyObject *value)
 
     _Py_CRITICAL_SECTION_ASSERT_OBJECT_LOCKED(iterable);
     while (_PySet_NextEntryRef(iterable, &pos, &key, &hash)) {
+        if (PyObject_CheckAccess(key) == NULL) {
+            Py_DECREF(key);
+            Py_DECREF(mp);
+            return NULL;
+        }
         if (insertdict(mp, key, hash, Py_NewRef(value))) {
             Py_DECREF(mp);
             return NULL;
@@ -4276,6 +4285,11 @@ dict_dict_merge(PyDictObject *mp, PyDictObject *other, int override, PyObject **
     PyObject *key, *value;
 
     while (_PyDict_Next((PyObject*)other, &pos, &key, &value, &hash)) {
+        // A clone copies heap references directly. This path instead acquires
+        // keys for lookups and insertion, which may invoke comparison slots.
+        if (PyObject_CheckAccess(key) == NULL) {
+            return -1;
+        }
         int err = 0;
         Py_INCREF(key);
         Py_INCREF(value);
