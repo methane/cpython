@@ -2491,6 +2491,93 @@ static PyMethodDef return_heap_value_def = {
 
 typedef struct {
     PyObject_HEAD
+    PyObject *values;
+    Py_ssize_t position;
+    int raise_stop;
+} raw_iterator;
+
+static int
+raw_iterator_traverse(PyObject *op, visitproc visit, void *arg)
+{
+    Py_VISIT(Py_TYPE(op));
+    Py_VISIT(((raw_iterator *)op)->values);
+    return 0;
+}
+
+static void
+raw_iterator_dealloc(PyObject *op)
+{
+    PyTypeObject *type = Py_TYPE(op);
+    PyObject_GC_UnTrack(op);
+    Py_XDECREF(((raw_iterator *)op)->values);
+    type->tp_free(op);
+    Py_DECREF(type);
+}
+
+static PyObject *
+raw_iterator_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
+{
+    PyObject *values;
+    int raise_stop = 0;
+    static char *keywords[] = {"values", "raise_stop", NULL};
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "O!|p:RawIterator", keywords,
+                                    &PyTuple_Type, &values, &raise_stop)) {
+        return NULL;
+    }
+    raw_iterator *it = (raw_iterator *)type->tp_alloc(type, 0);
+    if (it != NULL) {
+        it->values = Py_NewRef(values);
+        it->raise_stop = raise_stop;
+    }
+    return (PyObject *)it;
+}
+
+static PyObject *
+raw_iterator_next(PyObject *op)
+{
+    raw_iterator *it = (raw_iterator *)op;
+    if (it->position == PyTuple_GET_SIZE(it->values)) {
+        if (it->raise_stop) {
+            PyErr_SetNone(PyExc_StopIteration);
+        }
+        return NULL;
+    }
+    // Like an extension callback, return the heap reference without inspecting
+    // it. The runtime must check it before consuming or exposing the value.
+    return Py_NewRef(PyTuple_GET_ITEM(it->values, it->position++));
+}
+
+static PyObject *
+make_raw_iterator_type(PyObject *self, PyObject *Py_UNUSED(ignored))
+{
+    static PyMemberDef members[] = {
+        {"position", Py_T_PYSSIZET, offsetof(raw_iterator, position), Py_READONLY},
+        {NULL},
+    };
+    PyType_Slot slots[] = {
+        {Py_tp_new, raw_iterator_new},
+        {Py_tp_dealloc, raw_iterator_dealloc},
+        {Py_tp_traverse, raw_iterator_traverse},
+        {Py_tp_iter, PyObject_SelfIter},
+        {Py_tp_iternext, raw_iterator_next},
+        {Py_tp_members, members},
+        {0, NULL},
+    };
+    PyType_Spec spec = {
+        .name = "_testinternalcapi.RawIterator",
+        .basicsize = sizeof(raw_iterator),
+        .flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_IMMUTABLETYPE | Py_TPFLAGS_HAVE_GC,
+        .slots = slots,
+    };
+    PyObject *type = PyType_FromSpec(&spec);
+    if (type != NULL && PyObject_DeclareImmutable(type) < 0) {
+        Py_CLEAR(type);
+    }
+    return type;
+}
+
+typedef struct {
+    PyObject_HEAD
     PyObject *value;
     int descriptor_calls;
     vectorcallfunc vectorcall;
@@ -5293,6 +5380,7 @@ static PyMethodDef methods[] = {
     {"threadgroup_qsbr_probe", threadgroup_qsbr_probe, METH_VARARGS, NULL},
     {"test_qsbr_thread_states", test_qsbr_thread_states, METH_NOARGS, NULL},
     {"make_container_element", make_container_element, METH_O, NULL},
+    {"make_raw_iterator_type", make_raw_iterator_type, METH_NOARGS, NULL},
     {"container_element_calls", container_element_calls, METH_O, NULL},
     {"slice_getindices_probe", slice_getindices_probe, METH_O, NULL},
     {"threadgroup_weakref_probe", threadgroup_weakref_probe, METH_VARARGS, NULL},

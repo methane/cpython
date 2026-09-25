@@ -879,6 +879,145 @@ assert 'threading' not in sys.modules
                             self.assertEqual(
                                 internal.container_element_calls(value), 0)
 
+    def test_native_iterator_consumers(self):
+        iterator_type = internal.make_raw_iterator_type()
+        cases = (
+            ('all', 'bound_builtin(it)', None, all),
+            ('any', 'bound_builtin(it)', None, any),
+            ('filter none', 'bound_builtin(ctor(None, it))', filter, next),
+            ('filter bool', 'bound_builtin(ctor(truth, it))', filter, next),
+            ('map', 'bound_builtin(ctor(consumer, it))', map, next),
+            ('map heap arguments',
+             'bound_builtin(ctor(consumer, it, *((0,),) * 10))', map, next),
+            ('zip', 'bound_builtin(ctor(it))', zip, next),
+            ('zip new tuple',
+             'it = iterator_type((0,) + source[1])\n'
+             'adapted = ctor(it)\n'
+             'held = bound_builtin(adapted)\n'
+             'bound_builtin(adapted)', zip, next),
+            ('enumerate', 'bound_builtin(ctor(it))', enumerate, next),
+            ('enumerate long index',
+             'bound_builtin(ctor(it, 1 << 128))', enumerate, next),
+            ('list', 'ctor(it)', list, next),
+            ('list extend', 'copied = []\ncopied.extend(it)', None, next),
+            ('bytearray', 'ctor(it)', bytearray, next),
+            # These already use checked iteration/return APIs.
+            ('bytes', 'ctor(it)', bytes, next),
+            ('min', 'bound_builtin(it)', None, min),
+            ('max', 'bound_builtin(it)', None, max),
+            ('next', 'bound_builtin(it)', None, next),
+        )
+        for name, body, ctor, builtin in cases:
+            namespace = {}
+            exec('def probe():\n'
+                 '    iterator_type, ctor, error, rejected, truth = source[2]\n'
+                 '    it = iterator_type(source[1])\n'
+                 '    try:\n' + textwrap.indent(body, '        ') + '\n'
+                 '    except error:\n        assert rejected\n'
+                 '    else:\n        assert not rejected\n'
+                 '    return True', namespace)
+            for immutable in (False, True):
+                for group in (sys.main_thread_group, self.foreign):
+                    with self.subTest(operation=name, immutable=immutable, group=group):
+                        value = internal.make_container_element(immutable)
+                        rejected = not immutable and group is self.foreign
+                        options = (iterator_type, ctor, IllegalThreadAccessException,
+                                   rejected, bool)
+                        self.assertTrue(internal.threadgroup_vm_probe(
+                            namespace['probe'].__code__, group,
+                            (True, (value,), options), 0, 1, False, builtin))
+                        if rejected:
+                            self.assertEqual(internal.container_element_calls(value), 0)
+
+    def test_native_iterator_strict_errors(self):
+        iterator_type = internal.make_raw_iterator_type()
+        for ctor, arguments in ((map, 'consumer, '), (zip, '')):
+            for iterables in ('(), it', '(0,), it, ()'):
+                namespace = {}
+                exec('def probe():\n'
+                     '    iterator_type, ctor, error = source[2]\n'
+                     '    it = iterator_type(source[1])\n'
+                     f'    adapted = ctor({arguments}{iterables}, strict=True)\n'
+                     '    try:\n        bound_builtin(adapted)\n'
+                     '    except error:\n        return True\n'
+                     '    assert False', namespace)
+                for immutable in (False, True):
+                    for group in (sys.main_thread_group, self.foreign):
+                        with self.subTest(ctor=ctor, iterables=iterables,
+                                          immutable=immutable, group=group):
+                            value = internal.make_container_element(immutable)
+                            error = (IllegalThreadAccessException if
+                                     not immutable and group is self.foreign
+                                     else ValueError)
+                            self.assertTrue(internal.threadgroup_vm_probe(
+                                namespace['probe'].__code__, group,
+                                (True, (value,), (iterator_type, ctor, error)),
+                                0, 1, False, next))
+                            self.assertEqual(internal.container_element_calls(value), 0)
+
+    def test_native_iterator_short_circuit(self):
+        iterator_type = internal.make_raw_iterator_type()
+        cases = (
+            ('all', 'assert bound_builtin(it) is False', None, all, (False,), 1),
+            ('any', 'assert bound_builtin(it) is True', None, any, (True,), 1),
+            ('filter', 'assert bound_builtin(ctor(None, it)) is True',
+             filter, next, (True,), 1),
+            ('map', 'assert bound_builtin(ctor(consumer, (), it), None) is None',
+             map, next, (), 0),
+            ('zip', 'assert bound_builtin(ctor((), it), None) is None',
+             zip, next, (), 0),
+            ('list extend',
+             'copied = [0]\n'
+             'try:\n    copied.extend(it)\n'
+             'except error:\n    pass\n'
+             'else:\n    assert False\n'
+             'assert copied == [0, 1]', None, next, (1,), 2),
+        )
+        for name, body, ctor, builtin, prefix, position in cases:
+            namespace = {}
+            exec('def probe():\n'
+                 '    iterator_type, ctor, error, position = source[2]\n'
+                 '    it = iterator_type(source[1])\n' +
+                 textwrap.indent(body, '    ') + '\n'
+                 '    assert it.position == position\n'
+                 '    return True', namespace)
+            value = internal.make_container_element(False)
+            with self.subTest(operation=name):
+                self.assertTrue(internal.threadgroup_vm_probe(
+                    namespace['probe'].__code__, self.foreign,
+                    (True, prefix + (value,),
+                     (iterator_type, ctor, IllegalThreadAccessException, position)),
+                    0, 1, False, builtin))
+                self.assertEqual(internal.container_element_calls(value), 0)
+
+    def test_native_iterator_exhaustion(self):
+        iterator_type = internal.make_raw_iterator_type()
+        cases = (
+            ('all', 'bound_builtin(it) is True', None, all),
+            ('any', 'bound_builtin(it) is False', None, any),
+            ('filter', 'bound_builtin(ctor(None, it), 42) == 42', filter, next),
+            ('map', 'bound_builtin(ctor(consumer, it), 42) == 42', map, next),
+            ('zip', 'bound_builtin(ctor(it), 42) == 42', zip, next),
+            ('enumerate', 'bound_builtin(ctor(it), 42) == 42', enumerate, next),
+            ('list', 'ctor(it) == []', list, next),
+            ('bytearray', 'ctor(it) == b""', bytearray, next),
+        )
+        for name, expression, ctor, builtin in cases:
+            namespace = {}
+            exec('def probe():\n'
+                 '    iterator_type, ctor, raise_stop = source[2]\n'
+                 '    it = iterator_type((), raise_stop)\n'
+                 f'    assert {expression}\n'
+                 '    return True', namespace)
+            for raise_stop in (False, True):
+                for group in (sys.main_thread_group, self.foreign):
+                    with self.subTest(operation=name, raise_stop=raise_stop,
+                                      group=group):
+                        self.assertTrue(internal.threadgroup_vm_probe(
+                            namespace['probe'].__code__, group,
+                            (True, None, (iterator_type, ctor, raise_stop)),
+                            0, 1, False, builtin))
+
     def test_slice_component_acquisition(self):
         cases = (
             ('source[1].__repr__()', None),

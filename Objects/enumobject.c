@@ -176,7 +176,7 @@ enum_next(PyObject *op)
     PyObject *old_index;
     PyObject *old_item;
 
-    next_item = (*Py_TYPE(it)->tp_iternext)(it);
+    next_item = _PyObject_CheckAccessNullable((*Py_TYPE(it)->tp_iternext)(it));
     if (next_item == NULL)
         return NULL;
 

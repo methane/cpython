@@ -424,6 +424,12 @@ Native fixtures declare only their slotted instance immutable; the class and
 Python methods stay LOCAL. Regressions cover subscription, iteration, arithmetic,
 bytes conversion and context entry, plus a getitem cache populated by an earlier
 worker in the method's owner group.
+Builtin iterator consumers validate owned results from direct native
+`tp_iternext` calls before truth testing, passing arguments, converting values
+or storing them in result containers. This covers `all`, `any`, `filter`,
+`map`, `zip`, `enumerate`, list extension and bytearray construction, including
+strict map/zip length probes. Short-circuiting leaves unconsumed values alone,
+and both forms of iterator exhaustion retain their existing behavior.
 Attribute-hook dispatch also checks the selected `__getattribute__` or
 `__getattr__` and any callable returned by descriptor binding. An unused LOCAL
 `__getattr__` does not block an existing accessible attribute. Descriptor slot
@@ -563,6 +569,18 @@ The default-path parallel scheduling test requires group-only serialization
 from startup and does not skip. The extension-import test also runs in the normal
 build, checking that imports leave this scheduling state unchanged.
 
+- Native iterator consumers: debug and release each pass 912 tests across nine
+  ownership, builtin, list, bytes, enumerate, iterator and C API files (16 and
+  17 skips). Four new tests exercise 122 worker calls, including Main and
+  immutable controls, strict length errors, short-circuiting, partial extension
+  and both forms of exhaustion. Baseline runs report 18 failures; callback
+  counters demonstrate that rejecting a value after truth testing is too late.
+  All four tests pass TSan without suppressions. Existing Main-only builtin,
+  list and enumerate cases pass `-R 3:3` (38 tests, one skip), with no new
+  Main-only failure in this selection. Logs: `test-iterator-consumers-before.log`,
+  `test-iterator-consumers-controls-before.log`, `test-iterator-consumers-debug.log`,
+  `test-iterator-consumers-release.log`, `test-iterator-consumers-main-refleak.log`
+  and `tsan-iterator-consumers.log`.
 - Base-class C API results: debug and release each pass 162 tests across five
   ownership, type/slot C API, xxlimited and defaultdict files. Native probes
   check token results before a VM return check can mask a failure, status-only
