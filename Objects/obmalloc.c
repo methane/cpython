@@ -1843,6 +1843,23 @@ get_state(void)
     return interp->obmalloc;
 }
 
+static void
+pymalloc_lock(OMState *state)
+{
+    // PYTHONMALLOCSTATS reenters the allocator. Do not detach while
+    // waiting: an allocation can occur while an object is only partly built.
+    PyLockStatus status = _PyRecursiveMutex_LockTimed(
+        &state->mutex, -1, _Py_LOCK_DONT_DETACH);
+    assert(status == PY_LOCK_ACQUIRED);
+    (void)status;
+}
+
+static void
+pymalloc_unlock(OMState *state)
+{
+    _PyRecursiveMutex_Unlock(&state->mutex);
+}
+
 // These macros all rely on a local "state" variable.
 #define usedpools (state->pools.used)
 #define allarenas (state->mgmt.arenas)
@@ -1903,6 +1920,7 @@ get_pymalloc_allocated_blocks(PyInterpreterState *interp)
         return 0;
     }
 
+    pymalloc_lock(state);
     Py_ssize_t n = raw_allocated_blocks;
     /* add up allocated blocks for used pools */
     for (uint i = 0; i < maxarenas; ++i) {
@@ -1920,6 +1938,7 @@ get_pymalloc_allocated_blocks(PyInterpreterState *interp)
             n += p->ref.count;
         }
     }
+    pymalloc_unlock(state);
     return n;
 }
 
@@ -2183,11 +2202,13 @@ new_arena(OMState *state)
     uint excess;        /* number of bytes above pool alignment */
     void *address;
 
-    int debug_stats = _PyRuntime.obmalloc.dump_debug_stats;
+    int debug_stats = _Py_atomic_load_int_relaxed(
+        &_PyRuntime.obmalloc.dump_debug_stats);
     if (debug_stats == -1) {
         const char *opt = Py_GETENV("PYTHONMALLOCSTATS");
         debug_stats = (opt != NULL && *opt != '\0');
-        _PyRuntime.obmalloc.dump_debug_stats = debug_stats;
+        _Py_atomic_store_int_relaxed(&_PyRuntime.obmalloc.dump_debug_stats,
+                                     debug_stats);
     }
     if (debug_stats) {
         _PyObject_DebugMallocStats(stderr);
@@ -2550,10 +2571,12 @@ static inline void*
 pymalloc_alloc(OMState *state, void *Py_UNUSED(ctx), size_t nbytes)
 {
 #ifdef WITH_VALGRIND
-    if (UNLIKELY(running_on_valgrind == -1)) {
-        running_on_valgrind = RUNNING_ON_VALGRIND;
+    int on_valgrind = _Py_atomic_load_int_relaxed(&running_on_valgrind);
+    if (UNLIKELY(on_valgrind == -1)) {
+        on_valgrind = RUNNING_ON_VALGRIND;
+        _Py_atomic_store_int_relaxed(&running_on_valgrind, on_valgrind);
     }
-    if (UNLIKELY(running_on_valgrind)) {
+    if (UNLIKELY(on_valgrind)) {
         return NULL;
     }
 #endif
@@ -2598,14 +2621,17 @@ void *
 _PyObject_Malloc(void *ctx, size_t nbytes)
 {
     OMState *state = get_state();
+    pymalloc_lock(state);
     void* ptr = pymalloc_alloc(state, ctx, nbytes);
-    if (LIKELY(ptr != NULL)) {
-        return ptr;
-    }
-
-    ptr = PyMem_RawMalloc(nbytes);
-    if (ptr != NULL) {
-        raw_allocated_blocks++;
+    pymalloc_unlock(state);
+    if (UNLIKELY(ptr == NULL)) {
+        // Raw allocator hooks may detach; do not hold the pool mutex here.
+        ptr = PyMem_RawMalloc(nbytes);
+        if (ptr != NULL) {
+            pymalloc_lock(state);
+            raw_allocated_blocks++;
+            pymalloc_unlock(state);
+        }
     }
     return ptr;
 }
@@ -2618,15 +2644,19 @@ _PyObject_Calloc(void *ctx, size_t nelem, size_t elsize)
     size_t nbytes = nelem * elsize;
 
     OMState *state = get_state();
+    pymalloc_lock(state);
     void* ptr = pymalloc_alloc(state, ctx, nbytes);
+    pymalloc_unlock(state);
     if (LIKELY(ptr != NULL)) {
         memset(ptr, 0, nbytes);
-        return ptr;
     }
-
-    ptr = PyMem_RawCalloc(nelem, elsize);
-    if (ptr != NULL) {
-        raw_allocated_blocks++;
+    else {
+        ptr = PyMem_RawCalloc(nelem, elsize);
+        if (ptr != NULL) {
+            pymalloc_lock(state);
+            raw_allocated_blocks++;
+            pymalloc_unlock(state);
+        }
     }
     return ptr;
 }
@@ -2824,7 +2854,7 @@ pymalloc_free(OMState *state, void *Py_UNUSED(ctx), void *p)
     assert(p != NULL);
 
 #ifdef WITH_VALGRIND
-    if (UNLIKELY(running_on_valgrind > 0)) {
+    if (UNLIKELY(_Py_atomic_load_int_relaxed(&running_on_valgrind) > 0)) {
         return 0;
     }
 #endif
@@ -2885,10 +2915,15 @@ _PyObject_Free(void *ctx, void *p)
     }
 
     OMState *state = get_state();
-    if (UNLIKELY(!pymalloc_free(state, ctx, p))) {
+    pymalloc_lock(state);
+    int freed = pymalloc_free(state, ctx, p);
+    if (UNLIKELY(!freed)) {
+        raw_allocated_blocks--;
+    }
+    pymalloc_unlock(state);
+    if (UNLIKELY(!freed)) {
         /* pymalloc didn't allocate this address */
         PyMem_RawFree(p);
-        raw_allocated_blocks--;
     }
 }
 
@@ -2914,13 +2949,15 @@ pymalloc_realloc(OMState *state, void *ctx,
 
 #ifdef WITH_VALGRIND
     /* Treat running_on_valgrind == -1 the same as 0 */
-    if (UNLIKELY(running_on_valgrind > 0)) {
+    if (UNLIKELY(_Py_atomic_load_int_relaxed(&running_on_valgrind) > 0)) {
         return 0;
     }
 #endif
 
+    pymalloc_lock(state);
     pool = POOL_ADDR(p);
     if (!address_in_range(state, p, pool)) {
+        pymalloc_unlock(state);
         /* pymalloc is not managing this block.
 
            If nbytes <= SMALL_REQUEST_THRESHOLD, it's tempting to try to take
@@ -2938,6 +2975,7 @@ pymalloc_realloc(OMState *state, void *ctx,
 
     /* pymalloc is in charge of this block */
     size = INDEX2SIZE(pool->szidx);
+    pymalloc_unlock(state);
     if (nbytes <= size) {
         /* The block is staying the same or shrinking.
 
@@ -2974,11 +3012,10 @@ _PyObject_Realloc(void *ctx, void *ptr, size_t nbytes)
     }
 
     OMState *state = get_state();
-    if (pymalloc_realloc(state, ctx, &ptr2, ptr, nbytes)) {
-        return ptr2;
+    if (!pymalloc_realloc(state, ctx, &ptr2, ptr, nbytes)) {
+        ptr2 = PyMem_RawRealloc(ptr, nbytes);
     }
-
-    return PyMem_RawRealloc(ptr, nbytes);
+    return ptr2;
 }
 
 #else   /* ! WITH_PYMALLOC */
@@ -3920,7 +3957,10 @@ _PyObject_DebugMallocStats(FILE *out)
     else
 #endif
     if (_PyMem_PymallocEnabled()) {
+        OMState *state = get_state();
+        pymalloc_lock(state);
         pymalloc_print_stats(out);
+        pymalloc_unlock(state);
         return 1;
     }
     else {

@@ -8,6 +8,8 @@ extern "C" {
 #  error "this header requires Py_BUILD_CORE define"
 #endif
 
+#include "pycore_lock.h"           // _PyRecursiveMutex
+
 
 typedef unsigned int pymem_uint;  /* assuming >= 16 bits */
 
@@ -685,6 +687,8 @@ struct _obmalloc_global_state {
 };
 
 struct _obmalloc_state {
+    // Protect pools and arenas shared by concurrently executing ThreadGroups.
+    _PyRecursiveMutex mutex;
     struct _obmalloc_pools pools;
     struct _obmalloc_mgmt mgmt;
 #if WITH_PYMALLOC_RADIX_TREE

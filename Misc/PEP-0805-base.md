@@ -95,11 +95,16 @@ shared pymalloc arenas are counted only once. Heap selection is scoped to each
 allocator call, including recursive embedding/tracing hooks. Allocator ownership
 is independent of the object's ThreadGroup owner and reference-count bias.
 Without mimalloc, the normal build defaults to system malloc. The explicit
-`PYTHONMALLOC=pymalloc` selection remains available under interpreter-wide
-serialization; the private parallel-allocation probe rejects it. Static runtime
-initialization and preconfiguration choose the same defaults, including debug
-hooks. Isolated native workers exercise default, explicit mimalloc and system
-malloc allocation concurrently with cyclic collection in two groups. Their
+`PYTHONMALLOC=pymalloc` selection protects its pools, arenas and block accounting
+with a recursive mutex in the allocator state. Waiting does not detach a thread
+mid-allocation; `PYTHONMALLOCSTATS` can reenter the same mutex. Statistics
+readers use that mutex too. Raw fallbacks run outside the mutex, including
+realloc's move to a larger block, so hooks can detach without deadlocking
+another allocator call in the same group. No object-header fields are added.
+Static runtime initialization and preconfiguration choose the same defaults,
+including debug hooks. Isolated native workers exercise default, explicit
+mimalloc, pymalloc and system malloc allocation and reallocation concurrently
+with cyclic collection in two groups. Their
 immutable cycles have no Python finalizers or mutating API, so this does not
 decide the pending LOCAL finalization design.
 
@@ -499,6 +504,18 @@ flags/events rather than foreign LOCAL Python functions or mutable results.
 The default-path parallel scheduling test remains skipped while the interpreter
 GIL is enabled. The isolated native probe additionally tests real parallelism.
 
+- Pymalloc metadata synchronization: debug and release each pass 569 tests
+  across groups, GC, memory/misc C APIs, embedding and fork with
+  `PYTHONMALLOC=pymalloc_debug` (12 and 30 skips). The three allocator tests
+  pass `-R 3:3` and a normal debug TSan build with pymalloc enabled, without
+  suppressions. The original parallel probe aborts on a corrupted pool before
+  synchronization. A separate Main-only raw-hook reproducer also verified that
+  holding the new mutex across a detaching raw fallback deadlocks; the final
+  lock scope fixes this and has a permanent regression test. Logs:
+  `test-pymalloc-parallel-before.log`, `test-pymalloc-raw-detach-before.log`,
+  `test-pymalloc-raw-detach-after.log`, `test-pymalloc-debug-final.log`,
+  `test-pymalloc-release-final.log`, `test-pymalloc-refleak-final.log` and
+  `tsan-pymalloc-final.log`.
 - Code and descriptor metadata acquisition: debug and release each pass 291
   tests across ownership, code, codeop and descriptors (two skips). All three
   new tests pass `-R 3:3` and TSan without suppressions. Before the fix, 16

@@ -333,6 +333,8 @@ for _ in range(4):
             allocators += ('malloc', 'malloc_debug')
         if support.with_mimalloc():
             allocators += ('mimalloc', 'mimalloc_debug')
+        if support.with_pymalloc():
+            allocators += ('pymalloc', 'pymalloc_debug')
         for allocator in allocators:
             with self.subTest(allocator=allocator):
                 script_helper.assert_python_ok('-c', '''
@@ -349,19 +351,47 @@ assert sys._is_gil_enabled() == before
 ''', PYTHONMALLOC=allocator)
 
     @unittest.skipUnless(support.with_pymalloc(), 'requires pymalloc')
-    def test_parallel_allocation_rejects_pymalloc(self):
+    def test_parallel_pymalloc_statistics(self):
+        _, _, stderr = script_helper.assert_python_ok('-c', '''
+import threading
+import _testinternalcapi as internal
+from test import support
+
+groups = (threading.ThreadGroup(), threading.ThreadGroup())
+assert internal.threadgroup_probe(
+    groups, 3, support.SHORT_TIMEOUT, True) == (True, True)
+''', PYTHONMALLOC='pymalloc', PYTHONMALLOCSTATS='1')
+        self.assertIn(b'Small block threshold', stderr)
+
+    @unittest.skipUnless(support.with_pymalloc(), 'requires pymalloc')
+    def test_pymalloc_detaching_raw_allocator(self):
         script_helper.assert_python_ok('-c', '''
+import sys
 import threading
 import _testinternalcapi as internal
 
-groups = (threading.ThreadGroup(), threading.ThreadGroup())
-try:
-    internal.threadgroup_probe(groups, 3, 1.0, True)
-except ValueError as exc:
-    assert 'thread-safe allocator' in str(exc)
-else:
-    raise AssertionError('parallel allocation accepted pymalloc')
-''', PYTHONMALLOC='pymalloc')
+completed = []
+
+def worker():
+    assert threading.current_thread().group is sys.main_thread_group
+    for _ in range(20):
+        bytearray(10000)
+    completed.append(True)
+
+def run():
+    threads = [threading.Thread(target=worker, group=sys.main_thread_group)
+               for _ in range(2)]
+    try:
+        for thread in threads:
+            thread.start()
+    finally:
+        for thread in threads:
+            if thread.ident is not None:
+                thread.join()
+
+assert internal.threadgroup_detaching_allocator_probe(run) >= 40
+assert completed == [True, True]
+''', PYTHONMALLOC='pymalloc_debug')
 
     def test_parallel_probe_requires_isolation(self):
         internal = import_helper.import_module('_testinternalcapi')

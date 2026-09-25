@@ -1215,6 +1215,27 @@ group_probe_worker(void *arg)
     if (probe->ok && probe->mode == 3) {
         for (int i = 0; i < 2000; i++) {
             Py_ssize_t size = 64 + i % 1024;
+            // Exercise zeroing and reallocations across pymalloc size classes
+            // and its raw-allocator fallback.
+            unsigned char *buffer = PyObject_Calloc((size_t)size, 1);
+            if (buffer == NULL) {
+                probe->ok = 0;
+                break;
+            }
+            for (Py_ssize_t j = 0; j < size; j++) {
+                probe->ok &= buffer[j] == 0;
+                buffer[j] = (unsigned char)i;
+            }
+            unsigned char *resized = PyObject_Realloc(buffer, (size_t)size * 2);
+            if (resized == NULL) {
+                PyObject_Free(buffer);
+                probe->ok = 0;
+                break;
+            }
+            for (Py_ssize_t j = 0; j < size; j++) {
+                probe->ok &= resized[j] == (unsigned char)i;
+            }
+            PyObject_Free(resized);
             PyObject *bytes = PyBytes_FromStringAndSize(NULL, size);
             if (bytes == NULL) {
                 probe->ok = 0;
@@ -1304,7 +1325,9 @@ threadgroup_probe(PyObject *self, PyObject *args)
             (strcmp(allocator, "mimalloc") != 0 &&
              strcmp(allocator, "mimalloc_debug") != 0 &&
              strcmp(allocator, "malloc") != 0 &&
-             strcmp(allocator, "malloc_debug") != 0))
+             strcmp(allocator, "malloc_debug") != 0 &&
+             strcmp(allocator, "pymalloc") != 0 &&
+             strcmp(allocator, "pymalloc_debug") != 0))
         {
             return PyErr_Format(PyExc_ValueError,
                                 "parallel allocation probe requires a thread-safe allocator");
@@ -4260,6 +4283,75 @@ test_reentrant_allocation_heap(PyObject *self, PyObject *Py_UNUSED(args))
 }
 #endif
 
+struct detaching_allocator_probe {
+    PyMemAllocatorEx original;
+    int calls;
+};
+
+static void
+detaching_allocator_pause(struct detaching_allocator_probe *probe, size_t size)
+{
+    // The Python probe requests 10000-byte buffers. Leave arena bookkeeping
+    // and calls without an attached state alone.
+    if (size >= 10000 && size <= 10256 &&
+        PyThreadState_GetUnchecked() != NULL) {
+        _Py_atomic_add_int(&probe->calls, 1);
+        PyEvent delay = {0};
+        PyEvent_WaitTimed(&delay, 1000000, 1);  // detach for one millisecond
+    }
+}
+
+static void *
+detaching_allocator_malloc(void *ctx, size_t size)
+{
+    struct detaching_allocator_probe *probe = ctx;
+    detaching_allocator_pause(probe, size);
+    return probe->original.malloc(probe->original.ctx, size);
+}
+
+static void *
+detaching_allocator_calloc(void *ctx, size_t nelem, size_t size)
+{
+    struct detaching_allocator_probe *probe = ctx;
+    detaching_allocator_pause(probe, nelem * size);
+    return probe->original.calloc(probe->original.ctx, nelem, size);
+}
+
+static void *
+detaching_allocator_realloc(void *ctx, void *ptr, size_t size)
+{
+    struct detaching_allocator_probe *probe = ctx;
+    detaching_allocator_pause(probe, size);
+    return probe->original.realloc(probe->original.ctx, ptr, size);
+}
+
+static void
+detaching_allocator_free(void *ctx, void *ptr)
+{
+    struct detaching_allocator_probe *probe = ctx;
+    probe->original.free(probe->original.ctx, ptr);
+}
+
+static PyObject *
+threadgroup_detaching_allocator_probe(PyObject *self, PyObject *callback)
+{
+    struct detaching_allocator_probe probe = {0};
+    PyMem_GetAllocator(PYMEM_DOMAIN_RAW, &probe.original);
+    PyMemAllocatorEx allocator = {
+        &probe, detaching_allocator_malloc, detaching_allocator_calloc,
+        detaching_allocator_realloc, detaching_allocator_free,
+    };
+    PyMem_SetAllocator(PYMEM_DOMAIN_RAW, &allocator);
+    PyObject *result = PyObject_CallNoArgs(callback);
+    // The isolated callback must join all workers before returning.
+    PyMem_SetAllocator(PYMEM_DOMAIN_RAW, &probe.original);
+    if (result == NULL) {
+        return NULL;
+    }
+    Py_DECREF(result);
+    return PyLong_FromLong(_Py_atomic_load_int(&probe.calls));
+}
+
 struct allocation_probe {
     PyInterpreterState *interp;
     _PyThreadGroupState *group;
@@ -4634,6 +4726,7 @@ static PyMethodDef methods[] = {
     {"make_access_descriptor", make_access_descriptor, METH_VARARGS, NULL},
     {"access_descriptor_calls", access_descriptor_calls, METH_O, NULL},
     {"threadgroup_vm_probe", threadgroup_vm_probe, METH_VARARGS, NULL},
+    {"threadgroup_detaching_allocator_probe", threadgroup_detaching_allocator_probe, METH_O, NULL},
     {"threadgroup_return_probe", threadgroup_return_probe, METH_VARARGS, NULL},
     {"test_static_immutable_access", test_static_immutable_access, METH_NOARGS, NULL},
     {"threadgroup_access_probe", threadgroup_access_probe, METH_VARARGS, NULL},
