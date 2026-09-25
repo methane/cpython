@@ -1496,7 +1496,7 @@ type_name(PyObject *tp, void *Py_UNUSED(closure))
     PyTypeObject *type = PyTypeObject_CAST(tp);
     if (type->tp_flags & Py_TPFLAGS_HEAPTYPE) {
         PyHeapTypeObject* et = (PyHeapTypeObject*)type;
-        return Py_NewRef(et->ht_name);
+        return _PyObject_CheckAccessNullable(Py_NewRef(et->ht_name));
     }
     else {
         return PyUnicode_FromString(_PyType_Name(type));
@@ -1509,7 +1509,7 @@ type_qualname(PyObject *tp, void *Py_UNUSED(closure))
     PyTypeObject *type = PyTypeObject_CAST(tp);
     if (type->tp_flags & Py_TPFLAGS_HEAPTYPE) {
         PyHeapTypeObject* et = (PyHeapTypeObject*)type;
-        return Py_NewRef(et->ht_qualname);
+        return _PyObject_CheckAccessNullable(Py_NewRef(et->ht_qualname));
     }
     else {
         return PyUnicode_FromString(_PyType_Name(type));
@@ -5875,7 +5875,7 @@ PyType_GetModule(PyTypeObject *type)
             type->tp_name);
         return NULL;
     }
-    return et->ht_module;
+    return PyObject_CheckAccess(et->ht_module);
 }
 
 void *
@@ -5969,7 +5969,7 @@ PyType_GetModuleByDef(PyTypeObject *type, PyModuleDef *def)
             type->tp_name);
         return NULL;
     }
-    return mod;
+    return PyObject_CheckAccess(mod);
 }
 
 

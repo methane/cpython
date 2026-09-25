@@ -3089,7 +3089,10 @@ static const char *return_apis[] = {
     "PyObject_RichCompare", "PyObject_RichCompareBool",
     "PyCFunction_GetSelf", "PyMethod_Function", "PyMethod_Self",
     "PyInstanceMethod_Function", "PyNumber_Index", "PyNumber_Long",
-    "PyNumber_Float", "PyFloat_AsDouble", "PyObject_Type", "PyType_GetDict", NULL,
+    "PyNumber_Float", "PyFloat_AsDouble", "PyObject_Type", "PyType_GetDict",
+    "PyType_GetName", "PyType_GetQualName", "PyType_GetFullyQualifiedName",
+    "PyType_GetModuleName", "PyType_GetModule", "PyType_GetModuleByDef",
+    "PyType_GetModuleByToken", "PyType_GetModuleState", NULL,
 };
 
 struct return_probe {
@@ -3097,6 +3100,8 @@ struct return_probe {
     int api;
     const struct operator_api *operator;
     int position;
+    PyModuleDef *module_def;
+    void *module_state;
 };
 
 static void
@@ -3124,7 +3129,7 @@ return_probe_worker(void *arg)
     PyObject *result = NULL;
     int status = -2;  // Pointer-returning API, with no separate status code.
     int owned = 1;
-    int numeric = 0;
+    int compare_value = 0;
     if (key == NULL) {
         goto done;
     }
@@ -3302,7 +3307,7 @@ return_probe_worker(void *arg)
             if (box == NULL) {
                 goto done;
             }
-            numeric = 1;
+            compare_value = 1;
             switch (probe->api) {
                 case 36: result = PyNumber_Index(box); break;
                 case 37: result = PyNumber_Long(box); break;
@@ -3334,6 +3339,96 @@ return_probe_worker(void *arg)
             result = PyType_GetDict(type);
             break;
         }
+        case 42:
+        case 43:
+        case 44:
+        case 45: {
+            PyObject *expected = NULL;
+            if (probe->api == 44) {
+                expected = PyDict_GetItemWithError(mapping, key);
+                if (expected == NULL) {
+                    goto done;
+                }
+            }
+            box = make_return_box(&member_box_spec, value);
+            if (box == NULL) {
+                goto done;
+            }
+            PyHeapTypeObject *type = (PyHeapTypeObject *)Py_TYPE(box);
+            if (probe->api == 45) {
+                if (PyDict_SetItemString(type->ht_type.tp_dict,
+                                        "__module__", value) < 0) {
+                    goto done;
+                }
+                result = PyType_GetModuleName(&type->ht_type);
+            }
+            else {
+                PyObject **field = probe->api == 42 ? &type->ht_name :
+                                                      &type->ht_qualname;
+                // Keep the original name alive: tp_name can point into it.
+                PyObject *old = *field;
+                *field = Py_NewRef(value);  // Blind copy into the local type.
+                switch (probe->api) {
+                    case 42: result = PyType_GetName(&type->ht_type); break;
+                    case 43: result = PyType_GetQualName(&type->ht_type); break;
+                    case 44: result = PyType_GetFullyQualifiedName(&type->ht_type); break;
+                }
+                Py_SETREF(*field, old);
+                if (probe->api == 44) {
+                    value = expected;
+                    compare_value = 1;
+                }
+            }
+            break;
+        }
+        case 46:
+        case 47:
+        case 48:
+        case 49: {
+            PyType_Spec spec = member_box_spec;
+            spec.flags |= Py_TPFLAGS_BASETYPE;
+            box = make_return_box(&spec, value);
+            if (box == NULL) {
+                goto done;
+            }
+            PyTypeObject *type = Py_TYPE(box);
+            ((PyHeapTypeObject *)type)->ht_module = Py_NewRef(value);
+            if (probe->position) {
+                PyType_Slot slots[] = {{Py_tp_base, type}, {0, NULL}};
+                PyType_Spec sub_spec = {
+                    .name = "_testinternalcapi.ModuleSubclass",
+                    .flags = Py_TPFLAGS_DEFAULT,
+                    .slots = slots,
+                };
+                func = PyType_FromSpec(&sub_spec);
+                if (func == NULL) {
+                    goto done;
+                }
+                type = (PyTypeObject *)func;
+            }
+            switch (probe->api) {
+                case 46:
+                    result = PyType_GetModule(type);
+                    owned = 0;
+                    break;
+                case 47:
+                    result = PyType_GetModuleByDef(type, probe->module_def);
+                    owned = 0;
+                    break;
+                case 48:
+                    result = PyType_GetModuleByToken(type, probe->module_def);
+                    break;
+                case 49: {
+                    void *state = PyType_GetModuleState(type);
+                    if (!PyErr_Occurred() && state == probe->module_state) {
+                        // Normalize successful scalar results for comparison.
+                        result = Py_NewRef(value);
+                    }
+                    break;
+                }
+            }
+            break;
+        }
         default:
             box = make_return_box(&return_box_spec, value);
             if (box == NULL) {
@@ -3354,7 +3449,7 @@ check_result:
     }
     if (probe->base.accessible) {
         probe->base.ok = status == 1 && result != NULL &&
-            (numeric ? PyObject_RichCompareBool(result, value, Py_EQ) == 1 :
+            (compare_value ? PyObject_RichCompareBool(result, value, Py_EQ) == 1 :
                        result == value) && !PyErr_Occurred();
     }
     else {
@@ -3412,6 +3507,23 @@ threadgroup_return_probe(PyObject *self, PyObject *args)
     if (return_apis[index] == NULL && operator == NULL) {
         return PyErr_Format(PyExc_ValueError, "unknown API %s", api);
     }
+    PyModuleDef *module_def = NULL;
+    void *module_state = NULL;
+    if (index >= 46 && index <= 49) {
+        // Read native metadata in the caller's group, where the module is safe.
+        PyObject *module = PyTuple_GetItem(source, 0);
+        if (module == NULL) {
+            return NULL;
+        }
+        module_def = PyModule_GetDef(module);
+        if (PyErr_Occurred()) {
+            return NULL;
+        }
+        module_state = PyModule_GetState(module);
+        if (PyErr_Occurred()) {
+            return NULL;
+        }
+    }
     _PyThreadGroupState *state = _PyThreadGroup_GetState(group);
     if (state == NULL) {
         return NULL;
@@ -3421,6 +3533,8 @@ threadgroup_return_probe(PyObject *self, PyObject *args)
         .api = index,
         .operator = operator,
         .position = position,
+        .module_def = module_def,
+        .module_state = module_state,
     };
     PyThread_ident_t ident;
     PyThread_handle_t handle;

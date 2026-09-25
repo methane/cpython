@@ -468,6 +468,33 @@ assert 'threading' not in sys.modules
                         (cls, frozendict()), group, 'PyType_GetDict'),
                         group is sys.main_thread_group)
 
+    def test_type_name_returns(self):
+        class String(str):
+            pass
+
+        for api in ('PyType_GetName', 'PyType_GetQualName',
+                    'PyType_GetFullyQualifiedName', 'PyType_GetModuleName'):
+            for value in ('stored_name', String('stored_name')):
+                for group in (sys.main_thread_group, self.foreign):
+                    with self.subTest(api=api, value_type=type(value), group=group):
+                        self.assertIs(internal.threadgroup_return_probe(
+                            (value, frozendict(value='_testinternalcapi.stored_name')),
+                            group, api), type(value) is str or
+                            group is sys.main_thread_group)
+
+    def test_type_module_returns(self):
+        for api in ('PyType_GetModule', 'PyType_GetModuleByDef',
+                    'PyType_GetModuleByToken', 'PyType_GetModuleState'):
+            # The token/definition APIs can also find an ancestor's module.
+            positions = (0, 1) if api in (
+                'PyType_GetModuleByDef', 'PyType_GetModuleByToken') else (0,)
+            for position in positions:
+                for group in (sys.main_thread_group, self.foreign):
+                    with self.subTest(api=api, inherited=position, group=group):
+                        self.assertIs(internal.threadgroup_return_probe(
+                            (internal, frozendict()), group, api, position),
+                            group is sys.main_thread_group)
+
     def test_numeric_operator_slot_returns(self):
         unary = ('Negative', 'Positive', 'Invert', 'Absolute')
         binary = ('Add', 'Subtract', 'Multiply', 'MatrixMultiply', 'FloorDivide',

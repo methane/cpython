@@ -369,6 +369,10 @@ instance can still have a LOCAL class. `PyType_GetDict()` also validates the
 returned dictionary, including Main-owned dictionaries of shared builtin types.
 Its existing annotation and ctypes callers propagate acquisition failures.
 Internal dictionary lookup and the raw `Py_TYPE` macro remain unchanged.
+Heap type name/qualified-name getters check stored references before returning
+or formatting them. Normal associated-module getters validate borrowed results;
+the token getter and module-state getter inherit those checks. Their `DuringGC`
+lookup helpers retain raw traversal semantics.
 Extension objects remain LOCAL unless explicitly declared immutable. Static
 extension objects can rebind to a new Main after their former interpreter has
 been destroyed. `PyType_Ready()` also marks static types whose object headers
@@ -544,6 +548,16 @@ The default-path parallel scheduling test requires group-only serialization
 from startup and does not skip. The extension-import test also runs in the normal
 build, checking that imports leave this scheduling state unchanged.
 
+- Type name/module results: debug and release each pass 444 tests across six
+  ownership, type/module C API, module, descriptor and exception files (four
+  skips). Two native tests reproduce nine foreign-group failures before the
+  fix and pass afterward. They cover name subclasses before full-name formatting,
+  borrowed/owned module results, inherited module lookup and state pointers;
+  Main and exact-string controls pass. Both tests also pass TSan without
+  suppressions. Existing Main-only type/module C APIs pass `-R 3:3` (37 tests).
+  No new Main-only failure was found. Logs: `test-type-metadata-before.log`,
+  `test-type-metadata-debug.log`, `test-type-metadata-release.log`,
+  `test-type-metadata-main-refleak.log` and `tsan-type-metadata.log`.
 - Class/dictionary C API results: debug and release each pass 532 tests across
   ownership, types/descriptors, annotations and ctypes structures (three skips).
   Four foreign-group cases fail before the fix: an immutable instance's LOCAL
