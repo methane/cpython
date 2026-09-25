@@ -5859,7 +5859,11 @@ void *
 PyType_GetSlot(PyTypeObject *type, int slot_in)
 {
     uint16_t slot = _PySlot_resolve_type_slot(slot_in);
-    return _PySlot_type_getslot(type, slot);
+    void *result = _PySlot_type_getslot(type, slot);
+    if (result != NULL && (slot == Py_tp_base || slot == Py_tp_bases)) {
+        return PyObject_CheckAccess(result);
+    }
+    return result;
 }
 
 PyObject *
@@ -6089,6 +6093,10 @@ PyType_GetBaseByToken(PyTypeObject *type, void *token, PyTypeObject **result)
 
     int res = PyType_GetBaseByToken_DuringGC(type, token, result);
     if (res > 0 && result) {
+        if (PyObject_CheckAccess((PyObject *)*result) == NULL) {
+            *result = NULL;
+            return -1;
+        }
         Py_INCREF(*result);
     }
     return res;

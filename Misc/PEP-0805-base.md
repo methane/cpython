@@ -370,7 +370,8 @@ returned dictionary, including Main-owned dictionaries of shared builtin types.
 The Python `type.__dict__` getter validates the dictionary before wrapping it
 in a mapping proxy, preventing a foreign group from reading it through a
 newly created local proxy.
-Its existing annotation and ctypes callers propagate acquisition failures.
+The annotation and ctypes callers of `PyType_GetDict()` propagate acquisition
+failures.
 Internal dictionary lookup and the raw `Py_TYPE` macro remain unchanged.
 Heap type name/qualified-name getters check stored references before returning
 or formatting them. Normal associated-module getters validate borrowed results;
@@ -381,6 +382,12 @@ tuples before reading their metadata. This includes C API construction of
 immutable types and bases returned by `__mro_entries__`. Metaclass selection
 also validates the acquired metaclass; a rejected base replacement leaves
 the original bases intact.
+`PyType_GetBaseByToken()` checks the returned base before taking a new reference,
+clearing the output pointer and returning -1 on rejection. Queries with no
+output pointer retain their status-only behavior. `PyType_GetSlot()` checks the
+borrowed object pointers in `Py_tp_base` and `Py_tp_bases`; other slots keep
+their native pointer semantics. A read-only extension type can be declared
+immutable while its base or its tuple-subclass bases remain LOCAL.
 Extension objects remain LOCAL unless explicitly declared immutable. Static
 extension objects can rebind to a new Main after their former interpreter has
 been destroyed. `PyType_Ready()` also marks static types whose object headers
@@ -556,6 +563,17 @@ The default-path parallel scheduling test requires group-only serialization
 from startup and does not skip. The extension-import test also runs in the normal
 build, checking that imports leave this scheduling state unchanged.
 
+- Base-class C API results: debug and release each pass 162 tests across five
+  ownership, type/slot C API, xxlimited and defaultdict files. Native probes
+  check token results before a VM return check can mask a failure, status-only
+  token queries, borrowed base/bases slots and a LOCAL tuple subclass used for
+  the bases. Baseline runs reproduce one token and three slot acquisition
+  failures; Main and exact-tuple controls pass. Both targeted tests pass TSan
+  without suppressions. Existing Main-only C API and extension tests pass
+  `-R 3:3` (72 tests), with no new Main-only failure in this selection. Logs:
+  `test-base-token-before.log`, `test-base-slot-before-release.log`,
+  `test-base-returns-debug.log`, `test-base-returns-release.log`,
+  `test-base-returns-main-refleak.log` and `tsan-base-returns.log`.
 - Type dictionary proxies: debug and release each pass 457 tests across six
   ownership, types, descriptors, dictionary views and type/dictionary C API
   files (one and two skips). Before the fix, foreign groups acquire proxies for

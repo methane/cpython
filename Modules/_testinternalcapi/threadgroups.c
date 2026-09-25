@@ -3074,6 +3074,47 @@ done:
     return result;
 }
 
+static PyObject *
+make_immutable_subtype(PyObject *self, PyObject *tuple_type)
+{
+    // Both type definitions are read-only. Only the subtype is explicitly
+    // declared shareable; its base retains the default LOCAL ownership.
+    static PyType_Slot base_slots[] = {
+        {Py_tp_token, Py_TP_USE_SPEC},
+        {0, NULL},
+    };
+    static PyType_Spec base_spec = {
+        .name = "_testinternalcapi.LocalTokenBase",
+        .flags = Py_TPFLAGS_IMMUTABLETYPE | Py_TPFLAGS_BASETYPE,
+        .slots = base_slots,
+    };
+    PyObject *base = PyType_FromSpec(&base_spec);
+    if (base == NULL) {
+        return NULL;
+    }
+    static int subtype_token;
+    PyType_Slot slots[] = {{Py_tp_token, &subtype_token}, {0, NULL}};
+    PyType_Spec spec = {
+        .name = "_testinternalcapi.ImmutableTokenSubtype",
+        .flags = Py_TPFLAGS_IMMUTABLETYPE,
+        .slots = slots,
+    };
+    PyObject *bases = PyTuple_Pack(1, base);
+    if (bases != NULL) {
+        Py_SETREF(bases, PyObject_CallOneArg(tuple_type, bases));
+    }
+    PyObject *subtype = bases == NULL ? NULL :
+        PyType_FromSpecWithBases(&spec, bases);
+    Py_XDECREF(bases);
+    PyObject *result = NULL;
+    if (subtype != NULL && PyObject_DeclareImmutable(subtype) == 0) {
+        result = PyTuple_Pack(2, base, subtype);
+    }
+    Py_XDECREF(subtype);
+    Py_DECREF(base);
+    return result;
+}
+
 static const char *return_apis[] = {
     "PyTuple_GetItem", "PySequence_GetItem", "PyObject_GetItem",
     "PyList_GetItem", "PyList_GetItemRef",
@@ -3092,7 +3133,8 @@ static const char *return_apis[] = {
     "PyNumber_Float", "PyFloat_AsDouble", "PyObject_Type", "PyType_GetDict",
     "PyType_GetName", "PyType_GetQualName", "PyType_GetFullyQualifiedName",
     "PyType_GetModuleName", "PyType_GetModule", "PyType_GetModuleByDef",
-    "PyType_GetModuleByToken", "PyType_GetModuleState", NULL,
+    "PyType_GetModuleByToken", "PyType_GetModuleState", "PyType_GetBaseByToken",
+    "PyType_GetSlot_base", "PyType_GetSlot_bases", NULL,
 };
 
 struct return_probe {
@@ -3102,6 +3144,7 @@ struct return_probe {
     int position;
     PyModuleDef *module_def;
     void *module_state;
+    void *type_token;
 };
 
 static void
@@ -3429,6 +3472,33 @@ return_probe_worker(void *arg)
             }
             break;
         }
+        case 50: {
+            PyObject *type = PyDict_GetItemWithError(mapping, key);
+            if (type == NULL) {
+                goto done;
+            }
+            // A query without an output reference need not expose the base.
+            if (PyType_GetBaseByToken((PyTypeObject *)type,
+                                     probe->type_token, NULL) != 1) {
+                goto done;
+            }
+            PyTypeObject *base = &PyBaseObject_Type;
+            status = PyType_GetBaseByToken((PyTypeObject *)type,
+                                          probe->type_token, &base);
+            result = (PyObject *)base;
+            break;
+        }
+        case 51:
+        case 52: {
+            PyObject *type = PyDict_GetItemWithError(mapping, key);
+            if (type == NULL) {
+                goto done;
+            }
+            int slot = probe->api == 51 ? Py_tp_base : Py_tp_bases;
+            result = PyType_GetSlot((PyTypeObject *)type, slot);
+            owned = 0;
+            break;
+        }
         default:
             box = make_return_box(&return_box_spec, value);
             if (box == NULL) {
@@ -3509,6 +3579,21 @@ threadgroup_return_probe(PyObject *self, PyObject *args)
     }
     PyModuleDef *module_def = NULL;
     void *module_state = NULL;
+    void *type_token = NULL;
+    if (index == 50) {
+        // Read the token in the caller's group, where this type is accessible.
+        PyObject *type = PyTuple_GetItem(source, 0);
+        if (type == NULL) {
+            return NULL;
+        }
+        type_token = PyType_GetSlot((PyTypeObject *)type, Py_tp_token);
+        if (type_token == NULL) {
+            if (!PyErr_Occurred()) {
+                PyErr_SetString(PyExc_ValueError, "expected a type with a token");
+            }
+            return NULL;
+        }
+    }
     if (index >= 46 && index <= 49) {
         // Read native metadata in the caller's group, where the module is safe.
         PyObject *module = PyTuple_GetItem(source, 0);
@@ -3535,6 +3620,7 @@ threadgroup_return_probe(PyObject *self, PyObject *args)
         .position = position,
         .module_def = module_def,
         .module_state = module_state,
+        .type_token = type_token,
     };
     PyThread_ident_t ident;
     PyThread_handle_t handle;
@@ -5226,6 +5312,7 @@ static PyMethodDef methods[] = {
     {"threadgroup_type_from_bases", threadgroup_type_from_bases, METH_VARARGS, NULL},
     {"threadgroup_detaching_allocator_probe", threadgroup_detaching_allocator_probe, METH_O, NULL},
     {"threadgroup_return_probe", threadgroup_return_probe, METH_VARARGS, NULL},
+    {"make_immutable_subtype", make_immutable_subtype, METH_O, NULL},
     {"threadgroup_number_source", threadgroup_number_source, METH_VARARGS, NULL},
     {"test_static_immutable_access", test_static_immutable_access, METH_NOARGS, NULL},
     {"threadgroup_access_probe", threadgroup_access_probe, METH_VARARGS, NULL},

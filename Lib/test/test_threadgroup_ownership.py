@@ -675,6 +675,47 @@ assert 'threading' not in sys.modules
                              (type, IllegalThreadAccessException, rejected, explicit)),
                             0, 1, False, builtins.__build_class__))
 
+    def test_type_base_token_return(self):
+        base, subtype = internal.make_immutable_subtype(tuple)
+        self.assertIs(base.__shareable__, threading.Shareable.LOCAL)
+        self.assertIs(subtype.__shareable__, threading.Shareable.IMMUTABLE)
+
+        def get_base():
+            source[1].__base__
+            return True
+
+        for group in (sys.main_thread_group, self.foreign):
+            with self.subTest(group=group):
+                self.assertIs(internal.threadgroup_vm_probe(
+                    get_base.__code__, group, (base, subtype, None), 0),
+                    group is sys.main_thread_group)
+                for expected in (base, subtype):
+                    with self.subTest(expected=expected):
+                        self.assertIs(internal.threadgroup_return_probe(
+                            (expected, frozendict(value=subtype)), group,
+                            'PyType_GetBaseByToken'),
+                            expected is subtype or group is sys.main_thread_group)
+
+    def test_type_base_slot_returns(self):
+        class Bases(tuple):
+            pass
+
+        for tuple_type in (tuple, Bases):
+            base, subtype = internal.make_immutable_subtype(tuple_type)
+            bases = subtype.__bases__
+            self.assertIs(type(bases), tuple_type)
+            for group in (sys.main_thread_group, self.foreign):
+                for api, expected in (
+                    ('PyType_GetSlot_base', base),
+                    ('PyType_GetSlot_bases', bases),
+                ):
+                    with self.subTest(tuple_type=tuple_type, group=group, api=api):
+                        shared = (expected.__shareable__ is
+                                  threading.Shareable.IMMUTABLE)
+                        self.assertIs(internal.threadgroup_return_probe(
+                            (expected, frozendict(value=subtype)), group, api),
+                            shared or group is sys.main_thread_group)
+
     def test_numeric_operator_slot_returns(self):
         unary = ('Negative', 'Positive', 'Invert', 'Absolute')
         binary = ('Add', 'Subtract', 'Multiply', 'MatrixMultiply', 'FloorDivide',
