@@ -827,7 +827,7 @@ _Py_BuiltinCallFast_StackRef(
     );
     STACKREFS_TO_PYOBJECTS_CLEANUP(args_o);
     assert((res != NULL) ^ (PyErr_Occurred() != NULL));
-    return res;
+    return _PyObject_CheckAccessNullable(res);
 }
 
 PyObject *
@@ -851,7 +851,7 @@ _Py_BuiltinCallFastWithKeywords_StackRef(
     res = cfunc(self, args_o, total_args, NULL);
     STACKREFS_TO_PYOBJECTS_CLEANUP(args_o);
     assert((res != NULL) ^ (PyErr_Occurred() != NULL));
-    return res;
+    return _PyObject_CheckAccessNullable(res);
 }
 
 PyObject *
@@ -872,7 +872,7 @@ _PyCallMethodDescriptorFast_StackRef(
     res = cfunc(self, (args_o + 1), total_args - 1);
     STACKREFS_TO_PYOBJECTS_CLEANUP(args_o);
     assert((res != NULL) ^ (PyErr_Occurred() != NULL));
-    return res;
+    return _PyObject_CheckAccessNullable(res);
 }
 
 PyObject *
@@ -893,7 +893,7 @@ _PyCallMethodDescriptorFastWithKeywords_StackRef(
     res = cfunc(self, (args_o + 1), total_args-1, NULL);
     STACKREFS_TO_PYOBJECTS_CLEANUP(args_o);
     assert((res != NULL) ^ (PyErr_Occurred() != NULL));
-    return res;
+    return _PyObject_CheckAccessNullable(res);
 }
 
 PyObject *
@@ -911,7 +911,7 @@ _Py_CallBuiltinClass_StackRef(
     res = tp->tp_vectorcall((PyObject *)tp, args_o, total_args | PY_VECTORCALL_ARGUMENTS_OFFSET, NULL);
     STACKREFS_TO_PYOBJECTS_CLEANUP(args_o);
     assert((res != NULL) ^ (PyErr_Occurred() != NULL));
-    return res;
+    return _PyObject_CheckAccessNullable(res);
 }
 
 PyObject *

@@ -2346,18 +2346,59 @@ return_box_compare(PyObject *self, PyObject *other, int comparison)
     return Py_NewRef(((return_box *)self)->value);
 }
 
+static PyObject *
+return_box_method(PyObject *self, PyObject *unused)
+{
+    return Py_NewRef(((return_box *)self)->value);
+}
+
+static PyObject *
+return_box_fast(PyObject *self, PyObject *const *args, Py_ssize_t nargs)
+{
+    return return_box_method(self, NULL);
+}
+
+static PyObject *
+return_box_keywords(PyObject *self, PyObject *const *args,
+                    Py_ssize_t nargs, PyObject *kwnames)
+{
+    return return_box_method(self, NULL);
+}
+
+static PyMethodDef return_box_methods[] = {
+    {"get_noargs", return_box_method, METH_NOARGS, NULL},
+    {"get_o", return_box_method, METH_O, NULL},
+    {"get_fast", _PyCFunction_CAST(return_box_fast), METH_FASTCALL, NULL},
+    {"get_keywords", _PyCFunction_CAST(return_box_keywords),
+     METH_FASTCALL | METH_KEYWORDS, NULL},
+    {NULL},
+};
+
+static PyObject *
+return_box_type_vectorcall(PyObject *type, PyObject *const *args,
+                           size_t nargsf, PyObject *kwnames)
+{
+    if (PyVectorcall_NARGS(nargsf) != 1 ||
+        (kwnames != NULL && PyTuple_GET_SIZE(kwnames) != 0) ||
+        !Py_IS_TYPE(args[0], (PyTypeObject *)type)) {
+        return PyErr_Format(PyExc_TypeError, "expected a return box");
+    }
+    return return_box_method(args[0], NULL);
+}
+
 static PyType_Slot member_box_slots[] = {
     {Py_tp_dealloc, return_box_dealloc},
     {Py_tp_traverse, return_box_traverse},
     {Py_tp_members, return_box_members},
     {Py_tp_richcompare, return_box_compare},
+    {Py_tp_methods, return_box_methods},
     {0, NULL},
 };
 
 static PyType_Spec member_box_spec = {
     .name = "_testinternalcapi.MemberBox",
     .basicsize = sizeof(return_box),
-    .flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_GC,
+    .flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_GC | Py_TPFLAGS_IMMUTABLETYPE,
     .slots = member_box_slots,
 };
 
@@ -2395,6 +2436,10 @@ make_return_box(PyType_Spec *spec, PyObject *value)
     PyTypeObject *type = (PyTypeObject *)PyType_FromSpec(spec);
     if (type == NULL) {
         return NULL;
+    }
+    if (spec == &member_box_spec) {
+        // Exercise the VM's specialized type-call result acquisition too.
+        type->tp_vectorcall = return_box_type_vectorcall;
     }
     return_box *box = (return_box *)type->tp_alloc(type, 0);
     Py_DECREF(type);

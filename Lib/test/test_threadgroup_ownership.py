@@ -996,6 +996,54 @@ assert 'threading' not in sys.modules
                         (get, descriptor, None), 0, 32),
                         group is sys.main_thread_group)
 
+    def check_c_call_results(self, warmups, specialized=False):
+        cases = (
+            ("mapping.get('value')", 'CALL_METHOD_DESCRIPTOR_FAST'),
+            ('box.get_noargs()', 'CALL_METHOD_DESCRIPTOR_NOARGS'),
+            ('box.get_o(None)', 'CALL_METHOD_DESCRIPTOR_O'),
+            ('box.get_fast(None)', 'CALL_METHOD_DESCRIPTOR_FAST'),
+            ('box.get_keywords(None)', 'CALL_METHOD_DESCRIPTOR_FAST_WITH_KEYWORDS'),
+            ('method = box.get_o\nmethod(None)', 'CALL_BUILTIN_O'),
+            ('method = box.get_fast\nmethod(None)', 'CALL_BUILTIN_FAST'),
+            ('method = box.get_keywords\nmethod(None)', 'CALL_BUILTIN_FAST_WITH_KEYWORDS'),
+            ('box.__class__(box)', 'CALL_BUILTIN_CLASS'),
+        )
+        for body, opcode in cases:
+            with self.subTest(body=body):
+                namespace = {}
+                exec('def probe():\n' + textwrap.indent(body, '    ') +
+                     '\n    return True', namespace)
+                self.check_vm_code(namespace['probe'].__code__, warmups,
+                                   opcode if specialized else None)
+
+        # type() also acquires a new reference, even for an immutable instance.
+        instance = internal.make_immutable_special_method_instance({})
+
+        def probe_type():
+            type_ = cls.__class__
+            type_(source[1])
+            return True
+
+        for value in (instance, 42):
+            for group in (sys.main_thread_group, self.foreign):
+                with self.subTest(type_of=type(value), group=group):
+                    accessible, bytecode = internal.threadgroup_vm_probe(
+                        probe_type.__code__.replace(), group,
+                        (type(value), value, None), warmups, 1, True)
+                    self.assertIs(accessible,
+                                  value is not instance or group is sys.main_thread_group)
+                    if specialized:
+                        self.assertIn('CALL_TYPE_1', {
+                            instruction.opname
+                            for instruction in dis._get_instructions_bytes(bytecode)})
+
+    def test_vm_c_call_results(self):
+        self.check_c_call_results(0)
+
+    @requires_specialization
+    def test_vm_specialized_c_call_results(self):
+        self.check_c_call_results(64, specialized=True)
+
     def test_attribute_hook_descriptor_result(self):
         def hook(name):
             return 42

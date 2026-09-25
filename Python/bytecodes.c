@@ -4760,7 +4760,8 @@ dummy_func(
             _GUARD_NOS_NULL +
             _GUARD_CALLABLE_TYPE_1 +
             _CALL_TYPE_1 +
-            POP_TOP;
+            POP_TOP +
+            _CHECK_ACCESS;
 
         op(_GUARD_CALLABLE_STR_1, (callable, unused, unused -- callable, unused, unused)) {
             PyObject *callable_o = PyStackRef_AsPyObjectBorrow(callable);
@@ -4961,6 +4962,7 @@ dummy_func(
             PyObject *res_o = _PyCFunction_TrampolineCall(cfunc, bound_self, PyStackRef_AsPyObjectBorrow(arg));
             _Py_LeaveRecursiveCallTstate(tstate);
             assert((res_o != NULL) ^ (_PyErr_Occurred(tstate) != NULL));
+            res_o = _PyObject_CheckAccessNullable(res_o);
             if (res_o == NULL) {
                 ERROR_NO_POP();
             }
@@ -5182,6 +5184,7 @@ dummy_func(
             PyObject *res_o = _PyCFunction_TrampolineCall(cfunc, self, arg);
             _Py_LeaveRecursiveCallTstate(tstate);
             assert((res_o != NULL) ^ (_PyErr_Occurred(tstate) != NULL));
+            res_o = _PyObject_CheckAccessNullable(res_o);
             if (res_o == NULL) {
                 ERROR_NO_POP();
             }
@@ -5205,6 +5208,7 @@ dummy_func(
             PyObject *res_o = _PyCFunction_TrampolineCall(cfunc_v, self, arg);
             _Py_LeaveRecursiveCallTstate(tstate);
             assert((res_o != NULL) ^ (_PyErr_Occurred(tstate) != NULL));
+            res_o = _PyObject_CheckAccessNullable(res_o);
             if (res_o == NULL) {
                 ERROR_NO_POP();
             }
@@ -5331,6 +5335,7 @@ dummy_func(
             PyObject *res_o = _PyCFunction_TrampolineCall(cfunc, self, NULL);
             _Py_LeaveRecursiveCallTstate(tstate);
             assert((res_o != NULL) ^ (_PyErr_Occurred(tstate) != NULL));
+            res_o = _PyObject_CheckAccessNullable(res_o);
             if (res_o == NULL) {
                 ERROR_NO_POP();
             }
@@ -5349,6 +5354,7 @@ dummy_func(
             PyObject *res_o = _PyCFunction_TrampolineCall(cfunc_v, self, NULL);
             _Py_LeaveRecursiveCallTstate(tstate);
             assert((res_o != NULL) ^ (_PyErr_Occurred(tstate) != NULL));
+            res_o = _PyObject_CheckAccessNullable(res_o);
             if (res_o == NULL) {
                 ERROR_NO_POP();
             }

@@ -394,6 +394,12 @@ immutable instance does not grant access to its LOCAL class as an implicit
 argument. `PyCFunction_GetSelf()` checks its borrowed result as well. The
 specialized `METH_O` and fast-call paths perform the same acquisition checks;
 explicit arguments already held by the caller need no additional checks.
+Specialized builtin, method-descriptor and type-vectorcall paths also validate
+their returned references, matching the generic C-call path. The `type()`
+specialization ends with a separate `_CHECK_ACCESS` micro-op so replacing the
+type lookup with a constant does not remove the acquisition check. Native test
+callbacks deliberately return stored heap references without checking them;
+the VM must reject foreign LOCAL results even after call specialization.
 
 Tuple and list element operations check references before invoking repr, hash,
 comparison or sorting callbacks. A local list copied from a shared tuple can
@@ -445,6 +451,16 @@ flags/events rather than foreign LOCAL Python functions or mutable results.
 The default-path parallel scheduling test remains skipped while the interpreter
 GIL is enabled. The isolated native probe additionally tests real parallelism.
 
+- Specialized C call results: debug and release builds each run 1,198 tests
+  across nine files successfully (four and six skips). Before the fix, ten
+  foreign specialized subcases fail while the cold paths reject access.
+  Both new tests pass `-R 3:3` and TSan without suppressions; the existing
+  parallel LOCAL function probe also passes. Coverage includes builtin,
+  method-descriptor and type-vectorcall results, plus `type()`, with owner
+  and immutable controls and assertions that specialization remains active.
+  Logs: `test-c-call-results-before.log`, `test-c-call-results-debug.log`,
+  `test-c-call-results-release.log`, `test-c-call-results-refleak.log`,
+  `test-c-call-results-parallel.log` and `tsan-c-call-results.log`.
 - Bound C receivers and defining classes: debug and release builds each run
   1,013 tests across seven files successfully (four and six skips). The initial
   regressions fail in 15 foreign cases before the fix. Five selected tests
