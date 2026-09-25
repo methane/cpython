@@ -717,6 +717,68 @@ assert 'threading' not in sys.modules
                             group, api), type(value) is str or
                             group is sys.main_thread_group)
 
+    def test_type_name_format_acquisition(self):
+        capi = import_helper.import_module('_testlimitedcapi')
+
+        def probe():
+            error, rejected, position, expected = source[2]
+            try:
+                if position == 0:
+                    bound_builtin(source[1], '')
+                else:
+                    bound_builtin('', source[1])
+            except error:
+                assert rejected
+            except TypeError as exc:
+                assert not rejected
+                assert exc.__str__() == expected
+            else:
+                assert False
+            return True
+
+        for value in (internal.make_immutable_special_method_instance({}),
+                      internal.make_immutable_call_receiver(object)):
+            local_type = type(value).__shareable__ is threading.Shareable.LOCAL
+            for position, ordinal in enumerate(('first', 'second')):
+                expected = f'{ordinal} argument must be str, not {type(value).__name__}'
+                for group in (sys.main_thread_group, self.foreign):
+                    rejected = local_type and group is self.foreign
+                    with self.subTest(local_type=local_type, position=position,
+                                      group=group):
+                        self.assertTrue(internal.threadgroup_vm_probe(
+                            probe.__code__, group,
+                            (True, value, (IllegalThreadAccessException,
+                             rejected, position, expected)),
+                            0, 1, False, capi.unicode_equal))
+
+    def test_object_repr_type_acquisition(self):
+        def probe():
+            error, rejected, expected, converter = source[2]
+            try:
+                actual = (bound_builtin(source[1]) if converter is None
+                          else converter(source[1]))
+            except error:
+                assert rejected
+            else:
+                assert not rejected
+                assert actual == expected
+            return True
+
+        for value in (internal.make_immutable_special_method_instance({}),
+                      internal.make_immutable_call_receiver(object)):
+            local_type = type(value).__shareable__ is threading.Shareable.LOCAL
+            expected = repr(value)
+            for operation in (repr, str):
+                for group in (sys.main_thread_group, self.foreign):
+                    rejected = local_type and group is self.foreign
+                    with self.subTest(local_type=local_type,
+                                      operation=operation, group=group):
+                        self.assertTrue(internal.threadgroup_vm_probe(
+                            probe.__code__, group,
+                            (True, value, (IllegalThreadAccessException,
+                             rejected, expected, str if operation is str else None)),
+                            0, 1, False, repr))
+
     def test_type_module_returns(self):
         for api in ('PyType_GetModule', 'PyType_GetModuleByDef',
                     'PyType_GetModuleByToken', 'PyType_GetModuleState'):

@@ -373,8 +373,11 @@ current ThreadGroup. Rejected acquisitions raise `IllegalThreadAccessException`
 without inspecting the foreign object's representation. C API checks apply to
 acquired results; already-acquired arguments need no additional runtime check.
 `PyObject_Type()` validates its newly acquired class: an immutable native
-instance can still have a LOCAL class. `PyType_GetDict()` also validates the
-returned dictionary, including Main-owned dictionaries of shared builtin types.
+instance can still have a LOCAL class. `%T` formatting uses that checked type
+acquisition before constructing a type name, and `object.__repr__` checks its
+stored class before reading the class's module or name. `PyType_GetDict()` also
+validates the returned dictionary, including Main-owned dictionaries of shared
+builtin types.
 The Python `type.__dict__` getter validates the dictionary before wrapping it
 in a mapping proxy, preventing a foreign group from reading it through a
 newly created local proxy.
@@ -618,6 +621,16 @@ The default-path parallel scheduling test requires group-only serialization
 from startup and does not skip. The extension-import test also runs in the normal
 build, checking that imports leave this scheduling state unchanged.
 
+- Type acquisition for formatting: debug and release each pass 512 tests across
+  ownership, descriptors, builtins and Unicode C APIs (nine and ten skips).
+  Two new tests exercise 16 worker calls, covering `%T` in argument errors and
+  the default object representation through `repr` and `str`. The baseline has
+  four foreign-LOCAL-class failures; Main and shared-class controls pass. Both
+  tests pass TSan without suppressions. Thirteen existing Main-only formatting
+  and representation tests pass `-R 3:3`, with no new Main-only failure in this
+  selection. Logs: `test-type-format-baseline.log`, `test-type-format-debug.log`,
+  `test-type-format-release.log`, `test-type-format-main-refleak.log` and
+  `tsan-type-format.log`.
 - Function docstring acquisition: debug and release each pass 205 tests across
   ownership, function attributes, code objects and opcodes (one skip). The new
   test exercises 40 worker cases, each twice, through the constructor and

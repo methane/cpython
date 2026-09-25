@@ -7458,7 +7458,10 @@ object_repr(PyObject *self)
     PyTypeObject *type;
     PyObject *mod, *name, *rtn;
 
-    type = Py_TYPE(self);
+    type = (PyTypeObject *)PyObject_CheckAccess((PyObject *)Py_TYPE(self));
+    if (type == NULL) {
+        return NULL;
+    }
     mod = type_module(type);
     if (mod == NULL)
         PyErr_Clear();

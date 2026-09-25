@@ -3104,7 +3104,10 @@ unicode_fromformat_arg(_PyUnicodeWriter *writer,
     case 'T':
     {
         PyObject *obj = va_arg(*vargs, PyObject *);
-        PyTypeObject *type = (PyTypeObject *)Py_NewRef(Py_TYPE(obj));
+        PyTypeObject *type = (PyTypeObject *)PyObject_Type(obj);
+        if (type == NULL) {
+            return NULL;
+        }
 
         PyObject *type_name;
         if (flags & F_ALT) {
