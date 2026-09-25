@@ -477,6 +477,26 @@ assert internal.threadgroup_probe(
     groups, 14, support.SHORT_TIMEOUT, True) == (True, True)
 ''', PYTHONMALLOC='debug')
 
+    def test_parallel_pending_calls(self):
+        self.check_parallel_pending_calls(15)
+
+    def test_parallel_main_pending_call_handoff(self):
+        self.check_parallel_pending_calls(16)
+
+    def check_parallel_pending_calls(self, mode):
+        script_helper.assert_python_ok('-c', '''
+import faulthandler
+import sys
+import threading
+from test import support
+import _testinternalcapi as internal
+
+faulthandler.dump_traceback_later(support.LONG_TIMEOUT, exit=True)
+groups = (threading.ThreadGroup('first'), threading.ThreadGroup('second'))
+assert internal.threadgroup_probe(
+    groups, int(sys.argv[1]), support.SHORT_TIMEOUT, True) == (True, True)
+''', str(mode), PYTHONMALLOC='debug')
+
     def test_parallel_local_functions(self):
         script_helper.assert_python_ok('-c', '''
 import faulthandler
@@ -616,7 +636,7 @@ class C:
     value = None
 
 instance = C()
-internal.test_shared_keys_type_watcher(instance)
+internal.threadgroup_shared_keys_watcher_probe(instance)
 assert instance.__dict__ == {'inner': None, 'outer': None}
 ''')
 

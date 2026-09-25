@@ -119,10 +119,146 @@ struct group_probe {
     PyObject *lookup_objects;
     int *lookup_rounds;
     int type_watcher;
+    struct parallel_pending_probe *pending;
     char error[256];
 };
 
 #define PARALLEL_CODE_COUNT 16384
+
+struct parallel_pending_probe {
+    int refs;
+    int calls;
+    int active;
+    int failed;
+    PyEvent handler_started;
+    PyEvent main_attempted;
+    PyTime_t timeout;
+};
+
+static void
+parallel_pending_release(struct parallel_pending_probe *pending)
+{
+    if (_Py_atomic_add_int(&pending->refs, -1) == 1) {
+        PyMem_RawFree(pending);
+    }
+}
+
+static int
+parallel_pending_callback(void *arg)
+{
+    struct parallel_pending_probe *pending = arg;
+    if (_Py_atomic_add_int(&pending->active, 1) != 0) {
+        _Py_atomic_store_int(&pending->failed, 1);
+    }
+    // Other groups can enqueue and try to handle calls while this callback
+    // detaches. The interpreter must still run only one handler at a time.
+    PyEvent pause = {0};
+    PyEvent_WaitTimed(&pause, 10000, 1);
+    if (_Py_atomic_add_int(&pending->active, -1) != 1) {
+        _Py_atomic_store_int(&pending->failed, 1);
+    }
+    _Py_atomic_add_int(&pending->calls, 1);
+    parallel_pending_release(pending);
+    return 0;
+}
+
+static int
+parallel_pending_main_callback(void *arg)
+{
+    struct parallel_pending_probe *pending = arg;
+    if (PyThread_get_thread_ident() !=
+        PyInterpreterState_Get()->runtime->main_thread) {
+        _Py_atomic_store_int(&pending->failed, 1);
+    }
+    _Py_atomic_add_int(&pending->calls, 1);
+    parallel_pending_release(pending);
+    return 0;
+}
+
+static int
+parallel_pending_handoff_callback(void *arg)
+{
+    struct parallel_pending_probe *pending = arg;
+    _Py_atomic_add_int(&pending->refs, 1);
+    if (_PyEval_AddPendingCall(PyInterpreterState_Get(),
+                              parallel_pending_main_callback, pending,
+                              _Py_PENDING_MAINTHREADONLY) !=
+        _Py_ADD_PENDING_SUCCESS) {
+        parallel_pending_release(pending);
+        _Py_atomic_store_int(&pending->failed, 1);
+    }
+    _PyEvent_Notify(&pending->handler_started);
+    // Main tries to handle its call while this group is still the handler.
+    if (!PyEvent_WaitTimed(&pending->main_attempted, pending->timeout, 1)) {
+        _Py_atomic_store_int(&pending->failed, 1);
+    }
+    parallel_pending_release(pending);
+    return 0;
+}
+
+static int
+parallel_pending_main_wait(struct parallel_pending_probe *pending)
+{
+    PyThreadState *tstate = PyThreadState_Get();
+    int ok = PyEvent_WaitTimed(&pending->handler_started, pending->timeout, 1);
+    if (ok) {
+        ok = _Py_HandlePending(tstate) == 0;
+    }
+    _PyEvent_Notify(&pending->main_attempted);
+    PyTime_t now;
+    if (!ok || PyTime_Monotonic(&now) < 0) {
+        return 0;
+    }
+    PyTime_t deadline = now + pending->timeout;
+    while (!_Py_atomic_load_int(&pending->calls)) {
+        if (_Py_HandlePending(tstate) < 0 ||
+            PyTime_Monotonic(&now) < 0 || now >= deadline) {
+            return 0;
+        }
+    }
+    return !_Py_atomic_load_int(&pending->failed);
+}
+
+static int
+parallel_pending_worker(struct group_probe *probe)
+{
+    struct parallel_pending_probe *pending = probe->pending;
+    PyThreadState *tstate = PyThreadState_Get();
+    if (probe->mode == 16) {
+        if (probe->index != 0) {
+            return 1;
+        }
+        _Py_atomic_add_int(&pending->refs, 1);
+        if (_PyEval_AddPendingCall(probe->interp,
+                                  parallel_pending_handoff_callback,
+                                  pending, 0) != _Py_ADD_PENDING_SUCCESS) {
+            parallel_pending_release(pending);
+            return 0;
+        }
+        return _PyEval_MakePendingCalls(tstate) == 0 &&
+               !_Py_atomic_load_int(&pending->failed);
+    }
+    for (int i = 0; i < 128; i++) {
+        _Py_atomic_add_int(&pending->refs, 1);
+        if (_PyEval_AddPendingCall(probe->interp, parallel_pending_callback,
+                                  pending, 0) != _Py_ADD_PENDING_SUCCESS) {
+            parallel_pending_release(pending);
+            return 0;
+        }
+    }
+    PyTime_t now;
+    if (PyTime_Monotonic(&now) < 0) {
+        return 0;
+    }
+    PyTime_t deadline = now + probe->timeout;
+    while (_Py_atomic_load_int(&pending->calls) < 256) {
+        if (_Py_HandlePending(tstate) < 0 ||
+            PyTime_Monotonic(&now) < 0 || now >= deadline) {
+            return 0;
+        }
+    }
+    return !_Py_atomic_load_int(&pending->failed);
+}
 
 static int
 noop_code_watcher(PyCodeEvent event, PyCodeObject *code)
@@ -474,7 +610,7 @@ reentrant_keys_watcher(PyTypeObject *type)
 }
 
 static PyObject *
-test_shared_keys_type_watcher(PyObject *self, PyObject *instance)
+threadgroup_shared_keys_watcher_probe(PyObject *self, PyObject *instance)
 {
     int watcher = PyType_AddWatcher(reentrant_keys_watcher);
     if (watcher < 0) {
@@ -1059,6 +1195,10 @@ group_probe_worker(void *arg)
         probe->ok = parallel_type_watcher_worker(probe);
     }
 
+    if (probe->ok && (probe->mode == 15 || probe->mode == 16)) {
+        probe->ok = parallel_pending_worker(probe);
+    }
+
     if (probe->ok && probe->mode == 6) {
         probe->ok = parallel_vm_worker(probe);
         PyObject *exc = PyErr_GetRaisedException();
@@ -1130,10 +1270,12 @@ threadgroup_probe(PyObject *self, PyObject *args)
                           &groups, &mode, &seconds, &parallel, &PyCode_Type, &code)) {
         return NULL;
     }
-    if (PyTuple_GET_SIZE(groups) != 2 || mode < 0 || mode > 14 ||
+    if (PyTuple_GET_SIZE(groups) != 2 || mode < 0 || mode > 16 ||
         !(seconds > 0.0 && seconds <= 300.0) ||
         ((mode == 6) != (code != NULL)) ||
-        (code != NULL && ((PyCodeObject *)code)->co_nfreevars != 0)) {
+        (code != NULL && ((PyCodeObject *)code)->co_nfreevars != 0) ||
+        (mode == 16 && PyThread_get_thread_ident() !=
+                       PyInterpreterState_Get()->runtime->main_thread)) {
         PyErr_SetString(PyExc_ValueError, "invalid group probe arguments");
         return NULL;
     }
@@ -1152,6 +1294,7 @@ threadgroup_probe(PyObject *self, PyObject *args)
     PyObject *cycle_type = NULL;
     PyObject *types = NULL;
     struct parallel_gc_counts *counts = NULL;
+    struct parallel_pending_probe *pending = NULL;
     uint32_t *versions = NULL;
     static uint64_t intern_serial;
     struct parallel_intern_probe intern = {0};
@@ -1209,11 +1352,22 @@ threadgroup_probe(PyObject *self, PyObject *args)
             return NULL;
         }
     }
+    if (mode == 15 || mode == 16) {
+        pending = PyMem_RawCalloc(1, sizeof(*pending));
+        if (pending == NULL) {
+            return PyErr_NoMemory();
+        }
+        // Each queued callback owns a reference, including if workers time
+        // out or fail to start and the caller handles the remaining calls.
+        pending->refs = 1;
+        pending->timeout = (PyTime_t)(seconds * 1000000000.0);
+    }
 #ifdef Py_REF_DEBUG
     Py_ssize_t refs_before = mode == 4 ? _Py_GetGlobalRefTotal() : 0;
 #endif
     int start_failed = 0;
     int use_parallel = 0;
+    int pending_main_ok = 0;
     for (int i = 0; i < 2; i++) {
         PyObject *wrapper = PyTuple_GetItem(groups, i);
         if (wrapper == NULL) {
@@ -1241,6 +1395,7 @@ threadgroup_probe(PyObject *self, PyObject *args)
             .lookup_objects = types,
             .lookup_rounds = lookup_rounds,
             .type_watcher = type_watcher,
+            .pending = pending,
         };
     }
     if (parallel) {
@@ -1278,6 +1433,11 @@ done:
         _Py_atomic_store_int_relaxed(&gil->enabled, 0);
     }
     _PyEvent_Notify(&start);
+    if (mode == 16 && started == 2) {
+        Py_BLOCK_THREADS
+        pending_main_ok = parallel_pending_main_wait(pending);
+        Py_UNBLOCK_THREADS
+    }
     for (int i = 0; i < started; i++) {
         PyThread_join_thread(handles[i]);
     }
@@ -1289,6 +1449,12 @@ done:
     Py_END_ALLOW_THREADS
     if (type_watcher >= 0) {
         PyType_ClearWatcher(type_watcher);
+    }
+    if (pending != NULL) {
+        parallel_pending_release(pending);
+    }
+    if (mode == 16) {
+        probes[0].ok &= pending_main_ok;
     }
     if (start_failed) {
         PyErr_SetString(PyExc_RuntimeError, "failed to start group probe");
@@ -4483,7 +4649,7 @@ static PyMethodDef methods[] = {
      METH_NOARGS, NULL},
     {"threadgroup_probe", threadgroup_probe, METH_VARARGS, NULL},
     {"threadgroup_watcher_clear_probe", threadgroup_watcher_clear_probe, METH_O, NULL},
-    {"test_shared_keys_type_watcher", test_shared_keys_type_watcher, METH_O, NULL},
+    {"threadgroup_shared_keys_watcher_probe", threadgroup_shared_keys_watcher_probe, METH_O, NULL},
     {NULL, NULL},
 };
 

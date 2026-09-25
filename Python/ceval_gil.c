@@ -310,6 +310,7 @@ take_gil(PyThreadState *tstate)
     PyInterpreterState *interp = tstate->interp;
     struct _gil_runtime_state *gil = interp->ceval.gil;
     if (!_Py_atomic_load_int_relaxed(&gil->enabled)) {
+        update_eval_breaker_for_thread(interp, tstate);
         return;
     }
 
@@ -367,6 +368,7 @@ take_gil(PyThreadState *tstate)
         // return.
         COND_SIGNAL(gil->cond);
         MUTEX_UNLOCK(gil->mutex);
+        update_eval_breaker_for_thread(interp, tstate);
         return;
     }
 
@@ -819,27 +821,6 @@ _PyEval_SignalReceived(void)
 }
 
 
-#ifndef Py_GIL_DISABLED
-static void
-signal_active_thread(PyInterpreterState *interp, uintptr_t bit)
-{
-    struct _gil_runtime_state *gil = interp->ceval.gil;
-
-    // If a thread from the targeted interpreter is holding the GIL, signal
-    // that thread. Otherwise, the next thread to run from the targeted
-    // interpreter will have its bit set as part of taking the GIL.
-    MUTEX_LOCK(gil->mutex);
-    if (_Py_atomic_load_int_relaxed(&gil->locked)) {
-        PyThreadState *holder = (PyThreadState*)_Py_atomic_load_ptr_relaxed(&gil->last_holder);
-        if (holder->interp == interp) {
-            _Py_set_eval_breaker_bit(holder, bit);
-        }
-    }
-    MUTEX_UNLOCK(gil->mutex);
-}
-#endif
-
-
 /* Mechanism whereby asynchronously executing callbacks (e.g. UNIX
    signal handlers or Mac I/O completion routines) can schedule calls
    to a function to be called synchronously.
@@ -946,11 +927,7 @@ _PyEval_AddPendingCall(PyInterpreterState *interp,
         _Py_set_eval_breaker_bit(_PyRuntime.main_tstate, _PY_CALLS_TO_DO_BIT);
     }
     else {
-#ifdef Py_GIL_DISABLED
         _Py_set_eval_breaker_bit_all(interp, _PY_CALLS_TO_DO_BIT);
-#else
-        signal_active_thread(interp, _PY_CALLS_TO_DO_BIT);
-#endif
     }
 
     return result;
@@ -1038,13 +1015,9 @@ finally:
 }
 
 static void
-signal_pending_calls(PyThreadState *tstate, PyInterpreterState *interp)
+signal_pending_calls(PyInterpreterState *interp)
 {
-#ifdef Py_GIL_DISABLED
     _Py_set_eval_breaker_bit_all(interp, _PY_CALLS_TO_DO_BIT);
-#else
-    _Py_set_eval_breaker_bit(tstate, _PY_CALLS_TO_DO_BIT);
-#endif
 }
 
 static void
@@ -1058,11 +1031,18 @@ unsignal_pending_calls(PyThreadState *tstate, PyInterpreterState *interp)
 }
 
 static void
-clear_pending_handling_thread(struct _pending_calls *pending)
+clear_pending_handling_thread(PyInterpreterState *interp)
 {
-    FT_MUTEX_LOCK(&pending->mutex);
+    struct _pending_calls *pending = &interp->ceval.pending;
+    PyMutex_Lock(&pending->mutex);
     pending->handling_thread = NULL;
-    FT_MUTEX_UNLOCK(&pending->mutex);
+    PyMutex_Unlock(&pending->mutex);
+    // Main may have tried to handle its queue while another group was the
+    // handler. That attempt clears Main's bit, so wake it again now.
+    if (_Py_IsMainInterpreter(interp) && _Py_atomic_load_int32_relaxed(
+            &_PyRuntime.ceval.pending_mainthread.npending)) {
+        _Py_set_eval_breaker_bit(_PyRuntime.main_tstate, _PY_CALLS_TO_DO_BIT);
+    }
 }
 
 static int
@@ -1097,30 +1077,30 @@ make_pending_calls(PyThreadState *tstate)
 
     int32_t npending;
     if (_make_pending_calls(pending, &npending) != 0) {
-        clear_pending_handling_thread(pending);
+        clear_pending_handling_thread(interp);
         /* There might not be more calls to make, but we play it safe. */
-        signal_pending_calls(tstate, interp);
+        signal_pending_calls(interp);
         return -1;
     }
     if (npending > 0) {
         /* We hit pending->maxloop. */
-        signal_pending_calls(tstate, interp);
+        signal_pending_calls(interp);
     }
 
     if (_Py_IsMainThread() && _Py_IsMainInterpreter(interp)) {
         if (_make_pending_calls(pending_main, &npending) != 0) {
-            clear_pending_handling_thread(pending);
+            clear_pending_handling_thread(interp);
             /* There might not be more calls to make, but we play it safe. */
-            signal_pending_calls(tstate, interp);
+            signal_pending_calls(interp);
             return -1;
         }
         if (npending > 0) {
             /* We hit pending_main->maxloop. */
-            signal_pending_calls(tstate, interp);
+            signal_pending_calls(interp);
         }
     }
 
-    clear_pending_handling_thread(pending);
+    clear_pending_handling_thread(interp);
     return 0;
 }
 

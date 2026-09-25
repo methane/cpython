@@ -40,6 +40,14 @@ gate keeps workers detached during the switch; after joining them, it restores
 the lock before returning to Python. This is a test facility, not a public
 parallel-execution mode or evidence that arbitrary Python code is ready for it.
 
+Interpreter pending calls notify all threads, including when group execution
+does not hold the interpreter GIL. Attachment still refreshes pending calls and
+instrumentation state. The queue mutex also protects clearing the active handler
+in the normal build. If Main tried to process its own queue while a foreign
+group was the handler, releasing that handler re-notifies Main. Native probes
+exercise concurrent enqueueing, callbacks that detach, bounded queue draining
+and Main-only handoff without sharing Python callbacks between groups.
+
 The reference-counting bias belongs to a **ThreadGroup**, not an OS thread.
 Objects retain their owner IDs on merging, resurrection and creator-thread
 exit. A 64-bit `PyObject` occupies 24 bytes: a 32-bit owner/bias ID, an 8-bit local
@@ -476,6 +484,32 @@ flags/events rather than foreign LOCAL Python functions or mutable results.
 The default-path parallel scheduling test remains skipped while the interpreter
 GIL is enabled. The isolated native probe additionally tests real parallelism.
 
+- Pending-call notification and handler arbitration: the release build passes
+  730 tests across groups, C API misc, threading, signal and GC (22 skips).
+  The debug selection initially fails only on a one-argument fixture accidentally
+  discovered as a no-argument `test_*` helper. After renaming it, C API misc's
+  318 tests pass on rerun; the other four files already passed.
+  Both new native pending-call tests and the renamed fixture's caller pass
+  `-R 3:3` and TSan without suppressions. Before the fix, native group queues
+  stall and a contended Main-only call loses its notification. Logs:
+  `test-pending-native-before.log`, `test-pending-handoff-before.log`,
+  `test-pending-debug.log`, `test-pending-debug-misc-final.log`,
+  `test-pending-release.log`, `test-pending-refleak.log` and
+  `tsan-pending-final.log`.
+- A temporary normal release build with group serialization from startup
+  reproduced a Main-only timeout in `TestPendingCalls.test_max_pending`; the
+  pending-call fix removes it. A six-file audit then runs 789 tests, with failures
+  in C API misc (the fixture name above), sys (expects the interpreter GIL to be
+  enabled), and the allocation probe (expects immediate foreign-group frees).
+  Separate measurements confirm Main-group allocations are reclaimed promptly;
+  a foreign group's immutable tuple and its bytes need two collections to drain
+  their BRC queues. The verbose group rerun reproduces the two allocator
+  subcases; the initial run reports three subcase failures without identifying
+  the extra failure, so this audit is not a completed parallel-runtime gate.
+  The startup initializer was restored after the experiment. Logs:
+  `test-default-parallel-before.log`, `test-default-parallel-audit.log`,
+  `test-default-parallel-threadgroup-details.log` and
+  `test-default-parallel-allocation-details.log`.
 - Descriptor qualified-name caches: debug and release builds each run 469 tests
   across six files successfully (three and six skips). The three new tests pass
   `-R 3:3` and TSan without suppressions. Before the fix, concurrent native
