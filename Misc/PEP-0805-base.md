@@ -529,6 +529,11 @@ retain a shared argument tuple containing another group's LOCAL class, list or
 extension instance. Failed discovery discards the partial parameter tuple;
 subsequent attempts still report the acquisition error. Returning `__args__`
 and copying it into a reduction tuple preserve opaque references.
+Substitution checks arguments acquired from its input tuple and arguments passed
+to a substitution callback after unpacking or preparation. Variadic expansion
+also checks a prepared tuple before reading its size or copying its elements.
+An absent parameter list, wrong prepared arity or earlier unpacking error still
+fails before unused substitution arguments are acquired.
 
 Arithmetic dispatch validates native unary, binary, ternary and in-place slot
 results before returning them to C callers. Sequence concatenation/repetition
@@ -595,6 +600,17 @@ The default-path parallel scheduling test requires group-only serialization
 from startup and does not skip. The extension-import test also runs in the normal
 build, checking that imports leave this scheduling state unchanged.
 
+- Generic alias substitution inputs: debug and release each pass 923 tests
+  across ownership, generic aliases, typing and type aliases. Three new tests
+  exercise 31 worker calls through local protocol implementations, covering
+  direct, prepared and unpacked inputs, variadic tuple subclasses and earlier
+  errors. Baseline runs reproduce seven foreign-group failures; Main and
+  immutable controls pass. All three tests pass TSan without suppressions.
+  Existing Main-only generic/type-alias tests pass `-R 3:3` (70 tests), with no
+  new Main-only failure in this selection. Logs:
+  `test-alias-substitution-before.log`, `test-alias-substitution-debug.log`,
+  `test-alias-substitution-release.log`, `test-alias-substitution-main-refleak.log`
+  and `tsan-alias-substitution.log`.
 - Generic alias elements: debug and release each pass 920 tests across ownership,
   generic aliases, typing and type aliases. Three new tests exercise 43 worker
   calls, covering repr, parameter discovery, LOCAL class/list/native elements,

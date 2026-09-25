@@ -304,6 +304,11 @@ subs_tvars(PyObject *obj, PyObject *params,
                 PyObject *param = PyTuple_GET_ITEM(params, iparam);
                 arg = argitems[iparam];
                 if (Py_TYPE(param)->tp_iter && PyTuple_Check(arg)) {  // TypeVarTuple
+                    if (PyObject_CheckAccess(arg) == NULL) {
+                        Py_DECREF(subparams);
+                        Py_DECREF(subargs);
+                        return NULL;
+                    }
                     j = tuple_extend(&subargs, j,
                                     &PyTuple_GET_ITEM(arg, 0),
                                     PyTuple_GET_SIZE(arg));
@@ -382,6 +387,10 @@ _unpack_args(PyObject *item)
     PyObject **argitems = is_tuple ? &PyTuple_GET_ITEM(item, 0) : &item;
     for (Py_ssize_t i = 0; i < nitems; i++) {
         item = argitems[i];
+        if (is_tuple && PyObject_CheckAccess(item) == NULL) {
+            Py_DECREF(newargs);
+            return NULL;
+        }
         if (!PyType_Check(item)) {
             PyObject *subargs = _unpacked_tuple_args(item);
             if (subargs != NULL &&
@@ -541,7 +550,8 @@ _Py_subs_parameters(PyObject *self, PyObject *args, PyObject *parameters, PyObje
                 arg = NULL;
             }
             else {
-                arg = PyObject_CallOneArg(subst, argitems[iparam]);
+                PyObject *value = PyObject_CheckAccess(argitems[iparam]);
+                arg = value == NULL ? NULL : PyObject_CallOneArg(subst, value);
             }
             Py_DECREF(subst);
         }

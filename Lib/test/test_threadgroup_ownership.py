@@ -1216,6 +1216,139 @@ assert 'threading' not in sys.modules
             (True, (value,), (list, IllegalThreadAccessException)), 0))
         self.assertEqual(internal.container_element_calls(value), 0)
 
+    def test_generic_alias_substitution_acquisition(self):
+        class LocalClass:
+            pass
+
+        def probe():
+            origin, error, rejected, path = source[2]
+            type_type = ().__class__.__class__
+            Parameter = type_type('Parameter', (), {'__typing_subst__': consumer})
+
+            def prepare(self, alias, arguments):
+                return source[1]
+
+            Prepared = type_type('Prepared', (Parameter,),
+                                 {'__typing_prepare_subst__': prepare})
+
+            assert origin[Parameter()][1].__args__ == (True,)
+            parameter = Prepared() if path == 'prepared' else Parameter()
+            alias = origin[parameter]
+            arguments = source[1]
+            if path == 'prepared':
+                arguments = 1
+            elif path == 'unpacked':
+                tuple_type = ().__class__
+                arguments = (*tuple_type[arguments],)[0]
+            try:
+                result = alias[arguments]
+            except error:
+                assert rejected
+            else:
+                assert not rejected
+                assert result.__args__ == (True,)
+            return True
+
+        for value in (1, LocalClass, internal.make_container_element(False),
+                      internal.make_container_element(True)):
+            immutable = value.__shareable__ is threading.Shareable.IMMUTABLE
+            for path in ('direct', 'prepared', 'unpacked'):
+                for group in (sys.main_thread_group, self.foreign):
+                    rejected = not immutable and group is self.foreign
+                    with self.subTest(value_type=type(value), path=path, group=group):
+                        self.assertTrue(internal.threadgroup_vm_probe(
+                            probe.__code__, group,
+                            (True, (value,), (list, IllegalThreadAccessException,
+                             rejected, path)), 0))
+
+    def test_generic_alias_variadic_substitution_acquisition(self):
+        class Tuple(tuple):
+            pass
+
+        def probe():
+            origin, error, rejected = source[2]
+            type_type = ().__class__.__class__
+
+            def iterate(self):
+                return ().__iter__()
+
+            def prepare(self, alias, arguments):
+                return source[1]
+
+            Parameter = type_type('Parameter', (), {
+                '__typing_subst__': consumer,
+                '__iter__': iterate,
+                '__typing_prepare_subst__': prepare,
+            })
+
+            def getitem(self, arguments):
+                assert arguments == (1, 2)
+                return 42
+
+            Nested = type_type('Nested', (), {
+                '__parameters__': (Parameter(),),
+                '__getitem__': getitem,
+            })
+
+            alias = origin[Nested()]
+            try:
+                result = alias[0]
+            except error:
+                assert rejected
+            else:
+                assert not rejected
+                assert result.__args__ == (42,)
+            return True
+
+        for value in ((1, 2), Tuple((1, 2))):
+            for group in (sys.main_thread_group, self.foreign):
+                rejected = type(value) is Tuple and group is self.foreign
+                with self.subTest(value_type=type(value), group=group):
+                    self.assertTrue(internal.threadgroup_vm_probe(
+                        probe.__code__, group,
+                        (True, (value,), (list, IllegalThreadAccessException, rejected)), 0))
+
+    def test_generic_alias_unused_substitution_arguments(self):
+        def probe():
+            origin, error, path = source[2]
+            type_type = ().__class__.__class__
+            arguments = source[1]
+            if path == 'no parameters':
+                alias = origin[0]
+            elif path == 'prepared arity':
+                def prepare(self, alias, arguments):
+                    return (0,) + source[1]
+
+                Parameter = type_type('Parameter', (), {
+                    '__typing_subst__': consumer,
+                    '__typing_prepare_subst__': prepare,
+                })
+                alias = origin[Parameter()]
+                arguments = 0
+            else:
+                def getattribute(self, name):
+                    raise error
+
+                Bad = type_type('Bad', (), {'__getattribute__': getattribute})
+                Parameter = type_type('Parameter', (), {'__typing_subst__': consumer})
+                alias = origin[Parameter()]
+                arguments = (Bad(),) + source[1]
+            try:
+                alias[arguments]
+            except error:
+                return True
+            assert False
+
+        value = internal.make_container_element(False)
+        for path, error in (('no parameters', TypeError),
+                            ('prepared arity', TypeError),
+                            ('earlier unpack error', ValueError)):
+            with self.subTest(path=path):
+                self.assertTrue(internal.threadgroup_vm_probe(
+                    probe.__code__, self.foreign,
+                    (True, (value,), (list, error, path)), 0))
+                self.assertEqual(internal.container_element_calls(value), 0)
+
     def test_exception_argument_formatting(self):
         for exception_type in (BaseException, Exception, KeyError, AttributeError):
             for method in ('__str__', '__repr__'):
