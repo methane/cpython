@@ -523,6 +523,13 @@ the attribute name before synthesizing a message. Multiple-argument formatting
 retains the tuple's existing element checks. Assigning, retrieving and copying
 the `args` tuple into a reduction result does not acquire its elements.
 
+Generic alias repr and type-parameter discovery acquire arguments before
+inspecting their types, attributes or contents. A locally created alias can
+retain a shared argument tuple containing another group's LOCAL class, list or
+extension instance. Failed discovery discards the partial parameter tuple;
+subsequent attempts still report the acquisition error. Returning `__args__`
+and copying it into a reduction tuple preserve opaque references.
+
 Arithmetic dispatch validates native unary, binary, ternary and in-place slot
 results before returning them to C callers. Sequence concatenation/repetition
 and their numeric fallbacks validate newly returned references too. Existing
@@ -588,6 +595,17 @@ The default-path parallel scheduling test requires group-only serialization
 from startup and does not skip. The extension-import test also runs in the normal
 build, checking that imports leave this scheduling state unchanged.
 
+- Generic alias elements: debug and release each pass 920 tests across ownership,
+  generic aliases, typing and type aliases. Three new tests exercise 43 worker
+  calls, covering repr, parameter discovery, LOCAL class/list/native elements,
+  immutable controls, opaque argument storage and repeated failed discovery
+  after an accessible type parameter. Baseline runs reproduce 13 failures;
+  Main and immutable controls pass. All three tests pass TSan without
+  suppressions. Existing Main-only generic/type-alias tests pass `-R 3:3`
+  (70 tests), with no new Main-only failure in this selection. Logs:
+  `test-alias-elements-before.log`, `test-alias-elements-debug.log`,
+  `test-alias-elements-release.log`, `test-alias-elements-main-refleak.log`
+  and `tsan-alias-elements.log`.
 - Exception argument formatting: debug and release each run 319 tests across
   ownership, base exceptions, exceptions, exception groups and exception C APIs
   (three skips). Both have one known Main-only failure: the fixed exception

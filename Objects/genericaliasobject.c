@@ -118,7 +118,10 @@ ga_repr(PyObject *self)
                 goto error;
             }
         }
-        PyObject *p = PyTuple_GET_ITEM(alias->args, i);
+        PyObject *p = PyObject_CheckAccess(PyTuple_GET_ITEM(alias->args, i));
+        if (p == NULL) {
+            goto error;
+        }
         if (PyList_CheckExact(p)) {
             // Looks like we are working with ParamSpec's list of type args:
             if (ga_repr_items_list(writer, p) < 0) {
@@ -207,7 +210,10 @@ _Py_make_parameters(PyObject *args)
     }
     Py_ssize_t iparam = 0;
     for (Py_ssize_t iarg = 0; iarg < nargs; iarg++) {
-        PyObject *t = PyTuple_GET_ITEM(args, iarg);
+        PyObject *t = PyObject_CheckAccess(PyTuple_GET_ITEM(args, iarg));
+        if (t == NULL) {
+            goto error;
+        }
         // We don't want __parameters__ descriptor of a bare Python class.
         if (PyType_Check(t)) {
             continue;

@@ -1136,6 +1136,86 @@ assert 'threading' not in sys.modules
             0, 1, False, internal.slice_getindices_probe))
         self.assertEqual(internal.container_element_calls(value), 0)
 
+    def test_generic_alias_element_acquisition(self):
+        class LocalClass:
+            pass
+
+        def probe():
+            origin, error, rejected, operation, expected = source[2]
+            alias = origin[source[1]]
+            try:
+                if operation == 'repr':
+                    assert bound_builtin(alias) == expected
+                else:
+                    assert alias.__parameters__ == ()
+            except error:
+                assert rejected
+            else:
+                assert not rejected
+            return True
+
+        native_values = [internal.make_container_element(immutable)
+                         for immutable in (False, True)]
+        for value in (1, LocalClass, [1], *native_values):
+            immutable = value.__shareable__ is threading.Shareable.IMMUTABLE
+            native = type(value) not in (int, type, list)
+            for args in ((value,), (0, value)):
+                expected = repr(list[args])
+                for operation in ('repr', 'parameters'):
+                    for group in (sys.main_thread_group, self.foreign):
+                        rejected = not immutable and group is self.foreign
+                        before = internal.container_element_calls(value) if native else 0
+                        with self.subTest(value_type=type(value), size=len(args),
+                                          operation=operation, group=group):
+                            self.assertTrue(internal.threadgroup_vm_probe(
+                                probe.__code__, group,
+                                (True, args, (list, IllegalThreadAccessException,
+                                 rejected, operation, expected)),
+                                0, 1, False, repr))
+                            if native:
+                                calls = before + (operation == 'repr' and not rejected)
+                                self.assertEqual(internal.container_element_calls(value), calls)
+
+    def test_generic_alias_argument_storage(self):
+        def probe():
+            alias = source[2][source[1]]
+            assert alias.__args__ is source[1]
+            assert alias.__reduce__()[1][1] is source[1]
+            return True
+
+        value = internal.make_container_element(False)
+        for group in (sys.main_thread_group, self.foreign):
+            with self.subTest(group=group):
+                self.assertTrue(internal.threadgroup_vm_probe(
+                    probe.__code__, group, (True, (value,), list), 0))
+                self.assertEqual(internal.container_element_calls(value), 0)
+
+    def test_generic_alias_parameter_failure_cleanup(self):
+        def probe():
+            origin, error = source[2]
+
+            def generic[T]():
+                pass
+
+            parameter = generic.__type_params__[0]
+            assert origin[parameter].__parameters__ == (parameter,)
+            alias = origin[(parameter,) + source[1]]
+            for attempt in (0, 1):
+                try:
+                    alias.__parameters__
+                except error:
+                    pass
+                else:
+                    assert False
+            assert alias.__args__[0] is parameter
+            return True
+
+        value = internal.make_container_element(False)
+        self.assertTrue(internal.threadgroup_vm_probe(
+            probe.__code__, self.foreign,
+            (True, (value,), (list, IllegalThreadAccessException)), 0))
+        self.assertEqual(internal.container_element_calls(value), 0)
+
     def test_exception_argument_formatting(self):
         for exception_type in (BaseException, Exception, KeyError, AttributeError):
             for method in ('__str__', '__repr__'):
