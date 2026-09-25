@@ -240,6 +240,14 @@ Tests run on Linux/aarch64. Logs are under `/tmp/pep805-base/`. The optional
 flags/events rather than foreign LOCAL Python functions or mutable results.
 Parallel scheduling tests remain skipped while the interpreter GIL is enabled.
 
+- The non-debug normal build at `3ca90372f0` passes 1,885 tests across 15 files
+  covering immutable caches, ownership, ThreadGroups, strings, bytes, hashes,
+  dictionaries, sets, views, comparison, repr, codecs and related C APIs
+  (44 skips). Its `mimalloc_debug` selection passes 76 ownership, ThreadGroup
+  and dictionary-view tests (two skips). `Py_GIL_DISABLED=0`, `Py_DEBUG=0`,
+  and the interpreter GIL remains enabled; object and code basic sizes remain
+  24 and 224 bytes. These results verify the ported paths with serialized
+  execution, not parallel group execution.
 - Hash-table acquisitions: 932 tests pass across eight files covering ownership,
   dicts/frozendicts, sets, dictionary views, comparison, repr and C APIs
   (two skips). Ownership and dictionary views pass `-R 3:3` with
