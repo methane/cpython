@@ -112,14 +112,22 @@ before the pointer; readers acquire the pointer before using the length.
 String, bytes, tuple, frozenset and frozendict hash caches use atomic accesses
 in the normal build. A cold frozendict hash checks acquired values before
 invoking their hash callbacks; cached container hashes and stored key hashes
-do not acquire the elements. Unicode interning and other shared runtime caches
-still require a concurrency port before groups can execute in parallel.
+do not acquire the elements. Shared runtime caches still require further
+concurrency work before groups can execute in parallel.
 The interning-state byte is now separate from Unicode's immutable bit fields,
 with atomic publication and reads in both builds. Mortal interning and canonical
 identity are preserved, including use by another group and survival after that
-worker exits. The normal intern table still depends on the interpreter GIL:
-parallel removal/retrieval of its uncounted references and conversion of a
-group-biased mortal string to an immortal string need further coordination.
+worker exits. The normal intern table is now a weak native hash table protected
+by an interpreter mutex. Legacy interpreters which share the table use the
+same mutex. New entries set BRC's maybe-weakref flag; lookup acquires a strong
+reference before unlocking and rejects entries whose count has reached zero.
+An old deallocator removes only its own allocation, preserving an equal
+replacement. No dictionary references are hidden from the refcount. Shutdown
+temporarily makes the table strong to preserve borrowed Unicode ID entries
+until they acquire references. Table allocation uses the raw allocator.
+Conversion of a group-biased mortal string to an immortal string still needs
+coordination with other groups' reference-count updates before the interpreter
+GIL can be removed. Table synchronization does not solve that transition.
 
 Thread-local bytecode is active in the normal build, including thread lifecycle,
 frame migration, generator throws and specialization. `-X tlbc=0` and
@@ -273,6 +281,15 @@ Tests run on Linux/aarch64. Logs are under `/tmp/pep805-base/`. The optional
 flags/events rather than foreign LOCAL Python functions or mutable results.
 Parallel scheduling tests remain skipped while the interpreter GIL is enabled.
 
+- Weak intern table: debug and non-debug normal builds each pass 982 tests
+  across 14 files covering ownership, sys, type caching, strings, Unicode C
+  APIs, marshal, code, embedding, groups, GC, threading, fork and tracemalloc
+  (36 and 39 skips respectively). Ownership, sys and type-cache suites pass
+  `-R 3:3` with `mimalloc_debug` (166 tests, seven skips). A native regression
+  reproduces a zero-reference entry awaiting deallocation: the old table
+  incorrectly resurrects it, while the weak table replaces it and preserves
+  the replacement when the old allocation is freed. This validates that
+  lifetime boundary, not concurrent execution or immortalization safety.
 - Type metadata and per-type caches: a native contention probe verifies that a
   cache reader waits for the type mutex and observes invalidation after the
   wait. The new test fails against the preceding release runtime, where the

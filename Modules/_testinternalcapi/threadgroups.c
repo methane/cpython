@@ -320,6 +320,51 @@ struct deferred_shutdown_probe {
     int child_destroyed;
 };
 
+static PyObject *
+unicode_intern_dead_entry(PyObject *self, PyObject *unused)
+{
+    PyInterpreterState *interp = _PyInterpreterState_GET();
+    PyObject *original = PyUnicode_FromString("intern entry awaiting deallocation");
+    if (original == NULL) {
+        return NULL;
+    }
+    _PyUnicode_InternMortal(interp, &original);
+    PyObject *copy = _PyUnicode_Copy(original);
+    if (copy == NULL) {
+        Py_DECREF(original);
+        return NULL;
+    }
+    assert(Py_REFCNT(original) == 1);
+    // Reproduce the interval between the last decref and unicode_dealloc
+    // acquiring the intern-table mutex. The table must not resurrect it.
+    Py_SET_REFCNT(original, 0);
+#ifdef Py_REF_DEBUG
+    _Py_DecRefTotal(_PyThreadState_GET());
+#endif
+    _PyUnicode_InternMortal(interp, &copy);
+    if (copy == original) {
+        Py_DECREF(copy);
+        return PyErr_Format(PyExc_AssertionError,
+                            "interning resurrected a zero-reference string");
+    }
+    _Py_Dealloc(original);
+    // The old deallocator must not remove the replacement's equal key.
+    PyObject *again = _PyUnicode_Copy(copy);
+    if (again == NULL) {
+        Py_DECREF(copy);
+        return NULL;
+    }
+    _PyUnicode_InternMortal(interp, &again);
+    int same = again == copy;
+    Py_DECREF(again);
+    Py_DECREF(copy);
+    if (!same) {
+        return PyErr_Format(PyExc_AssertionError,
+                            "deallocation removed the replacement intern entry");
+    }
+    Py_RETURN_NONE;
+}
+
 static void
 deferred_shutdown_child(PyObject *capsule)
 {
@@ -2682,6 +2727,7 @@ threadgroup_weakref_probe(PyObject *self, PyObject *args)
 
 static PyMethodDef methods[] = {
     {"threadgroup_intern", threadgroup_intern, METH_VARARGS, NULL},
+    {"unicode_intern_dead_entry", unicode_intern_dead_entry, METH_NOARGS, NULL},
     {"threadgroup_unicode_cache_probe", threadgroup_unicode_cache_probe,
      METH_VARARGS, NULL},
     {"threadgroup_qsbr_probe", threadgroup_qsbr_probe, METH_VARARGS, NULL},

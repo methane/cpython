@@ -11,7 +11,8 @@ import threading
 import unittest
 
 from test.support import (
-    import_helper, requires_specialization, script_helper, threading_helper,
+    Py_GIL_DISABLED, import_helper, requires_specialization, script_helper,
+    threading_helper,
 )
 
 internal = import_helper.import_module('_testinternalcapi')
@@ -175,6 +176,10 @@ assert 'threading' not in sys.modules
                 del value, interned
                 gc.collect()
                 self.assertEqual(sys.getunicodeinternedsize(), count)
+
+    @unittest.skipIf(Py_GIL_DISABLED, "requires mortal interned strings")
+    def test_interning_does_not_resurrect_dead_entry(self):
+        internal.unicode_intern_dead_entry()
 
     def test_static_type_with_zero_initialized_header(self):
         capi = import_helper.import_module('_testcapi')

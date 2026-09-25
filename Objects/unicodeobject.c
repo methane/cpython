@@ -211,10 +211,22 @@ _PyUnicode_GetEmpty(void)
     return &_Py_STR(empty);
 }
 
-/* This dictionary holds per-interpreter interned strings.
+/* The normal build uses a weak table of per-interpreter interned strings.
+ * The free-threaded build uses a dictionary of immortal strings.
  * See InternalDocs/string_interning.md for details.
  */
-static inline PyObject *get_interned_dict(PyInterpreterState *interp)
+#ifdef Py_GIL_DISABLED
+typedef PyObject interned_table_t;
+#else
+typedef _Py_hashtable_t interned_table_t;
+#endif
+
+#ifndef Py_GIL_DISABLED
+static PyMutex *get_interned_mutex(PyInterpreterState *interp);
+#endif
+
+static inline interned_table_t *
+get_interned_table(PyInterpreterState *interp)
 {
     return _Py_INTERP_CACHED_OBJECT(interp, interned_strings);
 }
@@ -228,29 +240,60 @@ static inline PyObject *get_interned_dict(PyInterpreterState *interp)
 Py_ssize_t
 _PyUnicode_InternedSize(void)
 {
-    PyObject *dict = get_interned_dict(_PyInterpreterState_GET());
+    PyInterpreterState *interp = _PyInterpreterState_GET();
+    interned_table_t *dict = get_interned_table(interp);
+#ifdef Py_GIL_DISABLED
     return _Py_hashtable_len(INTERNED_STRINGS) + PyDict_GET_SIZE(dict);
+#else
+    PyMutex *mutex = get_interned_mutex(interp);
+    PyMutex_LockFlags(mutex, _Py_LOCK_DONT_DETACH);
+    Py_ssize_t size = _Py_hashtable_len(INTERNED_STRINGS) + _Py_hashtable_len(dict);
+    PyMutex_Unlock(mutex);
+    return size;
+#endif
 }
+
+#ifndef Py_GIL_DISABLED
+static int
+count_immortal_interned(_Py_hashtable_t *table, const void *key,
+                       const void *value, void *arg)
+{
+    if (PyUnicode_CHECK_INTERNED((PyObject *)key) == SSTATE_INTERNED_IMMORTAL) {
+        (*(Py_ssize_t *)arg)++;
+    }
+    return 0;
+}
+#endif
 
 /* Get number of immortal interned strings for the current interpreter. */
 Py_ssize_t
 _PyUnicode_InternedSize_Immortal(void)
 {
-    PyObject *dict = get_interned_dict(_PyInterpreterState_GET());
+    PyInterpreterState *interp = _PyInterpreterState_GET();
+    interned_table_t *dict = get_interned_table(interp);
+#ifdef Py_GIL_DISABLED
     PyObject *key, *value;
     Py_ssize_t pos = 0;
+#endif
     Py_ssize_t count = 0;
 
     // It's tempting to keep a count and avoid a loop here. But, this function
     // is intended for refleak tests. It spends extra work to report the true
     // value, to help detect bugs in optimizations.
 
+#ifdef Py_GIL_DISABLED
     while (PyDict_Next(dict, &pos, &key, &value)) {
         assert(PyUnicode_CHECK_INTERNED(key) != SSTATE_INTERNED_IMMORTAL_STATIC);
         if (PyUnicode_CHECK_INTERNED(key) == SSTATE_INTERNED_IMMORTAL) {
            count++;
        }
     }
+#else
+    PyMutex *mutex = get_interned_mutex(interp);
+    PyMutex_LockFlags(mutex, _Py_LOCK_DONT_DETACH);
+    _Py_hashtable_foreach(dict, count_immortal_interned, &count);
+    PyMutex_Unlock(mutex);
+#endif
     return _Py_hashtable_len(INTERNED_STRINGS) + count;
 }
 
@@ -292,17 +335,37 @@ has_shared_intern_dict(PyInterpreterState *interp)
     return interp != main_interp  && interp->feature_flags & Py_RTFLAGS_USE_MAIN_OBMALLOC;
 }
 
+#ifndef Py_GIL_DISABLED
+static PyMutex *
+get_interned_mutex(PyInterpreterState *interp)
+{
+    if (has_shared_intern_dict(interp)) {
+        interp = _PyInterpreterState_Main();
+    }
+    return &_Py_INTERP_CACHED_OBJECT(interp, interned_mutex);
+}
+#endif
+
 static int
 init_interned_dict(PyInterpreterState *interp)
 {
-    assert(get_interned_dict(interp) == NULL);
-    PyObject *interned;
+    assert(get_interned_table(interp) == NULL);
+    interned_table_t *interned;
     if (has_shared_intern_dict(interp)) {
-        interned = get_interned_dict(_PyInterpreterState_Main());
+        interned = get_interned_table(_PyInterpreterState_Main());
+#ifdef Py_GIL_DISABLED
         Py_INCREF(interned);
+#endif
     }
     else {
+#ifdef Py_GIL_DISABLED
         interned = PyDict_New();
+#else
+        _Py_hashtable_allocator_t alloc = {PyMem_RawMalloc, PyMem_RawFree};
+        interned = _Py_hashtable_new_full(hashtable_unicode_hash,
+                                        hashtable_unicode_compare,
+                                        NULL, NULL, &alloc);
+#endif
         if (interned == NULL) {
             return -1;
         }
@@ -314,13 +377,19 @@ init_interned_dict(PyInterpreterState *interp)
 static void
 clear_interned_dict(PyInterpreterState *interp)
 {
-    PyObject *interned = get_interned_dict(interp);
+    interned_table_t *interned = get_interned_table(interp);
     if (interned != NULL) {
         if (!has_shared_intern_dict(interp)) {
-            // only clear if the dict belongs to this interpreter
+            // Only clear if the table belongs to this interpreter.
+#ifdef Py_GIL_DISABLED
             PyDict_Clear(interned);
+#else
+            _Py_hashtable_destroy(interned);
+#endif
         }
+#ifdef Py_GIL_DISABLED
         Py_DECREF(interned);
+#endif
         _Py_INTERP_CACHED_OBJECT(interp, interned_strings) = NULL;
     }
 }
@@ -1666,6 +1735,20 @@ unicode_dealloc(PyObject *unicode)
         case SSTATE_NOT_INTERNED:
             break;
         case SSTATE_INTERNED_MORTAL:
+#ifndef Py_GIL_DISABLED
+            // A failed weak acquisition may already have replaced this entry
+            // while this deallocator was waiting for the table mutex.
+            assert(Py_REFCNT(unicode) == 0);
+            PyInterpreterState *interp = _PyInterpreterState_GET();
+            interned_table_t *interned = get_interned_table(interp);
+            assert(interned != NULL);
+            PyMutex *mutex = get_interned_mutex(interp);
+            PyMutex_LockFlags(mutex, _Py_LOCK_DONT_DETACH);
+            if (_Py_hashtable_get(interned, unicode) == unicode) {
+                _Py_hashtable_steal(interned, unicode);
+            }
+            PyMutex_Unlock(mutex);
+#else
             /* Remove the object from the intern dict.
              * Before doing so, we set the refcount to 2: the key and value
              * in the interned_dict.
@@ -1678,7 +1761,7 @@ unicode_dealloc(PyObject *unicode)
             _Py_IncRefTotal(_PyThreadState_GET());
 #endif
             PyInterpreterState *interp = _PyInterpreterState_GET();
-            PyObject *interned = get_interned_dict(interp);
+            interned_table_t *interned = get_interned_table(interp);
             assert(interned != NULL);
             PyObject *popped;
             int r = PyDict_Pop(interned, unicode, &popped);
@@ -1712,6 +1795,7 @@ unicode_dealloc(PyObject *unicode)
 #ifdef Py_REF_DEBUG
             /* let's be pedantic with the ref total */
             _Py_DecRefTotal(_PyThreadState_GET());
+#endif
 #endif
             break;
         default:
@@ -14576,7 +14660,7 @@ intern_static(PyInterpreterState *interp, PyObject *s /* stolen */)
     /* We must not add process-global interned string if there's already a
      * per-interpreter interned_dict, which might contain duplicates.
      */
-    PyObject *interned = get_interned_dict(interp);
+    interned_table_t *interned = get_interned_table(interp);
     assert(interned == NULL);
 #endif
 
@@ -14643,6 +14727,55 @@ can_immortalize_safely(PyObject *s)
 }
 #endif
 
+#ifndef Py_GIL_DISABLED
+static PyObject *
+intern_dynamic(PyInterpreterState *interp, PyObject *s, bool immortalize)
+{
+    interned_table_t *table = get_interned_table(interp);
+    PyMutex *mutex = get_interned_mutex(interp);
+    // Do not detach while waiting: callers may hold hidden C++ static-init
+    // locks. Table operations use the raw allocator and cannot invoke Python.
+    PyMutex_LockFlags(mutex, _Py_LOCK_DONT_DETACH);
+    PyObject *existing = _Py_hashtable_get(table, s);
+    if (existing != NULL) {
+        // The mutex keeps the allocation alive while we try to acquire it,
+        // but its reference count may already have reached zero.
+        if (_Py_TryIncref(existing)) {
+            if (immortalize &&
+                PyUnicode_CHECK_INTERNED(existing) == SSTATE_INTERNED_MORTAL) {
+                immortalize_interned(existing);
+            }
+            PyMutex_Unlock(mutex);
+            Py_DECREF(s);
+            return existing;
+        }
+        // Its deallocator is responsible for the allocation, not this entry.
+        // Remove it before inserting a new canonical string of equal value.
+        _Py_hashtable_steal(table, s);
+    }
+    if (_Py_hashtable_set(table, s, s) < 0) {
+        PyMutex_Unlock(mutex);
+        return s;
+    }
+    // Prevent the biased-count fast deallocation path from racing weak
+    // acquisitions. The table itself contributes no strong references.
+    _PyObject_SetMaybeWeakref(s);
+    if (_Py_IsImmortal(s)) {
+        _Py_atomic_store_uint8(&_PyUnicode_STATE(s).interned,
+                               SSTATE_INTERNED_IMMORTAL);
+    }
+    else {
+        _Py_atomic_store_uint8(&_PyUnicode_STATE(s).interned,
+                               SSTATE_INTERNED_MORTAL);
+        if (immortalize) {
+            immortalize_interned(s);
+        }
+    }
+    PyMutex_Unlock(mutex);
+    return s;
+}
+#endif
+
 static /* non-null */ PyObject*
 intern_common(PyInterpreterState *interp, PyObject *s /* stolen */,
               bool immortalize)
@@ -14672,15 +14805,12 @@ intern_common(PyInterpreterState *interp, PyObject *s /* stolen */,
             break;
         case SSTATE_INTERNED_MORTAL:
 #ifndef Py_GIL_DISABLED
-            // yes but we might need to make it immortal
-            if (immortalize) {
-                immortalize_interned(s);
+            if (!immortalize) {
+                return s;
             }
-            return s;
-#else
-            // not fully interned yet; fall through to the locking path
-            break;
 #endif
+            // Promotion must be serialized with other table operations.
+            break;
         default:
             // all done
             return s;
@@ -14722,8 +14852,11 @@ intern_common(PyInterpreterState *interp, PyObject *s /* stolen */,
         }
     }
 
+#ifndef Py_GIL_DISABLED
+    return intern_dynamic(interp, s, immortalize);
+#else
     /* Do a setdefault on the per-interpreter cache. */
-    PyObject *interned = get_interned_dict(interp);
+    interned_table_t *interned = get_interned_table(interp);
     assert(interned != NULL);
 #ifdef Py_GIL_DISABLED
 #  define INTERN_MUTEX &_Py_INTERP_CACHED_OBJECT(interp, interned_mutex)
@@ -14823,6 +14956,7 @@ intern_common(PyInterpreterState *interp, PyObject *s /* stolen */,
 
     FT_MUTEX_UNLOCK(INTERN_MUTEX);
     return s;
+#endif
 }
 
 void
@@ -14876,14 +15010,47 @@ PyUnicode_InternFromString(const char *cp)
 }
 
 
+#ifndef Py_GIL_DISABLED
+static int
+prepare_interned_clear(_Py_hashtable_t *table, const void *key,
+                       const void *value, void *arg)
+{
+    PyObject *s = (PyObject *)key;
+    // Temporarily make the table strong, so all strings stay alive until
+    // the borrowed entries in unicode.ids have acquired their own references.
+    if (PyUnicode_CHECK_INTERNED(s) == SSTATE_INTERNED_IMMORTAL) {
+        _Py_SetMortal(s, 1);
+#ifdef Py_REF_DEBUG
+        _Py_IncRefTotal(_PyThreadState_GET());
+#endif
+        (*(Py_ssize_t *)arg) += PyUnicode_GET_LENGTH(s);
+    }
+    else {
+        assert(PyUnicode_CHECK_INTERNED(s) == SSTATE_INTERNED_MORTAL);
+        Py_INCREF(s);
+    }
+    _Py_atomic_store_uint8_relaxed(&_PyUnicode_STATE(s).interned,
+                                  SSTATE_NOT_INTERNED);
+    return 0;
+}
+
+static void
+release_interned_string(void *s)
+{
+    Py_DECREF((PyObject *)s);
+}
+#endif
+
 void
 _PyUnicode_ClearInterned(PyInterpreterState *interp)
 {
-    PyObject *interned = get_interned_dict(interp);
+    interned_table_t *interned = get_interned_table(interp);
     if (interned == NULL) {
         return;
     }
+#ifdef Py_GIL_DISABLED
     assert(PyDict_CheckExact(interned));
+#endif
 
     if (has_shared_intern_dict(interp)) {
         // the dict doesn't belong to this interpreter, skip the debug
@@ -14892,6 +15059,17 @@ _PyUnicode_ClearInterned(PyInterpreterState *interp)
         return;
     }
 
+#ifndef Py_GIL_DISABLED
+    PyMutex *mutex = get_interned_mutex(interp);
+    PyMutex_LockFlags(mutex, _Py_LOCK_DONT_DETACH);
+    Py_ssize_t total_length = 0;
+    _Py_hashtable_foreach(interned, prepare_interned_clear, &total_length);
+    interned->key_destroy_func = release_interned_string;
+#ifdef INTERNED_STATS
+    fprintf(stderr, "releasing %zu interned strings\n",
+            _Py_hashtable_len(interned));
+#endif
+#else
 #ifdef INTERNED_STATS
     fprintf(stderr, "releasing %zd interned strings\n",
             PyDict_GET_SIZE(interned));
@@ -14948,6 +15126,7 @@ _PyUnicode_ClearInterned(PyInterpreterState *interp)
                 &_PyUnicode_STATE(s).interned, SSTATE_NOT_INTERNED);
         }
     }
+#endif
 #ifdef INTERNED_STATS
     fprintf(stderr,
             "total length of all interned strings: %zd characters\n",
@@ -14960,6 +15139,9 @@ _PyUnicode_ClearInterned(PyInterpreterState *interp)
         Py_XINCREF(ids->array[i]);
     }
     clear_interned_dict(interp);
+#ifndef Py_GIL_DISABLED
+    PyMutex_Unlock(mutex);
+#endif
     if (_Py_IsMainInterpreter(interp)) {
         clear_global_interned_strings();
     }
@@ -15362,7 +15544,7 @@ _PyUnicode_FiniEncodings(struct _Py_unicode_fs_codec *fs_codec)
 static inline int
 unicode_is_finalizing(void)
 {
-    return (get_interned_dict(_PyInterpreterState_Main()) == NULL);
+    return (get_interned_table(_PyInterpreterState_Main()) == NULL);
 }
 #endif
 
@@ -15383,7 +15565,7 @@ _PyUnicode_Fini(PyInterpreterState *interp)
 
     if (!has_shared_intern_dict(interp)) {
         // _PyUnicode_ClearInterned() must be called before _PyUnicode_Fini()
-        assert(get_interned_dict(interp) == NULL);
+        assert(get_interned_table(interp) == NULL);
     }
 
     _PyUnicode_FiniEncodings(&state->fs_codec);

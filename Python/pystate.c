@@ -321,6 +321,7 @@ _Py_COMP_DIAG_POP
         &(runtime)->audit_hooks.mutex, \
         &(runtime)->allocators.mutex, \
         &(runtime)->_main_interpreter.types.mutex, \
+        &(runtime)->_main_interpreter.cached_objects.interned_mutex, \
         &(runtime)->_main_interpreter.code_state.mutex, \
         &(runtime)->_main_interpreter.dict_state.watcher_mutex, \
     }

@@ -44,10 +44,12 @@ It is shared across threads and interpreters without any synchronization.
 
 All other strings are allocated dynamically, and have their
 `_PyUnicode_STATE(s).statically_allocated` flag set to zero.
-When interned, such strings are added to an interpreter-wide dict,
+When interned, such strings are added to
 `PyInterpreterState.cached_objects.interned_strings`.
-
-The key and value of each entry in this dict reference the same object.
+The normal build uses a weak native hash table protected by the interpreter's
+intern mutex. Legacy interpreters which share the main interpreter's table
+also share its mutex. The free-threaded build uses a dictionary whose key and
+value both reference the same immortal object.
 
 
 ## Immortality and reference counting
@@ -57,10 +59,15 @@ free-threaded build, interned strings are always immortal.
 
 For mortal interned strings:
 
-- the 2 references from the interned dict (key & value) are excluded from
-  their refcount
-- the deallocator (`unicode_dealloc`) removes the string from the interned dict
-- at shutdown, when the interned dict is cleared, the references are added back
+- the normal table holds no strong references and sets the BRC maybe-weakref
+  flag before publishing a new entry
+- lookup holds the table mutex while attempting to acquire a strong reference;
+  if that fails, the entry is removed and can be replaced by an equal string
+- the deallocator (`unicode_dealloc`) takes the same mutex and removes only an
+  entry pointing to that exact allocation, leaving any replacement intact
+- at shutdown the table temporarily acquires strong references, clears the
+  interned states and releases its references after `unicode.ids` has acquired
+  the references it needs to survive table destruction
 
 As with any type, you should only immortalize strings that will live until
 interpreter shutdown.
@@ -105,7 +112,9 @@ The state occupies a separate byte, accessed atomically in both builds.
 It does not share a bit-field storage location with the immutable character
 kind, compactness or ASCII flags. Publishing an interned state follows the
 corresponding reference-count updates. This does not by itself synchronize
-the intern table or the reference-count transition to immortality.
+the reference-count transition to immortality. Table operations are serialized
+by the intern mutex, but the normal build still relies on the interpreter GIL
+when promoting a string whose biased count may belong to another ThreadGroup.
 
 The valid transitions between these states are:
 

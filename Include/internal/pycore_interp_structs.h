@@ -735,10 +735,12 @@ typedef struct wrapperbase pytype_slotdef;
 
 
 struct _Py_interp_cached_objects {
-#ifdef Py_GIL_DISABLED
     PyMutex interned_mutex;
-#endif
+#ifdef Py_GIL_DISABLED
     PyObject *interned_strings;
+#else
+    struct _Py_hashtable_t *interned_strings;
+#endif
 
     /* object.__reduce__ */
     PyObject *objreduce;
