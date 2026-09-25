@@ -596,7 +596,7 @@ analyze_descriptor_load(PyTypeObject *type, PyObject *name, PyObject **descr, un
     }
     else {
         *descr = NULL;
-        *tp_version = FT_ATOMIC_LOAD_UINT_RELAXED(type->tp_version_tag);
+        *tp_version = _Py_atomic_load_uint_relaxed(&type->tp_version_tag);
         return GETSET_OVERRIDDEN;
     }
     unsigned int descr_version;

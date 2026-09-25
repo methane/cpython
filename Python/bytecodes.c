@@ -2804,7 +2804,7 @@ dummy_func(
             PyTypeObject *tp = (PyTypeObject *)PyStackRef_AsPyObjectBorrow(nos);
             assert(type_version != 0);
             EXIT_IF(!PyType_Check((PyObject *)tp));
-            EXIT_IF(FT_ATOMIC_LOAD_UINT_RELAXED(tp->tp_version_tag) != type_version);
+            EXIT_IF(_Py_atomic_load_uint_relaxed(&tp->tp_version_tag) != type_version);
         }
 
         op(_GUARD_LOAD_SUPER_ATTR_METHOD, (global_super_st, class_st, unused -- global_super_st, class_st, unused)) {
@@ -2898,14 +2898,14 @@ dummy_func(
         op(_GUARD_TYPE_VERSION, (type_version/2, owner -- owner)) {
             PyTypeObject *tp = Py_TYPE(PyStackRef_AsPyObjectBorrow(owner));
             assert(type_version != 0);
-            EXIT_IF(FT_ATOMIC_LOAD_UINT_RELAXED(tp->tp_version_tag) != type_version);
+            EXIT_IF(_Py_atomic_load_uint_relaxed(&tp->tp_version_tag) != type_version);
         }
 
         op(_GUARD_TYPE_VERSION_LOCKED, (type_version/2, owner -- owner)) {
             PyObject *owner_o = PyStackRef_AsPyObjectBorrow(owner);
             assert(type_version != 0);
             PyTypeObject *tp = Py_TYPE(owner_o);
-            if (FT_ATOMIC_LOAD_UINT_RELAXED(tp->tp_version_tag) != type_version) {
+            if (_Py_atomic_load_uint_relaxed(&tp->tp_version_tag) != type_version) {
                 UNLOCK_OBJECT(owner_o);
                 EXIT_IF(true);
             }
@@ -3067,7 +3067,7 @@ dummy_func(
 
             EXIT_IF(!PyType_Check(owner_o));
             assert(type_version != 0);
-            EXIT_IF(FT_ATOMIC_LOAD_UINT_RELAXED(((PyTypeObject *)owner_o)->tp_version_tag) != type_version);
+            EXIT_IF(_Py_atomic_load_uint_relaxed(&((PyTypeObject *)owner_o)->tp_version_tag) != type_version);
         }
 
         op(_LOAD_ATTR_CLASS, (descr/4, owner -- attr)) {
@@ -4819,7 +4819,7 @@ dummy_func(
             EXIT_IF(!PyStackRef_IsNull(self_or_null));
             EXIT_IF(!PyType_Check(callable_o));
             PyTypeObject *tp = (PyTypeObject *)callable_o;
-            EXIT_IF(FT_ATOMIC_LOAD_UINT32_RELAXED(tp->tp_version_tag) != type_version);
+            EXIT_IF(_Py_atomic_load_uint_relaxed(&tp->tp_version_tag) != type_version);
         }
 
         op(_ALLOCATE_OBJECT, (callable, self_or_null, unused[oparg] -- callable, self_or_null, unused[oparg])) {

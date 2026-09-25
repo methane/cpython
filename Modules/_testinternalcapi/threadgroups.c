@@ -116,10 +116,77 @@ struct group_probe {
     uint32_t *versions;
     int version_count;
     PyObject *code;
+    PyObject *types;
+    int *lookup_rounds;
     char error[256];
 };
 
 #define PARALLEL_CODE_COUNT 16384
+
+static PyObject *
+parallel_lookup_types(void)
+{
+    PyType_Slot slots[] = {
+        {0, NULL},
+    };
+    PyType_Spec spec = {
+        .name = "_testinternalcapi.ParallelLookup",
+        .basicsize = sizeof(PyObject),
+        .flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_IMMUTABLETYPE,
+        .slots = slots,
+    };
+    PyObject *types = PyTuple_New(1024);
+    if (types == NULL) {
+        return NULL;
+    }
+    for (Py_ssize_t i = 0; i < PyTuple_GET_SIZE(types); i++) {
+        PyObject *type = PyType_FromSpec(&spec);
+        if (type == NULL ||
+            PyDict_SetItemString(((PyTypeObject *)type)->tp_dict,
+                                 "value", Py_None) < 0 ||
+            PyObject_DeclareImmutable(type) < 0) {
+            Py_XDECREF(type);
+            Py_DECREF(types);
+            return NULL;
+        }
+        PyTuple_SET_ITEM(types, i, type);
+    }
+    return types;
+}
+
+static int
+parallel_lookup_worker(struct group_probe *probe)
+{
+    PyThreadState *tstate = PyThreadState_Get();
+    PyTime_t now;
+    if (PyTime_Monotonic(&now) < 0) {
+        return 0;
+    }
+    PyTime_t deadline = now + probe->timeout;
+    for (Py_ssize_t i = 0; i < PyTuple_GET_SIZE(probe->types); i++) {
+        // Bring both readers to each cold type before either fills its cache.
+        _Py_atomic_store_int(&probe->lookup_rounds[probe->index], (int)i + 1);
+        while (_Py_atomic_load_int(&probe->lookup_rounds[1 - probe->index]) <= i) {
+            if (_Py_HandlePending(tstate) < 0 ||
+                PyTime_Monotonic(&now) < 0 || now >= deadline) {
+                return 0;
+            }
+        }
+        PyObject *type = PyTuple_GET_ITEM(probe->types, i);
+        for (int repeat = 0; repeat < 8; repeat++) {
+            PyObject *value = PyObject_GetAttr(type, &_Py_ID(value));
+            if (value == NULL) {
+                return 0;
+            }
+            int ok = value == Py_None;
+            Py_DECREF(value);
+            if (!ok) {
+                return 0;
+            }
+        }
+    }
+    return 1;
+}
 
 static PyObject *
 parallel_vm_collect(PyObject *self, PyObject *unused)
@@ -443,6 +510,10 @@ group_probe_worker(void *arg)
         probe->ok = parallel_code_worker(probe, tstate);
     }
 
+    if (probe->ok && probe->mode == 7) {
+        probe->ok = parallel_lookup_worker(probe);
+    }
+
     if (probe->ok && probe->mode == 6) {
         probe->ok = parallel_vm_worker(probe);
         PyObject *exc = PyErr_GetRaisedException();
@@ -514,7 +585,7 @@ threadgroup_probe(PyObject *self, PyObject *args)
                           &groups, &mode, &seconds, &parallel, &PyCode_Type, &code)) {
         return NULL;
     }
-    if (PyTuple_GET_SIZE(groups) != 2 || mode < 0 || mode > 6 ||
+    if (PyTuple_GET_SIZE(groups) != 2 || mode < 0 || mode > 7 ||
         !(seconds > 0.0 && seconds <= 300.0) ||
         ((mode == 6) != (code != NULL)) ||
         (code != NULL && ((PyCodeObject *)code)->co_nfreevars != 0)) {
@@ -528,11 +599,13 @@ threadgroup_probe(PyObject *self, PyObject *args)
     PyEvent events[2] = {{0}, {0}};
     PyEvent start = {0};
     uint8_t flags[2] = {0, 0};
+    int lookup_rounds[2] = {0, 0};
     struct group_probe probes[2] = {{0}, {0}};
     PyThread_handle_t handles[2];
     int started = 0;
     PyObject *result = NULL;
     PyObject *cycle_type = NULL;
+    PyObject *types = NULL;
     struct parallel_gc_counts *counts = NULL;
     uint32_t *versions = NULL;
     static uint64_t intern_serial;
@@ -577,6 +650,12 @@ threadgroup_probe(PyObject *self, PyObject *args)
             return PyErr_NoMemory();
         }
     }
+    if (mode == 7) {
+        types = parallel_lookup_types();
+        if (types == NULL) {
+            return NULL;
+        }
+    }
 #ifdef Py_REF_DEBUG
     Py_ssize_t refs_before = mode == 4 ? _Py_GetGlobalRefTotal() : 0;
 #endif
@@ -606,6 +685,8 @@ threadgroup_probe(PyObject *self, PyObject *args)
             .intern = &intern,
             .versions = versions == NULL ? NULL : versions + i * PARALLEL_CODE_COUNT,
             .code = code,
+            .types = types,
+            .lookup_rounds = lookup_rounds,
         };
     }
     if (parallel) {
@@ -700,6 +781,7 @@ done:
         }
     }
     PyMem_RawFree(versions);
+    Py_XDECREF(types);
     if (cycle_type != NULL) {
         PyGC_Collect();
         if (counts->created != counts->freed && !PyErr_Occurred()) {

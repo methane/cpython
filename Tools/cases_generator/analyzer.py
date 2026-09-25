@@ -703,6 +703,7 @@ NON_ESCAPING_FUNCTIONS = (
     "_Py_TryIncrefCompareStackRef",
     "_Py_atomic_compare_exchange_uint8",
     "_Py_atomic_load_ptr_acquire",
+    "_Py_atomic_load_uint_relaxed",
     "_Py_atomic_load_uint32_relaxed",
     "_Py_atomic_load_uintptr_acquire",
     "_Py_atomic_store_uint8_relaxed",

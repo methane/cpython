@@ -11296,7 +11296,7 @@
                 SET_CURRENT_CACHED_VALUES(0);
                 JUMP_TO_JUMP_TARGET();
             }
-            if (FT_ATOMIC_LOAD_UINT_RELAXED(tp->tp_version_tag) != type_version) {
+            if (_Py_atomic_load_uint_relaxed(&tp->tp_version_tag) != type_version) {
                 UOP_STAT_INC(uopcode, miss);
                 SET_CURRENT_CACHED_VALUES(0);
                 JUMP_TO_JUMP_TARGET();
@@ -11325,7 +11325,7 @@
                 SET_CURRENT_CACHED_VALUES(1);
                 JUMP_TO_JUMP_TARGET();
             }
-            if (FT_ATOMIC_LOAD_UINT_RELAXED(tp->tp_version_tag) != type_version) {
+            if (_Py_atomic_load_uint_relaxed(&tp->tp_version_tag) != type_version) {
                 UOP_STAT_INC(uopcode, miss);
                 _tos_cache0 = _stack_item_0;
                 SET_CURRENT_CACHED_VALUES(1);
@@ -11357,7 +11357,7 @@
                 SET_CURRENT_CACHED_VALUES(2);
                 JUMP_TO_JUMP_TARGET();
             }
-            if (FT_ATOMIC_LOAD_UINT_RELAXED(tp->tp_version_tag) != type_version) {
+            if (_Py_atomic_load_uint_relaxed(&tp->tp_version_tag) != type_version) {
                 UOP_STAT_INC(uopcode, miss);
                 _tos_cache1 = _stack_item_1;
                 _tos_cache0 = nos;
@@ -11390,7 +11390,7 @@
                 SET_CURRENT_CACHED_VALUES(3);
                 JUMP_TO_JUMP_TARGET();
             }
-            if (FT_ATOMIC_LOAD_UINT_RELAXED(tp->tp_version_tag) != type_version) {
+            if (_Py_atomic_load_uint_relaxed(&tp->tp_version_tag) != type_version) {
                 UOP_STAT_INC(uopcode, miss);
                 _tos_cache2 = _stack_item_2;
                 _tos_cache1 = nos;
@@ -11691,7 +11691,7 @@
             uint32_t type_version = (uint32_t)CURRENT_OPERAND0_32();
             PyTypeObject *tp = Py_TYPE(PyStackRef_AsPyObjectBorrow(owner));
             assert(type_version != 0);
-            if (FT_ATOMIC_LOAD_UINT_RELAXED(tp->tp_version_tag) != type_version) {
+            if (_Py_atomic_load_uint_relaxed(&tp->tp_version_tag) != type_version) {
                 UOP_STAT_INC(uopcode, miss);
                 SET_CURRENT_CACHED_VALUES(0);
                 JUMP_TO_JUMP_TARGET();
@@ -11713,7 +11713,7 @@
             uint32_t type_version = (uint32_t)CURRENT_OPERAND0_32();
             PyTypeObject *tp = Py_TYPE(PyStackRef_AsPyObjectBorrow(owner));
             assert(type_version != 0);
-            if (FT_ATOMIC_LOAD_UINT_RELAXED(tp->tp_version_tag) != type_version) {
+            if (_Py_atomic_load_uint_relaxed(&tp->tp_version_tag) != type_version) {
                 UOP_STAT_INC(uopcode, miss);
                 _tos_cache0 = owner;
                 SET_CURRENT_CACHED_VALUES(1);
@@ -11735,7 +11735,7 @@
             uint32_t type_version = (uint32_t)CURRENT_OPERAND0_32();
             PyTypeObject *tp = Py_TYPE(PyStackRef_AsPyObjectBorrow(owner));
             assert(type_version != 0);
-            if (FT_ATOMIC_LOAD_UINT_RELAXED(tp->tp_version_tag) != type_version) {
+            if (_Py_atomic_load_uint_relaxed(&tp->tp_version_tag) != type_version) {
                 UOP_STAT_INC(uopcode, miss);
                 _tos_cache1 = owner;
                 _tos_cache0 = _stack_item_0;
@@ -11760,7 +11760,7 @@
             uint32_t type_version = (uint32_t)CURRENT_OPERAND0_32();
             PyTypeObject *tp = Py_TYPE(PyStackRef_AsPyObjectBorrow(owner));
             assert(type_version != 0);
-            if (FT_ATOMIC_LOAD_UINT_RELAXED(tp->tp_version_tag) != type_version) {
+            if (_Py_atomic_load_uint_relaxed(&tp->tp_version_tag) != type_version) {
                 UOP_STAT_INC(uopcode, miss);
                 _tos_cache2 = owner;
                 _tos_cache1 = _stack_item_1;
@@ -11785,7 +11785,7 @@
             PyObject *owner_o = PyStackRef_AsPyObjectBorrow(owner);
             assert(type_version != 0);
             PyTypeObject *tp = Py_TYPE(owner_o);
-            if (FT_ATOMIC_LOAD_UINT_RELAXED(tp->tp_version_tag) != type_version) {
+            if (_Py_atomic_load_uint_relaxed(&tp->tp_version_tag) != type_version) {
                 UNLOCK_OBJECT(owner_o);
                 if (true) {
                     UOP_STAT_INC(uopcode, miss);
@@ -11811,7 +11811,7 @@
             PyObject *owner_o = PyStackRef_AsPyObjectBorrow(owner);
             assert(type_version != 0);
             PyTypeObject *tp = Py_TYPE(owner_o);
-            if (FT_ATOMIC_LOAD_UINT_RELAXED(tp->tp_version_tag) != type_version) {
+            if (_Py_atomic_load_uint_relaxed(&tp->tp_version_tag) != type_version) {
                 UNLOCK_OBJECT(owner_o);
                 if (true) {
                     UOP_STAT_INC(uopcode, miss);
@@ -11837,7 +11837,7 @@
             PyObject *owner_o = PyStackRef_AsPyObjectBorrow(owner);
             assert(type_version != 0);
             PyTypeObject *tp = Py_TYPE(owner_o);
-            if (FT_ATOMIC_LOAD_UINT_RELAXED(tp->tp_version_tag) != type_version) {
+            if (_Py_atomic_load_uint_relaxed(&tp->tp_version_tag) != type_version) {
                 UNLOCK_OBJECT(owner_o);
                 if (true) {
                     UOP_STAT_INC(uopcode, miss);
@@ -11866,7 +11866,7 @@
             PyObject *owner_o = PyStackRef_AsPyObjectBorrow(owner);
             assert(type_version != 0);
             PyTypeObject *tp = Py_TYPE(owner_o);
-            if (FT_ATOMIC_LOAD_UINT_RELAXED(tp->tp_version_tag) != type_version) {
+            if (_Py_atomic_load_uint_relaxed(&tp->tp_version_tag) != type_version) {
                 UNLOCK_OBJECT(owner_o);
                 if (true) {
                     UOP_STAT_INC(uopcode, miss);
@@ -12467,7 +12467,7 @@
                 JUMP_TO_JUMP_TARGET();
             }
             assert(type_version != 0);
-            if (FT_ATOMIC_LOAD_UINT_RELAXED(((PyTypeObject *)owner_o)->tp_version_tag) != type_version) {
+            if (_Py_atomic_load_uint_relaxed(&((PyTypeObject *)owner_o)->tp_version_tag) != type_version) {
                 UOP_STAT_INC(uopcode, miss);
                 SET_CURRENT_CACHED_VALUES(0);
                 JUMP_TO_JUMP_TARGET();
@@ -12495,7 +12495,7 @@
                 JUMP_TO_JUMP_TARGET();
             }
             assert(type_version != 0);
-            if (FT_ATOMIC_LOAD_UINT_RELAXED(((PyTypeObject *)owner_o)->tp_version_tag) != type_version) {
+            if (_Py_atomic_load_uint_relaxed(&((PyTypeObject *)owner_o)->tp_version_tag) != type_version) {
                 UOP_STAT_INC(uopcode, miss);
                 _tos_cache0 = owner;
                 SET_CURRENT_CACHED_VALUES(1);
@@ -12524,7 +12524,7 @@
                 JUMP_TO_JUMP_TARGET();
             }
             assert(type_version != 0);
-            if (FT_ATOMIC_LOAD_UINT_RELAXED(((PyTypeObject *)owner_o)->tp_version_tag) != type_version) {
+            if (_Py_atomic_load_uint_relaxed(&((PyTypeObject *)owner_o)->tp_version_tag) != type_version) {
                 UOP_STAT_INC(uopcode, miss);
                 _tos_cache1 = owner;
                 _tos_cache0 = _stack_item_0;
@@ -12557,7 +12557,7 @@
                 JUMP_TO_JUMP_TARGET();
             }
             assert(type_version != 0);
-            if (FT_ATOMIC_LOAD_UINT_RELAXED(((PyTypeObject *)owner_o)->tp_version_tag) != type_version) {
+            if (_Py_atomic_load_uint_relaxed(&((PyTypeObject *)owner_o)->tp_version_tag) != type_version) {
                 UOP_STAT_INC(uopcode, miss);
                 _tos_cache2 = owner;
                 _tos_cache1 = _stack_item_1;
@@ -17850,7 +17850,7 @@
                 JUMP_TO_JUMP_TARGET();
             }
             PyTypeObject *tp = (PyTypeObject *)callable_o;
-            if (FT_ATOMIC_LOAD_UINT32_RELAXED(tp->tp_version_tag) != type_version) {
+            if (_Py_atomic_load_uint_relaxed(&tp->tp_version_tag) != type_version) {
                 UOP_STAT_INC(uopcode, miss);
                 SET_CURRENT_CACHED_VALUES(0);
                 JUMP_TO_JUMP_TARGET();

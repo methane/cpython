@@ -231,7 +231,7 @@ cache_lookup(PyTypeObject *type, PyObject *name)
     }
     // Check the cache version against the type version tag to maintain
     // consistency with find_name_in_mro and prevent stale cache reads
-    if (cache->version_tag != FT_ATOMIC_LOAD_UINT_RELAXED(type->tp_version_tag)) {
+    if (cache->version_tag != _Py_atomic_load_uint_relaxed(&type->tp_version_tag)) {
         PyStackRef_XCLOSE(out_ref);
         return miss;
     }

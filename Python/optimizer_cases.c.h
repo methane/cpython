@@ -2307,7 +2307,7 @@
                 OPT_STAT_INC(remove_globals_incorrect_keys);
                 ctx->done = true;
             }
-            else if (interp->rare_events.builtin_dict >= _Py_MAX_ALLOWED_BUILTINS_MODIFICATIONS) {
+            else if (_Py_atomic_load_uint8_relaxed(&interp->rare_events.builtin_dict) >= _Py_MAX_ALLOWED_BUILTINS_MODIFICATIONS) {
             }
             else {
                 if (!ctx->builtins_watched) {

@@ -94,13 +94,20 @@ PyAPI_FUNC(PyObject*) _Py_GetSpecializationStats(void);
 #endif  // !Py_STATS
 
 
+static inline void
+_PyStats_RareEventIncrement(uint8_t *counter)
+{
+    // Different ThreadGroups update the same interpreter's counters. A stale
+    // store must not lose increments or lower a counter that has saturated.
+    uint8_t value = _Py_atomic_load_uint8_relaxed(counter);
+    while (value < UINT8_MAX &&
+           !_Py_atomic_compare_exchange_uint8(counter, &value, value + 1)) {
+    }
+}
+
 #define RARE_EVENT_INTERP_INC(interp, name) \
     do { \
-        /* saturating add */ \
-        uint8_t val = FT_ATOMIC_LOAD_UINT8_RELAXED(interp->rare_events.name); \
-        if (val < UINT8_MAX) { \
-            FT_ATOMIC_STORE_UINT8(interp->rare_events.name, val + 1); \
-        } \
+        _PyStats_RareEventIncrement(&(interp)->rare_events.name); \
         RARE_EVENT_STAT_INC(name); \
     } while (0); \
 

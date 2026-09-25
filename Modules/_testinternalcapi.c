@@ -2756,11 +2756,16 @@ get_rare_event_counters(PyObject *self, PyObject *type)
 
     return Py_BuildValue(
         "{sksksksksk}",
-        "set_class", (unsigned long)interp->rare_events.set_class,
-        "set_bases", (unsigned long)interp->rare_events.set_bases,
-        "set_eval_frame_func", (unsigned long)interp->rare_events.set_eval_frame_func,
-        "builtin_dict", (unsigned long)interp->rare_events.builtin_dict,
-        "func_modification", (unsigned long)interp->rare_events.func_modification
+        "set_class",
+            (unsigned long)_Py_atomic_load_uint8_relaxed(&interp->rare_events.set_class),
+        "set_bases",
+            (unsigned long)_Py_atomic_load_uint8_relaxed(&interp->rare_events.set_bases),
+        "set_eval_frame_func",
+            (unsigned long)_Py_atomic_load_uint8_relaxed(&interp->rare_events.set_eval_frame_func),
+        "builtin_dict",
+            (unsigned long)_Py_atomic_load_uint8_relaxed(&interp->rare_events.builtin_dict),
+        "func_modification",
+            (unsigned long)_Py_atomic_load_uint8_relaxed(&interp->rare_events.func_modification)
     );
 }
 
@@ -2769,11 +2774,11 @@ reset_rare_event_counters(PyObject *self, PyObject *Py_UNUSED(type))
 {
     PyInterpreterState *interp = PyInterpreterState_Get();
 
-    interp->rare_events.set_class = 0;
-    interp->rare_events.set_bases = 0;
-    interp->rare_events.set_eval_frame_func = 0;
-    interp->rare_events.builtin_dict = 0;
-    interp->rare_events.func_modification = 0;
+    _Py_atomic_store_uint8_relaxed(&interp->rare_events.set_class, 0);
+    _Py_atomic_store_uint8_relaxed(&interp->rare_events.set_bases, 0);
+    _Py_atomic_store_uint8_relaxed(&interp->rare_events.set_eval_frame_func, 0);
+    _Py_atomic_store_uint8_relaxed(&interp->rare_events.builtin_dict, 0);
+    _Py_atomic_store_uint8_relaxed(&interp->rare_events.func_modification, 0);
 
     return Py_None;
 }

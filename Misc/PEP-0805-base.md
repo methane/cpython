@@ -139,6 +139,12 @@ mutex before invalidating its type's version and cache. Type-watcher registratio
 removal and watch-bit updates also use it. Debug builds enable the existing
 revealed-type lock and world-stop assertions in both builds.
 
+Type-version publication, unlocked cache guards and the version-use counter
+use atomic operations in the normal build. Immutable types still initialize
+these caches lazily, so group serialization alone cannot protect their first
+attribute lookup. A native probe brings two groups to each of 1,024 previously
+unqueried immutable extension types and checks repeated attribute acquisition.
+
 Normal-build per-type lookup-cache readers take that mutex too, acquiring a
 strong result reference before unlocking. Unlike the free-threading cache, this
 cache owns mortal interned names and can contain LOCAL values. Its invalidated
@@ -161,6 +167,12 @@ before a concurrent destructor can free it. Fork reinitializes the mutex. Native
 workers create and retire 32,768 code/function pairs across two groups, invalidate
 function versions and run GC, then check that every code version was unique.
 This does not change the LOCAL state of Python functions or permit sharing them.
+
+Interpreter-wide rare-event counters also use atomic accesses, with saturating
+compare/exchange increments. Independent groups can modify their own LOCAL
+functions concurrently; those updates must not lose counts or overwrite a
+saturated counter with an older value. A native VM regression checks both the
+exact count below saturation and the 255 limit after further modifications.
 
 Dictionary key-version allocation uses the interpreter-wide atomic counter in
 normal builds too. Concurrent readers publish a key table's first version with
@@ -352,6 +364,22 @@ flags/events rather than foreign LOCAL Python functions or mutable results.
 The default-path parallel scheduling test remains skipped while the interpreter
 GIL is enabled. The isolated native probe additionally tests real parallelism.
 
+- Concurrent runtime metadata: debug and release normal builds each pass 679
+  tests across twelve files (6 and 9 skips), covering types, attribute caches,
+  functions, watchers, counters, groups, ownership, GC and generated VM cases.
+  ThreadSanitizer first reports races in the function-modification counter and
+  in a cold immutable type's version publication. After the fixes, the parallel
+  selection passes under ThreadSanitizer (11 tests, two skips), without adding
+  suppressions. The new regressions check exact/saturated modification counts
+  and concurrent first lookups of immutable types. A separate native VM workload
+  creating, deriving, changing and discarding LOCAL classes also passes TSan.
+  Logs: `test-runtime-counters-*`, `tsan-parallel-*`, `tsan-cold-types-before2.log`
+  and `tsan-type-churn-before.log`.
+  The sanitizer worktree is configured with `--with-pydebug
+  --with-thread-sanitizer --without-mimalloc --without-pymalloc`, retaining
+  `Py_GIL_DISABLED=0` and a 24-byte header. On this Linux/aarch64 host, configure,
+  make and the test process need `setarch aarch64 -R` to avoid TSan's startup
+  memory-mapping failure; tests use `TSAN_OPTIONS=halt_on_error=1`.
 - Parallel LOCAL VM execution and dictionary versions: debug, release and
   `--without-mimalloc` debug normal builds each pass 764 tests across thirteen
   files (7, 10 and 8 skips), covering dictionaries and their C APIs, VM caches,

@@ -1117,15 +1117,13 @@ set_version_unlocked(PyTypeObject *tp, unsigned int version)
             + (tp->tp_version_tag % TYPE_VERSION_CACHE_SIZE);
         *slot = NULL;
     }
-    if (version) {
-        tp->tp_versions_used++;
-    }
-#else
+#endif
     if (version) {
         _Py_atomic_add_uint16(&tp->tp_versions_used, 1);
     }
-#endif
-    FT_ATOMIC_STORE_UINT_RELAXED(tp->tp_version_tag, version);
+    // Immutable types can acquire their first version while another group
+    // reads these fields outside the type lock.
+    _Py_atomic_store_uint_relaxed(&tp->tp_version_tag, version);
 #ifndef Py_GIL_DISABLED
     if (version != 0) {
         PyTypeObject **slot =
@@ -1216,7 +1214,7 @@ void
 PyType_Modified(PyTypeObject *type)
 {
     // Quick check without the lock held
-    if (FT_ATOMIC_LOAD_UINT_RELAXED(type->tp_version_tag) == 0) {
+    if (_Py_atomic_load_uint_relaxed(&type->tp_version_tag) == 0) {
         return;
     }
 
@@ -1288,7 +1286,7 @@ type_mro_modified(PyTypeObject *type, PyObject *bases)
     assert(!(type->tp_flags & _Py_TPFLAGS_STATIC_BUILTIN));
     set_version_unlocked(type, 0);  /* 0 is not a valid version tag */
     _PyTypeCache_Invalidate(type);
-    type->tp_versions_used = _Py_ATTR_CACHE_UNUSED;
+    _Py_atomic_store_uint16_relaxed(&type->tp_versions_used, _Py_ATTR_CACHE_UNUSED);
     if (PyType_HasFeature(type, Py_TPFLAGS_HEAPTYPE)) {
         // This field *must* be invalidated if the type is modified (see the
         // comment on struct _specialization_cache):
@@ -6201,7 +6199,7 @@ static int
 should_assign_version_tag(PyTypeObject *type, PyObject *name, unsigned int version_tag)
 {
     return (version_tag == 0
-        && FT_ATOMIC_LOAD_UINT16_RELAXED(type->tp_versions_used) < MAX_VERSIONS_PER_CLASS
+        && _Py_atomic_load_uint16_relaxed(&type->tp_versions_used) < MAX_VERSIONS_PER_CLASS
         && MCACHE_CACHEABLE_NAME(name));
 }
 
@@ -6227,7 +6225,7 @@ _PyType_LookupStackRefAndVersion(PyTypeObject *type, PyObject *name, _PyStackRef
     int res;
     PyInterpreterState *interp = _PyInterpreterState_GET();
 
-    unsigned int version_tag = FT_ATOMIC_LOAD_UINT(type->tp_version_tag);
+    unsigned int version_tag = _Py_atomic_load_uint(&type->tp_version_tag);
     if (cacheable &&
         (version_tag != 0 || should_assign_version_tag(type, name, version_tag)))
     {

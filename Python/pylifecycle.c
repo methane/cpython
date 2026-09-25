@@ -657,7 +657,7 @@ builtins_dict_watcher(PyDict_WatchEvent event, PyObject *dict, PyObject *key, Py
 {
     PyInterpreterState *interp = _PyInterpreterState_GET();
 #ifdef _Py_TIER2
-    if (interp->rare_events.builtin_dict < _Py_MAX_ALLOWED_BUILTINS_MODIFICATIONS) {
+    if (_Py_atomic_load_uint8_relaxed(&interp->rare_events.builtin_dict) < _Py_MAX_ALLOWED_BUILTINS_MODIFICATIONS) {
         _Py_Executors_InvalidateAll(interp, 1);
     }
 #endif

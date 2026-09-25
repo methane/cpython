@@ -468,6 +468,44 @@ assert internal.threadgroup_probe(
     groups, 6, support.SHORT_TIMEOUT, True, exercise.__code__) == (True, True)
 ''', PYTHONMALLOC='debug')
 
+    def test_parallel_function_modifications(self):
+        script_helper.assert_python_ok('-c', '''
+import faulthandler
+import threading
+from test import support
+import _testinternalcapi as internal
+
+faulthandler.dump_traceback_later(support.LONG_TIMEOUT, exit=True)
+
+def exercise():
+    def func():
+        pass
+    for i in range(100):
+        func.__defaults__ = (i,)
+    return True
+
+groups = (threading.ThreadGroup('first'), threading.ThreadGroup('second'))
+internal.reset_rare_event_counters()
+for expected in (200, 255):
+    assert internal.threadgroup_probe(
+        groups, 6, support.SHORT_TIMEOUT, True, exercise.__code__) == (True, True)
+    count = internal.get_rare_event_counters()['func_modification']
+    assert count == expected, (count, expected)
+''', PYTHONMALLOC='debug')
+
+    def test_parallel_immutable_type_lookup(self):
+        script_helper.assert_python_ok('-c', '''
+import faulthandler
+import threading
+from test import support
+import _testinternalcapi as internal
+
+faulthandler.dump_traceback_later(support.LONG_TIMEOUT, exit=True)
+groups = (threading.ThreadGroup('first'), threading.ThreadGroup('second'))
+assert internal.threadgroup_probe(
+    groups, 7, support.SHORT_TIMEOUT, True) == (True, True)
+''', PYTHONMALLOC='debug')
+
     def test_wait_releases_group(self):
         internal = import_helper.import_module('_testinternalcapi')
         group = threading.ThreadGroup()
