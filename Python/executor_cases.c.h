@@ -12279,7 +12279,7 @@
             }
             #endif
             PyObject *attr_o;
-            if (hint >= (size_t)FT_ATOMIC_LOAD_SSIZE_RELAXED(dk->dk_nentries)) {
+            if (hint >= (size_t)_Py_atomic_load_ssize_relaxed(&dk->dk_nentries)) {
                 if (true) {
                     UOP_STAT_INC(uopcode, miss);
                     _tos_cache0 = owner;

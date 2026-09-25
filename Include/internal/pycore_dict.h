@@ -206,10 +206,8 @@ struct _dictkeysobject {
     /* Kind of keys */
     uint8_t dk_kind;
 
-#ifdef Py_GIL_DISABLED
-    /* Lock used to protect shared keys */
+    /* Lock used to protect keys shared by instances in different groups. */
     PyMutex dk_mutex;
-#endif
 
     /* Version number -- Reset to 0 by any modification to keys */
     uint32_t dk_version;
@@ -367,8 +365,8 @@ shared_keys_usable_size(PyDictKeysObject *keys)
     // second, and conversely here we read dk_usable first and dk_entries
     // second (to avoid the case where we read entries before the increment
     // and read usable after the decrement)
-    Py_ssize_t dk_usable = FT_ATOMIC_LOAD_SSIZE_ACQUIRE(keys->dk_usable);
-    Py_ssize_t dk_nentries = FT_ATOMIC_LOAD_SSIZE_ACQUIRE(keys->dk_nentries);
+    Py_ssize_t dk_usable = _Py_atomic_load_ssize_acquire(&keys->dk_usable);
+    Py_ssize_t dk_nentries = _Py_atomic_load_ssize_acquire(&keys->dk_nentries);
     return dk_nentries + dk_usable;
 }
 

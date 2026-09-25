@@ -116,7 +116,7 @@ struct group_probe {
     uint32_t *versions;
     int version_count;
     PyObject *code;
-    PyObject *types;
+    PyObject *lookup_objects;
     int *lookup_rounds;
     char error[256];
 };
@@ -353,8 +353,112 @@ parallel_context_dict_worker(struct group_probe *probe)
 }
 
 static PyObject *
-parallel_lookup_types(void)
+parallel_slot_getattribute(PyObject *self, PyObject *name)
 {
+    return PyObject_GenericGetAttr(self, name);
+}
+
+static PyMethodDef parallel_slot_getattribute_def = {
+    "__getattribute__", parallel_slot_getattribute, METH_O, NULL,
+};
+
+// The reentrant watcher probe runs in an isolated, single-threaded process.
+static PyObject *keys_watcher_target;
+static int keys_watcher_entered;
+static int keys_watcher_calls;
+
+static int
+reentrant_keys_watcher(PyTypeObject *type)
+{
+    if (keys_watcher_target == NULL || keys_watcher_entered ||
+        type != Py_TYPE(keys_watcher_target)) {
+        return 0;
+    }
+    keys_watcher_entered = 1;
+    keys_watcher_calls++;
+    int res = PyObject_SetAttrString(keys_watcher_target, "inner", Py_None);
+    keys_watcher_entered = 0;
+    return res;
+}
+
+static PyObject *
+test_shared_keys_type_watcher(PyObject *self, PyObject *instance)
+{
+    int watcher = PyType_AddWatcher(reentrant_keys_watcher);
+    if (watcher < 0) {
+        return NULL;
+    }
+    keys_watcher_target = instance;
+    keys_watcher_calls = 0;
+    int watched = PyType_Watch(watcher, (PyObject *)Py_TYPE(instance)) == 0;
+    // Populate the type version so insertion invalidates it and notifies.
+    PyObject *value = watched ? PyObject_GetAttrString(instance, "value") : NULL;
+    int ok = value != NULL &&
+             PyObject_SetAttrString(instance, "outer", Py_None) == 0;
+    Py_XDECREF(value);
+    if (watched) {
+        PyType_Unwatch(watcher, (PyObject *)Py_TYPE(instance));
+    }
+    PyType_ClearWatcher(watcher);
+    keys_watcher_target = NULL;
+    if (PyErr_Occurred()) {
+        return NULL;
+    }
+    if (!ok || keys_watcher_calls != 1) {
+        return PyErr_Format(PyExc_AssertionError,
+                            "shared keys insertion did not notify its type watcher");
+    }
+    Py_RETURN_NONE;
+}
+
+static PyObject *
+parallel_slot_type(int with_dict)
+{
+    // A native method descriptor keeps the fixture independent of
+    // synchronized Python functions, which belong to a later PEP stage.
+    PyObject *method = PyDescr_NewMethod(&PyBaseObject_Type,
+                                         &parallel_slot_getattribute_def);
+    if (method == NULL) {
+        return NULL;
+    }
+    if (PyObject_DeclareImmutable(method) < 0) {
+        Py_DECREF(method);
+        return NULL;
+    }
+    PyObject *namespace = Py_BuildValue("{s:O,s:O,s:s}",
+        "__getattribute__", method, "value", Py_None,
+        "__module__", "_testinternalcapi");
+    Py_DECREF(method);
+    if (namespace == NULL) {
+        return NULL;
+    }
+    if (!with_dict) {
+        PyObject *slots = PyTuple_New(0);
+        int res = slots == NULL ? -1 :
+            PyDict_SetItemString(namespace, "__slots__", slots);
+        Py_XDECREF(slots);
+        if (res < 0) {
+            Py_DECREF(namespace);
+            return NULL;
+        }
+    }
+    PyObject *type = PyObject_CallFunction((PyObject *)&PyType_Type, "s()O",
+                                          "ParallelSlotLookup", namespace);
+    Py_DECREF(namespace);
+    if (type == NULL) {
+        return NULL;
+    }
+    if (PyType_Freeze((PyTypeObject *)type) < 0) {
+        Py_DECREF(type);
+        return NULL;
+    }
+    return type;
+}
+
+static PyObject *
+parallel_lookup_objects(int mode)
+{
+    int instances = mode != 7;
     PyType_Slot slots[] = {
         {0, NULL},
     };
@@ -364,15 +468,23 @@ parallel_lookup_types(void)
         .flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_IMMUTABLETYPE,
         .slots = slots,
     };
-    PyObject *types = PyTuple_New(1024);
+    PyObject *types = PyTuple_New(instances ? 128 : 1024);
     if (types == NULL) {
         return NULL;
     }
     for (Py_ssize_t i = 0; i < PyTuple_GET_SIZE(types); i++) {
-        PyObject *type = PyType_FromSpec(&spec);
+        PyObject *type = instances ? parallel_slot_type(mode == 11) :
+                                    PyType_FromSpec(&spec);
+        if (mode == 12 && type != NULL) {
+            // Share an immutable instance while its class remains LOCAL.
+            // Only native method descriptors are reached through that class.
+            PyObject *instance = PyObject_CallNoArgs(type);
+            Py_DECREF(type);
+            type = instance;
+        }
         if (type == NULL ||
-            PyDict_SetItemString(((PyTypeObject *)type)->tp_dict,
-                                 "value", Py_None) < 0 ||
+            (!instances && PyDict_SetItemString(((PyTypeObject *)type)->tp_dict,
+                                                "value", Py_None) < 0) ||
             PyObject_DeclareImmutable(type) < 0) {
             Py_XDECREF(type);
             Py_DECREF(types);
@@ -384,6 +496,58 @@ parallel_lookup_types(void)
 }
 
 static int
+parallel_instance_attributes(PyObject *instance, int worker)
+{
+    PyObject *dict = PyObject_GenericGetDict(instance, NULL);
+    if (dict == NULL) {
+        return 0;
+    }
+    int ok = 1;
+    // The workers add distinct names to one shared keys table. This covers
+    // split dictionaries, their copies, and conversion to combined tables.
+    for (int i = 0; i < 40; i++) {
+        PyObject *name = PyUnicode_FromFormat("attribute_%d_%d", worker, i);
+        PyObject *value = PyLong_FromLong(worker * 40 + i);
+        PyObject *found = NULL;
+        if (name == NULL || value == NULL ||
+            PyObject_SetAttr(instance, name, value) < 0 ||
+            (found = PyObject_GetAttr(instance, name)) == NULL ||
+            found != value) {
+            ok = 0;
+        }
+        Py_XDECREF(found);
+        found = NULL;
+        if (ok && (PyDict_GetItemRef(dict, name, &found) != 1 || found != value)) {
+            ok = 0;
+        }
+        Py_XDECREF(found);
+        Py_XDECREF(name);
+        Py_XDECREF(value);
+        if (!ok) {
+            break;
+        }
+        if (i == 4 || i == 39) {
+            PyObject *copy = PyDict_Copy(dict);
+            PyObject *items = PyDict_Items(dict);
+            ok = copy != NULL && items != NULL &&
+                 PyDict_Size(copy) == i + 1 && PyList_GET_SIZE(items) == i + 1;
+            Py_XDECREF(copy);
+            Py_XDECREF(items);
+            if (!ok) {
+                break;
+            }
+        }
+    }
+    if (ok) {
+        PyDict_Clear(dict);
+        ok = PyObject_SetAttrString(instance, "last", Py_None) == 0 &&
+             PyDict_Size(dict) == 1;
+    }
+    Py_DECREF(dict);
+    return ok;
+}
+
+static int
 parallel_lookup_worker(struct group_probe *probe)
 {
     PyThreadState *tstate = PyThreadState_Get();
@@ -392,7 +556,7 @@ parallel_lookup_worker(struct group_probe *probe)
         return 0;
     }
     PyTime_t deadline = now + probe->timeout;
-    for (Py_ssize_t i = 0; i < PyTuple_GET_SIZE(probe->types); i++) {
+    for (Py_ssize_t i = 0; i < PyTuple_GET_SIZE(probe->lookup_objects); i++) {
         // Bring both readers to each cold type before either fills its cache.
         _Py_atomic_store_int(&probe->lookup_rounds[probe->index], (int)i + 1);
         while (_Py_atomic_load_int(&probe->lookup_rounds[1 - probe->index]) <= i) {
@@ -401,17 +565,30 @@ parallel_lookup_worker(struct group_probe *probe)
                 return 0;
             }
         }
-        PyObject *type = PyTuple_GET_ITEM(probe->types, i);
+        PyObject *item = PyTuple_GET_ITEM(probe->lookup_objects, i);
+        PyObject *target = probe->mode == 11 ? PyObject_CallNoArgs(item) :
+                                              Py_NewRef(item);
+        if (target == NULL) {
+            return 0;
+        }
         for (int repeat = 0; repeat < 8; repeat++) {
-            PyObject *value = PyObject_GetAttr(type, &_Py_ID(value));
+            PyObject *value = PyObject_GetAttr(target, &_Py_ID(value));
             if (value == NULL) {
+                Py_DECREF(target);
                 return 0;
             }
             int ok = value == Py_None;
             Py_DECREF(value);
             if (!ok) {
+                Py_DECREF(target);
                 return 0;
             }
+        }
+        int ok = probe->mode != 11 ||
+                 parallel_instance_attributes(target, probe->index);
+        Py_DECREF(target);
+        if (!ok) {
+            return 0;
         }
     }
     return 1;
@@ -754,11 +931,11 @@ group_probe_worker(void *arg)
         probe->ok = parallel_code_worker(probe, tstate);
     }
 
-    if (probe->ok && probe->mode >= 9) {
+    if (probe->ok && (probe->mode == 9 || probe->mode == 10)) {
         probe->ok = parallel_context_dict_worker(probe);
     }
 
-    if (probe->ok && probe->mode == 7) {
+    if (probe->ok && (probe->mode == 7 || probe->mode >= 11)) {
         probe->ok = parallel_lookup_worker(probe);
     }
 
@@ -833,7 +1010,7 @@ threadgroup_probe(PyObject *self, PyObject *args)
                           &groups, &mode, &seconds, &parallel, &PyCode_Type, &code)) {
         return NULL;
     }
-    if (PyTuple_GET_SIZE(groups) != 2 || mode < 0 || mode > 10 ||
+    if (PyTuple_GET_SIZE(groups) != 2 || mode < 0 || mode > 12 ||
         !(seconds > 0.0 && seconds <= 300.0) ||
         ((mode == 6) != (code != NULL)) ||
         (code != NULL && ((PyCodeObject *)code)->co_nfreevars != 0)) {
@@ -898,8 +1075,8 @@ threadgroup_probe(PyObject *self, PyObject *args)
             return PyErr_NoMemory();
         }
     }
-    if (mode == 7) {
-        types = parallel_lookup_types();
+    if (mode == 7 || mode >= 11) {
+        types = parallel_lookup_objects(mode);
         if (types == NULL) {
             return NULL;
         }
@@ -933,7 +1110,7 @@ threadgroup_probe(PyObject *self, PyObject *args)
             .intern = &intern,
             .versions = versions == NULL ? NULL : versions + i * PARALLEL_CODE_COUNT,
             .code = code,
-            .types = types,
+            .lookup_objects = types,
             .lookup_rounds = lookup_rounds,
         };
     }
@@ -3984,6 +4161,7 @@ static PyMethodDef methods[] = {
      METH_NOARGS, NULL},
     {"threadgroup_probe", threadgroup_probe, METH_VARARGS, NULL},
     {"threadgroup_watcher_clear_probe", threadgroup_watcher_clear_probe, METH_O, NULL},
+    {"test_shared_keys_type_watcher", test_shared_keys_type_watcher, METH_O, NULL},
     {NULL, NULL},
 };
 

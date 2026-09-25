@@ -37,6 +37,39 @@ class DictTest(unittest.TestCase):
         self.assertEqual(dict(), {})
         self.assertIsNot(dict(), {})
 
+    def test_shared_keys_reentrant_comparison(self):
+        class C:
+            pass
+
+        first, second = C(), C()
+        first.x = 1
+        mapping = first.__dict__
+
+        class Key:
+            def __hash__(self):
+                return hash('x')
+
+            def __eq__(self, other):
+                second.y = 2
+                return other == 'x'
+
+        self.assertEqual(mapping[Key()], 1)
+        self.assertEqual(second.y, 2)
+
+    def test_shared_keys_outlive_type(self):
+        class C:
+            pass
+
+        instance = C()
+        instance.x = 1
+        mapping = instance.__dict__
+        ref = weakref.ref(C)
+        del instance, C
+        gc.collect()
+        self.assertIsNone(ref())
+        mapping['y'] = 2
+        self.assertEqual(mapping, {'x': 1, 'y': 2})
+
     def test_literal_constructor(self):
         # check literal constructor for different sized dicts
         # (to exercise the BUILD_MAP oparg).

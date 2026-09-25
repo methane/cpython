@@ -9768,7 +9768,7 @@
                 }
                 #endif
                 PyObject *attr_o;
-                if (hint >= (size_t)FT_ATOMIC_LOAD_SSIZE_RELAXED(dk->dk_nentries)) {
+                if (hint >= (size_t)_Py_atomic_load_ssize_relaxed(&dk->dk_nentries)) {
                     if (true) {
                         UPDATE_MISS_STATS(LOAD_ATTR);
                         assert(_PyOpcode_Deopt[opcode] == (LOAD_ATTR));

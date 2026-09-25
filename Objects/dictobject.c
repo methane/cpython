@@ -185,16 +185,6 @@ ASSERT_DICT_LOCKED(PyObject *op)
 #define ASSERT_OWNED_OR_SHARED(mp) \
     assert(_Py_IsOwnedByCurrentThread((PyObject *)mp) || IS_DICT_SHARED(mp));
 
-#define LOCK_KEYS_IF_SPLIT(keys, kind) \
-        if (kind == DICT_KEYS_SPLIT) { \
-            LOCK_KEYS(keys);           \
-        }
-
-#define UNLOCK_KEYS_IF_SPLIT(keys, kind) \
-        if (kind == DICT_KEYS_SPLIT) {   \
-            UNLOCK_KEYS(keys);           \
-        }
-
 static inline Py_ssize_t
 load_keys_nentries(PyDictObject *mp)
 {
@@ -216,67 +206,15 @@ set_values(PyDictObject *mp, PyDictValues *values)
     _Py_atomic_store_ptr_release(&mp->ma_values, values);
 }
 
-// gh-151593: The _Py_LOCK_DONT_DETACH flag ensures that the outer critical
-// section is not dropped if there is some contention on the keys lock.
-// It also means that it will be important that LOCK_KEYS() is essentially the
-// "inner-most" code and that we don't call Py_DECREF() or similar while
-// holding the keys lock.
-//
-// We are not allowed to acquire other locks within LOCK_KEYS(). For example,
-// PyType_Modified() must not be called within LOCK_KEYS() since it acquires
-// the type lock.
-#define LOCK_KEYS(keys) PyMutex_LockFlags(&keys->dk_mutex, _Py_LOCK_DONT_DETACH)
-#define UNLOCK_KEYS(keys) PyMutex_Unlock(&keys->dk_mutex)
-
-#define ASSERT_KEYS_LOCKED(keys) assert(PyMutex_IsLocked(&keys->dk_mutex))
-#define LOAD_SHARED_KEY(key) _Py_atomic_load_ptr_acquire(&key)
-#define STORE_SHARED_KEY(key, value) _Py_atomic_store_ptr_release(&key, value)
-// Inc refs the keys object, giving the previous value
-#define INCREF_KEYS(dk)  _Py_atomic_add_ssize(&dk->dk_refcnt, 1)
-// Dec refs the keys object, giving the previous value
-#define DECREF_KEYS(dk)  _Py_atomic_add_ssize(&dk->dk_refcnt, -1)
-#define LOAD_KEYS_NENTRIES(keys) _Py_atomic_load_ssize_relaxed(&keys->dk_nentries)
-
-#define INCREF_KEYS_FT(dk) dictkeys_incref(dk)
-#define DECREF_KEYS_FT(dk, shared) dictkeys_decref(dk, shared)
-
-static inline void split_keys_entry_added(PyDictKeysObject *keys)
-{
-    ASSERT_KEYS_LOCKED(keys);
-
-    // We increase before we decrease so we never get too small of a value
-    // when we're racing with reads
-    _Py_atomic_store_ssize_relaxed(&keys->dk_nentries, keys->dk_nentries + 1);
-    _Py_atomic_store_ssize_release(&keys->dk_usable, keys->dk_usable - 1);
-}
-
 #else /* Py_GIL_DISABLED */
 
 #define ASSERT_DICT_LOCKED(op)
 #define ASSERT_WORLD_STOPPED_OR_DICT_LOCKED(op)
 #define ASSERT_WORLD_STOPPED_OR_OBJ_LOCKED(op)
-#define LOCK_KEYS(keys)
-#define UNLOCK_KEYS(keys)
-#define ASSERT_KEYS_LOCKED(keys)
-#define LOAD_SHARED_KEY(key) key
-#define STORE_SHARED_KEY(key, value) key = value
-#define INCREF_KEYS(dk)  dk->dk_refcnt++
-#define DECREF_KEYS(dk)  dk->dk_refcnt--
-#define LOAD_KEYS_NENTRIES(keys) keys->dk_nentries
-#define INCREF_KEYS_FT(dk)
-#define DECREF_KEYS_FT(dk, shared)
-#define LOCK_KEYS_IF_SPLIT(keys, kind)
-#define UNLOCK_KEYS_IF_SPLIT(keys, kind)
 #define IS_DICT_SHARED(mp) (false)
 #define SET_DICT_SHARED(mp)
 #define LOAD_INDEX(keys, size, idx) ((const int##size##_t*)(keys->dk_indices))[idx]
 #define STORE_INDEX(keys, size, idx, value) ((int##size##_t*)(keys->dk_indices))[idx] = (int##size##_t)value
-
-static inline void split_keys_entry_added(PyDictKeysObject *keys)
-{
-    keys->dk_usable--;
-    keys->dk_nentries++;
-}
 
 static inline void
 set_keys(PyDictObject *mp, PyDictKeysObject *keys)
@@ -293,11 +231,38 @@ set_values(PyDictObject *mp, PyDictValues *values)
 static inline Py_ssize_t
 load_keys_nentries(PyDictObject *mp)
 {
-    return mp->ma_keys->dk_nentries;
+    return _Py_atomic_load_ssize_acquire(&mp->ma_keys->dk_nentries);
 }
 
 
 #endif
+
+// The keys of distinct LOCAL instances can be shared across ThreadGroups.
+// Take the type lock before this innermost lock, and release it before
+// executing callbacks or decrementing references that could run Python.
+#define LOCK_KEYS(keys) PyMutex_LockFlags(&keys->dk_mutex, _Py_LOCK_DONT_DETACH)
+#define UNLOCK_KEYS(keys) PyMutex_Unlock(&keys->dk_mutex)
+#define ASSERT_KEYS_LOCKED(keys) assert(PyMutex_IsLocked(&keys->dk_mutex))
+#define LOCK_KEYS_IF_SPLIT(keys, kind) \
+    if (kind == DICT_KEYS_SPLIT) { LOCK_KEYS(keys); }
+#define UNLOCK_KEYS_IF_SPLIT(keys, kind) \
+    if (kind == DICT_KEYS_SPLIT) { UNLOCK_KEYS(keys); }
+#define LOAD_SHARED_KEY(key) _Py_atomic_load_ptr_acquire(&key)
+#define STORE_SHARED_KEY(key, value) _Py_atomic_store_ptr_release(&key, value)
+// These reference operations return the previous count.
+#define INCREF_KEYS(dk) _Py_atomic_add_ssize(&dk->dk_refcnt, 1)
+#define DECREF_KEYS(dk) _Py_atomic_add_ssize(&dk->dk_refcnt, -1)
+#define LOAD_KEYS_NENTRIES(keys) _Py_atomic_load_ssize_acquire(&keys->dk_nentries)
+
+static inline void
+split_keys_entry_added(PyDictKeysObject *keys)
+{
+    ASSERT_KEYS_LOCKED(keys);
+    // Publish the new entry before decreasing the remaining space so an
+    // allocation's concurrent size calculation cannot underestimate it.
+    _Py_atomic_store_ssize_release(&keys->dk_nentries, keys->dk_nentries + 1);
+    _Py_atomic_store_ssize_release(&keys->dk_usable, keys->dk_usable - 1);
+}
 
 #ifndef NDEBUG
 // Check if it's possible to modify a dictionary.
@@ -481,8 +446,8 @@ static void free_keys_object(PyDictKeysObject *keys, bool use_qsbr);
 static inline void
 dictkeys_incref(PyDictKeysObject *dk)
 {
-    if (FT_ATOMIC_LOAD_SSIZE_RELAXED(dk->dk_refcnt) < 0) {
-        assert(FT_ATOMIC_LOAD_SSIZE_RELAXED(dk->dk_refcnt) == _Py_DICT_IMMORTAL_INITIAL_REFCNT);
+    if (_Py_atomic_load_ssize_relaxed(&dk->dk_refcnt) < 0) {
+        assert(_Py_atomic_load_ssize_relaxed(&dk->dk_refcnt) == _Py_DICT_IMMORTAL_INITIAL_REFCNT);
         return;
     }
 #ifdef Py_REF_DEBUG
@@ -494,11 +459,11 @@ dictkeys_incref(PyDictKeysObject *dk)
 static inline void
 dictkeys_decref(PyDictKeysObject *dk, bool use_qsbr)
 {
-    if (FT_ATOMIC_LOAD_SSIZE_RELAXED(dk->dk_refcnt) < 0) {
-        assert(FT_ATOMIC_LOAD_SSIZE_RELAXED(dk->dk_refcnt) == _Py_DICT_IMMORTAL_INITIAL_REFCNT);
+    if (_Py_atomic_load_ssize_relaxed(&dk->dk_refcnt) < 0) {
+        assert(_Py_atomic_load_ssize_relaxed(&dk->dk_refcnt) == _Py_DICT_IMMORTAL_INITIAL_REFCNT);
         return;
     }
-    assert(FT_ATOMIC_LOAD_SSIZE(dk->dk_refcnt) > 0);
+    assert(_Py_atomic_load_ssize(&dk->dk_refcnt) > 0);
 #ifdef Py_REF_DEBUG
     _Py_DecRefTotal(_PyThreadState_GET());
 #endif
@@ -648,9 +613,7 @@ static PyDictKeysObject empty_keys_struct = {
         0, /* dk_log2_size */
         3, /* dk_log2_index_bytes */
         DICT_KEYS_UNICODE, /* dk_kind */
-#ifdef Py_GIL_DISABLED
         {0}, /* dk_mutex */
-#endif
         1, /* dk_version */
         0, /* dk_usable (immutable) */
         0, /* dk_nentries */
@@ -711,10 +674,9 @@ _PyDict_CheckConsistency(PyObject *op, int check_content)
     int splitted = _PyDict_HasSplitTable(mp);
     Py_ssize_t usable = USABLE_FRACTION(DK_SIZE(keys));
 
-    // In the free-threaded build, shared keys may be concurrently modified,
-    // so use atomic loads.
-    Py_ssize_t dk_usable = FT_ATOMIC_LOAD_SSIZE_ACQUIRE(keys->dk_usable);
-    Py_ssize_t dk_nentries = FT_ATOMIC_LOAD_SSIZE_ACQUIRE(keys->dk_nentries);
+    // Shared keys may be concurrently modified by another instance's group.
+    Py_ssize_t dk_usable = _Py_atomic_load_ssize_acquire(&keys->dk_usable);
+    Py_ssize_t dk_nentries = _Py_atomic_load_ssize_acquire(&keys->dk_nentries);
 
     CHECK(0 <= mp->ma_used && mp->ma_used <= usable);
     CHECK(0 <= dk_usable && dk_usable <= usable);
@@ -835,9 +797,7 @@ init_keys_object(PyDictKeysObject* dk, uint8_t log2_size, int log2_bytes, int ki
     dk->dk_log2_size = log2_size;
     dk->dk_log2_index_bytes = log2_bytes;
     dk->dk_kind = kind;
-#ifdef Py_GIL_DISABLED
     dk->dk_mutex = (PyMutex){0};
-#endif
     dk->dk_nentries = 0;
     dk->dk_usable = usable;
     dk->dk_version = 0;
@@ -1166,8 +1126,12 @@ compare_unicode_generic(PyDictObject *mp, PyDictKeysObject *dk,
     if (unicode_get_hash(ep->me_key) == hash) {
         PyObject *startkey = ep->me_key;
         Py_INCREF(startkey);
+        // Equality can mutate another instance using the same keys. The
+        // caller owns a keys reference across this temporary unlock.
+        UNLOCK_KEYS_IF_SPLIT(dk, dk->dk_kind);
         int cmp = PyObject_RichCompareBool(startkey, key, Py_EQ);
         Py_DECREF(startkey);
+        LOCK_KEYS_IF_SPLIT(dk, dk->dk_kind);
         if (cmp < 0) {
             return DKIX_ERROR;
         }
@@ -1289,7 +1253,9 @@ unicodekeys_lookup_split(PyDictKeysObject* dk, PyObject *key, Py_hash_t hash)
         UNLOCK_KEYS(dk);
     }
 #else
+    LOCK_KEYS(dk);
     ix = unicodekeys_lookup_unicode(dk, key, hash);
+    UNLOCK_KEYS(dk);
 #endif
     return ix;
 }
@@ -1307,6 +1273,9 @@ _PyDictKeys_StringLookup(PyDictKeysObject* dk, PyObject *key)
         return DKIX_ERROR;
     }
     Py_hash_t hash = hash_unicode_key(key);
+    if (dk->dk_kind == DICT_KEYS_SPLIT) {
+        return unicodekeys_lookup_split(dk, key, hash);
+    }
     return unicodekeys_lookup_unicode(dk, key, hash);
 }
 
@@ -1325,8 +1294,8 @@ _PyDictKeys_StringLookupAndVersion(PyDictKeysObject *dk, PyObject *key, uint32_t
     return ix;
 }
 
-/* Like _PyDictKeys_StringLookup() but only works on split keys.  Note
- * that in free-threaded builds this locks the keys object as required.
+/* Like _PyDictKeys_StringLookup() but only works on split keys, synchronizing
+ * with concurrent insertions as required.
  */
 Py_ssize_t
 _PyDictKeys_StringLookupSplit(PyDictKeysObject* dk, PyObject *key)
@@ -1373,25 +1342,21 @@ start:
 
     if (kind != DICT_KEYS_GENERAL) {
         if (PyUnicode_CheckExact(key)) {
-#ifdef Py_GIL_DISABLED
             if (kind == DICT_KEYS_SPLIT) {
                 ix = unicodekeys_lookup_split(dk, key, hash);
             }
             else {
                 ix = unicodekeys_lookup_unicode(dk, key, hash);
             }
-#else
-            ix = unicodekeys_lookup_unicode(dk, key, hash);
-#endif
         }
         else {
-            INCREF_KEYS_FT(dk);
+            dictkeys_incref(dk);
             LOCK_KEYS_IF_SPLIT(dk, kind);
 
             ix = unicodekeys_lookup_generic(mp, dk, key, hash);
 
             UNLOCK_KEYS_IF_SPLIT(dk, kind);
-            DECREF_KEYS_FT(dk, IS_DICT_SHARED(mp));
+            dictkeys_decref(dk, IS_DICT_SHARED(mp));
             if (ix == DKIX_KEY_CHANGED) {
                 goto start;
             }
@@ -1955,7 +1920,7 @@ insert_split_key(PyDictKeysObject *keys, PyObject *key, Py_hash_t hash)
 #ifdef Py_GIL_DISABLED
     ix = unicodekeys_lookup_unicode_threadsafe(keys, key, hash);
 #else
-    ix = unicodekeys_lookup_unicode(keys, key, hash);
+    ix = unicodekeys_lookup_split(keys, key, hash);
 #endif
     if (ix >= 0) {
         return ix;
@@ -1969,17 +1934,24 @@ insert_split_key(PyDictKeysObject *keys, PyObject *key, Py_hash_t hash)
     PyCriticalSection section;
     _PyCriticalSection_BeginMutex(tstate, &section, &tstate->interp->types.mutex);
 
+    PyTypeObject *type = NULL;
     LOCK_KEYS(keys);
     ix = unicodekeys_lookup_unicode(keys, key, hash);
     if (ix == DKIX_EMPTY && keys->dk_usable > 0) {
+        struct _instancekeysobject *shared_keys = _PyDictKeys_AsSharedKeys(keys);
+        PyTypeObject *owner = _Py_atomic_load_ptr_acquire(&shared_keys->dsk_owning_type);
+        if (owner != NULL && _Py_TryIncref((PyObject *)owner)) {
+            type = owner;
+            // Type watchers can re-enter instance attribute insertion.
+            UNLOCK_KEYS(keys);
+            _PyType_Modified_Unlocked(type);
+            LOCK_KEYS(keys);
+            ix = unicodekeys_lookup_unicode(keys, key, hash);
+        }
+    }
+    if (ix == DKIX_EMPTY && keys->dk_usable > 0) {
         // Insert into new slot
         _Py_atomic_store_uint32_relaxed(&keys->dk_version, 0);
-        struct _instancekeysobject *shared_keys = _PyDictKeys_AsSharedKeys(keys);
-        PyTypeObject *type = FT_ATOMIC_LOAD_PTR_ACQUIRE(shared_keys->dsk_owning_type);
-        if (type) {
-            // we acquired the type lock above
-            _PyType_Modified_Unlocked(type);
-        }
         Py_ssize_t hashpos = find_empty_slot(keys, hash);
         ix = keys->dk_nentries;
         dictkeys_set_index(keys, hashpos, ix);
@@ -1991,6 +1963,7 @@ insert_split_key(PyDictKeysObject *keys, PyObject *key, Py_hash_t hash)
     UNLOCK_KEYS(keys);
 
     _PyCriticalSection_End(tstate, &section);
+    Py_XDECREF(type);
     return ix;
 }
 
@@ -3164,12 +3137,12 @@ clear_lock_held(PyObject *op)
         dictkeys_decref(oldkeys, IS_DICT_SHARED(mp));
     }
     else if (oldvalues->embedded) {
-        clear_embedded_values(oldvalues, oldkeys->dk_nentries);
+        clear_embedded_values(oldvalues, LOAD_KEYS_NENTRIES(oldkeys));
     }
     else {
         set_values(mp, NULL);
         set_keys(mp, Py_EMPTY_KEYS);
-        n = oldkeys->dk_nentries;
+        n = LOAD_KEYS_NENTRIES(oldkeys);
         for (i = 0; i < n; i++) {
             PyObject *tmp = oldvalues->values[i];
             FT_ATOMIC_STORE_PTR_RELEASE(oldvalues->values[i], NULL);
@@ -5128,7 +5101,7 @@ dict_traverse(PyObject *op, visitproc visit, void *arg)
 {
     PyDictObject *mp = (PyDictObject *)op;
     PyDictKeysObject *keys = mp->ma_keys;
-    Py_ssize_t i, n = keys->dk_nentries;
+    Py_ssize_t i, n = LOAD_KEYS_NENTRIES(keys);
 
     if (DK_IS_UNICODE(keys)) {
         if (_PyDict_HasSplitTable(mp)) {
@@ -5175,7 +5148,7 @@ _PyDict_SizeOf_LockHeld(PyDictObject *mp)
     }
     /* If the dictionary is split, the keys portion is accounted-for
        in the type object. */
-    if (mp->ma_keys->dk_refcnt == 1) {
+    if (_Py_atomic_load_ssize_relaxed(&mp->ma_keys->dk_refcnt) == 1) {
         res += _PyDict_KeysSize(mp->ma_keys);
     }
     assert(res <= (size_t)PY_SSIZE_T_MAX);
@@ -7328,6 +7301,9 @@ _PyDict_NewKeysForClass(PyHeapTypeObject *cls)
         return NULL;
     }
 
+    // The owner hint can outlive the type's last strong reference. A reader
+    // must be able to try acquiring it while the type lock prevents freeing.
+    _PyObject_SetMaybeWeakref((PyObject *)cls);
     shared_keys->dsk_owning_type = (PyTypeObject *)cls;
     PyDictKeysObject* keys = &shared_keys->dsk_keys;
     init_keys_object(keys, NEXT_LOG2_SHARED_KEYS_MAX_SIZE, log2_bytes, DICT_KEYS_SPLIT,
@@ -7354,10 +7330,16 @@ _PyDict_NewKeysForClass(PyHeapTypeObject *cls)
 void
 _PyDict_RemoveKeysForClass(PyHeapTypeObject *cls)
 {
-    struct _instancekeysobject *shared_keys = _PyDictKeys_AsSharedKeys(cls->ht_cached_keys);
-    FT_ATOMIC_STORE_PTR_RELEASE(shared_keys->dsk_owning_type, NULL);
+    PyDictKeysObject *keys = cls->ht_cached_keys;
+    struct _instancekeysobject *shared_keys = _PyDictKeys_AsSharedKeys(keys);
+    PyThreadState *tstate = _PyThreadState_GET();
+    PyCriticalSection section;
+    _PyCriticalSection_BeginMutex(tstate, &section, &tstate->interp->types.mutex);
+    _Py_atomic_store_ptr_release(&shared_keys->dsk_owning_type, NULL);
+    cls->ht_cached_keys = NULL;
+    _PyCriticalSection_End(tstate, &section);
 
-    _PyDictKeys_DecRef(cls->ht_cached_keys);
+    _PyDictKeys_DecRef(keys);
 }
 
 void
@@ -7369,7 +7351,6 @@ _PyObject_InitInlineValues(PyObject *obj, PyTypeObject *tp)
     PyDictKeysObject *keys = CACHED_KEYS(tp);
     assert(keys != NULL);
     OBJECT_STAT_INC(inline_values);
-#ifdef Py_GIL_DISABLED
     Py_ssize_t usable = _Py_atomic_load_ssize_relaxed(&keys->dk_usable);
     if (usable > 1) {
         LOCK_KEYS(keys);
@@ -7378,11 +7359,6 @@ _PyObject_InitInlineValues(PyObject *obj, PyTypeObject *tp)
         }
         UNLOCK_KEYS(keys);
     }
-#else
-    if (keys->dk_usable > 1) {
-        keys->dk_usable--;
-    }
-#endif
     size_t size = shared_keys_usable_size(keys);
     PyDictValues *values = _PyObject_InlineValues(obj);
     assert(size < 256);

@@ -153,6 +153,27 @@ branch retains lock-free readers and QSBR retirement. This port does not yet
 establish safety of every type-version or specialization-cache fast path under
 concurrent groups, and does not change LOCAL object finalization.
 
+Shared instance-key tables now use their existing key mutex, atomic reference
+counts and atomic size publication in the normal build. Distinct LOCAL
+instances of an IMMUTABLE type can share this table even though their attribute
+values remain private to their groups. Lookup and insertion synchronize on
+the table; equality and type-watcher callbacks run after releasing its mutex
+so they can re-enter attribute operations. The table's borrowed type hint is
+acquired with a conditional incref under the type mutex. Type destruction
+clears the hint under that mutex before dismantling its metadata. Dictionaries
+that survive their type retain the keys without retaining or accessing the
+dead type. A VM attribute-cache guard reads the shared entry count atomically
+before deciding whether the table is suitable for specialization.
+
+Attribute and descriptor access no longer rewrite their type's slots lazily.
+Slot publication selects the simpler attribute dispatcher when the type has
+no `__getattr__`. Restricting lazy writes to LOCAL types would be insufficient:
+an IMMUTABLE instance can have a LOCAL class. Native fixtures exercise both
+shared immutable types with each group's own instances, and shared immutable
+instances of LOCAL types. They also check attribute insertion and acquisition,
+dictionary copies and conversion from shared keys to combined tables. The
+attribute methods are native descriptors; no Python function is shared.
+
 Code objects use a dedicated mutex and acquire/release publication for their
 lazy variable-name and bytecode caches. `co_extra` growth publishes a copied
 array and retires the old array through QSBR; extra-slot registration uses the
@@ -385,6 +406,23 @@ flags/events rather than foreign LOCAL Python functions or mutable results.
 The default-path parallel scheduling test remains skipped while the interpreter
 GIL is enabled. The isolated native probe additionally tests real parallelism.
 
+- Shared instance keys and type slots: normal debug and release builds each
+  run 1,008 tests across fourteen files successfully (14 and 19 skips), covering
+  groups, ownership, dictionaries, type caches and descriptors, watcher APIs,
+  GC, weakrefs, embedding, fork, specialization and generated VM cases. Before
+  the fixes, TSan reports races in inline-value capacity accounting and lazy
+  attribute-slot replacement. Restricting slot replacement to LOCAL types
+  still races when their IMMUTABLE instances are shared. The regressions cover
+  both ownership combinations, shared-key growth and conversion to combined
+  tables, reentrant equality/type-watcher callbacks, and keys outliving their
+  type. After the fix, the parallel/shared-key selection runs 19 tests under
+  TSan successfully (two skips), without suppressions. Logs:
+  `tsan-type-attribute-slot-before.log`,
+  `tsan-shared-type-caches-old-slot.log`,
+  `tsan-local-type-immutable-instance-before.log`,
+  `tsan-shared-type-slots-parallel.log`,
+  `test-shared-type-slots-debug-final.log` and
+  `test-shared-type-slots-release-final.log`.
 - Dictionary/context watcher registries: normal debug and release builds each
   run 533 tests across nine files successfully (10 and 15 skips), covering
   groups, ownership, contexts, watcher APIs, dictionaries, GC, embedding and

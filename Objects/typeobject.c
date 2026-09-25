@@ -6905,6 +6905,12 @@ type_dealloc(PyObject *self)
     }
 
     _PyObject_GC_UNTRACK(type);
+    PyHeapTypeObject *et = (PyHeapTypeObject *)type;
+    if (et->ht_cached_keys) {
+        // Shared instance dictionaries may outlive their type. Detach the
+        // borrowed owner hint before dismantling metadata used by watchers.
+        _PyDict_RemoveKeysForClass(et);
+    }
     type_dealloc_common(type);
 
     // PyObject_ClearWeakRefs() raises an exception if Py_REFCNT() != 0
@@ -6924,13 +6930,9 @@ type_dealloc(PyObject *self)
      */
     PyMem_Free((char *)type->tp_doc);
 
-    PyHeapTypeObject *et = (PyHeapTypeObject *)type;
     Py_XDECREF(et->ht_name);
     Py_XDECREF(et->ht_qualname);
     Py_XDECREF(et->ht_slots);
-    if (et->ht_cached_keys) {
-        _PyDict_RemoveKeysForClass(et);
-    }
     Py_XDECREF(et->ht_module);
     PyMem_Free(et->_ht_tpname);
 #ifdef Py_GIL_DISABLED
@@ -10907,9 +10909,9 @@ slot_tp_call(PyObject *self, PyObject *args, PyObject *kwds)
 
    - _Py_slot_tp_getattr_hook() is used when a __getattr__ hook is present.
 
-   The code in update_one_slot() always installs _Py_slot_tp_getattr_hook();
-   this detects the absence of __getattr__ and then installs the simpler
-   slot if necessary. */
+   update_one_slot() selects the dispatcher while publishing the type slots.
+   Attribute access must not replace it: an immutable instance can be shared
+   even when its type is LOCAL. */
 
 PyObject *
 _Py_slot_tp_getattro(PyObject *self, PyObject *name)
@@ -10957,10 +10959,6 @@ _Py_slot_tp_getattr_hook(PyObject *self, PyObject *name)
     getattr = _PyType_LookupRef(tp, &_Py_ID(__getattr__));
     if (getattr == NULL) {
         /* No __getattr__ hook: use a simpler dispatcher */
-#ifndef Py_GIL_DISABLED
-        // Replacing the slot is only thread-safe if there is a GIL.
-        tp->tp_getattro = _Py_slot_tp_getattro;
-#endif
         return _Py_slot_tp_getattro(self, name);
     }
     /* speed hack: we could use lookup_maybe, but that would resolve the
@@ -11093,11 +11091,6 @@ slot_tp_descr_get(PyObject *self, PyObject *obj, PyObject *type)
     _PyType_LookupStackRefAndVersion(tp, &_Py_ID(__get__), &cref.ref);
     if (PyStackRef_IsNull(cref.ref)) {
         _PyThreadState_PopCStackRef(tstate, &cref);
-#ifndef Py_GIL_DISABLED
-        /* Avoid further slowdowns */
-        if (tp->tp_descr_get == slot_tp_descr_get)
-            tp->tp_descr_get = NULL;
-#endif
         return Py_NewRef(self);
     }
     if (obj == NULL)
@@ -11877,6 +11870,7 @@ update_one_slot(PyTypeObject *type, pytype_slotdef *p, pytype_slotdef **next_p,
 
     // Set to 1 if the generic wrapper is necessary
     int use_generic = 0;
+    int has_getattr = 0;
 
     int offset = p->offset;
     void **ptr = slotptr(type, offset);
@@ -11896,6 +11890,10 @@ update_one_slot(PyTypeObject *type, pytype_slotdef *p, pytype_slotdef **next_p,
         /* Use faster uncached lookup as we won't get any cache hits during type setup. */
         _PyStackRef descr_ref;
         int res = find_name_in_mro(type, p->name_strobj, &descr_ref);
+        if (p->name_strobj == &_Py_ID(__getattr__) && res != 0) {
+            // A lookup error must also retain the fallback dispatcher.
+            has_getattr = 1;
+        }
         if (res <= 0) {
             if (ptr == (void**)&type->tp_iternext) {
                 specific = (void *)_PyObject_NextNotImplemented;
@@ -11999,6 +11997,9 @@ update_one_slot(PyTypeObject *type, pytype_slotdef *p, pytype_slotdef **next_p,
         slot_value = specific;
     } else {
         slot_value = generic;
+    }
+    if (slot_value == (void *)_Py_slot_tp_getattr_hook && !has_getattr) {
+        slot_value = (void *)_Py_slot_tp_getattro;
     }
 
     if (queued_updates != NULL) {

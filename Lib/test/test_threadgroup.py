@@ -548,6 +548,47 @@ assert internal.threadgroup_probe(
     groups, 7, support.SHORT_TIMEOUT, True) == (True, True)
 ''', PYTHONMALLOC='debug')
 
+    def test_parallel_immutable_type_attribute_slot(self):
+        script_helper.assert_python_ok('-c', '''
+import faulthandler
+import threading
+from test import support
+import _testinternalcapi as internal
+
+faulthandler.dump_traceback_later(support.LONG_TIMEOUT, exit=True)
+groups = (threading.ThreadGroup('first'), threading.ThreadGroup('second'))
+assert internal.threadgroup_probe(
+    groups, 11, support.SHORT_TIMEOUT, True) == (True, True)
+''', PYTHONMALLOC='debug')
+
+    def test_parallel_immutable_instance_local_type_slot(self):
+        script_helper.assert_python_ok('-c', '''
+import faulthandler
+import threading
+from test import support
+import _testinternalcapi as internal
+
+faulthandler.dump_traceback_later(support.LONG_TIMEOUT, exit=True)
+groups = (threading.ThreadGroup('first'), threading.ThreadGroup('second'))
+assert internal.threadgroup_probe(
+    groups, 12, support.SHORT_TIMEOUT, True) == (True, True)
+''', PYTHONMALLOC='debug')
+
+    def test_shared_keys_reentrant_type_watcher(self):
+        script_helper.assert_python_ok('-c', '''
+import faulthandler
+from test import support
+import _testinternalcapi as internal
+
+faulthandler.dump_traceback_later(support.LONG_TIMEOUT, exit=True)
+class C:
+    value = None
+
+instance = C()
+internal.test_shared_keys_type_watcher(instance)
+assert instance.__dict__ == {'inner': None, 'outer': None}
+''')
+
     def test_wait_releases_group(self):
         internal = import_helper.import_module('_testinternalcapi')
         group = threading.ThreadGroup()

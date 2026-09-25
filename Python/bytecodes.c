@@ -2996,7 +2996,7 @@ dummy_func(
             EXIT_IF(!_Py_IsOwnedByCurrentThread((PyObject *)dict) && !_PyObject_GC_IS_SHARED(dict));
 #endif
             PyObject *attr_o;
-            if (hint >= (size_t)FT_ATOMIC_LOAD_SSIZE_RELAXED(dk->dk_nentries)) {
+            if (hint >= (size_t)_Py_atomic_load_ssize_relaxed(&dk->dk_nentries)) {
                 EXIT_IF(true);
             }
 
