@@ -253,6 +253,13 @@ Tests run on Linux/aarch64. Logs are under `/tmp/pep805-base/`. The optional
 flags/events rather than foreign LOCAL Python functions or mutable results.
 Parallel scheduling tests remain skipped while the interpreter GIL is enabled.
 
+- The non-debug normal build at `8fc12d73f3` passes 1,414 tests across 15 files
+  covering Unicode interning, ownership, strings, code, monitoring, tracing,
+  profiling, specialization, test support and embedding (38 skips). Its
+  `tlbc=0` monitoring selection passes 599 tests (four skips), and its
+  `mimalloc_debug` ownership/monitoring/bytecode selection passes 62 tests.
+  `Py_GIL_DISABLED=0`, `Py_DEBUG=0`, and the interpreter GIL remains enabled;
+  object, code and string basic sizes remain 24, 224 and 72 bytes respectively.
 - Monitoring and thread-local bytecode: 828 tests pass across nine files covering
   monitoring, tracing, profiling, specialization, generated cases, ownership and
   evaluation APIs (one skip). The threaded monitoring and bytecode suites pass
