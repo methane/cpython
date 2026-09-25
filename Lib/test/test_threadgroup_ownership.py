@@ -330,7 +330,7 @@ assert 'threading' not in sys.modules
             'PyVectorcall_Call', 'PyObject_Call', 'PyObject_Vectorcall',
             'PyObject_VectorcallDict', 'PyVectorcall_Call_keywords',
             'PyObject_RichCompare', 'PyObject_RichCompareBool',
-            'PyCFunction_GetSelf',
+            'PyCFunction_GetSelf', 'PyMethod_Function', 'PyMethod_Self',
         )
 
         class Value:
@@ -995,6 +995,54 @@ assert 'threading' not in sys.modules
                         namespace['probe'].__code__, group,
                         (get, descriptor, None), 0, 32),
                         group is sys.main_thread_group)
+
+    def check_bound_method_calls(self, warmups, specialized=False):
+        cases = (
+            ('method(None)', 'CALL_BOUND_METHOD_EXACT_ARGS'),
+            ('method()', 'CALL_BOUND_METHOD_GENERAL'),
+            ('method(arg=None)', 'CALL_KW_BOUND_METHOD'),
+            ('method(*(None,))', None),
+            ('method(**{"arg": None})', None),
+        )
+
+        def consume(self, arg=None):
+            return True
+
+        for foreign_field in ('self', 'function'):
+            binding = ('bind_method(module.consume, source)' if foreign_field == 'self'
+                       else 'bind_method(module.consume, (None,), source)')
+            for call, opcode in cases:
+                namespace = {}
+                exec(textwrap.dedent(f'''
+                    def probe():
+                        if module.__dict__.get('consume') is None:
+                            def consume(self, arg=None):
+                                return True
+                            module.consume = consume
+                        method = {binding}
+                        {call}
+                        return True
+                '''), namespace)
+                for value in (object() if foreign_field == 'self' else consume, None):
+                    for group in (sys.main_thread_group, self.foreign):
+                        with self.subTest(field=foreign_field, call=call,
+                                          control=value is None, group=group):
+                            accessible, bytecode = internal.threadgroup_vm_probe(
+                                namespace['probe'].__code__.replace(), group,
+                                (value, None, None), warmups, 1, True)
+                            self.assertIs(accessible,
+                                          value is None or group is sys.main_thread_group)
+                            if specialized and opcode is not None:
+                                self.assertIn(opcode, {
+                                    instruction.opname for instruction in
+                                    dis._get_instructions_bytes(bytecode)})
+
+    def test_bound_method_calls(self):
+        self.check_bound_method_calls(0)
+
+    @requires_specialization
+    def test_specialized_bound_method_calls(self):
+        self.check_bound_method_calls(64, specialized=True)
 
     def check_c_call_results(self, warmups, specialized=False):
         cases = (

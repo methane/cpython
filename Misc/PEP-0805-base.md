@@ -400,6 +400,12 @@ specialization ends with a separate `_CHECK_ACCESS` micro-op so replacing the
 type lookup with a constant does not remove the acquisition check. Native test
 callbacks deliberately return stored heap references without checking them;
 the VM must reject foreign LOCAL results even after call specialization.
+Python bound-method dispatch acquires its stored receiver and function before
+passing either to the callee, including positional, keyword and specialized
+paths. `PyMethod_Function()` and `PyMethod_Self()` check their borrowed results.
+Call specialization and version guards check access before reading a stored
+function's mutable fields. The native probe can copy opaque tuple references
+into a local method to verify these acquisition boundaries.
 
 Tuple and list element operations check references before invoking repr, hash,
 comparison or sorting callbacks. A local list copied from a shared tuple can
@@ -451,6 +457,16 @@ flags/events rather than foreign LOCAL Python functions or mutable results.
 The default-path parallel scheduling test remains skipped while the interpreter
 GIL is enabled. The isolated native probe additionally tests real parallelism.
 
+- Python bound-method calls and C API getters: debug and release builds each
+  run 748 tests across eight files successfully (one skip in each build).
+  Before the fix, 22 foreign subcases fail; owner and immutable controls pass.
+  The three selected tests pass `-R 3:3` and TSan without suppressions, and the
+  existing parallel LOCAL function probe passes. The regressions verify both
+  stored fields, ordinary and expanded arguments, and all three bound-method
+  specializations. Logs: `test-python-methods-before.log`,
+  `test-python-methods-targeted-final.log`, `test-python-methods-debug.log`,
+  `test-python-methods-release.log`, `test-python-methods-refleak.log`,
+  `test-python-methods-parallel.log` and `tsan-python-methods.log`.
 - Specialized C call results: debug and release builds each run 1,198 tests
   across nine files successfully (four and six skips). Before the fix, ten
   foreign specialized subcases fail while the cold paths reject access.

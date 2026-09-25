@@ -29,7 +29,7 @@ PyMethod_Function(PyObject *im)
         PyErr_BadInternalCall();
         return NULL;
     }
-    return ((PyMethodObject *)im)->im_func;
+    return PyObject_CheckAccess(((PyMethodObject *)im)->im_func);
 }
 
 PyObject *
@@ -39,7 +39,7 @@ PyMethod_Self(PyObject *im)
         PyErr_BadInternalCall();
         return NULL;
     }
-    return ((PyMethodObject *)im)->im_self;
+    return PyObject_CheckAccess(((PyMethodObject *)im)->im_self);
 }
 
 
@@ -50,8 +50,14 @@ method_vectorcall(PyObject *method, PyObject *const *args,
     assert(Py_IS_TYPE(method, &PyMethod_Type));
 
     PyThreadState *tstate = _PyThreadState_GET();
-    PyObject *self = PyMethod_GET_SELF(method);
-    PyObject *func = PyMethod_GET_FUNCTION(method);
+    PyObject *self = PyMethod_Self(method);
+    if (self == NULL) {
+        return NULL;
+    }
+    PyObject *func = PyMethod_Function(method);
+    if (func == NULL) {
+        return NULL;
+    }
     return _PyObject_VectorcallPrepend(tstate, func, self, args, nargsf, kwnames);
 }
 

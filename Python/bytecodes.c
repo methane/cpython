@@ -4435,8 +4435,14 @@ dummy_func(
             if (PyStackRef_TYPE(callable) == &PyMethod_Type && PyStackRef_IsNull(self_or_null)) {
                 PyObject *callable_o = PyStackRef_AsPyObjectBorrow(callable);
                 PyObject *self = ((PyMethodObject *)callable_o)->im_self;
-                self_or_null = PyStackRef_FromPyObjectNew(self);
                 PyObject *method = ((PyMethodObject *)callable_o)->im_func;
+                int access_error =
+                    PyObject_CheckAccess(self) == NULL ||
+                    PyObject_CheckAccess(method) == NULL;
+                if (access_error) {
+                    ERROR_NO_POP();
+                }
+                self_or_null = PyStackRef_FromPyObjectNew(self);
                 _PyStackRef temp = callable;
                 callable = PyStackRef_FromPyObjectNew(method);
                 PyStackRef_CLOSE(temp);
@@ -4571,6 +4577,8 @@ dummy_func(
 
             EXIT_IF(Py_TYPE(callable_o) != &PyMethod_Type);
             PyObject *func = ((PyMethodObject *)callable_o)->im_func;
+            int accessible = PyObject_IsAccessible(func);
+            EXIT_IF(!accessible);
             EXIT_IF(!PyFunction_Check(func));
             EXIT_IF(((PyFunctionObject *)func)->func_version != func_version);
             EXIT_IF(!PyStackRef_IsNull(null));
@@ -4580,9 +4588,17 @@ dummy_func(
             PyObject *callable_o = PyStackRef_AsPyObjectBorrow(callable);
             assert(PyStackRef_IsNull(self_or_null));
             assert(Py_TYPE(callable_o) == &PyMethod_Type);
-            self_or_null = PyStackRef_FromPyObjectNew(((PyMethodObject *)callable_o)->im_self);
+            PyObject *self = ((PyMethodObject *)callable_o)->im_self;
+            PyObject *func = ((PyMethodObject *)callable_o)->im_func;
+            int access_error =
+                PyObject_CheckAccess(self) == NULL ||
+                PyObject_CheckAccess(func) == NULL;
+            if (access_error) {
+                ERROR_NO_POP();
+            }
+            self_or_null = PyStackRef_FromPyObjectNew(self);
             _PyStackRef temp = callable;
-            callable = PyStackRef_FromPyObjectNew(((PyMethodObject *)callable_o)->im_func);
+            callable = PyStackRef_FromPyObjectNew(func);
             assert(PyStackRef_FunctionCheck(callable));
             PyStackRef_CLOSE(temp);
         }
@@ -4644,9 +4660,17 @@ dummy_func(
             assert(PyStackRef_IsNull(self_or_null));
             PyObject *callable_o = PyStackRef_AsPyObjectBorrow(callable);
             STAT_INC(CALL, hit);
-            self_or_null = PyStackRef_FromPyObjectNew(((PyMethodObject *)callable_o)->im_self);
+            PyObject *self = ((PyMethodObject *)callable_o)->im_self;
+            PyObject *func = ((PyMethodObject *)callable_o)->im_func;
+            int access_error =
+                PyObject_CheckAccess(self) == NULL ||
+                PyObject_CheckAccess(func) == NULL;
+            if (access_error) {
+                ERROR_NO_POP();
+            }
+            self_or_null = PyStackRef_FromPyObjectNew(self);
             _PyStackRef temp = callable;
-            callable = PyStackRef_FromPyObjectNew(((PyMethodObject *)callable_o)->im_func);
+            callable = PyStackRef_FromPyObjectNew(func);
             PyStackRef_CLOSE(temp);
         }
 
@@ -5479,8 +5503,14 @@ dummy_func(
             if (PyStackRef_TYPE(callable) == &PyMethod_Type && PyStackRef_IsNull(self_or_null)) {
                 PyObject *callable_o = PyStackRef_AsPyObjectBorrow(callable);
                 PyObject *self = ((PyMethodObject *)callable_o)->im_self;
-                self_or_null = PyStackRef_FromPyObjectNew(self);
                 PyObject *method = ((PyMethodObject *)callable_o)->im_func;
+                int access_error =
+                    PyObject_CheckAccess(self) == NULL ||
+                    PyObject_CheckAccess(method) == NULL;
+                if (access_error) {
+                    ERROR_NO_POP();
+                }
+                self_or_null = PyStackRef_FromPyObjectNew(self);
                 _PyStackRef temp = callable;
                 callable = PyStackRef_FromPyObjectNew(method);
                 PyStackRef_CLOSE(temp);
@@ -5594,6 +5624,8 @@ dummy_func(
 
             EXIT_IF(Py_TYPE(callable_o) != &PyMethod_Type);
             PyObject *func = ((PyMethodObject *)callable_o)->im_func;
+            int accessible = PyObject_IsAccessible(func);
+            EXIT_IF(!accessible);
             EXIT_IF(!PyFunction_Check(func));
             EXIT_IF(((PyFunctionObject *)func)->func_version != func_version);
             EXIT_IF(!PyStackRef_IsNull(null));
@@ -5604,8 +5636,16 @@ dummy_func(
             _PyStackRef callable_s = callable;
             PyObject *callable_o = PyStackRef_AsPyObjectBorrow(callable);
             assert(Py_TYPE(callable_o) == &PyMethod_Type);
-            self_or_null = PyStackRef_FromPyObjectNew(((PyMethodObject *)callable_o)->im_self);
-            callable = PyStackRef_FromPyObjectNew(((PyMethodObject *)callable_o)->im_func);
+            PyObject *self = ((PyMethodObject *)callable_o)->im_self;
+            PyObject *func = ((PyMethodObject *)callable_o)->im_func;
+            int access_error =
+                PyObject_CheckAccess(self) == NULL ||
+                PyObject_CheckAccess(func) == NULL;
+            if (access_error) {
+                ERROR_NO_POP();
+            }
+            self_or_null = PyStackRef_FromPyObjectNew(self);
+            callable = PyStackRef_FromPyObjectNew(func);
             assert(PyStackRef_FunctionCheck(callable));
             PyStackRef_CLOSE(callable_s);
         }

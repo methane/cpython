@@ -2597,7 +2597,7 @@ static const char *return_apis[] = {
     "PyVectorcall_Call_keywords", "PyEval_GetBuiltins", "PyImport_GetModuleDict",
     "PySys_GetXOptions", "PyEval_GetFrameBuiltins",
     "PyObject_RichCompare", "PyObject_RichCompareBool",
-    "PyCFunction_GetSelf", NULL,
+    "PyCFunction_GetSelf", "PyMethod_Function", "PyMethod_Self", NULL,
 };
 
 struct return_probe {
@@ -2776,6 +2776,17 @@ return_probe_worker(void *arg)
             result = PyCFunction_GetSelf(func);
             owned = 0;
             break;
+        case 33:
+        case 34:
+            func = probe->api == 33 ? PyMethod_New(value, Py_None) :
+                                     PyMethod_New(Py_None, value);
+            if (func == NULL) {
+                goto done;
+            }
+            result = probe->api == 33 ? PyMethod_Function(func) :
+                                       PyMethod_Self(func);
+            owned = 0;
+            break;
         default:
             box = make_return_box(&return_box_spec, value);
             if (box == NULL) {
@@ -2945,6 +2956,30 @@ static PyMethodDef consume_probe_args_def = {
 };
 
 static PyObject *
+bind_probe_method(PyObject *unused, PyObject *args)
+{
+    PyObject *function, *receivers, *functions = NULL;
+    if (!PyArg_ParseTuple(args, "OO!|O!:bind_method", &function,
+                          &PyTuple_Type, &receivers, &PyTuple_Type, &functions)) {
+        return NULL;
+    }
+    if (PyTuple_GET_SIZE(receivers) == 0 ||
+        (functions != NULL && PyTuple_GET_SIZE(functions) == 0)) {
+        return PyErr_Format(PyExc_ValueError, "expected nonempty reference tuples");
+    }
+    // Blindly copy heap references into a worker-local bound method. The
+    // supplied function is also the warmup fallback for a None heap value.
+    if (functions != NULL && PyTuple_GET_ITEM(functions, 0) != Py_None) {
+        function = PyTuple_GET_ITEM(functions, 0);
+    }
+    return PyMethod_New(function, PyTuple_GET_ITEM(receivers, 0));
+}
+
+static PyMethodDef bind_probe_method_def = {
+    "bind_method", bind_probe_method, METH_VARARGS, NULL,
+};
+
+static PyObject *
 legacy_probe_call(PyObject *consumer, PyObject *args)
 {
     return PyObject_CallFunction(consumer, "O", args);
@@ -3035,6 +3070,7 @@ vm_probe_worker(void *arg)
     PyObject *instance = make_vm_probe_instance();
     PyObject *module = PyModule_New("_testinternalcapi.vm_probe");
     PyObject *consumer = PyCFunction_NewEx(&consume_probe_args_def, NULL, NULL);
+    PyObject *bind_method = PyCFunction_NewEx(&bind_probe_method_def, NULL, NULL);
     PyObject *legacy = consumer == NULL ? NULL :
         PyCFunction_NewEx(&legacy_probe_call_def, consumer, NULL);
     PyObject *prepend = consumer == NULL ? NULL :
@@ -3042,7 +3078,7 @@ vm_probe_worker(void *arg)
     PyObject *func = NULL, *closure = NULL, *warm = NULL, *result = NULL;
     if (globals == NULL || builtins == NULL || cell == NULL || box == NULL ||
         cls == NULL || instance == NULL || module == NULL || consumer == NULL ||
-        legacy == NULL || prepend == NULL ||
+        legacy == NULL || prepend == NULL || bind_method == NULL ||
         PyDict_SetItemString(globals, "__builtins__", builtins) < 0 ||
         PyDict_SetItemString(builtins, "TypeError", PyExc_TypeError) < 0 ||
         PyDict_SetItemString(globals, "box", box) < 0 ||
@@ -3051,7 +3087,8 @@ vm_probe_worker(void *arg)
         PyDict_SetItemString(globals, "module", module) < 0 ||
         PyDict_SetItemString(globals, "legacy_call", legacy) < 0 ||
         PyDict_SetItemString(globals, "prepend_call", prepend) < 0 ||
-        PyDict_SetItemString(globals, "consumer", consumer) < 0) {
+        PyDict_SetItemString(globals, "consumer", consumer) < 0 ||
+        PyDict_SetItemString(globals, "bind_method", bind_method) < 0) {
         goto done;
     }
     int is_function = ((PyCodeObject *)probe->code)->co_flags & CO_NEWLOCALS;
@@ -3131,6 +3168,7 @@ done:
     Py_XDECREF(cls);
     Py_XDECREF(module);
     Py_XDECREF(consumer);
+    Py_XDECREF(bind_method);
     Py_XDECREF(legacy);
     Py_XDECREF(prepend);
     Py_XDECREF(builtins);

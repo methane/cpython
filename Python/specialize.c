@@ -1891,7 +1891,7 @@ _Py_Specialize_Call(_PyStackRef callable_st, _PyStackRef self_or_null_st, _Py_CO
     }
     else if (PyMethod_Check(callable)) {
         PyObject *func = ((PyMethodObject *)callable)->im_func;
-        if (PyFunction_Check(func)) {
+        if (PyObject_IsAccessible(func) && PyFunction_Check(func)) {
             fail = specialize_py_call((PyFunctionObject *)func, instr, nargs, true);
         }
         else {
@@ -1922,7 +1922,7 @@ _Py_Specialize_CallKw(_PyStackRef callable_st, _Py_CODEUNIT *instr, int nargs)
     }
     else if (PyMethod_Check(callable)) {
         PyObject *func = ((PyMethodObject *)callable)->im_func;
-        if (PyFunction_Check(func)) {
+        if (PyObject_IsAccessible(func) && PyFunction_Check(func)) {
             fail = specialize_py_call_kw((PyFunctionObject *)func, instr, nargs, true);
         }
         else {
