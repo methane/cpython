@@ -1346,18 +1346,22 @@ dummy_func(
         }
 
         op(_BINARY_OP_SUBSCR_CHECK_FUNC, (container, unused -- container, unused, getitem)) {
-            PyTypeObject *tp = Py_TYPE(PyStackRef_AsPyObjectBorrow(container));
-            EXIT_IF(!PyType_HasFeature(tp, Py_TPFLAGS_HEAPTYPE));
-            PyHeapTypeObject *ht = (PyHeapTypeObject *)tp;
-            PyObject *getitem_o = FT_ATOMIC_LOAD_PTR_ACQUIRE(ht->_spec_cache.getitem);
+            uint32_t cached_version;
+            PyObject *getitem_o = _PyObject_GetCachedGetItem(
+                PyStackRef_AsPyObjectBorrow(container), &cached_version);
             EXIT_IF(getitem_o == NULL);
             assert(PyFunction_Check(getitem_o));
-            uint32_t cached_version = FT_ATOMIC_LOAD_UINT32_RELAXED(ht->_spec_cache.getitem_version);
-            EXIT_IF(((PyFunctionObject *)getitem_o)->func_version != cached_version);
+            if (((PyFunctionObject *)getitem_o)->func_version != cached_version) {
+                Py_DECREF(getitem_o);
+                EXIT_IF(true);
+            }
             PyCodeObject *code = (PyCodeObject *)PyFunction_GET_CODE(getitem_o);
             assert(code->co_argcount == 2);
-            EXIT_IF(!_PyThreadState_HasStackSpace(tstate, code->co_framesize));
-            getitem = PyStackRef_FromPyObjectNew(getitem_o);
+            if (!_PyThreadState_HasStackSpace(tstate, code->co_framesize)) {
+                Py_DECREF(getitem_o);
+                EXIT_IF(true);
+            }
+            getitem = PyStackRef_FromPyObjectSteal(getitem_o);
         }
 
         op(_BINARY_OP_SUBSCR_INIT_CALL, (container, sub, getitem -- new_frame)) {

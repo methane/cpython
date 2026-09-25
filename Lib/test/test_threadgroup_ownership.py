@@ -824,6 +824,69 @@ assert 'threading' not in sys.modules
                     self.assertEqual(internal.access_descriptor_calls(descriptor),
                                      1 if group is sys.main_thread_group else 0)
 
+    def test_foreign_special_methods(self):
+        def getitem(self, key):
+            return 42
+
+        def add(self, other):
+            return 42
+
+        def to_bytes(self):
+            return b'result'
+
+        def enter(self):
+            return None
+
+        def exit(self, *args):
+            return None
+
+        cases = (
+            ({'__getitem__': getitem}, getitem, 'return source[1][0] == 42'),
+            ({'__getitem__': getitem}, getitem,
+             'for item in source[1]:\n    return item == 42'),
+            ({'__add__': add}, add, 'return source[1] + 1 == 42'),
+            ({'__bytes__': to_bytes}, to_bytes,
+             "return source[2](source[1]) == b'result'"),
+            ({'__enter__': enter, '__exit__': exit}, enter,
+             'with source[1]:\n    pass\nreturn True'),
+        )
+        for methods, method, body in cases:
+            instance = internal.make_immutable_special_method_instance(methods)
+            self.assertIs(instance.__shareable__, threading.Shareable.IMMUTABLE)
+            self.assertIs(type(instance).__shareable__, threading.Shareable.LOCAL)
+            namespace = {}
+            exec('def probe():\n' + textwrap.indent(body, '    '), namespace)
+            for group in (sys.main_thread_group, self.foreign):
+                with self.subTest(operation=body, group=group):
+                    # The first element gives the expected access result;
+                    # the code obtains the method through the shared instance.
+                    self.assertIs(internal.threadgroup_vm_probe(
+                        namespace['probe'].__code__, group,
+                        (method, instance, bytes), 0, 32),
+                        group is sys.main_thread_group)
+
+    @requires_specialization
+    def test_foreign_specialized_getitem(self):
+        def getitem(self, key):
+            return 42
+
+        instance = internal.make_immutable_special_method_instance(
+            {'__getitem__': getitem})
+
+        def probe():
+            return source[1][0] == 42
+
+        values = (getitem, instance, bytes)
+        accessible, bytecode = internal.threadgroup_vm_probe(
+            probe.__code__, sys.main_thread_group, values, 0, 64, True)
+        self.assertTrue(accessible)
+        self.assertIn('BINARY_OP_SUBSCR_GETITEM', {
+            instruction.opname
+            for instruction in dis._get_instructions_bytes(bytecode)})
+        # The type cache remains populated after the first worker exits.
+        self.assertFalse(internal.threadgroup_vm_probe(
+            probe.__code__, self.foreign, values, 0, 128))
+
     def test_vm_repeated_rejected_attribute(self):
         # Changing a class attribute invalidates its old type cache. Keep
         # trying after rejection so respecialization cannot bypass the check.

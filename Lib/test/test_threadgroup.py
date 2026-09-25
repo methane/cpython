@@ -480,11 +480,14 @@ def exercise():
     def read(self):
         return self.value
 
+    def getitem(self, key):
+        return self.value + key
+
     def generate(start):
         for offset in range(8):
             yield start + offset
 
-    box_type = type('Box', (), {'read': read})
+    box_type = type('Box', (), {'read': read, '__getitem__': getitem})
     box = box_type()
     for iteration in range(16000):
         assert record_keys_version({'key': iteration}) > 1
@@ -492,6 +495,8 @@ def exercise():
             continue
         box.value = iteration
         assert box.read() == iteration
+        for offset in range(16):
+            assert box[offset] == iteration + offset
         box_type.alias = read
         assert box.alias() == iteration
         del box_type.alias

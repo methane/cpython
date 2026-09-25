@@ -21,6 +21,9 @@ Freezing, protective/compound locks, synchronized objects and functions,
 TransferBox, Channel, the debugger StopTheWorld API, and performance work are
 later stages and excluded. Internal GC world stops belong to the runtime port.
 Windows and native machine-code JIT validation are deferred.
+Changes are limited to these runtime stages and their direct regression tests.
+Library compatibility failures are recorded rather than expanding this branch
+to make the existing suite pass; Main-only failures are identified separately.
 
 ## Runtime configuration and layout
 
@@ -366,6 +369,22 @@ dictionary they return. A frameless native thread in another group cannot obtain
 Main's LOCAL interpreter dictionaries. VM namespace storage still uses internal
 references; individual values obtained from those namespaces are checked.
 
+The common special-method lookup helpers check methods acquired from a type
+before invoking or binding them, and also check descriptor results. An immutable
+instance can have a LOCAL class and LOCAL methods; sharing that instance does
+not grant access to those methods. Sequence-iteration fallback preserves a
+failed acquisition instead of replacing it with a non-iterable `TypeError`.
+Subscript specialization declines inaccessible Python functions. Existing
+getitem cache entries are acquired under the type mutex, returning an accessible
+strong reference before unlocking. The helper reads the instance's type after
+acquiring the mutex, since waiting may release group execution rights. A cache
+miss falls back to the checked method lookup. The generated VM cases treat
+this acquisition as an escape and publish their stack roots accordingly.
+Native fixtures declare only their slotted instance immutable; the class and
+Python methods stay LOCAL. Regressions cover subscription, iteration, arithmetic,
+bytes conversion and context entry, plus a getitem cache populated by an earlier
+worker in the method's owner group.
+
 Tuple and list element operations check references before invoking repr, hash,
 comparison or sorting callbacks. A local list copied from a shared tuple can
 still contain foreign LOCAL elements. Sorting checks those elements and the
@@ -416,6 +435,24 @@ flags/events rather than foreign LOCAL Python functions or mutable results.
 The default-path parallel scheduling test remains skipped while the interpreter
 GIL is enabled. The isolated native probe additionally tests real parallelism.
 
+- Special-method acquisition: normal debug and release builds each run 653
+  tests across ten files successfully (six and ten skips), covering ownership,
+  groups, descriptors, type caches, specialization, generated VM cases,
+  iteration, context managers and abstract/object C APIs. The parallel and
+  foreign-special-method selection runs 18 tests under TSan successfully
+  (two skips), without suppressions. Logs:
+  `test-special-methods-debug-scoped.log`,
+  `test-special-methods-release-scoped.log` and
+  `tsan-special-methods-final.log`.
+- Known Main-only failure: `test_pickle.CompatPickleTests.test_exceptions`
+  expects the new `IllegalThreadAccessException` to have a Python 2
+  `exceptions` mapping, but the existing mapping returns `__builtin__`.
+  Running this test alone creates no foreign ThreadGroup and fails both in
+  the current build and at `d800afe949`, before the special-method changes.
+  Pickle implementation and compatibility tests are unchanged. Reproduce with
+  `./python -m unittest test.test_pickle.CompatPickleTests.test_exceptions`.
+  Logs: `test-pickle-access-exception-current.log` and
+  `test-pickle-access-exception-baseline.log`.
 - Type-watcher destruction: normal debug and release builds each run 734 tests
   across eleven files successfully (14 and 19 skips), covering groups,
   ownership, watcher/type APIs, descriptors, caches, GC, weakrefs, embedding,

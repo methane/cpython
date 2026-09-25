@@ -2930,11 +2930,13 @@ _PyObject_LookupSpecial(PyObject *self, PyObject *attr)
 {
     PyObject *res;
 
-    res = _PyType_LookupRef(Py_TYPE(self), attr);
+    res = _PyObject_CheckAccessNullable(
+        _PyType_LookupRef(Py_TYPE(self), attr));
     if (res != NULL) {
         descrgetfunc f;
         if ((f = Py_TYPE(res)->tp_descr_get) != NULL) {
-            Py_SETREF(res, f(res, self, (PyObject *)(Py_TYPE(self))));
+            Py_SETREF(res, _PyObject_CheckAccessNullable(
+                f(res, self, (PyObject *)(Py_TYPE(self)))));
         }
     }
     return res;
@@ -2954,6 +2956,10 @@ _PyObject_LookupSpecialMethod(PyObject *attr, _PyStackRef *method_and_self)
     if (method_o == NULL) {
         return 0;
     }
+    if (PyObject_CheckAccess(method_o) == NULL) {
+        PyStackRef_CLEAR(method_and_self[0]);
+        return -1;
+    }
 
     if (_PyType_HasFeature(Py_TYPE(method_o), Py_TPFLAGS_METHOD_DESCRIPTOR)) {
         /* Avoid temporary PyMethodObject */
@@ -2962,7 +2968,8 @@ _PyObject_LookupSpecialMethod(PyObject *attr, _PyStackRef *method_and_self)
 
     descrgetfunc f = Py_TYPE(method_o)->tp_descr_get;
     if (f != NULL) {
-        PyObject *func = f(method_o, self, (PyObject *)(Py_TYPE(self)));
+        PyObject *func = _PyObject_CheckAccessNullable(
+            f(method_o, self, (PyObject *)(Py_TYPE(self))));
         if (func == NULL) {
             return -1;
         }
@@ -2986,6 +2993,10 @@ lookup_method_ex(PyObject *self, PyObject *attr, _PyStackRef *out,
     }
 
     PyObject *value = PyStackRef_AsPyObjectBorrow(*out);
+    if (PyObject_CheckAccess(value) == NULL) {
+        PyStackRef_CLEAR(*out);
+        return -1;
+    }
     if (_PyType_HasFeature(Py_TYPE(value), Py_TPFLAGS_METHOD_DESCRIPTOR)) {
         /* Avoid temporary PyMethodObject */
         return 1;
@@ -2993,7 +3004,8 @@ lookup_method_ex(PyObject *self, PyObject *attr, _PyStackRef *out,
 
     descrgetfunc f = Py_TYPE(value)->tp_descr_get;
     if (f != NULL) {
-        value = f(value, self, (PyObject *)(Py_TYPE(self)));
+        value = _PyObject_CheckAccessNullable(
+            f(value, self, (PyObject *)(Py_TYPE(self))));
         PyStackRef_CLEAR(*out);
         if (value == NULL) {
             if (!raise_attribute_error &&
@@ -6320,6 +6332,28 @@ _PyType_CacheGetItemForSpecialization(PyHeapTypeObject *ht, PyObject *descriptor
     }
     END_TYPE_LOCK();
     return can_cache;
+}
+
+PyObject *
+_PyObject_GetCachedGetItem(PyObject *container, uint32_t *version)
+{
+    PyObject *result = NULL;
+    BEGIN_TYPE_LOCK();
+    // Acquiring the mutex can detach. Read the type afterwards, since another
+    // thread in this group could change container.__class__ while we wait.
+    PyTypeObject *type = Py_TYPE(container);
+    if (PyType_HasFeature(type, Py_TPFLAGS_HEAPTYPE)) {
+        PyHeapTypeObject *ht = (PyHeapTypeObject *)type;
+        PyObject *cached = ht->_spec_cache.getitem;
+        if (cached != NULL && PyObject_IsAccessible(cached)) {
+            // Cache entries are borrowed. Retain the function before a type
+            // mutation can invalidate the entry and drop its last reference.
+            result = Py_NewRef(cached);
+            *version = ht->_spec_cache.getitem_version;
+        }
+    }
+    END_TYPE_LOCK();
+    return result;
 }
 
 void
@@ -11045,8 +11079,8 @@ has_dunder_getitem(PyObject *self)
     PyThreadState *tstate = _PyThreadState_GET();
     _PyCStackRef c_ref;
     _PyThreadState_PushCStackRef(tstate, &c_ref);
-    lookup_maybe_method(self, &_Py_ID(__getitem__), &c_ref.ref);
-    int has_dunder_getitem = !PyStackRef_IsNull(c_ref.ref);
+    int found = lookup_maybe_method(self, &_Py_ID(__getitem__), &c_ref.ref);
+    int has_dunder_getitem = found >= 0 ? 1 : (PyErr_Occurred() ? -1 : 0);
     _PyThreadState_PopCStackRef(tstate, &c_ref);
     return has_dunder_getitem;
 }
@@ -11063,13 +11097,19 @@ slot_tp_iter(PyObject *self)
     else if (PyErr_Occurred()) {
         return NULL;
     }
-    else if (attr_is_none || !has_dunder_getitem(self)) {
-        PyErr_Format(PyExc_TypeError,
-            "'%.200s' object is not iterable",
-            Py_TYPE(self)->tp_name);
-        return NULL;
+    if (!attr_is_none) {
+        int has_getitem = has_dunder_getitem(self);
+        if (has_getitem < 0) {
+            return NULL;
+        }
+        if (has_getitem) {
+            return PySeqIter_New(self);
+        }
     }
-    return PySeqIter_New(self);
+    PyErr_Format(PyExc_TypeError,
+        "'%.200s' object is not iterable",
+        Py_TYPE(self)->tp_name);
+    return NULL;
 }
 
 static PyObject *

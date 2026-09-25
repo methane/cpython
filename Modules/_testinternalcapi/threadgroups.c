@@ -1980,6 +1980,37 @@ make_immutable_capsule(PyObject *self, PyObject *unused)
 }
 
 static PyObject *
+make_immutable_special_method_instance(PyObject *self, PyObject *methods)
+{
+    if (!PyDict_Check(methods)) {
+        return PyErr_Format(PyExc_TypeError, "expected a method dictionary");
+    }
+    PyObject *namespace = PyDict_Copy(methods);
+    PyObject *slots = PyTuple_New(0);
+    PyObject *type = NULL;
+    PyObject *instance = NULL;
+    if (namespace == NULL || slots == NULL ||
+        PyDict_SetItemString(namespace, "__slots__", slots) < 0 ||
+        PyDict_SetItemString(namespace, "__module__", Py_None) < 0) {
+        goto done;
+    }
+    type = PyObject_CallFunction((PyObject *)&PyType_Type, "s()O",
+                                 "ImmutableSpecialMethods", namespace);
+    if (type == NULL || PyType_Freeze((PyTypeObject *)type) < 0) {
+        goto done;
+    }
+    instance = PyObject_CallNoArgs(type);
+    if (instance != NULL && PyObject_DeclareImmutable(instance) < 0) {
+        Py_CLEAR(instance);
+    }
+done:
+    Py_XDECREF(type);
+    Py_XDECREF(namespace);
+    Py_XDECREF(slots);
+    return instance;
+}
+
+static PyObject *
 test_static_immutable_access(PyObject *self, PyObject *unused)
 {
     PyObject *code = (PyObject *)&_Py_InitCleanup;
@@ -4261,6 +4292,8 @@ static PyMethodDef methods[] = {
     {"test_static_immutable_access", test_static_immutable_access, METH_NOARGS, NULL},
     {"threadgroup_access_probe", threadgroup_access_probe, METH_VARARGS, NULL},
     {"make_immutable_capsule", make_immutable_capsule, METH_NOARGS, NULL},
+    {"make_immutable_special_method_instance", make_immutable_special_method_instance,
+     METH_O, NULL},
     {"check_main_group_lifetime", check_main_group_lifetime, METH_NOARGS, NULL},
     {"test_deferred_c_stack_ref", test_deferred_c_stack_ref, METH_NOARGS, NULL},
     {"check_deferred_shutdown", check_deferred_shutdown, METH_NOARGS, NULL},

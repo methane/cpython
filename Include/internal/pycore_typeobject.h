@@ -164,6 +164,9 @@ typedef int (*_py_validate_type)(PyTypeObject *);
 // Exported for external JIT support
 int _PyType_Validate(PyTypeObject *ty, _py_validate_type validate, unsigned int *tp_version);
 int _PyType_CacheGetItemForSpecialization(PyHeapTypeObject *ht, PyObject *descriptor, uint32_t tp_version);
+// Return an accessible strong reference, or NULL for a cache miss.
+PyAPI_FUNC(PyObject *) _PyObject_GetCachedGetItem(
+    PyObject *container, uint32_t *version);
 
 // Precalculates count of non-unique slots and fills wrapperbase.name_count.
 extern int _PyType_InitSlotDefs(PyInterpreterState *interp);

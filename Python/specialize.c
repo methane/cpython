@@ -2433,7 +2433,8 @@ _Py_Specialize_BinaryOp(_PyStackRef lhs_st, _PyStackRef rhs_st, _Py_CODEUNIT *in
             unsigned int tp_version;
             PyTypeObject *container_type = Py_TYPE(lhs);
             PyObject *descriptor = _PyType_LookupRefAndVersion(container_type, &_Py_ID(__getitem__), &tp_version);
-            if (descriptor && Py_TYPE(descriptor) == &PyFunction_Type &&
+            if (descriptor && PyObject_IsAccessible(descriptor) &&
+                Py_TYPE(descriptor) == &PyFunction_Type &&
                 container_type->tp_flags & Py_TPFLAGS_HEAPTYPE)
             {
                 PyFunctionObject *func = (PyFunctionObject *)descriptor;
