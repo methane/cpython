@@ -1136,6 +1136,125 @@ assert 'threading' not in sys.modules
             0, 1, False, internal.slice_getindices_probe))
         self.assertEqual(internal.container_element_calls(value), 0)
 
+    def test_memoryview_shape_acquisition(self):
+        class Integer(int):
+            pass
+
+        def probe():
+            view_type, copy_type, order = source[2]
+            shape = source[1]
+            if copy_type is not None:
+                shape = copy_type(shape)
+            view = view_type(b'a')
+            cast = view.cast('B', shape, order=order)
+            assert cast.tobytes() == b'a'
+            return True
+
+        for value in (1, Integer(1)):
+            for shape in ((value,), (value, 1), (1, value)):
+                for copy_type in (None, list):
+                    for order in ('C', 'F'):
+                        for group in (sys.main_thread_group, self.foreign):
+                            accessible = (type(value) is int or
+                                          group is sys.main_thread_group)
+                            with self.subTest(value_type=type(value), shape=shape,
+                                              copy_type=copy_type, order=order,
+                                              group=group):
+                                self.assertIs(internal.threadgroup_vm_probe(
+                                    probe.__code__, group,
+                                    (value, shape, (memoryview, copy_type, order)),
+                                    0), accessible)
+
+    def test_memoryview_tuple_index_acquisition(self):
+        class Integer(int):
+            pass
+
+        for write in (False, True):
+            namespace = {}
+            operation = ('view[source[1]] = 90\n'
+                         'assert view[index] == 90' if write else
+                         'assert view[source[1]] == view[index]')
+            exec('def probe():\n'
+                 '    view_type, bytearray_type, index = source[2]\n'
+                 "    view = view_type(bytearray_type(b'abcd'))\n"
+                 '    if index.__len__() == 2:\n'
+                 "        view = view.cast('B', (2, 2))\n" +
+                 textwrap.indent(operation, '    ') + '\n'
+                 '    return True', namespace)
+            for value in (1, Integer(1), internal.make_container_element(False),
+                          internal.make_container_element(True)):
+                native = type(value) not in (int, Integer)
+                immutable = value.__shareable__ is threading.Shareable.IMMUTABLE
+                for key, index in (((value,), (1,)),
+                                   ((value, 0), (1, 0)),
+                                   ((0, value), (0, 1))):
+                    for group in (sys.main_thread_group, self.foreign):
+                        accessible = immutable or group is sys.main_thread_group
+                        before = internal.container_element_calls(value) if native else 0
+                        with self.subTest(write=write, value_type=type(value),
+                                          index=index, group=group):
+                            self.assertIs(internal.threadgroup_vm_probe(
+                                namespace['probe'].__code__, group,
+                                (value, key, (memoryview, bytearray, index)), 0),
+                                accessible)
+                            if native:
+                                self.assertEqual(internal.container_element_calls(value),
+                                                 before + accessible)
+
+    def test_memoryview_unused_elements(self):
+        cases = (
+            ("view.cast('B', (0,) + source[1])", ValueError),
+            ("view.cast('B', ('bad',) + source[1])", TypeError),
+            ('view[(0,) + source[1]]', TypeError),
+            ("view.cast('B', (2, 2))[source[1]]", NotImplementedError),
+            ("view.cast('B', (2, 2))[(99,) + source[1]]", IndexError),
+            ("view.cast('B', (2, 2))[(99,) + source[1]] = 90", IndexError),
+            ('view.toreadonly()[source[1]] = 90', TypeError),
+            ('view.release()\nview[source[1]]', ValueError),
+        )
+        for body, error in cases:
+            namespace = {}
+            exec('def probe():\n'
+                 '    view_type, bytearray_type, error = source[2]\n'
+                 "    view = view_type(bytearray_type(b'abcd'))\n"
+                 '    try:\n' + textwrap.indent(body, '        ') + '\n'
+                 '    except error:\n        return True\n'
+                 '    assert False', namespace)
+            value = internal.make_container_element(False)
+            with self.subTest(body=body):
+                self.assertTrue(internal.threadgroup_vm_probe(
+                    namespace['probe'].__code__, self.foreign,
+                    (True, (value,), (memoryview, bytearray, error)), 0))
+                self.assertEqual(internal.container_element_calls(value), 0)
+
+    def test_memoryview_acquisition_failure_cleanup(self):
+        class Integer(int):
+            pass
+
+        for body, value in (
+            ("view.cast('B', (4,) + source[1])", Integer(1)),
+            ("view.cast('B', (2, 2))[(0,) + source[1]] = 90",
+             internal.make_container_element(False)),
+        ):
+            namespace = {}
+            exec('def probe():\n'
+                 '    view_type, bytearray_type, error = source[2]\n'
+                 "    data = bytearray_type(b'abcd')\n"
+                 '    view = view_type(data)\n'
+                 '    try:\n' + textwrap.indent(body, '        ') + '\n'
+                 '    except error:\n        pass\n'
+                 '    else:\n        assert False\n'
+                 "    assert data == b'abcd'\n"
+                 '    view.release()\n'
+                 "    data.extend(b'e')\n"
+                 "    assert data == b'abcde'\n"
+                 '    return True', namespace)
+            with self.subTest(body=body):
+                self.assertTrue(internal.threadgroup_vm_probe(
+                    namespace['probe'].__code__, self.foreign,
+                    (True, (value,),
+                     (memoryview, bytearray, IllegalThreadAccessException)), 0))
+
     def test_string_tailmatch_acquires_alternatives(self):
         class String(str):
             pass

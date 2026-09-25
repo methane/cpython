@@ -1373,6 +1373,9 @@ copy_shape(Py_ssize_t *shape, const PyObject *seq, Py_ssize_t ndim,
 
     for (i = 0; i < ndim; i++) {
         PyObject *tmp = PySequence_Fast_GET_ITEM(seq, i);
+        if (PyObject_CheckAccess(tmp) == NULL) {
+            return -1;
+        }
         if (!PyLong_Check(tmp)) {
             PyErr_SetString(PyExc_TypeError,
                 "memoryview.cast(): elements of shape must be integers");
@@ -2533,8 +2536,11 @@ ptr_from_tuple(const Py_buffer *view, PyObject *tup)
 
     for (dim = 0; dim < nindices; dim++) {
         Py_ssize_t index;
-        index = PyNumber_AsSsize_t(PyTuple_GET_ITEM(tup, dim),
-                                   PyExc_IndexError);
+        PyObject *item = PyObject_CheckAccess(PyTuple_GET_ITEM(tup, dim));
+        if (item == NULL) {
+            return NULL;
+        }
+        index = PyNumber_AsSsize_t(item, PyExc_IndexError);
         if (index == -1 && PyErr_Occurred())
             return NULL;
         ptr = lookup_dimension(view, ptr, (int)dim, index);

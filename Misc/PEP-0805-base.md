@@ -504,6 +504,12 @@ tuple-based acquisition checks and short circuits. Copying components into a
 reduction tuple does not acquire them. A zero step or invalid length can fail
 before unused components are acquired.
 
+Memoryview casting checks each acquired shape element before reading its integer
+value. Tuple indexing checks each acquired index before conversion, for both
+reads and writes. Shape/arity errors and an earlier out-of-bounds index still
+fail before unused elements are acquired. Failed acquisitions leave buffer data
+unchanged and release incomplete views.
+
 Arithmetic dispatch validates native unary, binary, ternary and in-place slot
 results before returning them to C callers. Sequence concatenation/repetition
 and their numeric fallbacks validate newly returned references too. Existing
@@ -569,6 +575,18 @@ The default-path parallel scheduling test requires group-only serialization
 from startup and does not skip. The extension-import test also runs in the normal
 build, checking that imports leave this scheduling state unchanged.
 
+- Memoryview shape/index acquisition: debug and release each pass 423 tests
+  across ownership, memoryview, buffer and abstract C API files (21 skips).
+  Four new tests exercise 106 worker calls, covering integer subclasses,
+  native index callbacks, tuple/list shapes, C/F ordering, multidimensional
+  reads/writes, earlier errors and buffer cleanup. Baseline runs reproduce
+  24 foreign-group failures; Main and immutable controls pass. All four tests
+  pass TSan without suppressions. Existing Main-only memoryview/buffer tests
+  pass `-R 3:3` (22 tests, three skips), with no new Main-only failure in this
+  selection. Logs: `test-memoryview-acquisition-before.log`,
+  `test-memoryview-acquisition-debug.log`, `test-memoryview-acquisition-release.log`,
+  `test-memoryview-acquisition-main-refleak.log` and
+  `tsan-memoryview-acquisition.log`.
 - Native iterator consumers: debug and release each pass 912 tests across nine
   ownership, builtin, list, bytes, enumerate, iterator and C API files (16 and
   17 skips). Four new tests exercise 122 worker calls, including Main and
