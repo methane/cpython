@@ -10972,7 +10972,8 @@ call_attribute(PyObject *self, PyObject *attr, PyObject *name)
     descrgetfunc f = Py_TYPE(attr)->tp_descr_get;
 
     if (f != NULL) {
-        descr = f(attr, self, (PyObject *)(Py_TYPE(self)));
+        descr = _PyObject_CheckAccessNullable(
+            f(attr, self, (PyObject *)(Py_TYPE(self))));
         if (descr == NULL)
             return NULL;
         else
@@ -11004,7 +11005,12 @@ _Py_slot_tp_getattr_hook(PyObject *self, PyObject *name)
        __getattr__, even when self has the default __getattribute__
        method. So we use _PyType_LookupRef and create the method only when
        needed, with call_attribute. */
-    getattribute = _PyType_LookupRef(tp, &_Py_ID(__getattribute__));
+    getattribute = _PyObject_CheckAccessNullable(
+        _PyType_LookupRef(tp, &_Py_ID(__getattribute__)));
+    if (getattribute == NULL && PyErr_Occurred()) {
+        Py_DECREF(getattr);
+        return NULL;
+    }
     if (getattribute == NULL ||
         (Py_IS_TYPE(getattribute, &PyWrapperDescr_Type) &&
          ((PyWrapperDescrObject *)getattribute)->d_wrapped ==
@@ -11014,7 +11020,10 @@ _Py_slot_tp_getattr_hook(PyObject *self, PyObject *name)
         /* if res == NULL with no exception set, then it must be an
            AttributeError suppressed by us. */
         if (res == NULL && !PyErr_Occurred()) {
-            res = call_attribute(self, getattr, name);
+            // Acquire the fallback hook only when it is actually used.
+            if (PyObject_CheckAccess(getattr) != NULL) {
+                res = call_attribute(self, getattr, name);
+            }
         }
     }
     else {
@@ -11022,7 +11031,9 @@ _Py_slot_tp_getattr_hook(PyObject *self, PyObject *name)
         Py_DECREF(getattribute);
         if (res == NULL && PyErr_ExceptionMatches(PyExc_AttributeError)) {
             PyErr_Clear();
-            res = call_attribute(self, getattr, name);
+            if (PyObject_CheckAccess(getattr) != NULL) {
+                res = call_attribute(self, getattr, name);
+            }
         }
     }
 
@@ -11142,6 +11153,10 @@ slot_tp_descr_get(PyObject *self, PyObject *obj, PyObject *type)
     if (type == NULL)
         type = Py_None;
     PyObject *get = PyStackRef_AsPyObjectBorrow(cref.ref);
+    if (PyObject_CheckAccess(get) == NULL) {
+        _PyThreadState_PopCStackRef(tstate, &cref);
+        return NULL;
+    }
     PyObject *stack[3] = {self, obj, type};
     PyObject *res = PyObject_Vectorcall(get, stack, 3, NULL);
     _PyThreadState_PopCStackRef(tstate, &cref);

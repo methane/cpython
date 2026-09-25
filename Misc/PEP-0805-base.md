@@ -384,6 +384,10 @@ Native fixtures declare only their slotted instance immutable; the class and
 Python methods stay LOCAL. Regressions cover subscription, iteration, arithmetic,
 bytes conversion and context entry, plus a getitem cache populated by an earlier
 worker in the method's owner group.
+Attribute-hook dispatch also checks the selected `__getattribute__` or
+`__getattr__` and any callable returned by descriptor binding. An unused LOCAL
+`__getattr__` does not block an existing accessible attribute. Descriptor slot
+dispatch checks the acquired `__get__` before calling it.
 
 Tuple and list element operations check references before invoking repr, hash,
 comparison or sorting callbacks. A local list copied from a shared tuple can
@@ -435,6 +439,14 @@ flags/events rather than foreign LOCAL Python functions or mutable results.
 The default-path parallel scheduling test remains skipped while the interpreter
 GIL is enabled. The isolated native probe additionally tests real parallelism.
 
+- Attribute hooks and descriptor dispatch: debug and release builds each run
+  370 tests across six files successfully (four and eight skips). Six foreign
+  subcases fail before the acquisition checks; all three new tests pass
+  afterwards, including `-R 3:3`. Eight selected ownership tests pass under
+  TSan without suppressions. Logs: `test-attribute-hooks-before.log`,
+  `test-attribute-hook-results-before.log`,
+  `test-attribute-hooks-debug-scoped.log`, `test-attribute-hooks-release.log`,
+  `test-attribute-hooks-refleak.log` and `tsan-attribute-hooks.log`.
 - Special-method acquisition: normal debug and release builds each run 653
   tests across ten files successfully (six and ten skips), covering ownership,
   groups, descriptors, type caches, specialization, generated VM cases,
@@ -453,6 +465,12 @@ GIL is enabled. The isolated native probe additionally tests real parallelism.
   `./python -m unittest test.test_pickle.CompatPickleTests.test_exceptions`.
   Logs: `test-pickle-access-exception-current.log` and
   `test-pickle-access-exception-baseline.log`.
+- Known Main-only failure: `test_descrtut`'s `tut3` expects a fixed `dir(list)`
+  listing without the added `__shareable__` attribute. The standalone test
+  fails identically in the current build and at `d800afe949`. Its expected
+  output is unchanged. Reproduce with `./python -m test test_descrtut`.
+  Logs: `test-descrtut-shareable-current.log` and
+  `test-descrtut-shareable-baseline.log`.
 - Type-watcher destruction: normal debug and release builds each run 734 tests
   across eleven files successfully (14 and 19 skips), covering groups,
   ownership, watcher/type APIs, descriptors, caches, GC, weakrefs, embedding,

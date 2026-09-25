@@ -2396,7 +2396,7 @@ static PyObject *
 access_descriptor_get(PyObject *self, PyObject *obj, PyObject *type)
 {
     _Py_atomic_add_int(&((return_box *)self)->descriptor_calls, 1);
-    Py_RETURN_NONE;
+    return Py_NewRef(((return_box *)self)->value);
 }
 
 static PyType_Slot access_descriptor_slots[] = {
@@ -2414,9 +2414,20 @@ static PyType_Spec access_descriptor_spec = {
 };
 
 static PyObject *
-make_access_descriptor(PyObject *self, PyObject *unused)
+make_access_descriptor(PyObject *self, PyObject *args)
 {
-    return make_return_box(&access_descriptor_spec, Py_None);
+    PyObject *value = Py_None;
+    int immutable = 0;
+    if (!PyArg_ParseTuple(args, "|Op:make_access_descriptor", &value, &immutable)) {
+        return NULL;
+    }
+    PyObject *descriptor = make_return_box(&access_descriptor_spec, value);
+    if (descriptor != NULL && immutable &&
+        (PyType_Freeze(Py_TYPE(descriptor)) < 0 ||
+         PyObject_DeclareImmutable(descriptor) < 0)) {
+        Py_CLEAR(descriptor);
+    }
+    return descriptor;
 }
 
 static PyObject *
@@ -4285,7 +4296,7 @@ static PyMethodDef methods[] = {
     {"test_gc_visit_world_stop", test_gc_visit_world_stop, METH_NOARGS, NULL},
     {"threadgroup_world_stop_probe", threadgroup_world_stop_probe, METH_VARARGS, NULL},
     {"threadgroup_freelist_probe", threadgroup_freelist_probe, METH_VARARGS, NULL},
-    {"make_access_descriptor", make_access_descriptor, METH_NOARGS, NULL},
+    {"make_access_descriptor", make_access_descriptor, METH_VARARGS, NULL},
     {"access_descriptor_calls", access_descriptor_calls, METH_O, NULL},
     {"threadgroup_vm_probe", threadgroup_vm_probe, METH_VARARGS, NULL},
     {"threadgroup_return_probe", threadgroup_return_probe, METH_VARARGS, NULL},

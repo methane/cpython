@@ -865,6 +865,79 @@ assert 'threading' not in sys.modules
                         (method, instance, bytes), 0, 32),
                         group is sys.main_thread_group)
 
+    def test_foreign_attribute_hooks(self):
+        def hook(self, name):
+            return 42
+
+        cases = (
+            {'__getattr__': hook},
+            {'__getattribute__': hook},
+            {'__getattribute__': hook, '__getattr__': hook},
+        )
+
+        def probe():
+            assert source[1].missing == 42
+            return True
+
+        for methods in cases:
+            instance = internal.make_immutable_special_method_instance(methods)
+            for group in (sys.main_thread_group, self.foreign):
+                with self.subTest(methods=tuple(methods), group=group):
+                    self.assertIs(internal.threadgroup_vm_probe(
+                        probe.__code__, group, (hook, instance, None), 0, 32),
+                        group is sys.main_thread_group)
+
+        # A LOCAL fallback hook must not prevent access to an existing value.
+        instance = internal.make_immutable_special_method_instance(
+            {'__getattr__': hook, 'present': 42})
+
+        def existing():
+            assert source[1].present == 42
+            return True
+
+        self.assertTrue(internal.threadgroup_vm_probe(
+            existing.__code__, self.foreign, (None, instance, None), 0, 32))
+
+    def test_foreign_descriptor_get(self):
+        def get(self, instance, owner):
+            return 42
+
+        descriptor = internal.make_immutable_special_method_instance(
+            {'__get__': get})
+        for expression in ('cls.descriptor', 'cls().descriptor'):
+            namespace = {}
+            exec('def probe():\n    cls.descriptor = source[1]\n'
+                 f'    assert {expression} == 42\n    return True', namespace)
+            for group in (sys.main_thread_group, self.foreign):
+                with self.subTest(expression=expression, group=group):
+                    self.assertIs(internal.threadgroup_vm_probe(
+                        namespace['probe'].__code__, group,
+                        (get, descriptor, None), 0, 32),
+                        group is sys.main_thread_group)
+
+    def test_attribute_hook_descriptor_result(self):
+        def hook(name):
+            return 42
+
+        def probe():
+            assert source[1].missing == 42
+            return True
+
+        for name in ('__getattr__', '__getattribute__'):
+            for group in (sys.main_thread_group, self.foreign):
+                with self.subTest(hook=name, group=group):
+                    descriptor = internal.make_access_descriptor(hook, True)
+                    methods = {'__getattr__': descriptor, name: descriptor}
+                    instance = internal.make_immutable_special_method_instance(
+                        methods)
+                    self.assertIs(internal.threadgroup_vm_probe(
+                        probe.__code__, group, (hook, instance, None), 0, 32),
+                        group is sys.main_thread_group)
+                    # Binding is allowed, but the returned LOCAL callable
+                    # must be checked before it is invoked.
+                    self.assertEqual(internal.access_descriptor_calls(descriptor),
+                                     32)
+
     @requires_specialization
     def test_foreign_specialized_getitem(self):
         def getitem(self, key):
