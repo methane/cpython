@@ -161,8 +161,8 @@ static int
 _setup_optimizer_watchers(void *Py_UNUSED(arg))
 {
     PyInterpreterState *interp = _PyInterpreterState_GET();
-    FT_ATOMIC_STORE_PTR_RELEASE(
-        interp->dict_state.watchers[GLOBALS_WATCHER_ID],
+    _Py_atomic_store_ptr_release(
+        &interp->dict_state.watchers[GLOBALS_WATCHER_ID],
         globals_watcher_callback);
     interp->type_watchers[TYPE_WATCHER_ID] = type_watcher_callback;
     return 0;

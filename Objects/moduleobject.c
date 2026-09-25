@@ -218,8 +218,10 @@ int
 _PyModule_InitModuleDictWatcher(PyInterpreterState *interp)
 {
     // This is a reserved watcher for CPython so there's no need to check for non-NULL.
-    assert(interp->dict_state.watchers[MODULE_WATCHER_ID] == NULL);
-    interp->dict_state.watchers[MODULE_WATCHER_ID] = &module_dict_watcher;
+    assert(_Py_atomic_load_ptr_relaxed(
+        &interp->dict_state.watchers[MODULE_WATCHER_ID]) == NULL);
+    _Py_atomic_store_ptr_release(
+        &interp->dict_state.watchers[MODULE_WATCHER_ID], &module_dict_watcher);
     return 0;
 }
 

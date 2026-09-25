@@ -177,6 +177,18 @@ callbacks may re-enter the registration APIs. Shutdown clears these registries
 under the same mutex. Native workers repeatedly register and remove watchers
 while creating, modifying and destroying their own functions and code objects.
 
+Dictionary watcher registration and removal use their existing interpreter
+mutex in normal builds too. Callback publication uses release stores and
+notification uses acquire loads, including the reserved runtime callbacks.
+Context watcher registration, removal and callback lookup use a dedicated
+interpreter mutex, with an atomic active mask. Fork reinitializes this mutex.
+Both registries release their locks before constructing errors or invoking
+callbacks, and skip slots cleared during notification. Removing a watcher
+does not wait for a callback that another group has already obtained.
+Native workers register, notify and remove dictionary and context watchers
+using objects owned by their own group and native callbacks with no shared
+mutable Python state.
+
 Interpreter-wide rare-event counters also use atomic accesses, with saturating
 compare/exchange increments. Independent groups can modify their own LOCAL
 functions concurrently; those updates must not lose counts or overwrite a
@@ -373,6 +385,19 @@ flags/events rather than foreign LOCAL Python functions or mutable results.
 The default-path parallel scheduling test remains skipped while the interpreter
 GIL is enabled. The isolated native probe additionally tests real parallelism.
 
+- Dictionary/context watcher registries: normal debug and release builds each
+  run 533 tests across nine files successfully (10 and 15 skips), covering
+  groups, ownership, contexts, watcher APIs, dictionaries, GC, embedding and
+  fork. The native fixture performs 4,096 registration/notification/removal
+  cycles for each
+  kind of watcher across two groups. Before the fix, TSan reports races in
+  both registration APIs, and clearing a later context watcher during
+  notification aborts on a NULL-callback assertion. After the fix, all three
+  watcher regressions pass under TSan without suppressions, including the
+  previous code/function tests and clearing probes for all four registries.
+  Logs: `test-context-watcher-clear-before.log`,
+  `tsan-dict-context-watchers-before.log`,
+  `tsan-dict-context-watchers-after.log` and `test-dict-context-watchers-*`.
 - Code/function watcher registries: debug and release normal builds each pass
   395 tests across nine files (10 and 15 skips), including watcher APIs, code,
   functions, groups, ownership, GC, embedding and fork. Before the change,

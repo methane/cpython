@@ -992,6 +992,7 @@ struct _is {
     // One bit is set for each non-NULL entry in code_watchers
     uint8_t active_code_watchers;
     uint8_t active_context_watchers;
+    PyMutex context_watchers_mutex;
 
     struct _py_object_state object_state;
     struct _Py_unicode_state unicode;

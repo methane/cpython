@@ -136,15 +136,29 @@ noop_func_watcher(PyFunction_WatchEvent event, PyFunctionObject *func,
     return 0;
 }
 
+static int
+noop_dict_watcher(PyDict_WatchEvent event, PyObject *dict,
+                  PyObject *key, PyObject *value)
+{
+    return 0;
+}
+
+static int
+noop_context_watcher(PyContextEvent event, PyObject *context)
+{
+    return 0;
+}
+
 // The clearing probe runs in an isolated process with one Python thread.
 static int watcher_to_clear = -1;
 static int cleared_watcher_calls;
+static int (*clear_watcher)(int);
 
 static int
-clear_later_code_watcher(PyCodeEvent event, PyCodeObject *code)
+clear_later_watcher(void)
 {
     if (watcher_to_clear >= 0) {
-        if (PyCode_ClearWatcher(watcher_to_clear) < 0) {
+        if (clear_watcher(watcher_to_clear) < 0) {
             return -1;
         }
         watcher_to_clear = -1;
@@ -153,16 +167,29 @@ clear_later_code_watcher(PyCodeEvent event, PyCodeObject *code)
 }
 
 static int
+clear_later_code_watcher(PyCodeEvent event, PyCodeObject *code)
+{
+    return clear_later_watcher();
+}
+
+static int
 clear_later_func_watcher(PyFunction_WatchEvent event, PyFunctionObject *func,
                         PyObject *value)
 {
-    if (watcher_to_clear >= 0) {
-        if (PyFunction_ClearWatcher(watcher_to_clear) < 0) {
-            return -1;
-        }
-        watcher_to_clear = -1;
-    }
-    return 0;
+    return clear_later_watcher();
+}
+
+static int
+clear_later_context_watcher(PyContextEvent event, PyObject *context)
+{
+    return clear_later_watcher();
+}
+
+static int
+clear_later_dict_watcher(PyDict_WatchEvent event, PyObject *dict,
+                        PyObject *key, PyObject *value)
+{
+    return clear_later_watcher();
 }
 
 static int
@@ -180,13 +207,57 @@ cleared_func_watcher(PyFunction_WatchEvent event, PyFunctionObject *func,
     return 0;
 }
 
+static int
+cleared_context_watcher(PyContextEvent event, PyObject *context)
+{
+    cleared_watcher_calls++;
+    return 0;
+}
+
+static int
+cleared_dict_watcher(PyDict_WatchEvent event, PyObject *dict,
+                     PyObject *key, PyObject *value)
+{
+    cleared_watcher_calls++;
+    return 0;
+}
+
+static int
+add_clearing_watcher(int kind, int first)
+{
+    switch (kind) {
+        case 0:
+            return PyFunction_AddWatcher(first ? clear_later_func_watcher :
+                                                 cleared_func_watcher);
+        case 1:
+            return PyCode_AddWatcher(first ? clear_later_code_watcher :
+                                             cleared_code_watcher);
+        case 2:
+            return PyContext_AddWatcher(first ? clear_later_context_watcher :
+                                                cleared_context_watcher);
+        case 3:
+            return PyDict_AddWatcher(first ? clear_later_dict_watcher :
+                                             cleared_dict_watcher);
+        default:
+            Py_UNREACHABLE();
+    }
+}
+
 static PyObject *
 threadgroup_watcher_clear_probe(PyObject *self, PyObject *arg)
 {
-    int code_watcher = PyObject_IsTrue(arg);
-    if (code_watcher < 0) {
+    static int (*const clear_functions[])(int) = {
+        PyFunction_ClearWatcher, PyCode_ClearWatcher,
+        PyContext_ClearWatcher, PyDict_ClearWatcher,
+    };
+    int kind = PyLong_AsInt(arg);
+    if (kind == -1 && PyErr_Occurred()) {
         return NULL;
     }
+    if (kind < 0 || kind >= (int)Py_ARRAY_LENGTH(clear_functions)) {
+        return PyErr_Format(PyExc_ValueError, "invalid watcher kind");
+    }
+    clear_watcher = clear_functions[kind];
     PyObject *globals = PyDict_New();
     PyObject *code = (PyObject *)PyCode_NewEmpty("watcher-clear", "probe", 1);
     if (globals == NULL || code == NULL) {
@@ -194,35 +265,43 @@ threadgroup_watcher_clear_probe(PyObject *self, PyObject *arg)
         Py_XDECREF(code);
         return NULL;
     }
-    int first = code_watcher ? PyCode_AddWatcher(clear_later_code_watcher) :
-                              PyFunction_AddWatcher(clear_later_func_watcher);
+    int first = add_clearing_watcher(kind, 1);
     if (first < 0) {
         Py_DECREF(globals);
         Py_DECREF(code);
         return NULL;
     }
     cleared_watcher_calls = 0;
-    watcher_to_clear = code_watcher ? PyCode_AddWatcher(cleared_code_watcher) :
-                                     PyFunction_AddWatcher(cleared_func_watcher);
+    watcher_to_clear = add_clearing_watcher(kind, 0);
     PyObject *watched = NULL;
     if (watcher_to_clear >= 0) {
-        watched = code_watcher ?
-            (PyObject *)PyCode_NewEmpty("watcher-clear", "watched", 1) :
-            PyFunction_New(code, globals);
+        switch (kind) {
+            case 0:
+                watched = PyFunction_New(code, globals);
+                break;
+            case 1:
+                watched = (PyObject *)PyCode_NewEmpty("watcher-clear", "watched", 1);
+                break;
+            case 2:
+                watched = PyContext_New();
+                if (watched != NULL && PyContext_Enter(watched) == 0) {
+                    PyContext_Exit(watched);
+                }
+                break;
+            case 3:
+                watched = PyDict_New();
+                if (watched != NULL && PyDict_Watch(first, watched) == 0 &&
+                    PyDict_Watch(watcher_to_clear, watched) == 0) {
+                    PyDict_SetItemString(watched, "value", Py_None);
+                }
+                break;
+        }
     }
     int ok = watched != NULL && watcher_to_clear == -1 &&
              cleared_watcher_calls == 0;
-    if (code_watcher) {
-        PyCode_ClearWatcher(first);
-        if (watcher_to_clear >= 0) {
-            PyCode_ClearWatcher(watcher_to_clear);
-        }
-    }
-    else {
-        PyFunction_ClearWatcher(first);
-        if (watcher_to_clear >= 0) {
-            PyFunction_ClearWatcher(watcher_to_clear);
-        }
+    clear_watcher(first);
+    if (watcher_to_clear >= 0) {
+        clear_watcher(watcher_to_clear);
     }
     watcher_to_clear = -1;
     Py_XDECREF(watched);
@@ -236,6 +315,41 @@ threadgroup_watcher_clear_probe(PyObject *self, PyObject *arg)
                             "a cleared watcher received a later notification");
     }
     Py_RETURN_NONE;
+}
+
+static int
+parallel_context_dict_worker(struct group_probe *probe)
+{
+    int context = probe->mode == 10;
+    PyThreadState *tstate = PyThreadState_Get();
+    for (int i = 0; i < 2048; i++) {
+        int watcher = context ? PyContext_AddWatcher(noop_context_watcher) :
+                                PyDict_AddWatcher(noop_dict_watcher);
+        if (watcher < 0) {
+            return 0;
+        }
+        PyObject *watched = context ? PyContext_New() : PyDict_New();
+        int ok = watched != NULL;
+        if (ok && context) {
+            ok = PyContext_Enter(watched) == 0;
+            if (ok) {
+                ok = PyContext_Exit(watched) == 0;
+            }
+        }
+        else if (ok) {
+            ok = PyDict_Watch(watcher, watched) == 0 &&
+                 PyDict_SetItemString(watched, "value", Py_None) == 0 &&
+                 PyDict_DelItemString(watched, "value") == 0 &&
+                 PyDict_Unwatch(watcher, watched) == 0;
+        }
+        int cleared = context ? PyContext_ClearWatcher(watcher) :
+                                PyDict_ClearWatcher(watcher);
+        Py_XDECREF(watched);
+        if (!ok || cleared < 0 || _Py_HandlePending(tstate) < 0) {
+            return 0;
+        }
+    }
+    return 1;
 }
 
 static PyObject *
@@ -640,6 +754,10 @@ group_probe_worker(void *arg)
         probe->ok = parallel_code_worker(probe, tstate);
     }
 
+    if (probe->ok && probe->mode >= 9) {
+        probe->ok = parallel_context_dict_worker(probe);
+    }
+
     if (probe->ok && probe->mode == 7) {
         probe->ok = parallel_lookup_worker(probe);
     }
@@ -715,7 +833,7 @@ threadgroup_probe(PyObject *self, PyObject *args)
                           &groups, &mode, &seconds, &parallel, &PyCode_Type, &code)) {
         return NULL;
     }
-    if (PyTuple_GET_SIZE(groups) != 2 || mode < 0 || mode > 8 ||
+    if (PyTuple_GET_SIZE(groups) != 2 || mode < 0 || mode > 10 ||
         !(seconds > 0.0 && seconds <= 300.0) ||
         ((mode == 6) != (code != NULL)) ||
         (code != NULL && ((PyCodeObject *)code)->co_nfreevars != 0)) {

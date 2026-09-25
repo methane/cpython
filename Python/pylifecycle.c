@@ -1576,7 +1576,8 @@ init_interp_main(PyThreadState *tstate)
     }
 
 
-    interp->dict_state.watchers[0] = &builtins_dict_watcher;
+    _Py_atomic_store_ptr_release(&interp->dict_state.watchers[0],
+                                 &builtins_dict_watcher);
     if (PyDict_Watch(0, interp->builtins) != 0) {
         return _PyStatus_ERR("failed to set builtin dict watcher");
     }

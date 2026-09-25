@@ -516,10 +516,8 @@ Dictionary objects
 
    .. note::
 
-      This function is not internally synchronized. In the
-      :term:`free-threaded <free threading>` build, callers should ensure no
-      concurrent calls to :c:func:`PyDict_AddWatcher` or
-      :c:func:`PyDict_ClearWatcher` are in progress.
+      Watcher registration and removal are internally synchronized. This does
+      not serialize watcher callbacks.
 
    .. versionadded:: 3.12
 
@@ -531,10 +529,8 @@ Dictionary objects
 
    .. note::
 
-      This function is not internally synchronized. In the
-      :term:`free-threaded <free threading>` build, callers should ensure no
-      concurrent calls to :c:func:`PyDict_AddWatcher` or
-      :c:func:`PyDict_ClearWatcher` are in progress.
+      Watcher registration and removal are internally synchronized. Clearing a
+      watcher does not wait for callbacks already in progress.
 
    .. versionadded:: 3.12
 

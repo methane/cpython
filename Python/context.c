@@ -6,6 +6,7 @@
 #include "pycore_gc.h"            // _PyObject_GC_MAY_BE_TRACKED()
 #include "pycore_hamt.h"
 #include "pycore_initconfig.h"    // _PyStatus_OK()
+#include "pycore_lock.h"          // PyMutex_LockFlags()
 #include "pycore_object.h"
 #include "pycore_pyatomic_ft_wrappers.h" // FT_ATOMIC_LOAD_INT_RELAXED()
 #include "pycore_pyerrors.h"
@@ -163,14 +164,17 @@ notify_context_watchers(PyThreadState *ts, PyContextEvent event, PyObject *ctx)
     assert(Py_REFCNT(ctx) > 0);
     PyInterpreterState *interp = ts->interp;
     assert(interp->_initialized);
-    uint8_t bits = interp->active_context_watchers;
+    uint8_t bits = _Py_atomic_load_uint8_relaxed(&interp->active_context_watchers);
     int i = 0;
     while (bits) {
         assert(i < CONTEXT_MAX_WATCHERS);
         if (bits & 1) {
+            PyMutex_LockFlags(&interp->context_watchers_mutex, 0);
             PyContext_WatchCallback cb = interp->context_watchers[i];
-            assert(cb != NULL);
-            if (cb(event, ctx) < 0) {
+            PyMutex_Unlock(&interp->context_watchers_mutex);
+            // Callbacks can change the registry. Skip a cleared slot, and
+            // invoke callbacks after unlocking so they may re-enter the API.
+            if (cb != NULL && cb(event, ctx) < 0) {
                 PyErr_FormatUnraisable(
                     "Exception ignored in %s watcher callback for %R",
                     context_event_name(event), ctx);
@@ -188,14 +192,19 @@ PyContext_AddWatcher(PyContext_WatchCallback callback)
     PyInterpreterState *interp = _PyInterpreterState_GET();
     assert(interp->_initialized);
 
+    PyMutex_LockFlags(&interp->context_watchers_mutex, 0);
     for (int i = 0; i < CONTEXT_MAX_WATCHERS; i++) {
         if (!interp->context_watchers[i]) {
             interp->context_watchers[i] = callback;
-            interp->active_context_watchers |= (1 << i);
+            uint8_t bits = _Py_atomic_load_uint8_relaxed(&interp->active_context_watchers);
+            _Py_atomic_store_uint8_relaxed(&interp->active_context_watchers,
+                                           bits | (1 << i));
+            PyMutex_Unlock(&interp->context_watchers_mutex);
             return i;
         }
     }
 
+    PyMutex_Unlock(&interp->context_watchers_mutex);
     PyErr_SetString(PyExc_RuntimeError, "no more context watcher IDs available");
     return -1;
 }
@@ -210,12 +219,17 @@ PyContext_ClearWatcher(int watcher_id)
         PyErr_Format(PyExc_ValueError, "Invalid context watcher ID %d", watcher_id);
         return -1;
     }
+    PyMutex_LockFlags(&interp->context_watchers_mutex, 0);
     if (!interp->context_watchers[watcher_id]) {
+        PyMutex_Unlock(&interp->context_watchers_mutex);
         PyErr_Format(PyExc_ValueError, "No context watcher set for ID %d", watcher_id);
         return -1;
     }
     interp->context_watchers[watcher_id] = NULL;
-    interp->active_context_watchers &= ~(1 << watcher_id);
+    uint8_t bits = _Py_atomic_load_uint8_relaxed(&interp->active_context_watchers);
+    _Py_atomic_store_uint8_relaxed(&interp->active_context_watchers,
+                                   bits & ~(1 << watcher_id));
+    PyMutex_Unlock(&interp->context_watchers_mutex);
     return 0;
 }
 

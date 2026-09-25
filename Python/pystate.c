@@ -325,6 +325,7 @@ _Py_COMP_DIAG_POP
         &(runtime)->_main_interpreter.code_state.mutex, \
         &(runtime)->_main_interpreter.func_state.mutex, \
         &(runtime)->_main_interpreter.dict_state.watcher_mutex, \
+        &(runtime)->_main_interpreter.context_watchers_mutex, \
     }
 
 static void
@@ -967,9 +968,11 @@ interpreter_clear(PyInterpreterState *interp, PyThreadState *tstate)
         tstate->_status.cleared = 1;
     }
 
+    PyMutex_LockFlags(&interp->dict_state.watcher_mutex, 0);
     for (int i=0; i < DICT_MAX_WATCHERS; i++) {
-        interp->dict_state.watchers[i] = NULL;
+        _Py_atomic_store_ptr_release(&interp->dict_state.watchers[i], NULL);
     }
+    PyMutex_Unlock(&interp->dict_state.watcher_mutex);
 
     for (int i=0; i < TYPE_MAX_WATCHERS; i++) {
         interp->type_watchers[i] = NULL;
@@ -987,10 +990,12 @@ interpreter_clear(PyInterpreterState *interp, PyThreadState *tstate)
     _Py_atomic_store_uint8_relaxed(&interp->active_code_watchers, 0);
     PyMutex_Unlock(&interp->func_state.mutex);
 
+    PyMutex_LockFlags(&interp->context_watchers_mutex, 0);
     for (int i=0; i < CONTEXT_MAX_WATCHERS; i++) {
         interp->context_watchers[i] = NULL;
     }
-    interp->active_context_watchers = 0;
+    _Py_atomic_store_uint8_relaxed(&interp->active_context_watchers, 0);
+    PyMutex_Unlock(&interp->context_watchers_mutex);
     // XXX Once we have one allocator per interpreter (i.e.
     // per-interpreter GC) we must ensure that all of the interpreter's
     // objects have been cleaned up at the point.
