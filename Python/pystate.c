@@ -974,9 +974,11 @@ interpreter_clear(PyInterpreterState *interp, PyThreadState *tstate)
     }
     PyMutex_Unlock(&interp->dict_state.watcher_mutex);
 
+    PyMutex_LockFlags(&interp->types.mutex, 0);
     for (int i=0; i < TYPE_MAX_WATCHERS; i++) {
-        interp->type_watchers[i] = NULL;
+        _Py_atomic_store_ptr_release(&interp->type_watchers[i], NULL);
     }
+    PyMutex_Unlock(&interp->types.mutex);
 
     PyMutex_LockFlags(&interp->func_state.mutex, 0);
     for (int i=0; i < FUNC_MAX_WATCHERS; i++) {

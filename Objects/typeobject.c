@@ -1020,8 +1020,8 @@ PyType_AddWatcher(PyType_WatchCallback callback)
     BEGIN_TYPE_LOCK();
     // start at 1, 0 is reserved for cpython optimizer
     for (int i = 1; i < TYPE_MAX_WATCHERS; i++) {
-        if (!interp->type_watchers[i]) {
-            interp->type_watchers[i] = callback;
+        if (!_Py_atomic_load_ptr_relaxed(&interp->type_watchers[i])) {
+            _Py_atomic_store_ptr_release(&interp->type_watchers[i], callback);
             watcher_id = i;
             break;
         }
@@ -1041,7 +1041,7 @@ validate_watcher_id(PyInterpreterState *interp, int watcher_id)
         PyErr_Format(PyExc_ValueError, "Invalid type watcher ID %d", watcher_id);
         return -1;
     }
-    if (!interp->type_watchers[watcher_id]) {
+    if (!_Py_atomic_load_ptr_relaxed(&interp->type_watchers[watcher_id])) {
         PyErr_Format(PyExc_ValueError, "No type watcher set for ID %d", watcher_id);
         return -1;
     }
@@ -1056,7 +1056,7 @@ PyType_ClearWatcher(int watcher_id)
     BEGIN_TYPE_LOCK();
     res = validate_watcher_id(interp, watcher_id);
     if (res == 0) {
-        interp->type_watchers[watcher_id] = NULL;
+        _Py_atomic_store_ptr_release(&interp->type_watchers[watcher_id], NULL);
     }
     END_TYPE_LOCK();
     return res;
@@ -1079,7 +1079,7 @@ PyType_Watch(int watcher_id, PyObject* obj)
     if (res == 0) {
         // Ensure we will get a callback on the next modification.
         assign_version_tag(interp, type);
-        type->tp_watched |= (1 << watcher_id);
+        _Py_atomic_or_uint8(&type->tp_watched, (uint8_t)(1 << watcher_id));
     }
     END_TYPE_LOCK();
     return res;
@@ -1098,7 +1098,7 @@ PyType_Unwatch(int watcher_id, PyObject* obj)
     BEGIN_TYPE_LOCK();
     res = validate_watcher_id(interp, watcher_id);
     if (res == 0) {
-        type->tp_watched &= ~(1 << watcher_id);
+        _Py_atomic_and_uint8(&type->tp_watched, (uint8_t)~(1 << watcher_id));
     }
     END_TYPE_LOCK();
     return res;
@@ -1179,16 +1179,17 @@ _PyType_Modified_Unlocked(PyTypeObject *type)
     }
 
     // Notify registered type watchers, if any
-    if (type->tp_watched) {
+    int bits = _Py_atomic_load_uint8_relaxed(&type->tp_watched);
+    if (bits) {
         PyInterpreterState *interp = _PyInterpreterState_GET();
-        int bits = type->tp_watched;
         int i = 0;
         while (bits) {
             assert(i < TYPE_MAX_WATCHERS);
             if (bits & 1) {
                 // Note that PyErr_FormatUnraisable is potentially re-entrant
                 // and the watcher callback might be too.
-                PyType_WatchCallback cb = interp->type_watchers[i];
+                PyType_WatchCallback cb =
+                    _Py_atomic_load_ptr_acquire(&interp->type_watchers[i]);
                 if (cb && (cb(type) < 0)) {
                     PyErr_FormatUnraisable(
                         "Exception ignored in type watcher callback #%d for %R",
@@ -6880,15 +6881,18 @@ type_dealloc(PyObject *self)
     // Notify type watchers before teardown.  The type object is still fully
     // intact at this point (dict, bases, mro, name are all valid), so
     // callbacks can safely inspect it.
-    if (type->tp_watched) {
+    int bits = _Py_atomic_load_uint8_relaxed(&type->tp_watched);
+    if (bits) {
         _PyObject_ResurrectStart(self);
         PyInterpreterState *interp = _PyInterpreterState_GET();
-        int bits = type->tp_watched;
         int i = 0;
         while (bits) {
             assert(i < TYPE_MAX_WATCHERS);
             if (bits & 1) {
-                PyType_WatchCallback cb = interp->type_watchers[i];
+                // Destruction runs outside the type mutex. Another group
+                // may register or clear a callback while this type dies.
+                PyType_WatchCallback cb =
+                    _Py_atomic_load_ptr_acquire(&interp->type_watchers[i]);
                 if (cb && (cb(type) < 0)) {
                     PyErr_FormatUnraisable(
                         "Exception ignored in type watcher callback #%d "

@@ -118,6 +118,7 @@ struct group_probe {
     PyObject *code;
     PyObject *lookup_objects;
     int *lookup_rounds;
+    int type_watcher;
     char error[256];
 };
 
@@ -147,6 +148,97 @@ static int
 noop_context_watcher(PyContextEvent event, PyObject *context)
 {
     return 0;
+}
+
+static int
+noop_type_watcher(PyTypeObject *type)
+{
+    return 0;
+}
+
+static int
+parallel_type_watcher_worker(struct group_probe *probe)
+{
+    PyThreadState *tstate = PyThreadState_Get();
+    PyTime_t now;
+    if (PyTime_Monotonic(&now) < 0) {
+        return 0;
+    }
+    PyTime_t deadline = now + probe->timeout;
+    int *rounds = probe->lookup_rounds;
+    if (probe->index == 0) {
+        // Only this worker changes registrations. It allocates no Python
+        // objects, so all LOCAL types are collected by their creator below.
+        while (_Py_atomic_load_int(&rounds[1]) == 0) {
+            if (_Py_HandlePending(tstate) < 0 ||
+                PyTime_Monotonic(&now) < 0 || now >= deadline) {
+                return 0;
+            }
+        }
+        _Py_atomic_store_int(&rounds[0], 1);
+        do {
+            if (PyType_ClearWatcher(probe->type_watcher) < 0 ||
+                PyType_AddWatcher(noop_type_watcher) != probe->type_watcher ||
+                _Py_HandlePending(tstate) < 0 ||
+                PyTime_Monotonic(&now) < 0 || now >= deadline) {
+                return 0;
+            }
+        } while (_Py_atomic_load_int(&rounds[1]) == 1);
+        return 1;
+    }
+
+    PyType_Slot slots[] = {{0, NULL}};
+    PyType_Spec spec = {
+        .name = "_testinternalcapi.WatchedLocalType",
+        .basicsize = sizeof(PyObject),
+        .flags = Py_TPFLAGS_DEFAULT,
+        .slots = slots,
+    };
+    PyObject *types = PyTuple_New(512);
+    PyObject *refs = PyTuple_New(512);
+    int ok = types != NULL && refs != NULL;
+    for (Py_ssize_t i = 0; ok && i < PyTuple_GET_SIZE(types); i++) {
+        PyObject *type = PyType_FromSpec(&spec);
+        if (type == NULL) {
+            ok = 0;
+            break;
+        }
+        PyTuple_SET_ITEM(types, i, type);
+        PyObject *ref = PyWeakref_NewRef(type, NULL);
+        if (ref == NULL) {
+            ok = 0;
+            break;
+        }
+        PyTuple_SET_ITEM(refs, i, ref);
+        ok = PyType_Watch(probe->type_watcher, type) == 0;
+    }
+    if (ok) {
+        // Publish only the barrier; no LOCAL object crosses groups.
+        _Py_atomic_store_int(&rounds[1], 1);
+        while (_Py_atomic_load_int(&rounds[0]) == 0) {
+            if (_Py_HandlePending(tstate) < 0 ||
+                PyTime_Monotonic(&now) < 0 || now >= deadline) {
+                ok = 0;
+                break;
+            }
+        }
+    }
+    Py_XDECREF(types);
+    PyGC_Collect();
+    if (ok) {
+        for (Py_ssize_t i = 0; i < PyTuple_GET_SIZE(refs); i++) {
+            PyObject *type;
+            int live = PyWeakref_GetRef(PyTuple_GET_ITEM(refs, i), &type);
+            Py_XDECREF(type);
+            if (live != 0) {
+                ok = 0;
+                break;
+            }
+        }
+    }
+    Py_XDECREF(refs);
+    _Py_atomic_store_int(&rounds[1], 2);
+    return ok;
 }
 
 // The clearing probe runs in an isolated process with one Python thread.
@@ -935,8 +1027,12 @@ group_probe_worker(void *arg)
         probe->ok = parallel_context_dict_worker(probe);
     }
 
-    if (probe->ok && (probe->mode == 7 || probe->mode >= 11)) {
+    if (probe->ok && (probe->mode == 7 || probe->mode == 11 || probe->mode == 12)) {
         probe->ok = parallel_lookup_worker(probe);
+    }
+
+    if (probe->ok && probe->mode == 13) {
+        probe->ok = parallel_type_watcher_worker(probe);
     }
 
     if (probe->ok && probe->mode == 6) {
@@ -1010,7 +1106,7 @@ threadgroup_probe(PyObject *self, PyObject *args)
                           &groups, &mode, &seconds, &parallel, &PyCode_Type, &code)) {
         return NULL;
     }
-    if (PyTuple_GET_SIZE(groups) != 2 || mode < 0 || mode > 12 ||
+    if (PyTuple_GET_SIZE(groups) != 2 || mode < 0 || mode > 13 ||
         !(seconds > 0.0 && seconds <= 300.0) ||
         ((mode == 6) != (code != NULL)) ||
         (code != NULL && ((PyCodeObject *)code)->co_nfreevars != 0)) {
@@ -1075,9 +1171,17 @@ threadgroup_probe(PyObject *self, PyObject *args)
             return PyErr_NoMemory();
         }
     }
-    if (mode == 7 || mode >= 11) {
+    if (mode == 7 || mode == 11 || mode == 12) {
         types = parallel_lookup_objects(mode);
         if (types == NULL) {
+            return NULL;
+        }
+    }
+    int type_watcher = -1;
+    if (mode == 13) {
+        PyGC_Collect();
+        type_watcher = PyType_AddWatcher(noop_type_watcher);
+        if (type_watcher < 0) {
             return NULL;
         }
     }
@@ -1112,6 +1216,7 @@ threadgroup_probe(PyObject *self, PyObject *args)
             .code = code,
             .lookup_objects = types,
             .lookup_rounds = lookup_rounds,
+            .type_watcher = type_watcher,
         };
     }
     if (parallel) {
@@ -1158,6 +1263,9 @@ done:
         _Py_atomic_store_int_relaxed(&gil->enabled, saved_gil);
     }
     Py_END_ALLOW_THREADS
+    if (type_watcher >= 0) {
+        PyType_ClearWatcher(type_watcher);
+    }
     if (start_failed) {
         PyErr_SetString(PyExc_RuntimeError, "failed to start group probe");
     }

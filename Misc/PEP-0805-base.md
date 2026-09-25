@@ -139,6 +139,16 @@ mutex before invalidating its type's version and cache. Type-watcher registratio
 removal and watch-bit updates also use it. Debug builds enable the existing
 revealed-type lock and world-stop assertions in both builds.
 
+Type-watcher callbacks use atomic publication and acquisition, including the
+optimizer's reserved callback and registry clearing during shutdown. A type's
+watched bits are atomic too. Destruction notifies watchers outside the type
+mutex, so it must synchronize with another group's registration changes even
+when the type itself is LOCAL. Empty callback slots are skipped; clearing a
+watcher does not wait for a callback already acquired by another group.
+The native regression creates and collects 512 LOCAL types in one group while
+the other group only replaces registrations. Weak references confirm that all
+512 types die. No LOCAL object or Python callback is shared between the workers.
+
 Type-version publication, unlocked cache guards and the version-use counter
 use atomic operations in the normal build. Immutable types still initialize
 these caches lazily, so group serialization alone cannot protect their first
@@ -406,6 +416,15 @@ flags/events rather than foreign LOCAL Python functions or mutable results.
 The default-path parallel scheduling test remains skipped while the interpreter
 GIL is enabled. The isolated native probe additionally tests real parallelism.
 
+- Type-watcher destruction: normal debug and release builds each run 734 tests
+  across eleven files successfully (14 and 19 skips), covering groups,
+  ownership, watcher/type APIs, descriptors, caches, GC, weakrefs, embedding,
+  fork and specialization. Before the fix, TSan reports `type_dealloc` reading
+  the callback slot concurrently with `PyType_ClearWatcher`. After the fix,
+  all 65 selected watcher tests pass under TSan without suppressions, including
+  the parallel native workers and the existing destruction/error cases.
+  Logs: `tsan-type-watcher-before.log`, `tsan-type-watchers-after.log`,
+  `test-type-watchers-debug.log` and `test-type-watchers-release.log`.
 - Shared instance keys and type slots: normal debug and release builds each
   run 1,008 tests across fourteen files successfully (14 and 19 skips), covering
   groups, ownership, dictionaries, type caches and descriptors, watcher APIs,

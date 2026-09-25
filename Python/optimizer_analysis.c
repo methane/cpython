@@ -164,7 +164,8 @@ _setup_optimizer_watchers(void *Py_UNUSED(arg))
     _Py_atomic_store_ptr_release(
         &interp->dict_state.watchers[GLOBALS_WATCHER_ID],
         globals_watcher_callback);
-    interp->type_watchers[TYPE_WATCHER_ID] = type_watcher_callback;
+    _Py_atomic_store_ptr_release(&interp->type_watchers[TYPE_WATCHER_ID],
+                                 type_watcher_callback);
     return 0;
 }
 
