@@ -2927,6 +2927,153 @@ slice_getindices_probe(PyObject *self, PyObject *slice)
     return Py_BuildValue("nnn", start, stop, step);
 }
 
+struct operator_api {
+    const char *name;
+    int slot;
+    unaryfunc unary;
+    binaryfunc binary;
+    ternaryfunc ternary;
+    ssizeargfunc repeat;
+};
+
+static const struct operator_api operator_apis[] = {
+    {"PyNumber_Negative", Py_nb_negative, .unary = PyNumber_Negative},
+    {"PyNumber_Positive", Py_nb_positive, .unary = PyNumber_Positive},
+    {"PyNumber_Invert", Py_nb_invert, .unary = PyNumber_Invert},
+    {"PyNumber_Absolute", Py_nb_absolute, .unary = PyNumber_Absolute},
+    {"PyNumber_Add", Py_nb_add, .binary = PyNumber_Add},
+    {"PyNumber_Subtract", Py_nb_subtract, .binary = PyNumber_Subtract},
+    {"PyNumber_Multiply", Py_nb_multiply, .binary = PyNumber_Multiply},
+    {"PyNumber_MatrixMultiply", Py_nb_matrix_multiply, .binary = PyNumber_MatrixMultiply},
+    {"PyNumber_FloorDivide", Py_nb_floor_divide, .binary = PyNumber_FloorDivide},
+    {"PyNumber_TrueDivide", Py_nb_true_divide, .binary = PyNumber_TrueDivide},
+    {"PyNumber_Remainder", Py_nb_remainder, .binary = PyNumber_Remainder},
+    {"PyNumber_Divmod", Py_nb_divmod, .binary = PyNumber_Divmod},
+    {"PyNumber_Lshift", Py_nb_lshift, .binary = PyNumber_Lshift},
+    {"PyNumber_Rshift", Py_nb_rshift, .binary = PyNumber_Rshift},
+    {"PyNumber_And", Py_nb_and, .binary = PyNumber_And},
+    {"PyNumber_Xor", Py_nb_xor, .binary = PyNumber_Xor},
+    {"PyNumber_Or", Py_nb_or, .binary = PyNumber_Or},
+    {"PyNumber_Power", Py_nb_power, .ternary = PyNumber_Power},
+    {"PyNumber_InPlaceAdd", Py_nb_inplace_add, .binary = PyNumber_InPlaceAdd},
+    {"PyNumber_InPlaceSubtract", Py_nb_inplace_subtract, .binary = PyNumber_InPlaceSubtract},
+    {"PyNumber_InPlaceMultiply", Py_nb_inplace_multiply, .binary = PyNumber_InPlaceMultiply},
+    {"PyNumber_InPlaceMatrixMultiply", Py_nb_inplace_matrix_multiply, .binary = PyNumber_InPlaceMatrixMultiply},
+    {"PyNumber_InPlaceFloorDivide", Py_nb_inplace_floor_divide, .binary = PyNumber_InPlaceFloorDivide},
+    {"PyNumber_InPlaceTrueDivide", Py_nb_inplace_true_divide, .binary = PyNumber_InPlaceTrueDivide},
+    {"PyNumber_InPlaceRemainder", Py_nb_inplace_remainder, .binary = PyNumber_InPlaceRemainder},
+    {"PyNumber_InPlaceLshift", Py_nb_inplace_lshift, .binary = PyNumber_InPlaceLshift},
+    {"PyNumber_InPlaceRshift", Py_nb_inplace_rshift, .binary = PyNumber_InPlaceRshift},
+    {"PyNumber_InPlaceAnd", Py_nb_inplace_and, .binary = PyNumber_InPlaceAnd},
+    {"PyNumber_InPlaceXor", Py_nb_inplace_xor, .binary = PyNumber_InPlaceXor},
+    {"PyNumber_InPlaceOr", Py_nb_inplace_or, .binary = PyNumber_InPlaceOr},
+    {"PyNumber_InPlacePower", Py_nb_inplace_power, .ternary = PyNumber_InPlacePower},
+    {"PySequence_Concat", Py_sq_concat, .binary = PySequence_Concat},
+    {"PySequence_Repeat", Py_sq_repeat, .repeat = PySequence_Repeat},
+    {"PySequence_InPlaceConcat", Py_sq_inplace_concat, .binary = PySequence_InPlaceConcat},
+    {"PySequence_InPlaceRepeat", Py_sq_inplace_repeat, .repeat = PySequence_InPlaceRepeat},
+    {"PySequence_InPlaceConcat_fallback", Py_sq_concat, .binary = PySequence_InPlaceConcat},
+    {"PySequence_InPlaceRepeat_fallback", Py_sq_repeat, .repeat = PySequence_InPlaceRepeat},
+    {"PySequence_Concat_numeric", Py_nb_add, .binary = PySequence_Concat},
+    {"PySequence_Repeat_numeric", Py_nb_multiply, .repeat = PySequence_Repeat},
+    {"PySequence_InPlaceConcat_numeric", Py_nb_inplace_add, .binary = PySequence_InPlaceConcat},
+    {"PySequence_InPlaceRepeat_numeric", Py_nb_inplace_multiply, .repeat = PySequence_InPlaceRepeat},
+    {"PyNumber_Add_sequence", Py_sq_concat, .binary = PyNumber_Add},
+    {"PyNumber_Multiply_sequence", Py_sq_repeat, .binary = PyNumber_Multiply},
+    {"PyNumber_InPlaceAdd_sequence", Py_sq_inplace_concat, .binary = PyNumber_InPlaceAdd},
+    {"PyNumber_InPlaceMultiply_sequence", Py_sq_inplace_repeat, .binary = PyNumber_InPlaceMultiply},
+    {"PyNumber_InPlaceAdd_sequence_fallback", Py_sq_concat, .binary = PyNumber_InPlaceAdd},
+    {"PyNumber_InPlaceMultiply_sequence_fallback", Py_sq_repeat, .binary = PyNumber_InPlaceMultiply},
+    {NULL},
+};
+
+static PyObject *
+operator_box_binary(PyObject *left, PyObject *right)
+{
+    // Reflected native slots receive operands in their original order.
+    PyObject *box = Py_TYPE(left)->tp_dealloc == return_box_dealloc ? left : right;
+    assert(Py_TYPE(box)->tp_dealloc == return_box_dealloc);
+    return return_box_number(box);
+}
+
+static PyObject *
+operator_box_power(PyObject *left, PyObject *right, PyObject *modulus)
+{
+    if (Py_TYPE(left)->tp_dealloc == return_box_dealloc ||
+        Py_TYPE(right)->tp_dealloc == return_box_dealloc) {
+        return operator_box_binary(left, right);
+    }
+    assert(Py_TYPE(modulus)->tp_dealloc == return_box_dealloc);
+    return return_box_number(modulus);
+}
+
+static PyObject *
+operator_box_repeat(PyObject *self, Py_ssize_t count)
+{
+    return return_box_number(self);
+}
+
+static PyObject *
+operator_return_probe(PyObject *value, const struct operator_api *api, int position)
+{
+    void *slot;
+    if (api->slot == Py_sq_repeat || api->slot == Py_sq_inplace_repeat) {
+        slot = operator_box_repeat;
+    }
+    else if (api->unary != NULL) {
+        slot = return_box_number;
+    }
+    else if (api->ternary != NULL) {
+        slot = operator_box_power;
+    }
+    else {
+        slot = operator_box_binary;
+    }
+    PyType_Slot slots[] = {
+        {Py_tp_dealloc, return_box_dealloc},
+        {Py_tp_traverse, return_box_traverse},
+        // Let sequence APIs reach their numeric fallback too.
+        {Py_sq_item, operator_box_repeat},
+        {api->slot, slot},
+        {0, NULL},
+    };
+    PyType_Spec spec = {
+        .name = "_testinternalcapi.OperatorBox",
+        .basicsize = sizeof(return_box),
+        .flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_GC,
+        .slots = slots,
+    };
+    PyObject *box = make_return_box(&spec, value);
+    PyObject *one = PyLong_FromLong(1);
+    PyObject *result = NULL;
+    if (box == NULL || one == NULL) {
+        goto done;
+    }
+    if (api->unary != NULL && position == 0) {
+        result = api->unary(box);
+    }
+    else if (api->binary != NULL && position < 2) {
+        PyObject *other = api->binary == PySequence_Concat ||
+            api->binary == PySequence_InPlaceConcat ? box : one;
+        result = position == 0 ? api->binary(box, other) : api->binary(other, box);
+    }
+    else if (api->ternary != NULL) {
+        result = api->ternary(position == 0 ? box : one,
+                              position == 1 ? box : one,
+                              position == 2 ? box : Py_None);
+    }
+    else if (api->repeat != NULL && position == 0) {
+        result = api->repeat(box, 2);
+    }
+    else {
+        PyErr_SetString(PyExc_ValueError, "invalid operator operand position");
+    }
+done:
+    Py_XDECREF(one);
+    Py_XDECREF(box);
+    return result;
+}
+
 static const char *return_apis[] = {
     "PyTuple_GetItem", "PySequence_GetItem", "PyObject_GetItem",
     "PyList_GetItem", "PyList_GetItemRef",
@@ -2948,6 +3095,8 @@ static const char *return_apis[] = {
 struct return_probe {
     struct access_probe base;
     int api;
+    const struct operator_api *operator;
+    int position;
 };
 
 static void
@@ -2978,6 +3127,10 @@ return_probe_worker(void *arg)
     int numeric = 0;
     if (key == NULL) {
         goto done;
+    }
+    if (probe->operator != NULL) {
+        result = operator_return_probe(value, probe->operator, probe->position);
+        goto check_result;
     }
     switch (probe->api) {
         case 0:
@@ -3177,6 +3330,7 @@ return_probe_worker(void *arg)
                 default: Py_UNREACHABLE();
             }
     }
+check_result:
     if (status == -2) {
         status = result == NULL ? -1 : 1;
     }
@@ -3210,9 +3364,13 @@ threadgroup_return_probe(PyObject *self, PyObject *args)
 {
     PyObject *group, *source;
     const char *api;
-    if (!PyArg_ParseTuple(args, "O!Os:threadgroup_return_probe", &PyTuple_Type,
-                          &source, &group, &api)) {
+    int position = 0;
+    if (!PyArg_ParseTuple(args, "O!Os|i:threadgroup_return_probe", &PyTuple_Type,
+                          &source, &group, &api, &position)) {
         return NULL;
+    }
+    if (position < 0 || position > 2) {
+        return PyErr_Format(PyExc_ValueError, "invalid operator operand position");
     }
     if (PyTuple_GET_SIZE(source) != 2 ||
         !PyAnyDict_Check(PyTuple_GET_ITEM(source, 1))) {
@@ -3224,7 +3382,16 @@ threadgroup_return_probe(PyObject *self, PyObject *args)
             break;
         }
     }
+    const struct operator_api *operator = NULL;
     if (return_apis[index] == NULL) {
+        for (int i = 0; operator_apis[i].name != NULL; i++) {
+            if (strcmp(api, operator_apis[i].name) == 0) {
+                operator = &operator_apis[i];
+                break;
+            }
+        }
+    }
+    if (return_apis[index] == NULL && operator == NULL) {
         return PyErr_Format(PyExc_ValueError, "unknown API %s", api);
     }
     _PyThreadGroupState *state = _PyThreadGroup_GetState(group);
@@ -3234,6 +3401,8 @@ threadgroup_return_probe(PyObject *self, PyObject *args)
     struct return_probe probe = {
         .base = {.interp = PyInterpreterState_Get(), .group = state, .value = source},
         .api = index,
+        .operator = operator,
+        .position = position,
     };
     PyThread_ident_t ident;
     PyThread_handle_t handle;

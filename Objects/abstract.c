@@ -968,14 +968,14 @@ binary_op1(PyObject *v, PyObject *w, const int op_slot
         if (slotw && PyType_IsSubtype(Py_TYPE(w), Py_TYPE(v))) {
             x = slotw(v, w);
             if (x != Py_NotImplemented)
-                return x;
+                return _PyObject_CheckAccessNullable(x);
             Py_DECREF(x); /* can't do it */
             slotw = NULL;
         }
         x = slotv(v, w);
         assert(_Py_CheckSlotResult(v, op_name, x != NULL));
         if (x != Py_NotImplemented) {
-            return x;
+            return _PyObject_CheckAccessNullable(x);
         }
         Py_DECREF(x); /* can't do it */
     }
@@ -983,7 +983,7 @@ binary_op1(PyObject *v, PyObject *w, const int op_slot
         PyObject *x = slotw(v, w);
         assert(_Py_CheckSlotResult(w, op_name, x != NULL));
         if (x != Py_NotImplemented) {
-            return x;
+            return _PyObject_CheckAccessNullable(x);
         }
         Py_DECREF(x); /* can't do it */
     }
@@ -1062,7 +1062,7 @@ ternary_op(PyObject *v,
         if (slotw && PyType_IsSubtype(Py_TYPE(w), Py_TYPE(v))) {
             x = slotw(v, w, z);
             if (x != Py_NotImplemented) {
-                return x;
+                return _PyObject_CheckAccessNullable(x);
             }
             Py_DECREF(x); /* can't do it */
             slotw = NULL;
@@ -1070,7 +1070,7 @@ ternary_op(PyObject *v,
         x = slotv(v, w, z);
         assert(_Py_CheckSlotResult(v, op_name, x != NULL));
         if (x != Py_NotImplemented) {
-            return x;
+            return _PyObject_CheckAccessNullable(x);
         }
         Py_DECREF(x); /* can't do it */
     }
@@ -1078,7 +1078,7 @@ ternary_op(PyObject *v,
         PyObject *x = slotw(v, w, z);
         assert(_Py_CheckSlotResult(w, op_name, x != NULL));
         if (x != Py_NotImplemented) {
-            return x;
+            return _PyObject_CheckAccessNullable(x);
         }
         Py_DECREF(x); /* can't do it */
     }
@@ -1093,7 +1093,7 @@ ternary_op(PyObject *v,
             PyObject *x = slotz(v, w, z);
             assert(_Py_CheckSlotResult(z, op_name, x != NULL));
             if (x != Py_NotImplemented) {
-                return x;
+                return _PyObject_CheckAccessNullable(x);
             }
             Py_DECREF(x); /* can't do it */
         }
@@ -1148,7 +1148,7 @@ PyNumber_Add(PyObject *v, PyObject *w)
     if (m && m->sq_concat) {
         result = (*m->sq_concat)(v, w);
         assert(_Py_CheckSlotResult(v, "+", result != NULL));
-        return result;
+        return _PyObject_CheckAccessNullable(result);
     }
 
     return binop_type_error(v, w, "+");
@@ -1170,7 +1170,7 @@ sequence_repeat(ssizeargfunc repeatfunc, PyObject *seq, PyObject *n)
     }
     PyObject *res = (*repeatfunc)(seq, count);
     assert(_Py_CheckSlotResult(seq, "*", res != NULL));
-    return res;
+    return _PyObject_CheckAccessNullable(res);
 }
 
 PyObject *
@@ -1239,7 +1239,7 @@ binary_iop1(PyObject *v, PyObject *w, const int iop_slot, const int op_slot
             PyObject *x = (slot)(v, w);
             assert(_Py_CheckSlotResult(v, op_name, x != NULL));
             if (x != Py_NotImplemented) {
-                return x;
+                return _PyObject_CheckAccessNullable(x);
             }
             Py_DECREF(x);
         }
@@ -1279,7 +1279,7 @@ ternary_iop(PyObject *v, PyObject *w, PyObject *z, const int iop_slot, const int
         if (slot) {
             PyObject *x = (slot)(v, w, z);
             if (x != Py_NotImplemented) {
-                return x;
+                return _PyObject_CheckAccessNullable(x);
             }
             Py_DECREF(x);
         }
@@ -1319,7 +1319,7 @@ PyNumber_InPlaceAdd(PyObject *v, PyObject *w)
             if (func != NULL) {
                 result = func(v, w);
                 assert(_Py_CheckSlotResult(v, "+=", result != NULL));
-                return result;
+                return _PyObject_CheckAccessNullable(result);
             }
         }
         result = binop_type_error(v, w, "+=");
@@ -1383,7 +1383,7 @@ _PyNumber_InPlacePowerNoMod(PyObject *lhs, PyObject *rhs)
         if (m && m->op) {                                                \
             PyObject *res = (*m->op)(o);                                 \
             assert(_Py_CheckSlotResult(o, #meth_name, res != NULL));     \
-            return res;                                                  \
+            return _PyObject_CheckAccessNullable(res);                   \
         }                                                                \
                                                                          \
         return type_error("bad operand type for "descr": '%.200s'", o);  \
@@ -1732,7 +1732,7 @@ PySequence_Concat(PyObject *s, PyObject *o)
     if (m && m->sq_concat) {
         PyObject *res = m->sq_concat(s, o);
         assert(_Py_CheckSlotResult(s, "+", res != NULL));
-        return res;
+        return _PyObject_CheckAccessNullable(res);
     }
 
     /* Instances of user classes defining an __add__() method only
@@ -1758,7 +1758,7 @@ PySequence_Repeat(PyObject *o, Py_ssize_t count)
     if (m && m->sq_repeat) {
         PyObject *res = m->sq_repeat(o, count);
         assert(_Py_CheckSlotResult(o, "*", res != NULL));
-        return res;
+        return _PyObject_CheckAccessNullable(res);
     }
 
     /* Instances of user classes defining a __mul__() method only
@@ -1789,12 +1789,12 @@ PySequence_InPlaceConcat(PyObject *s, PyObject *o)
     if (m && m->sq_inplace_concat) {
         PyObject *res = m->sq_inplace_concat(s, o);
         assert(_Py_CheckSlotResult(s, "+=", res != NULL));
-        return res;
+        return _PyObject_CheckAccessNullable(res);
     }
     if (m && m->sq_concat) {
         PyObject *res = m->sq_concat(s, o);
         assert(_Py_CheckSlotResult(s, "+", res != NULL));
-        return res;
+        return _PyObject_CheckAccessNullable(res);
     }
 
     if (PySequence_Check(s) && PySequence_Check(o)) {
@@ -1818,12 +1818,12 @@ PySequence_InPlaceRepeat(PyObject *o, Py_ssize_t count)
     if (m && m->sq_inplace_repeat) {
         PyObject *res = m->sq_inplace_repeat(o, count);
         assert(_Py_CheckSlotResult(o, "*=", res != NULL));
-        return res;
+        return _PyObject_CheckAccessNullable(res);
     }
     if (m && m->sq_repeat) {
         PyObject *res = m->sq_repeat(o, count);
         assert(_Py_CheckSlotResult(o, "*", res != NULL));
-        return res;
+        return _PyObject_CheckAccessNullable(res);
     }
 
     if (PySequence_Check(o)) {

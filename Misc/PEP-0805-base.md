@@ -474,6 +474,11 @@ tuple-based acquisition checks and short circuits. Copying components into a
 reduction tuple does not acquire them. A zero step or invalid length can fail
 before unused components are acquired.
 
+Arithmetic dispatch validates native unary, binary, ternary and in-place slot
+results before returning them to C callers. Sequence concatenation/repetition
+and their numeric fallbacks validate newly returned references too. Existing
+`NotImplemented` dispatch and reflected operand ordering are unchanged.
+
 Numeric conversion checks newly returned `nb_index`, `nb_int` and `nb_float`
 references before reporting type errors, issuing warnings or copying subclass
 data into an exact numeric result. This includes the scalar `PyFloat_AsDouble`
@@ -534,6 +539,16 @@ The default-path parallel scheduling test requires group-only serialization
 from startup and does not skip. The extension-import test also runs in the normal
 build, checking that imports leave this scheduling state unchanged.
 
+- Arithmetic/sequence operator results: debug and release each pass 1,147 tests
+  across twelve ownership, numeric, sequence, descriptor/operator and C API
+  files (16 skips). Native tests cover 35 C APIs through 64 operand/fallback
+  cases, with Main, foreign LOCAL and immutable controls. All 64 foreign LOCAL
+  cases fail before the fix and pass afterward; checks occur before results
+  reach the VM. Both new tests pass TSan without suppressions, and existing
+  numeric/abstract C APIs pass `-R 3:3` (64 tests). No new Main-only failure was
+  found. Logs: `test-operator-before.log`, `test-operator-debug.log`,
+  `test-operator-release.log`, `test-operator-main-refleak.log` and
+  `tsan-operator.log`.
 - Numeric conversion results: debug and release each pass 387 tests across
   ownership, integer/index/float/complex operations and numeric C APIs (5/6 skips).
   The new native test covers four conversion APIs, exact and subclass results,

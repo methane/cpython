@@ -436,6 +436,57 @@ assert 'threading' not in sys.modules
                         self.assertIs(accessible,
                                       immutable or group is sys.main_thread_group)
 
+    def test_numeric_operator_slot_returns(self):
+        unary = ('Negative', 'Positive', 'Invert', 'Absolute')
+        binary = ('Add', 'Subtract', 'Multiply', 'MatrixMultiply', 'FloorDivide',
+                  'TrueDivide', 'Remainder', 'Divmod', 'Lshift', 'Rshift',
+                  'And', 'Xor', 'Or')
+        operations = [(name, 1) for name in unary]
+        operations += [(name, 2) for name in binary]
+        operations += [('Power', 3), ('InPlacePower', 1)]
+        operations += [('InPlace' + name, 1) for name in binary if name != 'Divmod']
+        for name, positions in operations:
+            api = 'PyNumber_' + name
+            for position in range(positions):
+                for value in (None, 42, object()):
+                    for group in (sys.main_thread_group, self.foreign):
+                        with self.subTest(api=api, position=position,
+                                          value_type=type(value), group=group):
+                            self.assertIs(internal.threadgroup_return_probe(
+                                (value, frozendict()), group, api, position),
+                                type(value) is not object or
+                                group is sys.main_thread_group)
+
+    def test_sequence_operator_slot_returns(self):
+        operations = (
+            'PySequence_Concat', 'PySequence_Repeat',
+            'PySequence_InPlaceConcat', 'PySequence_InPlaceRepeat',
+            'PySequence_InPlaceConcat_fallback',
+            'PySequence_InPlaceRepeat_fallback',
+            'PySequence_Concat_numeric', 'PySequence_Repeat_numeric',
+            'PySequence_InPlaceConcat_numeric',
+            'PySequence_InPlaceRepeat_numeric',
+            'PyNumber_Add_sequence', 'PyNumber_Multiply_sequence',
+            'PyNumber_InPlaceAdd_sequence', 'PyNumber_InPlaceMultiply_sequence',
+            'PyNumber_InPlaceAdd_sequence_fallback',
+            'PyNumber_InPlaceMultiply_sequence_fallback',
+        )
+        for api in operations:
+            # Number multiplication also tries repetition of its right operand.
+            positions = ((0, 1) if api in (
+                'PyNumber_Multiply_sequence',
+                'PyNumber_InPlaceMultiply_sequence_fallback',
+            ) else (0,))
+            for position in positions:
+                for value in (None, 42, object()):
+                    for group in (sys.main_thread_group, self.foreign):
+                        with self.subTest(api=api, position=position,
+                                          value_type=type(value), group=group):
+                            self.assertIs(internal.threadgroup_return_probe(
+                                (value, frozendict()), group, api, position),
+                                type(value) is not object or
+                                group is sys.main_thread_group)
+
     def test_numeric_conversion_slot_returns(self):
         import warnings
 
