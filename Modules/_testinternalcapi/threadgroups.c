@@ -2597,7 +2597,8 @@ static const char *return_apis[] = {
     "PyVectorcall_Call_keywords", "PyEval_GetBuiltins", "PyImport_GetModuleDict",
     "PySys_GetXOptions", "PyEval_GetFrameBuiltins",
     "PyObject_RichCompare", "PyObject_RichCompareBool",
-    "PyCFunction_GetSelf", "PyMethod_Function", "PyMethod_Self", NULL,
+    "PyCFunction_GetSelf", "PyMethod_Function", "PyMethod_Self",
+    "PyInstanceMethod_Function", NULL,
 };
 
 struct return_probe {
@@ -2787,6 +2788,14 @@ return_probe_worker(void *arg)
                                        PyMethod_Self(func);
             owned = 0;
             break;
+        case 35:
+            func = PyInstanceMethod_New(value);
+            if (func == NULL) {
+                goto done;
+            }
+            result = PyInstanceMethod_Function(func);
+            owned = 0;
+            break;
         default:
             box = make_return_box(&return_box_spec, value);
             if (box == NULL) {
@@ -2963,14 +2972,17 @@ bind_probe_method(PyObject *unused, PyObject *args)
                           &PyTuple_Type, &receivers, &PyTuple_Type, &functions)) {
         return NULL;
     }
-    if (PyTuple_GET_SIZE(receivers) == 0 ||
-        (functions != NULL && PyTuple_GET_SIZE(functions) == 0)) {
+    if (functions != NULL && PyTuple_GET_SIZE(functions) == 0) {
         return PyErr_Format(PyExc_ValueError, "expected nonempty reference tuples");
     }
     // Blindly copy heap references into a worker-local bound method. The
     // supplied function is also the warmup fallback for a None heap value.
     if (functions != NULL && PyTuple_GET_ITEM(functions, 0) != Py_None) {
         function = PyTuple_GET_ITEM(functions, 0);
+    }
+    // An empty receiver tuple creates the C API's class descriptor wrapper.
+    if (PyTuple_GET_SIZE(receivers) == 0) {
+        return PyInstanceMethod_New(function);
     }
     return PyMethod_New(function, PyTuple_GET_ITEM(receivers, 0));
 }

@@ -331,6 +331,7 @@ assert 'threading' not in sys.modules
             'PyObject_VectorcallDict', 'PyVectorcall_Call_keywords',
             'PyObject_RichCompare', 'PyObject_RichCompareBool',
             'PyCFunction_GetSelf', 'PyMethod_Function', 'PyMethod_Self',
+            'PyInstanceMethod_Function',
         )
 
         class Value:
@@ -1138,6 +1139,67 @@ assert 'threading' not in sys.modules
             with self.subTest(group=group):
                 self.assertTrue(internal.threadgroup_vm_probe(
                     probe.__code__, group, (True, (object(),), (target,)), 0))
+
+    def test_instance_method_acquisition(self):
+        def target(*args, **kwargs):
+            return True
+
+        expressions = (
+            'method()',
+            'method(None)',
+            'method(arg=None)',
+            'method(*(None,))',
+            'method(**{"arg": None})',
+            'method.__doc__',
+            'method.__name__',
+            'method.__repr__()',
+            'method == other',
+            'method != other',
+            'other == method',
+            'method.__func__',
+            'method.__get__(None, cls)',
+        )
+        for expression in expressions:
+            namespace = {}
+            exec(textwrap.dedent(f'''
+                def probe():
+                    def local(*args, **kwargs):
+                        return True
+                    method = bind_method(local, (), source)
+                    other = bind_method(local, ())
+                    {expression}
+                    return True
+            '''), namespace)
+            for value in (target, None):
+                for group in (sys.main_thread_group, self.foreign):
+                    for warmups in (0, 32):
+                        with self.subTest(expression=expression, group=group,
+                                          control=value is None, warmups=warmups):
+                            self.assertIs(internal.threadgroup_vm_probe(
+                                namespace['probe'].__code__.replace(), group,
+                                (value, None, None), warmups),
+                                value is None or group is sys.main_thread_group)
+
+    def test_instance_method_binding_copies_function(self):
+        def target(self):
+            return True
+
+        def probe():
+            cls.method = bind_method(consumer, (), source[1])
+            instance = cls()
+            # Binding only copies the descriptor's stored reference. Calling
+            # the resulting bound method must acquire the function later.
+            method = instance.method
+            assert method.__self__ is instance
+            try:
+                method()
+            except source[2]:
+                return True
+            assert False, 'calling must reject the stored foreign function'
+
+        self.assertTrue(internal.threadgroup_vm_probe(
+            probe.__code__, self.foreign,
+            (True, (target,), IllegalThreadAccessException), 0))
 
     def check_c_call_results(self, warmups, specialized=False):
         cases = (

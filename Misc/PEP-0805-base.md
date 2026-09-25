@@ -413,6 +413,11 @@ checks the receiver and any class obtained from its header before reading the
 class name, including when an immutable receiver has a LOCAL class. Receiver
 identity comparisons, pointer hashing and blind copying into reduction tuples
 do not inspect the receiver and need no acquisition check.
+The C API's `instancemethod` wrapper likewise checks its stored function in
+`PyInstanceMethod_Function()`, calls, attribute forwarding and comparison.
+Representation preserves the getter's access exception. Descriptor binding
+only copies that function into a local bound method; the later call performs
+the acquisition check.
 
 Tuple and list element operations check references before invoking repr, hash,
 comparison or sorting callbacks. A local list copied from a shared tuple can
@@ -464,6 +469,14 @@ flags/events rather than foreign LOCAL Python functions or mutable results.
 The default-path parallel scheduling test remains skipped while the interpreter
 GIL is enabled. The isolated native probe additionally tests real parallelism.
 
+- C API instance-method wrappers: debug and release builds each run 694 tests
+  across seven files successfully (one and two skips). Three selected tests
+  pass `-R 3:3` and TSan without suppressions. Before the fix, 23 foreign
+  subcases fail across the borrowed getter, calls, attributes and comparison.
+  Descriptor binding still copies the stored reference; invoking the resulting
+  bound method rejects a foreign function. Logs: `test-instance-methods-before.log`,
+  `test-instance-methods-debug.log`, `test-instance-methods-release.log`,
+  `test-instance-methods-refleak.log` and `tsan-instance-methods.log`.
 - Bound-method attributes and slots: debug and release builds each run 692
   tests across seven files successfully (one and two skips). The three new
   tests pass `-R 3:3` and TSan without suppressions. Before the fix, 22 foreign

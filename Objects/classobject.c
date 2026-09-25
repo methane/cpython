@@ -402,7 +402,7 @@ PyInstanceMethod_Function(PyObject *im)
         PyErr_BadInternalCall();
         return NULL;
     }
-    return PyInstanceMethod_GET_FUNCTION(im);
+    return PyObject_CheckAccess(PyInstanceMethod_GET_FUNCTION(im));
 }
 
 #define IMO_OFF(x) offsetof(PyInstanceMethodObject, x)
@@ -416,8 +416,11 @@ static PyMemberDef instancemethod_memberlist[] = {
 static PyObject *
 instancemethod_get_doc(PyObject *self, void *context)
 {
-    return PyObject_GetAttr(PyInstanceMethod_GET_FUNCTION(self),
-                            &_Py_ID(__doc__));
+    PyObject *func = PyInstanceMethod_Function(self);
+    if (func == NULL) {
+        return NULL;
+    }
+    return PyObject_GetAttr(func, &_Py_ID(__doc__));
 }
 
 static PyGetSetDef instancemethod_getset[] = {
@@ -449,7 +452,11 @@ instancemethod_getattro(PyObject *self, PyObject *name)
         }
     }
 
-    return PyObject_GetAttr(PyInstanceMethod_GET_FUNCTION(self), name);
+    PyObject *func = PyInstanceMethod_Function(self);
+    if (func == NULL) {
+        return NULL;
+    }
+    return PyObject_GetAttr(func, name);
 }
 
 static void
@@ -468,7 +475,11 @@ instancemethod_traverse(PyObject *self, visitproc visit, void *arg) {
 static PyObject *
 instancemethod_call(PyObject *self, PyObject *arg, PyObject *kw)
 {
-    return PyObject_Call(PyInstanceMethod_GET_FUNCTION(self), arg, kw);
+    PyObject *func = PyInstanceMethod_Function(self);
+    if (func == NULL) {
+        return NULL;
+    }
+    return PyObject_Call(func, arg, kw);
 }
 
 static PyObject *
@@ -484,7 +495,6 @@ instancemethod_descr_get(PyObject *descr, PyObject *obj, PyObject *type) {
 static PyObject *
 instancemethod_richcompare(PyObject *self, PyObject *other, int op)
 {
-    PyInstanceMethodObject *a, *b;
     PyObject *res;
     int eq;
 
@@ -494,9 +504,15 @@ instancemethod_richcompare(PyObject *self, PyObject *other, int op)
     {
         Py_RETURN_NOTIMPLEMENTED;
     }
-    a = (PyInstanceMethodObject *)self;
-    b = (PyInstanceMethodObject *)other;
-    eq = PyObject_RichCompareBool(a->func, b->func, Py_EQ);
+    PyObject *a = PyInstanceMethod_Function(self);
+    if (a == NULL) {
+        return NULL;
+    }
+    PyObject *b = PyInstanceMethod_Function(other);
+    if (b == NULL) {
+        return NULL;
+    }
+    eq = PyObject_RichCompareBool(a, b, Py_EQ);
     if (eq < 0)
         return NULL;
     if (op == Py_EQ)
@@ -514,7 +530,6 @@ instancemethod_repr(PyObject *self)
     const char *defname = "?";
 
     if (func == NULL) {
-        PyErr_BadInternalCall();
         return NULL;
     }
 
