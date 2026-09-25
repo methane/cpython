@@ -664,6 +664,21 @@ _Py_GetBaseCodeUnit(PyCodeObject *code, int i)
 }
 
 static void
+reset_counter(_Py_CODEUNIT *instr)
+{
+    _Py_BackoffCounter counter = {
+        .value_and_backoff =
+            _Py_atomic_load_uint16_relaxed(&instr[1].counter.value_and_backoff)
+    };
+    // Monitoring must not re-enable specialization on shared bytecode when
+    // thread-local copies or specialization have been disabled.
+    if (!backoff_counter_is_unreachable(counter)) {
+        _Py_atomic_store_uint16_relaxed(&instr[1].counter.value_and_backoff,
+                                       adaptive_counter_warmup().value_and_backoff);
+    }
+}
+
+static void
 de_instrument(PyCodeObject *code, _Py_CODEUNIT *bytecode, _PyCoMonitoringData *monitoring, int i,
               int event)
 {
@@ -689,8 +704,7 @@ de_instrument(PyCodeObject *code, _Py_CODEUNIT *bytecode, _PyCoMonitoringData *m
     CHECK(_PyOpcode_Deopt[deinstrumented] == deinstrumented);
     _Py_atomic_store_uint8_relaxed(opcode_ptr, deinstrumented);
     if (_PyOpcode_Caches[deinstrumented]) {
-        _Py_atomic_store_uint16_relaxed(&instr[1].counter.value_and_backoff,
-                                       adaptive_counter_warmup().value_and_backoff);
+        reset_counter(instr);
     }
 }
 
@@ -712,8 +726,7 @@ de_instrument_line(PyCodeObject *code, _Py_CODEUNIT *bytecode, _PyCoMonitoringDa
     CHECK(original_opcode == _PyOpcode_Deopt[original_opcode]);
     _Py_atomic_store_uint8(&instr->op.code, original_opcode);
     if (_PyOpcode_Caches[original_opcode]) {
-        _Py_atomic_store_uint16_relaxed(&instr[1].counter.value_and_backoff,
-                                       adaptive_counter_warmup().value_and_backoff);
+        reset_counter(instr);
     }
     assert(instr->op.code != INSTRUMENTED_LINE);
 }
@@ -737,8 +750,7 @@ de_instrument_per_instruction(PyCodeObject *code, _Py_CODEUNIT *bytecode,
     CHECK(original_opcode == _PyOpcode_Deopt[original_opcode]);
     _Py_atomic_store_uint8_relaxed(opcode_ptr, original_opcode);
     if (_PyOpcode_Caches[original_opcode]) {
-        _Py_atomic_store_uint16_relaxed(&instr[1].counter.value_and_backoff,
-                                       adaptive_counter_warmup().value_and_backoff);
+        reset_counter(instr);
     }
     assert(*opcode_ptr != INSTRUMENTED_INSTRUCTION);
     assert(instr->op.code != INSTRUMENTED_INSTRUCTION);
@@ -767,8 +779,7 @@ instrument(PyCodeObject *code, _Py_CODEUNIT *bytecode, _PyCoMonitoringData *moni
         assert(instrumented);
         _Py_atomic_store_uint8_relaxed(opcode_ptr, instrumented);
         if (_PyOpcode_Caches[deopt]) {
-            _Py_atomic_store_uint16_relaxed(&instr[1].counter.value_and_backoff,
-                                           adaptive_counter_warmup().value_and_backoff);
+            reset_counter(instr);
         }
     }
 }

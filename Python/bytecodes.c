@@ -177,25 +177,17 @@ dummy_func(
         }
 
         tier1 op(_MAYBE_INSTRUMENT, (--)) {
-            #ifdef Py_GIL_DISABLED
-            // For thread-safety, we need to check instrumentation version
-            // even when tracing. Otherwise, another thread may concurrently
-            // re-write the bytecode while we are executing this function.
-            int check_instrumentation = 1;
-            #else
-            int check_instrumentation = (tstate->tracing == 0);
-            #endif
-            if (check_instrumentation) {
-                uintptr_t global_version = _Py_atomic_load_uintptr_relaxed(&tstate->eval_breaker) & ~_PY_EVAL_EVENTS_MASK;
-                uintptr_t code_version = _Py_atomic_load_uintptr_acquire(&_PyFrame_GetCode(frame)->_co_instrumentation_version);
-                if (code_version != global_version) {
-                    int err = _Py_Instrument(_PyFrame_GetCode(frame), tstate->interp);
-                    if (err) {
-                        ERROR_NO_POP();
-                    }
-                    next_instr = this_instr;
-                    DISPATCH();
+            // Monitoring updates other threads' copies too. Check the version
+            // even inside a tracing callback before executing this copy.
+            uintptr_t global_version = _Py_atomic_load_uintptr_relaxed(&tstate->eval_breaker) & ~_PY_EVAL_EVENTS_MASK;
+            uintptr_t code_version = _Py_atomic_load_uintptr_acquire(&_PyFrame_GetCode(frame)->_co_instrumentation_version);
+            if (code_version != global_version) {
+                int err = _Py_Instrument(_PyFrame_GetCode(frame), tstate->interp);
+                if (err) {
+                    ERROR_NO_POP();
                 }
+                next_instr = this_instr;
+                DISPATCH();
             }
         }
 
@@ -3562,7 +3554,7 @@ dummy_func(
         #if ENABLE_SPECIALIZATION
             if (this_instr->op.code == JUMP_BACKWARD) {
                 uint8_t desired = tstate->interp->jit ? JUMP_BACKWARD_JIT : JUMP_BACKWARD_NO_JIT;
-                FT_ATOMIC_STORE_UINT8_RELAXED(this_instr->op.code, desired);
+                _Py_atomic_store_uint8_relaxed(&this_instr->op.code, desired);
                 // Need to re-dispatch so the warmup counter isn't off by one:
                 next_instr = this_instr;
                 DISPATCH_SAME_OPARG();

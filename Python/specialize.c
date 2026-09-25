@@ -2949,6 +2949,11 @@ _Py_Specialize_GetIter(_PyStackRef iterable, _Py_CODEUNIT *instr)
 void
 _Py_Specialize_Resume(_Py_CODEUNIT *instr, PyThreadState *tstate, _PyInterpreterFrame *frame)
 {
+    // Unlike other adaptive instructions, RESUME reaches the specializer
+    // without testing its counter. Leave disabled counters untouched.
+    if (backoff_counter_is_unreachable(load_counter(&instr[1].counter))) {
+        return;
+    }
     if (tstate->tracing == 0 && instr->op.code == RESUME) {
         if (tstate->interp->jit) {
             PyCodeObject *co = (PyCodeObject *)PyStackRef_AsPyObjectBorrow(frame->f_executable);

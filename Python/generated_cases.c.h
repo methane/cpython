@@ -8199,26 +8199,18 @@
             }
             // _MAYBE_INSTRUMENT
             {
-                #ifdef Py_GIL_DISABLED
-
-                int check_instrumentation = 1;
-                #else
-                int check_instrumentation = (tstate->tracing == 0);
-                #endif
-                if (check_instrumentation) {
-                    uintptr_t global_version = _Py_atomic_load_uintptr_relaxed(&tstate->eval_breaker) & ~_PY_EVAL_EVENTS_MASK;
-                    uintptr_t code_version = _Py_atomic_load_uintptr_acquire(&_PyFrame_GetCode(frame)->_co_instrumentation_version);
-                    if (code_version != global_version) {
-                        _PyFrame_SetStackPointer(frame, stack_pointer);
-                        _PyFrame_StackPointerValidate(frame);
-                        int err = _Py_Instrument(_PyFrame_GetCode(frame), tstate->interp);
-                        _PyFrame_StackPointerInvalidate(frame);
-                        if (err) {
-                            JUMP_TO_LABEL(error);
-                        }
-                        next_instr = this_instr;
-                        DISPATCH();
+                uintptr_t global_version = _Py_atomic_load_uintptr_relaxed(&tstate->eval_breaker) & ~_PY_EVAL_EVENTS_MASK;
+                uintptr_t code_version = _Py_atomic_load_uintptr_acquire(&_PyFrame_GetCode(frame)->_co_instrumentation_version);
+                if (code_version != global_version) {
+                    _PyFrame_SetStackPointer(frame, stack_pointer);
+                    _PyFrame_StackPointerValidate(frame);
+                    int err = _Py_Instrument(_PyFrame_GetCode(frame), tstate->interp);
+                    _PyFrame_StackPointerInvalidate(frame);
+                    if (err) {
+                        JUMP_TO_LABEL(error);
                     }
+                    next_instr = this_instr;
+                    DISPATCH();
                 }
             }
             // _CHECK_PERIODIC_IF_NOT_YIELD_FROM
@@ -8498,7 +8490,7 @@
                 #if ENABLE_SPECIALIZATION
                 if (this_instr->op.code == JUMP_BACKWARD) {
                     uint8_t desired = tstate->interp->jit ? JUMP_BACKWARD_JIT : JUMP_BACKWARD_NO_JIT;
-                    FT_ATOMIC_STORE_UINT8_RELAXED(this_instr->op.code, desired);
+                    _Py_atomic_store_uint8_relaxed(&this_instr->op.code, desired);
                     next_instr = this_instr;
                     DISPATCH_SAME_OPARG();
                 }
@@ -11595,26 +11587,18 @@
             }
             // _MAYBE_INSTRUMENT
             {
-                #ifdef Py_GIL_DISABLED
-
-                int check_instrumentation = 1;
-                #else
-                int check_instrumentation = (tstate->tracing == 0);
-                #endif
-                if (check_instrumentation) {
-                    uintptr_t global_version = _Py_atomic_load_uintptr_relaxed(&tstate->eval_breaker) & ~_PY_EVAL_EVENTS_MASK;
-                    uintptr_t code_version = _Py_atomic_load_uintptr_acquire(&_PyFrame_GetCode(frame)->_co_instrumentation_version);
-                    if (code_version != global_version) {
-                        _PyFrame_SetStackPointer(frame, stack_pointer);
-                        _PyFrame_StackPointerValidate(frame);
-                        int err = _Py_Instrument(_PyFrame_GetCode(frame), tstate->interp);
-                        _PyFrame_StackPointerInvalidate(frame);
-                        if (err) {
-                            JUMP_TO_LABEL(error);
-                        }
-                        next_instr = this_instr;
-                        DISPATCH();
+                uintptr_t global_version = _Py_atomic_load_uintptr_relaxed(&tstate->eval_breaker) & ~_PY_EVAL_EVENTS_MASK;
+                uintptr_t code_version = _Py_atomic_load_uintptr_acquire(&_PyFrame_GetCode(frame)->_co_instrumentation_version);
+                if (code_version != global_version) {
+                    _PyFrame_SetStackPointer(frame, stack_pointer);
+                    _PyFrame_StackPointerValidate(frame);
+                    int err = _Py_Instrument(_PyFrame_GetCode(frame), tstate->interp);
+                    _PyFrame_StackPointerInvalidate(frame);
+                    if (err) {
+                        JUMP_TO_LABEL(error);
                     }
+                    next_instr = this_instr;
+                    DISPATCH();
                 }
             }
             // _QUICKEN_RESUME

@@ -1,5 +1,4 @@
-"""Tests monitoring, sys.settrace, and sys.setprofile in a multi-threaded
-environment to verify things are thread-safe in a free-threaded build"""
+"""Test monitoring, tracing and profiling with thread-local bytecode."""
 
 import sys
 import threading
@@ -12,6 +11,8 @@ from sys import monitoring
 from test.support import threading_helper
 from threading import Thread, _PyRLock, Barrier
 from unittest import TestCase
+
+threading_helper.requires_working_threading(module=True)
 
 
 class InstrumentationMultiThreadedMixin:
@@ -101,6 +102,9 @@ class SetPreTraceMultiThreaded(InstrumentationMultiThreadedMixin, TestCase):
     def setUp(self):
         super().setUp()
         self.called = False
+
+    def tearDown(self):
+        sys.settrace(None)
 
     def after_test(self):
         self.assertTrue(self.called)

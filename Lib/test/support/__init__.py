@@ -1517,8 +1517,17 @@ def requires_limited_api(test):
 TEST_MODULES_ENABLED = (sysconfig.get_config_var('TEST_MODULES') or 'yes') == 'yes'
 
 def requires_specialization(test):
-    return unittest.skipUnless(
-        _opcode.ENABLE_SPECIALIZATION, "requires specialization")(test)
+    enabled = _opcode.ENABLE_SPECIALIZATION
+    if enabled:
+        try:
+            from _testinternalcapi import get_configs
+        except ImportError:
+            pass
+        else:
+            # Shared bytecode cannot specialize when thread-local copies are
+            # disabled, even if the build includes the specializer.
+            enabled = get_configs()['config']['tlbc_enabled']
+    return unittest.skipUnless(enabled, "requires specialization")(test)
 
 
 def reset_code(f: types.FunctionType) -> types.FunctionType:

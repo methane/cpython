@@ -113,6 +113,10 @@ copies under the code mutex or a world stop. Publishing tables and entries uses
 acquire/release atomics; QSBR retirement happens after unlocking, since its OOM
 fallback can suspend critical sections. These copies and their interpreter-local
 indices belong to threads, independently of ThreadGroup reference-count bias.
+Instrumentation versions are checked inside tracing callbacks too. Monitoring
+preserves disabled specialization counters, and RESUME does not update them;
+this also prevents audit callbacks from attempting to restart an unreachable
+counter with `tlbc=0`. Threaded monitoring tests run in normal-build discovery.
 Code objects gain one pointer for the copy table (224-byte basic size on
 Linux/aarch64). Cache cleanup retains copies referenced by suspended generators,
 coroutines, async generators and retained frames after their thread exits,
@@ -246,6 +250,17 @@ Tests run on Linux/aarch64. Logs are under `/tmp/pep805-base/`. The optional
 flags/events rather than foreign LOCAL Python functions or mutable results.
 Parallel scheduling tests remain skipped while the interpreter GIL is enabled.
 
+- Monitoring and thread-local bytecode: 828 tests pass across nine files covering
+  monitoring, tracing, profiling, specialization, generated cases, ownership and
+  evaluation APIs (one skip). The threaded monitoring and bytecode suites pass
+  `-R 3:3` with `mimalloc_debug` (23 tests). Regressions first reproduced twelve
+  failures with `tlbc=0`, including an audit-hook assertion failure and unwanted
+  specialization after monitoring. The corrected disabled-copy configuration
+  passes 599 tests across five files (four skips). The existing specialization
+  requirement now also reads the runtime TLBC configuration; no assertions were
+  removed from the specialization tests. Test-support, monitoring and bytecode
+  suites pass another 186 tests with the default enabled configuration (six
+  skips), including verification of the requirement in both configurations.
 - Atomic Unicode interning state: 658 tests pass across 14 files covering
   ownership, sys, strings, Unicode C APIs, marshal, code, embedding, remote
   inspection and GDB (51 skips). Ownership and sys pass `-R 3:3` with

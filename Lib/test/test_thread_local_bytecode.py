@@ -303,8 +303,94 @@ class TLBCTests(unittest.TestCase):
             f(1, 2)
 
         assert "BINARY_OP_ADD_INT" not in all_opnames(f)
+        assert "RESUME_CHECK" not in all_opnames(f)
         """)
         assert_python_ok("-X", "tlbc=0", "-c", code)
+
+    def test_audit_hook_if_tlbc_disabled(self):
+        code = textwrap.dedent("""
+        import sys
+
+        events = []
+        def hook(event, args):
+            if event == 'test.tlbc':
+                events.append(args)
+
+        sys.addaudithook(hook)
+        for i in range(10):
+            sys.audit('test.tlbc', i)
+        assert events == [(i,) for i in range(10)]
+        """)
+        assert_python_ok("-X", "tlbc=0", "-c", code)
+
+    def test_specialization_requirement_respects_tlbc(self):
+        code = textwrap.dedent("""
+        import _opcode
+        import sys
+        from test.support import requires_specialization
+
+        @requires_specialization
+        def test():
+            pass
+
+        enabled = _opcode.ENABLE_SPECIALIZATION and int(sys.argv[1])
+        assert getattr(test, '__unittest_skip__', False) == (not enabled)
+        """)
+        for enabled in ('0', '1'):
+            with self.subTest(enabled=enabled):
+                assert_python_ok("-X", f"tlbc={enabled}", "-c", code, enabled)
+
+    def test_monitoring_if_tlbc_disabled(self):
+        code = textwrap.dedent("""
+        import dis
+        import sys
+        from _testinternalcapi import get_tlbc
+
+        def f(a, b):
+            c = a + b
+            return abs(c)
+
+        calls = []
+        mode = sys.argv[1]
+        def callback(*args):
+            calls.append(None)
+            return callback
+
+        if mode in ('trace', 'profile'):
+            setter = sys.settrace if mode == 'trace' else sys.setprofile
+            setter(callback)
+        else:
+            monitoring = sys.monitoring
+            tool = monitoring.PROFILER_ID
+            monitoring.use_tool_id(tool, 'test tlbc')
+            event = getattr(monitoring.events, mode)
+            def monitor(*args):
+                calls.append(None)
+                if sys.argv[2] == 'disable':
+                    return monitoring.DISABLE
+            monitoring.register_callback(tool, event, monitor)
+            monitoring.set_local_events(tool, f.__code__, event)
+
+        for _ in range(100):
+            assert f(1, 2) == 3
+        assert calls
+        if mode in ('trace', 'profile'):
+            setter(None)
+        else:
+            monitoring.set_local_events(tool, f.__code__, 0)
+            monitoring.free_tool_id(tool)
+        for _ in range(100):
+            assert f(1, 2) == 3
+        opnames = {i.opname for i in
+                   dis._get_instructions_bytes(get_tlbc(f))}
+        assert not opnames.intersection(dis._specialized_opmap), opnames
+        """)
+        for mode in ('trace', 'profile', 'PY_START', 'LINE', 'INSTRUCTION', 'CALL'):
+            actions = (('keep',) if mode in ('trace', 'profile')
+                       else ('keep', 'disable'))
+            for action in actions:
+                with self.subTest(mode=mode, action=action):
+                    assert_python_ok("-X", "tlbc=0", "-c", code, mode, action)
 
     def test_generator_throw(self):
         code = textwrap.dedent("""
