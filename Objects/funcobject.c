@@ -4,6 +4,7 @@
 #include "pycore_code.h"          // _PyCode_VerifyStateless()
 #include "pycore_dict.h"          // _Py_INCREF_DICT()
 #include "pycore_function.h"      // _PyFunction_Vectorcall
+#include "pycore_lock.h"          // PyMutex_LockFlags()
 #include "pycore_long.h"          // _PyLong_GetOne()
 #include "pycore_modsupport.h"    // _PyArg_NoKeywords()
 #include "pycore_object.h"        // _PyObject_GC_UNTRACK()
@@ -292,6 +293,8 @@ function object and the code object.
 
 The cache doesn't contain strong references; cache entries are
 invalidated whenever the function or code object is deallocated.
+The function-state mutex protects publication and invalidation, including
+the paired function/code pointers and the code reference inspected on removal.
 
 Invariants
 ----------
@@ -325,9 +328,11 @@ _PyFunction_SetVersion(PyFunctionObject *func, uint32_t version)
     func->func_version = version;
 #ifndef Py_GIL_DISABLED
     PyInterpreterState *interp = _PyInterpreterState_GET();
+    PyMutex_LockFlags(&interp->func_state.mutex, 0);
     struct _func_version_cache_item *slot = get_cache_item(interp, version);
     slot->func = func;
     slot->code = func->func_code;
+    PyMutex_Unlock(&interp->func_state.mutex);
 #endif
 }
 
@@ -339,12 +344,14 @@ func_clear_version(PyInterpreterState *interp, PyFunctionObject *func)
         return;
     }
 #ifndef Py_GIL_DISABLED
+    PyMutex_LockFlags(&interp->func_state.mutex, 0);
     struct _func_version_cache_item *slot =
         get_cache_item(interp, func->func_version);
     if (slot->func == func) {
         slot->func = NULL;
         // Leave slot->code alone, there may be use for it.
     }
+    PyMutex_Unlock(&interp->func_state.mutex);
 #endif
     func->func_version = FUNC_VERSION_CLEARED;
 }
@@ -354,6 +361,7 @@ _PyFunction_ClearCodeByVersion(uint32_t version)
 {
 #ifndef Py_GIL_DISABLED
     PyInterpreterState *interp = _PyInterpreterState_GET();
+    PyMutex_LockFlags(&interp->func_state.mutex, 0);
     struct _func_version_cache_item *slot = get_cache_item(interp, version);
     if (slot->code) {
         assert(PyCode_Check(slot->code));
@@ -363,6 +371,7 @@ _PyFunction_ClearCodeByVersion(uint32_t version)
             slot->func = NULL;
         }
     }
+    PyMutex_Unlock(&interp->func_state.mutex);
 #endif
 }
 

@@ -154,6 +154,14 @@ interpreter's code-state mutex. Replaced extra values are still released after
 unlocking, so extension free callbacks can re-enter. On Linux/aarch64 the mutex
 occupies existing code-object padding; the generic object header remains 24 bytes.
 
+Code-version allocation and function/code version-cache publication and removal
+also use the interpreter's function-state mutex in the normal build. The cache
+keeps borrowed pointers, so removal inspects the cached code under that mutex
+before a concurrent destructor can free it. Fork reinitializes the mutex. Native
+workers create and retire 32,768 code/function pairs across two groups, invalidate
+function versions and run GC, then check that every code version was unique.
+This does not change the LOCAL state of Python functions or permit sharing them.
+
 Immutable strings publish their lazy UTF-8 cache with an atomic compare/exchange.
 Competing encoders preserve the first buffer, whose address may already be held
 by a C caller, and free the redundant allocation. The cache length is published
@@ -333,6 +341,14 @@ flags/events rather than foreign LOCAL Python functions or mutable results.
 The default-path parallel scheduling test remains skipped while the interpreter
 GIL is enabled. The isolated native probe additionally tests real parallelism.
 
+- Code/function version state: debug, release and `--without-mimalloc` debug
+  normal builds each pass 423 tests across eleven files (10, 15 and 11 skips),
+  covering code, functions, watchers, type caches, groups, ownership, GC,
+  deferred reclamation, embedding and fork. The new parallel allocation probe
+  first reproduces a duplicate code version, then passes with normal-build
+  locking. Ten successive rounds with new groups and intervening collections
+  also pass, exercising 327,680 code allocations and function-cache updates.
+  Logs: `test-code-versions-*`.
 - Pending group BRC queues: debug, release and `--without-mimalloc` debug
   normal builds each pass 429 tests across eight files (13, 27 and 23 skips).
   The new native fixture fails all four cases before the collector change,

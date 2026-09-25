@@ -396,6 +396,19 @@ assert internal.threadgroup_probe(
         result = internal.threadgroup_probe((group, group), 1, 0.01)
         self.assertEqual(sorted(result), [False, True])
 
+    def test_parallel_code_versions(self):
+        script_helper.assert_python_ok('-c', '''
+import faulthandler
+import threading
+from test import support
+import _testinternalcapi as internal
+
+faulthandler.dump_traceback_later(support.LONG_TIMEOUT, exit=True)
+groups = (threading.ThreadGroup('first'), threading.ThreadGroup('second'))
+assert internal.threadgroup_probe(
+    groups, 5, support.SHORT_TIMEOUT, True) == (True, True)
+''', PYTHONMALLOC='debug')
+
     def test_wait_releases_group(self):
         internal = import_helper.import_module('_testinternalcapi')
         group = threading.ThreadGroup()

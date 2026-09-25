@@ -4,6 +4,7 @@
 #include "pycore_ceval.h"
 #include "pycore_code.h"
 #include "pycore_freelist.h"
+#include "pycore_function.h"
 #include "pycore_lock.h"
 #include "pycore_object.h"
 #include "pycore_object_deferred.h"
@@ -111,7 +112,64 @@ struct group_probe {
     PyTypeObject *cycle_type;
     struct parallel_gc_counts *counts;
     struct parallel_intern_probe *intern;
+    uint32_t *versions;
 };
+
+#define PARALLEL_CODE_COUNT 16384
+
+static int
+parallel_code_worker(struct group_probe *probe, PyThreadState *tstate)
+{
+    PyObject *globals = PyDict_New();
+    PyObject *builtins = PyDict_New();
+    if (globals == NULL || builtins == NULL ||
+        PyDict_SetItemString(globals, "__builtins__", builtins) < 0) {
+        Py_XDECREF(globals);
+        Py_XDECREF(builtins);
+        return 0;
+    }
+    Py_DECREF(builtins);
+    int ok = 1;
+    for (int i = 0; i < PARALLEL_CODE_COUNT; i++) {
+        PyCodeObject *code = PyCode_NewEmpty("parallel-code", "probe", 1);
+        if (code == NULL) {
+            ok = 0;
+            break;
+        }
+        probe->versions[i] = code->co_version;
+        PyObject *func = PyFunction_New((PyObject *)code, globals);
+        if (func == NULL) {
+            Py_DECREF(code);
+            ok = 0;
+            break;
+        }
+        _PyFunction_SetVersion((PyFunctionObject *)func, code->co_version);
+        if (i % 64 == 0 && PyFunction_SetDefaults(func, Py_None) < 0) {
+            ok = 0;
+        }
+        Py_DECREF(func);
+        Py_DECREF(code);
+        if (i % 256 == 0) {
+            PyGC_Collect();
+        }
+        if (_Py_HandlePending(tstate) < 0) {
+            ok = 0;
+        }
+        if (!ok) {
+            break;
+        }
+    }
+    Py_DECREF(globals);
+    return ok;
+}
+
+static int
+compare_code_versions(const void *a, const void *b)
+{
+    uint32_t first = *(const uint32_t *)a;
+    uint32_t second = *(const uint32_t *)b;
+    return (first > second) - (first < second);
+}
 
 struct parallel_intern_probe {
     PyObject *value;
@@ -293,6 +351,10 @@ group_probe_worker(void *arg)
         probe->ok = parallel_intern_worker(probe, tstate);
     }
 
+    if (probe->ok && probe->mode == 5) {
+        probe->ok = parallel_code_worker(probe, tstate);
+    }
+
     if (probe->ok && probe->mode == 3) {
         for (int i = 0; i < 2000; i++) {
             Py_ssize_t size = 64 + i % 1024;
@@ -350,7 +412,7 @@ threadgroup_probe(PyObject *self, PyObject *args)
                           &groups, &mode, &seconds, &parallel)) {
         return NULL;
     }
-    if (PyTuple_GET_SIZE(groups) != 2 || mode < 0 || mode > 4 ||
+    if (PyTuple_GET_SIZE(groups) != 2 || mode < 0 || mode > 5 ||
         !(seconds > 0.0 && seconds <= 300.0)) {
         PyErr_SetString(PyExc_ValueError, "invalid group probe arguments");
         return NULL;
@@ -368,6 +430,7 @@ threadgroup_probe(PyObject *self, PyObject *args)
     PyObject *result = NULL;
     PyObject *cycle_type = NULL;
     struct parallel_gc_counts *counts = NULL;
+    uint32_t *versions = NULL;
     static uint64_t intern_serial;
     struct parallel_intern_probe intern = {0};
     if (mode >= 3) {
@@ -404,6 +467,12 @@ threadgroup_probe(PyObject *self, PyObject *args)
             return NULL;
         }
     }
+    if (mode == 5) {
+        versions = PyMem_RawCalloc(2 * PARALLEL_CODE_COUNT, sizeof(*versions));
+        if (versions == NULL) {
+            return PyErr_NoMemory();
+        }
+    }
 #ifdef Py_REF_DEBUG
     Py_ssize_t refs_before = mode == 4 ? _Py_GetGlobalRefTotal() : 0;
 #endif
@@ -431,6 +500,7 @@ threadgroup_probe(PyObject *self, PyObject *args)
             .cycle_type = (PyTypeObject *)cycle_type,
             .counts = counts,
             .intern = &intern,
+            .versions = versions == NULL ? NULL : versions + i * PARALLEL_CODE_COUNT,
         };
     }
     if (parallel) {
@@ -500,6 +570,18 @@ done:
     if (mode == 4 && intern.failed) {
         Py_XDECREF(intern.value);
     }
+    if (versions != NULL && probes[0].ok && probes[1].ok && !PyErr_Occurred()) {
+        qsort(versions, 2 * PARALLEL_CODE_COUNT, sizeof(*versions),
+              compare_code_versions);
+        for (int i = 1; i < 2 * PARALLEL_CODE_COUNT; i++) {
+            if (versions[i] == versions[i - 1]) {
+                PyErr_Format(PyExc_AssertionError,
+                             "parallel code creation reused version %u", versions[i]);
+                break;
+            }
+        }
+    }
+    PyMem_RawFree(versions);
     if (cycle_type != NULL) {
         PyGC_Collect();
         if (counts->created != counts->freed && !PyErr_Occurred()) {

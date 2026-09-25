@@ -10,6 +10,7 @@
 #include "pycore_initconfig.h"    // _PyStatus_OK()
 #include "pycore_interp.h"        // PyInterpreterState.co_extra_freefuncs
 #include "pycore_interpframe.h"   // FRAME_SPECIALS_SIZE
+#include "pycore_lock.h"          // PyMutex_LockFlags()
 #include "pycore_opcode_metadata.h" // _PyOpcode_Caches
 #include "pycore_opcode_utils.h"  // RESUME_AT_FUNC_START
 #include "pycore_optimizer.h"     // _Py_ExecutorDetach
@@ -552,12 +553,13 @@ init_code(PyCodeObject *co, struct _PyCodeConstructor *con)
     co->co_framesize = nlocalsplus + con->stacksize + FRAME_SPECIALS_SIZE;
     co->co_ncellvars = ncellvars;
     co->co_nfreevars = nfreevars;
-    FT_MUTEX_LOCK(&interp->func_state.mutex);
+    // Version numbers are shared by all groups, including in the normal build.
+    PyMutex_LockFlags(&interp->func_state.mutex, 0);
     co->co_version = interp->func_state.next_version;
     if (interp->func_state.next_version != 0) {
         interp->func_state.next_version++;
     }
-    FT_MUTEX_UNLOCK(&interp->func_state.mutex);
+    PyMutex_Unlock(&interp->func_state.mutex);
     co->_co_monitoring = NULL;
     co->_co_instrumentation_version = 0;
     /* not set */
