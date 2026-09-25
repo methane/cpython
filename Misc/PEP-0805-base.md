@@ -267,6 +267,10 @@ Parallel scheduling tests remain skipped while the interpreter GIL is enabled.
   same-group and foreign-group access, and both LOCAL and declared IMMUTABLE
   keys. Separate cases retain pointer-only cloning and copying of LOCAL values
   without invoking their callbacks.
+- The non-debug normal build at `acea7f58dc` passes the same 1,136-test bulk
+  acquisition selection (ten files, two skips). Its `mimalloc_debug` ownership
+  and dictionary-view selection passes 56 tests. These checks retain the
+  interpreter GIL and do not validate concurrent group execution.
 - The non-debug normal build at `8fc12d73f3` passes 1,414 tests across 15 files
   covering Unicode interning, ownership, strings, code, monitoring, tracing,
   profiling, specialization, test support and embedding (38 skips). Its
