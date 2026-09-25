@@ -355,6 +355,14 @@ identity comparison, a read-only `name`, and the PEP's `Shareable.LOCAL` repr.
 No Python enum methods, mutable enum dictionaries, numeric enum contract or
 later-stage sharing states are needed for this interface.
 
+The core `Template` and `Interpolation` types are shallow immutable containers,
+including instances constructed by t-string bytecodes. Their iterators remain
+LOCAL. Interpolation formatting checks each stored field before invoking its
+representation; template concatenation checks the two strings it combines.
+Copying untouched strings or interpolation values into another immutable
+container does not acquire those elements. The `string.templatelib` Python
+module and its functions retain their existing LOCAL state.
+
 ThreadGroup is a managed static builtin type whose wrapper holds only an exact
 string or None. Main survives interpreter dictionaries, finalizers and type
 teardown. The public `PyInterpreterState_Clear()` path releases Main after
@@ -606,6 +614,17 @@ The default-path parallel scheduling test requires group-only serialization
 from startup and does not skip. The extension-import test also runs in the normal
 build, checking that imports leave this scheduling state unchanged.
 
+- Template and interpolation ownership: debug and release each pass 184 tests
+  across ownership, strings and t-strings. Three new tests cover shallow
+  immutability, LOCAL iterators, field acquisition, formatting, concatenation
+  and opaque reference copying. Enabling immutable classification alone exposes
+  six foreign-group failures in formatting and concatenation; Main controls
+  pass. With the acquisition checks, all three tests pass TSan without
+  suppressions. Existing Main-only template and t-string tests pass `-R 3:3`
+  (27 tests), with no new Main-only failure in this selection. Logs:
+  `test-template-before.log`, `test-template-before-guards.log`,
+  `test-template-debug.log`, `test-template-release.log`,
+  `test-template-main-refleak.log` and `tsan-template.log`.
 - Generic alias substitution metadata: debug and release each pass 924 tests
   across ownership, generic aliases, typing and type aliases. The new test
   exercises 32 worker calls with repeated substitutions, covering cached foreign

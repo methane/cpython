@@ -61,6 +61,129 @@ class OwnershipTests(unittest.TestCase):
     def test_native_immutable_declaration(self):
         self.check_access(internal.make_immutable_capsule(), True)
 
+    def test_template_shallow_immutability(self):
+        from string.templatelib import Interpolation, Template
+
+        def probe():
+            template, interpolation = source[1]
+            local, immutable, error = source[2]
+            assert template.__shareable__ is immutable
+            assert interpolation.__shareable__ is immutable
+            assert template.__iter__().__shareable__ is local
+            assert template.interpolations[0] is interpolation
+            # Copying references into another immutable tuple is permitted.
+            values = template.values
+            assert values.__len__() == 1
+            try:
+                values[0]
+            except error:
+                pass
+            else:
+                assert False
+            own_value = []
+            own_template = t'{own_value}'
+            assert own_template.__shareable__ is immutable
+            assert own_template.interpolations[0].__shareable__ is immutable
+            assert own_template.values[0] is own_value
+            return True
+
+        value = internal.make_container_element(False)
+        interpolation = Interpolation(value)
+        template = Template(interpolation)
+        for item in (interpolation, template, t'{value}', Template('text')):
+            self.check_access(item, True)
+        self.assertTrue(internal.threadgroup_vm_probe(
+            probe.__code__, self.foreign,
+            (True, (template, interpolation),
+             (threading.Shareable.LOCAL, threading.Shareable.IMMUTABLE,
+              IllegalThreadAccessException)), 0))
+        self.assertEqual(internal.container_element_calls(value), 0)
+
+    def test_interpolation_reference_acquisition(self):
+        from string.templatelib import Interpolation
+
+        class String(str):
+            pass
+
+        def probe():
+            interpolation = source[1]
+            field, operation, error, rejected, expected = source[2]
+            try:
+                if operation == 'repr':
+                    assert bound_builtin(interpolation) == expected
+                else:
+                    interpolation.__getattribute__(field)
+            except error:
+                assert rejected
+            else:
+                assert not rejected
+            return True
+
+        fields = ('value', 'expression', 'conversion', 'format_spec')
+        for index, field in enumerate(fields):
+            for immutable in (False, True):
+                value = (internal.make_container_element(immutable) if index == 0
+                         else ('r' if immutable else String('r')))
+                args = [1, 'x', None, '']
+                args[index] = value
+                interpolation = Interpolation(*args)
+                expected = repr(interpolation)
+                for operation in ('getattr', 'repr'):
+                    for group in (sys.main_thread_group, self.foreign):
+                        rejected = not immutable and group is self.foreign
+                        before = internal.container_element_calls(value) if index == 0 else 0
+                        with self.subTest(field=field, immutable=immutable,
+                                          operation=operation, group=group):
+                            self.assertTrue(internal.threadgroup_vm_probe(
+                                probe.__code__, group,
+                                (True, interpolation, (field, operation,
+                                 IllegalThreadAccessException, rejected, expected)),
+                                0, 1, False, repr))
+                            if index == 0:
+                                calls = before + (operation == 'repr' and not rejected)
+                                self.assertEqual(internal.container_element_calls(value), calls)
+
+    def test_template_string_acquisition(self):
+        from string.templatelib import Interpolation, Template
+
+        class String(str):
+            pass
+
+        def probe():
+            template, suffix, opaque = source[1]
+            operation, error, rejected = source[2]
+            # An unexamined prefix can be copied through concatenation.
+            copied = opaque + suffix
+            assert copied.strings.__len__() == 2
+            assert copied.strings[1] == 'tail!'
+            try:
+                if operation == 'concat left':
+                    template + suffix
+                elif operation == 'concat right':
+                    suffix + template
+                elif operation == 'iter':
+                    template.__iter__().__next__()
+                else:
+                    template.__repr__()
+            except error:
+                assert rejected
+            else:
+                assert not rejected
+            return True
+
+        for value in ('text', String('text')):
+            values = (Template(value), Template('!'),
+                      Template(value, Interpolation(1), 'tail'))
+            for operation in ('concat left', 'concat right', 'iter', 'repr'):
+                for group in (sys.main_thread_group, self.foreign):
+                    rejected = type(value) is String and group is self.foreign
+                    with self.subTest(value_type=type(value), operation=operation,
+                                      group=group):
+                        self.assertTrue(internal.threadgroup_vm_probe(
+                            probe.__code__, group,
+                            (True, values,
+                             (operation, IllegalThreadAccessException, rejected)), 0))
+
     def test_shareable_attribute(self):
         class Value:
             pass

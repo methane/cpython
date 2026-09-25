@@ -2904,6 +2904,7 @@ is_intrinsically_immutable(PyTypeObject *type)
            type == &PyTuple_Type || type == &PyFrozenSet_Type ||
            type == &PyFrozenDict_Type || type == &PyRange_Type ||
            type == &PySlice_Type ||
+           type == &_PyTemplate_Type || type == &_PyInterpolation_Type ||
            type == &PyMethodDescr_Type || type == &PyClassMethodDescr_Type ||
            type == &PyMemberDescr_Type || type == &PyGetSetDescr_Type ||
            type == &PyWrapperDescr_Type ||

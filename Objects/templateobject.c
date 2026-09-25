@@ -255,6 +255,10 @@ template_strings_concat(PyObject *left, PyObject *right)
     Py_ssize_t right_stringslen = PyTuple_GET_SIZE(right);
     PyObject *right_firststring = PyTuple_GET_ITEM(right, 0);
 
+    if (PyObject_CheckAccess(left_laststring) == NULL ||
+        PyObject_CheckAccess(right_firststring) == NULL) {
+        return NULL;
+    }
     PyObject *concat = PyUnicode_Concat(left_laststring, right_firststring);
     if (concat == NULL) {
         return NULL;

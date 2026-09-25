@@ -112,6 +112,12 @@ static PyObject *
 interpolation_repr(PyObject *op)
 {
     interpolationobject *self = interpolationobject_CAST(op);
+    if (PyObject_CheckAccess(self->value) == NULL ||
+        PyObject_CheckAccess(self->expression) == NULL ||
+        PyObject_CheckAccess(self->conversion) == NULL ||
+        PyObject_CheckAccess(self->format_spec) == NULL) {
+        return NULL;
+    }
     return PyUnicode_FromFormat("%s(%R, %R, %R, %R)",
                                 _PyType_Name(Py_TYPE(self)), self->value, self->expression,
                                 self->conversion, self->format_spec);
