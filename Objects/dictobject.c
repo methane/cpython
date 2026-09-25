@@ -1951,10 +1951,11 @@ insert_split_key(PyDictKeysObject *keys, PyObject *key, Py_hash_t hash)
 {
     assert(PyUnicode_CheckExact(key));
     Py_ssize_t ix;
-
-
 #ifdef Py_GIL_DISABLED
     ix = unicodekeys_lookup_unicode_threadsafe(keys, key, hash);
+#else
+    ix = unicodekeys_lookup_unicode(keys, key, hash);
+#endif
     if (ix >= 0) {
         return ix;
     }
@@ -1963,8 +1964,9 @@ insert_split_key(PyDictKeysObject *keys, PyObject *key, Py_hash_t hash)
     // is never acquired below the keys mutex but a keys mutex can be acquired
     // elsewhere while we hold the types lock. To avoid deadlocks we must always
     // acquire the type lock first.
-    Py_BEGIN_CRITICAL_SECTION_MUTEX(&_PyInterpreterState_GET()->types.mutex);
-#endif
+    PyThreadState *tstate = _PyThreadState_GET();
+    PyCriticalSection section;
+    _PyCriticalSection_BeginMutex(tstate, &section, &tstate->interp->types.mutex);
 
     LOCK_KEYS(keys);
     ix = unicodekeys_lookup_unicode(keys, key, hash);
@@ -1987,9 +1989,7 @@ insert_split_key(PyDictKeysObject *keys, PyObject *key, Py_hash_t hash)
     assert (ix < SHARED_KEYS_MAX_SIZE);
     UNLOCK_KEYS(keys);
 
-#ifdef Py_GIL_DISABLED
-    Py_END_CRITICAL_SECTION();
-#endif
+    _PyCriticalSection_End(tstate, &section);
     return ix;
 }
 

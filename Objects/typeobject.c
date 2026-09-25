@@ -4,6 +4,7 @@
 #include "pycore_abstract.h"      // _PySequence_IterSearch()
 #include "pycore_call.h"          // _PyObject_VectorcallTstate()
 #include "pycore_code.h"          // CO_FAST_FREE
+#include "pycore_critical_section.h"
 #include "pycore_descrobject.h"   // _PyMember_GetOffset()
 #include "pycore_dict.h"          // _PyDict_KeysSize()
 #include "pycore_function.h"      // _PyFunction_GetVersionForCurrentState()
@@ -46,16 +47,13 @@ class object "PyObject *" "&PyBaseObject_Type"
 #define NEXT_VERSION_TAG(interp) \
     (interp)->types.next_version_tag
 
-// Storage for the mutexes saved by type_lock_prevent_release().  Defined for
-// both builds so the call sites don't need to be conditionally compiled.
+// Storage for the mutexes saved by type_lock_prevent_release().
 typedef struct {
     PyMutex *mutex1;
     PyMutex *mutex2;
 } pinned_mutexes_t;
 
-#ifdef Py_GIL_DISABLED
-
-// There's a global lock for types that ensures that tp_version_tag and
+// There's a per-interpreter lock for types that ensures that tp_version_tag and
 // _spec_cache are correctly updated if the type is modified.  It also protects
 // tp_mro, tp_bases, and tp_base.  This avoids having to take additional locks
 // while doing various subclass processing which may result in odd behaviors
@@ -69,13 +67,26 @@ typedef struct {
 // while the stop-the-world mechanism is active.  The slots and flags are read
 // in many places without holding a lock and without atomics.
 #define TYPE_LOCK &_PyInterpreterState_GET()->types.mutex
-#define BEGIN_TYPE_LOCK() Py_BEGIN_CRITICAL_SECTION_MUTEX(TYPE_LOCK)
-#define END_TYPE_LOCK() Py_END_CRITICAL_SECTION()
+#define BEGIN_TYPE_LOCK() \
+    { \
+        PyThreadState *_type_tstate = _PyThreadState_GET(); \
+        PyCriticalSection _type_cs; \
+        _PyCriticalSection_BeginMutex(_type_tstate, &_type_cs, TYPE_LOCK)
+#define END_TYPE_LOCK() \
+        _PyCriticalSection_End(_type_tstate, &_type_cs); \
+    }
 
+#ifdef Py_GIL_DISABLED
 #define BEGIN_TYPE_DICT_LOCK(d) \
     Py_BEGIN_CRITICAL_SECTION2_MUTEX(TYPE_LOCK, &_PyObject_CAST(d)->ob_mutex)
 
 #define END_TYPE_DICT_LOCK() Py_END_CRITICAL_SECTION2()
+#else
+// A LOCAL type dictionary is serialized by its ThreadGroup. The type lock
+// protects metadata shared with other groups, including builtin subclasses.
+#define BEGIN_TYPE_DICT_LOCK(d) BEGIN_TYPE_LOCK()
+#define END_TYPE_DICT_LOCK() END_TYPE_LOCK()
+#endif
 
 #if !defined(NDEBUG) || defined(Py_DEBUG)
 // Return true if the world is currently stopped.
@@ -90,8 +101,8 @@ types_world_is_stopped(void)
 // Checks that the type has not yet been revealed (exposed) to other
 // threads.  The _Py_TYPE_REVEALED_FLAG flag is set by type_new() and
 // PyType_FromMetaclass() to indicate that a newly initialized type might be
-// revealed.  We only have ob_flags on 64-bit platforms.
-#if SIZEOF_VOID_P > 4
+// revealed.
+#if defined(Py_DEBUG)
 #define TYPE_IS_REVEALED(tp) ((((PyObject *)(tp))->ob_flags & _Py_TYPE_REVEALED_FLAG) != 0)
 #else
 #define TYPE_IS_REVEALED(tp) 0
@@ -99,7 +110,7 @@ types_world_is_stopped(void)
 
 #ifdef Py_DEBUG
 #define ASSERT_TYPE_LOCK_HELD() \
-    if (!types_world_is_stopped()) { _Py_CRITICAL_SECTION_ASSERT_MUTEX_LOCKED(TYPE_LOCK); }
+    if (!types_world_is_stopped()) { _PyCriticalSection_AssertHeld(TYPE_LOCK); }
 
 // Checks if we can safely update type slots or tp_flags.
 #define ASSERT_WORLD_STOPPED_OR_NEW_TYPE(tp) \
@@ -181,24 +192,6 @@ type_lock_allow_release(pinned_mutexes_t *pinned)
         assert(pinned->mutex2 == NULL);
     }
 }
-
-#else
-
-#define BEGIN_TYPE_LOCK()
-#define END_TYPE_LOCK()
-#define BEGIN_TYPE_DICT_LOCK(d)
-#define END_TYPE_DICT_LOCK()
-#define ASSERT_TYPE_LOCK_HELD()
-#define TYPE_IS_REVEALED(tp) 0
-#define ASSERT_WORLD_STOPPED_OR_NEW_TYPE(tp)
-#define ASSERT_NEW_TYPE_OR_LOCKED(tp)
-#define types_world_is_stopped() 1
-#define types_stop_world()
-#define types_start_world()
-#define type_lock_prevent_release(pinned) ((void)(pinned))
-#define type_lock_allow_release(pinned) ((void)(pinned))
-
-#endif
 
 #define PyTypeObject_CAST(op)   ((PyTypeObject *)(op))
 
@@ -995,7 +988,11 @@ unsigned int
 PyType_ClearCache(void)
 {
     PyInterpreterState *interp = _PyInterpreterState_GET();
-    return NEXT_VERSION_TAG(interp) - 1;
+    unsigned int version;
+    BEGIN_TYPE_LOCK();
+    version = NEXT_VERSION_TAG(interp) - 1;
+    END_TYPE_LOCK();
+    return version;
 }
 
 
@@ -1018,17 +1015,22 @@ int
 PyType_AddWatcher(PyType_WatchCallback callback)
 {
     PyInterpreterState *interp = _PyInterpreterState_GET();
-
+    int watcher_id = -1;
+    BEGIN_TYPE_LOCK();
     // start at 1, 0 is reserved for cpython optimizer
     for (int i = 1; i < TYPE_MAX_WATCHERS; i++) {
         if (!interp->type_watchers[i]) {
             interp->type_watchers[i] = callback;
-            return i;
+            watcher_id = i;
+            break;
         }
     }
 
-    PyErr_SetString(PyExc_RuntimeError, "no more type watcher IDs available");
-    return -1;
+    END_TYPE_LOCK();
+    if (watcher_id < 0) {
+        PyErr_SetString(PyExc_RuntimeError, "no more type watcher IDs available");
+    }
+    return watcher_id;
 }
 
 static inline int
@@ -1049,11 +1051,14 @@ int
 PyType_ClearWatcher(int watcher_id)
 {
     PyInterpreterState *interp = _PyInterpreterState_GET();
-    if (validate_watcher_id(interp, watcher_id) < 0) {
-        return -1;
+    int res;
+    BEGIN_TYPE_LOCK();
+    res = validate_watcher_id(interp, watcher_id);
+    if (res == 0) {
+        interp->type_watchers[watcher_id] = NULL;
     }
-    interp->type_watchers[watcher_id] = NULL;
-    return 0;
+    END_TYPE_LOCK();
+    return res;
 }
 
 static int assign_version_tag(PyInterpreterState *interp, PyTypeObject *type);
@@ -1067,15 +1072,16 @@ PyType_Watch(int watcher_id, PyObject* obj)
     }
     PyTypeObject *type = (PyTypeObject *)obj;
     PyInterpreterState *interp = _PyInterpreterState_GET();
-    if (validate_watcher_id(interp, watcher_id) < 0) {
-        return -1;
-    }
-    // ensure we will get a callback on the next modification
+    int res;
     BEGIN_TYPE_LOCK();
-    assign_version_tag(interp, type);
-    type->tp_watched |= (1 << watcher_id);
+    res = validate_watcher_id(interp, watcher_id);
+    if (res == 0) {
+        // Ensure we will get a callback on the next modification.
+        assign_version_tag(interp, type);
+        type->tp_watched |= (1 << watcher_id);
+    }
     END_TYPE_LOCK();
-    return 0;
+    return res;
 }
 
 int
@@ -1087,11 +1093,14 @@ PyType_Unwatch(int watcher_id, PyObject* obj)
     }
     PyTypeObject *type = (PyTypeObject *)obj;
     PyInterpreterState *interp = _PyInterpreterState_GET();
-    if (validate_watcher_id(interp, watcher_id)) {
-        return -1;
+    int res;
+    BEGIN_TYPE_LOCK();
+    res = validate_watcher_id(interp, watcher_id);
+    if (res == 0) {
+        type->tp_watched &= ~(1 << watcher_id);
     }
-    type->tp_watched &= ~(1 << watcher_id);
-    return 0;
+    END_TYPE_LOCK();
+    return res;
 }
 
 static void
@@ -1145,11 +1154,9 @@ _PyType_Modified_Unlocked(PyTypeObject *type)
        needed.
      */
     ASSERT_NEW_TYPE_OR_LOCKED(type);
-#ifdef Py_GIL_DISABLED
     // This function is re-entrant and it's not safe to call it
     // with the world stopped.
     assert(!types_world_is_stopped());
-#endif
     if (type->tp_version_tag == 0) {
         return;
     }
@@ -3758,11 +3765,8 @@ solid_base(PyTypeObject *type)
     }
 }
 
-#ifdef Py_GIL_DISABLED
-
-// The structures and functions below are used in the free-threaded build
-// to safely make updates to type slots, on type_setattro() for a slot
-// or when __bases__ is re-assigned.  Since the slots are read without atomic
+// The structures and functions below safely update type slots during
+// type_setattro() or when __bases__ is re-assigned. Since slots are read without atomic
 // operations and without locking, we can only safely update them while the
 // world is stopped.  However, with the world stopped, we are very limited on
 // which APIs can be safely used.  For example, calling _PyObject_HashDictKey()
@@ -3903,13 +3907,6 @@ apply_type_slot_updates(slot_update_t *updates)
     types_start_world();
     type_lock_allow_release(&pinned);
 }
-
-#else
-
-// dummy definition, this parameter is only NULL in the default build
-typedef void slot_update_t;
-
-#endif
 
 /// data passed to update_slots_callback()
 typedef struct {
@@ -6618,7 +6615,6 @@ type_update_dict(PyTypeObject *type, PyDictObject *dict, PyObject *name,
 static int
 update_slot_after_setattr(PyTypeObject *type, PyObject *name)
 {
-#ifdef Py_GIL_DISABLED
     assert(SLOT_UPDATE_CHUNK_SIZE >= MAX_EQUIV);
     slot_update_chunk_t chunk = {0};
     // Stack allocate the first chunk.  It is usually the only one needed but
@@ -6638,10 +6634,6 @@ update_slot_after_setattr(PyTypeObject *type, PyObject *name)
         cur = prev;
     }
     return res;
-#else
-    update_slot(type, name, NULL);
-    return 0;
-#endif
 }
 
 static int
@@ -9543,7 +9535,7 @@ type_ready_publish(PyTypeObject *type, int fix_slots)
         // may only be used on types that are not yet revealed.
         type_add_flags(type, Py_TPFLAGS_READY);
 
-#if defined(Py_GIL_DISABLED) && defined(Py_DEBUG) && SIZEOF_VOID_P > 4
+#if defined(Py_DEBUG)
         // Mark the type as revealed while still holding the type lock.
         // Threads can only find the type through the subclasses of its bases,
         // which is done below with the lock held.  So, they cannot see the
@@ -12010,7 +12002,6 @@ update_one_slot(PyTypeObject *type, pytype_slotdef *p, pytype_slotdef **next_p,
         slot_value = generic;
     }
 
-#ifdef Py_GIL_DISABLED
     if (queued_updates != NULL) {
         // queue the update to perform later, while world is stopped
         if (queue_slot_update(queued_updates, type, ptr, slot_value) < 0) {
@@ -12020,11 +12011,6 @@ update_one_slot(PyTypeObject *type, pytype_slotdef *p, pytype_slotdef **next_p,
         // do the update to the type structure now
         *ptr = slot_value;
     }
-#else
-    // always do the update immediately
-    assert(queued_updates == NULL);
-    *ptr = slot_value;
-#endif
 
     if (next_p != NULL) {
         *next_p = p;
@@ -12108,8 +12094,6 @@ fixup_slot_dispatchers(PyTypeObject *type)
     }
 }
 
-#ifdef Py_GIL_DISABLED
-
 // Called when __bases__ is re-assigned.
 static int
 update_all_slots(PyTypeObject* type)
@@ -12135,22 +12119,6 @@ update_all_slots(PyTypeObject* type)
     }
     return 0;
 }
-
-#else
-
-// Called when __bases__ is re-assigned.
-static int
-update_all_slots(PyTypeObject* type)
-{
-    pytype_slotdef *p;
-    for (p = slotdefs; p->name; p++) {
-        /* update_slot returns int but can't actually fail in this case*/
-        update_slot(type, p->name_strobj, NULL);
-    }
-    return 0;
-}
-
-#endif
 
 int
 _PyType_InitSlotDefs(PyInterpreterState *interp)

@@ -5,7 +5,7 @@ import sys
 import unittest
 import warnings
 from test import support
-from test.support import import_helper, requires_specialization
+from test.support import import_helper, requires_specialization, threading_helper
 try:
     from sys import _clear_type_cache
 except ImportError:
@@ -349,6 +349,16 @@ class PerTypeLookupCacheTests(unittest.TestCase):
         hit, value, _ = self.type_cache_lookup(C, "x")
         self.assertEqual(hit, 0)
         self.assertIsNone(value)
+
+    @unittest.skipIf(support.Py_GIL_DISABLED, "free-threaded cache reads are lock-free")
+    @threading_helper.requires_working_threading()
+    def test_reader_waits_for_invalidation(self):
+        C = self._make_type()
+        # The native reader must wait for the type mutex, then see the
+        # invalidation performed by the thread holding that mutex.
+        parked, cache_hit = _testinternalcapi.type_cache_reader_waits(C, "x")
+        self.assertEqual(parked, 1)
+        self.assertEqual(cache_hit, 0)
 
     def test_setattr_invalidates_cache(self):
         # Mutating a type's attributes must invalidate any cached entries

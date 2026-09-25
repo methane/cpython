@@ -83,6 +83,21 @@ The public object-based critical sections retain their normal-build behavior;
 LOCAL objects rely on group serialization. A skipped two-mutex acquisition
 during a world stop releases any first mutex acquired by its fast path.
 
+Type metadata updates use the interpreter's existing type mutex in the normal
+build. Type-slot and flag updates use internal world stops, with the type mutex
+pinned while waiting for the pause. Instance shared-key insertion takes the same
+mutex before invalidating its type's version and cache. Type-watcher registration,
+removal and watch-bit updates also use it. Debug builds enable the existing
+revealed-type lock and world-stop assertions in both builds.
+
+Normal-build per-type lookup-cache readers take that mutex too, acquiring a
+strong result reference before unlocking. Unlike the free-threading cache, this
+cache owns mortal interned names and can contain LOCAL values. Its invalidated
+storage and name references are released under the lock; the free-threading
+branch retains lock-free readers and QSBR retirement. This port does not yet
+establish safety of every type-version or specialization-cache fast path under
+concurrent groups, and does not change LOCAL object finalization.
+
 Code objects use a dedicated mutex and acquire/release publication for their
 lazy variable-name and bytecode caches. `co_extra` growth publishes a copied
 array and retires the old array through QSBR; extra-slot registration uses the
@@ -258,6 +273,18 @@ Tests run on Linux/aarch64. Logs are under `/tmp/pep805-base/`. The optional
 flags/events rather than foreign LOCAL Python functions or mutable results.
 Parallel scheduling tests remain skipped while the interpreter GIL is enabled.
 
+- Type metadata and per-type caches: a native contention probe verifies that a
+  cache reader waits for the type mutex and observes invalidation after the
+  wait. The new test fails against the preceding release runtime, where the
+  reader proceeds before invalidation. Type-cache, watcher and subclass
+  initialization suites pass `-R 3:3` with `mimalloc_debug` (100 tests).
+  The non-debug normal build passes 1,284 tests across 18 files covering types,
+  descriptors, specialization, ownership, watchers, GC, threading, fork and
+  embedding (24 skips). The debug selection passes the same 1,284 tests
+  (17 skips). Its embedding and threading suites first reached the 120-second
+  limit while the release compiler was running; both pass with the same limit
+  after compilation finishes. Both builds retain `Py_GIL_DISABLED=0`, the
+  enabled interpreter GIL and the 24-byte object header.
 - Bulk hash-table acquisitions: 1,136 tests pass across ten files covering
   ownership, sets, dictionaries, dictionary views, C APIs, comparison, repr,
   unpacking and calls (two skips). Ownership and dictionary views pass `-R 3:3`

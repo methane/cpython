@@ -545,12 +545,12 @@ given type object has a specified feature.
 #define Py_TPFLAGS_HAVE_FINALIZE (1UL << 0)
 #define Py_TPFLAGS_HAVE_VERSION_TAG   (1UL << 18)
 
-// Flag values for ob_flags (16 bits available, if SIZEOF_VOID_P > 4).
+// Flag values for ob_flags.
 #define _Py_IMMORTAL_FLAGS (1 << 0)
 #define _Py_LEGACY_ABI_CHECK_FLAG (1 << 1) /* see PyModuleDef_Init() */
 #define _Py_STATICALLY_ALLOCATED_FLAG (1 << 2)
 #if !defined(Py_LIMITED_API)
-#  if defined(Py_GIL_DISABLED) && defined(Py_DEBUG)
+#  if defined(Py_DEBUG)
 #    define _Py_TYPE_REVEALED_FLAG (1 << 3)
 #  endif
 #endif

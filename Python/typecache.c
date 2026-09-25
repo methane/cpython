@@ -7,6 +7,7 @@
 // and for heap types the cache is stored in the `PyTypeObject._tp_cache` field.
 
 #include "Python.h"
+#include "pycore_critical_section.h"
 #include "pycore_typecache.h"
 #include "pycore_interp.h"        // PyInterpreterState
 #include "pycore_pymem.h"
@@ -72,9 +73,13 @@ cache_free_delayed(struct type_cache *cache)
             Py_DECREF(cache->hashtable[i].name);
         }
     }
-#endif
-    // Delay the freeing of old cache for concurrent lock-free readers
+    // Normal-build readers hold the type lock too. Their cache references
+    // cannot survive invalidation, so names and storage can be released here.
+    PyMem_Free(cache);
+#else
+    // Delay the freeing of old cache for concurrent lock-free readers.
     _PyMem_FreeDelayed(cache, cache_nbytes(cache));
+#endif
 }
 
 
@@ -191,10 +196,10 @@ _PyTypeCache_Insert(PyTypeObject *type, PyObject *name, PyObject *value)
 
 
 // Lookup the given name in the type cache.
-// The cache is lock-free so it is possible that cache becomes stale during the lookup,
-// to prevent returning stale cache entry, the cache version is compared with the type version tag.
-struct _PyTypeCacheLookupResult
-_PyTypeCache_Lookup(PyTypeObject *type, PyObject *name)
+// Free-threaded readers are lock-free. Compare versions to reject a cache that
+// becomes stale during lookup. Normal-build readers hold the type lock.
+static struct _PyTypeCacheLookupResult
+cache_lookup(PyTypeObject *type, PyObject *name)
 {
     assert(PyUnicode_CheckExact(name) && PyUnicode_CHECK_INTERNED(name));
     struct _PyTypeCacheLookupResult miss = {PyStackRef_NULL, 0, 0};
@@ -233,8 +238,26 @@ _PyTypeCache_Lookup(PyTypeObject *type, PyObject *name)
     return (struct _PyTypeCacheLookupResult){out_ref, 1, cache->version_tag};
 }
 
+struct _PyTypeCacheLookupResult
+_PyTypeCache_Lookup(PyTypeObject *type, PyObject *name)
+{
+#ifdef Py_GIL_DISABLED
+    return cache_lookup(type, name);
+#else
+    // Names can be mortal and values can be LOCAL. Acquire the returned
+    // reference before another group can invalidate or retire the cache.
+    PyThreadState *tstate = _PyThreadState_GET();
+    PyCriticalSection section;
+    _PyCriticalSection_BeginMutex(tstate, &section, &tstate->interp->types.mutex);
+    struct _PyTypeCacheLookupResult result = cache_lookup(type, name);
+    _PyCriticalSection_End(tstate, &section);
+    return result;
+#endif
+}
+
 // Invalidate the type cache of the type.
-// The cache is set to the empty cache and the old cache is freed with QSBR.
+// The cache is set to the empty cache. Free-threaded builds retire the old
+// cache with QSBR; normal builds release it while holding the type lock.
 // The TYPE_LOCK should be held while calling this function.
 void
 _PyTypeCache_Invalidate(PyTypeObject *type)
