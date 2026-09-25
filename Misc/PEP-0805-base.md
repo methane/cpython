@@ -517,6 +517,12 @@ exception and uses the existing cleanup path, including releasing buffers
 acquired for earlier elements. Already-acquired top-level call arguments are
 unchanged; length errors and earlier conversion errors retain their precedence.
 
+Exception formatting acquires a sole `args` element before converting it to text
+or repr. This includes `KeyError` quoting and `AttributeError`'s comparison with
+the attribute name before synthesizing a message. Multiple-argument formatting
+retains the tuple's existing element checks. Assigning, retrieving and copying
+the `args` tuple into a reduction result does not acquire its elements.
+
 Arithmetic dispatch validates native unary, binary, ternary and in-place slot
 results before returning them to C callers. Sequence concatenation/repetition
 and their numeric fallbacks validate newly returned references too. Existing
@@ -582,6 +588,18 @@ The default-path parallel scheduling test requires group-only serialization
 from startup and does not skip. The extension-import test also runs in the normal
 build, checking that imports leave this scheduling state unchanged.
 
+- Exception argument formatting: debug and release each run 319 tests across
+  ownership, base exceptions, exceptions, exception groups and exception C APIs
+  (three skips). Both have one known Main-only failure: the fixed exception
+  hierarchy omits `IllegalThreadAccessException`, as confirmed independently in
+  the earlier `d800afe949` build. The remaining tests pass. Three new tests
+  exercise 80 worker calls; baseline runs reproduce ten foreign-group failures,
+  and all three tests pass TSan without suppressions. Main-only formatting and
+  message tests pass `-R 3:3` (12 tests). Logs: `test-exception-arguments-before.log`,
+  `test-exception-arguments-debug.log`, `test-exception-arguments-release.log`,
+  `test-exception-arguments-main-refleak-focused.log` and
+  `tsan-exception-arguments.log`. The initial broader reference-leak selection
+  also included the failing hierarchy test.
 - Nested argument acquisition: debug and release each pass 364 tests across
   ownership, argument-parsing C APIs and calls. Four new tests exercise 117
   worker calls through existing C API test functions, covering positional and
@@ -901,6 +919,14 @@ build, checking that imports leave this scheduling state unchanged.
   `test-special-methods-debug-scoped.log`,
   `test-special-methods-release-scoped.log` and
   `tsan-special-methods-final.log`.
+- Known Main-only failure: `test_baseexception.ExceptionClassTests.test_inheritance`
+  compares builtin exceptions with `Lib/test/exception_hierarchy.txt`, which
+  does not list `IllegalThreadAccessException`. The isolated test fails in both
+  the current build and `d800afe949`; neither the test nor its fixture differs
+  from the CPython base. Reproduce with
+  `./python -m unittest test.test_baseexception.ExceptionClassTests.test_inheritance`.
+  Logs: `test-exception-hierarchy-current.log` and
+  `test-exception-hierarchy-baseline.log`.
 - Known Main-only failure: `test_pickle.CompatPickleTests.test_exceptions`
   expects the new `IllegalThreadAccessException` to have a Python 2
   `exceptions` mapping, but the existing mapping returns `__builtin__`.

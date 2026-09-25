@@ -172,9 +172,11 @@ BaseException_str(PyObject *op)
     case 0:
         res = Py_GetConstant(Py_CONSTANT_EMPTY_STR);
         break;
-    case 1:
-        res = PyObject_Str(PyTuple_GET_ITEM(self->args, 0));
+    case 1: {
+        PyObject *arg = PyTuple_GetItem(self->args, 0);
+        res = arg == NULL ? NULL : PyObject_Str(arg);
         break;
+    }
     default:
         res = PyObject_Str(self->args);
         break;
@@ -193,8 +195,8 @@ BaseException_repr(PyObject *op)
     Py_BEGIN_CRITICAL_SECTION(self);
     const char *name = _PyType_Name(Py_TYPE(self));
     if (PyTuple_GET_SIZE(self->args) == 1) {
-        res = PyUnicode_FromFormat("%s(%R)", name,
-                                    PyTuple_GET_ITEM(self->args, 0));
+        PyObject *arg = PyTuple_GetItem(self->args, 0);
+        res = arg == NULL ? NULL : PyUnicode_FromFormat("%s(%R)", name, arg);
     }
     else {
         res = PyUnicode_FromFormat("%s%R", name, self->args);
@@ -2715,8 +2717,9 @@ static PyObject *
 AttributeError_str(PyObject *op)
 {
     PyAttributeErrorObject *self = PyAttributeErrorObject_CAST(op);
-    PyObject *arg;  // borrowed ref
+    PyObject *arg = NULL;  // borrowed ref
     PyObject *obj = NULL, *name = NULL;
+    Py_ssize_t nargs;
 
      /* .name and .obj are set automatically when attribute lookup fails, so
         synthesize a more informative message from them when the caller
@@ -2725,18 +2728,24 @@ AttributeError_str(PyObject *op)
         message the caller gave. */
 
     Py_BEGIN_CRITICAL_SECTION(self);
+    nargs = PyTuple_GET_SIZE(self->args);
+    if (nargs == 1) {
+        arg = PyTuple_GetItem(self->args, 0);
+    }
     if (
         self->obj && self->name && PyUnicode_Check(self->name)
-        && ((PyTuple_GET_SIZE(self->args) == 1
-             && PyUnicode_Check(arg = PyTuple_GET_ITEM(self->args, 0))
+        && ((arg && PyUnicode_Check(arg)
              && _PyUnicode_Equal(arg, self->name))
-            || PyTuple_GET_SIZE(self->args) == 0)
+            || nargs == 0)
     ) {
         obj = Py_NewRef(self->obj);
         name = Py_NewRef(self->name);
     }
     Py_END_CRITICAL_SECTION();
 
+    if (nargs == 1 && arg == NULL) {
+        return NULL;
+    }
     if (!obj) {
         assert(!name);
         return BaseException_str(op);  /* re-acquires lock */
@@ -3093,7 +3102,8 @@ KeyError_str(PyObject *op)
     */
     PyBaseExceptionObject *self = PyBaseExceptionObject_CAST(op);
     if (PyTuple_GET_SIZE(self->args) == 1) {
-        return PyObject_Repr(PyTuple_GET_ITEM(self->args, 0));
+        PyObject *arg = PyTuple_GetItem(self->args, 0);
+        return arg == NULL ? NULL : PyObject_Repr(arg);
     }
     return BaseException_str(op);
 }

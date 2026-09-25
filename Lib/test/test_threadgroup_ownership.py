@@ -1136,6 +1136,67 @@ assert 'threading' not in sys.modules
             0, 1, False, internal.slice_getindices_probe))
         self.assertEqual(internal.container_element_calls(value), 0)
 
+    def test_exception_argument_formatting(self):
+        for exception_type in (BaseException, Exception, KeyError, AttributeError):
+            for method in ('__str__', '__repr__'):
+                for size in (1, 2):
+                    namespace = {}
+                    exec('def probe():\n'
+                         '    error = source[2]()\n'
+                         '    error.args = source[1]\n'
+                         f'    error.{method}()\n'
+                         '    return True', namespace)
+                    for immutable in (False, True):
+                        for group in (sys.main_thread_group, self.foreign):
+                            value = internal.make_container_element(immutable)
+                            args = (value,) if size == 1 else (0, value)
+                            accessible = immutable or group is sys.main_thread_group
+                            with self.subTest(exception_type=exception_type,
+                                              method=method, size=size,
+                                              immutable=immutable, group=group):
+                                self.assertIs(internal.threadgroup_vm_probe(
+                                    namespace['probe'].__code__, group,
+                                    (value, args, exception_type), 0), accessible)
+                                self.assertEqual(internal.container_element_calls(value),
+                                                 int(accessible))
+
+    def test_attribute_error_message_acquisition(self):
+        class String(str):
+            pass
+
+        def probe():
+            exception_type, expected = source[2]
+            error = exception_type(name='missing', obj=None)
+            error.args = source[1]
+            assert error.__str__() == expected
+            return True
+
+        for message in ('missing', 'custom', String('missing'), String('custom')):
+            for group in (sys.main_thread_group, self.foreign):
+                accessible = type(message) is str or group is sys.main_thread_group
+                expected = ("'NoneType' object has no attribute 'missing'"
+                            if message == 'missing' else 'custom')
+                with self.subTest(message=message, value_type=type(message), group=group):
+                    self.assertIs(internal.threadgroup_vm_probe(
+                        probe.__code__, group,
+                        (message, (message,), (AttributeError, expected)), 0), accessible)
+
+    def test_exception_argument_storage(self):
+        def probe():
+            error = source[2]()
+            error.args = source[1]
+            assert error.args is source[1]
+            assert error.__reduce__()[1] is source[1]
+            return True
+
+        for exception_type in (BaseException, Exception, KeyError, AttributeError):
+            value = internal.make_container_element(False)
+            for group in (sys.main_thread_group, self.foreign):
+                with self.subTest(exception_type=exception_type, group=group):
+                    self.assertTrue(internal.threadgroup_vm_probe(
+                        probe.__code__, group, (True, (value,), exception_type), 0))
+                    self.assertEqual(internal.container_element_calls(value), 0)
+
     def test_nested_argument_integer_acquisition(self):
         capi = import_helper.import_module('_testcapi')
 
