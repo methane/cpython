@@ -474,6 +474,13 @@ tuple-based acquisition checks and short circuits. Copying components into a
 reduction tuple does not acquire them. A zero step or invalid length can fail
 before unused components are acquired.
 
+String/bytes prefix and suffix matching acquire tuple alternatives as they are
+used, preserving short-circuit matches. Joining acquires sequence elements before
+reading string data or requesting buffers; rejection releases earlier buffers.
+The bytes constructor's sequence fast path also checks elements before integer
+conversion. Unicode joining from already-acquired argument arrays remains
+unchecked; public joining validates heap elements in their original error order.
+
 Marshal checks references loaded from container elements and code/slice fields
 before serializing them. Set elements are checked before their separate encoding
 used for sorting. An existing serialization error stops later acquisitions,
@@ -522,6 +529,16 @@ The default-path parallel scheduling test requires group-only serialization
 from startup and does not skip. The extension-import test also runs in the normal
 build, checking that imports leave this scheduling state unchanged.
 
+- String sequence acquisition: debug and release each pass 853 tests across
+  ownership, strings, bytes, formatting, their C APIs and regular expressions
+  (17/30 skips). Before the fix, the four new tests report 33 failures involving
+  foreign LOCAL elements; Main controls pass. Afterward all four pass, including
+  native callback counts, short-circuit matching, first-error preservation and
+  release of earlier buffers. The 20 selected existing Main-only operations pass
+  `-R 3:3` (one skip). No new Main-only failure was found in this selection.
+  The four new tests also pass TSan without suppressions (`tsan-string.log`).
+  Logs: `test-string-acquisition-before.log`, `test-string-debug.log`,
+  `test-string-release.log` and `test-string-main-refleak.log`.
 - Marshal heap acquisition: debug and release each pass the six ownership,
   marshal/C API, code and compilation suites (381 tests, 15 skips). The 67
   source/sourceless-loader tests also pass after importing `unittest.mock` in

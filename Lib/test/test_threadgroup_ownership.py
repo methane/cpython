@@ -630,6 +630,155 @@ assert 'threading' not in sys.modules
             0, 1, False, internal.slice_getindices_probe))
         self.assertEqual(internal.container_element_calls(value), 0)
 
+    def test_string_tailmatch_acquires_alternatives(self):
+        class String(str):
+            pass
+
+        class Bytes(bytes):
+            pass
+
+        native_values = [internal.make_container_element(immutable)
+                         for immutable in (False, True)]
+        for receiver, values in (
+            ("'buffer'", ('buffer', String('buffer'))),
+            ("b'buffer'", (b'buffer', Bytes(b'buffer'), *native_values)),
+            ("source[2](b'buffer')",
+             (b'buffer', Bytes(b'buffer'), *native_values)),
+        ):
+            for method in ('startswith', 'endswith'):
+                namespace = {}
+                exec('def probe():\n'
+                     f'    assert {receiver}.{method}(source[1])\n'
+                     '    return True', namespace)
+                for value in values:
+                    for group in (sys.main_thread_group, self.foreign):
+                        accessible = (group is sys.main_thread_group or
+                                      value.__shareable__ is
+                                      threading.Shareable.IMMUTABLE)
+                        native = type(value) not in (str, String, bytes, Bytes)
+                        before = (internal.container_element_calls(value)
+                                  if native else 0)
+                        with self.subTest(receiver=receiver, method=method,
+                                          value_type=type(value), group=group):
+                            self.assertIs(internal.threadgroup_vm_probe(
+                                namespace['probe'].__code__, group,
+                                (value, (value,), bytearray), 0), accessible)
+                            if native:
+                                self.assertEqual(
+                                    internal.container_element_calls(value),
+                                    before + accessible)
+
+    def test_string_join_acquires_elements(self):
+        class String(str):
+            pass
+
+        class Bytes(bytes):
+            pass
+
+        native_values = [internal.make_container_element(immutable)
+                         for immutable in (False, True)]
+        for separator, values, prefix in (
+            ("'-'", ('buffer', String('buffer')), 'first'),
+            ("b'-'", (b'buffer', Bytes(b'buffer'), *native_values), b'first'),
+            ("source[2][1](b'-')",
+             (b'buffer', Bytes(b'buffer'), *native_values), b'first'),
+        ):
+            namespace = {}
+            exec('def probe():\n'
+                 '    values = source[1]\n'
+                 '    if source[2][0] is not None:\n'
+                 '        values = source[2][0](values)\n'
+                 f'    assert {separator}.join(values) == source[2][2]\n'
+                 '    return True', namespace)
+            for value in values:
+                for multiple in (False, True):
+                    items = (prefix, value) if multiple else (value,)
+                    expected = ('first-buffer' if multiple else 'buffer')
+                    if isinstance(prefix, bytes):
+                        expected = expected.encode()
+                    for copy in (None, list):
+                        for group in (sys.main_thread_group, self.foreign):
+                            accessible = (group is sys.main_thread_group or
+                                          value.__shareable__ is
+                                          threading.Shareable.IMMUTABLE)
+                            native = type(value) not in (str, String, bytes, Bytes)
+                            before = (internal.container_element_calls(value)
+                                      if native else 0)
+                            with self.subTest(separator=separator, copy=copy,
+                                              multiple=multiple, group=group,
+                                              value_type=type(value)):
+                                self.assertIs(internal.threadgroup_vm_probe(
+                                    namespace['probe'].__code__, group,
+                                    (value, items, (copy, bytearray, expected)),
+                                    0), accessible)
+                                if native:
+                                    self.assertEqual(
+                                        internal.container_element_calls(value),
+                                        before + accessible)
+
+    def test_bytes_from_sequence_acquires_elements(self):
+        class Integer(int):
+            pass
+
+        def probe():
+            values = source[1]
+            if source[2][1] is not None:
+                values = source[2][1](values)
+            assert source[2][0](values) == b'\x00\x01'
+            return True
+
+        for value in (1, Integer(1), internal.make_container_element(False),
+                      internal.make_container_element(True)):
+            for copy in (None, list):
+                for group in (sys.main_thread_group, self.foreign):
+                    accessible = (group is sys.main_thread_group or
+                                  value.__shareable__ is
+                                  threading.Shareable.IMMUTABLE)
+                    native = type(value) not in (int, Integer)
+                    before = internal.container_element_calls(value) if native else 0
+                    with self.subTest(value_type=type(value), copy=copy, group=group):
+                        self.assertIs(internal.threadgroup_vm_probe(
+                            probe.__code__, group,
+                            (value, (0, value), (bytes, copy)), 0), accessible)
+                        if native:
+                            self.assertEqual(internal.container_element_calls(value),
+                                             before + accessible)
+
+    def test_string_sequence_short_circuit_and_cleanup(self):
+        def probe():
+            bytearray_type, access_error = source[2]
+            foreign = source[1]
+            assert 'buffer'.startswith(('buffer',) + foreign)
+            assert 'buffer'.endswith(('buffer',) + foreign)
+            assert b'buffer'.startswith((b'buffer',) + foreign)
+            assert b'buffer'.endswith((b'buffer',) + foreign)
+            mutable = bytearray_type(b'buffer')
+            assert mutable.startswith((b'buffer',) + foreign)
+            assert mutable.endswith((b'buffer',) + foreign)
+            for separator in ('-', b'-', bytearray_type(b'-')):
+                try:
+                    separator.join((0,) + foreign)
+                except TypeError:
+                    pass
+                else:
+                    assert False
+            for separator in (b'-', bytearray_type(b'-')):
+                try:
+                    separator.join((mutable,) + foreign)
+                except access_error:
+                    pass
+                else:
+                    assert False
+                # A rejected later element must release the earlier buffer.
+                mutable.extend(b'!')
+            return True
+
+        value = internal.make_container_element(False)
+        self.assertTrue(internal.threadgroup_vm_probe(
+            probe.__code__, self.foreign,
+            (True, (value,), (bytearray, IllegalThreadAccessException)), 0))
+        self.assertEqual(internal.container_element_calls(value), 0)
+
     def test_marshal_heap_acquisition(self):
         import_helper.import_module('_testcapi')
         # Regrtest's Python audit hook belongs to Main. An isolated process

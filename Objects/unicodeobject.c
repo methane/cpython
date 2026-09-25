@@ -10456,6 +10456,10 @@ case_operation(PyObject *self,
     return res;
 }
 
+static PyObject *
+unicode_join_array(PyObject *separator, PyObject *const *items,
+                   Py_ssize_t seqlen, int check_items);
+
 PyObject *
 PyUnicode_Join(PyObject *separator, PyObject *seq)
 {
@@ -10473,7 +10477,7 @@ PyUnicode_Join(PyObject *separator, PyObject *seq)
 
     items = PySequence_Fast_ITEMS(fseq);
     seqlen = PySequence_Fast_GET_SIZE(fseq);
-    res = _PyUnicode_JoinArray(separator, items, seqlen);
+    res = unicode_join_array(separator, items, seqlen, 1);
 
     Py_END_CRITICAL_SECTION_SEQUENCE_FAST();
 
@@ -10483,6 +10487,14 @@ PyUnicode_Join(PyObject *separator, PyObject *seq)
 
 PyObject *
 _PyUnicode_JoinArray(PyObject *separator, PyObject *const *items, Py_ssize_t seqlen)
+{
+    /* These references have already been acquired by the caller. */
+    return unicode_join_array(separator, items, seqlen, 0);
+}
+
+static PyObject *
+unicode_join_array(PyObject *separator, PyObject *const *items,
+                   Py_ssize_t seqlen, int check_items)
 {
     PyObject *res = NULL; /* the result */
     PyObject *sep = NULL;
@@ -10553,6 +10565,9 @@ _PyUnicode_JoinArray(PyObject *separator, PyObject *const *items, Py_ssize_t seq
     for (i = 0; i < seqlen; i++) {
         size_t add_sz;
         item = items[i];
+        if (check_items && PyObject_CheckAccess(item) == NULL) {
+            goto onError;
+        }
         if (!PyUnicode_Check(item)) {
             PyErr_Format(PyExc_TypeError,
                          "sequence item %zd: expected str instance,"
@@ -13826,6 +13841,9 @@ unicode_startswith_impl(PyObject *self, PyObject *subobj, Py_ssize_t start,
         Py_ssize_t i;
         for (i = 0; i < PyTuple_GET_SIZE(subobj); i++) {
             PyObject *substring = PyTuple_GET_ITEM(subobj, i);
+            if (PyObject_CheckAccess(substring) == NULL) {
+                return NULL;
+            }
             if (!PyUnicode_Check(substring)) {
                 PyErr_Format(PyExc_TypeError,
                              "tuple for startswith must only contain str, "
@@ -13883,6 +13901,9 @@ unicode_endswith_impl(PyObject *self, PyObject *subobj, Py_ssize_t start,
         Py_ssize_t i;
         for (i = 0; i < PyTuple_GET_SIZE(subobj); i++) {
             PyObject *substring = PyTuple_GET_ITEM(subobj, i);
+            if (PyObject_CheckAccess(substring) == NULL) {
+                return NULL;
+            }
             if (!PyUnicode_Check(substring)) {
                 PyErr_Format(PyExc_TypeError,
                              "tuple for endswith must only contain str, "

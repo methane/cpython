@@ -682,6 +682,9 @@ _Py_bytes_tailmatch(const char *str, Py_ssize_t len,
         Py_ssize_t i;
         for (i = 0; i < PyTuple_GET_SIZE(subobj); i++) {
             PyObject *item = PyTuple_GET_ITEM(subobj, i);
+            if (PyObject_CheckAccess(item) == NULL) {
+                return NULL;
+            }
             int result = tailmatch(str, len, item, start, end, direction);
             if (result < 0) {
                 return NULL;

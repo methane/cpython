@@ -2994,6 +2994,10 @@ _PyBytes_FromSequence_lock_held(PyObject *x, PyObject **result)
 
     PyObject *const *items = PySequence_Fast_ITEMS(x);
     for (Py_ssize_t i = 0; i < size; i++) {
+        if (PyObject_CheckAccess(items[i]) == NULL) {
+            PyBytesWriter_Discard(writer);
+            return -1;
+        }
         Py_ssize_t value = PyLong_AsSsize_t(items[i]);
         if (value == -1 && PyErr_Occurred()) {
             PyBytesWriter_Discard(writer);
