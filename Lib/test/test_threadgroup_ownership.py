@@ -779,6 +779,72 @@ assert 'threading' not in sys.modules
                              rejected, expected, str if operation is str else None)),
                             0, 1, False, repr))
 
+    def test_unicode_error_type_acquisition(self):
+        capi = import_helper.import_module('_testlimitedcapi')
+        cases = (
+            ('bound_builtin(source[1])', capi.unicode_fromobject),
+            ("bound_builtin(source[1], '')", capi.unicode_compare),
+            ("bound_builtin('', source[1])", capi.unicode_compare),
+            ("bound_builtin('', source[1])", capi.unicode_concat),
+            ("source[1] in 'text'", None),
+            ("'text'.center(8, source[1])", None),
+            ("'text'.ljust(8, source[1])", None),
+            ("'text'.rjust(8, source[1])", None),
+            ("'text'.split(source[1])", None),
+            ("'text'.rsplit(source[1])", None),
+            ("''.join(('text', source[1]))", None),
+            ("bound_builtin(source[1], ('text', 'suffix'))", capi.unicode_join),
+            ("'text'.startswith(source[1])", None),
+            ("'text'.endswith(source[1])", None),
+            ("'text'.startswith(('nomatch', source[1]))", None),
+            ("'text'.endswith(('nomatch', source[1]))", None),
+        )
+        for value in (internal.make_immutable_special_method_instance({}),
+                      internal.make_immutable_call_receiver(object)):
+            local_type = type(value).__shareable__ is threading.Shareable.LOCAL
+            for expression, builtin in cases:
+                # Keep the ordinary error text, including legacy type names.
+                with self.assertRaises(TypeError) as cm:
+                    eval(expression, {'source': (True, value),
+                                      'bound_builtin': builtin})
+                expected = str(cm.exception)
+                namespace = {}
+                exec('def probe():\n'
+                     '    error, rejected, expected = source[2]\n'
+                     '    try:\n        ' + expression + '\n'
+                     '    except error:\n        assert rejected\n'
+                     '    except TypeError as exc:\n'
+                     '        assert not rejected\n'
+                     '        assert exc.__str__() == expected\n'
+                     '    else:\n        assert False\n'
+                     '    return True', namespace)
+                for group in (sys.main_thread_group, self.foreign):
+                    rejected = local_type and group is self.foreign
+                    with self.subTest(expression=expression, local_type=local_type,
+                                      group=group):
+                        self.assertTrue(internal.threadgroup_vm_probe(
+                            namespace['probe'].__code__, group,
+                            (True, value, (IllegalThreadAccessException,
+                             rejected, expected)), 0, 1, False, builtin or repr))
+
+    def test_unicode_error_skips_unused_types(self):
+        capi = import_helper.import_module('_testlimitedcapi')
+
+        def probe():
+            value = source[1]
+            assert bound_builtin(value, ()) == ''
+            assert bound_builtin(value, ('text',)) == 'text'
+            assert 'text'.startswith(('text', value))
+            assert 'text'.endswith(('text', value))
+            return True
+
+        value = internal.make_immutable_special_method_instance({})
+        for group in (sys.main_thread_group, self.foreign):
+            with self.subTest(group=group):
+                self.assertTrue(internal.threadgroup_vm_probe(
+                    probe.__code__, group, (True, value, None),
+                    0, 1, False, capi.unicode_join))
+
     def test_type_module_returns(self):
         for api in ('PyType_GetModule', 'PyType_GetModuleByDef',
                     'PyType_GetModuleByToken', 'PyType_GetModuleState'):

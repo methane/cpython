@@ -378,6 +378,10 @@ acquisition before constructing a type name, and `object.__repr__` checks its
 stored class before reading the class's module or name. `PyType_GetDict()` also
 validates the returned dictionary, including Main-owned dictionaries of shared
 builtin types.
+`PyUnicode_FromObject`, joining, comparison, containment, concatenation, padding,
+splitting and prefix/suffix matching check acquired classes before formatting
+their legacy `tp_name` error messages. Successful operations and short-circuit
+paths do not acquire unused classes; the existing message text is retained.
 The Python `type.__dict__` getter validates the dictionary before wrapping it
 in a mapping proxy, preventing a foreign group from reading it through a
 newly created local proxy.
@@ -625,6 +629,16 @@ The default-path parallel scheduling test requires group-only serialization
 from startup and does not skip. The extension-import test also runs in the normal
 build, checking that imports leave this scheduling state unchanged.
 
+- Legacy Unicode type errors: debug and release each pass 328 tests across
+  ownership, strings and Unicode C APIs (six and seven skips). Two new tests
+  exercise 66 worker calls covering 16 error paths, their ordinary messages,
+  Main/shared-class controls and short-circuit operations that skip unused
+  classes. The baseline reproduces 16 foreign-class failures; Main controls
+  pass. Both tests pass TSan without suppressions. Twenty-eight existing
+  Main-only operations pass `-R 3:3` (one skip), with no new Main-only failure in
+  this selection. Logs: `test-unicode-error-before.log`,
+  `test-unicode-error-debug.log`, `test-unicode-error-release.log`,
+  `test-unicode-error-main-refleak.log` and `tsan-unicode-error.log`.
 - String conversion slot results: debug and release each pass 513 tests across
   ownership, descriptors, builtins and Unicode C APIs (nine and ten skips).
   The new test exercises 32 native worker calls through repr, str, the str-to-repr

@@ -3515,6 +3515,9 @@ PyUnicode_FromObject(PyObject *obj)
            return a true Unicode object with the same data. */
         return _PyUnicode_Copy(obj);
     }
+    if (PyObject_CheckAccess((PyObject *)Py_TYPE(obj)) == NULL) {
+        return NULL;
+    }
     PyErr_Format(PyExc_TypeError,
                  "Can't convert '%.100s' object to str implicitly",
                  Py_TYPE(obj)->tp_name);
@@ -10538,6 +10541,9 @@ unicode_join_array(PyObject *separator, PyObject *const *items,
         }
         else {
             if (!PyUnicode_Check(separator)) {
+                if (PyObject_CheckAccess((PyObject *)Py_TYPE(separator)) == NULL) {
+                    goto onError;
+                }
                 PyErr_Format(PyExc_TypeError,
                              "separator: expected str instance,"
                              " %.80s found",
@@ -10572,6 +10578,9 @@ unicode_join_array(PyObject *separator, PyObject *const *items,
             goto onError;
         }
         if (!PyUnicode_Check(item)) {
+            if (PyObject_CheckAccess((PyObject *)Py_TYPE(item)) == NULL) {
+                goto onError;
+            }
             PyErr_Format(PyExc_TypeError,
                          "sequence item %zd: expected str instance,"
                          " %.80s found",
@@ -11370,6 +11379,9 @@ convert_uc(PyObject *obj, void *addr)
     Py_UCS4 *fillcharloc = (Py_UCS4 *)addr;
 
     if (!PyUnicode_Check(obj)) {
+        if (PyObject_CheckAccess((PyObject *)Py_TYPE(obj)) == NULL) {
+            return 0;
+        }
         PyErr_Format(PyExc_TypeError,
                      "The fill character must be a unicode character, "
                      "not %.100s", Py_TYPE(obj)->tp_name);
@@ -11571,6 +11583,10 @@ PyUnicode_Compare(PyObject *left, PyObject *right)
 
         return unicode_compare(left, right);
     }
+    if (PyObject_CheckAccess((PyObject *)Py_TYPE(left)) == NULL ||
+        PyObject_CheckAccess((PyObject *)Py_TYPE(right)) == NULL) {
+        return -1;
+    }
     PyErr_Format(PyExc_TypeError,
                  "Can't compare %.100s and %.100s",
                  Py_TYPE(left)->tp_name,
@@ -11761,6 +11777,9 @@ PyUnicode_Contains(PyObject *str, PyObject *substr)
     int result;
 
     if (!PyUnicode_Check(substr)) {
+        if (PyObject_CheckAccess((PyObject *)Py_TYPE(substr)) == NULL) {
+            return -1;
+        }
         PyErr_Format(PyExc_TypeError,
                      "'in <string>' requires string as left operand, not %.100s",
                      Py_TYPE(substr)->tp_name);
@@ -11824,6 +11843,9 @@ PyUnicode_Concat(PyObject *left, PyObject *right)
         return NULL;
 
     if (!PyUnicode_Check(right)) {
+        if (PyObject_CheckAccess((PyObject *)Py_TYPE(right)) == NULL) {
+            return NULL;
+        }
         PyErr_Format(PyExc_TypeError,
             "can only concatenate str (not \"%.200s\") to str",
             Py_TYPE(right)->tp_name);
@@ -13364,6 +13386,9 @@ unicode_split_impl(PyObject *self, PyObject *sep, Py_ssize_t maxsplit)
     if (PyUnicode_Check(sep))
         return split(self, sep, maxsplit);
 
+    if (PyObject_CheckAccess((PyObject *)Py_TYPE(sep)) == NULL) {
+        return NULL;
+    }
     PyErr_Format(PyExc_TypeError,
                  "must be str or None, not %.100s",
                  Py_TYPE(sep)->tp_name);
@@ -13544,6 +13569,9 @@ unicode_rsplit_impl(PyObject *self, PyObject *sep, Py_ssize_t maxsplit)
     if (PyUnicode_Check(sep))
         return rsplit(self, sep, maxsplit);
 
+    if (PyObject_CheckAccess((PyObject *)Py_TYPE(sep)) == NULL) {
+        return NULL;
+    }
     PyErr_Format(PyExc_TypeError,
                  "must be str or None, not %.100s",
                  Py_TYPE(sep)->tp_name);
@@ -13848,6 +13876,9 @@ unicode_startswith_impl(PyObject *self, PyObject *subobj, Py_ssize_t start,
                 return NULL;
             }
             if (!PyUnicode_Check(substring)) {
+                if (PyObject_CheckAccess((PyObject *)Py_TYPE(substring)) == NULL) {
+                    return NULL;
+                }
                 PyErr_Format(PyExc_TypeError,
                              "tuple for startswith must only contain str, "
                              "not %.100s",
@@ -13866,6 +13897,9 @@ unicode_startswith_impl(PyObject *self, PyObject *subobj, Py_ssize_t start,
         Py_RETURN_FALSE;
     }
     if (!PyUnicode_Check(subobj)) {
+        if (PyObject_CheckAccess((PyObject *)Py_TYPE(subobj)) == NULL) {
+            return NULL;
+        }
         PyErr_Format(PyExc_TypeError,
                      "startswith first arg must be str or "
                      "a tuple of str, not %.100s", Py_TYPE(subobj)->tp_name);
@@ -13908,6 +13942,9 @@ unicode_endswith_impl(PyObject *self, PyObject *subobj, Py_ssize_t start,
                 return NULL;
             }
             if (!PyUnicode_Check(substring)) {
+                if (PyObject_CheckAccess((PyObject *)Py_TYPE(substring)) == NULL) {
+                    return NULL;
+                }
                 PyErr_Format(PyExc_TypeError,
                              "tuple for endswith must only contain str, "
                              "not %.100s",
@@ -13925,6 +13962,9 @@ unicode_endswith_impl(PyObject *self, PyObject *subobj, Py_ssize_t start,
         Py_RETURN_FALSE;
     }
     if (!PyUnicode_Check(subobj)) {
+        if (PyObject_CheckAccess((PyObject *)Py_TYPE(subobj)) == NULL) {
+            return NULL;
+        }
         PyErr_Format(PyExc_TypeError,
                      "endswith first arg must be str or "
                      "a tuple of str, not %.100s", Py_TYPE(subobj)->tp_name);
