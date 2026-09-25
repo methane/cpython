@@ -10,6 +10,11 @@
 static void
 merge_object(PyObject *op)
 {
+    // The owner can immortalize an object while its queue reference is
+    // pending. Immortalization has already discarded that reference count.
+    if (_Py_IsImmortal(op)) {
+        return;
+    }
     // Subtract the reference stolen by the queue.
     if (_Py_ExplicitMergeRefcount(op, -1) == 0) {
         _Py_Dealloc(op);
@@ -19,6 +24,11 @@ merge_object(PyObject *op)
 void
 _Py_brc_queue_object(PyObject *op)
 {
+    // A foreign decref can enter its slow path after the owner has made
+    // the object immortal. There is no longer a count to merge or reclaim.
+    if (_Py_IsImmortal(op)) {
+        return;
+    }
     PyThreadState *tstate = _PyThreadState_GET();
     _PyThreadGroupState *group = _PyThreadGroup_Find(
         tstate->interp, op->ob_owner_id);
@@ -42,7 +52,8 @@ _Py_brc_queue_object(PyObject *op)
             _PyThreadGroup_Decref(group);
             // No allocation is needed to merge while all mutators are stopped.
             _PyEval_StopTheWorld(tstate->interp);
-            Py_ssize_t refcnt = _Py_ExplicitMergeRefcount(op, -1);
+            Py_ssize_t refcnt = _Py_IsImmortal(op)
+                ? 1 : _Py_ExplicitMergeRefcount(op, -1);
             _PyEval_StartTheWorld(tstate->interp);
             if (refcnt == 0) {
                 _Py_Dealloc(op);

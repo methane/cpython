@@ -365,6 +365,65 @@ unicode_intern_dead_entry(PyObject *self, PyObject *unused)
     Py_RETURN_NONE;
 }
 
+static PyObject *
+threadgroup_immortal_brc(PyObject *self, PyObject *arg)
+{
+    int queued = PyLong_AsInt(arg);
+    if (queued == -1 && PyErr_Occurred()) {
+        return NULL;
+    }
+    static uint64_t serial;
+    unsigned long long id = _Py_atomic_add_uint64(&serial, 1);
+    PyObject *value = PyUnicode_FromFormat("pending intern merge %llu", id);
+    if (value == NULL) {
+        return NULL;
+    }
+    PyThreadState *tstate = _PyThreadState_GET();
+    _PyUnicode_InternMortal(tstate->interp, &value);
+    uint32_t owner = value->ob_owner_id;
+    if (queued) {
+        // Stage a queue-owned reference before promotion. A raw allocation
+        // has the same lifetime/allocator as an ordinary object-stack chunk.
+        _PyObjectStackChunk *chunk = PyMem_RawMalloc(sizeof(*chunk));
+        if (chunk == NULL) {
+            Py_DECREF(value);
+            return PyErr_NoMemory();
+        }
+        chunk->n = 1;
+        chunk->objs[0] = Py_NewRef(value);
+        _PyThreadGroupState *group = tstate->threadgroup;
+        PyMutex_LockFlags(&group->brc_mutex, _Py_LOCK_DONT_DETACH);
+        chunk->prev = group->objects_to_merge.head;
+        group->objects_to_merge.head = chunk;
+        assert(value->ob_ref_shared == _Py_REF_MAYBE_WEAKREF);
+        _Py_atomic_store_ssize_relaxed(&value->ob_ref_shared, _Py_REF_QUEUED);
+        PyMutex_Unlock(&group->brc_mutex);
+    }
+    _PyUnicode_InternImmortal(tstate->interp, &value);
+    if (queued) {
+        _Py_set_eval_breaker_bit(tstate, _PY_EVAL_EXPLICIT_MERGE_BIT);
+        if (_Py_HandlePending(tstate) < 0) {
+            Py_DECREF(value);
+            return NULL;
+        }
+    }
+    else {
+        // Reproduce a foreign decref that observed the mortal local count,
+        // then entered its slow path after the owner immortalized the string.
+#ifdef Py_REF_DEBUG
+        _Py_DecRefTotal(tstate);
+#endif
+        _Py_DecRefShared(value);
+    }
+    int ok = _Py_IsImmortal(value) && value->ob_owner_id == owner;
+    Py_DECREF(value);
+    if (!ok) {
+        return PyErr_Format(PyExc_AssertionError,
+                            "BRC changed an immortal string's lifetime or owner");
+    }
+    Py_RETURN_NONE;
+}
+
 static void
 deferred_shutdown_child(PyObject *capsule)
 {
@@ -2728,6 +2787,7 @@ threadgroup_weakref_probe(PyObject *self, PyObject *args)
 static PyMethodDef methods[] = {
     {"threadgroup_intern", threadgroup_intern, METH_VARARGS, NULL},
     {"unicode_intern_dead_entry", unicode_intern_dead_entry, METH_NOARGS, NULL},
+    {"threadgroup_immortal_brc", threadgroup_immortal_brc, METH_O, NULL},
     {"threadgroup_unicode_cache_probe", threadgroup_unicode_cache_probe,
      METH_VARARGS, NULL},
     {"threadgroup_qsbr_probe", threadgroup_qsbr_probe, METH_VARARGS, NULL},

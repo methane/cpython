@@ -36,6 +36,9 @@ exit. A 64-bit `PyObject` occupies 24 bytes: a 32-bit owner/bias ID, an 8-bit lo
 count, state, flags and GC bits, a pointer-sized shared count and a type pointer.
 The shared count retains PEP 703's two flag bits. Local overflow merges the
 count into the shared field instead of making the object immortal.
+BRC queue entry, draining and the paused allocation-failure fallback skip
+objects that have become immortal. Their queue reference no longer needs to
+be merged, and their lifetime and ownership must remain unchanged.
 There is no object mutex, OS-thread ID or deferred-cleanup linkage in the header.
 GC-tracked objects currently retain the normal collector's separate GC prefix.
 Tracking and finalization status use the existing `ob_gc_bits` byte, with
@@ -281,7 +284,14 @@ Tests run on Linux/aarch64. Logs are under `/tmp/pep805-base/`. The optional
 flags/events rather than foreign LOCAL Python functions or mutable results.
 Parallel scheduling tests remain skipped while the interpreter GIL is enabled.
 
-- Weak intern table: debug and non-debug normal builds each pass 982 tests
+- Immortal BRC transitions: debug and non-debug normal builds each pass 357
+  tests across nine files covering ownership, groups, sys, GC, reclamation,
+  object/immortal C APIs and embedding (19 and 24 skips respectively).
+  Ownership passes `-R 3:3` with `mimalloc_debug` (42 tests). Native probes
+  stage a slow decref arriving after immortalization and a queued reference
+  immortalized before draining; both abort in the preceding runtime and pass
+  after the guards. Concurrent reference-count promotion remains unfinished.
+- Weak intern table (`5082181131`): debug and non-debug normal builds each pass 982 tests
   across 14 files covering ownership, sys, type caching, strings, Unicode C
   APIs, marshal, code, embedding, groups, GC, threading, fork and tracemalloc
   (36 and 39 skips respectively). Ownership, sys and type-cache suites pass

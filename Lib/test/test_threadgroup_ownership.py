@@ -181,6 +181,12 @@ assert 'threading' not in sys.modules
     def test_interning_does_not_resurrect_dead_entry(self):
         internal.unicode_intern_dead_entry()
 
+    @unittest.skipIf(Py_GIL_DISABLED, "requires the normal-build group BRC port")
+    def test_immortal_string_brc_transitions(self):
+        for queued in (False, True):
+            with self.subTest(queued=queued):
+                internal.threadgroup_immortal_brc(queued)
+
     def test_static_type_with_zero_initialized_header(self):
         capi = import_helper.import_module('_testcapi')
         typ = capi.RecursingInfinitelyError
