@@ -19,6 +19,8 @@ struct parallel_gc_counts {
     int refs;
     int created;
     int freed;
+    int freed_while_stopped;
+    int local_freed_elsewhere;
 };
 
 static void
@@ -57,6 +59,14 @@ parallel_gc_dealloc(PyObject *op)
     parallel_gc_clear(op);
     struct parallel_gc_counts *counts = ((parallel_gc_object *)op)->counts;
     if (counts != NULL) {
+        PyThreadState *tstate = _PyThreadState_GET();
+        if (tstate->interp->stoptheworld.world_stopped) {
+            _Py_atomic_add_int(&counts->freed_while_stopped, 1);
+        }
+        if (op->ob_shareable == _Py_SHAREABLE_LOCAL &&
+            op->ob_owner_id != tstate->threadgroup->id) {
+            _Py_atomic_add_int(&counts->local_freed_elsewhere, 1);
+        }
         _Py_atomic_add_int(&counts->freed, 1);
         parallel_gc_counts_release(counts);
     }
@@ -793,6 +803,123 @@ threadgroup_immortal_brc(PyObject *self, PyObject *arg)
     if (!ok) {
         return PyErr_Format(PyExc_AssertionError,
                             "BRC changed an immortal string's lifetime or owner");
+    }
+    Py_RETURN_NONE;
+}
+
+static PyObject *
+threadgroup_gc_brc_probe(PyObject *self, PyObject *args)
+{
+    PyObject *wrapper;
+    int keep_owner;
+    int retry = 0;
+    if (!PyArg_ParseTuple(args, "Op|p:threadgroup_gc_brc_probe",
+                          &wrapper, &keep_owner, &retry)) {
+        return NULL;
+    }
+    _PyThreadGroupState *group = _PyThreadGroup_GetState(wrapper);
+    if (group == NULL) {
+        return NULL;
+    }
+    PyThreadState *current = PyThreadState_Get();
+    PyThreadState *owner = PyThreadState_New(current->interp);
+    PyObject *type = parallel_gc_type();
+    struct parallel_gc_counts *counts = PyMem_RawCalloc(1, sizeof(*counts));
+    _PyObjectStackChunk *chunk = PyMem_RawCalloc(1, sizeof(*chunk));
+    if (owner == NULL || type == NULL || counts == NULL || chunk == NULL) {
+        if (owner != NULL) {
+            PyThreadState_Clear(owner);
+            PyThreadState_Delete(owner);
+        }
+        Py_XDECREF(type);
+        PyMem_RawFree(counts);
+        PyMem_RawFree(chunk);
+        _PyThreadGroup_Decref(group);
+        return PyErr_NoMemory();
+    }
+    counts->refs = 1;
+    _PyThreadGroup_Decref(owner->threadgroup);
+    _PyThreadGroup_Incref(group);
+    owner->threadgroup = group;
+    owner->threadgroup_object = Py_NewRef(wrapper);
+    PyThreadState_Swap(owner);
+    PyObject *external = NULL;
+    int ok = 1;
+    for (int i = 0; i < 4 + keep_owner; i++) {
+        PyObject *op = ((PyTypeObject *)type)->tp_alloc((PyTypeObject *)type, 0);
+        if (op == NULL) {
+            ok = 0;
+            break;
+        }
+        parallel_gc_object *obj = (parallel_gc_object *)op;
+        obj->counts = counts;
+        counts->refs++;
+        counts->created++;
+        if (i != 4) {
+            PyObject_DeclareImmutable(op);
+        }
+        if (i == 1) {
+            obj->cycle = Py_NewRef(op);
+        }
+        else if (i == 2) {
+            PyObject_GC_UnTrack(op);
+        }
+        else if (i == 3) {
+            external = Py_NewRef(op);
+        }
+        // Stage the reference stolen by a foreign decref's BRC queue.
+        // Keep the owner's local count intact until the collector merges it.
+        assert(op->ob_ref_shared == 0);
+        _Py_atomic_store_ssize_relaxed(&op->ob_ref_shared, _Py_REF_QUEUED);
+        chunk->objs[chunk->n++] = op;
+    }
+    // An entry immortalized after enqueueing must also be discarded.
+    chunk->objs[chunk->n++] = Py_NewRef(Py_None);
+    PyErr_Clear();
+    PyThreadState_Swap(current);
+    PyMutex_LockFlags(&group->brc_mutex, _Py_LOCK_DONT_DETACH);
+    chunk->prev = group->objects_to_merge.head;
+    group->objects_to_merge.head = chunk;
+    PyMutex_Unlock(&group->brc_mutex);
+    if (!keep_owner) {
+        PyThreadState_Clear(owner);
+        PyThreadState_Delete(owner);
+        owner = NULL;
+    }
+
+    PyGC_Collect();
+    if (retry) {
+        // A failed queue transfer must preserve references for the next GC.
+        PyGC_Collect();
+    }
+    int foreign_local = keep_owner && group != current->threadgroup;
+    PyMutex_LockFlags(&group->brc_mutex, _Py_LOCK_DONT_DETACH);
+    Py_ssize_t pending = _PyObjectStack_Size(&group->objects_to_merge);
+    PyMutex_Unlock(&group->brc_mutex);
+    ok &= pending == foreign_local &&
+        counts->freed == 3 + (keep_owner && !foreign_local) &&
+        external != NULL && Py_REFCNT(external) == 1 &&
+        external->ob_owner_id == group->id;
+    Py_XDECREF(external);
+    if (owner != NULL) {
+        // Foreign LOCAL references must wait for their own group's safepoint.
+        PyThreadState_Swap(owner);
+        _Py_set_eval_breaker_bit(owner, _PY_EVAL_EXPLICIT_MERGE_BIT);
+        ok &= _Py_HandlePending(owner) == 0;
+        PyErr_Clear();
+        PyThreadState_Swap(current);
+        PyThreadState_Clear(owner);
+        PyThreadState_Delete(owner);
+    }
+    PyGC_Collect();
+    ok &= counts->freed == counts->created &&
+        counts->freed_while_stopped == 0 && counts->local_freed_elsewhere == 0;
+    parallel_gc_counts_release(counts);
+    Py_DECREF(type);
+    _PyThreadGroup_Decref(group);
+    if (!ok) {
+        return PyErr_Format(PyExc_AssertionError,
+                            "GC did not drain eligible group BRC references");
     }
     Py_RETURN_NONE;
 }
@@ -3294,6 +3421,7 @@ static PyMethodDef methods[] = {
     {"threadgroup_intern", threadgroup_intern, METH_VARARGS, NULL},
     {"unicode_intern_dead_entry", unicode_intern_dead_entry, METH_NOARGS, NULL},
     {"threadgroup_immortal_brc", threadgroup_immortal_brc, METH_O, NULL},
+    {"threadgroup_gc_brc_probe", threadgroup_gc_brc_probe, METH_VARARGS, NULL},
     {"threadgroup_unicode_cache_probe", threadgroup_unicode_cache_probe,
      METH_VARARGS, NULL},
     {"threadgroup_qsbr_probe", threadgroup_qsbr_probe, METH_VARARGS, NULL},

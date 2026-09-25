@@ -104,8 +104,16 @@ use this mechanism; the later-stage public debugger API is not exposed.
 The paused collector merges BRC counts when taking its strong references to
 unreachable objects. This prevents later clearing from leaving the final
 reference on a departed owner's merge queue. Clearing and destruction still
-run after the world resumes. General collection of pre-existing BRC queues
-and owner-correct LOCAL destruction remain unfinished.
+run after the world resumes. Before the cycle snapshot, GC also merges pending
+BRC queues from every registered group, including groups without thread states.
+It releases immutable and collector-owned references after resuming the world,
+then pauses again for cycle detection. Keeping those queue references until
+resumption avoids both destructors during a pause and zero-count tracked objects
+in the generation lists. Foreign LOCAL references remain on their owner's queue;
+owner-correct LOCAL destruction still awaits the finalization design decision.
+In particular, destroying a shallow-immutable container can release foreign
+LOCAL children through the existing decref paths; draining immutable queue
+entries does not resolve that general ownership problem.
 
 QSBR registration and quiescence are active in the normal build. Retired internal
 buffers remain allocated until attached readers have passed a safepoint or
@@ -325,6 +333,17 @@ flags/events rather than foreign LOCAL Python functions or mutable results.
 The default-path parallel scheduling test remains skipped while the interpreter
 GIL is enabled. The isolated native probe additionally tests real parallelism.
 
+- Pending group BRC queues: debug, release and `--without-mimalloc` debug
+  normal builds each pass 429 tests across eight files (13, 27 and 23 skips).
+  The new native fixture fails all four cases before the collector change,
+  then verifies tracked/untracked reclamation, cycles, surviving external
+  references, immortal entries, departed thread states and LOCAL queue
+  retention. Failure injection verifies recovery on the next collection.
+  GC and ownership pass `-R 3:3` (109 tests, one skip). The debug weakref and
+  embedding files exceed the initial 120-second limit during concurrent
+  builds, then pass with a 600-second limit. All three builds retain
+  `Py_GIL_DISABLED=0`, an enabled interpreter GIL and a 24-byte object header.
+  Logs: `test-gc-brc-*`.
 - Default parallel allocator: debug and release normal builds each pass a
   650-test selection across nine files covering command-line configuration,
   embedding, memory C APIs, groups, ownership, sys, GC, weakrefs and tracemalloc

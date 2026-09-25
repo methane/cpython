@@ -11,8 +11,8 @@ import threading
 import unittest
 
 from test.support import (
-    Py_GIL_DISABLED, import_helper, requires_specialization, script_helper,
-    threading_helper,
+    Py_GIL_DISABLED, import_helper, nomemtest, requires_specialization,
+    script_helper, threading_helper,
 )
 
 internal = import_helper.import_module('_testinternalcapi')
@@ -186,6 +186,56 @@ assert 'threading' not in sys.modules
         for queued in (False, True):
             with self.subTest(queued=queued):
                 internal.threadgroup_immortal_brc(queued)
+
+    @unittest.skipIf(Py_GIL_DISABLED, "requires the normal-build group BRC port")
+    def test_gc_drains_group_brc_queues(self):
+        for keep_owner in (False, True):
+            for foreign in (False, True):
+                with self.subTest(keep_owner=keep_owner, foreign=foreign):
+                    script_helper.assert_python_ok('-c', textwrap.dedent(f'''
+                        import _testinternalcapi as internal
+                        import sys
+                        import threading
+
+                        group = (threading.ThreadGroup('GC queue owner')
+                                 if {foreign} else sys.main_thread_group)
+                        internal.threadgroup_gc_brc_probe(group, {keep_owner})
+                    '''))
+
+    @nomemtest
+    @unittest.skipIf(Py_GIL_DISABLED, "requires the normal-build group BRC port")
+    def test_gc_brc_queue_memory_error(self):
+        import_helper.import_module('_testcapi')
+        script_helper.assert_python_ok('-c', textwrap.dedent('''
+            import _testcapi
+            import _testinternalcapi as internal
+            import gc
+            import sys
+            import threading
+
+            errors = []
+            fail = True
+            def callback(phase, info):
+                global fail
+                if phase == 'start' and fail:
+                    fail = False
+                    _testcapi.set_nomemory(0, 1)
+
+            group = threading.ThreadGroup('GC queue allocation failure')
+            gc.collect()  # Empty the collector's object-stack freelist.
+            gc.set_threshold(1000000)
+            gc.callbacks.append(callback)
+            hook = sys.unraisablehook
+            sys.unraisablehook = lambda info: errors.append(info.exc_type)
+            try:
+                internal.threadgroup_gc_brc_probe(group, True, True)
+            finally:
+                _testcapi.remove_mem_hooks()
+                gc.callbacks.remove(callback)
+                sys.unraisablehook = hook
+            assert errors == [MemoryError], errors
+            assert not internal.threadgroup_world_is_stopped()
+        '''))
 
     def test_static_type_with_zero_initialized_header(self):
         capi = import_helper.import_module('_testcapi')

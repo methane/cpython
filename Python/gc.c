@@ -3,6 +3,7 @@
 //  See InternalDocs/garbage_collector.md for more infromation.
 
 #include "Python.h"
+#include "pycore_brc.h"           // _Py_brc_merge_for_gc()
 #include "pycore_ceval.h"         // _Py_set_eval_breaker_bit()
 #include "pycore_genobject.h"
 #include "pycore_frame.h"
@@ -1784,6 +1785,25 @@ gc_collect_main(PyThreadState *tstate, int generation, _PyGC_Reason reason)
     // Reference counts, uncounted stack roots and heap edges must describe
     // one paused state. User callbacks run only after restarting the world.
     _PyEval_StopTheWorld(tstate->interp);
+
+    // Groups with no running threads can still have pending queue references.
+    // Merge while every local updater is paused, then drop the transferred
+    // references before taking the cycle snapshot. Deallocators may call
+    // Python, so they must run with the world resumed and GC lists intact.
+    _PyObjectStack queued_refs = {0};
+    int queue_error = _Py_brc_merge_for_gc(tstate, &queued_refs);
+    if (queued_refs.head != NULL || queue_error) {
+        _PyEval_StartTheWorld(tstate->interp);
+        PyObject *op;
+        while ((op = _PyObjectStack_Pop(&queued_refs)) != NULL) {
+            Py_DECREF(op);
+        }
+        if (queue_error) {
+            PyErr_NoMemory();
+            goto finish_collection;
+        }
+        _PyEval_StopTheWorld(tstate->interp);
+    }
 
     // The normal build delays freeing shared internal storage, not object
     // decrefs. Reclaim retired storage after every reader has stopped.

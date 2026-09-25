@@ -83,3 +83,55 @@ _Py_brc_merge_refcounts(PyThreadState *tstate)
         merge_object(op);
     }
 }
+
+int
+_Py_brc_merge_for_gc(PyThreadState *tstate, _PyObjectStack *to_decref)
+{
+    PyInterpreterState *interp = tstate->interp;
+    assert(interp->stoptheworld.world_stopped);
+    int err = 0;
+    PyMutex_LockFlags(&interp->threadgroups_mutex, 0);
+    for (_PyThreadGroupState *group = interp->threadgroups;
+         group != NULL && !err; group = group->next) {
+        PyMutex_LockFlags(&group->brc_mutex, 0);
+        _PyObjectStackChunk **link = &group->objects_to_merge.head;
+        while (*link != NULL && !err) {
+            _PyObjectStackChunk *chunk = *link;
+            Py_ssize_t retained = 0;
+            for (Py_ssize_t i = 0; i < chunk->n; i++) {
+                PyObject *op = chunk->objs[i];
+                if (err) {
+                    chunk->objs[retained++] = op;
+                    continue;
+                }
+                if (_Py_IsImmortal(op)) {
+                    // Immortalization already discarded the queue reference.
+                    continue;
+                }
+                // Keep the queue reference until the world resumes. This
+                // avoids zero-count tracked objects and deallocators here.
+                _Py_ExplicitMergeRefcount(op, 0);
+                if (op->ob_owner_id != tstate->threadgroup->id &&
+                    _Py_atomic_load_uint8_relaxed(&op->ob_shareable) !=
+                        _Py_SHAREABLE_IMMUTABLE) {
+                    chunk->objs[retained++] = op;
+                }
+                else if (_PyObjectStack_Push(to_decref, op) < 0) {
+                    chunk->objs[retained++] = op;
+                    err = -1;
+                }
+            }
+            chunk->n = retained;
+            if (retained == 0) {
+                *link = chunk->prev;
+                _PyObjectStackChunk_Free(chunk);
+            }
+            else {
+                link = &chunk->prev;
+            }
+        }
+        PyMutex_Unlock(&group->brc_mutex);
+    }
+    PyMutex_Unlock(&interp->threadgroups_mutex);
+    return err;
+}

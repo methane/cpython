@@ -71,6 +71,11 @@ void _Py_brc_after_fork(PyInterpreterState *interp);
 void _Py_brc_queue_object(PyObject *ob);
 void _Py_brc_merge_refcounts(PyThreadState *tstate);
 
+// While the interpreter is paused, merge queued counts and transfer references
+// that the collector can release after resuming. Foreign LOCAL references stay
+// on their owner's queue until the finalization execution policy is resolved.
+int _Py_brc_merge_for_gc(PyThreadState *tstate, _PyObjectStack *to_decref);
+
 #ifdef __cplusplus
 }
 #endif
