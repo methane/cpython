@@ -3,6 +3,7 @@
 #include "parts.h"
 #include "pycore_ceval.h"
 #include "pycore_code.h"
+#include "pycore_dict.h"
 #include "pycore_freelist.h"
 #include "pycore_function.h"
 #include "pycore_lock.h"
@@ -113,9 +114,95 @@ struct group_probe {
     struct parallel_gc_counts *counts;
     struct parallel_intern_probe *intern;
     uint32_t *versions;
+    int version_count;
+    PyObject *code;
+    char error[256];
 };
 
 #define PARALLEL_CODE_COUNT 16384
+
+static PyObject *
+parallel_vm_collect(PyObject *self, PyObject *unused)
+{
+    return PyLong_FromSsize_t(PyGC_Collect());
+}
+
+static PyMethodDef parallel_vm_collect_def = {
+    "gc_collect", parallel_vm_collect, METH_NOARGS, NULL,
+};
+
+static PyObject *
+parallel_vm_record_keys(PyObject *self, PyObject *mapping)
+{
+    struct group_probe *probe = PyCapsule_GetPointer(self, "parallel VM probe");
+    if (probe == NULL) {
+        return NULL;
+    }
+    if (!PyDict_CheckExact(mapping) || probe->version_count == PARALLEL_CODE_COUNT) {
+        return PyErr_Format(PyExc_ValueError, "invalid dictionary version probe");
+    }
+    uint32_t version = _PyDictKeys_GetVersionForCurrentState(
+        _PyInterpreterState_GET(), ((PyDictObject *)mapping)->ma_keys);
+    probe->versions[probe->version_count++] = version;
+    return PyLong_FromUnsignedLong(version);
+}
+
+static PyMethodDef parallel_vm_record_keys_def = {
+    "record_keys_version", parallel_vm_record_keys, METH_O, NULL,
+};
+
+static int
+parallel_vm_worker(struct group_probe *probe)
+{
+    PyObject *globals = PyDict_New();
+    PyObject *builtins = PyDict_New();
+    PyObject *collect = PyCFunction_NewEx(&parallel_vm_collect_def, NULL, NULL);
+    PyObject *context = PyCapsule_New(probe, "parallel VM probe", NULL);
+    PyObject *record = context == NULL ? NULL :
+        PyCFunction_NewEx(&parallel_vm_record_keys_def, context, NULL);
+    PyObject *func = NULL;
+    PyObject *result = NULL;
+    struct {
+        const char *name;
+        PyTypeObject *type;
+    } types[] = {
+        {"int", &PyLong_Type}, {"float", &PyFloat_Type},
+        {"str", &PyUnicode_Type}, {"list", &PyList_Type},
+        {"tuple", &PyTuple_Type}, {"dict", &PyDict_Type},
+        {"set", &PySet_Type}, {"frozenset", &PyFrozenSet_Type},
+        {"range", &PyRange_Type}, {"type", &PyType_Type},
+        {"object", &PyBaseObject_Type},
+    };
+    if (globals == NULL || builtins == NULL || collect == NULL || record == NULL ||
+        PyDict_SetItemString(globals, "__builtins__", builtins) < 0 ||
+        PyDict_SetItemString(builtins, "gc_collect", collect) < 0 ||
+        PyDict_SetItemString(builtins, "record_keys_version", record) < 0 ||
+        PyDict_SetItemString(builtins, "AssertionError", PyExc_AssertionError) < 0) {
+        goto done;
+    }
+    for (size_t i = 0; i < Py_ARRAY_LENGTH(types); i++) {
+        if (PyDict_SetItemString(builtins, types[i].name,
+                                 (PyObject *)types[i].type) < 0) {
+            goto done;
+        }
+    }
+    // Only code is shared. Each worker creates its own function, namespace,
+    // builtins dictionary and native callable in its current ThreadGroup.
+    func = PyFunction_New(probe->code, globals);
+    if (func != NULL) {
+        result = PyObject_CallNoArgs(func);
+    }
+done:
+    int ok = result == Py_True;
+    Py_XDECREF(result);
+    Py_XDECREF(func);
+    Py_XDECREF(collect);
+    Py_XDECREF(record);
+    Py_XDECREF(context);
+    Py_XDECREF(builtins);
+    Py_XDECREF(globals);
+    return ok;
+}
 
 static int
 parallel_code_worker(struct group_probe *probe, PyThreadState *tstate)
@@ -137,6 +224,7 @@ parallel_code_worker(struct group_probe *probe, PyThreadState *tstate)
             break;
         }
         probe->versions[i] = code->co_version;
+        probe->version_count++;
         PyObject *func = PyFunction_New((PyObject *)code, globals);
         if (func == NULL) {
             Py_DECREF(code);
@@ -164,7 +252,7 @@ parallel_code_worker(struct group_probe *probe, PyThreadState *tstate)
 }
 
 static int
-compare_code_versions(const void *a, const void *b)
+compare_versions(const void *a, const void *b)
 {
     uint32_t first = *(const uint32_t *)a;
     uint32_t second = *(const uint32_t *)b;
@@ -355,6 +443,19 @@ group_probe_worker(void *arg)
         probe->ok = parallel_code_worker(probe, tstate);
     }
 
+    if (probe->ok && probe->mode == 6) {
+        probe->ok = parallel_vm_worker(probe);
+        PyObject *exc = PyErr_GetRaisedException();
+        if (exc != NULL) {
+            PyObject *message = PyObject_Str(exc);
+            const char *text = message == NULL ? NULL : PyUnicode_AsUTF8(message);
+            PyOS_snprintf(probe->error, sizeof(probe->error), "%s: %s",
+                          Py_TYPE(exc)->tp_name, text == NULL ? "" : text);
+            Py_XDECREF(message);
+            Py_DECREF(exc);
+        }
+    }
+
     if (probe->ok && probe->mode == 3) {
         for (int i = 0; i < 2000; i++) {
             Py_ssize_t size = 64 + i % 1024;
@@ -408,12 +509,15 @@ threadgroup_probe(PyObject *self, PyObject *args)
     int mode;
     double seconds;
     int parallel = 0;
-    if (!PyArg_ParseTuple(args, "O!id|p:threadgroup_probe", &PyTuple_Type,
-                          &groups, &mode, &seconds, &parallel)) {
+    PyObject *code = NULL;
+    if (!PyArg_ParseTuple(args, "O!id|pO!:threadgroup_probe", &PyTuple_Type,
+                          &groups, &mode, &seconds, &parallel, &PyCode_Type, &code)) {
         return NULL;
     }
-    if (PyTuple_GET_SIZE(groups) != 2 || mode < 0 || mode > 5 ||
-        !(seconds > 0.0 && seconds <= 300.0)) {
+    if (PyTuple_GET_SIZE(groups) != 2 || mode < 0 || mode > 6 ||
+        !(seconds > 0.0 && seconds <= 300.0) ||
+        ((mode == 6) != (code != NULL)) ||
+        (code != NULL && ((PyCodeObject *)code)->co_nfreevars != 0)) {
         PyErr_SetString(PyExc_ValueError, "invalid group probe arguments");
         return NULL;
     }
@@ -467,7 +571,7 @@ threadgroup_probe(PyObject *self, PyObject *args)
             return NULL;
         }
     }
-    if (mode == 5) {
+    if (mode == 5 || mode == 6) {
         versions = PyMem_RawCalloc(2 * PARALLEL_CODE_COUNT, sizeof(*versions));
         if (versions == NULL) {
             return PyErr_NoMemory();
@@ -501,6 +605,7 @@ threadgroup_probe(PyObject *self, PyObject *args)
             .counts = counts,
             .intern = &intern,
             .versions = versions == NULL ? NULL : versions + i * PARALLEL_CODE_COUNT,
+            .code = code,
         };
     }
     if (parallel) {
@@ -550,6 +655,15 @@ done:
     if (start_failed) {
         PyErr_SetString(PyExc_RuntimeError, "failed to start group probe");
     }
+    if (mode == 6 && started == 2 && !PyErr_Occurred()) {
+        for (int i = 0; i < 2; i++) {
+            if (!probes[i].ok) {
+                PyErr_Format(PyExc_AssertionError,
+                             "parallel VM worker %d failed: %s", i, probes[i].error);
+                break;
+            }
+        }
+    }
     if (mode == 4 && !PyErr_Occurred()) {
         // Worker teardown queues references to the caller-owned wrappers.
         // Drain them at a safepoint before checking the reference total.
@@ -571,12 +685,16 @@ done:
         Py_XDECREF(intern.value);
     }
     if (versions != NULL && probes[0].ok && probes[1].ok && !PyErr_Occurred()) {
-        qsort(versions, 2 * PARALLEL_CODE_COUNT, sizeof(*versions),
-              compare_code_versions);
-        for (int i = 1; i < 2 * PARALLEL_CODE_COUNT; i++) {
+        int count = probes[0].version_count + probes[1].version_count;
+        memmove(versions + probes[0].version_count,
+                versions + PARALLEL_CODE_COUNT,
+                probes[1].version_count * sizeof(*versions));
+        qsort(versions, count, sizeof(*versions), compare_versions);
+        for (int i = 1; i < count; i++) {
             if (versions[i] == versions[i - 1]) {
                 PyErr_Format(PyExc_AssertionError,
-                             "parallel code creation reused version %u", versions[i]);
+                             "parallel %s creation reused version %u",
+                             mode == 5 ? "code" : "dictionary", versions[i]);
                 break;
             }
         }

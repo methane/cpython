@@ -192,7 +192,7 @@ convert_global_to_const(_PyUOpInstruction *inst, PyObject *obj)
         return NULL;
     }
     PyDictKeysObject *keys = dict->ma_keys;
-    if (keys->dk_version != inst->operand0) {
+    if (_Py_atomic_load_uint32_relaxed(&keys->dk_version) != inst->operand0) {
         return NULL;
     }
     PyObject *res = entries[index].me_value;
@@ -215,7 +215,7 @@ incorrect_keys(PyObject *obj, uint32_t version)
         return true;
     }
     PyDictObject *dict = (PyDictObject *)obj;
-    return dict->ma_keys->dk_version != version;
+    return _Py_atomic_load_uint32_relaxed(&dict->ma_keys->dk_version) != version;
 }
 
 

@@ -554,7 +554,7 @@ dictkeys_set_index(PyDictKeysObject *keys, Py_ssize_t i, Py_ssize_t ix)
     int log2size = DK_LOG_SIZE(keys);
 
     assert(ix >= DKIX_DUMMY);
-    assert(keys->dk_version == 0);
+    assert(_Py_atomic_load_uint32_relaxed(&keys->dk_version) == 0);
 
     if (log2size < 8) {
         assert(ix <= 0x7f);
@@ -1922,7 +1922,7 @@ insert_combined_dict(PyDictObject *mp,
     }
 
     _PyDict_NotifyEvent(PyDict_EVENT_ADDED, mp, key, value);
-    FT_ATOMIC_STORE_UINT32_RELAXED(mp->ma_keys->dk_version, 0);
+    _Py_atomic_store_uint32_relaxed(&mp->ma_keys->dk_version, 0);
 
     Py_ssize_t hashpos = find_empty_slot(mp->ma_keys, hash);
     dictkeys_set_index(mp->ma_keys, hashpos, mp->ma_keys->dk_nentries);
@@ -1972,7 +1972,7 @@ insert_split_key(PyDictKeysObject *keys, PyObject *key, Py_hash_t hash)
     ix = unicodekeys_lookup_unicode(keys, key, hash);
     if (ix == DKIX_EMPTY && keys->dk_usable > 0) {
         // Insert into new slot
-        FT_ATOMIC_STORE_UINT32_RELAXED(keys->dk_version, 0);
+        _Py_atomic_store_uint32_relaxed(&keys->dk_version, 0);
         struct _instancekeysobject *shared_keys = _PyDictKeys_AsSharedKeys(keys);
         PyTypeObject *type = FT_ATOMIC_LOAD_PTR_ACQUIRE(shared_keys->dsk_owning_type);
         if (type) {
@@ -2986,7 +2986,7 @@ delitem_common(PyDictObject *mp, Py_hash_t hash, Py_ssize_t ix,
         ASSERT_CONSISTENT(mp);
     }
     else {
-        FT_ATOMIC_STORE_UINT32_RELAXED(mp->ma_keys->dk_version, 0);
+        _Py_atomic_store_uint32_relaxed(&mp->ma_keys->dk_version, 0);
         dictkeys_set_index(mp->ma_keys, hashpos, DKIX_DUMMY);
         if (DK_IS_UNICODE(mp->ma_keys)) {
             PyDictUnicodeEntry *ep = &DK_UNICODE_ENTRIES(mp->ma_keys)[ix];
@@ -5071,7 +5071,7 @@ dict_popitem_impl(PyDictObject *self)
             return NULL;
         }
     }
-    FT_ATOMIC_STORE_UINT32_RELAXED(self->ma_keys->dk_version, 0);
+    _Py_atomic_store_uint32_relaxed(&self->ma_keys->dk_version, 0);
 
     /* Pop last item */
     PyObject *key, *value;
@@ -5187,7 +5187,7 @@ _PyDict_ClearKeysVersionLockHeld(PyObject *op)
     PyDictObject *mp = _PyAnyDict_CAST(op);
     assert(can_modify_dict(mp));
 
-    FT_ATOMIC_STORE_UINT32_RELAXED(mp->ma_keys->dk_version, 0);
+    _Py_atomic_store_uint32_relaxed(&mp->ma_keys->dk_version, 0);
 }
 
 Py_ssize_t
@@ -8203,7 +8203,8 @@ _PyDictKeys_DecRef(PyDictKeysObject *keys)
 static inline uint32_t
 get_next_dict_keys_version(PyInterpreterState *interp)
 {
-#ifdef Py_GIL_DISABLED
+    // Namespace and attribute caches use interpreter-wide version numbers,
+    // even when their dictionaries belong to different ThreadGroups.
     uint32_t v;
     do {
         v = _Py_atomic_load_uint32_relaxed(
@@ -8213,28 +8214,26 @@ get_next_dict_keys_version(PyInterpreterState *interp)
         }
     } while (!_Py_atomic_compare_exchange_uint32(
         &interp->dict_state.next_keys_version, &v, v + 1));
-#else
-    if (interp->dict_state.next_keys_version == 0) {
-        return 0;
-    }
-    uint32_t v = interp->dict_state.next_keys_version++;
-#endif
     return v;
 }
 
-// In free-threaded builds the caller must ensure that the keys object is not
-// being mutated concurrently by another thread.
+// The caller must prevent concurrent key mutation. Readers of shared immutable
+// keys can still race to initialize the version, so publish only the first one.
 uint32_t
 _PyDictKeys_GetVersionForCurrentState(PyInterpreterState *interp,
                                       PyDictKeysObject *dictkeys)
 {
-    uint32_t dk_version = FT_ATOMIC_LOAD_UINT32_RELAXED(dictkeys->dk_version);
+    uint32_t dk_version = _Py_atomic_load_uint32_relaxed(&dictkeys->dk_version);
     if (dk_version != 0) {
         return dk_version;
     }
     dk_version = get_next_dict_keys_version(interp);
-    FT_ATOMIC_STORE_UINT32_RELAXED(dictkeys->dk_version, dk_version);
-    return dk_version;
+    uint32_t expected = 0;
+    if (_Py_atomic_compare_exchange_uint32(&dictkeys->dk_version,
+                                           &expected, dk_version)) {
+        return dk_version;
+    }
+    return expected;
 }
 
 uint32_t

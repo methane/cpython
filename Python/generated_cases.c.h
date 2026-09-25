@@ -9339,7 +9339,7 @@
                 PyDictObject *dict = (PyDictObject *)((PyModuleObject *)owner_o)->md_dict;
                 assert(dict != NULL);
                 PyDictKeysObject *keys = FT_ATOMIC_LOAD_PTR_ACQUIRE(dict->ma_keys);
-                if (FT_ATOMIC_LOAD_UINT32_RELAXED(keys->dk_version) != dict_version) {
+                if (_Py_atomic_load_uint32_relaxed(&keys->dk_version) != dict_version) {
                     UPDATE_MISS_STATS(LOAD_ATTR);
                     assert(_PyOpcode_Deopt[opcode] == (LOAD_ATTR));
                     JUMP_TO_PREDICTED(LOAD_ATTR);
@@ -10342,7 +10342,7 @@
                     JUMP_TO_PREDICTED(LOAD_GLOBAL);
                 }
                 PyDictKeysObject *keys = FT_ATOMIC_LOAD_PTR_ACQUIRE(dict->ma_keys);
-                if (FT_ATOMIC_LOAD_UINT32_RELAXED(keys->dk_version) != version) {
+                if (_Py_atomic_load_uint32_relaxed(&keys->dk_version) != version) {
                     UPDATE_MISS_STATS(LOAD_GLOBAL);
                     assert(_PyOpcode_Deopt[opcode] == (LOAD_GLOBAL));
                     JUMP_TO_PREDICTED(LOAD_GLOBAL);
@@ -10360,7 +10360,7 @@
                     JUMP_TO_PREDICTED(LOAD_GLOBAL);
                 }
                 PyDictKeysObject *keys = FT_ATOMIC_LOAD_PTR_ACQUIRE(dict->ma_keys);
-                if (FT_ATOMIC_LOAD_UINT32_RELAXED(keys->dk_version) != version) {
+                if (_Py_atomic_load_uint32_relaxed(&keys->dk_version) != version) {
                     UPDATE_MISS_STATS(LOAD_GLOBAL);
                     assert(_PyOpcode_Deopt[opcode] == (LOAD_GLOBAL));
                     JUMP_TO_PREDICTED(LOAD_GLOBAL);
@@ -10441,7 +10441,7 @@
                     JUMP_TO_PREDICTED(LOAD_GLOBAL);
                 }
                 PyDictKeysObject *keys = FT_ATOMIC_LOAD_PTR_ACQUIRE(dict->ma_keys);
-                if (FT_ATOMIC_LOAD_UINT32_RELAXED(keys->dk_version) != version) {
+                if (_Py_atomic_load_uint32_relaxed(&keys->dk_version) != version) {
                     UPDATE_MISS_STATS(LOAD_GLOBAL);
                     assert(_PyOpcode_Deopt[opcode] == (LOAD_GLOBAL));
                     JUMP_TO_PREDICTED(LOAD_GLOBAL);

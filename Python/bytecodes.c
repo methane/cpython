@@ -2333,7 +2333,7 @@ dummy_func(
             PyDictObject *dict = (PyDictObject *)GLOBALS();
             DEOPT_IF(!PyDict_CheckExact(dict));
             PyDictKeysObject *keys = FT_ATOMIC_LOAD_PTR_ACQUIRE(dict->ma_keys);
-            DEOPT_IF(FT_ATOMIC_LOAD_UINT32_RELAXED(keys->dk_version) != version);
+            DEOPT_IF(_Py_atomic_load_uint32_relaxed(&keys->dk_version) != version);
             assert(keys->dk_kind == DICT_KEYS_UNICODE);
         }
 
@@ -2342,7 +2342,7 @@ dummy_func(
             PyDictObject *dict = (PyDictObject *)GLOBALS();
             DEOPT_IF(!PyDict_CheckExact(dict));
             PyDictKeysObject *keys = FT_ATOMIC_LOAD_PTR_ACQUIRE(dict->ma_keys);
-            DEOPT_IF(FT_ATOMIC_LOAD_UINT32_RELAXED(keys->dk_version) != version);
+            DEOPT_IF(_Py_atomic_load_uint32_relaxed(&keys->dk_version) != version);
             assert(keys->dk_kind == DICT_KEYS_UNICODE);
             PyDictUnicodeEntry *entries = DK_UNICODE_ENTRIES(keys);
             assert(index < DK_SIZE(keys));
@@ -2362,7 +2362,7 @@ dummy_func(
             PyDictObject *dict = (PyDictObject *)BUILTINS();
             DEOPT_IF(!PyDict_CheckExact(dict));
             PyDictKeysObject *keys = FT_ATOMIC_LOAD_PTR_ACQUIRE(dict->ma_keys);
-            DEOPT_IF(FT_ATOMIC_LOAD_UINT32_RELAXED(keys->dk_version) != version);
+            DEOPT_IF(_Py_atomic_load_uint32_relaxed(&keys->dk_version) != version);
             assert(keys->dk_kind == DICT_KEYS_UNICODE);
             PyDictUnicodeEntry *entries = DK_UNICODE_ENTRIES(keys);
             PyObject *res_o = FT_ATOMIC_LOAD_PTR_CONSUME(entries[index].me_value);
@@ -2958,7 +2958,7 @@ dummy_func(
             PyDictObject *dict = (PyDictObject *)((PyModuleObject *)owner_o)->md_dict;
             assert(dict != NULL);
             PyDictKeysObject *keys = FT_ATOMIC_LOAD_PTR_ACQUIRE(dict->ma_keys);
-            EXIT_IF(FT_ATOMIC_LOAD_UINT32_RELAXED(keys->dk_version) != dict_version);
+            EXIT_IF(_Py_atomic_load_uint32_relaxed(&keys->dk_version) != dict_version);
             assert(keys->dk_kind == DICT_KEYS_UNICODE);
             assert(index < FT_ATOMIC_LOAD_SSIZE_RELAXED(keys->dk_nentries));
             PyDictUnicodeEntry *ep = DK_UNICODE_ENTRIES(keys) + index;

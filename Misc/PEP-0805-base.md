@@ -162,6 +162,17 @@ workers create and retire 32,768 code/function pairs across two groups, invalida
 function versions and run GC, then check that every code version was unique.
 This does not change the LOCAL state of Python functions or permit sharing them.
 
+Dictionary key-version allocation uses the interpreter-wide atomic counter in
+normal builds too. Concurrent readers publish a key table's first version with
+compare/exchange; cache guards and invalidation use atomic accesses. This avoids
+assigning the same version to unrelated dictionaries in different groups.
+The isolated native VM probe shares only immutable code and creates each
+worker's function, globals, builtins and native callables in its own group.
+It exercises namespace and attribute caches, class/method changes, containers,
+generators, exceptions and GC while recording 32,000 distinct dictionary-key
+versions. It neither introduces synchronized functions nor settles the pending
+execution context for LOCAL finalizers.
+
 Immutable strings publish their lazy UTF-8 cache with an atomic compare/exchange.
 Competing encoders preserve the first buffer, whose address may already be held
 by a C caller, and free the redundant allocation. The cache length is published
@@ -341,6 +352,15 @@ flags/events rather than foreign LOCAL Python functions or mutable results.
 The default-path parallel scheduling test remains skipped while the interpreter
 GIL is enabled. The isolated native probe additionally tests real parallelism.
 
+- Parallel LOCAL VM execution and dictionary versions: debug, release and
+  `--without-mimalloc` debug normal builds each pass 764 tests across thirteen
+  files (7, 10 and 8 skips), covering dictionaries and their C APIs, VM caches,
+  types, groups, ownership, GC, code, generated cases, generators and exceptions.
+  Before the fix, the native VM regression detects two dictionary key tables
+  assigned version 2045. The same regression passes after the atomic port,
+  alongside the existing code-version probe. All three builds retain
+  `Py_GIL_DISABLED=0`, an enabled default interpreter GIL and a 24-byte header.
+  Logs: `test-parallel-vm-*`.
 - Code/function version state: debug, release and `--without-mimalloc` debug
   normal builds each pass 423 tests across eleven files (10, 15 and 11 skips),
   covering code, functions, watchers, type caches, groups, ownership, GC,

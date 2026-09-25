@@ -409,6 +409,65 @@ assert internal.threadgroup_probe(
     groups, 5, support.SHORT_TIMEOUT, True) == (True, True)
 ''', PYTHONMALLOC='debug')
 
+    def test_parallel_local_functions(self):
+        script_helper.assert_python_ok('-c', '''
+import faulthandler
+import threading
+from test import support
+import _testinternalcapi as internal
+
+faulthandler.dump_traceback_later(support.LONG_TIMEOUT, exit=True)
+
+def exercise():
+    def add(a, b):
+        return a + b
+
+    def read(self):
+        return self.value
+
+    def generate(start):
+        for offset in range(8):
+            yield start + offset
+
+    box_type = type('Box', (), {'read': read})
+    box = box_type()
+    for iteration in range(16000):
+        assert record_keys_version({'key': iteration}) > 1
+        if iteration % 64 != 0:
+            continue
+        box.value = iteration
+        assert box.read() == iteration
+        box_type.alias = read
+        assert box.alias() == iteration
+        del box_type.alias
+        total = 0
+        for value in generate(iteration):
+            total += value
+        assert total == iteration * 8 + 28
+        try:
+            raise AssertionError(iteration)
+        except AssertionError as error:
+            assert error.args == (iteration,)
+        values = [add(iteration, i) for i in range(24)]
+        mapping = {str(i): values[i] for i in range(24)}
+        copied = dict(mapping)
+        assert copied == mapping
+        copied['0'] += 1
+        assert copied['0'] == values[0] + 1
+        assert set(values) == set(mapping.values())
+        values.sort(reverse=True)
+        assert values[0] == iteration + 23
+        assert tuple(values)[-1] == iteration
+        text = str(iteration)
+        assert text.encode().decode() == text
+        gc_collect()
+    return True
+
+groups = (threading.ThreadGroup('first'), threading.ThreadGroup('second'))
+assert internal.threadgroup_probe(
+    groups, 6, support.SHORT_TIMEOUT, True, exercise.__code__) == (True, True)
+''', PYTHONMALLOC='debug')
+
     def test_wait_releases_group(self):
         internal = import_helper.import_module('_testinternalcapi')
         group = threading.ThreadGroup()

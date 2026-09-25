@@ -10221,7 +10221,7 @@
                 JUMP_TO_JUMP_TARGET();
             }
             PyDictKeysObject *keys = FT_ATOMIC_LOAD_PTR_ACQUIRE(dict->ma_keys);
-            if (FT_ATOMIC_LOAD_UINT32_RELAXED(keys->dk_version) != version) {
+            if (_Py_atomic_load_uint32_relaxed(&keys->dk_version) != version) {
                 UOP_STAT_INC(uopcode, miss);
                 SET_CURRENT_CACHED_VALUES(0);
                 JUMP_TO_JUMP_TARGET();
@@ -10245,7 +10245,7 @@
                 JUMP_TO_JUMP_TARGET();
             }
             PyDictKeysObject *keys = FT_ATOMIC_LOAD_PTR_ACQUIRE(dict->ma_keys);
-            if (FT_ATOMIC_LOAD_UINT32_RELAXED(keys->dk_version) != version) {
+            if (_Py_atomic_load_uint32_relaxed(&keys->dk_version) != version) {
                 UOP_STAT_INC(uopcode, miss);
                 _tos_cache0 = _stack_item_0;
                 SET_CURRENT_CACHED_VALUES(1);
@@ -10273,7 +10273,7 @@
                 JUMP_TO_JUMP_TARGET();
             }
             PyDictKeysObject *keys = FT_ATOMIC_LOAD_PTR_ACQUIRE(dict->ma_keys);
-            if (FT_ATOMIC_LOAD_UINT32_RELAXED(keys->dk_version) != version) {
+            if (_Py_atomic_load_uint32_relaxed(&keys->dk_version) != version) {
                 UOP_STAT_INC(uopcode, miss);
                 _tos_cache1 = _stack_item_1;
                 _tos_cache0 = _stack_item_0;
@@ -10305,7 +10305,7 @@
                 JUMP_TO_JUMP_TARGET();
             }
             PyDictKeysObject *keys = FT_ATOMIC_LOAD_PTR_ACQUIRE(dict->ma_keys);
-            if (FT_ATOMIC_LOAD_UINT32_RELAXED(keys->dk_version) != version) {
+            if (_Py_atomic_load_uint32_relaxed(&keys->dk_version) != version) {
                 UOP_STAT_INC(uopcode, miss);
                 _tos_cache2 = _stack_item_2;
                 _tos_cache1 = _stack_item_1;
@@ -10335,7 +10335,7 @@
                 JUMP_TO_JUMP_TARGET();
             }
             PyDictKeysObject *keys = FT_ATOMIC_LOAD_PTR_ACQUIRE(dict->ma_keys);
-            if (FT_ATOMIC_LOAD_UINT32_RELAXED(keys->dk_version) != version) {
+            if (_Py_atomic_load_uint32_relaxed(&keys->dk_version) != version) {
                 UOP_STAT_INC(uopcode, miss);
                 SET_CURRENT_CACHED_VALUES(0);
                 JUMP_TO_JUMP_TARGET();
@@ -10381,7 +10381,7 @@
                 JUMP_TO_JUMP_TARGET();
             }
             PyDictKeysObject *keys = FT_ATOMIC_LOAD_PTR_ACQUIRE(dict->ma_keys);
-            if (FT_ATOMIC_LOAD_UINT32_RELAXED(keys->dk_version) != version) {
+            if (_Py_atomic_load_uint32_relaxed(&keys->dk_version) != version) {
                 UOP_STAT_INC(uopcode, miss);
                 SET_CURRENT_CACHED_VALUES(0);
                 JUMP_TO_JUMP_TARGET();
@@ -12210,7 +12210,7 @@
             PyDictObject *dict = (PyDictObject *)((PyModuleObject *)owner_o)->md_dict;
             assert(dict != NULL);
             PyDictKeysObject *keys = FT_ATOMIC_LOAD_PTR_ACQUIRE(dict->ma_keys);
-            if (FT_ATOMIC_LOAD_UINT32_RELAXED(keys->dk_version) != dict_version) {
+            if (_Py_atomic_load_uint32_relaxed(&keys->dk_version) != dict_version) {
                 UOP_STAT_INC(uopcode, miss);
                 _tos_cache0 = owner;
                 SET_CURRENT_CACHED_VALUES(1);
