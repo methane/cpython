@@ -117,8 +117,6 @@ extern void _Py_AddRefTotal(PyThreadState *, Py_ssize_t);
 extern PyAPI_FUNC(void) _Py_IncRefTotal(PyThreadState *);
 extern PyAPI_FUNC(void) _Py_DecRefTotal(PyThreadState *);
 
-#  define _Py_DEC_REFTOTAL(interp) \
-    interp->object_state.reftotal--
 #endif
 
 // Exported for internal inline helpers used by test extensions.
@@ -212,11 +210,6 @@ _Py_REF_IS_MERGED(Py_ssize_t ob_ref_shared)
 
 // Merge the local and shared reference count fields and add `extra` to the
 // refcount when merging.
-
-#ifdef Py_REF_DEBUG
-#  undef _Py_DEC_REFTOTAL
-#endif
-
 
 extern int _PyType_CheckConsistency(PyTypeObject *type);
 extern int _PyDict_CheckConsistency(PyObject *mp, int check_content);

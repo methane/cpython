@@ -1961,7 +1961,7 @@ tstate_delete_common(PyThreadState *tstate, int release_gil)
         }
     }
 
-#if defined(Py_REF_DEBUG) && defined(Py_GIL_DISABLED)
+#ifdef Py_REF_DEBUG
     // Add our portion of the total refcount to the interpreter's total.
     _PyThreadStateImpl *tstate_impl = (_PyThreadStateImpl *)tstate;
     tstate->interp->object_state.reftotal += tstate_impl->reftotal;
@@ -2078,6 +2078,15 @@ _PyThreadState_RemoveExcept(PyThreadState *tstate)
     }
     tstate->prev = tstate->next = NULL;
     interp->threads.head = tstate;
+#ifdef Py_REF_DEBUG
+    // These states bypass tstate_delete_common(). Preserve their totals while
+    // unlinking them, before readers can observe the reduced thread list.
+    for (PyThreadState *p = list; p != NULL; p = p->next) {
+        _PyThreadStateImpl *removed = (_PyThreadStateImpl *)p;
+        interp->object_state.reftotal += removed->reftotal;
+        removed->reftotal = 0;
+    }
+#endif
     HEAD_UNLOCK(runtime);
 
     return list;

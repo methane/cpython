@@ -2784,7 +2784,137 @@ threadgroup_weakref_probe(PyObject *self, PyObject *args)
     Py_RETURN_NONE;
 }
 
+#ifdef Py_REF_DEBUG
+static PyObject *
+threadgroup_reftotal_fork_probe(PyObject *self, PyObject *fork_func)
+{
+    PyThreadState *current = PyThreadState_Get();
+    PyInterpreterState *interp = current->interp;
+    PyThreadState *worker = PyThreadState_New(interp);
+    if (worker == NULL) {
+        return PyErr_NoMemory();
+    }
+    PyThreadState_Swap(worker);
+    PyObject *value = PyBytes_FromString("fork reference total probe");
+    PyErr_Clear();
+    PyThreadState_Swap(current);
+    if (value == NULL) {
+        PyThreadState_Clear(worker);
+        PyThreadState_Delete(worker);
+        return PyErr_NoMemory();
+    }
+    Py_ssize_t contribution = ((_PyThreadStateImpl *)worker)->reftotal;
+    Py_ssize_t accumulated = interp->object_state.reftotal;
+    PyObject *pid = PyObject_CallNoArgs(fork_func);
+    int ok = 1;
+    if (pid != NULL && PyLong_AsLong(pid) == 0) {
+        // AfterFork_Child has removed and freed the other state. Its objects
+        // can outlive it, so its reference total must still be accounted for.
+        ok = contribution != 0 &&
+            interp->object_state.reftotal == accumulated + contribution;
+    }
+    else {
+        PyThreadState_Clear(worker);
+        PyThreadState_Delete(worker);
+    }
+    Py_DECREF(value);
+    if (PyErr_Occurred()) {
+        Py_XDECREF(pid);
+        return NULL;
+    }
+    if (!ok) {
+        Py_DECREF(pid);
+        return PyErr_Format(PyExc_AssertionError,
+                            "fork lost a removed thread's reference total");
+    }
+    return pid;
+}
+
+static PyObject *
+threadgroup_reftotal_probe(PyObject *self, PyObject *args)
+{
+    PyObject *group;
+    int clear_elsewhere;
+    if (!PyArg_ParseTuple(args, "Op:threadgroup_reftotal_probe",
+                          &group, &clear_elsewhere)) {
+        return NULL;
+    }
+    _PyThreadGroupState *state = _PyThreadGroup_GetState(group);
+    if (state == NULL) {
+        return NULL;
+    }
+    PyThreadState *current = PyThreadState_Get();
+    PyInterpreterState *interp = current->interp;
+    PyThreadState *worker = PyThreadState_New(interp);
+    if (worker == NULL) {
+        _PyThreadGroup_Decref(state);
+        return PyErr_NoMemory();
+    }
+    _PyThreadGroup_Decref(worker->threadgroup);
+    worker->threadgroup = state;
+
+    // Switch states on the same OS thread to measure exact deltas without
+    // concurrent Python execution changing the interpreter/global totals.
+    _PyThreadStateImpl *current_impl = (_PyThreadStateImpl *)current;
+    _PyThreadStateImpl *worker_impl = (_PyThreadStateImpl *)worker;
+    Py_ssize_t current_total = current_impl->reftotal;
+    PyThreadState_Swap(worker);
+    // Keep an immutable object alive after its creating state is deleted.
+    PyObject *value = PyBytes_FromStringAndSize("reference total probe", 21);
+    if (value == NULL) {
+        PyErr_Clear();
+        PyThreadState_Clear(worker);
+        PyThreadState_Swap(current);
+        PyThreadState_Delete(worker);
+        return PyErr_NoMemory();
+    }
+    Py_ssize_t local = worker_impl->reftotal;
+    Py_ssize_t accumulated = interp->object_state.reftotal;
+    Py_ssize_t total = _PyInterpreterState_GetRefTotal(interp);
+    Py_ssize_t global = _Py_GetGlobalRefTotal();
+    Py_INCREF(value);
+    int ok = worker_impl->reftotal == local + 1 &&
+        current_impl->reftotal == current_total &&
+        interp->object_state.reftotal == accumulated &&
+        _PyInterpreterState_GetRefTotal(interp) == total + 1 &&
+        _Py_GetGlobalRefTotal() == global + 1;
+    Py_DECREF(value);
+    ok &= worker_impl->reftotal == local &&
+        _PyInterpreterState_GetRefTotal(interp) == total &&
+        _Py_GetGlobalRefTotal() == global;
+
+    if (!clear_elsewhere) {
+        PyThreadState_Clear(worker);
+    }
+    PyThreadState_Swap(current);
+    if (clear_elsewhere) {
+        PyThreadState_Clear(worker);
+    }
+    local = worker_impl->reftotal;
+    accumulated = interp->object_state.reftotal;
+    total = _PyInterpreterState_GetRefTotal(interp);
+    global = _Py_GetGlobalRefTotal();
+    PyThreadState_Delete(worker);
+    // Deleting the state must transfer its contribution exactly once.
+    ok &= local != 0 && interp->object_state.reftotal == accumulated + local &&
+        _PyInterpreterState_GetRefTotal(interp) == total &&
+        _Py_GetGlobalRefTotal() == global;
+    Py_DECREF(value);
+    ok &= _PyInterpreterState_GetRefTotal(interp) == total - 1 &&
+        _Py_GetGlobalRefTotal() == global - 1;
+    if (!ok) {
+        return PyErr_Format(PyExc_AssertionError,
+                            "thread reference totals were lost or shared");
+    }
+    Py_RETURN_NONE;
+}
+#endif
+
 static PyMethodDef methods[] = {
+#ifdef Py_REF_DEBUG
+    {"threadgroup_reftotal_fork_probe", threadgroup_reftotal_fork_probe, METH_O, NULL},
+    {"threadgroup_reftotal_probe", threadgroup_reftotal_probe, METH_VARARGS, NULL},
+#endif
     {"threadgroup_intern", threadgroup_intern, METH_VARARGS, NULL},
     {"unicode_intern_dead_entry", unicode_intern_dead_entry, METH_NOARGS, NULL},
     {"threadgroup_immortal_brc", threadgroup_immortal_brc, METH_O, NULL},

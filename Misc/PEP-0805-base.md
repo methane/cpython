@@ -45,6 +45,15 @@ Tracking and finalization status use the existing `ob_gc_bits` byte, with
 atomic read-modify-write updates that preserve other flags. The GC prefix holds
 list links and temporary reachability counts, not finalization state.
 
+Debug reference totals use per-thread counters in the normal build too.
+Readers sum live states using atomic loads; thread and interpreter deletion
+transfer their contributions under the same registry lock used by readers.
+Bulk removal after fork or during shutdown transfers totals while removing
+the discarded states from that registry.
+This preserves `sys.gettotalrefcount()` across teardown without requiring
+every reference operation to update an interpreter-wide counter. This debug
+accounting is separate from the ThreadGroup bias of object reference counts.
+
 Object freelists are per-thread in the normal build too. Full GC clears all
 thread caches, and thread-state clearing disables the target state's caches,
 including when another thread performs the cleanup. The underlying allocator
@@ -284,6 +293,15 @@ Tests run on Linux/aarch64. Logs are under `/tmp/pep805-base/`. The optional
 flags/events rather than foreign LOCAL Python functions or mutable results.
 Parallel scheduling tests remain skipped while the interpreter GIL is enabled.
 
+- Debug reference totals: debug and non-debug normal builds each successfully
+  run 608 tests across 11 files covering groups, ownership, sys, GC, threading,
+  fork, embedding, object/immortal C APIs and reclamation (23 and 30 skips).
+  Groups, ownership and sys pass `-R 3:3` with `mimalloc_debug` (170 tests,
+  nine skips). Native probes check isolated live-state accounting, transfer on
+  deletion, objects surviving their creating state, and bulk removal by fork.
+  The live-state probe fails before the per-thread port; the fork probe fails
+  before preserving totals during bulk removal. Both pass after their fixes.
+  These results do not establish concurrent execution safety for the runtime.
 - Immortal BRC transitions: debug and non-debug normal builds each pass 357
   tests across nine files covering ownership, groups, sys, GC, reclamation,
   object/immortal C APIs and embedding (19 and 24 skips respectively).

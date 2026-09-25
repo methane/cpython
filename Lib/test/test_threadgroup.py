@@ -30,6 +30,38 @@ _testinternalcapi.check_main_group_lifetime()
         internal = import_helper.import_module("_testinternalcapi")
         internal.test_threadgroup_refcount_overflow()
 
+    @support.refcount_test
+    @unittest.skipUnless(hasattr(sys, 'gettotalrefcount'), 'requires Py_REF_DEBUG')
+    def test_thread_reference_totals(self):
+        script_helper.assert_python_ok('-c', '''
+import gc
+import sys
+import threading
+import _testinternalcapi as internal
+
+gc.disable()
+for group in (sys.main_thread_group, threading.ThreadGroup('reference totals')):
+    for clear_elsewhere in (False, True):
+        internal.threadgroup_reftotal_probe(group, clear_elsewhere)
+''')
+
+    @support.refcount_test
+    @unittest.skipUnless(hasattr(sys, 'gettotalrefcount'), 'requires Py_REF_DEBUG')
+    @unittest.skipUnless(support.has_fork_support, 'requires fork')
+    def test_thread_reference_totals_after_fork(self):
+        script_helper.assert_python_ok('-c', '''
+import gc
+import os
+import _testinternalcapi as internal
+
+gc.disable()
+pid = internal.threadgroup_reftotal_fork_probe(os.fork)
+if pid == 0:
+    os._exit(0)
+_, status = os.waitpid(pid, 0)
+assert os.waitstatus_to_exitcode(status) == 0, status
+''')
+
     def test_thread_local_freelists(self):
         internal = import_helper.import_module('_testinternalcapi')
         for group in (sys.main_thread_group, threading.ThreadGroup('allocation')):

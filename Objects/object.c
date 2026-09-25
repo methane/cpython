@@ -89,14 +89,10 @@ get_legacy_reftotal(void)
 static inline void
 reftotal_add(PyThreadState *tstate, Py_ssize_t n)
 {
-#ifdef Py_GIL_DISABLED
     _PyThreadStateImpl *tstate_impl = (_PyThreadStateImpl *)tstate;
     // relaxed store to avoid data race with read in get_reftotal()
     Py_ssize_t reftotal = tstate_impl->reftotal + n;
     _Py_atomic_store_ssize_relaxed(&tstate_impl->reftotal, reftotal);
-#else
-    REFTOTAL(tstate->interp) += n;
-#endif
 }
 
 static inline Py_ssize_t get_global_reftotal(_PyRuntimeState *);
@@ -117,8 +113,11 @@ _Py_FinalizeRefTotal(_PyRuntimeState *runtime)
 void
 _PyInterpreterState_FinalizeRefTotal(PyInterpreterState *interp)
 {
+    // Serialize the transfer with readers and other interpreter finalizations.
+    HEAD_LOCK(interp->runtime);
     interp->runtime->object_state.interpreter_leaks += REFTOTAL(interp);
     REFTOTAL(interp) = 0;
+    HEAD_UNLOCK(interp->runtime);
 }
 
 static inline Py_ssize_t
@@ -127,13 +126,11 @@ get_reftotal(PyInterpreterState *interp)
     /* For a single interpreter, we ignore the legacy _Py_RefTotal,
        since we can't determine which interpreter updated it. */
     Py_ssize_t total = REFTOTAL(interp);
-#ifdef Py_GIL_DISABLED
     _Py_FOR_EACH_TSTATE_UNLOCKED(interp, p) {
         /* This may race with other threads modifications to their reftotal */
         _PyThreadStateImpl *tstate_impl = (_PyThreadStateImpl *)p;
         total += _Py_atomic_load_ssize_relaxed(&tstate_impl->reftotal);
     }
-#endif
     return total;
 }
 
@@ -143,17 +140,17 @@ get_global_reftotal(_PyRuntimeState *runtime)
     Py_ssize_t total = 0;
 
     /* Add up the total from each interpreter. */
-    HEAD_LOCK(&_PyRuntime);
+    HEAD_LOCK(runtime);
     PyInterpreterState *interp = PyInterpreterState_Head();
     for (; interp != NULL; interp = PyInterpreterState_Next(interp)) {
         total += get_reftotal(interp);
     }
-    HEAD_UNLOCK(&_PyRuntime);
+    total += runtime->object_state.interpreter_leaks;
+    HEAD_UNLOCK(runtime);
 
     /* Add in the updated value from the legacy _Py_RefTotal. */
     total += get_legacy_reftotal();
     total += last_final_reftotal;
-    total += runtime->object_state.interpreter_leaks;
 
     return total;
 }

@@ -20,6 +20,7 @@ struct _reftracer_runtime_state {
 
 struct _py_object_runtime_state {
 #ifdef Py_REF_DEBUG
+    // Contributions from deleted interpreters, guarded by HEAD_LOCK.
     Py_ssize_t interpreter_leaks;
 #endif
     int _not_used;
@@ -27,6 +28,7 @@ struct _py_object_runtime_state {
 
 struct _py_object_state {
 #ifdef Py_REF_DEBUG
+    // Contributions from deleted thread states, guarded by HEAD_LOCK.
     Py_ssize_t reftotal;
 #endif
 #ifdef Py_TRACE_REFS
