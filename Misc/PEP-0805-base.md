@@ -434,12 +434,20 @@ category from the object's type tag and does not acquire these stored fields.
 The name getter reports access and UTF-8 encoding errors through `NULL`;
 the limited-API test wrapper propagates that error before converting the result.
 
+Code representation, hashing and equality acquire stored metadata before
+formatting, hashing or comparing it. Code construction can retain LOCAL string,
+tuple and bytes subclasses even though the code object itself is immutable.
+Unused metadata and fields skipped by equality's short-circuit remain unacquired.
+Constant-key construction retains its existing treatment of opaque references.
+
 Immutable descriptors publish their `__qualname__` cache once using atomic
 compare/exchange. Concurrent readers retain the first cached string. A cold
 lookup acquires the stored class before reading its qualified name; a cached
 lookup only reads the immutable string. Metaclass reentry can populate the cache
 during name calculation, but any error from the outer calculation still
 propagates rather than returning a value with an exception pending.
+Descriptor representation also acquires the stored class before reading its
+mutable type name.
 
 Tuple and list element operations check references before invoking repr, hash,
 comparison or sorting callbacks. A local list copied from a shared tuple can
@@ -491,6 +499,16 @@ flags/events rather than foreign LOCAL Python functions or mutable results.
 The default-path parallel scheduling test remains skipped while the interpreter
 GIL is enabled. The isolated native probe additionally tests real parallelism.
 
+- Code and descriptor metadata acquisition: debug and release each pass 291
+  tests across ownership, code, codeop and descriptors (two skips). All three
+  new tests pass `-R 3:3` and TSan without suppressions. Before the fix, 16
+  foreign-group subcases fail while their Main controls pass. Logs:
+  `test-code-metadata-before.log`, `test-code-metadata-debug.log`,
+  `test-code-metadata-release.log`, `test-code-metadata-refleak.log` and
+  `tsan-code-metadata.log`. The separate Main-only compatibility rerun still
+  fails only the selected pickle mapping and descriptor tutorial cases below
+  (`test-main-compat-audit.log`); their implementations and expectations are
+  unchanged.
 - Evaluation name metadata: debug and release each pass 346 tests across
   ownership, C API eval, function attributes, classes and calls. Both new tests
   pass `-R 3:3` and TSan without suppressions. Three foreign-name acquisition

@@ -2455,7 +2455,13 @@ code_repr(PyObject *self)
         lineno = co->co_firstlineno;
     else
         lineno = -1;
+    if (PyObject_CheckAccess(co->co_name) == NULL) {
+        return NULL;
+    }
     if (co->co_filename && PyUnicode_Check(co->co_filename)) {
+        if (PyObject_CheckAccess(co->co_filename) == NULL) {
+            return NULL;
+        }
         return PyUnicode_FromFormat(
             "<code object %U at %p, file \"%U\", line %d>",
             co->co_name, co, co->co_filename, lineno);
@@ -2464,6 +2470,17 @@ code_repr(PyObject *self)
             "<code object %U at %p, file ???, line %d>",
             co->co_name, co, lineno);
     }
+}
+
+/* The operands are stored references acquired from code objects. */
+static int
+code_compare_field(PyObject *left, PyObject *right)
+{
+    if (PyObject_CheckAccess(left) == NULL ||
+        PyObject_CheckAccess(right) == NULL) {
+        return -1;
+    }
+    return PyObject_RichCompareBool(left, right, Py_EQ);
 }
 
 static PyObject *
@@ -2483,7 +2500,7 @@ code_richcompare(PyObject *self, PyObject *other, int op)
     co = (PyCodeObject *)self;
     cp = (PyCodeObject *)other;
 
-    eq = PyObject_RichCompareBool(co->co_name, cp->co_name, Py_EQ);
+    eq = code_compare_field(co->co_name, cp->co_name);
     if (eq <= 0) goto unequal;
     eq = co->co_argcount == cp->co_argcount;
     if (!eq) goto unequal;
@@ -2522,17 +2539,15 @@ code_richcompare(PyObject *self, PyObject *other, int op)
     Py_DECREF(consts2);
     if (eq <= 0) goto unequal;
 
-    eq = PyObject_RichCompareBool(co->co_names, cp->co_names, Py_EQ);
+    eq = code_compare_field(co->co_names, cp->co_names);
     if (eq <= 0) goto unequal;
-    eq = PyObject_RichCompareBool(co->co_localsplusnames,
-                                  cp->co_localsplusnames, Py_EQ);
+    eq = code_compare_field(co->co_localsplusnames, cp->co_localsplusnames);
     if (eq <= 0) goto unequal;
-    eq = PyObject_RichCompareBool(co->co_linetable, cp->co_linetable, Py_EQ);
+    eq = code_compare_field(co->co_linetable, cp->co_linetable);
     if (eq <= 0) {
         goto unequal;
     }
-    eq = PyObject_RichCompareBool(co->co_exceptiontable,
-                                  cp->co_exceptiontable, Py_EQ);
+    eq = code_compare_field(co->co_exceptiontable, cp->co_exceptiontable);
     if (eq <= 0) {
         goto unequal;
     }
@@ -2565,7 +2580,11 @@ code_hash(PyObject *self)
         uhash *= PyHASH_MULTIPLIER;  \
     } while (0)
     #define SCRAMBLE_IN_HASH(EXPR) do {     \
-        Py_hash_t h = PyObject_Hash(EXPR);  \
+        PyObject *field = PyObject_CheckAccess(EXPR); \
+        if (field == NULL) {                \
+            return -1;                     \
+        }                                  \
+        Py_hash_t h = PyObject_Hash(field); \
         if (h == -1) {                      \
             return -1;                      \
         }                                   \

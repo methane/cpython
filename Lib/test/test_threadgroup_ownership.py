@@ -273,6 +273,94 @@ assert 'threading' not in sys.modules
             with self.subTest(group=group):
                 internal.threadgroup_weakref_probe(group, target)
 
+    def test_code_metadata_acquisition(self):
+        class String(str):
+            pass
+
+        class Tuple(tuple):
+            pass
+
+        class Bytes(bytes):
+            pass
+
+        def target(arg):
+            return arg.value
+
+        code = target.__code__
+        fields = {
+            'co_name': String,
+            'co_filename': String,
+            'co_qualname': String,
+            'co_consts': Tuple,
+            'co_names': Tuple,
+            'co_linetable': Bytes,
+            'co_exceptiontable': Bytes,
+        }
+        cases = (
+            ('source[1].__repr__()', ('co_name', 'co_filename')),
+            ('source[1].__hash__()',
+             ('co_name', 'co_consts', 'co_names', 'co_linetable',
+              'co_exceptiontable')),
+            ('assert source[1] == source[2]',
+             ('co_name', 'co_names', 'co_linetable', 'co_exceptiontable')),
+            ('assert not (source[2] != source[1])',
+             ('co_name', 'co_names', 'co_linetable', 'co_exceptiontable')),
+        )
+        for statement, acquired_fields in cases:
+            namespace = {}
+            exec(f'def probe():\n    {statement}\n    return True', namespace)
+            probe = namespace['probe'].__code__
+            for field in acquired_fields:
+                value = fields[field](getattr(code, field))
+                replaced = code.replace(**{field: value})
+                self.assertIs(getattr(replaced, field), value)
+                for group in (sys.main_thread_group, self.foreign):
+                    with self.subTest(statement=statement, field=field, group=group):
+                        self.assertIs(internal.threadgroup_vm_probe(
+                            probe, group, (value, replaced, code), 0),
+                            group is sys.main_thread_group)
+            # Exact builtins remain accessible in both groups.
+            for group in (sys.main_thread_group, self.foreign):
+                with self.subTest(statement=statement, group=group):
+                    self.assertTrue(internal.threadgroup_vm_probe(
+                        probe, group, (True, code, code.replace()), 0))
+
+    def test_code_metadata_not_acquired(self):
+        class String(str):
+            pass
+
+        class Tuple(tuple):
+            pass
+
+        def target():
+            return None
+
+        code = target.__code__
+
+        def unused():
+            source[1].__hash__()
+            assert source[1] == source[2]
+            assert not (source[1] != source[2])
+            source[2].__repr__()
+            return True
+
+        # Filename and qualname do not participate in hash or equality;
+        # repr reads the filename, but not the qualname.
+        named = code.replace(co_qualname=String('local qualname'))
+        self.assertTrue(internal.threadgroup_vm_probe(
+            unused.__code__, self.foreign,
+            (True, named.replace(co_filename=String('local filename')), named), 0))
+
+        def short_circuit():
+            assert source[1] != source[2]
+            return True
+
+        # A different name short-circuits comparison of later stored fields.
+        self.assertTrue(internal.threadgroup_vm_probe(
+            short_circuit.__code__, self.foreign,
+            (True, code.replace(co_names=Tuple(code.co_names)),
+             code.replace(co_name='different')), 0))
+
     @requires_specialization
     def test_code_specialization_across_groups(self):
         def probe(a, b, expected):
@@ -833,6 +921,23 @@ assert 'threading' not in sys.modules
                         probe.__code__, group,
                         (marker, descriptor, expected), 0),
                         cached or group is sys.main_thread_group)
+
+    def test_descriptor_repr_class_acquisition(self):
+        class Owner:
+            __slots__ = ('field',)
+
+        def probe():
+            assert source[1].__repr__() == source[2]
+            return True
+
+        for descriptor in (Owner.field, list.append, int.real, int.__add__,
+                           object.__str__):
+            for group in (sys.main_thread_group, self.foreign):
+                with self.subTest(descriptor=descriptor, group=group):
+                    self.assertIs(internal.threadgroup_vm_probe(
+                        probe.__code__, group,
+                        (descriptor.__objclass__, descriptor, repr(descriptor)), 0),
+                        descriptor is not Owner.field or group is sys.main_thread_group)
 
     def test_vm_descriptor_checked_before_call(self):
         for warmups in (0, 64):

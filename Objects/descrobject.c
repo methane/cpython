@@ -48,6 +48,9 @@ descr_repr(PyDescrObject *descr, const char *kind)
     if (descr->d_type == &PyBaseObject_Type) {
         return PyUnicode_FromFormat("<%s '%V'>", kind, name, "?");
     }
+    if (PyObject_CheckAccess((PyObject *)descr->d_type) == NULL) {
+        return NULL;
+    }
     return PyUnicode_FromFormat("<%s '%V' of '%s' objects>",
                                 kind, name, "?", descr->d_type->tp_name);
 }
