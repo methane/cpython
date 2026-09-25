@@ -467,6 +467,13 @@ before using their truth value. Container length, cached tuple hashes and
 comparison paths that do not inspect an element need no element acquisition.
 The tuple hash cache uses atomic reads and writes in the normal build too.
 
+Slice repr, hashing and index conversion acquire stored start, stop and step
+references before using them. The legacy integer-only C API checks an accepted
+integer before reading its value. Slice comparisons retain their existing
+tuple-based acquisition checks and short circuits. Copying components into a
+reduction tuple does not acquire them. A zero step or invalid length can fail
+before unused components are acquired.
+
 Hash-table lookup checks stored keys before invoking equality callbacks.
 Dictionary repr, equality, item-view membership and item-view symmetric
 difference check the keys and values they acquire. A shallow copy into a local
@@ -508,6 +515,33 @@ The default-path parallel scheduling test requires group-only serialization
 from startup and does not skip. The extension-import test also runs in the normal
 build, checking that imports leave this scheduling state unchanged.
 
+- Slice component acquisition: debug and release each run 694 tests across
+  ownership, slices, ranges, tuples, lists, bytes and strings successfully
+  (14 skips). Before the fix, 27 foreign-group cases fail; Main controls pass.
+  Native callback counters verify repr/hash/index/conversion and comparisons
+  have no side effects when an element is rejected. Exact integer controls,
+  attributes, identity comparisons, reductions and early failures are covered.
+  Final focused runs pass 110 ownership/slice/range tests in both builds
+  (`test-slice-acquisition-sites.log`, `test-slice-release-final.log`).
+  The three new tests also pass TSan without suppressions (`tsan-slice-final.log`).
+  Logs: `test-slice-before.log`, `test-slice-debug-final.log` and
+  `test-slice-release.log`. The initial debug command named a nonexistent
+  `test_unicode` file; the final run uses `test_str`.
+  Reference-leak checks expose retained LOCAL weakrefs after owner thread exit:
+  the three new tests leak 96 references and blocks per measured repetition,
+  and the existing `test_vm_heap_loads`/`test_sequence_element_operations`
+  selection also leaks (114 per repetition). A separate native probe doing no
+  slice operations leaves three LOCAL weakrefs per departed group on its BRC
+  queue, even after ten collections; they are dead and have no callbacks.
+  Its Main-only control is stable. This is
+  part of the pending owner-correct LOCAL reclamation design, not a successful
+  leak gate. Existing `test_slice` alone passes `-R 3:3`. Logs:
+  `test-slice-refleak.log`, `test-default-startup-ownership-refleak.log`,
+  `departed-weakref-probe.log` and `test-slice-main-refleak.log`.
+- The full ThreadGroup file at `df77299a32` passes TSan from normal startup:
+  46 tests, one mimalloc-only skip. No suppressions are used. This expands the
+  earlier seven-case startup selection without proving owner-correct LOCAL
+  reclamation. Log: `tsan-default-groups-audit.log`.
 - Group-only serialization from normal startup: debug and release each pass
   964 tests across groups, ownership, reclamation, GC, threading, signal,
   memory/misc/eval C APIs, fork and embedding (19 and 37 skips). Both retain

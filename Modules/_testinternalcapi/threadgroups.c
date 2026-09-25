@@ -2755,6 +2755,13 @@ container_element_compare(PyObject *op, PyObject *other, int comparison)
 }
 
 static PyObject *
+container_element_index(PyObject *op)
+{
+    _Py_atomic_add_int(&((container_element *)op)->calls, 1);
+    return PyLong_FromLong(1);
+}
+
+static PyObject *
 make_container_element(PyObject *self, PyObject *immutable)
 {
     int shareable = PyObject_IsTrue(immutable);
@@ -2766,6 +2773,7 @@ make_container_element(PyObject *self, PyObject *immutable)
         {Py_tp_repr, container_element_repr},
         {Py_tp_hash, container_element_hash},
         {Py_nb_bool, container_element_bool},
+        {Py_nb_index, container_element_index},
         {Py_tp_richcompare, container_element_compare},
         {0, NULL},
     };
@@ -2795,6 +2803,22 @@ container_element_calls(PyObject *self, PyObject *element)
     }
     return PyLong_FromLong(_Py_atomic_load_int(
         &((container_element *)element)->calls));
+}
+
+static PyObject *
+slice_getindices_probe(PyObject *self, PyObject *slice)
+{
+    if (!PySlice_Check(slice)) {
+        return PyErr_Format(PyExc_TypeError, "expected a slice");
+    }
+    Py_ssize_t start, stop, step;
+    if (PySlice_GetIndices(slice, 10, &start, &stop, &step) < 0) {
+        if (PyErr_Occurred()) {
+            return NULL;
+        }
+        Py_RETURN_NONE;
+    }
+    return Py_BuildValue("nnn", start, stop, step);
 }
 
 static const char *return_apis[] = {
@@ -4724,6 +4748,7 @@ static PyMethodDef methods[] = {
     {"test_qsbr_thread_states", test_qsbr_thread_states, METH_NOARGS, NULL},
     {"make_container_element", make_container_element, METH_O, NULL},
     {"container_element_calls", container_element_calls, METH_O, NULL},
+    {"slice_getindices_probe", slice_getindices_probe, METH_O, NULL},
     {"threadgroup_weakref_probe", threadgroup_weakref_probe, METH_VARARGS, NULL},
 #ifdef WITH_MIMALLOC
     {"test_reentrant_allocation_heap", test_reentrant_allocation_heap, METH_NOARGS, NULL},

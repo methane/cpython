@@ -512,6 +512,124 @@ assert 'threading' not in sys.modules
                             self.assertEqual(
                                 internal.container_element_calls(value), 0)
 
+    def test_slice_component_acquisition(self):
+        cases = (
+            ('source[1].__repr__()', None),
+            ('source[1].__hash__()', None),
+            ('source[1].indices(10)', None),
+            ('[][source[1]]', None),
+            ('()[source[1]]', None),
+            ('b""[source[1]]', None),
+            ('""[source[1]]', None),
+            ('source[2][source[1]]', range(10)),
+            ('source[1] == source[2]', slice(0, 3, 1)),
+            ('source[2] < source[1]', slice(0, 3, 1)),
+        )
+        for index, field in enumerate(('start', 'stop', 'step')):
+            for statement, other in (*cases, (f'source[1].{field}', None)):
+                namespace = {}
+                exec(f'def probe():\n    {statement}\n    return True', namespace)
+                for immutable in (False, True):
+                    for group in (sys.main_thread_group, self.foreign):
+                        with self.subTest(field=field, statement=statement,
+                                          immutable=immutable, group=group):
+                            value = internal.make_container_element(immutable)
+                            parts = [0, 3, 1]
+                            parts[index] = value
+                            item = slice(*parts)
+                            accessible = immutable or group is sys.main_thread_group
+                            self.assertIs(internal.threadgroup_vm_probe(
+                                namespace['probe'].__code__, group,
+                                (value, item, other), 0), accessible)
+                            if not accessible:
+                                self.assertEqual(
+                                    internal.container_element_calls(value), 0)
+
+    def test_slice_getindices_acquisition(self):
+        class Index(int):
+            pass
+
+        def probe():
+            try:
+                result = bound_builtin(source[1])
+            except source[2][0]:
+                assert source[2][1]
+            else:
+                assert not source[2][1]
+                assert result == source[2][2]
+            return True
+
+        for index in range(3):
+            for integer_type in (int, Index):
+                parts = [0, 3, 1]
+                parts[index] = integer_type(parts[index])
+                item = slice(*parts)
+                for group in (sys.main_thread_group, self.foreign):
+                    with self.subTest(index=index, integer_type=integer_type,
+                                      group=group):
+                        inaccessible = (integer_type is Index and
+                                        group is self.foreign)
+                        expected = (IllegalThreadAccessException, inaccessible,
+                                    (0, 3, 1))
+                        self.assertTrue(internal.threadgroup_vm_probe(
+                            probe.__code__, group, (True, item, expected),
+                            0, 1, False, internal.slice_getindices_probe))
+
+    def test_slice_without_component_acquisition(self):
+        def identity_and_copy():
+            item = source[1]
+            assert item == item and item <= item and item >= item
+            assert not (item != item or item < item or item > item)
+            assert not (item == ())
+            state = item.__reduce__()
+            assert state[0] is item.__class__
+            assert state[1].__len__() == 3
+            return True
+
+        value = internal.make_container_element(False)
+        self.assertTrue(internal.threadgroup_vm_probe(
+            identity_and_copy.__code__, self.foreign,
+            (True, slice(value, value, value), None), 0))
+        self.assertEqual(internal.container_element_calls(value), 0)
+
+        def short_circuit():
+            assert source[1] < source[2]
+            assert source[2] != source[1]
+            return True
+
+        self.assertTrue(internal.threadgroup_vm_probe(
+            short_circuit.__code__, self.foreign,
+            (True, slice(0, value, value), slice(1, value, value)), 0))
+        self.assertEqual(internal.container_element_calls(value), 0)
+
+        # Invalid length or a zero step fails before acquiring start and stop.
+        for statement, item in (
+            ('source[1].indices(-1)', slice(value, value, value)),
+            ('source[1].indices(10)', slice(value, value, 0)),
+            ('[][source[1]]', slice(value, value, 0)),
+        ):
+            namespace = {}
+            exec('def probe():\n    try:\n' +
+                 f'        {statement}\n' +
+                 '    except source[2]:\n        return True\n' +
+                 '    assert False', namespace)
+            with self.subTest(statement=statement):
+                self.assertTrue(internal.threadgroup_vm_probe(
+                    namespace['probe'].__code__, self.foreign,
+                    (True, item, ValueError), 0))
+        self.assertEqual(internal.container_element_calls(value), 0)
+
+        def invalid_step():
+            assert bound_builtin(source[1]) is None
+            return True
+
+        # The legacy API rejects non-integer steps by type, without conversion.
+        self.assertTrue(internal.threadgroup_vm_probe(
+            invalid_step.__code__, self.foreign,
+            (True, slice(value, value, value), None),
+            0, 1, False, internal.slice_getindices_probe))
+        self.assertEqual(internal.container_element_calls(value), 0)
+
     def test_sequence_operations_without_element_access(self):
         cases = (
             'assert source[1].__len__() == 1',

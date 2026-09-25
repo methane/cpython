@@ -185,12 +185,14 @@ PySlice_GetIndices(PyObject *_r, Py_ssize_t length,
         *step = 1;
     } else {
         if (!PyLong_Check(r->step)) return -1;
+        if (PyObject_CheckAccess(r->step) == NULL) return -1;
         *step = PyLong_AsSsize_t(r->step);
     }
     if (r->start == Py_None) {
         *start = *step < 0 ? length-1 : 0;
     } else {
         if (!PyLong_Check(r->start)) return -1;
+        if (PyObject_CheckAccess(r->start) == NULL) return -1;
         *start = PyLong_AsSsize_t(r->start);
         if (*start < 0) *start += length;
     }
@@ -198,6 +200,7 @@ PySlice_GetIndices(PyObject *_r, Py_ssize_t length,
         *stop = *step < 0 ? -1 : length;
     } else {
         if (!PyLong_Check(r->stop)) return -1;
+        if (PyObject_CheckAccess(r->stop) == NULL) return -1;
         *stop = PyLong_AsSsize_t(r->stop);
         if (*stop < 0) *stop += length;
     }
@@ -221,7 +224,10 @@ PySlice_Unpack(PyObject *_r,
         *step = 1;
     }
     else {
-        if (!_PyEval_SliceIndex(r->step, step)) return -1;
+        if (PyObject_CheckAccess(r->step) == NULL ||
+            !_PyEval_SliceIndex(r->step, step)) {
+            return -1;
+        }
         if (*step == 0) {
             PyErr_SetString(PyExc_ValueError,
                             "slice step cannot be zero");
@@ -240,14 +246,20 @@ PySlice_Unpack(PyObject *_r,
         *start = *step < 0 ? PY_SSIZE_T_MAX : 0;
     }
     else {
-        if (!_PyEval_SliceIndex(r->start, start)) return -1;
+        if (PyObject_CheckAccess(r->start) == NULL ||
+            !_PyEval_SliceIndex(r->start, start)) {
+            return -1;
+        }
     }
 
     if (r->stop == Py_None) {
         *stop = *step < 0 ? PY_SSIZE_T_MIN : PY_SSIZE_T_MAX;
     }
     else {
-        if (!_PyEval_SliceIndex(r->stop, stop)) return -1;
+        if (PyObject_CheckAccess(r->stop) == NULL ||
+            !_PyEval_SliceIndex(r->stop, stop)) {
+            return -1;
+        }
     }
 
     return 0;
@@ -353,6 +365,11 @@ static PyObject *
 slice_repr(PyObject *op)
 {
     PySliceObject *r = _PySlice_CAST(op);
+    if (PyObject_CheckAccess(r->start) == NULL ||
+        PyObject_CheckAccess(r->stop) == NULL ||
+        PyObject_CheckAccess(r->step) == NULL) {
+        return NULL;
+    }
     return PyUnicode_FromFormat("slice(%R, %R, %R)",
                                 r->start, r->stop, r->step);
 }
@@ -400,6 +417,9 @@ _PySlice_GetLongIndices(PySliceObject *self, PyObject *length,
         step_is_negative = 0;
     }
     else {
+        if (PyObject_CheckAccess(self->step) == NULL) {
+            goto error;
+        }
         step = evaluate_slice_index(self->step);
         if (step == NULL) {
             goto error;
@@ -436,6 +456,9 @@ _PySlice_GetLongIndices(PySliceObject *self, PyObject *length,
         start = Py_NewRef(step_is_negative ? upper : lower);
     }
     else {
+        if (PyObject_CheckAccess(self->start) == NULL) {
+            goto error;
+        }
         start = evaluate_slice_index(self->start);
         if (start == NULL)
             goto error;
@@ -469,6 +492,9 @@ _PySlice_GetLongIndices(PySliceObject *self, PyObject *length,
         stop = Py_NewRef(step_is_negative ? lower : upper);
     }
     else {
+        if (PyObject_CheckAccess(self->stop) == NULL) {
+            goto error;
+        }
         stop = evaluate_slice_index(self->stop);
         if (stop == NULL)
             goto error;
@@ -645,6 +671,9 @@ slice_hash(PyObject *op)
     PySliceObject *v = _PySlice_CAST(op);
     Py_uhash_t acc = _PyHASH_XXPRIME_5;
 #define _PyHASH_SLICE_PART(com) { \
+    if (PyObject_CheckAccess(v->com) == NULL) { \
+        return -1; \
+    } \
     Py_uhash_t lane = PyObject_Hash(v->com); \
     if(lane == (Py_uhash_t)-1) { \
         return -1; \
