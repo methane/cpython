@@ -571,6 +571,76 @@ test_static_immutable_access(PyObject *self, PyObject *unused)
     Py_RETURN_NONE;
 }
 
+struct unicode_intern_probe {
+    struct access_probe base;
+    PyObject *result;
+    int immortal;
+};
+
+static void
+unicode_intern_worker(void *arg)
+{
+    struct unicode_intern_probe *probe = arg;
+    PyThreadState *tstate = PyThreadState_New(probe->base.interp);
+    if (tstate == NULL) {
+        return;
+    }
+    _PyThreadGroup_Decref(tstate->threadgroup);
+    tstate->threadgroup = probe->base.group;
+    _PyThreadGroup_Incref(tstate->threadgroup);
+    PyEval_AcquireThread(tstate);
+    if (PyObject_CheckAccess(probe->base.value) != NULL) {
+        PyObject *value = Py_NewRef(probe->base.value);
+        if (probe->immortal) {
+            _PyUnicode_InternImmortal(tstate->interp, &value);
+        }
+        else {
+            _PyUnicode_InternMortal(tstate->interp, &value);
+        }
+        probe->base.ok = PyUnicode_CHECK_INTERNED(value) != SSTATE_NOT_INTERNED &&
+            !PyErr_Occurred();
+        probe->result = value;
+    }
+    PyErr_Clear();
+    PyThreadState_Clear(tstate);
+    PyThreadState_DeleteCurrent();
+}
+
+static PyObject *
+threadgroup_intern(PyObject *self, PyObject *args)
+{
+    PyObject *group, *value;
+    int immortal;
+    if (!PyArg_ParseTuple(args, "OO!p:threadgroup_intern", &group,
+                          &PyUnicode_Type, &value, &immortal)) {
+        return NULL;
+    }
+    _PyThreadGroupState *state = _PyThreadGroup_GetState(group);
+    if (state == NULL) {
+        return NULL;
+    }
+    struct unicode_intern_probe probe = {
+        .base = {.interp = PyInterpreterState_Get(), .group = state,
+                 .value = value},
+        .immortal = immortal,
+    };
+    PyThread_ident_t ident;
+    PyThread_handle_t handle;
+    int started = PyThread_start_joinable_thread(
+        unicode_intern_worker, &probe, &ident, &handle);
+    if (started == 0) {
+        Py_BEGIN_ALLOW_THREADS
+        PyThread_join_thread(handle);
+        Py_END_ALLOW_THREADS
+    }
+    _PyThreadGroup_Decref(state);
+    if (!probe.base.ok) {
+        Py_XDECREF(probe.result);
+        return PyErr_Format(PyExc_AssertionError, "Unicode interning probe failed");
+    }
+    return _PyObject_CheckAccessNullable(probe.result);
+}
+
 struct unicode_cache_probe {
     struct access_probe base;
     PyMemAllocatorEx original;
@@ -2611,6 +2681,7 @@ threadgroup_weakref_probe(PyObject *self, PyObject *args)
 }
 
 static PyMethodDef methods[] = {
+    {"threadgroup_intern", threadgroup_intern, METH_VARARGS, NULL},
     {"threadgroup_unicode_cache_probe", threadgroup_unicode_cache_probe,
      METH_VARARGS, NULL},
     {"threadgroup_qsbr_probe", threadgroup_qsbr_probe, METH_VARARGS, NULL},

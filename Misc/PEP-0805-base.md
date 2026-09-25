@@ -99,6 +99,12 @@ in the normal build. A cold frozendict hash checks acquired values before
 invoking their hash callbacks; cached container hashes and stored key hashes
 do not acquire the elements. Unicode interning and other shared runtime caches
 still require a concurrency port before groups can execute in parallel.
+The interning-state byte is now separate from Unicode's immutable bit fields,
+with atomic publication and reads in both builds. Mortal interning and canonical
+identity are preserved, including use by another group and survival after that
+worker exits. The normal intern table still depends on the interpreter GIL:
+parallel removal/retrieval of its uncounted references and conversion of a
+group-biased mortal string to an immortal string need further coordination.
 
 Thread-local bytecode is active in the normal build, including thread lifecycle,
 frame migration, generator throws and specialization. `-X tlbc=0` and
@@ -240,6 +246,15 @@ Tests run on Linux/aarch64. Logs are under `/tmp/pep805-base/`. The optional
 flags/events rather than foreign LOCAL Python functions or mutable results.
 Parallel scheduling tests remain skipped while the interpreter GIL is enabled.
 
+- Atomic Unicode interning state: 658 tests pass across 14 files covering
+  ownership, sys, strings, Unicode C APIs, marshal, code, embedding, remote
+  inspection and GDB (51 skips). Ownership and sys pass `-R 3:3` with
+  `mimalloc_debug` (140 tests, seven skips). Native workers exercise mortal and
+  immortal interning for all character widths, canonical identity across groups,
+  survival after worker exit and reclamation of mortal strings. On Linux/aarch64,
+  `str.__basicsize__` remains 72 bytes, and empty/non-ASCII sample string sizes
+  match the preceding build. This validates metadata publication and existing
+  lifecycle behavior; the intern-table concurrency port remains incomplete.
 - The non-debug normal build at `3ca90372f0` passes 1,885 tests across 15 files
   covering immutable caches, ownership, ThreadGroups, strings, bytes, hashes,
   dictionaries, sets, views, comparison, repr, codecs and related C APIs

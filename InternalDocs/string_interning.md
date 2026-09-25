@@ -101,6 +101,12 @@ stored in `_PyUnicode_STATE(s).interned`) can be:
 - `SSTATE_INTERNED_IMMORTAL` (2)
 - `SSTATE_INTERNED_IMMORTAL_STATIC` (3)
 
+The state occupies a separate byte, accessed atomically in both builds.
+It does not share a bit-field storage location with the immutable character
+kind, compactness or ASCII flags. Publishing an interned state follows the
+corresponding reference-count updates. This does not by itself synchronize
+the intern table or the reference-count transition to immortality.
+
 The valid transitions between these states are:
 
 - For dynamically allocated strings:

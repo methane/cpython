@@ -57,12 +57,8 @@ struct _PyUnicodeObject_state {
            3: Interned, Immortal, and Static
        This categorization allows the runtime to determine the right
        cleanup mechanism at runtime shutdown. */
-#ifdef Py_GIL_DISABLED
     // Needs to be accessed atomically, so can't be a bit field.
     unsigned char interned;
-#else
-    unsigned int interned:2;
-#endif
     /* Character size:
 
        - PyUnicode_1BYTE_KIND (1):
@@ -97,11 +93,9 @@ struct _PyUnicodeObject_state {
     unsigned int ascii:1;
     /* The object is statically allocated. */
     unsigned int statically_allocated:1;
-#ifndef Py_GIL_DISABLED
     /* Historical: padding to ensure that PyUnicode_DATA() is always aligned to
        4 bytes (see issue gh-63736 on m68k) */
-    unsigned int :24;
-#endif
+    unsigned int :18;
 };
 
 /* ASCII-only strings created through PyUnicode_New use the PyASCIIObject
@@ -205,11 +199,7 @@ typedef struct {
 
 /* Use only if you know it's a string */
 static inline unsigned int PyUnicode_CHECK_INTERNED(PyObject *op) {
-#ifdef Py_GIL_DISABLED
-    return _Py_atomic_load_uint8_relaxed(&_PyASCIIObject_CAST(op)->state.interned);
-#else
-    return _PyASCIIObject_CAST(op)->state.interned;
-#endif
+    return _Py_atomic_load_uint8(&_PyASCIIObject_CAST(op)->state.interned);
 }
 #define PyUnicode_CHECK_INTERNED(op) PyUnicode_CHECK_INTERNED(_PyObject_CAST(op))
 

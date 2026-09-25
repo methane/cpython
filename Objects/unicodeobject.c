@@ -1662,7 +1662,7 @@ unicode_dealloc(PyObject *unicode)
         _Py_SetImmortal(unicode);
         return;
     }
-    switch (_PyUnicode_STATE(unicode).interned) {
+    switch (PyUnicode_CHECK_INTERNED(unicode)) {
         case SSTATE_NOT_INTERNED:
             break;
         case SSTATE_INTERNED_MORTAL:
@@ -1692,7 +1692,8 @@ unicode_dealloc(PyObject *unicode)
                 //   so it can't cause trouble (except wasted memory)
                 // - if it wasn't popped, it'll remain interned
                 _Py_SetImmortal(unicode);
-                _PyUnicode_STATE(unicode).interned = SSTATE_INTERNED_IMMORTAL;
+                _Py_atomic_store_uint8(
+                    &_PyUnicode_STATE(unicode).interned, SSTATE_INTERNED_IMMORTAL);
                 return;
             }
             if (r == 0) {
@@ -14626,7 +14627,8 @@ immortalize_interned(PyObject *s)
     // The switch to SSTATE_INTERNED_IMMORTAL must be the last thing done here
     // to synchronize with the check in intern_common() that avoids locking if
     // the string is already immortal.
-    FT_ATOMIC_STORE_UINT8(_PyUnicode_STATE(s).interned, SSTATE_INTERNED_IMMORTAL);
+    _Py_atomic_store_uint8(
+        &_PyUnicode_STATE(s).interned, SSTATE_INTERNED_IMMORTAL);
 }
 
 #ifdef Py_GIL_DISABLED
@@ -14797,7 +14799,7 @@ intern_common(PyInterpreterState *interp, PyObject *s /* stolen */,
 
     /* NOT_INTERNED -> INTERNED_MORTAL */
 
-    assert(_PyUnicode_STATE(s).interned == SSTATE_NOT_INTERNED);
+    assert(PyUnicode_CHECK_INTERNED(s) == SSTATE_NOT_INTERNED);
 
     if (!_Py_IsImmortal(s)) {
         /* The two references in interned dict (key and value) are not counted.
@@ -14805,7 +14807,8 @@ intern_common(PyInterpreterState *interp, PyObject *s /* stolen */,
         Py_DECREF(s);
         Py_DECREF(s);
     }
-    FT_ATOMIC_STORE_UINT8(_PyUnicode_STATE(s).interned, SSTATE_INTERNED_MORTAL);
+    _Py_atomic_store_uint8(
+        &_PyUnicode_STATE(s).interned, SSTATE_INTERNED_MORTAL);
 
     /* INTERNED_MORTAL -> INTERNED_IMMORTAL (if needed) */
 
@@ -14941,7 +14944,8 @@ _PyUnicode_ClearInterned(PyInterpreterState *interp)
             Py_UNREACHABLE();
         }
         if (!shared) {
-            FT_ATOMIC_STORE_UINT8_RELAXED(_PyUnicode_STATE(s).interned, SSTATE_NOT_INTERNED);
+            _Py_atomic_store_uint8_relaxed(
+                &_PyUnicode_STATE(s).interned, SSTATE_NOT_INTERNED);
         }
     }
 #ifdef INTERNED_STATS

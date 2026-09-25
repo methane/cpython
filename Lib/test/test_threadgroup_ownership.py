@@ -4,6 +4,7 @@ import _thread
 import builtins
 import datetime
 import dis
+import gc
 import sys
 import textwrap
 import threading
@@ -140,6 +141,40 @@ assert 'threading' not in sys.modules
                 with self.subTest(char=char, group=group):
                     internal.threadgroup_unicode_cache_probe(group, value,
                                                              expected)
+
+    def test_string_interning_across_groups(self):
+        for char in ('a', '\u00e9', '\u65e5', '\U0001f40d'):
+            for group in (sys.main_thread_group, self.foreign):
+                for immortal in (False, True):
+                    with self.subTest(char=char, group=group, immortal=immortal):
+                        value = f'group intern {char * 19}\0{group.name}:{immortal}'
+                        expected = value.encode('utf-8')
+                        interned = internal.threadgroup_intern(group, value,
+                                                              immortal)
+                        self.assertEqual(interned, value)
+                        self.assertEqual(len(interned), len(value))
+                        self.assertEqual(interned.encode('utf-8'), expected)
+                        self.assertIs(sys.intern(value), interned)
+                        self.assertIs(sys._is_immortal(interned), immortal)
+                        copy = expected.decode('utf-8')
+                        self.assertIsNot(copy, interned)
+                        self.assertIs(internal.threadgroup_intern(group, copy,
+                                                                 immortal),
+                                      interned)
+
+    def test_mortal_interned_string_reclamation(self):
+        for group in (sys.main_thread_group, self.foreign):
+            with self.subTest(group=group):
+                value = f'mortal intern reclamation {id(self)}:{group.name}'
+                gc.collect()
+                count = sys.getunicodeinternedsize()
+                interned = internal.threadgroup_intern(group, value, False)
+                self.assertIs(interned, value)
+                self.assertFalse(sys._is_immortal(interned))
+                self.assertEqual(sys.getunicodeinternedsize(), count + 1)
+                del value, interned
+                gc.collect()
+                self.assertEqual(sys.getunicodeinternedsize(), count)
 
     def test_static_type_with_zero_initialized_header(self):
         capi = import_helper.import_module('_testcapi')
