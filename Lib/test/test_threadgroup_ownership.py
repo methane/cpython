@@ -436,6 +436,42 @@ assert 'threading' not in sys.modules
                         self.assertIs(accessible,
                                       immutable or group is sys.main_thread_group)
 
+    def test_numeric_conversion_slot_returns(self):
+        import warnings
+
+        class Integer(int):
+            pass
+
+        class Float(float):
+            pass
+
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore', DeprecationWarning)
+            for api, typ, subtype in (
+                ('PyNumber_Index', int, Integer),
+                ('PyNumber_Long', int, Integer),
+                ('PyNumber_Float', float, Float),
+                ('PyFloat_AsDouble', float, Float),
+            ):
+                for value in (typ(-1), subtype(-1)):
+                    for group in (sys.main_thread_group, self.foreign):
+                        with self.subTest(api=api, value_type=type(value), group=group):
+                            self.assertIs(internal.threadgroup_return_probe(
+                                (value, frozendict()), group, api),
+                                type(value) is typ or group is sys.main_thread_group)
+                # An inaccessible return is rejected before reporting an
+                # invalid numeric return type as well.
+                with self.subTest(api=api, invalid_return=True):
+                    self.assertFalse(internal.threadgroup_return_probe(
+                        ([], frozendict()), self.foreign, api))
+                # Reverse the direction: Main can process deprecation warnings,
+                # so warning-module ownership cannot mask an unchecked copy.
+                source = (internal.threadgroup_number_source(self.foreign, typ)
+                          + (frozendict(),))
+                with self.subTest(api=api, foreign_number_in_main=True):
+                    self.assertFalse(internal.threadgroup_return_probe(
+                        source, sys.main_thread_group, api))
+
     def test_interpreter_namespace_returns(self):
         for api, value in (
             ('PyEval_GetBuiltins', builtins.__dict__),

@@ -474,6 +474,11 @@ tuple-based acquisition checks and short circuits. Copying components into a
 reduction tuple does not acquire them. A zero step or invalid length can fail
 before unused components are acquired.
 
+Numeric conversion checks newly returned `nb_index`, `nb_int` and `nb_float`
+references before reporting type errors, issuing warnings or copying subclass
+data into an exact numeric result. This includes the scalar `PyFloat_AsDouble`
+API. Already-acquired input numbers need no additional checks.
+
 String/bytes prefix and suffix matching acquire tuple alternatives as they are
 used, preserving short-circuit matches. Joining acquires sequence elements before
 reading string data or requesting buffers; rejection releases earlier buffers.
@@ -529,6 +534,18 @@ The default-path parallel scheduling test requires group-only serialization
 from startup and does not skip. The extension-import test also runs in the normal
 build, checking that imports leave this scheduling state unchanged.
 
+- Numeric conversion results: debug and release each pass 387 tests across
+  ownership, integer/index/float/complex operations and numeric C APIs (5/6 skips).
+  The new native test covers four conversion APIs, exact and subclass results,
+  wrong-type LOCAL results, both ownership directions and the valid -1 sentinel.
+  Its eight failing baseline cases pass after the fix. The reverse direction
+  creates a numeric subclass in a foreign group and consumes its opaque tuple
+  from Main; otherwise the Main-owned warning module can mask the unchecked
+  subclass conversion. The test also passes TSan without suppressions. Existing
+  Main-only numeric C APIs pass `-R 3:3` (64 tests), and this selection found no
+  new Main-only failure. Logs: `test-number-return-before-reverse.log`,
+  `test-number-debug.log`, `test-number-release.log`,
+  `test-number-main-refleak.log` and `tsan-number-return.log`.
 - String sequence acquisition: debug and release each pass 853 tests across
   ownership, strings, bytes, formatting, their C APIs and regular expressions
   (17/30 skips). Before the fix, the four new tests report 33 failures involving

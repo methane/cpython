@@ -2616,6 +2616,104 @@ static PyType_Spec member_box_spec = {
 };
 
 static PyObject *
+return_box_number(PyObject *self)
+{
+    return Py_NewRef(((return_box *)self)->value);
+}
+
+static PyType_Slot number_box_slots[] = {
+    {Py_tp_dealloc, return_box_dealloc},
+    {Py_tp_traverse, return_box_traverse},
+    {Py_nb_index, return_box_number},
+    {Py_nb_int, return_box_number},
+    {Py_nb_float, return_box_number},
+    {0, NULL},
+};
+
+static PyType_Spec number_box_spec = {
+    .name = "_testinternalcapi.NumberBox",
+    .basicsize = sizeof(return_box),
+    .flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_GC,
+    .slots = number_box_slots,
+};
+
+struct number_source_probe {
+    struct access_probe base;
+    PyObject *result;
+};
+
+static void
+number_source_worker(void *arg)
+{
+    struct number_source_probe *probe = arg;
+    PyThreadState *tstate = PyThreadState_New(probe->base.interp);
+    if (tstate == NULL) {
+        return;
+    }
+    _PyThreadGroup_Decref(tstate->threadgroup);
+    tstate->threadgroup = probe->base.group;
+    _PyThreadGroup_Incref(tstate->threadgroup);
+    PyEval_AcquireThread(tstate);
+
+    PyType_Slot slots[] = {
+        {Py_tp_base, probe->base.value},
+        {0, NULL},
+    };
+    PyType_Spec spec = {
+        .name = "_testinternalcapi.LocalNumber",
+        .flags = Py_TPFLAGS_DEFAULT,
+        .slots = slots,
+    };
+    PyObject *type = PyType_FromSpec(&spec);
+    PyObject *number = PyLong_FromLong(-1);
+    PyObject *value = type != NULL && number != NULL ?
+        PyObject_CallOneArg(type, number) : NULL;
+    if (value != NULL) {
+        probe->result = PyTuple_Pack(1, value);
+    }
+    Py_XDECREF(value);
+    Py_XDECREF(number);
+    Py_XDECREF(type);
+    PyErr_Clear();
+    PyThreadState_Clear(tstate);
+    PyThreadState_DeleteCurrent();
+}
+
+static PyObject *
+threadgroup_number_source(PyObject *self, PyObject *args)
+{
+    PyObject *group, *base;
+    if (!PyArg_ParseTuple(args, "OO:threadgroup_number_source", &group, &base)) {
+        return NULL;
+    }
+    if (base != (PyObject *)&PyLong_Type && base != (PyObject *)&PyFloat_Type) {
+        return PyErr_Format(PyExc_ValueError, "expected int or float base");
+    }
+    _PyThreadGroupState *state = _PyThreadGroup_GetState(group);
+    if (state == NULL) {
+        return NULL;
+    }
+    struct number_source_probe probe = {
+        .base = {.interp = PyInterpreterState_Get(), .group = state,
+                 .value = base},
+    };
+    PyThread_ident_t ident;
+    PyThread_handle_t handle;
+    if (PyThread_start_joinable_thread(number_source_worker, &probe,
+                                      &ident, &handle) == 0) {
+        Py_BEGIN_ALLOW_THREADS
+        PyThread_join_thread(handle);
+        Py_END_ALLOW_THREADS
+    }
+    _PyThreadGroup_Decref(state);
+    if (probe.result == NULL) {
+        return PyErr_Format(PyExc_AssertionError, "number source creation failed");
+    }
+    // Return an immutable container, without acquiring its LOCAL element.
+    return probe.result;
+}
+
+static PyObject *
 return_box_vectorcall(PyObject *self, PyObject *const *args,
                       size_t nargsf, PyObject *kwnames)
 {
@@ -2843,7 +2941,8 @@ static const char *return_apis[] = {
     "PySys_GetXOptions", "PyEval_GetFrameBuiltins",
     "PyObject_RichCompare", "PyObject_RichCompareBool",
     "PyCFunction_GetSelf", "PyMethod_Function", "PyMethod_Self",
-    "PyInstanceMethod_Function", NULL,
+    "PyInstanceMethod_Function", "PyNumber_Index", "PyNumber_Long",
+    "PyNumber_Float", "PyFloat_AsDouble", NULL,
 };
 
 struct return_probe {
@@ -2876,6 +2975,7 @@ return_probe_worker(void *arg)
     PyObject *result = NULL;
     int status = -2;  // Pointer-returning API, with no separate status code.
     int owned = 1;
+    int numeric = 0;
     if (key == NULL) {
         goto done;
     }
@@ -3041,6 +3141,28 @@ return_probe_worker(void *arg)
             result = PyInstanceMethod_Function(func);
             owned = 0;
             break;
+        case 36:
+        case 37:
+        case 38:
+        case 39:
+            box = make_return_box(&number_box_spec, value);
+            if (box == NULL) {
+                goto done;
+            }
+            numeric = 1;
+            switch (probe->api) {
+                case 36: result = PyNumber_Index(box); break;
+                case 37: result = PyNumber_Long(box); break;
+                case 38: result = PyNumber_Float(box); break;
+                case 39: {
+                    double number = PyFloat_AsDouble(box);
+                    if (number != -1.0 || !PyErr_Occurred()) {
+                        result = PyFloat_FromDouble(number);
+                    }
+                    break;
+                }
+            }
+            break;
         default:
             box = make_return_box(&return_box_spec, value);
             if (box == NULL) {
@@ -3059,7 +3181,9 @@ return_probe_worker(void *arg)
         status = result == NULL ? -1 : 1;
     }
     if (probe->base.accessible) {
-        probe->base.ok = status == 1 && result == value && !PyErr_Occurred();
+        probe->base.ok = status == 1 && result != NULL &&
+            (numeric ? PyObject_RichCompareBool(result, value, Py_EQ) == 1 :
+                       result == value) && !PyErr_Occurred();
     }
     else {
         probe->base.ok = status == -1 && result == NULL &&
@@ -4773,6 +4897,7 @@ static PyMethodDef methods[] = {
     {"threadgroup_vm_probe", threadgroup_vm_probe, METH_VARARGS, NULL},
     {"threadgroup_detaching_allocator_probe", threadgroup_detaching_allocator_probe, METH_O, NULL},
     {"threadgroup_return_probe", threadgroup_return_probe, METH_VARARGS, NULL},
+    {"threadgroup_number_source", threadgroup_number_source, METH_VARARGS, NULL},
     {"test_static_immutable_access", test_static_immutable_access, METH_NOARGS, NULL},
     {"threadgroup_access_probe", threadgroup_access_probe, METH_VARARGS, NULL},
     {"make_immutable_capsule", make_immutable_capsule, METH_NOARGS, NULL},

@@ -275,7 +275,7 @@ PyFloat_AsDouble(PyObject *op)
         return -1;
     }
 
-    res = (*nb->nb_float) (op);
+    res = _PyObject_CheckAccessNullable((*nb->nb_float)(op));
     if (res == NULL) {
         return -1;
     }

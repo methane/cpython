@@ -1426,6 +1426,7 @@ _PyNumber_Index(PyObject *item)
 
     PyObject *result = Py_TYPE(item)->tp_as_number->nb_index(item);
     assert(_Py_CheckSlotResult(item, "__index__", result != NULL));
+    result = _PyObject_CheckAccessNullable(result);
     if (!result || PyLong_CheckExact(result)) {
         return result;
     }
@@ -1536,6 +1537,7 @@ PyNumber_Long(PyObject *o)
            of exact type int. */
         result = m->nb_int(o);
         assert(_Py_CheckSlotResult(o, "__int__", result != NULL));
+        result = _PyObject_CheckAccessNullable(result);
         if (!result || PyLong_CheckExact(result)) {
             return result;
         }
@@ -1614,6 +1616,7 @@ PyNumber_Float(PyObject *o)
     if (m && m->nb_float) { /* This should include subclasses of float */
         PyObject *res = m->nb_float(o);
         assert(_Py_CheckSlotResult(o, "__float__", res != NULL));
+        res = _PyObject_CheckAccessNullable(res);
         if (!res || PyFloat_CheckExact(res)) {
             return res;
         }
