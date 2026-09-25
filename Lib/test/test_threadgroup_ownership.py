@@ -132,6 +132,15 @@ assert 'threading' not in sys.modules
     def test_static_immutable_access(self):
         internal.test_static_immutable_access()
 
+    def test_unicode_cache_publication_across_groups(self):
+        for char in ('\u00e9', '\u65e5', '\U0001f40d'):
+            value = char * 19 + '\0suffix'
+            expected = value.encode('utf-8')
+            for group in (sys.main_thread_group, self.foreign):
+                with self.subTest(char=char, group=group):
+                    internal.threadgroup_unicode_cache_probe(group, value,
+                                                             expected)
+
     def test_static_type_with_zero_initialized_header(self):
         capi = import_helper.import_module('_testcapi')
         typ = capi.RecursingInfinitelyError
@@ -339,19 +348,76 @@ assert 'threading' not in sys.modules
                     (True, (value,), None), 0))
                 self.assertEqual(internal.container_element_calls(value), 0)
 
-    def test_tuple_cached_hash_does_not_acquire_elements(self):
-        value = internal.make_container_element(False)
-        container = (value,)
-        expected = hash(container)
-        calls = internal.container_element_calls(value)
-
+    def test_immutable_container_cached_hash_does_not_acquire_elements(self):
         def probe():
             assert source[1].__hash__() == source[2]
             return True
 
-        self.assertTrue(internal.threadgroup_vm_probe(
-            probe.__code__, self.foreign, (True, container, expected), 0))
-        self.assertEqual(internal.container_element_calls(value), calls)
+        for factory in (lambda v: (v,), lambda v: frozenset([v]),
+                        lambda v: frozendict(value=v)):
+            value = internal.make_container_element(False)
+            container = factory(value)
+            expected = hash(container)
+            calls = internal.container_element_calls(value)
+            with self.subTest(container_type=type(container)):
+                self.assertTrue(internal.threadgroup_vm_probe(
+                    probe.__code__, self.foreign,
+                    (True, container, expected), 0))
+                self.assertEqual(internal.container_element_calls(value), calls)
+
+    def test_frozendict_hash_acquires_values(self):
+        def probe():
+            source[1].__hash__()
+            return True
+
+        for immutable in (False, True):
+            for group in (sys.main_thread_group, self.foreign):
+                with self.subTest(immutable=immutable, group=group):
+                    value = internal.make_container_element(immutable)
+                    container = frozendict(value=value)
+                    accessible = immutable or group is sys.main_thread_group
+                    self.assertIs(internal.threadgroup_vm_probe(
+                        probe.__code__, group, (value, container, None), 0),
+                        accessible)
+                    self.assertEqual(internal.container_element_calls(value),
+                                     int(accessible))
+
+    def test_immutable_hash_uses_stored_key_hashes(self):
+        def probe():
+            source[1].__hash__()
+            return True
+
+        for factory in (lambda v: frozenset([v]),
+                        lambda v: frozendict({v: 42})):
+            value = internal.make_container_element(False)
+            container = factory(value)
+            calls = internal.container_element_calls(value)
+            with self.subTest(container_type=type(container)):
+                self.assertTrue(internal.threadgroup_vm_probe(
+                    probe.__code__, self.foreign, (True, container, None), 0))
+                self.assertEqual(internal.container_element_calls(value), calls)
+
+    def test_immutable_hash_caches_across_groups(self):
+        def probe():
+            assert value.__hash__() == source[1]
+            return True
+
+        cases = (
+            ('immutable hash cache', lambda: ''.join(('immutable ', 'hash cache'))),
+            (b'cached bytes', lambda: bytes(bytearray(b'cached bytes'))),
+            ((123, 456), lambda: tuple([123, 456])),
+            (frozenset([123, 456]), lambda: frozenset([123, 456])),
+            (frozendict(value=42), lambda: frozendict(value=42)),
+        )
+        for control, factory in cases:
+            expected = hash(control)
+            fresh = factory()
+            self.assertIsNot(fresh, control)
+            for group in (self.foreign, sys.main_thread_group):
+                with self.subTest(value_type=type(fresh), group=group):
+                    self.assertTrue(internal.threadgroup_vm_probe(
+                        probe.__code__, group, (fresh, expected, None), 0, 10))
+            self.assertEqual(hash(fresh), expected)
 
     def test_sort_access_failure_restores_list(self):
         for reverse in (False, True):

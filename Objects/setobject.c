@@ -638,7 +638,7 @@ set_empty_to_minsize(PySetObject *so)
     so->fill = 0;
     FT_ATOMIC_STORE_SSIZE_RELAXED(so->used, 0);
     FT_ATOMIC_STORE_SSIZE_RELEASE(so->mask, PySet_MINSIZE - 1);
-    FT_ATOMIC_STORE_SSIZE_RELAXED(so->hash, -1);
+    _Py_atomic_store_ssize_relaxed(&so->hash, -1);
     FT_ATOMIC_STORE_PTR_RELEASE(so->table, so->smalltable);
 }
 
@@ -1017,12 +1017,12 @@ frozenset_hash(PyObject *self)
     PySetObject *so = _PySet_CAST(self);
     Py_uhash_t hash;
 
-    if (FT_ATOMIC_LOAD_SSIZE_RELAXED(so->hash) != -1) {
-        return FT_ATOMIC_LOAD_SSIZE_ACQUIRE(so->hash);
+    if (_Py_atomic_load_ssize_relaxed(&so->hash) != -1) {
+        return _Py_atomic_load_ssize_acquire(&so->hash);
     }
 
     hash = frozenset_hash_impl(self);
-    FT_ATOMIC_STORE_SSIZE_RELEASE(so->hash, hash);
+    _Py_atomic_store_ssize_release(&so->hash, hash);
     return hash;
 }
 
@@ -1550,12 +1550,13 @@ set_swap_bodies(PySetObject *a, PySetObject *b)
 
     if (PyType_IsSubtype(Py_TYPE(a), &PyFrozenSet_Type)  &&
         PyType_IsSubtype(Py_TYPE(b), &PyFrozenSet_Type)) {
-        h = FT_ATOMIC_LOAD_SSIZE_RELAXED(a->hash);
-        FT_ATOMIC_STORE_SSIZE_RELAXED(a->hash, FT_ATOMIC_LOAD_SSIZE_RELAXED(b->hash));
-        FT_ATOMIC_STORE_SSIZE_RELAXED(b->hash, h);
+        h = _Py_atomic_load_ssize_relaxed(&a->hash);
+        _Py_atomic_store_ssize_relaxed(
+            &a->hash, _Py_atomic_load_ssize_relaxed(&b->hash));
+        _Py_atomic_store_ssize_relaxed(&b->hash, h);
     } else {
-        FT_ATOMIC_STORE_SSIZE_RELAXED(a->hash, -1);
-        FT_ATOMIC_STORE_SSIZE_RELAXED(b->hash, -1);
+        _Py_atomic_store_ssize_relaxed(&a->hash, -1);
+        _Py_atomic_store_ssize_relaxed(&b->hash, -1);
     }
     if (!SET_IS_SHARED(b) && SET_IS_SHARED(a)) {
         SET_MARK_SHARED(b);
@@ -2500,8 +2501,8 @@ set_richcompare(PyObject *self, PyObject *w, int op)
     case Py_EQ:
         if (PySet_GET_SIZE(v) != PySet_GET_SIZE(w))
             Py_RETURN_FALSE;
-        Py_hash_t v_hash = FT_ATOMIC_LOAD_SSIZE_RELAXED(v->hash);
-        Py_hash_t w_hash = FT_ATOMIC_LOAD_SSIZE_RELAXED(((PySetObject *)w)->hash);
+        Py_hash_t v_hash = _Py_atomic_load_ssize_relaxed(&v->hash);
+        Py_hash_t w_hash = _Py_atomic_load_ssize_relaxed(&((PySetObject *)w)->hash);
         if (v_hash != -1 && w_hash != -1 && v_hash != w_hash)
             Py_RETURN_FALSE;
         return set_issubset((PyObject*)v, w);

@@ -90,6 +90,16 @@ interpreter's code-state mutex. Replaced extra values are still released after
 unlocking, so extension free callbacks can re-enter. On Linux/aarch64 the mutex
 occupies existing code-object padding; the generic object header remains 24 bytes.
 
+Immutable strings publish their lazy UTF-8 cache with an atomic compare/exchange.
+Competing encoders preserve the first buffer, whose address may already be held
+by a C caller, and free the redundant allocation. The cache length is published
+before the pointer; readers acquire the pointer before using the length.
+String, bytes, tuple, frozenset and frozendict hash caches use atomic accesses
+in the normal build. A cold frozendict hash checks acquired values before
+invoking their hash callbacks; cached container hashes and stored key hashes
+do not acquire the elements. Unicode interning and other shared runtime caches
+still require a concurrency port before groups can execute in parallel.
+
 Thread-local bytecode is active in the normal build, including thread lifecycle,
 frame migration, generator throws and specialization. `-X tlbc=0` and
 `PYTHON_TLBC=0` disable both copies and specialization. Monitoring updates all
@@ -222,6 +232,14 @@ Tests run on Linux/aarch64. Logs are under `/tmp/pep805-base/`. The optional
 flags/events rather than foreign LOCAL Python functions or mutable results.
 Parallel scheduling tests remain skipped while the interpreter GIL is enabled.
 
+- Immutable caches: 1,821 tests pass across 12 files covering ownership,
+  ThreadGroups, strings, bytes, sets, dicts, hashes, codecs and related C APIs
+  (30 skips). Ownership and ThreadGroups pass `-R 3:3` with `mimalloc_debug`
+  (56 tests, two skips). A native allocator hook pauses one UTF-8 cache creator
+  until another publishes its buffer, then verifies both callers retain the
+  first address and the redundant buffer is freed. All six publication cases
+  failed before the fix. A separate cold frozendict hash regression exposed
+  an unchecked foreign LOCAL value; the rejected callback now has no effects.
 - Thread-local bytecode: 22 related test files pass, including frames,
   generators, monitoring, disassembly, remote inspection, configuration,
   embedding, threading and generated interpreter cases. New tests cover table

@@ -13,6 +13,7 @@
 #include "pycore_qsbr.h"
 #include "pycore_stackref.h"
 #include "pycore_threadgroup.h"
+#include "pycore_unicodeobject.h"
 
 struct group_probe {
     PyInterpreterState *interp;
@@ -567,6 +568,166 @@ test_static_immutable_access(PyObject *self, PyObject *unused)
     assert(PyObject_CheckAccess(code) == code);
     assert(PyObject_DeclareImmutable(code) == 0);
     assert(!PyObject_IS_GC(code));
+    Py_RETURN_NONE;
+}
+
+struct unicode_cache_probe {
+    struct access_probe base;
+    PyMemAllocatorEx original;
+    PyThreadState *worker;
+    PyEvent allocated;
+    PyEvent resume;
+    size_t cache_size;
+    void *candidate;
+    const char *worker_cache;
+    Py_ssize_t worker_size;
+    Py_hash_t worker_hash;
+    int armed;
+    int discarded;
+    int timed_out;
+};
+
+static void *
+unicode_cache_malloc(void *ctx, size_t size)
+{
+    struct unicode_cache_probe *probe = ctx;
+    void *ptr = probe->original.malloc(probe->original.ctx, size);
+    if (ptr != NULL && size == probe->cache_size &&
+        _Py_atomic_load_int(&probe->armed) &&
+        _PyThreadState_GET() == probe->worker &&
+        _Py_atomic_exchange_int(&probe->armed, 0)) {
+        _Py_atomic_store_ptr(&probe->candidate, ptr);
+        _PyEvent_Notify(&probe->allocated);
+        // Let the caller publish a cache while this allocation is in flight.
+        probe->timed_out = !PyEvent_WaitTimed(&probe->resume, 10000000000LL, 1);
+    }
+    return ptr;
+}
+
+static void *
+unicode_cache_calloc(void *ctx, size_t nelem, size_t size)
+{
+    struct unicode_cache_probe *probe = ctx;
+    return probe->original.calloc(probe->original.ctx, nelem, size);
+}
+
+static void *
+unicode_cache_realloc(void *ctx, void *ptr, size_t size)
+{
+    struct unicode_cache_probe *probe = ctx;
+    return probe->original.realloc(probe->original.ctx, ptr, size);
+}
+
+static void
+unicode_cache_free(void *ctx, void *ptr)
+{
+    struct unicode_cache_probe *probe = ctx;
+    if (ptr != NULL && ptr == _Py_atomic_load_ptr(&probe->candidate)) {
+        _Py_atomic_store_ptr(&probe->candidate, NULL);
+        _Py_atomic_store_int(&probe->discarded, 1);
+    }
+    probe->original.free(probe->original.ctx, ptr);
+}
+
+static void
+unicode_cache_worker(void *arg)
+{
+    struct unicode_cache_probe *probe = arg;
+    PyThreadState *tstate = PyThreadState_New(probe->base.interp);
+    if (tstate == NULL) {
+        _PyEvent_Notify(&probe->allocated);
+        return;
+    }
+    _PyThreadGroup_Decref(tstate->threadgroup);
+    tstate->threadgroup = probe->base.group;
+    _PyThreadGroup_Incref(tstate->threadgroup);
+    PyEval_AcquireThread(tstate);
+    probe->worker = tstate;
+    if (PyObject_CheckAccess(probe->base.value) != NULL) {
+        probe->worker_hash = PyObject_Hash(probe->base.value);
+        if (probe->worker_hash != -1) {
+            _Py_atomic_store_int(&probe->armed, 1);
+            probe->worker_cache = PyUnicode_AsUTF8AndSize(
+                probe->base.value, &probe->worker_size);
+            probe->base.ok = probe->worker_cache != NULL && !PyErr_Occurred();
+        }
+    }
+    PyErr_Clear();
+    _PyEvent_Notify(&probe->allocated);
+    PyThreadState_Clear(tstate);
+    PyThreadState_DeleteCurrent();
+}
+
+static PyObject *
+threadgroup_unicode_cache_probe(PyObject *self, PyObject *args)
+{
+    PyObject *group, *value, *expected;
+    if (!PyArg_ParseTuple(args, "OO!O!:threadgroup_unicode_cache_probe",
+                          &group, &PyUnicode_Type, &value, &PyBytes_Type,
+                          &expected)) {
+        return NULL;
+    }
+    if (PyUnicode_IS_ASCII(value) || PyUnicode_GET_LENGTH(value) < 2) {
+        return PyErr_Format(PyExc_ValueError, "non-ASCII string required");
+    }
+    _PyThreadGroupState *state = _PyThreadGroup_GetState(group);
+    if (state == NULL) {
+        return NULL;
+    }
+    // A fresh exact str has neither a UTF-8 cache nor a cached hash.
+    PyObject *fresh = _PyUnicode_Copy(value);
+    if (fresh == NULL) {
+        _PyThreadGroup_Decref(state);
+        return NULL;
+    }
+    struct unicode_cache_probe probe = {
+        .base = {.interp = PyInterpreterState_Get(), .group = state,
+                 .value = fresh},
+        .cache_size = (size_t)PyBytes_GET_SIZE(expected) + 1,
+    };
+    PyMem_GetAllocator(PYMEM_DOMAIN_MEM, &probe.original);
+    PyMemAllocatorEx watch = {
+        .ctx = &probe,
+        .malloc = unicode_cache_malloc,
+        .calloc = unicode_cache_calloc,
+        .realloc = unicode_cache_realloc,
+        .free = unicode_cache_free,
+    };
+    PyMem_SetAllocator(PYMEM_DOMAIN_MEM, &watch);
+    PyThread_ident_t ident;
+    PyThread_handle_t handle;
+    int started = PyThread_start_joinable_thread(
+        unicode_cache_worker, &probe, &ident, &handle);
+    int ok = 0;
+    if (started == 0) {
+        ok = PyEvent_WaitTimed(&probe.allocated, 10000000000LL, 1) &&
+            _Py_atomic_load_ptr(&probe.candidate) != NULL;
+        Py_ssize_t size = 0;
+        const char *cache = PyUnicode_AsUTF8AndSize(fresh, &size);
+        Py_hash_t hash = PyObject_Hash(fresh);
+        _PyEvent_Notify(&probe.resume);
+        Py_BEGIN_ALLOW_THREADS
+        PyThread_join_thread(handle);
+        Py_END_ALLOW_THREADS
+        ok &= cache != NULL && hash != -1 && probe.base.ok &&
+            !probe.timed_out && _Py_atomic_load_int(&probe.discarded) &&
+            cache == probe.worker_cache && size == probe.worker_size &&
+            size == PyBytes_GET_SIZE(expected) && hash == probe.worker_hash;
+        if (ok) {
+            ok = memcmp(cache, PyBytes_AS_STRING(expected), size) == 0 &&
+                cache[size] == '\0' && PyUnicode_AsUTF8(fresh) == cache;
+        }
+    }
+    PyMem_SetAllocator(PYMEM_DOMAIN_MEM, &probe.original);
+    Py_DECREF(fresh);
+    _PyThreadGroup_Decref(state);
+    if (PyErr_Occurred()) {
+        return NULL;
+    }
+    if (!ok) {
+        return PyErr_Format(PyExc_AssertionError,
+                            "Unicode cache publication probe failed");
+    }
     Py_RETURN_NONE;
 }
 
@@ -2450,6 +2611,8 @@ threadgroup_weakref_probe(PyObject *self, PyObject *args)
 }
 
 static PyMethodDef methods[] = {
+    {"threadgroup_unicode_cache_probe", threadgroup_unicode_cache_probe,
+     METH_VARARGS, NULL},
     {"threadgroup_qsbr_probe", threadgroup_qsbr_probe, METH_VARARGS, NULL},
     {"test_qsbr_thread_states", test_qsbr_thread_states, METH_NOARGS, NULL},
     {"make_container_element", make_container_element, METH_O, NULL},

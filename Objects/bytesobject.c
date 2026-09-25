@@ -55,11 +55,7 @@ set_ob_shash(PyBytesObject *a, Py_hash_t hash)
 {
 _Py_COMP_DIAG_PUSH
 _Py_COMP_DIAG_IGNORE_DEPR_DECLS
-#ifdef Py_GIL_DISABLED
     _Py_atomic_store_ssize_relaxed(&a->ob_shash, hash);
-#else
-    a->ob_shash = hash;
-#endif
 _Py_COMP_DIAG_POP
 }
 
@@ -68,11 +64,7 @@ get_ob_shash(PyBytesObject *a)
 {
 _Py_COMP_DIAG_PUSH
 _Py_COMP_DIAG_IGNORE_DEPR_DECLS
-#ifdef Py_GIL_DISABLED
     return _Py_atomic_load_ssize_relaxed(&a->ob_shash);
-#else
-    return a->ob_shash;
-#endif
 _Py_COMP_DIAG_POP
 }
 

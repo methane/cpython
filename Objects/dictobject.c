@@ -8455,7 +8455,7 @@ static Py_hash_t
 frozendict_hash(PyObject *op)
 {
     PyFrozenDictObject *self = _PyFrozenDictObject_CAST(op);
-    Py_hash_t shash = FT_ATOMIC_LOAD_SSIZE_RELAXED(self->ma_hash);
+    Py_hash_t shash = _Py_atomic_load_ssize_relaxed(&self->ma_hash);
     if (shash != -1) {
         return shash;
     }
@@ -8467,6 +8467,9 @@ frozendict_hash(PyObject *op)
     Py_ssize_t pos = 0;
     Py_hash_t key_hash;
     while (_PyDict_Next(op, &pos, NULL, &value, &key_hash)) {
+        if (PyObject_CheckAccess(value) == NULL) {
+            return -1;
+        }
         Py_hash_t pair_hash = frozendict_pair_hash(key_hash, value);
         if (pair_hash == -1) {
             return -1;
@@ -8486,7 +8489,7 @@ frozendict_hash(PyObject *op)
         hash = 590923713UL;
     }
 
-    FT_ATOMIC_STORE_SSIZE_RELAXED(self->ma_hash, (Py_hash_t)hash);
+    _Py_atomic_store_ssize_relaxed(&self->ma_hash, (Py_hash_t)hash);
     return (Py_hash_t)hash;
 }
 

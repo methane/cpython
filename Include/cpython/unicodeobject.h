@@ -131,7 +131,7 @@ typedef struct {
          * compact = 1
          * ascii = 0
          * utf8 is not shared with data
-         * utf8_length = 0 if utf8 is NULL
+         * utf8_length is valid after utf8 has been published
          * (data starts just after the structure)
 
        - legacy string:
@@ -143,7 +143,7 @@ typedef struct {
          * compact = 0
          * data.any is not NULL
          * utf8 is shared and utf8_length = length with data.any if ascii = 1
-         * utf8_length = 0 if utf8 is NULL
+         * utf8_length is valid after utf8 has been published
 
        Compact strings use only one memory block (structure + characters),
        whereas legacy strings use one block for the structure and one block
@@ -301,11 +301,7 @@ static inline Py_ssize_t PyUnicode_GET_LENGTH(PyObject *op) {
 /* Returns the cached hash, or -1 if not cached yet. */
 static inline Py_hash_t
 PyUnstable_Unicode_GET_CACHED_HASH(PyObject *op) {
-#ifdef Py_GIL_DISABLED
     return _Py_atomic_load_ssize_relaxed(&_PyASCIIObject_CAST(op)->hash);
-#else
-    return _PyASCIIObject_CAST(op)->hash;
-#endif
 }
 
 /* Write into the canonical representation, this function does not do any sanity
