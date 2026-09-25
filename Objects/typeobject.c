@@ -1861,7 +1861,10 @@ type_check_new_bases(PyTypeObject *type, PyObject *new_bases, PyTypeObject **bes
     }
     Py_ssize_t n = PyTuple_GET_SIZE(new_bases);
     for (Py_ssize_t i = 0; i < n; i++) {
-        PyObject *ob = PyTuple_GET_ITEM(new_bases, i);
+        PyObject *ob = PyTuple_GetItem(new_bases, i);
+        if (ob == NULL) {
+            return -1;
+        }
         if (!PyType_Check(ob)) {
             PyErr_Format(PyExc_TypeError,
                          "%s.__bases__ must be tuple of classes, not '%s'",
@@ -3718,7 +3721,10 @@ find_best_base(PyObject *bases)
     base = NULL;
     winner = NULL;
     for (i = 0; i < n; i++) {
-        PyObject *base_proto = PyTuple_GET_ITEM(bases, i);
+        PyObject *base_proto = PyTuple_GetItem(bases, i);
+        if (base_proto == NULL) {
+            return NULL;
+        }
         if (!PyType_Check(base_proto)) {
             PyErr_Format(
                 PyExc_TypeError,
@@ -4166,8 +4172,14 @@ _PyType_CalculateMetaclass(PyTypeObject *metatype, PyObject *bases)
     nbases = PyTuple_GET_SIZE(bases);
     winner = metatype;
     for (i = 0; i < nbases; i++) {
-        tmp = PyTuple_GET_ITEM(bases, i);
+        tmp = PyTuple_GetItem(bases, i);
+        if (tmp == NULL) {
+            return NULL;
+        }
         tmptype = Py_TYPE(tmp);
+        if (PyObject_CheckAccess((PyObject *)tmptype) == NULL) {
+            return NULL;
+        }
         if (PyType_IsSubtype(winner, tmptype)) {
             continue;
         }
@@ -5000,7 +5012,10 @@ type_new_get_bases(type_new_ctx *ctx, PyObject **type)
     }
 
     for (Py_ssize_t i = 0; i < nbases; i++) {
-        PyObject *base = PyTuple_GET_ITEM(ctx->bases, i);
+        PyObject *base = PyTuple_GetItem(ctx->bases, i);
+        if (base == NULL) {
+            return -1;
+        }
         if (PyType_Check(base)) {
             continue;
         }
@@ -5185,7 +5200,7 @@ check_immutable_bases(const char *type_name, PyObject *bases, int skip_first)
         i = 1;
     }
     for (; i<PyTuple_GET_SIZE(bases); i++) {
-        PyTypeObject *b = (PyTypeObject*)PyTuple_GET_ITEM(bases, i);
+        PyTypeObject *b = (PyTypeObject*)PyTuple_GetItem(bases, i);
         if (!b) {
             return -1;
         }

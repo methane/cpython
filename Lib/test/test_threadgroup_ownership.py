@@ -495,6 +495,141 @@ assert 'threading' not in sys.modules
                             (internal, frozendict()), group, api, position),
                             group is sys.main_thread_group)
 
+    def test_type_base_acquisition(self):
+        class Base:
+            pass
+
+        def create_type():
+            ctor, error, rejected = source[2]
+            try:
+                child = ctor('Child', source[1], {})
+            except error:
+                assert rejected
+            else:
+                assert not rejected
+                assert child.__bases__ is source[1]
+            return True
+
+        for base in (Base, int, object(), 42):
+            for group in (sys.main_thread_group, self.foreign):
+                foreign = (group is self.foreign and
+                           base.__shareable__ is threading.Shareable.LOCAL)
+                error = IllegalThreadAccessException if foreign else TypeError
+                rejected = foreign or not isinstance(base, type)
+                with self.subTest(base=base, group=group):
+                    self.assertTrue(internal.threadgroup_vm_probe(
+                        create_type.__code__, group,
+                        (True, (base,), (type, error, rejected)), 0))
+
+    def test_capi_type_base_acquisition(self):
+        capi = import_helper.import_module('_testlimitedcapi')
+
+        class Base:
+            pass
+
+        def create_type():
+            flags, from_slots, error, rejected = source[2]
+            try:
+                child = bound_builtin(source[1], flags, from_slots)
+            except error:
+                assert rejected
+            else:
+                assert not rejected
+                assert child.__bases__ is source[1]
+            return True
+
+        # IMMUTABLETYPE prevents type mutation; it does not make a newly
+        # created extension type shareable between ThreadGroups.
+        fixed_base = capi.type_from_slots('flags')
+        self.assertIs(fixed_base.__shareable__, threading.Shareable.LOCAL)
+        for base in (Base, fixed_base, object):
+            for flags in (False, True):
+                for from_slots in (False, True):
+                    for group in (sys.main_thread_group, self.foreign):
+                        foreign = group is self.foreign and base is not object
+                        error = (IllegalThreadAccessException if foreign
+                                 else TypeError)
+                        rejected = foreign or (flags and base is Base)
+                        with self.subTest(base=base, flags=flags,
+                                          from_slots=from_slots, group=group):
+                            self.assertTrue(internal.threadgroup_vm_probe(
+                                create_type.__code__, group,
+                                (True, (base,), (flags, from_slots, error, rejected)),
+                                0, 1, False, internal.threadgroup_type_from_bases))
+
+    def test_type_set_bases_acquisition(self):
+        # Regrtest's Main-local audit hook otherwise rejects __bases__ writes
+        # before the setter reaches the base tuple.
+        script_helper.assert_python_ok('-c', textwrap.dedent('''
+            import sys
+            import threading
+            import _testinternalcapi as internal
+
+            class Base:
+                pass
+
+            def replace_bases():
+                ctor, error, rejected = source[2]
+                child = ctor('Child', (cls,), {})
+                old_bases = child.__bases__
+                try:
+                    child.__bases__ = source[1]
+                except error:
+                    assert rejected
+                    assert child.__bases__ is old_bases
+                else:
+                    assert not rejected
+                    assert child.__bases__ is source[1]
+                return True
+
+            foreign = threading.ThreadGroup('base replacement')
+            for group in (sys.main_thread_group, foreign):
+                for base in (Base, object()):
+                    error = (IllegalThreadAccessException if group is foreign
+                             else TypeError)
+                    rejected = group is foreign or base is not Base
+                    assert internal.threadgroup_vm_probe(
+                        replace_bases.__code__, group,
+                        (True, (base,), (type, error, rejected)), 0)
+        '''))
+
+    def test_mro_entries_base_acquisition(self):
+        class Base:
+            pass
+
+        def create_type():
+            ctor, error, rejected, explicit = source[2]
+
+            def resolve(self, bases):
+                return source[1]
+
+            def body():
+                pass
+
+            entry = ctor('Entry', (), {'__mro_entries__': resolve})()
+            try:
+                if explicit:
+                    child = bound_builtin(body, 'Child', entry, metaclass=ctor)
+                else:
+                    child = bound_builtin(body, 'Child', entry)
+            except error:
+                assert rejected
+            else:
+                assert not rejected
+                assert child.__bases__ == source[1]
+            return True
+
+        for base in (Base, int):
+            for explicit in (False, True):
+                for group in (sys.main_thread_group, self.foreign):
+                    rejected = group is self.foreign and base is Base
+                    with self.subTest(base=base, explicit=explicit, group=group):
+                        self.assertTrue(internal.threadgroup_vm_probe(
+                            create_type.__code__, group,
+                            (True, (base,),
+                             (type, IllegalThreadAccessException, rejected, explicit)),
+                            0, 1, False, builtins.__build_class__))
+
     def test_numeric_operator_slot_returns(self):
         unary = ('Negative', 'Positive', 'Invert', 'Absolute')
         binary = ('Add', 'Subtract', 'Multiply', 'MatrixMultiply', 'FloorDivide',

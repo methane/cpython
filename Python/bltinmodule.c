@@ -156,14 +156,19 @@ builtin___build_class__(PyObject *self, PyObject *const *args, Py_ssize_t nargs,
     if (meta == NULL) {
         /* if there are no bases, use type: */
         if (PyTuple_GET_SIZE(bases) == 0) {
-            meta = (PyObject *) (&PyType_Type);
+            meta = Py_NewRef(&PyType_Type);
         }
         /* else get the type of the first base */
         else {
-            PyObject *base0 = PyTuple_GET_ITEM(bases, 0);
-            meta = (PyObject *)Py_TYPE(base0);
+            PyObject *base0 = PyTuple_GetItem(bases, 0);
+            if (base0 == NULL) {
+                goto error;
+            }
+            meta = PyObject_Type(base0);
+            if (meta == NULL) {
+                goto error;
+            }
         }
-        Py_INCREF(meta);
         isclass = 1;  /* meta is really a class */
     }
 

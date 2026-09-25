@@ -373,6 +373,11 @@ Heap type name/qualified-name getters check stored references before returning
 or formatting them. Normal associated-module getters validate borrowed results;
 the token getter and module-state getter inherit those checks. Their `DuringGC`
 lookup helpers retain raw traversal semantics.
+Type construction and `__bases__` replacement validate bases acquired from
+tuples before reading their metadata. This includes C API construction of
+immutable types and bases returned by `__mro_entries__`. Metaclass selection
+also validates the acquired metaclass; a rejected base replacement leaves
+the original bases intact.
 Extension objects remain LOCAL unless explicitly declared immutable. Static
 extension objects can rebind to a new Main after their former interpreter has
 been destroyed. `PyType_Ready()` also marks static types whose object headers
@@ -548,6 +553,16 @@ The default-path parallel scheduling test requires group-only serialization
 from startup and does not skip. The extension-import test also runs in the normal
 build, checking that imports leave this scheduling state unchanged.
 
+- Base-class acquisitions: debug and release each pass 402 tests across seven
+  ownership, type/slot C API, class, descriptor, subclass-init and super files
+  (one skip). Four new tests exercise 44 native-worker calls, covering Python
+  and C type creation, `__bases__` replacement and `__mro_entries__`. The
+  baseline reports 13 failures; Main controls pass. After the fix all four tests
+  also pass TSan without suppressions. Existing Main-only type/slot C API and
+  subclass-init tests pass `-R 3:3` (64 tests). No new Main-only failure was found
+  in this selection. Logs: `test-type-bases-before.log`,
+  `test-type-bases-debug.log`, `test-type-bases-release.log`,
+  `test-type-bases-main-refleak.log` and `tsan-type-bases.log`.
 - Type name/module results: debug and release each pass 444 tests across six
   ownership, type/module C API, module, descriptor and exception files (four
   skips). Two native tests reproduce nine foreign-group failures before the

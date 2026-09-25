@@ -3860,6 +3860,33 @@ done:
 }
 
 static PyObject *
+threadgroup_type_from_bases(PyObject *self, PyObject *args)
+{
+    PyObject *bases;
+    int immutable, from_slots;
+    if (!PyArg_ParseTuple(args, "Opp:threadgroup_type_from_bases",
+                          &bases, &immutable, &from_slots)) {
+        return NULL;
+    }
+    unsigned int flags = immutable ? Py_TPFLAGS_IMMUTABLETYPE : 0;
+    if (from_slots) {
+        return PyType_FromSlots((PySlot[]) {
+            PySlot_DATA(Py_tp_name, "_testinternalcapi.BaseProbe"),
+            PySlot_DATA(Py_tp_bases, bases),
+            PySlot_UINT64(Py_tp_flags, flags),
+            PySlot_END
+        });
+    }
+    PyType_Slot slots[] = {{0, NULL}};
+    PyType_Spec spec = {
+        .name = "_testinternalcapi.BaseProbe",
+        .flags = flags,
+        .slots = slots,
+    };
+    return PyType_FromSpecWithBases(&spec, bases);
+}
+
+static PyObject *
 threadgroup_vm_probe(PyObject *self, PyObject *args)
 {
     PyObject *group, *source, *code;
@@ -5196,6 +5223,7 @@ static PyMethodDef methods[] = {
     {"make_access_descriptor", make_access_descriptor, METH_VARARGS, NULL},
     {"access_descriptor_calls", access_descriptor_calls, METH_O, NULL},
     {"threadgroup_vm_probe", threadgroup_vm_probe, METH_VARARGS, NULL},
+    {"threadgroup_type_from_bases", threadgroup_type_from_bases, METH_VARARGS, NULL},
     {"threadgroup_detaching_allocator_probe", threadgroup_detaching_allocator_probe, METH_O, NULL},
     {"threadgroup_return_probe", threadgroup_return_probe, METH_VARARGS, NULL},
     {"threadgroup_number_source", threadgroup_number_source, METH_VARARGS, NULL},
