@@ -138,7 +138,7 @@ PyCFunction_GetSelf(PyObject *op)
         PyErr_BadInternalCall();
         return NULL;
     }
-    return PyCFunction_GET_SELF(op);
+    return PyObject_CheckAccess(PyCFunction_GET_SELF(op));
 }
 
 int
@@ -158,7 +158,8 @@ PyCMethod_GetClass(PyObject *op)
         PyErr_BadInternalCall();
         return NULL;
     }
-    return PyCFunction_GET_CLASS(op);
+    return (PyTypeObject *)PyObject_CheckAccess(
+        (PyObject *)PyCFunction_GET_CLASS(op));
 }
 
 /* Methods (the standard built-in methods, that is) */
@@ -425,6 +426,10 @@ typedef void (*funcptr)(void);
 static inline funcptr
 cfunction_enter_call(PyThreadState *tstate, PyObject *func)
 {
+    PyObject *self = PyCFunction_GET_SELF(func);
+    if (self != NULL && _PyObject_CheckAccessThread(self, tstate) < 0) {
+        return NULL;
+    }
     if (_Py_EnterRecursiveCallTstate(tstate, " while calling a Python object")) {
         return NULL;
     }
@@ -472,7 +477,10 @@ cfunction_vectorcall_FASTCALL_KEYWORDS_METHOD(
     PyObject *func, PyObject *const *args, size_t nargsf, PyObject *kwnames)
 {
     PyThreadState *tstate = _PyThreadState_GET();
-    PyTypeObject *cls = PyCFunction_GET_CLASS(func);
+    PyTypeObject *cls = PyCMethod_GetClass(func);
+    if (cls == NULL) {
+        return NULL;
+    }
     Py_ssize_t nargs = PyVectorcall_NARGS(nargsf);
     PyCMethod meth = (PyCMethod)cfunction_enter_call(tstate, func);
     if (meth == NULL) {
@@ -558,6 +566,9 @@ cfunction_call(PyObject *func, PyObject *args, PyObject *kwargs)
      * is NULL. This is intentional, since vectorcall would be slower. */
     PyCFunction meth = PyCFunction_GET_FUNCTION(func);
     PyObject *self = PyCFunction_GET_SELF(func);
+    if (self != NULL && _PyObject_CheckAccessThread(self, tstate) < 0) {
+        return NULL;
+    }
 
     PyObject *result;
     if (flags & METH_KEYWORDS) {

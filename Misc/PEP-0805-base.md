@@ -388,6 +388,12 @@ Attribute-hook dispatch also checks the selected `__getattribute__` or
 `__getattr__` and any callable returned by descriptor binding. An unused LOCAL
 `__getattr__` does not block an existing accessible attribute. Descriptor slot
 dispatch checks the acquired `__get__` before calling it.
+C calls check the hidden receiver acquired from a bound builtin and the
+defining class acquired from a `METH_METHOD` callable or descriptor. An
+immutable instance does not grant access to its LOCAL class as an implicit
+argument. `PyCFunction_GetSelf()` checks its borrowed result as well. The
+specialized `METH_O` and fast-call paths perform the same acquisition checks;
+explicit arguments already held by the caller need no additional checks.
 
 Tuple and list element operations check references before invoking repr, hash,
 comparison or sorting callbacks. A local list copied from a shared tuple can
@@ -439,6 +445,17 @@ flags/events rather than foreign LOCAL Python functions or mutable results.
 The default-path parallel scheduling test remains skipped while the interpreter
 GIL is enabled. The isolated native probe additionally tests real parallelism.
 
+- Bound C receivers and defining classes: debug and release builds each run
+  1,013 tests across seven files successfully (four and six skips). The initial
+  regressions fail in 15 foreign cases before the fix. Five selected tests
+  pass `-R 3:3` and TSan without suppressions, and the existing parallel LOCAL
+  function probe passes. Coverage includes all C calling conventions, bound
+  and unbound `METH_METHOD` dispatch, and the borrowed receiver getter. Three
+  regressions inspect bytecode to verify the specialized call paths remain
+  active while rejecting foreign receivers. Logs:
+  `test-bound-builtins-before.log`, `test-bound-builtins-debug.log`,
+  `test-bound-builtins-release.log`, `test-bound-builtins-refleak.log`,
+  `test-bound-builtins-parallel.log` and `tsan-bound-builtins.log`.
 - Attribute hooks and descriptor dispatch: debug and release builds each run
   370 tests across six files successfully (four and eight skips). Six foreign
   subcases fail before the acquisition checks; all three new tests pass

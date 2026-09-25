@@ -2011,6 +2011,19 @@ done:
 }
 
 static PyObject *
+make_immutable_call_receiver(PyObject *self, PyObject *type)
+{
+    if (!PyType_Check(type)) {
+        return PyErr_Format(PyExc_TypeError, "expected a type");
+    }
+    PyObject *instance = PyObject_CallNoArgs(type);
+    if (instance != NULL && PyObject_DeclareImmutable(instance) < 0) {
+        Py_CLEAR(instance);
+    }
+    return instance;
+}
+
+static PyObject *
 test_static_immutable_access(PyObject *self, PyObject *unused)
 {
     PyObject *code = (PyObject *)&_Py_InitCleanup;
@@ -2538,7 +2551,8 @@ static const char *return_apis[] = {
     "PyObject_Call", "PyObject_Vectorcall", "PyObject_VectorcallDict",
     "PyVectorcall_Call_keywords", "PyEval_GetBuiltins", "PyImport_GetModuleDict",
     "PySys_GetXOptions", "PyEval_GetFrameBuiltins",
-    "PyObject_RichCompare", "PyObject_RichCompareBool", NULL,
+    "PyObject_RichCompare", "PyObject_RichCompareBool",
+    "PyCFunction_GetSelf", NULL,
 };
 
 struct return_probe {
@@ -2709,6 +2723,14 @@ return_probe_worker(void *arg)
                 result = Py_NewRef(value);
             }
             break;
+        case 32:
+            func = PyCFunction_NewEx(&return_heap_value_def, value, NULL);
+            if (func == NULL) {
+                goto done;
+            }
+            result = PyCFunction_GetSelf(func);
+            owned = 0;
+            break;
         default:
             box = make_return_box(&return_box_spec, value);
             if (box == NULL) {
@@ -2802,6 +2824,7 @@ struct vm_probe {
     struct access_probe base;
     PyObject *code;
     PyObject *bytecode;
+    PyMethodDef *builtin;
     int warmups;
     int trials;
     int capture_bytecode;
@@ -2909,6 +2932,23 @@ static PyMethodDef prepend_probe_call_def = {
 };
 
 static int
+set_vm_probe_builtin(PyObject *globals, PyMethodDef *method, PyObject *source)
+{
+    if (method == NULL) {
+        return 0;
+    }
+    // Copy the opaque heap reference into a newly bound callable. Calling
+    // it must acquire this receiver independently of the explicit arguments.
+    PyObject *func = PyCFunction_NewEx(method, PyTuple_GET_ITEM(source, 0), NULL);
+    if (func == NULL) {
+        return -1;
+    }
+    int result = PyDict_SetItemString(globals, "bound_builtin", func);
+    Py_DECREF(func);
+    return result;
+}
+
+static int
 set_vm_probe_defaults(PyObject *func, PyObject *globals, PyObject *source)
 {
     if (func == NULL) {
@@ -2985,6 +3025,7 @@ vm_probe_worker(void *arg)
     warm = PyTuple_Pack(3, Py_None, Py_None, Py_None);
     if (warm == NULL || set_vm_probe_values(globals, builtins, cell, warm,
                                             box, instance, cls, module) < 0 ||
+        set_vm_probe_builtin(globals, probe->builtin, warm) < 0 ||
         set_vm_probe_defaults(func, globals, warm) < 0) {
         goto done;
     }
@@ -2998,6 +3039,7 @@ vm_probe_worker(void *arg)
     }
     if (set_vm_probe_values(globals, builtins, cell, source,
                             box, instance, cls, module) < 0 ||
+        set_vm_probe_builtin(globals, probe->builtin, source) < 0 ||
         set_vm_probe_defaults(func, globals, source) < 0) {
         goto done;
     }
@@ -3056,11 +3098,17 @@ static PyObject *
 threadgroup_vm_probe(PyObject *self, PyObject *args)
 {
     PyObject *group, *source, *code;
+    PyObject *builtin = NULL;
     int warmups, trials = 1, capture_bytecode = 0;
-    if (!PyArg_ParseTuple(args, "O!OO!i|ip:threadgroup_vm_probe", &PyCode_Type,
+    if (!PyArg_ParseTuple(args, "O!OO!i|ipO:threadgroup_vm_probe", &PyCode_Type,
                           &code, &group, &PyTuple_Type, &source, &warmups,
-                          &trials, &capture_bytecode)) {
+                          &trials, &capture_bytecode, &builtin)) {
         return NULL;
+    }
+    if (builtin != NULL &&
+        (!PyCFunction_Check(builtin) ||
+         (PyCFunction_GET_FLAGS(builtin) & METH_METHOD))) {
+        return PyErr_Format(PyExc_TypeError, "expected a builtin function");
     }
     if (PyTuple_GET_SIZE(source) != 3 || warmups < 0 || warmups > 1000 ||
         trials < 1 || trials > 1000 ||
@@ -3076,6 +3124,8 @@ threadgroup_vm_probe(PyObject *self, PyObject *args)
     struct vm_probe probe = {
         .base = {.interp = PyInterpreterState_Get(), .group = state, .value = source},
         .code = code,
+        .builtin = builtin == NULL ? NULL :
+            ((PyCFunctionObject *)builtin)->m_ml,
         .warmups = warmups,
         .trials = trials,
         .capture_bytecode = capture_bytecode,
@@ -4305,6 +4355,7 @@ static PyMethodDef methods[] = {
     {"make_immutable_capsule", make_immutable_capsule, METH_NOARGS, NULL},
     {"make_immutable_special_method_instance", make_immutable_special_method_instance,
      METH_O, NULL},
+    {"make_immutable_call_receiver", make_immutable_call_receiver, METH_O, NULL},
     {"check_main_group_lifetime", check_main_group_lifetime, METH_NOARGS, NULL},
     {"test_deferred_c_stack_ref", test_deferred_c_stack_ref, METH_NOARGS, NULL},
     {"check_deferred_shutdown", check_deferred_shutdown, METH_NOARGS, NULL},

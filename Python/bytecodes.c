@@ -4952,8 +4952,13 @@ dummy_func(
             }
             STAT_INC(CALL, hit);
             PyCFunction cfunc = PyCFunction_GET_FUNCTION(callable_o);
+            PyObject *bound_self = PyCFunction_GetSelf(callable_o);
+            if (bound_self == NULL && PyErr_Occurred()) {
+                _Py_LeaveRecursiveCallTstate(tstate);
+                ERROR_NO_POP();
+            }
             _PyStackRef arg = args[0];
-            PyObject *res_o = _PyCFunction_TrampolineCall(cfunc, PyCFunction_GET_SELF(callable_o), PyStackRef_AsPyObjectBorrow(arg));
+            PyObject *res_o = _PyCFunction_TrampolineCall(cfunc, bound_self, PyStackRef_AsPyObjectBorrow(arg));
             _Py_LeaveRecursiveCallTstate(tstate);
             assert((res_o != NULL) ^ (_PyErr_Occurred(tstate) != NULL));
             if (res_o == NULL) {

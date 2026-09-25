@@ -374,13 +374,15 @@ method_vectorcall_FASTCALL_KEYWORDS_METHOD(
     if (method_check_args(func, args, nargs, NULL)) {
         return NULL;
     }
+    PyTypeObject *cls = ((PyMethodDescrObject *)func)->d_common.d_type;
+    if (PyObject_CheckAccess((PyObject *)cls) == NULL) {
+        return NULL;
+    }
     PyCMethod meth = (PyCMethod) method_enter_call(tstate, func);
     if (meth == NULL) {
         return NULL;
     }
-    PyObject *result = meth(args[0],
-                            ((PyMethodDescrObject *)func)->d_common.d_type,
-                            args+1, nargs-1, kwnames);
+    PyObject *result = meth(args[0], cls, args+1, nargs-1, kwnames);
     _Py_LeaveRecursiveCall();
     return result;
 }

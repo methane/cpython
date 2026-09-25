@@ -330,6 +330,7 @@ assert 'threading' not in sys.modules
             'PyVectorcall_Call', 'PyObject_Call', 'PyObject_Vectorcall',
             'PyObject_VectorcallDict', 'PyVectorcall_Call_keywords',
             'PyObject_RichCompare', 'PyObject_RichCompareBool',
+            'PyCFunction_GetSelf',
         )
 
         class Value:
@@ -897,6 +898,86 @@ assert 'threading' not in sys.modules
 
         self.assertTrue(internal.threadgroup_vm_probe(
             existing.__code__, self.foreign, (None, instance, None), 0, 32))
+
+    def test_foreign_builtin_class_receiver(self):
+        instance = internal.make_immutable_special_method_instance({})
+        for expression in ('source[1].__init_subclass__()',
+                           'source[1].__subclasshook__(source[2])'):
+            namespace = {}
+            exec(f'def probe():\n    {expression}\n    return True', namespace)
+            for group in (sys.main_thread_group, self.foreign):
+                with self.subTest(expression=expression, group=group):
+                    self.assertIs(internal.threadgroup_vm_probe(
+                        namespace['probe'].__code__, group,
+                        (type(instance), instance, object), 0, 32),
+                        group is sys.main_thread_group)
+
+    def test_foreign_builtin_defining_class(self):
+        clinic = import_helper.import_module('_testclinic')
+        instance = internal.make_immutable_call_receiver(clinic.TestClass)
+
+        bodies = (
+            'source[1].get_defining_class_arg(None)',
+            'method = source[1].get_defining_class_arg\nmethod(None)',
+        )
+        for body in bodies:
+            namespace = {}
+            exec('def probe():\n' + textwrap.indent(body, '    ') +
+                 '\n    return True', namespace)
+            for group in (sys.main_thread_group, self.foreign):
+                with self.subTest(body=body, group=group):
+                    self.assertIs(internal.threadgroup_vm_probe(
+                        namespace['probe'].__code__, group,
+                        (clinic.TestClass, instance, None), 0, 32),
+                        group is sys.main_thread_group)
+
+    def test_builtin_bound_receiver_acquisition(self):
+        capi = import_helper.import_module('_testcapi')
+        cases = (
+            ('meth_noargs', ''),
+            ('meth_o', 'None'),
+            ('meth_fastcall', 'None'),
+            ('meth_fastcall_keywords', 'None'),
+            ('meth_fastcall_keywords', 'key=None'),
+            ('meth_varargs', 'None'),
+            ('meth_varargs_keywords', 'key=None'),
+        )
+        for name, args in cases:
+            namespace = {}
+            exec(f'def probe():\n    bound_builtin({args})\n    return True',
+                 namespace)
+            for value in ([], None):
+                for group in (sys.main_thread_group, self.foreign):
+                    for warmups in (0, 64):
+                        with self.subTest(name=name, args=args, value=value,
+                                          group=group, warmups=warmups):
+                            self.assertIs(internal.threadgroup_vm_probe(
+                                namespace['probe'].__code__, group,
+                                (value, None, None), warmups, 32, False,
+                                getattr(capi, name)),
+                                value is None or group is sys.main_thread_group)
+
+    @requires_specialization
+    def test_builtin_bound_receiver_specializations(self):
+        capi = import_helper.import_module('_testcapi')
+        cases = (
+            ('meth_o', 'CALL_BUILTIN_O'),
+            ('meth_fastcall', 'CALL_BUILTIN_FAST'),
+            ('meth_fastcall_keywords', 'CALL_BUILTIN_FAST_WITH_KEYWORDS'),
+        )
+        for name, opcode in cases:
+            with self.subTest(name=name):
+                def probe():
+                    bound_builtin(None)
+                    return True
+
+                accessible, bytecode = internal.threadgroup_vm_probe(
+                    probe.__code__, self.foreign, ([], None, None),
+                    64, 32, True, getattr(capi, name))
+                self.assertFalse(accessible)
+                self.assertIn(opcode, {
+                    instruction.opname
+                    for instruction in dis._get_instructions_bytes(bytecode)})
 
     def test_foreign_descriptor_get(self):
         def get(self, instance, owner):

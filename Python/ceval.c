@@ -809,15 +809,19 @@ _Py_BuiltinCallFast_StackRef(
     _PyStackRef *arguments,
     int total_args)
 {
+    PyObject *callable_o = PyStackRef_AsPyObjectBorrow(callable);
+    PyObject *self = PyCFunction_GetSelf(callable_o);
+    if (self == NULL && PyErr_Occurred()) {
+        return NULL;
+    }
     PyObject *res;
     STACKREFS_TO_PYOBJECTS(arguments, total_args, args_o);
     if (CONVERSION_FAILED(args_o)) {
         return NULL;
     }
-    PyObject *callable_o = PyStackRef_AsPyObjectBorrow(callable);
     PyCFunction cfunc = PyCFunction_GET_FUNCTION(callable_o);
     res = _PyCFunctionFast_CAST(cfunc)(
-        PyCFunction_GET_SELF(callable_o),
+        self,
         args_o,
         total_args
     );
@@ -832,15 +836,19 @@ _Py_BuiltinCallFastWithKeywords_StackRef(
     _PyStackRef *arguments,
     int total_args)
 {
+    PyObject *callable_o = PyStackRef_AsPyObjectBorrow(callable);
+    PyObject *self = PyCFunction_GetSelf(callable_o);
+    if (self == NULL && PyErr_Occurred()) {
+        return NULL;
+    }
     PyObject *res;
     STACKREFS_TO_PYOBJECTS(arguments, total_args, args_o);
     if (CONVERSION_FAILED(args_o)) {
         return NULL;
     }
-    PyObject *callable_o = PyStackRef_AsPyObjectBorrow(callable);
     PyCFunctionFastWithKeywords cfunc =
         _PyCFunctionFastWithKeywords_CAST(PyCFunction_GET_FUNCTION(callable_o));
-    res = cfunc(PyCFunction_GET_SELF(callable_o), args_o, total_args, NULL);
+    res = cfunc(self, args_o, total_args, NULL);
     STACKREFS_TO_PYOBJECTS_CLEANUP(args_o);
     assert((res != NULL) ^ (PyErr_Occurred() != NULL));
     return res;

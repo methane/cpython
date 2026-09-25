@@ -18118,10 +18118,19 @@
             }
             STAT_INC(CALL, hit);
             PyCFunction cfunc = PyCFunction_GET_FUNCTION(callable_o);
-            _PyStackRef arg = args[0];
             _PyFrame_SetStackPointer(frame, stack_pointer);
             _PyFrame_StackPointerValidate(frame);
-            PyObject *res_o = _PyCFunction_TrampolineCall(cfunc, PyCFunction_GET_SELF(callable_o), PyStackRef_AsPyObjectBorrow(arg));
+            PyObject *bound_self = PyCFunction_GetSelf(callable_o);
+            _PyFrame_StackPointerInvalidate(frame);
+            if (bound_self == NULL && PyErr_Occurred()) {
+                _Py_LeaveRecursiveCallTstate(tstate);
+                SET_CURRENT_CACHED_VALUES(0);
+                JUMP_TO_ERROR();
+            }
+            _PyStackRef arg = args[0];
+            assert(stack_pointer == _PyFrame_GetStackPointer(frame));
+            _PyFrame_StackPointerValidate(frame);
+            PyObject *res_o = _PyCFunction_TrampolineCall(cfunc, bound_self, PyStackRef_AsPyObjectBorrow(arg));
             _PyFrame_StackPointerInvalidate(frame);
             _Py_LeaveRecursiveCallTstate(tstate);
             assert((res_o != NULL) ^ (_PyErr_Occurred(tstate) != NULL));
