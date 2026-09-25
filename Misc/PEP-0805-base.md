@@ -474,6 +474,13 @@ tuple-based acquisition checks and short circuits. Copying components into a
 reduction tuple does not acquire them. A zero step or invalid length can fail
 before unused components are acquired.
 
+Marshal checks references loaded from container elements and code/slice fields
+before serializing them. Set elements are checked before their separate encoding
+used for sorting. An existing serialization error stops later acquisitions,
+preserving the first exception and avoiding later buffer callbacks. Public
+input arguments and newly created code bytes need no additional checks.
+The wire format and the raw dictionary/set iteration contracts are unchanged.
+
 Hash-table lookup checks stored keys before invoking equality callbacks.
 Dictionary repr, equality, item-view membership and item-view symmetric
 difference check the keys and values they acquire. A shallow copy into a local
@@ -515,6 +522,25 @@ The default-path parallel scheduling test requires group-only serialization
 from startup and does not skip. The extension-import test also runs in the normal
 build, checking that imports leave this scheduling state unchanged.
 
+- Marshal heap acquisition: debug and release each pass the six ownership,
+  marshal/C API, code and compilation suites (381 tests, 15 skips). The 67
+  source/sourceless-loader tests also pass after importing `unittest.mock` in
+  their runner. Running that file alone initially produces six Main-only
+  `AttributeError`s because it assumes that import has already occurred;
+  both the test and `unittest` are unchanged from the branch's CPython base.
+  The debug command additionally named a nonexistent bytecode test package.
+  The two new tests pass TSan without suppressions. They use isolated processes
+  so regrtest's Main-owned Python audit hook cannot reject the call before the
+  serialization under test. Native buffer callbacks record no side effects on
+  rejection; Main and immutable controls, versions 0–6, both C output APIs,
+  copied local containers, code metadata, unsupported versions, disabled code
+  serialization and first-error preservation are covered. Existing Main-only
+  marshal/C API tests pass `-R 3:3` (87 tests, eight skips); this does not establish foreign
+  LOCAL reclamation. Logs: `test-marshal-acquisition-before.log`,
+  `test-marshal-debug.log`, `test-marshal-release.log`,
+  `test-marshal-loader-details.log`, `test-marshal-loader-debug.log`,
+  `test-marshal-loader-release.log`, `test-marshal-main-refleak.log` and
+  `tsan-marshal.log`.
 - Slice component acquisition: debug and release each run 694 tests across
   ownership, slices, ranges, tuples, lists, bytes and strings successfully
   (14 skips). Before the fix, 27 foreign-group cases fail; Main controls pass.

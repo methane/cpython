@@ -630,6 +630,173 @@ assert 'threading' not in sys.modules
             0, 1, False, internal.slice_getindices_probe))
         self.assertEqual(internal.container_element_calls(value), 0)
 
+    def test_marshal_heap_acquisition(self):
+        import_helper.import_module('_testcapi')
+        # Regrtest's Python audit hook belongs to Main. An isolated process
+        # lets serialization reach its heap reads in the foreign group.
+        script_helper.assert_python_ok('-c', textwrap.dedent('''
+            import os
+            import sys
+            import tempfile
+            import threading
+            import _testcapi as capi
+            import _testinternalcapi as internal
+
+            class Bytes(bytes):
+                pass
+
+            def target():
+                return None
+
+            def encode():
+                obj = source[1]
+                if source[2][3] is not None:
+                    obj = source[2][3](obj)
+                try:
+                    bound_builtin(obj, source[2][1])
+                except source[2][0]:
+                    assert source[2][2]
+                else:
+                    assert not source[2][2]
+                return True
+
+            def encode_file():
+                obj = source[1]
+                if source[2][3] is not None:
+                    obj = source[2][3](obj)
+                try:
+                    bound_builtin(obj, source[2][4], source[2][1])
+                except source[2][0]:
+                    assert source[2][2]
+                else:
+                    assert not source[2][2]
+                return True
+
+            cases = (
+                ('tuple', lambda v: (v,), None, 0),
+                ('list copy', lambda v: (v,), list, 0),
+                ('dict copy', lambda v: frozendict(value=v), dict, 0),
+                ('frozendict value', lambda v: frozendict(value=v), None, 6),
+                ('frozendict key', lambda v: frozendict({v: 1}), None, 6),
+                ('frozenset', lambda v: frozenset([v]), None, 0),
+                ('set copy', lambda v: frozenset([v]), set, 0),
+                ('slice start', lambda v: slice(v, None), None, 5),
+                ('slice stop', lambda v: slice(None, v), None, 5),
+                ('slice step', lambda v: slice(None, None, v), None, 5),
+                ('code consts', lambda v: target.__code__.replace(co_consts=(v,)),
+                 None, 0),
+            )
+            group = threading.ThreadGroup('marshal')
+            with tempfile.TemporaryDirectory() as directory:
+                filename = os.fsencode(os.path.join(directory, 'object.bin'))
+                for name, make, copy, first_version in cases:
+                    for version in range(first_version, 7):
+                        for value in (b'bytes', Bytes(b'bytes'),
+                                      internal.make_container_element(False),
+                                      internal.make_container_element(True)):
+                            shared = value.__shareable__ is threading.Shareable.IMMUTABLE
+                            obj = make(value)
+                            for owner in (sys.main_thread_group, group):
+                                rejected = not shared and owner is group
+                                options = (IllegalThreadAccessException, version,
+                                           rejected, copy, filename)
+                                for code, api in (
+                                    (encode.__code__, capi.pymarshal_writeobjecttostring),
+                                    (encode_file.__code__, capi.pymarshal_write_object_to_file),
+                                ):
+                                    native = type(value) not in (bytes, Bytes)
+                                    before = internal.container_element_calls(value) if native else 0
+                                    try:
+                                        assert internal.threadgroup_vm_probe(
+                                            code, owner, (True, obj, options),
+                                            0, 1, False, api)
+                                        if rejected and native:
+                                            assert internal.container_element_calls(value) == before
+                                    except Exception:
+                                        print(name, version, type(value), owner, api.__name__)
+                                        raise
+        '''))
+
+    def test_marshal_code_metadata_acquisition(self):
+        import_helper.import_module('_testcapi')
+        script_helper.assert_python_ok('-c', textwrap.dedent('''
+            import marshal
+            import sys
+            import threading
+            import _testcapi as capi
+            import _testinternalcapi as internal
+
+            class String(str):
+                pass
+            class Tuple(tuple):
+                pass
+            class Bytes(bytes):
+                pass
+
+            def target():
+                return None
+
+            def encode():
+                try:
+                    bound_builtin(source[1], source[2][2])
+                except source[2][0]:
+                    assert source[2][1]
+                else:
+                    assert not source[2][1]
+                return True
+
+            fields = {'co_name': String, 'co_filename': String,
+                      'co_qualname': String, 'co_names': Tuple,
+                      'co_consts': Tuple, 'co_linetable': Bytes,
+                      'co_exceptiontable': Bytes}
+            group = threading.ThreadGroup('marshal metadata')
+            for field, cls in fields.items():
+                value = cls(getattr(target.__code__, field))
+                obj = target.__code__.replace(**{field: value})
+                assert getattr(obj, field) is value
+                for owner in (sys.main_thread_group, group):
+                    # Marshal does not support str/tuple subclasses at all;
+                    # preserve that Main error, while foreign reads are denied.
+                    unsupported = cls is not Bytes
+                    foreign = owner is group
+                    expected = (IllegalThreadAccessException if foreign else ValueError,
+                                foreign or unsupported, 6)
+                    try:
+                        assert internal.threadgroup_vm_probe(
+                            encode.__code__, owner, (True, obj, expected),
+                            0, 1, False, capi.pymarshal_writeobjecttostring)
+                    except Exception:
+                        print(field, owner)
+                        raise
+
+            for obj, version in ((slice([], []), 4),
+                                 (frozendict(value=[]), 5)):
+                assert internal.threadgroup_vm_probe(
+                    encode.__code__, group,
+                    (True, obj, (ValueError, True, version)),
+                    0, 1, False, capi.pymarshal_writeobjecttostring)
+
+            def disallow_code():
+                try:
+                    bound_builtin(source[1], 6, allow_code=False)
+                except source[2]:
+                    return True
+                assert False
+
+            assert internal.threadgroup_vm_probe(
+                disallow_code.__code__, group,
+                (True, target.__code__.replace(co_consts=([],)), ValueError),
+                0, 1, False, marshal.dumps)
+
+            element = internal.make_container_element(False)
+            for obj, error in (((range(2), element), ValueError),
+                               ((element, range(2)), IllegalThreadAccessException)):
+                assert internal.threadgroup_vm_probe(
+                    encode.__code__, group, (True, obj, (error, True, 6)),
+                    0, 1, False, capi.pymarshal_writeobjecttostring)
+                assert internal.container_element_calls(element) == 0
+        '''))
+
     def test_sequence_operations_without_element_access(self):
         cases = (
             'assert source[1].__len__() == 1',

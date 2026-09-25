@@ -522,6 +522,19 @@ w_object(PyObject *v, WFILE *p)
 }
 
 static void
+w_heap_object(PyObject *v, WFILE *p)
+{
+    if (p->error) {
+        return;
+    }
+    if (v != NULL && PyObject_CheckAccess(v) == NULL) {
+        p->error = true;
+        return;
+    }
+    w_object(v, p);
+}
+
+static void
 w_complex_object(PyObject *v, char flag, WFILE *p)
 {
     Py_ssize_t i, n;
@@ -620,7 +633,7 @@ w_complex_object(PyObject *v, char flag, WFILE *p)
             W_SIZE(n, p);
         }
         for (i = 0; i < n; i++) {
-            w_object(PyTuple_GET_ITEM(v, i), p);
+            w_heap_object(PyTuple_GET_ITEM(v, i), p);
         }
         w_complete(v, p);
     }
@@ -629,7 +642,7 @@ w_complex_object(PyObject *v, char flag, WFILE *p)
         n = PyList_GET_SIZE(v);
         W_SIZE(n, p);
         for (i = 0; i < n; i++) {
-            w_object(PyList_GET_ITEM(v, i), p);
+            w_heap_object(PyList_GET_ITEM(v, i), p);
         }
     }
     else if (PyAnyDict_CheckExact(v)) {
@@ -653,8 +666,8 @@ w_complex_object(PyObject *v, char flag, WFILE *p)
         /* This one is NULL object terminated! */
         pos = 0;
         while (PyDict_Next(v, &pos, &key, &value)) {
-            w_object(key, p);
-            w_object(value, p);
+            w_heap_object(key, p);
+            w_heap_object(value, p);
         }
         w_object((PyObject *)NULL, p);
         if (PyFrozenDict_CheckExact(v)) {
@@ -684,6 +697,11 @@ w_complex_object(PyObject *v, char flag, WFILE *p)
         Py_ssize_t i = 0;
         Py_BEGIN_CRITICAL_SECTION(v);
         while (_PySet_NextEntryRef(v, &pos, &value, &hash)) {
+            if (PyObject_CheckAccess(value) == NULL) {
+                p->error = true;
+                Py_DECREF(value);
+                break;
+            }
             PyObject *dump = _PyMarshal_WriteObjectToString(value,
                                     p->version, p->allow_code);
             if (dump == NULL) {
@@ -712,7 +730,7 @@ w_complex_object(PyObject *v, char flag, WFILE *p)
         for (Py_ssize_t i = 0; i < n; i++) {
             PyObject *pair = PyList_GET_ITEM(pairs, i);
             value = PyTuple_GET_ITEM(pair, 1);
-            w_object(value, p);
+            w_heap_object(value, p);
         }
         Py_DECREF(pairs);
     }
@@ -736,16 +754,16 @@ w_complex_object(PyObject *v, char flag, WFILE *p)
         w_long(co->co_stacksize, p);
         w_long(co->co_flags, p);
         w_object(co_code, p);
-        w_object(co->co_consts, p);
-        w_object(co->co_names, p);
-        w_object(co->co_localsplusnames, p);
-        w_object(co->co_localspluskinds, p);
-        w_object(co->co_filename, p);
-        w_object(co->co_name, p);
-        w_object(co->co_qualname, p);
+        w_heap_object(co->co_consts, p);
+        w_heap_object(co->co_names, p);
+        w_heap_object(co->co_localsplusnames, p);
+        w_heap_object(co->co_localspluskinds, p);
+        w_heap_object(co->co_filename, p);
+        w_heap_object(co->co_name, p);
+        w_heap_object(co->co_qualname, p);
         w_long(co->co_firstlineno, p);
-        w_object(co->co_linetable, p);
-        w_object(co->co_exceptiontable, p);
+        w_heap_object(co->co_linetable, p);
+        w_heap_object(co->co_exceptiontable, p);
         Py_DECREF(co_code);
         w_complete(v, p);
     }
@@ -773,9 +791,9 @@ w_complex_object(PyObject *v, char flag, WFILE *p)
         }
         PySliceObject *slice = (PySliceObject *)v;
         W_TYPE(TYPE_SLICE, p);
-        w_object(slice->start, p);
-        w_object(slice->stop, p);
-        w_object(slice->step, p);
+        w_heap_object(slice->start, p);
+        w_heap_object(slice->stop, p);
+        w_heap_object(slice->step, p);
         w_complete(v, p);
     }
     else {

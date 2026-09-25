@@ -2761,6 +2761,13 @@ container_element_index(PyObject *op)
     return PyLong_FromLong(1);
 }
 
+static int
+container_element_getbuffer(PyObject *op, Py_buffer *view, int flags)
+{
+    _Py_atomic_add_int(&((container_element *)op)->calls, 1);
+    return PyBuffer_FillInfo(view, op, (void *)"buffer", 6, 1, flags);
+}
+
 static PyObject *
 make_container_element(PyObject *self, PyObject *immutable)
 {
@@ -2774,6 +2781,7 @@ make_container_element(PyObject *self, PyObject *immutable)
         {Py_tp_hash, container_element_hash},
         {Py_nb_bool, container_element_bool},
         {Py_nb_index, container_element_index},
+        {Py_bf_getbuffer, container_element_getbuffer},
         {Py_tp_richcompare, container_element_compare},
         {0, NULL},
     };
