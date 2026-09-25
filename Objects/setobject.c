@@ -109,6 +109,10 @@ set_compare_threadsafe(PySetObject *so, setentry *table, setentry *ep,
         if (!_Py_TryIncrefCompare(&ep->key, startkey)) {
             return SET_LOOKKEY_CHANGED;
         }
+        if (PyObject_CheckAccess(startkey) == NULL) {
+            Py_DECREF(startkey);
+            return SET_LOOKKEY_ERROR;
+        }
         int cmp = PyObject_RichCompareBool(startkey, key, Py_EQ);
         Py_DECREF(startkey);
         if (cmp < 0) {
@@ -150,6 +154,9 @@ set_compare_entry_lock_held(PySetObject *so, setentry *table, setentry *entry,
             && PyUnicode_CheckExact(key)
             && unicode_eq(startkey, key))
             return SET_LOOKKEY_FOUND;
+        if (PyObject_CheckAccess(startkey) == NULL) {
+            return SET_LOOKKEY_ERROR;
+        }
         table = so->table;
         Py_INCREF(startkey);
         int cmp = PyObject_RichCompareBool(startkey, key, Py_EQ);
@@ -182,6 +189,9 @@ set_compare_frozenset(PySetObject *so, setentry *table, setentry *ep,
     }
     Py_ssize_t ep_hash = ep->hash;
     if (ep_hash == hash) {
+        if (PyObject_CheckAccess(startkey) == NULL) {
+            return SET_LOOKKEY_ERROR;
+        }
         int cmp = PyObject_RichCompareBool(startkey, key, Py_EQ);
         if (cmp < 0) {
             return SET_LOOKKEY_ERROR;
@@ -283,6 +293,9 @@ set_add_entry_takeref(PySetObject *so, PyObject *key, Py_hash_t hash)
                     && PyUnicode_CheckExact(key)
                     && unicode_eq(startkey, key))
                     goto found_active;
+                if (PyObject_CheckAccess(startkey) == NULL) {
+                    goto comparison_error;
+                }
                 table = so->table;
                 Py_INCREF(startkey);
                 cmp = PyObject_RichCompareBool(startkey, key, Py_EQ);

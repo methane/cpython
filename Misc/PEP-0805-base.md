@@ -206,6 +206,14 @@ before using their truth value. Container length, cached tuple hashes and
 comparison paths that do not inspect an element need no element acquisition.
 The tuple hash cache uses atomic reads and writes in the normal build too.
 
+Hash-table lookup checks stored keys before invoking equality callbacks.
+Dictionary repr, equality, item-view membership and item-view symmetric
+difference check the keys and values they acquire. A shallow copy into a local
+dictionary or set can still contain foreign LOCAL elements, so these checks
+apply to mutable containers too. Missing hashes/keys and unequal dictionary
+lengths can determine an answer without acquiring the unused elements.
+Bulk set operations and other C API/VM acquisition paths still need an audit.
+
 Cross-group LOCAL reclamation still needs a choice of execution context,
 especially after every thread in the owning group has exited. The immediate
 GIL-serialized BRC merge is not an owner-correct finalization mechanism. The
@@ -232,6 +240,14 @@ Tests run on Linux/aarch64. Logs are under `/tmp/pep805-base/`. The optional
 flags/events rather than foreign LOCAL Python functions or mutable results.
 Parallel scheduling tests remain skipped while the interpreter GIL is enabled.
 
+- Hash-table acquisitions: 932 tests pass across eight files covering ownership,
+  dicts/frozendicts, sets, dictionary views, comparison, repr and C APIs
+  (two skips). Ownership and dictionary views pass `-R 3:3` with
+  `mimalloc_debug` (52 tests). Before the fixes, native callback counters exposed
+  11 key-lookup, 16 dictionary-operation and eight item-view symmetric-difference
+  failures. Rejected operations now leave those callbacks untouched, including
+  after copying a shared container into a local dict/set. Separate regressions
+  retain lookups and comparisons that need no inaccessible element.
 - Immutable caches: 1,821 tests pass across 12 files covering ownership,
   ThreadGroups, strings, bytes, sets, dicts, hashes, codecs and related C APIs
   (30 skips). Ownership and ThreadGroups pass `-R 3:3` with `mimalloc_debug`

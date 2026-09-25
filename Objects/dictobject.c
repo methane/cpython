@@ -1220,6 +1220,9 @@ compare_generic(PyDictObject *mp, PyDictKeysObject *dk,
     }
     if (ep->me_hash == hash) {
         PyObject *startkey = ep->me_key;
+        if (PyObject_CheckAccess(startkey) == NULL) {
+            return DKIX_ERROR;
+        }
         Py_INCREF(startkey);
         int cmp = PyObject_RichCompareBool(startkey, key, Py_EQ);
         Py_DECREF(startkey);
@@ -1573,6 +1576,10 @@ compare_generic_threadsafe(PyDictObject *mp, PyDictKeysObject *dk,
     if (ep_hash == hash) {
         if (startkey == NULL || !_Py_TryIncrefCompare(&ep->me_key, startkey)) {
             return DKIX_KEY_CHANGED;
+        }
+        if (PyObject_CheckAccess(startkey) == NULL) {
+            Py_DECREF(startkey);
+            return DKIX_ERROR;
         }
         int cmp = PyObject_RichCompareBool(startkey, key, Py_EQ);
         Py_DECREF(startkey);
@@ -3734,7 +3741,8 @@ anydict_repr_impl(PyObject *self)
         first = 0;
 
         // Write repr(key)
-        if (PyUnicodeWriter_WriteRepr(writer, key) < 0) {
+        if (PyObject_CheckAccess(key) == NULL ||
+            PyUnicodeWriter_WriteRepr(writer, key) < 0) {
             goto error;
         }
 
@@ -3747,7 +3755,8 @@ anydict_repr_impl(PyObject *self)
         }
 
         // Write repr(value)
-        if (PyUnicodeWriter_WriteRepr(writer, value) < 0) {
+        if (PyObject_CheckAccess(value) == NULL ||
+            PyUnicodeWriter_WriteRepr(writer, value) < 0) {
             goto error;
         }
 
@@ -4700,6 +4709,9 @@ dict_equal_lock_held(PyDictObject *a, PyDictObject *b)
         if (aval != NULL) {
             int cmp;
             PyObject *bval;
+            if (PyObject_CheckAccess(key) == NULL) {
+                return -1;
+            }
             /* temporarily bump aval's refcount to ensure it stays
                alive until we're done with it */
             Py_INCREF(aval);
@@ -4715,7 +4727,13 @@ dict_equal_lock_held(PyDictObject *a, PyDictObject *b)
                 return 0;
             }
             Py_INCREF(bval);
-            cmp = PyObject_RichCompareBool(aval, bval, Py_EQ);
+            if (PyObject_CheckAccess(aval) == NULL ||
+                PyObject_CheckAccess(bval) == NULL) {
+                cmp = -1;
+            }
+            else {
+                cmp = PyObject_RichCompareBool(aval, bval, Py_EQ);
+            }
             Py_DECREF(key);
             Py_DECREF(aval);
             Py_DECREF(bval);
@@ -6817,6 +6835,9 @@ dictitems_xor_lock_held(PyObject *d1, PyObject *d2)
     while (_PyDict_Next(d2, &pos, &key, &val2, &hash)) {
         Py_INCREF(key);
         Py_INCREF(val2);
+        if (PyObject_CheckAccess(key) == NULL) {
+            goto error;
+        }
         val1 = _PyDict_GetItem_KnownHash(temp_dict, key, hash);
 
         int to_delete;
@@ -6828,7 +6849,13 @@ dictitems_xor_lock_held(PyObject *d1, PyObject *d2)
         }
         else {
             Py_INCREF(val1);
-            to_delete = PyObject_RichCompareBool(val1, val2, Py_EQ);
+            if (PyObject_CheckAccess(val1) == NULL ||
+                PyObject_CheckAccess(val2) == NULL) {
+                to_delete = -1;
+            }
+            else {
+                to_delete = PyObject_RichCompareBool(val1, val2, Py_EQ);
+            }
             Py_CLEAR(val1);
             if (to_delete < 0) {
                 goto error;
@@ -7082,9 +7109,17 @@ dictitems_contains(PyObject *self, PyObject *obj)
         return 0;
     key = PyTuple_GET_ITEM(obj, 0);
     value = PyTuple_GET_ITEM(obj, 1);
+    if (PyObject_CheckAccess(key) == NULL) {
+        return -1;
+    }
     result = PyDict_GetItemRef((PyObject *)dv->dv_dict, key, &found);
     if (result == 1) {
-        result = PyObject_RichCompareBool(found, value, Py_EQ);
+        if (PyObject_CheckAccess(value) == NULL) {
+            result = -1;
+        }
+        else {
+            result = PyObject_RichCompareBool(found, value, Py_EQ);
+        }
         Py_DECREF(found);
     }
     return result;

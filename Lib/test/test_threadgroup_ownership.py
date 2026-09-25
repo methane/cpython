@@ -419,6 +419,120 @@ assert 'threading' not in sys.modules
                         probe.__code__, group, (fresh, expected, None), 0, 10))
             self.assertEqual(hash(fresh), expected)
 
+    def test_hash_table_lookup_acquires_keys(self):
+        cases = (
+            (frozenset, None, 'assert 0 not in table'),
+            (frozenset, set, 'assert 0 not in table'),
+            (frozenset, set, 'table.add(0)'),
+            (frozenset, set, 'table.discard(0)'),
+            (lambda v: frozendict.fromkeys(v), None, 'assert 0 not in table'),
+            (lambda v: frozendict.fromkeys(v), None, 'table.get(0)'),
+            (lambda v: frozendict.fromkeys(v), dict, 'assert 0 not in table'),
+            (lambda v: frozendict.fromkeys(v), dict, 'table.get(0)'),
+            (lambda v: frozendict.fromkeys(v), dict, 'table.setdefault(0)'),
+            (lambda v: frozendict.fromkeys(v), dict, 'table[0] = None'),
+            (lambda v: frozendict.fromkeys(v), dict, 'table.pop(0, None)'),
+        )
+        for factory, copy_type, body in cases:
+            namespace = {}
+            exec('def probe():\n'
+                 '    table = source[1]\n'
+                 '    if source[2] is not None:\n'
+                 '        table = source[2](table)\n' +
+                 textwrap.indent(body, '    ') + '\n    return True', namespace)
+            for immutable in (False, True):
+                for group in (sys.main_thread_group, self.foreign):
+                    value = internal.make_container_element(immutable)
+                    table = factory([value])
+                    calls = internal.container_element_calls(value)
+                    accessible = immutable or group is sys.main_thread_group
+                    with self.subTest(table_type=type(table), copy_type=copy_type,
+                                      body=body, immutable=immutable, group=group):
+                        self.assertIs(internal.threadgroup_vm_probe(
+                            namespace['probe'].__code__.replace(), group,
+                            (value, table, copy_type), 0), accessible)
+                        calls_after = internal.container_element_calls(value)
+                        if accessible:
+                            self.assertGreater(calls_after, calls)
+                        else:
+                            self.assertEqual(calls_after, calls)
+
+    def test_hash_table_lookup_without_key_acquisition(self):
+        def probe():
+            assert 1 not in source[1]
+            return True
+
+        for factory in (frozenset, lambda v: frozendict.fromkeys(v)):
+            value = internal.make_container_element(False)
+            table = factory([value])
+            calls = internal.container_element_calls(value)
+            with self.subTest(table_type=type(table)):
+                self.assertTrue(internal.threadgroup_vm_probe(
+                    probe.__code__, self.foreign, (True, table, None), 0))
+                self.assertEqual(internal.container_element_calls(value), calls)
+
+    def test_dict_element_operations(self):
+        cases = (
+            (lambda v: (frozendict({v: None}), None), 'table.__repr__()'),
+            (lambda v: (frozendict(value=v), None), 'table.__repr__()'),
+            (lambda v: (frozendict({v: None}), None), 'table == table'),
+            (lambda v: (frozendict(value=v), None), 'table == table'),
+            (lambda v: (frozendict(value=v), None), "table == {'value': None}"),
+            (lambda v: (frozendict(value=v), None), "{'value': None} == table"),
+            (lambda v: (frozendict({0: None}), (v, None)),
+             'source[2] in table.items()'),
+            (lambda v: (frozendict({0: None}), (0, v)),
+             'source[2] in table.items()'),
+            (lambda v: (frozendict({v: None}), None),
+             'table.items() ^ table.items()'),
+            (lambda v: (frozendict(value=v), None),
+             'table.items() ^ table.items()'),
+            (lambda v: (frozendict(value=v), None),
+             "table.items() ^ {'value': None}.items()"),
+            (lambda v: (frozendict(value=v), None),
+             "{'value': None}.items() ^ table.items()"),
+        )
+        for index, (factory, body) in enumerate(cases):
+            for copy in (False, True):
+                prefix = 'table = {**source[1]}' if copy else 'table = source[1]'
+                namespace = {}
+                exec('def probe():\n' + textwrap.indent(prefix + '\n' + body,
+                                                       '    ') +
+                     '\n    return True', namespace)
+                for immutable in (False, True):
+                    for group in (sys.main_thread_group, self.foreign):
+                        value = internal.make_container_element(immutable)
+                        table, operand = factory(value)
+                        calls = internal.container_element_calls(value)
+                        accessible = immutable or group is sys.main_thread_group
+                        with self.subTest(case=index, copy=copy,
+                                          immutable=immutable, group=group):
+                            self.assertIs(internal.threadgroup_vm_probe(
+                                namespace['probe'].__code__.replace(), group,
+                                (value, table, operand), 0), accessible)
+                            if not accessible:
+                                self.assertEqual(
+                                    internal.container_element_calls(value), calls)
+
+    def test_dict_comparison_without_value_acquisition(self):
+        cases = (
+            (lambda v: frozendict(value=v), 'assert table != {}'),
+            (lambda v: frozendict(value=v), "assert table != {'missing': None}"),
+            (lambda v: frozendict({0: None}), 'assert source[2] not in table.items()'),
+        )
+        for factory, body in cases:
+            value = internal.make_container_element(False)
+            table = factory(value)
+            calls = internal.container_element_calls(value)
+            namespace = {}
+            exec('def probe():\n    table = source[1]\n' +
+                 textwrap.indent(body, '    ') + '\n    return True', namespace)
+            with self.subTest(body=body):
+                self.assertTrue(internal.threadgroup_vm_probe(
+                    namespace['probe'].__code__, self.foreign,
+                    (True, table, (1, value)), 0))
+                self.assertEqual(internal.container_element_calls(value), calls)
+
     def test_sort_access_failure_restores_list(self):
         for reverse in (False, True):
             for key in ('None', 'key'):
