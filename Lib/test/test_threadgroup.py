@@ -307,6 +307,57 @@ if name == '_testsinglephase_no_gil_slot':
         self.assertEqual(internal.threadgroup_probe(
             groups, 1, support.SHORT_TIMEOUT), (True, True))
 
+    def test_group_scheduling_without_interpreter_lock(self):
+        script_helper.assert_python_ok('-c', '''
+import sys
+import threading
+from test import support
+import _testinternalcapi as internal
+
+before = sys._is_gil_enabled()
+first = threading.ThreadGroup('first')
+second = threading.ThreadGroup('second')
+for _ in range(4):
+    assert internal.threadgroup_probe(
+        (first, second), 1, support.SHORT_TIMEOUT, True) == (True, True)
+    result = internal.threadgroup_probe((first, first), 1, 0.01, True)
+    assert sorted(result) == [False, True], result
+    assert internal.threadgroup_probe(
+        (first, first), 2, support.SHORT_TIMEOUT, True) == (True, True)
+    assert sys._is_gil_enabled() == before
+''')
+
+    @unittest.skipUnless(support.with_mimalloc(), 'requires mimalloc')
+    def test_parallel_allocation_and_collection(self):
+        for allocator in ('mimalloc', 'mimalloc_debug'):
+            with self.subTest(allocator=allocator):
+                script_helper.assert_python_ok('-c', '''
+import sys
+import threading
+from test import support
+import _testinternalcapi as internal
+
+before = sys._is_gil_enabled()
+groups = (threading.ThreadGroup('first'), threading.ThreadGroup('second'))
+assert internal.threadgroup_probe(
+    groups, 3, support.SHORT_TIMEOUT, True) == (True, True)
+assert sys._is_gil_enabled() == before
+''', PYTHONMALLOC=allocator)
+
+    def test_parallel_probe_requires_isolation(self):
+        internal = import_helper.import_module('_testinternalcapi')
+        ready = threading.Event()
+        finish = threading.Event()
+        def wait():
+            ready.set()
+            finish.wait()
+        thread = threading.Thread(target=wait)
+        with threading_helper.start_threads([thread], unlock=finish.set):
+            self.assertTrue(ready.wait(support.SHORT_TIMEOUT))
+            with self.assertRaisesRegex(RuntimeError, 'isolated process'):
+                internal.threadgroup_probe(
+                    (sys.main_thread_group, sys.main_thread_group), 1, 1.0, True)
+
     def test_same_group_cannot_execute_in_parallel(self):
         internal = import_helper.import_module('_testinternalcapi')
         group = threading.ThreadGroup()

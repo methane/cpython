@@ -15,22 +15,98 @@
 #include "pycore_threadgroup.h"
 #include "pycore_unicodeobject.h"
 
+struct parallel_gc_counts {
+    int refs;
+    int created;
+    int freed;
+};
+
+static void
+parallel_gc_counts_release(struct parallel_gc_counts *counts)
+{
+    if (_Py_atomic_add_int(&counts->refs, -1) == 1) {
+        PyMem_RawFree(counts);
+    }
+}
+
+typedef struct {
+    PyObject_HEAD
+    PyObject *cycle;
+    struct parallel_gc_counts *counts;
+} parallel_gc_object;
+
+static int
+parallel_gc_traverse(PyObject *op, visitproc visit, void *arg)
+{
+    Py_VISIT(Py_TYPE(op));
+    Py_VISIT(((parallel_gc_object *)op)->cycle);
+    return 0;
+}
+
+static int
+parallel_gc_clear(PyObject *op)
+{
+    Py_CLEAR(((parallel_gc_object *)op)->cycle);
+    return 0;
+}
+
+static void
+parallel_gc_dealloc(PyObject *op)
+{
+    PyObject_GC_UnTrack(op);
+    parallel_gc_clear(op);
+    struct parallel_gc_counts *counts = ((parallel_gc_object *)op)->counts;
+    if (counts != NULL) {
+        _Py_atomic_add_int(&counts->freed, 1);
+        parallel_gc_counts_release(counts);
+    }
+    PyTypeObject *type = Py_TYPE(op);
+    type->tp_free(op);
+    Py_DECREF(type);
+}
+
+static PyObject *
+parallel_gc_type(void)
+{
+    PyType_Slot slots[] = {
+        {Py_tp_traverse, parallel_gc_traverse},
+        {Py_tp_clear, parallel_gc_clear},
+        {Py_tp_dealloc, parallel_gc_dealloc},
+        {0, NULL},
+    };
+    PyType_Spec spec = {
+        .name = "_testinternalcapi.ParallelGCProbe",
+        .basicsize = sizeof(parallel_gc_object),
+        .flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_GC,
+        .slots = slots,
+    };
+    PyObject *type = PyType_FromSpec(&spec);
+    if (type != NULL) {
+        PyObject_DeclareImmutable(type);
+    }
+    return type;
+}
+
 struct group_probe {
     PyInterpreterState *interp;
     _PyThreadGroupState *state;
     PyObject *wrapper;
     PyEvent *events;
+    PyEvent *start;
     uint8_t *flags;
     int index;
     int mode;
     PyTime_t timeout;
     int ok;
+    PyTypeObject *cycle_type;
+    struct parallel_gc_counts *counts;
 };
 
 static void
 group_probe_worker(void *arg)
 {
     struct group_probe *probe = arg;
+    PyEvent_Wait(probe->start);
     PyThreadState *tstate = PyThreadState_New(probe->interp);
     if (tstate == NULL) {
         return;
@@ -49,7 +125,7 @@ group_probe_worker(void *arg)
     Py_XDECREF(wrapper);
     PyErr_Clear();
 
-    if (probe->ok && probe->mode == 1) {
+    if (probe->ok && (probe->mode == 1 || probe->mode == 3)) {
         /* Both workers must reach this barrier without releasing execution
            rights. Interleaving bytecode in one group cannot satisfy it. */
         PyTime_t now;
@@ -75,6 +151,47 @@ group_probe_worker(void *arg)
         probe->ok &= tstate->holds_threadgroup;
     }
 
+    if (probe->ok && probe->mode == 3) {
+        for (int i = 0; i < 2000; i++) {
+            Py_ssize_t size = 64 + i % 1024;
+            PyObject *bytes = PyBytes_FromStringAndSize(NULL, size);
+            if (bytes == NULL) {
+                probe->ok = 0;
+                break;
+            }
+            memset(PyBytes_AS_STRING(bytes), (unsigned char)i, size);
+            parallel_gc_object *cycle = (parallel_gc_object *)
+                PyType_GenericAlloc(probe->cycle_type, 0);
+            if (cycle == NULL) {
+                Py_DECREF(bytes);
+                probe->ok = 0;
+                break;
+            }
+            cycle->counts = probe->counts;
+            _Py_atomic_add_int(&probe->counts->refs, 1);
+            cycle->cycle = Py_NewRef((PyObject *)cycle);
+            // This fixture has no mutating API or Python finalizers. GC may
+            // clear it in either group without deciding LOCAL finalization.
+            PyObject_DeclareImmutable((PyObject *)cycle);
+            _Py_atomic_add_int(&probe->counts->created, 1);
+            Py_DECREF(cycle);
+            if (i % 64 == 0) {
+                PyGC_Collect();
+            }
+            if (_Py_HandlePending(tstate) < 0) {
+                probe->ok = 0;
+            }
+            for (Py_ssize_t j = 0; j < size; j++) {
+                probe->ok &= (unsigned char)PyBytes_AS_STRING(bytes)[j] ==
+                    (unsigned char)i;
+            }
+            Py_DECREF(bytes);
+            if (!probe->ok) {
+                break;
+            }
+        }
+    }
+
     PyErr_Clear();
     PyThreadState_Clear(tstate);
     PyThreadState_DeleteCurrent();
@@ -86,23 +203,53 @@ threadgroup_probe(PyObject *self, PyObject *args)
     PyObject *groups;
     int mode;
     double seconds;
-    if (!PyArg_ParseTuple(args, "O!id:threadgroup_probe", &PyTuple_Type,
-                          &groups, &mode, &seconds)) {
+    int parallel = 0;
+    if (!PyArg_ParseTuple(args, "O!id|p:threadgroup_probe", &PyTuple_Type,
+                          &groups, &mode, &seconds, &parallel)) {
         return NULL;
     }
-    if (PyTuple_GET_SIZE(groups) != 2 || mode < 0 || mode > 2 ||
+    if (PyTuple_GET_SIZE(groups) != 2 || mode < 0 || mode > 3 ||
         !(seconds > 0.0 && seconds <= 300.0)) {
         PyErr_SetString(PyExc_ValueError, "invalid group probe arguments");
         return NULL;
     }
 
     PyInterpreterState *interp = PyInterpreterState_Get();
+    struct _gil_runtime_state *gil = interp->ceval.gil;
+    int saved_gil = _Py_atomic_load_int_relaxed(&gil->enabled);
     PyEvent events[2] = {{0}, {0}};
+    PyEvent start = {0};
     uint8_t flags[2] = {0, 0};
     struct group_probe probes[2] = {{0}, {0}};
     PyThread_handle_t handles[2];
     int started = 0;
     PyObject *result = NULL;
+    PyObject *cycle_type = NULL;
+    struct parallel_gc_counts *counts = NULL;
+    if (mode == 3) {
+        const char *allocator = _PyMem_GetCurrentAllocatorName();
+        if (!parallel || allocator == NULL ||
+            (strcmp(allocator, "mimalloc") != 0 &&
+             strcmp(allocator, "mimalloc_debug") != 0))
+        {
+            return PyErr_Format(PyExc_ValueError,
+                                "parallel allocation probe requires mimalloc");
+        }
+        cycle_type = parallel_gc_type();
+        if (cycle_type == NULL) {
+            return NULL;
+        }
+        counts = PyMem_RawCalloc(1, sizeof(*counts));
+        if (counts == NULL) {
+            Py_DECREF(cycle_type);
+            return PyErr_NoMemory();
+        }
+        counts->refs = 1;
+        // Discard pre-existing garbage in the caller's owning group.
+        PyGC_Collect();
+    }
+    int start_failed = 0;
+    int use_parallel = 0;
     for (int i = 0; i < 2; i++) {
         PyObject *wrapper = PyTuple_GetItem(groups, i);
         if (wrapper == NULL) {
@@ -117,17 +264,36 @@ threadgroup_probe(PyObject *self, PyObject *args)
             .state = state,
             .wrapper = Py_NewRef(wrapper),
             .events = events,
+            .start = &start,
             .flags = flags,
             .index = i,
             .mode = mode,
             .timeout = (PyTime_t)(seconds * 1000000000.0),
+            .cycle_type = (PyTypeObject *)cycle_type,
+            .counts = counts,
         };
+    }
+    if (parallel) {
+        // Preparation can run GC callbacks. Check isolation after it, before
+        // any worker starts: no unrelated Python execution may enter here.
+        PyThreadState *current = PyThreadState_Get();
+        HEAD_LOCK(interp->runtime);
+        int isolated = interp == interp->runtime->interpreters.head &&
+            interp->next == NULL && interp->threads.head == current &&
+            current->next == NULL;
+        HEAD_UNLOCK(interp->runtime);
+        if (!isolated) {
+            PyErr_SetString(PyExc_RuntimeError,
+                            "parallel probe requires an isolated process");
+            goto done;
+        }
+        use_parallel = 1;
     }
     for (int i = 0; i < 2; i++) {
         PyThread_ident_t ident;
         if (PyThread_start_joinable_thread(group_probe_worker, &probes[i],
                                            &ident, &handles[i]) != 0) {
-            PyErr_SetString(PyExc_RuntimeError, "failed to start group probe");
+            start_failed = 1;
             goto done;
         }
         started++;
@@ -136,10 +302,35 @@ threadgroup_probe(PyObject *self, PyObject *args)
 done:
     /* The workers access stack storage. Join even on partial start failure. */
     Py_BEGIN_ALLOW_THREADS
+    // Change the lock's state only when no thread is attached. Workers wait
+    // at the start gate until the caller has released its execution rights.
+    if (use_parallel) {
+        _Py_atomic_store_int_relaxed(&gil->enabled, 0);
+    }
+    _PyEvent_Notify(&start);
     for (int i = 0; i < started; i++) {
         PyThread_join_thread(handles[i]);
     }
+    // Every native worker is gone. Restore serialization before reattaching
+    // and returning to Python, including on partial thread-start failure.
+    if (use_parallel) {
+        _Py_atomic_store_int_relaxed(&gil->enabled, saved_gil);
+    }
     Py_END_ALLOW_THREADS
+    if (start_failed) {
+        PyErr_SetString(PyExc_RuntimeError, "failed to start group probe");
+    }
+    if (cycle_type != NULL) {
+        PyGC_Collect();
+        if (counts->created != counts->freed && !PyErr_Occurred()) {
+            PyErr_Format(PyExc_AssertionError,
+                         "parallel GC freed %d of %d cycles",
+                         counts->freed, counts->created);
+        }
+        // Even a failing probe may leave cycles for a later collection.
+        parallel_gc_counts_release(counts);
+        Py_DECREF(cycle_type);
+    }
     if (!PyErr_Occurred()) {
         result = Py_BuildValue("(OO)", probes[0].ok ? Py_True : Py_False,
                               probes[1].ok ? Py_True : Py_False);
@@ -2016,6 +2207,9 @@ gc_world_stop_clear(PyObject *op)
     if (probe->observed != NULL) {
         *probe->observed |= GC_PROBE_CLEARED;
         if (_PyInterpreterState_GET()->stoptheworld.world_stopped) {
+            *probe->observed |= GC_PROBE_BAD_PHASE;
+        }
+        if (op->ob_ref_local != 0 || !_Py_REF_IS_MERGED(op->ob_ref_shared)) {
             *probe->observed |= GC_PROBE_BAD_PHASE;
         }
     }

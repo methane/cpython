@@ -1207,6 +1207,11 @@ hold_unreachable(PyGC_Head *list, _PyObjectStack *objects)
             return -1;
         }
         Py_INCREF(op);
+        // Once the world resumes, the collector can clear this object from
+        // a different group, including after its creating threads have exited.
+        // Merge while every local updater is paused so those decrefs cannot
+        // leave the worklist reference waiting on the owner's BRC queue.
+        _Py_ExplicitMergeRefcount(op, 0);
         _PyObject_SET_GC_BITS(op, _PyGC_BITS_UNREACHABLE);
     }
     return 0;

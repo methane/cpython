@@ -11,11 +11,11 @@ The five-stage implementation is **not complete**.
 
 | Stage | Current implementation | Remaining work |
 | --- | --- | --- |
-| ThreadGroups | Group selection, serialization, detach/reattach, native identity, fork and Main lifetime | Parallel execution in the normal build |
+| ThreadGroups | Group selection, serialization, detach/reattach, native parallel scheduling, fork and Main lifetime | Parallel execution in the normal default path |
 | One-time ABI change | Compact owner/state and group-biased RC header; no cleanup queue fields | Complete the allocation/GC port and audit native layouts |
 | Biased and deferred reference counting | Group bias, per-thread code counts, deferred stack roots and normal GC integration | Queue collection and reclamation with concurrent groups |
 | LOCAL and IMMUTABLE ownership | Builtin/static metadata, public `__shareable__` state, common C API returns, VM heap loads, attributes and call expansion | Remaining API/VM acquisitions and migration of static extension types |
-| Parallel allocation and cyclic GC | Per-thread heaps/freelists and bytecode, QSBR, paused reachability snapshots, owned worklists and synchronized tracking | Concurrent execution, owner-correct finalization, cross-interpreter legacy objects and teardown |
+| Parallel allocation and cyclic GC | Per-thread heaps/freelists and bytecode, QSBR, paused snapshots, owned worklists and native concurrent allocation/collection | General concurrent execution, owner-correct finalization, cross-interpreter legacy objects and teardown |
 
 Freezing, protective/compound locks, synchronized objects and functions,
 TransferBox, Channel, the debugger StopTheWorld API, and performance work are
@@ -29,6 +29,13 @@ Build normally, for example `./configure --with-pydebug && make -j8`.
 Selecting `--disable-gil` is not the implementation of stages three and five.
 The old free-threading backend still assumes OS-thread IDs and a larger local
 counter and is not compatible with this intermediate header.
+
+The normal scheduler now honors the interpreter-lock enable state. A private
+native probe can temporarily disable that lock in an isolated process, retaining
+group serialization and the normal build's object/GC implementations. Its start
+gate keeps workers detached during the switch; after joining them, it restores
+the lock before returning to Python. This is a test facility, not a public
+parallel-execution mode or evidence that arbitrary Python code is ready for it.
 
 The reference-counting bias belongs to a **ThreadGroup**, not an OS thread.
 Objects retain their owner IDs on merging, resurrection and creator-thread
@@ -57,8 +64,7 @@ accounting is separate from the ThreadGroup bias of object reference counts.
 Object freelists are per-thread in the normal build too. Full GC clears all
 thread caches, and thread-state clearing disables the target state's caches,
 including when another thread performs the cleanup. The underlying allocator
-and collector still require the interpreter GIL; this is preparation for their
-parallel implementation.
+selection and general runtime still retain the interpreter GIL by default.
 
 With `PYTHONMALLOC=mimalloc` or `mimalloc_debug`, the normal build uses the
 ported per-thread heaps, separated by object/GC/preheader layout. Exiting threads
@@ -67,6 +73,9 @@ includes other threads and abandoned blocks. Heap selection is scoped to each
 allocator call, including recursive embedding/tracing hooks. Allocator ownership
 is independent of the object's ThreadGroup owner and reference-count bias.
 The default remains pymalloc while parallel heap tracking is being implemented.
+Isolated native workers now exercise mimalloc allocation concurrently with
+cyclic collection in two groups. Their immutable cycles have no Python finalizers
+or mutating API, so this does not decide the pending LOCAL finalization design.
 
 Audit hooks and interpreter views that span initialization use the non-swappable
 raw allocator. Its debug backend is also independent of runtime allocator
@@ -77,6 +86,11 @@ in the normal build. Detached states, including states created during a pause,
 cannot attach until it ends. Attachment drops group/GIL execution rights before
 waiting on a suspended state. Fork, shutdown and existing introspection callers
 use this mechanism; the later-stage public debugger API is not exposed.
+The paused collector merges BRC counts when taking its strong references to
+unreachable objects. This prevents later clearing from leaving the final
+reference on a departed owner's merge queue. Clearing and destruction still
+run after the world resumes. General collection of pre-existing BRC queues
+and owner-correct LOCAL destruction remain unfinished.
 
 QSBR registration and quiescence are active in the normal build. Retired internal
 buffers remain allocated until attached readers have passed a safepoint or
@@ -291,8 +305,20 @@ excluding later-stage functionality.
 Tests run on Linux/aarch64. Logs are under `/tmp/pep805-base/`. The optional
 `_decimal` module is unavailable. The native scheduling probes exchange raw
 flags/events rather than foreign LOCAL Python functions or mutable results.
-Parallel scheduling tests remain skipped while the interpreter GIL is enabled.
+The default-path parallel scheduling test remains skipped while the interpreter
+GIL is enabled. The isolated native probe additionally tests real parallelism.
 
+- Native parallel scheduling and GC: debug and non-debug normal builds each
+  successfully run 731 tests across ten files covering groups, ownership, GC,
+  weakrefs, reclamation, threading, fork, embedding and sys (24 and 29 skips).
+  Groups, GC and weakrefs pass `-R 3:3` with `mimalloc_debug` (233 tests,
+  seven skips). Two native groups retain execution rights at a barrier, while
+  workers in one group cannot do so. Concurrent allocation/collection checks
+  bytes contents and destruction of all 4,000 immutable cycles with both
+  mimalloc variants. Before merging candidate counts, one run freed only
+  3,988 cycles; after the fix, an additional 25-round stress run collects all
+  100,000 cycles. The probe rejects unrelated live states and restores the
+  interpreter lock before returning. General Python parallelism is unfinished.
 - Debug reference totals: debug and non-debug normal builds each successfully
   run 608 tests across 11 files covering groups, ownership, sys, GC, threading,
   fork, embedding, object/immortal C APIs and reclamation (23 and 30 skips).

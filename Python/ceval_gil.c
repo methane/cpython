@@ -229,14 +229,12 @@ drop_gil(PyInterpreterState *interp, PyThreadState *tstate, int final_release)
 
     assert(final_release || tstate != NULL);
     struct _gil_runtime_state *gil = ceval->gil;
-#ifdef Py_GIL_DISABLED
     // Check if we have the GIL before dropping it. tstate will be NULL if
     // take_gil() detected that this thread has been destroyed, in which case
     // we know we have the GIL.
     if (tstate != NULL && !tstate->holds_gil) {
         return;
     }
-#endif
     if (!_Py_atomic_load_int_relaxed(&gil->locked)) {
         Py_FatalError("drop_gil: GIL is not locked");
     }
@@ -311,11 +309,9 @@ take_gil(PyThreadState *tstate)
     assert(_PyThreadState_CheckConsistency(tstate));
     PyInterpreterState *interp = tstate->interp;
     struct _gil_runtime_state *gil = interp->ceval.gil;
-#ifdef Py_GIL_DISABLED
     if (!_Py_atomic_load_int_relaxed(&gil->enabled)) {
         return;
     }
-#endif
 
     /* Check that _PyEval_InitThreads() was called to create the lock */
     assert(gil_created(gil));
@@ -365,7 +361,6 @@ take_gil(PyThreadState *tstate)
         }
     }
 
-#ifdef Py_GIL_DISABLED
     if (!_Py_atomic_load_int_relaxed(&gil->enabled)) {
         // Another thread disabled the GIL between our check above and
         // now. Don't take the GIL, signal any other waiting threads, and
@@ -374,7 +369,6 @@ take_gil(PyThreadState *tstate)
         MUTEX_UNLOCK(gil->mutex);
         return;
     }
-#endif
 
 #ifdef FORCE_SWITCHING
     /* This mutex must be taken before modifying gil->last_holder:
@@ -493,6 +487,10 @@ init_own_gil(PyInterpreterState *interp, struct _gil_runtime_state *gil)
 #ifdef Py_GIL_DISABLED
     const PyConfig *config = _PyInterpreterState_GetConfig(interp);
     gil->enabled = config->enable_gil == _PyConfig_GIL_ENABLE ? INT_MAX : 0;
+#else
+    // Retain interpreter-wide serialization until the runtime port is ready.
+    // Isolated native tests can exercise the group locks without this lock.
+    gil->enabled = INT_MAX;
 #endif
     create_gil(gil);
     assert(gil_created(gil));

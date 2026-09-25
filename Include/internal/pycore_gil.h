@@ -20,12 +20,11 @@ extern "C" {
 #define FORCE_SWITCHING
 
 struct _gil_runtime_state {
-#ifdef Py_GIL_DISABLED
-    /* Set at interpreter initialization: 0 for ThreadGroup scheduling,
-       INT_MAX for an explicitly requested global GIL. Extension imports do
-       not change this value; LOCAL extension objects use their group lock. */
+    /* Interpreter serialization: 0 leaves only the ThreadGroup locks.
+       Normal builds retain INT_MAX during the port; isolated native probes
+       temporarily use 0 while testing the parallel runtime foundations.
+       Extension imports do not change this value. */
     int enabled;
-#endif
     /* microseconds (the Python API uses seconds, though) */
     unsigned long interval;
     /* Last PyThreadState holding / having held the GIL. This helps us
