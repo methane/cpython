@@ -605,10 +605,12 @@ converttuple(PyObject *arg, const char **p_format, va_list *p_va, int flags,
 
     format = *p_format;
     for (i = 0; i < n; i++) {
-        const char *msg;
-        PyObject *item = PyTuple_GET_ITEM(arg, i);
-        msg = convertitem(item, &format, p_va, flags, levels+1,
-                          msgbuf, bufsize, freelist);
+        const char *msg = msgbuf;
+        PyObject *item = PyObject_CheckAccess(PyTuple_GET_ITEM(arg, i));
+        if (item != NULL) {
+            msg = convertitem(item, &format, p_va, flags, levels+1,
+                              msgbuf, bufsize, freelist);
+        }
         if (msg != NULL) {
             levels[0] = i+1;
             if (!istuple) {

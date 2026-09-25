@@ -1136,6 +1136,136 @@ assert 'threading' not in sys.modules
             0, 1, False, internal.slice_getindices_probe))
         self.assertEqual(internal.container_element_calls(value), 0)
 
+    def test_nested_argument_integer_acquisition(self):
+        capi = import_helper.import_module('_testcapi')
+
+        class Integer(int):
+            pass
+
+        cases = (
+            (capi.getargs_tuple, 'bound_builtin(0, values)'),
+            (capi.getargs_keywords, 'bound_builtin((0, 0), 0, (0, values))'),
+            (capi.getargs_keywords,
+             'bound_builtin((0, 0), 0, arg3=(0, values))'),
+        )
+        for api, expression in cases:
+            namespace = {}
+            exec('def probe():\n'
+                 '    copy_type, error, rejected = source[2]\n'
+                 '    values = source[1]\n'
+                 '    if copy_type is not None:\n'
+                 '        values = copy_type(values)\n'
+                 '    try:\n' + f'        {expression}\n'
+                 '    except error:\n        assert rejected\n'
+                 '    else:\n        assert not rejected\n'
+                 '    return True', namespace)
+            for value in (1, Integer(1), internal.make_container_element(False),
+                          internal.make_container_element(True)):
+                native = type(value) not in (int, Integer)
+                immutable = value.__shareable__ is threading.Shareable.IMMUTABLE
+                for position in (0, 1):
+                    values = (value, 0) if position == 0 else (0, value)
+                    for copy_type in (None, list):
+                        for group in (sys.main_thread_group, self.foreign):
+                            rejected = not immutable and group is self.foreign
+                            before = internal.container_element_calls(value) if native else 0
+                            with self.subTest(expression=expression,
+                                              value_type=type(value), position=position,
+                                              copy_type=copy_type, group=group):
+                                self.assertTrue(internal.threadgroup_vm_probe(
+                                    namespace['probe'].__code__, group,
+                                    (True, values, (copy_type,
+                                     IllegalThreadAccessException, rejected)),
+                                    0, 1, False, api))
+                                if native:
+                                    self.assertEqual(internal.container_element_calls(value),
+                                                     before + (not rejected))
+
+    def test_nested_argument_object_acquisition(self):
+        capi = import_helper.import_module('_testcapi')
+
+        class String(str):
+            pass
+
+        class Bytes(bytes):
+            pass
+
+        def probe():
+            format, error, rejected = source[2]
+            try:
+                bound_builtin((source[1],), {}, format, ['arg'])
+            except error:
+                assert rejected
+            else:
+                assert not rejected
+            return True
+
+        native_values = [internal.make_container_element(immutable)
+                         for immutable in (False, True)]
+        for format, values in (('(O)', native_values), ('(p)', native_values),
+                               ('(U)', ('text', String('text'))),
+                               ('(S)', (b'data', Bytes(b'data')))):
+            for value in values:
+                for group in (sys.main_thread_group, self.foreign):
+                    immutable = value.__shareable__ is threading.Shareable.IMMUTABLE
+                    rejected = not immutable and group is self.foreign
+                    native = format in ('(O)', '(p)')
+                    before = internal.container_element_calls(value) if native else 0
+                    with self.subTest(format=format, value_type=type(value), group=group):
+                        self.assertTrue(internal.threadgroup_vm_probe(
+                            probe.__code__, group,
+                            (True, (value,), (format, IllegalThreadAccessException, rejected)),
+                            0, 1, False, capi.parse_tuple_and_keywords))
+                        if native:
+                            expected = before + (format == '(p)' and not rejected)
+                            self.assertEqual(internal.container_element_calls(value), expected)
+
+    def test_nested_argument_unused_elements(self):
+        capi = import_helper.import_module('_testcapi')
+        for expression in ('bound_builtin(0, source[1])',
+                           "bound_builtin(0, ('bad',) + source[1])",
+                           "bound_builtin('bad', (0,) + source[1])"):
+            namespace = {}
+            exec('def probe():\n'
+                 '    try:\n' + f'        {expression}\n'
+                 '    except TypeError:\n        return True\n'
+                 '    assert False', namespace)
+            value = internal.make_container_element(False)
+            with self.subTest(expression=expression):
+                self.assertTrue(internal.threadgroup_vm_probe(
+                    namespace['probe'].__code__, self.foreign,
+                    (True, (value,), None), 0, 1, False, capi.getargs_tuple))
+                self.assertEqual(internal.container_element_calls(value), 0)
+
+    def test_nested_argument_acquisition_failure_cleanup(self):
+        capi = import_helper.import_module('_testcapi')
+
+        def probe():
+            bytearray_type, copy_type, error = source[2]
+            data = bytearray_type(b'data')
+            values = (data,) + source[1]
+            if copy_type is not None:
+                values = copy_type(values)
+            try:
+                bound_builtin((values,), {}, '(y*i)', ['arg'])
+            except error:
+                pass
+            else:
+                assert False
+            # Rejection must release the buffer acquired for the first item.
+            data.extend(b'!')
+            assert data == b'data!'
+            return True
+
+        for copy_type in (None, list):
+            value = internal.make_container_element(False)
+            with self.subTest(copy_type=copy_type):
+                self.assertTrue(internal.threadgroup_vm_probe(
+                    probe.__code__, self.foreign,
+                    (True, (value,), (bytearray, copy_type, IllegalThreadAccessException)),
+                    0, 1, False, capi.parse_tuple_and_keywords))
+                self.assertEqual(internal.container_element_calls(value), 0)
+
     def test_memoryview_shape_acquisition(self):
         class Integer(int):
             pass

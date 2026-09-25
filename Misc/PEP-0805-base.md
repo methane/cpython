@@ -510,6 +510,13 @@ reads and writes. Shape/arity errors and an earlier out-of-bounds index still
 fail before unused elements are acquired. Failed acquisitions leave buffer data
 unchanged and release incomplete views.
 
+Nested argument parsing acquires each tuple element before converting it or
+returning it through a C output parameter. This applies recursively and after
+normalizing a nested sequence to a tuple. Rejection preserves the access
+exception and uses the existing cleanup path, including releasing buffers
+acquired for earlier elements. Already-acquired top-level call arguments are
+unchanged; length errors and earlier conversion errors retain their precedence.
+
 Arithmetic dispatch validates native unary, binary, ternary and in-place slot
 results before returning them to C callers. Sequence concatenation/repetition
 and their numeric fallbacks validate newly returned references too. Existing
@@ -575,6 +582,18 @@ The default-path parallel scheduling test requires group-only serialization
 from startup and does not skip. The extension-import test also runs in the normal
 build, checking that imports leave this scheduling state unchanged.
 
+- Nested argument acquisition: debug and release each pass 364 tests across
+  ownership, argument-parsing C APIs and calls. Four new tests exercise 117
+  worker calls through existing C API test functions, covering positional and
+  keyword parsing, recursive tuple/list inputs, native conversions, object
+  output parameters, earlier errors and buffer cleanup. Baseline runs reproduce
+  28 foreign-group failures; Main and immutable controls pass. All four tests
+  pass TSan without suppressions. Existing Main-only argument-parsing tests
+  pass `-R 3:3` (73 tests), with no new Main-only failure in this selection.
+  Logs: `test-getargs-nested-before.log`, `test-getargs-nested-debug-final.log`,
+  `test-getargs-nested-release-final.log`, `test-getargs-nested-main-refleak.log`
+  and `tsan-getargs-nested.log`. The initial broader command also named a
+  nonexistent `test_capi.test_call`; the corrected selection passes.
 - Memoryview shape/index acquisition: debug and release each pass 423 tests
   across ownership, memoryview, buffer and abstract C API files (21 skips).
   Four new tests exercise 106 worker calls, covering integer subclasses,
