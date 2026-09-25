@@ -130,19 +130,32 @@ static inline void _Py_RefcntAdd(PyObject* op, Py_ssize_t n)
         return;
     }
     if (_Py_IsOwnedByCurrentThread(op)) {
-        Py_ssize_t refcnt = (Py_ssize_t)op->ob_ref_local + n;
-        if (refcnt >= _Py_IMMORTAL_REFCNT_LOCAL) {
-            _Py_ExplicitMergeRefcount(op, n);
-        }
-        else {
-            _Py_atomic_store_uint8_relaxed(&op->ob_ref_local, (uint8_t)refcnt);
+        uint8_t local = _Py_atomic_load_uint8_relaxed(&op->ob_ref_local);
+        for (;;) {
+            if (local == _Py_IMMORTAL_REFCNT_LOCAL) {
+                return;
+            }
+            if (local == 0) {
+                break;
+            }
+            Py_ssize_t refcnt = (Py_ssize_t)local + n;
+            if (refcnt >= _Py_IMMORTAL_REFCNT_LOCAL) {
+                _Py_ExplicitMergeRefcount(op, n);
+                _Py_INCREF_STAT_INC();
+                return;
+            }
+            if (!_Py_atomic_compare_exchange_uint8(&op->ob_ref_local,
+                                                   &local, (uint8_t)refcnt)) {
+                continue;
+            }
 #ifdef Py_REF_DEBUG
             _Py_AddRefTotal(_PyThreadState_GET(), n);
 #endif
+            _Py_INCREF_STAT_INC();
+            return;
         }
     }
-    else {
-        _Py_atomic_add_ssize(&op->ob_ref_shared, (n << _Py_REF_SHARED_SHIFT));
+    if (_Py_IncRefShared(op, n)) {
 #ifdef Py_REF_DEBUG
         _Py_AddRefTotal(_PyThreadState_GET(), n);
 #endif
@@ -169,6 +182,8 @@ _PyObject_IsUniquelyReferenced(PyObject *ob)
 
 PyAPI_FUNC(void) _Py_SetImmortal(PyObject *op);
 PyAPI_FUNC(void) _Py_SetImmortalUntracked(PyObject *op);
+// Atomically immortalize an untracked object and return the discarded count.
+extern Py_ssize_t _Py_ImmortalizeRefcount(PyObject *op);
 
 // Makes an immortal object mortal again with the specified refcnt. Should only
 // be used during runtime finalization.
@@ -178,6 +193,7 @@ static inline void _Py_SetMortal(PyObject *op, short refcnt)
         assert(_Py_IsImmortal(op));
         op->ob_ref_local = 0;
         op->ob_ref_shared = _Py_REF_SHARED(refcnt, _Py_REF_MERGED);
+        _Py_atomic_and_uint8(&op->ob_flags, (uint8_t)~_Py_IMMORTAL_FLAGS);
     }
 }
 
@@ -374,30 +390,25 @@ _PyObject_InitVar(PyVarObject *op, PyTypeObject *typeobj, Py_ssize_t size)
 /* Tries to increment an object's reference count
  *
  * This is a specialized version of _Py_TryIncref that only succeeds if the
- * object is immortal or local to this thread. It does not handle the case
- * where the  reference count modification requires an atomic operation. This
- * allows call sites to specialize for the immortal/local case.
+ * object is immortal or local to this group. Compare/exchange preserves a
+ * concurrent immortalization; shared acquisitions use the fallback below.
  */
 static inline int
 _Py_TryIncrefFast(PyObject *op) {
     uint8_t local = _Py_atomic_load_uint8_relaxed(&op->ob_ref_local);
-    local += 1;
-    if (local == 0) {
+    if (local == _Py_IMMORTAL_REFCNT_LOCAL) {
         // immortal
         _Py_INCREF_IMMORTAL_STAT_INC();
         return 1;
     }
-    if (_Py_IsOwnedByCurrentThread(op)) {
-        _Py_INCREF_STAT_INC();
-        if (local == _Py_IMMORTAL_REFCNT_LOCAL) {
-            _Py_IncRefLocalOverflow(op);
-        }
-        else {
-            _Py_atomic_store_uint8_relaxed(&op->ob_ref_local, local);
-        }
+    int changed = _Py_TryIncRefLocal(op, local);
+    if (changed >= 0) {
 #ifdef Py_REF_DEBUG
-        _Py_IncRefTotal(_PyThreadState_GET());
+        if (changed) {
+            _Py_IncRefTotal(_PyThreadState_GET());
+        }
 #endif
+        _Py_INCREF_STAT_INC();
         return 1;
     }
     return 0;
@@ -408,6 +419,10 @@ _Py_TryIncRefShared(PyObject *op)
 {
     Py_ssize_t shared = _Py_atomic_load_ssize_relaxed(&op->ob_ref_shared);
     for (;;) {
+        if (shared == _Py_REF_SHARED_IMMORTAL) {
+            _Py_INCREF_IMMORTAL_STAT_INC();
+            return 1;
+        }
         // If the shared refcount is zero and the object is either merged
         // or may not have weak references, then we cannot incref it.
         if (shared == 0 || shared == _Py_REF_MERGED) {
@@ -484,12 +499,12 @@ _Py_NewRefWithLock(PyObject *op)
     if (_Py_TryIncrefFast(op)) {
         return op;
     }
-#ifdef Py_REF_DEBUG
-    _Py_IncRefTotal(_PyThreadState_GET());
-#endif
-    _Py_INCREF_STAT_INC();
     for (;;) {
         Py_ssize_t shared = _Py_atomic_load_ssize_relaxed(&op->ob_ref_shared);
+        if (shared == _Py_REF_SHARED_IMMORTAL) {
+            _Py_INCREF_IMMORTAL_STAT_INC();
+            return op;
+        }
         Py_ssize_t new_shared = shared + (1 << _Py_REF_SHARED_SHIFT);
         if ((shared & _Py_REF_SHARED_FLAG_MASK) == 0) {
             new_shared |= _Py_REF_MAYBE_WEAKREF;
@@ -498,6 +513,10 @@ _Py_NewRefWithLock(PyObject *op)
                 &op->ob_ref_shared,
                 &shared,
                 new_shared)) {
+#ifdef Py_REF_DEBUG
+            _Py_IncRefTotal(_PyThreadState_GET());
+#endif
+            _Py_INCREF_STAT_INC();
             return op;
         }
     }
@@ -520,6 +539,9 @@ _PyObject_SetMaybeWeakref(PyObject *op)
     }
     for (;;) {
         Py_ssize_t shared = _Py_atomic_load_ssize_relaxed(&op->ob_ref_shared);
+        if (shared == _Py_REF_SHARED_IMMORTAL) {
+            return;
+        }
         if ((shared & _Py_REF_SHARED_FLAG_MASK) != 0) {
             // Nothing to do if it's in WEAKREFS, QUEUED, or MERGED states.
             return;

@@ -118,7 +118,7 @@ PyModuleDef_Init(PyModuleDef* def)
     // (The values may change at runtime as the PyModuleDef is used, but
     // PyModuleDef_Init is required before using the def as a Python object,
     // so we check at least once with the initial values.
-    uint16_t flags = ((PyObject*)def)->ob_flags;
+    uint8_t flags = _Py_atomic_load_uint8_relaxed(&((PyObject *)def)->ob_flags);
     uint16_t bits = _Py_STATICALLY_ALLOCATED_FLAG | _Py_LEGACY_ABI_CHECK_FLAG;
     if ((flags & bits) != _Py_STATICALLY_ALLOCATED_FLAG) {
         const char *message = "invalid PyModuleDef, extension possibly "

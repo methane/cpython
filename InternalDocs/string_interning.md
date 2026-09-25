@@ -69,6 +69,14 @@ For mortal interned strings:
   interned states and releases its references after `unicode.ids` has acquired
   the references it needs to survive table destruction
 
+Immortalization holds the intern-table mutex while atomically replacing the
+local count with its immortal marker and the shared count with a reserved
+sentinel. Local and shared updates use compare/exchange, so late operations
+cannot overwrite these markers. Debug reference totals discard the captured
+counts, including a count in transit during local-to-shared merging. Publishing
+the immortal interned state is the last step. This preserves the canonical
+string's identity while other ThreadGroups hold references to it.
+
 As with any type, you should only immortalize strings that will live until
 interpreter shutdown.
 We currently also immortalize strings contained in code objects and similar,

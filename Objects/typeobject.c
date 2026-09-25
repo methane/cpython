@@ -103,7 +103,8 @@ types_world_is_stopped(void)
 // PyType_FromMetaclass() to indicate that a newly initialized type might be
 // revealed.
 #if defined(Py_DEBUG)
-#define TYPE_IS_REVEALED(tp) ((((PyObject *)(tp))->ob_flags & _Py_TYPE_REVEALED_FLAG) != 0)
+#define TYPE_IS_REVEALED(tp) ((_Py_atomic_load_uint8_relaxed( \
+    &((PyObject *)(tp))->ob_flags) & _Py_TYPE_REVEALED_FLAG) != 0)
 #else
 #define TYPE_IS_REVEALED(tp) 0
 #endif
@@ -9540,7 +9541,7 @@ type_ready_publish(PyTypeObject *type, int fix_slots)
         // Threads can only find the type through the subclasses of its bases,
         // which is done below with the lock held.  So, they cannot see the
         // type before the flag is set.
-        ((PyObject*)type)->ob_flags |= _Py_TYPE_REVEALED_FLAG;
+        _Py_atomic_or_uint8(&((PyObject *)type)->ob_flags, _Py_TYPE_REVEALED_FLAG);
 #endif
 
         res = type_ready_add_subclasses(type);

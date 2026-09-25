@@ -14699,15 +14699,15 @@ immortalize_interned(PyObject *s)
 {
     assert(PyUnicode_CHECK_INTERNED(s) == SSTATE_INTERNED_MORTAL);
     assert(!_Py_IsImmortal(s));
+    Py_ssize_t discarded = _Py_ImmortalizeRefcount(s);
 #ifdef Py_REF_DEBUG
     /* The reference count value should be excluded from the RefTotal.
        The decrements to these objects will not be registered so they
        need to be accounted for in here. */
-    for (Py_ssize_t i = 0; i < Py_REFCNT(s); i++) {
-        _Py_DecRefTotal(_PyThreadState_GET());
-    }
+    _Py_AddRefTotal(_PyThreadState_GET(), -discarded);
+#else
+    (void)discarded;
 #endif
-    _Py_SetImmortal(s);
     // The switch to SSTATE_INTERNED_IMMORTAL must be the last thing done here
     // to synchronize with the check in intern_common() that avoids locking if
     // the string is already immortal.

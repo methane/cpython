@@ -100,7 +100,135 @@ struct group_probe {
     int ok;
     PyTypeObject *cycle_type;
     struct parallel_gc_counts *counts;
+    struct parallel_intern_probe *intern;
 };
+
+struct parallel_intern_probe {
+    PyObject *value;
+    int phase;
+    int failed;
+    uint64_t serial;
+};
+
+static int
+parallel_intern_pending(PyThreadState *tstate, struct parallel_intern_probe *probe,
+                        PyTime_t deadline)
+{
+    PyTime_t now;
+    if (_Py_HandlePending(tstate) < 0 || PyTime_Monotonic(&now) < 0 ||
+        now >= deadline) {
+        _Py_atomic_store_int(&probe->failed, 1);
+    }
+    return !_Py_atomic_load_int(&probe->failed);
+}
+
+static int
+parallel_intern_worker(struct group_probe *group, PyThreadState *tstate)
+{
+    struct parallel_intern_probe *probe = group->intern;
+    PyTime_t now;
+    if (PyTime_Monotonic(&now) < 0) {
+        _Py_atomic_store_int(&probe->failed, 1);
+        return 0;
+    }
+    PyTime_t deadline = now + group->timeout;
+    for (int round = 0; round < 2000; round++) {
+        if (group->index == 0) {
+            PyObject *value = PyUnicode_FromFormat(
+                "parallel immortal intern %llu:%d",
+                (unsigned long long)probe->serial, round);
+            if (value == NULL) {
+                _Py_atomic_store_int(&probe->failed, 1);
+                return 0;
+            }
+            _PyUnicode_InternMortal(tstate->interp, &value);
+            _Py_atomic_store_ptr(&probe->value, value);
+            _Py_atomic_store_int(&probe->phase, round * 2 + 1);
+            do {
+                if (round % 4 == 1) {
+                    // Cross the eight-bit limit while promotion can race
+                    // with merging the local count into the shared field.
+                    for (int i = 0; i < 256; i++) {
+                        Py_INCREF(value);
+                    }
+                    for (int i = 0; i < 256; i++) {
+                        Py_DECREF(value);
+                    }
+                }
+                else if (round % 4 == 3) {
+                    // tuple repetition adds references in bulk, including
+                    // an overflowing local-to-shared merge on alternate rounds.
+                    PyObject *single = PyTuple_Pack(1, value);
+                    if (single == NULL) {
+                        _Py_atomic_store_int(&probe->failed, 1);
+                        break;
+                    }
+                    PyObject *repeated = PySequence_Repeat(
+                        single, round & 4 ? 256 : 7);
+                    Py_DECREF(single);
+                    if (repeated == NULL) {
+                        _Py_atomic_store_int(&probe->failed, 1);
+                        break;
+                    }
+                    Py_DECREF(repeated);
+                }
+                else {
+                    for (int i = 0; i < 64; i++) {
+                        if (round % 4 == 0) {
+                            Py_INCREF(value);
+                        }
+                        else if (!_Py_TryIncref(value)) {
+                            _Py_atomic_store_int(&probe->failed, 1);
+                            break;
+                        }
+                        Py_DECREF(value);
+                        // Our strong reference keeps the target alive, as
+                        // a container's lock would at an ordinary call site.
+                        PyObject *ref = _Py_NewRefWithLock(value);
+                        Py_DECREF(ref);
+                    }
+                }
+                if (!parallel_intern_pending(tstate, probe, deadline)) {
+                    break;
+                }
+            } while (_Py_atomic_load_int(&probe->phase) < round * 2 + 2);
+            if (!_Py_IsImmortal(value)) {
+                _Py_atomic_store_int(&probe->failed, 1);
+            }
+            // On failure the coordinator retains this reference until both
+            // workers have exited; the promoter may still be acquiring it.
+            if (!_Py_atomic_load_int(&probe->failed)) {
+                Py_DECREF(value);
+            }
+        }
+        else {
+            while (_Py_atomic_load_int(&probe->phase) < round * 2 + 1) {
+                if (!parallel_intern_pending(tstate, probe, deadline)) {
+                    return 0;
+                }
+            }
+            PyObject *value = _Py_atomic_load_ptr(&probe->value);
+            // Alternate direct promotion with acquiring the canonical string
+            // through an equal copy's lookup in the weak intern table.
+            PyObject *interned = round & 1
+                ? _PyUnicode_Copy(value) : Py_NewRef(value);
+            if (interned == NULL) {
+                _Py_atomic_store_int(&probe->failed, 1);
+                return 0;
+            }
+            _PyUnicode_InternImmortal(tstate->interp, &interned);
+            if (interned != value || !_Py_IsImmortal(interned)) {
+                _Py_atomic_store_int(&probe->failed, 1);
+            }
+            Py_DECREF(interned);
+            _Py_atomic_store_int(&probe->phase, round * 2 + 2);
+        }
+        if (_Py_atomic_load_int(&probe->failed)) {
+            return 0;
+        }
+    }
+    return 1;
+}
 
 static void
 group_probe_worker(void *arg)
@@ -125,7 +253,7 @@ group_probe_worker(void *arg)
     Py_XDECREF(wrapper);
     PyErr_Clear();
 
-    if (probe->ok && (probe->mode == 1 || probe->mode == 3)) {
+    if (probe->ok && (probe->mode == 1 || probe->mode >= 3)) {
         /* Both workers must reach this barrier without releasing execution
            rights. Interleaving bytecode in one group cannot satisfy it. */
         PyTime_t now;
@@ -149,6 +277,10 @@ group_probe_worker(void *arg)
         probe->ok = PyEvent_WaitTimed(&probe->events[1 - probe->index],
                                      probe->timeout, 1);
         probe->ok &= tstate->holds_threadgroup;
+    }
+
+    if (probe->ok && probe->mode == 4) {
+        probe->ok = parallel_intern_worker(probe, tstate);
     }
 
     if (probe->ok && probe->mode == 3) {
@@ -208,7 +340,7 @@ threadgroup_probe(PyObject *self, PyObject *args)
                           &groups, &mode, &seconds, &parallel)) {
         return NULL;
     }
-    if (PyTuple_GET_SIZE(groups) != 2 || mode < 0 || mode > 3 ||
+    if (PyTuple_GET_SIZE(groups) != 2 || mode < 0 || mode > 4 ||
         !(seconds > 0.0 && seconds <= 300.0)) {
         PyErr_SetString(PyExc_ValueError, "invalid group probe arguments");
         return NULL;
@@ -226,7 +358,9 @@ threadgroup_probe(PyObject *self, PyObject *args)
     PyObject *result = NULL;
     PyObject *cycle_type = NULL;
     struct parallel_gc_counts *counts = NULL;
-    if (mode == 3) {
+    static uint64_t intern_serial;
+    struct parallel_intern_probe intern = {0};
+    if (mode >= 3) {
         const char *allocator = _PyMem_GetCurrentAllocatorName();
         if (!parallel || allocator == NULL ||
             (strcmp(allocator, "mimalloc") != 0 &&
@@ -235,6 +369,8 @@ threadgroup_probe(PyObject *self, PyObject *args)
             return PyErr_Format(PyExc_ValueError,
                                 "parallel allocation probe requires mimalloc");
         }
+    }
+    if (mode == 3) {
         cycle_type = parallel_gc_type();
         if (cycle_type == NULL) {
             return NULL;
@@ -248,6 +384,17 @@ threadgroup_probe(PyObject *self, PyObject *args)
         // Discard pre-existing garbage in the caller's owning group.
         PyGC_Collect();
     }
+    if (mode == 4) {
+        intern.serial = _Py_atomic_add_uint64(&intern_serial, 1);
+        PyThreadState *tstate = PyThreadState_Get();
+        _Py_set_eval_breaker_bit(tstate, _PY_EVAL_EXPLICIT_MERGE_BIT);
+        if (_Py_HandlePending(tstate) < 0) {
+            return NULL;
+        }
+    }
+#ifdef Py_REF_DEBUG
+    Py_ssize_t refs_before = mode == 4 ? _Py_GetGlobalRefTotal() : 0;
+#endif
     int start_failed = 0;
     int use_parallel = 0;
     for (int i = 0; i < 2; i++) {
@@ -271,6 +418,7 @@ threadgroup_probe(PyObject *self, PyObject *args)
             .timeout = (PyTime_t)(seconds * 1000000000.0),
             .cycle_type = (PyTypeObject *)cycle_type,
             .counts = counts,
+            .intern = &intern,
         };
     }
     if (parallel) {
@@ -319,6 +467,26 @@ done:
     Py_END_ALLOW_THREADS
     if (start_failed) {
         PyErr_SetString(PyExc_RuntimeError, "failed to start group probe");
+    }
+    if (mode == 4 && !PyErr_Occurred()) {
+        // Worker teardown queues references to the caller-owned wrappers.
+        // Drain them at a safepoint before checking the reference total.
+        PyThreadState *tstate = PyThreadState_Get();
+        _Py_set_eval_breaker_bit(tstate, _PY_EVAL_EXPLICIT_MERGE_BIT);
+        int pending = _Py_HandlePending(tstate);
+#ifdef Py_REF_DEBUG
+        Py_ssize_t delta = _Py_GetGlobalRefTotal() - refs_before;
+        if (pending == 0 && probes[0].ok && probes[1].ok && delta != 0) {
+            PyErr_Format(PyExc_AssertionError,
+                         "parallel immortalization changed total references by %zd",
+                         delta);
+        }
+#else
+        (void)pending;
+#endif
+    }
+    if (mode == 4 && intern.failed) {
+        Py_XDECREF(intern.value);
     }
     if (cycle_type != NULL) {
         PyGC_Collect();
@@ -563,6 +731,9 @@ threadgroup_immortal_brc(PyObject *self, PyObject *arg)
     if (queued == -1 && PyErr_Occurred()) {
         return NULL;
     }
+#ifdef Py_REF_DEBUG
+    Py_ssize_t refs_before = _Py_GetGlobalRefTotal();
+#endif
     static uint64_t serial;
     unsigned long long id = _Py_atomic_add_uint64(&serial, 1);
     PyObject *value = PyUnicode_FromFormat("pending intern merge %llu", id);
@@ -606,7 +777,16 @@ threadgroup_immortal_brc(PyObject *self, PyObject *arg)
 #endif
         _Py_DecRefShared(value);
     }
-    int ok = _Py_IsImmortal(value) && value->ob_owner_id == owner;
+    // Other late slow paths must leave the closed counters unchanged, even
+    // when their caller observed a mortal count before promotion.
+    int ok = !_Py_IncRefShared(value, 1) &&
+        _Py_TryIncRefShared(value) && !_Py_IncRefLocalOverflow(value) &&
+        _Py_ExplicitMergeRefcount(value, 3) == _Py_IMMORTAL_INITIAL_REFCNT &&
+        _Py_IsImmortal(value) && value->ob_owner_id == owner &&
+        value->ob_ref_shared == _Py_REF_SHARED_IMMORTAL;
+#ifdef Py_REF_DEBUG
+    ok &= _Py_GetGlobalRefTotal() == refs_before;
+#endif
     Py_DECREF(value);
     if (!ok) {
         return PyErr_Format(PyExc_AssertionError,

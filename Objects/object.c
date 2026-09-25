@@ -386,6 +386,13 @@ _Py_DecRefSharedIsDead(PyObject *o, const char *filename, int lineno)
     Py_ssize_t new_shared;
     Py_ssize_t shared = _Py_atomic_load_ssize_relaxed(&o->ob_ref_shared);
     do {
+        if (shared == _Py_REF_SHARED_IMMORTAL) {
+#ifdef Py_REF_DEBUG
+            // The caller tentatively accounted for a mortal decref.
+            _Py_IncRefTotal(_PyThreadState_GET());
+#endif
+            return 0;
+        }
         should_queue = (shared == 0 || shared == _Py_REF_MAYBE_WEAKREF);
 
         if (should_queue) {
@@ -440,7 +447,11 @@ _Py_DecRefShared(PyObject *o)
 void
 _Py_MergeZeroLocalRefcount(PyObject *op)
 {
-    assert(op->ob_ref_local == 0);
+    if (_Py_IsImmortal(op)) {
+        return;
+    }
+    assert(_Py_atomic_load_uint8_relaxed(&op->ob_ref_local) == 0 ||
+           _Py_IsImmortal(op));
 
     Py_ssize_t shared = _Py_atomic_load_ssize_acquire(&op->ob_ref_shared);
     if (shared == 0) {
@@ -452,6 +463,9 @@ _Py_MergeZeroLocalRefcount(PyObject *op)
     // Slow-path: atomically set the flags (low two bits) to _Py_REF_MERGED.
     Py_ssize_t new_shared;
     do {
+        if (shared == _Py_REF_SHARED_IMMORTAL) {
+            return;
+        }
         new_shared = (shared & ~_Py_REF_SHARED_FLAG_MASK) | _Py_REF_MERGED;
     } while (!_Py_atomic_compare_exchange_ssize(&op->ob_ref_shared,
                                                 &shared, new_shared));
@@ -466,20 +480,36 @@ _Py_MergeZeroLocalRefcount(PyObject *op)
 Py_ssize_t
 _Py_ExplicitMergeRefcount(PyObject *op, Py_ssize_t extra)
 {
-    assert(!_Py_IsImmortal(op));
-
 #ifdef Py_REF_DEBUG
     _Py_AddRefTotal(_PyThreadState_GET(), extra);
 #endif
 
     // Publish the zero local count before marking the shared count as merged.
-    Py_ssize_t local = (Py_ssize_t)op->ob_ref_local;
-    _Py_atomic_store_uint8_relaxed(&op->ob_ref_local, 0);
+    uint8_t local = _Py_atomic_load_uint8_relaxed(&op->ob_ref_local);
+    for (;;) {
+        if (local == _Py_IMMORTAL_REFCNT_LOCAL) {
+#ifdef Py_REF_DEBUG
+            _Py_AddRefTotal(_PyThreadState_GET(), -extra);
+#endif
+            return _Py_IMMORTAL_INITIAL_REFCNT;
+        }
+        if (_Py_atomic_compare_exchange_uint8(&op->ob_ref_local, &local, 0)) {
+            break;
+        }
+    }
 
     Py_ssize_t refcnt;
     Py_ssize_t new_shared;
     Py_ssize_t shared = _Py_atomic_load_ssize_relaxed(&op->ob_ref_shared);
     do {
+        if (shared == _Py_REF_SHARED_IMMORTAL) {
+#ifdef Py_REF_DEBUG
+            // Immortalization could not see the count in transit between
+            // the two fields. Discard it here, and cancel the unapplied extra.
+            _Py_AddRefTotal(_PyThreadState_GET(), -(Py_ssize_t)local - extra);
+#endif
+            return _Py_IMMORTAL_INITIAL_REFCNT;
+        }
         refcnt = Py_ARITHMETIC_RIGHT_SHIFT(Py_ssize_t, shared, _Py_REF_SHARED_SHIFT);
         refcnt += local;
         refcnt += extra;
@@ -490,15 +520,13 @@ _Py_ExplicitMergeRefcount(PyObject *op, Py_ssize_t extra)
     return refcnt;
 }
 
-void
+int
 _Py_IncRefLocalOverflow(PyObject *op)
 {
-    assert(_Py_IsOwnedByCurrentThread(op));
-    assert(op->ob_ref_local == _Py_IMMORTAL_REFCNT_LOCAL - 1);
     // Do not make a mortal object immortal at the eight-bit count limit.
     // The caller accounts for the incref in debug builds.
     _Py_ExplicitMergeRefcount(op, 0);
-    _Py_atomic_add_ssize(&op->ob_ref_shared, 1 << _Py_REF_SHARED_SHIFT);
+    return _Py_IncRefShared(op, 1);
 }
 
 // The more complicated "slow" path for undoing the resurrection of an object.
@@ -3035,19 +3063,31 @@ _Py_NewReferenceNoTotal(PyObject *op)
     new_reference(op);
 }
 
-void
-_Py_SetImmortalUntracked(PyObject *op)
+Py_ssize_t
+_Py_ImmortalizeRefcount(PyObject *op)
 {
-    // Check if already immortal to avoid degrading from static immortal to plain immortal
-    if (_Py_IsImmortal(op)) {
-        return;
+    uint8_t local = _Py_atomic_exchange_uint8(
+        &op->ob_ref_local, _Py_IMMORTAL_REFCNT_LOCAL);
+    if (local == _Py_IMMORTAL_REFCNT_LOCAL) {
+        return 0;
     }
-    _Py_atomic_store_uint8_relaxed(&op->ob_ref_local, _Py_IMMORTAL_REFCNT_LOCAL);
-    _Py_atomic_store_ssize_relaxed(&op->ob_ref_shared, 0);
-    op->ob_flags |= _Py_IMMORTAL_FLAGS;
+    // Closing each counter captures every successful update to that field.
+    // Local CAS operations cannot overwrite the immortal marker; shared CAS
+    // operations stop at this sentinel instead of modifying a discarded count.
+    Py_ssize_t shared = _Py_atomic_exchange_ssize(
+        &op->ob_ref_shared, _Py_REF_SHARED_IMMORTAL);
+    _Py_atomic_or_uint8(&op->ob_flags, _Py_IMMORTAL_FLAGS);
 #ifdef Py_GIL_DISABLED
     _Py_atomic_or_uint8(&op->ob_gc_bits, _PyGC_BITS_DEFERRED);
 #endif
+    return local + Py_ARITHMETIC_RIGHT_SHIFT(Py_ssize_t, shared,
+                                            _Py_REF_SHARED_SHIFT);
+}
+
+void
+_Py_SetImmortalUntracked(PyObject *op)
+{
+    (void)_Py_ImmortalizeRefcount(op);
 }
 
 void

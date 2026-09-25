@@ -43,6 +43,15 @@ exit. A 64-bit `PyObject` occupies 24 bytes: a 32-bit owner/bias ID, an 8-bit lo
 count, state, flags and GC bits, a pointer-sized shared count and a type pointer.
 The shared count retains PEP 703's two flag bits. Local overflow merges the
 count into the shared field instead of making the object immortal.
+Local updates use compare/exchange so a foreign group's immortalization cannot
+be overwritten by a stale update. Dynamic immortalization closes the local
+counter and then the shared counter, using a reserved shared value that late
+operations recognize without arithmetic. Static immortals keep their existing
+initializers. Interned strings subtract the counts captured by these exchanges
+from debug totals; a concurrent merge accounts for any local count in transit.
+This preserves canonical intern identity and adds no object-header fields.
+The cost of compare/exchange on local operations has not been measured;
+performance work remains a later stage.
 BRC queue entry, draining and the paused allocation-failure fallback skip
 objects that have become immortal. Their queue reference no longer needs to
 be merged, and their lifetime and ownership must remain unchanged.
@@ -151,9 +160,11 @@ An old deallocator removes only its own allocation, preserving an equal
 replacement. No dictionary references are hidden from the refcount. Shutdown
 temporarily makes the table strong to preserve borrowed Unicode ID entries
 until they acquire references. Table allocation uses the raw allocator.
-Conversion of a group-biased mortal string to an immortal string still needs
-coordination with other groups' reference-count updates before the interpreter
-GIL can be removed. Table synchronization does not solve that transition.
+Conversion of a group-biased mortal string to an immortal string now uses the
+counter-closing protocol described above. Native workers exercise it concurrently
+with local, shared and bulk updates, overflow merging and strong acquisitions
+from the weak table. This validates that transition, not general parallel
+execution of the remaining runtime caches.
 
 Thread-local bytecode is active in the normal build, including thread lifecycle,
 frame migration, generator throws and specialization. `-X tlbc=0` and
@@ -308,6 +319,21 @@ flags/events rather than foreign LOCAL Python functions or mutable results.
 The default-path parallel scheduling test remains skipped while the interpreter
 GIL is enabled. The isolated native probe additionally tests real parallelism.
 
+- Concurrent immortalization: normal debug and release builds successfully run
+  1,183 tests across eighteen files covering groups, ownership, reference-count
+  C APIs, Unicode, GC, weakrefs, code, types, threading, fork, embedding and
+  reclamation (34 and 43 skips respectively). An initial native regression
+  reproduced a negative string refcount and process abort. The fixed probe
+  checks reference totals after both workers exit and management references
+  are drained. It covers INCREF/DECREF, weak acquisitions, overflow merging,
+  tuple repetition's bulk updates and canonical intern-table lookup. Additional
+  debug/mimalloc_debug and release/mimalloc stress runs each complete 50,000
+  promotions. Groups, ownership, immortal/Unicode C APIs, GC and weakrefs pass
+  `-R 3:3` with `mimalloc_debug` (346 tests, seven skips). Public headers compile
+  as C++11 with and without the limited API.
+  Both builds retain `Py_GIL_DISABLED=0`, an enabled default interpreter GIL and
+  a 24-byte object header. Logs: `test-immortal-counters-*` and
+  `test-parallel-intern-*` under the log directory above.
 - Native parallel scheduling and GC: debug and non-debug normal builds each
   successfully run 731 tests across ten files covering groups, ownership, GC,
   weakrefs, reclamation, threading, fork, embedding and sys (24 and 29 skips).

@@ -358,6 +358,20 @@ assert sys._is_gil_enabled() == before
                 internal.threadgroup_probe(
                     (sys.main_thread_group, sys.main_thread_group), 1, 1.0, True)
 
+    @unittest.skipUnless(support.with_mimalloc(), 'requires mimalloc')
+    def test_parallel_intern_immortalization(self):
+        script_helper.assert_python_ok('-c', '''
+import faulthandler
+import threading
+from test import support
+import _testinternalcapi as internal
+
+faulthandler.dump_traceback_later(support.LONG_TIMEOUT, exit=True)
+groups = (threading.ThreadGroup('owner'), threading.ThreadGroup('promoter'))
+assert internal.threadgroup_probe(
+    groups, 4, support.SHORT_TIMEOUT, True) == (True, True)
+''', PYTHONMALLOC='mimalloc_debug')
+
     def test_same_group_cannot_execute_in_parallel(self):
         internal = import_helper.import_module('_testinternalcapi')
         group = threading.ThreadGroup()
