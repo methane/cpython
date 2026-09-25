@@ -2023,6 +2023,9 @@ type_dict(PyObject *tp, void *Py_UNUSED(closure))
     if (dict == NULL) {
         Py_RETURN_NONE;
     }
+    if (PyObject_CheckAccess(dict) == NULL) {
+        return NULL;
+    }
     return PyDictProxy_New(dict);
 }
 

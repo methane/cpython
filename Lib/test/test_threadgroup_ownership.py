@@ -460,6 +460,10 @@ assert 'threading' not in sys.modules
                             code, group, (cls, value, type), 0), accessible)
 
     def test_type_dictionary_returns(self):
+        def get_proxy():
+            source[1].__dict__
+            return True
+
         for cls in (int, list, type):
             self.assertIs(cls.__shareable__, threading.Shareable.IMMUTABLE)
             for group in (sys.main_thread_group, self.foreign):
@@ -467,6 +471,47 @@ assert 'threading' not in sys.modules
                     self.assertIs(internal.threadgroup_return_probe(
                         (cls, frozendict()), group, 'PyType_GetDict'),
                         group is sys.main_thread_group)
+                    self.assertIs(internal.threadgroup_vm_probe(
+                        get_proxy.__code__, group, (object(), cls, None), 0),
+                        group is sys.main_thread_group)
+
+    def test_mappingproxy_creation(self):
+        capi = import_helper.import_module('_testlimitedcapi')
+        proxy_type = type(type.__dict__)
+
+        def local_mapping():
+            cls.value = 1
+            proxy = cls.__dict__
+            assert proxy['value'] == 1
+            cls.value = 2
+            assert proxy['value'] == 2
+
+            mapping = {'value': 1}
+            for proxy in (source[2](mapping), bound_builtin(mapping)):
+                assert proxy.__shareable__ is source[1]
+                assert proxy['value'] == mapping['value']
+                mapping['value'] += 1
+                assert proxy['value'] == mapping['value']
+            return True
+
+        def immutable_mapping():
+            proxy = source[2](source[1])
+            proxy['value']
+            return True
+
+        for group in (sys.main_thread_group, self.foreign):
+            with self.subTest(group=group):
+                self.assertTrue(internal.threadgroup_vm_probe(
+                    local_mapping.__code__, group,
+                    (True, threading.Shareable.LOCAL, proxy_type),
+                    0, 1, False, capi.dictproxy_new))
+                for value in (42, object()):
+                    # The immutable mapping is shareable; its contents may
+                    # still belong to another group and need checked getters.
+                    self.assertIs(internal.threadgroup_vm_probe(
+                        immutable_mapping.__code__, group,
+                        (value, frozendict(value=value), proxy_type), 0),
+                        type(value) is int or group is sys.main_thread_group)
 
     def test_type_name_returns(self):
         class String(str):

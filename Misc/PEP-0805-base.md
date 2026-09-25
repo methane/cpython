@@ -367,6 +367,9 @@ acquired results; already-acquired arguments need no additional runtime check.
 `PyObject_Type()` validates its newly acquired class: an immutable native
 instance can still have a LOCAL class. `PyType_GetDict()` also validates the
 returned dictionary, including Main-owned dictionaries of shared builtin types.
+The Python `type.__dict__` getter validates the dictionary before wrapping it
+in a mapping proxy, preventing a foreign group from reading it through a
+newly created local proxy.
 Its existing annotation and ctypes callers propagate acquisition failures.
 Internal dictionary lookup and the raw `Py_TYPE` macro remain unchanged.
 Heap type name/qualified-name getters check stored references before returning
@@ -553,6 +556,17 @@ The default-path parallel scheduling test requires group-only serialization
 from startup and does not skip. The extension-import test also runs in the normal
 build, checking that imports leave this scheduling state unchanged.
 
+- Type dictionary proxies: debug and release each pass 457 tests across six
+  ownership, types, descriptors, dictionary views and type/dictionary C API
+  files (one and two skips). Before the fix, foreign groups acquire proxies for
+  three builtin types' Main-owned dictionaries; indexing one asserts in debug
+  and reads the dictionary in release. The getter now rejects that acquisition.
+  Both targeted tests pass TSan without suppressions; local proxy construction,
+  live updates and immutable mappings remain covered. Existing Main-only proxy
+  tests pass `-R 3:3` (20 tests), with no new Main-only failure in this selection.
+  Logs: `test-type-proxy-before.log`, `test-type-proxy-debug.log`,
+  `test-type-proxy-release.log`, `test-type-proxy-main-refleak.log` and
+  `tsan-type-proxy.log`.
 - Base-class acquisitions: debug and release each pass 402 tests across seven
   ownership, type/slot C API, class, descriptor, subclass-init and super files
   (one skip). Four new tests exercise 44 native-worker calls, covering Python
