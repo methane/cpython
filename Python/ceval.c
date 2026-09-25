@@ -2936,14 +2936,25 @@ PyEval_MergeCompilerFlags(PyCompilerFlags *cf)
 const char *
 PyEval_GetFuncName(PyObject *func)
 {
-    if (PyMethod_Check(func))
-        return PyEval_GetFuncName(PyMethod_GET_FUNCTION(func));
-    else if (PyFunction_Check(func))
-        return PyUnicode_AsUTF8(((PyFunctionObject*)func)->func_name);
-    else if (PyCFunction_Check(func))
+    if (PyMethod_Check(func)) {
+        PyObject *function = PyMethod_Function(func);
+        return function == NULL ? NULL : PyEval_GetFuncName(function);
+    }
+    else if (PyFunction_Check(func)) {
+        PyObject *name = PyObject_CheckAccess(
+            ((PyFunctionObject *)func)->func_name);
+        return name == NULL ? NULL : PyUnicode_AsUTF8(name);
+    }
+    else if (PyCFunction_Check(func)) {
         return ((PyCFunctionObject*)func)->m_ml->ml_name;
-    else
-        return Py_TYPE(func)->tp_name;
+    }
+    else {
+        PyTypeObject *type = Py_TYPE(func);
+        if (PyObject_CheckAccess((PyObject *)type) == NULL) {
+            return NULL;
+        }
+        return type->tp_name;
+    }
 }
 
 const char *

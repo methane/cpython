@@ -99,6 +99,8 @@ Reflection
 
    Return the name of *func* if it is a function, class or instance object, else the
    name of *func*\s type.
+   Return ``NULL`` with an exception set if the name cannot be retrieved or
+   encoded as UTF-8, including when access to a stored reference is forbidden.
 
 
 .. c:function:: const char* PyEval_GetFuncDesc(PyObject *func)

@@ -426,6 +426,13 @@ The C API's `instancemethod` wrapper likewise checks its stored function in
 Representation preserves the getter's access exception. Descriptor binding
 only copies that function into a local bound method; the later call performs
 the acquisition check.
+`PyEval_GetFuncName()` acquires a method's stored function, a function's stored
+name, or the fallback class before reading its name. A function created from
+shared code may retain a LOCAL string subclass as its name. The getter does not
+inspect a bound method's receiver. `PyEval_GetFuncDesc()` returns a constant
+category from the object's type tag and does not acquire these stored fields.
+The name getter reports access and UTF-8 encoding errors through `NULL`;
+the limited-API test wrapper propagates that error before converting the result.
 
 Immutable descriptors publish their `__qualname__` cache once using atomic
 compare/exchange. Concurrent readers retain the first cached string. A cold
@@ -484,6 +491,15 @@ flags/events rather than foreign LOCAL Python functions or mutable results.
 The default-path parallel scheduling test remains skipped while the interpreter
 GIL is enabled. The isolated native probe additionally tests real parallelism.
 
+- Evaluation name metadata: debug and release each pass 346 tests across
+  ownership, C API eval, function attributes, classes and calls. Both new tests
+  pass `-R 3:3` and TSan without suppressions. Three foreign-name acquisition
+  subcases fail before the runtime fix; Main and non-acquiring controls pass.
+  The test wrapper also previously segfaulted on Main alone when a function name
+  contained an unencodable surrogate. Logs: `test-funcname-before.log`,
+  `test-funcname-surrogate-before.log`, `test-funcname-debug.log`,
+  `test-funcname-release.log`, `test-funcname-refleak.log` and
+  `tsan-funcname.log`.
 - Pending-call notification and handler arbitration: the release build passes
   730 tests across groups, C API misc, threading, signal and GC (22 skips).
   The debug selection initially fails only on a one-argument fixture accidentally

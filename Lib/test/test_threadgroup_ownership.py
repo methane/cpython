@@ -1109,6 +1109,61 @@ assert 'threading' not in sys.modules
                                 (value, None, None), warmups),
                                 value is None or group is sys.main_thread_group)
 
+    def test_eval_function_metadata_acquisition(self):
+        limited = import_helper.import_module('_testlimitedcapi')
+
+        class Name(str):
+            pass
+
+        def target(self):
+            return True
+
+        code = target.__code__.replace(co_name=Name('stored_name'))
+        instance = internal.make_immutable_special_method_instance({})
+        cases = (
+            ('bound function', target,
+             'bind_method(local, (None,), source[1])', 'target', '()', True),
+            ('stored name', code, 'local', 'stored_name', '()', True),
+            ('instance class', instance, 'source[1][0]',
+             limited.eval_get_func_name(instance), ' object', True),
+            ('bound receiver', object(), 'bind_method(local, source[1])',
+             'local', '()', False),
+        )
+        for case, value, expression, name, desc, reads_field in cases:
+            namespace = {}
+            exec(textwrap.dedent(f'''
+                def probe():
+                    def local(self):
+                        return True
+                    value = {expression}
+                    try:
+                        actual = bound_builtin(value)
+                    except source[2]:
+                        assert source[1][1] is None
+                    else:
+                        assert actual == source[1][1]
+                    return True
+            '''), namespace)
+            probe_code = namespace['probe'].__code__
+            if case == 'stored name':
+                # MAKE_FUNCTION copies this code's stored name without an
+                # explicit function.__new__ call or its separate audit event.
+                probe_code = probe_code.replace(co_consts=tuple(
+                    code if isinstance(const, type(code)) and const.co_name == 'local'
+                    else const for const in probe_code.co_consts))
+            for getter, result in ((limited.eval_get_func_name, name),
+                                   (limited.eval_get_func_desc, desc)):
+                for group in (sys.main_thread_group, self.foreign):
+                    with self.subTest(case=case, getter=getter.__name__, group=group):
+                        expected = result
+                        if (getter is limited.eval_get_func_name and reads_field
+                                and group is self.foreign):
+                            expected = None
+                        self.assertTrue(internal.threadgroup_vm_probe(
+                            probe_code, group,
+                            (True, (value, expected), IllegalThreadAccessException),
+                            0, 1, False, getter))
+
     def test_bound_method_private_name_owner(self):
         def probe():
             __builtins__['getattr'] = consumer

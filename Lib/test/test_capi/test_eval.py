@@ -23,6 +23,14 @@ class Tests(unittest.TestCase):
         self.assertEqual(eval_get_func_name(sum), "sum")  # c function
         self.assertEqual(eval_get_func_name(A), "type")
 
+    def test_eval_get_func_name_encoding_error(self):
+        def function():
+            pass
+
+        function.__name__ = '\ud800'
+        with self.assertRaises(UnicodeEncodeError):
+            _testlimitedcapi.eval_get_func_name(function)
+
     def test_eval_get_func_desc(self):
         eval_get_func_desc = _testlimitedcapi.eval_get_func_desc
 

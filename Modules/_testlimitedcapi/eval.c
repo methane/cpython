@@ -4,7 +4,8 @@
 static PyObject *
 eval_get_func_name(PyObject *self, PyObject *func)
 {
-    return PyUnicode_FromString(PyEval_GetFuncName(func));
+    const char *name = PyEval_GetFuncName(func);
+    return name == NULL ? NULL : PyUnicode_FromString(name);
 }
 
 static PyObject *
