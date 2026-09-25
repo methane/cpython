@@ -485,6 +485,10 @@ formatting, hashing or comparing it. Code construction can retain LOCAL string,
 tuple and bytes subclasses even though the code object itself is immutable.
 Unused metadata and fields skipped by equality's short-circuit remain unacquired.
 Constant-key construction retains its existing treatment of opaque references.
+Function construction acquires the code's constants tuple and its docstring
+only when `CO_HAS_DOCSTRING` is set. Rejection propagates the access exception
+and releases partially acquired references, instead of dereferencing a NULL
+docstring. Code without a docstring does not acquire unused constants.
 
 Immutable descriptors publish their `__qualname__` cache once using atomic
 compare/exchange. Concurrent readers retain the first cached string. A cold
@@ -614,6 +618,19 @@ The default-path parallel scheduling test requires group-only serialization
 from startup and does not skip. The extension-import test also runs in the normal
 build, checking that imports leave this scheduling state unchanged.
 
+- Function docstring acquisition: debug and release each pass 205 tests across
+  ownership, function attributes, code objects and opcodes (one skip). The new
+  test exercises 40 worker cases, each twice, through the constructor and
+  `MAKE_FUNCTION`, including Main controls and unused constants. Before the
+  fix, a foreign LOCAL docstring crashes in `PyFunction_NewWithQualName`; a
+  foreign tuple subclass containing an ordinary docstring is read unchecked.
+  The test runs in a subprocess so regrtest's Main-owned Python audit hook
+  cannot reject `function.__new__` before docstring acquisition. It passes TSan
+  without suppressions. Existing Main-only tests pass `-R 3:3` (89 tests, one
+  skip), with no new Main-only failure in this selection. Logs:
+  `function-doc-before.log`, `function-doc-tuple-before.log`,
+  `test-function-doc-debug-isolated.log`, `test-function-doc-release-isolated.log`,
+  `test-function-doc-main-refleak.log` and `tsan-function-doc-isolated.log`.
 - Template and interpolation ownership: debug and release each pass 184 tests
   across ownership, strings and t-strings. Three new tests cover shallow
   immutability, LOCAL iterators, field acquisition, formatting, concatenation

@@ -185,12 +185,20 @@ PyFunction_NewWithQualName(PyObject *code, PyObject *globals, PyObject *qualname
     assert(qualname != NULL);
     Py_INCREF(qualname);
 
-    PyObject *consts = code_obj->co_consts;
-    assert(PyTuple_Check(consts));
-    PyObject *doc;
+    PyObject *module = NULL;
+    PyObject *builtins = NULL;
+    PyObject *doc = NULL;
     if (code_obj->co_flags & CO_HAS_DOCSTRING) {
+        PyObject *consts = PyObject_CheckAccess(code_obj->co_consts);
+        if (consts == NULL) {
+            goto error;
+        }
+        assert(PyTuple_Check(consts));
         assert(PyTuple_Size(consts) >= 1);
         doc = PyTuple_GetItem(consts, 0);
+        if (doc == NULL) {
+            goto error;
+        }
         if (!PyUnicode_Check(doc)) {
             doc = Py_None;
         }
@@ -201,8 +209,6 @@ PyFunction_NewWithQualName(PyObject *code, PyObject *globals, PyObject *qualname
     Py_INCREF(doc);
 
     // __module__: Use globals['__name__'] if it exists, or NULL.
-    PyObject *module;
-    PyObject *builtins = NULL;
     if (PyDict_GetItemRef(globals, &_Py_ID(__name__), &module) < 0) {
         goto error;
     }
@@ -255,7 +261,7 @@ error:
     Py_DECREF(code_obj);
     Py_DECREF(name);
     Py_DECREF(qualname);
-    Py_DECREF(doc);
+    Py_XDECREF(doc);
     Py_XDECREF(module);
     Py_XDECREF(builtins);
     return NULL;

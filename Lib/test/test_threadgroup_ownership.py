@@ -448,6 +448,73 @@ assert 'threading' not in sys.modules
                     self.assertTrue(internal.threadgroup_vm_probe(
                         probe, group, (True, code, code.replace()), 0))
 
+    def test_function_docstring_acquisition(self):
+        # Regrtest's Main-owned audit hook otherwise rejects function.__new__
+        # before it reaches the code object's docstring in the foreign group.
+        script_helper.assert_python_ok('-m', 'unittest',
+            f'{__name__}.OwnershipTests._check_function_docstring_acquisition')
+
+    def _check_function_docstring_acquisition(self):
+        import inspect
+
+        class String(str):
+            pass
+
+        class Tuple(tuple):
+            pass
+
+        def target():
+            'docstring'
+            return 42
+
+        operations = {
+            'constructor': 'created = local.__class__(source[1], {})',
+            'MAKE_FUNCTION': 'def created():\n    return 42',
+        }
+        cases = (
+            ('exact string', 'docstring', False),
+            ('string subclass', String('docstring'), False),
+            ('local non-string', object(), False),
+            ('immutable non-string', 1, False),
+            ('tuple subclass', 'docstring', True),
+        )
+        for case, doc, tuple_subclass in cases:
+            consts = (doc,) + target.__code__.co_consts[1:]
+            if tuple_subclass:
+                consts = Tuple(consts)
+            local = tuple_subclass or doc.__shareable__ is threading.Shareable.LOCAL
+            for has_docstring in (False, True):
+                flags = target.__code__.co_flags
+                if not has_docstring:
+                    flags &= ~inspect.CO_HAS_DOCSTRING
+                code = target.__code__.replace(co_consts=consts, co_flags=flags)
+                expected = 'docstring' if has_docstring and isinstance(doc, str) else None
+                for operation, statement in operations.items():
+                    namespace = {}
+                    exec('def probe():\n'
+                         '    def local():\n        pass\n'
+                         '    error, rejected, expected = source[2]\n'
+                         '    for attempt in (0, 1):\n'
+                         '        try:\n' + textwrap.indent(statement, '            ') + '\n'
+                         '        except error:\n            assert rejected\n'
+                         '        else:\n'
+                         '            assert not rejected\n'
+                         '            assert created.__doc__ == expected\n'
+                         '    return True', namespace)
+                    probe_code = namespace['probe'].__code__
+                    if operation == 'MAKE_FUNCTION':
+                        probe_code = probe_code.replace(co_consts=tuple(
+                            code if isinstance(item, type(code)) and item.co_name == 'created'
+                            else item for item in probe_code.co_consts))
+                    for group in (sys.main_thread_group, self.foreign):
+                        rejected = local and has_docstring and group is self.foreign
+                        with self.subTest(case=case, docstring=has_docstring,
+                                          operation=operation, group=group):
+                            self.assertTrue(internal.threadgroup_vm_probe(
+                                probe_code, group,
+                                (True, code, (IllegalThreadAccessException,
+                                             rejected, expected)), 0))
+
     def test_code_metadata_not_acquired(self):
         class String(str):
             pass
