@@ -235,6 +235,13 @@ Parallel scheduling tests remain skipped while the interpreter GIL is enabled.
   exceptions, ownership, types, descriptors, C API types and embedding
   (ten skips). The new ownership regression verifies the type belongs to Main
   and remains inaccessible to a foreign group.
+- The non-debug normal build at `5335bbdef2` passes 831 tests across ten files
+  covering TLBC, ownership, ThreadGroups, code, monitoring, remote inspection,
+  exceptions, embedding, GC and internal critical sections (24 skips).
+  `Py_GIL_DISABLED=0`, `Py_DEBUG=0`, and the interpreter GIL remains enabled;
+  object and code basic sizes are 24 and 224 bytes respectively.
+  The 13 existing threaded monitoring tests also pass when invoked directly
+  in the debug normal build; their package still skips normal builds.
 - Shared code metadata: 981 tests pass across ten files covering code objects,
   ownership, ThreadGroups, GC, C APIs, sys, monitoring, embedding, disassembly
   and frames (30 skips). Code, ownership and ThreadGroups also pass `-R 3:3`
