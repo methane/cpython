@@ -106,6 +106,11 @@ for group in (sys.main_thread_group, threading.ThreadGroup('allocation heap')):
     if support.with_pymalloc():
         assert live - before >= 4096, (before, live)
         assert abandoned - before >= 4096, (before, abandoned)
+        if group is not sys.main_thread_group:
+            # Immutable objects may wait on the departed group's merge queue.
+            # Releasing the tuple can queue its children for the next pass.
+            support.gc_collect()
+            freed = sys.getallocatedblocks()
         assert freed - before < 128, (before, freed)
     else:
         # Allocation accounting is unavailable in --without-pymalloc builds.
@@ -226,7 +231,6 @@ assert results == [None], results
 assert value.get() == 'parent'
 ''')
 
-    @unittest.skipUnless(support.Py_GIL_DISABLED, 'requires parallel runtime')
     def test_extension_import_preserves_scheduling(self):
         import_helper.import_module('_testmultiphase')
         for name in (
@@ -300,8 +304,7 @@ if name == '_testsinglephase_no_gil_slot':
         self.assertEqual(counter, [40000])
 
     def test_different_groups_execute_in_parallel(self):
-        if sys._is_gil_enabled():
-            self.skipTest('parallel substrate not enabled')
+        self.assertFalse(sys._is_gil_enabled())
         internal = import_helper.import_module('_testinternalcapi')
         groups = (threading.ThreadGroup(), threading.ThreadGroup())
         self.assertEqual(internal.threadgroup_probe(

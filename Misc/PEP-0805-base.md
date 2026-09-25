@@ -11,11 +11,11 @@ The five-stage implementation is **not complete**.
 
 | Stage | Current implementation | Remaining work |
 | --- | --- | --- |
-| ThreadGroups | Group selection, serialization, detach/reattach, native parallel scheduling, fork and Main lifetime | Parallel execution in the normal default path |
+| ThreadGroups | Group selection, group-only serialization from startup, detach/reattach, native parallel scheduling, fork and Main lifetime | Broader lifecycle validation |
 | One-time ABI change | Compact owner/state and group-biased RC header; no cleanup queue fields | Complete the allocation/GC port and audit native layouts |
 | Biased and deferred reference counting | Group bias, per-thread code counts, deferred stack roots and normal GC integration | Queue collection and reclamation with concurrent groups |
 | LOCAL and IMMUTABLE ownership | Builtin/static metadata, public `__shareable__` state, common C API returns, VM heap loads, attributes and call expansion | Remaining API/VM acquisitions and migration of static extension types |
-| Parallel allocation and cyclic GC | Per-thread heaps/freelists and bytecode, QSBR, paused snapshots, owned worklists and native concurrent allocation/collection | General concurrent execution, owner-correct finalization, cross-interpreter legacy objects and teardown |
+| Parallel allocation and cyclic GC | Per-thread heaps/freelists and bytecode, QSBR, paused snapshots, owned worklists and concurrent allocation/collection in the normal default path | Owner-correct finalization, cross-interpreter legacy objects and teardown |
 
 Freezing, protective/compound locks, synchronized objects and functions,
 TransferBox, Channel, the debugger StopTheWorld API, and performance work are
@@ -28,17 +28,19 @@ to make the existing suite pass; Main-only failures are identified separately.
 ## Runtime configuration and layout
 
 Build normally, for example `./configure --with-pydebug && make -j8`.
-`Py_GIL_DISABLED` is zero; the interpreter GIL remains enabled during the port.
+`Py_GIL_DISABLED` is zero. From startup, each ThreadGroup serializes its own
+threads; the interpreter-wide GIL is disabled (`sys._is_gil_enabled()` is false).
 Selecting `--disable-gil` is not the implementation of stages three and five.
 The old free-threading backend still assumes OS-thread IDs and a larger local
 counter and is not compatible with this intermediate header.
 
-The normal scheduler now honors the interpreter-lock enable state. A private
-native probe can temporarily disable that lock in an isolated process, retaining
-group serialization and the normal build's object/GC implementations. Its start
-gate keeps workers detached during the switch; after joining them, it restores
-the lock before returning to Python. This is a test facility, not a public
-parallel-execution mode or evidence that arbitrary Python code is ready for it.
+The normal scheduler honors the interpreter-lock enable state. The default-path
+native test checks concurrent execution without changing that state. Older
+isolated native probes also exercise an explicit switch with detached workers
+and restore the previous state after joining them. The normal build's object/GC
+implementations remain in use. Ordinary Python functions remain LOCAL at this
+stage, so cross-group execution uses native fixtures until synchronized functions
+are implemented in a later stage.
 
 Interpreter pending calls notify all threads, including when group execution
 does not hold the interpreter GIL. Attachment still refreshes pending calls and
@@ -83,8 +85,9 @@ accounting is separate from the ThreadGroup bias of object reference counts.
 
 Object freelists are per-thread in the normal build too. Full GC clears all
 thread caches, and thread-state clearing disables the target state's caches,
-including when another thread performs the cleanup. The general runtime still
-retains the interpreter GIL by default.
+including when another thread performs the cleanup. Mimalloc heap abandonment
+requires an exclusively owned, finalizing thread state; cleanup by another
+thread does not require the interpreter GIL or the heap's original OS thread.
 
 The normal build now defaults to mimalloc when it is available, including its
 ported per-thread heaps separated by object/GC/preheader layout. Exiting threads
@@ -323,9 +326,9 @@ Within an interpreter, tracking/untracking, allocation counters, configuration
 and statistics use a GC mutex when threads are running. Nothing may detach,
 stop the world or execute Python while holding it. Result construction and
 destructors run after unlocking; heap-size observations use atomic counts.
-This is not yet proof of concurrent collection: execution still uses the
-interpreter GIL, and legacy extension objects shared across interpreters need
-further ownership and list-lifetime work.
+Native probes exercise concurrent allocation and collection from separate
+groups. Legacy extension objects shared across interpreters still need further
+ownership and list-lifetime work.
 Shutdown merges/disables per-thread counts under a pause before releasing deferred
 references. Shutdown list moves use the GC mutex, releasing it before dropping
 sentinels that can execute destructors.
@@ -501,9 +504,30 @@ excluding later-stage functionality.
 Tests run on Linux/aarch64. Logs are under `/tmp/pep805-base/`. The optional
 `_decimal` module is unavailable. The native scheduling probes exchange raw
 flags/events rather than foreign LOCAL Python functions or mutable results.
-The default-path parallel scheduling test remains skipped while the interpreter
-GIL is enabled. The isolated native probe additionally tests real parallelism.
+The default-path parallel scheduling test requires group-only serialization
+from startup and does not skip. The extension-import test also runs in the normal
+build, checking that imports leave this scheduling state unchanged.
 
+- Group-only serialization from normal startup: debug and release each pass
+  964 tests across groups, ownership, reclamation, GC, threading, signal,
+  memory/misc/eval C APIs, fork and embedding (19 and 37 skips). Both retain
+  `Py_GIL_DISABLED=0` and a 24-byte object header. The default-path concurrency
+  assertion fails before activation and passes afterwards; Main remains
+  serialized. Activation also exposed an invalid mimalloc OS-thread/GIL
+  assertion when exclusively clearing an inactive thread's heaps, including
+  Main-only shutdown and fork cases. Cleanup now checks the finalizing state
+  at its caller. The QSBR fixture explicitly detaches its caller before letting
+  the worker test quiescence; debug reference totals include queued references,
+  and foreign immutable heap allocations may await GC draining their BRC queues.
+  Main's immediate reclamation assertion is retained. Five selected tests pass
+  `-R 3:3`; seven scheduling, allocation, QSBR and accounting tests pass TSan
+  without suppressions. That TSan build includes pymalloc but not mimalloc;
+  debug and release cover mimalloc cleanup. Logs:
+  `test-default-startup-before.log`, `test-default-startup-audit.log`,
+  `test-default-startup-cleanup.log`, `test-default-startup-debug-final.log`,
+  `test-default-startup-release-final.log`, `test-default-startup-refleak.log`
+  and `tsan-default-startup.log`. These results do not settle LOCAL finalization
+  in another group or the unchecked C getter macro contract.
 - Pymalloc metadata synchronization: debug and release each pass 569 tests
   across groups, GC, memory/misc C APIs, embedding and fork with
   `PYTHONMALLOC=pymalloc_debug` (12 and 30 skips). The three allocator tests
@@ -651,6 +675,14 @@ GIL is enabled. The isolated native probe additionally tests real parallelism.
   output is unchanged. Reproduce with `./python -m test test_descrtut`.
   Logs: `test-descrtut-shareable-current.log` and
   `test-descrtut-shareable-baseline.log`.
+- Known Main-only failure after group-only startup:
+  `test_sys.SysModuleTest.test_is_gil_enabled` expects the interpreter-wide GIL
+  to be enabled in a normal configured build. The runtime now reports false,
+  while threads within Main remain serialized. The existing test is unchanged.
+  A standalone rerun also confirms the pickle mapping failure above, and
+  `test_descrtut` still fails only its fixed listing. Logs:
+  `test-default-startup-main-compat.log` and
+  `test-default-startup-main-descrtut.log`.
 - Type-watcher destruction: normal debug and release builds each run 734 tests
   across eleven files successfully (14 and 19 skips), covering groups,
   ownership, watcher/type APIs, descriptors, caches, GC, weakrefs, embedding,

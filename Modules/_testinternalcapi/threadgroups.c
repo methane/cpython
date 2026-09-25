@@ -3886,6 +3886,7 @@ struct qsbr_probe {
     _PyThreadGroupState *group;
     PyObject *code;
     PyObject *error;
+    PyEvent start;
     PyEvent ready;
     PyEvent resume;
     void *target;
@@ -3949,6 +3950,7 @@ static void
 qsbr_probe_worker(void *arg)
 {
     struct qsbr_probe *probe = arg;
+    PyEvent_Wait(&probe->start);
     PyThreadState *tstate = PyThreadState_New(probe->interp);
     if (tstate == NULL) {
         _PyEvent_Notify(&probe->ready);
@@ -4112,11 +4114,17 @@ threadgroup_qsbr_probe(PyObject *self, PyObject *args)
     }
     else {
         if (mode == 5) {
+            _PyEvent_Notify(&probe.start);
             PyEvent_WaitTimed(&probe.ready, 10000000000LL, 1);
             qsbr_probe_collect();
             _PyEvent_Notify(&probe.resume);
         }
         Py_BEGIN_ALLOW_THREADS
+        if (mode != 5) {
+            // The caller must be QSBR-offline before the worker can prove
+            // that quiescing its own reader is enough to reclaim the block.
+            _PyEvent_Notify(&probe.start);
+        }
         PyThread_join_thread(handle);
         Py_END_ALLOW_THREADS
         // Also collects the exited producer's abandoned queue in mode 4.
@@ -4686,9 +4694,13 @@ threadgroup_reftotal_probe(PyObject *self, PyObject *args)
     ok &= local != 0 && interp->object_state.reftotal == accumulated + local &&
         _PyInterpreterState_GetRefTotal(interp) == total &&
         _Py_GetGlobalRefTotal() == global;
+    // A foreign decref transfers this unmerged immutable reference to its
+    // group's merge queue. That queue reference remains in the debug totals.
+    int queued = !_Py_IsOwnedByCurrentThread(value) &&
+                 !_PyEval_IsGILEnabled(current);
     Py_DECREF(value);
-    ok &= _PyInterpreterState_GetRefTotal(interp) == total - 1 &&
-        _Py_GetGlobalRefTotal() == global - 1;
+    ok &= _PyInterpreterState_GetRefTotal(interp) == total - !queued &&
+        _Py_GetGlobalRefTotal() == global - !queued;
     if (!ok) {
         return PyErr_Format(PyExc_AssertionError,
                             "thread reference totals were lost or shared");

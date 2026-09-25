@@ -3319,6 +3319,7 @@ void
 _PyThreadState_ClearMimallocHeaps(PyThreadState *tstate)
 {
 #ifdef WITH_MIMALLOC
+    assert(tstate->_status.finalizing);
     assert(tstate == _PyThreadState_GET() ||
            _Py_atomic_load_int(&tstate->state) != _Py_THREAD_ATTACHED);
     if (!tstate->_status.bound) {

@@ -490,9 +490,9 @@ init_own_gil(PyInterpreterState *interp, struct _gil_runtime_state *gil)
     const PyConfig *config = _PyInterpreterState_GetConfig(interp);
     gil->enabled = config->enable_gil == _PyConfig_GIL_ENABLE ? INT_MAX : 0;
 #else
-    // Retain interpreter-wide serialization until the runtime port is ready.
-    // Isolated native tests can exercise the group locks without this lock.
-    gil->enabled = INT_MAX;
+    // Each ThreadGroup serializes its own threads in the normal build.
+    // Different groups must not be serialized by an interpreter-wide lock.
+    gil->enabled = 0;
 #endif
     create_gil(gil);
     assert(gil_created(gil));
