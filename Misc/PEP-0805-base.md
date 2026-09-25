@@ -14,7 +14,7 @@ The five-stage implementation is **not complete**.
 | ThreadGroups | Group selection, serialization, detach/reattach, native identity, fork and Main lifetime | Parallel execution in the normal build |
 | One-time ABI change | Compact owner/state and group-biased RC header; no cleanup queue fields | Complete the allocation/GC port and audit native layouts |
 | Biased and deferred reference counting | Group bias, per-thread code counts, deferred stack roots and normal GC integration | Queue collection and reclamation with concurrent groups |
-| LOCAL and IMMUTABLE ownership | Builtin/static metadata, public `__shareable__` state, common C API returns, VM heap loads, attributes and call expansion | Remaining API/VM acquisitions and shared static extension ownership |
+| LOCAL and IMMUTABLE ownership | Builtin/static metadata, public `__shareable__` state, common C API returns, VM heap loads, attributes and call expansion | Remaining API/VM acquisitions and migration of static extension types |
 | Parallel allocation and cyclic GC | Per-thread heaps/freelists and bytecode, QSBR, paused reachability snapshots, owned worklists and synchronized tracking | Concurrent execution, owner-correct finalization, cross-interpreter legacy objects and teardown |
 
 Freezing, protective/compound locks, synchronized objects and functions,
@@ -191,10 +191,13 @@ acquired results; already-acquired arguments need no additional runtime check.
 Extension objects remain LOCAL unless explicitly declared immutable. Static
 extension objects can rebind to a new Main after their former interpreter has
 been destroyed. `PyType_Ready()` also marks static types whose object headers
-were zero-initialized, so they follow the same ownership rule. Simultaneous use
-of managed static extension types by multiple
-interpreters needs a design decision; see the
-[Japanese questions](PEP-0805-open-questions-ja.md).
+were zero-initialized, so they follow the same ownership rule. Each subinterpreter
+will retain its own Main ThreadGroup. Static extension types will eventually
+be replaced by types created separately for each interpreter; sharing Main or
+adding an ownership exception for shared static types is not the chosen design.
+Simultaneous use of the existing managed static extension types still has a
+compatibility limitation until that migration; see the
+[Japanese design notes](PEP-0805-open-questions-ja.md).
 
 Weakref and proxy caches only reuse accessible objects. An immutable referent
 can have separate LOCAL basic refs in multiple groups, and each group retains

@@ -1,6 +1,12 @@
 # 最初の5段階に関する設計確認
 
-## 静的な拡張型と複数 interpreter
+## 決定済み: 静的な拡張型と複数 interpreter
+
+各 subinterpreter が固有の Main ThreadGroup を持ち、現在の静的な拡張型は
+将来すべて非 static な型へ移行する方針です。interpreter 間で Main を共有
+する方法や、共有された静的型のヘッダーに対する所有権の特例は追加しません。
+この点について追加の設計確認は不要です。以下は型の移行が済むまで残る
+互換性上の制限です。
 
 PEP 805 は、C 拡張のモジュール・クラス・インスタンスを既定で LOCAL
 としています。
@@ -28,14 +34,6 @@ try:
 finally:
     _interpreters.destroy(interp)
 ```
-
-検討したい方針は次の2つです。
-
-1. 管理対象の静的拡張型については、既存の interpreter ごとの型状態に
-   LOCAL の所有者を記録する。同じ C の型アドレスでも、interpreter ごとの
-   型状態をそれぞれの所有対象と解釈する。
-2. Main の ThreadGroup を interpreter 間で共有する。ただし、interpreter
-   ごとの並列性やグループの寿命・識別にも影響する。
 
 `_Py_TPFLAGS_STATIC_BUILTIN` は管理対象の拡張型にも使われているので、この
 フラグを根拠として拡張型を一律 IMMUTABLE にするのは、既定を LOCAL とする
