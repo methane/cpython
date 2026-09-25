@@ -1538,10 +1538,7 @@ alloc_threadstate(PyInterpreterState *interp)
 static void
 free_threadstate(_PyThreadStateImpl *tstate)
 {
-    if (tstate->base.threadgroup != NULL) {
-        _PyThreadGroup_Decref(tstate->base.threadgroup);
-        tstate->base.threadgroup = NULL;
-    }
+    _PyThreadGroup_SetThreadState(&tstate->base, NULL);
     PyInterpreterState *interp = tstate->base.interp;
 #ifdef Py_STATS
     _PyStats_ThreadFini(tstate);
@@ -1587,8 +1584,7 @@ init_threadstate(_PyThreadStateImpl *_tstate,
 
     assert(interp != NULL);
     tstate->interp = interp;
-    tstate->threadgroup = interp->main_threadgroup;
-    _PyThreadGroup_Incref(tstate->threadgroup);
+    _PyThreadGroup_SetThreadState(tstate, interp->main_threadgroup);
     tstate->eval_breaker =
         _Py_atomic_load_uintptr_relaxed(&interp->ceval.instrumentation_version);
 

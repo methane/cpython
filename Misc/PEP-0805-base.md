@@ -128,11 +128,16 @@ BRC queues from every registered group, including groups without thread states.
 It releases immutable and collector-owned references after resuming the world,
 then pauses again for cycle detection. Keeping those queue references until
 resumption avoids both destructors during a pause and zero-count tracked objects
-in the generation lists. Foreign LOCAL references remain on their owner's queue;
-owner-correct LOCAL destruction still awaits the finalization design decision.
-In particular, destroying a shallow-immutable container can release foreign
-LOCAL children through the existing decref paths; draining immutable queue
-entries does not resolve that general ownership problem.
+in the generation lists. Foreign LOCAL references remain on their owner's queue
+while that group has threads. Following Mark's clarification, a group with no
+thread states permits atomic adoption by the decrefing or collecting group.
+Membership includes detached and not-yet-started states. Joining a group and
+adopting its objects use the same BRC mutex. Counts are merged before publishing
+the new owner ID, and remain merged afterwards. The object header is unchanged.
+This covers both queued decrefs and zero merged counts when destroying a tuple
+with LOCAL children. It also lets GC drain departed groups' LOCAL queue entries.
+It does not transfer the LOCAL class, function or globals needed by a Python
+finalizer, or resolve finalization while the owner still has threads.
 
 QSBR registration and quiescence are active in the normal build. Retired internal
 buffers remain allocated until attached readers have passed a safepoint or
@@ -600,12 +605,13 @@ Existing clone/pointer-copy paths still copy heap references without acquiring
 elements, and copied dictionary values do not need acquisition just for copying.
 Other C API/VM acquisition paths still need an audit.
 
-Cross-group LOCAL reclamation still needs a choice of execution context,
-especially after every thread in the owning group has exited. The immediate
-GIL-serialized BRC merge is not an owner-correct finalization mechanism. The
-Japanese questions record this separately from static extension ownership and
-unchecked C macros. This execution-context decision is deferred until discussion
-with Mark; a dedicated cleanup thread has not been adopted.
+Mark has resolved ownership of an individual object after its last owner thread
+exits: the decrefing group may atomically adopt it. The implementation now does
+so, without a cleanup thread or changing the current thread's group. Python
+finalizers still require a decision about their LOCAL dependencies: moving only
+the instance leaves its `__del__` inaccessible, while moving a shared class and
+function to one group would prevent another group from acquiring them later.
+The Japanese questions include a reproducer and this remaining case.
 
 ## Extraction provenance
 
@@ -629,6 +635,20 @@ The default-path parallel scheduling test requires group-only serialization
 from startup and does not skip. The extension-import test also runs in the normal
 build, checking that imports leave this scheduling state unchanged.
 
+- Orphan ownership adoption: debug passes 758 tests across ownership, groups,
+  GC, weakrefs, threading, fork, memory C APIs and embedding (15 skips).
+  Rebuilding group membership after fork then passes 50 group/fork tests.
+  Release passes 377 ownership/group/GC/weakref/fork tests (eight skips).
+  Native probes cover unmerged and merged tuple elements, detached and pending
+  owner states, simultaneous adopters, and departed groups' LOCAL GC queues.
+  Eight focused cases pass TSan without suppressions. Four adoption and existing
+  VM/sequence tests pass `-R 3:3`; the 30-group weakref reproducer now retains
+  zero references. No new Main-only failure appears in this selection.
+  A separate diagnostic still observes zero Python `__del__` calls because
+  its function remains foreign LOCAL; this is recorded in the Japanese questions.
+  Logs: `test-orphan-debug.log`, `test-orphan-release.log`, `test-orphan-fork-final.log`,
+  `tsan-orphan-final.log`, `test-orphan-refleak.log`, `orphan-leak-final.log`
+  and `orphan-finalizer-evidence.log`.
 - Legacy Unicode type errors: debug and release each pass 328 tests across
   ownership, strings and Unicode C APIs (six and seven skips). Two new tests
   exercise 66 worker calls covering 16 error paths, their ordinary messages,
@@ -880,15 +900,18 @@ build, checking that imports leave this scheduling state unchanged.
   Logs: `test-slice-before.log`, `test-slice-debug-final.log` and
   `test-slice-release.log`. The initial debug command named a nonexistent
   `test_unicode` file; the final run uses `test_str`.
-  Reference-leak checks expose retained LOCAL weakrefs after owner thread exit:
+  Before the orphan-adoption change, reference-leak checks exposed retained
+  LOCAL weakrefs after owner thread exit:
   the three new tests leak 96 references and blocks per measured repetition,
   and the existing `test_vm_heap_loads`/`test_sequence_element_operations`
   selection also leaks (114 per repetition). A separate native probe doing no
   slice operations leaves three LOCAL weakrefs per departed group on its BRC
   queue, even after ten collections; they are dead and have no callbacks.
-  Its Main-only control is stable. This is
-  part of the pending owner-correct LOCAL reclamation design, not a successful
-  leak gate. Existing `test_slice` alone passes `-R 3:3`. Logs:
+  Its Main-only control is stable. Atomic adoption now fixes this queue leak;
+  `orphan-leak-final.log` records zero retained references for the foreign-group
+  reproducer, and `test-orphan-refleak.log` passes the existing VM/sequence cases
+  and the new adoption tests with `-R 3:3`. This does not resolve Python finalizer
+  dependencies. Existing `test_slice` alone passes `-R 3:3`. Earlier failure logs:
   `test-slice-refleak.log`, `test-default-startup-ownership-refleak.log`,
   `departed-weakref-probe.log` and `test-slice-main-refleak.log`.
 - The full ThreadGroup file at `df77299a32` passes TSan from normal startup:

@@ -49,8 +49,9 @@ _Py_IsOwnedByCurrentThread(PyObject *ob)
     // The name is retained for internal callers ported from PEP 703. The bias
     // belongs to the whole group, not to the allocating OS thread.
     uint8_t local = _Py_atomic_load_uint8_relaxed(&ob->ob_ref_local);
+    uint32_t owner = _Py_atomic_load_uint32_relaxed(&ob->ob_owner_id);
     return local != 0 && local != _Py_IMMORTAL_REFCNT_LOCAL &&
-           ob->ob_owner_id != 0 && ob->ob_owner_id == _Py_GetThreadGroupId();
+           owner != 0 && owner == _Py_GetThreadGroupId();
 }
 
 // Merge an overflowing local count into the shared field and add one.

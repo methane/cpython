@@ -3596,6 +3596,11 @@ stack is shallower */
 void
 _Py_Dealloc(PyObject *op)
 {
+    if (_Py_atomic_load_uint8_relaxed(&op->ob_shareable) == _Py_SHAREABLE_LOCAL) {
+        // Merged counts can reach zero outside the original group too.
+        // An empty owner can hand this object to the decrefing group.
+        _PyThreadGroup_TryAdopt(op, _PyThreadState_GET());
+    }
     PyTypeObject *type = Py_TYPE(op);
     unsigned long gc_flag = type->tp_flags & Py_TPFLAGS_HAVE_GC;
     destructor dealloc = type->tp_dealloc;

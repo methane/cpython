@@ -1,11 +1,65 @@
 // Biased reference counting between ThreadGroups. Objects keep their ownership
-// ID after merging; OS thread exit does not abandon a group's local counts.
+// ID after merging. The last thread's departure permits atomic adoption.
 #include "Python.h"
 #include "pycore_brc.h"
 #include "pycore_ceval.h"
 #include "pycore_object.h"
 #include "pycore_pystate.h"
 #include "pycore_threadgroup.h"
+
+/* The old group's brc_mutex excludes new members and other adopters. Merge
+   before publishing the new ID: neither group may resume local-count updates
+   while the count is in transit. Adopted objects keep their merged counts. */
+static void
+merge_abandoned_object(PyObject *op, _PyThreadGroupState *group,
+                       PyThreadState *tstate)
+{
+    assert(group->threads == 0);
+    _Py_ExplicitMergeRefcount(op, 0);
+    if (_Py_atomic_load_uint8_relaxed(&op->ob_shareable) ==
+        _Py_SHAREABLE_IMMUTABLE) {
+        // Access to immutable objects does not require changing their owner.
+        return;
+    }
+    uint32_t owner = group->id;
+    int changed = _Py_atomic_compare_exchange_uint32(
+        &op->ob_owner_id, &owner, tstate->threadgroup->id);
+    assert(changed);
+    (void)changed;
+}
+
+int
+_PyThreadGroup_TryAdopt(PyObject *op, PyThreadState *tstate)
+{
+    for (;;) {
+        uint32_t owner = _Py_atomic_load_uint32(&op->ob_owner_id);
+        if (owner == tstate->threadgroup->id) {
+            return 1;
+        }
+        if (_Py_IsImmortal(op) ||
+            _Py_atomic_load_uint8_relaxed(&op->ob_shareable) ==
+                _Py_SHAREABLE_IMMUTABLE) {
+            return 0;
+        }
+        _PyThreadGroupState *group = _PyThreadGroup_Find(tstate->interp, owner);
+        if (group == NULL) {
+            return 0;
+        }
+        PyMutex_LockFlags(&group->brc_mutex, 0);
+        if (_Py_atomic_load_uint32(&op->ob_owner_id) != owner) {
+            PyMutex_Unlock(&group->brc_mutex);
+            _PyThreadGroup_Decref(group);
+            continue;
+        }
+        int adopted = group->threads == 0;
+        if (adopted) {
+            merge_abandoned_object(op, group, tstate);
+        }
+        PyMutex_Unlock(&group->brc_mutex);
+        _PyThreadGroup_Decref(group);
+        return adopted;
+    }
+}
 
 static void
 merge_object(PyObject *op)
@@ -30,13 +84,28 @@ _Py_brc_queue_object(PyObject *op)
         return;
     }
     PyThreadState *tstate = _PyThreadState_GET();
-    _PyThreadGroupState *group = _PyThreadGroup_Find(
-        tstate->interp, op->ob_owner_id);
+    uint32_t owner;
+    _PyThreadGroupState *group;
+retry:
+    owner = _Py_atomic_load_uint32(&op->ob_owner_id);
+    group = _PyThreadGroup_Find(tstate->interp, owner);
     if (group == NULL || !_PyEval_IsGILEnabled(tstate)) {
         // An absent group belonged to an interpreter that has shut down.
         // A live group may still have an active updater in a parallel build.
         if (group != NULL) {
             PyMutex_LockFlags(&group->brc_mutex, 0);
+            if (_Py_atomic_load_uint32(&op->ob_owner_id) != owner) {
+                PyMutex_Unlock(&group->brc_mutex);
+                _PyThreadGroup_Decref(group);
+                goto retry;
+            }
+            if (group->threads == 0) {
+                merge_abandoned_object(op, group, tstate);
+                PyMutex_Unlock(&group->brc_mutex);
+                _PyThreadGroup_Decref(group);
+                merge_object(op);
+                return;
+            }
             int err = _PyObjectStack_Push(&group->objects_to_merge, op);
             PyMutex_Unlock(&group->brc_mutex);
             if (err == 0) {
@@ -111,7 +180,12 @@ _Py_brc_merge_for_gc(PyThreadState *tstate, _PyObjectStack *to_decref)
                 // Keep the queue reference until the world resumes. This
                 // avoids zero-count tracked objects and deallocators here.
                 _Py_ExplicitMergeRefcount(op, 0);
-                if (op->ob_owner_id != tstate->threadgroup->id &&
+                uint32_t owner = _Py_atomic_load_uint32(&op->ob_owner_id);
+                if (owner == group->id && group->threads == 0) {
+                    merge_abandoned_object(op, group, tstate);
+                    owner = tstate->threadgroup->id;
+                }
+                if (owner != tstate->threadgroup->id &&
                     _Py_atomic_load_uint8_relaxed(&op->ob_shareable) !=
                         _Py_SHAREABLE_IMMUTABLE) {
                     chunk->objs[retained++] = op;

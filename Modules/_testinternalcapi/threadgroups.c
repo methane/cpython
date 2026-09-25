@@ -1134,8 +1134,8 @@ group_probe_worker(void *arg)
     if (tstate == NULL) {
         return;
     }
-    _PyThreadGroup_Decref(tstate->threadgroup);
-    tstate->threadgroup = probe->state;
+    _PyThreadGroup_SetThreadState(tstate, probe->state);
+    _PyThreadGroup_Decref(probe->state);
     probe->state = NULL;
     tstate->threadgroup_object = probe->wrapper;
     probe->wrapper = NULL;
@@ -1574,9 +1574,7 @@ refcount_probe_worker(void *arg)
         _PyEvent_Notify(&probe->checked);
         return;
     }
-    _PyThreadGroup_Decref(tstate->threadgroup);
-    tstate->threadgroup = probe->group;
-    _PyThreadGroup_Incref(probe->group);
+    _PyThreadGroup_SetThreadState(tstate, probe->group);
     PyEval_AcquireThread(tstate);
     if (probe->phase == 0) {
         probe->object = PyBytes_FromString("group-biased reference count");
@@ -1866,14 +1864,12 @@ threadgroup_gc_brc_probe(PyObject *self, PyObject *args)
         return PyErr_NoMemory();
     }
     counts->refs = 1;
-    _PyThreadGroup_Decref(owner->threadgroup);
-    _PyThreadGroup_Incref(group);
-    owner->threadgroup = group;
+    _PyThreadGroup_SetThreadState(owner, group);
     owner->threadgroup_object = Py_NewRef(wrapper);
     PyThreadState_Swap(owner);
     PyObject *external = NULL;
     int ok = 1;
-    for (int i = 0; i < 4 + keep_owner; i++) {
+    for (int i = 0; i < 5; i++) {
         PyObject *op = ((PyTypeObject *)type)->tp_alloc((PyTypeObject *)type, 0);
         if (op == NULL) {
             ok = 0;
@@ -1925,7 +1921,7 @@ threadgroup_gc_brc_probe(PyObject *self, PyObject *args)
     Py_ssize_t pending = _PyObjectStack_Size(&group->objects_to_merge);
     PyMutex_Unlock(&group->brc_mutex);
     ok &= pending == foreign_local &&
-        counts->freed == 3 + (keep_owner && !foreign_local) &&
+        counts->freed == 3 + !foreign_local &&
         external != NULL && Py_REFCNT(external) == 1 &&
         external->ob_owner_id == group->id;
     Py_XDECREF(external);
@@ -1950,6 +1946,201 @@ threadgroup_gc_brc_probe(PyObject *self, PyObject *args)
                             "GC did not drain eligible group BRC references");
     }
     Py_RETURN_NONE;
+}
+
+static PyObject *
+threadgroup_orphan_decref_probe(PyObject *self, PyObject *args)
+{
+    PyObject *wrapper;
+    int merged, keep_owner;
+    if (!PyArg_ParseTuple(args, "Opp:threadgroup_orphan_decref_probe",
+                          &wrapper, &merged, &keep_owner)) {
+        return NULL;
+    }
+    _PyThreadGroupState *group = _PyThreadGroup_GetState(wrapper);
+    if (group == NULL) {
+        return NULL;
+    }
+    PyThreadState *current = PyThreadState_Get();
+    PyThreadState *owner = PyThreadState_New(current->interp);
+    PyObject *type = parallel_gc_type();
+    struct parallel_gc_counts *counts = PyMem_RawCalloc(1, sizeof(*counts));
+    if (owner == NULL || type == NULL || counts == NULL) {
+        if (owner != NULL) {
+            PyThreadState_Clear(owner);
+            PyThreadState_Delete(owner);
+        }
+        Py_XDECREF(type);
+        PyMem_RawFree(counts);
+        _PyThreadGroup_Decref(group);
+        return PyErr_NoMemory();
+    }
+    counts->refs = 1;
+    _PyThreadGroup_SetThreadState(owner, group);
+    PyThreadState_Swap(owner);
+    parallel_gc_object *op = (parallel_gc_object *)
+        ((PyTypeObject *)type)->tp_alloc((PyTypeObject *)type, 0);
+    PyObject *tuple = NULL;
+    if (op != NULL) {
+        op->counts = counts;
+        counts->refs++;
+        counts->created++;
+        tuple = PyTuple_Pack(1, op);
+        Py_DECREF(op);
+        if (tuple != NULL && merged) {
+            _Py_ExplicitMergeRefcount((PyObject *)op, 0);
+        }
+    }
+    PyErr_Clear();
+    PyThreadState_Swap(current);
+    int ok = tuple != NULL;
+    if (!keep_owner) {
+        PyThreadState_Clear(owner);
+        PyThreadState_Delete(owner);
+        owner = NULL;
+    }
+    if (keep_owner && tuple != NULL) {
+        // Detached membership is not abandonment. Nor is a newly assigned
+        // state which has not yet run: test both with the same LOCAL object.
+        ok &= !_PyThreadGroup_TryAdopt((PyObject *)op, current);
+        PyThreadState *pending = PyThreadState_New(current->interp);
+        if (pending != NULL) {
+            _PyThreadGroup_SetThreadState(pending, group);
+            PyThreadState_Clear(owner);
+            PyThreadState_Delete(owner);
+            owner = pending;
+            ok &= !_PyThreadGroup_TryAdopt((PyObject *)op, current);
+        }
+        else {
+            ok = 0;
+            PyErr_Clear();
+        }
+        // Once the last member disappears, the same object is adoptable.
+        PyThreadState_Clear(owner);
+        PyThreadState_Delete(owner);
+        owner = NULL;
+    }
+    Py_XDECREF(tuple);
+    ok &= counts->freed == 1 && counts->local_freed_elsewhere == 0 &&
+          counts->freed_while_stopped == 0;
+    parallel_gc_counts_release(counts);
+    Py_DECREF(type);
+    _PyThreadGroup_Decref(group);
+    if (!ok) {
+        return PyErr_Format(PyExc_AssertionError,
+                            "orphan tuple element was not reclaimed by its new owner");
+    }
+    Py_RETURN_NONE;
+}
+
+struct adoption_probe {
+    PyThreadState *tstate;
+    PyObject *value;
+    PyEvent *start;
+    PyEvent *release;
+    PyEvent done;
+    int adopted;
+};
+
+static void
+adoption_probe_worker(void *arg)
+{
+    struct adoption_probe *probe = arg;
+    PyEvent_Wait(probe->start);
+    PyEval_AcquireThread(probe->tstate);
+    probe->adopted = _PyThreadGroup_TryAdopt(probe->value, probe->tstate);
+    for (int i = 0; i < 10000; i++) {
+        Py_INCREF(probe->value);
+        Py_DECREF(probe->value);
+    }
+    _PyEvent_Notify(&probe->done);
+    // Keep both groups populated until the coordinator checks the winner.
+    PyEvent_WaitTimed(probe->release, -1, 1);
+    PyThreadState_Clear(probe->tstate);
+    PyThreadState_DeleteCurrent();
+}
+
+static PyObject *
+threadgroup_adoption_race(PyObject *self, PyObject *args)
+{
+    PyObject *wrappers[3];
+    if (!PyArg_ParseTuple(args, "OOO:threadgroup_adoption_race",
+                          &wrappers[0], &wrappers[1], &wrappers[2])) {
+        return NULL;
+    }
+    PyThreadState *current = PyThreadState_Get();
+    PyThreadState *states[3] = {NULL};
+    int created = 0;
+    for (int i = 0; i < 3; i++) {
+        _PyThreadGroupState *group = _PyThreadGroup_GetState(wrappers[i]);
+        if (group == NULL) {
+            goto fail;
+        }
+        states[i] = PyThreadState_New(current->interp);
+        if (states[i] != NULL) {
+            _PyThreadGroup_SetThreadState(states[i], group);
+            created++;
+        }
+        _PyThreadGroup_Decref(group);
+        if (states[i] == NULL) {
+            PyErr_NoMemory();
+            goto fail;
+        }
+    }
+    PyThreadState_Swap(states[0]);
+    PyObject *value = PyList_New(0);
+    PyThreadState_Clear(states[0]);
+    PyThreadState_Swap(current);
+    PyThreadState_Delete(states[0]);
+    states[0] = NULL;
+    if (value == NULL) {
+        PyErr_NoMemory();
+        goto fail;
+    }
+    PyEvent start = {0}, release = {0};
+    struct adoption_probe probes[2] = {
+        {.tstate = states[1], .value = value, .start = &start, .release = &release},
+        {.tstate = states[2], .value = value, .start = &start, .release = &release},
+    };
+    uint32_t ids[2] = {states[1]->threadgroup->id, states[2]->threadgroup->id};
+    PyThread_handle_t handles[2];
+    int started = 0;
+    for (int i = 0; i < 2; i++) {
+        PyThread_ident_t ident;
+        if (PyThread_start_joinable_thread(adoption_probe_worker, &probes[i],
+                                           &ident, &handles[i]) != 0) {
+            break;
+        }
+        states[i + 1] = NULL;  // The worker owns and deletes its state.
+        started++;
+    }
+    _PyEvent_Notify(&start);
+    for (int i = 0; i < started; i++) {
+        PyEvent_WaitTimed(&probes[i].done, -1, 1);
+    }
+    int ok = started == 2 && probes[0].adopted + probes[1].adopted == 1;
+    if (ok) {
+        ok = _Py_atomic_load_uint32(&value->ob_owner_id) ==
+                 ids[probes[1].adopted] &&
+             value->ob_ref_local == 0 && Py_REFCNT(value) == 1;
+    }
+    _PyEvent_Notify(&release);
+    for (int i = 0; i < started; i++) {
+        join_refcount_probe(handles[i]);
+    }
+    Py_DECREF(value);
+    if (ok) {
+        Py_RETURN_NONE;
+    }
+    PyErr_SetString(PyExc_AssertionError, "ownership adoption race failed");
+fail:
+    for (int i = 0; i < created; i++) {
+        if (states[i] != NULL) {
+            PyThreadState_Clear(states[i]);
+            PyThreadState_Delete(states[i]);
+        }
+    }
+    return NULL;
 }
 
 static void
@@ -2097,9 +2288,7 @@ access_probe_worker(void *arg)
     if (tstate == NULL) {
         return;
     }
-    _PyThreadGroup_Decref(tstate->threadgroup);
-    tstate->threadgroup = probe->group;
-    _PyThreadGroup_Incref(probe->group);
+    _PyThreadGroup_SetThreadState(tstate, probe->group);
     PyEval_AcquireThread(tstate);
 
     PyObject *value = probe->value;
@@ -2261,9 +2450,7 @@ unicode_intern_worker(void *arg)
     if (tstate == NULL) {
         return;
     }
-    _PyThreadGroup_Decref(tstate->threadgroup);
-    tstate->threadgroup = probe->base.group;
-    _PyThreadGroup_Incref(tstate->threadgroup);
+    _PyThreadGroup_SetThreadState(tstate, probe->base.group);
     PyEval_AcquireThread(tstate);
     if (PyObject_CheckAccess(probe->base.value) != NULL) {
         PyObject *value = Py_NewRef(probe->base.value);
@@ -2384,9 +2571,7 @@ unicode_cache_worker(void *arg)
         _PyEvent_Notify(&probe->allocated);
         return;
     }
-    _PyThreadGroup_Decref(tstate->threadgroup);
-    tstate->threadgroup = probe->base.group;
-    _PyThreadGroup_Incref(tstate->threadgroup);
+    _PyThreadGroup_SetThreadState(tstate, probe->base.group);
     PyEval_AcquireThread(tstate);
     probe->worker = tstate;
     if (PyObject_CheckAccess(probe->base.value) != NULL) {
@@ -2737,9 +2922,7 @@ number_source_worker(void *arg)
     if (tstate == NULL) {
         return;
     }
-    _PyThreadGroup_Decref(tstate->threadgroup);
-    tstate->threadgroup = probe->base.group;
-    _PyThreadGroup_Incref(tstate->threadgroup);
+    _PyThreadGroup_SetThreadState(tstate, probe->base.group);
     PyEval_AcquireThread(tstate);
 
     PyType_Slot slots[] = {
@@ -3246,9 +3429,7 @@ return_probe_worker(void *arg)
     if (tstate == NULL) {
         return;
     }
-    _PyThreadGroup_Decref(tstate->threadgroup);
-    tstate->threadgroup = probe->base.group;
-    _PyThreadGroup_Incref(tstate->threadgroup);
+    _PyThreadGroup_SetThreadState(tstate, probe->base.group);
     PyEval_AcquireThread(tstate);
 
     PyObject *source = probe->base.value;
@@ -3914,9 +4095,7 @@ vm_probe_worker(void *arg)
     if (tstate == NULL) {
         return;
     }
-    _PyThreadGroup_Decref(tstate->threadgroup);
-    tstate->threadgroup = probe->base.group;
-    _PyThreadGroup_Incref(tstate->threadgroup);
+    _PyThreadGroup_SetThreadState(tstate, probe->base.group);
     PyEval_AcquireThread(tstate);
 
     PyObject *source = probe->base.value;
@@ -4143,9 +4322,7 @@ freelist_probe_worker(void *arg)
         _PyEvent_Notify(&probe->detached);
         return;
     }
-    _PyThreadGroup_Decref(tstate->threadgroup);
-    tstate->threadgroup = probe->group;
-    _PyThreadGroup_Incref(probe->group);
+    _PyThreadGroup_SetThreadState(tstate, probe->group);
     PyEval_AcquireThread(tstate);
 
     PyObject *value = PyFloat_FromDouble(1.25);
@@ -4277,9 +4454,7 @@ world_stop_probe_worker(void *arg)
         _PyEvent_Notify(&probe->ready);
         return;
     }
-    _PyThreadGroup_Decref(tstate->threadgroup);
-    tstate->threadgroup = probe->group;
-    _PyThreadGroup_Incref(probe->group);
+    _PyThreadGroup_SetThreadState(tstate, probe->group);
     probe->tstate = tstate;
     _PyEvent_Notify(&probe->ready);
     PyEvent_Wait(&probe->proceed);
@@ -4617,9 +4792,7 @@ qsbr_probe_worker(void *arg)
         _PyEvent_Notify(&probe->ready);
         return;
     }
-    _PyThreadGroup_Decref(tstate->threadgroup);
-    tstate->threadgroup = probe->group;
-    _PyThreadGroup_Incref(probe->group);
+    _PyThreadGroup_SetThreadState(tstate, probe->group);
     PyEval_AcquireThread(tstate);
     _PyThreadStateImpl *ts = (_PyThreadStateImpl *)tstate;
     PyObject *func = NULL, *globals = NULL;
@@ -5038,9 +5211,7 @@ allocation_probe_worker(void *arg)
         _PyEvent_Notify(&probe->ready);
         return;
     }
-    _PyThreadGroup_Decref(tstate->threadgroup);
-    tstate->threadgroup = probe->group;
-    _PyThreadGroup_Incref(probe->group);
+    _PyThreadGroup_SetThreadState(tstate, probe->group);
     PyEval_AcquireThread(tstate);
     PyObject *values = PyTuple_New(ALLOCATION_PROBE_COUNT);
     if (values != NULL) {
@@ -5153,9 +5324,7 @@ weakref_probe_worker(void *arg)
         _PyEvent_Notify(&probe->ready);
         return;
     }
-    _PyThreadGroup_Decref(tstate->threadgroup);
-    tstate->threadgroup = probe->group;
-    _PyThreadGroup_Incref(probe->group);
+    _PyThreadGroup_SetThreadState(tstate, probe->group);
     PyEval_AcquireThread(tstate);
     assert(PyObject_IsAccessible(probe->target));
 
@@ -5306,8 +5475,8 @@ threadgroup_reftotal_probe(PyObject *self, PyObject *args)
         _PyThreadGroup_Decref(state);
         return PyErr_NoMemory();
     }
-    _PyThreadGroup_Decref(worker->threadgroup);
-    worker->threadgroup = state;
+    _PyThreadGroup_SetThreadState(worker, state);
+    _PyThreadGroup_Decref(state);
 
     // Switch states on the same OS thread to measure exact deltas without
     // concurrent Python execution changing the interpreter/global totals.
@@ -5355,13 +5524,10 @@ threadgroup_reftotal_probe(PyObject *self, PyObject *args)
     ok &= local != 0 && interp->object_state.reftotal == accumulated + local &&
         _PyInterpreterState_GetRefTotal(interp) == total &&
         _Py_GetGlobalRefTotal() == global;
-    // A foreign decref transfers this unmerged immutable reference to its
-    // group's merge queue. That queue reference remains in the debug totals.
-    int queued = !_Py_IsOwnedByCurrentThread(value) &&
-                 !_PyEval_IsGILEnabled(current);
+    // No member remains in a foreign owner: the decref can merge immediately.
     Py_DECREF(value);
-    ok &= _PyInterpreterState_GetRefTotal(interp) == total - !queued &&
-        _Py_GetGlobalRefTotal() == global - !queued;
+    ok &= _PyInterpreterState_GetRefTotal(interp) == total - 1 &&
+        _Py_GetGlobalRefTotal() == global - 1;
     if (!ok) {
         return PyErr_Format(PyExc_AssertionError,
                             "thread reference totals were lost or shared");
@@ -5379,6 +5545,9 @@ static PyMethodDef methods[] = {
     {"unicode_intern_dead_entry", unicode_intern_dead_entry, METH_NOARGS, NULL},
     {"threadgroup_immortal_brc", threadgroup_immortal_brc, METH_O, NULL},
     {"threadgroup_gc_brc_probe", threadgroup_gc_brc_probe, METH_VARARGS, NULL},
+    {"threadgroup_orphan_decref_probe", threadgroup_orphan_decref_probe,
+     METH_VARARGS, NULL},
+    {"threadgroup_adoption_race", threadgroup_adoption_race, METH_VARARGS, NULL},
     {"threadgroup_unicode_cache_probe", threadgroup_unicode_cache_probe,
      METH_VARARGS, NULL},
     {"threadgroup_qsbr_probe", threadgroup_qsbr_probe, METH_VARARGS, NULL},

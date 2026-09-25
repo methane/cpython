@@ -694,9 +694,34 @@ _PyThreadGroup_Decref(_PyThreadGroupState *group)
 {
     if (_Py_atomic_add_ssize(&group->refcount, -1) == 1) {
         assert(group->holder == NULL);
+        assert(group->threads == 0);
         assert(group->wrapper == NULL);
         PyMem_RawFree(group->name);
         PyMem_RawFree(group);
+    }
+}
+
+void
+_PyThreadGroup_SetThreadState(PyThreadState *tstate, _PyThreadGroupState *group)
+{
+    assert(!tstate->holds_threadgroup);
+    _PyThreadGroupState *previous = tstate->threadgroup;
+    if (previous == group) {
+        return;
+    }
+    if (group != NULL) {
+        _PyThreadGroup_Incref(group);
+        PyMutex_LockFlags(&group->brc_mutex, 0);
+        group->threads++;
+        PyMutex_Unlock(&group->brc_mutex);
+    }
+    tstate->threadgroup = group;
+    if (previous != NULL) {
+        PyMutex_LockFlags(&previous->brc_mutex, 0);
+        assert(previous->threads > 0);
+        previous->threads--;
+        PyMutex_Unlock(&previous->brc_mutex);
+        _PyThreadGroup_Decref(previous);
     }
 }
 
@@ -765,11 +790,19 @@ _PyEval_ReInitThreads(PyThreadState *tstate)
 {
     assert(tstate->interp == _PyInterpreterState_Main());
 
-    _Py_FOR_EACH_TSTATE_BEGIN(tstate->interp, other) {
-        _PyThreadGroupState *group = other->threadgroup;
+    // A detached thread may have been joining or leaving a group at fork.
+    // Rebuild membership from the inherited states before deleting them.
+    _PyMutex_at_fork_reinit(&tstate->interp->threadgroups_mutex);
+    for (_PyThreadGroupState *group = tstate->interp->threadgroups;
+         group != NULL; group = group->next) {
         _PyMutex_at_fork_reinit(&group->mutex);
         _PyMutex_at_fork_reinit(&group->holder_mutex);
+        _PyMutex_at_fork_reinit(&group->brc_mutex);
         group->holder = NULL;
+        group->threads = 0;
+    }
+    _Py_FOR_EACH_TSTATE_BEGIN(tstate->interp, other) {
+        other->threadgroup->threads++;
         other->holds_threadgroup = 0;
     }
     _Py_FOR_EACH_TSTATE_END(tstate->interp);

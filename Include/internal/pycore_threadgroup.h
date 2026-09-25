@@ -19,6 +19,9 @@ typedef struct _PyThreadGroupState {
     /* Foreign decrefs wait here until the owning group can merge them. */
     PyMutex brc_mutex;
     _PyObjectStack objects_to_merge;
+    /* Includes detached and not-yet-started thread states. Protected by
+       brc_mutex, together with adoption of an abandoned object's bias. */
+    Py_ssize_t threads;
     Py_ssize_t refcount;
     uint32_t id;
     struct _PyThreadGroupState *next;
@@ -44,6 +47,13 @@ PyAPI_FUNC(_PyThreadGroupState *) _PyThreadGroup_GetState(PyObject *group);
 extern void _PyThreadGroup_Fini(PyInterpreterState *interp);
 extern void _PyThreadGroup_Acquire(PyThreadState *tstate);
 extern void _PyThreadGroup_Release(PyThreadState *tstate);
+/* Assign a new, detached thread state, or remove a cleared thread state.
+   Takes its own reference to group; NULL removes membership. */
+PyAPI_FUNC(void) _PyThreadGroup_SetThreadState(
+    PyThreadState *tstate, _PyThreadGroupState *group);
+/* Take ownership only if the old group has no thread states. The caller
+   holds a reference, or has exclusive responsibility for deallocation. */
+PyAPI_FUNC(int) _PyThreadGroup_TryAdopt(PyObject *op, PyThreadState *tstate);
 PyAPI_FUNC(void) _PyThreadGroup_Decref(_PyThreadGroupState *group);
 
 static inline void

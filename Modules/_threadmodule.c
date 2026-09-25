@@ -641,9 +641,7 @@ ThreadHandle_start(ThreadHandle *self, PyObject *func, PyObject *args,
     }
     if (group != NULL) {
         threadgroupobject *owner = (threadgroupobject *)group;
-        _PyThreadGroup_Decref(boot->tstate->threadgroup);
-        boot->tstate->threadgroup = owner->state;
-        _PyThreadGroup_Incref(owner->state);
+        _PyThreadGroup_SetThreadState(boot->tstate, owner->state);
         boot->tstate->threadgroup_object = Py_NewRef(group);
     }
     // The caller can access func, but the new thread acquires it from the

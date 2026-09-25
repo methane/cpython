@@ -360,6 +360,23 @@ assert 'threading' not in sys.modules
             assert not internal.threadgroup_world_is_stopped()
         '''))
 
+    @unittest.skipIf(Py_GIL_DISABLED, "requires the normal-build group BRC port")
+    def test_orphan_tuple_decref(self):
+        for merged in (False, True):
+            for keep_owner in (False, True):
+                with self.subTest(merged=merged, keep_owner=keep_owner):
+                    group = threading.ThreadGroup('departed tuple owner')
+                    internal.threadgroup_orphan_decref_probe(
+                        group, merged, keep_owner)
+
+    @unittest.skipIf(Py_GIL_DISABLED, "requires the normal-build group BRC port")
+    def test_orphan_adoption_race(self):
+        for _ in range(20):
+            internal.threadgroup_adoption_race(
+                threading.ThreadGroup('departed owner'),
+                threading.ThreadGroup('first contender'),
+                threading.ThreadGroup('second contender'))
+
     def test_static_type_with_zero_initialized_header(self):
         capi = import_helper.import_module('_testcapi')
         typ = capi.RecursingInfinitelyError
