@@ -104,10 +104,9 @@ For example, :c:func:`PyMem_Free` must be used to free memory allocated using :c
 
 The three allocation domains are:
 
-* Raw domain: intended for allocating memory for general-purpose memory
-  buffers where the allocation *must* go to the system allocator or where the
-  allocator can operate without an :term:`attached thread state`. The memory
-  is requested directly from the system. See :ref:`Raw Memory Interface <raw-memoryinterface>`.
+* Raw domain: intended for allocating general-purpose memory buffers without
+  requiring an :term:`attached thread state`. See
+  :ref:`Raw Memory Interface <raw-memoryinterface>`.
 
 * "Mem" domain: intended for allocating memory for Python buffers and
   general-purpose memory buffers where the allocation must be performed with
@@ -139,6 +138,7 @@ functions are thread-safe, so a :term:`thread state` does not
 need to be :term:`attached <attached thread state>`.
 
 The :ref:`default raw memory allocator <default-memory-allocators>` uses
+:ref:`mimalloc <mimalloc>` when available. Otherwise it uses
 the following functions: :c:func:`malloc`, :c:func:`calloc`, :c:func:`realloc`
 and :c:func:`!free`; call ``malloc(1)`` (or ``calloc(1, 1)``) when requesting
 zero bytes.
@@ -204,11 +204,10 @@ The following function sets, modeled after the ANSI C standard, but specifying
 behavior when requesting zero bytes, are available for allocating and releasing
 memory from the Python heap.
 
-In the GIL-enabled build (default build) the
+In this PEP 805 reference implementation, the
 :ref:`default memory allocator <default-memory-allocators>` uses the
-:ref:`pymalloc memory allocator <pymalloc>`, whereas in the
-:term:`free-threaded build`, the default is the
-:ref:`mimalloc memory allocator <mimalloc>` instead.
+:ref:`mimalloc memory allocator <mimalloc>` when available, including in the
+normal build. Otherwise, it uses system :c:func:`malloc`.
 
 .. warning::
 
@@ -348,9 +347,8 @@ memory from the Python heap.
     the :ref:`Customize Memory Allocators <customize-memory-allocators>` section.
 
 The :ref:`default object allocator <default-memory-allocators>` uses the
-:ref:`pymalloc memory allocator <pymalloc>`.  In the
-:term:`free-threaded <free threading>` build, the default is the
-:ref:`mimalloc memory allocator <mimalloc>` instead.
+:ref:`mimalloc memory allocator <mimalloc>` when available, and system
+:c:func:`malloc` otherwise.
 
 .. warning::
 
@@ -433,12 +431,10 @@ Default memory allocators:
 ===================================  =======================  ====================  ======================  ======================
 Configuration                        Name                     PyMem_RawMalloc       PyMem_Malloc            PyObject_Malloc
 ===================================  =======================  ====================  ======================  ======================
-Release build                        ``"pymalloc"``           ``malloc``            ``pymalloc``            ``pymalloc``
-Debug build                          ``"pymalloc_debug"``     ``malloc`` + debug    ``pymalloc`` + debug    ``pymalloc`` + debug
-Release build, without pymalloc      ``"malloc"``             ``malloc``            ``malloc``              ``malloc``
-Debug build, without pymalloc        ``"malloc_debug"``       ``malloc`` + debug    ``malloc`` + debug      ``malloc`` + debug
-Free-threaded build                  ``"mimalloc"``           ``mimalloc``          ``mimalloc``            ``mimalloc``
-Free-threaded debug build            ``"mimalloc_debug"``     ``mimalloc`` + debug  ``mimalloc`` + debug    ``mimalloc`` + debug
+Release build, with mimalloc         ``"mimalloc"``           ``mimalloc``          ``mimalloc``            ``mimalloc``
+Debug build, with mimalloc           ``"mimalloc_debug"``     ``mimalloc`` + debug  ``mimalloc`` + debug    ``mimalloc`` + debug
+Release build, without mimalloc      ``"malloc"``             ``malloc``            ``malloc``              ``malloc``
+Debug build, without mimalloc        ``"malloc_debug"``       ``malloc`` + debug    ``malloc`` + debug      ``malloc`` + debug
 ===================================  =======================  ====================  ======================  ======================
 
 Legend:
@@ -691,9 +687,10 @@ Linux, ``MEM_LARGE_PAGES`` on Windows) with automatic fallback to regular pages.
 It falls back to :c:func:`PyMem_RawMalloc` and
 :c:func:`PyMem_RawRealloc` for allocations larger than 512 bytes.
 
-*pymalloc* is the :ref:`default allocator <default-memory-allocators>` of the
+*pymalloc* can be selected explicitly with :envvar:`PYTHONMALLOC` for the
 :c:macro:`PYMEM_DOMAIN_MEM` (ex: :c:func:`PyMem_Malloc`) and
-:c:macro:`PYMEM_DOMAIN_OBJ` (ex: :c:func:`PyObject_Malloc`) domains.
+:c:macro:`PYMEM_DOMAIN_OBJ` (ex: :c:func:`PyObject_Malloc`) domains. It requires
+interpreter-wide serialization in this reference implementation.
 
 The arena allocator uses the following functions:
 
@@ -759,12 +756,14 @@ and **required** allocator for the :c:macro:`PYMEM_DOMAIN_MEM` and
 builds.  The free-threaded build uses per-thread mimalloc heaps, which allows
 allocation and deallocation to proceed without locking in most cases.
 
-In the default (non-free-threaded) build, mimalloc is available but not the
-default allocator.  It can be selected at runtime using
+The normal build also uses per-thread mimalloc heaps by default in this
+reference implementation. It can be selected explicitly at runtime using
 :envvar:`PYTHONMALLOC`\ ``=mimalloc`` (or ``mimalloc_debug`` to include
-:ref:`debug hooks <pymem-debug-hooks>`).  It can be disabled at build time
+:ref:`debug hooks <pymem-debug-hooks>`). It can be disabled at build time
 using the :option:`--without-mimalloc` configure option, but this option
-cannot be combined with :option:`--disable-gil`.
+cannot be combined with :option:`--disable-gil`. The normal build falls back
+to system :c:func:`malloc` in that configuration. The legacy pymalloc allocator
+remains available explicitly while interpreter-wide serialization is enabled.
 
 tracemalloc C API
 =================

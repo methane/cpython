@@ -72,19 +72,25 @@ accounting is separate from the ThreadGroup bias of object reference counts.
 
 Object freelists are per-thread in the normal build too. Full GC clears all
 thread caches, and thread-state clearing disables the target state's caches,
-including when another thread performs the cleanup. The underlying allocator
-selection and general runtime still retain the interpreter GIL by default.
+including when another thread performs the cleanup. The general runtime still
+retains the interpreter GIL by default.
 
-With `PYTHONMALLOC=mimalloc` or `mimalloc_debug`, the normal build uses the
-ported per-thread heaps, separated by object/GC/preheader layout. Exiting threads
+The normal build now defaults to mimalloc when it is available, including its
+ported per-thread heaps separated by object/GC/preheader layout. Exiting threads
 abandon their live allocations to an interpreter pool; allocation accounting
-includes other threads and abandoned blocks. Heap selection is scoped to each
+includes other threads, abandoned blocks and legacy interpreters' own mimalloc
+heaps. It inspects allocated heaps independently of wrappers such as tracemalloc;
+shared pymalloc arenas are counted only once. Heap selection is scoped to each
 allocator call, including recursive embedding/tracing hooks. Allocator ownership
 is independent of the object's ThreadGroup owner and reference-count bias.
-The default remains pymalloc while parallel heap tracking is being implemented.
-Isolated native workers now exercise mimalloc allocation concurrently with
-cyclic collection in two groups. Their immutable cycles have no Python finalizers
-or mutating API, so this does not decide the pending LOCAL finalization design.
+Without mimalloc, the normal build defaults to system malloc. The explicit
+`PYTHONMALLOC=pymalloc` selection remains available under interpreter-wide
+serialization; the private parallel-allocation probe rejects it. Static runtime
+initialization and preconfiguration choose the same defaults, including debug
+hooks. Isolated native workers exercise default, explicit mimalloc and system
+malloc allocation concurrently with cyclic collection in two groups. Their
+immutable cycles have no Python finalizers or mutating API, so this does not
+decide the pending LOCAL finalization design.
 
 Audit hooks and interpreter views that span initialization use the non-swappable
 raw allocator. Its debug backend is also independent of runtime allocator
@@ -319,6 +325,22 @@ flags/events rather than foreign LOCAL Python functions or mutable results.
 The default-path parallel scheduling test remains skipped while the interpreter
 GIL is enabled. The isolated native probe additionally tests real parallelism.
 
+- Default parallel allocator: debug and release normal builds each pass a
+  650-test selection across nine files covering command-line configuration,
+  embedding, memory C APIs, groups, ownership, sys, GC, weakrefs and tracemalloc
+  (30 and 44 skips). A separate `--with-pydebug --without-mimalloc` build
+  validates the same selection using system malloc (42 skips); its allocation
+  statistics test was corrected to select the allocator it tests, then the
+  full command-line file passes on rerun. Default/debug/explicit allocator
+  selections exercise concurrent allocation and collection of 4,000 immutable
+  cycles each. Both pymalloc and mimalloc statistics remain covered explicitly.
+  Regression tests first reproduce counts dropping to zero under tracemalloc
+  and missing legacy interpreters' mimalloc allocations, then verify live and
+  freed blocks after the accounting fix. Sys and groups pass `-R 3:3` with the
+  default allocator (135 tests, nine skips). All three builds have
+  `Py_GIL_DISABLED=0` and retain interpreter-wide serialization outside the
+  native probes. Logs: `test-default-allocator-*`, `test-allocator-accounting-*`
+  and `test-allocator-stats-*`.
 - Concurrent immortalization: normal debug and release builds successfully run
   1,183 tests across eighteen files covering groups, ownership, reference-count
   C APIs, Unicode, GC, weakrefs, code, types, threading, fork, embedding and

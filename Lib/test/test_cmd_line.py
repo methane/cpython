@@ -830,9 +830,7 @@ class CmdLineTest(unittest.TestCase):
             code = "import _testinternalcapi; print(_testinternalcapi.pymem_getallocatorsname())"
             with support.SuppressCrashReport():
                 out = self.run_xdev("-c", code, check_exitcode=False)
-            if support.with_pymalloc():
-                alloc_name = "pymalloc_debug"
-            elif support.Py_GIL_DISABLED:
+            if support.with_mimalloc():
                 alloc_name = "mimalloc_debug"
             else:
                 alloc_name = "malloc_debug"
@@ -913,18 +911,17 @@ class CmdLineTest(unittest.TestCase):
         malloc = not support.Py_GIL_DISABLED
         pymalloc = support.with_pymalloc()
         mimalloc = support.with_mimalloc()
-        if support.Py_GIL_DISABLED:
+        if mimalloc:
             default_name = 'mimalloc_debug' if support.Py_DEBUG else 'mimalloc'
             default_name_debug = 'mimalloc_debug'
-        elif pymalloc:
-            default_name = 'pymalloc_debug' if support.Py_DEBUG else 'pymalloc'
-            default_name_debug = 'pymalloc_debug'
         else:
             default_name = 'malloc_debug' if support.Py_DEBUG else 'malloc'
             default_name_debug = 'malloc_debug'
 
         tests = [
             (None, default_name),
+            ('', default_name),
+            ('default', default_name),
             ('debug', default_name_debug),
         ]
         if malloc:
@@ -1106,9 +1103,18 @@ class CmdLineTest(unittest.TestCase):
     @unittest.skipIf("-fsanitize" in sysconfig.get_config_vars().get('PY_CFLAGS', ()),
                      "PYTHONMALLOCSTATS doesn't work with ASAN")
     def test_python_malloc_stats(self):
-        code = "pass"
-        rc, out, err = assert_python_ok('-c', code, PYTHONMALLOCSTATS='1')
-        self.assertIn(b'Small block threshold', err)
+        allocators = []
+        if support.with_pymalloc():
+            allocators.append('pymalloc')
+        if support.with_mimalloc():
+            allocators.append('mimalloc')
+        if not allocators:
+            self.skipTest('requires an allocator with heap statistics')
+        for allocator in allocators:
+            with self.subTest(allocator=allocator):
+                rc, out, err = assert_python_ok(
+                    '-c', 'pass', PYTHONMALLOCSTATS='1', PYTHONMALLOC=allocator)
+                self.assertIn(b'Small block threshold', err)
 
     def test_python_user_base(self):
         code = "import site; print(site.USER_BASE)"

@@ -364,10 +364,12 @@ threadgroup_probe(PyObject *self, PyObject *args)
         const char *allocator = _PyMem_GetCurrentAllocatorName();
         if (!parallel || allocator == NULL ||
             (strcmp(allocator, "mimalloc") != 0 &&
-             strcmp(allocator, "mimalloc_debug") != 0))
+             strcmp(allocator, "mimalloc_debug") != 0 &&
+             strcmp(allocator, "malloc") != 0 &&
+             strcmp(allocator, "malloc_debug") != 0))
         {
             return PyErr_Format(PyExc_ValueError,
-                                "parallel allocation probe requires mimalloc");
+                                "parallel allocation probe requires a thread-safe allocator");
         }
     }
     if (mode == 3) {

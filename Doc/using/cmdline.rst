@@ -1095,8 +1095,9 @@ conflict.
      :c:macro:`PYMEM_DOMAIN_MEM` and :c:macro:`PYMEM_DOMAIN_OBJ` domains and use
      the :c:func:`malloc` function for the :c:macro:`PYMEM_DOMAIN_RAW` domain.
    * ``mimalloc``: use the :ref:`mimalloc allocator <mimalloc>` for
-     :c:macro:`PYMEM_DOMAIN_MEM` and :c:macro:`PYMEM_DOMAIN_OBJ` domains and use
-     the :c:func:`malloc` function for the :c:macro:`PYMEM_DOMAIN_RAW` domain.
+     all domains (:c:macro:`PYMEM_DOMAIN_RAW`, :c:macro:`PYMEM_DOMAIN_MEM`,
+     :c:macro:`PYMEM_DOMAIN_OBJ`). This is the default allocator when mimalloc
+     support is available in this PEP 805 reference implementation.
 
    Install :ref:`debug hooks <pymem-debug-hooks>`:
 

@@ -1130,8 +1130,11 @@ class SysModuleTest(unittest.TestCase):
         if sys.platform != "win32":
             with_pymalloc = sysconfig.get_config_var("WITH_PYMALLOC")
             self.assertIn(b"free PyDictObjects", err)
-            if with_pymalloc:
+            if with_pymalloc and sysconfig.get_config_var("WITH_MIMALLOC"):
                 self.assertIn(b'Small block threshold', err)
+                self.assertIn(b'Medium block threshold', err)
+            else:
+                self.assertNotIn(b'Small block threshold', err)
 
         # The function has no parameter
         self.assertRaises(TypeError, sys._debugmallocstats, True)
@@ -1178,6 +1181,58 @@ class SysModuleTest(unittest.TestCase):
         gc.collect()
         c = sys.getallocatedblocks()
         self.assertIn(c, range(b - 50, b + 50))
+
+    @support.cpython_only
+    def test_getallocatedblocks_with_tracemalloc(self):
+        if not (support.with_pymalloc() and support.with_mimalloc()):
+            self.skipTest('requires mimalloc allocation accounting')
+        from test.support.script_helper import assert_python_ok
+        assert_python_ok('-c', '''
+import gc
+import sys
+import tracemalloc
+
+gc.collect()
+before = sys.getallocatedblocks()
+tracemalloc.start()
+objects = [bytes(1024) for _ in range(4096)]
+live = sys.getallocatedblocks()
+assert live >= before + len(objects), (before, live)
+tracemalloc.stop()
+after = sys.getallocatedblocks()
+assert after >= before + len(objects), (before, after)
+del objects
+gc.collect()
+assert sys.getallocatedblocks() < live - 4000
+''', PYTHONMALLOC='mimalloc')
+
+    @support.cpython_only
+    def test_getallocatedblocks_in_subinterpreters(self):
+        if not (support.with_pymalloc() and support.with_mimalloc()):
+            self.skipTest('requires mimalloc allocation accounting')
+        from test.support.script_helper import assert_python_ok
+        assert_python_ok('-c', '''
+import gc
+import sys
+import _interpreters
+
+for config in ('legacy', 'isolated'):
+    interp = _interpreters.create(config)
+    try:
+        assert _interpreters.run_string(
+            interp, 'import gc; gc.collect(); gc.disable()') is None
+        gc.collect()
+        before = sys.getallocatedblocks()
+        assert _interpreters.run_string(
+            interp, 'objects = [bytes(1024) for _ in range(4096)]') is None
+        live = sys.getallocatedblocks()
+        assert live >= before + 4096, (config, before, live)
+        assert _interpreters.run_string(interp, 'del objects; gc.collect()') is None
+        freed = sys.getallocatedblocks()
+        assert freed < live - 4000, (config, live, freed)
+    finally:
+        _interpreters.destroy(interp)
+''', PYTHONMALLOC='mimalloc')
 
     def test_is_gil_enabled(self):
         if support.Py_GIL_DISABLED:

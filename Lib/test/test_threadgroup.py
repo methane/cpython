@@ -327,9 +327,13 @@ for _ in range(4):
     assert sys._is_gil_enabled() == before
 ''')
 
-    @unittest.skipUnless(support.with_mimalloc(), 'requires mimalloc')
     def test_parallel_allocation_and_collection(self):
-        for allocator in ('mimalloc', 'mimalloc_debug'):
+        allocators = ('', 'default', 'debug')
+        if not support.Py_GIL_DISABLED:
+            allocators += ('malloc', 'malloc_debug')
+        if support.with_mimalloc():
+            allocators += ('mimalloc', 'mimalloc_debug')
+        for allocator in allocators:
             with self.subTest(allocator=allocator):
                 script_helper.assert_python_ok('-c', '''
 import sys
@@ -343,6 +347,21 @@ assert internal.threadgroup_probe(
     groups, 3, support.SHORT_TIMEOUT, True) == (True, True)
 assert sys._is_gil_enabled() == before
 ''', PYTHONMALLOC=allocator)
+
+    @unittest.skipUnless(support.with_pymalloc(), 'requires pymalloc')
+    def test_parallel_allocation_rejects_pymalloc(self):
+        script_helper.assert_python_ok('-c', '''
+import threading
+import _testinternalcapi as internal
+
+groups = (threading.ThreadGroup(), threading.ThreadGroup())
+try:
+    internal.threadgroup_probe(groups, 3, 1.0, True)
+except ValueError as exc:
+    assert 'thread-safe allocator' in str(exc)
+else:
+    raise AssertionError('parallel allocation accepted pymalloc')
+''', PYTHONMALLOC='pymalloc')
 
     def test_parallel_probe_requires_isolation(self):
         internal = import_helper.import_module('_testinternalcapi')
@@ -358,7 +377,6 @@ assert sys._is_gil_enabled() == before
                 internal.threadgroup_probe(
                     (sys.main_thread_group, sys.main_thread_group), 1, 1.0, True)
 
-    @unittest.skipUnless(support.with_mimalloc(), 'requires mimalloc')
     def test_parallel_intern_immortalization(self):
         script_helper.assert_python_ok('-c', '''
 import faulthandler
@@ -370,7 +388,7 @@ faulthandler.dump_traceback_later(support.LONG_TIMEOUT, exit=True)
 groups = (threading.ThreadGroup('owner'), threading.ThreadGroup('promoter'))
 assert internal.threadgroup_probe(
     groups, 4, support.SHORT_TIMEOUT, True) == (True, True)
-''', PYTHONMALLOC='mimalloc_debug')
+''', PYTHONMALLOC='debug')
 
     def test_same_group_cannot_execute_in_parallel(self):
         internal = import_helper.import_module('_testinternalcapi')

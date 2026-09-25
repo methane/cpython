@@ -405,15 +405,11 @@ void* _PyObject_Realloc(void *ctx, void *ptr, size_t size);
 #  define PYMALLOC_ALLOC {NULL, _PyObject_Malloc, _PyObject_Calloc, _PyObject_Realloc, _PyObject_Free}
 #endif  // WITH_PYMALLOC
 
-#if defined(Py_GIL_DISABLED)
-// Py_GIL_DISABLED requires using mimalloc for "mem" and "obj" domains.
+#if defined(WITH_MIMALLOC)
+// ThreadGroups need parallel allocation in the normal build as well.
 #  define PYRAW_ALLOC MIMALLOC_RAWALLOC
 #  define PYMEM_ALLOC MIMALLOC_ALLOC
 #  define PYOBJ_ALLOC MIMALLOC_OBJALLOC
-#elif defined(WITH_PYMALLOC)
-#  define PYRAW_ALLOC MALLOC_ALLOC
-#  define PYMEM_ALLOC PYMALLOC_ALLOC
-#  define PYOBJ_ALLOC PYMALLOC_ALLOC
 #else
 #  define PYRAW_ALLOC MALLOC_ALLOC
 #  define PYMEM_ALLOC MALLOC_ALLOC
@@ -1893,23 +1889,14 @@ get_mimalloc_allocated_blocks(PyInterpreterState *interp)
 }
 #endif
 
-Py_ssize_t
-_PyInterpreterState_GetAllocatedBlocks(PyInterpreterState *interp)
+static Py_ssize_t
+get_pymalloc_allocated_blocks(PyInterpreterState *interp)
 {
-#ifdef WITH_MIMALLOC
-    if (_PyMem_MimallocEnabled()) {
-        return get_mimalloc_allocated_blocks(interp);
-    }
-#endif
-
-#ifdef Py_DEBUG
-    assert(has_own_state(interp));
-#else
+    // Legacy interpreters share the main interpreter's pymalloc arenas.
+    // Count those arenas only once, under their owning interpreter.
     if (!has_own_state(interp)) {
-        _Py_FatalErrorFunc(__func__,
-                           "the interpreter doesn't have its own allocator");
+        return 0;
     }
-#endif
     OMState *state = interp->obmalloc;
 
     if (state == NULL) {
@@ -1936,25 +1923,34 @@ _PyInterpreterState_GetAllocatedBlocks(PyInterpreterState *interp)
     return n;
 }
 
+Py_ssize_t
+_PyInterpreterState_GetAllocatedBlocks(PyInterpreterState *interp)
+{
+    // Inspect the heaps, independent of the allocator's current entry point.
+    // Wrappers such as tracemalloc must not hide live allocations. Mimalloc
+    // heaps belong to each interpreter, even if it shares pymalloc arenas.
+    Py_ssize_t total = get_pymalloc_allocated_blocks(interp);
+#ifdef WITH_MIMALLOC
+    total += get_mimalloc_allocated_blocks(interp);
+#endif
+    return total;
+}
+
 static void free_obmalloc_arenas(PyInterpreterState *interp);
 
 void
 _PyInterpreterState_FinalizeAllocatedBlocks(PyInterpreterState *interp)
 {
+    Py_ssize_t leaked = 0;
 #ifdef WITH_MIMALLOC
-    if (_PyMem_MimallocEnabled()) {
-        Py_ssize_t leaked = _PyInterpreterState_GetAllocatedBlocks(interp);
-        interp->runtime->obmalloc.interpreter_leaks += leaked;
-        return;
-    }
+    leaked += get_mimalloc_allocated_blocks(interp);
 #endif
     if (has_own_state(interp) && interp->obmalloc != NULL) {
-        Py_ssize_t leaked = _PyInterpreterState_GetAllocatedBlocks(interp);
-        assert(has_own_state(interp) || leaked == 0);
-        interp->runtime->obmalloc.interpreter_leaks += leaked;
-        if (_PyMem_obmalloc_state_on_heap(interp) && leaked == 0) {
-            // free the obmalloc arenas and radix tree nodes.  If leaked > 0
-            // then some of the memory allocated by obmalloc has not been
+        Py_ssize_t pymalloc_leaked = get_pymalloc_allocated_blocks(interp);
+        leaked += pymalloc_leaked;
+        if (_PyMem_obmalloc_state_on_heap(interp) && pymalloc_leaked == 0) {
+            // Free the obmalloc arenas and radix tree nodes. If any pymalloc
+            // blocks have leaked, some memory allocated by obmalloc has not been
             // freed.  It might be safe to free the arenas in that case but
             // it's possible that extension modules are still using that
             // memory.  So, it is safer to not free and to leak.  Perhaps there
@@ -1963,6 +1959,7 @@ _PyInterpreterState_FinalizeAllocatedBlocks(PyInterpreterState *interp)
             free_obmalloc_arenas(interp);
         }
     }
+    interp->runtime->obmalloc.interpreter_leaks += leaked;
 }
 
 static Py_ssize_t get_num_global_allocated_blocks(_PyRuntimeState *);
@@ -2016,9 +2013,7 @@ get_num_global_allocated_blocks(_PyRuntimeState *runtime)
                 assert(has_own_state(interp));
             }
 #endif
-            if (has_own_state(interp)) {
-                total += _PyInterpreterState_GetAllocatedBlocks(interp);
-            }
+            total += _PyInterpreterState_GetAllocatedBlocks(interp);
         }
         HEAD_UNLOCK(runtime);
         _PyEval_StartTheWorldAll(&_PyRuntime);
