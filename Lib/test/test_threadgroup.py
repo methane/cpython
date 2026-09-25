@@ -464,6 +464,19 @@ assert internal.threadgroup_probe(
     groups, 13, support.SHORT_TIMEOUT, True) == (True, True)
 ''', PYTHONMALLOC='debug')
 
+    def test_parallel_descriptor_qualname(self):
+        script_helper.assert_python_ok('-c', '''
+import faulthandler
+import threading
+from test import support
+import _testinternalcapi as internal
+
+faulthandler.dump_traceback_later(support.LONG_TIMEOUT, exit=True)
+groups = (threading.ThreadGroup('first'), threading.ThreadGroup('second'))
+assert internal.threadgroup_probe(
+    groups, 14, support.SHORT_TIMEOUT, True) == (True, True)
+''', PYTHONMALLOC='debug')
+
     def test_parallel_local_functions(self):
         script_helper.assert_python_ok('-c', '''
 import faulthandler

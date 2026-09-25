@@ -639,6 +639,25 @@ parallel_instance_attributes(PyObject *instance, int worker)
     return ok;
 }
 
+static PyObject *
+parallel_descriptors(void)
+{
+    PyObject *descriptors = PyTuple_New(1024);
+    if (descriptors == NULL) {
+        return NULL;
+    }
+    for (Py_ssize_t i = 0; i < PyTuple_GET_SIZE(descriptors); i++) {
+        PyObject *descr = PyDescr_NewMethod(&PyBaseObject_Type,
+                                           &parallel_slot_getattribute_def);
+        if (descr == NULL) {
+            Py_DECREF(descriptors);
+            return NULL;
+        }
+        PyTuple_SET_ITEM(descriptors, i, descr);
+    }
+    return descriptors;
+}
+
 static int
 parallel_lookup_worker(struct group_probe *probe)
 {
@@ -649,7 +668,7 @@ parallel_lookup_worker(struct group_probe *probe)
     }
     PyTime_t deadline = now + probe->timeout;
     for (Py_ssize_t i = 0; i < PyTuple_GET_SIZE(probe->lookup_objects); i++) {
-        // Bring both readers to each cold type before either fills its cache.
+        // Bring both readers to each object before either fills its cache.
         _Py_atomic_store_int(&probe->lookup_rounds[probe->index], (int)i + 1);
         while (_Py_atomic_load_int(&probe->lookup_rounds[1 - probe->index]) <= i) {
             if (_Py_HandlePending(tstate) < 0 ||
@@ -664,12 +683,16 @@ parallel_lookup_worker(struct group_probe *probe)
             return 0;
         }
         for (int repeat = 0; repeat < 8; repeat++) {
-            PyObject *value = PyObject_GetAttr(target, &_Py_ID(value));
+            PyObject *name = probe->mode == 14 ? &_Py_ID(__qualname__) :
+                                               &_Py_ID(value);
+            PyObject *value = PyObject_GetAttr(target, name);
             if (value == NULL) {
                 Py_DECREF(target);
                 return 0;
             }
-            int ok = value == Py_None;
+            int ok = probe->mode == 14 ?
+                PyUnicode_Check(value) && PyUnicode_CompareWithASCIIString(
+                    value, "object.__getattribute__") == 0 : value == Py_None;
             Py_DECREF(value);
             if (!ok) {
                 Py_DECREF(target);
@@ -1027,7 +1050,8 @@ group_probe_worker(void *arg)
         probe->ok = parallel_context_dict_worker(probe);
     }
 
-    if (probe->ok && (probe->mode == 7 || probe->mode == 11 || probe->mode == 12)) {
+    if (probe->ok && (probe->mode == 7 || probe->mode == 11 ||
+                      probe->mode == 12 || probe->mode == 14)) {
         probe->ok = parallel_lookup_worker(probe);
     }
 
@@ -1106,7 +1130,7 @@ threadgroup_probe(PyObject *self, PyObject *args)
                           &groups, &mode, &seconds, &parallel, &PyCode_Type, &code)) {
         return NULL;
     }
-    if (PyTuple_GET_SIZE(groups) != 2 || mode < 0 || mode > 13 ||
+    if (PyTuple_GET_SIZE(groups) != 2 || mode < 0 || mode > 14 ||
         !(seconds > 0.0 && seconds <= 300.0) ||
         ((mode == 6) != (code != NULL)) ||
         (code != NULL && ((PyCodeObject *)code)->co_nfreevars != 0)) {
@@ -1171,8 +1195,8 @@ threadgroup_probe(PyObject *self, PyObject *args)
             return PyErr_NoMemory();
         }
     }
-    if (mode == 7 || mode == 11 || mode == 12) {
-        types = parallel_lookup_objects(mode);
+    if (mode == 7 || mode == 11 || mode == 12 || mode == 14) {
+        types = mode == 14 ? parallel_descriptors() : parallel_lookup_objects(mode);
         if (types == NULL) {
             return NULL;
         }

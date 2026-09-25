@@ -5212,6 +5212,31 @@ class ClassPropertiesAndMethods(unittest.TestCase):
         self.assertEqual(Y.__qualname__, 'Y')
         self.assertEqual(Y.Inside.__qualname__, 'Y.Inside')
 
+    def test_descriptor_qualname_reentrant_error(self):
+        entered = False
+        cached = None
+
+        class Meta(type):
+            def __getattribute__(cls, name):
+                nonlocal entered, cached
+                if name == '__qualname__' and not entered:
+                    entered = True
+                    try:
+                        cached = cls.field.__qualname__
+                        raise ValueError('qualname lookup failed')
+                    finally:
+                        entered = False
+                return super().__getattribute__(name)
+
+        class Owner(metaclass=Meta):
+            __slots__ = ('field',)
+
+        descriptor = Owner.field
+        with self.assertRaisesRegex(ValueError, 'qualname lookup failed'):
+            descriptor.__qualname__
+        self.assertIsInstance(cached, str)
+        self.assertIs(descriptor.__qualname__, cached)
+
     def test_qualname_dict(self):
         ns = {'__qualname__': 'some.name'}
         tp = type('Foo', (), ns)

@@ -419,6 +419,13 @@ Representation preserves the getter's access exception. Descriptor binding
 only copies that function into a local bound method; the later call performs
 the acquisition check.
 
+Immutable descriptors publish their `__qualname__` cache once using atomic
+compare/exchange. Concurrent readers retain the first cached string. A cold
+lookup acquires the stored class before reading its qualified name; a cached
+lookup only reads the immutable string. Metaclass reentry can populate the cache
+during name calculation, but any error from the outer calculation still
+propagates rather than returning a value with an exception pending.
+
 Tuple and list element operations check references before invoking repr, hash,
 comparison or sorting callbacks. A local list copied from a shared tuple can
 still contain foreign LOCAL elements. Sorting checks those elements and the
@@ -469,6 +476,15 @@ flags/events rather than foreign LOCAL Python functions or mutable results.
 The default-path parallel scheduling test remains skipped while the interpreter
 GIL is enabled. The isolated native probe additionally tests real parallelism.
 
+- Descriptor qualified-name caches: debug and release builds each run 469 tests
+  across six files successfully (three and six skips). The three new tests pass
+  `-R 3:3` and TSan without suppressions. Before the fix, concurrent native
+  readers trigger a TSan race, cold lookup reads a foreign LOCAL class, and
+  metaclass reentry followed by an exception aborts the debug build even with
+  Main alone. Logs: `tsan-descriptor-before.log`,
+  `test-descriptor-owner-before.log`, `test-descriptor-reentrant-before.log`,
+  `test-descriptor-debug.log`, `test-descriptor-release.log`,
+  `test-descriptor-refleak.log` and `tsan-descriptor.log`.
 - C API instance-method wrappers: debug and release builds each run 694 tests
   across seven files successfully (one and two skips). Three selected tests
   pass `-R 3:3` and TSan without suppressions. Before the fix, 23 foreign

@@ -812,6 +812,28 @@ assert 'threading' not in sys.modules
     def test_vm_name_load(self):
         self.check_vm_code(compile('value is None', '<probe>', 'exec'), 0)
 
+    def test_descriptor_qualname_class_acquisition(self):
+        def probe():
+            assert source[1].__qualname__ == source[2]
+            return True
+
+        for cached in (False, True):
+            for group in (sys.main_thread_group, self.foreign):
+                with self.subTest(cached=cached, group=group):
+                    class Owner:
+                        __slots__ = ('field',)
+
+                    descriptor = Owner.field
+                    expected = Owner.__qualname__ + '.field'
+                    if cached:
+                        self.assertEqual(descriptor.__qualname__, expected)
+                    # Reading a populated cache does not acquire the class.
+                    marker = None if cached else Owner
+                    self.assertIs(internal.threadgroup_vm_probe(
+                        probe.__code__, group,
+                        (marker, descriptor, expected), 0),
+                        cached or group is sys.main_thread_group)
+
     def test_vm_descriptor_checked_before_call(self):
         for warmups in (0, 64):
             for group in (sys.main_thread_group, self.foreign):

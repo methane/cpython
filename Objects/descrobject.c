@@ -602,8 +602,11 @@ calculate_qualname(PyDescrObject *descr)
         return NULL;
     }
 
-    type_qualname = PyObject_GetAttr(
-            (PyObject *)descr->d_type, &_Py_ID(__qualname__));
+    PyObject *type = PyObject_CheckAccess((PyObject *)descr->d_type);
+    if (type == NULL) {
+        return NULL;
+    }
+    type_qualname = PyObject_GetAttr(type, &_Py_ID(__qualname__));
     if (type_qualname == NULL)
         return NULL;
 
@@ -623,17 +626,24 @@ static PyObject *
 descr_get_qualname(PyObject *self, void *Py_UNUSED(ignored))
 {
     PyDescrObject *descr = (PyDescrObject *)self;
-    PyObject *qualname;
-    Py_BEGIN_CRITICAL_SECTION(self);
-    if (descr->d_qualname == NULL) {
+    PyObject *qualname = _Py_atomic_load_ptr_acquire(&descr->d_qualname);
+    if (qualname == NULL) {
         PyObject *new_qualname = calculate_qualname(descr);
-        if (new_qualname != NULL) {
-            Py_XSETREF(descr->d_qualname, new_qualname);
+        if (new_qualname == NULL) {
+            return NULL;
+        }
+        // Descriptors are immutable and may be shared between ThreadGroups.
+        // Keep the first cached value alive for all readers, including when
+        // a metaclass reenters this getter while calculating the name.
+        if (_Py_atomic_compare_exchange_ptr(&descr->d_qualname, &qualname,
+                                             new_qualname)) {
+            qualname = new_qualname;
+        }
+        else {
+            Py_DECREF(new_qualname);
         }
     }
-    qualname = Py_XNewRef(descr->d_qualname);
-    Py_END_CRITICAL_SECTION();
-    return qualname;
+    return Py_NewRef(qualname);
 }
 
 static PyObject *
