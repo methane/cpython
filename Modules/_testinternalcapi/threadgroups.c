@@ -3024,6 +3024,10 @@ struct operator_api {
 };
 
 static const struct operator_api operator_apis[] = {
+    {"PyObject_Repr", Py_tp_repr, .unary = PyObject_Repr},
+    {"PyObject_Str", Py_tp_str, .unary = PyObject_Str},
+    {"PyObject_Str_repr", Py_tp_repr, .unary = PyObject_Str},
+    {"PyObject_ASCII", Py_tp_repr, .unary = PyObject_ASCII},
     {"PyNumber_Negative", Py_nb_negative, .unary = PyNumber_Negative},
     {"PyNumber_Positive", Py_nb_positive, .unary = PyNumber_Positive},
     {"PyNumber_Invert", Py_nb_invert, .unary = PyNumber_Invert},

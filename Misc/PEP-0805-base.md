@@ -566,6 +566,10 @@ references before reporting type errors, issuing warnings or copying subclass
 data into an exact numeric result. This includes the scalar `PyFloat_AsDouble`
 API. Already-acquired input numbers need no additional checks.
 
+`PyObject_Repr` and `PyObject_Str` check native slot results before inspecting
+their type or returning them. A valid string result may be a LOCAL subclass.
+`PyObject_ASCII` inherits the repr check before accessing or escaping the string.
+
 String/bytes prefix and suffix matching acquire tuple alternatives as they are
 used, preserving short-circuit matches. Joining acquires sequence elements before
 reading string data or requesting buffers; rejection releases earlier buffers.
@@ -621,6 +625,16 @@ The default-path parallel scheduling test requires group-only serialization
 from startup and does not skip. The extension-import test also runs in the normal
 build, checking that imports leave this scheduling state unchanged.
 
+- String conversion slot results: debug and release each pass 513 tests across
+  ownership, descriptors, builtins and Unicode C APIs (nine and ten skips).
+  The new test exercises 32 native worker calls through repr, str, the str-to-repr
+  fallback and ASCII conversion, including non-ASCII strings and invalid LOCAL
+  results. Eleven foreign-group cases fail before the fix; Main and exact-string
+  controls pass. The test passes TSan without suppressions. Eighteen existing
+  Main-only conversion/formatting tests pass `-R 3:3` (two skips), with no new
+  Main-only failure in this selection. Logs: `test-string-return-before.log`,
+  `test-string-return-debug.log`, `test-string-return-release.log`,
+  `test-string-return-main-refleak.log` and `tsan-string-return.log`.
 - Type acquisition for formatting: debug and release each pass 512 tests across
   ownership, descriptors, builtins and Unicode C APIs (nine and ten skips).
   Two new tests exercise 16 worker calls, covering `%T` in argument errors and

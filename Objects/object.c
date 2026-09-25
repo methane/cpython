@@ -824,6 +824,7 @@ PyObject_Repr(PyObject *v)
     res = (*Py_TYPE(v)->tp_repr)(v);
     _Py_LeaveRecursiveCallTstate(tstate);
 
+    res = _PyObject_CheckAccessNullable(res);
     if (res == NULL) {
         return NULL;
     }
@@ -866,6 +867,7 @@ PyObject_Str(PyObject *v)
     res = (*Py_TYPE(v)->tp_str)(v);
     _Py_LeaveRecursiveCallTstate(tstate);
 
+    res = _PyObject_CheckAccessNullable(res);
     if (res == NULL) {
         return NULL;
     }

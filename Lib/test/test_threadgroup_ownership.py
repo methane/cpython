@@ -1019,6 +1019,26 @@ assert 'threading' not in sys.modules
                                 type(value) is not object or
                                 group is sys.main_thread_group)
 
+    def test_string_conversion_slot_returns(self):
+        class String(str):
+            pass
+
+        for api in ('PyObject_Repr', 'PyObject_Str', 'PyObject_Str_repr',
+                    'PyObject_ASCII'):
+            texts = ('ascii',) if api == 'PyObject_ASCII' else ('ascii', 'caf\u00e9')
+            for text in texts:
+                for value in (text, String(text)):
+                    for group in (sys.main_thread_group, self.foreign):
+                        with self.subTest(api=api, value_type=type(value),
+                                          text=text, group=group):
+                            self.assertIs(internal.threadgroup_return_probe(
+                                (value, frozendict()), group, api),
+                                type(value) is str or group is sys.main_thread_group)
+            # Reject an inaccessible slot result before validating its type.
+            with self.subTest(api=api, invalid_result=True):
+                self.assertFalse(internal.threadgroup_return_probe(
+                    ([], frozendict()), self.foreign, api))
+
     def test_numeric_conversion_slot_returns(self):
         import warnings
 
