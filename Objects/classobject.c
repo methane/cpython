@@ -98,15 +98,26 @@ method___reduce___impl(PyMethodObject *self)
 /*[clinic end generated code: output=6c04506d0fa6fdcb input=143a0bf5e96de6e8]*/
 {
     PyObject *funcself = PyMethod_GET_SELF(self);
-    PyObject *func = PyMethod_GET_FUNCTION(self);
+    PyObject *func = PyMethod_Function((PyObject *)self);
+    if (func == NULL) {
+        return NULL;
+    }
     PyObject *funcname = PyObject_GetAttr(func, &_Py_ID(__name__));
     if (funcname == NULL) {
         return NULL;
     }
     if (_Py_IsPrivateName(funcname)) {
-        PyObject *classname = PyType_Check(funcself)
-            ? PyType_GetName((PyTypeObject *)funcself)
-            : PyType_GetName(Py_TYPE(funcself));
+        if (PyObject_CheckAccess(funcself) == NULL) {
+            Py_DECREF(funcname);
+            return NULL;
+        }
+        PyObject *cls = PyType_Check(funcself) ? funcself :
+            PyObject_CheckAccess((PyObject *)Py_TYPE(funcself));
+        if (cls == NULL) {
+            Py_DECREF(funcname);
+            return NULL;
+        }
+        PyObject *classname = PyType_GetName((PyTypeObject *)cls);
         if (classname == NULL) {
             Py_DECREF(funcname);
             return NULL;
@@ -148,8 +159,11 @@ static PyMemberDef method_memberlist[] = {
 static PyObject *
 method_get_doc(PyObject *self, void *context)
 {
-    PyMethodObject *im = _PyMethodObject_CAST(self);
-    return PyObject_GetAttr(im->im_func, &_Py_ID(__doc__));
+    PyObject *func = PyMethod_Function(self);
+    if (func == NULL) {
+        return NULL;
+    }
+    return PyObject_GetAttr(func, &_Py_ID(__doc__));
 }
 
 static PyGetSetDef method_getset[] = {
@@ -160,7 +174,6 @@ static PyGetSetDef method_getset[] = {
 static PyObject *
 method_getattro(PyObject *obj, PyObject *name)
 {
-    PyMethodObject *im = (PyMethodObject *)obj;
     PyTypeObject *tp = Py_TYPE(obj);
     PyObject *descr = NULL;
 
@@ -184,7 +197,11 @@ method_getattro(PyObject *obj, PyObject *name)
         }
     }
 
-    return PyObject_GetAttr(im->im_func, name);
+    PyObject *func = PyMethod_Function(obj);
+    if (func == NULL) {
+        return NULL;
+    }
+    return PyObject_GetAttr(func, name);
 }
 
 /*[clinic input]
@@ -242,7 +259,15 @@ method_richcompare(PyObject *self, PyObject *other, int op)
     }
     a = (PyMethodObject *)self;
     b = (PyMethodObject *)other;
-    eq = PyObject_RichCompareBool(a->im_func, b->im_func, Py_EQ);
+    PyObject *a_func = PyMethod_Function(self);
+    if (a_func == NULL) {
+        return NULL;
+    }
+    PyObject *b_func = PyMethod_Function(other);
+    if (b_func == NULL) {
+        return NULL;
+    }
+    eq = PyObject_RichCompareBool(a_func, b_func, Py_EQ);
     if (eq == 1) {
         eq = (a->im_self == b->im_self);
     }
@@ -258,9 +283,14 @@ method_richcompare(PyObject *self, PyObject *other, int op)
 static PyObject *
 method_repr(PyObject *op)
 {
-    PyMethodObject *a = _PyMethodObject_CAST(op);
-    PyObject *self = a->im_self;
-    PyObject *func = a->im_func;
+    PyObject *self = PyMethod_Self(op);
+    if (self == NULL) {
+        return NULL;
+    }
+    PyObject *func = PyMethod_Function(op);
+    if (func == NULL) {
+        return NULL;
+    }
     PyObject *funcname, *result;
     const char *defname = "?";
 
@@ -287,8 +317,13 @@ static Py_hash_t
 method_hash(PyObject *self)
 {
     PyMethodObject *a = _PyMethodObject_CAST(self);
-    Py_hash_t x = PyObject_GenericHash(a->im_self);
-    Py_hash_t y = PyObject_Hash(a->im_func);
+    PyObject *func = PyMethod_Function(self);
+    if (func == NULL) {
+        return -1;
+    }
+    // The receiver contributes only its identity, without accessing it.
+    Py_hash_t x = Py_HashPointer(a->im_self);
+    Py_hash_t y = PyObject_Hash(func);
     if (y == -1) {
         return -1;
     }

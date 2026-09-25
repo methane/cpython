@@ -1044,6 +1044,101 @@ assert 'threading' not in sys.modules
     def test_specialized_bound_method_calls(self):
         self.check_bound_method_calls(64, specialized=True)
 
+    def test_bound_method_metadata(self):
+        def target(self):
+            return True
+
+        cases = (
+            ('function', 'method.__doc__'),
+            ('function', 'method.__name__'),
+            ('function', 'method.__repr__()'),
+            ('function', 'method.__hash__()'),
+            ('function', 'method == other'),
+            ('function', 'method != other'),
+            ('function', 'other == method'),
+            ('function', 'method.__reduce__()'),
+            ('self', 'method.__repr__()'),
+            ('self', 'method.__reduce__()'),
+        )
+        for field, expression in cases:
+            binding = ('bind_method(local, source)' if field == 'self'
+                       else 'bind_method(local, (None,), source)')
+            namespace = {}
+            exec(textwrap.dedent(f'''
+                def probe():
+                    __builtins__['getattr'] = consumer
+                    def __private(self):
+                        return True
+                    local = __private
+                    method = {binding}
+                    other = bind_method(local, (None,))
+                    {expression}
+                    return True
+            '''), namespace)
+            for value in (object() if field == 'self' else target, None):
+                for group in (sys.main_thread_group, self.foreign):
+                    for warmups in (0, 32):
+                        with self.subTest(field=field, expression=expression,
+                                          control=value is None, group=group,
+                                          warmups=warmups):
+                            self.assertIs(internal.threadgroup_vm_probe(
+                                namespace['probe'].__code__.replace(), group,
+                                (value, None, None), warmups),
+                                value is None or group is sys.main_thread_group)
+
+    def test_bound_method_private_name_owner(self):
+        def probe():
+            __builtins__['getattr'] = consumer
+
+            def __private(self):
+                return True
+
+            method = bind_method(__private, (source[1],))
+            method.__reduce__()
+            return True
+
+        instance = internal.make_immutable_special_method_instance({})
+        for value in (instance, 42):
+            for group in (sys.main_thread_group, self.foreign):
+                for warmups in (0, 32):
+                    with self.subTest(value=value, group=group, warmups=warmups):
+                        self.assertIs(internal.threadgroup_vm_probe(
+                            probe.__code__.replace(), group,
+                            (type(value), value, None), warmups),
+                            value is not instance or group is sys.main_thread_group)
+
+    def test_bound_method_unaccessed_fields(self):
+        def target(self):
+            return True
+
+        def probe():
+            __builtins__['getattr'] = consumer
+
+            def local(self):
+                "local doc"
+                return True
+
+            method = bind_method(local, source[1])
+            other = bind_method(local, source[1])
+            assert method.__doc__ == 'local doc'
+            assert method.__name__ == 'local'
+            # These operations use only the receiver's identity or copy its
+            # heap reference. None exposes it as a thread-owned reference.
+            assert method == other
+            assert method.__hash__() == other.__hash__()
+            reduced = method.__reduce__()
+            assert reduced[0] is consumer
+            assert reduced[1].__len__() == 2
+            # Getting __self__ likewise does not acquire the stored function.
+            method = bind_method(local, (None,), source[2])
+            assert method.__self__ is None
+            return True
+
+        for group in (sys.main_thread_group, self.foreign):
+            with self.subTest(group=group):
+                self.assertTrue(internal.threadgroup_vm_probe(
+                    probe.__code__, group, (True, (object(),), (target,)), 0))
+
     def check_c_call_results(self, warmups, specialized=False):
         cases = (
             ("mapping.get('value')", 'CALL_METHOD_DESCRIPTOR_FAST'),

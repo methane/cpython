@@ -406,6 +406,13 @@ paths. `PyMethod_Function()` and `PyMethod_Self()` check their borrowed results.
 Call specialization and version guards check access before reading a stored
 function's mutable fields. The native probe can copy opaque tuple references
 into a local method to verify these acquisition boundaries.
+Bound-method attribute forwarding, representation, hashing, comparison and
+reduction acquire the stored function before inspecting it or invoking its
+slots. Representation also acquires the receiver. Private-name reduction
+checks the receiver and any class obtained from its header before reading the
+class name, including when an immutable receiver has a LOCAL class. Receiver
+identity comparisons, pointer hashing and blind copying into reduction tuples
+do not inspect the receiver and need no acquisition check.
 
 Tuple and list element operations check references before invoking repr, hash,
 comparison or sorting callbacks. A local list copied from a shared tuple can
@@ -457,6 +464,16 @@ flags/events rather than foreign LOCAL Python functions or mutable results.
 The default-path parallel scheduling test remains skipped while the interpreter
 GIL is enabled. The isolated native probe additionally tests real parallelism.
 
+- Bound-method attributes and slots: debug and release builds each run 692
+  tests across seven files successfully (one and two skips). The three new
+  tests pass `-R 3:3` and TSan without suppressions. Before the fix, 22 foreign
+  subcases fail, including private-name reduction for an immutable instance
+  with a LOCAL class. Controls preserve operations that only copy or compare
+  receiver references. Ten existing method pickle round-trip tests also pass;
+  no pickle implementation or compatibility test is changed. Logs:
+  `test-method-metadata-before.log`, `test-method-metadata-debug.log`,
+  `test-method-metadata-release.log`, `test-method-metadata-refleak.log`,
+  `test-method-metadata-roundtrip.log` and `tsan-method-metadata.log`.
 - Python bound-method calls and C API getters: debug and release builds each
   run 748 tests across eight files successfully (one skip in each build).
   Before the fix, 22 foreign subcases fail; owner and immutable controls pass.
