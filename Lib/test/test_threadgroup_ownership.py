@@ -2256,6 +2256,79 @@ if cyclic:
                              grouped, error)), 0, 1, False,
                             internal.reraise_star_probe))
 
+    def test_traceback_chain_acquisition(self):
+        # Isolate native printing from regrtest's Main-owned Python audit hook.
+        code = textwrap.dedent('''
+            import _testinternalcapi as internal
+            import gc
+            import sys
+            import threading
+
+            def probe():
+                exception, make_type, make_tb, error, rejected, mode = source[2]
+                def capture():
+                    try:
+                        raise exception()
+                    except exception as exc:
+                        return exc.__traceback__
+
+                head, tail, target = capture(), capture(), capture()
+                if mode == 'cached_lineno':
+                    tail = make_tb(None, tail.tb_frame, tail.tb_lasti, 42)
+                head.tb_next = tail
+                field = ('frame' if mode in ('lineno', 'cached_lineno', 'print_frame')
+                         else 'next')
+                if mode != 'print_mutation':
+                    bound_builtin(tail, source[1], field)
+                writes = [0]
+                def write(self, text):
+                    writes[0] += 1
+                    if mode == 'print_mutation' and writes[0] == 2:
+                        # The depth scan has finished before frame output.
+                        bound_builtin(tail, source[1], 'next')
+                output = make_type('Output', (), {'write': write})()
+                try:
+                    if mode == 'lineno':
+                        tail.tb_lineno
+                    elif mode == 'cached_lineno':
+                        assert tail.tb_lineno == 42
+                    elif mode == 'set_next':
+                        target.tb_next = head
+                    else:
+                        bound_builtin(head, source[1], 'print', output)
+                except error:
+                    assert rejected
+                    if mode == 'set_next':
+                        assert target.tb_next is None
+                else:
+                    assert not rejected
+                return True
+
+            try:
+                raise BaseException()
+            except BaseException as exc:
+                traceback = exc.__traceback__
+            mode = sys.argv[1]
+            value = (traceback.tb_frame if mode in ('lineno', 'cached_lineno', 'print_frame')
+                     else traceback)
+            foreign = threading.ThreadGroup('traceback acquisition')
+            for group in (sys.main_thread_group, foreign):
+                gc.collect()
+                before = sys.getrefcount(value)
+                assert internal.threadgroup_vm_probe(
+                    probe.__code__, group,
+                    (True, (value,), (BaseException, type, type(traceback),
+                     IllegalThreadAccessException,
+                     group is foreign and mode != 'cached_lineno', mode)),
+                    0, 1, False, internal.traceback_reference_probe)
+                gc.collect()
+                assert sys.getrefcount(value) == before
+        ''')
+        for mode in ('lineno', 'cached_lineno', 'set_next', 'print_next', 'print_frame',
+                     'print_mutation'):
+            with self.subTest(mode=mode):
+                script_helper.assert_python_ok('-c', code, mode)
+
     def test_exception_reference_returns(self):
         class LocalArgs(tuple):
             pass

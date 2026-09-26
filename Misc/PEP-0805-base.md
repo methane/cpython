@@ -698,6 +698,11 @@ checks the C result before VM validation and covers naked exceptions, groups,
 `None`, and invalid accessible/foreign elements. The internal one-element
 result uses the checked strong-reference list getter.
 
+Traceback line computation checks acquired frames; cached line numbers need no
+frame acquisition. The `tb_next` setter and native printer check acquired links,
+including links changed by output callbacks after the printer's depth scan.
+These paths propagate ordinary access errors without recovery machinery.
+
 Module construction checks a `Py_mod_create` result before reading or changing
 its module state metadata. Both definition-based and slots-based constructors
 reject foreign LOCAL results and accept already accessible results.
@@ -754,6 +759,12 @@ Earlier validation predates the explicit class-sharability check in
 instance of a LOCAL class now share the class first, or test declaration
 failure. LOCAL method and LOCAL base acquisition tests remain relevant.
 
+- Traceback chains: five foreign acquisition cases fail before the guards.
+  Main controls and cached line reads pass; rejected setters leave the target
+  unchanged, and source refcounts balance after each native worker. Debug and
+  release each run 848 related tests without failures (four and five skips).
+  The regression passes TSan without suppressions. No new Main-only failure
+  appears. Logs: `test-traceback-chain-{before,focused,debug,release,tsan}.log`.
 - Exception context: six foreign cases fail before the fix. The C getter and
   group split/subgroup propagate acquisition failure; implicit chaining aborts
   without recursively creating an access exception. Chains with zero, one and

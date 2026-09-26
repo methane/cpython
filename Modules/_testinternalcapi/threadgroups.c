@@ -4524,6 +4524,37 @@ copy_exception_reference(PyObject *unused, PyObject *args)
 }
 
 static PyObject *
+traceback_reference_probe(PyObject *unused, PyObject *args)
+{
+    PyTracebackObject *tb;
+    PyObject *source, *file = NULL;
+    const char *field;
+    if (!PyArg_ParseTuple(args, "O!O!s|O:traceback_reference_probe",
+                          &PyTraceBack_Type, &tb, &PyTuple_Type, &source,
+                          &field, &file)) {
+        return NULL;
+    }
+    if (PyTuple_GET_SIZE(source) != 1) {
+        return PyErr_Format(PyExc_ValueError, "expected one heap reference");
+    }
+    // Copy an opaque heap reference into a traceback owned by the worker.
+    PyObject *value = PyTuple_GET_ITEM(source, 0);
+    if (strcmp(field, "next") == 0) {
+        Py_XSETREF(tb->tb_next, (PyTracebackObject *)Py_NewRef(value));
+    }
+    else if (strcmp(field, "frame") == 0) {
+        Py_SETREF(tb->tb_frame, (PyFrameObject *)Py_NewRef(value));
+    }
+    else if (strcmp(field, "print") != 0) {
+        return PyErr_Format(PyExc_ValueError, "unknown traceback field");
+    }
+    if (file != NULL && PyTraceBack_Print((PyObject *)tb, file) < 0) {
+        return NULL;
+    }
+    Py_RETURN_NONE;
+}
+
+static PyObject *
 function_reference_probe(PyObject *unused, PyObject *args)
 {
     PyObject *source, *callback = NULL;
@@ -6215,6 +6246,7 @@ static PyMethodDef methods[] = {
     {"exception_matches_probe", exception_matches_probe, METH_O, NULL},
     {"dict_next_probe", dict_next_probe, METH_VARARGS, NULL},
     {"copy_exception_reference", copy_exception_reference, METH_VARARGS, NULL},
+    {"traceback_reference_probe", traceback_reference_probe, METH_VARARGS, NULL},
     {"function_reference_probe", function_reference_probe, METH_VARARGS, NULL},
     {"frame_getvar_probe", frame_getvar_probe, METH_VARARGS, NULL},
 #ifdef Py_DEBUG

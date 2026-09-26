@@ -152,6 +152,9 @@ static int
 tb_get_lineno(PyObject *op)
 {
     PyTracebackObject *tb = _PyTracebackObject_CAST(op);
+    if (PyObject_CheckAccess((PyObject *)tb->tb_frame) == NULL) {
+        return -1;
+    }
     _PyInterpreterFrame* frame = tb->tb_frame->f_frame;
     assert(frame != NULL);
     return PyCode_Addr2Line(_PyFrame_GetCode(frame), tb->tb_lasti);
@@ -165,6 +168,9 @@ tb_lineno_get(PyObject *op, void *Py_UNUSED(_))
     if (lineno == -1) {
         lineno = tb_get_lineno(op);
         if (lineno < 0) {
+            if (PyErr_Occurred()) {
+                return NULL;
+            }
             Py_RETURN_NONE;
         }
     }
@@ -211,6 +217,10 @@ traceback_tb_next_set_impl(PyTracebackObject *self, PyObject *value)
         Py_XINCREF(cursor->tb_next);
         Py_SETREF(cursor, cursor->tb_next);
         Py_END_CRITICAL_SECTION();
+        if (cursor != NULL && PyObject_CheckAccess((PyObject *)cursor) == NULL) {
+            Py_DECREF(cursor);
+            return -1;
+        }
     }
 
     Py_XSETREF(self->tb_next, (PyTracebackObject *)Py_XNewRef(value));
@@ -720,16 +730,25 @@ tb_printinternal(PyTracebackObject *tb, PyObject *f, long limit)
     while (tb1 != NULL) {
         depth++;
         tb1 = tb1->tb_next;
+        if (tb1 != NULL && PyObject_CheckAccess((PyObject *)tb1) == NULL) {
+            return -1;
+        }
     }
     while (tb != NULL && depth > limit) {
         depth--;
         tb = tb->tb_next;
     }
     while (tb != NULL) {
+        if (PyObject_CheckAccess((PyObject *)tb->tb_frame) == NULL) {
+            goto error;
+        }
         code = PyFrame_GetCode(tb->tb_frame);
         int tb_lineno = tb->tb_lineno;
         if (tb_lineno == -1) {
             tb_lineno = tb_get_lineno((PyObject *)tb);
+            if (tb_lineno < 0 && PyErr_Occurred()) {
+                goto error;
+            }
         }
         if (last_file == NULL ||
             code->co_filename != last_file ||
@@ -758,6 +777,9 @@ tb_printinternal(PyTracebackObject *tb, PyObject *f, long limit)
         }
         Py_CLEAR(code);
         tb = tb->tb_next;
+        if (tb != NULL && PyObject_CheckAccess((PyObject *)tb) == NULL) {
+            goto error;
+        }
     }
     if (cnt > TB_RECURSIVE_CUTOFF) {
         if (tb_print_line_repeated(f, cnt) < 0) {
