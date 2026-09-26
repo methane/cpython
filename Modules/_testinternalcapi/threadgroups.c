@@ -4316,6 +4316,34 @@ static PyMethodDef bind_probe_method_def = {
 };
 
 static PyObject *
+reraise_star_probe(PyObject *unused, PyObject *args)
+{
+    PyObject *orig, *source;
+    if (!PyArg_ParseTuple(args, "OO!:reraise_star_probe", &orig,
+                          &PyTuple_Type, &source)) {
+        return NULL;
+    }
+    // Copy opaque heap references into a worker-local list. Inspect the C
+    // result before the VM's return check could conceal an unchecked return.
+    PyObject *excs = PySequence_List(source);
+    if (excs == NULL) {
+        return NULL;
+    }
+    PyObject *result = PyUnstable_Exc_PrepReraiseStar(orig, excs);
+    Py_DECREF(excs);
+    if (result == NULL) {
+        return NULL;
+    }
+    int accessible = PyObject_IsAccessible(result);
+    Py_DECREF(result);
+    if (!accessible) {
+        return PyErr_Format(PyExc_AssertionError,
+                            "exception API returned an inaccessible value");
+    }
+    Py_RETURN_TRUE;
+}
+
+static PyObject *
 copy_exception_cause(PyObject *unused, PyObject *args)
 {
     PyObject *exception, *source;
@@ -6017,6 +6045,7 @@ static PyMethodDef methods[] = {
     {"threadgroup_adoption_race", threadgroup_adoption_race, METH_VARARGS, NULL},
     {"threadgroup_finalization_probe", threadgroup_finalization_probe,
      METH_VARARGS, NULL},
+    {"reraise_star_probe", reraise_star_probe, METH_VARARGS, NULL},
     {"copy_exception_cause", copy_exception_cause, METH_VARARGS, NULL},
     {"function_reference_probe", function_reference_probe, METH_VARARGS, NULL},
     {"frame_getvar_probe", frame_getvar_probe, METH_VARARGS, NULL},

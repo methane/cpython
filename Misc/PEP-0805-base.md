@@ -673,6 +673,11 @@ it retains the existing fallback to the original exception. No library code
 changes are needed. Void exception-information APIs still need a failure
 contract for inaccessible traceback outputs; native diagnostics reproduce this
 separate issue without changing their current API contract.
+`PyUnstable_Exc_PrepReraiseStar()` validates list elements before inspecting
+their exception types or returning a single element. The native regression
+checks the C result before VM validation and covers naked exceptions, groups,
+`None`, and invalid accessible/foreign elements. The internal one-element
+result uses the checked strong-reference list getter.
 
 Debug tier-one dispatch validates all live evaluation-stack references after an
 instruction's acquisition checks, including tracing redispatch, inlined calls
@@ -726,6 +731,11 @@ Earlier validation predates the explicit class-sharability check in
 instance of a LOCAL class now share the class first, or test declaration
 failure. LOCAL method and LOCAL base acquisition tests remain relevant.
 
+- Exception re-raise acquisition: debug and release each run 406 ownership,
+  exception group, `except*` and exception API tests without failures (three
+  and four skips). Two foreign LOCAL cases fail before the fix. The regression
+  passes `-R 3:3` and TSan without suppressions. Main controls pass.
+  Logs: `test-exception-reraise-{before,debug,release,refleak,tsan}.log`.
 - Exception cause/args acquisition: debug and release each run 1,259 ownership,
   exception, group, C API, traceback and cross-interpreter tests without failures
   (seven and thirteen skips). Four foreign LOCAL cases fail before the fix.

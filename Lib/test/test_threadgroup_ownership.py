@@ -2042,6 +2042,36 @@ if cyclic:
                                 self.assertEqual(internal.container_element_calls(value),
                                                  int(accessible))
 
+    def test_exception_reraise_acquisition(self):
+        def probe():
+            leaf, constructor, grouped, error = source[2]
+            try:
+                try:
+                    if grouped:
+                        raise constructor('group', (leaf(),))
+                    raise leaf()
+                except leaf as orig:
+                    bound_builtin(orig, source[1])
+            except error:
+                pass
+            else:
+                assert error is None
+            return True
+
+        for value in (BaseException(), None, object(), 42):
+            for grouped in (False, True):
+                for group in (sys.main_thread_group, self.foreign):
+                    valid = isinstance(value, BaseException) or value is None
+                    error = None if valid else TypeError
+                    if not internal.threadgroup_access_probe(group, value):
+                        error = IllegalThreadAccessException
+                    with self.subTest(type=type(value), grouped=grouped, group=group):
+                        self.assertTrue(internal.threadgroup_vm_probe(
+                            probe.__code__, group,
+                            (True, (value,), (BaseException, BaseExceptionGroup,
+                             grouped, error)), 0, 1, False,
+                            internal.reraise_star_probe))
+
     def test_exception_reference_returns(self):
         class LocalArgs(tuple):
             pass

@@ -1703,7 +1703,7 @@ _PyExc_PrepReraiseStar(PyObject *orig, PyObject *excs)
             result = _PyExc_CreateExceptionGroup("", raised_list);
         }
         else {
-            result = Py_NewRef(PyList_GetItem(raised_list, 0));
+            result = PyList_GetItemRef(raised_list, 0);
         }
         if (result == NULL) {
             goto done;
@@ -1731,6 +1731,9 @@ PyUnstable_Exc_PrepReraiseStar(PyObject *orig, PyObject *excs)
     Py_ssize_t numexcs = PyList_GET_SIZE(excs);
     for (Py_ssize_t i = 0; i < numexcs; i++) {
         PyObject *exc = PyList_GET_ITEM(excs, i);
+        if (exc != NULL && PyObject_CheckAccess(exc) == NULL) {
+            return NULL;
+        }
         if (exc == NULL || !(PyExceptionInstance_Check(exc) || Py_IsNone(exc))) {
             PyErr_Format(PyExc_TypeError,
                          "item %zd of excs is not an exception", i);
