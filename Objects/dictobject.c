@@ -1802,12 +1802,12 @@ int
 _PyDict_HasOnlyStringKeys(PyObject *dict)
 {
     Py_ssize_t pos = 0;
-    PyObject *key, *value;
+    PyObject *key;
     assert(PyDict_Check(dict));
     /* Shortcut */
     if (((PyDictObject *)dict)->ma_keys->dk_kind != DICT_KEYS_GENERAL)
         return 1;
-    while (PyDict_Next(dict, &pos, &key, &value))
+    while (PyDict_Next(dict, &pos, &key, NULL))
         if (!PyUnicode_Check(key))
             return 0;
     return 1;
@@ -3169,6 +3169,7 @@ PyDict_Clear(PyObject *op)
 
 /* Internal version of PyDict_Next that returns a hash value in addition
  * to the key and value.
+ * Returns unchecked heap references; callers must check before acquiring them.
  * Return 1 on success, return 0 when the reached the end of the dictionary
  * (or if op is not a dictionary)
  */
@@ -3256,7 +3257,16 @@ _PyDict_Next(PyObject *op, Py_ssize_t *ppos, PyObject **pkey,
 int
 PyDict_Next(PyObject *op, Py_ssize_t *ppos, PyObject **pkey, PyObject **pvalue)
 {
-    return _PyDict_Next(op, ppos, pkey, pvalue, NULL);
+    int found = _PyDict_Next(op, ppos, pkey, pvalue, NULL);
+    if (found && ((pkey != NULL && !PyObject_IsAccessible(*pkey)) ||
+                  (pvalue != NULL && !PyObject_IsAccessible(*pvalue)))) {
+        //TODO(pep805): This iteration API has no error return.
+        fputs("Fatal Python error: PyDict_Next: IllegalThreadAccessException: "
+              "inaccessible dictionary entry\n", stderr);
+        fflush(stderr);
+        abort();
+    }
+    return found;
 }
 
 

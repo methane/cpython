@@ -9,6 +9,7 @@
 #include "Python.h"
 #include "pycore_call.h"             // _PyObject_CallNoArgs()
 #include "pycore_code.h"             // _PyCode_New()
+#include "pycore_dict.h"             // _PyDict_Next()
 #include "pycore_hashtable.h"        // _Py_hashtable_t
 #include "pycore_long.h"             // _PyLong_IsZero()
 #include "pycore_object.h"           // _PyObject_IsUniquelyReferenced
@@ -665,7 +666,7 @@ w_complex_object(PyObject *v, char flag, WFILE *p)
         }
         /* This one is NULL object terminated! */
         pos = 0;
-        while (PyDict_Next(v, &pos, &key, &value)) {
+        while (_PyDict_Next(v, &pos, &key, &value, NULL)) {
             w_heap_object(key, p);
             w_heap_object(value, p);
         }

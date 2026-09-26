@@ -1081,7 +1081,7 @@ _PyStack_UnpackDict(PyThreadState *tstate,
     Py_ssize_t pos = 0, i = 0;
     PyObject *key, *value;
     unsigned long keys_are_strings = Py_TPFLAGS_UNICODE_SUBCLASS;
-    while (PyDict_Next(kwargs, &pos, &key, &value)) {
+    while (_PyDict_Next(kwargs, &pos, &key, &value, NULL)) {
         if (_PyObject_CheckAccessThread(key, tstate) < 0 ||
             _PyObject_CheckAccessThread(value, tstate) < 0) {
             for (Py_ssize_t j = 0; j < i; j++) {

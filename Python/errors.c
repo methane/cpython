@@ -340,12 +340,19 @@ PyErr_GivenExceptionMatches(PyObject *err, PyObject *exc)
         Py_ssize_t i, n;
         n = PyTuple_Size(exc);
         for (i = 0; i < n; i++) {
+            PyObject *item = PyTuple_GET_ITEM(exc, i);
+            if (!PyObject_IsAccessible(item)) {
+                //TODO(pep805): This boolean API has no error return.
+                fputs("Fatal Python error: PyErr_GivenExceptionMatches: "
+                      "IllegalThreadAccessException: inaccessible tuple element\n",
+                      stderr);
+                fflush(stderr);
+                abort();
+            }
             /* Test recursively */
-             if (PyErr_GivenExceptionMatches(
-                 err, PyTuple_GET_ITEM(exc, i)))
-             {
-                 return 1;
-             }
+            if (PyErr_GivenExceptionMatches(err, item)) {
+                return 1;
+            }
         }
         return 0;
     }

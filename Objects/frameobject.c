@@ -399,7 +399,7 @@ framelocalsproxy_keys(PyObject *self, PyObject *Py_UNUSED(ignored))
         PyObject *key = NULL;
         PyObject *value = NULL;
 
-        while (PyDict_Next(frame->f_extra_locals, &i, &key, &value)) {
+        while (_PyDict_Next(frame->f_extra_locals, &i, &key, &value, NULL)) {
             if (PyList_Append(names, key) < 0) {
                 Py_DECREF(names);
                 return NULL;
@@ -607,7 +607,7 @@ framelocalsproxy_values(PyObject *self, PyObject *Py_UNUSED(ignored))
         Py_ssize_t j = 0;
         PyObject *key = NULL;
         PyObject *value = NULL;
-        while (PyDict_Next(frame->f_extra_locals, &j, &key, &value)) {
+        while (_PyDict_Next(frame->f_extra_locals, &j, &key, &value, NULL)) {
             if (PyList_Append(values, value) < 0) {
                 Py_DECREF(values);
                 return NULL;
@@ -649,7 +649,7 @@ framelocalsproxy_items(PyObject *self, PyObject *Py_UNUSED(ignored))
         Py_ssize_t j = 0;
         PyObject *key = NULL;
         PyObject *value = NULL;
-        while (PyDict_Next(frame->f_extra_locals, &j, &key, &value)) {
+        while (_PyDict_Next(frame->f_extra_locals, &j, &key, &value, NULL)) {
             PyObject *pair = _PyTuple_FromPair(key, value);
             if (pair == NULL) {
                 goto error;

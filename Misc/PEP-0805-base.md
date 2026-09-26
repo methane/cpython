@@ -613,7 +613,7 @@ before serializing them. Set elements are checked before their separate encoding
 used for sorting. An existing serialization error stops later acquisitions,
 preserving the first exception and avoiding later buffer callbacks. Public
 input arguments and newly created code bytes need no additional checks.
-The wire format and the raw dictionary/set iteration contracts are unchanged.
+The wire format and internal dictionary/set heap-copy paths are unchanged.
 
 Hash-table lookup checks stored keys before invoking equality callbacks.
 Dictionary repr, equality, item-view membership and item-view symmetric
@@ -625,6 +625,12 @@ Bulk set operations, dictionary merging and `fromkeys` also check source keys
 before using them in lookups or insertions that can invoke comparisons.
 Existing clone/pointer-copy paths still copy heap references without acquiring
 elements, and copied dictionary values do not need acquisition just for copying.
+`PyDict_Next()` validates requested key/value outputs. An inaccessible output
+logs to C stderr and aborts with a `//TODO(pep805)`, since 0 already means end of
+iteration. NULL output pointers and exhausted iteration acquire no reference.
+Frame-local container copies and the internal subclass registry use the existing
+unchecked iterator. Argument expansion and marshal also use it to retain their
+own acquisition checks and ordinary error returns.
 Other C API/VM acquisition paths still need an audit.
 
 Function construction checks each acquired closure element before inspecting its
@@ -666,7 +672,8 @@ also validate all acquired matcher tuple members before testing their types.
 The VM's shared validation for `except` and `except*` checks tuple members too,
 including later members when an earlier class would match. These paths already
 have an error return; the public boolean `PyErr_GivenExceptionMatches()` API
-still needs an acquisition guard under the interim abort policy.
+logs to C stderr and aborts on an inaccessible acquired tuple element, including
+nested tuples. Its usual short circuit leaves unvisited elements unacquired.
 
 `PyException_GetCause()` and `PyException_GetArgs()` validate their strong
 references, including LOCAL tuple subclasses used for exception arguments.
@@ -741,6 +748,14 @@ Earlier validation predates the explicit class-sharability check in
 instance of a LOCAL class now share the class first, or test declaration
 failure. LOCAL method and LOCAL base acquisition tests remain relevant.
 
+- Boolean C APIs: four foreign acquisitions fail before the guards. Nested
+  exception matchers and requested dictionary outputs now abort with a C stderr
+  diagnostic; unused outputs, short circuits and opaque copies remain valid.
+  Debug and release each run 1,481 related ownership, C API, dictionary,
+  exception, frame, type, weakref, ThreadGroup and GC tests without failures
+  (25 and 30 skips). The three regressions pass TSan without suppressions;
+  the two normal-path regressions pass `-R 3:3`. No new Main-only failure appears.
+  Logs: `test-boolean-capi-*.log`.
 - Void exception info: Main controls and foreign groups without a traceback
   succeed; foreign LOCAL traceback acquisition logs to C stderr and terminates
   with SIGABRT even when `sys.stderr` is None. Debug and release each run 1,159

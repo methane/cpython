@@ -781,6 +781,104 @@ if cyclic:
                         self.assertIs(accessible,
                                       immutable or group is sys.main_thread_group)
 
+    def test_boolean_capi_acquisition(self):
+        def matches():
+            assert bound_builtin(source[1]) is source[2]
+            return True
+
+        class LocalError(Exception):
+            pass
+
+        for group in (sys.main_thread_group, self.foreign):
+            cases = [((), False), ((TypeError, (ValueError,)), True),
+                     ((42,), False), ((ValueError, LocalError), True)]
+            if group is sys.main_thread_group:
+                cases.append(((TypeError, (LocalError,)), False))
+            for matcher, expected in cases:
+                with self.subTest(group=group, matcher=matcher):
+                    self.assertTrue(internal.threadgroup_vm_probe(
+                        matches.__code__, group, (True, matcher, expected),
+                        0, 1, False, internal.exception_matches_probe))
+
+        def next_item():
+            outputs, pos, expected, constructor = source[2]
+            mapping = source[1]
+            if constructor is not None:
+                mapping = constructor(mapping)
+            assert bound_builtin(mapping, outputs, pos) is expected
+            return True
+
+        for group in (sys.main_thread_group, self.foreign):
+            # Unrequested outputs and exhausted iteration acquire no reference.
+            for mapping, outputs, pos, expected in (
+                    (frozendict(), 3, 0, False),
+                    (frozendict(value=42), 3, 0, True),
+                    (frozendict(value=[]), 1, 0, True),
+                    (frozendict(value=[]), 0, 0, True),
+                    (frozendict(value=[]), 3, 1, False),
+                    (frozendict({object(): 42}), 2, 0, True)):
+                # A local copy also tests dictionaries with opaque LOCAL values.
+                constructors = (None, dict) if 'value' in mapping else (None,)
+                for constructor in constructors:
+                    with self.subTest(group=group, outputs=outputs, pos=pos,
+                                      constructor=constructor):
+                        self.assertTrue(internal.threadgroup_vm_probe(
+                            next_item.__code__, group,
+                            (True, mapping, (outputs, pos, expected, constructor)),
+                            0, 1, False, internal.dict_next_probe))
+
+    def test_subclass_registry_copies_opaque_references(self):
+        def probe():
+            return source[1].__subclasses__() is not None
+
+        self.assertTrue(internal.threadgroup_vm_probe(
+            probe.__code__, self.foreign, (True, object, None), 0))
+
+    def test_boolean_capi_inaccessible_acquisition_aborts(self):
+        code = textwrap.dedent('''
+            import _testinternalcapi as internal
+            import sys
+            import threading
+            from test.support import SuppressCrashReport
+
+            class LocalError(Exception):
+                pass
+
+            class LocalTuple(tuple):
+                pass
+
+            def matches():
+                return bound_builtin(source[1])
+
+            def next_item():
+                return bound_builtin(source[1], source[2])
+
+            mode = sys.argv[1]
+            if mode == 'matches':
+                worker, builtin = matches, internal.exception_matches_probe
+                source = (True, (TypeError, (LocalError,)), None)
+            elif mode == 'tuple':
+                worker, builtin = matches, internal.exception_matches_probe
+                source = (True, (LocalTuple((ValueError,)),), None)
+            else:
+                worker, builtin = next_item, internal.dict_next_probe
+                source = ((True, frozendict({object(): 42}), 1) if mode == 'key'
+                          else (True, frozendict(value=[]), 2))
+            sys.stderr = None
+            with SuppressCrashReport():
+                internal.threadgroup_vm_probe(
+                    worker.__code__, threading.ThreadGroup('boolean API'),
+                    source, 0, 1, False, builtin)
+        ''')
+        for mode in ('matches', 'tuple', 'key', 'value'):
+            api = (b'PyErr_GivenExceptionMatches' if mode in ('matches', 'tuple')
+                   else b'PyDict_Next')
+            with self.subTest(mode=mode):
+                rc, _, err = script_helper.assert_python_failure('-c', code, mode)
+                if sys.platform != 'win32':
+                    self.assertEqual(rc, -signal.SIGABRT)
+                self.assertIn(api + b': IllegalThreadAccessException', err)
+
     def test_exception_info_acquisition(self):
         def probe():
             return bound_builtin(source[1], source[2])

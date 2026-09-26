@@ -785,7 +785,8 @@ get_subclasses_unlocked(PyTypeObject *self, PyObject *list)
 
     Py_ssize_t i = 0;
     PyObject *ref;  // borrowed ref
-    while (PyDict_Next(subclasses, &i, NULL, &ref)) {
+    // The type registry is internal metadata, not acquired Python references.
+    while (_PyDict_Next(subclasses, &i, NULL, &ref, NULL)) {
         PyTypeObject *subclass = type_from_ref(ref);
         if (subclass == NULL) {
             continue;
@@ -1168,7 +1169,7 @@ _PyType_Modified_Unlocked(PyTypeObject *type)
 
         Py_ssize_t i = 0;
         PyObject *ref;
-        while (PyDict_Next(subclasses, &i, NULL, &ref)) {
+        while (_PyDict_Next(subclasses, &i, NULL, &ref, NULL)) {
             PyTypeObject *subclass = type_from_ref(ref);
             if (subclass == NULL) {
                 continue;
@@ -6856,7 +6857,7 @@ clear_static_tp_subclasses(PyTypeObject *type, int isbuiltin)
     // For now we just do a sanity check and then clear tp_subclasses.
     Py_ssize_t i = 0;
     PyObject *key, *ref;  // borrowed ref
-    while (PyDict_Next(subclasses, &i, &key, &ref)) {
+    while (_PyDict_Next(subclasses, &i, &key, &ref, NULL)) {
         PyTypeObject *subclass = type_from_ref(ref);
         if (subclass == NULL) {
             continue;
@@ -9790,7 +9791,7 @@ get_subclasses_key(PyTypeObject *type, PyTypeObject *base)
     PyObject *ref;  // borrowed ref
     PyObject *subclasses = lookup_tp_subclasses(base);
     if (subclasses != NULL) {
-        while (PyDict_Next(subclasses, &i, &key, &ref)) {
+        while (_PyDict_Next(subclasses, &i, &key, &ref, NULL)) {
             PyTypeObject *subclass = type_from_ref(ref);
             if (subclass == NULL) {
                 continue;
@@ -12431,7 +12432,7 @@ recurse_down_subclasses(PyTypeObject *type, PyObject *attr_name,
 
     Py_ssize_t i = 0;
     PyObject *ref;
-    while (PyDict_Next(subclasses, &i, NULL, &ref)) {
+    while (_PyDict_Next(subclasses, &i, NULL, &ref, NULL)) {
         PyTypeObject *subclass = type_from_ref(ref);
         if (subclass == NULL) {
             continue;

@@ -4467,6 +4467,32 @@ exception_info_probe(PyObject *unused, PyObject *args)
 }
 
 static PyObject *
+exception_matches_probe(PyObject *unused, PyObject *matcher)
+{
+    return PyBool_FromLong(PyErr_GivenExceptionMatches(PyExc_ValueError, matcher));
+}
+
+static PyObject *
+dict_next_probe(PyObject *unused, PyObject *args)
+{
+    PyObject *mapping;
+    int outputs;
+    Py_ssize_t pos = 0;
+    if (!PyArg_ParseTuple(args, "Oi|n:dict_next_probe", &mapping, &outputs, &pos)) {
+        return NULL;
+    }
+    PyObject *key = NULL, *value = NULL;
+    int found = PyDict_Next(mapping, &pos, outputs & 1 ? &key : NULL,
+                          outputs & 2 ? &value : NULL);
+    if (found && ((key != NULL && !PyObject_IsAccessible(key)) ||
+                  (value != NULL && !PyObject_IsAccessible(value)))) {
+        return PyErr_Format(PyExc_AssertionError,
+                            "PyDict_Next returned an inaccessible reference");
+    }
+    return PyBool_FromLong(found);
+}
+
+static PyObject *
 copy_exception_cause(PyObject *unused, PyObject *args)
 {
     PyObject *exception, *source;
@@ -6171,6 +6197,8 @@ static PyMethodDef methods[] = {
     {"module_create_probe", module_create_probe, METH_VARARGS, NULL},
     {"reraise_star_probe", reraise_star_probe, METH_VARARGS, NULL},
     {"exception_info_probe", exception_info_probe, METH_VARARGS, NULL},
+    {"exception_matches_probe", exception_matches_probe, METH_O, NULL},
+    {"dict_next_probe", dict_next_probe, METH_VARARGS, NULL},
     {"copy_exception_cause", copy_exception_cause, METH_VARARGS, NULL},
     {"function_reference_probe", function_reference_probe, METH_VARARGS, NULL},
     {"frame_getvar_probe", frame_getvar_probe, METH_VARARGS, NULL},
