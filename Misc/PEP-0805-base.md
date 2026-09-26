@@ -641,6 +641,13 @@ pointer. An absent value still succeeds with NULL; an explicitly supplied
 fallback is already an acquired argument and needs no extra ownership check.
 Native tests inspect the C output before it can reach a VM return check.
 
+`PyFunction_GetModule()` checks the borrowed `__module__` reference. Its runtime
+callers distinguish missing metadata from denied access: frame module lookup,
+sentinel construction, type parameter construction and type alias module lookup
+propagate acquisition errors. Native fixtures copy an opaque heap reference into
+a local function and inspect the C result before VM checks, or invoke its
+consumers. Missing metadata, `None` and non-string accessible values still work.
+
 Exception group construction checks acquired tuple elements before inspecting
 their exception types, and checks the implicit `ExceptionGroup` class selected
 for ordinary exceptions. That mutable heap type belongs to Main; constructing
@@ -703,6 +710,13 @@ Earlier validation predates the explicit class-sharability check in
 instance of a LOCAL class now share the class first, or test declaration
 failure. LOCAL method and LOCAL base acquisition tests remain relevant.
 
+- Function module acquisition: debug and release each run 1,335 ownership,
+  function API, builtin, sys, type parameter, type alias and typing tests with
+  only the known Main-only `test_is_gil_enabled` failure (15 and 16 skips).
+  Before the fix, direct C acquisition and sentinel construction both fail
+  their foreign LOCAL regressions. Two focused tests, including consumers of
+  the new error path, pass `-R 3:3` and TSan without suppressions. Logs:
+  `test-function-module-{before,debug,release,refleak,tsan}.log`.
 - VM exception matcher acquisitions: debug and release each run 399 ownership,
   exception group, `except*` and exception API tests without failures (three
   and four skips). The new regression reproduces four foreign LOCAL failures

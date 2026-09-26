@@ -399,7 +399,9 @@ caller(void)
     }
     PyObject *r = PyFunction_GetModule(PyStackRef_AsPyObjectBorrow(f->f_funcobj));
     if (!r) {
-        PyErr_Clear();
+        if (PyErr_Occurred()) {
+            return NULL;
+        }
         Py_RETURN_NONE;
     }
     return Py_NewRef(r);
@@ -1979,6 +1981,9 @@ typealias_module(PyObject *self, void *Py_UNUSED(closure))
             // and it may return NULL (e.g., for functions defined
             // in an exec()'ed block).
             return Py_NewRef(mod);
+        }
+        if (PyErr_Occurred()) {
+            return NULL;
         }
     }
     Py_RETURN_NONE;

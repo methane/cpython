@@ -780,6 +780,60 @@ if cyclic:
                         self.assertIs(accessible,
                                       immutable or group is sys.main_thread_group)
 
+    def test_function_module_acquisition(self):
+        def probe():
+            constructor, error, rejected = source[2]
+            def callback():
+                return constructor('marker')
+            try:
+                if constructor is None:
+                    bound_builtin(source[1])
+                else:
+                    bound_builtin(source[1], callback)
+            except error:
+                assert rejected
+            else:
+                assert not rejected
+            return True
+
+        for carrier in ((), (None,), (42,), (object(),)):
+            for constructor in (None, sentinel):
+                for group in (sys.main_thread_group, self.foreign):
+                    rejected = (group is self.foreign and carrier and
+                                type(carrier[0]) is object)
+                    with self.subTest(carrier=carrier, constructor=constructor,
+                                      group=group):
+                        self.assertTrue(internal.threadgroup_vm_probe(
+                            probe.__code__, group,
+                            (True, carrier, (constructor,
+                             IllegalThreadAccessException, bool(rejected))),
+                            0, 1, False, internal.function_module_probe))
+
+    def test_function_module_consumers(self):
+        import _typing
+
+        type Alias = Alias.__module__
+        callbacks = (
+            sys._getframemodulename,
+            lambda: sentinel('marker'),
+            lambda: _typing.TypeVar('T'),
+            lambda: _typing.ParamSpec('P'),
+            lambda: _typing.TypeVarTuple('Ts'),
+            lambda: _typing.TypeAliasType('Marker', int),
+            Alias.evaluate_value,
+        )
+        # The immutable carrier lets Main hold a foreign LOCAL number without
+        # acquiring it. All functions and consumers here belong to Main.
+        foreign = internal.threadgroup_number_source(self.foreign, int)
+        for carrier in ((), (None,), (42,), foreign):
+            for callback in callbacks:
+                with self.subTest(foreign=carrier is foreign, callback=callback):
+                    if carrier is foreign:
+                        with self.assertRaises(IllegalThreadAccessException):
+                            internal.function_module_probe(carrier, callback)
+                    else:
+                        internal.function_module_probe(carrier, callback)
+
     def test_type_reference_returns(self):
         def get_class():
             source[1].__class__

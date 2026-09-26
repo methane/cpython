@@ -4300,6 +4300,48 @@ static PyMethodDef bind_probe_method_def = {
 };
 
 static PyObject *
+function_module_probe(PyObject *unused, PyObject *args)
+{
+    PyObject *source, *callback = NULL;
+    if (!PyArg_ParseTuple(args, "O!|O:function_module_probe", &PyTuple_Type,
+                          &source, &callback)) {
+        return NULL;
+    }
+    if (PyTuple_GET_SIZE(source) > 1) {
+        return PyErr_Format(PyExc_ValueError, "expected at most one heap reference");
+    }
+    _PyInterpreterFrame *frame = _PyThreadState_GetFrame(_PyThreadState_GET());
+    if (frame == NULL) {
+        return PyErr_Format(PyExc_AssertionError, "expected a Python frame");
+    }
+    PyFunctionObject *func = _PyFrame_GetFunction(frame);
+    if (callback != NULL && PyFunction_Check(callback)) {
+        func = (PyFunctionObject *)callback;
+    }
+    // Copy an opaque heap reference into a worker-local function. An empty
+    // carrier exercises the getter's existing NULL-without-error contract.
+    PyObject *old = func->func_module;
+    func->func_module = PyTuple_GET_SIZE(source) ?
+        Py_NewRef(PyTuple_GET_ITEM(source, 0)) : NULL;
+    PyObject *result = NULL;
+    if (callback != NULL) {
+        result = PyObject_CallNoArgs(callback);
+    }
+    else {
+        PyObject *module = PyFunction_GetModule((PyObject *)func);
+        if (module != NULL && !PyObject_IsAccessible(module)) {
+            PyErr_SetString(PyExc_AssertionError,
+                            "function getter returned an inaccessible module");
+        }
+        else if (!PyErr_Occurred() && module == func->func_module) {
+            result = Py_NewRef(Py_True);
+        }
+    }
+    Py_XSETREF(func->func_module, old);
+    return result;
+}
+
+static PyObject *
 frame_getvar_probe(PyObject *unused, PyObject *args)
 {
     PyObject *source;
@@ -5908,6 +5950,7 @@ static PyMethodDef methods[] = {
     {"threadgroup_adoption_race", threadgroup_adoption_race, METH_VARARGS, NULL},
     {"threadgroup_finalization_probe", threadgroup_finalization_probe,
      METH_VARARGS, NULL},
+    {"function_module_probe", function_module_probe, METH_VARARGS, NULL},
     {"frame_getvar_probe", frame_getvar_probe, METH_VARARGS, NULL},
 #ifdef Py_DEBUG
     {"inject_inaccessible_local", inject_inaccessible_local, METH_O, NULL},

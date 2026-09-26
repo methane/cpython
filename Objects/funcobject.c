@@ -432,7 +432,7 @@ PyFunction_GetModule(PyObject *op)
         PyErr_BadInternalCall();
         return NULL;
     }
-    return ((PyFunctionObject *) op) -> func_module;
+    return PyObject_CheckAccess(((PyFunctionObject *) op) -> func_module);
 }
 
 PyObject *

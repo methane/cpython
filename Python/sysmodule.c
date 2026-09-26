@@ -2600,7 +2600,9 @@ sys__getframemodulename_impl(PyObject *module, int depth)
     PyObject *func = PyStackRef_AsPyObjectBorrow(f->f_funcobj);
     PyObject *r = PyFunction_GetModule(func);
     if (!r) {
-        PyErr_Clear();
+        if (PyErr_Occurred()) {
+            return NULL;
+        }
         r = Py_None;
     }
     return Py_NewRef(r);

@@ -40,7 +40,9 @@ caller(void)
     assert(PyFunction_Check(func));
     PyObject *r = PyFunction_GetModule((PyObject *)func);
     if (!r) {
-        assert(!PyErr_Occurred());
+        if (PyErr_Occurred()) {
+            return NULL;
+        }
         Py_RETURN_NONE;
     }
     return Py_NewRef(r);
@@ -84,6 +86,9 @@ sentinel_new_impl(PyTypeObject *type, PyObject *name, PyObject *repr)
         return NULL;
     }
     PyObject *module = caller();
+    if (module == NULL) {
+        return NULL;
+    }
     PyObject *self = sentinel_new_with_module(type, name, module, repr);
     Py_DECREF(module);
     return self;
