@@ -511,11 +511,32 @@ PyErr_GetRaisedException(void)
     return _PyErr_GetRaisedException(tstate);
 }
 
+static void
+check_exception_info_access(PyObject *exc, const char *api)
+{
+    if (exc == NULL || exc == Py_None) {
+        return;
+    }
+    if (PyObject_IsAccessible(exc) &&
+        PyObject_IsAccessible((PyObject *)Py_TYPE(exc)) &&
+        (((PyBaseExceptionObject *)exc)->traceback == NULL ||
+         PyObject_IsAccessible(((PyBaseExceptionObject *)exc)->traceback))) {
+        return;
+    }
+    //TODO(pep805): Define an access failure contract for these void APIs.
+    // Do not format an inaccessible exception or invoke Python stderr hooks.
+    fprintf(stderr, "Fatal Python error: %s: IllegalThreadAccessException: "
+                    "inaccessible exception information\n", api);
+    fflush(stderr);
+    abort();
+}
+
 void
 _PyErr_Fetch(PyThreadState *tstate, PyObject **p_type, PyObject **p_value,
              PyObject **p_traceback)
 {
     PyObject *exc = _PyErr_GetRaisedException(tstate);
+    check_exception_info_access(exc, "PyErr_Fetch");
     *p_value = exc;
     if (exc == NULL) {
         *p_type = NULL;
@@ -583,6 +604,7 @@ _PyErr_GetExcInfo(PyThreadState *tstate,
 {
     _PyErr_StackItem *exc_info = _PyErr_GetTopmostException(tstate);
 
+    check_exception_info_access(exc_info->exc_value, "PyErr_GetExcInfo");
     *p_type = get_exc_type(exc_info->exc_value);
     *p_value = Py_XNewRef(exc_info->exc_value);
     *p_traceback = get_exc_traceback(exc_info->exc_value);

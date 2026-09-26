@@ -4414,6 +4414,59 @@ reraise_star_probe(PyObject *unused, PyObject *args)
 }
 
 static PyObject *
+exception_info_probe(PyObject *unused, PyObject *args)
+{
+    PyObject *source;
+    int fetch;
+    if (!PyArg_ParseTuple(args, "O!p:exception_info_probe", &PyTuple_Type,
+                          &source, &fetch)) {
+        return NULL;
+    }
+    if (PyTuple_GET_SIZE(source) > 1) {
+        return PyErr_Format(PyExc_ValueError, "expected at most one traceback");
+    }
+    PyObject *exc = NULL;
+    if (PyTuple_GET_SIZE(source)) {
+        exc = PyObject_CallNoArgs(PyExc_BaseException);
+        if (exc == NULL) {
+            return NULL;
+        }
+        // Copy an opaque traceback reference into a worker-local exception.
+        PyObject *tb = PyTuple_GET_ITEM(source, 0);
+        if (tb != Py_None) {
+            ((PyBaseExceptionObject *)exc)->traceback = Py_NewRef(tb);
+        }
+    }
+    PyObject *type, *value, *tb;
+    if (fetch) {
+        PyErr_SetRaisedException(exc);
+        PyErr_Fetch(&type, &value, &tb);
+    }
+    else {
+        PyObject *saved = PyErr_GetHandledException();
+        PyErr_SetHandledException(exc);
+        Py_XDECREF(exc);
+        PyErr_GetExcInfo(&type, &value, &tb);
+        PyErr_SetHandledException(saved);
+        Py_XDECREF(saved);
+    }
+    int accessible = (type == NULL || PyObject_IsAccessible(type)) &&
+                     (value == NULL || PyObject_IsAccessible(value)) &&
+                     (tb == NULL || PyObject_IsAccessible(tb));
+    Py_XDECREF(type);
+    Py_XDECREF(value);
+    Py_XDECREF(tb);
+    if (!accessible) {
+        return PyErr_Format(PyExc_AssertionError,
+                            "exception info API returned an inaccessible value");
+    }
+    if (PyErr_Occurred()) {
+        return NULL;
+    }
+    Py_RETURN_TRUE;
+}
+
+static PyObject *
 copy_exception_cause(PyObject *unused, PyObject *args)
 {
     PyObject *exception, *source;
@@ -6117,6 +6170,7 @@ static PyMethodDef methods[] = {
      METH_VARARGS, NULL},
     {"module_create_probe", module_create_probe, METH_VARARGS, NULL},
     {"reraise_star_probe", reraise_star_probe, METH_VARARGS, NULL},
+    {"exception_info_probe", exception_info_probe, METH_VARARGS, NULL},
     {"copy_exception_cause", copy_exception_cause, METH_VARARGS, NULL},
     {"function_reference_probe", function_reference_probe, METH_VARARGS, NULL},
     {"frame_getvar_probe", frame_getvar_probe, METH_VARARGS, NULL},

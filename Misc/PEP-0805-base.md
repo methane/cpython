@@ -29,6 +29,10 @@ Windows and native machine-code JIT validation are deferred.
 Changes are limited to these runtime stages and their direct regression tests.
 Library compatibility failures are recorded rather than expanding this branch
 to make the existing suite pass; Main-only failures are identified separately.
+For exceptional ownership paths without an ordinary error return, the reference
+implementation uses a C stderr diagnostic and abort, with `//TODO(pep805)` at
+the decision point. This user-directed interim policy avoids adding recovery
+mechanisms; it does not replace the agreed finalization log-and-continue policy.
 
 ## Runtime configuration and layout
 
@@ -661,8 +665,8 @@ an otherwise local group does not grant access to it. `split()` and `subgroup()`
 also validate all acquired matcher tuple members before testing their types.
 The VM's shared validation for `except` and `except*` checks tuple members too,
 including later members when an earlier class would match. These paths already
-have an error return; the public boolean `PyErr_GivenExceptionMatches()` API's
-failure contract remains a separate design question.
+have an error return; the public boolean `PyErr_GivenExceptionMatches()` API
+still needs an acquisition guard under the interim abort policy.
 
 `PyException_GetCause()` and `PyException_GetArgs()` validate their strong
 references, including LOCAL tuple subclasses used for exception arguments.
@@ -670,9 +674,11 @@ Exception group metadata copying, native cause display and cross-interpreter
 cause unwrapping propagate getter failure instead of treating it as absence.
 The optional cross-interpreter message hint stops if arguments cannot be read;
 it retains the existing fallback to the original exception. No library code
-changes are needed. Void exception-information APIs still need a failure
-contract for inaccessible traceback outputs; native diagnostics reproduce this
-separate issue without changing their current API contract.
+changes are needed. `PyErr_Fetch()` and `PyErr_GetExcInfo()` check the acquired
+exception, type and traceback before exposing output references. If access is
+denied, their void interface cannot return an error: a fixed C stderr diagnostic
+identifies the API and `IllegalThreadAccessException`, then aborts. This path
+does not format the exception or invoke Python stderr hooks.
 `PyUnstable_Exc_PrepReraiseStar()` validates list elements before inspecting
 their exception types or returning a single element. The native regression
 checks the C result before VM validation and covers naked exceptions, groups,
@@ -735,6 +741,13 @@ Earlier validation predates the explicit class-sharability check in
 instance of a LOCAL class now share the class first, or test declaration
 failure. LOCAL method and LOCAL base acquisition tests remain relevant.
 
+- Void exception info: Main controls and foreign groups without a traceback
+  succeed; foreign LOCAL traceback acquisition logs to C stderr and terminates
+  with SIGABRT even when `sys.stderr` is None. Debug and release each run 1,159
+  related tests with only the two pre-existing subinterpreter import failures
+  below. The normal-path regression passes `-R 3:3`; both new tests and module
+  creation pass TSan without suppressions. No new Main-only failure appears.
+  Logs: `test-exception-info-abort-{focused,debug,release,refleak,tsan}.log`.
 - Module creation: four foreign LOCAL cases fail before the return guard; the
   focused regression passes debug, release, `-R 3:3` and TSan. The 460
   existing/new module, import, embedding and ownership tests have only two

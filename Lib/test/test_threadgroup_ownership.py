@@ -5,6 +5,7 @@ import builtins
 import datetime
 import dis
 import gc
+import signal
 import sys
 import textwrap
 import threading
@@ -779,6 +780,56 @@ if cyclic:
                             source, group, api)
                         self.assertIs(accessible,
                                       immutable or group is sys.main_thread_group)
+
+    def test_exception_info_acquisition(self):
+        def probe():
+            return bound_builtin(source[1], source[2])
+
+        try:
+            raise ValueError('traceback source')
+        except ValueError as exc:
+            traceback = exc.__traceback__
+        for fetch in (False, True):
+            for group in (sys.main_thread_group, self.foreign):
+                carriers = [(), (None,)]
+                if group is sys.main_thread_group:
+                    carriers.append((traceback,))
+                for carrier in carriers:
+                    with self.subTest(fetch=fetch, group=group, carrier=carrier):
+                        self.assertTrue(internal.threadgroup_vm_probe(
+                            probe.__code__, group, (True, carrier, fetch),
+                            0, 1, False, internal.exception_info_probe))
+
+    def test_exception_info_inaccessible_traceback_aborts(self):
+        code = textwrap.dedent('''
+            import _testinternalcapi as internal
+            import sys
+            import threading
+            from test.support import SuppressCrashReport
+
+            def probe():
+                return bound_builtin(source[1], source[2])
+
+            try:
+                raise ValueError('traceback source')
+            except ValueError as exc:
+                carrier = (exc.__traceback__,)
+            # The diagnostic must use C stderr even without Python stderr.
+            sys.stderr = None
+            with SuppressCrashReport():
+                internal.threadgroup_vm_probe(
+                    probe.__code__, threading.ThreadGroup('exception info'),
+                    (True, carrier, sys.argv[1] == 'fetch'),
+                    0, 1, False, internal.exception_info_probe)
+        ''')
+        for mode, api in [('fetch', b'PyErr_Fetch'),
+                          ('info', b'PyErr_GetExcInfo')]:
+            with self.subTest(api=api):
+                rc, _, err = script_helper.assert_python_failure('-c', code, mode)
+                if sys.platform != 'win32':
+                    self.assertEqual(rc, -signal.SIGABRT)
+                self.assertIn(api + b': IllegalThreadAccessException: '
+                              b'inaccessible exception information', err)
 
     def test_module_create_return_acquisition(self):
         capi = import_helper.import_module('_testcapi')

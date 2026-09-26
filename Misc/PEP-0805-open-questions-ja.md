@@ -45,66 +45,32 @@ finally:
 結び直しています。既存の `test_embed.test_datetime_reset_strptime` で確認済み
 です。この再初期化の問題と、上記の複数 interpreter の同時利用は別の問題です。
 
-## 未チェックの C API マクロと出力引数の契約
+## 決定済み: 失敗を返せない取得経路の暫定処理
 
-PEP は C API 関数の戻り値を検証し、拡張側のコールバックの戻り値も VM が
-検証するとしています。
+参照実装の差分を抑えるため、通常のエラー処理で返せない例外的なケースは、
+可能な範囲で C stderr に診断を書いて abort する方針です。ユーザーの指示に
+基づく暫定処理で、該当箇所に `//TODO(pep805)` を残します。追加の回復機構は
+作りません。通常の例外返却が可能な取得経路では、引き続き
+`IllegalThreadAccessException` を返します。
+
+`PyErr_Fetch()` と `PyErr_GetExcInfo()` は戻り値が void で、出力引数に
+参照を返します。自分の例外が別グループの LOCAL な traceback を保持する
+ケースを再現しました。両 API は例外・型・traceback の取得を検査し、拒否時は
+API 名と `IllegalThreadAccessException` を C stderr に書いて abort します。
+Python の例外表示や `sys.stderr` は使いません。Main の正常系と、
+Python の stderr がなくても subprocess が SIGABRT で終了することを検証します。
+
+`PyDict_Next()` の出力参照と、真偽値を返す `PyErr_GivenExceptionMatches()`
+の tuple 要素にも、通常の失敗返却が定義されていないという問題があります。
+これらにも上記の暫定方針を適用できるため、実装を進めるための回答待ちには
+しません。取得検査の追加と回帰テストは引き続き必要です。
+
+`PyTuple_GET_ITEM` / `PyList_GET_ITEM` などの未チェックマクロには、
+opaque なヒープ参照のコピーにも使われるという違いがあります。マクロ自体を
+一律に検査するか、取得側に明示的な検査を要求するかは、残る監査項目です。
+PEP の戻り値検査の規定は、既に取得済みの引数すべてを再検査する要求とは
+区別します。
 [C API functions / Extension API](https://peps.python.org/pep-0805/#c-api-functions)
-
-一方、`PyTuple_GET_ITEM` は現在も配列要素を直接読むマクロです。
-`PyTuple_GetItem` のような、失敗を返す関数とは契約が異なります。
-たとえば、拡張がアクセス可能な immutable tuple を受け取り、次のように
-その中のオブジェクトを使う場合があります。
-
-```c
-PyObject *value = PyTuple_GET_ITEM(tuple, 0);
-return PyObject_CallNoArgs(value);
-```
-
-tuple は shallow immutable なので、要素が他の ThreadGroup の LOCAL である
-ことはあり得ます。マクロを未チェックのままにすると、この取得には検査が
-入りません。一方、マクロを `NULL` と例外を返す形に変えるだけでは、従来は
-ここで失敗しないと考えていた拡張が `NULL` をそのまま使用する可能性があります。
-これは公開ヘッダーと呼び出し経路から確認した契約上の問題で、上のコードを
-安全な公開 API の使用例として推奨するものではありません。
-
-確認したい点は、これらの未チェックのマクロにも取得検査を要求するのか、
-それとも明示的な取得検査を行う責任を拡張側に残すのか、ということです。
-後者なら、拡張を変更しなくてよいという記述の適用範囲も確認したいです。
-`PyList_GET_ITEM` などにも同じ問題があります。
-
-関数形式でも、`PyDict_Next` のようにオブジェクトを出力引数で返し、
-終了を0で表す API には同様の確認が必要です。既存の呼び出し側は
-アクセス拒否を想定していないため、拒否時の戻り値と例外確認の契約を
-定める必要があります。runtime の marshal 内部では、この契約変更と
-独立して、取り出した参照を使用する前に検査しています。
-
-`PyErr_GivenExceptionMatches(given, exc)` も確認対象です。`exc` がアクセス
-可能な tuple でも、再帰的に読む要素が別グループの LOCAL な例外クラスで
-ある場合があります。この API の公開契約は一致するかどうかの真偽値で、
-失敗を表す戻り値が定義されていません。単に -1 を返すと、既存の
-`if (PyErr_GivenExceptionMatches(...))` は一致と解釈します。0 と例外を
-返す案でも、不一致との区別や、処理中の既存の例外をどう扱うかが必要です。
-この種の API には新しい失敗契約を設けるのか、呼び出し側に tuple 要素の
-事前検査を要求するのかを確認したいです。
-[既存の C API 契約](https://docs.python.org/3/c-api/exceptions.html#c.PyErr_GivenExceptionMatches)
-
-例外情報を返す `PyErr_Fetch()` と `PyErr_GetExcInfo()` も、戻り値が void で
-出力引数に参照を返します。アクセス可能な例外が別グループの LOCAL な
-traceback を保持すると、traceback の取得だけが失敗し得ます。
-`PyErr_Fetch()` は既存のエラー状態をクリアする契約なので、単に取得時の
-`IllegalThreadAccessException` を残すと、その契約と一致しません。拒否時の
-出力値、元の例外の保存先、呼び出し側の失敗確認方法を決める必要があります。
-両 API の実装と `Doc/c-api/exceptions.rst` の契約を確認しています。
-ネイティブ診断では、worker が自分で作った例外に traceback の参照だけを
-コピーしました。Main の対照ケースでは traceback はアクセス可能ですが、
-別グループでは両 API がアクセス不可の traceback を返し、エラー状態も
-設定されません。診断コードは `/tmp/pep805-base/exception_info_probe.c` と
-`exception_info_probe.py`、結果は `exception-info-contract.log` です。
-
-既に取得済みの引数すべてを再検査する方針にはしていません。関数版の
-getter、VM のヒープロード、`*args` / `**kwargs` の展開など、明確に
-新しいスレッド参照を作る箇所の修正は、この確認と独立して進めています。
 
 ## PEP に明記済み: 別の拡張の関数やスロットの直接呼び出し
 
