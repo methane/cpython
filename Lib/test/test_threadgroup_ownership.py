@@ -780,6 +780,41 @@ if cyclic:
                         self.assertIs(accessible,
                                       immutable or group is sys.main_thread_group)
 
+    def test_module_create_return_acquisition(self):
+        capi = import_helper.import_module('_testcapi')
+
+        class Spec:
+            name = 'create_probe'
+
+        def probe():
+            use_slots, error, rejected = source[2]
+            try:
+                bound_builtin(source[1], use_slots)
+            except error:
+                assert rejected
+            else:
+                assert not rejected
+            return True
+
+        for use_slots in (False, True):
+            for module in (False, True):
+                for group in (sys.main_thread_group, self.foreign):
+                    values = (capi.module_from_slots_size(Spec()),) if module else (42, object())
+                    for value in values:
+                        rejected = not internal.threadgroup_access_probe(group, value)
+                        with self.subTest(use_slots=use_slots, module=module,
+                                          group=group, type=type(value)):
+                            self.assertTrue(internal.threadgroup_vm_probe(
+                                probe.__code__, group,
+                                (True, (value,), (use_slots,
+                                 IllegalThreadAccessException, rejected)),
+                                0, 1, False, internal.module_create_probe))
+                            if module:
+                                # Rejection must precede copying module state
+                                # metadata from the new definition/slots.
+                                self.assertEqual(capi.pymodule_get_state_size(value),
+                                                 123 if rejected else 0)
+
     def test_function_module_acquisition(self):
         def probe():
             constructor, error, rejected = source[2]

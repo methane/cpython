@@ -679,6 +679,10 @@ checks the C result before VM validation and covers naked exceptions, groups,
 `None`, and invalid accessible/foreign elements. The internal one-element
 result uses the checked strong-reference list getter.
 
+Module construction checks a `Py_mod_create` result before reading or changing
+its module state metadata. Both definition-based and slots-based constructors
+reject foreign LOCAL results and accept already accessible results.
+
 Debug tier-one dispatch validates all live evaluation-stack references after an
 instruction's acquisition checks, including tracing redispatch, inlined calls
 and return values on the C entry frame. NULL and tagged integers are not object
@@ -731,6 +735,13 @@ Earlier validation predates the explicit class-sharability check in
 instance of a LOCAL class now share the class first, or test declaration
 failure. LOCAL method and LOCAL base acquisition tests remain relevant.
 
+- Module creation: four foreign LOCAL cases fail before the return guard; the
+  focused regression passes debug, release, `-R 3:3` and TSan. The 460
+  existing/new module, import, embedding and ownership tests have only two
+  failures in `SinglephaseInitTests`: `test_basic_multiple_interpreters_main_no_reset`
+  and `test_basic_multiple_interpreters_reset_each`. Both also fail without
+  the guard; they involve subinterpreters, not a single Main ThreadGroup.
+  Logs: `test-module-create-*.log`, including `import-baseline`.
 - Exception re-raise acquisition: debug and release each run 406 ownership,
   exception group, `except*` and exception API tests without failures (three
   and four skips). Two foreign LOCAL cases fail before the fix. The regression

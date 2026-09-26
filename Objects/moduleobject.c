@@ -575,6 +575,9 @@ module_from_slots_and_spec(
                 goto error;
             }
         }
+        if (PyObject_CheckAccess(m) == NULL) {
+            goto error;
+        }
     } else {
         m = PyModule_NewObject(nameobj);
         if (m == NULL) {

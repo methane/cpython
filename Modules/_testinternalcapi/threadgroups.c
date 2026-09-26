@@ -4316,6 +4316,76 @@ static PyMethodDef bind_probe_method_def = {
 };
 
 static PyObject *
+module_create_heap_value(PyObject *spec, PyModuleDef *def)
+{
+    PyObject *source = PyObject_GetAttrString(spec, "source");
+    if (source == NULL) {
+        return NULL;
+    }
+    PyObject *result = Py_NewRef(PyTuple_GET_ITEM(source, 0));
+    Py_DECREF(source);
+    return result;
+}
+
+static PyModuleDef_Slot module_create_slots[] = {
+    {Py_mod_create, module_create_heap_value},
+    {0, NULL},
+};
+
+static PyModuleDef module_create_def = {
+    PyModuleDef_HEAD_INIT,
+    .m_name = "_testinternalcapi.create_probe",
+    .m_size = 0,
+    .m_slots = module_create_slots,
+};
+
+PyABIInfo_VAR(module_create_abi);
+
+static PyObject *
+module_create_probe(PyObject *unused, PyObject *args)
+{
+    PyObject *source;
+    int use_slots;
+    if (!PyArg_ParseTuple(args, "O!p:module_create_probe", &PyTuple_Type,
+                          &source, &use_slots)) {
+        return NULL;
+    }
+    if (PyTuple_GET_SIZE(source) != 1) {
+        return PyErr_Format(PyExc_ValueError, "expected one heap reference");
+    }
+    PyObject *spec = PyModule_New("create_spec");
+    PyObject *name = PyUnicode_FromString(module_create_def.m_name);
+    PyObject *result = NULL;
+    if (spec == NULL || name == NULL ||
+        PyObject_SetAttrString(spec, "name", name) < 0 ||
+        PyObject_SetAttrString(spec, "source", source) < 0) {
+        goto done;
+    }
+    if (use_slots) {
+        PySlot slots[] = {
+            PySlot_DATA(Py_mod_abi, &module_create_abi),
+            PySlot_FUNC(Py_mod_create, module_create_heap_value),
+            PySlot_END,
+        };
+        result = PyModule_FromSlotsAndSpec(slots, spec);
+    }
+    else {
+        result = PyModule_FromDefAndSpec(&module_create_def, spec);
+    }
+    if (result != NULL) {
+        int accessible = PyObject_IsAccessible(result);
+        Py_DECREF(result);
+        result = accessible ? Py_NewRef(Py_True) :
+            PyErr_Format(PyExc_AssertionError,
+                         "module API returned an inaccessible value");
+    }
+done:
+    Py_XDECREF(spec);
+    Py_XDECREF(name);
+    return result;
+}
+
+static PyObject *
 reraise_star_probe(PyObject *unused, PyObject *args)
 {
     PyObject *orig, *source;
@@ -6045,6 +6115,7 @@ static PyMethodDef methods[] = {
     {"threadgroup_adoption_race", threadgroup_adoption_race, METH_VARARGS, NULL},
     {"threadgroup_finalization_probe", threadgroup_finalization_probe,
      METH_VARARGS, NULL},
+    {"module_create_probe", module_create_probe, METH_VARARGS, NULL},
     {"reraise_star_probe", reraise_star_probe, METH_VARARGS, NULL},
     {"copy_exception_cause", copy_exception_cause, METH_VARARGS, NULL},
     {"function_reference_probe", function_reference_probe, METH_VARARGS, NULL},
@@ -6100,5 +6171,8 @@ static PyMethodDef methods[] = {
 int
 _PyTestInternalCapi_Init_ThreadGroups(PyObject *module)
 {
+    if (PyModuleDef_Init(&module_create_def) == NULL) {
+        return -1;
+    }
     return PyModule_AddFunctions(module, methods);
 }
