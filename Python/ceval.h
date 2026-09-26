@@ -470,6 +470,23 @@ get_exception_handler(PyCodeObject *code, int index, int *level, int *handler, i
 
 
 #ifdef Py_DEBUG
+static void
+_Py_assert_accessible_stack(_PyInterpreterFrame *frame,
+                            _PyStackRef *stack_pointer)
+{
+    _PyStackRef *base = frame->owner == FRAME_OWNED_BY_INTERPRETER
+        ? ((_PyEntryFrame *)frame)->stack : _PyFrame_Stackbase(frame);
+    // Validate completed instructions, after their heap/API access checks.
+    // Intermediate spills before _CHECK_ACCESS can still contain a reference
+    // which that operation is about to reject.
+    for (_PyStackRef *ref = base; ref < stack_pointer; ref++) {
+        if (!PyStackRef_IsNullOrInt(*ref)) {
+            PyObject *op = PyStackRef_AsPyObjectBorrow(*ref);
+            assert(PyObject_IsAccessible(op));
+        }
+    }
+}
+
 #define ASSERT_WITHIN_STACK_BOUNDS(F, L) _Py_assert_within_stack_bounds(frame, stack_pointer, (F), (L))
 #else
 #define ASSERT_WITHIN_STACK_BOUNDS(F, L) (void)0
