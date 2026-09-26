@@ -407,6 +407,17 @@ assert 'threading' not in sys.modules
                         group, merged, keep_owner)
 
     @unittest.skipIf(Py_GIL_DISABLED, "requires the normal-build group BRC port")
+    def test_orphan_cycle_reclamation(self):
+        for merged in (False, True):
+            for keep_owner in (False, True):
+                for finalizer in (False, True):
+                    with self.subTest(merged=merged, keep_owner=keep_owner,
+                                      finalizer=finalizer):
+                        group = threading.ThreadGroup('departed cycle owner')
+                        internal.threadgroup_orphan_decref_probe(
+                            group, merged, keep_owner, True, finalizer)
+
+    @unittest.skipIf(Py_GIL_DISABLED, "requires the normal-build group BRC port")
     def test_orphan_adoption_race(self):
         for _ in range(20):
             internal.threadgroup_adoption_race(

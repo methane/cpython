@@ -144,6 +144,11 @@ with LOCAL children. It also lets GC drain departed groups' LOCAL queue entries.
 It does not transfer a Python finalizer's LOCAL class, function or globals.
 Following Mark's subsequent clarification, inaccessible Python finalizers and
 weakref callbacks are skipped with a diagnostic on C stderr.
+GC also attempts atomic adoption before native `tp_finalize` and `tp_clear`
+calls. Waiting until `_Py_Dealloc()` would let an abandoned cycle's native
+callbacks run while the instance still belonged to its departed group. This
+does not change ownership when the old group still has thread states; that
+native execution contract remains an open question.
 
 QSBR registration and quiescence are active in the normal build. Retired internal
 buffers remain allocated until attached readers have passed a safepoint or
@@ -654,6 +659,19 @@ Earlier validation predates the explicit class-sharability check in
 instance of a LOCAL class now share the class first, or test declaration
 failure. LOCAL method and LOCAL base acquisition tests remain relevant.
 
+- Orphan cyclic reclamation: debug and release each pass 395 ownership, group,
+  GC, weakref and finalization tests (five and eight skips). The new regression
+  exercises eight combinations of merged/unmerged counts, an initially
+  detached/pending owner and presence/absence of a native finalizer. All owner
+  states are removed before collection. Four merged-count cases fail before
+  the fix because native finalization or clearing sees the old owner ID.
+  Both cycle and non-cycle orphan probes pass `-R 3:3`. Seven focused tests pass
+  TSan without suppressions in normal debug/pymalloc. Debug and release use
+  normal mimalloc builds. No new Main-only failure appears in this selection.
+  Logs: `test-orphan-gc-before.log`, `test-orphan-gc-debug.log`,
+  `test-orphan-gc-release.log`, `test-orphan-gc-refleak.log`,
+  `test-orphan-gc-tsan.log`. Live-owner native reclamation remains unresolved;
+  it is separate from adoption after the last owner leaves.
 - Class sharability: debug and release each pass 515 tests across ownership,
   type C APIs, descriptors, weakrefs and GC (six and seven skips). The previous
   implementation fails both the instance/class and class/metaclass rejection

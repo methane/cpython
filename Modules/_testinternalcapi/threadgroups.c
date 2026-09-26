@@ -23,6 +23,9 @@ struct parallel_gc_counts {
     int freed;
     int freed_while_stopped;
     int local_freed_elsewhere;
+    int local_cleared_elsewhere;
+    int finalized;
+    int local_finalized_elsewhere;
 };
 
 static void
@@ -50,13 +53,36 @@ parallel_gc_traverse(PyObject *op, visitproc visit, void *arg)
 static int
 parallel_gc_clear(PyObject *op)
 {
+    parallel_gc_object *obj = (parallel_gc_object *)op;
+    if (obj->cycle != NULL && obj->counts != NULL &&
+        op->ob_shareable == _Py_SHAREABLE_LOCAL &&
+        op->ob_owner_id != _PyThreadState_GET()->threadgroup->id) {
+        _Py_atomic_add_int(&obj->counts->local_cleared_elsewhere, 1);
+    }
     Py_CLEAR(((parallel_gc_object *)op)->cycle);
     return 0;
 }
 
 static void
+parallel_gc_finalize(PyObject *op)
+{
+    assert(!_PyInterpreterState_GET()->stoptheworld.world_stopped);
+    struct parallel_gc_counts *counts = ((parallel_gc_object *)op)->counts;
+    if (counts != NULL) {
+        _Py_atomic_add_int(&counts->finalized, 1);
+        if (!PyObject_IsAccessible(op)) {
+            _Py_atomic_add_int(&counts->local_finalized_elsewhere, 1);
+        }
+    }
+}
+
+static void
 parallel_gc_dealloc(PyObject *op)
 {
+    if (Py_TYPE(op)->tp_finalize != NULL &&
+        PyObject_CallFinalizerFromDealloc(op) < 0) {
+        return;
+    }
     PyObject_GC_UnTrack(op);
     parallel_gc_clear(op);
     struct parallel_gc_counts *counts = ((parallel_gc_object *)op)->counts;
@@ -78,14 +104,18 @@ parallel_gc_dealloc(PyObject *op)
 }
 
 static PyObject *
-parallel_gc_type(void)
+parallel_gc_type(int with_finalizer)
 {
     PyType_Slot slots[] = {
         {Py_tp_traverse, parallel_gc_traverse},
         {Py_tp_clear, parallel_gc_clear},
         {Py_tp_dealloc, parallel_gc_dealloc},
         {0, NULL},
+        {0, NULL},
     };
+    if (with_finalizer) {
+        slots[3] = (PyType_Slot){Py_tp_finalize, parallel_gc_finalize};
+    }
     PyType_Spec spec = {
         .name = "_testinternalcapi.ParallelGCProbe",
         .basicsize = sizeof(parallel_gc_object),
@@ -1338,7 +1368,7 @@ threadgroup_probe(PyObject *self, PyObject *args)
         }
     }
     if (mode == 3) {
-        cycle_type = parallel_gc_type();
+        cycle_type = parallel_gc_type(0);
         if (cycle_type == NULL) {
             return NULL;
         }
@@ -1853,7 +1883,7 @@ threadgroup_gc_brc_probe(PyObject *self, PyObject *args)
     }
     PyThreadState *current = PyThreadState_Get();
     PyThreadState *owner = PyThreadState_New(current->interp);
-    PyObject *type = parallel_gc_type();
+    PyObject *type = parallel_gc_type(0);
     struct parallel_gc_counts *counts = PyMem_RawCalloc(1, sizeof(*counts));
     _PyObjectStackChunk *chunk = PyMem_RawCalloc(1, sizeof(*chunk));
     if (owner == NULL || type == NULL || counts == NULL || chunk == NULL) {
@@ -1957,8 +1987,10 @@ threadgroup_orphan_decref_probe(PyObject *self, PyObject *args)
 {
     PyObject *wrapper;
     int merged, keep_owner;
-    if (!PyArg_ParseTuple(args, "Opp:threadgroup_orphan_decref_probe",
-                          &wrapper, &merged, &keep_owner)) {
+    int cyclic = 0, with_finalizer = 0;
+    if (!PyArg_ParseTuple(args, "Opp|pp:threadgroup_orphan_decref_probe",
+                          &wrapper, &merged, &keep_owner, &cyclic,
+                          &with_finalizer)) {
         return NULL;
     }
     _PyThreadGroupState *group = _PyThreadGroup_GetState(wrapper);
@@ -1967,7 +1999,7 @@ threadgroup_orphan_decref_probe(PyObject *self, PyObject *args)
     }
     PyThreadState *current = PyThreadState_Get();
     PyThreadState *owner = PyThreadState_New(current->interp);
-    PyObject *type = parallel_gc_type();
+    PyObject *type = parallel_gc_type(with_finalizer);
     struct parallel_gc_counts *counts = PyMem_RawCalloc(1, sizeof(*counts));
     if (owner == NULL || type == NULL || counts == NULL) {
         if (owner != NULL) {
@@ -1989,6 +2021,9 @@ threadgroup_orphan_decref_probe(PyObject *self, PyObject *args)
         op->counts = counts;
         counts->refs++;
         counts->created++;
+        if (cyclic) {
+            op->cycle = Py_NewRef((PyObject *)op);
+        }
         tuple = PyTuple_Pack(1, op);
         Py_DECREF(op);
         if (tuple != NULL && merged) {
@@ -2025,7 +2060,13 @@ threadgroup_orphan_decref_probe(PyObject *self, PyObject *args)
         owner = NULL;
     }
     Py_XDECREF(tuple);
+    if (cyclic) {
+        PyGC_Collect();
+    }
     ok &= counts->freed == 1 && counts->local_freed_elsewhere == 0 &&
+          counts->local_cleared_elsewhere == 0 &&
+          counts->local_finalized_elsewhere == 0 &&
+          counts->finalized == with_finalizer &&
           counts->freed_while_stopped == 0;
     parallel_gc_counts_release(counts);
     Py_DECREF(type);

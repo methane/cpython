@@ -140,3 +140,40 @@ GC が空の所有グループの BRC キューを処理する場合は、世界
 この決定は Python のコールバックに関するもので、拡張型の `tp_dealloc` /
 `tp_clear` の所有権・寿命の監査や、C API の未チェック取得の契約の確認を
 完了したという意味ではありません。
+
+所有グループが空の GC 対象については、ネイティブ `tp_finalize` と
+`tp_clear` の前にも単体の移譲を行うようにしました。従来の `_Py_Dealloc()`
+での移譲だけでは、循環参照の解消や finalizer の実行に間に合わないためです。
+回帰テストは `test_orphan_cycle_reclamation` です。
+
+## 未解決: 所有グループが存命の場合のネイティブ解放
+
+Python の `__del__` と weakref callback の決定とは別に、C の `tp_dealloc` /
+`tp_clear` の実行場所を確認したいです。LOCAL な拡張型の LOCAL インスタンスを
+immutable tuple に格納し、別グループから tuple の最後の参照を解放しました。
+同じ interpreter 内に所有者の thread state を残した診断では、次の結果です。
+
+| 条件 | 観測 |
+| --- | --- |
+| Main 内での回収 | ネイティブ処理の対象はアクセス可能 |
+| 未合算の LOCAL、所有者は待機中 | BRC キューに残り、所有グループの再開後に回収 |
+| 合算済みの LOCAL、所有者は待機中 | 別グループで `tp_dealloc` が呼ばれ、対象はアクセス不可 |
+| 同条件の自己参照サイクルを GC | `tp_clear` と `tp_dealloc` が別グループで呼ばれ、対象はアクセス不可 |
+
+この診断は同じ OS スレッドで thread state を切り替えて実行し、C スロットの
+入口で `PyObject_IsAccessible()` を記録しています。並行したデータ競合そのものを
+計測したものではありません。診断用 C 拡張は
+`/tmp/pep805-base/native_reclaim_probe.c`、実行スクリプトは同ディレクトリの
+`native_reclaim_probe.py`、結果は `native-reclaim-after.log` にあります。
+
+`_Py_Dealloc()` は `_PyThreadGroup_TryAdopt()` が失敗してもネイティブの
+deallocator を呼びます。GC の native finalizer と clearing も、所有者が
+存命なら移譲できません。PEP は C 拡張を既定で LOCAL とするため、その
+ネイティブ処理が所有グループ内の共有状態に触れる可能性を排除できません。
+
+確認したい契約は、これらのネイティブ処理を所有グループへ戻して実行すべきか、
+それとも別グループで実行できる特別な制約・例外があるのか、です。前者なら、
+合算済みの最後の decref と GC の処理にも、所有者の再開まで待つ仕組みが必要です。
+後者なら、既存の LOCAL 拡張が解放時にアクセスできる状態の範囲を明確にする
+必要があります。Python コールバックをスキップしてよいという回答を、これらの
+ネイティブ処理を任意のグループで実行してよいという意味には拡張していません。

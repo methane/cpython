@@ -18,6 +18,7 @@
 #include "pycore_object_stack.h"  // _PyObjectStack
 #include "pycore_pyerrors.h"
 #include "pycore_pystate.h"       // _PyThreadState_GET()
+#include "pycore_threadgroup.h"   // _PyThreadGroup_TryAdopt()
 #include "pycore_tuple.h"         // _PyTuple_MaybeUntrack()
 #include "pycore_weakref.h"       // _PyWeakref_ClearRef()
 #include "pydtrace.h"
@@ -1241,6 +1242,9 @@ finalize_garbage(PyThreadState *tstate, _PyObjectStack *objects)
             PyObject *op = chunk->objs[i];
             destructor finalize = Py_TYPE(op)->tp_finalize;
             if (!_PyGC_FINALIZED(op) && finalize != NULL) {
+                // An abandoned LOCAL object must be adopted before its native
+                // finalizer runs, not only when its count later reaches zero.
+                _PyThreadGroup_TryAdopt(op, tstate);
                 _PyGC_SET_FINALIZED(op);
                 finalize(op);
                 assert(!_PyErr_Occurred(tstate));
@@ -1394,6 +1398,9 @@ delete_garbage(PyThreadState *tstate, GCState *gcstate,
             }
             inquiry clear = Py_TYPE(op)->tp_clear;
             if (clear != NULL) {
+                // Objects without a finalizer also need ownership transferred
+                // before clearing, if their old group has no threads left.
+                _PyThreadGroup_TryAdopt(op, tstate);
                 (void) clear(op);
                 if (_PyErr_Occurred(tstate)) {
                     PyErr_FormatUnraisable("Exception ignored in tp_clear of %s",
