@@ -936,7 +936,7 @@ BaseExceptionGroup_new(PyTypeObject *type, PyObject *args, PyObject *kwds)
 
     bool nested_base_exceptions = false;
     for (Py_ssize_t i = 0; i < numexcs; i++) {
-        PyObject *exc = PyTuple_GET_ITEM(exceptions, i);
+        PyObject *exc = PyTuple_GetItem(exceptions, i);
         if (!exc) {
             goto error;
         }
@@ -970,6 +970,9 @@ BaseExceptionGroup_new(PyTypeObject *type, PyObject *args, PyObject *kwds)
              * wrap them in an ExceptionGroup
              */
             cls = PyExc_ExceptionGroup;
+            if (cls != NULL && PyObject_CheckAccess((PyObject *)cls) == NULL) {
+                goto error;
+            }
         }
     }
     else {
@@ -1264,7 +1267,11 @@ get_matcher_type(PyObject *value,
     if (PyTuple_CheckExact(value)) {
         Py_ssize_t n = PyTuple_GET_SIZE(value);
         for (Py_ssize_t i=0; i<n; i++) {
-            if (!PyExceptionClass_Check(PyTuple_GET_ITEM(value, i))) {
+            PyObject *exc_type = PyTuple_GetItem(value, i);
+            if (exc_type == NULL) {
+                return -1;
+            }
+            if (!PyExceptionClass_Check(exc_type)) {
                 goto error;
             }
         }

@@ -1919,6 +1919,87 @@ if cyclic:
                                 self.assertEqual(internal.container_element_calls(value),
                                                  int(accessible))
 
+    def test_exception_group_element_acquisition(self):
+        def probe():
+            constructor, error = source[2]
+            if error is None:
+                constructor('group', source[1])
+            else:
+                try:
+                    constructor('group', source[1])
+                except error:
+                    pass
+                else:
+                    assert False
+            return True
+
+        for value in (BaseException(), ValueError(), object(), 42):
+            for group in (sys.main_thread_group, self.foreign):
+                error = None if isinstance(value, BaseException) else ValueError
+                if group is self.foreign and type(value) is not int:
+                    error = IllegalThreadAccessException
+                with self.subTest(value=type(value), group=group):
+                    self.assertTrue(internal.threadgroup_vm_probe(
+                        probe.__code__, group,
+                        (True, (value,), (BaseExceptionGroup, error)), 0))
+
+    def test_exception_group_implicit_class_acquisition(self):
+        def probe():
+            constructor, leaf_type, error, rejected = source[2]
+            leaf = leaf_type()
+            try:
+                constructor('group', (leaf,))
+            except error:
+                assert rejected
+            else:
+                assert not rejected
+            return True
+
+        for leaf_type in (BaseException, ValueError):
+            for group in (sys.main_thread_group, self.foreign):
+                # ExceptionGroup is a mutable heap type created in Main.
+                rejected = leaf_type is ValueError and not (
+                    internal.threadgroup_access_probe(group, ExceptionGroup))
+                with self.subTest(leaf_type=leaf_type, group=group):
+                    self.assertTrue(internal.threadgroup_vm_probe(
+                        probe.__code__, group,
+                        (True, None, (BaseExceptionGroup, leaf_type,
+                         IllegalThreadAccessException, rejected)), 0))
+
+    def test_exception_group_matcher_acquisition(self):
+        class LocalError(BaseException):
+            pass
+
+        def probe():
+            constructor, leaf_type, error, split = source[2]
+            group = constructor('group', (leaf_type(),))
+            method = group.split if split else group.subgroup
+            if error is None:
+                method(source[1])
+            else:
+                try:
+                    method(source[1])
+                except error:
+                    pass
+                else:
+                    assert False
+            return True
+
+        for value in (LocalError, BaseException, object(), 42):
+            for prefix in ((), (BaseException,)):
+                for split in (False, True):
+                    for group in (sys.main_thread_group, self.foreign):
+                        error = None if isinstance(value, type) else TypeError
+                        if (group is self.foreign and
+                            value is not BaseException and type(value) is not int):
+                            error = IllegalThreadAccessException
+                        with self.subTest(value=value, prefix=prefix,
+                                          split=split, group=group):
+                            self.assertTrue(internal.threadgroup_vm_probe(
+                                probe.__code__, group,
+                                (True, prefix + (value,),
+                                 (BaseExceptionGroup, BaseException, error, split)), 0))
+
     def test_attribute_error_message_acquisition(self):
         class String(str):
             pass

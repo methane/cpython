@@ -641,6 +641,12 @@ pointer. An absent value still succeeds with NULL; an explicitly supplied
 fallback is already an acquired argument and needs no extra ownership check.
 Native tests inspect the C output before it can reach a VM return check.
 
+Exception group construction checks acquired tuple elements before inspecting
+their exception types, and checks the implicit `ExceptionGroup` class selected
+for ordinary exceptions. That mutable heap type belongs to Main; constructing
+an otherwise local group does not grant access to it. `split()` and `subgroup()`
+also validate all acquired matcher tuple members before testing their types.
+
 Debug tier-one dispatch validates all live evaluation-stack references after an
 instruction's acquisition checks, including tracing redispatch, inlined calls
 and return values on the C entry frame. NULL and tagged integers are not object
@@ -693,6 +699,12 @@ Earlier validation predates the explicit class-sharability check in
 instance of a LOCAL class now share the class first, or test declaration
 failure. LOCAL method and LOCAL base acquisition tests remain relevant.
 
+- Exception group acquisitions: debug and release each run 398 ownership,
+  exception group, `except*` and exception API tests without failures (three
+  and four skips). Before the fix, 12 foreign LOCAL cases fail while Main
+  and immutable controls pass. The three new tests pass `-R 3:3` and TSan
+  without suppressions. Logs:
+  `test-exception-group-acquisition-{before,debug,release,refleak,tsan}.log`.
 - Context variable C API results: debug and release each run 235 ownership,
   context and group tests without failures (one and four skips). The three
   foreign LOCAL default/cache/HAMT cases fail before the fix. The native return
