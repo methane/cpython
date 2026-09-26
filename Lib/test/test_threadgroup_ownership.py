@@ -2333,9 +2333,14 @@ if cyclic:
         class LocalArgs(tuple):
             pass
 
+        try:
+            raise BaseException()
+        except BaseException as exc:
+            traceback = exc.__traceback__
         cases = (
             ('PyException_GetCause', BaseException()),
             ('PyException_GetContext', BaseException()),
+            ('PyException_GetTraceback', traceback),
             ('PyException_GetArgs', (object(),)),
             ('PyException_GetArgs', LocalArgs()),
         )
@@ -2362,8 +2367,12 @@ if cyclic:
                 assert not rejected
             return True
 
-        reference = BaseException()
-        for field in ('cause', 'context'):
+        try:
+            raise BaseException()
+        except BaseException as exc:
+            traceback = exc.__traceback__
+        for field in ('cause', 'context', 'traceback'):
+            reference = traceback if field == 'traceback' else BaseException()
             for split in (False, True):
                 for group in (sys.main_thread_group, self.foreign):
                     with self.subTest(field=field, split=split, group=group):
@@ -2373,6 +2382,136 @@ if cyclic:
                              KeyboardInterrupt, IllegalThreadAccessException,
                              group is self.foreign, split, field)), 0, 1, False,
                             internal.copy_exception_reference))
+
+    def test_with_exit_traceback_acquisition(self):
+        def probe():
+            exception, make_type, error, rejected = source[2]
+            called = []
+            def enter(self):
+                pass
+            def exit(self, typ, value, tb):
+                called.append(True)
+                # Acquire the frame, so a missing argument check is visible.
+                tb.tb_frame
+                return True
+            context = make_type('Context', (), {
+                '__enter__': enter, '__exit__': exit})()
+            exc = exception()
+            try:
+                with context:
+                    try:
+                        raise exc
+                    finally:
+                        bound_builtin(exc, source[1], 'traceback')
+            except error:
+                assert rejected and not called
+            else:
+                assert not rejected and called == [True]
+            return True
+
+        try:
+            raise BaseException()
+        except BaseException as exc:
+            traceback = exc.__traceback__
+        for group in (sys.main_thread_group, self.foreign):
+            with self.subTest(group=group):
+                self.assertTrue(internal.threadgroup_vm_probe(
+                    probe.__code__, group,
+                    (True, (traceback,), (BaseException, type,
+                     IllegalThreadAccessException, group is self.foreign)),
+                    0, 1, False, internal.copy_exception_reference))
+
+    def test_traceback_opaque_copy(self):
+        def probe():
+            exception, error, rejected, api = source[2]
+            exc = exception()
+            if api == 'throw':
+                bound_builtin(exc, 'copy', source[1])
+                def generator():
+                    try:
+                        yield None
+                    except exception as caught:
+                        assert caught is exc
+                        yield True
+                gen = generator()
+                gen.__next__()
+                assert gen.throw(exc) is True
+                gen.close()
+            else:
+                assert bound_builtin(exc, api, source[1]) is exc
+            try:
+                tb = exc.__traceback__
+                if api == 'throw':
+                    tb = tb.tb_next
+            except error:
+                assert rejected
+            else:
+                assert not rejected and tb is source[1][0]
+            return True
+
+        try:
+            raise BaseException()
+        except BaseException as exc:
+            traceback = exc.__traceback__
+        for api in ('restore', 'set_object', 'throw'):
+            for group in (sys.main_thread_group, self.foreign):
+                with self.subTest(api=api, group=group):
+                    self.assertTrue(internal.threadgroup_vm_probe(
+                        probe.__code__, group,
+                        (True, (traceback,), (BaseException,
+                         IllegalThreadAccessException, group is self.foreign, api)),
+                        0, 1, False, internal.traceback_api_probe))
+
+    def test_traceback_void_consumers_abort(self):
+        code = textwrap.dedent('''
+            import _testinternalcapi as internal
+            import sys
+            import threading
+            from test.support import SuppressCrashReport
+
+            def probe():
+                exception, make_type, string, mode, foreign = source[2]
+                if mode == 'print':
+                    bound_builtin(exception(), 'print', source[1])
+                else:
+                    def hash(self):
+                        exc = exception()
+                        if mode == 'import_next':
+                            bound_builtin(exc, 'copy', source[1])
+                            raise exc
+                        try:
+                            raise exc
+                        finally:
+                            bound_builtin(exc, 'copy', source[1])
+                    name = make_type('Name', (string,), {'__hash__': hash})('probe')
+                    try:
+                        bound_builtin(name, 'import')
+                    except exception:
+                        assert not foreign
+                return True
+
+            try:
+                raise BaseException()
+            except BaseException as exc:
+                traceback = exc.__traceback__
+            mode, foreign = sys.argv[1], sys.argv[2] == 'foreign'
+            group = threading.ThreadGroup('traceback consumer') if foreign else sys.main_thread_group
+            sys.stderr = None
+            with SuppressCrashReport():
+                assert internal.threadgroup_vm_probe(
+                    probe.__code__, group,
+                    (True, (traceback,), (BaseException, type, str, mode, foreign)),
+                    0, 1, False, internal.traceback_api_probe)
+        ''')
+        for mode in ('print', 'import', 'import_next'):
+            with self.subTest(mode=mode):
+                script_helper.assert_python_ok('-c', code, mode, 'main')
+                rc, _, err = script_helper.assert_python_failure(
+                    '-c', code, mode, 'foreign')
+                if sys.platform != 'win32':
+                    self.assertEqual(rc, -signal.SIGABRT)
+                api = b'PyErr_PrintEx' if mode == 'print' else b'remove_importlib_frames'
+                self.assertIn(api + b': IllegalThreadAccessException: inaccessible', err)
 
     def test_exception_context_chain_inaccessible_aborts(self):
         code = textwrap.dedent('''

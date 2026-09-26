@@ -698,7 +698,7 @@ future_set_exception(asyncio_state *state, FutureObj *fut, PyObject *exc)
     assert(!fut->fut_exception);
     assert(!fut->fut_exception_tb);
     fut->fut_exception = exc_val;
-    fut->fut_exception_tb = PyException_GetTraceback(exc_val);
+    fut->fut_exception_tb = Py_XNewRef(((PyBaseExceptionObject *)exc_val)->traceback);
     fut->fut_state = STATE_FINISHED;
 
     if (future_schedule_callbacks(state, fut) == -1) {
@@ -1937,7 +1937,8 @@ FutureIter_throw(PyObject *op, PyObject *const *args, Py_ssize_t nargs)
         type = PyExceptionInstance_Class(type);
         Py_INCREF(type);
         if (tb == NULL)
-            tb = PyException_GetTraceback(val);
+            /* Copy the heap reference for PyErr_Restore(). */
+            tb = Py_XNewRef(((PyBaseExceptionObject *)val)->traceback);
     } else {
         PyErr_SetString(PyExc_TypeError,
                         "exceptions must be classes deriving BaseException or "

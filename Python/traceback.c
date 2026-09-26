@@ -331,7 +331,8 @@ PyTraceBack_Here(PyFrameObject *frame)
 {
     PyObject *exc = PyErr_GetRaisedException();
     assert(PyExceptionInstance_Check(exc));
-    PyObject *tb = PyException_GetTraceback(exc);
+    // Copy the opaque heap reference into the new traceback's tb_next.
+    PyObject *tb = Py_XNewRef(((PyBaseExceptionObject *)exc)->traceback);
     PyObject *newtb = _PyTraceBack_FromFrame(tb, frame);
     Py_XDECREF(tb);
     if (newtb == NULL) {

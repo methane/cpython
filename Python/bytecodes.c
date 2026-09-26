@@ -4234,6 +4234,7 @@ dummy_func(
             exc = PyExceptionInstance_Class(val_o);
             PyObject *original_tb = tb = PyException_GetTraceback(val_o);
             if (tb == NULL) {
+                ERROR_IF(_PyErr_Occurred(tstate));
                 tb = Py_None;
             }
             assert(PyStackRef_IsTaggedInt(lasti));

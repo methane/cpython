@@ -675,7 +675,8 @@ have an error return; the public boolean `PyErr_GivenExceptionMatches()` API
 logs to C stderr and aborts on an inaccessible acquired tuple element, including
 nested tuples. Its usual short circuit leaves unvisited elements unacquired.
 
-`PyException_GetCause()`, `PyException_GetContext()` and `PyException_GetArgs()`
+`PyException_GetCause()`, `PyException_GetContext()`, `PyException_GetTraceback()`
+and `PyException_GetArgs()`
 validate their strong references, including LOCAL tuple subclasses used for
 exception arguments. Exception group metadata copying, native chained exception
 display and cross-interpreter cause unwrapping propagate getter failure instead
@@ -702,6 +703,12 @@ Traceback line computation checks acquired frames; cached line numbers need no
 frame acquisition. The `tb_next` setter and native printer check acquired links,
 including links changed by output callbacks after the printer's depth scan.
 These paths propagate ordinary access errors without recovery machinery.
+`WITH_EXCEPT_START` rejects an inaccessible traceback before calling `__exit__`.
+`PyErr_PrintEx()` and import traceback trimming have no ordinary error return;
+they use C stderr and abort with `//TODO(pep805)`. Trimming checks each acquired
+link and frame. Internal metadata copies and presence tests use the stored
+reference without acquiring its referent, including exception restoration,
+trace events, `sys.exc_info()` tuples and future/generator exception storage.
 
 Module construction checks a `Py_mod_create` result before reading or changing
 its module state metadata. Both definition-based and slots-based constructors
@@ -712,7 +719,9 @@ instruction's acquisition checks, including tracing redispatch, inlined calls
 and return values on the C entry frame. NULL and tagged integers are not object
 references. Temporary spills before `_CHECK_ACCESS` are not validation points:
 that operation must be allowed to reject a heap reference normally. Release
-builds omit these assertions. The negative regression deliberately corrupts a
+builds omit these assertions. The helper lives in the header shared with
+the test interpreter, so regenerating its cases retains these checks.
+The negative regression deliberately corrupts a
 local slot and verifies that `LOAD_FAST` is caught before the value is consumed.
 This implements normal-interpreter validation from the
 [appendix](https://peps.python.org/pep-0805/appendix-implementation/#validation);
@@ -759,6 +768,19 @@ Earlier validation predates the explicit class-sharability check in
 instance of a LOCAL class now share the class first, or test declaration
 failure. LOCAL method and LOCAL base acquisition tests remain relevant.
 
+- Traceback getters/consumers: the pre-fix tests expose three rejected-getter
+  failures and an inaccessible `__exit__` argument caught by debug dispatch.
+  All five regressions pass debug, release and TSan without suppressions;
+  four normal-path tests pass `-R 3:3`. Both broad runs pass 13 related files;
+  `test_sys` has only its known GIL assertion failure. `test_import` aborts in
+  subinterpreter shutdown at `_PyModule_ClearDict()`/`PyDict_Next()`, also
+  reproduced at pre-change `50c3de4962`. Excluding the two previously failing
+  single-phase tests still encounters this cleanup issue elsewhere in import.
+  No new Main-only failure is observed. Logs: `test-traceback-getter-*.log` and
+  `test-traceback-import-{baseline,debug}.log`.
+- Test interpreter build: regeneration exposed the debug stack helper's old
+  file-local definition. Moving it to the shared header fixes the build;
+  both existing alternate-interpreter specialization tests pass.
 - Traceback chains: five foreign acquisition cases fail before the guards.
   Main controls and cached line reads pass; rejected setters leave the target
   unchanged, and source refcounts balance after each native worker. Debug and

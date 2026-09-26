@@ -3634,10 +3634,19 @@ remove_importlib_frames(PyThreadState *tstate)
     }
 
     assert(PyExceptionInstance_Check(exc));
-    base_tb = PyException_GetTraceback(exc);
+    base_tb = Py_XNewRef(((PyBaseExceptionObject *)exc)->traceback);
     prev_link = &base_tb;
     PyObject *tb = base_tb;
     while (tb != NULL) {
+        if (!PyObject_IsAccessible(tb) ||
+            !PyObject_IsAccessible((PyObject *)((PyTracebackObject *)tb)->tb_frame)) {
+            //TODO(pep805): Trimming a pending exception has no error return.
+            fputs("Fatal Python error: remove_importlib_frames: "
+                  "IllegalThreadAccessException: inaccessible traceback or frame\n",
+                  stderr);
+            fflush(stderr);
+            abort();
+        }
         assert(PyTraceBack_Check(tb));
         PyTracebackObject *traceback = (PyTracebackObject *)tb;
         PyObject *next = (PyObject *) traceback->tb_next;

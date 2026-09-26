@@ -522,7 +522,7 @@ PyException_GetTraceback(PyObject *self)
     Py_BEGIN_CRITICAL_SECTION(self);
     traceback = Py_XNewRef(PyBaseExceptionObject_CAST(self)->traceback);
     Py_END_CRITICAL_SECTION();
-    return traceback;
+    return _PyObject_CheckAccessNullable(traceback);
 }
 
 
@@ -1192,6 +1192,9 @@ exceptiongroup_subset(
     /* Now we hold a reference to the new eg */
 
     PyObject *tb = PyException_GetTraceback(orig);
+    if (tb == NULL && PyErr_Occurred()) {
+        goto error;
+    }
     if (tb) {
         int res = PyException_SetTraceback(eg, tb);
         Py_DECREF(tb);
@@ -1748,13 +1751,10 @@ PyUnstable_Exc_PrepReraiseStar(PyObject *orig, PyObject *excs)
     /* Make sure that orig has something as traceback, in the interpreter
      * it always does because it's a raised exception.
      */
-    PyObject *tb = PyException_GetTraceback(orig);
-
-    if (tb == NULL) {
+    if (PyBaseExceptionObject_CAST(orig)->traceback == NULL) {
         PyErr_Format(PyExc_ValueError, "orig must be a raised exception");
         return NULL;
     }
-    Py_DECREF(tb);
 
     return _PyExc_PrepReraiseStar(orig, excs);
 }

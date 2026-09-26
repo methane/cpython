@@ -3651,7 +3651,7 @@ static const char *return_apis[] = {
     "PyType_GetSlot_base", "PyType_GetSlot_bases",
     "PyContextVar_Get_default", "PyContextVar_Get_cached",
     "PyContextVar_Get_uncached", "PyException_GetCause", "PyException_GetArgs",
-    "PyException_GetContext",
+    "PyException_GetContext", "PyException_GetTraceback",
     NULL,
 };
 
@@ -4054,6 +4054,7 @@ return_probe_worker(void *arg)
         case 56:
         case 57:
         case 58:
+        case 59:
             box = PyObject_CallNoArgs(PyExc_BaseException);
             if (box == NULL) {
                 goto done;
@@ -4066,9 +4067,13 @@ return_probe_worker(void *arg)
                 PyException_SetArgs(box, value);
                 result = PyException_GetArgs(box);
             }
-            else {
+            else if (probe->api == 58) {
                 PyException_SetContext(box, Py_NewRef(value));
                 result = PyException_GetContext(box);
+            }
+            else {
+                ((PyBaseExceptionObject *)box)->traceback = Py_NewRef(value);
+                result = PyException_GetTraceback(box);
             }
             break;
         default:
@@ -4517,10 +4522,56 @@ copy_exception_reference(PyObject *unused, PyObject *args)
     else if (strcmp(field, "context") == 0) {
         PyException_SetContext(exception, Py_NewRef(PyTuple_GET_ITEM(source, 0)));
     }
+    else if (strcmp(field, "traceback") == 0) {
+        Py_XSETREF(((PyBaseExceptionObject *)exception)->traceback,
+                   Py_NewRef(PyTuple_GET_ITEM(source, 0)));
+    }
     else {
         return PyErr_Format(PyExc_ValueError, "unknown exception field");
     }
     Py_RETURN_NONE;
+}
+
+static PyObject *
+traceback_api_probe(PyObject *unused, PyObject *args)
+{
+    PyObject *value, *source = NULL;
+    const char *api;
+    if (!PyArg_ParseTuple(args, "Os|O!:traceback_api_probe", &value, &api,
+                          &PyTuple_Type, &source)) {
+        return NULL;
+    }
+    if (strcmp(api, "import") == 0) {
+        return PyImport_ImportModuleLevelObject(value, NULL, NULL, NULL, 0);
+    }
+    if (!PyExceptionInstance_Check(value)) {
+        return PyErr_Format(PyExc_TypeError, "expected an exception");
+    }
+    if (source != NULL) {
+        if (PyTuple_GET_SIZE(source) != 1) {
+            return PyErr_Format(PyExc_ValueError, "expected one heap reference");
+        }
+        Py_XSETREF(((PyBaseExceptionObject *)value)->traceback,
+                   Py_NewRef(PyTuple_GET_ITEM(source, 0)));
+    }
+    if (strcmp(api, "copy") == 0) {
+        Py_RETURN_NONE;
+    }
+    if (strcmp(api, "restore") == 0) {
+        PyErr_Restore(Py_NewRef(Py_TYPE(value)), Py_NewRef(value), NULL);
+    }
+    else if (strcmp(api, "set_object") == 0) {
+        PyErr_SetObject((PyObject *)Py_TYPE(value), value);
+    }
+    else if (strcmp(api, "print") == 0) {
+        PyErr_SetRaisedException(Py_NewRef(value));
+        PyErr_PrintEx(0);
+        Py_RETURN_NONE;
+    }
+    else {
+        return PyErr_Format(PyExc_ValueError, "unknown traceback API");
+    }
+    return PyErr_GetRaisedException();
 }
 
 static PyObject *
@@ -6246,6 +6297,7 @@ static PyMethodDef methods[] = {
     {"exception_matches_probe", exception_matches_probe, METH_O, NULL},
     {"dict_next_probe", dict_next_probe, METH_VARARGS, NULL},
     {"copy_exception_reference", copy_exception_reference, METH_VARARGS, NULL},
+    {"traceback_api_probe", traceback_api_probe, METH_VARARGS, NULL},
     {"traceback_reference_probe", traceback_reference_probe, METH_VARARGS, NULL},
     {"function_reference_probe", function_reference_probe, METH_VARARGS, NULL},
     {"frame_getvar_probe", frame_getvar_probe, METH_VARARGS, NULL},

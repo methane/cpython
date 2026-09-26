@@ -214,7 +214,8 @@ sys_trace_exception_func(
     PyObject *exc = args[2];
     assert(PyExceptionInstance_Check(exc));
     PyObject *type = (PyObject *)Py_TYPE(exc);
-    PyObject *tb = PyException_GetTraceback(exc);
+    // The event tuple copies this heap reference without reading its referent.
+    PyObject *tb = Py_XNewRef(((PyBaseExceptionObject *)exc)->traceback);
     if (tb == NULL) {
         tb = Py_NewRef(Py_None);
     }

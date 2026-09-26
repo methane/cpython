@@ -714,6 +714,13 @@ _PyErr_PrintEx(PyThreadState *tstate, int set_sys_last_vars)
     assert(PyExceptionInstance_Check(exc));
     typ = Py_NewRef(Py_TYPE(exc));
     tb = PyException_GetTraceback(exc);
+    if (tb == NULL && _PyErr_Occurred(tstate)) {
+        //TODO(pep805): PyErr_PrintEx cannot return an acquisition error.
+        fputs("Fatal Python error: PyErr_PrintEx: IllegalThreadAccessException: "
+              "inaccessible exception traceback\n", stderr);
+        fflush(stderr);
+        abort();
+    }
     if (tb == NULL) {
         tb = Py_NewRef(Py_None);
     }
@@ -826,6 +833,9 @@ print_exception_traceback(struct exception_print_context *ctx, PyObject *value)
     int err = 0;
 
     PyObject *tb = PyException_GetTraceback(value);
+    if (tb == NULL && PyErr_Occurred()) {
+        return -1;
+    }
     if (tb && tb != Py_None) {
         const char *header = EXCEPTION_TB_HEADER;
         err = _PyTraceBack_Print(tb, header, f);
@@ -1154,12 +1164,8 @@ _PyErr_Display(PyObject *file, PyObject *unused, PyObject *value, PyObject *tb)
         && tb != NULL && PyTraceBack_Check(tb)) {
         /* Put the traceback on the exception, otherwise it won't get
            displayed.  See issue #18776. */
-        PyObject *cur_tb = PyException_GetTraceback(value);
-        if (cur_tb == NULL) {
+        if (((PyBaseExceptionObject *)value)->traceback == NULL) {
             PyException_SetTraceback(value, tb);
-        }
-        else {
-            Py_DECREF(cur_tb);
         }
     }
 

@@ -71,6 +71,9 @@ _testcapi_exception_print_impl(PyObject *module, PyObject *exc, int legacy)
         PyObject *tb = NULL;
         if (PyExceptionInstance_Check(exc)) {
             tb = PyException_GetTraceback(exc);
+            if (tb == NULL && PyErr_Occurred()) {
+                return NULL;
+            }
         }
         PyErr_Display((PyObject *) Py_TYPE(exc), exc, tb);
         Py_XDECREF(tb);

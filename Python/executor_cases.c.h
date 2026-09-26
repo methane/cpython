@@ -16039,6 +16039,15 @@
             exc = PyExceptionInstance_Class(val_o);
             PyObject *original_tb = tb = PyException_GetTraceback(val_o);
             if (tb == NULL) {
+                if (_PyErr_Occurred(tstate)) {
+                    stack_pointer[0] = lasti;
+                    stack_pointer[1] = _stack_item_1;
+                    stack_pointer[2] = val;
+                    stack_pointer += 3;
+                    ASSERT_WITHIN_STACK_BOUNDS(__FILE__, __LINE__);
+                    SET_CURRENT_CACHED_VALUES(0);
+                    JUMP_TO_ERROR();
+                }
                 tb = Py_None;
             }
             assert(PyStackRef_IsTaggedInt(lasti));

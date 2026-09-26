@@ -69,11 +69,7 @@ _PyErr_Restore(PyThreadState *tstate, PyObject *type, PyObject *value,
     assert(PyExceptionClass_Check(type));
     if (value != NULL && type == (PyObject *)Py_TYPE(value)) {
         /* Already normalized */
-#ifdef Py_DEBUG
-        PyObject *tb = PyException_GetTraceback(value);
-        assert(tb != Py_None);
-        Py_XDECREF(tb);
-#endif
+        assert(((PyBaseExceptionObject *)value)->traceback != Py_None);
     }
     else {
         PyObject *exc = _PyErr_CreateException(type, value);
@@ -153,7 +149,6 @@ void
 _PyErr_SetObject(PyThreadState *tstate, PyObject *exception, PyObject *value)
 {
     PyObject *exc_value;
-    PyObject *tb = NULL;
 
     if (exception != NULL &&
         !PyExceptionClass_Check(exception)) {
@@ -242,10 +237,8 @@ _PyErr_SetObject(PyThreadState *tstate, PyObject *exception, PyObject *value)
             Py_DECREF(exc_value);
         }
     }
-    assert(value != NULL);
-    if (PyExceptionInstance_Check(value))
-        tb = PyException_GetTraceback(value);
-    _PyErr_Restore(tstate, Py_NewRef(Py_TYPE(value)), value, tb);
+    assert(PyExceptionInstance_Check(value));
+    _PyErr_SetRaisedException(tstate, value);
 }
 
 void
@@ -607,7 +600,8 @@ get_exc_traceback(PyObject *exc_value)  /* returns a strong ref */
     }
     else {
         assert(PyExceptionInstance_Check(exc_value));
-        PyObject *tb = PyException_GetTraceback(exc_value);
+        // Copy into sys.exc_info()'s tuple; the void C API checks access first.
+        PyObject *tb = Py_XNewRef(((PyBaseExceptionObject *)exc_value)->traceback);
         return tb ? tb : Py_None;
     }
 }

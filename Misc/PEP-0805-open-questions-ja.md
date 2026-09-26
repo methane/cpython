@@ -60,6 +60,11 @@ API 名と `IllegalThreadAccessException` を C stderr に書いて abort しま
 Python の例外表示や `sys.stderr` は使いません。Main の正常系と、
 Python の stderr がなくても subprocess が SIGABRT で終了することを検証します。
 
+`PyErr_PrintEx()` の traceback 取得と、import 失敗時の traceback 連鎖・frame
+の走査にも同じ暫定処理を使います。`with` の `__exit__` 引数や通常の getter
+では、取得失敗を例外として返します。参照の格納や有無の確認だけの内部処理は、
+traceback 本体を取得しないようにします。
+
 暗黙の例外連鎖を調べる `PyErr_SetObject()` も、アクセス不能な context を
 見つけた場合は診断と abort を行います。ここで取得エラーを作ると、その
 例外の連鎖を調べて同じ経路に再帰するためです。通常の

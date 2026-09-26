@@ -578,8 +578,8 @@ _PyGen_SetException(PyObject *typ, PyObject *val, PyObject *tb)
             typ = Py_NewRef(PyExceptionInstance_Class(typ));
 
             if (tb == NULL)
-                /* Returns NULL if there's no traceback */
-                tb = PyException_GetTraceback(val);
+                /* Copy the heap reference for PyErr_Restore(). */
+                tb = Py_XNewRef(((PyBaseExceptionObject *)val)->traceback);
         }
     }
     else {

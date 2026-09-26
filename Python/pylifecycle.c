@@ -3437,9 +3437,8 @@ _Py_FatalError_PrintExc(PyThreadState *tstate)
 
     PyErr_DisplayException(exc);
 
-    PyObject *tb = PyException_GetTraceback(exc);
+    PyObject *tb = ((PyBaseExceptionObject *)exc)->traceback;
     int has_tb = (tb != NULL) && (tb != Py_None);
-    Py_XDECREF(tb);
     Py_DECREF(exc);
 
     /* sys.stderr may be buffered: call sys.stderr.flush() */
