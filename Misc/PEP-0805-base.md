@@ -623,6 +623,13 @@ Existing clone/pointer-copy paths still copy heap references without acquiring
 elements, and copied dictionary values do not need acquisition just for copying.
 Other C API/VM acquisition paths still need an audit.
 
+Function construction checks each acquired closure element before inspecting its
+cell type. `COPY_FREE_VARS` also checks cells before placing them in the frame:
+a C setter can copy an immutable closure tuple containing foreign LOCAL cells.
+Rejecting only the cell's contents would still permit nonlocal writes/deletion.
+Tests cover construction, reads, writes, deletion, nested capture, warmed calls,
+Main controls, and cleanup after the first local cell was already copied.
+
 Mark has resolved ownership of an individual object after its last owner thread
 exits: the decrefing group may atomically adopt it. Python `__del__` and weakref
 callbacks that cannot be accessed in the reclaiming group may be skipped.
@@ -664,6 +671,14 @@ Earlier validation predates the explicit class-sharability check in
 instance of a LOCAL class now share the class first, or test declaration
 failure. LOCAL method and LOCAL base acquisition tests remain relevant.
 
+- Native reclamation diagnostics and closure cells: debug and release each run
+  1,097 tests across 11 files without failures (six and nine skips). Main-only
+  controls pass, including empty stderr for native reclamation. Four in-process
+  closure/orphan tests pass `-R 3:3`; eight focused tests pass TSan without
+  suppressions. Before the closure fix, ten foreign acquisition cases fail.
+  The diagnostics leave native reclamation enabled while the owner is still
+  alive, and preserve pending exceptions without invoking Python logging.
+  Logs: `test-reclaim-closure-{debug,release,refleak,tsan}.log`.
 - Orphan cyclic reclamation: debug and release each pass 395 ownership, group,
   GC, weakref and finalization tests (five and eight skips). The new regression
   exercises eight combinations of merged/unmerged counts, an initially
@@ -675,8 +690,8 @@ failure. LOCAL method and LOCAL base acquisition tests remain relevant.
   normal mimalloc builds. No new Main-only failure appears in this selection.
   Logs: `test-orphan-gc-before.log`, `test-orphan-gc-debug.log`,
   `test-orphan-gc-release.log`, `test-orphan-gc-refleak.log`,
-  `test-orphan-gc-tsan.log`. Live-owner native reclamation remains unresolved;
-  it is separate from adoption after the last owner leaves.
+  `test-orphan-gc-tsan.log`. This validation predates the decision to log and
+  continue native reclamation while the owner is still alive.
 - Class sharability: debug and release each pass 515 tests across ownership,
   type C APIs, descriptors, weakrefs and GC (six and seven skips). The previous
   implementation fails both the instance/class and class/metaclass rejection

@@ -2485,6 +2485,8 @@ dummy_func(
             int offset = co->co_nlocalsplus - oparg;
             for (int i = 0; i < oparg; ++i) {
                 PyObject *o = PyTuple_GET_ITEM(closure, i);
+                PyObject *checked = PyObject_CheckAccess(o);
+                ERROR_IF(checked == NULL);
                 frame->localsplus[offset + i] = PyStackRef_FromPyObjectNew(o);
             }
         }

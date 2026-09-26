@@ -5968,6 +5968,13 @@
             int offset = co->co_nlocalsplus - oparg;
             for (int i = 0; i < oparg; ++i) {
                 PyObject *o = PyTuple_GET_ITEM(closure, i);
+                _PyFrame_SetStackPointer(frame, stack_pointer);
+                _PyFrame_StackPointerValidate(frame);
+                PyObject *checked = PyObject_CheckAccess(o);
+                _PyFrame_StackPointerInvalidate(frame);
+                if (checked == NULL) {
+                    JUMP_TO_LABEL(error);
+                }
                 frame->localsplus[offset + i] = PyStackRef_FromPyObjectNew(o);
             }
             DISPATCH();

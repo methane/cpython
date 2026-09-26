@@ -648,9 +648,6 @@ enum {
     _COPY_3_r23,
     _COPY_3_r33,
     _COPY_FREE_VARS_r00,
-    _COPY_FREE_VARS_r11,
-    _COPY_FREE_VARS_r22,
-    _COPY_FREE_VARS_r33,
     _CREATE_INIT_FRAME_r01,
     _DELETE_DEREF_r00,
     _DELETE_FAST_r00,
@@ -1431,7 +1428,7 @@ enum {
     _WITH_EXCEPT_START_r33,
     _YIELD_VALUE_r11,
 };
-#define MAX_UOP_REGS_ID 1644
+#define MAX_UOP_REGS_ID 1641
 
 #ifdef __cplusplus
 }

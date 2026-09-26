@@ -3504,6 +3504,91 @@ if cyclic:
             with self.subTest(warmups=warmups):
                 self.check_vm_code(probe.__code__, warmups)
 
+    def test_function_constructor_closure_acquisition(self):
+        from types import CellType, FunctionType
+
+        value = None
+
+        def target():
+            return value
+
+        def probe():
+            constructor, error, rejected, is_cell = source[2]
+            code, closure = source[1]
+            try:
+                constructor(code, {}, closure=closure)
+            except error:
+                assert rejected
+            except TypeError:
+                assert not rejected and not is_cell
+            else:
+                assert not rejected and is_cell
+            return True
+
+        for cell in (CellType(None), object()):
+            for group in (sys.main_thread_group, self.foreign):
+                with self.subTest(cell=isinstance(cell, CellType), group=group):
+                    self.assertTrue(internal.threadgroup_vm_probe(
+                        probe.__code__, group,
+                        (True, (target.__code__, (cell,)),
+                         (FunctionType, IllegalThreadAccessException,
+                          group is self.foreign, isinstance(cell, CellType))), 0))
+
+    def test_vm_closure_cell_acquisition(self):
+        from types import CellType
+        capi = import_helper.import_module('_testcapi')
+        bodies = {
+            'read': 'return value',
+            'write': 'nonlocal value\nvalue = 42',
+            'delete': 'nonlocal value\ndel value',
+            'capture': 'def inner():\n    return value\nreturn inner',
+        }
+        for operation, body in bodies.items():
+            namespace = {}
+            exec('def probe():\n'
+                 '    global entered\n'
+                 '    first = None\n'
+                 '    value = None\n'
+                 '    def target():\n'
+                 '        global entered\n'
+                 '        entered = True\n'
+                 '        assert first is None\n' + textwrap.indent(body, '        ') + '\n'
+                 '    for _ in (None,) * source[2][2]:\n'
+                 '        value = None\n'
+                 '        target()\n'
+                 '    entered = False\n'
+                 '    closure = target.__closure__[:1] + source[1]\n'
+                 '    bound_builtin(target, closure)\n'
+                 '    try:\n'
+                 '        target()\n'
+                 '    except source[2][0]:\n'
+                 '        assert source[2][1]\n'
+                 '    else:\n'
+                 '        assert not source[2][1]\n'
+                 '    assert entered is (not source[2][1])\n'
+                 '    return True\n', namespace)
+            for group in (sys.main_thread_group, self.foreign):
+                for warmups in (0, 64):
+                    with self.subTest(operation=operation, group=group,
+                                      warmups=warmups):
+                        cell = CellType(None)
+                        # The C setter copies a safe tuple without acquiring
+                        # its cell. COPY_FREE_VARS must reject that cell before
+                        # any Python body runs, including nonlocal writes.
+                        # The first, local cell also exercises partial cleanup.
+                        self.assertTrue(internal.threadgroup_vm_probe(
+                            namespace['probe'].__code__, group,
+                            (True, (cell,), (IllegalThreadAccessException,
+                             group is self.foreign, warmups)),
+                            0, 1, False, capi.function_set_closure))
+                        if group is sys.main_thread_group and operation == 'delete':
+                            with self.assertRaises(ValueError):
+                                cell.cell_contents
+                        else:
+                            expected = (42 if group is sys.main_thread_group and
+                                        operation == 'write' else None)
+                            self.assertIs(cell.cell_contents, expected)
+
     def test_vm_default_arguments(self):
         def positional(value=None, b=None, c=None):
             return value is None

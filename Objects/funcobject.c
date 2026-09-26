@@ -1175,6 +1175,9 @@ func_new_impl(PyTypeObject *type, PyCodeObject *code, PyObject *globals,
         Py_ssize_t i;
         for (i = 0; i < nclosure; i++) {
             PyObject *o = PyTuple_GET_ITEM(closure, i);
+            if (PyObject_CheckAccess(o) == NULL) {
+                return NULL;
+            }
             if (!PyCell_Check(o)) {
                 return PyErr_Format(PyExc_TypeError,
                     "arg 5 (closure) expected cell, found %s",
