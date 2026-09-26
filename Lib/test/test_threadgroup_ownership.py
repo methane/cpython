@@ -377,6 +377,59 @@ assert 'threading' not in sys.modules
                 threading.ThreadGroup('first contender'),
                 threading.ThreadGroup('second contender'))
 
+    def test_foreign_finalization_callbacks(self):
+        source = '''
+del_events = []
+weak_events = []
+def finalize(self):
+    del_events.append(None)
+def callback(ref):
+    weak_events.append(ref() is None)
+namespace = {'__del__': finalize}
+value = type('Finalized', (), namespace)()
+if cyclic:
+    value.cycle = value
+'''
+        configurations = ((False, False), (True, False), (False, True))
+        for shared_callback, shared_class in configurations:
+            for foreign in (False, True):
+                for cyclic in (False, True):
+                    for keep_owner in (False, True):
+                        with self.subTest(foreign=foreign, cyclic=cyclic,
+                                          keep_owner=keep_owner,
+                                          shared_callback=shared_callback,
+                                          shared_class=shared_class):
+                            _, _, err = script_helper.assert_python_ok(
+                                '-c', textwrap.dedent(f'''
+                                    import _testinternalcapi as internal
+                                    import sys
+                                    import threading
+
+                                    errors = []
+                                    sys.unraisablehook = lambda info: errors.append(info)
+                                    group = (threading.ThreadGroup('finalization owner')
+                                             if {foreign} else sys.main_thread_group)
+                                    code = compile({source!r}, '<finalization probe>', 'exec')
+                                    class Stderr:
+                                        def write(self, text):
+                                            raise AssertionError('logging ran Python')
+                                    stderr = sys.stderr
+                                    sys.stderr = Stderr()
+                                    try:
+                                        result = internal.threadgroup_finalization_probe(
+                                            code, group, {cyclic}, {keep_owner},
+                                            {shared_callback}, {shared_class})
+                                    finally:
+                                        sys.stderr = stderr
+                                    assert result == {(0, 0, 1) if foreign else (1, 1, 1)}, result
+                                    assert not errors, errors
+                                '''))
+                            if foreign:
+                                self.assertEqual(err.count(b'skipping __del__:'), 1, err)
+                                self.assertEqual(err.count(b'skipping weakref callback:'), 1, err)
+                            else:
+                                self.assertEqual(err, b'')
+
     def test_static_type_with_zero_initialized_header(self):
         capi = import_helper.import_module('_testcapi')
         typ = capi.RecursingInfinitelyError

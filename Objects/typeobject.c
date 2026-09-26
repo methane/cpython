@@ -11272,6 +11272,14 @@ slot_tp_finalize(PyObject *self)
     _PyCStackRef cref;
     _PyThreadState_PushCStackRef(tstate, &cref);
 
+    // Finalization may run in a different ThreadGroup after the owner exits,
+    // or when GC collects an unreachable object. It does not grant access to
+    // the object's LOCAL class, __del__ function or other dependencies.
+    if (!PyObject_IsAccessible(self) ||
+        !PyObject_IsAccessible((PyObject *)Py_TYPE(self))) {
+        goto inaccessible;
+    }
+
     /* Execute __del__ method, if any. */
     int unbound = lookup_maybe_method(self, &_Py_ID(__del__), &cref.ref);
     if (unbound >= 0) {
@@ -11285,7 +11293,17 @@ slot_tp_finalize(PyObject *self)
             Py_DECREF(res);
         }
     }
+    else if (_PyErr_ExceptionMatches(tstate, PyExc_IllegalThreadAccessException)) {
+        goto inaccessible;
+    }
+    goto done;
 
+inaccessible:
+    // Logging must not execute Python or inspect an inaccessible object.
+    fputs("PEP 805: skipping __del__: inaccessible object "
+          "in current ThreadGroup\n", stderr);
+
+done:
     _PyThreadState_PopCStackRef(tstate, &cref);
 
     /* Restore the saved exception. */

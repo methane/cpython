@@ -2042,6 +2042,158 @@ struct adoption_probe {
     int adopted;
 };
 
+static PyObject *
+record_finalization_callback(PyObject *capsule, PyObject *ref)
+{
+    int *calls = PyCapsule_GetPointer(capsule, "finalization callback counter");
+    if (calls == NULL) {
+        return NULL;
+    }
+    (*calls)++;
+    Py_RETURN_NONE;
+}
+
+static PyMethodDef finalization_callback_def = {
+    "record_callback", record_finalization_callback, METH_O, NULL
+};
+
+static PyObject *
+threadgroup_finalization_probe(PyObject *self, PyObject *args)
+{
+    PyObject *code, *wrapper;
+    int cyclic, keep_owner;
+    int shared_callback = 0, shared_class = 0;
+    if (!PyArg_ParseTuple(args, "O!Opp|pp:threadgroup_finalization_probe",
+                          &PyCode_Type, &code, &wrapper, &cyclic, &keep_owner,
+                          &shared_callback, &shared_class)) {
+        return NULL;
+    }
+    _PyThreadGroupState *group = _PyThreadGroup_GetState(wrapper);
+    if (group == NULL) {
+        return NULL;
+    }
+    PyThreadState *current = PyThreadState_Get();
+    PyThreadState *owner = PyThreadState_New(current->interp);
+    if (owner == NULL) {
+        _PyThreadGroup_Decref(group);
+        return PyErr_NoMemory();
+    }
+    _PyThreadGroup_SetThreadState(owner, group);
+    _PyThreadGroup_Decref(group);
+    PyThreadState_Swap(owner);
+    PyObject *ns = PyDict_New();
+    PyObject *builtins = PyDict_New();
+    PyObject *tuple = NULL, *ref = NULL, *del_events = NULL, *weak_events = NULL;
+    PyObject *result = NULL;
+    int native_calls = 0;
+    int ok = 0;
+    if (ns != NULL && builtins != NULL &&
+        PyDict_SetItemString(ns, "__builtins__", builtins) == 0 &&
+        PyDict_SetItemString(ns, "type", (PyObject *)&PyType_Type) == 0 &&
+        PyDict_SetItemString(ns, "cyclic", cyclic ? Py_True : Py_False) == 0) {
+        result = PyEval_EvalCode(code, ns, ns);
+    }
+    if (result != NULL) {
+        PyObject *value = PyDict_GetItemString(ns, "value");
+        PyObject *callback = PyDict_GetItemString(ns, "callback");
+        del_events = Py_XNewRef(PyDict_GetItemString(ns, "del_events"));
+        weak_events = Py_XNewRef(PyDict_GetItemString(ns, "weak_events"));
+        if (value != NULL && callback != NULL &&
+            del_events != NULL && PyList_CheckExact(del_events) &&
+            weak_events != NULL && PyList_CheckExact(weak_events)) {
+            tuple = PyTuple_Pack(1, value);
+            if (shared_class &&
+                (PyType_Freeze(Py_TYPE(value)) < 0 ||
+                 PyObject_DeclareImmutable((PyObject *)Py_TYPE(value)) < 0)) {
+                Py_CLEAR(tuple);
+            }
+            PyObject *native = NULL;
+            if (shared_callback) {
+                PyObject *counter = PyCapsule_New(&native_calls,
+                    "finalization callback counter", NULL);
+                if (counter != NULL) {
+                    if (PyObject_DeclareImmutable(counter) == 0) {
+                        native = PyCFunction_New(&finalization_callback_def, counter);
+                        if (native != NULL && PyObject_DeclareImmutable(native) < 0) {
+                            Py_CLEAR(native);
+                        }
+                    }
+                    Py_DECREF(counter);
+                }
+                callback = native;
+            }
+            if (tuple != NULL && callback != NULL) {
+                ref = PyWeakref_NewRef(value, callback);
+            }
+            Py_XDECREF(native);
+            // Exercise a foreign merged decref even with a detached owner.
+            // Only the instance escapes, inside an immutable tuple.
+            if (tuple != NULL && ref != NULL &&
+                PyDict_DelItemString(ns, "value") == 0) {
+                _Py_ExplicitMergeRefcount(value, 0);
+                _Py_ExplicitMergeRefcount(tuple, 0);
+                ok = 1;
+            }
+        }
+    }
+    Py_XDECREF(result);
+    Py_XDECREF(builtins);
+    // Do not propagate a foreign LOCAL exception back into Main.
+    if (PyErr_Occurred()) {
+        ok = 0;
+        PyErr_Clear();
+    }
+    if (!keep_owner) {
+        PyThreadState_Clear(owner);
+    }
+    PyThreadState_Swap(current);
+    if (!keep_owner) {
+        PyThreadState_Delete(owner);
+        owner = NULL;
+    }
+
+    // Reclamation must preserve an exception already being propagated.
+    PyErr_SetString(PyExc_ValueError, "exception during finalization probe");
+    PyObject *saved = PyErr_GetRaisedException();
+    PyErr_SetRaisedException(Py_NewRef(saved));
+    Py_XDECREF(tuple);
+    if (cyclic) {
+        PyGC_Collect();
+    }
+    PyObject *after = PyErr_GetRaisedException();
+    ok &= after == saved;
+    Py_XDECREF(after);
+    Py_DECREF(saved);
+
+    result = NULL;
+    if (ok) {
+        // Read only native counters: the owner is gone or detached on this
+        // same OS thread. Do not acquire its LOCAL Python results in Main.
+        result = Py_BuildValue("nni", PyList_GET_SIZE(del_events),
+                               shared_callback ? (Py_ssize_t)native_calls :
+                                                 PyList_GET_SIZE(weak_events),
+                               ((PyWeakReference *)ref)->wr_object == Py_None);
+    }
+    if (owner != NULL) {
+        PyThreadState_Swap(owner);
+    }
+    Py_XDECREF(ref);
+    Py_XDECREF(del_events);
+    Py_XDECREF(weak_events);
+    Py_XDECREF(ns);
+    if (owner != NULL) {
+        PyThreadState_Clear(owner);
+        PyThreadState_Swap(current);
+        PyThreadState_Delete(owner);
+    }
+    if (!ok) {
+        Py_XDECREF(result);
+        PyErr_SetString(PyExc_AssertionError, "finalization probe failed");
+        return NULL;
+    }
+    return result;
+}
+
 static void
 adoption_probe_worker(void *arg)
 {
@@ -5548,6 +5700,8 @@ static PyMethodDef methods[] = {
     {"threadgroup_orphan_decref_probe", threadgroup_orphan_decref_probe,
      METH_VARARGS, NULL},
     {"threadgroup_adoption_race", threadgroup_adoption_race, METH_VARARGS, NULL},
+    {"threadgroup_finalization_probe", threadgroup_finalization_probe,
+     METH_VARARGS, NULL},
     {"threadgroup_unicode_cache_probe", threadgroup_unicode_cache_probe,
      METH_VARARGS, NULL},
     {"threadgroup_qsbr_probe", threadgroup_qsbr_probe, METH_VARARGS, NULL},

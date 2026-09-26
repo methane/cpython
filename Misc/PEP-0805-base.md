@@ -7,7 +7,12 @@ from `experimental/pep-805` at `9a4de37db8`. Its CPython base is
 
 The specification is [PEP 805](https://peps.python.org/pep-0805/) and its
 [implementation appendix](https://peps.python.org/pep-0805/appendix-implementation/).
-The five-stage implementation is **not complete**.
+The five-stage implementation is **not complete**. The scope below retains the
+five named stages originally requested. The public appendix, as read on
+2026-09-26, now orders ABI change, development-only ThreadGroups, parallel
+allocation/GC, reference counting and simple ownership first, with the public
+ThreadGroups API following them. That reordered list does not remove the
+ThreadGroups API already requested for this branch.
 
 | Stage | Current implementation | Remaining work |
 | --- | --- | --- |
@@ -15,7 +20,7 @@ The five-stage implementation is **not complete**.
 | One-time ABI change | Compact owner/state and group-biased RC header; no cleanup queue fields | Complete the allocation/GC port and audit native layouts |
 | Biased and deferred reference counting | Group bias, per-thread code counts, deferred stack roots and normal GC integration | Queue collection and reclamation with concurrent groups |
 | LOCAL and IMMUTABLE ownership | Builtin/static metadata, public `__shareable__` state, common C API returns, VM heap loads, attributes and call expansion | Remaining API/VM acquisitions and migration of static extension types |
-| Parallel allocation and cyclic GC | Per-thread heaps/freelists and bytecode, QSBR, paused snapshots, owned worklists and concurrent allocation/collection in the normal default path | Owner-correct finalization, cross-interpreter legacy objects and teardown |
+| Parallel allocation and cyclic GC | Per-thread heaps/freelists and bytecode, QSBR, paused snapshots, owned worklists and concurrent allocation/collection in the normal default path | Native extension destruction, cross-interpreter legacy objects and teardown |
 
 Freezing, protective/compound locks, synchronized objects and functions,
 TransferBox, Channel, the debugger StopTheWorld API, and performance work are
@@ -108,8 +113,8 @@ Static runtime initialization and preconfiguration choose the same defaults,
 including debug hooks. Isolated native workers exercise default, explicit
 mimalloc, pymalloc and system malloc allocation and reallocation concurrently
 with cyclic collection in two groups. Their
-immutable cycles have no Python finalizers or mutating API, so this does not
-decide the pending LOCAL finalization design.
+immutable cycles have no Python finalizers or mutating API. Separate tests
+below cover the decision to skip inaccessible Python finalization callbacks.
 
 Audit hooks and interpreter views that span initialization use the non-swappable
 raw allocator. Its debug backend is also independent of runtime allocator
@@ -136,8 +141,9 @@ adopting its objects use the same BRC mutex. Counts are merged before publishing
 the new owner ID, and remain merged afterwards. The object header is unchanged.
 This covers both queued decrefs and zero merged counts when destroying a tuple
 with LOCAL children. It also lets GC drain departed groups' LOCAL queue entries.
-It does not transfer the LOCAL class, function or globals needed by a Python
-finalizer, or resolve finalization while the owner still has threads.
+It does not transfer a Python finalizer's LOCAL class, function or globals.
+Following Mark's subsequent clarification, inaccessible Python finalizers and
+weakref callbacks are skipped with a diagnostic on C stderr.
 
 QSBR registration and quiescence are active in the normal build. Retired internal
 buffers remain allocated until attached readers have passed a safepoint or
@@ -258,8 +264,8 @@ The isolated native VM probe shares only immutable code and creates each
 worker's function, globals, builtins and native callables in its own group.
 It exercises namespace and attribute caches, class/method changes, containers,
 generators, exceptions and GC while recording 32,000 distinct dictionary-key
-versions. It neither introduces synchronized functions nor settles the pending
-execution context for LOCAL finalizers.
+versions. Synchronized functions remain outside this branch's scope; separate
+finalization probes exercise skipping inaccessible Python callbacks.
 
 Immutable strings publish their lazy UTF-8 cache with an atomic compare/exchange.
 Competing encoders preserve the first buffer, whose address may already be held
@@ -606,12 +612,16 @@ elements, and copied dictionary values do not need acquisition just for copying.
 Other C API/VM acquisition paths still need an audit.
 
 Mark has resolved ownership of an individual object after its last owner thread
-exits: the decrefing group may atomically adopt it. The implementation now does
-so, without a cleanup thread or changing the current thread's group. Python
-finalizers still require a decision about their LOCAL dependencies: moving only
-the instance leaves its `__del__` inaccessible, while moving a shared class and
-function to one group would prevent another group from acquiring them later.
-The Japanese questions include a reproducer and this remaining case.
+exits: the decrefing group may atomically adopt it. Python `__del__` and weakref
+callbacks that cannot be accessed in the reclaiming group may be skipped.
+`slot_tp_finalize` checks the object and class before method lookup and logs
+inaccessible method acquisition. Both collectors and refcount destruction use
+the same weakref callback acquisition helper, which checks the callback and the
+weakref argument. Diagnostics are fixed strings on C stderr; they execute no
+Python logging or object representation. Ordinary accessible callbacks retain
+their existing error reporting, and pending exceptions survive reclamation.
+No cleanup thread, group switching or implicit transfer of callback dependencies
+is needed. Native extension destructors/clearing and lifetime still need audit.
 
 ## Extraction provenance
 
@@ -635,6 +645,19 @@ The default-path parallel scheduling test requires group-only serialization
 from startup and does not skip. The extension-import test also runs in the normal
 build, checking that imports leave this scheduling state unchanged.
 
+- Inaccessible Python finalization callbacks: debug and release each pass
+  346 tests across ownership, GC, weakrefs and finalization (five and six skips).
+  The regression covers 24 combinations of Main/foreign group, refcount/GC,
+  departed/detached owner, shared callback and shared class. It checks skipped
+  calls, C stderr diagnostics, pending exceptions and absence of Python logging
+  or unraisable hooks. An in-process run of all 24 combinations passes `-R 3:3`.
+  Six focused finalization, adoption and parallel-GC tests pass TSan without
+  suppressions using normal debug/pymalloc (`--without-mimalloc`). Normal debug
+  and release use mimalloc; none of these builds enables `--disable-gil`.
+  No new Main-only failure appears in this selection. Logs:
+  `test-skip-finalizers-debug-final.log`, `test-skip-finalizers-focused-final.log`,
+  `test-skip-finalizers-release-final.log`, `test-skip-finalizers-refleak-final.log`
+  and `test-skip-finalizers-tsan.log`.
 - Orphan ownership adoption: debug passes 758 tests across ownership, groups,
   GC, weakrefs, threading, fork, memory C APIs and embedding (15 skips).
   Rebuilding group membership after fork then passes 50 group/fork tests.
@@ -644,8 +667,9 @@ build, checking that imports leave this scheduling state unchanged.
   Eight focused cases pass TSan without suppressions. Four adoption and existing
   VM/sequence tests pass `-R 3:3`; the 30-group weakref reproducer now retains
   zero references. No new Main-only failure appears in this selection.
-  A separate diagnostic still observes zero Python `__del__` calls because
-  its function remains foreign LOCAL; this is recorded in the Japanese questions.
+  At that point a separate diagnostic observed zero Python `__del__` calls
+  because its function remained foreign LOCAL. Mark has since confirmed that
+  inaccessible Python callbacks may be skipped, with a stderr diagnostic.
   Logs: `test-orphan-debug.log`, `test-orphan-release.log`, `test-orphan-fork-final.log`,
   `tsan-orphan-final.log`, `test-orphan-refleak.log`, `orphan-leak-final.log`
   and `orphan-finalizer-evidence.log`.
@@ -910,8 +934,9 @@ build, checking that imports leave this scheduling state unchanged.
   Its Main-only control is stable. Atomic adoption now fixes this queue leak;
   `orphan-leak-final.log` records zero retained references for the foreign-group
   reproducer, and `test-orphan-refleak.log` passes the existing VM/sequence cases
-  and the new adoption tests with `-R 3:3`. This does not resolve Python finalizer
-  dependencies. Existing `test_slice` alone passes `-R 3:3`. Earlier failure logs:
+  and the new adoption tests with `-R 3:3`. The subsequent callback policy
+  skips inaccessible finalizers instead of moving their dependencies. Existing
+  `test_slice` alone passes `-R 3:3`. Earlier failure logs:
   `test-slice-refleak.log`, `test-default-startup-ownership-refleak.log`,
   `departed-weakref-probe.log` and `test-slice-main-refleak.log`.
 - The full ThreadGroup file at `df77299a32` passes TSan from normal startup:

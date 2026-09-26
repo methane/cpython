@@ -1623,8 +1623,7 @@ call_weakref_callbacks(struct collection_state *state)
         PyObject *callback = wr->wr_callback;
         _PyObject_ASSERT(op, callback != NULL);
 
-        /* copy-paste of weakrefobject.c's handle_callback() */
-        PyObject *temp = PyObject_CallOneArg(callback, (PyObject *)wr);
+        PyObject *temp = _PyWeakref_CallCallback(wr, callback);
         if (temp == NULL) {
             PyErr_FormatUnraisable("Exception ignored while "
                                    "calling weakref callback %R", callback);

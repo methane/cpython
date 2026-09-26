@@ -121,6 +121,10 @@ static inline int _PyWeakref_IS_DEAD(PyObject *ref_obj)
 
 extern Py_ssize_t _PyWeakref_GetWeakrefCount(PyObject *obj);
 
+// The callback and weakref come from the heap and must be accessible before
+// they can be passed to Python. Log and return None for a skipped callback.
+extern PyObject *_PyWeakref_CallCallback(PyWeakReference *ref, PyObject *callback);
+
 // Clear all the weak references to obj but leave their callbacks uncalled and
 // intact.
 extern void _PyWeakref_ClearWeakRefsNoCallbacks(PyObject *obj);

@@ -990,13 +990,24 @@ PyWeakref_GetObject(PyObject *ref)
     return result;  // borrowed reference
 }
 
-/* Note that there's an inlined copy-paste of handle_callback() in gcmodule.c's
- * handle_weakrefs().
- */
+PyObject *
+_PyWeakref_CallCallback(PyWeakReference *ref, PyObject *callback)
+{
+    if (!PyObject_IsAccessible(callback) ||
+        !PyObject_IsAccessible((PyObject *)ref)) {
+        // Do not invoke repr(), sys.stderr or an unraisable hook on foreign
+        // LOCAL objects while reclaiming them in another ThreadGroup.
+        fputs("PEP 805: skipping weakref callback: inaccessible object "
+              "in current ThreadGroup\n", stderr);
+        Py_RETURN_NONE;
+    }
+    return PyObject_CallOneArg(callback, (PyObject *)ref);
+}
+
 static void
 handle_callback(PyWeakReference *ref, PyObject *callback)
 {
-    PyObject *cbresult = PyObject_CallOneArg(callback, (PyObject *)ref);
+    PyObject *cbresult = _PyWeakref_CallCallback(ref, callback);
 
     if (cbresult == NULL) {
         PyErr_FormatUnraisable("Exception ignored while "
