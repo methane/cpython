@@ -422,7 +422,7 @@ PyFunction_GetGlobals(PyObject *op)
         PyErr_BadInternalCall();
         return NULL;
     }
-    return ((PyFunctionObject *) op) -> func_globals;
+    return PyObject_CheckAccess(((PyFunctionObject *) op) -> func_globals);
 }
 
 PyObject *
@@ -442,7 +442,7 @@ PyFunction_GetDefaults(PyObject *op)
         PyErr_BadInternalCall();
         return NULL;
     }
-    return ((PyFunctionObject *) op) -> func_defaults;
+    return PyObject_CheckAccess(((PyFunctionObject *) op) -> func_defaults);
 }
 
 int
@@ -491,7 +491,7 @@ PyFunction_GetKwDefaults(PyObject *op)
         PyErr_BadInternalCall();
         return NULL;
     }
-    return ((PyFunctionObject *) op) -> func_kwdefaults;
+    return PyObject_CheckAccess(((PyFunctionObject *) op) -> func_kwdefaults);
 }
 
 int
@@ -530,7 +530,7 @@ PyFunction_GetClosure(PyObject *op)
         PyErr_BadInternalCall();
         return NULL;
     }
-    return ((PyFunctionObject *) op) -> func_closure;
+    return PyObject_CheckAccess(((PyFunctionObject *) op) -> func_closure);
 }
 
 int
@@ -566,6 +566,10 @@ static PyObject *
 func_get_annotation_dict(PyFunctionObject *op)
 {
     if (op->func_annotations == NULL) {
+        if (op->func_annotate != NULL &&
+            PyObject_CheckAccess(op->func_annotate) == NULL) {
+            return NULL;
+        }
         if (op->func_annotate == NULL || !PyCallable_Check(op->func_annotate)) {
             Py_RETURN_NONE;
         }
@@ -584,6 +588,9 @@ func_get_annotation_dict(PyFunctionObject *op)
         Py_XSETREF(op->func_annotations, ann_dict);
         return ann_dict;
     }
+    if (PyObject_CheckAccess(op->func_annotations) == NULL) {
+        return NULL;
+    }
     if (PyTuple_CheckExact(op->func_annotations)) {
         PyObject *ann_tuple = op->func_annotations;
         PyObject *ann_dict = PyDict_New();
@@ -594,11 +601,9 @@ func_get_annotation_dict(PyFunctionObject *op)
         assert(PyTuple_GET_SIZE(ann_tuple) % 2 == 0);
 
         for (Py_ssize_t i = 0; i < PyTuple_GET_SIZE(ann_tuple); i += 2) {
-            int err = PyDict_SetItem(ann_dict,
-                                     PyTuple_GET_ITEM(ann_tuple, i),
-                                     PyTuple_GET_ITEM(ann_tuple, i + 1));
-
-            if (err < 0) {
+            PyObject *key = PyTuple_GetItem(ann_tuple, i);
+            if (key == NULL || PyDict_SetItem(
+                    ann_dict, key, PyTuple_GET_ITEM(ann_tuple, i + 1)) < 0) {
                 Py_DECREF(ann_dict);
                 return NULL;
             }
@@ -994,14 +999,11 @@ static PyObject *
 function___annotations___get_impl(PyFunctionObject *self)
 /*[clinic end generated code: output=a4cf4c884c934cbb input=92643d7186c1ad0c]*/
 {
-    PyObject *d = NULL;
-    if (self->func_annotations == NULL &&
-        (self->func_annotate == NULL || !PyCallable_Check(self->func_annotate))) {
-        self->func_annotations = PyDict_New();
-        if (self->func_annotations == NULL)
-            return NULL;
+    PyObject *d = func_get_annotation_dict(self);
+    if (d == Py_None) {
+        assert(self->func_annotations == NULL);
+        d = self->func_annotations = PyDict_New();
     }
-    d = func_get_annotation_dict(self);
     return Py_XNewRef(d);
 }
 

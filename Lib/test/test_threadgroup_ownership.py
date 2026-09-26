@@ -807,7 +807,7 @@ if cyclic:
                             probe.__code__, group,
                             (True, carrier, (constructor,
                              IllegalThreadAccessException, bool(rejected))),
-                            0, 1, False, internal.function_module_probe))
+                            0, 1, False, internal.function_reference_probe))
 
     def test_function_module_consumers(self):
         import _typing
@@ -830,9 +830,78 @@ if cyclic:
                 with self.subTest(foreign=carrier is foreign, callback=callback):
                     if carrier is foreign:
                         with self.assertRaises(IllegalThreadAccessException):
-                            internal.function_module_probe(carrier, callback)
+                            internal.function_reference_probe(carrier, callback)
                     else:
-                        internal.function_module_probe(carrier, callback)
+                        internal.function_reference_probe(carrier, callback)
+
+    def test_function_reference_acquisition(self):
+        class LocalTuple(tuple):
+            pass
+
+        def probe():
+            field, error, rejected, attribute = source[2]
+            def callback():
+                return callback.__annotations__
+            try:
+                bound_builtin(source[1], callback if attribute else None, field)
+            except error:
+                assert rejected
+            else:
+                assert not rejected
+            return True
+
+        fields = {
+            'globals': ({},),
+            'defaults': ((), LocalTuple()),
+            'kwdefaults': ({},),
+            'closure': ((), LocalTuple()),
+            'annotations': ({},),
+            'annotate': (lambda format: {},),
+        }
+        for field, values in fields.items():
+            for value in values:
+                attributes = (False, True) if field in ('annotations', 'annotate') else (False,)
+                for attribute in attributes:
+                    for group in (sys.main_thread_group, self.foreign):
+                        rejected = not internal.threadgroup_access_probe(group, value)
+                        with self.subTest(field=field, type=type(value), group=group,
+                                          attribute=attribute):
+                            self.assertTrue(internal.threadgroup_vm_probe(
+                                probe.__code__, group,
+                                (True, (value,), (field, IllegalThreadAccessException,
+                                 rejected, attribute)), 0, 1, False,
+                                internal.function_reference_probe))
+
+    def test_function_annotation_tuple_acquisition(self):
+        def probe():
+            field, error, rejected, attribute = source[2]
+            def callback():
+                return callback.__annotations__
+            try:
+                bound_builtin(source[1], callback if attribute else None, field)
+            except error:
+                assert rejected
+            else:
+                assert not rejected
+            return True
+
+        for key in (False, True):
+            for immutable in (False, True):
+                for attribute in (False, True):
+                    for group in (sys.main_thread_group, self.foreign):
+                        value = internal.make_container_element(immutable)
+                        pair = (value, None) if key else ('annotation', value)
+                        annotations = ('first', 0) + pair
+                        rejected = key and not immutable and group is self.foreign
+                        with self.subTest(key=key, immutable=immutable, group=group,
+                                          attribute=attribute):
+                            self.assertTrue(internal.threadgroup_vm_probe(
+                                probe.__code__, group,
+                                (True, (annotations,), ('annotations',
+                                 IllegalThreadAccessException, rejected, attribute)),
+                                0, 1, False, internal.function_reference_probe))
+                            self.assertEqual(internal.container_element_calls(value),
+                                             int(key and not rejected))
 
     def test_type_reference_returns(self):
         def get_class():

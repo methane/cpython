@@ -647,6 +647,12 @@ sentinel construction, type parameter construction and type alias module lookup
 propagate acquisition errors. Native fixtures copy an opaque heap reference into
 a local function and inspect the C result before VM checks, or invoke its
 consumers. Missing metadata, `None` and non-string accessible values still work.
+The globals, defaults, keyword defaults and closure C getters validate their
+borrowed references too, including LOCAL tuple subclasses. Both annotation
+getters validate the stored mapping and annotation callable before inspecting
+them. Conversion of the internal annotation tuple checks keys before hashing;
+values remain opaque heap copies. Native tests distinguish returned-reference
+validation from the VM's own checks and count accesses to annotation keys.
 
 Exception group construction checks acquired tuple elements before inspecting
 their exception types, and checks the implicit `ExceptionGroup` class selected
@@ -710,6 +716,14 @@ Earlier validation predates the explicit class-sharability check in
 instance of a LOCAL class now share the class first, or test declaration
 failure. LOCAL method and LOCAL base acquisition tests remain relevant.
 
+- Function metadata and annotation acquisition: debug and release each run
+  1,286 ownership, function, annotation, typing and scope tests without failures
+  (one release skip). The initial regressions reproduce seven foreign LOCAL
+  failures before the fix. Four focused tests pass `-R 3:3` and TSan without
+  suppressions, including module consumers after the native fixture was
+  generalized. Annotation tests cover both C API and attribute reads, cleanup
+  after a partial tuple conversion, and opaque copying of LOCAL values.
+  Logs: `test-function-reference-{before,debug,release,refleak,tsan}.log`.
 - Function module acquisition: debug and release each run 1,335 ownership,
   function API, builtin, sys, type parameter, type alias and typing tests with
   only the known Main-only `test_is_gil_enabled` failure (15 and 16 skips).
