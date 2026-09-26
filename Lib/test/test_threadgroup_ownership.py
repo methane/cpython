@@ -1919,6 +1919,38 @@ if cyclic:
                                 self.assertEqual(internal.container_element_calls(value),
                                                  int(accessible))
 
+    def test_except_matcher_acquisition(self):
+        class LocalError(BaseException):
+            pass
+
+        for clause in ('except', 'except*'):
+            namespace = {}
+            exec(f'''def probe():
+    constructor, error = source[2]
+    try:
+        try:
+            raise constructor()
+        {clause} source[1]:
+            pass
+    except error:
+        pass
+    else:
+        assert error is None
+    return True
+''', namespace)
+            for value in (LocalError, BaseException, object(), 42):
+                for group in (sys.main_thread_group, self.foreign):
+                    error = None if isinstance(value, type) else TypeError
+                    if (group is self.foreign and
+                        value is not BaseException and type(value) is not int):
+                        error = IllegalThreadAccessException
+                    with self.subTest(clause=clause, value=value, group=group):
+                        # Validate later tuple members even if the first matches.
+                        self.assertTrue(internal.threadgroup_vm_probe(
+                            namespace['probe'].__code__, group,
+                            (True, (BaseException, value),
+                             (BaseException, error)), 0))
+
     def test_exception_group_element_acquisition(self):
         def probe():
             constructor, error = source[2]

@@ -646,6 +646,10 @@ their exception types, and checks the implicit `ExceptionGroup` class selected
 for ordinary exceptions. That mutable heap type belongs to Main; constructing
 an otherwise local group does not grant access to it. `split()` and `subgroup()`
 also validate all acquired matcher tuple members before testing their types.
+The VM's shared validation for `except` and `except*` checks tuple members too,
+including later members when an earlier class would match. These paths already
+have an error return; the public boolean `PyErr_GivenExceptionMatches()` API's
+failure contract remains a separate design question.
 
 Debug tier-one dispatch validates all live evaluation-stack references after an
 instruction's acquisition checks, including tracing redispatch, inlined calls
@@ -699,6 +703,11 @@ Earlier validation predates the explicit class-sharability check in
 instance of a LOCAL class now share the class first, or test declaration
 failure. LOCAL method and LOCAL base acquisition tests remain relevant.
 
+- VM exception matcher acquisitions: debug and release each run 399 ownership,
+  exception group, `except*` and exception API tests without failures (three
+  and four skips). The new regression reproduces four foreign LOCAL failures
+  before the fix, and passes `-R 3:3` and TSan without suppressions afterwards.
+  Logs: `test-except-acquisition-{before,debug,release,refleak,tsan}.log`.
 - Exception group acquisitions: debug and release each run 398 ownership,
   exception group, `except*` and exception API tests without failures (three
   and four skips). Before the fix, 12 foreign LOCAL cases fail while Main

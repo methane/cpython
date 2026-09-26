@@ -79,6 +79,16 @@ tuple は shallow immutable なので、要素が他の ThreadGroup の LOCAL �
 定める必要があります。runtime の marshal 内部では、この契約変更と
 独立して、取り出した参照を使用する前に検査しています。
 
+`PyErr_GivenExceptionMatches(given, exc)` も確認対象です。`exc` がアクセス
+可能な tuple でも、再帰的に読む要素が別グループの LOCAL な例外クラスで
+ある場合があります。この API の公開契約は一致するかどうかの真偽値で、
+失敗を表す戻り値が定義されていません。単に -1 を返すと、既存の
+`if (PyErr_GivenExceptionMatches(...))` は一致と解釈します。0 と例外を
+返す案でも、不一致との区別や、処理中の既存の例外をどう扱うかが必要です。
+この種の API には新しい失敗契約を設けるのか、呼び出し側に tuple 要素の
+事前検査を要求するのかを確認したいです。
+[既存の C API 契約](https://docs.python.org/3/c-api/exceptions.html#c.PyErr_GivenExceptionMatches)
+
 既に取得済みの引数すべてを再検査する方針にはしていません。関数版の
 getter、VM のヒープロード、`*args` / `**kwargs` の展開など、明確に
 新しいスレッド参照を作る箇所の修正は、この確認と独立して進めています。
