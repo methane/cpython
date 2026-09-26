@@ -382,11 +382,15 @@ not_found:
         goto found;
     }
     else {
-        *val = def;
-        goto found;
+        // The explicit default is already an acquired argument.
+        *val = Py_NewRef(def);
+        return 0;
    }
 
 found:
+    if (*val != NULL && PyObject_CheckAccess(*val) == NULL) {
+        goto error;
+    }
     Py_XINCREF(*val);
     return 0;
 

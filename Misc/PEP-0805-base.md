@@ -635,6 +635,12 @@ a local cell; `PyFrame_GetVarString()` uses the same check. The native regressio
 examines the result before a VM return check can mask an unchecked C API result.
 The frame, closure cell and getter callable all belong to the executing worker.
 
+`PyContextVar_Get()` checks values acquired from the variable's default, its
+cache and the current context's HAMT. Denied access returns -1 with a NULL output
+pointer. An absent value still succeeds with NULL; an explicitly supplied
+fallback is already an acquired argument and needs no extra ownership check.
+Native tests inspect the C output before it can reach a VM return check.
+
 Debug tier-one dispatch validates all live evaluation-stack references after an
 instruction's acquisition checks, including tracing redispatch, inlined calls
 and return values on the C entry frame. NULL and tagged integers are not object
@@ -687,6 +693,11 @@ Earlier validation predates the explicit class-sharability check in
 instance of a LOCAL class now share the class first, or test declaration
 failure. LOCAL method and LOCAL base acquisition tests remain relevant.
 
+- Context variable C API results: debug and release each run 235 ownership,
+  context and group tests without failures (one and four skips). The three
+  foreign LOCAL default/cache/HAMT cases fail before the fix. The native return
+  probe passes `-R 3:3`; it and parallel context watchers pass TSan without
+  suppressions. Logs: `test-context-return-{before,debug,release,refleak,tsan}.log`.
 - Debug stack validation: debug and release each run 1,146 tests across 12
   ownership, scheduling, frame, tracing, monitoring, generator and opcode-cache
   files without failures (nine and twelve skips). The injected invalid local

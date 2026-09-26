@@ -762,6 +762,8 @@ if cyclic:
             'PyObject_RichCompare', 'PyObject_RichCompareBool',
             'PyCFunction_GetSelf', 'PyMethod_Function', 'PyMethod_Self',
             'PyInstanceMethod_Function',
+            'PyContextVar_Get_default', 'PyContextVar_Get_cached',
+            'PyContextVar_Get_uncached',
         )
 
         class Value:

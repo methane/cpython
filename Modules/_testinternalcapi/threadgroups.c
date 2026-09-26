@@ -3648,7 +3648,9 @@ static const char *return_apis[] = {
     "PyType_GetName", "PyType_GetQualName", "PyType_GetFullyQualifiedName",
     "PyType_GetModuleName", "PyType_GetModule", "PyType_GetModuleByDef",
     "PyType_GetModuleByToken", "PyType_GetModuleState", "PyType_GetBaseByToken",
-    "PyType_GetSlot_base", "PyType_GetSlot_bases", NULL,
+    "PyType_GetSlot_base", "PyType_GetSlot_bases",
+    "PyContextVar_Get_default", "PyContextVar_Get_cached",
+    "PyContextVar_Get_uncached", NULL,
 };
 
 struct return_probe {
@@ -3681,6 +3683,7 @@ return_probe_worker(void *arg)
     PyObject *key = PyUnicode_FromString("value");
     PyObject *list = NULL, *iter = NULL, *func = NULL, *box = NULL;
     PyObject *callargs = NULL, *kwargs = NULL;
+    PyObject *context = NULL, *token = NULL;
     PyObject *result = NULL;
     int status = -2;  // Pointer-returning API, with no separate status code.
     int owned = 1;
@@ -4011,6 +4014,41 @@ return_probe_worker(void *arg)
             owned = 0;
             break;
         }
+        case 53:
+        case 54:
+        case 55:
+            // The worker owns the variable and context; only an opaque value
+            // is copied from the shared carrier into their heap storage.
+            box = PyContextVar_New("return_probe", probe->api == 53 ? value : NULL);
+            if (box == NULL) {
+                goto done;
+            }
+            if (probe->api != 53) {
+                token = PyContextVar_Set(box, value);
+                if (token == NULL) {
+                    goto done;
+                }
+            }
+            if (probe->api == 55) {
+                // Entering a copied context invalidates the variable cache.
+                context = PyContext_CopyCurrent();
+                if (context == NULL || PyContext_Enter(context) < 0) {
+                    goto done;
+                }
+            }
+            status = PyContextVar_Get(box, NULL, &result) < 0 ? -1 : 1;
+            if (probe->api == 55) {
+                PyObject *error = PyErr_GetRaisedException();
+                if (PyContext_Exit(context) < 0) {
+                    Py_XDECREF(result);
+                    result = NULL;
+                    status = -1;
+                }
+                if (error != NULL) {
+                    PyErr_SetRaisedException(error);
+                }
+            }
+            break;
         default:
             box = make_return_box(&return_box_spec, value);
             if (box == NULL) {
@@ -4050,6 +4088,8 @@ done:
     Py_XDECREF(box);
     Py_XDECREF(callargs);
     Py_XDECREF(kwargs);
+    Py_XDECREF(token);
+    Py_XDECREF(context);
     PyThreadState_Clear(tstate);
     PyThreadState_DeleteCurrent();
 }
