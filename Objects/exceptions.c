@@ -543,7 +543,7 @@ PyException_GetCause(PyObject *self)
     Py_BEGIN_CRITICAL_SECTION(self);
     cause = Py_XNewRef(PyBaseExceptionObject_CAST(self)->cause);
     Py_END_CRITICAL_SECTION();
-    return cause;
+    return _PyObject_CheckAccessNullable(cause);
 }
 
 /* Steals a reference to cause */
@@ -583,7 +583,7 @@ PyException_GetArgs(PyObject *self)
     Py_BEGIN_CRITICAL_SECTION(self);
     args = Py_NewRef(PyBaseExceptionObject_CAST(self)->args);
     Py_END_CRITICAL_SECTION();
-    return args;
+    return _PyObject_CheckAccessNullable(args);
 }
 
 void
@@ -1200,7 +1200,11 @@ exceptiongroup_subset(
         }
     }
     PyException_SetContext(eg, PyException_GetContext(orig));
-    PyException_SetCause(eg, PyException_GetCause(orig));
+    PyObject *cause = PyException_GetCause(orig);
+    if (cause == NULL && PyErr_Occurred()) {
+        goto error;
+    }
+    PyException_SetCause(eg, cause);
 
     PyObject *notes;
     if (PyObject_GetOptionalAttr(orig, &_Py_ID(__notes__), &notes) < 0) {

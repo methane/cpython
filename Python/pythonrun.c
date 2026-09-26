@@ -1100,6 +1100,9 @@ print_exception_cause_and_context(struct exception_print_context *ctx,
         Py_DECREF(cause);
         return err;
     }
+    if (PyErr_Occurred()) {
+        return -1;
+    }
     if (((PyBaseExceptionObject *)value)->suppress_context) {
         return 0;
     }

@@ -109,6 +109,10 @@ _PyXI_UnwrapNotShareableError(PyThreadState * tstate, _PyXI_failure *failure)
         exc = cause;
     }
     else {
+        if (PyErr_Occurred()) {
+            Py_DECREF(exc);
+            return -1;
+        }
         assert(PyException_GetContext(exc) == NULL);
     }
     _PyErr_SetRaisedException(tstate, exc);

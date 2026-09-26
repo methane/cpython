@@ -89,6 +89,19 @@ tuple は shallow immutable なので、要素が他の ThreadGroup の LOCAL �
 事前検査を要求するのかを確認したいです。
 [既存の C API 契約](https://docs.python.org/3/c-api/exceptions.html#c.PyErr_GivenExceptionMatches)
 
+例外情報を返す `PyErr_Fetch()` と `PyErr_GetExcInfo()` も、戻り値が void で
+出力引数に参照を返します。アクセス可能な例外が別グループの LOCAL な
+traceback を保持すると、traceback の取得だけが失敗し得ます。
+`PyErr_Fetch()` は既存のエラー状態をクリアする契約なので、単に取得時の
+`IllegalThreadAccessException` を残すと、その契約と一致しません。拒否時の
+出力値、元の例外の保存先、呼び出し側の失敗確認方法を決める必要があります。
+両 API の実装と `Doc/c-api/exceptions.rst` の契約を確認しています。
+ネイティブ診断では、worker が自分で作った例外に traceback の参照だけを
+コピーしました。Main の対照ケースでは traceback はアクセス可能ですが、
+別グループでは両 API がアクセス不可の traceback を返し、エラー状態も
+設定されません。診断コードは `/tmp/pep805-base/exception_info_probe.c` と
+`exception_info_probe.py`、結果は `exception-info-contract.log` です。
+
 既に取得済みの引数すべてを再検査する方針にはしていません。関数版の
 getter、VM のヒープロード、`*args` / `**kwargs` の展開など、明確に
 新しいスレッド参照を作る箇所の修正は、この確認と独立して進めています。

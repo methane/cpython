@@ -159,6 +159,9 @@ test_from_spec_invalid_metatype_inheritance(PyObject *self, PyObject *Py_UNUSED(
     if (PyErr_ExceptionMatches(PyExc_TypeError)) {
         exc = PyErr_GetRaisedException();
         args = PyException_GetArgs(exc);
+        if (args == NULL) {
+            goto finally;
+        }
         if (!PyTuple_Check(args) || PyTuple_Size(args) != 1) {
             PyErr_SetString(PyExc_AssertionError,
                     "TypeError args are not a one-tuple");

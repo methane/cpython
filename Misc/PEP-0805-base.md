@@ -664,6 +664,16 @@ including later members when an earlier class would match. These paths already
 have an error return; the public boolean `PyErr_GivenExceptionMatches()` API's
 failure contract remains a separate design question.
 
+`PyException_GetCause()` and `PyException_GetArgs()` validate their strong
+references, including LOCAL tuple subclasses used for exception arguments.
+Exception group metadata copying, native cause display and cross-interpreter
+cause unwrapping propagate getter failure instead of treating it as absence.
+The optional cross-interpreter message hint stops if arguments cannot be read;
+it retains the existing fallback to the original exception. No library code
+changes are needed. Void exception-information APIs still need a failure
+contract for inaccessible traceback outputs; native diagnostics reproduce this
+separate issue without changing their current API contract.
+
 Debug tier-one dispatch validates all live evaluation-stack references after an
 instruction's acquisition checks, including tracing redispatch, inlined calls
 and return values on the C entry frame. NULL and tagged integers are not object
@@ -716,6 +726,12 @@ Earlier validation predates the explicit class-sharability check in
 instance of a LOCAL class now share the class first, or test declaration
 failure. LOCAL method and LOCAL base acquisition tests remain relevant.
 
+- Exception cause/args acquisition: debug and release each run 1,259 ownership,
+  exception, group, C API, traceback and cross-interpreter tests without failures
+  (seven and thirteen skips). Four foreign LOCAL cases fail before the fix.
+  The two regressions pass `-R 3:3` and TSan without suppressions. Main controls
+  pass, including shallow immutable argument tuples containing LOCAL elements.
+  Logs: `test-exception-reference-{before,debug,release,refleak,tsan}.log`.
 - Function metadata and annotation acquisition: debug and release each run
   1,286 ownership, function, annotation, typing and scope tests without failures
   (one release skip). The initial regressions reproduce seven foreign LOCAL

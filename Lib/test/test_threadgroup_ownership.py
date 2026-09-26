@@ -2042,6 +2042,49 @@ if cyclic:
                                 self.assertEqual(internal.container_element_calls(value),
                                                  int(accessible))
 
+    def test_exception_reference_returns(self):
+        class LocalArgs(tuple):
+            pass
+
+        cases = (
+            ('PyException_GetCause', BaseException()),
+            ('PyException_GetArgs', (object(),)),
+            ('PyException_GetArgs', LocalArgs()),
+        )
+        for api, value in cases:
+            for group in (sys.main_thread_group, self.foreign):
+                with self.subTest(api=api, type=type(value), group=group):
+                    accessible = internal.threadgroup_access_probe(group, value)
+                    self.assertIs(internal.threadgroup_return_probe(
+                        (value, frozendict()), group, api), accessible)
+
+    def test_exception_group_cause_acquisition(self):
+        def probe():
+            constructor, leaf, matcher, error, rejected, split = source[2]
+            group = constructor('group', (leaf(), matcher()))
+            bound_builtin(group, source[1])
+            try:
+                if split:
+                    group.split(matcher)
+                else:
+                    group.subgroup(matcher)
+            except error:
+                assert rejected
+            else:
+                assert not rejected
+            return True
+
+        cause = BaseException()
+        for split in (False, True):
+            for group in (sys.main_thread_group, self.foreign):
+                with self.subTest(split=split, group=group):
+                    self.assertTrue(internal.threadgroup_vm_probe(
+                        probe.__code__, group,
+                        (True, (cause,), (BaseExceptionGroup, BaseException,
+                         KeyboardInterrupt, IllegalThreadAccessException,
+                         group is self.foreign, split)), 0, 1, False,
+                        internal.copy_exception_cause))
+
     def test_except_matcher_acquisition(self):
         class LocalError(BaseException):
             pass

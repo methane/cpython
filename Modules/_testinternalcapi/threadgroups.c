@@ -3650,7 +3650,8 @@ static const char *return_apis[] = {
     "PyType_GetModuleByToken", "PyType_GetModuleState", "PyType_GetBaseByToken",
     "PyType_GetSlot_base", "PyType_GetSlot_bases",
     "PyContextVar_Get_default", "PyContextVar_Get_cached",
-    "PyContextVar_Get_uncached", NULL,
+    "PyContextVar_Get_uncached", "PyException_GetCause", "PyException_GetArgs",
+    NULL,
 };
 
 struct return_probe {
@@ -4049,6 +4050,21 @@ return_probe_worker(void *arg)
                 }
             }
             break;
+        case 56:
+        case 57:
+            box = PyObject_CallNoArgs(PyExc_BaseException);
+            if (box == NULL) {
+                goto done;
+            }
+            if (probe->api == 56) {
+                PyException_SetCause(box, Py_NewRef(value));
+                result = PyException_GetCause(box);
+            }
+            else {
+                PyException_SetArgs(box, value);
+                result = PyException_GetArgs(box);
+            }
+            break;
         default:
             box = make_return_box(&return_box_spec, value);
             if (box == NULL) {
@@ -4298,6 +4314,22 @@ bind_probe_method(PyObject *unused, PyObject *args)
 static PyMethodDef bind_probe_method_def = {
     "bind_method", bind_probe_method, METH_VARARGS, NULL,
 };
+
+static PyObject *
+copy_exception_cause(PyObject *unused, PyObject *args)
+{
+    PyObject *exception, *source;
+    if (!PyArg_ParseTuple(args, "OO!:copy_exception_cause", &exception,
+                          &PyTuple_Type, &source)) {
+        return NULL;
+    }
+    if (!PyExceptionInstance_Check(exception) || PyTuple_GET_SIZE(source) != 1) {
+        return PyErr_Format(PyExc_ValueError, "expected an exception and one heap reference");
+    }
+    // Store an opaque heap reference without acquiring its referent.
+    PyException_SetCause(exception, Py_NewRef(PyTuple_GET_ITEM(source, 0)));
+    Py_RETURN_NONE;
+}
 
 static PyObject *
 function_reference_probe(PyObject *unused, PyObject *args)
@@ -5985,6 +6017,7 @@ static PyMethodDef methods[] = {
     {"threadgroup_adoption_race", threadgroup_adoption_race, METH_VARARGS, NULL},
     {"threadgroup_finalization_probe", threadgroup_finalization_probe,
      METH_VARARGS, NULL},
+    {"copy_exception_cause", copy_exception_cause, METH_VARARGS, NULL},
     {"function_reference_probe", function_reference_probe, METH_VARARGS, NULL},
     {"frame_getvar_probe", frame_getvar_probe, METH_VARARGS, NULL},
 #ifdef Py_DEBUG
