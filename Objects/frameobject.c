@@ -2325,7 +2325,7 @@ PyFrame_GetVar(PyFrameObject *frame_obj, PyObject *name)
         if (value == NULL) {
             break;
         }
-        return value;
+        return _PyObject_CheckAccessNullable(value);
     }
 
     PyErr_Format(PyExc_NameError, "variable %R does not exist", name);

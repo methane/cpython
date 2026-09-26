@@ -630,6 +630,11 @@ Rejecting only the cell's contents would still permit nonlocal writes/deletion.
 Tests cover construction, reads, writes, deletion, nested capture, warmed calls,
 Main controls, and cleanup after the first local cell was already copied.
 
+`PyFrame_GetVar()` validates its acquired result, including contents copied into
+a local cell; `PyFrame_GetVarString()` uses the same check. The native regression
+examines the result before a VM return check can mask an unchecked C API result.
+The frame, closure cell and getter callable all belong to the executing worker.
+
 Mark has resolved ownership of an individual object after its last owner thread
 exits: the decrefing group may atomically adopt it. Python `__del__` and weakref
 callbacks that cannot be accessed in the reclaiming group may be skipped.
@@ -671,6 +676,11 @@ Earlier validation predates the explicit class-sharability check in
 instance of a LOCAL class now share the class first, or test declaration
 failure. LOCAL method and LOCAL base acquisition tests remain relevant.
 
+- Frame variable C APIs: debug and release each run 731 ownership, frame,
+  scope, function and tracing tests without failures (nine skips). Both foreign
+  LOCAL getters fail the native regression before the fix; Main and immutable
+  controls pass. The regression passes `-R 3:3` and TSan without suppressions.
+  Logs: `test-frame-acquisition-{before,debug,release,refleak,tsan}.log`.
 - Native reclamation diagnostics and closure cells: debug and release each run
   1,097 tests across 11 files without failures (six and nine skips). Main-only
   controls pass, including empty stderr for native reclamation. Four in-process

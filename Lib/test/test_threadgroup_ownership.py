@@ -3504,6 +3504,32 @@ if cyclic:
             with self.subTest(warmups=warmups):
                 self.check_vm_code(probe.__code__, warmups)
 
+    def test_frame_variable_capi_acquisition(self):
+        value = None
+
+        def probe():
+            # Keep a free variable in the frame without reading its contents.
+            def capture():
+                return value
+            try:
+                bound_builtin(source[1], source[2][2])
+            except source[2][0]:
+                assert source[2][1]
+            else:
+                assert not source[2][1]
+            return True
+
+        for use_string in (False, True):
+            for value, immutable in ((object(), False), (42, True)):
+                for group in (sys.main_thread_group, self.foreign):
+                    with self.subTest(use_string=use_string, group=group,
+                                      immutable=immutable):
+                        self.assertTrue(internal.threadgroup_vm_probe(
+                            probe.__code__, group,
+                            (True, (value,), (IllegalThreadAccessException,
+                             not immutable and group is self.foreign, use_string)),
+                            0, 1, False, internal.frame_getvar_probe))
+
     def test_function_constructor_closure_acquisition(self):
         from types import CellType, FunctionType
 

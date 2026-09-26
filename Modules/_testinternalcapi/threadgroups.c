@@ -5,7 +5,9 @@
 #include "pycore_code.h"
 #include "pycore_dict.h"
 #include "pycore_freelist.h"
+#include "pycore_frame.h"
 #include "pycore_function.h"
+#include "pycore_interpframe.h"
 #include "pycore_lock.h"
 #include "pycore_object.h"
 #include "pycore_object_deferred.h"
@@ -4258,6 +4260,63 @@ static PyMethodDef bind_probe_method_def = {
 };
 
 static PyObject *
+frame_getvar_probe(PyObject *unused, PyObject *args)
+{
+    PyObject *source;
+    int use_string;
+    if (!PyArg_ParseTuple(args, "O!p:frame_getvar_probe", &PyTuple_Type,
+                          &source, &use_string)) {
+        return NULL;
+    }
+    if (PyTuple_GET_SIZE(source) != 1) {
+        return PyErr_Format(PyExc_ValueError, "expected one heap reference");
+    }
+    PyFrameObject *frame = PyEval_GetFrame();  // Borrowed, worker-local frame.
+    if (frame == NULL) {
+        return PyErr_Format(PyExc_AssertionError, "expected a Python frame");
+    }
+    PyObject *closure = PyFunction_GetClosure(
+        (PyObject *)_PyFrame_GetFunction(frame->f_frame));
+    if (closure == NULL) {
+        return PyErr_Format(PyExc_AssertionError, "expected a closure");
+    }
+    PyObject *cell = PyTuple_GetItem(closure, 0);
+    PyObject *old = cell == NULL ? NULL : PyCell_Get(cell);
+    if (old == NULL) {
+        return NULL;
+    }
+    // Opaque heap copying into a worker-local cell must not acquire its value.
+    if (PyCell_Set(cell, PyTuple_GET_ITEM(source, 0)) < 0) {
+        Py_DECREF(old);
+        return NULL;
+    }
+    PyObject *value = NULL;
+    if (use_string) {
+        value = PyFrame_GetVarString(frame, "value");
+    }
+    else {
+        PyObject *name = PyUnicode_FromString("value");
+        if (name != NULL) {
+            value = PyFrame_GetVar(frame, name);
+            Py_DECREF(name);
+        }
+    }
+    PyCell_Set(cell, old);
+    Py_DECREF(old);
+    if (value == NULL) {
+        return NULL;
+    }
+    // Inspect the API result before the VM's return check can hide a leak.
+    int accessible = PyObject_IsAccessible(value);
+    Py_DECREF(value);
+    if (!accessible) {
+        return PyErr_Format(PyExc_AssertionError,
+                            "frame getter returned an inaccessible value");
+    }
+    Py_RETURN_TRUE;
+}
+
+static PyObject *
 legacy_probe_call(PyObject *consumer, PyObject *args)
 {
     return PyObject_CallFunction(consumer, "O", args);
@@ -5789,6 +5848,7 @@ static PyMethodDef methods[] = {
     {"threadgroup_adoption_race", threadgroup_adoption_race, METH_VARARGS, NULL},
     {"threadgroup_finalization_probe", threadgroup_finalization_probe,
      METH_VARARGS, NULL},
+    {"frame_getvar_probe", frame_getvar_probe, METH_VARARGS, NULL},
     {"threadgroup_unicode_cache_probe", threadgroup_unicode_cache_probe,
      METH_VARARGS, NULL},
     {"threadgroup_qsbr_probe", threadgroup_qsbr_probe, METH_VARARGS, NULL},
