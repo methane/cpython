@@ -4316,6 +4316,26 @@ frame_getvar_probe(PyObject *unused, PyObject *args)
     Py_RETURN_TRUE;
 }
 
+#ifdef Py_DEBUG
+static PyObject *
+inject_inaccessible_local(PyObject *unused, PyObject *source)
+{
+    if (!PyTuple_Check(source) || PyTuple_GET_SIZE(source) != 1) {
+        return PyErr_Format(PyExc_ValueError, "expected one heap reference");
+    }
+    _PyInterpreterFrame *frame = _PyThreadState_GetFrame(_PyThreadState_GET());
+    if (frame == NULL || _PyFrame_GetCode(frame)->co_nlocalsplus != 1) {
+        return PyErr_Format(PyExc_ValueError, "expected a frame with one local");
+    }
+    // Deliberately violate the local-variable invariant. The following
+    // LOAD_FAST must trigger debug validation when it pushes this reference.
+    _PyStackRef old = frame->localsplus[0];
+    frame->localsplus[0] = PyStackRef_FromPyObjectNew(PyTuple_GET_ITEM(source, 0));
+    PyStackRef_XCLOSE(old);
+    Py_RETURN_NONE;
+}
+#endif
+
 static PyObject *
 legacy_probe_call(PyObject *consumer, PyObject *args)
 {
@@ -5849,6 +5869,9 @@ static PyMethodDef methods[] = {
     {"threadgroup_finalization_probe", threadgroup_finalization_probe,
      METH_VARARGS, NULL},
     {"frame_getvar_probe", frame_getvar_probe, METH_VARARGS, NULL},
+#ifdef Py_DEBUG
+    {"inject_inaccessible_local", inject_inaccessible_local, METH_O, NULL},
+#endif
     {"threadgroup_unicode_cache_probe", threadgroup_unicode_cache_probe,
      METH_VARARGS, NULL},
     {"threadgroup_qsbr_probe", threadgroup_qsbr_probe, METH_VARARGS, NULL},

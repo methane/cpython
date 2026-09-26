@@ -635,6 +635,17 @@ a local cell; `PyFrame_GetVarString()` uses the same check. The native regressio
 examines the result before a VM return check can mask an unchecked C API result.
 The frame, closure cell and getter callable all belong to the executing worker.
 
+Debug tier-one dispatch validates all live evaluation-stack references after an
+instruction's acquisition checks, including tracing redispatch, inlined calls
+and return values on the C entry frame. NULL and tagged integers are not object
+references. Temporary spills before `_CHECK_ACCESS` are not validation points:
+that operation must be allowed to reject a heap reference normally. Release
+builds omit these assertions. The negative regression deliberately corrupts a
+local slot and verifies that `LOAD_FAST` is caught before the value is consumed.
+This implements normal-interpreter validation from the
+[appendix](https://peps.python.org/pep-0805/appendix-implementation/#validation);
+machine-code JIT validation remains outside this branch's current scope.
+
 Mark has resolved ownership of an individual object after its last owner thread
 exits: the decrefing group may atomically adopt it. Python `__del__` and weakref
 callbacks that cannot be accessed in the reclaiming group may be skipped.
@@ -676,6 +687,14 @@ Earlier validation predates the explicit class-sharability check in
 instance of a LOCAL class now share the class first, or test declaration
 failure. LOCAL method and LOCAL base acquisition tests remain relevant.
 
+- Debug stack validation: debug and release each run 1,146 tests across 12
+  ownership, scheduling, frame, tracing, monitoring, generator and opcode-cache
+  files without failures (nine and twelve skips). The injected invalid local
+  reaches `LOAD_FAST` without detection before the change, and now aborts at
+  the stack assertion. Five focused TSan tests pass without suppressions,
+  including parallel local function execution and GC. Logs:
+  `test-stack-validation-debug-final.log`, `test-stack-validation-release.log`,
+  `test-stack-validation-tsan.log`, `test-stack-validation-parallel-tsan.log`.
 - Frame variable C APIs: debug and release each run 731 ownership, frame,
   scope, function and tracing tests without failures (nine skips). Both foreign
   LOCAL getters fail the native regression before the fix; Main and immutable

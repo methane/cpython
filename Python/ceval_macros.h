@@ -190,11 +190,18 @@ do { \
 
 #define QSBR_QUIESCENT_STATE(tstate) _Py_qsbr_quiescent_state(((_PyThreadStateImpl *)tstate)->qsbr)
 
+#ifdef Py_DEBUG
+#define ASSERT_ACCESSIBLE_STACK() \
+    _Py_assert_accessible_stack(frame, stack_pointer)
+#else
+#define ASSERT_ACCESSIBLE_STACK() ((void)0)
+#endif
 
 /* Do interpreter dispatch accounting for tracing and instrumentation */
 #define DISPATCH() \
     { \
         _PyFrame_StackAssertInvalid(frame); \
+        ASSERT_ACCESSIBLE_STACK(); \
         NEXTOPARG(); \
         PRE_DISPATCH_GOTO(); \
         DISPATCH_GOTO(); \
@@ -203,6 +210,7 @@ do { \
 #define DISPATCH_NON_TRACING() \
     { \
         _PyFrame_StackAssertInvalid(frame); \
+        ASSERT_ACCESSIBLE_STACK(); \
         NEXTOPARG(); \
         PRE_DISPATCH_GOTO(); \
         DISPATCH_GOTO_NON_TRACING(); \
@@ -210,6 +218,7 @@ do { \
 
 #define DISPATCH_SAME_OPARG() \
     { \
+        ASSERT_ACCESSIBLE_STACK(); \
         opcode = next_instr->op.code; \
         PRE_DISPATCH_GOTO(); \
         DISPATCH_GOTO_NON_TRACING(); \
@@ -218,6 +227,7 @@ do { \
 #define DISPATCH_INLINED(NEW_FRAME)                              \
     do {                                                         \
         assert(!IS_PEP523_HOOKED(tstate));                       \
+        ASSERT_ACCESSIBLE_STACK();                              \
         _PyFrame_SetStackPointer(frame, stack_pointer);          \
         _PyFrame_StackPointerValidate(frame);                    \
         assert((NEW_FRAME)->previous == frame);                  \

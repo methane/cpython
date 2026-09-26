@@ -11,7 +11,7 @@ import threading
 import unittest
 
 from test.support import (
-    Py_GIL_DISABLED, import_helper, nomemtest, requires_specialization,
+    Py_DEBUG, Py_GIL_DISABLED, import_helper, nomemtest, requires_specialization,
     script_helper, threading_helper,
 )
 
@@ -3503,6 +3503,27 @@ if cyclic:
         for warmups in (0, 64):
             with self.subTest(warmups=warmups):
                 self.check_vm_code(probe.__code__, warmups)
+
+    @unittest.skipUnless(Py_DEBUG, "requires debug stack validation")
+    def test_debug_stack_access_validation(self):
+        code = textwrap.dedent('''
+            import _testinternalcapi as internal
+            import threading
+            from test.support import SuppressCrashReport
+
+            def probe():
+                injected = None
+                bound_builtin(source[1])
+                return injected is None
+
+            with SuppressCrashReport():
+                internal.threadgroup_vm_probe(
+                    probe.__code__, threading.ThreadGroup('invalid stack'),
+                    (True, (object(),), None), 0, 1, False,
+                    internal.inject_inaccessible_local)
+        ''')
+        _, _, err = script_helper.assert_python_failure('-c', code)
+        self.assertIn(b'PyObject_IsAccessible', err)
 
     def test_frame_variable_capi_acquisition(self):
         value = None
