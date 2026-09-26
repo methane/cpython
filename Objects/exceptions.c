@@ -564,7 +564,7 @@ PyException_GetContext(PyObject *self)
     Py_BEGIN_CRITICAL_SECTION(self);
     context = Py_XNewRef(PyBaseExceptionObject_CAST(self)->context);
     Py_END_CRITICAL_SECTION();
-    return context;
+    return _PyObject_CheckAccessNullable(context);
 }
 
 /* Steals a reference to context */
@@ -1199,7 +1199,11 @@ exceptiongroup_subset(
             goto error;
         }
     }
-    PyException_SetContext(eg, PyException_GetContext(orig));
+    PyObject *context = PyException_GetContext(orig);
+    if (context == NULL && PyErr_Occurred()) {
+        goto error;
+    }
+    PyException_SetContext(eg, context);
     PyObject *cause = PyException_GetCause(orig);
     if (cause == NULL && PyErr_Occurred()) {
         goto error;

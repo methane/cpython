@@ -1107,6 +1107,9 @@ print_exception_cause_and_context(struct exception_print_context *ctx,
         return 0;
     }
     PyObject *context = PyException_GetContext(value);
+    if (context == NULL && PyErr_Occurred()) {
+        return -1;
+    }
     if (context) {
         int err = 0;
         if (!print_exception_seen_lookup(ctx, context)) {

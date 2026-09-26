@@ -2262,6 +2262,7 @@ if cyclic:
 
         cases = (
             ('PyException_GetCause', BaseException()),
+            ('PyException_GetContext', BaseException()),
             ('PyException_GetArgs', (object(),)),
             ('PyException_GetArgs', LocalArgs()),
         )
@@ -2272,11 +2273,11 @@ if cyclic:
                     self.assertIs(internal.threadgroup_return_probe(
                         (value, frozendict()), group, api), accessible)
 
-    def test_exception_group_cause_acquisition(self):
+    def test_exception_group_reference_acquisition(self):
         def probe():
-            constructor, leaf, matcher, error, rejected, split = source[2]
+            constructor, leaf, matcher, error, rejected, split, field = source[2]
             group = constructor('group', (leaf(), matcher()))
-            bound_builtin(group, source[1])
+            bound_builtin(group, source[1], field)
             try:
                 if split:
                     group.split(matcher)
@@ -2288,16 +2289,53 @@ if cyclic:
                 assert not rejected
             return True
 
-        cause = BaseException()
-        for split in (False, True):
-            for group in (sys.main_thread_group, self.foreign):
-                with self.subTest(split=split, group=group):
-                    self.assertTrue(internal.threadgroup_vm_probe(
-                        probe.__code__, group,
-                        (True, (cause,), (BaseExceptionGroup, BaseException,
-                         KeyboardInterrupt, IllegalThreadAccessException,
-                         group is self.foreign, split)), 0, 1, False,
-                        internal.copy_exception_cause))
+        reference = BaseException()
+        for field in ('cause', 'context'):
+            for split in (False, True):
+                for group in (sys.main_thread_group, self.foreign):
+                    with self.subTest(field=field, split=split, group=group):
+                        self.assertTrue(internal.threadgroup_vm_probe(
+                            probe.__code__, group,
+                            (True, (reference,), (BaseExceptionGroup, BaseException,
+                             KeyboardInterrupt, IllegalThreadAccessException,
+                             group is self.foreign, split, field)), 0, 1, False,
+                            internal.copy_exception_reference))
+
+    def test_exception_context_chain_inaccessible_aborts(self):
+        code = textwrap.dedent('''
+            import _testinternalcapi as internal
+            import sys
+            import threading
+            from test.support import SuppressCrashReport
+
+            def probe():
+                exception, number, indices = source[2]
+                try:
+                    raise exception()
+                except exception as current:
+                    for _ in indices:
+                        following = exception()
+                        current.__context__ = following
+                        current = following
+                    bound_builtin(current, source[1], 'context')
+                    number('not an integer')
+
+            sys.stderr = None
+            with SuppressCrashReport():
+                internal.threadgroup_vm_probe(
+                    probe.__code__, threading.ThreadGroup('exception context'),
+                    (True, (BaseException(),),
+                     (BaseException, int, range(int(sys.argv[1])))),
+                    0, 1, False, internal.copy_exception_reference)
+        ''')
+        for length in (0, 1, 3):
+            with self.subTest(length=length):
+                rc, _, err = script_helper.assert_python_failure(
+                    '-c', code, str(length))
+                if sys.platform != 'win32':
+                    self.assertEqual(rc, -signal.SIGABRT)
+                self.assertIn(b'PyErr_SetObject: IllegalThreadAccessException: '
+                              b'inaccessible exception context', err)
 
     def test_except_matcher_acquisition(self):
         class LocalError(BaseException):

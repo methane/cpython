@@ -113,7 +113,7 @@ _PyXI_UnwrapNotShareableError(PyThreadState * tstate, _PyXI_failure *failure)
             Py_DECREF(exc);
             return -1;
         }
-        assert(PyException_GetContext(exc) == NULL);
+        assert(((PyBaseExceptionObject *)exc)->context == NULL);
     }
     _PyErr_SetRaisedException(tstate, exc);
     return 0;

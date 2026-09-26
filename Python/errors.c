@@ -205,14 +205,21 @@ _PyErr_SetObject(PyThreadState *tstate, PyObject *exception, PyObject *value)
            context chain, while taking care not to hang on
            pre-existing ones.
            This is O(chain length) but context chains are
-           usually very short. Sensitive readers may try
-           to inline the call to PyException_GetContext. */
+           usually very short. */
         if (exc_value != value) {
             PyObject *o = exc_value, *context;
             PyObject *slow_o = o;  /* Floyd's cycle detection algo */
             int slow_update_toggle = 0;
-            while ((context = PyException_GetContext(o))) {
-                Py_DECREF(context);
+            while ((context = ((PyBaseExceptionObject *)o)->context)) {
+                if (!PyObject_IsAccessible(context)) {
+                    //TODO(pep805): Raising an access error would chain it here
+                    // recursively. Report without creating a Python exception.
+                    fputs("Fatal Python error: PyErr_SetObject: "
+                          "IllegalThreadAccessException: inaccessible exception context\n",
+                          stderr);
+                    fflush(stderr);
+                    abort();
+                }
                 if (context == value) {
                     PyException_SetContext(o, NULL);
                     break;
@@ -224,8 +231,8 @@ _PyErr_SetObject(PyThreadState *tstate, PyObject *exception, PyObject *value)
                     break;
                 }
                 if (slow_update_toggle) {
-                    slow_o = PyException_GetContext(slow_o);
-                    Py_DECREF(slow_o);
+                    // The fast pointer has already checked this reference.
+                    slow_o = ((PyBaseExceptionObject *)slow_o)->context;
                 }
                 slow_update_toggle = !slow_update_toggle;
             }

@@ -3651,6 +3651,7 @@ static const char *return_apis[] = {
     "PyType_GetSlot_base", "PyType_GetSlot_bases",
     "PyContextVar_Get_default", "PyContextVar_Get_cached",
     "PyContextVar_Get_uncached", "PyException_GetCause", "PyException_GetArgs",
+    "PyException_GetContext",
     NULL,
 };
 
@@ -4052,6 +4053,7 @@ return_probe_worker(void *arg)
             break;
         case 56:
         case 57:
+        case 58:
             box = PyObject_CallNoArgs(PyExc_BaseException);
             if (box == NULL) {
                 goto done;
@@ -4060,9 +4062,13 @@ return_probe_worker(void *arg)
                 PyException_SetCause(box, Py_NewRef(value));
                 result = PyException_GetCause(box);
             }
-            else {
+            else if (probe->api == 57) {
                 PyException_SetArgs(box, value);
                 result = PyException_GetArgs(box);
+            }
+            else {
+                PyException_SetContext(box, Py_NewRef(value));
+                result = PyException_GetContext(box);
             }
             break;
         default:
@@ -4493,18 +4499,27 @@ dict_next_probe(PyObject *unused, PyObject *args)
 }
 
 static PyObject *
-copy_exception_cause(PyObject *unused, PyObject *args)
+copy_exception_reference(PyObject *unused, PyObject *args)
 {
     PyObject *exception, *source;
-    if (!PyArg_ParseTuple(args, "OO!:copy_exception_cause", &exception,
-                          &PyTuple_Type, &source)) {
+    const char *field = "cause";
+    if (!PyArg_ParseTuple(args, "OO!|s:copy_exception_reference", &exception,
+                          &PyTuple_Type, &source, &field)) {
         return NULL;
     }
     if (!PyExceptionInstance_Check(exception) || PyTuple_GET_SIZE(source) != 1) {
         return PyErr_Format(PyExc_ValueError, "expected an exception and one heap reference");
     }
     // Store an opaque heap reference without acquiring its referent.
-    PyException_SetCause(exception, Py_NewRef(PyTuple_GET_ITEM(source, 0)));
+    if (strcmp(field, "cause") == 0) {
+        PyException_SetCause(exception, Py_NewRef(PyTuple_GET_ITEM(source, 0)));
+    }
+    else if (strcmp(field, "context") == 0) {
+        PyException_SetContext(exception, Py_NewRef(PyTuple_GET_ITEM(source, 0)));
+    }
+    else {
+        return PyErr_Format(PyExc_ValueError, "unknown exception field");
+    }
     Py_RETURN_NONE;
 }
 
@@ -6199,7 +6214,7 @@ static PyMethodDef methods[] = {
     {"exception_info_probe", exception_info_probe, METH_VARARGS, NULL},
     {"exception_matches_probe", exception_matches_probe, METH_O, NULL},
     {"dict_next_probe", dict_next_probe, METH_VARARGS, NULL},
-    {"copy_exception_cause", copy_exception_cause, METH_VARARGS, NULL},
+    {"copy_exception_reference", copy_exception_reference, METH_VARARGS, NULL},
     {"function_reference_probe", function_reference_probe, METH_VARARGS, NULL},
     {"frame_getvar_probe", frame_getvar_probe, METH_VARARGS, NULL},
 #ifdef Py_DEBUG

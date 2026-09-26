@@ -675,10 +675,11 @@ have an error return; the public boolean `PyErr_GivenExceptionMatches()` API
 logs to C stderr and aborts on an inaccessible acquired tuple element, including
 nested tuples. Its usual short circuit leaves unvisited elements unacquired.
 
-`PyException_GetCause()` and `PyException_GetArgs()` validate their strong
-references, including LOCAL tuple subclasses used for exception arguments.
-Exception group metadata copying, native cause display and cross-interpreter
-cause unwrapping propagate getter failure instead of treating it as absence.
+`PyException_GetCause()`, `PyException_GetContext()` and `PyException_GetArgs()`
+validate their strong references, including LOCAL tuple subclasses used for
+exception arguments. Exception group metadata copying, native chained exception
+display and cross-interpreter cause unwrapping propagate getter failure instead
+of treating it as absence.
 The optional cross-interpreter message hint stops if arguments cannot be read;
 it retains the existing fallback to the original exception. No library code
 changes are needed. `PyErr_Fetch()` and `PyErr_GetExcInfo()` check the acquired
@@ -686,6 +687,11 @@ exception, type and traceback before exposing output references. If access is
 denied, their void interface cannot return an error: a fixed C stderr diagnostic
 identifies the API and `IllegalThreadAccessException`, then aborts. This path
 does not format the exception or invoke Python stderr hooks.
+Implicit context-chain traversal in `PyErr_SetObject()` uses a non-raising access
+check before following each context. An inaccessible link logs to C stderr and
+aborts with `//TODO(pep805)`: creating an access exception there would recursively
+traverse the same chain. Existing cycle detection still handles accessible
+chains; its slow pointer follows links already checked by the fast pointer.
 `PyUnstable_Exc_PrepReraiseStar()` validates list elements before inspecting
 their exception types or returning a single element. The native regression
 checks the C result before VM validation and covers naked exceptions, groups,
@@ -748,6 +754,14 @@ Earlier validation predates the explicit class-sharability check in
 instance of a LOCAL class now share the class first, or test declaration
 failure. LOCAL method and LOCAL base acquisition tests remain relevant.
 
+- Exception context: six foreign cases fail before the fix. The C getter and
+  group split/subgroup propagate acquisition failure; implicit chaining aborts
+  without recursively creating an access exception. Chains with zero, one and
+  three local prefix links are covered. Debug and release each run 1,267 related
+  tests without failures (seven and thirteen skips), including existing cycle
+  detection tests. Three regressions pass TSan without suppressions; the two
+  normal-path tests pass `-R 3:3`. No new Main-only failure appears.
+  Logs: `test-exception-context-{before,focused,debug,release,refleak,tsan}.log`.
 - Boolean C APIs: four foreign acquisitions fail before the guards. Nested
   exception matchers and requested dictionary outputs now abort with a C stderr
   diagnostic; unused outputs, short circuits and opaque copies remain valid.

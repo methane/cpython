@@ -60,6 +60,12 @@ API 名と `IllegalThreadAccessException` を C stderr に書いて abort しま
 Python の例外表示や `sys.stderr` は使いません。Main の正常系と、
 Python の stderr がなくても subprocess が SIGABRT で終了することを検証します。
 
+暗黙の例外連鎖を調べる `PyErr_SetObject()` も、アクセス不能な context を
+見つけた場合は診断と abort を行います。ここで取得エラーを作ると、その
+例外の連鎖を調べて同じ経路に再帰するためです。通常の
+`PyException_GetContext()` と、その結果を使う ExceptionGroup の処理では、
+取得不能を `IllegalThreadAccessException` として返します。
+
 `PyDict_Next()` の出力参照と、真偽値を返す `PyErr_GivenExceptionMatches()`
 の tuple 要素にも、通常の失敗返却が定義されていないという問題があります。
 両 API にも同じ診断と abort を追加しました。要求されない辞書の出力参照と、
