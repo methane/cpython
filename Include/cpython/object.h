@@ -13,6 +13,7 @@ PyAPI_FUNC(int) PyObject_IsAccessible(PyObject *op);
 PyAPI_FUNC(PyObject *) PyObject_CheckAccess(PyObject *op);
 // Native code must already guarantee immutability of the representation.
 // This declaration does not freeze an otherwise mutable Python object.
+// The object's class must already be shareable.
 PyAPI_FUNC(int) PyObject_DeclareImmutable(PyObject *op);
 
 #ifdef Py_REF_DEBUG

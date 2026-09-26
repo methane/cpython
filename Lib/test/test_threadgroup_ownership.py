@@ -61,6 +61,43 @@ class OwnershipTests(unittest.TestCase):
     def test_native_immutable_declaration(self):
         self.check_access(internal.make_immutable_capsule(), True)
 
+    def test_immutable_declaration_requires_shareable_class(self):
+        capi = import_helper.import_module('_testlimitedcapi')
+
+        class Meta(type):
+            pass
+
+        class Value(metaclass=Meta):
+            __slots__ = ()
+
+        value = Value()
+        # A read-only type definition does not opt into cross-group sharing.
+        capi.type_freeze(Meta)
+        capi.type_freeze(Value)
+        for obj in (value, Value):
+            with self.subTest(object=obj):
+                with self.assertRaises(TypeError):
+                    internal.object_declare_immutable(obj)
+                self.assertIs(obj.__shareable__, threading.Shareable.LOCAL)
+                self.check_access(obj, False)
+
+        # Declare the metaclass, class and instance in dependency order.
+        for obj in (Meta, Value, value):
+            with self.subTest(object=obj):
+                self.assertIsNone(internal.object_declare_immutable(obj))
+                self.assertIsNone(internal.object_declare_immutable(obj))
+                self.assertIs(obj.__shareable__, threading.Shareable.IMMUTABLE)
+                self.check_access(obj, True)
+
+    def test_immutable_declaration_rejects_local_extension_class(self):
+        clinic = import_helper.import_module('_testclinic')
+        value = clinic.TestClass()
+        with self.assertRaisesRegex(TypeError, 'class is not shareable'):
+            internal.object_declare_immutable(value)
+        self.assertIs(value.__shareable__, threading.Shareable.LOCAL)
+        self.assertIs(clinic.TestClass.__shareable__, threading.Shareable.LOCAL)
+        self.check_access(value, False)
+
     def test_template_shallow_immutability(self):
         from string.templatelib import Interpolation, Template
 
@@ -2907,7 +2944,7 @@ if cyclic:
         for methods, method, body in cases:
             instance = internal.make_immutable_special_method_instance(methods)
             self.assertIs(instance.__shareable__, threading.Shareable.IMMUTABLE)
-            self.assertIs(type(instance).__shareable__, threading.Shareable.LOCAL)
+            self.assertIs(type(instance).__shareable__, threading.Shareable.IMMUTABLE)
             namespace = {}
             exec('def probe():\n' + textwrap.indent(body, '    '), namespace)
             for group in (sys.main_thread_group, self.foreign):
@@ -2952,7 +2989,7 @@ if cyclic:
         self.assertTrue(internal.threadgroup_vm_probe(
             existing.__code__, self.foreign, (None, instance, None), 0, 32))
 
-    def test_foreign_builtin_class_receiver(self):
+    def test_shared_builtin_class_receiver(self):
         instance = internal.make_immutable_special_method_instance({})
         for expression in ('source[1].__init_subclass__()',
                            'source[1].__subclasshook__(source[2])'):
@@ -2960,18 +2997,19 @@ if cyclic:
             exec(f'def probe():\n    {expression}\n    return True', namespace)
             for group in (sys.main_thread_group, self.foreign):
                 with self.subTest(expression=expression, group=group):
-                    self.assertIs(internal.threadgroup_vm_probe(
+                    self.assertTrue(internal.threadgroup_vm_probe(
                         namespace['probe'].__code__, group,
-                        (type(instance), instance, object), 0, 32),
-                        group is sys.main_thread_group)
+                        (type(instance), instance, object), 0, 32))
 
     def test_foreign_builtin_defining_class(self):
-        clinic = import_helper.import_module('_testclinic')
-        instance = internal.make_immutable_call_receiver(clinic.TestClass)
+        base, subtype = internal.make_immutable_subtype(tuple)
+        instance = internal.make_immutable_call_receiver(subtype)
+        self.assertIs(base.__shareable__, threading.Shareable.LOCAL)
+        self.assertIs(subtype.__shareable__, threading.Shareable.IMMUTABLE)
 
         bodies = (
-            'source[1].get_defining_class_arg(None)',
-            'method = source[1].get_defining_class_arg\nmethod(None)',
+            'source[1].method()',
+            'method = source[1].method\nmethod()',
         )
         for body in bodies:
             namespace = {}
@@ -2981,7 +3019,7 @@ if cyclic:
                 with self.subTest(body=body, group=group):
                     self.assertIs(internal.threadgroup_vm_probe(
                         namespace['probe'].__code__, group,
-                        (clinic.TestClass, instance, None), 0, 32),
+                        (base, instance, None), 0, 32),
                         group is sys.main_thread_group)
 
     def test_builtin_bound_receiver_acquisition(self):
@@ -3154,12 +3192,12 @@ if cyclic:
             ('bound function', target,
              'bind_method(local, (None,), source[1])', 'target', '()', True),
             ('stored name', code, 'local', 'stored_name', '()', True),
-            ('instance class', instance, 'source[1][0]',
-             limited.eval_get_func_name(instance), ' object', True),
+            ('shared instance class', instance, 'source[1][0]',
+             limited.eval_get_func_name(instance), ' object', False),
             ('bound receiver', object(), 'bind_method(local, source[1])',
              'local', '()', False),
         )
-        for case, value, expression, name, desc, reads_field in cases:
+        for case, value, expression, name, desc, local_metadata in cases:
             namespace = {}
             exec(textwrap.dedent(f'''
                 def probe():
@@ -3186,7 +3224,7 @@ if cyclic:
                 for group in (sys.main_thread_group, self.foreign):
                     with self.subTest(case=case, getter=getter.__name__, group=group):
                         expected = result
-                        if (getter is limited.eval_get_func_name and reads_field
+                        if (getter is limited.eval_get_func_name and local_metadata
                                 and group is self.foreign):
                             expected = None
                         self.assertTrue(internal.threadgroup_vm_probe(
@@ -3194,7 +3232,7 @@ if cyclic:
                             (True, (value, expected), IllegalThreadAccessException),
                             0, 1, False, getter))
 
-    def test_bound_method_private_name_owner(self):
+    def test_bound_method_private_name_shared_class(self):
         def probe():
             __builtins__['getattr'] = consumer
 
@@ -3210,10 +3248,9 @@ if cyclic:
             for group in (sys.main_thread_group, self.foreign):
                 for warmups in (0, 32):
                     with self.subTest(value=value, group=group, warmups=warmups):
-                        self.assertIs(internal.threadgroup_vm_probe(
+                        self.assertTrue(internal.threadgroup_vm_probe(
                             probe.__code__.replace(), group,
-                            (type(value), value, None), warmups),
-                            value is not instance or group is sys.main_thread_group)
+                            (type(value), value, None), warmups))
 
     def test_bound_method_unaccessed_fields(self):
         def target(self):
@@ -3328,7 +3365,8 @@ if cyclic:
                 self.check_vm_code(namespace['probe'].__code__, warmups,
                                    opcode if specialized else None)
 
-        # type() also acquires a new reference, even for an immutable instance.
+        # The class of an immutable instance must itself be shareable, so
+        # type() must succeed across groups, including after specialization.
         instance = internal.make_immutable_special_method_instance({})
 
         def probe_type():
@@ -3342,8 +3380,7 @@ if cyclic:
                     accessible, bytecode = internal.threadgroup_vm_probe(
                         probe_type.__code__.replace(), group,
                         (type(value), value, None), warmups, 1, True)
-                    self.assertIs(accessible,
-                                  value is not instance or group is sys.main_thread_group)
+                    self.assertTrue(accessible)
                     if specialized:
                         self.assertIn('CALL_TYPE_1', {
                             instruction.opname

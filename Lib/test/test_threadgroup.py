@@ -645,7 +645,7 @@ assert internal.threadgroup_probe(
     groups, 11, support.SHORT_TIMEOUT, True) == (True, True)
 ''', PYTHONMALLOC='debug')
 
-    def test_parallel_immutable_instance_local_type_slot(self):
+    def test_parallel_immutable_instance_shared_type_slot(self):
         script_helper.assert_python_ok('-c', '''
 import faulthandler
 import threading

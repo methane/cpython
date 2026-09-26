@@ -207,10 +207,9 @@ before deciding whether the table is suitable for specialization.
 
 Attribute and descriptor access no longer rewrite their type's slots lazily.
 Slot publication selects the simpler attribute dispatcher when the type has
-no `__getattr__`. Restricting lazy writes to LOCAL types would be insufficient:
-an IMMUTABLE instance can have a LOCAL class. Native fixtures exercise both
-shared immutable types with each group's own instances, and shared immutable
-instances of LOCAL types. They also check attribute insertion and acquisition,
+no `__getattr__`. Native fixtures exercise shared immutable types with each
+group's own instances, and shared immutable instances of shared immutable
+types. They also check attribute insertion and acquisition,
 dictionary copies and conversion from shared keys to combined tables. The
 attribute methods are native descriptors; no Python function is shared.
 
@@ -383,12 +382,17 @@ Reference acquisition accepts IMMUTABLE objects and LOCAL objects owned by the
 current ThreadGroup. Rejected acquisitions raise `IllegalThreadAccessException`
 without inspecting the foreign object's representation. C API checks apply to
 acquired results; already-acquired arguments need no additional runtime check.
-`PyObject_Type()` validates its newly acquired class: an immutable native
-instance can still have a LOCAL class. `%T` formatting uses that checked type
-acquisition before constructing a type name, and `object.__repr__` checks its
-stored class before reading the class's module or name. `PyType_GetDict()` also
-validates the returned dictionary, including Main-owned dictionaries of shared
-builtin types.
+`PyObject_DeclareImmutable()` rejects an object whose class is LOCAL before
+changing its state. The class must first be declared shareable; declaring a
+class likewise requires a shareable metaclass. `PyType_Freeze()` alone only prevents
+type mutation; it does not declare cross-group sharing. These declarations
+remain shallow: a shared class can contain LOCAL methods or inherit from a LOCAL
+base. Test fixtures declare their read-only classes before sharing instances.
+`PyObject_Type()` validates its newly acquired class. `%T` formatting uses that
+checked type acquisition before constructing a type name, and `object.__repr__`
+checks its stored class before reading the class's module or name.
+`PyType_GetDict()` also validates the returned dictionary, including Main-owned
+dictionaries of shared builtin types.
 `PyUnicode_FromObject`, joining, comparison, containment, concatenation, padding,
 splitting and prefix/suffix matching check acquired classes before formatting
 their legacy `tp_name` error messages. Successful operations and short-circuit
@@ -437,7 +441,7 @@ references; individual values obtained from those namespaces are checked.
 
 The common special-method lookup helpers check methods acquired from a type
 before invoking or binding them, and also check descriptor results. An immutable
-instance can have a LOCAL class and LOCAL methods; sharing that instance does
+class can have LOCAL methods; sharing an instance of that class does
 not grant access to those methods. Sequence-iteration fallback preserves a
 failed acquisition instead of replacing it with a non-iterable `TypeError`.
 Subscript specialization declines inaccessible Python functions. Existing
@@ -462,9 +466,10 @@ Attribute-hook dispatch also checks the selected `__getattribute__` or
 dispatch checks the acquired `__get__` before calling it.
 C calls check the hidden receiver acquired from a bound builtin and the
 defining class acquired from a `METH_METHOD` callable or descriptor. An
-immutable instance does not grant access to its LOCAL class as an implicit
-argument. `PyCFunction_GetSelf()` checks its borrowed result as well. The
-specialized `METH_O` and fast-call paths perform the same acquisition checks;
+immutable instance with a shared class can inherit a method defined in a LOCAL
+base; its defining class must still be checked. `PyCFunction_GetSelf()` checks
+its borrowed result as well. The specialized `METH_O` and fast-call paths
+perform the same acquisition checks;
 explicit arguments already held by the caller need no additional checks.
 Specialized builtin, method-descriptor and type-vectorcall paths also validate
 their returned references, matching the generic C-call path. The `type()`
@@ -482,9 +487,8 @@ Bound-method attribute forwarding, representation, hashing, comparison and
 reduction acquire the stored function before inspecting it or invoking its
 slots. Representation also acquires the receiver. Private-name reduction
 checks the receiver and any class obtained from its header before reading the
-class name, including when an immutable receiver has a LOCAL class. Receiver
-identity comparisons, pointer hashing and blind copying into reduction tuples
-do not inspect the receiver and need no acquisition check.
+class name. Receiver identity comparisons, pointer hashing and blind copying
+into reduction tuples do not inspect the receiver and need no acquisition check.
 The C API's `instancemethod` wrapper likewise checks its stored function in
 `PyInstanceMethod_Function()`, calls, attribute forwarding and comparison.
 Representation preserves the getter's access exception. Descriptor binding
@@ -645,6 +649,25 @@ The default-path parallel scheduling test requires group-only serialization
 from startup and does not skip. The extension-import test also runs in the normal
 build, checking that imports leave this scheduling state unchanged.
 
+Earlier validation predates the explicit class-sharability check in
+`PyObject_DeclareImmutable()`. Fixtures that formerly declared an immutable
+instance of a LOCAL class now share the class first, or test declaration
+failure. LOCAL method and LOCAL base acquisition tests remain relevant.
+
+- Class sharability: debug and release each pass 515 tests across ownership,
+  type C APIs, descriptors, weakrefs and GC (six and seven skips). The previous
+  implementation fails both the instance/class and class/metaclass rejection
+  cases. The regressions check failure without a state change, declaration in
+  dependency order, idempotence and the default LOCAL extension class. Existing
+  native fixtures now declare their classes before their immutable instances;
+  the inherited C-method test still rejects its LOCAL defining base before
+  entering the native callback. Five focused tests pass `-R 3:3`; eight pass
+  TSan without suppressions on normal debug/pymalloc, including parallel shared
+  instance lookup and the finalization callbacks. Neither normal debug/mimalloc
+  nor release/mimalloc shows a new Main-only failure in this selection.
+  Logs: `test-class-declaration-before.log`,
+  `test-class-declaration-debug-final.log`, `test-class-declaration-release-final.log`,
+  `test-class-declaration-refleak.log` and `test-class-declaration-tsan.log`.
 - Inaccessible Python finalization callbacks: debug and release each pass
   346 tests across ownership, GC, weakrefs and finalization (five and six skips).
   The regression covers 24 combinations of Main/foreign group, refcount/GC,

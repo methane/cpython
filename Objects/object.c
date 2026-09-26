@@ -3030,6 +3030,13 @@ PyObject_DeclareImmutable(PyObject *op)
     if (get_shareable_state(op, _PyThreadState_GET()) == _Py_SHAREABLE_IMMUTABLE) {
         return 0;
     }
+    // Sharing an instance must not expose its LOCAL class to other groups.
+    if (get_shareable_state((PyObject *)Py_TYPE(op), _PyThreadState_GET()) !=
+        _Py_SHAREABLE_IMMUTABLE) {
+        PyErr_SetString(PyExc_TypeError,
+                        "cannot declare immutable: class is not shareable");
+        return -1;
+    }
     // Preserve the bias: immutable objects still use the creating group's
     // local reference count, independently of their access policy.
     _Py_atomic_store_uint8(&op->ob_shareable, _Py_SHAREABLE_IMMUTABLE);

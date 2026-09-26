@@ -704,8 +704,12 @@ parallel_lookup_objects(int mode)
         PyObject *type = instances ? parallel_slot_type(mode == 11) :
                                     PyType_FromSpec(&spec);
         if (mode == 12 && type != NULL) {
-            // Share an immutable instance while its class remains LOCAL.
-            // Only native method descriptors are reached through that class.
+            // Share the class before sharing the immutable instance.
+            if (PyObject_DeclareImmutable(type) < 0) {
+                Py_DECREF(type);
+                Py_DECREF(types);
+                return NULL;
+            }
             PyObject *instance = PyObject_CallNoArgs(type);
             Py_DECREF(type);
             type = instance;
@@ -2517,6 +2521,15 @@ threadgroup_access_probe(PyObject *self, PyObject *args)
 }
 
 static PyObject *
+object_declare_immutable(PyObject *self, PyObject *op)
+{
+    if (PyObject_DeclareImmutable(op) < 0) {
+        return NULL;
+    }
+    Py_RETURN_NONE;
+}
+
+static PyObject *
 make_immutable_capsule(PyObject *self, PyObject *unused)
 {
     static const char data[] = "immutable native data";
@@ -2550,7 +2563,8 @@ make_immutable_special_method_instance(PyObject *self, PyObject *methods)
     }
     type = PyObject_CallFunction((PyObject *)&PyType_Type, "s()O",
                                  "ImmutableSpecialMethods", namespace);
-    if (type == NULL || PyType_Freeze((PyTypeObject *)type) < 0) {
+    if (type == NULL || PyType_Freeze((PyTypeObject *)type) < 0 ||
+        PyObject_DeclareImmutable(type) < 0) {
         goto done;
     }
     instance = PyObject_CallNoArgs(type);
@@ -3215,6 +3229,7 @@ make_access_descriptor(PyObject *self, PyObject *args)
     PyObject *descriptor = make_return_box(&access_descriptor_spec, value);
     if (descriptor != NULL && immutable &&
         (PyType_Freeze(Py_TYPE(descriptor)) < 0 ||
+         PyObject_DeclareImmutable((PyObject *)Py_TYPE(descriptor)) < 0 ||
          PyObject_DeclareImmutable(descriptor) < 0)) {
         Py_CLEAR(descriptor);
     }
@@ -3317,7 +3332,10 @@ make_container_element(PyObject *self, PyObject *immutable)
     }
     PyObject *element = type->tp_alloc(type, 0);
     Py_DECREF(type);
-    if (element != NULL && shareable && PyObject_DeclareImmutable(element) < 0) {
+    if (element != NULL && shareable &&
+        (PyType_Freeze(Py_TYPE(element)) < 0 ||
+         PyObject_DeclareImmutable((PyObject *)Py_TYPE(element)) < 0 ||
+         PyObject_DeclareImmutable(element) < 0)) {
         Py_CLEAR(element);
     }
     return element;
@@ -3501,12 +3519,29 @@ done:
 }
 
 static PyObject *
+immutable_subtype_method(PyObject *self, PyTypeObject *defining_class,
+                         PyObject *const *args, Py_ssize_t nargs,
+                         PyObject *kwnames)
+{
+    // The VM must acquire the LOCAL defining class before entering C code,
+    // even when the receiver and its immediate class are shareable.
+    assert(PyObject_IsAccessible((PyObject *)defining_class));
+    Py_RETURN_NONE;
+}
+
+static PyObject *
 make_immutable_subtype(PyObject *self, PyObject *tuple_type)
 {
     // Both type definitions are read-only. Only the subtype is explicitly
     // declared shareable; its base retains the default LOCAL ownership.
+    static PyMethodDef base_methods[] = {
+        {"method", _PyCFunction_CAST(immutable_subtype_method),
+         METH_METHOD | METH_FASTCALL | METH_KEYWORDS, NULL},
+        {NULL},
+    };
     static PyType_Slot base_slots[] = {
         {Py_tp_token, Py_TP_USE_SPEC},
+        {Py_tp_methods, base_methods},
         {0, NULL},
     };
     static PyType_Spec base_spec = {
@@ -5689,6 +5724,7 @@ threadgroup_reftotal_probe(PyObject *self, PyObject *args)
 #endif
 
 static PyMethodDef methods[] = {
+    {"object_declare_immutable", object_declare_immutable, METH_O, NULL},
 #ifdef Py_REF_DEBUG
     {"threadgroup_reftotal_fork_probe", threadgroup_reftotal_fork_probe, METH_O, NULL},
     {"threadgroup_reftotal_probe", threadgroup_reftotal_probe, METH_VARARGS, NULL},
