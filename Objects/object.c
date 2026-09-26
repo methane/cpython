@@ -3642,6 +3642,12 @@ _Py_Dealloc(PyObject *op)
     _Py_ForgetReference(op);
 #endif
     _PyReftracerTrack(op, PyRefTracer_DESTROY);
+    if (!PyObject_IsAccessible(op)) {
+        // Reclaim in this group even if the LOCAL owner still has threads.
+        // Diagnostics must not inspect the object or invoke Python logging.
+        fputs("PEP 805: calling tp_dealloc: inaccessible object "
+              "in current ThreadGroup\n", stderr);
+    }
     (*dealloc)(op);
 
 #ifdef Py_DEBUG

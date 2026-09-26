@@ -1987,10 +1987,10 @@ threadgroup_orphan_decref_probe(PyObject *self, PyObject *args)
 {
     PyObject *wrapper;
     int merged, keep_owner;
-    int cyclic = 0, with_finalizer = 0;
-    if (!PyArg_ParseTuple(args, "Opp|pp:threadgroup_orphan_decref_probe",
+    int cyclic = 0, with_finalizer = 0, reclaim_with_owner = 0;
+    if (!PyArg_ParseTuple(args, "Opp|ppp:threadgroup_orphan_decref_probe",
                           &wrapper, &merged, &keep_owner, &cyclic,
-                          &with_finalizer)) {
+                          &with_finalizer, &reclaim_with_owner)) {
         return NULL;
     }
     _PyThreadGroupState *group = _PyThreadGroup_GetState(wrapper);
@@ -2027,6 +2027,7 @@ threadgroup_orphan_decref_probe(PyObject *self, PyObject *args)
         tuple = PyTuple_Pack(1, op);
         Py_DECREF(op);
         if (tuple != NULL && merged) {
+            _Py_ExplicitMergeRefcount(tuple, 0);
             _Py_ExplicitMergeRefcount((PyObject *)op, 0);
         }
     }
@@ -2038,7 +2039,7 @@ threadgroup_orphan_decref_probe(PyObject *self, PyObject *args)
         PyThreadState_Delete(owner);
         owner = NULL;
     }
-    if (keep_owner && tuple != NULL) {
+    if (keep_owner && !reclaim_with_owner && tuple != NULL) {
         // Detached membership is not abandonment. Nor is a newly assigned
         // state which has not yet run: test both with the same LOCAL object.
         ok &= !_PyThreadGroup_TryAdopt((PyObject *)op, current);
@@ -2059,21 +2060,30 @@ threadgroup_orphan_decref_probe(PyObject *self, PyObject *args)
         PyThreadState_Delete(owner);
         owner = NULL;
     }
+    // Native deallocation and its diagnostics must preserve a pending error.
+    PyErr_SetNone(PyExc_RuntimeError);
     Py_XDECREF(tuple);
+    ok &= PyErr_ExceptionMatches(PyExc_RuntimeError);
+    PyErr_Clear();
     if (cyclic) {
         PyGC_Collect();
     }
-    ok &= counts->freed == 1 && counts->local_freed_elsewhere == 0 &&
-          counts->local_cleared_elsewhere == 0 &&
-          counts->local_finalized_elsewhere == 0 &&
+    int foreign = owner != NULL && group != current->threadgroup;
+    ok &= counts->freed == 1 && counts->local_freed_elsewhere == foreign &&
+          counts->local_cleared_elsewhere == (cyclic && foreign) &&
+          counts->local_finalized_elsewhere == (with_finalizer && foreign) &&
           counts->finalized == with_finalizer &&
           counts->freed_while_stopped == 0;
+    if (owner != NULL) {
+        PyThreadState_Clear(owner);
+        PyThreadState_Delete(owner);
+    }
     parallel_gc_counts_release(counts);
     Py_DECREF(type);
     _PyThreadGroup_Decref(group);
     if (!ok) {
         return PyErr_Format(PyExc_AssertionError,
-                            "orphan tuple element was not reclaimed by its new owner");
+                            "tuple element was not reclaimed in the expected group");
     }
     Py_RETURN_NONE;
 }

@@ -147,8 +147,11 @@ weakref callbacks are skipped with a diagnostic on C stderr.
 GC also attempts atomic adoption before native `tp_finalize` and `tp_clear`
 calls. Waiting until `_Py_Dealloc()` would let an abandoned cycle's native
 callbacks run while the instance still belonged to its departed group. This
-does not change ownership when the old group still has thread states; that
-native execution contract remains an open question.
+does not change ownership when the old group still has thread states. Following
+the user's decision, native reclamation proceeds in the collecting/decrefing
+group with a diagnostic on C stderr if the object remains inaccessible. It does
+not wait for the owner to resume. This decision does not establish that existing
+extensions' native callbacks are safe when they touch their group's other state.
 
 QSBR registration and quiescence are active in the normal build. Retired internal
 buffers remain allocated until attached readers have passed a safepoint or
@@ -630,7 +633,9 @@ weakref argument. Diagnostics are fixed strings on C stderr; they execute no
 Python logging or object representation. Ordinary accessible callbacks retain
 their existing error reporting, and pending exceptions survive reclamation.
 No cleanup thread, group switching or implicit transfer of callback dependencies
-is needed. Native extension destructors/clearing and lifetime still need audit.
+is needed. Native destructors and GC clearing/finalization proceed with C stderr
+diagnostics when adoption fails and the object remains inaccessible; Python
+callbacks retain the access checks and skip behavior above.
 
 ## Extraction provenance
 

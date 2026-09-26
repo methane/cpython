@@ -418,6 +418,40 @@ assert 'threading' not in sys.modules
                             group, merged, keep_owner, True, finalizer)
 
     @unittest.skipIf(Py_GIL_DISABLED, "requires the normal-build group BRC port")
+    def test_native_reclamation_with_live_owner(self):
+        for foreign in (False, True):
+            for cyclic in (False, True):
+                for finalizer in (False, True):
+                    with self.subTest(foreign=foreign, cyclic=cyclic,
+                                      finalizer=finalizer):
+                        _, _, err = script_helper.assert_python_ok(
+                            '-c', textwrap.dedent(f'''
+                                import _testinternalcapi as internal
+                                import sys
+                                import threading
+
+                                group = (threading.ThreadGroup('live owner')
+                                         if {foreign} else sys.main_thread_group)
+                                class Stderr:
+                                    def write(self, text):
+                                        raise AssertionError('logging ran Python')
+                                stderr = sys.stderr
+                                sys.stderr = Stderr()
+                                try:
+                                    internal.threadgroup_orphan_decref_probe(
+                                        group, True, True, {cyclic}, {finalizer}, True)
+                                finally:
+                                    sys.stderr = stderr
+                            '''))
+                        if foreign:
+                            self.assertEqual(err.count(b'calling tp_dealloc:'), 1, err)
+                            self.assertEqual(err.count(b'calling tp_clear:'), cyclic, err)
+                            self.assertEqual(err.count(b'calling tp_finalize:'),
+                                             cyclic and finalizer, err)
+                        else:
+                            self.assertEqual(err, b'')
+
+    @unittest.skipIf(Py_GIL_DISABLED, "requires the normal-build group BRC port")
     def test_orphan_adoption_race(self):
         for _ in range(20):
             internal.threadgroup_adoption_race(

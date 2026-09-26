@@ -1246,6 +1246,10 @@ finalize_garbage(PyThreadState *tstate, _PyObjectStack *objects)
                 // finalizer runs, not only when its count later reaches zero.
                 _PyThreadGroup_TryAdopt(op, tstate);
                 _PyGC_SET_FINALIZED(op);
+                if (!PyObject_IsAccessible(op)) {
+                    fputs("PEP 805: calling tp_finalize: inaccessible object "
+                          "in current ThreadGroup\n", stderr);
+                }
                 finalize(op);
                 assert(!_PyErr_Occurred(tstate));
             }
@@ -1401,6 +1405,10 @@ delete_garbage(PyThreadState *tstate, GCState *gcstate,
                 // Objects without a finalizer also need ownership transferred
                 // before clearing, if their old group has no threads left.
                 _PyThreadGroup_TryAdopt(op, tstate);
+                if (!PyObject_IsAccessible(op)) {
+                    fputs("PEP 805: calling tp_clear: inaccessible object "
+                          "in current ThreadGroup\n", stderr);
+                }
                 (void) clear(op);
                 if (_PyErr_Occurred(tstate)) {
                     PyErr_FormatUnraisable("Exception ignored in tp_clear of %s",
