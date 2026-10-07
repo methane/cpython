@@ -124,8 +124,9 @@ access to internal read-only data of Unicode objects:
    canonical representation has the correct character size; use
    :c:func:`PyUnicode_KIND` to select the right function.
 
-   These functions may allocate the fixed-width buffer. On failure they return
-   ``NULL`` with an exception set. Check the result before dereferencing it.
+   These functions may allocate the fixed-width buffer. Allocation failure
+   calls :c:func:`Py_FatalError` and terminates the process. Use
+   :c:func:`_PyUnicode_GetFSRView` when allocation failure must be recoverable.
 
    .. versionchanged:: 3.16
       The fixed-width representation is generated on demand.
@@ -159,15 +160,18 @@ access to internal read-only data of Unicode objects:
 
    Return a pointer to the fixed-width code point buffer, generating it if
    necessary. *unicode* must be a Unicode object (not checked by the macro).
-   On allocation failure, return ``NULL`` with an exception set. The pointer
-   remains valid while the caller holds a reference to the unchanged object.
+   On allocation failure, call :c:func:`Py_FatalError` and terminate the process.
+   Use :c:func:`_PyUnicode_GetFSRView` for recoverable allocation failure.
+   The pointer remains valid while the caller holds a reference to the unchanged
+   object.
 
    The first request can take time and memory proportional to the string length.
    Subsequent requests reuse the buffer. This buffer must not be modified unless
    the string is being constructed with :c:func:`PyUnicode_New`.
 
    .. versionchanged:: 3.16
-      May allocate and fail. Callers must check the returned pointer.
+      May allocate. Allocation failure terminates the process rather than
+      returning ``NULL``.
 
    .. versionadded:: 3.3
 
@@ -202,16 +206,15 @@ access to internal read-only data of Unicode objects:
 
 .. c:function:: Py_UCS4 PyUnicode_READ_CHAR(PyObject *unicode, Py_ssize_t index)
 
-   Read a code point, generating the fixed-width representation if possible.
-   The caller must provide a Unicode object and a valid index. If generating
-   the representation runs out of memory, read the character by scanning the
-   UTF-8 representation instead.
-   For consecutive reads, obtain and check :c:func:`PyUnicode_DATA` once and use
+   Read a code point, generating the fixed-width representation if necessary.
+   The caller must provide a Unicode object and a valid index. Allocation
+   failure calls :c:func:`Py_FatalError`, as with :c:func:`PyUnicode_DATA`.
+   For consecutive reads, obtain :c:func:`PyUnicode_DATA` once and use
    :c:func:`PyUnicode_READ` with the cached pointer and kind.
 
    .. versionchanged:: 3.16
-      May generate the fixed-width representation or scan UTF-8 if its
-      allocation fails.
+      May generate the fixed-width representation. Allocation failure
+      terminates the process.
 
    .. versionadded:: 3.3
 

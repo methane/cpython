@@ -177,6 +177,43 @@ unicode_materialize_fsr(PyObject *self, PyObject *obj)
     Py_RETURN_NONE;
 }
 
+/* Call the exported symbol instead of the inline PyUnicode_DATA() macro. */
+static PyObject *
+unicode_materialize_fsr_function(PyObject *self, PyObject *obj)
+{
+    if ((PyUnicode_DATA)(obj) == NULL) {
+        return NULL;
+    }
+    Py_RETURN_NONE;
+}
+
+static PyObject *
+unicode_materialize_fsr_typed(PyObject *self, PyObject *obj)
+{
+    if (!PyUnicode_Check(obj)) {
+        PyErr_SetString(PyExc_TypeError, "expected str");
+        return NULL;
+    }
+    const void *data;
+    switch (PyUnicode_KIND(obj)) {
+    case PyUnicode_1BYTE_KIND:
+        data = PyUnicode_1BYTE_DATA(obj);
+        break;
+    case PyUnicode_2BYTE_KIND:
+        data = PyUnicode_2BYTE_DATA(obj);
+        break;
+    case PyUnicode_4BYTE_KIND:
+        data = PyUnicode_4BYTE_DATA(obj);
+        break;
+    default:
+        Py_UNREACHABLE();
+    }
+    if (data == NULL) {
+        return NULL;
+    }
+    Py_RETURN_NONE;
+}
+
 static PyObject *
 unicode_readchar_macro(PyObject *self, PyObject *args)
 {
@@ -921,6 +958,8 @@ static PyMethodDef TestMethods[] = {
     {"unicode_export_noalloc", unicode_export_noalloc, METH_O},
     {"unicode_storage", unicode_storage, METH_O},
     {"unicode_materialize_fsr", unicode_materialize_fsr, METH_O},
+    {"unicode_materialize_fsr_function", unicode_materialize_fsr_function, METH_O},
+    {"unicode_materialize_fsr_typed", unicode_materialize_fsr_typed, METH_O},
     {"unicode_readchar_macro", unicode_readchar_macro, METH_VARARGS},
     {"unicode_write_inplace", unicode_write_inplace, METH_VARARGS},
     {"unicode_new",              unicode_new,                    METH_VARARGS},

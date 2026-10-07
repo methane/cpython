@@ -252,20 +252,22 @@ static inline void* _PyUnicode_NONCOMPACT_DATA(PyObject *op) {
     return data;
 }
 
-/* Return the FSR, materializing it if necessary. On allocation failure,
-   return NULL with an exception set. The pointer lives as long as op. */
+/* Return the FSR, materializing it if necessary. Allocation failure calls
+   Py_FatalError(). The pointer lives as long as op. */
 PyAPI_FUNC(void*) PyUnicode_DATA(PyObject *op);
 
+/* Fallible access for APIs that can propagate an exception. */
 PyAPI_FUNC(void*) _PyUnicode_GetFSR(PyObject *op);
+PyAPI_FUNC(void*) _PyUnicode_GetFSROrFatal(PyObject *op);
 PyAPI_FUNC(int) _PyUnicode_EqualUTF8(PyObject *left, PyObject *right);
 /* Internal, bounds-checked-by-caller access for allocation-free consumers. */
 PyAPI_FUNC(Py_UCS4) _PyUnicode_ReadCharNoAlloc(PyObject *op, Py_ssize_t index);
-/* Called when PyUnicode_DATA() cannot allocate the fixed-width representation. */
+/* Scan UTF-8 after a fallible FSR request runs out of memory. */
 PyAPI_FUNC(Py_UCS4) _PyUnicode_ReadCharFallback(PyObject *op, Py_ssize_t index);
 
 static inline void* _PyUnicode_DATA(PyObject *op) {
     if (_PyASCIIObject_CAST(op)->state.utf8_storage) {
-        return _PyUnicode_GetFSR(op);
+        return _PyUnicode_GetFSROrFatal(op);
     }
     if (PyUnicode_IS_COMPACT(op)) {
         return _PyUnicode_COMPACT_DATA(op);
@@ -313,7 +315,7 @@ PyAPI_FUNC(int) _PyUnicode_Next(PyObject *str, Py_ssize_t *position, Py_UCS4 *ch
 /* Return pointers to the canonical representation cast to unsigned char,
    Py_UCS2, or Py_UCS4 for direct character access.
    No checks are performed, use PyUnicode_KIND() before to ensure
-   these will work correctly. */
+   these will work correctly. Allocation failure calls Py_FatalError(). */
 
 #define PyUnicode_1BYTE_DATA(op) _Py_STATIC_CAST(Py_UCS1*, PyUnicode_DATA(op))
 #define PyUnicode_2BYTE_DATA(op) _Py_STATIC_CAST(Py_UCS2*, PyUnicode_DATA(op))
@@ -392,9 +394,6 @@ static inline Py_UCS4 PyUnicode_READ(int kind,
 static inline Py_UCS4 PyUnicode_READ_CHAR(PyObject *unicode, Py_ssize_t index)
 {
     const void *data = PyUnicode_DATA(unicode);
-    if (data == NULL) {
-        return _PyUnicode_ReadCharFallback(unicode, index);
-    }
     return PyUnicode_READ(PyUnicode_KIND(unicode), data, index);
 }
 #define PyUnicode_READ_CHAR(unicode, index) \

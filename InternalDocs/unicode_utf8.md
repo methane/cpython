@@ -23,9 +23,13 @@ publishes it only after completion. The free-threaded build uses an acquire load
 and a release store under the object's critical section. A failed allocation
 leaves the object unchanged. A published view is retained until destruction.
 
-`PyUnicode_DATA()` and the typed data macros return NULL on allocation failure;
-`PyUnicode_READ_CHAR()` returns `(Py_UCS4)-1`. Every caller must propagate the
-exception. `PyUnicode_READ()` itself still operates on a caller-supplied array.
+`PyUnicode_DATA()` (macro and exported function), the typed data macros, and
+`PyUnicode_READ_CHAR()` call `Py_FatalError()` if FSR allocation fails. These
+legacy accessors do not require callers to handle a new allocation-failure
+return value. `_PyUnicode_GetFSR()` remains fallible for internal consumers and
+the explicit FSR view API. `PyUnicode_ReadChar()` retains its UTF-8 scan fallback
+when FSR allocation fails. `PyUnicode_READ()` itself still operates on a
+caller-supplied array.
 Internal allocation-free consumers can scan with `_PyUnicode_ReadCharNoAlloc()`;
 this is not the API for repeated random access.
 
@@ -55,8 +59,8 @@ sequential API whose caller does keep the string alive.
 
 All three storage APIs preserve lone surrogates and surrogate pairs without
 combining them. `PyUnicode_AsUTF8AndSize()` still provides strict UTF-8 and
-rejects surrogates. The new view APIs are experimental; existing layout-based
-compatibility APIs and their allocation-failure behavior remain unchanged.
+rejects surrogates. The new view APIs are experimental and report errors to the
+caller, including allocation failure, without invoking the fatal legacy path.
 
 Hashing, equality, ordering, UTF-8 output, concatenation, and ordinary and virtual
 iteration consume the primary payload without generating a FSR. Hashing uses

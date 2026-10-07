@@ -404,29 +404,83 @@ class UTF8StorageTests(unittest.TestCase):
     def make_string(self, text):
         return text.encode('utf-8', 'surrogatepass').decode('utf-8', 'surrogatepass')
 
+    def test_legacy_fsr_allocation_failure_aborts(self):
+        calls = ('api.unicode_materialize_fsr(value)',
+                 'api.unicode_materialize_fsr_function(value)',
+                 'api.unicode_materialize_fsr_typed(value)',
+                 'api.unicode_readchar_macro(value, 0)')
+        for text in ('café', '日é', '😀日', '\udcff日'):
+            for subclass in (False, True):
+                for call in calls:
+                    with self.subTest(text=ascii(text), subclass=subclass, call=call):
+                        code = textwrap.dedent(f"""
+                            import _testcapi as api
+                            from test.support import SuppressCrashReport
+                            SuppressCrashReport().__enter__()
+                            class Str(str):
+                                pass
+                            value = {text!a}.encode('utf-8', 'surrogatepass').decode(
+                                'utf-8', 'surrogatepass')
+                            if {subclass}:
+                                value = Str(value)
+                            assert api.unicode_storage(value)[3] == 0
+                            api.set_nomemory(0, 1)
+                            {call}
+                        """)
+                        proc = assert_python_failure('-c', code)
+                        self.assertIn(b'Fatal Python error:', proc.err)
+                        self.assertIn(b'cannot allocate Unicode fixed-width representation',
+                                      proc.err)
+                        if sys.platform != 'win32':
+                            self.assertEqual(proc.rc, -signal.SIGABRT)
+
+    def test_legacy_fsr_existing_storage_noalloc(self):
+        from test.support.script_helper import assert_python_ok
+        assert_python_ok('-c', textwrap.dedent(r"""
+            import sys
+            import _testcapi as api
+            class Str(str):
+                pass
+            encoding = 'utf-32-le' if sys.byteorder == 'little' else 'utf-32-be'
+            remove_hooks = api.remove_mem_hooks
+            for text in ('ascii', 'café', '日é', '😀日', '\udcff日'):
+                for factory in (str, Str):
+                    cached = factory(text.encode('utf-8', 'surrogatepass').decode(
+                        'utf-8', 'surrogatepass'))
+                    api.unicode_materialize_fsr(cached)
+                    fsr = api.unicode_fromkindanddata(
+                        4, text.encode(encoding, 'surrogatepass'))
+                    for value in (cached, factory(fsr)):
+                        before = api.unicode_storage(value)
+                        for get_data in (api.unicode_materialize_fsr,
+                                         api.unicode_materialize_fsr_function,
+                                         api.unicode_materialize_fsr_typed):
+                            try:
+                                api.set_nomemory(0, 1)
+                                get_data(value)
+                            finally:
+                                remove_hooks()
+                            assert api.unicode_storage(value) == before
+                            assert value == text
+        """))
+
     def test_readchar_fsr_allocation_failure(self):
+        import_helper.import_module('_testlimitedcapi')
         from test.support.script_helper import assert_python_ok
         assert_python_ok('-c', textwrap.dedent(r"""
             import _testcapi
-            try:
-                import _testlimitedcapi
-            except ImportError:
-                readers = (_testcapi.unicode_readchar_macro,)
-            else:
-                readers = (_testcapi.unicode_readchar_macro,
-                           _testlimitedcapi.unicode_readchar)
-            for reader in readers:
-                for text, index in (('日é😀', 2), ('é\udcff日', 1)):
-                    value = text.encode('utf-8', 'surrogatepass').decode(
-                        'utf-8', 'surrogatepass')
-                    assert _testcapi.unicode_storage(value)[3] == 0
-                    try:
-                        _testcapi.set_nomemory(0, 1)
-                        ch = reader(value, index)
-                    finally:
-                        _testcapi.remove_mem_hooks()
-                    assert ch == ord(text[index])
-                    assert _testcapi.unicode_storage(value)[3] == 0
+            from _testlimitedcapi import unicode_readchar
+            for text, index in (('日é😀', 2), ('é\udcff日', 1)):
+                value = text.encode('utf-8', 'surrogatepass').decode(
+                    'utf-8', 'surrogatepass')
+                assert _testcapi.unicode_storage(value)[3] == 0
+                try:
+                    _testcapi.set_nomemory(0, 1)
+                    ch = unicode_readchar(value, index)
+                finally:
+                    _testcapi.remove_mem_hooks()
+                assert ch == ord(text[index])
+                assert _testcapi.unicode_storage(value)[3] == 0
         """))
 
     def test_write_apis_abort_without_writable_storage(self):
@@ -2245,7 +2299,7 @@ class UTF8StorageTests(unittest.TestCase):
             import _testcapi
             s = b'caf\xc3\xa9'.decode()
             failed = False
-            materialize = _testcapi.unicode_materialize_fsr
+            materialize = _testcapi.unicode_getfsrview
             remove_hooks = _testcapi.remove_mem_hooks
             try:
                 _testcapi.set_nomemory(0, 1)
@@ -2256,7 +2310,8 @@ class UTF8StorageTests(unittest.TestCase):
                 remove_hooks()
             assert failed
             assert _testcapi.unicode_storage(s)[3] == 0
-            materialize(s)
+            view = materialize(s)
+            _testcapi.unicode_view_release(view)
             assert _testcapi.unicode_storage(s)[3] == 1
             assert s[3] == 'é'
         """))

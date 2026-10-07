@@ -863,6 +863,9 @@ _PyUnicode_EqualUTF8(PyObject *left, PyObject *right)
 void *
 _PyUnicode_GetFSR(PyObject *op)
 {
+    if (!_PyASCIIObject_CAST(op)->state.utf8_storage) {
+        return PyUnicode_DATA(op);
+    }
     PyCompactUnicodeObject *u = _PyCompactUnicodeObject_CAST(op);
     void *data = FT_ATOMIC_LOAD_PTR_ACQUIRE(u->fsr);
     if (data != NULL) {
@@ -892,6 +895,17 @@ _PyUnicode_GetFSR(PyObject *op)
         }
     }
     Py_END_CRITICAL_SECTION();
+    return data;
+}
+
+/* Legacy direct-access APIs have no allocation-failure return convention. */
+void *
+_PyUnicode_GetFSROrFatal(PyObject *op)
+{
+    void *data = _PyUnicode_GetFSR(op);
+    if (data == NULL) {
+        Py_FatalError("cannot allocate Unicode fixed-width representation");
+    }
     return data;
 }
 
@@ -974,7 +988,7 @@ _PyUnicode_GetFSRView(PyObject *str, Py_buffer *view)
     if (ensure_unicode(str) < 0) {
         return -1;
     }
-    const void *data = PyUnicode_DATA(str);
+    const void *data = _PyUnicode_GetFSR(str);
     if (data == NULL) {
         return -1;
     }
@@ -4523,7 +4537,11 @@ PyUnicode_ReadChar(PyObject *unicode, Py_ssize_t index)
         PyErr_SetString(PyExc_IndexError, "string index out of range");
         return (Py_UCS4)-1;
     }
-    return PyUnicode_READ_CHAR(unicode, index);
+    const void *data = _PyUnicode_GetFSR(unicode);
+    if (data == NULL) {
+        return _PyUnicode_ReadCharFallback(unicode, index);
+    }
+    return PyUnicode_READ(PyUnicode_KIND(unicode), data, index);
 }
 
 int
