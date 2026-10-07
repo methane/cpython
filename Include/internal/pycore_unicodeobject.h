@@ -33,6 +33,23 @@ PyAPI_FUNC(PyObject*) _PyUnicode_BinarySlice(PyObject *, PyObject *, PyObject *)
 PyAPI_FUNC(PyObject *) _PyUnicode_Repeat(PyObject *str, Py_ssize_t len);
 
 
+/* UCS-4 preserves individual surrogates; a 16-bit wchar_t input combines
+   valid pairs, as required by PyUnicode_FromWideChar(). */
+static inline Py_UCS4
+_PyUnicode_ReadWideChar(const void *data, int kind, Py_ssize_t size,
+                        Py_ssize_t *index, int join_surrogates)
+{
+    Py_UCS4 ch = PyUnicode_READ(kind, data, (*index)++);
+    if (join_surrogates && Py_UNICODE_IS_HIGH_SURROGATE(ch) && *index < size) {
+        Py_UCS4 low = PyUnicode_READ(kind, data, *index);
+        if (Py_UNICODE_IS_LOW_SURROGATE(low)) {
+            (*index)++;
+            ch = Py_UNICODE_JOIN_SURROGATES(ch, low);
+        }
+    }
+    return ch;
+}
+
 /* Generic helper macro to convert characters of different types.
    from_type and to_type have to be valid type names, begin and end
    are pointers to the source characters which should be of type

@@ -1,12 +1,13 @@
 # Unicode UTF-8 storage
 
-Normal completed strings have a compact UTF-8 payload. Valid UTF-8 input is
+Strings constructed from UTF-8 have a compact UTF-8 payload. Valid UTF-8 input is
 validated and copied directly, without an intermediate FSR. Invalid input uses
 the existing decoder and error handlers before finalizing into UTF-8 storage.
 ASCII keeps the existing small header and shares its payload with fixed-width
-readers. Non-ASCII uses
+readers. Non-ASCII UTF-8 storage uses
 `PyCompactUnicodeObject`, followed by `utf8_length` bytes and a terminating NUL.
-Lengths exposed to Python and the C API still count code points.
+Lengths exposed to Python and the C API still count code points. Constructors
+from fixed-width data instead retain FSR storage and generate UTF-8 on demand.
 
 The payload is UTF-8 with surrogatepass: every surrogate is a separate three-byte
 sequence, including adjacent high/low surrogates. `has_surrogates` records content,
@@ -143,8 +144,20 @@ length and known character-width metadata before scanning either payload.
 ## Construction and compatibility
 
 `PyUnicode_New()` returns a writable FSR (inline for ASCII, separately allocated
-for non-ASCII). Completed constructors and Writer results convert to compact
-UTF-8. Subclasses retain separately allocated data.
+for non-ASCII). `PyUnicode_FromKindAndData()` and `PyUnicode_FromWideChar()`
+copy their input into FSR storage using the minimum character width. Non-ASCII
+results use a noncompact `PyUnicodeObject` with no initial UTF-8 cache; empty
+strings and Latin-1 singletons still use shared objects. Completing an FSR
+construction buffer does not convert it to UTF-8. Copying an FSR-primary string
+or constructing a subclass from it also preserves FSR storage. A 16-bit
+`wchar_t` input combines valid surrogate pairs, while UCS2 input preserves
+individual surrogates.
+
+For these strings, Export(all) initially selects UCS1/UCS2/UCS4. Hashing or
+strict UTF-8 access fills the UTF-8 cache when needed, after which Export(all)
+prefers UTF-8. UTF8View can instead own a temporary encoding without filling
+the cache. Writer results continue to use compact UTF-8. Subclasses retain
+separately allocated data.
 
 The existing `PyUnicode_WriteChar`, `PyUnicode_Fill`, and
 `PyUnicode_CopyCharacters` contracts also allow a private, unused decoded string

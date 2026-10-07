@@ -271,30 +271,13 @@ _PyUnicodeWriter_WriteStr(_PyUnicodeWriter *writer, PyObject *str)
 }
 
 
-/* UCS-4 preserves individual surrogates; a 16-bit wchar_t input combines
-   valid pairs, as required by PyUnicode_FromWideChar(). */
-static Py_UCS4
-unicode_writer_read_wide(const void *data, int kind, Py_ssize_t size,
-                         Py_ssize_t *index, int join_surrogates)
-{
-    Py_UCS4 ch = PyUnicode_READ(kind, data, (*index)++);
-    if (join_surrogates && Py_UNICODE_IS_HIGH_SURROGATE(ch) && *index < size) {
-        Py_UCS4 low = PyUnicode_READ(kind, data, *index);
-        if (Py_UNICODE_IS_LOW_SURROGATE(low)) {
-            (*index)++;
-            ch = Py_UNICODE_JOIN_SURROGATES(ch, low);
-        }
-    }
-    return ch;
-}
-
 static int
 unicode_writer_write_wide(_PyUnicodeWriter *writer, const void *data,
                           int kind, Py_ssize_t size, int join_surrogates)
 {
     Py_ssize_t bytes = 0, length = 0;
     for (Py_ssize_t i = 0; i < size; length++) {
-        Py_UCS4 ch = unicode_writer_read_wide(data, kind, size, &i, join_surrogates);
+        Py_UCS4 ch = _PyUnicode_ReadWideChar(data, kind, size, &i, join_surrogates);
         if (ch > _Py_MAX_UNICODE) {
             PyErr_Format(PyExc_ValueError,
                          "character U+%x is not in range [U+0000; U+%x]",
@@ -314,7 +297,7 @@ unicode_writer_write_wide(_PyUnicodeWriter *writer, const void *data,
         return -1;
     unsigned char *out = (unsigned char *)_PyUnicodeWriter_UTF8Data(writer);
     for (Py_ssize_t i = 0; i < size; ) {
-        Py_UCS4 ch = unicode_writer_read_wide(data, kind, size, &i, join_surrogates);
+        Py_UCS4 ch = _PyUnicode_ReadWideChar(data, kind, size, &i, join_surrogates);
         out = _PyUnicode_WriteUTF8Char(out, ch);
     }
     _PyUnicodeWriter_AdvanceUTF8(writer, bytes, length);
