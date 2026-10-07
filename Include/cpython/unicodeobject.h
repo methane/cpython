@@ -273,6 +273,42 @@ static inline void* _PyUnicode_DATA(PyObject *op) {
 }
 #define PyUnicode_DATA(op) _PyUnicode_DATA(_PyObject_CAST(op))
 
+/* Experimental read-only representation APIs, not part of the limited API.
+   UTF-8 here uses surrogatepass, unlike PyUnicode_AsUTF8AndSize(). */
+#define _PyUnicode_FORMAT_UCS1 0x01
+#define _PyUnicode_FORMAT_UCS2 0x02
+#define _PyUnicode_FORMAT_UCS4 0x04
+#define _PyUnicode_FORMAT_UTF8 0x08
+
+/* Export only existing storage, preferring UTF-8 to an available FSR.
+   Return a requested format, or -1 with an exception and view unchanged.
+   Release a successful view with PyBuffer_Release(). */
+PyAPI_FUNC(int32_t) _PyUnicode_Export(
+    PyObject *unicode, int32_t requested_formats, Py_buffer *view);
+
+/* Obtain an FSR, materializing and caching it if necessary. Return its format,
+   or -1 with an exception and view unchanged. PyBuffer_Release() ends access;
+   it does not promise to discard the FSR cache. */
+PyAPI_FUNC(int32_t) _PyUnicode_GetFSRView(PyObject *unicode, Py_buffer *view);
+
+/* A surrogatepass UTF-8 view. Init retains existing storage or owns a temporary
+   encoding for FSR-only strings. The caller need not keep the string alive.
+   Clear is valid after failed initialization and may be repeated. */
+typedef struct {
+    const char *data;
+    Py_ssize_t size;
+    PyObject *owner;  /* Private: the string or a temporary bytes object. */
+} _PyUnicodeUTF8View;
+
+PyAPI_FUNC(int) _PyUnicodeUTF8View_Init(_PyUnicodeUTF8View *, PyObject *unicode);
+PyAPI_FUNC(void) _PyUnicodeUTF8View_Clear(_PyUnicodeUTF8View *);
+
+/* Allocation-free iteration. Start at zero; position is an opaque cursor
+   (UTF-8 bytes or FSR code points), reusable only with the same string.
+   Return 1 on success, or 0 at end without changing position or ch.
+   The caller keeps the string alive. */
+PyAPI_FUNC(int) _PyUnicode_Next(PyObject *str, Py_ssize_t *position, Py_UCS4 *ch);
+
 /* Return pointers to the canonical representation cast to unsigned char,
    Py_UCS2, or Py_UCS4 for direct character access.
    No checks are performed, use PyUnicode_KIND() before to ensure

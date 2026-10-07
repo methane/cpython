@@ -28,6 +28,35 @@ exception. `PyUnicode_READ()` itself still operates on a caller-supplied array.
 Internal allocation-free consumers can scan with `_PyUnicode_ReadCharNoAlloc()`;
 this is not the API for repeated random access.
 
+Extensions can use three experimental, read-only APIs from `Python.h` (outside
+the Limited API), without depending on the object's layout:
+
+* `_PyUnicode_Export(str, formats, &view)` returns an already available format,
+  with UTF-8 preferred over FSR whenever requested. It never materializes or
+  converts a representation. A matching UTF-8 cache on an FSR-primary object
+  counts as available; hashing such an object can therefore change the selected
+  format. Unsupported requests raise `BufferError`.
+* `_PyUnicode_GetFSRView(str, &view)` returns UCS1/UCS2/UCS4, materializing and
+  caching FSR if necessary. Allocation failure leaves the object and output
+  buffer unchanged. Existing FSR storage is reused.
+* `_PyUnicodeUTF8View_Init(&view, str)` retains existing UTF-8 storage or owns a
+  temporary surrogatepass encoding of an FSR-only string. It never fills the
+  string's UTF-8 cache. Clear releases the owner and invalidates the pointer.
+
+The first two use `Py_buffer` and `PyBuffer_Release()`. The view retains the
+string, is read-only, and counts bytes in `len`; divide by `itemsize` for the
+FSR code point count. Release ends pointer access without requesting cache
+eviction. CPython currently retains materialized FSR until object destruction,
+but another implementation may release or unpin storage earlier. The UTF-8
+view also retains its owner, so none of these views require the caller to keep
+a separate string reference. `_PyUnicode_Next()` remains an allocation-free
+sequential API whose caller does keep the string alive.
+
+All three storage APIs preserve lone surrogates and surrogate pairs without
+combining them. `PyUnicode_AsUTF8AndSize()` still provides strict UTF-8 and
+rejects surrogates. The new view APIs are experimental; existing layout-based
+compatibility APIs and their allocation-failure behavior remain unchanged.
+
 Hashing, equality, ordering, UTF-8 output, concatenation, and ordinary and virtual
 iteration consume the primary payload without generating a FSR. Hashing uses
 surrogatepass bytes for both storage forms. Non-ASCII hashes can therefore differ
@@ -55,7 +84,7 @@ needles are read sequentially or converted into a temporary matching-width
 buffer, without materializing their FSR.
 
 UTF-8 search, explicit-separator split/partition, replacement and tab expansion use
-an internal UTF-8 view: primary storage is borrowed, while FSR-primary inputs
+a UTF-8 view: existing storage is retained, while FSR-only inputs
 are encoded into temporary owned bytes with surrogatepass. Cleanup is shared,
 and the temporary encoding never populates the public strict UTF-8 cache.
 This removes character-width dispatch and widening from these algorithms.

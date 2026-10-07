@@ -32,6 +32,234 @@ class Str(str):
 
 
 @unittest.skipIf(_testcapi is None, 'need _testcapi module')
+class UnicodeRepresentationTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.UCS1 = _testcapi._PyUnicode_FORMAT_UCS1
+        cls.UCS2 = _testcapi._PyUnicode_FORMAT_UCS2
+        cls.UCS4 = _testcapi._PyUnicode_FORMAT_UCS4
+        cls.UTF8 = _testcapi._PyUnicode_FORMAT_UTF8
+        cls.FSR = cls.UCS1 | cls.UCS2 | cls.UCS4
+        cls.ALL = cls.FSR | cls.UTF8
+
+    @staticmethod
+    def make_string(text):
+        return text.encode('utf-8', 'surrogatepass').decode('utf-8', 'surrogatepass')
+
+    def check_view(self, view, text, format, *, borrowed=True):
+        if format == self.UTF8:
+            data = text.encode('utf-8', 'surrogatepass')
+            itemsize, buffer_format = 1, 'B'
+        else:
+            itemsize, buffer_format = {
+                self.UCS1: (1, 'B'), self.UCS2: (2, '=H'), self.UCS4: (4, '=I'),
+            }[format]
+            data = b''.join(ord(ch).to_bytes(itemsize, sys.byteorder) for ch in text)
+        self.assertEqual(_testcapi.unicode_view_info(view),
+                         (format, data, itemsize, buffer_format, 1, 1, borrowed))
+
+    def test_export_utf8(self):
+        for text in ('', 'ascii', 'é', 'café', '日本語', 'a😀b',
+                     'x\0é', 'a\ud800\udcffb', '\ud800\udc00'):
+            for factory in (self.make_string, Str):
+                with self.subTest(text=ascii(text), factory=factory):
+                    value = factory(text)
+                    before = _testcapi.unicode_storage(value)
+                    view = _testcapi.unicode_export(value, self.ALL)
+                    self.check_view(view, text, self.UTF8)
+                    _testcapi.unicode_view_release(view)
+                    self.assertEqual(_testcapi.unicode_storage(value), before)
+                    if not before[3]:
+                        with self.assertRaises(BufferError):
+                            _testcapi.unicode_export(value, self.FSR)
+                        self.assertEqual(_testcapi.unicode_storage(value), before)
+
+    def test_export_ascii_as_ucs1(self):
+        for factory in (self.make_string, Str):
+            value = factory('a\0b')
+            view = _testcapi.unicode_export(value, self.FSR)
+            self.check_view(view, value, self.UCS1)
+            _testcapi.unicode_view_release(view)
+
+    def test_export_fsr_and_utf8_cache(self):
+        for ch, kind in ((0xe9, self.UCS1), (0x100, self.UCS2),
+                         (0xd800, self.UCS2), (0x10000, self.UCS4)):
+            for cache in ('hash', 'strict'):
+                if cache == 'strict' and ch == 0xd800:
+                    continue
+                with self.subTest(ch=ch, cache=cache):
+                    text = chr(ch) * 3
+                    value = _testcapi.unicode_new(3, ch)
+                    before = _testcapi.unicode_storage(value)
+                    self.assertEqual(before[4], 0)
+                    view = _testcapi.unicode_export(value, self.ALL)
+                    self.check_view(view, text, kind)
+                    _testcapi.unicode_view_release(view)
+                    with self.assertRaises(BufferError):
+                        _testcapi.unicode_export(value, self.UTF8)
+                    other = self.UCS4 if kind != self.UCS4 else self.UCS1
+                    with self.assertRaises(BufferError):
+                        _testcapi.unicode_export(value, other)
+                    self.assertEqual(_testcapi.unicode_storage(value), before)
+
+                    if cache == 'hash':
+                        hash(value)
+                    else:
+                        _testcapi.unicode_asutf8(value, 0)
+                    before = _testcapi.unicode_storage(value)
+                    view = _testcapi.unicode_export(value, self.ALL)
+                    self.check_view(view, text, self.UTF8)
+                    _testcapi.unicode_view_release(view)
+                    view = _testcapi.unicode_export(value, self.FSR)
+                    self.check_view(view, text, kind)
+                    _testcapi.unicode_view_release(view)
+                    self.assertEqual(_testcapi.unicode_storage(value), before)
+                    if ch == 0xd800:
+                        with self.assertRaises(UnicodeEncodeError):
+                            _testcapi.unicode_asutf8(value, 0)
+
+    def test_getfsrview_caches_and_reuses(self):
+        for text, kind in (('café', self.UCS1), ('日\0本', self.UCS2),
+                           ('a😀b', self.UCS4), ('a\ud800\udc00', self.UCS2)):
+            for factory in (self.make_string, Str):
+                value = factory(text)
+                self.assertEqual(_testcapi.unicode_storage(value)[3], 0)
+                view = _testcapi.unicode_getfsrview(value)
+                self.check_view(view, text, kind)
+                _testcapi.unicode_view_release(view)
+                self.assertEqual(_testcapi.unicode_storage(value)[3], 1)
+                before = value.__sizeof__()
+                view = _testcapi.unicode_getfsrview(value)
+                self.check_view(view, text, kind)
+                _testcapi.unicode_view_release(view)
+                self.assertEqual(value.__sizeof__(), before)
+                # Materializing an FSR never changes the UTF-8 preference.
+                view = _testcapi.unicode_export(value, self.ALL)
+                self.check_view(view, text, self.UTF8)
+                _testcapi.unicode_view_release(view)
+                view = _testcapi.unicode_export(value, self.FSR)
+                self.check_view(view, text, kind)
+                _testcapi.unicode_view_release(view)
+
+    def test_utf8view_temporary(self):
+        for ch in (0xe9, 0x100, 0xd800, 0x10000):
+            value = _testcapi.unicode_new(3, ch)
+            before = _testcapi.unicode_storage(value)
+            view = _testcapi.unicode_utf8view(value)
+            self.check_view(view, chr(ch) * 3, self.UTF8, borrowed=False)
+            self.assertEqual(_testcapi.unicode_storage(value), before)
+            del value
+            self.check_view(view, chr(ch) * 3, self.UTF8, borrowed=False)
+            _testcapi.unicode_view_release(view)
+
+    def test_view_lifetime(self):
+        import weakref
+        for acquire in (lambda s: _testcapi.unicode_export(s, self.ALL),
+                        _testcapi.unicode_getfsrview, _testcapi.unicode_utf8view):
+            for explicit_release in (False, True):
+                value = Str('a日\0\udcff')
+                ref = weakref.ref(value)
+                view = acquire(value)
+                before = _testcapi.unicode_view_info(view)
+                del value
+                support.gc_collect()
+                self.assertIsNotNone(ref())
+                self.assertEqual(_testcapi.unicode_view_info(view), before)
+                if explicit_release:
+                    _testcapi.unicode_view_release(view)
+                    _testcapi.unicode_view_release(view)
+                    with self.assertRaises(ValueError):
+                        _testcapi.unicode_view_info(view)
+                else:
+                    del view
+                support.gc_collect()
+                self.assertIsNone(ref())
+
+    def test_invalid_arguments(self):
+        for value in (None, b'abc', 42, []):
+            with self.assertRaises(TypeError):
+                _testcapi.unicode_export(value, self.ALL)
+            with self.assertRaises(TypeError):
+                _testcapi.unicode_getfsrview(value)
+            with self.assertRaises(TypeError):
+                _testcapi.unicode_utf8view(value)
+        value = self.make_string('日本')
+        before = _testcapi.unicode_storage(value)
+        for formats in (0, 0x10, self.UCS1, self.UCS4):
+            with self.assertRaises(BufferError):
+                _testcapi.unicode_export(value, formats)
+        self.assertEqual(_testcapi.unicode_storage(value), before)
+
+    def test_allocation_failure_and_noalloc_export(self):
+        from test.support.script_helper import assert_python_ok
+        assert_python_ok('-c', textwrap.dedent(r"""
+            import _testcapi as api
+            remove_hooks = api.remove_mem_hooks
+            for ch in (0xe9, 0x100, 0xd800, 0x10000):
+                text = chr(ch) * 3
+                for get_view in (api.unicode_getfsrview, api.unicode_utf8view):
+                    if get_view == api.unicode_getfsrview:
+                        value = text.encode('utf-8', 'surrogatepass').decode(
+                            'utf-8', 'surrogatepass')
+                    else:
+                        value = api.unicode_new(3, ch)
+                    before = api.unicode_storage(value)
+                    failed = False
+                    try:
+                        api.set_nomemory(0, 1)
+                        get_view(value)
+                    except MemoryError:
+                        failed = True
+                    finally:
+                        remove_hooks()
+                    assert failed
+                    assert api.unicode_storage(value) == before
+                    assert value == text
+                    view = get_view(value)
+                    api.unicode_view_release(view)
+                for value in (text.encode('utf-8', 'surrogatepass').decode(
+                                  'utf-8', 'surrogatepass'), api.unicode_new(3, ch)):
+                    for cached in (False, True):
+                        if cached:
+                            hash(value)
+                            view = api.unicode_getfsrview(value)
+                            api.unicode_view_release(view)
+                        before = api.unicode_storage(value)
+                        try:
+                            api.set_nomemory(0, 1)
+                            api.unicode_export_noalloc(value)
+                        finally:
+                            remove_hooks()
+                        assert api.unicode_storage(value) == before
+        """))
+
+    @threading_helper.requires_working_threading()
+    def test_concurrent_views_and_cache_publication(self):
+        utf8 = self.make_string('a日\0😀\udcff' * 20)
+        fsr = _testcapi.unicode_new(100, 0xd800)
+        values = ((utf8, 'a日\0😀\udcff' * 20, self.UCS4),
+                  (fsr, '\ud800' * 100, self.UCS2))
+
+        def read():
+            for _ in range(20):
+                for value, text, kind in values:
+                    view = _testcapi.unicode_export(value, self.ALL)
+                    format = _testcapi.unicode_view_info(view)[0]
+                    self.assertIn(format, (self.UTF8, kind))
+                    self.check_view(view, text, format)
+                    _testcapi.unicode_view_release(view)
+                    view = _testcapi.unicode_getfsrview(value)
+                    self.check_view(view, text, kind)
+                    _testcapi.unicode_view_release(view)
+                    hash(value)
+                    view = _testcapi.unicode_utf8view(value)
+                    self.check_view(view, text, self.UTF8)
+                    _testcapi.unicode_view_release(view)
+
+        threading_helper.run_concurrently(read, nthreads=8)
+
+
+@unittest.skipIf(_testcapi is None, 'need _testcapi module')
 class UTF8StorageTests(unittest.TestCase):
     def make_string(self, text):
         return text.encode('utf-8', 'surrogatepass').decode('utf-8', 'surrogatepass')

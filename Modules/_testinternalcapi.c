@@ -3325,7 +3325,7 @@ unicode_utf8_view(PyObject *self, PyObject *args)
         return NULL;
     }
     PyObject *bytes = PyBytes_FromStringAndSize(view.data, view.size);
-    int borrowed = view.owner == NULL;
+    int borrowed = view.owner == str;
     _PyUnicodeUTF8View_Clear(&view);
     _PyUnicodeUTF8View_Clear(&view);
     if (bytes == NULL) {

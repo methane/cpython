@@ -650,18 +650,30 @@ _PyUnicode_GetPrimaryUTF8(PyObject *op, Py_ssize_t *size)
     return NULL;
 }
 
+/* Return already available surrogatepass UTF-8, without encoding or caching. */
+static const char *
+unicode_existing_utf8(PyObject *str, Py_ssize_t *size)
+{
+    const char *data = _PyUnicode_GetPrimaryUTF8(str, size);
+    if (data == NULL) {
+        data = _PyUnicode_UTF8(str);
+        if (data != NULL) {
+            *size = PyUnicode_UTF8_LENGTH(str);
+        }
+    }
+    return data;
+}
+
 int
 _PyUnicodeUTF8View_Init(_PyUnicodeUTF8View *view, PyObject *str)
 {
     view->owner = NULL;
     view->size = 0;
-    view->data = _PyUnicode_GetPrimaryUTF8(str, &view->size);
-    if (view->data == NULL) {
-        view->data = _PyUnicode_UTF8(str);
-        if (view->data != NULL) {
-            view->size = PyUnicode_UTF8_LENGTH(str);
-        }
+    view->data = NULL;
+    if (ensure_unicode(str) < 0) {
+        return -1;
     }
+    view->data = unicode_existing_utf8(str, &view->size);
     if (view->data == NULL) {
         view->owner = unicode_encode_utf8(str, _Py_ERROR_SURROGATEPASS, NULL);
         if (view->owner == NULL) {
@@ -669,6 +681,9 @@ _PyUnicodeUTF8View_Init(_PyUnicodeUTF8View *view, PyObject *str)
         }
         view->data = PyBytes_AS_STRING(view->owner);
         view->size = PyBytes_GET_SIZE(view->owner);
+    }
+    else {
+        view->owner = Py_NewRef(str);
     }
     return 0;
 }
@@ -696,7 +711,7 @@ unicode_utf8_pair_init(_PyUnicodeUTF8View views[2], PyObject *a, PyObject *b)
         return -1;
     }
     if (_PyUnicodeUTF8View_Init(&views[1], b) < 0) {
-        Py_XDECREF(views[0].owner);
+        _PyUnicodeUTF8View_Clear(&views[0]);
         return -1;
     }
     return 0;
@@ -878,6 +893,94 @@ _PyUnicode_GetFSR(PyObject *op)
     }
     Py_END_CRITICAL_SECTION();
     return data;
+}
+
+static int32_t
+unicode_export_buffer(PyObject *str, const void *data, Py_ssize_t size,
+                      int32_t format, Py_buffer *view)
+{
+    if (PyBuffer_FillInfo(view, str, (void *)data, size, 1, PyBUF_SIMPLE) < 0) {
+        return -1;
+    }
+    switch (format) {
+    case _PyUnicode_FORMAT_UCS2:
+        view->format = "=H";
+        view->itemsize = 2;
+        break;
+    case _PyUnicode_FORMAT_UCS4:
+        view->format = "=I";
+        view->itemsize = 4;
+        break;
+    default:
+        view->format = "B";
+        break;
+    }
+    return format;
+}
+
+int32_t
+_PyUnicode_Export(PyObject *str, int32_t requested_formats, Py_buffer *view)
+{
+    if (str == NULL || view == NULL) {
+        PyErr_BadInternalCall();
+        return -1;
+    }
+    if (ensure_unicode(str) < 0) {
+        return -1;
+    }
+    int32_t format = -1;
+    Py_BEGIN_CRITICAL_SECTION(str);
+    Py_ssize_t size;
+    const void *data = NULL;
+    if (requested_formats & _PyUnicode_FORMAT_UTF8) {
+        data = unicode_existing_utf8(str, &size);
+    }
+    if (data != NULL) {
+        format = unicode_export_buffer(str, data, size,
+                                       _PyUnicode_FORMAT_UTF8, view);
+    }
+    else {
+        int kind = PyUnicode_KIND(str);
+        /* The UCS format bits coincide with the PEP 393 character widths. */
+        if (requested_formats & kind) {
+            if (_PyASCIIObject_CAST(str)->state.utf8_storage) {
+                data = FT_ATOMIC_LOAD_PTR_ACQUIRE(
+                    _PyCompactUnicodeObject_CAST(str)->fsr);
+            }
+            else {
+                data = PyUnicode_DATA(str);
+            }
+        }
+        if (data != NULL) {
+            format = unicode_export_buffer(str, data,
+                PyUnicode_GET_LENGTH(str) * kind, kind, view);
+        }
+        else {
+            PyErr_SetString(PyExc_BufferError,
+                            "requested Unicode representation is not available");
+        }
+    }
+    Py_END_CRITICAL_SECTION();
+    return format;
+}
+
+int32_t
+_PyUnicode_GetFSRView(PyObject *str, Py_buffer *view)
+{
+    if (str == NULL || view == NULL) {
+        PyErr_BadInternalCall();
+        return -1;
+    }
+    if (ensure_unicode(str) < 0) {
+        return -1;
+    }
+    const void *data = PyUnicode_DATA(str);
+    if (data == NULL) {
+        return -1;
+    }
+    int kind = PyUnicode_KIND(str);
+    return unicode_export_buffer(str, data, PyUnicode_GET_LENGTH(str) * kind,
+                                 kind, view);
 }
 
 /* Consume a completed FSR object and return its compact UTF-8 equivalent. */

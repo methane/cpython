@@ -388,6 +388,116 @@ These APIs can be used to work with surrogates:
    be in the range ``[0xDC00; 0xDFFF]``.
 
 
+Experimental representation views
+"""""""""""""""""""""""""""""""""
+
+The following private APIs are available through :file:`Python.h` in this
+experimental branch. They are not part of the Limited API or Stable ABI.
+They distinguish access to an existing native representation from a request
+to generate a particular representation. All exported data is read-only.
+
+.. c:macro:: _PyUnicode_FORMAT_UCS1
+             _PyUnicode_FORMAT_UCS2
+             _PyUnicode_FORMAT_UCS4
+             _PyUnicode_FORMAT_UTF8
+
+   Format bits with values ``0x01``, ``0x02``, ``0x04``, and ``0x08`` respectively.
+   UCS formats contain one code point per element in native byte order.
+   UTF-8 uses ``surrogatepass``: every surrogate code point is encoded separately,
+   preserving every Python string, including adjacent surrogate pairs.
+
+.. c:function:: int32_t _PyUnicode_Export(PyObject *unicode, int32_t requested_formats, Py_buffer *view)
+
+   Export an existing representation selected from the bitwise combination
+   *requested_formats*. Prefer UTF-8 whenever it exists and is requested,
+   including a cached UTF-8 encoding of an FSR-primary string. Otherwise,
+   export the existing fixed-width representation if its exact format is
+   requested. ASCII storage is available as either UTF-8 or UCS1.
+
+   This operation does not encode, widen, materialize, or cache a representation.
+   CPython performs it in constant time without allocating memory. Requesting
+   all four formats allows consumers to use native storage across implementations::
+
+      Py_buffer view;
+      int32_t format = _PyUnicode_Export(
+          str, _PyUnicode_FORMAT_UTF8 | _PyUnicode_FORMAT_UCS1 |
+               _PyUnicode_FORMAT_UCS2 | _PyUnicode_FORMAT_UCS4, &view);
+      if (format < 0) {
+          return NULL;
+      }
+      /* Read view.buf according to format, using view.len bytes. */
+      PyBuffer_Release(&view);
+
+   Return the selected format on success. Return ``-1`` with an exception set
+   on error, leaving *view* unchanged. Raise :exc:`TypeError` for a non-string
+   argument and :exc:`BufferError` if no requested representation is available.
+   Unknown format bits are ignored; an empty or unsupported-only request fails.
+   *unicode* and *view* must not be ``NULL``.
+
+   The buffer retains its owner until :c:func:`PyBuffer_Release` is called;
+   callers need not retain a separate reference to *unicode*. Its ``len``
+   counts bytes, excluding the terminating NUL. Embedded NULs are permitted.
+   The buffer has ``readonly=1``, ``ndim=1``, and ``NULL`` shape, strides,
+   suboffsets, and internal fields. Its format and item size are:
+
+   ===========  =============  =========
+   Format       Buffer format  Item size
+   ===========  =============  =========
+   UCS1         ``"B"``        1
+   UCS2         ``"=H"``       2
+   UCS4         ``"=I"``       4
+   UTF-8        ``"B"``        1
+   ===========  =============  =========
+
+.. c:function:: int32_t _PyUnicode_GetFSRView(PyObject *unicode, Py_buffer *view)
+
+   Obtain a fixed-width view for random access. Reuse an existing FSR in
+   constant time, or allocate and cache one if absent. Return its UCS1, UCS2,
+   or UCS4 format, with the same buffer metadata and lifetime as
+   :c:func:`_PyUnicode_Export`. The code point count is ``view.len / view.itemsize``.
+
+   Return ``-1`` with an exception set on error, leaving *view* unchanged.
+   Allocation failure raises :exc:`MemoryError` and leaves the string's
+   representation unchanged. Non-string arguments raise :exc:`TypeError`.
+   *unicode* and *view* must not be ``NULL``.
+
+   Call :c:func:`PyBuffer_Release` after use. Release ends the caller's access
+   to the pointer; it does not request cache eviction. CPython currently retains
+   the FSR until the string is destroyed, but callers must not rely on this
+   retention after release.
+
+.. c:type:: _PyUnicodeUTF8View
+
+   A read-only surrogatepass UTF-8 view with ``const char *data`` and
+   ``Py_ssize_t size`` members. *size* counts bytes, excluding the terminating
+   NUL. The remaining fields are private.
+
+.. c:function:: int _PyUnicodeUTF8View_Init(_PyUnicodeUTF8View *view, PyObject *unicode)
+
+   Retain existing UTF-8 storage if available. Otherwise encode the FSR into
+   temporary owned bytes, without adding a UTF-8 cache to the string. Return
+   ``0`` on success or ``-1`` with an exception set on failure. The view keeps
+   its storage alive independently of the caller's reference to *unicode*.
+   Do not initialize an active view again before clearing it.
+
+   This API accepts surrogates. :c:func:`PyUnicode_AsUTF8AndSize` remains a
+   strict UTF-8 API and raises :exc:`UnicodeEncodeError` for surrogates.
+
+.. c:function:: void _PyUnicodeUTF8View_Clear(_PyUnicodeUTF8View *view)
+
+   End access and release the retained storage. Reset *data* to ``NULL`` and
+   *size* to zero. Safe after failed initialization, on a zero-initialized view,
+   and on an already cleared view. This does not evict a string's caches.
+
+.. c:function:: int _PyUnicode_Next(PyObject *unicode, Py_ssize_t *position, Py_UCS4 *ch)
+
+   Read the next code point without generating a representation. Initialize
+   *position* to zero and then reuse only positions returned for the same string;
+   it is an opaque cursor, not a code point index. Return ``1`` and update
+   *position* and *ch* on success. Return ``0`` at the end, leaving both unchanged.
+   The caller must keep *unicode* alive throughout iteration.
+
+
 Creating and accessing Unicode strings
 """"""""""""""""""""""""""""""""""""""
 
