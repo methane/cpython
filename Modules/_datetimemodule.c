@@ -14,7 +14,7 @@
 #include "pycore_object.h"        // _PyObject_Init()
 #include "pycore_time.h"          // _PyTime_ObjectToTime_t()
 #include "pycore_tuple.h"         // _PyTuple_FromPair
-#include "pycore_unicodeobject.h" // _PyUnicode_Copy()
+#include "pycore_unicodeobject.h" // _PyUnicodeWriter
 #include "pycore_initconfig.h"    // _PyStatus_OK()
 #include "pycore_pyatomic_ft_wrappers.h"
 
@@ -1637,7 +1637,7 @@ append_keyword_tzinfo(PyObject *repr, PyObject *tzinfo)
     if (tzinfo == Py_None)
         return repr;
     /* Get rid of the trailing ')'. */
-    assert(PyUnicode_READ_CHAR(repr, PyUnicode_GET_LENGTH(repr)-1) == ')');
+    assert(_PyUnicode_ReadCharNoAlloc(repr, PyUnicode_GET_LENGTH(repr)-1) == ')');
     temp = PyUnicode_Substring(repr, 0, PyUnicode_GET_LENGTH(repr) - 1);
     Py_DECREF(repr);
     if (temp == NULL)
@@ -1661,7 +1661,7 @@ append_keyword_fold(PyObject *repr, int fold)
     if (fold == 0)
         return repr;
     /* Get rid of the trailing ')'. */
-    assert(PyUnicode_READ_CHAR(repr, PyUnicode_GET_LENGTH(repr)-1) == ')');
+    assert(_PyUnicode_ReadCharNoAlloc(repr, PyUnicode_GET_LENGTH(repr)-1) == ')');
     temp = PyUnicode_Substring(repr, 0, PyUnicode_GET_LENGTH(repr) - 1);
     Py_DECREF(repr);
     if (temp == NULL)
@@ -1874,6 +1874,21 @@ make_freplacement(PyObject *object)
     return PyUnicode_FromString(freplacement);
 }
 
+/* Append a complete span from a surrogate-preserving UTF-8 format view. */
+static int
+write_utf8_format_span(PyUnicodeWriter *writer, const char *data,
+                       Py_ssize_t size, int ascii)
+{
+    Py_ssize_t length = size;
+    if (!ascii) {
+        for (Py_ssize_t i = 0; i < size; i++) {
+            length -= ((unsigned char)data[i] & 0xc0) == 0x80;
+        }
+    }
+    return _PyUnicodeWriter_WriteUTF8((_PyUnicodeWriter *)writer,
+                                      data, size, length);
+}
+
 /* I sure don't want to reproduce the strftime code from the time module,
  * so this imports the module and calls it.  All the hair is due to
  * giving special meanings to the %z, %:z, %Z and %f format codes via a
@@ -1907,27 +1922,31 @@ wrap_strftime(PyObject *object, PyObject *format, PyObject *timetuple,
      * is expensive, don't unless they're actually used.
      */
 
+    _PyUnicodeUTF8View view = {0};
     PyUnicodeWriter *writer = PyUnicodeWriter_Create(0);
     if (writer == NULL) {
         goto Error;
     }
 
-    Py_ssize_t flen = PyUnicode_GET_LENGTH(format);
+    if (_PyUnicodeUTF8View_Init(&view, format) < 0) {
+        goto Error;
+    }
+    int ascii = PyUnicode_IS_ASCII(format);
+    Py_ssize_t flen = view.size;
     Py_ssize_t i = 0;
     Py_ssize_t start = 0;
     Py_ssize_t end = 0;
     while (i != flen) {
-        i = PyUnicode_FindChar(format, '%', i, flen, 1);
-        if (i < 0) {
-            assert(!PyErr_Occurred());
+        const char *percent = memchr(view.data + i, '%', flen - i);
+        if (percent == NULL) {
             break;
         }
-        end = i;
+        end = i = percent - view.data;
         i++;
         if (i == flen) {
             break;
         }
-        Py_UCS4 ch = PyUnicode_READ_CHAR(format, i);
+        unsigned char ch = (unsigned char)view.data[i];
         i++;
         /* A % has been seen and ch is the character after it. */
         PyObject *replacement = NULL;
@@ -1940,7 +1959,7 @@ wrap_strftime(PyObject *object, PyObject *format, PyObject *timetuple,
             }
             replacement = zreplacement;
         }
-        else if (ch == ':' && i < flen && PyUnicode_READ_CHAR(format, i) == 'z') {
+        else if (ch == ':' && i < flen && view.data[i] == 'z') {
             /* %:z -> +HH:MM */
             i++;
             if (colonzreplacement == NULL) {
@@ -2013,7 +2032,7 @@ wrap_strftime(PyObject *object, PyObject *format, PyObject *timetuple,
             if (ch == 'C') {
                 n -= 2;
             }
-            if (PyUnicodeWriter_WriteSubstring(writer, format, start, end) < 0) {
+            if (write_utf8_format_span(writer, view.data + start, end - start, ascii) < 0) {
                 goto Error;
             }
             start = i;
@@ -2028,7 +2047,7 @@ wrap_strftime(PyObject *object, PyObject *format, PyObject *timetuple,
         }
         assert(replacement != NULL);
         assert(PyUnicode_Check(replacement));
-        if (PyUnicodeWriter_WriteSubstring(writer, format, start, end) < 0) {
+        if (write_utf8_format_span(writer, view.data + start, end - start, ascii) < 0) {
             goto Error;
         }
         start = i;
@@ -2043,7 +2062,7 @@ wrap_strftime(PyObject *object, PyObject *format, PyObject *timetuple,
         newformat = Py_NewRef(format);
     }
     else {
-        if (PyUnicodeWriter_WriteSubstring(writer, format, start, flen) < 0) {
+        if (write_utf8_format_span(writer, view.data + start, flen - start, ascii) < 0) {
             goto Error;
         }
         newformat = PyUnicodeWriter_Finish(writer);
@@ -2056,6 +2075,7 @@ wrap_strftime(PyObject *object, PyObject *format, PyObject *timetuple,
     Py_DECREF(newformat);
 
  Done:
+    _PyUnicodeUTF8View_Clear(&view);
     Py_XDECREF(freplacement);
     Py_XDECREF(zreplacement);
     Py_XDECREF(colonzreplacement);
@@ -3234,7 +3254,7 @@ date_new(PyTypeObject *type, PyObject *args, PyObject *kw)
         }
         else if (PyUnicode_Check(state)) {
             if (PyUnicode_GET_LENGTH(state) == _PyDateTime_DATE_DATASIZE &&
-                MONTH_IS_SANE(PyUnicode_READ_CHAR(state, 2)))
+                MONTH_IS_SANE(_PyUnicode_ReadCharNoAlloc(state, 2)))
             {
                 state = PyUnicode_AsLatin1String(state);
                 if (state == NULL) {
@@ -4717,7 +4737,7 @@ time_new(PyTypeObject *type, PyObject *args, PyObject *kw)
         }
         else if (PyUnicode_Check(state)) {
             if (PyUnicode_GET_LENGTH(state) == _PyDateTime_TIME_DATASIZE &&
-                (0x7F & PyUnicode_READ_CHAR(state, 0)) < 24)
+                (0x7F & _PyUnicode_ReadCharNoAlloc(state, 0)) < 24)
             {
                 state = PyUnicode_AsLatin1String(state);
                 if (state == NULL) {
@@ -5505,7 +5525,7 @@ datetime_new(PyTypeObject *type, PyObject *args, PyObject *kw)
         }
         else if (PyUnicode_Check(state)) {
             if (PyUnicode_GET_LENGTH(state) == _PyDateTime_DATETIME_DATASIZE &&
-                MONTH_IS_SANE(PyUnicode_READ_CHAR(state, 2) & 0x7F))
+                MONTH_IS_SANE(_PyUnicode_ReadCharNoAlloc(state, 2) & 0x7F))
             {
                 state = PyUnicode_AsLatin1String(state);
                 if (state == NULL) {
@@ -5927,9 +5947,6 @@ _sanitize_isoformat_str(PyObject *dtstr)
     // replaces any surrogate character separators with `T`.
     //
     // The result of this, if not NULL, returns a new reference
-    const void* const unicode_data = PyUnicode_DATA(dtstr);
-    const int kind = PyUnicode_KIND(dtstr);
-
     // Depending on the format of the string, the separator can only ever be
     // in positions 7, 8 or 10. We'll check each of these for a surrogate and
     // if we find one, replace it with `T`. If there is more than one surrogate,
@@ -5945,7 +5962,7 @@ _sanitize_isoformat_str(PyObject *dtstr)
             break;
         }
 
-        if(Py_UNICODE_IS_SURROGATE(PyUnicode_READ(kind, unicode_data, pos))) {
+        if(Py_UNICODE_IS_SURROGATE(_PyUnicode_ReadCharNoAlloc(dtstr, pos))) {
             surrogate_separator = pos;
             break;
         }
@@ -5955,17 +5972,16 @@ _sanitize_isoformat_str(PyObject *dtstr)
         return Py_NewRef(dtstr);
     }
 
-    PyObject *str_out = _PyUnicode_Copy(dtstr);
-    if (str_out == NULL) {
+    _PyUnicodeWriter writer;
+    _PyUnicodeWriter_Init(&writer);
+    if (_PyUnicodeWriter_WriteSubstring(&writer, dtstr, 0, surrogate_separator) < 0 ||
+        _PyUnicodeWriter_WriteChar(&writer, 'T') < 0 ||
+        _PyUnicodeWriter_WriteSubstring(&writer, dtstr, surrogate_separator + 1, len) < 0)
+    {
+        _PyUnicodeWriter_Dealloc(&writer);
         return NULL;
     }
-
-    if (PyUnicode_WriteChar(str_out, surrogate_separator, (Py_UCS4)'T')) {
-        Py_DECREF(str_out);
-        return NULL;
-    }
-
-    return str_out;
+    return _PyUnicodeWriter_Finish(&writer);
 }
 
 

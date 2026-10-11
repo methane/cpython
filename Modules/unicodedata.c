@@ -19,6 +19,7 @@
 #include "Python.h"
 #include "pycore_object.h"        // _PyObject_VisitType()
 #include "pycore_ucnhash.h"       // _PyUnicode_Name_CAPI
+#include "pycore_unicodeobject.h" // _PyUnicode_Next()
 #include "pycore_unicodectype.h"  // _PyUnicode_IsXidStart()
 
 #include <stdbool.h>
@@ -615,8 +616,6 @@ nfd_nfkd(PyObject *self, PyObject *input, int k)
     PyObject *result;
     Py_UCS4 *output;
     Py_ssize_t i, o, osize;
-    int input_kind;
-    const void *input_data;
     /* Longest decomposition in Unicode 3.2: U+FDFA */
     Py_UCS4 stack[20];
     Py_ssize_t space, isize;
@@ -643,11 +642,11 @@ nfd_nfkd(PyObject *self, PyObject *input, int k)
         return NULL;
     }
     i = o = 0;
-    input_kind = PyUnicode_KIND(input);
-    input_data = PyUnicode_DATA(input);
+    Py_ssize_t cursor = 0;
+    Py_UCS4 ch;
 
-    while (i < isize) {
-        stack[stackptr++] = PyUnicode_READ(input_kind, input_data, i++);
+    while (_PyUnicode_Next(input, &cursor, &ch)) {
+        stack[stackptr++] = ch;
         while(stackptr) {
             Py_UCS4 code = stack[--stackptr];
             /* Hangul Decomposition adds three characters in
@@ -805,6 +804,10 @@ nfc_nfkc(PyObject *self, PyObject *input, int k)
 
     kind = PyUnicode_KIND(result);
     data = PyUnicode_DATA(result);
+    if (data == NULL) {
+        Py_DECREF(result);
+        return NULL;
+    }
     len = PyUnicode_GET_LENGTH(result);
 
     /* We allocate a buffer for the output.
@@ -954,9 +957,8 @@ is_normalized_quickcheck(PyObject *self, PyObject *input, bool nfc, bool k,
         return YES;
     }
 
-    Py_ssize_t i, len;
-    int kind;
-    const void *data;
+    Py_ssize_t cursor = 0;
+    Py_UCS4 ch;
     unsigned char prev_combining = 0;
 
     /* The two quickcheck bits at this shift have type QuickcheckResult. */
@@ -964,12 +966,7 @@ is_normalized_quickcheck(PyObject *self, PyObject *input, bool nfc, bool k,
 
     QuickcheckResult result = YES; /* certainly normalized, unless we find something */
 
-    i = 0;
-    kind = PyUnicode_KIND(input);
-    data = PyUnicode_DATA(input);
-    len = PyUnicode_GET_LENGTH(input);
-    while (i < len) {
-        Py_UCS4 ch = PyUnicode_READ(kind, data, i++);
+    while (_PyUnicode_Next(input, &cursor, &ch)) {
         const _PyUnicode_DatabaseRecord *record = _getrecord_ex(ch);
 
         unsigned char combining = record->combining;
@@ -1786,6 +1783,7 @@ typedef struct {
     PyObject *str;
     Py_ssize_t start;
     Py_ssize_t pos;
+    Py_ssize_t cursor;
     Py_ssize_t end;
     int gcb;
     enum ExtPictState ep_state;
@@ -1927,6 +1925,11 @@ _Py_InitGraphemeBreak(_PyGraphemeBreak *iter, PyObject *str,
 {
     iter->str = str;
     iter->start = iter->pos = start;
+    iter->cursor = 0;
+    Py_UCS4 ch;
+    for (Py_ssize_t i = 0; start < end && i < start; i++) {
+        (void)_PyUnicode_Next(str, &iter->cursor, &ch);
+    }
     iter->end = end;
     iter->gcb = 0;
     iter->ep_state = ExtPictState_Init;
@@ -1941,10 +1944,9 @@ _Py_NextGraphemeBreak(_PyGraphemeBreak *iter)
         return -1;
     }
 
-    int kind = PyUnicode_KIND(iter->str);
-    void *pstr = PyUnicode_DATA(iter->str);
     while (iter->pos < iter->end) {
-        Py_UCS4 chr = PyUnicode_READ(kind, pstr, iter->pos);
+        Py_UCS4 chr;
+        (void)_PyUnicode_Next(iter->str, &iter->cursor, &chr);
         const _PyUnicode_DatabaseRecord *record = _getrecord_ex(chr);
         int gcb = record->grapheme_cluster_break;
         iter->ep_state = update_ext_pict_state(iter->ep_state, gcb, record->ext_pict);

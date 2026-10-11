@@ -492,7 +492,7 @@ PyCurses_ConvertToChtype(PyCursesWindowObject *win, PyObject *obj, chtype *ch)
                          PyUnicode_GET_LENGTH(obj));
             return 0;
         }
-        value = PyUnicode_READ_CHAR(obj, 0);
+        value = _PyUnicode_ReadCharNoAlloc(obj, 0);
         if (128 < value) {
             PyObject *bytes;
             const char *encoding;

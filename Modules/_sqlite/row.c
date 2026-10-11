@@ -27,6 +27,7 @@
 
 #include "row.h"
 #include "cursor.h"
+#include "pycore_unicodeobject.h" // _PyUnicode_GetPrimaryUTF8()
 
 #define clinic_state() (pysqlite_get_state_by_type(type))
 #include "clinic/row.c.h"
@@ -124,8 +125,8 @@ equal_ignore_case(PyObject *left, PyObject *right)
     if (PyUnicode_GET_LENGTH(right) != len) {
         return 0;
     }
-    const Py_UCS1 *p1 = PyUnicode_1BYTE_DATA(left);
-    const Py_UCS1 *p2 = PyUnicode_1BYTE_DATA(right);
+    const Py_UCS1 *p1 = (const Py_UCS1 *)_PyUnicode_GetPrimaryUTF8(left, NULL);
+    const Py_UCS1 *p2 = (const Py_UCS1 *)_PyUnicode_GetPrimaryUTF8(right, NULL);
     for (; len; len--, p1++, p2++) {
         if (Py_TOLOWER(*p1) != Py_TOLOWER(*p2)) {
             return 0;

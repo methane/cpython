@@ -58,6 +58,7 @@
 #endif
 
 #include "Python.h"
+#include "pycore_unicodeobject.h" // _PyUnicode_GetPrimaryUTF8()
 #include "pycore_long.h"          // _PyLong_DigitValue
 #include "pycore_strhex.h"        // _Py_strhex_bytes_with_sep()
 #ifdef USE_ZLIB_CRC32
@@ -438,8 +439,8 @@ ascii_buffer_converter(PyObject *arg, Py_buffer *buf)
                             "string argument should contain only ASCII characters");
             return 0;
         }
-        assert(PyUnicode_KIND(arg) == PyUnicode_1BYTE_KIND);
-        buf->buf = (void *) PyUnicode_1BYTE_DATA(arg);
+        assert(PyUnicode_IS_ASCII(arg));
+        buf->buf = (void *)_PyUnicode_GetPrimaryUTF8(arg, NULL);
         buf->len = PyUnicode_GET_LENGTH(arg);
         buf->obj = NULL;
         return 1;

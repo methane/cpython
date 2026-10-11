@@ -2848,9 +2848,6 @@ static PyObject *
 raw_unicode_escape(PyObject *obj)
 {
     Py_ssize_t size = PyUnicode_GET_LENGTH(obj);
-    const void *data = PyUnicode_DATA(obj);
-    int kind = PyUnicode_KIND(obj);
-
     Py_ssize_t alloc = size;
     PyBytesWriter *writer = PyBytesWriter_Create(alloc);
     if (writer == NULL) {
@@ -2858,8 +2855,9 @@ raw_unicode_escape(PyObject *obj)
     }
     char *p = PyBytesWriter_GetData(writer);
 
-    for (Py_ssize_t i=0; i < size; i++) {
-        Py_UCS4 ch = PyUnicode_READ(kind, data, i);
+    Py_ssize_t cursor = 0;
+    Py_UCS4 ch;
+    while (_PyUnicode_Next(obj, &cursor, &ch)) {
         /* Map 32-bit characters to '\Uxxxxxxxx' */
         if (ch >= 0x10000) {
             /* -1: subtract 1 preallocated byte */
@@ -4233,7 +4231,7 @@ save_pers(PickleState *state, PicklerObject *self, PyObject *obj)
             }
 
             if (_Pickler_Write(self, &persid_op, 1) < 0 ||
-                _Pickler_Write(self, PyUnicode_DATA(pid_str),
+                _Pickler_Write(self, _PyUnicode_GetPrimaryUTF8(pid_str, NULL),
                                PyUnicode_GET_LENGTH(pid_str)) < 0 ||
                 _Pickler_Write(self, "\n", 1) < 0) {
                 Py_DECREF(pid_str);
