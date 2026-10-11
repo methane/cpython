@@ -868,6 +868,25 @@ class UTF8StorageTests(unittest.TestCase):
                                           min(capacity, units)))
                     self.assertEqual(_testcapi.unicode_storage(value), before)
 
+    def test_newline_decoder_without_fsr(self):
+        import _io
+
+        text = 'é\r\n日\r😀\n\ud800\udcff\0\r'
+        for translate in (False, True):
+            expected = text.replace('\r\n', '\n').replace('\r', '\n') if translate else text
+            for factory in (self.make_string, Str):
+                for split in range(len(text) + 1):
+                    decoder = _io.IncrementalNewlineDecoder(None, translate)
+                    chunks = [factory(text[:split]), factory(text[split:])]
+                    before = [_testcapi.unicode_storage(s) for s in chunks]
+                    result = decoder.decode(chunks[0], False)
+                    result += decoder.decode(chunks[1], True)
+                    self.assertEqual(result, expected)
+                    self.assertEqual(decoder.newlines, ('\r', '\n', '\r\n'))
+                    after = [_testcapi.unicode_storage(s) for s in chunks]
+                    self.assertEqual(after[0][:3], before[0][:3])
+                    self.assertEqual(after[1][:3], before[1][:3])
+
     def test_charmap_replacement_without_fsr(self):
         import codecs
 
@@ -1591,6 +1610,145 @@ class UTF8StorageTests(unittest.TestCase):
                     self.assertEqual('%c' % value, text)
                     self.assertEqual(_testcapi.unicode_storage(value), before)
 
+    def test_module_consumers_without_fsr(self):
+        import datetime
+        import operator
+        import types
+
+        for factory in (self.make_string, Str):
+            for text in ('日.😀', '.日', '日.', '日..😀', '日.\udcff'):
+                with self.subTest(text=ascii(text), factory=factory):
+                    root = types.SimpleNamespace()
+                    obj = root
+                    parts = text.split('.')
+                    for name in parts[:-1]:
+                        child = types.SimpleNamespace()
+                        setattr(obj, name, child)
+                        obj = child
+                    setattr(obj, parts[-1], 42)
+                    value = factory(text)
+                    before = _testcapi.unicode_storage(value)
+                    self.assertEqual(operator.attrgetter(value)(root), 42)
+                    self.assertEqual(_testcapi.unicode_storage(value)[:3], before[:3])
+            for separator in ('日', '😀', '\ud800', '\udcff'):
+                value = factory('2026-01-02' + separator + '03:04:05')
+                before = _testcapi.unicode_storage(value)
+                self.assertEqual(datetime.datetime.fromisoformat(value),
+                                 datetime.datetime(2026, 1, 2, 3, 4, 5))
+                self.assertEqual(_testcapi.unicode_storage(value)[:3], before[:3])
+
+    def test_json_without_fsr(self):
+        import json
+        _json = import_helper.import_module('_json')
+        scanner = _json.make_scanner(json.JSONDecoder())
+        for factory in (self.make_string, Str):
+            for text in ('café', '日😀', 'a\0\nb', '\ud800\udcff', '"\\日'):
+                with self.subTest(factory=factory, text=ascii(text)):
+                    value = factory(text)
+                    before = _testcapi.unicode_storage(value)
+                    for ascii_only, encode in (
+                        (False, _json.encode_basestring),
+                        (True, _json.encode_basestring_ascii),
+                    ):
+                        encoded = encode(value)
+                        encode_python = (json.encoder.py_encode_basestring_ascii
+                                         if ascii_only else
+                                         json.encoder.py_encode_basestring)
+                        expected = encode_python(text)
+                        self.assertEqual(encoded, expected)
+                        self.assertEqual(json.dumps(value, ensure_ascii=ascii_only),
+                                         expected)
+                        document = factory('日😀[' + encoded + ',12.5,true]')
+                        doc_before = _testcapi.unicode_storage(document)
+                        decoded = json.decoder.py_scanstring(expected, 1)[0]
+                        self.assertEqual(scanner(document, 2),
+                                         ([decoded, 12.5, True], len(document)))
+                        self.assertEqual(_testcapi.unicode_storage(document),
+                                         doc_before)
+                    self.assertEqual(_testcapi.unicode_storage(value), before)
+
+    def test_json_escape_boundaries(self):
+        import json
+        _json = import_helper.import_module('_json')
+        text = (''.join(map(chr, range(32))) + '"\\' +
+                '\x7f\x80\u07ff\u0800\ud7ff\ud800\udfff\ue000\uffff'
+                '\U00010000\U0010ffff')
+        for repeat in (1, 31):
+            value = self.make_string(text * repeat)
+            for ascii_only, encode, reference in (
+                (False, _json.encode_basestring,
+                 json.encoder.py_encode_basestring),
+                (True, _json.encode_basestring_ascii,
+                 json.encoder.py_encode_basestring_ascii),
+            ):
+                with self.subTest(repeat=repeat, ascii_only=ascii_only):
+                    expected = reference(text * repeat)
+                    self.assertEqual(encode(value), expected)
+                    self.assertEqual(
+                        json.dumps([value, value], ensure_ascii=ascii_only),
+                        '[' + expected + ', ' + expected + ']')
+                    self.assertEqual(_testcapi.unicode_storage(value)[3], 0)
+
+    def test_json_hooks_without_fsr(self):
+        import json
+        _json = import_helper.import_module('_json')
+        for factory in (self.make_string, Str):
+            value = factory('{"日":[12,1.5,NaN],"😀":"\udcff"}')
+            before = _testcapi.unicode_storage(value)
+            decoder = json.JSONDecoder(parse_int=str, parse_float=str,
+                                       parse_constant=str,
+                                       object_pairs_hook=tuple,
+                                       array_hook=tuple)
+            self.assertEqual(_json.make_scanner(decoder)(value, 0),
+                             ((("日", ("12", "1.5", "NaN")),
+                               ("😀", "\udcff")), len(value)))
+            self.assertEqual(_testcapi.unicode_storage(value), before)
+
+    def test_json_character_offsets(self):
+        import json
+        _json = import_helper.import_module('_json')
+        scanner = _json.make_scanner(json.JSONDecoder())
+        for document, position in (
+            ('["日😀",]', 5),
+            ('{"日😀":0,}', 7),
+            ('["日😀",?]', 6),
+        ):
+            value = self.make_string(document)
+            before = _testcapi.unicode_storage(value)
+            try:
+                scanner(value, 0)
+            except json.JSONDecodeError as exc:
+                self.assertEqual(exc.pos, position)
+                self.assertIs(exc.doc, value)
+            except StopIteration as exc:
+                self.assertEqual(exc.value, position)
+            else:
+                self.fail('invalid JSON accepted')
+            self.assertEqual(_testcapi.unicode_storage(value)[:3], before[:3])
+        value = self.make_string('日😀"a\\n語"tail')
+        before = _testcapi.unicode_storage(value)
+        self.assertEqual(_json.scanstring(value, 3), ('a\n語', 8))
+        self.assertEqual(_testcapi.unicode_storage(value)[:3], before[:3])
+
+    def test_json_invalid_escape_offsets(self):
+        import json
+        _json = import_helper.import_module('_json')
+        for document, message, position in (
+            ('"日\\u12語4"', 'Invalid \\uXXXX escape', 3),
+            ('"日\\ud800\\u日"', 'Invalid \\uXXXX escape', 9),
+            ('"日\n"', 'Invalid control character at', 2),
+            ('"日\\q"', 'Invalid \\escape', 2),
+            ('日😀', 'Unterminated string starting at', 0),
+        ):
+            with self.subTest(document=ascii(document)):
+                value = self.make_string(document)
+                before = _testcapi.unicode_storage(value)
+                with self.assertRaises(json.JSONDecodeError) as caught:
+                    _json.scanstring(value, 1)
+                self.assertEqual(caught.exception.msg, message)
+                self.assertEqual(caught.exception.pos, position)
+                self.assertEqual(_testcapi.unicode_storage(value)[:3], before[:3])
+
     @unittest.skipIf(_testinternalcapi is None, 'need _testinternalcapi')
     def test_next_cursor(self):
         for text in ('', 'ascii', 'a\0é日😀\ud800\udcffz'):
@@ -1653,6 +1811,40 @@ class UTF8StorageTests(unittest.TestCase):
                 self.assertEqual(handler(error), expected)
                 self.assertEqual(_testcapi.unicode_storage(value), before)
 
+    def test_csv_without_fsr(self):
+        import csv
+        import io
+        for factory in (self.make_string, Str):
+            for text in ('日😀', '日,"😀', '日\n😀', '日\0\udcff'):
+                value = factory(text)
+                ending = factory('終\r\n')
+                before = [_testcapi.unicode_storage(v) for v in (value, ending)]
+                output = io.StringIO()
+                csv.writer(output, lineterminator=ending).writerow([value])
+                expected = ('"' + text.replace('"', '""') + '"'
+                            if any(c in text for c in ',"\n') else text)
+                self.assertEqual(output.getvalue(), expected + ending)
+                line = factory(expected + '\r\n')
+                line_before = _testcapi.unicode_storage(line)
+                self.assertEqual(list(csv.reader([line])), [[text]])
+                self.assertEqual(_testcapi.unicode_storage(line), line_before)
+                after = [_testcapi.unicode_storage(v) for v in (value, ending)]
+                self.assertEqual(after[0][:3], before[0][:3])
+                self.assertEqual(after[1][:3], before[1][:3])
+
+    def test_pickle_and_strftime_without_fsr(self):
+        import pickle
+        import time
+        value = self.make_string('日😀\0\n\r\\\x1a\ud800\udcff')
+        self.assertEqual(pickle.loads(pickle.dumps(value, protocol=0)), value)
+        self.assertEqual(_testcapi.unicode_storage(value)[3], 0)
+        for factory in (self.make_string, Str):
+            value = factory('日%Y😀\0%m\udcff%%')
+            before = _testcapi.unicode_storage(value)
+            self.assertEqual(time.strftime(value, (2026, 9, 20, 1, 2, 3, 6, 263, 0)),
+                             '日2026😀\0' '09\udcff%')
+            self.assertEqual(_testcapi.unicode_storage(value), before)
+
     def test_encoding_map_without_fsr(self):
         import codecs
         for first, last in (('\0', '日'), ('X', '日'), ('\0', '😀')):
@@ -1663,6 +1855,86 @@ class UTF8StorageTests(unittest.TestCase):
                 self.assertEqual(codecs.charmap_encode(last, 'strict', mapping),
                                  (b'\xff', 1))
                 self.assertEqual(_testcapi.unicode_storage(table), before)
+
+    def test_expat_encoding_table_without_fsr(self):
+        import codecs
+        expat = import_helper.import_module('pyexpat')
+        table = self.make_string(''.join(map(chr, range(128))) + '日' +
+                                 ''.join(map(chr, range(129, 256))))
+        def decode(data, errors='strict'):
+            self.assertEqual(bytes(data), bytes(range(256)))
+            return table, 256
+        def search(name):
+            if name == 'test_utf8_cursor_expat':
+                return codecs.CodecInfo(name=name, encode=codecs.latin_1_encode,
+                                        decode=decode)
+        codecs.register(search)
+        try:
+            parser = expat.ParserCreate('test_utf8_cursor_expat')
+            output = []
+            parser.CharacterDataHandler = output.append
+            parser.Parse(b'<x>\x80</x>', True)
+            self.assertEqual(output, ['日'])
+            self.assertEqual(_testcapi.unicode_storage(table)[3], 0)
+        finally:
+            codecs.unregister(search)
+
+    def test_normalization_without_fsr(self):
+        ud = import_helper.import_module('unicodedata')
+        for database in (ud, ud.ucd_3_2_0):
+            for text in ('日😀', 'a\u0315\u0300', '\uac01', '\ufdfa',
+                         'x\ud800\udcff'):
+                for form in ('NFC', 'NFD', 'NFKC', 'NFKD'):
+                    expected = database.normalize(form, text)
+                    for factory in (self.make_string, Str):
+                        value = factory(text)
+                        before = _testcapi.unicode_storage(value)
+                        self.assertEqual(database.normalize(form, value), expected)
+                        self.assertEqual(database.is_normalized(form, value),
+                                         expected == text)
+                        self.assertEqual(_testcapi.unicode_storage(value), before)
+        for text, category in (('日', 'Lo'), ('😀', 'So'), ('\udcff', 'Cs')):
+            value = self.make_string(text)
+            self.assertEqual(ud.category(value), category)
+            self.assertEqual(_testcapi.unicode_storage(value)[3], 0)
+
+    def test_graphemes_without_fsr(self):
+        ud = import_helper.import_module('unicodedata')
+        pieces = ['a\u0301', '🇯🇵', '👩\u200d💻', '\r\n', '\udcff']
+        for factory in (self.make_string, Str):
+            value = factory(''.join(pieces))
+            before = _testcapi.unicode_storage(value)
+            self.assertEqual(list(map(str, ud.iter_graphemes(value))), pieces)
+            self.assertEqual(list(map(str, ud.iter_graphemes(value, 2, -1))),
+                             pieces[1:-1])
+            self.assertEqual(list(ud.iter_graphemes(value, PY_SSIZE_T_MAX)), [])
+            self.assertEqual(_testcapi.unicode_storage(value)[:3], before[:3])
+        value = self.make_string(''.join(pieces))
+        iterator = ud.iter_graphemes(value)
+        self.assertEqual(str(next(iterator)), pieces[0])
+        _testcapi.unicode_materialize_fsr(value)
+        self.assertEqual(list(map(str, iterator)), pieces[1:])
+
+    def test_decimal_input_without_fsr(self):
+        decimal = import_helper.import_module('_decimal')
+        for factory in (self.make_string, Str):
+            for text, expected in (('\u2003１２_٣.٥\u2002', '123.5'),
+                                   ('１２_ ', '12'), ('_１２_', '12')):
+                value = factory(text)
+                before = _testcapi.unicode_storage(value)
+                self.assertEqual(decimal.Decimal(value), decimal.Decimal(expected))
+                self.assertEqual(_testcapi.unicode_storage(value), before)
+            for text in ('１２ _ ', '１２\u2003_', '１２\0', '１２\udcff'):
+                value = factory(text)
+                before = _testcapi.unicode_storage(value)
+                with self.assertRaises(decimal.InvalidOperation):
+                    decimal.Decimal(value)
+                self.assertEqual(_testcapi.unicode_storage(value), before)
+            value = factory('１２.٥')
+            before = _testcapi.unicode_storage(value)
+            self.assertEqual(decimal.Context().create_decimal(value),
+                             decimal.Decimal('12.5'))
+            self.assertEqual(_testcapi.unicode_storage(value), before)
 
     def test_lazy_fsr(self):
         for text in ('café', '日本語', 'a😀b', 'x\0é', 'a\ud800\udcffb',
