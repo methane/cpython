@@ -1,7 +1,7 @@
 """Compare native string methods using baseline and modified interpreters.
 
 Use the same build options for both interpreters. Pass --warm to materialize
-the input's FSR before timing, or --fsr to use FSR-primary str subclasses.
+the input's FSR before timing, or --fsr to use writable FSR inputs.
 Report median process CPU nanoseconds per call
 and the increase in retained input size; output allocations are not included
 in that size. These small measurements are exploratory, not a pyperformance
@@ -12,13 +12,13 @@ import sys
 import time
 
 
-class Str(str):
-    pass
-
-
 def make_string(raw, fsr=False):
     value = raw.decode()
-    return Str(value) if fsr else value
+    if fsr and value:
+        import _testcapi
+        value, _ = _testcapi.unicode_copycharacters(
+            value, 0, value, 0, len(value))
+    return value
 
 
 samples = {

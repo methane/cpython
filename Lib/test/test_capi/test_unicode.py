@@ -48,6 +48,17 @@ SSTATE_INTERNED_IMMORTAL = 2
 SSTATE_INTERNED_IMMORTAL_STATIC = 3
 
 
+def make_fsr(text):
+    # Exercise the legacy writable-buffer API, independently of constructors
+    # that now encode their fixed-width input into UTF-8 primary storage.
+    if not text:
+        return ''
+    value, copied = _testcapi.unicode_copycharacters(
+        text, 0, text, 0, len(text))
+    assert copied == len(text)
+    return value
+
+
 def assert_invalid_string(testcase, text):
     # Check that a Unicode string contains invalid characters:
     # not in range [U+0000; U+10ffff]
@@ -141,29 +152,25 @@ class UnicodeRepresentationTests(unittest.TestCase):
                         with self.assertRaises(UnicodeEncodeError):
                             _testcapi.unicode_asutf8(value, 0)
 
-    def check_lazy_fsr(self, value, text, kind):
+    def check_primary_utf8(self, value, text, *, compact=True):
+        encoded = text.encode('utf-8', 'surrogatepass')
         surrogates = any(0xd800 <= ord(ch) <= 0xdfff for ch in text)
-        before = (0, 0, int(surrogates), 1, 0)
+        ascii_only = text.isascii()
+        before = (int(not ascii_only), int(compact), int(surrogates),
+                  int(ascii_only), len(encoded))
         self.assertEqual(_testcapi.unicode_storage(value), before)
         self.assertEqual(value, text)
-        view = _testcapi.unicode_export(value, self.ALL)
-        self.check_view(view, text, kind)
-        _testcapi.unicode_view_release(view)
-        with self.assertRaises(BufferError):
-            _testcapi.unicode_export(value, self.UTF8)
-        view = _testcapi.unicode_getfsrview(value)
-        self.check_view(view, text, kind)
-        _testcapi.unicode_view_release(view)
-        view = _testcapi.unicode_utf8view(value)
-        self.check_view(view, text, self.UTF8, borrowed=False)
-        _testcapi.unicode_view_release(view)
+        for export in (lambda v: _testcapi.unicode_export(v, self.ALL),
+                       _testcapi.unicode_utf8view):
+            view = export(value)
+            self.check_view(view, text, self.UTF8)
+            _testcapi.unicode_view_release(view)
         self.assertEqual(_testcapi.unicode_storage(value), before)
 
     @support.nomemtest
     def test_replace_ascii_no_match_without_encoding_replacement(self):
         for text in ('日本', '\ud800\udcff'):
-            raw = b''.join(ord(ch).to_bytes(4, sys.byteorder) for ch in text)
-            replacement = _testcapi.unicode_fromkindanddata(4, raw)
+            replacement = make_fsr(text)
             before = _testcapi.unicode_storage(replacement)
             self.assertEqual(before[0], 0)  # FSR-primary, UTF-8 still absent
             self.assertEqual(before[4], 0)
@@ -181,7 +188,7 @@ class UnicodeRepresentationTests(unittest.TestCase):
             self.assertEqual('a\0b'.replace('\0', replacement), 'a' + text + 'b')
             self.assertEqual('axa'.replace('a', replacement, 1), text + 'xa')
 
-    def test_fromkindanddata_lazy_utf8(self):
+    def test_fromkindanddata_primary_utf8(self):
         for text, kind in (('café', self.UCS1), ('日', self.UCS2),
                            ('日\0本', self.UCS2), ('😀', self.UCS4),
                            ('a😀b', self.UCS4), ('\ud800', self.UCS2),
@@ -195,9 +202,9 @@ class UnicodeRepresentationTests(unittest.TestCase):
                     value = _testcapi.unicode_fromkindanddata(input_kind, data)
                     # The constructor owns its copy of the fixed-width input.
                     del data
-                    self.check_lazy_fsr(value, text, kind)
+                    self.check_primary_utf8(value, text)
 
-    def test_fromwidechar_lazy_utf8(self):
+    def test_fromwidechar_primary_utf8(self):
         api = import_helper.import_module('_testlimitedcapi')
         width = _testcapi.SIZEOF_WCHAR_T
         encoding = f'utf-{width * 8}-' + ('le' if sys.byteorder == 'little' else 'be')
@@ -207,33 +214,69 @@ class UnicodeRepresentationTests(unittest.TestCase):
                            ('a\ud800x\udc00', self.UCS2)):
             with self.subTest(text=ascii(text)):
                 value = api.unicode_fromwidechar(text.encode(encoding, 'surrogatepass'))
-                self.check_lazy_fsr(value, text, kind)
+                self.check_primary_utf8(value, text)
         pair = '\ud800\udc00'
         raw = b''.join(ord(ch).to_bytes(width, sys.byteorder) for ch in pair)
         expected = '\U00010000' if width == 2 else pair
-        kind = self.UCS4 if width == 2 else self.UCS2
-        self.check_lazy_fsr(api.unicode_fromwidechar(raw), expected, kind)
+        self.check_primary_utf8(api.unicode_fromwidechar(raw), expected)
 
-    def test_copy_and_subclass_preserve_fsr(self):
+    def test_copy_and_subclass_encode_fsr(self):
         for text, kind in (('café', self.UCS1), ('日\0本', self.UCS2),
                            ('a😀b', self.UCS4), ('a\ud800\udc00', self.UCS2)):
             for cached in (False, True):
                 with self.subTest(text=ascii(text), cached=cached):
-                    raw = b''.join(ord(ch).to_bytes(kind, sys.byteorder) for ch in text)
-                    value = _testcapi.unicode_fromkindanddata(kind, raw)
+                    value = make_fsr(text)
                     if cached:
                         hash(value)
                     before = _testcapi.unicode_storage(value)
                     copy, = value.__getnewargs__()
-                    self.check_lazy_fsr(copy, text, kind)
+                    self.check_primary_utf8(copy, text)
                     subclass = Str(value)
-                    self.check_lazy_fsr(subclass, text, kind)
+                    self.check_primary_utf8(subclass, text, compact=False)
                     copy, = subclass.__getnewargs__()
-                    self.check_lazy_fsr(copy, text, kind)
+                    self.check_primary_utf8(copy, text)
                     self.assertEqual(hash(subclass), hash(text))
                     self.assertEqual(_testcapi.unicode_storage(value), before)
 
-    def test_constructed_fsr_utf8_cache(self):
+    def test_slices_finalize_as_utf8(self):
+        for text in ('caféé', '日本語文字列', 'a😀b😀c',
+                     'a\ud800\udc00\0z'):
+            for factory in (self.make_string, make_fsr, Str):
+                for cached in (False, True):
+                    value = factory(text)
+                    if cached:
+                        _testcapi.unicode_materialize_fsr(value)
+                    for indices in (slice(1, -1), slice(None, None, 2),
+                                    slice(None, None, -1)):
+                        with self.subTest(text=ascii(text), factory=factory,
+                                          cached=cached, indices=indices):
+                            result = value[indices]
+                            self.check_primary_utf8(result, text[indices])
+            value = make_fsr(' ' + text + ' ')
+            self.check_primary_utf8(value.strip(), text)
+
+    @support.nomemtest
+    def test_slice_completion_allocation_failure(self):
+        # Fail the result allocation or completion, not legacy DATA().
+        value = make_fsr('日é😀\udcff' * 4)
+        indices = slice(None, None, 2)
+        expected = value[indices]
+        before = _testcapi.unicode_storage(value)
+        failures = successes = 0
+        for fail_at in range(6):
+            try:
+                with support.inject_memory_error_cm(fail_at):
+                    result = value[indices]
+            except MemoryError:
+                failures += 1
+            else:
+                successes += 1
+                self.check_primary_utf8(result, expected)
+            self.assertEqual(_testcapi.unicode_storage(value), before)
+        self.assertGreater(failures, 0)
+        self.assertGreater(successes, 0)
+
+    def test_constructed_utf8_needs_no_encoding_cache(self):
         for text, kind in (('café', self.UCS1), ('日\0本', self.UCS2),
                            ('a😀b', self.UCS4), ('a\ud800\udc00', self.UCS2)):
             for cache in ('hash', 'strict'):
@@ -247,16 +290,16 @@ class UnicodeRepresentationTests(unittest.TestCase):
                     elif '\ud800' in text:
                         with self.assertRaises(UnicodeEncodeError):
                             _testcapi.unicode_asutf8(value, 0)
-                        self.check_lazy_fsr(value, text, kind)
+                        self.check_primary_utf8(value, text)
                         continue
                     else:
                         self.assertEqual(_testcapi.unicode_asutf8(value, len(encoded) + 1),
                                          encoded + b'\0')
-                    self.assertEqual(value.__sizeof__(), before + len(encoded) + 1)
+                    self.assertEqual(value.__sizeof__(), before)
                     view = _testcapi.unicode_export(value, self.ALL)
                     self.check_view(view, text, self.UTF8)
                     _testcapi.unicode_view_release(view)
-                    view = _testcapi.unicode_export(value, self.FSR)
+                    view = _testcapi.unicode_getfsrview(value)
                     self.check_view(view, text, kind)
                     _testcapi.unicode_view_release(view)
 
@@ -267,6 +310,7 @@ class UnicodeRepresentationTests(unittest.TestCase):
             import sys
             import _testcapi as api
             import _testlimitedcapi as limited
+            from test.test_capi.test_unicode import make_fsr
             class Str(str):
                 pass
             text = 'a日😀\udcff'
@@ -274,7 +318,7 @@ class UnicodeRepresentationTests(unittest.TestCase):
             width = api.SIZEOF_WCHAR_T
             encoding = f'utf-{width * 8}-' + ('le' if sys.byteorder == 'little' else 'be')
             wide = text.encode(encoding, 'surrogatepass')
-            source = api.unicode_fromkindanddata(4, raw)
+            source = make_fsr(text)
             before = api.unicode_storage(source)
             remove_hooks = api.remove_mem_hooks
             for factory, args in ((api.unicode_fromkindanddata, (4, raw)),
@@ -296,7 +340,9 @@ class UnicodeRepresentationTests(unittest.TestCase):
                     else:
                         successes += 1
                         assert result == text
-                        assert api.unicode_storage(result) == (0, 0, 1, 1, 0)
+                        encoded = text.encode('utf-8', 'surrogatepass')
+                        assert api.unicode_storage(result) == (
+                            1, int(type(result) is str), 1, 0, len(encoded))
                     assert source == text
                     assert api.unicode_storage(source) == before
                 assert failures and successes
@@ -420,8 +466,7 @@ class UnicodeRepresentationTests(unittest.TestCase):
     @threading_helper.requires_working_threading()
     def test_concurrent_views_and_cache_publication(self):
         utf8 = self.make_string('a日\0😀\udcff' * 20)
-        fsr = _testcapi.unicode_fromkindanddata(
-            2, (0xd800).to_bytes(2, sys.byteorder) * 100)
+        fsr = _testcapi.unicode_new(100, 0xd800)
         values = ((utf8, 'a日\0😀\udcff' * 20, self.UCS4),
                   (fsr, '\ud800' * 100, self.UCS2))
 
@@ -449,10 +494,7 @@ class UTF8StorageTests(unittest.TestCase):
     def make_string(self, text):
         return text.encode('utf-8', 'surrogatepass').decode('utf-8', 'surrogatepass')
 
-    def make_fsr(self, text):
-        encoding = 'utf-32-le' if sys.byteorder == 'little' else 'utf-32-be'
-        return _testcapi.unicode_fromkindanddata(
-            4, text.encode(encoding, 'surrogatepass'))
+    make_fsr = staticmethod(make_fsr)
 
     def test_fsr_fastpath_results(self):
         text = '\u2000\t日é\0😀\udcff日\u2000'
@@ -481,8 +523,9 @@ class UTF8StorageTests(unittest.TestCase):
         self.assertIs(unchanged.strip(), unchanged)
         self.assertIs(unchanged.expandtabs(), unchanged)
         self.assertIs(unchanged.split('日', 0)[0], unchanged)
-        self.assertIs('{}'.format(unchanged), unchanged)
-        self.assertIs(unchanged.format(), unchanged)
+        for result in ('{}'.format(unchanged), unchanged.format()):
+            self.assertEqual(result, unchanged)
+            self.assertEqual(_testcapi.unicode_storage(result)[:4], (1, 1, 0, 0))
         self.assertEqual(_testcapi.unicode_storage(unchanged)[-1], 0)
 
     def test_tailmatch_storage_combinations(self):
@@ -558,9 +601,8 @@ class UTF8StorageTests(unittest.TestCase):
             import sys, _testcapi as api
             remove = api.remove_mem_hooks
             utf8_suffix = '😀\udcff' * 100
-            enc = 'utf-32-le' if sys.byteorder == 'little' else 'utf-32-be'
-            fsr_suffix = api.unicode_fromkindanddata(
-                4, utf8_suffix.encode(enc, 'surrogatepass'))
+            from test.test_capi.test_unicode import make_fsr
+            fsr_suffix = make_fsr(utf8_suffix)
             def append(fail_at, cache):
                 value = b'\xe6\x97\xa5\xe6\x9c\xac'.decode()
                 if cache:
@@ -627,9 +669,9 @@ class UTF8StorageTests(unittest.TestCase):
         from test.support.script_helper import assert_python_ok
         assert_python_ok('-c', textwrap.dedent(r"""
             import sys, _testcapi as api
-            enc = 'utf-32-le' if sys.byteorder == 'little' else 'utf-32-be'
-            s = api.unicode_fromkindanddata(4, ('日本' * 32).encode(enc))
-            p = api.unicode_fromkindanddata(4, ('本日' * 32).encode(enc))
+            from test.test_capi.test_unicode import make_fsr
+            s = make_fsr('日本' * 32)
+            p = make_fsr('本日' * 32)
             utf = ('日本' * 32).encode().decode()
             ops = [(s.strip, (), s), (s.expandtabs, (), s),
                    (s.__contains__, ('本',), True), (s.count, ('本',), 32),
@@ -682,18 +724,18 @@ class UTF8StorageTests(unittest.TestCase):
         assert_python_ok('-c', textwrap.dedent(r"""
             import sys
             import _testcapi as api
+            from test.test_capi.test_unicode import make_fsr
             class Str(str):
                 pass
-            encoding = 'utf-32-le' if sys.byteorder == 'little' else 'utf-32-be'
             remove_hooks = api.remove_mem_hooks
             for text in ('ascii', 'café', '日é', '😀日', '\udcff日'):
                 for factory in (str, Str):
                     cached = factory(text.encode('utf-8', 'surrogatepass').decode(
                         'utf-8', 'surrogatepass'))
                     api.unicode_materialize_fsr(cached)
-                    fsr = api.unicode_fromkindanddata(
-                        4, text.encode(encoding, 'surrogatepass'))
-                    for value in (cached, factory(fsr)):
+                    fsr = make_fsr(text)
+                    for value in (fsr, cached, factory(fsr)):
+                        api.unicode_materialize_fsr(value)
                         before = api.unicode_storage(value)
                         for get_data in (api.unicode_materialize_fsr,
                                          api.unicode_materialize_fsr_function,
@@ -833,7 +875,8 @@ class UTF8StorageTests(unittest.TestCase):
             value = Str(source)
             self.assertEqual(value, chr(ch) * 3)
             self.assertEqual(_testcapi.unicode_storage(value),
-                             (0, 0, int(ch == 0xd800), 1, 3 if ch < 128 else 0))
+                             (int(ch >= 128), 0, int(ch == 0xd800), int(ch < 128),
+                              len((chr(ch) * 3).encode('utf-8', 'surrogatepass'))))
 
     def test_subclass_from_overestimated_fsr(self):
         for text in ('a', 'é', '日', '\udcff'):
@@ -2530,8 +2573,7 @@ class UTF8StorageTests(unittest.TestCase):
             import sys
             remove_hooks = _testcapi.remove_mem_hooks
             for fail_at in (0, 1):
-                value = _testcapi.unicode_fromkindanddata(
-                    2, (0xd800).to_bytes(2, sys.byteorder) * 3)
+                value = _testcapi.unicode_new(3, 0xd800)
                 before = value.__sizeof__()
                 failed = False
                 try:
@@ -2941,8 +2983,9 @@ class CAPITest(unittest.TestCase):
                                     for ch in s)
                     result = fromkindanddata(kind, data)
                     self.assertEqual(result, s)
-                    self.assertEqual(_testcapi.unicode_storage(result)[0:2], (0, 0))
-                    self.assertEqual(_testcapi.unicode_storage(result)[3:5], (1, 0))
+                    self.assertEqual(_testcapi.unicode_storage(result)[0:2], (1, 1))
+                    self.assertEqual(_testcapi.unicode_storage(result)[3:5],
+                                     (0, len(s.encode('utf-8', 'surrogatepass'))))
         for value in (0x110000, 0xffffffff):
             for length in (1, 2):
                 data = value.to_bytes(4, sys.byteorder) * length
@@ -4543,14 +4586,14 @@ class CAPITest(unittest.TestCase):
 
 class PyUnicodeWriterTest(unittest.TestCase):
     def test_readonly_fsr(self):
-        enc = 'utf-32-le' if sys.byteorder == 'little' else 'utf-32-be'
         text = '日é\0😀\udcff'
-        value = _testcapi.unicode_fromkindanddata(
-            4, text.encode(enc, 'surrogatepass'))
+        value = make_fsr(text)
         writer = self.create_writer(0)
         writer.write_str(value)
         self.assertEqual(writer.storage(), (len(text), -1))
-        self.assertIs(writer.finish(), value)
+        result = writer.finish()
+        self.assertEqual(result, value)
+        self.assertEqual(_testcapi.unicode_storage(result)[:4], (1, 1, 1, 0))
         self.assertEqual(_testcapi.unicode_storage(value)[-1], 0)
         for size in range(len(text) + 1):
             writer = self.create_writer(0)
@@ -4569,9 +4612,9 @@ class PyUnicodeWriterTest(unittest.TestCase):
         from test.support.script_helper import assert_python_ok
         assert_python_ok('-c', textwrap.dedent(r"""
             import sys, _testcapi as api
-            enc = 'utf-32-le' if sys.byteorder == 'little' else 'utf-32-be'
+            from test.test_capi.test_unicode import make_fsr
             text = '日é\0😀\udcff'
-            value = api.unicode_fromkindanddata(4, text.encode(enc, 'surrogatepass'))
+            value = make_fsr(text)
             remove = api.remove_mem_hooks
             for fail_at in range(8):
                 writer = api.PyUnicodeWriter(0)
@@ -4592,10 +4635,13 @@ class PyUnicodeWriterTest(unittest.TestCase):
             writer.write_str(value)
             try:
                 api.set_nomemory(0, 1)
-                result = writer.finish()
+                writer.finish()
+            except MemoryError:
+                pass
+            else:
+                raise AssertionError('FSR completion must allocate UTF-8')
             finally:
                 remove()
-            assert result is value
         """))
 
     def test_utf8_storage(self):

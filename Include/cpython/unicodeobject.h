@@ -122,9 +122,8 @@ typedef struct {
        - noncompact UTF-8: PyUnicodeObject with a separate UTF-8 buffer,
          used by Unicode subclasses, with an optional FSR cache (ASCII
          shares its one-byte buffer with FSR readers);
-       - noncompact FSR: PyUnicodeObject with a separate fixed-width buffer
-         and an optional UTF-8 cache, used by non-ASCII FSR constructors
-         and PyUnicode_New().
+       - writable FSR: PyUnicodeObject with a separate data buffer, used by
+         PyUnicode_New() for non-ASCII strings.
 
        UTF-8 payloads encode surrogates individually as three bytes. They
        must not be exposed as strict UTF-8 when has_surrogates is set.
@@ -149,7 +148,7 @@ typedef struct {
     Py_ssize_t inline_length;  /* Original compact payload allocation size. */
 } PyCompactUnicodeObject;
 
-/* Object format for noncompact FSR strings and Unicode subclasses. */
+/* Object format for writable FSR strings and Unicode subclasses. */
 typedef struct {
     PyCompactUnicodeObject _base;
     union {
@@ -157,7 +156,7 @@ typedef struct {
         Py_UCS1 *latin1;
         Py_UCS2 *ucs2;
         Py_UCS4 *ucs4;
-    } data;                     /* Primary UTF-8 or FSR buffer */
+    } data;                     /* Primary UTF-8 or writable FSR buffer */
 } PyUnicodeObject;
 
 

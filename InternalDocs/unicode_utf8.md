@@ -1,13 +1,12 @@
 # Unicode UTF-8 storage
 
-Strings constructed from UTF-8 have a compact UTF-8 payload. Valid UTF-8 input is
+Normal completed strings have a compact UTF-8 payload. Valid UTF-8 input is
 validated and copied directly, without an intermediate FSR. Invalid input uses
 the existing decoder and error handlers before finalizing into UTF-8 storage.
 ASCII keeps the existing small header and shares its payload with fixed-width
-readers. Non-ASCII UTF-8 storage uses
+readers. Non-ASCII uses
 `PyCompactUnicodeObject`, followed by `utf8_length` bytes and a terminating NUL.
-Lengths exposed to Python and the C API still count code points. Constructors
-from fixed-width data instead retain FSR storage and generate UTF-8 on demand.
+Lengths exposed to Python and the C API still count code points.
 
 The payload is UTF-8 with surrogatepass: every surrogate is a separate three-byte
 sequence, including adjacent high/low surrogates. `has_surrogates` records content,
@@ -130,14 +129,16 @@ Decoder error positions and consumed counts still refer to input bytes.
 The separate `wchar_t` decoding API retains its required fixed-width output.
 
 A sole exact primary string may be retained read-only to preserve result
-identity. Preparing a subsequent write copies its UTF-8 bytes into owned storage;
-allocation failure leaves the retained contents intact. Writer buffers never use
-a writable FSR. FSR input strings are encoded on append, and extensions
-using the removed private layout or preparation APIs must migrate to byte writes.
+identity. A sole FSR input may also be retained until the next write or finish,
+but finishing encodes it into a UTF-8 primary result. Preparing a subsequent
+write copies or encodes retained contents into owned storage; allocation failure
+leaves those contents intact. Writer buffers never use a writable FSR.
+Extensions using the removed private layout or preparation APIs must migrate
+to byte writes.
 
 `Tools/scripts/bench_unicode_methods.py` measures first-call CPU time and retained
 input memory; `--warm` measures calls after indexing has materialized a FSR,
-and `--fsr` measures FSR-primary subclass inputs.
+and `--fsr` measures writable FSR inputs (requires `_testcapi`).
 Use matching build options. Avoid interpreting debug-build ratios as release
 performance claims. The byte-oriented methods preserve existing ASCII
 specializations where applicable.
@@ -148,20 +149,14 @@ length and known character-width metadata before scanning either payload.
 ## Construction and compatibility
 
 `PyUnicode_New()` returns a writable FSR (inline for ASCII, separately allocated
-for non-ASCII). `PyUnicode_FromKindAndData()` and `PyUnicode_FromWideChar()`
-copy their input into FSR storage using the minimum character width. Non-ASCII
-results use a noncompact `PyUnicodeObject` with no initial UTF-8 cache; empty
-strings and Latin-1 singletons still use shared objects. Completing an FSR
-construction buffer does not convert it to UTF-8. Copying an FSR-primary string
-or constructing a subclass from it also preserves FSR storage. A 16-bit
-`wchar_t` input combines valid surrogate pairs, while UCS2 input preserves
-individual surrogates.
-
-For these strings, Export(all) initially selects UCS1/UCS2/UCS4. Hashing or
-strict UTF-8 access fills the UTF-8 cache when needed, after which Export(all)
-prefers UTF-8. UTF8View can instead own a temporary encoding without filling
-the cache. Writer results continue to use compact UTF-8. Subclasses retain
-separately allocated data.
+for non-ASCII). Completed constructors and Writer results convert to compact
+UTF-8. `PyUnicode_FromKindAndData()` encodes its input directly into UTF-8;
+`PyUnicode_FromWideChar()` uses the UTF-8 writer. A 16-bit `wchar_t` input
+combines valid surrogate pairs, while UCS2 input preserves individual surrogates.
+Copies and subclasses of FSR construction buffers also encode to UTF-8;
+subclasses retain separately allocated UTF-8 data. Slices finalized from FSR
+use the same eager conversion. Lazy UTF-8 construction is a separate experiment
+and is not part of this branch.
 
 The existing `PyUnicode_WriteChar`, `PyUnicode_Fill`, and
 `PyUnicode_CopyCharacters` contracts also allow a private, unused decoded string

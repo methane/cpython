@@ -550,6 +550,9 @@ _PyUnicodeWriter_Finish(_PyUnicodeWriter *writer)
             Py_DECREF(str);
             str = part;
         }
+        else {
+            str = _PyUnicode_Result(str);
+        }
     }
     else {
 #ifdef Py_DEBUG

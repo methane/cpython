@@ -10,9 +10,8 @@ Unicode Objects
 
 Unicode objects normally store UTF-8 directly after the object header.
 ASCII strings share this storage with their one-byte code point representation.
-For other strings constructed from UTF-8, the fixed-width representation
-introduced by :pep:`393` is generated on demand and retained until the object
-is destroyed.
+For other strings, the fixed-width representation introduced by :pep:`393`
+is generated on demand and retained until the object is destroyed.
 Its elements have type :c:type:`Py_UCS1`, :c:type:`Py_UCS2`, or :c:type:`Py_UCS4`.
 
 Python strings may contain surrogate code points. Internally, these are encoded
@@ -20,10 +19,11 @@ individually using the ``surrogatepass`` convention. This does not change the
 strict UTF-8 encoding APIs, which continue to reject strings containing
 surrogates. String lengths and indices always count code points, not UTF-8 bytes.
 
-Strings created with :c:func:`PyUnicode_New`, :c:func:`PyUnicode_FromKindAndData`,
-or :c:func:`PyUnicode_FromWideChar` may instead own a fixed-width buffer and
-generate UTF-8 on demand. Copies and Unicode subclasses preserve this storage
-when constructed from an FSR-primary string.
+Strings under construction with :c:func:`PyUnicode_New` retain a writable
+fixed-width buffer for compatibility. Completed fixed-width constructors,
+including :c:func:`PyUnicode_FromKindAndData` and :c:func:`PyUnicode_FromWideChar`,
+encode their input into primary UTF-8 storage. Unicode subclasses use a
+separately allocated UTF-8 buffer.
 
 .. impl-detail::
 
@@ -524,10 +524,6 @@ APIs:
    All characters must be in range [U+0000; U+10ffff]. If *kind* is
    :c:macro:`PyUnicode_4BYTE_KIND` and the string contains invalid characters,
    the behavior is undefined.
-
-   In this experimental implementation, non-ASCII results retain a separately
-   allocated fixed-width buffer and generate UTF-8 only when requested.
-   Empty strings and Latin-1 singletons may reuse shared objects.
 
    .. versionadded:: 3.3
 
@@ -1082,10 +1078,6 @@ wchar_t Support
    Passing ``-1`` as the *size* indicates that the function must itself compute the length,
    using :c:func:`!wcslen`.
    Return ``NULL`` on failure.
-
-   The result retains fixed-width storage with the same lazy UTF-8 behavior
-   as :c:func:`PyUnicode_FromKindAndData`. On platforms with 16-bit
-   :c:type:`wchar_t`, valid surrogate pairs are combined into single code points.
 
 
 .. c:function:: Py_ssize_t PyUnicode_AsWideChar(PyObject *unicode, wchar_t *wstr, Py_ssize_t size)
