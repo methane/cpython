@@ -728,6 +728,25 @@ class TestTranforms(BytecodeTestCase):
         self.assertEqual(format('x = %s!', '%% %s'), 'x = %% %s!')
         self.assertEqual(format('x = %s, y = %d', 12, 34), 'x = 12, y = 34')
 
+    def test_format_utf8_literals(self):
+        for fmt in ('日😀%s末', '\ud800%% %r \udcff',
+                    'é%10.2s\0終', '😀%% %a %%日',
+                    '日%s😀%r末', '日%日', '😀%s%', '日%s%s'):
+            for values in (('é😀',), ('é😀', '\udcff')):
+                with self.subTest(fmt=fmt, values=values):
+                    names = [f'x{i}' for i in range(len(values))]
+                    code = compile(f'{fmt!r} % ({", ".join(names)},)',
+                                   '<test>', 'eval')
+                    namespace = dict(zip(names, values))
+                    try:
+                        expected = fmt % values
+                    except (TypeError, ValueError) as exc:
+                        with self.assertRaises(type(exc)) as caught:
+                            eval(code, namespace)
+                        self.assertEqual(str(caught.exception), str(exc))
+                    else:
+                        self.assertEqual(eval(code, namespace), expected)
+
     def test_format_errors(self):
         with self.assertRaisesRegex(TypeError,
                     'not enough arguments for format string'):

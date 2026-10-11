@@ -3,6 +3,274 @@
 #include "parts.h"
 #include "util.h"
 
+/* Keep exported pointers alive across Python calls, including after the caller
+   drops its last reference to the string. */
+typedef struct {
+    Py_buffer buffer;
+    _PyUnicodeUTF8View utf8;
+    int32_t format;
+} UnicodeView;
+
+#define UNICODE_VIEW_CAPSULE "_testcapi.UnicodeView"
+
+static void
+unicode_view_clear(UnicodeView *view)
+{
+    PyBuffer_Release(&view->buffer);
+    _PyUnicodeUTF8View_Clear(&view->utf8);
+}
+
+static void
+unicode_view_destructor(PyObject *capsule)
+{
+    UnicodeView *view = PyCapsule_GetPointer(capsule, UNICODE_VIEW_CAPSULE);
+    assert(view != NULL);
+    unicode_view_clear(view);
+    PyMem_Free(view);
+}
+
+static PyObject *
+unicode_view_capsule(UnicodeView *view)
+{
+    UnicodeView *copy = PyMem_Malloc(sizeof(*copy));
+    if (copy == NULL) {
+        unicode_view_clear(view);
+        return PyErr_NoMemory();
+    }
+    *copy = *view;
+    PyObject *capsule = PyCapsule_New(copy, UNICODE_VIEW_CAPSULE,
+                                    unicode_view_destructor);
+    if (capsule == NULL) {
+        unicode_view_clear(copy);
+        PyMem_Free(copy);
+    }
+    return capsule;
+}
+
+static PyObject *
+unicode_export(PyObject *self, PyObject *args)
+{
+    PyObject *str;
+    int formats;
+    if (!PyArg_ParseTuple(args, "Oi", &str, &formats)) {
+        return NULL;
+    }
+    UnicodeView view = {.buffer.len = -1};
+    view.format = _PyUnicode_Export(str, formats, &view.buffer);
+    if (view.format < 0) {
+        assert(view.buffer.obj == NULL && view.buffer.buf == NULL);
+        assert(view.buffer.len == -1);
+        return NULL;
+    }
+    return unicode_view_capsule(&view);
+}
+
+static PyObject *
+unicode_getfsrview(PyObject *self, PyObject *str)
+{
+    UnicodeView view = {.buffer.len = -1};
+    view.format = _PyUnicode_GetFSRView(str, &view.buffer);
+    if (view.format < 0) {
+        assert(view.buffer.obj == NULL && view.buffer.buf == NULL);
+        assert(view.buffer.len == -1);
+        return NULL;
+    }
+    return unicode_view_capsule(&view);
+}
+
+static PyObject *
+unicode_utf8view(PyObject *self, PyObject *str)
+{
+    UnicodeView view = {.format = _PyUnicode_FORMAT_UTF8};
+    if (_PyUnicodeUTF8View_Init(&view.utf8, str) < 0) {
+        _PyUnicodeUTF8View_Clear(&view.utf8);
+        _PyUnicodeUTF8View_Clear(&view.utf8);
+        assert(view.utf8.data == NULL && view.utf8.size == 0);
+        return NULL;
+    }
+    return unicode_view_capsule(&view);
+}
+
+static PyObject *
+unicode_view_info(PyObject *self, PyObject *capsule)
+{
+    UnicodeView *view = PyCapsule_GetPointer(capsule, UNICODE_VIEW_CAPSULE);
+    if (view == NULL) {
+        return NULL;
+    }
+    if (view->utf8.owner != NULL) {
+        return Py_BuildValue("iy#nsiii", view->format,
+                             view->utf8.data, view->utf8.size,
+                             (Py_ssize_t)1, "B", 1, 1,
+                             PyUnicode_Check(view->utf8.owner));
+    }
+    Py_buffer *buffer = &view->buffer;
+    if (buffer->obj == NULL) {
+        PyErr_SetString(PyExc_ValueError, "view has been released");
+        return NULL;
+    }
+    assert(buffer->shape == NULL && buffer->strides == NULL);
+    assert(buffer->suboffsets == NULL && buffer->internal == NULL);
+    return Py_BuildValue("iy#nsiii", view->format,
+                         buffer->buf, buffer->len, buffer->itemsize,
+                         buffer->format, buffer->readonly, buffer->ndim, 1);
+}
+
+static PyObject *
+unicode_view_release(PyObject *self, PyObject *capsule)
+{
+    UnicodeView *view = PyCapsule_GetPointer(capsule, UNICODE_VIEW_CAPSULE);
+    if (view == NULL) {
+        return NULL;
+    }
+    unicode_view_clear(view);
+    Py_RETURN_NONE;
+}
+
+/* No result allocation: memory hooks can verify the API itself never allocates. */
+static PyObject *
+unicode_export_noalloc(PyObject *self, PyObject *str)
+{
+    Py_buffer view = {0};
+    int32_t formats = _PyUnicode_FORMAT_UCS1 | _PyUnicode_FORMAT_UCS2 |
+                      _PyUnicode_FORMAT_UCS4 | _PyUnicode_FORMAT_UTF8;
+    if (_PyUnicode_Export(str, formats, &view) < 0) {
+        return NULL;
+    }
+    PyBuffer_Release(&view);
+    PyBuffer_Release(&view);
+    Py_RETURN_NONE;
+}
+
+/* Inspect storage without requesting an FSR or hashing the string. */
+static PyObject *
+unicode_storage(PyObject *self, PyObject *obj)
+{
+    if (!PyUnicode_Check(obj)) {
+        PyErr_SetString(PyExc_TypeError, "expected str");
+        return NULL;
+    }
+    int utf8, compact, surrogates, cached;
+    Py_ssize_t size;
+    Py_BEGIN_CRITICAL_SECTION(obj);
+    PyASCIIObject *ascii = (PyASCIIObject *)obj;
+    utf8 = ascii->state.utf8_storage;
+    compact = ascii->state.compact;
+    surrogates = ascii->state.has_surrogates;
+    cached = !utf8 || ((PyCompactUnicodeObject *)obj)->fsr != NULL;
+    size = ascii->state.ascii ? ascii->length :
+        ((PyCompactUnicodeObject *)obj)->utf8_length;
+    Py_END_CRITICAL_SECTION();
+    return Py_BuildValue("(iiiin)", utf8, compact, surrogates, cached, size);
+}
+
+static PyObject *
+unicode_materialize_fsr(PyObject *self, PyObject *obj)
+{
+    if (!PyUnicode_Check(obj)) {
+        PyErr_SetString(PyExc_TypeError, "expected str");
+        return NULL;
+    }
+    if (PyUnicode_DATA(obj) == NULL) {
+        return NULL;
+    }
+    Py_RETURN_NONE;
+}
+
+/* Call the exported symbol instead of the inline PyUnicode_DATA() macro. */
+static PyObject *
+unicode_materialize_fsr_function(PyObject *self, PyObject *obj)
+{
+    if ((PyUnicode_DATA)(obj) == NULL) {
+        return NULL;
+    }
+    Py_RETURN_NONE;
+}
+
+static PyObject *
+unicode_materialize_fsr_typed(PyObject *self, PyObject *obj)
+{
+    if (!PyUnicode_Check(obj)) {
+        PyErr_SetString(PyExc_TypeError, "expected str");
+        return NULL;
+    }
+    const void *data;
+    switch (PyUnicode_KIND(obj)) {
+    case PyUnicode_1BYTE_KIND:
+        data = PyUnicode_1BYTE_DATA(obj);
+        break;
+    case PyUnicode_2BYTE_KIND:
+        data = PyUnicode_2BYTE_DATA(obj);
+        break;
+    case PyUnicode_4BYTE_KIND:
+        data = PyUnicode_4BYTE_DATA(obj);
+        break;
+    default:
+        Py_UNREACHABLE();
+    }
+    if (data == NULL) {
+        return NULL;
+    }
+    Py_RETURN_NONE;
+}
+
+static PyObject *
+unicode_readchar_macro(PyObject *self, PyObject *args)
+{
+    PyObject *obj;
+    Py_ssize_t index;
+    if (!PyArg_ParseTuple(args, "On", &obj, &index)) {
+        return NULL;
+    }
+    if (!PyUnicode_Check(obj) || index < 0 || index >= PyUnicode_GET_LENGTH(obj)) {
+        PyErr_BadArgument();
+        return NULL;
+    }
+    Py_UCS4 ch = PyUnicode_READ_CHAR(obj, index);
+    if (ch == (Py_UCS4)-1) {
+        return NULL;
+    }
+    return PyLong_FromUnsignedLong(ch);
+}
+
+/* Exercise the write APIs on a UTF-8-backed string in a subprocess. */
+static PyObject *
+unicode_write_inplace(PyObject *self, PyObject *args)
+{
+    PyObject *obj;
+    int mode;
+    if (!PyArg_ParseTuple(args, "Oi", &obj, &mode)) {
+        return NULL;
+    }
+    if (!PyUnicode_Check(obj)) {
+        PyErr_BadArgument();
+        return NULL;
+    }
+    if (mode == 0) {
+        PyUnicode_WRITE(PyUnicode_KIND(obj), NULL, 0, 'x');
+    }
+    else if (mode == 1) {
+        if (PyUnicode_WriteChar(obj, 0, 'x') < 0) {
+            return NULL;
+        }
+    }
+    else if (mode == 2) {
+        if (PyUnicode_Fill(obj, 0, 1, 'x') < 0) {
+            return NULL;
+        }
+    }
+    else if (mode == 3) {
+        if (PyUnicode_CopyCharacters(obj, 0, obj, 0, 1) < 0) {
+            return NULL;
+        }
+    }
+    else {
+        PyErr_BadArgument();
+        return NULL;
+    }
+    Py_RETURN_NONE;
+}
+
 /* Test PyUnicode_New() */
 static PyObject *
 unicode_new(PyObject *self, PyObject *args)
@@ -54,6 +322,39 @@ unicode_copy(PyObject *unicode)
         return NULL;
     }
     return copy;
+}
+
+/* Test PyUnicode_WriteChar() on a PyUnicode_New() construction buffer. */
+static PyObject *
+unicode_writechar(PyObject *self, PyObject *args, PyObject *kwargs)
+{
+    static char *kwlist[] = {"to", "index", "character", "incref", NULL};
+    int incref = 0;
+    PyObject *to, *to_copy;
+    Py_ssize_t index;
+    unsigned int character;
+
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "OnI|p", kwlist,
+                                     &to, &index, &character, &incref)) {
+        return NULL;
+    }
+    NULLABLE(to);
+    to_copy = unicode_copy(to);
+    if (to_copy == NULL && to != NULL) {
+        return NULL;
+    }
+    if (incref) {
+        Py_XINCREF(to_copy);
+    }
+    int result = PyUnicode_WriteChar(to_copy, index, (Py_UCS4)character);
+    if (incref) {
+        Py_XDECREF(to_copy);
+    }
+    if (result < 0) {
+        Py_XDECREF(to_copy);
+        return NULL;
+    }
+    return Py_BuildValue("(Ni)", to_copy, result);
 }
 
 
@@ -791,19 +1092,29 @@ writer_get_buffer(PyObject *self_raw, PyObject *args)
     }
 
     _PyUnicodeWriter *writer = (_PyUnicodeWriter*)self->writer;
+    // Capacity is measured in UTF-8 bytes; maxchar describes the contents.
+    PyObject *contents;
     PyObject *allocated;
-    Py_UCS4 maxchar;
-    if (writer->buffer) {
-        allocated = PyLong_FromSsize_t(PyUnicode_GET_LENGTH(writer->buffer));
-        maxchar = PyUnicode_MAX_CHAR_VALUE(writer->buffer);
+    if (writer->readonly != NULL) {
+        contents = Py_NewRef(writer->readonly);
+        allocated = writer->utf8_pos < 0 ? Py_NewRef(Py_None)
+                                         : PyLong_FromSsize_t(writer->utf8_pos);
     }
     else {
-        allocated = Py_None;
-        maxchar = writer->min_char;
+        contents = PyUnicode_DecodeUTF8(writer->utf8 ? writer->utf8 : "",
+                                       writer->utf8_pos, "surrogatepass");
+        allocated = writer->utf8 ? PyLong_FromSsize_t(writer->utf8_size)
+                                 : Py_NewRef(Py_None);
     }
-    return Py_BuildValue("(NkN)",
-                         allocated, (unsigned long)maxchar,
-                         PyBool_FromLong(writer->readonly));
+    if (contents == NULL || allocated == NULL) {
+        Py_XDECREF(contents);
+        Py_XDECREF(allocated);
+        return NULL;
+    }
+    Py_UCS4 maxchar = PyUnicode_MAX_CHAR_VALUE(contents);
+    Py_DECREF(contents);
+    return Py_BuildValue("(NkN)", allocated, (unsigned long)maxchar,
+                        PyBool_FromLong(writer->readonly != NULL));
 }
 
 
@@ -846,7 +1157,33 @@ writer_finish_with_size(PyObject *self_raw, PyObject *args)
 }
 
 
+static PyObject *
+writer_storage(PyObject *self_raw, PyObject *unused)
+{
+    WriterObject *self = (WriterObject *)self_raw;
+    if (writer_check(self) < 0) {
+        return NULL;
+    }
+    _PyUnicodeWriter *writer = (_PyUnicodeWriter *)self->writer;
+    return Py_BuildValue("nn", writer->pos, writer->utf8_pos);
+}
+
+static PyObject *
+writer_set_overallocate(PyObject *self_raw, PyObject *arg)
+{
+    WriterObject *self = (WriterObject *)self_raw;
+    if (writer_check(self) < 0)
+        return NULL;
+    int enabled = PyObject_IsTrue(arg);
+    if (enabled < 0)
+        return NULL;
+    ((_PyUnicodeWriter *)self->writer)->overallocate = enabled;
+    Py_RETURN_NONE;
+}
+
 static PyMethodDef writer_methods[] = {
+    {"storage", writer_storage, METH_NOARGS},
+    {"set_overallocate", writer_set_overallocate, METH_O},
     {"write_char", _PyCFunction_CAST(writer_write_char), METH_VARARGS},
     {"write_utf8", _PyCFunction_CAST(writer_write_utf8), METH_VARARGS},
     {"write_ascii", _PyCFunction_CAST(writer_write_ascii), METH_VARARGS},
@@ -881,8 +1218,21 @@ static PyType_Spec Writer_spec = {
 
 
 static PyMethodDef TestMethods[] = {
+    {"unicode_export", unicode_export, METH_VARARGS},
+    {"unicode_getfsrview", unicode_getfsrview, METH_O},
+    {"unicode_utf8view", unicode_utf8view, METH_O},
+    {"unicode_view_info", unicode_view_info, METH_O},
+    {"unicode_view_release", unicode_view_release, METH_O},
+    {"unicode_export_noalloc", unicode_export_noalloc, METH_O},
+    {"unicode_storage", unicode_storage, METH_O},
+    {"unicode_materialize_fsr", unicode_materialize_fsr, METH_O},
+    {"unicode_materialize_fsr_function", unicode_materialize_fsr_function, METH_O},
+    {"unicode_materialize_fsr_typed", unicode_materialize_fsr_typed, METH_O},
+    {"unicode_readchar_macro", unicode_readchar_macro, METH_VARARGS},
+    {"unicode_write_inplace", unicode_write_inplace, METH_VARARGS},
     {"unicode_new",              unicode_new,                    METH_VARARGS},
     {"unicode_fill",             _PyCFunction_CAST(unicode_fill), METH_VARARGS | METH_KEYWORDS},
+    {"unicode_writechar",        _PyCFunction_CAST(unicode_writechar), METH_VARARGS | METH_KEYWORDS},
     {"unicode_fromkindanddata",  unicode_fromkindanddata,        METH_VARARGS},
     {"unicode_asucs4",           unicode_asucs4,                 METH_VARARGS},
     {"unicode_asucs4copy",       unicode_asucs4copy,             METH_VARARGS},
@@ -908,6 +1258,13 @@ static PyMethodDef TestMethods[] = {
 int
 _PyTestCapi_Init_Unicode(PyObject *m) {
     if (PyModule_AddFunctions(m, TestMethods) < 0) {
+        return -1;
+    }
+    if (PyModule_AddIntMacro(m, _PyUnicode_FORMAT_UCS1) < 0 ||
+        PyModule_AddIntMacro(m, _PyUnicode_FORMAT_UCS2) < 0 ||
+        PyModule_AddIntMacro(m, _PyUnicode_FORMAT_UCS4) < 0 ||
+        PyModule_AddIntMacro(m, _PyUnicode_FORMAT_UTF8) < 0)
+    {
         return -1;
     }
 
