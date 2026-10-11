@@ -43,7 +43,10 @@ unicodedata_UCD_decimal(PyObject *self, PyObject *const *args, Py_ssize_t nargs)
             PyUnicode_GET_LENGTH(args[0]));
         goto exit;
     }
-    chr = PyUnicode_READ_CHAR(args[0], 0);
+    chr = _PyUnicode_ReadCharNoAlloc(args[0], 0);
+    if ((Py_UCS4)chr == (Py_UCS4)-1) {
+        goto exit;
+    }
     if (nargs < 2) {
         goto skip_optional;
     }
@@ -92,7 +95,10 @@ unicodedata_UCD_digit(PyObject *self, PyObject *const *args, Py_ssize_t nargs)
             PyUnicode_GET_LENGTH(args[0]));
         goto exit;
     }
-    chr = PyUnicode_READ_CHAR(args[0], 0);
+    chr = _PyUnicode_ReadCharNoAlloc(args[0], 0);
+    if ((Py_UCS4)chr == (Py_UCS4)-1) {
+        goto exit;
+    }
     if (nargs < 2) {
         goto skip_optional;
     }
@@ -142,7 +148,10 @@ unicodedata_UCD_numeric(PyObject *self, PyObject *const *args, Py_ssize_t nargs)
             PyUnicode_GET_LENGTH(args[0]));
         goto exit;
     }
-    chr = PyUnicode_READ_CHAR(args[0], 0);
+    chr = _PyUnicode_ReadCharNoAlloc(args[0], 0);
+    if ((Py_UCS4)chr == (Py_UCS4)-1) {
+        goto exit;
+    }
     if (nargs < 2) {
         goto skip_optional;
     }
@@ -183,7 +192,10 @@ unicodedata_UCD_category(PyObject *self, PyObject *arg)
             PyUnicode_GET_LENGTH(arg));
         goto exit;
     }
-    chr = PyUnicode_READ_CHAR(arg, 0);
+    chr = _PyUnicode_ReadCharNoAlloc(arg, 0);
+    if ((Py_UCS4)chr == (Py_UCS4)-1) {
+        goto exit;
+    }
     return_value = unicodedata_UCD_category_impl(self, chr);
 
 exit:
@@ -221,7 +233,10 @@ unicodedata_UCD_bidirectional(PyObject *self, PyObject *arg)
             PyUnicode_GET_LENGTH(arg));
         goto exit;
     }
-    chr = PyUnicode_READ_CHAR(arg, 0);
+    chr = _PyUnicode_ReadCharNoAlloc(arg, 0);
+    if ((Py_UCS4)chr == (Py_UCS4)-1) {
+        goto exit;
+    }
     return_value = unicodedata_UCD_bidirectional_impl(self, chr);
 
 exit:
@@ -260,7 +275,10 @@ unicodedata_UCD_combining(PyObject *self, PyObject *arg)
             PyUnicode_GET_LENGTH(arg));
         goto exit;
     }
-    chr = PyUnicode_READ_CHAR(arg, 0);
+    chr = _PyUnicode_ReadCharNoAlloc(arg, 0);
+    if ((Py_UCS4)chr == (Py_UCS4)-1) {
+        goto exit;
+    }
     _return_value = unicodedata_UCD_combining_impl(self, chr);
     if ((_return_value == -1) && PyErr_Occurred()) {
         goto exit;
@@ -304,7 +322,10 @@ unicodedata_UCD_mirrored(PyObject *self, PyObject *arg)
             PyUnicode_GET_LENGTH(arg));
         goto exit;
     }
-    chr = PyUnicode_READ_CHAR(arg, 0);
+    chr = _PyUnicode_ReadCharNoAlloc(arg, 0);
+    if ((Py_UCS4)chr == (Py_UCS4)-1) {
+        goto exit;
+    }
     _return_value = unicodedata_UCD_mirrored_impl(self, chr);
     if ((_return_value == -1) && PyErr_Occurred()) {
         goto exit;
@@ -344,7 +365,10 @@ unicodedata_UCD_east_asian_width(PyObject *self, PyObject *arg)
             PyUnicode_GET_LENGTH(arg));
         goto exit;
     }
-    chr = PyUnicode_READ_CHAR(arg, 0);
+    chr = _PyUnicode_ReadCharNoAlloc(arg, 0);
+    if ((Py_UCS4)chr == (Py_UCS4)-1) {
+        goto exit;
+    }
     return_value = unicodedata_UCD_east_asian_width_impl(self, chr);
 
 exit:
@@ -382,7 +406,10 @@ unicodedata_UCD_decomposition(PyObject *self, PyObject *arg)
             PyUnicode_GET_LENGTH(arg));
         goto exit;
     }
-    chr = PyUnicode_READ_CHAR(arg, 0);
+    chr = _PyUnicode_ReadCharNoAlloc(arg, 0);
+    if ((Py_UCS4)chr == (Py_UCS4)-1) {
+        goto exit;
+    }
     return_value = unicodedata_UCD_decomposition_impl(self, chr);
 
 exit:
@@ -507,7 +534,10 @@ unicodedata_UCD_name(PyObject *self, PyObject *const *args, Py_ssize_t nargs)
             PyUnicode_GET_LENGTH(args[0]));
         goto exit;
     }
-    chr = PyUnicode_READ_CHAR(args[0], 0);
+    chr = _PyUnicode_ReadCharNoAlloc(args[0], 0);
+    if ((Py_UCS4)chr == (Py_UCS4)-1) {
+        goto exit;
+    }
     if (nargs < 2) {
         goto skip_optional;
     }
@@ -548,7 +578,10 @@ unicodedata_isxidstart(PyObject *module, PyObject *arg)
             PyUnicode_GET_LENGTH(arg));
         goto exit;
     }
-    chr = PyUnicode_READ_CHAR(arg, 0);
+    chr = _PyUnicode_ReadCharNoAlloc(arg, 0);
+    if ((Py_UCS4)chr == (Py_UCS4)-1) {
+        goto exit;
+    }
     return_value = unicodedata_isxidstart_impl(module, chr);
 
 exit:
@@ -584,7 +617,10 @@ unicodedata_isxidcontinue(PyObject *module, PyObject *arg)
             PyUnicode_GET_LENGTH(arg));
         goto exit;
     }
-    chr = PyUnicode_READ_CHAR(arg, 0);
+    chr = _PyUnicode_ReadCharNoAlloc(arg, 0);
+    if ((Py_UCS4)chr == (Py_UCS4)-1) {
+        goto exit;
+    }
     return_value = unicodedata_isxidcontinue_impl(module, chr);
 
 exit:
@@ -720,7 +756,10 @@ unicodedata_block(PyObject *module, PyObject *arg)
             PyUnicode_GET_LENGTH(arg));
         goto exit;
     }
-    chr = PyUnicode_READ_CHAR(arg, 0);
+    chr = _PyUnicode_ReadCharNoAlloc(arg, 0);
+    if ((Py_UCS4)chr == (Py_UCS4)-1) {
+        goto exit;
+    }
     return_value = unicodedata_block_impl(module, chr);
 
 exit:
@@ -756,7 +795,10 @@ unicodedata_grapheme_cluster_break(PyObject *module, PyObject *arg)
             PyUnicode_GET_LENGTH(arg));
         goto exit;
     }
-    chr = PyUnicode_READ_CHAR(arg, 0);
+    chr = _PyUnicode_ReadCharNoAlloc(arg, 0);
+    if ((Py_UCS4)chr == (Py_UCS4)-1) {
+        goto exit;
+    }
     return_value = unicodedata_grapheme_cluster_break_impl(module, chr);
 
 exit:
@@ -792,7 +834,10 @@ unicodedata_indic_conjunct_break(PyObject *module, PyObject *arg)
             PyUnicode_GET_LENGTH(arg));
         goto exit;
     }
-    chr = PyUnicode_READ_CHAR(arg, 0);
+    chr = _PyUnicode_ReadCharNoAlloc(arg, 0);
+    if ((Py_UCS4)chr == (Py_UCS4)-1) {
+        goto exit;
+    }
     return_value = unicodedata_indic_conjunct_break_impl(module, chr);
 
 exit:
@@ -828,10 +873,13 @@ unicodedata_extended_pictographic(PyObject *module, PyObject *arg)
             PyUnicode_GET_LENGTH(arg));
         goto exit;
     }
-    chr = PyUnicode_READ_CHAR(arg, 0);
+    chr = _PyUnicode_ReadCharNoAlloc(arg, 0);
+    if ((Py_UCS4)chr == (Py_UCS4)-1) {
+        goto exit;
+    }
     return_value = unicodedata_extended_pictographic_impl(module, chr);
 
 exit:
     return return_value;
 }
-/*[clinic end generated code: output=482a87df218f07c1 input=a9049054013a1b77]*/
+/*[clinic end generated code: output=a1c7353afe4335a0 input=a9049054013a1b77]*/

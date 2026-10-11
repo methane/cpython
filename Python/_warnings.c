@@ -679,17 +679,18 @@ show_warning(PyThreadState *tstate, PyObject *filename, int lineno,
 
     /* Print "  source_line\n" */
     if (sourceline) {
-        int kind;
-        const void *data;
         Py_ssize_t i, len;
         Py_UCS4 ch;
         PyObject *truncated;
 
-        kind = PyUnicode_KIND(sourceline);
-        data = PyUnicode_DATA(sourceline);
+        /* Leading ASCII whitespace has identical byte and character offsets. */
+        Py_ssize_t utf8_size;
+        const unsigned char *utf8 = (const unsigned char *)
+            _PyUnicode_GetPrimaryUTF8(sourceline, &utf8_size);
         len = PyUnicode_GET_LENGTH(sourceline);
         for (i=0; i<len; i++) {
-            ch = PyUnicode_READ(kind, data, i);
+            ch = utf8 != NULL ? utf8[i]
+                : _PyUnicode_ReadCharNoAlloc(sourceline, i);
             if (ch != ' ' && ch != '\t' && ch != '\014')
                 break;
         }

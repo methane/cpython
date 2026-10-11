@@ -6,6 +6,10 @@
 Py_LOCAL_INLINE(int)
 unicode_eq(PyObject *str1, PyObject *str2)
 {
+    if (_PyASCIIObject_CAST(str1)->state.utf8_storage ||
+        _PyASCIIObject_CAST(str2)->state.utf8_storage) {
+        return _PyUnicode_EqualUTF8(str1, str2);
+    }
     Py_ssize_t len = PyUnicode_GET_LENGTH(str1);
     if (PyUnicode_GET_LENGTH(str2) != len) {
         return 0;

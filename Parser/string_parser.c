@@ -163,24 +163,17 @@ decode_unicode_with_escapes(Parser *parser, const char *s, size_t len, Token *t)
             }
         }
         if (*s & 0x80) {
-            PyObject *w;
-            int kind;
-            const void *data;
-            Py_ssize_t w_len;
-            Py_ssize_t i;
-            w = decode_utf8(&s, end);
+            PyObject *w = decode_utf8(&s, end);
             if (w == NULL) {
                 PyMem_Free(buf);
                 return NULL;
             }
-            kind = PyUnicode_KIND(w);
-            data = PyUnicode_DATA(w);
-            w_len = PyUnicode_GET_LENGTH(w);
-            for (i = 0; i < w_len; i++) {
+            Py_ssize_t cursor = 0;
+            Py_UCS4 chr;
+            while (_PyUnicode_Next(w, &cursor, &chr)) {
                 // sprintf() writes a null byte: the buffer is large enough
                 // for that thanks to the overallocation.
                 assert((p + 11 - buf) <= alloc);
-                Py_UCS4 chr = PyUnicode_READ(kind, data, i);
                 sprintf(p, "\\U%08x", chr);
                 p += 10;
             }

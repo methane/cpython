@@ -15,6 +15,7 @@
 #include "pycore_runtime.h"       // _PyRuntime
 #include "pycore_setobject.h"     // _PySet_NextEntry()
 #include "pycore_typeobject.h"    // _PyStaticType_InitBuiltin()
+#include "pycore_unicodeobject.h" // _PyUnicodeUTF8View
 
 
 static Py_ssize_t

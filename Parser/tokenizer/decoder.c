@@ -67,8 +67,7 @@ chunk_set_unicode(struct tok_state *tok, _PyTok_Chunk *chunk,
             ? E_NOMEM : E_DECODE;
         return -1;
     }
-    if (strip_bom && PyUnicode_GET_LENGTH(unicode) > 0 &&
-            PyUnicode_ReadChar(unicode, 0) == UNICODE_BOM) {
+    if (strip_bom && utf8_len >= UTF8_BOM_LENGTH && memcmp(utf8, UTF8_BOM, UTF8_BOM_LENGTH) == 0) {
         utf8 += UTF8_BOM_LENGTH;
         utf8_len -= UTF8_BOM_LENGTH;
     }

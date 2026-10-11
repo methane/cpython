@@ -1249,7 +1249,10 @@ test_int_converter(PyObject *module, PyObject *const *args, Py_ssize_t nargs)
             PyUnicode_GET_LENGTH(args[2]));
         goto exit;
     }
-    c = PyUnicode_READ_CHAR(args[2], 0);
+    c = _PyUnicode_ReadCharNoAlloc(args[2], 0);
+    if ((Py_UCS4)c == (Py_UCS4)-1) {
+        goto exit;
+    }
     if (nargs < 4) {
         goto skip_optional;
     }
@@ -1266,7 +1269,7 @@ exit:
 
 static PyObject *
 test_int_converter_impl(PyObject *module, int a, int b, int c, myenum d)
-/*[clinic end generated code: output=d5357b563bdb8789 input=5d8f4eb5899b24de]*/
+/*[clinic end generated code: output=2614d7c6c70a9f4e input=5d8f4eb5899b24de]*/
 
 
 /*[clinic input]
