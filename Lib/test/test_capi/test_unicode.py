@@ -1710,6 +1710,99 @@ class UTF8StorageTests(unittest.TestCase):
                                          doc_before)
                     self.assertEqual(_testcapi.unicode_storage(value), before)
 
+    def test_json_word_scan_boundaries(self):
+        import json
+        import _json
+        chars = ''.join(map(chr, range(256))) + '\u0100\u07ff\u0800日😀\ud800\udfff'
+        for pad in range(17):
+            for ch in chars:
+                text = 'a' * pad + ch + 'z' * (32 - pad)
+                for encode, reference in (
+                    (_json.encode_basestring, json.encoder.py_encode_basestring),
+                    (_json.encode_basestring_ascii,
+                     json.encoder.py_encode_basestring_ascii),
+                ):
+                    self.assertEqual(encode(self.make_string(text)), reference(text))
+            for size in range(33):
+                text = 'a' * size
+                self.assertEqual(_json.encode_basestring(text), '"' + text + '"')
+                self.assertEqual(json.loads('"' + text + '"'), text)
+            # A control byte is legal only for non-strict scanstring.
+            text = 'a' * pad + '\0\x1f' + '日' * 9
+            document = '"' + text + '"'
+            self.assertEqual(_json.scanstring(document, 1, False),
+                             (text, len(document)))
+            with self.assertRaises(json.JSONDecodeError) as caught:
+                _json.scanstring(document, 1, True)
+            self.assertEqual(caught.exception.pos, pad + 1)
+
+    def test_json_decoded_utf8_metadata(self):
+        import json
+        import _json
+        for text in ('', 'ascii', '\x7f', '\x80', 'é', 'ÿ', '\u0100',
+                     '\u07ff', '\u0800', '\ud7ff', '\ud800', '\udfff',
+                     '\ue000', '\uffff', '\U00010000', '\U0010ffff',
+                     '😀\ud800', '\udfff😀', 'ÿ\n日\0😀'):
+            for factory in (self.make_string, make_fsr, Str):
+                for ascii_only in (False, True):
+                    document = json.dumps(text, ensure_ascii=ascii_only)
+                    # Prefix changes byte offsets without changing JSON indices.
+                    value = factory('日😀' + document + 'trailing')
+                    result, end = _json.scanstring(value, 3)
+                    self.assertEqual((result, end), (text, 2 + len(document)))
+                    self.assertEqual(result.isascii(), text.isascii())
+                    self.assertEqual(result.encode('utf-8', 'surrogatepass'),
+                                     text.encode('utf-8', 'surrogatepass'))
+                    self.assertEqual(hash(result), hash(text))
+                    if any(0xd800 <= ord(ch) <= 0xdfff for ch in text):
+                        self.assertRaises(UnicodeEncodeError, result.encode)
+                    # Materialization verifies the stored width and count too.
+                    _testcapi.unicode_materialize_fsr(result)
+                    self.assertEqual(list(result), list(text))
+
+    def test_json_document_end_offsets(self):
+        import json
+        decoder = json.JSONDecoder()
+        text = '日😀\udcff' * 20
+        document = json.dumps([text], ensure_ascii=False)
+        for prefix in ('', '日😀', 'é' * 100):
+            for suffix in ('', ' \n', '😀' * 100, '\udcff日'):
+                for factory in (self.make_string, make_fsr, Str):
+                    value = factory(prefix + document + suffix)
+                    self.assertEqual(decoder.raw_decode(value, len(prefix)),
+                                     ([text], len(prefix) + len(document)))
+        with self.assertRaises(json.JSONDecodeError) as caught:
+            json.loads(document + '😀')
+        self.assertEqual(caught.exception.pos, len(document))
+
+    @support.nomemtest
+    def test_json_utf8_allocation_failures(self):
+        import json
+        import _json
+        for factory in (self.make_string, make_fsr, Str):
+            value = factory('é日😀\udcff\0"\\')
+            document = factory(json.dumps(str(value), ensure_ascii=False))
+            for fn, args, expected in (
+                (_json.encode_basestring, (value,),
+                 json.encoder.py_encode_basestring(value)),
+                (_json.encode_basestring_ascii, (value,),
+                 json.encoder.py_encode_basestring_ascii(value)),
+                (_json.scanstring, (document, 1), (str(value), len(document))),
+            ):
+                failures = successes = 0
+                for fail_at in range(20):
+                    try:
+                        with support.inject_memory_error_cm(fail_at):
+                            result = fn(*args)
+                    except MemoryError:
+                        failures += 1
+                    else:
+                        successes += 1
+                        self.assertEqual(result, expected)
+                self.assertGreater(failures, 0)
+                self.assertGreater(successes, 0)
+                self.assertEqual(fn(*args), expected)
+
     def test_json_escape_boundaries(self):
         import json
         _json = import_helper.import_module('_json')

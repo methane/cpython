@@ -117,8 +117,17 @@ at `_PyUnicodeWriter_UTF8Data(writer)` and committing complete code points with
 `_PyUnicodeWriter_AdvanceUTF8(writer, bytes_written, codepoints_written)`.
 The pointer is valid only until the next reserve or append. Integer decimal and
 base-2/8/16 conversion use it directly, with equal byte and character counts.
-Printf-style signs and padding also write to this buffer. Finish validates and
-copies the accumulated bytes into the final compact string.
+Printf-style signs and padding also write to this buffer. Finish inspects UTF-8
+leading bytes for the character-width and surrogate metadata, then copies the
+already validated bytes into the final compact string.
+
+The JSON scanner collects character count, width and surrogate metadata while
+finding each string's closing quote. `_PyUnicode_FromUTF8AndMetadata()` copies
+these trusted bytes without validating or scanning them again; its caller must
+provide the exact character count and canonical width bound. JSON escaping uses
+bounded, unaligned-safe word scans to find special bytes and copies unchanged
+runs in bulk. Successful decoding reuses the document's known character count
+when reporting its end position, scanning the shorter suffix when appropriate.
 
 The fixed-width Writer fields and `Prepare`, `PrepareKind`, and `InitWithBuffer`
 APIs have been removed. Numeric formatting (including locale grouping),

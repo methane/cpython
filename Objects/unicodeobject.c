@@ -1401,8 +1401,30 @@ unicode_new_utf8(Py_ssize_t size, Py_ssize_t length, Py_UCS4 maxchar,
     return result;
 }
 
+/* The caller has already scanned the trusted UTF-8/surrogatepass bytes. */
+PyObject *
+_PyUnicode_FromUTF8AndMetadata(const char *data, Py_ssize_t size,
+                              Py_ssize_t length, Py_UCS4 maxchar, int surrogates)
+{
+    assert(size >= length && length >= 0);
+    if (maxchar < 128) {
+        return _PyUnicode_FromASCII(data, length);
+    }
+    if (length == 1 && maxchar <= 255) {
+        const unsigned char *p = (const unsigned char *)data;
+        return get_latin1_char((Py_UCS1)unicode_utf8_next(&p));
+    }
+    char *out;
+    PyObject *result = unicode_new_utf8(size, length, maxchar, surrogates, &out);
+    if (result == NULL) {
+        return NULL;
+    }
+    memcpy(out, data, size);
+    return length < 2 ? unicode_result(result) : result;
+}
+
 /* Writer callers already validated the bytes and counted code points.
-   Only the representation metadata remains to be determined. */
+   Leading bytes determine the FSR width without decoding every code point. */
 PyObject *
 _PyUnicode_FromValidatedUTF8(const char *data, Py_ssize_t size, Py_ssize_t length)
 {
@@ -1412,20 +1434,31 @@ _PyUnicode_FromValidatedUTF8(const char *data, Py_ssize_t size, Py_ssize_t lengt
     }
     const unsigned char *p = (const unsigned char *)data;
     const unsigned char *end = p + size;
-    Py_UCS4 maxchar = 0;
+    Py_UCS4 maxchar = 127;
     int surrogates = 0;
     while (p < end) {
-        Py_UCS4 ch = unicode_utf8_next(&p);
-        maxchar = Py_MAX(maxchar, ch);
-        surrogates |= Py_UNICODE_IS_SURROGATE(ch);
+        unsigned char ch = *p++;
+        if (ch < 0x80) {
+            continue;
+        }
+        if (ch < 0xe0) {
+            maxchar = Py_MAX(maxchar, ch < 0xc4 ? 0xffU : 0xffffU);
+            p++;
+        }
+        else if (ch < 0xf0) {
+            maxchar = Py_MAX(maxchar, 0xffffU);
+            surrogates |= ch == 0xed && *p >= 0xa0;
+            p += 2;
+        }
+        else {
+            maxchar = MAX_UNICODE;
+            p += 3;
+        }
+        if (maxchar == MAX_UNICODE && surrogates) {
+            break;
+        }
     }
-    char *out;
-    PyObject *result = unicode_new_utf8(size, length, maxchar, surrogates, &out);
-    if (result == NULL) {
-        return NULL;
-    }
-    memcpy(out, data, size);
-    return length < 2 ? unicode_result(result) : result;
+    return _PyUnicode_FromUTF8AndMetadata(data, size, length, maxchar, surrogates);
 }
 
 /* Implementation of the "backslashreplace" error handler for 8-bit encodings:

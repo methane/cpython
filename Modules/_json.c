@@ -114,6 +114,15 @@ json_character_offset(const JSONInput *input, Py_ssize_t offset)
     if (offset < 0 || PyUnicode_IS_ASCII(input->str)) {
         return offset;
     }
+    /* Successful loads normally finish at the end of the document. Use its
+       known character count, or scan the shorter suffix for trailing input. */
+    if (offset > input->size / 2) {
+        Py_ssize_t chars = PyUnicode_GET_LENGTH(input->str);
+        for (Py_ssize_t i = offset; i < input->size; i++) {
+            chars -= (input->data[i] & 0xc0) != 0x80;
+        }
+        return chars;
+    }
     Py_ssize_t chars = 0;
     for (Py_ssize_t i = 0; i < offset; i++) {
         chars += (input->data[i] & 0xc0) != 0x80;
@@ -138,7 +147,7 @@ json_byte_offset(const JSONInput *input, Py_ssize_t chars)
 }
 
 /* The input is trusted UTF-8, including surrogatepass sequences. */
-static Py_UCS4
+static inline Py_UCS4
 json_next_char(const unsigned char **cursor)
 {
     const unsigned char *p = *cursor;
@@ -157,18 +166,6 @@ json_next_char(const unsigned char **cursor)
     }
     *cursor = p;
     return ch;
-}
-
-static int
-json_write_fragment(PyUnicodeWriter *writer, const unsigned char *data,
-                    Py_ssize_t size)
-{
-    Py_ssize_t chars = 0;
-    for (Py_ssize_t i = 0; i < size; i++) {
-        chars += (data[i] & 0xc0) != 0x80;
-    }
-    return _PyUnicodeWriter_WriteUTF8((_PyUnicodeWriter *)writer,
-                                     (const char *)data, size, chars);
 }
 
 /* Forward decls */
@@ -221,7 +218,7 @@ static const unsigned char short_escape[128] = {
     ['\n'] = 'n', ['\r'] = 'r', ['\t'] = 't',
 };
 
-static Py_ssize_t
+static inline Py_ssize_t
 ascii_escape_unichar(Py_UCS4 c, unsigned char *output, Py_ssize_t chars)
 {
     /* Emit one or two \uXXXX escapes. The output has room for 12 bytes. */
@@ -244,6 +241,44 @@ ascii_escape_unichar(Py_UCS4 c, unsigned char *output, Py_ssize_t chars)
     return chars;
 }
 
+/* Locate a byte requiring JSON escaping. Word loads are bounded by end and
+   use memcpy for alignment/aliasing safety. The bit tests may report an early
+   match due to a borrow; the byte loop identifies the exact position. */
+static inline const unsigned char *
+json_find_special(const unsigned char *p, const unsigned char *end, int ascii_only)
+{
+    /* Avoid word-scan setup for consecutive escapes or non-ASCII characters
+       that each require an escape under ensure_ascii. */
+    if (p < end && (ascii_only ? !S_CHAR(*p)
+                         : *p < 32 || *p == '"' || *p == '\\')) {
+        return p;
+    }
+    const size_t ones = SIZE_MAX / 255;
+    const size_t high = ones * 0x80;
+    while (end - p >= (Py_ssize_t)sizeof(size_t)) {
+        size_t word;
+        memcpy(&word, p, sizeof(word));
+        size_t quote = word ^ (ones * '"');
+        size_t slash = word ^ (ones * '\\');
+        size_t special = ((quote - ones) & ~quote) |
+                         ((slash - ones) & ~slash) |
+                         ((word - ones * 0x20) & ~word);
+        if (ascii_only) {
+            size_t del = word ^ (ones * 0x7f);
+            special |= word | ((del - ones) & ~del);
+        }
+        if (special & high) {
+            break;
+        }
+        p += sizeof(word);
+    }
+    while (p < end && (ascii_only ? S_CHAR(*p)
+                          : *p >= 32 && *p != '"' && *p != '\\')) {
+        p++;
+    }
+    return p;
+}
+
 static int
 write_escaped(PyUnicodeWriter *writer, PyObject *str, int ascii_only)
 {
@@ -258,26 +293,15 @@ write_escaped(PyUnicodeWriter *writer, PyObject *str, int ascii_only)
     }
     Py_ssize_t size = input.size + 2;
     Py_ssize_t chars = PyUnicode_GET_LENGTH(str) + 2;
-    const unsigned char *p = input.data;
-    const unsigned char *end = p + input.size;
+    const unsigned char *end = input.data + input.size;
+    const unsigned char *first = json_find_special(input.data, end, ascii_only);
+    const unsigned char *p = first;
     while (p < end) {
-        const unsigned char *start = p;
-        Py_UCS4 ch = *p++;
-        if (ch >= 128) {
-            if (!ascii_only) {
-                /* UTF-8 continuation bytes cannot require JSON escaping. */
-                p += ch < 0xe0 ? 1 : ch < 0xf0 ? 2 : 3;
-                continue;
-            }
-            p = start;
-            ch = json_next_char(&p);
-        }
-        if (ascii_only ? S_CHAR(ch) : ch >= 32 && ch != '"' && ch != '\\') {
-            continue;
-        }
+        unsigned char ch = *p;
+        Py_ssize_t width = ch < 0x80 ? 1 : ch < 0xe0 ? 2 : ch < 0xf0 ? 3 : 4;
         Py_ssize_t n = ch < 128 && short_escape[ch] ? 2
-            : ch >= 0x10000 ? 12 : 6;
-        Py_ssize_t extra = n - (p - start);
+            : ch >= 0xf0 ? 12 : 6;
+        Py_ssize_t extra = n - width;
         if (size > PY_SSIZE_T_MAX - extra) {
             PyErr_SetString(PyExc_OverflowError, "string is too long to escape");
             Py_XDECREF(input.owner);
@@ -285,6 +309,7 @@ write_escaped(PyUnicodeWriter *writer, PyObject *str, int ascii_only)
         }
         size += extra;
         chars += n - 1;
+        p = json_find_special(p + width, end, ascii_only);
     }
     _PyUnicodeWriter *out = (_PyUnicodeWriter *)writer;
     if (_PyUnicodeWriter_PrepareUTF8(out, size) < 0) {
@@ -294,33 +319,26 @@ write_escaped(PyUnicodeWriter *writer, PyObject *str, int ascii_only)
     unsigned char *buffer = (unsigned char *)_PyUnicodeWriter_UTF8Data(out);
     Py_ssize_t pos = 0;
     buffer[pos++] = '"';
-    p = input.data;
-    while (p < end) {
-        const unsigned char *start = p;
-        while (p < end && (ascii_only ? S_CHAR(*p)
-               : *p >= 32 && *p != '"' && *p != '\\')) {
-            p += *p < 128 ? 1 : *p < 0xe0 ? 2 : *p < 0xf0 ? 3 : 4;
-        }
+    const unsigned char *start = input.data;
+    p = first;
+    while (1) {
         if (p != start) {
             memcpy(buffer + pos, start, p - start);
             pos += p - start;
         }
-        if (p < end) {
-            Py_UCS4 ch = *p;
-            if (ch < 128) {
-                p++;
-            }
-            else {
-                ch = json_next_char(&p);
-            }
-            if (ch < 128 && short_escape[ch]) {
-                buffer[pos++] = '\\';
-                buffer[pos++] = short_escape[ch];
-            }
-            else {
-                pos = ascii_escape_unichar(ch, buffer, pos);
-            }
+        if (p == end) {
+            break;
         }
+        Py_UCS4 ch = json_next_char(&p);
+        if (ch < 128 && short_escape[ch]) {
+            buffer[pos++] = '\\';
+            buffer[pos++] = short_escape[ch];
+        }
+        else {
+            pos = ascii_escape_unichar(ch, buffer, pos);
+        }
+        start = p;
+        p = json_find_special(p, end, ascii_only);
     }
     buffer[pos++] = '"';
     assert(pos == size);
@@ -452,33 +470,60 @@ scanstring_utf8(const JSONInput *input, Py_ssize_t end, int strict, Py_ssize_t *
         goto bail;
     }
     while (1) {
-        /* Find the end of the string or the next escape */
-        Py_UCS4 c;
-        {
-            // Use tight scope variable to help register allocation.
-            Py_UCS4 d = 0;
-            for (next = end; next < len; next++) {
-                d = buf[next];
-                if (d == '"' || d == '\\') {
+        /* Scan trusted UTF-8 once, collecting the result's metadata while
+           locating the next escape or closing quote. */
+        Py_UCS4 c = 0;
+        Py_UCS4 maxchar = 127;
+        int surrogates = 0;
+        Py_ssize_t chars = 0;
+        next = end;
+        if (next < len && (buf[next] == '"' || buf[next] == '\\')) {
+            /* Consecutive escapes have no fragment to scan or copy. */
+            c = buf[next];
+        }
+        else {
+            if (PyUnicode_IS_ASCII(input->str)) {
+                next = json_find_special(buf + end, buf + len, 0) - buf;
+                chars = next - end;
+            }
+            while (next < len) {
+                c = buf[next];
+                if (c == '"' || c == '\\') {
                     break;
                 }
-                if (d <= 0x1f && strict) {
+                if (c <= 0x1f && strict) {
                     raise_errmsg_utf8("Invalid control character at", input, next);
                     goto bail;
                 }
+                if (c < 0x80) {
+                    next++;
+                }
+                else if (c < 0xe0) {
+                    maxchar = Py_MAX(maxchar, c < 0xc4 ? 0xffU : 0xffffU);
+                    next += 2;
+                }
+                else if (c < 0xf0) {
+                    maxchar = Py_MAX(maxchar, 0xffffU);
+                    surrogates |= c == 0xed && buf[next + 1] >= 0xa0;
+                    next += 3;
+                }
+                else {
+                    maxchar = _Py_MAX_UNICODE;
+                    next += 4;
+                }
+                chars++;
             }
-            c = d;
         }
 
         if (c == '"') {
             // Fast path for simple case.
             if (writer == NULL) {
-                PyObject *ret = PyUnicode_DecodeUTF8((const char *)buf + end,
-                                                    next - end, "surrogatepass");
+                PyObject *ret = _PyUnicode_FromUTF8AndMetadata(
+                    (const char *)buf + end, next - end, chars, maxchar, surrogates);
                 if (ret == NULL) {
                     goto bail;
                 }
-                *next_end_ptr = next + 1;;
+                *next_end_ptr = next + 1;
                 return ret;
             }
         }
@@ -494,7 +539,8 @@ scanstring_utf8(const JSONInput *input, Py_ssize_t end, int strict, Py_ssize_t *
 
         /* Pick up this chunk if it's not zero length */
         if (next != end) {
-            if (json_write_fragment(writer, buf + end, next - end) < 0) {
+            if (_PyUnicodeWriter_WriteUTF8((_PyUnicodeWriter *)writer,
+                                            (const char *)buf + end, next - end, chars) < 0) {
                 goto bail;
             }
         }

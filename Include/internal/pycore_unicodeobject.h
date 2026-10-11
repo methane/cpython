@@ -139,6 +139,10 @@ PyAPI_FUNC(int) _PyUnicodeWriter_WriteUTF8(_PyUnicodeWriter *, const char *,
                                       Py_ssize_t, Py_ssize_t);
 /* Input is validated UTF-8/surrogatepass, with its code point count. */
 extern PyObject *_PyUnicode_FromValidatedUTF8(const char *, Py_ssize_t, Py_ssize_t);
+/* Trusted UTF-8 with exact length, canonical character-width bound, and
+   surrogate flag already computed by the caller. Does not validate or scan. */
+PyAPI_FUNC(PyObject *) _PyUnicode_FromUTF8AndMetadata(
+    const char *, Py_ssize_t, Py_ssize_t, Py_UCS4, int);
 extern void _PyUnicodeWriter_Truncate(_PyUnicodeWriter *, Py_ssize_t);
 
 /* Reserve bytes for direct UTF-8 writes. The UTF8Data() write pointer remains
