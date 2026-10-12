@@ -1196,11 +1196,12 @@ static bool mi_segment_check_free(mi_segment_t* segment, size_t slices_needed, s
       // ensure used count is up to date and collect potential concurrent frees
       mi_page_t* const page = mi_slice_to_page(slice);
       _mi_page_free_collect(page, false);
-      if (mi_page_all_free(page)) {
+      if (mi_page_all_free(page) && _PyMem_mi_page_is_safe_to_free(page)) {
         // if this page is all free now, free it without adding to any queues (yet)
         mi_assert_internal(page->next == NULL && page->prev==NULL);
         _mi_stat_decrease(&tld->stats->pages_abandoned, 1);
         segment->abandoned--;
+        _PyMem_mi_page_clear_qsbr(page);
         slice = mi_segment_page_clear(page, tld); // re-assign slice due to coalesce!
         mi_assert_internal(!mi_slice_is_used(slice));
         if (slice->slice_count >= slices_needed) {
@@ -1263,8 +1264,9 @@ static mi_segment_t* mi_segment_reclaim(mi_segment_t* segment, mi_heap_t* heap, 
       mi_page_set_heap(page, target_heap);
       _mi_page_use_delayed_free(page, MI_USE_DELAYED_FREE, true); // override never (after heap is set)
       _mi_page_free_collect(page, false); // ensure used count is up to date
-      if (mi_page_all_free(page)) {
+      if (mi_page_all_free(page) && _PyMem_mi_page_is_safe_to_free(page)) {
         // if everything free by now, free the page
+        _PyMem_mi_page_clear_qsbr(page);
         slice = mi_segment_page_clear(page, tld);   // set slice again due to coalesceing
       }
       else {
@@ -1698,10 +1700,10 @@ mi_page_t* _mi_segment_page_alloc(mi_heap_t* heap, size_t block_size, size_t pag
 
 static bool mi_segment_visit_page(mi_page_t* page, bool visit_blocks, mi_block_visit_fun* visitor, void* arg) {
   mi_heap_area_t area;
+  _mi_page_free_collect(page,true); // area->used must include cross-thread frees
   _mi_heap_area_init(&area, page);
   if (!visitor(NULL, &area, NULL, area.block_size, arg)) return false;
   if (visit_blocks) {
-    _mi_page_free_collect(page,true); // collect so the used count is accurate
     return _mi_heap_area_visit_blocks(&area, page, visitor, arg);
   }
   else {

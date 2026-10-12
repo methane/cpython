@@ -22,7 +22,7 @@ terms of the MIT license. A copy of the license can be found in the file
 // --------------------------------------------------------------------------
 
 
-#include <mimalloc-stats.h>
+#include "../mimalloc-stats.h"
 #include <stddef.h>   // ptrdiff_t
 #include <stdint.h>   // uintptr_t, uint16_t, etc
 #include <stdbool.h>  // bool
@@ -328,6 +328,8 @@ typedef struct mi_page_s {
   uint8_t               is_committed:1;    // `true` if the page virtual memory is committed
   uint8_t               is_zero_init:1;    // `true` if the page was initially zero initialized
   uint8_t               is_huge:1;         // `true` if the page is in a huge segment (`segment->kind == MI_SEGMENT_HUGE`)
+  uint8_t               use_qsbr:1;        // delay page freeing using CPython QSBR
+  uint8_t               debug_offset;      // preserve object headers during debug filling
                                            // padding
   // layout like this to optimize access in `mi_malloc` and `mi_free`
   uint16_t              capacity;          // number of blocks committed, must be the first field, see `segment.c:page_clear`
@@ -357,6 +359,10 @@ typedef struct mi_page_s {
 
   // 64-bit 11 words, 32-bit 13 words, (+2 for secure)
   void* padding[1];
+#ifdef Py_GIL_DISABLED
+  uint64_t              qsbr_goal;
+  struct llist_node     qsbr_node;
+#endif
 } mi_page_t;
 
 
@@ -573,6 +579,8 @@ struct mi_heap_s {
   mi_heap_t*            next;                                // list of heaps per thread
   bool                  no_reclaim;                          // `true` if this heap should not reclaim abandoned pages
   uint8_t               tag;                                 // custom tag, can be used for separating heaps based on the object types
+  uint8_t               debug_offset;
+  bool                  page_use_qsbr;
   #if MI_GUARDED
   size_t                guarded_size_min;                    // minimal size for guarded objects
   size_t                guarded_size_max;                    // maximal size for guarded objects

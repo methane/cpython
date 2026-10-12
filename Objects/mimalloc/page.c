@@ -243,6 +243,10 @@ static void _mi_page_thread_free_collect(mi_page_t* page)
   mi_assert_internal(count <= UINT16_MAX);
   mi_assert_internal(page->used >= (uint16_t)count);
   page->used = page->used - (uint16_t)count;
+  if (page->used == 0) {
+    // A previous QSBR goal predates the allocations just freed by other threads.
+    _PyMem_mi_page_clear_qsbr(page);
+  }
 }
 
 void _mi_page_free_collect(mi_page_t* page, bool force) {
@@ -297,6 +301,7 @@ void _mi_page_reclaim(mi_heap_t* heap, mi_page_t* page) {
   // TODO: push on full queue immediately if it is full?
   mi_page_queue_t* pq = mi_page_queue(heap, mi_page_block_size(page));
   mi_page_queue_push(heap, pq, page);
+  _PyMem_mi_page_reclaimed(page);
   mi_assert_expensive(_mi_page_is_valid(page));
 }
 
@@ -417,6 +422,12 @@ void _mi_page_abandon(mi_page_t* page, mi_page_queue_t* pq) {
 
   mi_heap_t* pheap = mi_page_heap(page);
 
+#ifdef Py_GIL_DISABLED
+  if (page->qsbr_node.next != NULL) {
+    llist_remove(&page->qsbr_node); // retain the goal across abandonment
+  }
+#endif
+
   // remove from our page list
   mi_segments_tld_t* segments_tld = &pheap->tld->segments;
   mi_page_queue_remove(pq, page);
@@ -451,11 +462,8 @@ void _mi_page_force_abandon(mi_page_t* page) {
 
   // and now unlink it from the page queue and abandon (or free)
   mi_page_queue_t* pq = mi_heap_page_queue_of(heap, page);
-  if (mi_page_all_free(page)) {
-    _mi_page_free(page, pq, false);
-  }
-  else {
-    _mi_page_abandon(page, pq);
+  if (!mi_page_all_free(page) || !_PyMem_mi_page_maybe_free(page, pq, false)) {
+    _mi_page_abandon(page, mi_page_queue_of(page));
   }
 }
 
@@ -467,6 +475,11 @@ void _mi_page_free(mi_page_t* page, mi_page_queue_t* pq, bool force) {
   mi_assert_internal(pq == mi_page_queue_of(page));
   mi_assert_internal(mi_page_all_free(page));
   mi_assert_internal(mi_page_thread_free_flag(page)!=MI_DELAYED_FREEING);
+
+#ifdef Py_GIL_DISABLED
+  mi_assert_internal(page->qsbr_goal == 0);
+  mi_assert_internal(page->qsbr_node.next == NULL);
+#endif
 
   // no more aligned blocks in here
   mi_page_set_has_aligned(page, false);
@@ -496,6 +509,7 @@ void _mi_page_retire(mi_page_t* page) mi_attr_noexcept {
   mi_assert_internal(mi_page_all_free(page));
 
   mi_page_set_has_aligned(page, false);
+  _PyMem_mi_page_clear_qsbr(page);
 
   // don't retire too often..
   // (or we end up retiring and re-allocating most of the time)
@@ -521,7 +535,7 @@ void _mi_page_retire(mi_page_t* page) mi_attr_noexcept {
     }
   }
   #endif
-  _mi_page_free(page, pq, false);
+  _PyMem_mi_page_maybe_free(page, pq, false);
 }
 
 // free retired pages: we don't need to look at the entire queues
@@ -536,7 +550,7 @@ void _mi_heap_collect_retired(mi_heap_t* heap, bool force) {
       if (mi_page_all_free(page)) {
         page->retire_expire--;
         if (force || page->retire_expire == 0) {
-          _mi_page_free(pq->first, pq, force);
+          _PyMem_mi_page_maybe_free(page, pq, force);
         }
         else {
           // keep retired, update min/max
@@ -714,6 +728,8 @@ static void mi_page_init(mi_heap_t* heap, mi_page_t* page, size_t block_size, mi
   mi_assert_internal(block_size > 0);
   // set fields
   mi_page_set_heap(page, heap);
+  page->use_qsbr = heap->page_use_qsbr;
+  page->debug_offset = heap->debug_offset;
   page->block_size = block_size;
   size_t page_size;
   page->page_start = _mi_segment_page_start(segment, page, &page_size);
@@ -749,6 +765,10 @@ static void mi_page_init(mi_heap_t* heap, mi_page_t* page, size_t block_size, mi
   mi_assert_internal(page->next == NULL);
   mi_assert_internal(page->prev == NULL);
   mi_assert_internal(page->retire_expire == 0);
+#ifdef Py_GIL_DISABLED
+  mi_assert_internal(page->qsbr_goal == 0);
+  mi_assert_internal(page->qsbr_node.next == NULL);
+#endif
   mi_assert_internal(!mi_page_has_aligned(page));
   #if (MI_PADDING || MI_ENCODE_FREELIST)
   mi_assert_internal(page->keys[0] != 0);
@@ -865,6 +885,7 @@ static mi_page_t* mi_page_queue_find_free_ex(mi_heap_t* heap, mi_page_queue_t* p
   }
 
   if (page == NULL) {
+    _PyMem_mi_heap_collect_qsbr(heap);
     _mi_heap_collect_retired(heap, false); // perhaps make a page available?
     page = mi_page_fresh(heap, pq);
     if (page == NULL && first_try) {
@@ -876,6 +897,7 @@ static mi_page_t* mi_page_queue_find_free_ex(mi_heap_t* heap, mi_page_queue_t* p
     // move the page to the front of the queue
     mi_page_queue_move_to_front(heap, pq, page);
     page->retire_expire = 0;
+    _PyMem_mi_page_clear_qsbr(page);
     // _mi_heap_collect_retired(heap, false); // update retire counts; note: increases rss on MemoryLoad bench so don't do this
   }
   mi_assert_internal(page == NULL || mi_page_immediate_available(page));
@@ -906,6 +928,7 @@ static inline mi_page_t* mi_find_free_page(mi_heap_t* heap, size_t size) {
 
     if (mi_page_immediate_available(page)) {
       page->retire_expire = 0;
+      _PyMem_mi_page_clear_qsbr(page);
       return page; // fast path
     }
   }
@@ -951,6 +974,7 @@ void mi_register_deferred_free(mi_deferred_free_fun* fn, void* arg) mi_attr_noex
 // Huge pages are also use if the requested alignment is very large (> MI_BLOCK_ALIGNMENT_MAX)
 // so their size is not always `> MI_LARGE_OBJ_SIZE_MAX`.
 static mi_page_t* mi_large_huge_page_alloc(mi_heap_t* heap, size_t size, size_t page_alignment) {
+  _PyMem_mi_heap_collect_qsbr(heap);
   size_t block_size = _mi_os_good_alloc_size(size);
   mi_assert_internal(mi_bin(block_size) == MI_BIN_HUGE || page_alignment > 0);
   bool is_huge = (block_size > MI_LARGE_OBJ_SIZE_MAX || page_alignment > 0);

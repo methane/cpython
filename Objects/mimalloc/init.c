@@ -16,6 +16,7 @@ terms of the MIT license. A copy of the license can be found in the file
 const mi_page_t _mi_page_empty = {
   0,
   false, false, false, false,
+  false, 0, // CPython QSBR and debug offset
   0,       // capacity
   0,       // reserved capacity
   { 0 },   // flags
@@ -124,6 +125,7 @@ mi_decl_cache_align const mi_heap_t _mi_heap_empty = {
   NULL,             // next
   false,            // can reclaim
   0,                // tag
+  0, false,         // CPython debug offset and QSBR
   #if MI_GUARDED
   0, 0, 0, 1,       // rate is 0 and count is 1 so we never write to it (see `internal.h:mi_heap_malloc_use_guarded`)
   #endif
@@ -176,6 +178,7 @@ mi_decl_cache_align mi_heap_t _mi_heap_main = {
   NULL,             // next heap
   false,            // can reclaim
   0,                // tag
+  0, false,         // CPython debug offset and QSBR
   #if MI_GUARDED
   0, 0, 0, 0,
   #endif
