@@ -8,13 +8,22 @@ Unicode Objects and Codecs
 Unicode Objects
 ^^^^^^^^^^^^^^^
 
-Since the implementation of :pep:`393` in Python 3.3, Unicode objects internally
-use a variety of representations, in order to allow handling the complete range
-of Unicode characters while staying memory efficient.  There are special cases
-for strings where all code points are below 128, 256, or 65536; otherwise, code
-points must be below 1114112 (which is the full Unicode range).
+Unicode objects normally store UTF-8 directly after the object header.
+ASCII strings share this storage with their one-byte code point representation.
+For other strings, the fixed-width representation introduced by :pep:`393`
+is generated on demand and retained until the object is destroyed.
+Its elements have type :c:type:`Py_UCS1`, :c:type:`Py_UCS2`, or :c:type:`Py_UCS4`.
 
-UTF-8 representation is created on demand and cached in the Unicode object.
+Python strings may contain surrogate code points. Internally, these are encoded
+individually using the ``surrogatepass`` convention. This does not change the
+strict UTF-8 encoding APIs, which continue to reject strings containing
+surrogates. String lengths and indices always count code points, not UTF-8 bytes.
+
+Strings under construction with :c:func:`PyUnicode_New` retain a writable
+fixed-width buffer for compatibility. Completed fixed-width constructors,
+including :c:func:`PyUnicode_FromKindAndData` and :c:func:`PyUnicode_FromWideChar`,
+encode their input into primary UTF-8 storage. Unicode subclasses use a
+separately allocated UTF-8 buffer.
 
 .. impl-detail::
 
@@ -122,6 +131,13 @@ access to internal read-only data of Unicode objects:
    canonical representation has the correct character size; use
    :c:func:`PyUnicode_KIND` to select the right function.
 
+   These functions may allocate the fixed-width buffer. Allocation failure
+   calls :c:func:`Py_FatalError` and terminates the process. Use
+   :c:func:`_PyUnicode_GetFSRView` when allocation failure must be recoverable.
+
+   .. versionchanged:: 3.16
+      The fixed-width representation is generated on demand.
+
    .. versionadded:: 3.3
 
 
@@ -140,16 +156,29 @@ access to internal read-only data of Unicode objects:
 .. c:function:: int PyUnicode_KIND(PyObject *unicode)
 
    Return one of the PyUnicode kind constants (see above) that indicate how many
-   bytes per character this Unicode object uses to store its data.  *unicode* has to
-   be a Unicode object in the "canonical" representation (not checked).
+   bytes per character its fixed-width representation uses. This metadata query
+   does not allocate or generate that representation. *unicode* must be a Unicode
+   object (not checked).
 
    .. versionadded:: 3.3
 
 
 .. c:function:: void* PyUnicode_DATA(PyObject *unicode)
 
-   Return a void pointer to the raw Unicode buffer.  *unicode* has to be a Unicode
-   object in the "canonical" representation (not checked).
+   Return a pointer to the fixed-width code point buffer, generating it if
+   necessary. *unicode* must be a Unicode object (not checked by the macro).
+   On allocation failure, call :c:func:`Py_FatalError` and terminate the process.
+   Use :c:func:`_PyUnicode_GetFSRView` for recoverable allocation failure.
+   The pointer remains valid while the caller holds a reference to the unchanged
+   object.
+
+   The first request can take time and memory proportional to the string length.
+   Subsequent requests reuse the buffer. This buffer must not be modified unless
+   the string is being constructed with :c:func:`PyUnicode_New`.
+
+   .. versionchanged:: 3.16
+      May allocate. Allocation failure terminates the process rather than
+      returning ``NULL``.
 
    .. versionadded:: 3.3
 
@@ -169,9 +198,15 @@ access to internal read-only data of Unicode objects:
 
 .. c:function:: Py_UCS4 PyUnicode_READ_CHAR(PyObject *unicode, Py_ssize_t index)
 
-   Read a character from a Unicode object *unicode*, which must be in the "canonical"
-   representation.  This is less efficient than :c:func:`PyUnicode_READ` if you
-   do multiple consecutive reads.
+   Read a code point, generating the fixed-width representation if necessary.
+   The caller must provide a Unicode object and a valid index. Allocation
+   failure calls :c:func:`Py_FatalError`, as with :c:func:`PyUnicode_DATA`.
+   For consecutive reads, obtain :c:func:`PyUnicode_DATA` once and use
+   :c:func:`PyUnicode_READ` with the cached pointer and kind.
+
+   .. versionchanged:: 3.16
+      May generate the fixed-width representation. Allocation failure
+      terminates the process.
 
    .. impl-detail::
 
@@ -354,6 +389,116 @@ These APIs can be used to work with surrogates:
    *high* and *low* are respectively the leading and trailing surrogates in a
    surrogate pair. *high* must be in the range ``[0xD800; 0xDBFF]`` and *low* must
    be in the range ``[0xDC00; 0xDFFF]``.
+
+
+Experimental representation views
+"""""""""""""""""""""""""""""""""
+
+The following private APIs are available through :file:`Python.h` in this
+experimental branch. They are not part of the Limited API or Stable ABI.
+They distinguish access to an existing native representation from a request
+to generate a particular representation. All exported data is read-only.
+
+.. c:macro:: _PyUnicode_FORMAT_UCS1
+             _PyUnicode_FORMAT_UCS2
+             _PyUnicode_FORMAT_UCS4
+             _PyUnicode_FORMAT_UTF8
+
+   Format bits with values ``0x01``, ``0x02``, ``0x04``, and ``0x08`` respectively.
+   UCS formats contain one code point per element in native byte order.
+   UTF-8 uses ``surrogatepass``: every surrogate code point is encoded separately,
+   preserving every Python string, including adjacent surrogate pairs.
+
+.. c:function:: int32_t _PyUnicode_Export(PyObject *unicode, int32_t requested_formats, Py_buffer *view)
+
+   Export an existing representation selected from the bitwise combination
+   *requested_formats*. Prefer UTF-8 whenever it exists and is requested,
+   including a cached UTF-8 encoding of an FSR-primary string. Otherwise,
+   export the existing fixed-width representation if its exact format is
+   requested. ASCII storage is available as either UTF-8 or UCS1.
+
+   This operation does not encode, widen, materialize, or cache a representation.
+   CPython performs it in constant time without allocating memory. Requesting
+   all four formats allows consumers to use native storage across implementations::
+
+      Py_buffer view;
+      int32_t format = _PyUnicode_Export(
+          str, _PyUnicode_FORMAT_UTF8 | _PyUnicode_FORMAT_UCS1 |
+               _PyUnicode_FORMAT_UCS2 | _PyUnicode_FORMAT_UCS4, &view);
+      if (format < 0) {
+          return NULL;
+      }
+      /* Read view.buf according to format, using view.len bytes. */
+      PyBuffer_Release(&view);
+
+   Return the selected format on success. Return ``-1`` with an exception set
+   on error, leaving *view* unchanged. Raise :exc:`TypeError` for a non-string
+   argument and :exc:`BufferError` if no requested representation is available.
+   Unknown format bits are ignored; an empty or unsupported-only request fails.
+   *unicode* and *view* must not be ``NULL``.
+
+   The buffer retains its owner until :c:func:`PyBuffer_Release` is called;
+   callers need not retain a separate reference to *unicode*. Its ``len``
+   counts bytes, excluding the terminating NUL. Embedded NULs are permitted.
+   The buffer has ``readonly=1``, ``ndim=1``, and ``NULL`` shape, strides,
+   suboffsets, and internal fields. Its format and item size are:
+
+   ===========  =============  =========
+   Format       Buffer format  Item size
+   ===========  =============  =========
+   UCS1         ``"B"``        1
+   UCS2         ``"=H"``       2
+   UCS4         ``"=I"``       4
+   UTF-8        ``"B"``        1
+   ===========  =============  =========
+
+.. c:function:: int32_t _PyUnicode_GetFSRView(PyObject *unicode, Py_buffer *view)
+
+   Obtain a fixed-width view for random access. Reuse an existing FSR in
+   constant time, or allocate and cache one if absent. Return its UCS1, UCS2,
+   or UCS4 format, with the same buffer metadata and lifetime as
+   :c:func:`_PyUnicode_Export`. The code point count is ``view.len / view.itemsize``.
+
+   Return ``-1`` with an exception set on error, leaving *view* unchanged.
+   Allocation failure raises :exc:`MemoryError` and leaves the string's
+   representation unchanged. Non-string arguments raise :exc:`TypeError`.
+   *unicode* and *view* must not be ``NULL``.
+
+   Call :c:func:`PyBuffer_Release` after use. Release ends the caller's access
+   to the pointer; it does not request cache eviction. CPython currently retains
+   the FSR until the string is destroyed, but callers must not rely on this
+   retention after release.
+
+.. c:type:: _PyUnicodeUTF8View
+
+   A read-only surrogatepass UTF-8 view with ``const char *data`` and
+   ``Py_ssize_t size`` members. *size* counts bytes, excluding the terminating
+   NUL. The remaining fields are private.
+
+.. c:function:: int _PyUnicodeUTF8View_Init(_PyUnicodeUTF8View *view, PyObject *unicode)
+
+   Retain existing UTF-8 storage if available. Otherwise encode the FSR into
+   temporary owned bytes, without adding a UTF-8 cache to the string. Return
+   ``0`` on success or ``-1`` with an exception set on failure. The view keeps
+   its storage alive independently of the caller's reference to *unicode*.
+   Do not initialize an active view again before clearing it.
+
+   This API accepts surrogates. :c:func:`PyUnicode_AsUTF8AndSize` remains a
+   strict UTF-8 API and raises :exc:`UnicodeEncodeError` for surrogates.
+
+.. c:function:: void _PyUnicodeUTF8View_Clear(_PyUnicodeUTF8View *view)
+
+   End access and release the retained storage. Reset *data* to ``NULL`` and
+   *size* to zero. Safe after failed initialization, on a zero-initialized view,
+   and on an already cleared view. This does not evict a string's caches.
+
+.. c:function:: int _PyUnicode_Next(PyObject *unicode, Py_ssize_t *position, Py_UCS4 *ch)
+
+   Read the next code point without generating a representation. Initialize
+   *position* to zero and then reuse only positions returned for the same string;
+   it is an opaque cursor, not a code point index. Return ``1`` and update
+   *position* and *ch* on success. Return ``0`` at the end, leaving both unchanged.
+   The caller must keep *unicode* alive throughout iteration.
 
 
 Creating and accessing Unicode strings
@@ -698,7 +843,9 @@ APIs:
 
    Read a character from a string.  This function checks that *unicode* is a
    Unicode object and the index is not out of bounds, in contrast to
-   :c:func:`PyUnicode_READ_CHAR`, which performs no error checking.
+   :c:func:`PyUnicode_READ_CHAR`, which does not validate its object or index.
+   If generating the fixed-width representation runs out of memory, the
+   character is read by scanning UTF-8 instead.
 
    Return character on success, ``-1`` on error with an exception set.
 
@@ -1960,8 +2107,10 @@ Python does not always check these requirements.
    :c:func:`!PyUnicode_WRITE`. All requirements of
    :c:func:`PyUnicode_WriteChar` also apply.
 
-   The function performs no checks for any of its requirements,
-   and is intended for usage in loops.
+   Use a writable construction buffer obtained from :c:func:`PyUnicode_New`.
+   A lazily generated fixed-width read buffer must not be modified.
+   Passing a ``NULL`` *data* pointer aborts. Apart from this check, the function
+   performs no checks for its requirements and is intended for usage in loops.
 
    The owning string must not be "used" yet.
    See :ref:`pyunicode-new-mutating` for details.
@@ -1985,6 +2134,9 @@ Python does not always check these requirements.
 
    The destination string must not be "used" yet.
    See :ref:`pyunicode-new-mutating` for details.
+
+   Passing a UTF-8-backed destination aborts, even if its fixed-width
+   representation has already been generated.
 
    .. versionadded:: 3.3
 
@@ -2028,6 +2180,9 @@ Python does not always check these requirements.
    *unicode* must not be "used" yet.
    See :ref:`pyunicode-new-mutating` for details.
 
+   Passing a UTF-8-backed destination aborts, even if its fixed-width
+   representation has already been generated.
+
    .. versionadded:: 3.3
 
    .. soft-deprecated:: next
@@ -2047,6 +2202,9 @@ Python does not always check these requirements.
 
    *unicode* must not be "used" yet.
    See :ref:`pyunicode-new-mutating` for details.
+
+   Passing a UTF-8-backed destination aborts, even if its fixed-width
+   representation has already been generated.
 
    .. versionadded:: 3.3
 

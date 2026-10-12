@@ -666,6 +666,29 @@ class TclTest(unittest.TestCase):
         self.assertIsInstance(a, str)
         self.assertEqual(a, '::')
 
+    def test_splitlist_modified_utf8(self):
+        splitlist = self.interp.tk.splitlist
+        for high, low, char in (
+            (b'\xed\xa0\x80', b'\xed\xb0\x80', '\U00010000'),
+            (b'\xed\xa0\xbd', b'\xed\xb8\x80', '😀'),
+            (b'\xed\xaf\xbf', b'\xed\xbf\xbf', '\U0010ffff'),
+        ):
+            pair = high + low
+            for size in range(1, 7):
+                data = pair[:size]
+                expected = (char if size == 6 else
+                            data.decode('utf-8', 'surrogateescape'))
+                with self.subTest(data=data):
+                    self.assertEqual(splitlist(data), (expected,))
+                    self.assertEqual(splitlist(b'a\xc0\x80' + data + b'z'),
+                                     ('a\0' + expected + 'z',))
+            self.assertEqual(splitlist(low + high),
+                             ((low + high).decode('utf-8', 'surrogateescape'),))
+            self.assertEqual(splitlist(pair + pair), (char * 2,))
+            self.assertEqual(splitlist(high + b'\xc0\x80' + low),
+                             (high.decode('utf-8', 'surrogateescape') + '\0' +
+                              low.decode('utf-8', 'surrogateescape'),))
+
     def test_splitlist(self):
         splitlist = self.interp.tk.splitlist
         call = self.interp.tk.call

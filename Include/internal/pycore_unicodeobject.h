@@ -17,12 +17,7 @@ extern "C" {
 #define _Py_MAX_UNICODE 0x10ffff
 
 
-// Export for '_multibytecodec' shared extension. _PyUnicodeWriter_CanWrite()
-// calls this function when assertions are enabled.
 PyAPI_FUNC(int) _PyUnicode_IsModifiable(PyObject *unicode);
-extern void _PyUnicodeWriter_InitWithBuffer(
-    _PyUnicodeWriter *writer,
-    PyObject *buffer);
 extern PyObject* _PyUnicode_Result(PyObject *unicode);
 extern int _PyUnicode_DecodeUTF8Writer(
     _PyUnicodeWriter *writer,
@@ -38,6 +33,23 @@ extern PyObject* _PyUnicode_GetEmpty(void);
 PyAPI_FUNC(PyObject*) _PyUnicode_BinarySlice(PyObject *, PyObject *, PyObject *);
 PyAPI_FUNC(PyObject *) _PyUnicode_Repeat(PyObject *str, Py_ssize_t len);
 
+
+/* UCS-4 preserves individual surrogates; a 16-bit wchar_t input combines
+   valid pairs, as required by PyUnicode_FromWideChar(). */
+static inline Py_UCS4
+_PyUnicode_ReadWideChar(const void *data, int kind, Py_ssize_t size,
+                        Py_ssize_t *index, int join_surrogates)
+{
+    Py_UCS4 ch = PyUnicode_READ(kind, data, (*index)++);
+    if (join_surrogates && Py_UNICODE_IS_HIGH_SURROGATE(ch) && *index < size) {
+        Py_UCS4 low = PyUnicode_READ(kind, data, *index);
+        if (Py_UNICODE_IS_LOW_SURROGATE(low)) {
+            (*index)++;
+            ch = Py_UNICODE_JOIN_SURROGATES(ch, low);
+        }
+    }
+    return ch;
+}
 
 /* Generic helper macro to convert characters of different types.
    from_type and to_type have to be valid type names, begin and end
@@ -108,91 +120,81 @@ _PyUnicode_EnsureUnicode(PyObject *obj)
     return 0;
 }
 
-#ifndef NDEBUG
-static inline int
-_PyUnicodeWriter_CanWrite(_PyUnicodeWriter *writer)
-{
-    assert(!writer->readonly);
-
-    PyObject *buffer = writer->buffer;
-    assert(buffer != NULL);
-
-    // Code adapted from _PyUnicode_IsModifiable().
-    // Do not use _PyObject_IsUniquelyReferenced(): the caller can have its own
-    // lock to prevent a writer from being used by two threads at the same
-    // time.
-    assert(Py_REFCNT(buffer) == 1);
-    assert(PyUnstable_Unicode_GET_CACHED_HASH(buffer) == -1);
-    assert(!PyUnicode_CHECK_INTERNED(buffer));
-    assert(!_Py_IsImmortal(buffer));
-    return 1;
-}
-#endif
-
-static inline void
-_PyUnicodeWriter_SetBuffer(_PyUnicodeWriter *writer, PyObject *buffer)
-{
-    assert(writer->pos <= PyUnicode_GET_LENGTH(buffer));
-
-    // Py_DECREF() the previous buffer (if any)
-    Py_XSETREF(writer->buffer, buffer);
-    writer->data = PyUnicode_DATA(buffer);
-    writer->kind = PyUnicode_KIND(buffer);
-    writer->maxchar = PyUnicode_MAX_CHAR_VALUE(buffer);
-    writer->size = PyUnicode_GET_LENGTH(buffer);
-    writer->readonly = 0;
-}
-
-static inline void
-_PyUnicodeWriter_SetReadOnly(_PyUnicodeWriter *writer, PyObject *obj,
-                             Py_ssize_t length)
-{
-    assert(writer->buffer == NULL);
-    assert(writer->pos == 0);
-    // Micro-optimization: pass length as a parameter, as it's usually known
-    // by the caller
-    assert(length == PyUnicode_GET_LENGTH(obj));
-
-    writer->buffer = obj;
-    writer->data = NULL;
-    /* Set kind and size to 0 to make sure that the next
-     * _PyUnicodeWriter_Prepare() call allocates a new buffer and copies
-     * characters. */
-    writer->kind = 0;
-    writer->maxchar = PyUnicode_MAX_CHAR_VALUE(obj);
-    writer->size = 0;
-    writer->pos = length;
-    writer->readonly = 1;
-}
-
 static inline int
 _PyUnicodeWriter_WriteCharInline(_PyUnicodeWriter *writer, Py_UCS4 ch)
 {
-    if (ch > writer->maxchar || 1 > (writer->size - writer->pos)) {
-        if (writer->buffer == NULL && ch <= 255) {
-            // If the first write is a Latin1 character, use the singleton
-            // as a read-only object
-            PyObject *obj = _Py_LATIN1_CHR(ch);
-            // Py_NewRef() is not needed on immortal object
-            _PyUnicodeWriter_SetReadOnly(writer, obj, 1);
-            return 0;
-        }
-
-        if (_PyUnicodeWriter_PrepareInternal(writer, 1, ch) == -1) {
-            return -1;
-        }
-    }
-    assert(_PyUnicodeWriter_CanWrite(writer));
-
-    PyUnicode_WRITE(writer->kind, writer->data, writer->pos, ch);
-    writer->pos++;
-    return 0;
+    assert(ch <= _Py_MAX_UNICODE);
+    return _PyUnicodeWriter_WriteChar(writer, ch);
 }
 
 // Export for '_testcapi' shared extension
 PyAPI_FUNC(PyObject*) _PyUnicodeWriter_FinishWithSize(
     _PyUnicodeWriter *writer,
     Py_ssize_t size);
+
+/* Internal UTF-8/surrogatepass storage and append operations.
+   GetPrimaryUTF8 accepts a NULL size pointer when the length is not needed. */
+PyAPI_FUNC(const char *) _PyUnicode_GetPrimaryUTF8(PyObject *, Py_ssize_t *);
+PyAPI_FUNC(int) _PyUnicodeWriter_WriteUTF8(_PyUnicodeWriter *, const char *,
+                                      Py_ssize_t, Py_ssize_t);
+/* Input is validated UTF-8/surrogatepass, with its code point count. */
+extern PyObject *_PyUnicode_FromValidatedUTF8(const char *, Py_ssize_t, Py_ssize_t);
+/* Trusted UTF-8 with exact length, canonical character-width bound, and
+   surrogate flag already computed by the caller. Does not validate or scan. */
+PyAPI_FUNC(PyObject *) _PyUnicode_FromUTF8AndMetadata(
+    const char *, Py_ssize_t, Py_ssize_t, Py_UCS4, int);
+extern void _PyUnicodeWriter_Truncate(_PyUnicodeWriter *, Py_ssize_t);
+
+/* Reserve bytes for direct UTF-8 writes. The UTF8Data() write pointer remains
+   valid until the next prepare/append call. Advance commits complete code
+   points; for ASCII, size and length are equal. */
+PyAPI_FUNC(int) _PyUnicodeWriter_PrepareUTF8(_PyUnicodeWriter *, Py_ssize_t);
+extern int _PyUnicodeWriter_RepeatUTF8(_PyUnicodeWriter *, const char *,
+                                      Py_ssize_t, Py_ssize_t, Py_ssize_t);
+extern int _PyUnicodeWriter_WriteFill(_PyUnicodeWriter *, Py_UCS4, Py_ssize_t);
+
+static inline char *
+_PyUnicodeWriter_UTF8Data(_PyUnicodeWriter *writer)
+{
+    assert(writer->readonly == NULL);
+    return writer->utf8 == NULL ? NULL : writer->utf8 + writer->utf8_pos;
+}
+
+static inline void
+_PyUnicodeWriter_AdvanceUTF8(_PyUnicodeWriter *writer,
+                            Py_ssize_t size, Py_ssize_t length)
+{
+    assert(writer->readonly == NULL);
+    assert(size >= length && length >= 0);
+    assert(size <= writer->utf8_size - writer->utf8_pos);
+    assert(length <= PY_SSIZE_T_MAX - writer->pos);
+    writer->utf8_pos += size;
+    writer->pos += length;
+}
+
+static inline unsigned char *
+_PyUnicode_WriteUTF8Char(unsigned char *p, Py_UCS4 ch)
+{
+    if (ch < 0x80) {
+        *p++ = ch;
+    }
+    else if (ch < 0x800) {
+        *p++ = 0xc0 | (ch >> 6);
+        *p++ = 0x80 | (ch & 63);
+    }
+    else if (ch < 0x10000) {
+        *p++ = 0xe0 | (ch >> 12);
+        *p++ = 0x80 | ((ch >> 6) & 63);
+        *p++ = 0x80 | (ch & 63);
+    }
+    else {
+        *p++ = 0xf0 | (ch >> 18);
+        *p++ = 0x80 | ((ch >> 12) & 63);
+        *p++ = 0x80 | ((ch >> 6) & 63);
+        *p++ = 0x80 | (ch & 63);
+    }
+    return p;
+}
 
 /* --- Unicode API -------------------------------------------------------- */
 

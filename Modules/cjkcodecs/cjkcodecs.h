@@ -163,11 +163,13 @@ get_module_state(PyObject *mod)
     do {                                                                   \
         Py_UCS4 _c1 = (c1);                                                \
         Py_UCS4 _c2 = (c2);                                                \
-        if (_PyUnicodeWriter_Prepare(writer, 2, Py_MAX(_c1, _c2)) < 0)     \
-            return MBERR_EXCEPTION;                                        \
-        PyUnicode_WRITE(writer->kind, writer->data, writer->pos, _c1);     \
-        PyUnicode_WRITE(writer->kind, writer->data, writer->pos + 1, _c2); \
-        writer->pos += 2;                                                  \
+        unsigned char _bytes[8];                                         \
+        unsigned char *_end = _PyUnicode_WriteUTF8Char(_bytes, _c1);       \
+        _end = _PyUnicode_WriteUTF8Char(_end, _c2);                        \
+        if (_PyUnicodeWriter_PrepareUTF8(writer, _end - _bytes) < 0)       \
+            return MBERR_EXCEPTION;                                     \
+        memcpy(_PyUnicodeWriter_UTF8Data(writer), _bytes, _end - _bytes); \
+        _PyUnicodeWriter_AdvanceUTF8(writer, _end - _bytes, 2);            \
     } while (0)
 
 #define OUTBYTEI(c, i)                     \

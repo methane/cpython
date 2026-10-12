@@ -296,7 +296,7 @@ def generate_global_strings(identifiers, strings):
                 printer.write("uint8_t _data[2];")
             with printer.block('struct', ' latin1[128];'):
                 printer.write("PyCompactUnicodeObject _latin1;")
-                printer.write("uint8_t _data[2];")
+                printer.write("uint8_t _data[3];")
         printer.write(END)
         printer.write(after)
 

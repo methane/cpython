@@ -23,6 +23,7 @@
 #endif
 
 #include "Python.h"
+#include "pycore_unicodeobject.h" // _PyUnicode_GetPrimaryUTF8()
 #include "pycore_hashtable.h"
 #include "pycore_strhex.h"               // _Py_strhex()
 #include "pycore_pyatomic_ft_wrappers.h" // FT_ATOMIC_LOAD_PTR_RELAXED
@@ -2629,8 +2630,8 @@ _hashlib_compare_digest_impl(PyObject *module, PyObject *a, PyObject *b)
             return NULL;
         }
 
-        rc = _tscmp(PyUnicode_DATA(a),
-                    PyUnicode_DATA(b),
+        rc = _tscmp((const unsigned char *)_PyUnicode_GetPrimaryUTF8(a, NULL),
+                    (const unsigned char *)_PyUnicode_GetPrimaryUTF8(b, NULL),
                     PyUnicode_GET_LENGTH(a),
                     PyUnicode_GET_LENGTH(b));
     }

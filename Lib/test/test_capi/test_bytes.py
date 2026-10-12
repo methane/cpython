@@ -780,6 +780,17 @@ class BytesWriterTest(BaseWriterTest, unittest.TestCase):
         # Test PyBytesWriter_Create()
         return _testcapi.PyBytesWriter(size, 0)
 
+    @support.nomemtest
+    def test_finish_shrink_allocation_failure(self):
+        # Finish temporarily replaces the debug canary with a NUL byte.
+        # Failed realloc must still permit Discard to check the buffer.
+        size = self.LARGE_BUFFER * 2
+        writer = self.create_writer(size)
+        writer.write(0, b'x' * size)
+        with self.assertRaises(MemoryError):
+            _testcapi.call_with_nomemory(
+                0, 0, writer.finish_with_size, size - 1)
+
     # Only PyBytesWriter_Create() returns singletons
     def test_singletons(self):
         empty = b''

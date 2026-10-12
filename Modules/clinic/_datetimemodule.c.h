@@ -1803,7 +1803,10 @@ datetime_datetime_isoformat(PyObject *self, PyObject *const *args, Py_ssize_t na
                 PyUnicode_GET_LENGTH(args[0]));
             goto exit;
         }
-        sep = PyUnicode_READ_CHAR(args[0], 0);
+        sep = _PyUnicode_ReadCharNoAlloc(args[0], 0);
+        if ((Py_UCS4)sep == (Py_UCS4)-1) {
+            goto exit;
+        }
         if (!--noptargs) {
             goto skip_optional_pos;
         }
@@ -2082,4 +2085,4 @@ datetime_datetime___reduce__(PyObject *self, PyObject *Py_UNUSED(ignored))
 {
     return datetime_datetime___reduce___impl((PyDateTime_DateTime *)self);
 }
-/*[clinic end generated code: output=7bdfdfbd568c63ed input=a9049054013a1b77]*/
+/*[clinic end generated code: output=41d1ff9b3dca08ea input=a9049054013a1b77]*/
