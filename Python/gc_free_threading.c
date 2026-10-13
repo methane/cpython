@@ -400,14 +400,14 @@ gc_visit_heaps_lock_held(PyInterpreterState *interp, mi_block_visit_fun *visitor
     }
 
     // visit blocks in the per-interpreter abandoned pool (from dead threads)
-    mi_abandoned_pool_t *pool = &interp->mimalloc.abandoned_pool;
+    mi_subproc_t *subproc = interp->mimalloc.subproc;
     arg->offset = offset_base;
-    if (!_mi_abandoned_pool_visit_blocks(pool, _Py_MIMALLOC_HEAP_GC, true,
+    if (!mi_abandoned_visit_blocks(subproc, _Py_MIMALLOC_HEAP_GC, true,
                                          visitor, arg)) {
         return -1;
     }
     arg->offset = offset_pre;
-    if (!_mi_abandoned_pool_visit_blocks(pool, _Py_MIMALLOC_HEAP_GC_PRE, true,
+    if (!mi_abandoned_visit_blocks(subproc, _Py_MIMALLOC_HEAP_GC_PRE, true,
                                          visitor, arg)) {
         return -1;
     }
