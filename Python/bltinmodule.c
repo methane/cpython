@@ -2276,8 +2276,6 @@ builtin_print_impl(PyObject *module, PyObject * const *objects,
                    PyObject *file, int flush)
 /*[clinic end generated code: output=38d8def56c837bcc input=ff35cb3d59ee8115]*/
 {
-    int i, err;
-
     if (file == Py_None) {
         file = PySys_GetAttr(&_Py_ID(stdout));
         if (file == NULL) {
@@ -2315,36 +2313,51 @@ builtin_print_impl(PyObject *module, PyObject * const *objects,
         return NULL;
     }
 
-    for (i = 0; i < objects_length; i++) {
-        if (i > 0) {
-            if (sep == NULL) {
-                err = PyFile_WriteString(" ", file);
-            }
-            else {
-                err = PyFile_WriteObject(sep, file, Py_PRINT_RAW);
-            }
-            if (err) {
-                Py_DECREF(file);
-                return NULL;
-            }
-        }
-        err = PyFile_WriteObject(objects[i], file, Py_PRINT_RAW);
-        if (err) {
-            Py_DECREF(file);
-            return NULL;
-        }
-    }
-
-    if (end == NULL) {
-        err = PyFile_WriteString("\n", file);
-    }
-    else {
-        err = PyFile_WriteObject(end, file, Py_PRINT_RAW);
-    }
-    if (err) {
+    PyObject *write = PyObject_GetAttr(file, &_Py_ID(write));
+    if (write == NULL) {
         Py_DECREF(file);
         return NULL;
     }
+    PyUnicodeWriter *writer = PyUnicodeWriter_Create(0);
+    if (writer == NULL) {
+        Py_DECREF(write);
+        Py_DECREF(file);
+        return NULL;
+    }
+
+    /* Assemble the entire output before calling the stream's write method. */
+    for (Py_ssize_t i = 0; i < objects_length; i++) {
+        if (i > 0) {
+            int err = sep == NULL
+                ? PyUnicodeWriter_WriteChar(writer, ' ')
+                : PyUnicodeWriter_WriteStr(writer, sep);
+            if (err < 0) {
+                goto error;
+            }
+        }
+        if (PyUnicodeWriter_WriteStr(writer, objects[i]) < 0) {
+            goto error;
+        }
+    }
+    int err = end == NULL
+        ? PyUnicodeWriter_WriteChar(writer, '\n')
+        : PyUnicodeWriter_WriteStr(writer, end);
+    if (err < 0) {
+        goto error;
+    }
+    PyObject *text = PyUnicodeWriter_Finish(writer);
+    writer = NULL;
+    if (text == NULL) {
+        goto error;
+    }
+    PyObject *result = PyObject_CallOneArg(write, text);
+    Py_DECREF(text);
+    Py_DECREF(write);
+    if (result == NULL) {
+        Py_DECREF(file);
+        return NULL;
+    }
+    Py_DECREF(result);
 
     if (flush) {
         if (_PyFile_Flush(file) < 0) {
@@ -2355,6 +2368,12 @@ builtin_print_impl(PyObject *module, PyObject * const *objects,
     Py_DECREF(file);
 
     Py_RETURN_NONE;
+
+error:
+    PyUnicodeWriter_Discard(writer);
+    Py_DECREF(write);
+    Py_DECREF(file);
+    return NULL;
 }
 
 

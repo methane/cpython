@@ -140,6 +140,77 @@ class TestPrint(unittest.TestCase):
             sys.stdout = StringIO()  # the only reference
             print(X())  # should not crash
 
+    def test_single_write(self):
+        class Stream:
+            def __init__(self):
+                self.events = []
+
+            def write(self, text):
+                self.events.append(('write', text))
+
+            def flush(self):
+                self.events.append(('flush',))
+
+        cases = [
+            ((), {}, '\n'),
+            ((), {'end': ''}, ''),
+            (('a', 'b'), {}, 'a b\n'),
+            ((1, None, 2.5), {}, '1 None 2.5\n'),
+            (('a', '\u00e9', '\u65e5', '\U0001f40d', '\0'),
+             {'sep': '|', 'end': '!'}, 'a|\u00e9|\u65e5|\U0001f40d|\0!'),
+        ]
+        for args, kwargs, expected in cases:
+            with self.subTest(args=args, kwargs=kwargs):
+                stream = Stream()
+                print(*args, file=stream, flush=True, **kwargs)
+                self.assertEqual(stream.events,
+                                 [('write', expected), ('flush',)])
+
+    def test_string_subclass_conversion(self):
+        class Separator(str):
+            def __str__(self):
+                calls.append('sep')
+                return str(len(calls))
+
+        class Ending(str):
+            def __str__(self):
+                calls.append('end')
+                return '!'
+
+        class Value(str):
+            def __str__(self):
+                calls.append('value')
+                return 'X'
+
+        calls = []
+        stream = StringIO()
+        print(Value('ignored'), 'b', 'c', sep=Separator('ignored'),
+              end=Ending('ignored'), file=stream)
+        self.assertEqual(calls, ['value', 'sep', 'sep', 'end'])
+        self.assertEqual(stream.getvalue(), 'X2b3c!')
+
+    def test_conversion_error_before_write(self):
+        class BadValue:
+            def __str__(self):
+                raise ValueError('conversion failed')
+
+        stream = StringIO()
+        with self.assertRaisesRegex(ValueError, 'conversion failed'):
+            print('prefix', BadValue(), file=stream)
+        self.assertEqual(stream.getvalue(), '')
+
+    def test_write_error_does_not_flush(self):
+        class Stream:
+            def write(self, text):
+                raise OSError('write failed')
+
+            def flush(self):
+                raise AssertionError('flush called after a failed write')
+
+        stream = Stream()
+        with self.assertRaisesRegex(OSError, 'write failed'):
+            print('a', 'b', file=stream, flush=True)
+
 
 class TestPy2MigrationHint(unittest.TestCase):
     """Test that correct hint is produced analogous to Python3 syntax,
