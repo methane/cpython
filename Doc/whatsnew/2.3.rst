@@ -796,7 +796,8 @@ can the quoting and line-ending characters.
 
 Different dialects of comma-separated files can be defined and registered;
 currently there are two dialects, both used by Microsoft Excel. A separate
-:class:`csv.writer` class will generate comma-separated files from a succession
+:func:`csv.writer` function returns an object that generates comma-separated
+files from a succession
 of tuples or lists, quoting strings that contain the delimiter.
 
 
@@ -1203,7 +1204,7 @@ Optimizations
   increase, depending on your compiler's idiosyncrasies. See section
   :ref:`23section-other` for a longer explanation. (Removed by Michael Hudson.)
 
-* :func:`!xrange` objects now have their own iterator, making ``for i in
+* :class:`!xrange` objects now have their own iterator, making ``for i in
   xrange(n)`` slightly faster than ``for i in range(n)``.  (Patch by Raymond
   Hettinger.)
 
@@ -1941,7 +1942,7 @@ Support for a port to IBM's OS/2 using the EMX runtime environment was merged
 into the main Python source tree.  EMX is a POSIX emulation layer over the OS/2
 system APIs.  The Python port for EMX tries to support all the POSIX-like
 capability exposed by the EMX runtime, and mostly succeeds; :func:`!fork` and
-:func:`fcntl` are restricted by the limitations of the underlying emulation
+:func:`~fcntl.fcntl` are restricted by the limitations of the underlying emulation
 layer.  The standard OS/2 port, which uses IBM's Visual Age compiler, also
 gained support for case-sensitive import semantics as part of the integration of
 the EMX port into CVS.  (Contributed by Andrew MacIntyre.)

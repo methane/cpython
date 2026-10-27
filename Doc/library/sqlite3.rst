@@ -2535,7 +2535,7 @@ or a custom :attr:`~Cursor.row_factory`.
 
 While :attr:`!row_factory` exists as an attribute both on the
 :class:`Cursor` and the :class:`Connection`,
-it is recommended to set :class:`Connection.row_factory`,
+it is recommended to set :attr:`Connection.row_factory`,
 so all cursors created from the connection will use the same row factory.
 
 :class:`!Row` provides indexed and case-insensitive named access to columns,
@@ -2619,8 +2619,8 @@ The following row factory returns a :term:`named tuple`:
    >>> con.close()
 
 With some adjustments, the above recipe can be adapted to use a
-:class:`~dataclasses.dataclass`, or any other custom class,
-instead of a :class:`~collections.namedtuple`.
+class decorated with :func:`~dataclasses.dataclass`, or any other custom
+class, instead of a :term:`named tuple`.
 
 
 .. _sqlite3-howto-encoding:

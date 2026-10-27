@@ -285,8 +285,9 @@ Data types
          details.
 
          While mutable/unhashable values, such as :class:`dict`, :class:`list` or
-         a mutable :class:`~dataclasses.dataclass`, can be used, they will have a
-         quadratic performance impact during creation relative to the
+         mutable instances of classes decorated with :func:`~dataclasses.dataclass`,
+         can be used, they will have a quadratic performance impact during
+         creation relative to the
          total number of mutable/unhashable values in the enum.
 
    .. attribute:: Enum._name_

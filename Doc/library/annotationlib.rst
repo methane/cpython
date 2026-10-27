@@ -460,7 +460,7 @@ To modify the annotations, it is best to create a wrapper annotate function
 that calls the original annotate function, makes any necessary adjustments, and
 returns the result.
 
-Below is an example of a metaclass that filters out all :class:`typing.ClassVar`
+Below is an example of a metaclass that filters out all :data:`typing.ClassVar`
 annotations from the class and puts them in a separate attribute:
 
 .. code-block:: python

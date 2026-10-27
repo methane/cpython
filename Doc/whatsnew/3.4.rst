@@ -121,7 +121,7 @@ Significantly improved library modules:
 * :mod:`multiprocessing` now has :ref:`an option to avoid using os.fork
   on Unix <whatsnew-multiprocessing-no-fork>` (:issue:`8713`).
 * :mod:`email` has a new submodule, :mod:`~email.contentmanager`, and
-  a new :mod:`~email.message.Message` subclass
+  a new :class:`~email.message.Message` subclass
   (:class:`~email.message.EmailMessage`) that :ref:`simplify MIME
   handling <whatsnew_email_contentmanager>` (:issue:`18891`).
 * The :mod:`inspect` and :mod:`pydoc` modules are now capable of
@@ -440,7 +440,7 @@ Some smaller changes made to the core Python language are:
   references to local variables from the frame.  (Contributed by Antoine Pitrou
   in :issue:`17934`.)
 
-* :class:`memoryview` is now registered as a :class:`Sequence <collections.abc>`,
+* :class:`memoryview` is now registered as a :class:`~collections.abc.Sequence`,
   and supports the :func:`reversed` builtin.  (Contributed by Nick Coghlan
   and Claudiu Popa in :issue:`18690` and :issue:`19078`.)
 
@@ -683,7 +683,7 @@ intent of code that deliberately suppresses exceptions from a single
 statement.  (Contributed by Raymond Hettinger in :issue:`15806` and
 Zero Piraeus in :issue:`19266`.)
 
-The new :func:`contextlib.redirect_stdout` context manager makes it easier
+The new :class:`contextlib.redirect_stdout` context manager makes it easier
 for utility scripts to handle inflexible APIs that write their output to
 :data:`sys.stdout` and don't provide any options to redirect it.  Using the
 context manager, the :data:`sys.stdout` output can be redirected to any
@@ -741,8 +741,8 @@ an object-oriented API for inspecting bytecode in both in human-readable form
 and for iterating over instructions.  The :class:`~dis.Bytecode` constructor
 takes the same arguments that :func:`~dis.get_instructions` does (plus an
 optional *current_offset*), and the resulting object can be iterated to produce
-:class:`~dis.Instruction` objects.  But it also has a :mod:`~dis.Bytecode.dis`
-method, equivalent to calling :mod:`~dis.dis` on the constructor argument, but
+:class:`~dis.Instruction` objects.  But it also has a :meth:`~dis.Bytecode.dis`
+method, equivalent to calling :func:`~dis.dis` on the constructor argument, but
 returned as a multi-line string::
 
     >>> bytecode = dis.Bytecode(lambda x: x + 1, current_offset=3)
@@ -849,10 +849,10 @@ the :func:`~filecmp.dircmp` function.  (Contributed by Eli Bendersky in
 functools
 ---------
 
-The new :func:`~functools.partialmethod` descriptor brings partial argument
+The new :class:`~functools.partialmethod` descriptor brings partial argument
 application to descriptors, just as :func:`~functools.partial` provides
 for normal callables. The new descriptor also makes it easier to get
-arbitrary callables (including :func:`~functools.partial` instances)
+arbitrary callables (including :class:`~functools.partial` instances)
 to behave like normal instance methods when included in a class definition.
 (Contributed by Alon Horev and Nick Coghlan in :issue:`4331`.)
 
@@ -1043,7 +1043,7 @@ metaclasses.  (Contributed by Ethan Furman in :issue:`18929` and
 now use the :func:`~inspect.signature` API. This allows them to
 support a much broader range of callables, including those with
 ``__signature__`` attributes, those with metadata provided by argument
-clinic, :func:`functools.partial` objects and more. Note that, unlike
+clinic, :class:`functools.partial` objects and more. Note that, unlike
 :func:`~inspect.signature`, these functions still ignore ``__wrapped__``
 attributes, and report the already bound first argument for bound methods,
 so it is still necessary to update your code to use
@@ -1499,7 +1499,7 @@ The :mod:`stat` module is now backed by a C implementation in :mod:`!_stat`. A C
 implementation is required as most of the values aren't standardized and
 are platform-dependent.  (Contributed by Christian Heimes in :issue:`11016`.)
 
-The module supports new :mod:`~stat.ST_MODE` flags, :mod:`~stat.S_IFDOOR`,
+The module supports new :const:`~stat.ST_MODE` flags, :const:`~stat.S_IFDOOR`,
 :const:`~stat.S_IFPORT`, and :const:`~stat.S_IFWHT`.  (Contributed by
 Christian Hiemes in :issue:`11016`.)
 
@@ -1507,7 +1507,7 @@ Christian Hiemes in :issue:`11016`.)
 struct
 ------
 
-New function :mod:`~struct.iter_unpack` and a new
+New function :func:`~struct.iter_unpack` and a new
 :meth:`struct.Struct.iter_unpack` method on compiled formats provide streamed
 unpacking of a buffer containing repeated instances of a given format of data.
 (Contributed by Antoine Pitrou in :issue:`17804`.)
@@ -1612,7 +1612,7 @@ reducing the amount of memory consumed.  (Contributed by Andrew Kuchling in
 types
 -----
 
-A new :func:`~types.DynamicClassAttribute` descriptor provides a way to define
+A new :class:`~types.DynamicClassAttribute` descriptor provides a way to define
 an attribute that acts normally when looked up through an instance object, but
 which is routed to the *class* ``__getattr__`` when looked up through the
 class.  This allows one to have properties active on a class, and have virtual
@@ -1628,7 +1628,7 @@ urllib
 in :issue:`16423`.)
 
 The http method that will be used by a :class:`~urllib.request.Request` class
-can now be specified by setting a :class:`~urllib.request.Request.method`
+can now be specified by setting a :attr:`~urllib.request.Request.method`
 class attribute on the subclass.  (Contributed by Jason R Coombs in
 :issue:`18978`.)
 
@@ -2193,7 +2193,7 @@ removed:
   :class:`~http.client.HTTPSConnection` has been removed.  HTTP 0.9-style
   "Simple Responses" are no longer supported.
 
-* The deprecated :mod:`urllib.request.Request` getter and setter methods
+* The deprecated :class:`urllib.request.Request` getter and setter methods
   ``add_data``, ``has_data``, ``get_data``, ``get_type``, ``get_host``,
   ``get_selector``, ``set_proxy``, ``get_origin_req_host``, and
   ``is_unverifiable`` have been removed (use direct attribute access instead).
@@ -2413,13 +2413,13 @@ Changes in the Python API
   Previously some builtin hashes had uppercase names, but now that it is a
   formal public interface the naming has been made consistent (:issue:`18532`).
 
-* Because :mod:`unittest.TestSuite` now drops references to tests after they
+* Because :class:`unittest.TestSuite` now drops references to tests after they
   are run, test harnesses that reuse a :class:`~unittest.TestSuite` to re-run
   a set of tests may fail.   Test suites should not be re-used in this fashion
   since it means state is retained between test runs, breaking the test
   isolation that :mod:`unittest` is designed to provide.  However, if the lack
   of isolation is considered acceptable, the old behavior can be restored by
-  creating a :mod:`~unittest.TestSuite` subclass that defines a
+  creating a :class:`~unittest.TestSuite` subclass that defines a
   ``_removeTestAtIndex`` method that does nothing (see
   :meth:`.TestSuite.__iter__`) (:issue:`11798`).
 
@@ -2457,7 +2457,7 @@ Changes in the Python API
   ``U`` is ineffective in Python3 and will eventually raise an error if used.
   Depending on the function, the equivalent of its old Python2 behavior can be
   achieved using either a *newline* argument, or if necessary by wrapping the
-  stream in :mod:`~io.TextIOWrapper` to use its *newline* argument
+  stream in :class:`~io.TextIOWrapper` to use its *newline* argument
   (:issue:`15204`).
 
 * If you use ``pyvenv`` in a script and desire that pip

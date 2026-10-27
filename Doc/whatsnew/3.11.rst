@@ -622,7 +622,7 @@ asyncio
 contextlib
 ----------
 
-* Added non parallel-safe :func:`~contextlib.chdir` context manager to change
+* Added non parallel-safe :class:`~contextlib.chdir` context manager to change
   the current working directory and then restore it on exit. Simple wrapper
   around :func:`~os.chdir`. (Contributed by Filipe Laíns in :issue:`25625`)
 
@@ -1138,7 +1138,7 @@ typing
 
 For major changes, see :ref:`new-feat-related-type-hints-311`.
 
-* Add :func:`typing.assert_never` and :class:`typing.Never`.
+* Add :func:`typing.assert_never` and :data:`typing.Never`.
   :func:`typing.assert_never` is useful for asking a type checker to confirm
   that a line of code is not reachable. At runtime, it raises an
   :exc:`AssertionError`.

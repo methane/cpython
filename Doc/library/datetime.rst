@@ -1386,7 +1386,7 @@ Instance methods:
    hour=self.hour, minute=self.minute, second=self.second, microsecond=self.microsecond, \
    tzinfo=self.tzinfo, *, fold=0)
 
-   Return a new :class:`datetime` object with the same attributes, but with
+   Return a new :class:`.datetime` object with the same attributes, but with
    specified parameters updated. Note that ``tzinfo=None`` can be specified to
    create a naive datetime from an aware datetime with no conversion of date
    and time data.
@@ -2156,7 +2156,7 @@ Examples of working with a :class:`.time` object::
 
    A concrete subclass of :class:`tzinfo` may need to implement the following
    methods. Exactly which methods are needed depends on the uses made of aware
-   :mod:`!datetime` objects. If in doubt, simply implement all of them.
+   :class:`.datetime` objects. If in doubt, simply implement all of them.
 
 
 .. method:: tzinfo.utcoffset(dt)

@@ -91,7 +91,7 @@ directly with the details of how email messages are represented.  The
 :data:`~email.policy.compat32` API does *not* hide the details of the RFCs from
 the application, but for applications that need to operate at that level, they
 can be useful tools.  This documentation is also relevant for applications that
-are still using the :mod:`~email.policy.compat32` API for backward
+are still using the :data:`~email.policy.compat32` API for backward
 compatibility reasons.
 
 .. versionchanged:: 3.6

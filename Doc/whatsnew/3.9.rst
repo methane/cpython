@@ -1493,7 +1493,7 @@ Notable changes in Python 3.9.1
 typing
 ------
 
-The behavior of :class:`typing.Literal` was changed to conform with :pep:`586`
+The behavior of :data:`typing.Literal` was changed to conform with :pep:`586`
 and to match the behavior of static type checkers specified in the PEP.
 
 1. ``Literal`` now de-duplicates parameters.

@@ -224,8 +224,8 @@ numbers for the machine on which your program is running is available
 in :data:`sys.float_info`.  Complex numbers have a real and imaginary
 part, which are each a floating-point number.  To extract these parts
 from a complex number *z*, use ``z.real`` and ``z.imag``. (The standard
-library includes the additional numeric types :mod:`fractions.Fraction`, for
-rationals, and :mod:`decimal.Decimal`, for floating-point numbers with
+library includes the additional numeric types :class:`fractions.Fraction`, for
+rationals, and :class:`decimal.Decimal`, for floating-point numbers with
 user-definable precision.)
 
 .. index::
@@ -4910,7 +4910,7 @@ copying.
    .. versionchanged:: 3.12
       If ``view.ndim == 0``, ``len(view)`` now raises :exc:`TypeError` instead of returning 1.
 
-   The :class:`~memoryview.itemsize` attribute will give you the number of
+   The :attr:`~memoryview.itemsize` attribute will give you the number of
    bytes in a single element.
 
    A :class:`memoryview` supports slicing and indexing to expose its data.
@@ -4926,7 +4926,7 @@ copying.
     >>> bytes(v[1:4])
     b'bce'
 
-   If :class:`~memoryview.format` is one of the native format specifiers
+   If :attr:`~memoryview.format` is one of the native format specifiers
    from the :mod:`struct` module, indexing with an integer or a tuple of
    integers is also supported and returns a single *element* with
    the correct type.  One-dimensional memoryviews can be indexed
@@ -6143,9 +6143,9 @@ decimal arithmetic context. The specific types are not treated specially beyond
 their implementation of the context management protocol. See the
 :mod:`contextlib` module for some examples.
 
-Python's :term:`generator`\s and the :class:`contextlib.contextmanager` decorator
+Python's :term:`generator`\s and the :func:`contextlib.contextmanager` decorator
 provide a convenient way to implement these protocols.  If a generator function is
-decorated with the :class:`contextlib.contextmanager` decorator, it will return a
+decorated with the :func:`contextlib.contextmanager` decorator, it will return a
 context manager implementing the necessary :meth:`~contextmanager.__enter__` and
 :meth:`~contextmanager.__exit__` methods, rather than the iterator produced by an
 undecorated generator function.

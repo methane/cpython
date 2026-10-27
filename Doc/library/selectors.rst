@@ -68,7 +68,7 @@ constants below:
 
 .. class:: SelectorKey
 
-   A :class:`SelectorKey` is a :class:`~collections.namedtuple` used to
+   A :class:`SelectorKey` is a :term:`named tuple` used to
    associate a file object to its underlying file descriptor, selected event
    mask and attached data. It is returned by several :class:`BaseSelector`
    methods.
@@ -220,7 +220,7 @@ constants below:
    .. method:: fileno()
 
       This returns the file descriptor used by the underlying
-      :func:`select.epoll` object.
+      :class:`select.epoll` object.
 
 .. class:: DevpollSelector()
 
@@ -229,7 +229,7 @@ constants below:
    .. method:: fileno()
 
       This returns the file descriptor used by the underlying
-      :func:`select.devpoll` object.
+      :class:`select.devpoll` object.
 
    .. versionadded:: 3.5
 
@@ -240,7 +240,7 @@ constants below:
    .. method:: fileno()
 
       This returns the file descriptor used by the underlying
-      :func:`select.kqueue` object.
+      :class:`select.kqueue` object.
 
 
 Examples

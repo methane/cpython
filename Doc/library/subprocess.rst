@@ -820,7 +820,7 @@ Instances of the :class:`Popen` class have the following methods:
    .. note::
 
       Use the :mod:`asyncio` module for an asynchronous wait: see
-      :class:`asyncio.create_subprocess_exec`.
+      :func:`asyncio.create_subprocess_exec`.
 
    .. versionchanged:: 3.3
       *timeout* was added.

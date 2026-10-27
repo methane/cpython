@@ -3384,7 +3384,7 @@ The following classes, methods, and attributes will be useful for using ECH:
 .. seealso::
 
    Class :class:`socket.socket`
-       Documentation of underlying :mod:`socket` class
+       Documentation of underlying :class:`~socket.socket` class
 
    `SSL/TLS Strong Encryption: An Introduction <https://httpd.apache.org/docs/trunk/en/ssl/ssl_intro.html>`_
        Intro from the Apache HTTP Server documentation

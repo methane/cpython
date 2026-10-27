@@ -520,7 +520,8 @@ set-up and tear-down methods::
    subclasses will make future test refactorings infinitely easier.
 
 In some cases, the existing tests may have been written using the :mod:`doctest`
-module.  If so, :mod:`doctest` provides a :class:`~doctest.DocTestSuite` class that can
+module.  If so, :mod:`doctest` provides a :func:`~doctest.DocTestSuite` function
+that can
 automatically build :class:`unittest.TestSuite` instances from the existing
 :mod:`doctest`\ -based tests.
 

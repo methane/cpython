@@ -1,7 +1,7 @@
 .. _compat32_message:
 
-:mod:`email.message.Message`: Representing an email message using the :data:`~email.policy.compat32` API
---------------------------------------------------------------------------------------------------------
+:class:`email.message.Message`: Representing an email message using the :data:`~email.policy.compat32` API
+--------------------------------------------------------------------------------------------------------------
 
 .. module:: email.message
    :synopsis: The base class representing email messages in a fashion

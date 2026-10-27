@@ -68,7 +68,7 @@ Example of output of the Python test suite::
 
 We can see that Python loaded ``4855 KiB`` data (bytecode and constants) from
 modules and that the :mod:`collections` module allocated ``244 KiB`` to build
-:class:`~collections.namedtuple` types.
+:term:`named tuple` types.
 
 See :meth:`Snapshot.statistics` for more options.
 

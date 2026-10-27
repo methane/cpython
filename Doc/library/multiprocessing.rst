@@ -358,8 +358,8 @@ However, if you really do need to use some shared data then
 
 **Shared memory**
 
-   Data can be stored in a shared memory map using :class:`Value` or
-   :class:`Array`.  For example, the following code ::
+   Data can be stored in a shared memory map using :func:`Value` or
+   :func:`Array`.  For example, the following code ::
 
       from multiprocessing import Process, Value, Array
 
@@ -403,7 +403,8 @@ However, if you really do need to use some shared data then
    :class:`list`, :class:`dict`, :class:`set`, :class:`~managers.Namespace`, :class:`Lock`,
    :class:`RLock`, :class:`Semaphore`, :class:`BoundedSemaphore`,
    :class:`Condition`, :class:`Event`, :class:`Barrier`,
-   :class:`Queue`, :class:`Value` and :class:`Array`.  For example, ::
+   :class:`Queue`, and the objects returned by :func:`Value` and :func:`Array`.
+   For example, ::
 
       from multiprocessing import Process, Manager
 
@@ -1052,7 +1053,8 @@ For an example of the usage of queues for interprocess communication see
 
 .. class:: SimpleQueue()
 
-   It is a simplified :class:`Queue` type, very close to a locked :class:`Pipe`.
+   It is a simplified :class:`Queue` type, very close to a locked pair of
+   connections returned by :func:`Pipe`.
 
    Instantiating this class may set the global start method. See
    :ref:`global-start-method` for more details.
@@ -1681,7 +1683,7 @@ inherited by child processes.
 
    Return a :mod:`ctypes` object allocated from shared memory.  By default the
    return value is actually a synchronized wrapper for the object.  The object
-   itself can be accessed via the *value* attribute of a :class:`Value`.
+   itself can be accessed via the *value* attribute of the returned wrapper.
 
    *typecode_or_type* determines the type of the returned object: it is either a
    ctypes type or a one character typecode of the kind used by the :mod:`array`
@@ -2462,7 +2464,7 @@ with the :class:`Pool` class.
    the process which created the pool.
 
    .. warning::
-      :class:`multiprocessing.pool` objects have internal resources that need to be
+      :class:`multiprocessing.pool.Pool` objects have internal resources that need to be
       properly managed (like any other resource) by using the pool as a context manager
       or by calling :meth:`close` and :meth:`terminate` manually. Failure to do this
       can lead to the process hanging on finalization.
@@ -3042,7 +3044,7 @@ worker threads rather than worker processes.
 
       A :class:`ThreadPool` shares the same interface as :class:`Pool`, which
       is designed around a pool of processes and predates the introduction of
-      the :class:`concurrent.futures` module.  As such, it inherits some
+      the :mod:`concurrent.futures` module.  As such, it inherits some
       operations that don't make sense for a pool backed by threads, and it
       has its own type for representing the status of asynchronous jobs,
       :class:`AsyncResult`, that is not understood by any other libraries.
@@ -3203,7 +3205,7 @@ Beware of replacing :data:`sys.stdin` with a "file like object"
 
     Which solves the fundamental issue of processes colliding with each other
     resulting in a bad file descriptor error, but introduces a potential danger
-    to applications which replace :func:`sys.stdin` with a "file-like object"
+    to applications which replace :data:`sys.stdin` with a "file-like object"
     with output buffering.  This danger is that if multiple processes call
     :meth:`~io.IOBase.close` on this file-like object, it could result in the same
     data being flushed to the object multiple times, resulting in corruption.

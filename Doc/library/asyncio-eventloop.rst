@@ -1209,7 +1209,7 @@ convenient.
                                *, fallback=True)
    :async:
 
-   Send a file using high-performance :mod:`os.sendfile` if possible.
+   Send a file using high-performance :func:`os.sendfile` if possible.
    Return the total number of bytes sent.
 
    Asynchronous version of :meth:`socket.sendfile() <socket.socket.sendfile>`.

@@ -269,7 +269,7 @@ or during the event loop shutdown when the async-generator's garbage collection
 hook is called.
 
 To avoid this, explicitly close the generator by calling its
-:meth:`~agen.aclose` method, or use the :func:`contextlib.aclosing`
+:meth:`~agen.aclose` method, or use the :class:`contextlib.aclosing`
 context manager::
 
   import asyncio

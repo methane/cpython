@@ -289,7 +289,7 @@ respectively.
    See :pep:`612` for more details.
 
 .. seealso::
-   The documentation for :class:`ParamSpec` and :class:`Concatenate` provides
+   The documentation for :class:`ParamSpec` and :data:`Concatenate` provides
    examples of usage in ``Callable``.
 
 .. _generics:
@@ -3526,7 +3526,7 @@ Introspection helpers
    * The function recursively replaces all occurrences of
      ``Annotated[T, ...]``, ``Required[T]``, ``NotRequired[T]``, and ``ReadOnly[T]``
      with ``T``, unless *include_extras* is set to ``True`` (see
-     :class:`Annotated` for more information).
+     :data:`Annotated` for more information).
 
    .. caution::
 
@@ -3597,7 +3597,7 @@ Introspection helpers
    Get type arguments with all substitutions performed: for a typing object
    of the form ``X[Y, Z, ...]`` return ``(Y, Z, ...)``.
 
-   If ``X`` is a union or :class:`Literal` contained in another
+   If ``X`` is a union or :data:`Literal` contained in another
    generic type, the order of ``(Y, Z, ...)`` may be different from the order
    of the original arguments ``[Y, Z, ...]`` due to type caching.
    Return ``()`` for unsupported objects.

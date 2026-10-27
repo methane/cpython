@@ -864,7 +864,7 @@ function.
       <class 'int'>
 
    Accepts a wide range of Python callables, from plain functions and classes to
-   :func:`functools.partial` objects.
+   :class:`functools.partial` objects.
 
    If some of the annotations are strings (e.g., because
    ``from __future__ import annotations`` was used), :func:`signature` will

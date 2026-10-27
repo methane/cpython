@@ -1891,7 +1891,7 @@ methods.  They are also created by the built-in :func:`slice` function.
 
 .. versionadded:: 3.15
 
-   The :func:`slice` type now supports :ref:`subscription <subscriptions>`. For
+   The :class:`slice` type now supports :ref:`subscription <subscriptions>`. For
    example, ``slice[float]`` may be used in type annotations to indicate a slice
    containing :type:`float` objects.
 

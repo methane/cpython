@@ -1077,7 +1077,7 @@ symlinks and directory junctions.
 pathlib
 -------
 
-:mod:`pathlib.Path` methods that return a boolean result like
+:class:`pathlib.Path` methods that return a boolean result like
 :meth:`~pathlib.Path.exists`, :meth:`~pathlib.Path.is_dir`,
 :meth:`~pathlib.Path.is_file`, :meth:`~pathlib.Path.is_mount`,
 :meth:`~pathlib.Path.is_symlink`, :meth:`~pathlib.Path.is_block_device`,
@@ -1325,7 +1325,7 @@ The :mod:`typing` module incorporates several new features:
           grid_square: str
           xy_coordinate: tuple
 
-* Literal types.  See :pep:`586` and :class:`typing.Literal`.
+* Literal types.  See :pep:`586` and :data:`typing.Literal`.
   Literal types indicate that a parameter or return value
   is constrained to one or more specific literal values::
 
@@ -1333,7 +1333,7 @@ The :mod:`typing` module incorporates several new features:
           ...
 
 * "Final" variables, functions, methods and classes.  See :pep:`591`,
-  :class:`typing.Final` and :deco:`typing.final`.
+  :data:`typing.Final` and :deco:`typing.final`.
   The final qualifier instructs a static type checker to restrict
   subclassing, overriding, or reassignment::
 

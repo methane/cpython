@@ -621,8 +621,8 @@ the object to communicate.  (If the parent were to change the value of
 the global variable, the child's value would be unaffected, and vice
 versa.)
 
-Two other classes, :class:`~multiprocessing.pool.Pool` and
-:class:`~multiprocessing.Manager`, provide higher-level interfaces.
+The :class:`~multiprocessing.pool.Pool` class and the
+:func:`~multiprocessing.Manager` function provide higher-level interfaces.
 :class:`~multiprocessing.pool.Pool` will create a fixed number of worker
 processes, and requests can then be distributed to the workers by calling
 :meth:`~multiprocessing.pool.Pool.apply` or
@@ -651,14 +651,14 @@ This produces the following output::
     33452526613163807108170062053440751665152000000000
     ...
 
-The other high-level interface, the :class:`~multiprocessing.Manager` class,
+The other high-level interface, the :func:`~multiprocessing.Manager` function,
 creates a separate server process that can hold master copies of Python data
 structures.  Other processes can then access and modify these data
 structures using proxy objects.  The following example creates a
 shared dictionary by calling the :meth:`dict` method; the worker
 processes then insert values into the dictionary.  (Locking is not
 done for you automatically, which doesn't matter in this example.
-:class:`~multiprocessing.Manager`'s methods also include
+:class:`~multiprocessing.managers.SyncManager`'s methods also include
 :meth:`~multiprocessing.managers.SyncManager.Lock`,
 :meth:`~multiprocessing.managers.SyncManager.RLock`,
 and :meth:`~multiprocessing.managers.SyncManager.Semaphore` to create
@@ -2479,25 +2479,25 @@ changes, or look through the Subversion logs for all the details.
   :class:`!telnetlib.Telnet` class constructor, specifying a timeout
   measured in seconds.  (Added by Facundo Batista.)
 
-* The :class:`tempfile.NamedTemporaryFile` class usually deletes
-  the temporary file it created when the file is closed.  This
-  behaviour can now be changed by passing ``delete=False`` to the
-  constructor.  (Contributed by Damien Miller; :issue:`1537850`.)
+* The file object returned by :func:`tempfile.NamedTemporaryFile` usually
+  deletes the temporary file when it is closed. This behaviour can now
+  be changed by passing ``delete=False`` to the function.  (Contributed by
+  Damien Miller; :issue:`1537850`.)
 
   A new class, :class:`~tempfile.SpooledTemporaryFile`, behaves like
   a temporary file but stores its data in memory until a maximum size is
   exceeded.  On reaching that limit, the contents will be written to
   an on-disk temporary file.  (Contributed by Dustin J. Mitchell.)
 
-  The :class:`~tempfile.NamedTemporaryFile` and
-  :class:`~tempfile.SpooledTemporaryFile` classes
-  both work as context managers, so you can write
+  The objects returned by :func:`~tempfile.NamedTemporaryFile` and
+  :class:`~tempfile.SpooledTemporaryFile` both work as context managers, so you
+  can write
   ``with tempfile.NamedTemporaryFile() as tmp: ...``.
   (Contributed by Alexander Belopolsky; :issue:`2021`.)
 
 * The :mod:`test.test_support <test.support>` module gained a number
   of context managers useful for writing tests.
-  :func:`~test.support.os_helper.EnvironmentVarGuard` is a
+  :class:`~test.support.os_helper.EnvironmentVarGuard` is a
   context manager that temporarily changes environment variables and
   automatically restores them to their old values.
 
@@ -2618,11 +2618,12 @@ changes, or look through the Subversion logs for all the details.
   line of source code.  (Added as part of :issue:`1631171`, which re-implemented
   part of the :mod:`warnings` module in C code.)
 
-  A new function, :func:`~warnings.catch_warnings`, is a context manager
+  A new class, :class:`~warnings.catch_warnings`, is a context manager
   intended for testing purposes that lets you temporarily modify the
   warning filters and then restore their original values (:issue:`3781`).
 
-* The XML-RPC :class:`SimpleXMLRPCServer <xmlrpc.server>` and :class:`DocXMLRPCServer <xmlrpc.server>`
+* The XML-RPC :class:`~xmlrpc.server.SimpleXMLRPCServer` and
+  :class:`~xmlrpc.server.DocXMLRPCServer`
   classes can now be prevented from immediately opening and binding to
   their socket by passing ``False`` as the *bind_and_activate*
   constructor parameter.  This can be used to modify the instance's

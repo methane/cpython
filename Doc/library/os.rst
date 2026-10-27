@@ -2224,7 +2224,7 @@ features:
 
    .. seealso::
 
-      The :func:`contextlib.chdir` context manager, which changes the current
+      The :class:`contextlib.chdir` context manager, which changes the current
       working directory on entering and restores the previous one on exit.
 
    .. versionchanged:: 3.3

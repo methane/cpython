@@ -776,7 +776,7 @@ It does *not* contain the file's data itself.
 Modifying the objects returned by :meth:`~TarFile.getmember` or
 :meth:`~TarFile.getmembers` will affect all subsequent
 operations on the archive.
-For cases where this is unwanted, you can use :mod:`copy.copy() <copy>` or
+For cases where this is unwanted, you can use :func:`copy.copy` or
 call the :meth:`~TarInfo.replace` method to create a modified copy in one step.
 
 Several attributes can be set to ``None`` to indicate that a piece of metadata

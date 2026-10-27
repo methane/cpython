@@ -415,7 +415,7 @@ loops that truncate the stream.
    elements regardless of their input order.
 
    The returned group is itself an iterator that shares the underlying iterable
-   with :func:`groupby`.  Because the source is shared, when the :func:`groupby`
+   with :func:`groupby`.  Because the source is shared, when the :class:`groupby`
    object is advanced, the previous group is no longer visible.  So, if that data
    is needed later, it should be stored as a list::
 

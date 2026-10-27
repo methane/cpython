@@ -825,7 +825,7 @@ Some smaller changes made to the core Python language are:
   precision, presumably you're expecting the formatting to be applied
   in some object-specific way.  (Fixed by Eric Smith; :issue:`7994`.)
 
-* The :func:`int` and :func:`!long` types gained a ``bit_length``
+* The :class:`int` and :class:`!long` types gained a ``bit_length``
   method that returns the number of bits necessary to represent
   its argument in binary::
 
@@ -1116,7 +1116,7 @@ changes, or look through the Subversion logs for all the details.
   length as the read-only :attr:`~collections.deque.maxlen` attribute.
   (Both features added by Raymond Hettinger.)
 
-  The :class:`~collections.namedtuple` class now has an optional *rename* parameter.
+  The :func:`~collections.namedtuple` function now has an optional *rename* parameter.
   If *rename* is true, field names that are invalid because they've
   been repeated or aren't legal Python identifiers will be
   renamed to legal names that are derived from the field's

@@ -23,7 +23,8 @@ adjustable by the *width* parameter defaulting to 80 characters.
    Added support for pretty-printing :class:`types.SimpleNamespace`.
 
 .. versionchanged:: 3.10
-   Added support for pretty-printing :class:`dataclasses.dataclass`.
+   Added support for pretty-printing instances of classes decorated with
+   :func:`dataclasses.dataclass`.
 
 .. _pprint-functions:
 

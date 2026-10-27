@@ -765,10 +765,10 @@ dependency of parameter types in such a precise manner.
 The second option is the new ``Concatenate`` operator. It's used in conjunction
 with parameter specification variables to type annotate a higher order callable
 which adds or removes parameters of another callable.  Examples of usage can
-be found in :class:`typing.Concatenate`.
+be found in :data:`typing.Concatenate`.
 
-See :class:`typing.Callable`, :class:`typing.ParamSpec`,
-:class:`typing.Concatenate`, :class:`typing.ParamSpecArgs`,
+See :data:`typing.Callable`, :class:`typing.ParamSpec`,
+:data:`typing.Concatenate`, :class:`typing.ParamSpecArgs`,
 :class:`typing.ParamSpecKwargs`, and :pep:`612` for more details.
 
 (Contributed by Ken Jin in :issue:`41559`, with minor enhancements by Jelle
@@ -966,7 +966,7 @@ that a :exc:`TypeError` may be raised for invalid forms of parameterizing
 contextlib
 ----------
 
-Add a :func:`contextlib.aclosing` context manager to safely close async generators
+Add a :class:`contextlib.aclosing` context manager to safely close async generators
 and objects representing asynchronously released resources.
 (Contributed by Joongi Kim and John Belmonte in :issue:`41229`.)
 
@@ -1304,7 +1304,8 @@ pprint
 :func:`pprint.pprint` now accepts a new ``underscore_numbers`` keyword argument.
 (Contributed by sblondon in :issue:`42914`.)
 
-:mod:`pprint` can now pretty-print :class:`dataclasses.dataclass` instances.
+:mod:`pprint` can now pretty-print instances of classes decorated with
+:func:`dataclasses.dataclass`.
 (Contributed by Lewis Gaul in :issue:`43080`.)
 
 py_compile
@@ -1456,7 +1457,7 @@ typing
 
 For major changes, see :ref:`new-feat-related-type-hints`.
 
-The behavior of :class:`typing.Literal` was changed to conform with :pep:`586`
+The behavior of :data:`typing.Literal` was changed to conform with :pep:`586`
 and to match the behavior of static type checkers specified in the PEP.
 
 1. ``Literal`` now de-duplicates parameters.

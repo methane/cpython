@@ -1428,8 +1428,9 @@ before compressing and decompressing:
 Aides and Brian Curtin in :issue:`9962`, :issue:`1675951`, :issue:`7471` and
 :issue:`2846`.)
 
-Also, the :class:`zipfile.ZipExtFile <zipfile.ZipFile.open>` class was reworked internally to represent
-files stored inside an archive.  The new implementation is significantly faster
+Also, the ``zipfile.ZipExtFile`` class, returned by
+:meth:`zipfile.ZipFile.open`, was reworked internally to represent files stored
+inside an archive.  The new implementation is significantly faster
 and can be wrapped in an :class:`io.BufferedReader` object for more speedups.  It
 also solves an issue where interleaved calls to *read* and *readline* gave the
 wrong results.
@@ -1702,7 +1703,7 @@ imaplib
 -------
 
 Support for explicit TLS on standard IMAP4 connections has been added through
-the new :mod:`imaplib.IMAP4.starttls` method.
+the new :meth:`imaplib.IMAP4.starttls` method.
 
 (Contributed by Lorenzo M. Catucci and Antoine Pitrou, :issue:`4471`.)
 
@@ -2708,7 +2709,7 @@ require changes to your code:
 
   (Discovered by David Beazley and fixed by Victor Stinner; :issue:`10783`.)
 
-* The :class:`xml.etree.ElementTree` class now raises an
+* The :mod:`xml.etree.ElementTree` module now raises an
   :exc:`xml.etree.ElementTree.ParseError` when a parse fails. Previously it
   raised an :exc:`xml.parsers.expat.ExpatError`.
 

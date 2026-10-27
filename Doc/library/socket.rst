@@ -2049,9 +2049,9 @@ Socket Objects
    .. method:: sendfile(file, offset=0, count=None)
 
       Send a file until EOF is reached by using high-performance
-      :mod:`os.sendfile` and return the total number of bytes which were sent.
+      :func:`os.sendfile` and return the total number of bytes which were sent.
       *file* must be a regular file object opened in binary mode. If
-      :mod:`os.sendfile` is not available (e.g. Windows) or *file* is not a
+      :func:`os.sendfile` is not available (e.g. Windows) or *file* is not a
       regular file :meth:`send` will be used instead. *offset* tells from where to
       start reading the file. If specified, *count* is the total number of bytes
       to transmit as opposed to sending the file until EOF is reached. File

@@ -97,8 +97,8 @@ The same technique works for objects with named attributes. For example:
     [('dave', 'B', 10), ('jane', 'B', 12), ('john', 'A', 15)]
 
 Objects with named attributes can be made by a regular class as shown
-above, or they can be instances of :class:`~dataclasses.dataclass` or
-a :term:`named tuple`.
+above, or they can be instances of a class decorated with
+:func:`~dataclasses.dataclass` or a :term:`named tuple`.
 
 Operator Module Functions and Partial Function Evaluation
 =========================================================
@@ -267,7 +267,7 @@ other languages.  Also, some libraries provide comparison functions as part of
 their API.  For example, :func:`locale.strcoll` is a comparison function.
 
 To accommodate those situations, Python provides
-:class:`functools.cmp_to_key` to wrap the comparison function
+:func:`functools.cmp_to_key` to wrap the comparison function
 to make it usable as a key function::
 
     sorted(words, key=cmp_to_key(strcoll))  # locale-aware sort order

@@ -1466,8 +1466,8 @@ objects now support the :term:`context manager` protocol.
 operator
 --------
 
-:func:`~operator.attrgetter`, :func:`~operator.itemgetter`,
-and :func:`~operator.methodcaller` objects now support pickling.
+:class:`~operator.attrgetter`, :class:`~operator.itemgetter`,
+and :class:`~operator.methodcaller` objects now support pickling.
 (Contributed by Josh Rosenberg and Serhiy Storchaka in :issue:`22955`.)
 
 New :func:`~operator.matmul` and :func:`~operator.imatmul` functions
@@ -2506,8 +2506,8 @@ Changes in the Python API
 
 * Nested :func:`functools.partial` calls are now flattened.  If you were
   relying on the previous behavior, you can now either add an attribute to a
-  :func:`functools.partial` object or you can create a subclass of
-  :func:`functools.partial`.
+  :class:`functools.partial` object or you can create a subclass of
+  :class:`functools.partial`.
   (Contributed by Alexander Belopolsky in :issue:`7830`.)
 
 Changes in the C API

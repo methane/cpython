@@ -30,7 +30,8 @@ knowing the precise details of the CSV format used by Excel.  Programmers can
 also describe the CSV formats understood by other applications or define their
 own special-purpose CSV formats.
 
-The :mod:`!csv` module's :class:`reader` and :class:`writer` objects read and
+The :mod:`!csv` module's :ref:`reader <reader-objects>` and :ref:`writer
+<writer-objects>` objects read and
 write sequences.  Programmers can also read and write data in dictionary form
 using the :class:`DictReader` and :class:`DictWriter` classes.
 
@@ -181,7 +182,7 @@ The :mod:`!csv` module defines the following classes:
    to ``None``).
 
    All other optional or keyword arguments are passed to the underlying
-   :class:`reader` instance.
+   :ref:`reader <reader-objects>` instance.
 
    If the argument passed to *fieldnames* is an iterator, it will be coerced to a :class:`list`.
 
@@ -230,7 +231,7 @@ The :mod:`!csv` module defines the following classes:
    is raised.
    If it is set to ``'ignore'``, extra values in the dictionary are ignored.
    Any other optional or keyword arguments are passed to the underlying
-   :class:`writer` instance.
+   :ref:`writer <writer-objects>` instance.
 
    Note that unlike the :class:`DictReader` class, the *fieldnames* parameter
    of the :class:`DictWriter` class is not optional.
@@ -266,11 +267,11 @@ The :mod:`!csv` module defines the following classes:
    information for how to handle doublequotes, whitespace, delimiters, etc.
    Due to the lack of a strict CSV specification, different applications
    produce subtly different CSV data.  :class:`Dialect` instances define how
-   :class:`reader` and :class:`writer` instances behave.
+   :ref:`reader <reader-objects>` and :ref:`writer <writer-objects>` instances behave.
 
    All available :class:`Dialect` names are returned by :func:`list_dialects`,
-   and they can be registered with specific :class:`reader` and :class:`writer`
-   classes through their initializer (``__init__``) functions like this::
+   and they can be passed to the :func:`reader` and :func:`writer`
+   functions when creating instances like this::
 
        import csv
 
@@ -383,12 +384,13 @@ The :mod:`!csv` module defines the following constants:
 
 .. data:: QUOTE_ALL
 
-   Instructs :class:`writer` objects to quote all fields.
+   Instructs :ref:`writer <writer-objects>` objects to quote all fields.
 
 
 .. data:: QUOTE_MINIMAL
 
-   Instructs :class:`writer` objects to only quote those fields which contain
+   Instructs :ref:`writer <writer-objects>` objects to only quote those fields
+   which contain
    special characters such as *delimiter*, *quotechar*, ``'\r'``, ``'\n'``
    or any of the characters in *lineterminator*.
    If *doublequote* is :const:`False` and *escapechar* is set,
@@ -397,9 +399,10 @@ The :mod:`!csv` module defines the following constants:
 
 .. data:: QUOTE_NONNUMERIC
 
-   Instructs :class:`writer` objects to quote all non-numeric fields.
+   Instructs :ref:`writer <writer-objects>` objects to quote all non-numeric fields.
 
-   Instructs :class:`reader` objects to convert all non-quoted fields to type :class:`float`.
+   Instructs :ref:`reader <reader-objects>` objects to convert all non-quoted
+   fields to type :class:`float`.
 
    .. note::
       Some numeric types, such as :class:`bool`, :class:`~fractions.Fraction`,
@@ -410,7 +413,7 @@ The :mod:`!csv` module defines the following constants:
 
 .. data:: QUOTE_NONE
 
-   Instructs :class:`writer` objects to never quote fields.
+   Instructs :ref:`writer <writer-objects>` objects to never quote fields.
    When the current *delimiter*, *quotechar*, *escapechar*, ``'\r'``, ``'\n'``
    or any of the characters in *lineterminator* occurs in output data
    it is preceded by the current *escapechar* character.
@@ -418,26 +421,29 @@ The :mod:`!csv` module defines the following constants:
    any characters that require escaping are encountered.
    Set *quotechar* to ``None`` to prevent its escaping.
 
-   Instructs :class:`reader` objects to perform no special processing of quote characters.
+   Instructs :ref:`reader <reader-objects>` objects to perform no special
+   processing of quote characters.
 
 .. data:: QUOTE_NOTNULL
 
-   Instructs :class:`writer` objects to quote all fields which are not
+   Instructs :ref:`writer <writer-objects>` objects to quote all fields which are not
    ``None``.  This is similar to :data:`QUOTE_ALL`, except that if a
    field value is ``None`` an empty (unquoted) string is written.
 
-   Instructs :class:`reader` objects to interpret an empty (unquoted) field
+   Instructs :ref:`reader <reader-objects>` objects to interpret an empty
+   (unquoted) field
    as ``None`` and to otherwise behave as :data:`QUOTE_ALL`.
 
    .. versionadded:: 3.12
 
 .. data:: QUOTE_STRINGS
 
-   Instructs :class:`writer` objects to always place quotes around fields
+   Instructs :ref:`writer <writer-objects>` objects to always place quotes around fields
    which are strings.  This is similar to :data:`QUOTE_NONNUMERIC`, except that if a
    field value is ``None`` an empty (unquoted) string is written.
 
-   Instructs :class:`reader` objects to interpret an empty (unquoted) string as ``None`` and
+   Instructs :ref:`reader <reader-objects>` objects to interpret an empty
+   (unquoted) string as ``None`` and
    to otherwise behave as :data:`QUOTE_NONNUMERIC`.
 
    .. versionadded:: 3.12
@@ -457,8 +463,9 @@ Dialects and formatting parameters
 To make it easier to specify the format of input and output records, specific
 formatting parameters are grouped together into dialects.  A dialect is a
 subclass of the :class:`Dialect` class containing various attributes
-describing the format of the CSV file.  When creating :class:`reader` or
-:class:`writer` objects, the programmer can specify a string or a subclass of
+describing the format of the CSV file.  When creating :ref:`reader <reader-objects>` or
+:ref:`writer <writer-objects>` objects, the programmer can specify a string or a
+subclass of
 the :class:`Dialect` class as the dialect parameter.  In addition to, or instead
 of, the *dialect* parameter, the programmer can also specify individual
 formatting parameters, which have the same names as the attributes defined below
@@ -506,12 +513,14 @@ Dialects support the following attributes:
 
 .. attribute:: Dialect.lineterminator
 
-   The string used to terminate lines produced by the :class:`writer`. It defaults
+   The string used to terminate lines produced by the :ref:`writer
+   <writer-objects>`. It defaults
    to ``'\r\n'``.
 
    .. note::
 
-      The :class:`reader` is hard-coded to recognise either ``'\r'`` or ``'\n'`` as
+      The :ref:`reader <reader-objects>` is hard-coded to recognise either
+      ``'\r'`` or ``'\n'`` as
       end-of-line, and ignores *lineterminator*. This behavior may change in the
       future.
 
@@ -594,12 +603,16 @@ DictReader objects have the following public attribute:
 
 
 
+.. _writer-objects:
+
 Writer objects
 --------------
 
-:class:`writer` objects (:class:`DictWriter` instances and objects returned by
+:ref:`writer <writer-objects>` objects (:class:`DictWriter` instances and
+objects returned by
 the :func:`writer` function) have the following public methods.  A *row* must be
-an iterable of strings or numbers for :class:`writer` objects and a dictionary
+an iterable of strings or numbers for :ref:`writer <writer-objects>` objects and
+a dictionary
 mapping fieldnames to strings or numbers (by passing them through :func:`str`
 first) for :class:`DictWriter` objects.  Note that complex numbers are written
 out surrounded by parens. This may cause some problems for other programs which

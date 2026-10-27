@@ -1286,7 +1286,7 @@ http.server
 
   .. _whatsnew315-color-http.server:
 
-* The logging of :mod:`~http.server.BaseHTTPRequestHandler`,
+* The logging of :class:`~http.server.BaseHTTPRequestHandler`,
   as used by the :ref:`command-line interface <http-server-cli>`,
   is colored by default.
   This can be controlled with :ref:`environment variables
@@ -1648,7 +1648,7 @@ tarfile
 
 * :func:`~tarfile.TarFile.extract` and :func:`~tarfile.TarFile.extractall`
   no longer extract rejected members when
-  :func:`~tarfile.TarFile.errorlevel` is zero.
+  :attr:`~tarfile.TarFile.errorlevel` is zero.
   (Contributed by Matt Prodani and Petr Viktorin in :gh:`112887`
   and :cve:`2025-4435`.)
 
@@ -1944,7 +1944,7 @@ webbrowser
   :program:`/usr/bin/open` instead of constructing and executing AppleScript
   via :program:`osascript`. The default browser is detected from the
   LaunchServices preferences file using :mod:`plistlib`, with
-  :class:`!com.apple.Safari` as the fallback on fresh installations.
+  ``com.apple.Safari`` as the fallback on fresh installations.
   For non-HTTP(S) URLs, :program:`open -b <bundle-id>` is used to route the
   URL through a browser rather than the OS file handler, preventing
   file injection attacks.

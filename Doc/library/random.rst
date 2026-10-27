@@ -193,7 +193,7 @@ Functions for sequences
    to specify both *weights* and *cum_weights*.
 
    The *weights* or *cum_weights* can use any numeric type that interoperates
-   with the :class:`float` values returned by :func:`random` (that includes
+   with the :class:`float` values returned by :func:`.random` (that includes
    integers, floats, and fractions but excludes decimals).  Weights are assumed
    to be non-negative and finite.  A :exc:`ValueError` is raised if all
    weights are zero.
@@ -247,7 +247,7 @@ Functions for sequences
    counts=[4, 2], k=5)`` is equivalent to ``sample(['red', 'red', 'red', 'red',
    'blue', 'blue'], k=5)``.
 
-   To choose a sample from a range of integers, use a :func:`range` object as an
+   To choose a sample from a range of integers, use a :class:`range` object as an
    argument.  This is especially fast and space efficient for sampling from a large
    population:  ``sample(range(10000000), k=60)``.
 

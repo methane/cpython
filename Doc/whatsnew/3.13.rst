@@ -189,7 +189,7 @@ Important removals:
   (deprecated in Python 3.11).
 * Remove the :mod:`!tkinter.tix` module (deprecated in Python 3.6).
 * Remove the :func:`!locale.resetlocale` function.
-* Remove the :mod:`!typing.io` and :mod:`!typing.re` namespaces.
+* Remove the :obj:`!typing.io` and :obj:`!typing.re` namespaces.
 * Remove chained :class:`classmethod` descriptors.
 
 Release schedule changes:
@@ -792,8 +792,8 @@ copy
   The following types support the :func:`~copy.replace` function
   and implement the replace protocol:
 
-  * :func:`collections.namedtuple`
-  * :class:`dataclasses.dataclass`
+  * :term:`named tuple` types created by :func:`collections.namedtuple`
+  * Classes decorated with :func:`dataclasses.dataclass`
   * :class:`datetime.datetime`, :class:`datetime.date`, :class:`datetime.time`
   * :class:`inspect.Signature`, :class:`inspect.Parameter`
   * :class:`types.SimpleNamespace`
@@ -1766,7 +1766,7 @@ turtle
 typing
 ------
 
-* Remove the :mod:`!typing.io` and :mod:`!typing.re` namespaces,
+* Remove the :obj:`!typing.io` and :obj:`!typing.re` namespaces,
   deprecated since Python 3.8.
   The items in those namespaces can be imported directly
   from the :mod:`typing` module.

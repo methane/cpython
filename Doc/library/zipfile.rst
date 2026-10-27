@@ -213,7 +213,7 @@ ZipFile objects
    writing files to the archive.
    When using :const:`ZIP_STORED` or :const:`ZIP_LZMA` it has no effect.
    When using :const:`ZIP_DEFLATED` integers ``0`` through ``9`` are accepted
-   (see :class:`zlib <zlib.compressobj>` for more information).
+   (see :func:`zlib.compressobj` for more information).
    When using :const:`ZIP_BZIP2` integers ``1`` through ``9`` are accepted
    (see :class:`bz2 <bz2.BZ2File>` for more information).
    When using :const:`ZIP_ZSTANDARD` integers ``-131072`` through ``22`` are
@@ -688,7 +688,7 @@ Path objects
       untrusted archives, consider resolving filenames using :func:`os.path.abspath`
       and checking against the target directory with :func:`os.path.commonpath`.
 
-Path objects expose the following features of :mod:`pathlib.Path`
+Path objects expose the following features of :class:`pathlib.Path`
 objects:
 
 Path objects are traversable using the ``/`` operator or ``joinpath``.

@@ -13,7 +13,7 @@
 --------------
 
 This module creates temporary files and directories.  It works on all
-supported platforms. :class:`TemporaryFile`, :class:`NamedTemporaryFile`,
+supported platforms. :func:`TemporaryFile`, :func:`NamedTemporaryFile`,
 :class:`TemporaryFileWrapper`, :class:`TemporaryDirectory`, and
 :class:`SpooledTemporaryFile` are high-level interfaces which provide
 automatic cleanup and can be used as :term:`context managers

@@ -51,7 +51,7 @@ message objects.
 
    If *policy* is specified use the rules it specifies to update and serialize
    the representation of the message.  If *policy* is not set, use the
-   :class:`~email.policy.default` policy, which follows the rules of the email
+   :data:`~email.policy.default` policy, which follows the rules of the email
    RFCs except for line endings (instead of the RFC mandated ``\r\n``, it uses
    the Python standard ``\n`` line endings).  For more information see the
    :mod:`~email.policy` documentation. [2]_

@@ -203,7 +203,7 @@ headers.
       the list of addresses is "flattened" into a one dimensional list).
 
    The ``decoded`` value of the header will have all encoded words decoded to
-   a string.  :class:`~encodings.idna` encoded domain names are also decoded to
+   a string.  :mod:`~encodings.idna` encoded domain names are also decoded to
    a string.  The ``decoded`` value is set by :ref:`joining <meth-str-join>` the
    :class:`str` value of the elements of the ``groups`` attribute with ``',
    '``.
@@ -319,7 +319,7 @@ variant, :attr:`~.BaseHeader.max_count` is set to 1.
     class.  When *use_default_map* is ``True`` (the default), the standard
     mapping of header names to classes is copied in to the registry during
     initialization.  *base_class* is always the last class in the generated
-    class's :class:`~type.__bases__` list.
+    class's :attr:`~type.__bases__` list.
 
     The default mappings are:
 

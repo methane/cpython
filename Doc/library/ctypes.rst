@@ -2569,7 +2569,8 @@ Utility functions
    It is a semantically equivalent (but more efficient) alternative to
    ``memoryview((c_byte * size).from_address(ptr))``.
    (While :meth:`~_CData.from_address` only takes integers, *ptr* can also
-   be given as a :class:`ctypes.POINTER` or a :func:`~ctypes.byref` object.)
+   be given as an instance of a pointer type created by :func:`POINTER`
+   or an object returned by :func:`byref`.)
 
    .. audit-event:: ctypes.memoryview_at address,size,readonly
 
@@ -3734,7 +3735,7 @@ fields, or any other data types containing pointer type fields.
 
    Any other value will raise a :class:`ValueError`.
 
-   For controlling field-specific data, wrap the annotation in :class:`typing.Annotated`
+   For controlling field-specific data, wrap the annotation in :data:`typing.Annotated`
    with :class:`CFieldInfo` as the second argument, like so:
 
    .. code-block:: python
@@ -3758,9 +3759,9 @@ fields, or any other data types containing pointer type fields.
 .. class:: CFieldInfo(anonymous=False, bit_width=None)
    :module: ctypes.util
 
-   Information regarding a structure field defined by the :func:`struct`
+   Information regarding a structure field defined by the :func:`.struct`
    decorator. This should be used in the second argument of a
-   :class:`typing.Annotated` wrapping a ctypes type.
+   :data:`typing.Annotated` wrapping a ctypes type.
 
    *anonymous* specifies whether the field will be present in the
    :attr:`~ctypes.Structure._anonymous_` attribute of the generated class.

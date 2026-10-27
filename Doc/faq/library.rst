@@ -290,7 +290,7 @@ How do I parcel out work among a bunch of worker threads?
 ---------------------------------------------------------
 
 The easiest way is to use the :mod:`concurrent.futures` module,
-especially the :mod:`~concurrent.futures.ThreadPoolExecutor` class.
+especially the :class:`~concurrent.futures.ThreadPoolExecutor` class.
 
 Or, if you want fine control over the dispatching algorithm, you can write
 your own logic manually.  Use the :mod:`queue` module to create a queue

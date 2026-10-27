@@ -1173,7 +1173,7 @@ always available. Unless explicitly noted otherwise, all variables are read-only
 .. function:: get_asyncgen_hooks()
 
    Returns an *asyncgen_hooks* object, which is similar to a
-   :class:`~collections.namedtuple` of the form ``(firstiter, finalizer)``,
+   :term:`named tuple` of the form ``(firstiter, finalizer)``,
    where *firstiter* and *finalizer* are expected to be either ``None`` or
    functions which take an :term:`asynchronous generator iterator` as an
    argument, and are used to schedule finalization of an asynchronous

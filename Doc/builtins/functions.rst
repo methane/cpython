@@ -919,7 +919,7 @@ are always available.  They are listed here in alphabetical order.
    ``type(value).__format__(value, format_spec)`` which bypasses the instance
    dictionary when searching for the value's :meth:`~object.__format__` method.
    A :exc:`TypeError` exception is raised if the method search reaches
-   :mod:`object` and the *format_spec* is non-empty, or if either the
+   :class:`object` and the *format_spec* is non-empty, or if either the
    *format_spec* or the return value are not strings.
 
    .. versionchanged:: 3.4
@@ -1582,7 +1582,7 @@ are always available.  They are listed here in alphabetical order.
    A custom opener can be used by passing a callable as *opener*. The underlying
    file descriptor for the file object is then obtained by calling *opener* with
    (*file*, *flags*). *opener* must return an open file descriptor (passing
-   :mod:`os.open` as *opener* results in functionality similar to passing
+   :func:`os.open` as *opener* results in functionality similar to passing
    ``None``).
 
    The newly created file is :ref:`non-inheritable <fd_inheritance>`.

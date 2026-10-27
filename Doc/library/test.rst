@@ -871,11 +871,11 @@ The :mod:`!test.support` module defines the following functions:
 .. function:: check_syntax_error(testcase, statement, errtext='', *, lineno=None, offset=None)
 
    Test for syntax errors in *statement* by attempting to compile *statement*.
-   *testcase* is the :mod:`unittest` instance for the test.  *errtext* is the
-   regular expression which should match the string representation of the
-   raised :exc:`SyntaxError`.  If *lineno* is not ``None``, compares to
-   the line of the exception.  If *offset* is not ``None``, compares to
-   the offset of the exception.
+   *testcase* is the :class:`unittest.TestCase` instance for the test.
+   *errtext* is the regular expression which should match the string
+   representation of the raised :exc:`SyntaxError`.  If *lineno* is not ``None``,
+   compares to the line of the exception.  If *offset* is not ``None``, compares
+   to the offset of the exception.
 
 
 .. function:: open_urlresource(url, *args, **kw)
@@ -1840,10 +1840,11 @@ The :mod:`!test.support.warnings_helper` module provides support for warnings te
    Test for syntax warning in *statement* by attempting to compile *statement*.
    Test also that the :exc:`SyntaxWarning` is emitted only once, and that it
    will be converted to a :exc:`SyntaxError` when turned into error.
-   *testcase* is the :mod:`unittest` instance for the test.  *errtext* is the
-   regular expression which should match the string representation of the
-   emitted :exc:`SyntaxWarning` and raised :exc:`SyntaxError`.  If *lineno*
-   is not ``None``, compares to the line of the warning and exception.
+   *testcase* is the :class:`unittest.TestCase` instance for the test.
+   *errtext* is the regular expression which should match the string
+   representation of the emitted :exc:`SyntaxWarning` and raised
+   :exc:`SyntaxError`.  If *lineno* is not ``None``, compares to the line of the
+   warning and exception.
    If *offset* is not ``None``, compares to the offset of the exception.
 
    .. versionadded:: 3.8

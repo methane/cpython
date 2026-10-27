@@ -626,7 +626,7 @@ review:
 Some other changes to standard library modules, not covered by
 :pep:`3108`:
 
-* Killed :mod:`!sets`.  Use the built-in :func:`set` class.
+* Killed :mod:`!sets`.  Use the built-in :class:`set` class.
 
 * Cleanup of the :mod:`sys` module: removed :func:`!sys.exitfunc`,
   :func:`!sys.exc_clear`, :data:`!sys.exc_type`, :data:`!sys.exc_value`,

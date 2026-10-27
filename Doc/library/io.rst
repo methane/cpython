@@ -680,7 +680,7 @@ Raw file I/O
    A custom opener can be used by passing a callable as *opener*. The underlying
    file descriptor for the file object is then obtained by calling *opener* with
    (*name*, *flags*). *opener* must return an open file descriptor (passing
-   :mod:`os.open` as *opener* results in functionality similar to passing
+   :func:`os.open` as *opener* results in functionality similar to passing
    ``None``).
 
    The newly created file is :ref:`non-inheritable <fd_inheritance>`.

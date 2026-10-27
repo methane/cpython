@@ -690,7 +690,7 @@ csv
 
 * Add :const:`csv.QUOTE_NOTNULL` and :const:`csv.QUOTE_STRINGS` flags to
   provide finer grained control of ``None`` and empty strings by
-  :class:`~csv.reader` and :class:`~csv.writer` objects.
+  :ref:`reader <reader-objects>` and :ref:`writer <writer-objects>` objects.
 
 dis
 ---
@@ -929,7 +929,7 @@ sys
 tempfile
 --------
 
-* The :class:`tempfile.NamedTemporaryFile` function has a new optional parameter
+* The :func:`tempfile.NamedTemporaryFile` function has a new optional parameter
   *delete_on_close* (Contributed by Evgeny Zorin in :gh:`58451`.)
 * :func:`tempfile.mkdtemp` now always returns an absolute path, even if the
   argument provided to the *dir* parameter is a relative path.
@@ -1596,7 +1596,7 @@ ssl
 
 * Remove the :func:`!ssl.wrap_socket` function, deprecated in Python 3.7:
   instead, create a :class:`ssl.SSLContext` object and call its
-  :class:`ssl.SSLContext.wrap_socket` method. Any package that still uses
+  :meth:`ssl.SSLContext.wrap_socket` method. Any package that still uses
   :func:`!ssl.wrap_socket` is broken and insecure. The function neither sends a
   SNI TLS extension nor validates the server hostname. Code is subject to :cwe:`295`
   (Improper Certificate Validation).

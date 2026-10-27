@@ -166,7 +166,7 @@ The following events are supported:
 
 More events may be added in the future.
 
-These events are attributes of the :mod:`!sys.monitoring.events` namespace.
+These events are attributes of the :data:`!sys.monitoring.events` namespace.
 Each event is represented as a power-of-2 integer constant.
 To define a set of events, simply bitwise OR the individual events together.
 For example, to specify both :monitoring-event:`PY_RETURN` and :monitoring-event:`PY_START`

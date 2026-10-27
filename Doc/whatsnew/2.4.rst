@@ -68,7 +68,7 @@ symmetric differences. ::
    >>> a
    set(['a', 'c', 'b', 'd', 'r', 'w', 'y', 'z'])
 
-The :func:`frozenset` type is an immutable version of :func:`set`. Since it is
+The :class:`frozenset` type is an immutable version of :func:`set`. Since it is
 immutable and hashable, it may be used as a dictionary key or as a member of
 another set.
 
@@ -779,7 +779,7 @@ Here are all of the changes that Python 2.4 makes to the core Python language.
 
 * Decorators for functions and methods were added (:pep:`318`).
 
-* Built-in :func:`set` and :func:`frozenset` types were  added (:pep:`218`).
+* Built-in :class:`set` and :class:`frozenset` types were  added (:pep:`218`).
   Other new built-ins include the ``reversed(seq)`` function (:pep:`322`).
 
 * Generator expressions were added (:pep:`289`).

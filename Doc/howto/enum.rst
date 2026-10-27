@@ -483,7 +483,7 @@ sense to allow sharing some common behavior between a group of enumerations.
 Dataclass support
 -----------------
 
-When inheriting from a :class:`~dataclasses.dataclass`,
+When inheriting from a class decorated with :func:`~dataclasses.dataclass`,
 the :meth:`~Enum.__repr__` omits the inherited class' name.  For example::
 
     >>> from dataclasses import dataclass, field
@@ -571,7 +571,7 @@ The :class:`Enum` class is callable, providing the following functional API::
     >>> list(Animal)
     [<Animal.ANT: 1>, <Animal.BEE: 2>, <Animal.CAT: 3>, <Animal.DOG: 4>]
 
-The semantics of this API resemble :class:`~collections.namedtuple`. The first
+The semantics of this API resemble :func:`~collections.namedtuple`. The first
 argument of the call to :class:`Enum` is the name of the enumeration.
 
 The second argument is the *source* of enumeration member names.  It can be a
@@ -909,8 +909,8 @@ Some rules:
 4. When another data type is mixed in, the :attr:`~Enum.value` attribute is *not the
    same* as the enum member itself, although it is equivalent and will compare
    equal.
-5. A ``data type`` is a mixin that defines :meth:`~object.__new__`, or a
-   :class:`~dataclasses.dataclass`
+5. A ``data type`` is a mixin that defines :meth:`~object.__new__` or is
+   decorated with :func:`~dataclasses.dataclass`
 6. %-style formatting:  ``%s`` and ``%r`` call the :class:`Enum` class's
    :meth:`~object.__str__` and :meth:`~object.__repr__` respectively; other codes (such as
    ``%i`` or ``%h`` for IntEnum) treat the enum member as its mixed-in type.
