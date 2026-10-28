@@ -2253,6 +2253,47 @@ builtin_pow_impl(PyObject *module, PyObject *base, PyObject *exp,
     return PyNumber_Power(base, exp, mod);
 }
 
+/* Convert in output order, before touching the TextIOWrapper buffer. */
+static PyObject *
+print_strings(PyObject *const *objects, Py_ssize_t count,
+              PyObject *sep, PyObject *end)
+{
+    if (count > PY_SSIZE_T_MAX / 2) {
+        return PyErr_NoMemory();
+    }
+    PyObject *strings = PyList_New(count ? 2 * count : 1);
+    if (strings == NULL) {
+        return NULL;
+    }
+    Py_ssize_t pos = 0;
+    for (Py_ssize_t i = 0; i < count; i++) {
+        if (i > 0) {
+            PyObject *text = sep == NULL ? PyUnicode_FromOrdinal(' ')
+                                        : PyObject_Str(sep);
+            if (text == NULL) {
+                Py_DECREF(strings);
+                return NULL;
+            }
+            PyList_SET_ITEM(strings, pos++, text);
+        }
+        PyObject *text = PyObject_Str(objects[i]);
+        if (text == NULL) {
+            Py_DECREF(strings);
+            return NULL;
+        }
+        PyList_SET_ITEM(strings, pos++, text);
+    }
+    PyObject *text = end == NULL ? PyUnicode_FromOrdinal('\n')
+                                : PyObject_Str(end);
+    if (text == NULL) {
+        Py_DECREF(strings);
+        return NULL;
+    }
+    PyList_SET_ITEM(strings, pos, text);
+    return strings;
+}
+
+
 /*[clinic input]
 print as builtin_print
 
@@ -2318,40 +2359,52 @@ builtin_print_impl(PyObject *module, PyObject * const *objects,
         Py_DECREF(file);
         return NULL;
     }
-    PyUnicodeWriter *writer = PyUnicodeWriter_Create(0);
-    if (writer == NULL) {
-        Py_DECREF(write);
-        Py_DECREF(file);
-        return NULL;
+    PyUnicodeWriter *writer = NULL;
+    PyObject *result;
+    if (_PyTextIOWrapper_IsWrite(write)) {
+        PyObject *strings = print_strings(objects, objects_length, sep, end);
+        if (strings == NULL) {
+            goto error;
+        }
+        result = _PyTextIOWrapper_WriteList(write, strings);
+        Py_DECREF(strings);
     }
+    else {
+        writer = PyUnicodeWriter_Create(0);
+        if (writer == NULL) {
+            Py_DECREF(write);
+            Py_DECREF(file);
+            return NULL;
+        }
 
-    /* Assemble the entire output before calling the stream's write method. */
-    for (Py_ssize_t i = 0; i < objects_length; i++) {
-        if (i > 0) {
-            int err = sep == NULL
-                ? PyUnicodeWriter_WriteChar(writer, ' ')
-                : PyUnicodeWriter_WriteStr(writer, sep);
-            if (err < 0) {
+        /* Assemble the entire output before calling the stream's write method. */
+        for (Py_ssize_t i = 0; i < objects_length; i++) {
+            if (i > 0) {
+                int err = sep == NULL
+                    ? PyUnicodeWriter_WriteChar(writer, ' ')
+                    : PyUnicodeWriter_WriteStr(writer, sep);
+                if (err < 0) {
+                    goto error;
+                }
+            }
+            if (PyUnicodeWriter_WriteStr(writer, objects[i]) < 0) {
                 goto error;
             }
         }
-        if (PyUnicodeWriter_WriteStr(writer, objects[i]) < 0) {
+        int err = end == NULL
+            ? PyUnicodeWriter_WriteChar(writer, '\n')
+            : PyUnicodeWriter_WriteStr(writer, end);
+        if (err < 0) {
             goto error;
         }
+        PyObject *text = PyUnicodeWriter_Finish(writer);
+        writer = NULL;
+        if (text == NULL) {
+            goto error;
+        }
+        result = PyObject_CallOneArg(write, text);
+        Py_DECREF(text);
     }
-    int err = end == NULL
-        ? PyUnicodeWriter_WriteChar(writer, '\n')
-        : PyUnicodeWriter_WriteStr(writer, end);
-    if (err < 0) {
-        goto error;
-    }
-    PyObject *text = PyUnicodeWriter_Finish(writer);
-    writer = NULL;
-    if (text == NULL) {
-        goto error;
-    }
-    PyObject *result = PyObject_CallOneArg(write, text);
-    Py_DECREF(text);
     Py_DECREF(write);
     if (result == NULL) {
         Py_DECREF(file);

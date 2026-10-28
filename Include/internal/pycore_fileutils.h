@@ -314,6 +314,12 @@ PyAPI_FUNC(char*) _Py_UniversalNewlineFgetsWithSize(char *, int, FILE*, PyObject
 
 extern int _PyFile_Flush(PyObject *);
 
+/* Private print() fast path.  Only accepts the original write method bound to
+   an exact TextIOWrapper.  strings is a private list of already converted str
+   objects, in output order (including separators and the ending). */
+extern int _PyTextIOWrapper_IsWrite(PyObject *write);
+extern PyObject *_PyTextIOWrapper_WriteList(PyObject *write, PyObject *strings);
+
 #ifndef MS_WINDOWS
 extern int _Py_GetTicksPerSecond(long *ticks_per_second);
 #endif
