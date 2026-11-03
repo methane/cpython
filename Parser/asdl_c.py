@@ -495,6 +495,71 @@ class Obj2ModPrototypeVisitor(PickleVisitor):
 
 class Obj2ModVisitor(PickleVisitor):
 
+    def visitModule(self, mod):
+        # Share list conversion loops between fields with the same element type.
+        # Keep them out of line to avoid duplicating the loop and refcount code.
+        fields = {}
+        for dfn in mod.dfns:
+            value = dfn.value
+            groups = [value.attributes]
+            if isinstance(value, asdl.Sum):
+                groups.extend(cons.fields for cons in value.types)
+            else:
+                groups.append(value.fields)
+            for group in groups:
+                for field in group:
+                    if field.seq:
+                        fields.setdefault(field.type, field)
+        for field in fields.values():
+            self.sequenceConverter(field)
+        super().visitModule(mod)
+
+    def sequenceConverter(self, field):
+        element = field.type
+        seq = "int" if self.isSimpleType(field) else element
+        self.emit("/* Consume a reference to the list, including on failure. */", 0)
+        self.emit("static Py_NO_INLINE asdl_%s_seq *" % seq, 0)
+        self.emit("obj2ast_%s_list(struct ast_state *state, PyObject *obj," % element, 0)
+        self.emit("const char *node, const char *field,", 1)
+        self.emit("const char *context, PyArena *arena)", 1)
+        self.emit("{", 0)
+        self.emit("if (!PyList_Check(obj)) {", 1)
+        self.emit('PyErr_Format(PyExc_TypeError, "%s field \\"%s\\" must be a list, not a %T",', 2, reflow=False)
+        self.emit("node, field, obj);", 3)
+        self.emit("goto failed;", 2)
+        self.emit("}", 1)
+        self.emit("Py_ssize_t len = PyList_GET_SIZE(obj);", 1)
+        self.emit("asdl_%s_seq *seq = _Py_asdl_%s_seq_new(len, arena);" % (seq, seq), 1)
+        self.emit("if (seq == NULL) {", 1)
+        self.emit("goto failed;", 2)
+        self.emit("}", 1)
+        self.emit("for (Py_ssize_t i = 0; i < len; i++) {", 1)
+        self.emit("%s val;" % get_c_type(element), 2)
+        self.emit("if (_Py_EnterRecursiveCall(context)) {", 2)
+        self.emit("goto failed;", 3)
+        self.emit("}", 2)
+        self.emit("PyObject *item = Py_NewRef(PyList_GET_ITEM(obj, i));", 2)
+        self.emit("int res = obj2ast_%s(state, item, &val, field, arena);" % element, 2)
+        self.emit("_Py_LeaveRecursiveCall();", 2)
+        self.emit("Py_DECREF(item);", 2)
+        self.emit("if (res != 0) {", 2)
+        self.emit("goto failed;", 3)
+        self.emit("}", 2)
+        self.emit("if (len != PyList_GET_SIZE(obj)) {", 2)
+        self.emit('PyErr_Format(PyExc_RuntimeError, "%s field \\"%s\\" changed size during iteration",', 3, reflow=False)
+        self.emit("node, field);", 4)
+        self.emit("goto failed;", 3)
+        self.emit("}", 2)
+        self.emit("asdl_seq_SET(seq, i, val);", 2)
+        self.emit("}", 1)
+        self.emit("Py_DECREF(obj);", 1)
+        self.emit("return seq;", 1)
+        self.emit("failed:", 0)
+        self.emit("Py_DECREF(obj);", 1)
+        self.emit("return NULL;", 1)
+        self.emit("}", 0)
+        self.emit("", 0)
+
     attribute_special_defaults = {
         "end_lineno": "lineno",
         "end_col_offset": "col_offset",
@@ -648,7 +713,6 @@ class Obj2ModVisitor(PickleVisitor):
         return field.type in self.metadata.simple_sums or self.isNumeric(field)
 
     def visitField(self, field, name, sum=None, prod=None, depth=0):
-        ctype = get_c_type(field.type)
         line = "if (PyObject_GetOptionalAttr(obj, state->%s, &tmp) < 0) {"
         self.emit(line % field.name, depth)
         self.emit("return -1;", depth+1)
@@ -686,47 +750,19 @@ class Obj2ModVisitor(PickleVisitor):
             self.emit("}", depth)
             self.emit("else {", depth)
 
-        self.emit("int res;", depth+1)
         if field.seq:
-            self.emit("Py_ssize_t len;", depth+1)
-            self.emit("Py_ssize_t i;", depth+1)
-            self.emit("if (!PyList_Check(tmp)) {", depth+1)
-            self.emit("PyErr_Format(PyExc_TypeError, \"%s field \\\"%s\\\" must "
-                      "be a list, not a %%T\", tmp);" %
-                      (name, field.name),
-                      depth+2, reflow=False)
-            self.emit("goto failed;", depth+2)
-            self.emit("}", depth+1)
-            self.emit("len = PyList_GET_SIZE(tmp);", depth+1)
-            if self.isSimpleType(field):
-                self.emit("%s = _Py_asdl_int_seq_new(len, arena);" % field.name, depth+1)
-            else:
-                self.emit("%s = _Py_asdl_%s_seq_new(len, arena);" % (field.name, field.type), depth+1)
+            self.emit('%s = obj2ast_%s_list(' % (field.name, field.type), depth+1)
+            self.emit('state, tmp, "%s", "%s",' % (name, field.name), depth+2)
+            self.emit('" while traversing \'%s\' node", arena);' % name, depth+2)
+            self.emit("tmp = NULL;", depth+1)
             self.emit("if (%s == NULL) goto failed;" % field.name, depth+1)
-            self.emit("for (i = 0; i < len; i++) {", depth+1)
-            self.emit("%s val;" % ctype, depth+2)
-            self.emit("PyObject *tmp2 = Py_NewRef(PyList_GET_ITEM(tmp, i));", depth+2)
-            with self.recursive_call(name, depth+2):
-                self.emit("res = obj2ast_%s(state, tmp2, &val, \"%s\", arena);" %
-                          (field.type, field.name), depth+2, reflow=False)
-            self.emit("Py_DECREF(tmp2);", depth+2)
-            self.emit("if (res != 0) goto failed;", depth+2)
-            self.emit("if (len != PyList_GET_SIZE(tmp)) {", depth+2)
-            self.emit("PyErr_SetString(PyExc_RuntimeError, \"%s field \\\"%s\\\" "
-                      "changed size during iteration\");" %
-                      (name, field.name),
-                      depth+3, reflow=False)
-            self.emit("goto failed;", depth+3)
-            self.emit("}", depth+2)
-            self.emit("asdl_seq_SET(%s, i, val);" % field.name, depth+2)
-            self.emit("}", depth+1)
         else:
+            self.emit("int res;", depth+1)
             with self.recursive_call(name, depth+1):
                 self.emit("res = obj2ast_%s(state, tmp, &%s, \"%s\", arena);" %
                           (field.type, field.name, field.name), depth+1)
             self.emit("if (res != 0) goto failed;", depth+1)
-
-        self.emit("Py_CLEAR(tmp);", depth+1)
+            self.emit("Py_CLEAR(tmp);", depth+1)
         self.emit("}", depth)
 
 
