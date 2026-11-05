@@ -18,6 +18,7 @@
 #include "pycore_pystate.h"       // _PyThreadState_GET()
 #include "pycore_pythonrun.h"     // _Py_SourceAsString()
 #include "pycore_tuple.h"         // _PyTuple_Recycle()
+#include "pycore_unicodeobject.h" // _Py_LATIN1_CHR()
 
 #include "clinic/bltinmodule.c.h"
 
@@ -2315,6 +2316,66 @@ builtin_print_impl(PyObject *module, PyObject * const *objects,
         return NULL;
     }
 
+    PyObject *writelines;
+    if (PyObject_GetOptionalAttr(file, &_Py_ID(writelines), &writelines) < 0) {
+        Py_DECREF(file);
+        return NULL;
+    }
+    if (writelines != NULL) {
+        // Keep the strings separate: joining them can require a large copy.
+        if (objects_length > PY_SSIZE_T_MAX / 2) {
+            Py_DECREF(writelines);
+            Py_DECREF(file);
+            return PyErr_NoMemory();
+        }
+        PyObject *lines = PyTuple_New(objects_length ? 2 * objects_length : 1);
+        if (lines == NULL) {
+            Py_DECREF(writelines);
+            Py_DECREF(file);
+            return NULL;
+        }
+        Py_ssize_t pos = 0;
+        for (Py_ssize_t j = 0; j < objects_length; j++) {
+            if (j > 0) {
+                PyObject *separator = sep ? PyObject_Str(sep) :
+                                           Py_NewRef(_Py_LATIN1_CHR(' '));
+                if (separator == NULL) {
+                    Py_DECREF(lines);
+                    Py_DECREF(writelines);
+                    Py_DECREF(file);
+                    return NULL;
+                }
+                PyTuple_SET_ITEM(lines, pos++, separator);
+            }
+            PyObject *text = PyObject_Str(objects[j]);
+            if (text == NULL) {
+                Py_DECREF(lines);
+                Py_DECREF(writelines);
+                Py_DECREF(file);
+                return NULL;
+            }
+            PyTuple_SET_ITEM(lines, pos++, text);
+        }
+        PyObject *ending = end ? PyObject_Str(end) :
+                                Py_NewRef(_Py_LATIN1_CHR('\n'));
+        if (ending == NULL) {
+            Py_DECREF(lines);
+            Py_DECREF(writelines);
+            Py_DECREF(file);
+            return NULL;
+        }
+        PyTuple_SET_ITEM(lines, pos, ending);
+        PyObject *result = PyObject_CallOneArg(writelines, lines);
+        Py_DECREF(lines);
+        Py_DECREF(writelines);
+        if (result == NULL) {
+            Py_DECREF(file);
+            return NULL;
+        }
+        Py_DECREF(result);
+        goto done;
+    }
+
     for (i = 0; i < objects_length; i++) {
         if (i > 0) {
             if (sep == NULL) {
@@ -2346,6 +2407,7 @@ builtin_print_impl(PyObject *module, PyObject * const *objects,
         return NULL;
     }
 
+done:
     if (flush) {
         if (_PyFile_Flush(file) < 0) {
             Py_DECREF(file);

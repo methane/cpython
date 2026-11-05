@@ -1,6 +1,6 @@
 import unittest
 import sys
-from io import StringIO
+from io import BytesIO, StringIO, TextIOWrapper
 
 from test import support
 
@@ -128,6 +128,72 @@ class TestPrint(unittest.TestCase):
             def flush(self):
                 raise RuntimeError
         self.assertRaises(RuntimeError, print, 1, file=noflush(), flush=True)
+
+    def test_print_writelines(self):
+        class Writer:
+            def __init__(self):
+                self.calls = []
+
+            def writelines(self, lines):
+                self.calls.append(tuple(lines))
+
+            def flush(self):
+                self.calls.append('flush')
+
+        file = Writer()
+        print('a', 42, file=file, sep=':', end='!', flush=True)
+        self.assertEqual(file.calls, [('a', ':', '42', '!'), 'flush'])
+        file.calls.clear()
+        print(file=file)
+        print('a', 'b', sep=None, end=None, file=file)
+        self.assertEqual(file.calls, [('\n',), ('a', ' ', 'b', '\n')])
+
+    def test_print_writelines_error(self):
+        class Writer:
+            def writelines(self, lines):
+                raise OSError('write failed')
+
+            def flush(self):
+                raise AssertionError('flush called after a write error')
+
+        with self.assertRaisesRegex(OSError, 'write failed'):
+            print('a', file=Writer(), flush=True)
+
+    def test_print_writelines_str_error(self):
+        class Bad:
+            def __str__(self):
+                raise ValueError('conversion failed')
+
+        file = StringIO()
+        with self.assertRaisesRegex(ValueError, 'conversion failed'):
+            print('a', Bad(), file=file)
+        self.assertEqual(file.getvalue(), '')
+
+    def test_print_string_subclasses(self):
+        class Text(str):
+            def __str__(self):
+                return 'converted'
+
+        file = StringIO()
+        print(Text('a'), 'b', sep=Text(' '), end=Text('\n'), file=file)
+        self.assertEqual(file.getvalue(), 'convertedconvertedbconverted')
+
+    def test_print_textiowrapper(self):
+        with TextIOWrapper(BytesIO(), encoding='utf-8', newline='\r\n') as file:
+            print('日本語', 42, sep=':', file=file, flush=True)
+            self.assertEqual(file.buffer.getvalue(),
+                             '日本語:42\r\n'.encode())
+
+    def test_print_textiowrapper_overridden_write(self):
+        written = []
+
+        class TextIO(TextIOWrapper):
+            def write(self, text):
+                written.append(text)
+
+        with TextIO(BytesIO(), encoding='utf-8') as file:
+            print('a', 'b', file=file)
+        self.assertEqual(written, ['a', ' ', 'b', '\n'])
 
     def test_gh130163(self):
         class X:

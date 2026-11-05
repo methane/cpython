@@ -1,0 +1,4 @@
+Use a single ``writelines()`` call in :func:`print` when the output stream
+provides it, without concatenating the strings. Streams providing only
+``write()`` remain supported. When using ``writelines()``, arguments are
+converted to strings before writing any output.

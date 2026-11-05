@@ -928,6 +928,7 @@ struct _Py_global_strings {
         STRUCT_FOR_ID(writable)
         STRUCT_FOR_ID(write)
         STRUCT_FOR_ID(write_through)
+        STRUCT_FOR_ID(writelines)
         STRUCT_FOR_ID(year)
         STRUCT_FOR_ID(zdict)
         STRUCT_FOR_ID(zstd_dict)

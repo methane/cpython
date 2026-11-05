@@ -1,0 +1,5 @@
+Optimize :meth:`io.TextIOWrapper.writelines` by using a single critical section
+and avoiding repeated locking when calling the built-in ``write()`` method.
+Overridden ``write()`` methods are still honored. Blocking I/O and callbacks
+can suspend the critical section, so the operation is not guaranteed to be
+atomic.

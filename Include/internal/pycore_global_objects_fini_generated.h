@@ -916,6 +916,7 @@ _PyStaticObjects_CheckAll(PyInterpreterState *interp) {
     _PyStaticObject_CheckUnicodeSingleton((PyObject *)&_Py_ID(writable), "writable", 8);
     _PyStaticObject_CheckUnicodeSingleton((PyObject *)&_Py_ID(write), "write", 5);
     _PyStaticObject_CheckUnicodeSingleton((PyObject *)&_Py_ID(write_through), "write_through", 13);
+    _PyStaticObject_CheckUnicodeSingleton((PyObject *)&_Py_ID(writelines), "writelines", 10);
     _PyStaticObject_CheckUnicodeSingleton((PyObject *)&_Py_ID(year), "year", 4);
     _PyStaticObject_CheckUnicodeSingleton((PyObject *)&_Py_ID(zdict), "zdict", 5);
     _PyStaticObject_CheckUnicodeSingleton((PyObject *)&_Py_ID(zstd_dict), "zstd_dict", 9);

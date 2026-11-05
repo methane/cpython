@@ -798,6 +798,87 @@ class TextIOWrapperTest:
         self.assertRaises(TypeError, txt.writelines, None)
         self.assertRaises(TypeError, txt.writelines, b'abc')
 
+    def test_writelines_iterator_error(self):
+        def lines():
+            yield 'first'
+            raise RuntimeError('iteration failed')
+
+        with self.TextIOWrapper(self.BytesIO(), encoding='utf-8') as txt:
+            with self.assertRaisesRegex(RuntimeError, 'iteration failed'):
+                txt.writelines(lines())
+            txt.flush()
+            self.assertEqual(txt.buffer.getvalue(), b'first')
+            # An error must not leave the stream locked.
+            self.assertIsNone(txt.writelines(['second']))
+
+    def test_writelines_partial_write(self):
+        for bad, error in ((None, TypeError), ('\u20ac', UnicodeEncodeError)):
+            with self.subTest(bad=bad):
+                with self.TextIOWrapper(self.BytesIO(), encoding='ascii') as txt:
+                    with self.assertRaises(error):
+                        txt.writelines(['first', bad, 'last'])
+                    txt.flush()
+                    self.assertEqual(txt.buffer.getvalue(), b'first')
+
+    def test_writelines_overridden_write(self):
+        written = []
+
+        class TextIO(self.TextIOWrapper):
+            def write(self, text):
+                written.append(text)
+
+        with TextIO(self.BytesIO(), encoding='utf-8') as txt:
+            self.assertIsNone(txt.writelines(['a', 'b']))
+        self.assertEqual(written, ['a', 'b'])
+
+    def test_writelines_replace_write(self):
+        written = []
+        with self.TextIOWrapper(self.BytesIO(), encoding='utf-8') as txt:
+            def lines():
+                yield 'first'
+                txt.write = written.append
+                yield 'second'
+                del txt.write
+                yield 'third'
+
+            txt.writelines(lines())
+            txt.flush()
+            self.assertEqual(txt.buffer.getvalue(), b'firstthird')
+            self.assertEqual(written, ['second'])
+
+    def test_writelines_classmethod_write(self):
+        written = []
+
+        class TextIO(self.TextIOWrapper):
+            @classmethod
+            def write(cls, text):
+                written.append((cls, text))
+
+        with TextIO(self.BytesIO(), encoding='utf-8') as txt:
+            txt.writelines(['a', 'b'])
+        self.assertEqual(written, [(TextIO, 'a'), (TextIO, 'b')])
+
+    def test_writelines_close(self):
+        with self.TextIOWrapper(self.BytesIO(), encoding='utf-8') as txt:
+            def lines():
+                yield 'first'
+                txt.close()
+                yield 'second'
+
+            with self.assertRaises(ValueError):
+                txt.writelines(lines())
+
+    def test_writelines_empty(self):
+        with self.TextIOWrapper(self.BytesIO(), encoding='utf-8') as txt:
+            self.assertIsNone(txt.writelines(iter(())))
+        self.assertRaises(ValueError, txt.writelines, [])
+
+        with self.BufferedReader(self.BytesIO()) as buf:
+            with self.TextIOWrapper(buf, encoding='utf-8') as txt:
+                self.assertIsNone(txt.writelines([]))
+                self.assertRaises(self.UnsupportedOperation,
+                                  txt.writelines, ['a'])
+
     def test_issue1395_1(self):
         txt = self.TextIOWrapper(self.BytesIO(self.testdata), encoding="ascii")
 
@@ -1448,6 +1529,46 @@ def _to_memoryview(buf):
 
 class CTextIOWrapperTest(TextIOWrapperTest, CTestCase):
     shutdown_error = "LookupError: unknown encoding: ascii"
+
+    def test_writelines_write_bound_to_class(self):
+        class TextIO(self.TextIOWrapper):
+            write = classmethod(self.TextIOWrapper.write)
+
+        with TextIO(self.BytesIO(), encoding='utf-8') as txt:
+            with self.assertRaises(TypeError):
+                txt.writelines(['a'])
+            txt.flush()
+            self.assertEqual(txt.buffer.getvalue(), b'')
+
+    def test_writelines_detach(self):
+        with self.BytesIO() as buf:
+            txt = self.TextIOWrapper(buf, encoding='utf-8')
+
+            def lines():
+                yield 'first'
+                txt.detach()
+                yield 'second'
+
+            with self.assertRaisesRegex(ValueError, 'detached'):
+                txt.writelines(lines())
+
+    def test_writelines_interrupted_write(self):
+        import errno
+
+        written = []
+
+        class TextIO(self.TextIOWrapper):
+            def write(self, text):
+                written.append(text)
+                if len(written) == 1:
+                    raise InterruptedError(errno.EINTR, 'interrupted')
+                return super().write(text)
+
+        with TextIO(self.BytesIO(), encoding='utf-8') as txt:
+            txt.writelines(['a', 'b'])
+            txt.flush()
+            self.assertEqual(txt.buffer.getvalue(), b'ab')
+        self.assertEqual(written, ['a', 'a', 'b'])
 
     def test_write_newline_replace_returns_non_string(self):
         class Text(str):

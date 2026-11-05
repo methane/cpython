@@ -740,6 +740,33 @@ exit:
     return return_value;
 }
 
+PyDoc_STRVAR(_io_TextIOWrapper_writelines__doc__,
+"writelines($self, lines, /)\n"
+"--\n"
+"\n"
+"Write a list of lines to stream.\n"
+"\n"
+"Line separators are not added, so it is usual for each of the\n"
+"lines provided to have a line separator at the end.");
+
+#define _IO_TEXTIOWRAPPER_WRITELINES_METHODDEF    \
+    {"writelines", (PyCFunction)_io_TextIOWrapper_writelines, METH_O, _io_TextIOWrapper_writelines__doc__},
+
+static PyObject *
+_io_TextIOWrapper_writelines_impl(textio *self, PyObject *lines);
+
+static PyObject *
+_io_TextIOWrapper_writelines(PyObject *self, PyObject *lines)
+{
+    PyObject *return_value = NULL;
+
+    Py_BEGIN_CRITICAL_SECTION(self);
+    return_value = _io_TextIOWrapper_writelines_impl((textio *)self, lines);
+    Py_END_CRITICAL_SECTION();
+
+    return return_value;
+}
+
 PyDoc_STRVAR(_io_TextIOWrapper_read__doc__,
 "read($self, size=-1, /)\n"
 "--\n"
@@ -1261,4 +1288,4 @@ _io_TextIOWrapper_buffer_get(PyObject *self, void *Py_UNUSED(context))
 
 #define _IO_TEXTIOWRAPPER_BUFFER_GETSETDEF {"buffer", (getter)_io_TextIOWrapper_buffer_get, (setter)NULL, NULL},
 
-/*[clinic end generated code: output=f3dd3fff36cd2142 input=a9049054013a1b77]*/
+/*[clinic end generated code: output=4e03189c4d4fae36 input=a9049054013a1b77]*/

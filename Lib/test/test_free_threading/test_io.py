@@ -235,6 +235,40 @@ class IncrementalNewlineDecoderTest(TestCase):
 
 
 class TextIOWrapperTest(TestCase):
+    def test_writelines_buffered(self):
+        # Keep everything in the text buffer: blocking I/O and Python
+        # callbacks may suspend the critical section.
+        with io.TextIOWrapper(io.BytesIO(), encoding='utf-8') as stream:
+            stream._CHUNK_SIZE = 1 << 20
+
+            def write_lines(char):
+                lines = (char,) * 32 + ('\n',)
+                for _ in range(100):
+                    stream.writelines(lines)
+
+            def write():
+                for _ in range(100):
+                    stream.write('write\n')
+
+            run_concurrently([lambda: write_lines('a'),
+                              lambda: write_lines('b'), write])
+            stream.flush()
+            self.assertCountEqual(stream.buffer.getvalue().splitlines(),
+                                  [b'a' * 32, b'b' * 32, b'write'] * 100)
+
+    def test_print_buffered(self):
+        with io.TextIOWrapper(io.BytesIO(), encoding='utf-8') as stream:
+            stream._CHUNK_SIZE = 1 << 20
+
+            def worker(char):
+                for _ in range(100):
+                    print(*(char,) * 32, sep='', file=stream)
+
+            run_concurrently([lambda: worker('a'), lambda: worker('b')])
+            stream.flush()
+            self.assertCountEqual(stream.buffer.getvalue().splitlines(),
+                                  [b'a' * 32, b'b' * 32] * 100)
+
     def test_buffer_detach_race(self):
         make = lambda: io.TextIOWrapper(io.BytesIO())
         slot = [make()]

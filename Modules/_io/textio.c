@@ -15,6 +15,7 @@
 #include "pycore_object.h"        // _PyObject_GC_UNTRACK()
 #include "pycore_pyerrors.h"      // _PyErr_ChainExceptions1()
 #include "pycore_pystate.h"       // _PyInterpreterState_GET()
+#include "pycore_stackref.h"      // _PyCStackRef
 #include "pycore_unicodeobject.h" // _PyUnicode_AsASCIIString()
 #include "pycore_weakref.h"       // FT_CLEAR_WEAKREFS()
 
@@ -1930,6 +1931,88 @@ _io_TextIOWrapper_write_impl(textio *self, PyObject *text)
     return PyLong_FromSsize_t(textlen);
 }
 
+/*[clinic input]
+@critical_section
+_io.TextIOWrapper.writelines
+    lines: object
+    /
+
+Write a list of lines to stream.
+
+Line separators are not added, so it is usual for each of the
+lines provided to have a line separator at the end.
+[clinic start generated code]*/
+
+static PyObject *
+_io_TextIOWrapper_writelines_impl(textio *self, PyObject *lines)
+/*[clinic end generated code: output=2584a0b34b0b3f55 input=cd108193c0ba0413]*/
+{
+    if (self->state != NULL &&
+        Py_IS_TYPE(self, self->state->PyTextIOWrapper_Type))
+    {
+        CHECK_ATTACHED(self);
+        CHECK_CLOSED(self);
+    }
+    else if (_PyIOBase_check_closed((PyObject *)self, Py_True) == NULL) {
+        return NULL;
+    }
+    PyObject *iter = PyObject_GetIter(lines);
+    if (iter == NULL) {
+        return NULL;
+    }
+
+    PyThreadState *tstate = _PyThreadState_GET();
+    PyObject *line;
+    while ((line = PyIter_Next(iter)) != NULL) {
+        PyObject *res;
+        do {
+            // Respect overrides, including changes made by the iterator
+            // or a callback, by looking up write on every iteration.
+            _PyCStackRef receiver, method;
+            _PyThreadState_PushCStackRef(tstate, &receiver);
+            _PyThreadState_PushCStackRef(tstate, &method);
+            receiver.ref = PyStackRef_FromPyObjectBorrow((PyObject *)self);
+            int is_method = _PyObject_GetMethodStackRef(
+                tstate, &receiver.ref, &_Py_ID(write), &method.ref);
+            if (is_method < 0) {
+                res = NULL;
+            }
+            else {
+                PyObject *write = PyStackRef_AsPyObjectBorrow(method.ref);
+                if (is_method &&
+                    PyStackRef_AsPyObjectBorrow(receiver.ref) == (PyObject *)self &&
+                    Py_IS_TYPE(write, &PyMethodDescr_Type) &&
+                    ((PyMethodDescrObject *)write)->d_method->ml_meth ==
+                        _io_TextIOWrapper_write && PyUnicode_Check(line))
+                {
+                    // Reuse the critical section instead of locking again
+                    // for each line. I/O and callbacks may still suspend it.
+                    res = _io_TextIOWrapper_write_impl(self, line);
+                }
+                else {
+                    PyObject *args[] = {
+                        PyStackRef_AsPyObjectBorrow(receiver.ref), line};
+                    res = PyObject_Vectorcall(write, args + !is_method,
+                                              1 + is_method, NULL);
+                }
+            }
+            _PyThreadState_PopCStackRef(tstate, &method);
+            _PyThreadState_PopCStackRef(tstate, &receiver);
+        } while (res == NULL && _PyIO_trap_eintr());
+        Py_DECREF(line);
+        if (res == NULL) {
+            Py_DECREF(iter);
+            return NULL;
+        }
+        Py_DECREF(res);
+    }
+    Py_DECREF(iter);
+    if (PyErr_Occurred()) {
+        return NULL;
+    }
+    Py_RETURN_NONE;
+}
+
 /* Steal a reference to chars and store it in the decoded_char buffer;
  */
 static void
@@ -3514,6 +3597,7 @@ static PyMethodDef textiowrapper_methods[] = {
     _IO_TEXTIOWRAPPER_DETACH_METHODDEF
     _IO_TEXTIOWRAPPER_RECONFIGURE_METHODDEF
     _IO_TEXTIOWRAPPER_WRITE_METHODDEF
+    _IO_TEXTIOWRAPPER_WRITELINES_METHODDEF
     _IO_TEXTIOWRAPPER_READ_METHODDEF
     _IO_TEXTIOWRAPPER_READLINE_METHODDEF
     _IO_TEXTIOWRAPPER_FLUSH_METHODDEF

@@ -2203,6 +2203,7 @@ extern "C" {
     INIT_ID(writable), \
     INIT_ID(write), \
     INIT_ID(write_through), \
+    INIT_ID(writelines), \
     INIT_ID(year), \
     INIT_ID(zdict), \
     INIT_ID(zstd_dict), \

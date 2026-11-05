@@ -1730,17 +1730,27 @@ are always available.  They are listed here in alphabetical order.
    default values.  If no *objects* are given, :func:`print` will just write
    *end*.
 
-   The *file* argument must be an object with a ``write(string)`` method; if it
-   is not present or ``None``, :data:`sys.stdout` will be used.  Since printed
+   The *file* argument must be an object with a ``writelines(strings)`` or
+   ``write(string)`` method; if it is not present or ``None``,
+   :data:`sys.stdout` will be used.  Since printed
    arguments are converted to text strings, :func:`print` cannot be used with
    binary mode file objects.  For these, use ``file.write(...)`` instead.
 
    Output buffering is usually determined by *file*.
    However, if *flush* is true, the stream is forcibly flushed.
 
+   If *file* provides ``writelines()``, the arguments and separators are
+   converted to strings before being passed to a single ``writelines()`` call.
+   Otherwise, each string is passed separately to ``write()``.
+   A single ``writelines()`` call does not guarantee that output from other
+   threads cannot be interleaved.
 
    .. versionchanged:: 3.3
       Added the *flush* keyword argument.
+
+   .. versionchanged:: 3.16
+      Use ``writelines()`` when available. If converting an argument to a string
+      fails, nothing is passed to ``writelines()``.
 
 
 .. class:: property(fget=None, fset=None, fdel=None, doc=None)

@@ -1117,6 +1117,15 @@ Text I/O
       The return value of :meth:`!tell` can be given as input to :meth:`seek`,
       to restore a previous stream position.
 
+   .. method:: writelines(lines, /)
+
+      Write the strings in the iterable *lines* to the stream, without adding
+      line separators. Overridden :meth:`~TextIOBase.write` methods are honored.
+
+      .. versionchanged:: 3.16
+         Use a single critical section in free-threaded builds. This does not
+         guarantee atomic output; see :ref:`io-multithreading`.
+
 
 .. class:: StringIO(initial_value='', newline='\n')
 
@@ -1254,6 +1263,8 @@ due to the reconstruction algorithm used.
 :class:`StringIO`, however, is a native in-memory unicode container and will
 exhibit similar speed to :class:`BytesIO`.
 
+.. _io-multithreading:
+
 Multi-threading
 ^^^^^^^^^^^^^^^
 
@@ -1266,6 +1277,12 @@ protect their internal structures using a lock; it is therefore safe to call
 them from multiple threads at once.
 
 :class:`TextIOWrapper` objects are not thread-safe.
+
+In a free-threaded build, :meth:`TextIOWrapper.writelines` uses one critical
+section for the iteration, avoiding repeated locking when calling the built-in
+:meth:`~TextIOBase.write` implementation. This does not make the operation
+atomic: blocking I/O and callbacks may suspend the critical section, allowing
+other threads to write between the strings. This also applies to :func:`print`.
 
 Reentrancy
 ^^^^^^^^^^
