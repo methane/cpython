@@ -1181,6 +1181,11 @@ are always available.  They are listed here in alphabetical order.
    a :exc:`TypeError` exception is raised. :exc:`TypeError` may not be
    raised for an invalid type if an earlier check succeeds.
 
+   If *object* has a ``__class__`` attribute that differs from
+   :func:`type(object) <type>` (for example a proxy, or a :mod:`unittest.mock`
+   object created with a *spec*), ``True`` is also returned when that class
+   is a subclass of *classinfo*.
+
    .. versionchanged:: 3.10
       *classinfo* can be a :ref:`types-union`.
 
@@ -1741,6 +1746,10 @@ are always available.  They are listed here in alphabetical order.
 
    .. versionchanged:: 3.3
       Added the *flush* keyword argument.
+
+   .. versionchanged:: 3.16
+      The output is now written in a single ``write()`` call whenever possible,
+      instead of writing each argument, separator, and terminator separately.
 
 
 .. class:: property(fget=None, fset=None, fdel=None, doc=None)
